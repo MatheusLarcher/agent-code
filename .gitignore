@@ -1,0 +1,23 @@
+node_modules/
+out/
+dist/
+.vite/
+*.log
+.DS_Store
+
+# Environment variables / secrets — never commit these
+.env
+.env.*
+
+# Build artifacts
+*.tsbuildinfo
+
+# Local tooling & machine-specific config (ruflo / Claude Code).
+# Not part of the app — contains absolute paths with your username.
+.claude/
+.claude-flow/
+.mcp.json
+CLAUDE.md
+
+# Stray file accidentally created during development
+{}
