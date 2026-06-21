@@ -16,7 +16,8 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Permissões de ferramentas](#permissões-de-ferramentas)
 - [Conversas, projetos e persistência](#conversas-projetos-e-persistência)
 - [Interface do chat (cards, janela, referências)](#interface-do-chat-cards-janela-referências)
-- [Navegador embutido](#navegador-embutido)
+- [Preview: abas (web + Android)](#preview-abas-web--android)
+- [Preview Android (emulador + moldura de device)](#preview-android-emulador--moldura-de-device)
 - [Contrato de IPC](#contrato-de-ipc)
 - [Notificações e modais](#notificações-e-modais)
 - [Build, tipos e ferramentas](#build-tipos-e-ferramentas)
@@ -73,15 +74,18 @@ const options: Options = {
   includePartialMessages: true,          // habilita streaming token a token
   permissionMode: 'default',
   settingSources: ['user', 'project', 'local'],   // lê ~/.claude e .claude do projeto
-  systemPrompt: { type: 'preset', preset: 'claude_code', append: BROWSER_HINT },
-  mcpServers: { browser: createBrowserMcpServer(browser) },
+  systemPrompt: { type: 'preset', preset: 'claude_code', append: `${BROWSER_HINT}\n\n${ANDROID_HINT}` },
+  mcpServers: {
+    browser: createBrowserMcpServer(browser),     // ferramentas browser_* + abas
+    android: createAndroidMcpServer(browser)       // ferramentas android_* (build/preview/device)
+  },
   canUseTool: (toolName, input) => this.handlePermission(toolName, input)
 }
 this.q = query({ prompt: this.input, options })
 for await (const message of this.q) this.handleMessage(message)
 ```
 
-- `BROWSER_HINT` é um texto anexado ao system prompt explicando que o agente tem as ferramentas `browser_*` e que a página é renderizada ao vivo para o usuário.
+- `BROWSER_HINT` explica que o agente tem as ferramentas `browser_*`, que o preview é organizado em **abas** (reusar a aba atual por padrão) e que a página é renderizada ao vivo. `ANDROID_HINT` explica o fluxo Android (instalar a toolchain com `android_setup`, gerar APK, abrir preview e testar em vários tamanhos com `android_set_device`).
 - `executable: 'node'` evita que o binário do Electron seja usado como runtime do CLI embutido.
 - **Interromper:** `interrupt()` chama `q.interrupt()` (ignora erro se não houver turno ativo).
 - **Encerrar:** `dispose()` fecha a fila de entrada (encerra o loop do SDK).
@@ -119,6 +123,7 @@ O gate é `canUseTool` → `AgentSession.handlePermission(toolName, input)`.
 - `bypassAll` está ligado ("Permitir tudo"); ou
 - `toolName` está no conjunto `READ_ONLY` = `Read, Glob, Grep, LS, NotebookRead, TodoWrite, WebFetch, WebSearch`; ou
 - `toolName` começa com `mcp__browser__` (ferramentas do navegador); ou
+- `toolName` está no conjunto `ANDROID_AUTO` — ferramentas Android de **interação/inspeção** (`android_open_preview`, `android_list_devices`, `android_list_device_models`, `android_set_device`, `android_screenshot`, `android_tap`, `android_swipe`, `android_type`, `android_key`). As ferramentas **pesadas** (`android_setup` — download de GBs —, `android_build_apk`, `android_install_run`) **não** estão aqui, então passam pelo modal; ou
 - `toolName` já está em `approvedTools` ("sempre permitir" desta sessão).
 
 **Senão**, registra a pendência e pede ao usuário:
@@ -216,19 +221,41 @@ O badge de status é `running…`/`done`/`error` (erro em vermelho). O corpo exp
 
 ---
 
-## Navegador embutido
+## Preview: abas (web + Android)
 
-`src/main/browserController.ts` encapsula um Chromium do Playwright.
+O painel da direita é **multi-aba**, **um por conversa** — o main mantém `Map<convId, BrowserController>` + `activeConvId` (a conversa exibida). `getBrowser(convId)` cria sob demanda; os *callbacks* (`onFrame`/`onState`/`onPicked`/`onAndroidProgress`) só repassam ao renderer quando `convId === activeConvId`. Trocar de conversa manda `browser:set-active` (→ `refreshView()`); excluir manda `browser:dispose`. A sessão do agente recebe `getBrowser(opts.convId)`, então as ferramentas agem no preview da própria conversa.
 
-**Um navegador por conversa** — o main mantém um `Map<convId, BrowserController>` e um `activeConvId` (a conversa cujo navegador o painel mostra no momento). `getBrowser(convId)` cria sob demanda; os *callbacks* (`onFrame`/`onState`/`onPicked`) só repassam ao renderer quando `convId === activeConvId`, então navegadores de conversas em segundo plano seguem vivos sem pintar por cima do que o usuário vê. Ao trocar de conversa, o renderer manda `browser:set-active`; o main faz `refreshView()` (re-emite o estado e empurra um frame via screenshot, pois o screencast só envia frames em mudança) ou, se aquela conversa não tem navegador, envia o estado vazio. Deletar a conversa dispara `browser:dispose` (fecha e remove do `Map`). A sessão do agente recebe `getBrowser(opts.convId)`, então as ferramentas `browser_*` agem no navegador da própria conversa.
+Cada aba é uma superfície de um **tipo** (`TabKind`): `web` (página do Chromium) ou `android` (tela de um device/emulador). `iphone` está **reservado** (nome + ícone existem; abrir retorna "não implementado"). `TAB_KINDS` (em `src/shared/ipc.ts`) é a fonte única de rótulo/ícone/implementado, e `tabName(tab)` gera o nome exibido **e visto pelo LLM**: `web - <site>` / `android - <app>`.
 
-- **Headless + screencast:** `chromium.launch({ headless: true })`, contexto com viewport 1280×800. A página é transmitida por **CDP `Page.startScreencast`** (JPEG, qualidade 60); cada frame vira `{ data, width, height }` enviado por `browser:frame`. Os frames são confirmados com `screencastFrameAck`.
-- **Estado:** `emitState()` envia `browser:state` (`url`, `title`, `loading`, `canGoBack/Forward`, `launched`) em navegações e `load`.
-- **Seletor de elementos (picker):** um *init script* (`PICKER_SCRIPT`) é injetado em toda página. Quando `window.__agentSelectMode` está ligado, ele desenha um realce no hover e, ao clicar, chama `window.__agentPick` (exposta via `exposeFunction`) com seletor/tag/id/classes/texto/HTML; isso vira `browser:picked` → vira um *chip* no composer.
-- **Entrada do usuário:** `forwardInput` recebe eventos do canvas com coordenadas **normalizadas** (0–1) e os reaplica na página (mouse via Playwright; *wheel* via CDP `Input.dispatchMouseEvent`; teclado por `type`/`press`).
-- **Ferramentas do agente:** métodos `navigate`, `snapshot` (digest estruturado: título, url, texto, elementos interativos), `screenshot` (PNG base64), `clickSelector`, `typeText`, `getText`, `evaluate`, `back`, `reload`.
+**Sempre há uma aba ativa** e toda ação age sobre ela. O `BrowserController` mantém `Map<id, Tab>` + `activeTabId`; só a ativa transmite frames (as outras seguem vivas em segundo plano). Um `Tab` tem `page` (web) **ou** `device` (android), nunca os dois.
 
-`src/main/browserTools.ts` empacota esses métodos como um **servidor MCP em processo** (`createSdkMcpServer`), expondo as ferramentas `browser_navigate`, `browser_snapshot`, `browser_screenshot`, `browser_click`, `browser_type`, `browser_get_text`, `browser_evaluate`, `browser_back`, `browser_reload` (esquemas validados com `zod`).
+**Barra de abas** (`BrowserTabs.tsx`) — cada aba com ícone (`TabIcon`: globo/robô/telefone) + nome + "×"; o **"+"** abre o **modal de nova aba** (`NewTabModal`, renderizado na raiz do app para **não ser cortado** pela barra, que rola horizontalmente — era esse o bug do antigo dropdown). O modal lista Web / Android / iPhone (reservado, desabilitado). Canais: `browser:new-tab`, `browser:select-tab`, `browser:close-tab`.
+
+**O LLM controla as abas** — `browser_list_tabs`, `browser_new_tab`, `browser_select_tab`, `browser_close_tab`. O system prompt orienta a **reusar a aba atual** e só abrir outra quando precisar de uma página separada. Ao usar "Select", o `PickedElement` carrega `tabId`/`tabName`, então a mensagem informa de qual aba veio.
+
+### Aba web
+
+`chromium.launch({ headless: true })`, contexto com viewport 1280×800 e `deviceScaleFactor: 2` (renderiza em 2× para o texto ficar nítido). Cada aba web tem sua **sessão CDP** + `Page.startScreencast` (JPEG, qualidade 82); o handler só pinta se a aba for a ativa, e confirma com `screencastFrameAck`. O **picker** é um init script (`PICKER_SCRIPT`, em `src/main/picker.ts`) adicionado **no contexto** (vale para todas as abas); o callback é exposto via `context.exposeBinding('__agentPick', …)`, então `source.page` identifica a aba do clique. A lógica de página (navegar, snapshot, screenshot, click, type, getText, evaluate, select-mode, input) vive em `src/main/pageActions.ts` (funções puras sobre uma `Page`); os tipos/constantes de aba ficam em `src/main/browserTabs.ts`. Assim o `browserController.ts` só orquestra abas.
+
+`src/main/browserTools.ts` expõe, como **servidor MCP em processo**, as ferramentas de aba + `browser_navigate`, `browser_snapshot`, `browser_screenshot`, `browser_click`, `browser_type`, `browser_get_text`, `browser_evaluate`, `browser_back`, `browser_reload` (todas na aba ativa, esquemas `zod`).
+
+---
+
+## Preview Android (emulador + moldura de device)
+
+A aba Android transmite a tela de um **device físico** (se conectado) ou do **emulador** (AVD padrão) via `adb`. Tudo em `src/main/android/`.
+
+**Toolchain sob demanda** (`androidEnv.ts`) — `detect()` localiza JDK, Android SDK, `adb`, emulador, `sdkmanager`/`avdmanager` (no SDK do próprio app em `userData`, no `ANDROID_HOME`/`ANDROID_SDK_ROOT` ou no SDK do Android Studio). `ensureInstalled()` baixa o que falta com progresso — JDK 17 (Temurin), command-line tools, platform-tools, plataforma `android-34`, build-tools, emulador, system image — aceita licenças e cria um AVD padrão. É **idempotente** (só baixa o ausente) e fica cacheado no `userData` (baixa uma vez, reusa). O Electron é importado de forma preguiçosa para o módulo rodar também em Node puro (testes/scripts).
+
+**Device ao vivo** (`androidDevice.ts`) — `ensureBooted()` sobe o device/emulador; `startStreaming()` empurra frames **PNG** (~6 fps) via `adb exec-out screencap`; toques/swipes/texto/teclas vão por `adb shell input` (coordenadas normalizadas 0–1 → pixels). `setScreenSize(w,h,dpi)` aplica `wm size`/`wm density` (e `resetScreenSize()` restaura); `screenSize` expõe o tamanho atual. `install()`/`launch()` instalam e abrem um APK. Ao fechar a aba: se o device já rodava (não foi o app que subiu), a resolução nativa é restaurada; um emulador que o app subiu é encerrado (`emu kill`). `androidTab.ts` isola o boot e o mapeamento de input do device.
+
+**Moldura + modelos** (`src/shared/devices.ts`, `BrowserPanel.tsx`) — uma **tabela** de presets (telefones e tablets) com resolução (px) e densidade. A lista exibida é **deduplicada por resolução** (`uniqueByResolution`): quando vários aparelhos compartilham a mesma resolução, fica o **mais recente** (maior `year`). O preview começa como **Galaxy S26 Ultra** (`DEFAULT_DEVICE_ID`). O usuário escolhe num seletor ou usa **"Personalizado…"** (largura×altura). Selecionar chama `browser:set-android-size` → `AndroidDevice.setScreenSize`, então o emulador renderiza **naquele tamanho real**. A UI desenha uma **moldura de celular** (bezel arredondado, câmera *punch-hole* nos telefones; bezel fino nos tablets) dimensionada para caber no painel mantendo o aspecto do device.
+
+**Fonte única de verdade** — o tamanho atual vai em `BrowserState.androidSize` (lido do device); a UI (seletor, moldura, status) é derivada disso. Por isso **mudar pelo dropdown ou pela tool do LLM dá no mesmo** — a moldura acompanha. O controller aplica o S26 Ultra ao abrir a aba.
+
+**Frames com `mime`** — como Android transmite PNG e a web JPEG, `BrowserFrame` carrega `mime` (`image/png`|`image/jpeg`, default JPEG) e o `<canvas>` desenha com o tipo certo.
+
+**Ferramentas do agente** (`androidTools.ts`, servidor MCP `android`): `android_setup`, `android_open_preview`, `android_build_apk` (`gradlew assembleDebug`), `android_install_run`, `android_screenshot`, `android_tap`, `android_swipe`, `android_type`, `android_key`, `android_list_devices`, `android_list_device_models` (deduplicada) e `android_set_device` (modelo por id **ou** resolução custom; abre o preview se preciso). O progresso do boot/instalação é transmitido pelo canal `browser:android-progress`.
 
 ---
 
@@ -254,6 +281,11 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `browserSetSelectMode` | `browser:set-select-mode` | `browser.setSelectMode(on)` | `boolean` |
 | `browserInput` | `browser:input` | `browser.forwardInput(ev)` (navegador ativo) | `BrowserInput` |
 | `browserClose` | `browser:close` | `browser.close()` (navegador ativo) | — |
+| `browserSetViewport` | `browser:set-viewport` | redimensiona o viewport da aba web ativa ao painel | `width`, `height` |
+| `browserNewTab` | `browser:new-tab` | `getBrowser(activeConvId).newTab(kind)` (web/android) | `TabKind?` → `string` (status) |
+| `browserSelectTab` | `browser:select-tab` | torna uma aba a ativa | `tabId` |
+| `browserCloseTab` | `browser:close-tab` | fecha uma aba | `tabId` |
+| `browserSetAndroidSize` | `browser:set-android-size` | aplica resolução (modelo/custom) no device Android ativo | `width`, `height`, `dpi?` → `string` |
 | `browserSetActive` | `browser:set-active` | define `activeConvId` e repinta o painel (`refreshView`) | `string \| null` |
 | `browserDispose` | `browser:dispose` | fecha e remove o navegador da conversa | `string` |
 
@@ -265,9 +297,10 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 |-----------|-------|---------|
 | `agentEvent` | `agent:event` | `AgentEventMsg` `{ convId, event: ChatEvent }` |
 | `agentPermissionRequest` | `agent:permission-request` | `PermissionRequestMsg` `{ convId, req: PermissionRequest }` |
-| `browserFrame` | `browser:frame` | `BrowserFrame` `{ data, width, height }` |
-| `browserStateChanged` | `browser:state` | `BrowserState` |
-| `browserPicked` | `browser:picked` | `PickedElement` |
+| `browserFrame` | `browser:frame` | `BrowserFrame` `{ data, width, height, mime? }` (mime = `image/png` no Android) |
+| `browserStateChanged` | `browser:state` | `BrowserState` (inclui `tabs[]` e, no Android, `androidSize`) |
+| `browserPicked` | `browser:picked` | `PickedElement` (com `tabId`/`tabName`) |
+| `androidProgress` | `browser:android-progress` | `AndroidProgressMsg` `{ convId, line }` (progresso do boot/instalação) |
 
 ---
 
@@ -280,7 +313,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 
 O valor do contexto é memoizado (`useMemo`) para os consumidores não re-renderizarem a cada toast. O `App` é envolvido pelo `UiProvider` em `main.tsx`, então qualquer componente (incl. `Sidebar`) usa `useUI()`.
 
-`PermissionModal` reusa o mesmo visual de modal para o pedido de permissão do agente, com 3 ações (Negar / Permitir uma vez / Sempre permitir).
+`PermissionModal` reusa o mesmo visual de modal para o pedido de permissão do agente, com 3 ações (Negar / Permitir uma vez / Sempre permitir). `NewTabModal` usa o mesmo padrão (`.modal-overlay`/`.modal-card`) para escolher o tipo da nova aba de preview (Web / Android / iPhone reservado) — renderizado na raiz do app, então nunca é cortado pela barra de abas.
 
 ---
 
@@ -290,6 +323,8 @@ O valor do contexto é memoizado (`useMemo`) para os consumidores não re-render
 - **TypeScript** com *project references* (`tsconfig.json` → `tsconfig.node.json` + `tsconfig.web.json`). `node` cobre `src/main`, `src/preload`, `src/shared`; `web` cobre `src/renderer` + `src/shared` (com `lib: DOM`, `jsx: react-jsx`). Ambos `strict`, `moduleResolution: Bundler`, alias `@shared/*`.
 - **Vitest** (`vitest.config.ts`): ambiente `jsdom`, `globals`, alias `@shared`, plugin do React; inclui `src/**/*.test.{ts,tsx}`.
 - **Ícone** (`scripts/make-icon.mjs`): usa o Playwright para renderizar `build/icon.svg` e salvar `icon.png` (512) e `icon.ico` (256, ICO de uma imagem PNG). Rodar com `npm run icon`.
+- **Scripts auxiliares** (`scripts/`): `screenshot.mjs` (gera o print do README dirigindo o app via `_electron`), `ui-tab-test.mjs` (smoke test do sistema de abas) e `android-probe.mjs` (verifica o caminho do preview Android). São utilitários de desenvolvimento, executados com `node scripts/<arquivo>.mjs`.
+- **Organização do `BrowserController`**: para manter o arquivo enxuto, a parte de página web está em `pageActions.ts`, os tipos/constantes de aba em `browserTabs.ts`, o init script do picker em `picker.ts` e a parte Android em `android/` (`androidEnv`, `androidDevice`, `androidTab`, `androidTools`).
 
 ---
 

@@ -8,7 +8,7 @@ import {
   type WheelEvent
 } from 'react'
 import type { BrowserState } from '@shared/ipc'
-import { ANDROID_DEVICES, DEFAULT_DEVICE_ID, findDevice, type DeviceType } from '@shared/devices'
+import { DEVICE_OPTIONS, DEFAULT_DEVICE_ID, deviceForResolution, findDevice, type DeviceType } from '@shared/devices'
 import { BrowserTabs } from './BrowserTabs'
 
 interface Props {
@@ -98,7 +98,7 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
   const cur: Res = state.androidSize
     ? { w: state.androidSize.width, h: state.androidSize.height }
     : DEFAULT_RES
-  const matchId = ANDROID_DEVICES.find((d) => d.width === cur.w && d.height === cur.h)?.id
+  const matchId = deviceForResolution(cur.w, cur.h)?.id
   const selValue = forceCustom || !matchId ? 'custom' : matchId
 
   const deviceType: DeviceType = useMemo(() => {
@@ -173,8 +173,8 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
     if (w >= 240 && h >= 240) void window.api.setAndroidSize(w, h)
   }
 
-  const phones = ANDROID_DEVICES.filter((d) => d.type === 'phone')
-  const tablets = ANDROID_DEVICES.filter((d) => d.type === 'tablet')
+  const phones = DEVICE_OPTIONS.filter((d) => d.type === 'phone')
+  const tablets = DEVICE_OPTIONS.filter((d) => d.type === 'tablet')
 
   const canvasEl = (
     <canvas

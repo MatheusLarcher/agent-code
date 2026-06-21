@@ -10,10 +10,11 @@ Você conversa com o agente de um lado e ele pesquisa, abre sites e interage com
 
 - 💬 **Conversar com o agente** (Claude) com streaming, markdown, cartões de ferramenta e medidor de tokens/custo.
 - 🌐 **Navegador embutido controlado pelo agente** — ele navega, lê e clica em páginas e você vê tudo acontecendo ao vivo.
-- 🗂️ **Abas de preview** — várias páginas abertas ao mesmo tempo, e o agente sabe qual aba está controlando (web hoje; android/iPhone planejados).
+- 🗂️ **Abas de preview** — várias páginas/dispositivos abertos ao mesmo tempo, e o agente sabe (e controla) qual aba está ativa.
+- 📱 **Preview Android** — o agente sobe um emulador, gera o APK e testa o app ao vivo numa **moldura de celular**, podendo trocar entre modelos (S26 Ultra, Pixel, tablets…) ou resolução custom. _(iPhone planejado.)_
 - 🖱️ **Selecionar um elemento da página** e enviá-lo pro chat com um clique.
 - 📁 **Histórico por projeto** — conversas agrupadas por pasta, que reabrem e retomam o contexto.
-- ⚡ **Várias conversas em paralelo**, cada uma com seu próprio agente e navegador.
+- ⚡ **Várias conversas em paralelo**, cada uma com seu próprio agente e preview.
 - 🔒 **Permissões por ferramenta**, com um modo "permitir tudo" que liga/desliga na hora.
 
 ## Como rodar
@@ -35,5 +36,5 @@ Electron + React + TypeScript, usando o **Claude Agent SDK** (o agente) e o **Pl
 
 ## Documentação
 
-- [docs/ARQUITETURA.md](docs/ARQUITETURA.md) — como o app funciona por dentro (processos, IPC, permissões, navegador, build).
+- [docs/ARQUITETURA.md](docs/ARQUITETURA.md) — como o app funciona por dentro (processos, IPC, permissões, preview web/Android, build).
 - [docs/REFERENCIA.md](docs/REFERENCIA.md) — referência arquivo por arquivo do projeto.

@@ -4,7 +4,7 @@ import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { BrowserController } from '../browserController'
 import { detect, ensureInstalled, spawnTool } from './androidEnv'
-import { ANDROID_DEVICES, findDevice } from '../../shared/devices'
+import { DEVICE_OPTIONS, findDevice } from '../../shared/devices'
 
 type Text = { content: { type: 'text'; text: string }[] }
 const text = (t: string): Text => ({ content: [{ type: 'text', text: t }] })
@@ -100,7 +100,7 @@ export function createAndroidMcpServer(
         {},
         async () =>
           text(
-            ANDROID_DEVICES.map(
+            DEVICE_OPTIONS.map(
               (d) => `${d.id} — ${d.name} (${d.type}, ${d.width}x${d.height} @ ${d.dpi}dpi)`
             ).join('\n')
           )
