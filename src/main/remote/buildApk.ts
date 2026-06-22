@@ -134,6 +134,19 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
   await run('npx', ['--yes', 'cap', 'sync', 'android'], { cwd: rootDir, env: d.env, onLine })
   await ensureCameraPermission(androidDir, onLine)
 
+  // Brand the launcher/splash with the SAME art as the desktop app
+  // (resources/ generated from build/icon.svg). Non-fatal: a failure here just
+  // leaves the default Capacitor icon instead of aborting the build.
+  if (await exists(join(rootDir, 'resources', 'icon-only.png'))) {
+    onLine('Aplicando ícone do app (mesma arte do desktop)…')
+    const iconCode = await run('npx', ['--yes', '@capacitor/assets', 'generate', '--android'], {
+      cwd: rootDir,
+      env: d.env,
+      onLine
+    })
+    if (iconCode !== 0) onLine('Aviso: não foi possível gerar os ícones; usando o padrão.')
+  }
+
   // 4) Gradle debug build.
   onLine('Compilando APK (gradlew assembleDebug)… isso pode levar alguns minutos.')
   const gradlew = WIN ? join(androidDir, 'gradlew.bat') : join(androidDir, 'gradlew')

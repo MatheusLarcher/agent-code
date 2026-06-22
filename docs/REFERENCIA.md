@@ -78,7 +78,7 @@ Regenere ambos com `npm run icon` após editar o SVG.
 | `android/androidTab.ts` | Metade Android da aba: `bootAndroidDevice` e `forwardAndroidInput` (mapeia input do canvas no device), separados do controller. |
 | `android/androidTools.ts` | `createAndroidMcpServer(browser)` — servidor MCP `android`: `android_setup`, `android_open_preview`, `android_build_apk`, `android_install_run`, `android_screenshot`, `android_tap`/`swipe`/`type`/`key`, `android_list_devices`, `android_list_device_models`, `android_set_device` (modelo/custom). |
 | `remote/remoteServer.ts` | **Ponte LAN** (HTTP + SSE) para o controle remoto pelo celular: rotas `/` (landing), `/download` (APK), `/app` (cliente web), `/api/state`/`history`/`events`(SSE)/`send`; auth por token; `start`/`stop`/`info`/`broadcast`/`setState`. |
-| `remote/buildApk.ts` | Gera o APK do app remoto (`smartfone-remote`) via Capacitor, transmitindo o progresso linha a linha. |
+| `remote/buildApk.ts` | Gera o APK do app remoto (`smartfone-remote`) via Capacitor, transmitindo o progresso linha a linha. Após o `cap sync`, **aplica o ícone do app** (mesma arte do desktop) via `@capacitor/assets generate --android` (não-fatal: falha mantém o ícone padrão). |
 | `remote/remoteServer.test.ts` | Testes (Vitest) da ponte: auth por token, `/api/state`/`history`, `send` → `onInbound`, contagem de clientes. |
 
 ---
@@ -147,8 +147,10 @@ Projeto **Capacitor** separado (próprio `package.json`/`package-lock.json`) que
 | Arquivo | Responsabilidade |
 |---------|------------------|
 | `capacitor.config.json` | Config do Capacitor (id/nome do app, pasta `www`). |
-| `package.json` | Deps do Capacitor + script de build. |
-| `scripts/build-apk.mjs` | Gera o APK: copia o `www/`, adiciona/atualiza a plataforma Android e roda o Gradle (chamado por `remote:build-apk`). |
+| `package.json` | Deps do Capacitor (+ `@capacitor/assets` para os ícones) e scripts (`icons`, `assets`, `build:apk`). |
+| `resources/` | **Arte do ícone/splash** do app (mesma faísca coral do desktop): `icon-only.png`, `icon-foreground.png`, `icon-background.png` (1024²) e `splash.png`/`splash-dark.png` (2732²). Geradas de `build/icon.svg`; consumidas por `@capacitor/assets generate --android` para criar todas as densidades de mipmap + o ícone adaptativo. |
+| `scripts/make-icons.mjs` | Rasteriza `build/icon.svg` (via Playwright do projeto pai) nos assets de `resources/`. Rode da raiz do repo: `node smartfone-remote/scripts/make-icons.mjs`. |
+| `scripts/build-apk.mjs` | Gera o APK: copia o `www/`, adiciona/atualiza a plataforma Android, **aplica o ícone** (`@capacitor/assets generate`, se houver `resources/`) e roda o Gradle (chamado por `remote:build-apk`). |
 | `www/index.html` | Telas do app: pareamento (QR/manual), overlay do scanner, e o chat (header com ☰ + título + indicador online, mensagens, composer, **drawer de histórico** e **menu de sair**). |
 | `www/app.js` | Lógica do cliente: parear, buscar `/api/state`, montar o **histórico agrupado por projeto** (drawer), abrir conversa (`/api/history` + SSE `/api/events`), enviar comando (`/api/send`), indicador online e sair com confirmação. |
 | `www/styles.css` | Tema escuro (espelha o do desktop): pareamento, scanner, chat, drawer, popover de conexão. |

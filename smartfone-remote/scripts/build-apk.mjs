@@ -56,6 +56,13 @@ async function main() {
   console.log('→ cap sync android')
   await run('npx', ['--yes', 'cap', 'sync', 'android'])
 
+  // Brand the launcher/splash with the same art as the desktop app
+  // (resources/ generated from build/icon.svg). Non-fatal.
+  if (existsSync(join(ROOT, 'resources', 'icon-only.png'))) {
+    console.log('→ capacitor-assets generate (ícone do app)')
+    await run('npx', ['--yes', '@capacitor/assets', 'generate', '--android'])
+  }
+
   // Ensure the in-app QR scanner can use the camera.
   const manifest = join(androidDir, 'app/src/main/AndroidManifest.xml')
   if (existsSync(manifest)) {

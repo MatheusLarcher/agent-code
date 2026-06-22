@@ -351,7 +351,7 @@ O valor do contexto é memoizado (`useMemo`) para os consumidores não re-render
 - **Ícone** (`scripts/make-icon.mjs`): usa o Playwright para renderizar `build/icon.svg` e salvar `icon.png` (512) e `icon.ico` (256, ICO de uma imagem PNG). Rodar com `npm run icon`.
 - **Scripts auxiliares** (`scripts/`): `screenshot.mjs` (gera o print do README dirigindo o app via `_electron`), `ui-tab-test.mjs` (smoke test do sistema de abas) e `android-probe.mjs` (verifica o caminho do preview Android). São utilitários de desenvolvimento, executados com `node scripts/<arquivo>.mjs`.
 - **Organização do `BrowserController`**: para manter o arquivo enxuto, a parte de página web está em `pageActions.ts`, os tipos/constantes de aba em `browserTabs.ts`, o init script do picker em `picker.ts` e a parte Android em `android/` (`androidEnv`, `androidDevice`, `androidTab`, `androidTools`).
-- **App remoto** (`smartfone-remote/`): projeto **Capacitor** separado (próprio `package.json`). O cliente é o `www/` (HTML/JS puro, sem build). `scripts/build-apk.mjs` gera o APK; o `.gitignore` ignora `smartfone-remote/{node_modules,android,dist,.gradle}`.
+- **App remoto** (`smartfone-remote/`): projeto **Capacitor** separado (próprio `package.json`). O cliente é o `www/` (HTML/JS puro, sem build). `scripts/build-apk.mjs` gera o APK; o `.gitignore` ignora `smartfone-remote/{node_modules,android,dist,.gradle}`. O **ícone do app** reaproveita a arte do desktop: `scripts/make-icons.mjs` rasteriza `build/icon.svg` em `resources/` (`icon-only`/`-foreground`/`-background` + `splash`), e o build roda `@capacitor/assets generate --android` para gerar mipmaps + ícone adaptativo. Trocar o ícone do desktop e regerar reflete nos dois.
 
 ---
 
