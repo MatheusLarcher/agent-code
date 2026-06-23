@@ -1,7 +1,29 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+  type MouseEvent
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { UIMessage } from '../types'
+import { isDownloadableFile } from '@shared/ipc'
+import { useUI } from '../ui/UiProvider'
+
+/**
+ * Path of a deliverable a `Write` produced (else ''). Only the `Write` tool
+ * (file creation, not edits to existing source) and only deliverable extensions
+ * (APK, zip, PDF, image…) qualify — so code/config the agent edits never gets a
+ * download chip, just the artifacts the user asked to create.
+ */
+function writtenPath(name: string, input: unknown): string {
+  if (name !== 'Write') return ''
+  const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const p = inp.file_path
+  return typeof p === 'string' && isDownloadableFile(p) ? p : ''
+}
 
 // Links must open in the system browser, not navigate the app frame. Forcing
 // target=_blank routes the click through the main process' window-open handler
@@ -85,8 +107,18 @@ function describeTool(name: string, input: unknown): ToolInfo {
 
 function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.Element {
   const [open, setOpen] = useState(false)
+  const { notify } = useUI()
   const info = describeTool(m.name, m.input)
   const hasDiff = info.stats && (info.stats.added > 0 || info.stats.removed > 0)
+  // Offer a download once the write succeeded (the file exists on disk).
+  const filePath = m.result && !m.result.isError ? writtenPath(m.name, m.input) : ''
+
+  const download = async (e: MouseEvent): Promise<void> => {
+    e.stopPropagation()
+    const r = await window.api.downloadFile(filePath)
+    notify(r.ok ? 'sucesso' : 'erro', r.message)
+  }
+
   return (
     <div className={`tool-card ${info.isSkill ? 'tool-skill' : ''} ${m.result?.isError ? 'tool-error' : ''}`}>
       <button className="tool-head" onClick={() => setOpen((o) => !o)}>
@@ -97,6 +129,11 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
           <span className="tool-diff">
             {info.stats.added > 0 && <span className="diff-add">+{info.stats.added}</span>}
             {info.stats.removed > 0 && <span className="diff-del">−{info.stats.removed}</span>}
+          </span>
+        )}
+        {filePath && (
+          <span className="tool-download" onClick={download} title="Baixar arquivo">
+            ⬇️ Baixar
           </span>
         )}
         {m.result ? (

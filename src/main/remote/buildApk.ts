@@ -94,6 +94,98 @@ async function ensureCameraPermission(androidDir: string, onLine: Progress): Pro
   onLine('Permissão de câmera adicionada ao AndroidManifest.')
 }
 
+/** Java source installed into the (gitignored, regenerated) Android project so the
+ *  WebView saves files streamed by the PC bridge to the phone's Downloads. */
+const MAIN_ACTIVITY_JAVA = `package com.matheus.agentremote;
+
+import android.Manifest;
+import android.app.DownloadManager;
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.webkit.URLUtil;
+import android.widget.Toast;
+
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+import com.getcapacitor.BridgeActivity;
+
+// Wires a WebView download listener so files streamed by the PC bridge
+// (GET /api/file, Content-Disposition: attachment) are saved to the phone's
+// public Downloads folder via DownloadManager. Managed by buildApk.ts.
+public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                    this, new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE }, 1);
+        }
+
+        getBridge().getWebView().setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            try {
+                String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                request.setMimeType(mimeType);
+                if (userAgent != null) request.addRequestHeader("User-Agent", userAgent);
+                request.setTitle(fileName);
+                request.setDescription("Agent Remote");
+                request.allowScanningByMediaScanner();
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                if (dm != null) dm.enqueue(request);
+                Toast.makeText(getApplicationContext(), "Baixando " + fileName + "…", Toast.LENGTH_SHORT).show();
+            } catch (Exception e) {
+                Toast.makeText(getApplicationContext(), "Falha no download: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+}
+`
+
+/**
+ * Install download support into the generated Android project: declare
+ * WRITE_EXTERNAL_STORAGE (only needed pre‑API 29) and overwrite MainActivity with
+ * the version that wires a WebView download listener. Idempotent.
+ */
+async function ensureDownloadSupport(androidDir: string, onLine: Progress): Promise<void> {
+  // 1) Storage permission for DownloadManager on API < 29.
+  const manifest = join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml')
+  try {
+    const xml = await readFile(manifest, 'utf8')
+    if (!xml.includes('WRITE_EXTERNAL_STORAGE')) {
+      const open = xml.match(/<manifest[^>]*>/)
+      if (open) {
+        const perm =
+          '\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />'
+        await writeFile(manifest, xml.replace(open[0], open[0] + perm))
+        onLine('Permissão de armazenamento (download) adicionada ao AndroidManifest.')
+      }
+    }
+  } catch {
+    /* manifest not generated yet — skip */
+  }
+  // 2) MainActivity with the download listener.
+  const activity = join(androidDir, 'app', 'src', 'main', 'java', 'com', 'matheus', 'agentremote', 'MainActivity.java')
+  try {
+    const cur = await readFile(activity, 'utf8').catch(() => '')
+    if (cur !== MAIN_ACTIVITY_JAVA) {
+      await writeFile(activity, MAIN_ACTIVITY_JAVA)
+      onLine('MainActivity: download de arquivos no app habilitado.')
+    }
+  } catch (err) {
+    onLine(`Aviso: não foi possível habilitar o download no app (${String(err)}).`)
+  }
+}
+
 /** Dark used for the adaptive-icon background (matches the desktop icon). */
 const ICON_BG = '#1f1e1d'
 
@@ -164,6 +256,7 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
   onLine('Sincronizando web → Android (cap sync)…')
   await run('npx', ['--yes', 'cap', 'sync', 'android'], { cwd: rootDir, env: d.env, onLine })
   await ensureCameraPermission(androidDir, onLine)
+  await ensureDownloadSupport(androidDir, onLine)
 
   // Brand the launcher/splash with the SAME art as the desktop app
   // (resources/ generated from build/icon.svg). Non-fatal: a failure here just

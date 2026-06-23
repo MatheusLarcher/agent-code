@@ -28,6 +28,8 @@ export interface AgentCodeApi {
   pickFile(): Promise<string | null>
   /** Open a project folder in VS Code. Returns a status (success or why it failed). */
   openInEditor(dir: string): Promise<{ ok: boolean; message: string }>
+  /** Save a copy of a file (created by the agent) to Downloads and reveal it. */
+  downloadFile(path: string): Promise<{ ok: boolean; message: string; saved?: string }>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
   sendMessage(convId: string, text: string, images?: ImageAttachment[]): Promise<void>

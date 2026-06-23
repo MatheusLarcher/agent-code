@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { spawn } from 'node:child_process'
-import { join } from 'node:path'
+import { join, basename, extname } from 'node:path'
+import { stat as fsStat, copyFile as fsCopyFile, access as fsAccess } from 'node:fs/promises'
 import { BrowserController } from './browserController'
 import { AgentSession } from './agentSession'
 import { RemoteServer } from './remote/remoteServer'
@@ -44,6 +45,16 @@ const EMPTY_BROWSER_STATE = {
 
 function send(channel: string, payload: unknown): void {
   mainWindow?.webContents.send(channel, payload)
+}
+
+/** True if a path exists (used to avoid clobbering files in Downloads). */
+async function fsExists(p: string): Promise<boolean> {
+  try {
+    await fsAccess(p)
+    return true
+  } catch {
+    return false
+  }
 }
 
 // Root of the smartfone-remote project (sibling of out/ → ../../ from out/main).
@@ -162,6 +173,31 @@ function registerIpc(): void {
       }
     }
   })
+
+  // Save a copy of a file the agent created into the user's Downloads folder and
+  // reveal it (so "baixar" works on the desktop too, not only on the phone).
+  ipcMain.handle(
+    Channels.fileDownload,
+    async (_e, path: string): Promise<{ ok: boolean; message: string; saved?: string }> => {
+      if (!path) return { ok: false, message: 'Caminho de arquivo ausente.' }
+      try {
+        const src = await fsStat(path)
+        if (!src.isFile()) return { ok: false, message: 'O caminho não é um arquivo.' }
+        const downloads = app.getPath('downloads')
+        let dest = join(downloads, basename(path))
+        // Avoid clobbering an existing file: append " (1)", " (2)", …
+        const ext = extname(dest)
+        const stem = dest.slice(0, dest.length - ext.length)
+        let n = 1
+        while (await fsExists(dest)) dest = `${stem} (${n++})${ext}`
+        await fsCopyFile(path, dest)
+        shell.showItemInFolder(dest)
+        return { ok: true, message: `Salvo em ${dest}`, saved: dest }
+      } catch (err) {
+        return { ok: false, message: `Falha ao baixar: ${String(err)}` }
+      }
+    }
+  )
 
   ipcMain.handle(Channels.agentStart, async (_e, opts: StartAgentOptions) => {
     const { convId } = opts

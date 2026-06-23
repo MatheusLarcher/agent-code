@@ -318,6 +318,16 @@ html, body {
   border-top: 1px solid var(--line-soft); padding-top: 6px;
 }
 .tool .tool-result.err { color: var(--err); }
+.tool-dl {
+  margin-top: 9px;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid rgba(224, 132, 88, 0.36);
+  border-radius: 20px; padding: 7px 14px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  font-family: inherit;
+}
+.tool-dl:active { background: rgba(224, 132, 88, 0.28); transform: scale(0.97); }
 
 .reconnect-bar, .busy-bar {
   display: flex; align-items: center; gap: 8px;

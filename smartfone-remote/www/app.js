@@ -106,6 +106,40 @@ function summarizeInput(input) {
   } catch (e) { return '' }
 }
 
+// Deliverable file types a user would ask to create and download (APK, zip, PDF,
+// image…). Code/config the agent edits while working is intentionally excluded.
+var DOWNLOADABLE_EXTS = {
+  zip: 1, tar: 1, gz: 1, tgz: 1, bz2: 1, xz: 1, rar: 1, '7z': 1,
+  apk: 1, aab: 1, ipa: 1, exe: 1, msi: 1, dmg: 1, pkg: 1, deb: 1, rpm: 1, appimage: 1, iso: 1, jar: 1, bin: 1,
+  pdf: 1, doc: 1, docx: 1, xls: 1, xlsx: 1, ppt: 1, pptx: 1, odt: 1, ods: 1, odp: 1, rtf: 1, epub: 1, csv: 1,
+  png: 1, jpg: 1, jpeg: 1, gif: 1, webp: 1, bmp: 1, svg: 1, ico: 1, mp4: 1, mov: 1, webm: 1, avi: 1, mkv: 1,
+  mp3: 1, wav: 1, ogg: 1, flac: 1,
+  ttf: 1, otf: 1, woff: 1, woff2: 1
+}
+function isDownloadableFile(p) {
+  var m = /\.([a-z0-9]+)$/i.exec(p || '')
+  return !!(m && DOWNLOADABLE_EXTS[m[1].toLowerCase()])
+}
+// Only files CREATED via Write (not edits) and of a deliverable type are offered.
+function writtenPath(name, input) {
+  if (name !== 'Write' || !input || typeof input !== 'object') return ''
+  var p = input.file_path
+  return typeof p === 'string' && isDownloadableFile(p) ? p : ''
+}
+
+// Ask the PC bridge to stream the file; the WebView's download listener saves it
+// to the phone's Downloads folder (works even on Android, in the installed app).
+function triggerDownload(path) {
+  var url = api('/api/file?path=' + encodeURIComponent(path))
+  var a = document.createElement('a')
+  a.href = url
+  a.setAttribute('download', basename(path))
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  setTimeout(function () { document.body.removeChild(a) }, 0)
+}
+
 function renderMessages() {
   var box = $('messages')
   var nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80
@@ -141,6 +175,17 @@ function renderMessages() {
       if (m.result) {
         var r = el('tool-result' + (m.result.isError ? ' err' : ''), m.result.text || '')
         t.appendChild(r)
+      }
+      // A created file (Write/Edit/…) that finished without error is downloadable.
+      var fp = m.result && !m.result.isError ? writtenPath(m.name, m.input) : ''
+      if (fp) {
+        var dl = document.createElement('button')
+        dl.className = 'tool-dl'
+        dl.textContent = '⬇️ Baixar ' + basename(fp)
+        dl.addEventListener('click', function (path) {
+          return function () { triggerDownload(path) }
+        }(fp))
+        t.appendChild(dl)
       }
       box.appendChild(t)
     }

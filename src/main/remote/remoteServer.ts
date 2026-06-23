@@ -5,6 +5,7 @@ import { networkInterfaces } from 'node:os'
 import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
+import { isDownloadableFile } from '../../shared/ipc'
 import type {
   ChatEvent,
   ImageAttachment,
@@ -222,6 +223,7 @@ export class RemoteServer {
       if (path === '/api/history') return this.serveHistory(url, res)
       if (path === '/api/events') return this.serveEvents(req, res)
       if (path === '/api/send' && req.method === 'POST') return this.serveSend(req, res)
+      if (path === '/api/file') return this.serveFile(url, res)
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'rota desconhecida' }))
       return
@@ -274,6 +276,53 @@ export class RemoteServer {
       res.writeHead(404)
       res.end('not found')
     }
+  }
+
+  /**
+   * Stream a file the agent created so a phone can download it. Only paths that
+   * actually appear as a written file in the current conversation snapshot are
+   * allowed — this is the path‑traversal guard (no arbitrary disk reads).
+   */
+  private async serveFile(url: URL, res: ServerResponse): Promise<void> {
+    const requested = url.searchParams.get('path') ?? ''
+    if (!requested || !this.downloadablePaths().has(normalize(requested))) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('arquivo não disponível para download')
+      return
+    }
+    try {
+      const s = await stat(requested)
+      if (!s.isFile()) throw new Error('not a file')
+      const name = requested.split(/[\\/]+/).pop() || 'arquivo'
+      res.writeHead(200, {
+        'Content-Type': MIME[extname(requested).toLowerCase()] ?? 'application/octet-stream',
+        'Content-Length': String(s.size),
+        'Content-Disposition': `attachment; filename="${name.replace(/"/g, '')}"`
+      })
+      createReadStream(requested).pipe(res)
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('arquivo não encontrado')
+    }
+  }
+
+  /**
+   * Allowlist of downloadable deliverables in the current snapshot: only files
+   * the agent *created* via `Write` whose extension is a deliverable type (APK,
+   * zip, PDF, image…). Source/config edits are never downloadable.
+   */
+  private downloadablePaths(): Set<string> {
+    const out = new Set<string>()
+    for (const conv of this.state.conversations) {
+      for (const m of conv.messages as Array<Record<string, unknown>>) {
+        if (m && m.kind === 'tool-use' && String(m.name) === 'Write') {
+          const input = (m.input ?? {}) as Record<string, unknown>
+          const p = input.file_path
+          if (typeof p === 'string' && p && isDownloadableFile(p)) out.add(normalize(p))
+        }
+      }
+    }
+    return out
   }
 
   private serveState(res: ServerResponse): void {

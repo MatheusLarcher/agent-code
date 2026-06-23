@@ -30,6 +30,32 @@ export interface ImageAttachment {
   data: string
 }
 
+/**
+ * Extensions treated as "deliverables" — finished artifacts a user would ask to
+ * be created and then download (an APK, a zip, a PDF, an image…). Deliberately
+ * excludes source/code/config/text the agent edits while working, so the chat's
+ * "⬇️ Baixar" affordance only shows on real outputs, not on every file touched.
+ */
+export const DOWNLOADABLE_EXTS: ReadonlySet<string> = new Set([
+  // archives
+  'zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'rar', '7z',
+  // app packages / installers / binaries
+  'apk', 'aab', 'ipa', 'exe', 'msi', 'dmg', 'pkg', 'deb', 'rpm', 'appimage', 'iso', 'jar', 'bin',
+  // documents / spreadsheets / slides
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'rtf', 'epub', 'csv',
+  // media
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'mp4', 'mov', 'webm', 'avi', 'mkv',
+  'mp3', 'wav', 'ogg', 'flac',
+  // fonts
+  'ttf', 'otf', 'woff', 'woff2'
+])
+
+/** True when `path` ends in a deliverable extension (see DOWNLOADABLE_EXTS). */
+export function isDownloadableFile(path: string): boolean {
+  const m = /\.([a-z0-9]+)$/i.exec(path)
+  return m ? DOWNLOADABLE_EXTS.has(m[1].toLowerCase()) : false
+}
+
 /** Agent asks the user to approve a tool call. */
 export interface PermissionRequest {
   id: string
@@ -223,6 +249,8 @@ export const Channels = {
   pickFile: 'app:pick-file',
   /** Open a project folder in VS Code (via the `code` CLI, falling back to the vscode:// URL). */
   openInEditor: 'app:open-in-editor',
+  /** Save a copy of an agent-created file to the Downloads folder and reveal it. */
+  fileDownload: 'app:file-download',
   browserLaunch: 'browser:launch',
   browserNavigate: 'browser:navigate',
   browserBack: 'browser:back',

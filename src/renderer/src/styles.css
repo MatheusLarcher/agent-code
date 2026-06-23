@@ -931,12 +931,31 @@ body {
 .diff-del {
   color: var(--err);
 }
+.tool-download {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+  background: rgba(217, 119, 87, 0.16);
+  color: var(--accent);
+  border: 1px solid rgba(217, 119, 87, 0.32);
+}
+.tool-download:hover {
+  background: rgba(217, 119, 87, 0.28);
+}
 .tool-badge {
   margin-left: auto;
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 20px;
   white-space: nowrap;
+}
+/* When a download chip is present it takes the auto spacer; the badge sits next to it. */
+.tool-download ~ .tool-badge {
+  margin-left: 8px;
 }
 .tool-badge.run {
   background: rgba(217, 119, 87, 0.18);

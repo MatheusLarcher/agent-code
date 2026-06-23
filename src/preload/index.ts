@@ -36,6 +36,8 @@ const api: AgentCodeApi = {
   pickFile: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickFile),
   openInEditor: (dir: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(Channels.openInEditor, dir),
+  downloadFile: (path: string): Promise<{ ok: boolean; message: string; saved?: string }> =>
+    ipcRenderer.invoke(Channels.fileDownload, path),
 
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>

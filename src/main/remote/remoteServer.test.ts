@@ -1,5 +1,8 @@
 import { describe, it, expect, afterAll, beforeAll } from 'vitest'
 import { get, request, type IncomingMessage } from 'node:http'
+import { writeFileSync, mkdtempSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { RemoteServer } from './remoteServer'
 import type { RemoteConversation } from '../../shared/ipc'
 
@@ -15,11 +18,20 @@ const server = new RemoteServer({
 
 let base = ''
 let token = ''
+let filePath = ''
 
 beforeAll(async () => {
   const info = await server.start()
   token = info.token
   base = `http://127.0.0.1:${info.port}`
+  // A real file "written" by the agent (referenced via a Write tool-use) so the
+  // /api/file download allowlist accepts it.
+  const dir = mkdtempSync(join(tmpdir(), 'agent-remote-'))
+  filePath = join(dir, 'relatorio.pdf')
+  writeFileSync(filePath, 'conteúdo do arquivo gerado')
+  // A source file written during work must NOT be downloadable.
+  const srcPath = join(dir, 'codigo.ts')
+  writeFileSync(srcPath, 'export const x = 1')
   const conv: RemoteConversation = {
     id: 'c1',
     title: 'Conversa',
@@ -27,7 +39,23 @@ beforeAll(async () => {
     busy: false,
     connected: true,
     updatedAt: 2,
-    messages: [{ kind: 'user', id: 'u1', text: 'oi' }]
+    messages: [
+      { kind: 'user', id: 'u1', text: 'oi' },
+      {
+        kind: 'tool-use',
+        id: 't1',
+        name: 'Write',
+        input: { file_path: filePath, content: 'x' },
+        parentToolUseId: null
+      },
+      {
+        kind: 'tool-use',
+        id: 't2',
+        name: 'Write',
+        input: { file_path: srcPath, content: 'export const x = 1' },
+        parentToolUseId: null
+      }
+    ]
   }
   server.setState({ conversations: [conv] })
 })
@@ -84,7 +112,7 @@ describe('RemoteServer — ponte LAN', () => {
     const convs = (r.json as { conversations: Array<{ id: string; messageCount: number; messages?: unknown }> }).conversations
     expect(convs).toHaveLength(1)
     expect(convs[0].id).toBe('c1')
-    expect(convs[0].messageCount).toBe(1)
+    expect(convs[0].messageCount).toBe(3)
     expect(convs[0].messages).toBeUndefined()
   })
 
@@ -92,7 +120,7 @@ describe('RemoteServer — ponte LAN', () => {
     const r = await getJson(`/api/history?token=${token}&conv=c1`)
     expect(r.status).toBe(200)
     const msgs = (r.json as { messages: Array<{ text: string }> }).messages
-    expect(msgs).toHaveLength(1)
+    expect(msgs).toHaveLength(3)
     expect(msgs[0].text).toBe('oi')
   })
 
@@ -110,6 +138,46 @@ describe('RemoteServer — ponte LAN', () => {
   it('POST /api/send valida campos obrigatórios', async () => {
     const r = await postJson(`/api/send?token=${token}`, { convId: 'c1' })
     expect(r.status).toBe(400)
+  })
+
+  it('/api/file baixa um arquivo criado pelo agente', async () => {
+    const r = await new Promise<{ status: number; body: string; disp: string }>((resolve, reject) => {
+      get(`${base}/api/file?token=${token}&path=${encodeURIComponent(filePath)}`, (res) => {
+        let body = ''
+        res.on('data', (d) => (body += d))
+        res.on('end', () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            body,
+            disp: String(res.headers['content-disposition'] ?? '')
+          })
+        )
+      }).on('error', reject)
+    })
+    expect(r.status).toBe(200)
+    expect(r.body).toBe('conteúdo do arquivo gerado')
+    expect(r.disp).toContain('relatorio.pdf')
+  })
+
+  it('/api/file recusa um arquivo de código (não é entregável)', async () => {
+    const srcPath = join(filePath, '..', 'codigo.ts')
+    const status = await new Promise<number>((resolve, reject) => {
+      get(`${base}/api/file?token=${token}&path=${encodeURIComponent(srcPath)}`, (res) => {
+        res.resume()
+        resolve(res.statusCode ?? 0)
+      }).on('error', reject)
+    })
+    expect(status).toBe(403)
+  })
+
+  it('/api/file recusa caminho fora da allowlist (403)', async () => {
+    const status = await new Promise<number>((resolve, reject) => {
+      get(`${base}/api/file?token=${token}&path=${encodeURIComponent('C:/Windows/system32/secret.txt')}`, (res) => {
+        res.resume() // drain so the socket closes
+        resolve(res.statusCode ?? 0)
+      }).on('error', reject)
+    })
+    expect(status).toBe(403)
   })
 
   it('broadcast chega ao cliente SSE conectado', async () => {
