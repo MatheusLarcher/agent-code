@@ -27,7 +27,8 @@ var state = {
   reconnect: null,   // pending SSE reconnect timer
   retry: 0,          // backoff step
   wakeLock: null,    // screen wake lock (keeps the app awake/connected)
-  online: false
+  online: false,
+  openTools: {}      // tool-use ids the user expanded (persist across re-renders)
 }
 
 var $ = function (id) { return document.getElementById(id) }
@@ -127,6 +128,37 @@ function writtenPath(name, input) {
   return typeof p === 'string' && isDownloadableFile(p) ? p : ''
 }
 
+function lineCount(s) {
+  return typeof s === 'string' && s.length ? s.split('\n').length : 0
+}
+
+// Compact, Claude-Code-style label for a tool call (mirrors the PC describeTool):
+// a verb, a detail (file/skill), and +/- line stats for file edits.
+function describeTool(name, input) {
+  var inp = (input && typeof input === 'object') ? input : {}
+  switch (name) {
+    case 'Skill':
+      return { verb: 'Skill', detail: String(inp.skill || 'skill'), isSkill: true, stats: null }
+    case 'Write':
+      return { verb: 'Write', detail: basename(inp.file_path), isSkill: false, stats: { added: lineCount(inp.content), removed: 0 } }
+    case 'Edit':
+      return { verb: 'Edit', detail: basename(inp.file_path), isSkill: false, stats: { added: lineCount(inp.new_string), removed: lineCount(inp.old_string) } }
+    case 'MultiEdit': {
+      var added = 0, removed = 0
+      if (Array.isArray(inp.edits)) {
+        inp.edits.forEach(function (e) { added += lineCount(e && e.new_string); removed += lineCount(e && e.old_string) })
+      }
+      return { verb: 'Edit', detail: basename(inp.file_path), isSkill: false, stats: { added: added, removed: removed } }
+    }
+    case 'NotebookEdit':
+      return { verb: 'Edit', detail: basename(inp.notebook_path), isSkill: false, stats: { added: lineCount(inp.new_source), removed: 0 } }
+    case 'Read':
+      return { verb: 'Read', detail: basename(inp.file_path), isSkill: false, stats: null }
+    default:
+      return { verb: String(name || 'tool').replace(/^mcp__browser__/, '🌐 ').replace(/^mcp__[^_]+__/, ''), detail: '', isSkill: false, stats: null }
+  }
+}
+
 // Ask the PC bridge to stream the file; the WebView's download listener saves it
 // to the phone's Downloads folder (works even on Android, in the installed app).
 function triggerDownload(path) {
@@ -138,6 +170,68 @@ function triggerDownload(path) {
   document.body.appendChild(a)
   a.click()
   setTimeout(function () { document.body.removeChild(a) }, 0)
+}
+
+// A collapsed, expandable tool card (mirrors the PC ToolCard): compact header
+// with verb/file/±stats/badge; tap to reveal input + result. Expanded state is
+// kept in state.openTools so it survives the frequent full re-renders.
+function renderTool(m) {
+  var info = describeTool(m.name, m.input)
+  var hasDiff = info.stats && (info.stats.added > 0 || info.stats.removed > 0)
+  var open = !!state.openTools[m.id]
+
+  var card = el('tool-card' + (info.isSkill ? ' tool-skill' : '') + (m.result && m.result.isError ? ' tool-error' : ''))
+
+  var head = el('tool-head')
+  head.appendChild(el('tool-caret', open ? '▾' : '▸'))
+  head.appendChild(el('tool-verb', info.verb))
+  if (info.detail) head.appendChild(el('tool-detail', info.detail))
+  if (hasDiff) {
+    var diff = el('tool-diff')
+    if (info.stats.added > 0) diff.appendChild(el('diff-add', '+' + info.stats.added))
+    if (info.stats.removed > 0) diff.appendChild(el('diff-del', '−' + info.stats.removed))
+    head.appendChild(diff)
+  }
+  // A created deliverable (Write) that finished OK is downloadable.
+  var fp = m.result && !m.result.isError ? writtenPath(m.name, m.input) : ''
+  if (fp) {
+    var dl = document.createElement('button')
+    dl.className = 'tool-dl'
+    dl.textContent = '⬇️ Baixar'
+    dl.addEventListener('click', function (e) { e.stopPropagation(); triggerDownload(fp) })
+    head.appendChild(dl)
+  }
+  var badge = m.result
+    ? el('tool-badge ' + (m.result.isError ? 'err' : 'ok'), m.result.isError ? 'error' : 'done')
+    : el('tool-badge run', 'running…')
+  head.appendChild(badge)
+
+  var body = el('tool-body')
+  body.hidden = !open
+  body.appendChild(el('tool-section-label', 'input'))
+  var pre = el('tool-pre')
+  pre.textContent = (function () {
+    try { return JSON.stringify(m.input, null, 2).slice(0, 1500) } catch (e) { return summarizeInput(m.input) }
+  })()
+  body.appendChild(pre)
+  if (m.result) {
+    body.appendChild(el('tool-section-label', 'result'))
+    var rpre = el('tool-pre' + (m.result.isError ? ' err' : ''))
+    rpre.textContent = (m.result.text || '').slice(0, 2500)
+    body.appendChild(rpre)
+  }
+
+  head.addEventListener('click', function () {
+    var nowOpen = !state.openTools[m.id]
+    if (nowOpen) state.openTools[m.id] = true
+    else delete state.openTools[m.id]
+    body.hidden = !nowOpen
+    head.firstChild.textContent = nowOpen ? '▾' : '▸'
+  })
+
+  card.appendChild(head)
+  card.appendChild(body)
+  return card
 }
 
 function renderMessages() {
@@ -169,25 +263,7 @@ function renderMessages() {
     } else if (m.kind === 'status') {
       box.appendChild(el('msg system', m.text))
     } else if (m.kind === 'tool-use') {
-      var t = el('tool')
-      t.appendChild(el('tool-name', m.name || 'tool'))
-      t.appendChild(el('tool-input', summarizeInput(m.input)))
-      if (m.result) {
-        var r = el('tool-result' + (m.result.isError ? ' err' : ''), m.result.text || '')
-        t.appendChild(r)
-      }
-      // A created file (Write/Edit/…) that finished without error is downloadable.
-      var fp = m.result && !m.result.isError ? writtenPath(m.name, m.input) : ''
-      if (fp) {
-        var dl = document.createElement('button')
-        dl.className = 'tool-dl'
-        dl.textContent = '⬇️ Baixar ' + basename(fp)
-        dl.addEventListener('click', function (path) {
-          return function () { triggerDownload(path) }
-        }(fp))
-        t.appendChild(dl)
-      }
-      box.appendChild(t)
+      box.appendChild(renderTool(m))
     }
   })
   if (nearBottom) box.scrollTop = box.scrollHeight

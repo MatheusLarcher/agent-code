@@ -300,33 +300,65 @@ html, body {
 }
 .msg.system, .msg.error { align-self: center; font-size: 12px; color: var(--faint); text-align: center; }
 .msg.error { color: var(--err); }
-.tool {
+/* collapsed, expandable tool card (mirrors the PC chat) */
+.tool-card {
   align-self: flex-start;
   width: 92%;
   background: var(--bg);
   border: 1px solid var(--line-soft);
   border-radius: 13px;
+  overflow: hidden;
+}
+.tool-card.tool-skill { border-color: rgba(224, 132, 88, 0.4); }
+.tool-card.tool-error { border-color: rgba(229, 115, 115, 0.5); }
+.tool-head {
+  display: flex; align-items: center; gap: 7px;
   padding: 10px 12px;
+  cursor: pointer;
   font-size: 12.5px;
 }
-.tool .tool-name { color: var(--accent); font-weight: 700; font-family: ui-monospace, monospace; }
-.tool .tool-input { color: var(--muted); margin-top: 4px; font-family: ui-monospace, monospace; word-break: break-word; }
-.tool .tool-result {
-  margin-top: 7px; color: var(--muted);
-  max-height: 130px; overflow: auto;
-  white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 11.5px;
-  border-top: 1px solid var(--line-soft); padding-top: 6px;
+.tool-head:active { background: rgba(255, 255, 255, 0.03); }
+.tool-caret { color: var(--faint); font-size: 10px; flex: 0 0 auto; width: 10px; }
+.tool-verb { color: var(--accent); font-weight: 700; font-family: ui-monospace, monospace; flex: 0 0 auto; }
+.tool-skill .tool-verb { background: var(--accent-soft); padding: 1px 7px; border-radius: 6px; }
+.tool-detail {
+  color: var(--muted); font-family: ui-monospace, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
-.tool .tool-result.err { color: var(--err); }
+.tool-diff { display: inline-flex; gap: 6px; font-family: ui-monospace, monospace; font-weight: 600; flex: 0 0 auto; }
+.diff-add { color: var(--ok); }
+.diff-del { color: var(--err); }
+.tool-badge {
+  margin-left: auto; flex: 0 0 auto;
+  font-size: 10.5px; padding: 2px 8px; border-radius: 20px; white-space: nowrap;
+}
+.tool-badge.run { background: var(--accent-soft); color: var(--accent); }
+.tool-badge.ok { background: rgba(111, 193, 138, 0.16); color: var(--ok); }
+.tool-badge.err { background: rgba(229, 115, 115, 0.16); color: var(--err); }
+.tool-body { border-top: 1px solid var(--line-soft); padding: 8px 12px 10px; }
+.tool-section-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--faint); font-weight: 700; margin: 6px 0 3px;
+}
+.tool-section-label:first-child { margin-top: 0; }
+.tool-pre {
+  margin: 0; color: var(--muted);
+  max-height: 220px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, monospace; font-size: 11.5px; line-height: 1.45;
+}
+.tool-pre.err { color: var(--err); }
 .tool-dl {
-  margin-top: 9px;
+  margin-left: auto; flex: 0 0 auto;
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid rgba(224, 132, 88, 0.36);
-  border-radius: 20px; padding: 7px 14px;
-  font-size: 13px; font-weight: 600; cursor: pointer;
+  border-radius: 20px; padding: 4px 11px;
+  font-size: 11.5px; font-weight: 600; cursor: pointer;
   font-family: inherit;
 }
+/* When the download chip is present it takes the spacer; badge sits next to it. */
+.tool-dl ~ .tool-badge { margin-left: 8px; }
 .tool-dl:active { background: rgba(224, 132, 88, 0.28); transform: scale(0.97); }
 
 .reconnect-bar, .busy-bar {
