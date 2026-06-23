@@ -104,7 +104,7 @@ async function flushConnect(): Promise<void> {
   })
 }
 async function send(text: string): Promise<HTMLElement> {
-  const ta = await screen.findByPlaceholderText(/Message Claude/i)
+  const ta = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
   fireEvent.change(ta, { target: { value: text } })
   fireEvent.keyDown(ta, { key: 'Enter' })
   return ta

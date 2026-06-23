@@ -8,6 +8,7 @@ import type {
   BrowserFrame,
   BrowserInput,
   BrowserState,
+  FileAttachment,
   ImageAttachment,
   PermissionRequestMsg,
   PermissionResponse,
@@ -42,8 +43,12 @@ const api: AgentCodeApi = {
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(Channels.agentStart, opts),
-  sendMessage: (convId: string, text: string, images?: ImageAttachment[]): Promise<void> =>
-    ipcRenderer.invoke(Channels.agentSend, convId, text, images),
+  sendMessage: (
+    convId: string,
+    text: string,
+    images?: ImageAttachment[],
+    files?: FileAttachment[]
+  ): Promise<void> => ipcRenderer.invoke(Channels.agentSend, convId, text, images, files),
   interrupt: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentInterrupt, convId),
   setBypass: (convId: string, on: boolean): Promise<void> =>
     ipcRenderer.invoke(Channels.agentSetBypass, convId, on),

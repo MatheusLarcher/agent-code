@@ -7,6 +7,8 @@ export type UserMessage = {
   text: string
   /** Data-URL thumbnails of any attached images (for display only). */
   images?: string[]
+  /** Non-image file attachments shown as cards in the bubble (display only). */
+  files?: { name: string; size: number }[]
 }
 
 /** Anything the message list can render (agent events + user messages). */

@@ -11,6 +11,7 @@ import remarkGfm from 'remark-gfm'
 import type { UIMessage } from '../types'
 import { isDownloadableFile, parseDownloads } from '@shared/ipc'
 import { useUI } from '../ui/UiProvider'
+import { fileMeta, fmtSize } from '../files'
 
 /** Last path segment, for the chip label. */
 function fileLabel(p: string): string {
@@ -246,6 +247,22 @@ export function MessageList({ messages, busy }: { messages: UIMessage[]; busy: b
                       {m.images.map((src, k) => (
                         <img key={k} className="msg-image" src={src} alt="anexo" />
                       ))}
+                    </div>
+                  )}
+                  {m.files && m.files.length > 0 && (
+                    <div className="msg-files">
+                      {m.files.map((f, k) => {
+                        const meta = fileMeta(f.name)
+                        return (
+                          <span className="file-card" key={k} title={f.name}>
+                            <span className={`file-badge kind-${meta.kind}`}>{meta.ext}</span>
+                            <span className="file-card-info">
+                              <span className="file-card-name">{f.name}</span>
+                              {f.size > 0 && <span className="file-card-size">{fmtSize(f.size)}</span>}
+                            </span>
+                          </span>
+                        )
+                      })}
                     </div>
                   )}
                   {m.text}

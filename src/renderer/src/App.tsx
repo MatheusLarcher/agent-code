@@ -3,6 +3,7 @@ import type {
   AgentEventMsg,
   BrowserState,
   ChatEvent,
+  FileAttachment,
   ImageAttachment,
   PermissionRequest,
   PickedElement,
@@ -14,6 +15,7 @@ import { loadConversations, loadUi, saveConversations, saveUi } from './storage'
 import { ChatPanel } from './components/ChatPanel'
 import { BrowserPanel } from './components/BrowserPanel'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
+import { IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
 import { NewTabModal } from './ui/NewTabModal'
@@ -41,6 +43,8 @@ interface QueuedMessage {
   images: ImageAttachment[]
   /** Data-URL thumbnails for display. */
   thumbs: string[]
+  /** Non-image file attachments (saved to disk by main on send). */
+  files: FileAttachment[]
 }
 
 function basename(p: string): string {
@@ -239,11 +243,17 @@ export function App(): JSX.Element {
             title: c.title === DEFAULT_TITLE && next.text.trim() ? deriveTitle(next.text) : c.title,
             messages: [
               ...c.messages,
-              { kind: 'user', id: uid('u'), text: next.text, images: next.thumbs.length ? next.thumbs : undefined }
+              {
+                kind: 'user',
+                id: uid('u'),
+                text: next.text,
+                images: next.thumbs.length ? next.thumbs : undefined,
+                files: next.files.length ? next.files.map((f) => ({ name: f.name, size: f.size })) : undefined
+              }
             ],
             updatedAt: Date.now()
           }))
-          void window.api.sendMessage(cid, next.full, next.images)
+          void window.api.sendMessage(cid, next.full, next.images, next.files)
           setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
         } else {
           setBusy(cid, false)
@@ -486,12 +496,13 @@ export function App(): JSX.Element {
       full: string,
       text: string,
       images: ImageAttachment[],
-      thumbs: string[]
+      thumbs: string[],
+      files: FileAttachment[]
     ): Promise<void> => {
       // Agent already busy on THIS conversation → queue instead of sending, so
       // the running task isn't cancelled. It'll be dispatched when the turn ends.
       if (busyRef.current.has(conv.id)) {
-        setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs }])
+        setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs, files }])
         return
       }
 
@@ -506,7 +517,13 @@ export function App(): JSX.Element {
         title: c.title === DEFAULT_TITLE && text.trim() ? deriveTitle(text) : c.title,
         messages: [
           ...c.messages,
-          { kind: 'user', id: uid('u'), text, images: thumbs.length ? thumbs : undefined }
+          {
+            kind: 'user',
+            id: uid('u'),
+            text,
+            images: thumbs.length ? thumbs : undefined,
+            files: files.length ? files.map((f) => ({ name: f.name, size: f.size })) : undefined
+          }
         ],
         updatedAt: Date.now()
       }))
@@ -514,7 +531,7 @@ export function App(): JSX.Element {
       try {
         // Lazily (re)start the agent for this conversation, resuming if possible.
         if (!connectedRef.current.has(conv.id)) await connect(conv)
-        await window.api.sendMessage(conv.id, full, images)
+        await window.api.sendMessage(conv.id, full, images, files)
       } catch (err) {
         setBusy(conv.id, false)
         setBusySince((m) => withoutKey(m, conv.id))
@@ -525,7 +542,7 @@ export function App(): JSX.Element {
   )
 
   const sendMessage = useCallback(
-    async (text: string, images: ImageAttachment[] = []): Promise<void> => {
+    async (text: string, images: ImageAttachment[] = [], files: FileAttachment[] = []): Promise<void> => {
       const conv = getActive()
       if (!conv) return
       let full = text.trim()
@@ -539,11 +556,11 @@ export function App(): JSX.Element {
           .join('\n\n')
         full = `${full}\n\n--- Selected page elements ---\n${refs}`
       }
-      if (!full && images.length === 0) return
+      if (!full && images.length === 0 && files.length === 0) return
 
       const thumbs = images.map((img) => `data:${img.mediaType};base64,${img.data}`)
       setChips([]) // chips were consumed into `full`
-      await dispatch(conv, full, text, images, thumbs)
+      await dispatch(conv, full, text, images, thumbs, files)
     },
     [dispatch]
   )
@@ -559,7 +576,7 @@ export function App(): JSX.Element {
       }
       const imgs = images ?? []
       const thumbs = imgs.map((img) => `data:${img.mediaType};base64,${img.data}`)
-      void dispatch(conv, text, text, imgs, thumbs)
+      void dispatch(conv, text, text, imgs, thumbs, [])
     })
     return off
   }, [dispatch, notify])
@@ -636,6 +653,7 @@ export function App(): JSX.Element {
             'preview — abra ou atualize a tela do projeto com a nova aparência para o usuário ver rodando.',
           '✅ Aprovei o design — aplique no projeto conforme o que pedi.',
           [],
+          [],
           []
         )
         notify('sucesso', 'Design aprovado — adaptando ao projeto e mostrando o resultado no preview.')
@@ -644,6 +662,7 @@ export function App(): JSX.Element {
           conv,
           'O usuário descartou o design exibido no preview do Stitch. Não implemente nada; se ele pedir, ajuste o design depois.',
           '🗑️ Descartei o design do Stitch.',
+          [],
           [],
           []
         )
@@ -770,18 +789,19 @@ export function App(): JSX.Element {
             onClick={() => setRemoteOpen(true)}
             title="Controle remoto pelo celular (Android)"
           >
-            📱{remoteRunning && <span className="remote-dot" />}
+            <IconSmartphone />
+            {remoteRunning && <span className="remote-dot" />}
           </button>
           <button
             className="btn ghost settings-btn"
             onClick={() => setSettingsOpen(true)}
             title="Configurações (Google Stitch, etc.)"
           >
-            ⚙️
+            <IconSettings />
           </button>
           {!active ? null : activeConnected ? (
             <span className={`session-pill ${skipPerms ? 'danger' : ''}`}>
-              ● {skipPerms ? 'allow-all' : 'conectado'}
+              ● {skipPerms ? 'tudo liberado' : 'conectado'}
             </span>
           ) : (
             <button

@@ -3,6 +3,7 @@ import type { ImageAttachment, PickedElement } from '@shared/ipc'
 import type { UIMessage } from '../types'
 import { MessageList } from './MessageList'
 import { Composer, type RefProject } from './Composer'
+import { IconClock, IconClose } from './Icons'
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -112,7 +113,7 @@ export function ChatPanel(props: Props): JSX.Element {
           <h2>Claude Code</h2>
           <p>
             {hasActive
-              ? 'Ask Claude to build, edit, or research. It can open the embedded browser on the right when needed.'
+              ? 'Peça ao Claude para construir, editar ou pesquisar. Ele abre o navegador embutido à direita quando precisar.'
               : 'Crie uma conversa na barra à esquerda para começar.'}
           </p>
         </div>
@@ -122,7 +123,7 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {props.queued.length > 0 && (
         <div className="queue">
-          <div className="queue-label">⏳ Na fila ({props.queued.length}) — enviadas quando a tarefa atual terminar</div>
+          <div className="queue-label"><IconClock size={13} /> Na fila ({props.queued.length}) — enviadas quando a tarefa atual terminar</div>
           {props.queued.map((q) => (
             <div className="queue-item" key={q.id}>
               {q.thumbs.length > 0 && (
@@ -134,7 +135,7 @@ export function ChatPanel(props: Props): JSX.Element {
               )}
               <span className="queue-text">{q.text.trim() || '(imagem)'}</span>
               <button className="queue-x" onClick={() => props.onDeleteQueued(q.id)} title="Remover da fila">
-                ×
+                <IconClose size={13} />
               </button>
             </div>
           ))}

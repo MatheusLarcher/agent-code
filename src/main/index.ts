@@ -8,9 +8,11 @@ import { RemoteServer } from './remote/remoteServer'
 import { buildRemoteApk } from './remote/buildApk'
 import { Channels } from '../shared/ipc'
 import { loadConfig, updateConfig } from './config'
+import { saveAttachments } from './attachments'
 import type {
   AppConfig,
   BrowserInput,
+  FileAttachment,
   ImageAttachment,
   PermissionResponse,
   RemoteStatePayload,
@@ -220,9 +222,23 @@ function registerIpc(): void {
     return { ok: true }
   })
 
-  ipcMain.handle(Channels.agentSend, (_e, convId: string, text: string, images?: ImageAttachment[]) => {
-    sessions.get(convId)?.send(text, images)
-  })
+  ipcMain.handle(
+    Channels.agentSend,
+    async (_e, convId: string, text: string, images?: ImageAttachment[], files?: FileAttachment[]) => {
+      let finalText = text
+      // Non-image files are saved to disk and referenced by path so the agent can
+      // open them with its own tools (Read, scripts, etc.).
+      if (files && files.length > 0) {
+        const saved = await saveAttachments(convId, files)
+        if (saved.length > 0) {
+          const refs = saved.map((s) => `- ${s.name}: ${s.path}`).join('\n')
+          const note = `Arquivos anexados pelo usuário (abra-os com suas ferramentas, ex.: Read, se forem relevantes):\n${refs}`
+          finalText = finalText ? `${finalText}\n\n${note}` : note
+        }
+      }
+      sessions.get(convId)?.send(finalText, images)
+    }
+  )
 
   ipcMain.handle(Channels.agentInterrupt, async (_e, convId: string) => {
     await sessions.get(convId)?.interrupt()

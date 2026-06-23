@@ -31,6 +31,22 @@ export interface ImageAttachment {
 }
 
 /**
+ * A non-image file attached to a user message (Excel, Word, PDF, text, etc.).
+ * Main saves it to disk and references it by path so the agent can open it with
+ * its own tools — the model doesn't receive the bytes inline.
+ */
+export interface FileAttachment {
+  /** Original file name, e.g. "relatorio.xlsx". */
+  name: string
+  /** MIME type (best-effort; "application/octet-stream" when unknown). */
+  mediaType: string
+  /** Base64 payload, without the `data:...;base64,` prefix. */
+  data: string
+  /** Size in bytes (for the chip label). */
+  size: number
+}
+
+/**
  * Extensions treated as "deliverables" — finished artifacts a user would ask to
  * be created and then download (an APK, a zip, a PDF, an image…). Deliberately
  * excludes source/code/config/text the agent edits while working, so the chat's

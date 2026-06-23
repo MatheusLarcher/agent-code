@@ -10,6 +10,15 @@ import {
 import type { BrowserState } from '@shared/ipc'
 import { DEVICE_OPTIONS, DEFAULT_DEVICE_ID, deviceForResolution, findDevice, type DeviceType } from '@shared/devices'
 import { BrowserTabs } from './BrowserTabs'
+import {
+  IconArrowRight,
+  IconChevronLeft,
+  IconChevronRight,
+  IconCollapseRight,
+  IconHome,
+  IconPointer,
+  IconRefresh
+} from './Icons'
 
 interface Props {
   state: BrowserState
@@ -198,7 +207,7 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
     return (
       <section className="browser-panel minimized">
         <button className="browser-restore" onClick={onToggleMinimize} title="Mostrar navegador">
-          🌐 Navegador ‹
+          ‹ Navegador
         </button>
       </section>
     )
@@ -209,26 +218,26 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
       <BrowserTabs tabs={state.tabs} onRequestNewTab={onRequestNewTab} />
       <div className="browser-toolbar">
         <button className="nav-btn" onClick={onToggleMinimize} title="Minimizar navegador">
-          –
+          <IconCollapseRight />
         </button>
         <button
           className="nav-btn"
           onClick={() => window.api.browserBack()}
-          title={isAndroid ? 'Voltar (Android)' : 'Back'}
+          title={isAndroid ? 'Voltar (Android)' : 'Voltar'}
         >
-          ‹
+          <IconChevronLeft />
         </button>
         {!isAndroid && (
-          <button className="nav-btn" onClick={() => window.api.browserForward()} title="Forward">
-            ›
+          <button className="nav-btn" onClick={() => window.api.browserForward()} title="Avançar">
+            <IconChevronRight />
           </button>
         )}
         <button
           className="nav-btn"
           onClick={() => window.api.browserReload()}
-          title={isAndroid ? 'Tela inicial (Android)' : 'Reload'}
+          title={isAndroid ? 'Tela inicial (Android)' : 'Recarregar'}
         >
-          {isAndroid ? '⌂' : '⟳'}
+          {isAndroid ? <IconHome /> : <IconRefresh />}
         </button>
         {isAndroid ? (
           <div className="android-bar">
@@ -288,13 +297,13 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
               value={addr}
               onChange={(e) => setAddr(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && go()}
-              placeholder="Enter URL…"
+              placeholder="Digite a URL…"
             />
-            <button className="nav-btn" onClick={go} title="Go">
-              →
+            <button className="nav-btn" onClick={go} title="Ir">
+              <IconArrowRight />
             </button>
-            <button className={`select-toggle ${selectMode ? 'active' : ''}`} onClick={toggleSelect} title="Pick an element and send it to chat">
-              ⊹ Select
+            <button className={`select-toggle ${selectMode ? 'active' : ''}`} onClick={toggleSelect} title="Selecionar um elemento e enviá-lo ao chat">
+              <IconPointer size={14} /> Selecionar
             </button>
           </>
         )}
@@ -322,11 +331,7 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
       <div className={`browser-stage ${isAndroid ? 'android' : ''}`} ref={stageRef}>
         {!state.launched && (
           <div className="browser-placeholder">
-            <p>The browser opens automatically when the agent needs it,</p>
-            <p>or open it now:</p>
-            <button className="btn primary" onClick={() => window.api.launchBrowser()}>
-              Open browser
-            </button>
+            <p>O navegador abre automaticamente quando o agente precisar.</p>
           </div>
         )}
         {isAndroid ? (
@@ -341,13 +346,13 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
 
       <div className="browser-status">
         {selectMode ? (
-          <span className="picking-hint">Select mode — click any element to add it to your message</span>
+          <span className="picking-hint">Modo seleção — clique em qualquer elemento para adicioná-lo à sua mensagem</span>
         ) : isAndroid ? (
           <span className="title-text">
             📱 {matchId ? findDevice(matchId)!.name : 'Personalizado'} · {cur.w}×{cur.h}
           </span>
         ) : (
-          <span className="title-text">{state.title || 'No page loaded'}</span>
+          <span className="title-text">{state.title || 'Nenhuma página carregada'}</span>
         )}
       </div>
     </section>

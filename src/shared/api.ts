@@ -5,6 +5,7 @@ import type {
   BrowserFrame,
   BrowserInput,
   BrowserState,
+  FileAttachment,
   ImageAttachment,
   PermissionRequestMsg,
   PermissionResponse,
@@ -32,7 +33,12 @@ export interface AgentCodeApi {
   downloadFile(path: string): Promise<{ ok: boolean; message: string; saved?: string }>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
-  sendMessage(convId: string, text: string, images?: ImageAttachment[]): Promise<void>
+  sendMessage(
+    convId: string,
+    text: string,
+    images?: ImageAttachment[],
+    files?: FileAttachment[]
+  ): Promise<void>
   interrupt(convId: string): Promise<void>
   /** Toggle "allow all" on a conversation's running session. */
   setBypass(convId: string, on: boolean): Promise<void>

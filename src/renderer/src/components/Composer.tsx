@@ -7,7 +7,12 @@ import {
   type KeyboardEvent,
   type RefObject
 } from 'react'
-import type { ImageAttachment, PickedElement } from '@shared/ipc'
+import type { FileAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
+import { IconArrowUp, IconAt, IconBox, IconClose, IconFile, IconFolder, IconPaperclip, IconStop } from './Icons'
+import { fileMeta, fmtSize } from '../files'
+
+/** Max size for a single non-image attachment (keeps the IPC payload sane). */
+const MAX_FILE_BYTES = 25 * 1024 * 1024
 
 const MAX_LINES = 8
 
@@ -22,7 +27,7 @@ interface Props {
   busy: boolean
   chips: PickedElement[]
   onRemoveChip: (i: number) => void
-  onSend: (text: string, images: ImageAttachment[]) => void
+  onSend: (text: string, images: ImageAttachment[], files: FileAttachment[]) => void
   onInterrupt: () => void
   textareaRef: RefObject<HTMLTextAreaElement | null>
   /** Projects from history, offered in the @ reference menu. */
@@ -43,6 +48,24 @@ function fileToAttachment(file: File): Promise<ImageAttachment> {
   })
 }
 
+/** Read any file as a base64 FileAttachment (keeps name/type/size for the chip). */
+function fileToFileAttachment(file: File): Promise<FileAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const m = /^data:([^;]*);base64,(.*)$/.exec(String(reader.result))
+      resolve({
+        name: file.name || 'arquivo',
+        mediaType: m?.[1] || file.type || 'application/octet-stream',
+        data: m?.[2] || '',
+        size: file.size
+      })
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
 function baseName(p: string): string {
   const parts = p.split(/[\\/]+/).filter(Boolean)
   return parts[parts.length - 1] || p
@@ -52,6 +75,7 @@ export function Composer(props: Props): JSX.Element {
   const [value, setValue] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [images, setImages] = useState<ImageAttachment[]>([])
+  const [files, setFiles] = useState<FileAttachment[]>([])
   const refMenu = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -86,10 +110,11 @@ export function Composer(props: Props): JSX.Element {
 
   const submit = (): void => {
     if (props.disabled) return
-    if (!value.trim() && props.chips.length === 0 && images.length === 0) return
-    props.onSend(value, images)
+    if (!value.trim() && props.chips.length === 0 && images.length === 0 && files.length === 0) return
+    props.onSend(value, images, files)
     setValue('')
     setImages([])
+    setFiles([])
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -99,29 +124,38 @@ export function Composer(props: Props): JSX.Element {
     }
   }
 
-  // Collect image files (from the picker, paste, or drag-drop) into attachments.
-  const addImageFiles = async (files: FileList | File[]): Promise<void> => {
-    const imgs = [...files].filter((f) => f.type.startsWith('image/'))
-    if (!imgs.length) return
-    const attached = await Promise.all(imgs.map(fileToAttachment))
-    setImages((prev) => [...prev, ...attached])
+  // Collect attachments (from the picker, paste, or drag-drop). Images go to the
+  // native vision path (base64 image blocks); every other file type becomes a
+  // chip and is saved to disk by main so the agent can open it by path.
+  const addFiles = async (list: FileList | File[]): Promise<void> => {
+    const arr = [...list]
+    const imgs = arr.filter((f) => f.type.startsWith('image/'))
+    const others = arr.filter((f) => !f.type.startsWith('image/') && f.size <= MAX_FILE_BYTES)
+    if (imgs.length) {
+      const attached = await Promise.all(imgs.map(fileToAttachment))
+      setImages((prev) => [...prev, ...attached])
+    }
+    if (others.length) {
+      const attached = await Promise.all(others.map(fileToFileAttachment))
+      setFiles((prev) => [...prev, ...attached])
+    }
   }
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
-    const files = [...e.clipboardData.items]
-      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+    const pasted = [...e.clipboardData.items]
+      .filter((it) => it.kind === 'file')
       .map((it) => it.getAsFile())
       .filter((f): f is File => f !== null)
-    if (files.length) {
+    if (pasted.length) {
       e.preventDefault()
-      void addImageFiles(files)
+      void addFiles(pasted)
     }
   }
 
   const onDrop = (e: DragEvent<HTMLDivElement>): void => {
     if (e.dataTransfer.files.length) {
       e.preventDefault()
-      void addImageFiles(e.dataTransfer.files)
+      void addFiles(e.dataTransfer.files)
     }
   }
 
@@ -167,7 +201,7 @@ export function Composer(props: Props): JSX.Element {
               <span className="chip-tag">{c.tagName}</span>
               {c.id ? `#${c.id}` : c.text.slice(0, 24) || c.selector.slice(0, 24)}
               <button className="chip-x" onClick={() => props.onRemoveChip(i)}>
-                ×
+                <IconClose size={12} />
               </button>
             </span>
           ))}
@@ -183,20 +217,42 @@ export function Composer(props: Props): JSX.Element {
                 title="Remover"
                 onClick={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
               >
-                ×
+                <IconClose size={12} />
               </button>
             </span>
           ))}
         </div>
       )}
+      {files.length > 0 && (
+        <div className="file-chips">
+          {files.map((f, i) => {
+            const meta = fileMeta(f.name)
+            return (
+              <span className="file-chip" key={i} title={`${f.name} · ${fmtSize(f.size)}`}>
+                <span className={`file-badge kind-${meta.kind}`}>{meta.ext}</span>
+                <span className="file-chip-info">
+                  <span className="file-chip-name">{f.name}</span>
+                  {f.size > 0 && <span className="file-chip-size">{fmtSize(f.size)}</span>}
+                </span>
+                <button
+                  className="file-x"
+                  title="Remover"
+                  onClick={() => setFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                >
+                  <IconClose size={12} />
+                </button>
+              </span>
+            )
+          })}
+        </div>
+      )}
       <input
         ref={fileInput}
         type="file"
-        accept="image/*"
         multiple
         style={{ display: 'none' }}
         onChange={(e) => {
-          if (e.target.files) void addImageFiles(e.target.files)
+          if (e.target.files) void addFiles(e.target.files)
           e.target.value = ''
         }}
       />
@@ -208,15 +264,15 @@ export function Composer(props: Props): JSX.Element {
             disabled={props.disabled}
             title="Referenciar arquivo, pasta ou projeto"
           >
-            @
+            <IconAt />
           </button>
           {menuOpen && (
             <div className="ref-menu">
               <button className="ref-item" onClick={pickFile}>
-                📄 Arquivo…
+                <span className="ref-row"><IconFile size={15} /> Arquivo…</span>
               </button>
               <button className="ref-item" onClick={pickFolder}>
-                📁 Pasta…
+                <span className="ref-row"><IconFolder size={15} /> Pasta…</span>
               </button>
               {props.projects.length > 0 && (
                 <>
@@ -231,7 +287,7 @@ export function Composer(props: Props): JSX.Element {
                       }}
                       title={p.path}
                     >
-                      📦 {p.name}
+                      <span className="ref-row"><IconBox size={15} /> {p.name}</span>
                       <span className="ref-path">{p.path}</span>
                     </button>
                   ))}
@@ -244,14 +300,14 @@ export function Composer(props: Props): JSX.Element {
           className="ref-btn"
           onClick={() => fileInput.current?.click()}
           disabled={props.disabled}
-          title="Anexar imagem (ou cole/arraste no campo)"
+          title="Anexar arquivo ou imagem (ou cole/arraste no campo)"
         >
-          🖼
+          <IconPaperclip />
         </button>
         <textarea
           ref={props.textareaRef}
           className="composer-input"
-          placeholder={props.disabled ? 'Start a session first…' : 'Message Claude…  (Enter to send, Shift+Enter for newline)'}
+          placeholder={props.disabled ? 'Inicie uma sessão primeiro…' : 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'}
           value={value}
           disabled={props.disabled}
           onChange={(e) => setValue(e.target.value)}
@@ -261,7 +317,7 @@ export function Composer(props: Props): JSX.Element {
         />
         {props.busy && (
           <button className="btn stop" onClick={props.onInterrupt} title="Parar tarefa atual">
-            ■
+            <IconStop size={14} />
           </button>
         )}
         <button
@@ -270,7 +326,7 @@ export function Composer(props: Props): JSX.Element {
           disabled={props.disabled}
           title={props.busy ? 'Adicionar à fila' : 'Enviar'}
         >
-          ↑
+          <IconArrowUp />
         </button>
       </div>
     </div>

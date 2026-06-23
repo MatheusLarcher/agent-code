@@ -1,6 +1,7 @@
 import type { MouseEvent } from 'react'
 import { tabName, type TabInfo } from '@shared/ipc'
 import { TabIcon } from './TabIcon'
+import { IconClose, IconPlus } from './Icons'
 
 interface Props {
   tabs: TabInfo[]
@@ -30,13 +31,13 @@ export function BrowserTabs({ tabs, onRequestNewTab }: Props): JSX.Element {
           </span>
           <span className="tab-name">{tabName(t)}</span>
           <button className="tab-close" title="Fechar aba" onClick={(e) => close(e, t.id)}>
-            ×
+            <IconClose size={13} />
           </button>
         </div>
       ))}
 
       <button className="tab-new" title="Nova aba" onClick={onRequestNewTab}>
-        +
+        <IconPlus size={15} />
       </button>
     </div>
   )
