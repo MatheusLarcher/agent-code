@@ -1,3 +1,6 @@
+import { app } from 'electron'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import type { Browser, BrowserContext, Page } from 'playwright'
 import type { BrowserFrame, BrowserInput, BrowserState, PickedElement, TabInfo, TabKind } from '../shared/ipc'
 import { TAB_KINDS, tabName } from '../shared/ipc'
@@ -51,8 +54,16 @@ export class BrowserController {
   private selectMode = false
   /** Current page viewport in CSS px — follows the panel size in the UI. */
   private viewport = { ...DEFAULT_VIEWPORT }
+  /** Safety timers that force the loading spinner off if 'load' never fires. */
+  private loadTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  constructor(private readonly cb: BrowserCallbacks) {}
+  /** `profileKey` (the conversation id) gives each browser its own persistent
+   *  profile dir, so logins/cookies survive restarts and two conversations don't
+   *  fight over the same profile lock. */
+  constructor(
+    private readonly cb: BrowserCallbacks,
+    private readonly profileKey: string = 'default'
+  ) {}
 
   get isLaunched(): boolean {
     return this.activeTab() !== null
@@ -90,15 +101,52 @@ export class BrowserController {
   private async ensureContext(): Promise<BrowserContext> {
     if (this.context) return this.context
     const { chromium } = await import('playwright')
-    // Headless so no real Chromium window pops up — pages are streamed to the
-    // in-app canvas via CDP screencast (see startScreencast).
-    this.browser = await chromium.launch({
-      headless: true,
-      args: ['--disable-blink-features=AutomationControlled', '--no-default-browser-check']
-    })
-    this.context = await this.browser.newContext({
+    const safeKey = this.profileKey.replace(/[^a-z0-9_-]/gi, '_') || 'default'
+    // Tests run outside the Electron runtime (no app.getPath) and headless.
+    const isTest = !!process.env.VITEST
+    let root: string
+    try {
+      root = app.getPath('userData')
+    } catch {
+      root = join(tmpdir(), 'agent-code')
+    }
+    const userDataDir = join(root, 'browser-profiles', safeKey)
+    // A REAL, headed Chrome — parked far offscreen so its window never shows, but
+    // streamed into the in-app canvas via CDP screencast. Headed + real Chrome (vs
+    // headless Chromium) renders crisp (captured at 2× DPR) and looks like a normal
+    // browser to sites: real UA, a persistent profile (logins survive), and none of
+    // the automation flags that get bots blocked.
+    const opts = {
+      headless: isTest,
       viewport: this.viewport,
-      deviceScaleFactor: DEVICE_SCALE
+      deviceScaleFactor: DEVICE_SCALE,
+      locale: 'pt-BR',
+      // Drop the "controlled by automation" flag that also exposes navigator.webdriver.
+      ignoreDefaultArgs: ['--enable-automation'],
+      args: [
+        '--no-default-browser-check',
+        '--no-first-run',
+        '--disable-blink-features=AutomationControlled',
+        '--window-position=-32000,-32000',
+        `--window-size=${this.viewport.width},${this.viewport.height}`,
+        // Keep the offscreen window painting at full speed (no background throttling).
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding'
+      ]
+    }
+    // Prefer the user's installed Chrome (most "normal"); fall back to the bundled
+    // Chromium if Chrome isn't present (and always in tests, for speed/determinism).
+    try {
+      if (isTest) throw new Error('use bundled chromium in tests')
+      this.context = await chromium.launchPersistentContext(userDataDir, { ...opts, channel: 'chrome' })
+    } catch {
+      this.context = await chromium.launchPersistentContext(userDataDir, opts)
+    }
+    this.browser = this.context.browser()
+    // Hide the last obvious automation signal some sites sniff.
+    await this.context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
     })
     // Expose at the CONTEXT level so every tab (current and future) shares the
     // picker binding; `source.page` tells us which tab a pick came from.
@@ -205,7 +253,7 @@ export class BrowserController {
     const context = await this.ensureContext()
     const page = await context.newPage()
     const label = (title && title.trim()) || 'Stitch design'
-    const tab: Tab = { id: nextTabId(), kind: 'stitch', page, cdp: null, device: null, title: label, url: '' }
+    const tab: Tab = { id: nextTabId(), kind: 'stitch', page, cdp: null, device: null, title: label, url: '', loading: false }
     this.tabs.set(tab.id, tab)
     this.wireTab(tab)
     this.activeTabId = tab.id
@@ -227,7 +275,7 @@ export class BrowserController {
   private async openWebTab(): Promise<Tab> {
     const context = await this.ensureContext()
     const page = await context.newPage()
-    const tab: Tab = { id: nextTabId(), kind: 'web', page, cdp: null, device: null, title: '', url: page.url() }
+    const tab: Tab = { id: nextTabId(), kind: 'web', page, cdp: null, device: null, title: '', url: page.url(), loading: false }
     this.tabs.set(tab.id, tab)
     this.wireTab(tab)
     this.activeTabId = tab.id
@@ -256,7 +304,8 @@ export class BrowserController {
       cdp: null,
       device,
       title: device.model,
-      url: ''
+      url: '',
+      loading: false
     }
     this.tabs.set(tab.id, tab)
     this.activeTabId = tab.id
@@ -307,6 +356,11 @@ export class BrowserController {
     const tab = this.tabs.get(id)
     if (!tab) return `Aba ${id} não encontrada.`
     const name = tabName(tab)
+    const lt = this.loadTimers.get(id)
+    if (lt) {
+      clearTimeout(lt)
+      this.loadTimers.delete(id)
+    }
     this.tabs.delete(id)
     try {
       if (tab.device) await tab.device.stop()
@@ -333,11 +387,37 @@ export class BrowserController {
     if (!page) return // Android tabs have no Playwright page to wire.
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) {
+        this.setLoading(tab, true)
         if (tab.id === this.activeTabId) void this.reapplySelectMode()
         void this.updateTabMeta(tab)
       }
     })
-    page.on('load', () => void this.updateTabMeta(tab))
+    page.on('load', () => {
+      this.setLoading(tab, false)
+      void this.updateTabMeta(tab)
+    })
+  }
+
+  /** Flip a tab's loading flag and repaint the toolbar. A safety timer clears it
+   *  if the page's 'load' never fires (SPAs, stalled requests). */
+  private setLoading(tab: Tab, value: boolean): void {
+    const pending = this.loadTimers.get(tab.id)
+    if (pending) {
+      clearTimeout(pending)
+      this.loadTimers.delete(tab.id)
+    }
+    tab.loading = value
+    if (value) {
+      this.loadTimers.set(
+        tab.id,
+        setTimeout(() => {
+          tab.loading = false
+          this.loadTimers.delete(tab.id)
+          if (tab.id === this.activeTabId) this.emitState()
+        }, 20000)
+      )
+    }
+    if (tab.id === this.activeTabId) this.emitState()
   }
 
   private async updateTabMeta(tab: Tab): Promise<void> {
@@ -419,7 +499,7 @@ export class BrowserController {
     this.cb.onState({
       url: active.url,
       title: active.title,
-      loading: false,
+      loading: active.loading,
       canGoBack: true,
       canGoForward: true,
       launched: true,
@@ -483,8 +563,9 @@ export class BrowserController {
   async navigate(url: string): Promise<string> {
     // Always load into a web tab — never into the Stitch design preview / Android.
     const page = await this.ensureWebPage()
-    await gotoUrl(page, url)
     const tab = this.activeTab()!
+    this.setLoading(tab, true) // immediate spinner, before the navigation commits
+    await gotoUrl(page, url)
     await this.updateTabMeta(tab)
     return `Navegou para ${page.url()} — "${tab.title}" (aba: "${tabName(tab)}").`
   }
@@ -493,6 +574,7 @@ export class BrowserController {
     const tab = this.activeTab()
     if (!tab) return
     if (tab.device) return void tab.device.back().catch(() => undefined)
+    this.setLoading(tab, true)
     await tab.page?.goBack({ waitUntil: 'domcontentloaded' }).catch(() => undefined)
     await this.updateTabMeta(tab)
   }
@@ -500,6 +582,7 @@ export class BrowserController {
   async forward(): Promise<void> {
     const tab = this.activeTab()
     if (!tab || tab.device) return // no "forward" on a device
+    this.setLoading(tab, true)
     await tab.page?.goForward({ waitUntil: 'domcontentloaded' }).catch(() => undefined)
     await this.updateTabMeta(tab)
   }
@@ -508,6 +591,7 @@ export class BrowserController {
     const tab = this.activeTab()
     if (!tab) return
     if (tab.device) return void tab.device.home().catch(() => undefined) // Home as a soft "reset"
+    this.setLoading(tab, true)
     await tab.page?.reload({ waitUntil: 'domcontentloaded' }).catch(() => undefined)
     await this.updateTabMeta(tab)
   }
@@ -544,6 +628,8 @@ export class BrowserController {
       if (tab.device) await tab.device.stop().catch(() => undefined)
     }
     try {
+      // Persistent context owns the browser process — closing it tears everything down.
+      await this.context?.close()
       await this.browser?.close()
     } catch {
       /* ignore */

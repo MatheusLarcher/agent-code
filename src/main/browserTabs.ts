@@ -7,7 +7,7 @@ export const DEFAULT_VIEWPORT = { width: 1280, height: 800 }
 // DPR (the frame is downscaled into the panel). MAX_FRAME caps a very large panel
 // so the JPEGs don't explode in size.
 export const DEVICE_SCALE = 2
-export const JPEG_QUALITY = 82
+export const JPEG_QUALITY = 90
 export const MAX_FRAME = { width: 3840, height: 2400 }
 
 /**
@@ -24,6 +24,8 @@ export interface Tab {
   /** Cached so emitState() is synchronous (titles are async to read). */
   title: string
   url: string
+  /** True while the page is navigating/loading (drives the toolbar spinner). */
+  loading: boolean
 }
 
 export const isAndroid = (t: Tab): boolean => t.kind === 'android'

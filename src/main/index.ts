@@ -80,13 +80,16 @@ function getBrowser(convId: string): BrowserController {
   if (!b) {
     // Callbacks are gated on `activeConvId` so a background conversation's
     // browser never paints over the one the user is looking at.
-    b = new BrowserController({
-      onFrame: (frame) => convId === activeConvId && send(Channels.browserFrame, frame),
-      onState: (state) => convId === activeConvId && send(Channels.browserStateChanged, state),
-      onPicked: (el) => convId === activeConvId && send(Channels.browserPicked, el),
-      // Boot progress is tagged with convId so the renderer shows it on the right chat.
-      onAndroidProgress: (line) => send(Channels.androidProgress, { convId, line })
-    })
+    b = new BrowserController(
+      {
+        onFrame: (frame) => convId === activeConvId && send(Channels.browserFrame, frame),
+        onState: (state) => convId === activeConvId && send(Channels.browserStateChanged, state),
+        onPicked: (el) => convId === activeConvId && send(Channels.browserPicked, el),
+        // Boot progress is tagged with convId so the renderer shows it on the right chat.
+        onAndroidProgress: (line) => send(Channels.androidProgress, { convId, line })
+      },
+      convId
+    )
     void b.setViewport(desiredViewport.width, desiredViewport.height)
     browsers.set(convId, b)
   }

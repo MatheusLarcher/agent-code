@@ -147,11 +147,24 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
     const { nx, ny } = norm(e)
     void window.api.sendBrowserInput({ type: 'move', nx, ny })
   }
+  const btn = (e: MouseEvent<HTMLCanvasElement>): 'left' | 'right' | 'middle' =>
+    e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left'
+  // Press/release are sent separately so dragging works (text selection, sliders,
+  // drag-and-drop). On the web page down+up already make a click.
+  const onDown = (e: MouseEvent<HTMLCanvasElement>): void => {
+    e.currentTarget.focus()
+    const { nx, ny } = norm(e)
+    void window.api.sendBrowserInput({ type: 'down', nx, ny, button: btn(e) })
+  }
+  const onUp = (e: MouseEvent<HTMLCanvasElement>): void => {
+    const { nx, ny } = norm(e)
+    void window.api.sendBrowserInput({ type: 'up', nx, ny, button: btn(e) })
+  }
+  // Kept for Android taps (the web page uses down/up above).
   const onClick = (e: MouseEvent<HTMLCanvasElement>): void => {
     e.currentTarget.focus()
     const { nx, ny } = norm(e)
-    const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left'
-    void window.api.sendBrowserInput({ type: 'click', nx, ny, button })
+    void window.api.sendBrowserInput({ type: 'click', nx, ny, button: btn(e) })
   }
   const onWheel = (e: WheelEvent<HTMLCanvasElement>): void => {
     const { nx, ny } = norm(e as unknown as MouseEvent<HTMLCanvasElement>)
@@ -159,8 +172,18 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
   }
   const onKey = (e: KeyboardEvent<HTMLCanvasElement>): void => {
     e.preventDefault()
-    const text = e.key.length === 1 ? e.key : undefined
-    void window.api.sendBrowserInput({ type: 'key', key: e.key, text })
+    const mod = e.ctrlKey || e.metaKey
+    // For Ctrl/Cmd combos, don't send a typed char — main bridges copy/paste/etc.
+    const text = !mod && e.key.length === 1 ? e.key : undefined
+    void window.api.sendBrowserInput({
+      type: 'key',
+      key: e.key,
+      text,
+      ctrl: e.ctrlKey,
+      meta: e.metaKey,
+      shift: e.shiftKey,
+      alt: e.altKey
+    })
   }
 
   const go = (): void => {
@@ -196,6 +219,8 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
       className={`browser-canvas ${selectMode ? 'picking' : ''} ${isAndroid ? 'in-frame' : ''} ${state.launched ? '' : 'hidden'}`}
       tabIndex={0}
       onMouseMove={onMove}
+      onMouseDown={onDown}
+      onMouseUp={onUp}
       onClick={onClick}
       onContextMenu={(e) => e.preventDefault()}
       onWheel={onWheel}
@@ -239,6 +264,7 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
         >
           {isAndroid ? <IconHome /> : <IconRefresh />}
         </button>
+        {state.loading && <span className="nav-spinner" title="Carregando…" />}
         {isAndroid ? (
           <div className="android-bar">
             <select

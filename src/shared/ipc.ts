@@ -218,9 +218,20 @@ export interface PickedElement {
 /** Input event forwarded from the renderer canvas back into the page. */
 export type BrowserInput =
   | { type: 'move'; nx: number; ny: number }
+  | { type: 'down'; nx: number; ny: number; button: 'left' | 'right' | 'middle' }
+  | { type: 'up'; nx: number; ny: number; button: 'left' | 'right' | 'middle' }
   | { type: 'click'; nx: number; ny: number; button: 'left' | 'right' | 'middle' }
   | { type: 'wheel'; nx: number; ny: number; dx: number; dy: number }
-  | { type: 'key'; key: string; text?: string }
+  | {
+      type: 'key'
+      key: string
+      text?: string
+      /** Modifier state — lets us bridge Ctrl/Cmd combos (copy/paste/cut/select-all). */
+      ctrl?: boolean
+      meta?: boolean
+      shift?: boolean
+      alt?: boolean
+    }
 
 /** Per-turn token usage reported by the agent. */
 export interface TokenUsage {

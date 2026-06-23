@@ -1628,6 +1628,17 @@ button svg {
 .nav-btn:hover {
   background: var(--line);
 }
+/* Loading indicator next to the nav buttons (like a normal browser). */
+.nav-spinner {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 0 3px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite;
+}
 .addr {
   flex: 1;
   background: var(--bg);

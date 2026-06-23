@@ -1,3 +1,4 @@
+import { clipboard } from 'electron'
 import type { Page, CDPSession } from 'playwright'
 import type { BrowserInput } from '../shared/ipc'
 
@@ -103,7 +104,12 @@ export async function syncSelectMode(page: Page, on: boolean): Promise<void> {
   }
 }
 
-/** Forward a panel input event (normalized coords) onto the page. */
+/**
+ * Forward a panel input event (normalized coords) onto the page. Mouse press/
+ * release are sent separately (`down`/`up`) so dragging works — text selection,
+ * sliders, drag-and-drop. The legacy `click` is ignored here (Android uses it);
+ * down+up already produce a click on the web page.
+ */
 export async function forwardPageInput(
   page: Page,
   cdp: CDPSession | null,
@@ -115,8 +121,12 @@ export async function forwardPageInput(
   try {
     if (ev.type === 'move') {
       await page.mouse.move(x(ev.nx), y(ev.ny))
-    } else if (ev.type === 'click') {
-      await page.mouse.click(x(ev.nx), y(ev.ny), { button: ev.button })
+    } else if (ev.type === 'down') {
+      await page.mouse.move(x(ev.nx), y(ev.ny))
+      await page.mouse.down({ button: ev.button })
+    } else if (ev.type === 'up') {
+      await page.mouse.move(x(ev.nx), y(ev.ny))
+      await page.mouse.up({ button: ev.button })
     } else if (ev.type === 'wheel') {
       await cdp?.send('Input.dispatchMouseEvent', {
         type: 'mouseWheel',
@@ -126,10 +136,51 @@ export async function forwardPageInput(
         deltaY: ev.dy
       })
     } else if (ev.type === 'key') {
-      if (ev.text && ev.text.length === 1) await page.keyboard.type(ev.text)
-      else await page.keyboard.press(ev.key)
+      await forwardKey(page, ev)
     }
   } catch {
     /* ignore transient input errors during navigation */
   }
+}
+
+/**
+ * Forward a key event, bridging the OS clipboard for the combos a normal browser
+ * supports: paste inserts the system clipboard, copy/cut read the page selection
+ * into it. Other Ctrl/Cmd combos (select-all, undo, …) are passed through.
+ */
+async function forwardKey(page: Page, ev: Extract<BrowserInput, { type: 'key' }>): Promise<void> {
+  const mod = !!(ev.ctrl || ev.meta)
+  const lower = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key
+
+  if (mod && lower === 'v') {
+    const text = clipboard.readText()
+    if (text) await page.keyboard.insertText(text)
+    return
+  }
+  if (mod && (lower === 'c' || lower === 'x')) {
+    const sel = await page.evaluate(() => {
+      const ae = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) {
+        return (ae.value || '').substring(ae.selectionStart || 0, ae.selectionEnd || 0)
+      }
+      return window.getSelection?.()?.toString() || ''
+    })
+    if (sel) {
+      clipboard.writeText(sel)
+      if (lower === 'x') await page.keyboard.insertText('') // delete the selection (cut)
+    }
+    return
+  }
+  if (mod) {
+    const parts: string[] = []
+    if (ev.ctrl) parts.push('Control')
+    if (ev.meta) parts.push('Meta')
+    if (ev.alt) parts.push('Alt')
+    if (ev.shift) parts.push('Shift')
+    parts.push(lower)
+    await page.keyboard.press(parts.join('+'))
+    return
+  }
+  if (ev.text && ev.text.length === 1) await page.keyboard.type(ev.text)
+  else await page.keyboard.press(ev.key)
 }
