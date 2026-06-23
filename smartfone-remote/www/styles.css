@@ -270,12 +270,14 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  scroll-behavior: smooth;
+  /* No smooth scroll: while streaming we adjust scrollTop every frame, and the
+     animation would turn that into constant up/down jitter. */
 }
 .msg {
   max-width: 86%; font-size: 15px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word;
-  animation: pop 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  /* No entrance animation: the list is rebuilt on every streaming token, so an
+     animation here would replay on each bubble every frame (visible jitter). */
 }
 .msg.user {
   align-self: flex-end;

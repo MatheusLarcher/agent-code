@@ -234,8 +234,20 @@ function renderTool(m) {
   return card
 }
 
+// Coalesce bursts of streaming events into one render per animation frame, so a
+// fast token stream doesn't rebuild the list dozens of times per second.
+var renderQueued = false
+function scheduleRender() {
+  if (renderQueued) return
+  renderQueued = true
+  requestAnimationFrame(function () { renderQueued = false; renderMessages() })
+}
+
 function renderMessages() {
   var box = $('messages')
+  // Remember position BEFORE clearing: clearing resets scrollTop to 0, which would
+  // otherwise yank the view to the top on every streaming event.
+  var prevTop = box.scrollTop
   var nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80
   box.innerHTML = ''
   state.messages.forEach(function (m) {
@@ -266,7 +278,9 @@ function renderMessages() {
       box.appendChild(renderTool(m))
     }
   })
-  if (nearBottom) box.scrollTop = box.scrollHeight
+  // Pinned to the bottom → follow new content; otherwise keep the user exactly
+  // where they were reading (content above the growing message is stable).
+  box.scrollTop = nearBottom ? box.scrollHeight : prevTop
 }
 
 // ---- networking -----------------------------------------------------------
@@ -410,7 +424,7 @@ function openEvents() {
       return
     }
     reduce(state.messages, msg.event)
-    renderMessages()
+    scheduleRender()
     if (msg.event.kind === 'result' || msg.event.kind === 'error') {
       $('busy').hidden = true
       fetchState()
