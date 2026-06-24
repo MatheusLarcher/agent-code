@@ -146,6 +146,28 @@ export const IconSettings = (p: IconProps): JSX.Element => (
     <path d="M19.4 12a7.5 7.5 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7.3 7.3 0 0 0-2-1.2L16.5 3h-4l-.5 2.4a7.3 7.3 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5a7.5 7.5 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-.9c.6.5 1.3.9 2 1.2l.5 2.4h4l.5-2.4c.7-.3 1.4-.7 2-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z" />
   </Svg>
 )
+export const IconMic = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <rect x="9" y="2.5" width="6" height="11" rx="3" />
+    <path d="M5.5 11a6.5 6.5 0 0 0 13 0" />
+    <line x1="12" y1="17.5" x2="12" y2="21" />
+    <line x1="8.5" y1="21" x2="15.5" y2="21" />
+  </Svg>
+)
+/** Speaker with sound waves — "read this aloud". */
+export const IconSpeaker = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M4 9v6h3.5L13 19V5L7.5 9z" />
+    <path d="M16.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M19 6a8 8 0 0 1 0 12" />
+  </Svg>
+)
+/** Filled stop square sized for the small inline message buttons. */
+export const IconStopSmall = ({ size = 14, ...rest }: IconProps): JSX.Element => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}>
+    <rect x="7" y="7" width="10" height="10" rx="1.5" />
+  </svg>
+)
 export const IconClock = (p: IconProps): JSX.Element => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="9" />

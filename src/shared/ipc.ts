@@ -293,9 +293,19 @@ export interface StitchConfig {
   apiKey: string
 }
 
+/** OpenAI integration (optional). When an API key is set, the chat gets voice
+ *  input (speech→text, gpt-4o-mini-transcribe) and read-aloud (text→speech,
+ *  gpt-4o-mini-tts). The key is stored only in the cache-folder SQLite db. */
+export interface OpenAiConfig {
+  /** API key from platform.openai.com → API keys (sent as a Bearer header by main). */
+  apiKey: string
+}
+
 /** Everything the user can configure — persisted across app restarts. */
 export interface AppConfig {
   stitch: StitchConfig
+  /** OpenAI key for chat voice (TTS + speech-to-text). */
+  openai: OpenAiConfig
   /** "Permitir tudo": run new sessions with permission prompts disabled. Persisted. */
   skipPermissions: boolean
   /** Fixed pairing token for the LAN remote bridge. Generated once and reused on
@@ -309,6 +319,7 @@ export interface AppConfig {
 
 export const DEFAULT_CONFIG: AppConfig = {
   stitch: { enabled: false, apiKey: '' },
+  openai: { apiKey: '' },
   skipPermissions: false,
   remoteToken: '',
   remoteEnabled: false
@@ -384,6 +395,10 @@ export const Channels = {
   remotePublishState: 'remote:publish-state',
   /** Build the Android remote APK (smartfone-remote); progress streams back. */
   remoteBuildApk: 'remote:build-apk',
+  /** Transcribe recorded audio to text via OpenAI (gpt-4o-mini-transcribe). */
+  openaiTranscribe: 'openai:transcribe',
+  /** Synthesize speech from text via OpenAI (gpt-4o-mini-tts). */
+  openaiTts: 'openai:tts',
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',

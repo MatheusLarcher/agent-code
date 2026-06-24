@@ -1,7 +1,7 @@
 import { useEffect, useState, type RefObject } from 'react'
 import type { ImageAttachment, PickedElement } from '@shared/ipc'
 import type { UIMessage } from '../types'
-import { MessageList } from './MessageList'
+import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
 import { IconClock, IconClose } from './Icons'
 
@@ -64,6 +64,12 @@ interface Props {
   lastDurationMs: number | null
   /** First-run "Conectar": pick a folder, open the first chat and connect. */
   onStart?: () => void
+  /** Whether an OpenAI key is set (enables mic + read-aloud). */
+  voiceReady: boolean
+  /** Open Settings on the OpenAI key when voice is used without a key. */
+  onNeedVoiceKey: () => void
+  /** Read-aloud state/handler (TTS lives in App). */
+  tts: TtsControls
 }
 
 const fmt = (n: number): string => {
@@ -126,7 +132,7 @@ export function ChatPanel(props: Props): JSX.Element {
         </div>
       )}
 
-      <MessageList key={props.convId ?? 'none'} messages={messages} busy={busy} />
+      <MessageList key={props.convId ?? 'none'} messages={messages} busy={busy} tts={props.tts} />
 
       {props.queued.length > 0 && (
         <div className="queue">
@@ -158,6 +164,8 @@ export function ChatPanel(props: Props): JSX.Element {
         onInterrupt={props.onInterrupt}
         textareaRef={props.composerRef}
         projects={props.projects}
+        voiceReady={props.voiceReady}
+        onNeedVoiceKey={props.onNeedVoiceKey}
       />
     </section>
   )

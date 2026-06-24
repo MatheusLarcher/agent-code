@@ -8,8 +8,9 @@ import {
   type RefObject
 } from 'react'
 import type { FileAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
-import { IconArrowUp, IconAt, IconBox, IconClose, IconFile, IconFolder, IconPaperclip, IconStop } from './Icons'
+import { IconArrowUp, IconAt, IconBox, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconStop } from './Icons'
 import { fileMeta, fmtSize } from '../files'
+import { useUI } from '../ui/UiProvider'
 
 /** Max size for a single non-image attachment (keeps the IPC payload sane). */
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -32,6 +33,19 @@ interface Props {
   textareaRef: RefObject<HTMLTextAreaElement | null>
   /** Projects from history, offered in the @ reference menu. */
   projects: RefProject[]
+  /** Whether an OpenAI key is set (enables the mic dictation). */
+  voiceReady: boolean
+  /** Called when the user taps the mic without a key set (open Settings). */
+  onNeedVoiceKey: () => void
+}
+
+/** MediaRecorder mime type the browser supports for the mic (OpenAI accepts webm/ogg/mp4). */
+function pickAudioMime(): string {
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
+  for (const c of candidates) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(c)) return c
+  }
+  return ''
 }
 
 /** Read an image File as a base64 attachment (strips the data-URL prefix). */
@@ -72,12 +86,119 @@ function baseName(p: string): string {
 }
 
 export function Composer(props: Props): JSX.Element {
+  const { notify } = useUI()
   const [value, setValue] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [images, setImages] = useState<ImageAttachment[]>([])
   const [files, setFiles] = useState<FileAttachment[]>([])
   const refMenu = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  // ---- voice dictation (mic → text, OpenAI gpt-4o-mini-transcribe) ----
+  // Records continuously and re-transcribes the audio-so-far every few seconds, so
+  // the composer fills in live as you speak (ChatGPT-style). Always transcribing
+  // from the start of the utterance keeps the text consistent (it just grows).
+  const [recording, setRecording] = useState(false)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const flushTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const inFlight = useRef(false)
+  // Text already in the box when dictation started — the transcript is appended to it.
+  const baseTextRef = useRef('')
+
+  const blobToBase64 = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => {
+        const m = /^data:[^;]*;base64,(.*)$/.exec(String(r.result))
+        resolve(m?.[1] ?? '')
+      }
+      r.onerror = () => reject(r.error)
+      r.readAsDataURL(blob)
+    })
+
+  // Transcribe everything captured so far and reflect it in the textarea.
+  const flushTranscript = async (final: boolean): Promise<void> => {
+    if (inFlight.current && !final) return
+    if (chunksRef.current.length === 0) return
+    inFlight.current = true
+    try {
+      const type = chunksRef.current[0]?.type || 'audio/webm'
+      const blob = new Blob(chunksRef.current, { type })
+      const b64 = await blobToBase64(blob)
+      if (!b64) return
+      const r = await window.api.transcribeAudio(b64, type)
+      if (r.ok && typeof r.text === 'string') {
+        const t = r.text.trim()
+        const base = baseTextRef.current
+        setValue(base && t ? `${base} ${t}` : base + t)
+      } else if (!r.ok && r.error === 'no-key') {
+        stopDictation()
+        props.onNeedVoiceKey()
+      } else if (!r.ok && final) {
+        notify('erro', `Transcrição falhou: ${r.error ?? 'erro'}`)
+      }
+    } finally {
+      inFlight.current = false
+    }
+  }
+
+  const stopDictation = (): void => {
+    if (flushTimer.current) {
+      clearInterval(flushTimer.current)
+      flushTimer.current = null
+    }
+    const rec = recorderRef.current
+    recorderRef.current = null
+    if (rec && rec.state !== 'inactive') {
+      try {
+        rec.stop()
+      } catch {
+        /* already stopped */
+      }
+    }
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
+    setRecording(false)
+  }
+
+  const startDictation = async (): Promise<void> => {
+    if (!props.voiceReady) {
+      props.onNeedVoiceKey()
+      return
+    }
+    const mime = pickAudioMime()
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      chunksRef.current = []
+      baseTextRef.current = value.trim()
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+      recorderRef.current = rec
+      rec.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
+      }
+      rec.onstop = () => {
+        void flushTranscript(true).then(() => props.textareaRef.current?.focus())
+      }
+      rec.start(1000) // emit a chunk every second so a partial blob is always available
+      setRecording(true)
+      // Re-transcribe the growing audio for the live effect.
+      flushTimer.current = setInterval(() => void flushTranscript(false), 2500)
+    } catch {
+      notify('erro', 'Não consegui acessar o microfone. Verifique a permissão.')
+      stopDictation()
+    }
+  }
+
+  // Stop recording and free the mic if the composer unmounts mid-dictation.
+  useEffect(() => () => stopDictation(), [])
+
+  const toggleMic = (): void => {
+    if (recording) stopDictation()
+    else void startDictation()
+  }
 
   // Auto-grow the textarea up to MAX_LINES, then scroll.
   useEffect(() => {
@@ -303,6 +424,14 @@ export function Composer(props: Props): JSX.Element {
           title="Anexar arquivo ou imagem (ou cole/arraste no campo)"
         >
           <IconPaperclip />
+        </button>
+        <button
+          className={`ref-btn mic-btn ${recording ? 'recording' : ''}`}
+          onClick={toggleMic}
+          disabled={props.disabled}
+          title={recording ? 'Parar e transcrever' : 'Falar (transcreve para texto)'}
+        >
+          <IconMic />
         </button>
         <textarea
           ref={props.textareaRef}

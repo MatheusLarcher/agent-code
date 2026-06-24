@@ -41,6 +41,17 @@ export interface AgentCodeApi {
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet(key: string, value: string): Promise<void>
 
+  /** Transcribe recorded audio (base64) to text via OpenAI. `error: 'no-key'`
+   *  means the user hasn't set an OpenAI API key yet. */
+  transcribeAudio(
+    audioBase64: string,
+    mimeType: string
+  ): Promise<{ ok: boolean; text?: string; error?: string }>
+  /** Synthesize speech (base64 MP3) from already-treated text via OpenAI. */
+  speak(
+    text: string
+  ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }>
+
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
   sendMessage(
     convId: string,

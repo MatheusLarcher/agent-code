@@ -20,6 +20,7 @@ import { IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
+import { toSpeechText } from '@shared/speechText'
 import { NewTabModal } from './ui/NewTabModal'
 import { RemoteModal } from './ui/RemoteModal'
 import { SettingsModal } from './ui/SettingsModal'
@@ -142,8 +143,15 @@ export function App(): JSX.Element {
   // (gates publishing conversation snapshots to main for phones to read).
   const [remoteOpen, setRemoteOpen] = useState(false)
   const [remoteRunning, setRemoteRunning] = useState(false)
-  // App settings modal (Google Stitch API key, etc.).
+  // App settings modal (Google Stitch / OpenAI API keys, etc.).
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // When opening Settings to nudge a missing key, focus that section.
+  const [settingsFocus, setSettingsFocus] = useState<'openai' | null>(null)
+  // Whether an OpenAI key is set — gates the mic and read-aloud buttons.
+  const [voiceReady, setVoiceReady] = useState(false)
+  // Read-aloud (TTS): id of the message currently playing, and the <audio> in use.
+  const [speakingId, setSpeakingId] = useState<string | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
   // Stitch tabs already approved ("Aplicar no projeto" clicked) — hides the bar.
   const [appliedStitch, setAppliedStitch] = useState<Set<string>>(new Set())
   // Messages typed while the agent is busy wait here (per conversation) instead
@@ -324,6 +332,7 @@ export function App(): JSX.Element {
     void window.api.getConfig().then((c) => {
       skipPermsRef.current = c.skipPermissions
       setSkipPerms(c.skipPermissions)
+      setVoiceReady(!!c.openai?.apiKey?.trim())
     })
   }, [])
 
@@ -640,6 +649,65 @@ export function App(): JSX.Element {
     [activeId, permissions]
   )
 
+  // Voice features need an OpenAI key. When missing, open Settings on that field.
+  const needVoiceKey = useCallback((): void => {
+    notify('aviso', 'Adicione sua API key da OpenAI nas Configurações para usar voz.')
+    setSettingsFocus('openai')
+    setSettingsOpen(true)
+  }, [notify])
+
+  // Close Settings and re-read whether an OpenAI key now exists.
+  const closeSettings = useCallback((): void => {
+    setSettingsOpen(false)
+    setSettingsFocus(null)
+    void window.api.getConfig().then((c) => setVoiceReady(!!c.openai?.apiKey?.trim()))
+  }, [])
+
+  // Read an assistant answer aloud (TTS). Clicking again (or another message)
+  // stops the current playback. The text is treated for speech before sending.
+  const toggleSpeak = useCallback(
+    async (id: string, text: string): Promise<void> => {
+      // Stop whatever is playing first.
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      if (speakingId === id) {
+        setSpeakingId(null)
+        return
+      }
+      if (!voiceReady) {
+        needVoiceKey()
+        return
+      }
+      const speech = toSpeechText(text)
+      if (!speech.trim()) {
+        notify('aviso', 'Não há texto para ler nesta resposta.')
+        return
+      }
+      setSpeakingId(id)
+      const r = await window.api.speak(speech)
+      if (!r.ok || !r.audioBase64) {
+        setSpeakingId(null)
+        if (r.error === 'no-key') needVoiceKey()
+        else notify('erro', `Falha ao gerar áudio: ${r.error ?? 'erro'}`)
+        return
+      }
+      const audio = new Audio(`data:${r.mimeType ?? 'audio/mpeg'};base64,${r.audioBase64}`)
+      audioRef.current = audio
+      const done = (): void => {
+        if (audioRef.current === audio) audioRef.current = null
+        setSpeakingId((cur) => (cur === id ? null : cur))
+      }
+      audio.onended = done
+      audio.onerror = done
+      await audio.play().catch(() => done())
+    },
+    [speakingId, voiceReady, needVoiceKey, notify]
+  )
+
+  const tts = useMemo(() => ({ speakingId, onToggleSpeak: toggleSpeak }), [speakingId, toggleSpeak])
+
   const interrupt = useCallback((): void => {
     const cid = activeIdRef.current
     if (!cid) return
@@ -873,6 +941,9 @@ export function App(): JSX.Element {
             runningSince={runningSince}
             lastDurationMs={lastDurationMs}
             onStart={connectStart}
+            voiceReady={voiceReady}
+            onNeedVoiceKey={needVoiceKey}
+            tts={tts}
           />
           {!browserMinimized && (
             <div
@@ -913,7 +984,7 @@ export function App(): JSX.Element {
         />
       )}
       {remoteOpen && <RemoteModal onClose={() => setRemoteOpen(false)} />}
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsModal onClose={closeSettings} focus={settingsFocus} />}
     </div>
   )
 }

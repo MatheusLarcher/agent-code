@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DEFAULT_CONFIG, type AppConfig, type CacheInfo } from '@shared/ipc'
 import { useUI } from './UiProvider'
 
 interface Props {
   onClose: () => void
+  /** When 'openai', highlight + scroll to the OpenAI key (a voice feature needs it). */
+  focus?: 'openai' | null
 }
 
 /**
@@ -12,12 +14,14 @@ interface Props {
  * MCP tools for generating UI mockups. Changes apply to sessions started after
  * saving (reconnect a conversation to pick them up).
  */
-export function SettingsModal({ onClose }: Props): JSX.Element {
+export function SettingsModal({ onClose, focus }: Props): JSX.Element {
   const { notify } = useUI()
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
   const [showKey, setShowKey] = useState(false)
+  const [showOpenAiKey, setShowOpenAiKey] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [cache, setCache] = useState<CacheInfo | null>(null)
+  const openAiRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void window.api.getConfig().then((c) => {
@@ -32,14 +36,23 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  // When opened to nudge the OpenAI key, scroll to and focus that field.
+  useEffect(() => {
+    if (focus === 'openai' && loaded) {
+      openAiRef.current?.scrollIntoView({ block: 'center' })
+      openAiRef.current?.focus()
+    }
+  }, [focus, loaded])
+
   const save = async (): Promise<void> => {
     const stitch = { ...cfg.stitch, apiKey: cfg.stitch.apiKey.trim() }
+    const openai = { ...cfg.openai, apiKey: cfg.openai.apiKey.trim() }
     // Enabling without a key is pointless — warn but still save the preference.
     if (stitch.enabled && !stitch.apiKey) {
       notify('aviso', 'Informe a API key do Stitch para habilitar a integração.')
     }
-    // Save only the Stitch section so we never clobber other settings (e.g. "Permitir tudo").
-    await window.api.setConfig({ stitch })
+    // Save only the keys we edit here so we never clobber other settings (e.g. "Permitir tudo").
+    await window.api.setConfig({ stitch, openai })
     notify('sucesso', 'Configurações salvas. Reconecte a conversa para aplicar.')
     onClose()
   }
@@ -126,6 +139,43 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
             <span className="settings-hint">
               Gere em stitch.withgoogle.com → ícone de perfil → Stitch Settings → API Keys → Create Key.
               A chave fica salva só no seu computador.
+            </span>
+          </label>
+        </section>
+
+        <section className={`settings-section ${focus === 'openai' ? 'settings-highlight' : ''}`}>
+          <label className="settings-field">
+            <span className="settings-field-label">🎙️ OpenAI (voz no chat)</span>
+            {focus === 'openai' && (
+              <span className="settings-warn">
+                Adicione sua API key da OpenAI para usar o microfone e a leitura em voz alta.
+              </span>
+            )}
+            <div className="settings-key-row">
+              <input
+                ref={openAiRef}
+                className="settings-input"
+                type={showOpenAiKey ? 'text' : 'password'}
+                value={cfg.openai.apiKey}
+                placeholder="sk-..."
+                autoComplete="off"
+                spellCheck={false}
+                disabled={!loaded}
+                onChange={(e) => setCfg((c) => ({ ...c, openai: { ...c.openai, apiKey: e.target.value } }))}
+              />
+              <button
+                className="btn ghost"
+                type="button"
+                onClick={() => setShowOpenAiKey((v) => !v)}
+                title="Mostrar/ocultar"
+              >
+                {showOpenAiKey ? '🙈' : '👁️'}
+              </button>
+            </div>
+            <span className="settings-hint">
+              Gere em platform.openai.com → API keys. Habilita falar para escrever (transcrição,
+              gpt-4o-mini-transcribe) e ouvir as respostas (gpt-4o-mini-tts). A chave fica salva só no
+              seu computador (no banco da pasta de dados).
             </span>
           </label>
         </section>

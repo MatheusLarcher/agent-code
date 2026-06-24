@@ -12,6 +12,16 @@ import type { UIMessage } from '../types'
 import { isDownloadableFile, parseDownloads } from '@shared/ipc'
 import { useUI } from '../ui/UiProvider'
 import { fileMeta, fmtSize } from '../files'
+import { IconSpeaker, IconStopSmall } from './Icons'
+
+/** Read-aloud controls passed down from App (TTS state lives there so audio
+ *  survives message re-renders and conversation switches). */
+export interface TtsControls {
+  /** Id of the message currently being read (or loading), else null. */
+  speakingId: string | null
+  /** Start/stop reading a message's answer aloud. */
+  onToggleSpeak: (id: string, text: string) => void
+}
 
 /** Last path segment, for the chip label. */
 function fileLabel(p: string): string {
@@ -178,7 +188,15 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
   )
 }
 
-export function MessageList({ messages, busy }: { messages: UIMessage[]; busy: boolean }): JSX.Element {
+export function MessageList({
+  messages,
+  busy,
+  tts
+}: {
+  messages: UIMessage[]
+  busy: boolean
+  tts: TtsControls
+}): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(PAGE)
@@ -271,6 +289,7 @@ export function MessageList({ messages, busy }: { messages: UIMessage[]; busy: b
             )
           case 'assistant-text': {
             const { clean, paths } = parseDownloads(m.text)
+            const speaking = tts.speakingId === m.id
             return (
               <div key={m.id} className={`msg assistant ${m.answer ? '' : 'narration'}`}>
                 <div className="bubble">
@@ -278,6 +297,16 @@ export function MessageList({ messages, busy }: { messages: UIMessage[]; busy: b
                   {paths.map((p, k) => (
                     <DownloadChip key={k} path={p} />
                   ))}
+                  {m.answer && clean && (
+                    <button
+                      className={`msg-speak ${speaking ? 'active' : ''}`}
+                      onClick={() => tts.onToggleSpeak(m.id, clean)}
+                      title={speaking ? 'Parar leitura' : 'Ler em voz alta'}
+                    >
+                      {speaking ? <IconStopSmall size={14} /> : <IconSpeaker size={15} />}
+                      {speaking ? 'Parar' : 'Ouvir'}
+                    </button>
+                  )}
                 </div>
               </div>
             )

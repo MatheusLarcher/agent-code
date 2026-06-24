@@ -10,17 +10,23 @@ const KEY = 'config'
 
 /** Read the persisted config, merged over defaults (missing keys are filled in). */
 export function loadConfig(): AppConfig {
+  const fresh = (): AppConfig => ({
+    ...DEFAULT_CONFIG,
+    stitch: { ...DEFAULT_CONFIG.stitch },
+    openai: { ...DEFAULT_CONFIG.openai }
+  })
   try {
     const raw = kvGet(KEY)
-    if (!raw) return { ...DEFAULT_CONFIG, stitch: { ...DEFAULT_CONFIG.stitch } }
+    if (!raw) return fresh()
     const parsed = JSON.parse(raw) as Partial<AppConfig>
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
-      stitch: { ...DEFAULT_CONFIG.stitch, ...(parsed.stitch ?? {}) }
+      stitch: { ...DEFAULT_CONFIG.stitch, ...(parsed.stitch ?? {}) },
+      openai: { ...DEFAULT_CONFIG.openai, ...(parsed.openai ?? {}) }
     }
   } catch {
-    return { ...DEFAULT_CONFIG, stitch: { ...DEFAULT_CONFIG.stitch } }
+    return fresh()
   }
 }
 
@@ -43,7 +49,8 @@ export function updateConfig(patch: Partial<AppConfig>): AppConfig {
   const next: AppConfig = {
     ...cur,
     ...patch,
-    stitch: { ...cur.stitch, ...(patch.stitch ?? {}) }
+    stitch: { ...cur.stitch, ...(patch.stitch ?? {}) },
+    openai: { ...cur.openai, ...(patch.openai ?? {}) }
   }
   saveConfig(next)
   return next

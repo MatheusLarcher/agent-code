@@ -45,6 +45,17 @@ const api: AgentCodeApi = {
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
   kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),
 
+  // OpenAI voice (chat)
+  transcribeAudio: (
+    audioBase64: string,
+    mimeType: string
+  ): Promise<{ ok: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke(Channels.openaiTranscribe, audioBase64, mimeType),
+  speak: (
+    text: string
+  ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }> =>
+    ipcRenderer.invoke(Channels.openaiTts, text),
+
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(Channels.agentStart, opts),

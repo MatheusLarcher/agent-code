@@ -8,6 +8,7 @@ import { RemoteServer } from './remote/remoteServer'
 import { buildRemoteApk } from './remote/buildApk'
 import { Channels } from '../shared/ipc'
 import { loadConfig, updateConfig } from './config'
+import { transcribeAudio, synthesizeSpeech } from './openai'
 import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
 import { saveAttachments } from './attachments'
 import type {
@@ -133,6 +134,12 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // Grant microphone access for the voice dictation (getUserMedia). Electron denies
+  // media by default with no handler; we allow only 'media' from our own renderer.
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'media')
+  })
+
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) void mainWindow.loadURL(devUrl)
   else void mainWindow.loadFile(join(import.meta.dirname, '../renderer/index.html'))
@@ -146,6 +153,30 @@ function registerIpc(): void {
   // App configuration (Settings screen).
   ipcMain.handle(Channels.configGet, () => loadConfig())
   ipcMain.handle(Channels.configSet, (_e, patch: Partial<AppConfig>) => updateConfig(patch))
+
+  // OpenAI voice (chat): speech-to-text and text-to-speech. The key stays in main
+  // (read from config); the renderer only ships audio/text. Errors come back as
+  // { ok: false } so the UI can show a toast / prompt for the key.
+  ipcMain.handle(Channels.openaiTranscribe, async (_e, audioBase64: string, mimeType: string) => {
+    const apiKey = loadConfig().openai.apiKey.trim()
+    if (!apiKey) return { ok: false, error: 'no-key' }
+    try {
+      const text = await transcribeAudio(apiKey, audioBase64, mimeType)
+      return { ok: true, text }
+    } catch (err) {
+      return { ok: false, error: String(err instanceof Error ? err.message : err) }
+    }
+  })
+  ipcMain.handle(Channels.openaiTts, async (_e, text: string) => {
+    const apiKey = loadConfig().openai.apiKey.trim()
+    if (!apiKey) return { ok: false, error: 'no-key' }
+    try {
+      const { base64, mimeType } = await synthesizeSpeech(apiKey, text)
+      return { ok: true, audioBase64: base64, mimeType }
+    } catch (err) {
+      return { ok: false, error: String(err instanceof Error ? err.message : err) }
+    }
+  })
 
   // Cache folder: where the SQLite db (config/token/conversations) + .md memories live.
   ipcMain.handle(Channels.cacheGetInfo, () => getCacheInfo())
