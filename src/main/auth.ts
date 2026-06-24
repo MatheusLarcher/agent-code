@@ -1,22 +1,35 @@
-// Claude Code authentication state. The CLI (which the Agent SDK runs) stores its
-// OAuth login in ~/.claude/.credentials.json under "claudeAiOauth". We only need to
-// know whether a login exists so the app can trigger /login itself instead of
-// telling the user to type it. Token refresh is the CLI's job — presence is enough.
+// Claude Code authentication state. We ask the CLI itself — `claude auth status
+// --json` — instead of reading ~/.claude/.credentials.json, because that file is
+// NOT the source of truth: on Windows the OAuth token lives in the Credential
+// Manager (keychain), so the file can be absent/stale even when the user is logged
+// in. `auth status` reads whichever store the platform uses, so it's authoritative
+// and cross-platform. Token refresh is the CLI's job — a logged-in answer is enough.
+import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { claudeCliPath } from './claudeCli'
 
-export function credentialsPath(): string {
-  return join(homedir(), '.claude', '.credentials.json')
-}
-
-/** True when a Claude OAuth login is present on this machine. */
-export function isAuthenticated(): boolean {
-  try {
-    const raw = readFileSync(credentialsPath(), 'utf8')
-    const data = JSON.parse(raw) as { claudeAiOauth?: { accessToken?: string } }
-    return typeof data.claudeAiOauth?.accessToken === 'string' && data.claudeAiOauth.accessToken.length > 0
-  } catch {
-    return false
-  }
+/** True when a Claude OAuth login exists (per the CLI's own status check). */
+export function isAuthenticated(): Promise<boolean> {
+  return new Promise((resolve) => {
+    let cli: string
+    try {
+      cli = claudeCliPath()
+    } catch {
+      resolve(false)
+      return
+    }
+    execFile(
+      cli,
+      ['auth', 'status', '--json'],
+      { cwd: homedir(), windowsHide: true, timeout: 15_000 },
+      (_err, stdout) => {
+        try {
+          const data = JSON.parse(String(stdout)) as { loggedIn?: boolean }
+          resolve(data.loggedIn === true)
+        } catch {
+          resolve(false)
+        }
+      }
+    )
+  })
 }

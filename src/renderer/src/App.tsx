@@ -493,11 +493,11 @@ export function App(): JSX.Element {
       if (inflight) return inflight
       const p = (async () => {
         // First run: if there's no Claude login yet, do /login for the user (opens
-        // the browser) instead of letting the chat tell them to type it.
+        // the system browser) instead of letting the chat tell them to type it.
         const { authenticated } = await window.api.authStatus()
         if (!authenticated) {
           notify('aviso', 'Abrindo o login do Claude no navegador… é só autenticar para continuar.')
-          const { ok } = await window.api.authLogin(conv.id)
+          const { ok } = await window.api.authLogin()
           if (!ok) {
             notify('erro', 'Login não concluído. Clique em Conectar de novo quando autenticar.')
             throw new Error('not-authenticated')

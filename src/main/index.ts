@@ -185,31 +185,14 @@ function registerIpc(): void {
     }
   })
   // Claude Code auth: status + the one-click OAuth login (no typed /login).
-  ipcMain.handle(Channels.authStatus, () => ({ authenticated: isAuthenticated() }))
-  ipcMain.handle(Channels.authLogin, async (_e, convId?: string) => {
+  ipcMain.handle(Channels.authStatus, async () => ({ authenticated: await isAuthenticated() }))
+  ipcMain.handle(Channels.authLogin, async () => {
     authLog('=== auth:login start ===')
-    // Open the OAuth URL in the app's OWN embedded browser (same session the user
-    // is in, persistent profile) — falling back to the system browser if that fails.
+    // The FIRST login opens the user's own SYSTEM browser (product decision) — not
+    // the app's embedded browser. The CLI runs a loopback to capture the code.
     const openUrl = (url: string): void => {
-      authLog(`open url: ${url}`)
-      const cid = convId || activeConvId
-      try {
-        if (cid) {
-          const b = getBrowser(cid)
-          void b
-            .ensureLaunched()
-            .then(() => b.navigate(url))
-            .catch((err) => {
-              authLog(`embedded open failed, falling back: ${String(err)}`)
-              void shell.openExternal(url)
-            })
-        } else {
-          void shell.openExternal(url)
-        }
-      } catch (err) {
-        authLog(`open url threw, falling back: ${String(err)}`)
-        void shell.openExternal(url)
-      }
+      authLog(`opening system browser: ${url}`)
+      void shell.openExternal(url)
     }
     const ok = await runClaudeLogin(openUrl, authLog)
     authLog(`=== auth:login done: authenticated=${ok} ===`)
