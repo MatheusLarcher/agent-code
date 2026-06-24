@@ -149,6 +149,8 @@ export function App(): JSX.Element {
   const [settingsFocus, setSettingsFocus] = useState<'openai' | null>(null)
   // Whether an OpenAI key is set — gates the mic and read-aloud buttons.
   const [voiceReady, setVoiceReady] = useState(false)
+  // Read-aloud speed (config), applied as the audio playbackRate (deterministic).
+  const voiceSpeedRef = useRef(1)
   // Read-aloud (TTS): id of the message currently playing, and the <audio> in use.
   const [speakingId, setSpeakingId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -335,6 +337,7 @@ export function App(): JSX.Element {
       skipPermsRef.current = c.skipPermissions
       setSkipPerms(c.skipPermissions)
       setVoiceReady(!!c.openai?.apiKey?.trim())
+      voiceSpeedRef.current = c.openai?.speed || 1
     })
   }, [])
 
@@ -662,7 +665,10 @@ export function App(): JSX.Element {
   const closeSettings = useCallback((): void => {
     setSettingsOpen(false)
     setSettingsFocus(null)
-    void window.api.getConfig().then((c) => setVoiceReady(!!c.openai?.apiKey?.trim()))
+    void window.api.getConfig().then((c) => {
+      setVoiceReady(!!c.openai?.apiKey?.trim())
+      voiceSpeedRef.current = c.openai?.speed || 1
+    })
   }, [])
 
   // Stop any read-aloud in progress and invalidate its pending synthesis.
@@ -680,6 +686,10 @@ export function App(): JSX.Element {
   const playClip = (base64: string, mimeType: string): Promise<void> =>
     new Promise<void>((resolve) => {
       const audio = new Audio(`data:${mimeType};base64,${base64}`)
+      // Speed is applied here (not at synthesis) so it's exact and instant.
+      // preservesPitch keeps the voice natural instead of chipmunk/slowed.
+      audio.playbackRate = voiceSpeedRef.current || 1
+      audio.preservesPitch = true
       audioRef.current = audio
       let settled = false
       const done = (): void => {

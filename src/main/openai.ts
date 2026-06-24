@@ -26,6 +26,8 @@ export async function transcribeAudio(
   const form = new FormData()
   form.append('file', new Blob([buf], { type }), `audio.${ext}`)
   form.append('model', 'gpt-4o-mini-transcribe')
+  // Force Portuguese so it doesn't guess the language (better accuracy for pt-BR).
+  form.append('language', 'pt')
 
   const res = await fetch(`${API}/audio/transcriptions`, {
     method: 'POST',
@@ -40,23 +42,15 @@ export async function transcribeAudio(
   return data.text ?? ''
 }
 
-/** Reading pace as an instruction (gpt-4o-mini-tts ignores the numeric `speed`
- *  param, so we steer pace through the prompt instead). */
-function paceInstruction(speed: number): string {
-  if (speed <= 0.85) return ' Fale devagar, em ritmo pausado.'
-  if (speed >= 1.4) return ' Fale bem rápido, em ritmo acelerado.'
-  if (speed >= 1.15) return ' Fale um pouco mais rápido que o normal.'
-  return ''
-}
-
 /** Text-to-speech. Returns base64 MP3 audio for the renderer to play. The text is
  *  already treated for reading (see toSpeechText); the instructions keep the
- *  delivery natural, in the text's own language, at the chosen pace. */
+ *  delivery natural and in the text's own language. Reading SPEED is applied in
+ *  the renderer (HTMLAudioElement.playbackRate) — deterministic and instant,
+ *  unlike the model's pace which gpt-4o-mini-tts tends to ignore. */
 export async function synthesizeSpeech(
   apiKey: string,
   text: string,
-  voice = 'alloy',
-  speed = 1
+  voice = 'alloy'
 ): Promise<{ base64: string; mimeType: string }> {
   const res = await fetch(`${API}/audio/speech`, {
     method: 'POST',
@@ -66,7 +60,8 @@ export async function synthesizeSpeech(
       input: text,
       voice: voice || 'alloy',
       response_format: 'mp3',
-      instructions: `Leia de forma natural e clara, no mesmo idioma do texto.${paceInstruction(speed)}`
+      // Always read in Brazilian Portuguese instead of guessing from the text.
+      instructions: 'Leia sempre em português do Brasil (pt-BR), de forma natural e clara, com sotaque brasileiro.'
     })
   })
   if (!res.ok) {

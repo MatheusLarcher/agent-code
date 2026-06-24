@@ -58,20 +58,34 @@ export function toSpeechText(markdown: string): string {
 }
 
 /**
- * Split already-treated speech text into small chunks (by sentence/paragraph,
- * grouped up to `maxLen` chars). The caller synthesizes and plays them in
- * sequence, so playback starts after just the first chunk instead of waiting for
- * the whole answer to be synthesized — much lower time-to-first-audio.
+ * Split already-treated speech text into chunks the caller synthesizes and plays
+ * in sequence, so playback starts after just the FIRST chunk — not the whole
+ * answer. Chunk sizes RAMP UP: the first is tiny (≈ one short sentence) so the
+ * first audio comes back fast, later ones are bigger to keep the number of TTS
+ * calls low. Over-long sentences are broken on clause/word boundaries so no
+ * single chunk (especially the first) is huge.
  */
-export function splitForSpeech(text: string, maxLen = 280): string[] {
-  const parts = text
+const CHUNK_RAMP = [60, 150, 260] // char budget for chunk 0, 1, 2+
+const HARD_MAX = 260
+
+export function splitForSpeech(text: string): string[] {
+  const sentences = text
     .split(/(?<=[.!?…])\s+|\n+/)
     .map((s) => s.trim())
     .filter(Boolean)
+
+  // Break any sentence longer than the hard cap so the first chunk can stay small.
+  const parts: string[] = []
+  for (const s of sentences) {
+    if (s.length <= HARD_MAX) parts.push(s)
+    else parts.push(...breakLong(s, HARD_MAX))
+  }
+
   const chunks: string[] = []
   let cur = ''
+  const limit = (): number => CHUNK_RAMP[Math.min(chunks.length, CHUNK_RAMP.length - 1)]
   for (const p of parts) {
-    if (cur && cur.length + 1 + p.length > maxLen) {
+    if (cur && cur.length + 1 + p.length > limit()) {
       chunks.push(cur)
       cur = ''
     }
@@ -79,6 +93,36 @@ export function splitForSpeech(text: string, maxLen = 280): string[] {
   }
   if (cur) chunks.push(cur)
   return chunks
+}
+
+/** Break a too-long sentence into ≤max pieces, preferring clause boundaries
+ *  (commas/semicolons/colons/dashes), falling back to word splits. */
+function breakLong(sentence: string, max: number): string[] {
+  const out: string[] = []
+  let cur = ''
+  const push = (): void => {
+    if (cur) out.push(cur)
+    cur = ''
+  }
+  for (const clause of sentence.split(/(?<=[,;:—])\s+/)) {
+    if (clause.length > max) {
+      push()
+      let w = ''
+      for (const word of clause.split(/\s+/)) {
+        if (w && w.length + 1 + word.length > max) {
+          out.push(w)
+          w = ''
+        }
+        w = w ? `${w} ${word}` : word
+      }
+      if (w) cur = w
+    } else {
+      if (cur && cur.length + 1 + clause.length > max) push()
+      cur = cur ? `${cur} ${clause}` : clause
+    }
+  }
+  push()
+  return out
 }
 
 /** Strip inline Markdown from a single line, keeping the spoken words. */

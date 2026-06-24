@@ -146,6 +146,11 @@ export const IconSettings = (p: IconProps): JSX.Element => (
     <path d="M19.4 12a7.5 7.5 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7.3 7.3 0 0 0-2-1.2L16.5 3h-4l-.5 2.4a7.3 7.3 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5a7.5 7.5 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-.9c.6.5 1.3.9 2 1.2l.5 2.4h4l.5-2.4c.7-.3 1.4-.7 2-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z" />
   </Svg>
 )
+export const IconChevronDown = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <polyline points="6 9 12 15 18 9" />
+  </Svg>
+)
 export const IconMic = (p: IconProps): JSX.Element => (
   <Svg {...p}>
     <rect x="9" y="2.5" width="6" height="11" rx="3" />

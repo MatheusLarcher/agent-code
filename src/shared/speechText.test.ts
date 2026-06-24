@@ -67,15 +67,6 @@ describe('toSpeechText — texto tratado para leitura', () => {
 })
 
 describe('splitForSpeech — fatiar para tocar rápido', () => {
-  it('quebra por frases agrupando até o limite', () => {
-    const chunks = splitForSpeech('Uma frase. Outra frase. Mais uma.', 20)
-    expect(chunks.length).toBeGreaterThan(1)
-    // nenhum pedaço (formado por várias frases) ultrapassa muito o limite
-    expect(chunks.every((c) => c.length <= 24)).toBe(true)
-    expect(chunks.join(' ')).toContain('Uma frase')
-    expect(chunks.join(' ')).toContain('Mais uma')
-  })
-
   it('texto curto vira um único pedaço', () => {
     expect(splitForSpeech('Oi, tudo bem?')).toEqual(['Oi, tudo bem?'])
   })
@@ -84,10 +75,31 @@ describe('splitForSpeech — fatiar para tocar rápido', () => {
     expect(splitForSpeech('')).toEqual([])
   })
 
-  it('o primeiro pedaço é pequeno (baixa latência até o 1º áudio)', () => {
+  it('o primeiro pedaço é bem pequeno (1ª frase) — baixa latência até o 1º áudio', () => {
     const long = Array.from({ length: 30 }, (_, i) => `Frase número ${i}.`).join(' ')
     const chunks = splitForSpeech(long)
-    expect(chunks[0].length).toBeLessThanOrEqual(280)
     expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks[0].length).toBeLessThanOrEqual(60)
+    // e o primeiro pedaço sai antes (mais curto) que os seguintes, que crescem
+    expect(chunks[0].length).toBeLessThanOrEqual(chunks[chunks.length - 1].length)
+  })
+
+  it('os pedaços crescem em rampa (primeiro menor que os do meio/fim)', () => {
+    const long = Array.from({ length: 40 }, (_, i) => `Esta é a frase de número ${i} aqui.`).join(' ')
+    const chunks = splitForSpeech(long)
+    expect(chunks.length).toBeGreaterThanOrEqual(3)
+    expect(chunks[0].length).toBeLessThan(chunks[2].length)
+  })
+
+  it('quebra uma frase gigante sem deixar nenhum pedaço enorme', () => {
+    const huge = `Começo, ${'palavra '.repeat(120)}fim.`
+    const chunks = splitForSpeech(huge)
+    expect(chunks.every((c) => c.length <= 260)).toBe(true)
+  })
+
+  it('preserva todo o conteúdo (nada é perdido ao fatiar)', () => {
+    const txt = 'Primeira frase. Segunda frase um pouco maior. Terceira.'
+    const joined = splitForSpeech(txt).join(' ')
+    for (const w of ['Primeira', 'Segunda', 'Terceira']) expect(joined).toContain(w)
   })
 })

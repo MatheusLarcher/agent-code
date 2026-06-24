@@ -136,9 +136,13 @@ function createWindow(): void {
 
   // Grant microphone access for the voice dictation (getUserMedia). Electron denies
   // media by default with no handler; we allow only 'media' from our own renderer.
-  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+  // Both handlers are needed: the async request prompt AND the sync check that
+  // getUserMedia consults first.
+  const sess = mainWindow.webContents.session
+  sess.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(permission === 'media')
   })
+  sess.setPermissionCheckHandler((_wc, permission) => permission === 'media')
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) void mainWindow.loadURL(devUrl)
@@ -168,10 +172,10 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle(Channels.openaiTts, async (_e, text: string) => {
-    const { apiKey, voice, speed } = loadConfig().openai
+    const { apiKey, voice } = loadConfig().openai
     if (!apiKey.trim()) return { ok: false, error: 'no-key' }
     try {
-      const { base64, mimeType } = await synthesizeSpeech(apiKey.trim(), text, voice, speed)
+      const { base64, mimeType } = await synthesizeSpeech(apiKey.trim(), text, voice)
       return { ok: true, audioBase64: base64, mimeType }
     } catch (err) {
       return { ok: false, error: String(err instanceof Error ? err.message : err) }

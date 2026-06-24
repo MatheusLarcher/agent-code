@@ -317,8 +317,8 @@ export interface OpenAiConfig {
   apiKey: string
   /** Voice used for read-aloud (one of OPENAI_VOICES). */
   voice: string
-  /** Reading pace: 0.8 = slow, 1 = normal, up to ~1.5 = fast. Steered via the
-   *  model's instructions (gpt-4o-mini-tts ignores the numeric `speed` param). */
+  /** Reading speed: 0.8 = slow, 1 = normal, 1.5 = fast. Applied in the renderer
+   *  as the audio playbackRate (exact/instant) — the model's own pace is unreliable. */
   speed: number
 }
 
