@@ -278,6 +278,16 @@ export const DEFAULT_CONFIG: AppConfig = {
   remoteToken: ''
 }
 
+/** Where per-user data lives: the SQLite db (config/token/conversations) + .md memories. */
+export interface CacheInfo {
+  /** Absolute path of the active cache folder (…/agent-code). */
+  dir: string
+  /** Absolute path of the SQLite database inside it. */
+  dbPath: string
+  /** Absolute path of the memories folder inside it. */
+  memoriesDir: string
+}
+
 // Channel name constants — single source of truth.
 export const Channels = {
   // renderer -> main (invoke)
@@ -285,6 +295,10 @@ export const Channels = {
   configGet: 'config:get',
   /** Persist the app configuration (Settings screen). */
   configSet: 'config:set',
+  /** Get the active cache folder (where the SQLite db + .md memories live). */
+  cacheGetInfo: 'cache:get-info',
+  /** Pick a new cache folder (native dialog) and switch to it; returns the new CacheInfo. */
+  cacheChooseDir: 'cache:choose-dir',
   agentStart: 'agent:start',
   agentSend: 'agent:send',
   agentInterrupt: 'agent:interrupt',

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { DEFAULT_CONFIG, type AppConfig } from '@shared/ipc'
+import { DEFAULT_CONFIG, type AppConfig, type CacheInfo } from '@shared/ipc'
 import { useUI } from './UiProvider'
 
 interface Props {
@@ -17,12 +17,14 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
   const [showKey, setShowKey] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [cache, setCache] = useState<CacheInfo | null>(null)
 
   useEffect(() => {
     void window.api.getConfig().then((c) => {
       setCfg(c)
       setLoaded(true)
     })
+    void window.api.getCacheInfo().then(setCache)
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
@@ -42,10 +44,43 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
     onClose()
   }
 
+  const changeCacheDir = async (): Promise<void> => {
+    const next = await window.api.chooseCacheDir()
+    if (!next) return
+    setCache(next)
+    // Re-read config from the newly selected folder so the screen reflects it.
+    void window.api.getConfig().then(setCfg)
+    notify('sucesso', `Pasta de dados: ${next.dir}. Reinicie o app para aplicar em tudo.`)
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card settings-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <h3 className="modal-title">⚙️ Configurações</h3>
+
+        <section className="settings-section">
+          <label className="settings-field">
+            <span className="settings-field-label">📁 Pasta de dados (cache)</span>
+            <div className="settings-key-row">
+              <input
+                className="settings-input"
+                type="text"
+                value={cache?.dir ?? 'carregando…'}
+                readOnly
+                spellCheck={false}
+                title={cache?.dir ?? ''}
+              />
+              <button className="btn ghost" type="button" onClick={changeCacheDir} disabled={!cache}>
+                Trocar…
+              </button>
+            </div>
+            <span className="settings-hint">
+              Onde ficam o banco SQLite (configurações, token do Android, conversas) e as memórias
+              (.md). É por usuário, não por projeto. Se a pasta escolhida já tiver dados, eles são
+              carregados. Uma pasta <code>agent-code</code> é criada dentro do local selecionado.
+            </span>
+          </label>
+        </section>
 
         <section className="settings-section">
           <div className="settings-row">

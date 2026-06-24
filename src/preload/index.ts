@@ -8,6 +8,7 @@ import type {
   BrowserFrame,
   BrowserInput,
   BrowserState,
+  CacheInfo,
   FileAttachment,
   ImageAttachment,
   PermissionRequestMsg,
@@ -39,6 +40,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.openInEditor, dir),
   downloadFile: (path: string): Promise<{ ok: boolean; message: string; saved?: string }> =>
     ipcRenderer.invoke(Channels.fileDownload, path),
+  getCacheInfo: (): Promise<CacheInfo> => ipcRenderer.invoke(Channels.cacheGetInfo),
+  chooseCacheDir: (): Promise<CacheInfo | null> => ipcRenderer.invoke(Channels.cacheChooseDir),
 
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>

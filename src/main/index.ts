@@ -8,6 +8,7 @@ import { RemoteServer } from './remote/remoteServer'
 import { buildRemoteApk } from './remote/buildApk'
 import { Channels } from '../shared/ipc'
 import { loadConfig, updateConfig } from './config'
+import { initStore, getCacheInfo, setCacheDir } from './store'
 import { saveAttachments } from './attachments'
 import type {
   AppConfig,
@@ -145,6 +146,17 @@ function registerIpc(): void {
   // App configuration (Settings screen).
   ipcMain.handle(Channels.configGet, () => loadConfig())
   ipcMain.handle(Channels.configSet, (_e, patch: Partial<AppConfig>) => updateConfig(patch))
+
+  // Cache folder: where the SQLite db (config/token/conversations) + .md memories live.
+  ipcMain.handle(Channels.cacheGetInfo, () => getCacheInfo())
+  ipcMain.handle(Channels.cacheChooseDir, async () => {
+    const res = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Escolha onde salvar os dados do Agent Code',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    return setCacheDir(res.filePaths[0])
+  })
 
   ipcMain.handle(Channels.pickDirectory, async () => {
     const res = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] })
@@ -332,6 +344,7 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  initStore() // open the cache-folder SQLite db (+ migrate legacy settings.json) before anything reads config
   registerIpc()
   createWindow()
   app.on('activate', () => {

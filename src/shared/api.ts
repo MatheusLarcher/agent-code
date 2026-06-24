@@ -5,6 +5,7 @@ import type {
   BrowserFrame,
   BrowserInput,
   BrowserState,
+  CacheInfo,
   FileAttachment,
   ImageAttachment,
   PermissionRequestMsg,
@@ -31,6 +32,10 @@ export interface AgentCodeApi {
   openInEditor(dir: string): Promise<{ ok: boolean; message: string }>
   /** Save a copy of a file (created by the agent) to Downloads and reveal it. */
   downloadFile(path: string): Promise<{ ok: boolean; message: string; saved?: string }>
+  /** Read the active cache folder (SQLite db + .md memories location). */
+  getCacheInfo(): Promise<CacheInfo>
+  /** Pick a new cache folder and switch to it; resolves null if the dialog was canceled. */
+  chooseCacheDir(): Promise<CacheInfo | null>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
   sendMessage(
