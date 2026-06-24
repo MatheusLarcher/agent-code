@@ -70,6 +70,15 @@ interface Props {
   onNeedVoiceKey: () => void
   /** Read-aloud state/handler (TTS lives in App). */
   tts: TtsControls
+  /** Model picker (mirrored above the composer). Locked while connected — the
+   *  model is fixed when the session starts; stop the session to change it. */
+  models: { id: string; label: string }[]
+  model: string
+  modelLocked: boolean
+  onModelChange: (id: string) => void
+  /** "Permitir tudo" toggle, shown right above the composer. */
+  skipPerms: boolean
+  onToggleSkipPerms: (on: boolean) => void
 }
 
 const fmt = (n: number): string => {
@@ -154,6 +163,37 @@ export function ChatPanel(props: Props): JSX.Element {
           ))}
         </div>
       )}
+
+      <div className="composer-bar">
+        <select
+          className="model-select"
+          value={props.model}
+          disabled={props.modelLocked}
+          title={
+            props.modelLocked
+              ? 'Para trocar o modelo, pare a sessão (botão no topo).'
+              : 'Modelo usado nesta conversa'
+          }
+          onChange={(e) => props.onModelChange(e.target.value)}
+        >
+          {props.models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <label
+          className="skip-perms"
+          title="Permite todas as ferramentas sem pedir permissão. Pode ligar/desligar a qualquer momento."
+        >
+          <input
+            type="checkbox"
+            checked={props.skipPerms}
+            onChange={(e) => props.onToggleSkipPerms(e.target.checked)}
+          />
+          Permitir tudo
+        </label>
+      </div>
 
       <Composer
         disabled={!hasActive}

@@ -16,7 +16,7 @@ import { loadConversations, loadUi, saveConversations, saveUi } from './storage'
 import { ChatPanel } from './components/ChatPanel'
 import { BrowserPanel } from './components/BrowserPanel'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
-import { IconSettings, IconSmartphone } from './components/Icons'
+import { IconPower, IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
@@ -145,6 +145,9 @@ export function App(): JSX.Element {
   const [remoteRunning, setRemoteRunning] = useState(false)
   // App settings modal (Google Stitch / OpenAI API keys, etc.).
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Confirmation before stopping a session whose agent is mid-task (so an
+  // accidental click never kills a running turn). Holds the conversation id.
+  const [stopConfirm, setStopConfirm] = useState<string | null>(null)
   // When opening Settings to nudge a missing key, focus that section.
   const [settingsFocus, setSettingsFocus] = useState<'openai' | null>(null)
   // Whether an OpenAI key is set — gates the mic and read-aloud buttons.
@@ -552,6 +555,54 @@ export function App(): JSX.Element {
     }
   }, [connect, notify])
 
+  // End a conversation's live session (frees the model selector, which is locked
+  // while connected). Interrupt first so a running turn is actually stopped, then
+  // dispose. The conversation + its sdkSessionId are kept, so "Conectar" later
+  // resumes the history — now on whatever model the user picked.
+  const stopSession = useCallback(
+    async (id: string): Promise<void> => {
+      try {
+        await window.api.interrupt(id)
+      } catch {
+        /* not mid-turn */
+      }
+      await window.api.disposeAgent(id)
+      setConnected(id, false)
+      setBusy(id, false)
+      setBusySince((m) => withoutKey(m, id))
+      setPermissions((p) => withoutKey(p, id))
+      notify('sucesso', 'Sessão encerrada — agora você pode trocar o modelo.')
+    },
+    [setConnected, setBusy, notify]
+  )
+
+  // "Parar sessão" click: if the agent is mid-task, ask first (don't kill a
+  // running turn by accident); otherwise stop right away.
+  const requestStopSession = useCallback((): void => {
+    const id = activeIdRef.current
+    if (!id) return
+    if (busyRef.current.has(id)) setStopConfirm(id)
+    else void stopSession(id)
+  }, [stopSession])
+
+  // "Permitir tudo" toggle — a global switch persisted across restarts and
+  // applied to every live session. Shared by the topbar and the composer bar.
+  const toggleSkipPerms = useCallback(
+    (on: boolean): void => {
+      setSkipPerms(on)
+      void window.api.setConfig({ skipPermissions: on }) // persiste entre reinícios
+      for (const id of connectedRef.current) void window.api.setBypass(id, on)
+      if (on) setPermissions({})
+      notify(
+        on ? 'aviso' : 'sucesso',
+        on
+          ? 'Modo "permitir tudo" ativado — ferramentas não pedirão confirmação.'
+          : 'Confirmações de permissão reativadas.'
+      )
+    },
+    [notify]
+  )
+
   // Core send into a SPECIFIC conversation, shared by the PC composer and by
   // commands arriving from a phone (remote inbound). `full` is what goes to the
   // agent (may include page-element refs); `text` is what's shown/used for title.
@@ -941,32 +992,8 @@ export function App(): JSX.Element {
               </option>
             ))}
           </select>
-          <label
-            className="skip-perms"
-            title="Permite todas as ferramentas sem pedir permissão. Pode ligar/desligar a qualquer momento."
-          >
-            <input
-              type="checkbox"
-              checked={skipPerms}
-              onChange={(e) => {
-                const on = e.target.checked
-                setSkipPerms(on)
-                void window.api.setConfig({ skipPermissions: on }) // persiste entre reinícios
-                // Apply to every live session so "permitir tudo" is a global switch.
-                for (const id of connectedIds) void window.api.setBypass(id, on)
-                if (on) setPermissions({})
-                notify(
-                  on ? 'aviso' : 'sucesso',
-                  on
-                    ? 'Modo "permitir tudo" ativado — ferramentas não pedirão confirmação.'
-                    : 'Confirmações de permissão reativadas.'
-                )
-              }}
-            />
-            Permitir tudo
-          </label>
           <button
-            className={`btn ghost remote-btn ${remoteRunning ? 'on' : ''}`}
+            className={`btn ghost remote-btn topbar-right ${remoteRunning ? 'on' : ''}`}
             onClick={() => setRemoteOpen(true)}
             title="Controle remoto pelo celular (Android)"
           >
@@ -981,9 +1008,19 @@ export function App(): JSX.Element {
             <IconSettings />
           </button>
           {active && activeConnected ? (
-            <span className={`session-pill ${skipPerms ? 'danger' : ''}`}>
-              ● {skipPerms ? 'tudo liberado' : 'conectado'}
-            </span>
+            <>
+              <span className={`session-pill ${skipPerms ? 'danger' : ''}`}>
+                ● {skipPerms ? 'tudo liberado' : 'conectado'}
+              </span>
+              <button
+                className="btn ghost stop-session-btn"
+                onClick={requestStopSession}
+                title="Parar a sessão (encerra o agente e libera a troca de modelo)"
+              >
+                <IconPower />
+                Parar sessão
+              </button>
+            </>
           ) : (
             // Shown even with no conversation: on first run it picks a folder,
             // creates the first chat and connects (see connectStart).
@@ -1014,6 +1051,12 @@ export function App(): JSX.Element {
             voiceReady={voiceReady}
             onNeedVoiceKey={needVoiceKey}
             tts={tts}
+            models={MODELS}
+            model={active?.model ?? MODELS[0].id}
+            modelLocked={!active || activeConnected}
+            onModelChange={(m) => active && patchConv(active.id, (c) => ({ ...c, model: m }))}
+            skipPerms={skipPerms}
+            onToggleSkipPerms={toggleSkipPerms}
           />
           {!browserMinimized && (
             <div
@@ -1055,6 +1098,37 @@ export function App(): JSX.Element {
       )}
       {remoteOpen && <RemoteModal onClose={() => setRemoteOpen(false)} />}
       {settingsOpen && <SettingsModal onClose={closeSettings} focus={settingsFocus} />}
+      {stopConfirm && (
+        <div className="modal-overlay" onClick={() => setStopConfirm(null)}>
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="modal-title">Parar a execução do agente?</h3>
+            <p className="modal-message">
+              O agente está executando uma tarefa agora. Parar a sessão vai interromper essa
+              execução e encerrar o agente. Você poderá reconectar depois (a conversa é mantida).
+            </p>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setStopConfirm(null)}>
+                Continuar executando
+              </button>
+              <button
+                className="btn danger-btn"
+                onClick={() => {
+                  const id = stopConfirm
+                  setStopConfirm(null)
+                  void stopSession(id)
+                }}
+              >
+                Parar execução
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

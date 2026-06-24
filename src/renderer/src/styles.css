@@ -407,6 +407,22 @@ body {
   color: var(--accent);
   font-weight: 600;
 }
+/* Pushes the right-hand topbar cluster (remote/settings/session) to the edge,
+   now that the "permitir tudo" checkbox (which used to carry margin-left:auto)
+   moved down to the composer bar. */
+.topbar .topbar-right {
+  margin-left: auto;
+}
+/* "Parar sessão" — destructive accent, icon + label inline. */
+.stop-session-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+}
+.stop-session-btn:hover {
+  background: rgba(255, 90, 90, 0.12);
+}
 
 /* ---- buttons ---- */
 .btn {
@@ -1141,6 +1157,21 @@ button svg {
 }
 
 /* ---- composer ---- */
+/* Quick-access row just above the input: model picker + "permitir tudo". */
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 0;
+  background: var(--bg-2);
+}
+.composer-bar .model-select {
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+.composer-bar .skip-perms {
+  margin-left: auto;
+}
 .composer {
   border-top: 1px solid var(--line);
   padding: 12px 16px 16px;
