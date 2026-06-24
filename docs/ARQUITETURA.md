@@ -15,6 +15,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Tradução de mensagens do SDK em eventos de UI](#tradução-de-mensagens-do-sdk-em-eventos-de-ui)
 - [Permissões de ferramentas](#permissões-de-ferramentas)
 - [Pasta de dados (cache) e SQLite](#pasta-de-dados-cache-e-sqlite)
+- [Memória persistente](#memória-persistente)
 - [Conversas, projetos e persistência](#conversas-projetos-e-persistência)
 - [Interface do chat (cards, janela, referências)](#interface-do-chat-cards-janela-referências)
 - [Baixar arquivos pelo chat](#baixar-arquivos-pelo-chat)
@@ -73,12 +74,13 @@ No encerramento (`window-all-closed`): fecha todos os navegadores e descarta tod
 const options: Options = {
   cwd,
   model,
+  additionalDirectories: [memoriesDir],  // libera a pasta de memórias (fora do cwd) p/ ler/gravar
   ...(resume ? { resume } : {}),         // retoma uma sessão anterior
   executable: 'node',                    // roda o CLI sob o Node do sistema, não o Electron
   includePartialMessages: true,          // habilita streaming token a token
   permissionMode: 'default',
   settingSources: ['user', 'project', 'local'],   // lê ~/.claude e .claude do projeto
-  systemPrompt: { type: 'preset', preset: 'claude_code', append: `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}` },
+  systemPrompt: { type: 'preset', preset: 'claude_code', append: `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}` },
   mcpServers: {
     browser: createBrowserMcpServer(browser),     // ferramentas browser_* + abas
     android: createAndroidMcpServer(browser)       // ferramentas android_* (build/preview/device)
@@ -89,7 +91,8 @@ this.q = query({ prompt: this.input, options })
 for await (const message of this.q) this.handleMessage(message)
 ```
 
-- `BROWSER_HINT` explica que o agente tem as ferramentas `browser_*`, que o preview é organizado em **abas** (reusar a aba atual por padrão) e que a página é renderizada ao vivo. `ANDROID_HINT` explica o fluxo Android (instalar a toolchain com `android_setup`, gerar APK, abrir preview e testar em vários tamanhos com `android_set_device`). `DOWNLOAD_HINT` instrui o agente a, quando o usuário pede um arquivo entregável (APK, zip, PDF…), emitir um marcador `[[download:CAMINHO_ABSOLUTO]]` numa linha própria — o app transforma isso num botão de **Baixar** no chat (ver [Baixar arquivos pelo chat](#baixar-arquivos-pelo-chat)).
+- `BROWSER_HINT` explica que o agente tem as ferramentas `browser_*`, que o preview é organizado em **abas** (reusar a aba atual por padrão) e que a página é renderizada ao vivo. `ANDROID_HINT` explica o fluxo Android (instalar a toolchain com `android_setup`, gerar APK, abrir preview e testar em vários tamanhos com `android_set_device`). `DOWNLOAD_HINT` instrui o agente a, quando o usuário pede um arquivo entregável (APK, zip, PDF…), emitir um marcador `[[download:CAMINHO_ABSOLUTO]]` numa linha própria — o app transforma isso num botão de **Baixar** no chat (ver [Baixar arquivos pelo chat](#baixar-arquivos-pelo-chat)). `buildMemoryHint(memoriesDir)` é montado **por sessão** (o caminho e o índice são dinâmicos): diz ao agente onde fica a **memória persistente** do usuário, como salvar/recall e **pré-carrega o `MEMORY.md`** atual (ver [Memória persistente](#memória-persistente)).
+- `additionalDirectories: [memoriesDir]` — a pasta de memórias vive **fora** do `cwd` do projeto, então é liberada explicitamente; sem isso o limite do workspace bloquearia ler/gravar os `.md` de memória.
 - `executable: 'node'` evita que o binário do Electron seja usado como runtime do CLI embutido.
 - **Interromper:** `interrupt()` chama `q.interrupt()` (ignora erro se não houver turno ativo).
 - **Encerrar:** `dispose()` fecha a fila de entrada (encerra o loop do SDK).
@@ -186,7 +189,9 @@ A persistência **por usuário** (não por projeto) vive numa **pasta de cache**
   ├─ agent-code.db               ← SQLite: tabela kv(key → JSON) com TODAS as configs
   │                                do sistema (API key do Stitch, "permitir tudo",
   │                                token da sessão Android…); conversas virão depois
-  └─ memories/                   ← arquivos .md de memória (usados pela memória, em breve)
+  └─ memories/                   ← arquivos .md da memória persistente (1 fato por arquivo)
+     ├─ MEMORY.md                 ←   índice (1 bullet por memória) pré-carregado no system prompt
+     └─ <slug>.md                 ←   um fato por arquivo
 ```
 
 - **Ponteiro** — o único dado guardado fora da pasta de cache: `~/.agent-code/location.json` com `{ cacheDir }`. Nada mais é criado no home.
@@ -196,7 +201,29 @@ A persistência **por usuário** (não por projeto) vive numa **pasta de cache**
 - **Conversas e estado da UI** também vivem no SQLite: `storage.ts` (renderer) grava as chaves `agentcode.conversations.v1` e `agentcode.ui.v1` no banco via `kv:get`/`kv:set`, **migrando** o que houver no `localStorage` antigo na primeira leitura (ver [Conversas e persistência](#conversas-projetos-e-persistência)).
 - **IPC:** `cache:get-info` (caminho atual), `cache:choose-dir` (diálogo nativo `openDirectory`+`createDirectory` → troca e recarrega) e `kv:get`/`kv:set` (store key→JSON). A tela `SettingsModal` mostra o caminho e o botão "Trocar…".
 
-> Fase atual: **configs/API key/token e conversas** já estão no SQLite. A **arquitetura de recall de memória** (injetar a descrição de todas as memórias em cada request) é a próxima fase.
+> Fase atual: **configs/API key/token, conversas e a memória persistente** já estão no disco da pasta de cache (SQLite + `memories/`). Ver [Memória persistente](#memória-persistente).
+
+---
+
+## Memória persistente
+
+O agente tem uma **memória de longo prazo por usuário**, em arquivos Markdown na pasta `memories/` da [pasta de cache](#pasta-de-dados-cache-e-sqlite) — privada por usuário/máquina e **persistente entre conversas**. A *mecânica* (onde fica, como salvar, como recall) é injetada no system prompt; o *conteúdo* é o que o agente acumula com o uso.
+
+**Como é montada** (`buildMemoryHint(memoriesDir)` em `agentSession.ts`, chamado a cada `start()`):
+
+- O texto da instrução **acompanha o projeto** (todo install se comporta igual), mas o **caminho** é resolvido em runtime via `getCacheInfo().memoriesDir`, porque é per-usuário/per-máquina.
+- O índice `MEMORY.md` é **pré-carregado** (lido do disco e embutido no prompt), do mesmo jeito que o Claude Code expõe o seu — assim o modelo já "sabe" passivamente o que lembrou, sem precisar listar a pasta. Num install novo o índice vem vazio (`(no memories saved yet)`); se o arquivo não existir ou não for legível, é tratado como vazio.
+
+**Convenção de gravação** (instruída ao agente):
+
+- **Um fato por arquivo**, `<slug-curto>.md` dentro de `memories/`; e um índice `MEMORY.md` com um bullet por memória (`- [Título](arquivo.md) — gancho curto`).
+- Antes de criar, conferir o índice e **atualizar** um arquivo existente do mesmo tema em vez de duplicar; apagar a memória (e o bullet) se virar falsa.
+- **Não** salvar o que já é evidente do código, do histórico do git ou do `CLAUDE.md`.
+- Disparado por pedidos do tipo "lembra disso", "salva na memória", "anota", "memorize", "remember this".
+
+**Acesso ao disco** — a pasta fica fora do `cwd` do projeto, então `start()` a libera via `additionalDirectories: [memoriesDir]`; sem isso o limite do workspace bloquearia a leitura/escrita dos `.md`. As ferramentas de arquivo (`Read`/`Write`/`Glob`…) agem nela normalmente.
+
+> Como o código do main agora puxa `node:sqlite` (via `config → store`), o teste `agentSession.test.ts` roda no ambiente **node** (`// @vitest-environment node`) em vez do `jsdom` padrão (que não externaliza o builtin `node:sqlite` e tentaria empacotá-lo).
 
 ---
 

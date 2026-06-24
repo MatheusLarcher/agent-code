@@ -1,3 +1,7 @@
+// @vitest-environment node
+// Main-process code: pulls in node builtins (via config → store → node:sqlite),
+// so it must run in the node env, not the default jsdom (which can't externalize
+// the newer node:sqlite builtin and tries to bundle it).
 import { describe, it, expect, vi } from 'vitest'
 import { AgentSession } from './agentSession'
 import type { BrowserController } from './browserController'

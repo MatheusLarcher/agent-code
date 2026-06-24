@@ -11,7 +11,8 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
  *  <chosen>/agent-code/             ← cache folder (name fixed = the project name)
  *    ├─ agent-code.db               ← SQLite: all system data (config, android token,
  *    │                                 conversations…) as a simple key→JSON store
- *    └─ memories/                   ← .md memory files (used by the memory feature later)
+ *    └─ memories/                   ← .md files of the persistent per-user memory
+ *                                     (MEMORY.md index + one fact per <slug>.md)
  *
  * The cache folder holds ONLY the .db and the .md memories — no libraries. SQLite is
  * the built-in node:sqlite (no native/npm dependency), so nothing else lands there.

@@ -5,6 +5,9 @@ import { createBrowserMcpServer } from './browserTools'
 import { createAndroidMcpServer } from './android/androidTools'
 import { createStitchPreviewMcpServer } from './stitchTools'
 import { loadConfig } from './config'
+import { getCacheInfo } from './store'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { ChatEvent, ImageAttachment, PermissionRequest, PermissionResponse, StartAgentOptions } from '../shared/ipc'
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
@@ -99,6 +102,44 @@ Follow THIS flow strictly:
 
 If the user rejects ("Descartar"), do not implement; offer to refine the design with Stitch instead.`
 
+// Persistent, cross-conversation memory. The .md files live in the user's chosen
+// cache folder (next to the SQLite db — see store.ts), so the PATH is per-user/per-machine,
+// but THESE INSTRUCTIONS ship with the project, so every install behaves the same.
+// Built per session because the folder path and the current index are dynamic.
+function buildMemoryHint(memoriesDir: string): string {
+  // Pre-load the index so the model passively knows what it already remembers,
+  // the same way Claude Code surfaces MEMORY.md — empty on a fresh install.
+  let index = ''
+  try {
+    const indexPath = join(memoriesDir, 'MEMORY.md')
+    if (existsSync(indexPath)) index = readFileSync(indexPath, 'utf8').trim()
+  } catch {
+    /* unreadable index — treat as empty */
+  }
+
+  return `You have a PERSISTENT MEMORY for this user, kept as Markdown files in this folder:
+${memoriesDir}
+
+This folder is part of the user's cache folder (next to the app's database) and survives across
+conversations. The memories are private to THIS user/machine — always use the ABSOLUTE path above
+(your working directory is the user's project, NOT this folder). The folder already exists; just
+write into it with your tools.
+
+SAVING — when the user asks you to remember, save, note, or memorize something ("lembra disso",
+"salva na memória", "anota", "memorize", "remember this", etc.):
+- Write ONE fact per file as <short-kebab-name>.md inside the folder above.
+- Keep a MEMORY.md index in that same folder: one bullet per memory — "- [Title](file.md) — short hook".
+- Before creating a file, check the index for an existing memory on the same topic and UPDATE that
+  file instead of making a duplicate. Delete a memory file (and its index line) if it becomes wrong.
+- Do NOT save things already evident from the project's code, git history, or CLAUDE.md.
+
+RECALLING — these files are your long-term knowledge about this user and their projects. Read the
+relevant ones when they help the current task. The current index is below (empty if none yet):
+
+--- MEMORY.md (current index) ---
+${index || '(no memories saved yet)'}`
+}
+
 // Tools auto-approved without prompting the user.
 const READ_ONLY = new Set([
   'Read',
@@ -166,7 +207,10 @@ export class AgentSession {
       browser: createBrowserMcpServer(this.browser),
       android: createAndroidMcpServer(this.browser)
     }
-    let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}`
+    // Tell the model where its per-user memory lives (and pre-load the index), so
+    // "lembra disso" saves into the cache folder and recall works across chats.
+    const memoriesDir = getCacheInfo().memoriesDir
+    let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     if (stitchOn) {
       // Official Stitch remote MCP — auth via the X-Goog-Api-Key header.
       mcpServers.stitch = {
@@ -183,6 +227,9 @@ export class AgentSession {
     const options: Options = {
       cwd: this.opts.cwd,
       model: this.opts.model,
+      // The memories folder lives outside the project cwd, so allow it explicitly —
+      // otherwise the workspace boundary would block reading/writing memory files.
+      additionalDirectories: [memoriesDir],
       // Resume a previous SDK session (loads its history) when continuing an old chat.
       ...(this.opts.resume ? { resume: this.opts.resume } : {}),
       // Run the bundled Claude Code CLI under system Node rather than the
