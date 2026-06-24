@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_CONFIG, type AppConfig, type CacheInfo } from '@shared/ipc'
+import { DEFAULT_CONFIG, OPENAI_VOICES, type AppConfig, type CacheInfo } from '@shared/ipc'
 import { useUI } from './UiProvider'
 
 interface Props {
@@ -178,6 +178,38 @@ export function SettingsModal({ onClose, focus }: Props): JSX.Element {
               seu computador (no banco da pasta de dados).
             </span>
           </label>
+
+          <div className="settings-key-row settings-voice-row">
+            <label className="settings-field settings-field-inline">
+              <span className="settings-field-label">Voz da leitura</span>
+              <select
+                className="settings-input"
+                value={cfg.openai.voice}
+                disabled={!loaded}
+                onChange={(e) => setCfg((c) => ({ ...c, openai: { ...c.openai, voice: e.target.value } }))}
+              >
+                {OPENAI_VOICES.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field settings-field-inline">
+              <span className="settings-field-label">Velocidade</span>
+              <select
+                className="settings-input"
+                value={String(cfg.openai.speed)}
+                disabled={!loaded}
+                onChange={(e) => setCfg((c) => ({ ...c, openai: { ...c.openai, speed: Number(e.target.value) } }))}
+              >
+                <option value="0.8">Devagar</option>
+                <option value="1">Normal</option>
+                <option value="1.25">Rápida</option>
+                <option value="1.5">Bem rápida</option>
+              </select>
+            </label>
+          </div>
         </section>
 
         <div className="modal-actions">

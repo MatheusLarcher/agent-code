@@ -168,10 +168,10 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle(Channels.openaiTts, async (_e, text: string) => {
-    const apiKey = loadConfig().openai.apiKey.trim()
-    if (!apiKey) return { ok: false, error: 'no-key' }
+    const { apiKey, voice, speed } = loadConfig().openai
+    if (!apiKey.trim()) return { ok: false, error: 'no-key' }
     try {
-      const { base64, mimeType } = await synthesizeSpeech(apiKey, text)
+      const { base64, mimeType } = await synthesizeSpeech(apiKey.trim(), text, voice, speed)
       return { ok: true, audioBase64: base64, mimeType }
     } catch (err) {
       return { ok: false, error: String(err instanceof Error ? err.message : err) }

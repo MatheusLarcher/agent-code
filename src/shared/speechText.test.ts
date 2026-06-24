@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toSpeechText } from './speechText'
+import { splitForSpeech, toSpeechText } from './speechText'
 
 describe('toSpeechText — texto tratado para leitura', () => {
   it('remove blocos de código (não lê exemplo de código)', () => {
@@ -63,5 +63,31 @@ describe('toSpeechText — texto tratado para leitura', () => {
 
   it('string vazia → vazia', () => {
     expect(toSpeechText('')).toBe('')
+  })
+})
+
+describe('splitForSpeech — fatiar para tocar rápido', () => {
+  it('quebra por frases agrupando até o limite', () => {
+    const chunks = splitForSpeech('Uma frase. Outra frase. Mais uma.', 20)
+    expect(chunks.length).toBeGreaterThan(1)
+    // nenhum pedaço (formado por várias frases) ultrapassa muito o limite
+    expect(chunks.every((c) => c.length <= 24)).toBe(true)
+    expect(chunks.join(' ')).toContain('Uma frase')
+    expect(chunks.join(' ')).toContain('Mais uma')
+  })
+
+  it('texto curto vira um único pedaço', () => {
+    expect(splitForSpeech('Oi, tudo bem?')).toEqual(['Oi, tudo bem?'])
+  })
+
+  it('vazio → nenhum pedaço', () => {
+    expect(splitForSpeech('')).toEqual([])
+  })
+
+  it('o primeiro pedaço é pequeno (baixa latência até o 1º áudio)', () => {
+    const long = Array.from({ length: 30 }, (_, i) => `Frase número ${i}.`).join(' ')
+    const chunks = splitForSpeech(long)
+    expect(chunks[0].length).toBeLessThanOrEqual(280)
+    expect(chunks.length).toBeGreaterThan(1)
   })
 })

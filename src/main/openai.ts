@@ -40,13 +40,23 @@ export async function transcribeAudio(
   return data.text ?? ''
 }
 
+/** Reading pace as an instruction (gpt-4o-mini-tts ignores the numeric `speed`
+ *  param, so we steer pace through the prompt instead). */
+function paceInstruction(speed: number): string {
+  if (speed <= 0.85) return ' Fale devagar, em ritmo pausado.'
+  if (speed >= 1.4) return ' Fale bem rápido, em ritmo acelerado.'
+  if (speed >= 1.15) return ' Fale um pouco mais rápido que o normal.'
+  return ''
+}
+
 /** Text-to-speech. Returns base64 MP3 audio for the renderer to play. The text is
  *  already treated for reading (see toSpeechText); the instructions keep the
- *  delivery natural and in the text's own language. */
+ *  delivery natural, in the text's own language, at the chosen pace. */
 export async function synthesizeSpeech(
   apiKey: string,
   text: string,
-  voice = 'alloy'
+  voice = 'alloy',
+  speed = 1
 ): Promise<{ base64: string; mimeType: string }> {
   const res = await fetch(`${API}/audio/speech`, {
     method: 'POST',
@@ -54,9 +64,9 @@ export async function synthesizeSpeech(
     body: JSON.stringify({
       model: 'gpt-4o-mini-tts',
       input: text,
-      voice,
+      voice: voice || 'alloy',
       response_format: 'mp3',
-      instructions: 'Leia de forma natural e clara, no mesmo idioma do texto.'
+      instructions: `Leia de forma natural e clara, no mesmo idioma do texto.${paceInstruction(speed)}`
     })
   })
   if (!res.ok) {

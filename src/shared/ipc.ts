@@ -293,12 +293,33 @@ export interface StitchConfig {
   apiKey: string
 }
 
+/** Voices offered by gpt-4o-mini-tts (shown in the Settings dropdown). */
+export const OPENAI_VOICES = [
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'fable',
+  'nova',
+  'onyx',
+  'sage',
+  'shimmer',
+  'verse'
+] as const
+export type OpenAiVoice = (typeof OPENAI_VOICES)[number]
+
 /** OpenAI integration (optional). When an API key is set, the chat gets voice
  *  input (speech→text, gpt-4o-mini-transcribe) and read-aloud (text→speech,
  *  gpt-4o-mini-tts). The key is stored only in the cache-folder SQLite db. */
 export interface OpenAiConfig {
   /** API key from platform.openai.com → API keys (sent as a Bearer header by main). */
   apiKey: string
+  /** Voice used for read-aloud (one of OPENAI_VOICES). */
+  voice: string
+  /** Reading pace: 0.8 = slow, 1 = normal, up to ~1.5 = fast. Steered via the
+   *  model's instructions (gpt-4o-mini-tts ignores the numeric `speed` param). */
+  speed: number
 }
 
 /** Everything the user can configure — persisted across app restarts. */
@@ -319,7 +340,7 @@ export interface AppConfig {
 
 export const DEFAULT_CONFIG: AppConfig = {
   stitch: { enabled: false, apiKey: '' },
-  openai: { apiKey: '' },
+  openai: { apiKey: '', voice: 'alloy', speed: 1 },
   skipPermissions: false,
   remoteToken: '',
   remoteEnabled: false

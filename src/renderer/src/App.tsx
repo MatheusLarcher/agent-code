@@ -20,7 +20,7 @@ import { IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
-import { toSpeechText } from '@shared/speechText'
+import { splitForSpeech, toSpeechText } from '@shared/speechText'
 import { NewTabModal } from './ui/NewTabModal'
 import { RemoteModal } from './ui/RemoteModal'
 import { SettingsModal } from './ui/SettingsModal'
@@ -152,6 +152,8 @@ export function App(): JSX.Element {
   // Read-aloud (TTS): id of the message currently playing, and the <audio> in use.
   const [speakingId, setSpeakingId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  // Bumped to cancel an in-flight read-aloud sequence (stop / switch message).
+  const speakTokenRef = useRef(0)
   // Stitch tabs already approved ("Aplicar no projeto" clicked) — hides the bar.
   const [appliedStitch, setAppliedStitch] = useState<Set<string>>(new Set())
   // Messages typed while the agent is busy wait here (per conversation) instead
@@ -663,47 +665,83 @@ export function App(): JSX.Element {
     void window.api.getConfig().then((c) => setVoiceReady(!!c.openai?.apiKey?.trim()))
   }, [])
 
+  // Stop any read-aloud in progress and invalidate its pending synthesis.
+  const stopSpeak = useCallback((): void => {
+    speakTokenRef.current++
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+    setSpeakingId(null)
+  }, [])
+
+  // Play one base64 chunk to completion (or until cancelled). Resolves on end,
+  // error, or when the audio is paused by stopSpeak.
+  const playClip = (base64: string, mimeType: string): Promise<void> =>
+    new Promise<void>((resolve) => {
+      const audio = new Audio(`data:${mimeType};base64,${base64}`)
+      audioRef.current = audio
+      let settled = false
+      const done = (): void => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      audio.onended = done
+      audio.onerror = done
+      audio.onpause = done // stopSpeak pauses → unblock the sequence
+      audio.play().catch(done)
+    })
+
   // Read an assistant answer aloud (TTS). Clicking again (or another message)
-  // stops the current playback. The text is treated for speech before sending.
+  // stops playback. The text is treated for speech, then synthesized and played
+  // chunk-by-chunk so the first audio starts fast (the rest are prefetched).
   const toggleSpeak = useCallback(
     async (id: string, text: string): Promise<void> => {
-      // Stop whatever is playing first.
-      if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current = null
-      }
-      if (speakingId === id) {
-        setSpeakingId(null)
-        return
-      }
+      const wasThis = speakingId === id
+      stopSpeak()
+      if (wasThis) return // second click = stop
       if (!voiceReady) {
         needVoiceKey()
         return
       }
-      const speech = toSpeechText(text)
-      if (!speech.trim()) {
+      const chunks = splitForSpeech(toSpeechText(text))
+      if (chunks.length === 0) {
         notify('aviso', 'Não há texto para ler nesta resposta.')
         return
       }
+      const token = ++speakTokenRef.current
       setSpeakingId(id)
-      const r = await window.api.speak(speech)
-      if (!r.ok || !r.audioBase64) {
+
+      // Prefetch synthesis so chunk i+1 is ready while chunk i plays.
+      const pending = new Map<number, ReturnType<typeof window.api.speak>>()
+      const fetchChunk = (i: number): ReturnType<typeof window.api.speak> | null => {
+        if (i < 0 || i >= chunks.length) return null
+        if (!pending.has(i)) pending.set(i, window.api.speak(chunks[i]))
+        return pending.get(i) ?? null
+      }
+
+      fetchChunk(0)
+      for (let i = 0; i < chunks.length; i++) {
+        const p = fetchChunk(i)
+        fetchChunk(i + 1) // kick off the next one in parallel
+        const r = await p!
+        if (token !== speakTokenRef.current) return // cancelled while synthesizing
+        if (!r.ok || !r.audioBase64) {
+          stopSpeak()
+          if (r.error === 'no-key') needVoiceKey()
+          else notify('erro', `Falha ao gerar áudio: ${r.error ?? 'erro'}`)
+          return
+        }
+        await playClip(r.audioBase64, r.mimeType ?? 'audio/mpeg')
+        if (token !== speakTokenRef.current) return // stopped during playback
+      }
+      if (token === speakTokenRef.current) {
+        audioRef.current = null
         setSpeakingId(null)
-        if (r.error === 'no-key') needVoiceKey()
-        else notify('erro', `Falha ao gerar áudio: ${r.error ?? 'erro'}`)
-        return
       }
-      const audio = new Audio(`data:${r.mimeType ?? 'audio/mpeg'};base64,${r.audioBase64}`)
-      audioRef.current = audio
-      const done = (): void => {
-        if (audioRef.current === audio) audioRef.current = null
-        setSpeakingId((cur) => (cur === id ? null : cur))
-      }
-      audio.onended = done
-      audio.onerror = done
-      await audio.play().catch(() => done())
     },
-    [speakingId, voiceReady, needVoiceKey, notify]
+    [speakingId, voiceReady, needVoiceKey, notify, stopSpeak]
   )
 
   const tts = useMemo(() => ({ speakingId, onToggleSpeak: toggleSpeak }), [speakingId, toggleSpeak])

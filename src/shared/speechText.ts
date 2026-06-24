@@ -57,6 +57,30 @@ export function toSpeechText(markdown: string): string {
     .trim()
 }
 
+/**
+ * Split already-treated speech text into small chunks (by sentence/paragraph,
+ * grouped up to `maxLen` chars). The caller synthesizes and plays them in
+ * sequence, so playback starts after just the first chunk instead of waiting for
+ * the whole answer to be synthesized — much lower time-to-first-audio.
+ */
+export function splitForSpeech(text: string, maxLen = 280): string[] {
+  const parts = text
+    .split(/(?<=[.!?…])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const chunks: string[] = []
+  let cur = ''
+  for (const p of parts) {
+    if (cur && cur.length + 1 + p.length > maxLen) {
+      chunks.push(cur)
+      cur = ''
+    }
+    cur = cur ? `${cur} ${p}` : p
+  }
+  if (cur) chunks.push(cur)
+  return chunks
+}
+
 /** Strip inline Markdown from a single line, keeping the spoken words. */
 function cleanInline(line: string): string {
   let s = line

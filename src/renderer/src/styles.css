@@ -2344,6 +2344,15 @@ button svg {
   display: flex;
   gap: 8px;
 }
+.settings-voice-row {
+  margin-top: 10px;
+}
+.settings-field-inline {
+  flex: 1;
+}
+.settings-field-inline select.settings-input {
+  cursor: pointer;
+}
 .settings-input {
   flex: 1;
   background: var(--bg);
