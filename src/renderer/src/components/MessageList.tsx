@@ -13,6 +13,7 @@ import { isDownloadableFile, parseDownloads } from '@shared/ipc'
 import { useUI } from '../ui/UiProvider'
 import { fileMeta, fmtSize } from '../files'
 import { IconSpeaker, IconStopSmall } from './Icons'
+import { CodeBlock, extToLang } from './CodeBlock'
 
 /** Read-aloud controls passed down from App (TTS state lives there so audio
  *  survives message re-renders and conversation switches). */
@@ -74,6 +75,47 @@ function Markdown({ text }: { text: string }): JSX.Element {
   )
 }
 
+/** "há X" relative label for a time earlier TODAY (else ''). */
+function relativeToday(ts: number, now: number): string {
+  const d = new Date(ts)
+  const n = new Date(now)
+  const sameDay =
+    d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()
+  if (!sameDay) return ''
+  const secs = Math.max(0, Math.floor((now - ts) / 1000))
+  if (secs < 45) return 'agora mesmo'
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `há ${mins} min`
+  const hrs = Math.floor(mins / 60)
+  const rem = mins % 60
+  return rem ? `há ${hrs} h ${rem} min` : `há ${hrs} h`
+}
+
+/** Date+time stamp shown under the last assistant answer. If the task ran today,
+ *  it also shows how long ago (refreshing every 30s). */
+function MessageTime({ ts }: { ts: number }): JSX.Element {
+  const [now, setNow] = useState(() => Date.now())
+  const rel = relativeToday(ts, now)
+  useEffect(() => {
+    if (!rel) return // only a "today" stamp needs to keep ticking
+    const id = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [rel])
+
+  const d = new Date(ts)
+  const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  const sameDay = !!relativeToday(ts, Date.now())
+  const absolute = sameDay
+    ? `Hoje às ${time}`
+    : `${d.toLocaleDateString('pt-BR')} às ${time}`
+  return (
+    <div className="msg-time" title={d.toLocaleString('pt-BR')}>
+      {absolute}
+      {rel && <span className="msg-time-rel"> · {rel}</span>}
+    </div>
+  )
+}
+
 /** How many messages to render at first, and to add each time the user scrolls
  *  to the top. Keeps very long conversations cheap to render (Gemini-style). */
 const PAGE = 40
@@ -106,6 +148,14 @@ function describeTool(name: string, input: unknown): ToolInfo {
   switch (name) {
     case 'Skill':
       return { verb: 'Skill', detail: String(inp.skill ?? 'skill'), isSkill: true, stats: null }
+    case 'Bash': {
+      // Show the first line of the command right in the (collapsed) head, so the
+      // user can read what ran without expanding.
+      const cmd = typeof inp.command === 'string' ? inp.command.trim() : ''
+      const firstLine = cmd.split('\n')[0]
+      const detail = firstLine.length > 64 ? firstLine.slice(0, 64) + '…' : firstLine
+      return { verb: 'Bash', detail, isSkill: false, stats: null }
+    }
     case 'Write':
       return { verb: 'Write', detail: baseName(inp.file_path), isSkill: false, stats: { added: lineCount(inp.content), removed: 0 } }
     case 'Edit':
@@ -132,6 +182,52 @@ function describeTool(name: string, input: unknown): ToolInfo {
       return { verb: 'Read', detail: baseName(inp.file_path), isSkill: false, stats: null }
     default:
       return { verb: name.replace(/^mcp__browser__/, '🌐 ').replace(/^mcp__[^_]+__/, ''), detail: '', isSkill: false, stats: null }
+  }
+}
+
+/** A human-readable view of a tool's input: a real code block (with newlines
+ *  and quotes intact — no escaped \n / \" noise) instead of raw escaped JSON. */
+interface InputView {
+  /** Optional small caption above the block (e.g. a Bash command's description). */
+  caption: string
+  language: string
+  code: string
+}
+
+function toolInputView(name: string, input: unknown): InputView {
+  const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+  switch (name) {
+    case 'Bash':
+      return { caption: str(inp.description), language: 'bash', code: str(inp.command) }
+    case 'Write':
+      return { caption: str(inp.file_path), language: extToLang(str(inp.file_path)), code: str(inp.content) }
+    case 'Edit':
+    case 'NotebookEdit': {
+      const oldS = str(inp.old_string || inp.old_source)
+      const newS = str(inp.new_string || inp.new_source)
+      const diffLines = [
+        ...oldS.split('\n').map((l) => '- ' + l),
+        ...newS.split('\n').map((l) => '+ ' + l)
+      ].join('\n')
+      return { caption: str(inp.file_path || inp.notebook_path), language: 'diff', code: diffLines }
+    }
+    case 'MultiEdit': {
+      const edits = Array.isArray(inp.edits) ? (inp.edits as Array<Record<string, unknown>>) : []
+      const code = edits
+        .map((e) =>
+          [
+            ...str(e?.old_string).split('\n').map((l) => '- ' + l),
+            ...str(e?.new_string).split('\n').map((l) => '+ ' + l)
+          ].join('\n')
+        )
+        .join('\n\n')
+      return { caption: str(inp.file_path), language: 'diff', code }
+    }
+    default:
+      // Anything else: pretty JSON, highlighted as JSON (still far more readable
+      // than a one-line escaped blob).
+      return { caption: '', language: 'json', code: JSON.stringify(input, null, 2) }
   }
 }
 
@@ -172,18 +268,25 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
           <span className="tool-badge run">running…</span>
         )}
       </button>
-      {open && (
-        <div className="tool-body">
-          <div className="tool-section-label">input</div>
-          <pre>{JSON.stringify(m.input, null, 2).slice(0, 1500)}</pre>
-          {m.result && (
-            <>
-              <div className="tool-section-label">result</div>
-              <pre>{m.result.text.slice(0, 2500)}</pre>
-            </>
-          )}
-        </div>
-      )}
+      {open && (() => {
+        const view = toolInputView(m.name, m.input)
+        return (
+          <div className="tool-body">
+            {view.caption && <div className="tool-caption">{view.caption}</div>}
+            {view.code ? (
+              <CodeBlock code={view.code.slice(0, 6000)} language={view.language} />
+            ) : (
+              <div className="tool-empty">(sem conteúdo)</div>
+            )}
+            {m.result && (
+              <>
+                <div className="tool-section-label">resultado</div>
+                <pre className="tool-result-pre">{m.result.text.slice(0, 2500)}</pre>
+              </>
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -213,6 +316,17 @@ export function MessageList({
   const startIdx = Math.max(0, total - visible)
   const shown = messages.slice(startIdx)
   const hasOlder = startIdx > 0
+
+  // Id of the most recent assistant answer that carries a finish time — only that
+  // one shows the date/time (and, if today, the "how long ago") footer.
+  let lastTsId: string | null = null
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.kind === 'assistant-text' && m.ts) {
+      lastTsId = m.id
+      break
+    }
+  }
 
   // After older messages are prepended, anchor the viewport so it doesn't jump
   // (the newly added content pushes everything down by its height).
@@ -297,15 +411,20 @@ export function MessageList({
                   {paths.map((p, k) => (
                     <DownloadChip key={k} path={p} />
                   ))}
-                  {m.answer && clean && (
-                    <button
-                      className={`msg-speak ${speaking ? 'active' : ''}`}
-                      onClick={() => tts.onToggleSpeak(m.id, clean)}
-                      title={speaking ? 'Parar leitura' : 'Ler em voz alta'}
-                    >
-                      {speaking ? <IconStopSmall size={14} /> : <IconSpeaker size={15} />}
-                      {speaking ? 'Parar' : 'Ouvir'}
-                    </button>
+                  {((m.answer && clean) || (m.id === lastTsId && m.ts)) && (
+                    <div className="msg-foot">
+                      {m.answer && clean && (
+                        <button
+                          className={`msg-speak ${speaking ? 'active' : ''}`}
+                          onClick={() => tts.onToggleSpeak(m.id, clean)}
+                          title={speaking ? 'Parar leitura' : 'Ler em voz alta'}
+                        >
+                          {speaking ? <IconStopSmall size={14} /> : <IconSpeaker size={15} />}
+                          {speaking ? 'Parar' : 'Ouvir'}
+                        </button>
+                      )}
+                      {m.id === lastTsId && m.ts && <MessageTime ts={m.ts} />}
+                    </div>
                   )}
                 </div>
               </div>

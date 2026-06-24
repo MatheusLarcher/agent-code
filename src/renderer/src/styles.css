@@ -1014,7 +1014,6 @@ button svg {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
   padding: 5px 11px;
   border-radius: 9px;
   font-size: 12px;
@@ -1078,6 +1077,57 @@ button svg {
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+}
+/* Syntax-highlighted command/code (VS Code colors via highlight.js vs2015). */
+.code-block.hljs {
+  margin: 0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  tab-size: 2;
+}
+.code-block.hljs code {
+  font-family: inherit;
+  background: none;
+  padding: 0;
+  white-space: pre;
+}
+/* File path / command description shown above the code block. */
+.tool-caption {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+.tool-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+.tool-result-pre {
+  margin-top: 2px;
+  max-height: 360px;
+  overflow: auto;
+}
+/* Footer row inside the answer bubble: "Ouvir" button + date/time side by side. */
+.msg-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+/* Date/time (and "how long ago") next to the listen button. */
+.msg-time {
+  font-size: 11px;
+  color: var(--muted);
+}
+.msg-time-rel {
+  opacity: 0.85;
 }
 
 /* ---- permission card ---- */

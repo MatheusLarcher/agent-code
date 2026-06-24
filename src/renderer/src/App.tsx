@@ -105,7 +105,9 @@ function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
     const copy = [...prev]
     for (let i = copy.length - 1; i >= 0; i--) {
       if (copy[i].kind === 'assistant-text') {
-        copy[i] = { ...copy[i], answer: true }
+        // Stamp the finish time so the chat can show when this answer ran (and,
+        // if today, how long ago).
+        copy[i] = { ...copy[i], answer: true, ts: Date.now() }
         break
       }
     }

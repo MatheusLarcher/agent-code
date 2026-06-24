@@ -16,6 +16,9 @@ export type UIMessage = (ChatEvent | UserMessage) & {
   result?: { isError: boolean; text: string }
   /** Set on the final assistant text of a turn (the actual answer, shown in full font). */
   answer?: boolean
+  /** Epoch ms the turn finished — stamped on the answer so the chat can show
+   *  when (and how long ago) that task ran. */
+  ts?: number
 }
 
 /** Per-session token/cost accounting shown in the chat header. */
