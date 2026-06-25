@@ -22,7 +22,7 @@ Inventário completo do projeto: **cada arquivo versionado** e sua responsabilid
 |---------|------------------|
 | `start.bat` | Inicialização no Windows: usa o Node do sistema ou **baixa um Node portátil** (v24.11.1, em `.node/`, sem admin) se faltar; **linka as skills** (`.agents\skills\* → .claude\skills\` via junction `mklink /J`, idempotente, sem reinstalar); instala dependências na primeira vez (baixa o Chromium do Playwright), garante o binário do Electron e roda `npm run dev`. |
 | `package.json` | Metadados, **scripts** (`dev`, `build`, `start`, `icon`, `postinstall`, `typecheck`, `test`) e dependências. Runtime: `@anthropic-ai/claude-agent-sdk`, `playwright`, `zod`, `react-markdown`, `remark-gfm`, `qrcode` (QR do controle remoto). Dev: Electron 42, electron-vite, React 19, TypeScript, Vite, Vitest, jsdom, Testing Library, `@types/qrcode`. O SQLite usa o **`node:sqlite` embutido** (sem dependência nova). |
-| `skills-lock.json` | Lockfile do **kit de skills** (`npx skills`): origem (repo GitHub) + hash de cada skill versionada em `.agents/skills/`. |
+| `skills-lock.json` | Lockfile do **kit de skills** (`npx skills`): origem (repo GitHub) + hash de cada skill **instalada via `npx skills add`**. A skill própria `planejar` (escrita à mão) **não** entra aqui. |
 | `package-lock.json` | Lockfile de dependências (gerado). |
 | `electron.vite.config.ts` | Config do **electron-vite**: alvos main/preload (com `externalizeDepsPlugin`) e renderer (plugin React + alias `@shared`). |
 | `vitest.config.ts` | Config dos testes: ambiente `jsdom`, `globals`, alias `@shared`, plugin React; inclui `src/**/*.test.{ts,tsx}`. |
@@ -30,7 +30,7 @@ Inventário completo do projeto: **cada arquivo versionado** e sua responsabilid
 | `tsconfig.node.json` | TS do lado Node (`src/main`, `src/preload`, `src/shared`, config). `strict`, `moduleResolution: Bundler`, `types: ["node"]`, alias `@shared/*`. |
 | `tsconfig.web.json` | TS do renderer (`src/renderer` + `src/shared`). Igual ao node, com `lib: DOM` e `jsx: react-jsx`. |
 | `.gitignore` | Ignora `node_modules/`, `out/`, `dist/`, `.vite/`, logs, `.env*`, `*.tsbuildinfo`, ferramentas locais (`.claude/`, `.claude-flow/`, `.mcp.json`, `CLAUDE.md`), o Node portátil (`.node/`) e os gerados do app remoto (`smartfone-remote/{node_modules,android,dist,.gradle}`). **`.agents/` é versionado** (kit de skills). |
-| `.agents/skills/` | **Kit de skills** versionado (fonte da verdade): `brainstorming`, `frontend-design`, `copywriting`, `landing-page-design`, `adversarial-review` (esta adaptada para subagentes Claude nativos). O `start.bat` cria junctions disso em `.claude/skills/`. |
+| `.agents/skills/` | **Kit de skills** versionado (fonte da verdade): `brainstorming`, `frontend-design`, `copywriting`, `landing-page-design`, `adversarial-review` (esta adaptada para subagentes Claude nativos) e **`planejar`** (própria do projeto, escrita à mão — *Plan & Execute* guiado por tarefas; não vem do `npx skills`/`skills-lock.json`). O `start.bat` cria junctions disso em `.claude/skills/`. |
 | `.gitattributes` | `* text=auto` (normalização de fim de linha). |
 | `README.md` | Documentação principal (uso, requisitos, funcionalidades, scripts). |
 | `docs/ARQUITETURA.md` | Arquitetura detalhada. |

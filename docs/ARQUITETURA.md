@@ -435,8 +435,9 @@ O projeto versiona um **kit de skills** do Claude Code para que, ao clonar em ou
 
 - **Fonte da verdade:** `.agents/skills/<nome>/` (arquivos reais, versionados — instalados via `npx skills add`, registrados em `skills-lock.json` na raiz). `.claude/` segue **gitignorado**.
 - **Ativação:** o `start.bat` linka `.agents\skills\* → .claude\skills\` via **junction** (`mklink /J` — não exige admin, idempotente). Só **linka**, não reinstala — preserva adaptações locais. O Claude Code lê `.claude/skills/` nativamente.
-- **Kit atual (5):** `brainstorming` (design antes de implementar), `frontend-design` (direção visual), `copywriting` (copy de conversão), `landing-page-design` (estratégia de conversão — sem dependências externas) e `adversarial-review` (revisão crítica multi-lente).
+- **Kit atual (6):** `brainstorming` (design antes de implementar), `frontend-design` (direção visual), `copywriting` (copy de conversão), `landing-page-design` (estratégia de conversão — sem dependências externas), `adversarial-review` (revisão crítica multi-lente) e `planejar` (execução guiada por tarefas — *Plan & Execute*).
 - **`adversarial-review`** foi **adaptada** para spawnar **subagentes Claude nativos** (ferramenta Agent) em vez do CLI externo `codex exec --skip-git-repo-check` do upstream — funciona neste setup e sem o risco de rodar outro agente autônomo com trava desligada. As lentes (Skeptic/Architect/Minimalist), o dimensionamento e o formato de veredito ficam em `references/`.
+- **`planejar`** é **própria deste projeto** (escrita à mão, **não** vem do `npx skills add` nem entra no `skills-lock.json`). Para tarefas **complexas** de código (tela/painel do zero, refatoração multi-arquivo, fluxo completo), ela obriga o agente a **planejar antes de codar**: cria `EXECUTION_PLAN.md` na raiz com o prompt original + tarefas atômicas em checkboxes, executa **uma por vez**, valida cada uma no terminal (`npm run typecheck`/`npm test`) antes de marcar `[x]`, e fecha com auditoria contra o pedido original. A `description` dispara **auto-invocação** em tarefas complexas mesmo sem o usuário citá-la; tarefas **simples** são resolvidas direto, sem plano.
 
 ---
 

@@ -9,6 +9,8 @@ Você conversa com o agente de um lado e ele pesquisa, abre sites e interage com
 ## O que dá pra fazer
 
 - 💬 **Conversar com o agente** (Claude) com streaming, markdown, cartões de ferramenta e medidor de tokens/custo.
+- 🎙️ **Voz no chat** — ditado por microfone (transcrição) e **leitura das respostas em voz alta**, com velocidade ajustável _(usa sua chave OpenAI)_.
+- ✍️ **Sua mensagem nunca se perde** — **rascunho salvo por conversa** (sobrevive a trocar de conversa e reabrir o app) e, se a resposta der erro, a mensagem fica marcada com **"Tentar de novo"** para reenviar em 1 clique.
 - 🌐 **Navegador embutido controlado pelo agente** — agora um **Chrome de verdade** (perfil persistente por conversa, copiar/colar, captura nítida); ele navega, lê e clica em páginas e você vê tudo ao vivo.
 - 🗂️ **Abas de preview** — várias páginas/dispositivos abertos ao mesmo tempo, e o agente sabe (e controla) qual aba está ativa.
 - 📱 **Preview Android** — o agente sobe um emulador, gera o APK e testa o app ao vivo numa **moldura de celular**, podendo trocar entre modelos (S26 Ultra, Pixel, tablets…) ou resolução custom. _(iPhone planejado.)_
