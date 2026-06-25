@@ -37,6 +37,12 @@ export interface RemoteServerDeps {
   loadToken?: () => string
   /** Persist a freshly generated pairing token so it stays fixed across sessions. */
   saveToken?: (token: string) => void
+  /** Transcribe phone audio on the PC (OpenAI). Throws Error('no-key') if unset. */
+  transcribe?: (audioBase64: string, mimeType: string) => Promise<string>
+  /** Synthesize speech on the PC (OpenAI). Throws Error('no-key') if unset. */
+  tts?: (text: string) => Promise<{ base64: string; mimeType: string }>
+  /** Whether an OpenAI key is configured (gates the phone's voice buttons). */
+  voiceReady?: () => boolean
 }
 
 const DEFAULT_PORT = 8765
@@ -223,6 +229,8 @@ export class RemoteServer {
       if (path === '/api/history') return this.serveHistory(url, res)
       if (path === '/api/events') return this.serveEvents(req, res)
       if (path === '/api/send' && req.method === 'POST') return this.serveSend(req, res)
+      if (path === '/api/transcribe' && req.method === 'POST') return this.serveTranscribe(req, res)
+      if (path === '/api/tts' && req.method === 'POST') return this.serveTts(req, res)
       if (path === '/api/file') return this.serveFile(url, res)
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'rota desconhecida' }))
@@ -332,8 +340,56 @@ export class RemoteServer {
 
   private serveState(res: ServerResponse): void {
     const conversations = this.state.conversations.map((c) => summarize(c))
+    // `voiceReady` tells the phone whether to show the mic/listen buttons (the
+    // actual STT/TTS runs on the PC, where the OpenAI key lives).
+    const voiceReady = this.deps.voiceReady ? this.deps.voiceReady() : false
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ conversations }))
+    res.end(JSON.stringify({ conversations, voiceReady }))
+  }
+
+  /** Phone → PC speech-to-text: receives recorded audio, returns the transcript.
+   *  The phone records; the PC (with the OpenAI key) transcribes. */
+  private async serveTranscribe(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.deps.transcribe) return sendJson(res, 503, { ok: false, error: 'voice-unavailable' })
+    const body = await readBody(req)
+    let audioBase64 = ''
+    let mimeType = ''
+    try {
+      const j = JSON.parse(body) as { audioBase64?: string; mimeType?: string }
+      audioBase64 = String(j.audioBase64 ?? '')
+      mimeType = String(j.mimeType ?? '')
+    } catch {
+      /* fall through to validation */
+    }
+    if (!audioBase64) return sendJson(res, 400, { ok: false, error: 'áudio vazio' })
+    try {
+      const text = await this.deps.transcribe(audioBase64, mimeType)
+      sendJson(res, 200, { ok: true, text })
+    } catch (err) {
+      // 200 with an error field so the phone can show a friendly message.
+      const msg = err instanceof Error ? err.message : String(err)
+      sendJson(res, 200, { ok: false, error: msg === 'no-key' ? 'no-key' : msg })
+    }
+  }
+
+  /** Phone → PC text-to-speech: receives text, returns base64 MP3 to play. */
+  private async serveTts(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.deps.tts) return sendJson(res, 503, { ok: false, error: 'voice-unavailable' })
+    const body = await readBody(req)
+    let text = ''
+    try {
+      text = String((JSON.parse(body) as { text?: string }).text ?? '').trim()
+    } catch {
+      /* fall through */
+    }
+    if (!text) return sendJson(res, 400, { ok: false, error: 'texto vazio' })
+    try {
+      const { base64, mimeType } = await this.deps.tts(text)
+      sendJson(res, 200, { ok: true, audioBase64: base64, mimeType })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      sendJson(res, 200, { ok: false, error: msg === 'no-key' ? 'no-key' : msg })
+    }
   }
 
   private serveHistory(url: URL, res: ServerResponse): void {
@@ -387,6 +443,12 @@ export class RemoteServer {
 function summarize(c: RemoteConversation): Omit<RemoteConversation, 'messages'> & { messageCount: number } {
   const { messages, ...rest } = c
   return { ...rest, messageCount: messages.length }
+}
+
+/** Write a JSON response with the given status. */
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
+  res.end(JSON.stringify(body))
 }
 
 /** Read at most ~24MB of a request body as a string (images travel as base64). */

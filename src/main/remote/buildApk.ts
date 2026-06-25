@@ -94,6 +94,26 @@ async function ensureCameraPermission(androidDir: string, onLine: Progress): Pro
   onLine('Permissão de câmera adicionada ao AndroidManifest.')
 }
 
+/** Ensure the manifest declares RECORD_AUDIO so the chat's voice dictation
+ *  (getUserMedia in the WebView) can request the microphone. Idempotent. */
+async function ensureMicrophonePermission(androidDir: string, onLine: Progress): Promise<void> {
+  const manifest = join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml')
+  let xml: string
+  try {
+    xml = await readFile(manifest, 'utf8')
+  } catch {
+    return
+  }
+  if (xml.includes('android.permission.RECORD_AUDIO')) return
+  const open = xml.match(/<manifest[^>]*>/)
+  if (!open) return
+  const perm =
+    '\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />' +
+    '\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />'
+  await writeFile(manifest, xml.replace(open[0], open[0] + perm))
+  onLine('Permissão de microfone adicionada ao AndroidManifest.')
+}
+
 /** Java source installed into the (gitignored, regenerated) Android project so the
  *  WebView saves files streamed by the PC bridge to the phone's Downloads. */
 const MAIN_ACTIVITY_JAVA = `package com.matheus.agentremote;
@@ -256,6 +276,7 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
   onLine('Sincronizando web → Android (cap sync)…')
   await run('npx', ['--yes', 'cap', 'sync', 'android'], { cwd: rootDir, env: d.env, onLine })
   await ensureCameraPermission(androidDir, onLine)
+  await ensureMicrophonePermission(androidDir, onLine)
   await ensureDownloadSupport(androidDir, onLine)
 
   // Brand the launcher/splash with the SAME art as the desktop app

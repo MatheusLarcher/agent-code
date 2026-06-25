@@ -28,7 +28,11 @@ var state = {
   retry: 0,          // backoff step
   wakeLock: null,    // screen wake lock (keeps the app awake/connected)
   online: false,
-  openTools: {}      // tool-use ids the user expanded (persist across re-renders)
+  openTools: {},     // tool-use ids the user expanded (persist across re-renders)
+  voiceReady: false, // PC has an OpenAI key → show mic/listen buttons
+  recording: false,  // mic is capturing right now
+  speakingId: null,  // id of the assistant message being read aloud (or null)
+  audio: null        // <Audio> currently playing the TTS
 }
 
 var $ = function (id) { return document.getElementById(id) }
@@ -106,7 +110,9 @@ function el(cls, text) {
 var ICONS = {
   download: '<path d="M12 4v10"/><polyline points="7 11 12 16 17 11"/><line x1="5" y1="20" x2="19" y2="20"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-  clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>'
+  clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
+  speaker: '<path d="M4 9v6h3.5L13 19V5L7.5 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8 8 0 0 1 0 12"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>'
 }
 function icon(name, size) {
   var s = size || 16
@@ -395,6 +401,19 @@ function renderMessages() {
         dl.addEventListener('click', function () { triggerDownload(path) })
         a.appendChild(dl)
       })
+      // "Ouvir" — only on the final answer, and only when the PC can synthesize
+      // (has an OpenAI key). Reading aloud is processed on the PC.
+      if (m.answer && state.voiceReady && parsed.clean) {
+        var speaking = state.speakingId === m.id
+        var sp = document.createElement('button')
+        sp.className = 'msg-speak' + (speaking ? ' active' : '')
+        sp.appendChild(icon(speaking ? 'stop' : 'speaker', 15))
+        sp.appendChild(document.createTextNode(speaking ? ' Parar' : ' Ouvir'))
+        ;(function (id, txt) {
+          sp.addEventListener('click', function () { toggleSpeak(id, txt) })
+        })(m.id, parsed.clean)
+        a.appendChild(sp)
+      }
       box.appendChild(a)
     } else if (m.kind === 'thinking') {
       box.appendChild(el('msg thinking', m.text))
@@ -430,10 +449,16 @@ function fetchState() {
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
     .then(function (data) {
       state.conversations = data.conversations || []
+      var wasReady = state.voiceReady
+      state.voiceReady = !!data.voiceReady
+      var mic = $('mic')
+      if (mic) mic.hidden = !state.voiceReady
       if (!$('history').hidden) renderHistory()
       updateConvTitle()
       var cur = current()
       $('busy').hidden = !(cur && cur.busy)
+      // If voice availability flipped, refresh so the "Ouvir" buttons appear/hide.
+      if (wasReady !== state.voiceReady) scheduleRender()
       return data
     })
 }
@@ -599,6 +624,149 @@ function send() {
   }).catch(function () { setStatus(false) })
 }
 
+// ---- voice: mic (STT) + read aloud (TTS), both processed on the PC ----------
+
+var rec = { recorder: null, stream: null, chunks: [], mime: '' }
+
+function pickAudioMime() {
+  var cands = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
+  for (var i = 0; i < cands.length; i++) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(cands[i])) return cands[i]
+  }
+  return ''
+}
+
+function setMicUI(recording, transcribing) {
+  var b = $('mic')
+  if (!b) return
+  b.classList.toggle('recording', !!recording)
+  b.classList.toggle('busy', !!transcribing)
+  b.title = recording ? 'Parar e transcrever' : (transcribing ? 'Transcrevendo…' : 'Falar')
+}
+
+function toggleMic() {
+  if (state.recording) stopRecording()
+  else startRecording()
+}
+
+function startRecording() {
+  if (!state.voiceReady) { alert('Configure a chave da OpenAI no app do PC para usar voz.'); return }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+    alert('Microfone indisponível aqui. Use o app instalado (no navegador via http a gravação é bloqueada).')
+    return
+  }
+  rec.mime = pickAudioMime()
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+    rec.stream = stream
+    rec.chunks = []
+    var r = new MediaRecorder(stream, rec.mime ? { mimeType: rec.mime } : undefined)
+    rec.recorder = r
+    r.ondataavailable = function (e) { if (e.data && e.data.size) rec.chunks.push(e.data) }
+    r.onstop = function () {
+      var type = (rec.chunks[0] && rec.chunks[0].type) || rec.mime || 'audio/webm'
+      var blob = new Blob(rec.chunks, { type: type })
+      stopStream()
+      if (blob.size) transcribeBlob(blob, type)
+      else setMicUI(false)
+    }
+    r.start() // one whole, finalized file on stop
+    state.recording = true
+    setMicUI(true)
+  }).catch(function (e) {
+    stopStream()
+    state.recording = false
+    setMicUI(false)
+    var name = e && e.name ? e.name : 'erro'
+    alert(name === 'NotAllowedError'
+      ? 'Permissão de microfone negada. Libere o microfone para o app nas configurações do Android.'
+      : 'Não consegui acessar o microfone (' + name + ').')
+  })
+}
+
+function stopRecording() {
+  state.recording = false
+  setMicUI(false, true)
+  if (rec.recorder && rec.recorder.state !== 'inactive') {
+    try { rec.recorder.stop() } catch (e) { /* already stopping */ }
+  }
+}
+
+function stopStream() {
+  if (rec.stream) { rec.stream.getTracks().forEach(function (t) { t.stop() }); rec.stream = null }
+  rec.recorder = null
+}
+
+function blobToBase64(blob) {
+  return new Promise(function (resolve) {
+    var r = new FileReader()
+    r.onload = function () {
+      var s = String(r.result)
+      var i = s.indexOf('base64,')
+      resolve(i >= 0 ? s.slice(i + 'base64,'.length) : '')
+    }
+    r.onerror = function () { resolve('') }
+    r.readAsDataURL(blob)
+  })
+}
+
+// Send the recorded audio to the PC, which transcribes it and returns text we
+// drop into the input box (appended to whatever is already typed).
+function transcribeBlob(blob, type) {
+  setMicUI(false, true)
+  blobToBase64(blob).then(function (b64) {
+    if (!b64) { setMicUI(false); return }
+    return fetch(api('/api/transcribe'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioBase64: b64, mimeType: type })
+    }).then(function (r) { return r.json() }).then(function (d) {
+      setMicUI(false)
+      if (d && d.ok && d.text) {
+        var input = $('input')
+        var t = String(d.text).trim()
+        input.value = input.value.trim() ? input.value.trim() + ' ' + t : t
+        autoGrow()
+        input.focus()
+      } else if (d && d.error === 'no-key') {
+        alert('Configure a chave da OpenAI no app do PC para usar voz.')
+      } else {
+        alert('Transcrição falhou: ' + ((d && d.error) || 'erro'))
+      }
+    })
+  }).catch(function () { setMicUI(false); alert('Falha ao transcrever o áudio.') })
+}
+
+function stopSpeak() {
+  if (state.audio) { try { state.audio.pause() } catch (e) {} state.audio = null }
+  state.speakingId = null
+  scheduleRender()
+}
+
+// Ask the PC to synthesize the answer's text and play the returned MP3. Tapping
+// again (same message) stops it.
+function toggleSpeak(id, text) {
+  if (state.speakingId === id) { stopSpeak(); return }
+  stopSpeak()
+  state.speakingId = id
+  scheduleRender()
+  fetch(api('/api/tts'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text })
+  }).then(function (r) { return r.json() }).then(function (d) {
+    if (state.speakingId !== id) return // canceled while loading
+    if (d && d.ok && d.audioBase64) {
+      var audio = new Audio('data:' + (d.mimeType || 'audio/mpeg') + ';base64,' + d.audioBase64)
+      state.audio = audio
+      audio.onended = function () { if (state.speakingId === id) stopSpeak() }
+      audio.play().catch(function () { stopSpeak() })
+    } else {
+      stopSpeak()
+      alert(d && d.error === 'no-key' ? 'Configure a chave da OpenAI no app do PC.' : 'Falha ao gerar o áudio.')
+    }
+  }).catch(function () { stopSpeak() })
+}
+
 // ---- image attachments ----------------------------------------------------
 
 // Read an image File into a base64 attachment (strips the data-URL prefix),
@@ -691,6 +859,8 @@ function showPair(error) {
   if (state.es) { state.es.close(); state.es = null }
   if (state.poll) { clearInterval(state.poll); state.poll = null }
   if (state.reconnect) { clearTimeout(state.reconnect); state.reconnect = null }
+  if (state.recording) stopRecording()
+  stopSpeak()
   $('reconnect').hidden = true
   releaseWakeLock()
   if (typeof stopScan === 'function') stopScan()
@@ -874,6 +1044,7 @@ function init() {
     }
   })
   $('send').addEventListener('click', send)
+  $('mic').addEventListener('click', toggleMic)
   $('input').addEventListener('input', autoGrow)
   $('input').addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }

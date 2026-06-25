@@ -76,7 +76,20 @@ const remote = new RemoteServer({
   onClientsChanged: (info) => send(Channels.remoteClients, info),
   // Fixed pairing token, persisted in settings.json so phones stay paired.
   loadToken: () => loadConfig().remoteToken,
-  saveToken: (token) => updateConfig({ remoteToken: token })
+  saveToken: (token) => updateConfig({ remoteToken: token }),
+  // Voice runs on the PC (the OpenAI key lives here): the phone records/plays,
+  // we transcribe/synthesize. Throw 'no-key' so the phone shows a clear hint.
+  transcribe: (audioBase64, mimeType) => {
+    const apiKey = loadConfig().openai.apiKey.trim()
+    if (!apiKey) throw new Error('no-key')
+    return transcribeAudio(apiKey, audioBase64, mimeType)
+  },
+  tts: (text) => {
+    const { apiKey, voice } = loadConfig().openai
+    if (!apiKey.trim()) throw new Error('no-key')
+    return synthesizeSpeech(apiKey.trim(), text, voice)
+  },
+  voiceReady: () => !!loadConfig().openai.apiKey.trim()
 })
 
 /** Get (creating if needed) the browser dedicated to a conversation. */

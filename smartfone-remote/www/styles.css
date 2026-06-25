@@ -345,6 +345,20 @@ html, body {
   font-family: inherit;
 }
 .msg.assistant .msg-dl:active { background: rgba(224, 132, 88, 0.28); transform: scale(0.98); }
+/* "Ouvir / Parar" (read aloud) under an answer — quieter than the download chip. */
+.msg.assistant .msg-speak {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 10px;
+  background: none; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 12px; padding: 8px 14px;
+  font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.msg.assistant .msg-speak.active { color: var(--accent); border-color: rgba(224, 132, 88, 0.55); }
+.msg.assistant .msg-speak:active { transform: scale(0.98); }
+/* Mic button states: red pulse while recording, dimmed while transcribing. */
+.mic-btn.recording { color: var(--err, #e5654b); animation: mic-pulse 1.1s ease-in-out infinite; }
+.mic-btn.busy { opacity: 0.5; }
+@keyframes mic-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 .msg.thinking {
   align-self: flex-start; color: var(--muted); font-style: italic; font-size: 13.5px;
   border-left: 2px solid var(--line); padding-left: 11px;

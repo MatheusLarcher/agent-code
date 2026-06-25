@@ -106,6 +106,16 @@ async function main() {
         console.log('→ CAMERA permission added to AndroidManifest')
       }
     }
+    if (!xml.includes('android.permission.RECORD_AUDIO')) {
+      const open = xml.match(/<manifest[^>]*>/)
+      if (open) {
+        xml = xml.replace(open[0], open[0] +
+          '\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />' +
+          '\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />')
+        writeFileSync(manifest, xml)
+        console.log('→ RECORD_AUDIO permission added to AndroidManifest')
+      }
+    }
   }
 
   console.log('→ gradlew assembleDebug')
