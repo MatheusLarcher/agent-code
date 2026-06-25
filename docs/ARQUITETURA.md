@@ -10,10 +10,13 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 
 - [Como rodar](#como-rodar)
 - [Modelo de processos e segurança](#modelo-de-processos-e-segurança)
+- [Autenticação (login do Claude)](#autenticação-login-do-claude)
 - [Sequência de inicialização](#sequência-de-inicialização)
 - [Ciclo de vida da sessão do agente](#ciclo-de-vida-da-sessão-do-agente)
 - [Tradução de mensagens do SDK em eventos de UI](#tradução-de-mensagens-do-sdk-em-eventos-de-ui)
 - [Permissões de ferramentas](#permissões-de-ferramentas)
+- [Modal de pergunta interativa (AskUserQuestion)](#modal-de-pergunta-interativa-askuserquestion)
+- [Voz no chat (OpenAI)](#voz-no-chat-openai)
 - [Pasta de dados (cache) e SQLite](#pasta-de-dados-cache-e-sqlite)
 - [Memória persistente](#memória-persistente)
 - [Conversas, projetos e persistência](#conversas-projetos-e-persistência)
@@ -45,6 +48,21 @@ Garantias de segurança:
 - Links externos (`window.open`/target=_blank) são interceptados em `setWindowOpenHandler` e abertos no navegador padrão do sistema (`shell.openExternal`), nunca dentro do app.
 
 A janela usa `titleBarStyle: 'hidden'` com `titleBarOverlay` (controles do Windows à direita, altura 52). O ícone vem de `build/icon.ico` (Windows) ou `build/icon.png`.
+
+Além disso, a sessão da janela libera a permissão de **microfone** (necessária para o ditado por voz, ver [Voz no chat](#voz-no-chat-openai)): o Electron nega `media` por padrão quando não há handler, então `setPermissionRequestHandler` e `setPermissionCheckHandler` (os dois são necessários — o `getUserMedia` consulta o *check* síncrono primeiro e depois o *request* assíncrono) liberam **só** `media` da própria renderer. A CSP do `index.html` ganhou `media-src 'self' data: blob:` para o `<audio>` da leitura em voz alta tocar áudio `data:`/`blob:`.
+
+---
+
+## Autenticação (login do Claude)
+
+O app faz o **login do Claude com um clique**: ao clicar em **Conectar** sem um login existente, ele detecta e dispara o fluxo de OAuth sozinho, sem pedir para o usuário digitar `/login` no chat (o loop `query()` do SDK roda em modo `--print`, headless, e **não** consegue conduzir o fluxo interativo de OAuth — por isso a abordagem antiga nunca abria o navegador).
+
+- **Resolver o binário do CLI** (`src/main/claudeCli.ts`) — `claudeCliPath()` localiza o **CLI nativo do Claude Code** que o Agent SDK distribui como dependência opcional por plataforma (`@anthropic-ai/claude-agent-sdk-<plat>-<arch>`, mais a variante `-musl` no Linux). Usa `createRequire(import.meta.url).resolve(\`${pkg}/${bin}\`)` (`claude.exe` no Windows, `claude` nos demais), cacheia o caminho e lança se nenhum candidato resolver. Como o `externalizeDepsPlugin` mantém esses pacotes como `require` de runtime em `node_modules`, o `require.resolve` acha o binário em produção também.
+- **Status** (`src/main/auth.ts`) — `isAuthenticated()` pergunta ao **próprio CLI** (`claude auth status --json`, `cwd: homedir()`, timeout 15 s) e lê `loggedIn === true` do JSON. **Não** lê `~/.claude/.credentials.json` porque esse arquivo **não** é a fonte da verdade: no Windows o token de OAuth vive no **Credential Manager** (keychain), então o arquivo pode estar ausente/desatualizado mesmo logado. O `auth status` lê o store que a plataforma usa, então é autoritativo e multiplataforma; qualquer falha (CLI ausente, JSON inválido) resolve `false`.
+- **Login** (`src/main/login.ts`) — `runClaudeLogin(openUrl, log)` faz `spawn` de `claude auth login --claudeai` (`stdin: 'ignore'` para o CLI ver uma sessão não-interativa e usar o callback de loopback em vez de pedir para colar o código). Conforme o CLI imprime no stdout/stderr, `scan()` **raspa a primeira URL de OAuth** (filtra por `claude.ai`/`anthropic.com`/`/oauth`/`authorize`) e a abre no **navegador do sistema** via `openUrl` (garante a abertura mesmo se o auto-open do CLI não disparar). A conclusão é confirmada por **`auth status`** (não por esperar o CLI sair, que pode ficar travado esperando `[Enter]` que não podemos enviar): há um poll de backstop a cada 2,5 s, confirmação ao ver `"Login successful"`, no `exit` do processo e um timeout de 3 min. Um único login roda por vez — `inFlight` faz cliques concorrentes (ou várias conversas conectando juntas) **compartilharem** a mesma tentativa em vez de gerar vários processos `auth login`.
+- **IPC** — `auth:status` → `{ authenticated }`; `auth:login` → `{ ok }` (passa `shell.openExternal` como `openUrl`). No `src/renderer/src/App.tsx`, o `connect()` faz o **gate**: chama `authStatus()` e, se não logado, mostra um toast "abrindo o login… é só autenticar", chama `authLogin()` e, no sucesso, toast "Login concluído!" antes de chamar `startAgent`; se falhar, toast de erro e aborta o connect (lança para o caminho de envio não prosseguir).
+
+> Diagnóstico temporário: `index.ts` ainda mantém um `authLog()` que grava `auth-debug.log` na pasta de cache — é só instrumentação do fluxo de OAuth, não uma feature permanente.
 
 ---
 
@@ -174,6 +192,41 @@ Comportamento garantido (e coberto por testes em `agentSession.test.ts`):
 - Sem permissão e sem bypass → **pergunta no chat** (modal).
 - Com "Permitir tudo" → **não pergunta nada** e libera tudo.
 - Todo `allow` devolve o `input` original.
+
+> A auto-aprovação por prefixo também cobre as ferramentas do **Stitch** (`mcp__stitch__`/`mcp__stitchpreview__`) — só geram/exibem mockups; o gate real é a implementação no projeto (`Write`/`Edit`, que ainda pergunta) e a aprovação explícita "Aplicar/Descartar" no preview.
+
+---
+
+## Modal de pergunta interativa (AskUserQuestion)
+
+Quando o agente chama a ferramenta **`AskUserQuestion`** (pergunta de múltipla escolha ao usuário), o CLI embutido **não** consegue renderizá-la sem um terminal. O gate de permissão (`src/main/agentSession.ts`) então a **intercepta** e a trata de forma especial: ela **não é uma permissão**, é uma pergunta que precisa de resposta, então é roteada para a UI própria **mesmo com "Permitir tudo" ligado** (não dá para auto-responder uma pergunta — e o `setBypass` explicitamente **pula** qualquer `AskUserQuestion` pendente ao resolver as demais).
+
+- `handlePermission` detecta `toolName === 'AskUserQuestion'`, gera um `id`, extrai as perguntas com `parseAskQuestions(input)` (tolerante a dados ruins: mapeia `questions[]` para o shape tipado `AskQuestion` — `header`, `question`, `multiSelect`, `options[]` com `label`/`description`) e envia `agent:permission-request` com o campo extra `questions`. A Promise fica pendente em `pendingPermissions`.
+- No renderer (`src/renderer/src/App.tsx`), um pedido **com** `questions` renderiza o `src/renderer/src/ui/QuestionModal.tsx` (em vez do `PermissionModal`): opções clicáveis (single ou **multi-select**), uma opção **"Outro…"** sempre presente com campo de texto livre, e o botão **Responder** habilitado só quando toda pergunta tem ao menos uma escolha. A escolha vai em `answerQuestion(answers)` → `respondPermission` com `{ behavior: 'allow', answers }`.
+- De volta no main, `resolvePermission` vê o campo `answers` e devolve a resposta ao modelo. Como o `PermissionResult` do SDK só permite `allow`/`deny` e não aceita a saída estruturada da ferramenta, a resposta é embutida num **`deny` com `message`** (`"The user answered your question(s):\n- <header>: <picks>"`) — o modelo lê isso e segue. Os tipos `AskQuestion`/`AskQuestionOption`/`QuestionAnswer` ficam em `src/shared/ipc.ts`.
+
+---
+
+## Voz no chat (OpenAI)
+
+O chat ganha **voz** opcional via OpenAI: ditado por microfone (fala → texto) e leitura em voz alta das respostas (texto → fala). Tudo é gated por uma **API key da OpenAI** configurada na tela de Configurações. As chamadas à OpenAI rodam **no main** — a key **nunca** chega ao renderer; o renderer só envia áudio/texto por IPC e recebe texto/áudio de volta.
+
+**Configuração** — em `src/shared/ipc.ts`, `OpenAiConfig` carrega `apiKey`, `voice` (uma de `OPENAI_VOICES` — as vozes do `gpt-4o-mini-tts`) e `speed`; o `DEFAULT_CONFIG` traz `openai: { apiKey: '', voice: 'alloy', speed: 1 }`. `src/main/config.ts` faz o **merge aninhado** de `openai` (em `loadConfig`/`updateConfig`, igual ao `stitch`), para salvar a key sem clobber das outras configs. A `src/renderer/src/ui/SettingsModal.tsx` tem a seção **"🎙️ OpenAI (voz no chat)"** com o campo de key (mostrar/ocultar), o seletor de **voz** e o de **velocidade** (Devagar/Normal/Rápida/Bem rápida → `0.8`/`1`/`1.25`/`1.5`); a prop `focus: 'openai'` rola até a seção, a destaca e foca o input (usado quando o usuário toca o mic/Ouvir sem key). Ao fechar Configurações, o `App` relê `voiceReady` (key presente) e `voiceSpeedRef`.
+
+**Chamadas OpenAI no main** (`src/main/openai.ts`, usa o `fetch`/`FormData`/`Blob` embutidos do Node, sem npm):
+- `transcribeAudio(apiKey, audioBase64, mimeType)` — POST em `/audio/transcriptions` com `model: 'gpt-4o-mini-transcribe'` e **`language: 'pt'`** (força o português, melhor acurácia para pt-BR); deduz a extensão pelo mime.
+- `synthesizeSpeech(apiKey, text, voice)` — POST em `/audio/speech` com `model: 'gpt-4o-mini-tts'`, `response_format: 'mp3'` e uma **instrução forçando pt-BR** ("Leia sempre em português do Brasil…"); devolve `{ base64, mimeType: 'audio/mpeg' }`.
+- IPC `openai:transcribe` / `openai:tts` em `src/main/index.ts` leem a key da config; sem key retornam `{ ok: false, error: 'no-key' }` (o renderer abre Configurações), e erros viram `{ ok: false, error }` para um toast.
+
+**Microfone / ditado** (`src/renderer/src/components/Composer.tsx`) — grava em **segmentos finalizados de ~4 s** com `MediaRecorder` e **transcreve cada segmento somando o texto** no campo. O porquê: um arquivo `webm` só é decodificável depois de **finalizado** (`stop()`); enviar o áudio ainda "aberto" fazia a API decodificar como vazio (o bug do "não aparece nada"). Então um `setInterval(cycleSegment, 4000)` para o segmento atual (cujo `onstop` transcreve um arquivo completo) e abre o próximo; o texto novo é anexado a `baseTextRef` + `transcriptRef`. O botão de mic tem um **medidor VU** (`runMeter` desenha barras direto do `AnalyserNode` da Web Audio API, sem re-render por frame) e uma **setinha** (`mic-caret`) que abre um menu para escolher o microfone (`enumerateDevices` → `audioinput`; o `deviceId` é persistido em `localStorage` na chave `agentcode.micId`, com fallback ao padrão se o device sumir — `OverconstrainedError`). A permissão de mic é liberada no Electron (ver [Modelo de processos](#modelo-de-processos-e-segurança)).
+
+**Leitura em voz alta (TTS)** (`src/renderer/src/App.tsx` + `src/renderer/src/components/MessageList.tsx`) — cada resposta **final** (`answer`) ganha um botão **"Ouvir/Parar"** no rodapé da bolha. O `toggleSpeak(id, text)` trata o texto, sintetiza e toca **em pedaços (pipeline)** para latência baixa: pré-busca a síntese do pedaço `i+1` enquanto o `i` toca (`fetchChunk`), e um `speakTokenRef` cancela uma sequência em andamento ao parar ou trocar de mensagem. O texto é tratado antes por `src/shared/speechText.ts`:
+- `toSpeechText(markdown)` — remove blocos de código cercados e URLs (mantém o **texto** dos links, descarta imagens), tira marcadores de heading/lista/citação/ênfase e **não lê tabelas**: cada tabela GFM vira a menção "conforme a tabela.".
+- `splitForSpeech(text)` — fatia por frases numa **rampa** de tamanho (`CHUNK_RAMP = [60, 150, 260]`): o 1º pedaço é minúsculo para o primeiro áudio voltar rápido, os seguintes maiores para reduzir o número de chamadas TTS; frases acima de `HARD_MAX` são quebradas em cláusulas/palavras.
+
+A **velocidade** é aplicada no player via `audio.playbackRate` (com `preservesPitch` para a voz não ficar de "esquilo") — determinística e instantânea, porque o `gpt-4o-mini-tts` ignora o parâmetro `speed`. Os ícones novos ficam em `src/renderer/src/components/Icons.tsx` (`IconMic`, `IconSpeaker`, `IconStopSmall`, `IconChevronDown`).
+
+> A mesma voz roda **no celular** pela ponte LAN: o app grava/toca e o PC transcreve/sintetiza (o `RemoteServer` recebe `transcribe`/`tts`/`voiceReady` por dependência em `index.ts`, lendo a key da config). Há testes do tratamento de fala em `src/shared/speechText.test.ts`.
 
 ---
 
@@ -393,8 +446,13 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 |-----------|-------|----------------|---------|
 | `pickDirectory` | `app:pick-directory` | abre `dialog.showOpenDialog` (pasta) | — → `string \| null` |
 | `pickFile` | `app:pick-file` | abre `dialog.showOpenDialog` (arquivo) | — → `string \| null` |
+| `pathExists` | `app:path-exists` | guarda da pasta do projeto: `fs.stat` + `isDirectory()` | `path` → `boolean` |
 | `openInEditor` | `app:open-in-editor` | abre a pasta no VS Code (CLI `code`, com *fallback* `vscode://file/`) | `dir` → `{ ok, message }` |
 | `fileDownload` | `app:file-download` | copia um arquivo (entregável criado pelo agente) para Downloads e o revela no Explorer | `path` → `{ ok, message, saved? }` |
+| `openaiTranscribe` | `openai:transcribe` | transcreve áudio (base64) via OpenAI `gpt-4o-mini-transcribe` (key no main) | `audioBase64`, `mimeType` → `{ ok, text?, error? }` |
+| `openaiTts` | `openai:tts` | sintetiza fala (MP3 base64) de um texto via OpenAI `gpt-4o-mini-tts` | `text` → `{ ok, audioBase64?, mimeType?, error? }` |
+| `authStatus` | `auth:status` | há login do Claude nesta máquina? (`claude auth status --json`) | — → `{ authenticated }` |
+| `authLogin` | `auth:login` | dispara o login OAuth do Claude (abre o navegador do sistema) | — → `{ ok }` |
 | `cacheGetInfo` | `cache:get-info` | caminho atual da pasta de dados (SQLite + memórias) | — → `CacheInfo` |
 | `cacheChooseDir` | `cache:choose-dir` | diálogo nativo para escolher/trocar a pasta de dados e recarregar | — → `CacheInfo \| null` |
 | `kvGet` / `kvSet` | `kv:get` / `kv:set` | lê/grava um valor (JSON) no store key→valor do SQLite (conversas, UI…) | `key`(`, value`) → `string \| null` / — |
@@ -428,7 +486,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | Constante | Canal | Payload |
 |-----------|-------|---------|
 | `agentEvent` | `agent:event` | `AgentEventMsg` `{ convId, event: ChatEvent }` |
-| `agentPermissionRequest` | `agent:permission-request` | `PermissionRequestMsg` `{ convId, req: PermissionRequest }` |
+| `agentPermissionRequest` | `agent:permission-request` | `PermissionRequestMsg` `{ convId, req: PermissionRequest }` (com `questions?` quando é um `AskUserQuestion`) |
 | `browserFrame` | `browser:frame` | `BrowserFrame` `{ data, width, height, mime? }` (mime = `image/png` no Android) |
 | `browserStateChanged` | `browser:state` | `BrowserState` (inclui `tabs[]` e, no Android, `androidSize`) |
 | `browserPicked` | `browser:picked` | `PickedElement` (com `tabId`/`tabName`) |
@@ -448,7 +506,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 
 O valor do contexto é memoizado (`useMemo`) para os consumidores não re-renderizarem a cada toast. O `App` é envolvido pelo `UiProvider` em `main.tsx`, então qualquer componente (incl. `Sidebar`) usa `useUI()`.
 
-`PermissionModal` reusa o mesmo visual de modal para o pedido de permissão do agente, com 3 ações (Negar / Permitir uma vez / Sempre permitir). `NewTabModal` usa o mesmo padrão (`.modal-overlay`/`.modal-card`) para escolher o tipo da nova aba de preview (Web / Android / iPhone reservado) — renderizado na raiz do app, então nunca é cortado pela barra de abas.
+`PermissionModal` reusa o mesmo visual de modal para o pedido de permissão do agente, com 3 ações (Negar / Permitir uma vez / Sempre permitir). `QuestionModal` (ver [Modal de pergunta interativa](#modal-de-pergunta-interativa-askuserquestion)) usa o mesmo padrão para o `AskUserQuestion` — opções clicáveis, multi-select e "Outro…"; o `App` escolhe entre os dois conforme o pedido carrega `questions`. `NewTabModal` usa o mesmo padrão (`.modal-overlay`/`.modal-card`) para escolher o tipo da nova aba de preview (Web / Android / iPhone reservado) — renderizado na raiz do app, então nunca é cortado pela barra de abas.
 
 ---
 
@@ -468,10 +526,11 @@ O valor do contexto é memoizado (`useMemo`) para os consumidores não re-render
 
 1. Usuário digita no `Composer` e envia → `App.sendMessage(text)`.
 2. Se houver *chips* (elementos selecionados na página), eles são anexados ao texto.
-3. Se a conversa ativa não está conectada, `connect()` dispara `agent:start` (com `resume` se houver) → o main cria uma `AgentSession` e começa o loop do SDK.
-4. A mensagem do usuário é adicionada à conversa (e vira o título, se ainda for o padrão) e enviada por `agent:send` → entra na `AsyncQueue`.
-5. O SDK processa: emite `system` (init, captura `sessionId`), textos em streaming, `thinking`, `tool_use`.
-6. Cada `tool_use` passa pelo gate de permissão: auto-aprovado (com `updatedInput`) ou pede no modal.
-7. Ferramentas `browser_*` dirigem o Chromium; os frames aparecem ao vivo no `BrowserPanel`.
-8. `tool_result` e a resposta final chegam como `ChatEvent`; o `MessageList` renderiza os cartões e a resposta; o medidor de tokens/custo é atualizado pelo `result`.
-9. Tudo é persistido (debounce) no **SQLite** da [pasta de cache](#pasta-de-dados-cache-e-sqlite) — conversas, estado da UI e as configs do sistema (API key, token Android, "permitir tudo") — e reaparece no próximo início.
+3. **Guarda da pasta do projeto** — antes de conectar/enviar, `ensureProject(conv)` verifica via `app:path-exists` que a `cwd` da conversa **ainda existe e é uma pasta** (no main, `fs.stat` + `isDirectory()`). Se não existir (pasta movida/excluída), um toast de erro avisa e o envio é **abortado** — nunca chega ao LLM com um `cwd` inválido. (O envio enquanto a conversa já está ocupada pula a guarda, pois a mensagem só entra na fila local.)
+4. Se a conversa ativa não está conectada, `connect()` faz o [gate de login do Claude](#autenticação-login-do-claude) e dispara `agent:start` (com `resume` se houver) → o main cria uma `AgentSession` e começa o loop do SDK.
+5. A mensagem do usuário é adicionada à conversa (e vira o título, se ainda for o padrão) e enviada por `agent:send` → entra na `AsyncQueue`.
+6. O SDK processa: emite `system` (init, captura `sessionId`), textos em streaming, `thinking`, `tool_use`.
+7. Cada `tool_use` passa pelo gate de permissão: auto-aprovado (com `updatedInput`), pede no modal, ou (se for `AskUserQuestion`) abre o [modal de pergunta](#modal-de-pergunta-interativa-askuserquestion).
+8. Ferramentas `browser_*` dirigem o Chromium; os frames aparecem ao vivo no `BrowserPanel`.
+9. `tool_result` e a resposta final chegam como `ChatEvent`; o `MessageList` renderiza os cartões e a resposta; o medidor de tokens/custo é atualizado pelo `result`. Cada resposta final pode ser ouvida pelo botão **"Ouvir"** ([voz no chat](#voz-no-chat-openai)).
+10. Tudo é persistido (debounce) no **SQLite** da [pasta de cache](#pasta-de-dados-cache-e-sqlite) — conversas, estado da UI e as configs do sistema (API key, token Android, "permitir tudo") — e reaparece no próximo início.
