@@ -55,6 +55,8 @@ interface Props {
   composerRef: RefObject<HTMLTextAreaElement | null>
   /** Projects from history, offered in the composer's @ reference menu. */
   projects: RefProject[]
+  /** Active conversation's project root — searched by the "@" autocomplete. */
+  projectRoot: string | null
   /** Active conversation id — resets the message window when it changes. */
   convId: string | null
   /** Saved draft for the active conversation (restored into the composer). */
@@ -87,6 +89,9 @@ interface Props {
   model: string
   modelLocked: boolean
   onModelChange: (id: string) => void
+  /** Called when the user clicks the model picker while it's locked (in session),
+   *  so App can show a "stop the session to change the model" hint. */
+  onModelLockedClick: () => void
   /** "Permitir tudo" toggle, shown right above the composer. */
   skipPerms: boolean
   onToggleSkipPerms: (on: boolean) => void
@@ -183,15 +188,32 @@ export function ChatPanel(props: Props): JSX.Element {
 
       <div className="composer-bar">
         <select
-          className="model-select"
+          className={`model-select${props.modelLocked ? ' locked' : ''}`}
           value={props.model}
-          disabled={props.modelLocked}
+          aria-disabled={props.modelLocked}
           title={
             props.modelLocked
               ? 'Para trocar o modelo, pare a sessão (botão no topo).'
               : 'Modelo usado nesta conversa'
           }
-          onChange={(e) => props.onModelChange(e.target.value)}
+          // Locked while connected: keep it clickable (so we can explain why)
+          // but block the dropdown from opening and show a hint instead.
+          onMouseDown={(e) => {
+            if (props.modelLocked) {
+              e.preventDefault()
+              e.currentTarget.blur()
+              props.onModelLockedClick()
+            }
+          }}
+          onKeyDown={(e) => {
+            if (props.modelLocked) {
+              e.preventDefault()
+              props.onModelLockedClick()
+            }
+          }}
+          onChange={(e) => {
+            if (!props.modelLocked) props.onModelChange(e.target.value)
+          }}
         >
           {props.models.map((m) => (
             <option key={m.id} value={m.id}>
@@ -228,6 +250,7 @@ export function ChatPanel(props: Props): JSX.Element {
         onDraftChange={props.onDraftChange}
         projectMissing={props.projectMissing}
         projectMissingMsg={props.projectMissingMsg}
+        projectRoot={props.projectRoot}
       />
     </section>
   )

@@ -11,6 +11,8 @@ import type {
   CacheInfo,
   FileAttachment,
   ImageAttachment,
+  MentionHit,
+  SkillInfo,
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
@@ -39,6 +41,12 @@ const api: AgentCodeApi = {
   pickFile: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickFile),
   openInEditor: (dir: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(Channels.openInEditor, dir),
+  openInFolder: (dir: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(Channels.openInFolder, dir),
+  mentionSearch: (root: string, query: string): Promise<MentionHit[]> =>
+    ipcRenderer.invoke(Channels.mentionSearch, root, query),
+  listSkills: (root: string): Promise<SkillInfo[]> =>
+    ipcRenderer.invoke(Channels.listSkills, root),
   downloadFile: (path: string): Promise<{ ok: boolean; message: string; saved?: string }> =>
     ipcRenderer.invoke(Channels.fileDownload, path),
   getCacheInfo: (): Promise<CacheInfo> => ipcRenderer.invoke(Channels.cacheGetInfo),

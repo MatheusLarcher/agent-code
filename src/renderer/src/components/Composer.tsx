@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
   type RefObject
 } from 'react'
-import type { FileAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
+import type { FileAttachment, ImageAttachment, MentionHit, PickedElement, SkillInfo } from '@shared/ipc'
 import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconStop } from './Icons'
 import { fileMeta, fmtSize } from '../files'
 import { useUI } from '../ui/UiProvider'
@@ -33,6 +33,8 @@ interface Props {
   textareaRef: RefObject<HTMLTextAreaElement | null>
   /** Projects from history, offered in the @ reference menu. */
   projects: RefProject[]
+  /** Active conversation's project root — searched live by the "@" autocomplete. */
+  projectRoot: string | null
   /** Whether an OpenAI key is set (enables the mic dictation). */
   voiceReady: boolean
   /** Called when the user taps the mic without a key set (open Settings). */
@@ -96,6 +98,45 @@ function baseName(p: string): string {
   return parts[parts.length - 1] || p
 }
 
+/** lowercase + strip accents (project filter rule), for local skill matching. */
+function foldText(s: string): string {
+  return s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+}
+
+/** One row in the autocomplete: a project file/folder ('@') or a skill ('/'). */
+interface PickerItem {
+  /** Inserted right after the trigger: a file path ('@') or a skill name ('/'). */
+  id: string
+  title: string
+  subtitle: string
+  kind: '@' | '/'
+  isDir?: boolean
+}
+
+/**
+ * If the caret sits inside a `trigger`-token (`@` or `/`), return where the
+ * trigger is and the text typed after it; otherwise null. The trigger only
+ * counts at the start of the box or right after whitespace, and the token ends
+ * at the first space — so "ler @src/ma" → { start, query: "src/ma" }, "/plan" →
+ * { start: 0, query: "plan" }, but "a@b", "x/y" or "@x y|" → null.
+ */
+function findToken(
+  text: string,
+  caret: number,
+  trigger: '@' | '/'
+): { start: number; query: string } | null {
+  for (let i = caret - 1; i >= 0; i--) {
+    const ch = text[i]
+    if (ch === trigger) {
+      const before = i === 0 ? '' : text[i - 1]
+      if (i === 0 || /\s/.test(before)) return { start: i, query: text.slice(i + 1, caret) }
+      return null
+    }
+    if (/\s/.test(ch)) return null
+  }
+  return null
+}
+
 export function Composer(props: Props): JSX.Element {
   const { notify } = useUI()
   const [value, setValue] = useState(props.draft)
@@ -123,6 +164,18 @@ export function Composer(props: Props): JSX.Element {
   const [files, setFiles] = useState<FileAttachment[]>([])
   const refMenu = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  // ---- "@" / "/" autocomplete ----
+  // `picker.kind` is '@' (project files, live-searched in main) or '/' (skills,
+  // loaded once per project and filtered locally). Selecting inserts `@<path>`
+  // or `/<skill>` — the agent resolves either (file by Read/Glob, skill by name).
+  const [picker, setPicker] = useState<{ kind: '@' | '/'; start: number; query: string } | null>(null)
+  const [pickerItems, setPickerItems] = useState<PickerItem[]>([])
+  const [pickerIndex, setPickerIndex] = useState(0)
+  const pickerMenu = useRef<HTMLDivElement>(null)
+  const pickerReq = useRef(0) // request id, so stale searches don't overwrite newer ones
+  const skillsCache = useRef<{ root: string; items: SkillInfo[] } | null>(null)
+  const pickerOpen = picker !== null && pickerItems.length > 0
 
   // ---- voice dictation (mic → text, OpenAI gpt-4o-mini-transcribe) ----
   // Records in ~4s FINALIZED segments and appends each transcript, filling the box
@@ -447,9 +500,35 @@ export function Composer(props: Props): JSX.Element {
     updateValue('') // clears the box and the saved draft for this conversation
     setImages([])
     setFiles([])
+    setPicker(null)
+    setPickerItems([])
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // While the picker menu is open, the arrow keys / Enter / Tab / Esc drive it
+    // instead of the textarea (Enter must pick an item, not send the message).
+    if (pickerOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setPickerIndex((i) => (i + 1) % pickerItems.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setPickerIndex((i) => (i - 1 + pickerItems.length) % pickerItems.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        choosePicker(pickerItems[pickerIndex])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setPicker(null)
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit()
@@ -531,6 +610,116 @@ export function Composer(props: Props): JSX.Element {
     if (p) insertRef(p)
   }
 
+  // Recompute the active @mention from the box's current text + caret position.
+  const syncPicker = (text: string, caret: number): void => {
+    if (props.disabled || blocked) {
+      setPicker(null)
+      return
+    }
+    const token = findToken(text, caret, '@') || findToken(text, caret, '/')
+    if (token) {
+      // Re-check the character to see what kind it is
+      const kind = text[token.start] as '@' | '/'
+      setPicker({ kind, ...token })
+    } else {
+      setPicker(null)
+    }
+  }
+
+  // Live-search the project whenever the @query (or active project) changes.
+  // Debounced, and tagged with a request id so a slow earlier search can't
+  // overwrite a newer one's results.
+  useEffect(() => {
+    if (!picker || !props.projectRoot) {
+      setPickerItems([])
+      return
+    }
+    if (picker.kind === '@') {
+      if (typeof window.api.mentionSearch !== 'function') return
+      const id = ++pickerReq.current
+      const t = setTimeout(() => {
+        window.api
+          .mentionSearch(props.projectRoot!, picker.query)
+          .then((hits) => {
+            if (id === pickerReq.current) {
+              setPickerItems(hits.map((h) => ({ id: h.path, title: h.name, subtitle: h.path, kind: '@', isDir: h.isDir })))
+              setPickerIndex(0)
+            }
+          })
+          .catch(() => {
+            if (id === pickerReq.current) setPickerItems([])
+          })
+      }, 90)
+      return () => clearTimeout(t)
+    } else {
+      if (typeof window.api.listSkills !== 'function') return
+      const id = ++pickerReq.current
+      const loadSkills = async () => {
+        try {
+          if (!skillsCache.current || skillsCache.current.root !== props.projectRoot) {
+            const items = await window.api.listSkills(props.projectRoot!)
+            skillsCache.current = { root: props.projectRoot!, items }
+          }
+          if (id !== pickerReq.current) return
+          const q = picker.query.toLowerCase()
+          const matched = skillsCache.current.items
+            .filter((s) => s.name.toLowerCase().includes(q))
+            .map((s) => ({
+              id: s.name,
+              title: s.name,
+              subtitle: s.description || 'Skill',
+              kind: '/' as const
+            }))
+          setPickerItems(matched)
+          setPickerIndex(0)
+        } catch {
+          if (id === pickerReq.current) setPickerItems([])
+        }
+      }
+      void loadSkills()
+    }
+  }, [picker, props.projectRoot])
+
+  // Close the @menu on outside click (item clicks use mousedown+preventDefault,
+  // so they fire before this and aren't treated as "outside").
+  useEffect(() => {
+    if (!picker) return
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (pickerMenu.current?.contains(t)) return
+      if (props.textareaRef.current?.contains(t)) return
+      setPicker(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [picker, props.textareaRef])
+
+  // Keep the highlighted item visible as you arrow through a long list.
+  useEffect(() => {
+    if (!pickerOpen) return
+    const el = pickerMenu.current?.children[pickerIndex] as HTMLElement | undefined
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [pickerIndex, pickerOpen])
+
+  // Insert the chosen file/folder as an `@<path>` mention, replacing the token.
+  const choosePicker = (hit: PickerItem): void => {
+    if (!picker) return
+    const end = picker.start + 1 + picker.query.length
+    const insert = hit.kind === '@' ? `@${hit.id} ` : `/${hit.id} `
+    const next = value.slice(0, picker.start) + insert + value.slice(end)
+    updateValue(next)
+    setPicker(null)
+    setPickerItems([])
+    const ta = props.textareaRef.current
+    if (ta) {
+      requestAnimationFrame(() => {
+        ta.focus()
+        const pos = picker.start + insert.length
+        ta.setSelectionRange(pos, pos)
+      })
+    }
+  }
+
   return (
     <div className="composer">
       {props.chips.length > 0 && (
@@ -609,6 +798,35 @@ export function Composer(props: Props): JSX.Element {
             <i />
           </span>
           <span className="rec-meter-label">Ouvindo… clique no microfone para parar e transcrever</span>
+        </div>
+      )}
+      {pickerOpen && (
+        <div className="mention-menu" ref={pickerMenu} role="listbox">
+          {pickerItems.map((it, i) => (
+            <button
+              type="button"
+              key={it.id}
+              className={`mention-item${i === pickerIndex ? ' active' : ''}`}
+              role="option"
+              aria-selected={i === pickerIndex}
+              onMouseEnter={() => setPickerIndex(i)}
+              // mousedown (not click) + preventDefault: act before the textarea
+              // blurs, so the caret/selection is still intact when we insert.
+              onMouseDown={(e) => {
+                e.preventDefault()
+                choosePicker(it)
+              }}
+              title={it.subtitle}
+            >
+              {it.kind === '@' ? (
+                it.isDir ? <IconFolder size={15} /> : <IconFile size={15} />
+              ) : (
+                <IconBox size={15} />
+              )}
+              <span className="mention-name">{it.title}</span>
+              <span className="mention-path">{it.subtitle}</span>
+            </button>
+          ))}
         </div>
       )}
       <div className="composer-row" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
@@ -706,8 +924,19 @@ export function Composer(props: Props): JSX.Element {
           readOnly={blocked}
           onMouseDown={blocked ? onBlocked : undefined}
           onFocusCapture={blocked ? () => onBlocked() : undefined}
-          onChange={(e) => updateValue(e.target.value)}
+          onChange={(e) => {
+            updateValue(e.target.value)
+            syncPicker(e.target.value, e.target.selectionStart ?? e.target.value.length)
+          }}
           onKeyDown={onKey}
+          onClick={(e) => syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+          onKeyUp={(e) => {
+            // Re-detect the token when the caret moves (not while the menu is
+            // driving the arrows — those are handled in onKeyDown).
+            if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+              syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
+            }
+          }}
           onPaste={onPaste}
           rows={1}
         />
