@@ -473,6 +473,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `pickFile` | `app:pick-file` | abre `dialog.showOpenDialog` (arquivo) | — → `string \| null` |
 | `pathExists` | `app:path-exists` | guarda da pasta do projeto: `fs.stat` + `isDirectory()` | `path` → `boolean` |
 | `openInEditor` | `app:open-in-editor` | abre a pasta no VS Code (CLI `code`, com *fallback* `vscode://file/`) | `dir` → `{ ok, message }` |
+| `openInFolder` | `app:open-in-folder` | abre a pasta do projeto no explorador do SO (`shell.openPath`) | `dir` → `{ ok, message }` |
 | `fileDownload` | `app:file-download` | copia um arquivo (entregável criado pelo agente) para Downloads e o revela no Explorer | `path` → `{ ok, message, saved? }` |
 | `openaiTranscribe` | `openai:transcribe` | transcreve áudio (base64) via OpenAI `gpt-4o-mini-transcribe` (key no main) | `audioBase64`, `mimeType` → `{ ok, text?, error? }` |
 | `openaiTts` | `openai:tts` | sintetiza fala (MP3 base64) de um texto via OpenAI `gpt-4o-mini-tts` | `text` → `{ ok, audioBase64?, mimeType?, error? }` |

@@ -1,7 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { join, basename, extname } from 'node:path'
-import { stat as fsStat, copyFile as fsCopyFile, access as fsAccess } from 'node:fs/promises'
+import {
+  stat as fsStat,
+  copyFile as fsCopyFile,
+  access as fsAccess,
+  readdir as fsReaddir,
+  readFile as fsReadFile
+} from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { BrowserController } from './browserController'
 import { AgentSession } from './agentSession'
 import { RemoteServer } from './remote/remoteServer'
@@ -19,6 +26,8 @@ import type {
   BrowserInput,
   FileAttachment,
   ImageAttachment,
+  MentionHit,
+  SkillInfo,
   PermissionResponse,
   RemoteStatePayload,
   StartAgentOptions,
@@ -66,6 +75,163 @@ async function fsExists(p: string): Promise<boolean> {
 
 // Root of the smartfone-remote project (sibling of out/ → ../../ from out/main).
 const REMOTE_ROOT = join(import.meta.dirname, '../../smartfone-remote')
+
+// ---- "@" autocomplete: search project files/folders --------------------------
+
+/** Directories never worth walking for the "@" menu (noise / huge / generated). */
+const MENTION_IGNORE = new Set([
+  'node_modules', '.git', 'dist', 'out', 'build', '.gradle', '.vite',
+  'coverage', '.next', '.turbo', '.cache', '.idea'
+])
+
+/** lowercase + strip accents, so "TÉST" matches "teste" (project filter rule). */
+function foldText(s: string): string {
+  return s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+}
+
+/** Rank a candidate against the folded query; -1 means "no match" (drop it). */
+function mentionScore(q: string, name: string, relPath: string, isDir: boolean): number {
+  const n = foldText(name)
+  const p = foldText(relPath)
+  let base: number
+  if (n === q) base = 100
+  else if (n.startsWith(q)) base = 80
+  else if (n.includes(q)) base = 60
+  else if (p.includes(q)) base = 30
+  else return -1
+  return base + (isDir ? 3 : 0) // nudge folders up a touch, as the user asked for both
+}
+
+/**
+ * Walk the project tree breadth-first (shallow entries first) and return files
+ * and folders whose name/path contains `query`, accent- and case-insensitive.
+ * Capped in both hits and nodes scanned so each keystroke stays cheap. An empty
+ * query lists the project's top level (folders first).
+ */
+async function searchProjectEntries(root: string, query: string): Promise<MentionHit[]> {
+  const MAX_HITS = 30
+  const MAX_SCAN = 20000
+  const q = foldText(query.trim())
+
+  // Empty query → just the project's top level (folders first), no recursion.
+  if (!q) {
+    let top: import('node:fs').Dirent[]
+    try {
+      top = await fsReaddir(root, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    return top
+      .filter((e) => !(e.isDirectory() && MENTION_IGNORE.has(e.name)))
+      .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+      .slice(0, MAX_HITS)
+      .map((e) => ({ path: e.name, name: e.name, isDir: e.isDirectory() }))
+  }
+
+  type Hit = MentionHit & { score: number }
+  const hits: Hit[] = []
+  const queue: string[] = [''] // relative dirs still to visit ('' = root)
+  let scanned = 0
+
+  while (queue.length && scanned < MAX_SCAN) {
+    const rel = queue.shift()!
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = await fsReaddir(join(root, rel), { withFileTypes: true })
+    } catch {
+      continue
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name))
+    for (const e of entries) {
+      if (scanned >= MAX_SCAN) break
+      scanned++
+      const isDir = e.isDirectory()
+      if (isDir && MENTION_IGNORE.has(e.name)) continue
+      const relPath = rel ? `${rel}/${e.name}` : e.name
+      if (isDir) queue.push(relPath)
+      const score = mentionScore(q, e.name, relPath, isDir)
+      if (score >= 0) hits.push({ path: relPath, name: e.name, isDir, score })
+    }
+  }
+  hits.sort(
+    (a, b) => b.score - a.score || a.path.length - b.path.length || a.path.localeCompare(b.path)
+  )
+  return hits.slice(0, MAX_HITS).map(({ path, name, isDir }) => ({ path, name, isDir }))
+}
+
+// ---- "/" autocomplete: list the agent's skills --------------------------------
+
+/**
+ * Pull `name` and `description` out of a SKILL.md frontmatter block. Handles the
+ * three shapes seen in this repo: `description: "..."`, `description: ...`, and a
+ * YAML block scalar (`description: >-` followed by indented lines). The
+ * description is collapsed to a single line for the menu subtitle.
+ */
+function parseSkillFrontmatter(md: string): { name: string; description: string } | null {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md)
+  if (!m) return null
+  const lines = m[1].split(/\r?\n/)
+  let name = ''
+  let description = ''
+  for (let i = 0; i < lines.length; i++) {
+    const nameM = /^name:\s*(.+)$/.exec(lines[i])
+    if (nameM) {
+      name = nameM[1].trim().replace(/^['"]|['"]$/g, '')
+      continue
+    }
+    const descM = /^description:\s*(.*)$/.exec(lines[i])
+    if (descM) {
+      const inline = descM[1].trim()
+      // Block scalar (">", "|", ">-", "|-") or empty → gather indented continuation.
+      if (inline === '' || /^[>|][-+]?$/.test(inline)) {
+        const buf: string[] = []
+        for (let j = i + 1; j < lines.length; j++) {
+          if (/^\s/.test(lines[j]) || lines[j].trim() === '') buf.push(lines[j].trim())
+          else break
+        }
+        description = buf.join(' ').trim()
+      } else {
+        description = inline.replace(/^['"]|['"]$/g, '')
+      }
+    }
+  }
+  if (!name) return null
+  return { name, description: description.replace(/\s+/g, ' ').trim() }
+}
+
+/**
+ * List the skills available to the agent: each subfolder with a SKILL.md under
+ * the project's `.claude/skills` and `.agents/skills`, plus the user-level
+ * `~/.claude/skills`. Deduped by name (project wins), sorted alphabetically.
+ */
+async function listAgentSkills(projectRoot: string): Promise<SkillInfo[]> {
+  const roots = [
+    projectRoot ? join(projectRoot, '.claude', 'skills') : '',
+    projectRoot ? join(projectRoot, '.agents', 'skills') : '',
+    join(homedir(), '.claude', 'skills')
+  ].filter(Boolean)
+
+  const byName = new Map<string, SkillInfo>()
+  for (const root of roots) {
+    let dirs: import('node:fs').Dirent[]
+    try {
+      dirs = await fsReaddir(root, { withFileTypes: true })
+    } catch {
+      continue // skills dir absent — skip
+    }
+    for (const d of dirs) {
+      if (!d.isDirectory() && !d.isSymbolicLink()) continue
+      try {
+        const md = await fsReadFile(join(root, d.name, 'SKILL.md'), 'utf8')
+        const parsed = parseSkillFrontmatter(md)
+        if (parsed && !byName.has(parsed.name)) byName.set(parsed.name, parsed)
+      } catch {
+        /* no SKILL.md here — skip */
+      }
+    }
+  }
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
 
 // LAN bridge: phones POST commands here; we forward them to the renderer (which
 // dispatches into the right conversation) and tee live agent events back over SSE.
@@ -277,6 +443,28 @@ function registerIpc(): void {
         message: 'Não foi possível abrir o VS Code. Verifique se está instalado e se o comando "code" está no PATH.'
       }
     }
+  })
+
+  ipcMain.handle(Channels.openInFolder, async (_e, dir: string): Promise<{ ok: boolean; message: string }> => {
+    if (!dir) return { ok: false, message: 'Nenhuma pasta para abrir.' }
+    // shell.openPath opens the folder itself in the OS file explorer; it resolves
+    // with an empty string on success or an error description on failure.
+    const err = await shell.openPath(dir)
+    return err
+      ? { ok: false, message: `Não foi possível abrir a pasta: ${err}` }
+      : { ok: true, message: 'Abrindo a pasta no explorador…' }
+  })
+
+  ipcMain.handle(
+    Channels.mentionSearch,
+    async (_e, root: string, query: string): Promise<MentionHit[]> => {
+      if (!root) return []
+      return searchProjectEntries(root, query)
+    }
+  )
+
+  ipcMain.handle(Channels.listSkills, async (_e, root: string): Promise<SkillInfo[]> => {
+    return listAgentSkills(root)
   })
 
   // Save a copy of a file the agent created into the user's Downloads folder and

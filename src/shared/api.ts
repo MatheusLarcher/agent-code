@@ -8,6 +8,8 @@ import type {
   CacheInfo,
   FileAttachment,
   ImageAttachment,
+  MentionHit,
+  SkillInfo,
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
@@ -32,6 +34,12 @@ export interface AgentCodeApi {
   pickFile(): Promise<string | null>
   /** Open a project folder in VS Code. Returns a status (success or why it failed). */
   openInEditor(dir: string): Promise<{ ok: boolean; message: string }>
+  /** Open a project folder in the OS file explorer. Returns a status. */
+  openInFolder(dir: string): Promise<{ ok: boolean; message: string }>
+  /** Live "@" autocomplete: files/folders under `root` matching `query` (≤ limit hits). */
+  mentionSearch(root: string, query: string): Promise<MentionHit[]>
+  /** "/" autocomplete: skills available to the agent (project `root` + user-level). */
+  listSkills(root: string): Promise<SkillInfo[]>
   /** Save a copy of a file (created by the agent) to Downloads and reveal it. */
   downloadFile(path: string): Promise<{ ok: boolean; message: string; saved?: string }>
   /** Read the active cache folder (SQLite db + .md memories location). */

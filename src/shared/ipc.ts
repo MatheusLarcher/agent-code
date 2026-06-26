@@ -46,6 +46,24 @@ export interface FileAttachment {
   size: number
 }
 
+/** One hit in the "@" autocomplete: a file or folder under the project. */
+export interface MentionHit {
+  /** Path relative to the project root, with forward slashes (e.g. "src/main/index.ts"). */
+  path: string
+  /** Just the file/folder name (e.g. "index.ts"). */
+  name: string
+  /** True for a directory, false for a file. */
+  isDir: boolean
+}
+
+/** One skill in the "/" autocomplete (from a SKILL.md frontmatter). */
+export interface SkillInfo {
+  /** Skill slug, e.g. "planejar" — inserted as `/planejar` to activate it. */
+  name: string
+  /** One-line summary (frontmatter `description`, collapsed to a single line). */
+  description: string
+}
+
 /**
  * Extensions treated as "deliverables" — finished artifacts a user would ask to
  * be created and then download (an APK, a zip, a PDF, an image…). Deliberately
@@ -428,6 +446,12 @@ export const Channels = {
   pathExists: 'app:path-exists',
   /** Open a project folder in VS Code (via the `code` CLI, falling back to the vscode:// URL). */
   openInEditor: 'app:open-in-editor',
+  /** Open a project folder in the OS file explorer (Explorer/Finder/xdg-open). */
+  openInFolder: 'app:open-in-folder',
+  /** Live "@" autocomplete: search files/folders under the project for a query. */
+  mentionSearch: 'app:mention-search',
+  /** "/" autocomplete: list the skills available to the agent (project + user). */
+  listSkills: 'app:list-skills',
   /** Save a copy of an agent-created file to the Downloads folder and reveal it. */
   fileDownload: 'app:file-download',
   browserLaunch: 'browser:launch',

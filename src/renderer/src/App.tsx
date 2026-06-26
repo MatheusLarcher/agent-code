@@ -1202,18 +1202,30 @@ export function App(): JSX.Element {
               </svg>
             </button>
           )}
-          <select
-            className="model-select"
-            value={active?.model ?? MODELS[0].id}
-            disabled={!active || activeConnected}
-            onChange={(e) => active && patchConv(active.id, (c) => ({ ...c, model: e.target.value }))}
-          >
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+          {active && (
+            <button
+              className="btn ghost editor-btn"
+              title={`Abrir a pasta no explorador · ${basename(active.cwd)}`}
+              onClick={async () => {
+                const r = await window.api.openInFolder(active.cwd)
+                notify(r.ok ? 'sucesso' : 'erro', r.message)
+              }}
+            >
+              <svg
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+            </button>
+          )}
           <button
             className={`btn ghost remote-btn topbar-right ${remoteRunning ? 'on' : ''}`}
             onClick={() => setRemoteOpen(true)}
@@ -1265,6 +1277,7 @@ export function App(): JSX.Element {
             onRetry={(msgId) => active && void retryMessage(active.id, msgId)}
             composerRef={composerRef}
             projects={projects}
+            projectRoot={active?.cwd ?? null}
             convId={active?.id ?? null}
             draft={active?.draft ?? ''}
             onDraftChange={onDraftChange}
@@ -1282,6 +1295,9 @@ export function App(): JSX.Element {
             model={active?.model ?? MODELS[0].id}
             modelLocked={!active || activeConnected}
             onModelChange={(m) => active && patchConv(active.id, (c) => ({ ...c, model: m }))}
+            onModelLockedClick={() =>
+              notify('aviso', 'Pare a sessão (botão no topo) para poder trocar o modelo.')
+            }
             skipPerms={skipPerms}
             onToggleSkipPerms={toggleSkipPerms}
           />
