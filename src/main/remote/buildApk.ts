@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { access, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { detect, ensureInstalled, type Progress } from '../android/androidEnv'
 
 /**
@@ -21,6 +21,50 @@ async function exists(p: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * Find a directory that contains `npm` (and `node`), so the build never depends
+ * on the Electron process having Node on its PATH — the cause of the
+ * "'npm' não é reconhecido" failure when the app isn't launched from start.bat.
+ *
+ * Checks, in order: the portable Node that start.bat downloads
+ * (`.node/node-*-win-x64` at the repo root, sibling of smartfone-remote), then
+ * the dir of the currently running node binary, then common system installs.
+ * Returns the dir, or null if it couldn't be found (npm may still be on PATH).
+ */
+async function findNodeBin(rootDir: string): Promise<string | null> {
+  const npmName = WIN ? 'npm.cmd' : 'npm'
+  const hasNpm = async (dir: string): Promise<boolean> => exists(join(dir, npmName))
+
+  // 1) Portable Node downloaded by start.bat (repo root = parent of rootDir).
+  const nodeCache = join(rootDir, '..', '.node')
+  try {
+    for (const name of await readdir(nodeCache)) {
+      const cand = join(nodeCache, name)
+      if (await hasNpm(cand)) return cand
+    }
+  } catch {
+    /* no .node dir — fall through */
+  }
+
+  // 2) The directory of the node binary that is currently running, if any
+  //    (process.execPath is electron.exe under Electron, but worth a look).
+  const execDir = dirname(process.execPath)
+  if (await hasNpm(execDir)) return execDir
+
+  // 3) Common system install locations.
+  const candidates = WIN
+    ? [
+        process.env['ProgramFiles'] && join(process.env['ProgramFiles'], 'nodejs'),
+        process.env['ProgramW6432'] && join(process.env['ProgramW6432'], 'nodejs'),
+        process.env['APPDATA'] && join(process.env['APPDATA'], 'npm')
+      ]
+    : ['/usr/local/bin', '/usr/bin', '/opt/homebrew/bin']
+  for (const c of candidates) {
+    if (c && (await hasNpm(c))) return c
+  }
+  return null
 }
 
 /** Spawn a command, streaming trimmed output lines. `shell` resolves npm/npx
@@ -259,22 +303,41 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
     return { ok: false, message: `Toolchain incompleta: ${d.missing.join(', ')}.` }
   }
 
+  // Make sure npm/npx/node resolve regardless of how the app was launched: the
+  // Electron process doesn't always inherit Node on its PATH (e.g. when not
+  // started from start.bat). Prepend the located Node dir to the build env's PATH.
+  const env: NodeJS.ProcessEnv = { ...d.env }
+  const nodeBin = await findNodeBin(rootDir)
+  if (nodeBin) {
+    env['PATH'] = nodeBin + delimiter + (env['PATH'] || '')
+    onLine(`Usando Node em: ${nodeBin}`)
+  } else {
+    onLine('Aviso: Node não localizado; tentando usar o npm do PATH do sistema…')
+  }
+
   // 2) npm dependencies of the Capacitor project.
   if (!(await exists(join(rootDir, 'node_modules')))) {
     onLine('Instalando dependências do projeto (npm install)…')
-    const code = await run('npm', ['install'], { cwd: rootDir, env: d.env, onLine })
-    if (code !== 0) return { ok: false, message: 'npm install falhou.' }
+    const code = await run('npm', ['install'], { cwd: rootDir, env, onLine })
+    if (code !== 0) {
+      return {
+        ok: false,
+        message: nodeBin
+          ? 'npm install falhou. Veja os logs acima.'
+          : "npm install falhou: Node.js não encontrado. Abra o app pelo start.bat (que baixa o Node automaticamente) ou instale o Node.js."
+      }
+    }
   }
 
   // 3) Capacitor Android platform: add on first run, then sync the web assets.
   const androidDir = join(rootDir, 'android')
   if (!(await exists(androidDir))) {
     onLine('Criando plataforma Android (cap add android)…')
-    const code = await run('npx', ['--yes', 'cap', 'add', 'android'], { cwd: rootDir, env: d.env, onLine })
+    const code = await run('npx', ['--yes', 'cap', 'add', 'android'], { cwd: rootDir, env, onLine })
     if (code !== 0) return { ok: false, message: 'cap add android falhou.' }
   }
   onLine('Sincronizando web → Android (cap sync)…')
-  await run('npx', ['--yes', 'cap', 'sync', 'android'], { cwd: rootDir, env: d.env, onLine })
+  await run('npx', ['--yes', 'cap', 'sync', 'android'], { cwd: rootDir, env, onLine })
   await ensureCameraPermission(androidDir, onLine)
   await ensureMicrophonePermission(androidDir, onLine)
   await ensureDownloadSupport(androidDir, onLine)
@@ -291,7 +354,7 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
       '--iconBackgroundColor', '#1f1e1d',
       '--iconBackgroundColorDark', '#1f1e1d'
     ]
-    const iconCode = await run('npx', iconArgs, { cwd: rootDir, env: d.env, onLine })
+    const iconCode = await run('npx', iconArgs, { cwd: rootDir, env, onLine })
     if (iconCode !== 0) onLine('Aviso: não foi possível gerar os ícones; usando o padrão.')
     else await brandAdaptiveIcon(androidDir, onLine)
   }
@@ -299,7 +362,7 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
   // 4) Gradle debug build.
   onLine('Compilando APK (gradlew assembleDebug)… isso pode levar alguns minutos.')
   const gradlew = WIN ? join(androidDir, 'gradlew.bat') : join(androidDir, 'gradlew')
-  const code = await run(gradlew, ['assembleDebug'], { cwd: androidDir, env: d.env, onLine })
+  const code = await run(gradlew, ['assembleDebug'], { cwd: androidDir, env, onLine })
   if (code !== 0) return { ok: false, message: `Build Gradle falhou (exit ${code}).` }
 
   // 5) Locate and publish the APK where the bridge serves it (/download).
