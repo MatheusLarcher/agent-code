@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import type { PermissionRequest } from '@shared/ipc'
+import { CountdownBar } from './CountdownBar'
 
 interface Props {
   request: PermissionRequest
@@ -42,6 +43,7 @@ export function PermissionModal({ request, onRespond }: Props): JSX.Element {
             Sempre permitir
           </button>
         </div>
+        <CountdownBar deadline={request.deadline} />
       </div>
     </div>
   )

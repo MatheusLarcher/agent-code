@@ -171,6 +171,11 @@ const ANDROID_AUTO = new Set([
 let counter = 0
 const nextId = (): string => `e${Date.now().toString(36)}-${counter++}`
 
+// A pending question/permission auto-resolves after this long without an answer:
+// a question proceeds (the model is told nobody answered); a tool permission
+// auto-denies (never auto-allow a tool the user never saw).
+const PERMISSION_TIMEOUT_MS = 7 * 60_000
+
 // `AskUserQuestion` is the tool the model uses to ask the user a multiple-choice
 // question. The bundled CLI can't render it without a terminal, so we intercept it
 // (see handlePermission) and surface the questions to our own UI. This pulls the
@@ -203,7 +208,13 @@ export class AgentSession {
   private q: ReturnType<typeof query> | null = null
   private pendingPermissions = new Map<
     string,
-    { toolName: string; input: Record<string, unknown>; resolve: (r: PermissionResult) => void }
+    {
+      toolName: string
+      input: Record<string, unknown>
+      resolve: (r: PermissionResult) => void
+      /** Auto-resolve timer (cleared if the user answers first). */
+      timer: ReturnType<typeof setTimeout>
+    }
   >()
   private approvedTools = new Set<string>()
   /** "Allow all" — when true every tool is auto-approved without prompting. Toggleable at runtime. */
@@ -218,7 +229,10 @@ export class AgentSession {
     private readonly opts: StartAgentOptions,
     private readonly browser: BrowserController,
     private readonly emit: (e: ChatEvent) => void,
-    private readonly askPermission: (req: PermissionRequest) => void
+    private readonly askPermission: (req: PermissionRequest) => void,
+    /** Called when a pending permission/question timed out and was auto-resolved,
+     *  so the renderer can close the matching modal. */
+    private readonly onPermissionExpire: (id: string) => void
   ) {}
 
   async start(): Promise<void> {
@@ -342,6 +356,7 @@ export class AgentSession {
     const pending = this.pendingPermissions.get(res.id)
     if (!pending) return
     this.pendingPermissions.delete(res.id)
+    clearTimeout(pending.timer) // user answered in time — cancel the auto-resolve
     // An answered AskUserQuestion: the user picked options. PermissionResult only
     // allows allow/deny, and we can't supply the tool's own structured output, so
     // we feed the answer back as a `deny` message — the model reads it and goes on.
@@ -369,6 +384,7 @@ export class AgentSession {
       // AskUserQuestion, which still needs a real answer (it isn't a permission).
       for (const [id, pending] of this.pendingPermissions) {
         if (pending.toolName === 'AskUserQuestion') continue
+        clearTimeout(pending.timer)
         pending.resolve({ behavior: 'allow', updatedInput: pending.input })
         this.pendingPermissions.delete(id)
       }
@@ -387,10 +403,14 @@ export class AgentSession {
     // auto-answer a question), and feed the user's pick back via resolvePermission.
     if (toolName === 'AskUserQuestion') {
       const id = nextId()
-      this.askPermission({ id, toolName, input, questions: parseAskQuestions(input) })
-      return new Promise<PermissionResult>((resolve) => {
-        this.pendingPermissions.set(id, { toolName, input, resolve })
+      this.askPermission({
+        id,
+        toolName,
+        input,
+        questions: parseAskQuestions(input),
+        deadline: Date.now() + PERMISSION_TIMEOUT_MS
       })
+      return new Promise<PermissionResult>((resolve) => this.registerPending(id, toolName, input, resolve))
     }
     if (
       this.bypassAll ||
@@ -411,10 +431,44 @@ export class AgentSession {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     const id = nextId()
-    this.askPermission({ id, toolName, input })
-    return new Promise<PermissionResult>((resolve) => {
-      this.pendingPermissions.set(id, { toolName, input, resolve })
-    })
+    this.askPermission({ id, toolName, input, deadline: Date.now() + PERMISSION_TIMEOUT_MS })
+    return new Promise<PermissionResult>((resolve) => this.registerPending(id, toolName, input, resolve))
+  }
+
+  /** Track a pending request and arm its auto-resolve timer. */
+  private registerPending(
+    id: string,
+    toolName: string,
+    input: Record<string, unknown>,
+    resolve: (r: PermissionResult) => void
+  ): void {
+    const timer = setTimeout(() => this.expirePermission(id), PERMISSION_TIMEOUT_MS)
+    // Don't let a pending prompt keep the process alive (e.g. on quit).
+    timer.unref?.()
+    this.pendingPermissions.set(id, { toolName, input, resolve, timer })
+  }
+
+  /** No answer in time: a question proceeds (model told nobody answered); a tool
+   *  permission auto-denies. Either way, tell the renderer to close the modal. */
+  private expirePermission(id: string): void {
+    const pending = this.pendingPermissions.get(id)
+    if (!pending) return
+    this.pendingPermissions.delete(id)
+    clearTimeout(pending.timer)
+    if (pending.toolName === 'AskUserQuestion') {
+      pending.resolve({
+        behavior: 'deny',
+        message:
+          'O usuário não respondeu em 7 minutos. Siga sem a resposta dele: assuma a opção mais sensata e continue a tarefa.'
+      })
+    } else {
+      pending.resolve({
+        behavior: 'deny',
+        message:
+          'Sem resposta do usuário (tempo de 7 minutos esgotado). A ferramenta NÃO foi autorizada; siga sem executá-la.'
+      })
+    }
+    this.onPermissionExpire(id)
   }
 
   private handleMessage(message: SDKMessage): void {

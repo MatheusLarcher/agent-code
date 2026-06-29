@@ -55,16 +55,32 @@ Avalie o pedido:
 2. Rode os **checks reais do projeto** — descubra-os nos scripts do `package.json`. Neste repo:
    `npm run typecheck` e `npm test`; rode também lint/build parcial se existirem.
 3. Se o terminal retornar erros, **corrija na hora**, antes de avançar.
-4. **Só com o código validado**, marque a tarefa com `[x]` no `EXECUTION_PLAN.md` e inicie a
-   próxima pendente.
+4. Com o código passando nos checks de terminal, **faça o Passo 3.5 antes** de marcar `[x]`.
+   Typecheck/teste verde **não** é "pronto" — pega o que compila, não o que funciona.
+
+### Passo 3.5 — Validação de runtime (OBRIGATÓRIA p/ qualquer mudança de UI/fluxo)
+Checks de terminal não pegam comportamento. **Rode o app** e exercite a feature **como um
+usuário** (use a skill `/verify` para subir e observar). Passe por esta checklist anti-regressão:
+- **Remontagem:** abrir → sair (trocar de aba/rota) → **voltar**. O estado/preview persiste?
+- **Reload (F5):** recarrega correto?
+- **Estado vazio** (sem dados) e **estado de erro** (rede/permissão).
+- **Ações encadeadas:** criar→aparece na lista; editar→reflete; excluir→some.
+- **Seleção/troca de contexto** (ex.: trocar o paciente/registro selecionado).
+- **Recursos com imagem/preview/blob/object-URL/stream/áudio:** testar explicitamente
+  montar→desmontar→remontar (é o caso clássico que `tsc` não pega).
+
+Se qualquer item quebrar, **corrija na hora** e revalide. Só então marque a tarefa com `[x]` no
+`EXECUTION_PLAN.md` e inicie a próxima pendente.
 
 ### Passo 4 — Auditoria e entrega
 1. Quando a **última** tarefa receber `[x]`, **pare de codar**.
 2. Cruze o resultado final com o **"Prompt Original"** salvo no Passo 1 — confira que tudo que foi
    pedido foi entregue.
-3. Envie no chat: **"✅ Funcionalidade concluída"**.
-4. Diga **o que foi feito** e aponte **o que precisa de validação visual manual** do usuário no
-   navegador (o terminal valida tipos/testes, não a aparência).
+3. Você só pode escrever **"✅ Funcionalidade concluída"** depois de ter **observado a feature
+   funcionando no app rodando**, pelo fluxo real do usuário (Passo 3.5). Tipos/testes verdes **não**
+   autorizam esse texto.
+4. Ao usuário, aponte **apenas** julgamentos subjetivos de estética/gosto. **NUNCA** delegue a ele
+   a verificação de que *funciona* — isso é sua obrigação, não dele.
 
 ---
 
@@ -72,5 +88,9 @@ Avalie o pedido:
 - Nunca despeje todo o código de uma vez numa tarefa complexa.
 - `EXECUTION_PLAN.md` é a **fonte de verdade** do progresso: atualize o checkbox após **cada**
   tarefa validada.
-- Uma tarefa só é "feita" depois de **passar nos checks do terminal**, não antes.
-- Em tarefa simples, nada disso se aplica: resolva direto.
+- Passar em typecheck/testes **NÃO é "pronto"**. "Pronto" = comportamento **verificado rodando o
+  app** no fluxo real (Passo 3.5). Tipos/testes pegam o que compila, não o que funciona.
+- Antes de cada tarefa, **liste no `EXECUTION_PLAN.md` os "fluxos de uso a validar"** daquela
+  tarefa. Verificação se planeja, não se improvisa.
+- Em tarefa simples, o protocolo de plano não se aplica — **mas a regra de validar rodando o app
+  (Passo 3.5) continua valendo**: não diga "pronto/funcionando" sem ter visto funcionar.

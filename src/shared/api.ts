@@ -10,6 +10,7 @@ import type {
   ImageAttachment,
   MentionHit,
   SkillInfo,
+  PermissionExpiredMsg,
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
@@ -83,6 +84,9 @@ export interface AgentCodeApi {
   disposeAgent(convId: string): Promise<void>
   onAgentEvent(cb: (e: AgentEventMsg) => void): () => void
   onPermissionRequest(cb: (m: PermissionRequestMsg) => void): () => void
+  /** Subscribe to permission/question timeouts (auto-resolved) so the renderer
+   *  can close the matching modal. Returns an unsubscribe function. */
+  onPermissionExpired(cb: (m: PermissionExpiredMsg) => void): () => void
 
   launchBrowser(): Promise<void>
   navigate(url: string): Promise<string>

@@ -13,6 +13,7 @@ import type {
   ImageAttachment,
   MentionHit,
   SkillInfo,
+  PermissionExpiredMsg,
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
@@ -86,6 +87,8 @@ const api: AgentCodeApi = {
   onAgentEvent: (cb: (e: AgentEventMsg) => void): (() => void) => on(Channels.agentEvent, cb),
   onPermissionRequest: (cb: (m: PermissionRequestMsg) => void): (() => void) =>
     on(Channels.agentPermissionRequest, cb),
+  onPermissionExpired: (cb: (m: PermissionExpiredMsg) => void): (() => void) =>
+    on(Channels.agentPermissionExpired, cb),
 
   // browser
   launchBrowser: (): Promise<void> => ipcRenderer.invoke(Channels.browserLaunch),

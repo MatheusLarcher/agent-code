@@ -143,6 +143,10 @@ export interface PermissionRequest {
   toolName: string
   input: Record<string, unknown>
   questions?: AskQuestion[]
+  /** Epoch ms when this request auto-resolves if the user doesn't respond
+   *  (questions → proceed without an answer; tool permissions → auto-deny).
+   *  Drives the countdown bar in the modal. */
+  deadline?: number
 }
 
 /** A chat event tagged with the conversation whose agent produced it. Each
@@ -156,6 +160,13 @@ export interface AgentEventMsg {
 export interface PermissionRequestMsg {
   convId: string
   req: PermissionRequest
+}
+
+/** main → renderer: a pending permission/question auto-resolved (timed out), so
+ *  the renderer should close its modal for that conversation. */
+export interface PermissionExpiredMsg {
+  convId: string
+  id: string
 }
 
 export interface PermissionResponse {
@@ -360,6 +371,40 @@ export function isOllamaModel(model: string | undefined): boolean {
   return model.endsWith(':cloud') || OLLAMA_MODELS.some((m) => m.id === model)
 }
 
+/** Fallback context window for a model not listed in CONTEXT_LIMITS. */
+export const DEFAULT_CONTEXT_LIMIT = 200_000
+
+/** Context-window size (max input tokens) per model — the denominator of the
+ *  context-usage bar. Anthropic values are authoritative (Anthropic model
+ *  catalog): the Opus 4.x family and Sonnet 4.6 are 1M, Haiku 4.5 is 200K.
+ *  Ollama Cloud values are best-effort native context windows. Unknown models
+ *  fall back to DEFAULT_CONTEXT_LIMIT. Keep this in sync when adding a model to
+ *  the selector (App.tsx MODELS / OLLAMA_MODELS) — a wrong limit makes the bar
+ *  read wrong. */
+export const CONTEXT_LIMITS: Record<string, number> = {
+  // Anthropic — authoritative
+  'claude-opus-4-8': 1_000_000,
+  'claude-opus-4-7': 1_000_000,
+  'claude-opus-4-6': 1_000_000,
+  'claude-opus-4-5': 1_000_000,
+  'claude-sonnet-4-6': 1_000_000,
+  'claude-haiku-4-5': 200_000,
+  'claude-fable-5': 1_000_000,
+  // Ollama Cloud — best-effort native context windows
+  'qwen3-coder:480b-cloud': 256_000,
+  'gpt-oss:120b-cloud': 128_000,
+  'gpt-oss:20b-cloud': 128_000,
+  'deepseek-v4-pro:cloud': 128_000,
+  'glm-5.2:cloud': 200_000,
+  'kimi-k2.7-code:cloud': 256_000
+}
+
+/** Context-window size for a model id, falling back to DEFAULT_CONTEXT_LIMIT. */
+export function contextLimitFor(model: string | undefined): number {
+  if (!model) return DEFAULT_CONTEXT_LIMIT
+  return CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
+}
+
 /** Ollama Cloud integration (optional). When enabled with an API key, the model
  *  selector gains the OLLAMA_MODELS; sessions on those run against Ollama Cloud
  *  via the Anthropic-compatible API. The key is stored only in the SQLite db. */
@@ -500,6 +545,8 @@ export const Channels = {
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',
+  /** main → renderer: a pending permission/question timed out and was auto-resolved. */
+  agentPermissionExpired: 'agent:permission-expired',
   browserFrame: 'browser:frame',
   browserStateChanged: 'browser:state',
   browserPicked: 'browser:picked',

@@ -48,6 +48,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
       return () => {}
     }),
     onPermissionRequest: vi.fn(() => () => {}),
+    onPermissionExpired: vi.fn(() => () => {}),
     launchBrowser: vi.fn(async () => {}),
     navigate: vi.fn(async () => ''),
     browserBack: vi.fn(async () => {}),
@@ -183,5 +184,41 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     await emit(result) // o 'result' vindo da interrupção não pode despachar a fila
     expect(api.sendMessage).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
+})
+
+describe('App — barra de limite de contexto', () => {
+  it('mostra o uso da janela de entrada sobre o limite do modelo (Opus = 1M) e atualiza no fim do turno', async () => {
+    const { container } = render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    // O valor "X / Y" é renderizado em nós de texto separados; lê o textContent.
+    const ctxVal = (): string => container.querySelector('.ctx-bar-val')?.textContent ?? ''
+
+    // Abre a conversa (Opus, limite 1M) — antes de qualquer turno, a janela está em 0.
+    await send('oi')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    expect(screen.getByText('entrada')).toBeTruthy()
+    expect(ctxVal()).toBe('0 / 1M')
+
+    // Um turno termina informando o tamanho real da janela enviada ao modelo
+    // (result sempre traz `usage`; `contextTokens` é a janela de entrada real).
+    await emit({
+      kind: 'result',
+      id: 'rctx',
+      isError: false,
+      text: 'done',
+      durationMs: 1,
+      contextTokens: 120000,
+      usage: { input: 120000, output: 50, cacheRead: 0, cacheWrite: 0 }
+    })
+    await waitFor(() => expect(ctxVal()).toBe('120.0k / 1M'))
+
+    // O contexto de saída é separado (acumulado), não se mistura com a janela de entrada.
+    expect(screen.getByText(/↑ .* saída/)).toBeTruthy()
   })
 })

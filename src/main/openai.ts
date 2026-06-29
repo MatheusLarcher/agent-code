@@ -25,7 +25,10 @@ export async function transcribeAudio(
 
   const form = new FormData()
   form.append('file', new Blob([buf], { type }), `audio.${ext}`)
-  form.append('model', 'gpt-4o-mini-transcribe')
+  // Full gpt-4o-transcribe (not the -mini): noticeably better pt-BR accuracy. The
+  // renderer's VAD already drops silence-only audio, so we don't pay to transcribe
+  // quiet stretches that would otherwise come back as hallucinated words.
+  form.append('model', 'gpt-4o-transcribe')
   // Force Portuguese so it doesn't guess the language (better accuracy for pt-BR).
   form.append('language', 'pt')
 

@@ -514,7 +514,8 @@ function registerIpc(): void {
         send(Channels.agentEvent, { convId, event })
         remote.broadcast(convId, event)
       },
-      (req) => send(Channels.agentPermissionRequest, { convId, req })
+      (req) => send(Channels.agentPermissionRequest, { convId, req }),
+      (id) => send(Channels.agentPermissionExpired, { convId, id })
     )
     sessions.set(convId, s)
     void s.start()

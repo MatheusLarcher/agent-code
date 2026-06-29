@@ -582,6 +582,57 @@ button svg {
 .tok.out {
   color: var(--text);
 }
+/* context-usage bar (input window: used / model limit) */
+.ctx-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 2px 9px;
+  color: var(--muted);
+}
+.ctx-bar-cap {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.ctx-bar-track {
+  width: 70px;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+.ctx-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.ctx-bar-val {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-bar.warn {
+  border-color: #d9a44166;
+}
+.ctx-bar.warn .ctx-bar-fill {
+  background: #d9a441;
+}
+.ctx-bar.crit {
+  border-color: #e5534b66;
+}
+.ctx-bar.crit .ctx-bar-fill {
+  background: #e5534b;
+}
+.ctx-bar.crit .ctx-bar-val {
+  color: #e5534b;
+}
 .tok.cost {
   color: var(--accent);
   border-color: var(--accent-dim);
@@ -1656,22 +1707,40 @@ button svg {
     opacity: 0.3;
   }
 }
-.rec-bars {
+/* Elapsed-time counter (mm:ss), updated from the meter loop. */
+.rec-time {
+  flex: 0 0 auto;
+  min-width: 30px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--err);
+}
+/* WhatsApp-style scrolling waveform: a strip of thin bars that fills the width;
+   heights scroll right→left as new amplitude samples arrive. */
+.rec-wave {
   display: flex;
   align-items: center;
-  gap: 3px;
-  height: 22px;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
 }
-.rec-bars i {
-  width: 3px;
-  height: 22px;
+.rec-wave i {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: 100%;
   border-radius: 2px;
   background: var(--err);
-  transform: scaleY(0.12);
+  transform: scaleY(0.08);
   transform-origin: center;
-  transition: transform 0.06s linear;
+  transition: transform 0.09s linear;
 }
 .rec-meter-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 12px;
   color: var(--muted);
 }
@@ -2411,6 +2480,21 @@ button svg {
   gap: 8px;
   justify-content: flex-end;
   margin-top: 18px;
+}
+/* Countdown until the agent auto-resolves the modal (drains right → left). */
+.countdown-track {
+  height: 3px;
+  width: 100%;
+  margin-top: 16px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.countdown-fill {
+  height: 100%;
+  width: 100%;
+  transform-origin: left;
+  background: var(--accent);
 }
 .btn.danger-btn {
   background: var(--err);

@@ -11,12 +11,14 @@ import type { BrowserController } from './browserController'
 function makeSession(opts: { skipPermissions?: boolean } = {}): {
   s: AgentSession
   ask: ReturnType<typeof vi.fn>
+  expire: ReturnType<typeof vi.fn>
 } {
   const emit = vi.fn()
   const ask = vi.fn()
+  const expire = vi.fn()
   const browser = {} as BrowserController
-  const s = new AgentSession({ convId: 'c1', cwd: '/proj', ...opts }, browser, emit, ask)
-  return { s, ask }
+  const s = new AgentSession({ convId: 'c1', cwd: '/proj', ...opts }, browser, emit, ask, expire)
+  return { s, ask, expire }
 }
 
 // handlePermission is private; reach it directly for the test.
@@ -128,5 +130,65 @@ describe('AgentSession — AskUserQuestion (pergunta interativa)', () => {
     const { id } = ask.mock.calls[0][0]
     s.resolvePermission({ id, behavior: 'allow', answers: [{ header: 'Lib', question: 'Qual lib usar?', selected: ['Yup'] }] })
     await expect(p).resolves.toMatchObject({ behavior: 'deny' })
+  })
+})
+
+describe('AgentSession — auto-timeout (sem resposta do usuário)', () => {
+  const askInput = { questions: [{ header: 'X', question: 'Q?', multiSelect: false, options: [{ label: 'A', description: '' }] }] }
+
+  it('manda um deadline futuro na requisição', () => {
+    const { s, ask } = makeSession()
+    const before = Date.now()
+    void gate(s, 'Bash', { command: 'ls' })
+    const req = ask.mock.calls[0][0]
+    expect(typeof req.deadline).toBe('number')
+    expect(req.deadline).toBeGreaterThan(before)
+  })
+
+  it('permissão de ferramenta: no timeout auto-NEGA e avisa o renderer', async () => {
+    vi.useFakeTimers()
+    try {
+      const { s, ask, expire } = makeSession()
+      const p = gate(s, 'Bash', { command: 'rm -rf x' })
+      const { id } = ask.mock.calls[0][0]
+      vi.advanceTimersByTime(7 * 60_000 + 10)
+      const res = (await p) as { behavior: string; message: string }
+      expect(res.behavior).toBe('deny')
+      expect(res.message).toMatch(/tempo|esgotado/i)
+      expect(expire).toHaveBeenCalledWith(id)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pergunta: no timeout prossegue (deny avisando que ninguém respondeu)', async () => {
+    vi.useFakeTimers()
+    try {
+      const { s, ask, expire } = makeSession()
+      const p = gate(s, 'AskUserQuestion', askInput)
+      const { id } = ask.mock.calls[0][0]
+      vi.advanceTimersByTime(7 * 60_000 + 10)
+      const res = (await p) as { behavior: string; message: string }
+      expect(res.behavior).toBe('deny')
+      expect(res.message).toMatch(/não respondeu|sensata/i)
+      expect(expire).toHaveBeenCalledWith(id)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('se o usuário responde a tempo, o timeout é cancelado (não dispara expire)', async () => {
+    vi.useFakeTimers()
+    try {
+      const { s, ask, expire } = makeSession()
+      const p = gate(s, 'Bash', { command: 'ls' })
+      const { id } = ask.mock.calls[0][0]
+      s.resolvePermission({ id, behavior: 'allow' })
+      await p
+      vi.advanceTimersByTime(7 * 60_000 + 10)
+      expect(expire).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

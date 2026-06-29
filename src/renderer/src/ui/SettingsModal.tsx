@@ -179,7 +179,7 @@ export function SettingsModal({ onClose, focus }: Props): JSX.Element {
             </div>
             <span className="settings-hint">
               Gere em platform.openai.com → API keys. Habilita falar para escrever (transcrição,
-              gpt-4o-mini-transcribe) e ouvir as respostas (gpt-4o-mini-tts). A chave fica salva só no
+              gpt-4o-transcribe) e ouvir as respostas (gpt-4o-mini-tts). A chave fica salva só no
               seu computador (no banco da pasta de dados).
             </span>
           </label>

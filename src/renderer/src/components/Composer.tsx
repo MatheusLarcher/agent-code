@@ -11,6 +11,7 @@ import type { FileAttachment, ImageAttachment, MentionHit, PickedElement, SkillI
 import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconStop } from './Icons'
 import { fileMeta, fmtSize } from '../files'
 import { useUI } from '../ui/UiProvider'
+import { frameRms, newVadState, vadStep, type VadState } from '../vad'
 
 /** Max size for a single non-image attachment (keeps the IPC payload sane). */
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -51,6 +52,12 @@ interface Props {
   /** Error shown when the user tries to use the box while the project is missing. */
   projectMissingMsg: string
 }
+
+/** Recording waveform (WhatsApp-style): number of bars in the scrolling strip and
+ *  how often (ms) a new amplitude sample is pushed onto it. ~90ms × 48 bars ≈ 4.3s
+ *  of history visible, scrolling right→left as you speak. */
+const WAVE_BARS = 48
+const WAVE_SAMPLE_MS = 90
 
 /** MediaRecorder mime type the browser supports for the mic (OpenAI accepts webm/ogg/mp4). */
 function pickAudioMime(): string {
@@ -177,16 +184,19 @@ export function Composer(props: Props): JSX.Element {
   const skillsCache = useRef<{ root: string; items: SkillInfo[] } | null>(null)
   const pickerOpen = picker !== null && pickerItems.length > 0
 
-  // ---- voice dictation (mic → text, OpenAI gpt-4o-mini-transcribe) ----
-  // Records in ~4s FINALIZED segments and appends each transcript, filling the box
-  // as you speak. Why segments instead of re-transcribing a growing recording: a
-  // MediaRecorder file is only valid once stopped — sending the still-open webm
-  // makes the API decode it as empty (the "nothing shows up" bug). Each segment is
-  // stopped (a complete, decodable file), transcribed, then a new segment starts.
+  // ---- voice dictation (mic → text, OpenAI gpt-4o-transcribe) ----
+  // Records one utterance per segment, cut at NATURAL PAUSES by a local VAD (voice
+  // activity detection, see ../vad — no external library), then appends each
+  // transcript. Two reasons it's segmented rather than one growing recording:
+  //   1. A MediaRecorder file is only valid once stopped — sending the still-open
+  //      webm makes the API decode it as empty (the "nothing shows up" bug).
+  //   2. The VAD closes a segment only when you pause (silence), never mid-word, so
+  //      nothing gets cut in half (the old fixed ~4s timer split words).
+  // Segments with no detected speech are DROPPED (never sent), so the model can't
+  // hallucinate words over silence. The VAD runs inside the meter's rAF loop.
   const [recording, setRecording] = useState(false)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const segTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const mimeRef = useRef<string>('')
   // Text already in the box when dictation started, and the transcript built so far.
   const baseTextRef = useRef('')
@@ -199,29 +209,71 @@ export function Composer(props: Props): JSX.Element {
   const [micId, setMicId] = useState<string>(() => localStorage.getItem('agentcode.micId') ?? '')
   const micWrap = useRef<HTMLDivElement>(null)
 
-  // ---- live input-level meter (so you can SEE the mic is picking up sound) ----
+  // Current recording segment (one utterance). `vad` carries the speech/silence
+  // state the meter loop advances; `vad.hadSpeech` gates whether it's transcribed.
+  const segRef = useRef<{ chunks: Blob[]; vad: VadState } | null>(null)
+
+  // ---- live recording waveform (WhatsApp-style scrolling strip) + meter ----
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const rafRef = useRef<number | null>(null)
   const barsRef = useRef<HTMLSpanElement | null>(null)
+  // Scrolling waveform state: the amplitude history (one entry per sample, newest
+  // last), the loudest frame since the last sample, when that sample was taken, the
+  // elapsed-time label node, and when recording started.
+  const levelsRef = useRef<number[]>([])
+  const wavePeakRef = useRef(0)
+  const waveTickRef = useRef(0)
+  const timeRef = useRef<HTMLSpanElement | null>(null)
+  const recStartRef = useRef(0)
   // Whether we've already surfaced a transcription error this session (avoid spam).
   const errNotifiedRef = useRef(false)
 
-  // Drive the visible VU bars straight from the analyser (no per-frame re-render).
+  // Per-frame loop (no React re-render): reads the raw waveform once and uses its
+  // RMS for both the VAD and the scrolling recording waveform.
   const runMeter = (): void => {
     const a = analyserRef.current
-    const bars = barsRef.current
-    if (a && bars) {
-      const data = new Uint8Array(a.frequencyBinCount)
-      a.getByteFrequencyData(data)
-      const n = bars.children.length
-      const band = Math.max(1, Math.floor(data.length / n))
-      for (let i = 0; i < n; i++) {
-        let sum = 0
-        for (let j = 0; j < band; j++) sum += data[i * band + j]
-        const avg = sum / band / 255 // 0..1
-        const h = Math.max(0.12, Math.min(1, avg * 1.8))
-        ;(bars.children[i] as HTMLElement).style.transform = `scaleY(${h})`
+    if (!a) {
+      rafRef.current = requestAnimationFrame(runMeter)
+      return
+    }
+    const time = new Uint8Array(a.fftSize)
+    a.getByteTimeDomainData(time)
+    const rms = frameRms(time)
+    const now = performance.now()
+
+    // VAD: advance the segment's speech/silence state; close the utterance at a
+    // pause (or the safety cap) so it gets transcribed.
+    const seg = segRef.current
+    if (seg) {
+      const { end } = vadStep(seg.vad, rms, now)
+      if (end) endUtterance()
+    }
+
+    // Waveform: keep the loudest frame since the last sample, then every
+    // WAVE_SAMPLE_MS push it as a new bar so the strip scrolls right→left like
+    // WhatsApp. The newest sample sits at the far right; older ones march left.
+    wavePeakRef.current = Math.max(wavePeakRef.current, rms)
+    if (now - waveTickRef.current >= WAVE_SAMPLE_MS) {
+      waveTickRef.current = now
+      const levels = levelsRef.current
+      levels.push(wavePeakRef.current)
+      wavePeakRef.current = 0
+      if (levels.length > WAVE_BARS) levels.splice(0, levels.length - WAVE_BARS)
+      const bars = barsRef.current
+      if (bars) {
+        const n = bars.children.length
+        const offset = n - levels.length // empty bars on the left until history fills
+        for (let i = 0; i < n; i++) {
+          const lvl = i >= offset ? levels[i - offset] : 0
+          const h = Math.max(0.08, Math.min(1, lvl * 3.2)) // amplify; keep a tiny stub
+          ;(bars.children[i] as HTMLElement).style.transform = `scaleY(${h})`
+        }
+      }
+      const label = timeRef.current
+      if (label && recStartRef.current) {
+        const s = Math.floor((now - recStartRef.current) / 1000)
+        label.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
       }
     }
     rafRef.current = requestAnimationFrame(runMeter)
@@ -303,24 +355,30 @@ export function Composer(props: Props): JSX.Element {
   }
 
   // Start one recording segment. Its own chunks finalize into a valid file on stop.
+  // The segment carries its own VAD state; on stop we DROP it if no speech was
+  // detected (pure silence is never sent to the API → no hallucinated words).
   const startSegment = (stream: MediaStream): void => {
     const rec = new MediaRecorder(stream, mimeRef.current ? { mimeType: mimeRef.current } : undefined)
-    const chunks: Blob[] = []
+    const seg = { chunks: [] as Blob[], vad: newVadState(performance.now()) }
+    segRef.current = seg
     rec.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunks.push(e.data)
+      if (e.data && e.data.size > 0) seg.chunks.push(e.data)
     }
     rec.onstop = () => {
-      const type = chunks[0]?.type || mimeRef.current || 'audio/webm'
-      const blob = new Blob(chunks, { type })
-      if (chunks.length === 0 || blob.size === 0) return
+      const type = seg.chunks[0]?.type || mimeRef.current || 'audio/webm'
+      const blob = new Blob(seg.chunks, { type })
+      // Discard silence-only segments: nothing to transcribe, and sending them is
+      // exactly what makes the model invent words over quiet stretches.
+      if (!seg.vad.hadSpeech || blob.size === 0) return
       void transcribeBlob(blob, type)
     }
     recorderRef.current = rec
     rec.start() // no timeslice — one whole, finalized file when stopped
   }
 
-  // Close the current segment (→ transcribed via its onstop) and open the next.
-  const cycleSegment = (): void => {
+  // Close the current utterance (→ transcribed via its onstop if it had speech) and
+  // open the next. Called by the VAD when it detects a pause, not on a fixed timer.
+  const endUtterance = (): void => {
     const rec = recorderRef.current
     if (rec && rec.state !== 'inactive') {
       try {
@@ -333,14 +391,13 @@ export function Composer(props: Props): JSX.Element {
   }
 
   const stopDictation = (): void => {
-    if (segTimer.current) {
-      clearInterval(segTimer.current)
-      segTimer.current = null
-    }
+    // Stop the meter/VAD first so a pending rAF can't reopen a segment mid-teardown.
+    stopMeter()
     const rec = recorderRef.current
     recorderRef.current = null
-    // Stop the last segment first so its onstop fires and transcribes the tail,
-    // THEN tear down the stream/meter (stopping tracks first can drop that data).
+    segRef.current = null
+    // Stop the last segment so its onstop fires and transcribes the tail (if it had
+    // speech), THEN tear down the stream (stopping tracks first can drop that data).
     if (rec && rec.state !== 'inactive') {
       try {
         rec.stop()
@@ -348,7 +405,6 @@ export function Composer(props: Props): JSX.Element {
         /* already stopped */
       }
     }
-    stopMeter()
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
     setRecording(false)
@@ -375,11 +431,15 @@ export function Composer(props: Props): JSX.Element {
       errNotifiedRef.current = false
       transcriptRef.current = ''
       baseTextRef.current = value.trim()
+      // Reset the scrolling waveform + elapsed timer for this recording.
+      levelsRef.current = []
+      wavePeakRef.current = 0
+      waveTickRef.current = 0
+      recStartRef.current = performance.now()
+      // The VAD (driven by the meter loop) finalizes each utterance at a pause and
+      // starts the next one, so text fills in as you speak — without cutting words.
       startSegment(stream)
       setRecording(true)
-      // Every few seconds, finalize the current segment (→ transcribed) and start
-      // a new one, so text fills in while you keep talking.
-      segTimer.current = setInterval(cycleSegment, 4000)
     } catch (err) {
       const name = err instanceof Error ? err.name : ''
       let msg = 'Não consegui acessar o microfone.'
@@ -788,16 +848,15 @@ export function Composer(props: Props): JSX.Element {
       {recording && (
         <div className="rec-meter" role="status" aria-live="polite">
           <span className="rec-dot" />
-          <span className="rec-bars" ref={barsRef}>
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
+          <span className="rec-time" ref={timeRef}>
+            0:00
           </span>
-          <span className="rec-meter-label">Ouvindo… clique no microfone para parar e transcrever</span>
+          <span className="rec-wave" ref={barsRef} aria-hidden="true">
+            {Array.from({ length: WAVE_BARS }, (_, i) => (
+              <i key={i} />
+            ))}
+          </span>
+          <span className="rec-meter-label">clique no microfone para parar e transcrever</span>
         </div>
       )}
       {pickerOpen && (

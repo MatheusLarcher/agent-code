@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { PermissionRequest, QuestionAnswer } from '@shared/ipc'
+import { CountdownBar } from './CountdownBar'
 
 interface Props {
   request: PermissionRequest
@@ -122,6 +123,7 @@ export function QuestionModal({ request, onAnswer, onCancel }: Props): JSX.Eleme
             Responder
           </button>
         </div>
+        <CountdownBar deadline={request.deadline} />
       </div>
     </div>
   )

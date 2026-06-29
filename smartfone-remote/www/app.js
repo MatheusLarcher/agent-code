@@ -274,6 +274,11 @@ function describeTool(name, input) {
       return { verb: 'Edit', detail: basename(inp.notebook_path), isSkill: false, stats: { added: lineCount(inp.new_source), removed: 0 } }
     case 'Read':
       return { verb: 'Read', detail: basename(inp.file_path), isSkill: false, stats: null }
+    case 'AskUserQuestion': {
+      var qs = Array.isArray(inp.questions) ? inp.questions : []
+      var first = qs[0] || {}
+      return { verb: 'Pergunta', detail: typeof first.header === 'string' ? first.header : '', isSkill: false, stats: null }
+    }
     default:
       return { verb: String(name || 'tool').replace(/^mcp__browser__/, '🌐 ').replace(/^mcp__[^_]+__/, ''), detail: '', isSkill: false, stats: null }
   }
@@ -299,8 +304,12 @@ function renderTool(m) {
   var info = describeTool(m.name, m.input)
   var hasDiff = info.stats && (info.stats.added > 0 || info.stats.removed > 0)
   var open = !!state.openTools[m.id]
+  // AskUserQuestion devolve a resposta como 'deny' (is_error=true), mas isso NAO
+  // e falha — tratar como respondido, sem pintar de vermelho.
+  var isQuestion = m.name === 'AskUserQuestion'
+  var noAnswer = isQuestion && m.result && /não respondeu|tempo|esgotado/i.test(m.result.text || '')
 
-  var card = el('tool-card' + (info.isSkill ? ' tool-skill' : '') + (m.result && m.result.isError ? ' tool-error' : ''))
+  var card = el('tool-card' + (info.isSkill ? ' tool-skill' : '') + ((m.result && m.result.isError && !isQuestion) ? ' tool-error' : ''))
 
   var head = el('tool-head')
   head.appendChild(el('tool-caret', open ? '▾' : '▸'))
@@ -323,7 +332,9 @@ function renderTool(m) {
     head.appendChild(dl)
   }
   var badge = m.result
-    ? el('tool-badge ' + (m.result.isError ? 'err' : 'ok'), m.result.isError ? 'error' : 'done')
+    ? (isQuestion
+        ? el('tool-badge ok', noAnswer ? 'sem resposta' : 'respondido')
+        : el('tool-badge ' + (m.result.isError ? 'err' : 'ok'), m.result.isError ? 'error' : 'done'))
     : el('tool-badge run', 'running…')
   head.appendChild(badge)
 

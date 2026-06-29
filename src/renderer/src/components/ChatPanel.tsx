@@ -1,5 +1,6 @@
 import { useEffect, useState, type RefObject } from 'react'
 import type { FileAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
+import { contextLimitFor } from '@shared/ipc'
 import type { UIMessage } from '../types'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
@@ -105,25 +106,56 @@ const fmt = (n: number): string => {
   return String(n)
 }
 
+/** The model's context limit, formatted compactly (1_000_000 → "1M", 200_000 → "200K"). */
+const fmtLimit = (n: number): string => {
+  if (n >= 1e6) return `${Number((n / 1e6).toFixed(1))}M`
+  if (n >= 1000) return `${Math.round(n / 1000)}K`
+  return String(n)
+}
+
+/** Context-window usage bar: how much of the model's input window the last
+ *  request filled. `context` is the real input size (input + cache tokens) of
+ *  the last model request; the denominator is the model's own context limit. */
+function ContextBar({ context, model }: { context: number; model: string }): JSX.Element {
+  const limit = contextLimitFor(model)
+  const pct = Math.min(100, limit > 0 ? (context / limit) * 100 : 0)
+  const level = pct >= 95 ? 'crit' : pct >= 80 ? 'warn' : 'ok'
+  return (
+    <div
+      className={`ctx-bar ${level}`}
+      title={
+        `Contexto de entrada — o que está sendo enviado ao modelo (a janela que ele recebe): ` +
+        `${context.toLocaleString('pt-BR')} de ${limit.toLocaleString('pt-BR')} tokens (${pct.toFixed(1)}%)`
+      }
+    >
+      <span className="ctx-bar-cap">entrada</span>
+      <span className="ctx-bar-track">
+        <span className="ctx-bar-fill" style={{ width: `${pct}%` }} />
+      </span>
+      <span className="ctx-bar-val">
+        {fmt(context)} / {fmtLimit(limit)}
+      </span>
+    </div>
+  )
+}
+
 export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
   return (
     <section className="chat-panel">
       <div className="chat-header">
         <span className="chat-title">Chat</span>
-        <div className="token-meter" title="Tempo da tarefa e uso de tokens">
+        <div className="token-meter" title="Tempo da tarefa, uso de contexto e custo">
           <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
-          <span
-            className="tok ctx"
-            title={`Tokens de contexto na última resposta: ${tokens.context.toLocaleString('pt-BR')}`}
-          >
-            ⬚ {fmt(tokens.context)} ctx
-          </span>
+          <ContextBar context={tokens.context} model={props.model} />
           <span
             className="tok out"
-            title={`Tokens de saída acumulados: ${tokens.output.toLocaleString('pt-BR')}`}
+            title={
+              `Contexto de saída — total de tokens que o modelo gerou nesta conversa ` +
+              `(acumulado, não é a janela de contexto): ${tokens.output.toLocaleString('pt-BR')}`
+            }
           >
-            ↓ {fmt(tokens.output)} out
+            ↑ {fmt(tokens.output)} saída
           </span>
           <span className="tok cost" title={`Custo estimado acumulado: $${tokens.cost.toFixed(6)}`}>
             ${tokens.cost.toFixed(2)}

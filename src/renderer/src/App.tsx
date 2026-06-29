@@ -407,6 +407,11 @@ export function App(): JSX.Element {
         notify('aviso', `“${title}” está aguardando ${what}.`)
       }
     })
+    // A pending question/permission timed out on the main side and was
+    // auto-resolved — close its modal here (only if it's still the same request).
+    const offExpired = window.api.onPermissionExpired(({ convId, id }) => {
+      setPermissions((p) => (p[convId]?.id === id ? withoutKey(p, convId) : p))
+    })
     const offState = window.api.onBrowserState(setBrowserState)
     const offPicked = window.api.onBrowserPicked((el) => {
       setChips((c) => [...c, el])
@@ -415,6 +420,7 @@ export function App(): JSX.Element {
     return () => {
       offEvent()
       offPerm()
+      offExpired()
       offState()
       offPicked()
     }

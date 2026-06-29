@@ -180,6 +180,11 @@ function describeTool(name: string, input: unknown): ToolInfo {
       return { verb: 'Edit', detail: baseName(inp.notebook_path), isSkill: false, stats: { added: lineCount(inp.new_source), removed: 0 } }
     case 'Read':
       return { verb: 'Read', detail: baseName(inp.file_path), isSkill: false, stats: null }
+    case 'AskUserQuestion': {
+      const qs = Array.isArray(inp.questions) ? (inp.questions as Array<Record<string, unknown>>) : []
+      const first = qs[0]
+      return { verb: 'Pergunta', detail: typeof first?.header === 'string' ? first.header : '', isSkill: false, stats: null }
+    }
     default:
       return { verb: name.replace(/^mcp__browser__/, '🌐 ').replace(/^mcp__[^_]+__/, ''), detail: '', isSkill: false, stats: null }
   }
@@ -236,6 +241,12 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
   const { notify } = useUI()
   const info = describeTool(m.name, m.input)
   const hasDiff = info.stats && (info.stats.added > 0 || info.stats.removed > 0)
+  // AskUserQuestion has no allow/deny: its answer is fed back as a `deny` message,
+  // so its tool-result is flagged is_error — but that's NOT a failure. Treat it as
+  // a normal "answered" outcome (don't paint it red).
+  const isQuestion = m.name === 'AskUserQuestion'
+  const noAnswer = isQuestion && !!m.result && /não respondeu|tempo|esgotado/i.test(m.result.text)
+  const errored = !!m.result?.isError && !isQuestion
   // Offer a download once the write succeeded (the file exists on disk).
   const filePath = m.result && !m.result.isError ? writtenPath(m.name, m.input) : ''
   
@@ -266,7 +277,7 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
   }
 
   return (
-    <div className={`tool-card ${info.isSkill ? 'tool-skill' : ''} ${m.result?.isError ? 'tool-error' : ''}`}>
+    <div className={`tool-card ${info.isSkill ? 'tool-skill' : ''} ${errored ? 'tool-error' : ''}`}>
       <button className="tool-head" onClick={() => setOpen((o) => !o)}>
         <span className="tool-caret">{open ? '▾' : '▸'}</span>
         <span className="tool-name">{info.verb}</span>
@@ -288,7 +299,11 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
           </span>
         )}
         {m.result ? (
-          <span className={`tool-badge ${m.result.isError ? 'err' : 'ok'}`}>{m.result.isError ? 'error' : 'done'}</span>
+          isQuestion ? (
+            <span className="tool-badge ok">{noAnswer ? 'sem resposta' : 'respondido'}</span>
+          ) : (
+            <span className={`tool-badge ${m.result.isError ? 'err' : 'ok'}`}>{m.result.isError ? 'error' : 'done'}</span>
+          )
         ) : (
           <span className="tool-badge run">running…</span>
         )}
