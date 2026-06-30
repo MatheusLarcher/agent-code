@@ -23,6 +23,8 @@ interface Props {
   onNewChatIn: (path: string) => void
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
+  /** Open a search hit, scrolling to the matching message (null → just open). */
+  onSelectResult: (convId: string, msgId: string | null) => void
 }
 
 /* ---- tiny inline icons (stroke = currentColor) ---- */
@@ -68,6 +70,73 @@ const Spinner = ({ size = 14 }: { size?: number }): JSX.Element => (
     <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
   </svg>
 )
+
+/* ---- prompt search helpers ---- */
+
+/** Lowercase + strip accents so "selênio" matches "selenio" (accent-insensitive). */
+function fold(s: string): string {
+  const n = s.toLowerCase().normalize('NFD')
+  let out = ''
+  for (let i = 0; i < n.length; i++) {
+    const code = n.charCodeAt(i)
+    if (code >= 0x300 && code <= 0x36f) continue
+    out += n[i]
+  }
+  return out
+}
+
+/** A short, single-line excerpt of `text` centered on the (case-insensitive) hit. */
+function makeSnippet(text: string, q: string): string {
+  const i = text.toLowerCase().indexOf(q.toLowerCase())
+  const at = i >= 0 ? i : 0
+  const start = Math.max(0, at - 28)
+  let s = text.slice(start, at + q.length + 60).replace(/\s+/g, ' ').trim()
+  if (start > 0) s = '… ' + s
+  if (at + q.length + 60 < text.length) s = s + ' …'
+  return s
+}
+
+interface PromptMatch {
+  snippet: string
+  /** Id of the matching USER message, or null when only the title matched. */
+  messageId: string | null
+}
+
+/** First USER prompt that matches `q` (with its id), else the title, else null. */
+function matchPrompt(c: Conversation, q: string, fq: string): PromptMatch | null {
+  for (const m of c.messages) {
+    if (m.kind === 'user' && typeof m.text === 'string' && fold(m.text).includes(fq)) {
+      return { snippet: makeSnippet(m.text, q), messageId: m.id }
+    }
+  }
+  if (fold(c.title).includes(fq)) return { snippet: makeSnippet(c.title, q), messageId: null }
+  return null
+}
+
+interface SearchResultRowProps {
+  c: Conversation
+  snippet: string
+  active: boolean
+  busy: boolean
+  onOpen: () => void
+}
+
+/** A search hit: conversation title + the matching prompt excerpt. */
+function SearchResultRow({ c, snippet, active, busy, onOpen }: SearchResultRowProps): JSX.Element {
+  return (
+    <div
+      className={`conv-row search-result ${active ? 'active' : ''}`}
+      onClick={onOpen}
+      title={c.title}
+    >
+      <span className="conv-ico">{busy ? <Spinner /> : <IconChat />}</span>
+      <div className="search-result-text">
+        <span className="conv-title">{c.title}</span>
+        <span className="search-snippet">{snippet}</span>
+      </div>
+    </div>
+  )
+}
 
 interface ConvRowProps {
   c: Conversation
@@ -165,6 +234,8 @@ export function Sidebar(props: Props): JSX.Element {
   // blur+commit the first one instantly, closing edit mode before you could type.
   const [editing, setEditing] = useState<{ key: string; id: string } | null>(null)
   const [editValue, setEditValue] = useState('')
+  // Free-text search over the user's own prompts across every conversation.
+  const [query, setQuery] = useState('')
 
   const toggleProject = (path: string): void =>
     setCollapsedProjects((prev) => {
@@ -250,6 +321,16 @@ export function Sidebar(props: Props): JSX.Element {
   }
 
   // ---- expanded sidebar ----
+  const q = query.trim()
+  const fq = fold(q)
+  const results = q
+    ? projects
+        .flatMap((p) => p.conversations)
+        .map((c) => ({ c, m: matchPrompt(c, q, fq) }))
+        .filter((r): r is { c: Conversation; m: PromptMatch } => r.m != null)
+        .sort((a, b) => b.c.updatedAt - a.c.updatedAt)
+    : []
+
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
@@ -262,6 +343,43 @@ export function Sidebar(props: Props): JSX.Element {
         </button>
       </div>
 
+      <div className="side-search">
+        <input
+          className="side-search-input"
+          type="search"
+          value={query}
+          placeholder="Buscar nos meus prompts…"
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+
+      {q ? (
+        <div className="sidebar-scroll">
+          <section className="side-section">
+            <div className="side-section-head">
+              <span className="side-section-title">
+                Resultados {results.length > 0 && <span className="project-count">{results.length}</span>}
+              </span>
+            </div>
+            {results.length === 0 ? (
+              <div className="side-empty">Nenhum prompt encontrado.</div>
+            ) : (
+              <div className="conv-list">
+                {results.map(({ c, m }) => (
+                  <SearchResultRow
+                    key={c.id}
+                    c={c}
+                    snippet={m.snippet}
+                    active={c.id === activeId}
+                    busy={props.busyIds.has(c.id)}
+                    onOpen={() => props.onSelectResult(c.id, m.messageId)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      ) : (
       <div className="sidebar-scroll">
         <section className="side-section">
           <div className="side-section-head">
@@ -318,6 +436,7 @@ export function Sidebar(props: Props): JSX.Element {
           )}
         </section>
       </div>
+      )}
     </aside>
   )
 }

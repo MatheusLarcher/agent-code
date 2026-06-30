@@ -67,6 +67,9 @@
       <div id="messages" class="messages"></div>
       <div id="busy" class="busy-bar" hidden><span class="spinner"></span> trabalhando…</div>
       <footer class="composer">
+        <button id="jump-bottom" class="jump-bottom" title="Ir para o final" aria-label="Ir para o final" hidden>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>
+        </button>
         <div id="preview" class="preview-tray" hidden></div>
         <div class="composer-row">
           <button id="attach" class="icon-btn attach-btn" title="Enviar imagem" aria-label="Enviar imagem">
@@ -86,15 +89,56 @@
       <!-- Connection menu (revealed by tapping the online indicator) -->
       <div id="status-menu" class="popover" hidden>
         <div class="popover-info" id="status-info"></div>
+        <button id="open-settings" class="popover-item">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Configurações
+        </button>
         <button id="exit" class="popover-item danger">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
           Sair da conexão
         </button>
       </div>
 
+      <!-- Settings panel (Permitir tudo + conexão) -->
+      <aside id="settings" class="settings-panel" hidden>
+        <header class="settings-top">
+          <button id="settings-back" class="icon-btn" title="Voltar" aria-label="Voltar">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          </button>
+          <span class="settings-top-title">Configurações</span>
+        </header>
+        <div class="settings-body">
+          <section id="cfg-skip-card" class="cfg-card cfg-switch-card">
+            <label class="cfg-switch-row">
+              <span class="cfg-switch-text">
+                <strong>🔓 Permitir tudo</strong>
+                <span class="cfg-desc">Executa todas as ferramentas no PC sem pedir confirmação, em todas as conversas. Aplica na hora — use com cuidado.</span>
+              </span>
+              <input id="cfg-skip" class="cfg-switch-input" type="checkbox" />
+              <span class="cfg-switch-visual" aria-hidden="true"></span>
+            </label>
+          </section>
+          <section class="cfg-card">
+            <div class="cfg-card-title">Conexão</div>
+            <div class="cfg-row"><span class="cfg-k">Endereço</span><span class="cfg-v" id="cfg-addr">—</span></div>
+            <div class="cfg-row"><span class="cfg-k">Token</span><span class="cfg-v" id="cfg-token">—</span></div>
+            <button id="cfg-exit" class="cfg-exit">Sair desta conexão</button>
+          </section>
+        </div>
+      </aside>
+
       <!-- Conversation history (like the PC sidebar) -->
       <aside id="history" class="drawer" hidden>
-        <div class="drawer-head">Conversas</div>
+        <div class="drawer-head">
+          <span>Conversas</span>
+          <button id="drawer-settings" class="icon-btn drawer-settings" title="Configurações" aria-label="Configurações">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
+        <div class="hist-search">
+          <input id="hist-search-input" type="search" inputmode="search" autocomplete="off"
+                 placeholder="Buscar nos meus prompts…" aria-label="Buscar nos meus prompts" />
+        </div>
         <div id="history-list" class="history-list"></div>
       </aside>
       <div id="scrim" class="scrim" hidden></div>

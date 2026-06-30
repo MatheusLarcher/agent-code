@@ -73,6 +73,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     publishRemoteState: vi.fn(async () => {}),
     buildRemoteApk: vi.fn(async () => ({ ok: true, message: '' })),
     onRemoteInbound: vi.fn(() => () => {}),
+    onRemoteSetSkipPerms: vi.fn(() => () => {}),
     onRemoteBuildProgress: vi.fn(() => () => {}),
     onRemoteClients: vi.fn(() => () => {})
   }

@@ -597,7 +597,9 @@ export const Channels = {
   /** main → renderer: progress while building the remote APK. */
   remoteBuildProgress: 'remote:build-progress',
   /** main → renderer: the number of connected phones changed (RemoteInfo). */
-  remoteClients: 'remote:clients'
+  remoteClients: 'remote:clients',
+  /** main → renderer: a phone toggled the global "Permitir tudo" switch. */
+  remoteSetSkipPerms: 'remote:set-skip-perms'
 } as const
 
 /** A progress line emitted while an Android device/emulator boots, tagged with
@@ -649,6 +651,8 @@ export interface RemoteConversation {
 /** Snapshot the renderer publishes to main so the bridge can serve history. */
 export interface RemoteStatePayload {
   conversations: RemoteConversation[]
+  /** Global "Permitir tudo" (skip permissions) state, mirrored to the phone. */
+  skipPerms?: boolean
 }
 
 /** A command received from a phone, forwarded to the renderer to dispatch into

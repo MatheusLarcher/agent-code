@@ -43,6 +43,8 @@ export interface RemoteServerDeps {
   tts?: (text: string) => Promise<{ base64: string; mimeType: string }>
   /** Whether an OpenAI key is configured (gates the phone's voice buttons). */
   voiceReady?: () => boolean
+  /** A phone toggled the global "Permitir tudo" switch — apply it on the PC. */
+  onSetSkipPerms?: (on: boolean) => void
 }
 
 const DEFAULT_PORT = 8765
@@ -236,6 +238,8 @@ export class RemoteServer {
         return
       }
       if (path === '/api/state') return this.serveState(res)
+      if (path === '/api/skip-perms' && req.method === 'POST') return this.serveSetSkipPerms(req, res)
+      if (path === '/api/search') return this.serveSearch(url, res)
       if (path === '/api/history') return this.serveHistory(url, res)
       if (path === '/api/events') return this.serveEvents(req, res)
       if (path === '/api/send' && req.method === 'POST') return this.serveSend(req, res)
@@ -354,7 +358,22 @@ export class RemoteServer {
     // actual STT/TTS runs on the PC, where the OpenAI key lives).
     const voiceReady = this.deps.voiceReady ? this.deps.voiceReady() : false
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ conversations, voiceReady }))
+    res.end(JSON.stringify({ conversations, voiceReady, skipPerms: this.state.skipPerms ?? false }))
+  }
+
+  /** Phone → PC: flip the global "Permitir tudo" (skip permissions) switch. */
+  private async serveSetSkipPerms(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    let on = false
+    try {
+      on = !!(JSON.parse(body) as { on?: boolean }).on
+    } catch {
+      /* fall through to default */
+    }
+    this.deps.onSetSkipPerms?.(on)
+    // Reflect it immediately so the phone's UI doesn't wait for the next publish.
+    this.state = { ...this.state, skipPerms: on }
+    sendJson(res, 200, { ok: true, skipPerms: on })
   }
 
   /** Phone → PC speech-to-text: receives recorded audio, returns the transcript.
@@ -409,6 +428,36 @@ export class RemoteServer {
     res.end(JSON.stringify({ messages: conv?.messages ?? [] }))
   }
 
+  /** Full-text search over the USER's own prompts across every conversation.
+   *  Reuses the in-memory snapshot the renderer publishes (which carries the full
+   *  message list), so no extra DB query is needed. Returns the matching convs with
+   *  a short snippet around the hit, most-recent first. */
+  private serveSearch(url: URL, res: ServerResponse): void {
+    const q = (url.searchParams.get('q') ?? '').trim()
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+    if (!q) {
+      res.end(JSON.stringify({ results: [] }))
+      return
+    }
+    const fq = fold(q)
+    const results: Array<{ id: string; title: string; cwd: string; snippet: string; messageId: string | null; updatedAt: number }> = []
+    for (const c of this.state.conversations) {
+      let snippet: string | null = null
+      let messageId: string | null = null
+      for (const m of c.messages as Array<{ kind?: string; text?: string; id?: string }>) {
+        if (m && m.kind === 'user' && typeof m.text === 'string' && fold(m.text).includes(fq)) {
+          snippet = makeSnippet(m.text, q)
+          messageId = typeof m.id === 'string' ? m.id : null
+          break
+        }
+      }
+      if (snippet == null && fold(c.title).includes(fq)) snippet = makeSnippet(c.title, q)
+      if (snippet != null) results.push({ id: c.id, title: c.title, cwd: c.cwd, snippet, messageId, updatedAt: c.updatedAt })
+    }
+    results.sort((a, b) => b.updatedAt - a.updatedAt)
+    res.end(JSON.stringify({ results }))
+  }
+
   private serveEvents(req: IncomingMessage, res: ServerResponse): void {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -453,6 +502,30 @@ export class RemoteServer {
 function summarize(c: RemoteConversation): Omit<RemoteConversation, 'messages'> & { messageCount: number } {
   const { messages, ...rest } = c
   return { ...rest, messageCount: messages.length }
+}
+
+/** Lowercase + strip accents, so "selênio" matches "selenio" (accent-insensitive).
+ *  Drops Unicode combining marks (U+0300–U+036F) by code point — no literal regex. */
+function fold(s: string): string {
+  const n = s.toLowerCase().normalize('NFD')
+  let out = ''
+  for (let i = 0; i < n.length; i++) {
+    const code = n.charCodeAt(i)
+    if (code >= 0x300 && code <= 0x36f) continue
+    out += n[i]
+  }
+  return out
+}
+
+/** A short, single-line excerpt of `text` centered on the (case-insensitive) hit. */
+function makeSnippet(text: string, q: string): string {
+  const i = text.toLowerCase().indexOf(q.toLowerCase())
+  const at = i >= 0 ? i : 0
+  const start = Math.max(0, at - 28)
+  let s = text.slice(start, at + q.length + 52).replace(/\s+/g, ' ').trim()
+  if (start > 0) s = '… ' + s
+  if (at + q.length + 52 < text.length) s = s + ' …'
+  return s
 }
 
 /** Write a JSON response with the given status. */

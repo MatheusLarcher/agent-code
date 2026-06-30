@@ -41,6 +41,7 @@ function renderSidebar(onRename = vi.fn()): { onRename: ReturnType<typeof vi.fn>
         onNewChatIn={() => {}}
         onRename={onRename}
         onDelete={() => {}}
+        onSelectResult={() => {}}
       />
     </UiProvider>
   )

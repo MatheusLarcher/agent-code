@@ -60,6 +60,10 @@ interface Props {
   projectRoot: string | null
   /** Active conversation id — resets the message window when it changes. */
   convId: string | null
+  /** Id of a message to scroll to (from a search hit), or null. */
+  scrollToId?: string | null
+  /** Bumped on each search-hit navigation so repeats re-trigger the scroll. */
+  scrollSeq?: number
   /** Saved draft for the active conversation (restored into the composer). */
   draft: string
   /** Persist the composer draft for the active conversation as it's typed. */
@@ -93,9 +97,6 @@ interface Props {
   /** Called when the user clicks the model picker while it's locked (in session),
    *  so App can show a "stop the session to change the model" hint. */
   onModelLockedClick: () => void
-  /** "Permitir tudo" toggle, shown right above the composer. */
-  skipPerms: boolean
-  onToggleSkipPerms: (on: boolean) => void
 }
 
 const fmt = (n: number): string => {
@@ -192,6 +193,8 @@ export function ChatPanel(props: Props): JSX.Element {
       <MessageList
         key={props.convId ?? 'none'}
         messages={messages}
+        scrollToId={props.scrollToId}
+        scrollSeq={props.scrollSeq}
         busy={busy}
         tts={props.tts}
         onRetry={props.onRetry}
@@ -253,17 +256,6 @@ export function ChatPanel(props: Props): JSX.Element {
             </option>
           ))}
         </select>
-        <label
-          className="skip-perms"
-          title="Permite todas as ferramentas sem pedir permissão. Pode ligar/desligar a qualquer momento."
-        >
-          <input
-            type="checkbox"
-            checked={props.skipPerms}
-            onChange={(e) => props.onToggleSkipPerms(e.target.checked)}
-          />
-          Permitir tudo
-        </label>
       </div>
 
       <Composer
