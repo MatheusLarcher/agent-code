@@ -133,6 +133,8 @@ export interface AgentCodeApi {
   buildRemoteApk(): Promise<{ ok: boolean; apkPath?: string; message: string }>
   /** A command arrived from a phone — dispatch it into its conversation. */
   onRemoteInbound(cb: (m: RemoteInboundMsg) => void): () => void
+  /** A phone toggled the global "Permitir tudo" switch — apply it on the PC. */
+  onRemoteSetSkipPerms(cb: (m: { on: boolean }) => void): () => void
   /** Progress lines while the remote APK is built. */
   onRemoteBuildProgress(cb: (m: RemoteBuildProgressMsg) => void): () => void
   /** The connected-phone count changed. */

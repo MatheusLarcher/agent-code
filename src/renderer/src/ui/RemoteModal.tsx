@@ -49,6 +49,8 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
   const [qr, setQr] = useState<string>('')
   const [busy, setBusy] = useState(false)
   const [building, setBuilding] = useState(false)
+  // Resultado do último build: null = nunca rodou nesta sessão; ok = terminou.
+  const [buildResult, setBuildResult] = useState<'ok' | 'fail' | null>(null)
   const [buildLog, setBuildLog] = useState<string[]>([])
   const logRef = useRef<HTMLPreElement>(null)
 
@@ -88,6 +90,7 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
       setBuildLog((l) => [...l.slice(-300), m.line])
       if (m.done) {
         setBuilding(false)
+        setBuildResult(m.ok ? 'ok' : 'fail')
         notify(m.ok ? 'sucesso' : 'erro', m.line)
       }
     })
@@ -117,6 +120,7 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
 
   const build = useCallback(async (): Promise<void> => {
     setBuilding(true)
+    setBuildResult(null)
     setBuildLog(['Iniciando build do APK…'])
     try {
       await window.api.buildRemoteApk()
@@ -152,6 +156,15 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
             </div>
             {info.running && qr && (
               <span className="remote-qr-caption">🌐 aponta para a VPS (acesso remoto)</span>
+            )}
+            {building && (
+              <span className="remote-build-badge building">⏳ Gerando APK…</span>
+            )}
+            {!building && buildResult === 'ok' && (
+              <span className="remote-build-badge ok">✅ APK gerado — pode escanear o QR</span>
+            )}
+            {!building && buildResult === 'fail' && (
+              <span className="remote-build-badge fail">❌ Falha ao gerar o APK</span>
             )}
           </div>
 

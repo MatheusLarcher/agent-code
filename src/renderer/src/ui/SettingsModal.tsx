@@ -6,6 +6,9 @@ interface Props {
   onClose: () => void
   /** When 'openai', highlight + scroll to the OpenAI key (a voice feature needs it). */
   focus?: 'openai' | null
+  /** Global "allow all tools" switch — applies live (not gated by Save). */
+  skipPerms: boolean
+  onToggleSkipPerms: (on: boolean) => void
 }
 
 /**
@@ -14,7 +17,7 @@ interface Props {
  * MCP tools for generating UI mockups. Changes apply to sessions started after
  * saving (reconnect a conversation to pick them up).
  */
-export function SettingsModal({ onClose, focus }: Props): JSX.Element {
+export function SettingsModal({ onClose, focus, skipPerms, onToggleSkipPerms }: Props): JSX.Element {
   const { notify } = useUI()
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
   const [showKey, setShowKey] = useState(false)
@@ -78,6 +81,26 @@ export function SettingsModal({ onClose, focus }: Props): JSX.Element {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card settings-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <h3 className="modal-title">⚙️ Configurações</h3>
+
+        <div className="settings-scroll">
+        <section className={`settings-section settings-switch-section ${skipPerms ? 'on' : ''}`}>
+          <label className="settings-switch-row">
+            <span className="settings-switch-text">
+              <strong>🔓 Permitir tudo</strong>
+              <span className="settings-desc">
+                Executa todas as ferramentas sem pedir confirmação, em todas as conversas. Aplica na
+                hora e fica salvo entre reinícios — use com cuidado.
+              </span>
+            </span>
+            <input
+              className="switch-input"
+              type="checkbox"
+              checked={skipPerms}
+              onChange={(e) => onToggleSkipPerms(e.target.checked)}
+            />
+            <span className="switch-visual" aria-hidden="true" />
+          </label>
+        </section>
 
         <section className="settings-section">
           <label className="settings-field">
@@ -267,6 +290,7 @@ export function SettingsModal({ onClose, focus }: Props): JSX.Element {
             </span>
           </label>
         </section>
+        </div>
 
         <div className="modal-actions">
           <button className="btn ghost" onClick={onClose}>

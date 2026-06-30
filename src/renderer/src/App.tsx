@@ -344,7 +344,8 @@ export function App(): JSX.Element {
                   text: q.text,
                   images: q.thumbs.length ? q.thumbs : undefined,
                   files: q.files.length ? q.files.map((f) => ({ name: f.name, size: f.size })) : undefined,
-                  error: 'A conversa encerrou antes de enviar esta mensagem.'
+                  error: 'A conversa encerrou antes de enviar esta mensagem.',
+                  ts: Date.now()
                 }))
               ],
               updatedAt: Date.now()
@@ -381,7 +382,8 @@ export function App(): JSX.Element {
                 id: nextMsgId,
                 text: next.text,
                 images: next.thumbs.length ? next.thumbs : undefined,
-                files: next.files.length ? next.files.map((f) => ({ name: f.name, size: f.size })) : undefined
+                files: next.files.length ? next.files.map((f) => ({ name: f.name, size: f.size })) : undefined,
+                ts: Date.now()
               }
             ],
             updatedAt: Date.now()
@@ -533,11 +535,12 @@ export function App(): JSX.Element {
           connected: connectedRef.current.has(c.id),
           updatedAt: c.updatedAt,
           messages: c.messages
-        }))
+        })),
+        skipPerms: skipPermsRef.current
       })
     }, 400)
     return () => clearTimeout(pubTimer.current)
-  }, [conversations, busyIds, connectedIds, remoteRunning, hydrated])
+  }, [conversations, busyIds, connectedIds, remoteRunning, hydrated, skipPerms])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
   // page viewport follows (BrowserPanel reports its new size to main).
@@ -609,6 +612,14 @@ export function App(): JSX.Element {
 
   const selectConversation = useCallback((id: string): void => {
     setActiveId(id)
+  }, [])
+
+  // A search hit asks to open a conversation AND land on the matched message.
+  // `seq` bumps each time so clicking the same result re-triggers the scroll.
+  const [scrollTarget, setScrollTarget] = useState<{ convId: string; msgId: string; seq: number } | null>(null)
+  const selectConversationAt = useCallback((id: string, msgId: string | null): void => {
+    setActiveId(id)
+    if (msgId) setScrollTarget((prev) => ({ convId: id, msgId, seq: (prev?.seq ?? 0) + 1 }))
   }, [])
 
   const renameConversation = useCallback(
@@ -753,7 +764,7 @@ export function App(): JSX.Element {
   }, [stopSession])
 
   // "Permitir tudo" toggle — a global switch persisted across restarts and
-  // applied to every live session. Shared by the topbar and the composer bar.
+  // applied to every live session. Lives in Settings; the topbar shows its status.
   const toggleSkipPerms = useCallback(
     (on: boolean): void => {
       setSkipPerms(on)
@@ -810,7 +821,8 @@ export function App(): JSX.Element {
             id: msgId,
             text,
             images: thumbs.length ? thumbs : undefined,
-            files: files.length ? files.map((f) => ({ name: f.name, size: f.size })) : undefined
+            files: files.length ? files.map((f) => ({ name: f.name, size: f.size })) : undefined,
+            ts: Date.now()
           }
         ],
         updatedAt: Date.now()
@@ -926,6 +938,12 @@ export function App(): JSX.Element {
     })
     return off
   }, [dispatch, notify])
+
+  // A phone flipped "Permitir tudo" — apply it on the PC (persist + live sessions).
+  useEffect(() => {
+    const off = window.api.onRemoteSetSkipPerms(({ on }) => toggleSkipPerms(on))
+    return off
+  }, [toggleSkipPerms])
 
   const deleteQueued = useCallback((id: string): void => {
     setQueue((q) => q.filter((m) => m.id !== id))
@@ -1069,8 +1087,18 @@ export function App(): JSX.Element {
     // instead of auto-starting the next queued message.
     interruptedRef.current.add(cid) // intentional stop — don't flag the message as failed
     setQueue((q) => q.filter((m) => m.convId !== cid))
+    // Mark the in-flight message as canceled so the chat shows a "cancelada" note.
+    const inflight = inflightRef.current[cid]
+    if (inflight) {
+      patchConv(cid, (c) => ({
+        ...c,
+        messages: c.messages.map((m) =>
+          m.kind === 'user' && m.id === inflight.msgId ? { ...m, canceled: true } : m
+        )
+      }))
+    }
     void window.api.interrupt(cid)
-  }, [])
+  }, [patchConv])
 
   // Open a preview tab from the modal. newTab returns a status string, so we can
   // surface success/errors (e.g. Android failing because the toolchain is missing)
@@ -1187,10 +1215,12 @@ export function App(): JSX.Element {
         onNewChatIn={newChatIn}
         onRename={renameConversation}
         onDelete={deleteConversation}
+        onSelectResult={selectConversationAt}
       />
 
       <div className="main-area">
         <header className="topbar">
+          <div className="topbar-left">
           <div className="project readonly" title={active?.cwd || ''}>
             <span className="project-label">Projeto</span>
             <span className="project-path">{active ? basename(active.cwd) : 'Nenhuma conversa'}</span>
@@ -1236,6 +1266,7 @@ export function App(): JSX.Element {
               </svg>
             </button>
           )}
+          </div>
           <button
             className={`btn ghost remote-btn topbar-right ${remoteRunning ? 'on' : ''}`}
             onClick={() => setRemoteOpen(true)}
@@ -1289,6 +1320,8 @@ export function App(): JSX.Element {
             projects={projects}
             projectRoot={active?.cwd ?? null}
             convId={active?.id ?? null}
+            scrollToId={scrollTarget && scrollTarget.convId === activeId ? scrollTarget.msgId : null}
+            scrollSeq={scrollTarget?.seq ?? 0}
             draft={active?.draft ?? ''}
             onDraftChange={onDraftChange}
             projectMissing={projectMissing}
@@ -1308,8 +1341,6 @@ export function App(): JSX.Element {
             onModelLockedClick={() =>
               notify('aviso', 'Pare a sessão (botão no topo) para poder trocar o modelo.')
             }
-            skipPerms={skipPerms}
-            onToggleSkipPerms={toggleSkipPerms}
           />
           {!browserMinimized && (
             <div
@@ -1371,7 +1402,14 @@ export function App(): JSX.Element {
         />
       )}
       {remoteOpen && <RemoteModal onClose={() => setRemoteOpen(false)} />}
-      {settingsOpen && <SettingsModal onClose={closeSettings} focus={settingsFocus} />}
+      {settingsOpen && (
+        <SettingsModal
+          onClose={closeSettings}
+          focus={settingsFocus}
+          skipPerms={skipPerms}
+          onToggleSkipPerms={toggleSkipPerms}
+        />
+      )}
       {stopConfirm && (
         <div className="modal-overlay" onClick={() => setStopConfirm(null)}>
           <div

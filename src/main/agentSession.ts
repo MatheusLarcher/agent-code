@@ -219,6 +219,10 @@ export class AgentSession {
   private approvedTools = new Set<string>()
   /** "Allow all" — when true every tool is auto-approved without prompting. Toggleable at runtime. */
   private bypassAll = false
+  /** Set when the user manually canceled the previous turn. The SDK keeps the
+   *  interrupted exchange in its in-memory context (no API to drop it), so the
+   *  next message is prefixed with a note telling the model to disregard it. */
+  private canceledPending = false
   private liveId: string | null = null
   private liveText = ''
   /** Context-window size of the most recent model request (last `assistant`
@@ -325,15 +329,27 @@ export class AgentSession {
   }
 
   send(text: string, images?: ImageAttachment[]): void {
+    // If the user manually canceled the previous turn, neutralize it: the SDK
+    // still carries the interrupted request (and any partial reply) in context,
+    // so prefix a clear note telling the model to ignore that canceled exchange.
+    let outText = text
+    if (this.canceledPending) {
+      this.canceledPending = false
+      const note =
+        '[Observação do sistema: o usuário CANCELOU manualmente a solicitação anterior e a resposta parcial a ela. ' +
+        'Desconsidere por completo aquela solicitação cancelada e a resposta interrompida — trate como se nunca ' +
+        'tivessem existido — e atenda apenas à mensagem a seguir.]'
+      outText = text ? `${note}\n\n${text}` : note
+    }
     // With images, send a content-block array (image blocks first, then the
     // text) instead of a plain string — the native Anthropic image format.
-    let content: unknown = text
+    let content: unknown = outText
     if (images && images.length > 0) {
       const blocks: unknown[] = images.map((img) => ({
         type: 'image',
         source: { type: 'base64', media_type: img.mediaType, data: img.data }
       }))
-      if (text) blocks.push({ type: 'text', text })
+      if (outText) blocks.push({ type: 'text', text: outText })
       content = blocks
     }
     const msg: SDKUserMessage = {
@@ -347,6 +363,9 @@ export class AgentSession {
   async interrupt(): Promise<void> {
     try {
       await this.q?.interrupt()
+      // Manual cancel: flag the conversation so the next message tells the model
+      // to disregard the canceled request (set only on a real interrupt).
+      this.canceledPending = true
     } catch {
       /* not in a turn */
     }

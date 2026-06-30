@@ -239,6 +239,7 @@ async function listAgentSkills(projectRoot: string): Promise<SkillInfo[]> {
 // dispatches into the right conversation) and tee live agent events back over SSE.
 const remote = new RemoteServer({
   onInbound: (convId, text, images) => send(Channels.remoteInbound, { convId, text, images }),
+  onSetSkipPerms: (on) => send(Channels.remoteSetSkipPerms, { on }),
   apkPath: () => join(REMOTE_ROOT, 'dist', 'agent-remote.apk'),
   wwwDir: () => join(REMOTE_ROOT, 'www'),
   onClientsChanged: (info) => send(Channels.remoteClients, info),

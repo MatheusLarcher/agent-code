@@ -314,17 +314,28 @@ export function MessageList({
   messages,
   busy,
   tts,
-  onRetry
+  onRetry,
+  scrollToId,
+  scrollSeq
 }: {
   messages: UIMessage[]
   busy: boolean
   tts: TtsControls
   /** Resend a user message whose turn failed. */
   onRetry: (msgId: string) => void
+  /** Id of a message to scroll to (from a search hit), or null. */
+  scrollToId?: string | null
+  /** Bumped on each search-hit navigation so repeats re-trigger the scroll. */
+  scrollSeq?: number
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(PAGE)
+  // Whether the "jump to bottom" button is shown (user scrolled up from the end).
+  const [showJump, setShowJump] = useState(false)
+  // Last handled search-scroll request, so the same nav doesn't re-fire forever.
+  const lastSeq = useRef(-1)
+  const pendingScroll = scrollToId != null && scrollSeq !== lastSeq.current
 
   // Refs coordinating the two scroll behaviors below.
   const atBottom = useRef(true) // was the user pinned to the bottom?
@@ -364,17 +375,43 @@ export function MessageList({
   useEffect(() => {
     if (loadingOlder.current) return
     if (first.current) {
-      endRef.current?.scrollIntoView()
+      // Arriving from a search hit: don't yank to the bottom — let the scroll
+      // effect below center the matched prompt instead.
+      if (!pendingScroll) endRef.current?.scrollIntoView()
       first.current = false
       return
     }
     if (atBottom.current) endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Search-hit navigation: make sure the target is inside the rendered window,
+  // then scroll it to the center and flash it once.
+  useEffect(() => {
+    if (!pendingScroll || !scrollToId) return
+    const idx = messages.findIndex((m) => 'id' in m && m.id === scrollToId)
+    if (idx < 0) return
+    const needed = total - idx + 4 // a few messages of context below it
+    setVisible((v) => (v < needed ? needed : v))
+  }, [pendingScroll, scrollToId, scrollSeq, messages, total])
+
+  useLayoutEffect(() => {
+    if (!pendingScroll || !scrollToId) return
+    const root = scrollRef.current
+    const el = root?.querySelector(`[data-mid="${CSS.escape(scrollToId)}"]`) as HTMLElement | null
+    if (!el) return // not in the window yet — the effect above expands it, re-running this
+    el.scrollIntoView({ block: 'center' })
+    el.classList.add('msg-flash')
+    window.setTimeout(() => el.classList.remove('msg-flash'), 2200)
+    lastSeq.current = scrollSeq ?? -1
+  }, [pendingScroll, scrollToId, scrollSeq, visible, messages])
+
   const onScroll = (): void => {
     const el = scrollRef.current
     if (!el) return
-    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    atBottom.current = fromBottom < 120
+    const far = fromBottom > 240
+    setShowJump((v) => (v === far ? v : far))
     // Near the top with more to show → load another page, keeping position.
     if (el.scrollTop < 80 && hasOlder && !loadingOlder.current) {
       prevHeight.current = el.scrollHeight
@@ -384,7 +421,14 @@ export function MessageList({
     }
   }
 
+  const jumpToBottom = (): void => {
+    atBottom.current = true
+    setShowJump(false)
+    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
   return (
+    <div className="message-list-wrap">
     <div className="message-list" ref={scrollRef} onScroll={onScroll}>
       {hasOlder && (
         <div className="load-more-hint">↑ Role para cima para carregar mais ({startIdx} anteriores)</div>
@@ -394,7 +438,7 @@ export function MessageList({
         switch (m.kind) {
           case 'user':
             return (
-              <div key={m.id} className="msg user">
+              <div key={m.id} className="msg user" data-mid={m.id}>
                 <div className={`bubble ${m.error ? 'has-error' : ''}`}>
                   {m.images && m.images.length > 0 && (
                     <div className="msg-images">
@@ -421,6 +465,7 @@ export function MessageList({
                   )}
                   {m.text}
                 </div>
+                {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
                 {m.error && (
                   <div className="msg-error">
                     <span className="msg-error-text" title={m.error}>
@@ -436,6 +481,7 @@ export function MessageList({
                     </button>
                   </div>
                 )}
+                {m.ts && <MessageTime ts={m.ts} />}
               </div>
             )
           case 'assistant-text': {
@@ -505,6 +551,16 @@ export function MessageList({
         </div>
       )}
       <div ref={endRef} />
+    </div>
+      {showJump && (
+        <button className="jump-bottom" title="Ir para o final" onClick={jumpToBottom}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <polyline points="6 13 12 19 18 13" />
+          </svg>
+        </button>
+      )}
     </div>
   )
 }

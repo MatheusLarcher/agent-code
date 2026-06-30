@@ -32,7 +32,9 @@ var state = {
   voiceReady: false, // PC has an OpenAI key → show mic/listen buttons
   recording: false,  // mic is capturing right now
   speakingId: null,  // id of the assistant message being read aloud (or null)
-  audio: null        // <Audio> currently playing the TTS
+  audio: null,       // <Audio> currently playing the TTS
+  scrollToMsg: null, // message id to scroll to after a search-result navigation
+  skipPerms: false   // global "Permitir tudo" state (mirrored from the PC)
 }
 
 var $ = function (id) { return document.getElementById(id) }
@@ -382,9 +384,13 @@ function renderMessages() {
   var prevTop = box.scrollTop
   var nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80
   box.innerHTML = ''
+  var scrollTarget = null
   state.messages.forEach(function (m) {
     if (m.kind === 'user') {
+      var wrap = el('msg-row user')
       var u = el('msg user')
+      if (m.id) u.setAttribute('data-mid', m.id)
+      if (state.scrollToMsg && m.id === state.scrollToMsg) scrollTarget = u
       if (m.images && m.images.length) {
         var gal = el('msg-imgs')
         m.images.forEach(function (src) {
@@ -395,7 +401,12 @@ function renderMessages() {
         u.appendChild(gal)
       }
       if (m.text) u.appendChild(document.createTextNode(m.text))
-      box.appendChild(u)
+      wrap.appendChild(u)
+      // Note when this message was manually canceled.
+      if (m.canceled) wrap.appendChild(el('msg-canceled', '⊘ Mensagem cancelada'))
+      // Sent date/time, small, under my own message.
+      if (m.ts) wrap.appendChild(el('msg-time', fmtMsgTime(m.ts)))
+      box.appendChild(wrap)
     } else if (m.kind === 'assistant-text') {
       var a = el('msg assistant')
       var parsed = parseDownloads(m.text)
@@ -441,6 +452,37 @@ function renderMessages() {
   // Pinned to the bottom → follow new content; otherwise keep the user exactly
   // where they were reading (content above the growing message is stable).
   box.scrollTop = nearBottom ? box.scrollHeight : prevTop
+  // Coming from a search hit: center the found prompt and flash it once.
+  if (scrollTarget) {
+    scrollTarget.scrollIntoView({ block: 'center' })
+    scrollTarget.classList.add('msg-highlight')
+    setTimeout(function () { scrollTarget.classList.remove('msg-highlight') }, 2200)
+    state.scrollToMsg = null
+  }
+  updateJumpBtn()
+}
+
+// Compact "data e horário" for a sent message: "Hoje às 14:32" or "30/06/2026 às 14:32".
+function fmtMsgTime(ts) {
+  var d = new Date(ts)
+  var time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  var n = new Date()
+  var sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()
+  return sameDay ? ('Hoje às ' + time) : (d.toLocaleDateString('pt-BR') + ' às ' + time)
+}
+
+// Floating "scroll to bottom": visible only when the user scrolled up from the end.
+function updateJumpBtn() {
+  var box = $('messages')
+  var btn = $('jump-bottom')
+  if (!box || !btn) return
+  var far = box.scrollHeight - box.scrollTop - box.clientHeight > 220
+  btn.hidden = !far
+}
+function scrollMessagesToBottom() {
+  var box = $('messages')
+  box.scrollTop = box.scrollHeight
+  updateJumpBtn()
 }
 
 // ---- networking -----------------------------------------------------------
@@ -464,7 +506,12 @@ function fetchState() {
       state.voiceReady = !!data.voiceReady
       var mic = $('mic')
       if (mic) mic.hidden = !state.voiceReady
-      if (!$('history').hidden) renderHistory()
+      // Mirror the PC's "Permitir tudo" state; keep the settings toggle in sync.
+      state.skipPerms = !!data.skipPerms
+      syncSkipToggle()
+      // Don't clobber active search results when the conversation list refreshes.
+      var sb = $('hist-search-input')
+      if (!$('history').hidden && !(sb && sb.value.trim())) renderHistory()
       updateConvTitle()
       var cur = current()
       $('busy').hidden = !(cur && cur.busy)
@@ -520,9 +567,51 @@ function renderHistory() {
   updateConvTitle()
 }
 
+// Search across the user's own prompts (server-side, every conversation).
+var searchTimer = null
+function onSearchInput() {
+  var q = $('hist-search-input').value.trim()
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null }
+  if (!q) { renderHistory(); return }
+  searchTimer = setTimeout(function () { runSearch(q) }, 220)
+}
+function runSearch(q) {
+  fetch(api('/api/search?q=' + encodeURIComponent(q)))
+    .then(function (r) { return r.json() })
+    .then(function (data) {
+      // Drop a stale response if the box changed while it was in flight.
+      if ($('hist-search-input').value.trim() !== q) return
+      renderSearchResults(data.results || [], q)
+    })
+    .catch(function () { /* keep the current list on a network blip */ })
+}
+function renderSearchResults(results, q) {
+  var list = $('history-list')
+  list.innerHTML = ''
+  if (!results.length) {
+    list.appendChild(el('hist-empty', 'Nenhum prompt encontrado para “' + q + '”.'))
+    return
+  }
+  results.forEach(function (c) {
+    var row = el('hist-row hist-result' + (c.id === state.convId ? ' active' : ''))
+    row.appendChild(el('hist-title', c.title || 'Conversa'))
+    if (c.snippet) row.appendChild(el('hist-snippet', c.snippet))
+    row.addEventListener('click', function () {
+      // Land on the exact prompt that matched (when the hit was a message, not
+      // just the title); loadHistory's render scrolls to it.
+      state.scrollToMsg = c.messageId || null
+      selectConv(c.id)
+      closeDrawer()
+    })
+    list.appendChild(row)
+  })
+}
+
 // ---- drawer / connection menu --------------------------------------------
 
 function openDrawer() {
+  var box = $('hist-search-input')
+  if (box) box.value = '' // start each open with a clean search
   renderHistory()
   $('history').hidden = false
   $('scrim').hidden = false
@@ -543,6 +632,42 @@ function closeMenus() {
   $('history').hidden = true
   $('status-menu').hidden = true
   $('scrim').hidden = true
+}
+
+// ---- settings -------------------------------------------------------------
+
+function openSettings() {
+  closeMenus()
+  $('cfg-addr').textContent = state.base ? state.base.replace(/^https?:\/\//, '') : '—'
+  $('cfg-token').textContent = state.token || '—'
+  syncSkipToggle()
+  $('settings').hidden = false
+}
+function closeSettings() {
+  $('settings').hidden = true
+}
+// Reflect state.skipPerms on the toggle + its card (without firing onchange).
+function syncSkipToggle() {
+  var input = $('cfg-skip')
+  if (input) input.checked = !!state.skipPerms
+  var card = $('cfg-skip-card')
+  if (card) card.classList.toggle('on', !!state.skipPerms)
+}
+// Push a new "Permitir tudo" value to the PC (optimistic; state echoes back).
+function setSkipPerms(on) {
+  state.skipPerms = on
+  syncSkipToggle()
+  fetch(api('/api/skip-perms'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on: on })
+  }).catch(function () { /* next /api/state poll will reconcile */ })
+}
+function confirmExit() {
+  if (confirm('Sair desta conexão? Você precisará parear de novo (QR ou endereço) para voltar.')) {
+    closeSettings()
+    showPair()
+  }
 }
 
 function loadHistory(convId) {
@@ -620,7 +745,7 @@ function send() {
   var thumbs = imgs.map(function (im) { return 'data:' + im.mediaType + ';base64,' + im.data })
   // Optimistic echo (the PC adds the user message locally; SSE only carries
   // agent events, so there's no duplicate).
-  reduce(state.messages, { kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs })
+  reduce(state.messages, { kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs, ts: Date.now() })
   renderMessages()
   input.value = ''
   state.images = []
@@ -1045,15 +1170,21 @@ function init() {
   // Open the conversation history (drawer) from the menu button or the title.
   $('menu').addEventListener('click', openDrawer)
   $('conv-title').addEventListener('click', openDrawer)
+  // Live search over the user's prompts inside the drawer.
+  $('hist-search-input').addEventListener('input', onSearchInput)
+  // Floating scroll-to-bottom button.
+  $('messages').addEventListener('scroll', updateJumpBtn)
+  $('jump-bottom').addEventListener('click', scrollMessagesToBottom)
   // The online indicator reveals the connection menu; "Sair" asks to confirm.
   $('status').addEventListener('click', toggleStatusMenu)
   $('scrim').addEventListener('click', closeMenus)
-  $('exit').addEventListener('click', function () {
-    closeMenus()
-    if (confirm('Sair desta conexão? Você precisará parear de novo (QR ou endereço) para voltar.')) {
-      showPair()
-    }
-  })
+  $('exit').addEventListener('click', function () { closeMenus(); confirmExit() })
+  // Settings panel (from the connection menu or the sidebar gear).
+  $('open-settings').addEventListener('click', openSettings)
+  $('drawer-settings').addEventListener('click', openSettings)
+  $('settings-back').addEventListener('click', closeSettings)
+  $('cfg-exit').addEventListener('click', confirmExit)
+  $('cfg-skip').addEventListener('change', function (e) { setSkipPerms(e.target.checked) })
   $('send').addEventListener('click', send)
   $('mic').addEventListener('click', toggleMic)
   $('input').addEventListener('input', autoGrow)

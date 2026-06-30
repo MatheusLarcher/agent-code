@@ -132,6 +132,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.remoteBuildApk),
   onRemoteInbound: (cb: (m: RemoteInboundMsg) => void): (() => void) =>
     on(Channels.remoteInbound, cb),
+  onRemoteSetSkipPerms: (cb: (m: { on: boolean }) => void): (() => void) =>
+    on(Channels.remoteSetSkipPerms, cb),
   onRemoteBuildProgress: (cb: (m: RemoteBuildProgressMsg) => void): (() => void) =>
     on(Channels.remoteBuildProgress, cb),
   onRemoteClients: (cb: (info: RemoteInfo) => void): (() => void) => on(Channels.remoteClients, cb)

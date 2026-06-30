@@ -13,6 +13,9 @@ export type UserMessage = {
    *  in the chat showing this error and a "Tentar de novo" button, so a typed
    *  message is never lost even when the model errors. */
   error?: string
+  /** Set when the user manually canceled this message's turn — the chat shows a
+   *  small "cancelada" note and the model is told to disregard it. */
+  canceled?: boolean
 }
 
 /** Anything the message list can render (agent events + user messages). */

@@ -143,6 +143,47 @@ body {
 .side-section {
   margin-top: 8px;
 }
+.side-search {
+  padding: 4px 10px 6px;
+}
+.side-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.side-search-input::placeholder {
+  color: var(--muted);
+}
+.side-search-input:focus {
+  border-color: var(--accent);
+}
+.conv-row.search-result {
+  align-items: flex-start;
+  padding: 7px 8px;
+}
+.conv-row.search-result .conv-ico {
+  margin-top: 1px;
+}
+.search-result-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.search-snippet {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .side-section-head {
   display: flex;
   align-items: center;
@@ -334,9 +375,14 @@ body {
 }
 .topbar button,
 .topbar select,
-.topbar .project,
-.topbar .skip-perms {
+.topbar .project {
   -webkit-app-region: no-drag;
+}
+/* Project label + its action icons (VS Code, folder) kept tight together. */
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .brand {
   font-weight: 600;
@@ -384,20 +430,6 @@ body {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 6px 8px;
-}
-.skip-perms {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  color: var(--muted);
-  margin-left: auto;
-  cursor: pointer;
-  user-select: none;
-}
-.skip-perms input {
-  accent-color: var(--accent);
-  cursor: pointer;
 }
 .session-pill {
   color: var(--ok);
@@ -747,6 +779,13 @@ button svg {
 }
 
 /* ---- messages ---- */
+.message-list-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .message-list {
   flex: 1;
   overflow-y: auto;
@@ -754,6 +793,41 @@ button svg {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.jump-bottom {
+  position: absolute;
+  bottom: 14px;
+  right: 18px;
+  z-index: 5;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+  transition: background 0.12s, transform 0.12s;
+  animation: jumpin 0.16s ease-out;
+}
+.jump-bottom:hover {
+  background: var(--bg-3);
+}
+.jump-bottom:active {
+  transform: scale(0.94);
+}
+@keyframes jumpin {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .msg {
   display: flex;
@@ -794,6 +868,19 @@ button svg {
 .msg.user .bubble.has-error {
   box-shadow: 0 0 0 1.5px var(--err);
 }
+/* Flash the bubble when arrived-at from a search hit. */
+.msg.msg-flash .bubble {
+  animation: msgflash 2.2s ease-out;
+}
+@keyframes msgflash {
+  0%,
+  25% {
+    box-shadow: 0 0 0 3px var(--accent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
 .msg-error {
   display: flex;
   align-items: center;
@@ -802,6 +889,14 @@ button svg {
   margin-top: 5px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+/* Note under a manually-canceled user message. */
+.msg-canceled {
+  margin-top: 4px;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
 }
 .msg-error-text {
   font-size: 12px;
@@ -1223,6 +1318,12 @@ button svg {
   font-size: 11px;
   color: var(--muted);
 }
+/* Sent-time under the user's own bubble (right-aligned with it). */
+.msg.user .msg-time {
+  margin-top: 4px;
+  padding: 0 2px;
+  font-size: 10.5px;
+}
 .msg-time-rel {
   opacity: 0.85;
 }
@@ -1337,9 +1438,6 @@ button svg {
 }
 .composer-bar .model-select.locked:active {
   background: var(--bg);
-}
-.composer-bar .skip-perms {
-  margin-left: auto;
 }
 .composer {
   border-top: 1px solid var(--line);
@@ -2778,6 +2876,29 @@ button svg {
   text-align: center;
   max-width: 220px;
 }
+.remote-build-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  text-align: center;
+  max-width: 220px;
+}
+.remote-build-badge.ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--line));
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+.remote-build-badge.fail {
+  color: var(--err, #e5484d);
+  border-color: color-mix(in srgb, var(--err, #e5484d) 40%, var(--line));
+  background: color-mix(in srgb, var(--err, #e5484d) 10%, transparent);
+}
+.remote-build-badge.building {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+}
 .relay-status {
   font-size: 12px;
   font-weight: 600;
@@ -2917,14 +3038,44 @@ button svg {
 }
 
 .settings-modal {
-  width: 520px;
-  max-width: 92vw;
+  width: 560px;
+  max-width: 94vw;
+  max-height: 88vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
+/* Fixed header + footer; only the middle scrolls, so the dialog never spills off
+   small screens and the Save/Cancel buttons stay reachable. */
+.settings-modal .modal-title {
+  margin: 0;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-modal .modal-actions {
+  margin: 0;
+  padding: 14px 22px;
+  border-top: 1px solid var(--line);
+}
+/* Each settings group is a bordered card → clear separation, more breathing room. */
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin: 6px 0 18px;
+  gap: 14px;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
 }
 .settings-toggle {
   display: flex;
@@ -2945,6 +3096,69 @@ button svg {
   color: var(--muted);
   line-height: 1.45;
 }
+
+/* "Permitir tudo" — a styled toggle switch (danger accent), applied live. The
+   card chrome comes from .settings-section; only the active coloring is special. */
+.settings-switch-section {
+  transition: border-color 0.18s, background 0.18s;
+}
+.settings-switch-section.on {
+  border-color: color-mix(in srgb, var(--err) 55%, var(--line));
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+}
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+}
+.settings-switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.settings-switch-text strong {
+  font-size: 14px;
+}
+.switch-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch-visual {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  position: relative;
+  transition: background 0.18s, border-color 0.18s;
+}
+.switch-visual::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.18s, background 0.18s;
+}
+.switch-input:checked + .switch-visual {
+  background: color-mix(in srgb, var(--err) 70%, transparent);
+  border-color: var(--err);
+}
+.switch-input:checked + .switch-visual::after {
+  transform: translateX(20px);
+  background: #fff;
+}
+.switch-input:focus-visible + .switch-visual {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+}
 .settings-field {
   display: flex;
   flex-direction: column;
@@ -2953,14 +3167,13 @@ button svg {
 .settings-field-label {
   font-size: 12px;
   color: var(--muted);
+  font-weight: 600;
 }
-/* When Settings is opened to nudge the OpenAI key. */
+/* When Settings is opened to nudge the OpenAI key: recolor the card (no negative
+   margins, which would poke out of the scroll area). */
 .settings-highlight {
-  border-radius: 12px;
-  padding: 12px;
-  margin: 0 -12px;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
   background: color-mix(in srgb, var(--accent) 8%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .settings-warn {
   font-size: 12px;
@@ -2972,10 +3185,12 @@ button svg {
   gap: 8px;
 }
 .settings-voice-row {
-  margin-top: 10px;
+  margin-top: 4px;
+  flex-wrap: wrap;
 }
 .settings-field-inline {
-  flex: 1;
+  flex: 1 1 150px;
+  min-width: 140px;
 }
 .settings-field-inline select.settings-input {
   cursor: pointer;
