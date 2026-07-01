@@ -31,6 +31,13 @@ export async function transcribeAudio(
   form.append('model', 'gpt-4o-transcribe')
   // Force Portuguese so it doesn't guess the language (better accuracy for pt-BR).
   form.append('language', 'pt')
+  // Bias prompt: short/noisy segments sometimes come back hallucinated in another
+  // alphabet entirely (e.g. Cyrillic) even with `language` set — a pt-BR context
+  // prompt anchors the decoder to Brazilian Portuguese tech dictation.
+  form.append(
+    'prompt',
+    'Transcrição de um ditado em português do Brasil sobre programação e desenvolvimento de software.'
+  )
 
   const res = await fetch(`${API}/audio/transcriptions`, {
     method: 'POST',

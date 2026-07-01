@@ -45,6 +45,8 @@ export interface RemoteServerDeps {
   voiceReady?: () => boolean
   /** A phone toggled the global "Permitir tudo" switch — apply it on the PC. */
   onSetSkipPerms?: (on: boolean) => void
+  /** A phone asked to change a conversation's model/effort — apply it on the PC. */
+  onSetModel?: (convId: string, model?: string, effort?: string) => void
 }
 
 const DEFAULT_PORT = 8765
@@ -239,6 +241,7 @@ export class RemoteServer {
       }
       if (path === '/api/state') return this.serveState(res)
       if (path === '/api/skip-perms' && req.method === 'POST') return this.serveSetSkipPerms(req, res)
+      if (path === '/api/set-model' && req.method === 'POST') return this.serveSetModel(req, res)
       if (path === '/api/search') return this.serveSearch(url, res)
       if (path === '/api/history') return this.serveHistory(url, res)
       if (path === '/api/events') return this.serveEvents(req, res)
@@ -275,7 +278,7 @@ export class RemoteServer {
       res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' })
       res.end(
         '<h1>APK ainda não gerado</h1><p>No PC, abra o painel "📱 Android" e clique em ' +
-          '"Gerar APK". Enquanto isso, você pode usar o cliente web em <a href="/app">/app</a>.</p>'
+          '"Gerar APK". Enquanto isso, você pode usar o cliente web em <a href="/app/">/app</a>.</p>'
       )
     }
   }
@@ -358,7 +361,45 @@ export class RemoteServer {
     // actual STT/TTS runs on the PC, where the OpenAI key lives).
     const voiceReady = this.deps.voiceReady ? this.deps.voiceReady() : false
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ conversations, voiceReady, skipPerms: this.state.skipPerms ?? false }))
+    res.end(
+      JSON.stringify({
+        conversations,
+        voiceReady,
+        skipPerms: this.state.skipPerms ?? false,
+        models: this.state.models ?? [],
+        modelEffort: this.state.modelEffort ?? {},
+        effortLabels: this.state.effortLabels ?? {}
+      })
+    )
+  }
+
+  /** Phone → PC: change a conversation's model and/or reasoning effort. */
+  private async serveSetModel(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    let convId = ''
+    let model: string | undefined
+    let effort: string | undefined
+    try {
+      const j = JSON.parse(body) as { convId?: string; model?: string; effort?: string }
+      convId = (j.convId ?? '').trim()
+      model = typeof j.model === 'string' && j.model.trim() ? j.model.trim() : undefined
+      effort = typeof j.effort === 'string' && j.effort.trim() ? j.effort.trim() : undefined
+    } catch {
+      /* fall through to validation */
+    }
+    if (!convId || (!model && !effort)) {
+      return sendJson(res, 400, { ok: false, error: 'convId e (model ou effort) são obrigatórios' })
+    }
+    this.deps.onSetModel?.(convId, model, effort)
+    // Optimistic echo on the snapshot so the phone's next /api/state already
+    // reflects the change (the renderer's own publish will confirm it).
+    this.state = {
+      ...this.state,
+      conversations: this.state.conversations.map((c) =>
+        c.id === convId ? { ...c, ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : c
+      )
+    }
+    sendJson(res, 200, { ok: true })
   }
 
   /** Phone → PC: flip the global "Permitir tudo" (skip permissions) switch. */
@@ -605,7 +646,7 @@ function landingHtml(i: RemoteInfo): string {
   <h1>📱 Agent Code — Controle remoto</h1>
   <p>Instale o app para enviar comandos ao Claude Code rodando no seu PC.</p>
   <a class="btn" href="/download">⬇️ Baixar APK</a>
-  <a class="alt" href="/app?token=${i.token}">ou abrir o cliente web agora →</a>
+  <a class="alt" href="/app/?token=${i.token}">ou abrir o cliente web agora →</a>
   <div class="kv">
     <div>Endereço: <code>${conn}</code></div>
     <div>Token: <code>${i.token}</code></div>

@@ -598,13 +598,19 @@ export function App(): JSX.Element {
           busy: busyRef.current.has(c.id),
           connected: connectedRef.current.has(c.id),
           updatedAt: c.updatedAt,
-          messages: c.messages
+          messages: c.messages,
+          model: c.model,
+          effort: c.effort ?? DEFAULT_EFFORT
         })),
-        skipPerms: skipPermsRef.current
+        skipPerms: skipPermsRef.current,
+        // Catalog for the phone's selectors — same options the PC picker offers.
+        models,
+        modelEffort: MODEL_EFFORT,
+        effortLabels: EFFORT_LABELS
       })
     }, 400)
     return () => clearTimeout(pubTimer.current)
-  }, [conversations, busyIds, connectedIds, remoteRunning, hydrated, skipPerms])
+  }, [conversations, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
   // page viewport follows (BrowserPanel reports its new size to main).
@@ -1045,6 +1051,18 @@ export function App(): JSX.Element {
     const off = window.api.onRemoteSetSkipPerms(({ on }) => toggleSkipPerms(on))
     return off
   }, [toggleSkipPerms])
+
+  // A phone changed a conversation's model/effort — apply with the same rules as
+  // the PC pickers (restart-on-idle; ignored while the conversation is busy).
+  useEffect(() => {
+    const off = window.api.onRemoteSetModel(({ convId, model, effort }) => {
+      const conv = convsRef.current.find((c) => c.id === convId)
+      if (!conv || busyRef.current.has(convId)) return
+      if (model && model !== conv.model) changeModel(convId, model)
+      if (effort && effort !== conv.effort) changeEffort(convId, effort)
+    })
+    return off
+  }, [changeModel, changeEffort])
 
   const deleteQueued = useCallback((id: string): void => {
     setQueue((q) => q.filter((m) => m.id !== id))

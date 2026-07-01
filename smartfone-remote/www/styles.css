@@ -592,6 +592,24 @@ html, body {
 .jump-bottom:active { transform: scale(0.93); background: var(--surface-3); }
 @keyframes jumpin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .composer-row { display: flex; align-items: flex-end; gap: 8px; }
+/* Model + effort selectors of the current conversation (mirrors the PC). */
+.model-bar { display: flex; gap: 8px; }
+.model-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px 26px 6px 10px;
+  font-size: 13px;
+  max-width: 60%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23b9b6b1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+.model-select:disabled { opacity: 0.55; }
+.effort-select { max-width: 40%; }
 .attach-btn {
   flex: 0 0 auto;
   width: 44px; height: 44px;

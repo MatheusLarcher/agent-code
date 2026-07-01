@@ -644,7 +644,9 @@ export const Channels = {
   /** main → renderer: the number of connected phones changed (RemoteInfo). */
   remoteClients: 'remote:clients',
   /** main → renderer: a phone toggled the global "Permitir tudo" switch. */
-  remoteSetSkipPerms: 'remote:set-skip-perms'
+  remoteSetSkipPerms: 'remote:set-skip-perms',
+  /** Phone asked to change a conversation's model/effort. */
+  remoteSetModel: 'remote:set-model'
 } as const
 
 /** A progress line emitted while an Android device/emulator boots, tagged with
@@ -691,6 +693,10 @@ export interface RemoteConversation {
   connected: boolean
   updatedAt: number
   messages: unknown[]
+  /** Current model id of this conversation (phone shows/changes it). */
+  model?: string
+  /** Current reasoning effort of this conversation. */
+  effort?: string
 }
 
 /** Snapshot the renderer publishes to main so the bridge can serve history. */
@@ -698,6 +704,12 @@ export interface RemoteStatePayload {
   conversations: RemoteConversation[]
   /** Global "Permitir tudo" (skip permissions) state, mirrored to the phone. */
   skipPerms?: boolean
+  /** Models available in the PC's picker (Claude + enabled Ollama), for the phone's selector. */
+  models?: { id: string; label: string }[]
+  /** Effort levels supported per model id (mirrors MODEL_EFFORT; missing/empty = no effort UI). */
+  modelEffort?: Record<string, string[]>
+  /** Human labels per effort level (pt-BR), so the phone doesn't hardcode them. */
+  effortLabels?: Record<string, string>
 }
 
 /** A command received from a phone, forwarded to the renderer to dispatch into
@@ -707,6 +719,16 @@ export interface RemoteInboundMsg {
   text: string
   /** Optional images attached on the phone, forwarded to the agent. */
   images?: ImageAttachment[]
+}
+
+/** A model/effort change requested from a phone, forwarded to the renderer
+ *  (which applies it with the same rules as the PC's own pickers). */
+export interface RemoteSetModelMsg {
+  convId: string
+  /** New model id, when the phone changed the model. */
+  model?: string
+  /** New effort level, when the phone changed the effort. */
+  effort?: string
 }
 
 /** A progress line emitted while the remote APK is being built. */

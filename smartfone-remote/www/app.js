@@ -34,7 +34,10 @@ var state = {
   speakingId: null,  // id of the assistant message being read aloud (or null)
   audio: null,       // <Audio> currently playing the TTS
   scrollToMsg: null, // message id to scroll to after a search-result navigation
-  skipPerms: false   // global "Permitir tudo" state (mirrored from the PC)
+  skipPerms: false,  // global "Permitir tudo" state (mirrored from the PC)
+  models: [],        // model catalog from the PC ({id,label}[])
+  modelEffort: {},   // effort levels supported per model id
+  effortLabels: {}   // pt-BR label per effort level
 }
 
 var $ = function (id) { return document.getElementById(id) }
@@ -509,6 +512,11 @@ function fetchState() {
       // Mirror the PC's "Permitir tudo" state; keep the settings toggle in sync.
       state.skipPerms = !!data.skipPerms
       syncSkipToggle()
+      // Model/effort catalog + current values (for the selectors above the input).
+      state.models = data.models || []
+      state.modelEffort = data.modelEffort || {}
+      state.effortLabels = data.effortLabels || {}
+      renderModelBar()
       // Don't clobber active search results when the conversation list refreshes.
       var sb = $('hist-search-input')
       if (!$('history').hidden && !(sb && sb.value.trim())) renderHistory()
@@ -535,6 +543,64 @@ function basename(p) {
 function updateConvTitle() {
   var cur = current()
   $('conv-title-text').textContent = (cur && cur.title) || 'Conversa'
+}
+
+// ---- model + effort selectors (above the input, mirroring the PC pickers) ---
+
+function fillSelect(sel, options, value) {
+  sel.innerHTML = ''
+  options.forEach(function (o) {
+    var opt = document.createElement('option')
+    opt.value = o.value
+    opt.textContent = o.label
+    sel.appendChild(opt)
+  })
+  sel.value = value
+}
+
+function renderModelBar() {
+  var bar = $('model-bar')
+  var cur = current()
+  if (!bar) return
+  if (!cur || !state.models.length) { bar.hidden = true; return }
+  bar.hidden = false
+  var busy = !!cur.busy
+  var mSel = $('model-select')
+  // Don't rebuild while the user is inside a (native) dropdown — the periodic
+  // /api/state refresh would close it mid-choice.
+  if (document.activeElement === mSel || document.activeElement === $('effort-select')) return
+  fillSelect(
+    mSel,
+    state.models.map(function (m) { return { value: m.id, label: m.label } }),
+    cur.model || (state.models[0] && state.models[0].id) || ''
+  )
+  mSel.disabled = busy
+  // Effort: only for models that support it (Ollama models don't → hide).
+  var eSel = $('effort-select')
+  var levels = state.modelEffort[cur.model] || []
+  if (!levels.length) { eSel.hidden = true; return }
+  eSel.hidden = false
+  fillSelect(
+    eSel,
+    levels.map(function (l) { return { value: l, label: state.effortLabels[l] || l } }),
+    cur.effort || 'high'
+  )
+  eSel.disabled = busy
+}
+
+// Push a model/effort change to the PC. Optimistic on the local snapshot; the
+// next /api/state (or its own echo) reconciles. Locked while the conv is busy.
+function setModel(patch) {
+  var cur = current()
+  if (!cur || cur.busy) { renderModelBar(); return }
+  if (patch.model) { cur.model = patch.model; delete cur.effort }
+  if (patch.effort) cur.effort = patch.effort
+  renderModelBar()
+  fetch(api('/api/set-model'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ convId: state.convId, model: patch.model, effort: patch.effort })
+  }).then(function () { fetchState() }).catch(function () { /* next poll reconciles */ })
 }
 
 // History drawer, grouped by project (cwd) like the PC sidebar.
@@ -734,6 +800,7 @@ function selectConv(convId) {
   updateConvTitle()
   var cur = current()
   $('busy').hidden = !(cur && cur.busy)
+  renderModelBar()
   loadHistory(convId)
 }
 
@@ -1187,6 +1254,8 @@ function init() {
   $('cfg-skip').addEventListener('change', function (e) { setSkipPerms(e.target.checked) })
   $('send').addEventListener('click', send)
   $('mic').addEventListener('click', toggleMic)
+  $('model-select').addEventListener('change', function (e) { setModel({ model: e.target.value }) })
+  $('effort-select').addEventListener('change', function (e) { setModel({ effort: e.target.value }) })
   $('input').addEventListener('input', autoGrow)
   $('input').addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }

@@ -20,6 +20,7 @@ import type {
   PickedElement,
   RemoteBuildProgressMsg,
   RemoteInboundMsg,
+  RemoteSetModelMsg,
   RemoteInfo,
   RemoteStatePayload,
   StartAgentOptions,
@@ -135,6 +136,8 @@ const api: AgentCodeApi = {
     on(Channels.remoteInbound, cb),
   onRemoteSetSkipPerms: (cb: (m: { on: boolean }) => void): (() => void) =>
     on(Channels.remoteSetSkipPerms, cb),
+  onRemoteSetModel: (cb: (m: RemoteSetModelMsg) => void): (() => void) =>
+    on(Channels.remoteSetModel, cb),
   onRemoteBuildProgress: (cb: (m: RemoteBuildProgressMsg) => void): (() => void) =>
     on(Channels.remoteBuildProgress, cb),
   onRemoteClients: (cb: (info: RemoteInfo) => void): (() => void) => on(Channels.remoteClients, cb)

@@ -17,6 +17,7 @@ import type {
   PickedElement,
   RemoteBuildProgressMsg,
   RemoteInboundMsg,
+  RemoteSetModelMsg,
   RemoteInfo,
   RemoteStatePayload,
   StartAgentOptions,
@@ -137,6 +138,8 @@ export interface AgentCodeApi {
   onRemoteInbound(cb: (m: RemoteInboundMsg) => void): () => void
   /** A phone toggled the global "Permitir tudo" switch — apply it on the PC. */
   onRemoteSetSkipPerms(cb: (m: { on: boolean }) => void): () => void
+  /** A phone asked to change a conversation's model/effort — apply it on the PC. */
+  onRemoteSetModel(cb: (m: RemoteSetModelMsg) => void): () => void
   /** Progress lines while the remote APK is built. */
   onRemoteBuildProgress(cb: (m: RemoteBuildProgressMsg) => void): () => void
   /** The connected-phone count changed. */
