@@ -42,7 +42,8 @@ export type { UserMessage, UIMessage } from './types'
 const MODELS = [
   { id: 'claude-opus-4-8', label: 'Opus 4.8' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' }
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
+  { id: 'claude-fable-5', label: 'Fable 5' }
 ]
 
 const EFFORT_LABELS: Record<string, string> = {
