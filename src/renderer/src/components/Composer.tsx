@@ -11,7 +11,7 @@ import type { FileAttachment, ImageAttachment, MentionHit, PickedElement, SkillI
 import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconStop } from './Icons'
 import { fileMeta, fmtSize } from '../files'
 import { useUI } from '../ui/UiProvider'
-import { frameRms, newVadState, vadStep, type VadState } from '../vad'
+import { frameRms, vadStep, tryArmedTrigger, type VadState } from '../vad'
 
 /** Max size for a single non-image attachment (keeps the IPC payload sane). */
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -219,8 +219,13 @@ export function Composer(props: Props): JSX.Element {
   //      webm makes the API decode it as empty (the "nothing shows up" bug).
   //   2. The VAD closes a segment only when you pause (silence), never mid-word, so
   //      nothing gets cut in half (the old fixed ~4s timer split words).
-  // Segments with no detected speech are DROPPED (never sent), so the model can't
-  // hallucinate words over silence. The VAD runs inside the meter's rAF loop.
+  // SILENCE IS NEVER RECORDED, not just never sent: while "armed" (no segment
+  // active — right after the mic opens, or in the gap between two utterances) the
+  // MediaRecorder simply isn't running; `tryArmedTrigger` (in the meter's rAF loop)
+  // starts it the INSTANT real speech is detected. So there's nothing to trim or
+  // discard after the fact — a silent lead-in of any length before you start
+  // talking is just never captured, which is what used to make the model
+  // hallucinate words over a long quiet stretch baked into the recorded audio.
   const [recording, setRecording] = useState(false)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -269,12 +274,18 @@ export function Composer(props: Props): JSX.Element {
     const rms = frameRms(time)
     const now = performance.now()
 
-    // VAD: advance the segment's speech/silence state; close the utterance at a
-    // pause (or the safety cap) so it gets transcribed.
+    // VAD: while a segment is recording, advance it and close the utterance at a
+    // pause (or the safety cap). While ARMED (no segment yet — silence before the
+    // first word, or the gap between two utterances), don't record anything; start
+    // a segment the instant real speech is detected, so silence is never captured
+    // in the first place (see the block comment above `recording`/`recorderRef`).
     const seg = segRef.current
     if (seg) {
       const { end } = vadStep(seg.vad, rms, now)
       if (end) endUtterance()
+    } else if (streamRef.current) {
+      const vad = tryArmedTrigger(rms, now)
+      if (vad) startSegment(streamRef.current, vad)
     }
 
     // Waveform: keep the loudest frame since the last sample, then every
@@ -381,12 +392,13 @@ export function Composer(props: Props): JSX.Element {
     }
   }
 
-  // Start one recording segment. Its own chunks finalize into a valid file on stop.
-  // The segment carries its own VAD state; on stop we DROP it if no speech was
-  // detected (pure silence is never sent to the API → no hallucinated words).
-  const startSegment = (stream: MediaStream): void => {
+  // Start one recording segment — only ever called once real speech is already
+  // detected (`vad` comes from `tryArmedTrigger`, already `hadSpeech: true`), so
+  // recording and "there's speech in this segment" start at the same instant. Its
+  // chunks finalize into a valid file on stop.
+  const startSegment = (stream: MediaStream, vad: VadState): void => {
     const rec = new MediaRecorder(stream, mimeRef.current ? { mimeType: mimeRef.current } : undefined)
-    const seg = { chunks: [] as Blob[], vad: newVadState(performance.now()) }
+    const seg = { chunks: [] as Blob[], vad }
     segRef.current = seg
     rec.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) seg.chunks.push(e.data)
@@ -394,8 +406,9 @@ export function Composer(props: Props): JSX.Element {
     rec.onstop = () => {
       const type = seg.chunks[0]?.type || mimeRef.current || 'audio/webm'
       const blob = new Blob(seg.chunks, { type })
-      // Discard silence-only segments: nothing to transcribe, and sending them is
-      // exactly what makes the model invent words over quiet stretches.
+      // Safety net only — segments now always start on detected speech, so this
+      // should always be true. Kept in case a segment ends (e.g. MAX_SEG_MS) with
+      // an empty/corrupt blob.
       if (!seg.vad.hadSpeech || blob.size === 0) return
       void transcribeBlob(blob, type)
     }
@@ -403,10 +416,15 @@ export function Composer(props: Props): JSX.Element {
     rec.start() // no timeslice — one whole, finalized file when stopped
   }
 
-  // Close the current utterance (→ transcribed via its onstop if it had speech) and
-  // open the next. Called by the VAD when it detects a pause, not on a fixed timer.
+  // Close the current utterance (→ transcribed via its onstop) and go back to
+  // ARMED — does NOT start recording again immediately. The next segment only
+  // begins once `tryArmedTrigger` (in the meter loop) detects real speech, so the
+  // silence between two utterances is never captured either, same as the lead-in
+  // before the first word. Called by the VAD when it detects a pause, not a timer.
   const endUtterance = (): void => {
     const rec = recorderRef.current
+    recorderRef.current = null
+    segRef.current = null // back to armed
     if (rec && rec.state !== 'inactive') {
       try {
         rec.stop()
@@ -414,7 +432,6 @@ export function Composer(props: Props): JSX.Element {
         /* already stopping */
       }
     }
-    if (streamRef.current) startSegment(streamRef.current)
   }
 
   const stopDictation = (): void => {
@@ -463,9 +480,9 @@ export function Composer(props: Props): JSX.Element {
       wavePeakRef.current = 0
       waveTickRef.current = 0
       recStartRef.current = performance.now()
-      // The VAD (driven by the meter loop) finalizes each utterance at a pause and
-      // starts the next one, so text fills in as you speak — without cutting words.
-      startSegment(stream)
+      // Start ARMED (segRef stays null): the meter loop's `tryArmedTrigger` opens
+      // the first segment the instant real speech begins — nothing is recorded
+      // during the silence before the user starts talking.
       setRecording(true)
     } catch (err) {
       const name = err instanceof Error ? err.name : ''

@@ -54,3 +54,19 @@ export function vadStep(state: VadState, rms: number, now: number): { state: Vad
     (now - state.lastVoiceAt > VAD_SILENCE_HOLD_MS || now - state.segStartAt > VAD_MAX_SEG_MS)
   return { state, end }
 }
+
+/** "Armed" (listening, not recording) → recording transition. Call this once
+ *  per frame while no segment is active — i.e. during silence, or in the gap
+ *  between two utterances. Returns `null` while the frame is still silence
+ *  (stay armed; nothing to record — this is how leading silence is removed:
+ *  it's simply never captured, nothing to trim after the fact). The instant a
+ *  frame crosses the speech threshold, returns a fresh `VadState` with
+ *  `hadSpeech` already true (that trigger frame IS speech) — the caller should
+ *  start recording at that exact moment, so the very first voiced sample is
+ *  the first byte of audio sent to the API. */
+export function tryArmedTrigger(rms: number, now: number): VadState | null {
+  if (rms <= VAD_SPEECH_RMS) return null
+  const state = newVadState(now)
+  state.hadSpeech = true
+  return state
+}
