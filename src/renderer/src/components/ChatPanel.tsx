@@ -4,7 +4,7 @@ import { contextLimitFor } from '@shared/ipc'
 import type { UIMessage } from '../types'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
-import { IconClock, IconClose } from './Icons'
+import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -99,6 +99,88 @@ interface Props {
   /** Called when the user clicks the model picker while it's locked (agent busy),
    *  so App can show a "wait for the current task to finish" hint. */
   onModelLockedClick: () => void
+  /** Reasoning effort selector — shown beside the model picker. */
+  effortLevels: { value: string; label: string }[]
+  effort: string
+  effortLocked: boolean
+  onEffortChange: (level: string) => void
+}
+
+/** Custom popover replacing the plain <select> for reasoning effort: a button
+ *  showing "Esforço <label>" that opens a small panel with a slider between
+ *  "Mais rápido" and "Mais inteligente" (dots = available levels). */
+function EffortPicker(props: {
+  levels: { value: string; label: string }[]
+  value: string
+  locked: boolean
+  onChange: (level: string) => void
+  onLockedClick?: () => void
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const idx = Math.max(
+    0,
+    props.levels.findIndex((l) => l.value === props.value)
+  )
+  const current = props.levels[idx] ?? props.levels[0]
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent): void => {
+      if (!(e.target as HTMLElement).closest('.effort-picker')) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  return (
+    <div className="effort-picker">
+      <button
+        type="button"
+        className={`effort-trigger${props.locked ? ' locked' : ''}`}
+        aria-expanded={open}
+        title={
+          props.locked
+            ? 'Espere o Claude terminar a tarefa atual para trocar o esforço.'
+            : 'Esforço de raciocínio — quanto maior, mais profundo (e mais lento/caro)'
+        }
+        onClick={() => {
+          if (props.locked) {
+            props.onLockedClick?.()
+            return
+          }
+          setOpen((v) => !v)
+        }}
+      >
+        <span>{current?.label ?? ''}</span>
+        <IconChevronDown size={12} className="effort-trigger-chevron" />
+      </button>
+      {open && (
+        <div className="effort-popover">
+          <div className="effort-popover-head">
+            <span>
+              Esforço <strong>{current?.label ?? ''}</strong>
+            </span>
+            <span className="effort-help" title="Controla o quanto o modelo 'pensa' antes de responder: mais esforço tende a ser mais preciso, porém mais lento e mais caro.">
+              <IconHelp size={14} />
+            </span>
+          </div>
+          <div className="effort-slider-labels">
+            <span>Mais rápido</span>
+            <span>Mais inteligente</span>
+          </div>
+          <input
+            type="range"
+            className="effort-slider"
+            min={0}
+            max={Math.max(0, props.levels.length - 1)}
+            step={1}
+            value={idx}
+            onChange={(e) => props.onChange(props.levels[Number(e.target.value)].value)}
+          />
+        </div>
+      )}
+    </div>
+  )
 }
 
 const fmt = (n: number): string => {
@@ -266,6 +348,14 @@ export function ChatPanel(props: Props): JSX.Element {
             </option>
           ))}
         </select>
+        {props.effortLevels.length > 0 && (
+          <EffortPicker
+            levels={props.effortLevels}
+            value={props.effort}
+            locked={props.effortLocked}
+            onChange={props.onEffortChange}
+          />
+        )}
       </div>
 
       <Composer

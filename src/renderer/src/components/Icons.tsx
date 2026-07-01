@@ -186,3 +186,11 @@ export const IconClock = (p: IconProps): JSX.Element => (
     <polyline points="12 7 12 12 15.5 14" />
   </Svg>
 )
+
+export const IconHelp = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9.5 9a2.5 2.5 0 0 1 4.9.8c0 1.7-2.4 2-2.4 3.7" />
+    <circle cx="12" cy="17" r="0.1" fill="currentColor" stroke="currentColor" strokeWidth="1.5" />
+  </Svg>
+)

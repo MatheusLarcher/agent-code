@@ -1,4 +1,5 @@
 import type { Conversation } from './types'
+import type { RateLimitStatus } from '@shared/ipc'
 
 // Persistence for the conversation history + UI state. Now backed by the
 // per-user SQLite store in the chosen cache folder (main process, via
@@ -11,6 +12,7 @@ import type { Conversation } from './types'
 
 const CONV_KEY = 'agentcode.conversations.v1'
 const UI_KEY = 'agentcode.ui.v1'
+const USAGE_LIMITS_KEY = 'agentcode.usage-limits.v1'
 
 export interface UiState {
   collapsed: boolean
@@ -92,5 +94,28 @@ export async function saveUi(ui: UiState): Promise<void> {
     await window.api.kvSet(UI_KEY, JSON.stringify(ui))
   } catch {
     /* ignore */
+  }
+}
+
+/** Load the last known account-wide rate-limit snapshot (5h / weekly / etc.).
+ *  Falls back to legacy localStorage once, like the other UI/conversation keys. */
+export async function loadUsageLimits(): Promise<Record<string, RateLimitStatus>> {
+  try {
+    const raw = await readMigrating(USAGE_LIMITS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, RateLimitStatus>) : {}
+  } catch {
+    return {}
+  }
+}
+
+/** Persist the account-wide rate-limit snapshot so the badge is visible on
+ *  app launch even before the next agent turn. */
+export async function saveUsageLimits(limits: Record<string, RateLimitStatus>): Promise<void> {
+  try {
+    await window.api.kvSet(USAGE_LIMITS_KEY, JSON.stringify(limits))
+  } catch {
+    /* store error — usage badge is best-effort */
   }
 }

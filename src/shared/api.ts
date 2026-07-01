@@ -85,6 +85,8 @@ export interface AgentCodeApi {
   respondPermission(convId: string, res: PermissionResponse): Promise<void>
   /** Dispose a conversation's agent session (on chat deletion). */
   disposeAgent(convId: string): Promise<void>
+  /** Poll the latest account-wide rate-limit snapshot for a connected session. */
+  refreshUsage(convId: string): Promise<void>
   onAgentEvent(cb: (e: AgentEventMsg) => void): () => void
   onPermissionRequest(cb: (m: PermissionRequestMsg) => void): () => void
   /** Subscribe to permission/question timeouts (auto-resolved) so the renderer

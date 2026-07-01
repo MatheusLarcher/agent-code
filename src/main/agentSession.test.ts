@@ -207,10 +207,17 @@ describe('AgentSession — rate_limit_event (uso de 5h/semana da conta)', () => 
       uuid: 'u1',
       session_id: 'sess1'
     })
-    expect(emit).toHaveBeenCalledWith({
-      kind: 'rate-limit',
-      limits: { rateLimitType: 'five_hour', status: 'allowed_warning', utilization: 0.62, resetsAt: 1234 }
-    })
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'rate-limit',
+        limits: expect.objectContaining({
+          rateLimitType: 'five_hour',
+          status: 'allowed_warning',
+          utilization: 0.62,
+          resetsAt: 1234
+        })
+      })
+    )
   })
 
   it('sem rateLimitType (evento ainda não classificado): não emite nada', () => {
@@ -223,5 +230,40 @@ describe('AgentSession — rate_limit_event (uso de 5h/semana da conta)', () => 
     const { s, emit } = makeSession()
     expect(() => handle(s, { type: 'some_future_message_type' })).not.toThrow()
     expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('refreshUsage() emite rate-limit a partir do endpoint experimental', async () => {
+    const { s, emit } = makeSession()
+    const q = {
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: vi.fn(async () => ({
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 42, resets_at: '2026-07-01T00:00:00.000Z' },
+          seven_day: { utilization: 10, resets_at: null },
+          extra_usage: { is_enabled: true, utilization: 5 }
+        }
+      }))
+    }
+    ;(s as unknown as { q: typeof q }).q = q
+    await s.refreshUsage()
+    expect(q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET).toHaveBeenCalledTimes(1)
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'rate-limit',
+        limits: expect.objectContaining({ rateLimitType: 'five_hour', utilization: 0.42, status: 'allowed' })
+      })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'rate-limit',
+        limits: expect.objectContaining({ rateLimitType: 'seven_day', utilization: 0.1, status: 'allowed' })
+      })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'rate-limit',
+        limits: expect.objectContaining({ rateLimitType: 'overage', utilization: 0.05, status: 'allowed' })
+      })
+    )
   })
 })

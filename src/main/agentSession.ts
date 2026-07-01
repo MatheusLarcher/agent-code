@@ -9,7 +9,15 @@ import { getCacheInfo } from './store'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isOllamaModel, OLLAMA_BASE_URL } from '../shared/ipc'
-import type { AskQuestion, ChatEvent, ImageAttachment, PermissionRequest, PermissionResponse, StartAgentOptions } from '../shared/ipc'
+import type {
+  AskQuestion,
+  ChatEvent,
+  ImageAttachment,
+  PermissionRequest,
+  PermissionResponse,
+  RateLimitStatus,
+  StartAgentOptions
+} from '../shared/ipc'
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
 (browser_navigate, browser_snapshot, browser_screenshot, browser_click, browser_type,
@@ -298,6 +306,7 @@ export class AgentSession {
     const options: Options = {
       cwd: this.opts.cwd,
       model: this.opts.model,
+      ...(this.opts.effort ? { effort: this.opts.effort as Options['effort'] } : {}),
       ...(env ? { env } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
@@ -407,6 +416,71 @@ export class AgentSession {
         pending.resolve({ behavior: 'allow', updatedInput: pending.input })
         this.pendingPermissions.delete(id)
       }
+    }
+  }
+
+  /** Poll the SDK's experimental usage endpoint for the latest account-wide
+   *  rate-limit snapshot (5h / weekly / etc.). Emits `rate-limit` events so the
+   *  badge updates even when the backend did not push a `rate_limit_event` on
+   *  its own. Safe to call at any time; failures are swallowed. */
+  async refreshUsage(): Promise<void> {
+    const q = this.q
+    if (!q) return
+    try {
+      const usage = await q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+      if (!usage.rate_limits_available || !usage.rate_limits) return
+      const limits = usage.rate_limits
+      const now = Date.now()
+      const emitLimit = (
+        type: RateLimitStatus['rateLimitType'],
+        data: { utilization: number | null; resets_at: string | null } | null | undefined
+      ): void => {
+        if (!data) return
+        const utilization = data.utilization
+        const resetsAt = data.resets_at ? new Date(data.resets_at).getTime() : undefined
+        if (utilization == null && resetsAt == null) return
+        let status: RateLimitStatus['status'] = 'allowed'
+        if (utilization != null) {
+          if (utilization >= 100) status = 'rejected'
+          else if (utilization >= 80) status = 'allowed_warning'
+        }
+        this.emit({
+          kind: 'rate-limit',
+          limits: {
+            rateLimitType: type,
+            status,
+            utilization: utilization != null ? utilization / 100 : undefined,
+            resetsAt,
+            updatedAt: now
+          }
+        })
+      }
+      emitLimit('five_hour', limits.five_hour)
+      emitLimit('seven_day', limits.seven_day)
+      emitLimit('seven_day_opus', limits.seven_day_opus)
+      emitLimit('seven_day_sonnet', limits.seven_day_sonnet)
+
+      // Paid overage window — present only when enabled on the account.
+      const extra = limits.extra_usage
+      if (extra?.is_enabled) {
+        const u = extra.utilization
+        let status: RateLimitStatus['status'] = 'allowed'
+        if (u != null) {
+          if (u >= 100) status = 'rejected'
+          else if (u >= 80) status = 'allowed_warning'
+        }
+        this.emit({
+          kind: 'rate-limit',
+          limits: {
+            rateLimitType: 'overage',
+            status,
+            utilization: u != null ? u / 100 : undefined,
+            updatedAt: now
+          }
+        })
+      }
+    } catch {
+      /* best-effort: usage endpoint is experimental and may fail */
     }
   }
 
@@ -562,6 +636,9 @@ export class AgentSession {
               }
             : undefined
         })
+        // Refresh the account-wide usage badge as soon as the turn finishes,
+        // even if the SDK did not push a spontaneous rate_limit_event.
+        void this.refreshUsage()
         break
       }
 
@@ -592,7 +669,8 @@ export class AgentSession {
               rateLimitType: info.rateLimitType,
               status: info.status,
               utilization: info.utilization,
-              resetsAt: info.resetsAt
+              resetsAt: info.resetsAt,
+              updatedAt: Date.now()
             }
           })
         }

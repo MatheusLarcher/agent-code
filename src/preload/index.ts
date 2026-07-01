@@ -86,6 +86,7 @@ const api: AgentCodeApi = {
   respondPermission: (convId: string, res: PermissionResponse): Promise<void> =>
     ipcRenderer.invoke(Channels.agentPermissionResponse, convId, res),
   disposeAgent: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentDispose, convId),
+  refreshUsage: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentRefreshUsage, convId),
   onAgentEvent: (cb: (e: AgentEventMsg) => void): (() => void) => on(Channels.agentEvent, cb),
   onPermissionRequest: (cb: (m: PermissionRequestMsg) => void): (() => void) =>
     on(Channels.agentPermissionRequest, cb),

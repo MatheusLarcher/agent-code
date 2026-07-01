@@ -42,6 +42,8 @@ export interface RateLimitStatus {
   utilization?: number
   /** Epoch ms when this window resets, when known. */
   resetsAt?: number
+  /** Epoch ms when this snapshot was produced locally (for stale-checking + persistence). */
+  updatedAt?: number
 }
 
 /** An image attached to a user message, sent to the agent as a base64 block. */
@@ -371,7 +373,27 @@ export interface StartAgentOptions {
   skipPermissions?: boolean
   /** SDK session id to resume — loads the prior conversation history so an old chat can continue. */
   resume?: string
+  /** Reasoning effort for the model (low / medium / high / xhigh / max). */
+  effort?: string
 }
+
+/** Reasoning effort levels a model may support. */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/** Which effort levels each model supports. Haiku stops at high; Opus/Sonnet/Fable go to max.
+ *  Ollama models don't support effort at all. */
+export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
+  'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-opus-4-7': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-opus-4-6': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-opus-4-5': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-haiku-4-5': ['low', 'medium', 'high'],
+  'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max']
+}
+
+/** Default effort when none is selected — "high" is the Anthropic default. */
+export const DEFAULT_EFFORT: EffortLevel = 'high'
 
 // ---- App configuration (persisted in the main process) ------------------
 
@@ -544,6 +566,7 @@ export const Channels = {
   agentInterrupt: 'agent:interrupt',
   agentSetBypass: 'agent:set-bypass',
   agentPermissionResponse: 'agent:permission-response',
+  agentRefreshUsage: 'agent:refresh-usage',
   /** Dispose a conversation's agent session (e.g. when the chat is deleted). */
   agentDispose: 'agent:dispose',
   pickDirectory: 'app:pick-directory',

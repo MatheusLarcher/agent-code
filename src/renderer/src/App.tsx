@@ -11,10 +11,18 @@ import type {
   RateLimitStatus,
   TabKind
 } from '@shared/ipc'
-import { isOllamaModel, OLLAMA_MODELS } from '@shared/ipc'
+import { isOllamaModel, OLLAMA_MODELS, MODEL_EFFORT, DEFAULT_EFFORT } from '@shared/ipc'
+import type { EffortLevel } from '@shared/ipc'
 import type { Conversation, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
-import { loadConversations, loadUi, saveConversations, saveUi } from './storage'
+import {
+  loadConversations,
+  loadUi,
+  saveConversations,
+  saveUi,
+  loadUsageLimits,
+  saveUsageLimits
+} from './storage'
 import { ChatPanel } from './components/ChatPanel'
 import { BrowserPanel } from './components/BrowserPanel'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
@@ -36,6 +44,22 @@ const MODELS = [
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' }
 ]
+
+const EFFORT_LABELS: Record<string, string> = {
+  low: 'Baixo',
+  medium: 'Médio',
+  high: 'Alto',
+  xhigh: 'Muito alto',
+  max: 'Máximo'
+}
+
+/** Effort levels available for a given model id (empty = no effort support, hide the selector). */
+function effortLevelsFor(modelId: string | undefined): { value: string; label: string }[] {
+  if (!modelId) return []
+  const levels = MODEL_EFFORT[modelId]
+  if (!levels || levels.length === 0) return []
+  return levels.map((v) => ({ value: v, label: EFFORT_LABELS[v] || v }))
+}
 
 const EMPTY_TOKENS = { context: 0, output: 0, cost: 0 }
 
@@ -449,7 +473,11 @@ export function App(): JSX.Element {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const [loaded, ui] = await Promise.all([loadConversations(), loadUi()])
+      const [loaded, ui, limits] = await Promise.all([
+        loadConversations(),
+        loadUi(),
+        loadUsageLimits()
+      ])
       if (cancelled) return
       setConversations(loaded)
       setCollapsed(ui.collapsed)
@@ -458,12 +486,23 @@ export function App(): JSX.Element {
       setActiveId(
         ui.activeId && loaded.some((c) => c.id === ui.activeId) ? ui.activeId : loaded[0]?.id ?? null
       )
+      // Only seed the badge from storage if no live rate-limit event arrived
+      // first — "persist" means the latest value wins, not the stored one.
+      setUsageLimits((prev) => (Object.keys(prev).length === 0 ? limits : prev))
       setHydrated(true)
     })()
     return () => {
       cancelled = true
     }
   }, [])
+
+  // Persist the account-wide usage snapshot whenever it changes, so the badge
+  // shows the last known value on the next app launch. Skip the initial empty
+  // state — it would overwrite the stored snapshot before loadUsageLimits runs.
+  useEffect(() => {
+    if (Object.keys(usageLimits).length === 0) return
+    void saveUsageLimits(usageLimits)
+  }, [usageLimits])
 
   // Load persisted app config once (e.g. the "Permitir tudo" toggle).
   useEffect(() => {
@@ -481,6 +520,17 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (hydrated) void window.api.setActiveBrowser(activeId)
   }, [activeId, hydrated])
+
+  // Poll the latest account-wide usage every 10 minutes on any connected
+  // session, so the badge reflects reality even when the agent isn't answering.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const target =
+        activeId && connectedIds.has(activeId) ? activeId : Array.from(connectedIds)[0]
+      if (target) void window.api.refreshUsage(target)
+    }, 10 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [activeId, connectedIds])
 
   // Verify the active conversation's project folder still exists, so the composer
   // can block typing when it's gone (instead of only failing at send time). Re-check
@@ -588,6 +638,7 @@ export function App(): JSX.Element {
       title: DEFAULT_TITLE,
       cwd: folder,
       model: sameFolderModel || getActive()?.model || MODELS[0].id,
+      effort: getActive()?.effort || DEFAULT_EFFORT,
       sdkSessionId: null,
       messages: [],
       tokens: { ...EMPTY_TOKENS },
@@ -701,7 +752,8 @@ export function App(): JSX.Element {
           cwd: conv.cwd,
           model: conv.model,
           skipPermissions: skipPermsRef.current,
-          resume: conv.sdkSessionId ?? undefined
+          resume: conv.sdkSessionId ?? undefined,
+          effort: conv.effort
         })
         setConnected(conv.id, true)
         setPermissions((pp) => withoutKey(pp, conv.id))
@@ -784,10 +836,28 @@ export function App(): JSX.Element {
   // same as if the user had clicked "Parar sessão" — just without the manual step.
   const changeModel = useCallback(
     (id: string, model: string): void => {
-      patchConv(id, (c) => ({ ...c, model }))
+      // When switching models, reset effort to the default if the new model
+      // doesn't support the current level (e.g. Haiku doesn't have xhigh/max).
+      patchConv(id, (c) => {
+        const supported = MODEL_EFFORT[model] ?? []
+        const effort = c.effort && supported.includes(c.effort as EffortLevel) ? c.effort : DEFAULT_EFFORT
+        return { ...c, model, effort }
+      })
       if (connectedRef.current.has(id) && !busyRef.current.has(id)) {
         void stopSession(id, { silent: true })
         notify('sucesso', `Modelo trocado para a próxima mensagem: ${model}.`)
+      }
+    },
+    [patchConv, stopSession, notify]
+  )
+
+  // Effort selector — same restart-on-idle logic as the model picker.
+  const changeEffort = useCallback(
+    (id: string, effort: string): void => {
+      patchConv(id, (c) => ({ ...c, effort }))
+      if (connectedRef.current.has(id) && !busyRef.current.has(id)) {
+        void stopSession(id, { silent: true })
+        notify('sucesso', `Esforço trocado para a próxima mensagem: ${effort}.`)
       }
     },
     [patchConv, stopSession, notify]
@@ -1372,6 +1442,10 @@ export function App(): JSX.Element {
             onModelLockedClick={() =>
               notify('aviso', 'Espere o Claude terminar a tarefa atual para trocar o modelo.')
             }
+            effortLevels={effortLevelsFor(active?.model)}
+            effort={active?.effort ?? DEFAULT_EFFORT}
+            effortLocked={!active || showBusy}
+            onEffortChange={(e) => active && changeEffort(active.id, e)}
           />
           {!browserMinimized && (
             <div

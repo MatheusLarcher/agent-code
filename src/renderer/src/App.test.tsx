@@ -43,6 +43,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     setBypass: vi.fn(async () => {}),
     respondPermission: vi.fn(async () => {}),
     disposeAgent: vi.fn(async () => {}),
+    refreshUsage: vi.fn(async () => {}),
     onAgentEvent: vi.fn((cb: (m: AgentEventMsg) => void) => {
       agentEventCb = cb
       return () => {}
@@ -323,4 +324,21 @@ describe('App — uso da conta (5h/semana) na topbar, global (não é por conver
     expect(screen.getByText('Semana')).toBeTruthy()
     expect(screen.getByText('30%')).toBeTruthy()
   })
+
+  it('carrega o último snapshot salvo ao abrir o app', async () => {
+    localStorage.setItem(
+      'agentcode.usage-limits.v1',
+      JSON.stringify({
+        five_hour: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0.5, updatedAt: Date.now() }
+      })
+    )
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await waitFor(() => expect(screen.getByText('Sessão 5h')).toBeTruthy())
+    expect(screen.getByText('50%')).toBeTruthy()
+  })
+
 })

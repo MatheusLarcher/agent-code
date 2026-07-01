@@ -587,6 +587,10 @@ function registerIpc(): void {
     sessions.delete(convId)
   })
 
+  ipcMain.handle(Channels.agentRefreshUsage, async (_e, convId: string) => {
+    await sessions.get(convId)?.refreshUsage()
+  })
+
   // Manual panel controls act on the browser of the conversation being viewed.
   ipcMain.handle(Channels.browserLaunch, async () => {
     if (activeConvId) await getBrowser(activeConvId).ensureLaunched()
