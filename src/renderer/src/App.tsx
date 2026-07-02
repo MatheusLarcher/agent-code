@@ -64,6 +64,21 @@ function effortLevelsFor(modelId: string | undefined): { value: string; label: s
 
 const EMPTY_TOKENS = { context: 0, output: 0, cost: 0 }
 
+/** Whether an incoming account-usage snapshot should be IGNORED as a spurious
+ *  zero. A fresh session sometimes reports 0% / "já resetou" before the backend
+ *  has real numbers, wiping a perfectly valid badge. Rule: drop the update only
+ *  when it claims ~0 usage while the SAVED snapshot still says the window hasn't
+ *  reset yet (resetsAt in the future) — a genuine reset (time already passed)
+ *  keeps flowing through and zeroes the badge normally. */
+export function isSpuriousUsageZero(prev: RateLimitStatus | undefined, next: RateLimitStatus): boolean {
+  if (!prev) return false
+  const nextPct = next.utilization ?? 0
+  if (nextPct > 0) return false
+  const prevPct = prev.utilization ?? 0
+  if (prevPct <= 0) return false
+  return typeof prev.resetsAt === 'number' && prev.resetsAt > Date.now()
+}
+
 /** A message waiting in the per-conversation outbox while the agent is busy. */
 interface QueuedMessage {
   id: string
@@ -299,7 +314,11 @@ export function App(): JSX.Element {
       // Account-wide, not conversation-wide — skip patchConv entirely (no
       // message bubble, no per-conv token/turn bookkeeping applies here).
       if (e.kind === 'rate-limit') {
-        setUsageLimits((prev) => ({ ...prev, [e.limits.rateLimitType]: e.limits }))
+        setUsageLimits((prev) =>
+          isSpuriousUsageZero(prev[e.limits.rateLimitType], e.limits)
+            ? prev
+            : { ...prev, [e.limits.rateLimitType]: e.limits }
+        )
         return
       }
       patchConv(cid, (c) => {
@@ -487,9 +506,16 @@ export function App(): JSX.Element {
       setActiveId(
         ui.activeId && loaded.some((c) => c.id === ui.activeId) ? ui.activeId : loaded[0]?.id ?? null
       )
-      // Only seed the badge from storage if no live rate-limit event arrived
-      // first — "persist" means the latest value wins, not the stored one.
-      setUsageLimits((prev) => (Object.keys(prev).length === 0 ? limits : prev))
+      // Seed the badge from storage: live events win, EXCEPT when the live
+      // value is a spurious zero and the stored snapshot is still valid —
+      // then the stored one prevails (same rule as the live-event guard).
+      setUsageLimits((prev) => {
+        const merged = { ...limits, ...prev }
+        for (const [type, stored] of Object.entries(limits)) {
+          if (prev[type] && isSpuriousUsageZero(stored, prev[type])) merged[type] = stored
+        }
+        return merged
+      })
       setHydrated(true)
     })()
     return () => {
@@ -522,14 +548,14 @@ export function App(): JSX.Element {
     if (hydrated) void window.api.setActiveBrowser(activeId)
   }, [activeId, hydrated])
 
-  // Poll the latest account-wide usage every 10 minutes on any connected
+  // Poll the latest account-wide usage every 5 minutes on any connected
   // session, so the badge reflects reality even when the agent isn't answering.
   useEffect(() => {
     const id = setInterval(() => {
       const target =
         activeId && connectedIds.has(activeId) ? activeId : Array.from(connectedIds)[0]
       if (target) void window.api.refreshUsage(target)
-    }, 10 * 60 * 1000)
+    }, 5 * 60 * 1000)
     return () => clearInterval(id)
   }, [activeId, connectedIds])
 

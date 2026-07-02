@@ -326,6 +326,54 @@ describe('App — uso da conta (5h/semana) na topbar, global (não é por conver
     expect(screen.getByText('30%')).toBeTruthy()
   })
 
+  it('ignora um 0% espúrio quando o snapshot atual ainda não resetou', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await emit({
+      kind: 'rate-limit',
+      limits: {
+        rateLimitType: 'five_hour',
+        status: 'allowed',
+        utilization: 0.62,
+        resetsAt: Date.now() + 60 * 60 * 1000 // ainda falta 1h para o reset real
+      }
+    })
+    await waitFor(() => expect(screen.getByText('62%')).toBeTruthy())
+    // Sessão nova reporta 0% / "já resetou" sem dado real — deve ser descartado.
+    await emit({
+      kind: 'rate-limit',
+      limits: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0 }
+    })
+    expect(screen.getByText('62%')).toBeTruthy()
+    expect(screen.queryByText('0%')).toBeNull()
+  })
+
+  it('aceita o 0% quando o horário de reset já passou (reset de verdade)', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await emit({
+      kind: 'rate-limit',
+      limits: {
+        rateLimitType: 'five_hour',
+        status: 'allowed',
+        utilization: 0.62,
+        resetsAt: Date.now() - 1000 // reset já aconteceu
+      }
+    })
+    await waitFor(() => expect(screen.getByText('62%')).toBeTruthy())
+    await emit({
+      kind: 'rate-limit',
+      limits: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0 }
+    })
+    await waitFor(() => expect(screen.getByText('0%')).toBeTruthy())
+  })
+
   it('carrega o último snapshot salvo ao abrir o app', async () => {
     localStorage.setItem(
       'agentcode.usage-limits.v1',
