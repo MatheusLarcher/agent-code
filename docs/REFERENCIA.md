@@ -206,11 +206,12 @@ type ChatEvent =
   | { kind: 'thinking'; id: string; text: string }
   | { kind: 'tool-use'; id: string; name: string; input: unknown; parentToolUseId: string | null }
   | { kind: 'tool-result'; id: string; toolUseId: string; isError: boolean; text: string }
-  | { kind: 'result'; id: string; isError: boolean; text: string; durationMs: number; costUsd?: number; usage?: TokenUsage }
+  | { kind: 'result'; id: string; isError: boolean; text: string; durationMs: number; costUsd?: number; contextTokens?: number; usage?: TokenUsage }
   | { kind: 'status'; id: string; text: string }
   | { kind: 'error'; id: string; text: string }
+  | { kind: 'rate-limit'; limits: RateLimitStatus }   // uso da CONTA (5h/semana) — global, nunca vira bolha de chat
 
-interface StartAgentOptions { convId: string; cwd: string; model?: string; skipPermissions?: boolean; resume?: string }
+interface StartAgentOptions { convId: string; cwd: string; model?: string; skipPermissions?: boolean; resume?: string; effort?: string }
 interface AgentEventMsg { convId: string; event: ChatEvent }            // main → renderer (cada evento marcado com a conversa)
 interface PermissionRequestMsg { convId: string; req: PermissionRequest }
 interface PermissionExpiredMsg { convId: string; id: string }           // main → renderer: pendência expirou (7 min) → fecha o modal

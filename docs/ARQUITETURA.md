@@ -93,6 +93,7 @@ No encerramento (`window-all-closed`): fecha todos os navegadores e descarta tod
 const options: Options = {
   cwd,
   model,
+  ...(effort ? { effort } : {}),         // esforço de raciocínio da conversa (low…max)
   additionalDirectories: [memoriesDir],  // libera a pasta de memórias (fora do cwd) p/ ler/gravar
   ...(resume ? { resume } : {}),         // retoma uma sessão anterior
   executable: 'node',                    // roda o CLI sob o Node do sistema, não o Electron
@@ -468,15 +469,15 @@ No `RemoteModal`, o **QR sempre aponta para a URL pública** (`REMOTE_PUBLIC_HOS
 
 **Servidor** (`src/main/remote/remoteServer.ts`) — `RemoteServer` sobe um `http.createServer` em `0.0.0.0:8765` (com *fallback* de porta se ocupada), usa um **token fixo** e descobre o IP da LAN. Rotas:
 
-- `/` — landing com QR/instruções; `/download` — o APK gerado; `/app` — o cliente web embutido (fallback no navegador).
-- `/api/state` — lista de conversas (sem as mensagens); `/api/history?conv=ID` — histórico de uma conversa; `/api/events` — **SSE** com os eventos do agente ao vivo; `POST /api/send` — envia um comando (com imagens opcionais) para uma conversa; `/api/file?path=…` — faz **stream de um arquivo entregável** para download (allowlist, ver [Baixar arquivos pelo chat](#baixar-arquivos-pelo-chat)).
+- `/` — landing com QR/instruções; `/download` — o APK gerado; `/app/` — o cliente web embutido (fallback no navegador; a **barra final importa**: os assets são relativos, então os links usam `/app/`).
+- `/api/state` — lista de conversas (sem as mensagens, mas com `model`/`effort` de cada uma) + `voiceReady`, `skipPerms` e o **catálogo de modelos/esforços** (`models`, `modelEffort`, `effortLabels` — alimenta os seletores do celular); `/api/history?conv=ID` — histórico de uma conversa; `/api/search?q=…` — busca nos prompts do usuário; `/api/events` — **SSE** com os eventos do agente ao vivo; `POST /api/send` — envia um comando (com imagens opcionais) para uma conversa; `POST /api/set-model` — troca modelo/esforço de uma conversa (`{convId, model?, effort?}` → dep `onSetModel` → `remote:set-model` → o renderer aplica via `changeModel`/`changeEffort`, com eco otimista no snapshot); `POST /api/skip-perms` — liga/desliga o "Permitir tudo" global; `POST /api/transcribe` / `POST /api/tts` — voz do celular (processada no PC); `/api/file?path=…` — faz **stream de um arquivo entregável** para download (allowlist, ver [Baixar arquivos pelo chat](#baixar-arquivos-pelo-chat)).
 - Tudo em `/api/*` exige `?token=` (o mesmo do QR). CORS liberado para o WebView do Capacitor.
 
 **Token fixo** — o token **não muda mais** a cada start: é gerado uma vez e persistido (`remoteToken` em `config`, no SQLite), reusado em todas as sessões — um celular pareado continua pareado entre reinícios. A ponte recebe `loadToken`/`saveToken` por dependência (em `index.ts`).
 
 **Imagens do celular** — `POST /api/send` aceita `images` (base64); `sanitizeImages` valida (só `image/*`, máx. 8) e o limite do corpo subiu para ~24 MB. Elas chegam ao renderer por `remote:inbound` (`RemoteInboundMsg.images`) e são despachadas no mesmo caminho do composer.
 
-**Fluxo** (em `src/main/index.ts`): o `RemoteServer` é criado com `onInbound` (um comando do celular → `remote:inbound` → o renderer despacha na conversa certa, como se fosse digitado; agora carrega `images` também), `apkPath`/`wwwDir`, `onClientsChanged` (→ `remote:clients`) e `loadToken`/`saveToken` (token fixo). Cada evento do agente é **tee‑ado**: além de ir ao renderer, `remote.broadcast(convId, event)` envia por SSE aos celulares. O renderer publica um **snapshot** das conversas por `remote:publish-state` (debounce 400ms) para a ponte servir o histórico e montar a allowlist de download. A UI do PC (`RemoteModal`) liga/desliga a ponte, mostra o QR/endereço/token (rotulado **"fixo"**) e a contagem de celulares, e gera o APK (`remote:build-apk` → `buildApk.ts`, progresso por `remote:build-progress`).
+**Fluxo** (em `src/main/index.ts`): o `RemoteServer` é criado com `onInbound` (um comando do celular → `remote:inbound` → o renderer despacha na conversa certa, como se fosse digitado; agora carrega `images` também), `onSetSkipPerms` (→ `remote:set-skip-perms`), `onSetModel` (→ `remote:set-model`), `transcribe`/`tts`/`voiceReady` (voz no celular, key da config), `apkPath`/`wwwDir`, `onClientsChanged` (→ `remote:clients`) e `loadToken`/`saveToken` (token fixo). Cada evento do agente é **tee‑ado**: além de ir ao renderer, `remote.broadcast(convId, event)` envia por SSE aos celulares. O renderer publica um **snapshot** das conversas por `remote:publish-state` (debounce 400ms) para a ponte servir o histórico e montar a allowlist de download. A UI do PC (`RemoteModal`) liga/desliga a ponte, mostra o QR/endereço/token (rotulado **"fixo"**) e a contagem de celulares, e gera o APK (`remote:build-apk` → `buildApk.ts`, progresso por `remote:build-progress`).
 
 **Cliente do celular** (`smartfone-remote/`) — um app **Capacitor** cujo `www/` (`index.html` + `app.js` + `styles.css` + `jsqr.js`) é o cliente. Recursos:
 
@@ -487,6 +488,7 @@ No `RemoteModal`, o **QR sempre aponta para a URL pública** (`REMOTE_PUBLIC_HOS
 - **Markdown** nas respostas do assistente (conversor próprio, sem dependência, seguro por HTML-escape) e **cards de ferramenta recolhidos/expansíveis** iguais ao chat do PC (verbo + arquivo + `+N`/`−N` + badge), com estado de expansão preservado entre re-renders.
 - **Scroll corrigido** durante o streaming (preserva a posição quando o usuário rolou pra cima; sem `scroll-behavior: smooth` que causava tremor; renders agrupados por frame com `requestAnimationFrame`).
 - **Download de arquivos** no chat (chip em `Write` entregável + marcador `[[download:]]`) via `/api/file` + `DownloadListener` nativo.
+- **Trocar modelo/esforço** da conversa: barra `#model-bar` acima do composer com dois `<select>` nativos, preenchidos do catálogo do `/api/state` (`renderModelBar`); a troca envia `POST /api/set-model` (`setModel`, otimista — o poll de 4s reconcilia). O esforço some em modelo sem suporte (Ollama) e ambos desabilitam com a conversa ocupada. Dois cuidados de Android: o rebuild periódico é **pulado enquanto um seletor está focado** (senão o refresh fecharia o dropdown nativo no meio da escolha) e o handler de `change` chama **`blur()`** logo após escolher (o Android mantém o `<select>` focado depois que o dialog fecha — sem o blur, o guard travaria a reconciliação para sempre).
 
 O `www/` é servido em `/app` (atualiza na hora) e empacotado no APK por `scripts/build-apk.mjs` (precisa **regerar o APK** para o app instalado pegar mudanças no `www/`). O `buildApk.ts` reaplica de forma idempotente as customizações nativas do diretório `android/` (gitignorado/regenerado): permissão de câmera, ícone adaptativo e o `MainActivity` com o `DownloadListener` + permissão de armazenamento.
 
@@ -517,7 +519,11 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `pathExists` | `app:path-exists` | guarda da pasta do projeto: `fs.stat` + `isDirectory()` | `path` → `boolean` |
 | `openInEditor` | `app:open-in-editor` | abre a pasta no VS Code (CLI `code`, com *fallback* `vscode://file/`) | `dir` → `{ ok, message }` |
 | `openInFolder` | `app:open-in-folder` | abre a pasta do projeto no explorador do SO (`shell.openPath`) | `dir` → `{ ok, message }` |
+| `mentionSearch` | `app:mention-search` | busca arquivos/pastas do projeto para o autocomplete "@" do composer | `root`, `query` → `MentionHit[]` |
+| `listSkills` | `app:list-skills` | lista as skills disponíveis do projeto (menu "@") | `root` → `SkillInfo[]` |
 | `fileDownload` | `app:file-download` | copia um arquivo (entregável criado pelo agente) para Downloads e o revela no Explorer | `path` → `{ ok, message, saved? }` |
+| `fileRead` / `fileReadBytes` | `app:file-read` / `app:file-read-bytes` | lê um arquivo como texto / bytes (visualizadores do renderer) | `path` → `string` / `FileBytes` |
+| `configGet` / `configSet` | `config:get` / `config:set` | lê / grava a `AppConfig` persistida (Configurações) | — → `AppConfig` / `Partial<AppConfig>` |
 | `openaiTranscribe` | `openai:transcribe` | transcreve áudio (base64) via OpenAI `gpt-4o-transcribe` (key no main) | `audioBase64`, `mimeType` → `{ ok, text?, error? }` |
 | `openaiTts` | `openai:tts` | sintetiza fala (MP3 base64) de um texto via OpenAI `gpt-4o-mini-tts` | `text` → `{ ok, audioBase64?, mimeType?, error? }` |
 | `authStatus` | `auth:status` | há login do Claude nesta máquina? (`claude auth status --json`) | — → `{ authenticated }` |
@@ -530,6 +536,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `agentInterrupt` | `agent:interrupt` | `sessions.get(convId).interrupt()` | `convId` |
 | `agentSetBypass` | `agent:set-bypass` | `sessions.get(convId).setBypass(on)` | `convId`, `boolean` |
 | `agentPermissionResponse` | `agent:permission-response` | `sessions.get(convId).resolvePermission(res)` | `convId`, `PermissionResponse` |
+| `agentRefreshUsage` | `agent:refresh-usage` | força um poll do uso da conta (5h/semana) numa sessão conectada | `convId` |
 | `agentDispose` | `agent:dispose` | descarta a sessão de `convId` | `convId` |
 | `browserLaunch` | `browser:launch` | `browser.ensureLaunched()` | — |
 | `browserNavigate` | `browser:navigate` | `browser.navigate(url)` | `string` → `string` |
@@ -556,6 +563,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 |-----------|-------|---------|
 | `agentEvent` | `agent:event` | `AgentEventMsg` `{ convId, event: ChatEvent }` |
 | `agentPermissionRequest` | `agent:permission-request` | `PermissionRequestMsg` `{ convId, req: PermissionRequest }` (com `questions?` quando é um `AskUserQuestion`) |
+| `agentPermissionExpired` | `agent:permission-expired` | `PermissionExpiredMsg` `{ convId, id }` (pedido auto-resolvido por timeout → fecha o modal) |
 | `browserFrame` | `browser:frame` | `BrowserFrame` `{ data, width, height, mime? }` (mime = `image/png` no Android) |
 | `browserStateChanged` | `browser:state` | `BrowserState` (inclui `tabs[]` e, no Android, `androidSize`) |
 | `browserPicked` | `browser:picked` | `PickedElement` (com `tabId`/`tabName`) |
@@ -563,6 +571,8 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `remoteInbound` | `remote:inbound` | `RemoteInboundMsg` `{ convId, text, images? }` (comando vindo de um celular, com imagens opcionais) |
 | `remoteBuildProgress` | `remote:build-progress` | `RemoteBuildProgressMsg` `{ line, done?, ok? }` |
 | `remoteClients` | `remote:clients` | `RemoteInfo` (mudou a contagem de celulares / estado da ponte) |
+| `remoteSetSkipPerms` | `remote:set-skip-perms` | `{ on }` (um celular alternou o "Permitir tudo" global) |
+| `remoteSetModel` | `remote:set-model` | `RemoteSetModelMsg` `{ convId, model?, effort? }` (um celular trocou modelo/esforço da conversa) |
 
 ---
 
