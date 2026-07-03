@@ -40,11 +40,8 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision(undefined)).toBe(true)
   })
 
-  it('Kimi K2.7 Code é multimodal nativo — não entra no vision relay', () => {
-    expect(modelSupportsVision('kimi-k2.7-code:cloud')).toBe(true)
-  })
-
-  it('demais modelos Ollama são texto-only — precisam do vision relay', () => {
+  it('TODO modelo Ollama passa pelo vision relay — mesmo Kimi K2.7 (cloud rejeitou imagem em produção)', () => {
+    expect(modelSupportsVision('kimi-k2.7-code:cloud')).toBe(false)
     expect(modelSupportsVision('qwen3-coder:480b-cloud')).toBe(false)
     expect(modelSupportsVision('gpt-oss:120b-cloud')).toBe(false)
     expect(modelSupportsVision('gpt-oss:20b-cloud')).toBe(false)
