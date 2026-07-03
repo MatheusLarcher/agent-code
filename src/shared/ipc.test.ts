@@ -40,8 +40,11 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision(undefined)).toBe(true)
   })
 
-  it('TODO modelo Ollama passa pelo vision relay — mesmo Kimi K2.7 (cloud rejeitou imagem em produção)', () => {
-    expect(modelSupportsVision('kimi-k2.7-code:cloud')).toBe(false)
+  it('Kimi K2.7 Code aceita imagem direto (verificado com probe real contra a API do Ollama Cloud)', () => {
+    expect(modelSupportsVision('kimi-k2.7-code:cloud')).toBe(true)
+  })
+
+  it('demais modelos Ollama são texto-only (400 real da API) — precisam do vision relay', () => {
     expect(modelSupportsVision('qwen3-coder:480b-cloud')).toBe(false)
     expect(modelSupportsVision('gpt-oss:120b-cloud')).toBe(false)
     expect(modelSupportsVision('gpt-oss:20b-cloud')).toBe(false)

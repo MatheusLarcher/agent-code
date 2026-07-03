@@ -330,15 +330,14 @@ describe('AgentSession — vision_fallback_router', () => {
     expect(blocks.some((b) => b.type === 'image')).toBe(true)
   })
 
-  it('Kimi K2.7 Code (Ollama) + imagem: TAMBÉM passa pelo relay (cloud rejeitou imagem direta em produção)', async () => {
-    describeImagesMock.mockResolvedValueOnce('Texto visível (OCR completo): tela de login')
+  it('Kimi K2.7 Code (Ollama, único com visão real verificada) + imagem: NÃO chama o relay', async () => {
     const { s } = makeSession({ model: 'kimi-k2.7-code:cloud' })
 
     await s.send('o que é isso?', [{ mediaType: 'image/png', data: 'AAAA' }])
 
-    expect(describeImagesMock).toHaveBeenCalledTimes(1)
+    expect(describeImagesMock).not.toHaveBeenCalled()
     const [msg] = pushedMessages(s)
-    expect(typeof msg.message.content).toBe('string')
+    expect(Array.isArray(msg.message.content)).toBe(true)
   })
 
   it('sem imagem: fluxo idêntico ao atual, relay nunca é chamado', async () => {

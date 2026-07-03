@@ -454,19 +454,20 @@ export function isOllamaModel(model: string | undefined): boolean {
 }
 
 /** Ollama Cloud models in OLLAMA_MODELS confirmed to accept image input
- *  THROUGH OLLAMA'S OWN Anthropic-compatible cloud endpoint — not just "the
- *  base model has a vision encoder somewhere". Kimi K2.7 Code's underlying
- *  weights do ship a vision encoder (MoonViT), but Ollama Cloud's hosted
- *  `:cloud` tag rejected an image with `this model does not support image
- *  input` in production, so it does NOT belong here. Keep this set EMPTY
- *  until a model is verified end-to-end against the real Ollama Cloud API —
- *  a wrong "true" here sends a raw image straight to a model that 400s. */
-const OLLAMA_VISION_MODELS = new Set<string>([])
+ *  THROUGH OLLAMA'S OWN Anthropic-compatible cloud endpoint (`POST
+ *  https://ollama.com/v1/messages` with an image block) — not just "the base
+ *  model has a vision encoder somewhere". Verified with a live probe against
+ *  every model in OLLAMA_MODELS: only `kimi-k2.7-code:cloud` returned 200 (it
+ *  actually processed the image); the other five all returned 400 `this model
+ *  does not support image input`. Re-verify the same way before adding
+ *  anything here — a wrong entry sends a raw image straight to a model that
+ *  400s, exactly the bug this list exists to prevent. */
+const OLLAMA_VISION_MODELS = new Set(['kimi-k2.7-code:cloud'])
 
 /** Whether `model` can accept an image directly. All Claude models support
- *  vision; Ollama Cloud models ALWAYS route through the vision-fallback relay
- *  (vision_fallback_router in src/main/visionRelay.ts) instead — see
- *  OLLAMA_VISION_MODELS for why. */
+ *  vision; for Ollama Cloud, only the models in OLLAMA_VISION_MODELS do —
+ *  everything else routes through the vision-fallback relay
+ *  (vision_fallback_router in src/main/visionRelay.ts) instead. */
 export function modelSupportsVision(model: string | undefined): boolean {
   if (!model) return true
   if (!isOllamaModel(model)) return true
