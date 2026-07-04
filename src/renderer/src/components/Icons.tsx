@@ -194,3 +194,11 @@ export const IconHelp = (p: IconProps): JSX.Element => (
     <circle cx="12" cy="17" r="0.1" fill="currentColor" stroke="currentColor" strokeWidth="1.5" />
   </Svg>
 )
+
+/** Shield-check — used as the shortcut to trigger the code-review skill. */
+export const IconShieldCheck = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />
+    <polyline points="9 12 11 14 15 10" />
+  </Svg>
+)

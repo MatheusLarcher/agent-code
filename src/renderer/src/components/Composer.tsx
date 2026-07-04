@@ -8,7 +8,7 @@ import {
   type RefObject
 } from 'react'
 import type { FileAttachment, ImageAttachment, MentionHit, PickedElement, SkillInfo } from '@shared/ipc'
-import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconStop } from './Icons'
+import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconShieldCheck, IconStop } from './Icons'
 import { fileMeta, fmtSize } from '../files'
 import { useUI } from '../ui/UiProvider'
 import { frameRms, vadStep, tryArmedTrigger, type VadState } from '../vad'
@@ -1124,6 +1124,14 @@ export function Composer(props: Props): JSX.Element {
             <IconStop size={14} />
           </button>
         )}
+        <button
+          className="ref-btn"
+          onClick={() => props.onSend('/code-review', [], [])}
+          disabled={props.disabled || blocked}
+          title="Revisar código (chama a skill code-review)"
+        >
+          <IconShieldCheck />
+        </button>
         <button
           className="btn send"
           onClick={submit}
