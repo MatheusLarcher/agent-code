@@ -15,6 +15,13 @@ export const VAD_SILENCE_HOLD_MS = 800
 /** Safety cap (ms): finalize an utterance even without a pause, so a long monologue
  *  still gets transcribed in pieces instead of growing unbounded. */
 export const VAD_MAX_SEG_MS = 30_000
+/** Pre-roll rotation (ms): while NO speech has been detected yet, the recorder runs
+ *  in short rolling segments this long, each discarded if it stays silent. When
+ *  speech starts, the current roll already holds the milliseconds BEFORE the
+ *  trigger frame — so the attack of the first word (soft consonants below the
+ *  threshold) is preserved instead of clipped. Short enough that a discarded
+ *  silent roll never carries meaningful audio. */
+export const VAD_PREROLL_MS = 500
 
 export interface VadState {
   /** Whether any voice was detected in the current segment — gates transcription. */
@@ -53,6 +60,14 @@ export function vadStep(state: VadState, rms: number, now: number): { state: Vad
     state.hadSpeech &&
     (now - state.lastVoiceAt > VAD_SILENCE_HOLD_MS || now - state.segStartAt > VAD_MAX_SEG_MS)
   return { state, end }
+}
+
+/** Whether a still-silent segment should be discarded and restarted (pre-roll
+ *  rotation). Only applies before any speech: once `hadSpeech` is true the
+ *  segment must end via `vadStep` (natural pause / max cap), never rotated —
+ *  rotation mid-speech would cut a word in half. */
+export function shouldRotatePreroll(state: VadState, now: number): boolean {
+  return !state.hadSpeech && now - state.segStartAt > VAD_PREROLL_MS
 }
 
 /** "Armed" (listening, not recording) → recording transition. Call this once

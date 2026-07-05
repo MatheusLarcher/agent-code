@@ -4,9 +4,11 @@ import {
   newVadState,
   vadStep,
   tryArmedTrigger,
+  shouldRotatePreroll,
   VAD_SPEECH_RMS,
   VAD_SILENCE_HOLD_MS,
-  VAD_MAX_SEG_MS
+  VAD_MAX_SEG_MS,
+  VAD_PREROLL_MS
 } from './vad'
 
 const SPEECH_RMS = VAD_SPEECH_RMS + 0.05 // comfortably above the voice threshold
@@ -59,6 +61,45 @@ describe('vadStep — segmentar na pausa (não no meio da palavra)', () => {
     }
     expect(end).toBe(true)
     expect(s.hadSpeech).toBe(true)
+  })
+})
+
+describe('shouldRotatePreroll — pré-rolo preserva o início da palavra sem gravar silêncio', () => {
+  it('rolo ainda em silêncio estoura o pré-rolo → descarta e recomeça', () => {
+    const s = newVadState(0)
+    expect(shouldRotatePreroll(s, VAD_PREROLL_MS - 50)).toBe(false) // dentro da janela
+    expect(shouldRotatePreroll(s, VAD_PREROLL_MS + 50)).toBe(true) // estourou, rotaciona
+  })
+
+  it('assim que houve fala, NUNCA rotaciona (cortaria a palavra no meio)', () => {
+    const s = newVadState(0)
+    vadStep(s, SPEECH_RMS, 100) // fala no meio do rolo
+    expect(s.hadSpeech).toBe(true)
+    // mesmo muito depois do pré-rolo, o segmento com fala não é rotacionado
+    expect(shouldRotatePreroll(s, VAD_PREROLL_MS * 10)).toBe(false)
+  })
+
+  it('fluxo completo: rolos silenciosos descartados → fala no meio de um rolo → fecha só na pausa', () => {
+    // 3 rolos de puro silêncio: cada um estoura o pré-rolo e é descartado
+    for (let roll = 0; roll < 3; roll++) {
+      const start = roll * (VAD_PREROLL_MS + 16)
+      const s = newVadState(start)
+      for (let t = start + 16; t <= start + VAD_PREROLL_MS; t += 16) {
+        expect(vadStep(s, SILENCE_RMS, t).end).toBe(false)
+      }
+      expect(s.hadSpeech).toBe(false) // rolo silencioso → blob descartado, nada vai pra API
+      expect(shouldRotatePreroll(s, start + VAD_PREROLL_MS + 16)).toBe(true)
+    }
+    // 4º rolo: a fala começa no MEIO do rolo — o comecinho (antes do gatilho) já está gravado
+    const start = 3 * (VAD_PREROLL_MS + 16)
+    const s = newVadState(start)
+    vadStep(s, SILENCE_RMS, start + 100) // iníciozinho silencioso do rolo (o pré-rolo em si)
+    vadStep(s, SPEECH_RMS, start + 200) // fala detectada
+    expect(s.hadSpeech).toBe(true)
+    expect(s.segStartAt).toBe(start) // o segmento começou ANTES da fala → ataque preservado
+    expect(shouldRotatePreroll(s, start + VAD_PREROLL_MS + 16)).toBe(false) // não corta mais
+    // e fecha apenas na pausa natural
+    expect(vadStep(s, SILENCE_RMS, start + 200 + VAD_SILENCE_HOLD_MS + 50).end).toBe(true)
   })
 })
 
