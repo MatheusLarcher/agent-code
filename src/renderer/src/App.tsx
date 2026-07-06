@@ -1342,6 +1342,7 @@ export function App(): JSX.Element {
   const activeConnected = activeId !== null && connectedIds.has(activeId)
   const showBusy = activeId !== null && busyIds.has(activeId)
   const activePermission = activeId ? permissions[activeId] : undefined
+  const questionMinimized = activeId ? !!minimizedQuestions[activeId] : false
   const messages = active?.messages ?? []
   const tokens = active?.tokens ?? EMPTY_TOKENS
   const activeQueue = active ? queue.filter((m) => m.convId === active.id) : []
@@ -1539,11 +1540,14 @@ export function App(): JSX.Element {
 
       {activePermission &&
         (activePermission.questions ? (
-          <QuestionModal
-            request={activePermission}
-            onAnswer={answerQuestion}
-            onCancel={() => respond('deny', false)}
-          />
+          !questionMinimized && (
+            <QuestionModal
+              request={activePermission}
+              onAnswer={answerQuestion}
+              onCancel={() => respond('deny', false)}
+              onMinimize={() => setQuestionMinimized(true)}
+            />
+          )
         ) : (
           <PermissionModal request={activePermission} onRespond={respond} />
         ))}

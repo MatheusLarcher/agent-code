@@ -6,6 +6,10 @@ interface Props {
   request: PermissionRequest
   onAnswer: (answers: QuestionAnswer[]) => void
   onCancel: () => void
+  /** Clicar fora ou apertar Esc chama isto (não `onCancel`) — a pergunta continua
+   *  pendente, só escondida; o chip do ChatPanel reabre o modal. Só o botão
+   *  "Cancelar" descarta a pergunta de verdade. */
+  onMinimize: () => void
 }
 
 const OTHER = '__other__'
@@ -16,7 +20,7 @@ const OTHER = '__other__'
  * always offered (the SDK leaves the "Other" choice to the host). The picks are
  * fed back to the model as the tool's answer.
  */
-export function QuestionModal({ request, onAnswer, onCancel }: Props): JSX.Element {
+export function QuestionModal({ request, onAnswer, onCancel, onMinimize }: Props): JSX.Element {
   const questions = useMemo(() => request.questions ?? [], [request.questions])
   // Per question: the set of selected option labels (single-select keeps one).
   const [picked, setPicked] = useState<string[][]>(() => questions.map(() => []))
@@ -25,11 +29,11 @@ export function QuestionModal({ request, onAnswer, onCancel }: Props): JSX.Eleme
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onCancel()
+      if (e.key === 'Escape') onMinimize()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onCancel])
+  }, [onMinimize])
 
   const toggle = (qi: number, label: string, multi: boolean): void => {
     setPicked((prev) => {
@@ -61,7 +65,7 @@ export function QuestionModal({ request, onAnswer, onCancel }: Props): JSX.Eleme
   }
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-overlay" onClick={onMinimize}>
       <div
         className="modal-card question-modal"
         role="dialog"
