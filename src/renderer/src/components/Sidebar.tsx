@@ -396,7 +396,7 @@ export function Sidebar(props: Props): JSX.Element {
               const open = !collapsedProjects.has(p.path)
               const busy = p.conversations.some((c) => props.busyIds.has(c.id))
               return (
-                <div className="project-item" key={p.path}>
+                <div className={`project-item ${open ? 'open' : ''}`} key={p.path}>
                   <div className={`project-row ${busy ? 'busy' : ''}`}>
                     <button className="project-row-main" onClick={() => toggleProject(p.path)} title={p.path}>
                       <IconChevron open={open} />

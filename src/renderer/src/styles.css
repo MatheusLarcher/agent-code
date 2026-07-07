@@ -217,6 +217,22 @@ body {
   padding: 4px 8px 8px;
 }
 
+.project-item {
+  border-radius: 9px;
+}
+/* Aberto: o item vira um "painel" visível (fundo + borda), deixando claro que as
+   conversas abaixo estão CONTIDAS neste projeto — não apenas indentadas. */
+.project-item.open {
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  padding-bottom: 3px;
+  margin-bottom: 2px;
+}
+.project-item.open .project-row {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
 .project-row {
   width: 100%;
   display: flex;
@@ -291,6 +307,7 @@ body {
 }
 .project-convs {
   margin: 1px 0 4px;
+  padding-left: 20px;
 }
 
 .conv-row {
@@ -303,12 +320,35 @@ body {
   color: var(--text);
   user-select: none;
 }
+/* Árvore projeto → conversas: uma guia vertical contínua (ligada ao ícone da
+   pasta) com um "cotovelo" horizontal em cada conversa — deixa explícito que
+   ela pertence a ESTE projeto, não é só uma indentação genérica. */
 .conv-row.nested {
-  margin-left: 14px;
-  padding-left: 8px;
+  position: relative;
+  margin-left: 0;
+  padding-left: 14px;
+}
+.conv-row.nested::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 0;
+  bottom: 50%;
+  width: 10px;
   border-left: 1px solid var(--line);
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
+  border-bottom: 1px solid var(--line);
+  border-bottom-left-radius: 6px;
+}
+.conv-row.nested::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  bottom: 0;
+  top: 50%;
+  border-left: 1px solid var(--line);
+}
+.project-convs .conv-row.nested:last-child::after {
+  display: none;
 }
 .conv-row:hover {
   background: var(--bg-3);
