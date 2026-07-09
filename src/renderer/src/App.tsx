@@ -1058,13 +1058,19 @@ export function App(): JSX.Element {
     [connect, ensureProject, setBusy, notify, clearMessageError, markMessageError]
   )
 
-  // Persist the composer draft onto the active conversation (debounced save keeps
+  // Persist a composer draft onto a SPECIFIC conversation (debounced save keeps
   // it across switches and restarts). No-op write when unchanged.
+  //
+  // Takes an explicit `convId` rather than reading "whichever conversation is
+  // active right now" — the Composer only calls this on blur / conversation
+  // switch / send (not on every keystroke, which used to cause a full App
+  // re-render per letter). By the time a switch-triggered flush runs, the
+  // active conversation may already be the NEW one, so an implicit "current
+  // active" target would silently write the outgoing draft onto the wrong
+  // conversation (or lose it). The explicit id keeps the write correct.
   const onDraftChange = useCallback(
-    (text: string): void => {
-      const id = activeIdRef.current
-      if (!id) return
-      patchConv(id, (c) => (c.draft === text ? c : { ...c, draft: text }))
+    (convId: string, text: string): void => {
+      patchConv(convId, (c) => (c.draft === text ? c : { ...c, draft: text }))
     },
     [patchConv]
   )

@@ -66,8 +66,9 @@ interface Props {
   scrollSeq?: number
   /** Saved draft for the active conversation (restored into the composer). */
   draft: string
-  /** Persist the composer draft for the active conversation as it's typed. */
-  onDraftChange: (text: string) => void
+  /** Persist a conversation's composer draft — called with an explicit convId
+   *  (blur / conversation switch / send), not on every keystroke. */
+  onDraftChange: (convId: string, text: string) => void
   /** True when the active conversation's project folder no longer exists — the
    *  composer is blocked (read-only) and interacting shows the error. */
   projectMissing: boolean

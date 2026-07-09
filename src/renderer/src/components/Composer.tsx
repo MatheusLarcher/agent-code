@@ -44,8 +44,10 @@ interface Props {
   convId: string | null
   /** Saved draft text for the active conversation (restored into the box). */
   draft: string
-  /** Persist the box text as the active conversation's draft as it's typed. */
-  onDraftChange: (text: string) => void
+  /** Persist a conversation's draft — called with an explicit convId (blur /
+   *  conversation switch / send), NOT on every keystroke (that used to cause a
+   *  full app re-render per letter — see `flushDraft` below). */
+  onDraftChange: (convId: string, text: string) => void
   /** True when the conversation's project folder no longer exists — blocks typing
    *  (the box becomes read-only and any interaction shows the error). */
   projectMissing: boolean
@@ -228,22 +230,47 @@ export function Composer(props: Props): JSX.Element {
   // The conversation `value` currently belongs to. When the active conversation
   // changes we swap in that chat's saved draft (so switching never loses text).
   const convIdRef = useRef(props.convId)
+  // Mirrors `value` for code that needs the LATEST text without re-subscribing
+  // effects/listeners on every keystroke (the conversation-switch effect and the
+  // window-blur flush below both read this instead of depending on `value`).
+  const valueRef = useRef(value)
+  valueRef.current = value
 
-  // Report user-driven edits up so the draft is persisted per conversation. We
-  // never call this for the load-on-switch below, so switching can't overwrite
-  // another chat's draft with the previous one.
+  // Local-only edit — just updates the box. Does NOT persist to disk: saving on
+  // every keystroke used to force a full app re-render per letter (slow while
+  // typing). Persistence happens only via `flushDraft`, at blur/switch/send.
   const updateValue = (next: string): void => {
     setValue(next)
-    props.onDraftChange(next)
   }
 
-  // Switching conversations → restore that chat's draft into the box.
+  // Save `text` as `convId`'s draft. Takes an explicit id (not "whatever's
+  // active now") so a flush triggered by a conversation switch always targets
+  // the OUTGOING conversation, never the one just switched into.
+  const flushDraft = (convId: string | null, text: string): void => {
+    if (convId) props.onDraftChange(convId, text)
+  }
+
+  // Switching conversations → flush the outgoing chat's unsaved text (never
+  // lose it just because the switch happened before the field was blurred),
+  // then restore the new chat's saved draft into the box.
   useEffect(() => {
     if (convIdRef.current !== props.convId) {
+      flushDraft(convIdRef.current, valueRef.current)
       convIdRef.current = props.convId
       setValue(props.draft)
     }
   }, [props.convId, props.draft])
+
+  // Extra safety net: the whole app losing OS focus (e.g. Alt+Tab, closing via
+  // Alt+F4) doesn't necessarily blur the textarea first — flush on window blur
+  // too, so a typed draft is never lost. Mounted once; always reads the latest
+  // conversation/text via refs.
+  useEffect(() => {
+    const onWindowBlur = (): void => flushDraft(convIdRef.current, valueRef.current)
+    window.addEventListener('blur', onWindowBlur)
+    return () => window.removeEventListener('blur', onWindowBlur)
+  }, [])
+
   const [images, setImages] = useState<ImageAttachment[]>([])
   const [files, setFiles] = useState<FileAttachment[]>([])
   const refMenu = useRef<HTMLDivElement>(null)
@@ -652,7 +679,10 @@ export function Composer(props: Props): JSX.Element {
     if (props.disabled || blocked) return
     if (!value.trim() && props.chips.length === 0 && images.length === 0 && files.length === 0) return
     props.onSend(value, images, files)
-    updateValue('') // clears the box and the saved draft for this conversation
+    updateValue('') // clears the box
+    // The message was already sent — flush the now-empty draft explicitly so the
+    // stale (pre-send) text doesn't reappear if the user comes back to this chat.
+    flushDraft(props.convId, '')
     setImages([])
     setFiles([])
     setPicker(null)
@@ -1102,6 +1132,11 @@ export function Composer(props: Props): JSX.Element {
               syncPicker(e.target.value, e.target.selectionStart ?? e.target.value.length)
             }}
             onKeyDown={onKey}
+            // "Salvar quando o usuário clica em outra coisa": the mention/skill
+            // picker's own items use mousedown+preventDefault specifically to
+            // avoid blurring the box while picking, so this only fires on a
+            // real "left the composer" — never mid-autocomplete.
+            onBlur={() => flushDraft(props.convId, value)}
             onClick={(e) => syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
             onKeyUp={(e) => {
               // Re-detect the token when the caret moves (not while the menu is
