@@ -462,11 +462,17 @@ export class RemoteServer {
     }
   }
 
+  /** Only the most recent messages of ONE conversation go to the phone — never
+   *  the whole thing. Long conversations (lots of tool output) are heavy over a
+   *  mobile connection; the phone doesn't need older history to keep chatting. */
+  private static readonly HISTORY_LIMIT = 30
+
   private serveHistory(url: URL, res: ServerResponse): void {
     const id = url.searchParams.get('conv') ?? ''
     const conv = this.state.conversations.find((c) => c.id === id)
+    const messages = (conv?.messages ?? []).slice(-RemoteServer.HISTORY_LIMIT)
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ messages: conv?.messages ?? [] }))
+    res.end(JSON.stringify({ messages }))
   }
 
   /** Full-text search over the USER's own prompts across every conversation.

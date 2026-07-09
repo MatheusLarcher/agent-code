@@ -19,6 +19,7 @@ const server = new RemoteServer({
 let base = ''
 let token = ''
 let filePath = ''
+let conv: RemoteConversation
 
 beforeAll(async () => {
   const info = await server.start()
@@ -32,7 +33,7 @@ beforeAll(async () => {
   // A source file written during work must NOT be downloadable.
   const srcPath = join(dir, 'codigo.ts')
   writeFileSync(srcPath, 'export const x = 1')
-  const conv: RemoteConversation = {
+  conv = {
     id: 'c1',
     title: 'Conversa',
     cwd: '/proj',
@@ -116,12 +117,41 @@ describe('RemoteServer — ponte LAN', () => {
     expect(convs[0].messages).toBeUndefined()
   })
 
-  it('/api/history devolve as mensagens da conversa', async () => {
+  it('/api/history devolve as mensagens da conversa (conversa curta: todas)', async () => {
     const r = await getJson(`/api/history?token=${token}&conv=c1`)
     expect(r.status).toBe(200)
     const msgs = (r.json as { messages: Array<{ text: string }> }).messages
     expect(msgs).toHaveLength(3)
     expect(msgs[0].text).toBe('oi')
+  })
+
+  it('/api/history NUNCA manda mais que as 30 últimas mensagens (conversa longa)', async () => {
+    const longConv: RemoteConversation = {
+      id: 'clong',
+      title: 'Conversa longa',
+      cwd: '/proj',
+      busy: false,
+      connected: true,
+      updatedAt: 3,
+      // 50 mensagens — só as 20..49 (as ÚLTIMAS 30) devem voltar.
+      messages: Array.from({ length: 50 }, (_, i) => ({ kind: 'user', id: `m${i}`, text: `msg ${i}` }))
+    }
+    // setState SUBSTITUI o snapshot inteiro — soma à conversa `c1` existente
+    // (não troca por ela) para não quebrar os testes seguintes que dependem dela.
+    server.setState({ conversations: [conv, longConv] })
+    const r = await getJson(`/api/history?token=${token}&conv=clong`)
+    expect(r.status).toBe(200)
+    const msgs = (r.json as { messages: Array<{ text: string }> }).messages
+    expect(msgs).toHaveLength(30)
+    // são as mais RECENTES (a mais antiga do corte é "msg 20", a última é "msg 49")
+    expect(msgs[0].text).toBe('msg 20')
+    expect(msgs[msgs.length - 1].text).toBe('msg 49')
+  })
+
+  it('/api/history com conversa inexistente devolve lista vazia (sem erro)', async () => {
+    const r = await getJson(`/api/history?token=${token}&conv=inexistente`)
+    expect(r.status).toBe(200)
+    expect((r.json as { messages: unknown[] }).messages).toEqual([])
   })
 
   it('POST /api/send encaminha o comando via onInbound', async () => {
