@@ -372,6 +372,17 @@ html, body {
   /* No smooth scroll: while streaming we adjust scrollTop every frame, and the
      animation would turn that into constant up/down jitter. */
 }
+/* Abrindo um chat — ocupa a área inteira de mensagens enquanto /api/history
+   carrega (troca o espinner e some assim que o conteúdo chega ou dá erro). */
+.messages-loading {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
 .msg {
   max-width: 86%; font-size: 15px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word;

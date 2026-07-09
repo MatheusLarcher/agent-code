@@ -37,8 +37,14 @@ var state = {
   skipPerms: false,  // global "Permitir tudo" state (mirrored from the PC)
   models: [],        // model catalog from the PC ({id,label}[])
   modelEffort: {},   // effort levels supported per model id
-  effortLabels: {}   // pt-BR label per effort level
+  effortLabels: {},  // pt-BR label per effort level
+  historyLoading: false // true enquanto /api/history está em voo (abrindo um chat)
 }
+
+// Conta as chamadas de loadHistory: só a resposta da chamada MAIS RECENTE pode
+// atualizar a tela — evita que trocar de chat rápido deixe o spinner "grudado"
+// (ou pior, uma resposta antiga sobrescrevendo o chat que o usuário abriu depois).
+var historyReq = 0
 
 var $ = function (id) { return document.getElementById(id) }
 
@@ -382,6 +388,13 @@ function scheduleRender() {
 
 function renderMessages() {
   var box = $('messages')
+  // Abrindo um chat (loadHistory em voo): mostra o loading no lugar da lista —
+  // nem tenta desenhar mensagens de um chat que ainda pode nem ser o certo.
+  if (state.historyLoading) {
+    box.innerHTML = '<div class="messages-loading"><span class="spinner"></span><span>Carregando mensagens…</span></div>'
+    updateJumpBtn()
+    return
+  }
   // Remember position BEFORE clearing: clearing resets scrollTop to 0, which would
   // otherwise yank the view to the top on every streaming event.
   var prevTop = box.scrollTop
@@ -736,12 +749,30 @@ function confirmExit() {
   }
 }
 
-function loadHistory(convId) {
+// `silent`: true para um RESYNC de fundo (pull-to-refresh, reconexão) — essas
+// ações já têm sua própria barra de progresso e devem manter as mensagens já
+// carregadas visíveis, sem apagar a tela pro spinner cheio. `silent` false (o
+// padrão) é para ABRIR um chat — aí sim mostra o loading, como pedido.
+function loadHistory(convId, silent) {
+  var reqId = ++historyReq
+  if (!silent) {
+    state.historyLoading = true
+    renderMessages()
+  }
   return fetch(api('/api/history?conv=' + encodeURIComponent(convId)))
     .then(function (r) { return r.json() })
     .then(function (data) {
+      if (reqId !== historyReq) return // uma chamada mais nova já assumiu a tela
       state.messages = (data.messages || []).slice()
+      state.historyLoading = false
       renderMessages()
+    })
+    .catch(function (err) {
+      if (reqId === historyReq) {
+        state.historyLoading = false
+        renderMessages()
+      }
+      throw err // preserva o comportamento de erro pra quem chama loadHistory
     })
 }
 
@@ -790,7 +821,7 @@ function onPullEnd() {
   setPullBar('refreshing')
   var done = function () { pull.refreshing = false; setPullBar('hidden') }
   if (!state.convId) { done(); return }
-  loadHistory(state.convId).then(done, done)
+  loadHistory(state.convId, true).then(done, done)
 }
 
 function setupPullToRefresh() {
@@ -832,7 +863,9 @@ function openEvents() {
     setStatus(true)
     // Assim que a sessão conecta (primeira vez ou depois de uma queda), ressincroniza
     // o chat da conversa ativa — o histórico pode ter mudado enquanto ficamos offline.
-    if (state.convId) loadHistory(state.convId).catch(function () {})
+    // Silencioso: se for a 1ª conexão, selectConv (chamado logo em seguida por showChat)
+    // já mostrou o loading; numa reconexão, as mensagens já carregadas ficam visíveis.
+    if (state.convId) loadHistory(state.convId, true).catch(function () {})
   }
   es.onerror = function () {
     setStatus(false)
