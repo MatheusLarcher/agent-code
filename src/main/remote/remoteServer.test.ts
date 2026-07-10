@@ -102,6 +102,29 @@ async function waitFor(cond: () => boolean, ms = 2000): Promise<void> {
 }
 
 describe('RemoteServer — ponte LAN', () => {
+  it('reutiliza o mesmo token persistido após parar e iniciar uma nova ponte', async () => {
+    let persisted = ''
+    const deps = {
+      onInbound: () => undefined,
+      apkPath: () => 'C:/nonexistent/agent-remote.apk',
+      wwwDir: () => 'C:/nonexistent/www',
+      loadToken: () => persisted,
+      saveToken: (token: string) => {
+        persisted = token
+      }
+    }
+    const first = new RemoteServer(deps)
+    const firstInfo = await first.start()
+    await first.stop()
+
+    const second = new RemoteServer(deps)
+    const secondInfo = await second.start()
+    await second.stop()
+
+    expect(persisted).toBe(firstInfo.token)
+    expect(secondInfo.token).toBe(firstInfo.token)
+  })
+
   it('exige token nas rotas /api', async () => {
     const r = await getJson('/api/state')
     expect(r.status).toBe(401)
