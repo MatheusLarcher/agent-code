@@ -102,6 +102,10 @@ html, body {
 .manual { margin-top: 20px; border-top: 1px solid var(--line-soft); padding-top: 18px; }
 .manual .btn { width: 100%; margin-top: 4px; }
 .pair-foot { margin: 18px 0 0; color: var(--faint); font-size: 12.5px; text-align: center; }
+.reconnect-card .brand-logo { background: var(--accent-soft); color: var(--accent); box-shadow: none; }
+.reconnect-card .spinner { width: 19px; height: 19px; border-color: var(--line); border-top-color: var(--accent); }
+.reconnect-status { min-height: 20px; margin: -6px 0 20px; color: var(--accent); font-size: 13px; }
+.reconnect-card .btn { width: 100%; }
 
 /* ---- camera scanner overlay ---- */
 .scanner {

@@ -40,6 +40,20 @@
       <p class="pair-foot">Mantém o app conectado à última sessão automaticamente.</p>
     </section>
 
+    <!-- Saved pairing reconnects automatically; QR is an explicit fallback. -->
+    <section id="pairing" class="screen pair-screen" hidden>
+      <div class="pair-card reconnect-card">
+        <div class="brand">
+          <div class="brand-logo"><span class="spinner"></span></div>
+          <h1>Reconectando</h1>
+        </div>
+        <p id="pairing-detail" class="sub">Procurando a ponte do seu PC…</p>
+        <p id="pairing-status" class="reconnect-status">Conectando…</p>
+        <button id="pairing-cancel" class="btn ghost big">Cancelar e escanear QR</button>
+      </div>
+      <p class="pair-foot">Seu pareamento fica salvo neste celular.</p>
+    </section>
+
     <!-- Camera QR scanner overlay -->
     <div id="scanner" class="scanner" hidden>
       <!-- Live feed is drawn frame-by-frame onto this canvas. The <video> stays

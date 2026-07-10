@@ -25,6 +25,8 @@ var state = {
   poll: null,
   images: [],        // staged image attachments {mediaType, data}
   reconnect: null,   // pending SSE reconnect timer
+  pairingRetry: null, // pending initial-pairing reconnect timer
+  pairingAttempt: 0,  // backoff step while the initial connection is unavailable
   retry: 0,          // backoff step
   wakeLock: null,    // screen wake lock (keeps the app awake/connected)
   online: false,
@@ -70,6 +72,7 @@ function loadConfig() {
   try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null') } catch (e) { return null }
 }
 function saveConfig(cfg) { localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)) }
+function clearConfig() { localStorage.removeItem(CONFIG_KEY) }
 
 function api(path) {
   var sep = path.indexOf('?') >= 0 ? '&' : '?'
@@ -745,7 +748,7 @@ function setSkipPerms(on) {
 function confirmExit() {
   if (confirm('Sair desta conexão? Você precisará parear de novo (QR ou endereço) para voltar.')) {
     closeSettings()
-    showPair()
+    cancelPairingReconnect()
   }
 }
 
@@ -851,6 +854,43 @@ function scheduleReconnect() {
     // Refresh state too, so the conversation list/history catch up after a drop.
     fetchState().catch(function () {})
   }, delay)
+}
+
+function clearPairingRetry() {
+  if (state.pairingRetry) clearTimeout(state.pairingRetry)
+  state.pairingRetry = null
+}
+
+function pairingErrorText(err) {
+  var msg = err && err.message ? err.message : String(err || '')
+  if (msg.indexOf('HTTP 401') >= 0) return 'O PC não aceitou o token salvo. Vou continuar tentando enquanto a ponte reinicia.'
+  return 'Não encontrei o PC agora. Vou tentar de novo automaticamente.'
+}
+
+/** Retry the saved pairing without ever discarding it. The QR screen is only
+ * reached by an explicit cancel/logout action. */
+function attemptPairingReconnect() {
+  clearPairingRetry()
+  fetchState().then(function (data) {
+    state.pairingAttempt = 0
+    showConnectedChat(data)
+  }).catch(function (err) {
+    $('pairing-detail').textContent = pairingErrorText(err)
+    var delay = Math.min(15000, 1000 * Math.pow(2, state.pairingAttempt))
+    state.pairingAttempt++
+    $('pairing-status').textContent = 'Tentando novamente em ' + Math.ceil(delay / 1000) + ' s…'
+    state.pairingRetry = setTimeout(attemptPairingReconnect, delay)
+  })
+}
+
+function beginPairingReconnect() {
+  if (!state.base || !state.token) { showPair(); return }
+  $('pair').hidden = true
+  $('chat').hidden = true
+  $('pairing').hidden = false
+  $('pairing-detail').textContent = 'Procurando a ponte do seu PC…'
+  $('pairing-status').textContent = 'Conectando…'
+  attemptPairingReconnect()
 }
 
 function openEvents() {
@@ -1135,30 +1175,27 @@ function renderPreview() {
 
 // ---- screens --------------------------------------------------------------
 
-function showChat() {
+function showConnectedChat(data) {
+  clearPairingRetry()
   $('pair').hidden = true
+  $('pairing').hidden = true
   $('chat').hidden = false
   state.retry = 0
   requestWakeLock()
-  fetchState()
-    .then(function () {
-      if (!state.conversations.length) {
-        alert('Nenhuma conversa no PC ainda. Crie uma conversa no app do PC primeiro.')
-        return
-      }
-      var last = localStorage.getItem(LAST_CONV_KEY)
-      var pick = state.conversations.some(function (c) { return c.id === last }) ? last : state.conversations[0].id
-      selectConv(pick)
-      openEvents()
-      if (state.poll) clearInterval(state.poll)
-      state.poll = setInterval(fetchState, 4000)
-    })
-    .catch(function (e) {
-      showPair('Não foi possível conectar: ' + e.message + '. Confira endereço/token e a rede.')
-    })
+  if (!data.conversations.length) {
+    alert('Nenhuma conversa no PC ainda. Crie uma conversa no app do PC primeiro.')
+  } else {
+    var last = localStorage.getItem(LAST_CONV_KEY)
+    var pick = state.conversations.some(function (c) { return c.id === last }) ? last : state.conversations[0].id
+    selectConv(pick)
+  }
+  openEvents()
+  if (state.poll) clearInterval(state.poll)
+  state.poll = setInterval(function () { fetchState().catch(function () {}) }, 4000)
 }
 
 function showPair(error) {
+  clearPairingRetry()
   if (state.es) { state.es.close(); state.es = null }
   if (state.poll) { clearInterval(state.poll); state.poll = null }
   if (state.reconnect) { clearTimeout(state.reconnect); state.reconnect = null }
@@ -1168,6 +1205,7 @@ function showPair(error) {
   releaseWakeLock()
   if (typeof stopScan === 'function') stopScan()
   $('chat').hidden = true
+  $('pairing').hidden = true
   $('pair').hidden = false
   // Reset to the QR-first layout (manual entry collapsed behind the link).
   $('manual').hidden = true
@@ -1198,7 +1236,15 @@ function applyConfig(cfg) {
   saveConfig(cfg)
   $('addr').value = cfg.base
   $('token').value = cfg.token
-  showChat()
+  beginPairingReconnect()
+}
+
+function cancelPairingReconnect() {
+  clearConfig()
+  state.base = ''
+  state.token = ''
+  state.pairingAttempt = 0
+  showPair()
 }
 
 function startScan() {
@@ -1302,6 +1348,10 @@ function releaseWakeLock() {
 // the live stream is up (Android may have torn it down while backgrounded).
 function onResume() {
   if (document.visibilityState !== 'visible') return
+  if (!$('pairing').hidden) {
+    beginPairingReconnect()
+    return
+  }
   if ($('chat').hidden) return
   requestWakeLock()
   if (!state.es && !state.reconnect) { openEvents(); fetchState().catch(function () {}) }
@@ -1333,6 +1383,7 @@ function init() {
     }
     applyConfig(cfg2)
   })
+  $('pairing-cancel').addEventListener('click', cancelPairingReconnect)
 
   // Open the conversation history (drawer) from the menu button or the title.
   $('menu').addEventListener('click', openDrawer)
@@ -1392,7 +1443,7 @@ function init() {
   if (cfg && cfg.base && cfg.token) {
     state.base = cfg.base
     state.token = cfg.token
-    showChat()
+    beginPairingReconnect()
   }
 }
 
