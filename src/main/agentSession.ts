@@ -642,7 +642,17 @@ export class AgentSession {
             cache_read_input_tokens?: number
             cache_creation_input_tokens?: number
           }
+          origin?: { kind?: string }
         }
+        // A background subagent (Task tool) finishing sends its OWN `result`
+        // message into this same stream, tagged `origin.kind === 'peer'`. That
+        // is not the end of the main turn — emitting it as `kind: 'result'`
+        // would tell the renderer the whole turn is done (clearing the "busy"
+        // indicator: spinner, timer, "trabalhando" banner) while the main
+        // agent keeps working and producing more tool_use/text afterward.
+        // Mirrors the parent_tool_use_id filter already used for the
+        // `assistant` case below (context-token tracking).
+        if (r.origin?.kind === 'peer') break
         this.emit({
           kind: 'result',
           id: nextId(),

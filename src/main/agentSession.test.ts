@@ -210,6 +210,28 @@ describe('AgentSession — auto-timeout (sem resposta do usuário)', () => {
   })
 })
 
+describe('AgentSession — result de subagente NÃO encerra o turno principal', () => {
+  const baseResult = { type: 'result', subtype: 'success', is_error: false, result: 'ok', duration_ms: 100 }
+
+  it('result do turno principal (sem origin): emite kind:"result" normalmente', () => {
+    const { s, emit } = makeSession()
+    handle(s, baseResult)
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'result', isError: false }))
+  })
+
+  it('result com origin humano/normal (kind !== "peer"): emite normalmente', () => {
+    const { s, emit } = makeSession()
+    handle(s, { ...baseResult, origin: { kind: 'human' } })
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'result' }))
+  })
+
+  it('result de SUBAGENTE em background (origin.kind === "peer"): NÃO emite — não pode desligar o indicador de "trabalhando" do turno principal', () => {
+    const { s, emit } = makeSession()
+    handle(s, { ...baseResult, origin: { kind: 'peer', from: 'task-123' } })
+    expect(emit).not.toHaveBeenCalled()
+  })
+})
+
 describe('AgentSession — rate_limit_event (uso de 5h/semana da conta)', () => {
   it('emite kind:"rate-limit" com os campos do rate_limit_info', () => {
     const { s, emit } = makeSession()
