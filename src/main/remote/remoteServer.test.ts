@@ -133,11 +133,12 @@ describe('RemoteServer — ponte LAN', () => {
   it('/api/state lista conversas (resumo, sem mensagens)', async () => {
     const r = await getJson(`/api/state?token=${token}`)
     expect(r.status).toBe(200)
-    const convs = (r.json as { conversations: Array<{ id: string; messageCount: number; messages?: unknown }> }).conversations
+    const convs = (r.json as { conversations: Array<{ id: string; messageCount: number; messages?: unknown; queued?: { text: string }[] }> }).conversations
     expect(convs).toHaveLength(1)
     expect(convs[0].id).toBe('c1')
     expect(convs[0].messageCount).toBe(3)
     expect(convs[0].messages).toBeUndefined()
+    expect(convs[0].queued).toEqual([])
   })
 
   it('/api/history devolve as mensagens da conversa (conversa curta: todas)', async () => {

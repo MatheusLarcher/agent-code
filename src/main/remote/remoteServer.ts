@@ -548,7 +548,7 @@ export class RemoteServer {
 /** Conversation summary for /api/state (drops the heavy message list). */
 function summarize(c: RemoteConversation): Omit<RemoteConversation, 'messages'> & { messageCount: number } {
   const { messages, ...rest } = c
-  return { ...rest, messageCount: messages.length }
+  return { ...rest, queued: c.queued ?? [], messageCount: messages.length }
 }
 
 /** Lowercase + strip accents, so "selênio" matches "selenio" (accent-insensitive).

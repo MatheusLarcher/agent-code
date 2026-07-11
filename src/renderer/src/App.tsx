@@ -635,6 +635,7 @@ export function App(): JSX.Element {
           connected: connectedRef.current.has(c.id),
           updatedAt: c.updatedAt,
           messages: c.messages,
+          queued: queueRef.current.filter((m) => m.convId === c.id).map((m) => ({ text: m.text })),
           model: c.model,
           effort: c.effort ?? DEFAULT_EFFORT
         })),
@@ -646,7 +647,7 @@ export function App(): JSX.Element {
       })
     }, 400)
     return () => clearTimeout(pubTimer.current)
-  }, [conversations, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models])
+  }, [conversations, queue, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
   // page viewport follows (BrowserPanel reports its new size to main).

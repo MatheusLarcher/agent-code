@@ -421,6 +421,7 @@ function renderMessages() {
       }
       if (m.text) u.appendChild(document.createTextNode(m.text))
       wrap.appendChild(u)
+      if (m.queued) wrap.appendChild(el('msg-queued', 'Na fila'))
       // Note when this message was manually canceled.
       if (m.canceled) wrap.appendChild(el('msg-canceled', '⊘ Mensagem cancelada'))
       // Sent date/time, small, under my own message.
@@ -539,6 +540,7 @@ function fetchState() {
       updateConvTitle()
       var cur = current()
       $('busy').hidden = !(cur && cur.busy)
+      syncQueuedMessages()
       // If voice availability flipped, refresh so the "Ouvir" buttons appear/hide.
       if (wasReady !== state.voiceReady) scheduleRender()
       return data
@@ -861,6 +863,23 @@ function clearPairingRetry() {
   state.pairingRetry = null
 }
 
+function syncQueuedMessages() {
+  var cur = current()
+  if (!cur || cur.id !== state.convId) return
+  var pending = (cur.queued || []).map(function (q) { return q.text })
+  state.messages = state.messages.filter(function (m) {
+    if (m.kind !== 'user' || !m.queued) return true
+    var i = pending.indexOf(m.text)
+    if (i < 0) return false
+    pending.splice(i, 1)
+    return true
+  })
+  pending.forEach(function (text, i) {
+    state.messages.push({ kind: 'user', id: 'queued-' + Date.now() + '-' + i, text: text, queued: true })
+  })
+  scheduleRender()
+}
+
 function pairingErrorText(err) {
   var msg = err && err.message ? err.message : String(err || '')
   if (msg.indexOf('HTTP 401') >= 0) return 'O PC não aceitou o token salvo. Vou continuar tentando enquanto a ponte reinicia.'
@@ -952,7 +971,8 @@ function send() {
   var thumbs = imgs.map(function (im) { return 'data:' + im.mediaType + ';base64,' + im.data })
   // Optimistic echo (the PC adds the user message locally; SSE only carries
   // agent events, so there's no duplicate).
-  reduce(state.messages, { kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs, ts: Date.now() })
+  var cur = current()
+  reduce(state.messages, { kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs, ts: Date.now(), queued: !!(cur && cur.busy) })
   renderMessages()
   input.value = ''
   state.images = []
@@ -1412,9 +1432,6 @@ function init() {
   $('model-select').addEventListener('change', function (e) { e.target.blur(); setModel({ model: e.target.value }) })
   $('effort-select').addEventListener('change', function (e) { e.target.blur(); setModel({ effort: e.target.value }) })
   $('input').addEventListener('input', autoGrow)
-  $('input').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
-  })
 
   // Image attachments: pick from gallery/camera, paste, or drag-drop.
   $('attach').addEventListener('click', function () { $('file').click() })

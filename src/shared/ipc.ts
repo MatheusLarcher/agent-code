@@ -718,6 +718,8 @@ export interface RemoteConversation {
   connected: boolean
   updatedAt: number
   messages: unknown[]
+  /** Messages waiting in the desktop outbox while this conversation is busy. */
+  queued?: { text: string }[]
   /** Current model id of this conversation (phone shows/changes it). */
   model?: string
   /** Current reasoning effort of this conversation. */

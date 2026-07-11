@@ -406,6 +406,11 @@ html, body {
 .msg-canceled {
   font-size: 11px; font-weight: 600; color: var(--muted); padding: 0 2px;
 }
+.msg-queued {
+  align-self: flex-end; font-size: 11px; font-weight: 650; color: var(--accent);
+  background: var(--accent-soft); border: 1px solid rgba(224, 132, 88, 0.28);
+  border-radius: 999px; padding: 2px 8px;
+}
 .msg.user {
   align-self: flex-end;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
