@@ -1,4 +1,5 @@
 import type { Conversation } from './types'
+import type { UIMessage } from './types'
 import type { RateLimitStatus } from '@shared/ipc'
 
 // Persistence for the conversation history + UI state. Now backed by the
@@ -24,6 +25,19 @@ export interface UiState {
 }
 
 const DEFAULT_BROWSER_WIDTH = 720
+const COMPACTION_AGE_MS = 15 * 24 * 60 * 60 * 1000
+
+/** Keep only the useful narrative of conversations older than 15 days. This
+ * touches Agent Code's rendered history, never the Claude SDK session files. */
+export function compactOldConversations(list: Conversation[], now = Date.now()): Conversation[] {
+  return list.map((conversation) => {
+    if (now - conversation.createdAt < COMPACTION_AGE_MS) return conversation
+    const messages = conversation.messages.filter(
+      (message: UIMessage) => message.kind === 'user' || (message.kind === 'assistant-text' && message.answer)
+    )
+    return messages.length === conversation.messages.length ? conversation : { ...conversation, messages }
+  })
+}
 
 /** Read a key from SQLite, falling back to (and migrating from) old localStorage. */
 async function readMigrating(key: string): Promise<string | null> {
@@ -56,7 +70,7 @@ export async function loadConversations(): Promise<Conversation[]> {
     const raw = await readMigrating(CONV_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as Conversation[]) : []
+    return Array.isArray(parsed) ? compactOldConversations(parsed as Conversation[]) : []
   } catch {
     return []
   }
@@ -66,7 +80,7 @@ export async function saveConversations(list: Conversation[]): Promise<void> {
   try {
     // Drop attached-image data URLs when persisting — they're large and only
     // shown during the session.
-    const json = JSON.stringify(list, (key, value) => (key === 'images' ? undefined : value))
+    const json = JSON.stringify(compactOldConversations(list), (key, value) => (key === 'images' ? undefined : value))
     await window.api.kvSet(CONV_KEY, json)
   } catch {
     /* store error — history is best-effort */
