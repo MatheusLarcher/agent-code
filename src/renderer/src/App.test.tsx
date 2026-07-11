@@ -190,6 +190,53 @@ describe('App — fila de mensagens (multi-sessão)', () => {
   })
 })
 
+describe('App — indicador "trabalhando" se autocorrige após um result prematuro', () => {
+  // Consulta pelo elemento real da faixa (não por texto — a bolha da mensagem
+  // usada como fixture de "atividade" também contém a palavra "trabalhando").
+  const workingBanner = (): Element | null => document.querySelector('.working-banner')
+
+  it('atividade chegando pra uma conversa já "ociosa" liga o indicador de novo (sem re-despachar a fila)', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    expect(workingBanner()).toBeTruthy() // faixa "Claude está trabalhando"
+
+    // result PREMATURO (ex.: de um subagente que escapou do filtro do main) —
+    // desliga o indicador como se o turno tivesse acabado de verdade.
+    await emit(result)
+    expect(workingBanner()).toBeNull()
+
+    // mas o turno de verdade CONTINUA gerando atividade depois disso —
+    // o indicador tem que voltar sozinho, sem o usuário reenviar nada.
+    await emit(partial)
+    expect(workingBanner()).toBeTruthy()
+    // não é um novo turno — não deve ter despachado nada extra.
+    expect(api.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('atividade chegando pra uma conversa JÁ ocupada não reinicia nada (idempotente)', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(partial) // já estava ocupado — só mais uma atividade normal
+    expect(workingBanner()).toBeTruthy()
+    expect(api.sendMessage).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('App — barra de limite de contexto', () => {
   it('mostra o uso da janela de entrada sobre o limite do modelo (Opus = 1M) e atualiza no fim do turno', async () => {
     const { container } = render(

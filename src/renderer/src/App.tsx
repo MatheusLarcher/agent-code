@@ -357,6 +357,20 @@ export function App(): JSX.Element {
         return next
       })
 
+      // Self-heal the "working" indicator: if real turn activity lands for a
+      // conversation we think is idle, it wasn't actually done — a stray/early
+      // `result` (e.g. a subagent's own, now filtered in agentSession.ts, but
+      // this is a safety net against any other way that could happen) must not
+      // leave the spinner/timer/banner stuck off while the agent keeps working.
+      // Scoped to ONLY busyIds/busySince — never re-runs the end-of-turn cleanup
+      // (queue dispatch, permission clearing, error marking) below.
+      const isActivity =
+        e.kind === 'assistant-text' || e.kind === 'thinking' || e.kind === 'tool-use' || e.kind === 'tool-result' || e.kind === 'status'
+      if (isActivity && !busyRef.current.has(cid)) {
+        setBusy(cid, true)
+        setBusySince((m) => (m[cid] ? m : { ...m, [cid]: Date.now() }))
+      }
+
       if (e.kind === 'result' || e.kind === 'error') {
         // A finished turn has no outstanding permission request — clear any so a
         // stale modal can't reappear when this conversation becomes active again.
