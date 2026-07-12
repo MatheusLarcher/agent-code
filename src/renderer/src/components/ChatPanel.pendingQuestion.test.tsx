@@ -46,6 +46,8 @@ function renderPanel(pendingQuestion: boolean, onReopenQuestion = vi.fn()): { on
       effort="medium"
       effortLocked={false}
       onEffortChange={() => {}}
+      economyMode={false}
+      onEconomyModeChange={() => {}}
       pendingQuestion={pendingQuestion}
       onReopenQuestion={onReopenQuestion}
     />

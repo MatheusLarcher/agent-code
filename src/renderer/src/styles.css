@@ -1598,6 +1598,43 @@ button svg {
   accent-color: var(--accent);
   cursor: pointer;
 }
+
+/* ---- Economy mode toggle (💰/⚡ button beside model/effort pickers) ---- */
+.economy-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px 4px 8px;
+  font-size: 12.5px;
+  background: var(--bg-3);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+.economy-toggle:hover {
+  background: var(--bg-4);
+  color: var(--text);
+}
+.economy-toggle.on {
+  background: #2d4a1e;
+  color: #8bc34a;
+  border-color: #4caf50;
+}
+.economy-toggle.on:hover {
+  background: #3a5c28;
+  color: #a5d66e;
+}
+.economy-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.economy-label {
+  font-weight: 500;
+}
+
 .composer {
   border-top: 1px solid var(--line);
   padding: 12px 16px 16px;

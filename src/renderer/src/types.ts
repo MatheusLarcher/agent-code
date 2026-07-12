@@ -44,6 +44,9 @@ export interface Conversation {
   model: string
   /** Reasoning effort for the model (low / medium / high / xhigh / max). */
   effort?: string
+  /** Per-conversation "modo econômico" — when on, the LLM skips validation/build
+   *  for trivial tasks to save tokens. Scoped to THIS conversation only. */
+  economyMode?: boolean
   /** SDK session id captured from the agent, used to resume the conversation later. */
   sdkSessionId: string | null
   /** Unsent composer text for this conversation (draft). Kept across conversation

@@ -112,6 +112,28 @@ Follow THIS flow strictly:
 
 If the user rejects ("Descartar"), do not implement; offer to refine the design with Stitch instead.`
 
+// Shown to the model only when the "Modo econômico" toggle is ON in the UI.
+// Instructs the LLM to skip validation/build/tests for trivial tasks to save tokens.
+const ECONOMY_HINT = `MODO ECONÔMICO ATIVADO — O USUÁRIO MARCOU O TOGGLE "ECONÔMICO" NA UI.
+
+Você está operando em modo de economia de tokens. Siga estas regras:
+
+1. **Pule typecheck e build para tarefas triviais** — Se a mudança for puramente textual (typo, label, comentário, string), NÃO rode typecheck nem build. Apenas edite.
+
+2. **Pule testes para mudanças pontuais** — Se a mudança for em 1 arquivo, sem alteração de lógica (CSS, texto de UI, ajuste visual), NÃO rode testes.
+
+3. **Não revalide o código após editar** — Não releia o arquivo depois de editá-lo. O Edit/Write já teria falhado se algo desse errado.
+
+4. **Sem verificações redundantes** — Não faça grep/ls/glob para "confirmar" algo que você já sabe.
+
+5. **Respostas mais curtas** — Seja direto. Um "✅ pronto" é suficiente para tarefas simples. Não explique o que fez a menos que o usuário pergunte.
+
+6. **Sem Definition of Done completo** — As regras normais de validação (rodar o app, testar fluxo real, verificar estado vazio/erro) NÃO se aplicam. Apenas faça a mudança e siga em frente.
+
+7. **Mudanças complexas = ignore o modo econômico** — Se a tarefa envolve múltiplos arquivos, alterações de lógica, refatoração, segurança ou credenciais, siga o fluxo normal completo.
+
+8. **Nunca pule verificações de segurança** — Credenciais, secrets, dados sensíveis sempre exigem cuidado normal.`
+
 // Persistent, cross-conversation memory. The .md files live in the user's chosen
 // cache folder (next to the SQLite db — see store.ts), so the PATH is per-user/per-machine,
 // but THESE INSTRUCTIONS ship with the project, so every install behaves the same.
@@ -277,6 +299,12 @@ export class AgentSession {
       // Our bridge that renders generated designs in the preview for approval.
       mcpServers.stitchpreview = createStitchPreviewMcpServer(this.browser)
       append += `\n\n${STITCH_HINT}`
+    }
+
+    // Modo econômico: when the user toggled it on for THIS conversation, tell the
+    // model to skip validation/build/tests for trivial tasks to save tokens.
+    if (this.opts.economyMode) {
+      append += `\n\n${ECONOMY_HINT}`
     }
 
     // Ollama Cloud routing: when the chosen model is an Ollama model, point the

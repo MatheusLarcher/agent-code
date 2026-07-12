@@ -110,6 +110,9 @@ interface Props {
   effort: string
   effortLocked: boolean
   onEffortChange: (level: string) => void
+  /** Modo econômico toggle — shown beside the model/effort pickers. */
+  economyMode: boolean
+  onEconomyModeChange: (on: boolean) => void
 }
 
 /** Custom popover replacing the plain <select> for reasoning effort: a button
@@ -369,6 +372,19 @@ export function ChatPanel(props: Props): JSX.Element {
             onChange={props.onEffortChange}
           />
         )}
+        <button
+          type="button"
+          className={`economy-toggle${props.economyMode ? ' on' : ''}`}
+          title={
+            props.economyMode
+              ? 'Modo econômico ATIVO — tarefas simples pulam validação para economizar tokens. Clique para desativar.'
+              : 'Modo econômico — quando ativo, tarefas simples (typo, CSS, texto) pulam typecheck/build/test para economizar tokens.'
+          }
+          onClick={() => props.onEconomyModeChange(!props.economyMode)}
+        >
+          <span className="economy-icon">{props.economyMode ? '⚡' : '💰'}</span>
+          <span className="economy-label">Econômico</span>
+        </button>
       </div>
 
       <Composer

@@ -375,6 +375,9 @@ export interface StartAgentOptions {
   resume?: string
   /** Reasoning effort for the model (low / medium / high / xhigh / max). */
   effort?: string
+  /** Per-conversation "modo econômico": instructs the LLM to skip validation for
+   *  trivial tasks. Scoped to THIS conversation only. */
+  economyMode?: boolean
 }
 
 /** Reasoning effort levels a model may support. */

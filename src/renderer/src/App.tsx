@@ -651,7 +651,8 @@ export function App(): JSX.Element {
           messages: c.messages,
           queued: queueRef.current.filter((m) => m.convId === c.id).map((m) => ({ text: m.text })),
           model: c.model,
-          effort: c.effort ?? DEFAULT_EFFORT
+          effort: c.effort ?? DEFAULT_EFFORT,
+          economyMode: c.economyMode === true
         })),
         skipPerms: skipPermsRef.current,
         // Catalog for the phone's selectors — same options the PC picker offers.
@@ -688,15 +689,17 @@ export function App(): JSX.Element {
 
   // ---- conversation management ----
   const createConversation = (folder: string): Conversation => {
-    // New conversations in a known project inherit that project's model; otherwise
-    // fall back to the active conversation's model.
-    const sameFolderModel = convsRef.current.find((c) => c.cwd === folder)?.model
+    // New conversations in a known project inherit that project's model + economy
+    // mode; otherwise fall back to the active conversation's settings.
+    const sameFolder = convsRef.current.find((c) => c.cwd === folder)
+    const active = getActive()
     const conv: Conversation = {
       id: uid('c'),
       title: DEFAULT_TITLE,
       cwd: folder,
-      model: sameFolderModel || getActive()?.model || MODELS[0].id,
-      effort: getActive()?.effort || DEFAULT_EFFORT,
+      model: sameFolder?.model || active?.model || MODELS[0].id,
+      effort: active?.effort || DEFAULT_EFFORT,
+      economyMode: sameFolder?.economyMode ?? active?.economyMode ?? false,
       sdkSessionId: null,
       messages: [],
       tokens: { ...EMPTY_TOKENS },
@@ -812,7 +815,8 @@ export function App(): JSX.Element {
           model: conv.model,
           skipPermissions: skipPermsRef.current,
           resume: conv.sdkSessionId ?? undefined,
-          effort: conv.effort
+          effort: conv.effort,
+          economyMode: conv.economyMode === true
         })
         setConnected(conv.id, true)
         setPermissions((pp) => withoutKey(pp, conv.id))
@@ -940,6 +944,25 @@ export function App(): JSX.Element {
       )
     },
     [notify]
+  )
+
+  // "Modo econômico" toggle — per-conversation, same restart-on-idle logic as the
+  // model/effort pickers. When on, the session receives instructions to skip
+  // validation for trivial tasks (scoped to THIS conversation only).
+  const changeEconomyMode = useCallback(
+    (id: string, on: boolean): void => {
+      patchConv(id, (c) => (c.economyMode === on ? c : { ...c, economyMode: on }))
+      if (connectedRef.current.has(id) && !busyRef.current.has(id)) {
+        void stopSession(id, { silent: true })
+        notify(
+          'sucesso',
+          on
+            ? 'Modo econômico ativado para esta conversa — vale na próxima mensagem.'
+            : 'Modo econômico desativado para esta conversa — vale na próxima mensagem.'
+        )
+      }
+    },
+    [patchConv, stopSession, notify]
   )
 
   // Core send into a SPECIFIC conversation, shared by the PC composer and by
@@ -1538,6 +1561,8 @@ export function App(): JSX.Element {
             effort={active?.effort ?? DEFAULT_EFFORT}
             effortLocked={!active || showBusy}
             onEffortChange={(e) => active && changeEffort(active.id, e)}
+            economyMode={active?.economyMode === true}
+            onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
             pendingQuestion={!!activePermission?.questions && questionMinimized}
             onReopenQuestion={() => setQuestionMinimized(false)}
           />
