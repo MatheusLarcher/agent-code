@@ -56,7 +56,8 @@ beforeAll(async () => {
         input: { file_path: srcPath, content: 'export const x = 1' },
         parentToolUseId: null
       }
-    ]
+    ],
+    questions: [{ id: 'u1', text: 'oi', position: 0 }]
   }
   server.setState({ conversations: [conv] })
 })
@@ -133,12 +134,13 @@ describe('RemoteServer — ponte LAN', () => {
   it('/api/state lista conversas (resumo, sem mensagens)', async () => {
     const r = await getJson(`/api/state?token=${token}`)
     expect(r.status).toBe(200)
-    const convs = (r.json as { conversations: Array<{ id: string; messageCount: number; messages?: unknown; queued?: { text: string }[] }> }).conversations
+    const convs = (r.json as { conversations: Array<{ id: string; messageCount: number; messages?: unknown; queued?: { text: string }[]; questions?: Array<{ id: string }> }> }).conversations
     expect(convs).toHaveLength(1)
     expect(convs[0].id).toBe('c1')
     expect(convs[0].messageCount).toBe(3)
     expect(convs[0].messages).toBeUndefined()
     expect(convs[0].queued).toEqual([])
+    expect(convs[0].questions?.[0].id).toBe('u1')
   })
 
   it('/api/history devolve as mensagens da conversa (conversa curta: todas)', async () => {
@@ -176,6 +178,14 @@ describe('RemoteServer — ponte LAN', () => {
     const r = await getJson(`/api/history?token=${token}&conv=inexistente`)
     expect(r.status).toBe(200)
     expect((r.json as { messages: unknown[] }).messages).toEqual([])
+  })
+
+  it('/api/history-window devolve uma janela centrada na pergunta', async () => {
+    server.setState({ conversations: [conv] })
+    const r = await getJson(`/api/history-window?token=${token}&conv=c1&message=u1`)
+    expect(r.status).toBe(200)
+    expect((r.json as { targetId: string }).targetId).toBe('u1')
+    expect((r.json as { messages: Array<{ id: string }> }).messages.some((m) => m.id === 'u1')).toBe(true)
   })
 
   it('POST /api/send encaminha o comando via onInbound', async () => {

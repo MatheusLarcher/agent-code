@@ -725,6 +725,7 @@ export interface RemoteConversation {
   messages: unknown[]
   /** Messages waiting in the desktop outbox while this conversation is busy. */
   queued?: { text: string }[]
+  questions?: Array<{ id: string; text: string; ts?: number; position: number; queued?: boolean }>
   recovery?: {
     reason: 'limit' | 'transient'
     scheduledAt: number

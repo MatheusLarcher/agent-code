@@ -644,6 +644,14 @@ export function App(): JSX.Element {
           updatedAt: c.updatedAt,
           messages: c.messages,
           queued: queueRef.current.filter((m) => m.convId === c.id).map((m) => ({ text: m.text })),
+          questions: [
+            ...c.messages
+              .filter((m): m is Extract<UIMessage, { kind: 'user' }> => m.kind === 'user')
+              .map((m, position) => ({ id: m.id, text: m.text, ts: m.ts, position })),
+            ...queueRef.current
+              .filter((m) => m.convId === c.id)
+              .map((m, index) => ({ id: m.id, text: m.text, position: c.messages.length + index, queued: true }))
+          ],
           recovery: c.recovery
             ? {
                 reason: c.recovery.reason,

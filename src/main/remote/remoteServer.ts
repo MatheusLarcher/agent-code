@@ -247,6 +247,7 @@ export class RemoteServer {
       if (path === '/api/recovery' && req.method === 'POST') return this.serveRecovery(req, res)
       if (path === '/api/search') return this.serveSearch(url, res)
       if (path === '/api/history') return this.serveHistory(url, res)
+      if (path === '/api/history-window') return this.serveHistoryWindow(url, res)
       if (path === '/api/events') return this.serveEvents(req, res)
       if (path === '/api/send' && req.method === 'POST') return this.serveSend(req, res)
       if (path === '/api/transcribe' && req.method === 'POST') return this.serveTranscribe(req, res)
@@ -490,6 +491,18 @@ export class RemoteServer {
     const messages = (conv?.messages ?? []).slice(-RemoteServer.HISTORY_LIMIT)
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify({ messages }))
+  }
+
+  /** Small history slice centered on a selected question from the lightweight index. */
+  private serveHistoryWindow(url: URL, res: ServerResponse): void {
+    const convId = url.searchParams.get('conv') ?? ''
+    const messageId = url.searchParams.get('message') ?? ''
+    const conv = this.state.conversations.find((c) => c.id === convId)
+    const messages = conv?.messages ?? []
+    const center = messages.findIndex((m) => !!m && typeof m === 'object' && (m as { id?: string }).id === messageId)
+    if (center < 0) return sendJson(res, 404, { messages: [], error: 'mensagem não encontrada' })
+    const start = Math.max(0, center - 12)
+    return sendJson(res, 200, { messages: messages.slice(start, center + 18), targetId: messageId })
   }
 
   /** Full-text search over the USER's own prompts across every conversation.
