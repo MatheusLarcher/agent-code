@@ -1414,6 +1414,30 @@ button svg {
   border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--line));
   border-radius: 12px; background: color-mix(in srgb, var(--accent) 9%, var(--surface));
 }
+.question-map {
+  position: absolute; z-index: 8; left: 6px; top: 18px; bottom: 18px; width: 18px;
+}
+.question-map-track { position: absolute; left: 8px; top: 0; bottom: 0; width: 1px; background: var(--line); opacity: 0.7; }
+.question-map-point-wrap { position: absolute; left: 0; width: 18px; transform: translateY(-50%); }
+.question-map-point {
+  display: block; width: 8px; height: 3px; margin-left: 5px; padding: 0; border: 0;
+  border-radius: 2px; background: color-mix(in srgb, var(--muted) 65%, transparent); cursor: pointer;
+  transition: width 140ms ease, margin 140ms ease, background 140ms ease;
+}
+.question-map-point:hover, .question-map-point:focus-visible, .question-map-point.active {
+  width: 15px; margin-left: 1px; background: var(--accent); outline: none;
+}
+.question-map-point.grouped { height: 5px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.question-map-card {
+  position: absolute; left: 22px; top: 50%; transform: translateY(-50%); width: min(340px, 45vw);
+  padding: 7px; border: 1px solid var(--line); border-radius: 13px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent); box-shadow: var(--shadow); backdrop-filter: blur(14px);
+}
+.question-map-card button { display: flex; width: 100%; flex-direction: column; gap: 3px; padding: 8px; border: 0; border-radius: 8px; text-align: left; color: var(--text); background: transparent; cursor: pointer; }
+.question-map-card button:hover, .question-map-card button:focus-visible { background: var(--surface-2); outline: none; }
+.question-map-card strong { font-size: 12px; line-height: 1.35; }
+.question-map-card span, .question-map-more { font-size: 10px; color: var(--muted); }
+.question-map-more { padding: 5px 8px; }
 .recovery-clock { color: var(--accent); display: grid; place-items: center; }
 .recovery-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .recovery-copy strong { font-size: 12px; color: var(--text); }

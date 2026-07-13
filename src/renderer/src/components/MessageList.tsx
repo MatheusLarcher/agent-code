@@ -6,6 +6,7 @@ import {
   type MouseEvent
 } from 'react'
 import type { UIMessage } from '../types'
+import { QuestionMap } from './QuestionMap'
 import { isDownloadableFile, isTextPreviewable, parseDownloads } from '@shared/ipc'
 import { useUI } from '../ui/UiProvider'
 import { fileMeta, fmtSize } from '../files'
@@ -333,9 +334,13 @@ export function MessageList({
   const [visible, setVisible] = useState(PAGE)
   // Whether the "jump to bottom" button is shown (user scrolled up from the end).
   const [showJump, setShowJump] = useState(false)
+  const [scrollRatio, setScrollRatio] = useState(1)
+  const [mapScroll, setMapScroll] = useState<{ id: string; seq: number } | null>(null)
   // Last handled search-scroll request, so the same nav doesn't re-fire forever.
   const lastSeq = useRef(-1)
-  const pendingScroll = scrollToId != null && scrollSeq !== lastSeq.current
+  const effectiveTarget = mapScroll?.id ?? scrollToId
+  const effectiveSeq = mapScroll?.seq ?? scrollSeq
+  const pendingScroll = effectiveTarget != null && effectiveSeq !== lastSeq.current
 
   // Refs coordinating the two scroll behaviors below.
   const atBottom = useRef(true) // was the user pinned to the bottom?
@@ -387,23 +392,24 @@ export function MessageList({
   // Search-hit navigation: make sure the target is inside the rendered window,
   // then scroll it to the center and flash it once.
   useEffect(() => {
-    if (!pendingScroll || !scrollToId) return
-    const idx = messages.findIndex((m) => 'id' in m && m.id === scrollToId)
+    if (!pendingScroll || !effectiveTarget) return
+    const idx = messages.findIndex((m) => 'id' in m && m.id === effectiveTarget)
     if (idx < 0) return
     const needed = total - idx + 4 // a few messages of context below it
     setVisible((v) => (v < needed ? needed : v))
-  }, [pendingScroll, scrollToId, scrollSeq, messages, total])
+  }, [pendingScroll, effectiveTarget, effectiveSeq, messages, total])
 
   useLayoutEffect(() => {
-    if (!pendingScroll || !scrollToId) return
+    if (!pendingScroll || !effectiveTarget) return
     const root = scrollRef.current
-    const el = root?.querySelector(`[data-mid="${CSS.escape(scrollToId)}"]`) as HTMLElement | null
+    const el = root?.querySelector(`[data-mid="${CSS.escape(effectiveTarget)}"]`) as HTMLElement | null
     if (!el) return // not in the window yet — the effect above expands it, re-running this
     el.scrollIntoView({ block: 'center' })
     el.classList.add('msg-flash')
     window.setTimeout(() => el.classList.remove('msg-flash'), 2200)
-    lastSeq.current = scrollSeq ?? -1
-  }, [pendingScroll, scrollToId, scrollSeq, visible, messages])
+    lastSeq.current = effectiveSeq ?? -1
+    if (mapScroll?.id === effectiveTarget) setMapScroll(null)
+  }, [pendingScroll, effectiveTarget, effectiveSeq, visible, messages, mapScroll])
 
   const onScroll = (): void => {
     const el = scrollRef.current
@@ -412,6 +418,8 @@ export function MessageList({
     atBottom.current = fromBottom < 120
     const far = fromBottom > 240
     setShowJump((v) => (v === far ? v : far))
+    const max = Math.max(1, el.scrollHeight - el.clientHeight)
+    setScrollRatio(Math.max(0, Math.min(1, el.scrollTop / max)))
     // Near the top with more to show → load another page, keeping position.
     if (el.scrollTop < 80 && hasOlder && !loadingOlder.current) {
       prevHeight.current = el.scrollHeight
@@ -429,6 +437,7 @@ export function MessageList({
 
   return (
     <div className="message-list-wrap">
+    <QuestionMap messages={messages} scrollRatio={scrollRatio} onSelect={(id) => setMapScroll({ id, seq: Date.now() })} />
     <div className="message-list" ref={scrollRef} onScroll={onScroll}>
       {hasOlder && (
         <div className="load-more-hint">↑ Role para cima para carregar mais ({startIdx} anteriores)</div>
