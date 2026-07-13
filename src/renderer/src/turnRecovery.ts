@@ -11,6 +11,10 @@ export interface FailureSchedule {
   scheduledAt: number
 }
 
+export function shouldRecoverTerminal(kind: 'error' | 'result', isError: boolean, wasInterrupted: boolean): boolean {
+  return !wasInterrupted && (kind === 'error' || isError)
+}
+
 const LIMIT_RE = /(you(?:'ve| have) hit .*limit|session limit|rate[_ -]?limit|usage limit|limit.*resets?)/i
 const RESET_RE = /resets?\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*\(([^)]+)\)/i
 

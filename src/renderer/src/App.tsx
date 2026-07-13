@@ -15,7 +15,7 @@ import { isOllamaModel, OLLAMA_MODELS, MODEL_EFFORT, DEFAULT_EFFORT } from '@sha
 import type { EffortLevel } from '@shared/ipc'
 import type { Conversation, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
-import { MAX_GENERIC_RETRIES, scheduleFailure } from './turnRecovery'
+import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
 import {
   loadConversations,
   loadUi,
@@ -386,7 +386,7 @@ export function App(): JSX.Element {
         // A failed turn = a fatal session error, or a result the model flagged as
         // an error and that the user did NOT cause by stopping it. The user's
         // message must stay in the chat, marked with the error + a retry button.
-        const failed = e.kind === 'error' || (e.kind === 'result' && e.isError && !wasInterrupted)
+        const failed = shouldRecoverTerminal(e.kind, e.kind === 'result' && e.isError, wasInterrupted)
 
         if (e.kind === 'result' && !e.isError) setLastDuration((m) => ({ ...m, [cid]: e.durationMs }))
 

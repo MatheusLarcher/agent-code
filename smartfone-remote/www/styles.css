@@ -407,11 +407,11 @@ html, body {
 .msg-canceled {
   font-size: 11px; font-weight: 600; color: var(--muted); padding: 0 2px;
 }
-.question-map { position: absolute; z-index: 12; top: 18px; bottom: 18px; left: 5px; width: 24px; pointer-events: none; }
-.question-map::before { content: ''; position: absolute; left: 11px; top: 0; bottom: 0; width: 1px; background: var(--line); }
+.question-map { position: absolute; z-index: 12; top: 50%; left: 7px; width: 24px; height: min(210px, 46%); transform: translateY(-50%); pointer-events: none; }
+.question-map::before { display: none; }
 .question-point-wrap { position: absolute; left: 0; width: 24px; transform: translateY(-50%); pointer-events: auto; }
 .question-point { display: block; width: 18px; height: 12px; padding: 0; border: 0; background: transparent; }
-.question-point::after { content: ''; display: block; width: 7px; height: 3px; margin-left: 8px; border-radius: 3px; background: var(--faint); }
+.question-point::after { content: ''; display: block; width: 7px; height: 2px; margin-left: 8px; border-radius: 999px; background: color-mix(in srgb, var(--faint) 72%, transparent); }
 .question-point:active::after, .question-point.queued::after { width: 11px; background: var(--accent); }
 .question-card { position: absolute; left: 21px; top: 50%; width: min(270px, calc(100vw - 52px)); transform: translateY(-50%); padding: 11px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); color: var(--text); box-shadow: var(--shadow); text-align: left; }
 .question-card-text { font-size: 13px; font-weight: 650; line-height: 1.35; }

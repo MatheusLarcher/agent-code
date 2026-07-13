@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_GENERIC_RETRIES, parseResetFromError, scheduleFailure } from './turnRecovery'
+import { MAX_GENERIC_RETRIES, parseResetFromError, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
 
 describe('turnRecovery', () => {
+  it('nunca recupera uma interrupção feita pelo usuário, mesmo quando termina com erro', () => {
+    expect(shouldRecoverTerminal('error', true, true)).toBe(false)
+    expect(shouldRecoverTerminal('result', true, true)).toBe(false)
+    expect(shouldRecoverTerminal('error', true, false)).toBe(true)
+  })
   it('interpreta reset com horário e fuso e adiciona um minuto', () => {
     const now = Date.parse('2026-07-13T02:00:00.000Z') // 23:00 do dia anterior em São Paulo
     const parsed = parseResetFromError("You've hit your session limit · resets 12:20am (America/Sao_Paulo)", now)
