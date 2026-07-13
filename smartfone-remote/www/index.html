@@ -85,7 +85,10 @@
         <button id="turn-recovery-cancel">Cancelar</button>
       </div>
       <div id="pull-refresh" class="reconnect-bar" hidden><span class="spinner"></span><span id="pull-refresh-text">Puxe para atualizar</span></div>
-      <div id="messages" class="messages"></div>
+      <div class="messages-wrap">
+        <div id="messages" class="messages"></div>
+        <nav id="question-map" class="question-map" aria-label="Mapa das suas perguntas" hidden></nav>
+      </div>
       <div id="busy" class="busy-bar" hidden><span class="spinner"></span> trabalhando…</div>
       <footer class="composer">
         <button id="jump-bottom" class="jump-bottom" title="Ir para o final" aria-label="Ir para o final" hidden>

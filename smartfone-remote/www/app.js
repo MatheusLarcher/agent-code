@@ -40,7 +40,8 @@ var state = {
   models: [],        // model catalog from the PC ({id,label}[])
   modelEffort: {},   // effort levels supported per model id
   effortLabels: {},  // pt-BR label per effort level
-  historyLoading: false // true enquanto /api/history está em voo (abrindo um chat)
+  historyLoading: false, // true enquanto /api/history está em voo (abrindo um chat)
+  questionOpen: null
 }
 
 // Conta as chamadas de loadHistory: só a resposta da chamada MAIS RECENTE pode
@@ -480,6 +481,57 @@ function renderMessages() {
     state.scrollToMsg = null
   }
   updateJumpBtn()
+  renderQuestionMap()
+}
+
+function questionPreview(text) {
+  var clean = (text || '').trim().replace(/\s+/g, ' ')
+  return clean.length > 130 ? clean.slice(0, 130) + '...' : (clean || '(imagem/anexo)')
+}
+
+function renderQuestionMap() {
+  var map = $('question-map')
+  if (!map) return
+  var cur = current()
+  var questions = (cur && cur.questions) || []
+  map.innerHTML = ''
+  map.hidden = !questions.length
+  if (!questions.length) return
+  var max = Math.max(1, questions.reduce(function (n, q) { return Math.max(n, q.position || 0) }, 0))
+  questions.forEach(function (q) {
+    var wrap = el('question-point-wrap')
+    wrap.style.top = ((q.position || 0) / max * 100) + '%'
+    var point = document.createElement('button')
+    point.className = 'question-point' + (q.queued ? ' queued' : '')
+    point.setAttribute('aria-label', questionPreview(q.text))
+    point.addEventListener('click', function (e) {
+      e.stopPropagation()
+      state.questionOpen = state.questionOpen === q.id ? null : q.id
+      renderQuestionMap()
+    })
+    wrap.appendChild(point)
+    if (state.questionOpen === q.id) {
+      var card = document.createElement('button')
+      card.className = 'question-card'
+      card.appendChild(el('question-card-text', questionPreview(q.text)))
+      card.appendChild(el('question-card-meta', q.queued ? 'Na fila' : (q.ts ? fmtMsgTime(q.ts) : 'Ir para a pergunta')))
+      card.addEventListener('click', function (e) { e.stopPropagation(); goToQuestion(q) })
+      wrap.appendChild(card)
+    }
+    map.appendChild(wrap)
+  })
+}
+
+function goToQuestion(q) {
+  state.questionOpen = null
+  var queued = q.queued && state.messages.find(function (m) { return m.kind === 'user' && m.queued && m.text === q.text })
+  state.scrollToMsg = queued ? queued.id : q.id
+  var loaded = state.messages.some(function (m) { return m.id === state.scrollToMsg })
+  if (loaded) { renderMessages(); return }
+  fetch(api('/api/history-window?conv=' + encodeURIComponent(state.convId) + '&message=' + encodeURIComponent(q.id)))
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+    .then(function (data) { state.messages = (data.messages || []).slice(); renderMessages() })
+    .catch(function () { state.scrollToMsg = null; renderQuestionMap() })
 }
 
 // Compact "data e horário" for a sent message: "Hoje às 14:32" or "30/06/2026 às 14:32".
@@ -542,6 +594,7 @@ function fetchState() {
       $('busy').hidden = !(cur && cur.busy)
       syncQueuedMessages()
       renderTurnRecovery()
+      renderQuestionMap()
       // If voice availability flipped, refresh so the "Ouvir" buttons appear/hide.
       if (wasReady !== state.voiceReady) scheduleRender()
       return data
@@ -1440,6 +1493,9 @@ function init() {
   $('hist-search-input').addEventListener('input', onSearchInput)
   // Floating scroll-to-bottom button.
   $('messages').addEventListener('scroll', updateJumpBtn)
+  $('messages').addEventListener('click', function () {
+    if (state.questionOpen) { state.questionOpen = null; renderQuestionMap() }
+  })
   $('jump-bottom').addEventListener('click', scrollMessagesToBottom)
   setupPullToRefresh()
   // The online indicator reveals the connection menu; "Sair" asks to confirm.

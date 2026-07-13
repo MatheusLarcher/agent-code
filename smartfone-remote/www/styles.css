@@ -366,6 +366,7 @@ html, body {
 }
 .hist-empty { padding: 18px 12px; font-size: 13px; color: var(--faint); text-align: center; }
 
+.messages-wrap { flex: 1 1 auto; min-height: 0; position: relative; display: flex; }
 .messages {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -406,6 +407,15 @@ html, body {
 .msg-canceled {
   font-size: 11px; font-weight: 600; color: var(--muted); padding: 0 2px;
 }
+.question-map { position: absolute; z-index: 12; top: 18px; bottom: 18px; left: 5px; width: 24px; pointer-events: none; }
+.question-map::before { content: ''; position: absolute; left: 11px; top: 0; bottom: 0; width: 1px; background: var(--line); }
+.question-point-wrap { position: absolute; left: 0; width: 24px; transform: translateY(-50%); pointer-events: auto; }
+.question-point { display: block; width: 18px; height: 12px; padding: 0; border: 0; background: transparent; }
+.question-point::after { content: ''; display: block; width: 7px; height: 3px; margin-left: 8px; border-radius: 3px; background: var(--faint); }
+.question-point:active::after, .question-point.queued::after { width: 11px; background: var(--accent); }
+.question-card { position: absolute; left: 21px; top: 50%; width: min(270px, calc(100vw - 52px)); transform: translateY(-50%); padding: 11px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); color: var(--text); box-shadow: var(--shadow); text-align: left; }
+.question-card-text { font-size: 13px; font-weight: 650; line-height: 1.35; }
+.question-card-meta { margin-top: 6px; font-size: 11px; color: var(--faint); }
 .msg-queued {
   align-self: flex-end; font-size: 11px; font-weight: 650; color: var(--accent);
   background: var(--accent-soft); border: 1px solid rgba(224, 132, 88, 0.28);
