@@ -47,6 +47,8 @@ export interface RemoteServerDeps {
   onSetSkipPerms?: (on: boolean) => void
   /** A phone asked to change a conversation's model/effort — apply it on the PC. */
   onSetModel?: (convId: string, model?: string, effort?: string) => void
+  /** A phone asked to retry or cancel a suspended turn. */
+  onRecoveryAction?: (convId: string, action: 'retry' | 'cancel') => void
 }
 
 const DEFAULT_PORT = 8765
@@ -242,6 +244,7 @@ export class RemoteServer {
       if (path === '/api/state') return this.serveState(res)
       if (path === '/api/skip-perms' && req.method === 'POST') return this.serveSetSkipPerms(req, res)
       if (path === '/api/set-model' && req.method === 'POST') return this.serveSetModel(req, res)
+      if (path === '/api/recovery' && req.method === 'POST') return this.serveRecovery(req, res)
       if (path === '/api/search') return this.serveSearch(url, res)
       if (path === '/api/history') return this.serveHistory(url, res)
       if (path === '/api/events') return this.serveEvents(req, res)
@@ -400,6 +403,20 @@ export class RemoteServer {
       )
     }
     sendJson(res, 200, { ok: true })
+  }
+
+  private async serveRecovery(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    try {
+      const data = JSON.parse(body) as { convId?: string; action?: string }
+      const convId = String(data.convId ?? '').trim()
+      const action = data.action === 'retry' || data.action === 'cancel' ? data.action : null
+      if (!convId || !action) return sendJson(res, 400, { ok: false, error: 'convId/action inválidos' })
+      this.deps.onRecoveryAction?.(convId, action)
+      return sendJson(res, 200, { ok: true })
+    } catch {
+      return sendJson(res, 400, { ok: false, error: 'JSON inválido' })
+    }
   }
 
   /** Phone → PC: flip the global "Permitir tudo" (skip permissions) switch. */

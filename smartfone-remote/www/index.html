@@ -78,6 +78,12 @@
         <button id="status" class="status" title="Conexão"><span class="dot"></span><span class="status-text">…</span></button>
       </header>
       <div id="reconnect" class="reconnect-bar" hidden><span class="spinner"></span> reconectando…</div>
+      <div id="turn-recovery" class="turn-recovery" hidden>
+        <span class="turn-recovery-clock">◷</span>
+        <div class="turn-recovery-copy"><strong id="turn-recovery-title"></strong><span id="turn-recovery-time"></span></div>
+        <button id="turn-recovery-retry">Tentar agora</button>
+        <button id="turn-recovery-cancel">Cancelar</button>
+      </div>
       <div id="pull-refresh" class="reconnect-bar" hidden><span class="spinner"></span><span id="pull-refresh-text">Puxe para atualizar</span></div>
       <div id="messages" class="messages"></div>
       <div id="busy" class="busy-bar" hidden><span class="spinner"></span> trabalhando…</div>

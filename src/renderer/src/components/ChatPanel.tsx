@@ -1,7 +1,7 @@
 import { useEffect, useState, type RefObject } from 'react'
 import type { FileAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
 import { contextLimitFor } from '@shared/ipc'
-import type { UIMessage } from '../types'
+import type { TurnRecovery, UIMessage } from '../types'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
 import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
@@ -41,6 +41,30 @@ function RunTimer({ since, lastMs }: { since: number | null; lastMs: number | nu
   return null
 }
 
+function RecoveryCard({ recovery, onRetry, onCancel }: { recovery: TurnRecovery; onRetry: () => void; onCancel: () => void }): JSX.Element {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  const stopped = recovery.scheduledAt <= 0
+  const remaining = Math.max(0, recovery.scheduledAt - now)
+  const when = stopped
+    ? `Tentativas automáticas encerradas (${recovery.attempt}/${recovery.maxAttempts})`
+    : `Nova tentativa em ${fmtDuration(remaining)} · ${new Date(recovery.scheduledAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+  return (
+    <div className="recovery-card" role="status">
+      <span className="recovery-clock"><IconClock size={15} /></span>
+      <div className="recovery-copy">
+        <strong>{recovery.reason === 'limit' ? 'Limite do Claude atingido' : 'Resposta interrompida'}</strong>
+        <span>{when}</span>
+      </div>
+      <button type="button" className="recovery-action" onClick={onRetry}>Tentar agora</button>
+      <button type="button" className="recovery-action subtle" onClick={onCancel}>Cancelar</button>
+    </div>
+  )
+}
+
 interface Props {
   messages: UIMessage[]
   /** Whether a conversation is selected (composer enabled). */
@@ -77,6 +101,9 @@ interface Props {
   /** Messages waiting to be sent (agent busy), shown above the composer. */
   queued: { id: string; text: string; thumbs: string[] }[]
   onDeleteQueued: (id: string) => void
+  recovery?: TurnRecovery
+  onRetryRecovery: () => void
+  onCancelRecovery: () => void
   /** True when the agent asked a question (AskUserQuestion) and its modal was
    *  minimized (clicked outside / Esc) — shows a chip to reopen it. */
   pendingQuestion: boolean
@@ -300,6 +327,10 @@ export function ChatPanel(props: Props): JSX.Element {
         tts={props.tts}
         onRetry={props.onRetry}
       />
+
+      {props.recovery && (
+        <RecoveryCard recovery={props.recovery} onRetry={props.onRetryRecovery} onCancel={props.onCancelRecovery} />
+      )}
 
       {props.queued.length > 0 && (
         <div className="queue">

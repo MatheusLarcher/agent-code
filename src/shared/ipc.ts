@@ -674,7 +674,9 @@ export const Channels = {
   /** main → renderer: a phone toggled the global "Permitir tudo" switch. */
   remoteSetSkipPerms: 'remote:set-skip-perms',
   /** Phone asked to change a conversation's model/effort. */
-  remoteSetModel: 'remote:set-model'
+  remoteSetModel: 'remote:set-model',
+  /** Phone asked to retry/cancel a suspended turn. */
+  remoteRecoveryAction: 'remote:recovery-action'
 } as const
 
 /** A progress line emitted while an Android device/emulator boots, tagged with
@@ -723,6 +725,13 @@ export interface RemoteConversation {
   messages: unknown[]
   /** Messages waiting in the desktop outbox while this conversation is busy. */
   queued?: { text: string }[]
+  recovery?: {
+    reason: 'limit' | 'transient'
+    scheduledAt: number
+    attempt: number
+    maxAttempts: number
+    errorText: string
+  }
   /** Current model id of this conversation (phone shows/changes it). */
   model?: string
   /** Current reasoning effort of this conversation. */

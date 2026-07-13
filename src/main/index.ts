@@ -241,6 +241,7 @@ const remote = new RemoteServer({
   onInbound: (convId, text, images) => send(Channels.remoteInbound, { convId, text, images }),
   onSetSkipPerms: (on) => send(Channels.remoteSetSkipPerms, { on }),
   onSetModel: (convId, model, effort) => send(Channels.remoteSetModel, { convId, model, effort }),
+  onRecoveryAction: (convId, action) => send(Channels.remoteRecoveryAction, { convId, action }),
   apkPath: () => join(REMOTE_ROOT, 'dist', 'agent-remote.apk'),
   wwwDir: () => join(REMOTE_ROOT, 'www'),
   onClientsChanged: (info) => send(Channels.remoteClients, info),

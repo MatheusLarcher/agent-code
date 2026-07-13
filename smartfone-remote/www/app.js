@@ -541,6 +541,7 @@ function fetchState() {
       var cur = current()
       $('busy').hidden = !(cur && cur.busy)
       syncQueuedMessages()
+      renderTurnRecovery()
       // If voice availability flipped, refresh so the "Ouvir" buttons appear/hide.
       if (wasReady !== state.voiceReady) scheduleRender()
       return data
@@ -878,6 +879,31 @@ function syncQueuedMessages() {
     state.messages.push({ kind: 'user', id: 'queued-' + Date.now() + '-' + i, text: text, queued: true })
   })
   scheduleRender()
+}
+
+function renderTurnRecovery() {
+  var box = $('turn-recovery')
+  var cur = current()
+  var recovery = cur && cur.recovery
+  if (!recovery) { box.hidden = true; return }
+  box.hidden = false
+  $('turn-recovery-title').textContent = recovery.reason === 'limit' ? 'Limite do Claude atingido' : 'Resposta interrompida'
+  if (recovery.scheduledAt <= 0) {
+    $('turn-recovery-time').textContent = 'Tentativas automáticas encerradas (' + recovery.attempt + '/' + recovery.maxAttempts + ')'
+  } else {
+    var seconds = Math.max(0, Math.ceil((recovery.scheduledAt - Date.now()) / 1000))
+    var clock = new Date(recovery.scheduledAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    $('turn-recovery-time').textContent = 'Nova tentativa em ' + seconds + 's · ' + clock
+  }
+}
+
+function recoveryAction(action) {
+  if (!state.convId) return
+  fetch(api('/api/recovery'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ convId: state.convId, action: action })
+  }).then(fetchState).catch(function () { setStatus(false) })
 }
 
 function pairingErrorText(err) {
@@ -1404,6 +1430,8 @@ function init() {
     applyConfig(cfg2)
   })
   $('pairing-cancel').addEventListener('click', cancelPairingReconnect)
+  $('turn-recovery-retry').addEventListener('click', function () { recoveryAction('retry') })
+  $('turn-recovery-cancel').addEventListener('click', function () { recoveryAction('cancel') })
 
   // Open the conversation history (drawer) from the menu button or the title.
   $('menu').addEventListener('click', openDrawer)

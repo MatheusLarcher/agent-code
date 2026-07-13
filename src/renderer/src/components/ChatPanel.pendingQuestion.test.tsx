@@ -32,6 +32,8 @@ function renderPanel(pendingQuestion: boolean, onReopenQuestion = vi.fn()): { on
       projectMissingMsg=""
       queued={[]}
       onDeleteQueued={() => {}}
+      onRetryRecovery={() => {}}
+      onCancelRecovery={() => {}}
       runningSince={null}
       lastDurationMs={null}
       voiceReady={false}

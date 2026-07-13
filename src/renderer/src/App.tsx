@@ -15,6 +15,7 @@ import { isOllamaModel, OLLAMA_MODELS, MODEL_EFFORT, DEFAULT_EFFORT } from '@sha
 import type { EffortLevel } from '@shared/ipc'
 import type { Conversation, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
+import { MAX_GENERIC_RETRIES, scheduleFailure } from './turnRecovery'
 import {
   loadConversations,
   loadUi,
@@ -257,6 +258,8 @@ export function App(): JSX.Element {
   chipsRef.current = chips
   const queueRef = useRef(queue)
   queueRef.current = queue
+  const usageLimitsRef = useRef(usageLimits)
+  usageLimitsRef.current = usageLimits
 
   // The message currently in flight per conversation (the user bubble awaiting a
   // response), so a failing turn can mark exactly that message as errored.
@@ -388,9 +391,8 @@ export function App(): JSX.Element {
         if (e.kind === 'result' && !e.isError) setLastDuration((m) => ({ ...m, [cid]: e.durationMs }))
 
         if (failed) {
-          // Pin the error onto the in-flight message and keep its payload so the
-          // user can resend it as-is. Drop the queue (it won't be dispatched) and
-          // stop the busy timer.
+          // Suspend this turn instead of treating it as complete. The queue stays
+          // frozen until the automatic continuation actually succeeds.
           const inflight = inflightRef.current[cid]
           if (inflight) {
             failedRef.current[inflight.msgId] = {
@@ -402,35 +404,26 @@ export function App(): JSX.Element {
             markMessageError(cid, inflight.msgId, e.text || 'A resposta falhou. Tente de novo.')
           }
           delete inflightRef.current[cid]
-          setBusy(cid, false)
-          setBusySince((m) => withoutKey(m, cid))
-
-          // Anything still queued for this conversation won't be dispatched now —
-          // turn each into its own errored bubble (with retry) so no typed message
-          // is silently lost.
-          const stillQueued = queueRef.current.filter((m) => m.convId === cid)
-          if (stillQueued.length) {
-            setQueue((cur) => cur.filter((m) => m.convId !== cid))
-            patchConv(cid, (c) => ({
+          const schedule = scheduleFailure(e.text || 'Erro transitório', usageLimitsRef.current)
+          const previousRecovery = convsRef.current.find((c) => c.id === cid)?.recovery
+          const attempt = schedule.reason === 'transient' ? (previousRecovery?.attempt ?? 0) + 1 : 0
+          const exhausted = schedule.reason === 'transient' && attempt >= MAX_GENERIC_RETRIES
+          patchConv(cid, (c) => {
+            return {
               ...c,
-              messages: [
-                ...c.messages,
-                ...stillQueued.map((q) => ({
-                  kind: 'user' as const,
-                  id: q.id, // reuse the queue id so retry can find it
-                  text: q.text,
-                  images: q.thumbs.length ? q.thumbs : undefined,
-                  files: q.files.length ? q.files.map((f) => ({ name: f.name, size: f.size })) : undefined,
-                  error: 'A conversa encerrou antes de enviar esta mensagem.',
-                  ts: Date.now()
-                }))
-              ],
-              updatedAt: Date.now()
-            }))
-            for (const q of stillQueued) {
-              failedRef.current[q.id] = { convId: cid, full: q.full, images: q.images, files: q.files }
+              recovery: {
+                id: uid('recovery'),
+                reason: schedule.reason,
+                scheduledAt: exhausted ? 0 : schedule.scheduledAt,
+                attempt,
+                maxAttempts: MAX_GENERIC_RETRIES,
+                errorText: e.text || 'Erro transitório',
+                messageId: inflight?.msgId ?? c.recovery?.messageId ?? null
+              }
             }
-          }
+          })
+          setBusy(cid, !exhausted)
+          setBusySince((m) => withoutKey(m, cid))
 
           if (e.kind === 'error') {
             // Fatal session error: surface it (a background chat has no visible
@@ -445,6 +438,7 @@ export function App(): JSX.Element {
         // queued message for this conversation (if any). The conversation stays
         // "busy" through the handoff; only when the queue is empty do we go idle.
         delete inflightRef.current[cid]
+        patchConv(cid, (c) => ({ ...c, recovery: undefined }))
         const next = queueRef.current.find((m) => m.convId === cid)
         if (next) {
           setQueue((cur) => cur.filter((m) => m.id !== next.id))
@@ -650,6 +644,15 @@ export function App(): JSX.Element {
           updatedAt: c.updatedAt,
           messages: c.messages,
           queued: queueRef.current.filter((m) => m.convId === c.id).map((m) => ({ text: m.text })),
+          recovery: c.recovery
+            ? {
+                reason: c.recovery.reason,
+                scheduledAt: c.recovery.scheduledAt,
+                attempt: c.recovery.attempt,
+                maxAttempts: c.recovery.maxAttempts,
+                errorText: c.recovery.errorText
+              }
+            : undefined,
           model: c.model,
           effort: c.effort ?? DEFAULT_EFFORT,
           economyMode: c.economyMode === true
@@ -982,7 +985,7 @@ export function App(): JSX.Element {
 
       // Agent already busy on THIS conversation → queue instead of sending, so
       // the running task isn't cancelled. It'll be dispatched when the turn ends.
-      if (busyRef.current.has(conv.id)) {
+      if (busyRef.current.has(conv.id) || conv.recovery || queueRef.current.some((m) => m.convId === conv.id)) {
         setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs, files }])
         return
       }
@@ -1031,6 +1034,68 @@ export function App(): JSX.Element {
     },
     [connect, patchConv, setBusy, notify, ensureProject, markMessageError]
   )
+
+  const runRecovery = useCallback(
+    async (convId: string, force = false): Promise<void> => {
+      const conv = convsRef.current.find((c) => c.id === convId)
+      const recovery = conv?.recovery
+      if (!conv || !recovery || (!force && recovery.scheduledAt <= 0)) return
+      if (!(await ensureProject(conv))) {
+        patchConv(convId, (c) => ({ ...c, recovery: undefined }))
+        setBusy(convId, false)
+        return
+      }
+      // Invalidate this timer before awaiting so reloads/state updates cannot
+      // launch the same recovery twice.
+      patchConv(convId, (c) =>
+        c.recovery?.id === recovery.id ? { ...c, recovery: { ...c.recovery, scheduledAt: -1 } } : c
+      )
+      setBusy(convId, true)
+      setBusySince((m) => ({ ...m, [convId]: Date.now() }))
+      const continuation =
+        'Continue exatamente de onde parou. A execução anterior foi interrompida por limite de uso ou erro transitório.'
+      const msgId = recovery.messageId ?? uid('recovery-msg')
+      inflightRef.current[convId] = { msgId, full: continuation, images: [], files: [] }
+      if (recovery.messageId) clearMessageError(convId, recovery.messageId)
+      try {
+        if (!connectedRef.current.has(convId)) await connect(conv)
+        await window.api.sendMessage(convId, continuation, [], [])
+      } catch (err) {
+        const attempt = recovery.attempt + 1
+        patchConv(convId, (c) => ({
+          ...c,
+          recovery: {
+            ...recovery,
+            id: uid('recovery'),
+            reason: 'transient',
+            attempt,
+            scheduledAt: attempt >= MAX_GENERIC_RETRIES ? 0 : Date.now() + 60_000,
+            errorText: String(err)
+          }
+        }))
+        setBusy(convId, attempt < MAX_GENERIC_RETRIES)
+        setBusySince((m) => withoutKey(m, convId))
+      }
+    },
+    [clearMessageError, connect, ensureProject, patchConv, setBusy]
+  )
+
+  // Restore persisted recoveries after reload and keep exactly one timer per
+  // conversation. A stale callback re-checks the recovery id in runRecovery.
+  useEffect(() => {
+    if (!hydrated) return
+    const timers: ReturnType<typeof setTimeout>[] = []
+    for (const conv of conversations) {
+      const recovery = conv.recovery
+      if (!recovery) continue
+      if (recovery.scheduledAt > 0) {
+        setBusy(conv.id, true)
+        const delay = Math.max(0, recovery.scheduledAt - Date.now())
+        timers.push(setTimeout(() => void runRecovery(conv.id), Math.min(delay, 2_147_483_647)))
+      }
+    }
+    return () => timers.forEach(clearTimeout)
+  }, [conversations, hydrated, runRecovery, setBusy])
 
   const sendMessage = useCallback(
     async (text: string, images: ImageAttachment[] = [], files: FileAttachment[] = []): Promise<void> => {
@@ -1147,9 +1212,33 @@ export function App(): JSX.Element {
     return off
   }, [changeModel, changeEffort])
 
+  useEffect(() => {
+    return window.api.onRemoteRecoveryAction(({ convId, action }) => {
+      if (action === 'retry') void runRecovery(convId, true)
+      else {
+        patchConv(convId, (c) => ({ ...c, recovery: undefined }))
+        setBusy(convId, false)
+        setBusySince((m) => withoutKey(m, convId))
+      }
+    })
+  }, [patchConv, runRecovery, setBusy])
+
   const deleteQueued = useCallback((id: string): void => {
     setQueue((q) => q.filter((m) => m.id !== id))
   }, [])
+
+  const retryRecoveryNow = useCallback((): void => {
+    const id = activeIdRef.current
+    if (id) void runRecovery(id, true)
+  }, [runRecovery])
+
+  const cancelRecovery = useCallback((): void => {
+    const id = activeIdRef.current
+    if (!id) return
+    patchConv(id, (c) => ({ ...c, recovery: undefined }))
+    setBusy(id, false)
+    setBusySince((m) => withoutKey(m, id))
+  }, [patchConv, setBusy])
 
   const respond = useCallback(
     async (behavior: 'allow' | 'deny', always: boolean): Promise<void> => {
@@ -1544,6 +1633,9 @@ export function App(): JSX.Element {
             projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
             queued={activeQueue}
             onDeleteQueued={deleteQueued}
+            recovery={active?.recovery}
+            onRetryRecovery={retryRecoveryNow}
+            onCancelRecovery={cancelRecovery}
             runningSince={runningSince}
             lastDurationMs={lastDurationMs}
             onStart={connectStart}

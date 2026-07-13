@@ -138,6 +138,8 @@ const api: AgentCodeApi = {
     on(Channels.remoteSetSkipPerms, cb),
   onRemoteSetModel: (cb: (m: RemoteSetModelMsg) => void): (() => void) =>
     on(Channels.remoteSetModel, cb),
+  onRemoteRecoveryAction: (cb: (m: { convId: string; action: 'retry' | 'cancel' }) => void): (() => void) =>
+    on(Channels.remoteRecoveryAction, cb),
   onRemoteBuildProgress: (cb: (m: RemoteBuildProgressMsg) => void): (() => void) =>
     on(Channels.remoteBuildProgress, cb),
   onRemoteClients: (cb: (info: RemoteInfo) => void): (() => void) => on(Channels.remoteClients, cb)

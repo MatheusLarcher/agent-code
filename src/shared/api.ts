@@ -140,6 +140,7 @@ export interface AgentCodeApi {
   onRemoteSetSkipPerms(cb: (m: { on: boolean }) => void): () => void
   /** A phone asked to change a conversation's model/effort — apply it on the PC. */
   onRemoteSetModel(cb: (m: RemoteSetModelMsg) => void): () => void
+  onRemoteRecoveryAction(cb: (m: { convId: string; action: 'retry' | 'cancel' }) => void): () => void
   /** Progress lines while the remote APK is built. */
   onRemoteBuildProgress(cb: (m: RemoteBuildProgressMsg) => void): () => void
   /** The connected-phone count changed. */

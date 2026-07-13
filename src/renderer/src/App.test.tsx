@@ -76,6 +76,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     onRemoteInbound: vi.fn(() => () => {}),
     onRemoteSetSkipPerms: vi.fn(() => () => {}),
     onRemoteSetModel: vi.fn(() => () => {}),
+    onRemoteRecoveryAction: vi.fn(() => () => {}),
     onRemoteBuildProgress: vi.fn(() => () => {}),
     onRemoteClients: vi.fn(() => () => {})
   }
@@ -187,6 +188,21 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     await emit(result) // o 'result' vindo da interrupção não pode despachar a fila
     expect(api.sendMessage).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
+})
+
+describe('App — recuperação persistida', () => {
+  it('restaura o cartão e não envia antes do horário agendado', async () => {
+    const conv = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')[0]
+    conv.recovery = {
+      id: 'rec1', reason: 'limit', scheduledAt: Date.now() + 60_000,
+      attempt: 0, maxAttempts: 5, errorText: 'session limit', messageId: null
+    }
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([conv]))
+    render(<UiProvider><App /></UiProvider>)
+    expect(await screen.findByText('Limite do Claude atingido')).toBeTruthy()
+    expect(screen.getByText(/Nova tentativa em/)).toBeTruthy()
+    expect(api.sendMessage).not.toHaveBeenCalled()
   })
 })
 

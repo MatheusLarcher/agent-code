@@ -35,6 +35,16 @@ export interface TokenTotals {
   cost: number
 }
 
+export interface TurnRecovery {
+  id: string
+  reason: 'limit' | 'transient'
+  scheduledAt: number
+  attempt: number
+  maxAttempts: number
+  errorText: string
+  messageId: string | null
+}
+
 /** A single conversation, grouped by its project folder (`cwd`) in the sidebar. */
 export interface Conversation {
   id: string
@@ -52,6 +62,8 @@ export interface Conversation {
   /** Unsent composer text for this conversation (draft). Kept across conversation
    *  switches and app restarts so a half-typed message is never lost. */
   draft?: string
+  /** A failed turn waiting to resume; persisted so app restarts restore its timer. */
+  recovery?: TurnRecovery
   messages: UIMessage[]
   tokens: TokenTotals
   createdAt: number
