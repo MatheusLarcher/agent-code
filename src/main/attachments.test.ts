@@ -3,7 +3,29 @@ import { createServer, type Server } from 'node:http'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { resolvePastedPath, downloadPastedUrl } from './attachments'
+import { resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
+
+describe('buildAttachmentNote — nota de anexos anexada ao texto do usuário', () => {
+  it('retorna o texto original quando não há anexos', () => {
+    expect(buildAttachmentNote('oi', [])).toBe('oi')
+  })
+
+  it('agrega blob-attachments e fileRefs (pasted-by-reference) na mesma nota', () => {
+    const note = buildAttachmentNote('confira os arquivos', [
+      { name: 'relatorio.xlsx', path: 'C:\\attachments\\relatorio.xlsx' },
+      { name: 'manual.pdf', path: 'C:\\attachments\\manual.pdf' }
+    ])
+    expect(note).toContain('confira os arquivos')
+    expect(note).toContain('- relatorio.xlsx: C:\\attachments\\relatorio.xlsx')
+    expect(note).toContain('- manual.pdf: C:\\attachments\\manual.pdf')
+  })
+
+  it('funciona sem texto (mensagem só com anexo)', () => {
+    const note = buildAttachmentNote('', [{ name: 'a.txt', path: 'C:\\a.txt' }])
+    expect(note.startsWith('Arquivos anexados')).toBe(true)
+    expect(note).toContain('- a.txt: C:\\a.txt')
+  })
+})
 
 // resolvePastedPath: pure stat, no HTTP needed.
 describe('resolvePastedPath — caminho local colado como texto', () => {

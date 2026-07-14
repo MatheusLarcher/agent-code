@@ -37,6 +37,9 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     getCacheInfo: vi.fn(async () => ({ dir: '', dbPath: '', memoriesDir: '' })),
     chooseCacheDir: vi.fn(async () => null),
     downloadFile: vi.fn(async () => ({ ok: true, message: '' })),
+    resolvePastedPath: vi.fn(async () => ({ ok: false, error: 'not used in these tests' })),
+    downloadPastedUrl: vi.fn(async () => ({ ok: false, error: 'not used in these tests' })),
+    readFileBytes: vi.fn(async () => ({ ok: false, error: 'not used in these tests' })),
     startAgent: vi.fn(() => new Promise<{ ok: boolean }>((res) => resolveStart.push(res))),
     sendMessage: vi.fn(async () => {}),
     interrupt: vi.fn(async () => {}),
@@ -126,6 +129,20 @@ async function send(text: string): Promise<HTMLElement> {
   return ta
 }
 
+// Paste a line that looks like a local path/URL — mirrors a real OS paste
+// (clipboardData with only text/plain, no file), driving the Composer's
+// onPaste exactly like Composer.draft.test.tsx-style tests do at this layer.
+async function pasteLine(line: string): Promise<void> {
+  const ta = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+  const clipboardData = {
+    items: [] as { kind: string }[],
+    getData: (type: string) => (type === 'text/plain' ? line : '')
+  }
+  await act(async () => {
+    fireEvent.paste(ta, { clipboardData })
+  })
+}
+
 describe('App — fila de mensagens (multi-sessão)', () => {
   it('enviar com a tarefa rodando ENFILEIRA (não cancela) e despacha no fim do turno', async () => {
     render(
@@ -188,6 +205,120 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     await emit(result) // o 'result' vindo da interrupção não pode despachar a fila
     expect(api.sendMessage).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
+})
+
+describe('App — anexo por referência (fileRefs: caminho/link colado)', () => {
+  it('colar um caminho local vira chip e o envio manda o fileRef pro main (path, sem base64)', async () => {
+    api.resolvePastedPath = vi.fn(async () => ({
+      ok: true,
+      name: 'relatorio.pdf',
+      path: 'C:\\pasta\\relatorio.pdf',
+      mediaType: 'application/pdf',
+      size: 123456,
+      isImage: false
+    }))
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await pasteLine('C:\\pasta\\relatorio.pdf')
+    await waitFor(() => expect(screen.getByText('relatorio.pdf')).toBeTruthy())
+
+    fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    const [, , images, files, fileRefs] = api.sendMessage.mock.calls[0]
+    expect(images).toEqual([])
+    expect(files).toEqual([]) // o caminho local NÃO passa pelo fluxo de FileAttachment (base64)
+    expect(fileRefs).toEqual([
+      { name: 'relatorio.pdf', path: 'C:\\pasta\\relatorio.pdf', mediaType: 'application/pdf', size: 123456 }
+    ])
+  })
+
+  it('enviar com fileRef durante turno ocupado ENFILEIRA e despacha com o fileRef preservado', async () => {
+    api.resolvePastedPath = vi.fn(async () => ({
+      ok: true,
+      name: 'notas.txt',
+      path: 'C:\\pasta\\notas.txt',
+      mediaType: 'text/plain',
+      size: 42,
+      isImage: false
+    }))
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(partial) // turno ainda rodando
+
+    await pasteLine('C:\\pasta\\notas.txt')
+    await waitFor(() => expect(screen.getByText('notas.txt')).toBeTruthy())
+    fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
+    expect(screen.getByText(/Na fila/)).toBeTruthy()
+    expect(api.sendMessage).toHaveBeenCalledTimes(1) // ainda não despachou
+
+    await emit(result) // turno termina → despacha a fila
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    const [, , , , fileRefs] = api.sendMessage.mock.calls[1]
+    expect(fileRefs).toEqual([
+      { name: 'notas.txt', path: 'C:\\pasta\\notas.txt', mediaType: 'text/plain', size: 42 }
+    ])
+    expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
+
+  it('"Tentar de novo" numa mensagem com fileRef que falhou reenvia o mesmo fileRef', async () => {
+    api.resolvePastedPath = vi.fn(async () => ({
+      ok: true,
+      name: 'dados.csv',
+      path: 'C:\\pasta\\dados.csv',
+      mediaType: 'text/csv',
+      size: 999,
+      isImage: false
+    }))
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await pasteLine('C:\\pasta\\dados.csv')
+    await waitFor(() => expect(screen.getByText('dados.csv')).toBeTruthy())
+    fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    // O turno falha com um erro transitório (não é de rate-limit) — o app agenda
+    // retries automáticos; o botão manual "Tentar de novo" só habilita quando as
+    // tentativas automáticas se esgotam (MAX_GENERIC_RETRIES). Emitir o mesmo
+    // erro repetidas vezes evolui `attempt` a cada rodada até esgotar.
+    for (let i = 0; i < 6; i++) {
+      await emit({ kind: 'error', id: `e${i}`, text: 'sessão caiu' })
+    }
+    const retryBtn = await screen.findByText(/Tentar de novo/)
+    const retryButtonEl = retryBtn.closest('button') as HTMLButtonElement
+    expect(retryButtonEl.disabled).toBe(false)
+    // A fatal 'error' event disconnects the conversation (setConnected(cid, false)),
+    // so retryMessage's `await connect(conv)` re-issues startAgent — flush it too.
+    await act(async () => {
+      fireEvent.click(retryButtonEl)
+    })
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+
+    const [, , , , fileRefsOnRetry] = api.sendMessage.mock.calls[1]
+    expect(fileRefsOnRetry).toEqual([
+      { name: 'dados.csv', path: 'C:\\pasta\\dados.csv', mediaType: 'text/csv', size: 999 }
+    ])
   })
 })
 

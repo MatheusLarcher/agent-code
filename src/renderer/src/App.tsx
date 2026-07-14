@@ -4,6 +4,7 @@ import type {
   BrowserState,
   ChatEvent,
   FileAttachment,
+  FileRefAttachment,
   ImageAttachment,
   PermissionRequest,
   PickedElement,
@@ -93,6 +94,8 @@ interface QueuedMessage {
   thumbs: string[]
   /** Non-image file attachments (saved to disk by main on send). */
   files: FileAttachment[]
+  /** Attachments resolved from a pasted local path or URL (path only, no bytes). */
+  fileRefs: FileRefAttachment[]
 }
 
 function basename(p: string): string {
@@ -264,12 +267,18 @@ export function App(): JSX.Element {
   // The message currently in flight per conversation (the user bubble awaiting a
   // response), so a failing turn can mark exactly that message as errored.
   const inflightRef = useRef<
-    Record<string, { msgId: string; full: string; images: ImageAttachment[]; files: FileAttachment[] }>
+    Record<
+      string,
+      { msgId: string; full: string; images: ImageAttachment[]; files: FileAttachment[]; fileRefs: FileRefAttachment[] }
+    >
   >({})
   // Payloads of messages whose turn failed, kept (in memory) so "Tentar de novo"
   // resends the exact same text + attachments. Keyed by message id.
   const failedRef = useRef<
-    Record<string, { convId: string; full: string; images: ImageAttachment[]; files: FileAttachment[] }>
+    Record<
+      string,
+      { convId: string; full: string; images: ImageAttachment[]; files: FileAttachment[]; fileRefs: FileRefAttachment[] }
+    >
   >({})
   // Conversations the user just interrupted/stopped — their next `result` is an
   // intentional stop, not a failure, so we must not flag the message as errored.
@@ -399,7 +408,8 @@ export function App(): JSX.Element {
               convId: cid,
               full: inflight.full,
               images: inflight.images,
-              files: inflight.files
+              files: inflight.files,
+              fileRefs: inflight.fileRefs
             }
             markMessageError(cid, inflight.msgId, e.text || 'A resposta falhou. Tente de novo.')
           }
@@ -453,14 +463,23 @@ export function App(): JSX.Element {
                 id: nextMsgId,
                 text: next.text,
                 images: next.thumbs.length ? next.thumbs : undefined,
-                files: next.files.length ? next.files.map((f) => ({ name: f.name, size: f.size })) : undefined,
+                files:
+                  next.files.length || next.fileRefs.length
+                    ? [...next.files, ...next.fileRefs].map((f) => ({ name: f.name, size: f.size }))
+                    : undefined,
                 ts: Date.now()
               }
             ],
             updatedAt: Date.now()
           }))
-          inflightRef.current[cid] = { msgId: nextMsgId, full: next.full, images: next.images, files: next.files }
-          void window.api.sendMessage(cid, next.full, next.images, next.files)
+          inflightRef.current[cid] = {
+            msgId: nextMsgId,
+            full: next.full,
+            images: next.images,
+            files: next.files,
+            fileRefs: next.fileRefs
+          }
+          void window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs)
           setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
         } else {
           setBusy(cid, false)
@@ -986,7 +1005,8 @@ export function App(): JSX.Element {
       text: string,
       images: ImageAttachment[],
       thumbs: string[],
-      files: FileAttachment[]
+      files: FileAttachment[],
+      fileRefs: FileRefAttachment[] = []
     ): Promise<void> => {
       // Project folder gone → don't process or send to the LLM; just warn.
       if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) return
@@ -994,7 +1014,7 @@ export function App(): JSX.Element {
       // Agent already busy on THIS conversation → queue instead of sending, so
       // the running task isn't cancelled. It'll be dispatched when the turn ends.
       if (busyRef.current.has(conv.id) || conv.recovery || queueRef.current.some((m) => m.convId === conv.id)) {
-        setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs, files }])
+        setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs, files, fileRefs }])
         return
       }
 
@@ -1016,26 +1036,29 @@ export function App(): JSX.Element {
             id: msgId,
             text,
             images: thumbs.length ? thumbs : undefined,
-            files: files.length ? files.map((f) => ({ name: f.name, size: f.size })) : undefined,
+            files:
+              files.length || fileRefs.length
+                ? [...files, ...fileRefs].map((f) => ({ name: f.name, size: f.size }))
+                : undefined,
             ts: Date.now()
           }
         ],
         updatedAt: Date.now()
       }))
       // Remember this as the in-flight message so a failing turn can mark it.
-      inflightRef.current[conv.id] = { msgId, full, images, files }
+      inflightRef.current[conv.id] = { msgId, full, images, files, fileRefs }
 
       try {
         // Lazily (re)start the agent for this conversation, resuming if possible.
         if (!connectedRef.current.has(conv.id)) await connect(conv)
-        await window.api.sendMessage(conv.id, full, images, files)
+        await window.api.sendMessage(conv.id, full, images, files, fileRefs)
       } catch (err) {
         // Couldn't even reach the agent → keep the message, flag it with the error
         // and keep its payload so "Tentar de novo" can resend it.
         setBusy(conv.id, false)
         setBusySince((m) => withoutKey(m, conv.id))
         delete inflightRef.current[conv.id]
-        failedRef.current[msgId] = { convId: conv.id, full, images, files }
+        failedRef.current[msgId] = { convId: conv.id, full, images, files, fileRefs }
         markMessageError(conv.id, msgId, `Falha ao enviar: ${String(err)}`)
         notify('erro', `Falha ao enviar: ${String(err)}`)
       }
@@ -1063,7 +1086,7 @@ export function App(): JSX.Element {
       const continuation =
         'Continue exatamente de onde parou. A execução anterior foi interrompida por limite de uso ou erro transitório.'
       const msgId = recovery.messageId ?? uid('recovery-msg')
-      inflightRef.current[convId] = { msgId, full: continuation, images: [], files: [] }
+      inflightRef.current[convId] = { msgId, full: continuation, images: [], files: [], fileRefs: [] }
       if (recovery.messageId) clearMessageError(convId, recovery.messageId)
       try {
         if (!connectedRef.current.has(convId)) await connect(conv)
@@ -1106,7 +1129,12 @@ export function App(): JSX.Element {
   }, [conversations, hydrated, runRecovery, setBusy])
 
   const sendMessage = useCallback(
-    async (text: string, images: ImageAttachment[] = [], files: FileAttachment[] = []): Promise<void> => {
+    async (
+      text: string,
+      images: ImageAttachment[] = [],
+      files: FileAttachment[] = [],
+      fileRefs: FileRefAttachment[] = []
+    ): Promise<void> => {
       const conv = getActive()
       if (!conv) return
       let full = text.trim()
@@ -1120,11 +1148,11 @@ export function App(): JSX.Element {
           .join('\n\n')
         full = `${full}\n\n--- Selected page elements ---\n${refs}`
       }
-      if (!full && images.length === 0 && files.length === 0) return
+      if (!full && images.length === 0 && files.length === 0 && fileRefs.length === 0) return
 
       const thumbs = images.map((img) => `data:${img.mediaType};base64,${img.data}`)
       setChips([]) // chips were consumed into `full`
-      await dispatch(conv, full, text, images, thumbs, files)
+      await dispatch(conv, full, text, images, thumbs, files, fileRefs)
     },
     [dispatch]
   )
@@ -1143,6 +1171,7 @@ export function App(): JSX.Element {
       const full = payload?.full ?? msg.text
       const images = payload?.images ?? []
       const files = payload?.files ?? []
+      const fileRefs = payload?.fileRefs ?? []
 
       // Project folder gone → keep the error, just warn (ensureProject toasts).
       if (!(await ensureProject(conv))) return
@@ -1151,17 +1180,17 @@ export function App(): JSX.Element {
       interruptedRef.current.delete(convId) // fresh turn: clear any stale stop flag
       setBusy(convId, true)
       setBusySince((m) => ({ ...m, [convId]: Date.now() }))
-      inflightRef.current[convId] = { msgId, full, images, files }
+      inflightRef.current[convId] = { msgId, full, images, files, fileRefs }
       delete failedRef.current[msgId]
 
       try {
         if (!connectedRef.current.has(convId)) await connect(conv)
-        await window.api.sendMessage(convId, full, images, files)
+        await window.api.sendMessage(convId, full, images, files, fileRefs)
       } catch (err) {
         setBusy(convId, false)
         setBusySince((m) => withoutKey(m, convId))
         delete inflightRef.current[convId]
-        failedRef.current[msgId] = { convId, full, images, files }
+        failedRef.current[msgId] = { convId, full, images, files, fileRefs }
         markMessageError(convId, msgId, `Falha ao enviar: ${String(err)}`)
         notify('erro', `Falha ao enviar: ${String(err)}`)
       }

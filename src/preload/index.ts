@@ -11,6 +11,7 @@ import type {
   CacheInfo,
   FileAttachment,
   FileBytes,
+  FileRefAttachment,
   ImageAttachment,
   MentionHit,
   ResolvedPastedRef,
@@ -84,8 +85,9 @@ const api: AgentCodeApi = {
     convId: string,
     text: string,
     images?: ImageAttachment[],
-    files?: FileAttachment[]
-  ): Promise<void> => ipcRenderer.invoke(Channels.agentSend, convId, text, images, files),
+    files?: FileAttachment[],
+    fileRefs?: FileRefAttachment[]
+  ): Promise<void> => ipcRenderer.invoke(Channels.agentSend, convId, text, images, files, fileRefs),
   interrupt: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentInterrupt, convId),
   setBypass: (convId: string, on: boolean): Promise<void> =>
     ipcRenderer.invoke(Channels.agentSetBypass, convId, on),

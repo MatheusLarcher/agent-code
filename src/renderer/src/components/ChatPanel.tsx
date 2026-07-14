@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from 'react'
-import type { FileAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
+import type { FileAttachment, FileRefAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
 import { contextLimitFor } from '@shared/ipc'
 import type { TurnRecovery, UIMessage } from '../types'
 import { MessageList, type TtsControls } from './MessageList'
@@ -73,7 +73,12 @@ interface Props {
   tokens: { context: number; output: number; cost: number }
   chips: PickedElement[]
   onRemoveChip: (i: number) => void
-  onSend: (text: string, images: ImageAttachment[], files: FileAttachment[]) => void
+  onSend: (
+    text: string,
+    images: ImageAttachment[],
+    files: FileAttachment[],
+    fileRefs: FileRefAttachment[]
+  ) => void
   onInterrupt: () => void
   /** Resend a user message whose turn failed (its bubble shows a retry button). */
   onRetry: (msgId: string) => void

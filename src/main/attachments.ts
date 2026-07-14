@@ -25,6 +25,21 @@ const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 const DOWNLOAD_TIMEOUT_MS = 60_000
 
 /**
+ * Compose the "arquivos anexados" note appended to the user's text, from
+ * whatever got saved to disk (blob attachments + pasted-by-reference paths).
+ * Pure/testable: no disk or Electron dependency.
+ */
+export function buildAttachmentNote(
+  text: string,
+  refItems: Array<{ name: string; path: string }>
+): string {
+  if (refItems.length === 0) return text
+  const refs = refItems.map((s) => `- ${s.name}: ${s.path}`).join('\n')
+  const note = `Arquivos anexados pelo usuário (abra-os com suas ferramentas, ex.: Read, se forem relevantes):\n${refs}`
+  return text ? `${text}\n\n${note}` : note
+}
+
+/**
  * Persist non-image attachments to disk so the agent can open them by path with
  * its own tools. Files land under `<userData>/attachments/<convId>/` and a
  * timestamp prefix keeps same-named files from clobbering each other.

@@ -21,12 +21,13 @@ import { isAuthenticated } from './auth'
 import { runClaudeLogin } from './login'
 import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
-import { saveAttachments, resolvePastedPath, downloadPastedUrl } from './attachments'
+import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import type {
   AppConfig,
   BrowserInput,
   FileAttachment,
   FileBytes,
+  FileRefAttachment,
   ImageAttachment,
   MentionHit,
   ResolvedPastedRef,
@@ -572,18 +573,21 @@ function registerIpc(): void {
 
   ipcMain.handle(
     Channels.agentSend,
-    async (_e, convId: string, text: string, images?: ImageAttachment[], files?: FileAttachment[]) => {
-      let finalText = text
+    async (
+      _e,
+      convId: string,
+      text: string,
+      images?: ImageAttachment[],
+      files?: FileAttachment[],
+      fileRefs?: FileRefAttachment[]
+    ) => {
       // Non-image files are saved to disk and referenced by path so the agent can
-      // open them with its own tools (Read, scripts, etc.).
-      if (files && files.length > 0) {
-        const saved = await saveAttachments(convId, files)
-        if (saved.length > 0) {
-          const refs = saved.map((s) => `- ${s.name}: ${s.path}`).join('\n')
-          const note = `Arquivos anexados pelo usuário (abra-os com suas ferramentas, ex.: Read, se forem relevantes):\n${refs}`
-          finalText = finalText ? `${finalText}\n\n${note}` : note
-        }
-      }
+      // open them with its own tools (Read, scripts, etc.). Pasted-by-reference
+      // files (fileRefs) are already on disk — local path or main's own
+      // download — so they join the same note without another save.
+      const saved: Array<{ name: string; path: string }> =
+        files && files.length > 0 ? await saveAttachments(convId, files) : []
+      const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
       await sessions.get(convId)?.send(finalText, images)
     }
   )

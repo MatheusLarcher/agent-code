@@ -8,6 +8,7 @@ import type {
   CacheInfo,
   FileAttachment,
   FileBytes,
+  FileRefAttachment,
   ImageAttachment,
   MentionHit,
   ResolvedPastedRef,
@@ -83,7 +84,8 @@ export interface AgentCodeApi {
     convId: string,
     text: string,
     images?: ImageAttachment[],
-    files?: FileAttachment[]
+    files?: FileAttachment[],
+    fileRefs?: FileRefAttachment[]
   ): Promise<void>
   interrupt(convId: string): Promise<void>
   /** Toggle "allow all" on a conversation's running session. */
