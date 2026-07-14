@@ -1923,6 +1923,15 @@ button svg {
   background: var(--line);
   color: var(--err);
 }
+/* Shown while a pasted path/URL is being stat'd or downloaded; blocks send. */
+.file-resolving {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
 /* Cards inside a sent (accent) bubble: translucent light surface for contrast. */
 .msg-files {
   display: flex;

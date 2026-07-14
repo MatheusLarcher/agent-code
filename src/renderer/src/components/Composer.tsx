@@ -7,11 +7,12 @@ import {
   type KeyboardEvent,
   type RefObject
 } from 'react'
-import type { FileAttachment, ImageAttachment, MentionHit, PickedElement, SkillInfo } from '@shared/ipc'
-import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconShieldCheck, IconStop } from './Icons'
+import type { FileAttachment, FileRefAttachment, ImageAttachment, MentionHit, PickedElement, SkillInfo } from '@shared/ipc'
+import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconShieldCheck, IconSpinner, IconStop } from './Icons'
 import { fileMeta, fmtSize } from '../files'
 import { useUI } from '../ui/UiProvider'
 import { frameRms, newVadState, shouldRotatePreroll, vadStep, type VadState } from '../vad'
+import { looksLikeFileUrl, looksLikeLocalPath } from '@shared/mime'
 
 /** Max size for a single non-image attachment (keeps the IPC payload sane). */
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -29,7 +30,12 @@ interface Props {
   busy: boolean
   chips: PickedElement[]
   onRemoveChip: (i: number) => void
-  onSend: (text: string, images: ImageAttachment[], files: FileAttachment[]) => void
+  onSend: (
+    text: string,
+    images: ImageAttachment[],
+    files: FileAttachment[],
+    fileRefs: FileRefAttachment[]
+  ) => void
   onInterrupt: () => void
   textareaRef: RefObject<HTMLTextAreaElement | null>
   /** Projects from history, offered in the @ reference menu. */
@@ -273,6 +279,12 @@ export function Composer(props: Props): JSX.Element {
 
   const [images, setImages] = useState<ImageAttachment[]>([])
   const [files, setFiles] = useState<FileAttachment[]>([])
+  // Attachments resolved from a pasted local path or URL (never read into
+  // memory by this app — main only stat'd/downloaded them). `resolvingCount`
+  // tracks in-flight resolutions so the composer can block sending until
+  // every pasted line has settled (resolved into a chip, or given up).
+  const [fileRefs, setFileRefs] = useState<FileRefAttachment[]>([])
+  const [resolvingCount, setResolvingCount] = useState(0)
   const refMenu = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -677,14 +689,23 @@ export function Composer(props: Props): JSX.Element {
 
   const submit = (): void => {
     if (props.disabled || blocked) return
-    if (!value.trim() && props.chips.length === 0 && images.length === 0 && files.length === 0) return
-    props.onSend(value, images, files)
+    if (resolvingCount > 0) return // still resolving pasted path(s)/URL(s)
+    if (
+      !value.trim() &&
+      props.chips.length === 0 &&
+      images.length === 0 &&
+      files.length === 0 &&
+      fileRefs.length === 0
+    )
+      return
+    props.onSend(value, images, files, fileRefs)
     updateValue('') // clears the box
     // The message was already sent — flush the now-empty draft explicitly so the
     // stale (pre-send) text doesn't reappear if the user comes back to this chat.
     flushDraft(props.convId, '')
     setImages([])
     setFiles([])
+    setFileRefs([])
     setPicker(null)
     setPickerItems([])
   }
@@ -737,6 +758,36 @@ export function Composer(props: Props): JSX.Element {
     }
   }
 
+  // Resolve one pasted line already known to look like a local path or a file
+  // URL. Images go through `readFileBytes` (same as a blob paste — real
+  // preview + vision block); everything else becomes a `FileRefAttachment`
+  // (path only, no bytes ever cross IPC). Failures notify and are reported to
+  // the caller so the original line can be put back as plain text.
+  const resolvePastedLine = async (line: string): Promise<{ ok: boolean; line: string }> => {
+    const isUrl = looksLikeFileUrl(line)
+    const resolved = isUrl
+      ? await window.api.downloadPastedUrl(line, props.convId ?? '')
+      : await window.api.resolvePastedPath(line)
+    if (!resolved.ok) {
+      notify('erro', `${isUrl ? 'Falha ao baixar' : 'Arquivo não encontrado'}: ${resolved.error}`)
+      return { ok: false, line }
+    }
+    if (resolved.isImage) {
+      const bytes = await window.api.readFileBytes(resolved.path)
+      if (!bytes.ok) {
+        notify('erro', `Falha ao ler imagem: ${bytes.error}`)
+        return { ok: false, line }
+      }
+      setImages((prev) => [...prev, { mediaType: resolved.mediaType, data: bytes.base64 }])
+    } else {
+      setFileRefs((prev) => [
+        ...prev,
+        { name: resolved.name, path: resolved.path, mediaType: resolved.mediaType, size: resolved.size }
+      ])
+    }
+    return { ok: true, line }
+  }
+
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
     if (blocked) {
       onBlocked(e)
@@ -749,7 +800,42 @@ export function Composer(props: Props): JSX.Element {
     if (pasted.length) {
       e.preventDefault()
       void addFiles(pasted)
+      return
     }
+
+    // No real file in the clipboard — check if the pasted TEXT is one or more
+    // lines that look like a local path or a file URL. Only intercept the
+    // paste (preventDefault) when at least one line qualifies; a normal
+    // paragraph paste is untouched.
+    const text = e.clipboardData.getData('text/plain')
+    const lines = text.split(/\r\n|\r|\n/)
+    const candidates = lines.filter((l) => l.trim() && (looksLikeLocalPath(l) || looksLikeFileUrl(l)))
+    if (candidates.length === 0) return
+
+    e.preventDefault()
+    const remaining = lines.filter((l) => !candidates.includes(l))
+    // Insert whatever text ISN'T a recognized path/URL at the caret, same as a
+    // normal paste would — the recognized lines are consumed into attachments.
+    const ta = props.textareaRef.current
+    const leftover = remaining.join('\n')
+    if (leftover) {
+      const start = ta?.selectionStart ?? value.length
+      const end = ta?.selectionEnd ?? value.length
+      updateValue(value.slice(0, start) + leftover + value.slice(end))
+    }
+
+    setResolvingCount((n) => n + candidates.length)
+    void Promise.all(candidates.map((line) => resolvePastedLine(line))).then((results) => {
+      setResolvingCount((n) => n - results.length)
+      // Lines that failed to resolve go back into the box as plain text so
+      // nothing pasted is silently dropped. Reads valueRef (not `value`) since
+      // this runs after the paste event closure is long gone.
+      const failedLines = results.filter((r) => !r.ok).map((r) => r.line)
+      if (failedLines.length) {
+        const cur = valueRef.current
+        updateValue(`${cur}${cur ? '\n' : ''}${failedLines.join('\n')}`)
+      }
+    })
   }
 
   const onDrop = (e: DragEvent<HTMLDivElement>): void => {
@@ -973,6 +1059,35 @@ export function Composer(props: Props): JSX.Element {
           })}
         </div>
       )}
+      {fileRefs.length > 0 && (
+        <div className="file-chips">
+          {fileRefs.map((f, i) => {
+            const meta = fileMeta(f.name)
+            return (
+              <span className="file-chip" key={i} title={`${f.name} · ${fmtSize(f.size)} · ${f.path}`}>
+                <span className={`file-badge kind-${meta.kind}`}>{meta.ext}</span>
+                <span className="file-chip-info">
+                  <span className="file-chip-name">{f.name}</span>
+                  {f.size > 0 && <span className="file-chip-size">{fmtSize(f.size)}</span>}
+                </span>
+                <button
+                  className="file-x"
+                  title="Remover"
+                  onClick={() => setFileRefs((prev) => prev.filter((_, idx) => idx !== i))}
+                >
+                  <IconClose size={12} />
+                </button>
+              </span>
+            )
+          })}
+        </div>
+      )}
+      {resolvingCount > 0 && (
+        <div className="file-resolving" role="status" aria-live="polite">
+          <IconSpinner size={13} />
+          Resolvendo {resolvingCount} arquivo{resolvingCount > 1 ? 's' : ''}…
+        </div>
+      )}
       <input
         ref={fileInput}
         type="file"
@@ -1159,7 +1274,7 @@ export function Composer(props: Props): JSX.Element {
         )}
         <button
           className="ref-btn"
-          onClick={() => props.onSend('/code-review', [], [])}
+          onClick={() => props.onSend('/code-review', [], [], [])}
           disabled={props.disabled || blocked}
           title="Revisar código (chama a skill code-review)"
         >
@@ -1168,8 +1283,8 @@ export function Composer(props: Props): JSX.Element {
         <button
           className="btn send"
           onClick={submit}
-          disabled={props.disabled || blocked}
-          title={props.busy ? 'Adicionar à fila' : 'Enviar'}
+          disabled={props.disabled || blocked || resolvingCount > 0}
+          title={resolvingCount > 0 ? 'Aguardando resolver anexo(s)…' : props.busy ? 'Adicionar à fila' : 'Enviar'}
         >
           <IconArrowUp />
         </button>

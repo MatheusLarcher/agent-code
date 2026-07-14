@@ -202,3 +202,11 @@ export const IconShieldCheck = (p: IconProps): JSX.Element => (
     <polyline points="9 12 11 14 15 10" />
   </Svg>
 )
+
+/** Windows-style spinning ring (apply the `.spinner` CSS class for the animation). */
+export const IconSpinner = ({ size = 14, ...rest }: IconProps): JSX.Element => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...rest}>
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2.4" />
+    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+  </svg>
+)

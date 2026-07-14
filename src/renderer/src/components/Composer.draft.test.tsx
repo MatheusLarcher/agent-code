@@ -1,14 +1,19 @@
 import { createRef } from 'react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
-import type { ImageAttachment, FileAttachment } from '@shared/ipc'
+import type { FileAttachment, FileRefAttachment, ImageAttachment } from '@shared/ipc'
 import { UiProvider } from '../ui/UiProvider'
 import { Composer } from './Composer'
 
 afterEach(cleanup)
 
 type DraftChangeFn = (convId: string, text: string) => void
-type SendFn = (text: string, images: ImageAttachment[], files: FileAttachment[]) => void
+type SendFn = (
+  text: string,
+  images: ImageAttachment[],
+  files: FileAttachment[],
+  fileRefs: FileRefAttachment[]
+) => void
 
 function renderComposer(props: { convId?: string | null; draft?: string } = {}): {
   onDraftChange: ReturnType<typeof vi.fn<DraftChangeFn>>
@@ -90,7 +95,7 @@ describe('Composer — rascunho só salva ao perder o foco (não a cada tecla)',
     const { onDraftChange, onSend } = renderComposer({ convId: 'c1' })
     fireEvent.change(textarea(), { target: { value: 'mensagem pronta' } })
     fireEvent.keyDown(textarea(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('mensagem pronta', [], [])
+    expect(onSend).toHaveBeenCalledWith('mensagem pronta', [], [], [])
     expect(textarea().value).toBe('')
     expect(onDraftChange).toHaveBeenCalledWith('c1', '')
   })
