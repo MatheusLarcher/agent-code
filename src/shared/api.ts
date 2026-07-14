@@ -10,6 +10,7 @@ import type {
   FileBytes,
   ImageAttachment,
   MentionHit,
+  ResolvedPastedRef,
   SkillInfo,
   PermissionExpiredMsg,
   PermissionRequestMsg,
@@ -49,6 +50,10 @@ export interface AgentCodeApi {
   readFile(path: string): Promise<string>
   /** Read a local file as base64 bytes — for binary previews (PDF, images, xlsx…). */
   readFileBytes(path: string): Promise<FileBytes>
+  /** Resolve a composer-pasted line as a local file path (stat only, no bytes read). */
+  resolvePastedPath(path: string): Promise<ResolvedPastedRef>
+  /** Download a composer-pasted http(s) file URL to disk (streamed, no bytes over IPC). */
+  downloadPastedUrl(url: string, convId: string): Promise<ResolvedPastedRef>
   /** Read the active cache folder (SQLite db + .md memories location). */
   getCacheInfo(): Promise<CacheInfo>
   /** Pick a new cache folder and switch to it; resolves null if the dialog was canceled. */

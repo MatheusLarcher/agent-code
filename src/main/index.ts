@@ -21,7 +21,7 @@ import { isAuthenticated } from './auth'
 import { runClaudeLogin } from './login'
 import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
-import { saveAttachments } from './attachments'
+import { saveAttachments, resolvePastedPath, downloadPastedUrl } from './attachments'
 import type {
   AppConfig,
   BrowserInput,
@@ -29,6 +29,7 @@ import type {
   FileBytes,
   ImageAttachment,
   MentionHit,
+  ResolvedPastedRef,
   SkillInfo,
   PermissionResponse,
   RemoteStatePayload,
@@ -531,6 +532,21 @@ function registerIpc(): void {
       return { ok: false, error: `Erro ao ler arquivo: ${String(err)}` }
     }
   })
+
+  // Composer: a pasted line that looks like a local path — stat only, no
+  // bytes read, so the agent opens the ORIGINAL path with its own tools.
+  ipcMain.handle(Channels.resolvePastedPath, async (_e, rawPath: string): Promise<ResolvedPastedRef> => {
+    return resolvePastedPath(rawPath)
+  })
+
+  // Composer: a pasted line that looks like a file URL — download it to disk
+  // (streaming) and hand back the saved path, never the bytes.
+  ipcMain.handle(
+    Channels.downloadPastedUrl,
+    async (_e, url: string, convId: string): Promise<ResolvedPastedRef> => {
+      return downloadPastedUrl(url, convId)
+    }
+  )
 
   ipcMain.handle(Channels.agentStart, async (_e, opts: StartAgentOptions) => {
     const { convId } = opts

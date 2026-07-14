@@ -13,6 +13,7 @@ import type {
   FileBytes,
   ImageAttachment,
   MentionHit,
+  ResolvedPastedRef,
   SkillInfo,
   PermissionExpiredMsg,
   PermissionRequestMsg,
@@ -54,6 +55,10 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.fileDownload, path),
   readFile: (path: string): Promise<string> => ipcRenderer.invoke(Channels.fileRead, path),
   readFileBytes: (path: string): Promise<FileBytes> => ipcRenderer.invoke(Channels.fileReadBytes, path),
+  resolvePastedPath: (path: string): Promise<ResolvedPastedRef> =>
+    ipcRenderer.invoke(Channels.resolvePastedPath, path),
+  downloadPastedUrl: (url: string, convId: string): Promise<ResolvedPastedRef> =>
+    ipcRenderer.invoke(Channels.downloadPastedUrl, url, convId),
   getCacheInfo: (): Promise<CacheInfo> => ipcRenderer.invoke(Channels.cacheGetInfo),
   chooseCacheDir: (): Promise<CacheInfo | null> => ipcRenderer.invoke(Channels.cacheChooseDir),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
