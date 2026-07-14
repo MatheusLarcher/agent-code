@@ -70,6 +70,29 @@ export interface FileAttachment {
   size: number
 }
 
+/**
+ * A non-image file attached BY REFERENCE — pasted as a local path or a URL,
+ * never read into memory by the app. `path` is either the user's original
+ * path (local) or where main streamed a downloaded URL to. Only the path is
+ * sent to the agent; the bytes never cross the renderer/IPC boundary, so this
+ * has no size cap (unlike `FileAttachment`).
+ */
+export interface FileRefAttachment {
+  /** Display name, e.g. "relatorio.pdf". */
+  name: string
+  /** Absolute path already on disk (local file, or main's download target). */
+  path: string
+  /** MIME type (best-effort, from the extension). */
+  mediaType: string
+  /** Size in bytes (for the chip label). */
+  size: number
+}
+
+/** Result of resolving a pasted local path or downloading a pasted URL. */
+export type ResolvedPastedRef =
+  | { ok: true; name: string; path: string; mediaType: string; size: number; isImage: boolean }
+  | { ok: false; error: string }
+
 /** One hit in the "@" autocomplete: a file or folder under the project. */
 export interface MentionHit {
   /** Path relative to the project root, with forward slashes (e.g. "src/main/index.ts"). */
@@ -615,6 +638,10 @@ export const Channels = {
   fileRead: 'app:file-read',
   /** Read a local file as base64 bytes (for binary previews: PDF, images, xlsx…). */
   fileReadBytes: 'app:file-read-bytes',
+  /** Resolve a pasted line as a local file path (stat only, no bytes read). */
+  resolvePastedPath: 'app:resolve-pasted-path',
+  /** Download a pasted http(s) file URL to disk, streaming (no bytes over IPC). */
+  downloadPastedUrl: 'app:download-pasted-url',
   browserLaunch: 'browser:launch',
   browserNavigate: 'browser:navigate',
   browserBack: 'browser:back',
