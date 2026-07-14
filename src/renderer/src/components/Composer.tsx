@@ -762,7 +762,15 @@ export function Composer(props: Props): JSX.Element {
   // size check). Reuses `resolvePastedPath` (stat only, no bytes) — mirrors
   // `resolvePastedLine` below, including the same anti-leak guard.
   const resolveLargeFile = async (file: File, pastedConvId: string | null): Promise<void> => {
-    const path = window.api.getPathForFile(file)
+    // getPathForFile throws (per Electron's own docs) if `file` isn't a real
+    // File — treat that the same as "no path" instead of letting the
+    // rejection skip addFiles' resolvingCount decrement and wedge send.
+    let path: string
+    try {
+      path = window.api.getPathForFile(file)
+    } catch {
+      path = ''
+    }
     if (!path) {
       applyIfStillActive(pastedConvId, () =>
         notify('erro', `Arquivo maior que 25 MB precisa ter um caminho no disco: ${file.name}`)

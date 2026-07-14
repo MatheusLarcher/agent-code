@@ -208,6 +208,26 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     expect(screen.queryByText('sem-path.bin')).toBeNull()
   })
 
+  it('getPathForFile lançando exceção não trava resolvingCount (envio continua liberado)', async () => {
+    // webUtils.getPathForFile documenta que lança se o argumento não for um
+    // File de verdade — confirma que isso é tratado como "sem caminho" em vez
+    // de rejeitar a Promise e pular o decremento de resolvingCount.
+    ;(window as unknown as { api: unknown }).api = {
+      getPathForFile: vi.fn(() => {
+        throw new Error('not a File')
+      }),
+      resolvePastedPath: vi.fn(),
+      readFileBytes: vi.fn()
+    }
+    renderComposer({ convId: 'c1' })
+    pasteFile(bigFile('estranho.bin', 30_000_000))
+    expect(await screen.findByText(/precisa ter um caminho no disco/)).toBeTruthy()
+    // resolvingCount voltou a 0 — o envio não fica travado pra sempre.
+    expect(screen.queryByText(/Resolvendo/)).toBeNull()
+    const sendBtn = document.querySelector('button.btn.send') as HTMLButtonElement
+    expect(sendBtn.disabled).toBe(false)
+  })
+
   it('imagem >25MB e ≤50MB com caminho vira preview real (não chip)', async () => {
     stubApi({
       path: 'C:\\fotos\\grande.png',
