@@ -741,13 +741,67 @@ export function Composer(props: Props): JSX.Element {
     }
   }
 
-  // Collect attachments (from the picker, paste, or drag-drop). Images go to the
-  // native vision path (base64 image blocks); every other file type becomes a
-  // chip and is saved to disk by main so the agent can open it by path.
+  // The Composer isn't remounted per conversation (only MessageList is), so a
+  // slow resolution (a URL download, or stat'ing/reading a huge local file)
+  // must not land its result on whatever conversation happens to be open when
+  // it finishes. Callers capture `convIdRef.current` as `pastedConvId` right
+  // before starting an async resolution, then run every resulting state
+  // update through this guard — a conversation switch mid-resolution silently
+  // drops the result instead of attaching it to the wrong chat.
+  const applyIfStillActive = (pastedConvId: string | null, fn: () => void): void => {
+    if (convIdRef.current === pastedConvId) fn()
+  }
+
+  // Same size cap `readFileBytes` enforces in main — checked here BEFORE
+  // calling it so a huge image never gets read into memory just to be
+  // rejected; it falls back to a plain chip instead of a preview.
+  const MAX_IMAGE_PREVIEW_BYTES = 50 * 1024 * 1024
+
+  // Resolve a File that has a real path on disk (via webUtils.getPathForFile)
+  // but is too large for the base64/FileReader path (addFiles' `others`/`imgs`
+  // size check). Reuses `resolvePastedPath` (stat only, no bytes) — mirrors
+  // `resolvePastedLine` below, including the same anti-leak guard.
+  const resolveLargeFile = async (file: File, pastedConvId: string | null): Promise<void> => {
+    const path = window.api.getPathForFile(file)
+    if (!path) {
+      applyIfStillActive(pastedConvId, () =>
+        notify('erro', `Arquivo maior que 25 MB precisa ter um caminho no disco: ${file.name}`)
+      )
+      return
+    }
+    const resolved = await window.api.resolvePastedPath(path)
+    if (!resolved.ok) {
+      applyIfStillActive(pastedConvId, () => notify('erro', `Arquivo não encontrado: ${resolved.error}`))
+      return
+    }
+    if (resolved.isImage && resolved.size <= MAX_IMAGE_PREVIEW_BYTES) {
+      const bytes = await window.api.readFileBytes(resolved.path)
+      if (!bytes.ok) {
+        applyIfStillActive(pastedConvId, () => notify('erro', `Falha ao ler imagem: ${bytes.error}`))
+        return
+      }
+      applyIfStillActive(pastedConvId, () =>
+        setImages((prev) => [...prev, { mediaType: resolved.mediaType, data: bytes.base64 }])
+      )
+      return
+    }
+    applyIfStillActive(pastedConvId, () =>
+      setFileRefs((prev) => [
+        ...prev,
+        { name: resolved.name, path: resolved.path, mediaType: resolved.mediaType, size: resolved.size }
+      ])
+    )
+  }
+
+  // Collect attachments (from the picker, paste, or drag-drop). Small files
+  // (≤MAX_FILE_BYTES) go through FileReader → base64, same as always. Larger
+  // ones are resolved by real disk path instead (resolveLargeFile) — no size
+  // cap, since the bytes never cross IPC.
   const addFiles = async (list: FileList | File[]): Promise<void> => {
     const arr = [...list]
-    const imgs = arr.filter((f) => f.type.startsWith('image/'))
+    const imgs = arr.filter((f) => f.type.startsWith('image/') && f.size <= MAX_FILE_BYTES)
     const others = arr.filter((f) => !f.type.startsWith('image/') && f.size <= MAX_FILE_BYTES)
+    const large = arr.filter((f) => f.size > MAX_FILE_BYTES)
     if (imgs.length) {
       const attached = await Promise.all(imgs.map(fileToAttachment))
       setImages((prev) => [...prev, ...attached])
@@ -756,6 +810,12 @@ export function Composer(props: Props): JSX.Element {
       const attached = await Promise.all(others.map(fileToFileAttachment))
       setFiles((prev) => [...prev, ...attached])
     }
+    if (large.length) {
+      const pastedConvId = convIdRef.current
+      setResolvingCount((n) => n + large.length)
+      await Promise.all(large.map((f) => resolveLargeFile(f, pastedConvId)))
+      setResolvingCount((n) => n - large.length)
+    }
   }
 
   // Resolve one pasted line already known to look like a local path or a file
@@ -763,38 +823,33 @@ export function Composer(props: Props): JSX.Element {
   // preview + vision block); everything else becomes a `FileRefAttachment`
   // (path only, no bytes ever cross IPC). Failures notify and are reported to
   // the caller so the original line can be put back as plain text.
-  //
-  // The Composer isn't remounted per conversation (only MessageList is), so a
-  // slow resolution (a URL download can take seconds) must not land its
-  // result on whatever conversation happens to be open when it finishes —
-  // `pastedConvId` is checked against the live `convIdRef` right before each
-  // state update, so a conversation switch mid-resolution silently drops the
-  // result instead of attaching it to the wrong chat.
   const resolvePastedLine = async (line: string, pastedConvId: string | null): Promise<{ ok: boolean; line: string }> => {
     const isUrl = looksLikeFileUrl(line)
     const resolved = isUrl
       ? await window.api.downloadPastedUrl(line, props.convId ?? '')
       : await window.api.resolvePastedPath(line)
     if (!resolved.ok) {
-      if (convIdRef.current === pastedConvId) {
+      applyIfStillActive(pastedConvId, () =>
         notify('erro', `${isUrl ? 'Falha ao baixar' : 'Arquivo não encontrado'}: ${resolved.error}`)
-      }
+      )
       return { ok: false, line }
     }
     if (resolved.isImage) {
       const bytes = await window.api.readFileBytes(resolved.path)
       if (!bytes.ok) {
-        if (convIdRef.current === pastedConvId) notify('erro', `Falha ao ler imagem: ${bytes.error}`)
+        applyIfStillActive(pastedConvId, () => notify('erro', `Falha ao ler imagem: ${bytes.error}`))
         return { ok: false, line }
       }
-      if (convIdRef.current === pastedConvId) {
+      applyIfStillActive(pastedConvId, () =>
         setImages((prev) => [...prev, { mediaType: resolved.mediaType, data: bytes.base64 }])
-      }
-    } else if (convIdRef.current === pastedConvId) {
-      setFileRefs((prev) => [
-        ...prev,
-        { name: resolved.name, path: resolved.path, mediaType: resolved.mediaType, size: resolved.size }
-      ])
+      )
+    } else {
+      applyIfStillActive(pastedConvId, () =>
+        setFileRefs((prev) => [
+          ...prev,
+          { name: resolved.name, path: resolved.path, mediaType: resolved.mediaType, size: resolved.size }
+        ])
+      )
     }
     return { ok: true, line }
   }
