@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Conversation } from '../types'
 import { useUI } from '../ui/UiProvider'
+import { IconSpinner } from './Icons'
 
 export interface SidebarProject {
   path: string
@@ -63,14 +64,6 @@ const IconTrash = (): JSX.Element => (
     <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
   </svg>
 )
-/** Windows-style spinning ring; shown on a project/conversation while it's busy. */
-const Spinner = ({ size = 14 }: { size?: number }): JSX.Element => (
-  <svg className="spinner" width={size} height={size} viewBox="0 0 24 24" fill="none">
-    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2.4" />
-    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
-  </svg>
-)
-
 /* ---- prompt search helpers ---- */
 
 /** Lowercase + strip accents so "selênio" matches "selenio" (accent-insensitive). */
@@ -129,7 +122,7 @@ function SearchResultRow({ c, snippet, active, busy, onOpen }: SearchResultRowPr
       onClick={onOpen}
       title={c.title}
     >
-      <span className="conv-ico">{busy ? <Spinner /> : <IconChat />}</span>
+      <span className="conv-ico">{busy ? <IconSpinner className="spinner" /> : <IconChat />}</span>
       <div className="search-result-text">
         <span className="conv-title">{c.title}</span>
         <span className="search-snippet">{snippet}</span>
@@ -185,7 +178,7 @@ function ConvRow({
       title={editing ? undefined : `${c.title} — duplo-clique para renomear`}
     >
       <span className="conv-ico">
-        {busy ? <Spinner /> : <IconChat />}
+        {busy ? <IconSpinner className="spinner" /> : <IconChat />}
       </span>
       {editing ? (
         <input
@@ -401,7 +394,7 @@ export function Sidebar(props: Props): JSX.Element {
                     <button className="project-row-main" onClick={() => toggleProject(p.path)} title={p.path}>
                       <IconChevron open={open} />
                       <span className="project-folder">
-                        {busy ? <Spinner size={15} /> : <IconFolder />}
+                        {busy ? <IconSpinner className="spinner" size={15} /> : <IconFolder />}
                       </span>
                       <span className="project-name">{p.name}</span>
                       <span className="project-count">{p.conversations.length}</span>

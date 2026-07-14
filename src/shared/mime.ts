@@ -2,14 +2,21 @@
 // is) and main (resolving/downloading it). Single source of truth so the two
 // sides can't disagree on what counts as a "file".
 
-const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
-const DOC_EXTS = ['pdf', 'doc', 'docx', 'odt', 'rtf', 'xls', 'xlsx', 'csv', 'ods', 'ppt', 'pptx', 'odp']
-const TEXT_EXTS = ['txt', 'md', 'log']
-const ARCHIVE_EXTS = ['zip', 'rar', '7z', 'tar', 'gz']
-const CODE_EXTS = [
+// Granular per-category groups — the single source of truth for "which
+// extensions count as X", shared by paste-detection (this file) AND the
+// composer's chip badge coloring (src/renderer/src/files.ts).
+export const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
+export const PDF_EXTS = ['pdf']
+export const WORD_EXTS = ['doc', 'docx', 'odt', 'rtf']
+export const EXCEL_EXTS = ['xls', 'xlsx', 'csv', 'ods']
+export const PPT_EXTS = ['ppt', 'pptx', 'odp']
+export const TEXT_EXTS = ['txt', 'md', 'log']
+export const ARCHIVE_EXTS = ['zip', 'rar', '7z', 'tar', 'gz']
+export const CODE_EXTS = [
   'js', 'ts', 'tsx', 'jsx', 'json', 'py', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'rb', 'php',
   'html', 'css', 'xml', 'yml', 'yaml', 'sh'
 ]
+const DOC_EXTS = [...PDF_EXTS, ...WORD_EXTS, ...EXCEL_EXTS, ...PPT_EXTS]
 
 /** Every extension (no dot, lowercase) recognized as "this is a file", for
  *  paste-detection purposes. */

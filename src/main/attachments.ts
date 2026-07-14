@@ -24,6 +24,15 @@ function userDataDir(): string {
 const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 const DOWNLOAD_TIMEOUT_MS = 60_000
 
+// `Date.now()` alone has 1ms resolution — two attachments resolved in the
+// same tick (e.g. pasting two URLs with the same file name, resolved via
+// Promise.all) could collide on the same target path and write to the same
+// file concurrently. This counter guarantees a unique suffix per process.
+let attachmentSeq = 0
+function uniquePrefix(): string {
+  return `${Date.now()}-${++attachmentSeq}`
+}
+
 /**
  * Compose the "arquivos anexados" note appended to the user's text, from
  * whatever got saved to disk (blob attachments + pasted-by-reference paths).
@@ -55,7 +64,7 @@ export async function saveAttachments(
   for (const f of files) {
     try {
       const name = safeName(f.name)
-      const target = join(dir, `${Date.now()}-${name}`)
+      const target = join(dir, `${uniquePrefix()}-${name}`)
       await writeFile(target, Buffer.from(f.data, 'base64'))
       out.push({ name, path: target })
     } catch {
@@ -103,7 +112,7 @@ export async function downloadPastedUrl(url: string, convId: string): Promise<Re
   const name = safeName(decodeURIComponent(parsed.pathname.split('/').pop() || 'arquivo'))
   const dir = join(userDataDir(), 'attachments', safeName(convId))
   await mkdir(dir, { recursive: true })
-  const target = join(dir, `${Date.now()}-${name}`)
+  const target = join(dir, `${uniquePrefix()}-${name}`)
 
   // Best-effort cleanup of a partial download (size cap hit, timeout, or
   // stream error) — the caller only ever gets a fully-written file or none.

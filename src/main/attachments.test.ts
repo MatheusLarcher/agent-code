@@ -96,6 +96,12 @@ describe('downloadPastedUrl — link http(s) colado como texto', () => {
         res.writeHead(200, { 'Content-Type': 'application/pdf' })
         res.write('metade dos dados')
         res.socket?.destroy()
+      } else if (req.url === '/a/relatorio.pdf') {
+        res.writeHead(200, { 'Content-Type': 'application/pdf' })
+        res.end('conteudo do site A')
+      } else if (req.url === '/b/relatorio.pdf') {
+        res.writeHead(200, { 'Content-Type': 'application/pdf' })
+        res.end('conteudo do site B, bem diferente do A')
       } else {
         res.writeHead(404)
         res.end()
@@ -120,6 +126,22 @@ describe('downloadPastedUrl — link http(s) colado como texto', () => {
     expect(r.isImage).toBe(false)
     expect(existsSync(r.path)).toBe(true)
     expect(readFileSync(r.path, 'utf8')).toBe(smallBody)
+  })
+
+  it('duas URLs com o mesmo nome-base resolvidas em paralelo não colidem no mesmo arquivo', async () => {
+    // Same base name ("relatorio.pdf"), same conv — before the unique-suffix
+    // fix, Date.now() alone (1ms resolution) could give both the same target
+    // path, and the second createWriteStream would corrupt the first's data.
+    const [a, b] = await Promise.all([
+      downloadPastedUrl(`${base}/a/relatorio.pdf`, 'conv-colisao'),
+      downloadPastedUrl(`${base}/b/relatorio.pdf`, 'conv-colisao')
+    ])
+    expect(a.ok).toBe(true)
+    expect(b.ok).toBe(true)
+    if (!a.ok || !b.ok) return
+    expect(a.path).not.toBe(b.path)
+    expect(readFileSync(a.path, 'utf8')).toBe('conteudo do site A')
+    expect(readFileSync(b.path, 'utf8')).toBe('conteudo do site B, bem diferente do A')
   })
 
   it('rejeita quando o Content-Length declarado passa do teto de 200 MB', async () => {

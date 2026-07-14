@@ -763,23 +763,34 @@ export function Composer(props: Props): JSX.Element {
   // preview + vision block); everything else becomes a `FileRefAttachment`
   // (path only, no bytes ever cross IPC). Failures notify and are reported to
   // the caller so the original line can be put back as plain text.
-  const resolvePastedLine = async (line: string): Promise<{ ok: boolean; line: string }> => {
+  //
+  // The Composer isn't remounted per conversation (only MessageList is), so a
+  // slow resolution (a URL download can take seconds) must not land its
+  // result on whatever conversation happens to be open when it finishes —
+  // `pastedConvId` is checked against the live `convIdRef` right before each
+  // state update, so a conversation switch mid-resolution silently drops the
+  // result instead of attaching it to the wrong chat.
+  const resolvePastedLine = async (line: string, pastedConvId: string | null): Promise<{ ok: boolean; line: string }> => {
     const isUrl = looksLikeFileUrl(line)
     const resolved = isUrl
       ? await window.api.downloadPastedUrl(line, props.convId ?? '')
       : await window.api.resolvePastedPath(line)
     if (!resolved.ok) {
-      notify('erro', `${isUrl ? 'Falha ao baixar' : 'Arquivo não encontrado'}: ${resolved.error}`)
+      if (convIdRef.current === pastedConvId) {
+        notify('erro', `${isUrl ? 'Falha ao baixar' : 'Arquivo não encontrado'}: ${resolved.error}`)
+      }
       return { ok: false, line }
     }
     if (resolved.isImage) {
       const bytes = await window.api.readFileBytes(resolved.path)
       if (!bytes.ok) {
-        notify('erro', `Falha ao ler imagem: ${bytes.error}`)
+        if (convIdRef.current === pastedConvId) notify('erro', `Falha ao ler imagem: ${bytes.error}`)
         return { ok: false, line }
       }
-      setImages((prev) => [...prev, { mediaType: resolved.mediaType, data: bytes.base64 }])
-    } else {
+      if (convIdRef.current === pastedConvId) {
+        setImages((prev) => [...prev, { mediaType: resolved.mediaType, data: bytes.base64 }])
+      }
+    } else if (convIdRef.current === pastedConvId) {
       setFileRefs((prev) => [
         ...prev,
         { name: resolved.name, path: resolved.path, mediaType: resolved.mediaType, size: resolved.size }
@@ -824,9 +835,11 @@ export function Composer(props: Props): JSX.Element {
       updateValue(value.slice(0, start) + leftover + value.slice(end))
     }
 
+    const pastedConvId = convIdRef.current
     setResolvingCount((n) => n + candidates.length)
-    void Promise.all(candidates.map((line) => resolvePastedLine(line))).then((results) => {
+    void Promise.all(candidates.map((line) => resolvePastedLine(line, pastedConvId))).then((results) => {
       setResolvingCount((n) => n - results.length)
+      if (convIdRef.current !== pastedConvId) return // switched conversations mid-resolution
       // Lines that failed to resolve go back into the box as plain text so
       // nothing pasted is silently dropped. Reads valueRef (not `value`) since
       // this runs after the paste event closure is long gone.
@@ -1084,7 +1097,7 @@ export function Composer(props: Props): JSX.Element {
       )}
       {resolvingCount > 0 && (
         <div className="file-resolving" role="status" aria-live="polite">
-          <IconSpinner size={13} />
+          <IconSpinner className="spinner" size={13} />
           Resolvendo {resolvingCount} arquivo{resolvingCount > 1 ? 's' : ''}…
         </div>
       )}

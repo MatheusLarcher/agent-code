@@ -1,4 +1,5 @@
 /** Display helpers for non-image file attachments (chip icon + size). */
+import { ARCHIVE_EXTS, CODE_EXTS, EXCEL_EXTS, PDF_EXTS, PPT_EXTS, TEXT_EXTS, WORD_EXTS } from '@shared/mime'
 
 /** A file's short type label + a kind used to color its badge. */
 export interface FileMeta {
@@ -11,13 +12,13 @@ export interface FileMeta {
 export function fileMeta(name: string): FileMeta {
   const e = (name.split('.').pop() || '').toLowerCase()
   const kind: FileMeta['kind'] =
-    e === 'pdf' ? 'pdf'
-    : ['doc', 'docx', 'odt', 'rtf'].includes(e) ? 'doc'
-    : ['xls', 'xlsx', 'csv', 'ods'].includes(e) ? 'xls'
-    : ['ppt', 'pptx', 'odp'].includes(e) ? 'ppt'
-    : ['txt', 'md', 'log'].includes(e) ? 'txt'
-    : ['zip', 'rar', '7z', 'tar', 'gz'].includes(e) ? 'zip'
-    : ['js', 'ts', 'tsx', 'jsx', 'json', 'py', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'rb', 'php', 'html', 'css', 'xml', 'yml', 'yaml', 'sh'].includes(e) ? 'code'
+    PDF_EXTS.includes(e) ? 'pdf'
+    : WORD_EXTS.includes(e) ? 'doc'
+    : EXCEL_EXTS.includes(e) ? 'xls'
+    : PPT_EXTS.includes(e) ? 'ppt'
+    : TEXT_EXTS.includes(e) ? 'txt'
+    : ARCHIVE_EXTS.includes(e) ? 'zip'
+    : CODE_EXTS.includes(e) ? 'code'
     : 'file'
   return { ext: e ? e.toUpperCase().slice(0, 4) : 'FILE', kind }
 }

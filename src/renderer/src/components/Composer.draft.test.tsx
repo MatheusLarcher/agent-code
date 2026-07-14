@@ -108,3 +108,50 @@ describe('Composer — rascunho só salva ao perder o foco (não a cada tecla)',
     expect(onDraftChange).toHaveBeenCalledWith('c1', 'digitando e troquei de janela')
   })
 })
+
+describe('Composer — anexo por caminho/link colado não vaza entre conversas', () => {
+  // window.api is only wired up by preload in the real app; these tests stub
+  // just what Composer calls during a paste resolution.
+  function stubApi(resolveDelayMs: number): void {
+    ;(window as unknown as { api: unknown }).api = {
+      resolvePastedPath: vi.fn(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  ok: true,
+                  name: 'arquivo.txt',
+                  path: 'C:\\pasta\\arquivo.txt',
+                  mediaType: 'text/plain',
+                  size: 10,
+                  isImage: false
+                }),
+              resolveDelayMs
+            )
+          )
+      )
+    }
+  }
+
+  function paste(line: string): void {
+    const clipboardData = {
+      items: [] as { kind: string }[],
+      getData: (type: string) => (type === 'text/plain' ? line : '')
+    }
+    fireEvent.paste(textarea(), { clipboardData })
+  }
+
+  it('resolução que termina DEPOIS de trocar de conversa não aparece na conversa nova', async () => {
+    stubApi(50) // resolve depois do próximo microtask/tick, dando tempo de trocar de conversa
+    const { rerender } = renderComposer({ convId: 'c1' })
+    paste('C:\\pasta\\arquivo.txt')
+    expect(await screen.findByText(/Resolvendo/)).toBeTruthy()
+
+    // Troca pra c2 ANTES da Promise de resolvePastedPath terminar.
+    rerender('c2', '')
+
+    await new Promise((r) => setTimeout(r, 80)) // espera a resolução (tardia) terminar
+    expect(screen.queryByText('arquivo.txt')).toBeNull() // não vazou pra c2
+  })
+})
