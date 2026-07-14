@@ -55,6 +55,9 @@ export interface AgentCodeApi {
   resolvePastedPath(path: string): Promise<ResolvedPastedRef>
   /** Download a composer-pasted http(s) file URL to disk (streamed, no bytes over IPC). */
   downloadPastedUrl(url: string, convId: string): Promise<ResolvedPastedRef>
+  /** Absolute path a pasted/dropped `File` points to, or '' if it has no real
+   *  file on disk (e.g. a blob built in JS). Synchronous (runs in preload). */
+  getPathForFile(file: File): string
   /** Read the active cache folder (SQLite db + .md memories location). */
   getCacheInfo(): Promise<CacheInfo>
   /** Pick a new cache folder and switch to it; resolves null if the dialog was canceled. */

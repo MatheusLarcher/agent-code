@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { Channels } from '../shared/ipc'
 import type { AgentCodeApi } from '../shared/api'
 import type {
@@ -60,6 +60,10 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.resolvePastedPath, path),
   downloadPastedUrl: (url: string, convId: string): Promise<ResolvedPastedRef> =>
     ipcRenderer.invoke(Channels.downloadPastedUrl, url, convId),
+  // Synchronous — webUtils runs directly in the preload process, no IPC round
+  // trip. Returns '' if the File wasn't constructed from a real path on disk
+  // (e.g. a blob built in JS, or a screenshot never saved anywhere).
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   getCacheInfo: (): Promise<CacheInfo> => ipcRenderer.invoke(Channels.cacheGetInfo),
   chooseCacheDir: (): Promise<CacheInfo | null> => ipcRenderer.invoke(Channels.cacheChooseDir),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
