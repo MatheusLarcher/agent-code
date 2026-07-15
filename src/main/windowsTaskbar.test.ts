@@ -4,7 +4,8 @@ import { hideChromeWindowFromTaskbar } from './windowsTaskbar'
 
 const isWindows = process.platform === 'win32'
 
-/** Read back GWL_EXSTYLE for the (single, real) top-level window of `pid`. */
+/** Read back GWL_EXSTYLE for the (single, real) top-level window of `pid` — `null`
+ *  when no such window exists yet (NOT the same as a style value of 0). */
 function readExStyle(pid: number): Promise<number | null> {
   const script = `
 Add-Type @"
@@ -20,27 +21,44 @@ public class AgentCodeWin32Test {
 }
 "@
 $targetPid = ${pid}
-$result = -1
+$found = $false
+$result = 0
 [AgentCodeWin32Test]::EnumWindows({
   param($hWnd, $lparam)
   $procId = 0
   [AgentCodeWin32Test]::GetWindowThreadProcessId($hWnd, [ref]$procId) | Out-Null
   if ($procId -eq $targetPid -and [AgentCodeWin32Test]::IsWindowVisible($hWnd) -and [AgentCodeWin32Test]::GetParent($hWnd) -eq [IntPtr]::Zero) {
+    $script:found = $true
     $script:result = [AgentCodeWin32Test]::GetWindowLong($hWnd, -20)
   }
   return $true
 }, [IntPtr]::Zero) | Out-Null
-Write-Output $result
+if ($found) { Write-Output $result } else { Write-Output 'NOTFOUND' }
 `.trim()
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], (_err, stdout) => {
-      const n = Number.parseInt(stdout.trim(), 10)
+      const out = stdout.trim()
+      if (out === 'NOTFOUND') return resolve(null)
+      const n = Number.parseInt(out, 10)
       resolve(Number.isNaN(n) ? null : n)
     })
   })
 }
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Poll `readExStyle` until the window actually exists (Add-Type compilation +
+ *  window creation can take a variable amount of time, especially under load —
+ *  a fixed sleep here was flaky) or the timeout elapses. */
+async function waitForWindow(pid: number, timeoutMs = 15_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const style = await readExStyle(pid)
+    if (style !== null) return style
+    if (Date.now() > deadline) throw new Error(`Janela do processo ${pid} não apareceu em ${timeoutMs}ms`)
+    await delay(200)
+  }
+}
 
 /**
  * Spawn a throwaway WinForms window we fully own — NOT notepad.exe: Windows 11's
@@ -71,12 +89,10 @@ describe.skipIf(!isWindows)('hideChromeWindowFromTaskbar', () => {
     const proc = spawnTestWindow(marker)
     try {
       expect(proc.pid).toBeTruthy()
-      await delay(1500) // dar tempo do Add-Type compilar e a janela real existir
 
-      const before = await readExStyle(proc.pid!)
-      expect(before).not.toBeNull()
+      const before = await waitForWindow(proc.pid!) // polls instead of a fixed sleep — flaky under load otherwise
       // eslint-disable-next-line no-bitwise
-      expect((before! & 0x80) === 0).toBe(true) // WS_EX_TOOLWINDOW ainda não setado
+      expect((before & 0x80) === 0).toBe(true) // WS_EX_TOOLWINDOW ainda não setado
 
       // O marcador está no próprio texto do script passado a powershell.exe —
       // aparece no CommandLine do processo, único o bastante para o teste.
@@ -92,7 +108,7 @@ describe.skipIf(!isWindows)('hideChromeWindowFromTaskbar', () => {
     } finally {
       proc.kill() // this process is the SOLE owner of its window — always closes it
     }
-  }, 20000)
+  }, 30000)
 
   it('não faz nada (não rejeita) quando não há processo casando com o marcador', async () => {
     await expect(hideChromeWindowFromTaskbar(`agent-code-marker-inexistente-${Date.now()}`)).resolves.toBeUndefined()
