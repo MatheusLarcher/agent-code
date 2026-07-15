@@ -45,6 +45,23 @@ export interface TurnRecovery {
   messageId: string | null
 }
 
+/** One task in a TodoWrite plan, mirroring the SDK's TodoWriteInput item shape. */
+export interface TodoItem {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+  activeForm: string
+}
+
+/** The agent's current TodoWrite plan for a conversation — replaced wholesale
+ *  (never appended) each time the agent calls TodoWrite again, so it reads as
+ *  one live checklist instead of a new card per call. `active` goes false when
+ *  the turn ends (result/error), collapsing the card to a summary — it stays
+ *  visible either way, it just stops showing the spinner. */
+export interface TodoPlan {
+  items: TodoItem[]
+  active: boolean
+}
+
 /** A single conversation, grouped by its project folder (`cwd`) in the sidebar. */
 export interface Conversation {
   id: string
@@ -64,6 +81,9 @@ export interface Conversation {
   draft?: string
   /** A failed turn waiting to resume; persisted so app restarts restore its timer. */
   recovery?: TurnRecovery
+  /** The agent's current TodoWrite plan, if it has called that tool at least
+   *  once in this conversation. Rendered as a fixed card above the composer. */
+  todoPlan?: TodoPlan
   messages: UIMessage[]
   tokens: TokenTotals
   createdAt: number
