@@ -301,29 +301,38 @@ A maioria dos modelos do Ollama Cloud da lista (`OLLAMA_MODELS`) é **texto-only
 
 ## Pasta de dados (cache) e SQLite
 
-A persistência **por usuário** (não por projeto) vive numa **pasta de cache** que o usuário escolhe na tela de Configurações. `src/main/store.ts` gerencia isso usando o **SQLite embutido** do Node (`node:sqlite` — nenhuma dependência nativa/npm, então na pasta só ficam o `.db` e os `.md`).
+A persistência **por usuário** vive numa **pasta de cache** que o usuário escolhe na tela de Configurações. `src/main/store.ts` gerencia o banco **global** (config/UI/uso) usando o **SQLite embutido** do Node (`node:sqlite` — nenhuma dependência nativa/npm); `src/main/projectStore.ts` gerencia um banco **por projeto** só para as conversas (ver [Conversas, projetos e persistência](#conversas-projetos-e-persistência) para o porquê e a migração).
 
 **Layout:**
 
 ```
 ~/.agent-code/location.json      ← ponteiro: SÓ o caminho da pasta de cache
 <escolhida>/agent-code/          ← pasta de cache (nome fixo = nome do projeto)
-  ├─ agent-code.db               ← SQLite: tabela kv(key → JSON) com TODAS as configs
-  │                                do sistema (API key do Stitch, "permitir tudo",
-  │                                token da sessão Android…); conversas virão depois
+  ├─ agent-code.db               ← SQLite: tabela kv(key → JSON) — config do sistema
+  │                                (API key do Stitch, "permitir tudo", token Android,
+  │                                UI state, snapshot de uso); a chave antiga de
+  │                                conversas (agentcode.conversations.v1) fica aqui
+  │                                como backup INERTE pós-migração, nunca mais lida
+  ├─ agent-code.db.bak           ← cópia do banco antigo, feita uma vez, na 1ª
+  │                                migração para o storage por projeto (só se havia
+  │                                dado legado pra migrar)
+  ├─ data/                       ← UM arquivo SQLite por projeto — só conversas
+  │  ├─ <slug-do-projeto>-<hash8>.db    (slug = nome da pasta; hash8 = SHA-1 do
+  │  ├─ <slug-do-projeto>-<hash8>.db     caminho ABSOLUTO — dois projetos de nome
+  │  └─ sem-projeto.db                   igual em locais diferentes nunca colidem)
   └─ memories/                   ← arquivos .md da memória persistente (1 fato por arquivo)
      ├─ MEMORY.md                 ←   índice (1 bullet por memória) pré-carregado no system prompt
      └─ <slug>.md                 ←   um fato por arquivo
 ```
 
 - **Ponteiro** — o único dado guardado fora da pasta de cache: `~/.agent-code/location.json` com `{ cacheDir }`. Nada mais é criado no home.
-- **`initStore()`** roda no `app.whenReady()` antes de qualquer leitura de config: lê o ponteiro; no **primeiro uso** usa o padrão `Documentos/agent-code` e **migra** o antigo `settings.json` (de `userData`) para a chave `config` do banco. É idempotente e as funções `kvGet`/`kvSet` chamam o init de forma preguiçosa, então a ordem de chamada não importa.
-- **Trocar de pasta** (`setCacheDir`) — se o usuário escolhe uma pasta chamada `agent-code`, usa-a direto; senão cria uma subpasta `agent-code` dentro do local escolhido. Se já houver `.db`/memórias lá, **só carrega** (abre o banco existente sem apagar). O ponteiro é reescrito.
-- **`config.ts`** deixou de usar `settings.json` e passou a ler/gravar a chave `config` do SQLite (mesma forma de `AppConfig`); o **token fixo do Android** (`remoteToken`) e a API key do Stitch vivem aqui.
-- **Conversas e estado da UI** também vivem no SQLite: `storage.ts` (renderer) grava as chaves `agentcode.conversations.v1` e `agentcode.ui.v1` no banco via `kv:get`/`kv:set`, **migrando** o que houver no `localStorage` antigo na primeira leitura (ver [Conversas e persistência](#conversas-projetos-e-persistência)).
-- **IPC:** `cache:get-info` (caminho atual), `cache:choose-dir` (diálogo nativo `openDirectory`+`createDirectory` → troca e recarrega) e `kv:get`/`kv:set` (store key→JSON). A tela `SettingsModal` mostra o caminho e o botão "Trocar…".
+- **`initStore()`** roda no `app.whenReady()` antes de qualquer leitura de config: lê o ponteiro; no **primeiro uso** usa o padrão `Documentos/agent-code` e **migra** o antigo `settings.json` (de `userData`) para a chave `config` do banco global. É idempotente e as funções `kvGet`/`kvSet` chamam o init de forma preguiçosa, então a ordem de chamada não importa.
+- **Trocar de pasta** (`setCacheDir`) — se o usuário escolhe uma pasta chamada `agent-code`, usa-a direto; senão cria uma subpasta `agent-code` dentro do local escolhido. Se já houver `.db`/memórias lá, **só carrega** (abre o banco existente sem apagar); a **pasta `data/` inteira** é movida junto com o resto (`moveAllContents`), então as conversas por projeto seguem a mudança de pasta. O ponteiro é reescrito.
+- **`config.ts`** deixou de usar `settings.json` e passou a ler/gravar a chave `config` do SQLite global (mesma forma de `AppConfig`); o **token fixo do Android** (`remoteToken`) e a API key do Stitch vivem aqui.
+- **Conversas** vivem em `data/`, um banco por projeto — ver a seção seguinte. **Estado da UI e snapshot de uso** continuam no banco global (`storage.ts`, chaves `agentcode.ui.v1`/`agentcode.usage-limits.v1` via `kv:get`/`kv:set`), **migrando** o que houver no `localStorage` antigo na primeira leitura.
+- **IPC:** `cache:get-info` (caminho atual), `cache:choose-dir` (diálogo nativo `openDirectory`+`createDirectory` → troca e recarrega), `kv:get`/`kv:set` (store key→JSON, config/UI/uso) e `conversations:load-all`/`conversations:save-all` (conversas, fanned out por projeto — ver abaixo). A tela `SettingsModal` mostra o caminho e o botão "Trocar…".
 
-> Fase atual: **configs/API key/token, conversas e a memória persistente** já estão no disco da pasta de cache (SQLite + `memories/`). Ver [Memória persistente](#memória-persistente).
+> Fase atual: **configs/API key/token, conversas (por projeto) e a memória persistente** já estão no disco da pasta de cache. Ver [Memória persistente](#memória-persistente).
 
 ---
 
@@ -382,12 +391,16 @@ O `App` grava o `draft` na conversa (persistido no SQLite pelo *debounce* das co
 - marca a última fala como "resposta" no `result`,
 - e dedup­lica a nota de "sessão pronta".
 
-**Persistência** (`src/renderer/src/storage.ts`) — agora **assíncrona**, backed pelo SQLite da [pasta de cache](#pasta-de-dados-cache-e-sqlite) (via `kv:get`/`kv:set` no main), não mais no `localStorage`:
+**Persistência** (`src/renderer/src/storage.ts`) — **assíncrona**, backed pela [pasta de cache](#pasta-de-dados-cache-e-sqlite), não mais no `localStorage`:
 
-- `agentcode.conversations.v1` — todas as conversas; salvo com **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo). O campo `images` é descartado ao persistir.
-- `agentcode.ui.v1` — `{ collapsed, activeId, browserMinimized, browserWidth }`.
-- **Migração** — na primeira leitura de cada chave, se não houver no SQLite, o valor antigo do `localStorage` é copiado para o banco (e mantido como backup inofensivo). A hidratação do `App` virou `async` (carrega em paralelo e só então marca `hydrated`, que evita sobrescrever antes de carregar).
-- As **configs do sistema** (API key do Stitch, "permitir tudo", token do Android) ficam na chave `config` do mesmo banco (`config.ts` → `store.ts`), não mais no `settings.json`.
+- **Conversas** — `loadConversations()`/`saveConversations(list)` continuam com a **mesma assinatura de sempre** (a lista completa, de todos os projetos, entra e sai como um único array — a UI/`App.tsx` não muda nada), mas por baixo chamam `window.api.loadAllConversations()`/`saveAllConversations()` (canais `conversations:load-all`/`conversations:save-all`), que no main (`src/main/projectStore.ts`) **agrupam por `cwd`** e leem/gravam **um banco SQLite por projeto** em `data/<projeto>-<hash>.db`, em vez de um único blob:
+  - **Carregar** = abrir todo `.db` de `data/` e concatenar as conversas de cada um — o mesmo "carregar tudo de uma vez" de antes, só que a fonte agora é vários arquivos.
+  - **Salvar** = agrupar a lista completa por projeto, regravar o arquivo de cada projeto presente e **apagar** o arquivo de qualquer projeto que não apareça mais na lista (todas as conversas dele foram excluídas) — evita "fantasmas" ressurgindo num load futuro.
+  - **Migração automática, uma única vez:** a primeira vez que `data/` não existe ainda, o antigo blob único (chave `agentcode.conversations.v1`, no SQLite global) é lido, um **backup do banco inteiro** (`agent-code.db.bak`) é feito, e as conversas são divididas por projeto. A chave antiga **não é apagada** (fica como um backup inerte, nunca mais lida) — mesmo espírito da migração do `localStorage` abaixo.
+  - `saveConversations` continua fazendo o **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo) e descartando o campo `images` ao persistir.
+- `agentcode.ui.v1` — `{ collapsed, activeId, browserMinimized, browserWidth }` — continua no banco **global** (`kv:get`/`kv:set`), não migrou para os bancos por projeto (não é dado de projeto).
+- **Migração do `localStorage`** (herdada de instalações bem antigas, anteriores até ao SQLite) — na primeira leitura de cada chave, se não houver dado algum (nem no SQLite global, nem em nenhum banco de projeto), o valor antigo do `localStorage` é copiado (e mantido como backup inofensivo, nunca reconsultado depois — evitar isso é o que garante que uma conversa **de verdade** apagada não "ressuscite" de um `localStorage` velho). A hidratação do `App` virou `async` (carrega em paralelo e só então marca `hydrated`, que evita sobrescrever antes de carregar).
+- As **configs do sistema** (API key do Stitch, "permitir tudo", token do Android) ficam na chave `config` do banco global (`config.ts` → `store.ts`), não mais no `settings.json`.
 
 ---
 
@@ -450,7 +463,11 @@ Cada aba é uma superfície de um **tipo** (`TabKind`): `web` (página do Chromi
 
 ### Aba web
 
-O preview roda um **Chrome de verdade** (`channel: 'chrome'`, com *fallback* para o Chromium do Playwright), **headed com a janela fora da tela** e **perfil persistente por conversa** (`launchPersistentContext`), então logins/sessões sobrevivem entre execuções. As flags de automação são removidas e `navigator.webdriver` fica oculto — sites param de bloquear como "robô". O contexto usa viewport 1280×800 e `deviceScaleFactor: 2` (texto nítido). Cada aba web tem sua **sessão CDP** + `Page.startScreencast` (JPEG, qualidade **90**); o handler só pinta se a aba for a ativa, e confirma com `screencastFrameAck`.
+O preview roda um **Chrome de verdade** (`channel: 'chrome'`, com *fallback* para o Chromium do Playwright), **headed com a janela fora da tela** (`--window-position=-32000,-32000`) e **perfil persistente por conversa** (`launchPersistentContext`), então logins/sessões sobrevivem entre execuções. As flags de automação são removidas e `navigator.webdriver` fica oculto — sites param de bloquear como "robô". O contexto usa viewport 1280×800 e `deviceScaleFactor: 2` (texto nítido). Cada aba web tem sua **sessão CDP** + `Page.startScreencast` (JPEG, qualidade **90**); o handler só pinta se a aba for a ativa, e confirma com `screencastFrameAck`.
+
+**`bringToFront()` ao criar/trocar de aba** — flags como `--disable-backgrounding-occluded-windows` evitam o *throttling* de **janela** ocluída, mas não impedem que o Chrome trate a página como uma **aba em segundo plano de verdade** dentro da própria janela (sujeita a *Memory Saver*/descarte). Sem isso, a aba que o app considera "ativa" podia silenciosamente perder estado entre chamadas de ferramenta, sem clique/navegação nenhuma. `openWebTab`, `showStitchDesign` e `selectTab` chamam `page.bringToFront()` (best-effort) sempre que uma aba web vira a ativa.
+
+**Escondida da barra de tarefas do Windows** (`src/main/windowsTaskbar.ts`) — a janela do Chrome fica fora da tela, mas o Windows ainda lista qualquer janela de topo na taskbar independente da posição, e o Chrome não tem flag de linha de comando pra isso. `hideChromeWindowFromTaskbar(userDataDir)` roda **uma vez por conversa**, logo após `launchPersistentContext` (e antes de qualquer aba/screencast existir), via um script PowerShell embutido (sem dependência nativa nova): localiza o processo pelo `--user-data-dir` único do perfil e aplica `WS_EX_TOOLWINDOW` na janela. O Windows só "aceita" essa mudança com um ciclo **esconder → mudar o estilo → reexibir sem ativar** (`SW_HIDE`→`SetWindowLong`→`SW_SHOWNA`) — confirmado empiricamente (`windowsTaskbar.test.ts`, contra uma janela WinForms descartável, nunca a janela real do app). Por isso é chamado **antes** de qualquer captura começar: esconder/reexibir uma janela em plena transmissão poderia travar frames.
 
 **Copiar/colar e seleção** — `Ctrl+C/V/X` usam o **clipboard do sistema**; arrastar o mouse (down/move/up separados) **seleciona texto**; demais combos de teclado passam direto para a página. A barra do navegador mostra um **spinner de carregamento** (com trava de segurança que evita girar pra sempre se o evento `load` não disparar). O **picker** é um init script (`PICKER_SCRIPT`, em `src/main/picker.ts`) adicionado **no contexto** (vale para todas as abas); o callback é exposto via `context.exposeBinding('__agentPick', …)`, então `source.page` identifica a aba do clique. A lógica de página (navegar, snapshot, screenshot, click, type, getText, evaluate, select-mode, input) vive em `src/main/pageActions.ts` (funções puras sobre uma `Page`); os tipos/constantes de aba ficam em `src/main/browserTabs.ts`. Assim o `browserController.ts` só orquestra abas.
 
@@ -464,7 +481,7 @@ A aba Android transmite a tela de um **device físico** (se conectado) ou do **e
 
 **Toolchain sob demanda** (`androidEnv.ts`) — `detect()` localiza JDK, Android SDK, `adb`, emulador, `sdkmanager`/`avdmanager` (no SDK do próprio app em `userData`, no `ANDROID_HOME`/`ANDROID_SDK_ROOT` ou no SDK do Android Studio). `ensureInstalled()` baixa o que falta com progresso — JDK 17 (Temurin), command-line tools, platform-tools, plataforma `android-34`, build-tools, emulador, system image — aceita licenças e cria um AVD padrão. É **idempotente** (só baixa o ausente) e fica cacheado no `userData` (baixa uma vez, reusa). O Electron é importado de forma preguiçosa para o módulo rodar também em Node puro (testes/scripts).
 
-**Device ao vivo** (`androidDevice.ts`) — `ensureBooted()` sobe o device/emulador; `startStreaming()` empurra frames **PNG** (~6 fps) via `adb exec-out screencap`; toques/swipes/texto/teclas vão por `adb shell input` (coordenadas normalizadas 0–1 → pixels). `setScreenSize(w,h,dpi)` aplica `wm size`/`wm density` (e `resetScreenSize()` restaura); `screenSize` expõe o tamanho atual. `install()`/`launch()` instalam e abrem um APK. Ao fechar a aba: se o device já rodava (não foi o app que subiu), a resolução nativa é restaurada; um emulador que o app subiu é encerrado (`emu kill`). `androidTab.ts` isola o boot e o mapeamento de input do device.
+**Device ao vivo** (`androidDevice.ts`) — `ensureBooted()` sobe o device/emulador (com a flag **`-no-window`** — a interação é toda via `adb`/`screencap`, então a janela gráfica do próprio emulador nunca é usada, só aparecia como um ícone extra na barra de tarefas do Windows); `startStreaming()` empurra frames **PNG** (~6 fps) via `adb exec-out screencap`; toques/swipes/texto/teclas vão por `adb shell input` (coordenadas normalizadas 0–1 → pixels). `setScreenSize(w,h,dpi)` aplica `wm size`/`wm density` (e `resetScreenSize()` restaura); `screenSize` expõe o tamanho atual. `install()`/`launch()` instalam e abrem um APK. Ao fechar a aba: se o device já rodava (não foi o app que subiu), a resolução nativa é restaurada; um emulador que o app subiu é encerrado (`emu kill`). `androidTab.ts` isola o boot e o mapeamento de input do device.
 
 **Moldura + modelos** (`src/shared/devices.ts`, `BrowserPanel.tsx`) — uma **tabela** de presets (telefones e tablets) com resolução (px) e densidade. A lista exibida é **deduplicada por resolução** (`uniqueByResolution`): quando vários aparelhos compartilham a mesma resolução, fica o **mais recente** (maior `year`). O preview começa como **Galaxy S26 Ultra** (`DEFAULT_DEVICE_ID`). O usuário escolhe num seletor ou usa **"Personalizado…"** (largura×altura). Selecionar chama `browser:set-android-size` → `AndroidDevice.setScreenSize`, então o emulador renderiza **naquele tamanho real**. A UI desenha uma **moldura de celular** (bezel arredondado, câmera *punch-hole* nos telefones; bezel fino nos tablets) dimensionada para caber no painel mantendo o aspecto do device.
 
@@ -552,7 +569,8 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `authLogin` | `auth:login` | dispara o login OAuth do Claude (abre o navegador do sistema) | — → `{ ok }` |
 | `cacheGetInfo` | `cache:get-info` | caminho atual da pasta de dados (SQLite + memórias) | — → `CacheInfo` |
 | `cacheChooseDir` | `cache:choose-dir` | diálogo nativo para escolher/trocar a pasta de dados e recarregar | — → `CacheInfo \| null` |
-| `kvGet` / `kvSet` | `kv:get` / `kv:set` | lê/grava um valor (JSON) no store key→valor do SQLite (conversas, UI…) | `key`(`, value`) → `string \| null` / — |
+| `kvGet` / `kvSet` | `kv:get` / `kv:set` | lê/grava um valor (JSON) no store key→valor do SQLite global (config, UI, uso) | `key`(`, value`) → `string \| null` / — |
+| `loadAllConversations` / `saveAllConversations` | `conversations:load-all` / `conversations:save-all` | lê/grava **todas** as conversas, um banco SQLite por projeto em `data/` (`projectStore.ts`) | — → `unknown[]` / `unknown[]` → — |
 | `agentStart` | `agent:start` | substitui a sessão de `convId` em `sessions` (usa `getBrowser(convId)`) | `StartAgentOptions` `{ convId, cwd, model?, skipPermissions?, resume? }` |
 | `agentSend` | `agent:send` | `sessions.get(convId).send(text, images)` | `convId`, `string`, `ImageAttachment[]?` |
 | `agentInterrupt` | `agent:interrupt` | `sessions.get(convId).interrupt()` | `convId` |
@@ -634,4 +652,4 @@ O valor do contexto é memoizado (`useMemo`) para os consumidores não re-render
 7. Cada `tool_use` passa pelo gate de permissão: auto-aprovado (com `updatedInput`), pede no modal, ou (se for `AskUserQuestion`) abre o [modal de pergunta](#modal-de-pergunta-interativa-askuserquestion).
 8. Ferramentas `browser_*` dirigem o Chromium; os frames aparecem ao vivo no `BrowserPanel`.
 9. `tool_result` e a resposta final chegam como `ChatEvent`; o `MessageList` renderiza os cartões e a resposta; o medidor de tokens/custo é atualizado pelo `result`. Cada resposta final pode ser ouvida pelo botão **"Ouvir"** ([voz no chat](#voz-no-chat-openai)). **Se o turno falhar** (`error`/`result.isError`), a mensagem do usuário **continua na bolha**, marcada com erro e com **"Tentar de novo"** (ver "Mensagem nunca se perde no erro", na seção de sessões/fila acima).
-10. Tudo é persistido (debounce) no **SQLite** da [pasta de cache](#pasta-de-dados-cache-e-sqlite) — conversas, estado da UI e as configs do sistema (API key, token Android, "permitir tudo") — e reaparece no próximo início.
+10. Tudo é persistido (debounce) na [pasta de cache](#pasta-de-dados-cache-e-sqlite) — **conversas** num banco SQLite **por projeto** em `data/`, estado da UI e as configs do sistema (API key, token Android, "permitir tudo") no banco global — e reaparece no próximo início.
