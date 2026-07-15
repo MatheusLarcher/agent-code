@@ -21,6 +21,7 @@ import { isAuthenticated } from './auth'
 import { runClaudeLogin } from './login'
 import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
+import { loadAllConversationRecords, saveAllConversationRecords, type ConversationRecord } from './projectStore'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import type {
   AppConfig,
@@ -421,6 +422,14 @@ function registerIpc(): void {
   })
   ipcMain.handle(Channels.kvGet, (_e, key: string) => kvGet(key))
   ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => kvSet(key, value))
+  // Conversations: one SQLite db per project (`data/<projeto>.db`) instead of a single blob.
+  ipcMain.handle(Channels.conversationsLoadAll, () => loadAllConversationRecords(getCacheInfo().dir))
+  ipcMain.handle(Channels.conversationsSaveAll, (_e, list: unknown) => {
+    // A malformed (non-array) payload must never be treated as "zero conversations" —
+    // that would delete every project's db, not just skip the save.
+    if (!Array.isArray(list)) return
+    saveAllConversationRecords(getCacheInfo().dir, list as ConversationRecord[])
+  })
 
   ipcMain.handle(Channels.pickDirectory, async () => {
     const res = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] })

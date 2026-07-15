@@ -612,6 +612,10 @@ export const Channels = {
   kvGet: 'kv:get',
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet: 'kv:set',
+  /** Load every conversation from every per-project db under `data/` (merged). */
+  conversationsLoadAll: 'conversations:load-all',
+  /** Persist the full conversation list, split one db per project (`cwd`). */
+  conversationsSaveAll: 'conversations:save-all',
   agentStart: 'agent:start',
   agentSend: 'agent:send',
   agentInterrupt: 'agent:interrupt',

@@ -66,6 +66,10 @@ export interface AgentCodeApi {
   kvGet(key: string): Promise<string | null>
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet(key: string, value: string): Promise<void>
+  /** Load every conversation from every per-project db under `data/` (merged). */
+  loadAllConversations(): Promise<unknown[]>
+  /** Persist the full conversation list, split one db per project (`cwd`). */
+  saveAllConversations(list: unknown[]): Promise<void>
 
   /** Transcribe recorded audio (base64) to text via OpenAI. `error: 'no-key'`
    *  means the user hasn't set an OpenAI API key yet. */

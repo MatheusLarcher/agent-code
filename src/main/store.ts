@@ -28,7 +28,10 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
 const APP_DIRNAME = 'agent-code'
 const POINTER_DIR = join(homedir(), '.agent-code')
 const POINTER_FILE = join(POINTER_DIR, 'location.json')
-const DB_NAME = 'agent-code.db'
+/** Name of the (legacy, still-global) db: config/token/usage-limits — and, until
+ *  migrated, the old single-blob conversations key. Exported so `projectStore.ts`
+ *  can locate it for the one-time migration without duplicating the literal. */
+export const DB_NAME = 'agent-code.db'
 
 /** Path of the active cache folder. Resolved lazily from the pointer on first use. */
 let cacheDir = ''

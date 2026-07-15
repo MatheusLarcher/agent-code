@@ -34,6 +34,12 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     kvSet: vi.fn(async (key: string, value: string) => {
       localStorage.setItem(key, value)
     }),
+    // Conversations: in real code this fans out to one db per project, but the
+    // component doesn't care — same localStorage key the tests already seed/assert on.
+    loadAllConversations: vi.fn(async () => JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')),
+    saveAllConversations: vi.fn(async (list: unknown[]) => {
+      localStorage.setItem('agentcode.conversations.v1', JSON.stringify(list))
+    }),
     getCacheInfo: vi.fn(async () => ({ dir: '', dbPath: '', memoriesDir: '' })),
     chooseCacheDir: vi.fn(async () => null),
     downloadFile: vi.fn(async () => ({ ok: true, message: '' })),

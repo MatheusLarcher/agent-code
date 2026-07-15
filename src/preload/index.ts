@@ -68,6 +68,9 @@ const api: AgentCodeApi = {
   chooseCacheDir: (): Promise<CacheInfo | null> => ipcRenderer.invoke(Channels.cacheChooseDir),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
   kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),
+  loadAllConversations: (): Promise<unknown[]> => ipcRenderer.invoke(Channels.conversationsLoadAll),
+  saveAllConversations: (list: unknown[]): Promise<void> =>
+    ipcRenderer.invoke(Channels.conversationsSaveAll, list),
 
   // OpenAI voice (chat)
   transcribeAudio: (

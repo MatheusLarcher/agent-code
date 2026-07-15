@@ -2,16 +2,19 @@ import type { Conversation } from './types'
 import type { UIMessage } from './types'
 import type { RateLimitStatus } from '@shared/ipc'
 
-// Persistence for the conversation history + UI state. Now backed by the
-// per-user SQLite store in the chosen cache folder (main process, via
-// window.api.kvGet/kvSet), not localStorage. The agent's own transcript is also
-// stored by the SDK under ~/.claude/projects (used for `resume`); this keeps the
-// rendered history + sidebar metadata across restarts.
+// Persistence for the conversation history + UI state. Conversations are backed
+// by one SQLite db PER PROJECT (main process, via window.api.loadAllConversations/
+// saveAllConversations — see src/main/projectStore.ts), not a single shared blob
+// and not localStorage. UI state and usage-limits stay in the shared cache-folder
+// kv store (window.api.kvGet/kvSet). The agent's own transcript is also stored by
+// the SDK under ~/.claude/projects (used for `resume`); this keeps the rendered
+// history + sidebar metadata across restarts.
 //
-// Migration: the first time a key is missing from SQLite, any value still in the
-// old localStorage is copied over (and kept as a harmless backup).
+// Migration: the one-time split of the old single-blob conversations list into
+// per-project dbs happens transparently in the main process (projectStore.ts).
+// For UI/usage-limits keys, the first time a key is missing from SQLite, any
+// value still in the old localStorage is copied over (kept as a harmless backup).
 
-const CONV_KEY = 'agentcode.conversations.v1'
 const UI_KEY = 'agentcode.ui.v1'
 const USAGE_LIMITS_KEY = 'agentcode.usage-limits.v1'
 
@@ -65,12 +68,41 @@ async function readMigrating(key: string): Promise<string | null> {
   return legacy
 }
 
+/** Set once the legacy localStorage blob (below) has been checked a single time,
+ *  so an empty result on some LATER load (the user deleted every conversation on
+ *  purpose) never gets reinterpreted as "never checked" and resurrects it again. */
+const LEGACY_CHECKED_KEY = 'agentcode.conversations.legacy-checked.v1'
+
+/**
+ * Very old installs kept conversations only in the browser's own localStorage,
+ * before the SQLite/per-project store existed at all — the main process has no
+ * way to see or migrate that on its own. Read directly from localStorage (NEVER
+ * via `window.api.kvGet`, which would return the old, already-migrated SQLite
+ * blob — that one is kept only as an inert backup and must stay unread, or a
+ * genuinely-emptied history would resurrect deleted conversations). Checked at
+ * most once per install — see `LEGACY_CHECKED_KEY`.
+ */
+function readLegacyLocalStorageConversations(): Conversation[] | null {
+  try {
+    if (localStorage.getItem(LEGACY_CHECKED_KEY)) return null
+    localStorage.setItem(LEGACY_CHECKED_KEY, '1')
+    const raw = localStorage.getItem('agentcode.conversations.v1')
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as Conversation[]) : null
+  } catch {
+    return null
+  }
+}
+
 export async function loadConversations(): Promise<Conversation[]> {
   try {
-    const raw = await readMigrating(CONV_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? compactOldConversations(parsed as Conversation[]) : []
+    const list = (await window.api.loadAllConversations()) as Conversation[]
+    if (list.length) return compactOldConversations(list)
+    // Nothing in the per-project dbs — fall back to a pre-SQLite localStorage-only
+    // install, but only the very first time (see readLegacyLocalStorageConversations).
+    const legacy = readLegacyLocalStorageConversations()
+    return legacy ? compactOldConversations(legacy) : []
   } catch {
     return []
   }
@@ -80,8 +112,10 @@ export async function saveConversations(list: Conversation[]): Promise<void> {
   try {
     // Drop attached-image data URLs when persisting — they're large and only
     // shown during the session.
-    const json = JSON.stringify(compactOldConversations(list), (key, value) => (key === 'images' ? undefined : value))
-    await window.api.kvSet(CONV_KEY, json)
+    const clean = JSON.parse(
+      JSON.stringify(compactOldConversations(list), (key, value) => (key === 'images' ? undefined : value))
+    )
+    await window.api.saveAllConversations(clean)
   } catch {
     /* store error — history is best-effort */
   }
