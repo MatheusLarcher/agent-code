@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-libra
 import { UiProvider } from './ui/UiProvider'
 import { App } from './App'
 import type { AgentEventMsg, ChatEvent } from '@shared/ipc'
+import type { TodoItem } from './types'
 
 // jsdom has no layout engine — stub the DOM APIs the panels rely on.
 window.HTMLElement.prototype.scrollIntoView = vi.fn()
@@ -117,9 +118,9 @@ afterEach(cleanup)
 const result: ChatEvent = { kind: 'result', id: 'r1', isError: false, text: 'done', durationMs: 1 }
 const partial: ChatEvent = { kind: 'assistant-text', id: 'a1', text: 'trabalhando', final: false }
 
-async function emit(event: ChatEvent): Promise<void> {
+async function emit(event: ChatEvent, convId = 'c1'): Promise<void> {
   await act(async () => {
-    agentEventCb?.({ convId: 'c1', event })
+    agentEventCb?.({ convId, event })
   })
 }
 async function flushConnect(): Promise<void> {
@@ -595,17 +596,12 @@ describe('App — uso da conta (5h/semana) na topbar, global (não é por conver
 // Reads what the app persisted for the seeded conversation ('c1') — the same
 // mechanism App.tsx itself uses (saveConversations -> window.api.saveAllConversations),
 // so these assert on real persisted state, not an internal implementation detail.
-interface TestTodoItem {
-  content: string
-  status: 'pending' | 'in_progress' | 'completed'
-  activeForm: string
-}
-function savedConv(): { todoPlan?: { items: TestTodoItem[]; active: boolean } } | undefined {
+function savedConv(): { todoPlan?: { items: TodoItem[]; active: boolean } } | undefined {
   const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
   return list.find((c: { id: string }) => c.id === 'c1')
 }
 
-const todoWriteEvent = (todos: TestTodoItem[]): ChatEvent => ({
+const todoWriteEvent = (todos: TodoItem[]): ChatEvent => ({
   kind: 'tool-use',
   id: 'tw1',
   name: 'TodoWrite',
@@ -819,5 +815,61 @@ describe('App — TodoPlanCard renderizado de verdade (end-to-end)', () => {
     // conversa dentro dele) — clicar em qualquer uma seleciona a conversa.
     fireEvent.click(screen.getAllByText('Conversa 2')[0])
     await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeNull())
+  })
+
+  it('expandir o card numa conversa não deixa o card da OUTRA conversa nascer já aberto', async () => {
+    const conv2 = {
+      id: 'c2',
+      title: 'Conversa 2',
+      cwd: '/proj2',
+      model: 'claude-opus-4-8',
+      sdkSessionId: null,
+      messages: [],
+      tokens: { context: 0, output: 0, cost: 0 },
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const seeded = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([...seeded, conv2]))
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('tarefa complexa na conversa 1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(todoWriteEvent([{ content: 'Passo 1 da conversa 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' }]))
+    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
+
+    // Expande o card da conversa 1 — a lista completa fica visível.
+    fireEvent.click(screen.getByRole('button', { name: /Fazendo o passo 1/ }))
+    await waitFor(() => expect(screen.getByText('Passo 1 da conversa 1')).toBeTruthy())
+
+    // Troca pra conversa 2 e dá a ela seu PRÓPRIO todoPlan (também ativo).
+    fireEvent.click(screen.getAllByText('Conversa 2')[0])
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1)) // ainda não mandou nada na c2
+    fireEvent.change(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { target: { value: 'tarefa na c2' } })
+    fireEvent.keyDown(screen.getByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    await emit(
+      {
+        kind: 'tool-use',
+        id: 'tw-c2',
+        name: 'TodoWrite',
+        input: { todos: [{ content: 'Passo 1 da conversa 2', status: 'in_progress', activeForm: 'Fazendo outra coisa' }] },
+        parentToolUseId: null
+      },
+      'c2'
+    )
+
+    // O card da c2 deve nascer FECHADO — o texto completo do item não aparece
+    // até o usuário clicar, mesmo tendo expandido o card da c1 antes.
+    await waitFor(() => expect(screen.getByText('Fazendo outra coisa')).toBeTruthy())
+    expect(screen.queryByText('Passo 1 da conversa 2')).toBeNull()
   })
 })

@@ -368,7 +368,7 @@ export function ChatPanel(props: Props): JSX.Element {
         </button>
       )}
 
-      {props.todoPlan && <TodoPlanCard plan={props.todoPlan} />}
+      {props.todoPlan && <TodoPlanCard key={props.convId ?? 'none'} plan={props.todoPlan} />}
 
       <div className="composer-bar">
         <select

@@ -868,16 +868,9 @@ button svg {
 .todo-plan-dot.in_progress {
   background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
-  animation: todo-plan-pulse 1.3s ease-in-out infinite;
-}
-@keyframes todo-plan-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 12%, transparent);
-  }
+  /* Same halo-pulse pattern as .pending-question-chip (defined further down)
+     — reused instead of declaring a near-identical second keyframe. */
+  animation: pending-question-pulse 1.3s ease-in-out infinite;
 }
 .todo-plan-count {
   flex-shrink: 0;
