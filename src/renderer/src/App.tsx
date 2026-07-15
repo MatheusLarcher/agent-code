@@ -1738,6 +1738,7 @@ export function App(): JSX.Element {
             onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
             pendingQuestion={!!activePermission?.questions && questionMinimized}
             onReopenQuestion={() => setQuestionMinimized(false)}
+            todoPlan={active?.todoPlan}
           />
           {!browserMinimized && (
             <div

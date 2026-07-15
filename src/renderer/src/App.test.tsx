@@ -738,3 +738,86 @@ describe('App — TodoWrite vira um plano fixo, não um card no feed de mensagen
     expect(savedConv()?.todoPlan?.items[0].content).toBe('Passo 1')
   })
 })
+
+describe('App — TodoPlanCard renderizado de verdade (end-to-end)', () => {
+  it('card aparece fixo acima da composer, atualiza ao vivo, e recolhe quando o turno termina', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('corrige X e Y, com testes')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    // Sem TodoWrite ainda — nenhum card no DOM.
+    expect(document.querySelector('.todo-plan-card')).toBeNull()
+
+    await emit(
+      todoWriteEvent([
+        { content: 'Corrigir X', status: 'in_progress', activeForm: 'Corrigindo X' },
+        { content: 'Corrigir Y', status: 'pending', activeForm: 'Corrigindo Y' },
+        { content: 'Rodar testes', status: 'pending', activeForm: 'Rodando os testes' }
+      ])
+    )
+    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
+    expect(screen.getByText('Corrigindo X')).toBeTruthy()
+    // 0 itens completed ainda (1 in_progress + 2 pending).
+    expect(screen.getByText('0/3')).toBeTruthy()
+    expect(document.querySelectorAll('.todo-plan-dot')).toHaveLength(3)
+
+    // Avança — MESMO card atualiza (não duplica: continua só 1 .todo-plan-card).
+    await emit(
+      todoWriteEvent([
+        { content: 'Corrigir X', status: 'completed', activeForm: 'Corrigindo X' },
+        { content: 'Corrigir Y', status: 'in_progress', activeForm: 'Corrigindo Y' },
+        { content: 'Rodar testes', status: 'pending', activeForm: 'Rodando os testes' }
+      ])
+    )
+    await waitFor(() => expect(screen.getByText('Corrigindo Y')).toBeTruthy())
+    expect(document.querySelectorAll('.todo-plan-card')).toHaveLength(1)
+    // 1 item completed agora ("Corrigir X").
+    expect(screen.getByText('1/3')).toBeTruthy()
+
+    // Turno termina — card recolhe (resumo), continua visível.
+    await emit(result)
+    await waitFor(() => expect(screen.getByText('1/3 concluído')).toBeTruthy())
+    expect(document.querySelector('.todo-plan-card')).toBeTruthy() // nunca some
+    expect(document.querySelector('.todo-plan-card .spinner')).toBeNull() // spinner parou
+  })
+
+  it('trocar de conversa mostra o todoPlan da conversa nova (ou nenhum card, se ela nunca usou TodoWrite)', async () => {
+    const conv2 = {
+      id: 'c2',
+      title: 'Conversa 2',
+      cwd: '/proj2',
+      model: 'claude-opus-4-8',
+      sdkSessionId: null,
+      messages: [],
+      tokens: { context: 0, output: 0, cost: 0 },
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const seeded = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([...seeded, conv2]))
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('tarefa complexa na conversa 1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(todoWriteEvent([{ content: 'Passo 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' }]))
+    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
+
+    // Troca pra Conversa 2 (nunca usou TodoWrite) — o card some, sem vazar o da c1.
+    // Duas entradas na sidebar mostram "Conversa 2" (o próprio projeto + a
+    // conversa dentro dele) — clicar em qualquer uma seleciona a conversa.
+    fireEvent.click(screen.getAllByText('Conversa 2')[0])
+    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeNull())
+  })
+})

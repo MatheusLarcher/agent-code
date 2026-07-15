@@ -32,9 +32,7 @@ export function TodoPlanCard({ plan }: { plan: TodoPlan }): JSX.Element {
             <span key={i} className={`todo-plan-dot ${t.status}`} />
           ))}
         </span>
-        <span className="todo-plan-count">
-          {done}/{total}
-        </span>
+        <span className="todo-plan-count">{`${done}/${total}`}</span>
         <IconChevronDown size={13} className="todo-plan-caret" />
       </button>
       {open && (
