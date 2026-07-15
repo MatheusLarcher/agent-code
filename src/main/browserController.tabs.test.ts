@@ -1,4 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest'
+import type { BrowserState } from '../shared/ipc'
 import { BrowserController } from './browserController'
 
 // Offline, deterministic pages (no network) so the test is fast and reliable.
@@ -57,5 +58,40 @@ describe('BrowserController — múltiplas abas (o que o LLM controla)', () => {
     expect(after).toHaveLength(1)
     expect(after[0].title).toBe('Beta')
     expect(after[0].active).toBe(true)
+  }, 120000)
+})
+
+describe('BrowserController — regressões das ferramentas web', () => {
+  it('troca uma aba de arquivo por uma aba web segura ao receber snapshot', async () => {
+    const states: BrowserState[] = []
+    const ctrl = new BrowserController({ onFrame: () => {}, onState: (state) => states.push(state), onPicked: () => {} }, 'file-regression')
+    try {
+      await ctrl.newTab('file', 'C:/tmp/exemplo.pdf')
+      const snapshot = await ctrl.snapshot()
+      expect(snapshot).toContain('web -')
+      expect(ctrl.tabsInfo().find((tab) => tab.active)?.kind).toBe('web')
+      expect(states.at(-1)?.launched).toBe(true)
+    } finally {
+      await ctrl.close()
+    }
+  }, 120000)
+
+  it('publica launched na primeira ferramenta e reflete o histórico real', async () => {
+    const states: BrowserState[] = []
+    const ctrl = new BrowserController({ onFrame: () => {}, onState: (state) => states.push(state), onPicked: () => {} }, 'history-regression')
+    try {
+      await ctrl.snapshot()
+      expect(states.some((state) => state.launched)).toBe(true)
+      expect(states.at(-1)?.canGoBack).toBe(false)
+      expect(states.at(-1)?.canGoForward).toBe(false)
+      await ctrl.navigate(pageUrl('Primeira'))
+      await ctrl.navigate(pageUrl('Segunda'))
+      expect(states.at(-1)?.canGoBack).toBe(true)
+      expect(states.at(-1)?.canGoForward).toBe(false)
+      await ctrl.back()
+      expect(states.at(-1)?.canGoForward).toBe(true)
+    } finally {
+      await ctrl.close()
+    }
   }, 120000)
 })

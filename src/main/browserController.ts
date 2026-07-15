@@ -160,20 +160,12 @@ export class BrowserController {
 
   /** Ensure the browser is up with at least one web tab; returns its page. */
   async ensureLaunched(): Promise<Page> {
-    await this.ensureContext()
-    const t = this.activeTab()
-    if (t?.page) return t.page
-    if (!t || isAndroid(t)) await this.openWebTab()
-    return this.activeTab()!.page!
+    return this.ensureWebPage()
   }
 
-  /** The active tab's page (for the web tools); errors if the active tab is Android. */
+  /** A safe web page for browser tools, regardless of the active preview kind. */
   private async activePage(): Promise<Page> {
-    const t = this.activeTab()
-    if (t && isAndroid(t)) {
-      throw new Error('A aba ativa é Android — use as ferramentas android_* para controlá-la.')
-    }
-    return this.ensureLaunched()
+    return this.ensureWebPage()
   }
 
   /**
@@ -242,7 +234,9 @@ export class BrowserController {
         device: null,
         title: url ? url.split(/[\\/]/).pop() || 'Arquivo' : 'Arquivo',
         url: url || '',
-        loading: false
+        loading: false,
+        canGoBack: false,
+        canGoForward: false
       }
       this.tabs.set(tab.id, tab)
       this.activeTabId = tab.id
@@ -270,7 +264,7 @@ export class BrowserController {
     const context = await this.ensureContext()
     const page = await context.newPage()
     const label = (title && title.trim()) || 'Stitch design'
-    const tab: Tab = { id: nextTabId(), kind: 'stitch', page, cdp: null, device: null, title: label, url: '', loading: false }
+    const tab: Tab = { id: nextTabId(), kind: 'stitch', page, cdp: null, device: null, title: label, url: '', loading: false, canGoBack: false, canGoForward: false }
     this.tabs.set(tab.id, tab)
     this.wireTab(tab)
     this.activeTabId = tab.id
@@ -292,13 +286,14 @@ export class BrowserController {
   private async openWebTab(): Promise<Tab> {
     const context = await this.ensureContext()
     const page = await context.newPage()
-    const tab: Tab = { id: nextTabId(), kind: 'web', page, cdp: null, device: null, title: '', url: page.url(), loading: false }
+    const tab: Tab = { id: nextTabId(), kind: 'web', page, cdp: null, device: null, title: '', url: page.url(), loading: false, canGoBack: false, canGoForward: false }
     this.tabs.set(tab.id, tab)
     this.wireTab(tab)
     this.activeTabId = tab.id
     await this.applyViewport(page)
     await this.startScreencast(tab)
     await this.reapplySelectMode()
+    this.emitState()
     return tab
   }
 
@@ -322,7 +317,9 @@ export class BrowserController {
       device,
       title: device.model,
       url: '',
-      loading: false
+      loading: false,
+      canGoBack: false,
+      canGoForward: false
     }
     this.tabs.set(tab.id, tab)
     this.activeTabId = tab.id
@@ -451,7 +448,24 @@ export class BrowserController {
     } catch {
       /* navigating */
     }
+    await this.updateNavigationState(tab)
     this.emitState()
+  }
+
+  private async updateNavigationState(tab: Tab): Promise<void> {
+    if (!tab.cdp || tab.kind !== 'web') {
+      tab.canGoBack = false
+      tab.canGoForward = false
+      return
+    }
+    try {
+      const history = await tab.cdp.send('Page.getNavigationHistory')
+      tab.canGoBack = history.currentIndex > 0
+      tab.canGoForward = history.currentIndex < history.entries.length - 1
+    } catch {
+      tab.canGoBack = false
+      tab.canGoForward = false
+    }
   }
 
   // ---- streaming / view ----
@@ -517,8 +531,8 @@ export class BrowserController {
       url: active.url,
       title: active.title,
       loading: active.loading,
-      canGoBack: true,
-      canGoForward: true,
+      canGoBack: active.canGoBack,
+      canGoForward: active.canGoForward,
       launched: true,
       tabs,
       androidSize: active.device ? active.device.screenSize : undefined

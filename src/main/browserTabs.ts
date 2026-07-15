@@ -26,6 +26,9 @@ export interface Tab {
   url: string
   /** True while the page is navigating/loading (drives the toolbar spinner). */
   loading: boolean
+  /** Cached navigation availability so emitState() stays synchronous. */
+  canGoBack: boolean
+  canGoForward: boolean
 }
 
 export const isAndroid = (t: Tab): boolean => t.kind === 'android'

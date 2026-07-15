@@ -254,11 +254,12 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
           className="nav-btn"
           onClick={() => window.api.browserBack()}
           title={isAndroid ? 'Voltar (Android)' : 'Voltar'}
+          disabled={!isAndroid && !state.canGoBack}
         >
           <IconChevronLeft />
         </button>
         {!isAndroid && (
-          <button className="nav-btn" onClick={() => window.api.browserForward()} title="Avançar">
+          <button className="nav-btn" onClick={() => window.api.browserForward()} title="Avançar" disabled={!state.canGoForward}>
             <IconChevronRight />
           </button>
         )}

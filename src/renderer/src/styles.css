@@ -2446,6 +2446,11 @@ button svg {
 .nav-btn:hover {
   background: var(--line);
 }
+.nav-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+  background: var(--bg-3);
+}
 /* Loading indicator next to the nav buttons (like a normal browser). */
 .nav-spinner {
   flex: 0 0 auto;
