@@ -90,7 +90,22 @@ export class AndroidDevice {
     const before = new Set(await this.onlineDevices())
     this.emulatorProc = spawn(
       d.emulator,
-      ['-avd', DEFAULT_AVD, '-no-snapshot', '-no-boot-anim', '-gpu', 'auto', '-netdelay', 'none', '-netspeed', 'full'],
+      // -no-window: we only ever read the screen via `adb exec-out screencap` (see
+      // DeviceFrame/streaming above) — the emulator's own GUI window is unused, and
+      // without this flag it shows up as its own icon in the Windows taskbar.
+      [
+        '-avd',
+        DEFAULT_AVD,
+        '-no-snapshot',
+        '-no-boot-anim',
+        '-no-window',
+        '-gpu',
+        'auto',
+        '-netdelay',
+        'none',
+        '-netspeed',
+        'full'
+      ],
       { env: this.env, detached: false, stdio: 'ignore' }
     )
     this.emulatorProc.on('error', () => undefined)

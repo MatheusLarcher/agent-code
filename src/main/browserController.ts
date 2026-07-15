@@ -29,6 +29,7 @@ import {
   forwardPageInput
 } from './pageActions'
 import { bootAndroidDevice, forwardAndroidInput } from './android/androidTab'
+import { hideChromeWindowFromTaskbar } from './windowsTaskbar'
 import type { AndroidDevice } from './android/androidDevice'
 import type { Progress } from './android/androidEnv'
 
@@ -144,6 +145,14 @@ export class BrowserController {
       this.context = await chromium.launchPersistentContext(userDataDir, opts)
     }
     this.browser = this.context.browser()
+    // Best-effort: hide the real Chrome window from the Windows taskbar (it's
+    // parked off-screen, but Windows still lists any top-level window in the
+    // taskbar regardless of position). AWAITED here, before any tab/screencast
+    // exists yet — the fix briefly hides+reshows the native window (see
+    // windowsTaskbar.ts for why), which is only safe to do before we're capturing
+    // it. Skipped under tests — the headless test browser has no window to find,
+    // and the retry loop would just waste several seconds per test run.
+    if (!isTest) await hideChromeWindowFromTaskbar(userDataDir)
     // Hide the last obvious automation signal some sites sniff.
     await this.context.addInitScript(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
