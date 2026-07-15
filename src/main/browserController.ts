@@ -263,6 +263,7 @@ export class BrowserController {
   async showStitchDesign(html: string, title?: string): Promise<string> {
     const context = await this.ensureContext()
     const page = await context.newPage()
+    await page.bringToFront().catch(() => undefined)
     const label = (title && title.trim()) || 'Stitch design'
     const tab: Tab = { id: nextTabId(), kind: 'stitch', page, cdp: null, device: null, title: label, url: '', loading: false, canGoBack: false, canGoForward: false }
     this.tabs.set(tab.id, tab)
@@ -286,6 +287,12 @@ export class BrowserController {
   private async openWebTab(): Promise<Tab> {
     const context = await this.ensureContext()
     const page = await context.newPage()
+    // Real Chrome only exempts the *frontmost* tab from its own background/discard
+    // heuristics (Memory Saver, tab freezing) — our launch flags only cover window-
+    // level occlusion, not per-tab backgrounding within the same window. Without
+    // this, a page we still consider "active" can silently get discarded/reset by
+    // Chrome itself between tool calls, with no navigation or reload on our side.
+    await page.bringToFront().catch(() => undefined)
     const tab: Tab = { id: nextTabId(), kind: 'web', page, cdp: null, device: null, title: '', url: page.url(), loading: false, canGoBack: false, canGoForward: false }
     this.tabs.set(tab.id, tab)
     this.wireTab(tab)
@@ -358,6 +365,7 @@ export class BrowserController {
     const tab = this.tabs.get(id)
     if (!tab) return `Aba ${id} não encontrada.`
     this.activeTabId = id
+    if (tab.page) await tab.page.bringToFront().catch(() => undefined)
     await this.applyViewport(tab.page)
     await this.reapplySelectMode()
     this.emitState()
