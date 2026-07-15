@@ -1,9 +1,10 @@
 import { useEffect, useState, type RefObject } from 'react'
 import type { FileAttachment, FileRefAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
 import { contextLimitFor } from '@shared/ipc'
-import type { TurnRecovery, UIMessage } from '../types'
+import type { TodoPlan, TurnRecovery, UIMessage } from '../types'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
+import { TodoPlanCard } from './TodoPlanCard'
 import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
 
 function fmtDuration(ms: number): string {
@@ -114,6 +115,8 @@ interface Props {
   pendingQuestion: boolean
   /** Reopens the minimized question modal (chip's onClick). */
   onReopenQuestion: () => void
+  /** The active conversation's current TodoWrite plan, fixed above the composer. */
+  todoPlan?: TodoPlan
   /** When the active conversation's task started (ms epoch), or null if idle. */
   runningSince: number | null
   /** Duration (ms) of the last finished task, shown when idle. */
@@ -364,6 +367,8 @@ export function ChatPanel(props: Props): JSX.Element {
           <span>O agente fez uma pergunta — toque para responder</span>
         </button>
       )}
+
+      {props.todoPlan && <TodoPlanCard plan={props.todoPlan} />}
 
       <div className="composer-bar">
         <select
