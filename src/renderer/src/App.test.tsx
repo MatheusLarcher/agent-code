@@ -591,3 +591,150 @@ describe('App — uso da conta (5h/semana) na topbar, global (não é por conver
   })
 
 })
+
+// Reads what the app persisted for the seeded conversation ('c1') — the same
+// mechanism App.tsx itself uses (saveConversations -> window.api.saveAllConversations),
+// so these assert on real persisted state, not an internal implementation detail.
+interface TestTodoItem {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+  activeForm: string
+}
+function savedConv(): { todoPlan?: { items: TestTodoItem[]; active: boolean } } | undefined {
+  const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+  return list.find((c: { id: string }) => c.id === 'c1')
+}
+
+const todoWriteEvent = (todos: TestTodoItem[]): ChatEvent => ({
+  kind: 'tool-use',
+  id: 'tw1',
+  name: 'TodoWrite',
+  input: { todos },
+  parentToolUseId: null
+})
+
+describe('App — TodoWrite vira um plano fixo, não um card no feed de mensagens', () => {
+  it('TodoWrite não aparece na lista de mensagens e atualiza o todoPlan persistido', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(
+      todoWriteEvent([
+        { content: 'Passo 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' },
+        { content: 'Passo 2', status: 'pending', activeForm: 'Fazendo o passo 2' }
+      ])
+    )
+
+    // Nenhum card de ferramenta "TodoWrite" no feed — nem o nome da tool nem o
+    // conteúdo cru do input aparecem como mensagem.
+    expect(screen.queryByText('TodoWrite')).toBeNull()
+    expect(screen.queryByText(/Passo 1/)).toBeNull()
+
+    await waitFor(() => {
+      const plan = savedConv()?.todoPlan
+      expect(plan?.active).toBe(true)
+      expect(plan?.items).toEqual([
+        { content: 'Passo 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' },
+        { content: 'Passo 2', status: 'pending', activeForm: 'Fazendo o passo 2' }
+      ])
+    })
+  })
+
+  it('uma segunda chamada de TodoWrite SUBSTITUI o plano (não acumula itens)', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(
+      todoWriteEvent([
+        { content: 'Passo 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' },
+        { content: 'Passo 2', status: 'pending', activeForm: 'Fazendo o passo 2' }
+      ])
+    )
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(2))
+
+    await emit(
+      todoWriteEvent([
+        { content: 'Passo 1', status: 'completed', activeForm: 'Fazendo o passo 1' },
+        { content: 'Passo 2', status: 'in_progress', activeForm: 'Fazendo o passo 2' }
+      ])
+    )
+
+    await waitFor(() => {
+      const plan = savedConv()?.todoPlan
+      expect(plan?.items).toHaveLength(2) // não virou 4
+      expect(plan?.items[0].status).toBe('completed')
+      expect(plan?.items[1].status).toBe('in_progress')
+    })
+  })
+
+  it('o turno terminar (result) marca active:false mesmo com itens ainda pendentes', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(
+      todoWriteEvent([
+        { content: 'Passo 1', status: 'completed', activeForm: 'Fazendo o passo 1' },
+        { content: 'Passo 2', status: 'pending', activeForm: 'Fazendo o passo 2' }
+      ])
+    )
+    await waitFor(() => expect(savedConv()?.todoPlan?.active).toBe(true))
+
+    await emit(result) // turno termina — interrompido/concluído, itens continuam como estavam
+
+    await waitFor(() => {
+      const plan = savedConv()?.todoPlan
+      expect(plan?.active).toBe(false)
+      expect(plan?.items).toHaveLength(2) // itens preservados, só o spinner para
+    })
+  })
+
+  it('input malformado de TodoWrite não derruba o app nem sobrescreve um plano válido anterior', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(todoWriteEvent([{ content: 'Passo 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' }]))
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(1))
+
+    // input malformado (sem 'todos', ou com status inválido) — extractTodoPlan
+    // deve devolver null e o plano anterior permanece intacto.
+    await emit({ kind: 'tool-use', id: 'tw2', name: 'TodoWrite', input: { oops: true }, parentToolUseId: null })
+    await emit({
+      kind: 'tool-use',
+      id: 'tw3',
+      name: 'TodoWrite',
+      input: { todos: [{ content: 'x', status: 'nope', activeForm: 'y' }] },
+      parentToolUseId: null
+    })
+
+    expect(savedConv()?.todoPlan?.items).toHaveLength(1)
+    expect(savedConv()?.todoPlan?.items[0].content).toBe('Passo 1')
+  })
+})

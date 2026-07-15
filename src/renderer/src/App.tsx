@@ -14,7 +14,7 @@ import type {
 } from '@shared/ipc'
 import { isOllamaModel, OLLAMA_MODELS, MODEL_EFFORT, DEFAULT_EFFORT } from '@shared/ipc'
 import type { EffortLevel } from '@shared/ipc'
-import type { Conversation, UIMessage } from './types'
+import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
 import {
@@ -130,7 +130,40 @@ function withoutKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
 }
 
 /** Pure reducer for a conversation's message list (system events handled by the caller). */
+/** True for the tool-use event that carries a TodoWrite call — these are
+ *  diverted to `Conversation.todoPlan` (see `extractTodoPlan`) instead of
+ *  becoming a generic ToolCard in the message feed. */
+function isTodoWriteToolUse(e: ChatEvent): e is Extract<ChatEvent, { kind: 'tool-use' }> {
+  return e.kind === 'tool-use' && e.name === 'TodoWrite'
+}
+
+/** Validate + extract a TodoWrite call's todo list. `input` is `unknown` (it
+ *  comes from the SDK as-is) — checked defensively rather than trusting the
+ *  shape, since a malformed/future SDK payload shouldn't crash the reducer. */
+function extractTodoPlan(e: Extract<ChatEvent, { kind: 'tool-use' }>): TodoPlan | null {
+  const input = e.input as { todos?: unknown } | null
+  const todos = input?.todos
+  if (!Array.isArray(todos)) return null
+  const items: TodoItem[] = []
+  for (const t of todos) {
+    if (
+      typeof t !== 'object' ||
+      t === null ||
+      typeof (t as TodoItem).content !== 'string' ||
+      typeof (t as TodoItem).activeForm !== 'string' ||
+      !['pending', 'in_progress', 'completed'].includes((t as TodoItem).status)
+    ) {
+      return null
+    }
+    items.push(t as TodoItem)
+  }
+  return { items, active: true }
+}
+
 function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
+  // TodoWrite calls never join the message feed — they update
+  // Conversation.todoPlan instead (handled in onEvent, alongside this call).
+  if (isTodoWriteToolUse(e)) return prev
   if (e.kind === 'assistant-text') {
     const i = prev.findIndex((m) => m.kind === 'assistant-text' && m.id === e.id)
     if (i >= 0) {
@@ -352,6 +385,17 @@ export function App(): JSX.Element {
           }
         } else {
           next = { ...c, messages: reduceMessages(c.messages, e), updatedAt: Date.now() }
+        }
+        // TodoWrite replaces the whole plan (never appends) — one live
+        // checklist per conversation, not a new card per call. A malformed
+        // input (extractTodoPlan → null) is dropped silently rather than
+        // clobbering whatever plan was already showing.
+        if (isTodoWriteToolUse(e)) {
+          const plan = extractTodoPlan(e)
+          if (plan) next = { ...next, todoPlan: plan }
+        }
+        if ((e.kind === 'result' || e.kind === 'error') && next.todoPlan) {
+          next = { ...next, todoPlan: { ...next.todoPlan, active: false } }
         }
         if (e.kind === 'result' && e.usage) {
           const u = e.usage
