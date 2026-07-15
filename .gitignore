@@ -31,3 +31,6 @@ smartfone-remote/android/
 smartfone-remote/dist/
 smartfone-remote/.gradle/
 /mockups
+
+# Visual brainstorming companion (Superpowers) mockup sessions
+.superpowers/
