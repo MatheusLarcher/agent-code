@@ -101,7 +101,7 @@ describe('migração do blob legado', () => {
     expect(existsSync(join(cacheDir, 'agent-code.db.bak'))).toBe(true)
   })
 
-  it('não apaga a chave legada do db antigo (fica como backup inerte)', () => {
+  it('apaga a chave legada do db global após migrar (o .bak é o backup, não uma chave morta)', () => {
     seedLegacyDb(cacheDir, [conv('old1', 'C:\\Projects\\legado')])
     loadAllConversationRecords(cacheDir)
     const db = new DatabaseSync(join(cacheDir, 'agent-code.db'))
@@ -109,7 +109,9 @@ describe('migração do blob legado', () => {
       | { value?: string }
       | undefined
     db.close()
-    expect(row?.value).toBeTruthy()
+    expect(row).toBeUndefined()
+    // O backup do banco inteiro continua intacto — é ele que guarda os dados originais.
+    expect(existsSync(join(cacheDir, 'agent-code.db.bak'))).toBe(true)
   })
 
   it('é idempotente — rodar duas vezes não duplica nem corrompe', () => {

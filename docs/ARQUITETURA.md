@@ -311,11 +311,14 @@ A persistência **por usuário** vive numa **pasta de cache** que o usuário esc
   ├─ agent-code.db               ← SQLite: tabela kv(key → JSON) — config do sistema
   │                                (API key do Stitch, "permitir tudo", token Android,
   │                                UI state, snapshot de uso); a chave antiga de
-  │                                conversas (agentcode.conversations.v1) fica aqui
-  │                                como backup INERTE pós-migração, nunca mais lida
+  │                                conversas (agentcode.conversations.v1) é APAGADA
+  │                                daqui assim que a migração pro storage por
+  │                                projeto termina — não fica como lixo morto
   ├─ agent-code.db.bak           ← cópia do banco antigo, feita uma vez, na 1ª
   │                                migração para o storage por projeto (só se havia
-  │                                dado legado pra migrar)
+  │                                dado legado pra migrar) — essa cópia É o backup;
+  │                                pode ser apagada manualmente quando o usuário
+  │                                confirmar que a migração preservou tudo
   ├─ data/                       ← UM arquivo SQLite por projeto — só conversas
   │  ├─ <slug-do-projeto>-<hash8>.db    (slug = nome da pasta; hash8 = SHA-1 do
   │  ├─ <slug-do-projeto>-<hash8>.db     caminho ABSOLUTO — dois projetos de nome
@@ -396,7 +399,7 @@ O `App` grava o `draft` na conversa (persistido no SQLite pelo *debounce* das co
 - **Conversas** — `loadConversations()`/`saveConversations(list)` continuam com a **mesma assinatura de sempre** (a lista completa, de todos os projetos, entra e sai como um único array — a UI/`App.tsx` não muda nada), mas por baixo chamam `window.api.loadAllConversations()`/`saveAllConversations()` (canais `conversations:load-all`/`conversations:save-all`), que no main (`src/main/projectStore.ts`) **agrupam por `cwd`** e leem/gravam **um banco SQLite por projeto** em `data/<projeto>-<hash>.db`, em vez de um único blob:
   - **Carregar** = abrir todo `.db` de `data/` e concatenar as conversas de cada um — o mesmo "carregar tudo de uma vez" de antes, só que a fonte agora é vários arquivos.
   - **Salvar** = agrupar a lista completa por projeto, regravar o arquivo de cada projeto presente e **apagar** o arquivo de qualquer projeto que não apareça mais na lista (todas as conversas dele foram excluídas) — evita "fantasmas" ressurgindo num load futuro.
-  - **Migração automática, uma única vez:** a primeira vez que `data/` não existe ainda, o antigo blob único (chave `agentcode.conversations.v1`, no SQLite global) é lido, um **backup do banco inteiro** (`agent-code.db.bak`) é feito, e as conversas são divididas por projeto. A chave antiga **não é apagada** (fica como um backup inerte, nunca mais lida) — mesmo espírito da migração do `localStorage` abaixo.
+  - **Migração automática, uma única vez:** a primeira vez que `data/` não existe ainda, o antigo blob único (chave `agentcode.conversations.v1`, no SQLite global) é lido, um **backup do banco inteiro** (`agent-code.db.bak`) é feito, as conversas são divididas por projeto e **a chave antiga é apagada** do banco global — o `.bak` é o backup de verdade, não uma chave morta guardada pra sempre dentro do banco que continua em uso (a versão inicial deste recurso fazia isso, e um usuário real acumulou dezenas de MB de lixo morto no `agent-code.db` até ser limpo manualmente).
   - `saveConversations` continua fazendo o **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo) e descartando o campo `images` ao persistir.
 - `agentcode.ui.v1` — `{ collapsed, activeId, browserMinimized, browserWidth }` — continua no banco **global** (`kv:get`/`kv:set`), não migrou para os bancos por projeto (não é dado de projeto).
 - **Migração do `localStorage`** (herdada de instalações bem antigas, anteriores até ao SQLite) — na primeira leitura de cada chave, se não houver dado algum (nem no SQLite global, nem em nenhum banco de projeto), o valor antigo do `localStorage` é copiado (e mantido como backup inofensivo, nunca reconsultado depois — evitar isso é o que garante que uma conversa **de verdade** apagada não "ressuscite" de um `localStorage` velho). A hidratação do `App` virou `async` (carrega em paralelo e só então marca `hydrated`, que evita sobrescrever antes de carregar).

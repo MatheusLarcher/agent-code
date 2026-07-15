@@ -17,7 +17,8 @@ const DATA_DIRNAME = 'data'
 const NO_PROJECT_FILE = 'sem-projeto.db'
 const CONVERSATIONS_KEY = 'conversations'
 /** The key the single-blob store used to keep ALL conversations under, in the
- *  legacy shared `agent-code.db`. Read once for migration, never written again. */
+ *  legacy shared `agent-code.db`. Read once for migration, then deleted — the
+ *  one-time `.bak` copy of the whole db is the safety net, not a live dead key. */
 const LEGACY_CONVERSATIONS_KEY = 'agentcode.conversations.v1'
 
 /** A conversation as seen by this layer: opaque JSON, only `cwd` matters for grouping. */
@@ -121,11 +122,30 @@ function readLegacyConversations(cacheDir: string): ConversationRecord[] {
   }
 }
 
+/** Remove the legacy conversations key from the global db once its data has
+ *  been safely split into per-project files — the `.bak` copy is the surviving
+ *  safety net, so there's no reason to also carry the dead blob around forever
+ *  inside the live `agent-code.db` (it was multiple MB of pure dead weight). */
+function deleteLegacyConversationsKey(cacheDir: string): void {
+  const legacyPath = join(cacheDir, DB_NAME)
+  try {
+    const db = new DatabaseSync(legacyPath)
+    try {
+      db.exec('PRAGMA journal_mode = DELETE')
+      db.prepare('DELETE FROM kv WHERE key = ?').run(LEGACY_CONVERSATIONS_KEY)
+    } finally {
+      db.close()
+    }
+  } catch {
+    /* best-effort — worst case the dead key lingers, harmless */
+  }
+}
+
 /**
  * One-time, idempotent split of the legacy blob into per-project files — runs
- * only when `data/` doesn't exist yet. Backs up the whole legacy db first (once);
- * the legacy key itself is left in place afterward as an inert backup, mirroring
- * how this codebase already keeps old localStorage values around post-migration.
+ * only when `data/` doesn't exist yet. Backs up the whole legacy db first (once),
+ * then deletes the legacy key from the live db once the split has been written —
+ * the `.bak` file is the safety net, not a dead key kept around forever.
  */
 function migrateLegacyConversations(cacheDir: string): void {
   if (existsSync(dataDir(cacheDir))) return // already migrated (or nothing to migrate)
@@ -146,6 +166,7 @@ function migrateLegacyConversations(cacheDir: string): void {
   for (const [file, records] of groupByProject(legacyList)) {
     writeConversations(join(dataDir(cacheDir), file), records)
   }
+  deleteLegacyConversationsKey(cacheDir)
 }
 
 /** Load every conversation from every per-project db under `data/` — merged, the
