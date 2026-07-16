@@ -45,18 +45,23 @@ export interface TurnRecovery {
   messageId: string | null
 }
 
-/** One task in a TodoWrite plan, mirroring the SDK's TodoWriteInput item shape. */
+/** One task in the agent's plan, fed by either the legacy TodoWrite tool or the
+ *  modern TaskCreate/TaskUpdate pair (the one actually used in practice — see
+ *  App.tsx). `id` is only set/used on the TaskCreate/TaskUpdate path, to
+ *  correlate a later TaskUpdate call back to the right item; TodoWrite always
+ *  replaces the whole list wholesale and never needs it. */
 export interface TodoItem {
+  id?: string
   content: string
   status: 'pending' | 'in_progress' | 'completed'
   activeForm: string
 }
 
-/** The agent's current TodoWrite plan for a conversation — replaced wholesale
- *  (never appended) each time the agent calls TodoWrite again, so it reads as
- *  one live checklist instead of a new card per call. `active` goes false when
- *  the turn ends (result/error), collapsing the card to a summary — it stays
- *  visible either way, it just stops showing the spinner. */
+/** The agent's current task plan for a conversation — replaced/patched each
+ *  time the agent tracks progress again, so it reads as one live checklist
+ *  instead of a new card per call. `active` goes false when the turn ends
+ *  (result/error), collapsing the card to a summary — it stays visible either
+ *  way, it just stops showing the spinner. */
 export interface TodoPlan {
   items: TodoItem[]
   active: boolean
@@ -81,8 +86,8 @@ export interface Conversation {
   draft?: string
   /** A failed turn waiting to resume; persisted so app restarts restore its timer. */
   recovery?: TurnRecovery
-  /** The agent's current TodoWrite plan, if it has called that tool at least
-   *  once in this conversation. Rendered as a fixed card above the composer. */
+  /** The agent's current task plan, if it has tracked progress at least once
+   *  in this conversation. Rendered as a fixed card above the composer. */
   todoPlan?: TodoPlan
   messages: UIMessage[]
   tokens: TokenTotals

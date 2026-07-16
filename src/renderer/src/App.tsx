@@ -137,6 +137,23 @@ function isTodoWriteToolUse(e: ChatEvent): e is Extract<ChatEvent, { kind: 'tool
   return e.kind === 'tool-use' && e.name === 'TodoWrite'
 }
 
+/** TaskCreate/TaskUpdate are the tool pair actually used in practice today
+ *  (TodoWrite is kept working above but real sessions don't call it) — same
+ *  treatment: diverted to `Conversation.todoPlan` instead of the message feed. */
+function isTaskCreateToolUse(e: ChatEvent): e is Extract<ChatEvent, { kind: 'tool-use' }> {
+  return e.kind === 'tool-use' && e.name === 'TaskCreate'
+}
+function isTaskUpdateToolUse(e: ChatEvent): e is Extract<ChatEvent, { kind: 'tool-use' }> {
+  return e.kind === 'tool-use' && e.name === 'TaskUpdate'
+}
+
+/** Shared by both TodoWrite and TaskUpdate validation, so the set of valid
+ *  statuses can't silently drift between the two paths. */
+const TODO_STATUSES = ['pending', 'in_progress', 'completed'] as const
+function isTodoStatus(s: unknown): s is TodoItem['status'] {
+  return typeof s === 'string' && (TODO_STATUSES as readonly string[]).includes(s)
+}
+
 /** Validate + extract a TodoWrite call's todo list. `input` is `unknown` (it
  *  comes from the SDK as-is) — checked defensively rather than trusting the
  *  shape, since a malformed/future SDK payload shouldn't crash the reducer. */
@@ -151,7 +168,7 @@ function extractTodoPlan(e: Extract<ChatEvent, { kind: 'tool-use' }>): TodoPlan 
       t === null ||
       typeof (t as TodoItem).content !== 'string' ||
       typeof (t as TodoItem).activeForm !== 'string' ||
-      !['pending', 'in_progress', 'completed'].includes((t as TodoItem).status)
+      !isTodoStatus((t as TodoItem).status)
     ) {
       return null
     }
@@ -160,10 +177,62 @@ function extractTodoPlan(e: Extract<ChatEvent, { kind: 'tool-use' }>): TodoPlan 
   return { items, active: true }
 }
 
+/** TaskCreate has no id in its input — the SDK only assigns one once the call
+ *  resolves — so a new item is keyed by the tool-use call's own id until
+ *  `applyTaskResult` resolves it to the real task id. */
+function applyTaskCreate(plan: TodoPlan | undefined, e: Extract<ChatEvent, { kind: 'tool-use' }>): TodoPlan | null {
+  const input = e.input as { subject?: unknown; activeForm?: unknown } | null
+  const subject = input?.subject
+  if (typeof subject !== 'string') return null
+  const activeForm = typeof input?.activeForm === 'string' && input.activeForm ? input.activeForm : subject
+  const item: TodoItem = { id: e.id, content: subject, activeForm, status: 'pending' }
+  return { items: [...(plan?.items ?? []), item], active: true }
+}
+
+/** Resolves a pending TaskCreate item's temp id to the real task id, parsed
+ *  from the result text (e.g. "Task #3 created successfully: ..." — the SDK
+ *  never puts the id in structured output, only in this message). Returns
+ *  null (no plan change) for any result that isn't one of ours, so this is
+ *  safe to call for every tool-result event, not just Task ones. */
+function applyTaskResult(plan: TodoPlan | undefined, e: Extract<ChatEvent, { kind: 'tool-result' }>): TodoPlan | null {
+  if (!plan) return null
+  const i = plan.items.findIndex((it) => it.id === e.toolUseId)
+  if (i < 0) return null
+  if (e.isError) return { ...plan, items: plan.items.filter((_, idx) => idx !== i) }
+  const match = /Task #(\d+)/.exec(e.text)
+  if (!match) return null // can't resolve the real id — item stays under its temp id
+  const items = [...plan.items]
+  items[i] = { ...items[i], id: match[1] }
+  return { ...plan, items }
+}
+
+/** Applies a TaskUpdate call (status/subject/activeForm patch, or removal on
+ *  `status: 'deleted'`) to the item with a matching resolved id. An unknown
+ *  taskId (never resolved, or just invalid) is a no-op, same defensive
+ *  philosophy as extractTodoPlan — a stray/malformed call can't crash this. */
+function applyTaskUpdate(plan: TodoPlan | undefined, e: Extract<ChatEvent, { kind: 'tool-use' }>): TodoPlan | null {
+  if (!plan) return null
+  const input = e.input as
+    | { taskId?: unknown; status?: unknown; subject?: unknown; activeForm?: unknown }
+    | null
+  const taskId = input?.taskId
+  if (typeof taskId !== 'string') return null
+  const i = plan.items.findIndex((it) => it.id === taskId)
+  if (i < 0) return null
+  if (input?.status === 'deleted') return { ...plan, items: plan.items.filter((_, idx) => idx !== i) }
+  const items = [...plan.items]
+  const patched = { ...items[i] }
+  if (isTodoStatus(input?.status)) patched.status = input.status
+  if (typeof input?.subject === 'string') patched.content = input.subject
+  if (typeof input?.activeForm === 'string') patched.activeForm = input.activeForm
+  items[i] = patched
+  return { ...plan, items }
+}
+
 function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
-  // TodoWrite calls never join the message feed — they update
-  // Conversation.todoPlan instead (handled in onEvent, alongside this call).
-  if (isTodoWriteToolUse(e)) return prev
+  // TodoWrite/TaskCreate/TaskUpdate calls never join the message feed — they
+  // update Conversation.todoPlan instead (handled in onEvent, alongside this call).
+  if (isTodoWriteToolUse(e) || isTaskCreateToolUse(e) || isTaskUpdateToolUse(e)) return prev
   if (e.kind === 'assistant-text') {
     const i = prev.findIndex((m) => m.kind === 'assistant-text' && m.id === e.id)
     if (i >= 0) {
@@ -179,6 +248,10 @@ function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
       copy[i] = { ...copy[i], result: { isError: e.isError, text: e.text } }
       return copy
     }
+    // Orphaned result — its tool-use was diverted above (TodoWrite/Task*), so
+    // there's nothing in `prev` to attach it to. Drop it rather than letting
+    // it fall through and land as a standalone message with no context.
+    return prev
   }
   if (e.kind === 'result') {
     // The result text duplicates the final answer and the cost is in the header,
@@ -387,11 +460,22 @@ export function App(): JSX.Element {
           next = { ...c, messages: reduceMessages(c.messages, e), updatedAt: Date.now() }
         }
         // TodoWrite replaces the whole plan (never appends) — one live
-        // checklist per conversation, not a new card per call. A malformed
-        // input (extractTodoPlan → null) is dropped silently rather than
-        // clobbering whatever plan was already showing.
+        // checklist per conversation, not a new card per call. TaskCreate/
+        // TaskUpdate (the pair actually used in practice) instead patch it
+        // incrementally, by id. Any malformed/unresolved input is dropped
+        // silently (apply*/extract* → null) rather than clobbering whatever
+        // plan was already showing.
         if (isTodoWriteToolUse(e)) {
           const plan = extractTodoPlan(e)
+          if (plan) next = { ...next, todoPlan: plan }
+        } else if (isTaskCreateToolUse(e)) {
+          const plan = applyTaskCreate(next.todoPlan, e)
+          if (plan) next = { ...next, todoPlan: plan }
+        } else if (isTaskUpdateToolUse(e)) {
+          const plan = applyTaskUpdate(next.todoPlan, e)
+          if (plan) next = { ...next, todoPlan: plan }
+        } else if (e.kind === 'tool-result') {
+          const plan = applyTaskResult(next.todoPlan, e)
           if (plan) next = { ...next, todoPlan: plan }
         }
         if ((e.kind === 'result' || e.kind === 'error') && next.todoPlan) {

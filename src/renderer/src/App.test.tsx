@@ -873,3 +873,302 @@ describe('App — TodoPlanCard renderizado de verdade (end-to-end)', () => {
     expect(screen.queryByText('Passo 1 da conversa 2')).toBeNull()
   })
 })
+
+// TaskCreate/TaskUpdate: the pair actually used in practice today (see
+// App.tsx) — TodoWrite above is kept working but real sessions don't call it.
+// Unlike TodoWrite, the task id isn't in TaskCreate's input: it only shows up
+// in the matching tool-result text ("Task #N created successfully: ...").
+const taskCreateEvent = (id: string, subject: string, activeForm?: string): ChatEvent => ({
+  kind: 'tool-use',
+  id,
+  name: 'TaskCreate',
+  input: activeForm ? { subject, activeForm } : { subject },
+  parentToolUseId: null
+})
+
+const taskCreatedResult = (toolUseId: string, taskId: string, subject: string): ChatEvent => ({
+  kind: 'tool-result',
+  id: `${toolUseId}-res`,
+  toolUseId,
+  isError: false,
+  text: `Task #${taskId} created successfully: ${subject}`
+})
+
+const taskUpdateEvent = (id: string, taskId: string, patch: Record<string, unknown>): ChatEvent => ({
+  kind: 'tool-use',
+  id,
+  name: 'TaskUpdate',
+  input: { taskId, ...patch },
+  parentToolUseId: null
+})
+
+describe('App — TaskCreate/TaskUpdate também vira um plano fixo, não um card no feed de mensagens', () => {
+  it('TaskCreate + resultado + TaskUpdate não aparecem no feed e atualizam o todoPlan persistido', async () => {
+    // createdAt precisa ser recente: compactOldConversations (storage.ts) filtra
+    // pra só user/assistant-answer em conversas com mais de 15 dias, e o seed
+    // padrão do beforeEach (createdAt: 1) sempre cai nessa regra — o que deixaria
+    // a checagem de "mensagem órfã" abaixo cega ao bug (o tool-result some do
+    // save de qualquer forma, tenha ou não o vazamento).
+    const seeded = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+    seeded[0].createdAt = Date.now()
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify(seeded))
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(taskCreateEvent('call1', 'Passo 1', 'Fazendo o passo 1'))
+    await emit(taskCreatedResult('call1', '1', 'Passo 1'))
+    await emit(taskCreateEvent('call2', 'Passo 2', 'Fazendo o passo 2'))
+    await emit(taskCreatedResult('call2', '2', 'Passo 2'))
+    await emit(taskUpdateEvent('u1', '1', { status: 'in_progress' }))
+
+    // Nenhum ToolCard de TaskCreate/TaskUpdate no feed.
+    expect(screen.queryByText('TaskCreate')).toBeNull()
+    expect(screen.queryByText('TaskUpdate')).toBeNull()
+
+    await waitFor(() => {
+      const conv = savedConv() as
+        | { todoPlan?: { items: TodoItem[]; active: boolean }; messages?: { kind: string }[] }
+        | undefined
+      const plan = conv?.todoPlan
+      expect(plan?.active).toBe(true)
+      expect(plan?.items).toEqual([
+        { id: '1', content: 'Passo 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' },
+        { id: '2', content: 'Passo 2', status: 'pending', activeForm: 'Fazendo o passo 2' }
+      ])
+      // Nem mensagem órfã de resultado (o tool-use que ela pertence foi
+      // desviado do feed, nunca entrou em `prev`) — lido no mesmo `waitFor`
+      // pra esperar o save debounced persistir antes de checar o localStorage.
+      expect((conv?.messages ?? []).some((m) => m.kind === 'tool-result')).toBe(false)
+    })
+  })
+
+  it('TaskUpdate faz PATCH por id (não duplica, não mexe nos outros itens)', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(taskCreateEvent('c1', 'Passo 1', 'Fazendo o passo 1'))
+    await emit(taskCreatedResult('c1', '1', 'Passo 1'))
+    await emit(taskCreateEvent('c2', 'Passo 2', 'Fazendo o passo 2'))
+    await emit(taskCreatedResult('c2', '2', 'Passo 2'))
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(2))
+
+    await emit(taskUpdateEvent('u1', '1', { status: 'completed' }))
+    await emit(taskUpdateEvent('u2', '2', { status: 'in_progress' }))
+
+    await waitFor(() => {
+      const plan = savedConv()?.todoPlan
+      expect(plan?.items).toHaveLength(2) // não virou 4
+      expect(plan?.items[0].status).toBe('completed')
+      expect(plan?.items[1].status).toBe('in_progress')
+    })
+  })
+
+  it('status "deleted" remove o item certo da lista', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(taskCreateEvent('c1', 'Passo 1'))
+    await emit(taskCreatedResult('c1', '1', 'Passo 1'))
+    await emit(taskCreateEvent('c2', 'Passo 2'))
+    await emit(taskCreatedResult('c2', '2', 'Passo 2'))
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(2))
+
+    await emit(taskUpdateEvent('u1', '1', { status: 'deleted' }))
+
+    await waitFor(() => {
+      const plan = savedConv()?.todoPlan
+      expect(plan?.items).toHaveLength(1)
+      expect(plan?.items[0].content).toBe('Passo 2')
+    })
+  })
+
+  it('o turno terminar (result) marca active:false mesmo com itens ainda pendentes', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(taskCreateEvent('c1', 'Passo 1'))
+    await emit(taskCreatedResult('c1', '1', 'Passo 1'))
+    await emit(taskUpdateEvent('u1', '1', { status: 'completed' }))
+    await emit(taskCreateEvent('c2', 'Passo 2'))
+    await emit(taskCreatedResult('c2', '2', 'Passo 2'))
+    await waitFor(() => expect(savedConv()?.todoPlan?.active).toBe(true))
+
+    await emit(result) // turno termina — itens continuam como estavam
+
+    await waitFor(() => {
+      const plan = savedConv()?.todoPlan
+      expect(plan?.active).toBe(false)
+      expect(plan?.items).toHaveLength(2)
+    })
+  })
+
+  it('input malformado (TaskCreate sem subject, TaskUpdate com taskId desconhecido) não derruba nem sobrescreve o plano', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(taskCreateEvent('c1', 'Passo 1'))
+    await emit(taskCreatedResult('c1', '1', 'Passo 1'))
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(1))
+
+    // TaskCreate sem 'subject' — applyTaskCreate devolve null, plano intacto.
+    await emit({ kind: 'tool-use', id: 'bad1', name: 'TaskCreate', input: { oops: true }, parentToolUseId: null })
+    // TaskUpdate com taskId desconhecido — no-op.
+    await emit(taskUpdateEvent('bad2', '999', { status: 'completed' }))
+
+    expect(savedConv()?.todoPlan?.items).toHaveLength(1)
+    expect(savedConv()?.todoPlan?.items[0].content).toBe('Passo 1')
+    expect(savedConv()?.todoPlan?.items[0].status).toBe('pending')
+  })
+
+  it('TaskUpdate chegando antes do resultado do TaskCreate resolver o id é ignorado com segurança (sem crash)', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(taskCreateEvent('c1', 'Passo 1'))
+    // Sem emitir o tool-result ainda — o id real "1" nunca foi resolvido.
+    await emit(taskUpdateEvent('u1', '1', { status: 'completed' }))
+
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(1))
+    expect(savedConv()?.todoPlan?.items[0].status).toBe('pending') // no-op, não mudou
+  })
+
+  it('resultado de TaskCreate com erro (isError) remove o item pendente', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(taskCreateEvent('c1', 'Passo 1'))
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(1))
+
+    await emit({ kind: 'tool-result', id: 'c1-res', toolUseId: 'c1', isError: true, text: 'Error: task limit reached' })
+
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(0))
+  })
+})
+
+describe('App — TodoPlanCard renderizado de verdade via TaskCreate/TaskUpdate (end-to-end)', () => {
+  it('card aparece fixo acima da composer, atualiza ao vivo, e recolhe quando o turno termina', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('corrige X e Y, com testes')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    // Sem TaskCreate ainda — nenhum card no DOM.
+    expect(document.querySelector('.todo-plan-card')).toBeNull()
+
+    await emit(taskCreateEvent('cA', 'Corrigir X', 'Corrigindo X'))
+    await emit(taskCreatedResult('cA', '1', 'Corrigir X'))
+    await emit(taskCreateEvent('cB', 'Corrigir Y', 'Corrigindo Y'))
+    await emit(taskCreatedResult('cB', '2', 'Corrigir Y'))
+    await emit(taskCreateEvent('cC', 'Rodar testes', 'Rodando os testes'))
+    await emit(taskCreatedResult('cC', '3', 'Rodar testes'))
+    await emit(taskUpdateEvent('u1', '1', { status: 'in_progress' }))
+
+    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
+    expect(screen.getByText('Corrigindo X')).toBeTruthy()
+    // 0 itens completed ainda.
+    expect(screen.getByText('0/3')).toBeTruthy()
+    expect(document.querySelectorAll('.todo-plan-dot')).toHaveLength(3)
+
+    // Avança — MESMO card atualiza (não duplica: continua só 1 .todo-plan-card).
+    await emit(taskUpdateEvent('u2', '1', { status: 'completed' }))
+    await emit(taskUpdateEvent('u3', '2', { status: 'in_progress' }))
+
+    await waitFor(() => expect(screen.getByText('Corrigindo Y')).toBeTruthy())
+    expect(document.querySelectorAll('.todo-plan-card')).toHaveLength(1)
+    expect(screen.getByText('1/3')).toBeTruthy()
+
+    // Turno termina — card recolhe (resumo), continua visível.
+    await emit(result)
+    await waitFor(() => expect(screen.getByText('1/3 concluído')).toBeTruthy())
+    expect(document.querySelector('.todo-plan-card')).toBeTruthy() // nunca some
+    expect(document.querySelector('.todo-plan-card .spinner')).toBeNull() // spinner parou
+  })
+
+  it('trocar de conversa mostra o todoPlan da conversa nova (ou nenhum card, se ela nunca usou Task*)', async () => {
+    const conv2 = {
+      id: 'c2',
+      title: 'Conversa 2',
+      cwd: '/proj2',
+      model: 'claude-opus-4-8',
+      sdkSessionId: null,
+      messages: [],
+      tokens: { context: 0, output: 0, cost: 0 },
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const seeded = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([...seeded, conv2]))
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('tarefa complexa na conversa 1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(taskCreateEvent('c1', 'Passo 1'))
+    await emit(taskCreatedResult('c1', '1', 'Passo 1'))
+    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
+
+    // Troca pra Conversa 2 (nunca usou Task*) — o card some, sem vazar o da c1.
+    fireEvent.click(screen.getAllByText('Conversa 2')[0])
+    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeNull())
+  })
+})
