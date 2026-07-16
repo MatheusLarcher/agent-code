@@ -327,7 +327,7 @@ export function ChatPanel(props: Props): JSX.Element {
       )}
 
       <MessageList
-        key={props.convId ?? 'none'}
+        key={`message-list:${props.convId ?? 'none'}`}
         messages={messages}
         scrollToId={props.scrollToId}
         scrollSeq={props.scrollSeq}
@@ -368,7 +368,7 @@ export function ChatPanel(props: Props): JSX.Element {
         </button>
       )}
 
-      {props.todoPlan && <TodoPlanCard key={props.convId ?? 'none'} plan={props.todoPlan} />}
+      {props.todoPlan && <TodoPlanCard key={`todo-plan:${props.convId ?? 'none'}`} plan={props.todoPlan} />}
 
       <div className="composer-bar">
         <select

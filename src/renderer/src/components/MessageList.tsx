@@ -463,7 +463,7 @@ export function MessageList({
         switch (m.kind) {
           case 'user':
             return (
-              <div key={m.id} className="msg user" data-mid={m.id}>
+              <div key={`user:${m.id}`} className="msg user" data-mid={m.id}>
                 <div className={`bubble ${m.error ? 'has-error' : ''}`}>
                   {m.images && m.images.length > 0 && (
                     <div className="msg-images">
@@ -513,7 +513,7 @@ export function MessageList({
             const { clean, paths } = parseDownloads(m.text)
             const speaking = tts.speakingId === m.id
             return (
-              <div key={m.id} className={`msg assistant ${m.answer ? '' : 'narration'}`}>
+              <div key={`assistant:${m.id}`} className={`msg assistant ${m.answer ? '' : 'narration'}`}>
                 <div className="bubble">
                   {clean && <Markdown text={clean} />}
                   {paths.map((p, k) => (
@@ -540,15 +540,15 @@ export function MessageList({
           }
           case 'thinking':
             return (
-              <div key={m.id + idx} className="msg thinking">
+              <div key={`thinking:${m.id}`} className="msg thinking">
                 <div className="bubble">{m.text}</div>
               </div>
             )
           case 'tool-use':
-            return <ToolCard key={m.id} m={m} />
+            return <ToolCard key={`tool:${m.id}`} m={m} />
           case 'system':
             return (
-              <div key={'sys' + idx} className="msg system-note">
+              <div key={`system:${m.sessionId}:${idx}`} className="msg system-note">
                 Session ready · {m.model} · {m.cwd}
               </div>
             )
@@ -558,7 +558,7 @@ export function MessageList({
             return null
           case 'error':
             return (
-              <div key={m.id} className="msg result-note err">
+              <div key={`error:${m.id}`} className="msg result-note err">
                 {m.text}
               </div>
             )
