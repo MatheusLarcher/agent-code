@@ -1,152 +1,107 @@
 ---
 name: planejar
 description: >-
-  Execução guiada por tarefas (Plan & Execute) para tarefas COMPLEXAS de código. Use
-  OBRIGATORIAMENTE — mesmo que o usuário NÃO peça — sempre que a tarefa for: criar uma
-  tela/página/painel inteiro do zero, refatorar em VÁRIOS arquivos, ou implementar um fluxo
-  completo (frontend + integração/estado, ou endpoint/schema/worker no backend). Também quando
-  o usuário disser "planejar", "passo a passo", "use a skill de tarefas" ou "faça por etapas".
-  Garante que você NÃO seja preguiçoso em mudanças complexas (ex.: telas de PDV, dashboards,
-  endpoints com efeitos colaterais) gerando tudo de uma vez. NÃO use em tarefas simples (1
-  arquivo, ajuste pontual de CSS/Tailwind, bug rápido, dúvida) — nesses casos resolva direto,
-  sem plano.
+  Planejar e executar mudanças de código complexas em marcos verificáveis. Use quando o pedido
+  envolver múltiplos subsistemas ou dependências, decisões arquiteturais, alto risco ou impacto,
+  contratos, migrações ou efeitos externos, ou quando o usuário pedir "planejar", "passo a
+  passo" ou "por etapas". Se o usuário pedir apenas um plano, não implemente. Sem pedido explícito
+  de planejamento, não acione somente pela quantidade de arquivos; resolva diretamente mudanças
+  atômicas de baixo risco e dúvidas conceituais.
 ---
 
-# Planejar — Execução Guiada por Tarefas (Plan & Execute)
+# Planejar — execução guiada por marcos
 
-Você é um agente de terminal. Esta skill define como você trata pedidos de código: **sem
-preguiça** em tarefas complexas (telas completas de PDV, painéis de gestão, fluxos inteiros,
-endpoints/migrações/workers) e **sem cerimônia** em tarefas simples.
+Organize trabalho complexo sem cerimônia desnecessária. Ajuste o rigor ao risco, preserve o
+escopo autorizado e siga as instruções do repositório.
 
-## 🚦 Triagem — faça ANTES de codar
+## 1. Classificar o pedido
 
-Avalie o pedido:
+- Distinguir **somente planejar** de **planejar e executar**. No primeiro caso, entregar o plano
+  e parar antes de editar, testar, comitar ou realizar efeitos externos.
+- Quando o usuário pedir um plano, respeitar o formato mesmo para uma mudança pequena e ajustar o
+  detalhamento ao risco.
+- Tratar como complexo o trabalho que exija vários marcos dependentes, atravesse subsistemas,
+  altere contratos ou persistência, tenha grande impacto ou envolva incerteza relevante.
+- Sem pedido de plano, tratar como direto o trabalho atômico e de baixo risco, mesmo que uma
+  alteração mecânica toque vários arquivos; sair deste protocolo e seguir o fluxo normal do
+  projeto. Não exigir runtime para perguntas conceituais sem mudança.
+- Usar número de arquivos apenas como sinal auxiliar, nunca como critério decisivo.
 
-- **Tarefa SIMPLES** (edição em um único arquivo, ajuste pontual de CSS/Tailwind, correção de um
-  bug rápido, dúvida conceitual): **resolva imediatamente e direto. NÃO crie `EXECUTION_PLAN.md`,
-  não fragmente em etapas.** Se você entrou nesta skill por engano numa tarefa simples, saia do
-  modo de tarefas e apenas resolva. Mesmo assim, valide rodando (Passo 3.5) antes de dizer
-  "pronto".
+## 2. Preparar o trabalho
 
-- **Tarefa COMPLEXA** (tela/página/painel do zero, refatoração em múltiplos arquivos, fluxo
-  completo frontend + integração, ou mudança de backend com efeito colateral real — endpoint,
-  schema, worker, integração externa) **OU pedido explícito** ("planejar", "passo a passo",
-  "skill de tarefas"): siga o **protocolo** abaixo. Você está **PROIBIDO de gerar todo o código
-  de uma vez**.
+1. Ler as instruções fornecidas pelo ambiente e pelo repositório, respeitando sua hierarquia.
+   Inspecionar os arquivos, contratos, scripts e testes relevantes.
+2. Inspecionar `git status` e o diff existente antes de editar. Identificar mudanças do usuário e
+   evitar sobrescrevê-las, misturá-las ao escopo ou incluí-las em futuras operações Git.
+3. Quando viável, estabelecer o baseline dos checks relevantes. Distinguir regressão nova de
+   falha preexistente e não ampliar o escopo para corrigir falhas antigas sem necessidade.
+4. Preferir o planejamento nativo do ambiente. Persistir um plano somente se o usuário pedir ou
+   se a retomada exigir; usar caminho único, resumir requisitos e omitir prompt bruto, segredo e
+   PII.
+5. Dividir o trabalho em marcos ordenados por dependência. Registrar em cada um o resultado
+   observável, o escopo provável e os fluxos aplicáveis de validação. Exigir integração segura,
+   não um commit isolado.
+6. Pedir decisão ao usuário somente quando faltar uma escolha material, houver expansão de
+   escopo, ação destrutiva, efeito externo, operação em produção ou nova autoridade necessária.
+   Se o pedido já autorizar a implementação e estiver claro, comunicar o plano e prosseguir.
 
----
+## 3. Executar por marcos
 
-## ⚙️ Protocolo (somente para tarefa complexa)
+- Manter um marco por vez quando houver escopo sobreposto. Paralelizar pesquisa, revisão,
+  validação ou escritas disjuntas somente quando não houver risco de corrida.
+- Ler cada arquivo antes de editá-lo e seguir os padrões reais do projeto. Aplicar outras skills
+  apenas quando forem pertinentes e estiverem disponíveis; não depender de comandos ou skills
+  inexistentes.
+- Atualizar o plano quando surgir trabalho necessário. Resolver o que estiver no escopo e parar
+  somente quando faltar decisão ou autoridade.
+- Corrigir regressão causada pelo marco antes de avançar. Registrar separadamente falhas
+  preexistentes que não pertençam ao pedido.
 
-### Passo 1 — Planejamento estrito
-1. Crie/sobrescreva **`.claude/EXECUTION_PLAN.md`** (nunca na raiz do repo — a raiz vaza pro
-   `git status` e pode ser commitada por engano). Se o arquivo já existir, **leia antes** de
-   sobrescrever: se parecer de uma sessão anterior não concluída, pergunte ao usuário se é
-   continuação antes de descartar.
-2. No **topo** dele, cole o **prompt original do usuário** (verbatim).
-3. Quebre o pedido em **tarefas atômicas** com checkboxes. Heurística de "atômica": a tarefa dá
-   pra **validar isoladamente** (passa nos checks + comportamento observável) e **commitar
-   sozinha**. Se não dá pra validar sozinha, está grande ou pequena demais. Exemplo:
-   - `[ ]` Tarefa 1: Estrutura base e grids (layout/Tailwind).
-   - `[ ]` Tarefa 2: Componentes individuais isolados (estilizados).
-   - `[ ]` Tarefa 3: Lógica de estado e integração.
-4. Antes de cada tarefa, liste os **"fluxos de uso a validar"** dela (o que será checado no
-   Passo 3.5).
-5. Se a tarefa envolve arquivos que você não criou, ou muda um contrato existente (API/schema/
-   payload de integração), **mostre o plano ao usuário e peça ok antes de codar**. Caso
-   contrário, avise no chat que o plano foi criado e **inicie imediatamente a Tarefa 1**.
-6. Se `.claude/` não estiver no `.gitignore` do projeto (raro, mas confira), garanta que o
-   arquivo de plano não seja versionado.
+## 4. Validar de forma proporcional e segura
 
-### Passo 2 — Foco total (uma por vez)
-1. Escreva código **exclusivamente** para a tarefa atual.
-2. Empregue **máximo esforço** em design e nas regras de UI/API **do projeto** — siga as
-   convenções já existentes no código e o `CLAUDE.md` (ex.: notificações via toasts; busca/filtro
-   case- e acento-insensível; contratos de API já estabelecidos). **Não seja genérico.** Para
-   UI, aplique também a skill `frontend-design` e a preferência de mobile+animações por padrão
-   quando aplicável.
-3. **Você NÃO tem permissão para começar a próxima etapa** antes de fechar a atual.
-4. Descobriu trabalho novo/faltante no meio da tarefa? **Adicione como tarefa no plano** — não
-   resolva "por fora" sem registrar. Bloqueou de verdade? **Pare e fale com o usuário**, não
-   improvise uma solução fora do escopo combinado.
+Por marco, executar checks direcionados e o menor fluxo de runtime que demonstre o comportamento.
+Ao final, executar os checks exigidos pelo repositório e a validação integrada aplicável. Não
+rodar cegamente todo script depois de cada microalteração.
 
-### Passo 3 — Validação no terminal
-1. Concluída a escrita da tarefa, **use o terminal** para testá-la de forma autônoma.
-2. Descubra os **checks reais do projeto** (não assuma stack): `package.json` → `npm run
-   typecheck`/`test`/`lint`; `pyproject.toml`/`requirements.txt` → `pytest`, `ruff`, `mypy`;
-   `Makefile` → alvos definidos; ou o que o `CLAUDE.md` do projeto indicar. Rode todos os que
-   existirem.
-3. Se o terminal retornar erros, **corrija na hora**, antes de avançar.
-4. Com o código passando nos checks de terminal, **faça o Passo 3.5 antes** de marcar `[x]`.
-   Typecheck/teste verde **não** é "pronto" — pega o que compila, não o que funciona.
+Checks verdes não substituem comportamento observado. Em mudança executável, rodar o app ou
+serviço antes de afirmar que funciona. Se isso for impossível, informar exatamente a lacuna e não
+declarar a funcionalidade concluída.
 
-### Passo 3.5 — Validação de runtime (OBRIGATÓRIA)
-Checks de terminal não pegam comportamento. **Rode o app/serviço** e exercite a mudança **como
-um usuário real** — a validação depende do tipo de tarefa.
+### Frontend, quando aplicável
 
-**Se tocar UI/fluxo de frontend** (use a skill `/verify` para subir e observar):
-- **Remontagem:** abrir → sair (trocar de aba/rota) → **voltar**. O estado/preview persiste?
-- **Reload (F5):** recarrega correto?
-- **Estado vazio** (sem dados) e **estado de erro** (rede/permissão).
-- **Ações encadeadas:** criar→aparece na lista; editar→reflete; excluir→some.
-- **Seleção/troca de contexto** (ex.: trocar o paciente/registro selecionado).
-- **Recursos com imagem/preview/blob/object-URL/stream/áudio:** testar explicitamente
-  montar→desmontar→remontar (é o caso clássico que `tsc` não pega).
+- Montar, sair da rota ou contexto e remontar; confirmar se o estado deve persistir ou limpar.
+- Recarregar a aplicação quando o fluxo existir.
+- Exercitar loading, vazio, erro, troca de contexto e permissão afetada pela mudança.
+- Exercitar criar, listar, editar e excluir somente quando fizerem parte do fluxo.
+- Para imagem, preview, blob, object URL, stream ou áudio, testar montar, desmontar e remontar.
 
-**Se tocar backend** (API/schema/worker/integração externa):
-- Bata no **endpoint real** (curl, cliente HTTP) — não simule a chamada — e confira o response
-  e o **log ao vivo** do serviço.
-- Confira o **estado persistido** no banco/storage após a operação (não confie só no retorno).
-- Migração de schema: rode-a de forma **idempotente** (aplicar 2x sem erro).
-- Integração com serviço de terceiro (webhook, fila, API externa): confirme que o serviço
-  **realmente entrega/recebe**, observando logs ao vivo — não apenas o payload simulado.
-- **Estado de erro:** falha de rede/credencial/permissão é tratada de forma graciosa, sem
-  derrubar o serviço.
+### Backend, quando aplicável
 
-Se qualquer item quebrar, **corrija na hora** e revalide. Só então marque a tarefa com `[x]` no
-`EXECUTION_PLAN.md`.
+- Usar ambiente local, de teste ou staging autorizado com dados sintéticos. Não alterar produção
+  nem gerar efeito externo real sem autorização explícita.
+- Executar o endpoint ou processo integrado; verificar resposta, logs, persistência, sucesso,
+  validação, autorização e falhas relevantes.
+- Testar migrações em banco controlado conforme a semântica do projeto. Exigir reaplicação segura
+  ou no-op apenas quando isso fizer parte do contrato da ferramenta.
+- Confirmar entrega real a webhook, fila, email ou API de terceiro somente com autorização,
+  credenciais apropriadas e destino de teste. Caso contrário, usar testes de contrato/integração e
+  declarar a limitação.
 
-### Passo 3.7 — Commit por tarefa
-Após marcar `[x]` numa tarefa, faça um **commit focado só nela** (apenas os arquivos daquela
-tarefa). Isso dá rollback granular e histórico legível — não acumule várias tarefas num commit
-só. Depois disso, inicie a próxima tarefa pendente.
+Ao encontrar regressão, corrigir e repetir os checks e fluxos afetados antes de marcar o marco
+como concluído.
 
-### Passo 4 — Auditoria e entrega
-1. Quando a **última** tarefa receber `[x]`, **pare de codar**.
-2. Cruze o resultado final com o **"Prompt Original"** salvo no Passo 1 — confira que tudo que foi
-   pedido foi entregue.
-3. Você só pode escrever **"✅ Funcionalidade concluída"** depois de ter **observado a feature
-   funcionando no app/serviço rodando**, pelo fluxo real do usuário (Passo 3.5) — UI ou backend.
-   Tipos/testes verdes **não** autorizam esse texto.
-4. Ao usuário, aponte **apenas** julgamentos subjetivos de estética/gosto. **NUNCA** delegue a ele
-   a verificação de que *funciona* — isso é sua obrigação, não dele.
-5. Remova ou arquive o `.claude/EXECUTION_PLAN.md` — não deixe plano concluído órfão no repo.
+## 5. Revisar, versionar e entregar
 
-### Passo 5 — Revisão final (skill `code-review`)
-1. Com a última tarefa validada (Passo 3.5) e antes de qualquer commit final, invoque a skill
-   `code-review` sobre o diff acumulado de todo o plano (não só da última tarefa) — ela olha bugs
-   de correção e oportunidades de reuse/simplificação/eficiência.
-2. Se ela encontrar problema: **corrija na hora** e revalide (Passo 3/3.5) antes de seguir.
-3. Se o usuário mandar comitar **antes** dessa revisão ter rodado (ou antes de corrigir o que ela
-   achou), **avise explicitamente** que há revisão pendente/problemas encontrados — não comite
-   calado presumindo que está tudo bem.
-
----
-
-## Regras inquebráveis
-- Nunca despeje todo o código de uma vez numa tarefa complexa.
-- `EXECUTION_PLAN.md` é a **fonte de verdade** do progresso: atualize o checkbox após **cada**
-  tarefa validada, e faça o commit correspondente (Passo 3.7).
-- Passar em typecheck/testes **NÃO é "pronto"**. "Pronto" = comportamento **verificado rodando o
-  app/serviço** no fluxo real (Passo 3.5), seja UI ou backend.
-- Antes de cada tarefa, **liste no `EXECUTION_PLAN.md` os "fluxos de uso a validar"** daquela
-  tarefa. Verificação se planeja, não se improvisa.
-- Descobriu trabalho novo no meio? Adicione como tarefa no plano — não resolva "por fora".
-  Tarefa bloqueou de verdade? Pare e fale com o usuário — não improvise.
-- Mudança de contrato (API/schema) ou arquivo que você não criou: confirme o plano com o
-  usuário antes de codar.
-- Em tarefa simples, o protocolo de plano não se aplica — **mas a regra de validar rodando o app
-  (Passo 3.5) continua valendo**: não diga "pronto/funcionando" sem ter visto funcionar.
-- Nunca comite o resultado de uma tarefa complexa sem antes rodar a skill `code-review`
-  (Passo 5). Se o usuário pedir pra comitar antes disso, avise que a revisão ainda não rodou ou
-  que ela achou problemas — não comite em silêncio.
+1. Quando houver implementação, aplicar `code-review` ao escopo explícito antes da entrega ou de
+   qualquer commit. Usar o working diff sem commits; com commits intermediários autorizados,
+   registrar o SHA-base e revisar `base..HEAD`, ou revisar cada marco antes de comitá-lo.
+2. Corrigir achados confirmados e repetir os checks e fluxos afetados. Fazer a auditoria final
+   somente depois da revisão e da revalidação.
+3. Preparar stage, commit ou push somente com autorização explícita. Inspecionar status e diff e
+   incluir apenas arquivos ou hunks do trabalho atual.
+4. Comparar o resultado com os requisitos mais recentes da conversa, não apenas com o primeiro
+   prompt. Confirmar que cada critério de aceitação foi coberto.
+5. Concluir o plano nativo e remover apenas artefatos temporários que não precisem ser preservados.
+6. Entregar um resumo com mudanças, evidências de validação e limitações reais. Não transferir ao
+   usuário uma verificação funcional que o agente poderia executar; pedir ao usuário apenas
+   julgamento subjetivo ou acesso e autoridade indisponíveis.
