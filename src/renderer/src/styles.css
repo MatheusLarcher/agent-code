@@ -751,6 +751,7 @@ button svg {
 
 /* ---- "Claude está trabalhando" banner (top of chat while busy) ---- */
 .working-banner {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -761,6 +762,7 @@ button svg {
   font-size: 12.5px;
   font-weight: 500;
   position: relative;
+  z-index: 10;
   overflow: hidden;
 }
 /* sweeping highlight bar along the bottom edge */
@@ -967,11 +969,13 @@ button svg {
   position: relative;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 .message-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 20px 18px 8px;
   display: flex;

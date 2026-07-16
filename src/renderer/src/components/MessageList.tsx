@@ -332,6 +332,7 @@ export function MessageList({
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(PAGE)
+  const [knownTotal, setKnownTotal] = useState(messages.length)
   // Whether the "jump to bottom" button is shown (user scrolled up from the end).
   const [showJump, setShowJump] = useState(false)
   const [scrollRatio, setScrollRatio] = useState(1)
@@ -349,12 +350,20 @@ export function MessageList({
   // Refs coordinating the two scroll behaviors below.
   const atBottom = useRef(true) // was the user pinned to the bottom?
   const loadingOlder = useRef(false) // are we prepending older messages right now?
-  const prevHeight = useRef(0)
-  const prevTop = useRef(0)
+  const loadAnchor = useRef<{ node: HTMLElement; top: number } | null>(null)
   const first = useRef(true)
 
   // Only the last `visible` messages are actually rendered.
   const total = messages.length
+  // While the user is reading history, keep the current window start fixed when
+  // live events append at the end. Adjusting state during render makes React
+  // restart this render before committing, so the first visible row is never
+  // briefly removed from the DOM.
+  if (total !== knownTotal) {
+    const added = total - knownTotal
+    setKnownTotal(total)
+    if (added > 0 && !atBottom.current) setVisible((v) => v + added)
+  }
   const startIdx = Math.max(0, total - visible)
   const shown = messages.slice(startIdx)
   const hasOlder = startIdx > 0
@@ -370,12 +379,17 @@ export function MessageList({
     }
   }
 
-  // After older messages are prepended, anchor the viewport so it doesn't jump
-  // (the newly added content pushes everything down by its height).
+  // After older messages are prepended, keep the exact same DOM row at the same
+  // screen position. A global scrollHeight delta is incorrect when streaming or
+  // the typing/banner state changes below/around the viewport in the same commit.
   useLayoutEffect(() => {
     if (!loadingOlder.current) return
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight - prevHeight.current + prevTop.current
+    const anchor = loadAnchor.current
+    if (el && anchor?.node.isConnected) {
+      el.scrollTop += anchor.node.getBoundingClientRect().top - anchor.top
+    }
+    loadAnchor.current = null
     loadingOlder.current = false
   }, [visible])
 
@@ -397,7 +411,7 @@ export function MessageList({
   // then scroll it to the center and flash it once.
   useEffect(() => {
     if (!pendingScroll || !effectiveTarget) return
-    const idx = messages.findIndex((m) => 'id' in m && m.id === effectiveTarget)
+    const idx = messages.findIndex((m) => m.kind === 'user' && m.id === effectiveTarget)
     if (idx < 0) return
     const needed = total - idx + 4 // a few messages of context below it
     setVisible((v) => (v < needed ? needed : v))
@@ -427,19 +441,33 @@ export function MessageList({
     // Which user message ([data-mid] is user-only) is nearest the viewport
     // center right now — the QuestionMap highlights that one. Only rendered
     // (non-paginated-out) prompts count, which is exactly what's on screen.
-    const mid = el.scrollTop + el.clientHeight / 2
-    let best: { id: string; d: number } | null = null
-    el.querySelectorAll<HTMLElement>('[data-mid]').forEach((node) => {
+    const viewportCenter = el.scrollTop + el.clientHeight / 2
+    const nodes = el.querySelectorAll<HTMLElement>('[data-mid]')
+    let lo = 0
+    let hi = nodes.length - 1
+    let bestId: string | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    // Rows are ordered vertically, so binary search needs only O(log N) layout
+    // reads even after the user has revealed thousands of old messages.
+    while (lo <= hi) {
+      const probe = Math.floor((lo + hi) / 2)
+      const node = nodes[probe]
       const center = node.offsetTop + node.offsetHeight / 2
-      const d = Math.abs(center - mid)
-      if (!best || d < best.d) best = { id: node.dataset.mid || '', d }
-    })
-    const bestId = (best as { id: string; d: number } | null)?.id ?? null
+      const distance = Math.abs(center - viewportCenter)
+      if (distance < bestDistance) {
+        bestDistance = distance
+        bestId = node.dataset.mid || null
+      }
+      if (center < viewportCenter) lo = probe + 1
+      else hi = probe - 1
+    }
     setActiveMid((v) => (v === bestId ? v : bestId))
     // Near the top with more to show → load another page, keeping position.
     if (el.scrollTop < 80 && hasOlder && !loadingOlder.current) {
-      prevHeight.current = el.scrollHeight
-      prevTop.current = el.scrollTop
+      const anchor = Array.from(el.children).find(
+        (node): node is HTMLElement => node instanceof HTMLElement && node.matches('.msg, .tool-card')
+      )
+      loadAnchor.current = anchor ? { node: anchor, top: anchor.getBoundingClientRect().top } : null
       loadingOlder.current = true
       setVisible((v) => v + PAGE)
     }
