@@ -36,12 +36,28 @@ function preview(text: string): string {
   return clean.length > 150 ? `${clean.slice(0, 150)}...` : clean || '(imagem/anexo)'
 }
 
-export function QuestionMap({ messages, scrollRatio, onSelect }: { messages: UIMessage[]; scrollRatio: number; onSelect: (id: string) => void }): JSX.Element | null {
+export function QuestionMap({
+  messages,
+  scrollRatio,
+  activeId,
+  onSelect
+}: {
+  messages: UIMessage[]
+  scrollRatio: number
+  /** Id of the user message nearest the viewport center (measured from the real
+   *  DOM by MessageList). When set, the active dot follows it exactly; the
+   *  scrollRatio comparison below is only the fallback before any scroll. */
+  activeId?: string | null
+  onSelect: (id: string) => void
+}): JSX.Element | null {
   const clusters = useMemo(() => clusterQuestions(messages), [messages])
   const [open, setOpen] = useState<number | null>(null)
   if (!clusters.length) return null
-  let active = 0
-  for (let i = 0; i < clusters.length; i++) if (Math.abs(clusters[i].ratio - scrollRatio) < Math.abs(clusters[active].ratio - scrollRatio)) active = i
+  let active = activeId ? clusters.findIndex((c) => c.questions.some((q) => q.id === activeId)) : -1
+  if (active < 0) {
+    active = 0
+    for (let i = 0; i < clusters.length; i++) if (Math.abs(clusters[i].ratio - scrollRatio) < Math.abs(clusters[active].ratio - scrollRatio)) active = i
+  }
   return (
     <nav className="question-map" aria-label="Mapa das suas perguntas" onMouseLeave={() => setOpen(null)}>
       <div className="question-map-track" />

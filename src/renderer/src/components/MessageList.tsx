@@ -335,6 +335,10 @@ export function MessageList({
   // Whether the "jump to bottom" button is shown (user scrolled up from the end).
   const [showJump, setShowJump] = useState(false)
   const [scrollRatio, setScrollRatio] = useState(1)
+  // Id of the user message nearest the viewport center — drives the QuestionMap's
+  // active dot from real element positions instead of an index-vs-scrollTop guess
+  // (message heights vary and pagination skews any ratio-based mapping).
+  const [activeMid, setActiveMid] = useState<string | null>(null)
   const [mapScroll, setMapScroll] = useState<{ id: string; seq: number } | null>(null)
   // Last handled search-scroll request, so the same nav doesn't re-fire forever.
   const lastSeq = useRef(-1)
@@ -420,6 +424,18 @@ export function MessageList({
     setShowJump((v) => (v === far ? v : far))
     const max = Math.max(1, el.scrollHeight - el.clientHeight)
     setScrollRatio(Math.max(0, Math.min(1, el.scrollTop / max)))
+    // Which user message ([data-mid] is user-only) is nearest the viewport
+    // center right now — the QuestionMap highlights that one. Only rendered
+    // (non-paginated-out) prompts count, which is exactly what's on screen.
+    const mid = el.scrollTop + el.clientHeight / 2
+    let best: { id: string; d: number } | null = null
+    el.querySelectorAll<HTMLElement>('[data-mid]').forEach((node) => {
+      const center = node.offsetTop + node.offsetHeight / 2
+      const d = Math.abs(center - mid)
+      if (!best || d < best.d) best = { id: node.dataset.mid || '', d }
+    })
+    const bestId = (best as { id: string; d: number } | null)?.id ?? null
+    setActiveMid((v) => (v === bestId ? v : bestId))
     // Near the top with more to show → load another page, keeping position.
     if (el.scrollTop < 80 && hasOlder && !loadingOlder.current) {
       prevHeight.current = el.scrollHeight
@@ -437,7 +453,7 @@ export function MessageList({
 
   return (
     <div className="message-list-wrap">
-    <QuestionMap messages={messages} scrollRatio={scrollRatio} onSelect={(id) => setMapScroll({ id, seq: Date.now() })} />
+    <QuestionMap messages={messages} scrollRatio={scrollRatio} activeId={activeMid} onSelect={(id) => setMapScroll({ id, seq: Date.now() })} />
     <div className="message-list" ref={scrollRef} onScroll={onScroll}>
       {hasOlder && (
         <div className="load-more-hint">↑ Role para cima para carregar mais ({startIdx} anteriores)</div>
