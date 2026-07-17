@@ -254,6 +254,14 @@ export interface PermissionExpiredMsg {
   id: string
 }
 
+/** main → renderer: a phone answered a pending permission/question; the renderer
+ *  should resolve it locally (same as if the desktop UI had answered) so both
+ *  sides stay in sync regardless of who answered first. */
+export interface RemotePermissionResponseMsg {
+  convId: string
+  res: PermissionResponse
+}
+
 export interface PermissionResponse {
   id: string
   behavior: 'allow' | 'deny'
@@ -707,7 +715,9 @@ export const Channels = {
   /** Phone asked to change a conversation's model/effort. */
   remoteSetModel: 'remote:set-model',
   /** Phone asked to retry/cancel a suspended turn. */
-  remoteRecoveryAction: 'remote:recovery-action'
+  remoteRecoveryAction: 'remote:recovery-action',
+  /** Phone answered a pending permission/question. */
+  remotePermissionResponse: 'remote:permission-response'
 } as const
 
 /** A progress line emitted while an Android device/emulator boots, tagged with
@@ -768,6 +778,9 @@ export interface RemoteConversation {
   model?: string
   /** Current reasoning effort of this conversation. */
   effort?: string
+  /** Pending permission/AskUserQuestion request, if any — same shape the desktop
+   *  modal uses. The phone answers via `POST /api/permission-respond`. */
+  permission?: PermissionRequest
 }
 
 /** Snapshot the renderer publishes to main so the bridge can serve history. */

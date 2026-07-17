@@ -87,6 +87,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     onRemoteSetSkipPerms: vi.fn(() => () => {}),
     onRemoteSetModel: vi.fn(() => () => {}),
     onRemoteRecoveryAction: vi.fn(() => () => {}),
+    onRemotePermissionResponse: vi.fn(() => () => {}),
     onRemoteBuildProgress: vi.fn(() => () => {}),
     onRemoteClients: vi.fn(() => () => {})
   }

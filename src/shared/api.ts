@@ -19,6 +19,7 @@ import type {
   PickedElement,
   RemoteBuildProgressMsg,
   RemoteInboundMsg,
+  RemotePermissionResponseMsg,
   RemoteSetModelMsg,
   RemoteInfo,
   RemoteStatePayload,
@@ -155,6 +156,8 @@ export interface AgentCodeApi {
   /** A phone asked to change a conversation's model/effort — apply it on the PC. */
   onRemoteSetModel(cb: (m: RemoteSetModelMsg) => void): () => void
   onRemoteRecoveryAction(cb: (m: { convId: string; action: 'retry' | 'cancel' }) => void): () => void
+  /** A phone answered a pending permission/question — resolve it locally too. */
+  onRemotePermissionResponse(cb: (m: RemotePermissionResponseMsg) => void): () => void
   /** Progress lines while the remote APK is built. */
   onRemoteBuildProgress(cb: (m: RemoteBuildProgressMsg) => void): () => void
   /** The connected-phone count changed. */

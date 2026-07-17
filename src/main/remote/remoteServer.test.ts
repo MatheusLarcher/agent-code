@@ -4,16 +4,18 @@ import { writeFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { RemoteServer } from './remoteServer'
-import type { RemoteConversation } from '../../shared/ipc'
+import type { PermissionResponse, RemoteConversation } from '../../shared/ipc'
 
 // Drive the LAN bridge over real HTTP (node:http, not jsdom fetch) so we verify
 // auth, the JSON routes and the live SSE stream end‑to‑end.
 
 const inbound: Array<{ convId: string; text: string }> = []
+const permissionResponses: Array<{ convId: string; res: PermissionResponse }> = []
 const server = new RemoteServer({
   onInbound: (convId, text) => inbound.push({ convId, text }),
   apkPath: () => 'C:/nonexistent/agent-remote.apk',
-  wwwDir: () => 'C:/nonexistent/www'
+  wwwDir: () => 'C:/nonexistent/www',
+  onPermissionResponse: (convId, res) => permissionResponses.push({ convId, res })
 })
 
 let base = ''
@@ -202,6 +204,47 @@ describe('RemoteServer — ponte LAN', () => {
   it('POST /api/send valida campos obrigatórios', async () => {
     const r = await postJson(`/api/send?token=${token}`, { convId: 'c1' })
     expect(r.status).toBe(400)
+  })
+
+  it('POST /api/permission-respond resolve um Allow/Deny simples de ferramenta', async () => {
+    const r = await postJson(`/api/permission-respond?token=${token}`, {
+      convId: 'c1',
+      id: 'perm1',
+      behavior: 'allow',
+      always: true
+    })
+    expect(r.status).toBe(200)
+    expect(permissionResponses).toContainEqual({
+      convId: 'c1',
+      res: { id: 'perm1', behavior: 'allow', always: true, message: undefined, answers: undefined }
+    })
+  })
+
+  it('POST /api/permission-respond resolve um AskUserQuestion (com answers)', async () => {
+    const answers = [{ header: 'Lib', question: 'Qual lib usar?', selected: ['Zod'] }]
+    const r = await postJson(`/api/permission-respond?token=${token}`, {
+      convId: 'c1',
+      id: 'perm2',
+      behavior: 'deny', // AskUserQuestion sempre volta como "deny" com a resposta em `answers`
+      answers
+    })
+    expect(r.status).toBe(200)
+    expect(permissionResponses).toContainEqual({
+      convId: 'c1',
+      res: { id: 'perm2', behavior: 'deny', always: false, message: undefined, answers }
+    })
+  })
+
+  it('POST /api/permission-respond sem token é rejeitado (401)', async () => {
+    const r = await postJson('/api/permission-respond', { convId: 'c1', id: 'x', behavior: 'allow' })
+    expect(r.status).toBe(401)
+  })
+
+  it('POST /api/permission-respond valida campos obrigatórios', async () => {
+    const before = permissionResponses.length
+    const r = await postJson(`/api/permission-respond?token=${token}`, { convId: 'c1' })
+    expect(r.status).toBe(400)
+    expect(permissionResponses.length).toBe(before) // não chama o dep com dado incompleto
   })
 
   it('/api/file baixa um arquivo criado pelo agente', async () => {

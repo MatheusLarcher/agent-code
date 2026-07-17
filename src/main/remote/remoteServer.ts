@@ -9,6 +9,7 @@ import { isDownloadableFile, parseDownloads } from '../../shared/ipc'
 import type {
   ChatEvent,
   ImageAttachment,
+  PermissionResponse,
   RemoteConversation,
   RemoteInfo,
   RemoteStatePayload
@@ -49,6 +50,9 @@ export interface RemoteServerDeps {
   onSetModel?: (convId: string, model?: string, effort?: string) => void
   /** A phone asked to retry or cancel a suspended turn. */
   onRecoveryAction?: (convId: string, action: 'retry' | 'cancel') => void
+  /** A phone answered a pending permission/AskUserQuestion request — resolve it
+   *  the same way the desktop IPC handler does. */
+  onPermissionResponse?: (convId: string, res: PermissionResponse) => void
 }
 
 const DEFAULT_PORT = 8765
@@ -245,6 +249,7 @@ export class RemoteServer {
       if (path === '/api/skip-perms' && req.method === 'POST') return this.serveSetSkipPerms(req, res)
       if (path === '/api/set-model' && req.method === 'POST') return this.serveSetModel(req, res)
       if (path === '/api/recovery' && req.method === 'POST') return this.serveRecovery(req, res)
+      if (path === '/api/permission-respond' && req.method === 'POST') return this.servePermissionRespond(req, res)
       if (path === '/api/search') return this.serveSearch(url, res)
       if (path === '/api/history') return this.serveHistory(url, res)
       if (path === '/api/history-window') return this.serveHistoryWindow(url, res)
@@ -414,6 +419,39 @@ export class RemoteServer {
       const action = data.action === 'retry' || data.action === 'cancel' ? data.action : null
       if (!convId || !action) return sendJson(res, 400, { ok: false, error: 'convId/action inválidos' })
       this.deps.onRecoveryAction?.(convId, action)
+      return sendJson(res, 200, { ok: true })
+    } catch {
+      return sendJson(res, 400, { ok: false, error: 'JSON inválido' })
+    }
+  }
+
+  /** Phone → PC: answer a pending permission/AskUserQuestion request (the one
+   *  published on the conversation snapshot as `permission`). Resolves the SAME
+   *  way the desktop's IPC handler does — the agent can't tell who answered. */
+  private async servePermissionRespond(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    try {
+      const data = JSON.parse(body) as {
+        convId?: string
+        id?: string
+        behavior?: string
+        always?: boolean
+        message?: string
+        answers?: PermissionResponse['answers']
+      }
+      const convId = String(data.convId ?? '').trim()
+      const id = String(data.id ?? '').trim()
+      const behavior = data.behavior === 'allow' || data.behavior === 'deny' ? data.behavior : null
+      if (!convId || !id || !behavior) {
+        return sendJson(res, 400, { ok: false, error: 'convId/id/behavior inválidos' })
+      }
+      this.deps.onPermissionResponse?.(convId, {
+        id,
+        behavior,
+        always: !!data.always,
+        message: typeof data.message === 'string' ? data.message : undefined,
+        answers: Array.isArray(data.answers) ? data.answers : undefined
+      })
       return sendJson(res, 200, { ok: true })
     } catch {
       return sendJson(res, 400, { ok: false, error: 'JSON inválido' })

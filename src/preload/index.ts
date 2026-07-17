@@ -22,6 +22,7 @@ import type {
   PickedElement,
   RemoteBuildProgressMsg,
   RemoteInboundMsg,
+  RemotePermissionResponseMsg,
   RemoteSetModelMsg,
   RemoteInfo,
   RemoteStatePayload,
@@ -154,6 +155,8 @@ const api: AgentCodeApi = {
     on(Channels.remoteSetModel, cb),
   onRemoteRecoveryAction: (cb: (m: { convId: string; action: 'retry' | 'cancel' }) => void): (() => void) =>
     on(Channels.remoteRecoveryAction, cb),
+  onRemotePermissionResponse: (cb: (m: RemotePermissionResponseMsg) => void): (() => void) =>
+    on(Channels.remotePermissionResponse, cb),
   onRemoteBuildProgress: (cb: (m: RemoteBuildProgressMsg) => void): (() => void) =>
     on(Channels.remoteBuildProgress, cb),
   onRemoteClients: (cb: (info: RemoteInfo) => void): (() => void) => on(Channels.remoteClients, cb)

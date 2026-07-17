@@ -7,8 +7,8 @@
  *   GET  /api/events  (SSE)    live agent events {convId, event}
  *   POST /api/send             send a command into a conversation
  *
- * It mirrors the desktop chat (history + what's being built) but is limited to
- * sending commands — permissions are approved on the PC.
+ * It mirrors the desktop chat (history + what's being built), including answering
+ * pending permission/AskUserQuestion requests via POST /api/permission-respond.
  */
 'use strict'
 
@@ -41,7 +41,9 @@ var state = {
   modelEffort: {},   // effort levels supported per model id
   effortLabels: {},  // pt-BR label per effort level
   historyLoading: false, // true enquanto /api/history está em voo (abrindo um chat)
-  questionOpen: null
+  questionOpen: null,
+  permReqId: null,       // id of the permission/question request currently rendered
+  permCountdownTimer: null
 }
 
 // Conta as chamadas de loadHistory: só a resposta da chamada MAIS RECENTE pode
@@ -595,6 +597,7 @@ function fetchState() {
       syncQueuedMessages()
       renderTurnRecovery()
       renderQuestionMap()
+      renderPermission()
       // If voice availability flipped, refresh so the "Ouvir" buttons appear/hide.
       if (wasReady !== state.voiceReady) scheduleRender()
       return data
@@ -950,6 +953,192 @@ function renderTurnRecovery() {
   }
 }
 
+// ---- pending permission / AskUserQuestion modal ---------------------------
+
+var OTHER = '__other__'
+
+function clearPermCountdown() {
+  if (state.permCountdownTimer) { clearInterval(state.permCountdownTimer); state.permCountdownTimer = null }
+}
+
+function startPermCountdown(deadline) {
+  clearPermCountdown()
+  var box = $('perm-countdown')
+  var bar = $('perm-countdown-bar')
+  if (!deadline) { box.hidden = true; return }
+  box.hidden = false
+  var total = Math.max(1, deadline - Date.now())
+  function tick() {
+    var remaining = Math.max(0, deadline - Date.now())
+    bar.style.transitionDuration = '0s'
+    bar.style.transform = 'scaleX(' + (remaining / total) + ')'
+    if (remaining <= 0) clearPermCountdown()
+  }
+  tick()
+  state.permCountdownTimer = setInterval(tick, 250)
+}
+
+function permRespond(convId, id, behavior, always, answers) {
+  clearPermCountdown()
+  $('perm-modal').hidden = true
+  state.permReqId = null
+  fetch(api('/api/permission-respond'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ convId: convId, id: id, behavior: behavior, always: always, answers: answers })
+  }).then(fetchState).catch(function () {})
+}
+
+function renderPermission() {
+  var cur = current()
+  var req = cur && cur.permission
+  var modal = $('perm-modal')
+  if (!req) {
+    modal.hidden = true
+    clearPermCountdown()
+    state.permReqId = null
+    return
+  }
+  // Already showing this exact request — don't rebuild (would wipe picks mid-answer).
+  if (state.permReqId === req.id) return
+  state.permReqId = req.id
+  modal.hidden = false
+  startPermCountdown(req.deadline)
+
+  var toolBox = $('perm-tool')
+  var qBox = $('perm-questions')
+  var actions = $('perm-actions')
+  qBox.innerHTML = ''
+  actions.innerHTML = ''
+
+  if (req.questions && req.questions.length) {
+    toolBox.hidden = true
+    var picked = req.questions.map(function () { return [] })
+    var other = req.questions.map(function () { return '' })
+
+    function resolved(qi) {
+      var labels = picked[qi].filter(function (l) { return l !== OTHER })
+      var text = other[qi].trim()
+      var wantsOther = picked[qi].indexOf(OTHER) >= 0 && text.length > 0
+      return wantsOther ? labels.concat([text]) : labels
+    }
+    function ready() {
+      for (var i = 0; i < req.questions.length; i++) if (resolved(i).length === 0) return false
+      return true
+    }
+    function updateSubmit() { submitBtn.disabled = !ready() }
+
+    req.questions.forEach(function (q, qi) {
+      var block = document.createElement('div')
+      if (q.header) {
+        var h = document.createElement('div')
+        h.className = 'perm-q-sub'
+        h.textContent = q.header
+        block.appendChild(h)
+      }
+      var title = document.createElement('div')
+      title.className = 'perm-q-title'
+      title.textContent = q.question
+      block.appendChild(title)
+
+      var opts = document.createElement('div')
+      opts.className = 'perm-q-opts'
+      var otherInput = null
+
+      function renderOpt(label, desc, isOtherOpt) {
+        var btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'perm-opt'
+        var labelSpan = document.createElement('span')
+        labelSpan.textContent = label
+        btn.appendChild(labelSpan)
+        if (desc) {
+          var descSpan = document.createElement('span')
+          descSpan.className = 'perm-opt-desc'
+          descSpan.textContent = desc
+          btn.appendChild(descSpan)
+        }
+        btn.addEventListener('click', function () {
+          var cur2 = picked[qi]
+          var at = cur2.indexOf(isOtherOpt ? OTHER : label)
+          if (q.multiSelect) {
+            if (at >= 0) cur2.splice(at, 1)
+            else cur2.push(isOtherOpt ? OTHER : label)
+          } else {
+            picked[qi] = (cur2[0] === (isOtherOpt ? OTHER : label)) ? [] : [isOtherOpt ? OTHER : label]
+          }
+          // Re-sync all buttons' selected state from `picked[qi]`.
+          Array.prototype.forEach.call(opts.children, function (el, idx) {
+            var lbl = idx < q.options.length ? q.options[idx].label : OTHER
+            el.classList.toggle('selected', picked[qi].indexOf(lbl) >= 0)
+          })
+          if (otherInput) otherInput.hidden = picked[qi].indexOf(OTHER) < 0
+          updateSubmit()
+        })
+        return btn
+      }
+
+      q.options.forEach(function (op) { opts.appendChild(renderOpt(op.label, op.description, false)) })
+      opts.appendChild(renderOpt('Outro…', 'Escrever uma resposta própria', true))
+      block.appendChild(opts)
+
+      otherInput = document.createElement('input')
+      otherInput.type = 'text'
+      otherInput.className = 'perm-other-input'
+      otherInput.placeholder = 'Sua resposta'
+      otherInput.hidden = true
+      otherInput.addEventListener('input', function () { other[qi] = otherInput.value; updateSubmit() })
+      block.appendChild(otherInput)
+
+      qBox.appendChild(block)
+    })
+
+    var cancelBtn = document.createElement('button')
+    cancelBtn.className = 'perm-btn-deny'
+    cancelBtn.textContent = 'Cancelar'
+    cancelBtn.addEventListener('click', function () { permRespond(cur.id, req.id, 'deny', false) })
+    var submitBtn = document.createElement('button')
+    submitBtn.className = 'perm-btn-submit'
+    submitBtn.textContent = 'Responder'
+    submitBtn.disabled = true
+    submitBtn.addEventListener('click', function () {
+      if (!ready()) return
+      var answers = req.questions.map(function (q, qi) {
+        return { header: q.header, question: q.question, selected: resolved(qi) }
+      })
+      permRespond(cur.id, req.id, 'allow', false, answers)
+    })
+    actions.appendChild(cancelBtn)
+    actions.appendChild(submitBtn)
+  } else {
+    toolBox.hidden = false
+    toolBox.innerHTML = ''
+    var niceName = (req.toolName || '').replace(/^mcp__browser__/, '🌐 ').replace(/^mcp__[^_]+__/, '')
+    var toolLabel = document.createElement('span')
+    toolLabel.textContent = 'O agente quer executar '
+    var strong = document.createElement('strong')
+    strong.textContent = niceName
+    toolLabel.appendChild(strong)
+    toolBox.appendChild(toolLabel)
+
+    var denyBtn = document.createElement('button')
+    denyBtn.className = 'perm-btn-deny'
+    denyBtn.textContent = 'Negar'
+    denyBtn.addEventListener('click', function () { permRespond(cur.id, req.id, 'deny', false) })
+    var onceBtn = document.createElement('button')
+    onceBtn.className = 'perm-btn-allow'
+    onceBtn.textContent = 'Permitir uma vez'
+    onceBtn.addEventListener('click', function () { permRespond(cur.id, req.id, 'allow', false) })
+    var alwaysBtn = document.createElement('button')
+    alwaysBtn.className = 'perm-btn-always'
+    alwaysBtn.textContent = 'Sempre permitir'
+    alwaysBtn.addEventListener('click', function () { permRespond(cur.id, req.id, 'allow', true) })
+    actions.appendChild(denyBtn)
+    actions.appendChild(onceBtn)
+    actions.appendChild(alwaysBtn)
+  }
+}
+
 function recoveryAction(action) {
   if (!state.convId) return
   fetch(api('/api/recovery'), {
@@ -1028,6 +1217,9 @@ function openEvents() {
       fetchState()
     } else {
       $('busy').hidden = false
+      // A tool call often means a permission/AskUserQuestion is coming right
+      // after — refresh promptly instead of waiting for a coincidental poll.
+      if (msg.event.kind === 'tool-use') fetchState()
     }
   }
 }
@@ -1039,6 +1231,10 @@ function selectConv(convId) {
   var cur = current()
   $('busy').hidden = !(cur && cur.busy)
   renderModelBar()
+  // A pending permission belongs to a specific conversation — force a rebuild
+  // so switching chats doesn't show/hide the wrong one.
+  state.permReqId = null
+  renderPermission()
   loadHistory(convId)
 }
 

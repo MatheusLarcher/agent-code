@@ -171,6 +171,18 @@
         <div id="history-list" class="history-list"></div>
       </aside>
       <div id="scrim" class="scrim" hidden></div>
+
+      <!-- Pending permission/AskUserQuestion modal — mirrors the desktop's. -->
+      <div id="perm-modal" class="modal-overlay" hidden>
+        <div class="modal-card perm-card">
+          <div id="perm-countdown" class="perm-countdown" hidden><span id="perm-countdown-bar"></span></div>
+          <div class="perm-body">
+            <div id="perm-tool" class="perm-tool" hidden></div>
+            <div id="perm-questions" class="perm-questions"></div>
+          </div>
+          <div id="perm-actions" class="perm-actions"></div>
+        </div>
+      </div>
     </section>
 
     <script src="jsqr.js"></script>

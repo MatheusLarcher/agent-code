@@ -7,6 +7,7 @@ import type {
   FileRefAttachment,
   ImageAttachment,
   PermissionRequest,
+  PermissionResponse,
   PickedElement,
   QuestionAnswer,
   RateLimitStatus,
@@ -810,7 +811,8 @@ export function App(): JSX.Element {
             : undefined,
           model: c.model,
           effort: c.effort ?? DEFAULT_EFFORT,
-          economyMode: c.economyMode === true
+          economyMode: c.economyMode === true,
+          permission: permissions[c.id]
         })),
         skipPerms: skipPermsRef.current,
         // Catalog for the phone's selectors — same options the PC picker offers.
@@ -820,7 +822,7 @@ export function App(): JSX.Element {
       })
     }, 400)
     return () => clearTimeout(pubTimer.current)
-  }, [conversations, queue, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models])
+  }, [conversations, queue, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models, permissions])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
   // page viewport follows (BrowserPanel reports its new size to main).
@@ -1405,17 +1407,27 @@ export function App(): JSX.Element {
     setBusySince((m) => withoutKey(m, id))
   }, [patchConv, setBusy])
 
+  // Shared by desktop answers AND phone answers (routed back via
+  // onRemotePermissionResponse) so both sides clear their local modal state no
+  // matter which one actually answered first.
+  const respondToPermission = useCallback(
+    async (convId: string, res: PermissionResponse): Promise<void> => {
+      await window.api.respondPermission(convId, res)
+      setPermissions((p) => withoutKey(p, convId))
+      setMinimizedQuestions((m) => withoutKey(m, convId))
+    },
+    []
+  )
+
   const respond = useCallback(
     async (behavior: 'allow' | 'deny', always: boolean): Promise<void> => {
       const cid = activeId
       if (!cid) return
       const req = permissions[cid]
       if (!req) return
-      await window.api.respondPermission(cid, { id: req.id, behavior, always })
-      setPermissions((p) => withoutKey(p, cid))
-      setMinimizedQuestions((m) => withoutKey(m, cid))
+      await respondToPermission(cid, { id: req.id, behavior, always })
     },
-    [activeId, permissions]
+    [activeId, permissions, respondToPermission]
   )
 
   // Answer an AskUserQuestion: the user's picks go back to the model as the
@@ -1426,12 +1438,18 @@ export function App(): JSX.Element {
       if (!cid) return
       const req = permissions[cid]
       if (!req) return
-      await window.api.respondPermission(cid, { id: req.id, behavior: 'allow', answers })
-      setPermissions((p) => withoutKey(p, cid))
-      setMinimizedQuestions((m) => withoutKey(m, cid))
+      await respondToPermission(cid, { id: req.id, behavior: 'allow', answers })
     },
-    [activeId, permissions]
+    [activeId, permissions, respondToPermission]
   )
+
+  // A phone answered a pending permission/question — resolve it the same way a
+  // desktop answer would, so both sides' modals close in sync.
+  useEffect(() => {
+    return window.api.onRemotePermissionResponse(({ convId, res }) => {
+      void respondToPermission(convId, res)
+    })
+  }, [respondToPermission])
 
   // Toggle whether the active conversation's pending question is minimized
   // (hidden, chip visible in ChatPanel) — used for outside-click/Esc AND the

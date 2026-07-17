@@ -387,6 +387,8 @@ O `App` grava o `draft` na conversa (persistido no SQLite pelo *debounce* das co
 
 **Permissões por conversa** — cada pedido de ferramenta fica em `permissions[convId]`; o modal só renderiza o da **conversa ativa**. Se um pedido chega para uma conversa **em segundo plano**, um toast avisa que aquele chat está aguardando (senão a sessão dele congelaria sem o usuário perceber). "Permitir tudo" aplica `setBypass` a **todas** as sessões vivas (interruptor global).
 
+**Permissões/perguntas também no celular** — `permissions[c.id]` vira o campo `permission` no snapshot publicado por `publishRemoteState` (mesmo padrão do `recovery`), então `/api/state` já entrega o pedido pendente pro celular sem canal SSE novo. O celular responde via `POST /api/permission-respond` (`smartfone-remote/www/app.js`, `renderPermission()`), que cai em `RemoteServer.onPermissionResponse` → `remote:permission-response` → o `App.tsx` chama o mesmo `respondToPermission` que o desktop usa, então **qualquer um dos dois lados que responder primeiro fecha o modal do outro** (extraído de `respond`/`answerQuestion`, agora parametrizado por `convId` em vez de fixo em `activeId`).
+
 **Roteamento de eventos** — cada evento chega ao renderer como `AgentEventMsg` (`{ convId, event }`); `onEvent` aplica o `ChatEvent` à conversa indicada pelo `convId` (não à ativa), então respostas vão para a conversa certa mesmo com várias rodando ao mesmo tempo. `reduceMessages` é um reducer puro que:
 
 - atualiza o texto ao vivo do assistente (mesmo `id`),
@@ -616,6 +618,8 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `remoteClients` | `remote:clients` | `RemoteInfo` (mudou a contagem de celulares / estado da ponte) |
 | `remoteSetSkipPerms` | `remote:set-skip-perms` | `{ on }` (um celular alternou o "Permitir tudo" global) |
 | `remoteSetModel` | `remote:set-model` | `RemoteSetModelMsg` `{ convId, model?, effort? }` (um celular trocou modelo/esforço da conversa) |
+| `remoteRecoveryAction` | `remote:recovery-action` | `{ convId, action: 'retry' \| 'cancel' }` (um celular agiu no cartão de recuperação de turno) |
+| `remotePermissionResponse` | `remote:permission-response` | `RemotePermissionResponseMsg` `{ convId, res: PermissionResponse }` (um celular respondeu uma permissão/`AskUserQuestion` pendente; o renderer chama `respondToPermission` — o mesmo caminho de `window.api.respondPermission` que o desktop usa — pra fechar o modal dos dois lados) |
 
 ---
 
