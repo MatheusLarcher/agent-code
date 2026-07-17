@@ -39,7 +39,11 @@ export function TodoPlanCard({ plan }: { plan: TodoPlan }): JSX.Element {
         <div className="todo-plan-body">
           {plan.items.map((t, i) => (
             <div className="todo-plan-item" key={i}>
-              <span className={`todo-plan-item-check ${t.status}`}>{t.status === 'completed' ? '✓' : ''}</span>
+              {t.status === 'in_progress' ? (
+                <IconSpinner className="spinner todo-plan-item-spinner" size={14} />
+              ) : (
+                <span className={`todo-plan-item-check ${t.status}`}>{t.status === 'completed' ? '✓' : ''}</span>
+              )}
               <span className={`todo-plan-item-text ${t.status}`}>{t.content}</span>
             </div>
           ))}

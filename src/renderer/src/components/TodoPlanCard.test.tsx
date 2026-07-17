@@ -31,6 +31,10 @@ describe('TodoPlanCard', () => {
     expect(screen.getByText('Reproduzir o bug')).toBeTruthy()
     expect(screen.getByText('Corrigir a validação')).toBeTruthy()
     expect(screen.getByText('Adicionar teste')).toBeTruthy()
+    // Item em execução vira spinner; concluído mantém o check; pendente mantém o quadrado vazio.
+    expect(document.querySelectorAll('.todo-plan-item-spinner')).toHaveLength(1)
+    expect(document.querySelectorAll('.todo-plan-item-check')).toHaveLength(2)
+    expect(document.querySelector('.todo-plan-item-check.completed')?.textContent).toBe('✓')
 
     fireEvent.click(head)
     expect(screen.queryByText('Reproduzir o bug')).toBeNull()

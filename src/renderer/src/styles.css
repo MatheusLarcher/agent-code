@@ -916,8 +916,9 @@ button svg {
   border-color: var(--ok);
   color: #1a1a1a;
 }
-.todo-plan-item-check.in_progress {
-  border-color: var(--accent);
+.todo-plan-item-spinner {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 .todo-plan-item-text {
   min-width: 0;
