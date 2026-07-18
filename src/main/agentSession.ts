@@ -8,10 +8,12 @@ import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { isOllamaModel, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import type {
   AskQuestion,
+  AgentInterruptResult,
   ChatEvent,
   ImageAttachment,
   PermissionRequest,
@@ -256,6 +258,9 @@ export class AgentSession {
   private canceledPending = false
   private liveId: string | null = null
   private liveText = ''
+  /** Text lookup for UUIDs returned by the SDK interrupt receipt. Bounded so a
+   *  long-lived session cannot retain every prompt forever. */
+  private submittedMessages = new Map<string, string>()
   /** Context-window size of the most recent model request (last `assistant`
    *  message's input usage) — the true "context used", not the per-turn sum. */
   private lastContextTokens = 0
@@ -366,7 +371,14 @@ export class AgentSession {
     }
   }
 
-  async send(text: string, images?: ImageAttachment[]): Promise<void> {
+  async send(text: string, images?: ImageAttachment[], messageUuid?: string): Promise<void> {
+    const uuid = messageUuid || randomUUID()
+    const receiptText = text.length > 500 ? `${text.slice(0, 500)}…` : text
+    this.submittedMessages.set(uuid, receiptText)
+    if (this.submittedMessages.size > 100) {
+      const oldest = this.submittedMessages.keys().next().value
+      if (oldest) this.submittedMessages.delete(oldest)
+    }
     // If the user manually canceled the previous turn, neutralize it: the SDK
     // still carries the interrupted request (and any partial reply) in context,
     // so prefix a clear note telling the model to ignore that canceled exchange.
@@ -399,7 +411,8 @@ export class AgentSession {
       this.input.push({
         type: 'user',
         message: { role: 'user', content: merged },
-        parent_tool_use_id: null
+        parent_tool_use_id: null,
+        uuid
       } as SDKUserMessage)
       return
     }
@@ -418,19 +431,28 @@ export class AgentSession {
     const msg: SDKUserMessage = {
       type: 'user',
       message: { role: 'user', content },
-      parent_tool_use_id: null
+      parent_tool_use_id: null,
+      uuid
     } as SDKUserMessage
     this.input.push(msg)
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(): Promise<AgentInterruptResult> {
+    if (!this.q) return { stillQueued: [] }
     try {
-      await this.q?.interrupt()
+      const receipt = await this.q.interrupt()
       // Manual cancel: flag the conversation so the next message tells the model
       // to disregard the canceled request (set only on a real interrupt).
       this.canceledPending = true
+      return {
+        stillQueued: (receipt?.still_queued ?? []).map((messageId) => ({
+          messageId,
+          text: this.submittedMessages.get(messageId)
+        }))
+      }
     } catch {
       /* not in a turn */
+      return { stillQueued: [] }
     }
   }
 
@@ -629,6 +651,18 @@ export class AgentSession {
             cwd: message.cwd,
             tools: message.tools
           })
+          // The level event is not emitted at process startup. Reset explicitly
+          // so a resumed/restarted session never leaves stale tasks in the UI.
+          this.emit({ kind: 'background-tasks', tasks: [] })
+        } else if (message.subtype === 'background_tasks_changed') {
+          this.emit({
+            kind: 'background-tasks',
+            tasks: message.tasks.map((task) => ({
+              id: task.task_id,
+              type: task.task_type,
+              description: task.description
+            }))
+          })
         }
         break
 
@@ -649,7 +683,7 @@ export class AgentSession {
           this.lastContextTokens =
             (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
         }
-        this.handleAssistant(message.message.content as unknown as AssistantBlock[])
+        this.handleAssistant(message.message.content as unknown as AssistantBlock[], message.aborted === true)
         break
       }
 
@@ -757,10 +791,18 @@ export class AgentSession {
     }
   }
 
-  private handleAssistant(blocks: AssistantBlock[]): void {
+  private handleAssistant(blocks: AssistantBlock[], aborted = false): void {
+    let emittedText = false
     for (const block of blocks) {
       if (block.type === 'text' && block.text) {
-        this.emit({ kind: 'assistant-text', id: this.liveId ?? nextId(), text: block.text, final: true })
+        emittedText = true
+        this.emit({
+          kind: 'assistant-text',
+          id: this.liveId ?? nextId(),
+          text: block.text,
+          final: true,
+          ...(aborted ? { aborted: true as const } : {})
+        })
       } else if (block.type === 'thinking' && block.thinking) {
         this.emit({ kind: 'thinking', id: nextId(), text: block.thinking })
       } else if (block.type === 'tool_use') {
@@ -772,6 +814,11 @@ export class AgentSession {
           parentToolUseId: null
         })
       }
+    }
+    // Some aborted frames carry no completed text block even though partial
+    // deltas already painted text. Re-emit that live row only to attach the flag.
+    if (aborted && !emittedText && this.liveId && this.liveText) {
+      this.emit({ kind: 'assistant-text', id: this.liveId, text: this.liveText, final: true, aborted: true })
     }
     this.liveId = null
     this.liveText = ''

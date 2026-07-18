@@ -3,6 +3,7 @@ import { Channels } from '../shared/ipc'
 import type { AgentCodeApi } from '../shared/api'
 import type {
   AgentEventMsg,
+  AgentInterruptResult,
   AndroidProgressMsg,
   AppConfig,
   BrowserFrame,
@@ -94,9 +95,11 @@ const api: AgentCodeApi = {
     text: string,
     images?: ImageAttachment[],
     files?: FileAttachment[],
-    fileRefs?: FileRefAttachment[]
-  ): Promise<void> => ipcRenderer.invoke(Channels.agentSend, convId, text, images, files, fileRefs),
-  interrupt: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentInterrupt, convId),
+    fileRefs?: FileRefAttachment[],
+    messageUuid?: string
+  ): Promise<void> => ipcRenderer.invoke(Channels.agentSend, convId, text, images, files, fileRefs, messageUuid),
+  interrupt: (convId: string): Promise<AgentInterruptResult> =>
+    ipcRenderer.invoke(Channels.agentInterrupt, convId),
   setBypass: (convId: string, on: boolean): Promise<void> =>
     ipcRenderer.invoke(Channels.agentSetBypass, convId, on),
   respondPermission: (convId: string, res: PermissionResponse): Promise<void> =>

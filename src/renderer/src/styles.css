@@ -890,6 +890,61 @@ button svg {
 .todo-plan-card.open .todo-plan-caret {
   transform: rotate(180deg);
 }
+
+/* SDK level snapshots: these cards are replaced wholesale on each event. */
+.background-tasks-card,
+.interrupt-queue-warning {
+  flex-shrink: 0;
+  margin: 0 16px 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-3);
+  font-size: 12px;
+}
+.background-tasks-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  font-weight: 650;
+}
+.background-task-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.background-task-row {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 0;
+}
+.background-task-type {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.background-task-description {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.interrupt-queue-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
+  background: color-mix(in srgb, var(--warn) 8%, var(--bg-3));
+}
+.interrupt-queue-warning ul {
+  margin: 3px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
 .todo-plan-body {
   border-top: 1px solid var(--line);
   padding: 5px 0;
@@ -1119,6 +1174,17 @@ button svg {
 .msg.assistant .bubble {
   background: var(--bg-3);
   border-bottom-left-radius: 4px;
+}
+.msg.assistant.aborted .bubble {
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
+}
+.msg-aborted {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  color: var(--warn);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 /* ---- rendered markdown (assistant messages) ---- */

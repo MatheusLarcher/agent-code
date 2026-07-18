@@ -1,10 +1,18 @@
 import { useEffect, useState, type RefObject } from 'react'
-import type { FileAttachment, FileRefAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
+import type {
+  BackgroundTask,
+  FileAttachment,
+  FileRefAttachment,
+  ImageAttachment,
+  PickedElement,
+  QueuedAfterInterrupt
+} from '@shared/ipc'
 import { contextLimitFor } from '@shared/ipc'
 import type { TodoPlan, TurnRecovery, UIMessage } from '../types'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
 import { TodoPlanCard } from './TodoPlanCard'
+import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
 import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
 
 function fmtDuration(ms: number): string {
@@ -117,6 +125,8 @@ interface Props {
   onReopenQuestion: () => void
   /** The active conversation's current TodoWrite plan, fixed above the composer. */
   todoPlan?: TodoPlan
+  backgroundTasks?: BackgroundTask[]
+  queuedAfterInterrupt?: QueuedAfterInterrupt[]
   /** When the active conversation's task started (ms epoch), or null if idle. */
   runningSince: number | null
   /** Duration (ms) of the last finished task, shown when idle. */
@@ -369,6 +379,9 @@ export function ChatPanel(props: Props): JSX.Element {
       )}
 
       {props.todoPlan && <TodoPlanCard key={`todo-plan:${props.convId ?? 'none'}`} plan={props.todoPlan} />}
+
+      <BackgroundTasksCard tasks={props.backgroundTasks ?? []} />
+      <InterruptQueueWarning messages={props.queuedAfterInterrupt ?? []} />
 
       <div className="composer-bar">
         <select

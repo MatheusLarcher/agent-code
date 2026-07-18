@@ -65,3 +65,15 @@ describe('MessageList - janela e ancora de scroll', () => {
     expect(list.scrollTop).toBe(280)
   })
 })
+
+describe('MessageList - resposta interrompida', () => {
+  it('explica visualmente quando a resposta do assistente ficou incompleta', () => {
+    const view = render(
+      messageList([
+        { kind: 'assistant-text', id: 'a1', text: 'Resposta cortada no me', final: true, aborted: true }
+      ])
+    )
+    expect(view.getByText('Resposta interrompida pelo Stop — pode estar incompleta.')).toBeTruthy()
+    expect(view.container.querySelector('.msg.assistant.aborted')).toBeTruthy()
+  })
+})

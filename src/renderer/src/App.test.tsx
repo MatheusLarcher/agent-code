@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, act, configure } from '@testing-library/react'
 import { UiProvider } from './ui/UiProvider'
 import { App } from './App'
 import type { AgentEventMsg, ChatEvent } from '@shared/ipc'
 import type { TodoItem } from './types'
+
+// This file mounts the full app dozens of times. Under the complete parallel
+// suite, jsdom can spend over 1s transforming/settling sibling files even though
+// the same flow completes in ~250ms in isolation.
+configure({ asyncUtilTimeout: 3_000 })
 
 // jsdom has no layout engine — stub the DOM APIs the panels rely on.
 window.HTMLElement.prototype.scrollIntoView = vi.fn()
@@ -49,7 +54,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     readFileBytes: vi.fn(async () => ({ ok: false, error: 'not used in these tests' })),
     startAgent: vi.fn(() => new Promise<{ ok: boolean }>((res) => resolveStart.push(res))),
     sendMessage: vi.fn(async () => {}),
-    interrupt: vi.fn(async () => {}),
+    interrupt: vi.fn(async () => ({ stillQueued: [] })),
     setBypass: vi.fn(async () => {}),
     respondPermission: vi.fn(async () => {}),
     disposeAgent: vi.fn(async () => {}),
@@ -213,6 +218,50 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     await emit(result) // o 'result' vindo da interrupção não pode despachar a fila
     expect(api.sendMessage).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
+
+  it('mantém aviso quando o SDK diz que uma mensagem sobreviveu ao Stop', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg que sobrevive')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    const sdkUuid = String(api.sendMessage.mock.calls[0][5])
+    api.interrupt.mockResolvedValueOnce({
+      stillQueued: [{ messageId: sdkUuid, text: 'msg que sobrevive' }]
+    })
+
+    fireEvent.click(screen.getByTitle('Parar tarefa atual'))
+    await waitFor(() => expect(screen.getByText('O Stop não cancelou tudo.')).toBeTruthy())
+    expect(screen.getAllByText('msg que sobrevive').length).toBeGreaterThan(1)
+
+    await emit(result) // resultado do turno interrompido: o sobrevivente ainda vai rodar
+    expect(screen.getByText('O Stop não cancelou tudo.')).toBeTruthy()
+    await emit(partial)
+    await emit(result) // resultado do sobrevivente: aviso pode sair
+    await waitFor(() => expect(screen.queryByText('O Stop não cancelou tudo.')).toBeNull())
+  })
+})
+
+describe('App — tarefas em segundo plano do SDK', () => {
+  it('substitui o painel inteiro a cada background_tasks_changed', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await waitFor(() => expect(agentEventCb).not.toBeNull())
+    await emit({
+      kind: 'background-tasks',
+      tasks: [{ id: 'bg1', type: 'bash', description: 'Servidor local' }]
+    })
+    expect(screen.getByText('Servidor local')).toBeTruthy()
+    await emit({ kind: 'background-tasks', tasks: [] })
+    expect(screen.queryByText('Servidor local')).toBeNull()
   })
 })
 

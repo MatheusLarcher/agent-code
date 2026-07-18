@@ -541,7 +541,10 @@ export function MessageList({
             const { clean, paths } = parseDownloads(m.text)
             const speaking = tts.speakingId === m.id
             return (
-              <div key={`assistant:${m.id}`} className={`msg assistant ${m.answer ? '' : 'narration'}`}>
+              <div
+                key={`assistant:${m.id}`}
+                className={`msg assistant ${m.answer ? '' : 'narration'} ${m.aborted ? 'aborted' : ''}`}
+              >
                 <div className="bubble">
                   {clean && <Markdown text={clean} />}
                   {paths.map((p, k) => (
@@ -561,6 +564,9 @@ export function MessageList({
                       )}
                       {m.id === lastTsId && m.ts && <MessageTime ts={m.ts} />}
                     </div>
+                  )}
+                  {m.aborted && (
+                    <div className="msg-aborted">Resposta interrompida pelo Stop — pode estar incompleta.</div>
                   )}
                 </div>
               </div>

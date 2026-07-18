@@ -1,4 +1,4 @@
-import type { ChatEvent } from '@shared/ipc'
+import type { BackgroundTask, ChatEvent, QueuedAfterInterrupt } from '@shared/ipc'
 
 /** A user message, rendered on the right side of the chat. */
 export type UserMessage = {
@@ -89,6 +89,10 @@ export interface Conversation {
   /** The agent's current task plan, if it has tracked progress at least once
    *  in this conversation. Rendered as a fixed card above the composer. */
   todoPlan?: TodoPlan
+  /** Replace-semantics snapshot of work still running outside the foreground turn. */
+  backgroundTasks?: BackgroundTask[]
+  /** Messages reported by interrupt() that will still execute after Stop. */
+  queuedAfterInterrupt?: QueuedAfterInterrupt[]
   messages: UIMessage[]
   tokens: TokenTotals
   createdAt: number

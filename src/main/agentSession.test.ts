@@ -14,8 +14,8 @@ vi.mock('./visionRelay', async () => {
 
 /** Peeks the raw SDK user-messages the session queued for the SDK to pull
  *  (AsyncQueue.values is private, but this is plain JS at runtime). */
-function pushedMessages(s: AgentSession): Array<{ message: { content: unknown } }> {
-  return (s as unknown as { input: { values: Array<{ message: { content: unknown } }> } }).input.values
+function pushedMessages(s: AgentSession): Array<{ message: { content: unknown }; uuid?: string }> {
+  return (s as unknown as { input: { values: Array<{ message: { content: unknown }; uuid?: string }> } }).input.values
 }
 
 // Build a session without starting the SDK query loop — we only exercise the
@@ -229,6 +229,55 @@ describe('AgentSession — result de subagente NÃO encerra o turno principal', 
     const { s, emit } = makeSession()
     handle(s, { ...baseResult, origin: { kind: 'peer', from: 'task-123' } })
     expect(emit).not.toHaveBeenCalled()
+  })
+})
+
+describe('AgentSession — novos sinais de interrupção e background', () => {
+  it('carimba a mensagem e devolve still_queued com o texto correspondente', async () => {
+    const { s } = makeSession()
+    await s.send('rode depois do Stop', undefined, '11111111-1111-4111-8111-111111111111')
+    const q = { interrupt: vi.fn(async () => ({ still_queued: ['11111111-1111-4111-8111-111111111111'] })) }
+    ;(s as unknown as { q: typeof q }).q = q
+
+    await expect(s.interrupt()).resolves.toEqual({
+      stillQueued: [{ messageId: '11111111-1111-4111-8111-111111111111', text: 'rode depois do Stop' }]
+    })
+    expect(pushedMessages(s)[0].uuid).toBe('11111111-1111-4111-8111-111111111111')
+  })
+
+  it('marca a resposta final como aborted quando o SDK corta o stream', () => {
+    const { s, emit } = makeSession()
+    handle(s, { type: 'stream_event', event: { type: 'message_start', message: { id: 'a-abort' } } })
+    handle(s, { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'resposta cor' } } })
+    handle(s, {
+      type: 'assistant',
+      aborted: true,
+      parent_tool_use_id: null,
+      message: { content: [{ type: 'text', text: 'resposta cor' }] }
+    })
+    expect(emit).toHaveBeenLastCalledWith({
+      kind: 'assistant-text',
+      id: 'a-abort',
+      text: 'resposta cor',
+      final: true,
+      aborted: true
+    })
+  })
+
+  it('replaces the full background task snapshot and resets it on init', () => {
+    const { s, emit } = makeSession()
+    handle(s, {
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [{ task_id: 'bg-1', task_type: 'bash', description: 'Servidor local' }]
+    })
+    expect(emit).toHaveBeenLastCalledWith({
+      kind: 'background-tasks',
+      tasks: [{ id: 'bg-1', type: 'bash', description: 'Servidor local' }]
+    })
+
+    handle(s, { type: 'system', subtype: 'init', session_id: 's1', model: 'opus', cwd: '/proj', tools: [] })
+    expect(emit).toHaveBeenLastCalledWith({ kind: 'background-tasks', tasks: [] })
   })
 })
 

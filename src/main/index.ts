@@ -23,6 +23,7 @@ import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
 import { loadAllConversationRecords, saveAllConversationRecords, type ConversationRecord } from './projectStore'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
+import { startMemoryCuratorScheduler } from './memoryCurator'
 import type {
   AppConfig,
   BrowserInput,
@@ -40,6 +41,7 @@ import type {
 } from '../shared/ipc'
 
 let mainWindow: BrowserWindow | null = null
+let stopMemoryCurator: (() => void) | null = null
 
 // One independent agent session per conversation — they run concurrently, so
 // switching/sending in one conversation never cancels another's running task.
@@ -589,7 +591,8 @@ function registerIpc(): void {
       text: string,
       images?: ImageAttachment[],
       files?: FileAttachment[],
-      fileRefs?: FileRefAttachment[]
+      fileRefs?: FileRefAttachment[],
+      messageUuid?: string
     ) => {
       // Non-image files are saved to disk and referenced by path so the agent can
       // open them with its own tools (Read, scripts, etc.). Pasted-by-reference
@@ -598,12 +601,12 @@ function registerIpc(): void {
       const saved: Array<{ name: string; path: string }> =
         files && files.length > 0 ? await saveAttachments(convId, files) : []
       const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
-      await sessions.get(convId)?.send(finalText, images)
+      await sessions.get(convId)?.send(finalText, images, messageUuid)
     }
   )
 
   ipcMain.handle(Channels.agentInterrupt, async (_e, convId: string) => {
-    await sessions.get(convId)?.interrupt()
+    return (await sessions.get(convId)?.interrupt()) ?? { stillQueued: [] }
   })
 
   ipcMain.handle(Channels.agentSetBypass, (_e, convId: string, on: boolean) => {
@@ -714,6 +717,9 @@ app.whenReady().then(() => {
   authLog('=== main started (new build) ===')
   registerIpc()
   createWindow()
+  // Runs outside every chat session. The cheap transcript mtime gate happens
+  // before any agent is started, and the persisted timestamp keeps it daily.
+  stopMemoryCurator = startMemoryCuratorScheduler()
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
   // a paired phone reconnects on its own (the fixed token is already persisted).
   if (loadConfig().remoteEnabled) {
@@ -737,4 +743,9 @@ app.on('window-all-closed', () => {
   relay.stop()
   void remote.stop()
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  stopMemoryCurator?.()
+  stopMemoryCurator = null
 })

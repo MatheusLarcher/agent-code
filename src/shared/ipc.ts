@@ -4,10 +4,12 @@
 /** A normalized chat event the renderer renders. Produced in main from SDKMessage. */
 export type ChatEvent =
   | { kind: 'system'; sessionId: string; model: string; cwd: string; tools: string[] }
-  | { kind: 'assistant-text'; id: string; text: string; final: boolean }
+  | { kind: 'assistant-text'; id: string; text: string; final: boolean; aborted?: true }
   | { kind: 'thinking'; id: string; text: string }
   | { kind: 'tool-use'; id: string; name: string; input: unknown; parentToolUseId: string | null }
   | { kind: 'tool-result'; id: string; toolUseId: string; isError: boolean; text: string }
+  /** Full replacement snapshot from `system/background_tasks_changed`. */
+  | { kind: 'background-tasks'; tasks: BackgroundTask[] }
   | {
       kind: 'result'
       id: string
@@ -25,6 +27,25 @@ export type ChatEvent =
    *  tied to this conversation. The renderer routes this straight into a
    *  global (not per-conversation) state; it never becomes a chat bubble. */
   | { kind: 'rate-limit'; limits: RateLimitStatus }
+
+/** One task the SDK reports as still running in the background. */
+export interface BackgroundTask {
+  id: string
+  type: string
+  description: string
+}
+
+/** A user message that survived Stop and will still be processed by the SDK. */
+export interface QueuedAfterInterrupt {
+  messageId: string
+  /** Available for messages submitted by this app; internal SDK messages omit it. */
+  text?: string
+}
+
+/** Receipt returned by the SDK's interrupt control request. */
+export interface AgentInterruptResult {
+  stillQueued: QueuedAfterInterrupt[]
+}
 
 /** One rate-limit window's status, mirroring the SDK's `rate_limit_event`.
  *  Only sent for claude.ai subscription (Pro/Max) sessions — a bare API key

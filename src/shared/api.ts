@@ -1,5 +1,6 @@
 import type {
   AgentEventMsg,
+  AgentInterruptResult,
   AndroidProgressMsg,
   AppConfig,
   BrowserFrame,
@@ -93,9 +94,11 @@ export interface AgentCodeApi {
     text: string,
     images?: ImageAttachment[],
     files?: FileAttachment[],
-    fileRefs?: FileRefAttachment[]
+    fileRefs?: FileRefAttachment[],
+    /** Stable SDK uuid used to correlate an interrupt receipt with this bubble. */
+    messageUuid?: string
   ): Promise<void>
-  interrupt(convId: string): Promise<void>
+  interrupt(convId: string): Promise<AgentInterruptResult>
   /** Toggle "allow all" on a conversation's running session. */
   setBypass(convId: string, on: boolean): Promise<void>
   respondPermission(convId: string, res: PermissionResponse): Promise<void>

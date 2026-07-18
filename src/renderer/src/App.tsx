@@ -234,6 +234,7 @@ function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
   // TodoWrite/TaskCreate/TaskUpdate calls never join the message feed — they
   // update Conversation.todoPlan instead (handled in onEvent, alongside this call).
   if (isTodoWriteToolUse(e) || isTaskCreateToolUse(e) || isTaskUpdateToolUse(e)) return prev
+  if (e.kind === 'background-tasks') return prev
   if (e.kind === 'assistant-text') {
     const i = prev.findIndex((m) => m.kind === 'assistant-text' && m.id === e.id)
     if (i >= 0) {
@@ -376,7 +377,14 @@ export function App(): JSX.Element {
   const inflightRef = useRef<
     Record<
       string,
-      { msgId: string; full: string; images: ImageAttachment[]; files: FileAttachment[]; fileRefs: FileRefAttachment[] }
+      {
+        msgId: string
+        sdkUuid: string
+        full: string
+        images: ImageAttachment[]
+        files: FileAttachment[]
+        fileRefs: FileRefAttachment[]
+      }
     >
   >({})
   // Payloads of messages whose turn failed, kept (in memory) so "Tentar de novo"
@@ -478,6 +486,8 @@ export function App(): JSX.Element {
         } else if (e.kind === 'tool-result') {
           const plan = applyTaskResult(next.todoPlan, e)
           if (plan) next = { ...next, todoPlan: plan }
+        } else if (e.kind === 'background-tasks') {
+          next = { ...next, backgroundTasks: e.tasks }
         }
         if ((e.kind === 'result' || e.kind === 'error') && next.todoPlan) {
           next = { ...next, todoPlan: { ...next.todoPlan, active: false } }
@@ -521,6 +531,9 @@ export function App(): JSX.Element {
         // Did the user just stop this turn? A user interrupt/stop ends with a
         // `result` (sometimes flagged is_error); that's intentional, not a failure.
         const wasInterrupted = interruptedRef.current.delete(cid)
+        if (!wasInterrupted) {
+          patchConv(cid, (c) => ({ ...c, queuedAfterInterrupt: undefined }))
+        }
         // A failed turn = a fatal session error, or a result the model flagged as
         // an error and that the user did NOT cause by stopping it. The user's
         // message must stay in the chat, marked with the error + a retry button.
@@ -601,14 +614,16 @@ export function App(): JSX.Element {
             ],
             updatedAt: Date.now()
           }))
+          const sdkUuid = crypto.randomUUID()
           inflightRef.current[cid] = {
             msgId: nextMsgId,
+            sdkUuid,
             full: next.full,
             images: next.images,
             files: next.files,
             fileRefs: next.fileRefs
           }
-          void window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs)
+          void window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid)
           setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
         } else {
           setBusy(cid, false)
@@ -665,7 +680,15 @@ export function App(): JSX.Element {
         loadUsageLimits()
       ])
       if (cancelled) return
-      setConversations(loaded)
+      // Live SDK state never survives an app process restart. Avoid briefly
+      // painting stale background/interrupt warnings from persisted history.
+      setConversations(
+        loaded.map((conversation) => ({
+          ...conversation,
+          backgroundTasks: [],
+          queuedAfterInterrupt: undefined
+        }))
+      )
       setCollapsed(ui.collapsed)
       setBrowserMinimized(ui.browserMinimized)
       setBrowserWidth(ui.browserWidth)
@@ -1176,12 +1199,13 @@ export function App(): JSX.Element {
         updatedAt: Date.now()
       }))
       // Remember this as the in-flight message so a failing turn can mark it.
-      inflightRef.current[conv.id] = { msgId, full, images, files, fileRefs }
+      const sdkUuid = crypto.randomUUID()
+      inflightRef.current[conv.id] = { msgId, sdkUuid, full, images, files, fileRefs }
 
       try {
         // Lazily (re)start the agent for this conversation, resuming if possible.
         if (!connectedRef.current.has(conv.id)) await connect(conv)
-        await window.api.sendMessage(conv.id, full, images, files, fileRefs)
+        await window.api.sendMessage(conv.id, full, images, files, fileRefs, sdkUuid)
       } catch (err) {
         // Couldn't even reach the agent → keep the message, flag it with the error
         // and keep its payload so "Tentar de novo" can resend it.
@@ -1216,11 +1240,19 @@ export function App(): JSX.Element {
       const continuation =
         'Continue exatamente de onde parou. A execução anterior foi interrompida por limite de uso ou erro transitório.'
       const msgId = recovery.messageId ?? uid('recovery-msg')
-      inflightRef.current[convId] = { msgId, full: continuation, images: [], files: [], fileRefs: [] }
+      const sdkUuid = crypto.randomUUID()
+      inflightRef.current[convId] = {
+        msgId,
+        sdkUuid,
+        full: continuation,
+        images: [],
+        files: [],
+        fileRefs: []
+      }
       if (recovery.messageId) clearMessageError(convId, recovery.messageId)
       try {
         if (!connectedRef.current.has(convId)) await connect(conv)
-        await window.api.sendMessage(convId, continuation, [], [])
+        await window.api.sendMessage(convId, continuation, [], [], [], sdkUuid)
       } catch (err) {
         const attempt = recovery.attempt + 1
         patchConv(convId, (c) => ({
@@ -1310,12 +1342,13 @@ export function App(): JSX.Element {
       interruptedRef.current.delete(convId) // fresh turn: clear any stale stop flag
       setBusy(convId, true)
       setBusySince((m) => ({ ...m, [convId]: Date.now() }))
-      inflightRef.current[convId] = { msgId, full, images, files, fileRefs }
+      const sdkUuid = crypto.randomUUID()
+      inflightRef.current[convId] = { msgId, sdkUuid, full, images, files, fileRefs }
       delete failedRef.current[msgId]
 
       try {
         if (!connectedRef.current.has(convId)) await connect(conv)
-        await window.api.sendMessage(convId, full, images, files, fileRefs)
+        await window.api.sendMessage(convId, full, images, files, fileRefs, sdkUuid)
       } catch (err) {
         setBusy(convId, false)
         setBusySince((m) => withoutKey(m, convId))
@@ -1573,18 +1606,40 @@ export function App(): JSX.Element {
     // instead of auto-starting the next queued message.
     interruptedRef.current.add(cid) // intentional stop — don't flag the message as failed
     setQueue((q) => q.filter((m) => m.convId !== cid))
-    // Mark the in-flight message as canceled so the chat shows a "cancelada" note.
+    // The receipt tells us whether the in-flight SDK message actually survived
+    // the Stop. Only paint it as canceled when the SDK confirms it will not run.
     const inflight = inflightRef.current[cid]
-    if (inflight) {
-      patchConv(cid, (c) => ({
-        ...c,
-        messages: c.messages.map((m) =>
-          m.kind === 'user' && m.id === inflight.msgId ? { ...m, canceled: true } : m
-        )
-      }))
-    }
-    void window.api.interrupt(cid)
-  }, [patchConv])
+    void window.api
+      .interrupt(cid)
+      .then((receipt) => {
+        const surviving = new Set(receipt.stillQueued.map((message) => message.messageId))
+        patchConv(cid, (c) => ({
+          ...c,
+          queuedAfterInterrupt: receipt.stillQueued.length > 0 ? receipt.stillQueued : undefined,
+          messages:
+            inflight && !surviving.has(inflight.sdkUuid)
+              ? c.messages.map((m) =>
+                  m.kind === 'user' && m.id === inflight.msgId ? { ...m, canceled: true } : m
+                )
+              : c.messages
+        }))
+        if (receipt.stillQueued.length > 0) {
+          notify(
+            'aviso',
+            `${receipt.stillQueued.length} mensagem(ns) sobreviveram ao Stop e ainda serão processadas.`
+          )
+        }
+      })
+      .catch(() => {
+        if (!inflight) return
+        patchConv(cid, (c) => ({
+          ...c,
+          messages: c.messages.map((m) =>
+            m.kind === 'user' && m.id === inflight.msgId ? { ...m, canceled: true } : m
+          )
+        }))
+      })
+  }, [patchConv, notify])
 
   // Open a preview tab from the modal. newTab returns a status string, so we can
   // surface success/errors (e.g. Android failing because the toolchain is missing)
@@ -1841,6 +1896,8 @@ export function App(): JSX.Element {
             pendingQuestion={!!activePermission?.questions && questionMinimized}
             onReopenQuestion={() => setQuestionMinimized(false)}
             todoPlan={active?.todoPlan}
+            backgroundTasks={active?.backgroundTasks ?? []}
+            queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}
           />
           {!browserMinimized && (
             <div

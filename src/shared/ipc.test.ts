@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { contextLimitFor, modelSupportsVision, CONTEXT_LIMITS } from './ipc'
+import { contextLimitFor, modelSupportsVision, CONTEXT_LIMITS, MODEL_EFFORT } from './ipc'
 
 describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
   it('Claude: Opus/Sonnet/Fable = 1M, Haiku = 200K', () => {
@@ -50,5 +50,14 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision('gpt-oss:20b-cloud')).toBe(false)
     expect(modelSupportsVision('deepseek-v4-pro:cloud')).toBe(false)
     expect(modelSupportsVision('glm-5.2:cloud')).toBe(false)
+  })
+})
+
+describe('MODEL_EFFORT — esforço máximo do SDK', () => {
+  it('expõe max para Opus/Sonnet/Fable e mantém Haiku limitado a high', () => {
+    expect(MODEL_EFFORT['claude-opus-4-8']).toContain('max')
+    expect(MODEL_EFFORT['claude-sonnet-5']).toContain('max')
+    expect(MODEL_EFFORT['claude-fable-5']).toContain('max')
+    expect(MODEL_EFFORT['claude-haiku-4-5']).toEqual(['low', 'medium', 'high'])
   })
 })

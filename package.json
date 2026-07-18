@@ -15,7 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.197",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.214",
     "highlight.js": "^11.11.1",
     "playwright": "^1.61.0",
     "qrcode": "^1.5.4",
