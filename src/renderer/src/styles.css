@@ -485,6 +485,38 @@ body {
 .topbar .topbar-right {
   margin-left: auto;
 }
+.windows-control-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 7px 16px;
+  border-bottom: 1px solid color-mix(in srgb, #f4b942 65%, var(--line));
+  background: linear-gradient(90deg, rgba(244, 185, 66, 0.2), rgba(244, 185, 66, 0.08));
+  color: var(--text);
+}
+.windows-control-banner-icon {
+  color: #f4b942;
+  font-size: 19px;
+}
+.windows-control-banner-text {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+}
+.windows-control-banner-text strong {
+  font-size: 13px;
+}
+.windows-control-disable {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-color: color-mix(in srgb, #f4b942 70%, var(--line));
+  background: rgba(244, 185, 66, 0.13);
+}
 /* "Parar sessão" — destructive accent, icon + label inline. */
 .stop-session-btn {
   display: inline-flex;
@@ -3549,6 +3581,17 @@ button svg {
 .settings-switch-section.on {
   border-color: color-mix(in srgb, var(--err) 55%, var(--line));
   background: color-mix(in srgb, var(--err) 8%, transparent);
+}
+.windows-control-section {
+  transition: border-color 0.18s, background 0.18s;
+}
+.windows-control-section.on {
+  border-color: color-mix(in srgb, #f4b942 65%, var(--line));
+  background: color-mix(in srgb, #f4b942 10%, transparent);
+}
+.windows-control-section.on .switch-visual {
+  border-color: #f4b942;
+  background: #f4b942;
 }
 .settings-switch-row {
   display: flex;

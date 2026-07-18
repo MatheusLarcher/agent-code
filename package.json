@@ -6,8 +6,10 @@
   "main": "./out/main/index.js",
   "author": "Matheus",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "npm run windows-control:build && electron-vite dev",
+    "build": "electron-vite build && npm run windows-control:build",
+    "windows-control:build": "node scripts/build-windows-control.mjs",
+    "windows-control:test": "dotnet run --project src/main/windowsControl/native/AgentCode.WindowsControl.csproj -c Release -- --self-test",
     "start": "electron-vite preview",
     "icon": "node scripts/make-icon.mjs",
     "postinstall": "playwright install chromium",

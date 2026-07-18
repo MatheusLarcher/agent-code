@@ -598,6 +598,8 @@ export interface AppConfig {
   ollama: OllamaConfig
   /** "Permitir tudo": run new sessions with permission prompts disabled. Persisted. */
   skipPermissions: boolean
+  /** Independent high-risk gate for controlling arbitrary Windows applications. */
+  windowsControlEnabled: boolean
   /** Fixed pairing token for the LAN remote bridge. Generated once and reused on
    *  every start so a paired phone never has to re-pair. Empty until first use. */
   remoteToken: string
@@ -612,6 +614,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   openai: { apiKey: '', voice: 'alloy', speed: 1 },
   ollama: { enabled: false, apiKey: '' },
   skipPermissions: false,
+  windowsControlEnabled: false,
   remoteToken: '',
   remoteEnabled: false
 }
@@ -633,6 +636,8 @@ export const Channels = {
   configGet: 'config:get',
   /** Persist the app configuration (Settings screen). */
   configSet: 'config:set',
+  /** Persist and apply the independent Windows-control permission immediately. */
+  windowsControlSetEnabled: 'windows-control:set-enabled',
   /** Get the active cache folder (where the SQLite db + .md memories live). */
   cacheGetInfo: 'cache:get-info',
   /** Pick a new cache folder (native dialog) and switch to it; returns the new CacheInfo. */
@@ -720,6 +725,8 @@ export const Channels = {
   agentPermissionRequest: 'agent:permission-request',
   /** main → renderer: a pending permission/question timed out and was auto-resolved. */
   agentPermissionExpired: 'agent:permission-expired',
+  /** main → renderer: the Windows-control permission changed. */
+  windowsControlChanged: 'windows-control:changed',
   browserFrame: 'browser:frame',
   browserStateChanged: 'browser:state',
   browserPicked: 'browser:picked',

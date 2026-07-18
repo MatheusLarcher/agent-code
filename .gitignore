@@ -14,6 +14,8 @@ dist/
 
 # Build artifacts
 *.tsbuildinfo
+/src/main/windowsControl/native/bin/
+/src/main/windowsControl/native/obj/
 
 # Local tooling & machine-specific config (Claude Code / ruflo).
 # Not part of the app — contains absolute paths with your username.

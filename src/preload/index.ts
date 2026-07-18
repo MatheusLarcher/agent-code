@@ -41,6 +41,10 @@ const api: AgentCodeApi = {
   // app config (Settings screen)
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke(Channels.configGet),
   setConfig: (patch: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke(Channels.configSet, patch),
+  setWindowsControlEnabled: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke(Channels.windowsControlSetEnabled, enabled),
+  onWindowsControlChanged: (cb: (enabled: boolean) => void): (() => void) =>
+    on(Channels.windowsControlChanged, cb),
 
   // directory picker
   pathExists: (path: string): Promise<boolean> => ipcRenderer.invoke(Channels.pathExists, path),

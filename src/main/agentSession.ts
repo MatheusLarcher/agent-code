@@ -4,6 +4,8 @@ import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
 import { createAndroidMcpServer } from './android/androidTools'
 import { createStitchPreviewMcpServer } from './stitchTools'
+import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsControl/tools'
+import { windowsControl } from './windowsControl/service'
 import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { existsSync, readFileSync } from 'node:fs'
@@ -264,6 +266,8 @@ export class AgentSession {
   /** Context-window size of the most recent model request (last `assistant`
    *  message's input usage) — the true "context used", not the per-turn sum. */
   private lastContextTokens = 0
+  /** Per-session cancellation scope for Windows UI actions. */
+  private windowsControlScope = windowsControl.createScope()
 
   constructor(
     private readonly opts: StartAgentOptions,
@@ -289,10 +293,14 @@ export class AgentSession {
       browser: createBrowserMcpServer(this.browser),
       android: createAndroidMcpServer(this.browser)
     }
+    if (process.platform === 'win32') {
+      mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
+    }
     // Tell the model where its per-user memory lives (and pre-load the index), so
     // "lembra disso" saves into the cache folder and recall works across chats.
     const memoriesDir = getCacheInfo().memoriesDir
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
+    if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
     if (stitchOn) {
       // Official Stitch remote MCP — auth via the X-Goog-Api-Key header.
       mcpServers.stitch = {
@@ -438,6 +446,7 @@ export class AgentSession {
   }
 
   async interrupt(): Promise<AgentInterruptResult> {
+    this.windowsControlScope.cancel()
     if (!this.q) return { stillQueued: [] }
     try {
       const receipt = await this.q.interrupt()
@@ -561,6 +570,7 @@ export class AgentSession {
   }
 
   dispose(): void {
+    this.windowsControlScope.cancel()
     this.input.close()
   }
 
@@ -580,6 +590,17 @@ export class AgentSession {
         deadline: Date.now() + PERMISSION_TIMEOUT_MS
       })
       return new Promise<PermissionResult>((resolve) => this.registerPending(id, toolName, input, resolve))
+    }
+    // Windows control has its own high-risk master gate. "Permitir tudo" must
+    // never bypass it; enabling the dedicated toggle is the explicit grant.
+    if (toolName.startsWith('mcp__windows__')) {
+      if (loadConfig().windowsControlEnabled !== true) {
+        return Promise.resolve({
+          behavior: 'deny',
+          message: 'Controle do Windows desativado. Ative “Permitir controle do Windows” nas Configurações.'
+        })
+      }
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     if (
       this.bypassAll ||

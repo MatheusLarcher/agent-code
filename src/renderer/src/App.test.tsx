@@ -28,8 +28,18 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
   agentEventCb = null
   resolveStart = []
   const api = {
-    getConfig: vi.fn(async () => ({ stitch: { enabled: false, apiKey: '' }, skipPermissions: false })),
+    getConfig: vi.fn(async () => ({
+      stitch: { enabled: false, apiKey: '' },
+      openai: { apiKey: '', voice: 'alloy', speed: 1 },
+      ollama: { enabled: false, apiKey: '' },
+      skipPermissions: false,
+      windowsControlEnabled: false,
+      remoteToken: '',
+      remoteEnabled: false
+    })),
     setConfig: vi.fn(async () => {}),
+    setWindowsControlEnabled: vi.fn(async () => {}),
+    onWindowsControlChanged: vi.fn(() => () => {}),
     authStatus: vi.fn(async () => ({ authenticated: true })),
     authLogin: vi.fn(async () => ({ ok: true })),
     pathExists: vi.fn(async () => true),
@@ -1220,5 +1230,32 @@ describe('App — TodoPlanCard renderizado de verdade via TaskCreate/TaskUpdate 
     // Troca pra Conversa 2 (nunca usou Task*) — o card some, sem vazar o da c1.
     fireEvent.click(screen.getAllByText('Conversa 2')[0])
     await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeNull())
+  })
+})
+
+describe('App — permissão independente de controle do Windows', () => {
+  it('ativa pelo toggle, mantém aviso fora do feed e permite cortar imediatamente', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+
+    fireEvent.click(screen.getByTitle(/Configurações/i))
+    const label = await screen.findByText(/Permitir controle do Windows/i)
+    const checkbox = label.closest('label')?.querySelector('input[type="checkbox"]')
+    expect(checkbox).toBeTruthy()
+    fireEvent.click(checkbox!)
+
+    await waitFor(() => expect(api.setWindowsControlEnabled).toHaveBeenCalledWith(true))
+    expect(await screen.findByText('Controle do Windows ativo')).toBeTruthy()
+    const banner = document.querySelector('.windows-control-banner')
+    expect(banner).toBeTruthy()
+    expect(banner?.closest('.chat-panel')).toBeTruthy()
+    expect(banner?.closest('.browser-panel')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Desativar agora' }))
+    await waitFor(() => expect(api.setWindowsControlEnabled).toHaveBeenLastCalledWith(false))
+    await waitFor(() => expect(document.querySelector('.windows-control-banner')).toBeNull())
   })
 })

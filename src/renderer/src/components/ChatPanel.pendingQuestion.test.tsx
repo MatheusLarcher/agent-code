@@ -23,6 +23,8 @@ function renderPanel(
       messages={[]}
       hasActive={true}
       busy={false}
+      windowsControlEnabled={false}
+      onDisableWindowsControl={() => {}}
       tokens={{ context: 0, output: 0, cost: 0 }}
       chips={[]}
       onRemoveChip={() => {}}

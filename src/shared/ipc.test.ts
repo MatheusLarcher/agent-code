@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { contextLimitFor, modelSupportsVision, CONTEXT_LIMITS, MODEL_EFFORT } from './ipc'
+import { contextLimitFor, modelSupportsVision, CONTEXT_LIMITS, MODEL_EFFORT, DEFAULT_CONFIG, Channels } from './ipc'
+
+describe('controle do Windows — contrato compartilhado', () => {
+  it('começa desligado e usa canais IPC independentes de permitir tudo', () => {
+    expect(DEFAULT_CONFIG.windowsControlEnabled).toBe(false)
+    expect(Channels.windowsControlSetEnabled).not.toBe(Channels.configSet)
+    expect(Channels.windowsControlChanged).toBe('windows-control:changed')
+  })
+})
 
 describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
   it('Claude: Opus/Sonnet/Fable = 1M, Haiku = 200K', () => {

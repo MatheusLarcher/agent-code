@@ -79,6 +79,9 @@ interface Props {
   /** Whether a conversation is selected (composer enabled). */
   hasActive: boolean
   busy: boolean
+  /** Independent high-risk permission warning, constrained to the chat column. */
+  windowsControlEnabled: boolean
+  onDisableWindowsControl: () => void
   tokens: { context: number; output: number; cost: number }
   chips: PickedElement[]
   onRemoveChip: (i: number) => void
@@ -309,6 +312,19 @@ export function ChatPanel(props: Props): JSX.Element {
           </span>
         </div>
       </div>
+
+      {props.windowsControlEnabled && (
+        <div className="windows-control-banner" role="status" aria-live="polite">
+          <span className="windows-control-banner-icon" aria-hidden="true">⚠</span>
+          <span className="windows-control-banner-text">
+            <strong>Controle do Windows ativo</strong>
+            <span>O agente pode ver e controlar outros aplicativos deste computador.</span>
+          </span>
+          <button className="btn windows-control-disable" type="button" onClick={props.onDisableWindowsControl}>
+            Desativar agora
+          </button>
+        </div>
+      )}
 
       {busy && (
         <div className="working-banner" role="status" aria-live="polite">

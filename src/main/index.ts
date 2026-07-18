@@ -24,6 +24,7 @@ import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
 import { loadAllConversationRecords, saveAllConversationRecords, type ConversationRecord } from './projectStore'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
+import { windowsControl } from './windowsControl/service'
 import type {
   AppConfig,
   BrowserInput,
@@ -68,6 +69,18 @@ const EMPTY_BROWSER_STATE = {
 
 function send(channel: string, payload: unknown): void {
   mainWindow?.webContents.send(channel, payload)
+}
+
+function updateAppConfig(patch: Partial<AppConfig>): AppConfig {
+  if ('windowsControlEnabled' in patch && typeof patch.windowsControlEnabled !== 'boolean') {
+    throw new TypeError('windowsControlEnabled deve ser booleano.')
+  }
+  const next = updateConfig(patch)
+  if (patch.windowsControlEnabled !== undefined) {
+    windowsControl.setEnabled(next.windowsControlEnabled)
+    send(Channels.windowsControlChanged, next.windowsControlEnabled)
+  }
+  return next
 }
 
 /** True if a path exists (used to avoid clobbering files in Downloads). */
@@ -372,7 +385,11 @@ function authLog(line: string): void {
 function registerIpc(): void {
   // App configuration (Settings screen).
   ipcMain.handle(Channels.configGet, () => loadConfig())
-  ipcMain.handle(Channels.configSet, (_e, patch: Partial<AppConfig>) => updateConfig(patch))
+  ipcMain.handle(Channels.configSet, (_e, patch: Partial<AppConfig>) => updateAppConfig(patch))
+  ipcMain.handle(Channels.windowsControlSetEnabled, (_e, enabled: boolean) => {
+    if (typeof enabled !== 'boolean') throw new TypeError('enabled deve ser booleano.')
+    updateAppConfig({ windowsControlEnabled: enabled })
+  })
 
   // OpenAI voice (chat): speech-to-text and text-to-speech. The key stays in main
   // (read from config); the renderer only ships audio/text. Errors come back as
@@ -421,7 +438,11 @@ function registerIpc(): void {
       properties: ['openDirectory', 'createDirectory']
     })
     if (res.canceled || !res.filePaths[0]) return null
-    return setCacheDir(res.filePaths[0])
+    const info = setCacheDir(res.filePaths[0])
+    const enabled = loadConfig().windowsControlEnabled === true
+    windowsControl.setEnabled(enabled)
+    send(Channels.windowsControlChanged, enabled)
+    return info
   })
   ipcMain.handle(Channels.kvGet, (_e, key: string) => kvGet(key))
   ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => kvSet(key, value))
@@ -736,6 +757,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  windowsControl.stop()
   for (const b of browsers.values()) void b.close()
   browsers.clear()
   for (const s of sessions.values()) s.dispose()
@@ -746,6 +768,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  windowsControl.stop()
   stopMemoryCurator?.()
   stopMemoryCurator = null
 })

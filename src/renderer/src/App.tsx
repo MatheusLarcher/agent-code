@@ -295,6 +295,7 @@ export function App(): JSX.Element {
   const [busySince, setBusySince] = useState<Record<string, number>>({})
   const [lastDuration, setLastDuration] = useState<Record<string, number>>({})
   const [skipPerms, setSkipPerms] = useState(false)
+  const [windowsControlEnabled, setWindowsControlEnabled] = useState(false)
   const [permissions, setPermissions] = useState<Record<string, PermissionRequest>>({})
   // Clicking outside an AskUserQuestion modal (or Esc) MINIMIZES it instead of
   // canceling — the question stays pending in `permissions`, just hidden; a chip
@@ -725,11 +726,14 @@ export function App(): JSX.Element {
     void window.api.getConfig().then((c) => {
       skipPermsRef.current = c.skipPermissions
       setSkipPerms(c.skipPermissions)
+      setWindowsControlEnabled(c.windowsControlEnabled === true)
       setVoiceReady(!!c.openai?.apiKey?.trim())
       setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
       voiceSpeedRef.current = c.openai?.speed || 1
     })
   }, [])
+
+  useEffect(() => window.api.onWindowsControlChanged(setWindowsControlEnabled), [])
 
   // Tell main which conversation's browser the panel should show, so each chat
   // gets its own independent browser instance.
@@ -1125,6 +1129,26 @@ export function App(): JSX.Element {
           ? 'Modo "permitir tudo" ativado — ferramentas não pedirão confirmação.'
           : 'Confirmações de permissão reativadas.'
       )
+    },
+    [notify]
+  )
+
+  // Independent high-risk gate for arbitrary Windows UI control. It is never
+  // implied by "Permitir tudo" and main kills the native helper immediately on off.
+  const toggleWindowsControl = useCallback(
+    async (on: boolean): Promise<void> => {
+      try {
+        await window.api.setWindowsControlEnabled(on)
+        setWindowsControlEnabled(on)
+        notify(
+          on ? 'aviso' : 'sucesso',
+          on
+            ? 'Controle do Windows ativado. O agente pode interagir com outros aplicativos.'
+            : 'Controle do Windows desativado e ações pendentes interrompidas.'
+        )
+      } catch (error) {
+        notify('erro', `Não foi possível alterar o controle do Windows: ${String(error)}`)
+      }
     },
     [notify]
   )
@@ -1853,6 +1877,8 @@ export function App(): JSX.Element {
             messages={messages}
             hasActive={!!active}
             busy={showBusy}
+            windowsControlEnabled={windowsControlEnabled}
+            onDisableWindowsControl={() => void toggleWindowsControl(false)}
             tokens={tokens}
             chips={chips}
             onRemoveChip={(i) => setChips((c) => c.filter((_, idx) => idx !== i))}
@@ -1968,6 +1994,8 @@ export function App(): JSX.Element {
           focus={settingsFocus}
           skipPerms={skipPerms}
           onToggleSkipPerms={toggleSkipPerms}
+          windowsControlEnabled={windowsControlEnabled}
+          onToggleWindowsControl={(on) => void toggleWindowsControl(on)}
         />
       )}
       {stopConfirm && (

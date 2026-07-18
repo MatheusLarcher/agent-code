@@ -9,6 +9,8 @@ interface Props {
   /** Global "allow all tools" switch — applies live (not gated by Save). */
   skipPerms: boolean
   onToggleSkipPerms: (on: boolean) => void
+  windowsControlEnabled: boolean
+  onToggleWindowsControl: (on: boolean) => void
 }
 
 /**
@@ -17,7 +19,14 @@ interface Props {
  * MCP tools for generating UI mockups. Changes apply to sessions started after
  * saving (reconnect a conversation to pick them up).
  */
-export function SettingsModal({ onClose, focus, skipPerms, onToggleSkipPerms }: Props): JSX.Element {
+export function SettingsModal({
+  onClose,
+  focus,
+  skipPerms,
+  onToggleSkipPerms,
+  windowsControlEnabled,
+  onToggleWindowsControl
+}: Props): JSX.Element {
   const { notify } = useUI()
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
   const [showKey, setShowKey] = useState(false)
@@ -97,6 +106,25 @@ export function SettingsModal({ onClose, focus, skipPerms, onToggleSkipPerms }: 
               type="checkbox"
               checked={skipPerms}
               onChange={(e) => onToggleSkipPerms(e.target.checked)}
+            />
+            <span className="switch-visual" aria-hidden="true" />
+          </label>
+        </section>
+
+        <section className={`settings-section windows-control-section ${windowsControlEnabled ? 'on' : ''}`}>
+          <label className="settings-switch-row">
+            <span className="settings-switch-text">
+              <strong>🖥️ Permitir controle do Windows</strong>
+              <span className="settings-desc">
+                Permite que o agente veja janelas e controle mouse e teclado em outros aplicativos. É uma
+                permissão independente e mais perigosa; enquanto ativa, um aviso ficará sempre visível no app.
+              </span>
+            </span>
+            <input
+              className="switch-input"
+              type="checkbox"
+              checked={windowsControlEnabled}
+              onChange={(event) => onToggleWindowsControl(event.target.checked)}
             />
             <span className="switch-visual" aria-hidden="true" />
           </label>

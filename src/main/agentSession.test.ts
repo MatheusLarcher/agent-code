@@ -3,6 +3,10 @@
 // so it must run in the node env, not the default jsdom (which can't externalize
 // the newer node:sqlite builtin and tries to bundle it).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+const configState = vi.hoisted(() => ({ windowsControlEnabled: false as unknown }))
+vi.mock('./config', () => ({
+  loadConfig: () => ({ windowsControlEnabled: configState.windowsControlEnabled })
+}))
 import { AgentSession } from './agentSession'
 import type { BrowserController } from './browserController'
 
@@ -45,6 +49,10 @@ const gate = (s: AgentSession, name: string, input: Record<string, unknown>): Pr
 const handle = (s: AgentSession, message: unknown): void =>
   (s as unknown as { handleMessage(m: unknown): void }).handleMessage(message)
 
+beforeEach(() => {
+  configState.windowsControlEnabled = false
+})
+
 describe('AgentSession — fluxo de permissão', () => {
   it('auto-aprova ferramenta de leitura e DEVOLVE o input (updatedInput)', async () => {
     const { s, ask } = makeSession()
@@ -84,6 +92,35 @@ describe('AgentSession — fluxo de permissão', () => {
     const res = await gate(s, 'Bash', input)
     expect(ask).not.toHaveBeenCalled()
     expect(res).toEqual({ behavior: 'allow', updatedInput: input })
+  })
+
+  it('"permitir tudo" NÃO atravessa o gate independente do Windows', async () => {
+    const { s, ask } = makeSession()
+    s.setBypass(true)
+    const input = { windowId: '123' }
+    const res = await gate(s, 'mcp__windows__windows_click', input)
+    expect(ask).not.toHaveBeenCalled()
+    expect(res).toEqual({
+      behavior: 'deny',
+      message: 'Controle do Windows desativado. Ative “Permitir controle do Windows” nas Configurações.'
+    })
+  })
+
+  it('toggle do Windows ligado autoriza as ferramentas windows sem modal por clique', async () => {
+    configState.windowsControlEnabled = true
+    const { s, ask } = makeSession()
+    const input = { windowId: '123', text: 'oi' }
+    const res = await gate(s, 'mcp__windows__windows_type_text', input)
+    expect(ask).not.toHaveBeenCalled()
+    expect(res).toEqual({ behavior: 'allow', updatedInput: input })
+  })
+
+  it('config corrompida falha fechada no gate do Windows', async () => {
+    configState.windowsControlEnabled = 'true'
+    const { s } = makeSession()
+    await expect(gate(s, 'mcp__windows__windows_click', { windowId: '123' })).resolves.toMatchObject({
+      behavior: 'deny'
+    })
   })
 
   it('ligar "permitir tudo" ao vivo resolve a permissão pendente (com updatedInput)', async () => {

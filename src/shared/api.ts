@@ -34,6 +34,10 @@ export interface AgentCodeApi {
   getConfig(): Promise<AppConfig>
   /** Persist a partial app configuration (merged with what's on disk). */
   setConfig(patch: Partial<AppConfig>): Promise<void>
+  /** Toggle the independent high-risk permission for controlling Windows apps. */
+  setWindowsControlEnabled(enabled: boolean): Promise<void>
+  /** Keep every renderer surface synchronized with the Windows-control gate. */
+  onWindowsControlChanged(cb: (enabled: boolean) => void): () => void
   /** Whether a path exists and is a directory (project-folder guard). */
   pathExists(path: string): Promise<boolean>
   pickDirectory(): Promise<string | null>
