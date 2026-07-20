@@ -400,6 +400,16 @@ export function App(): JSX.Element {
   // intentional stop, not a failure, so we must not flag the message as errored.
   const interruptedRef = useRef<Set<string>>(new Set())
 
+  // Model/effort changed while busy: applied lazily at the next queue handoff
+  // (see onEvent's success branch) instead of restarting the live turn.
+  const pendingModelChangeRef = useRef<Set<string>>(new Set())
+  // onEvent is defined before connect()/stopSession() exist in this component's
+  // source order; it reaches them through these refs (assigned once those
+  // callbacks are created below) instead of closing over the not-yet-initialized
+  // consts directly, which would throw (TDZ) on every render.
+  const connectRef = useRef<((conv: Conversation) => Promise<void>) | null>(null)
+  const stopSessionRef = useRef<((id: string, opts?: { silent?: boolean }) => Promise<void>) | null>(null)
+
   const getActive = (): Conversation | null =>
     convsRef.current.find((c) => c.id === activeIdRef.current) ?? null
 
@@ -592,6 +602,12 @@ export function App(): JSX.Element {
         // "busy" through the handoff; only when the queue is empty do we go idle.
         delete inflightRef.current[cid]
         patchConv(cid, (c) => ({ ...c, recovery: undefined }))
+        // A model/effort change made while busy was deferred (see changeModel /
+        // changeEffort) — apply it now, at the handoff, by restarting the live
+        // session (same resume id, so history carries over) before the next
+        // message goes out.
+        const modelChangePending = pendingModelChangeRef.current.has(cid)
+        if (modelChangePending) pendingModelChangeRef.current = withoutId(pendingModelChangeRef.current, cid)
         const next = queueRef.current.find((m) => m.convId === cid)
         if (next) {
           setQueue((cur) => cur.filter((m) => m.id !== next.id))
@@ -624,9 +640,22 @@ export function App(): JSX.Element {
             files: next.files,
             fileRefs: next.fileRefs
           }
-          void window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid)
+          void (async () => {
+            if (modelChangePending) {
+              // Dispose the stale-model session and reconnect (same resume id, so
+              // history carries over) before this queued message goes out.
+              await stopSessionRef.current?.(cid, { silent: true })
+              setBusy(cid, true) // stopSession() clears busy; the handoff stays busy
+              const fresh = convsRef.current.find((c) => c.id === cid)
+              if (fresh) await connectRef.current?.(fresh)
+            }
+            await window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid)
+          })()
           setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
         } else {
+          // No more queued messages: if a change is pending, drop the session now
+          // so the next message the user types reconnects with the new model.
+          if (modelChangePending) void stopSessionRef.current?.(cid, { silent: true })
           setBusy(cid, false)
           setBusySince((m) => withoutKey(m, cid)) // stop the running timer
         }
@@ -1081,11 +1110,15 @@ export function App(): JSX.Element {
   }, [stopSession])
 
   // Model picker: the SDK fixes the model for the life of a session, so a live
-  // session must restart to pick up a change. We only allow this while the agent
-  // is IDLE (not mid-turn) — restarting a busy session would kill work in
-  // progress. If idle+connected, silently dispose the session (no "encerrada"
-  // toast/interruption UX) so the NEXT message reconnects with the new model,
-  // same as if the user had clicked "Parar sessão" — just without the manual step.
+  // session must restart to pick up a change.
+  // - Idle + connected: restart right away (silently dispose; no "encerrada"
+  //   toast/interruption UX) so the NEXT message reconnects with the new model,
+  //   same as clicking "Parar sessão" — just without the manual step.
+  // - Busy (mid-turn or working through the queue): can't restart without
+  //   killing the running turn, so just record the change. onEvent's
+  //   turn-succeeded handler applies it at the next queue handoff — the
+  //   in-flight message finishes on the old model, the next queued one (or the
+  //   next one you type) opens on the new one.
   const changeModel = useCallback(
     (id: string, model: string): void => {
       // When switching models, reset effort to the default if the new model
@@ -1095,7 +1128,11 @@ export function App(): JSX.Element {
         const effort = c.effort && supported.includes(c.effort as EffortLevel) ? c.effort : DEFAULT_EFFORT
         return { ...c, model, effort }
       })
-      if (connectedRef.current.has(id) && !busyRef.current.has(id)) {
+      if (!connectedRef.current.has(id)) return
+      if (busyRef.current.has(id)) {
+        pendingModelChangeRef.current = withId(pendingModelChangeRef.current, id)
+        notify('sucesso', `Modelo trocado — entra a partir da próxima mensagem da fila: ${model}.`)
+      } else {
         void stopSession(id, { silent: true })
         notify('sucesso', `Modelo trocado para a próxima mensagem: ${model}.`)
       }
@@ -1103,17 +1140,26 @@ export function App(): JSX.Element {
     [patchConv, stopSession, notify]
   )
 
-  // Effort selector — same restart-on-idle logic as the model picker.
+  // Effort selector — same deferred-while-busy logic as the model picker.
   const changeEffort = useCallback(
     (id: string, effort: string): void => {
       patchConv(id, (c) => ({ ...c, effort }))
-      if (connectedRef.current.has(id) && !busyRef.current.has(id)) {
+      if (!connectedRef.current.has(id)) return
+      if (busyRef.current.has(id)) {
+        pendingModelChangeRef.current = withId(pendingModelChangeRef.current, id)
+        notify('sucesso', `Esforço trocado — entra a partir da próxima mensagem da fila: ${effort}.`)
+      } else {
         void stopSession(id, { silent: true })
         notify('sucesso', `Esforço trocado para a próxima mensagem: ${effort}.`)
       }
     },
     [patchConv, stopSession, notify]
   )
+
+  // onEvent (defined earlier in this component) reaches connect()/stopSession()
+  // through these refs — see their declaration for why.
+  connectRef.current = connect
+  stopSessionRef.current = stopSession
 
   // "Permitir tudo" toggle — a global switch persisted across restarts and
   // applied to every live session. Lives in Settings; the topbar shows its status.
@@ -1908,14 +1954,12 @@ export function App(): JSX.Element {
             tts={tts}
             models={models}
             model={active?.model ?? MODELS[0].id}
-            modelLocked={!active || showBusy}
+            modelLocked={!active}
             onModelChange={(m) => active && changeModel(active.id, m)}
-            onModelLockedClick={() =>
-              notify('aviso', 'Espere o Claude terminar a tarefa atual para trocar o modelo.')
-            }
+            onModelLockedClick={() => notify('aviso', 'Selecione uma conversa para trocar o modelo.')}
             effortLevels={effortLevelsFor(active?.model)}
             effort={active?.effort ?? DEFAULT_EFFORT}
-            effortLocked={!active || showBusy}
+            effortLocked={!active}
             onEffortChange={(e) => active && changeEffort(active.id, e)}
             economyMode={active?.economyMode === true}
             onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}

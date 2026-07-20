@@ -488,7 +488,7 @@ describe('App — barra de limite de contexto', () => {
 })
 
 describe('App — trocar de modelo sem precisar parar a sessão manualmente', () => {
-  it('travado enquanto o agente está OCUPADO; destrava quando termina o turno', async () => {
+  it('NÃO fica travado enquanto o agente está ocupado — dá pra escolher já para a próxima mensagem', async () => {
     const { container } = render(
       <UiProvider>
         <App />
@@ -500,11 +500,75 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
-    // Logo após enviar, o turno está em andamento — o seletor deve estar travado.
-    expect(select().getAttribute('aria-disabled')).toBe('true')
+    // Turno em andamento — o seletor continua clicável (não trava mais aqui).
+    expect(select().getAttribute('aria-disabled')).toBe('false')
 
-    await emit(result) // turno termina — sessão continua conectada, mas ociosa
-    await waitFor(() => expect(select().getAttribute('aria-disabled')).toBe('false'))
+    // Trocar durante o processamento não mexe na sessão em andamento — só fica
+    // pendente para quando essa mensagem terminar.
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
+    expect(select().value).toBe('claude-sonnet-5')
+    expect(api.disposeAgent).not.toHaveBeenCalled()
+    expect(screen.getByText(/próxima mensagem da fila/)).toBeTruthy()
+  })
+
+  it('trocar o modelo OCUPADO, com mensagem na fila: a mensagem em andamento termina no modelo antigo, a da fila já sai no novo', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    const select = (): HTMLSelectElement =>
+      document.querySelector('select.model-select') as HTMLSelectElement
+
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    expect(api.startAgent.mock.calls[0][0]).toMatchObject({ model: 'claude-opus-4-8' })
+
+    await emit(partial) // ainda ocupado
+    await send('msg2') // vai para a fila
+    expect(screen.getByText(/Na fila/)).toBeTruthy()
+
+    // Troca o modelo com a msg1 ainda rodando e a msg2 já na fila.
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
+    expect(api.disposeAgent).not.toHaveBeenCalled() // não mexe no turno em andamento
+
+    await emit(result) // msg1 termina no modelo antigo → agora despacha a msg2
+    await waitFor(() => expect(api.disposeAgent).toHaveBeenCalledWith('c1'))
+    await flushConnect() // resolve o reconnect (novo processo, mesmo resume)
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+
+    expect(String(api.sendMessage.mock.calls[1][1])).toContain('msg2')
+    expect(api.startAgent).toHaveBeenCalledTimes(2)
+    const secondStart = api.startAgent.mock.calls[1][0] as { model: string; resume?: string }
+    expect(secondStart.model).toBe('claude-sonnet-5') // a msg2 já sai no modelo novo
+  })
+
+  it('trocar o modelo OCUPADO, sem fila: fica pendente até a próxima mensagem digitada', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    const select = (): HTMLSelectElement =>
+      document.querySelector('select.model-select') as HTMLSelectElement
+
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
+    expect(api.disposeAgent).not.toHaveBeenCalled()
+
+    await emit(result) // termina sem nada na fila → aplica a troca agora, ocioso
+    await waitFor(() => expect(api.disposeAgent).toHaveBeenCalledWith('c1'))
+
+    await send('msg2') // mensagem nova digitada → reconecta já no modelo trocado
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
+    const secondStart = api.startAgent.mock.calls[1][0] as { model: string }
+    expect(secondStart.model).toBe('claude-sonnet-5')
   })
 
   it('trocar o modelo com a sessão ociosa reinicia a sessão em silêncio (sem clicar em "Parar")', async () => {

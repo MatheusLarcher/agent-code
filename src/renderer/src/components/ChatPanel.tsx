@@ -142,16 +142,17 @@ interface Props {
   onNeedVoiceKey: () => void
   /** Read-aloud state/handler (TTS lives in App). */
   tts: TtsControls
-  /** Model picker (mirrored above the composer). Locked only while the agent is
-   *  BUSY (mid-turn) — the model is fixed for the life of a session, but an idle
-   *  connected session is silently restarted on change so the model takes effect
-   *  on the next message, without the user having to stop it by hand. */
+  /** Model picker (mirrored above the composer). Stays open even while the agent
+   *  is BUSY — the model is fixed for the life of a session, so a change made
+   *  mid-turn is deferred and applied at the next queue handoff (or the next
+   *  message you type) instead of restarting the running turn. Locked only when
+   *  there's no active conversation to apply it to. */
   models: { id: string; label: string }[]
   model: string
   modelLocked: boolean
   onModelChange: (id: string) => void
-  /** Called when the user clicks the model picker while it's locked (agent busy),
-   *  so App can show a "wait for the current task to finish" hint. */
+  /** Called when the user clicks the model picker while it's locked (no active
+   *  conversation), so App can show a hint. */
   onModelLockedClick: () => void
   /** Reasoning effort selector — shown beside the model picker. */
   effortLevels: { value: string; label: string }[]
@@ -170,6 +171,7 @@ function EffortPicker(props: {
   levels: { value: string; label: string }[]
   value: string
   locked: boolean
+  busy?: boolean
   onChange: (level: string) => void
   onLockedClick?: () => void
 }): JSX.Element {
@@ -197,8 +199,10 @@ function EffortPicker(props: {
         aria-expanded={open}
         title={
           props.locked
-            ? 'Espere o Claude terminar a tarefa atual para trocar o esforço.'
-            : 'Esforço de raciocínio — quanto maior, mais profundo (e mais lento/caro)'
+            ? 'Selecione uma conversa para trocar o esforço.'
+            : props.busy
+              ? 'Muda a partir da próxima mensagem da fila (a tarefa atual continua no esforço atual).'
+              : 'Esforço de raciocínio — quanto maior, mais profundo (e mais lento/caro)'
         }
         onClick={() => {
           if (props.locked) {
@@ -406,11 +410,13 @@ export function ChatPanel(props: Props): JSX.Element {
           aria-disabled={props.modelLocked}
           title={
             props.modelLocked
-              ? 'Espere o Claude terminar a tarefa atual para trocar o modelo.'
-              : 'Modelo usado nesta conversa'
+              ? 'Selecione uma conversa para trocar o modelo.'
+              : props.busy
+                ? 'Muda a partir da próxima mensagem da fila (a tarefa atual continua no modelo atual).'
+                : 'Modelo usado nesta conversa'
           }
-          // Locked only while busy: keep it clickable (so we can explain why)
-          // but block the dropdown from opening and show a hint instead.
+          // Locked only when there's no active conversation: keep it clickable
+          // (so we can explain why) but block the dropdown and show a hint.
           onMouseDown={(e) => {
             if (props.modelLocked) {
               e.preventDefault()
@@ -439,6 +445,7 @@ export function ChatPanel(props: Props): JSX.Element {
             levels={props.effortLevels}
             value={props.effort}
             locked={props.effortLocked}
+            busy={props.busy}
             onChange={props.onEffortChange}
           />
         )}
