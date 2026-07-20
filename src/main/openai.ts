@@ -2,7 +2,46 @@
 // API key never reaches the renderer — the renderer sends audio/text over IPC and
 // gets text/audio back. Uses Node's built-in fetch/FormData/Blob (no npm dep).
 
+import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
 const API = 'https://api.openai.com/v1'
+
+const DEBUG_AUDIO_KEEP = 8
+
+/** Dumps the exact audio segment sent to the STT API, so the user can play it
+ *  back and tell whether a bad transcript came from a noisy capture or from
+ *  the model itself. Keeps only the last few files — this is a debug aid, not
+ *  a recording feature, so it must not grow unbounded on disk. */
+export async function saveDebugAudioSegment(
+  debugDir: string,
+  audioBase64: string,
+  mimeType: string
+): Promise<string> {
+  await mkdir(debugDir, { recursive: true })
+  const file = join(debugDir, `segmento-${Date.now()}.${extFromMime(mimeType)}`)
+  await writeFile(file, Buffer.from(audioBase64, 'base64'))
+  const entries = (await readdir(debugDir)).filter((name) => name.startsWith('segmento-')).sort()
+  const excess = entries.length - DEBUG_AUDIO_KEEP
+  if (excess > 0) {
+    await Promise.all(entries.slice(0, excess).map((name) => unlink(join(debugDir, name)).catch(() => {})))
+  }
+  return file
+}
+
+/** File extension matching a MediaRecorder mime type (webm/opus by default). */
+function extFromMime(mimeType: string): string {
+  const type = mimeType || 'audio/webm'
+  return type.includes('webm')
+    ? 'webm'
+    : type.includes('mp4') || type.includes('m4a')
+      ? 'mp4'
+      : type.includes('ogg')
+        ? 'ogg'
+        : type.includes('mpeg')
+          ? 'mp3'
+          : 'wav'
+}
 
 /** Speech-to-text. Records come from the renderer's MediaRecorder (webm/opus by
  *  default). Returns the transcript text. */
@@ -13,15 +52,7 @@ export async function transcribeAudio(
 ): Promise<string> {
   const buf = Buffer.from(audioBase64, 'base64')
   const type = mimeType || 'audio/webm'
-  const ext = type.includes('webm')
-    ? 'webm'
-    : type.includes('mp4') || type.includes('m4a')
-      ? 'mp4'
-      : type.includes('ogg')
-        ? 'ogg'
-        : type.includes('mpeg')
-          ? 'mp3'
-          : 'wav'
+  const ext = extFromMime(type)
 
   const form = new FormData()
   form.append('file', new Blob([buf], { type }), `audio.${ext}`)

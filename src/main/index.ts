@@ -16,7 +16,7 @@ import { RelayClient } from './remote/relayClient'
 import { buildRemoteApk } from './remote/buildApk'
 import { Channels, REMOTE_RELAY_WS } from '../shared/ipc'
 import { loadConfig, updateConfig } from './config'
-import { transcribeAudio, synthesizeSpeech } from './openai'
+import { transcribeAudio, synthesizeSpeech, saveDebugAudioSegment } from './openai'
 import { isAuthenticated } from './auth'
 import { runClaudeLogin } from './login'
 import { appendFileSync } from 'node:fs'
@@ -43,6 +43,9 @@ import type {
 
 let mainWindow: BrowserWindow | null = null
 let stopMemoryCurator: (() => void) | null = null
+// Reveal the debug-audio folder in Explorer only once per app run (repeated
+// segments would otherwise pop a window every few seconds while dictating).
+let debugAudioRevealed = false
 
 // One independent agent session per conversation — they run concurrently, so
 // switching/sending in one conversation never cancels another's running task.
@@ -397,6 +400,18 @@ function registerIpc(): void {
   ipcMain.handle(Channels.openaiTranscribe, async (_e, audioBase64: string, mimeType: string) => {
     const apiKey = loadConfig().openai.apiKey.trim()
     if (!apiKey) return { ok: false, error: 'no-key' }
+    // Debug aid: dump the exact audio sent to STT so the user can play it back
+    // and judge whether a bad transcript is a capture/noise problem or the
+    // model's — see saveDebugAudioSegment's doc comment. Never blocks/fails
+    // the real transcription if the disk write has a problem.
+    void saveDebugAudioSegment(join(getCacheInfo().dir, 'debug-audio'), audioBase64, mimeType)
+      .then((file) => {
+        if (!debugAudioRevealed) {
+          debugAudioRevealed = true
+          shell.showItemInFolder(file)
+        }
+      })
+      .catch(() => {})
     try {
       const text = await transcribeAudio(apiKey, audioBase64, mimeType)
       return { ok: true, text }
