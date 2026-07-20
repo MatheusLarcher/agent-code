@@ -20,4 +20,12 @@ describe('buildPublicUrl — QR aponta para o host público (VPS)', () => {
     expect(buildPublicUrl('', 'tok')).toBe('')
     expect(buildPublicUrl('1.2.3.4', '')).toBe('')
   })
+  it('inclui ?lan= quando o endereço LAN é passado (fallback do celular pra rede local)', () => {
+    expect(buildPublicUrl('remoto.larchertech.com', 'tok', '192.168.0.10:8765')).toBe(
+      'http://remoto.larchertech.com/?token=tok&lan=192.168.0.10%3A8765'
+    )
+  })
+  it('sem endereço LAN, não inclui ?lan=', () => {
+    expect(buildPublicUrl('remoto.larchertech.com', 'tok')).toBe('http://remoto.larchertech.com/?token=tok')
+  })
 })

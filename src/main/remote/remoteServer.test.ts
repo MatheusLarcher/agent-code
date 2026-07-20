@@ -292,6 +292,23 @@ describe('RemoteServer — ponte LAN', () => {
     expect(status).toBe(200)
   })
 
+  it('/api/file autoriza um arquivo visto só via broadcast() — sem esperar setState() do renderer', async () => {
+    // Simula a corrida real: o telefone recebe o evento pelo SSE (broadcast, no
+    // processo principal) e tenta baixar ANTES do round-trip do renderer
+    // (setState) acontecer. Não chamamos setState() aqui de propósito.
+    const live = join(filePath, '..', 'ao-vivo.pdf')
+    writeFileSync(live, 'gerado agora mesmo')
+    server.broadcast('c1', { kind: 'assistant-text', id: 'a2', text: `Pronto: [[download:${live}]]`, final: true })
+
+    const status = await new Promise<number>((resolve, reject) => {
+      get(`${base}/api/file?token=${token}&path=${encodeURIComponent(live)}`, (res) => {
+        res.resume()
+        resolve(res.statusCode ?? 0)
+      }).on('error', reject)
+    })
+    expect(status).toBe(200)
+  })
+
   it('/api/file recusa um arquivo de código (não é entregável)', async () => {
     const srcPath = join(filePath, '..', 'codigo.ts')
     const status = await new Promise<number>((resolve, reject) => {

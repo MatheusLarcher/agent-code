@@ -16,7 +16,9 @@ var CONFIG_KEY = 'agent-remote-config'
 var LAST_CONV_KEY = 'agent-remote-last-conv'
 
 var state = {
-  base: '',
+  base: '',          // currently active endpoint — may be publicBase or lanBase
+  publicBase: '',    // VPS/public origin from pairing (fixed, the "resting" fallback)
+  lanBase: '',       // raw 'ip:port' of the PC on the LAN from the paired QR, if any
   token: '',
   conversations: [],
   convId: null,
@@ -59,16 +61,59 @@ function parseConfig(addr, token) {
   addr = (addr || '').trim()
   token = (token || '').trim()
   var base = ''
+  var lan = ''
   if (/^https?:\/\//i.test(addr)) {
     try {
       var u = new URL(addr)
       base = u.protocol + '//' + u.host
       if (!token && u.searchParams.get('token')) token = u.searchParams.get('token')
+      // The QR's public URL carries the PC's LAN address too (?lan=ip:port) so a
+      // phone on the same Wi‑Fi can skip the VPS relay — see pickBestBase().
+      lan = u.searchParams.get('lan') || ''
     } catch (e) { /* invalid url */ }
   } else if (addr) {
     base = 'http://' + addr.replace(/\/+$/, '')
   }
-  return { base: base, token: token }
+  return { base: base, token: token, lan: lan }
+}
+
+/** Quick reachability probe with a hard timeout (no AbortSignal.timeout — keep
+ *  this portable across older Android WebViews). Resolves true/false, never rejects. */
+function probeReachable(url, timeoutMs) {
+  return new Promise(function (resolve) {
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
+    var done = false
+    var timer = setTimeout(function () {
+      if (done) return
+      done = true
+      if (ctrl) ctrl.abort()
+      resolve(false)
+    }, timeoutMs)
+    fetch(url, { signal: ctrl ? ctrl.signal : undefined }).then(function (res) {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve(res.ok)
+    }).catch(function () {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve(false)
+    })
+  })
+}
+
+/** Prefer the PC's LAN address over the public/VPS one when both are known and
+ *  the LAN one actually answers right now (same Wi‑Fi) — avoids routing every
+ *  request (including file downloads) through the VPS relay unnecessarily.
+ *  Resolves to `publicBase` on any failure/timeout, or if there's no LAN
+ *  address on record. Never rejects. */
+function pickBestBase(publicBase, lan, token) {
+  if (!lan) return Promise.resolve(publicBase)
+  var lanBase = 'http://' + lan.replace(/\/+$/, '')
+  if (lanBase === publicBase) return Promise.resolve(publicBase)
+  return probeReachable(lanBase + '/api/state?token=' + encodeURIComponent(token), 1200)
+    .then(function (ok) { return ok ? lanBase : publicBase })
 }
 
 function loadConfig() {
@@ -1171,13 +1216,18 @@ function attemptPairingReconnect() {
 }
 
 function beginPairingReconnect() {
-  if (!state.base || !state.token) { showPair(); return }
+  if (!state.publicBase || !state.token) { showPair(); return }
   $('pair').hidden = true
   $('chat').hidden = true
   $('pairing').hidden = false
   $('pairing-detail').textContent = 'Procurando a ponte do seu PC…'
   $('pairing-status').textContent = 'Conectando…'
-  attemptPairingReconnect()
+  // Re-decide LAN vs público a cada tentativa de reconexão (cobre trocar de
+  // rede entre uma sessão e outra) — nunca falha, sempre cai no público.
+  pickBestBase(state.publicBase, state.lanBase, state.token).then(function (base) {
+    state.base = base
+    attemptPairingReconnect()
+  })
 }
 
 function openEvents() {
@@ -1526,6 +1576,8 @@ function showManual(error) {
 }
 
 function applyConfig(cfg) {
+  state.publicBase = cfg.base
+  state.lanBase = cfg.lan || ''
   state.base = cfg.base
   state.token = cfg.token
   saveConfig(cfg)
@@ -1537,6 +1589,8 @@ function applyConfig(cfg) {
 function cancelPairingReconnect() {
   clearConfig()
   state.base = ''
+  state.publicBase = ''
+  state.lanBase = ''
   state.token = ''
   state.pairingAttempt = 0
   showPair()
@@ -1738,6 +1792,8 @@ function init() {
 
   // Auto-connect if we already have a saved config.
   if (cfg && cfg.base && cfg.token) {
+    state.publicBase = cfg.base
+    state.lanBase = cfg.lan || ''
     state.base = cfg.base
     state.token = cfg.token
     beginPairingReconnect()

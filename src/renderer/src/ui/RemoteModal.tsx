@@ -26,13 +26,20 @@ const PUBLIC_HOST = REMOTE_PUBLIC_HOST
  * Accepts `host:port`, a bare host, or a full `http(s)://…` URL (origin is kept).
  * Returns '' if the host is empty/invalid so callers fall back to the LAN URL. The
  * phone's parseConfig reads the token from the `?token=` query.
+ *
+ * `lanAddr` (optional, `ip:port`) rides along as `?lan=` so a phone that scans
+ * this (public, VPS) URL still learns the PC's LAN address — the phone client
+ * probes it and prefers it over the VPS relay whenever it's reachable (same
+ * Wi‑Fi), without needing a second QR or re-pairing when switching networks.
  */
-export function buildPublicUrl(host: string, token: string): string {
+export function buildPublicUrl(host: string, token: string, lanAddr?: string): string {
   const h = host.trim().replace(/\/+$/, '')
   if (!h || !token) return ''
   const candidate = /^https?:\/\//i.test(h) ? h : `http://${h.replace(/^\/+/, '')}`
   try {
-    return `${new URL(candidate).origin}/?token=${encodeURIComponent(token)}`
+    const origin = new URL(candidate).origin
+    const lanPart = lanAddr ? `&lan=${encodeURIComponent(lanAddr)}` : ''
+    return `${origin}/?token=${encodeURIComponent(token)}${lanPart}`
   } catch {
     return ''
   }
@@ -69,8 +76,10 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
   }, [onClose])
 
   // The QR always encodes the public (VPS) URL so a scan connects remotely; the
-  // LAN URL stays available as text for same-Wi‑Fi use.
-  const publicUrl = info.running ? buildPublicUrl(PUBLIC_HOST, info.token) : ''
+  // LAN URL rides along in `?lan=` so the phone can still prefer it when it's
+  // reachable (same Wi‑Fi), instead of always going through the VPS relay.
+  const lanAddr = info.running && info.ip ? `${info.ip}:${info.port}` : ''
+  const publicUrl = info.running ? buildPublicUrl(PUBLIC_HOST, info.token, lanAddr) : ''
   const effectiveUrl = publicUrl || info.url
 
   // Render the QR whenever the effective URL changes (empty when stopped).

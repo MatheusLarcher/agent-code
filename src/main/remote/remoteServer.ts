@@ -133,6 +133,14 @@ export class RemoteServer {
   private keepAlive: ReturnType<typeof setInterval> | null = null
   /** Whether the PC is connected to the VPS broker (set by the RelayClient). */
   private relayConnected = false
+  /** Downloadable paths seen live via `broadcast()`, independent of `setState()`.
+   *  `setState()` comes from the renderer (a round-trip after it processes the
+   *  same event), so a phone that taps "Baixar" the instant the button appears
+   *  could 403 before that round-trip lands — this set closes that race by
+   *  authorizing the path the moment the event is teed to the phone, in main,
+   *  with no renderer dependency. Additive across the server's lifetime (never
+   *  cleared): once a file is offered, it stays downloadable. */
+  private liveDownloadable = new Set<string>()
 
   constructor(private readonly deps: RemoteServerDeps) {}
 
@@ -199,9 +207,22 @@ export class RemoteServer {
 
   /** Push a live agent event to every connected phone (tee from the main process). */
   broadcast(convId: string, event: ChatEvent): void {
+    this.trackDownloadable(event)
     if (!this.clients.size) return
     const line = `data: ${JSON.stringify({ convId, event })}\n\n`
     for (const c of this.clients) c.write(line)
+  }
+
+  /** Mirrors `downloadablePaths()`'s two sources, but runs synchronously as each
+   *  event is teed to the phone — no renderer round-trip in the loop. */
+  private trackDownloadable(event: ChatEvent): void {
+    if (event.kind === 'tool-use' && event.name === 'Write') {
+      const input = (event.input ?? {}) as Record<string, unknown>
+      const p = input.file_path
+      if (typeof p === 'string' && p && isDownloadableFile(p)) this.liveDownloadable.add(normalize(p))
+    } else if (event.kind === 'assistant-text') {
+      for (const p of parseDownloads(event.text).paths) this.liveDownloadable.add(normalize(p))
+    }
   }
 
   /** Replace the served conversation snapshot (renderer is the source of truth). */
@@ -341,14 +362,19 @@ export class RemoteServer {
   }
 
   /**
-   * Allowlist of downloadable files in the current snapshot:
+   * Allowlist of downloadable files:
+   *  - paths tracked live via `broadcast()` (see `liveDownloadable` — covers a
+   *    phone tapping "Baixar" the instant the button appears, before the
+   *    renderer's `setState()` round-trip lands), plus
    *  - deliverables the agent *created* via `Write` (APK/zip/PDF/image…), and
    *  - any file the agent explicitly exposed with a `[[download:PATH]]` marker
-   *    in its text (e.g. a built APK located after a Gradle build).
+   *    in its text (e.g. a built APK located after a Gradle build) — both from
+   *    the renderer's conversation snapshot, which also covers files from
+   *    conversations resumed/reloaded without going through `broadcast()` here.
    * Everything else (source/config edits) stays non‑downloadable.
    */
   private downloadablePaths(): Set<string> {
-    const out = new Set<string>()
+    const out = new Set<string>(this.liveDownloadable)
     for (const conv of this.state.conversations) {
       for (const m of conv.messages as Array<Record<string, unknown>>) {
         if (!m) continue
