@@ -12,6 +12,7 @@ import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, Ico
 import { fileMeta, fmtSize } from '../files'
 import { useUI } from '../ui/UiProvider'
 import { frameRms, newVadState, shouldRotatePreroll, vadStep, type VadState } from '../vad'
+import { encodeWav } from '../wav'
 import { looksLikeFileUrl, looksLikeLocalPath } from '@shared/mime'
 
 /** Max size for a single non-image attachment (keeps the IPC payload sane). */
@@ -119,14 +120,6 @@ export function stopRecording(
   }
 }
 
-/** MediaRecorder mime type the browser supports for the mic (OpenAI accepts webm/ogg/mp4). */
-function pickAudioMime(): string {
-  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
-  for (const c of candidates) {
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(c)) return c
-  }
-  return ''
-}
 
 /** Read an image File as a base64 attachment (strips the data-URL prefix). */
 function fileToAttachment(file: File): Promise<ImageAttachment> {
@@ -306,10 +299,13 @@ export function Composer(props: Props): JSX.Element {
   // Records one utterance per segment, cut at NATURAL PAUSES by a local VAD (voice
   // activity detection, see ../vad — no external library), then appends each
   // transcript. Two reasons it's segmented rather than one growing recording:
-  //   1. A MediaRecorder file is only valid once stopped — sending the still-open
-  //      webm makes the API decode it as empty (the "nothing shows up" bug).
+  //   1. Each pause yields a complete file the API can transcribe right away,
+  //      so the text streams into the box while you keep talking.
   //   2. The VAD closes a segment only when you pause (silence), never mid-word, so
   //      nothing gets cut in half (the old fixed ~4s timer split words).
+  // The audio itself is captured as RAW PCM from the meter's AudioContext and
+  // encoded as uncompressed 16-bit WAV (see ../wav) — MediaRecorder is not used
+  // (it can only produce lossy webm/opus, which degraded the STT input).
   // SILENCE IS NEVER SENT, and the word onset is never clipped: a short pre-roll
   // segment is ALWAYS recording (see VAD_PREROLL_MS). Silent rolls are rotated
   // out and their blobs discarded — a quiet stretch of any length never reaches
@@ -318,9 +314,9 @@ export function Composer(props: Props): JSX.Element {
   // of the first word (soft onsets below the threshold) is preserved instead of
   // the old behavior of starting the recorder only at the trigger and eating it.
   const [recording, setRecording] = useState(false)
-  const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const mimeRef = useRef<string>('')
+  // Sample rate of the capture AudioContext — needed to build the WAV header.
+  const sampleRateRef = useRef(48000)
   // Text already in the box when dictation started, and the transcript built so far.
   const baseTextRef = useRef('')
   const transcriptRef = useRef('')
@@ -334,7 +330,7 @@ export function Composer(props: Props): JSX.Element {
 
   // Current recording segment (one utterance). `vad` carries the speech/silence
   // state the meter loop advances; `vad.hadSpeech` gates whether it's transcribed.
-  const segRef = useRef<{ chunks: Blob[]; vad: VadState } | null>(null)
+  const segRef = useRef<{ chunks: Float32Array[]; vad: VadState } | null>(null)
 
   // ---- live recording waveform (WhatsApp-style scrolling strip) + meter ----
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -419,6 +415,20 @@ export function Composer(props: Props): JSX.Element {
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 512
       src.connect(analyser)
+      // Raw PCM capture for the WAV segments. A ScriptProcessor only fires when
+      // connected to the destination, so route it through a zero-gain node —
+      // otherwise the mic would play back through the speakers (feedback).
+      sampleRateRef.current = ctx.sampleRate
+      const proc = ctx.createScriptProcessor(4096, 1, 1)
+      proc.onaudioprocess = (e) => {
+        const seg = segRef.current
+        if (seg) seg.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+      }
+      const mute = ctx.createGain()
+      mute.gain.value = 0
+      src.connect(proc)
+      proc.connect(mute)
+      mute.connect(ctx.destination)
       audioCtxRef.current = ctx
       analyserRef.current = analyser
       rafRef.current = requestAnimationFrame(runMeter)
@@ -490,53 +500,33 @@ export function Composer(props: Props): JSX.Element {
   // roll stays silent past VAD_PREROLL_MS it's rotated out and its blob discarded;
   // if speech starts mid-roll, the roll keeps going until the natural pause — so
   // the audio sent always includes the instants right before the first word.
-  const startSegment = (stream: MediaStream, vad: VadState): void => {
-    const rec = new MediaRecorder(stream, mimeRef.current ? { mimeType: mimeRef.current } : undefined)
-    const seg = { chunks: [] as Blob[], vad }
-    segRef.current = seg
-    rec.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) seg.chunks.push(e.data)
-    }
-    rec.onstop = () => {
-      const type = seg.chunks[0]?.type || mimeRef.current || 'audio/webm'
-      const blob = new Blob(seg.chunks, { type })
-      // Rolos de puro silêncio (rotacionados sem fala) caem aqui e são descartados
-      // — silêncio nunca é enviado pra API, então nada de palavras alucinadas.
-      if (!seg.vad.hadSpeech || blob.size === 0) return
-      void transcribeBlob(blob, type)
-    }
-    recorderRef.current = rec
-    rec.start() // no timeslice — one whole, finalized file when stopped
+  const startSegment = (_stream: MediaStream, vad: VadState): void => {
+    // The ScriptProcessor in startMeter pushes PCM into whichever segment is
+    // current — opening a roll is just swapping in a fresh chunk list.
+    segRef.current = { chunks: [], vad }
   }
 
-  // Close the current segment: its onstop transcribes (se teve fala) ou descarta
-  // (rolo silencioso). O meter loop reabre o próximo rolo de pré-rolo em seguida.
+  // Close the current segment: encode as WAV and transcribe (se teve fala) ou
+  // descarta (rolo silencioso). O meter loop reabre o próximo rolo em seguida.
   const endUtterance = (): void => {
-    const rec = recorderRef.current
-    recorderRef.current = null
+    const seg = segRef.current
     segRef.current = null // back to armed
-    if (rec && rec.state !== 'inactive') {
-      try {
-        rec.stop()
-      } catch {
-        /* already stopping */
-      }
-    }
+    // Rolos de puro silêncio (rotacionados sem fala) são descartados — silêncio
+    // nunca é enviado pra API, então nada de palavras alucinadas.
+    if (!seg || !seg.vad.hadSpeech || seg.chunks.length === 0) return
+    void transcribeBlob(encodeWav(seg.chunks, sampleRateRef.current), 'audio/wav')
   }
 
   const stopDictation = (): void => {
     // Stop the meter/VAD first so a pending rAF can't reopen a segment mid-teardown.
+    // Every PCM frame captured up to this instant is already in segRef (no async
+    // encoder flush like MediaRecorder had), so the tail of the last sentence is
+    // safe: endUtterance() below encodes and transcribes it synchronously.
     stopMeter()
-    const rec = recorderRef.current
+    endUtterance()
     const stream = streamRef.current
-    recorderRef.current = null
-    segRef.current = null
     streamRef.current = null
-    // stopRecording waits for the recorder's real 'stop' event (tail flushed,
-    // transcribeBlob already kicked off via its onstop) before killing the mic
-    // — see its doc comment for why stopping tracks synchronously here used to
-    // clip the last sentence.
-    stopRecording(rec, stream, () => {
+    stopRecording(null, stream, () => {
       setRecording(false)
       props.textareaRef.current?.focus()
     })
@@ -551,7 +541,6 @@ export function Composer(props: Props): JSX.Element {
       notify('erro', 'Captura de áudio indisponível neste contexto (precisa rodar em https/localhost).')
       return
     }
-    mimeRef.current = pickAudioMime()
     try {
       const constraints: MediaStreamConstraints = {
         audio: micId ? { deviceId: { exact: micId } } : true
