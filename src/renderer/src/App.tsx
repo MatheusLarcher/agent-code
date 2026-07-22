@@ -716,7 +716,19 @@ export function App(): JSX.Element {
         loaded.map((conversation) => ({
           ...conversation,
           backgroundTasks: [],
-          queuedAfterInterrupt: undefined
+          queuedAfterInterrupt: undefined,
+          // A turn interrupted by the app closing never delivers its
+          // result/error event, so a persisted `active: true` (and any
+          // `in_progress` item) would show a spinner forever.
+          todoPlan: conversation.todoPlan
+            ? {
+                ...conversation.todoPlan,
+                active: false,
+                items: conversation.todoPlan.items.map((item) =>
+                  item.status === 'in_progress' ? { ...item, status: 'pending' as const } : item
+                )
+              }
+            : undefined
         }))
       )
       setCollapsed(ui.collapsed)
