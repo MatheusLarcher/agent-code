@@ -2,31 +2,28 @@
 // API key never reaches the renderer — the renderer sends audio/text over IPC and
 // gets text/audio back. Uses Node's built-in fetch/FormData/Blob (no npm dep).
 
-import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const API = 'https://api.openai.com/v1'
 
-const DEBUG_AUDIO_KEEP = 8
-
-/** Dumps the exact audio segment sent to the STT API, so the user can play it
- *  back and tell whether a bad transcript came from a noisy capture or from
- *  the model itself. Keeps only the last few files — this is a debug aid, not
- *  a recording feature, so it must not grow unbounded on disk. */
-export async function saveDebugAudioSegment(
-  debugDir: string,
+/** Writes one dictation segment to a scratch folder just long enough to send it
+ *  to the STT API — nothing here is meant to persist. Call `unlink` on the
+ *  returned path once the transcription request settles (success or failure). */
+export async function writeTempAudioSegment(
+  tmpDir: string,
   audioBase64: string,
   mimeType: string
 ): Promise<string> {
-  await mkdir(debugDir, { recursive: true })
-  const file = join(debugDir, `segmento-${Date.now()}.${extFromMime(mimeType)}`)
+  await mkdir(tmpDir, { recursive: true })
+  const file = join(tmpDir, `segmento-${Date.now()}.${extFromMime(mimeType)}`)
   await writeFile(file, Buffer.from(audioBase64, 'base64'))
-  const entries = (await readdir(debugDir)).filter((name) => name.startsWith('segmento-')).sort()
-  const excess = entries.length - DEBUG_AUDIO_KEEP
-  if (excess > 0) {
-    await Promise.all(entries.slice(0, excess).map((name) => unlink(join(debugDir, name)).catch(() => {})))
-  }
   return file
+}
+
+/** Best-effort delete — a leftover temp audio file is not worth surfacing an error for. */
+export async function deleteTempAudioSegment(file: string): Promise<void> {
+  await unlink(file).catch(() => {})
 }
 
 /** File extension matching a MediaRecorder mime type (webm/opus by default). */
