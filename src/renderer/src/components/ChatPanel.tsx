@@ -162,6 +162,11 @@ interface Props {
   /** Modo econômico toggle — shown beside the model/effort pickers. */
   economyMode: boolean
   onEconomyModeChange: (on: boolean) => void
+  /** Modo rápido toggle — only rendered when the current model supports fast mode
+   *  (`fastModeAvailable`), since the API rejects it on every other model. */
+  fastModeAvailable: boolean
+  fastMode: boolean
+  onFastModeChange: (on: boolean) => void
 }
 
 /** Custom popover replacing the plain <select> for reasoning effort: a button
@@ -462,6 +467,21 @@ export function ChatPanel(props: Props): JSX.Element {
           <span className="economy-icon">{props.economyMode ? '⚡' : '💰'}</span>
           <span className="economy-label">Econômico</span>
         </button>
+        {props.fastModeAvailable && (
+          <button
+            type="button"
+            className={`fast-toggle${props.fastMode ? ' on' : ''}`}
+            title={
+              props.fastMode
+                ? 'Modo rápido ATIVO — respostas até ~2,5x mais rápidas, com custo por token maior. Clique para desativar.'
+                : 'Modo rápido — deixa o Opus até ~2,5x mais rápido, cobrando mais por token. Bom para iteração e depuração ao vivo.'
+            }
+            onClick={() => props.onFastModeChange(!props.fastMode)}
+          >
+            <span className="fast-icon">↯</span>
+            <span className="fast-label">Rápido</span>
+          </button>
+        )}
       </div>
 
       <Composer

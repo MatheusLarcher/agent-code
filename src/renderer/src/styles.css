@@ -1901,6 +1901,44 @@ button svg {
   font-weight: 500;
 }
 
+/* ---- Fast mode toggle (↯ button, only on models that support fast mode) ----
+   Same shape as the economy toggle; amber "on" state so the two read as
+   distinct settings at a glance rather than one two-state control. */
+.fast-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  background: var(--bg-3);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+.fast-toggle:hover {
+  background: var(--bg-4);
+  color: var(--text);
+}
+.fast-toggle.on {
+  background: #4a3a12;
+  color: #ffc95c;
+  border-color: #e0a12a;
+}
+.fast-toggle.on:hover {
+  background: #5c4818;
+  color: #ffd884;
+}
+.fast-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.fast-label {
+  font-weight: 500;
+}
+
 .composer {
   border-top: 1px solid var(--line);
   padding: 12px 16px 16px;

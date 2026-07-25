@@ -59,6 +59,9 @@ function renderPanel(
       onEffortChange={() => {}}
       economyMode={false}
       onEconomyModeChange={() => {}}
+      fastModeAvailable={false}
+      fastMode={false}
+      onFastModeChange={() => {}}
       pendingQuestion={pendingQuestion}
       onReopenQuestion={onReopenQuestion}
       {...overrides}

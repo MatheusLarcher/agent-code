@@ -13,7 +13,13 @@ import type {
   RateLimitStatus,
   TabKind
 } from '@shared/ipc'
-import { isOllamaModel, OLLAMA_MODELS, MODEL_EFFORT, DEFAULT_EFFORT } from '@shared/ipc'
+import {
+  isOllamaModel,
+  modelSupportsFastMode,
+  OLLAMA_MODELS,
+  MODEL_EFFORT,
+  DEFAULT_EFFORT
+} from '@shared/ipc'
 import type { EffortLevel } from '@shared/ipc'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
@@ -43,11 +49,34 @@ import { SettingsModal } from './ui/SettingsModal'
 export type { UserMessage, UIMessage } from './types'
 
 const MODELS = [
-  { id: 'claude-opus-4-8', label: 'Opus 4.8' },
+  { id: 'claude-opus-5', label: 'Opus 5' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
   { id: 'claude-fable-5', label: 'Fable 5' }
 ]
+
+/** Labels for models no longer offered in the selector (Opus 4.8 was retired from
+ *  the list when Opus 5 shipped). Old conversations keep running on whatever model
+ *  they were created with, so the picker still has to be able to SHOW that model —
+ *  otherwise the <select> falls back to its first option and the UI would claim a
+ *  model the session isn't actually using. See modelsFor. */
+const LEGACY_MODEL_LABELS: Record<string, string> = {
+  'claude-opus-4-8': 'Opus 4.8 (antigo)',
+  'claude-opus-4-7': 'Opus 4.7 (antigo)',
+  'claude-opus-4-6': 'Opus 4.6 (antigo)',
+  'claude-opus-4-5': 'Opus 4.5 (antigo)'
+}
+
+/** The selector list, plus `current` appended when it's a model that's no longer
+ *  offered — so an old conversation shows its real model instead of silently
+ *  displaying the first option. */
+function modelsFor(
+  list: { id: string; label: string }[],
+  current: string | undefined
+): { id: string; label: string }[] {
+  if (!current || list.some((m) => m.id === current)) return list
+  return [...list, { id: current, label: LEGACY_MODEL_LABELS[current] ?? current }]
+}
 
 const EFFORT_LABELS: Record<string, string> = {
   low: 'Baixo',
@@ -528,6 +557,10 @@ export function App(): JSX.Element {
       // (queue dispatch, permission clearing, error marking) below.
       const isActivity =
         e.kind === 'assistant-text' || e.kind === 'thinking' || e.kind === 'tool-use' || e.kind === 'tool-result' || e.kind === 'status'
+      // O agente voltou a responder de fato: o cartão de recuperação ("Limite do
+      // Claude atingido" / "Tentativas automáticas encerradas") não pode continuar
+      // na tela enquanto a resposta chega — some na primeira atividade real.
+      if (isActivity) patchConv(cid, (c) => (c.recovery ? { ...c, recovery: undefined } : c))
       if (isActivity && !busyRef.current.has(cid)) {
         setBusy(cid, true)
         setBusySince((m) => (m[cid] ? m : { ...m, [cid]: Date.now() }))
@@ -831,8 +864,14 @@ export function App(): JSX.Element {
 
   // Flush conversations (incl. the current draft) right away if the app is closing
   // within the save debounce window — so a just-typed draft isn't lost on exit.
+  // Never before hydration: closing the app while the history is still loading
+  // would persist the still-empty list over everything that's on disk.
+  const hydratedRef = useRef(hydrated)
+  hydratedRef.current = hydrated
   useEffect(() => {
-    const flush = (): void => void saveConversations(convsRef.current)
+    const flush = (): void => {
+      if (hydratedRef.current) void saveConversations(convsRef.current)
+    }
     window.addEventListener('beforeunload', flush)
     return () => window.removeEventListener('beforeunload', flush)
   }, [])
@@ -921,13 +960,18 @@ export function App(): JSX.Element {
     // mode; otherwise fall back to the active conversation's settings.
     const sameFolder = convsRef.current.find((c) => c.cwd === folder)
     const active = getActive()
+    const model = sameFolder?.model || active?.model || MODELS[0].id
     const conv: Conversation = {
       id: uid('c'),
       title: DEFAULT_TITLE,
       cwd: folder,
-      model: sameFolder?.model || active?.model || MODELS[0].id,
+      model,
       effort: active?.effort || DEFAULT_EFFORT,
       economyMode: sameFolder?.economyMode ?? active?.economyMode ?? false,
+      // Fast mode is inherited like the other per-conversation settings, but only
+      // when the inherited model can actually run it.
+      fastMode:
+        modelSupportsFastMode(model) && (sameFolder?.fastMode ?? active?.fastMode ?? false),
       sdkSessionId: null,
       messages: [],
       tokens: { ...EMPTY_TOKENS },
@@ -1044,7 +1088,8 @@ export function App(): JSX.Element {
           skipPermissions: skipPermsRef.current,
           resume: conv.sdkSessionId ?? undefined,
           effort: conv.effort,
-          economyMode: conv.economyMode === true
+          economyMode: conv.economyMode === true,
+          fastMode: conv.fastMode === true
         })
         setConnected(conv.id, true)
         setPermissions((pp) => withoutKey(pp, conv.id))
@@ -1138,7 +1183,10 @@ export function App(): JSX.Element {
       patchConv(id, (c) => {
         const supported = MODEL_EFFORT[model] ?? []
         const effort = c.effort && supported.includes(c.effort as EffortLevel) ? c.effort : DEFAULT_EFFORT
-        return { ...c, model, effort }
+        // Fast mode only exists on some Opus models — drop it when moving to a
+        // model that would have the API reject the request.
+        const fastMode = c.fastMode === true && modelSupportsFastMode(model)
+        return { ...c, model, effort, fastMode }
       })
       if (!connectedRef.current.has(id)) return
       if (busyRef.current.has(id)) {
@@ -1230,6 +1278,26 @@ export function App(): JSX.Element {
     [patchConv, stopSession, notify]
   )
 
+  // "Modo rápido" (fast mode) toggle — per-conversation, same restart-on-idle
+  // logic as the economy toggle. Only offered on models that support it; the
+  // toggle is hidden otherwise, and switching to an unsupported model clears the
+  // flag (see changeModel) so it can't silently ride along.
+  const changeFastMode = useCallback(
+    (id: string, on: boolean): void => {
+      patchConv(id, (c) => (c.fastMode === on ? c : { ...c, fastMode: on }))
+      if (connectedRef.current.has(id) && !busyRef.current.has(id)) {
+        void stopSession(id, { silent: true })
+      }
+      notify(
+        'sucesso',
+        on
+          ? 'Modo rápido ativado — respostas até ~2,5x mais rápidas, com custo por token maior. Vale na próxima mensagem.'
+          : 'Modo rápido desativado — volta à velocidade e ao preço normais na próxima mensagem.'
+      )
+    },
+    [patchConv, stopSession, notify]
+  )
+
   // Core send into a SPECIFIC conversation, shared by the PC composer and by
   // commands arriving from a phone (remote inbound). `full` is what goes to the
   // agent (may include page-element refs); `text` is what's shown/used for title.
@@ -1246,9 +1314,19 @@ export function App(): JSX.Element {
       // Project folder gone → don't process or send to the LLM; just warn.
       if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) return
 
+      // Recuperação já parada (tentativas automáticas encerradas): nada mais vai
+      // despachar a fila, então uma mensagem nova recomeça o fluxo — descarta o
+      // cartão e segue o envio normal em vez de ficar presa na fila.
+      const stalledRecovery = conv.recovery?.scheduledAt === 0
+      if (stalledRecovery) patchConv(conv.id, (c) => ({ ...c, recovery: undefined }))
+
       // Agent already busy on THIS conversation → queue instead of sending, so
       // the running task isn't cancelled. It'll be dispatched when the turn ends.
-      if (busyRef.current.has(conv.id) || conv.recovery || queueRef.current.some((m) => m.convId === conv.id)) {
+      if (
+        busyRef.current.has(conv.id) ||
+        (conv.recovery && !stalledRecovery) ||
+        queueRef.current.some((m) => m.convId === conv.id)
+      ) {
         setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs, files, fileRefs }])
         return
       }
@@ -1421,6 +1499,9 @@ export function App(): JSX.Element {
       if (!(await ensureProject(conv))) return
 
       clearMessageError(convId, msgId)
+      // O reenvio manual assume o lugar da recuperação automática — o cartão sai
+      // da tela junto com o erro da bolha.
+      patchConv(convId, (c) => (c.recovery ? { ...c, recovery: undefined } : c))
       interruptedRef.current.delete(convId) // fresh turn: clear any stale stop flag
       setBusy(convId, true)
       setBusySince((m) => ({ ...m, [convId]: Date.now() }))
@@ -1440,7 +1521,7 @@ export function App(): JSX.Element {
         notify('erro', `Falha ao enviar: ${String(err)}`)
       }
     },
-    [connect, ensureProject, setBusy, notify, clearMessageError, markMessageError]
+    [connect, ensureProject, patchConv, setBusy, notify, clearMessageError, markMessageError]
   )
 
   // Persist a composer draft onto a SPECIFIC conversation (debounced save keeps
@@ -1964,7 +2045,7 @@ export function App(): JSX.Element {
             voiceReady={voiceReady}
             onNeedVoiceKey={needVoiceKey}
             tts={tts}
-            models={models}
+            models={modelsFor(models, active?.model)}
             model={active?.model ?? MODELS[0].id}
             modelLocked={!active}
             onModelChange={(m) => active && changeModel(active.id, m)}
@@ -1975,6 +2056,9 @@ export function App(): JSX.Element {
             onEffortChange={(e) => active && changeEffort(active.id, e)}
             economyMode={active?.economyMode === true}
             onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
+            fastModeAvailable={!!active && modelSupportsFastMode(active.model)}
+            fastMode={active?.fastMode === true}
+            onFastModeChange={(on) => active && changeFastMode(active.id, on)}
             pendingQuestion={!!activePermission?.questions && questionMinimized}
             onReopenQuestion={() => setQuestionMinimized(false)}
             todoPlan={active?.todoPlan}

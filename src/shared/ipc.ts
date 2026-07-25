@@ -430,6 +430,10 @@ export interface StartAgentOptions {
   /** Per-conversation "modo econômico": instructs the LLM to skip validation for
    *  trivial tasks. Scoped to THIS conversation only. */
   economyMode?: boolean
+  /** Per-conversation "modo rápido" (fast mode): runs Opus at up to ~2.5x the
+   *  output speed for a higher per-token price. Only meaningful for the models in
+   *  FAST_MODE_MODELS — see modelSupportsFastMode. */
+  fastMode?: boolean
 }
 
 /** Reasoning effort levels a model may support. */
@@ -438,6 +442,7 @@ export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 /** Which effort levels each model supports. Haiku stops at high; Opus/Sonnet/Fable go to max.
  *  Ollama models don't support effort at all. */
 export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
+  'claude-opus-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-7': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-6': ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -449,6 +454,21 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
 
 /** Default effort when none is selected — "high" is the Anthropic default. */
 export const DEFAULT_EFFORT: EffortLevel = 'high'
+
+/** Models that accept fast mode (`settings.fastMode`), which trades a higher
+ *  per-token price for up to ~2.5x output speed. Anthropic only offers it on the
+ *  Opus models listed here: Sonnet/Haiku/Fable and Ollama models don't support it,
+ *  and Opus 4.7's fast mode was removed on 2026-07-24 (the API now rejects those
+ *  requests instead of serving them at standard speed). Keep this list in sync
+ *  with https://code.claude.com/docs/en/fast-mode — offering it on a model that
+ *  doesn't support it produces a rejected request, not a silent fallback. */
+const FAST_MODE_MODELS = new Set(['claude-opus-5', 'claude-opus-4-8'])
+
+/** Whether `model` can run in fast mode (gates the toggle in the UI). */
+export function modelSupportsFastMode(model: string | undefined): boolean {
+  if (!model) return false
+  return FAST_MODE_MODELS.has(model)
+}
 
 // ---- App configuration (persisted in the main process) ------------------
 
@@ -534,13 +554,14 @@ export const DEFAULT_CONTEXT_LIMIT = 200_000
 
 /** Context-window size (max input tokens) per model — the denominator of the
  *  context-usage bar. Anthropic values are authoritative (Anthropic model
- *  catalog): the Opus 4.x family and Sonnet 5 are 1M, Haiku 4.5 is 200K.
+ *  catalog): Opus 5, the Opus 4.x family, and Sonnet 5 are 1M, Haiku 4.5 is 200K.
  *  Ollama Cloud values are best-effort native context windows. Unknown models
  *  fall back to DEFAULT_CONTEXT_LIMIT. Keep this in sync when adding a model to
  *  the selector (App.tsx MODELS / OLLAMA_MODELS) — a wrong limit makes the bar
  *  read wrong. */
 export const CONTEXT_LIMITS: Record<string, number> = {
   // Anthropic — authoritative
+  'claude-opus-5': 1_000_000,
   'claude-opus-4-8': 1_000_000,
   'claude-opus-4-7': 1_000_000,
   'claude-opus-4-6': 1_000_000,

@@ -5,8 +5,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 const configState = vi.hoisted(() => ({ windowsControlEnabled: false as unknown }))
 vi.mock('./config', () => ({
-  loadConfig: () => ({ windowsControlEnabled: configState.windowsControlEnabled })
+  loadConfig: () => ({
+    windowsControlEnabled: configState.windowsControlEnabled,
+    // start() reads these two; the permission-gate tests never call start(), but
+    // the fast-mode test below does.
+    stitch: { enabled: false, apiKey: '' },
+    ollama: { enabled: false, apiKey: '' }
+  })
 }))
+
+// Captures the Options object start() hands to the SDK, and ends the stream at
+// once so start() returns instead of waiting on a real agent.
+const queryMock = vi.hoisted(() => vi.fn())
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@anthropic-ai/claude-agent-sdk')
+  return {
+    ...actual,
+    query: (args: { options: unknown }) => {
+      queryMock(args)
+      return (async function* () {})()
+    }
+  }
+})
 import { AgentSession } from './agentSession'
 import type { BrowserController } from './browserController'
 
@@ -24,7 +44,7 @@ function pushedMessages(s: AgentSession): Array<{ message: { content: unknown };
 
 // Build a session without starting the SDK query loop — we only exercise the
 // permission gate (handlePermission / resolvePermission / setBypass).
-function makeSession(opts: { skipPermissions?: boolean; model?: string } = {}): {
+function makeSession(opts: { skipPermissions?: boolean; model?: string; fastMode?: boolean } = {}): {
   s: AgentSession
   emit: ReturnType<typeof vi.fn>
   ask: ReturnType<typeof vi.fn>
@@ -456,5 +476,32 @@ describe('AgentSession — vision_fallback_router', () => {
     expect(describeImagesMock).not.toHaveBeenCalled()
     const [msg] = pushedMessages(s)
     expect(msg.message.content).toBe('só texto, sem imagem')
+  })
+})
+
+describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () => {
+  const optionsOfLastQuery = (): Record<string, unknown> =>
+    (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
+
+  beforeEach(() => queryMock.mockClear())
+
+  it('modelo suportado + flag ligada: manda settings.fastMode', async () => {
+    const { s } = makeSession({ model: 'claude-opus-5', fastMode: true })
+    await s.start()
+    expect(optionsOfLastQuery().settings).toEqual({ fastMode: true })
+  })
+
+  it('flag desligada: não manda settings (fica no padrão da conta)', async () => {
+    const { s } = makeSession({ model: 'claude-opus-5', fastMode: false })
+    await s.start()
+    expect(optionsOfLastQuery().settings).toBeUndefined()
+  })
+
+  // A proteção que importa: mesmo se a flag vazar de uma conversa antiga, um
+  // modelo sem suporte não pode receber fastMode — a API rejeitaria a request.
+  it('modelo sem suporte + flag ligada: settings NÃO vai junto', async () => {
+    const { s } = makeSession({ model: 'claude-sonnet-5', fastMode: true })
+    await s.start()
+    expect(optionsOfLastQuery().settings).toBeUndefined()
   })
 })

@@ -58,19 +58,27 @@ function withProjectDb<T>(path: string, fn: (db: DatabaseSync) => T): T {
   }
 }
 
-function readConversations(path: string): ConversationRecord[] {
-  return withProjectDb(path, (db) => {
-    const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(CONVERSATIONS_KEY) as
-      | { value?: string }
-      | undefined
-    if (!row?.value) return []
-    try {
-      const parsed = JSON.parse(row.value)
-      return Array.isArray(parsed) ? (parsed as ConversationRecord[]) : []
-    } catch {
-      return []
-    }
-  })
+/** Read one project's conversations. `null` means the file exists but could NOT be
+ *  read (locked, not yet hydrated by a cloud-sync client, corrupt) — which is very
+ *  different from "this project has no conversations" and must never be confused
+ *  with it: the caller would prune a file whose data is still there. */
+function readConversations(path: string): ConversationRecord[] | null {
+  try {
+    return withProjectDb(path, (db) => {
+      const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(CONVERSATIONS_KEY) as
+        | { value?: string }
+        | undefined
+      if (!row?.value) return []
+      try {
+        const parsed = JSON.parse(row.value)
+        return Array.isArray(parsed) ? (parsed as ConversationRecord[]) : []
+      } catch {
+        return []
+      }
+    })
+  } catch {
+    return null
+  }
 }
 
 function writeConversations(path: string, list: ConversationRecord[]): void {
@@ -169,21 +177,44 @@ function migrateLegacyConversations(cacheDir: string): void {
   deleteLegacyConversationsKey(cacheDir)
 }
 
+/**
+ * Project files whose FULL contents this process has actually seen — either read
+ * by a load, or written by a save. Only these may ever be pruned.
+ *
+ * Pruning a file means "this project's last conversation was deleted", and that
+ * claim is only true if the incoming list was built from a view that included the
+ * file. Anything we haven't seen is somebody else's data, not a deletion:
+ *  - never loaded yet (app closing mid-load) → nothing is prunable, so an empty
+ *    list can't erase the history;
+ *  - a file we couldn't read (locked, half-synced, corrupt) → protected, instead
+ *    of being silently dropped from the list and then deleted;
+ *  - a file that appeared after the load (cloud-sync, a restore from backup) →
+ *    protected, and picked up on the next start.
+ */
+let seenFiles = new Set<string>()
+
 /** Load every conversation from every per-project db under `data/` — merged, the
- *  same "load everything at once" contract the single-blob store used to offer. */
+ *  same "load everything at once" contract the single-blob store used to offer.
+ *  A file that can't be read is skipped instead of aborting the whole load. */
 export function loadAllConversationRecords(cacheDir: string): ConversationRecord[] {
   migrateLegacyConversations(cacheDir)
   const merged: ConversationRecord[] = []
+  const seen = new Set<string>()
   for (const file of listProjectFiles(cacheDir)) {
-    merged.push(...readConversations(join(dataDir(cacheDir), file)))
+    const records = readConversations(join(dataDir(cacheDir), file))
+    if (records === null) continue // unreadable — leave it out AND leave it alone
+    seen.add(file)
+    merged.push(...records)
   }
+  seenFiles = seen
   return merged
 }
 
 /**
  * Persist the full conversation list, fanned out one file per project. A project
- * that no longer has any conversation (all deleted) has its file removed — no
- * ghost data resurrecting on a later load.
+ * that no longer has any conversation (all deleted) has its file removed — but
+ * only if we've seen that file's contents (see `seenFiles`), so an incomplete or
+ * never-run load can never be read as "erase every project".
  */
 export function saveAllConversationRecords(cacheDir: string, list: ConversationRecord[]): void {
   migrateLegacyConversations(cacheDir)
@@ -193,10 +224,13 @@ export function saveAllConversationRecords(cacheDir: string, list: ConversationR
   for (const [file, records] of grouped) {
     writeConversations(join(dataDir(cacheDir), file), records)
     stale.delete(file)
+    seenFiles.add(file) // we just wrote it, so we know exactly what's in it
   }
   for (const file of stale) {
+    if (!seenFiles.has(file)) continue
     try {
       rmSync(join(dataDir(cacheDir), file), { force: true })
+      seenFiles.delete(file)
     } catch {
       /* best-effort */
     }

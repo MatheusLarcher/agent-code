@@ -11,7 +11,7 @@ import { getCacheInfo } from './store'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { isOllamaModel, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
+import { isOllamaModel, modelSupportsFastMode, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import type {
   AskQuestion,
@@ -349,6 +349,12 @@ export class AgentSession {
       cwd: this.opts.cwd,
       model: this.opts.model,
       ...(this.opts.effort ? { effort: this.opts.effort as Options['effort'] } : {}),
+      // Modo rápido: only sent when the chosen model actually supports it — the
+      // API rejects a fast-mode request on an unsupported model instead of
+      // quietly serving it at standard speed.
+      ...(this.opts.fastMode && modelSupportsFastMode(this.opts.model)
+        ? { settings: { fastMode: true } }
+        : {}),
       ...(env ? { env } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.

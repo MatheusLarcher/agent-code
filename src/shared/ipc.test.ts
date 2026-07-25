@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { contextLimitFor, modelSupportsVision, CONTEXT_LIMITS, MODEL_EFFORT, DEFAULT_CONFIG, Channels } from './ipc'
+import {
+  contextLimitFor,
+  modelSupportsFastMode,
+  modelSupportsVision,
+  CONTEXT_LIMITS,
+  MODEL_EFFORT,
+  DEFAULT_CONFIG,
+  Channels
+} from './ipc'
 
 describe('controle do Windows — contrato compartilhado', () => {
   it('começa desligado e usa canais IPC independentes de permitir tudo', () => {
@@ -58,6 +66,26 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision('gpt-oss:20b-cloud')).toBe(false)
     expect(modelSupportsVision('deepseek-v4-pro:cloud')).toBe(false)
     expect(modelSupportsVision('glm-5.2:cloud')).toBe(false)
+  })
+})
+
+describe('modelSupportsFastMode — quais modelos aceitam o modo rápido', () => {
+  it('só os Opus suportados pela Anthropic (Opus 5 e 4.8)', () => {
+    expect(modelSupportsFastMode('claude-opus-5')).toBe(true)
+    expect(modelSupportsFastMode('claude-opus-4-8')).toBe(true)
+  })
+
+  it('Opus 4.7 NÃO entra — o modo rápido dele foi removido em 24/07/2026 e a API rejeita', () => {
+    expect(modelSupportsFastMode('claude-opus-4-7')).toBe(false)
+  })
+
+  it('Sonnet/Haiku/Fable, Ollama e desconhecidos ficam de fora (a API rejeitaria)', () => {
+    expect(modelSupportsFastMode('claude-sonnet-5')).toBe(false)
+    expect(modelSupportsFastMode('claude-haiku-4-5')).toBe(false)
+    expect(modelSupportsFastMode('claude-fable-5')).toBe(false)
+    expect(modelSupportsFastMode('qwen3-coder:480b-cloud')).toBe(false)
+    expect(modelSupportsFastMode('modelo-inexistente')).toBe(false)
+    expect(modelSupportsFastMode(undefined)).toBe(false)
   })
 })
 

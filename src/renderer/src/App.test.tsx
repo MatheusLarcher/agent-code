@@ -402,6 +402,38 @@ describe('App — recuperação persistida', () => {
     expect(screen.getByText(/Nova tentativa em/)).toBeTruthy()
     expect(api.sendMessage).not.toHaveBeenCalled()
   })
+
+  it('o cartão some assim que o agente volta a responder', async () => {
+    const conv = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')[0]
+    conv.recovery = {
+      id: 'rec1', reason: 'limit', scheduledAt: Date.now() + 60_000,
+      attempt: 0, maxAttempts: 5, errorText: 'session limit', messageId: null
+    }
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([conv]))
+    render(<UiProvider><App /></UiProvider>)
+    expect(await screen.findByText('Limite do Claude atingido')).toBeTruthy()
+
+    await emit(partial) // atividade real chegando = o agente respondeu
+    await waitFor(() => expect(screen.queryByText('Limite do Claude atingido')).toBeNull())
+  })
+
+  it('tentativas encerradas: mensagem nova descarta o cartão e é enviada (não fica na fila)', async () => {
+    const conv = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')[0]
+    conv.recovery = {
+      id: 'rec1', reason: 'transient', scheduledAt: 0,
+      attempt: 5, maxAttempts: 5, errorText: 'sessão caiu', messageId: null
+    }
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([conv]))
+    render(<UiProvider><App /></UiProvider>)
+    expect(await screen.findByText(/Tentativas automáticas encerradas/)).toBeTruthy()
+
+    await send('vai de novo')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText(/Tentativas automáticas encerradas/)).toBeNull()
+    expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
 })
 
 describe('App — indicador "trabalhando" se autocorrige após um result prematuro', () => {
@@ -611,9 +643,57 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     await waitFor(() => expect(select()).toBeTruthy())
     expect(select().getAttribute('aria-disabled')).toBe('false')
 
+    // Opus 4.8 saiu do seletor quando o Opus 5 entrou, mas esta conversa (fixture)
+    // continua nele. O picker precisa MOSTRAR o modelo real, senão o <select>
+    // cairia na primeira opção e a UI diria "Opus 5" com a sessão rodando em 4.8.
+    expect(select().value).toBe('claude-opus-4-8')
+    expect(Array.from(select().options).find((o) => o.value === 'claude-opus-4-8')?.textContent).toContain('antigo')
+
     fireEvent.change(select(), { target: { value: 'claude-haiku-4-5' } })
     expect(select().value).toBe('claude-haiku-4-5')
     expect(api.disposeAgent).not.toHaveBeenCalled()
+  })
+})
+
+describe('App — modo rápido (fast mode)', () => {
+  const fastToggle = (): HTMLElement | null => document.querySelector('.fast-toggle')
+
+  it('só aparece nos modelos suportados, chega no startAgent e é limpo ao trocar de modelo', async () => {
+    const { container } = render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+    // A fixture começa no Opus 4.8, que suporta modo rápido — e começa DESLIGADO.
+    await waitFor(() => expect(fastToggle()).toBeTruthy())
+    expect(fastToggle()?.className).not.toContain('on')
+
+    fireEvent.click(fastToggle() as HTMLElement)
+    await waitFor(() => expect(fastToggle()?.className).toContain('on'))
+
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    expect(api.startAgent.mock.calls[0][0]).toMatchObject({ fastMode: true })
+    await flushConnect()
+    await emit(result) // turno termina → sessão ociosa
+
+    // Sonnet não suporta: o toggle some e a flag cai junto, para a próxima sessão
+    // não sair com fastMode ligado (a API rejeitaria a request).
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
+    await waitFor(() => expect(fastToggle()).toBeNull())
+
+    await send('msg2')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
+    expect(api.startAgent.mock.calls[1][0]).toMatchObject({
+      model: 'claude-sonnet-5',
+      fastMode: false
+    })
+
+    // Voltar para um Opus suportado traz o toggle de volta, ainda desligado.
+    fireEvent.change(select(), { target: { value: 'claude-opus-5' } })
+    await waitFor(() => expect(fastToggle()).toBeTruthy())
+    expect(fastToggle()?.className).not.toContain('on')
   })
 })
 
@@ -1321,5 +1401,36 @@ describe('App — permissão independente de controle do Windows', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Desativar agora' }))
     await waitFor(() => expect(api.setWindowsControlEnabled).toHaveBeenLastCalledWith(false))
     await waitFor(() => expect(document.querySelector('.windows-control-banner')).toBeNull())
+  })
+})
+
+describe('App — fechar o app antes do histórico carregar não apaga o histórico', () => {
+  it('beforeunload durante o load não persiste nada; depois de hidratar persiste o que carregou', async () => {
+    const seeded = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+    let releaseLoad: (list: unknown[]) => void = () => {}
+    api.loadAllConversations.mockImplementation(
+      () => new Promise<unknown[]>((resolve) => { releaseLoad = resolve })
+    )
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+
+    // O usuário fecha o app com o histórico ainda carregando. Persistir agora
+    // gravaria a lista vazia sobre tudo que está no disco.
+    await act(async () => {
+      window.dispatchEvent(new Event('beforeunload'))
+    })
+    expect(api.saveAllConversations).not.toHaveBeenCalled()
+
+    // O load conclui → só a partir daí o app pode gravar, e grava o que carregou.
+    await act(async () => {
+      releaseLoad(seeded)
+    })
+    await waitFor(() => expect(api.saveAllConversations).toHaveBeenCalled())
+    const persisted = api.saveAllConversations.mock.calls.at(-1)?.[0] as { id: string }[]
+    expect(persisted.map((c) => c.id)).toEqual(['c1'])
   })
 })

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -83,6 +83,80 @@ describe('save/load — split por projeto', () => {
     saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a'), conv('b1', 'C:\\Projects\\app-b')])
     const loaded = loadAllConversationRecords(cacheDir)
     expect(loaded.map((c) => c.id).sort()).toEqual(['a1', 'b1'])
+  })
+})
+
+describe('nunca perder dados por causa de um load que falhou', () => {
+  /** A `.db` that exists but can't be opened as SQLite — the shape a locked,
+   *  half-synced or corrupt file takes on disk. */
+  function seedUnreadableDb(dir: string, name: string): void {
+    mkdirSync(join(dir, 'data'), { recursive: true })
+    writeFileSync(join(dir, 'data', name), 'isto não é um banco sqlite', 'utf8')
+  }
+
+  /** Write a valid project db straight to disk, as a backup restore or a
+   *  cloud-sync client would — behind the app's back. */
+  function seedProjectDb(path: string, list: ConversationRecord[]): void {
+    const db = new DatabaseSync(path)
+    db.exec('CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+    db.prepare('INSERT INTO kv(key, value) VALUES(?, ?)').run('conversations', JSON.stringify(list))
+    db.close()
+  }
+
+  it('um arquivo ilegível não derruba o load dos outros projetos', () => {
+    saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a')])
+    seedUnreadableDb(cacheDir, 'corrompido-00000000.db')
+
+    const loaded = loadAllConversationRecords(cacheDir)
+    expect(loaded.map((c) => c.id)).toEqual(['a1'])
+  })
+
+  it('não apaga o arquivo que o load não conseguiu ler', () => {
+    saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a')])
+    seedUnreadableDb(cacheDir, 'corrompido-00000000.db')
+
+    // Load incompleto: o ilegível ficou de fora da lista devolvida — então o
+    // save seguinte também não o menciona, e não pode ser lido como exclusão.
+    const loaded = loadAllConversationRecords(cacheDir)
+    saveAllConversationRecords(cacheDir, loaded)
+
+    expect(readdirSync(join(cacheDir, 'data'))).toContain('corrompido-00000000.db')
+  })
+
+  it('não apaga um banco restaurado depois do load (backup/cloud-sync com o app aberto)', () => {
+    saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a')])
+    loadAllConversationRecords(cacheDir)
+
+    // Restauração de um projeto que não existia quando o app carregou.
+    const restored = projectFileName('C:\\Projects\\resgatado')
+    seedProjectDb(join(cacheDir, 'data', restored), [conv('r1', 'C:\\Projects\\resgatado')])
+
+    // O app segue salvando o que tem em memória, sem saber do arquivo novo.
+    saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a')])
+
+    expect(readdirSync(join(cacheDir, 'data'))).toContain(restored)
+    expect(loadAllConversationRecords(cacheDir).map((c) => c.id).sort()).toEqual(['a1', 'r1'])
+  })
+
+  it('um save com lista vazia antes de qualquer load não apaga banco nenhum', async () => {
+    saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a'), conv('b1', 'C:\\Projects\\app-b')])
+    expect(readdirSync(join(cacheDir, 'data')).length).toBe(2)
+
+    // Processo novo, nenhum load ainda: é exatamente o caso de fechar o app
+    // antes do histórico terminar de carregar.
+    vi.resetModules()
+    const fresh = await import('./projectStore')
+    fresh.saveAllConversationRecords(cacheDir, [])
+
+    expect(readdirSync(join(cacheDir, 'data')).length).toBe(2)
+    expect(loadAllConversationRecords(cacheDir).map((c) => c.id).sort()).toEqual(['a1', 'b1'])
+  })
+
+  it('apagar todas as conversas de propósito ainda limpa os arquivos', () => {
+    saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a'), conv('b1', 'C:\\Projects\\app-b')])
+    loadAllConversationRecords(cacheDir) // load completo → a poda está liberada
+    saveAllConversationRecords(cacheDir, [])
+    expect(readdirSync(join(cacheDir, 'data')).length).toBe(0)
   })
 })
 
