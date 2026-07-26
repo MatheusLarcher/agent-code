@@ -10,6 +10,7 @@ import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readSessionTasks, watchSessionTasks } from './sessionTasks'
 import { randomUUID } from 'node:crypto'
 import { isOllamaModel, modelSupportsFastMode, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
@@ -268,6 +269,10 @@ export class AgentSession {
   private lastContextTokens = 0
   /** Per-session cancellation scope for Windows UI actions. */
   private windowsControlScope = windowsControl.createScope()
+  /** Stops the task-folder watcher of the CURRENT sdk session (a resume/restart
+   *  can hand us a different session id, and then we re-point the watcher). */
+  private stopTaskWatch: (() => void) | null = null
+  private watchedSessionId: string | null = null
 
   constructor(
     private readonly opts: StartAgentOptions,
@@ -577,7 +582,24 @@ export class AgentSession {
 
   dispose(): void {
     this.windowsControlScope.cancel()
+    this.stopTaskWatch?.()
+    this.stopTaskWatch = null
     this.input.close()
+  }
+
+  /**
+   * Point the task watcher at this sdk session and push its CURRENT list right
+   * away. Called on every `system/init` — including the one a resume produces —
+   * so a chat reopened after the app (or the machine) was restarted shows the
+   * real progress instead of the snapshot it happened to see last time.
+   */
+  private syncTasks(sessionId: string): void {
+    if (this.watchedSessionId === sessionId && this.stopTaskWatch) return
+    this.stopTaskWatch?.()
+    this.watchedSessionId = sessionId
+    const items = readSessionTasks(sessionId)
+    if (items) this.emit({ kind: 'task-list', items })
+    this.stopTaskWatch = watchSessionTasks(sessionId, (list) => this.emit({ kind: 'task-list', items: list }))
   }
 
   // ---- internals ----
@@ -681,6 +703,10 @@ export class AgentSession {
           // The level event is not emitted at process startup. Reset explicitly
           // so a resumed/restarted session never leaves stale tasks in the UI.
           this.emit({ kind: 'background-tasks', tasks: [] })
+          // Re-sync the plan card with the CLI's own task files: TaskCreate/
+          // TaskUpdate events only describe changes, so everything that happened
+          // while this app wasn't listening would otherwise stay invisible.
+          this.syncTasks(message.session_id)
         } else if (message.subtype === 'background_tasks_changed') {
           this.emit({
             kind: 'background-tasks',
@@ -742,6 +768,13 @@ export class AgentSession {
         // Mirrors the parent_tool_use_id filter already used for the
         // `assistant` case below (context-token tracking).
         if (r.origin?.kind === 'peer') break
+        // Belt-and-braces re-read at the end of every turn: if the folder watcher
+        // ever misses a write (network drive, antivirus, watcher limits), the card
+        // still lands on the truth instead of drifting for the rest of the chat.
+        if (this.watchedSessionId) {
+          const tasks = readSessionTasks(this.watchedSessionId)
+          if (tasks) this.emit({ kind: 'task-list', items: tasks })
+        }
         this.emit({
           kind: 'result',
           id: nextId(),

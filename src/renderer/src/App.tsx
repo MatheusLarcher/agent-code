@@ -263,7 +263,7 @@ function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
   // TodoWrite/TaskCreate/TaskUpdate calls never join the message feed — they
   // update Conversation.todoPlan instead (handled in onEvent, alongside this call).
   if (isTodoWriteToolUse(e) || isTaskCreateToolUse(e) || isTaskUpdateToolUse(e)) return prev
-  if (e.kind === 'background-tasks') return prev
+  if (e.kind === 'background-tasks' || e.kind === 'task-list') return prev
   if (e.kind === 'assistant-text') {
     const i = prev.findIndex((m) => m.kind === 'assistant-text' && m.id === e.id)
     if (i >= 0) {
@@ -526,6 +526,19 @@ export function App(): JSX.Element {
         } else if (e.kind === 'tool-result') {
           const plan = applyTaskResult(next.todoPlan, e)
           if (plan) next = { ...next, todoPlan: plan }
+        } else if (e.kind === 'task-list') {
+          // Authoritative snapshot straight from the CLI's task files — replaces
+          // the incrementally-built list, which goes stale for every event this
+          // app didn't see (closed app, machine restart, chat resumed later).
+          // An empty snapshot is only trusted when there IS a plan built from
+          // tasks; a TodoWrite-only plan (no ids) is left alone.
+          const fromTasks = next.todoPlan?.items.some((it) => it.id) ?? false
+          if (e.items.length || fromTasks) {
+            // Spinner follows the real turn state, not the last event we saw: a
+            // snapshot arriving mid-turn (resume, watcher tick) means the agent
+            // IS working on this plan right now.
+            next = { ...next, todoPlan: { items: e.items, active: busyRef.current.has(cid) } }
+          }
         } else if (e.kind === 'background-tasks') {
           next = { ...next, backgroundTasks: e.tasks }
         }

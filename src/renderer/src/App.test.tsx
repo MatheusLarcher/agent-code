@@ -939,6 +939,89 @@ describe('App — TodoWrite vira um plano fixo, não um card no feed de mensagen
   })
 })
 
+describe('App — plano sincronizado com as tarefas reais do CLI (task-list)', () => {
+  const taskList = (items: { id: string; content: string; status: TodoItem['status']; activeForm: string }[]): ChatEvent => ({
+    kind: 'task-list',
+    items
+  })
+
+  it('o snapshot do CLI corrige um plano defasado (app perdeu o TaskUpdate)', async () => {
+    const conv = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')[0]
+    // Estado que ficou salvo antes de reiniciar a máquina: M2 ainda "pending".
+    conv.todoPlan = {
+      items: [
+        { id: '1', content: 'M0 — Spike', status: 'completed', activeForm: 'Testando o spike' },
+        { id: '2', content: 'M2 — Tradução', status: 'pending', activeForm: 'Montando a tradução' }
+      ],
+      active: false
+    }
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([conv]))
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
+    expect(screen.getByText('1/2')).toBeTruthy()
+
+    // Ao reconectar, o main manda o estado real lido de ~/.claude/tasks/<sessão>.
+    await emit(
+      taskList([
+        { id: '1', content: 'M0 — Spike', status: 'completed', activeForm: 'Testando o spike' },
+        { id: '2', content: 'M2 — Tradução', status: 'completed', activeForm: 'Montando a tradução' },
+        { id: '3', content: 'M3 — Pipeline', status: 'in_progress', activeForm: 'Trocando o pipeline' }
+      ])
+    )
+
+    await waitFor(() => {
+      const plan = savedConv()?.todoPlan
+      expect(plan?.items).toHaveLength(3)
+      expect(plan?.items[1].status).toBe('completed')
+      expect(plan?.items[2].status).toBe('in_progress')
+    })
+    expect(screen.getByText('2/3')).toBeTruthy()
+  })
+
+  it('durante o turno o card volta a girar no item certo', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('continua de onde parou')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(taskList([{ id: '1', content: 'M3 — Pipeline', status: 'in_progress', activeForm: 'Trocando o pipeline' }]))
+    await waitFor(() => expect(screen.getByText('Trocando o pipeline')).toBeTruthy())
+    expect(document.querySelector('.todo-plan-card .spinner')).toBeTruthy()
+
+    await emit(result)
+    await waitFor(() => expect(document.querySelector('.todo-plan-card .spinner')).toBeNull())
+  })
+
+  it('lista vazia não apaga um plano de TodoWrite (que não vem das tarefas do CLI)', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('faz uma tarefa complexa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(todoWriteEvent([{ content: 'Passo 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' }]))
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(1))
+
+    await emit(taskList([]))
+    expect(savedConv()?.todoPlan?.items).toHaveLength(1)
+    expect(screen.getByText('Fazendo o passo 1')).toBeTruthy()
+  })
+})
+
 describe('App — TodoPlanCard renderizado de verdade (end-to-end)', () => {
   it('card aparece fixo acima da composer, atualiza ao vivo, e recolhe quando o turno termina', async () => {
     render(

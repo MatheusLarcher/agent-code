@@ -27,6 +27,21 @@ export type ChatEvent =
    *  tied to this conversation. The renderer routes this straight into a
    *  global (not per-conversation) state; it never becomes a chat bubble. */
   | { kind: 'rate-limit'; limits: RateLimitStatus }
+  /** Full snapshot of the agent's task plan, read from the CLI's own task
+   *  storage (see sessionTasks.ts). Authoritative: it replaces whatever the
+   *  renderer built from the live TaskCreate/TaskUpdate events, which go stale
+   *  whenever the app misses them (closed app, machine restart, resumed chat). */
+  | { kind: 'task-list'; items: TaskItem[] }
+
+/** One task in the agent's plan, as stored by the CLI. */
+export interface TaskItem {
+  id: string
+  /** The task's title (`subject` on disk). */
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+  /** Present-tense label shown while the task is the active one. */
+  activeForm: string
+}
 
 /** One task the SDK reports as still running in the background. */
 export interface BackgroundTask {
