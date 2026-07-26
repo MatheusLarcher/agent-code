@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { basename, join, resolve } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, copyFileSync, rmSync } from 'node:fs'
 import { DB_NAME } from './store'
+import { writeDbAtomically } from './atomicDb'
 
 /**
  * Per-project conversation storage. Instead of every conversation living in one
@@ -13,6 +14,9 @@ import { DB_NAME } from './store'
  */
 
 const DATA_DIRNAME = 'data'
+/** Files this process failed to read (damaged/locked). Kept so the next save
+ *  sets the file aside instead of overwriting data that may still be salvageable. */
+const unreadableFiles = new Set<string>()
 /** Bucket for conversations with no/blank `cwd` — shouldn't normally happen. */
 const NO_PROJECT_FILE = 'sem-projeto.db'
 const CONVERSATIONS_KEY = 'conversations'
@@ -77,16 +81,30 @@ function readConversations(path: string): ConversationRecord[] | null {
       }
     })
   } catch {
+    unreadableFiles.add(path)
     return null
   }
 }
 
+/**
+ * Replace a project's file with a freshly built one (see `atomicDb.ts`): these
+ * files hold a single key, so there is nothing to preserve from the old copy —
+ * and writing in place is exactly what a cloud-sync client turns into a
+ * "malformed" database. A file this process couldn't read is moved aside
+ * (`.corrupt-<ts>`) instead of being silently overwritten, and saving works
+ * again from then on rather than failing forever.
+ */
 function writeConversations(path: string, list: ConversationRecord[]): void {
-  withProjectDb(path, (db) =>
-    db
-      .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-      .run(CONVERSATIONS_KEY, JSON.stringify(list))
+  const wasUnreadable = unreadableFiles.has(path)
+  writeDbAtomically(
+    path,
+    (db) =>
+      void db
+        .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+        .run(CONVERSATIONS_KEY, JSON.stringify(list)),
+    { quarantineFirst: wasUnreadable }
   )
+  unreadableFiles.delete(path)
 }
 
 function listProjectFiles(cacheDir: string): string[] {

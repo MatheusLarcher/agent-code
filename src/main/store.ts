@@ -3,6 +3,7 @@ import { app } from 'electron'
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { isReadableDb, quarantineDb, writeDbAtomically } from './atomicDb'
 
 /**
  * Persistence layout (per user, NOT per project):
@@ -86,6 +87,9 @@ function dbPath(dir: string): string {
 function prepare(dir: string): void {
   mkdirSync(dir, { recursive: true })
   mkdirSync(join(dir, 'memories'), { recursive: true })
+  // A damaged db here would throw on every open and leave the app unusable at
+  // startup. Set it aside (never deleted) and start a fresh one instead.
+  if (existsSync(dbPath(dir)) && !isReadableDb(dbPath(dir))) quarantineDb(dbPath(dir))
   const db = new DatabaseSync(dbPath(dir))
   try {
     // Rollback journal (no persistent -wal/-shm) so the folder is a clean,
@@ -150,11 +154,18 @@ export function kvGet(key: string): string | null {
   })
 }
 
+/** Writes go through a temp copy that then replaces the file in one step — a
+ *  cloud-sync client (or a power loss) catching an in-place write mid-flight is
+ *  what leaves a "malformed" database behind. `seed` keeps the other keys. */
 export function kvSet(key: string, value: string): void {
-  withDb((db) =>
-    db
-      .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-      .run(key, value)
+  const dir = ensureDir()
+  writeDbAtomically(
+    dbPath(dir),
+    (db) =>
+      void db
+        .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+        .run(key, value),
+    { seed: true }
   )
 }
 

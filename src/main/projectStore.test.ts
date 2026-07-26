@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -150,6 +150,37 @@ describe('nunca perder dados por causa de um load que falhou', () => {
 
     expect(readdirSync(join(cacheDir, 'data')).length).toBe(2)
     expect(loadAllConversationRecords(cacheDir).map((c) => c.id).sort()).toEqual(['a1', 'b1'])
+  })
+
+  it('banco corrompido do projeto: o save volta a funcionar e guarda o arquivo velho', () => {
+    const file = projectFileName('C:\\Projects\\app-a')
+    saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a')])
+    // Corrompe o arquivo como um cloud-sync faria no meio de uma escrita.
+    writeFileSync(join(cacheDir, 'data', file), 'lixo no lugar do banco', 'utf8')
+
+    loadAllConversationRecords(cacheDir) // vê que está ilegível (a conversa some da lista)
+    // Antes isso lançava "database disk image is malformed" em todo save.
+    expect(() => saveAllConversationRecords(cacheDir, [conv('a2', 'C:\\Projects\\app-a')])).not.toThrow()
+
+    expect(loadAllConversationRecords(cacheDir).map((c) => c.id)).toEqual(['a2'])
+    // O arquivo danificado foi guardado, não sobrescrito por cima.
+    const files = readdirSync(join(cacheDir, 'data'))
+    expect(files.some((f) => f.startsWith(`${file}.corrupt-`))).toBe(true)
+  })
+
+  it('salvar não escreve dentro do arquivo em uso — troca por um pronto (à prova de sync/queda)', () => {
+    const file = join(cacheDir, 'data', projectFileName('C:\\Projects\\app-a'))
+    saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a')])
+    const before = statSync(file).ino
+
+    saveAllConversationRecords(cacheDir, [conv('a1', 'C:\\Projects\\app-a'), conv('a2', 'C:\\Projects\\app-a')])
+
+    // inode/índice diferente = o arquivo antigo foi SUBSTITUÍDO inteiro, não editado
+    // no lugar (é a edição no lugar que o OneDrive transforma em "malformed").
+    expect(statSync(file).ino).not.toBe(before)
+    expect(loadAllConversationRecords(cacheDir).map((c) => c.id).sort()).toEqual(['a1', 'a2'])
+    // E nenhum journal de rollback fica para trás ao lado do arquivo.
+    expect(existsSync(`${file}-journal`)).toBe(false)
   })
 
   it('apagar todas as conversas de propósito ainda limpa os arquivos', () => {
