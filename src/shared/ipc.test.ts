@@ -30,11 +30,11 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
     expect(contextLimitFor('glm-5.2:cloud')).toBe(1_000_000)
   })
 
-  it('Ollama Cloud: Qwen3-Coder 256K, gpt-oss 128K, Kimi K2.7 256K', () => {
+  it('Ollama Cloud: Qwen3-Coder 256K, gpt-oss 128K, Kimi K3 1M', () => {
     expect(contextLimitFor('qwen3-coder:480b-cloud')).toBe(256_000)
     expect(contextLimitFor('gpt-oss:120b-cloud')).toBe(128_000)
     expect(contextLimitFor('gpt-oss:20b-cloud')).toBe(128_000)
-    expect(contextLimitFor('kimi-k2.7-code:cloud')).toBe(256_000)
+    expect(contextLimitFor('kimi-k3:cloud')).toBe(1_000_000)
   })
 
   it('modelo desconhecido cai no fallback padrão', () => {
@@ -56,8 +56,8 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision(undefined)).toBe(true)
   })
 
-  it('Kimi K2.7 Code aceita imagem direto (verificado com probe real contra a API do Ollama Cloud)', () => {
-    expect(modelSupportsVision('kimi-k2.7-code:cloud')).toBe(true)
+  it('Kimi K3 aceita imagem direto (multimodal nativo, herdou o slot do K2.7)', () => {
+    expect(modelSupportsVision('kimi-k3:cloud')).toBe(true)
   })
 
   it('demais modelos Ollama são texto-only (400 real da API) — precisam do vision relay', () => {

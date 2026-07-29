@@ -554,7 +554,7 @@ export const OLLAMA_MODELS = [
   { id: 'gpt-oss:20b-cloud', label: 'GPT-OSS 20B (Ollama)' },
   { id: 'deepseek-v4-pro:cloud', label: 'DeepSeek V4 Pro (Ollama · assinatura)' },
   { id: 'glm-5.2:cloud', label: 'GLM 5.2 (Ollama · assinatura)' },
-  { id: 'kimi-k2.7-code:cloud', label: 'Kimi K2.7 Code (Ollama · assinatura)' }
+  { id: 'kimi-k3:cloud', label: 'Kimi K3 (Ollama · assinatura)' }
 ] as const
 
 /** True when `model` is an Ollama Cloud model (routes through Ollama, not Anthropic).
@@ -568,12 +568,14 @@ export function isOllamaModel(model: string | undefined): boolean {
  *  THROUGH OLLAMA'S OWN Anthropic-compatible cloud endpoint (`POST
  *  https://ollama.com/v1/messages` with an image block) — not just "the base
  *  model has a vision encoder somewhere". Verified with a live probe against
- *  every model in OLLAMA_MODELS: only `kimi-k2.7-code:cloud` returned 200 (it
- *  actually processed the image); the other five all returned 400 `this model
- *  does not support image input`. Re-verify the same way before adding
- *  anything here — a wrong entry sends a raw image straight to a model that
- *  400s, exactly the bug this list exists to prevent. */
-const OLLAMA_VISION_MODELS = new Set(['kimi-k2.7-code:cloud'])
+ *  every model in OLLAMA_MODELS: only the Kimi tag returned 200 (it actually
+ *  processed the image); the other five all returned 400 `this model does not
+ *  support image input`. Re-verify the same way before adding anything here — a
+ *  wrong entry sends a raw image straight to a model that 400s, exactly the bug
+ *  this list exists to prevent. `kimi-k3:cloud` inherits the slot from the K2.7
+ *  tag it replaced: Ollama's model card lists it as natively multimodal with
+ *  image input, but that has NOT been re-probed live yet. */
+const OLLAMA_VISION_MODELS = new Set(['kimi-k3:cloud'])
 
 /** Whether `model` can accept an image directly. All Claude models support
  *  vision; for Ollama Cloud, only the models in OLLAMA_VISION_MODELS do —
@@ -615,7 +617,7 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'gpt-oss:20b-cloud': 128_000,
   'deepseek-v4-pro:cloud': 1_000_000,
   'glm-5.2:cloud': 1_000_000,
-  'kimi-k2.7-code:cloud': 256_000
+  'kimi-k3:cloud': 1_000_000
 }
 
 /** Context-window size for a model id, falling back to DEFAULT_CONTEXT_LIMIT. */

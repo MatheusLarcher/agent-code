@@ -340,8 +340,8 @@ export function SettingsModal({
                 <span className="settings-desc">
                   Adiciona modelos do Ollama Cloud ao seletor de modelo. Eles rodam pela API compatível
                   com a Anthropic do Ollama e usam a sua API key — não precisam do login do Claude.
-                  Qwen3 Coder e GPT-OSS funcionam no plano grátis; DeepSeek V4 Pro, GLM 5.2 e Kimi K2.7
-                  Code exigem assinatura do Ollama (ollama.com/upgrade).
+                  Qwen3 Coder e GPT-OSS funcionam no plano grátis; DeepSeek V4 Pro, GLM 5.2 e Kimi K3
+                  exigem assinatura do Ollama (ollama.com/upgrade).
                 </span>
               </span>
             </label>
