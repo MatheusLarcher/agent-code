@@ -13,6 +13,7 @@ import type {
   FileRefAttachment,
   ImageAttachment,
   MentionHit,
+  ProjectTree,
   ResolvedPastedRef,
   SkillInfo,
   PermissionExpiredMsg,
@@ -52,6 +53,10 @@ export interface AgentCodeApi {
   mentionSearch(root: string, query: string): Promise<MentionHit[]>
   /** "/" autocomplete: skills available to the agent (project `root` + user-level). */
   listSkills(root: string): Promise<SkillInfo[]>
+  /** Project map: the most recently modified files under `root` (+ their folders).
+   *  `keep` = paths the caller is showing now, so the reply can report which of
+   *  them were deleted (see ProjectTree.missing). */
+  projectTree(root: string, keep?: string[]): Promise<ProjectTree>
   /** Save a copy of a file (created by the agent) to Downloads and reveal it. */
   downloadFile(path: string): Promise<{ ok: boolean; message: string; saved?: string }>
   /** Read the content of a local file (e.g. for previewing in the UI). */

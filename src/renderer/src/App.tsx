@@ -20,7 +20,8 @@ import {
   MODEL_EFFORT,
   DEFAULT_EFFORT
 } from '@shared/ipc'
-import type { EffortLevel } from '@shared/ipc'
+import type { EffortLevel, ProjectTree } from '@shared/ipc'
+import { fileTouches } from './projectActivity'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
@@ -1953,6 +1954,52 @@ export function App(): JSX.Element {
     setBrowserMinimized(true)
   }, [])
 
+  // ---- project map ----
+  // The tree is only scanned once the panel is actually open: it walks the disk,
+  // and doing it for every conversation switch in the background would be work
+  // nobody asked for.
+  const activeCwd = active?.cwd ?? ''
+  const [projectTree, setProjectTree] = useState<ProjectTree>({
+    nodes: [],
+    truncated: false,
+    missing: []
+  })
+  // Paths currently on the map, sent along on each re-read so the main process
+  // can answer which of them were actually DELETED (vs. merely pushed out of
+  // the "most recent" ranking) — the map animates destruction only for those.
+  const shownPaths = useRef<string[]>([])
+  useEffect(() => {
+    shownPaths.current = projectTree.nodes.filter((n) => !n.isDir).map((n) => n.path)
+  }, [projectTree])
+
+  const touchCount = active ? active.messages.length : 0
+  useEffect(() => {
+    if (!agentsOpen || !activeCwd) return
+    let alive = true
+    // Re-read shortly after activity settles: a file the agent just created or
+    // deleted should show up without the user having to reopen the panel.
+    const run = (): void => {
+      void window.api.projectTree(activeCwd, shownPaths.current).then((t) => {
+        if (alive) setProjectTree(t)
+      })
+    }
+    const id = setTimeout(run, shownPaths.current.length ? 1200 : 0)
+    return () => {
+      alive = false
+      clearTimeout(id)
+    }
+  }, [agentsOpen, activeCwd, touchCount])
+
+  const projectName = useMemo(
+    () => activeCwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'projeto',
+    [activeCwd]
+  )
+  /** The map reads the SAME messages the chat renders — no second store. */
+  const activeTouches = useMemo(
+    () => (active ? fileTouches(active.messages, active.cwd) : []),
+    [active]
+  )
+
   const projects = useMemo<SidebarProject[]>(() => {
     const map = new Map<string, Conversation[]>()
     for (const c of conversations) {
@@ -2178,6 +2225,12 @@ export function App(): JSX.Element {
               onClose={() => setAgentsOpen(false)}
               onOpenFlow={() => setFlowOpen(true)}
               conversationTitle={active?.title ?? 'Conversa'}
+              projectEntries={projectTree.nodes}
+              projectTruncated={projectTree.truncated}
+              projectMissing={projectTree.missing}
+              projectSteps={active?.todoPlan?.items ?? []}
+              touches={activeTouches}
+              projectName={projectName}
               width={browserWidth}
             />
           ) : (

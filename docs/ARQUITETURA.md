@@ -299,6 +299,30 @@ A maioria dos modelos do Ollama Cloud da lista (`OLLAMA_MODELS`) é **texto-only
 
 ---
 
+## Painel de agentes: três visões do mesmo trabalho
+
+O painel do lado direito (`AgentsPanel`) alterna entre **Lista**, **Fluxo** e **Projeto**. As duas primeiras leem o store de trilhas (`agentTracks.ts`, alimentado pelos `ChatEvent` com `parentToolUseId`); a terceira **não usa store nenhum**.
+
+### Visão "Projeto" — o mapa do repositório
+
+Um grafo no estilo Obsidian com **os 100 arquivos modificados mais recentemente** (+ as pastas que levam até eles): cada pasta é uma bolinha com nome, cada arquivo uma bolinha menor. Mostrar o repo inteiro foi a primeira versão e era a imagem errada — centenas de arquivos parados havia meses, com o trabalho vivo perdido no meio. Quando o agente mexe num arquivo, uma **linha luminosa sai da raiz e percorre o caminho real da árvore** (`agent-code → src → renderer → components → AgentFlow.tsx`) até ele; o nó só acende **quando a linha chega** — se acendesse na hora da chamada, a viagem viraria enfeite. Depois o verde **esfria devagar** (meia-vida ~16s), então a sessão inteira vira um mapa de calor da região do projeto que se moveu, e não um pisca-pisca.
+
+- **De onde vêm os dados** (`projectActivity.ts`): das **mesmas `Conversation.messages` que o chat renderiza** — cada `tool-use` já carrega o resultado (`App.tsx`). Essa é a razão de o mapa mostrar tudo o que o chat mostra sem um segundo store pra manter em sincronia. `fileTouches()` resolve cada chamada num ponto da árvore e `describeCall()` gera o texto do balão por ferramenta (`Bash` → o comando, `Edit` → `arquivo +2 −1`, `Grep` → o padrão…). `toRelative()` casa o caminho absoluto do Windows (`C:\…\src\main\index.ts`) com o relativo da árvore (`src/main/index.ts`), **sem diferenciar maiúscula** — caminho do Windows não diferencia, e um mismatch de caixa acenderia nó nenhum, silenciosamente.
+- **A árvore** vem do canal `projectTree` (`main/index.ts` → `readProjectTree`): varre (teto de 8000 entradas, reusando o `MENTION_IGNORE` do autocomplete do "@"), dá `stat` em cada arquivo — em paralelo **por pasta**, uma rodada de I/O por diretório e não uma por arquivo —, ordena por `mtime` e fica com os N mais recentes. A varredura roda com o painel aberto e **de novo ~1,2s depois de cada atividade**, senão um arquivo recém-criado só apareceria reabrindo o painel.
+- **Ciclo de vida do nó** (`NodePhase` em `projectGraph.ts`, animado por `advancePhases`): `arriving` (o agente abriu um arquivo que estava **fora** do filtro dos recentes — ele entra voando do fundo, grande e translúcido, em vez de simplesmente pipocar), `building` (criado agora — fragmentos convergem e fundem na bolinha) e `dying` (apagado — a bolinha se parte e só então sai do grafo). `ensureNode()` põe no mapa, na hora, qualquer caminho que o agente toque e que não esteja na lista, criando as pastas do caminho; `removeNode()` reencaixa os filhos no avô, senão sobrariam arestas apontando para um nó que não existe mais.
+- **Apagado ≠ saiu do ranking.** Um arquivo pode cair fora dos 100 mais recentes continuando vivo no disco, e do ponto de vista da lista os dois casos são idênticos. Por isso o renderer manda em `keep` os caminhos que está exibindo e o main devolve `ProjectTree.missing` — os que realmente **sumiram do disco**. A animação de destruição só toca para esses; inferir pela ausência na lista mostraria arquivos explodindo com eles ali, parados.
+- **Etapas no topo:** o `todoPlan` da conversa aparece numa faixa acima do mapa (concluídas riscadas, a atual pulsando), então dá pra ver *o plano* e *onde ele está pegando no código* na mesma tela. Clicar na faixa **minimiza** para uma pílula com a contagem e só as bolinhas — nesse estado o texto **sai do DOM** em vez de ser escondido por CSS, senão continuaria sendo lido por leitor de tela e achado pela busca da página.
+- **Layout** (`projectGraph.ts`): os nós nascem numa **árvore radial** (cada pasta dona de um setor angular, dividido entre os filhos por peso da subárvore) e a física só **relaxa** esse arranjo. Semear aleatoriamente não funciona: com ~1200 nós vira um bolo denso, e a repulsão em grade só alcança células vizinhas — o bolo não tem como se abrir sozinho (foi exatamente o que aconteceu neste repo na primeira tentativa).
+- **Duas armadilhas de física, ambas medidas neste repo:**
+  1. A repulsão `700/d²` vira catapulta quando dois nós nascem quase no mesmo pixel. Medido: nós arremessados a **raio 5784** enquanto a massa real cabia em 400 — e o auto-enquadramento então emoldurava os foguetes e amassava o mapa num canto. Corrigido com piso na distância (`d² ≥ 64`) e teto na força; depois disso, os bounds caíram de ~8000 pra ~1000.
+  2. Com piso na distância, dois nós **exatamente** sobrepostos ficam com força zero e nunca se separam — por isso a semeadura aplica um deslocamento determinístico derivado do hash do caminho.
+- **Custo de desenho:** as arestas frias vão num **único `beginPath()`/`stroke()`**; um `stroke()` por aresta é o que derruba um grafo desse tamanho. Nós fora da viewport são pulados, e a física congela quando `alpha` decai (o grafo assenta e para de consumir CPU).
+- **Rótulos:** pasta até profundidade 2 sempre nomeada (num painel estreito a escala fica bem abaixo de 0.35 e um mapa de bolinhas anônimas não diz *onde* o agente está); arquivo só quando quente. Enquanto um balão está aberto, o rótulo do nó some — o balão já traz o caminho e só seria tapado por ele.
+- **Balões:** no máximo 3 (os mais quentes), texto limitado a 38 caracteres, com **desvio de colisão** — sem isso um balão cobre o outro e ainda tapa o nome de um terceiro nó.
+- Testes: `projectActivity.test.ts` (caminho/rótulo por ferramenta) e `projectGraph.test.ts` (montagem da árvore, rota da animação, determinismo, estabilidade da física).
+
+---
+
 ## Pasta de dados (cache) e SQLite
 
 A persistência **por usuário** vive numa **pasta de cache** que o usuário escolhe na tela de Configurações. `src/main/store.ts` gerencia o banco **global** (config/UI/uso) usando o **SQLite embutido** do Node (`node:sqlite` — nenhuma dependência nativa/npm); `src/main/projectStore.ts` gerencia um banco **por projeto** só para as conversas (ver [Conversas, projetos e persistência](#conversas-projetos-e-persistência) para o porquê e a migração).
@@ -565,6 +589,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `openInFolder` | `app:open-in-folder` | abre a pasta do projeto no explorador do SO (`shell.openPath`) | `dir` → `{ ok, message }` |
 | `mentionSearch` | `app:mention-search` | busca arquivos/pastas do projeto para o autocomplete "@" do composer | `root`, `query` → `MentionHit[]` |
 | `listSkills` | `app:list-skills` | lista as skills disponíveis do projeto (menu "@") | `root` → `SkillInfo[]` |
+| `projectTree` | `app:project-tree` | arquivos mais recentes do projeto para o **mapa** (+ pastas do caminho); `keep` = o que o mapa exibe hoje, para o retorno dizer quais foram **apagados** | `root`, `keep[]` → `ProjectTree` |
 | `fileDownload` | `app:file-download` | copia um arquivo (entregável criado pelo agente) para Downloads e o revela no Explorer | `path` → `{ ok, message, saved? }` |
 | `fileRead` / `fileReadBytes` | `app:file-read` / `app:file-read-bytes` | lê um arquivo como texto / bytes (visualizadores do renderer) | `path` → `string` / `FileBytes` |
 | `configGet` / `configSet` | `config:get` / `config:set` | lê / grava a `AppConfig` persistida (Configurações) | — → `AppConfig` / `Partial<AppConfig>` |

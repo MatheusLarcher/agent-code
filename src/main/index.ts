@@ -34,6 +34,8 @@ import type {
   FileRefAttachment,
   ImageAttachment,
   MentionHit,
+  ProjectNode,
+  ProjectTree,
   ResolvedPastedRef,
   SkillInfo,
   PermissionResponse,
@@ -178,6 +180,100 @@ async function searchProjectEntries(root: string, query: string): Promise<Mentio
     (a, b) => b.score - a.score || a.path.length - b.path.length || a.path.localeCompare(b.path)
   )
   return hits.slice(0, MAX_HITS).map(({ path, name, isDir }) => ({ path, name, isDir }))
+}
+
+// ---- project map: the whole tree, for the "Projeto" graph view ----------------
+
+/**
+ * The project map's nodes: the N most RECENTLY MODIFIED files, plus every
+ * folder needed to reach them.
+ *
+ * Showing the whole repo was the first version and it was the wrong picture —
+ * hundreds of files nobody has touched in months, with the live work lost in
+ * the middle. Sorting by mtime makes the map answer "what is moving in this
+ * project", which is what it exists for. Anything the agent touches gets added
+ * on the fly by the renderer even if it isn't in this list.
+ *
+ * The walk is still capped (MAX_SCAN) so a monorepo can't stall the main
+ * process; `truncated` says the ranking only saw part of the repo.
+ */
+async function readProjectTree(root: string, keep: string[] = [], limit = 100): Promise<ProjectTree> {
+  const MAX_SCAN = 8000
+  const files: { path: string; name: string; mtimeMs: number }[] = []
+  const queue: string[] = ['']
+  let scanned = 0
+  let truncated = false
+
+  while (queue.length && scanned < MAX_SCAN) {
+    const rel = queue.shift()!
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = await fsReaddir(join(root, rel), { withFileTypes: true })
+    } catch {
+      continue
+    }
+    const batch: Promise<void>[] = []
+    for (const e of entries) {
+      if (scanned >= MAX_SCAN) {
+        truncated = true
+        break
+      }
+      scanned++
+      const isDir = e.isDirectory()
+      // Dotfiles stay out: config noise on a map meant to show code.
+      if (e.name.startsWith('.')) continue
+      if (isDir && MENTION_IGNORE.has(e.name)) continue
+      const relPath = rel ? `${rel}/${e.name}` : e.name
+      if (isDir) {
+        queue.push(relPath)
+        continue
+      }
+      // stat per file is the price of ranking by mtime; fired in parallel per
+      // directory so it's one round of I/O per folder, not one per file.
+      batch.push(
+        fsStat(join(root, relPath))
+          .then((s) => {
+            files.push({ path: relPath, name: e.name, mtimeMs: s.mtimeMs })
+          })
+          .catch(() => {
+            /* vanished mid-scan — just leave it out */
+          })
+      )
+    }
+    await Promise.all(batch)
+  }
+
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  const top = files.slice(0, limit)
+
+  // Every ancestor folder of a kept file has to come along, otherwise the node
+  // is an orphan and the graph drops it (and the travel animation would have
+  // no route to walk).
+  const out = new Map<string, ProjectNode>()
+  for (const f of top) {
+    const parts = f.path.split('/')
+    for (let i = 0; i < parts.length - 1; i++) {
+      const p = parts.slice(0, i + 1).join('/')
+      if (!out.has(p)) out.set(p, { path: p, name: parts[i], isDir: true })
+    }
+    out.set(f.path, { path: f.path, name: f.name, isDir: false, mtimeMs: f.mtimeMs })
+  }
+
+  // Which of the caller's current nodes are actually gone from disk (as opposed
+  // to just having dropped out of the ranking).
+  const missing: string[] = []
+  await Promise.all(
+    keep.map(async (rel) => {
+      if (!rel) return
+      try {
+        await fsAccess(join(root, rel))
+      } catch {
+        missing.push(rel)
+      }
+    })
+  )
+
+  return { nodes: [...out.values()], truncated: truncated || files.length > limit, missing }
 }
 
 // ---- "/" autocomplete: list the agent's skills --------------------------------
@@ -546,6 +642,14 @@ function registerIpc(): void {
   ipcMain.handle(Channels.listSkills, async (_e, root: string): Promise<SkillInfo[]> => {
     return listAgentSkills(root)
   })
+
+  ipcMain.handle(
+    Channels.projectTree,
+    async (_e, root: string, keep: string[] = []): Promise<ProjectTree> => {
+      if (!root) return { nodes: [], truncated: false, missing: [] }
+      return readProjectTree(root, keep)
+    }
+  )
 
   // Save a copy of a file the agent created into the user's Downloads folder and
   // reveal it (so "baixar" works on the desktop too, not only on the phone).

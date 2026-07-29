@@ -30,6 +30,12 @@ const base = {
   onClose: vi.fn(),
   onOpenFlow: vi.fn(),
   conversationTitle: 'Refatorar rotas',
+  projectEntries: [],
+  projectTruncated: false,
+  projectMissing: [],
+  projectSteps: [],
+  touches: [],
+  projectName: 'projeto',
   width: 480
 }
 
@@ -124,6 +130,31 @@ describe('AgentsPanel', () => {
     fireEvent.click(screen.getByTitle('Ver como fluxo'))
     fireEvent.click(screen.getByTitle('Expandir o fluxo'))
     expect(onOpenFlow).toHaveBeenCalledTimes(1)
+  })
+
+  it('etapas do projeto: minimizar deixa só as bolinhas, e volta ao clicar', () => {
+    const steps = [
+      { id: '1', content: 'Primeira etapa', status: 'completed' as const, activeForm: 'Fazendo a primeira' },
+      { id: '2', content: 'Segunda etapa', status: 'in_progress' as const, activeForm: 'Fazendo a segunda' }
+    ]
+    render(<AgentsPanel {...base} tracks={{}} projectSteps={steps} />)
+    fireEvent.click(screen.getByTitle('Ver o mapa do projeto'))
+
+    // aberto: texto das etapas na tela (a atual usa o activeForm)
+    expect(screen.getByText('Primeira etapa')).toBeTruthy()
+    expect(screen.getByText('Fazendo a segunda')).toBeTruthy()
+    expect(screen.getByText('1/2')).toBeTruthy()
+
+    fireEvent.click(screen.getByTitle('Minimizar as etapas'))
+
+    // minimizado: o texto SAI do DOM, sobram a contagem e as bolinhas
+    expect(screen.queryByText('Primeira etapa')).toBeNull()
+    expect(screen.queryByText('Fazendo a segunda')).toBeNull()
+    expect(screen.getByText('1/2')).toBeTruthy()
+    expect(document.querySelectorAll('.pgraph-steps.mini li i').length).toBe(2)
+
+    fireEvent.click(screen.getByTitle('Mostrar as etapas'))
+    expect(screen.getByText('Primeira etapa')).toBeTruthy()
   })
 
   it('trilha concluída para de girar e a com erro fica marcada', () => {

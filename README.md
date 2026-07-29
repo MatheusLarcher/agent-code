@@ -6,6 +6,14 @@ Você conversa com o agente de um lado e ele pesquisa, abre sites e interage com
 
 ![Agent Code — chat com o agente à esquerda e o navegador embutido à direita](docs/screenshot.png)
 
+### Veja o agente trabalhando no seu projeto
+
+O painel **Agentes** tem uma aba **Projeto**: um mapa do seu repositório onde cada pasta é uma bolinha e cada arquivo, uma menor. Quando o agente mexe em algo, um risco de luz sai da raiz do projeto e **percorre o caminho até o arquivo**; ele acende em verde quando a luz chega, com um balãozinho contando o que está sendo feito ali. O verde vai esfriando devagar, então bate o olho e você vê **em que parte do projeto o trabalho está acontecendo**. As etapas da tarefa ficam na faixa de cima.
+
+![Mapa do projeto — o agente acendendo os arquivos em que está mexendo](docs/mapa-projeto.png)
+
+Arquivo novo aparece **se montando** peça por peça, arquivo apagado **se desfaz**, e um arquivo antigo que o agente resolveu abrir **chega voando lá do fundo**. O mapa mostra os 100 arquivos mexidos mais recentemente, para não virar uma parede de bolinhas.
+
 ## O que dá pra fazer
 
 - 💬 **Conversar com o agente** (Claude) com streaming, markdown, cartões de ferramenta e medidor de tokens/custo.
@@ -22,6 +30,8 @@ Você conversa com o agente de um lado e ele pesquisa, abre sites e interage com
 - 🖱️ **Selecionar um elemento da página** e enviá-lo pro chat com um clique.
 - 🗄️ **Pasta de dados escolhida por você** — um SQLite (configs, API key, token Android) + memórias `.md` na pasta que você selecionar (por usuário, não por projeto).
 - 🧩 **Kit de skills portátil** — skills versionadas no repo, ativadas automaticamente pelo `start.bat` ao clonar.
+- 🗺️ **Mapa do projeto ao vivo** — veja os arquivos acendendo conforme o agente trabalha, com as etapas da tarefa no topo (aba **Projeto**, no painel Agentes).
+- 👥 **Painel de agentes** — quem está trabalhando na conversa, o que cada subagente está fazendo agora e quem ficou travado esperando sua resposta.
 - 📁 **Histórico por projeto** · ⚡ **Várias conversas em paralelo** · 📊 **Uso e limite da conta** · 🔒 **Permissões por ferramenta** ("permitir tudo" liga/desliga na hora).
 
 ## Como rodar

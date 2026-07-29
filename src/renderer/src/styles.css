@@ -4744,3 +4744,155 @@ button svg {
     animation-iteration-count: 1;
   }
 }
+
+/* ---- project map (visão "Projeto" do painel de agentes) ---- */
+.pgraph {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 0%, #232221 0%, var(--bg) 70%);
+  animation: flow-in 0.22s ease;
+}
+.pgraph-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+.pgraph-canvas:active {
+  cursor: grabbing;
+}
+.pgraph-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.pgraph-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(38, 38, 36, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+.pgraph-legend .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.pgraph-legend .dot.live {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+.pgraph-legend .dot.warm { background: #5d7a55; }
+.pgraph-legend .dot.file { background: #4a4744; }
+.pgraph-legend .dot.dir { background: #8a5a44; }
+.pgraph-warn { color: var(--warn); }
+.pgraph-count { color: var(--muted); opacity: 0.8; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pgraph { animation: none; }
+}
+
+/* etapas do agente, no topo do mapa */
+.pgraph-steps {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  background: rgba(38, 38, 36, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease;
+  animation: flow-in 0.24s ease;
+}
+.pgraph-steps:hover,
+.pgraph-steps:focus-visible {
+  background: rgba(48, 46, 44, 0.9);
+  border-color: #4a4744;
+}
+/* Minimizado: encolhe até o conteúdo e sobram só as bolinhas. */
+.pgraph-steps.mini {
+  right: auto;
+  gap: 9px;
+  padding: 6px 10px;
+}
+.pgraph-steps.mini ol { gap: 6px; }
+.pgraph-steps.mini li { gap: 0; }
+.pgraph-steps-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  padding-top: 1px;
+}
+.pgraph-steps ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+.pgraph-steps li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--muted);
+  max-width: 100%;
+}
+.pgraph-steps li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pgraph-steps li i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line);
+  flex-shrink: 0;
+}
+.pgraph-steps li.completed { color: #7d8a77; }
+.pgraph-steps li.completed i { background: var(--ok); }
+.pgraph-steps li.completed span { text-decoration: line-through; opacity: 0.75; }
+.pgraph-steps li.in_progress { color: var(--text); font-weight: 600; }
+.pgraph-steps li.in_progress i {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+  animation: pgraph-step-pulse 1.5s ease-in-out infinite;
+}
+@keyframes pgraph-step-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pgraph-steps { animation: none; }
+  .pgraph-steps li.in_progress i { animation: none; }
+}

@@ -150,6 +150,37 @@ export type ResolvedPastedRef =
   | { ok: true; name: string; path: string; mediaType: string; size: number; isImage: boolean }
   | { ok: false; error: string }
 
+/**
+ * One node of the project map (the "Projeto" view of the agents panel). Same
+ * shape as a MentionHit, but the list is a WHOLE tree instead of search hits —
+ * breadth-first and capped, so a huge repo degrades into "the top of the tree"
+ * rather than freezing the renderer.
+ */
+export interface ProjectNode {
+  /** Path relative to the project root, with forward slashes. */
+  path: string
+  name: string
+  isDir: boolean
+  /** Last-modified time (files only) — what the map ranks by. */
+  mtimeMs?: number
+}
+
+/** Result of a project-map scan: the nodes plus whether the cap cut it short. */
+export interface ProjectTree {
+  nodes: ProjectNode[]
+  /** True when the project has more files than the map is showing. */
+  truncated: boolean
+  /**
+   * Of the paths the caller said it is currently showing (`keep`), the ones that
+   * NO LONGER EXIST on disk. This is what lets the map play a destruction
+   * animation for a deleted file without ever playing it for a file that merely
+   * fell out of the "most recent" ranking — those two look identical from the
+   * node list alone, and confusing them would show files being destroyed that
+   * are sitting right there.
+   */
+  missing: string[]
+}
+
 /** One hit in the "@" autocomplete: a file or folder under the project. */
 export interface MentionHit {
   /** Path relative to the project root, with forward slashes (e.g. "src/main/index.ts"). */
@@ -805,6 +836,8 @@ export const Channels = {
   mentionSearch: 'app:mention-search',
   /** "/" autocomplete: list the skills available to the agent (project + user). */
   listSkills: 'app:list-skills',
+  /** Project map (grafo): every folder/file under the project, capped. */
+  projectTree: 'app:project-tree',
   /** Save a copy of an agent-created file to the Downloads folder and reveal it. */
   fileDownload: 'app:file-download',
   /** Read the content of a local file. */
