@@ -47,6 +47,17 @@ interface Props {
 }
 
 const COOL = 0.9993 // heat decay per frame → ~16s half-life
+/**
+ * The balloon's own life, in ms — deliberately much shorter than `heat`.
+ * The green is a heat map of WHERE the work happened and should linger; the
+ * text is WHAT is being done right now, and letting it sit for 16s meant three
+ * stale balloons parked over the map while the agent had already moved on.
+ * So it snaps in, is readable for a beat, and fades out on its own.
+ */
+const SAY_IN = 160
+const SAY_HOLD = 2100
+const SAY_OUT = 700
+const SAY_LIFE = SAY_IN + SAY_HOLD + SAY_OUT
 const TRAVEL_MS = 1800
 const SAY_MAX = 38
 const OK = '#7fae6f'
@@ -62,18 +73,44 @@ interface Travel {
   isError: boolean
   added?: number
   removed?: number
+  /** Second leg of a `Read`: the paper coming back to the agent. */
+  back?: boolean
 }
+
+/** Tools whose call goes out AND brings something back (see RETURN_MS). */
+const FETCHING = new Set(['Read'])
+/** How long the paper takes to come back — quicker than going, it's a reply. */
+const RETURN_MS = 1200
 
 const easeInOut = (t: number): number =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 const easeOut = (t: number): number => 1 - Math.pow(1 - t, 3)
 
+/**
+ * Parse `#rrggbb` OR `rgb(r,g,b)`.
+ *
+ * Accepting its own output matters: `mix()` calls are nested (blink over heat
+ * over base colour), and a hex-only parser turned the inner `rgb(...)` into
+ * `rgb(NaN,NaN,NaN)`. Canvas silently IGNORES an invalid fillStyle and keeps
+ * the previous one, so nodes were painted with the leftover colour of the last
+ * label drawn — that is how every folder quietly lost its orange, with no error
+ * anywhere.
+ */
+function parseColor(c: string): [number, number, number] {
+  if (c.startsWith('#')) {
+    return [
+      parseInt(c.slice(1, 3), 16),
+      parseInt(c.slice(3, 5), 16),
+      parseInt(c.slice(5, 7), 16)
+    ]
+  }
+  const m = c.match(/-?\d+(\.\d+)?/g)
+  return m ? [Number(m[0]), Number(m[1]), Number(m[2])] : [0, 0, 0]
+}
+
 function mix(c1: string, c2: string, t: number): string {
-  const p = (h: string): number[] => [
-    parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)
-  ]
-  const A = p(c1)
-  const B = p(c2)
+  const A = parseColor(c1)
+  const B = parseColor(c2)
   const k = Math.max(0, Math.min(1, t))
   return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * k)).join(',')})`
 }
@@ -164,6 +201,7 @@ export function ProjectGraph({
           node.isError = t.isError
           node.added = t.added
           node.removed = t.removed
+          node.sayAt = Date.now() - fromEnd * 400
         }
         return
       }
@@ -177,7 +215,11 @@ export function ProjectGraph({
         removed: t.removed
       })
     })
-    alpha.current = Math.max(alpha.current, 0.25)
+    // De propósito NÃO acorda a física aqui. Um empurrão de alpha por chamada
+    // fazia o mapa inteiro se remexer enquanto o agente trabalha — os galhos
+    // "abrindo" a cada ação. O layout agora fica parado; quem se mexe é só o
+    // nó que está piscando. A física só volta quando a ÁRVORE muda (arquivo
+    // criado/apagado), onde há de fato geometria nova para acomodar.
   }, [touches])
 
   useEffect(() => {
@@ -224,9 +266,21 @@ export function ProjectGraph({
     const overlaps = (a: Box, b: Box): boolean =>
       a.x < b.x + b.w + 6 && a.x + a.w + 6 > b.x && a.y < b.y + b.h + 6 && a.y + a.h + 6 > b.y
 
-    const drawBalloon = (n: GraphNode, sx: number, sy: number, placed: Box[]): void => {
-      const a = Math.min(1, (n.heat - 0.3) / 0.4)
+    const sayAlpha = (n: GraphNode, now: number): number => {
+      if (!n.say || !n.sayAt) return 0
+      const age = now - n.sayAt
+      if (age >= SAY_LIFE) return 0
+      if (age < SAY_IN) return age / SAY_IN
+      if (age < SAY_IN + SAY_HOLD) return 1
+      return 1 - (age - SAY_IN - SAY_HOLD) / SAY_OUT
+    }
+
+    const drawBalloon = (n: GraphNode, sx: number, sy: number, placed: Box[], now: number): void => {
+      const a = sayAlpha(n, now)
       if (a <= 0 || !n.say) return
+      // Sobe um tiquinho enquanto apaga — dá a leitura de "passou" em vez de
+      // simplesmente desligar.
+      sy -= (1 - a) * 10
       const tone = n.isError ? ERR : OK
       const tool = n.tool ?? ''
       const txt = shortSay(n.say)
@@ -312,15 +366,104 @@ export function ProjectGraph({
       ctx.globalAlpha = 1
     }
 
-    const drawTravel = (tr: Travel): void => {
-      const { scale, x: ox, y: oy } = view.current
-      const p = tr.route
-      if (p.length < 2) return
+    /** Segment lengths of a route + the total, used by both legs of a travel. */
+    const metrics = (p: GraphNode[]): { lens: number[]; total: number } => {
       const lens: number[] = []
       for (let i = 0; i < p.length - 1; i++) {
         lens.push(Math.hypot(p[i + 1].x - p[i].x, p[i + 1].y - p[i].y))
       }
-      const total = lens.reduce((a, b) => a + b, 0) || 1
+      return { lens, total: lens.reduce((a, b) => a + b, 0) || 1 }
+    }
+
+    /** Point at `dist` along the route (graph coords). */
+    const pointAt = (p: GraphNode[], lens: number[], dist: number): { x: number; y: number } => {
+      let acc = 0
+      for (let i = 0; i < lens.length; i++) {
+        if (dist <= acc + lens[i]) {
+          const k = lens[i] === 0 ? 0 : (dist - acc) / lens[i]
+          return { x: p[i].x + (p[i + 1].x - p[i].x) * k, y: p[i].y + (p[i + 1].y - p[i].y) * k }
+        }
+        acc += lens[i]
+      }
+      const last = p[p.length - 1]
+      return { x: last.x, y: last.y }
+    }
+
+    /**
+     * The sheet of paper a `Read` carries back to the agent. Drawn at a fixed
+     * screen size (not scaled with the graph) so it stays recognisable as an
+     * object even when the map is zoomed way out.
+     */
+    const drawPaper = (sx: number, sy: number, a: number): void => {
+      const w2 = 9
+      const h2 = 12
+      const fold = 4
+      ctx.globalAlpha = a
+      ctx.shadowColor = 'rgba(127,174,111,.9)'
+      ctx.shadowBlur = 8
+      ctx.beginPath()
+      ctx.moveTo(sx - w2 / 2, sy - h2 / 2)
+      ctx.lineTo(sx + w2 / 2 - fold, sy - h2 / 2)
+      ctx.lineTo(sx + w2 / 2, sy - h2 / 2 + fold)
+      ctx.lineTo(sx + w2 / 2, sy + h2 / 2)
+      ctx.lineTo(sx - w2 / 2, sy + h2 / 2)
+      ctx.closePath()
+      ctx.fillStyle = '#e8f3e0'
+      ctx.fill()
+      ctx.shadowBlur = 0
+      // dobra da quina
+      ctx.beginPath()
+      ctx.moveTo(sx + w2 / 2 - fold, sy - h2 / 2)
+      ctx.lineTo(sx + w2 / 2 - fold, sy - h2 / 2 + fold)
+      ctx.lineTo(sx + w2 / 2, sy - h2 / 2 + fold)
+      ctx.closePath()
+      ctx.fillStyle = '#a9c79a'
+      ctx.fill()
+      // linhas de texto
+      ctx.strokeStyle = 'rgba(90,110,80,.75)'
+      ctx.lineWidth = 1
+      for (let i = 0; i < 3; i++) {
+        const ly = sy - 2.5 + i * 3
+        ctx.beginPath()
+        ctx.moveTo(sx - w2 / 2 + 2, ly)
+        ctx.lineTo(sx + w2 / 2 - 2, ly)
+        ctx.stroke()
+      }
+      ctx.globalAlpha = 1
+    }
+
+    /** The return leg of a Read: the paper gliding back to the agent (root). */
+    const drawReturn = (tr: Travel): void => {
+      const { scale, x: ox, y: oy } = view.current
+      const p = tr.route
+      if (p.length < 2) return
+      const { lens, total } = metrics(p)
+      const e = easeInOut(Math.min(1, tr.t))
+      // Anda do arquivo DE VOLTA até a raiz.
+      const pt = pointAt(p, lens, total * (1 - e))
+      const sx = pt.x * scale + ox
+      const sy = pt.y * scale + oy
+
+      // rastro curto atrás do papel, pra leitura de movimento
+      const tailPt = pointAt(p, lens, Math.min(total, total * (1 - e) + 26))
+      ctx.strokeStyle = 'rgba(127,174,111,.35)'
+      ctx.lineWidth = 1.4
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(tailPt.x * scale + ox, tailPt.y * scale + oy)
+      ctx.lineTo(sx, sy)
+      ctx.stroke()
+
+      // some nos últimos 15% (chegou no agente, entregou)
+      drawPaper(sx, sy, e > 0.85 ? (1 - e) / 0.15 : Math.min(1, tr.t * 6))
+    }
+
+    const drawTravel = (tr: Travel): void => {
+      if (tr.back) return drawReturn(tr)
+      const { scale, x: ox, y: oy } = view.current
+      const p = tr.route
+      if (p.length < 2) return
+      const { lens, total } = metrics(p)
       const prog = easeInOut(Math.min(1, tr.t)) * total
       const tone = tr.isError ? ERR : OK
 
@@ -379,15 +522,28 @@ export function ProjectGraph({
 
       for (let i = travels.current.length - 1; i >= 0; i--) {
         const tr = travels.current[i]
-        tr.t += 16 / TRAVEL_MS
-        if (tr.t >= 1) {
-          const n = tr.route[tr.route.length - 1]
-          n.heat = 1
-          n.tool = tr.tool
-          n.say = tr.say
-          n.isError = tr.isError
-          n.added = tr.added
-          n.removed = tr.removed
+        tr.t += 16 / (tr.back ? RETURN_MS : TRAVEL_MS)
+        if (tr.t < 1) continue
+        if (tr.back) {
+          // O papel chegou no agente: fim da viagem.
+          travels.current.splice(i, 1)
+          continue
+        }
+        const n = tr.route[tr.route.length - 1]
+        n.heat = 1
+        n.tool = tr.tool
+        n.say = tr.say
+        n.isError = tr.isError
+        n.added = tr.added
+        n.removed = tr.removed
+        n.sayAt = Date.now()
+        if (FETCHING.has(tr.tool) && !tr.isError) {
+          // Ler não é só ir até o arquivo: o agente TRAZ o conteúdo de volta.
+          // A segunda perna carrega uma folha de papel do arquivo até a raiz,
+          // que é o que diferencia um Read de um Edit no mapa.
+          tr.back = true
+          tr.t = 0
+        } else {
           travels.current.splice(i, 1)
         }
       }
@@ -404,29 +560,20 @@ export function ProjectGraph({
       const { scale, x: ox, y: oy } = view.current
       ctx.clearRect(0, 0, w, h)
 
-      // Cold edges in ONE path: a stroke() per edge is the thing that makes a
-      // graph this size crawl.
+      // Every edge in ONE path, all the same cold grey. Edges used to light up
+      // green around a hot node, which made the work look like it was BLEEDING
+      // out into the branches; the only green line on the map now is the travel
+      // itself, so the eye follows one thing instead of a spreading stain.
+      // (One stroke() per edge is also what makes a graph this size crawl.)
       ctx.strokeStyle = 'rgba(58,56,54,.7)'
       ctx.lineWidth = 0.8
       ctx.beginPath()
       for (const l of graph.links) {
-        if (Math.max(l.a.heat, l.b.heat) > 0.05) continue
         if (l.b.phase === 'building' || l.b.phase === 'arriving') continue
         ctx.moveTo(l.a.x * scale + ox, l.a.y * scale + oy)
         ctx.lineTo(l.b.x * scale + ox, l.b.y * scale + oy)
       }
       ctx.stroke()
-
-      for (const l of graph.links) {
-        const heat = Math.max(l.a.heat, l.b.heat)
-        if (heat <= 0.05) continue
-        ctx.strokeStyle = `rgba(127,174,111,${0.15 + heat * 0.5})`
-        ctx.lineWidth = 1 + heat * 1.6
-        ctx.beginPath()
-        ctx.moveTo(l.a.x * scale + ox, l.a.y * scale + oy)
-        ctx.lineTo(l.b.x * scale + ox, l.b.y * scale + oy)
-        ctx.stroke()
-      }
 
       const pulse = Date.now() / 1000
       for (const n of graph.nodes) {
@@ -470,21 +617,27 @@ export function ProjectGraph({
         }
         const r = baseR * scaleMul
 
-        if (n.heat > 0.04) {
-          const p = 1 + Math.sin(pulse * 3.2) * 0.22
+        // Piscada: a batida vai de 0 a 1 e volta, e o nó CLAREIA no pico (verde
+        // claro, não só um halo maior). Antes o brilho era um halo crescendo, o
+        // que lia como a mancha se espalhando em vez de um pulso.
+        const beat = n.heat > 0.04 ? (1 + Math.sin(pulse * 4.4)) / 2 : 0
+        if (beat > 0) {
+          const glow = 0.1 + 0.32 * beat * n.heat
           ctx.beginPath()
-          ctx.arc(sx, sy, r + 9 * n.heat * p, 0, 7)
+          ctx.arc(sx, sy, r + 5, 0, 7)
           ctx.fillStyle = n.isError
-            ? `rgba(217,112,112,${0.13 * n.heat})`
-            : `rgba(127,174,111,${0.13 * n.heat})`
+            ? `rgba(217,112,112,${glow})`
+            : `rgba(127,174,111,${glow})`
           ctx.fill()
         }
         ctx.globalAlpha = fade
         ctx.beginPath()
         ctx.arc(sx, sy, r, 0, 7)
+        const lit = n.isError ? '#f0a8a8' : '#c8ecb4'
+        const hot = mix(tone, lit, beat * n.heat)
         ctx.fillStyle = n.isDir
-          ? mix('#8a5a44', tone, n.heat)
-          : mix('#4a4744', tone, Math.min(1, n.heat * 1.5))
+          ? mix('#8a5a44', hot, n.heat)
+          : mix('#4a4744', hot, Math.min(1, n.heat * 1.5))
         ctx.fill()
         ctx.globalAlpha = 1
 
@@ -506,11 +659,12 @@ export function ProjectGraph({
       travels.current.forEach(drawTravel)
 
       const placed: Box[] = []
+      const nowMs = Date.now()
       graph.nodes
-        .filter((n) => n.heat > 0.3 && n.say && n.phase !== 'dying')
-        .sort((a, b) => b.heat - a.heat)
+        .filter((n) => n.phase !== 'dying' && sayAlpha(n, nowMs) > 0)
+        .sort((a, b) => (b.sayAt ?? 0) - (a.sayAt ?? 0))
         .slice(0, 3)
-        .forEach((n) => drawBalloon(n, n.x * scale + ox, n.y * scale + oy, placed))
+        .forEach((n) => drawBalloon(n, n.x * scale + ox, n.y * scale + oy, placed, nowMs))
     }
     raf = requestAnimationFrame(frame)
 

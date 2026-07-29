@@ -39,6 +39,9 @@ export interface GraphNode {
   /** Edit line counts, drawn colored next to the text (like the chat card). */
   added?: number
   removed?: number
+  /** Epoch ms the balloon text was set — it lives on its OWN short timer,
+   *  independent of `heat` (see SAY_* in ProjectGraph). */
+  sayAt?: number
   phase: NodePhase
   /** 0→1 progress inside the current phase. */
   phaseT: number
