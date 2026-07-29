@@ -80,6 +80,10 @@ export interface AtomicWriteOptions {
   /** Quarantine the current file before replacing it (caller already knows it's
    *  unreadable — avoids re-probing it on every save). */
   quarantineFirst?: boolean
+  /** Where the throwaway copy is built. Defaults to the OS temp folder; tests
+   *  pass their own so they can assert on it without seeing other processes'
+   *  files (a real app running in parallel writes there too). */
+  tmpDir?: string
 }
 
 /**
@@ -89,9 +93,9 @@ export interface AtomicWriteOptions {
 export function writeDbAtomically(
   dest: string,
   fn: (db: DatabaseSync) => void,
-  { seed = false, quarantineFirst = false }: AtomicWriteOptions = {}
+  { seed = false, quarantineFirst = false, tmpDir = tmpdir() }: AtomicWriteOptions = {}
 ): void {
-  let tmp = join(tmpdir(), `agent-code-${randomUUID()}.db`)
+  let tmp = join(tmpDir, `agent-code-${randomUUID()}.db`)
   let damaged = quarantineFirst
   try {
     if (seed && existsSync(dest)) {
@@ -111,7 +115,7 @@ export function writeDbAtomically(
         try {
           rmSync(tmp, { force: true })
         } catch {
-          tmp = join(tmpdir(), `agent-code-${randomUUID()}.db`)
+          tmp = join(tmpDir, `agent-code-${randomUUID()}.db`)
         }
       }
     }

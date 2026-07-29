@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync, existsSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { isReadableDb, quarantineDb, writeDbAtomically } from './atomicDb'
@@ -74,10 +74,15 @@ describe('writeDbAtomically', () => {
   })
 
   it('não deixa arquivo temporário para trás', () => {
-    const before = readdirSync(tmpdir()).filter((f) => f.startsWith('agent-code-') && f.endsWith('.db')).length
-    put('a', '1')
-    const after = readdirSync(tmpdir()).filter((f) => f.startsWith('agent-code-') && f.endsWith('.db')).length
-    expect(after).toBe(before)
+    // tmpDir próprio: o %TEMP% do sistema também recebe os temporários de
+    // qualquer instância do app rodando em paralelo, e a contagem mentiria.
+    const scratch = join(dir, 'scratch')
+    mkdirSync(scratch, { recursive: true })
+    writeDbAtomically(db, (d) => void d.prepare('INSERT INTO kv(key, value) VALUES(?, ?)').run('a', '1'), {
+      tmpDir: scratch
+    })
+    expect(get('a')).toBe('1')
+    expect(readdirSync(scratch)).toEqual([])
   })
 
   it('quarantineDb move o arquivo em vez de apagar', () => {
