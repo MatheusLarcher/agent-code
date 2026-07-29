@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_CONFIG, OPENAI_VOICES, type AppConfig, type CacheInfo } from '@shared/ipc'
+import {
+  DEFAULT_CONFIG,
+  LOCAL_SPEECH_MODELS,
+  OPENAI_VOICES,
+  type AppConfig,
+  type CacheInfo
+} from '@shared/ipc'
 import { useUI } from './UiProvider'
 
 interface Props {
@@ -69,7 +75,13 @@ export function SettingsModal({
       notify('aviso', 'Informe a API key do Ollama para habilitar a integração.')
     }
     // Save only the keys we edit here so we never clobber other settings (e.g. "Permitir tudo").
-    await window.api.setConfig({ stitch, openai, ollama })
+    await window.api.setConfig({
+      stitch,
+      openai,
+      ollama,
+      transcribeEngine: cfg.transcribeEngine,
+      localSpeech: cfg.localSpeech
+    })
     notify('sucesso', 'Configurações salvas. Reconecte a conversa para aplicar.')
     onClose()
   }
@@ -265,6 +277,52 @@ export function SettingsModal({
                 <option value="1.5">Bem rápida</option>
               </select>
             </label>
+          </div>
+
+          {/* Onde a fala vira texto. O modo local não usa a chave nem manda áudio
+              para lugar nenhum — em troca, baixa o reconhecimento na 1ª vez. */}
+          <div className="settings-field">
+            <span className="settings-field-label">Transcrição do microfone</span>
+            <div className="settings-engine-row">
+              <button
+                type="button"
+                className={`settings-engine${cfg.transcribeEngine === 'cloud' ? ' on' : ''}`}
+                disabled={!loaded}
+                onClick={() => setCfg((c) => ({ ...c, transcribeEngine: 'cloud' }))}
+              >
+                <strong>Na nuvem</strong>
+                <span>usa sua chave da OpenAI, sem instalar nada</span>
+              </button>
+              <button
+                type="button"
+                className={`settings-engine${cfg.transcribeEngine === 'local' ? ' on' : ''}`}
+                disabled={!loaded}
+                onClick={() => setCfg((c) => ({ ...c, transcribeEngine: 'local' }))}
+              >
+                <strong>Neste computador</strong>
+                <span>funciona offline e o áudio não sai daqui</span>
+              </button>
+            </div>
+            {cfg.transcribeEngine === 'local' && (
+              <>
+                <select
+                  className="settings-input"
+                  value={cfg.localSpeech.model}
+                  disabled={!loaded}
+                  onChange={(e) => setCfg((c) => ({ ...c, localSpeech: { model: e.target.value } }))}
+                >
+                  {LOCAL_SPEECH_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {`${m.label} — ${m.note} (~${m.sizeMb} MB)`}
+                    </option>
+                  ))}
+                </select>
+                <span className="settings-hint">
+                  Na primeira vez que você falar, o app baixa o reconhecimento de voz e mostra o
+                  progresso. Depois disso ele fica salvo e funciona sem internet.
+                </span>
+              </>
+            )}
           </div>
         </section>
 

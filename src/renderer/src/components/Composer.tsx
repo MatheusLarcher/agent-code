@@ -7,7 +7,15 @@ import {
   type KeyboardEvent,
   type RefObject
 } from 'react'
-import type { FileAttachment, FileRefAttachment, ImageAttachment, MentionHit, PickedElement, SkillInfo } from '@shared/ipc'
+import type {
+  FileAttachment,
+  FileRefAttachment,
+  ImageAttachment,
+  MentionHit,
+  PickedElement,
+  SkillInfo,
+  SpeechSetupProgress
+} from '@shared/ipc'
 import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconShieldCheck, IconSpinner, IconStop } from './Icons'
 import { fileMeta, fmtSize } from '../files'
 import { useUI } from '../ui/UiProvider'
@@ -314,6 +322,10 @@ export function Composer(props: Props): JSX.Element {
   // of the first word (soft onsets below the threshold) is preserved instead of
   // the old behavior of starting the recorder only at the trigger and eating it.
   const [recording, setRecording] = useState(false)
+  // Preparação do reconhecimento de voz local (baixar/carregar o modelo). Fica
+  // visível até terminar: sem isso o microfone parece travado na primeira vez,
+  // que é justamente quando o download de centenas de MB acontece.
+  const [speechSetup, setSpeechSetup] = useState<SpeechSetupProgress | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   // Sample rate of the capture AudioContext — needed to build the WAV header.
   const sampleRateRef = useRef(48000)
@@ -584,6 +596,26 @@ export function Composer(props: Props): JSX.Element {
 
   // Stop recording and free the mic if the composer unmounts mid-dictation.
   useEffect(() => () => stopDictation(), [])
+
+  // Acompanha a preparação do reconhecimento de voz no computador. A faixa fica
+  // na tela enquanto baixa e sai sozinha ao terminar; erro fica um pouco mais
+  // para dar tempo de ler.
+  useEffect(() => {
+    // `window.api` não existe em teste de componente isolado nem numa build
+    // antiga do preload — a faixa é opcional, o ditado não pode quebrar por ela.
+    if (typeof window.api?.onSpeechSetupProgress !== 'function') return
+    let clear: ReturnType<typeof setTimeout> | undefined
+    const off = window.api.onSpeechSetupProgress((p) => {
+      clearTimeout(clear)
+      setSpeechSetup(p)
+      if (p.stage === 'done') clear = setTimeout(() => setSpeechSetup(null), 1600)
+      if (p.stage === 'error') clear = setTimeout(() => setSpeechSetup(null), 6000)
+    })
+    return () => {
+      clearTimeout(clear)
+      off()
+    }
+  }, [])
 
   const toggleMic = (): void => {
     if (recording) stopDictation()
@@ -1163,6 +1195,32 @@ export function Composer(props: Props): JSX.Element {
           e.target.value = ''
         }}
       />
+      {speechSetup && (
+        <div className={`speech-setup ${speechSetup.stage}`} role="status" aria-live="polite">
+          <span className="speech-setup-icon" aria-hidden="true">
+            {speechSetup.stage === 'done' ? '✓' : speechSetup.stage === 'error' ? '!' : <IconSpinner className="spinner" size={14} />}
+          </span>
+          <div className="speech-setup-body">
+            <span className="speech-setup-msg">
+              {speechSetup.message}
+              {speechSetup.stage === 'downloading' && speechSetup.totalMb
+                ? ` (~${speechSetup.totalMb} MB)`
+                : ''}
+            </span>
+            {speechSetup.stage !== 'done' && speechSetup.stage !== 'error' && (
+              <span className="speech-setup-bar">
+                <i
+                  className={speechSetup.percent == null ? 'indeterminate' : ''}
+                  style={speechSetup.percent == null ? undefined : { width: `${speechSetup.percent}%` }}
+                />
+              </span>
+            )}
+          </div>
+          {speechSetup.stage === 'downloading' && speechSetup.percent != null && (
+            <span className="speech-setup-pct">{speechSetup.percent}%</span>
+          )}
+        </div>
+      )}
       {recording && (
         <div className="rec-meter" role="status" aria-live="polite">
           <span className="rec-dot" />

@@ -14,9 +14,10 @@ import { AgentSession } from './agentSession'
 import { RemoteServer } from './remote/remoteServer'
 import { RelayClient } from './remote/relayClient'
 import { buildRemoteApk } from './remote/buildApk'
-import { Channels, REMOTE_RELAY_WS } from '../shared/ipc'
+import { Channels, DEFAULT_LOCAL_SPEECH_MODEL, REMOTE_RELAY_WS, type SpeechSetupProgress } from '../shared/ipc'
 import { loadConfig, updateConfig } from './config'
 import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAudioSegment } from './openai'
+import { stopLocalSpeech, transcribeLocal } from './speech'
 import { isAuthenticated } from './auth'
 import { runClaudeLogin } from './login'
 import { appendFileSync } from 'node:fs'
@@ -394,8 +395,28 @@ function registerIpc(): void {
   // OpenAI voice (chat): speech-to-text and text-to-speech. The key stays in main
   // (read from config); the renderer only ships audio/text. Errors come back as
   // { ok: false } so the UI can show a toast / prompt for the key.
-  ipcMain.handle(Channels.openaiTranscribe, async (_e, audioBase64: string, mimeType: string) => {
-    const apiKey = loadConfig().openai.apiKey.trim()
+  ipcMain.handle(Channels.openaiTranscribe, async (e, audioBase64: string, mimeType: string) => {
+    const cfg = loadConfig()
+
+    // On-device engine: nothing is uploaded, but the model may still need to be
+    // downloaded. Progress is streamed so the mic can keep its loading state and
+    // say what's happening instead of just hanging.
+    if (cfg.transcribeEngine === 'local') {
+      const model = cfg.localSpeech.model || DEFAULT_LOCAL_SPEECH_MODEL
+      const report = (p: SpeechSetupProgress): void => {
+        if (!e.sender.isDestroyed()) e.sender.send(Channels.speechSetupProgress, p)
+      }
+      try {
+        const text = await transcribeLocal(Buffer.from(audioBase64, 'base64'), model, report)
+        return { ok: true, text }
+      } catch (err) {
+        const message = String(err instanceof Error ? err.message : err)
+        report({ stage: 'error', message: 'Não consegui preparar o reconhecimento de voz.' })
+        return { ok: false, error: message }
+      }
+    }
+
+    const apiKey = cfg.openai.apiKey.trim()
     if (!apiKey) return { ok: false, error: 'no-key' }
     // Segment is written to a scratch folder only for the duration of the STT
     // call — the API needs a file, but nothing here should outlive this request.
@@ -775,6 +796,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   windowsControl.stop()
+  // O transcritor local é um processo Python com o modelo na GPU: fechar o app
+  // sem matá-lo deixaria VRAM presa até o usuário perceber no gerenciador.
+  stopLocalSpeech()
   stopMemoryCurator?.()
   stopMemoryCurator = null
 })

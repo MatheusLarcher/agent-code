@@ -2,6 +2,7 @@ import type {
   AgentEventMsg,
   AgentInterruptResult,
   AndroidProgressMsg,
+  SpeechSetupProgress,
   AppConfig,
   BrowserFrame,
   BrowserInput,
@@ -144,6 +145,9 @@ export interface AgentCodeApi {
   onBrowserPicked(cb: (el: PickedElement) => void): () => void
   /** Boot-progress lines while a conversation's Android device/emulator starts. */
   onAndroidProgress(cb: (m: AndroidProgressMsg) => void): () => void
+  /** Progress while the on-device speech model is downloaded/prepared (local
+   *  dictation engine). Ends with stage 'done' or 'error'. */
+  onSpeechSetupProgress(cb: (p: SpeechSetupProgress) => void): () => void
 
   // ---- remote control (smartfone-remote) ----
   /** Start the LAN bridge so a phone can drive the sessions. */

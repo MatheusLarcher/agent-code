@@ -5,6 +5,7 @@ import type {
   AgentEventMsg,
   AgentInterruptResult,
   AndroidProgressMsg,
+  SpeechSetupProgress,
   AppConfig,
   BrowserFrame,
   BrowserInput,
@@ -145,6 +146,8 @@ const api: AgentCodeApi = {
     on(Channels.browserPicked, cb),
   onAndroidProgress: (cb: (m: AndroidProgressMsg) => void): (() => void) =>
     on(Channels.androidProgress, cb),
+  onSpeechSetupProgress: (cb: (p: SpeechSetupProgress) => void): (() => void) =>
+    on(Channels.speechSetupProgress, cb),
 
   // remote control (smartfone-remote)
   remoteStart: (): Promise<RemoteInfo> => ipcRenderer.invoke(Channels.remoteStart),
