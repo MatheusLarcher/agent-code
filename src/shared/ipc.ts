@@ -6,8 +6,29 @@ export type ChatEvent =
   | { kind: 'system'; sessionId: string; model: string; cwd: string; tools: string[] }
   | { kind: 'assistant-text'; id: string; text: string; final: boolean; aborted?: true }
   | { kind: 'thinking'; id: string; text: string }
-  | { kind: 'tool-use'; id: string; name: string; input: unknown; parentToolUseId: string | null }
-  | { kind: 'tool-result'; id: string; toolUseId: string; isError: boolean; text: string }
+  /** `parentToolUseId` identifies the TRACK this call belongs to: `null` is the
+   *  main agent, anything else is the `Task` tool-use that spawned the subagent
+   *  running it. The chat feed only renders the main track; the rest feeds the
+   *  agents panel (see `agentTracks` in the renderer). */
+  | {
+      kind: 'tool-use'
+      id: string
+      name: string
+      input: unknown
+      parentToolUseId: string | null
+      /** Which kind of subagent is running this (SDK `subagent_type`), when known. */
+      subagentType?: string
+      /** The task description the subagent was given, for a readable track label. */
+      taskDescription?: string
+    }
+  | {
+      kind: 'tool-result'
+      id: string
+      toolUseId: string
+      isError: boolean
+      text: string
+      parentToolUseId?: string | null
+    }
   /** Full replacement snapshot from `system/background_tasks_changed`. */
   | { kind: 'background-tasks'; tasks: BackgroundTask[] }
   | {
@@ -625,11 +646,85 @@ export interface OpenAiConfig {
   speed: number
 }
 
+/** Where dictation is transcribed: OpenAI's API, or a model running on this
+ *  machine (works offline and sends no audio anywhere, but has to be downloaded
+ *  the first time — see `speech.ts`). */
+export type TranscribeEngine = 'cloud' | 'local'
+
+/** main → renderer while the on-device model is being prepared. `done` closes
+ *  the notice; `error` explains why it couldn't be installed. The renderer keeps
+ *  its loading state until one of those arrives — the user must never be left
+ *  looking at a mic that seems stuck. */
+export interface SpeechSetupProgress {
+  /** `preparing` = building the local environment (only the first time),
+   *  `downloading` = fetching the model, `loading` = putting it on the GPU. */
+  stage: 'preparing' | 'downloading' | 'loading' | 'done' | 'error'
+  /** 0..100 with real bytes when known; undefined while it can't be measured. */
+  percent?: number
+  /** Human message, no stack talk ("Baixando o reconhecimento de voz…"). */
+  message: string
+  /** Total download size in MB, for the notice. */
+  totalMb?: number
+}
+
+/** Local speech-to-text: which model, and where it stands on this machine. */
+export interface LocalSpeechConfig {
+  /** Model id (Hugging Face) used when the engine is 'local'. */
+  model: string
+}
+
+/**
+ * Models offered for on-device dictation. NVIDIA's Parakeet, not Whisper: it was
+ * measured faster (1.9s for 15s of audio on a laptop RTX 5050, 1.3 GB VRAM) with
+ * equivalent text, covers 25 languages including Portuguese, and is CC-BY-4.0.
+ * It runs through `transformers` (>= 5.10) — no NeMo toolkit required.
+ *
+ * `sizeMb` is the model download, and it's only paid ONCE PER MACHINE: the
+ * Hugging Face cache is shared with any other project that already pulled it.
+ */
+export const LOCAL_SPEECH_MODELS: {
+  id: string
+  label: string
+  sizeMb: number
+  note: string
+  /** Which stack loads it — they need separate environments (see `speech.ts`). */
+  runtime: 'transformers' | 'nemo'
+}[] = [
+  {
+    id: 'nvidia/parakeet-tdt-0.6b-v3',
+    label: 'Rápido',
+    sizeMb: 2400,
+    note: 'Parakeet TDT — resposta quase imediata, 25 idiomas',
+    runtime: 'transformers'
+  },
+  {
+    // Canary-Qwen 2.5B foi testado antes e REPROVADO para este uso: é só inglês,
+    // e transcreveu "Olá, este é um teste…" como "Hola es tu un test…". O 1B v2
+    // cobre 25 idiomas, português incluído, e é o mais preciso da família.
+    id: 'nvidia/canary-1b-v2',
+    label: 'Máxima precisão',
+    sizeMb: 6400,
+    note: 'Canary 1B v2 — mais preciso, porém mais pesado e lento',
+    runtime: 'nemo'
+  }
+]
+
+/** Runtime that loads a given model (defaults to the lighter one). */
+export function localSpeechRuntime(model: string): 'transformers' | 'nemo' {
+  return LOCAL_SPEECH_MODELS.find((m) => m.id === model)?.runtime ?? 'transformers'
+}
+
+export const DEFAULT_LOCAL_SPEECH_MODEL = LOCAL_SPEECH_MODELS[0].id
+
 /** Everything the user can configure — persisted across app restarts. */
 export interface AppConfig {
   stitch: StitchConfig
   /** OpenAI key for chat voice (TTS + speech-to-text). */
   openai: OpenAiConfig
+  /** Which engine transcribes dictation. Cloud is the default (nothing to install). */
+  transcribeEngine: TranscribeEngine
+  /** Settings for the on-device engine (only used when `transcribeEngine` is 'local'). */
+  localSpeech: LocalSpeechConfig
   /** Ollama Cloud key + toggle (adds Ollama models to the selector). */
   ollama: OllamaConfig
   /** "Permitir tudo": run new sessions with permission prompts disabled. Persisted. */
@@ -648,6 +743,8 @@ export interface AppConfig {
 export const DEFAULT_CONFIG: AppConfig = {
   stitch: { enabled: false, apiKey: '' },
   openai: { apiKey: '', voice: 'alloy', speed: 1 },
+  transcribeEngine: 'cloud',
+  localSpeech: { model: DEFAULT_LOCAL_SPEECH_MODEL },
   ollama: { enabled: false, apiKey: '' },
   skipPermissions: false,
   windowsControlEnabled: false,
@@ -748,8 +845,10 @@ export const Channels = {
   remotePublishState: 'remote:publish-state',
   /** Build the Android remote APK (smartfone-remote); progress streams back. */
   remoteBuildApk: 'remote:build-apk',
-  /** Transcribe recorded audio to text via OpenAI (gpt-4o-mini-transcribe). */
+  /** Transcribe recorded audio to text (OpenAI or the on-device model). */
   openaiTranscribe: 'openai:transcribe',
+  /** main → renderer: the on-device speech model is being downloaded/prepared. */
+  speechSetupProgress: 'speech:setup-progress',
   /** Synthesize speech from text via OpenAI (gpt-4o-mini-tts). */
   openaiTts: 'openai:tts',
   /** Whether a Claude Code login exists on this machine. */

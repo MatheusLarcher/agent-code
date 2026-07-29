@@ -24,6 +24,7 @@ import type { EffortLevel } from '@shared/ipc'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
+import { closeRunningTracks, isSubagentEvent, reduceTracks, type TrackMap } from './agentTracks'
 import {
   loadConversations,
   loadUi,
@@ -34,6 +35,9 @@ import {
 } from './storage'
 import { ChatPanel } from './components/ChatPanel'
 import { BrowserPanel } from './components/BrowserPanel'
+import { AgentsPanel } from './components/AgentsPanel'
+import { AgentFlow } from './components/AgentFlow'
+import { IconUsers } from './components/Icons'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge } from './components/UsageBadge'
 import { IconPower, IconSettings, IconSmartphone } from './components/Icons'
@@ -260,6 +264,9 @@ function applyTaskUpdate(plan: TodoPlan | undefined, e: Extract<ChatEvent, { kin
 }
 
 function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
+  // Subagent work never joins the chat feed — it would interleave with the main
+  // agent's answer. It goes to the agents panel instead (see agentTracks.ts).
+  if (isSubagentEvent(e)) return prev
   // TodoWrite/TaskCreate/TaskUpdate calls never join the message feed — they
   // update Conversation.todoPlan instead (handled in onEvent, alongside this call).
   if (isTodoWriteToolUse(e) || isTaskCreateToolUse(e) || isTaskUpdateToolUse(e)) return prev
@@ -308,6 +315,11 @@ export function App(): JSX.Element {
   const [collapsed, setCollapsed] = useState(false)
   const [browserMinimized, setBrowserMinimized] = useState(false)
   const [browserWidth, setBrowserWidth] = useState(720)
+  // Right-hand panel: the browser, the agents panel, or neither (rail only).
+  // They share the same slot — two panels at once would squeeze the chat.
+  const [agentsOpen, setAgentsOpen] = useState(false)
+  // Flow view (full-screen map of who spawned whom). Opened from the panel.
+  const [flowOpen, setFlowOpen] = useState(false)
   const [hydrated, setHydrated] = useState(false)
   // Whether the ACTIVE conversation's project folder is gone. When true the
   // composer is blocked (can't type) — we check on switch and on window focus.
@@ -336,6 +348,10 @@ export function App(): JSX.Element {
   // any one chat, so it must survive switching conversations. Keyed by
   // rateLimitType; only ever grows/updates, never reset by the UI itself.
   const [usageLimits, setUsageLimits] = useState<Record<string, RateLimitStatus>>({})
+  // Who is working inside each conversation (main agent + subagents), for the
+  // agents panel. Deliberately OUTSIDE `Conversation`: this is live state, not
+  // history — it never touches the chat feed nor gets persisted to disk.
+  const [tracks, setTracks] = useState<Record<string, TrackMap>>({})
   const [chips, setChips] = useState<PickedElement[]>([])
   // Whether the "new preview tab" modal is open (rendered at the app root so it
   // isn't clipped by the horizontally-scrolling tab strip).
@@ -493,6 +509,15 @@ export function App(): JSX.Element {
         )
         return
       }
+      // Agents panel: `Task` calls open a track, subagent calls feed it, and the
+      // Task's own result closes it. Kept apart from the message reducer below —
+      // the chat feed must not change because of this.
+      setTracks((prev) => {
+        const map = prev[cid] ?? {}
+        const next = reduceTracks(map, e)
+        return next === map ? prev : { ...prev, [cid]: next }
+      })
+
       patchConv(cid, (c) => {
         let next: Conversation
         if (e.kind === 'system') {
@@ -584,6 +609,14 @@ export function App(): JSX.Element {
         // stale modal can't reappear when this conversation becomes active again.
         setPermissions((p) => withoutKey(p, cid))
         setMinimizedQuestions((m) => withoutKey(m, cid))
+        // Nothing can still be running once the turn is over: a subagent whose
+        // closing result we missed would otherwise spin in the panel forever.
+        setTracks((prev) => {
+          const map = prev[cid]
+          if (!map) return prev
+          const next = closeRunningTracks(map)
+          return next === map ? prev : { ...prev, [cid]: next }
+        })
 
         // Did the user just stop this turn? A user interrupt/stop ends with a
         // `result` (sometimes flagged is_error); that's intentional, not a failure.
@@ -954,7 +987,9 @@ export function App(): JSX.Element {
       const ws = workspaceRef.current
       if (!ws) return
       const rect = ws.getBoundingClientRect()
-      const w = Math.max(340, Math.min(rect.width - 440, rect.right - ev.clientX))
+      // Mínimo do chat: 360px. Era 440, o que travava o painel de agentes cedo
+      // demais — o mapa de fluxo precisa de largura para mostrar as ações.
+      const w = Math.max(340, Math.min(rect.width - 360, rect.right - ev.clientX))
       setBrowserWidth(w)
     }
     const onUp = (): void => {
@@ -1896,6 +1931,28 @@ export function App(): JSX.Element {
   const runningSince = activeId ? busySince[activeId] ?? null : null
   const lastDurationMs = activeId ? lastDuration[activeId] ?? null : null
 
+  // ---- agents panel (supervisor view) ----
+  const activeTracks = useMemo(() => (activeId ? tracks[activeId] ?? {} : {}), [tracks, activeId])
+  const runningTrackCount = useMemo(
+    () => Object.values(activeTracks).filter((t) => t.status === 'running').length,
+    [activeTracks]
+  )
+  /** Every conversation stuck waiting on the user — the supervisor's real lever. */
+  const pendingPermissionList = useMemo(
+    () =>
+      Object.entries(permissions).map(([convId, request]) => ({
+        convId,
+        title: conversations.find((c) => c.id === convId)?.title ?? 'Conversa',
+        request
+      })),
+    [permissions, conversations]
+  )
+  // Opening the agents panel takes over the right-hand slot from the browser.
+  const openAgentsPanel = useCallback((): void => {
+    setAgentsOpen(true)
+    setBrowserMinimized(true)
+  }, [])
+
   const projects = useMemo<SidebarProject[]>(() => {
     const map = new Map<string, Conversation[]>()
     for (const c of conversations) {
@@ -1986,8 +2043,20 @@ export function App(): JSX.Element {
           )}
           </div>
           <UsageBadge limits={usageLimits} />
+          {/* Acesso permanente ao painel de agentes: sem isso ele só existiria
+              enquanto houvesse subagente rodando, e não daria pra rever nada. */}
           <button
-            className={`btn ghost remote-btn topbar-right ${remoteRunning ? 'on' : ''}`}
+            className={`btn ghost agents-btn topbar-right${agentsOpen ? ' on' : ''}${
+              runningTrackCount > 0 ? ' live' : ''
+            }`}
+            onClick={() => (agentsOpen ? setAgentsOpen(false) : openAgentsPanel())}
+            title="Agentes: quem está trabalhando nesta conversa"
+          >
+            <IconUsers />
+            {runningTrackCount > 0 && <span className="agents-btn-badge">{runningTrackCount}</span>}
+          </button>
+          <button
+            className={`btn ghost remote-btn ${remoteRunning ? 'on' : ''}`}
             onClick={() => setRemoteOpen(true)}
             title="Controle remoto pelo celular (Android)"
           >
@@ -2077,26 +2146,79 @@ export function App(): JSX.Element {
             todoPlan={active?.todoPlan}
             backgroundTasks={active?.backgroundTasks ?? []}
             queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}
+            runningAgents={runningTrackCount}
+            onOpenAgents={openAgentsPanel}
           />
-          {!browserMinimized && (
+          {/* O divisor vale para QUALQUER painel da direita (navegador ou agentes):
+              sem ele, o mapa de fluxo ficava preso na largura padrão. */}
+          {(agentsOpen || !browserMinimized) && (
             <div
               className="splitter"
               onMouseDown={startBrowserDrag}
-              title="Arraste para redimensionar o navegador"
+              title={
+                agentsOpen
+                  ? 'Arraste para expandir o painel de agentes'
+                  : 'Arraste para redimensionar o navegador'
+              }
             />
           )}
-          <BrowserPanel
-            state={browserState}
-            minimized={browserMinimized}
-            onToggleMinimize={() => setBrowserMinimized((v) => !v)}
-            width={browserWidth}
-            onRequestNewTab={() => setNewTabOpen(true)}
-            onRequestPickFile={(tabId) => setFilePicker({ replaceTabId: tabId })}
-            onStitchDecision={decideStitch}
-            stitchApplied={stitchApplied}
-          />
+          {agentsOpen ? (
+            <AgentsPanel
+              tracks={activeTracks}
+              busy={!!active && busyIds.has(active.id)}
+              busySince={active ? busySince[active.id] ?? null : null}
+              backgroundTasks={active?.backgroundTasks ?? []}
+              pendingPermissions={pendingPermissionList}
+              onFocusPermission={(convId) => {
+                setActiveId(convId)
+                setQuestionMinimized(false)
+                setAgentsOpen(false)
+              }}
+              loading={!hydrated}
+              onClose={() => setAgentsOpen(false)}
+              onOpenFlow={() => setFlowOpen(true)}
+              conversationTitle={active?.title ?? 'Conversa'}
+              width={browserWidth}
+            />
+          ) : (
+            <BrowserPanel
+              state={browserState}
+              minimized={browserMinimized}
+              onToggleMinimize={() => setBrowserMinimized((v) => !v)}
+              width={browserWidth}
+              onRequestNewTab={() => setNewTabOpen(true)}
+              onRequestPickFile={(tabId) => setFilePicker({ replaceTabId: tabId })}
+              onStitchDecision={decideStitch}
+              stitchApplied={stitchApplied}
+            />
+          )}
+          {/* Rail: with the browser minimized, the agents tab still needs a way in. */}
+          {browserMinimized && !agentsOpen && (
+            <div className="right-rail">
+              <button
+                type="button"
+                className={`right-rail-btn${runningTrackCount > 0 ? ' live' : ''}`}
+                onClick={openAgentsPanel}
+                title="Ver os agentes trabalhando"
+              >
+                <IconUsers size={15} />
+                Agentes
+                {runningTrackCount > 0 && <span className="rail-badge">{runningTrackCount}</span>}
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {flowOpen && (
+        <AgentFlow
+          tracks={activeTracks}
+          busy={!!active && busyIds.has(active.id)}
+          busySince={active ? busySince[active.id] ?? null : null}
+          title={active?.title ?? 'Conversa'}
+          onClose={() => setFlowOpen(false)}
+        />
+      )}
 
       {activePermission &&
         (activePermission.questions ? (

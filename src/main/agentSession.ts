@@ -239,6 +239,31 @@ function parseAskQuestions(input: Record<string, unknown>): AskQuestion[] {
 
 type AssistantBlock = { type: string; text?: string; thinking?: string; id?: string; name?: string; input?: unknown }
 
+/**
+ * Which agent produced a message. `parentToolUseId === null` is the main agent;
+ * anything else is the `Task` call that spawned the subagent, and works as the
+ * track id in the agents panel. The SDK also labels subagent messages with their
+ * type and task description — that's what makes a track readable ("Explore:
+ * procurar onde o plano é montado") instead of `toolu_01ABC…`.
+ */
+interface TrackInfo {
+  parentToolUseId: string | null
+  subagentType?: string
+  taskDescription?: string
+}
+
+const EMPTY_TRACK: TrackInfo = { parentToolUseId: null }
+
+function trackOf(message: unknown, parentToolUseId: string | null): TrackInfo {
+  if (!parentToolUseId) return EMPTY_TRACK
+  const m = message as { subagent_type?: unknown; task_description?: unknown }
+  return {
+    parentToolUseId,
+    ...(typeof m.subagent_type === 'string' && m.subagent_type ? { subagentType: m.subagent_type } : {}),
+    ...(typeof m.task_description === 'string' && m.task_description ? { taskDescription: m.task_description } : {})
+  }
+}
+
 export class AgentSession {
   private input = new AsyncQueue<SDKUserMessage>()
   private q: ReturnType<typeof query> | null = null
@@ -736,13 +761,19 @@ export class AgentSession {
           this.lastContextTokens =
             (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
         }
-        this.handleAssistant(message.message.content as unknown as AssistantBlock[], message.aborted === true)
+        this.handleAssistant(
+          message.message.content as unknown as AssistantBlock[],
+          message.aborted === true,
+          trackOf(message, parentToolUseId)
+        )
         break
       }
 
-      case 'user':
-        this.handleUser((message.message.content as unknown) as AssistantBlock[] | string)
+      case 'user': {
+        const parent = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null
+        this.handleUser((message.message.content as unknown) as AssistantBlock[] | string, parent)
         break
+      }
 
       case 'result': {
         const r = message as unknown as {
@@ -851,10 +882,15 @@ export class AgentSession {
     }
   }
 
-  private handleAssistant(blocks: AssistantBlock[], aborted = false): void {
+  private handleAssistant(blocks: AssistantBlock[], aborted = false, track: TrackInfo = EMPTY_TRACK): void {
     let emittedText = false
     for (const block of blocks) {
       if (block.type === 'text' && block.text) {
+        // Text/thinking from a SUBAGENT must never land in the chat feed — it
+        // would interleave with the main agent's answer. The SDK only forwards
+        // it when `forwardSubagentText` is on (it isn't), so this is a guard,
+        // not a live path.
+        if (track.parentToolUseId) continue
         emittedText = true
         this.emit({
           kind: 'assistant-text',
@@ -864,6 +900,7 @@ export class AgentSession {
           ...(aborted ? { aborted: true as const } : {})
         })
       } else if (block.type === 'thinking' && block.thinking) {
+        if (track.parentToolUseId) continue
         this.emit({ kind: 'thinking', id: nextId(), text: block.thinking })
       } else if (block.type === 'tool_use') {
         this.emit({
@@ -871,7 +908,11 @@ export class AgentSession {
           id: block.id ?? nextId(),
           name: block.name ?? 'tool',
           input: block.input,
-          parentToolUseId: null
+          // Which track ran this call: null = main agent, otherwise the `Task`
+          // call that spawned the subagent. The renderer routes on this.
+          parentToolUseId: track.parentToolUseId,
+          ...(track.subagentType ? { subagentType: track.subagentType } : {}),
+          ...(track.taskDescription ? { taskDescription: track.taskDescription } : {})
         })
       }
     }
@@ -884,7 +925,7 @@ export class AgentSession {
     this.liveText = ''
   }
 
-  private handleUser(content: AssistantBlock[] | string): void {
+  private handleUser(content: AssistantBlock[] | string, parentToolUseId: string | null = null): void {
     if (typeof content === 'string') return
     for (const block of content) {
       if (block.type === 'tool_result') {
@@ -894,7 +935,8 @@ export class AgentSession {
           id: nextId(),
           toolUseId: raw.tool_use_id ?? '',
           isError: Boolean(raw.is_error),
-          text: stringifyToolResult(raw.content)
+          text: stringifyToolResult(raw.content),
+          parentToolUseId
         })
       }
     }

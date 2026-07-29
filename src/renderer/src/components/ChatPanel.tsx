@@ -128,6 +128,10 @@ interface Props {
   onReopenQuestion: () => void
   /** The active conversation's current TodoWrite plan, fixed above the composer. */
   todoPlan?: TodoPlan
+  /** Quantos subagentes estão trabalhando agora nesta conversa (0 = nada a mostrar). */
+  runningAgents?: number
+  /** Abre o painel de agentes (a linha de status é só o atalho pra ele). */
+  onOpenAgents?: () => void
   backgroundTasks?: BackgroundTask[]
   queuedAfterInterrupt?: QueuedAfterInterrupt[]
   /** When the active conversation's task started (ms epoch), or null if idle. */
@@ -400,6 +404,20 @@ export function ChatPanel(props: Props): JSX.Element {
         <button type="button" className="pending-question-chip" onClick={props.onReopenQuestion}>
           <IconHelp size={15} />
           <span>O agente fez uma pergunta — toque para responder</span>
+        </button>
+      )}
+
+      {/* Sinal discreto de que há subagentes trabalhando — sem cartão por evento
+          no feed. Um clique abre o painel de agentes, onde está o detalhe. */}
+      {(props.runningAgents ?? 0) > 0 && (
+        <button type="button" className="agents-status-line" onClick={props.onOpenAgents}>
+          <span className="agents-status-dot" aria-hidden="true" />
+          <span className="agents-status-text">
+            {props.runningAgents === 1
+              ? '1 subagente trabalhando'
+              : `${props.runningAgents} subagentes trabalhando`}
+          </span>
+          <span className="agents-status-open">ver</span>
         </button>
       )}
 

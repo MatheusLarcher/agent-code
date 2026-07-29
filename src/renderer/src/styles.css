@@ -3739,3 +3739,1008 @@ button svg {
   color: var(--muted);
   line-height: 1.45;
 }
+
+/* ============ Painel de agentes (visão de supervisor) ============
+   Fica no painel da direita, ao lado do navegador: o chat continua só com a
+   conversa do agente principal e todo o trabalho dos subagentes aparece aqui. */
+.agents-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+  border-left: 1px solid var(--line);
+  min-width: 320px;
+  overflow: hidden;
+  animation: agents-panel-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes agents-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.agents-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.agents-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.agents-title svg {
+  color: var(--accent);
+}
+.agents-counts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.agents-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.agents-chip.live {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.agents-chip.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.agents-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.agents-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agents-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.agents-section-title.warn {
+  color: var(--warn);
+}
+.agents-section-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1f1e1d;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0;
+}
+.agents-empty {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.agents-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---- uma trilha (um subagente / uma tarefa) ---- */
+.agent-track {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  animation: track-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: border-color 0.16s ease, transform 0.16s ease;
+}
+@keyframes track-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.agent-track.running {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+.agent-track.error {
+  border-color: color-mix(in srgb, var(--err) 45%, var(--line));
+}
+.agent-track:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+.agent-track-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 11px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.agent-track-head.static {
+  cursor: default;
+}
+.agent-track-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--bg-3);
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.agent-track.running .agent-track-mark {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.agent-track.error .agent-track-mark {
+  color: var(--err);
+}
+.agent-track-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.agent-track-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-track-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.agent-track-tool {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.agent-track-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-track-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.agent-track-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.agent-track.running .agent-track-time {
+  color: var(--accent);
+}
+.agent-track-steps {
+  font-size: 10.5px;
+  opacity: 0.8;
+}
+.agent-track-caret {
+  color: var(--muted);
+  flex: 0 0 auto;
+  transition: transform 0.18s ease;
+}
+.agent-track.open .agent-track-caret {
+  transform: rotate(180deg);
+}
+/* Fita de progresso indeterminada — só enquanto a trilha está viva. */
+.agent-track-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: track-sweep 1.6s ease-in-out infinite;
+}
+@keyframes track-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
+}
+.agent-bg-pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 60%, transparent);
+  animation: bg-pulse 1.8s ease-out infinite;
+}
+@keyframes bg-pulse {
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* ---- passos de uma trilha (expandido) ---- */
+.agent-track-steps-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 11px 10px 47px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: steps-in 0.2s ease;
+}
+@keyframes steps-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.agent-step {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--line);
+  background: var(--bg-2);
+  border-radius: 0 8px 8px 0;
+}
+.agent-step.running {
+  border-left-color: var(--accent);
+}
+.agent-step.error {
+  border-left-color: var(--err);
+}
+.agent-step.empty {
+  color: var(--muted);
+  font-size: 11.5px;
+  border-left-color: transparent;
+}
+.agent-step-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+.agent-step-detail {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-step-result {
+  font-size: 10.5px;
+  color: var(--muted);
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- pendências que travam o trabalho ---- */
+.agent-pending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg));
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+.agent-pending:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--warn) 16%, var(--bg));
+}
+.agent-pending-conv {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-pending-tool {
+  font-size: 11px;
+  color: var(--warn);
+  flex: 0 0 auto;
+}
+
+/* ---- skeleton (mesma silhueta do conteúdo real, sem pulo de layout) ---- */
+.agents-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sk-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.sk-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.sk {
+  background: linear-gradient(90deg, var(--bg-3) 25%, var(--line) 37%, var(--bg-3) 63%);
+  background-size: 400% 100%;
+  animation: sk-shimmer 1.4s ease infinite;
+  border-radius: 6px;
+}
+@keyframes sk-shimmer {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
+}
+.sk-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+}
+.sk-line {
+  height: 10px;
+}
+.sk-line.lg {
+  width: 72%;
+}
+.sk-line.sm {
+  width: 45%;
+  height: 8px;
+}
+.sk-pill {
+  width: 38px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+/* Trilho lateral: dois botões (navegador / agentes) quando o painel está fechado. */
+.right-rail {
+  flex: 0 0 38px;
+  min-width: 38px;
+  border-left: 1px solid var(--line);
+  background: var(--bg-2);
+  display: flex;
+  flex-direction: column;
+}
+.right-rail-btn {
+  flex: 1;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 10px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.right-rail-btn:hover {
+  background: var(--bg-3);
+  color: var(--text);
+}
+.right-rail-btn.live {
+  color: var(--accent);
+}
+.right-rail-btn .rail-badge {
+  writing-mode: horizontal-tb;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1f1e1d;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: badge-pop 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes badge-pop {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ============ Fluxo dos agentes (visão de cima, em overlay) ============
+   Mesmo dado do painel, desenhado como mapa: os nós nascem conforme o trabalho
+   acontece e as ligações se desenham sozinhas. */
+.flow-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  /* Opaco: com o app aparecendo por trás, os nós ficavam ilegíveis. */
+  background: var(--bg);
+  animation: flow-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes flow-in {
+  from {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.flow-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.flow-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.flow-title svg {
+  color: var(--accent);
+}
+.flow-sub {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+.flow-counts {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--accent);
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.flow-canvas {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 24px 32px;
+}
+/* O conteúdo é desenhado em coordenadas fixas e o palco inteiro é escalado para
+   caber na janela — assim as colunas da direita nunca ficam fora da tela. */
+.flow-stage {
+  position: relative;
+  transform: scale(var(--flow-scale, 1));
+  transform-origin: top left;
+  transition: transform 0.18s ease;
+}
+.flow-links {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.flow-link {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.6;
+  stroke-dasharray: 900;
+  stroke-dashoffset: 900;
+  animation: flow-draw 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.flow-link.thin {
+  stroke-width: 1.2;
+  opacity: 0.65;
+}
+.flow-link.live {
+  stroke: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+@keyframes flow-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.flow-node {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  animation: node-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: border-color 0.16s ease, transform 0.16s ease;
+}
+.flow-node:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+}
+@keyframes node-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.flow-node.root {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: var(--bg-3);
+}
+.flow-node.main {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.flow-node.main.running,
+.flow-node.agent.running {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent), 0 6px 18px rgba(0, 0, 0, 0.28);
+  animation: node-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both, node-halo 2s ease-out infinite 0.32s;
+}
+@keyframes node-halo {
+  70% {
+    box-shadow: 0 0 0 10px transparent, 0 6px 18px rgba(0, 0, 0, 0.28);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent, 0 6px 18px rgba(0, 0, 0, 0.28);
+  }
+}
+.flow-node.agent.error {
+  border-color: var(--err);
+}
+.flow-node.step {
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: var(--bg);
+  font-size: 11.5px;
+  gap: 7px;
+}
+.flow-node.step.running {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.flow-node.step.error {
+  border-color: var(--err);
+}
+.flow-node-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.flow-node-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--bg-3);
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.flow-node.running .flow-node-mark {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.flow-node-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.flow-node-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-node-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.flow-step-tool {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--bg-3);
+  padding: 1px 6px;
+  border-radius: 5px;
+  flex: 0 0 auto;
+}
+.flow-step-detail {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-empty {
+  position: absolute;
+  max-width: 320px;
+  margin: 0;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: var(--bg-2);
+}
+/* Alternador Lista/Fluxo dentro do painel (mesma informação, dois desenhos). */
+.agents-view-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.agents-view-switch button {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.agents-view-switch button:hover {
+  color: var(--text);
+}
+.agents-view-switch button.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.agents-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+}
+.agents-expand:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  transform: translateY(-1px);
+}
+/* Mapa embutido: o corpo do painel vira a área de desenho, sem padding extra. */
+.agents-body.flow {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.flow-canvas.embedded {
+  padding: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-overlay,
+  .flow-node,
+  .flow-link {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Preparo do reconhecimento de voz local: fica acima do composer enquanto o
+   modelo baixa, com progresso REAL por bytes — o microfone não pode parecer
+   travado justamente na primeira vez que é usado. */
+.speech-setup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 12px 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
+  animation: track-in 0.2s ease;
+}
+.speech-setup.done {
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+  background: color-mix(in srgb, var(--ok) 10%, var(--bg-2));
+}
+.speech-setup.error {
+  border-color: color-mix(in srgb, var(--err) 45%, var(--line));
+  background: color-mix(in srgb, var(--err) 10%, var(--bg-2));
+}
+.speech-setup-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--bg-3);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.speech-setup.done .speech-setup-icon {
+  color: var(--ok);
+}
+.speech-setup.error .speech-setup-icon {
+  color: var(--err);
+}
+.speech-setup-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.speech-setup-msg {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.speech-setup-bar {
+  position: relative;
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.speech-setup-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+/* Sem bytes para medir (carregando na memória): faixa que anda, nunca parada. */
+.speech-setup-bar i.indeterminate {
+  width: 35%;
+  animation: speech-sweep 1.3s ease-in-out infinite;
+}
+@keyframes speech-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+.speech-setup-pct {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+/* Escolha do motor de transcrição nas Configurações. */
+.settings-engine-row {
+  display: flex;
+  gap: 8px;
+}
+.settings-engine {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
+}
+.settings-engine:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.settings-engine.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+.settings-engine strong {
+  font-size: 12.5px;
+}
+.settings-engine span {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+/* Botão fixo da topbar que abre/fecha o painel de agentes. */
+.agents-btn {
+  position: relative;
+}
+.agents-btn.on {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.agents-btn.live {
+  color: var(--accent);
+}
+.agents-btn-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1f1e1d;
+  font-size: 9.5px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: badge-pop 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Linha compacta acima do composer que abre o painel. */
+.agents-status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  animation: track-in 0.2s ease;
+  transition: background 0.14s ease, transform 0.14s ease;
+}
+.agents-status-line:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-2));
+}
+.agents-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: bg-pulse 1.8s ease-out infinite;
+  flex: 0 0 auto;
+}
+.agents-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agents-status-open {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agents-panel,
+  .agent-track,
+  .agent-track-steps-list,
+  .agents-status-line {
+    animation: none;
+  }
+  .agent-track-progress,
+  .agent-bg-pulse,
+  .agents-status-dot,
+  .sk {
+    animation-duration: 0.001s;
+    animation-iteration-count: 1;
+  }
+}

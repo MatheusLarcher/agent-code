@@ -203,6 +203,33 @@ export const IconShieldCheck = (p: IconProps): JSX.Element => (
   </Svg>
 )
 
+/** Expand to full screen (setas para os quatro cantos). */
+export const IconExpand = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <polyline points="9 4 4 4 4 9" />
+    <polyline points="15 4 20 4 20 9" />
+    <polyline points="15 20 20 20 20 15" />
+    <polyline points="9 20 4 20 4 15" />
+  </Svg>
+)
+
+/** Agents panel: a small crew of workers (the supervisor view). */
+export const IconUsers = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M15.5 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H6.4A3.4 3.4 0 0 0 3 18.4V20" />
+    <circle cx="9.2" cy="7.4" r="3.4" />
+    <path d="M21 20v-1.6a3.4 3.4 0 0 0-2.6-3.3" />
+    <path d="M15.6 4.2a3.4 3.4 0 0 1 0 6.5" />
+  </Svg>
+)
+
+/** A single agent/work unit — used on each track row. */
+export const IconSparkStar = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M12 3.5l1.9 4.9 4.9 1.9-4.9 1.9L12 17.1l-1.9-4.9-4.9-1.9 4.9-1.9L12 3.5z" />
+  </Svg>
+)
+
 /** Windows-style spinning ring (apply the `.spinner` CSS class for the animation). */
 export const IconSpinner = ({ size = 14, ...rest }: IconProps): JSX.Element => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...rest}>
