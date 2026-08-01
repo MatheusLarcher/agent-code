@@ -29,7 +29,6 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
   resolveStart = []
   const api = {
     getConfig: vi.fn(async () => ({
-      stitch: { enabled: false, apiKey: '' },
       openai: { apiKey: '', voice: 'alloy', speed: 1 },
       ollama: { enabled: false, apiKey: '' },
       skipPermissions: false,

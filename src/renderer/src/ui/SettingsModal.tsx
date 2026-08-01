@@ -20,10 +20,9 @@ interface Props {
 }
 
 /**
- * App settings. Currently the optional Google Stitch integration: enable it and
- * paste an API key (Stitch → Settings → API Keys) to give the agent the Stitch
- * MCP tools for generating UI mockups. Changes apply to sessions started after
- * saving (reconnect a conversation to pick them up).
+ * App settings: the OpenAI key (chat voice), the transcription engine, and the
+ * optional Ollama Cloud key. Changes apply to sessions started after saving
+ * (reconnect a conversation to pick them up).
  */
 export function SettingsModal({
   onClose,
@@ -35,7 +34,6 @@ export function SettingsModal({
 }: Props): JSX.Element {
   const { notify } = useUI()
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
-  const [showKey, setShowKey] = useState(false)
   const [showOpenAiKey, setShowOpenAiKey] = useState(false)
   const [showOllamaKey, setShowOllamaKey] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -64,19 +62,14 @@ export function SettingsModal({
   }, [focus, loaded])
 
   const save = async (): Promise<void> => {
-    const stitch = { ...cfg.stitch, apiKey: cfg.stitch.apiKey.trim() }
     const openai = { ...cfg.openai, apiKey: cfg.openai.apiKey.trim() }
     const ollama = { ...cfg.ollama, apiKey: cfg.ollama.apiKey.trim() }
     // Enabling without a key is pointless — warn but still save the preference.
-    if (stitch.enabled && !stitch.apiKey) {
-      notify('aviso', 'Informe a API key do Stitch para habilitar a integração.')
-    }
     if (ollama.enabled && !ollama.apiKey) {
       notify('aviso', 'Informe a API key do Ollama para habilitar a integração.')
     }
     // Save only the keys we edit here so we never clobber other settings (e.g. "Permitir tudo").
     await window.api.setConfig({
-      stitch,
       openai,
       ollama,
       transcribeEngine: cfg.transcribeEngine,
@@ -164,49 +157,6 @@ export function SettingsModal({
               do local selecionado. Se a pasta nova estiver vazia, seus dados atuais são movidos para
               lá; se já tiver dados do Agent Code, eles são carregados. Pode ficar no OneDrive/Google
               Drive — o app não trava os arquivos, então o backup funciona com o app aberto.
-            </span>
-          </label>
-        </section>
-
-        <section className="settings-section">
-          <div className="settings-row">
-            <label className="settings-toggle">
-              <input
-                type="checkbox"
-                checked={cfg.stitch.enabled}
-                disabled={!loaded}
-                onChange={(e) => setCfg((c) => ({ ...c, stitch: { ...c.stitch, enabled: e.target.checked } }))}
-              />
-              <span>
-                <strong>✨ Google Stitch</strong>
-                <span className="settings-desc">
-                  Gera mockups de UI por IA. Quando ativo, o agente pode criar um design, exibi-lo no
-                  preview e implementá-lo no projeto após sua aprovação.
-                </span>
-              </span>
-            </label>
-          </div>
-
-          <label className="settings-field">
-            <span className="settings-field-label">API key do Stitch</span>
-            <div className="settings-key-row">
-              <input
-                className="settings-input"
-                type={showKey ? 'text' : 'password'}
-                value={cfg.stitch.apiKey}
-                placeholder="Cole a key de Stitch → Settings → API Keys"
-                autoComplete="off"
-                spellCheck={false}
-                disabled={!loaded}
-                onChange={(e) => setCfg((c) => ({ ...c, stitch: { ...c.stitch, apiKey: e.target.value } }))}
-              />
-              <button className="btn ghost" type="button" onClick={() => setShowKey((v) => !v)} title="Mostrar/ocultar">
-                {showKey ? '🙈' : '👁️'}
-              </button>
-            </div>
-            <span className="settings-hint">
-              Gere em stitch.withgoogle.com → ícone de perfil → Stitch Settings → API Keys → Create Key.
-              A chave fica salva só no seu computador.
             </span>
           </label>
         </section>

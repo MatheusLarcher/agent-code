@@ -374,11 +374,10 @@ export interface BrowserFrame {
 
 /**
  * Kind of preview surface a tab renders. `web` (Playwright) and `android`
- * (a live device/emulator screen) are functional; `stitch` is a web-backed tab
- * that renders a Google Stitch design for visual approval (opened by the agent,
- * not manually); `iphone` is reserved (name + icon) for a future implementation.
+ * (a live device/emulator screen) are functional; `iphone` is reserved
+ * (name + icon) for a future implementation.
  */
-export type TabKind = 'web' | 'android' | 'stitch' | 'iphone' | 'file'
+export type TabKind = 'web' | 'android' | 'iphone' | 'file'
 
 /** Display + capability metadata for each preview kind (single source of truth). */
 export interface TabKindMeta {
@@ -394,9 +393,6 @@ export interface TabKindMeta {
 export const TAB_KINDS: Record<TabKind, TabKindMeta> = {
   web: { kind: 'web', label: 'web', display: 'Web', implemented: true },
   android: { kind: 'android', label: 'android', display: 'Android', implemented: true },
-  // Implemented, but opened by the agent (carries generated HTML) — never offered
-  // in the manual "new tab" modal, so it isn't listed there.
-  stitch: { kind: 'stitch', label: 'stitch', display: 'Stitch', implemented: true },
   iphone: { kind: 'iphone', label: 'iphone', display: 'iPhone', implemented: false },
   file: { kind: 'file', label: 'file', display: 'Arquivo', implemented: true }
 }
@@ -538,14 +534,6 @@ export function modelSupportsFastMode(model: string | undefined): boolean {
 }
 
 // ---- App configuration (persisted in the main process) ------------------
-
-/** Google Stitch integration (optional). When enabled with a valid API key, the
- *  agent gets the Stitch MCP tools to generate UI mockups. */
-export interface StitchConfig {
-  enabled: boolean
-  /** API key from Stitch → Settings → API Keys (sent as the X-Goog-Api-Key header). */
-  apiKey: string
-}
 
 /** Voices offered by gpt-4o-mini-tts (shown in the Settings dropdown). */
 export const OPENAI_VOICES = [
@@ -751,7 +739,6 @@ export const DEFAULT_LOCAL_SPEECH_MODEL = LOCAL_SPEECH_MODELS[0].id
 
 /** Everything the user can configure — persisted across app restarts. */
 export interface AppConfig {
-  stitch: StitchConfig
   /** OpenAI key for chat voice (TTS + speech-to-text). */
   openai: OpenAiConfig
   /** Which engine transcribes dictation. Cloud is the default (nothing to install). */
@@ -774,7 +761,6 @@ export interface AppConfig {
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
-  stitch: { enabled: false, apiKey: '' },
   openai: { apiKey: '', voice: 'alloy', speed: 1 },
   transcribeEngine: 'cloud',
   localSpeech: { model: DEFAULT_LOCAL_SPEECH_MODEL },

@@ -32,10 +32,6 @@ interface Props {
   /** Open the project file picker for an empty file tab (passes its tab id so it
    *  can be replaced once a file is chosen). */
   onRequestPickFile: (tabId: string) => void
-  /** User approved/rejected the Google Stitch design shown in the active tab. */
-  onStitchDecision: (decision: 'apply' | 'discard') => void
-  /** True once the active Stitch design was approved — hides the action buttons. */
-  stitchApplied: boolean
 }
 
 interface Res {
@@ -49,7 +45,7 @@ const DEFAULT_RES: Res = (() => {
   return { w: d.width, h: d.height, dpi: d.dpi }
 })()
 
-export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onRequestPickFile, onStitchDecision, stitchApplied }: Props): JSX.Element {
+export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onRequestPickFile }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -67,7 +63,6 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
 
   const activeTab = state.tabs.find((t) => t.active)
   const isAndroid = activeTab?.kind === 'android'
-  const isStitch = activeTab?.kind === 'stitch'
   const isFile = activeTab?.kind === 'file'
 
   // Keep the page viewport matching the panel (web tabs reflow to it); also track
@@ -320,8 +315,6 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
               </span>
             )}
           </div>
-        ) : isStitch ? (
-          <span className="stitch-toolbar-label">✨ Design gerado pelo Stitch — revise e aprove abaixo</span>
         ) : (
           <>
             <input
@@ -340,25 +333,6 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
           </>
         )}
       </div>
-
-      {isStitch &&
-        (stitchApplied ? (
-          <div className="stitch-approve-bar applied">
-            <span className="stitch-approve-text">✓ Design aprovado — adaptando ao projeto e atualizando o preview…</span>
-          </div>
-        ) : (
-          <div className="stitch-approve-bar">
-            <span className="stitch-approve-text">Aprovar este design e aplicar no projeto?</span>
-            <div className="stitch-approve-actions">
-              <button className="btn ghost" onClick={() => onStitchDecision('discard')} title="Descartar o design">
-                Descartar
-              </button>
-              <button className="btn primary" onClick={() => onStitchDecision('apply')} title="Aplicar este design no projeto (o agente adapta ao que você pediu)">
-                ✓ Aplicar no projeto
-              </button>
-            </div>
-          </div>
-        ))}
 
       <div className={`browser-stage ${isAndroid ? 'android' : ''}`} ref={stageRef}>
         {!state.launched && (

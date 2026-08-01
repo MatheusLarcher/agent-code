@@ -3,7 +3,6 @@ import { AsyncQueue } from './asyncQueue'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
 import { createAndroidMcpServer } from './android/androidTools'
-import { createStitchPreviewMcpServer } from './stitchTools'
 import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsControl/tools'
 import { windowsControl } from './windowsControl/service'
 import { loadConfig } from './config'
@@ -86,37 +85,6 @@ Rules: use the ABSOLUTE path to the finished file that already exists on disk; e
 file; only do this for real deliverable files the user asked for (NOT for source code you edited
 in the project). After building something like an APK, locate the resulting file and emit its
 marker so the user can download it right here.`
-
-// Shown to the model only when the Google Stitch integration is enabled in
-// Settings, so it knows it has this skill and follows the create→approve→implement flow.
-const STITCH_HINT = `You ALSO have GOOGLE STITCH available through the "stitch" MCP tools
-(mcp__stitch__*: list_projects, create_project, generate_screen_from_text, refine designs,
-fetch_screen_code, fetch_screen_image, extract_design_context, get_screen, list_screens…).
-Stitch is Google's AI UI designer: it turns a text prompt into a polished UI mockup and its
-frontend code. Use it whenever the user wants a NEW screen/page/UI/mockup/front-end design.
-
-Follow THIS flow strictly:
-1. Tell the user in chat that you are creating a mockup with Stitch (a short heads-up), then
-   call generate_screen_from_text (creating a project first if needed) to generate the screen.
-2. Fetch the generated screen's HTML with fetch_screen_code.
-3. Call mcp__stitchpreview__show_stitch_design with that HTML (and a short title) — this opens
-   a "stitch" preview tab showing the design to the user.
-4. STOP. Ask the user to review the design in the preview and approve it there: the tab has an
-   "Aplicar no projeto" button (approve) and a "Descartar" button (reject). Do NOT modify the
-   project yet.
-5. Only AFTER the user approves (they click "Aplicar no projeto" and you receive a message
-   saying so) do you apply it. Crucially, INTERPRET what the user originally asked for in this
-   conversation and do THAT — it may be creating a brand-new screen, redesigning/restyling an
-   existing screen or component, changing a theme, or anything else they requested. The user only
-   clicks "Aplicar"; it's on you to map the approved design onto their actual intent. Do NOT paste
-   the raw Stitch HTML: ADAPT the visual (layout, colors, typography, spacing, components) to the
-   project's stack, structure and conventions, reusing existing components and patterns, via
-   normal file edits.
-6. After applying, SHOW the result in the preview so the user sees the new look running: open or
-   refresh the relevant project screen (e.g. navigate the embedded browser to the running app/page,
-   or rebuild/preview the affected screen). Don't just say it's done — make it visible.
-
-If the user rejects ("Descartar"), do not implement; offer to refine the design with Stitch instead.`
 
 // Shown to the model only when the "Modo econômico" toggle is ON in the UI.
 // Instructs the LLM to skip validation/build/tests for trivial tasks to save tokens.
@@ -322,11 +290,6 @@ export class AgentSession {
 
     const cfg = loadConfig()
 
-    // Google Stitch is opt-in: only wire its remote MCP (and tell the model about
-    // the skill) when the user enabled it and provided an API key in Settings.
-    const stitch = cfg.stitch
-    const stitchOn = stitch.enabled && stitch.apiKey.trim().length > 0
-
     const mcpServers: Record<string, McpServerConfig> = {
       browser: createBrowserMcpServer(this.browser),
       android: createAndroidMcpServer(this.browser)
@@ -339,18 +302,6 @@ export class AgentSession {
     const memoriesDir = getCacheInfo().memoriesDir
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
-    if (stitchOn) {
-      // Official Stitch remote MCP — auth via the X-Goog-Api-Key header.
-      mcpServers.stitch = {
-        type: 'http',
-        url: 'https://stitch.googleapis.com/mcp',
-        headers: { 'X-Goog-Api-Key': stitch.apiKey.trim() },
-        timeout: 300_000
-      }
-      // Our bridge that renders generated designs in the preview for approval.
-      mcpServers.stitchpreview = createStitchPreviewMcpServer(this.browser)
-      append += `\n\n${STITCH_HINT}`
-    }
 
     // Modo econômico: when the user toggled it on for THIS conversation, tell the
     // model to skip validation/build/tests for trivial tasks to save tokens.
@@ -667,11 +618,6 @@ export class AgentSession {
       this.bypassAll ||
       READ_ONLY.has(toolName) ||
       toolName.startsWith('mcp__browser__') ||
-      // Stitch design/preview tools are safe to auto-run: they only generate and
-      // display mockups. The real gate is implementing into the project (Write/Edit),
-      // which still prompts, plus the explicit Aplicar/Descartar approval in the preview.
-      toolName.startsWith('mcp__stitch__') ||
-      toolName.startsWith('mcp__stitchpreview__') ||
       ANDROID_AUTO.has(toolName) ||
       this.approvedTools.has(toolName)
     ) {

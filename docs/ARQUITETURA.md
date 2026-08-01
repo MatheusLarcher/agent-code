@@ -209,7 +209,7 @@ Comportamento garantido (e coberto por testes em `agentSession.test.ts`):
 - Com "Permitir tudo" → **não pergunta nada** e libera tudo.
 - Todo `allow` devolve o `input` original.
 
-> A auto-aprovação por prefixo também cobre as ferramentas do **Stitch** (`mcp__stitch__`/`mcp__stitchpreview__`) — só geram/exibem mockups; o gate real é a implementação no projeto (`Write`/`Edit`, que ainda pergunta) e a aprovação explícita "Aplicar/Descartar" no preview.
+> A auto-aprovação por prefixo cobre as ferramentas do navegador e do Android; o gate real continua sendo a escrita no projeto (`Write`/`Edit`, que ainda pergunta).
 
 ### Auto-resolução por tempo (7 min) + barrinha
 
@@ -242,7 +242,7 @@ Quando o agente chama a ferramenta **`AskUserQuestion`** (pergunta de múltipla 
 
 O chat ganha **voz** opcional via OpenAI: ditado por microfone (fala → texto) e leitura em voz alta das respostas (texto → fala). Tudo é gated por uma **API key da OpenAI** configurada na tela de Configurações. As chamadas à OpenAI rodam **no main** — a key **nunca** chega ao renderer; o renderer só envia áudio/texto por IPC e recebe texto/áudio de volta.
 
-**Configuração** — em `src/shared/ipc.ts`, `OpenAiConfig` carrega `apiKey`, `voice` (uma de `OPENAI_VOICES` — as vozes do `gpt-4o-mini-tts`) e `speed`; o `DEFAULT_CONFIG` traz `openai: { apiKey: '', voice: 'alloy', speed: 1 }`. `src/main/config.ts` faz o **merge aninhado** de `openai` (em `loadConfig`/`updateConfig`, igual ao `stitch`), para salvar a key sem clobber das outras configs. A `src/renderer/src/ui/SettingsModal.tsx` tem a seção **"🎙️ OpenAI (voz no chat)"** com o campo de key (mostrar/ocultar), o seletor de **voz** e o de **velocidade** (Devagar/Normal/Rápida/Bem rápida → `0.8`/`1`/`1.25`/`1.5`); a prop `focus: 'openai'` rola até a seção, a destaca e foca o input (usado quando o usuário toca o mic/Ouvir sem key). Ao fechar Configurações, o `App` relê `voiceReady` (key presente) e `voiceSpeedRef`.
+**Configuração** — em `src/shared/ipc.ts`, `OpenAiConfig` carrega `apiKey`, `voice` (uma de `OPENAI_VOICES` — as vozes do `gpt-4o-mini-tts`) e `speed`; o `DEFAULT_CONFIG` traz `openai: { apiKey: '', voice: 'alloy', speed: 1 }`. `src/main/config.ts` faz o **merge aninhado** de `openai` (em `loadConfig`/`updateConfig`), para salvar a key sem clobber das outras configs. A `src/renderer/src/ui/SettingsModal.tsx` tem a seção **"🎙️ OpenAI (voz no chat)"** com o campo de key (mostrar/ocultar), o seletor de **voz** e o de **velocidade** (Devagar/Normal/Rápida/Bem rápida → `0.8`/`1`/`1.25`/`1.5`); a prop `focus: 'openai'` rola até a seção, a destaca e foca o input (usado quando o usuário toca o mic/Ouvir sem key). Ao fechar Configurações, o `App` relê `voiceReady` (key presente) e `voiceSpeedRef`.
 
 **Chamadas OpenAI no main** (`src/main/openai.ts`, usa o `fetch`/`FormData`/`Blob` embutidos do Node, sem npm):
 - `transcribeAudio(apiKey, audioBase64, mimeType)` — POST em `/audio/transcriptions` com `model: 'gpt-4o-transcribe'` (o completo, não o `-mini` — bem melhor para pt-BR) e **`language: 'pt'`** (força o português); deduz a extensão pelo mime. O renderer já descarta áudio só-silêncio (VAD), então não se paga transcrição de trechos quietos que voltariam como palavras inventadas.
@@ -273,7 +273,7 @@ A **velocidade** é aplicada no player via `audio.playbackRate` (com `preservesP
 
 Além do Claude (Opus/Sonnet/Haiku), o app pode rodar **modelos do Ollama Cloud** (DeepSeek, GLM, Qwen, Kimi, GPT-OSS…). Funciona **sem trocar de SDK**: o Ollama Cloud expõe uma **API compatível com a Anthropic Messages API**, então a própria CLI do Claude Code (que o Agent SDK sobe) é apontada para o Ollama por **variáveis de ambiente** — o mesmo truque do comando `ollama launch claude`.
 
-**Configuração** — em `src/shared/ipc.ts`: `OllamaConfig` (`{enabled, apiKey}`; `DEFAULT_CONFIG` traz `ollama: { enabled: false, apiKey: '' }`), a lista curada `OLLAMA_MODELS` (id = **tag exata** do Ollama, ex. `qwen3-coder:480b-cloud`, `glm-5.2:cloud`), `OLLAMA_BASE_URL = 'https://ollama.com'` e `isOllamaModel(id)` (true quando o id termina em `:cloud` — assim modelos futuros funcionam sem mexer no código). `src/main/config.ts` faz o **merge aninhado** de `ollama` (igual ao `stitch`/`openai`).
+**Configuração** — em `src/shared/ipc.ts`: `OllamaConfig` (`{enabled, apiKey}`; `DEFAULT_CONFIG` traz `ollama: { enabled: false, apiKey: '' }`), a lista curada `OLLAMA_MODELS` (id = **tag exata** do Ollama, ex. `qwen3-coder:480b-cloud`, `glm-5.2:cloud`), `OLLAMA_BASE_URL = 'https://ollama.com'` e `isOllamaModel(id)` (true quando o id termina em `:cloud` — assim modelos futuros funcionam sem mexer no código). `src/main/config.ts` faz o **merge aninhado** de `ollama` (igual ao `openai`).
 
 **Roteamento** (`src/main/agentSession.ts`) — quando o modelo escolhido é Ollama, a sessão monta `options.env` com três variáveis e parte daí:
 - `ANTHROPIC_BASE_URL` = `https://ollama.com`
@@ -338,7 +338,7 @@ A persistência **por usuário** vive numa **pasta de cache** que o usuário esc
 ~/.agent-code/location.json      ← ponteiro: SÓ o caminho da pasta de cache
 <escolhida>/agent-code/          ← pasta de cache (nome fixo = nome do projeto)
   ├─ agent-code.db               ← SQLite: tabela kv(key → JSON) — config do sistema
-  │                                (API key do Stitch, "permitir tudo", token Android,
+  │                                (API keys OpenAI/Ollama, "permitir tudo", token Android,
   │                                UI state, snapshot de uso); a chave antiga de
   │                                conversas (agentcode.conversations.v1) é APAGADA
   │                                daqui assim que a migração pro storage por
@@ -360,7 +360,7 @@ A persistência **por usuário** vive numa **pasta de cache** que o usuário esc
 - **Ponteiro** — o único dado guardado fora da pasta de cache: `~/.agent-code/location.json` com `{ cacheDir }`. Nada mais é criado no home.
 - **`initStore()`** roda no `app.whenReady()` antes de qualquer leitura de config: lê o ponteiro; no **primeiro uso** usa o padrão `Documentos/agent-code` e **migra** o antigo `settings.json` (de `userData`) para a chave `config` do banco global. É idempotente e as funções `kvGet`/`kvSet` chamam o init de forma preguiçosa, então a ordem de chamada não importa.
 - **Trocar de pasta** (`setCacheDir`) — se o usuário escolhe uma pasta chamada `agent-code`, usa-a direto; senão cria uma subpasta `agent-code` dentro do local escolhido. Se já houver `.db`/memórias lá, **só carrega** (abre o banco existente sem apagar); a **pasta `data/` inteira** é movida junto com o resto (`moveAllContents`), então as conversas por projeto seguem a mudança de pasta. O ponteiro é reescrito.
-- **`config.ts`** deixou de usar `settings.json` e passou a ler/gravar a chave `config` do SQLite global (mesma forma de `AppConfig`); o **token fixo do Android** (`remoteToken`) e a API key do Stitch vivem aqui.
+- **`config.ts`** deixou de usar `settings.json` e passou a ler/gravar a chave `config` do SQLite global (mesma forma de `AppConfig`); o **token fixo do Android** (`remoteToken`) e as API keys da OpenAI/Ollama vivem aqui.
 - **Conversas** vivem em `data/`, um banco por projeto — ver a seção seguinte. **Estado da UI e snapshot de uso** continuam no banco global (`storage.ts`, chaves `agentcode.ui.v1`/`agentcode.usage-limits.v1` via `kv:get`/`kv:set`), **migrando** o que houver no `localStorage` antigo na primeira leitura.
 - **IPC:** `cache:get-info` (caminho atual), `cache:choose-dir` (diálogo nativo `openDirectory`+`createDirectory` → troca e recarrega), `kv:get`/`kv:set` (store key→JSON, config/UI/uso) e `conversations:load-all`/`conversations:save-all` (conversas, fanned out por projeto — ver abaixo). A tela `SettingsModal` mostra o caminho e o botão "Trocar…".
 
@@ -434,7 +434,7 @@ O `App` grava o `draft` na conversa (persistido no SQLite pelo *debounce* das co
   - `saveConversations` continua fazendo o **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo) e descartando o campo `images` ao persistir.
 - `agentcode.ui.v1` — `{ collapsed, activeId, browserMinimized, browserWidth }` — continua no banco **global** (`kv:get`/`kv:set`), não migrou para os bancos por projeto (não é dado de projeto).
 - **Migração do `localStorage`** (herdada de instalações bem antigas, anteriores até ao SQLite) — na primeira leitura de cada chave, se não houver dado algum (nem no SQLite global, nem em nenhum banco de projeto), o valor antigo do `localStorage` é copiado (e mantido como backup inofensivo, nunca reconsultado depois — evitar isso é o que garante que uma conversa **de verdade** apagada não "ressuscite" de um `localStorage` velho). A hidratação do `App` virou `async` (carrega em paralelo e só então marca `hydrated`, que evita sobrescrever antes de carregar).
-- As **configs do sistema** (API key do Stitch, "permitir tudo", token do Android) ficam na chave `config` do banco global (`config.ts` → `store.ts`), não mais no `settings.json`.
+- As **configs do sistema** (API keys OpenAI/Ollama, "permitir tudo", token do Android) ficam na chave `config` do banco global (`config.ts` → `store.ts`), não mais no `settings.json`.
 
 ---
 
@@ -499,7 +499,7 @@ Cada aba é uma superfície de um **tipo** (`TabKind`): `web` (página do Chromi
 
 O preview roda um **Chrome de verdade** (`channel: 'chrome'`, com *fallback* para o Chromium do Playwright), **headed com a janela fora da tela** (`--window-position=-32000,-32000`) e **perfil persistente por conversa** (`launchPersistentContext`), então logins/sessões sobrevivem entre execuções. As flags de automação são removidas e `navigator.webdriver` fica oculto — sites param de bloquear como "robô". O contexto usa viewport 1280×800 e `deviceScaleFactor: 2` (texto nítido). Cada aba web tem sua **sessão CDP** + `Page.startScreencast` (JPEG, qualidade **90**); o handler só pinta se a aba for a ativa, e confirma com `screencastFrameAck`.
 
-**`bringToFront()` ao criar/trocar de aba** — flags como `--disable-backgrounding-occluded-windows` evitam o *throttling* de **janela** ocluída, mas não impedem que o Chrome trate a página como uma **aba em segundo plano de verdade** dentro da própria janela (sujeita a *Memory Saver*/descarte). Sem isso, a aba que o app considera "ativa" podia silenciosamente perder estado entre chamadas de ferramenta, sem clique/navegação nenhuma. `openWebTab`, `showStitchDesign` e `selectTab` chamam `page.bringToFront()` (best-effort) sempre que uma aba web vira a ativa.
+**`bringToFront()` ao criar/trocar de aba** — flags como `--disable-backgrounding-occluded-windows` evitam o *throttling* de **janela** ocluída, mas não impedem que o Chrome trate a página como uma **aba em segundo plano de verdade** dentro da própria janela (sujeita a *Memory Saver*/descarte). Sem isso, a aba que o app considera "ativa" podia silenciosamente perder estado entre chamadas de ferramenta, sem clique/navegação nenhuma. `openWebTab` e `selectTab` chamam `page.bringToFront()` (best-effort) sempre que uma aba web vira a ativa.
 
 **Escondida da barra de tarefas do Windows** (`src/main/windowsTaskbar.ts`) — a janela do Chrome fica fora da tela, mas o Windows ainda lista qualquer janela de topo na taskbar independente da posição, e o Chrome não tem flag de linha de comando pra isso. `hideChromeWindowFromTaskbar(userDataDir)` roda **uma vez por conversa**, logo após `launchPersistentContext` (e antes de qualquer aba/screencast existir), via um script PowerShell embutido (sem dependência nativa nova): localiza o processo pelo `--user-data-dir` único do perfil e aplica `WS_EX_TOOLWINDOW` na janela. O Windows só "aceita" essa mudança com um ciclo **esconder → mudar o estilo → reexibir sem ativar** (`SW_HIDE`→`SetWindowLong`→`SW_SHOWNA`) — confirmado empiricamente (`windowsTaskbar.test.ts`, contra uma janela WinForms descartável, nunca a janela real do app). Por isso é chamado **antes** de qualquer captura começar: esconder/reexibir uma janela em plena transmissão poderia travar frames.
 

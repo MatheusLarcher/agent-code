@@ -12,16 +12,13 @@ const DESCRIPTIONS: Record<TabKind, string> = {
   web: 'Um navegador headless completo para testar páginas web ou investigar URLs na internet.',
   android:
     'Um emulador/dispositivo Android real rodando no computador. O agente pode instalar e testar aplicativos.',
-  stitch: 'Preview interno gerado pelo Google Stitch (iniciado apenas via comando).',
   iphone: 'Simulador do iOS. Em breve!',
   file: 'Visualizador de arquivos do projeto: Markdown, PDF, imagens, planilhas (xlsx/csv) e código.'
 }
 
-// Stitch tabs are created by the agent (they carry generated HTML), so they are
-// never offered as a manual "new tab" option. Implemented kinds come first;
-// "em breve" ones (e.g. iPhone) sink to the bottom (sort is stable).
+// Implemented kinds come first; "em breve" ones (e.g. iPhone) sink to the
+// bottom (sort is stable).
 const MANUAL_KINDS = (Object.keys(TAB_KINDS) as TabKind[])
-  .filter((k) => k !== 'stitch')
   .sort((a, b) => Number(TAB_KINDS[b].implemented) - Number(TAB_KINDS[a].implemented))
 
 /** Centered modal to choose what kind of preview tab to open. Rendered at the app

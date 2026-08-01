@@ -179,9 +179,8 @@ export class BrowserController {
 
   /**
    * Ensure the active tab is a real WEB tab and return its page. Used before
-   * loading a URL so navigations never hijack a Stitch design tab (a web-backed
-   * preview meant only to show the generated mockup) or an Android tab — instead
-   * we reuse an existing web tab or open a fresh one.
+   * loading a URL so navigations never hijack an Android tab — instead we reuse
+   * an existing web tab or open a fresh one.
    */
   private async ensureWebPage(): Promise<Page> {
     await this.ensureContext()
@@ -222,9 +221,6 @@ export class BrowserController {
     if (!TAB_KINDS[kind]?.implemented) {
       return `O tipo de aba "${kind}" ainda não está implementado.`
     }
-    if (kind === 'stitch') {
-      return 'Abas Stitch são abertas automaticamente ao gerar um design — não há como abri-las manualmente.'
-    }
     if (kind === 'android') {
       try {
         const device = await this.openAndroidTab()
@@ -260,36 +256,6 @@ export class BrowserController {
       await this.refreshView()
     }
     return `Nova aba aberta e ativada: "${tabName(tab)}" (id ${tab.id}). Reaproveite esta aba para as próximas ações; só abra outra se precisar de uma página separada.`
-  }
-
-  /**
-   * Render a Google Stitch design in a dedicated `stitch` preview tab and
-   * activate it. Backed by a Playwright page (same streaming as a web tab) but
-   * marked `kind:'stitch'` so the UI shows the Aplicar/Descartar approval bar.
-   * The agent calls this (via the stitchpreview MCP tool) after generating a
-   * mockup; nothing is written to the project until the user approves.
-   */
-  async showStitchDesign(html: string, title?: string): Promise<string> {
-    const context = await this.ensureContext()
-    const page = await context.newPage()
-    await page.bringToFront().catch(() => undefined)
-    const label = (title && title.trim()) || 'Stitch design'
-    const tab: Tab = { id: nextTabId(), kind: 'stitch', page, cdp: null, device: null, title: label, url: '', loading: false, canGoBack: false, canGoForward: false }
-    this.tabs.set(tab.id, tab)
-    this.wireTab(tab)
-    this.activeTabId = tab.id
-    await this.applyViewport(page)
-    await page.setContent(html, { waitUntil: 'load' }).catch(() => undefined)
-    tab.title = label // keep the design label even after the page 'load' fires
-    await this.startScreencast(tab)
-    await this.reapplySelectMode()
-    this.emitState()
-    await this.refreshView()
-    return (
-      `Design do Stitch exibido no preview na aba "${tabName(tab)}" (id ${tab.id}). ` +
-      `PARE e peça ao usuário para revisar e aprovar pelo preview: há os botões "Aplicar no projeto" ` +
-      `e "Descartar" na barra da aba. NÃO implemente nada no projeto até o usuário aprovar.`
-    )
   }
 
   /** Create a web page, wire it, start streaming, and activate it. */
@@ -453,12 +419,6 @@ export class BrowserController {
 
   private async updateTabMeta(tab: Tab): Promise<void> {
     if (!tab.page) return
-    // Stitch tabs render injected HTML (about:blank) and carry a fixed design
-    // label — don't overwrite it with the page's (empty) title/url.
-    if (tab.kind === 'stitch') {
-      this.emitState()
-      return
-    }
     tab.url = tab.page.url()
     try {
       tab.title = await tab.page.title()
@@ -609,7 +569,7 @@ export class BrowserController {
   // ---- methods used by the agent's MCP browser tools (act on the active tab) ----
 
   async navigate(url: string): Promise<string> {
-    // Always load into a web tab — never into the Stitch design preview / Android.
+    // Always load into a web tab — never into the Android preview.
     const page = await this.ensureWebPage()
     const tab = this.activeTab()!
     this.setLoading(tab, true) // immediate spinner, before the navigation commits

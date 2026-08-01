@@ -362,7 +362,7 @@ export function App(): JSX.Element {
   // (gates publishing conversation snapshots to main for phones to read).
   const [remoteOpen, setRemoteOpen] = useState(false)
   const [remoteRunning, setRemoteRunning] = useState(false)
-  // App settings modal (Google Stitch / OpenAI API keys, etc.).
+  // App settings modal (OpenAI / Ollama API keys, etc.).
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Confirmation before stopping a session whose agent is mid-task (so an
   // accidental click never kills a running turn). Holds the conversation id.
@@ -382,8 +382,6 @@ export function App(): JSX.Element {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   // Bumped to cancel an in-flight read-aloud sequence (stop / switch message).
   const speakTokenRef = useRef(0)
-  // Stitch tabs already approved ("Aplicar no projeto" clicked) — hides the bar.
-  const [appliedStitch, setAppliedStitch] = useState<Set<string>>(new Set())
   // Messages typed while the agent is busy wait here (per conversation) instead
   // of being sent to the SDK — so a running task is never cancelled. The next
   // one is dispatched when the current turn finishes; the user can delete any.
@@ -1874,52 +1872,8 @@ export function App(): JSX.Element {
     [notify]
   )
 
-  // Approve/reject a Google Stitch design shown in the preview. The decision is
-  // sent into the active conversation as a normal message, so the agent either
-  // implements the design into the project (approve) or holds off (reject).
-  const decideStitch = useCallback(
-    (decision: 'apply' | 'discard'): void => {
-      const conv = getActive()
-      if (!conv) return
-      const stitchTab = browserState.tabs.find((t) => t.active && t.kind === 'stitch')
-      if (decision === 'apply') {
-        // Hide the bar right away — the design was approved.
-        if (stitchTab) setAppliedStitch((s) => withId(s, stitchTab.id))
-        void dispatch(
-          conv,
-          'O usuário aprovou o design exibido no preview do Stitch (clicou em "Aplicar no projeto"). ' +
-            'Aplique-o agora ATENDENDO ao que ele pediu nesta conversa — pode ser criar uma tela nova, ' +
-            'reformular/atualizar o visual de uma tela ou componente já existente, ou qualquer outra ' +
-            'alteração que ele tenha solicitado. NÃO cole o HTML cru do Stitch: ADAPTE o visual (layout, ' +
-            'cores, tipografia, espaçamentos, componentes) à stack, à estrutura e às convenções do projeto, ' +
-            'reaproveitando os componentes e padrões já existentes. Ao terminar, MOSTRE o resultado no ' +
-            'preview — abra ou atualize a tela do projeto com a nova aparência para o usuário ver rodando.',
-          '✅ Aprovei o design — aplique no projeto conforme o que pedi.',
-          [],
-          [],
-          []
-        )
-        notify('sucesso', 'Design aprovado — adaptando ao projeto e mostrando o resultado no preview.')
-      } else {
-        void dispatch(
-          conv,
-          'O usuário descartou o design exibido no preview do Stitch. Não implemente nada; se ele pedir, ajuste o design depois.',
-          '🗑️ Descartei o design do Stitch.',
-          [],
-          [],
-          []
-        )
-        if (stitchTab) void window.api.closeTab(stitchTab.id)
-      }
-    },
-    [dispatch, browserState.tabs, notify]
-  )
-
   // ---- derived view state ----
   const active = conversations.find((c) => c.id === activeId) ?? null
-  // The active Stitch design tab, and whether it was already approved (bar hidden).
-  const activeStitchTab = browserState.tabs.find((t) => t.active && t.kind === 'stitch')
-  const stitchApplied = !!activeStitchTab && appliedStitch.has(activeStitchTab.id)
   const activeConnected = activeId !== null && connectedIds.has(activeId)
   const showBusy = activeId !== null && busyIds.has(activeId)
   const activePermission = activeId ? permissions[activeId] : undefined
@@ -2111,7 +2065,7 @@ export function App(): JSX.Element {
           <button
             className="btn ghost settings-btn"
             onClick={() => setSettingsOpen(true)}
-            title="Configurações (Google Stitch, etc.)"
+            title="Configurações (voz, Ollama, pasta de dados, etc.)"
           >
             <IconSettings />
           </button>
@@ -2237,8 +2191,6 @@ export function App(): JSX.Element {
               width={browserWidth}
               onRequestNewTab={() => setNewTabOpen(true)}
               onRequestPickFile={(tabId) => setFilePicker({ replaceTabId: tabId })}
-              onStitchDecision={decideStitch}
-              stitchApplied={stitchApplied}
             />
           )}
           {/* Rail: with the browser minimized, the agents tab still needs a way in. */}

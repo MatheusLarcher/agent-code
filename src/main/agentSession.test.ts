@@ -9,7 +9,6 @@ vi.mock('./config', () => ({
     windowsControlEnabled: configState.windowsControlEnabled,
     // start() reads these two; the permission-gate tests never call start(), but
     // the fast-mode test below does.
-    stitch: { enabled: false, apiKey: '' },
     ollama: { enabled: false, apiKey: '' }
   })
 }))
