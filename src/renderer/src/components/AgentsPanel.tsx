@@ -4,13 +4,11 @@ import type { AgentTrack, TrackMap } from '../agentTracks'
 import { sortTracks } from '../agentTracks'
 import type { Touch } from '../projectActivity'
 import type { TodoItem } from '../types'
-import { AgentFlow } from './AgentFlow'
 import { ProjectGraph } from './ProjectGraph'
 import {
   IconChevronDown,
   IconClock,
   IconCollapseRight,
-  IconExpand,
   IconSparkStar,
   IconSpinner,
   IconUsers
@@ -36,10 +34,6 @@ interface Props {
   /** True while the app is still loading its data — shows the skeleton. */
   loading: boolean
   onClose: () => void
-  /** Opens the flow FULL SCREEN (the panel already shows it inline). */
-  onOpenFlow: () => void
-  /** Active conversation's title — the root node of the flow. */
-  conversationTitle: string
   /** Project tree of the active conversation's folder (the "Projeto" map). */
   projectEntries: ProjectNode[]
   /** True when the project scan hit its cap, so the map says it's partial. */
@@ -175,8 +169,6 @@ export function AgentsPanel({
   onFocusPermission,
   loading,
   onClose,
-  onOpenFlow,
-  conversationTitle,
   projectEntries,
   projectTruncated,
   projectMissing,
@@ -185,7 +177,7 @@ export function AgentsPanel({
   projectName,
   width
 }: Props): JSX.Element {
-  const [view, setView] = useState<'list' | 'flow' | 'project'>('list')
+  const [view, setView] = useState<'list' | 'project'>('list')
   const list = useMemo(() => sortTracks(tracks), [tracks])
   const running = list.filter((t) => t.status === 'running')
   const finished = list.filter((t) => t.status !== 'running')
@@ -213,14 +205,6 @@ export function AgentsPanel({
             </button>
             <button
               type="button"
-              className={view === 'flow' ? 'on' : ''}
-              onClick={() => setView('flow')}
-              title="Ver como fluxo"
-            >
-              Fluxo
-            </button>
-            <button
-              type="button"
               className={view === 'project' ? 'on' : ''}
               onClick={() => setView('project')}
               title="Ver o mapa do projeto"
@@ -228,11 +212,6 @@ export function AgentsPanel({
               Projeto
             </button>
           </span>
-          {view === 'flow' && (
-            <button type="button" className="agents-expand" onClick={onOpenFlow} title="Expandir o fluxo">
-              <IconExpand size={14} />
-            </button>
-          )}
           {running.length > 0 && <span className="agents-chip live">{running.length} trabalhando</span>}
           {backgroundTasks.length > 0 && <span className="agents-chip">{backgroundTasks.length} em 2º plano</span>}
           {pendingPermissions.length > 0 && (
@@ -255,15 +234,6 @@ export function AgentsPanel({
             truncated={projectTruncated}
             missing={projectMissing}
             steps={projectSteps}
-            embedded
-          />
-        ) : view === 'flow' ? (
-          <AgentFlow
-            tracks={tracks}
-            busy={busy}
-            busySince={busySince}
-            title={conversationTitle}
-            onClose={onClose}
             embedded
           />
         ) : (

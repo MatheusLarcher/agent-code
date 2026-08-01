@@ -37,7 +37,6 @@ import {
 import { ChatPanel } from './components/ChatPanel'
 import { BrowserPanel } from './components/BrowserPanel'
 import { AgentsPanel } from './components/AgentsPanel'
-import { AgentFlow } from './components/AgentFlow'
 import { IconUsers } from './components/Icons'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge } from './components/UsageBadge'
@@ -320,7 +319,6 @@ export function App(): JSX.Element {
   // They share the same slot — two panels at once would squeeze the chat.
   const [agentsOpen, setAgentsOpen] = useState(false)
   // Flow view (full-screen map of who spawned whom). Opened from the panel.
-  const [flowOpen, setFlowOpen] = useState(false)
   const [hydrated, setHydrated] = useState(false)
   // Whether the ACTIVE conversation's project folder is gone. When true the
   // composer is blocked (can't type) — we check on switch and on window focus.
@@ -2223,8 +2221,6 @@ export function App(): JSX.Element {
               }}
               loading={!hydrated}
               onClose={() => setAgentsOpen(false)}
-              onOpenFlow={() => setFlowOpen(true)}
-              conversationTitle={active?.title ?? 'Conversa'}
               projectEntries={projectTree.nodes}
               projectTruncated={projectTree.truncated}
               projectMissing={projectTree.missing}
@@ -2262,16 +2258,6 @@ export function App(): JSX.Element {
           )}
         </div>
       </div>
-
-      {flowOpen && (
-        <AgentFlow
-          tracks={activeTracks}
-          busy={!!active && busyIds.has(active.id)}
-          busySince={active ? busySince[active.id] ?? null : null}
-          title={active?.title ?? 'Conversa'}
-          onClose={() => setFlowOpen(false)}
-        />
-      )}
 
       {activePermission &&
         (activePermission.questions ? (

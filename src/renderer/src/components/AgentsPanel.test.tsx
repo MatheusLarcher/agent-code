@@ -28,8 +28,6 @@ const base = {
   onFocusPermission: vi.fn(),
   loading: false,
   onClose: vi.fn(),
-  onOpenFlow: vi.fn(),
-  conversationTitle: 'Refatorar rotas',
   projectEntries: [],
   projectTruncated: false,
   projectMissing: [],
@@ -107,29 +105,12 @@ describe('AgentsPanel', () => {
     expect(onFocus).toHaveBeenCalledWith('c9')
   })
 
-  it('alterna para o fluxo DENTRO do painel, sem overlay por cima do chat', () => {
+  it('só existem os modos Lista e Projeto — o fluxo foi removido', () => {
     render(<AgentsPanel {...base} tracks={{ t1: track() }} />)
-    fireEvent.click(screen.getByTitle('Ver como fluxo'))
-
-    // o mapa aparece embutido…
-    expect(document.querySelector('.agents-body.flow .flow-canvas.embedded')).toBeTruthy()
-    expect(screen.getByText('Agente principal')).toBeTruthy()
-    // …e NADA de overlay (era o que impedia de mandar mensagem)
-    expect(document.querySelector('.flow-overlay')).toBeNull()
-
-    fireEvent.click(screen.getByTitle('Ver como lista'))
-    expect(document.querySelector('.flow-canvas')).toBeNull()
-    expect(screen.getByText('2 ações')).toBeTruthy() // voltou a lista
-  })
-
-  it('o botão de expandir só existe no modo fluxo e abre a tela cheia', () => {
-    const onOpenFlow = vi.fn()
-    render(<AgentsPanel {...base} tracks={{ t1: track() }} onOpenFlow={onOpenFlow} />)
+    expect(screen.queryByTitle('Ver como fluxo')).toBeNull()
     expect(screen.queryByTitle('Expandir o fluxo')).toBeNull()
-
-    fireEvent.click(screen.getByTitle('Ver como fluxo'))
-    fireEvent.click(screen.getByTitle('Expandir o fluxo'))
-    expect(onOpenFlow).toHaveBeenCalledTimes(1)
+    expect(screen.getByTitle('Ver como lista')).toBeTruthy()
+    expect(screen.getByTitle('Ver o mapa do projeto')).toBeTruthy()
   })
 
   it('etapas do projeto: minimizar deixa só as bolinhas, e volta ao clicar', () => {
