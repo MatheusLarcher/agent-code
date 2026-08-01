@@ -180,6 +180,22 @@ describe('memory curator — isolated add-only execution', () => {
     expect(index).toContain('[API v2](api-v2.md) — usar a API v2')
   })
 
+  it('indexa memória salva dentro de subpasta, com a pasta no link', async () => {
+    const memories = await temp()
+    await mkdir(join(memories, '2D'))
+    await writeFile(join(memories, 'MEMORY.md'), '# Memórias\n')
+    await writeFile(join(memories, '2D', 'erp.md'), '---\ndescription: ERP da 2D usa X\n---\n# ERP da 2D\n')
+
+    await reconcileMemoryIndex(memories)
+    const index = await readFile(join(memories, 'MEMORY.md'), 'utf8')
+    expect(index).toContain('[ERP da 2D](2D/erp.md) — ERP da 2D usa X')
+
+    // add-only: rodar de novo não duplica a linha
+    await reconcileMemoryIndex(memories)
+    const again = await readFile(join(memories, 'MEMORY.md'), 'utf8')
+    expect(again.match(/2D\/erp\.md/g)).toHaveLength(1)
+  })
+
   it('allows writes only inside memories and refuses overwrite with Write', async () => {
     const root = await temp()
     const memories = join(root, 'memories')

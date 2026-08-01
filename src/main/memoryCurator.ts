@@ -4,6 +4,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { getCacheInfo, kvGet, kvSet } from './store'
+import { listMemoryFiles, memoryIndexLine } from './memoryIndex'
 
 export const CURATOR_MARKER = 'AGENT_CODE_MEMORY_CURATOR_V1'
 export const CURATOR_STATE_KEY = 'memory-curator:last-run-at'
@@ -34,9 +35,12 @@ Rule: regra aprendida.
 Why: erro/tentativa que motivou a correção.
 How to apply: quando e como usar a regra.
 Fix applied: correção concreta que o LLM fez depois do feedback.
-3. MEMORY.md deve ter exatamente uma entrada por tópico no formato
+3. MEMORY.md (na RAIZ da pasta) deve ter exatamente uma entrada por tópico no formato
    - [Título](arquivo.md) — gancho curto
    Mantenha cada linha perto de 150 caracteres. Atualize a entrada do tópico ao complementar.
+4. A pasta pode ter subpastas de agrupamento (ex.: "2D/"). O nome da subpasta é contexto: memória
+   sobre aquele assunto vai DENTRO dela, e o link no índice leva a subpasta junto — [Título](2D/arquivo.md).
+   Ao procurar o tópico existente, olhe também dentro das subpastas.
 
 Se não houver correção qualificada, não toque em nenhum arquivo. Use apenas Read/Glob/Grep para
 inspecionar e Write (só arquivo novo) ou Edit (arquivo existente) dentro da pasta de memórias.`
@@ -271,24 +275,17 @@ function indexTargets(markdown: string): Set<string> {
   return targets
 }
 
-function memorySummary(markdown: string, filename: string): { title: string; hook: string } {
-  const title = /^#\s+(.+)$/m.exec(markdown)?.[1]?.trim() || filename.replace(/\.md$/i, '').replace(/-/g, ' ')
-  const hook = /^description:\s*(.+)$/m.exec(markdown)?.[1]?.trim().replace(/^['"]|['"]$/g, '') || 'Feedback aprendido com o usuário'
-  return { title, hook }
-}
-
 /** Add missing index links deterministically; never rewrites or removes existing lines. */
 export async function reconcileMemoryIndex(memoriesDir: string): Promise<void> {
   const indexPath = join(memoriesDir, 'MEMORY.md')
   const current = existsSync(indexPath) ? await readFile(indexPath, 'utf8') : '# Memórias\n'
   const targets = indexTargets(current)
-  const files = (await readdir(memoriesDir)).filter((name) => name.endsWith('.md') && name !== 'MEMORY.md')
   const additions: string[] = []
-  for (const filename of files.sort()) {
-    if (targets.has(filename)) continue
-    const summary = memorySummary(await readFile(join(memoriesDir, filename), 'utf8'), filename)
-    const prefix = `- [${summary.title}](${filename}) — `
-    additions.push(prefix + summary.hook.slice(0, Math.max(20, 155 - prefix.length)))
+  // Recursive: a memory filed under "2D/" must reach the index too, keeping the
+  // folder in the link so the grouping survives.
+  for (const file of listMemoryFiles(memoriesDir)) {
+    if (targets.has(file.relPath)) continue
+    additions.push(memoryIndexLine(file))
   }
   if (!existsSync(indexPath)) await writeFile(indexPath, current, 'utf8')
   if (additions.length) {

@@ -8,6 +8,7 @@ import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsCo
 import { windowsControl } from './windowsControl/service'
 import { loadConfig } from './config'
 import { getCacheInfo } from './store'
+import { renderMemoryIndex } from './memoryIndex'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readSessionTasks, watchSessionTasks } from './sessionTasks'
@@ -162,19 +163,26 @@ conversations. The memories are private to THIS user/machine — always use the 
 (your working directory is the user's project, NOT this folder). The folder already exists; just
 write into it with your tools.
 
+SUBFOLDERS — the user may group memories in subfolders (e.g. "2D/"). The folder name IS context:
+every memory listed under a folder section below is about that subject. When the current task is
+about that subject, those memories apply; save new memories on that subject INTO the same folder
+(path relative to the root above, e.g. "2D/<short-kebab-name>.md").
+
 SAVING — when the user asks you to remember, save, note, or memorize something ("lembra disso",
 "salva na memória", "anota", "memorize", "remember this", etc.):
-- Write ONE fact per file as <short-kebab-name>.md inside the folder above.
-- Keep a MEMORY.md index in that same folder: one bullet per memory — "- [Title](file.md) — short hook".
+- Write ONE fact per file as <short-kebab-name>.md inside the folder above (or inside the matching
+  subfolder, when the fact clearly belongs to an existing group).
+- Keep a MEMORY.md index in the ROOT of that folder: one bullet per memory —
+  "- [Title](file.md) — short hook", using the path WITH the subfolder when there is one
+  ("- [Title](2D/file.md) — ...").
 - Before creating a file, check the index for an existing memory on the same topic and UPDATE that
   file instead of making a duplicate. Delete a memory file (and its index line) if it becomes wrong.
 - Do NOT save things already evident from the project's code, git history, or CLAUDE.md.
 
 RECALLING — these files are your long-term knowledge about this user and their projects. Read the
-relevant ones when they help the current task. The current index is below (empty if none yet):
+relevant ones when they help the current task. Everything saved is listed below (empty if none yet):
 
---- MEMORY.md (current index) ---
-${index || '(no memories saved yet)'}`
+${renderMemoryIndex(memoriesDir, index)}`
 }
 
 // Tools auto-approved without prompting the user.
