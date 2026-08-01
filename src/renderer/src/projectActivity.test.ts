@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import { describeCall, editStats, fileTouches, toRelative } from './projectActivity'
+import {
+  ACTION_COLORS,
+  actionColor,
+  actionKind,
+  describeCall,
+  editStats,
+  fileTouches,
+  fileType,
+  PRE_TURN,
+  toRelative,
+  turnsOf
+} from './projectActivity'
 import type { UIMessage } from './types'
 
 const CWD = 'C:\\Users\\Matheus\\Documents\\GitHub\\agent-code'
@@ -128,5 +139,90 @@ describe('fileTouches — ler as MESMAS mensagens do chat', () => {
       { kind: 'assistant-text', id: 'a1', text: 'ok' }
     ] as UIMessage[]
     expect(fileTouches(msgs, CWD)).toEqual([])
+  })
+})
+
+const user = (id: string, text: string): UIMessage => ({ kind: 'user', id, text }) as UIMessage
+
+describe('turno de cada chamada — filtrar o mapa pela mensagem enviada', () => {
+  const msgs: UIMessage[] = [
+    user('u1', 'arruma o login'),
+    toolUse('t1', 'Read', { file_path: `${CWD}\\src\\a.ts` }),
+    toolUse('t2', 'Edit', { file_path: `${CWD}\\src\\a.ts`, old_string: 'x', new_string: 'y' }),
+    user('u2', 'agora o css'),
+    toolUse('t3', 'Edit', { file_path: `${CWD}\\src\\b.css`, old_string: 'x', new_string: 'y' })
+  ]
+
+  it('cada chamada leva o id da mensagem que a originou', () => {
+    expect(fileTouches(msgs, CWD).map((t) => [t.id, t.turnId])).toEqual([
+      ['t1', 'u1'],
+      ['t2', 'u1'],
+      ['t3', 'u2']
+    ])
+  })
+
+  it('chamada antes de qualquer mensagem (sessão retomada) cai num turno próprio', () => {
+    const t = fileTouches([toolUse('t0', 'Bash', { command: 'ls' }), user('u1', 'oi')], CWD)
+    expect(t[0].turnId).toBe(PRE_TURN)
+  })
+
+  it('turnsOf resume cada mensagem: nº de chamadas e de arquivos distintos', () => {
+    const turns = turnsOf(msgs, fileTouches(msgs, CWD))
+    expect(turns).toEqual([
+      { id: 'u1', index: 1, label: 'arruma o login', calls: 2, files: 1 },
+      { id: 'u2', index: 2, label: 'agora o css', calls: 1, files: 1 }
+    ])
+  })
+
+  it('mensagem que não gerou nenhuma ação não vira filtro', () => {
+    const only = [user('u1', 'oi'), user('u2', 'faz algo'), toolUse('t1', 'Bash', { command: 'ls' })]
+    expect(turnsOf(only, fileTouches(only, CWD)).map((t) => t.id)).toEqual(['u2'])
+  })
+
+  it('o índice mostrado conta TODAS as mensagens, não só as que agiram', () => {
+    const list = [user('u1', 'oi'), user('u2', 'faz algo'), toolUse('t1', 'Bash', { command: 'ls' })]
+    expect(turnsOf(list, fileTouches(list, CWD))[0].index).toBe(2)
+  })
+
+  it('texto longo vira uma linha cortada', () => {
+    const long = user('u1', `${'a'.repeat(200)}\n\nsegunda linha`)
+    const list = [long, toolUse('t1', 'Bash', { command: 'ls' })]
+    const label = turnsOf(list, fileTouches(list, CWD))[0].label
+    expect(label.length).toBe(90)
+    expect(label.endsWith('…')).toBe(true)
+  })
+})
+
+describe('cor por tipo de ação', () => {
+  it('cada família tem a sua cor', () => {
+    expect(actionColor('Read')).toBe(ACTION_COLORS.read)
+    expect(actionColor('Edit')).toBe(ACTION_COLORS.edit)
+    expect(actionColor('Write')).toBe(ACTION_COLORS.write)
+    expect(actionColor('Bash')).toBe(ACTION_COLORS.run)
+    expect(actionColor('Grep')).toBe(ACTION_COLORS.search)
+    expect(actionColor('WebFetch')).toBe(ACTION_COLORS.web)
+    expect(actionColor('Task')).toBe(ACTION_COLORS.agent)
+  })
+
+  it('erro sobrepõe a cor da ferramenta', () => {
+    expect(actionColor('Edit', true)).toBe(ACTION_COLORS.error)
+  })
+
+  it('ferramenta de MCP cai no genérico, menos a do navegador', () => {
+    expect(actionKind('mcp__browser__browser_navigate')).toBe('web')
+    expect(actionKind('mcp__android__android_tap')).toBe('other')
+    expect(actionKind('FerramentaNova')).toBe('other')
+  })
+})
+
+describe('fileType — o que o filtro de tipo desliga', () => {
+  it('usa a extensão em minúscula', () => {
+    expect(fileType('src/App.TSX')).toBe('tsx')
+    expect(fileType('C:\\p\\docs\\LEIA.md')).toBe('md')
+  })
+
+  it('arquivo sem extensão vira o próprio nome (Dockerfile é um tipo)', () => {
+    expect(fileType('build/Dockerfile')).toBe('dockerfile')
+    expect(fileType('.gitignore')).toBe('.gitignore')
   })
 })

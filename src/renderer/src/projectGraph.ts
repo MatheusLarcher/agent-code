@@ -1,4 +1,5 @@
 import type { ProjectNode } from '@shared/ipc'
+import { actionColor } from './projectActivity'
 
 /**
  * The project map's model: tree → force-graph nodes, plus the physics step.
@@ -19,6 +20,22 @@ import type { ProjectNode } from '@shared/ipc'
  */
 export type NodePhase = 'idle' | 'arriving' | 'building' | 'dying'
 
+/**
+ * One action that landed on a node. Marks are PERMANENT: the map is the
+ * session's history, so a file the agent touched stays lit (and named) instead
+ * of cooling back to grey. `turnId` is what lets the map show only the work of
+ * one message the user sent.
+ */
+export interface NodeMark {
+  turnId: string
+  tool: string
+  /** Colour of the action's family (red when the call failed). */
+  color: string
+  isError: boolean
+  /** Epoch ms — the most recent mark wins when several share a node. */
+  at: number
+}
+
 export interface GraphNode {
   /** Path relative to the project root; '' is the root node itself. */
   path: string
@@ -30,7 +47,11 @@ export interface GraphNode {
   y: number
   vx: number
   vy: number
-  /** 1 right after the agent touched it, decaying towards 0 — drives the green. */
+  /** Everything the agent did on this node, oldest first (never cleared). */
+  marks: NodeMark[]
+  /** 1 right after the agent touched it, decaying towards 0. Drives ONLY the
+   *  pulse ("this is happening now"); the node's colour comes from `marks` and
+   *  no longer fades away with it. */
   heat: number
   /** Tool + text shown in the balloon while this node is hot. */
   tool?: string
@@ -91,7 +112,7 @@ export function buildGraph(entries: ProjectNode[], rootName: string, w = 900, h 
   const cy = h / 2
   const root: GraphNode = {
     path: '', name: rootName, isDir: true, depth: 0, parent: null,
-    x: cx, y: cy, vx: 0, vy: 0, heat: 0, phase: 'idle', phaseT: 0
+    x: cx, y: cy, vx: 0, vy: 0, marks: [], heat: 0, phase: 'idle', phaseT: 0
   }
   const byPath = new Map<string, GraphNode>([['', root]])
   const nodes: GraphNode[] = [root]
@@ -107,7 +128,7 @@ export function buildGraph(entries: ProjectNode[], rootName: string, w = 900, h 
     if (!parent) continue // parent got cut by the scan cap — skip the orphan
     const n: GraphNode = {
       path: e.path, name: e.name, isDir: e.isDir, depth: parent.depth + 1, parent,
-      x: 0, y: 0, vx: 0, vy: 0, heat: 0, phase: 'idle', phaseT: 0
+      x: 0, y: 0, vx: 0, vy: 0, marks: [], heat: 0, phase: 'idle', phaseT: 0
     }
     byPath.set(e.path, n)
     nodes.push(n)
@@ -182,7 +203,7 @@ export function ensureNode(g: Graph, path: string, isDir: boolean, phase: NodePh
     path, name, isDir, depth: parent.depth + 1, parent,
     x: parent.x + Math.cos(ang) * 6,
     y: parent.y + Math.sin(ang) * 6,
-    vx: 0, vy: 0, heat: 0, phase, phaseT: 0
+    vx: 0, vy: 0, marks: [], heat: 0, phase, phaseT: 0
   }
   g.byPath.set(path, n)
   g.nodes.push(n)
@@ -224,6 +245,38 @@ export function advancePhases(g: Graph, dtMs: number): void {
       n.phaseT = 0
     }
   }
+}
+
+/** Record an action on a node. Repeating the same tool in the same turn only
+ *  refreshes the timestamp — a loop of 40 Reads shouldn't grow the list. */
+export function addMark(n: GraphNode, turnId: string, tool: string, isError: boolean, at: number): void {
+  const same = n.marks.find((m) => m.turnId === turnId && m.tool === tool && m.isError === isError)
+  if (same) {
+    same.at = at
+    return
+  }
+  n.marks.push({ turnId, tool, color: actionColor(tool, isError), isError, at })
+}
+
+/**
+ * The mark that decides how a node is painted: the most recent one, or the most
+ * recent one still allowed by the filters — a message the user sent (`turnId`)
+ * and/or a kind of action (`allow`, from the "tipo de modificação" chips).
+ * `undefined` means "nothing the agent did here survives the filter", so the
+ * node stays a plain grey dot.
+ */
+export function markFor(
+  n: GraphNode,
+  turnId: string | null,
+  allow?: (m: NodeMark) => boolean
+): NodeMark | undefined {
+  let best: NodeMark | undefined
+  for (const m of n.marks) {
+    if (turnId && m.turnId !== turnId) continue
+    if (allow && !allow(m)) continue
+    if (!best || m.at >= best.at) best = m
+  }
+  return best
 }
 
 /** Root → node, the route the "call" animation travels. */

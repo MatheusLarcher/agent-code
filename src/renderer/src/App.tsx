@@ -21,7 +21,7 @@ import {
   DEFAULT_EFFORT
 } from '@shared/ipc'
 import type { EffortLevel, ProjectTree } from '@shared/ipc'
-import { fileTouches } from './projectActivity'
+import { fileTouches, turnsOf } from './projectActivity'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
@@ -1952,6 +1952,12 @@ export function App(): JSX.Element {
     [active]
   )
 
+  /** The user's messages that produced work — the map's step-by-step filter. */
+  const activeTurns = useMemo(
+    () => (active ? turnsOf(active.messages, activeTouches) : []),
+    [active, activeTouches]
+  )
+
   const projects = useMemo<SidebarProject[]>(() => {
     const map = new Map<string, Conversation[]>()
     for (const c of conversations) {
@@ -2180,6 +2186,7 @@ export function App(): JSX.Element {
               projectMissing={projectTree.missing}
               projectSteps={active?.todoPlan?.items ?? []}
               touches={activeTouches}
+              turns={activeTurns}
               projectName={projectName}
               width={browserWidth}
             />

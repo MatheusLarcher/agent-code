@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { BackgroundTask, PermissionRequest, ProjectNode } from '@shared/ipc'
 import type { AgentTrack, TrackMap } from '../agentTracks'
 import { sortTracks } from '../agentTracks'
-import type { Touch } from '../projectActivity'
+import type { Touch, Turn } from '../projectActivity'
 import type { TodoItem } from '../types'
 import { ProjectGraph } from './ProjectGraph'
 import {
@@ -44,6 +44,8 @@ interface Props {
   projectSteps: TodoItem[]
   /** Every tool call of the conversation, resolved onto the tree. */
   touches: Touch[]
+  /** The user's messages that produced work — the map filters by one of them. */
+  turns: Turn[]
   /** Project folder name — the root node of the map. */
   projectName: string
   width: number
@@ -174,6 +176,7 @@ export function AgentsPanel({
   projectMissing,
   projectSteps,
   touches,
+  turns,
   projectName,
   width
 }: Props): JSX.Element {
@@ -230,6 +233,7 @@ export function AgentsPanel({
           <ProjectGraph
             entries={projectEntries}
             touches={touches}
+            turns={turns}
             rootName={projectName}
             truncated={projectTruncated}
             missing={projectMissing}

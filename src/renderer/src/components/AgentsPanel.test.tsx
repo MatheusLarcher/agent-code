@@ -33,6 +33,7 @@ const base = {
   projectMissing: [],
   projectSteps: [],
   touches: [],
+  turns: [],
   projectName: 'projeto',
   width: 480
 }

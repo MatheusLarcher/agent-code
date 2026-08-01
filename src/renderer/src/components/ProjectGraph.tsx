@@ -1,16 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectNode } from '@shared/ipc'
-import type { Touch } from '../projectActivity'
+import { actionColor, actionKind, fileType, type ActionKind, type Touch, type Turn } from '../projectActivity'
 import type { TodoItem } from '../types'
+import { ProjectFilters } from './ProjectFilters'
 import {
+  addMark,
   advancePhases,
   bounds,
   buildGraph,
   ensureNode,
+  markFor,
   pathToNode,
   stepPhysics,
   type Graph,
-  type GraphNode
+  type GraphNode,
+  type NodeMark
 } from '../projectGraph'
 
 /**
@@ -20,8 +24,13 @@ import {
  * Folders are dots with a name, files are smaller dots. When a call happens, a
  * glowing head travels the REAL tree route (root → folder → … → file) and only
  * lights the node when it arrives — so the line is the story, not decoration.
- * The node then cools down slowly, which turns a session into a heat map of the
- * area of the project that moved.
+ *
+ * What the agent touched stays lit FOREVER, in the colour of the action (read,
+ * edit, create, run…), with the file's name next to it: the map is the history
+ * of the session, not a heat map that erases itself. The old fading is now only
+ * a pulse on what is happening right now. To read one step at a time, the
+ * filter bar follows a single message the user sent (`turnId`), and the file
+ * type chips take out whatever you don't want to see.
  *
  * Files have a life on screen too: one the agent touches from outside the
  * "recent" list flies IN from the back, a created file assembles from
@@ -35,6 +44,8 @@ interface Props {
   entries: ProjectNode[]
   /** Every tool call of the conversation, oldest first (see projectActivity). */
   touches: Touch[]
+  /** The user's messages that produced work — the "follow one step" filter. */
+  turns: Turn[]
   /** Paths confirmed DELETED from disk (never "just fell out of the ranking"). */
   missing?: string[]
   /** The agent's current plan — shown as a strip above the map. */
@@ -46,13 +57,17 @@ interface Props {
   embedded?: boolean
 }
 
-const COOL = 0.9993 // heat decay per frame → ~16s half-life
 /**
- * The balloon's own life, in ms — deliberately much shorter than `heat`.
- * The green is a heat map of WHERE the work happened and should linger; the
- * text is WHAT is being done right now, and letting it sit for 16s meant three
- * stale balloons parked over the map while the agent had already moved on.
- * So it snaps in, is readable for a beat, and fades out on its own.
+ * Heat decay per frame (~4s half-life). Heat is now ONLY the "this is happening
+ * now" pulse — it no longer decides whether a node is lit, so it can fade fast
+ * without erasing anything: the mark underneath stays.
+ */
+const COOL = 0.997
+/**
+ * The balloon's own life, in ms. The lit node and the file's name are what
+ * stays; the balloon is the running commentary ("Bash npm test"), and letting
+ * it sit meant three stale balloons parked over the map while the agent had
+ * already moved on. So it snaps in, is readable for a beat, and fades out.
  */
 const SAY_IN = 160
 const SAY_HOLD = 2100
@@ -69,6 +84,8 @@ interface Travel {
   route: GraphNode[]
   t: number
   tool: string
+  /** Message that caused it — stamped on the node when the head arrives. */
+  turnId: string
   say: string
   isError: boolean
   added?: number
@@ -118,9 +135,14 @@ function mix(c1: string, c2: string, t: number): string {
 /** Tools that bring a file into existence — those assemble instead of arriving. */
 const CREATING = new Set(['Write', 'NotebookEdit'])
 
+/** Where the "I don't want to see this" choices are remembered between sessions. */
+const HIDDEN_TYPES_KEY = 'agentcode.pgraph.hidden-types.v1'
+const HIDDEN_KINDS_KEY = 'agentcode.pgraph.hidden-kinds.v1'
+
 export function ProjectGraph({
   entries,
   touches,
+  turns,
   missing,
   steps,
   rootName,
@@ -134,6 +156,84 @@ export function ProjectGraph({
   const seen = useRef<Set<string>>(new Set())
   const view = useRef({ scale: 1, x: 0, y: 0, fitted: false })
   const alpha = useRef(0.5)
+
+  // Which message the map is following (null = the whole session) and which file
+  // types are switched off. The canvas loop reads them through refs: it runs at
+  // 60fps and must not be re-created every time a chip is clicked.
+  const [turnId, setTurnId] = useState<string | null>(null)
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
+  const [hiddenKinds, setHiddenKinds] = useState<Set<ActionKind>>(new Set())
+  const turnRef = useRef<string | null>(null)
+  turnRef.current = turnId
+  const hiddenRef = useRef<Set<string>>(hiddenTypes)
+  hiddenRef.current = hiddenTypes
+  const kindsRef = useRef<Set<ActionKind>>(hiddenKinds)
+  kindsRef.current = hiddenKinds
+
+  // The chosen message can vanish (conversation switched, history compacted) —
+  // following an id that no longer exists would blank the map with no way back.
+  useEffect(() => {
+    if (turnId && !turns.some((t) => t.id === turnId)) setTurnId(null)
+  }, [turns, turnId])
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [rawTypes, rawKinds] = await Promise.all([
+          window.api.kvGet(HIDDEN_TYPES_KEY),
+          window.api.kvGet(HIDDEN_KINDS_KEY)
+        ])
+        if (rawTypes) setHiddenTypes(new Set(JSON.parse(rawTypes) as string[]))
+        if (rawKinds) setHiddenKinds(new Set(JSON.parse(rawKinds) as ActionKind[]))
+      } catch {
+        /* nothing saved yet (or unreadable) — start showing everything */
+      }
+    })()
+  }, [])
+
+  const persistHidden = (next: Set<string>): void => {
+    setHiddenTypes(next)
+    void window.api.kvSet(HIDDEN_TYPES_KEY, JSON.stringify([...next])).catch(() => undefined)
+  }
+
+  const persistKinds = (next: Set<ActionKind>): void => {
+    setHiddenKinds(next)
+    void window.api.kvSet(HIDDEN_KINDS_KEY, JSON.stringify([...next])).catch(() => undefined)
+  }
+
+  // File types present in the map, most frequent first — the chips the user
+  // switches off.
+  const types = useMemo(() => {
+    const count = new Map<string, number>()
+    for (const e of entries) {
+      if (e.isDir) continue
+      const t = fileType(e.path)
+      count.set(t, (count.get(t) ?? 0) + 1)
+    }
+    return [...count.entries()]
+      .map(([type, n]) => ({ type, count: n }))
+      .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type))
+  }, [entries])
+
+  // Under a message filter, the counter and the legend describe THAT step —
+  // saying "312 ações" while the map shows the 4 of the selected message would
+  // just be wrong.
+  const shownTouches = useMemo(() => {
+    const byTurn = turnId ? touches.filter((t) => t.turnId === turnId) : touches
+    return hiddenKinds.size
+      ? byTurn.filter((t) => !hiddenKinds.has(t.isError ? 'error' : actionKind(t.tool)))
+      : byTurn
+  }, [touches, turnId, hiddenKinds])
+
+  // The legend (which doubles as the "kind of change" filter) lists every kind
+  // present in the selected step — including the ones switched off, otherwise
+  // there would be no way to switch them back on.
+  const kinds = useMemo(() => {
+    const set = new Set<ActionKind>()
+    const scope = turnId ? touches.filter((t) => t.turnId === turnId) : touches
+    for (const t of scope) set.add(t.isError ? 'error' : actionKind(t.tool))
+    return [...set]
+  }, [touches, turnId])
 
   // Build once, then RECONCILE. Rebuilding on every refresh would reset every
   // position and the map would jump on screen each time the tree is re-read.
@@ -193,7 +293,10 @@ export function ProjectGraph({
         alpha.current = Math.max(alpha.current, 0.3)
       }
       if (first) {
+        // Opening the tab mid-session: no replay, but every past call still
+        // marks its node — that history is exactly what the map is for now.
         const fromEnd = fresh.length - 1 - i
+        addMark(node, t.turnId, t.tool, t.isError, Date.now() - fromEnd)
         if (fromEnd < 10) {
           node.heat = Math.max(node.heat, 1 - fromEnd * 0.1)
           node.tool = t.tool
@@ -209,6 +312,7 @@ export function ProjectGraph({
         route: pathToNode(node),
         t: 0,
         tool: t.tool,
+        turnId: t.turnId,
         say: t.detail,
         isError: t.isError,
         added: t.added,
@@ -257,8 +361,18 @@ export function ProjectGraph({
 
     const radius = (n: GraphNode): number => {
       const base = n.path === '' ? 8 : n.isDir ? 5.5 : 3.6
-      return base + n.heat * 8
+      // A touched file keeps a slightly bigger dot for good — with the whole
+      // session lit, size is what separates "the agent worked here" from the
+      // hundreds of files that merely exist.
+      return base + (n.marks.length ? 1.6 : 0) + n.heat * 8
     }
+
+    /**
+     * Files of a type the user switched off simply aren't drawn (folders always
+     * are — hiding a branch's parent would leave its children floating).
+     */
+    const isHidden = (n: GraphNode): boolean =>
+      !n.isDir && hiddenRef.current.size > 0 && hiddenRef.current.has(fileType(n.path))
 
     const shortSay = (s: string): string => (s.length > SAY_MAX ? `${s.slice(0, SAY_MAX - 1)}…` : s)
 
@@ -281,7 +395,7 @@ export function ProjectGraph({
       // Sobe um tiquinho enquanto apaga — dá a leitura de "passou" em vez de
       // simplesmente desligar.
       sy -= (1 - a) * 10
-      const tone = n.isError ? ERR : OK
+      const tone = actionColor(n.tool ?? '', n.isError)
       const tool = n.tool ?? ''
       const txt = shortSay(n.say)
       // `+N` / `−M` of an Edit, same rule as the chat's tool card: green for
@@ -325,9 +439,11 @@ export function ProjectGraph({
       ctx.arcTo(x, y, x + bw, y, r)
       ctx.closePath()
       ctx.fill()
-      ctx.strokeStyle = n.isError ? 'rgba(217,112,112,.6)' : 'rgba(127,174,111,.55)'
+      ctx.strokeStyle = tone
+      ctx.globalAlpha = a * 0.55
       ctx.lineWidth = 1
       ctx.stroke()
+      ctx.globalAlpha = a
       ctx.textAlign = 'left'
       ctx.font = '700 10px system-ui'
       ctx.fillStyle = tone
@@ -394,12 +510,12 @@ export function ProjectGraph({
      * screen size (not scaled with the graph) so it stays recognisable as an
      * object even when the map is zoomed way out.
      */
-    const drawPaper = (sx: number, sy: number, a: number): void => {
+    const drawPaper = (sx: number, sy: number, a: number, tone: string): void => {
       const w2 = 9
       const h2 = 12
       const fold = 4
       ctx.globalAlpha = a
-      ctx.shadowColor = 'rgba(127,174,111,.9)'
+      ctx.shadowColor = tone
       ctx.shadowBlur = 8
       ctx.beginPath()
       ctx.moveTo(sx - w2 / 2, sy - h2 / 2)
@@ -408,7 +524,7 @@ export function ProjectGraph({
       ctx.lineTo(sx + w2 / 2, sy + h2 / 2)
       ctx.lineTo(sx - w2 / 2, sy + h2 / 2)
       ctx.closePath()
-      ctx.fillStyle = '#e8f3e0'
+      ctx.fillStyle = '#eceff2'
       ctx.fill()
       ctx.shadowBlur = 0
       // dobra da quina
@@ -417,10 +533,10 @@ export function ProjectGraph({
       ctx.lineTo(sx + w2 / 2 - fold, sy - h2 / 2 + fold)
       ctx.lineTo(sx + w2 / 2, sy - h2 / 2 + fold)
       ctx.closePath()
-      ctx.fillStyle = '#a9c79a'
+      ctx.fillStyle = mix(tone, '#ffffff', 0.35)
       ctx.fill()
       // linhas de texto
-      ctx.strokeStyle = 'rgba(90,110,80,.75)'
+      ctx.strokeStyle = 'rgba(70,80,95,.75)'
       ctx.lineWidth = 1
       for (let i = 0; i < 3; i++) {
         const ly = sy - 2.5 + i * 3
@@ -439,6 +555,7 @@ export function ProjectGraph({
       if (p.length < 2) return
       const { lens, total } = metrics(p)
       const e = easeInOut(Math.min(1, tr.t))
+      const tone = actionColor(tr.tool, tr.isError)
       // Anda do arquivo DE VOLTA até a raiz.
       const pt = pointAt(p, lens, total * (1 - e))
       const sx = pt.x * scale + ox
@@ -446,16 +563,18 @@ export function ProjectGraph({
 
       // rastro curto atrás do papel, pra leitura de movimento
       const tailPt = pointAt(p, lens, Math.min(total, total * (1 - e) + 26))
-      ctx.strokeStyle = 'rgba(127,174,111,.35)'
+      ctx.strokeStyle = tone
+      ctx.globalAlpha = 0.35
       ctx.lineWidth = 1.4
       ctx.lineCap = 'round'
       ctx.beginPath()
       ctx.moveTo(tailPt.x * scale + ox, tailPt.y * scale + oy)
       ctx.lineTo(sx, sy)
       ctx.stroke()
+      ctx.globalAlpha = 1
 
       // some nos últimos 15% (chegou no agente, entregou)
-      drawPaper(sx, sy, e > 0.85 ? (1 - e) / 0.15 : Math.min(1, tr.t * 6))
+      drawPaper(sx, sy, e > 0.85 ? (1 - e) / 0.15 : Math.min(1, tr.t * 6), tone)
     }
 
     const drawTravel = (tr: Travel): void => {
@@ -465,9 +584,10 @@ export function ProjectGraph({
       if (p.length < 2) return
       const { lens, total } = metrics(p)
       const prog = easeInOut(Math.min(1, tr.t)) * total
-      const tone = tr.isError ? ERR : OK
+      const tone = actionColor(tr.tool, tr.isError)
 
-      ctx.strokeStyle = tr.isError ? 'rgba(217,112,112,.85)' : 'rgba(127,174,111,.85)'
+      ctx.strokeStyle = tone
+      ctx.globalAlpha = 0.85
       ctx.lineWidth = 2
       ctx.lineCap = 'round'
       ctx.shadowColor = tone
@@ -496,14 +616,15 @@ export function ProjectGraph({
       }
       ctx.stroke()
       ctx.shadowBlur = 0
+      ctx.globalAlpha = 1
 
       const sx = hx * scale + ox
       const sy = hy * scale + oy
       const grd = ctx.createRadialGradient(sx, sy, 0, sx, sy, 11)
-      grd.addColorStop(0, tr.isError ? 'rgba(240,190,190,.95)' : 'rgba(190,230,175,.95)')
-      grd.addColorStop(1, 'rgba(127,174,111,0)')
+      grd.addColorStop(0, mix(tone, '#ffffff', 0.55))
+      grd.addColorStop(1, 'rgba(0,0,0,0)')
       ctx.beginPath(); ctx.arc(sx, sy, 11, 0, 7); ctx.fillStyle = grd; ctx.fill()
-      ctx.beginPath(); ctx.arc(sx, sy, 2.8, 0, 7); ctx.fillStyle = '#e8f3e0'; ctx.fill()
+      ctx.beginPath(); ctx.arc(sx, sy, 2.8, 0, 7); ctx.fillStyle = mix(tone, '#ffffff', 0.75); ctx.fill()
     }
 
     const frame = (): void => {
@@ -530,6 +651,7 @@ export function ProjectGraph({
           continue
         }
         const n = tr.route[tr.route.length - 1]
+        addMark(n, tr.turnId, tr.tool, tr.isError, Date.now())
         n.heat = 1
         n.tool = tr.tool
         n.say = tr.say
@@ -562,7 +684,7 @@ export function ProjectGraph({
 
       // Every edge in ONE path, all the same cold grey. Edges used to light up
       // green around a hot node, which made the work look like it was BLEEDING
-      // out into the branches; the only green line on the map now is the travel
+      // out into the branches; the only coloured line on the map is the travel
       // itself, so the eye follows one thing instead of a spreading stain.
       // (One stroke() per edge is also what makes a graph this size crawl.)
       ctx.strokeStyle = 'rgba(58,56,54,.7)'
@@ -570,18 +692,29 @@ export function ProjectGraph({
       ctx.beginPath()
       for (const l of graph.links) {
         if (l.b.phase === 'building' || l.b.phase === 'arriving') continue
+        if (isHidden(l.b)) continue
         ctx.moveTo(l.a.x * scale + ox, l.a.y * scale + oy)
         ctx.lineTo(l.b.x * scale + ox, l.b.y * scale + oy)
       }
       ctx.stroke()
 
       const pulse = Date.now() / 1000
+      const filter = turnRef.current
+      // Marks of a kind the user switched off simply don't count as "lit".
+      const allowKind = kindsRef.current.size
+        ? (m: NodeMark): boolean => !kindsRef.current.has(m.isError ? 'error' : actionKind(m.tool))
+        : undefined
+      const labels: { text: string; x: number; y: number; color: string; dir: boolean; marked: boolean }[] = []
       for (const n of graph.nodes) {
+        if (isHidden(n)) continue
         const sx = n.x * scale + ox
         const sy = n.y * scale + oy
         if (sx < -60 || sy < -60 || sx > w + 60 || sy > h + 60) continue
         const baseR = radius(n) * Math.max(0.6, Math.min(1.4, scale))
-        const tone = n.isError ? ERR : OK
+        // What the agent did here — under the message and kind-of-change
+        // filters. No mark means "not part of this step": plain grey dot.
+        const mark = markFor(n, filter, allowKind)
+        const tone = mark?.color ?? OK
 
         // --- lifecycle: born, arriving, destroyed ---
         if (n.phase === 'building') {
@@ -617,51 +750,96 @@ export function ProjectGraph({
         }
         const r = baseR * scaleMul
 
-        // Piscada: a batida vai de 0 a 1 e volta, e o nó CLAREIA no pico (verde
-        // claro, não só um halo maior). Antes o brilho era um halo crescendo, o
-        // que lia como a mancha se espalhando em vez de um pulso.
+        // Piscada: a batida vai de 0 a 1 e volta, e o nó CLAREIA no pico. Isso
+        // é só o "está acontecendo agora"; quando passa, o nó continua aceso na
+        // cor da ação — ele não volta mais a apagar.
         const beat = n.heat > 0.04 ? (1 + Math.sin(pulse * 4.4)) / 2 : 0
-        if (beat > 0) {
-          const glow = 0.1 + 0.32 * beat * n.heat
+        if (beat > 0 && mark) {
           ctx.beginPath()
           ctx.arc(sx, sy, r + 5, 0, 7)
-          ctx.fillStyle = n.isError
-            ? `rgba(217,112,112,${glow})`
-            : `rgba(127,174,111,${glow})`
+          ctx.globalAlpha = 0.1 + 0.32 * beat * n.heat
+          ctx.fillStyle = tone
           ctx.fill()
+          ctx.globalAlpha = 1
         }
         ctx.globalAlpha = fade
         ctx.beginPath()
         ctx.arc(sx, sy, r, 0, 7)
-        const lit = n.isError ? '#f0a8a8' : '#c8ecb4'
-        const hot = mix(tone, lit, beat * n.heat)
-        ctx.fillStyle = n.isDir
-          ? mix('#8a5a44', hot, n.heat)
-          : mix('#4a4744', hot, Math.min(1, n.heat * 1.5))
+        // Aceso = a cor da ação, cheia e permanente; o pulso só clareia por cima.
+        const hot = mix(tone, mix(tone, '#ffffff', 0.55), beat * n.heat)
+        ctx.fillStyle = mark ? hot : n.isDir ? '#6b5346' : '#4a4744'
         ctx.fill()
         ctx.globalAlpha = 1
 
         const hasBalloon = n.heat > 0.3 && !!n.say
-        // The top of the tree is always named: zoomed out to fit a narrow panel
-        // the scale is well under 0.35, and a map of anonymous dots tells you
-        // nothing about WHERE in the project the agent is working.
+        // Nomes: todo arquivo que o agente mexeu fica nomeado pra sempre (é o
+        // que o mapa está contando), mais o topo da árvore — zoom out num painel
+        // estreito deixa a escala bem abaixo de 0.35, e um mapa de bolinhas
+        // anônimas não diz NADA sobre onde o agente trabalhou.
         const showLabel =
-          !hasBalloon && n.phase === 'idle' && (n.isDir ? n.depth <= 2 || scale > 0.5 : n.heat > 0.12)
+          !hasBalloon && n.phase === 'idle' && (n.isDir ? n.depth <= 2 || scale > 0.5 : !!mark)
         if (showLabel) {
-          ctx.font = n.isDir ? '600 11.5px system-ui' : '400 11px system-ui'
-          ctx.textAlign = 'center'
-          ctx.fillStyle =
-            n.heat > 0.12 ? mix('#a3a09b', '#cfe7c4', n.heat) : 'rgba(163,160,155,.75)'
-          ctx.fillText(n.name, sx, sy - r - 6)
+          labels.push({
+            text: n.name,
+            x: sx,
+            y: sy - r - 6,
+            color: mark ? mix(tone, '#ffffff', 0.5) : 'rgba(163,160,155,.75)',
+            dir: n.isDir,
+            // Um arquivo que o agente mexeu ganha o lugar: é a informação que o
+            // usuário pediu. O nome da pasta é contexto e pode ceder.
+            marked: !!mark
+          })
         }
       }
 
-      travels.current.forEach(drawTravel)
+      // Nomes desenhados por último e sem se atropelar: um rótulo por cima do
+      // outro vira borrão ilegível justo onde o trabalho aconteceu. Os arquivos
+      // marcados escolhem primeiro; quem não acha lugar em 3 tentativas é
+      // deixado de fora (a bolinha colorida continua lá).
+      const takenLabels: Box[] = []
+      labels.sort((a, b) => Number(b.marked) - Number(a.marked))
+      for (const l of labels) {
+        ctx.font = l.dir ? '600 11.5px system-ui' : '400 11px system-ui'
+        const tw = ctx.measureText(l.text).width
+        let y = l.y
+        let fits = true
+        for (let i = 0; i < 3; i++) {
+          const box = { x: l.x - tw / 2, y: y - 10, w: tw, h: 13 }
+          const clash = takenLabels.find((p) => overlaps(box, p))
+          if (!clash) {
+            takenLabels.push(box)
+            fits = true
+            break
+          }
+          y = clash.y - 13
+          fits = false
+        }
+        if (!fits) continue
+        ctx.textAlign = 'center'
+        ctx.fillStyle = l.color
+        ctx.fillText(l.text, l.x, y)
+      }
+
+      // A viagem e o balão obedecem aos mesmos filtros do nó: com "leu"
+      // desligado, um Read não pode continuar riscando o mapa.
+      const mutedTravel = (tool: string, isError: boolean): boolean =>
+        kindsRef.current.has(isError ? 'error' : actionKind(tool))
+      travels.current.forEach((tr) => {
+        if (isHidden(tr.route[tr.route.length - 1])) return
+        if (mutedTravel(tr.tool, tr.isError)) return
+        drawTravel(tr)
+      })
 
       const placed: Box[] = []
       const nowMs = Date.now()
       graph.nodes
-        .filter((n) => n.phase !== 'dying' && sayAlpha(n, nowMs) > 0)
+        .filter(
+          (n) =>
+            n.phase !== 'dying' &&
+            !isHidden(n) &&
+            !mutedTravel(n.tool ?? '', n.isError === true) &&
+            sayAlpha(n, nowMs) > 0
+        )
         .sort((a, b) => (b.sayAt ?? 0) - (a.sayAt ?? 0))
         .slice(0, 3)
         .forEach((n) => drawBalloon(n, n.x * scale + ox, n.y * scale + oy, placed, nowMs))
@@ -713,6 +891,29 @@ export function ProjectGraph({
 
   return (
     <div className={`pgraph${embedded ? ' embedded' : ''}`}>
+      <ProjectFilters
+        turns={turns}
+        turnId={turnId}
+        onPickTurn={setTurnId}
+        types={types}
+        hidden={hiddenTypes}
+        onToggleType={(t) => {
+          const next = new Set(hiddenTypes)
+          if (next.has(t)) next.delete(t)
+          else next.add(t)
+          persistHidden(next)
+        }}
+        onShowAllTypes={() => persistHidden(new Set())}
+        kinds={kinds}
+        hiddenKinds={hiddenKinds}
+        onToggleKind={(k) => {
+          const next = new Set(hiddenKinds)
+          if (next.has(k)) next.delete(k)
+          else next.add(k)
+          persistKinds(next)
+        }}
+      />
+      <div className="pgraph-stage">
       {!!steps?.length && (
         <div
           className={`pgraph-steps${stepsOpen ? '' : ' mini'}`}
@@ -750,12 +951,16 @@ export function ProjectGraph({
       <canvas ref={canvasRef} className="pgraph-canvas" />
       {entries.length === 0 && <p className="pgraph-empty">Lendo os arquivos do projeto…</p>}
       <div className="pgraph-legend">
-        <span><i className="dot live" />mexendo agora</span>
-        <span><i className="dot warm" />mexeu há pouco</span>
         <span><i className="dot file" />arquivo</span>
         <span><i className="dot dir" />pasta</span>
         {truncated && <span className="pgraph-warn">100 mais recentes</span>}
-        {touches.length > 0 && <span className="pgraph-count">{touches.length} ações</span>}
+        {shownTouches.length > 0 && (
+          <span className="pgraph-count">
+            {shownTouches.length} {shownTouches.length === 1 ? 'ação' : 'ações'}
+            {turnId ? ' nesta mensagem' : ''}
+          </span>
+        )}
+      </div>
       </div>
     </div>
   )

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { advancePhases, buildGraph, bounds, ensureNode, pathToNode, removeNode, stepPhysics, PHASE_MS } from './projectGraph'
+import { addMark, advancePhases, buildGraph, bounds, ensureNode, markFor, pathToNode, removeNode, stepPhysics, PHASE_MS } from './projectGraph'
+import { ACTION_COLORS } from './projectActivity'
 import type { ProjectNode } from '@shared/ipc'
 
 const TREE: ProjectNode[] = [
@@ -169,5 +170,81 @@ describe('advancePhases — nascer, chegar e ser destruído', () => {
     advancePhases(g, 5000)
     expect(n.phase).toBe('idle')
     expect(n.phaseT).toBe(0)
+  })
+})
+
+describe('marcas: o que o agente fez fica no nó (e não apaga)', () => {
+  it('a marca guarda a cor da ação e o turno que a causou', () => {
+    const g = buildGraph(TREE, 'p')
+    const n = g.byPath.get('src/App.tsx')!
+    addMark(n, 'u1', 'Edit', false, 100)
+    expect(n.marks).toHaveLength(1)
+    expect(n.marks[0]).toMatchObject({ turnId: 'u1', tool: 'Edit', color: ACTION_COLORS.edit })
+  })
+
+  it('repetir a MESMA ferramenta no mesmo turno só atualiza a hora (não incha a lista)', () => {
+    const g = buildGraph(TREE, 'p')
+    const n = g.byPath.get('src/App.tsx')!
+    addMark(n, 'u1', 'Read', false, 100)
+    addMark(n, 'u1', 'Read', false, 900)
+    expect(n.marks).toHaveLength(1)
+    expect(n.marks[0].at).toBe(900)
+  })
+
+  it('sem filtro, vale a ação mais recente do nó', () => {
+    const g = buildGraph(TREE, 'p')
+    const n = g.byPath.get('src/App.tsx')!
+    addMark(n, 'u1', 'Read', false, 100)
+    addMark(n, 'u2', 'Edit', false, 200)
+    expect(markFor(n, null)!.tool).toBe('Edit')
+  })
+
+  it('com filtro, vale a ação daquela mensagem — as outras não pintam o nó', () => {
+    const g = buildGraph(TREE, 'p')
+    const n = g.byPath.get('src/App.tsx')!
+    addMark(n, 'u1', 'Read', false, 100)
+    addMark(n, 'u2', 'Edit', false, 200)
+    expect(markFor(n, 'u1')!.tool).toBe('Read')
+    expect(markFor(n, 'u3')).toBeUndefined()
+  })
+
+  it('nó nunca tocado não acende', () => {
+    const g = buildGraph(TREE, 'p')
+    expect(markFor(g.byPath.get('docs')!, null)).toBeUndefined()
+  })
+
+  it('erro pinta de vermelho, seja qual for a ferramenta', () => {
+    const g = buildGraph(TREE, 'p')
+    const n = g.byPath.get('src/App.tsx')!
+    addMark(n, 'u1', 'Edit', true, 100)
+    expect(markFor(n, null)!.color).toBe(ACTION_COLORS.error)
+  })
+})
+
+describe('filtro por tipo de modificação', () => {
+  it('escondendo a leitura, vale a ação anterior que sobrou', () => {
+    const g = buildGraph(TREE, 'p')
+    const n = g.byPath.get('src/App.tsx')!
+    addMark(n, 'u1', 'Edit', false, 100)
+    addMark(n, 'u1', 'Read', false, 200)
+    const semLeitura = (m: { tool: string }): boolean => m.tool !== 'Read'
+    expect(markFor(n, null)!.tool).toBe('Read')
+    expect(markFor(n, null, semLeitura)!.tool).toBe('Edit')
+  })
+
+  it('nó que só tem a ação escondida apaga', () => {
+    const g = buildGraph(TREE, 'p')
+    const n = g.byPath.get('src/App.tsx')!
+    addMark(n, 'u1', 'Read', false, 100)
+    expect(markFor(n, null, (m) => m.tool !== 'Read')).toBeUndefined()
+  })
+
+  it('os dois filtros valem juntos (mensagem E tipo)', () => {
+    const g = buildGraph(TREE, 'p')
+    const n = g.byPath.get('src/App.tsx')!
+    addMark(n, 'u1', 'Edit', false, 100)
+    addMark(n, 'u2', 'Read', false, 200)
+    expect(markFor(n, 'u2', (m) => m.tool !== 'Read')).toBeUndefined()
+    expect(markFor(n, 'u1', (m) => m.tool !== 'Read')!.tool).toBe('Edit')
   })
 })
