@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, statSync, writeFileSync, copyFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -181,6 +181,35 @@ describe('nunca perder dados por causa de um load que falhou', () => {
     expect(loadAllConversationRecords(cacheDir).map((c) => c.id).sort()).toEqual(['a1', 'a2'])
     // E nenhum journal de rollback fica para trás ao lado do arquivo.
     expect(existsSync(`${file}-journal`)).toBe(false)
+  })
+
+  it('cópia de conflito do OneDrive não duplica a conversa na lista', () => {
+    const cwd = 'C:\\Projects\\app-a'
+    saveAllConversationRecords(cacheDir, [{ id: 'a1', cwd, title: 'a1', updatedAt: 10, messages: [1] }])
+    // O cliente de sync deixa uma cópia ao lado, com o MESMO conteúdo antigo.
+    const original = join(cacheDir, 'data', projectFileName(cwd))
+    copyFileSync(original, join(cacheDir, 'data', 'app-a-1234abcd - PC do Fulano.db'))
+    // ...e o app segue evoluindo a conversa no arquivo canônico.
+    saveAllConversationRecords(cacheDir, [{ id: 'a1', cwd, title: 'a1', updatedAt: 20, messages: [1, 2, 3] }])
+
+    const loaded = loadAllConversationRecords(cacheDir)
+    expect(loaded.map((c) => c.id)).toEqual(['a1'])
+    expect((loaded[0].messages as unknown[]).length).toBe(3) // ficou a versão mais nova
+    // E gravar de volta não pode reintroduzir a cópia velha.
+    saveAllConversationRecords(cacheDir, loaded)
+    expect(loadAllConversationRecords(cacheDir).map((c) => c.id)).toEqual(['a1'])
+  })
+
+  it('lista já duplicada em disco é normalizada no load', () => {
+    const cwd = 'C:\\Projects\\app-a'
+    const dup = [
+      { id: 'a1', cwd, title: 'a1', updatedAt: 1, messages: [1] },
+      { id: 'a2', cwd, title: 'a2', updatedAt: 1, messages: [] },
+      { id: 'a1', cwd, title: 'a1', updatedAt: 1, messages: [1, 2] },
+      { id: 'a2', cwd, title: 'a2', updatedAt: 1, messages: [] }
+    ]
+    saveAllConversationRecords(cacheDir, dup)
+    expect(loadAllConversationRecords(cacheDir).map((c) => c.id)).toEqual(['a1', 'a2'])
   })
 
   it('apagar todas as conversas de propósito ainda limpa os arquivos', () => {

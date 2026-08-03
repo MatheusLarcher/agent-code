@@ -115,6 +115,52 @@ function listProjectFiles(cacheDir: string): string[] {
   }
 }
 
+/** "Riqueza" de um registro: quantas mensagens ele carrega. Usado só para
+ *  desempatar duas cópias da MESMA conversa (mesmo `id`). */
+function messageCount(record: ConversationRecord): number {
+  return Array.isArray(record?.messages) ? (record.messages as unknown[]).length : 0
+}
+
+function updatedAtOf(record: ConversationRecord): number {
+  const value = record?.updatedAt
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+/**
+ * Uma conversa só pode aparecer UMA vez na lista, por `id`.
+ *
+ * O mesmo `id` pode chegar duas vezes quando o `data/` vive numa pasta
+ * sincronizada (OneDrive) e o cliente de sync deixa uma cópia de conflito ao
+ * lado do arquivo original (`projeto-hash - PC do Fulano.db`) — ela também
+ * termina em `.db`, entra no merge do load e a lista dobra a cada abertura
+ * (e é gravada dobrada de volta). Fica a cópia mais completa/recente.
+ */
+export function dedupeById(list: ConversationRecord[]): ConversationRecord[] {
+  const byId = new Map<string, ConversationRecord>()
+  const out: ConversationRecord[] = []
+  for (const record of list) {
+    const id = typeof record?.id === 'string' ? record.id : ''
+    if (!id) {
+      out.push(record) // sem id não dá pra comparar — preserva
+      continue
+    }
+    const current = byId.get(id)
+    if (!current) {
+      byId.set(id, record)
+      out.push(record)
+      continue
+    }
+    const better =
+      updatedAtOf(record) > updatedAtOf(current) ||
+      (updatedAtOf(record) === updatedAtOf(current) && messageCount(record) > messageCount(current))
+    if (better) {
+      out[out.indexOf(current)] = record
+      byId.set(id, record)
+    }
+  }
+  return out
+}
+
 function groupByProject(list: ConversationRecord[]): Map<string, ConversationRecord[]> {
   const map = new Map<string, ConversationRecord[]>()
   for (const record of list) {
@@ -189,7 +235,7 @@ function migrateLegacyConversations(cacheDir: string): void {
     }
   }
 
-  for (const [file, records] of groupByProject(legacyList)) {
+  for (const [file, records] of groupByProject(dedupeById(legacyList))) {
     writeConversations(join(dataDir(cacheDir), file), records)
   }
   deleteLegacyConversationsKey(cacheDir)
@@ -225,7 +271,7 @@ export function loadAllConversationRecords(cacheDir: string): ConversationRecord
     merged.push(...records)
   }
   seenFiles = seen
-  return merged
+  return dedupeById(merged)
 }
 
 /**
@@ -237,7 +283,7 @@ export function loadAllConversationRecords(cacheDir: string): ConversationRecord
 export function saveAllConversationRecords(cacheDir: string, list: ConversationRecord[]): void {
   migrateLegacyConversations(cacheDir)
   mkdirSync(dataDir(cacheDir), { recursive: true })
-  const grouped = groupByProject(list)
+  const grouped = groupByProject(dedupeById(list))
   const stale = new Set(listProjectFiles(cacheDir))
   for (const [file, records] of grouped) {
     writeConversations(join(dataDir(cacheDir), file), records)
