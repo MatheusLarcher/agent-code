@@ -1,0 +1,111 @@
+import React, { useState } from 'react'
+import { css, cx } from '@emotion/react'
+
+type Props = {
+  conversations: ConversaArquivada[]
+  onUnarchive: (id: string) => void
+}
+
+const ArchivedCard = ({ conversations, onUnarchive }: Props): JSX.Element | null => {
+  const [isOpen, setIsOpen] = useState(false)
+
+  if (!conversations.length) return null
+
+  return (
+    <div css={styles.root}>
+      <header css={styles.header} onClick={() => setIsOpen(!isOpen)}>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          css={styles.icon}
+        >
+          <path d="M5.99998 17H18C19.6569 17 21 15.6569 21 14V3C21 1.34315 19.6569 -0.00012 18 0H5.99998M18 17L12 11L6 17" />
+        </svg>
+        <span css={styles.title}>Arquivadas ({conversations.length})</span>
+      </header>
+
+      {isOpen && (
+        <ul css={styles.list}>
+          {conversations.map(({ id, title }) => (
+            <li key={id} css={styles.item}>
+              <span>{title}</span>
+              <button
+                type="button"
+                onClick={() => onUnarchive(id)}
+                css={styles.button}
+              >
+                Desarquivar
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+const styles = {
+  root: css`
+    position: relative;
+    background-color: var(--bg-2);
+    border-radius: var(--radius);
+    backdrop-filter: brightness(0.9) blur(1px);
+    overflow: hidden;
+    transition: height 0.3s ease-in-out;
+  `,
+  header: css`
+    display: flex;
+    align-items: center;
+    padding: 16px;
+    cursor: pointer;
+    background-color: var(--bg-3);
+    border-bottom: 1px solid var(--line);
+    transition: background-color 0.2s ease-in-out, transform 0.2s ease-in-out;
+  `,
+  icon: css`
+    margin-right: 8px;
+    fill: var(--text);
+  `,
+  title: css`
+    font-size: 16px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  `,
+  list: css`
+    padding: 0;
+    margin: 0;
+    list-style-type: none;
+  `,
+  item: css`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    background-color: var(--bg-2);
+    border-bottom: 1px solid var(--line);
+    transition: background-color 0.2s ease-in-out, opacity 0.3s ease-in-out;
+  `,
+  button: css`
+    display: none;
+    padding: 8px 16px;
+    font-size: 14px;
+    color: var(--accent);
+    border: none;
+    background-color: transparent;
+    cursor: pointer;
+    transition: opacity 0.3s ease-in-out;
+  `,
+  item:hover: css`
+    background-color: var(--bg-3);
+  `,
+  item:hoverButton: css`
+    display: block;
+  `,
+}
+
+export default ArchivedCard

@@ -1,0 +1,9 @@
+{
+  "backdrop": [
+    "brightness(1.6) saturate(1.25) blur(14px)"
+  ],
+  "elementosComMask": 30,
+  "elementosComTransition": 30,
+  "elementosComGridRows": 1,
+  "alturaCard": 0
+}

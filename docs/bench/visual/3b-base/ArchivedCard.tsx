@@ -1,0 +1,112 @@
+import React, { useState } from 'react';
+
+interface ConversaArquivada { id: string; title: string; updatedAt: number }
+interface Props { conversations: ConversaArquivada[]; onUnarchive: (id: string) => void }
+
+export default function ArchivedCard(props: Props): JSX.Element {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: isExpanded ? 'auto' : '0',
+        overflow: 'hidden',
+        transition: 'height 0.3s ease-in-out',
+        backdropFilter: `blur(4px) brightness(95%)`,
+        borderRadius: props.theme.radius,
+        background: props.theme.bg2,
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '48px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 24px',
+          background: props.theme.bg3,
+          borderRadius: `${props.theme.radius} 0 0 ${props.theme.radius}`,
+          backdropFilter: `blur(4px) brightness(95%)`,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            cursor: 'pointer',
+          }}
+          onClick={() => setIsExpanded(!isExpanded)}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 2L3 7H13L8 12Z" stroke="#e8e6e3" strokeWidth="2" />
+          </svg>
+          <span style={{ marginLeft: '8px', color: props.theme.text }}>
+            Arquivadas ({props.conversations.length})
+          </span>
+        </div>
+      </div>
+
+      {isExpanded && (
+        <ul
+          style={{
+            listStyleType: 'none',
+            padding: 0,
+            margin: 0,
+            background: props.theme.bg2,
+          }}
+        >
+          {props.conversations.map((conversa) => (
+            <li
+              key={conversa.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 24px',
+                borderBottom: `1px solid ${props.theme.line}`,
+                transition: 'background-color 0.3s ease-in-out',
+              }}
+              onMouseEnter={() => {
+                // Simulando hover
+                const element = document.querySelector(`li[data-id="${conversa.id}"]`);
+                if (element) {
+                  element.style.backgroundColor = props.theme.bg2;
+                }
+              }}
+              onMouseLeave={() => {
+                // Simulando hover
+                const element = document.querySelector(`li[data-id="${conversa.id}"]`);
+                if (element) {
+                  element.style.backgroundColor = '';
+                }
+              }}
+            >
+              <span>{conversa.title}</span>
+              <button
+                data-id={conversa.id}
+                style={{
+                  padding: '8px 16px',
+                  background: props.theme.accent,
+                  color: props.theme.text,
+                  borderRadius: props.theme.radius,
+                  border: 'none',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease-in-out',
+                }}
+                onClick={() => props.onUnarchive(conversa.id)}
+              >
+                Desarquivar
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

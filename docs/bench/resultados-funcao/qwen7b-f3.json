@@ -1,0 +1,23 @@
+{
+  "model": "qwen7b-f3",
+  "total": 18,
+  "minutos": 0.3,
+  "rodadas": [
+    {
+      "rodada": 1,
+      "texto": "```ts\n// ARQUIVO: src/shared/reconcile.ts\n\nexport interface Registro {\n  id: string;\n  updatedAt: number;\n  messages?: unknown[];\n}\n\nexport function reconcile<T extends Registro>(local: T[], remoto: T[]): T[] {\n  const result: T[] = [];\n  const seenIds = new Set<string>();\n\n  // Processa registros locais\n  for (const item of local) {\n    if (!item.id || item.id === '') continue;\n    seenIds.add(item.id);\n    result.push(item);\n  }\n\n  // Processa registros remotos\n  for (const item of remoto) {\n    if (!item.id || item.id === '') continue;\n    if (seenIds.has(item.id)) {\n      const existingItem = result.find(r => r.id === item.id)!;\n      if (item.updatedAt > existingItem.updatedAt ||\n          (item.updatedAt === existingItem.updatedAt && \n           (item.messages?.length ?? 0) > (existingItem.messages?.length ?? 0))) {\n        const index = result.indexOf(existingItem);\n        result[index] = item;\n      }\n    } else {\n      seenIds.add(item.id);\n      result.push(item);\n    }\n  }\n\n  return result;\n}\n```",
+      "tokens": 261,
+      "segundos": 7.417,
+      "passou": 17,
+      "tipos": true
+    },
+    {
+      "rodada": 2,
+      "texto": "```ts\n// ARQUIVO: src/shared/reconcile.ts\n\nexport interface Registro {\n  id: string;\n  updatedAt: number;\n  messages?: unknown[];\n}\n\nexport function reconcile<T extends Registro>(local: T[], remoto: T[]): T[] {\n  const result: T[] = [];\n  const seenIds = new Set<string>();\n\n  // Processa registros locais\n  for (const item of local) {\n    if (!item.id || item.id === '') continue;\n    seenIds.add(item.id);\n    result.push(item);\n  }\n\n  // Processa registros remotos\n  for (const item of remoto) {\n    if (!item.id || item.id === '') continue;\n    if (seenIds.has(item.id)) {\n      const existingItem = result.find(r => r.id === item.id)!;\n      if (item.updatedAt > existingItem.updatedAt ||\n          (item.updatedAt === existingItem.updatedAt && \n           (item.messages?.length ?? 0) > (existingItem.messages?.length ?? 0))) {\n        const index = result.indexOf(existingItem);\n        result[index] = item;\n      }\n    } else {\n      seenIds.add(item.id);\n      result.push(item);\n    }\n  }\n\n  return result;\n}\n```",
+      "tokens": 261,
+      "segundos": 4.394,
+      "passou": 17,
+      "tipos": true
+    }
+  ]
+}

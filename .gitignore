@@ -1,5 +1,6 @@
 node_modules/
 out/
+graphify-out/
 dist/
 .vite/
 *.log
@@ -36,3 +37,9 @@ smartfone-remote/.gradle/
 
 # Visual brainstorming companion (Superpowers) mockup sessions
 .superpowers/
+
+# Benchmark de modelos locais: pesos treinados e dados gerados são grandes e
+# reproduzíveis pelos scripts em scripts/bench (a receita está na memória).
+docs/bench/lora-*/
+docs/bench/dataset/
+unsloth_compiled_cache/

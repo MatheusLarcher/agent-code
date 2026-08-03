@@ -1,0 +1,6 @@
+{
+  "model": "qwen3b-visual",
+  "api": "ollama",
+  "tokens": 849,
+  "segundos": 10
+}

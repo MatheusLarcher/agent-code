@@ -1,0 +1,875 @@
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx
+...arquivo completo...
+```
+
+Nada de texto fora do bloco.
+
+```tsx
+// ARQUIVO: src/renderer/src/components/ArchivedCard.tsx

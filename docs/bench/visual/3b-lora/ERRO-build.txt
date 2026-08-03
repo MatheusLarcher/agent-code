@@ -1,0 +1,33 @@
+
+X [ERROR] Expected "}" but found ":"
+
+    node_modules/.cache/bench-visual-1785652696650/ArchivedCard.tsx:103:12:
+      103 │   item:hover: css`
+          │             ^
+          ╵             }
+
+1 error
+node:child_process:964
+    throw err;
+    ^
+
+Error: Command failed: C:\Users\mathe\Documents\GitHub\agent-code\node_modules\@esbuild\win32-x64\esbuild.exe C:\Users\mathe\Documents\GitHub\agent-code\node_modules\.cache\bench-visual-1785652696650\main.tsx --bundle --loader:.tsx=tsx --jsx=automatic --outfile=C:\Users\mathe\Documents\GitHub\agent-code\node_modules\.cache\bench-visual-1785652696650\bundle.js
+    at genericNodeError (node:internal/errors:985:15)
+    at wrappedFn (node:internal/errors:539:14)
+    at checkExecSyncError (node:child_process:925:11)
+    at Object.execFileSync (node:child_process:961:15)
+    at Object.<anonymous> (C:\Users\mathe\Documents\GitHub\agent-code\node_modules\esbuild\bin\esbuild:222:28)
+    at Module._compile (node:internal/modules/cjs/loader:1761:14)
+    at Object..js (node:internal/modules/cjs/loader:1893:10)
+    at Module.load (node:internal/modules/cjs/loader:1481:32)
+    at Module._load (node:internal/modules/cjs/loader:1300:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:328:14) {
+  status: 1,
+  signal: null,
+  output: [ null, null, null ],
+  pid: 43892,
+  stdout: null,
+  stderr: null
+}
+
+Node.js v24.11.1

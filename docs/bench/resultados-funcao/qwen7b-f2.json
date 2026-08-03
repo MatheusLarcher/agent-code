@@ -1,0 +1,23 @@
+{
+  "model": "qwen7b-f2",
+  "total": 18,
+  "minutos": 0.4,
+  "rodadas": [
+    {
+      "rodada": 1,
+      "texto": "```ts\n// ARQUIVO: src/shared/reconcile.ts\n\nexport interface Registro {\n  id: string\n  updatedAt: number\n  messages?: unknown[]\n}\n\nexport function reconcile<T extends Registro>(local: T[], remoto: T[]): T[] {\n  const resultado: T[] = []\n  const idsLocais = new Set<string>()\n  const idsRemotos = new Set<string>()\n\n  // Adiciona registros de local que não estão em remoto\n  for (const item of local) {\n    if (!item.id || item.id === '') continue\n    idsLocais.add(item.id)\n    resultado.push(item)\n  }\n\n  // Mescla registros de local e remoto, resolvendo conflitos\n  for (const item of remoto) {\n    if (!item.id || item.id === '') continue\n    idsRemotos.add(item.id)\n\n    const index = resultado.findIndex(r => r.id === item.id)\n    if (index === -1) {\n      // Registro de remoto não está em local, adiciona-o\n      resultado.push(item)\n    } else {\n      // Registro de remoto está em local, resolve conflito\n      const registroLocal = resultado[index]\n      if (item.updatedAt > registroLocal.updatedAt ||\n          (item.updatedAt === registroLocal.updatedAt && item.messages?.length >= registroLocal.messages?.length)) {\n        resultado[index] = item\n      }\n    }\n  }\n\n  // Adiciona registros de remoto que não estão em local\n  for (const id of idsRemotos) {\n    if (!idsLocais.has(id)) {\n      const item = remoto.find(r => r.id === id)!\n      resultado.push(item)\n    }\n  }\n\n  return resultado\n}\n```",
+      "tokens": 363,
+      "segundos": 10.102,
+      "passou": 12,
+      "tipos": false
+    },
+    {
+      "rodada": 2,
+      "texto": "```ts\n// ARQUIVO: src/shared/reconcile.ts\n\nexport interface Registro {\n  id: string\n  updatedAt: number\n  messages?: unknown[]\n}\n\nexport function reconcile<T extends Registro>(local: T[], remoto: T[]): T[] {\n  const resultado: T[] = []\n  const idsLocais = new Set<string>()\n  const idsRemotos = new Set<string>()\n\n  // Adiciona registros de local que não estão em remoto\n  for (const item of local) {\n    if (!item.id || item.id === '') continue\n    idsLocais.add(item.id)\n    resultado.push(item)\n  }\n\n  // Mescla registros de local e remoto, resolvendo conflitos\n  for (const item of remoto) {\n    if (!item.id || item.id === '') continue\n    idsRemotos.add(item.id)\n\n    const index = resultado.findIndex(r => r.id === item.id)\n    if (index === -1) {\n      // Registro de remoto não está em local, adiciona-o\n      resultado.push(item)\n    } else {\n      // Registro de remoto está em local, resolve conflito\n      const registroLocal = resultado[index]\n      if (item.updatedAt > registroLocal.updatedAt ||\n          (item.updatedAt === registroLocal.updatedAt && item.messages?.length ?? 0 >= registroLocal.messages?.length ?? 0)) {\n        resultado[index] = item\n      }\n    }\n  }\n\n  // Adiciona registros de remoto que não estão em local\n  for (const id of idsRemotos) {\n    if (!idsLocais.has(id)) {\n      const item = remoto.find(r => r.id === id)!\n      resultado.push(item)\n    }\n  }\n\n  return resultado\n}\n```",
+      "tokens": 369,
+      "segundos": 6.464,
+      "passou": 0,
+      "tipos": false
+    }
+  ]
+}

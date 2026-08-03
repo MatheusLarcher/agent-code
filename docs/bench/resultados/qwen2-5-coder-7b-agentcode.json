@@ -1,0 +1,64 @@
+{
+  "model": "qwen2.5-coder-7b-agentcode",
+  "worktree": "C:\\Users\\mathe\\AppData\\Local\\Temp\\agent-code-bench\\lora",
+  "totalSeconds": 135.406,
+  "rounds": [
+    {
+      "round": 1,
+      "text": "```ts\n// ARQUIVO: src/shared/archive.ts\nexport interface Archivable { id: string; updatedAt: number; archived?: boolean }\n\n/** true apenas quando `archived === true`. */\nexport function isArchived(c: Archivable): boolean {\n  return c.archived ?? false\n}\n\n/** Separa a lista em visíveis e arquivadas, preservando a ordem original nas duas. */\nexport function partitionArchived<T extends Archivable>(list: T[]): { visible: T[]; archived: T[] } {\n  const visible: T[] = []\n  const archived: T[] = []\n  for (const c of list) {\n    if (isArchived(c)) archived.push(c)\n    else visible.push(c)\n  }\n  return { visible, archived }\n}\n\n/** Nova lista com o item `id` marcado/desmarcado. Imutável: não altera a lista\n *  nem os objetos recebidos. `id` inexistente → lista equivalente, sem mudanças. */\nexport function setArchived<T extends Archivable>(list: T[], id: string, archived: boolean): T[] {\n  const next = [...list]\n  for (let i = 0; i < next.length; i++) {\n    if (next[i].id === id) {\n      next[i] = { ...next[i], archived }\n      break\n    }\n  }\n  return next\n}\n\n/** Id da primeira conversa NÃO arquivada da lista, ou null se não houver. */\nexport function firstVisibleId<T extends Archivable>(list: T[]): string | null {\n  for (const c of list) if (!isArchived(c)) return c.id\n  return null\n}\n\n/** Ao arquivar `id`, qual conversa deve ficar ativa: a próxima não arquivada\n *  DEPOIS dele na lista; se não houver, a não arquivada mais próxima ANTES dele;\n *  se não sobrar nenhuma, null. Recebe a lista como está ANTES de arquivar. */\nexport function nextActiveAfterArchive<T extends Archivable>(list: T[], id: string): string | null {\n  const i = list.findIndex((c) => c.id === id)\n  if (i < 0) return null\n  for (let j = i + 1; j < list.length; j++) {\n    if (!isArchived(list[j])) return list[j].id\n  }\n  for (let j = i - 1; j >= 0; j--) {\n    if (!isArchived(list[j])) return list[j].id\n  }\n  return null\n}\n\n```",
+      "seconds": 27.93,
+      "promptTokens": 5969,
+      "outputTokens": 569,
+      "tokensPerSecond": 34.736519834156006,
+      "applied": [
+        "escreveu src/shared/archive.ts (52 linhas)"
+      ],
+      "failures": [],
+      "typecheck": true,
+      "typecheckOut": "",
+      "acceptancePassed": 17,
+      "acceptanceTotal": 22,
+      "acceptanceOut": "JSON report written to C:/Users/mathe/AppData/Local/Temp/agent-code-bench/lora/.bench-accept.json\n\n(node:23368) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
+      "suiteGreen": true,
+      "suiteOut": ""
+    },
+    {
+      "round": 2,
+      "text": "```ts\n// ARQUIVO: src/shared/archive.ts\nexport interface Archivable { id: string; updatedAt: number; archived?: boolean }\n\n/** true apenas quando `archived === true`. */\nexport function isArchived(c: Archivable): boolean {\n  return c.archived ?? false\n}\n\n/** Separa a lista em visíveis e arquivadas, preservando a ordem original nas duas. */\nexport function partitionArchived<T extends Archivable>(list: T[]): { visible: T[]; archived: T[] } {\n  const visible: T[] = []\n  const archived: T[] = []\n  for (const c of list) {\n    if (isArchived(c)) archived.push(c)\n    else visible.push(c)\n  }\n  return { visible, archived }\n}\n\n/** Nova lista com o item `id` marcado/desmarcado. Imutável: não altera a lista\n *  nem os objetos recebidos. `id` inexistente → lista equivalente, sem mudanças. */\nexport function setArchived<T extends Archivable>(list: T[], id: string, archived: boolean): T[] {\n  const next = [...list]\n  for (let i = 0; i < next.length; i++) {\n    if (next[i].id === id) {\n      next[i] = { ...next[i], archived }\n      break\n    }\n  }\n  return next\n}\n\n/** Id da primeira conversa NÃO arquivada da lista, ou null se não houver. */\nexport function firstVisibleId<T extends Archivable>(list: T[]): string | null {\n  for (const c of list) if (!isArchived(c)) return c.id\n  return null\n}\n\n/** Ao arquivar `id`, qual conversa deve ficar ativa: a próxima não arquivada\n *  DEPOIS dele na lista; se não houver, a não arquivada mais próxima ANTES dele;\n *  se não sobrar nenhuma, null. Recebe a lista como está ANTES de arquivar. */\nexport function nextActiveAfterArchive<T extends Archivable>(list: T[], id: string): string | null {\n  const i = list.findIndex((c) => c.id === id)\n  if (i < 0) return null\n  for (let j = i + 1; j < list.length; j++) {\n    if (!isArchived(list[j])) return list[j].id\n  }\n  for (let j = i - 1; j >= 0; j--) {\n    if (!isArchived(list[j])) return list[j].id\n  }\n  return null\n}\n\n```",
+      "seconds": 10.837,
+      "promptTokens": 6637,
+      "outputTokens": 569,
+      "tokensPerSecond": 54.49675313325203,
+      "applied": [
+        "escreveu src/shared/archive.ts (52 linhas)"
+      ],
+      "failures": [],
+      "typecheck": true,
+      "typecheckOut": "",
+      "acceptancePassed": 17,
+      "acceptanceTotal": 22,
+      "acceptanceOut": "JSON report written to C:/Users/mathe/AppData/Local/Temp/agent-code-bench/lora/.bench-accept.json\n\n(node:22440) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
+      "suiteGreen": true,
+      "suiteOut": ""
+    },
+    {
+      "round": 3,
+      "text": "```ts\n// ARQUIVO: src/shared/archive.ts\nexport interface Archivable { id: string; updatedAt: number; archived?: boolean }\n\n/** true apenas quando `archived === true`. */\nexport function isArchived(c: Archivable): boolean {\n  return c.archived ?? false\n}\n\n/** Separa a lista em visíveis e arquivadas, preservando a ordem original nas duas. */\nexport function partitionArchived<T extends Archivable>(list: T[]): { visible: T[]; archived: T[] } {\n  const visible: T[] = []\n  const archived: T[] = []\n  for (const c of list) {\n    if (isArchived(c)) archived.push(c)\n    else visible.push(c)\n  }\n  return { visible, archived }\n}\n\n/** Nova lista com o item `id` marcado/desmarcado. Imutável: não altera a lista\n *  nem os objetos recebidos. `id` inexistente → lista equivalente, sem mudanças. */\nexport function setArchived<T extends Archivable>(list: T[], id: string, archived: boolean): T[] {\n  const next = [...list]\n  for (let i = 0; i < next.length; i++) {\n    if (next[i].id === id) {\n      next[i] = { ...next[i], archived }\n      break\n    }\n  }\n  return next\n}\n\n/** Id da primeira conversa NÃO arquivada da lista, ou null se não houver. */\nexport function firstVisibleId<T extends Archivable>(list: T[]): string | null {\n  for (const c of list) if (!isArchived(c)) return c.id\n  return null\n}\n\n/** Ao arquivar `id`, qual conversa deve ficar ativa: a próxima não arquivada\n *  DEPOIS dele na lista; se não houver, a não arquivada mais próxima ANTES dele;\n *  se não sobrar nenhuma, null. Recebe a lista como está ANTES de arquivar. */\nexport function nextActiveAfterArchive<T extends Archivable>(list: T[], id: string): string | null {\n  const i = list.findIndex((c) => c.id === id)\n  if (i < 0) return null\n  for (let j = i + 1; j < list.length; j++) {\n    if (!isArchived(list[j])) return list[j].id\n  }\n  for (let j = i - 1; j >= 0; j--) {\n    if (!isArchived(list[j])) return list[j].id\n  }\n  return null\n}\n\n```",
+      "seconds": 10.876,
+      "promptTokens": 7305,
+      "outputTokens": 569,
+      "tokensPerSecond": 54.00380304461862,
+      "applied": [
+        "escreveu src/shared/archive.ts (52 linhas)"
+      ],
+      "failures": [],
+      "typecheck": true,
+      "typecheckOut": "",
+      "acceptancePassed": 17,
+      "acceptanceTotal": 22,
+      "acceptanceOut": "JSON report written to C:/Users/mathe/AppData/Local/Temp/agent-code-bench/lora/.bench-accept.json\n\n(node:21076) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
+      "suiteGreen": true,
+      "suiteOut": ""
+    }
+  ]
+}

@@ -1,0 +1,279 @@
+diff --git a/src/renderer/src/App.tsx b/src/renderer/src/App.tsx
+index 96da0ac..4dbc0db 100644
+--- a/src/renderer/src/App.tsx
++++ b/src/renderer/src/App.tsx
+@@ -21,6 +21,7 @@ import {
+   DEFAULT_EFFORT
+ } from '@shared/ipc'
+ import type { EffortLevel, ProjectTree } from '@shared/ipc'
++import { firstVisibleId, isArchived, nextActiveAfterArchive, setArchived } from '@shared/archive'
+ import { fileTouches, turnsOf } from './projectActivity'
+ import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
+ import { DEFAULT_TITLE } from './types'
+@@ -810,9 +811,10 @@ export function App(): JSX.Element {
+       setCollapsed(ui.collapsed)
+       setBrowserMinimized(ui.browserMinimized)
+       setBrowserWidth(ui.browserWidth)
+-      setActiveId(
+-        ui.activeId && loaded.some((c) => c.id === ui.activeId) ? ui.activeId : loaded[0]?.id ?? null
+-      )
++      // Uma conversa arquivada não pode ser a tela de abertura do app — nem a
++      // salva na UI anterior, nem como primeira da lista.
++      const salva = loaded.find((c) => c.id === ui.activeId)
++      setActiveId(salva && !isArchived(salva) ? salva.id : firstVisibleId(loaded))
+       // Seed the badge from storage: live events win, EXCEPT when the live
+       // value is a spurious zero and the stored snapshot is still valid —
+       // then the stored one prevails (same rule as the live-event guard).
+@@ -1082,11 +1084,19 @@ export function App(): JSX.Element {
+       setMinimizedQuestions((m) => withoutKey(m, id))
+       setQueue((q) => q.filter((m) => m.convId !== id))
+       setConversations(next)
+-      if (activeIdRef.current === id) setActiveId(next[0]?.id ?? null)
++      if (activeIdRef.current === id) setActiveId(firstVisibleId(next))
+     },
+     [setConnected, setBusy]
+   )
+ 
++  const archiveConversation = useCallback((id: string, archived: boolean): void => {
++    const anterior = convsRef.current
++    setConversations(setArchived(anterior, id, archived))
++    // Arquivar a conversa aberta deixaria a tela num item que sumiu da barra —
++    // então a vez passa para a vizinha visível.
++    if (archived && activeIdRef.current === id) setActiveId(nextActiveAfterArchive(anterior, id))
++  }, [])
++
+   // ---- agent connection ----
+   // In-flight connect promises per conversation: two concurrent sends (or a send
+   // racing the "Conectar" button) share ONE startAgent instead of disposing and
+@@ -1995,6 +2005,7 @@ export function App(): JSX.Element {
+         onNewChatIn={newChatIn}
+         onRename={renameConversation}
+         onDelete={deleteConversation}
++        onArchive={archiveConversation}
+         onSelectResult={selectConversationAt}
+       />
+ 
+diff --git a/src/renderer/src/components/Sidebar.test.tsx b/src/renderer/src/components/Sidebar.test.tsx
+index 1f75eba..7e557e5 100644
+--- a/src/renderer/src/components/Sidebar.test.tsx
++++ b/src/renderer/src/components/Sidebar.test.tsx
+@@ -41,6 +41,7 @@ function renderSidebar(onRename = vi.fn()): { onRename: ReturnType<typeof vi.fn>
+         onNewChatIn={() => {}}
+         onRename={onRename}
+         onDelete={() => {}}
++        onArchive={() => {}}
+         onSelectResult={() => {}}
+       />
+     </UiProvider>
+diff --git a/src/renderer/src/components/Sidebar.tsx b/src/renderer/src/components/Sidebar.tsx
+index 0d834cf..8c60651 100644
+--- a/src/renderer/src/components/Sidebar.tsx
++++ b/src/renderer/src/components/Sidebar.tsx
+@@ -2,6 +2,7 @@ import { useState } from 'react'
+ import type { Conversation } from '../types'
+ import { useUI } from '../ui/UiProvider'
+ import { IconSpinner } from './Icons'
++import { isArchived, partitionArchived } from '@shared/archive'
+ 
+ export interface SidebarProject {
+   path: string
+@@ -24,6 +25,8 @@ interface Props {
+   onNewChatIn: (path: string) => void
+   onRename: (id: string, title: string) => void
+   onDelete: (id: string) => void
++  /** Arquiva (true) ou desarquiva (false) uma conversa. */
++  onArchive: (id: string, archived: boolean) => void
+   /** Open a search hit, scrolling to the matching message (null → just open). */
+   onSelectResult: (convId: string, msgId: string | null) => void
+ }
+@@ -58,6 +61,20 @@ const IconChevron = ({ open }: { open: boolean }): JSX.Element => (
+     <polyline points="9 6 15 12 9 18" />
+   </svg>
+ )
++const IconArchive = (): JSX.Element => (
++  <svg width="14" height="14" viewBox="0 0 24 24" {...sv}>
++    <rect x="3" y="4" width="18" height="4" rx="1" />
++    <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
++    <line x1="10" y1="12" x2="14" y2="12" />
++  </svg>
++)
++const IconUnarchive = (): JSX.Element => (
++  <svg width="14" height="14" viewBox="0 0 24 24" {...sv}>
++    <rect x="3" y="4" width="18" height="4" rx="1" />
++    <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
++    <polyline points="9 14 12 11 15 14" />
++  </svg>
++)
+ const IconTrash = (): JSX.Element => (
+   <svg width="14" height="14" viewBox="0 0 24 24" {...sv}>
+     <polyline points="3 6 5 6 21 6" />
+@@ -144,6 +161,7 @@ interface ConvRowProps {
+   onCommit: () => void
+   onCancel: () => void
+   onDelete: (c: Conversation) => void
++  onArchive: (c: Conversation) => void
+ }
+ 
+ /**
+@@ -163,8 +181,10 @@ function ConvRow({
+   onEditChange,
+   onCommit,
+   onCancel,
+-  onDelete
++  onDelete,
++  onArchive
+ }: ConvRowProps): JSX.Element {
++  const arquivada = isArchived(c)
+   return (
+     <div
+       className={`conv-row ${active ? 'active' : ''} ${nested ? 'nested' : ''}`}
+@@ -202,6 +222,16 @@ function ConvRow({
+       ) : (
+         <span className="conv-title">{c.title}</span>
+       )}
++      <button
++        className="conv-archive"
++        title={arquivada ? 'Desarquivar' : 'Arquivar'}
++        onClick={(e) => {
++          e.stopPropagation()
++          onArchive(c)
++        }}
++      >
++        {arquivada ? <IconUnarchive /> : <IconArchive />}
++      </button>
+       <button
+         className="conv-del"
+         title="Excluir conversa"
+@@ -229,6 +259,9 @@ export function Sidebar(props: Props): JSX.Element {
+   const [editValue, setEditValue] = useState('')
+   // Free-text search over the user's own prompts across every conversation.
+   const [query, setQuery] = useState('')
++  // A seção de arquivadas começa fechada: ela existe para tirar ruído da barra,
++  // não para devolvê-lo logo abaixo.
++  const [arquivadasAbertas, setArquivadasAbertas] = useState(false)
+ 
+   const toggleProject = (path: string): void =>
+     setCollapsedProjects((prev) => {
+@@ -278,6 +311,7 @@ export function Sidebar(props: Props): JSX.Element {
+         onCommit={commitEdit}
+         onCancel={cancelEdit}
+         onDelete={confirmDelete}
++        onArchive={(conv) => props.onArchive(conv.id, !isArchived(conv))}
+       />
+     )
+   }
+@@ -314,10 +348,16 @@ export function Sidebar(props: Props): JSX.Element {
+   }
+ 
+   // ---- expanded sidebar ----
++  // Arquivada sai de tudo que é lista corrente (projeto, chats e busca) e só
++  // reaparece na seção própria, lá embaixo.
++  const arquivadas = partitionArchived(projects.flatMap((p) => p.conversations)).archived
++  const projetosVisiveis = projects.map((p) => ({ ...p, conversations: partitionArchived(p.conversations).visible }))
++  const recentesVisiveis = partitionArchived(recents).visible
++
+   const q = query.trim()
+   const fq = fold(q)
+   const results = q
+-    ? projects
++    ? projetosVisiveis
+         .flatMap((p) => p.conversations)
+         .map((c) => ({ c, m: matchPrompt(c, q, fq) }))
+         .filter((r): r is { c: Conversation; m: PromptMatch } => r.m != null)
+@@ -382,10 +422,10 @@ export function Sidebar(props: Props): JSX.Element {
+             </button>
+           </div>
+ 
+-          {projects.length === 0 && <div className="side-empty">Nenhum projeto</div>}
++          {projetosVisiveis.length === 0 && <div className="side-empty">Nenhum projeto</div>}
+ 
+           <div className="project-list">
+-            {projects.map((p) => {
++            {projetosVisiveis.map((p) => {
+               const open = !collapsedProjects.has(p.path)
+               const busy = p.conversations.some((c) => props.busyIds.has(c.id))
+               return (
+@@ -422,12 +462,26 @@ export function Sidebar(props: Props): JSX.Element {
+           <div className="side-section-head">
+             <span className="side-section-title">Chats</span>
+           </div>
+-          {recents.length === 0 ? (
++          {recentesVisiveis.length === 0 ? (
+             <div className="side-empty">Nenhum chat</div>
+           ) : (
+-            <div className="conv-list">{recents.map((c) => renderConv(c, false, 'chat'))}</div>
++            <div className="conv-list">{recentesVisiveis.map((c) => renderConv(c, false, 'chat'))}</div>
+           )}
+         </section>
++
++        {arquivadas.length > 0 && (
++          <section className="side-section">
++            <div className="side-section-head">
++              <button className="side-section-toggle" onClick={() => setArquivadasAbertas((v) => !v)}>
++                <IconChevron open={arquivadasAbertas} />
++                <span className="side-section-title">Arquivadas ({arquivadas.length})</span>
++              </button>
++            </div>
++            {arquivadasAbertas && (
++              <div className="conv-list">{arquivadas.map((c) => renderConv(c, false, 'arquivadas'))}</div>
++            )}
++          </section>
++        )}
+       </div>
+       )}
+     </aside>
+diff --git a/src/renderer/src/styles.css b/src/renderer/src/styles.css
+index e0786d9..f63c987 100644
+--- a/src/renderer/src/styles.css
++++ b/src/renderer/src/styles.css
+@@ -401,6 +401,36 @@ body {
+   background: var(--line);
+   color: var(--err);
+ }
++/* Arquivar mora ao lado do excluir e segue a mesma regra: só aparece no hover
++   da linha, para não poluir a barra com dois ícones em cada conversa. */
++.conv-archive {
++  background: transparent;
++  border: none;
++  color: var(--muted);
++  cursor: pointer;
++  padding: 2px;
++  border-radius: 5px;
++  display: none;
++  flex-shrink: 0;
++}
++.conv-row:hover .conv-archive {
++  display: flex;
++}
++.conv-archive:hover {
++  background: var(--line);
++  color: var(--fg);
++}
++.side-section-toggle {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  background: transparent;
++  border: none;
++  padding: 0;
++  cursor: pointer;
++  color: inherit;
++  font: inherit;
++}
+ 
+ /* ---- top bar ---- */
+ .topbar {
+diff --git a/src/renderer/src/types.ts b/src/renderer/src/types.ts
+index 31a2e17..214b1b1 100644
+--- a/src/renderer/src/types.ts
++++ b/src/renderer/src/types.ts
+@@ -82,6 +82,9 @@ export interface Conversation {
+   /** Per-conversation "modo rápido" — Opus at up to ~2.5x output speed for a
+    *  higher per-token price. Only applies to models in FAST_MODE_MODELS. */
+   fastMode?: boolean
++  /** Arquivada pelo usuário: sai das listas e da busca da barra lateral, mas nada
++   *  é apagado — fica na seção "Arquivadas", de onde volta com um clique. */
++  archived?: boolean
+   /** SDK session id captured from the agent, used to resume the conversation later. */
+   sdkSessionId: string | null
+   /** Unsent composer text for this conversation (draft). Kept across conversation

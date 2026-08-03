@@ -1,0 +1,6 @@
+{
+  "model": "deepseek-coder-6.7b-base",
+  "api": "completion",
+  "tokens": 6000,
+  "segundos": 259
+}
