@@ -305,6 +305,14 @@ function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
     }
     return copy
   }
+  if (e.kind === 'system') {
+    // Remove any existing system events with the same model and cwd
+    // since we only want to show the latest status for a given model/cwd combination
+    const filtered = prev.filter(m =>
+      !(m.kind === 'system' && m.model === e.model && m.cwd === e.cwd)
+    );
+    return [...filtered, e as UIMessage];
+  }
   return [...prev, e as UIMessage]
 }
 
