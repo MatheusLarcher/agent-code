@@ -1,8 +1,9 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { app } from 'electron'
 import type { SpeechSetupProgress } from '../shared/ipc'
 import { LOCAL_SPEECH_MODELS, localSpeechRuntime } from '../shared/ipc'
 import { getCacheInfo } from './store'
@@ -32,9 +33,34 @@ const REQUIREMENTS: Record<'transformers' | 'nemo', string[]> = {
   nemo: ['nemo_toolkit[asr]']
 }
 
+/**
+ * Root that holds the venvs. This is machine-local storage (Electron's `userData`,
+ * same place `androidEnv.ts`/`attachments.ts` use) — NOT the cache folder, which
+ * the user may point at a OneDrive/Drive path meant only for the small .db and
+ * .md memories. A venv is gigabytes of binaries a cloud client shouldn't sync.
+ */
+function speechRoot(): string {
+  return join(app.getPath('userData'), 'speech-env')
+}
+
+/** One-time move of a venv built before this lived outside the cache folder —
+ *  skips a full reinstall (and re-download) for anyone who already has one. */
+function migrateFromCacheDir(runtime: 'transformers' | 'nemo'): void {
+  const legacy = join(getCacheInfo().dir, 'speech-env', runtime)
+  const target = join(speechRoot(), runtime)
+  if (existsSync(target) || !existsSync(legacy)) return
+  try {
+    mkdirSync(speechRoot(), { recursive: true })
+    renameSync(legacy, target)
+  } catch {
+    /* cross-device or locked: leave it, the caller falls back to a fresh install */
+  }
+}
+
 /** One folder per runtime — see REQUIREMENTS. */
 function envDir(runtime: 'transformers' | 'nemo'): string {
-  return join(getCacheInfo().dir, 'speech-env', runtime)
+  migrateFromCacheDir(runtime)
+  return join(speechRoot(), runtime)
 }
 
 /** python.exe of our layered venv (Windows layout; POSIX kept for tests/CI). */
@@ -214,7 +240,7 @@ async function ensureEnv(runtime: 'transformers' | 'nemo', onProgress: ProgressF
     mkdirSync(dir, { recursive: true })
     // --system-site-packages: herda o torch/CUDA que já existe, em vez de baixar
     // outra stack inteira (uns 4 GB) só para rodar o mesmo modelo.
-    await run(base.exe, ['-m', 'venv', '--system-site-packages', dir], getCacheInfo().dir)
+    await run(base.exe, ['-m', 'venv', '--system-site-packages', dir], speechRoot())
     onProgress({ stage: 'preparing', message: 'Instalando os componentes de voz…' })
     await run(
       py,
