@@ -565,12 +565,14 @@ export const OLLAMA_BASE_URL = 'https://ollama.com'
 
 // Curated Ollama Cloud models offered in the model selector (id = exact Ollama
 // tag). Models marked "assinatura" require a paid Ollama plan (the free tier
-// returns a permission_error); the gpt-oss and qwen3-coder tags work on the free
-// tier. Tags were verified live against https://ollama.com/v1/messages.
+// returns a permission_error); the gpt-oss, qwen3-coder and gemma4 tags work on
+// the free tier. Tags were verified live against https://ollama.com/v1/messages.
 export const OLLAMA_MODELS = [
   { id: 'qwen3-coder:480b-cloud', label: 'Qwen3 Coder 480B (Ollama)' },
   { id: 'gpt-oss:120b-cloud', label: 'GPT-OSS 120B (Ollama)' },
   { id: 'gpt-oss:20b-cloud', label: 'GPT-OSS 20B (Ollama)' },
+  { id: 'gemma4:cloud', label: 'Gemma 4 (Ollama)' },
+  { id: 'nemotron-3-super:cloud', label: 'Nemotron 3 Super (Ollama · assinatura)' },
   { id: 'deepseek-v4-pro:cloud', label: 'DeepSeek V4 Pro (Ollama · assinatura)' },
   { id: 'glm-5.2:cloud', label: 'GLM 5.2 (Ollama · assinatura)' },
   { id: 'kimi-k3:cloud', label: 'Kimi K3 (Ollama · assinatura)' }
@@ -634,6 +636,8 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'qwen3-coder:480b-cloud': 256_000,
   'gpt-oss:120b-cloud': 128_000,
   'gpt-oss:20b-cloud': 128_000,
+  'gemma4:cloud': 256_000,
+  'nemotron-3-super:cloud': 256_000,
   'deepseek-v4-pro:cloud': 1_000_000,
   'glm-5.2:cloud': 1_000_000,
   'kimi-k3:cloud': 1_000_000

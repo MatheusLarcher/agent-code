@@ -30,10 +30,12 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
     expect(contextLimitFor('glm-5.2:cloud')).toBe(1_000_000)
   })
 
-  it('Ollama Cloud: Qwen3-Coder 256K, gpt-oss 128K, Kimi K3 1M', () => {
+  it('Ollama Cloud: Qwen3-Coder 256K, gpt-oss 128K, Gemma 4 256K, Nemotron 3 Super 256K, Kimi K3 1M', () => {
     expect(contextLimitFor('qwen3-coder:480b-cloud')).toBe(256_000)
     expect(contextLimitFor('gpt-oss:120b-cloud')).toBe(128_000)
     expect(contextLimitFor('gpt-oss:20b-cloud')).toBe(128_000)
+    expect(contextLimitFor('gemma4:cloud')).toBe(256_000)
+    expect(contextLimitFor('nemotron-3-super:cloud')).toBe(256_000)
     expect(contextLimitFor('kimi-k3:cloud')).toBe(1_000_000)
   })
 
@@ -64,6 +66,7 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision('qwen3-coder:480b-cloud')).toBe(false)
     expect(modelSupportsVision('gpt-oss:120b-cloud')).toBe(false)
     expect(modelSupportsVision('gpt-oss:20b-cloud')).toBe(false)
+    expect(modelSupportsVision('gemma4:cloud')).toBe(false)
     expect(modelSupportsVision('deepseek-v4-pro:cloud')).toBe(false)
     expect(modelSupportsVision('glm-5.2:cloud')).toBe(false)
   })
