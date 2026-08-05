@@ -10,7 +10,7 @@ import {
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { BrowserController } from './browserController'
-import { AgentSession } from './agentSession'
+import { AgentSession, type MessageOrigin } from './agentSession'
 import { RemoteServer } from './remote/remoteServer'
 import { RelayClient } from './remote/relayClient'
 import { buildRemoteApk } from './remote/buildApk'
@@ -350,10 +350,40 @@ async function listAgentSkills(projectRoot: string): Promise<SkillInfo[]> {
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/**
+ * Mensagens que acabaram de chegar do celular, esperando o `agent:send` que
+ * fecha o círculo. A marca é consumida uma vez só e casa pelo TEXTO — assim uma
+ * mensagem digitada no PC na mesma conversa não rouba o carimbo de celular.
+ */
+const pendingRemote = new Map<string, { text: string; at: number }>()
+/** A volta pelo renderer é imediata, MAS a mensagem pode ficar na fila enquanto o
+ *  agente termina o turno anterior — por isso a janela é larga, e não de segundos.
+ *  Passou disso, a marca é lixo e a origem cai para o padrão (PC). */
+const REMOTE_MARK_TTL_MS = 30 * 60_000
+
+function markRemoteInbound(convId: string, text: string): void {
+  pendingRemote.set(convId, { text, at: Date.now() })
+}
+
+/** Consome a marca (uma vez) e diz de onde a mensagem partiu. */
+function takeOrigin(convId: string, outgoing: string): MessageOrigin {
+  const mark = pendingRemote.get(convId)
+  if (!mark) return 'pc'
+  pendingRemote.delete(convId)
+  const fresh = Date.now() - mark.at < REMOTE_MARK_TTL_MS
+  return fresh && outgoing === mark.text ? 'celular' : 'pc'
+}
+
 // LAN bridge: phones POST commands here; we forward them to the renderer (which
 // dispatches into the right conversation) and tee live agent events back over SSE.
 const remote = new RemoteServer({
-  onInbound: (convId, text, images) => send(Channels.remoteInbound, { convId, text, images }),
+  onInbound: (convId, text, images) => {
+    // A mensagem do celular dá a volta pelo renderer (que a despacha na conversa
+    // certa) e só então volta para cá no `agent:send`. Guardamos a marca aqui,
+    // que é o único ponto que SABE que a origem é o celular.
+    markRemoteInbound(convId, text)
+    send(Channels.remoteInbound, { convId, text, images })
+  },
   onSetSkipPerms: (on) => send(Channels.remoteSetSkipPerms, { on }),
   onSetModel: (convId, model, effort) => send(Channels.remoteSetModel, { convId, model, effort }),
   onRecoveryAction: (convId, action) => send(Channels.remoteRecoveryAction, { convId, action }),
@@ -753,7 +783,7 @@ function registerIpc(): void {
       const saved: Array<{ name: string; path: string }> =
         files && files.length > 0 ? await saveAttachments(convId, files) : []
       const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
-      await sessions.get(convId)?.send(finalText, images, messageUuid)
+      await sessions.get(convId)?.send(finalText, images, messageUuid, takeOrigin(convId, text))
     }
   )
 

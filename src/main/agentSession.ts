@@ -9,6 +9,7 @@ import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { renderMemoryIndex } from './memoryIndex'
 import { existsSync, readFileSync } from 'node:fs'
+import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { readSessionTasks, watchSessionTasks } from './sessionTasks'
 import { randomUUID } from 'node:crypto'
@@ -85,6 +86,25 @@ Rules: use the ABSOLUTE path to the finished file that already exists on disk; e
 file; only do this for real deliverable files the user asked for (NOT for source code you edited
 in the project). After building something like an APK, locate the resulting file and emit its
 marker so the user can download it right here.`
+
+/** De onde a mensagem do usuário partiu: o próprio PC ou um celular pareado na
+ *  ponte LAN (`remote/remoteServer.ts`). */
+export type MessageOrigin = 'pc' | 'celular'
+
+/**
+ * Carimbo que abre TODA mensagem do usuário.
+ *
+ * Sem ele o modelo só tem a data que veio no system prompt — que é do INÍCIO da
+ * sessão e envelhece enquanto a conversa segue (uma sessão que atravessa a
+ * meia-noite passa o dia inteiro errando o "hoje"). E, com a ponte LAN, o mesmo
+ * chat recebe mensagem do PC e do celular sem nada distinguir as duas.
+ */
+export function buildContextStamp(origin: MessageOrigin, now: Date = new Date(), machine: string = hostname()): string {
+  const quando = now.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' })
+  const fuso = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const de = origin === 'celular' ? `do celular, pela ponte LAN do PC ${machine}` : `do PC ${machine}`
+  return `[Contexto do sistema: mensagem enviada ${de} em ${quando} (${fuso}).]`
+}
 
 // Shown to the model only when the "Modo econômico" toggle is ON in the UI.
 // Instructs the LLM to skip validation/build/tests for trivial tasks to save tokens.
@@ -374,7 +394,12 @@ export class AgentSession {
     }
   }
 
-  async send(text: string, images?: ImageAttachment[], messageUuid?: string): Promise<void> {
+  async send(
+    text: string,
+    images?: ImageAttachment[],
+    messageUuid?: string,
+    origin: MessageOrigin = 'pc'
+  ): Promise<void> {
     const uuid = messageUuid || randomUUID()
     const receiptText = text.length > 500 ? `${text.slice(0, 500)}…` : text
     this.submittedMessages.set(uuid, receiptText)
@@ -394,6 +419,12 @@ export class AgentSession {
         'tivessem existido — e atenda apenas à mensagem a seguir.]'
       outText = text ? `${note}\n\n${text}` : note
     }
+    // Data/hora e máquina de origem, sempre. Fica de FORA do `outText` de
+    // propósito: o relay de visão abaixo recebe a mensagem crua do usuário como
+    // pista da imagem, e o carimbo só atrapalharia essa descrição. Ele é colado
+    // por último, nos dois caminhos de saída.
+    const stamp = buildContextStamp(origin)
+    const stamped = (body: string): string => (body ? `${stamp}\n\n${body}` : stamp)
 
     // vision_fallback_router — the picked model can't see images (most Ollama
     // Cloud models are text-only): intercept BEFORE it ever reaches the SDK.
@@ -413,7 +444,7 @@ export class AgentSession {
       }
       this.input.push({
         type: 'user',
-        message: { role: 'user', content: merged },
+        message: { role: 'user', content: stamped(merged) },
         parent_tool_use_id: null,
         uuid
       } as SDKUserMessage)
@@ -422,13 +453,15 @@ export class AgentSession {
 
     // With images, send a content-block array (image blocks first, then the
     // text) instead of a plain string — the native Anthropic image format.
-    let content: unknown = outText
+    let content: unknown = stamped(outText)
     if (images && images.length > 0) {
       const blocks: unknown[] = images.map((img) => ({
         type: 'image',
         source: { type: 'base64', media_type: img.mediaType, data: img.data }
       }))
-      if (outText) blocks.push({ type: 'text', text: outText })
+      // Antes o bloco de texto sumia quando a mensagem era só imagem; o carimbo
+      // nunca é vazio, então agora ele sempre acompanha.
+      blocks.push({ type: 'text', text: stamped(outText) })
       content = blocks
     }
     const msg: SDKUserMessage = {
