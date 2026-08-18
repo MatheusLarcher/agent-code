@@ -18,6 +18,8 @@ vi.mock('./config', () => ({
 }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => codexState.connected }))
 vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: ensureCodexProxyMock }))
+const projectOutlineMock = vi.hoisted(() => vi.fn(async () => '[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]'))
+vi.mock('./projectOutline', () => ({ buildProjectOutline: projectOutlineMock }))
 
 // Captures the Options object start() hands to the SDK, and ends the stream at
 // once so start() returns instead of waiting on a real agent.
@@ -79,6 +81,8 @@ beforeEach(() => {
   codexState.connected = true
   queryMock.mockClear()
   ensureCodexProxyMock.mockClear()
+  projectOutlineMock.mockReset()
+  projectOutlineMock.mockResolvedValue('[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]')
 })
 
 describe('AgentSession — fluxo de permissão', () => {
@@ -490,8 +494,10 @@ describe('AgentSession — vision_fallback_router', () => {
 
     expect(describeImagesMock).not.toHaveBeenCalled()
     const [msg] = pushedMessages(s)
-    // O texto vai puro, só precedido do carimbo de contexto (data/hora + máquina).
-    expect(msg.message.content).toBe(`${buildContextStamp('pc')}\n\nsó texto, sem imagem`)
+    // O texto recebe o carimbo e o índice fresco de documentação do projeto.
+    expect(msg.message.content).toBe(
+      `${buildContextStamp('pc')}\n\n[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]\n\nsó texto, sem imagem`
+    )
   })
 })
 
@@ -609,5 +615,45 @@ describe('AgentSession — carimbo de data/hora e máquina', () => {
     const blocks = pushedMessages(s).at(-1)!.message.content as Array<{ type: string; text?: string }>
     expect(blocks.at(-1)!.type).toBe('text')
     expect(blocks.at(-1)!.text).toContain('[Contexto do sistema:')
+  })
+})
+
+describe('AgentSession — índice de docs por mensagem', () => {
+  it('recalcula e anexa o índice em cada envio', async () => {
+    projectOutlineMock
+      .mockResolvedValueOnce('[PROJECT_DOCS_OUTLINE]\ndocs/\n  primeiro.md\n[/PROJECT_DOCS_OUTLINE]')
+      .mockResolvedValueOnce('[PROJECT_DOCS_OUTLINE]\ndocs/\n  segundo.md\n[/PROJECT_DOCS_OUTLINE]')
+    const { s } = makeSession()
+
+    await s.send('primeira')
+    await s.send('segunda')
+
+    const messages = pushedMessages(s)
+    expect(messages[0].message.content).toContain('primeiro.md')
+    expect(messages[1].message.content).toContain('segundo.md')
+    expect(projectOutlineMock).toHaveBeenCalledTimes(2)
+    expect(projectOutlineMock).toHaveBeenCalledWith('/proj')
+  })
+
+  it('falha do índice não bloqueia nem perde a mensagem', async () => {
+    projectOutlineMock.mockRejectedValueOnce(new Error('sem acesso'))
+    const { s } = makeSession()
+
+    await s.send('continue mesmo assim')
+
+    const content = pushedMessages(s).at(-1)!.message.content as string
+    expect(content).toContain('outline unavailable for this dispatch')
+    expect(content.endsWith('\n\ncontinue mesmo assim')).toBe(true)
+  })
+
+  it('não envia o índice como pista para o relay de visão', async () => {
+    describeImagesMock.mockResolvedValueOnce('descrição')
+    projectOutlineMock.mockResolvedValueOnce('[PROJECT_DOCS_OUTLINE]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_OUTLINE]')
+    const { s } = makeSession({ model: 'glm-5.2:cloud' })
+
+    await s.send('analise a tela', [{ mediaType: 'image/png', data: 'AAA' }])
+
+    expect(describeImagesMock).toHaveBeenCalledWith(expect.any(Array), 'analise a tela')
+    expect(pushedMessages(s).at(-1)!.message.content as string).toContain('arquitetura.md')
   })
 })

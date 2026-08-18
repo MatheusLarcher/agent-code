@@ -17,6 +17,7 @@ import { isOllamaModel, isOpenAIModel, modelSupportsFastMode, modelSupportsVisio
 import { ensureCodexProxyRunning } from './codexProxy'
 import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
+import { buildProjectOutline } from './projectOutline'
 import type {
   AskQuestion,
   AgentInterruptResult,
@@ -478,12 +479,18 @@ export class AgentSession {
         'tivessem existido — e atenda apenas à mensagem a seguir.]'
       outText = text ? `${note}\n\n${text}` : note
     }
-    // Data/hora e máquina de origem, sempre. Fica de FORA do `outText` de
-    // propósito: o relay de visão abaixo recebe a mensagem crua do usuário como
-    // pista da imagem, e o carimbo só atrapalharia essa descrição. Ele é colado
-    // por último, nos dois caminhos de saída.
+    // Data/hora, máquina de origem e o índice fresco de `docs/`, sempre. Ficam
+    // FORA do `outText` de propósito: o relay de visão abaixo recebe a mensagem
+    // crua do usuário como pista da imagem. O contexto é colado só no payload final.
     const stamp = buildContextStamp(origin)
-    const stamped = (body: string): string => (body ? `${stamp}\n\n${body}` : stamp)
+    let docsOutline: string
+    try {
+      docsOutline = await buildProjectOutline(this.opts.cwd)
+    } catch {
+      docsOutline = '[PROJECT_DOCS_OUTLINE]\ndocs/ [outline unavailable for this dispatch]\n[/PROJECT_DOCS_OUTLINE]'
+    }
+    const stamped = (body: string): string =>
+      body ? `${stamp}\n\n${docsOutline}\n\n${body}` : `${stamp}\n\n${docsOutline}`
 
     // vision_fallback_router — the picked model can't see images (most Ollama
     // Cloud models are text-only): intercept BEFORE it ever reaches the SDK.

@@ -30,6 +30,7 @@ Arquivo novo aparece **se montando** peça por peça, arquivo apagado **se desfa
 - 🖱️ **Selecionar um elemento da página** e enviá-lo pro chat com um clique.
 - 🗄️ **Pasta de dados escolhida por você** — um SQLite (configs, API key, token Android) + memórias `.md` na pasta que você selecionar (por usuário, não por projeto).
 - 🧩 **Kit de skills portátil** — skills versionadas no repo, ativadas automaticamente pelo `start.bat` ao clonar.
+- 📚 **Documentação sempre contextualizada** — cada mensagem recebe um índice fresco de todos os arquivos e subpastas em `docs/`, com os cabeçalhos Markdown, sem reenviar os arquivos inteiros.
 - 🗺️ **Mapa do projeto ao vivo** — veja os arquivos acendendo conforme o agente trabalha, com as etapas da tarefa no topo (aba **Projeto**, no painel Agentes).
 - 👥 **Painel de agentes** — quem está trabalhando na conversa, o que cada subagente está fazendo agora e quem ficou travado esperando sua resposta.
 - 📁 **Histórico por projeto** · ⚡ **Várias conversas em paralelo** · 📊 **Uso e limite da conta** · 🔒 **Permissões por ferramenta** ("permitir tudo" liga/desliga na hora).
@@ -45,7 +46,7 @@ npm install   # instala as dependências + baixa o Chromium
 npm run dev   # abre o app
 ```
 
-**Requisitos:** Node.js 20+ (o `start.bat` baixa uma cópia portátil se necessário). Na primeira conversa com Claude, o app abre o login no navegador; alternativamente, use `ANTHROPIC_API_KEY`. Para voz, configure uma chave OpenAI em **Configurações**. Modelos Ollama Cloud exigem a chave do Ollama, também em **Configurações**.
+**Requisitos:** Node.js 20+ (o `start.bat` baixa uma cópia portátil se necessário). Na primeira conversa com Claude, o app abre o login no navegador; alternativamente, use `ANTHROPIC_API_KEY`. Para voz, configure uma chave OpenAI em **Configurações**. Essa chave OpenAI é exclusivamente para voz: os modelos GPT usam login OAuth do ChatGPT + backend Codex/proxy local, nunca a OpenAI API com chave. Modelos Ollama Cloud exigem a chave do Ollama, também em **Configurações**.
 
 **Roda 100% nativo no Windows — não precisa de WSL/Subsistema Linux.** O agente (CLI do Claude Code) é o binário nativo Windows que o Agent SDK distribui (`@anthropic-ai/claude-agent-sdk-win32-x64`, `claude.exe`), executado direto pelo Node do sistema. Nada no app depende de Linux, WSL ou de qualquer camada de compatibilidade.
 
