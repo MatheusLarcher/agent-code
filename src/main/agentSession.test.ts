@@ -32,7 +32,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => {
     }
   }
 })
-import { AgentSession, OPENAI_MAX_TURNS } from './agentSession'
+import { AgentSession, OPENAI_MAX_TURNS, buildContextStamp } from './agentSession'
 import type { BrowserController } from './browserController'
 
 const describeImagesMock = vi.fn()
@@ -490,7 +490,8 @@ describe('AgentSession — vision_fallback_router', () => {
 
     expect(describeImagesMock).not.toHaveBeenCalled()
     const [msg] = pushedMessages(s)
-    expect(msg.message.content).toBe('só texto, sem imagem')
+    // O texto vai puro, só precedido do carimbo de contexto (data/hora + máquina).
+    expect(msg.message.content).toBe(`${buildContextStamp('pc')}\n\nsó texto, sem imagem`)
   })
 })
 
@@ -569,5 +570,44 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(queryMock).not.toHaveBeenCalled()
     expect(ensureCodexProxyMock).not.toHaveBeenCalled()
     expect(emit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error', text: expect.stringMatching(/login/i) }))
+  })
+})
+
+describe('AgentSession — carimbo de data/hora e máquina', () => {
+  it('formata o carimbo do PC com data, hora, fuso e nome da máquina', () => {
+    const stamp = buildContextStamp('pc', new Date(2026, 7, 4, 22, 31, 5), 'MATHEUS-NOTE')
+    expect(stamp).toContain('do PC MATHEUS-NOTE')
+    expect(stamp).toContain('04/08/2026')
+    expect(stamp).toContain('22:31:05')
+    expect(stamp).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone)
+  })
+
+  it('carimbo do celular deixa claro que veio pela ponte LAN', () => {
+    const stamp = buildContextStamp('celular', new Date(2026, 7, 4, 22, 31, 5), 'MATHEUS-NOTE')
+    expect(stamp).toContain('do celular, pela ponte LAN do PC MATHEUS-NOTE')
+  })
+
+  it('toda mensagem sai carimbada, com o texto do usuário preservado abaixo', async () => {
+    const { s } = makeSession()
+    await s.send('roda os testes')
+    const content = pushedMessages(s).at(-1)!.message.content as string
+    expect(content).toMatch(/^\[Contexto do sistema: mensagem enviada do PC /)
+    expect(content.endsWith('\n\nroda os testes')).toBe(true)
+  })
+
+  it('origem celular muda o carimbo da mesma mensagem', async () => {
+    const { s } = makeSession()
+    await s.send('roda os testes', undefined, undefined, 'celular')
+    expect(pushedMessages(s).at(-1)!.message.content as string).toContain('do celular')
+  })
+
+  // Mensagem só com imagem tinha texto vazio e ia sem nenhum bloco de texto —
+  // o carimbo não pode sumir junto.
+  it('mensagem sem texto ainda leva o carimbo', async () => {
+    const { s } = makeSession()
+    await s.send('', [{ mediaType: 'image/png', data: 'AAA' }])
+    const blocks = pushedMessages(s).at(-1)!.message.content as Array<{ type: string; text?: string }>
+    expect(blocks.at(-1)!.type).toBe('text')
+    expect(blocks.at(-1)!.text).toContain('[Contexto do sistema:')
   })
 })
