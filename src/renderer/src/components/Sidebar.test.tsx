@@ -82,3 +82,65 @@ describe('Sidebar — renomear conversa', () => {
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 })
+
+describe('Sidebar — busca por projeto', () => {
+  function makeSearchConv(id: string, title: string, updatedAt: number, text?: string): Conversation {
+    return {
+      ...makeConv(),
+      id,
+      title,
+      updatedAt,
+      messages: text ? [{ id: `${id}-msg`, kind: 'user', text }] : []
+    }
+  }
+
+  function renderSearch(projects: Array<{ path: string; name: string; conversations: Conversation[] }>, onSelectResult = vi.fn()) {
+    render(
+      <UiProvider>
+        <Sidebar
+          collapsed={false}
+          onToggleCollapse={() => {}}
+          projects={projects}
+          recents={[]}
+          activeId={null}
+          busyIds={new Set()}
+          onSelect={() => {}}
+          onNewChat={() => {}}
+          onNewProject={() => {}}
+          onNewChatIn={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onSelectResult={onSelectResult}
+        />
+      </UiProvider>
+    )
+    return onSelectResult
+  }
+
+  it('prioriza nome exato do projeto sobre prompt mais recente', () => {
+    const exact = makeSearchConv('exact', 'Outra conversa', 1, 'nada')
+    const prompt = makeSearchConv('prompt', 'Conversa recente', 999, 'meu-app apareceu aqui')
+    renderSearch([
+      { path: 'C:/meu-app', name: 'meu-app', conversations: [exact] },
+      { path: 'C:/outro', name: 'outro', conversations: [prompt] }
+    ])
+    fireEvent.change(screen.getByPlaceholderText('Buscar conversas ou projetos…'), { target: { value: 'meu-app' } })
+    const titles = screen.getAllByText(/Outra conversa|Conversa recente/)
+    expect(titles[0].textContent).toContain('Outra conversa')
+    expect(screen.getAllByText('Projeto: meu-app').length).toBeGreaterThan(0)
+  })
+
+  it('busca projeto sem acento e passa null ao abrir resultado de projeto', () => {
+    const onSelectResult = renderSearch([{ path: 'C:/relatorios', name: 'Relatórios', conversations: [makeSearchConv('c2', 'Resumo', 1)] }])
+    fireEvent.change(screen.getByPlaceholderText('Buscar conversas ou projetos…'), { target: { value: 'relatorios' } })
+    fireEvent.click(screen.getByText('Resumo'))
+    expect(onSelectResult).toHaveBeenCalledWith('c2', null)
+  })
+
+  it('mantém o id da mensagem ao abrir resultado de prompt', () => {
+    const onSelectResult = renderSearch([{ path: 'C:/outro', name: 'outro', conversations: [makeSearchConv('c3', 'Resumo', 1, 'preciso procurar orçamento')] }])
+    fireEvent.change(screen.getByPlaceholderText('Buscar conversas ou projetos…'), { target: { value: 'orçamento' } })
+    fireEvent.click(screen.getByText('Resumo'))
+    expect(onSelectResult).toHaveBeenCalledWith('c3', 'c3-msg')
+  })
+})

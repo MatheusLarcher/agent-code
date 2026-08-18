@@ -91,31 +91,55 @@ function makeSnippet(text: string, q: string): string {
 
 interface PromptMatch {
   snippet: string
-  /** Id of the matching USER message, or null when only the title matched. */
+  /** Id of the matching USER message, or null when the project/title matched. */
   messageId: string | null
+  rank: number
+  source: 'project' | 'title' | 'prompt'
 }
 
-/** First USER prompt that matches `q` (with its id), else the title, else null. */
-function matchPrompt(c: Conversation, q: string, fq: string): PromptMatch | null {
+function matchKind(value: string, fq: string): number {
+  const fv = fold(value)
+  if (fv === fq) return 3
+  if (fv.startsWith(fq)) return 2
+  if (fv.includes(fq)) return 1
+  return 0
+}
+
+/** Match project, title, or the first matching USER prompt, with relevance rank. */
+function matchPrompt(c: Conversation, projectName: string, q: string, fq: string): PromptMatch | null {
+  const projectKind = matchKind(projectName, fq)
+  if (projectKind) {
+    return { snippet: `Projeto: ${projectName}`, messageId: null, rank: 300 + projectKind, source: 'project' }
+  }
+
+  const titleKind = matchKind(c.title, fq)
+  if (titleKind) {
+    return { snippet: makeSnippet(c.title, q), messageId: null, rank: 200 + titleKind, source: 'title' }
+  }
+
   for (const m of c.messages) {
-    if (m.kind === 'user' && typeof m.text === 'string' && fold(m.text).includes(fq)) {
-      return { snippet: makeSnippet(m.text, q), messageId: m.id }
+    if (m.kind === 'user' && typeof m.text === 'string') {
+      const promptKind = matchKind(m.text, fq)
+      if (promptKind) {
+        return { snippet: makeSnippet(m.text, q), messageId: m.id, rank: 100 + promptKind, source: 'prompt' }
+      }
     }
   }
-  if (fold(c.title).includes(fq)) return { snippet: makeSnippet(c.title, q), messageId: null }
   return null
 }
 
 interface SearchResultRowProps {
   c: Conversation
+  projectName: string
   snippet: string
+  source: PromptMatch['source']
   active: boolean
   busy: boolean
   onOpen: () => void
 }
 
-/** A search hit: conversation title + the matching prompt excerpt. */
-function SearchResultRow({ c, snippet, active, busy, onOpen }: SearchResultRowProps): JSX.Element {
+/** A search hit: conversation title, project context, and matching excerpt. */
+function SearchResultRow({ c, projectName, snippet, source, active, busy, onOpen }: SearchResultRowProps): JSX.Element {
   return (
     <div
       className={`conv-row search-result ${active ? 'active' : ''}`}
@@ -125,7 +149,8 @@ function SearchResultRow({ c, snippet, active, busy, onOpen }: SearchResultRowPr
       <span className="conv-ico">{busy ? <IconSpinner className="spinner" /> : <IconChat />}</span>
       <div className="search-result-text">
         <span className="conv-title">{c.title}</span>
-        <span className="search-snippet">{snippet}</span>
+        {source !== 'project' && <span className="search-snippet">{snippet}</span>}
+        <span className="search-project">Projeto: {projectName}</span>
       </div>
     </div>
   )
@@ -318,10 +343,15 @@ export function Sidebar(props: Props): JSX.Element {
   const fq = fold(q)
   const results = q
     ? projects
-        .flatMap((p) => p.conversations)
-        .map((c) => ({ c, m: matchPrompt(c, q, fq) }))
-        .filter((r): r is { c: Conversation; m: PromptMatch } => r.m != null)
-        .sort((a, b) => b.c.updatedAt - a.c.updatedAt)
+        .flatMap((p) => p.conversations.map((c) => ({ c, projectName: p.name, projectPath: p.path })))
+        .map((candidate) => ({ ...candidate, m: matchPrompt(candidate.c, candidate.projectName, q, fq) }))
+        .filter((r): r is { c: Conversation; projectName: string; projectPath: string; m: PromptMatch } => r.m != null)
+        .sort((a, b) =>
+          b.m.rank - a.m.rank ||
+          b.c.updatedAt - a.c.updatedAt ||
+          fold(a.c.title).localeCompare(fold(b.c.title)) ||
+          a.c.id.localeCompare(b.c.id)
+        )
     : []
 
   return (
@@ -341,7 +371,7 @@ export function Sidebar(props: Props): JSX.Element {
           className="side-search-input"
           type="search"
           value={query}
-          placeholder="Buscar nos meus prompts…"
+          placeholder="Buscar conversas ou projetos…"
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
@@ -355,14 +385,16 @@ export function Sidebar(props: Props): JSX.Element {
               </span>
             </div>
             {results.length === 0 ? (
-              <div className="side-empty">Nenhum prompt encontrado.</div>
+              <div className="side-empty">Nenhum resultado encontrado.</div>
             ) : (
               <div className="conv-list">
-                {results.map(({ c, m }) => (
+                {results.map(({ c, projectName, projectPath, m }) => (
                   <SearchResultRow
-                    key={c.id}
+                    key={`${projectPath}:${c.id}`}
                     c={c}
+                    projectName={projectName}
                     snippet={m.snippet}
+                    source={m.source}
                     active={c.id === activeId}
                     busy={props.busyIds.has(c.id)}
                     onOpen={() => props.onSelectResult(c.id, m.messageId)}
