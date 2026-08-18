@@ -4,7 +4,8 @@ import {
   LOCAL_SPEECH_MODELS,
   OPENAI_VOICES,
   type AppConfig,
-  type CacheInfo
+  type CacheInfo,
+  type CodexStatus
 } from '@shared/ipc'
 import { useUI } from './UiProvider'
 
@@ -38,6 +39,8 @@ export function SettingsModal({
   const [showOllamaKey, setShowOllamaKey] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [cache, setCache] = useState<CacheInfo | null>(null)
+  const [codex, setCodex] = useState<CodexStatus>({ connected: false })
+  const [codexBusy, setCodexBusy] = useState(false)
   const openAiRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -46,6 +49,7 @@ export function SettingsModal({
       setLoaded(true)
     })
     void window.api.getCacheInfo().then(setCache)
+    void window.api.codexStatus().then(setCodex)
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
@@ -89,6 +93,27 @@ export function SettingsModal({
       'sucesso',
       `Pasta de dados movida para: ${next.dir}. Seus dados (banco + memórias) foram transferidos.`
     )
+  }
+
+  const connectCodex = async (): Promise<void> => {
+    setCodexBusy(true)
+    try {
+      const result = await window.api.codexLogin()
+      if (result.ok) {
+        setCodex(await window.api.codexStatus())
+        notify('sucesso', 'Conectado com o ChatGPT.')
+      } else {
+        notify('erro', 'Não foi possível conectar com o ChatGPT. Tente novamente.')
+      }
+    } finally {
+      setCodexBusy(false)
+    }
+  }
+
+  const disconnectCodex = async (): Promise<void> => {
+    await window.api.codexLogout()
+    setCodex({ connected: false })
+    notify('aviso', 'Desconectado do ChatGPT.')
   }
 
   return (
@@ -290,7 +315,7 @@ export function SettingsModal({
                 <span className="settings-desc">
                   Adiciona modelos do Ollama Cloud ao seletor de modelo. Eles rodam pela API compatível
                   com a Anthropic do Ollama e usam a sua API key — não precisam do login do Claude.
-                  Qwen3 Coder e GPT-OSS funcionam no plano grátis; DeepSeek V4 Pro, GLM 5.2 e Kimi K3
+                  GPT-OSS e Gemma 4 funcionam no plano grátis; Nemotron 3 Ultra/Super, DeepSeek V4 Pro, GLM 5.2 e Kimi K3
                   exigem assinatura do Ollama (ollama.com/upgrade).
                 </span>
               </span>
@@ -325,6 +350,37 @@ export function SettingsModal({
               no seu computador (no banco da pasta de dados).
             </span>
           </label>
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-row">
+            <span>
+              <strong>🤖 OpenAI (ChatGPT Plus/Pro/Team)</strong>
+              <span className="settings-desc">
+                Adiciona modelos GPT ao seletor, cobrados pela sua ASSINATURA do ChatGPT (não por
+                API key). Conecte com a mesma conta que você usa no ChatGPT/Codex — o uso entra na
+                sua cota do plano, sujeita ao limite semanal dele. Recurso experimental: usa um
+                mecanismo não-oficial e pode parar de funcionar se a OpenAI mudar algo do lado dela.
+              </span>
+            </span>
+          </div>
+          <div className="settings-row">
+            {codex.connected ? (
+              <>
+                <span className="settings-hint">
+                  Conectado{codex.email ? ` como ${codex.email}` : ''}
+                  {codex.planType ? ` (plano ${codex.planType})` : ''}.
+                </span>
+                <button className="btn ghost" type="button" onClick={disconnectCodex} disabled={codexBusy}>
+                  Desconectar
+                </button>
+              </>
+            ) : (
+              <button className="btn primary" type="button" onClick={connectCodex} disabled={codexBusy}>
+                {codexBusy ? 'Conectando…' : 'Conectar com ChatGPT'}
+              </button>
+            )}
+          </div>
         </section>
         </div>
 

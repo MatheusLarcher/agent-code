@@ -30,13 +30,19 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
     expect(contextLimitFor('glm-5.2:cloud')).toBe(1_000_000)
   })
 
-  it('Ollama Cloud: Qwen3-Coder 256K, gpt-oss 128K, Gemma 4 256K, Nemotron 3 Super 256K, Kimi K3 1M', () => {
-    expect(contextLimitFor('qwen3-coder:480b-cloud')).toBe(256_000)
+  it('Ollama Cloud: Nemotron 3 Ultra 256K, gpt-oss 128K, Gemma 4 256K, Nemotron 3 Super 256K, Kimi K3 1M', () => {
+    expect(contextLimitFor('nemotron-3-ultra:cloud')).toBe(256_000)
     expect(contextLimitFor('gpt-oss:120b-cloud')).toBe(128_000)
     expect(contextLimitFor('gpt-oss:20b-cloud')).toBe(128_000)
     expect(contextLimitFor('gemma4:cloud')).toBe(256_000)
     expect(contextLimitFor('nemotron-3-super:cloud')).toBe(256_000)
     expect(contextLimitFor('kimi-k3:cloud')).toBe(1_000_000)
+  })
+
+  it('GPT-5.6 Luna/Terra/Sol usam a janela oficial de 1,05M', () => {
+    expect(contextLimitFor('gpt-5.6-luna')).toBe(1_050_000)
+    expect(contextLimitFor('gpt-5.6-terra')).toBe(1_050_000)
+    expect(contextLimitFor('gpt-5.6-sol')).toBe(1_050_000)
   })
 
   it('modelo desconhecido cai no fallback padrão', () => {
@@ -58,12 +64,18 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision(undefined)).toBe(true)
   })
 
+  it('GPT-5.6 mantém imagem nativa pelo tradutor Responses', () => {
+    expect(modelSupportsVision('gpt-5.6-luna')).toBe(true)
+    expect(modelSupportsVision('gpt-5.6-terra')).toBe(true)
+    expect(modelSupportsVision('gpt-5.6-sol')).toBe(true)
+  })
+
   it('Kimi K3 aceita imagem direto (multimodal nativo, herdou o slot do K2.7)', () => {
     expect(modelSupportsVision('kimi-k3:cloud')).toBe(true)
   })
 
   it('demais modelos Ollama são texto-only (400 real da API) — precisam do vision relay', () => {
-    expect(modelSupportsVision('qwen3-coder:480b-cloud')).toBe(false)
+    expect(modelSupportsVision('nemotron-3-ultra:cloud')).toBe(false)
     expect(modelSupportsVision('gpt-oss:120b-cloud')).toBe(false)
     expect(modelSupportsVision('gpt-oss:20b-cloud')).toBe(false)
     expect(modelSupportsVision('gemma4:cloud')).toBe(false)
@@ -86,7 +98,7 @@ describe('modelSupportsFastMode — quais modelos aceitam o modo rápido', () =>
     expect(modelSupportsFastMode('claude-sonnet-5')).toBe(false)
     expect(modelSupportsFastMode('claude-haiku-4-5')).toBe(false)
     expect(modelSupportsFastMode('claude-fable-5')).toBe(false)
-    expect(modelSupportsFastMode('qwen3-coder:480b-cloud')).toBe(false)
+    expect(modelSupportsFastMode('nemotron-3-ultra:cloud')).toBe(false)
     expect(modelSupportsFastMode('modelo-inexistente')).toBe(false)
     expect(modelSupportsFastMode(undefined)).toBe(false)
   })
@@ -98,5 +110,12 @@ describe('MODEL_EFFORT — esforço máximo do SDK', () => {
     expect(MODEL_EFFORT['claude-sonnet-5']).toContain('max')
     expect(MODEL_EFFORT['claude-fable-5']).toContain('max')
     expect(MODEL_EFFORT['claude-haiku-4-5']).toEqual(['low', 'medium', 'high'])
+  })
+
+  it('oferece low até max para toda a família GPT-5.6', () => {
+    const expected = ['low', 'medium', 'high', 'xhigh', 'max']
+    expect(MODEL_EFFORT['gpt-5.6-luna']).toEqual(expected)
+    expect(MODEL_EFFORT['gpt-5.6-terra']).toEqual(expected)
+    expect(MODEL_EFFORT['gpt-5.6-sol']).toEqual(expected)
   })
 })

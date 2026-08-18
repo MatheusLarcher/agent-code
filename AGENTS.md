@@ -1,43 +1,36 @@
-# agent-code — Codex Configuration
+# agent-code
 
-Desktop app (Electron + React + TypeScript) that wraps the Anthropic Agent SDK
-(`@anthropic-ai/Codex-agent-sdk`) in a chat UI, with an embedded browser, Android
-tooling, voice (OpenAI STT/TTS), and a LAN bridge so a phone can drive the same
-sessions. Build: `electron-vite`. Tests: `vitest`.
+Electron + React + TypeScript desktop app wrapping `@anthropic-ai/claude-agent-sdk`
+in a chat UI: embedded browser, Android tooling, voice (OpenAI STT/TTS), Windows
+control, and a LAN bridge so a phone can drive the same sessions.
 
 ## Layout
 
-- `src/main/` — Electron main process: agent sessions (`agentSession.ts`), browser
-  controller, Android tools, OpenAI audio (`openai.ts`), the phone bridge
-  (`remote/remoteServer.ts`), config/store.
-- `src/preload/` — IPC bridge exposed to the renderer.
-- `src/renderer/` — React UI (chat, composer, browser panel, modals).
-- `src/shared/` — types/helpers shared across processes.
-- `smartfone-remote/` — Capacitor phone client (the `www/` becomes the APK).
+`src/main/` Electron main — agent sessions, browser/android/windows tools, phone
+bridge (`remote/`) · `src/preload/` IPC bridge · `src/renderer/` React UI ·
+`src/shared/` cross-process types · `smartfone-remote/` Capacitor phone client
+(its `www/` becomes the APK).
+
+## Build & test
+
+- `npm run typecheck` — both tsconfigs (node + web).
+- `npm test` — vitest. `npm run build` — electron-vite **plus** the .NET native
+  Windows-control binary (`src/main/windowsControl/native/`, needs the dotnet SDK).
+- Run typecheck and tests after code changes; verify the build before committing.
+
+## Gotchas
+
+- The Claude CLI is the bundled npm dependency, resolved by `claudeCliPath()` in
+  `src/main/claudeCli.ts` — never a globally installed one. "Update Claude" for
+  this project means `npm install @anthropic-ai/claude-agent-sdk@latest`, then
+  typecheck + test + build. The system-wide `claude update` has no effect here.
+- `postinstall` runs `playwright install chromium`; a fresh clone needs it.
 
 ## Rules
 
-- Do what has been asked; nothing more, nothing less.
-- Prefer editing existing files over creating new ones. Don't create docs unless asked.
-- Keep working files out of the repo root — use `src/`, `tests/`, `docs/`, `scripts/`.
-- ALWAYS read a file before editing it.
 - NEVER commit secrets, credentials, or `.env` files.
-- NEVER add a `Co-Authored-By` trailer to commits unless `.Codex/settings.json` has
-  `attribution.commit` set. The Bash tool's default commit template may suggest one — ignore it.
+- NEVER add a `Co-Authored-By` trailer to commits unless `.claude/settings.json`
+  sets `attribution.commit`. It currently does not — ignore the Bash tool's
+  default commit template, which suggests one.
+- Keep working files out of the repo root: `src/`, `tests/`, `docs/`, `scripts/`.
 - Keep files under 500 lines. Validate input at system boundaries.
-
-## Build & Test
-
-- Typecheck: `npm run typecheck` (runs both `tsconfig.node.json` and `tsconfig.web.json`).
-- Build: `npm run build`. Tests: `npm test`.
-- ALWAYS run typecheck/tests after code changes and verify the build before committing.
-
-## Updating Codex in this project
-
-This app bundles its own Codex CLI binary via the `@anthropic-ai/Codex-agent-sdk`
-npm dependency (resolved by `claudeCliPath()` in `src/main/claudeCli.ts`, used for the login
-flow in `src/main/login.ts`). It does **not** use any globally-installed `Codex` CLI.
-
-When asked to "update Codex" / "Codex update" for **this project**, run
-`npm install @anthropic-ai/Codex-agent-sdk@latest`, then `npm run typecheck && npm test &&
-npm run build`. Do not run the system-wide `Codex update` command — it has no effect here.

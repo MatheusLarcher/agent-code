@@ -20,6 +20,7 @@ import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAud
 import { stopLocalSpeech, transcribeLocal } from './speech'
 import { isAuthenticated } from './auth'
 import { runClaudeLogin } from './login'
+import { codexStatus, codexLogout, runCodexLogin } from './codexAuth'
 import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
 import { loadAllConversationRecords, saveAllConversationRecords, type ConversationRecord } from './projectStore'
@@ -542,6 +543,24 @@ function registerIpc(): void {
     return { ok }
   })
 
+  // OpenAI Codex auth: same one-click OAuth pattern as Claude above, but
+  // against the ChatGPT subscription login instead of an Anthropic account.
+  ipcMain.handle(Channels.codexStatus, () => codexStatus())
+  ipcMain.handle(Channels.codexLogin, async () => {
+    authLog('=== codex:login start ===')
+    const openUrl = (url: string): void => {
+      authLog(`opening system browser: ${url}`)
+      void shell.openExternal(url)
+    }
+    const result = await runCodexLogin(openUrl, authLog)
+    authLog(`=== codex:login done: ok=${result.ok} message=${result.message ?? ''} ===`)
+    return result
+  })
+  ipcMain.handle(Channels.codexLogout, () => {
+    codexLogout()
+    authLog('=== codex:logout ===')
+  })
+
   ipcMain.handle(Channels.openaiTts, async (_e, text: string) => {
     const { apiKey, voice } = loadConfig().openai
     if (!apiKey.trim()) return { ok: false, error: 'no-key' }
@@ -731,8 +750,17 @@ function registerIpc(): void {
       (id) => send(Channels.agentPermissionExpired, { convId, id })
     )
     sessions.set(convId, s)
-    void s.start()
-    return { ok: true }
+    let ok = false
+    try {
+      ok = await s.start()
+    } catch (error) {
+      console.error(`Agent failed to start for conversation ${convId}:`, error)
+    }
+    if (!ok) {
+      if (sessions.get(convId) === s) sessions.delete(convId)
+      s.dispose()
+    }
+    return { ok }
   })
 
   ipcMain.handle(

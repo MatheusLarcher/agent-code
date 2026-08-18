@@ -4,6 +4,10 @@
 // the newer node:sqlite builtin and tries to bundle it).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 const configState = vi.hoisted(() => ({ windowsControlEnabled: false as unknown }))
+const codexState = vi.hoisted(() => ({ connected: true }))
+const ensureCodexProxyMock = vi.hoisted(() =>
+  vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:43210', secret: 'local-test-secret' }))
+)
 vi.mock('./config', () => ({
   loadConfig: () => ({
     windowsControlEnabled: configState.windowsControlEnabled,
@@ -12,6 +16,8 @@ vi.mock('./config', () => ({
     ollama: { enabled: false, apiKey: '' }
   })
 }))
+vi.mock('./codexAuth', () => ({ isCodexConnected: () => codexState.connected }))
+vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: ensureCodexProxyMock }))
 
 // Captures the Options object start() hands to the SDK, and ends the stream at
 // once so start() returns instead of waiting on a real agent.
@@ -26,7 +32,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => {
     }
   }
 })
-import { AgentSession } from './agentSession'
+import { AgentSession, OPENAI_MAX_TURNS } from './agentSession'
 import type { BrowserController } from './browserController'
 
 const describeImagesMock = vi.fn()
@@ -43,7 +49,7 @@ function pushedMessages(s: AgentSession): Array<{ message: { content: unknown };
 
 // Build a session without starting the SDK query loop — we only exercise the
 // permission gate (handlePermission / resolvePermission / setBypass).
-function makeSession(opts: { skipPermissions?: boolean; model?: string; fastMode?: boolean } = {}): {
+function makeSession(opts: { skipPermissions?: boolean; model?: string; fastMode?: boolean; effort?: string } = {}): {
   s: AgentSession
   emit: ReturnType<typeof vi.fn>
   ask: ReturnType<typeof vi.fn>
@@ -70,6 +76,9 @@ const handle = (s: AgentSession, message: unknown): void =>
 
 beforeEach(() => {
   configState.windowsControlEnabled = false
+  codexState.connected = true
+  queryMock.mockClear()
+  ensureCodexProxyMock.mockClear()
 })
 
 describe('AgentSession — fluxo de permissão', () => {
@@ -149,6 +158,13 @@ describe('AgentSession — fluxo de permissão', () => {
     expect(ask).toHaveBeenCalledTimes(1)
     s.setBypass(true)
     await expect(p).resolves.toEqual({ behavior: 'allow', updatedInput: input })
+  })
+
+  it('dispose nega permissões pendentes para não deixar a Query antiga viva', async () => {
+    const { s } = makeSession()
+    const pending = gate(s, 'Bash', { command: 'echo pending' })
+    s.dispose()
+    await expect(pending).resolves.toMatchObject({ behavior: 'deny', message: expect.stringMatching(/closed/i) })
   })
 })
 
@@ -502,5 +518,56 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
     const { s } = makeSession({ model: 'claude-sonnet-5', fastMode: true })
     await s.start()
     expect(optionsOfLastQuery().settings).toBeUndefined()
+  })
+})
+
+describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
+  const optionsOfLastQuery = (): Record<string, unknown> =>
+    (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
+
+  it('preserva ferramentas/permissões e fixa todos os subagentes no GPT selecionado', async () => {
+    const { s } = makeSession({ model: 'gpt-5.6-sol', effort: 'max' })
+    await s.start()
+
+    const options = optionsOfLastQuery()
+    const env = options.env as Record<string, string>
+    expect(options).toMatchObject({
+      cwd: '/proj',
+      model: 'gpt-5.6-sol',
+      effort: 'max',
+      maxTurns: OPENAI_MAX_TURNS,
+      permissionMode: 'default',
+      settingSources: ['user', 'project', 'local'],
+      systemPrompt: { type: 'preset', preset: 'claude_code' }
+    })
+    expect(options.mcpServers).toBeDefined()
+    expect(options.canUseTool).toEqual(expect.any(Function))
+    expect(env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:43210',
+      ANTHROPIC_AUTH_TOKEN: 'local-test-secret',
+      ANTHROPIC_API_KEY: '',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'gpt-5.6-sol',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.6-sol',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.6-sol',
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'gpt-5.6-sol',
+      CLAUDE_CODE_SUBAGENT_MODEL: 'gpt-5.6-sol'
+    })
+  })
+
+  it('não injeta proxy nem limite GPT numa sessão Anthropic', async () => {
+    const { s } = makeSession({ model: 'claude-sonnet-5' })
+    await expect(s.start()).resolves.toBe(true)
+    expect(optionsOfLastQuery().env).toBeUndefined()
+    expect(optionsOfLastQuery().maxTurns).toBeUndefined()
+    expect(ensureCodexProxyMock).not.toHaveBeenCalled()
+  })
+
+  it('falha antes de iniciar o SDK quando o ChatGPT está desconectado', async () => {
+    codexState.connected = false
+    const { s, emit } = makeSession({ model: 'gpt-5.6-luna' })
+    await expect(s.start()).resolves.toBe(false)
+    expect(queryMock).not.toHaveBeenCalled()
+    expect(ensureCodexProxyMock).not.toHaveBeenCalled()
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error', text: expect.stringMatching(/login/i) }))
   })
 })

@@ -41,6 +41,9 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     onWindowsControlChanged: vi.fn(() => () => {}),
     authStatus: vi.fn(async () => ({ authenticated: true })),
     authLogin: vi.fn(async () => ({ ok: true })),
+    codexStatus: vi.fn(async () => ({ connected: false })),
+    codexLogin: vi.fn(async () => ({ ok: true })),
+    codexLogout: vi.fn(async () => undefined),
     pathExists: vi.fn(async () => true),
     projectTree: vi.fn(async () => ({ nodes: [], truncated: false })),
     pickDirectory: vi.fn(async () => null),
@@ -139,9 +142,9 @@ async function emit(event: ChatEvent, convId = 'c1'): Promise<void> {
     agentEventCb?.({ convId, event })
   })
 }
-async function flushConnect(): Promise<void> {
+async function flushConnect(ok = true): Promise<void> {
   await act(async () => {
-    resolveStart.forEach((r) => r({ ok: true }))
+    resolveStart.forEach((r) => r({ ok }))
     resolveStart = []
   })
 }
@@ -167,6 +170,19 @@ async function pasteLine(line: string): Promise<void> {
 }
 
 describe('App — fila de mensagens (multi-sessão)', () => {
+  it('não envia nem marca conexão quando o main rejeita o startup da sessão', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('não pode cair em fila morta')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect(false)
+    await waitFor(() => expect(screen.getAllByText(/sessão do agente não iniciou/i).length).toBeGreaterThan(0))
+    expect(api.sendMessage).not.toHaveBeenCalled()
+  })
+
   it('enviar com a tarefa rodando ENFILEIRA (não cancela) e despacha no fim do turno', async () => {
     render(
       <UiProvider>
@@ -652,6 +668,32 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     fireEvent.change(select(), { target: { value: 'claude-haiku-4-5' } })
     expect(select().value).toBe('claude-haiku-4-5')
     expect(api.disposeAgent).not.toHaveBeenCalled()
+  })
+})
+
+describe('App — modelo GPT conectado por OAuth', () => {
+  it('mostra o GPT, preserva esforço e inicia sem consultar o login Anthropic', async () => {
+    api.codexStatus.mockResolvedValue({ connected: true })
+    const { container } = render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+
+    await waitFor(() => {
+      expect(Array.from(select().options).some((option) => option.value === 'gpt-5.6-sol')).toBe(true)
+    })
+    fireEvent.change(select(), { target: { value: 'gpt-5.6-sol' } })
+    await waitFor(() => expect(container.querySelector('.effort-trigger')?.textContent).toContain('Alto'))
+
+    await send('use uma ferramenta')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    expect(api.startAgent.mock.calls[0][0]).toMatchObject({
+      model: 'gpt-5.6-sol',
+      effort: 'high'
+    })
+    expect(api.authStatus).not.toHaveBeenCalled()
   })
 })
 

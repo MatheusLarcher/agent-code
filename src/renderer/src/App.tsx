@@ -15,8 +15,10 @@ import type {
 } from '@shared/ipc'
 import {
   isOllamaModel,
+  isOpenAIModel,
   modelSupportsFastMode,
   OLLAMA_MODELS,
+  OPENAI_MODELS,
   MODEL_EFFORT,
   DEFAULT_EFFORT
 } from '@shared/ipc'
@@ -381,8 +383,15 @@ export function App(): JSX.Element {
   const [voiceReady, setVoiceReady] = useState(false)
   // Whether Ollama Cloud is enabled with a key — adds its models to the selector.
   const [ollamaReady, setOllamaReady] = useState(false)
-  // Models offered in the selector: Claude always, Ollama Cloud when configured.
-  const models = useMemo(() => (ollamaReady ? [...MODELS, ...OLLAMA_MODELS] : MODELS), [ollamaReady])
+  // Whether a Codex (ChatGPT subscription) login exists — adds GPT models to the selector.
+  const [codexReady, setCodexReady] = useState(false)
+  // Models offered in the selector: Claude always, Ollama Cloud / GPT when configured.
+  const models = useMemo(() => {
+    let list = MODELS as { id: string; label: string }[]
+    if (ollamaReady) list = [...list, ...OLLAMA_MODELS]
+    if (codexReady) list = [...list, ...OPENAI_MODELS]
+    return list
+  }, [ollamaReady, codexReady])
   // Read-aloud speed (config), applied as the audio playbackRate (deterministic).
   const voiceSpeedRef = useRef(1)
   // Read-aloud (TTS): id of the message currently playing, and the <audio> in use.
@@ -856,6 +865,7 @@ export function App(): JSX.Element {
       setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
       voiceSpeedRef.current = c.openai?.speed || 1
     })
+    void window.api.codexStatus().then((s) => setCodexReady(s.connected))
   }, [])
 
   useEffect(() => window.api.onWindowsControlChanged(setWindowsControlEnabled), [])
@@ -1120,11 +1130,13 @@ export function App(): JSX.Element {
       const p = (async () => {
         // First run: if there's no Claude login yet, do /login for the user (opens
         // the system browser) instead of letting the chat tell them to type it.
-        // Ollama models authenticate with the Ollama API key (handled in main), so
-        // they skip the Anthropic login entirely.
-        const { authenticated } = isOllamaModel(conv.model)
-          ? { authenticated: true }
-          : await window.api.authStatus()
+        // Ollama models authenticate with the Ollama API key, and GPT models with
+        // the Codex OAuth login done in Settings (both handled in main), so they
+        // skip the Anthropic login entirely.
+        const { authenticated } =
+          isOllamaModel(conv.model) || isOpenAIModel(conv.model)
+            ? { authenticated: true }
+            : await window.api.authStatus()
         if (!authenticated) {
           notify('aviso', 'Abrindo o login do Claude no navegador… é só autenticar para continuar.')
           const { ok } = await window.api.authLogin()
@@ -1134,7 +1146,7 @@ export function App(): JSX.Element {
           }
           notify('sucesso', 'Login concluído!')
         }
-        await window.api.startAgent({
+        const started = await window.api.startAgent({
           convId: conv.id,
           cwd: conv.cwd,
           model: conv.model,
@@ -1144,12 +1156,16 @@ export function App(): JSX.Element {
           economyMode: conv.economyMode === true,
           fastMode: conv.fastMode === true
         })
+        if (!started.ok) throw new Error('a sessão do agente não iniciou')
         setConnected(conv.id, true)
         setPermissions((pp) => withoutKey(pp, conv.id))
         setMinimizedQuestions((m) => withoutKey(m, conv.id))
       })()
       connectingRef.current.set(conv.id, p)
-      void p.finally(() => connectingRef.current.delete(conv.id))
+      void p.then(
+        () => connectingRef.current.delete(conv.id),
+        () => connectingRef.current.delete(conv.id)
+      )
       return p
     },
     [setConnected, notify]
@@ -1726,6 +1742,7 @@ export function App(): JSX.Element {
       setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
       voiceSpeedRef.current = c.openai?.speed || 1
     })
+    void window.api.codexStatus().then((s) => setCodexReady(s.connected))
   }, [])
 
   // Stop any read-aloud in progress and invalidate its pending synthesis.

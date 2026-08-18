@@ -512,7 +512,10 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-opus-4-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-haiku-4-5': ['low', 'medium', 'high'],
-  'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max']
+  'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-5.6-terra': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-5.6-sol': ['low', 'medium', 'high', 'xhigh', 'max']
 }
 
 /** Default effort when none is selected — "high" is the Anthropic default. */
@@ -565,10 +568,10 @@ export const OLLAMA_BASE_URL = 'https://ollama.com'
 
 // Curated Ollama Cloud models offered in the model selector (id = exact Ollama
 // tag). Models marked "assinatura" require a paid Ollama plan (the free tier
-// returns a permission_error); the gpt-oss, qwen3-coder and gemma4 tags work on
-// the free tier. Tags were verified live against https://ollama.com/v1/messages.
+// returns a permission_error); the gpt-oss and gemma4 tags work on the free
+// tier. Tags were verified live against https://ollama.com/v1/messages.
 export const OLLAMA_MODELS = [
-  { id: 'qwen3-coder:480b-cloud', label: 'Qwen3 Coder 480B (Ollama)' },
+  { id: 'nemotron-3-ultra:cloud', label: 'Nemotron 3 Ultra (Ollama · assinatura)' },
   { id: 'gpt-oss:120b-cloud', label: 'GPT-OSS 120B (Ollama)' },
   { id: 'gpt-oss:20b-cloud', label: 'GPT-OSS 20B (Ollama)' },
   { id: 'gemma4:cloud', label: 'Gemma 4 (Ollama)' },
@@ -608,6 +611,28 @@ export function modelSupportsVision(model: string | undefined): boolean {
   return OLLAMA_VISION_MODELS.has(model)
 }
 
+// ---- OpenAI Codex integration --------------------------------------------
+// GPT models routed through the user's ChatGPT Plus/Pro/Team SUBSCRIPTION
+// (OAuth login in Settings — see codexAuth.ts/codexProxy.ts), not a metered
+// API key. A local proxy (codexProxy.ts) translates the Anthropic Messages
+// API the bundled CLI speaks into OpenAI's Codex Responses API, so this looks
+// to agentSession.ts just like the Ollama Cloud branch (env-var redirect).
+//
+// Model ids aren't discoverable from a public catalog (undocumented backend).
+// Restricted to the GPT-5.6 family the user's ChatGPT plan actually offers —
+// Luna, Terra and Sol — instead of a guessed generic id.
+export const OPENAI_MODELS = [
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (ChatGPT)' },
+  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (ChatGPT)' },
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (ChatGPT)' }
+] as const
+
+/** True when `model` is a GPT model routed through the Codex OAuth proxy. */
+export function isOpenAIModel(model: string | undefined): boolean {
+  if (!model) return false
+  return OPENAI_MODELS.some((m) => m.id === model)
+}
+
 /** Fallback context window for a model not listed in CONTEXT_LIMITS. */
 export const DEFAULT_CONTEXT_LIMIT = 200_000
 
@@ -628,12 +653,17 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'claude-sonnet-5': 1_000_000,
   'claude-haiku-4-5': 200_000,
   'claude-fable-5': 1_000_000,
+  // OpenAI GPT-5.6 family — official model catalog.
+  'gpt-5.6-luna': 1_050_000,
+  'gpt-5.6-terra': 1_050_000,
+  'gpt-5.6-sol': 1_050_000,
   // Ollama Cloud — native context windows (verified against each model's own
-  // published specs, not a guess): Qwen3-Coder-480B and gpt-oss keep their
-  // documented 256K/128K; DeepSeek V4 Pro and GLM-5.2 are actually 1M native —
-  // they were previously under-reported here, which made the context bar read
-  // as "full" way before the model's real limit.
-  'qwen3-coder:480b-cloud': 256_000,
+  // published specs, not a guess): gpt-oss keeps its documented 128K;
+  // DeepSeek V4 Pro and GLM-5.2 are actually 1M native — they were previously
+  // under-reported here, which made the context bar read as "full" way before
+  // the model's real limit. Nemotron 3 Ultra carries over the 256K limit of
+  // the qwen3-coder:480b-cloud tag it replaced — re-verify if that changed.
+  'nemotron-3-ultra:cloud': 256_000,
   'gpt-oss:120b-cloud': 128_000,
   'gpt-oss:20b-cloud': 128_000,
   'gemma4:cloud': 256_000,
@@ -669,6 +699,16 @@ export interface OpenAiConfig {
   /** Reading speed: 0.8 = slow, 1 = normal, 1.5 = fast. Applied in the renderer
    *  as the audio playbackRate (exact/instant) — the model's own pace is unreliable. */
   speed: number
+}
+
+/** OpenAI Codex login state (ChatGPT Plus/Pro/Team subscription, via OAuth —
+ *  NOT an API key). Mirrors codexAuth.ts's `codexStatus()`; never carries the
+ *  tokens themselves across IPC. */
+export interface CodexStatus {
+  connected: boolean
+  accountId?: string
+  email?: string
+  planType?: string
 }
 
 /** Where dictation is transcribed: OpenAI's API, or a model running on this
@@ -880,6 +920,12 @@ export const Channels = {
   authStatus: 'auth:status',
   /** Run the Claude OAuth login (opens the browser); resolves when authenticated. */
   authLogin: 'auth:login',
+  /** Whether the user has a Codex (ChatGPT subscription) login saved. */
+  codexStatus: 'codex:status',
+  /** Run the Codex OAuth login (opens the browser); resolves when tokens are saved. */
+  codexLogin: 'codex:login',
+  /** Erase the saved Codex login. */
+  codexLogout: 'codex:logout',
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',

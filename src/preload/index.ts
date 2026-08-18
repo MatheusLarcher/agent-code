@@ -11,6 +11,7 @@ import type {
   BrowserInput,
   BrowserState,
   CacheInfo,
+  CodexStatus,
   FileAttachment,
   FileBytes,
   FileRefAttachment,
@@ -94,6 +95,9 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.openaiTts, text),
   authStatus: (): Promise<{ authenticated: boolean }> => ipcRenderer.invoke(Channels.authStatus),
   authLogin: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.authLogin),
+  codexStatus: (): Promise<CodexStatus> => ipcRenderer.invoke(Channels.codexStatus),
+  codexLogin: (): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke(Channels.codexLogin),
+  codexLogout: (): Promise<void> => ipcRenderer.invoke(Channels.codexLogout),
 
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>

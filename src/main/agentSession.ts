@@ -12,7 +12,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readSessionTasks, watchSessionTasks } from './sessionTasks'
 import { randomUUID } from 'node:crypto'
-import { isOllamaModel, modelSupportsFastMode, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
+import { isOllamaModel, isOpenAIModel, modelSupportsFastMode, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
+import { ensureCodexProxyRunning } from './codexProxy'
+import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import type {
   AskQuestion,
@@ -24,6 +26,8 @@ import type {
   RateLimitStatus,
   StartAgentOptions
 } from '../shared/ipc'
+
+export const OPENAI_MAX_TURNS = 64
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
 (browser_navigate, browser_snapshot, browser_screenshot, browser_click, browser_type,
@@ -274,6 +278,7 @@ export class AgentSession {
    *  can hand us a different session id, and then we re-point the watcher). */
   private stopTaskWatch: (() => void) | null = null
   private watchedSessionId: string | null = null
+  private disposed = false
 
   constructor(
     private readonly opts: StartAgentOptions,
@@ -285,7 +290,8 @@ export class AgentSession {
     private readonly onPermissionExpire: (id: string) => void
   ) {}
 
-  async start(): Promise<void> {
+  async start(): Promise<boolean> {
+    if (this.disposed) return false
     this.bypassAll = this.opts.skipPermissions === true
 
     const cfg = loadConfig()
@@ -323,8 +329,48 @@ export class AgentSession {
         id: nextId(),
         text: 'Modelo do Ollama selecionado, mas falta a API key. Abra Configurações → Ollama Cloud e cole sua chave.'
       })
-      return
+      return false
     }
+    // GPT (Codex) routing: same trick as Ollama above, but ANTHROPIC_BASE_URL
+    // points at our own local proxy (see codexProxy.ts) instead of a real
+    // Anthropic-compatible endpoint — the Codex backend speaks a completely
+    // different protocol, so the proxy translates in both directions.
+    const openaiOn = isOpenAIModel(this.opts.model)
+    if (openaiOn && !isCodexConnected()) {
+      this.emit({
+        kind: 'error',
+        id: nextId(),
+        text: 'Modelo GPT selecionado, mas não há login do ChatGPT. Abra Configurações → OpenAI e conecte sua conta.'
+      })
+      return false
+    }
+    let openaiEnv: typeof process.env | undefined
+    if (openaiOn) {
+      try {
+        const { baseUrl, secret } = await ensureCodexProxyRunning((line) => console.log(`[codex-proxy] ${line}`))
+        openaiEnv = {
+          ...process.env,
+          ANTHROPIC_BASE_URL: baseUrl,
+          ANTHROPIC_AUTH_TOKEN: secret,
+          ANTHROPIC_API_KEY: '',
+          // Agent's model aliases normally resolve back to Claude model ids.
+          // Pin every child-agent tier to the selected GPT model instead.
+          ANTHROPIC_DEFAULT_SONNET_MODEL: this.opts.model,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: this.opts.model,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: this.opts.model,
+          ANTHROPIC_DEFAULT_FABLE_MODEL: this.opts.model,
+          CLAUDE_CODE_SUBAGENT_MODEL: this.opts.model
+        }
+      } catch (err) {
+        this.emit({
+          kind: 'error',
+          id: nextId(),
+          text: `Não consegui iniciar o proxy do Codex: ${String(err)}`
+        })
+        return false
+      }
+    }
+
     const env = ollamaOn
       ? {
           ...process.env,
@@ -332,7 +378,7 @@ export class AgentSession {
           ANTHROPIC_AUTH_TOKEN: ollamaKey,
           ANTHROPIC_API_KEY: ''
         }
-      : undefined
+      : openaiEnv
 
     const options: Options = {
       cwd: this.opts.cwd,
@@ -345,6 +391,7 @@ export class AgentSession {
         ? { settings: { fastMode: true } }
         : {}),
       ...(env ? { env } : {}),
+      ...(openaiOn ? { maxTurns: OPENAI_MAX_TURNS } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
       additionalDirectories: [memoriesDir],
@@ -363,14 +410,26 @@ export class AgentSession {
       canUseTool: (toolName, input) => this.handlePermission(toolName, input)
     }
 
-    this.q = query({ prompt: this.input, options })
-
+    if (this.disposed) return false
     try {
-      for await (const message of this.q) {
-        this.handleMessage(message)
+      this.q = query({ prompt: this.input, options })
+    } catch (err) {
+      this.emit({ kind: 'error', id: nextId(), text: `Agent failed to start: ${String(err)}` })
+      return false
+    }
+    void this.consumeMessages(this.q)
+    return true
+  }
+
+  private async consumeMessages(q: NonNullable<typeof this.q>): Promise<void> {
+    try {
+      for await (const message of q) {
+        if (!this.disposed) this.handleMessage(message)
       }
     } catch (err) {
-      this.emit({ kind: 'error', id: nextId(), text: `Agent stopped: ${String(err)}` })
+      if (!this.disposed) this.emit({ kind: 'error', id: nextId(), text: `Agent stopped: ${String(err)}` })
+    } finally {
+      if (this.q === q) this.q = null
     }
   }
 
@@ -444,12 +503,12 @@ export class AgentSession {
     this.windowsControlScope.cancel()
     if (!this.q) return { stillQueued: [] }
     try {
-      const receipt = await this.q.interrupt()
+      const receipt = (await this.q.interrupt()) as unknown as { still_queued?: string[] } | undefined
       // Manual cancel: flag the conversation so the next message tells the model
       // to disregard the canceled request (set only on a real interrupt).
       this.canceledPending = true
       return {
-        stillQueued: (receipt?.still_queued ?? []).map((messageId) => ({
+        stillQueued: (receipt?.still_queued ?? []).map((messageId: string) => ({
           messageId,
           text: this.submittedMessages.get(messageId)
         }))
@@ -565,9 +624,18 @@ export class AgentSession {
   }
 
   dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
     this.windowsControlScope.cancel()
     this.stopTaskWatch?.()
     this.stopTaskWatch = null
+    for (const pending of this.pendingPermissions.values()) {
+      clearTimeout(pending.timer)
+      pending.resolve({ behavior: 'deny', message: 'Agent session was closed before permission was granted.' })
+    }
+    this.pendingPermissions.clear()
+    this.q?.close()
+    this.q = null
     this.input.close()
   }
 
@@ -589,6 +657,9 @@ export class AgentSession {
   // ---- internals ----
 
   private handlePermission(toolName: string, input: Record<string, unknown>): Promise<PermissionResult> {
+    if (this.disposed) {
+      return Promise.resolve({ behavior: 'deny', message: 'Agent session is closed.' })
+    }
     // AskUserQuestion is NOT a permission — it's a question that needs an answer.
     // Always route it to our interactive UI (even with "allow all" on: you can't
     // auto-answer a question), and feed the user's pick back via resolvePermission.
@@ -686,10 +757,13 @@ export class AgentSession {
           // TaskUpdate events only describe changes, so everything that happened
           // while this app wasn't listening would otherwise stay invisible.
           this.syncTasks(message.session_id)
-        } else if (message.subtype === 'background_tasks_changed') {
+        } else if ((message as { subtype?: string }).subtype === 'background_tasks_changed') {
+          const tasks = (message as unknown as {
+            tasks: Array<{ task_id: string; task_type: string; description: string }>
+          }).tasks
           this.emit({
             kind: 'background-tasks',
-            tasks: message.tasks.map((task) => ({
+            tasks: tasks.map((task) => ({
               id: task.task_id,
               type: task.task_type,
               description: task.description
@@ -717,7 +791,7 @@ export class AgentSession {
         }
         this.handleAssistant(
           message.message.content as unknown as AssistantBlock[],
-          message.aborted === true,
+          (message as { aborted?: boolean }).aborted === true,
           trackOf(message, parentToolUseId)
         )
         break
