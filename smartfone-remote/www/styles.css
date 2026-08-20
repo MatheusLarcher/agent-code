@@ -513,6 +513,55 @@ html, body {
 }
 .msg.system, .msg.error { align-self: center; font-size: 12px; color: var(--faint); text-align: center; }
 .msg.error { color: var(--err); }
+
+/* Static WireMD artifact. The generated document is isolated in the only
+   iframe; this shell only scales and scrolls that reference viewport. */
+.ui-mockup-message {
+  align-self: stretch;
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.ui-mockup-card {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+}
+.ui-mockup-title {
+  margin: 0 0 8px 2px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-mockup-viewport {
+  max-width: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: #f5f5f5;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.ui-mockup-viewport.mobile { border-radius: 18px; }
+.ui-mockup-stage { position: relative; }
+.ui-mockup-frame {
+  position: absolute;
+  inset: 0 auto auto 0;
+  display: block;
+  border: 0;
+  background: #f5f5f5;
+  transform-origin: top left;
+}
+
 /* collapsed, expandable tool card (mirrors the PC chat) */
 .tool-card {
   align-self: stretch;

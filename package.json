@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./out/main/index.js",
   "author": "Matheus",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "npm run windows-control:build && electron-vite dev",
     "build": "electron-vite build && npm run windows-control:build",
@@ -18,21 +21,25 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
+    "@eclectic-ai/wiremd": "0.6.1",
     "highlight.js": "^11.11.1",
     "playwright": "^1.61.0",
     "qrcode": "^1.5.4",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "sanitize-html": "2.17.7",
     "ws": "^8.18.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^22.10.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/sanitize-html": "2.16.1",
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^42.4.1",

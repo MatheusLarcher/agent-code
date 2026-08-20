@@ -69,8 +69,10 @@ AgentSession, IPC ou React.
 }
 ```
 
-O schema aplica título de 1 a 80 caracteres, source de 1 a 2.500 caracteres e viewport
-`desktop` por padrão. Um controlador criado por `AgentSession` mantém:
+O schema MCP descreve os campos sem rejeitá-los antes do handler; o controlador aplica título
+de 1 a 80 caracteres, source de 1 a 2.500 caracteres e viewport `desktop` por padrão. Isso faz
+com que até uma entrada malformada consuma o orçamento de retry. Um controlador criado por
+`AgentSession` mantém:
 
 - artifacts conhecidos, indexados pelo título normalizado;
 - último `id` e `version` de cada título;
@@ -81,8 +83,9 @@ Uma chamada com título novo cria `id` e `version: 1`. Uma chamada com o mesmo t
 revisão, mantém o `id` e incrementa `version`. Ao reiniciar uma conversa, o renderer envia no
 `StartAgentOptions` a versão mais recente de cada artifact persistido para semear o controlador.
 O prompt interno também recebe o título e o source ativos para que uma sessão sem `resume`
-consiga editar o mockup anterior. Pedidos explícitos de várias telas usam títulos distintos e
-continuam limitados a três artifacts.
+consiga editar qualquer mockup anterior. Pedidos explícitos de várias telas usam títulos
+distintos e continuam limitados a três artifacts **por turno**, sem limitar a quantidade de
+títulos preservados na conversa.
 
 O evento estruturado enviado ao chat é:
 
@@ -98,8 +101,8 @@ O evento estruturado enviado ao chat é:
 }
 ```
 
-O resultado textual devolvido ao modelo contém `id`, `version`, `title`, `source` e viewport,
-mas não replica o HTML/CSS grande no contexto do LLM. O evento IPC é o artifact estruturado
+O resultado textual devolvido ao modelo contém `id`, `version`, `title`, `source` e viewport;
+o artifact completo segue separadamente em `_meta['agent-code/ui-mockup']`, fora do conteúdo do LLM. O evento IPC é o artifact estruturado
 completo. O arquivo HTML redundante no cache não será criado.
 
 ### Decisão do agente
@@ -116,14 +119,20 @@ sintaxe WireMD 0.6.1. Em especial, colunas serão ensinadas com sintaxe real:
 
 ```wiremd
 ::: columns-3
+::: column
 ### Fila
 12 chamados
+:::
 
+::: column
 ### SLA
 ((92%)){success}
+:::
 
+::: column
 ### Equipe
 8 atendentes
+:::
 :::
 ```
 
@@ -166,6 +175,8 @@ iframes, objects, embeds, forms ativos, handlers `on*`, URLs externas e protocol
 Somente tags e atributos necessários ao HTML/SVG estático do WireMD serão mantidos. CSS com
 `@import` ou `url()` será rejeitado. O documento final recebe CSP com `default-src 'none'`, sem
 rede, scripts, navegação, formulários, pop-ups ou origem compartilhada.
+Valores de atributos que alteram layout também são limitados (`rows`, `cols`, `width`, `height`,
+`rowspan` e `colspan`), impedindo superfícies de rolagem gigantes em HTML persistido.
 
 O React usa um único `<iframe sandbox="" referrerPolicy="no-referrer" srcDoc={html}>`. Desktop
 usa referência 1024 x 640 e mobile 390 x 760. O card limita a altura; excedentes rolam dentro
@@ -184,15 +195,17 @@ chegar ao `srcDoc`. O HTML continua isolado mesmo se o histórico estiver corrom
 3. instrui a simplificar e corrigir a sintaxe apenas uma vez.
 
 Na segunda falha, o controlador bloqueia novas tentativas naquele turno e devolve
-`retryAllowed: false`. O prompt obriga a resposta final exata:
+`retryAllowed: false`. Além do prompt, o host substitui a frase pré-tool e suprime
+texto posterior para garantir a resposta final exata:
 
 ```text
 Não consegui renderizar este mockup.
 ```
 
 Chamadas adicionais no mesmo turno recebem o mesmo resultado final e nunca executam o parser.
-Uma renderização bem-sucedida encerra o estado de retry. A mensagem técnica não aparece no
-feed porque o ToolCard específico é ocultado.
+Uma renderização bem-sucedida entre duas falhas não reinicia o orçamento: só uma nova mensagem
+do usuário chama `beginTurn()`. A mensagem técnica não aparece no feed porque o ToolCard
+específico é ocultado.
 
 ## Persistência e fluxo de dados
 
@@ -204,8 +217,10 @@ feed porque o ToolCard específico é ocultado.
 6. `Conversation.messages` persiste source, HTML sanitizado e metadados no SQLite por projeto.
 7. Ao reconectar, as versões mais recentes semeiam o controlador e o prompt interno.
 
-Artifacts emitidos por subagentes preservam `parentToolUseId` e não vazam para o feed
-principal. A compactação de histórico mantém os artifacts, inclusive source e versão.
+Subagentes são impedidos no gate de permissão de chamar `render_ui_mockup`, portanto não
+consomem o orçamento nem alteram revisões invisíveis. Load/save também descartam artifacts
+legados com `parentToolUseId` de subagente. A compactação mantém os artifacts principais,
+inclusive source e versão.
 
 ## Testes e verificação
 

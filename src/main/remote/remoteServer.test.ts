@@ -4,7 +4,8 @@ import { writeFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { RemoteServer } from './remoteServer'
-import type { PermissionResponse, RemoteConversation } from '../../shared/ipc'
+import { UI_MOCKUP_CSP } from '../../shared/uiMockup'
+import type { PermissionResponse, RemoteConversation, UiMockupArtifact } from '../../shared/ipc'
 
 // Drive the LAN bridge over real HTTP (node:http, not jsdom fetch) so we verify
 // auth, the JSON routes and the live SSE stream end‑to‑end.
@@ -22,6 +23,23 @@ let base = ''
 let token = ''
 let filePath = ''
 let conv: RemoteConversation
+
+function mockupArtifact(overrides: Partial<UiMockupArtifact> = {}): UiMockupArtifact {
+  return {
+    type: 'ui_mockup',
+    id: 'mockup-1',
+    version: 1,
+    title: 'Painel',
+    source: '# Painel',
+    html:
+      '<!doctype html><html><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+      `<meta http-equiv="Content-Security-Policy" content="${UI_MOCKUP_CSP}">` +
+      '<style>body{color:#111}</style></head><body class="wmd-root wmd-clean"><h1>Painel</h1></body></html>',
+    viewport: 'desktop',
+    ...overrides
+  }
+}
 
 beforeAll(async () => {
   const info = await server.start()
@@ -190,6 +208,61 @@ describe('RemoteServer — ponte LAN', () => {
     expect((r.json as { messages: Array<{ id: string }> }).messages.some((m) => m.id === 'u1')).toBe(true)
   })
 
+  it('filtra artifacts inseguros e cards/resultados antigos de mockup antes do histórico', async () => {
+    const filtered: RemoteConversation = {
+      ...conv,
+      id: 'mockup-history',
+      messages: [
+        { kind: 'user', id: 'keep-user', text: 'preservar' },
+        {
+          kind: 'tool-use',
+          id: 'hidden-full',
+          name: 'mcp__wiremd__render_ui_mockup',
+          input: { source: '# segredo 1' },
+          parentToolUseId: null
+        },
+        { kind: 'tool-result', id: 'hidden-result-1', toolUseId: 'hidden-full', isError: false, text: '# segredo 1' },
+        {
+          kind: 'tool-use',
+          id: 'hidden-bare',
+          name: 'render_ui_mockup',
+          input: { source: '# segredo 2' },
+          parentToolUseId: null
+        },
+        { kind: 'tool-result', id: 'hidden-result-2', toolUseId: 'hidden-bare', isError: true, text: '# segredo 2' },
+        { kind: 'tool-use', id: 'keep-tool', name: 'Read', input: {}, parentToolUseId: null },
+        { kind: 'tool-result', id: 'keep-result', toolUseId: 'keep-tool', isError: false, text: 'ok' },
+        { kind: 'ui-mockup', artifact: mockupArtifact(), parentToolUseId: null },
+        {
+          kind: 'ui-mockup',
+          artifact: mockupArtifact({ id: 'subagent-history', title: 'SUBAGENTE-HISTORICO' }),
+          parentToolUseId: 'task-1'
+        },
+        {
+          kind: 'ui-mockup',
+          artifact: mockupArtifact({ id: 'unsafe', html: '<!doctype html><script>alert(1)</script>' }),
+          parentToolUseId: null
+        }
+      ]
+    }
+
+    server.setState({ conversations: [conv, filtered] })
+    try {
+      const r = await getJson(`/api/history?token=${token}&conv=mockup-history`)
+      const messages = (r.json as { messages: Array<Record<string, unknown>> }).messages
+      expect(messages.map((message) => message.id).filter(Boolean)).toEqual([
+        'keep-user',
+        'keep-tool',
+        'keep-result'
+      ])
+      expect(messages.filter((message) => message.kind === 'ui-mockup')).toHaveLength(1)
+      expect(JSON.stringify(messages)).not.toContain('segredo')
+      expect(JSON.stringify(messages)).not.toContain('SUBAGENTE-HISTORICO')
+    } finally {
+      server.setState({ conversations: [conv] })
+    }
+  })
+
   it('POST /api/send encaminha o comando via onInbound', async () => {
     const r = await postJson(`/api/send?token=${token}`, { convId: 'c1', text: 'rode os testes' })
     expect(r.status).toBe(200)
@@ -341,6 +414,36 @@ describe('RemoteServer — ponte LAN', () => {
     await waitFor(() => buf.includes('compilando'))
     expect(buf).toContain('"convId":"c1"')
     expect(buf).toContain('"text":"compilando"')
+    req.destroy()
+  })
+
+  it('broadcast descarta ui-mockup inválido e preserva artifact válido no SSE', async () => {
+    let buf = ''
+    const req = get(`${base}/api/events?token=${token}`)
+    const res = await new Promise<IncomingMessage>((resolve) => req.on('response', resolve))
+    res.on('data', (d) => (buf += d.toString()))
+
+    server.broadcast('c1', {
+      kind: 'ui-mockup',
+      artifact: mockupArtifact({ id: 'unsafe-live', title: 'NAO-TRANSMITIR', html: '<script>bad()</script>' }),
+      parentToolUseId: null
+    })
+    server.broadcast('c1', {
+      kind: 'ui-mockup',
+      artifact: mockupArtifact({ id: 'safe-live', title: 'TRANSMITIR' }),
+      parentToolUseId: null
+    })
+    server.broadcast('c1', {
+      kind: 'ui-mockup',
+      artifact: mockupArtifact({ id: 'subagent-live', title: 'NAO-TRANSMITIR-SUBAGENTE' }),
+      parentToolUseId: 'task-1'
+    })
+
+    await waitFor(() => buf.includes('safe-live'))
+    expect(buf).toContain('TRANSMITIR')
+    expect(buf).not.toContain('NAO-TRANSMITIR')
+    expect(buf).not.toContain('SUBAGENTE')
+    expect(buf.match(/"kind":"ui-mockup"/g)).toHaveLength(1)
     req.destroy()
   })
 })

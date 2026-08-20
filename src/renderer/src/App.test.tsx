@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, act, configure } from '@testing-library/react'
 import { UiProvider } from './ui/UiProvider'
-import { App } from './App'
+import { App, reduceMessages } from './App'
 import type { AgentEventMsg, ChatEvent } from '@shared/ipc'
-import type { TodoItem } from './types'
+import type { TodoItem, UIMessage } from './types'
+import { UI_MOCKUP_CSP } from '@shared/uiMockup'
 
 // This file mounts the full app dozens of times. Under the complete parallel
 // suite, jsdom can spend over 1s transforming/settling sibling files even though
@@ -136,6 +137,7 @@ afterEach(cleanup)
 
 const result: ChatEvent = { kind: 'result', id: 'r1', isError: false, text: 'done', durationMs: 1 }
 const partial: ChatEvent = { kind: 'assistant-text', id: 'a1', text: 'trabalhando', final: false }
+const safeMockupHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${UI_MOCKUP_CSP}"><style>.wmd-root{color:#111}</style></head><body class="wmd-root wmd-clean"><h1>Tela</h1></body></html>`
 
 async function emit(event: ChatEvent, convId = 'c1'): Promise<void> {
   await act(async () => {
@@ -169,7 +171,118 @@ async function pasteLine(line: string): Promise<void> {
   })
 }
 
+describe('reduceMessages — resultado de turno visual', () => {
+  it('não recarimba a resposta textual anterior quando o turno termina apenas com mockup', () => {
+    const previous: UIMessage = {
+      kind: 'assistant-text', id: 'previous', text: 'Resposta anterior', final: true, answer: true, ts: 123
+    }
+    const visual: UIMessage = {
+      kind: 'ui-mockup',
+      parentToolUseId: null,
+      artifact: {
+        type: 'ui_mockup', id: 'visual-1', version: 1, title: 'Visual',
+        source: '# Visual', html: safeMockupHtml, viewport: 'desktop'
+      }
+    }
+    const messages: UIMessage[] = [previous, { kind: 'user', id: 'u-current', text: 'Mostre' }, visual]
+    const next = reduceMessages(messages, result)
+
+    expect(next[0]).toBe(previous)
+    expect(next[0].ts).toBe(123)
+  })
+
+  it('carimba a frase curta do mesmo turno mesmo quando o mockup vem depois dela', () => {
+    const previous: UIMessage = {
+      kind: 'assistant-text', id: 'previous', text: 'Resposta anterior', final: true, answer: true, ts: 123
+    }
+    const short: UIMessage = {
+      kind: 'assistant-text', id: 'short', text: 'Montei a visão principal.', final: true
+    }
+    const visual: UIMessage = {
+      kind: 'ui-mockup', parentToolUseId: null,
+      artifact: {
+        type: 'ui_mockup', id: 'visual-phrase', version: 1, title: 'Visual',
+        source: '# Visual', html: safeMockupHtml, viewport: 'desktop'
+      }
+    }
+    const messages: UIMessage[] = [
+      previous, { kind: 'user', id: 'u-current', text: 'Mostre' }, short, visual
+    ]
+    const next = reduceMessages(messages, result)
+
+    expect(next[0]).toBe(previous)
+    expect(next[2]).toMatchObject({ id: 'short', answer: true, ts: expect.any(Number) })
+  })
+})
+
 describe('App — fila de mensagens (multi-sessão)', () => {
+  it('envia apenas a versão mais recente do mockup ao iniciar, sem HTML', async () => {
+    const conversations = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+    conversations[0].messages = [
+      {
+        kind: 'ui-mockup', parentToolUseId: null,
+        artifact: {
+          type: 'ui_mockup', id: 'same-id', version: 1, title: 'Atendimento',
+          source: '# Antigo', html: safeMockupHtml, viewport: 'desktop'
+        }
+      },
+      {
+        kind: 'ui-mockup', parentToolUseId: null,
+        artifact: {
+          type: 'ui_mockup', id: 'same-id', version: 2, title: 'ATENDIMENTO',
+          source: '# Atual', html: safeMockupHtml, viewport: 'mobile'
+        }
+      }
+    ]
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify(conversations))
+
+    render(<UiProvider><App /></UiProvider>)
+    const textarea = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    const sendButton = screen.getByTitle('Enviar') as HTMLButtonElement
+    await waitFor(() => expect(sendButton.disabled).toBe(false))
+    fireEvent.change(textarea, { target: { value: 'continua' } })
+    fireEvent.click(sendButton)
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+
+    const options = api.startAgent.mock.calls[0][0] as { uiMockups: unknown[] }
+    expect(options.uiMockups).toEqual([{
+      id: 'same-id', version: 2, title: 'ATENDIMENTO', source: '# Atual', viewport: 'mobile'
+    }])
+    expect(JSON.stringify(options.uiMockups)).not.toContain('<!doctype html>')
+    await flushConnect()
+  })
+
+  it('troca o evento da tool pelo preview persistido e ignora artifacts de subagente', async () => {
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await emit({
+      kind: 'tool-use', id: 'wm1', name: 'mcp__wiremd__render_ui_mockup',
+      input: { source: '# SOURCE OCULTO' }, parentToolUseId: null
+    })
+    const artifact = {
+      type: 'ui_mockup' as const,
+      id: 'preview-1', version: 1, title: 'Painel visual', source: '# Painel visual',
+      html: safeMockupHtml, viewport: 'desktop' as const
+    }
+    await emit({ kind: 'ui-mockup', artifact, parentToolUseId: null })
+    await emit({
+      kind: 'ui-mockup',
+      artifact: { ...artifact, id: 'child-1', title: 'Preview de subagente' },
+      parentToolUseId: 'task-1'
+    })
+
+    expect(await screen.findByTitle('Painel visual')).toBeTruthy()
+    expect(screen.queryByTitle('Preview de subagente')).toBeNull()
+    expect(document.body.textContent).not.toContain('SOURCE OCULTO')
+    await waitFor(() => {
+      const saved = api.saveAllConversations.mock.calls.at(-1)?.[0] as Array<{ messages: ChatEvent[] }>
+      expect(saved?.[0].messages.some((message) => message.kind === 'ui-mockup')).toBe(true)
+      expect(saved?.[0].messages.some(
+        (message) => message.kind === 'tool-use' && message.name === 'mcp__wiremd__render_ui_mockup'
+      )).toBe(false)
+    })
+  })
+
   it('não envia nem marca conexão quando o main rejeita o startup da sessão', async () => {
     render(
       <UiProvider>

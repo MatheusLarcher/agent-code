@@ -61,6 +61,7 @@ const RESULT_PREVIEW = 2000
 
 /** True for an event that belongs to a subagent rather than the main agent. */
 export function isSubagentEvent(e: ChatEvent): boolean {
+  if (e.kind === 'ui-mockup') return e.parentToolUseId != null
   if (e.kind === 'tool-use') return e.parentToolUseId != null
   if (e.kind === 'tool-result') return e.parentToolUseId != null
   return false

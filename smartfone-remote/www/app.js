@@ -52,6 +52,24 @@ var state = {
 // atualizar a tela — evita que trocar de chat rápido deixe o spinner "grudado"
 // (ou pior, uma resposta antiga sobrescrevendo o chat que o usuário abriu depois).
 var historyReq = 0
+// Events that arrive while /api/history is in flight must be replayed over the
+// returned snapshot; otherwise an older HTTP response can erase a fresh SSE
+// preview. This bounded journal is per client, not persisted.
+var liveEventSeq = 0
+var recentLiveEvents = []
+
+function rememberLiveEvent(convId, event) {
+  liveEventSeq++
+  recentLiveEvents.push({ seq: liveEventSeq, convId: convId, event: event })
+  if (recentLiveEvents.length > 200) recentLiveEvents.splice(0, recentLiveEvents.length - 200)
+}
+
+function replayLiveEvents(messages, convId, afterSeq) {
+  recentLiveEvents.forEach(function (item) {
+    if (item.seq > afterSeq && item.convId === convId) reduce(messages, item.event)
+  })
+  return messages
+}
 
 var $ = function (id) { return document.getElementById(id) }
 
@@ -127,9 +145,150 @@ function api(path) {
   return state.base + path + sep + 'token=' + encodeURIComponent(state.token)
 }
 
+// The mockup tool is represented by a dedicated ui-mockup event. Its regular
+// tool-use card contains the raw WireMD source, so it must never enter the phone
+// feed (including old histories created before this dedicated renderer existed).
+function isUiMockupToolName(name) {
+  return name === 'render_ui_mockup' || name === 'mcp__wiremd__render_ui_mockup'
+}
+
+var UI_MOCKUP_CSP = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; media-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'"
+var UI_MOCKUP_DOCUMENT_PREFIX = '<!doctype html><html><head>' +
+  '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+  '<meta http-equiv="Content-Security-Policy" content="' + UI_MOCKUP_CSP + '"><style>'
+var UI_MOCKUP_BODY_BOUNDARY = '</style></head><body class="wmd-root wmd-clean">'
+var UI_MOCKUP_ALLOWED_TAGS = Object.create(null)
+;('a article aside blockquote br button circle code details div em fieldset figcaption figure footer g h1 h2 h3 h4 h5 h6 header hr img input label legend li line main nav ol option p path polygon polyline pre rect section select small span strong summary svg table tbody td textarea tfoot th thead tr ul'.split(' ')).forEach(function (tag) {
+  UI_MOCKUP_ALLOWED_TAGS[tag] = true
+})
+var UI_MOCKUP_ALLOWED_ATTRIBUTES = {
+  '*': ['class', 'title', 'role', 'aria-label', 'hidden'],
+  button: ['type', 'disabled'], details: ['open'],
+  input: ['type', 'placeholder', 'value', 'checked', 'disabled', 'required', 'min', 'max', 'step'],
+  textarea: ['placeholder', 'rows', 'cols', 'disabled', 'required'],
+  select: ['disabled', 'required', 'multiple'], option: ['value', 'selected', 'disabled'],
+  img: ['alt', 'width', 'height'],
+  svg: ['width', 'height', 'viewbox', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin'],
+  path: ['d', 'fill', 'stroke', 'stroke-width', 'transform'],
+  circle: ['cx', 'cy', 'r', 'fill', 'stroke', 'stroke-width'],
+  rect: ['x', 'y', 'width', 'height', 'rx', 'ry', 'fill', 'stroke', 'stroke-width'],
+  line: ['x1', 'y1', 'x2', 'y2', 'stroke', 'stroke-width'],
+  polyline: ['points', 'fill', 'stroke', 'stroke-width'],
+  polygon: ['points', 'fill', 'stroke', 'stroke-width'],
+  td: ['colspan', 'rowspan'], th: ['colspan', 'rowspan']
+}
+var UI_MOCKUP_LAYOUT_LIMITS = {
+  rows: [1, 20], cols: [1, 120], colspan: [1, 12], rowspan: [1, 12],
+  width: [0, 4096], height: [0, 4096]
+}
+
+function hasOnlyAllowedMockupBody(html) {
+  var bodyStart = html.indexOf(UI_MOCKUP_BODY_BOUNDARY)
+  if (bodyStart < 0) return false
+  bodyStart += UI_MOCKUP_BODY_BOUNDARY.length
+  var body = html.slice(bodyStart, -'</body></html>'.length)
+  var pattern = /<\/?([a-z][a-z0-9-]*)(?:\s[^<>]*?)?\/?>/gi
+  var cursor = 0
+  var match
+  while ((match = pattern.exec(body))) {
+    if (body.slice(cursor, match.index).indexOf('<') >= 0) return false
+    var tagName = match[1].toLowerCase()
+    if (!UI_MOCKUP_ALLOWED_TAGS[tagName]) return false
+    var tag = match[0]
+    if (/^<\//.test(tag)) {
+      if (!(new RegExp('^<\\/' + tagName + '\\s*>$', 'i')).test(tag)) return false
+    } else {
+      var endLength = /\/>$/.test(tag) ? 2 : 1
+      var rest = tag.slice(1 + tagName.length, tag.length - endLength)
+      var allowed = Object.create(null)
+      ;(UI_MOCKUP_ALLOWED_ATTRIBUTES['*'] || []).concat(UI_MOCKUP_ALLOWED_ATTRIBUTES[tagName] || []).forEach(function (name) {
+        allowed[name] = true
+      })
+      var seen = Object.create(null)
+      while (rest) {
+        if (/^\s*$/.test(rest)) { rest = ''; break }
+        var attribute = /^\s+([a-z_:][a-z0-9_.:-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/i.exec(rest)
+        if (!attribute) return false
+        var attributeName = attribute[1].toLowerCase()
+        var attributeValue = attribute[2] || attribute[3] || attribute[4] || ''
+        if (!allowed[attributeName] || seen[attributeName]) return false
+        seen[attributeName] = true
+        if (/[\u0000-\u001f\u007f]/.test(attributeValue)) return false
+        if (attributeName === 'class') {
+          var classes = attributeValue.split(/\s+/).filter(Boolean)
+          if (classes.some(function (name) { return !/^(?:icon|(?:wmd|icon|icons)-[a-z0-9-]+)$/i.test(name) })) return false
+        }
+        if ((attributeName === 'fill' || attributeName === 'stroke') && /url\s*\(|(?:javascript|vbscript|data)\s*:/i.test(attributeValue)) return false
+        var numericLimit = UI_MOCKUP_LAYOUT_LIMITS[attributeName]
+        if (numericLimit) {
+          if (!/^\d+(?:\.\d+)?$/.test(attributeValue)) return false
+          var numericValue = Number(attributeValue)
+          if (!isFinite(numericValue) || numericValue < numericLimit[0] || numericValue > numericLimit[1]) return false
+        }
+        rest = rest.slice(attribute[0].length)
+      }
+    }
+    cursor = match.index + match[0].length
+  }
+  return body.slice(cursor).indexOf('<') < 0
+}
+
+// History and live events cross a JSON/IPC boundary. The main process already
+// sanitizes generated HTML; this lightweight check is a second, browser-side
+// guard before any persisted value reaches iframe.srcdoc.
+function isSafeUiMockupArtifact(artifact) {
+  if (!artifact || typeof artifact !== 'object' || artifact.type !== 'ui_mockup') return false
+  if (typeof artifact.id !== 'string' || artifact.id.length < 1 || artifact.id.length > 128) return false
+  if (!Number.isInteger(artifact.version) || artifact.version < 1 || artifact.version > Number.MAX_SAFE_INTEGER) return false
+  if (typeof artifact.title !== 'string' || artifact.title.trim().length < 1 || artifact.title.length > 80) return false
+  if (/[\u0000-\u001f\u007f]/.test(artifact.title)) return false
+  if (typeof artifact.source !== 'string' || artifact.source.length < 1 || artifact.source.length > 2500) return false
+  if (artifact.viewport !== 'desktop' && artifact.viewport !== 'mobile') return false
+  if (typeof artifact.html !== 'string' || artifact.html.length < 1 || artifact.html.length > 250000) return false
+
+  var html = artifact.html
+  var lower = html.toLowerCase()
+  if (html.indexOf(UI_MOCKUP_DOCUMENT_PREFIX) !== 0 || !html.endsWith('</body></html>')) return false
+  if ((lower.match(/<html\b/g) || []).length !== 1 || (lower.match(/<body\b/g) || []).length !== 1) return false
+  if ((html.match(/<style>/g) || []).length !== 1 || (html.match(/<\/style>/g) || []).length !== 1) return false
+  if ((html.match(/<\/style><\/head><body class="wmd-root wmd-clean">/g) || []).length !== 1) return false
+  if (/<\s*(?:script|iframe|object|embed|form|base|link)\b/i.test(html)) return false
+  var tags = html.match(/<[^>]+>/g) || []
+  for (var tagIndex = 0; tagIndex < tags.length; tagIndex++) {
+    if (/(?:^|[\s/])(?:on[a-z0-9_-]+|href|src|srcset|imagesrcset|ping|manifest|action|formaction|poster|background|data|xlink:href)\s*=/i.test(tags[tagIndex])) return false
+  }
+  var styleBlocks = html.match(/<style(?:\s[^>]*)?>[\s\S]*?<\/style>/gi) || []
+  for (var styleIndex = 0; styleIndex < styleBlocks.length; styleIndex++) {
+    if (/@import\b|url\s*\(|expression\s*\(/i.test(styleBlocks[styleIndex])) return false
+  }
+
+  var metas = html.match(/<meta\b[^>]*>/gi) || []
+  if (metas.length !== 3) return false
+  return hasOnlyAllowedMockupBody(html)
+}
+
+function isSubagentFeedEvent(event) {
+  if (!event || event.parentToolUseId == null) return false
+  return event.kind === 'tool-use' || event.kind === 'tool-result' || event.kind === 'ui-mockup'
+}
+
+function sanitizeRemoteMessages(messages) {
+  if (!Array.isArray(messages)) return []
+  return messages.filter(function (message) {
+    if (!message || typeof message !== 'object' || typeof message.kind !== 'string') return false
+    if (isSubagentFeedEvent(message)) return false
+    if (message.kind === 'tool-use' && isUiMockupToolName(message.name)) return false
+    if (message.kind === 'ui-mockup') return isSafeUiMockupArtifact(message.artifact)
+    return true
+  })
+}
+
 // ---- message reducer (mirrors renderer reduceMessages) --------------------
 
 function reduce(list, e) {
+  if (!e || typeof e !== 'object' || isSubagentFeedEvent(e)) return list
+  if (e.kind === 'tool-use' && isUiMockupToolName(e.name)) return list
+  if (e.kind === 'ui-mockup' && !isSafeUiMockupArtifact(e.artifact)) return list
   if (e.kind === 'assistant-text') {
     for (var i = 0; i < list.length; i++) {
       if (list[i].kind === 'assistant-text' && list[i].id === e.id) {
@@ -149,9 +308,27 @@ function reduce(list, e) {
   }
   if (e.kind === 'result') {
     for (var k = list.length - 1; k >= 0; k--) {
+      if (list[k].kind === 'user') break
       if (list[k].kind === 'assistant-text') { list[k] = Object.assign({}, list[k], { answer: true }); break }
     }
     return list
+  }
+  if (e.kind === 'ui-mockup') {
+    for (var u = 0; u < list.length; u++) {
+      if (list[u].kind === 'ui-mockup' && list[u].artifact &&
+          list[u].artifact.id === e.artifact.id && list[u].artifact.version === e.artifact.version) {
+        list[u] = e
+        return list
+      }
+    }
+  }
+  if (typeof e.id === 'string') {
+    for (var d = 0; d < list.length; d++) {
+      if (list[d].kind === e.kind && list[d].id === e.id) {
+        list[d] = Object.assign({}, list[d], e)
+        return list
+      }
+    }
   }
   list.push(e)
   return list
@@ -363,6 +540,9 @@ function triggerDownload(path) {
 // with verb/file/±stats/badge; tap to reveal input + result. Expanded state is
 // kept in state.openTools so it survives the frequent full re-renders.
 function renderTool(m) {
+  // Defense for histories persisted by older versions: never stringify or show
+  // this tool's input because it contains the raw WireMD source.
+  if (isUiMockupToolName(m && m.name)) return document.createDocumentFragment()
   var info = describeTool(m.name, m.input)
   var hasDiff = info.stats && (info.stats.added > 0 || info.stats.removed > 0)
   var open = !!state.openTools[m.id]
@@ -428,6 +608,60 @@ function renderTool(m) {
   return card
 }
 
+function updateUiMockupLayout(wrap, artifact) {
+  var referenceWidth = artifact.viewport === 'mobile' ? 390 : 1024
+  var referenceHeight = artifact.viewport === 'mobile' ? 760 : 640
+  var messageBox = $('messages')
+  var availableWidth = Math.max(220, (messageBox ? messageBox.clientWidth : window.innerWidth) - 52)
+  var scale = Math.min(1, availableWidth / referenceWidth)
+  var scaledWidth = Math.max(1, Math.round(referenceWidth * scale))
+  var scaledHeight = Math.max(1, Math.round(referenceHeight * scale))
+  var heightLimit = Math.min(420, Math.max(220, Math.round(window.innerHeight * 0.48)))
+
+  var viewport = wrap.querySelector('.ui-mockup-viewport')
+  var stage = wrap.querySelector('.ui-mockup-stage')
+  var frame = wrap.querySelector('.ui-mockup-frame')
+  if (!viewport || !stage || !frame) return
+  viewport.style.width = scaledWidth + 'px'
+  viewport.style.height = Math.min(scaledHeight, heightLimit) + 'px'
+  stage.style.width = scaledWidth + 'px'
+  stage.style.height = scaledHeight + 'px'
+  frame.style.width = referenceWidth + 'px'
+  frame.style.height = referenceHeight + 'px'
+  frame.style.transform = 'scale(' + scale + ')'
+}
+
+function renderUiMockup(m) {
+  var artifact = m && m.artifact
+  if (!isSafeUiMockupArtifact(artifact)) return null
+
+  var wrap = el('ui-mockup-message')
+  wrap.setAttribute('data-mockup-key', artifact.id + ':' + artifact.version)
+  var card = el('ui-mockup-card')
+  card.appendChild(el('ui-mockup-title', artifact.title))
+
+  var viewport = el('ui-mockup-viewport ' + artifact.viewport)
+
+  // The stage owns the scaled layout size so the viewport can scroll without a
+  // second iframe. The iframe itself remains at the canonical reference size.
+  var stage = el('ui-mockup-stage')
+
+  var frame = document.createElement('iframe')
+  frame.className = 'ui-mockup-frame'
+  frame.title = artifact.title
+  frame.setAttribute('sandbox', '')
+  frame.setAttribute('referrerpolicy', 'no-referrer')
+  frame.setAttribute('tabindex', '-1')
+  frame.srcdoc = artifact.html
+
+  stage.appendChild(frame)
+  viewport.appendChild(stage)
+  card.appendChild(viewport)
+  wrap.appendChild(card)
+  updateUiMockupLayout(wrap, artifact)
+  return wrap
+}
+
 // Coalesce bursts of streaming events into one render per animation frame, so a
 // fast token stream doesn't rebuild the list dozens of times per second.
 var renderQueued = false
@@ -450,7 +684,21 @@ function renderMessages() {
   // otherwise yank the view to the top on every streaming event.
   var prevTop = box.scrollTop
   var nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80
-  box.innerHTML = ''
+  // Rebuild ordinary streaming rows while keeping existing mockup nodes
+  // connected. Detaching an iframe reloads srcdoc, which caused flicker and
+  // repeated parsing on every token delta after a preview appeared.
+  var mockupNodes = Object.create(null)
+  Array.prototype.slice.call(box.childNodes).forEach(function (node) {
+    var key = node.nodeType === 1 ? node.getAttribute('data-mockup-key') : null
+    if (key) mockupNodes[key] = node
+    else node.remove()
+  })
+  var cursor = box.firstChild
+  function place(node) {
+    if (!node) return
+    if (node === cursor) cursor = cursor.nextSibling
+    else box.insertBefore(node, cursor)
+  }
   var scrollTarget = null
   state.messages.forEach(function (m) {
     if (m.kind === 'user') {
@@ -474,7 +722,7 @@ function renderMessages() {
       if (m.canceled) wrap.appendChild(el('msg-canceled', '⊘ Mensagem cancelada'))
       // Sent date/time, small, under my own message.
       if (m.ts) wrap.appendChild(el('msg-time', fmtMsgTime(m.ts)))
-      box.appendChild(wrap)
+      place(wrap)
     } else if (m.kind === 'assistant-text') {
       var a = el('msg assistant')
       var parsed = parseDownloads(m.text)
@@ -504,19 +752,29 @@ function renderMessages() {
         })(m.id, parsed.clean)
         a.appendChild(sp)
       }
-      box.appendChild(a)
+      place(a)
+    } else if (m.kind === 'ui-mockup') {
+      var mockupKey = m.artifact.id + ':' + m.artifact.version
+      var mockup = mockupNodes[mockupKey] || renderUiMockup(m)
+      if (mockup) updateUiMockupLayout(mockup, m.artifact)
+      place(mockup)
     } else if (m.kind === 'thinking') {
-      box.appendChild(el('msg thinking', m.text))
+      place(el('msg thinking', m.text))
     } else if (m.kind === 'system') {
-      box.appendChild(el('msg system', 'sessão pronta' + (m.model ? ' · ' + m.model : '')))
+      place(el('msg system', 'sessão pronta' + (m.model ? ' · ' + m.model : '')))
     } else if (m.kind === 'error') {
-      box.appendChild(el('msg error', m.text))
+      place(el('msg error', m.text))
     } else if (m.kind === 'status') {
-      box.appendChild(el('msg system', m.text))
-    } else if (m.kind === 'tool-use') {
-      box.appendChild(renderTool(m))
+      place(el('msg system', m.text))
+    } else if (m.kind === 'tool-use' && !isUiMockupToolName(m.name)) {
+      place(renderTool(m))
     }
   })
+  while (cursor) {
+    var obsolete = cursor
+    cursor = cursor.nextSibling
+    obsolete.remove()
+  }
   // Pinned to the bottom → follow new content; otherwise keep the user exactly
   // where they were reading (content above the growing message is stable).
   box.scrollTop = nearBottom ? box.scrollHeight : prevTop
@@ -577,7 +835,7 @@ function goToQuestion(q) {
   if (loaded) { renderMessages(); return }
   fetch(api('/api/history-window?conv=' + encodeURIComponent(state.convId) + '&message=' + encodeURIComponent(q.id)))
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
-    .then(function (data) { state.messages = (data.messages || []).slice(); renderMessages() })
+    .then(function (data) { state.messages = sanitizeRemoteMessages(data.messages); renderMessages() })
     .catch(function () { state.scrollToMsg = null; renderQuestionMap() })
 }
 
@@ -862,6 +1120,7 @@ function confirmExit() {
 // padrão) é para ABRIR um chat — aí sim mostra o loading, como pedido.
 function loadHistory(convId, silent) {
   var reqId = ++historyReq
+  var liveSeqAtStart = liveEventSeq
   if (!silent) {
     state.historyLoading = true
     renderMessages()
@@ -870,7 +1129,7 @@ function loadHistory(convId, silent) {
     .then(function (r) { return r.json() })
     .then(function (data) {
       if (reqId !== historyReq) return // uma chamada mais nova já assumiu a tela
-      state.messages = (data.messages || []).slice()
+      state.messages = replayLiveEvents(sanitizeRemoteMessages(data.messages), convId, liveSeqAtStart)
       state.historyLoading = false
       renderMessages()
     })
@@ -1260,6 +1519,7 @@ function openEvents() {
       fetchState()
       return
     }
+    rememberLiveEvent(msg.convId, msg.event)
     reduce(state.messages, msg.event)
     scheduleRender()
     if (msg.event.kind === 'result' || msg.event.kind === 'error') {
@@ -1789,6 +2049,11 @@ function init() {
   document.addEventListener('visibilitychange', onResume)
   window.addEventListener('focus', onResume)
   window.addEventListener('online', onResume)
+  var mockupResizeTimer = null
+  window.addEventListener('resize', function () {
+    clearTimeout(mockupResizeTimer)
+    mockupResizeTimer = setTimeout(scheduleRender, 80)
+  })
 
   // Auto-connect if we already have a saved config.
   if (cfg && cfg.base && cfg.token) {

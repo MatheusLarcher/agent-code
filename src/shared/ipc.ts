@@ -1,11 +1,28 @@
 // Shared IPC contract between the Electron main process and the renderer.
 // Keep this file type-only so it can be imported from main, preload and renderer.
 
+export interface UiMockupArtifact {
+  type: 'ui_mockup'
+  id: string
+  version: number
+  title: string
+  source: string
+  html: string
+  viewport: 'desktop' | 'mobile'
+}
+
+export type UiMockupSeed = Pick<UiMockupArtifact, 'id' | 'version' | 'title' | 'source' | 'viewport'>
+
 /** A normalized chat event the renderer renders. Produced in main from SDKMessage. */
 export type ChatEvent =
   | { kind: 'system'; sessionId: string; model: string; cwd: string; tools: string[] }
   | { kind: 'assistant-text'; id: string; text: string; final: boolean; aborted?: true }
   | { kind: 'thinking'; id: string; text: string }
+  | {
+      kind: 'ui-mockup'
+      artifact: UiMockupArtifact
+      parentToolUseId: string | null
+    }
   /** `parentToolUseId` identifies the TRACK this call belongs to: `null` is the
    *  main agent, anything else is the `Task` tool-use that spawned the subagent
    *  running it. The chat feed only renders the main track; the rest feeds the
@@ -488,6 +505,8 @@ export interface StartAgentOptions {
   skipPermissions?: boolean
   /** SDK session id to resume — loads the prior conversation history so an old chat can continue. */
   resume?: string
+  /** Latest revision of each inline mockup, chronological and without HTML, used to continue versions after reconnecting. */
+  uiMockups?: UiMockupSeed[]
   /** Reasoning effort for the model (low / medium / high / xhigh / max). */
   effort?: string
   /** Per-conversation "modo econômico": instructs the LLM to skip validation for
