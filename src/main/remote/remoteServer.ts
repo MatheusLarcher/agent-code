@@ -6,7 +6,6 @@ import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
 import { isDownloadableFile, parseDownloads } from '../../shared/ipc'
-import { isRenderUiMockupToolName, isSafeUiMockupArtifact } from '../../shared/uiMockup'
 import type {
   ChatEvent,
   ImageAttachment,
@@ -71,51 +70,6 @@ const MIME: Record<string, string> = {
 const PRIVATE_IPV4 = /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/
 /** Virtual/host‑only adapters (emulador, WSL, Hyper‑V, VirtualBox, VMware, Docker…). */
 const VIRTUAL_IFACE = /(vethernet|virtualbox|vmware|hyper-v|loopback|wsl|docker|vethernet \(default switch\)|vmnet|nat|tunnel|tap|tailscale|zerotier|radmin|hamachi)/i
-
-type UnknownMessage = Record<string, unknown>
-
-function isMessageRecord(value: unknown): value is UnknownMessage {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-/**
- * The renderer snapshot is an IPC boundary, not a trusted typed value. Remove
- * unsafe persisted mockups and the legacy source-bearing tool card/result pair
- * before any phone can fetch it through either history endpoint.
- */
-function sanitizeRemoteMessages(messages: readonly unknown[]): unknown[] {
-  const hiddenToolIds = new Set<string>()
-  for (const message of messages) {
-    if (
-      isMessageRecord(message) &&
-      message.kind === 'tool-use' &&
-      isRenderUiMockupToolName(message.name) &&
-      typeof message.id === 'string'
-    ) {
-      hiddenToolIds.add(message.id)
-    }
-  }
-
-  return messages.filter((message) => {
-    if (!isMessageRecord(message)) return true
-    if (
-      message.parentToolUseId != null &&
-      (message.kind === 'tool-use' || message.kind === 'tool-result' || message.kind === 'ui-mockup')
-    ) {
-      return false
-    }
-    if (message.kind === 'tool-use' && isRenderUiMockupToolName(message.name)) return false
-    if (
-      message.kind === 'tool-result' &&
-      typeof message.toolUseId === 'string' &&
-      hiddenToolIds.has(message.toolUseId)
-    ) {
-      return false
-    }
-    if (message.kind === 'ui-mockup') return isSafeUiMockupArtifact(message.artifact)
-    return true
-  })
-}
 
 /** Source IPv4 the OS would use to reach the internet — picks the iface with the default route. */
 function routedLanIp(): Promise<string> {
@@ -253,10 +207,6 @@ export class RemoteServer {
 
   /** Push a live agent event to every connected phone (tee from the main process). */
   broadcast(convId: string, event: ChatEvent): void {
-    if (
-      event.kind === 'ui-mockup' &&
-      (event.parentToolUseId !== null || !isSafeUiMockupArtifact(event.artifact))
-    ) return
     this.trackDownloadable(event)
     if (!this.clients.size) return
     const line = `data: ${JSON.stringify({ convId, event })}\n\n`
@@ -277,13 +227,7 @@ export class RemoteServer {
 
   /** Replace the served conversation snapshot (renderer is the source of truth). */
   setState(state: RemoteStatePayload): void {
-    this.state = {
-      ...state,
-      conversations: state.conversations.map((conversation) => ({
-        ...conversation,
-        messages: sanitizeRemoteMessages(conversation.messages)
-      }))
-    }
+    this.state = state
   }
 
   // ---- internals ----

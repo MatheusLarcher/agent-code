@@ -1,7 +1,6 @@
 import type { Conversation } from './types'
 import type { UIMessage } from './types'
 import type { RateLimitStatus } from '@shared/ipc'
-import { isRenderUiMockupToolName, isSafeUiMockupArtifact } from '@shared/uiMockup'
 
 // Persistence for the conversation history + UI state. Conversations are backed
 // by one SQLite db PER PROJECT (main process, via window.api.loadAllConversations/
@@ -31,38 +30,13 @@ export interface UiState {
 const DEFAULT_BROWSER_WIDTH = 720
 const COMPACTION_AGE_MS = 15 * 24 * 60 * 60 * 1000
 
-function filterUiMockupHistory(messages: UIMessage[]): UIMessage[] {
-  const hiddenToolUseIds = new Set(
-    messages
-      .filter(
-        (message): message is Extract<UIMessage, { kind: 'tool-use' }> =>
-          message.kind === 'tool-use' && isRenderUiMockupToolName(message.name)
-      )
-      .map((message) => message.id)
-  )
-
-  return messages.filter((message) => {
-    if (message.kind === 'ui-mockup') {
-      return message.parentToolUseId == null && isSafeUiMockupArtifact(message.artifact)
-    }
-    if (message.kind === 'tool-use' && isRenderUiMockupToolName(message.name)) return false
-    if (message.kind === 'tool-result' && hiddenToolUseIds.has(message.toolUseId)) return false
-    return true
-  })
-}
-
 /** Keep only the useful narrative of conversations older than 15 days. This
  * touches Agent Code's rendered history, never the Claude SDK session files. */
 export function compactOldConversations(list: Conversation[], now = Date.now()): Conversation[] {
-  return list.map((original) => {
-    const safeMessages = filterUiMockupHistory(original.messages)
-    const conversation = safeMessages.length === original.messages.length
-      ? original
-      : { ...original, messages: safeMessages }
+  return list.map((conversation) => {
     if (now - conversation.createdAt < COMPACTION_AGE_MS) return conversation
     const messages = conversation.messages.filter(
-      (message: UIMessage) =>
-        message.kind === 'user' || message.kind === 'ui-mockup' || (message.kind === 'assistant-text' && message.answer)
+      (message: UIMessage) => message.kind === 'user' || (message.kind === 'assistant-text' && message.answer)
     )
     return messages.length === conversation.messages.length ? conversation : { ...conversation, messages }
   })

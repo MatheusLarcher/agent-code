@@ -36,9 +36,6 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => {
 })
 import { AgentSession, OPENAI_MAX_TURNS, buildContextStamp } from './agentSession'
 import type { BrowserController } from './browserController'
-import type { UiMockupArtifact, UiMockupSeed } from '../shared/ipc'
-import { UI_MOCKUP_CSP } from '../shared/uiMockup'
-import { FINAL_ERROR } from './wiremdTools'
 
 const describeImagesMock = vi.fn()
 vi.mock('./visionRelay', async () => {
@@ -54,15 +51,7 @@ function pushedMessages(s: AgentSession): Array<{ message: { content: unknown };
 
 // Build a session without starting the SDK query loop — we only exercise the
 // permission gate (handlePermission / resolvePermission / setBypass).
-function makeSession(
-  opts: {
-    skipPermissions?: boolean
-    model?: string
-    fastMode?: boolean
-    effort?: string
-    uiMockups?: UiMockupSeed[]
-  } = {}
-): {
+function makeSession(opts: { skipPermissions?: boolean; model?: string; fastMode?: boolean; effort?: string } = {}): {
   s: AgentSession
   emit: ReturnType<typeof vi.fn>
   ask: ReturnType<typeof vi.fn>
@@ -77,13 +66,10 @@ function makeSession(
 }
 
 // handlePermission is private; reach it directly for the test.
-const gate = (s: AgentSession, name: string, input: Record<string, unknown>, agentId?: string): Promise<unknown> =>
-  (s as unknown as {
-    handlePermission(n: string, i: Record<string, unknown>, a?: string): Promise<unknown>
-  }).handlePermission(
+const gate = (s: AgentSession, name: string, input: Record<string, unknown>): Promise<unknown> =>
+  (s as unknown as { handlePermission(n: string, i: Record<string, unknown>): Promise<unknown> }).handlePermission(
     name,
-    input,
-    agentId
+    input
   )
 
 // handleMessage is private; reach it directly to drive a raw SDK message.
@@ -105,33 +91,6 @@ describe('AgentSession — fluxo de permissão', () => {
     const res = await gate(s, 'Read', { file_path: '/a.py' })
     expect(ask).not.toHaveBeenCalled()
     expect(res).toEqual({ behavior: 'allow', updatedInput: { file_path: '/a.py' } })
-  })
-
-  it('auto-aprova somente os dois nomes exatos da tool local de mockup', async () => {
-    const { s, ask } = makeSession()
-    const input = { title: 'Painel', source: '# Painel', viewport: 'desktop' }
-
-    await expect(gate(s, 'render_ui_mockup', input)).resolves.toEqual({ behavior: 'allow', updatedInput: input })
-    await expect(gate(s, 'mcp__wiremd__render_ui_mockup', input)).resolves.toEqual({
-      behavior: 'allow',
-      updatedInput: input
-    })
-    expect(ask).not.toHaveBeenCalled()
-
-    void gate(s, 'mcp__wiremd__future_dangerous_tool', input)
-    expect(ask).toHaveBeenCalledTimes(1)
-    s.dispose()
-  })
-
-  it('nega renderização em subagente antes que ela consuma o estado do mockup principal', async () => {
-    const { s, ask } = makeSession()
-    const input = { title: 'Painel', source: '# Painel', viewport: 'desktop' }
-
-    await expect(gate(s, 'mcp__wiremd__render_ui_mockup', input, 'agent-child')).resolves.toEqual({
-      behavior: 'deny',
-      message: 'Only the main agent can render an inline UI mockup.'
-    })
-    expect(ask).not.toHaveBeenCalled()
   })
 
   it('pede permissão no chat para ferramenta não-aprovada (ex.: Bash)', async () => {
@@ -210,310 +169,6 @@ describe('AgentSession — fluxo de permissão', () => {
     const pending = gate(s, 'Bash', { command: 'echo pending' })
     s.dispose()
     await expect(pending).resolves.toMatchObject({ behavior: 'deny', message: expect.stringMatching(/closed/i) })
-  })
-})
-
-describe('AgentSession — integração do mockup WireMD', () => {
-  const artifact: UiMockupArtifact = {
-    type: 'ui_mockup',
-    id: 'mockup-1',
-    version: 2,
-    title: 'Central de atendimento',
-    source: '# Central de atendimento\n[Buscar](input)',
-    html:
-      '<!doctype html><html><head>' +
-      '<meta charset="utf-8">' +
-      '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-      `<meta http-equiv="Content-Security-Policy" content="${UI_MOCKUP_CSP}">` +
-      '<style>.wmd-root{color:#111}</style></head>' +
-      '<body class="wmd-root wmd-clean">preview</body></html>',
-    viewport: 'desktop'
-  }
-
-  const wiremdUse = (id: string, parent: string | null = null): Record<string, unknown> => ({
-    type: 'assistant',
-    parent_tool_use_id: parent,
-    message: {
-      content: [
-        {
-          type: 'tool_use',
-          id,
-          name: 'mcp__wiremd__render_ui_mockup',
-          input: { title: artifact.title, source: artifact.source, viewport: artifact.viewport }
-        }
-      ]
-    }
-  })
-
-  const wiremdResult = (
-    id: string,
-    parent: string | null = null,
-    toolUseResult: unknown = { structuredContent: artifact }
-  ): Record<string, unknown> => ({
-    type: 'user',
-    parent_tool_use_id: parent,
-    tool_use_result: toolUseResult,
-    message: {
-      content: [
-        {
-          type: 'tool_result',
-          tool_use_id: id,
-          content: JSON.stringify({ ok: true, type: 'ui_mockup', id: artifact.id, version: artifact.version })
-        }
-      ]
-    }
-  })
-
-  it('registra o MCP, ensina a sintaxe real/retry e inclui sementes sem HTML no prompt', async () => {
-    const seed: UiMockupSeed = {
-      id: 'saved-1',
-      version: 4,
-      title: 'Painel salvo',
-      source: '# Painel salvo\n((92%)){success}',
-      viewport: 'desktop'
-    }
-    const { s } = makeSession({ uiMockups: [seed] })
-    await s.start()
-
-    const options = (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
-    const mcpServers = options.mcpServers as Record<string, unknown>
-    const prompt = (options.systemPrompt as { append: string }).append
-    expect(mcpServers.wiremd).toBeDefined()
-    expect(prompt).toContain('::: columns-3')
-    expect(prompt).toContain('::: column')
-    expect(prompt).toContain('<row>')
-    expect(prompt).toContain('retryAllowed:true')
-    expect(prompt).toContain('Não consegui renderizar este mockup.')
-    expect(prompt).toContain('Me mostra como ficaria o dashboard')
-    expect(prompt).toContain('Quais métricas esse dashboard deveria ter?')
-    expect(prompt).toContain('Implemente essa tela em React')
-    expect(prompt).toContain('initial or most relevant screen')
-    expect(prompt).toContain('rendered preview is the main response')
-    expect(prompt).toContain('at most one short sentence before the call')
-    expect(prompt).toContain('ASCII wireframe')
-    expect(prompt).toContain(seed.title)
-    expect(prompt).toContain(JSON.stringify(seed.source))
-    expect(prompt).not.toContain('<!doctype html>')
-  })
-
-  it('não reseta o retry cedo quando outro turno é enfileirado', async () => {
-    const { s } = makeSession()
-    const controller = (s as unknown as { wiremdController: { beginTurn(): void } }).wiremdController
-    const beginTurn = vi.spyOn(controller, 'beginTurn')
-
-    await s.send('primeiro turno')
-    await s.send('segundo turno')
-    expect(beginTurn).toHaveBeenCalledTimes(1)
-
-    // Só a conclusão do turno principal transfere o orçamento para o próximo.
-    handle(s, { type: 'result', subtype: 'success', is_error: false, result: 'ok', duration_ms: 1 })
-    expect(beginTurn).toHaveBeenCalledTimes(2)
-
-    // Resultado de subagente não é uma fronteira de turno do usuário.
-    handle(s, {
-      type: 'result',
-      subtype: 'success',
-      is_error: false,
-      result: 'peer',
-      duration_ms: 1,
-      origin: { kind: 'peer' }
-    })
-    expect(beginTurn).toHaveBeenCalledTimes(2)
-
-    handle(s, { type: 'result', subtype: 'success', is_error: false, result: 'ok', duration_ms: 1 })
-    expect(beginTurn).toHaveBeenCalledTimes(2)
-  })
-
-  it('valida e deduplica sementes recebidas no boundary da sessão', () => {
-    const unsafe = { id: '', version: 0, title: 'Inválido', source: '', viewport: 'desktop' }
-    const seeds = [
-      unsafe,
-      { id: 'old', version: 1, title: ' Painel ', source: '# antigo', viewport: 'desktop' },
-      { id: 'new', version: 3, title: 'painel', source: '# novo', viewport: 'mobile' },
-      { id: 'other', version: 2, title: 'Outro', source: '# outro', viewport: 'desktop' }
-    ] as UiMockupSeed[]
-    const { s } = makeSession({ uiMockups: seeds })
-    const controller = (s as unknown as {
-      wiremdController: { seeds(): UiMockupSeed[] }
-    }).wiremdController
-
-    expect(controller.seeds()).toEqual([
-      { id: 'other', version: 2, title: 'Outro', source: '# outro', viewport: 'desktop' },
-      { id: 'new', version: 3, title: 'painel', source: '# novo', viewport: 'mobile' }
-    ])
-  })
-
-  it('ignora um payload uiMockups malformado no boundary IPC', () => {
-    const { s } = makeSession({ uiMockups: {} as unknown as UiMockupSeed[] })
-    const controller = (s as unknown as {
-      wiremdController: { seeds(): UiMockupSeed[] }
-    }).wiremdController
-
-    expect(controller.seeds()).toEqual([])
-  })
-
-  it('limita o estado WireMD reinjetado no system prompt às 12 revisões mais recentes', async () => {
-    const seeds = Array.from({ length: 13 }, (_, index): UiMockupSeed => ({
-      id: `saved-${index}`,
-      version: 1,
-      title: `Tela ${index}`,
-      source: `# Fonte exclusiva ${index}`,
-      viewport: 'desktop'
-    }))
-    const { s } = makeSession({ uiMockups: seeds })
-    await s.start()
-
-    const options = (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
-    const prompt = (options.systemPrompt as { append: string }).append
-    expect(prompt).toContain('# Fonte exclusiva 12')
-    expect(prompt).toContain('# Fonte exclusiva 1')
-    expect(prompt).not.toContain(JSON.stringify('# Fonte exclusiva 0'))
-    expect(prompt).toContain('1 older mockup(s) remain in history')
-  })
-
-  it('troca tool-use/result genéricos por um único artifact no track principal', () => {
-    const { s, emit } = makeSession()
-    handle(s, wiremdUse('wm-main'))
-    expect(emit).not.toHaveBeenCalled()
-
-    handle(s, wiremdResult('wm-main'))
-
-    expect(emit).toHaveBeenCalledTimes(1)
-    expect(emit).toHaveBeenCalledWith({ kind: 'ui-mockup', artifact, parentToolUseId: null })
-    expect(emit.mock.calls.flat().some((event) => event?.kind === 'tool-use' || event?.kind === 'tool-result')).toBe(false)
-  })
-
-  it('trata o preview como resposta final e suprime texto posterior no mesmo turno', async () => {
-    const { s, emit } = makeSession()
-    handle(s, wiremdUse('wm-final'))
-    handle(s, wiremdResult('wm-final'))
-    emit.mockClear()
-
-    handle(s, {
-      type: 'stream_event',
-      event: { type: 'message_start', message: { id: 'after-preview' } }
-    })
-    handle(s, {
-      type: 'stream_event',
-      event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Resumo indevido' } }
-    })
-    handle(s, {
-      type: 'assistant',
-      parent_tool_use_id: null,
-      message: { content: [{ type: 'text', text: 'Resumo indevido' }] }
-    })
-    expect(emit).not.toHaveBeenCalled()
-
-    handle(s, {
-      type: 'assistant',
-      parent_tool_use_id: null,
-      message: { content: [{ type: 'text', text: 'Não consegui renderizar este mockup.' }] }
-    })
-    expect(emit).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'assistant-text', text: 'Não consegui renderizar este mockup.', final: true
-    }))
-    emit.mockClear()
-
-    await s.send('novo turno')
-    handle(s, {
-      type: 'assistant',
-      parent_tool_use_id: null,
-      message: { content: [{ type: 'text', text: 'Texto permitido' }] }
-    })
-    expect(emit).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'assistant-text', text: 'Texto permitido', final: true
-    }))
-  })
-
-  it('preserva parentToolUseId no artifact de subagente sem emitir cards genéricos', () => {
-    const { s, emit } = makeSession()
-    handle(s, wiremdUse('wm-child', 'task-parent'))
-    handle(s, wiremdResult('wm-child', 'task-parent'))
-
-    expect(emit).toHaveBeenCalledTimes(1)
-    expect(emit).toHaveBeenCalledWith({ kind: 'ui-mockup', artifact, parentToolUseId: 'task-parent' })
-  })
-
-  it('recupera o artifact pendente por id e versão quando o bridge omite structuredContent', () => {
-    const { s, emit } = makeSession()
-    const controller = (s as unknown as {
-      wiremdController: { pendingArtifacts: Map<string, UiMockupArtifact> }
-    }).wiremdController
-    controller.pendingArtifacts.set(`${artifact.id}:${artifact.version}`, artifact)
-
-    handle(s, wiremdUse('wm-fallback'))
-    handle(s, wiremdResult('wm-fallback', null, null))
-
-    expect(emit).toHaveBeenCalledWith({ kind: 'ui-mockup', artifact, parentToolUseId: null })
-    expect(controller.pendingArtifacts.has(`${artifact.id}:${artifact.version}`)).toBe(false)
-  })
-
-  it('não envia structuredContent inseguro ao renderer', () => {
-    const { s, emit } = makeSession()
-    handle(s, wiremdUse('wm-unsafe'))
-    handle(s, wiremdResult('wm-unsafe', null, {
-      structuredContent: { ...artifact, html: '<!doctype html><script>alert(1)</script>' }
-    }))
-
-    expect(emit).not.toHaveBeenCalled()
-  })
-
-  it('suprime também o tool-result de erro do WireMD', () => {
-    const { s, emit } = makeSession()
-    handle(s, wiremdUse('wm-error'))
-    handle(s, {
-      type: 'user',
-      parent_tool_use_id: null,
-      tool_use_result: 'Error: inválido',
-      message: {
-        content: [
-          { type: 'tool_result', tool_use_id: 'wm-error', is_error: true, content: '{"retryAllowed":true}' }
-        ]
-      }
-    })
-    expect(emit).not.toHaveBeenCalled()
-  })
-
-  it('normaliza a segunda falha no host e suprime qualquer texto posterior do modelo', () => {
-    const { s, emit } = makeSession()
-    handle(s, {
-      type: 'assistant',
-      parent_tool_use_id: null,
-      message: { content: [{ type: 'text', text: 'Vou montar a prévia.' }] }
-    })
-    const leadId = (emit.mock.calls.at(-1)?.[0] as { id: string }).id
-    emit.mockClear()
-
-    handle(s, wiremdUse('wm-terminal'))
-    handle(s, {
-      type: 'user',
-      parent_tool_use_id: null,
-      tool_use_result: `Error: ${FINAL_ERROR}`,
-      message: {
-        content: [
-          {
-            type: 'tool_result', tool_use_id: 'wm-terminal', is_error: true,
-            content: JSON.stringify({ ok: false, retryAllowed: false, message: FINAL_ERROR })
-          }
-        ]
-      }
-    })
-    expect(emit).toHaveBeenCalledTimes(1)
-    expect(emit).toHaveBeenCalledWith({
-      kind: 'assistant-text', id: leadId, text: FINAL_ERROR, final: true
-    })
-    emit.mockClear()
-
-    handle(s, {
-      type: 'stream_event',
-      event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Texto indevido' } }
-    })
-    handle(s, {
-      type: 'assistant',
-      parent_tool_use_id: null,
-      message: { content: [{ type: 'text', text: 'Outra explicação indevida.' }] }
-    })
-    expect(emit).not.toHaveBeenCalled()
   })
 })
 

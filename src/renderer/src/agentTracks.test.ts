@@ -55,14 +55,6 @@ describe('isSubagentEvent', () => {
     expect(isSubagentEvent(taskCall('task-1', 'procurar X'))).toBe(false)
     expect(isSubagentEvent(taskResult('task-1'))).toBe(false)
     expect(isSubagentEvent({ kind: 'assistant-text', id: 'a', text: 'oi', final: true })).toBe(false)
-    expect(isSubagentEvent({
-      kind: 'ui-mockup',
-      artifact: {
-        type: 'ui_mockup', id: 'm1', version: 1, title: 'Tela', source: '# Tela',
-        html: '<!doctype html><html><head></head><body></body></html>', viewport: 'desktop'
-      },
-      parentToolUseId: 'task-1'
-    })).toBe(true)
   })
 })
 

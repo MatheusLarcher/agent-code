@@ -13,8 +13,6 @@ import { fileMeta, fmtSize } from '../files'
 import { IconSpeaker, IconStopSmall } from './Icons'
 import { CodeBlock, extToLang } from './CodeBlock'
 import { Markdown } from './Markdown'
-import { UiMockupPreview } from './UiMockupPreview'
-import { isRenderUiMockupToolName } from '@shared/uiMockup'
 
 /** Read-aloud controls passed down from App (TTS state lives there so audio
  *  survives message re-renders and conversation switches). */
@@ -580,16 +578,7 @@ export function MessageList({
                 <div className="bubble">{m.text}</div>
               </div>
             )
-          case 'ui-mockup': {
-            return (
-              <UiMockupPreview
-                key={`mockup:${m.artifact.id}:${m.artifact.version}`}
-                artifact={m.artifact}
-              />
-            )
-          }
           case 'tool-use':
-            if (isRenderUiMockupToolName(m.name)) return null
             return <ToolCard key={`tool:${m.id}`} m={m} />
           case 'system':
             return (

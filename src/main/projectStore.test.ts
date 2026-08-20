@@ -1,4 +1,3 @@
-// @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, statSync, writeFileSync, copyFileSync } from 'node:fs'

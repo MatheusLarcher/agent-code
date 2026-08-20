@@ -47,11 +47,6 @@ import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
 import { splitForSpeech, toSpeechText } from '@shared/speechText'
-import {
-  isRenderUiMockupToolName,
-  isSafeUiMockupArtifact,
-  latestUiMockupSeeds
-} from '@shared/uiMockup'
 import { NewTabModal } from './ui/NewTabModal'
 import { FilePickerModal } from './ui/FilePickerModal'
 import { RemoteModal } from './ui/RemoteModal'
@@ -270,12 +265,10 @@ function applyTaskUpdate(plan: TodoPlan | undefined, e: Extract<ChatEvent, { kin
   return { ...plan, items }
 }
 
-export function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
+function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
   // Subagent work never joins the chat feed — it would interleave with the main
   // agent's answer. It goes to the agents panel instead (see agentTracks.ts).
   if (isSubagentEvent(e)) return prev
-  if (e.kind === 'ui-mockup' && !isSafeUiMockupArtifact(e.artifact)) return prev
-  if (e.kind === 'tool-use' && isRenderUiMockupToolName(e.name)) return prev
   // TodoWrite/TaskCreate/TaskUpdate calls never join the message feed — they
   // update Conversation.todoPlan instead (handled in onEvent, alongside this call).
   if (isTodoWriteToolUse(e) || isTaskCreateToolUse(e) || isTaskUpdateToolUse(e)) return prev
@@ -305,10 +298,6 @@ export function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
     // so we don't render it — we only mark the last assistant text as the answer.
     const copy = [...prev]
     for (let i = copy.length - 1; i >= 0; i--) {
-      // A tool-only turn has no assistant text, while a permitted short phrase
-      // may appear immediately before a mockup. Walk across the artifact but
-      // never across the current turn's user boundary.
-      if (copy[i].kind === 'user') break
       if (copy[i].kind === 'assistant-text') {
         // Stamp the finish time so the chat can show when this answer ran (and,
         // if today, how long ago).
@@ -1165,8 +1154,7 @@ export function App(): JSX.Element {
           resume: conv.sdkSessionId ?? undefined,
           effort: conv.effort,
           economyMode: conv.economyMode === true,
-          fastMode: conv.fastMode === true,
-          uiMockups: latestUiMockupSeeds(conv.messages).reverse()
+          fastMode: conv.fastMode === true
         })
         if (!started.ok) throw new Error('a sessão do agente não iniciou')
         setConnected(conv.id, true)

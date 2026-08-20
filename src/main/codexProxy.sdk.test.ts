@@ -139,8 +139,7 @@ function captureRequest(init: RequestInit | undefined): CapturedRequest {
 }
 
 function toolNames(body: CodexResponsesRequest): string[] {
-  const embedded = body.input.flatMap((item) => item.type === 'additional_tools' ? item.tools : [])
-  return [...(body.tools ?? []), ...embedded].map((tool) => tool.name)
+  return (body.tools ?? []).map((tool) => tool.name)
 }
 
 function functionOutput(body: CodexResponsesRequest, callId: string): string | undefined {

@@ -3,7 +3,6 @@ import { cleanup, fireEvent, render } from '@testing-library/react'
 import type { UIMessage } from '../types'
 import { UiProvider } from '../ui/UiProvider'
 import { MessageList } from './MessageList'
-import { UI_MOCKUP_CSP } from '@shared/uiMockup'
 
 afterEach(cleanup)
 
@@ -64,50 +63,6 @@ describe('MessageList - janela e ancora de scroll', () => {
 
     expect(list.querySelectorAll('.msg.user')).toHaveLength(80)
     expect(list.scrollTop).toBe(280)
-  })
-})
-
-describe('MessageList - mockup artifact', () => {
-  it('renders a persisted artifact inline in one sandboxed iframe', () => {
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${UI_MOCKUP_CSP}"><style>.wmd-root{color:#111}</style></head><body class="wmd-root wmd-clean"><h1>Checkout preview</h1></body></html>`
-    const view = render(
-      messageList([
-        {
-          kind: 'ui-mockup',
-          artifact: {
-            type: 'ui_mockup',
-            id: 'mockup-1',
-            version: 2,
-            title: 'Checkout',
-            source: '# Checkout',
-            html,
-            viewport: 'mobile'
-          },
-          parentToolUseId: null
-        }
-      ])
-    )
-    const frame = view.getByTitle('Checkout') as HTMLIFrameElement
-    expect(frame.getAttribute('sandbox')).toBe('')
-    expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer')
-    expect(frame.srcdoc).toContain('Checkout preview')
-    expect(frame.srcdoc).not.toMatch(/<iframe\b/i)
-    expect(view.container.querySelectorAll('iframe')).toHaveLength(1)
-    expect(view.container.querySelector('.ui-mockup-card.mobile')).toBeTruthy()
-    expect(view.container.querySelector('.ui-mockup-viewport.mobile')).toBeTruthy()
-  })
-
-  it('never renders a persisted WireMD tool card or its source', () => {
-    const view = render(messageList([{
-      kind: 'tool-use',
-      id: 'wm1',
-      name: 'mcp__wiremd__render_ui_mockup',
-      input: { title: 'Segredo', source: '# SOURCE NÃO DEVE APARECER' },
-      parentToolUseId: null
-    }]))
-
-    expect(view.container.querySelector('.tool-card')).toBeNull()
-    expect(view.container.textContent).not.toContain('SOURCE NÃO DEVE APARECER')
   })
 })
 

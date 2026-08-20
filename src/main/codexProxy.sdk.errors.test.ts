@@ -14,7 +14,6 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 import type { CodexTokens } from './codexAuth'
 import type { CodexResponsesRequest } from './codexProxy'
-import { createWiremdMockupController } from './wiremdTools'
 
 vi.mock('./codexAuth', () => ({
   getValidCodexTokens: vi.fn(async () => null),
@@ -118,11 +117,6 @@ function outputOf(body: CodexResponsesRequest, callId: string): string | undefin
   return typeof found.output === 'string' ? found.output : JSON.stringify(found.output)
 }
 
-function toolNames(body: CodexResponsesRequest): string[] {
-  const embedded = body.input.flatMap((item) => item.type === 'additional_tools' ? item.tools : [])
-  return [...(body.tools ?? []), ...embedded].map((item) => item.name)
-}
-
 function blocks(message: SDKMessage): Array<Record<string, unknown>> {
   const content = (message as SDKMessage & { message?: { content?: unknown } }).message?.content
   return Array.isArray(content)
@@ -206,61 +200,6 @@ async function exists(path: string): Promise<boolean> {
 }
 
 describe.sequential('Codex proxy SDK tool error round-trips', () => {
-  it('executes the real WireMD MCP locally and returns its result for model continuation', async () => {
-    const root = await tempRoot('wiremd')
-    const captured: Capture[] = []
-    const final = 'WIREMD_CONTINUATION_COMPLETE'
-    const source = `# Atendimento
-::: columns-2
-::: column
-## Fila
-12 chamados
-:::
-::: column
-## SLA
-((92%)){success}
-:::
-:::`
-    const controller = createWiremdMockupController()
-    const fakeFetch: typeof fetch = async (_input, init) => {
-      const request = capture(init)
-      captured.push(request)
-      const returned = outputOf(request.body, 'call_wiremd')
-      if (returned !== undefined) return text('resp_wiremd_final', final)
-      const advertised = toolNames(request.body).find((name) => name.endsWith('__render_ui_mockup'))
-      if (!advertised) throw new Error('The SDK did not advertise render_ui_mockup')
-      return toolCall('resp_wiremd_tool', 'call_wiremd', advertised, {
-        title: 'Atendimento', source, viewport: 'desktop'
-      })
-    }
-    const proxy = await startCodexProxyServer({
-      getTokens: async () => tokens,
-      refreshTokens: async () => tokens,
-      secret: SECRET,
-      fetchImpl: fakeFetch
-    })
-
-    try {
-      const messages = await run(
-        'Mostre um dashboard compacto de atendimento.',
-        options(root, proxy.port, { tools: [], mcpServers: { wiremd: controller.server } })
-      )
-      const returned = outputOf(captured[1].body, 'call_wiremd')
-      expect(returned).toContain('"type":"ui_mockup"')
-      expect(returned).toContain(JSON.stringify(source).slice(1, -1))
-      expect(returned).not.toContain('<!doctype html>')
-      expect(
-        messages.some((message) => blocks(message).some(
-          (block) => block.type === 'tool_result' && block.tool_use_id === 'call_wiremd'
-        ))
-      ).toBe(true)
-      expect(resultOf(messages)).toMatchObject({ subtype: 'success', result: final })
-    } finally {
-      await proxy.close()
-      await rm(root, { recursive: true, force: true })
-    }
-  }, 35_000)
-
   it('returns a canUseTool Bash denial to Codex without executing the command', async () => {
     const root = await tempRoot('deny')
     const marker = join(root, 'forbidden-marker.txt')
@@ -365,7 +304,7 @@ describe.sequential('Codex proxy SDK tool error round-trips', () => {
       captured.push(request)
       const returned = outputOf(request.body, 'call_mcp_boom')
       if (returned !== undefined) return text('resp_mcp_final', 'MCP_ERROR_CONTINUED')
-      const advertised = toolNames(request.body).find((name) => name.endsWith('__explode'))
+      const advertised = (request.body.tools ?? []).map((item) => item.name).find((name) => name.endsWith('__explode'))
       if (!advertised) throw new Error('The SDK did not advertise the in-process MCP tool')
       return toolCall('resp_mcp_boom', 'call_mcp_boom', advertised, {})
     }

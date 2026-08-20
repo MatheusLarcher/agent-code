@@ -1,4 +1,3 @@
-// @vitest-environment node
 import { describe, it, expect } from 'vitest'
 import { localSpeechSizeMb, parseWorkerChunk } from './speech'
 import { DEFAULT_LOCAL_SPEECH_MODEL, LOCAL_SPEECH_MODELS, localSpeechRuntime } from '../shared/ipc'
