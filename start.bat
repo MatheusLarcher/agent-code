@@ -62,15 +62,23 @@ for /f "delims=" %%v in ('node -v') do set NODE_DETECTED=%%v
 echo Node.js: %NODE_DETECTED%
 echo.
 
-REM --- Instala dependencias se ainda nao foram instaladas ---
-if not exist "node_modules" (
-    echo node_modules nao encontrado. Instalando dependencias...
+REM --- Instala dependencias se estiverem ausentes ou incompletas ---
+REM A pasta node_modules pode existir mesmo apos uma instalacao interrompida.
+if not exist "node_modules\.bin\electron-vite.cmd" (
+    echo Dependencias ausentes ou incompletas. Instalando dependencias...
     echo Isso tambem baixa o Chromium do Playwright na primeira vez.
     echo.
     call npm install
     if errorlevel 1 (
         echo.
         echo [ERRO] Falha ao instalar as dependencias.
+        pause
+        exit /b 1
+    )
+    if not exist "node_modules\.bin\electron-vite.cmd" (
+        echo.
+        echo [ERRO] A instalacao terminou sem disponibilizar o electron-vite.
+        echo Tente remover o node_modules e executar npm install novamente.
         pause
         exit /b 1
     )
