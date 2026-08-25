@@ -166,6 +166,10 @@ interface Props {
   /** Modo econômico toggle — shown beside the model/effort pickers. */
   economyMode: boolean
   onEconomyModeChange: (on: boolean) => void
+  /** Dynamic /loop toggle. Economy mode disables it. */
+  loopEnabled: boolean
+  loopLocked: boolean
+  onLoopEnabledChange: (on: boolean) => void
   /** Modo rápido toggle — only rendered when the current model supports fast mode
    *  (`fastModeAvailable`), since the API rejects it on every other model. */
   fastModeAvailable: boolean
@@ -484,6 +488,22 @@ export function ChatPanel(props: Props): JSX.Element {
         >
           <span className="economy-icon">{props.economyMode ? '⚡' : '💰'}</span>
           <span className="economy-label">Econômico</span>
+        </button>
+        <button
+          type="button"
+          className={`loop-toggle${props.loopEnabled ? ' on' : ''}`}
+          disabled={props.loopLocked}
+          title={
+            props.loopLocked
+              ? 'Loop indisponível enquanto o modo econômico estiver ativo.'
+              : props.loopEnabled
+                ? 'Loop ATIVO — permite repetir a tarefa até atingir a condição, com limite padrão de 100 ciclos.'
+                : 'Loop — permite repetir a tarefa até atingir a condição, com limite padrão de 100 ciclos.'
+          }
+          onClick={() => props.onLoopEnabledChange(!props.loopEnabled)}
+        >
+          <span className="loop-icon">↻</span>
+          <span className="loop-label">Loop</span>
         </button>
         {props.fastModeAvailable && (
           <button

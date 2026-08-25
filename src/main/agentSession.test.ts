@@ -35,7 +35,14 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => {
     }
   }
 })
-import { AgentSession, OPENAI_MAX_TURNS, buildContextStamp } from './agentSession'
+import {
+  AgentSession,
+  DEFAULT_LOOP_LIMIT,
+  MAX_LOOP_LIMIT,
+  OPENAI_MAX_TURNS,
+  buildContextStamp,
+  loopLimitFromPrompt
+} from './agentSession'
 import type { BrowserController } from './browserController'
 
 const describeImagesMock = vi.fn()
@@ -52,7 +59,15 @@ function pushedMessages(s: AgentSession): Array<{ message: { content: unknown };
 
 // Build a session without starting the SDK query loop — we only exercise the
 // permission gate (handlePermission / resolvePermission / setBypass).
-function makeSession(opts: { skipPermissions?: boolean; model?: string; fastMode?: boolean; effort?: string; cwd?: string } = {}): {
+function makeSession(opts: {
+  skipPermissions?: boolean
+  model?: string
+  fastMode?: boolean
+  effort?: string
+  cwd?: string
+  economyMode?: boolean
+  loopEnabled?: boolean
+} = {}): {
   s: AgentSession
   emit: ReturnType<typeof vi.fn>
   ask: ReturnType<typeof vi.fn>
@@ -170,6 +185,90 @@ describe('AgentSession — fluxo de permissão', () => {
     const pending = gate(s, 'Bash', { command: 'echo pending' })
     s.dispose()
     await expect(pending).resolves.toMatchObject({ behavior: 'deny', message: expect.stringMatching(/closed/i) })
+  })
+})
+
+describe('AgentSession — controle seguro do /loop', () => {
+  const wakeup = {
+    delaySeconds: 60,
+    reason: 'Verificar novamente a condição pedida.',
+    prompt: '/loop verificar até concluir'
+  }
+
+  it('usa 100 por padrão e só aceita número ligado explicitamente ao loop', () => {
+    expect(loopLimitFromPrompt('verifique a porta 3000 até funcionar')).toBe(DEFAULT_LOOP_LIMIT)
+    expect(loopLimitFromPrompt('tente até 250 vezes')).toBe(250)
+    expect(loopLimitFromPrompt('limite do loop: 450')).toBe(450)
+    expect(loopLimitFromPrompt('loop limit 999999')).toBe(MAX_LOOP_LIMIT)
+    expect(loopLimitFromPrompt('tente até 20 vezes')).toBe(DEFAULT_LOOP_LIMIT)
+  })
+
+  it('bloqueia a skill loop quando o toggle está desligado', async () => {
+    const { s } = makeSession()
+    await expect(gate(s, 'Skill', { skill: 'loop' })).resolves.toMatchObject({
+      behavior: 'deny',
+      message: expect.stringMatching(/toggle.*Loop/i)
+    })
+  })
+
+  it('bloqueia ScheduleWakeup fora de uma skill loop ativa mesmo com toggle ligado', async () => {
+    const { s } = makeSession({ loopEnabled: true })
+    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({
+      behavior: 'deny',
+      message: expect.stringMatching(/skill \/loop/i)
+    })
+  })
+
+  it.each(['claude-opus-4-8', 'gpt-5.6-luna'])(
+    'autoriza wakeup válido no mesmo gate compartilhado (%s)',
+    async (model) => {
+    const { s, ask } = makeSession({ loopEnabled: true, model })
+    void gate(s, 'Skill', { skill: 'loop' })
+    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toEqual({
+      behavior: 'allow',
+      updatedInput: wakeup
+    })
+    expect(ask).not.toHaveBeenCalled() // o toggle Loop já é a autorização explícita
+    }
+  )
+
+  it('rejeita campos inventados pelo GPT', async () => {
+    const { s } = makeSession({ loopEnabled: true, skipPermissions: true })
+    s.setBypass(true)
+    await gate(s, 'Skill', { skill: 'loop' })
+    await expect(gate(s, 'ScheduleWakeup', { ...wakeup, noop: true })).resolves.toMatchObject({
+      behavior: 'deny',
+      message: expect.stringMatching(/noop/)
+    })
+  })
+
+  it('stop:true encerra o loop e bloqueia wakeups posteriores', async () => {
+    const { s } = makeSession({ loopEnabled: true, skipPermissions: true })
+    s.setBypass(true)
+    await gate(s, 'Skill', { skill: 'loop' })
+    await expect(gate(s, 'ScheduleWakeup', { stop: true })).resolves.toEqual({
+      behavior: 'allow',
+      updatedInput: { stop: true }
+    })
+    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('interrompe no limite configurado antes de criar outro wakeup', async () => {
+    const { s } = makeSession({ loopEnabled: true })
+    Object.assign(s as unknown as Record<string, unknown>, {
+      loopActive: true,
+      loopCycles: DEFAULT_LOOP_LIMIT,
+      loopLimit: DEFAULT_LOOP_LIMIT
+    })
+    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({
+      behavior: 'deny',
+      message: expect.stringMatching(/100 ciclos/)
+    })
+  })
+
+  it('modo econômico vence mesmo se um estado corrompido trouxer loop ligado', async () => {
+    const { s } = makeSession({ loopEnabled: true, economyMode: true, skipPermissions: true })
+    await expect(gate(s, 'Skill', { skill: 'loop' })).resolves.toMatchObject({ behavior: 'deny' })
   })
 })
 

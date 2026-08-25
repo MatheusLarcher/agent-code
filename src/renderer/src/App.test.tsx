@@ -842,10 +842,35 @@ describe('App — uso da conta (5h/semana) na topbar, global (não é por conver
 // Reads what the app persisted for the seeded conversation ('c1') — the same
 // mechanism App.tsx itself uses (saveConversations -> window.api.saveAllConversations),
 // so these assert on real persisted state, not an internal implementation detail.
-function savedConv(): { todoPlan?: { items: TodoItem[]; active: boolean } } | undefined {
+function savedConv(): {
+  todoPlan?: { items: TodoItem[]; active: boolean }
+  economyMode?: boolean
+  loopEnabled?: boolean
+} | undefined {
   const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
   return list.find((c: { id: string }) => c.id === 'c1')
 }
+
+describe('App — Loop e Econômico por conversa', () => {
+  it('persiste o toggle Loop e Econômico o desativa', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+
+    const loop = await screen.findByRole('button', { name: /Loop/i })
+    fireEvent.click(loop)
+    await waitFor(() => expect(savedConv()?.loopEnabled).toBe(true))
+
+    fireEvent.click(screen.getByRole('button', { name: /Econômico/i }))
+    await waitFor(() => {
+      expect(savedConv()?.economyMode).toBe(true)
+      expect(savedConv()?.loopEnabled).toBe(false)
+    })
+    expect((screen.getByRole('button', { name: /Loop/i }) as HTMLButtonElement).disabled).toBe(true)
+  })
+})
 
 const todoWriteEvent = (todos: TodoItem[]): ChatEvent => ({
   kind: 'tool-use',

@@ -29,6 +29,25 @@ import type {
 } from '../shared/ipc'
 
 export const OPENAI_MAX_TURNS = 64
+export const DEFAULT_LOOP_LIMIT = 100
+export const MAX_LOOP_LIMIT = 10_000
+
+/** Reads only numbers explicitly tied to a loop/repetition limit. Incidental
+ * ports, dates and ids must never silently turn into execution budgets. */
+export function loopLimitFromPrompt(text: string): number {
+  const patterns = [
+    /(?:limite(?:\s+(?:do|de))?\s+loop|loop\s+limit)\s*[:=]?\s*(\d+)/iu,
+    /(?:at[eé]|no\s+m[aá]ximo|max(?:imum)?)\s+(\d+)\s+(?:vezes|ciclos|itera(?:ç|c)[õo]es|times|cycles|iterations)/iu,
+    /(?:tente|repita|execute|rode|repeat|run|try)\s+(?:at[eé]\s+)?(\d+)\s+(?:vezes|ciclos|itera(?:ç|c)[õo]es|times|cycles|iterations)/iu
+  ]
+  for (const pattern of patterns) {
+    const value = Number(pattern.exec(text)?.[1])
+    if (Number.isSafeInteger(value) && value > DEFAULT_LOOP_LIMIT) {
+      return Math.min(value, MAX_LOOP_LIMIT)
+    }
+  }
+  return DEFAULT_LOOP_LIMIT
+}
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
 (browser_navigate, browser_snapshot, browser_screenshot, browser_click, browser_type,
@@ -131,6 +150,18 @@ Você está operando em modo de economia de tokens. Siga estas regras:
 7. **Mudanças complexas = ignore o modo econômico** — Se a tarefa envolve múltiplos arquivos, alterações de lógica, refatoração, segurança ou credenciais, siga o fluxo normal completo.
 
 8. **Nunca pule verificações de segurança** — Credenciais, secrets, dados sensíveis sempre exigem cuidado normal.`
+
+const LOOP_HINT = `MODO LOOP ATIVADO PELO USUÁRIO NESTA CONVERSA.
+
+Use a skill /loop somente quando a tarefa realmente pedir repetição. Em CADA ciclo:
+1. verifique primeiro a condição de saída escrita pelo usuário;
+2. se a condição já foi atingida, chame ScheduleWakeup com {"stop":true} e entregue o resultado final;
+3. só peça o próximo ScheduleWakeup DEPOIS de concluir e verificar o trabalho possível neste ciclo;
+4. nunca use ScheduleWakeup apenas para esperar um subagente ou tarefa em background;
+5. não inclua campos fora do schema, como "noop".
+
+O Agent Code aplica 100 ciclos por padrão. Um limite maior só vale quando o usuário o pedir
+explicitamente no texto. A condição de saída encerra o loop antes do limite.`
 
 // Persistent, cross-conversation memory. The .md files live in the user's chosen
 // cache folder (next to the SQLite db — see store.ts), so the PATH is per-user/per-machine,
@@ -290,6 +321,10 @@ export class AgentSession {
   private stopTaskWatch: (() => void) | null = null
   private watchedSessionId: string | null = null
   private disposed = false
+  private loopActive = false
+  private loopCycles = 0
+  private loopLimit = DEFAULT_LOOP_LIMIT
+  private loopScheduledThisIteration = false
 
   constructor(
     private readonly opts: StartAgentOptions,
@@ -330,6 +365,8 @@ export class AgentSession {
     // model to skip validation/build/tests for trivial tasks to save tokens.
     if (this.opts.economyMode) {
       append += `\n\n${ECONOMY_HINT}`
+    } else if (this.opts.loopEnabled) {
+      append += `\n\n${LOOP_HINT}`
     }
 
     // Ollama Cloud routing: when the chosen model is an Ollama model, point the
@@ -457,6 +494,12 @@ export class AgentSession {
     messageUuid?: string,
     origin: MessageOrigin = 'pc'
   ): Promise<void> {
+    // A real user dispatch starts a fresh loop budget. Dynamic wakeups are
+    // injected by the CLI and do not pass through this method.
+    this.loopActive = this.opts.loopEnabled === true && /^\s*\/loop(?:\s|$)/iu.test(text)
+    this.loopCycles = 0
+    this.loopLimit = loopLimitFromPrompt(text)
+    this.loopScheduledThisIteration = false
     const uuid = messageUuid || randomUUID()
     const receiptText = text.length > 500 ? `${text.slice(0, 500)}…` : text
     this.submittedMessages.set(uuid, receiptText)
@@ -722,6 +765,74 @@ export class AgentSession {
       })
       return new Promise<PermissionResult>((resolve) => this.registerPending(id, toolName, input, resolve))
     }
+    if (toolName === 'Skill') {
+      const skill = typeof input.skill === 'string' ? input.skill : typeof input.name === 'string' ? input.name : ''
+      if (/^(?:[^:]+:)?loop$/iu.test(skill.trim())) {
+        if (this.opts.loopEnabled !== true || this.opts.economyMode === true) {
+          return Promise.resolve({
+            behavior: 'deny',
+            message: 'Loop desativado nesta conversa. Ative o toggle “Loop” para usar /loop.'
+          })
+        }
+        this.loopActive = true
+        // The per-conversation toggle is the explicit user grant. Returning here
+        // also prevents loopActive from being set while the Skill permission is
+        // still pending (and possibly denied).
+        return Promise.resolve({ behavior: 'allow', updatedInput: input })
+      }
+    }
+    if (toolName === 'ScheduleWakeup') {
+      if (this.opts.loopEnabled !== true || this.opts.economyMode === true) {
+        return Promise.resolve({
+          behavior: 'deny',
+          message: 'ScheduleWakeup bloqueado: o toggle Loop está desativado nesta conversa.'
+        })
+      }
+      if (!this.loopActive) {
+        return Promise.resolve({
+          behavior: 'deny',
+          message: 'ScheduleWakeup só pode ser usado por uma execução ativa da skill /loop; não o use para esperar subagentes.'
+        })
+      }
+      const allowedKeys = new Set(['delaySeconds', 'reason', 'prompt', 'stop'])
+      const unexpected = Object.keys(input).filter((key) => !allowedKeys.has(key))
+      if (unexpected.length) {
+        return Promise.resolve({
+          behavior: 'deny',
+          message: `ScheduleWakeup inválido: campos não permitidos: ${unexpected.join(', ')}.`
+        })
+      }
+      if (input.stop === true) {
+        this.loopActive = false
+        this.loopScheduledThisIteration = false
+        return Promise.resolve({ behavior: 'allow', updatedInput: { stop: true } })
+      }
+      if (this.loopCycles >= this.loopLimit) {
+        this.loopActive = false
+        this.loopScheduledThisIteration = false
+        return Promise.resolve({
+          behavior: 'deny',
+          message: `Loop encerrado após ${this.loopLimit} ciclos sem confirmar a condição de saída. Peça explicitamente um limite maior para tentar novamente.`
+        })
+      }
+      if (
+        typeof input.delaySeconds !== 'number' ||
+        !Number.isFinite(input.delaySeconds) ||
+        typeof input.reason !== 'string' ||
+        !input.reason.trim() ||
+        typeof input.prompt !== 'string' ||
+        !input.prompt.trim()
+      ) {
+        return Promise.resolve({
+          behavior: 'deny',
+          message: 'ScheduleWakeup inválido: delaySeconds, reason e prompt são obrigatórios durante o loop.'
+        })
+      }
+      this.loopCycles++
+      this.loopScheduledThisIteration = true
+      console.log(`[loop] conversation=${this.opts.convId} cycle=${this.loopCycles}/${this.loopLimit} scheduled`)
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    }
     // Windows control has its own high-risk master gate. "Permitir tudo" must
     // never bypass it; enabling the dedicated toggle is the explicit grant.
     if (toolName.startsWith('mcp__windows__')) {
@@ -875,6 +986,14 @@ export class AgentSession {
         // Mirrors the parent_tool_use_id filter already used for the
         // `assistant` case below (context-token tracking).
         if (r.origin?.kind === 'peer') break
+        // If an active loop iteration reaches a successful terminal result
+        // without requesting another wakeup, its condition is complete. The CLI
+        // has nothing pending and the local guard must not authorize a stale call.
+        if (this.loopActive && !r.is_error && !this.loopScheduledThisIteration) {
+          this.loopActive = false
+          console.log(`[loop] conversation=${this.opts.convId} completed after ${this.loopCycles} cycle(s)`)
+        }
+        this.loopScheduledThisIteration = false
         // Belt-and-braces re-read at the end of every turn: if the folder watcher
         // ever misses a write (network drive, antivirus, watcher limits), the card
         // still lands on the truth instead of drifting for the rest of the chat.

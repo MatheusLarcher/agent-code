@@ -493,6 +493,9 @@ export interface StartAgentOptions {
   /** Per-conversation "modo econômico": instructs the LLM to skip validation for
    *  trivial tasks. Scoped to THIS conversation only. */
   economyMode?: boolean
+  /** Enables Claude Code's dynamic /loop for this conversation. Mutually
+   *  exclusive with economyMode and guarded in AgentSession. */
+  loopEnabled?: boolean
   /** Per-conversation "modo rápido" (fast mode): runs Opus at up to ~2.5x the
    *  output speed for a higher per-token price. Only meaningful for the models in
    *  FAST_MODE_MODELS — see modelSupportsFastMode. */
@@ -1012,6 +1015,9 @@ export interface RemoteConversation {
   model?: string
   /** Current reasoning effort of this conversation. */
   effort?: string
+  /** Per-conversation execution modes mirrored from the desktop. */
+  economyMode?: boolean
+  loopEnabled?: boolean
   /** Pending permission/AskUserQuestion request, if any — same shape the desktop
    *  modal uses. The phone answers via `POST /api/permission-respond`. */
   permission?: PermissionRequest

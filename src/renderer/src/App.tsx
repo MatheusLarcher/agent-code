@@ -459,9 +459,9 @@ export function App(): JSX.Element {
   // intentional stop, not a failure, so we must not flag the message as errored.
   const interruptedRef = useRef<Set<string>>(new Set())
 
-  // Model/effort changed while busy: applied lazily at the next queue handoff
+  // Session-bound config changed while busy: applied lazily at the next queue handoff
   // (see onEvent's success branch) instead of restarting the live turn.
-  const pendingModelChangeRef = useRef<Set<string>>(new Set())
+  const pendingSessionConfigRef = useRef<Set<string>>(new Set())
   // onEvent is defined before connect()/stopSession() exist in this component's
   // source order; it reaches them through these refs (assigned once those
   // callbacks are created below) instead of closing over the not-yet-initialized
@@ -695,12 +695,12 @@ export function App(): JSX.Element {
         // "busy" through the handoff; only when the queue is empty do we go idle.
         delete inflightRef.current[cid]
         patchConv(cid, (c) => ({ ...c, recovery: undefined }))
-        // A model/effort change made while busy was deferred (see changeModel /
-        // changeEffort) — apply it now, at the handoff, by restarting the live
+        // A session-bound setting (model, effort, Loop or Econômico) changed
+        // while busy — apply it now, at the handoff, by restarting the live
         // session (same resume id, so history carries over) before the next
         // message goes out.
-        const modelChangePending = pendingModelChangeRef.current.has(cid)
-        if (modelChangePending) pendingModelChangeRef.current = withoutId(pendingModelChangeRef.current, cid)
+        const sessionConfigPending = pendingSessionConfigRef.current.has(cid)
+        if (sessionConfigPending) pendingSessionConfigRef.current = withoutId(pendingSessionConfigRef.current, cid)
         const next = queueRef.current.find((m) => m.convId === cid)
         if (next) {
           setQueue((cur) => cur.filter((m) => m.id !== next.id))
@@ -734,8 +734,8 @@ export function App(): JSX.Element {
             fileRefs: next.fileRefs
           }
           void (async () => {
-            if (modelChangePending) {
-              // Dispose the stale-model session and reconnect (same resume id, so
+            if (sessionConfigPending) {
+              // Dispose the stale-config session and reconnect (same resume id, so
               // history carries over) before this queued message goes out.
               await stopSessionRef.current?.(cid, { silent: true })
               setBusy(cid, true) // stopSession() clears busy; the handoff stays busy
@@ -748,7 +748,7 @@ export function App(): JSX.Element {
         } else {
           // No more queued messages: if a change is pending, drop the session now
           // so the next message the user types reconnects with the new model.
-          if (modelChangePending) void stopSessionRef.current?.(cid, { silent: true })
+          if (sessionConfigPending) void stopSessionRef.current?.(cid, { silent: true })
           setBusy(cid, false)
           setBusySince((m) => withoutKey(m, cid)) // stop the running timer
         }
@@ -808,6 +808,9 @@ export function App(): JSX.Element {
       setConversations(
         loaded.map((conversation) => ({
           ...conversation,
+          // Corrupt/legacy state must never resurrect both mutually-exclusive
+          // modes. Economy wins because it is the stricter execution mode.
+          loopEnabled: conversation.economyMode === true ? false : conversation.loopEnabled === true,
           backgroundTasks: [],
           queuedAfterInterrupt: undefined,
           // A turn interrupted by the app closing never delivers its
@@ -980,6 +983,7 @@ export function App(): JSX.Element {
           model: c.model,
           effort: c.effort ?? DEFAULT_EFFORT,
           economyMode: c.economyMode === true,
+          loopEnabled: c.loopEnabled === true,
           permission: permissions[c.id]
         })),
         skipPerms: skipPermsRef.current,
@@ -1019,18 +1023,23 @@ export function App(): JSX.Element {
 
   // ---- conversation management ----
   const createConversation = (folder: string): Conversation => {
-    // New conversations in a known project inherit that project's model + economy
-    // mode; otherwise fall back to the active conversation's settings.
+    // New conversations in a known project inherit that project's execution
+    // modes; otherwise fall back to the active conversation's settings.
     const sameFolder = convsRef.current.find((c) => c.cwd === folder)
     const active = getActive()
     const model = sameFolder?.model || active?.model || MODELS[0].id
+    const inheritedEconomy = sameFolder?.economyMode ?? active?.economyMode ?? false
+    const inheritedLoop = inheritedEconomy
+      ? false
+      : (sameFolder?.loopEnabled ?? active?.loopEnabled ?? false)
     const conv: Conversation = {
       id: uid('c'),
       title: DEFAULT_TITLE,
       cwd: folder,
       model,
       effort: active?.effort || DEFAULT_EFFORT,
-      economyMode: sameFolder?.economyMode ?? active?.economyMode ?? false,
+      economyMode: inheritedEconomy,
+      loopEnabled: inheritedLoop,
       // Fast mode is inherited like the other per-conversation settings, but only
       // when the inherited model can actually run it.
       fastMode:
@@ -1154,6 +1163,7 @@ export function App(): JSX.Element {
           resume: conv.sdkSessionId ?? undefined,
           effort: conv.effort,
           economyMode: conv.economyMode === true,
+          loopEnabled: conv.loopEnabled === true,
           fastMode: conv.fastMode === true
         })
         if (!started.ok) throw new Error('a sessão do agente não iniciou')
@@ -1259,7 +1269,7 @@ export function App(): JSX.Element {
       })
       if (!connectedRef.current.has(id)) return
       if (busyRef.current.has(id)) {
-        pendingModelChangeRef.current = withId(pendingModelChangeRef.current, id)
+        pendingSessionConfigRef.current = withId(pendingSessionConfigRef.current, id)
         notify('sucesso', `Modelo trocado — entra a partir da próxima mensagem da fila: ${model}.`)
       } else {
         void stopSession(id, { silent: true })
@@ -1275,7 +1285,7 @@ export function App(): JSX.Element {
       patchConv(id, (c) => ({ ...c, effort }))
       if (!connectedRef.current.has(id)) return
       if (busyRef.current.has(id)) {
-        pendingModelChangeRef.current = withId(pendingModelChangeRef.current, id)
+        pendingSessionConfigRef.current = withId(pendingSessionConfigRef.current, id)
         notify('sucesso', `Esforço trocado — entra a partir da próxima mensagem da fila: ${effort}.`)
       } else {
         void stopSession(id, { silent: true })
@@ -1333,16 +1343,43 @@ export function App(): JSX.Element {
   // validation for trivial tasks (scoped to THIS conversation only).
   const changeEconomyMode = useCallback(
     (id: string, on: boolean): void => {
-      patchConv(id, (c) => (c.economyMode === on ? c : { ...c, economyMode: on }))
-      if (connectedRef.current.has(id) && !busyRef.current.has(id)) {
-        void stopSession(id, { silent: true })
-        notify(
-          'sucesso',
-          on
-            ? 'Modo econômico ativado para esta conversa — vale na próxima mensagem.'
-            : 'Modo econômico desativado para esta conversa — vale na próxima mensagem.'
-        )
+      const current = convsRef.current.find((c) => c.id === id)
+      const cancelsLoop = on && current?.loopEnabled === true
+      patchConv(id, (c) => ({ ...c, economyMode: on, ...(on ? { loopEnabled: false } : {}) }))
+      if (connectedRef.current.has(id)) {
+        if (cancelsLoop || !busyRef.current.has(id)) void stopSession(id, { silent: true })
+        else pendingSessionConfigRef.current.add(id)
       }
+      notify(
+        'sucesso',
+        on
+          ? cancelsLoop
+            ? 'Modo econômico ativado — o loop desta conversa foi interrompido e desativado.'
+            : 'Modo econômico ativado para esta conversa — vale na próxima mensagem.'
+          : 'Modo econômico desativado para esta conversa — vale na próxima mensagem.'
+      )
+    },
+    [patchConv, stopSession, notify]
+  )
+
+  const changeLoopEnabled = useCallback(
+    (id: string, on: boolean): void => {
+      const current = convsRef.current.find((c) => c.id === id)
+      if (on && current?.economyMode === true) return
+      patchConv(id, (c) => ({ ...c, loopEnabled: on, ...(on ? { economyMode: false } : {}) }))
+      // Disabling must destroy the SDK session even mid-turn: session-scoped
+      // ScheduleWakeup jobs die with it, so no stale wakeup can resurrect work.
+      if (connectedRef.current.has(id) && (!on || !busyRef.current.has(id))) {
+        void stopSession(id, { silent: true })
+      } else if (connectedRef.current.has(id)) {
+        pendingSessionConfigRef.current.add(id)
+      }
+      notify(
+        'sucesso',
+        on
+          ? 'Loop ativado para esta conversa — limite padrão de 100 ciclos.'
+          : 'Loop desativado — continuações pendentes foram interrompidas.'
+      )
     },
     [patchConv, stopSession, notify]
   )
@@ -2168,6 +2205,9 @@ export function App(): JSX.Element {
             onEffortChange={(e) => active && changeEffort(active.id, e)}
             economyMode={active?.economyMode === true}
             onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
+            loopEnabled={active?.loopEnabled === true}
+            loopLocked={active?.economyMode === true}
+            onLoopEnabledChange={(on) => active && changeLoopEnabled(active.id, on)}
             fastModeAvailable={!!active && modelSupportsFastMode(active.model)}
             fastMode={active?.fastMode === true}
             onFastModeChange={(on) => active && changeFastMode(active.id, on)}

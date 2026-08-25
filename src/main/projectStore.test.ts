@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, statSync, writeFileSync, copyFileSync } from 'node:fs'
@@ -54,6 +55,12 @@ describe('projectFileName', () => {
 })
 
 describe('save/load — split por projeto', () => {
+  it('preserva o toggle Loop junto da conversa', () => {
+    const record = { ...conv('loop-1', 'C:\\Projects\\loop-app'), loopEnabled: true, economyMode: false }
+    saveAllConversationRecords(cacheDir, [record])
+    expect(loadAllConversationRecords(cacheDir)).toEqual([record])
+  })
+
   it('grava cada projeto no seu próprio arquivo e o load junta tudo de volta', () => {
     const list = [conv('a1', 'C:\\Projects\\app-a'), conv('a2', 'C:\\Projects\\app-a'), conv('b1', 'C:\\Projects\\app-b')]
     saveAllConversationRecords(cacheDir, list)

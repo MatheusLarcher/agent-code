@@ -65,6 +65,9 @@ function renderPanel(
       pendingQuestion={pendingQuestion}
       onReopenQuestion={onReopenQuestion}
       {...overrides}
+      loopEnabled={overrides.loopEnabled ?? false}
+      loopLocked={overrides.loopLocked ?? false}
+      onLoopEnabledChange={overrides.onLoopEnabledChange ?? (() => {})}
     />
     </UiProvider>
   )
@@ -86,6 +89,20 @@ describe('ChatPanel — chip de pergunta pendente (entre o histórico e o compos
     const { onReopenQuestion } = renderPanel(true)
     fireEvent.click(screen.getByText(/O agente fez uma pergunta/))
     expect(onReopenQuestion).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ChatPanel — toggle Loop', () => {
+  it('aciona a mudança por conversa', () => {
+    const onChange = vi.fn()
+    renderPanel(false, vi.fn(), { onLoopEnabledChange: onChange })
+    fireEvent.click(screen.getByRole('button', { name: /Loop/i }))
+    expect(onChange).toHaveBeenCalledWith(true)
+  })
+
+  it('fica desabilitado durante o modo econômico', () => {
+    renderPanel(false, vi.fn(), { economyMode: true, loopLocked: true })
+    expect((screen.getByRole('button', { name: /Loop/i }) as HTMLButtonElement).disabled).toBe(true)
   })
 })
 

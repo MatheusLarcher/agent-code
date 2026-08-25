@@ -79,6 +79,9 @@ export interface Conversation {
   /** Per-conversation "modo econômico" — when on, the LLM skips validation/build
    *  for trivial tasks to save tokens. Scoped to THIS conversation only. */
   economyMode?: boolean
+  /** Per-conversation dynamic /loop permission. Persisted with the conversation
+   *  and mutually exclusive with economyMode. */
+  loopEnabled?: boolean
   /** Per-conversation "modo rápido" — Opus at up to ~2.5x output speed for a
    *  higher per-token price. Only applies to models in FAST_MODE_MODELS. */
   fastMode?: boolean
