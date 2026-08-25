@@ -7,10 +7,9 @@ import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsCo
 import { windowsControl } from './windowsControl/service'
 import { loadConfig } from './config'
 import { getCacheInfo } from './store'
-import { renderMemoryIndex } from './memoryIndex'
-import { existsSync, readFileSync } from 'node:fs'
+import { buildDynamicMemoryContext, buildMemoryIndexContext } from './memoryIndex'
 import { hostname } from 'node:os'
-import { join } from 'node:path'
+import { discoverSkills, renderAgentSkillCatalog } from './skillDiscovery'
 import { readSessionTasks, watchSessionTasks } from './sessionTasks'
 import { randomUUID } from 'node:crypto'
 import { isOllamaModel, isOpenAIModel, modelSupportsFastMode, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
@@ -138,16 +137,6 @@ Você está operando em modo de economia de tokens. Siga estas regras:
 // but THESE INSTRUCTIONS ship with the project, so every install behaves the same.
 // Built per session because the folder path and the current index are dynamic.
 function buildMemoryHint(memoriesDir: string): string {
-  // Pre-load the index so the model passively knows what it already remembers,
-  // the same way Claude Code surfaces MEMORY.md — empty on a fresh install.
-  let index = ''
-  try {
-    const indexPath = join(memoriesDir, 'MEMORY.md')
-    if (existsSync(indexPath)) index = readFileSync(indexPath, 'utf8').trim()
-  } catch {
-    /* unreadable index — treat as empty */
-  }
-
   return `You have a PERSISTENT MEMORY for this user, kept as Markdown files in this folder:
 ${memoriesDir}
 
@@ -173,9 +162,8 @@ SAVING — when the user asks you to remember, save, note, or memorize something
 - Do NOT save things already evident from the project's code, git history, or CLAUDE.md.
 
 RECALLING — these files are your long-term knowledge about this user and their projects. Read the
-relevant ones when they help the current task. Everything saved is listed below (empty if none yet):
-
-${renderMemoryIndex(memoriesDir, index)}`
+relevant ones when they help the current task. A fresh index and bounded relevant excerpts are
+attached to every user message, so changes made during this session are immediately available.`
 }
 
 // Tools auto-approved without prompting the user.
@@ -293,6 +281,8 @@ export class AgentSession {
   /** Context-window size of the most recent model request (last `assistant`
    *  message's input usage) — the true "context used", not the per-turn sum. */
   private lastContextTokens = 0
+  /** Avoid repeating a large unchanged memory index in every turn's history. */
+  private lastMemoryIndex = ''
   /** Per-session cancellation scope for Windows UI actions. */
   private windowsControlScope = windowsControl.createScope()
   /** Stops the task-folder watcher of the CURRENT sdk session (a resume/restart
@@ -308,7 +298,9 @@ export class AgentSession {
     private readonly askPermission: (req: PermissionRequest) => void,
     /** Called when a pending permission/question timed out and was auto-resolved,
      *  so the renderer can close the matching modal. */
-    private readonly onPermissionExpire: (id: string) => void
+    private readonly onPermissionExpire: (id: string) => void,
+    /** Installed Agent Code root; remains stable when a chat targets another project. */
+    private readonly appRoot: string = process.cwd()
   ) {}
 
   async start(): Promise<boolean> {
@@ -327,7 +319,11 @@ export class AgentSession {
     // Tell the model where its per-user memory lives (and pre-load the index), so
     // "lembra disso" saves into the cache folder and recall works across chats.
     const memoriesDir = getCacheInfo().memoriesDir
+    const discoveredSkills = discoverSkills(this.opts.cwd, undefined, this.appRoot)
+    const adaptedSkillRoots = [...new Set(discoveredSkills.filter((skill) => !skill.native).map((skill) => skill.root))]
+    const skillCatalog = renderAgentSkillCatalog(discoveredSkills)
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
+    if (skillCatalog) append += `\n\n${skillCatalog}`
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
 
     // Modo econômico: when the user toggled it on for THIS conversation, tell the
@@ -415,7 +411,8 @@ export class AgentSession {
       ...(openaiOn ? { maxTurns: OPENAI_MAX_TURNS } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
-      additionalDirectories: [memoriesDir],
+      additionalDirectories: [memoriesDir, ...adaptedSkillRoots],
+      skills: 'all',
       // Resume a previous SDK session (loads its history) when continuing an old chat.
       ...(this.opts.resume ? { resume: this.opts.resume } : {}),
       // Run the bundled Claude Code CLI under system Node rather than the
@@ -483,6 +480,15 @@ export class AgentSession {
     // FORA do `outText` de propósito: o relay de visão abaixo recebe a mensagem
     // crua do usuário como pista da imagem. O contexto é colado só no payload final.
     const stamp = buildContextStamp(origin)
+    const memoriesDir = getCacheInfo().memoriesDir
+    const freshMemoryIndex = buildMemoryIndexContext(memoriesDir)
+    const indexChanged = freshMemoryIndex !== this.lastMemoryIndex
+    if (indexChanged) this.lastMemoryIndex = freshMemoryIndex
+    const relevantMemories = buildDynamicMemoryContext(memoriesDir, text, false)
+    const memoryParts = [indexChanged ? freshMemoryIndex : '', relevantMemories].filter(Boolean)
+    const memoryContext = memoryParts.length
+      ? `[PERSISTENT_MEMORY_CONTEXT]\n${memoryParts.join('\n\n')}\n[/PERSISTENT_MEMORY_CONTEXT]`
+      : '[PERSISTENT_MEMORY_CONTEXT]\n(index unchanged; no relevant excerpt selected)\n[/PERSISTENT_MEMORY_CONTEXT]'
     let docsOutline: string
     try {
       docsOutline = await buildProjectOutline(this.opts.cwd)
@@ -490,7 +496,9 @@ export class AgentSession {
       docsOutline = '[PROJECT_DOCS_OUTLINE]\ndocs/ [outline unavailable for this dispatch]\n[/PROJECT_DOCS_OUTLINE]'
     }
     const stamped = (body: string): string =>
-      body ? `${stamp}\n\n${docsOutline}\n\n${body}` : `${stamp}\n\n${docsOutline}`
+      body
+        ? `${stamp}\n\n${docsOutline}\n\n${memoryContext}\n\n${body}`
+        : `${stamp}\n\n${docsOutline}\n\n${memoryContext}`
 
     // vision_fallback_router — the picked model can't see images (most Ollama
     // Cloud models are text-only): intercept BEFORE it ever reaches the SDK.

@@ -18,6 +18,7 @@ vi.mock('./config', () => ({
 }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => codexState.connected }))
 vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: ensureCodexProxyMock }))
+vi.mock('./store', () => ({ getCacheInfo: () => ({ memoriesDir: 'C:\\test\\agent-code-memories' }) }))
 const projectOutlineMock = vi.hoisted(() => vi.fn(async () => '[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]'))
 vi.mock('./projectOutline', () => ({ buildProjectOutline: projectOutlineMock }))
 
@@ -51,7 +52,7 @@ function pushedMessages(s: AgentSession): Array<{ message: { content: unknown };
 
 // Build a session without starting the SDK query loop — we only exercise the
 // permission gate (handlePermission / resolvePermission / setBypass).
-function makeSession(opts: { skipPermissions?: boolean; model?: string; fastMode?: boolean; effort?: string } = {}): {
+function makeSession(opts: { skipPermissions?: boolean; model?: string; fastMode?: boolean; effort?: string; cwd?: string } = {}): {
   s: AgentSession
   emit: ReturnType<typeof vi.fn>
   ask: ReturnType<typeof vi.fn>
@@ -455,7 +456,7 @@ describe('AgentSession — vision_fallback_router', () => {
 
   it('modelo Ollama SEM visão, relay falha: degrada com aviso mas NÃO trava o envio', async () => {
     describeImagesMock.mockRejectedValueOnce(new Error('timeout'))
-    const { s } = makeSession({ model: 'deepseek-v4-pro:cloud' })
+    const { s } = makeSession({ model: 'muse-glimmer:cloud' })
 
     await s.send('descreva a tela', [{ mediaType: 'image/png', data: 'AAAA' }])
 
@@ -494,10 +495,11 @@ describe('AgentSession — vision_fallback_router', () => {
 
     expect(describeImagesMock).not.toHaveBeenCalled()
     const [msg] = pushedMessages(s)
-    // O texto recebe o carimbo e o índice fresco de documentação do projeto.
-    expect(msg.message.content).toBe(
-      `${buildContextStamp('pc')}\n\n[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]\n\nsó texto, sem imagem`
-    )
+    // O texto recebe carimbo, documentação e memória dinâmica sem passar pelo relay.
+    const content = msg.message.content as string
+    expect(content).toContain('[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]')
+    expect(content).toContain('[PERSISTENT_MEMORY_CONTEXT]')
+    expect(content).toContain('só texto, sem imagem')
   })
 })
 
@@ -544,6 +546,11 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
       effort: 'max',
       maxTurns: OPENAI_MAX_TURNS,
       permissionMode: 'default',
+      skills: 'all',
+      additionalDirectories: expect.arrayContaining([
+        'C:\\test\\agent-code-memories',
+        expect.stringContaining('.agents\\skills')
+      ]),
       settingSources: ['user', 'project', 'local'],
       systemPrompt: { type: 'preset', preset: 'claude_code' }
     })
@@ -559,6 +566,17 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
       ANTHROPIC_DEFAULT_FABLE_MODEL: 'gpt-5.6-sol',
       CLAUDE_CODE_SUBAGENT_MODEL: 'gpt-5.6-sol'
     })
+  })
+
+  it('expõe skills do app ao GPT mesmo quando a conversa usa outro projeto', async () => {
+    const { s } = makeSession({ model: 'gpt-5.6-sol', cwd: 'C:\\outro-projeto-sem-skills' })
+    await s.start()
+    const options = optionsOfLastQuery()
+    const prompt = options.systemPrompt as { append: string }
+    expect(options.skills).toBe('all')
+    expect(prompt.append).toContain('PROJECT SKILLS FROM .agents/skills')
+    expect(prompt.append).toContain('SKILL.md FIRST')
+    expect(options.additionalDirectories).toEqual(expect.arrayContaining([expect.stringContaining('.agents')]))
   })
 
   it('não injeta proxy nem limite GPT numa sessão Anthropic', async () => {

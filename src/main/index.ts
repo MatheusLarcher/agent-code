@@ -14,7 +14,13 @@ import { AgentSession, type MessageOrigin } from './agentSession'
 import { RemoteServer } from './remote/remoteServer'
 import { RelayClient } from './remote/relayClient'
 import { buildRemoteApk } from './remote/buildApk'
-import { Channels, DEFAULT_LOCAL_SPEECH_MODEL, REMOTE_RELAY_WS, type SpeechSetupProgress } from '../shared/ipc'
+import {
+  Channels,
+  DEFAULT_LOCAL_SPEECH_MODEL,
+  LOCAL_SPEECH_MODELS,
+  REMOTE_RELAY_WS,
+  type SpeechSetupProgress
+} from '../shared/ipc'
 import { loadConfig, updateConfig } from './config'
 import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAudioSegment } from './openai'
 import { stopLocalSpeech, transcribeLocal } from './speech'
@@ -27,6 +33,7 @@ import { loadAllConversationRecords, saveAllConversationRecords, type Conversati
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { windowsControl } from './windowsControl/service'
+import { discoverSkills } from './skillDiscovery'
 import type {
   AppConfig,
   BrowserInput,
@@ -280,75 +287,12 @@ async function readProjectTree(root: string, keep: string[] = [], limit = 100): 
 // ---- "/" autocomplete: list the agent's skills --------------------------------
 
 /**
- * Pull `name` and `description` out of a SKILL.md frontmatter block. Handles the
- * three shapes seen in this repo: `description: "..."`, `description: ...`, and a
- * YAML block scalar (`description: >-` followed by indented lines). The
- * description is collapsed to a single line for the menu subtitle.
- */
-function parseSkillFrontmatter(md: string): { name: string; description: string } | null {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md)
-  if (!m) return null
-  const lines = m[1].split(/\r?\n/)
-  let name = ''
-  let description = ''
-  for (let i = 0; i < lines.length; i++) {
-    const nameM = /^name:\s*(.+)$/.exec(lines[i])
-    if (nameM) {
-      name = nameM[1].trim().replace(/^['"]|['"]$/g, '')
-      continue
-    }
-    const descM = /^description:\s*(.*)$/.exec(lines[i])
-    if (descM) {
-      const inline = descM[1].trim()
-      // Block scalar (">", "|", ">-", "|-") or empty → gather indented continuation.
-      if (inline === '' || /^[>|][-+]?$/.test(inline)) {
-        const buf: string[] = []
-        for (let j = i + 1; j < lines.length; j++) {
-          if (/^\s/.test(lines[j]) || lines[j].trim() === '') buf.push(lines[j].trim())
-          else break
-        }
-        description = buf.join(' ').trim()
-      } else {
-        description = inline.replace(/^['"]|['"]$/g, '')
-      }
-    }
-  }
-  if (!name) return null
-  return { name, description: description.replace(/\s+/g, ' ').trim() }
-}
-
-/**
  * List the skills available to the agent: each subfolder with a SKILL.md under
  * the project's `.claude/skills` and `.agents/skills`, plus the user-level
  * `~/.claude/skills`. Deduped by name (project wins), sorted alphabetically.
  */
 async function listAgentSkills(projectRoot: string): Promise<SkillInfo[]> {
-  const roots = [
-    projectRoot ? join(projectRoot, '.claude', 'skills') : '',
-    projectRoot ? join(projectRoot, '.agents', 'skills') : '',
-    join(homedir(), '.claude', 'skills')
-  ].filter(Boolean)
-
-  const byName = new Map<string, SkillInfo>()
-  for (const root of roots) {
-    let dirs: import('node:fs').Dirent[]
-    try {
-      dirs = await fsReaddir(root, { withFileTypes: true })
-    } catch {
-      continue // skills dir absent — skip
-    }
-    for (const d of dirs) {
-      if (!d.isDirectory() && !d.isSymbolicLink()) continue
-      try {
-        const md = await fsReadFile(join(root, d.name, 'SKILL.md'), 'utf8')
-        const parsed = parseSkillFrontmatter(md)
-        if (parsed && !byName.has(parsed.name)) byName.set(parsed.name, parsed)
-      } catch {
-        /* no SKILL.md here — skip */
-      }
-    }
-  }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+  return discoverSkills(projectRoot, undefined, app.getAppPath()).map(({ name, description }) => ({ name, description }))
 }
 
 /**
@@ -529,7 +473,13 @@ function registerIpc(): void {
     // downloaded. Progress is streamed so the mic can keep its loading state and
     // say what's happening instead of just hanging.
     if (cfg.transcribeEngine === 'local') {
-      const model = cfg.localSpeech.model || DEFAULT_LOCAL_SPEECH_MODEL
+      // A config salva pode ter um id de um catálogo antigo (ex.: o Whisper que
+      // existia antes do app passar a oferecer só os modelos da NVIDIA) — usá-lo
+      // direto tenta baixar um repo que não tem os pesos no formato esperado e
+      // falha com um erro obscuro. Cair no padrão quando o id não é mais oferecido.
+      const model = LOCAL_SPEECH_MODELS.some((m) => m.id === cfg.localSpeech.model)
+        ? cfg.localSpeech.model
+        : DEFAULT_LOCAL_SPEECH_MODEL
       const report = (p: SpeechSetupProgress): void => {
         if (!e.sender.isDestroyed()) e.sender.send(Channels.speechSetupProgress, p)
       }
@@ -777,7 +727,8 @@ function registerIpc(): void {
         remote.broadcast(convId, event)
       },
       (req) => send(Channels.agentPermissionRequest, { convId, req }),
-      (id) => send(Channels.agentPermissionExpired, { convId, id })
+      (id) => send(Channels.agentPermissionExpired, { convId, id }),
+      app.getAppPath()
     )
     sessions.set(convId, s)
     let ok = false

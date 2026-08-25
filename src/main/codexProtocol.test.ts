@@ -121,6 +121,29 @@ describe('Codex protocol — Anthropic request to Responses request', () => {
     expect(wire.prompt_cache_key).toBe(SESSION_A)
   })
 
+  it('preserva catálogo de skills e memória no developer prompt do GPT-5.6', () => {
+    const marker = 'SKILL_CATALOG_SENTINEL\nMEMORY_EXCERPT_SENTINEL'
+    const canonical = toCodexRequest(
+      request({
+        system: marker,
+        tools: [
+          { name: 'Skill', description: 'Load skill', input_schema: { type: 'object' } },
+          { name: 'Read', description: 'Read file', input_schema: { type: 'object' } }
+        ]
+      }),
+      undefined,
+      SESSION_A
+    )
+    const wire = toCodexWireRequest(canonical, SESSION_A)
+    expect(wire.input[1]).toEqual({
+      type: 'message',
+      role: 'developer',
+      content: [{ type: 'input_text', text: marker }]
+    })
+    const tools = (wire.input[0] as { tools: Array<{ name: string }> }).tools
+    expect(tools.map(({ name }) => name)).toEqual(['Skill', 'Read'])
+  })
+
   it.each([
     [{ type: 'auto' as const }, 'auto'],
     [{ type: 'any' as const }, 'required'],

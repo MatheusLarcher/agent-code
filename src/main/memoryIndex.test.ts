@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { listMemoryFiles, renderMemoryIndex } from './memoryIndex'
+import { buildDynamicMemoryContext, buildMemoryIndexContext, listMemoryFiles, renderMemoryIndex } from './memoryIndex'
 
 async function fixture(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'mem-'))
@@ -42,5 +42,35 @@ describe('memoryIndex', () => {
 
   it('pasta inexistente não explode', () => {
     expect(listMemoryFiles(join(tmpdir(), 'nao-existe-mem-xyz'))).toEqual([])
+  })
+
+  it('relê o índice e seleciona somente memória relevante', async () => {
+    const dir = await fixture()
+    await writeFile(join(dir, '2D', 'erp.md'), '---\ndescription: ERP da 2D usa X\n---\n# ERP da 2D\nO banco exclusivo chama FALCAO.', 'utf8')
+    const context = buildDynamicMemoryContext(dir, 'ERP FALCAO')
+    expect(context).toContain('Memória relevante: 2D/erp.md')
+    expect(context).toContain('FALCAO')
+    expect(context).not.toContain('Memória relevante: 2D/nota.md')
+  })
+
+  it('pode emitir só os trechos sem repetir o índice', async () => {
+    const dir = await fixture()
+    const context = buildDynamicMemoryContext(dir, 'ERP 2D', false)
+    expect(context).toContain('Memória relevante: 2D/erp.md')
+    expect(context).not.toContain('MEMORY.md (índice da raiz)')
+  })
+
+  it('índice dinâmico acompanha alteração no disco', async () => {
+    const dir = await fixture()
+    expect(buildMemoryIndexContext(dir)).not.toContain('Nova memória')
+    await mkdir(join(dir, 'nova'))
+    await writeFile(join(dir, 'nova', 'fato.md'), '---\ndescription: nova\n---\n# Nova memória', 'utf8')
+    expect(buildMemoryIndexContext(dir)).toContain('Nova memória')
+  })
+
+  it('ignora memória grande em vez de despejá-la no prompt', async () => {
+    const dir = await fixture()
+    await writeFile(join(dir, 'grande.md'), `# Gigante\n${'segredo '.repeat(10_000)}`, 'utf8')
+    expect(buildDynamicMemoryContext(dir, 'segredo')).not.toContain('Memória relevante: grande.md')
   })
 })
