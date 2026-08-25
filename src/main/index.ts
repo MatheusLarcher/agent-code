@@ -30,6 +30,7 @@ import { codexStatus, codexLogout, runCodexLogin } from './codexAuth'
 import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
 import { loadAllConversationRecords, saveAllConversationRecords, type ConversationRecord } from './projectStore'
+import { exportConversationsParquet } from './conversationParquet'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { windowsControl } from './windowsControl/service'
@@ -876,6 +877,11 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   initStore() // open the cache-folder SQLite db (+ migrate legacy settings.json) before anything reads config
   authLog('=== main started (new build) ===')
+  const cacheInfo = getCacheInfo()
+  const conversations = loadAllConversationRecords(cacheInfo.dir)
+  void exportConversationsParquet(cacheInfo.dir, conversations, cacheInfo.memoriesDir).catch((error) => {
+    authLog(`daily conversation parquet export failed: ${error instanceof Error ? error.message : String(error)}`)
+  })
   registerIpc()
   createWindow()
   // Runs outside every chat session. The cheap transcript mtime gate happens
