@@ -22,14 +22,14 @@ describe('skillDiscovery', () => {
   it('usa a mesma precedência da UI e não injeta o corpo no catálogo', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-project-'))
     const home = await mkdtemp(join(tmpdir(), 'skills-home-'))
-    const app = await mkdtemp(join(tmpdir(), 'skills-app-'))
+    const cache = await mkdtemp(join(tmpdir(), 'skills-cache-'))
     await skill(join(project, '.claude', 'skills'), 'native', 'duplicada', 'projeto nativo')
     await skill(join(project, '.agents', 'skills'), 'adapted', 'adaptada', 'somente agents')
     await skill(join(project, '.agents', 'skills'), 'loser', 'duplicada', 'não deve vencer')
-    await skill(join(app, '.agents', 'skills'), 'bundled', 'planejar', 'skill do Agent Code')
+    await skill(cache, 'bundled', 'planejar', 'skill do Agent Code')
     await skill(join(home, '.claude', 'skills'), 'global', 'global', 'usuário')
 
-    const found = discoverSkills(project, home, app)
+    const found = discoverSkills(project, home, cache)
     expect(found.map(({ name }) => name)).toEqual(['adaptada', 'duplicada', 'global', 'planejar'])
     expect(found.find(({ name }) => name === 'duplicada')?.source).toBe('project-claude')
 
@@ -43,12 +43,12 @@ describe('skillDiscovery', () => {
   it('mantém as skills do app quando a conversa abre outro projeto', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-other-project-'))
     const home = await mkdtemp(join(tmpdir(), 'skills-empty-home-'))
-    const app = await mkdtemp(join(tmpdir(), 'skills-agent-code-'))
-    await skill(join(app, '.agents', 'skills'), 'review', 'code-review', 'revisar o diff')
+    const cache = await mkdtemp(join(tmpdir(), 'skills-agent-code-'))
+    await skill(cache, 'review', 'code-review', 'revisar o diff')
 
-    const found = discoverSkills(project, home, app)
+    const found = discoverSkills(project, home, cache)
     expect(found).toEqual([
-      expect.objectContaining({ name: 'code-review', source: 'app-agents', root: join(app, '.agents', 'skills') })
+      expect.objectContaining({ name: 'code-review', source: 'cache', root: cache })
     ])
   })
 
@@ -56,7 +56,7 @@ describe('skillDiscovery', () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-empty-'))
     await mkdir(join(project, '.agents', 'skills', 'bad'), { recursive: true })
     await writeFile(join(project, '.agents', 'skills', 'bad', 'SKILL.md'), 'sem frontmatter', 'utf8')
-    expect(discoverSkills(project, join(project, 'home'), join(project, 'no-app'))).toEqual([])
-    expect(discoverSkills('relativo', join(project, 'home'), join(project, 'no-app'))).toEqual([])
+    expect(discoverSkills(project, join(project, 'home'), join(project, 'no-cache'))).toEqual([])
+    expect(discoverSkills('relativo', join(project, 'home'), join(project, 'no-cache'))).toEqual([])
   })
 })

@@ -335,9 +335,7 @@ export class AgentSession {
     private readonly askPermission: (req: PermissionRequest) => void,
     /** Called when a pending permission/question timed out and was auto-resolved,
      *  so the renderer can close the matching modal. */
-    private readonly onPermissionExpire: (id: string) => void,
-    /** Installed Agent Code root; remains stable when a chat targets another project. */
-    private readonly appRoot: string = process.cwd()
+    private readonly onPermissionExpire: (id: string) => void
   ) {}
 
   async start(): Promise<boolean> {
@@ -355,8 +353,10 @@ export class AgentSession {
     }
     // Tell the model where its per-user memory lives (and pre-load the index), so
     // "lembra disso" saves into the cache folder and recall works across chats.
-    const memoriesDir = getCacheInfo().memoriesDir
-    const discoveredSkills = discoverSkills(this.opts.cwd, undefined, this.appRoot)
+    const cacheInfo = getCacheInfo()
+    const memoriesDir = cacheInfo.memoriesDir
+    const cacheSkillsDir = cacheInfo.skillsDir
+    const discoveredSkills = discoverSkills(this.opts.cwd, undefined, cacheSkillsDir)
     const adaptedSkillRoots = [...new Set(discoveredSkills.filter((skill) => !skill.native).map((skill) => skill.root))]
     const skillCatalog = renderAgentSkillCatalog(discoveredSkills)
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
@@ -450,7 +450,7 @@ export class AgentSession {
       ...(openaiOn ? { maxTurns: OPENAI_MAX_TURNS } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
-      additionalDirectories: [memoriesDir, ...adaptedSkillRoots],
+      additionalDirectories: [memoriesDir, cacheSkillsDir, ...adaptedSkillRoots],
       skills: 'all',
       // Resume a previous SDK session (loads its history) when continuing an old chat.
       ...(this.opts.resume ? { resume: this.opts.resume } : {}),

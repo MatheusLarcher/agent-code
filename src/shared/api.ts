@@ -53,7 +53,7 @@ export interface AgentCodeApi {
   openInFolder(dir: string): Promise<{ ok: boolean; message: string }>
   /** Live "@" autocomplete: files/folders under `root` matching `query` (≤ limit hits). */
   mentionSearch(root: string, query: string): Promise<MentionHit[]>
-  /** "/" autocomplete: skills available to the agent (project `root` + user-level). */
+  /** "/" autocomplete: skills available to the agent (project + active cache + user-level). */
   listSkills(root: string): Promise<SkillInfo[]>
   /** Project map: the most recently modified files under `root` (+ their folders).
    *  `keep` = paths the caller is showing now, so the reply can report which of

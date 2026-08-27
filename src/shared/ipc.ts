@@ -828,6 +828,8 @@ export interface CacheInfo {
   dbPath: string
   /** Absolute path of the memories folder inside it. */
   memoriesDir: string
+  /** Absolute path of the active skills folder inside it. */
+  skillsDir: string
 }
 
 // Channel name constants — single source of truth.
@@ -839,7 +841,7 @@ export const Channels = {
   configSet: 'config:set',
   /** Persist and apply the independent Windows-control permission immediately. */
   windowsControlSetEnabled: 'windows-control:set-enabled',
-  /** Get the active cache folder (where the SQLite db + .md memories live). */
+  /** Get the active cache folder (where the SQLite db, memories and skills live). */
   cacheGetInfo: 'cache:get-info',
   /** Pick a new cache folder (native dialog) and switch to it; returns the new CacheInfo. */
   cacheChooseDir: 'cache:choose-dir',

@@ -8,23 +8,6 @@ echo   Agent Code - iniciando...
 echo ============================================
 echo.
 
-REM --- Linka as skills versionadas (.agents\skills) para o Claude Code GLOBAL ---
-REM Fonte da verdade = .agents\skills (vai no Git). Linkamos na pasta GLOBAL do
-REM Claude (%USERPROFILE%\.claude\skills) para que TODOS os projetos enxerguem as
-REM skills, nao so este. Apenas LINKAMOS (nao baixa nada da internet), usando
-REM junctions (mklink /J): nao exige admin e funciona em qualquer Windows.
-REM Idempotente: so cria o link que ainda nao existe.
-if exist ".agents\skills" (
-    if not exist "%USERPROFILE%\.claude\skills" mkdir "%USERPROFILE%\.claude\skills"
-    for /d %%s in (".agents\skills\*") do (
-        if not exist "%USERPROFILE%\.claude\skills\%%~nxs" (
-            mklink /J "%USERPROFILE%\.claude\skills\%%~nxs" "%%~fs" >nul 2>nul && echo   + skill ^(global^): %%~nxs
-        )
-    )
-    echo Skills sincronizadas ^(.agents\skills -^> %USERPROFILE%\.claude\skills^).
-    echo.
-)
-
 REM --- Garante o Node.js (usa o do sistema; se faltar, baixa um portatil) ---
 REM Versao fixada = a mesma usada no desenvolvimento. Portatil (sem admin),
 REM extraido em .node\ e reaproveitado nas proximas execucoes.

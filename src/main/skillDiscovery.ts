@@ -5,7 +5,7 @@ import { readdirSync, readFileSync, realpathSync, statSync, type Dirent } from '
 const MAX_FRONTMATTER_BYTES = 64 * 1024
 const VALID_SKILL_NAME = /^[\p{L}\p{N}][\p{L}\p{N}._:-]*$/u
 
-export type SkillSource = 'project-claude' | 'project-agents' | 'app-agents' | 'user-claude'
+export type SkillSource = 'project-claude' | 'project-agents' | 'cache' | 'user-claude'
 
 export interface DiscoveredSkill {
   name: string
@@ -61,21 +61,20 @@ function canonicalDirectory(path: string): string | null {
 }
 
 /**
- * `appRoot` is the installed Agent Code app, not necessarily the project being
- * discussed. This keeps this app's versioned `.agents/skills` available when
- * the user opens a chat for any other project.
+ * `cacheSkillsRoot` is the active per-user skill store. It remains stable when
+ * the user opens a chat for another project and follows cache-folder changes.
  */
 export function discoverSkills(
   projectRoot: string,
   userHome: string = homedir(),
-  appRoot: string = process.cwd()
+  cacheSkillsRoot: string = ''
 ): DiscoveredSkill[] {
   const project = projectRoot && isAbsolute(projectRoot) ? resolve(projectRoot) : ''
-  const app = appRoot && isAbsolute(appRoot) ? resolve(appRoot) : ''
+  const cache = cacheSkillsRoot && isAbsolute(cacheSkillsRoot) ? resolve(cacheSkillsRoot) : ''
   const roots: Array<{ path: string; source: SkillSource; native: boolean }> = [
     ...(project ? [{ path: join(project, '.claude', 'skills'), source: 'project-claude' as const, native: true }] : []),
     ...(project ? [{ path: join(project, '.agents', 'skills'), source: 'project-agents' as const, native: false }] : []),
-    ...(app ? [{ path: join(app, '.agents', 'skills'), source: 'app-agents' as const, native: false }] : []),
+    ...(cache ? [{ path: cache, source: 'cache' as const, native: true }] : []),
     { path: join(userHome, '.claude', 'skills'), source: 'user-claude', native: true }
   ]
 

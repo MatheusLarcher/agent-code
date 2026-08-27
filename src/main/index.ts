@@ -35,6 +35,7 @@ import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentN
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
+import { syncCacheSkills } from './skillManager'
 import type {
   AgentMessageKind,
   AppConfig,
@@ -289,12 +290,12 @@ async function readProjectTree(root: string, keep: string[] = [], limit = 100): 
 // ---- "/" autocomplete: list the agent's skills --------------------------------
 
 /**
- * List the skills available to the agent: each subfolder with a SKILL.md under
- * the project's `.claude/skills` and `.agents/skills`, plus the user-level
- * `~/.claude/skills`. Deduped by name (project wins), sorted alphabetically.
+ * List the skills available to the agent: project-local entries, the active
+ * cache skill store and user-level `~/.claude/skills`. Deduped by name
+ * (project wins), sorted alphabetically.
  */
 async function listAgentSkills(projectRoot: string): Promise<SkillInfo[]> {
-  return discoverSkills(projectRoot, undefined, app.getAppPath()).map(({ name, description }) => ({ name, description }))
+  return discoverSkills(projectRoot, undefined, getCacheInfo().skillsDir).map(({ name, description }) => ({ name, description }))
 }
 
 /**
@@ -563,6 +564,8 @@ function registerIpc(): void {
     })
     if (res.canceled || !res.filePaths[0]) return null
     const info = setCacheDir(res.filePaths[0])
+    const skillSync = syncCacheSkills(app.getAppPath(), info.dir)
+    for (const error of skillSync.errors) console.error(`[skills] ${error}`)
     const enabled = loadConfig().windowsControlEnabled === true
     windowsControl.setEnabled(enabled)
     send(Channels.windowsControlChanged, enabled)
@@ -729,8 +732,7 @@ function registerIpc(): void {
         remote.broadcast(convId, event)
       },
       (req) => send(Channels.agentPermissionRequest, { convId, req }),
-      (id) => send(Channels.agentPermissionExpired, { convId, id }),
-      app.getAppPath()
+      (id) => send(Channels.agentPermissionExpired, { convId, id })
     )
     sessions.set(convId, s)
     let ok = false
@@ -878,6 +880,8 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   initStore() // open the cache-folder SQLite db (+ migrate legacy settings.json) before anything reads config
+  const skillSync = syncCacheSkills(app.getAppPath(), getCacheInfo().dir)
+  for (const error of skillSync.errors) console.error(`[skills] ${error}`)
   authLog('=== main started (new build) ===')
   const cacheInfo = getCacheInfo()
   const conversations = loadAllConversationRecords(cacheInfo.dir)

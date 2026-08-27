@@ -59,7 +59,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     saveAllConversations: vi.fn(async (list: unknown[]) => {
       localStorage.setItem('agentcode.conversations.v1', JSON.stringify(list))
     }),
-    getCacheInfo: vi.fn(async () => ({ dir: '', dbPath: '', memoriesDir: '' })),
+    getCacheInfo: vi.fn(async () => ({ dir: '', dbPath: '', memoriesDir: '', skillsDir: '' })),
     chooseCacheDir: vi.fn(async () => null),
     downloadFile: vi.fn(async () => ({ ok: true, message: '' })),
     resolvePastedPath: vi.fn(async () => ({ ok: false, error: 'not used in these tests' })),

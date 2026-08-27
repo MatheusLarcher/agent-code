@@ -18,7 +18,13 @@ vi.mock('./config', () => ({
 }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => codexState.connected }))
 vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: ensureCodexProxyMock }))
-vi.mock('./store', () => ({ getCacheInfo: () => ({ memoriesDir: 'C:\\test\\agent-code-memories' }) }))
+vi.mock('./store', () => ({
+  getCacheInfo: () => ({
+    dir: 'C:\\test\\agent-code',
+    memoriesDir: 'C:\\test\\agent-code\\memories',
+    skillsDir: 'C:\\test\\agent-code\\skills'
+  })
+}))
 const projectOutlineMock = vi.hoisted(() => vi.fn(async () => '[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]'))
 vi.mock('./projectOutline', () => ({ buildProjectOutline: projectOutlineMock }))
 
@@ -709,8 +715,8 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
       permissionMode: 'default',
       skills: 'all',
       additionalDirectories: expect.arrayContaining([
-        'C:\\test\\agent-code-memories',
-        expect.stringContaining('.agents\\skills')
+        'C:\\test\\agent-code\\memories',
+        'C:\\test\\agent-code\\skills'
       ]),
       settingSources: ['user', 'project', 'local'],
       systemPrompt: { type: 'preset', preset: 'claude_code' }
@@ -729,15 +735,12 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     })
   })
 
-  it('expõe skills do app ao GPT mesmo quando a conversa usa outro projeto', async () => {
+  it('expõe a pasta de skills do cache ao GPT mesmo quando a conversa usa outro projeto', async () => {
     const { s } = makeSession({ model: 'gpt-5.6-sol', cwd: 'C:\\outro-projeto-sem-skills' })
     await s.start()
     const options = optionsOfLastQuery()
-    const prompt = options.systemPrompt as { append: string }
     expect(options.skills).toBe('all')
-    expect(prompt.append).toContain('PROJECT SKILLS FROM .agents/skills')
-    expect(prompt.append).toContain('SKILL.md FIRST')
-    expect(options.additionalDirectories).toEqual(expect.arrayContaining([expect.stringContaining('.agents')]))
+    expect(options.additionalDirectories).toEqual(expect.arrayContaining(['C:\\test\\agent-code\\skills']))
   })
 
   it('não injeta proxy nem limite GPT numa sessão Anthropic', async () => {

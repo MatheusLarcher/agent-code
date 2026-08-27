@@ -12,11 +12,12 @@ import { isReadableDb, quarantineDb, writeDbAtomically } from './atomicDb'
  *  <chosen>/agent-code/             ← cache folder (name fixed = the project name)
  *    ├─ agent-code.db               ← SQLite: all system data (config, android token,
  *    │                                 conversations…) as a simple key→JSON store
- *    └─ memories/                   ← .md files of the persistent per-user memory
+ *    ├─ memories/                   ← .md files of the persistent per-user memory
  *                                     (MEMORY.md index + one fact per <slug>.md)
+ *    └─ skills/                     ← active skills exposed to every agent session
  *
- * The cache folder holds ONLY the .db and the .md memories — no libraries. SQLite is
- * the built-in node:sqlite (no native/npm dependency), so nothing else lands there.
+ * SQLite is the built-in node:sqlite (no native/npm dependency), so no native
+ * libraries land in the cache.
  *
  * IMPORTANT — file handles are NOT kept open. Every read/write opens the db, runs,
  * and CLOSES it again (see `withDb`). This way the .db file is never locked while the
@@ -44,6 +45,8 @@ export interface CacheInfo {
   dbPath: string
   /** Absolute path of the memories folder inside it. */
   memoriesDir: string
+  /** Absolute path of the active skills folder inside it. */
+  skillsDir: string
 }
 
 /** Default cache folder before the user picks one: Documents/agent-code. */
@@ -87,6 +90,7 @@ function dbPath(dir: string): string {
 function prepare(dir: string): void {
   mkdirSync(dir, { recursive: true })
   mkdirSync(join(dir, 'memories'), { recursive: true })
+  mkdirSync(join(dir, 'skills'), { recursive: true })
   // A damaged db here would throw on every open and leave the app unusable at
   // startup. Set it aside (never deleted) and start a fresh one instead.
   if (existsSync(dbPath(dir)) && !isReadableDb(dbPath(dir))) quarantineDb(dbPath(dir))
@@ -173,7 +177,7 @@ export function kvSet(key: string, value: string): void {
 
 export function getCacheInfo(): CacheInfo {
   const dir = ensureDir()
-  return { dir, dbPath: dbPath(dir), memoriesDir: join(dir, 'memories') }
+  return { dir, dbPath: dbPath(dir), memoriesDir: join(dir, 'memories'), skillsDir: join(dir, 'skills') }
 }
 
 /**
