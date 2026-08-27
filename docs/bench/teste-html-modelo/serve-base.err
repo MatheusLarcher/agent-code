@@ -1,0 +1,6 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.9.1+cu130).
+W0818 22:55:45.082000 11108 site-packages\torch\distributed\elastic\multiprocessing\redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+Loading weights:   0%|          | 0/320 [00:00<?, ?it/s]Loading weights:   0%|          | 1/320 [00:00<00:44,  7.19it/s]Loading weights:  29%|██▉       | 94/320 [00:00<00:00, 473.00it/s]Loading weights:  60%|██████    | 193/320 [00:00<00:00, 680.78it/s]Loading weights:  90%|█████████ | 288/320 [00:00<00:00, 778.85it/s]Loading weights: 100%|██████████| 320/320 [00:00<00:00, 672.37it/s]
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.

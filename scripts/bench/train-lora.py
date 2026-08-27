@@ -65,8 +65,16 @@ def main():
     ap.add_argument("--base", default=DEFAULT_BASE)
     ap.add_argument("--max-len", type=int, default=MAX_LEN)
     ap.add_argument("--rank", type=int, default=8)
+    # `alpha/rank` é o ganho com que o adapter entra no modelo. Separado do rank de
+    # propósito: num modelo pequeno, capacidade a mais quebra (rank 16 degenerou),
+    # mas o GANHO é outro eixo — dá para manter o rank baixo e mexer só na força.
+    ap.add_argument("--alpha", type=int, default=0, help="lora_alpha (0 = rank*2)")
     ap.add_argument("--targets", default="q_proj,k_proj,v_proj,o_proj")
     ap.add_argument("--lr", type=float, default=2e-4)
+    # Modelo pequeno cabe inteiro na GPU: treinar em bf16 usa a MESMA precisão do
+    # servidor de inferência, então a comparação base-vs-treinado não mistura
+    # quantização com efeito de treino.
+    ap.add_argument("--no-4bit", action="store_true", help="treina em bf16 puro (modelo pequeno)")
     args = ap.parse_args()
 
     started = time.time()
@@ -76,24 +84,32 @@ def main():
         data = data.select(range(min(args.limit, len(data))))
     print(f"exemplos tokenizados: {len(data)}", flush=True)
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.base,
-        quantization_config=BitsAndBytesConfig(
+    quant = (
+        None
+        if args.no_4bit
+        else BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=torch.bfloat16,
             bnb_4bit_use_double_quant=True,
-        ),
+        )
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        args.base,
+        quantization_config=quant,
         dtype=torch.bfloat16,
         device_map={"": 0},
     )
     model.config.use_cache = False
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    if quant is not None:
+        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    else:
+        model.gradient_checkpointing_enable()
     model = get_peft_model(
         model,
         LoraConfig(
             r=args.rank,
-            lora_alpha=args.rank * 2,
+            lora_alpha=args.alpha or args.rank * 2,
             lora_dropout=0.05,
             bias="none",
             task_type="CAUSAL_LM",

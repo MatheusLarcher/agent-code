@@ -19,6 +19,9 @@ const WORKTREE = resolve(args.worktree ?? '../bench-local')
 const ROUNDS = Number(args.rounds ?? 3)
 const NUM_CTX = Number(args.ctx ?? 16384)
 const HOST = args.host ?? 'http://127.0.0.1:11434'
+// Modelo de raciocínio (qwen3.5) manda tudo para `message.thinking` e devolve
+// `content` vazio — `--think false` desliga isso no Ollama.
+const THINK = args.think === undefined ? undefined : args.think !== 'false'
 const REPO = resolve(new URL('../..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
 
 /** Arquivos que o modelo enxerga. `caminho#inicio-fim` recorta o trecho (o App.tsx
@@ -82,7 +85,7 @@ async function ask(messages) {
             // tokens/velocidade sai zerada.
             stream_options: { include_usage: true }
           }
-        : { model: MODEL, messages, stream: true, options: { temperature: 0, num_ctx: NUM_CTX } }
+        : { model: MODEL, messages, stream: true, options: { temperature: 0, num_ctx: NUM_CTX }, ...(THINK === undefined ? {} : { think: THINK }) }
     )
   })
   if (!res.ok) throw new Error(`ollama ${res.status}: ${await res.text()}`)
@@ -202,18 +205,34 @@ function evaluate() {
   // "numTotalTests" do relatório encolhe — a nota tem que ser contra o alvo real.
   const total = 22
   let passed = 0
+  let report = null
   try {
-    const report = JSON.parse(readFileSync(join(WORKTREE, '.bench-accept.json'), 'utf8'))
+    report = JSON.parse(readFileSync(join(WORKTREE, '.bench-accept.json'), 'utf8'))
     passed = report.numPassedTests ?? 0
   } catch {
     /* sem relatório = nada passou */
   }
+  // A realimentação estava CEGA: `acceptance.out` é o stdout do processo, e com
+  // `--reporter=json --outputFile=…` o relatório vai para o ARQUIVO — o stdout
+  // fica vazio. O modelo recebia os erros de tipo e NADA sobre quais testes de
+  // aceitação quebraram, então parava assim que o typecheck ficava verde.
+  const falhas = []
+  for (const arquivo of report?.testResults ?? []) {
+    for (const t of arquivo.assertionResults ?? []) {
+      if (t.status !== 'failed') continue
+      const motivo = (t.failureMessages ?? []).join(' ').split('\n')[0]
+      falhas.push(`- ${t.fullName ?? t.title}\n  ${motivo.slice(0, 300)}`)
+    }
+  }
+  const resumoFalhas = falhas.length
+    ? `${falhas.length} teste(s) de aceitação ainda falhando:\n${falhas.slice(0, 12).join('\n')}`
+    : ''
   return {
     typecheck: typecheck.ok,
     typecheckOut: typecheck.ok ? '' : typecheck.out.slice(-3000),
     acceptancePassed: passed,
     acceptanceTotal: total,
-    acceptanceOut: acceptance.ok ? '' : acceptance.out.slice(-3000),
+    acceptanceOut: resumoFalhas || (acceptance.ok ? '' : acceptance.out.slice(-2500)),
     suiteGreen: suite.ok,
     suiteOut: suite.ok ? '' : suite.out.slice(-2000)
   }

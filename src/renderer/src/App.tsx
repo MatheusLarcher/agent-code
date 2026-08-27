@@ -444,6 +444,8 @@ export function App(): JSX.Element {
         images: ImageAttachment[]
         files: FileAttachment[]
         fileRefs: FileRefAttachment[]
+        /** The model already produced visible text for this turn. */
+        responseReceived?: true
       }
     >
   >({})
@@ -609,6 +611,10 @@ export function App(): JSX.Element {
       // (queue dispatch, permission clearing, error marking) below.
       const isActivity =
         e.kind === 'assistant-text' || e.kind === 'thinking' || e.kind === 'tool-use' || e.kind === 'tool-result' || e.kind === 'status'
+      if (e.kind === 'assistant-text' && e.text.trim()) {
+        const inflight = inflightRef.current[cid]
+        if (inflight) inflight.responseReceived = true
+      }
       // O agente voltou a responder de fato: o cartão de recuperação ("Limite do
       // Claude atingido" / "Tentativas automáticas encerradas") não pode continuar
       // na tela enquanto a resposta chega — some na primeira atividade real.
@@ -641,7 +647,11 @@ export function App(): JSX.Element {
         // A failed turn = a fatal session error, or a result the model flagged as
         // an error and that the user did NOT cause by stopping it. The user's
         // message must stay in the chat, marked with the error + a retry button.
-        const failed = shouldRecoverTerminal(e.kind, e.kind === 'result' && e.isError, wasInterrupted)
+        // Some providers can deliver the assistant text and only then mark the
+        // terminal frame as an error. The user already received an answer, so
+        // that is a completed turn — never resurrect the retry card afterward.
+        const receivedResponse = inflightRef.current[cid]?.responseReceived === true
+        const failed = !receivedResponse && shouldRecoverTerminal(e.kind, e.kind === 'result' && e.isError, wasInterrupted)
 
         if (e.kind === 'result' && !e.isError) setLastDuration((m) => ({ ...m, [cid]: e.durationMs }))
 
@@ -1518,7 +1528,7 @@ export function App(): JSX.Element {
       if (recovery.messageId) clearMessageError(convId, recovery.messageId)
       try {
         if (!connectedRef.current.has(convId)) await connect(conv)
-        await window.api.sendMessage(convId, continuation, [], [], [], sdkUuid)
+        await window.api.sendMessage(convId, continuation, [], [], [], sdkUuid, 'recovery')
       } catch (err) {
         const attempt = recovery.attempt + 1
         patchConv(convId, (c) => ({

@@ -12,7 +12,8 @@ rodadas de ferramentas, mas não controla o ciclo de vida semântico do `/loop`.
 ## Objetivos
 
 - Dar ao usuário controle explícito do loop em cada conversa.
-- Encerrar automaticamente quando a condição pedida pelo usuário for atendida.
+- Transformar automaticamente mensagens normais em `/loop` quando o toggle estiver ligado, sem exigir que o usuário digite o comando.
+- Encerrar automaticamente quando uma condição de saída explícita no pedido for atendida.
 - Impedir que GPT ou Claude criem wakeups dinâmicos fora de um loop autorizado.
 - Evitar loops infinitos com limite padrão de 100 ciclos, substituível por um
   limite maior explícito no prompt.
@@ -38,7 +39,9 @@ O `ChatPanel` mostra um toggle **Loop** ao lado de **Econômico**. O controle:
 - é independente por conversa;
 - é restaurado ao reabrir o aplicativo;
 - fica visualmente desabilitado enquanto o modo econômico estiver ativo;
-- explica no tooltip o limite padrão e o encerramento por condição.
+- explica no tooltip que mensagens normais serão executadas em loop, com limite padrão de 100 ciclos e encerramento antecipado somente quando o pedido trouxer uma condição explícita.
+
+Com o toggle desligado, o envio não muda. Com o toggle ligado, cada nova mensagem normal é transformada apenas no payload enviado ao Agent SDK, adicionando `/loop ` antes do texto. A mensagem armazenada e renderizada no chat permanece exatamente como o usuário escreveu. Mensagens que já começam com `/loop` não recebem um segundo prefixo. Cada mensagem nova inicia uma ativação independente e zera seu contador.
 
 Conversas novas em um projeto herdam `loopEnabled` da conversa de referência do
 mesmo projeto, como já ocorre com modelo e modo econômico. A exclusividade é
@@ -89,15 +92,11 @@ A condição descrita pelo usuário é a regra principal. Exemplos:
 - "até os testes passarem" encerra após uma execução bem-sucedida dos testes;
 - "até o serviço ficar online" encerra quando a verificação solicitada responder.
 
-Em toda iteração, o prompt de controle manda o modelo avaliar a condição antes
-de solicitar outro wakeup. Ao considerá-la atendida, o modelo deve emitir
-`ScheduleWakeup({ stop: true })`. O `AgentSession` cancela intenções e wakeups
-pendentes e encerra o loop. Se a iteração terminar sem pedir outro wakeup, o
-controlador também a considera concluída e não agenda continuação.
+Quando o pedido trouxer uma condição de saída explícita, em toda iteração o prompt de controle manda o modelo avaliá-la antes de solicitar outro wakeup. Ao considerá-la atendida, o modelo deve emitir `ScheduleWakeup({ stop: true })`. O `AgentSession` cancela intenções e wakeups pendentes e encerra o loop.
 
-O Agent Code não inventa uma condição diferente nem declara sucesso sem a
-evidência requerida pelo pedido. Se a condição não puder ser confirmada, o loop
-continua até o limite ou termina com erro explícito.
+Quando o pedido não trouxer uma condição de saída explícita, o agente não pergunta e não inventa uma. A ativação continua até completar o limite de 100 ciclos. Uma resposta textual de conclusão antes desse limite não basta para encerrar esse caso: o controlador deve manter a repetição até o teto.
+
+Com condição explícita, se a iteração terminar sem pedir outro wakeup, o controlador a considera concluída e não agenda continuação. O Agent Code não declara sucesso sem a evidência requerida pelo pedido. Se uma condição explícita não puder ser confirmada, o loop continua até o limite ou termina com erro explícito.
 
 ## Limites
 
@@ -106,9 +105,7 @@ o pedido do usuário expressar claramente que ele é o limite do loop, por exemp
 "tente até 250 vezes" ou "limite do loop: 300". Números de porta, datas, ids e
 outras quantidades não podem ser interpretados como limite.
 
-Valores menores que 1, não inteiros ou ambíguos usam 100. Haverá um teto técnico
-documentado para evitar estouro numérico ou abuso acidental; pedidos acima dele
-são reduzidos ao teto com aviso visível. O contador aumenta uma vez por wakeup
+Valores menores que 1, não inteiros ou ambíguos usam 100. O teto técnico é 10.000 ciclos para evitar abuso acidental; pedidos acima dele são reduzidos a 10.000 com aviso visível. O contador aumenta uma vez por wakeup
 efetivamente disparado, não por chamada de ferramenta dentro da iteração.
 
 Ao atingir o limite, o controlador cancela o restante, informa que a condição
@@ -148,6 +145,11 @@ encerramento, sem registrar prompts completos nem dados sensíveis.
 Testes unitários e de integração devem cobrir:
 
 - persistência de `loopEnabled` no ciclo salvar/carregar;
+- mensagem normal recebendo `/loop ` apenas no payload do Agent SDK quando o toggle está ligado;
+- mensagem visível e persistida permanecendo sem o prefixo interno;
+- ausência de prefixo com toggle desligado e ausência de prefixo duplicado em `/loop` explícito;
+- nova mensagem iniciando uma ativação e um contador novos;
+- pedido sem condição explícita continuando até 100 ciclos sem perguntar nem inferir condição;
 - migração implícita de conversa sem o campo;
 - herança por projeto e normalização da exclusividade;
 - toggles mutuamente exclusivos e cancelamento imediato;
@@ -171,6 +173,8 @@ e prova real devem ser relatados separadamente.
 ## Critérios de aceite
 
 - O usuário controla Loop por conversa e a escolha sobrevive ao reinício.
+- Com Loop ligado, mensagens normais iniciam `/loop` automaticamente sem alterar o texto visível ou persistido; desligado, o envio permanece inalterado.
+- Sem condição explícita, o loop executa 100 ciclos sem perguntar nem inferir uma condição de saída.
 - Econômico e Loop nunca permanecem ativos ao mesmo tempo.
 - Ativar Econômico ou desligar Loop interrompe o ciclo atual.
 - A condição do usuário encerra o loop antes do limite.

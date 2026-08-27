@@ -20,6 +20,7 @@ import { buildProjectOutline } from './projectOutline'
 import type {
   AskQuestion,
   AgentInterruptResult,
+  AgentMessageKind,
   ChatEvent,
   ImageAttachment,
   PermissionRequest,
@@ -153,15 +154,16 @@ Você está operando em modo de economia de tokens. Siga estas regras:
 
 const LOOP_HINT = `MODO LOOP ATIVADO PELO USUÁRIO NESTA CONVERSA.
 
-Use a skill /loop somente quando a tarefa realmente pedir repetição. Em CADA ciclo:
-1. verifique primeiro a condição de saída escrita pelo usuário;
-2. se a condição já foi atingida, chame ScheduleWakeup com {"stop":true} e entregue o resultado final;
-3. só peça o próximo ScheduleWakeup DEPOIS de concluir e verificar o trabalho possível neste ciclo;
-4. nunca use ScheduleWakeup apenas para esperar um subagente ou tarefa em background;
-5. não inclua campos fora do schema, como "noop".
+Quando uma mensagem normal chegar com este modo ativo, ela será transformada internamente em /loop. Em CADA ciclo:
+1. se o usuário escreveu uma condição de saída explícita, verifique-a primeiro;
+2. se essa condição explícita já foi atingida, chame ScheduleWakeup com {"stop":true} e entregue o resultado final;
+3. se não existe condição de saída explícita, NÃO invente uma e NÃO encerre antes do limite: continue agendando até completar 100 ciclos;
+4. só peça o próximo ScheduleWakeup DEPOIS de concluir e verificar o trabalho possível neste ciclo;
+5. nunca use ScheduleWakeup apenas para esperar um subagente ou tarefa em background;
+6. não inclua campos fora do schema, como "noop".
 
 O Agent Code aplica 100 ciclos por padrão. Um limite maior só vale quando o usuário o pedir
-explicitamente no texto. A condição de saída encerra o loop antes do limite.`
+explicitamente no texto. Somente uma condição de saída explícita encerra o loop antes do limite.`
 
 // Persistent, cross-conversation memory. The .md files live in the user's chosen
 // cache folder (next to the SQLite db — see store.ts), so the PATH is per-user/per-machine,
@@ -492,11 +494,22 @@ export class AgentSession {
     text: string,
     images?: ImageAttachment[],
     messageUuid?: string,
-    origin: MessageOrigin = 'pc'
+    origin: MessageOrigin = 'pc',
+    messageKind: AgentMessageKind = 'normal'
   ): Promise<void> {
     // A real user dispatch starts a fresh loop budget. Dynamic wakeups are
-    // injected by the CLI and do not pass through this method.
-    this.loopActive = this.opts.loopEnabled === true && /^\s*\/loop(?:\s|$)/iu.test(text)
+    // injected by the CLI and do not pass through this method. Internal
+    // recovery prompts must never start a fresh loop just because the toggle
+    // remains enabled.
+    const trimmed = text.trimStart()
+    const startsWithSlashCommand = trimmed.startsWith('/')
+    const shouldAutoLoop =
+      messageKind === 'normal' &&
+      this.opts.loopEnabled === true &&
+      this.opts.economyMode !== true &&
+      !startsWithSlashCommand
+    const explicitLoop = /^\/loop(?:\s|$)/iu.test(trimmed)
+    this.loopActive = this.opts.loopEnabled === true && this.opts.economyMode !== true && (shouldAutoLoop || explicitLoop)
     this.loopCycles = 0
     this.loopLimit = loopLimitFromPrompt(text)
     this.loopScheduledThisIteration = false
@@ -510,14 +523,20 @@ export class AgentSession {
     // If the user manually canceled the previous turn, neutralize it: the SDK
     // still carries the interrupted request (and any partial reply) in context,
     // so prefix a clear note telling the model to ignore that canceled exchange.
-    let outText = text
+    let taskText = text
     if (this.canceledPending) {
       this.canceledPending = false
       const note =
         '[Observação do sistema: o usuário CANCELOU manualmente a solicitação anterior e a resposta parcial a ela. ' +
         'Desconsidere por completo aquela solicitação cancelada e a resposta interrompida — trate como se nunca ' +
         'tivessem existido — e atenda apenas à mensagem a seguir.]'
-      outText = text ? `${note}\n\n${text}` : note
+      taskText = text ? `${note}\n\n${text}` : note
+    }
+    let outText = shouldAutoLoop ? `/loop ${taskText}` : taskText
+    if (explicitLoop && taskText !== text) {
+      const loopPrefix = text.match(/^\s*\/loop(?:\s+|$)/iu)?.[0] ?? '/loop '
+      const loopBody = text.slice(loopPrefix.length)
+      outText = `${loopPrefix.trimEnd()} ${taskText.slice(0, taskText.length - text.length)}${loopBody}`
     }
     // Data/hora, máquina de origem e o índice fresco de `docs/`, sempre. Ficam
     // FORA do `outText` de propósito: o relay de visão abaixo recebe a mensagem
@@ -538,10 +557,15 @@ export class AgentSession {
     } catch {
       docsOutline = '[PROJECT_DOCS_OUTLINE]\ndocs/ [outline unavailable for this dispatch]\n[/PROJECT_DOCS_OUTLINE]'
     }
-    const stamped = (body: string): string =>
-      body
-        ? `${stamp}\n\n${docsOutline}\n\n${memoryContext}\n\n${body}`
-        : `${stamp}\n\n${docsOutline}\n\n${memoryContext}`
+    const stamped = (body: string): string => {
+      const context = `${stamp}\n\n${docsOutline}\n\n${memoryContext}`
+      const loopMatch = body.match(/^\s*\/loop(?:\s+|$)/iu)
+      if (loopMatch) {
+        const task = body.slice(loopMatch[0].length)
+        return task ? `/loop ${context}\n\n${task}` : `/loop ${context}`
+      }
+      return body ? `${context}\n\n${body}` : context
+    }
 
     // vision_fallback_router — the picked model can't see images (most Ollama
     // Cloud models are text-only): intercept BEFORE it ever reaches the SDK.
@@ -592,6 +616,7 @@ export class AgentSession {
 
   async interrupt(): Promise<AgentInterruptResult> {
     this.windowsControlScope.cancel()
+    this.clearLoopState()
     if (!this.q) return { stillQueued: [] }
     try {
       const receipt = (await this.q.interrupt()) as unknown as { still_queued?: string[] } | undefined
@@ -717,6 +742,7 @@ export class AgentSession {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.clearLoopState()
     this.windowsControlScope.cancel()
     this.stopTaskWatch?.()
     this.stopTaskWatch = null
@@ -746,6 +772,11 @@ export class AgentSession {
   }
 
   // ---- internals ----
+
+  private clearLoopState(): void {
+    this.loopActive = false
+    this.loopScheduledThisIteration = false
+  }
 
   private handlePermission(toolName: string, input: Record<string, unknown>): Promise<PermissionResult> {
     if (this.disposed) {
@@ -803,13 +834,11 @@ export class AgentSession {
         })
       }
       if (input.stop === true) {
-        this.loopActive = false
-        this.loopScheduledThisIteration = false
+        this.clearLoopState()
         return Promise.resolve({ behavior: 'allow', updatedInput: { stop: true } })
       }
       if (this.loopCycles >= this.loopLimit) {
-        this.loopActive = false
-        this.loopScheduledThisIteration = false
+        this.clearLoopState()
         return Promise.resolve({
           behavior: 'deny',
           message: `Loop encerrado após ${this.loopLimit} ciclos sem confirmar a condição de saída. Peça explicitamente um limite maior para tentar novamente.`

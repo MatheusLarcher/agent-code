@@ -433,6 +433,20 @@ describe('App — recuperação persistida', () => {
     await waitFor(() => expect(screen.queryByText('Limite do Claude atingido')).toBeNull())
   })
 
+  it('não recria o cartão se o terminal vier com erro após a resposta do agente', async () => {
+    render(<UiProvider><App /></UiProvider>)
+    await send('responda')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit({ kind: 'assistant-text', id: 'a1', text: 'Resposta entregue.', final: true })
+    await emit({ kind: 'result', id: 'r1', isError: true, text: 'conexão fechada', durationMs: 1 })
+
+    expect(screen.queryByText(/Nova tentativa em/)).toBeNull()
+    expect(screen.queryByText(/Tentativas automáticas encerradas/)).toBeNull()
+  })
+
   it('tentativas encerradas: mensagem nova descarta o cartão e é enviada (não fica na fila)', async () => {
     const conv = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')[0]
     conv.recovery = {
@@ -860,6 +874,7 @@ describe('App — Loop e Econômico por conversa', () => {
     )
 
     const loop = await screen.findByRole('button', { name: /Loop/i })
+    expect(loop.getAttribute('title')).toMatch(/mensagens normais.*100 ciclos/i)
     fireEvent.click(loop)
     await waitFor(() => expect(savedConv()?.loopEnabled).toBe(true))
 

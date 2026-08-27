@@ -6,7 +6,7 @@
 //
 // Uso: node scripts/bench/run-funcao.mjs --model <m> [--api openai --host <url>] --rounds 2
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { SYSTEM } from './format.mjs'
@@ -19,6 +19,9 @@ const MODEL = args.model
 const API = args.api ?? 'ollama'
 const HOST = args.host ?? 'http://127.0.0.1:11434'
 const ROUNDS = Number(args.rounds ?? 2)
+// Modelo de raciocínio (qwen3.5) manda tudo para `message.thinking` e devolve
+// `content` vazio — `--think false` desliga isso no Ollama.
+const THINK = args.think === undefined ? undefined : args.think !== 'false'
 const ALVO = 'src/shared/reconcile.ts'
 const TOTAL = 18
 
@@ -45,7 +48,7 @@ async function perguntar(messages) {
     body: JSON.stringify(
       openai
         ? { model: MODEL, messages, stream: true, temperature: 0, max_tokens: 4000, stream_options: { include_usage: true } }
-        : { model: MODEL, messages, stream: true, options: { temperature: 0, num_ctx: 8192 } }
+        : { model: MODEL, messages, stream: true, options: { temperature: 0, num_ctx: Number(args.ctx ?? 8192) }, ...(THINK === undefined ? {} : { think: THINK }) }
     )
   })
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`)
@@ -153,4 +156,12 @@ writeFileSync(
   'utf8'
 )
 writeFileSync(join(dir, `${slug}-reconcile.ts`), readFileSync(join(REPO, ALVO), 'utf8'), 'utf8')
+
+// O arquivo do modelo é escrito DENTRO do repositório de verdade (é onde o vitest
+// e o alias `@shared` o encontram), então ele tem que sair no fim. Sem isto o
+// `npm run typecheck` do projeto passa a falhar com o código que o modelo gerou —
+// e uma medição de um modelo que degenerou deixa o repo quebrado até alguém achar
+// o motivo. A cópia permanente já está em `resultados-funcao/`.
+rmSync(join(REPO, ALVO), { force: true })
+rmSync(join(REPO, '.func.json'), { force: true })
 process.stdout.write(`\nmelhor: ${Math.max(...historico.map((h) => h.passou))}/${TOTAL} -> ${dir}\n`)

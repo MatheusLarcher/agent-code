@@ -479,6 +479,8 @@ export interface TokenUsage {
   cacheWrite: number
 }
 
+export type AgentMessageKind = 'normal' | 'recovery'
+
 export interface StartAgentOptions {
   /** Conversation this agent serves — also keys its dedicated browser instance. */
   convId: string

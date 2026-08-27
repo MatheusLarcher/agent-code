@@ -1,0 +1,59 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.9.1+cu130).
+W0818 06:53:14.782000 38536 site-packages\torch\distributed\elastic\multiprocessing\redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+Loading weights:   0%|          | 0/320 [00:00<?, ?it/s]Loading weights:   0%|          | 1/320 [00:00<00:41,  7.64it/s]Loading weights:  31%|███▏      | 100/320 [00:00<00:00, 513.61it/s]Loading weights:  62%|██████▎   | 200/320 [00:00<00:00, 718.69it/s]Loading weights:  91%|█████████ | 291/320 [00:00<00:00, 785.37it/s]Loading weights: 100%|██████████| 320/320 [00:00<00:00, 674.40it/s]
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 62203)
+Traceback (most recent call last):
+  File "C:\Users\mathe\miniconda3\envs\lora-bench\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\mathe\miniconda3\envs\lora-bench\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\mathe\miniconda3\envs\lora-bench\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\mathe\miniconda3\envs\lora-bench\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Users\mathe\miniconda3\envs\lora-bench\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "C:\GitHub\agent-code\scripts\bench\serve-ollama-like.py", line 60, in do_POST
+    self._chunk(json.dumps({"message": {"role": "assistant", "content": piece}, "done": False}) + "\n")
+  File "C:\GitHub\agent-code\scripts\bench\serve-ollama-like.py", line 78, in _chunk
+    self.wfile.write(f"{len(data):X}\r\n".encode() + data + b"\r\n")
+  File "C:\Users\mathe\miniconda3\envs\lora-bench\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionResetError: [WinError 10054] Foi forçado o cancelamento de uma conexão existente pelo host remoto
+----------------------------------------
+Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.

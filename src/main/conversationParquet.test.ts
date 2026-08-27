@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ParquetReader } from 'parquetjs-lite'
+import parquet from 'parquetjs-lite'
 import { dailyParquetPath, exportConversationsParquet } from './conversationParquet'
+
+const { ParquetReader } = parquet
 
 async function readRows(path: string): Promise<Record<string, unknown>[]> {
   const reader = await ParquetReader.openFile(path)

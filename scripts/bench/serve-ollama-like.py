@@ -95,7 +95,14 @@ def main():
         extra["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16
         )
-    model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.bfloat16, device_map={"": 0}, **extra)
+    # `attn_implementation="sdpa"` explícito: com um adapter PEFT carregado por
+    # cima, o modelo cai no caminho "eager", que materializa a matriz de atenção
+    # inteira. Num prompt de ~20 mil tokens isso é quadrático e o servidor morreu
+    # com `CUDA out of memory: tried to allocate 17.54 GiB` numa GPU de 8 GB — a
+    # rodada BASE, sem adapter, tinha passado no mesmo prompt.
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, dtype=torch.bfloat16, device_map={"": 0}, attn_implementation="sdpa", **extra
+    )
     if args.adapter:
         from peft import PeftModel
 

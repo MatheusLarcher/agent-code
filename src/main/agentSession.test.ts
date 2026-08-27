@@ -203,6 +203,54 @@ describe('AgentSession — controle seguro do /loop', () => {
     expect(loopLimitFromPrompt('tente até 20 vezes')).toBe(DEFAULT_LOOP_LIMIT)
   })
 
+  it.each(['claude-opus-4-8', 'gpt-5.6-luna'])(
+    'transforma mensagem normal em /loop só no payload do SDK (%s)',
+    async (model) => {
+      const { s } = makeSession({ loopEnabled: true, model })
+      await s.send('verifique o deploy')
+      const content = String(pushedMessages(s)[0]?.message.content)
+      expect(content).toMatch(/^\/loop /)
+      expect(content).toContain('verifique o deploy')
+      await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toEqual({
+        behavior: 'allow',
+        updatedInput: wakeup
+      })
+    }
+  )
+
+  it('mantém envio normal com Loop desligado', async () => {
+    const { s } = makeSession()
+    await s.send('verifique o deploy')
+    const content = String(pushedMessages(s)[0]?.message.content)
+    expect(content).toContain('verifique o deploy')
+    expect(content).not.toContain('/loop verifique o deploy')
+  })
+
+  it('não duplica /loop explícito e mantém o comando no início do payload', async () => {
+    const { s } = makeSession({ loopEnabled: true })
+    await s.send('/loop verifique o deploy')
+    const content = String(pushedMessages(s)[0]?.message.content)
+    expect(content).toMatch(/^\/loop /)
+    expect(content.match(/\/loop/giu)).toHaveLength(1)
+    expect(content).toContain('verifique o deploy')
+  })
+
+  it.each(['/help', '  /review 123'])('não envolve outro comando slash: %s', async (text) => {
+    const { s } = makeSession({ loopEnabled: true })
+    await s.send(text)
+    const content = String(pushedMessages(s)[0]?.message.content)
+    expect(content).toContain(text)
+    expect(content).not.toContain('/loop')
+  })
+
+  it('não inicia um loop novo para continuação interna de recuperação', async () => {
+    const { s } = makeSession({ loopEnabled: true })
+    await s.send('Retome a solicitação anterior.', undefined, undefined, 'pc', 'recovery')
+    const content = String(pushedMessages(s)[0]?.message.content)
+    expect(content).not.toContain('/loop Retome a solicitação anterior.')
+    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
   it('bloqueia a skill loop quando o toggle está desligado', async () => {
     const { s } = makeSession()
     await expect(gate(s, 'Skill', { skill: 'loop' })).resolves.toMatchObject({
@@ -240,6 +288,20 @@ describe('AgentSession — controle seguro do /loop', () => {
       behavior: 'deny',
       message: expect.stringMatching(/noop/)
     })
+  })
+
+  it('interromper limpa a autorização antes que um wakeup atrasado chegue', async () => {
+    const { s } = makeSession({ loopEnabled: true })
+    await s.send('continue verificando')
+    await s.interrupt()
+    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('dispose limpa a autorização e nega wakeups atrasados', async () => {
+    const { s } = makeSession({ loopEnabled: true })
+    await s.send('continue verificando')
+    s.dispose()
+    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({ behavior: 'deny' })
   })
 
   it('stop:true encerra o loop e bloqueia wakeups posteriores', async () => {

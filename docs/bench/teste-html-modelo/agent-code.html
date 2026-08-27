@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dashboard — Vendas do Mês</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --card-bg: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --accent: #4f46e5;
+    --accent-soft: #eef2ff;
+    --shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px;
+  }
+  header {
+    margin-bottom: 28px;
+  }
+  header h1 {
+    margin: 0 0 4px;
+    font-size: 28px;
+    font-weight: 700;
+  }
+  header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-bottom: 32px;
+  }
+  .card {
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 20px 24px;
+  }
+  .card .label {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .card .value {
+    font-size: 26px;
+    font-weight: 700;
+  }
+  .card .badge {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  thead th {
+    text-align: left;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    padding: 14px 20px;
+    background: #f9fafb;
+    border-bottom: 1px solid #eef0f4;
+  }
+  tbody td {
+    padding: 14px 20px;
+    font-size: 14px;
+    border-bottom: 1px solid #f1f2f6;
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  tbody tr:hover {
+    background: #fafbff;
+  }
+  .valor {
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Vendas do mês</h1>
+    <p>Resumo do desempenho comercial — dados de exemplo</p>
+  </header>
+
+  <section class="kpis">
+    <div class="card">
+      <div class="label">Total vendido</div>
+      <div class="value">R$ 128.450</div>
+      <span class="badge">+12% vs. mês anterior</span>
+    </div>
+    <div class="card">
+      <div class="label">Número de pedidos</div>
+      <div class="value">342</div>
+      <span class="badge">+8% vs. mês anterior</span>
+    </div>
+    <div class="card">
+      <div class="label">Ticket médio</div>
+      <div class="value">R$ 375,58</div>
+      <span class="badge">+4% vs. mês anterior</span>
+    </div>
+  </section>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Produto</th>
+        <th>Quantidade</th>
+        <th>Valor</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Mouse sem fio</td><td>128</td><td class="valor">R$ 12.800,00</td></tr>
+      <tr><td>Teclado mecânico</td><td>96</td><td class="valor">R$ 19.200,00</td></tr>
+      <tr><td>Monitor 27"</td><td>54</td><td class="valor">R$ 43.200,00</td></tr>
+      <tr><td>Headset gamer</td><td>73</td><td class="valor">R$ 14.600,00</td></tr>
+      <tr><td>Webcam Full HD</td><td>61</td><td class="valor">R$ 9.150,00</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>

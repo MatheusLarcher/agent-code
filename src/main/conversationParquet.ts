@@ -1,8 +1,10 @@
 import { mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { ParquetSchema, ParquetWriter } from 'parquetjs-lite'
+import parquet from 'parquetjs-lite'
 import { listMemoryFiles } from './memoryIndex'
 import type { ConversationRecord } from './projectStore'
+
+const { ParquetSchema, ParquetWriter } = parquet
 
 const EXPORT_DIRNAME = 'memorias-longo-praso'
 

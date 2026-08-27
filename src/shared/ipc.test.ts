@@ -25,18 +25,18 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
     expect(contextLimitFor('claude-haiku-4-5')).toBe(200_000)
   })
 
-  it('Ollama Cloud: DeepSeek V4 Pro e GLM-5.2 são 1M nativos (não 128K/200K)', () => {
-    expect(contextLimitFor('deepseek-v4-pro:cloud')).toBe(1_000_000)
+  it('Ollama Cloud: GLM-5.2 e Kimi K3 são 1M nativos (não 128K/200K)', () => {
     expect(contextLimitFor('glm-5.2:cloud')).toBe(1_000_000)
+    expect(contextLimitFor('kimi-k3:cloud')).toBe(1_000_000)
   })
 
-  it('Ollama Cloud: Nemotron 3 Ultra 256K, gpt-oss 128K, Gemma 4 256K, Nemotron 3 Super 256K, Kimi K3 1M', () => {
+  it('Ollama Cloud: Nemotron 3 Ultra 256K, gpt-oss 128K, Gemma 4 256K, Nemotron 3 Super 256K, Muse Glimmer 256K', () => {
     expect(contextLimitFor('nemotron-3-ultra:cloud')).toBe(256_000)
     expect(contextLimitFor('gpt-oss:120b-cloud')).toBe(128_000)
     expect(contextLimitFor('gpt-oss:20b-cloud')).toBe(128_000)
     expect(contextLimitFor('gemma4:cloud')).toBe(256_000)
     expect(contextLimitFor('nemotron-3-super:cloud')).toBe(256_000)
-    expect(contextLimitFor('kimi-k3:cloud')).toBe(1_000_000)
+    expect(contextLimitFor('muse-glimmer:cloud')).toBe(256_000)
   })
 
   it('GPT-5.6 Luna/Terra/Sol usam a janela oficial de 1,05M', () => {
@@ -79,7 +79,8 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision('gpt-oss:120b-cloud')).toBe(false)
     expect(modelSupportsVision('gpt-oss:20b-cloud')).toBe(false)
     expect(modelSupportsVision('gemma4:cloud')).toBe(false)
-    expect(modelSupportsVision('deepseek-v4-pro:cloud')).toBe(false)
+    expect(modelSupportsVision('nemotron-3-super:cloud')).toBe(false)
+    expect(modelSupportsVision('muse-glimmer:cloud')).toBe(false)
     expect(modelSupportsVision('glm-5.2:cloud')).toBe(false)
   })
 })
@@ -99,6 +100,7 @@ describe('modelSupportsFastMode — quais modelos aceitam o modo rápido', () =>
     expect(modelSupportsFastMode('claude-haiku-4-5')).toBe(false)
     expect(modelSupportsFastMode('claude-fable-5')).toBe(false)
     expect(modelSupportsFastMode('nemotron-3-ultra:cloud')).toBe(false)
+    expect(modelSupportsFastMode('muse-glimmer:cloud')).toBe(false)
     expect(modelSupportsFastMode('modelo-inexistente')).toBe(false)
     expect(modelSupportsFastMode(undefined)).toBe(false)
   })

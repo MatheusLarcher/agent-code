@@ -315,8 +315,8 @@ export function SettingsModal({
                 <span className="settings-desc">
                   Adiciona modelos do Ollama Cloud ao seletor de modelo. Eles rodam pela API compatível
                   com a Anthropic do Ollama e usam a sua API key — não precisam do login do Claude.
-                  GPT-OSS e Gemma 4 funcionam no plano grátis; Nemotron 3 Ultra/Super, DeepSeek V4 Pro, GLM 5.2 e Kimi K3
-                  exigem assinatura do Ollama (ollama.com/upgrade).
+                  GPT-OSS e Gemma 4 funcionam no plano grátis; Nemotron 3 Ultra/Super, Muse Glimmer, GLM 5.2
+                  e Kimi K3 exigem assinatura do Ollama (ollama.com/upgrade).
                 </span>
               </span>
             </label>

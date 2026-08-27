@@ -29,7 +29,7 @@ Arquivo novo aparece **se montando** peça por peça, arquivo apagado **se desfa
 - 📎 **Anexar imagens e qualquer arquivo** (Excel, PDF, zip, código…) por colar, arrastar ou pelo botão.
 - 🖱️ **Selecionar um elemento da página** e enviá-lo pro chat com um clique.
 - 🗄️ **Pasta de dados escolhida por você** — um SQLite (configs, API key, token Android) + memórias `.md` na pasta que você selecionar (por usuário, não por projeto).
-- 🧩 **Kit de skills portátil** — skills versionadas no repo, ativadas automaticamente pelo `start.bat` ao clonar.
+- 🧩 **Skills para todos os modelos** — skills versionadas no repo, disponíveis também nas conversas GPT/Codex, mesmo sem junction global.
 - 📚 **Documentação sempre contextualizada** — cada mensagem recebe um índice fresco de todos os arquivos e subpastas em `docs/`, com os cabeçalhos Markdown, sem reenviar os arquivos inteiros.
 - 🗺️ **Mapa do projeto ao vivo** — veja os arquivos acendendo conforme o agente trabalha, com as etapas da tarefa no topo (aba **Projeto**, no painel Agentes).
 - 👥 **Painel de agentes** — quem está trabalhando na conversa, o que cada subagente está fazendo agora e quem ficou travado esperando sua resposta.
@@ -52,9 +52,9 @@ npm run dev   # abre o app
 
 ## Dados e segurança
 
-- Configurações, conversas e o token do celular ficam no SQLite da pasta de dados escolhida em **Configurações**; memórias persistentes ficam em arquivos `.md` na mesma pasta.
+- Configurações, conversas e o token do celular ficam no SQLite da pasta de dados escolhida em **Configurações**; memórias persistentes ficam em arquivos `.md` na mesma pasta e o índice/trechos relevantes acompanham cada mensagem, inclusive nos modelos GPT/Codex.
 - A ponte do celular usa um token persistente e continua exigindo que as permissões sejam aprovadas no PC. Use-a apenas em redes confiáveis.
-- As skills versionadas em `.agents/skills` são vinculadas automaticamente pelo `start.bat` ao perfil global do Claude Code (`%USERPROFILE%\.claude\skills`).
+- As skills versionadas em `.agents/skills` são vinculadas automaticamente pelo `start.bat` ao perfil global do Claude Code (`%USERPROFILE%\.claude\skills`). Além disso, o app as descobre diretamente e inclui no catálogo e nas permissões de leitura da sessão, inclusive quando o modelo selecionado é GPT/Codex.
 
 ## Stack
 

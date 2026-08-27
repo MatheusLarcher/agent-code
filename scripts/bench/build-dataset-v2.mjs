@@ -160,7 +160,14 @@ for (const rel of git(['ls-files', '*.ts', '*.tsx']).split('\n').filter(Boolean)
 // Só as chamadas `Write`, que carregam o arquivo inteiro. As `Edit` (trechos)
 // ficaram de fora de propósito: foram elas que ensinaram o modelo a responder
 // pedaço na primeira tentativa.
-const TRANSCRIPTS = join(process.env.USERPROFILE ?? '', '.claude/projects/C--Users-mathe-Documents-GitHub-agent-code')
+// O repositório já mudou de lugar (Documents/GitHub -> C:\GitHub) e o Claude Code
+// guarda um diretório por caminho, então os transcripts antigos ficam num slug e os
+// novos noutro. Varremos os dois: o slug do caminho atual + o histórico.
+const projetos = join(process.env.USERPROFILE ?? '', '.claude/projects')
+const TRANSCRIPT_DIRS = [
+  join(projetos, REPO.replace(/[^a-zA-Z0-9]/g, '-')),
+  join(projetos, 'C--Users-mathe-Documents-GitHub-agent-code')
+].filter((d, i, todos) => existsSync(d) && todos.indexOf(d) === i)
 let porTranscript = 0
 
 function textoDe(content) {
@@ -169,11 +176,11 @@ function textoDe(content) {
   return content.filter((c) => c?.type === 'text').map((c) => c.text).join('\n')
 }
 
-if (existsSync(TRANSCRIPTS)) {
-  const { readdirSync } = await import('node:fs')
-  for (const arquivo of readdirSync(TRANSCRIPTS).filter((f) => f.endsWith('.jsonl'))) {
+const { readdirSync } = await import('node:fs')
+for (const dir of TRANSCRIPT_DIRS) {
+  for (const arquivo of readdirSync(dir).filter((f) => f.endsWith('.jsonl'))) {
     let ultimoPedido = null
-    for (const linhaTxt of readFileSync(join(TRANSCRIPTS, arquivo), 'utf8').split('\n')) {
+    for (const linhaTxt of readFileSync(join(dir, arquivo), 'utf8').split('\n')) {
       if (!linhaTxt.trim()) continue
       let row
       try {

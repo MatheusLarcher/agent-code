@@ -36,6 +36,7 @@ import { startMemoryCuratorScheduler } from './memoryCurator'
 import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
 import type {
+  AgentMessageKind,
   AppConfig,
   BrowserInput,
   FileAttachment,
@@ -754,7 +755,8 @@ function registerIpc(): void {
       images?: ImageAttachment[],
       files?: FileAttachment[],
       fileRefs?: FileRefAttachment[],
-      messageUuid?: string
+      messageUuid?: string,
+      messageKind?: AgentMessageKind
     ) => {
       // Non-image files are saved to disk and referenced by path so the agent can
       // open them with its own tools (Read, scripts, etc.). Pasted-by-reference
@@ -763,7 +765,7 @@ function registerIpc(): void {
       const saved: Array<{ name: string; path: string }> =
         files && files.length > 0 ? await saveAttachments(convId, files) : []
       const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
-      await sessions.get(convId)?.send(finalText, images, messageUuid, takeOrigin(convId, text))
+      await sessions.get(convId)?.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }
   )
 

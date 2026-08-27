@@ -497,8 +497,8 @@ export function ChatPanel(props: Props): JSX.Element {
             props.loopLocked
               ? 'Loop indisponível enquanto o modo econômico estiver ativo.'
               : props.loopEnabled
-                ? 'Loop ATIVO — permite repetir a tarefa até atingir a condição, com limite padrão de 100 ciclos.'
-                : 'Loop — permite repetir a tarefa até atingir a condição, com limite padrão de 100 ciclos.'
+                ? 'Loop ATIVO — mensagens normais repetem automaticamente. Uma condição explícita encerra antes; sem condição, usa 100 ciclos.'
+                : 'Loop — repete mensagens normais automaticamente. Uma condição explícita encerra antes; sem condição, usa 100 ciclos.'
           }
           onClick={() => props.onLoopEnabledChange(!props.loopEnabled)}
         >
