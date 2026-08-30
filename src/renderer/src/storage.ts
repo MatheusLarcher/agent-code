@@ -1,6 +1,5 @@
-import type { Conversation } from './types'
-import type { UIMessage } from './types'
-import type { RateLimitStatus } from '@shared/ipc'
+import { DEFAULT_TITLE, type Conversation, type UIMessage } from './types'
+import type { RateLimitStatus, RepositoryChange, VersionedConversationDto } from '@shared/ipc'
 
 // Persistence for the conversation history + UI state. Conversations are backed
 // by one SQLite db PER PROJECT (main process, via window.api.loadAllConversations/
@@ -34,11 +33,16 @@ const COMPACTION_AGE_MS = 15 * 24 * 60 * 60 * 1000
  * touches Agent Code's rendered history, never the Claude SDK session files. */
 export function compactOldConversations(list: Conversation[], now = Date.now()): Conversation[] {
   return list.map((conversation) => {
-    if (now - conversation.createdAt < COMPACTION_AGE_MS) return conversation
-    const messages = conversation.messages.filter(
+    const messages = Array.isArray(conversation.messages) ? conversation.messages : []
+    if (Number.isFinite(conversation.createdAt) && now - conversation.createdAt < COMPACTION_AGE_MS) {
+      return messages === conversation.messages ? conversation : { ...conversation, messages }
+    }
+    const compacted = messages.filter(
       (message: UIMessage) => message.kind === 'user' || (message.kind === 'assistant-text' && message.answer)
     )
-    return messages.length === conversation.messages.length ? conversation : { ...conversation, messages }
+    return compacted.length === messages.length && messages === conversation.messages
+      ? conversation
+      : { ...conversation, messages: compacted }
   })
 }
 
@@ -95,30 +99,155 @@ function readLegacyLocalStorageConversations(): Conversation[] | null {
   }
 }
 
-export async function loadConversations(): Promise<Conversation[]> {
-  try {
-    const list = (await window.api.loadAllConversations()) as Conversation[]
-    if (list.length) return compactOldConversations(list)
-    // Nothing in the per-project dbs — fall back to a pre-SQLite localStorage-only
-    // install, but only the very first time (see readLegacyLocalStorageConversations).
-    const legacy = readLegacyLocalStorageConversations()
-    return legacy ? compactOldConversations(legacy) : []
-  } catch {
-    return []
+const conversationRecords = new Map<string, VersionedConversationDto>()
+const conversationQueues = new Map<string, Promise<void>>()
+const dirtyConversationIds = new Set<string>()
+const conversationGenerations = new Map<string, number>()
+
+function cleanConversation(conversation: Conversation): Conversation {
+  return JSON.parse(
+    JSON.stringify(compactOldConversations([conversation])[0], (key, value) =>
+      key === 'images' ? undefined : value
+    )
+  ) as Conversation
+}
+
+function serialized(value: unknown): string {
+  return JSON.stringify(value)
+}
+
+function finiteNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function timestamp(value: unknown, recordValue: string): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const parsed = Date.parse(recordValue)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+/** PostgreSQL is authoritative storage, but its JSONB payloads may have been
+ * written by an older Agent Code build or recovered from a partial legacy
+ * record. Normalize the renderer's required fields at this boundary so one
+ * malformed conversation cannot make the entire history unavailable. */
+function normalizeConversation(record: VersionedConversationDto): Conversation {
+  const payload = record.payload
+  const rawTokens = payload.tokens && typeof payload.tokens === 'object'
+    ? payload.tokens as Record<string, unknown>
+    : {}
+  const todoPlan = payload.todoPlan && typeof payload.todoPlan === 'object'
+    ? payload.todoPlan as Record<string, unknown>
+    : null
+  return {
+    ...payload,
+    id: record.id,
+    title: typeof payload.title === 'string' && payload.title.trim() ? payload.title : DEFAULT_TITLE,
+    cwd: typeof payload.cwd === 'string' ? payload.cwd : '',
+    model: typeof payload.model === 'string' && payload.model ? payload.model : 'claude-opus-5',
+    sdkSessionId: typeof payload.sdkSessionId === 'string' ? payload.sdkSessionId : null,
+    messages: Array.isArray(payload.messages) ? payload.messages as UIMessage[] : [],
+    tokens: {
+      context: finiteNumber(rawTokens.context),
+      output: finiteNumber(rawTokens.output),
+      cost: finiteNumber(rawTokens.cost)
+    },
+    createdAt: timestamp(payload.createdAt, record.createdAt),
+    updatedAt: timestamp(payload.updatedAt, record.updatedAt),
+    todoPlan: todoPlan && Array.isArray(todoPlan.items)
+      ? payload.todoPlan as Conversation['todoPlan']
+      : undefined
   }
 }
 
-export async function saveConversations(list: Conversation[]): Promise<void> {
-  try {
-    // Drop attached-image data URLs when persisting — they're large and only
-    // shown during the session.
-    const clean = JSON.parse(
-      JSON.stringify(compactOldConversations(list), (key, value) => (key === 'images' ? undefined : value))
-    )
-    await window.api.saveAllConversations(clean)
-  } catch {
-    /* store error — history is best-effort */
+export async function loadConversations(): Promise<Conversation[]> {
+  const records = await window.api.loadVersionedConversations()
+  conversationRecords.clear()
+  const list: Conversation[] = []
+  for (const record of records) {
+    const normalized = normalizeConversation(record)
+    conversationRecords.set(record.id, {
+      ...record,
+      payload: normalized as unknown as Record<string, unknown>
+    })
+    if (!record.deletedAt) list.push(normalized)
   }
+  if (list.length) return compactOldConversations(list)
+  // Only a genuinely successful empty authoritative read may consult the one-time
+  // browser-local migration source. Storage errors deliberately propagate.
+  const legacy = readLegacyLocalStorageConversations()
+  return legacy ? compactOldConversations(legacy) : []
+}
+
+function enqueueConversation(id: string, write: () => Promise<VersionedConversationDto>): Promise<void> {
+  const generation = (conversationGenerations.get(id) ?? 0) + 1
+  conversationGenerations.set(id, generation)
+  dirtyConversationIds.add(id)
+  const previous = conversationQueues.get(id) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(async () => {
+    const stored = await write()
+    conversationRecords.set(id, stored)
+    if (conversationGenerations.get(id) === generation) dirtyConversationIds.delete(id)
+  })
+  conversationQueues.set(id, next)
+  void next.finally(() => {
+    if (conversationQueues.get(id) === next) conversationQueues.delete(id)
+  }).catch(() => undefined)
+  return next
+}
+
+export async function saveConversations(list: Conversation[]): Promise<void> {
+  const clean = list.map(cleanConversation)
+  const nextIds = new Set(clean.map((conversation) => conversation.id))
+  const writes: Promise<void>[] = []
+  for (const conversation of clean) {
+    const current = conversationRecords.get(conversation.id)
+    if (!current?.deletedAt && serialized(current?.payload) === serialized(conversation)) continue
+    writes.push(
+      enqueueConversation(conversation.id, () =>
+        window.api.upsertConversation({
+          id: conversation.id,
+          payload: conversation as unknown as Record<string, unknown>,
+          ...(conversationRecords.has(conversation.id)
+            ? { expectedRevision: conversationRecords.get(conversation.id)!.revision }
+            : {})
+        })
+      )
+    )
+  }
+  for (const current of conversationRecords.values()) {
+    if (current.deletedAt || nextIds.has(current.id)) continue
+    writes.push(
+      enqueueConversation(current.id, () =>
+        window.api.deleteConversation({ id: current.id, expectedRevision: conversationRecords.get(current.id)!.revision })
+      )
+    )
+  }
+  await Promise.all(writes)
+}
+
+/** Reload only the authoritative records signaled by the durable change feed.
+ * Dirty local conversations are intentionally omitted so drafts or rejected
+ * writes cannot be overwritten by another installation. */
+export async function loadConversationChanges(changes: RepositoryChange[]): Promise<Map<string, Conversation | null>> {
+  const ids = new Set(changes.filter((change) => change.entity === 'conversation').map((change) => change.entityId))
+  if (!ids.size) return new Map()
+  const records = await window.api.loadVersionedConversations()
+  const fetched = new Map(records.map((record) => [record.id, record]))
+  const result = new Map<string, Conversation | null>()
+  for (const id of ids) {
+    if (dirtyConversationIds.has(id)) continue
+    const record = fetched.get(id)
+    const normalized = record ? normalizeConversation(record) : null
+    if (record && normalized) {
+      conversationRecords.set(id, {
+        ...record,
+        payload: normalized as unknown as Record<string, unknown>
+      })
+    }
+    if (!record || record.deletedAt) result.set(id, null)
+    else result.set(id, normalized)
+  }
+  return result
 }
 
 export async function loadUi(): Promise<UiState> {
@@ -138,11 +267,7 @@ export async function loadUi(): Promise<UiState> {
 }
 
 export async function saveUi(ui: UiState): Promise<void> {
-  try {
-    await window.api.kvSet(UI_KEY, JSON.stringify(ui))
-  } catch {
-    /* ignore */
-  }
+  await window.api.kvSet(UI_KEY, JSON.stringify(ui))
 }
 
 /** Load the last known account-wide rate-limit snapshot (5h / weekly / etc.).

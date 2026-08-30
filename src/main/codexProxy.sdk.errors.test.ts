@@ -117,6 +117,15 @@ function outputOf(body: CodexResponsesRequest, callId: string): string | undefin
   return typeof found.output === 'string' ? found.output : JSON.stringify(found.output)
 }
 
+function toolNames(body: CodexResponsesRequest): string[] {
+  return [
+    ...(body.tools ?? []).map((item) => item.name),
+    ...body.input.flatMap((item) =>
+      item.type === 'additional_tools' ? item.tools.map((tool) => tool.name) : []
+    )
+  ]
+}
+
 function blocks(message: SDKMessage): Array<Record<string, unknown>> {
   const content = (message as SDKMessage & { message?: { content?: unknown } }).message?.content
   return Array.isArray(content)
@@ -304,7 +313,7 @@ describe.sequential('Codex proxy SDK tool error round-trips', () => {
       captured.push(request)
       const returned = outputOf(request.body, 'call_mcp_boom')
       if (returned !== undefined) return text('resp_mcp_final', 'MCP_ERROR_CONTINUED')
-      const advertised = (request.body.tools ?? []).map((item) => item.name).find((name) => name.endsWith('__explode'))
+      const advertised = toolNames(request.body).find((name) => name.endsWith('__explode'))
       if (!advertised) throw new Error('The SDK did not advertise the in-process MCP tool')
       return toolCall('resp_mcp_boom', 'call_mcp_boom', advertised, {})
     }

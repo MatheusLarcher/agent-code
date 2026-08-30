@@ -22,10 +22,14 @@ class RO {
 // Captured from the mock so tests can drive the agent event stream and control
 // when `startAgent` (the connect IPC) resolves.
 let agentEventCb: ((m: AgentEventMsg) => void) | null = null
+let appCloseCb: (() => void) | null = null
+let appReloadCb: (() => void) | null = null
 let resolveStart: Array<(v: { ok: boolean }) => void> = []
 
 function installApi(): Record<string, ReturnType<typeof vi.fn>> {
   agentEventCb = null
+  appCloseCb = null
+  appReloadCb = null
   resolveStart = []
   const api = {
     getConfig: vi.fn(async () => ({
@@ -37,6 +41,84 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
       remoteEnabled: false
     })),
     setConfig: vi.fn(async () => {}),
+    onAppCloseRequested: vi.fn((cb: () => void) => {
+      appCloseCb = cb
+      return () => {
+        if (appCloseCb === cb) appCloseCb = null
+      }
+    }),
+    appCloseReady: vi.fn(async () => {}),
+    onAppReloadRequested: vi.fn((cb: () => void) => {
+      appReloadCb = cb
+      return () => {
+        if (appReloadCb === cb) appReloadCb = null
+      }
+    }),
+    appReloadReady: vi.fn(async () => {}),
+    getStorageStatus: vi.fn(async () => ({
+      backend: 'sqlite',
+      state: 'sqlite-ready',
+      writable: true,
+      installationId: '00000000-0000-4000-8000-000000000001',
+      targetDatabase: 'agent-code',
+      hasPassword: false
+    })),
+    getPostgresSettings: vi.fn(async () => ({
+      host: 'localhost',
+      port: 5432,
+      user: 'postgres',
+      maintenanceDatabase: 'postgres',
+      tlsMode: 'disable',
+      ca: ''
+    })),
+    testPostgresConnection: vi.fn(async () => {}),
+    activatePostgres: vi.fn(async () => {}),
+    deactivatePostgres: vi.fn(async () => {}),
+    retryStorage: vi.fn(async () => {}),
+    clearPostgresPassword: vi.fn(async () => {}),
+    onStorageStatusChanged: vi.fn(() => () => {}),
+    onStorageFlushRequested: vi.fn(() => () => {}),
+    storageFlushReady: vi.fn(async () => {}),
+    onStorageChanged: vi.fn(() => () => {}),
+    loadVersionedConversations: vi.fn(async () =>
+      JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]').map(
+        (payload: { id: string }) => ({
+          id: payload.id,
+          payload,
+          revision: 1,
+          contentHash: JSON.stringify(payload),
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString()
+        })
+      )
+    ),
+    upsertConversation: vi.fn(async (input: { id: string; payload: Record<string, unknown>; expectedRevision?: number }) => {
+      const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as Array<{ id: string }>
+      const next = [...list.filter((entry) => entry.id !== input.id), input.payload]
+      localStorage.setItem('agentcode.conversations.v1', JSON.stringify(next))
+      return {
+        id: input.id,
+        payload: input.payload,
+        revision: (input.expectedRevision ?? 0) + 1,
+        contentHash: JSON.stringify(input.payload),
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    }),
+    deleteConversation: vi.fn(async (input: { id: string; expectedRevision: number }) => {
+      const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as Array<{ id: string }>
+      const payload = list.find((entry) => entry.id === input.id) ?? { id: input.id }
+      localStorage.setItem('agentcode.conversations.v1', JSON.stringify(list.filter((entry) => entry.id !== input.id)))
+      return {
+        id: input.id,
+        payload,
+        revision: input.expectedRevision + 1,
+        contentHash: JSON.stringify(payload),
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date().toISOString(),
+        deletedAt: new Date().toISOString()
+      }
+    }),
     setWindowsControlEnabled: vi.fn(async () => {}),
     onWindowsControlChanged: vi.fn(() => () => {}),
     authStatus: vi.fn(async () => ({ authenticated: true })),
@@ -1573,7 +1655,7 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
   it('beforeunload durante o load não persiste nada; depois de hidratar persiste o que carregou', async () => {
     const seeded = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
     let releaseLoad: (list: unknown[]) => void = () => {}
-    api.loadAllConversations.mockImplementation(
+    api.loadVersionedConversations.mockImplementation(
       () => new Promise<unknown[]>((resolve) => { releaseLoad = resolve })
     )
 
@@ -1588,14 +1670,76 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
     await act(async () => {
       window.dispatchEvent(new Event('beforeunload'))
     })
-    expect(api.saveAllConversations).not.toHaveBeenCalled()
+    expect(api.upsertConversation).not.toHaveBeenCalled()
+    expect(api.deleteConversation).not.toHaveBeenCalled()
 
     // O load conclui → só a partir daí o app pode gravar, e grava o que carregou.
     await act(async () => {
-      releaseLoad(seeded)
+      releaseLoad(seeded.map((payload: { id: string }) => ({
+        id: payload.id,
+        payload,
+        revision: 1,
+        contentHash: JSON.stringify(payload),
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString()
+      })))
     })
-    await waitFor(() => expect(api.saveAllConversations).toHaveBeenCalled())
-    const persisted = api.saveAllConversations.mock.calls.at(-1)?.[0] as { id: string }[]
-    expect(persisted.map((c) => c.id)).toEqual(['c1'])
+    expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
+    expect(api.upsertConversation).not.toHaveBeenCalled()
+    expect(api.deleteConversation).not.toHaveBeenCalled()
+  })
+
+  it('confirma o fechamento somente depois de gravar conversa e UI', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
+    await waitFor(() => expect(appCloseCb).toBeTypeOf('function'))
+    api.upsertConversation.mockClear()
+    api.kvSet.mockClear()
+    api.appCloseReady.mockClear()
+    fireEvent.change(await screen.findByPlaceholderText(/Mensagem para o Claude/i), {
+      target: { value: 'rascunho antes de fechar' }
+    })
+
+    await act(async () => {
+      appCloseCb?.()
+    })
+    await waitFor(() => expect(api.appCloseReady).toHaveBeenCalledTimes(1))
+    expect(api.upsertConversation).toHaveBeenCalledTimes(1)
+    expect(api.kvSet).toHaveBeenCalledWith('agentcode.ui.v1', expect.any(String))
+    expect(api.upsertConversation.mock.invocationCallOrder[0]).toBeLessThan(
+      api.appCloseReady.mock.invocationCallOrder[0]
+    )
+    expect(api.kvSet.mock.invocationCallOrder[0]).toBeLessThan(api.appCloseReady.mock.invocationCallOrder[0])
+  })
+
+  it('confirma o reload somente depois de gravar conversa e UI', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
+    api.upsertConversation.mockClear()
+    api.kvSet.mockClear()
+    api.appReloadReady.mockClear()
+    await waitFor(() => expect(appReloadCb).toBeTypeOf('function'))
+    fireEvent.change(await screen.findByPlaceholderText(/Mensagem para o Claude/i), {
+      target: { value: 'rascunho antes de recarregar' }
+    })
+
+    await act(async () => {
+      appReloadCb?.()
+    })
+    await waitFor(() => expect(api.appReloadReady).toHaveBeenCalledTimes(1))
+    expect(api.upsertConversation).toHaveBeenCalledTimes(1)
+    expect(api.kvSet).toHaveBeenCalledWith('agentcode.ui.v1', expect.any(String))
+    expect(api.upsertConversation.mock.invocationCallOrder[0]).toBeLessThan(
+      api.appReloadReady.mock.invocationCallOrder[0]
+    )
+    expect(api.kvSet.mock.invocationCallOrder[0]).toBeLessThan(api.appReloadReady.mock.invocationCallOrder[0])
   })
 })

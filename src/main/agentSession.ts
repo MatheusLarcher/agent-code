@@ -1,4 +1,4 @@
-import { query, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { query, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
 import { AsyncQueue } from './asyncQueue'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
@@ -327,6 +327,10 @@ export class AgentSession {
   private loopCycles = 0
   private loopLimit = DEFAULT_LOOP_LIMIT
   private loopScheduledThisIteration = false
+  private turnActive = false
+  private idleWaiters = new Set<() => void>()
+  private mirrorFailed = false
+  private handoffReady: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly opts: StartAgentOptions,
@@ -335,7 +339,9 @@ export class AgentSession {
     private readonly askPermission: (req: PermissionRequest) => void,
     /** Called when a pending permission/question timed out and was auto-resolved,
      *  so the renderer can close the matching modal. */
-    private readonly onPermissionExpire: (id: string) => void
+    private readonly onPermissionExpire: (id: string) => void,
+    private readonly sessionStore?: SessionStore,
+    private readonly onTurnDurable?: (sessionId: string, mirrorFailed: boolean) => Promise<void>
   ) {}
 
   async start(): Promise<boolean> {
@@ -454,6 +460,9 @@ export class AgentSession {
       skills: 'all',
       // Resume a previous SDK session (loads its history) when continuing an old chat.
       ...(this.opts.resume ? { resume: this.opts.resume } : {}),
+      ...(this.sessionStore
+        ? { sessionStore: this.sessionStore, sessionStoreFlush: 'eager' as const, loadTimeoutMs: 30_000 }
+        : {}),
       // Run the bundled Claude Code CLI under system Node rather than the
       // Electron binary, which would otherwise be picked up as the runtime.
       executable: 'node',
@@ -486,6 +495,7 @@ export class AgentSession {
     } catch (err) {
       if (!this.disposed) this.emit({ kind: 'error', id: nextId(), text: `Agent stopped: ${String(err)}` })
     } finally {
+      this.markTurnIdle()
       if (this.q === q) this.q = null
     }
   }
@@ -497,6 +507,15 @@ export class AgentSession {
     origin: MessageOrigin = 'pc',
     messageKind: AgentMessageKind = 'normal'
   ): Promise<void> {
+    await this.handoffReady
+    if (this.mirrorFailed) {
+      this.emit({
+        kind: 'error',
+        id: nextId(),
+        text: 'A sessão não está pronta para retomada: o espelhamento do transcript falhou. Reconecte após corrigir a persistência.'
+      })
+      return
+    }
     // A real user dispatch starts a fresh loop budget. Dynamic wakeups are
     // injected by the CLI and do not pass through this method. Internal
     // recovery prompts must never start a fresh loop just because the toggle
@@ -583,6 +602,7 @@ export class AgentSession {
         // text, plus a note explaining the image couldn't be read this time.
         merged = `${outText}\n\n[Observação do sistema: não foi possível analisar a(s) imagem(ns) anexada(s) automaticamente (${String(err)}). Responda com base apenas no texto acima.]`
       }
+      this.turnActive = true
       this.input.push({
         type: 'user',
         message: { role: 'user', content: stamped(merged) },
@@ -611,7 +631,13 @@ export class AgentSession {
       parent_tool_use_id: null,
       uuid
     } as SDKUserMessage
+    this.turnActive = true
     this.input.push(msg)
+  }
+
+  async waitForIdle(): Promise<void> {
+    if (this.turnActive) await new Promise<void>((resolve) => this.idleWaiters.add(resolve))
+    await this.handoffReady
   }
 
   async interrupt(): Promise<AgentInterruptResult> {
@@ -754,6 +780,7 @@ export class AgentSession {
     this.q?.close()
     this.q = null
     this.input.close()
+    this.markTurnIdle()
   }
 
   /**
@@ -945,6 +972,13 @@ export class AgentSession {
           // TaskUpdate events only describe changes, so everything that happened
           // while this app wasn't listening would otherwise stay invisible.
           this.syncTasks(message.session_id)
+        } else if ((message as { subtype?: string }).subtype === 'mirror_error') {
+          this.mirrorFailed = true
+          this.emit({
+            kind: 'error',
+            id: nextId(),
+            text: 'Falha ao espelhar o transcript no backend autoritativo. Novos envios foram bloqueados.'
+          })
         } else if ((message as { subtype?: string }).subtype === 'background_tasks_changed') {
           const tasks = (message as unknown as {
             tasks: Array<{ task_id: string; task_type: string; description: string }>
@@ -1015,6 +1049,18 @@ export class AgentSession {
         // Mirrors the parent_tool_use_id filter already used for the
         // `assistant` case below (context-token tracking).
         if (r.origin?.kind === 'peer') break
+        if (this.watchedSessionId && this.onTurnDurable) {
+          const sessionId = this.watchedSessionId
+          this.handoffReady = this.onTurnDurable(sessionId, this.mirrorFailed).catch((error) => {
+            this.mirrorFailed = true
+            this.emit({
+              kind: 'error',
+              id: nextId(),
+              text: `A verificação da sessão falhou: ${error instanceof Error ? error.message : String(error)}`
+            })
+          })
+        }
+        this.markTurnIdle()
         // If an active loop iteration reaches a successful terminal result
         // without requesting another wakeup, its condition is complete. The CLI
         // has nothing pending and the local guard must not authorize a stale call.
@@ -1093,6 +1139,13 @@ export class AgentSession {
       default:
         break
     }
+  }
+
+  private markTurnIdle(): void {
+    if (!this.turnActive && this.idleWaiters.size === 0) return
+    this.turnActive = false
+    for (const resolve of this.idleWaiters) resolve()
+    this.idleWaiters.clear()
   }
 
   private handleStreamEvent(ev: { type: string; message?: { id?: string }; delta?: { type?: string; text?: string } }): void {

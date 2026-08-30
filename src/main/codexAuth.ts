@@ -9,7 +9,12 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { safeStorage } from 'electron'
-import { kvGet, kvSet } from './store'
+import { kvGet as legacyKvGet } from './store'
+import {
+  hasConfiguredKvRepository,
+  readPersistedKv,
+  writePersistedKv
+} from './persistence/kvFacade'
 
 // Same client_id the official Rust Codex CLI uses — the backend's `originator`
 // allowlist (see codexProxy.ts) is keyed off the traffic looking like that
@@ -125,21 +130,10 @@ function claimsFromIdToken(idToken: string): { accountId: string; email?: string
 // same OS-level protection Credential Manager relies on). Fail closed: an
 // unavailable/broken secure store must never downgrade OAuth tokens to plaintext.
 
-function persist(tokens: CodexTokens): void {
-  if (!validateStoredTokens(tokens)) throw new Error('Refusing to persist invalid Codex OAuth tokens')
-  const json = JSON.stringify(tokens)
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('Secure token storage is unavailable on this system')
-  }
-  const encrypted = safeStorage.encryptString(json)
-  if (!Buffer.isBuffer(encrypted) || encrypted.length === 0) {
-    throw new Error('Secure token storage returned an invalid encrypted payload')
-  }
-  kvSet(KV_KEY, JSON.stringify({ enc: encrypted.toString('base64') }))
-}
+let tokensInitialized = false
+let cachedTokens: CodexTokens | null = null
 
-function loadTokens(): CodexTokens | null {
-  const raw = kvGet(KV_KEY)
+function decodeStoredTokens(raw: string | null): CodexTokens | null {
   if (!raw) return null
   try {
     const wrapper: unknown = JSON.parse(raw)
@@ -151,10 +145,41 @@ function loadTokens(): CodexTokens | null {
   }
 }
 
+export async function initializeCodexAuthPersistence(): Promise<void> {
+  cachedTokens = decodeStoredTokens(await readPersistedKv(KV_KEY))
+  tokensInitialized = true
+}
+
+async function persist(tokens: CodexTokens): Promise<void> {
+  if (!validateStoredTokens(tokens)) throw new Error('Refusing to persist invalid Codex OAuth tokens')
+  const json = JSON.stringify(tokens)
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Secure token storage is unavailable on this system')
+  }
+  const encrypted = safeStorage.encryptString(json)
+  if (!Buffer.isBuffer(encrypted) || encrypted.length === 0) {
+    throw new Error('Secure token storage returned an invalid encrypted payload')
+  }
+  await writePersistedKv(KV_KEY, JSON.stringify({ enc: encrypted.toString('base64') }))
+  if (hasConfiguredKvRepository()) {
+    cachedTokens = tokens
+    tokensInitialized = true
+  }
+}
+
+function loadTokens(): CodexTokens | null {
+  if (!hasConfiguredKvRepository()) return decodeStoredTokens(legacyKvGet(KV_KEY))
+  return tokensInitialized ? cachedTokens : null
+}
+
 /** Erases the saved Codex login. */
-export function codexLogout(): void {
+export async function codexLogout(): Promise<void> {
   invalidateRefreshes()
-  kvSet(KV_KEY, JSON.stringify(null))
+  await writePersistedKv(KV_KEY, JSON.stringify(null))
+  if (hasConfiguredKvRepository()) {
+    cachedTokens = null
+    tokensInitialized = true
+  }
 }
 
 /** Status for the Settings screen — never exposes the tokens themselves. */
@@ -238,7 +263,7 @@ async function doRefreshCodexTokens(): Promise<CodexTokens | null> {
   })
   if (!refreshStillOwnsCredentials(generation, cur)) return null
   if (!res.ok) {
-    if (res.status === 400 || res.status === 401) codexLogout()
+    if (res.status === 400 || res.status === 401) await codexLogout()
     return null
   }
   const data: unknown = await res.json()
@@ -263,7 +288,7 @@ async function doRefreshCodexTokens(): Promise<CodexTokens | null> {
     expiresAt: Date.now() + data.expires_in * 1000
   }
   if (!refreshStillOwnsCredentials(generation, cur)) return null
-  persist(next)
+  await persist(next)
   return next
 }
 
@@ -373,7 +398,7 @@ function doLogin(openUrl: (url: string) => void, log: (line: string) => void): P
         try {
           const tokens = await exchangeCode(code, verifier)
           if (settled) return
-          persist(tokens)
+          await persist(tokens)
           invalidateRefreshes()
           res
             .writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })

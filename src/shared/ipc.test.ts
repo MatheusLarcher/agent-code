@@ -30,13 +30,13 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
     expect(contextLimitFor('kimi-k3:cloud')).toBe(1_000_000)
   })
 
-  it('Ollama Cloud: Nemotron 3 Ultra 256K, gpt-oss 128K, Gemma 4 256K, Nemotron 3 Super 256K, Muse Glimmer 256K', () => {
+  it('Ollama Cloud: Nemotron/Gemma 256K, gpt-oss e Muse Glimmer 128K', () => {
     expect(contextLimitFor('nemotron-3-ultra:cloud')).toBe(256_000)
     expect(contextLimitFor('gpt-oss:120b-cloud')).toBe(128_000)
     expect(contextLimitFor('gpt-oss:20b-cloud')).toBe(128_000)
     expect(contextLimitFor('gemma4:cloud')).toBe(256_000)
     expect(contextLimitFor('nemotron-3-super:cloud')).toBe(256_000)
-    expect(contextLimitFor('muse-glimmer:cloud')).toBe(256_000)
+    expect(contextLimitFor('muse-glimmer:cloud')).toBe(128_000)
   })
 
   it('GPT-5.6 Luna/Terra/Sol usam a janela oficial de 1,05M', () => {

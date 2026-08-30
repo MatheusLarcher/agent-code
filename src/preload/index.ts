@@ -32,7 +32,14 @@ import type {
   RemoteInfo,
   RemoteStatePayload,
   StartAgentOptions,
-  TabKind
+  TabKind,
+  PostgresConnectionDraft,
+  PostgresPublicSettings,
+  StorageStatusDto,
+  VersionedConversationDto,
+  ConversationUpsertDto,
+  ConversationDeleteDto,
+  RepositoryChange
 } from '../shared/ipc'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -45,6 +52,33 @@ const api: AgentCodeApi = {
   // app config (Settings screen)
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke(Channels.configGet),
   setConfig: (patch: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke(Channels.configSet, patch),
+  onAppCloseRequested: (cb: () => void): (() => void) => on(Channels.appCloseRequested, cb),
+  appCloseReady: (): Promise<void> => ipcRenderer.invoke(Channels.appCloseReady),
+  onAppReloadRequested: (cb: () => void): (() => void) => on(Channels.appReloadRequested, cb),
+  appReloadReady: (): Promise<void> => ipcRenderer.invoke(Channels.appReloadReady),
+  getStorageStatus: (): Promise<StorageStatusDto> => ipcRenderer.invoke(Channels.storageStatusGet),
+  getPostgresSettings: (): Promise<PostgresPublicSettings> =>
+    ipcRenderer.invoke(Channels.storagePostgresSettingsGet),
+  testPostgresConnection: (draft: PostgresConnectionDraft): Promise<void> =>
+    ipcRenderer.invoke(Channels.storagePostgresTest, draft),
+  activatePostgres: (draft: PostgresConnectionDraft): Promise<void> =>
+    ipcRenderer.invoke(Channels.storagePostgresActivate, draft),
+  deactivatePostgres: (): Promise<void> => ipcRenderer.invoke(Channels.storagePostgresDeactivate),
+  retryStorage: (draft?: PostgresConnectionDraft): Promise<void> => ipcRenderer.invoke(Channels.storageRetry, draft),
+  clearPostgresPassword: (): Promise<void> => ipcRenderer.invoke(Channels.storagePostgresPasswordClear),
+  onStorageStatusChanged: (cb: (status: StorageStatusDto) => void): (() => void) =>
+    on(Channels.storageStatusChanged, cb),
+  onStorageFlushRequested: (cb: (requestId: string) => void): (() => void) =>
+    on(Channels.storageFlushRequested, cb),
+  storageFlushReady: (requestId: string, error?: string): Promise<void> =>
+    ipcRenderer.invoke(Channels.storageFlushReady, requestId, error),
+  onStorageChanged: (cb: (changes: RepositoryChange[]) => void): (() => void) => on(Channels.storageChanged, cb),
+  loadVersionedConversations: (): Promise<VersionedConversationDto[]> =>
+    ipcRenderer.invoke(Channels.conversationsLoadVersioned),
+  upsertConversation: (input: ConversationUpsertDto): Promise<VersionedConversationDto> =>
+    ipcRenderer.invoke(Channels.conversationsUpsert, input),
+  deleteConversation: (input: ConversationDeleteDto): Promise<VersionedConversationDto> =>
+    ipcRenderer.invoke(Channels.conversationsDelete, input),
   setWindowsControlEnabled: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke(Channels.windowsControlSetEnabled, enabled),
   onWindowsControlChanged: (cb: (enabled: boolean) => void): (() => void) =>

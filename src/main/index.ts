@@ -1,4 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron'
+import { randomUUID } from 'node:crypto'
+import { getSessionInfo, getSessionMessages, importSessionToStore } from '@anthropic-ai/claude-agent-sdk'
 import { spawn } from 'node:child_process'
 import { join, basename, extname } from 'node:path'
 import {
@@ -21,15 +23,23 @@ import {
   REMOTE_RELAY_WS,
   type SpeechSetupProgress
 } from '../shared/ipc'
-import { loadConfig, updateConfig } from './config'
+import { initializeConfigPersistence, loadConfig, updateConfig } from './config'
 import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAudioSegment } from './openai'
 import { stopLocalSpeech, transcribeLocal } from './speech'
 import { isAuthenticated } from './auth'
 import { runClaudeLogin } from './login'
-import { codexStatus, codexLogout, runCodexLogin } from './codexAuth'
+import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin } from './codexAuth'
 import { appendFileSync } from 'node:fs'
-import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
-import { loadAllConversationRecords, saveAllConversationRecords, type ConversationRecord } from './projectStore'
+import { initStore, getCacheInfo, setCacheDir } from './store'
+import { storageLifecycle } from './persistence/lifecycle'
+import { readPersistedKv, writePersistedKv } from './persistence/kvFacade'
+import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
+import { hashJson, normalizeJson } from './persistence/hashes'
+import {
+  attachProjectIdentity,
+  isMissingProjectFolderError,
+  preserveProjectIdentityForMissingPersistedWrite
+} from './persistence/projectIdentity'
 import { exportConversationsParquet } from './conversationParquet'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
@@ -52,15 +62,86 @@ import type {
   PermissionResponse,
   RemoteStatePayload,
   StartAgentOptions,
-  TabKind
+  TabKind,
+  PostgresConnectionDraft,
+  ConversationUpsertDto,
+  ConversationDeleteDto
 } from '../shared/ipc'
 
 let mainWindow: BrowserWindow | null = null
 let stopMemoryCurator: (() => void) | null = null
+let closeRequested = false
+let closeReady = false
+let closeRequestTimer: ReturnType<typeof setInterval> | null = null
+let quitRequested = false
+let quitReady = false
+let storageClosePromise: Promise<void> | null = null
+let parquetExportPromise: Promise<unknown> | null = null
+const pendingStorageFlushes = new Map<
+  string,
+  { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+>()
 
 // One independent agent session per conversation — they run concurrently, so
 // switching/sending in one conversation never cancels another's running task.
 const sessions = new Map<string, AgentSession>()
+const sessionLeases = new Map<
+  string,
+  { repository: PersistenceRepository; lease: ConversationLease; heartbeat: ReturnType<typeof setInterval> }
+>()
+
+async function releaseSessionLease(convId: string): Promise<void> {
+  const held = sessionLeases.get(convId)
+  if (!held) return
+  sessionLeases.delete(convId)
+  clearInterval(held.heartbeat)
+  await held.repository.releaseConversationLease(held.lease).catch(() => undefined)
+}
+
+async function acquireSessionLease(convId: string): Promise<{ repository: PersistenceRepository; lease: ConversationLease }> {
+  await releaseSessionLease(convId)
+  const repository = storageLifecycle.repository()
+  const lease = await repository.acquireConversationLease(convId)
+  const heartbeat = setInterval(() => {
+    const held = sessionLeases.get(convId)
+    if (!held) return
+    void held.repository
+      .renewConversationLease(held.lease)
+      .then((renewed) => { held.lease = renewed })
+      .catch((error) => {
+        clearInterval(held.heartbeat)
+        sessionLeases.delete(convId)
+        sessions.get(convId)?.dispose()
+        send(Channels.agentEvent, {
+          convId,
+          event: { kind: 'error', id: randomUUID(), text: `Lease perdido: ${error instanceof Error ? error.message : String(error)}` }
+        })
+      })
+  }, 20_000)
+  heartbeat.unref?.()
+  sessionLeases.set(convId, { repository, lease, heartbeat })
+  return { repository, lease }
+}
+
+async function prepareSessionResume(
+  repository: PersistenceRepository,
+  convId: string,
+  cwd: string,
+  sessionId: string
+): Promise<void> {
+  if (await repository.sessionResumeReady(convId, sessionId)) return
+  const store = repository.createSessionStore(convId)
+  await importSessionToStore(sessionId, store, { dir: cwd, includeSubagents: true }).catch(() => undefined)
+  const [info, entries] = await Promise.all([
+    getSessionInfo(sessionId, { dir: cwd, sessionStore: store }),
+    store.load({ projectKey: convId, sessionId })
+  ])
+  if (!info || !entries?.length) {
+    throw new StorageError('SESSION_HANDOFF_INCOMPLETE', 'A sessão não possui transcript íntegro para retomada.')
+  }
+  await getSessionMessages(sessionId, { dir: cwd, sessionStore: store })
+  await repository.markSessionResumeReady(convId, sessionId, true, hashJson(normalizeJson(entries)))
+}
 
 // One independent browser per conversation. Only the conversation currently
 // shown in the panel (`activeConvId`) streams its frames/state to the renderer;
@@ -82,14 +163,76 @@ const EMPTY_BROWSER_STATE = {
 }
 
 function send(channel: string, payload: unknown): void {
-  mainWindow?.webContents.send(channel, payload)
+  const window = mainWindow
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+  try {
+    window.webContents.send(channel, payload)
+  } catch {
+    // Renderer teardown can race a final status/change notification.
+  }
 }
 
-function updateAppConfig(patch: Partial<AppConfig>): AppConfig {
+function requestRendererCloseFlush(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (!closeRequested) {
+    closeRequested = true
+    send(Channels.appCloseRequested, null)
+  }
+  if (!closeRequestTimer) {
+    closeRequestTimer = setInterval(() => send(Channels.appCloseRequested, null), 100)
+    closeRequestTimer.unref?.()
+  }
+}
+
+async function closeStorageForQuit(): Promise<void> {
+  storageClosePromise ??= (async () => {
+    await Promise.all([...sessionLeases.keys()].map(releaseSessionLease))
+    await parquetExportPromise?.catch(() => undefined)
+    await storageLifecycle.close()
+  })()
+  await storageClosePromise
+}
+
+function requestStorageFlush(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return Promise.resolve()
+  const requestId = randomUUID()
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingStorageFlushes.delete(requestId)
+      reject(new Error('O renderer não confirmou o flush de persistência.'))
+    }, 15_000)
+    timer.unref?.()
+    pendingStorageFlushes.set(requestId, { resolve, reject, timer })
+    send(Channels.storageFlushRequested, requestId)
+  })
+}
+
+const storageTransitionHooks = {
+  flushRenderer: requestStorageFlush,
+  waitForIdleAgents: async (): Promise<void> => {
+    await Promise.all([...sessions.values()].map((session) => session.waitForIdle()))
+    for (const session of sessions.values()) session.dispose()
+    sessions.clear()
+    await Promise.all([...sessionLeases.keys()].map(releaseSessionLease))
+  }
+}
+
+function assertStorageWritable(allowTransitionFlush = false): void {
+  if (!storageLifecycle.canMutate()) {
+    const status = storageLifecycle.status()
+    throw new Error(status.error?.message ?? 'Persistência indisponível para gravação.')
+  }
+  const state = storageLifecycle.status().state
+  if (!allowTransitionFlush && (state === 'activating-postgres' || state === 'deactivating-postgres')) {
+    throw new StorageError('TRANSITION_IN_PROGRESS', 'A persistência está em transição.')
+  }
+}
+
+async function updateAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   if ('windowsControlEnabled' in patch && typeof patch.windowsControlEnabled !== 'boolean') {
     throw new TypeError('windowsControlEnabled deve ser booleano.')
   }
-  const next = updateConfig(patch)
+  const next = await updateConfig(patch)
   if (patch.windowsControlEnabled !== undefined) {
     windowsControl.setEnabled(next.windowsControlEnabled)
     send(Channels.windowsControlChanged, next.windowsControlEnabled)
@@ -341,7 +484,9 @@ const remote = new RemoteServer({
   onClientsChanged: (info) => send(Channels.remoteClients, info),
   // Fixed pairing token, persisted in settings.json so phones stay paired.
   loadToken: () => loadConfig().remoteToken,
-  saveToken: (token) => updateConfig({ remoteToken: token }),
+  saveToken: async (token) => {
+    await updateConfig({ remoteToken: token })
+  },
   // Voice runs on the PC (the OpenAI key lives here): the phone records/plays,
   // we transcribe/synthesize. Throw 'no-key' so the phone shows a clear hint.
   transcribe: (audioBase64, mimeType) => {
@@ -395,6 +540,10 @@ function activeBrowser(): BrowserController | null {
 }
 
 function createWindow(): void {
+  if (closeRequestTimer) clearInterval(closeRequestTimer)
+  closeRequestTimer = null
+  closeRequested = false
+  closeReady = false
   mainWindow = new BrowserWindow({
     width: 1500,
     height: 950,
@@ -428,6 +577,14 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    const key = input.key.toLowerCase()
+    const reload = input.type === 'keyDown' && (key === 'f5' || (input.control && key === 'r'))
+    if (!reload) return
+    event.preventDefault()
+    send(Channels.appReloadRequested, null)
+  })
+
   // Grant microphone access for the voice dictation (getUserMedia). Electron denies
   // media by default with no handler; we allow only 'media' from our own renderer.
   // Both handlers are needed: the async request prompt AND the sync check that
@@ -442,8 +599,18 @@ function createWindow(): void {
   if (devUrl) void mainWindow.loadURL(devUrl)
   else void mainWindow.loadFile(join(import.meta.dirname, '../renderer/index.html'))
 
+  mainWindow.on('close', (event) => {
+    if (closeReady) return
+    event.preventDefault()
+    requestRendererCloseFlush()
+  })
+
   mainWindow.on('closed', () => {
+    if (closeRequestTimer) clearInterval(closeRequestTimer)
+    closeRequestTimer = null
     mainWindow = null
+    closeRequested = false
+    closeReady = false
   })
 }
 
@@ -458,12 +625,62 @@ function authLog(line: string): void {
 }
 
 function registerIpc(): void {
+  ipcMain.handle(Channels.storageStatusGet, () => storageLifecycle.status())
+  ipcMain.handle(Channels.storagePostgresSettingsGet, () => storageLifecycle.postgresSettings())
+  ipcMain.handle(Channels.storagePostgresTest, (_event, draft: PostgresConnectionDraft) =>
+    storageLifecycle.testPostgres(draft)
+  )
+  ipcMain.handle(Channels.storagePostgresActivate, (_event, draft: PostgresConnectionDraft) =>
+    storageLifecycle.activatePostgres(draft, storageTransitionHooks)
+  )
+  ipcMain.handle(Channels.storagePostgresDeactivate, () =>
+    storageLifecycle.deactivatePostgres(storageTransitionHooks)
+  )
+  ipcMain.handle(Channels.storageRetry, (_event, draft?: PostgresConnectionDraft) =>
+    storageLifecycle.retryPostgres(draft)
+  )
+  ipcMain.handle(Channels.storagePostgresPasswordClear, () => storageLifecycle.clearPostgresPassword())
+  ipcMain.handle(Channels.storageFlushReady, (_event, requestId: string, error?: string) => {
+    const pending = pendingStorageFlushes.get(requestId)
+    if (!pending) return
+    pendingStorageFlushes.delete(requestId)
+    clearTimeout(pending.timer)
+    if (error) pending.reject(new Error(error))
+    else pending.resolve()
+  })
   // App configuration (Settings screen).
-  ipcMain.handle(Channels.configGet, () => loadConfig())
-  ipcMain.handle(Channels.configSet, (_e, patch: Partial<AppConfig>) => updateAppConfig(patch))
-  ipcMain.handle(Channels.windowsControlSetEnabled, (_e, enabled: boolean) => {
+  ipcMain.handle(Channels.configGet, () => {
+    storageLifecycle.repository()
+    return loadConfig()
+  })
+  ipcMain.handle(Channels.configSet, (_e, patch: Partial<AppConfig>) => {
+    assertStorageWritable()
+    return updateAppConfig(patch)
+  })
+  ipcMain.handle(Channels.appCloseReady, async () => {
+    if (!closeRequested || !mainWindow) return
+    if (closeRequestTimer) clearInterval(closeRequestTimer)
+    closeRequestTimer = null
+    if (quitRequested) await closeStorageForQuit()
+    closeReady = true
+    const windowToClose = mainWindow
+    setImmediate(() => {
+      windowToClose.close()
+      if (quitRequested) {
+        quitReady = true
+        app.quit()
+      }
+    })
+  })
+
+  ipcMain.handle(Channels.appReloadReady, () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.reload()
+  })
+  ipcMain.handle(Channels.windowsControlSetEnabled, async (_e, enabled: boolean) => {
     if (typeof enabled !== 'boolean') throw new TypeError('enabled deve ser booleano.')
-    updateAppConfig({ windowsControlEnabled: enabled })
+    assertStorageWritable()
+    await updateAppConfig({ windowsControlEnabled: enabled })
   })
 
   // OpenAI voice (chat): speech-to-text and text-to-speech. The key stays in main
@@ -530,6 +747,7 @@ function registerIpc(): void {
   // against the ChatGPT subscription login instead of an Anthropic account.
   ipcMain.handle(Channels.codexStatus, () => codexStatus())
   ipcMain.handle(Channels.codexLogin, async () => {
+    assertStorageWritable()
     authLog('=== codex:login start ===')
     const openUrl = (url: string): void => {
       authLog(`opening system browser: ${url}`)
@@ -539,8 +757,9 @@ function registerIpc(): void {
     authLog(`=== codex:login done: ok=${result.ok} message=${result.message ?? ''} ===`)
     return result
   })
-  ipcMain.handle(Channels.codexLogout, () => {
-    codexLogout()
+  ipcMain.handle(Channels.codexLogout, async () => {
+    assertStorageWritable()
+    await codexLogout()
     authLog('=== codex:logout ===')
   })
 
@@ -563,7 +782,17 @@ function registerIpc(): void {
       properties: ['openDirectory', 'createDirectory']
     })
     if (res.canceled || !res.filePaths[0]) return null
+    assertStorageWritable()
+    await storageTransitionHooks.waitForIdleAgents()
+    await requestStorageFlush()
     const info = setCacheDir(res.filePaths[0])
+    if (storageLifecycle.status().backend === 'sqlite') {
+      await storageLifecycle.initializeSqlite(info)
+      await initializeConfigPersistence()
+      await initializeCodexAuthPersistence()
+    } else {
+      storageLifecycle.updateSqliteLocation(info)
+    }
     const skillSync = syncCacheSkills(app.getAppPath(), info.dir)
     for (const error of skillSync.errors) console.error(`[skills] ${error}`)
     const enabled = loadConfig().windowsControlEnabled === true
@@ -571,15 +800,55 @@ function registerIpc(): void {
     send(Channels.windowsControlChanged, enabled)
     return info
   })
-  ipcMain.handle(Channels.kvGet, (_e, key: string) => kvGet(key))
-  ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => kvSet(key, value))
-  // Conversations: one SQLite db per project (`data/<projeto>.db`) instead of a single blob.
-  ipcMain.handle(Channels.conversationsLoadAll, () => loadAllConversationRecords(getCacheInfo().dir))
-  ipcMain.handle(Channels.conversationsSaveAll, (_e, list: unknown) => {
+  ipcMain.handle(Channels.kvGet, (_e, key: string) => readPersistedKv(key))
+  ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => {
+    assertStorageWritable(true)
+    return writePersistedKv(key, value)
+  })
+  ipcMain.handle(Channels.conversationsLoadAll, async () =>
+    (await storageLifecycle.repository().loadConversations()).map((entry) => entry.payload)
+  )
+  ipcMain.handle(Channels.conversationsLoadVersioned, () =>
+    storageLifecycle.repository().loadConversations({ includeDeleted: true })
+  )
+  ipcMain.handle(Channels.conversationsUpsert, async (_e, input: ConversationUpsertDto) => {
+    if (!input || typeof input.id !== 'string' || !input.id || !input.payload || typeof input.payload !== 'object') {
+      throw new TypeError('Conversa inválida.')
+    }
+    assertStorageWritable(true)
+    const held = sessionLeases.get(input.id)
+    let payload: ConversationRecord
+    try {
+      payload = await attachProjectIdentity(input.payload)
+    } catch (cause) {
+      if (!isMissingProjectFolderError(cause)) throw cause
+      const persisted = (await storageLifecycle.repository().loadConversations({ includeDeleted: true }))
+        .find((entry) => entry.id === input.id)?.payload
+      payload = preserveProjectIdentityForMissingPersistedWrite(input.payload, persisted)
+    }
+    return storageLifecycle.repository().upsertConversation({
+      ...input,
+      payload,
+      ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
+    })
+  })
+  ipcMain.handle(Channels.conversationsDelete, async (_e, input: ConversationDeleteDto) => {
+    if (!input || typeof input.id !== 'string' || !Number.isInteger(input.expectedRevision)) {
+      throw new TypeError('Exclusão de conversa inválida.')
+    }
+    assertStorageWritable(true)
+    const held = sessionLeases.get(input.id)
+    return storageLifecycle.repository().deleteConversation({
+      ...input,
+      ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
+    })
+  })
+  ipcMain.handle(Channels.conversationsSaveAll, async (_e, list: unknown) => {
     // A malformed (non-array) payload must never be treated as "zero conversations" —
-    // that would delete every project's db, not just skip the save.
+    // that would delete every conversation, not just skip the save.
     if (!Array.isArray(list)) return
-    saveAllConversationRecords(getCacheInfo().dir, list as ConversationRecord[])
+    assertStorageWritable()
+    await storageLifecycle.repository().replaceAllConversations(list as ConversationRecord[])
   })
 
   ipcMain.handle(Channels.pickDirectory, async () => {
@@ -718,9 +987,21 @@ function registerIpc(): void {
   )
 
   ipcMain.handle(Channels.agentStart, async (_e, opts: StartAgentOptions) => {
+    assertStorageWritable()
     const { convId } = opts
+    const project = await fsStat(opts.cwd).catch(() => null)
+    if (!project?.isDirectory()) throw new Error('A pasta local do projeto não foi localizada nesta instalação.')
     // Replace only THIS conversation's session; others keep running.
     sessions.get(convId)?.dispose()
+    await releaseSessionLease(convId)
+    const { repository } = await acquireSessionLease(convId)
+    const sessionStore = repository.createSessionStore(convId)
+    try {
+      if (opts.resume) await prepareSessionResume(repository, convId, opts.cwd, opts.resume)
+    } catch (error) {
+      await releaseSessionLease(convId)
+      throw error
+    }
     const s = new AgentSession(
       opts,
       getBrowser(convId),
@@ -732,7 +1013,23 @@ function registerIpc(): void {
         remote.broadcast(convId, event)
       },
       (req) => send(Channels.agentPermissionRequest, { convId, req }),
-      (id) => send(Channels.agentPermissionExpired, { convId, id })
+      (id) => send(Channels.agentPermissionExpired, { convId, id }),
+      sessionStore,
+      async (sessionId, mirrorFailed) => {
+        if (mirrorFailed) {
+          await repository.markSessionResumeReady(convId, sessionId, false)
+          throw new StorageError('SESSION_HANDOFF_INCOMPLETE', 'O SDK informou falha no espelhamento do transcript.')
+        }
+        const [info, entries] = await Promise.all([
+          getSessionInfo(sessionId, { dir: opts.cwd, sessionStore }),
+          sessionStore.load({ projectKey: convId, sessionId })
+        ])
+        if (!info || !entries?.length) {
+          throw new StorageError('SESSION_HANDOFF_INCOMPLETE', 'O transcript espelhado não passou na verificação.')
+        }
+        await getSessionMessages(sessionId, { dir: opts.cwd, sessionStore })
+        await repository.markSessionResumeReady(convId, sessionId, true, hashJson(normalizeJson(entries)))
+      }
     )
     sessions.set(convId, s)
     let ok = false
@@ -744,6 +1041,7 @@ function registerIpc(): void {
     if (!ok) {
       if (sessions.get(convId) === s) sessions.delete(convId)
       s.dispose()
+      await releaseSessionLease(convId)
     }
     return { ok }
   })
@@ -760,6 +1058,10 @@ function registerIpc(): void {
       messageUuid?: string,
       messageKind?: AgentMessageKind
     ) => {
+      assertStorageWritable()
+      if (!sessionLeases.has(convId)) {
+        throw new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'A conversa não possui lease de escrita ativo.')
+      }
       // Non-image files are saved to disk and referenced by path so the agent can
       // open them with its own tools (Read, scripts, etc.). Pasted-by-reference
       // files (fileRefs) are already on disk — local path or main's own
@@ -786,6 +1088,7 @@ function registerIpc(): void {
   ipcMain.handle(Channels.agentDispose, (_e, convId: string) => {
     sessions.get(convId)?.dispose()
     sessions.delete(convId)
+    void releaseSessionLease(convId)
   })
 
   ipcMain.handle(Channels.agentRefreshUsage, async (_e, convId: string) => {
@@ -841,17 +1144,19 @@ function registerIpc(): void {
   // HTTP server itself can't survive the process exit, but the user's choice does:
   // "Ligar" → remoteEnabled = true; "Desligar" → false. App close does NOT clear it.
   ipcMain.handle(Channels.remoteStart, async () => {
+    assertStorageWritable()
     const info = await remote.start()
     if (info.running) {
-      updateConfig({ remoteEnabled: true })
+      await updateConfig({ remoteEnabled: true })
       relay.start() // dial the VPS broker so remote (off-LAN) access works
     }
     return info
   })
   ipcMain.handle(Channels.remoteStop, async () => {
+    assertStorageWritable()
     relay.stop()
     const info = await remote.stop()
-    updateConfig({ remoteEnabled: false })
+    await updateConfig({ remoteEnabled: false })
     return info
   })
   ipcMain.handle(Channels.remoteStatus, () => remote.info())
@@ -878,24 +1183,67 @@ function registerIpc(): void {
   })
 }
 
-app.whenReady().then(() => {
-  initStore() // open the cache-folder SQLite db (+ migrate legacy settings.json) before anything reads config
-  const skillSync = syncCacheSkills(app.getAppPath(), getCacheInfo().dir)
+app.whenReady().then(async () => {
+  initStore() // prepares the legacy SQLite source and cache folders before the v2 migration
+  const cacheInfo = getCacheInfo()
+  await storageLifecycle.initialize({
+    location: cacheInfo,
+    userDataDir: app.getPath('userData'),
+    secureStorage: safeStorage,
+    appVersion: app.getVersion()
+  })
+  const storageAvailable = storageLifecycle.canMutate()
+  if (storageAvailable) {
+    await initializeConfigPersistence()
+    await initializeCodexAuthPersistence()
+  }
+  const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir)
   for (const error of skillSync.errors) console.error(`[skills] ${error}`)
   authLog('=== main started (new build) ===')
-  const cacheInfo = getCacheInfo()
-  const conversations = loadAllConversationRecords(cacheInfo.dir)
-  void exportConversationsParquet(cacheInfo.dir, conversations, cacheInfo.memoriesDir).catch((error) => {
-    authLog(`daily conversation parquet export failed: ${error instanceof Error ? error.message : String(error)}`)
-  })
   registerIpc()
   createWindow()
+  storageLifecycle.subscribe((status) => {
+    send(Channels.storageStatusChanged, status)
+    if (status.state === 'postgres-offline') {
+      for (const [convId, session] of sessions) {
+        void session.waitForIdle().catch(() => undefined).finally(() => {
+          session.dispose()
+          sessions.delete(convId)
+          void releaseSessionLease(convId)
+        })
+      }
+    }
+  })
+  storageLifecycle.subscribeChanges((changes) => {
+    void (async () => {
+      if (changes.some((change) => change.entity.endsWith('-kv') && change.entityId.startsWith('config.'))) {
+        await initializeConfigPersistence()
+      }
+      if (changes.some((change) => change.entity.endsWith('-kv') && change.entityId === 'codexAuth')) {
+        await initializeCodexAuthPersistence()
+      }
+      send(Channels.storageChanged, changes)
+    })().catch((error) => {
+      authLog(`change feed apply failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  })
+  if (storageAvailable) {
+    const exportSnapshot = await storageLifecycle.repository().readExportSnapshot()
+    parquetExportPromise = exportConversationsParquet(
+      cacheInfo.dir,
+      exportSnapshot.conversations,
+      cacheInfo.memoriesDir,
+      { backend: exportSnapshot.backend, watermark: exportSnapshot.watermark }
+    ).catch((error) => {
+      authLog(`daily conversation parquet export failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  }
   // Runs outside every chat session. The cheap transcript mtime gate happens
   // before any agent is started, and the persisted timestamp keeps it daily.
-  stopMemoryCurator = startMemoryCuratorScheduler()
+  if (storageAvailable) stopMemoryCurator = await startMemoryCuratorScheduler()
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
   // a paired phone reconnects on its own (the fixed token is already persisted).
-  if (loadConfig().remoteEnabled) {
+  if (storageAvailable && loadConfig().remoteEnabled) {
     void remote
       .start()
       .then(() => relay.start())
@@ -919,7 +1267,22 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  quitRequested = true
+  if (!quitReady) {
+    event.preventDefault()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      requestRendererCloseFlush()
+    } else {
+      void closeStorageForQuit()
+        .then(() => {
+          quitReady = true
+          app.quit()
+        })
+        .catch((error) => console.error('[storage] failed to close before quit:', error))
+    }
+    return
+  }
   windowsControl.stop()
   // O transcritor local é um processo Python com o modelo na GPU: fechar o app
   // sem matá-lo deixaria VRAM presa até o usuário perceber no gerenciador.

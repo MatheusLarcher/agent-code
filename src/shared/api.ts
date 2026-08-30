@@ -29,7 +29,14 @@ import type {
   RemoteInfo,
   RemoteStatePayload,
   StartAgentOptions,
-  TabKind
+  TabKind,
+  PostgresConnectionDraft,
+  PostgresPublicSettings,
+  StorageStatusDto,
+  VersionedConversationDto,
+  ConversationUpsertDto,
+  ConversationDeleteDto,
+  RepositoryChange
 } from './ipc'
 
 /** The surface exposed on `window.api` by the preload script. */
@@ -38,6 +45,28 @@ export interface AgentCodeApi {
   getConfig(): Promise<AppConfig>
   /** Persist a partial app configuration (merged with what's on disk). */
   setConfig(patch: Partial<AppConfig>): Promise<void>
+  /** Flush request sent before Electron allows the window to close. */
+  onAppCloseRequested(cb: () => void): () => void
+  /** Confirm that pending durable writes finished and the window may close. */
+  appCloseReady(): Promise<void>
+  /** Flush request sent before Electron reloads the renderer. */
+  onAppReloadRequested(cb: () => void): () => void
+  /** Confirm that pending durable writes finished and the renderer may reload. */
+  appReloadReady(): Promise<void>
+  getStorageStatus(): Promise<StorageStatusDto>
+  getPostgresSettings(): Promise<PostgresPublicSettings>
+  testPostgresConnection(draft: PostgresConnectionDraft): Promise<void>
+  activatePostgres(draft: PostgresConnectionDraft): Promise<void>
+  deactivatePostgres(): Promise<void>
+  retryStorage(draft?: PostgresConnectionDraft): Promise<void>
+  clearPostgresPassword(): Promise<void>
+  onStorageStatusChanged(cb: (status: StorageStatusDto) => void): () => void
+  onStorageFlushRequested(cb: (requestId: string) => void): () => void
+  storageFlushReady(requestId: string, error?: string): Promise<void>
+  onStorageChanged(cb: (changes: RepositoryChange[]) => void): () => void
+  loadVersionedConversations(): Promise<VersionedConversationDto[]>
+  upsertConversation(input: ConversationUpsertDto): Promise<VersionedConversationDto>
+  deleteConversation(input: ConversationDeleteDto): Promise<VersionedConversationDto>
   /** Toggle the independent high-risk permission for controlling Windows apps. */
   setWindowsControlEnabled(enabled: boolean): Promise<void>
   /** Keep every renderer surface synchronized with the Windows-control gate. */

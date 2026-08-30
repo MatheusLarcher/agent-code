@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { copyFileSync, existsSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 /**
@@ -60,17 +60,49 @@ export function quarantineDb(path: string): void {
   }
 }
 
-/** Move `tmp` onto `dest` in a single step, falling back to a copy across volumes. */
+const RETRYABLE_REPLACE_ERRORS = new Set(['EBUSY', 'EPERM', 'EACCES'])
+
+function waitForFileUnlock(attempt: number): void {
+  const delay = Math.min(25 * (attempt + 1), 150)
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay)
+}
+
+/** Move `tmp` onto `dest` without ever copying partial bytes over the live db. */
 function replaceFile(tmp: string, dest: string): void {
   try {
     renameSync(tmp, dest)
   } catch {
-    // EXDEV (temp on another drive) or a transient lock from the sync client.
-    copyFileSync(tmp, dest)
+    // `%TEMP%` and the configured cache commonly live on different volumes.
+    // Copy to a unique sibling first, then atomically rename that complete file.
+    const staging = join(dirname(dest), `.${basename(dest)}.swap-${randomUUID()}.tmp`)
+    try {
+      copyFileSync(tmp, staging)
+      let lastError: unknown
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        try {
+          renameSync(staging, dest)
+          lastError = undefined
+          break
+        } catch (error) {
+          lastError = error
+          const code = (error as NodeJS.ErrnoException).code ?? ''
+          if (!RETRYABLE_REPLACE_ERRORS.has(code) || attempt === 19) throw error
+          waitForFileUnlock(attempt)
+        }
+      }
+      if (lastError) throw lastError
+    } finally {
+      rmSync(staging, { force: true })
+    }
   }
   // A rollback journal left behind by an interrupted in-place write would make
   // SQLite try to "recover" the file we just replaced.
-  rmSync(`${dest}-journal`, { force: true })
+  try {
+    rmSync(`${dest}-journal`, { force: true })
+  } catch {
+    // The replaced database is complete; a sync client may briefly hold a stale
+    // journal name, which SQLite will ignore when no matching hot journal exists.
+  }
 }
 
 export interface AtomicWriteOptions {

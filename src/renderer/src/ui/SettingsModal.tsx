@@ -8,6 +8,7 @@ import {
   type CodexStatus
 } from '@shared/ipc'
 import { useUI } from './UiProvider'
+import { PostgresSettingsSection } from './PostgresSettingsSection'
 
 interface Props {
   onClose: () => void
@@ -44,10 +45,10 @@ export function SettingsModal({
   const openAiRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    void window.api.getConfig().then((c) => {
-      setCfg(c)
-      setLoaded(true)
-    })
+    void window.api.getConfig()
+      .then((c) => setCfg(c))
+      .catch(() => undefined)
+      .finally(() => setLoaded(true))
     void window.api.getCacheInfo().then(setCache)
     void window.api.codexStatus().then(setCodex)
     const onKey = (e: KeyboardEvent): void => {
@@ -93,6 +94,7 @@ export function SettingsModal({
       'sucesso',
       `Pasta de dados movida para: ${next.dir}. Seus dados (banco + memórias) foram transferidos.`
     )
+    window.dispatchEvent(new Event('agent-code-request-reload'))
   }
 
   const connectCodex = async (): Promise<void> => {
@@ -159,6 +161,8 @@ export function SettingsModal({
             <span className="switch-visual" aria-hidden="true" />
           </label>
         </section>
+
+        <PostgresSettingsSection />
 
         <section className="settings-section">
           <label className="settings-field">

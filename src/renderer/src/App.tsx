@@ -11,6 +11,8 @@ import type {
   PickedElement,
   QuestionAnswer,
   RateLimitStatus,
+  RepositoryChange,
+  StorageStatusDto,
   TabKind
 } from '@shared/ipc'
 import {
@@ -34,7 +36,8 @@ import {
   saveConversations,
   saveUi,
   loadUsageLimits,
-  saveUsageLimits
+  saveUsageLimits,
+  loadConversationChanges
 } from './storage'
 import { ChatPanel } from './components/ChatPanel'
 import { BrowserPanel } from './components/BrowserPanel'
@@ -51,6 +54,7 @@ import { NewTabModal } from './ui/NewTabModal'
 import { FilePickerModal } from './ui/FilePickerModal'
 import { RemoteModal } from './ui/RemoteModal'
 import { SettingsModal } from './ui/SettingsModal'
+import { ipcErrorMessage } from './ipcError'
 
 export type { UserMessage, UIMessage } from './types'
 
@@ -330,6 +334,8 @@ export function App(): JSX.Element {
   const [agentsOpen, setAgentsOpen] = useState(false)
   // Flow view (full-screen map of who spawned whom). Opened from the panel.
   const [hydrated, setHydrated] = useState(false)
+  const [storageStatus, setStorageStatus] = useState<StorageStatusDto | null>(null)
+  const [storageLoadError, setStorageLoadError] = useState<string | null>(null)
   // Whether the ACTIVE conversation's project folder is gone. When true the
   // composer is blocked (can't type) — we check on switch and on window focus.
   const [projectMissing, setProjectMissing] = useState(false)
@@ -807,12 +813,18 @@ export function App(): JSX.Element {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const [loaded, ui, limits] = await Promise.all([
-        loadConversations(),
-        loadUi(),
-        loadUsageLimits()
-      ])
+      try {
+        const [loaded, ui, limits, initialStorageStatus] = await Promise.all([
+          loadConversations(),
+          loadUi(),
+          loadUsageLimits(),
+          window.api.getStorageStatus()
+        ])
+        if (!initialStorageStatus.writable) {
+          throw new Error(initialStorageStatus.error?.message ?? 'Persistência autoritativa indisponível.')
+        }
       if (cancelled) return
+      setStorageStatus(initialStorageStatus)
       // Live SDK state never survives an app process restart. Avoid briefly
       // painting stale background/interrupt warnings from persisted history.
       setConversations(
@@ -854,9 +866,54 @@ export function App(): JSX.Element {
         return merged
       })
       setHydrated(true)
+      } catch (error) {
+        if (cancelled) return
+        setStorageLoadError(ipcErrorMessage(error, 'Não foi possível carregar a persistência.'))
+        void window.api.getStorageStatus().then(setStorageStatus).catch(() => undefined)
+      }
     })()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    const offStatus = window.api.onStorageStatusChanged((status) => {
+      setStorageStatus(status)
+      if (!status.writable) {
+        setStorageLoadError(status.error?.message ?? 'Persistência autoritativa indisponível.')
+      }
+    })
+    const offChanges = window.api.onStorageChanged((changes: RepositoryChange[]) => {
+      if (changes.some((change) => change.entity.endsWith('-kv') && change.entityId.startsWith('config.'))) {
+        void window.api.getConfig().then((config) => {
+          skipPermsRef.current = config.skipPermissions
+          setSkipPerms(config.skipPermissions)
+          setWindowsControlEnabled(config.windowsControlEnabled === true)
+          setVoiceReady(Boolean(config.openai.apiKey.trim()))
+          setOllamaReady(config.ollama.enabled && Boolean(config.ollama.apiKey.trim()))
+          voiceSpeedRef.current = config.openai.speed || 1
+        }).catch(() => undefined)
+      }
+      void loadConversationChanges(changes)
+        .then((updates) => {
+          if (!updates.size) return
+          setConversations((current) => {
+            const byId = new Map(current.map((conversation) => [conversation.id, conversation]))
+            for (const [id, conversation] of updates) {
+              if (conversation) byId.set(id, conversation)
+              else byId.delete(id)
+            }
+            return [...byId.values()]
+          })
+        })
+        .catch((error) => {
+          setStorageLoadError(ipcErrorMessage(error, 'Falha ao sincronizar alterações.'))
+        })
+    })
+    return () => {
+      offStatus()
+      offChanges()
     }
   }, [])
 
@@ -870,14 +927,16 @@ export function App(): JSX.Element {
 
   // Load persisted app config once (e.g. the "Permitir tudo" toggle).
   useEffect(() => {
-    void window.api.getConfig().then((c) => {
-      skipPermsRef.current = c.skipPermissions
-      setSkipPerms(c.skipPermissions)
-      setWindowsControlEnabled(c.windowsControlEnabled === true)
-      setVoiceReady(!!c.openai?.apiKey?.trim())
-      setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
-      voiceSpeedRef.current = c.openai?.speed || 1
-    })
+    void window.api.getConfig()
+      .then((c) => {
+        skipPermsRef.current = c.skipPermissions
+        setSkipPerms(c.skipPermissions)
+        setWindowsControlEnabled(c.windowsControlEnabled === true)
+        setVoiceReady(!!c.openai?.apiKey?.trim())
+        setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
+        voiceSpeedRef.current = c.openai?.speed || 1
+      })
+      .catch(() => undefined)
     void window.api.codexStatus().then((s) => setCodexReady(s.connected))
   }, [])
 
@@ -929,26 +988,99 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!hydrated) return
     clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => void saveConversations(convsRef.current), 400)
+    saveTimer.current = setTimeout(() => {
+      void saveConversations(convsRef.current).catch(() =>
+        notify('erro', 'Não foi possível salvar o histórico. A conversa continua marcada como não salva.')
+      )
+    }, 400)
     return () => clearTimeout(saveTimer.current)
-  }, [conversations, hydrated])
+  }, [conversations, hydrated, notify])
   useEffect(() => {
-    if (hydrated) void saveUi({ collapsed, activeId, browserMinimized, browserWidth })
-  }, [collapsed, activeId, browserMinimized, browserWidth, hydrated])
+    if (hydrated) {
+      void saveUi({ collapsed, activeId, browserMinimized, browserWidth }).catch(() =>
+        notify('erro', 'Não foi possível salvar o estado da interface.')
+      )
+    }
+  }, [collapsed, activeId, browserMinimized, browserWidth, hydrated, notify])
 
-  // Flush conversations (incl. the current draft) right away if the app is closing
-  // within the save debounce window — so a just-typed draft isn't lost on exit.
-  // Never before hydration: closing the app while the history is still loading
-  // would persist the still-empty list over everything that's on disk.
+  // Close/reload is a durability boundary: pause the unload, flush the latest
+  // conversation + UI state, then explicitly release the pending navigation.
   const hydratedRef = useRef(hydrated)
   hydratedRef.current = hydrated
+  const closeUiRef = useRef({ collapsed, activeId, browserMinimized, browserWidth })
+  closeUiRef.current = { collapsed, activeId, browserMinimized, browserWidth }
+  const allowUnloadRef = useRef(false)
+  const unloadFlushRef = useRef<Promise<void> | null>(null)
   useEffect(() => {
-    const flush = (): void => {
-      if (hydratedRef.current) void saveConversations(convsRef.current)
+    const flushDurableState = async (): Promise<void> => {
+      clearTimeout(saveTimer.current)
+      if (!hydratedRef.current) return
+      await Promise.all([saveConversations(convsRef.current), saveUi(closeUiRef.current)])
     }
-    window.addEventListener('beforeunload', flush)
-    return () => window.removeEventListener('beforeunload', flush)
-  }, [])
+
+    const requestReload = (): void => {
+      if (allowUnloadRef.current) return
+      if (!hydratedRef.current) {
+        allowUnloadRef.current = true
+        void window.api.appReloadReady()
+        return
+      }
+      if (unloadFlushRef.current) return
+      unloadFlushRef.current = flushDurableState()
+        .then(async () => {
+          allowUnloadRef.current = true
+          await window.api.appReloadReady()
+        })
+        .catch(() => {
+          notify('erro', 'Não foi possível salvar antes de recarregar. A janela permaneceu aberta.')
+        })
+        .finally(() => {
+          unloadFlushRef.current = null
+        })
+    }
+
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (allowUnloadRef.current || !hydratedRef.current) return
+      event.preventDefault()
+      event.returnValue = ''
+      requestReload()
+    }
+
+    const offClose = window.api.onAppCloseRequested(() => {
+      if (unloadFlushRef.current) return
+      unloadFlushRef.current = flushDurableState()
+        .then(async () => {
+          allowUnloadRef.current = true
+          await window.api.appCloseReady()
+        })
+        .catch(() => {
+          notify('erro', 'Não foi possível salvar antes de fechar. A janela permaneceu aberta.')
+        })
+        .finally(() => {
+          unloadFlushRef.current = null
+        })
+    })
+    const offReload = window.api.onAppReloadRequested(requestReload)
+    window.addEventListener('agent-code-request-reload', requestReload)
+    const offStorageFlush = window.api.onStorageFlushRequested((requestId) => {
+      const pending = unloadFlushRef.current ?? flushDurableState()
+      unloadFlushRef.current = pending
+      void pending
+        .then(() => window.api.storageFlushReady(requestId))
+        .catch((error) => window.api.storageFlushReady(requestId, String(error)))
+        .finally(() => {
+          if (unloadFlushRef.current === pending) unloadFlushRef.current = null
+        })
+    })
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      offClose()
+      offReload()
+      window.removeEventListener('agent-code-request-reload', requestReload)
+      offStorageFlush()
+      window.removeEventListener('beforeunload', onBeforeUnload)
+    }
+  }, [notify])
 
   // ---- remote bridge: track running state + publish snapshots for phones ----
   useEffect(() => {
@@ -1165,6 +1297,9 @@ export function App(): JSX.Element {
           }
           notify('sucesso', 'Login concluído!')
         }
+        // PostgreSQL leases reference an existing conversation row. Flush a
+        // newly created/edited conversation before asking main to acquire it.
+        await saveConversations(convsRef.current)
         const started = await window.api.startAgent({
           convId: conv.id,
           cwd: conv.cwd,
@@ -2052,6 +2187,68 @@ export function App(): JSX.Element {
     [conversations]
   )
 
+  const selectProjectFolder = async (): Promise<void> => {
+    if (!active) return
+    const directory = await window.api.pickDirectory()
+    if (!directory) return
+    const valid = await window.api.pathExists(directory)
+    if (!valid) {
+      notify('erro', 'A pasta selecionada não está disponível.')
+      return
+    }
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === active.id ? { ...conversation, cwd: directory, updatedAt: Date.now() } : conversation
+      )
+    )
+    setProjectMissing(false)
+  }
+
+  if (storageLoadError && (!hydrated || storageStatus?.writable === false)) {
+    return (
+      <div className="storage-recovery" role="alert">
+        <div className="storage-recovery-card">
+          <h1>Persistência indisponível</h1>
+          <p>{storageLoadError}</p>
+          <p>
+            O backend selecionado continua sendo <strong>{storageStatus?.backend ?? 'desconhecido'}</strong>.
+            O SQLite local não foi usado como fallback e nenhuma lista vazia foi assumida.
+          </p>
+          <div className="modal-actions">
+            {storageStatus?.backend === 'postgres' && (
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => {
+                  void window.api.retryStorage()
+                    .then(() => window.dispatchEvent(new Event('agent-code-request-reload')))
+                    .catch((error) =>
+                      setStorageLoadError(ipcErrorMessage(error, 'A reconexão falhou.'))
+                    )
+                }}
+              >
+                Tentar novamente
+              </button>
+            )}
+            <button className="btn ghost" type="button" onClick={() => setSettingsOpen(true)}>
+              Corrigir configuração
+            </button>
+          </div>
+        </div>
+        {settingsOpen && (
+          <SettingsModal
+            onClose={closeSettings}
+            focus={settingsFocus}
+            skipPerms={skipPerms}
+            onToggleSkipPerms={toggleSkipPerms}
+            windowsControlEnabled={windowsControlEnabled}
+            onToggleWindowsControl={(on) => void toggleWindowsControl(on)}
+          />
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="app">
       <Sidebar
@@ -2193,6 +2390,7 @@ export function App(): JSX.Element {
             onDraftChange={onDraftChange}
             projectMissing={projectMissing}
             projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
+            onSelectProjectFolder={() => void selectProjectFolder()}
             queued={activeQueue}
             onDeleteQueued={deleteQueued}
             recovery={active?.recovery}

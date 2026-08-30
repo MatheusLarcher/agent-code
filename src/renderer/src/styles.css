@@ -36,6 +36,39 @@ body {
   flex-direction: row;
   height: 100%;
 }
+
+.storage-recovery {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: var(--bg-primary);
+}
+
+.storage-recovery-card {
+  width: min(620px, 100%);
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 22%);
+}
+
+.storage-recovery-card h1 { margin-top: 0; }
+
+.project-missing-banner {
+  margin: 0 16px 12px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-secondary));
+}
+
+.project-missing-banner p { margin: 4px 0 0; }
 .main-area {
   flex: 1;
   min-width: 0;

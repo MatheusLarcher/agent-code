@@ -37,7 +37,7 @@ export interface RemoteServerDeps {
   /** Read the persisted pairing token (empty if none yet — one is generated and saved). */
   loadToken?: () => string
   /** Persist a freshly generated pairing token so it stays fixed across sessions. */
-  saveToken?: (token: string) => void
+  saveToken?: (token: string) => void | Promise<void>
   /** Transcribe phone audio on the PC (OpenAI). Throws Error('no-key') if unset. */
   transcribe?: (audioBase64: string, mimeType: string) => Promise<string>
   /** Synthesize speech on the PC (OpenAI). Throws Error('no-key') if unset. */
@@ -175,7 +175,7 @@ export class RemoteServer {
       this.token = saved
     } else {
       this.token = randomBytes(16).toString('hex')
-      this.deps.saveToken?.(this.token)
+      await this.deps.saveToken?.(this.token)
     }
     const server = createServer((req, res) => {
       this.handle(req, res).catch((err) => {

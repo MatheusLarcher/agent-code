@@ -83,6 +83,7 @@ describe('writeDbAtomically', () => {
     })
     expect(get('a')).toBe('1')
     expect(readdirSync(scratch)).toEqual([])
+    expect(readdirSync(dir).some((name) => name.includes('.swap-'))).toBe(false)
   })
 
   it('quarantineDb move o arquivo em vez de apagar', () => {

@@ -139,7 +139,11 @@ function captureRequest(init: RequestInit | undefined): CapturedRequest {
 }
 
 function toolNames(body: CodexResponsesRequest): string[] {
-  return (body.tools ?? []).map((tool) => tool.name)
+  const topLevel = (body.tools ?? []).map((tool) => tool.name)
+  const litePrefix = body.input.flatMap((item) =>
+    item.type === 'additional_tools' ? item.tools.map((tool) => tool.name) : []
+  )
+  return [...topLevel, ...litePrefix]
 }
 
 function functionOutput(body: CodexResponsesRequest, callId: string): string | undefined {

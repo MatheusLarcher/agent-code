@@ -9,6 +9,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { homedir } from 'node:os'
@@ -122,7 +123,7 @@ export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: str
         const stat = lstatSync(link)
         if (stat.isSymbolicLink() && (previouslyManaged.has(name) || isLegacyAgentCodeLink(link))) {
           if (linkTarget(link) !== normalize(resolve(target))) {
-            rmSync(link, { recursive: true, force: true })
+            unlinkSync(link)
             symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir')
           }
           managedNow.push(name)
@@ -134,7 +135,10 @@ export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: str
       try {
         const stat = lstatSync(link)
         if (!stat.isSymbolicLink() || (!previouslyManaged.has(name) && !isLegacyAgentCodeLink(link))) continue
-        rmSync(link, { recursive: true, force: true })
+        // `rmSync(..., { recursive: true })` can leave a dangling Windows
+        // junction behind. Unlink the directory entry itself so recreating the
+        // managed junction below cannot fail with EEXIST.
+        unlinkSync(link)
       } catch {
         // Truly absent: create it below.
       }

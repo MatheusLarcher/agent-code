@@ -115,6 +115,7 @@ interface Props {
   projectMissing: boolean
   /** Error shown when the user interacts with the blocked composer. */
   projectMissingMsg: string
+  onSelectProjectFolder?: () => void
   /** Messages waiting to be sent (agent busy), shown above the composer. */
   queued: { id: string; text: string; thumbs: string[] }[]
   onDeleteQueued: (id: string) => void
@@ -521,6 +522,18 @@ export function ChatPanel(props: Props): JSX.Element {
           </button>
         )}
       </div>
+
+      {props.projectMissing && (
+        <div className="project-missing-banner" role="alert">
+          <div>
+            <strong>Pasta do projeto não localizada neste computador</strong>
+            <p>{props.projectMissingMsg}</p>
+          </div>
+          <button className="btn primary" type="button" onClick={() => props.onSelectProjectFolder?.()}>
+            Selecionar pasta
+          </button>
+        </div>
+      )}
 
       <Composer
         disabled={!hasActive}

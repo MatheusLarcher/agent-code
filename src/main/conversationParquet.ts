@@ -17,7 +17,11 @@ export interface ConversationParquetRow {
   atualizadoEm: string
   conteudo: string
   caminhoMemoria: string
+  backend: 'sqlite' | 'postgres'
+  watermark: string
 }
+
+interface ExportSource { backend: 'sqlite' | 'postgres'; watermark: string }
 
 export function dailyParquetPath(cacheDir: string, now = new Date()): string {
   const yyyy = now.getFullYear()
@@ -36,7 +40,7 @@ function dateText(value: unknown): string {
   return text(value)
 }
 
-function conversationRow(record: ConversationRecord): ConversationParquetRow {
+function conversationRow(record: ConversationRecord, source: ExportSource): ConversationParquetRow {
   return {
     tipo: 'conversa',
     id: text(record.id),
@@ -46,10 +50,11 @@ function conversationRow(record: ConversationRecord): ConversationParquetRow {
     atualizadoEm: dateText(record.updatedAt),
     conteudo: JSON.stringify(record),
     caminhoMemoria: '',
+    ...source
   }
 }
 
-function memoryRows(memoryDir: string): ConversationParquetRow[] {
+function memoryRows(memoryDir: string, source: ExportSource): ConversationParquetRow[] {
   return listMemoryFiles(memoryDir).flatMap((file) => {
     try {
       return [{
@@ -61,6 +66,7 @@ function memoryRows(memoryDir: string): ConversationParquetRow[] {
         atualizadoEm: '',
         conteudo: readFileSync(join(memoryDir, ...file.relPath.split('/')), 'utf8'),
         caminhoMemoria: file.relPath,
+        ...source
       }]
     } catch {
       return []
@@ -73,8 +79,13 @@ export async function exportConversationsParquet(
   cacheDir: string,
   conversations: ConversationRecord[],
   memoryDir: string,
-  now = new Date()
+  sourceOrNow: ExportSource | Date = { backend: 'sqlite', watermark: 'sqlite:legacy-export' },
+  explicitNow?: Date
 ): Promise<string> {
+  const source = sourceOrNow instanceof Date
+    ? { backend: 'sqlite' as const, watermark: 'sqlite:legacy-export' }
+    : sourceOrNow
+  const now = sourceOrNow instanceof Date ? sourceOrNow : (explicitNow ?? new Date())
   const target = dailyParquetPath(cacheDir, now)
   const exportDir = join(cacheDir, EXPORT_DIRNAME)
   mkdirSync(exportDir, { recursive: true })
@@ -88,12 +99,14 @@ export async function exportConversationsParquet(
     atualizadoEm: { type: 'UTF8' },
     conteudo: { type: 'UTF8' },
     caminhoMemoria: { type: 'UTF8' },
+    backend: { type: 'UTF8' },
+    watermark: { type: 'UTF8' }
   })
   try {
     const writer = await ParquetWriter.openFile(schema, temp)
     try {
-      for (const record of conversations) await writer.appendRow(conversationRow(record))
-      for (const row of memoryRows(memoryDir)) await writer.appendRow(row)
+      for (const record of conversations) await writer.appendRow(conversationRow(record, source))
+      for (const row of memoryRows(memoryDir, source)) await writer.appendRow(row)
     } finally {
       await writer.close()
     }

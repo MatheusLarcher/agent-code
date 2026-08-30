@@ -3,7 +3,8 @@ import { appendFile, readFile, readdir, stat, writeFile } from 'node:fs/promises
 import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { getCacheInfo, kvGet, kvSet } from './store'
+import { getCacheInfo } from './store'
+import { readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { listMemoryFiles, memoryIndexLine } from './memoryIndex'
 
 export const CURATOR_MARKER = 'AGENT_CODE_MEMORY_CURATOR_V1'
@@ -335,13 +336,13 @@ export async function runMemoryCuratorOnce(options: CuratorRunOptions = {}): Pro
 
 /** Daily in-process scheduler. It catches up after app startup without creating
  *  an OS task and never emits anything into a user's chat. */
-export function startMemoryCuratorScheduler(): () => void {
+export async function startMemoryCuratorScheduler(): Promise<() => void> {
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | null = null
 
   let saved = 0
   try {
-    saved = Number(kvGet(CURATOR_STATE_KEY) ?? 0)
+    saved = Number((await readPersistedKv(CURATOR_STATE_KEY)) ?? 0)
   } catch {
     /* store unavailable: run the cheap mtime gate now */
   }
@@ -364,7 +365,7 @@ export function startMemoryCuratorScheduler(): () => void {
       const finishedAt = Date.now()
       lastRunAt = finishedAt
       try {
-        kvSet(CURATOR_STATE_KEY, String(finishedAt))
+        await writePersistedKv(CURATOR_STATE_KEY, String(finishedAt))
       } catch (error) {
         console.warn('[memory-curator] could not persist last run:', error)
       }

@@ -673,6 +673,9 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'gpt-oss:20b-cloud': 128_000,
   'gemma4:cloud': 256_000,
   'nemotron-3-super:cloud': 256_000,
+  // Ollama's model card advertises 128K+ and the published model config uses
+  // max_length 131072. Keep the UI's decimal convention used by gpt-oss.
+  'muse-glimmer:cloud': 128_000,
   'deepseek-v4-pro:cloud': 1_000_000,
   'glm-5.2:cloud': 1_000_000,
   'kimi-k3:cloud': 1_000_000
@@ -809,6 +812,84 @@ export interface AppConfig {
   remoteEnabled: boolean
 }
 
+export type PostgresTlsMode = 'disable' | 'prefer' | 'require' | 'verify-full'
+
+/** Editable PostgreSQL fields. The target database is intentionally absent: it is always agent-code. */
+export interface PostgresConnectionDraft {
+  host: string
+  port: number
+  user: string
+  /** Empty means keep the encrypted password already stored on this installation. */
+  password: string
+  maintenanceDatabase: string
+  tlsMode: PostgresTlsMode
+  ca: string
+}
+
+export type StorageBackend = 'sqlite' | 'postgres'
+export type StorageLifecycleState =
+  | 'booting'
+  | 'sqlite-ready'
+  | 'testing-postgres'
+  | 'activating-postgres'
+  | 'postgres-ready'
+  | 'postgres-offline'
+  | 'deactivating-postgres'
+  | 'fatal'
+
+export interface StorageStatusDto {
+  backend: StorageBackend
+  state: StorageLifecycleState
+  writable: boolean
+  installationId: string
+  targetDatabase: 'agent-code'
+  hasPassword: boolean
+  /** Human-readable current transition step; present only while activating/deactivating. */
+  transitionStep?: string
+  error?: { code: string; message: string; retryable: boolean }
+}
+
+export interface PostgresPublicSettings {
+  host: string
+  port: number
+  user: string
+  maintenanceDatabase: string
+  tlsMode: PostgresTlsMode
+  ca: string
+  targetDatabase: 'agent-code'
+  hasPassword: boolean
+}
+
+/** Per-record conversation contract used by both SQLite and PostgreSQL. */
+export interface VersionedConversationDto {
+  id: string
+  payload: Record<string, unknown>
+  revision: number
+  contentHash: string
+  createdAt: string
+  updatedAt: string
+  deletedAt?: string
+}
+
+export interface ConversationUpsertDto {
+  id: string
+  payload: Record<string, unknown>
+  expectedRevision?: number
+}
+
+export interface ConversationDeleteDto {
+  id: string
+  expectedRevision: number
+}
+
+export interface RepositoryChange {
+  changeId: string
+  entity: 'global-kv' | 'device-kv' | 'conversation' | 'lease' | 'project'
+  entityId: string
+  revision?: number
+  installationId?: string
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   openai: { apiKey: '', voice: 'alloy', speed: 1 },
   transcribeEngine: 'cloud',
@@ -839,6 +920,25 @@ export const Channels = {
   configGet: 'config:get',
   /** Persist the app configuration (Settings screen). */
   configSet: 'config:set',
+  /** Main asks the renderer to flush durable state before the window closes. */
+  appCloseRequested: 'app:close-requested',
+  /** Renderer confirms every pending durable write completed. */
+  appCloseReady: 'app:close-ready',
+  /** Main asks the renderer to flush durable state before a keyboard reload. */
+  appReloadRequested: 'app:reload-requested',
+  /** Renderer confirms durable writes completed before a reload. */
+  appReloadReady: 'app:reload-ready',
+  storageStatusGet: 'storage:status-get',
+  storagePostgresSettingsGet: 'storage:postgres-settings-get',
+  storagePostgresTest: 'storage:postgres-test',
+  storagePostgresActivate: 'storage:postgres-activate',
+  storagePostgresDeactivate: 'storage:postgres-deactivate',
+  storageRetry: 'storage:retry',
+  storagePostgresPasswordClear: 'storage:postgres-password-clear',
+  storageStatusChanged: 'storage:status-changed',
+  storageFlushRequested: 'storage:flush-requested',
+  storageFlushReady: 'storage:flush-ready',
+  storageChanged: 'storage:changed',
   /** Persist and apply the independent Windows-control permission immediately. */
   windowsControlSetEnabled: 'windows-control:set-enabled',
   /** Get the active cache folder (where the SQLite db, memories and skills live). */
@@ -853,6 +953,9 @@ export const Channels = {
   conversationsLoadAll: 'conversations:load-all',
   /** Persist the full conversation list, split one db per project (`cwd`). */
   conversationsSaveAll: 'conversations:save-all',
+  conversationsLoadVersioned: 'conversations:load-versioned',
+  conversationsUpsert: 'conversations:upsert',
+  conversationsDelete: 'conversations:delete',
   agentStart: 'agent:start',
   agentSend: 'agent:send',
   agentInterrupt: 'agent:interrupt',
