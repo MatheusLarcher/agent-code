@@ -161,6 +161,23 @@ describe.runIf(integration).sequential('PostgresRepository', () => {
     expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.now())
   })
 
+  it('invalida lease órfão da própria instalação ao reiniciar sem tocar em outro dispositivo', async () => {
+    const installationId = randomUUID()
+    const owner = await repository(installationId)
+    const other = await repository(randomUUID())
+    opened.push(owner, other)
+    await owner.upsertConversation({ id: 'orphan', payload: { id: 'orphan', title: 'A' } })
+    await owner.acquireConversationLease('orphan')
+
+    await owner.close()
+    opened.splice(opened.indexOf(owner), 1)
+    const restarted = await repository(installationId)
+    opened.push(restarted)
+    const acquired = await other.acquireConversationLease('orphan')
+
+    expect(acquired.ownerInstallationId).not.toBe(installationId)
+  })
+
   it('preserva SessionStore opaco, UUID idempotente, ordem sem UUID e subagentes', async () => {
     const left = await repository(randomUUID())
     const right = await repository(randomUUID())

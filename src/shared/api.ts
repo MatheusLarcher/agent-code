@@ -56,8 +56,8 @@ export interface AgentCodeApi {
   getStorageStatus(): Promise<StorageStatusDto>
   getPostgresSettings(): Promise<PostgresPublicSettings>
   testPostgresConnection(draft: PostgresConnectionDraft): Promise<void>
-  activatePostgres(draft: PostgresConnectionDraft): Promise<void>
-  deactivatePostgres(): Promise<void>
+  activatePostgres(draft: PostgresConnectionDraft): Promise<boolean>
+  deactivatePostgres(): Promise<boolean>
   retryStorage(draft?: PostgresConnectionDraft): Promise<void>
   clearPostgresPassword(): Promise<void>
   onStorageStatusChanged(cb: (status: StorageStatusDto) => void): () => void

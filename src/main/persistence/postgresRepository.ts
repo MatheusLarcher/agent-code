@@ -125,12 +125,22 @@ export class PostgresRepository implements PersistenceRepository {
   }
 
   async initialize(): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO installations(installation_id, app_version)
-       VALUES($1, $2)
-       ON CONFLICT(installation_id) DO UPDATE SET app_version = EXCLUDED.app_version, last_seen_at = clock_timestamp()`,
-      [this.installationId, this.appVersion]
-    )
+    await transaction(this.pool, async (client) => {
+      await client.query(
+        `INSERT INTO installations(installation_id, app_version)
+         VALUES($1, $2)
+         ON CONFLICT(installation_id) DO UPDATE SET app_version = EXCLUDED.app_version, last_seen_at = clock_timestamp()`,
+        [this.installationId, this.appVersion]
+      )
+      // A single Electron main process owns an installation. If it restarted
+      // during a storage transition, its old in-memory tokens no longer exist
+      // and must not block the first renderer autosave for another 60 seconds.
+      await client.query(
+        `UPDATE conversation_leases SET heartbeat_at = clock_timestamp(), expires_at = clock_timestamp()
+         WHERE owner_installation_id = $1 AND expires_at > clock_timestamp()`,
+        [this.installationId]
+      )
+    })
     await this.feed.start()
     this.initialized = true
   }

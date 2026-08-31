@@ -61,9 +61,9 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.storagePostgresSettingsGet),
   testPostgresConnection: (draft: PostgresConnectionDraft): Promise<void> =>
     ipcRenderer.invoke(Channels.storagePostgresTest, draft),
-  activatePostgres: (draft: PostgresConnectionDraft): Promise<void> =>
+  activatePostgres: (draft: PostgresConnectionDraft): Promise<boolean> =>
     ipcRenderer.invoke(Channels.storagePostgresActivate, draft),
-  deactivatePostgres: (): Promise<void> => ipcRenderer.invoke(Channels.storagePostgresDeactivate),
+  deactivatePostgres: (): Promise<boolean> => ipcRenderer.invoke(Channels.storagePostgresDeactivate),
   retryStorage: (draft?: PostgresConnectionDraft): Promise<void> => ipcRenderer.invoke(Channels.storageRetry, draft),
   clearPostgresPassword: (): Promise<void> => ipcRenderer.invoke(Channels.storagePostgresPasswordClear),
   onStorageStatusChanged: (cb: (status: StorageStatusDto) => void): (() => void) =>

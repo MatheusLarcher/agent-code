@@ -88,17 +88,17 @@ export function PostgresSettingsSection(): JSX.Element {
 
   const activate = (): void => {
     void run('activate', async () => {
-      await window.api.activatePostgres(draft)
-      notify('sucesso', 'PostgreSQL ativado após migração e verificação.')
-      requestSafeReload()
+      const activated = await window.api.activatePostgres(draft)
+      if (!activated) return
+      notify('sucesso', 'PostgreSQL ativado. O aplicativo será reiniciado.')
     })
   }
 
   const deactivate = (): void => {
     void run('deactivate', async () => {
-      await window.api.deactivatePostgres()
-      notify('sucesso', 'SQLite ativado após exportação e verificação.')
-      requestSafeReload()
+      const deactivated = await window.api.deactivatePostgres()
+      if (!deactivated) return
+      notify('sucesso', 'SQLite ativado. O aplicativo será reiniciado.')
     })
   }
 

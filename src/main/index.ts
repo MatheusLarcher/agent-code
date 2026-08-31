@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron'
+import type { MessageBoxOptions } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { getSessionInfo, getSessionMessages, importSessionToStore } from '@anthropic-ai/claude-agent-sdk'
 import { spawn } from 'node:child_process'
@@ -78,6 +79,7 @@ let quitRequested = false
 let quitReady = false
 let storageClosePromise: Promise<void> | null = null
 let parquetExportPromise: Promise<unknown> | null = null
+let restartAfterStorageTransition = false
 const pendingStorageFlushes = new Map<
   string,
   { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
@@ -211,11 +213,41 @@ function requestStorageFlush(): Promise<void> {
 const storageTransitionHooks = {
   flushRenderer: requestStorageFlush,
   waitForIdleAgents: async (): Promise<void> => {
-    await Promise.all([...sessions.values()].map((session) => session.waitForIdle()))
+    // The caller has already obtained explicit user confirmation. Stop live
+    // work now instead of allowing a long-running turn to hold the migration.
     for (const session of sessions.values()) session.dispose()
     sessions.clear()
     await Promise.all([...sessionLeases.keys()].map(releaseSessionLease))
   }
+}
+
+async function confirmStorageTransitionStopsAgents(direction: 'postgres' | 'sqlite'): Promise<boolean> {
+  const count = sessions.size
+  if (!count) return true
+  const target = direction === 'postgres' ? 'PostgreSQL' : 'SQLite'
+  const options: MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['Parar agents e migrar', 'Cancelar'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    title: `Migrar para ${target}`,
+    message: `${count === 1 ? 'Existe 1 agent em execução' : `Existem ${count} agents em execução`}.`,
+    detail: `A migração para ${target} precisa interromper ${count === 1 ? 'esse agent' : 'esses agents'}. O histórico pendente será salvo antes da troca e o aplicativo reiniciará automaticamente.`
+  }
+  const result = mainWindow
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options)
+  return result.response === 0
+}
+
+function relaunchAfterStorageTransition(): void {
+  if (restartAfterStorageTransition) return
+  restartAfterStorageTransition = true
+  setTimeout(() => {
+    app.relaunch()
+    app.quit()
+  }, 300).unref?.()
 }
 
 function assertStorageWritable(allowTransitionFlush = false): void {
@@ -631,12 +663,18 @@ function registerIpc(): void {
   ipcMain.handle(Channels.storagePostgresTest, (_event, draft: PostgresConnectionDraft) =>
     storageLifecycle.testPostgres(draft)
   )
-  ipcMain.handle(Channels.storagePostgresActivate, (_event, draft: PostgresConnectionDraft) =>
-    storageLifecycle.activatePostgres(draft, storageTransitionHooks)
-  )
-  ipcMain.handle(Channels.storagePostgresDeactivate, () =>
-    storageLifecycle.deactivatePostgres(storageTransitionHooks)
-  )
+  ipcMain.handle(Channels.storagePostgresActivate, async (_event, draft: PostgresConnectionDraft) => {
+    if (!(await confirmStorageTransitionStopsAgents('postgres'))) return false
+    await storageLifecycle.activatePostgres(draft, storageTransitionHooks)
+    relaunchAfterStorageTransition()
+    return true
+  })
+  ipcMain.handle(Channels.storagePostgresDeactivate, async () => {
+    if (!(await confirmStorageTransitionStopsAgents('sqlite'))) return false
+    await storageLifecycle.deactivatePostgres(storageTransitionHooks)
+    relaunchAfterStorageTransition()
+    return true
+  })
   ipcMain.handle(Channels.storageRetry, (_event, draft?: PostgresConnectionDraft) =>
     storageLifecycle.retryPostgres(draft)
   )
@@ -1193,7 +1231,18 @@ function registerIpc(): void {
   })
 }
 
+const ownsSingleInstance = app.requestSingleInstanceLock()
+if (!ownsSingleInstance) app.quit()
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+})
+
 app.whenReady().then(async () => {
+  if (!ownsSingleInstance) return
   initStore() // prepares the legacy SQLite source and cache folders before the v2 migration
   const cacheInfo = getCacheInfo()
   await storageLifecycle.initialize({
