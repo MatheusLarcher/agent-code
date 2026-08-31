@@ -989,9 +989,11 @@ export function App(): JSX.Element {
     if (!hydrated) return
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      void saveConversations(convsRef.current).catch(() =>
-        notify('erro', 'Não foi possível salvar o histórico. A conversa continua marcada como não salva.')
-      )
+      void saveConversations(convsRef.current).catch((error) => {
+        const reason = ipcErrorMessage(error, 'A persistência rejeitou a gravação.')
+        console.error('[conversation-storage]', reason)
+        notify('erro', `Não foi possível salvar o histórico. Motivo: ${reason} A conversa continua marcada como não salva.`)
+      })
     }, 400)
     return () => clearTimeout(saveTimer.current)
   }, [conversations, hydrated, notify])

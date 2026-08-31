@@ -41,6 +41,7 @@ import {
   preserveProjectIdentityForMissingPersistedWrite
 } from './persistence/projectIdentity'
 import { exportConversationsParquet } from './conversationParquet'
+import { storageErrorForIpc, upsertConversationWithLeaseRecovery } from './persistence/conversationWriteRecovery'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { windowsControl } from './windowsControl/service'
@@ -826,11 +827,16 @@ function registerIpc(): void {
         .find((entry) => entry.id === input.id)?.payload
       payload = preserveProjectIdentityForMissingPersistedWrite(input.payload, persisted)
     }
-    return storageLifecycle.repository().upsertConversation({
-      ...input,
-      payload,
-      ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
-    })
+    const repository = storageLifecycle.repository()
+    try {
+      return await upsertConversationWithLeaseRecovery(repository, {
+        ...input,
+        payload,
+        ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
+      })
+    } catch (cause) {
+      throw storageErrorForIpc(cause)
+    }
   })
   ipcMain.handle(Channels.conversationsDelete, async (_e, input: ConversationDeleteDto) => {
     if (!input || typeof input.id !== 'string' || !Number.isInteger(input.expectedRevision)) {
@@ -838,10 +844,14 @@ function registerIpc(): void {
     }
     assertStorageWritable(true)
     const held = sessionLeases.get(input.id)
-    return storageLifecycle.repository().deleteConversation({
-      ...input,
-      ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
-    })
+    try {
+      return await storageLifecycle.repository().deleteConversation({
+        ...input,
+        ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
+      })
+    } catch (cause) {
+      throw storageErrorForIpc(cause)
+    }
   })
   ipcMain.handle(Channels.conversationsSaveAll, async (_e, list: unknown) => {
     // A malformed (non-array) payload must never be treated as "zero conversations" —

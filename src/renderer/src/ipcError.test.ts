@@ -10,4 +10,14 @@ describe('ipcErrorMessage', () => {
       )
     ).toBe('Usuário ou senha PostgreSQL inválidos.')
   })
+
+  it('remove metadados tipados da persistência e preserva o motivo seguro', () => {
+    expect(
+      ipcErrorMessage(
+        new Error("Error invoking remote method 'conversations:upsert': StorageError: " +
+          '[agent-code-storage-error:REVISION_CONFLICT:fatal] A conversa foi alterada por outra gravação.'),
+        'fallback'
+      )
+    ).toBe('A conversa foi alterada por outra gravação.')
+  })
 })
