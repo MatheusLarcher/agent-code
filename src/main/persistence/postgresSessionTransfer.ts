@@ -10,6 +10,7 @@ import type { PoolClient } from 'pg'
 import { hashJson, normalizeJson, type JsonValue } from './hashes'
 import { StorageError, type PersistenceRepository, type VersionedConversation } from './types'
 import { decodePostgresJson, encodePostgresJson } from './postgresEncoding'
+import { SDK_VERSION } from './postgresSessionStore'
 
 export interface ImportedSessionItem {
   entity: 'sdk-session' | 'conversation'
@@ -70,9 +71,9 @@ export async function importSessions(
   for (const bundle of bundles) {
     await client.query(
       `INSERT INTO sdk_sessions(conversation_id, session_id, mtime_ms, sdk_version, verified_hash, resume_ready)
-       VALUES($1, $2, $3, '0.3.220', NULL, false)
+       VALUES($1, $2, $3, $4, NULL, false)
        ON CONFLICT(conversation_id, session_id) DO NOTHING`,
-      [bundle.conversationId, bundle.sessionId, bundle.mtime]
+      [bundle.conversationId, bundle.sessionId, bundle.mtime, SDK_VERSION]
     )
     const existing = await client.query<{ subpath: string; entry: SessionStoreEntry }>(
       `SELECT subpath, entry FROM sdk_session_entries
@@ -150,9 +151,9 @@ export async function importSessions(
     }
     const verifiedHash = hashJson(normalizeJson(finalPaths))
     await client.query(
-      `UPDATE sdk_sessions SET mtime_ms = GREATEST(mtime_ms, $3), sdk_version = '0.3.220',
+      `UPDATE sdk_sessions SET mtime_ms = GREATEST(mtime_ms, $3), sdk_version = $5,
          verified_hash = $4, resume_ready = true WHERE conversation_id = $1 AND session_id = $2`,
-      [bundle.conversationId, bundle.sessionId, bundle.mtime, verifiedHash]
+      [bundle.conversationId, bundle.sessionId, bundle.mtime, verifiedHash, SDK_VERSION]
     )
     imported.push({ entity: 'sdk-session', id: `${bundle.conversationId}:${bundle.sessionId}`, contentHash: verifiedHash })
   }

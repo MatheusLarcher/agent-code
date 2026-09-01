@@ -9,7 +9,9 @@ import type { Pool, PoolClient } from 'pg'
 import { hashJson, normalizeJson } from './hashes'
 import { decodePostgresJson, encodePostgresJson } from './postgresEncoding'
 
-const SDK_VERSION = '0.3.220'
+/** Versão exata do Agent SDK usada para gravar sessões. Mantida em sinc com a
+ *  dependência fixada no package.json — ver docs/postgresql-persistence.md. */
+export const SDK_VERSION = '0.3.257'
 
 interface EntryRow {
   entry: SessionStoreEntry

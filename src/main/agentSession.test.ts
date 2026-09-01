@@ -815,8 +815,8 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     const systemPrompt = optionsOfLastQuery().systemPrompt as { append: string }
     expect(systemPrompt.append).toContain('AUTHORITATIVE PERSISTENT MEMORY CATALOG')
     expect(systemPrompt.append).toContain('--- MEMORY FILE: MEMORY.md ---')
-    expect(systemPrompt.append).toContain('--- MEMORY FILE: produto/preferencia.md ---')
-    expect(systemPrompt.append).toContain('Sempre usar o fluxo real.')
+    expect(systemPrompt.append).not.toContain('--- MEMORY FILE: produto/preferencia.md ---')
+    expect(systemPrompt.append).not.toContain('Sempre usar o fluxo real.')
 
     await s.send('sem mudança')
     expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('[PERSISTENT_MEMORY_UPDATE]')
@@ -825,7 +825,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
 
   it('atualiza uma vez a conversa aberta ao adicionar, alterar ou remover memória', async () => {
     const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-refresh-'))
-    const memoryFile = join(memories, 'regra.md')
+    const memoryFile = join(memories, 'MEMORY.md')
     await writeFile(memoryFile, '# Regra\nVersão inicial.', 'utf8')
     cacheState.memoriesDir = memories
     const { s } = makeSession({ model: 'gpt-5.6-sol' })
@@ -843,7 +843,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
 
     await writeFile(join(memories, 'nova.md'), '# Nova\nAdicionada durante a conversa.', 'utf8')
     await s.send('depois da adição')
-    expect(String(pushedMessages(s).at(-1)?.message.content)).toContain('Adicionada durante a conversa.')
+    expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('Adicionada durante a conversa.')
 
     await rm(memoryFile)
     await s.send('depois da remoção')
@@ -854,7 +854,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
 
   it('atualiza memória quando o conteúdo muda com tamanho e timestamp iguais', async () => {
     const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-same-metadata-'))
-    const memoryFile = join(memories, 'regra.md')
+    const memoryFile = join(memories, 'MEMORY.md')
     await writeFile(memoryFile, '# Regra AAAA\n', 'utf8')
     const metadata = await stat(memoryFile)
     cacheState.memoriesDir = memories

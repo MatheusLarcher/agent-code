@@ -1,5 +1,6 @@
 import { DEFAULT_TITLE, type Conversation, type UIMessage } from './types'
 import type { RateLimitStatus, RepositoryChange, VersionedConversationDto } from '@shared/ipc'
+import { ipcStorageErrorCode } from './ipcError'
 
 // Persistence for the conversation history + UI state. Conversations are backed
 // by one SQLite db PER PROJECT (main process, via window.api.loadAllConversations/
@@ -195,6 +196,36 @@ function enqueueConversation(id: string, write: () => Promise<VersionedConversat
   return next
 }
 
+/** Re-read the authoritative revision of one conversation. Used to rebase a
+ * compare-and-set that lost the race, so a single stale revision cannot wedge
+ * every later write of that conversation. */
+async function authoritativeRevision(id: string): Promise<number | undefined> {
+  const records = await window.api.loadVersionedConversations()
+  const record = records.find((entry) => entry.id === id)
+  if (record) conversationRecords.set(id, record)
+  else conversationRecords.delete(id)
+  return record?.revision
+}
+
+/**
+ * Run a compare-and-set write, rebasing ONCE if the stored revision moved.
+ * The local state is what the user is looking at, so a lost race means our
+ * cached revision is stale — not that the edit should be dropped. Without this
+ * the mismatch is permanent: `conversationRecords` never catches up and every
+ * following write of that conversation fails with the same conflict.
+ */
+async function writeWithRebase(
+  id: string,
+  attempt: (expectedRevision: number | undefined) => Promise<VersionedConversationDto>
+): Promise<VersionedConversationDto> {
+  try {
+    return await attempt(conversationRecords.get(id)?.revision)
+  } catch (error) {
+    if (ipcStorageErrorCode(error) !== 'REVISION_CONFLICT') throw error
+    return attempt(await authoritativeRevision(id))
+  }
+}
+
 export async function saveConversations(list: Conversation[]): Promise<void> {
   const clean = list.map(cleanConversation)
   const nextIds = new Set(clean.map((conversation) => conversation.id))
@@ -204,13 +235,13 @@ export async function saveConversations(list: Conversation[]): Promise<void> {
     if (!current?.deletedAt && serialized(current?.payload) === serialized(conversation)) continue
     writes.push(
       enqueueConversation(conversation.id, () =>
-        window.api.upsertConversation({
-          id: conversation.id,
-          payload: conversation as unknown as Record<string, unknown>,
-          ...(conversationRecords.has(conversation.id)
-            ? { expectedRevision: conversationRecords.get(conversation.id)!.revision }
-            : {})
-        })
+        writeWithRebase(conversation.id, (expectedRevision) =>
+          window.api.upsertConversation({
+            id: conversation.id,
+            payload: conversation as unknown as Record<string, unknown>,
+            ...(expectedRevision === undefined ? {} : { expectedRevision })
+          })
+        )
       )
     )
   }
@@ -218,7 +249,12 @@ export async function saveConversations(list: Conversation[]): Promise<void> {
     if (current.deletedAt || nextIds.has(current.id)) continue
     writes.push(
       enqueueConversation(current.id, () =>
-        window.api.deleteConversation({ id: current.id, expectedRevision: conversationRecords.get(current.id)!.revision })
+        writeWithRebase(current.id, (expectedRevision) =>
+          // A conversation that already vanished upstream needs no tombstone.
+          expectedRevision === undefined
+            ? Promise.resolve(conversationRecords.get(current.id) ?? current)
+            : window.api.deleteConversation({ id: current.id, expectedRevision })
+        )
       )
     )
   }

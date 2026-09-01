@@ -240,13 +240,71 @@ describe('SqliteRepository', () => {
     await repository.initialize()
 
     const lease = await repository.acquireConversationLease('c1')
-    await expect(repository.acquireConversationLease('c1')).rejects.toMatchObject({
-      code: 'LEASE_HELD_BY_OTHER_DEVICE'
-    })
-    const renewed = await repository.renewConversationLease(lease)
-    expect(renewed.fencingEpoch).toBe(lease.fencingEpoch)
+    // Re-acquiring from the SAME installation is allowed on purpose: only a
+    // foreign lease fences. One session per conversation is enforced by the
+    // main process (`sessions` map + releaseSessionLease), not by the lease —
+    // and refusing our own lease locked the conversation out after a crash.
+    const again = await repository.acquireConversationLease('c1')
+    expect(again.fencingEpoch).toBe(lease.fencingEpoch + 1)
+    const renewed = await repository.renewConversationLease(again)
+    expect(renewed.fencingEpoch).toBe(again.fencingEpoch)
     await repository.releaseConversationLease(renewed)
     const next = await repository.acquireConversationLease('c1')
-    expect(next.fencingEpoch).toBe(2)
+    expect(next.fencingEpoch).toBe(3)
+  })
+})
+
+/** "Não consegue gravar porque tem outro writer ativo" — the lease is meant to
+ * fence a REMOTE device. Treating this installation's own lease as foreign
+ * locked the conversation out of its own machine. */
+describe('conversation lease only fences other installations', () => {
+  it('takes over an orphan lease left by a previous session of this installation', async () => {
+    const { cache, dbPath } = await tempCache()
+    const repository = new SqliteRepository(cache, dbPath, 'device-a')
+    await repository.initialize()
+
+    // Session that never released its lease (app killed mid-turn).
+    const orphan = await repository.acquireConversationLease('conv-1')
+    const taken = await repository.acquireConversationLease('conv-1')
+
+    expect(taken.ownerInstallationId).toBe('device-a')
+    expect(taken.fencingEpoch).toBeGreaterThan(orphan.fencingEpoch)
+    await repository.close()
+  })
+
+  it('lets this installation write without a fence while it holds the lease', async () => {
+    const { cache, dbPath } = await tempCache()
+    const repository = new SqliteRepository(cache, dbPath, 'device-a')
+    await repository.initialize()
+    await repository.acquireConversationLease('conv-1')
+
+    // A plain renderer save (draft/title/streaming) carries no lease.
+    const stored = await repository.upsertConversation({
+      id: 'conv-1',
+      payload: { id: 'conv-1', title: 'Sem fence' }
+    })
+
+    expect(stored.revision).toBeGreaterThan(0)
+    await repository.close()
+  })
+
+  it('still refuses a write when another installation holds the lease', async () => {
+    const { cache, dbPath } = await tempCache()
+    const mine = new SqliteRepository(cache, dbPath, 'device-a')
+    await mine.initialize()
+    const theirs = new SqliteRepository(cache, dbPath, 'device-b')
+    await theirs.initialize()
+    await theirs.acquireConversationLease('conv-1')
+    // The in-memory lease map belongs to each instance, so mirror the foreign
+    // lease into the instance under test the same way a shared store would.
+    const foreign = await theirs.acquireConversationLease('conv-1')
+    ;(mine as unknown as { leases: Map<string, unknown> }).leases.set('conv-1', foreign)
+
+    await expect(mine.acquireConversationLease('conv-1')).rejects.toBeInstanceOf(StorageError)
+    await expect(
+      mine.upsertConversation({ id: 'conv-1', payload: { id: 'conv-1', title: 'x' } })
+    ).rejects.toBeInstanceOf(StorageError)
+    await mine.close()
+    await theirs.close()
   })
 })

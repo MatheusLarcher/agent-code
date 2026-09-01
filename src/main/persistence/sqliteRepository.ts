@@ -319,7 +319,13 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
 
   async acquireConversationLease(conversationId: string): Promise<ConversationLease> {
     const current = this.leases.get(conversationId)
-    if (current && Date.parse(current.expiresAt) > Date.now()) {
+    // Only another installation blocks us; our own live lease is an orphan from
+    // a session that never released it, and must not lock us out.
+    if (
+      current &&
+      Date.parse(current.expiresAt) > Date.now() &&
+      current.ownerInstallationId !== this.installationId
+    ) {
       throw new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'Esta conversa já está em execução.')
     }
     const fencingEpoch = (this.leaseEpochs.get(conversationId) ?? 0) + 1
@@ -357,7 +363,15 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
   private assertLeaseFence(conversationId: string, fence?: LeaseFence): void {
     const current = this.leases.get(conversationId)
     if (!current || Date.parse(current.expiresAt) <= Date.now()) return
-    if (!fence || current.token !== fence.token || current.fencingEpoch !== fence.fencingEpoch) {
+    // Our own lease never rejects our own plain writes (draft, title, streamed
+    // messages); revision CAS already orders them. Only a foreign lease fences.
+    if (!fence) {
+      if (current.ownerInstallationId !== this.installationId) {
+        throw new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'Esta conversa possui outro writer ativo.')
+      }
+      return
+    }
+    if (current.token !== fence.token || current.fencingEpoch !== fence.fencingEpoch) {
       throw new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'Esta conversa possui outro writer ativo.')
     }
   }

@@ -367,7 +367,11 @@ export class PostgresRepository implements PersistenceRepository {
          FROM conversation_leases WHERE conversation_id = $1 FOR UPDATE`,
         [conversationId]
       )
-      if (current.rows[0]?.valid) {
+      // Only ANOTHER installation blocks us. A live lease owned by this same
+      // installation is our own orphan — the previous process died before it
+      // could release it — and refusing it would lock the conversation out of
+      // its own machine until the lease expired.
+      if (current.rows[0]?.valid && current.rows[0].owner_installation_id !== this.installationId) {
         throw new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'Esta conversa já possui um writer ativo.')
       }
       const fencingEpoch = Number(current.rows[0]?.fencing_epoch ?? 0) + 1
@@ -418,9 +422,13 @@ export class PostgresRepository implements PersistenceRepository {
 
   private async assertFence(client: PoolClient, conversationId: string, fence?: ConversationWrite['lease']): Promise<void> {
     if (!fence) {
+      // A lease guards against a REMOTE writer. Our own lease must not reject
+      // this installation's plain writes (draft, title, streamed messages) —
+      // those are the same user, and revision CAS already orders them.
       const held = await client.query(
-        'SELECT 1 FROM conversation_leases WHERE conversation_id = $1 AND expires_at > clock_timestamp()',
-        [conversationId]
+        `SELECT 1 FROM conversation_leases WHERE conversation_id = $1
+         AND owner_installation_id <> $2 AND expires_at > clock_timestamp()`,
+        [conversationId, this.installationId]
       )
       if (held.rowCount) throw new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'Esta conversa possui outro writer ativo.')
       return

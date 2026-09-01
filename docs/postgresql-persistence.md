@@ -34,8 +34,11 @@ cursor por instalação.
 ## Sessões e indisponibilidade
 
 Cada conversa possui lease, token e fencing epoch. O Agent SDK está fixado em
-`0.3.220` e recebe `sessionStore`, `sessionStoreFlush: 'eager'` e timeout de
-load. A retomada e a verificação usam somente as APIs públicas do SDK. Um
+`0.3.257` (subiu de `0.3.220` para o CLI embutido reconhecer Fable 5.1, que
+exige `2.1.251+`) e recebe `sessionStore`, `sessionStoreFlush: 'eager'` e
+timeout de load. A versão gravada em `sdk_sessions.sdk_version` vem da
+constante `SDK_VERSION` (`postgresSessionStore.ts`), fonte única também para o
+importador de sessões — não repetir o literal em SQL. A retomada e a verificação usam somente as APIs públicas do SDK. Um
 `mirror_error` bloqueia novos envios até reconciliação.
 
 Se PostgreSQL estiver selecionado e indisponível, o app não abre o SQLite como

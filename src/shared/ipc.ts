@@ -517,6 +517,7 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-opus-4-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-haiku-4-5': ['low', 'medium', 'high'],
+  'claude-fable-5-1': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-5.6-terra': ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -657,6 +658,7 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'claude-opus-4-5': 1_000_000,
   'claude-sonnet-5': 1_000_000,
   'claude-haiku-4-5': 200_000,
+  'claude-fable-5-1': 1_000_000,
   'claude-fable-5': 1_000_000,
   // OpenAI GPT-5.6 family — official model catalog.
   'gpt-5.6-luna': 1_050_000,

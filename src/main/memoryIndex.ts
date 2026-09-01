@@ -94,15 +94,21 @@ export function memoryCatalogFilesystemVersion(dir: string): string {
 }
 
 export function renderMemoryCatalog(files: MemoryCatalogFile[], rootDir = ''): string {
-  const entries = files.map(
+  // Only the root index is injected into every conversation. Individual memory
+  // files remain available on disk and the model is explicitly given the root
+  // folder so it can read one on demand when the task requires it.
+  const entries = files
+    .filter((file) => file.relPath.toLowerCase() === 'memory.md')
+    .map(
     (file) => `--- MEMORY FILE: ${file.relPath} ---\n${file.content.trim() || '(empty memory file)'}`
-  )
+    )
   return `[AUTHORITATIVE PERSISTENT MEMORY CATALOG]
-This is the complete persistent-memory snapshot for this user at conversation startup. Consider every
-memory below when handling requests. The configured memories directory is:
+This is the complete MEMORY.md index for this user at conversation startup. The other memory files are
+not injected automatically; read them from the configured memories directory when they are relevant.
+The configured memories directory is:
 ${rootDir || '(not specified)'}
-Paths below are relative to that directory. A later
-[PERSISTENT_MEMORY_UPDATE] replaces this entire catalog; do not combine stale entries with the replacement.
+Use the Read tool with this directory and the relative path listed in MEMORY.md to load a complete memory.
+A later [PERSISTENT_MEMORY_UPDATE] replaces this entire index; do not combine stale entries with the replacement.
 
 ${entries.length > 0 ? entries.join('\n\n') : '(no persistent memory files are currently available)'}
 [/AUTHORITATIVE PERSISTENT MEMORY CATALOG]`

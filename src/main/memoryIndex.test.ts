@@ -83,7 +83,7 @@ describe('memoryIndex', () => {
     expect(buildDynamicMemoryContext(dir, 'segredo')).not.toContain('Memória relevante: grande.md')
   })
 
-  it('carrega o índice e o conteúdo completo de todas as memórias no catálogo inicial', async () => {
+  it('carrega apenas MEMORY.md e referencia a pasta para leitura sob demanda', async () => {
     const dir = await fixture()
     const snapshot = createMemoryCatalogSnapshot(dir)
 
@@ -96,9 +96,10 @@ describe('memoryIndex', () => {
     expect(snapshot.catalog).toContain('AUTHORITATIVE PERSISTENT MEMORY CATALOG')
     expect(snapshot.catalog).toContain(dir)
     expect(snapshot.catalog).toContain('--- MEMORY FILE: MEMORY.md ---')
-    expect(snapshot.catalog).toContain('--- MEMORY FILE: 2D/erp.md ---')
-    expect(snapshot.catalog).toContain('ERP da 2D usa X')
-    expect(snapshot.catalog).toContain('--- MEMORY FILE: raiz.md ---')
+    expect(snapshot.catalog).not.toContain('--- MEMORY FILE: 2D/erp.md ---')
+    expect(snapshot.catalog).not.toContain('ERP da 2D usa X')
+    expect(snapshot.catalog).not.toContain('--- MEMORY FILE: raiz.md ---')
+    expect(snapshot.catalog).toContain('read them from the configured memories directory')
     expect(snapshot.filesystemVersion).toBe(memoryCatalogFilesystemVersion(dir))
   })
 

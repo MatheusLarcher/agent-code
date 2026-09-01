@@ -63,7 +63,7 @@ const MODELS = [
   { id: 'claude-opus-5', label: 'Opus 5' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
-  { id: 'claude-fable-5', label: 'Fable 5' }
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' }
 ]
 
 /** Labels for models no longer offered in the selector (Opus 4.8 was retired from
@@ -75,7 +75,8 @@ const LEGACY_MODEL_LABELS: Record<string, string> = {
   'claude-opus-4-8': 'Opus 4.8 (antigo)',
   'claude-opus-4-7': 'Opus 4.7 (antigo)',
   'claude-opus-4-6': 'Opus 4.6 (antigo)',
-  'claude-opus-4-5': 'Opus 4.5 (antigo)'
+  'claude-opus-4-5': 'Opus 4.5 (antigo)',
+  'claude-fable-5': 'Fable 5 (antigo)'
 }
 
 /** The selector list, plus `current` appended when it's a model that's no longer
