@@ -42,6 +42,7 @@ export function SettingsModal({
   const [cache, setCache] = useState<CacheInfo | null>(null)
   const [codex, setCodex] = useState<CodexStatus>({ connected: false })
   const [codexBusy, setCodexBusy] = useState(false)
+  const [claudeBusy, setClaudeBusy] = useState(false)
   const openAiRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -118,6 +119,30 @@ export function SettingsModal({
     notify('aviso', 'Desconectado do ChatGPT.')
   }
 
+  // Desconecta de verdade (logout + caches de auth), CONFIRMA pelo CLI que a
+  // máquina está deslogada e só então abre o login — assim o navegador nunca
+  // reaproveita a conta anterior em silêncio.
+  const switchClaudeAccount = async (): Promise<void> => {
+    setClaudeBusy(true)
+    try {
+      const status = await window.api.authLogout()
+      if (status.loggedIn) {
+        notify('erro', 'Não foi possível desconectar a conta atual do Claude. Feche o app e tente de novo.')
+        return
+      }
+      notify('aviso', 'Conta desconectada. Abrindo o login para você escolher a nova conta…')
+      const { ok } = await window.api.authLogin()
+      notify(
+        ok ? 'sucesso' : 'erro',
+        ok
+          ? 'Login concluído com a nova conta do Claude.'
+          : 'Login não concluído. Clique em "Trocar conta" novamente para tentar outra vez.'
+      )
+    } finally {
+      setClaudeBusy(false)
+    }
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card settings-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
@@ -163,6 +188,26 @@ export function SettingsModal({
         </section>
 
         <PostgresSettingsSection />
+
+        <section className="settings-section">
+          <div className="settings-row">
+            <span>
+              <strong>🟣 Claude</strong>
+              <span className="settings-desc">
+                Desconecta a conta atual (removendo os caches de login), confirma que a máquina ficou
+                deslogada e abre o login para você entrar com outra conta ou organização.
+              </span>
+            </span>
+            <button
+              className="btn ghost"
+              type="button"
+              onClick={switchClaudeAccount}
+              disabled={claudeBusy}
+            >
+              {claudeBusy ? 'Trocando…' : 'Trocar conta'}
+            </button>
+          </div>
+        </section>
 
         <section className="settings-section">
           <label className="settings-field">

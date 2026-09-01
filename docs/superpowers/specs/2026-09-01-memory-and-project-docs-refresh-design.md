@@ -26,7 +26,7 @@ Todo arquivo Markdown diretamente em `docs/` será enviado com:
 - conteúdo integral;
 - marcador explícito caso fique ilegível durante a leitura.
 
-Não haverá limite artificial de bytes para esses arquivos da raiz.
+O conteúdo da raiz terá um teto de segurança agregado de 8 MiB por dispatch. Ao atingir o teto, os arquivos restantes continuam listados com um marcador explícito, evitando travar o processo principal ou exceder o corpo máximo da requisição.
 
 ### Conteúdo das subpastas
 
@@ -72,7 +72,7 @@ Falhas de leitura serão representadas por código sanitizado (`ENOENT`, `EACCES
 1. alteração de memória com mesmo tamanho e timestamp produz atualização autoritativa;
 2. memória inalterada não é duplicada;
 3. criação e remoção de memória substituem o catálogo completo;
-4. todo `docs/*.md` chega integralmente em cada dispatch;
+4. todo `docs/*.md` dentro do teto agregado chega integralmente em cada dispatch, e excedentes recebem marcador;
 5. Markdown em subpasta envia cabeçalhos, mas não o corpo;
 6. arquivos não Markdown enviam apenas caminho e tipo;
 7. mudança em `docs/*.md` aparece na mensagem seguinte;

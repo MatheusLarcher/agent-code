@@ -22,6 +22,7 @@ import {
   type SkillCatalogSnapshot
 } from './skillDiscovery'
 import { readSessionTasks, watchSessionTasks } from './sessionTasks'
+import { exposeCacheSkills, managedSkillsFilesystemVersion, syncCacheSkills } from './skillManager'
 import { randomUUID } from 'node:crypto'
 import { isOllamaModel, isOpenAIModel, modelSupportsFastMode, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
 import { ensureCodexProxyRunning } from './codexProxy'
@@ -206,9 +207,9 @@ SAVING — when the user asks you to remember, save, note, or memorize something
 - Do NOT save things already evident from the project's code, git history, or CLAUDE.md.
 
 RECALLING — these files are your long-term knowledge about this user and their projects. The complete
-catalog is loaded once when this conversation starts. Before every user dispatch, Agent Code checks only
-file names, modification dates, and sizes. If anything changed, one complete authoritative replacement is
-attached automatically; unchanged catalogs are never duplicated in the conversation.`
+catalog is loaded once when this conversation starts. Before every user dispatch, Agent Code hashes the
+current Markdown contents. If anything changed, one complete authoritative replacement is attached
+automatically; unchanged catalogs are never duplicated in the conversation.`
 }
 
 // Tools auto-approved without prompting the user.
@@ -298,6 +299,13 @@ function trackOf(message: unknown, parentToolUseId: string | null): TrackInfo {
   }
 }
 
+const EMPTY_SKILL_CATALOG = createSkillCatalogSnapshot([])
+
+export interface SkillRuntimePaths {
+  appRoot: string
+  userHome?: string
+}
+
 export class AgentSession {
   private input = new AsyncQueue<SDKUserMessage>()
   private q: ReturnType<typeof query> | null = null
@@ -328,7 +336,7 @@ export class AgentSession {
   private lastContextTokens = 0
   /** Version of the complete persistent-memory catalog already loaded into this session. */
   private memoryCatalogVersion = ''
-  /** Cheap metadata-only signature checked before every user dispatch. */
+  /** Content signature checked before materializing a replacement catalog. */
   private memoryFilesystemVersion = ''
   /** Version of the authoritative skill catalog already loaded into this
    *  session. Recomputed before every user dispatch so installs/removals become
@@ -340,6 +348,11 @@ export class AgentSession {
   private nativeSkillRegistryVersion = ''
   /** Cheap metadata-only signature checked before parsing any frontmatter. */
   private skillFilesystemVersion = ''
+  /** Content signature of the versioned `.agents/skills` source already copied
+   * into the active cache for this session. */
+  private managedSkillSourceVersion = ''
+  /** A content-level managed skill change still awaiting SDK confirmation. */
+  private managedSkillReloadPending = false
   /** Per-session cancellation scope for Windows UI actions. */
   private windowsControlScope = windowsControl.createScope()
   /** Stops the task-folder watcher of the CURRENT sdk session (a resume/restart
@@ -365,7 +378,8 @@ export class AgentSession {
      *  so the renderer can close the matching modal. */
     private readonly onPermissionExpire: (id: string) => void,
     private readonly sessionStore?: SessionStore,
-    private readonly onTurnDurable?: (sessionId: string, mirrorFailed: boolean) => Promise<void>
+    private readonly onTurnDurable?: (sessionId: string, mirrorFailed: boolean) => Promise<void>,
+    private readonly skillRuntime?: SkillRuntimePaths
   ) {}
 
   async start(): Promise<boolean> {
@@ -384,14 +398,17 @@ export class AgentSession {
     // Tell the model where its per-user memory lives (and pre-load the complete catalog), so
     // "lembra disso" saves into the cache folder and recall works across chats.
     const cacheInfo = getCacheInfo()
+    this.synchronizeManagedSkills(cacheInfo.dir, cacheInfo.skillsDir)
     const memoriesDir = cacheInfo.memoriesDir
     const cacheSkillsDir = cacheInfo.skillsDir
-    this.memoryFilesystemVersion = memoryCatalogFilesystemVersion(memoriesDir)
     const memorySnapshot = this.readMemoryCatalogSnapshot(memoriesDir)
+    this.memoryFilesystemVersion = memorySnapshot.filesystemVersion
     this.memoryCatalogVersion = memorySnapshot.version
-    this.skillFilesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, undefined, cacheSkillsDir)
-    const skillSnapshot = this.readSkillCatalogSnapshot(cacheSkillsDir)
-    this.skillCatalogVersion = skillSnapshot.version
+    this.skillFilesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, this.skillRuntime?.userHome)
+    const skillSnapshot = this.readSkillCatalogSnapshot()
+    // The authoritative filesystem catalog is injected with the first user
+    // dispatch, only after reloadSkills() confirms the same names.
+    this.skillCatalogVersion = ''
     // The filesystem catalog and the CLI's native Skill registry are separate
     // states. Never mark the native registry as loaded before reloadSkills()
     // has actually confirmed it for this SDK process.
@@ -399,7 +416,6 @@ export class AgentSession {
     const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     append += `\n\n${memorySnapshot.catalog}`
-    append += `\n\n${skillSnapshot.catalog}`
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
 
     // Modo econômico: when the user toggled it on for THIS conversation, tell the
@@ -600,7 +616,7 @@ export class AgentSession {
     try {
       docsOutline = await buildProjectOutline(this.opts.cwd)
     } catch {
-      docsOutline = '[PROJECT_DOCS_OUTLINE]\ndocs/ [outline unavailable for this dispatch]\n[/PROJECT_DOCS_OUTLINE]'
+      docsOutline = '[PROJECT_DOCS_CONTEXT]\ndocs/ [context unavailable for this dispatch]\n[/PROJECT_DOCS_CONTEXT]'
     }
     const stamped = (body: string): string => {
       const context = [stamp, docsOutline, memoryCatalogUpdate, skillCatalogUpdate].filter(Boolean).join('\n\n')
@@ -826,8 +842,25 @@ export class AgentSession {
 
   // ---- internals ----
 
-  private readSkillCatalogSnapshot(cacheSkillsDir: string = getCacheInfo().skillsDir): SkillCatalogSnapshot {
-    return createSkillCatalogSnapshot(discoverSkills(this.opts.cwd, undefined, cacheSkillsDir))
+  private synchronizeManagedSkills(cacheDir: string, cacheSkillsDir: string): boolean {
+    const runtime = this.skillRuntime
+    if (!runtime) return false
+    const sourceVersion = managedSkillsFilesystemVersion(runtime.appRoot)
+    const sourceChanged = sourceVersion !== this.managedSkillSourceVersion
+    const result = sourceChanged
+      ? syncCacheSkills(runtime.appRoot, cacheDir, runtime.userHome)
+      : exposeCacheSkills(cacheSkillsDir, runtime.userHome)
+    if (result.errors.length === 0) {
+      this.managedSkillSourceVersion = sourceVersion
+      if (sourceChanged) this.managedSkillReloadPending = true
+      return this.managedSkillReloadPending
+    }
+    console.warn('[skills] managed skill synchronization failed:', result.errors.join('\n'))
+    return this.managedSkillReloadPending
+  }
+
+  private readSkillCatalogSnapshot(): SkillCatalogSnapshot {
+    return createSkillCatalogSnapshot(discoverSkills(this.opts.cwd, this.skillRuntime?.userHome))
   }
 
   private readMemoryCatalogSnapshot(memoriesDir: string = getCacheInfo().memoriesDir): MemoryCatalogSnapshot {
@@ -839,8 +872,8 @@ export class AgentSession {
     const filesystemVersion = memoryCatalogFilesystemVersion(memoriesDir)
     if (filesystemVersion === this.memoryFilesystemVersion) return ''
 
-    this.memoryFilesystemVersion = filesystemVersion
     const snapshot = this.readMemoryCatalogSnapshot(memoriesDir)
+    this.memoryFilesystemVersion = snapshot.filesystemVersion
     if (snapshot.version === this.memoryCatalogVersion) return ''
 
     this.memoryCatalogVersion = snapshot.version
@@ -848,33 +881,50 @@ export class AgentSession {
   }
 
   private async refreshSkillsIfChanged(): Promise<string> {
-    const cacheSkillsDir = getCacheInfo().skillsDir
-    const filesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, undefined, cacheSkillsDir)
-    if (filesystemVersion === this.skillFilesystemVersion) {
-      await this.reloadNativeSkillsIfNeeded(this.skillCatalogVersion)
+    const cacheInfo = getCacheInfo()
+    const managedChanged = this.synchronizeManagedSkills(cacheInfo.dir, cacheInfo.skillsDir)
+    const filesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, this.skillRuntime?.userHome)
+    if (
+      !managedChanged &&
+      this.skillCatalogVersion !== '' &&
+      filesystemVersion === this.skillFilesystemVersion &&
+      this.nativeSkillRegistryVersion === this.skillCatalogVersion
+    ) return ''
+
+    const snapshot = this.readSkillCatalogSnapshot()
+    if (!(await this.reloadNativeSkillsIfNeeded(snapshot, managedChanged))) {
+      if (this.skillCatalogVersion === '') {
+        this.skillCatalogVersion = EMPTY_SKILL_CATALOG.version
+        return renderSkillCatalogUpdate(EMPTY_SKILL_CATALOG)
+      }
       return ''
     }
 
     this.skillFilesystemVersion = filesystemVersion
-    const snapshot = this.readSkillCatalogSnapshot(cacheSkillsDir)
-    await this.reloadNativeSkillsIfNeeded(snapshot.version)
     if (snapshot.version === this.skillCatalogVersion) return ''
 
     this.skillCatalogVersion = snapshot.version
     return renderSkillCatalogUpdate(snapshot)
   }
 
-  private async reloadNativeSkillsIfNeeded(version: string): Promise<void> {
+  private async reloadNativeSkillsIfNeeded(snapshot: SkillCatalogSnapshot, force: boolean = false): Promise<boolean> {
     const q = this.q
-    if (q && version !== this.nativeSkillRegistryVersion) {
-      try {
-        await q.reloadSkills()
-        this.nativeSkillRegistryVersion = version
-      } catch (error) {
-        // The authoritative catalog below still lets the model read SKILL.md
-        // directly. Keep the user's dispatch moving and retry on the next send.
-        console.warn('[skills] native reload failed; using catalog refresh fallback:', error)
+    if (!q) return false
+    if (!force && snapshot.version === this.nativeSkillRegistryVersion) return true
+    try {
+      const response = await q.reloadSkills()
+      const loaded = new Set(response.skills.map((skill) => skill.name))
+      const missing = snapshot.skills.map((skill) => skill.name).filter((name) => !loaded.has(name))
+      if (missing.length > 0) {
+        console.warn(`[skills] native registry omitted expected skills: ${missing.join(', ')}`)
+        return false
       }
+      this.nativeSkillRegistryVersion = snapshot.version
+      this.managedSkillReloadPending = false
+      return true
+    } catch (error) {
+      console.warn('[skills] native reload failed; catalog remains unchanged:', error)
+      return false
     }
   }
 

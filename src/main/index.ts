@@ -27,7 +27,7 @@ import {
 import { initializeConfigPersistence, loadConfig, updateConfig } from './config'
 import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAudioSegment } from './openai'
 import { stopLocalSpeech, transcribeLocal } from './speech'
-import { isAuthenticated } from './auth'
+import { isAuthenticated, logoutClaude } from './auth'
 import { runClaudeLogin } from './login'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin } from './codexAuth'
 import { appendFileSync } from 'node:fs'
@@ -471,7 +471,7 @@ async function readProjectTree(root: string, keep: string[] = [], limit = 100): 
  * (project wins), sorted alphabetically.
  */
 async function listAgentSkills(projectRoot: string): Promise<SkillInfo[]> {
-  return discoverSkills(projectRoot, undefined, getCacheInfo().skillsDir).map(({ name, description }) => ({ name, description }))
+  return discoverSkills(projectRoot).map(({ name, description }) => ({ name, description }))
 }
 
 /**
@@ -781,6 +781,12 @@ function registerIpc(): void {
     authLog(`=== auth:login done: authenticated=${ok} ===`)
     return { ok }
   })
+  ipcMain.handle(Channels.authLogout, async () => {
+    assertStorageWritable()
+    const status = await logoutClaude()
+    authLog(`=== auth:logout: loggedIn=${status.loggedIn} authMethod=${status.authMethod} ===`)
+    return status
+  })
 
   // OpenAI Codex auth: same one-click OAuth pattern as Claude above, but
   // against the ChatGPT subscription login instead of an Anthropic account.
@@ -1077,7 +1083,8 @@ function registerIpc(): void {
         }
         await getSessionMessages(sessionId, { dir: opts.cwd, sessionStore })
         await repository.markSessionResumeReady(convId, sessionId, true, hashJson(normalizeJson(entries)))
-      }
+      },
+      { appRoot: app.getAppPath() }
     )
     sessions.set(convId, s)
     let ok = false

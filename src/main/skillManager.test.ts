@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { syncCacheSkills } from './skillManager'
+import { exposeCacheSkills, syncCacheSkills } from './skillManager'
 
 async function seedSkill(root: string, name: string, body: string): Promise<void> {
   const dir = join(root, name)
@@ -28,6 +28,12 @@ describe('syncCacheSkills', () => {
     result = syncCacheSkills(app, cache, home)
     expect(result.errors).toEqual([])
     expect(await readFile(join(home, '.claude', 'skills', 'brainstorming', 'SKILL.md'), 'utf8')).toContain('v2')
+
+    await rm(join(app, '.agents', 'skills', 'brainstorming'), { recursive: true })
+    result = syncCacheSkills(app, cache, home)
+    expect(result.errors).toEqual([])
+    expect(existsSync(join(cache, 'skills', 'brainstorming', 'SKILL.md'))).toBe(false)
+    expect(existsSync(join(home, '.claude', 'skills', 'brainstorming', 'SKILL.md'))).toBe(false)
   })
 
   it('preserva skill externa no cache e diretório global real', async () => {
@@ -44,6 +50,114 @@ describe('syncCacheSkills', () => {
     expect(result.available).toEqual(['bundled', 'external'])
     expect(await readFile(join(cache, 'skills', 'external', 'SKILL.md'), 'utf8')).toContain('cache')
     expect(await readFile(join(home, '.claude', 'skills', 'external', 'SKILL.md'), 'utf8')).toContain('perfil')
+  })
+
+  it('expõe skill adicionada a quente e remove somente junction gerenciada obsoleta', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-hot-'))
+    const skills = join(root, 'cache', 'skills')
+    const home = join(root, 'home')
+    await seedSkill(skills, 'dynamic', 'ativa')
+
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+    const globalSkill = join(home, '.claude', 'skills', 'dynamic', 'SKILL.md')
+    expect(existsSync(globalSkill)).toBe(true)
+
+    await rm(join(skills, 'dynamic'), { recursive: true })
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+    expect(existsSync(globalSkill)).toBe(false)
+  })
+
+  it('não remove caminho externo citado por manifesto empacotado corrompido', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-hostile-manifest-'))
+    const app = join(root, 'app')
+    const cache = join(root, 'cache')
+    const home = join(root, 'home')
+    const victim = join(root, 'victim')
+    await mkdir(join(cache, 'skills'), { recursive: true })
+    await mkdir(victim, { recursive: true })
+    await writeFile(join(victim, 'keep.txt'), 'não apagar', 'utf8')
+    await writeFile(
+      join(cache, 'skills', '.agent-code-bundled.json'),
+      JSON.stringify({ version: 1, skills: ['..\\..\\victim'] }),
+      'utf8'
+    )
+
+    const result = syncCacheSkills(app, cache, home)
+    expect(result.errors.join('\n')).toMatch(/nome inválido/i)
+    expect(await readFile(join(victim, 'keep.txt'), 'utf8')).toBe('não apagar')
+  })
+
+  it('remove a cópia gerenciada obsoleta mesmo depois de o usuário reescrever o conteúdo', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-replaced-link-'))
+    const skills = join(root, 'cache', 'skills')
+    const home = join(root, 'home')
+    await seedSkill(skills, 'foo', 'cache')
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+
+    const globalSkill = join(home, '.claude', 'skills', 'foo')
+    await seedSkill(join(home, '.claude', 'skills'), 'foo', 'editada pelo usuário')
+    await rm(join(skills, 'foo'), { recursive: true })
+
+    // O manifesto registra a skill como gerenciada, então a cópia sai junto com a
+    // origem — é o preço de materializar diretório real em vez de junction.
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+    expect(existsSync(globalSkill)).toBe(false)
+  })
+
+  it('nunca substitui diretório do usuário que o Agent Code não criou', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-user-dir-'))
+    const skills = join(root, 'cache', 'skills')
+    const home = join(root, 'home')
+    await seedSkill(skills, 'shared', 'cache')
+    await seedSkill(join(home, '.claude', 'skills'), 'shared', 'do usuário')
+
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+    expect(await readFile(join(home, '.claude', 'skills', 'shared', 'SKILL.md'), 'utf8')).toContain('do usuário')
+  })
+
+  it('migra manifesto v1 antes de remover uma junction gerenciada obsoleta', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-v1-stale-'))
+    const app = join(root, 'app')
+    const cache = join(root, 'cache')
+    const skills = join(cache, 'skills')
+    const home = join(root, 'home')
+    const globalRoot = join(home, '.claude', 'skills')
+    await seedSkill(skills, 'stale', 'antiga')
+    await mkdir(globalRoot, { recursive: true })
+    await symlink(join(skills, 'stale'), join(globalRoot, 'stale'), 'junction')
+    await writeFile(
+      join(globalRoot, '.agent-code-managed.json'),
+      JSON.stringify({ version: 1, skills: ['stale'] }),
+      'utf8'
+    )
+    await writeFile(
+      join(skills, '.agent-code-bundled.json'),
+      JSON.stringify({ version: 1, skills: ['stale'] }),
+      'utf8'
+    )
+
+    expect(syncCacheSkills(app, cache, home).errors).toEqual([])
+    await expect(lstat(join(globalRoot, 'stale'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('remove junction v1 já quebrada quando ainda aponta para o cache ativo', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-v1-dangling-'))
+    const app = join(root, 'app')
+    const cache = join(root, 'cache')
+    const skills = join(cache, 'skills')
+    const home = join(root, 'home')
+    const globalRoot = join(home, '.claude', 'skills')
+    await mkdir(skills, { recursive: true })
+    await mkdir(globalRoot, { recursive: true })
+    await symlink(join(skills, 'gone'), join(globalRoot, 'gone'), 'junction')
+    await writeFile(
+      join(globalRoot, '.agent-code-managed.json'),
+      JSON.stringify({ version: 1, skills: ['gone'] }),
+      'utf8'
+    )
+
+    expect(syncCacheSkills(app, cache, home).errors).toEqual([])
+    await expect(lstat(join(globalRoot, 'gone'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('repara link quebrado legado e religa ao trocar o cache', async () => {

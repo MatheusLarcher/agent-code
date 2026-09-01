@@ -8,7 +8,7 @@ import type { TodoItem } from './types'
 // This file mounts the full app dozens of times. Under the complete parallel
 // suite, jsdom can spend over 1s transforming/settling sibling files even though
 // the same flow completes in ~250ms in isolation.
-configure({ asyncUtilTimeout: 3_000 })
+configure({ asyncUtilTimeout: 10_000 })
 
 // jsdom has no layout engine — stub the DOM APIs the panels rely on.
 window.HTMLElement.prototype.scrollIntoView = vi.fn()

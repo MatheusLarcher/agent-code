@@ -225,11 +225,41 @@ export async function saveConversations(list: Conversation[]): Promise<void> {
   await Promise.all(writes)
 }
 
+/** This installation's id, used to ignore the change feed's echo of our OWN
+ * writes. Read lazily (and cached) so no caller has to thread it through. */
+let localInstallationId: string | null = null
+async function installationId(): Promise<string | null> {
+  if (localInstallationId) return localInstallationId
+  try {
+    localInstallationId = (await window.api.getStorageStatus()).installationId
+  } catch {
+    /* keep null — the revision guard below still applies */
+  }
+  return localInstallationId
+}
+
+/** Mark conversations as locally-modified BEFORE the debounced write runs.
+ * Without this there is a window (the debounce) in which the local state already
+ * has new messages but nothing is dirty yet, so a change-feed notification would
+ * replace the conversation with the last persisted revision and the message
+ * would vanish from the screen a moment after being typed. */
+export function markConversationsDirty(ids: Iterable<string>): void {
+  for (const id of ids) dirtyConversationIds.add(id)
+}
+
 /** Reload only the authoritative records signaled by the durable change feed.
  * Dirty local conversations are intentionally omitted so drafts or rejected
- * writes cannot be overwritten by another installation. */
+ * writes cannot be overwritten by another installation. Changes this
+ * installation produced are skipped entirely: they can only carry data we just
+ * wrote, never anything newer than what is already on screen. */
 export async function loadConversationChanges(changes: RepositoryChange[]): Promise<Map<string, Conversation | null>> {
-  const ids = new Set(changes.filter((change) => change.entity === 'conversation').map((change) => change.entityId))
+  const self = await installationId()
+  const ids = new Set(
+    changes
+      .filter((change) => change.entity === 'conversation')
+      .filter((change) => !self || change.installationId !== self)
+      .map((change) => change.entityId)
+  )
   if (!ids.size) return new Map()
   const records = await window.api.loadVersionedConversations()
   const fetched = new Map(records.map((record) => [record.id, record]))
@@ -237,6 +267,10 @@ export async function loadConversationChanges(changes: RepositoryChange[]): Prom
   for (const id of ids) {
     if (dirtyConversationIds.has(id)) continue
     const record = fetched.get(id)
+    // A revision we already hold carries the same payload — applying it would
+    // only risk clobbering newer local state with identical stored state.
+    const known = conversationRecords.get(id)
+    if (record && known && record.revision <= known.revision) continue
     const normalized = record ? normalizeConversation(record) : null
     if (record && normalized) {
       conversationRecords.set(id, {

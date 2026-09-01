@@ -1,12 +1,12 @@
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { closeSync, openSync, readSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs'
 import { createHash } from 'node:crypto'
 
 const MAX_FRONTMATTER_BYTES = 64 * 1024
 const VALID_SKILL_NAME = /^[\p{L}\p{N}][\p{L}\p{N}._:-]*$/u
 
-export type SkillSource = 'project-claude' | 'project-agents' | 'cache' | 'user-claude'
+export type SkillSource = 'project-claude' | 'user-claude'
 
 export interface DiscoveredSkill {
   name: string
@@ -55,11 +55,6 @@ export function parseSkillFrontmatter(md: string): { name: string; description: 
   return { name, description: description.replace(/\s+/g, ' ').trim() }
 }
 
-function inside(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate)
-  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
-}
-
 function canonicalDirectory(path: string): string | null {
   try {
     const real = realpathSync(path)
@@ -82,15 +77,11 @@ function readFrontmatterPrefix(path: string): string {
 
 function candidateSkillRoots(
   projectRoot: string,
-  userHome: string,
-  cacheSkillsRoot: string
+  userHome: string
 ): Array<{ path: string; source: SkillSource; native: boolean }> {
   const project = projectRoot && isAbsolute(projectRoot) ? resolve(projectRoot) : ''
-  const cache = cacheSkillsRoot && isAbsolute(cacheSkillsRoot) ? resolve(cacheSkillsRoot) : ''
   return [
     ...(project ? [{ path: join(project, '.claude', 'skills'), source: 'project-claude' as const, native: true }] : []),
-    ...(project ? [{ path: join(project, '.agents', 'skills'), source: 'project-agents' as const, native: false }] : []),
-    ...(cache ? [{ path: cache, source: 'cache' as const, native: true }] : []),
     { path: join(userHome, '.claude', 'skills'), source: 'user-claude', native: true }
   ]
 }
@@ -108,18 +99,16 @@ function skillEntries(root: string): Dirent[] {
  * after this signature changes. */
 export function skillCatalogFilesystemVersion(
   projectRoot: string,
-  userHome: string = homedir(),
-  cacheSkillsRoot: string = ''
+  userHome: string = homedir()
 ): string {
   const versionInput: Array<{ source: SkillSource; skillFile: string; modifiedAtMs: number; sizeBytes: number }> = []
-  for (const candidate of candidateSkillRoots(projectRoot, userHome, cacheSkillsRoot)) {
+  for (const candidate of candidateSkillRoots(projectRoot, userHome)) {
     const root = canonicalDirectory(candidate.path)
     if (!root) continue
     for (const entry of skillEntries(root)) {
       if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
       try {
         const skillFile = realpathSync(join(root, entry.name, 'SKILL.md'))
-        if (!inside(root, skillFile)) continue
         const metadata = statSync(skillFile)
         versionInput.push({
           source: candidate.source,
@@ -136,26 +125,24 @@ export function skillCatalogFilesystemVersion(
 }
 
 /**
- * `cacheSkillsRoot` is the active per-user skill store. It remains stable when
- * the user opens a chat for another project and follows cache-folder changes.
+ * Only roots the SDK itself scans are catalogued. Cache skills reach the model
+ * because `exposeCacheSkills` materializes them inside the user root.
  */
 export function discoverSkills(
   projectRoot: string,
-  userHome: string = homedir(),
-  cacheSkillsRoot: string = ''
+  userHome: string = homedir()
 ): DiscoveredSkill[] {
   const byName = new Map<string, DiscoveredSkill>()
-  for (const candidateRoot of candidateSkillRoots(projectRoot, userHome, cacheSkillsRoot)) {
+  for (const candidateRoot of candidateSkillRoots(projectRoot, userHome)) {
     const root = canonicalDirectory(candidateRoot.path)
     if (!root) continue
     for (const entry of skillEntries(root)) {
       if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
       try {
         const skillFile = realpathSync(join(root, entry.name, 'SKILL.md'))
-        if (!inside(root, skillFile)) continue
         const metadata = statSync(skillFile)
         const parsed = parseSkillFrontmatter(readFrontmatterPrefix(skillFile))
-        if (!parsed || byName.has(parsed.name)) continue
+        if (!parsed || parsed.name !== entry.name || byName.has(parsed.name)) continue
         byName.set(parsed.name, {
           ...parsed,
           skillFile,
@@ -183,8 +170,9 @@ This is the complete current catalog of every skill discovered in the configured
 cache, and user-global filesystem roots. It supersedes shorter or incomplete listings of those skills;
 SDK-bundled commands that have no SKILL.md in these roots may still be listed separately by the runtime.
 Before acting on every user request, compare it with ALL descriptions below. When the user names a skill,
-or the request clearly matches a description, load that skill through the Skill tool or read its SKILL.md
-FIRST and follow it. Never claim that a skill was loaded unless the tool/read succeeded.\n\n${lines.length > 0 ? lines.join('\n') : '(no filesystem skills are currently available)'}`
+or the request clearly matches a description, load that skill through the Skill tool FIRST and follow it.
+Every filesystem skill listed here has been exposed through a native SDK root; never claim that a skill was
+loaded unless the Skill tool call succeeded.\n\n${lines.length > 0 ? lines.join('\n') : '(no filesystem skills are currently available)'}`
 }
 
 export function createSkillCatalogSnapshot(skills: DiscoveredSkill[]): SkillCatalogSnapshot {

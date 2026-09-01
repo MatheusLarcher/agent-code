@@ -20,6 +20,8 @@ export interface MemoryCatalogSnapshot {
   rootDir: string
   files: MemoryCatalogFile[]
   catalog: string
+  /** Content fingerprint of the exact files included in this snapshot. */
+  filesystemVersion: string
   version: string
 }
 
@@ -66,14 +68,29 @@ function listMemoryFileMetadata(dir: string): MemoryFileMetadata[] {
   return out
 }
 
-/** Cheap tree signature checked before every user dispatch. No file content is read. */
+function updateMemoryHash(
+  hash: ReturnType<typeof createHash>,
+  relPath: string,
+  content: string
+): void {
+  hash.update(relPath).update('\0').update(content, 'utf8').update('\0')
+}
+
+/** Content signature checked before every user dispatch. Reading the bodies is
+ * intentional: cloud sync can preserve both size and timestamp while replacing a
+ * memory, and that change must still invalidate the authoritative catalog. */
 export function memoryCatalogFilesystemVersion(dir: string): string {
-  const metadata = listMemoryFileMetadata(dir).map(({ relPath, modifiedAtMs, sizeBytes }) => ({
-    relPath,
-    modifiedAtMs,
-    sizeBytes
-  }))
-  return createHash('sha256').update(JSON.stringify({ dir, metadata })).digest('hex')
+  const hash = createHash('sha256').update(dir).update('\0')
+  for (const metadata of listMemoryFileMetadata(dir)) {
+    try {
+      const content = readFileSync(metadata.fullPath, 'utf8')
+      if (content.includes('\0')) continue
+      updateMemoryHash(hash, metadata.relPath, content)
+    } catch {
+      // A file can disappear or become unreadable while the tree is hashed.
+    }
+  }
+  return hash.digest('hex')
 }
 
 export function renderMemoryCatalog(files: MemoryCatalogFile[], rootDir = ''): string {
@@ -109,12 +126,15 @@ export function createMemoryCatalogSnapshot(dir: string): MemoryCatalogSnapshot 
     }
   }
   const catalog = renderMemoryCatalog(files, dir)
-  const versionInput = { dir, files: files.map(({ relPath, content }) => ({ relPath, content })) }
+  const hash = createHash('sha256').update(dir).update('\0')
+  for (const file of files) updateMemoryHash(hash, file.relPath, file.content)
+  const filesystemVersion = hash.digest('hex')
   return {
     rootDir: dir,
     files,
     catalog,
-    version: createHash('sha256').update(JSON.stringify(versionInput)).digest('hex')
+    filesystemVersion,
+    version: filesystemVersion
   }
 }
 

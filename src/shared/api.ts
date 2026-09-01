@@ -9,6 +9,7 @@ import type {
   BrowserInput,
   BrowserState,
   CacheInfo,
+  ClaudeAuthStatus,
   CodexStatus,
   FileAttachment,
   FileBytes,
@@ -128,6 +129,8 @@ export interface AgentCodeApi {
   authStatus(): Promise<{ authenticated: boolean }>
   /** Trigger the Claude OAuth login (opens the system browser); resolves when done. */
   authLogin(): Promise<{ ok: boolean }>
+  /** Erase the saved Claude OAuth login (+ stale caches); resolves with the verified status. */
+  authLogout(): Promise<ClaudeAuthStatus>
   /** Whether a Codex (ChatGPT subscription) login already exists. */
   codexStatus(): Promise<CodexStatus>
   /** Trigger the Codex OAuth login (opens the system browser); resolves when tokens are saved. */

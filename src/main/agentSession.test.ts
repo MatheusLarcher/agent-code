@@ -3,7 +3,7 @@
 // so it must run in the node env, not the default jsdom (which can't externalize
 // the newer node:sqlite builtin and tries to bundle it).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 const configState = vi.hoisted(() => ({ windowsControlEnabled: false as unknown }))
@@ -29,7 +29,7 @@ vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: ensureCodexProxyMock }
 vi.mock('./store', () => ({
   getCacheInfo: () => ({ ...cacheState })
 }))
-const projectOutlineMock = vi.hoisted(() => vi.fn(async () => '[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]'))
+const projectOutlineMock = vi.hoisted(() => vi.fn(async () => '[PROJECT_DOCS_CONTEXT]\ndocs/\n[/PROJECT_DOCS_CONTEXT]'))
 vi.mock('./projectOutline', () => ({ buildProjectOutline: projectOutlineMock }))
 
 // Captures the Options object start() hands to the SDK, and ends the stream at
@@ -54,6 +54,7 @@ import {
   loopLimitFromPrompt
 } from './agentSession'
 import type { BrowserController } from './browserController'
+import type { SkillRuntimePaths } from './agentSession'
 
 const describeImagesMock = vi.fn()
 vi.mock('./visionRelay', async () => {
@@ -77,6 +78,7 @@ function makeSession(opts: {
   cwd?: string
   economyMode?: boolean
   loopEnabled?: boolean
+  skillRuntime?: SkillRuntimePaths
 } = {}): {
   s: AgentSession
   emit: ReturnType<typeof vi.fn>
@@ -87,7 +89,17 @@ function makeSession(opts: {
   const ask = vi.fn()
   const expire = vi.fn()
   const browser = {} as BrowserController
-  const s = new AgentSession({ convId: 'c1', cwd: '/proj', ...opts }, browser, emit, ask, expire)
+  const { skillRuntime, ...agentOpts } = opts
+  const s = new AgentSession(
+    { convId: 'c1', cwd: '/proj', ...agentOpts },
+    browser,
+    emit,
+    ask,
+    expire,
+    undefined,
+    undefined,
+    skillRuntime
+  )
   return { s, emit, ask, expire }
 }
 
@@ -111,7 +123,7 @@ beforeEach(() => {
   queryMock.mockClear()
   ensureCodexProxyMock.mockClear()
   projectOutlineMock.mockReset()
-  projectOutlineMock.mockResolvedValue('[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]')
+  projectOutlineMock.mockResolvedValue('[PROJECT_DOCS_CONTEXT]\ndocs/\n[/PROJECT_DOCS_CONTEXT]')
 })
 
 describe('AgentSession — fluxo de permissão', () => {
@@ -671,7 +683,7 @@ describe('AgentSession — vision_fallback_router', () => {
     const [msg] = pushedMessages(s)
     // O texto recebe carimbo, documentação e a atualização inicial sem passar pelo relay.
     const content = msg.message.content as string
-    expect(content).toContain('[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]')
+    expect(content).toContain('[PROJECT_DOCS_CONTEXT]\ndocs/\n[/PROJECT_DOCS_CONTEXT]')
     expect(content).toContain('[PERSISTENT_MEMORY_UPDATE]')
     expect(content).toContain('só texto, sem imagem')
   })
@@ -750,8 +762,12 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(options.additionalDirectories).toEqual(expect.arrayContaining(['C:\\test\\agent-code\\skills']))
   })
 
-  it('envia nome e descrição de skills .agents no system prompt', async () => {
+  it('sincroniza skill .agents e só anuncia após confirmação do registro nativo', async () => {
     const project = await mkdtemp(join(tmpdir(), 'agent-session-skills-'))
+    const home = join(project, 'home')
+    const cache = join(project, 'cache')
+    cacheState.dir = cache
+    cacheState.skillsDir = join(cache, 'skills')
     const skillDir = join(project, '.agents', 'skills', 'modelar')
     await mkdir(skillDir, { recursive: true })
     await writeFile(
@@ -759,17 +775,31 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
       '---\nname: modelar\ndescription: editar qualquer arquivo STL ou 3MF\n---\n\nCORPO_NAO_VAI_NO_PROMPT',
       'utf8'
     )
-    const { s } = makeSession({ cwd: project, model: 'gpt-5.6-sol' })
+    const { s } = makeSession({
+      cwd: project,
+      model: 'gpt-5.6-sol',
+      skillRuntime: { appRoot: project, userHome: home }
+    })
 
     await s.start()
 
     const options = optionsOfLastQuery()
     const systemPrompt = options.systemPrompt as { append: string }
-    expect(systemPrompt.append).toContain('AUTHORITATIVE FILESYSTEM SKILLS CATALOG')
-    expect(systemPrompt.append).toContain('/modelar')
-    expect(systemPrompt.append).toContain('Description: editar qualquer arquivo STL ou 3MF')
-    expect(systemPrompt.append).not.toContain('CORPO_NAO_VAI_NO_PROMPT')
-    expect(options.additionalDirectories).toEqual(expect.arrayContaining([join(project, '.agents', 'skills')]))
+    expect(systemPrompt.append).not.toContain('AUTHORITATIVE FILESYSTEM SKILLS CATALOG')
+    expect(systemPrompt.append).not.toContain('/modelar')
+    expect(options.additionalDirectories).toEqual(expect.arrayContaining([join(cache, 'skills')]))
+
+    const reloadSkills = vi.fn(async () => ({
+      skills: [{ name: 'modelar', description: 'editar', argumentHint: '' }]
+    }))
+    ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
+    await s.send('use a skill')
+
+    const dispatched = String(pushedMessages(s).at(-1)?.message.content)
+    expect(dispatched).toContain('[SKILL_CATALOG_UPDATE]')
+    expect(dispatched).toContain('/modelar')
+    expect(dispatched).toContain('Description: editar qualquer arquivo STL ou 3MF')
+    expect(dispatched).not.toContain('CORPO_NAO_VAI_NO_PROMPT')
   })
 
   it('envia todas as memórias uma vez no system prompt inicial', async () => {
@@ -822,16 +852,43 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(removed).not.toContain('Versão atualizada e maior.')
   })
 
+  it('atualiza memória quando o conteúdo muda com tamanho e timestamp iguais', async () => {
+    const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-same-metadata-'))
+    const memoryFile = join(memories, 'regra.md')
+    await writeFile(memoryFile, '# Regra AAAA\n', 'utf8')
+    const metadata = await stat(memoryFile)
+    cacheState.memoriesDir = memories
+    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+    await s.start()
+
+    await writeFile(memoryFile, '# Regra BBBB\n', 'utf8')
+    await utimes(memoryFile, metadata.atime, metadata.mtime)
+    await s.send('mudança preservou metadados')
+
+    const update = String(pushedMessages(s).at(-1)?.message.content)
+    expect(update).toContain('[PERSISTENT_MEMORY_UPDATE]')
+    expect(update).toContain('# Regra BBBB')
+    expect(update).not.toContain('# Regra AAAA')
+  })
+
   it('recarrega o registro nativo antes do primeiro envio mesmo sem mudança no catálogo', async () => {
     const project = await mkdtemp(join(tmpdir(), 'agent-session-first-skill-reload-'))
-    const skillDir = join(project, '.agents', 'skills', '3d-print-modeling')
+    const home = join(project, 'home')
+    const cache = join(project, 'cache')
+    cacheState.dir = cache
+    cacheState.skillsDir = join(cache, 'skills')
+    const skillDir = join(project, '.claude', 'skills', '3d-print-modeling')
     await mkdir(skillDir, { recursive: true })
     await writeFile(
       join(skillDir, 'SKILL.md'),
       '---\nname: 3d-print-modeling\ndescription: editar modelos 3D\n---\n',
       'utf8'
     )
-    const { s } = makeSession({ cwd: project, model: 'gpt-5.6-sol' })
+    const { s } = makeSession({
+      cwd: project,
+      model: 'gpt-5.6-sol',
+      skillRuntime: { appRoot: project, userHome: home }
+    })
     await s.start()
 
     const reloadSkills = vi.fn(async () => ({
@@ -843,20 +900,30 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     await s.send('continue sem recarregar de novo')
 
     expect(reloadSkills).toHaveBeenCalledTimes(1)
-    expect(String(pushedMessages(s).at(-2)?.message.content)).not.toContain('[SKILL_CATALOG_UPDATE]')
+    expect(String(pushedMessages(s).at(-2)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
     expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('[SKILL_CATALOG_UPDATE]')
   })
 
-  it('recarrega e injeta o catálogo uma vez quando skills mudam na conversa ativa', async () => {
+  it('sincroniza, recarrega e injeta o catálogo quando .agents muda na conversa ativa', async () => {
     const project = await mkdtemp(join(tmpdir(), 'agent-session-skill-refresh-'))
+    const home = join(project, 'home')
+    const cache = join(project, 'cache')
+    cacheState.dir = cache
+    cacheState.skillsDir = join(cache, 'skills')
     const skillDir = join(project, '.agents', 'skills', 'dynamic')
     await mkdir(skillDir, { recursive: true })
     await writeFile(join(skillDir, 'SKILL.md'), '---\nname: dynamic\ndescription: versão inicial\n---', 'utf8')
-    const { s } = makeSession({ cwd: project, model: 'gpt-5.6-sol' })
+    const { s } = makeSession({
+      cwd: project,
+      model: 'gpt-5.6-sol',
+      skillRuntime: { appRoot: project, userHome: home }
+    })
     await s.start()
     await Promise.resolve()
 
-    const reloadSkills = vi.fn(async () => ({ skills: [] }))
+    const reloadSkills = vi.fn(async () => ({
+      skills: [{ name: 'dynamic', description: 'dinâmica', argumentHint: '' }]
+    }))
     ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
     await writeFile(
       join(skillDir, 'SKILL.md'),
@@ -883,19 +950,28 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(removalUpdate).not.toContain('/dynamic')
   })
 
-  it('repete somente a recarga nativa após falha, sem duplicar o catálogo', async () => {
+  it('mantém o catálogo antigo até a recarga nativa ser confirmada', async () => {
     const project = await mkdtemp(join(tmpdir(), 'agent-session-skill-retry-'))
-    const skillDir = join(project, '.agents', 'skills', 'retry')
+    const home = join(project, 'home')
+    const cache = join(project, 'cache')
+    cacheState.dir = cache
+    cacheState.skillsDir = join(cache, 'skills')
+    const skillDir = join(project, '.claude', 'skills', 'retry')
     await mkdir(skillDir, { recursive: true })
     await writeFile(join(skillDir, 'SKILL.md'), '---\nname: retry\ndescription: inicial\n---', 'utf8')
-    const { s } = makeSession({ cwd: project, model: 'gpt-5.6-sol' })
+    const { s } = makeSession({
+      cwd: project,
+      model: 'gpt-5.6-sol',
+      skillRuntime: { appRoot: project, userHome: home }
+    })
     await s.start()
     await Promise.resolve()
 
+    const loaded = { name: 'retry', description: 'retry', argumentHint: '' }
     const reloadSkills = vi
-      .fn<() => Promise<{ skills: never[] }>>()
+      .fn<() => Promise<{ skills: Array<typeof loaded> }>>()
       .mockRejectedValueOnce(new Error('falha transitória'))
-      .mockResolvedValue({ skills: [] })
+      .mockResolvedValue({ skills: [loaded] })
     ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     await writeFile(join(skillDir, 'SKILL.md'), '---\nname: retry\ndescription: atualizada\n---', 'utf8')
@@ -910,7 +986,89 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(reloadSkills).toHaveBeenCalledTimes(2)
     const messages = pushedMessages(s)
     expect(String(messages.at(-2)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
-    expect(String(messages.at(-1)?.message.content)).not.toContain('[SKILL_CATALOG_UPDATE]')
+    expect(String(messages.at(-2)?.message.content)).not.toContain('/retry')
+    expect(String(messages.at(-1)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
+    expect(String(messages.at(-1)?.message.content)).toContain('Description: atualizada')
+  })
+
+  it('força recarga quando o conteúdo muda sem alterar tamanho nem timestamp', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'agent-session-skill-same-metadata-'))
+    const home = join(project, 'home')
+    const cache = join(project, 'cache')
+    cacheState.dir = cache
+    cacheState.skillsDir = join(cache, 'skills')
+    const skillDir = join(project, '.agents', 'skills', 'stable-meta')
+    const sourceFile = join(skillDir, 'SKILL.md')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(sourceFile, '---\nname: stable-meta\ndescription: igual\n---\nBODY_A', 'utf8')
+    const original = await stat(sourceFile)
+    const { s } = makeSession({
+      cwd: project,
+      model: 'gpt-5.6-sol',
+      skillRuntime: { appRoot: project, userHome: home }
+    })
+    await s.start()
+
+    const loaded = { name: 'stable-meta', description: 'igual', argumentHint: '' }
+    const reloadSkills = vi
+      .fn<() => Promise<{ skills: Array<typeof loaded> }>>()
+      .mockResolvedValueOnce({ skills: [loaded] })
+      .mockRejectedValueOnce(new Error('falha depois da cópia'))
+      .mockResolvedValue({ skills: [loaded] })
+    ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
+    await s.send('confirme a versão inicial')
+
+    await writeFile(sourceFile, '---\nname: stable-meta\ndescription: igual\n---\nBODY_B', 'utf8')
+    await utimes(sourceFile, original.atime, original.mtime)
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await s.send('primeira recarga falha')
+      await s.send('repita mesmo com os metadados iguais')
+    } finally {
+      warning.mockRestore()
+    }
+
+    expect(reloadSkills).toHaveBeenCalledTimes(3)
+    expect(await readFile(join(cache, 'skills', 'stable-meta', 'SKILL.md'), 'utf8')).toContain('BODY_B')
+  })
+
+  it('repete a recarga quando o SDK omite uma skill esperada', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'agent-session-skill-missing-'))
+    const home = join(project, 'home')
+    const cache = join(project, 'cache')
+    cacheState.dir = cache
+    cacheState.skillsDir = join(cache, 'skills')
+    const skillDir = join(project, '.claude', 'skills', 'expected')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: expected\ndescription: inicial\n---', 'utf8')
+    const { s } = makeSession({
+      cwd: project,
+      model: 'gpt-5.6-sol',
+      skillRuntime: { appRoot: project, userHome: home }
+    })
+    await s.start()
+
+    const loaded = { name: 'expected', description: 'expected', argumentHint: '' }
+    const reloadSkills = vi
+      .fn<() => Promise<{ skills: Array<typeof loaded> }>>()
+      .mockResolvedValueOnce({ skills: [] })
+      .mockResolvedValue({ skills: [loaded] })
+    ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: expected\ndescription: atualizada\n---', 'utf8')
+
+    try {
+      await s.send('registro ainda incompleto')
+      await s.send('registro confirmado')
+    } finally {
+      warning.mockRestore()
+    }
+
+    expect(reloadSkills).toHaveBeenCalledTimes(2)
+    const messages = pushedMessages(s)
+    expect(String(messages.at(-2)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
+    expect(String(messages.at(-2)?.message.content)).not.toContain('/expected')
+    expect(String(messages.at(-1)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
   })
 
   it('não injeta proxy nem limite GPT numa sessão Anthropic', async () => {
@@ -970,11 +1128,11 @@ describe('AgentSession — carimbo de data/hora e máquina', () => {
   })
 })
 
-describe('AgentSession — índice de docs por mensagem', () => {
-  it('recalcula e anexa o índice em cada envio', async () => {
+describe('AgentSession — documentação do projeto em cada mensagem', () => {
+  it('recalcula e anexa o contexto autoritativo em cada envio', async () => {
     projectOutlineMock
-      .mockResolvedValueOnce('[PROJECT_DOCS_OUTLINE]\ndocs/\n  primeiro.md\n[/PROJECT_DOCS_OUTLINE]')
-      .mockResolvedValueOnce('[PROJECT_DOCS_OUTLINE]\ndocs/\n  segundo.md\n[/PROJECT_DOCS_OUTLINE]')
+      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  primeiro.md\n[/PROJECT_DOCS_CONTEXT]')
+      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  segundo.md\n[/PROJECT_DOCS_CONTEXT]')
     const { s } = makeSession()
 
     await s.send('primeira')
@@ -987,20 +1145,20 @@ describe('AgentSession — índice de docs por mensagem', () => {
     expect(projectOutlineMock).toHaveBeenCalledWith('/proj')
   })
 
-  it('falha do índice não bloqueia nem perde a mensagem', async () => {
+  it('falha do contexto não bloqueia nem perde a mensagem', async () => {
     projectOutlineMock.mockRejectedValueOnce(new Error('sem acesso'))
     const { s } = makeSession()
 
     await s.send('continue mesmo assim')
 
     const content = pushedMessages(s).at(-1)!.message.content as string
-    expect(content).toContain('outline unavailable for this dispatch')
+    expect(content).toContain('context unavailable for this dispatch')
     expect(content.endsWith('\n\ncontinue mesmo assim')).toBe(true)
   })
 
-  it('não envia o índice como pista para o relay de visão', async () => {
+  it('não envia a documentação como pista para o relay de visão', async () => {
     describeImagesMock.mockResolvedValueOnce('descrição')
-    projectOutlineMock.mockResolvedValueOnce('[PROJECT_DOCS_OUTLINE]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_OUTLINE]')
+    projectOutlineMock.mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_CONTEXT]')
     const { s } = makeSession({ model: 'glm-5.2:cloud' })
 
     await s.send('analise a tela', [{ mediaType: 'image/png', data: 'AAA' }])

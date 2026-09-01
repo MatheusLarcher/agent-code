@@ -1,5 +1,5 @@
 ---
-name: "Modo econômico"
+name: "economy-mode"
 description: "Modo de economia de tokens para tarefas simples. Quando ativado pelo toggle na UI, instrui o LLM a pular validações, testes e verificações desnecessárias — apenas para tarefas triviais. NUNCA use este modo a menos que o toggle de economia esteja marcado na interface."
 ---
 

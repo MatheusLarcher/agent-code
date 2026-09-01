@@ -709,6 +709,14 @@ export interface OpenAiConfig {
   speed: number
 }
 
+/** What `claude auth status --json` reports. `authMethod` is `'none'` when the
+ *  machine is signed out — the switch-account flow only offers a new login after
+ *  seeing `{ loggedIn: false, authMethod: 'none' }`. */
+export interface ClaudeAuthStatus {
+  loggedIn: boolean
+  authMethod: string
+}
+
 /** OpenAI Codex login state (ChatGPT Plus/Pro/Team subscription, via OAuth —
  *  NOT an API key). Mirrors codexAuth.ts's `codexStatus()`; never carries the
  *  tokens themselves across IPC. */
@@ -1030,6 +1038,8 @@ export const Channels = {
   authStatus: 'auth:status',
   /** Run the Claude OAuth login (opens the browser); resolves when authenticated. */
   authLogin: 'auth:login',
+  /** Erase the saved Claude OAuth login. */
+  authLogout: 'auth:logout',
   /** Whether the user has a Codex (ChatGPT subscription) login saved. */
   codexStatus: 'codex:status',
   /** Run the Codex OAuth login (opens the browser); resolves when tokens are saved. */

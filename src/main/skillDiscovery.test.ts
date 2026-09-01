@@ -9,6 +9,7 @@ import {
   renderAgentSkillCatalog,
   skillCatalogFilesystemVersion
 } from './skillDiscovery'
+import { exposeCacheSkills } from './skillManager'
 
 async function skill(root: string, folder: string, name: string, description: string): Promise<void> {
   const dir = join(root, folder)
@@ -25,22 +26,24 @@ describe('skillDiscovery', () => {
     expect(parseSkillFrontmatter('---\nname: ../fora\ndescription: não\n---')).toBeNull()
   })
 
-  it('usa a mesma precedência da UI e injeta todas as descrições, mas não o corpo', async () => {
+  it('cataloga somente raízes nativas com precedência do projeto e sem incluir o corpo', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-project-'))
     const home = await mkdtemp(join(tmpdir(), 'skills-home-'))
     const cache = await mkdtemp(join(tmpdir(), 'skills-cache-'))
-    await skill(join(project, '.claude', 'skills'), 'native', 'duplicada', 'projeto nativo')
-    await skill(join(project, '.agents', 'skills'), 'adapted', 'adaptada', 'somente agents')
-    await skill(join(project, '.agents', 'skills'), 'loser', 'duplicada', 'não deve vencer')
-    await skill(cache, 'bundled', 'planejar', 'skill do Agent Code')
+    await skill(join(project, '.claude', 'skills'), 'duplicada', 'duplicada', 'projeto nativo')
+    await skill(join(project, '.agents', 'skills'), 'adaptada', 'adaptada', 'não é raiz nativa')
+    await skill(cache, 'planejar', 'planejar', 'skill do Agent Code')
+    await skill(join(home, '.claude', 'skills'), 'duplicada', 'duplicada', 'não deve vencer')
     await skill(join(home, '.claude', 'skills'), 'global', 'global', 'usuário')
+    expect(exposeCacheSkills(cache, home).errors).toEqual([])
 
-    const found = discoverSkills(project, home, cache)
-    expect(found.map(({ name }) => name)).toEqual(['adaptada', 'duplicada', 'global', 'planejar'])
+    const found = discoverSkills(project, home)
+    expect(found.map(({ name }) => name)).toEqual(['duplicada', 'global', 'planejar'])
     expect(found.find(({ name }) => name === 'duplicada')?.source).toBe('project-claude')
+    expect(found.find(({ name }) => name === 'planejar')?.source).toBe('user-claude')
 
     const catalog = renderAgentSkillCatalog(found)
-    expect(catalog).toContain('/adaptada')
+    expect(catalog).not.toContain('/adaptada')
     expect(catalog).toContain('/duplicada')
     expect(catalog).toContain('Description: projeto nativo')
     expect(catalog).toContain('/global')
@@ -51,7 +54,7 @@ describe('skillDiscovery', () => {
 
   it('lê somente o prefixo de SKILL.md grande sem descartar seu frontmatter', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-large-'))
-    const root = join(project, '.agents', 'skills', 'large')
+    const root = join(project, '.claude', 'skills', 'large-skill')
     await mkdir(root, { recursive: true })
     await writeFile(
       join(root, 'SKILL.md'),
@@ -59,7 +62,7 @@ describe('skillDiscovery', () => {
       'utf8'
     )
 
-    const found = discoverSkills(project, join(project, 'home'), join(project, 'no-cache'))
+    const found = discoverSkills(project, join(project, 'home'))
     expect(found).toEqual([
       expect.objectContaining({
         name: 'large-skill',
@@ -72,20 +75,20 @@ describe('skillDiscovery', () => {
 
   it('versiona adição, alteração e remoção pelo estado atual das skills', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-version-'))
-    const root = join(project, '.agents', 'skills')
+    const root = join(project, '.claude', 'skills')
     const home = join(project, 'home')
     const cache = join(project, 'cache')
     await skill(root, 'one', 'one', 'primeira descrição')
-    const firstFilesystemVersion = skillCatalogFilesystemVersion(project, home, cache)
-    const first = createSkillCatalogSnapshot(discoverSkills(project, home, cache))
+    const firstFilesystemVersion = skillCatalogFilesystemVersion(project, home)
+    const first = createSkillCatalogSnapshot(discoverSkills(project, home))
 
     await skill(root, 'one', 'one', 'descrição atualizada e maior')
-    const changedFilesystemVersion = skillCatalogFilesystemVersion(project, home, cache)
-    const changed = createSkillCatalogSnapshot(discoverSkills(project, home, cache))
+    const changedFilesystemVersion = skillCatalogFilesystemVersion(project, home)
+    const changed = createSkillCatalogSnapshot(discoverSkills(project, home))
     await skill(root, 'two', 'two', 'segunda skill')
-    const added = createSkillCatalogSnapshot(discoverSkills(project, home, cache))
+    const added = createSkillCatalogSnapshot(discoverSkills(project, home))
     await rm(join(root, 'one'), { recursive: true })
-    const removed = createSkillCatalogSnapshot(discoverSkills(project, home, cache))
+    const removed = createSkillCatalogSnapshot(discoverSkills(project, home))
 
     expect(changed.version).not.toBe(first.version)
     expect(changedFilesystemVersion).not.toBe(firstFilesystemVersion)
@@ -100,19 +103,26 @@ describe('skillDiscovery', () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-other-project-'))
     const home = await mkdtemp(join(tmpdir(), 'skills-empty-home-'))
     const cache = await mkdtemp(join(tmpdir(), 'skills-agent-code-'))
-    await skill(cache, 'review', 'code-review', 'revisar o diff')
+    await skill(cache, 'code-review', 'code-review', 'revisar o diff')
+    expect(exposeCacheSkills(cache, home).errors).toEqual([])
 
-    const found = discoverSkills(project, home, cache)
+    const found = discoverSkills(project, home)
     expect(found).toEqual([
-      expect.objectContaining({ name: 'code-review', source: 'cache', root: cache })
+      expect.objectContaining({ name: 'code-review', source: 'user-claude', root: join(home, '.claude', 'skills') })
     ])
+  })
+
+  it('não anuncia skill cujo diretório diverge do nome nativo', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'skills-name-mismatch-'))
+    await skill(join(project, '.claude', 'skills'), 'diretorio', 'outro-nome', 'inválida para o SDK')
+    expect(discoverSkills(project, join(project, 'home'))).toEqual([])
   })
 
   it('pasta ausente, skill malformada e raiz relativa não quebram', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-empty-'))
-    await mkdir(join(project, '.agents', 'skills', 'bad'), { recursive: true })
-    await writeFile(join(project, '.agents', 'skills', 'bad', 'SKILL.md'), 'sem frontmatter', 'utf8')
-    expect(discoverSkills(project, join(project, 'home'), join(project, 'no-cache'))).toEqual([])
-    expect(discoverSkills('relativo', join(project, 'home'), join(project, 'no-cache'))).toEqual([])
+    await mkdir(join(project, '.claude', 'skills', 'bad'), { recursive: true })
+    await writeFile(join(project, '.claude', 'skills', 'bad', 'SKILL.md'), 'sem frontmatter', 'utf8')
+    expect(discoverSkills(project, join(project, 'home'))).toEqual([])
+    expect(discoverSkills('relativo', join(project, 'home'))).toEqual([])
   })
 })

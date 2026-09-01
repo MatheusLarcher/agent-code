@@ -32,23 +32,26 @@ describe('buildProjectOutline', () => {
     expect(await buildProjectOutline(cwd)).toContain('docs/ [not present]')
   })
 
-  it('lista recursivamente arquivos, subpastas vazias e headings em ordem estável', async () => {
+  it('envia Markdown da raiz completo e subpastas apenas por cabeçalhos', async () => {
     const cwd = await fixture()
     await mkdir(join(cwd, 'docs', 'nested', 'empty'), { recursive: true })
     await writeFile(join(cwd, 'docs', 'z.txt'), 'conteúdo que não deve entrar')
-    await writeFile(join(cwd, 'docs', 'A.MD'), '# Principal\n## Detalhe\ncorpo secreto')
+    await writeFile(join(cwd, 'docs', 'A.MD'), '# Principal\n## Detalhe\ncorpo completo da raiz')
+    await writeFile(join(cwd, 'docs', 'nested', 'guia.md'), '# Guia interno\n## Passo\ncorpo secreto aninhado')
     await writeFile(join(cwd, 'docs', 'nested', 'b.json'), '{"secret":true}')
 
     const outline = await buildProjectOutline(cwd)
-    expect(outline).toContain('docs/')
-    expect(outline).toContain('A.MD')
-    expect(outline).toContain('# Principal')
-    expect(outline).toContain('## Detalhe')
+    expect(outline).toContain('[PROJECT_DOCS_CONTEXT]')
+    expect(outline).toContain('--- PROJECT DOC FILE: docs/A.MD ---')
+    expect(outline).toContain('# Principal\n## Detalhe\ncorpo completo da raiz')
     expect(outline).toContain('nested/')
     expect(outline).toContain('empty/')
+    expect(outline).toContain('guia.md')
+    expect(outline).toContain('# Guia interno')
+    expect(outline).toContain('## Passo')
+    expect(outline).not.toContain('corpo secreto aninhado')
     expect(outline).toContain('b.json [json]')
     expect(outline).toContain('z.txt [text]')
-    expect(outline).not.toContain('corpo secreto')
     expect(outline).not.toContain('conteúdo que não deve entrar')
     expect(outline.indexOf('A.MD')).toBeLessThan(outline.indexOf('nested/'))
     expect(await buildProjectOutline(cwd)).toBe(outline)
@@ -62,14 +65,39 @@ describe('buildProjectOutline', () => {
     expect(await buildProjectOutline(cwd)).toContain('novo.md')
   })
 
-  it('limita leitura de heading sem omitir caminhos', async () => {
+  it('limita cabeçalhos aninhados, mas não trunca Markdown da raiz', async () => {
     const cwd = await fixture()
-    await mkdir(join(cwd, 'docs'))
-    await writeFile(join(cwd, 'docs', 'grande.md'), `# Início\n${'x'.repeat(70 * 1024)}\n# Depois`)
+    await mkdir(join(cwd, 'docs', 'nested'), { recursive: true })
+    const large = `# Início\n${'x'.repeat(70 * 1024)}\n# Depois`
+    await writeFile(join(cwd, 'docs', 'completo.md'), large)
+    await writeFile(join(cwd, 'docs', 'nested', 'grande.md'), large)
     await writeFile(join(cwd, 'docs', 'sempre-listado.bin'), Buffer.from([0, 1, 2]))
     const outline = await buildProjectOutline(cwd)
+    expect(outline).toContain('--- PROJECT DOC FILE: docs/completo.md ---')
+    expect(outline).toContain('# Depois')
     expect(outline).toContain('grande.md [heading metadata limited: first 64 KiB scanned]')
     expect(outline).toContain('sempre-listado.bin [bin]')
+  })
+
+  it('marca Markdown da raiz que ultrapassa o teto agregado', async () => {
+    const cwd = await fixture()
+    await mkdir(join(cwd, 'docs'))
+    await writeFile(join(cwd, 'docs', 'enorme.md'), `# Enorme\n${'x'.repeat(8 * 1024 * 1024)}`)
+
+    const outline = await buildProjectOutline(cwd)
+    expect(outline).toContain('enorme.md [full content omitted: 8 MiB root Markdown budget]')
+    expect(outline).not.toContain('xxxxxxxxxxxxxxxx')
+  })
+
+  it('arquivo Markdown binário também consome o teto agregado', async () => {
+    const cwd = await fixture()
+    await mkdir(join(cwd, 'docs'))
+    await writeFile(join(cwd, 'docs', 'a-binario.md'), Buffer.alloc(7 * 1024 * 1024, 0))
+    await writeFile(join(cwd, 'docs', 'b-texto.md'), `# Texto\n${'x'.repeat(2 * 1024 * 1024)}`)
+
+    const outline = await buildProjectOutline(cwd)
+    expect(outline).toContain('a-binario.md [binary markdown omitted]')
+    expect(outline).toContain('b-texto.md [full content omitted: 8 MiB root Markdown budget]')
   })
 
   it('lista symlink sem atravessá-lo', async () => {

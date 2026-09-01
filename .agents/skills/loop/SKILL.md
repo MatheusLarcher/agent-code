@@ -1,5 +1,5 @@
 ---
-name: "Loop"
+name: "loop"
 description: "Execute a prompt repeatedly on a fixed interval or with self-paced wakeups. Use when the user asks to run a task periodically, monitor status, poll a deploy or log, or keep iterating until a stated condition is met."
 ---
 

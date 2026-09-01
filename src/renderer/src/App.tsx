@@ -37,7 +37,8 @@ import {
   saveUi,
   loadUsageLimits,
   saveUsageLimits,
-  loadConversationChanges
+  loadConversationChanges,
+  markConversationsDirty
 } from './storage'
 import { ChatPanel } from './components/ChatPanel'
 import { BrowserPanel } from './components/BrowserPanel'
@@ -985,8 +986,22 @@ export function App(): JSX.Element {
 
   // ---- persist (debounced for the rapidly-changing message stream) ----
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedSnapshotRef = useRef<Map<string, Conversation>>(new Map())
   useEffect(() => {
     if (!hydrated) return
+    // Mark what changed as dirty IMMEDIATELY (cheap identity compare — React
+    // replaces the object of every patched conversation). Waiting for the
+    // debounced write to do it leaves a window where a change-feed notification
+    // would restore the last persisted revision and the new message would
+    // disappear from the screen right after showing up.
+    const changed: string[] = []
+    const snapshot = new Map<string, Conversation>()
+    for (const conversation of conversations) {
+      snapshot.set(conversation.id, conversation)
+      if (savedSnapshotRef.current.get(conversation.id) !== conversation) changed.push(conversation.id)
+    }
+    savedSnapshotRef.current = snapshot
+    if (changed.length) markConversationsDirty(changed)
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
       void saveConversations(convsRef.current).catch((error) => {

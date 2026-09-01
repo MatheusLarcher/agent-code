@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -99,9 +99,10 @@ describe('memoryIndex', () => {
     expect(snapshot.catalog).toContain('--- MEMORY FILE: 2D/erp.md ---')
     expect(snapshot.catalog).toContain('ERP da 2D usa X')
     expect(snapshot.catalog).toContain('--- MEMORY FILE: raiz.md ---')
+    expect(snapshot.filesystemVersion).toBe(memoryCatalogFilesystemVersion(dir))
   })
 
-  it('a versão barata acompanha adição, alteração e remoção sem ler o conteúdo', async () => {
+  it('a versão por conteúdo acompanha adição, alteração e remoção', async () => {
     const dir = await fixture()
     const initial = memoryCatalogFilesystemVersion(dir)
     await writeFile(join(dir, 'nova.md'), '# Nova memória com tamanho único', 'utf8')
@@ -114,6 +115,19 @@ describe('memoryIndex', () => {
 
     await rm(join(dir, 'nova.md'))
     expect(memoryCatalogFilesystemVersion(dir)).toBe(initial)
+  })
+
+  it('detecta troca de conteúdo com o mesmo tamanho e timestamp', async () => {
+    const dir = await fixture()
+    const file = join(dir, 'raiz.md')
+    await writeFile(file, '# Valor AAAA\n', 'utf8')
+    const metadata = await stat(file)
+    const before = memoryCatalogFilesystemVersion(dir)
+
+    await writeFile(file, '# Valor BBBB\n', 'utf8')
+    await utimes(file, metadata.atime, metadata.mtime)
+
+    expect(memoryCatalogFilesystemVersion(dir)).not.toBe(before)
   })
 
   it('a atualização declara substituição integral do catálogo anterior', async () => {

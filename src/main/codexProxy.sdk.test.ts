@@ -440,19 +440,13 @@ describe.sequential('Codex proxy with the real Claude Agent SDK/CLI', () => {
     }
   }, 35_000)
 
-  it('resolves 3d-print-modeling through the real native Skill tool', async () => {
+  it('hot-adds 3d-print-modeling and resolves it through the real native Skill tool', async () => {
     const root = await makeTempRoot('skill-3d')
     const home = join(root, 'home')
     const claudeConfig = join(home, '.claude')
     const skillDir = join(claudeConfig, 'skills', '3d-print-modeling')
     const skillSentinel = 'THREE_D_SKILL_BODY_LOADED_81af'
     const finalSentinel = 'THREE_D_SKILL_COMPLETE_4d29'
-    await mkdir(skillDir, { recursive: true })
-    await writeFile(
-      join(skillDir, 'SKILL.md'),
-      `---\nname: 3d-print-modeling\ndescription: Edit 3MF models.\n---\n\n${skillSentinel}`,
-      'utf8'
-    )
     const captured: CapturedRequest[] = []
     const fakeFetch: typeof fetch = async (_input, init) => {
       const request = captureRequest(init)
@@ -484,6 +478,13 @@ describe.sequential('Codex proxy with the real Claude Agent SDK/CLI', () => {
           CLAUDE_CONFIG_DIR: claudeConfig
         }
       }, async (running) => {
+        // The query already exists: this is the production hot-install path.
+        await mkdir(skillDir, { recursive: true })
+        await writeFile(
+          join(skillDir, 'SKILL.md'),
+          `---\nname: 3d-print-modeling\ndescription: Edit 3MF models.\n---\n\n${skillSentinel}`,
+          'utf8'
+        )
         const reloaded = await running.reloadSkills()
         expect(reloaded.skills.map((skill) => skill.name)).toContain('3d-print-modeling')
       })
