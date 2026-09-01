@@ -82,7 +82,7 @@ interface Props {
   /** Independent high-risk permission warning, constrained to the chat column. */
   windowsControlEnabled: boolean
   onDisableWindowsControl: () => void
-  tokens: { context: number; output: number; cost: number }
+  tokens: { context: number; output: number; cost: number; lastOutput?: number; lastCost?: number }
   chips: PickedElement[]
   onRemoveChip: (i: number) => void
   onSend: (
@@ -305,29 +305,11 @@ export function ChatPanel(props: Props): JSX.Element {
     <section className="chat-panel">
       <div className="chat-header">
         <span className="chat-title">Chat</span>
-        <div className="token-meter" title="Tempo da tarefa, uso de contexto e custo">
+        <div className="token-meter" title="Consumo geral desta conversa">
           <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
           <ContextBar context={tokens.context} model={props.model} />
-          <span
-            className="tok out"
-            title={
-              `Contexto de saída — total de tokens que o modelo gerou nesta conversa ` +
-              `(acumulado, não é a janela de contexto): ${tokens.output.toLocaleString('pt-BR')}`
-            }
-          >
-            ↑ {fmt(tokens.output)} saída
-          </span>
-          <span
-            className="tok cost"
-            title={
-              `Custo ESTIMADO com base no preço da API avulsa (pay-as-you-go) — NÃO é uma cobrança real. ` +
-              `Como você usa um plano de assinatura, esse uso já está incluído; o valor aqui é só uma referência ` +
-              `de quanto custaria se você usasse a API direto, sem plano. ` +
-              `Acumulado: $${tokens.cost.toFixed(6)}`
-            }
-          >
-            ~${tokens.cost.toFixed(2)}
-          </span>
+          <span className="tok out">↑ {fmt(tokens.output)} saída</span>
+          <span className="tok cost">~${tokens.cost.toFixed(2)}</span>
         </div>
       </div>
 
@@ -430,6 +412,13 @@ export function ChatPanel(props: Props): JSX.Element {
 
       <BackgroundTasksCard tasks={props.backgroundTasks ?? []} />
       <InterruptQueueWarning messages={props.queuedAfterInterrupt ?? []} />
+
+      <div className="last-usage-float" aria-label="Consumo da última resposta">
+        <span className="last-usage-title">Última resposta</span>
+        <ContextBar context={tokens.context} model={props.model} />
+        <span className="tok out">↑ {fmt(tokens.lastOutput ?? 0)} saída</span>
+        <span className="tok cost">~${(tokens.lastCost ?? 0).toFixed(2)}</span>
+      </div>
 
       <div className="composer-bar">
         <select

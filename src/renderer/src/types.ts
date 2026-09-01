@@ -33,6 +33,8 @@ export interface TokenTotals {
   context: number
   output: number
   cost: number
+  lastOutput?: number
+  lastCost?: number
 }
 
 export interface TurnRecovery {

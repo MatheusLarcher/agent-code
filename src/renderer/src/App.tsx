@@ -106,7 +106,7 @@ function effortLevelsFor(modelId: string | undefined): { value: string; label: s
   return levels.map((v) => ({ value: v, label: EFFORT_LABELS[v] || v }))
 }
 
-const EMPTY_TOKENS = { context: 0, output: 0, cost: 0 }
+const EMPTY_TOKENS = { context: 0, output: 0, cost: 0, lastOutput: 0, lastCost: 0 }
 
 /** Whether an incoming account-usage snapshot should be IGNORED as a spurious
  *  zero. A fresh session sometimes reports 0% / "já resetou" before the backend
@@ -603,7 +603,9 @@ export function App(): JSX.Element {
               // per-turn sum); falls back to the old computation if absent.
               context: e.contextTokens ?? u.input + u.cacheRead + u.cacheWrite,
               output: c.tokens.output + u.output,
-              cost: c.tokens.cost + (e.costUsd ?? 0)
+              cost: c.tokens.cost + (e.costUsd ?? 0),
+              lastOutput: u.output,
+              lastCost: e.costUsd ?? 0
             }
           }
         }

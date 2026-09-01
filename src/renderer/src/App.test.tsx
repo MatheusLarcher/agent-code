@@ -610,7 +610,7 @@ describe('App — barra de limite de contexto', () => {
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
-    expect(screen.getByText('entrada')).toBeTruthy()
+    expect(screen.getAllByText('entrada').length).toBeGreaterThan(0)
     expect(ctxVal()).toBe('0 / 1M')
 
     // Um turno termina informando o tamanho real da janela enviada ao modelo
@@ -627,7 +627,7 @@ describe('App — barra de limite de contexto', () => {
     await waitFor(() => expect(ctxVal()).toBe('120.0k / 1M'))
 
     // O contexto de saída é separado (acumulado), não se mistura com a janela de entrada.
-    expect(screen.getByText(/↑ .* saída/)).toBeTruthy()
+    expect(screen.getAllByText(/↑ .* saída/).length).toBeGreaterThan(0)
   })
 })
 
