@@ -392,7 +392,10 @@ export class AgentSession {
     this.skillFilesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, undefined, cacheSkillsDir)
     const skillSnapshot = this.readSkillCatalogSnapshot(cacheSkillsDir)
     this.skillCatalogVersion = skillSnapshot.version
-    this.nativeSkillRegistryVersion = skillSnapshot.version
+    // The filesystem catalog and the CLI's native Skill registry are separate
+    // states. Never mark the native registry as loaded before reloadSkills()
+    // has actually confirmed it for this SDK process.
+    this.nativeSkillRegistryVersion = ''
     const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     append += `\n\n${memorySnapshot.catalog}`

@@ -179,7 +179,11 @@ function resultMessage(messages: SDKMessage[]): SDKResultMessage {
   return result
 }
 
-async function collectQuery(prompt: string, options: Options): Promise<SDKMessage[]> {
+async function collectQuery(
+  prompt: string,
+  options: Options,
+  setup?: (running: ReturnType<typeof query>) => Promise<void>
+): Promise<SDKMessage[]> {
   const abortController = new AbortController()
   let timedOut = false
   const timeout = setTimeout(() => {
@@ -189,6 +193,7 @@ async function collectQuery(prompt: string, options: Options): Promise<SDKMessag
   const running = query({ prompt, options: { ...options, abortController } })
   const messages: SDKMessage[] = []
   try {
+    await setup?.(running)
     for await (const message of running) messages.push(message)
   } finally {
     clearTimeout(timeout)
@@ -429,6 +434,67 @@ describe.sequential('Codex proxy with the real Claude Agent SDK/CLI', () => {
         is_error: false,
         result: parentResult
       })
+    } finally {
+      await server.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 35_000)
+
+  it('resolves 3d-print-modeling through the real native Skill tool', async () => {
+    const root = await makeTempRoot('skill-3d')
+    const home = join(root, 'home')
+    const claudeConfig = join(home, '.claude')
+    const skillDir = join(claudeConfig, 'skills', '3d-print-modeling')
+    const skillSentinel = 'THREE_D_SKILL_BODY_LOADED_81af'
+    const finalSentinel = 'THREE_D_SKILL_COMPLETE_4d29'
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      `---\nname: 3d-print-modeling\ndescription: Edit 3MF models.\n---\n\n${skillSentinel}`,
+      'utf8'
+    )
+    const captured: CapturedRequest[] = []
+    const fakeFetch: typeof fetch = async (_input, init) => {
+      const request = captureRequest(init)
+      captured.push(request)
+      const output = functionOutput(request.body, 'call_skill_3d')
+      if (output !== undefined) return textResponse('resp_skill_3d_final', finalSentinel)
+      return functionCallResponse('resp_skill_3d_tool', 'call_skill_3d', 'Skill', {
+        skill: '3d-print-modeling',
+        args: 'Edit the attached 3MF.'
+      })
+    }
+    const server = await startCodexProxyServer({
+      getTokens: async () => tokens,
+      refreshTokens: async () => tokens,
+      secret: SECRET,
+      fetchImpl: fakeFetch
+    })
+
+    try {
+      const base = sdkOptions(root, server.port, { maxTurns: 4 })
+      const messages = await collectQuery('Use 3d-print-modeling.', {
+        ...base,
+        skills: 'all',
+        settingSources: ['user'],
+        env: {
+          ...(base.env ?? {}),
+          HOME: home,
+          USERPROFILE: home,
+          CLAUDE_CONFIG_DIR: claudeConfig
+        }
+      }, async (running) => {
+        const reloaded = await running.reloadSkills()
+        expect(reloaded.skills.map((skill) => skill.name)).toContain('3d-print-modeling')
+      })
+
+      expect(captured).toHaveLength(2)
+      expect(toolNames(captured[0].body)).toContain('Skill')
+      const skillOutput = functionOutput(captured[1].body, 'call_skill_3d')
+      expect(skillOutput).toContain('Launching skill: 3d-print-modeling')
+      expect(skillOutput).not.toContain('Unknown skill')
+      expect(JSON.stringify(captured[1].body.input)).toContain(skillSentinel)
+      expect(resultMessage(messages)).toMatchObject({ subtype: 'success', is_error: false, result: finalSentinel })
     } finally {
       await server.close()
       await rm(root, { recursive: true, force: true })

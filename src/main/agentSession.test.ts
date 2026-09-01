@@ -822,6 +822,31 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(removed).not.toContain('Versão atualizada e maior.')
   })
 
+  it('recarrega o registro nativo antes do primeiro envio mesmo sem mudança no catálogo', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'agent-session-first-skill-reload-'))
+    const skillDir = join(project, '.agents', 'skills', '3d-print-modeling')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: 3d-print-modeling\ndescription: editar modelos 3D\n---\n',
+      'utf8'
+    )
+    const { s } = makeSession({ cwd: project, model: 'gpt-5.6-sol' })
+    await s.start()
+
+    const reloadSkills = vi.fn(async () => ({
+      skills: [{ name: '3d-print-modeling', description: 'editar modelos 3D', argumentHint: '' }]
+    }))
+    ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
+
+    await s.send('edite o 3MF usando a skill')
+    await s.send('continue sem recarregar de novo')
+
+    expect(reloadSkills).toHaveBeenCalledTimes(1)
+    expect(String(pushedMessages(s).at(-2)?.message.content)).not.toContain('[SKILL_CATALOG_UPDATE]')
+    expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('[SKILL_CATALOG_UPDATE]')
+  })
+
   it('recarrega e injeta o catálogo uma vez quando skills mudam na conversa ativa', async () => {
     const project = await mkdtemp(join(tmpdir(), 'agent-session-skill-refresh-'))
     const skillDir = join(project, '.agents', 'skills', 'dynamic')
