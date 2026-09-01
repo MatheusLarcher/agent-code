@@ -1,0 +1,10 @@
+{
+  "name": "3d-print-modeling",
+  "description": "Author and iterate on FDM 3D-print parts as parametric Python (trimesh/manifold3d/shapely or build123d), then view and screenshot them headlessly to verify on every change.",
+  "version": "1.1.0",
+  "author": { "name": "Mohsen Esmaeili", "url": "https://github.com/m-esm" },
+  "homepage": "https://github.com/m-esm/3d-print-modeling",
+  "repository": "https://github.com/m-esm/3d-print-modeling",
+  "license": "MIT",
+  "keywords": ["claude-skill", "claude-code", "3d-printing", "fdm", "trimesh", "build123d", "cad", "stl"]
+}

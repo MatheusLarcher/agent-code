@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>STL viewer</title>
+<style>
+  html,body{margin:0;height:100%;background:#1c1f24;overflow:hidden}
+  #hud{position:fixed;top:8px;left:8px;color:#cfd6e0;font:12px/1.4 monospace;
+       background:rgba(0,0,0,.4);padding:6px 8px;border-radius:6px;white-space:pre}
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+window.THREE = THREE;
+
+const q = new URLSearchParams(location.search);
+const FILE = q.get('file') || 'part.stl';
+const VIEW = q.get('view') || 'iso';     // iso | front | side | top | back | bottom
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1c1f24);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(35, innerWidth/innerHeight, 0.1, 50000);
+const controls = new OrbitControls(camera, renderer.domElement);
+window._cam=camera; window._controls=controls; window._scene=scene;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const key = new THREE.DirectionalLight(0xffffff, 1.0); key.position.set(1,1,1.5); scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.5); fill.position.set(-1,-0.5,-1); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 0.4); rim.position.set(0,1,-1); scene.add(rim);
+const hud = document.getElementById('hud');
+window.__ready = false;
+
+new STLLoader().load(FILE, geo => {
+  geo.computeVertexNormals(); geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const size = new THREE.Vector3(); bb.getSize(size);
+  const center = new THREE.Vector3(); bb.getCenter(center);
+
+  const mat = new THREE.MeshStandardMaterial({color:0x8fb3d9, metalness:0.15, roughness:0.6,
+                                              side:THREE.DoubleSide});
+  const mesh = new THREE.Mesh(geo, mat); scene.add(mesh);
+  // edge lines for readability
+  mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25),
+           new THREE.LineBasicMaterial({color:0x223044})));
+
+  // print-bed grid on the part's lowest Z, + axes at the bbox corner
+  const maxdim = Math.max(size.x,size.y,size.z);
+  const grid = new THREE.GridHelper(Math.ceil(maxdim*2/10)*10, Math.ceil(maxdim*2/10), 0x445166, 0x2a3340);
+  grid.rotation.x = Math.PI/2; grid.position.set(center.x, center.y, bb.min.z); scene.add(grid);
+  const axes = new THREE.AxesHelper(maxdim*0.6); axes.position.copy(bb.min); scene.add(axes);
+
+  controls.target.copy(center);
+  const r = maxdim * 3.2;
+  const dirs = {iso:[1,-1,0.8], front:[0,-1,0], back:[0,1,0], side:[1,0,0], top:[0,0,1], bottom:[0,0,-1]};
+  const d = dirs[VIEW] || dirs.iso;
+  camera.position.copy(center).add(new THREE.Vector3(d[0],d[1],d[2]).normalize().multiplyScalar(r));
+  camera.up.set(0,0,1); controls.update();
+
+  hud.textContent = `${FILE}  [${VIEW}]\nX ${size.x.toFixed(2)}  Y ${size.y.toFixed(2)}  Z ${size.z.toFixed(2)} mm`;
+  window.__ready = true;
+}, undefined, err => { hud.textContent = 'LOAD ERROR: '+err; });
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+(function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); })();
+</script>
+</body>
+</html>

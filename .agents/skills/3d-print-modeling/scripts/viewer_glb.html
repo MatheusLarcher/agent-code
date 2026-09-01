@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0f13">
+<title>assembly viewer</title>
+<style>
+  :root{
+    --ink:#e9edf1; --ink-dim:#9aa4b0; --ink-faint:#69727e;
+    --panel:rgba(20,23,28,.66); --hair:rgba(255,255,255,.09);
+    --accent:#5cc7d4; --accent-soft:rgba(92,199,212,.16);
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --track:rgba(255,255,255,.12);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;color:var(--ink);
+    font:13px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;
+    /* studio backdrop: cool graphite dome, darker at the floor */
+    background:radial-gradient(125% 100% at 50% -10%, #2b313b 0%, #191d23 46%, #0d0f13 100%);}
+  canvas{display:block;touch-action:none}  /* OrbitControls owns all touch gestures */
+
+  /* ---- instrument panel ---- */
+  #hud{position:fixed;top:16px;left:16px;z-index:10;width:256px;
+    background:var(--panel);border:1px solid var(--hair);border-radius:14px;
+    backdrop-filter:blur(20px) saturate(1.25);-webkit-backdrop-filter:blur(20px) saturate(1.25);
+    box-shadow:0 16px 44px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);
+    padding:15px 16px 13px;max-height:calc(100vh - 32px);overflow:auto;overscroll-behavior:contain}
+  #hud::-webkit-scrollbar{width:8px}
+  #hud::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px}
+
+  .eyebrow{font:600 9.5px/1 var(--mono);letter-spacing:.22em;color:var(--accent);text-transform:uppercase}
+  .title{font:600 16px/1.2 system-ui;margin:5px 0 2px;letter-spacing:-.01em}
+  .dims{font:11px/1.4 var(--mono);color:var(--ink-dim);display:flex;gap:9px;margin-top:2px}
+  .dims b{font-weight:600}
+  .dims .ax{color:var(--ink-faint)}
+
+  .sec{display:flex;align-items:center;gap:9px;margin:16px 0 9px;
+    font:600 9.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint)}
+  .sec::after{content:"";flex:1;height:1px;background:var(--hair)}
+
+  /* part rows */
+  #parts{display:flex;flex-direction:column;gap:1px;max-height:32vh;overflow:auto}
+  #parts::-webkit-scrollbar{width:6px}
+  #parts::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:6px}
+  .part{display:flex;align-items:center;gap:9px;padding:4px 6px;border-radius:8px;cursor:pointer;
+    user-select:none;transition:background .12s}
+  .part:hover{background:rgba(255,255,255,.055)}
+  .part .sw{width:11px;height:11px;border-radius:3px;flex:0 0 auto;
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,.35),0 0 0 1px rgba(255,255,255,.06)}
+  .part .nm{font:12px/1 var(--mono);color:var(--ink);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .part input{margin:0}
+  .part.off{opacity:.4}
+  .cgrp{margin:2px 0}
+  .chead{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:8px;
+    cursor:pointer;user-select:none;font:600 11px/1 var(--mono);letter-spacing:.08em;
+    text-transform:uppercase;color:var(--ink-dim)}
+  .chead:hover{background:rgba(255,255,255,.05)}
+  .chead .carrow{width:10px;color:var(--ink-faint);transition:transform .15s}
+  .cgrp.closed .carrow{transform:rotate(-90deg)}
+  .chead .cname{flex:1}
+  .chead input{margin:0}
+  .cgrp .cbody{margin-left:10px;border-left:1px solid var(--hair);padding-left:4px}
+  .cgrp.closed .cbody{display:none}
+  .part.sel{background:rgba(232,116,34,.16);box-shadow:inset 0 0 0 1px rgba(232,116,34,.4)}
+  .part.off .nm{text-decoration:line-through}
+
+  /* control rows */
+  .ctl{display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px 8px;
+    margin:9px 0;font-size:12px;color:var(--ink-dim);cursor:default}
+  .ctl .val{font:11px/1 var(--mono);color:var(--accent);text-align:right;min-width:34px}
+  .ctl input[type=range]{grid-column:1/-1}
+
+  .chk{display:flex;align-items:center;gap:9px;margin:8px 0;font-size:12.5px;color:var(--ink);cursor:pointer;user-select:none}
+  .chk select{margin-left:auto}
+  .chk input[type=range]{width:64px;margin-left:auto}
+
+  /* themed form controls */
+  input[type=checkbox]{appearance:none;-webkit-appearance:none;width:15px;height:15px;flex:0 0 auto;
+    border:1.5px solid var(--ink-faint);border-radius:4px;background:transparent;cursor:pointer;
+    display:grid;place-content:center;transition:border-color .12s,background .12s}
+  input[type=checkbox]:hover{border-color:var(--ink-dim)}
+  input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+  input[type=checkbox]:checked::after{content:"";width:4px;height:8px;margin-top:-1px;
+    border:solid #0d1013;border-width:0 2px 2px 0;transform:rotate(42deg)}
+  input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  input[type=range]{appearance:none;-webkit-appearance:none;width:100%;height:20px;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:4px;background:var(--track)}
+  input[type=range]::-moz-range-track{height:4px;border-radius:4px;background:var(--track)}
+  input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:14px;margin-top:-5px;
+    border-radius:50%;background:var(--accent);box-shadow:0 1px 4px rgba(0,0,0,.5)}
+  input[type=range]::-moz-range-thumb{width:14px;height:14px;border:0;border-radius:50%;background:var(--accent);box-shadow:0 1px 4px rgba(0,0,0,.5)}
+
+  select{background:#232830;color:var(--ink);border:1px solid var(--hair);border-radius:6px;
+    padding:2px 6px;font:11px var(--mono)}
+
+  #legend{margin:6px 2px 0;font:10.5px/1.5 var(--mono);color:var(--ink-dim);display:none}
+  #legend span{white-space:nowrap}
+
+  /* ---- Fits panel (clearance / press map, ported from finnish-doors) ---- */
+  #fits{display:none;flex-direction:column;gap:1px;max-height:34vh;overflow:auto;margin-top:4px}
+  #fits::-webkit-scrollbar{width:6px}
+  #fits::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:6px}
+  #fits .fhd{font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-faint);margin:7px 2px 3px}
+  #fits .fr{display:flex;align-items:center;gap:7px;padding:3px 6px;border-radius:7px;
+    cursor:pointer;font:10.5px/1.3 var(--mono);color:var(--ink)}
+  #fits .fr:hover{background:rgba(255,255,255,.055)}
+  #fits .fr.on{background:var(--accent-soft)}
+  #fits .fr .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+  #fits .fr .pair{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #fits .fr .mm{font-weight:600}
+  #fits .flegend{margin:7px 2px 2px;font:10px/1.6 var(--mono);color:var(--ink-dim)}
+  .foot{margin-top:15px;padding-top:11px;border-top:1px solid var(--hair);
+    font:10.5px/1.5 var(--mono);color:var(--ink-faint)}
+
+  /* CAD dimension chips (camera-facing, follow their part) */
+  .dlabel{font:600 10.5px/1 var(--mono);white-space:nowrap;padding:2px 6px;border-radius:6px;
+    background:rgba(13,16,20,.78);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(4px)}
+
+  /* ---- mobile: HUD becomes a collapsible bottom sheet; canvas is the hero ---- */
+  #hudtoggle{display:none;position:fixed;top:calc(12px + env(safe-area-inset-top));
+    left:12px;z-index:11;width:44px;height:44px;border:1px solid var(--hair);border-radius:12px;
+    background:var(--panel);color:var(--ink);font:600 17px/1 var(--mono);cursor:pointer;
+    backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  @media (max-width: 700px){
+    #hudtoggle{display:block}
+    #hud{top:auto;left:0;right:0;bottom:0;width:100%;border-radius:16px 16px 0 0;
+      max-height:62vh;max-height:62dvh;
+      padding-bottom:calc(13px + env(safe-area-inset-bottom));
+      transform:translateY(105%);transition:transform .28s ease;
+      touch-action:pan-y}                              /* sheet scrolls; canvas gestures stay off it */
+    #hud.open{transform:none}
+    #hud::before{content:"";display:block;width:38px;height:4px;border-radius:4px;
+      margin:0 auto 10px;background:rgba(255,255,255,.22)}
+    #parts{max-height:24vh}
+    #fits{max-height:26vh}
+    .foot{display:none}                                /* mouse hints, meaningless on touch */
+  }
+  /* coarse pointers: bigger tap targets everywhere the fingers go */
+  @media (pointer: coarse){
+    .part{padding:9px 8px;gap:11px}
+    .chk{margin:12px 0}
+    .ctl{margin:12px 0}
+    input[type=checkbox]{width:20px;height:20px}
+    input[type=checkbox]:checked::after{width:5px;height:10px}
+    input[type=range]{height:30px}
+    input[type=range]::-webkit-slider-thumb{width:22px;height:22px;margin-top:-9px}
+    input[type=range]::-moz-range-thumb{width:22px;height:22px}
+    #fits .fr{padding:8px 6px}
+    select{padding:5px 8px;font-size:13px}
+    #hud,#hudtoggle{touch-action:manipulation}         /* kill the 300ms double-tap zoom */
+  }
+</style>
+</head>
+<body>
+<button id="hudtoggle" aria-label="toggle controls">☰</button>
+<!--
+  Generic assembly viewer (reference implementation: desk-pi, 2026-07).
+  PER-PROJECT HOOKS (all degrade gracefully when absent):
+   - PAL: name-regex -> material map. Edit per project; unmatched names get a
+     neutral fallback.
+   - CATS: name-regex -> parts-panel category groups (collapsible, toggle-all).
+     Unmatched names land in 'Other'.
+   - <model>.pose.json sidecar (written by the project's build): baked joint
+     angles + axis positions + name->kinematic-group map. Enables the per-joint
+     sliders. Rotary joints follow the pan/tilt delta pattern; linear joints
+     (e.g. telescoping masts) follow the ant_nodes/ant_travel/ant_baked_mm
+     pattern (head-local translation composed inside the head pose). Rename
+     labels per project. No sidecar -> sliders stay disabled.
+   - fit_report.json (from the fitmap gate): clearance/press map, ON by default;
+     patches are NEUTRAL-pose coords and get the FULL slider pose per group.
+   - Click-to-select: raycast (>6px pointer move = orbit, not click) -> part
+     glows, its panel row highlights, name + posed L/W/H shown under the title.
+   - Mobile: <=700px the HUD is a collapsible bottom sheet; canvas owns touch.
+-->
+<div id="hud">
+  <div class="eyebrow">assembly viewer</div>
+  <div class="title" id="title">assembly.glb</div>
+  <div class="dims" id="bbox"><span class="ax">-</span></div>
+  <div class="dims" id="selinfo" style="display:none;flex-wrap:wrap"></div>
+
+  <div class="sec">Parts</div>
+  <div id="parts"></div>
+
+  <div class="sec">Pose</div>
+  <label class="ctl">Pan <span class="val" id="pan_v">–</span>
+    <input type="range" id="pan" min="-93" max="93" step="0.1" value="0" disabled
+           title="rebuild (make build) to write pose.json"></label>
+  <label class="ctl">Tilt <span class="val" id="tilt_v">–</span>
+    <input type="range" id="tilt" min="-34" max="34" step="0.1" value="0" disabled
+           title="rebuild (make build) to write pose.json"></label>
+  <label class="ctl" id="antLrow" style="display:none">Antenna L <span class="val" id="antL_v">–</span>
+    <input type="range" id="antL" min="0" max="50" step="0.5" value="0" disabled></label>
+  <label class="ctl" id="antRrow" style="display:none">Antenna R <span class="val" id="antR_v">–</span>
+    <input type="range" id="antR" min="0" max="50" step="0.5" value="0" disabled></label>
+  <label class="chk"><input type="checkbox" id="t_sweep"> Sweep (animate head)</label>
+
+  <div class="sec">Appearance</div>
+  <label class="ctl">Transparency <span class="val" id="opacity_v">0%</span>
+    <input type="range" id="opacity" min="0" max="0.92" step="0.02" value="0.5"></label>
+  <label class="ctl">Explode <span class="val" id="explode_v">0%</span>
+    <input type="range" id="explode" min="0" max="1" step="0.01" value="0"></label>
+
+  <div class="sec">Measure</div>
+  <label class="chk"><input type="checkbox" id="t_bbox"> Overall size</label>
+  <label class="chk"><input type="checkbox" id="t_dims"> Per-part size</label>
+  <div id="legend">
+    <span style="color:#ff8f8f">■ L length&nbsp;(X)</span>&nbsp;
+    <span style="color:#86e29a">■ W width&nbsp;(Y)</span>&nbsp;
+    <span style="color:#8fc8fb">■ H height&nbsp;(Z)</span>
+  </div>
+
+  <div class="sec">Fits</div>
+  <label class="chk"><input type="checkbox" id="t_fits" checked> Fit map
+    <span id="fits_sum" style="margin-left:auto;font:10px var(--mono);color:var(--ink-faint)"></span></label>
+  <div id="fits"></div>
+
+  <div class="sec">View</div>
+  <label class="chk"><input type="checkbox" id="t_section"> Section cut
+    <select id="sec_axis"><option>X</option><option>Y</option><option>Z</option></select></label>
+  <label class="ctl">Cut plane <span class="val" id="cut_v">50%</span>
+    <input type="range" id="cut" min="0" max="1" step="0.01" value="0.5"></label>
+  <label class="chk"><input type="checkbox" id="t_spin"> Auto-spin
+    <input type="range" id="spinspd" min="5" max="120" step="5" value="35"></label>
+
+  <div class="foot">drag orbit · scroll zoom · right-drag pan<br>live-reloads on rebuild</div>
+</div>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+window.THREE = THREE;                                  // headless (shoot.py) needs THREE in scope
+
+const q = new URLSearchParams(location.search);
+const MODEL = q.get('m') || 'assembly.glb';
+document.getElementById('title').textContent = MODEL;
+
+const scene = new THREE.Scene();                       // transparent -> CSS studio gradient shows through
+const camera = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, 0.1, 50000);
+camera.up.set(0,0,1);                                  // Z up (print-bed convention)
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setClearColor(0x000000, 0);
+renderer.localClippingEnabled = true;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+// image-based lighting: soft PBR reflections so metals read as metal (no external asset)
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+// CSS2D overlay for crisp camera-facing dimension labels
+const labelRnd = new CSS2DRenderer(); labelRnd.setSize(innerWidth, innerHeight);
+labelRnd.domElement.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none';
+document.body.appendChild(labelRnd.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+window._cam = camera; window._controls = controls; window._scene = scene;   // headless render hooks
+
+// lighting: environment does the ambient work; these add shape + a warm key
+scene.add(new THREE.HemisphereLight(0xdfe8f2, 0x1a1d22, 0.55));
+const key = new THREE.DirectionalLight(0xfff2e0, 1.5); key.position.set(120,-140,180); scene.add(key);
+const fill= new THREE.DirectionalLight(0xbcd2ff, 0.35); fill.position.set(-150,80,-20); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 0.55); rim.position.set(-60,150,60); scene.add(rim);
+
+// floor: dim two-tone grid + a soft radial contact shadow, both on the Z=0 plane
+const grid = new THREE.GridHelper(700,35,0x39414d,0x252b33); grid.rotation.x=Math.PI/2; scene.add(grid);
+let contact = null;
+function makeContactShadow(cx, cy, size){
+  const cv=document.createElement('canvas'); cv.width=cv.height=256; const g=cv.getContext('2d');
+  const grd=g.createRadialGradient(128,128,10,128,128,128);
+  grd.addColorStop(0,'rgba(0,0,0,.55)'); grd.addColorStop(.6,'rgba(0,0,0,.22)'); grd.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=grd; g.fillRect(0,0,256,256);
+  const tex=new THREE.CanvasTexture(cv);
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(size,size),
+    new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false,opacity:.9}));
+  m.position.set(cx,cy,0.12); m.renderOrder=-1; scene.add(m); return m;
+}
+
+// section plane positioned at runtime from the bbox
+const sectionPlane = new THREE.Plane(new THREE.Vector3(-1,0,0), 0);
+
+// ---- Design-reference palette (reference/design/*.jpg): matte black body +
+// safety-orange accents, silver exposed mechanicals, near-black rubber tracks. ----
+const PAL = [
+  [/trim|rail|accent|hatch_frame|grille_ring|fin/i, {c:0xE87422, m:0.08, r:0.55}], // safety orange
+  [/lamp/i,         {c:0xE8A83C, m:0.1, r:0.3, e:0xB37514, ei:0.6}],  // amber indicator
+  [/led/i,          {c:0xF2F4F6, m:0.1, r:0.3, e:0x9AA4B0, ei:0.5}],  // white light strip
+  [/antenna/i,      {c:0x2A2D33, m:0.20, r:0.65, env:0.3}],  // black knurled stub
+  [/^arm_/i,        {c:0x33373E, m:0.15, r:0.65, env:0.3}],  // charcoal gripper arms
+  [/sensor/i,       {c:0xB8BCC2, m:0.75, r:0.35}],           // silver sensor barrels
+  [/head_bezel/i,   {c:0x2E3238, m:0.12, r:0.72, env:0.3}],  // matte charcoal, front
+  [/head_back|head_door|shell|cradle|cover|rear_pack|tilt_shroud/i, {c:0x363A41, m:0.12, r:0.72, env:0.3}], // charcoal, back
+  [/screen/i,       {c:0x0E1319, m:0.10, r:0.16, e:0x0b1a24, ei:0.32}], // dark glass, faint glow
+  [/camera/i,       {c:0x1E2126, m:0.30, r:0.4, env:0.35}],  // black camera pod
+  [/motor|byj|drive/i, {c:0x9AA0A8, m:0.70, r:0.35}],        // silver actuation
+  [/axle|balls/i,   {c:0xC4C8CE, m:0.85, r:0.25}],           // bright steel
+  [/pi5|^pi_|pi$/i, {c:0x2FA36B, m:0.10, r:0.5 }],           // PCB green
+  [/neck|clevis|fork|wheel|worm/i, {c:0x565C66, m:0.65, r:0.38}], // dark steel mechanicals
+  [/pan|platform/i, {c:0x4A4F57, m:0.55, r:0.42}],           // graphite pan
+  [/base|chassis|belly/i, {c:0x2C3036, m:0.12, r:0.75, env:0.3}],  // matte charcoal chassis
+  [/track/i,        {c:0x232529, m:0.05, r:0.9, env:0.25}],  // near-black rubber tracks
+];
+function matSpec(name){
+  for(const [re,s] of PAL){ try{ if(re.test(name)) return s; }catch(_){} }
+  return {c:0x8892A0, m:0.5, r:0.45};                        // coherent neutral fallback
+}
+const hex = n => '#'+matSpec(n).c.toString(16).padStart(6,'0');
+
+// dimension-line helpers
+const COLX=0xff6b6b, COLY=0x51cf66, COLZ=0x4dabf7, TXT={x:'#ff9a9a',y:'#8fe6a3',z:'#9ccbfb'};
+function line(p1,p2,color){return new THREE.Line(new THREE.BufferGeometry().setFromPoints([p1,p2]),new THREE.LineBasicMaterial({color,transparent:true,opacity:.85}));}
+function tick(p,ax,len,color){const a=p.clone(),b=p.clone();a[ax]-=len/2;b[ax]+=len/2;return line(a,b,color);}
+function dlabel(t,css){const d=document.createElement('div');d.className='dlabel';d.textContent=t;d.style.color=css;d.style.borderColor=css+'55';return new CSS2DObject(d);}
+function dimBox(gb, off){
+  const mn=gb.min, mx=gb.max, c=gb.getCenter(new THREE.Vector3()), s=gb.getSize(new THREE.Vector3()), D=new THREE.Group();
+  D.add(line(new THREE.Vector3(mn.x,mn.y-off,mn.z), new THREE.Vector3(mx.x,mn.y-off,mn.z), COLX));
+  D.add(tick(new THREE.Vector3(mn.x,mn.y-off,mn.z),'y',off,COLX)); D.add(tick(new THREE.Vector3(mx.x,mn.y-off,mn.z),'y',off,COLX));
+  const L=dlabel('L '+s.x.toFixed(0),TXT.x); L.position.set(c.x,mn.y-off,mn.z); D.add(L);
+  D.add(line(new THREE.Vector3(mx.x+off,mn.y,mn.z), new THREE.Vector3(mx.x+off,mx.y,mn.z), COLY));
+  D.add(tick(new THREE.Vector3(mx.x+off,mn.y,mn.z),'x',off,COLY)); D.add(tick(new THREE.Vector3(mx.x+off,mx.y,mn.z),'x',off,COLY));
+  const W=dlabel('W '+s.y.toFixed(0),TXT.y); W.position.set(mx.x+off,c.y,mn.z); D.add(W);
+  D.add(line(new THREE.Vector3(mx.x+off,mn.y-off,mn.z), new THREE.Vector3(mx.x+off,mn.y-off,mx.z), COLZ));
+  D.add(tick(new THREE.Vector3(mx.x+off,mn.y-off,mn.z),'x',off,COLZ)); D.add(tick(new THREE.Vector3(mx.x+off,mn.y-off,mx.z),'x',off,COLZ));
+  const H=dlabel('H '+s.z.toFixed(0),TXT.z); H.position.set(mx.x+off,mn.y-off,c.z); D.add(H);
+  D.labels=[L,W,H]; return D;
+}
+
+const groups = {};      // name -> {meshes:[], home:Vector3[], dim:Group, dimHome:Vector3, explodeDir:Vector3}
+let overallDim = null;
+const dimsRoot = new THREE.Group(); scene.add(dimsRoot);
+let bbox = new THREE.Box3(), center = new THREE.Vector3(), diag = 1;
+
+new GLTFLoader().load(MODEL, (gltf)=>{
+  gltf.scene.traverse(o=>{
+    if(!o.isMesh) return;
+    const name = o.name || (o.parent && o.parent.name) || 'part';
+    o.geometry.computeVertexNormals();                 // GLB normals often come through inverted
+    const s = matSpec(name);
+    o.material = new THREE.MeshStandardMaterial({
+      color:s.c, metalness:s.m, roughness:s.r,
+      emissive:s.e||0x000000, emissiveIntensity:s.ei||0,
+      envMapIntensity:(s.env!==undefined?s.env:0.85), side:THREE.DoubleSide});
+    o.userData.pname = name;
+    (groups[name] = groups[name] || {meshes:[]}).meshes.push(o);
+  });
+  scene.add(gltf.scene);
+
+  bbox.setFromObject(gltf.scene);
+  bbox.getCenter(center);
+  const sz = bbox.getSize(new THREE.Vector3());
+  diag = sz.length();
+  window._modelBox = bbox.clone();                     // tight box for headless framing (excludes grid)
+  const r = diag/2;
+  controls.target.copy(center);
+  const vh=THREE.MathUtils.degToRad(camera.fov)/2, hh=Math.atan(Math.tan(vh)*camera.aspect);
+  const fit=r/Math.sin(Math.min(vh,hh))*1.18;          // true FOV fit + margin
+  // front-left 3/4 from the +Y side so the hero view shows the FACE (screen), not the back
+  camera.position.copy(center).addScaledVector(new THREE.Vector3(-0.55,0.82,0.46).normalize(), fit);
+  controls.update();
+  sectionPlane.constant = center.x;
+  contact = makeContactShadow(center.x, center.y, Math.max(sz.x,sz.y)*1.7);
+  document.getElementById('bbox').innerHTML =
+    `<span class="ax" style="color:${TXT.x}">L</span><b>${sz.x.toFixed(0)}</b>`+
+    `<span class="ax" style="color:${TXT.y}">W</span><b>${sz.y.toFixed(0)}</b>`+
+    `<span class="ax" style="color:${TXT.z}">H</span><b>${sz.z.toFixed(0)}</b>`+
+    `<span class="ax">mm</span>`;
+
+  // parts panel grouped BY OBJECT (2026-07-10: the big prints are split into pieces;
+  // each object gets a collapsible group with a toggle-all checkbox)
+  const CATS = [
+    ['Head shell',      /^(head_|sd_plug|led_strip|camera_pod)/],
+    ['Screen & camera', /^(screen_|cam_cover|camera_ref)/],
+    ['Antennas',        /^(antenna_|ant_|motor_ant)/],
+    ['Neck & tilt',     /^(neck_|tilt_|worm_|motor_tilt)/],
+    ['Pan stage',       /^(pan_|motor_pan)/],
+    ['Chassis',         /^(chassis_|belly_plate)/],
+    ['Fascia & trim',   /^(trim_|sensor_|lamp_|led_front)/],
+    ['Track pod L',     /^(track_L|drivewheels_L|track_keeper_L|pod_rail_L|drive_L)/],
+    ['Track pod R',     /^(track_R|drivewheels_R|track_keeper_R|pod_rail_R|drive_R)/],
+  ];
+  const host = document.getElementById('parts');
+  const catBodies = new Map();
+  function catFor(n){ for(const [t,re] of CATS) if(re.test(n)) return t; return 'Other'; }
+  function catUI(title){
+    if(catBodies.has(title)) return catBodies.get(title);
+    const grp=document.createElement('div'); grp.className='cgrp';
+    const head=document.createElement('div'); head.className='chead';
+    head.innerHTML=`<span class="carrow">▾</span><span class="cname">${title}</span>`;
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=true;
+    cb.addEventListener('click',e=>e.stopPropagation());
+    head.appendChild(cb);
+    const body=document.createElement('div'); body.className='cbody';
+    head.addEventListener('click',()=>grp.classList.toggle('closed'));
+    cb.addEventListener('change',()=>{
+      body.querySelectorAll('.part input').forEach(pc=>{
+        if(pc.checked!==cb.checked){ pc.checked=cb.checked; pc.dispatchEvent(new Event('change')); }
+      });
+    });
+    grp.appendChild(head); grp.appendChild(body); host.appendChild(grp);
+    const rec={body, cb}; catBodies.set(title, rec); return rec;
+  }
+  function syncCat(title){
+    const rec=catBodies.get(title); if(!rec) return;
+    const boxes=[...rec.body.querySelectorAll('.part input')];
+    const on=boxes.filter(b=>b.checked).length;
+    rec.cb.checked = on===boxes.length;
+    rec.cb.indeterminate = on>0 && on<boxes.length;
+  }
+  for(const [name,g] of Object.entries(groups)){
+    g.home = g.meshes.map(o=>o.position.clone());
+
+    const gb = new THREE.Box3(); g.meshes.forEach(o=>gb.expandByObject(o));
+    const gc = gb.getCenter(new THREE.Vector3());
+    g.explodeDir = gc.clone().sub(center);
+    if(g.explodeDir.lengthSq() < 1e-6) g.explodeDir.set(0,0,1); else g.explodeDir.normalize();
+
+    const D = dimBox(gb, Math.max(6, diag*0.02));
+    D.visible=false; g.dim=D; g.dimHome=D.position.clone(); g.labels=D.labels; dimsRoot.add(D);
+
+    const cat = catFor(name);
+    const rec = catUI(cat);
+    const row = document.createElement('label'); row.className='part';
+    row.innerHTML = `<span class="sw" style="background:${hex(name)}"></span>`+
+                    `<span class="nm">${name}</span><input type="checkbox" checked>`;
+    row.querySelector('input').addEventListener('change',e=>{
+      g.meshes.forEach(o=>o.visible=e.target.checked);
+      row.classList.toggle('off', !e.target.checked);
+      syncCat(cat);
+      applyDims();
+    });
+    rec.body.appendChild(row);
+    g.row = row;
+  }
+
+  overallDim = dimBox(bbox, Math.max(12, diag*0.03));
+  const bh = new THREE.Box3Helper(bbox.clone(), 0xffffff);
+  bh.material.transparent=true; bh.material.opacity=0.18; overallDim.add(bh);
+  overallDim.visible=false; scene.add(overallDim);
+
+  applyDims();
+  // apply the slider's default transparency (50%) to the freshly loaded materials
+  $('opacity').dispatchEvent(new Event('input'));
+  window.__ready = true;
+  applyPose();                                       // pose.json may have loaded first
+  if($('t_fits').checked) $('t_fits').dispatchEvent(new Event('change'));   // default-on
+}, undefined, err=>{ document.getElementById('bbox').textContent='LOAD ERROR: '+err; });
+
+const $=id=>document.getElementById(id);
+const pct = v => Math.round(v*100)+'%';
+
+// global transparency: 0 = solid .. 0.92 = ghost. Acts on EVERY part.
+$('opacity').addEventListener('input',e=>{
+  const t=parseFloat(e.target.value), solid=t<=0.001;
+  $('opacity_v').textContent = pct(t);
+  Object.values(groups).forEach(g=>g.meshes.forEach(o=>{
+    o.material.transparent = !solid;
+    o.material.opacity = 1 - t;
+    o.material.depthWrite = solid;
+  }));
+});
+
+function updateLegend(){ $('legend').style.display = ($('t_dims').checked||$('t_bbox').checked)?'':'none'; }
+function applyDims(){
+  const on=$('t_dims').checked;
+  Object.values(groups).forEach(g=>{
+    if(!g.dim) return;
+    const vis = on && g.meshes.some(o=>o.visible);
+    g.dim.visible=vis;
+    g.labels.forEach(l=>{ l.visible=vis; l.element.style.display = vis?'':'none'; });
+  });
+  updateLegend();
+}
+$('t_dims').addEventListener('change',applyDims);
+$('t_bbox').addEventListener('change',e=>{
+  if(!overallDim) return;
+  const on=e.target.checked;
+  overallDim.visible=on;
+  overallDim.labels.forEach(l=>{ l.visible=on; l.element.style.display=on?'':'none'; });
+  updateLegend();
+});
+
+// ---- Pose: live pan/tilt of the head. The GLB bakes the build's preview pose into the
+// vertices, so pose.json (written by build.py) supplies the BAKED angles, the tilt-axis
+// position and each posed node's kinematic group; the sliders then apply DELTA rotations
+// about the same neutral-frame axes: pan = Rz about the origin, tilt = Rx about
+// (0, tilt_axis_y, tilt_axis_z). Head parts get Rz(pan)·Rx(Δtilt)·Rz(-bakedPan) so the
+// tilt axis swings with the pan, exactly like build.py's M_head = pan @ tilt.
+let pose=null;
+const poseM={head:new THREE.Matrix4(), pan:new THREE.Matrix4()};   // current group deltas
+const poseF={head:new THREE.Matrix4(), pan:new THREE.Matrix4()};   // FULL pose (for the
+// fit-map patch clouds: fit_report.json stores NEUTRAL-pose coords, so unlike the baked
+// meshes they need the absolute slider pose, not the delta from the baked pose)
+const DEG=Math.PI/180;
+fetch(MODEL.replace(/\.glb$/,'')+'.pose.json?'+Date.now()).then(r=>r.ok?r.json():null).then(p=>{
+  if(!p||!p.groups) return;
+  pose=p;
+  const pan=$('pan'), tilt=$('tilt');
+  pan.min=-p.pan_stop_deg;  pan.max=p.pan_stop_deg;  pan.value=p.pan_deg;
+  tilt.min=-p.tilt_stop_deg; tilt.max=p.tilt_stop_deg; tilt.value=p.tilt_deg;
+  pan.disabled=tilt.disabled=false; pan.title=tilt.title='';
+  if(p.ant_nodes && p.ant_nodes.length){
+    $('antLrow').style.display=''; $('antRrow').style.display='';
+    for(const id of ['antL','antR']){
+      const el=$(id); el.max=p.ant_travel; el.value=p.ant_baked_mm; el.disabled=false;
+      el.addEventListener('input',applyPose);
+    }
+  }
+  applyPose();
+}).catch(()=>{});
+function applyPose(){
+  if(!pose) return;
+  const pn=parseFloat($('pan').value), tn=parseFloat($('tilt').value);
+  $('pan_v').textContent=pn.toFixed(0)+'°'; $('tilt_v').textContent=tn.toFixed(0)+'°';
+  const rz=a=>new THREE.Matrix4().makeRotationZ(a*DEG);
+  const T =new THREE.Matrix4().makeTranslation(0, pose.tilt_axis_y, pose.tilt_axis_z);
+  const Ti=new THREE.Matrix4().makeTranslation(0,-pose.tilt_axis_y,-pose.tilt_axis_z);
+  const rxt=a=>T.clone().multiply(new THREE.Matrix4().makeRotationX(a*DEG)).multiply(Ti);
+  poseM.pan  = rz(pn - pose.pan_deg);            // same axis, so the deltas collapse
+  poseM.head = rz(pn).multiply(rxt(tn - pose.tilt_deg)).multiply(rz(-pose.pan_deg));
+  poseF.pan  = rz(pn);
+  poseF.head = rz(pn).multiply(rxt(tn));
+  // antenna masts: baked GLB has them lifted ant_baked_mm along head-local Z, so their
+  // delta = headPose . T(0,0,slider-baked) . inv(bakedHeadPose) -- the lift composes in
+  // HEAD-local frame (a tilted head deploys along its own up)
+  if(pose.ant_nodes && pose.ant_nodes.length){
+    const inv = rxt(-pose.tilt_deg).multiply(rz(-pose.pan_deg));
+    poseM.antenna_L = poseF.head.clone()
+      .multiply(new THREE.Matrix4().makeTranslation(0,0,parseFloat($('antL').value)-pose.ant_baked_mm))
+      .multiply(inv);
+    poseM.antenna_R = poseF.head.clone()
+      .multiply(new THREE.Matrix4().makeTranslation(0,0,parseFloat($('antR').value)-pose.ant_baked_mm))
+      .multiply(inv);
+    $('antL_v').textContent=parseFloat($('antL').value).toFixed(0)+'mm';
+    $('antR_v').textContent=parseFloat($('antR').value).toFixed(0)+'mm';
+  }
+  applyTransforms();
+  applyFitPose();
+}
+$('pan').addEventListener('input',applyPose);
+$('tilt').addEventListener('input',applyPose);
+
+// one place composes pose × explode per mesh (they must not fight over o.position)
+function applyTransforms(){
+  if(!window.__ready) return;
+  const t=parseFloat($('explode').value), spread=diag*0.6;
+  for(const [name,g] of Object.entries(groups)){
+    const off=g.explodeDir.clone().multiplyScalar(t*spread);
+    const k=pose ? (pose.ant_nodes && pose.ant_nodes.includes(name)?name
+                   :pose.groups.head.includes(name)?'head'
+                   :pose.groups.pan.includes(name)?'pan':null) : null;
+    g.meshes.forEach((o,i)=>{
+      const p=g.home[i].clone().add(off);
+      if(k){
+        const M=poseM[k].clone().multiply(new THREE.Matrix4().makeTranslation(p.x,p.y,p.z));
+        M.decompose(o.position,o.quaternion,o.scale);
+      } else o.position.copy(p);
+    });
+    if(g.dim) g.dim.position.copy(g.dimHome).add(off);
+  }
+}
+
+// explode along each group's radial direction from the assembly center
+$('explode').addEventListener('input',e=>{
+  $('explode_v').textContent = pct(parseFloat(e.target.value));
+  applyTransforms();
+});
+
+// section cut on a chosen axis
+function applySection(){
+  const on=$('t_section').checked, axis=$('sec_axis').value, t=parseFloat($('cut').value);
+  $('cut_v').textContent = pct(t);
+  const n={X:[-1,0,0],Y:[0,-1,0],Z:[0,0,-1]}[axis];
+  sectionPlane.normal.set(n[0],n[1],n[2]);
+  const mn=bbox.min, sz=bbox.getSize(new THREE.Vector3());
+  sectionPlane.constant = {X:mn.x+sz.x*t, Y:mn.y+sz.y*t, Z:mn.z+sz.z*t}[axis];
+  const planes=on?[sectionPlane]:[];
+  Object.values(groups).forEach(g=>g.meshes.forEach(o=>o.material.clippingPlanes=planes));
+}
+$('t_section').addEventListener('change',applySection);
+$('sec_axis').addEventListener('change',applySection);
+$('cut').addEventListener('input',applySection);
+
+// ---- FITS panel: clearance / press-fit map (fit_report.json, written by `make fits`).
+// Ported from finnish-doors 2026-07-08. TEAL = intended contact (designed seats/presses),
+// RED = only PROBLEMS (unexpected touch/press), amber/yellow/green = clearance scale.
+// Each pair renders a contact-PATCH point cloud; click a row to isolate it + glow the parts.
+let fitData=null, fitDots=null, fitSelNames=null;
+const FITCOLS={ok:'#5cc7d4',bad:'#ff6b6b',tight:'#ffb300',run:'#ffd866',free:'#6ecf7a'};
+const FITHEADS={bad:'PROBLEMS · unexpected contact',ok:'INTENDED · seats & presses',
+                tight:'TIGHT · under 0.15',run:'RUNNING · 0.15–0.4',free:'FREE · over 0.4'};
+function pairStatus(r){ const touch=r.press||r.mm<=0.005;
+  if(touch) return (r.designed||r.expected)?'ok':'bad';
+  return r.mm<0.15?'tight':r.mm<0.4?'run':'free'; }
+function fitTag(r){ const st=pairStatus(r);
+  if(st==='ok') return r.press?('press '+(-r.mm).toFixed(2)):'seated';
+  if(st==='bad') return (r.press?'PRESS '+(-r.mm).toFixed(2):'TOUCH')+' !';
+  return r.mm.toFixed(2); }
+function fitColD(d,st){ if(st==='ok') return FITCOLS.ok;
+  if(d<0.005) return st==='bad'?FITCOLS.bad:FITCOLS.tight;
+  return d<0.15?FITCOLS.tight:d<0.4?FITCOLS.run:FITCOLS.free; }
+function showFitDots(){
+  if(fitDots||!fitData) return;
+  fitDots=new THREE.Group(); fitDots.userData.byPair={};
+  fitData.forEach((r,idx)=>{
+    const pts=(r.patch&&r.patch.length)?r.patch:[[r.at[0],r.at[1],r.at[2],r.mm]];
+    const pos=new Float32Array(pts.length*3), col=new Float32Array(pts.length*3);
+    const st=pairStatus(r);
+    pts.forEach((p,i)=>{ pos[i*3]=p[0];pos[i*3+1]=p[1];pos[i*3+2]=p[2];
+      const c=new THREE.Color(parseInt(fitColD(p[3],st).slice(1),16));
+      col[i*3]=c.r;col[i*3+1]=c.g;col[i*3+2]=c.b; });
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    const m=new THREE.Points(g,new THREE.PointsMaterial({size:1.5,vertexColors:true,
+      transparent:true,opacity:.9,depthTest:false,sizeAttenuation:true}));
+    m.renderOrder=999; m.userData.pair=[r.a, r.b]; m.matrixAutoUpdate=false;
+    fitDots.add(m); fitDots.userData.byPair[idx]=m;
+  });
+  scene.add(fitDots);
+  applyFitPose();                      // patches are neutral-pose coords: pose them now
+}
+// pose the fit patches with the head/pan sliders. A patch belongs to the MORE moving of
+// its two parts (head > pan > fixed): same-group pairs ride exactly; a moving-vs-fixed
+// pair only truly exists at neutral, so its patch stays glued to the moving surface.
+function applyFitPose(){
+  if(!fitDots||!pose) return;
+  for(const m of fitDots.children){
+    const g = m.userData.pair.some(n=>pose.groups.head.includes(n)) ? 'head'
+            : m.userData.pair.some(n=>pose.groups.pan.includes(n))  ? 'pan' : null;
+    if(g) m.matrix.copy(poseF[g]); else m.matrix.identity();
+  }
+}
+function hideFitDots(){ if(fitDots){ scene.remove(fitDots); fitDots=null; } }
+function focusFitPair(idx){ if(!fitDots) return;
+  Object.entries(fitDots.userData.byPair).forEach(([i,m])=>{
+    m.material.opacity=(idx==null||+i===idx)?.95:.07;
+    m.material.size=(+i===idx)?2.6:1.5; }); }
+function clearFitSel(){
+  if(fitSelNames) fitSelNames.forEach(n=>{ const g=groups[n]; if(!g) return;
+    g.meshes.forEach(o=>{ if(o.userData._em!==undefined){
+      o.material.emissive.setHex(o.userData._em); o.material.emissiveIntensity=o.userData._ei; } }); });
+  fitSelNames=null;
+  document.querySelectorAll('#fits .fr.on').forEach(e=>e.classList.remove('on'));
+}
+function pickFit(r,el,idx){
+  const same=el.classList.contains('on');
+  clearFitSel(); if(same){ focusFitPair(null); return; }
+  fitSelNames=[r.a,r.b];
+  fitSelNames.forEach(n=>{ const g=groups[n]; if(!g) return;
+    g.meshes.forEach(o=>{ if(o.userData._em===undefined){
+        o.userData._em=o.material.emissive.getHex(); o.userData._ei=o.material.emissiveIntensity; }
+      o.material.emissive.setHex(0x5cc7d4); o.material.emissiveIntensity=.55; }); });
+  focusFitPair(idx); el.classList.add('on');
+}
+async function openFits(){
+  const panel=$('fits');
+  if(!fitData){
+    try{ fitData=await (await fetch('fit_report.json?'+Date.now())).json(); }
+    catch(e){ panel.innerHTML='<div class="fhd" style="color:var(--ink-dim)">no fit_report.json — run `make fits`</div>'; return; }
+  }
+  const bad=fitData.filter(r=>pairStatus(r)==='bad');
+  const nContact=fitData.filter(r=>['ok','bad'].includes(pairStatus(r))).length;
+  $('fits_sum').textContent = bad.length? bad.length+' ✗' : '✓';
+  $('fits_sum').style.color = bad.length? FITCOLS.bad : FITCOLS.ok;
+  panel.innerHTML = bad.length
+    ? '<div class="fhd" style="color:#ff6b6b">✗ '+bad.length+' unexpected contact'+(bad.length>1?'s':'')+' — fix before printing</div>'
+    : '<div class="fhd" style="color:#5cc7d4">✓ all '+nContact+' contacts are designed seats/presses</div>';
+  ['bad','ok','tight','run','free'].forEach(st=>{
+    const rows=fitData.map((r,idx)=>[r,idx]).filter(([r])=>pairStatus(r)===st);
+    if(!rows.length) return;
+    const h=document.createElement('div'); h.className='fhd';
+    h.style.color=FITCOLS[st]; h.textContent=FITHEADS[st]; panel.appendChild(h);
+    rows.forEach(([r,idx])=>{
+      const el=document.createElement('div'); el.className='fr';
+      el.innerHTML='<span class="dot" style="background:'+FITCOLS[st]+'"></span>'
+        +'<span class="pair">'+r.a+' ↔ '+r.b+'</span>'
+        +'<span class="mm" style="color:'+FITCOLS[st]+'">'+fitTag(r)+'</span>';
+      if(st==='bad') el.style.background='rgba(255,107,107,.14)';
+      el.addEventListener('click',()=>pickFit(r,el,idx));
+      panel.appendChild(el);
+    });
+  });
+  const lg=document.createElement('div'); lg.className='flegend';
+  lg.innerHTML='<span style="color:#5cc7d4">■</span> intended · <span style="color:#ff6b6b">■</span> problem'
+    +' · <span style="color:#ffb300">■</span> &lt;0.15 · <span style="color:#ffd866">■</span> 0.15–0.4 · <span style="color:#6ecf7a">■</span> free'
+    +'<br>patches trace each contact area · click a pair to isolate';
+  panel.appendChild(lg);
+}
+$('t_fits').addEventListener('change',e=>{
+  const panel=$('fits');
+  if(e.target.checked){ panel.style.display='flex'; openFits().then(showFitDots); }
+  else{ panel.style.display='none'; clearFitSel(); hideFitDots(); }
+});
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight); labelRnd.setSize(innerWidth,innerHeight);
+});
+
+// ---- click-to-select: raycast on click (not drag): glow the part, mark its row,
+// show its name + world-space L/W/H (posed). Click empty space / same part / Esc clears.
+let selName=null, selDown=null;
+const selRay=new THREE.Raycaster(), selNdc=new THREE.Vector2();
+function selectPart(name){
+  if(selName && groups[selName]){
+    const g=groups[selName];
+    g.meshes.forEach(o=>{ if(o.userData._selEm!==undefined){
+      o.material.emissive.setHex(o.userData._selEm);
+      o.material.emissiveIntensity=o.userData._selEi;
+      delete o.userData._selEm; }});
+    if(g.row) g.row.classList.remove('sel');
+  }
+  $('selinfo').style.display='none';
+  if(name===selName){ selName=null; return; }
+  selName=name||null;
+  if(!selName) return;
+  const g=groups[selName];
+  g.meshes.forEach(o=>{
+    o.userData._selEm=o.material.emissive.getHex();
+    o.userData._selEi=o.material.emissiveIntensity;
+    o.material.emissive.setHex(0xE87422); o.material.emissiveIntensity=.5; });
+  if(g.row){
+    const grp=g.row.closest('.cgrp'); if(grp) grp.classList.remove('closed');
+    g.row.classList.add('sel'); g.row.scrollIntoView({block:'nearest'});
+  }
+  const gb=new THREE.Box3(); g.meshes.forEach(o=>gb.expandByObject(o));
+  const s=gb.getSize(new THREE.Vector3());
+  $('selinfo').innerHTML='<span class="ax" style="color:#E87422">▶</span><b>'+selName+'</b>'+
+    '<span class="ax" style="color:'+TXT.x+'">L</span><b>'+s.x.toFixed(1)+'</b>'+
+    '<span class="ax" style="color:'+TXT.y+'">W</span><b>'+s.y.toFixed(1)+'</b>'+
+    '<span class="ax" style="color:'+TXT.z+'">H</span><b>'+s.z.toFixed(1)+'</b>';
+  $('selinfo').style.display='flex';
+}
+renderer.domElement.addEventListener('pointerdown',e=>{ selDown=[e.clientX,e.clientY]; });
+renderer.domElement.addEventListener('pointerup',e=>{
+  if(!selDown) return;
+  const moved=Math.hypot(e.clientX-selDown[0], e.clientY-selDown[1]); selDown=null;
+  if(moved>6 || !window.__ready) return;             // it was an orbit drag, not a click
+  selNdc.x=(e.clientX/innerWidth)*2-1; selNdc.y=-(e.clientY/innerHeight)*2+1;
+  selRay.setFromCamera(selNdc,camera);
+  const meshes=[];
+  for(const g of Object.values(groups)) for(const o of g.meshes) if(o.visible) meshes.push(o);
+  const hit=selRay.intersectObjects(meshes,false)[0];
+  selectPart(hit ? hit.object.userData.pname : null);
+});
+addEventListener('keydown',e=>{ if(e.key==='Escape' && selName) selectPart(selName); });
+
+// mobile bottom sheet: ☰ toggles the HUD; starting an orbit gesture tucks it away
+const mobile = matchMedia('(max-width: 700px)');
+$('hudtoggle').addEventListener('click',()=>$('hud').classList.toggle('open'));
+renderer.domElement.addEventListener('pointerdown',()=>{
+  if(mobile.matches) $('hud').classList.remove('open');
+});
+
+let last=performance.now();
+(function loop(t){
+  requestAnimationFrame(loop);
+  const dt=(t-last)/1000; last=t;
+  if($('t_spin').checked){ scene.rotation.z += dt * parseFloat($('spinspd').value)*Math.PI/180; }
+  if(pose && $('t_sweep').checked){                  // lazy figure-8 sweep inside the stops
+    const s=t/1000;
+    $('pan').value  = (Math.sin(s*0.7) * pose.pan_stop_deg  * 0.95).toFixed(1);
+    $('tilt').value = (Math.sin(s*1.3) * pose.tilt_stop_deg * 0.90).toFixed(1);
+    applyPose();
+  }
+  controls.update();
+  renderer.render(scene,camera);
+  labelRnd.render(scene,camera);
+})(last);
+
+// auto-reload when the build script rewrites the model
+let stamp=null;
+setInterval(async()=>{
+  try{ const r=await fetch(MODEL,{method:'HEAD',cache:'no-store'});
+    const s=r.headers.get('Last-Modified');
+    if(stamp && s && s!==stamp) location.reload();
+    stamp = s||stamp;
+  }catch(e){}
+}, 2000);
+</script>
+</body>
+</html>

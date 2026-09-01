@@ -1,0 +1,16 @@
+{
+  "name": "3d-print-modeling",
+  "metadata": { "description": "Parametric FDM 3D-print modeling skill for Claude Code, with a headless view-screenshot-iterate verification loop." },
+  "owner": { "name": "Mohsen Esmaeili", "email": "mesmaeili.bz@gmail.com" },
+  "plugins": [
+    {
+      "name": "3d-print-modeling",
+      "source": "./",
+      "description": "Parametric FDM part modeling with a headless view-screenshot-iterate loop.",
+      "version": "1.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/m-esm/3d-print-modeling",
+      "tags": ["3d-printing", "fdm", "cad", "trimesh", "build123d"]
+    }
+  ]
+}
