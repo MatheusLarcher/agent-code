@@ -146,6 +146,16 @@ function toolNames(body: CodexResponsesRequest): string[] {
   return [...topLevel, ...litePrefix]
 }
 
+function developerText(body: CodexResponsesRequest): string {
+  return body.input
+    .flatMap((item) =>
+      item.type === 'message' && item.role === 'developer'
+        ? item.content.flatMap((part) => (part.type === 'input_text' ? [part.text] : []))
+        : []
+    )
+    .join('\n')
+}
+
 function functionOutput(body: CodexResponsesRequest, callId: string): string | undefined {
   const item = body.input.find(
     (candidate) => candidate.type === 'function_call_output' && candidate.call_id === callId
@@ -240,6 +250,9 @@ describe.sequential('Codex proxy with the real Claude Agent SDK/CLI', () => {
     const fixturePath = join(root, 'probe.txt')
     const fileSentinel = 'REAL_READ_TOOL_SENTINEL_7e62'
     const finalSentinel = 'READ_CONTINUATION_COMPLETE_41b9'
+    const persistentContextSentinel =
+      'AUTHORITATIVE FILESYSTEM SKILLS CATALOG\n- /sdk-probe\n  Description: full skill description on every request\n' +
+      'AUTHORITATIVE PERSISTENT MEMORY CATALOG\n--- MEMORY FILE: probe.md ---\nfull memory on every request'
     const reasoning = {
       id: 'rs_read_roundtrip',
       type: 'reasoning',
@@ -273,11 +286,12 @@ describe.sequential('Codex proxy with the real Claude Agent SDK/CLI', () => {
     try {
       const messages = await collectQuery(
         'Read probe.txt exactly once, then report completion.',
-        sdkOptions(root, server.port, { tools: ['Read'], maxTurns: 4 })
+        sdkOptions(root, server.port, { tools: ['Read'], maxTurns: 4, systemPrompt: persistentContextSentinel })
       )
 
       expect(captured).toHaveLength(2)
       expect(toolNames(captured[0].body)).toContain('Read')
+      expect(captured.every((request) => developerText(request.body).includes(persistentContextSentinel))).toBe(true)
       expect(new Set(captured.map((request) => request.sessionId)).size).toBe(1)
 
       const continuation = captured[1].body.input

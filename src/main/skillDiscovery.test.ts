@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { discoverSkills, parseSkillFrontmatter, renderAgentSkillCatalog } from './skillDiscovery'
+import {
+  createSkillCatalogSnapshot,
+  discoverSkills,
+  parseSkillFrontmatter,
+  renderAgentSkillCatalog,
+  skillCatalogFilesystemVersion
+} from './skillDiscovery'
 
 async function skill(root: string, folder: string, name: string, description: string): Promise<void> {
   const dir = join(root, folder)
@@ -19,7 +25,7 @@ describe('skillDiscovery', () => {
     expect(parseSkillFrontmatter('---\nname: ../fora\ndescription: não\n---')).toBeNull()
   })
 
-  it('usa a mesma precedência da UI e não injeta o corpo no catálogo', async () => {
+  it('usa a mesma precedência da UI e injeta todas as descrições, mas não o corpo', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-project-'))
     const home = await mkdtemp(join(tmpdir(), 'skills-home-'))
     const cache = await mkdtemp(join(tmpdir(), 'skills-cache-'))
@@ -35,9 +41,59 @@ describe('skillDiscovery', () => {
 
     const catalog = renderAgentSkillCatalog(found)
     expect(catalog).toContain('/adaptada')
+    expect(catalog).toContain('/duplicada')
+    expect(catalog).toContain('Description: projeto nativo')
+    expect(catalog).toContain('/global')
+    expect(catalog).toContain('/planejar')
     expect(catalog).toContain('SKILL.md:')
     expect(catalog).not.toContain('BODY_SENTINEL')
-    expect(catalog).not.toContain('/duplicada')
+  })
+
+  it('lê somente o prefixo de SKILL.md grande sem descartar seu frontmatter', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'skills-large-'))
+    const root = join(project, '.agents', 'skills', 'large')
+    await mkdir(root, { recursive: true })
+    await writeFile(
+      join(root, 'SKILL.md'),
+      `---\nname: large-skill\ndescription: descrição que precisa chegar ao modelo\n---\n\n${'x'.repeat(80 * 1024)}`,
+      'utf8'
+    )
+
+    const found = discoverSkills(project, join(project, 'home'), join(project, 'no-cache'))
+    expect(found).toEqual([
+      expect.objectContaining({
+        name: 'large-skill',
+        description: 'descrição que precisa chegar ao modelo',
+        sizeBytes: expect.any(Number),
+        modifiedAtMs: expect.any(Number)
+      })
+    ])
+  })
+
+  it('versiona adição, alteração e remoção pelo estado atual das skills', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'skills-version-'))
+    const root = join(project, '.agents', 'skills')
+    const home = join(project, 'home')
+    const cache = join(project, 'cache')
+    await skill(root, 'one', 'one', 'primeira descrição')
+    const firstFilesystemVersion = skillCatalogFilesystemVersion(project, home, cache)
+    const first = createSkillCatalogSnapshot(discoverSkills(project, home, cache))
+
+    await skill(root, 'one', 'one', 'descrição atualizada e maior')
+    const changedFilesystemVersion = skillCatalogFilesystemVersion(project, home, cache)
+    const changed = createSkillCatalogSnapshot(discoverSkills(project, home, cache))
+    await skill(root, 'two', 'two', 'segunda skill')
+    const added = createSkillCatalogSnapshot(discoverSkills(project, home, cache))
+    await rm(join(root, 'one'), { recursive: true })
+    const removed = createSkillCatalogSnapshot(discoverSkills(project, home, cache))
+
+    expect(changed.version).not.toBe(first.version)
+    expect(changedFilesystemVersion).not.toBe(firstFilesystemVersion)
+    expect(added.version).not.toBe(changed.version)
+    expect(removed.version).not.toBe(added.version)
+    expect(added.catalog).toContain('Description: descrição atualizada e maior')
+    expect(added.catalog).toContain('Description: segunda skill')
+    expect(removed.catalog).not.toContain('/one')
   })
 
   it('mantém as skills do app quando a conversa abre outro projeto', async () => {

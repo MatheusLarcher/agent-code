@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, realpathSync, statSync, type Dirent } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
@@ -8,8 +9,124 @@ import { isAbsolute, join, relative, sep } from 'node:path'
  * a memory filed under a folder is never invisible.
  */
 
-/** Deep enough for "2D/clientes/x.md"; guards against a symlink loop. */
-const MAX_DEPTH = 4
+export interface MemoryCatalogFile {
+  relPath: string
+  content: string
+  modifiedAtMs: number
+  sizeBytes: number
+}
+
+export interface MemoryCatalogSnapshot {
+  rootDir: string
+  files: MemoryCatalogFile[]
+  catalog: string
+  version: string
+}
+
+interface MemoryFileMetadata {
+  relPath: string
+  fullPath: string
+  modifiedAtMs: number
+  sizeBytes: number
+}
+
+/** All Markdown files that form persistent memory, including the root index.
+ * Symlinks and hidden entries are skipped so the catalog cannot escape its root. */
+function listMemoryFileMetadata(dir: string): MemoryFileMetadata[] {
+  const out: MemoryFileMetadata[] = []
+  const walk = (current: string, folders: string[]): void => {
+    let entries: Dirent<string>[]
+    try {
+      entries = readdirSync(current, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue
+      const fullPath = join(current, entry.name)
+      if (entry.isDirectory()) {
+        walk(fullPath, [...folders, entry.name])
+        continue
+      }
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue
+      try {
+        const stat = statSync(fullPath)
+        out.push({
+          relPath: [...folders, entry.name].join('/'),
+          fullPath,
+          modifiedAtMs: stat.mtimeMs,
+          sizeBytes: stat.size
+        })
+      } catch {
+        // A file can disappear while the tree is being scanned.
+      }
+    }
+  }
+  walk(dir, [])
+  return out
+}
+
+/** Cheap tree signature checked before every user dispatch. No file content is read. */
+export function memoryCatalogFilesystemVersion(dir: string): string {
+  const metadata = listMemoryFileMetadata(dir).map(({ relPath, modifiedAtMs, sizeBytes }) => ({
+    relPath,
+    modifiedAtMs,
+    sizeBytes
+  }))
+  return createHash('sha256').update(JSON.stringify({ dir, metadata })).digest('hex')
+}
+
+export function renderMemoryCatalog(files: MemoryCatalogFile[], rootDir = ''): string {
+  const entries = files.map(
+    (file) => `--- MEMORY FILE: ${file.relPath} ---\n${file.content.trim() || '(empty memory file)'}`
+  )
+  return `[AUTHORITATIVE PERSISTENT MEMORY CATALOG]
+This is the complete persistent-memory snapshot for this user at conversation startup. Consider every
+memory below when handling requests. The configured memories directory is:
+${rootDir || '(not specified)'}
+Paths below are relative to that directory. A later
+[PERSISTENT_MEMORY_UPDATE] replaces this entire catalog; do not combine stale entries with the replacement.
+
+${entries.length > 0 ? entries.join('\n\n') : '(no persistent memory files are currently available)'}
+[/AUTHORITATIVE PERSISTENT MEMORY CATALOG]`
+}
+
+/** Reads every Markdown memory only when a conversation starts or metadata changed. */
+export function createMemoryCatalogSnapshot(dir: string): MemoryCatalogSnapshot {
+  const files: MemoryCatalogFile[] = []
+  for (const metadata of listMemoryFileMetadata(dir)) {
+    try {
+      const content = readFileSync(metadata.fullPath, 'utf8')
+      if (content.includes('\0')) continue
+      files.push({
+        relPath: metadata.relPath,
+        content,
+        modifiedAtMs: metadata.modifiedAtMs,
+        sizeBytes: metadata.sizeBytes
+      })
+    } catch {
+      // A file can disappear or become unreadable between metadata and content scans.
+    }
+  }
+  const catalog = renderMemoryCatalog(files, dir)
+  const versionInput = { dir, files: files.map(({ relPath, content }) => ({ relPath, content })) }
+  return {
+    rootDir: dir,
+    files,
+    catalog,
+    version: createHash('sha256').update(JSON.stringify(versionInput)).digest('hex')
+  }
+}
+
+export function renderMemoryCatalogUpdate(snapshot: MemoryCatalogSnapshot): string {
+  return `[PERSISTENT_MEMORY_UPDATE]
+Persistent-memory files changed after this conversation started. Replace every earlier persistent-memory
+catalog with the complete authoritative snapshot below. Do not mention this automatic refresh to the user
+unless it blocks the task.
+
+${snapshot.catalog}
+[/PERSISTENT_MEMORY_UPDATE]`
+}
 
 export interface MemoryFile {
   /** Path relative to the memories root, always with "/" — e.g. "2D/erp.md". */
@@ -32,7 +149,6 @@ export function memorySummary(markdown: string, filename: string): { title: stri
 export function listMemoryFiles(dir: string): MemoryFile[] {
   const out: MemoryFile[] = []
   const walk = (current: string, folders: string[]): void => {
-    if (folders.length > MAX_DEPTH) return
     let entries: Dirent<string>[]
     try {
       entries = readdirSync(current, { withFileTypes: true })
@@ -40,7 +156,7 @@ export function listMemoryFiles(dir: string): MemoryFile[] {
       return // unreadable folder — skip it instead of killing the whole scan
     }
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.name.startsWith('.')) continue
+      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue
       const full = join(current, entry.name)
       if (entry.isDirectory()) {
         walk(full, [...folders, entry.name])
@@ -70,8 +186,8 @@ export function memoryIndexLine(file: MemoryFile): string {
 }
 
 /**
- * The memories block injected into every conversation: the root index verbatim,
- * then a section per subfolder so the model knows the grouping the user created.
+ * Legacy compact index used by the curator/tests: the root index verbatim, then
+ * a section per subfolder so the grouping the user created remains visible.
  */
 export function renderMemoryIndex(dir: string, rootIndex: string): string {
   const grouped = new Map<string, MemoryFile[]>()

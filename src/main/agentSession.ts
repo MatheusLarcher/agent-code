@@ -7,9 +7,20 @@ import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsCo
 import { windowsControl } from './windowsControl/service'
 import { loadConfig } from './config'
 import { getCacheInfo } from './store'
-import { buildDynamicMemoryContext, buildMemoryIndexContext } from './memoryIndex'
+import {
+  createMemoryCatalogSnapshot,
+  memoryCatalogFilesystemVersion,
+  renderMemoryCatalogUpdate,
+  type MemoryCatalogSnapshot
+} from './memoryIndex'
 import { hostname } from 'node:os'
-import { discoverSkills, renderAgentSkillCatalog } from './skillDiscovery'
+import {
+  createSkillCatalogSnapshot,
+  discoverSkills,
+  renderSkillCatalogUpdate,
+  skillCatalogFilesystemVersion,
+  type SkillCatalogSnapshot
+} from './skillDiscovery'
 import { readSessionTasks, watchSessionTasks } from './sessionTasks'
 import { randomUUID } from 'node:crypto'
 import { isOllamaModel, isOpenAIModel, modelSupportsFastMode, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
@@ -194,9 +205,10 @@ SAVING — when the user asks you to remember, save, note, or memorize something
   file instead of making a duplicate. Delete a memory file (and its index line) if it becomes wrong.
 - Do NOT save things already evident from the project's code, git history, or CLAUDE.md.
 
-RECALLING — these files are your long-term knowledge about this user and their projects. Read the
-relevant ones when they help the current task. A fresh index and bounded relevant excerpts are
-attached to every user message, so changes made during this session are immediately available.`
+RECALLING — these files are your long-term knowledge about this user and their projects. The complete
+catalog is loaded once when this conversation starts. Before every user dispatch, Agent Code checks only
+file names, modification dates, and sizes. If anything changed, one complete authoritative replacement is
+attached automatically; unchanged catalogs are never duplicated in the conversation.`
 }
 
 // Tools auto-approved without prompting the user.
@@ -314,8 +326,20 @@ export class AgentSession {
   /** Context-window size of the most recent model request (last `assistant`
    *  message's input usage) — the true "context used", not the per-turn sum. */
   private lastContextTokens = 0
-  /** Avoid repeating a large unchanged memory index in every turn's history. */
-  private lastMemoryIndex = ''
+  /** Version of the complete persistent-memory catalog already loaded into this session. */
+  private memoryCatalogVersion = ''
+  /** Cheap metadata-only signature checked before every user dispatch. */
+  private memoryFilesystemVersion = ''
+  /** Version of the authoritative skill catalog already loaded into this
+   *  session. Recomputed before every user dispatch so installs/removals become
+   *  available without reopening the conversation. */
+  private skillCatalogVersion = ''
+  /** Version successfully reloaded by the SDK's native Skill registry. Kept
+   *  separate so a transient reload failure is retried without duplicating the
+   *  catalog update already delivered to the model. */
+  private nativeSkillRegistryVersion = ''
+  /** Cheap metadata-only signature checked before parsing any frontmatter. */
+  private skillFilesystemVersion = ''
   /** Per-session cancellation scope for Windows UI actions. */
   private windowsControlScope = windowsControl.createScope()
   /** Stops the task-folder watcher of the CURRENT sdk session (a resume/restart
@@ -357,16 +381,22 @@ export class AgentSession {
     if (process.platform === 'win32') {
       mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
     }
-    // Tell the model where its per-user memory lives (and pre-load the index), so
+    // Tell the model where its per-user memory lives (and pre-load the complete catalog), so
     // "lembra disso" saves into the cache folder and recall works across chats.
     const cacheInfo = getCacheInfo()
     const memoriesDir = cacheInfo.memoriesDir
     const cacheSkillsDir = cacheInfo.skillsDir
-    const discoveredSkills = discoverSkills(this.opts.cwd, undefined, cacheSkillsDir)
-    const adaptedSkillRoots = [...new Set(discoveredSkills.filter((skill) => !skill.native).map((skill) => skill.root))]
-    const skillCatalog = renderAgentSkillCatalog(discoveredSkills)
+    this.memoryFilesystemVersion = memoryCatalogFilesystemVersion(memoriesDir)
+    const memorySnapshot = this.readMemoryCatalogSnapshot(memoriesDir)
+    this.memoryCatalogVersion = memorySnapshot.version
+    this.skillFilesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, undefined, cacheSkillsDir)
+    const skillSnapshot = this.readSkillCatalogSnapshot(cacheSkillsDir)
+    this.skillCatalogVersion = skillSnapshot.version
+    this.nativeSkillRegistryVersion = skillSnapshot.version
+    const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
-    if (skillCatalog) append += `\n\n${skillCatalog}`
+    append += `\n\n${memorySnapshot.catalog}`
+    append += `\n\n${skillSnapshot.catalog}`
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
 
     // Modo econômico: when the user toggled it on for THIS conversation, tell the
@@ -456,7 +486,7 @@ export class AgentSession {
       ...(openaiOn ? { maxTurns: OPENAI_MAX_TURNS } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
-      additionalDirectories: [memoriesDir, cacheSkillsDir, ...adaptedSkillRoots],
+      additionalDirectories: [...new Set([memoriesDir, cacheSkillsDir, ...skillRoots])],
       skills: 'all',
       // Resume a previous SDK session (loads its history) when continuing an old chat.
       ...(this.opts.resume ? { resume: this.opts.resume } : {}),
@@ -516,6 +546,8 @@ export class AgentSession {
       })
       return
     }
+    const memoryCatalogUpdate = this.refreshMemoriesIfChanged()
+    const skillCatalogUpdate = await this.refreshSkillsIfChanged()
     // A real user dispatch starts a fresh loop budget. Dynamic wakeups are
     // injected by the CLI and do not pass through this method. Internal
     // recovery prompts must never start a fresh loop just because the toggle
@@ -561,15 +593,6 @@ export class AgentSession {
     // FORA do `outText` de propósito: o relay de visão abaixo recebe a mensagem
     // crua do usuário como pista da imagem. O contexto é colado só no payload final.
     const stamp = buildContextStamp(origin)
-    const memoriesDir = getCacheInfo().memoriesDir
-    const freshMemoryIndex = buildMemoryIndexContext(memoriesDir)
-    const indexChanged = freshMemoryIndex !== this.lastMemoryIndex
-    if (indexChanged) this.lastMemoryIndex = freshMemoryIndex
-    const relevantMemories = buildDynamicMemoryContext(memoriesDir, text, false)
-    const memoryParts = [indexChanged ? freshMemoryIndex : '', relevantMemories].filter(Boolean)
-    const memoryContext = memoryParts.length
-      ? `[PERSISTENT_MEMORY_CONTEXT]\n${memoryParts.join('\n\n')}\n[/PERSISTENT_MEMORY_CONTEXT]`
-      : '[PERSISTENT_MEMORY_CONTEXT]\n(index unchanged; no relevant excerpt selected)\n[/PERSISTENT_MEMORY_CONTEXT]'
     let docsOutline: string
     try {
       docsOutline = await buildProjectOutline(this.opts.cwd)
@@ -577,7 +600,7 @@ export class AgentSession {
       docsOutline = '[PROJECT_DOCS_OUTLINE]\ndocs/ [outline unavailable for this dispatch]\n[/PROJECT_DOCS_OUTLINE]'
     }
     const stamped = (body: string): string => {
-      const context = `${stamp}\n\n${docsOutline}\n\n${memoryContext}`
+      const context = [stamp, docsOutline, memoryCatalogUpdate, skillCatalogUpdate].filter(Boolean).join('\n\n')
       const loopMatch = body.match(/^\s*\/loop(?:\s+|$)/iu)
       if (loopMatch) {
         const task = body.slice(loopMatch[0].length)
@@ -799,6 +822,58 @@ export class AgentSession {
   }
 
   // ---- internals ----
+
+  private readSkillCatalogSnapshot(cacheSkillsDir: string = getCacheInfo().skillsDir): SkillCatalogSnapshot {
+    return createSkillCatalogSnapshot(discoverSkills(this.opts.cwd, undefined, cacheSkillsDir))
+  }
+
+  private readMemoryCatalogSnapshot(memoriesDir: string = getCacheInfo().memoriesDir): MemoryCatalogSnapshot {
+    return createMemoryCatalogSnapshot(memoriesDir)
+  }
+
+  private refreshMemoriesIfChanged(): string {
+    const memoriesDir = getCacheInfo().memoriesDir
+    const filesystemVersion = memoryCatalogFilesystemVersion(memoriesDir)
+    if (filesystemVersion === this.memoryFilesystemVersion) return ''
+
+    this.memoryFilesystemVersion = filesystemVersion
+    const snapshot = this.readMemoryCatalogSnapshot(memoriesDir)
+    if (snapshot.version === this.memoryCatalogVersion) return ''
+
+    this.memoryCatalogVersion = snapshot.version
+    return renderMemoryCatalogUpdate(snapshot)
+  }
+
+  private async refreshSkillsIfChanged(): Promise<string> {
+    const cacheSkillsDir = getCacheInfo().skillsDir
+    const filesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, undefined, cacheSkillsDir)
+    if (filesystemVersion === this.skillFilesystemVersion) {
+      await this.reloadNativeSkillsIfNeeded(this.skillCatalogVersion)
+      return ''
+    }
+
+    this.skillFilesystemVersion = filesystemVersion
+    const snapshot = this.readSkillCatalogSnapshot(cacheSkillsDir)
+    await this.reloadNativeSkillsIfNeeded(snapshot.version)
+    if (snapshot.version === this.skillCatalogVersion) return ''
+
+    this.skillCatalogVersion = snapshot.version
+    return renderSkillCatalogUpdate(snapshot)
+  }
+
+  private async reloadNativeSkillsIfNeeded(version: string): Promise<void> {
+    const q = this.q
+    if (q && version !== this.nativeSkillRegistryVersion) {
+      try {
+        await q.reloadSkills()
+        this.nativeSkillRegistryVersion = version
+      } catch (error) {
+        // The authoritative catalog below still lets the model read SKILL.md
+        // directly. Keep the user's dispatch moving and retry on the next send.
+        console.warn('[skills] native reload failed; using catalog refresh fallback:', error)
+      }
+    }
+  }
 
   private clearLoopState(): void {
     this.loopActive = false

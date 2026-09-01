@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildDynamicMemoryContext, buildMemoryIndexContext, listMemoryFiles, renderMemoryIndex } from './memoryIndex'
+import {
+  buildDynamicMemoryContext,
+  buildMemoryIndexContext,
+  createMemoryCatalogSnapshot,
+  listMemoryFiles,
+  memoryCatalogFilesystemVersion,
+  renderMemoryCatalog,
+  renderMemoryCatalogUpdate,
+  renderMemoryIndex
+} from './memoryIndex'
 
 async function fixture(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'mem-'))
@@ -72,5 +81,56 @@ describe('memoryIndex', () => {
     const dir = await fixture()
     await writeFile(join(dir, 'grande.md'), `# Gigante\n${'segredo '.repeat(10_000)}`, 'utf8')
     expect(buildDynamicMemoryContext(dir, 'segredo')).not.toContain('Memória relevante: grande.md')
+  })
+
+  it('carrega o índice e o conteúdo completo de todas as memórias no catálogo inicial', async () => {
+    const dir = await fixture()
+    const snapshot = createMemoryCatalogSnapshot(dir)
+
+    expect(snapshot.files.map((file) => file.relPath)).toEqual([
+      '2D/erp.md',
+      '2D/nota.md',
+      'MEMORY.md',
+      'raiz.md'
+    ])
+    expect(snapshot.catalog).toContain('AUTHORITATIVE PERSISTENT MEMORY CATALOG')
+    expect(snapshot.catalog).toContain(dir)
+    expect(snapshot.catalog).toContain('--- MEMORY FILE: MEMORY.md ---')
+    expect(snapshot.catalog).toContain('--- MEMORY FILE: 2D/erp.md ---')
+    expect(snapshot.catalog).toContain('ERP da 2D usa X')
+    expect(snapshot.catalog).toContain('--- MEMORY FILE: raiz.md ---')
+  })
+
+  it('a versão barata acompanha adição, alteração e remoção sem ler o conteúdo', async () => {
+    const dir = await fixture()
+    const initial = memoryCatalogFilesystemVersion(dir)
+    await writeFile(join(dir, 'nova.md'), '# Nova memória com tamanho único', 'utf8')
+    const added = memoryCatalogFilesystemVersion(dir)
+    expect(added).not.toBe(initial)
+
+    await writeFile(join(dir, 'nova.md'), '# Nova memória alterada e maior que antes', 'utf8')
+    const changed = memoryCatalogFilesystemVersion(dir)
+    expect(changed).not.toBe(added)
+
+    await rm(join(dir, 'nova.md'))
+    expect(memoryCatalogFilesystemVersion(dir)).toBe(initial)
+  })
+
+  it('a atualização declara substituição integral do catálogo anterior', async () => {
+    const snapshot = createMemoryCatalogSnapshot(await fixture())
+    const update = renderMemoryCatalogUpdate(snapshot)
+    expect(update).toContain('[PERSISTENT_MEMORY_UPDATE]')
+    expect(update).toContain(snapshot.catalog)
+    expect(update).toContain('Replace every earlier persistent-memory')
+  })
+
+  it('renderiza de forma explícita um catálogo vazio', () => {
+    expect(renderMemoryCatalog([])).toContain('(no persistent memory files are currently available)')
+  })
+
+  it('trocar a pasta ativa invalida a versão mesmo com arquivos idênticos', async () => {
+    const first = await fixture()
+    const second = await fixture()
+    expect(memoryCatalogFilesystemVersion(first)).not.toBe(memoryCatalogFilesystemVersion(second))
   })
 })

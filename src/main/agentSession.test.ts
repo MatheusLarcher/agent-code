@@ -3,8 +3,16 @@
 // so it must run in the node env, not the default jsdom (which can't externalize
 // the newer node:sqlite builtin and tries to bundle it).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 const configState = vi.hoisted(() => ({ windowsControlEnabled: false as unknown }))
 const codexState = vi.hoisted(() => ({ connected: true }))
+const cacheState = vi.hoisted(() => ({
+  dir: 'C:\\test\\agent-code',
+  memoriesDir: 'C:\\test\\agent-code\\memories',
+  skillsDir: 'C:\\test\\agent-code\\skills'
+}))
 const ensureCodexProxyMock = vi.hoisted(() =>
   vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:43210', secret: 'local-test-secret' }))
 )
@@ -19,11 +27,7 @@ vi.mock('./config', () => ({
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => codexState.connected }))
 vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: ensureCodexProxyMock }))
 vi.mock('./store', () => ({
-  getCacheInfo: () => ({
-    dir: 'C:\\test\\agent-code',
-    memoriesDir: 'C:\\test\\agent-code\\memories',
-    skillsDir: 'C:\\test\\agent-code\\skills'
-  })
+  getCacheInfo: () => ({ ...cacheState })
 }))
 const projectOutlineMock = vi.hoisted(() => vi.fn(async () => '[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]'))
 vi.mock('./projectOutline', () => ({ buildProjectOutline: projectOutlineMock }))
@@ -101,6 +105,9 @@ const handle = (s: AgentSession, message: unknown): void =>
 beforeEach(() => {
   configState.windowsControlEnabled = false
   codexState.connected = true
+  cacheState.dir = 'C:\\test\\agent-code'
+  cacheState.memoriesDir = 'C:\\test\\agent-code\\memories'
+  cacheState.skillsDir = 'C:\\test\\agent-code\\skills'
   queryMock.mockClear()
   ensureCodexProxyMock.mockClear()
   projectOutlineMock.mockReset()
@@ -662,10 +669,10 @@ describe('AgentSession — vision_fallback_router', () => {
 
     expect(describeImagesMock).not.toHaveBeenCalled()
     const [msg] = pushedMessages(s)
-    // O texto recebe carimbo, documentação e memória dinâmica sem passar pelo relay.
+    // O texto recebe carimbo, documentação e a atualização inicial sem passar pelo relay.
     const content = msg.message.content as string
     expect(content).toContain('[PROJECT_DOCS_OUTLINE]\ndocs/\n[/PROJECT_DOCS_OUTLINE]')
-    expect(content).toContain('[PERSISTENT_MEMORY_CONTEXT]')
+    expect(content).toContain('[PERSISTENT_MEMORY_UPDATE]')
     expect(content).toContain('só texto, sem imagem')
   })
 })
@@ -741,6 +748,144 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     const options = optionsOfLastQuery()
     expect(options.skills).toBe('all')
     expect(options.additionalDirectories).toEqual(expect.arrayContaining(['C:\\test\\agent-code\\skills']))
+  })
+
+  it('envia nome e descrição de skills .agents no system prompt', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'agent-session-skills-'))
+    const skillDir = join(project, '.agents', 'skills', 'modelar')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: modelar\ndescription: editar qualquer arquivo STL ou 3MF\n---\n\nCORPO_NAO_VAI_NO_PROMPT',
+      'utf8'
+    )
+    const { s } = makeSession({ cwd: project, model: 'gpt-5.6-sol' })
+
+    await s.start()
+
+    const options = optionsOfLastQuery()
+    const systemPrompt = options.systemPrompt as { append: string }
+    expect(systemPrompt.append).toContain('AUTHORITATIVE FILESYSTEM SKILLS CATALOG')
+    expect(systemPrompt.append).toContain('/modelar')
+    expect(systemPrompt.append).toContain('Description: editar qualquer arquivo STL ou 3MF')
+    expect(systemPrompt.append).not.toContain('CORPO_NAO_VAI_NO_PROMPT')
+    expect(options.additionalDirectories).toEqual(expect.arrayContaining([join(project, '.agents', 'skills')]))
+  })
+
+  it('envia todas as memórias uma vez no system prompt inicial', async () => {
+    const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-start-'))
+    await mkdir(join(memories, 'produto'))
+    await writeFile(join(memories, 'MEMORY.md'), '# Índice\n\n- [Preferência](produto/preferencia.md)', 'utf8')
+    await writeFile(join(memories, 'produto', 'preferencia.md'), '# Preferência\nSempre usar o fluxo real.', 'utf8')
+    cacheState.memoriesDir = memories
+    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+
+    await s.start()
+
+    const systemPrompt = optionsOfLastQuery().systemPrompt as { append: string }
+    expect(systemPrompt.append).toContain('AUTHORITATIVE PERSISTENT MEMORY CATALOG')
+    expect(systemPrompt.append).toContain('--- MEMORY FILE: MEMORY.md ---')
+    expect(systemPrompt.append).toContain('--- MEMORY FILE: produto/preferencia.md ---')
+    expect(systemPrompt.append).toContain('Sempre usar o fluxo real.')
+
+    await s.send('sem mudança')
+    expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('[PERSISTENT_MEMORY_UPDATE]')
+    expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('Sempre usar o fluxo real.')
+  })
+
+  it('atualiza uma vez a conversa aberta ao adicionar, alterar ou remover memória', async () => {
+    const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-refresh-'))
+    const memoryFile = join(memories, 'regra.md')
+    await writeFile(memoryFile, '# Regra\nVersão inicial.', 'utf8')
+    cacheState.memoriesDir = memories
+    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+    await s.start()
+
+    await writeFile(memoryFile, '# Regra\nVersão atualizada e maior.', 'utf8')
+    await s.send('depois da alteração')
+    const changed = String(pushedMessages(s).at(-1)?.message.content)
+    expect(changed).toContain('[PERSISTENT_MEMORY_UPDATE]')
+    expect(changed).toContain('Versão atualizada e maior.')
+    expect(changed).not.toContain('Versão inicial.')
+
+    await s.send('não repetir')
+    expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('[PERSISTENT_MEMORY_UPDATE]')
+
+    await writeFile(join(memories, 'nova.md'), '# Nova\nAdicionada durante a conversa.', 'utf8')
+    await s.send('depois da adição')
+    expect(String(pushedMessages(s).at(-1)?.message.content)).toContain('Adicionada durante a conversa.')
+
+    await rm(memoryFile)
+    await s.send('depois da remoção')
+    const removed = String(pushedMessages(s).at(-1)?.message.content)
+    expect(removed).toContain('[PERSISTENT_MEMORY_UPDATE]')
+    expect(removed).not.toContain('Versão atualizada e maior.')
+  })
+
+  it('recarrega e injeta o catálogo uma vez quando skills mudam na conversa ativa', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'agent-session-skill-refresh-'))
+    const skillDir = join(project, '.agents', 'skills', 'dynamic')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: dynamic\ndescription: versão inicial\n---', 'utf8')
+    const { s } = makeSession({ cwd: project, model: 'gpt-5.6-sol' })
+    await s.start()
+    await Promise.resolve()
+
+    const reloadSkills = vi.fn(async () => ({ skills: [] }))
+    ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: dynamic\ndescription: versão atualizada para a conversa aberta\n---',
+      'utf8'
+    )
+
+    await s.send('primeiro envio depois da mudança')
+    expect(reloadSkills).toHaveBeenCalledTimes(1)
+    expect(String(pushedMessages(s).at(-1)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
+    expect(String(pushedMessages(s).at(-1)?.message.content)).toContain(
+      'Description: versão atualizada para a conversa aberta'
+    )
+
+    await s.send('catálogo não deve repetir')
+    expect(reloadSkills).toHaveBeenCalledTimes(1)
+    expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('[SKILL_CATALOG_UPDATE]')
+
+    await rm(skillDir, { recursive: true })
+    await s.send('remoção também deve atualizar')
+    expect(reloadSkills).toHaveBeenCalledTimes(2)
+    const removalUpdate = String(pushedMessages(s).at(-1)?.message.content)
+    expect(removalUpdate).toContain('[SKILL_CATALOG_UPDATE]')
+    expect(removalUpdate).not.toContain('/dynamic')
+  })
+
+  it('repete somente a recarga nativa após falha, sem duplicar o catálogo', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'agent-session-skill-retry-'))
+    const skillDir = join(project, '.agents', 'skills', 'retry')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: retry\ndescription: inicial\n---', 'utf8')
+    const { s } = makeSession({ cwd: project, model: 'gpt-5.6-sol' })
+    await s.start()
+    await Promise.resolve()
+
+    const reloadSkills = vi
+      .fn<() => Promise<{ skills: never[] }>>()
+      .mockRejectedValueOnce(new Error('falha transitória'))
+      .mockResolvedValue({ skills: [] })
+    ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: retry\ndescription: atualizada\n---', 'utf8')
+
+    try {
+      await s.send('primeira tentativa')
+      await s.send('segunda tentativa')
+    } finally {
+      warning.mockRestore()
+    }
+
+    expect(reloadSkills).toHaveBeenCalledTimes(2)
+    const messages = pushedMessages(s)
+    expect(String(messages.at(-2)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
+    expect(String(messages.at(-1)?.message.content)).not.toContain('[SKILL_CATALOG_UPDATE]')
   })
 
   it('não injeta proxy nem limite GPT numa sessão Anthropic', async () => {
