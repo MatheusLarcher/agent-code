@@ -13,6 +13,7 @@
     "start": "electron-vite preview",
     "icon": "node scripts/make-icon.mjs",
     "postinstall": "playwright install chromium",
+    "package:portable": "npm run build && node scripts/stage-chromium.mjs && electron-builder --win portable",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run"
   },
@@ -39,6 +40,7 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^42.4.1",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "jsdom": "^29.1.1",
     "react": "^19.0.0",

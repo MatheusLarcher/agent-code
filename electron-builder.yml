@@ -1,0 +1,38 @@
+appId: com.larchertech.agentcode
+productName: Agent Code
+copyright: Matheus
+
+directories:
+  output: dist
+  buildResources: build
+
+# asar desligado de propósito: o Agent SDK (claude.exe) e o Playwright
+# executam binários de dentro de node_modules — dentro do asar não rodam.
+asar: false
+
+files:
+  - out/**
+  - package.json
+  # Kit de skills empacotado: `app.getAppPath()` no exe é resources/app, e o
+  # skillManager sincroniza de <appRoot>/.agents/skills para <cacheDir>/skills.
+  - .agents/skills/**
+  - '!out/windows-control/**' # vai como extraResources (o helper procura em resources/windows-control)
+  - '!out/ms-playwright/**' # idem: vai como extraResources
+
+extraResources:
+  # Helper nativo do controle do Windows (resolveHelperPath → resources/windows-control)
+  - from: out/windows-control
+    to: windows-control
+  # Chromium do Playwright embutido (PLAYWRIGHT_BROWSERS_PATH aponta pra cá em produção)
+  - from: out/ms-playwright
+    to: ms-playwright
+
+win:
+  target:
+    - target: portable
+      arch: [x64]
+  icon: build/icon.ico
+
+portable:
+  artifactName: AgentCode-${version}-portable.exe
+  unicode: false

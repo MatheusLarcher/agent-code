@@ -1250,6 +1250,12 @@ app.on('second-instance', () => {
   mainWindow.focus()
 })
 
+// No exe portátil o Chromium do Playwright vai embutido em resources/ms-playwright
+// (o pacote não tem acesso ao %LOCALAPPDATA%\ms-playwright da máquina de build).
+if (app.isPackaged && !process.env.PLAYWRIGHT_BROWSERS_PATH) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = join(process.resourcesPath, 'ms-playwright')
+}
+
 app.whenReady().then(async () => {
   if (!ownsSingleInstance) return
   initStore() // prepares the legacy SQLite source and cache folders before the v2 migration
