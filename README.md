@@ -46,6 +46,14 @@ npm install   # instala as dependências + baixa o Chromium
 npm run dev   # abre o app
 ```
 
+**Gerar o executável portátil:**
+
+```bash
+npm run package:portable   # → dist/AgentCode-<versão>-portable.exe
+```
+
+Um arquivo só, sem instalação: o Chromium do Playwright, o helper do controle do Windows e o kit de skills vão embutidos.
+
 **Requisitos:** Node.js 20+ (o `start.bat` baixa uma cópia portátil se necessário). Na primeira conversa com Claude, o app abre o login no navegador; alternativamente, use `ANTHROPIC_API_KEY`. Para voz, configure uma chave OpenAI em **Configurações**. Essa chave OpenAI é exclusivamente para voz: os modelos GPT usam login OAuth do ChatGPT + backend Codex/proxy local, nunca a OpenAI API com chave. Modelos Ollama Cloud exigem a chave do Ollama, também em **Configurações**.
 
 **Roda 100% nativo no Windows — não precisa de WSL/Subsistema Linux.** O agente (CLI do Claude Code) é o binário nativo Windows que o Agent SDK distribui (`@anthropic-ai/claude-agent-sdk-win32-x64`, `claude.exe`), executado direto pelo Node do sistema. Nada no app depende de Linux, WSL ou de qualquer camada de compatibilidade.
@@ -54,7 +62,7 @@ npm run dev   # abre o app
 
 - Configurações, conversas e o token do celular ficam no SQLite da pasta de dados escolhida em **Configurações**; memórias persistentes ficam em arquivos `.md` na mesma pasta e o índice/trechos relevantes acompanham cada mensagem, inclusive nos modelos GPT/Codex.
 - A ponte do celular usa um token persistente e continua exigindo que as permissões sejam aprovadas no PC. Use-a apenas em redes confiáveis.
-- As skills versionadas em `.agents/skills` são vinculadas automaticamente pelo `start.bat` ao perfil global do Claude Code (`%USERPROFILE%\.claude\skills`). Além disso, o app as descobre diretamente e inclui no catálogo e nas permissões de leitura da sessão, inclusive quando o modelo selecionado é GPT/Codex.
+- As skills versionadas em `.agents/skills` são sincronizadas pelo próprio app (processo principal, depois de carregar a pasta de dados) para `<pasta de dados>/skills`, e de lá expostas ao Claude Code — inclusive no perfil global (`%USERPROFILE%\.claude\skills`) para o `claude` interativo. O app também as descobre diretamente e inclui no catálogo e nas permissões de leitura da sessão, inclusive quando o modelo selecionado é GPT/Codex.
 
 ## Stack
 

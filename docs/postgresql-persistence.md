@@ -33,7 +33,13 @@ cursor por instalação.
 
 ## Sessões e indisponibilidade
 
-Cada conversa possui lease, token e fencing epoch. O Agent SDK está fixado em
+Cada conversa possui lease, token e fencing epoch. O lease protege **um turno
+ativo**, não uma conversa ociosa: `AgentSession` chama `onTurnComplete` assim que
+o SDK emite o resultado terminal do turno e o main libera o lease (só se aquela
+sessão ainda for a registrada para a conversa), e o próximo envio o readquire
+(`agent:send` chama `acquireSessionLease` em vez de recusar com
+`LEASE_HELD_BY_OTHER_DEVICE`). Sem isso, um writer abandonado bloqueava o outro
+processo indefinidamente. O Agent SDK está fixado em
 `0.3.257` (subiu de `0.3.220` para o CLI embutido reconhecer Fable 5.1, que
 exige `2.1.251+`) e recebe `sessionStore`, `sessionStoreFlush: 'eager'` e
 timeout de load. A versão gravada em `sdk_sessions.sdk_version` vem da
