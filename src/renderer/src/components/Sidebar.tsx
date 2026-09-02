@@ -58,6 +58,22 @@ const IconChevron = ({ open }: { open: boolean }): JSX.Element => (
     <polyline points="9 6 15 12 9 18" />
   </svg>
 )
+/** Two chevrons pointing at each other (recolher) or apart (expandir). */
+const IconCollapseAll = ({ expanded }: { expanded: boolean }): JSX.Element => (
+  <svg width="16" height="16" viewBox="0 0 24 24" {...sv}>
+    {expanded ? (
+      <>
+        <polyline points="6 9 12 4 18 9" />
+        <polyline points="6 15 12 20 18 15" />
+      </>
+    ) : (
+      <>
+        <polyline points="6 4 12 9 18 4" />
+        <polyline points="6 20 12 15 18 20" />
+      </>
+    )}
+  </svg>
+)
 const IconTrash = (): JSX.Element => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...sv}>
     <polyline points="3 6 5 6 21 6" />
@@ -128,34 +144,6 @@ function matchPrompt(c: Conversation, projectName: string, q: string, fq: string
   return null
 }
 
-interface SearchResultRowProps {
-  c: Conversation
-  projectName: string
-  snippet: string
-  source: PromptMatch['source']
-  active: boolean
-  busy: boolean
-  onOpen: () => void
-}
-
-/** A search hit: conversation title, project context, and matching excerpt. */
-function SearchResultRow({ c, projectName, snippet, source, active, busy, onOpen }: SearchResultRowProps): JSX.Element {
-  return (
-    <div
-      className={`conv-row search-result ${active ? 'active' : ''}`}
-      onClick={onOpen}
-      title={c.title}
-    >
-      <span className="conv-ico">{busy ? <IconSpinner className="spinner" /> : <IconChat />}</span>
-      <div className="search-result-text">
-        <span className="conv-title">{c.title}</span>
-        {source !== 'project' && <span className="search-snippet">{snippet}</span>}
-        <span className="search-project">Projeto: {projectName}</span>
-      </div>
-    </div>
-  )
-}
-
 interface ConvRowProps {
   c: Conversation
   nested?: boolean
@@ -163,6 +151,8 @@ interface ConvRowProps {
   busy: boolean
   editing: boolean
   editValue: string
+  /** Matching excerpt shown under the title while filtering (prompt hits). */
+  snippet?: string
   onSelect: (id: string) => void
   onStartEdit: () => void
   onEditChange: (v: string) => void
@@ -183,6 +173,7 @@ function ConvRow({
   busy,
   editing,
   editValue,
+  snippet,
   onSelect,
   onStartEdit,
   onEditChange,
@@ -224,6 +215,11 @@ function ConvRow({
           onClick={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
         />
+      ) : snippet ? (
+        <div className="search-result-text">
+          <span className="conv-title">{c.title}</span>
+          <span className="search-snippet">{snippet}</span>
+        </div>
       ) : (
         <span className="conv-title">{c.title}</span>
       )}
@@ -286,7 +282,7 @@ export function Sidebar(props: Props): JSX.Element {
     }
   }
 
-  const renderConv = (c: Conversation, nested: boolean, sectionKey: string): JSX.Element => {
+  const renderConv = (c: Conversation, nested: boolean, sectionKey: string, m?: PromptMatch | null): JSX.Element => {
     const rowKey = `${sectionKey}:${c.id}`
     return (
       <ConvRow
@@ -297,7 +293,8 @@ export function Sidebar(props: Props): JSX.Element {
         busy={props.busyIds.has(c.id)}
         editing={editing?.key === rowKey}
         editValue={editValue}
-        onSelect={props.onSelect}
+        snippet={m && m.source === 'prompt' ? m.snippet : undefined}
+        onSelect={m ? (id) => props.onSelectResult(id, m.messageId) : props.onSelect}
         onStartEdit={() => startEdit(rowKey, c)}
         onEditChange={setEditValue}
         onCommit={commitEdit}
@@ -341,18 +338,38 @@ export function Sidebar(props: Props): JSX.Element {
   // ---- expanded sidebar ----
   const q = query.trim()
   const fq = fold(q)
-  const results = q
+
+  // Searching FILTERS the same project tree (it doesn't rebuild the list as a flat
+  // result feed): a project whose name matches keeps all its conversations; the
+  // others keep only the conversations that match by title or by one of the user's
+  // own prompts (that excerpt is shown under the title).
+  interface FilteredConv {
+    c: Conversation
+    m: PromptMatch | null
+  }
+  const visibleProjects: Array<{ p: SidebarProject; convs: FilteredConv[] }> = q
     ? projects
-        .flatMap((p) => p.conversations.map((c) => ({ c, projectName: p.name, projectPath: p.path })))
-        .map((candidate) => ({ ...candidate, m: matchPrompt(candidate.c, candidate.projectName, q, fq) }))
-        .filter((r): r is { c: Conversation; projectName: string; projectPath: string; m: PromptMatch } => r.m != null)
-        .sort((a, b) =>
-          b.m.rank - a.m.rank ||
-          b.c.updatedAt - a.c.updatedAt ||
-          fold(a.c.title).localeCompare(fold(b.c.title)) ||
-          a.c.id.localeCompare(b.c.id)
-        )
-    : []
+        .map((p) => {
+          const projectHit = matchKind(p.name, fq) > 0
+          const convs: FilteredConv[] = projectHit
+            ? p.conversations.map((c) => ({ c, m: { snippet: '', messageId: null, rank: 0, source: 'project' as const } }))
+            : p.conversations
+                .map((c) => ({ c, m: matchPrompt(c, '', q, fq) }))
+                .filter((x): x is FilteredConv => x.m != null)
+          return { p, convs }
+        })
+        .filter((x) => x.convs.length > 0)
+    : projects.map((p) => ({ p, convs: p.conversations.map((c) => ({ c, m: null })) }))
+
+  const visibleRecents: FilteredConv[] = q
+    ? recents
+        .map((c) => ({ c, m: matchPrompt(c, '', q, fq) }))
+        .filter((x): x is FilteredConv => x.m != null)
+    : recents.map((c) => ({ c, m: null }))
+
+  const allCollapsed = projects.length > 0 && projects.every((p) => collapsedProjects.has(p.path))
+  const toggleAllProjects = (): void =>
+    setCollapsedProjects(allCollapsed ? new Set() : new Set(projects.map((p) => p.path)))
 
   return (
     <aside className="sidebar">
@@ -376,50 +393,34 @@ export function Sidebar(props: Props): JSX.Element {
         />
       </div>
 
-      {q ? (
-        <div className="sidebar-scroll">
-          <section className="side-section">
-            <div className="side-section-head">
-              <span className="side-section-title">
-                Resultados {results.length > 0 && <span className="project-count">{results.length}</span>}
-              </span>
-            </div>
-            {results.length === 0 ? (
-              <div className="side-empty">Nenhum resultado encontrado.</div>
-            ) : (
-              <div className="conv-list">
-                {results.map(({ c, projectName, projectPath, m }) => (
-                  <SearchResultRow
-                    key={`${projectPath}:${c.id}`}
-                    c={c}
-                    projectName={projectName}
-                    snippet={m.snippet}
-                    source={m.source}
-                    active={c.id === activeId}
-                    busy={props.busyIds.has(c.id)}
-                    onOpen={() => props.onSelectResult(c.id, m.messageId)}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
-      ) : (
       <div className="sidebar-scroll">
         <section className="side-section">
           <div className="side-section-head">
             <span className="side-section-title">Projetos</span>
+            {projects.length > 0 && (
+              <button
+                className="side-add"
+                title={allCollapsed ? 'Expandir todos os projetos' : 'Recolher todos os projetos'}
+                onClick={toggleAllProjects}
+              >
+                <IconCollapseAll expanded={!allCollapsed} />
+              </button>
+            )}
             <button className="side-add" title="Abrir pasta como projeto" onClick={props.onNewProject}>
               <IconPlus />
             </button>
           </div>
 
           {projects.length === 0 && <div className="side-empty">Nenhum projeto</div>}
+          {projects.length > 0 && visibleProjects.length === 0 && (
+            <div className="side-empty">Nenhum projeto encontrado.</div>
+          )}
 
           <div className="project-list">
-            {projects.map((p) => {
-              const open = !collapsedProjects.has(p.path)
-              const busy = p.conversations.some((c) => props.busyIds.has(c.id))
+            {visibleProjects.map(({ p, convs }) => {
+              // While filtering, matching projects stay open so the hits are visible.
+              const open = q ? true : !collapsedProjects.has(p.path)
+              const busy = convs.some((x) => props.busyIds.has(x.c.id))
               return (
                 <div className={`project-item ${open ? 'open' : ''}`} key={p.path}>
                   <div className={`project-row ${busy ? 'busy' : ''}`}>
@@ -429,7 +430,7 @@ export function Sidebar(props: Props): JSX.Element {
                         {busy ? <IconSpinner className="spinner" size={15} /> : <IconFolder />}
                       </span>
                       <span className="project-name">{p.name}</span>
-                      <span className="project-count">{p.conversations.length}</span>
+                      <span className="project-count">{convs.length}</span>
                     </button>
                     <button
                       className="project-add"
@@ -441,7 +442,7 @@ export function Sidebar(props: Props): JSX.Element {
                   </div>
                   {open && (
                     <div className="project-convs">
-                      {p.conversations.map((c) => renderConv(c, true, `proj:${p.path}`))}
+                      {convs.map(({ c, m }) => renderConv(c, true, `proj:${p.path}`, m))}
                     </div>
                   )}
                 </div>
@@ -454,14 +455,13 @@ export function Sidebar(props: Props): JSX.Element {
           <div className="side-section-head">
             <span className="side-section-title">Chats</span>
           </div>
-          {recents.length === 0 ? (
-            <div className="side-empty">Nenhum chat</div>
+          {visibleRecents.length === 0 ? (
+            <div className="side-empty">{q ? 'Nenhum chat encontrado.' : 'Nenhum chat'}</div>
           ) : (
-            <div className="conv-list">{recents.map((c) => renderConv(c, false, 'chat'))}</div>
+            <div className="conv-list">{visibleRecents.map(({ c, m }) => renderConv(c, false, 'chat', m))}</div>
           )}
         </section>
       </div>
-      )}
     </aside>
   )
 }

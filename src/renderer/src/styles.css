@@ -196,13 +196,6 @@ body {
 .side-search-input:focus {
   border-color: var(--accent);
 }
-.conv-row.search-result {
-  align-items: flex-start;
-  padding: 7px 8px;
-}
-.conv-row.search-result .conv-ico {
-  margin-top: 1px;
-}
 .search-result-text {
   flex: 1;
   min-width: 0;
@@ -217,29 +210,14 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.search-project {
-  align-self: flex-start;
-  margin-top: 2px;
-  padding: 1px 5px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  border-radius: 4px;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
 .side-section-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 2px;
   padding: 6px 6px 4px;
 }
 .side-section-title {
+  margin-right: auto;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;

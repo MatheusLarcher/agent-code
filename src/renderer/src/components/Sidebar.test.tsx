@@ -117,17 +117,32 @@ describe('Sidebar — busca por projeto', () => {
     return onSelectResult
   }
 
-  it('prioriza nome exato do projeto sobre prompt mais recente', () => {
-    const exact = makeSearchConv('exact', 'Outra conversa', 1, 'nada')
-    const prompt = makeSearchConv('prompt', 'Conversa recente', 999, 'meu-app apareceu aqui')
+  it('filtra a árvore de projetos em vez de virar uma lista de resultados', () => {
     renderSearch([
-      { path: 'C:/meu-app', name: 'meu-app', conversations: [exact] },
-      { path: 'C:/outro', name: 'outro', conversations: [prompt] }
+      { path: 'C:/meu-app', name: 'meu-app', conversations: [makeSearchConv('a', 'Outra conversa', 1, 'nada')] },
+      { path: 'C:/outro', name: 'outro', conversations: [makeSearchConv('b', 'Conversa recente', 999, 'sem relação')] }
     ])
     fireEvent.change(screen.getByPlaceholderText('Buscar conversas ou projetos…'), { target: { value: 'meu-app' } })
-    const titles = screen.getAllByText(/Outra conversa|Conversa recente/)
-    expect(titles[0].textContent).toContain('Outra conversa')
-    expect(screen.getAllByText('Projeto: meu-app').length).toBeGreaterThan(0)
+    // O projeto que casa continua sendo um nó da árvore, com suas conversas dentro.
+    expect(screen.getByText('meu-app')).toBeTruthy()
+    expect(screen.getByText('Outra conversa')).toBeTruthy()
+    // O que não casa sai da árvore.
+    expect(screen.queryByText('outro')).toBeNull()
+    expect(screen.queryByText('Conversa recente')).toBeNull()
+  })
+
+  it('mantém o projeto na árvore quando só uma conversa dele casa', () => {
+    renderSearch([
+      {
+        path: 'C:/outro',
+        name: 'outro',
+        conversations: [makeSearchConv('a', 'Orçamento', 2), makeSearchConv('b', 'Nada a ver', 1)]
+      }
+    ])
+    fireEvent.change(screen.getByPlaceholderText('Buscar conversas ou projetos…'), { target: { value: 'orcamento' } })
+    expect(screen.getByText('outro')).toBeTruthy()
+    expect(screen.getByText('Orçamento')).toBeTruthy()
+    expect(screen.queryByText('Nada a ver')).toBeNull()
   })
 
   it('busca projeto sem acento e passa null ao abrir resultado de projeto', () => {
@@ -135,6 +150,19 @@ describe('Sidebar — busca por projeto', () => {
     fireEvent.change(screen.getByPlaceholderText('Buscar conversas ou projetos…'), { target: { value: 'relatorios' } })
     fireEvent.click(screen.getByText('Resumo'))
     expect(onSelectResult).toHaveBeenCalledWith('c2', null)
+  })
+
+  it('recolhe e expande todos os projetos num clique', () => {
+    renderSearch([
+      { path: 'C:/a', name: 'a', conversations: [makeSearchConv('c1', 'Conversa A', 1)] },
+      { path: 'C:/b', name: 'b', conversations: [makeSearchConv('c2', 'Conversa B', 1)] }
+    ])
+    fireEvent.click(screen.getByTitle('Recolher todos os projetos'))
+    expect(screen.queryByText('Conversa A')).toBeNull()
+    expect(screen.queryByText('Conversa B')).toBeNull()
+    fireEvent.click(screen.getByTitle('Expandir todos os projetos'))
+    expect(screen.getByText('Conversa A')).toBeTruthy()
+    expect(screen.getByText('Conversa B')).toBeTruthy()
   })
 
   it('mantém o id da mensagem ao abrir resultado de prompt', () => {
