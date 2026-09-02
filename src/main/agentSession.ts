@@ -143,26 +143,31 @@ export function buildContextStamp(origin: MessageOrigin, now: Date = new Date(),
 }
 
 // Shown to the model only when the "Modo econômico" toggle is ON in the UI.
-// Instructs the LLM to skip validation/build/tests for trivial tasks to save tokens.
+// O modo NÃO reduz mais o rigor do trabalho: todos os recursos, validações e
+// verificações continuam valendo igual ao modo normal. Ele apenas ADICIONA
+// duas skills de compressão de tokens (`caveman` na saída, `rtk` na entrada).
 const ECONOMY_HINT = `MODO ECONÔMICO ATIVADO — O USUÁRIO MARCOU O TOGGLE "ECONÔMICO" NA UI.
 
-Você está operando em modo de economia de tokens. Siga estas regras:
+Este modo NÃO muda o que você faz nem o rigor com que faz. Todas as regras normais
+continuam valendo integralmente: planejamento, typecheck, testes, build, validação
+no app, revisão, segurança e Definition of Done. Não pule nenhuma etapa por causa
+deste modo.
 
-1. **Pule typecheck e build para tarefas triviais** — Se a mudança for puramente textual (typo, label, comentário, string), NÃO rode typecheck nem build. Apenas edite.
+A única mudança é COMO os tokens trafegam. Enquanto este modo estiver ativo:
 
-2. **Pule testes para mudanças pontuais** — Se a mudança for em 1 arquivo, sem alteração de lógica (CSS, texto de UI, ajuste visual), NÃO rode testes.
+1. Carregue a skill **caveman** (ferramenta Skill, nome \`caveman\`) no início do
+   turno e siga o estilo dela em todas as suas respostas — comprime a SAÍDA sem
+   perder substância técnica.
 
-3. **Não revalide o código após editar** — Não releia o arquivo depois de editá-lo. O Edit/Write já teria falhado se algo desse errado.
+2. Carregue a skill **rtk** (ferramenta Skill, nome \`rtk\`) e siga a regra dela ao
+   usar o Bash: prefixe com \`rtk\` os comandos cobertos (\`git\`, \`ls\`, \`grep\`,
+   \`test\`, \`tsc\`, \`docker\`, \`vitest\`, \`find\`, \`diff\`…) — comprime a ENTRADA
+   vinda do terminal.
 
-4. **Sem verificações redundantes** — Não faça grep/ls/glob para "confirmar" algo que você já sabe.
+3. Se uma das duas skills não estiver disponível, siga com a outra e avise o
+   usuário em uma linha; nunca trave a tarefa por causa disso.
 
-5. **Respostas mais curtas** — Seja direto. Um "✅ pronto" é suficiente para tarefas simples. Não explique o que fez a menos que o usuário pergunte.
-
-6. **Sem Definition of Done completo** — As regras normais de validação (rodar o app, testar fluxo real, verificar estado vazio/erro) NÃO se aplicam. Apenas faça a mudança e siga em frente.
-
-7. **Mudanças complexas = ignore o modo econômico** — Se a tarefa envolve múltiplos arquivos, alterações de lógica, refatoração, segurança ou credenciais, siga o fluxo normal completo.
-
-8. **Nunca pule verificações de segurança** — Credenciais, secrets, dados sensíveis sempre exigem cuidado normal.`
+Fora essas duas skills, comporte-se exatamente como no modo normal.`
 
 const LOOP_HINT = `MODO LOOP ATIVADO PELO USUÁRIO NESTA CONVERSA.
 
