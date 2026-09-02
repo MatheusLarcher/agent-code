@@ -1056,7 +1056,8 @@ function registerIpc(): void {
       await releaseSessionLease(convId)
       throw error
     }
-    const s = new AgentSession(
+    let s!: AgentSession
+    s = new AgentSession(
       opts,
       getBrowser(convId),
       // Tag every event/permission with the conversation so the renderer can
@@ -1084,7 +1085,10 @@ function registerIpc(): void {
         await getSessionMessages(sessionId, { dir: opts.cwd, sessionStore })
         await repository.markSessionResumeReady(convId, sessionId, true, hashJson(normalizeJson(entries)))
       },
-      { appRoot: app.getAppPath() }
+      { appRoot: app.getAppPath() },
+      async () => {
+        if (sessions.get(convId) === s) await releaseSessionLease(convId)
+      }
     )
     sessions.set(convId, s)
     let ok = false
@@ -1114,9 +1118,7 @@ function registerIpc(): void {
       messageKind?: AgentMessageKind
     ) => {
       assertStorageWritable()
-      if (!sessionLeases.has(convId)) {
-        throw new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'A conversa não possui lease de escrita ativo.')
-      }
+      if (!sessionLeases.has(convId)) await acquireSessionLease(convId)
       // Non-image files are saved to disk and referenced by path so the agent can
       // open them with its own tools (Read, scripts, etc.). Pasted-by-reference
       // files (fileRefs) are already on disk — local path or main's own

@@ -398,7 +398,9 @@ export class AgentSession {
     private readonly onPermissionExpire: (id: string) => void,
     private readonly sessionStore?: SessionStore,
     private readonly onTurnDurable?: (sessionId: string, mirrorFailed: boolean) => Promise<void>,
-    private readonly skillRuntime?: SkillRuntimePaths
+    private readonly skillRuntime?: SkillRuntimePaths,
+    /** Called after the SDK has emitted the terminal result for a turn. */
+    private readonly onTurnComplete?: () => void | Promise<void>
   ) {}
 
   async start(): Promise<boolean> {
@@ -1313,6 +1315,10 @@ export class AgentSession {
               }
             : undefined
         })
+        // A lease protects one active turn, not an idle conversation. Release it
+        // as soon as the SDK is done so another process cannot be blocked by an
+        // abandoned writer; the next send reacquires it in the main process.
+        void this.onTurnComplete?.()
         // Refresh the account-wide usage badge as soon as the turn finishes,
         // even if the SDK did not push a spontaneous rate_limit_event.
         void this.refreshUsage()
