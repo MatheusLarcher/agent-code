@@ -29,6 +29,7 @@ import { ensureCodexProxyRunning } from './codexProxy'
 import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import { buildProjectOutline } from './projectOutline'
+import { pathWithRtk } from './rtk'
 import type {
   AskQuestion,
   AgentInterruptResult,
@@ -487,7 +488,7 @@ export class AgentSession {
       }
     }
 
-    const env = ollamaOn
+    let env = ollamaOn
       ? {
           ...process.env,
           ANTHROPIC_BASE_URL: OLLAMA_BASE_URL,
@@ -495,6 +496,16 @@ export class AgentSession {
           ANTHROPIC_API_KEY: ''
         }
       : openaiEnv
+
+    // Economy mode leans on the `rtk` proxy binary, which is installed per-user
+    // and put on the user PATH — but a PATH change only reaches processes
+    // started after it, so a running app would need a restart to see it.
+    // Resolve the install dir and prepend it to the subprocess PATH instead.
+    // Nothing changes when rtk is not installed (the skill degrades on its own).
+    if (this.opts.economyMode) {
+      const rtkPath = pathWithRtk()
+      if (rtkPath) env = { ...(env ?? process.env), PATH: rtkPath }
+    }
 
     const options: Options = {
       cwd: this.opts.cwd,
@@ -969,6 +980,21 @@ export class AgentSession {
         // The per-conversation toggle is the explicit user grant. Returning here
         // also prevents loopActive from being set while the Skill permission is
         // still pending (and possibly denied).
+        return Promise.resolve({ behavior: 'allow', updatedInput: input })
+      }
+      // Same reasoning for the two economy-mode skills: the toggle IS the user's
+      // grant, and ECONOMY_HINT asks for both at the start of every turn — without
+      // this the user would face two permission modals per session. Read-only by
+      // nature (they only change how the model writes and which command prefix it
+      // uses), and denied outright when the toggle is off, so the model cannot
+      // opt into the compressed style behind the user's back.
+      if (/^(?:[^:]+:)?(?:caveman|rtk)$/iu.test(skill.trim())) {
+        if (this.opts.economyMode !== true) {
+          return Promise.resolve({
+            behavior: 'deny',
+            message: `Skill "${skill}" só é usada com o toggle "Econômico" ligado nesta conversa.`
+          })
+        }
         return Promise.resolve({ behavior: 'allow', updatedInput: input })
       }
     }

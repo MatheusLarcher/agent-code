@@ -359,6 +359,37 @@ describe('AgentSession — controle seguro do /loop', () => {
   })
 })
 
+describe('AgentSession — skills do modo econômico (caveman + rtk)', () => {
+  for (const skill of ['caveman', 'rtk']) {
+    it(`libera "${skill}" sem modal quando o toggle Econômico está ligado`, async () => {
+      const { s, ask } = makeSession({ economyMode: true })
+      await expect(gate(s, 'Skill', { skill })).resolves.toMatchObject({
+        behavior: 'allow',
+        updatedInput: { skill }
+      })
+      // O toggle é o consentimento: nada pode ir parar no modal de permissão.
+      expect(ask).not.toHaveBeenCalled()
+    })
+
+    it(`nega "${skill}" com o toggle desligado`, async () => {
+      const { s } = makeSession({})
+      await expect(gate(s, 'Skill', { skill })).resolves.toMatchObject({ behavior: 'deny' })
+    })
+  }
+
+  it('nega mesmo com prefixo de plugin (plugin:rtk)', async () => {
+    const { s } = makeSession({})
+    await expect(gate(s, 'Skill', { skill: 'plugin:rtk' })).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('não confunde uma skill de nome parecido', async () => {
+    const { s, ask } = makeSession({ economyMode: true })
+    // "rtk-extra" não é a skill liberada: precisa cair no fluxo normal (modal).
+    void gate(s, 'Skill', { skill: 'rtk-extra' })
+    expect(ask).toHaveBeenCalled()
+  })
+})
+
 describe('AgentSession — AskUserQuestion (pergunta interativa)', () => {
   const askInput = {
     questions: [
