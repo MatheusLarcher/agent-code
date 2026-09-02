@@ -3,13 +3,63 @@ import { existsSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { exposeCacheSkills, syncCacheSkills } from './skillManager'
+import { ensureNativeSkillRoot, exposeCacheSkills, syncCacheSkills } from './skillManager'
 
 async function seedSkill(root: string, name: string, body: string): Promise<void> {
   const dir = join(root, name)
   await mkdir(dir, { recursive: true })
   await writeFile(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: teste\n---\n${body}`, 'utf8')
 }
+
+describe('ensureNativeSkillRoot', () => {
+  it('cria <cache>/native/.claude/skills como link para <cache>/skills, e é idempotente', async () => {
+    const cache = await mkdtemp(join(tmpdir(), 'skill-native-'))
+    await seedSkill(join(cache, 'skills'), 'caveman', 'ugh')
+
+    const first = ensureNativeSkillRoot(cache)
+    expect(first.errors).toEqual([])
+    expect(first.root).toBe(join(cache, 'native'))
+    const link = join(cache, 'native', '.claude', 'skills')
+    expect((await lstat(link)).isSymbolicLink()).toBe(true)
+    // Followed like a real directory: this is exactly what the CLI scanner does.
+    expect(await readFile(join(link, 'caveman', 'SKILL.md'), 'utf8')).toContain('ugh')
+
+    // Second call: nothing to do, nothing broken.
+    expect(ensureNativeSkillRoot(cache).errors).toEqual([])
+    expect(await readFile(join(link, 'caveman', 'SKILL.md'), 'utf8')).toContain('ugh')
+  })
+
+  it('re-aponta um link que apontava para outro lugar', async () => {
+    const cache = await mkdtemp(join(tmpdir(), 'skill-native-repoint-'))
+    const elsewhere = join(cache, 'old-skills')
+    await seedSkill(elsewhere, 'velha', 'x')
+    await mkdir(join(cache, 'native', '.claude'), { recursive: true })
+    await symlink(elsewhere, join(cache, 'native', '.claude', 'skills'), 'junction')
+    await seedSkill(join(cache, 'skills'), 'nova', 'y')
+
+    expect(ensureNativeSkillRoot(cache).errors).toEqual([])
+    const link = join(cache, 'native', '.claude', 'skills')
+    expect(existsSync(join(link, 'nova', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(link, 'velha', 'SKILL.md'))).toBe(false)
+  })
+
+  it('nunca substitui um diretório real no lugar do link', async () => {
+    const cache = await mkdtemp(join(tmpdir(), 'skill-native-real-'))
+    await seedSkill(join(cache, 'native', '.claude', 'skills'), 'do-usuario', 'meu')
+    await seedSkill(join(cache, 'skills'), 'caveman', 'ugh')
+
+    const result = ensureNativeSkillRoot(cache)
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toMatch(/diretório real/)
+    expect(await readFile(join(cache, 'native', '.claude', 'skills', 'do-usuario', 'SKILL.md'), 'utf8')).toContain('meu')
+  })
+
+  it('não cria nada quando a pasta de dados não existe', async () => {
+    const result = ensureNativeSkillRoot(join(tmpdir(), 'nao-existe-' + Date.now()))
+    expect(result.errors).toHaveLength(1)
+    expect(existsSync(result.root)).toBe(false)
+  })
+})
 
 describe('syncCacheSkills', () => {
   it('copia, atualiza e expõe skills empacotadas pelo cache', async () => {

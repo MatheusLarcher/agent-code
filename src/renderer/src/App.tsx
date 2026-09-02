@@ -765,10 +765,19 @@ export function App(): JSX.Element {
             await window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid)
           })()
           setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
+        } else if (sessionConfigPending) {
+          // No more queued messages: drop the session now so the next message the
+          // user types reconnects with the new config. Must be awaited before
+          // clearing `busy` — otherwise the user can send before disposeAgent()
+          // releases the write lease in main, and that send fails with
+          // "conversa não possui lease de escrita ativo" (connectedRef still
+          // true, so dispatch skips connect() and goes straight to agentSend).
+          void (async () => {
+            await stopSessionRef.current?.(cid, { silent: true })
+            setBusy(cid, false)
+            setBusySince((m) => withoutKey(m, cid))
+          })()
         } else {
-          // No more queued messages: if a change is pending, drop the session now
-          // so the next message the user types reconnects with the new model.
-          if (sessionConfigPending) void stopSessionRef.current?.(cid, { silent: true })
           setBusy(cid, false)
           setBusySince((m) => withoutKey(m, cid)) // stop the running timer
         }

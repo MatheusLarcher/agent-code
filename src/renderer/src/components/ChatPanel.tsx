@@ -415,7 +415,9 @@ export function ChatPanel(props: Props): JSX.Element {
 
       <div className="last-usage-float" aria-label="Consumo da última resposta">
         <span className="last-usage-title">Última resposta</span>
-        <ContextBar context={tokens.context} model={props.model} />
+        <span className="tok in" title="Tokens de entrada enviados ao modelo na última resposta">
+          ↓ {fmt(tokens.context)} entrada
+        </span>
         <span className="tok out">↑ {fmt(tokens.lastOutput ?? 0)} saída</span>
         <span className="tok cost">~${(tokens.lastCost ?? 0).toFixed(2)}</span>
       </div>

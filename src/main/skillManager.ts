@@ -8,6 +8,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync
 } from 'node:fs'
@@ -292,6 +293,68 @@ export function exposeCacheSkills(skillsDir: string, userHome: string = homedir(
     errors.push(`Não foi possível salvar o manifesto de skills: ${String(error)}`)
   }
   return { skillsDir, available, errors }
+}
+
+/** `<cacheDir>/native` — the extra root handed to the SDK (`additionalDirectories`). */
+export function nativeSkillRoot(cacheDir: string): string {
+  return join(cacheDir, 'native')
+}
+
+/**
+ * Make the cache skills reachable by the Claude Code CLI the way it actually
+ * discovers them when driven through the Agent SDK.
+ *
+ * Measured against the bundled CLI (SDK 0.3.257): with `skills: 'all'` and
+ * `settingSources: ['user','project','local']` it loads `<cwd>/.claude/skills`
+ * and `<additionalDirectory>/.claude/skills`, but NOT `~/.claude/skills` — the
+ * user root that `exposeCacheSkills` fills was silently ignored, so every
+ * managed skill answered `Unknown skill`. A junction placed at the
+ * `.claude/skills` level of an additional directory IS followed, so we keep a
+ * single copy of the skills and point `<cacheDir>/native/.claude/skills` at it.
+ *
+ * `~/.claude/skills` is still populated for the interactive `claude` CLI and
+ * older SDKs; this root is what the in-app sessions rely on.
+ *
+ * Never clobbers a real directory at that path (only links are replaced), and
+ * refuses to create anything when the cache dir itself does not exist yet.
+ */
+export function ensureNativeSkillRoot(cacheDir: string, skillsDir: string = join(cacheDir, 'skills')): {
+  root: string
+  errors: string[]
+} {
+  const root = nativeSkillRoot(cacheDir)
+  const errors: string[] = []
+  if (!existsSync(cacheDir)) {
+    errors.push(`Pasta de dados inexistente, raiz nativa de skills não criada: ${cacheDir}`)
+    return { root, errors }
+  }
+  const claudeDir = join(root, '.claude')
+  const link = join(claudeDir, 'skills')
+  const target = normalize(resolve(skillsDir))
+  try {
+    mkdirSync(skillsDir, { recursive: true })
+    mkdirSync(claudeDir, { recursive: true })
+    let current: ReturnType<typeof lstatSync> | null = null
+    try {
+      current = lstatSync(link)
+    } catch (error) {
+      if (!isMissing(error)) throw error
+    }
+    if (current) {
+      if (!current.isSymbolicLink()) {
+        errors.push(`Já existe um diretório real em ${link}; não será substituído.`)
+        return { root, errors }
+      }
+      if (linkTarget(link) === target) return { root, errors }
+      unlinkSync(link)
+    }
+    // 'junction' is what works without admin rights on Windows; other platforms
+    // ignore the type and create a plain symlink.
+    symlinkSync(target, link, 'junction')
+  } catch (error) {
+    errors.push(`Não foi possível criar a raiz nativa de skills em ${link}: ${String(error)}`)
+  }
+  return { root, errors }
 }
 
 /**

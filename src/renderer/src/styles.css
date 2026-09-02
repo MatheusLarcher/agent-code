@@ -755,7 +755,8 @@ button svg {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.tok.out {
+.tok.out,
+.tok.in {
   color: var(--text);
 }
 /* context-usage bar (input window: used / model limit) */

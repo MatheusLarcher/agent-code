@@ -48,6 +48,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => {
 import {
   AgentSession,
   DEFAULT_LOOP_LIMIT,
+  ECONOMY_TURN_REMINDER,
   MAX_LOOP_LIMIT,
   OPENAI_MAX_TURNS,
   buildContextStamp,
@@ -376,6 +377,22 @@ describe('AgentSession — skills do modo econômico (caveman + rtk)', () => {
       await expect(gate(s, 'Skill', { skill })).resolves.toMatchObject({ behavior: 'deny' })
     })
   }
+
+  it('modo econômico anexa o lembrete por envio; desligado, não', async () => {
+    const on = makeSession({ economyMode: true })
+    await on.s.start()
+    await on.s.send('rode os testes')
+    const sentOn = String(pushedMessages(on.s).at(-1)?.message.content)
+    expect(sentOn).toContain(ECONOMY_TURN_REMINDER)
+    // O lembrete fica colado ao texto do usuário, depois de todo o contexto.
+    expect(sentOn.indexOf(ECONOMY_TURN_REMINDER)).toBeLessThan(sentOn.indexOf('rode os testes'))
+    expect(sentOn.indexOf(ECONOMY_TURN_REMINDER)).toBeGreaterThan(sentOn.indexOf('[PROJECT_DOCS_CONTEXT]'))
+
+    const off = makeSession({})
+    await off.s.start()
+    await off.s.send('rode os testes')
+    expect(String(pushedMessages(off.s).at(-1)?.message.content)).not.toContain('MODO ECONÔMICO')
+  })
 
   it('nega mesmo com prefixo de plugin (plugin:rtk)', async () => {
     const { s } = makeSession({})
@@ -819,6 +836,12 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(systemPrompt.append).not.toContain('AUTHORITATIVE FILESYSTEM SKILLS CATALOG')
     expect(systemPrompt.append).not.toContain('/modelar')
     expect(options.additionalDirectories).toEqual(expect.arrayContaining([join(cache, 'skills')]))
+    // The root the CLI really scans: <cache>/native/.claude/skills -> <cache>/skills.
+    // (~/.claude/skills is NOT read by the SDK-driven CLI — measured, see skillManager.)
+    expect(options.additionalDirectories).toEqual(expect.arrayContaining([join(cache, 'native')]))
+    const nativeLink = join(cache, 'native', '.claude', 'skills')
+    expect((await stat(nativeLink)).isDirectory()).toBe(true)
+    expect(await readFile(join(nativeLink, 'modelar', 'SKILL.md'), 'utf8')).toContain('name: modelar')
 
     const reloadSkills = vi.fn(async () => ({
       skills: [{ name: 'modelar', description: 'editar', argumentHint: '' }]
@@ -1100,6 +1123,49 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(String(messages.at(-2)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
     expect(String(messages.at(-2)?.message.content)).not.toContain('/expected')
     expect(String(messages.at(-1)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
+  })
+
+  it('skill só do usuário que o SDK não carrega sai do catálogo sem esconder as outras', async () => {
+    // Regressão real: `graphify` existia só em ~/.claude/skills (raiz que o CLI
+    // via SDK não lê). O tudo-ou-nada antigo anunciava "nenhuma skill" e o
+    // modelo parava de chamar caveman/rtk mesmo com o registro nativo cheio.
+    const project = await mkdtemp(join(tmpdir(), 'agent-session-skill-partial-'))
+    const home = join(project, 'home')
+    const cache = join(project, 'cache')
+    cacheState.dir = cache
+    cacheState.skillsDir = join(cache, 'skills')
+    await mkdir(join(project, '.agents', 'skills', 'caveman'), { recursive: true })
+    await writeFile(join(project, '.agents', 'skills', 'caveman', 'SKILL.md'), '---\nname: caveman\ndescription: terse\n---', 'utf8')
+    const userOnly = join(home, '.claude', 'skills', 'graphify')
+    await mkdir(userOnly, { recursive: true })
+    await writeFile(join(userOnly, 'SKILL.md'), '---\nname: graphify\ndescription: grafo\n---', 'utf8')
+    const { s } = makeSession({
+      cwd: project,
+      model: 'gpt-5.6-sol',
+      skillRuntime: { appRoot: project, userHome: home }
+    })
+    await s.start()
+
+    const reloadSkills = vi.fn(async () => ({
+      skills: [{ name: 'caveman', description: 'terse', argumentHint: '' }]
+    }))
+    ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await s.send('primeiro envio')
+      await s.send('segundo envio')
+    } finally {
+      warning.mockRestore()
+    }
+
+    const first = String(pushedMessages(s).at(-2)?.message.content)
+    expect(first).toContain('[SKILL_CATALOG_UPDATE]')
+    expect(first).toContain('/caveman')
+    expect(first).not.toContain('/graphify')
+    expect(first).not.toContain('no filesystem skills')
+    // Skill só do usuário não dispara re-recarga a cada mensagem.
+    expect(reloadSkills).toHaveBeenCalledTimes(1)
+    expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('[SKILL_CATALOG_UPDATE]')
   })
 
   it('não injeta proxy nem limite GPT numa sessão Anthropic', async () => {

@@ -22,7 +22,12 @@ import {
   type SkillCatalogSnapshot
 } from './skillDiscovery'
 import { readSessionTasks, watchSessionTasks } from './sessionTasks'
-import { exposeCacheSkills, managedSkillsFilesystemVersion, syncCacheSkills } from './skillManager'
+import {
+  ensureNativeSkillRoot,
+  exposeCacheSkills,
+  managedSkillsFilesystemVersion,
+  syncCacheSkills
+} from './skillManager'
 import { randomUUID } from 'node:crypto'
 import { isOllamaModel, isOpenAIModel, modelSupportsFastMode, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
 import { ensureCodexProxyRunning } from './codexProxy'
@@ -30,6 +35,8 @@ import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import { buildProjectOutline } from './projectOutline'
 import { pathWithRtk } from './rtk'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type {
   AskQuestion,
   AgentInterruptResult,
@@ -169,6 +176,9 @@ A única mudança é COMO os tokens trafegam. Enquanto este modo estiver ativo:
    usuário em uma linha; nunca trave a tarefa por causa disso.
 
 Fora essas duas skills, comporte-se exatamente como no modo normal.`
+
+// Short per-message companion of ECONOMY_HINT (see send()).
+export const ECONOMY_TURN_REMINDER = `[MODO ECONÔMICO LIGADO — antes de qualquer outra ação neste turno: (1) se ainda não carregou nesta sessão, chame a ferramenta Skill com "caveman" e depois com "rtk"; (2) responda no estilo caveman; (3) todo comando de Bash coberto pelo rtk (git, ls, grep, find, diff, tsc, vitest, npm test, docker…) vai com o prefixo \`rtk\`. Rigor, testes e validações continuam normais.]`
 
 const LOOP_HINT = `MODO LOOP ATIVADO PELO USUÁRIO NESTA CONVERSA.
 
@@ -352,6 +362,9 @@ export class AgentSession {
    *  separate so a transient reload failure is retried without duplicating the
    *  catalog update already delivered to the model. */
   private nativeSkillRegistryVersion = ''
+  /** The catalog actually announced for `nativeSkillRegistryVersion` — the
+   *  discovered snapshot minus whatever the SDK refused to load. */
+  private nativeConfirmedSnapshot: SkillCatalogSnapshot | null = null
   /** Cheap metadata-only signature checked before parsing any frontmatter. */
   private skillFilesystemVersion = ''
   /** Content signature of the versioned `.agents/skills` source already copied
@@ -407,6 +420,12 @@ export class AgentSession {
     this.synchronizeManagedSkills(cacheInfo.dir, cacheInfo.skillsDir)
     const memoriesDir = cacheInfo.memoriesDir
     const cacheSkillsDir = cacheInfo.skillsDir
+    // The CLI (driven via SDK) only discovers skills under <cwd>/.claude/skills and
+    // <additionalDirectory>/.claude/skills — never under ~/.claude/skills. Hand it a
+    // root whose .claude/skills is a junction to the cache skills. See skillManager.
+    const nativeRoot = ensureNativeSkillRoot(cacheInfo.dir, cacheSkillsDir)
+    if (nativeRoot.errors.length > 0) console.warn('[skills] native skill root:', nativeRoot.errors.join('\n'))
+    const nativeSkillDirs = nativeRoot.errors.length === 0 ? [nativeRoot.root] : []
     const memorySnapshot = this.readMemoryCatalogSnapshot(memoriesDir)
     this.memoryFilesystemVersion = memorySnapshot.filesystemVersion
     this.memoryCatalogVersion = memorySnapshot.version
@@ -521,7 +540,7 @@ export class AgentSession {
       ...(openaiOn ? { maxTurns: OPENAI_MAX_TURNS } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
-      additionalDirectories: [...new Set([memoriesDir, cacheSkillsDir, ...skillRoots])],
+      additionalDirectories: [...new Set([memoriesDir, cacheSkillsDir, ...nativeSkillDirs, ...skillRoots])],
       skills: 'all',
       // Resume a previous SDK session (loads its history) when continuing an old chat.
       ...(this.opts.resume ? { resume: this.opts.resume } : {}),
@@ -634,8 +653,15 @@ export class AgentSession {
     } catch {
       docsOutline = '[PROJECT_DOCS_CONTEXT]\ndocs/ [context unavailable for this dispatch]\n[/PROJECT_DOCS_CONTEXT]'
     }
+    // Per-dispatch reminder: the system-prompt hint alone is not followed reliably
+    // once the first message carries hundreds of KB of docs/memory/skill catalog
+    // (measured with Haiku: skills never loaded, Bash never prefixed). Placed
+    // LAST in the context block, right next to the user's own text.
+    const economyReminder = this.opts.economyMode ? ECONOMY_TURN_REMINDER : ''
     const stamped = (body: string): string => {
-      const context = [stamp, docsOutline, memoryCatalogUpdate, skillCatalogUpdate].filter(Boolean).join('\n\n')
+      const context = [stamp, docsOutline, memoryCatalogUpdate, skillCatalogUpdate, economyReminder]
+        .filter(Boolean)
+        .join('\n\n')
       const loopMatch = body.match(/^\s*\/loop(?:\s+|$)/iu)
       if (loopMatch) {
         const task = body.slice(loopMatch[0].length)
@@ -908,7 +934,8 @@ export class AgentSession {
     ) return ''
 
     const snapshot = this.readSkillCatalogSnapshot()
-    if (!(await this.reloadNativeSkillsIfNeeded(snapshot, managedChanged))) {
+    const confirmed = await this.reloadNativeSkillsIfNeeded(snapshot, managedChanged)
+    if (!confirmed) {
       if (this.skillCatalogVersion === '') {
         this.skillCatalogVersion = EMPTY_SKILL_CATALOG.version
         return renderSkillCatalogUpdate(EMPTY_SKILL_CATALOG)
@@ -917,30 +944,62 @@ export class AgentSession {
     }
 
     this.skillFilesystemVersion = filesystemVersion
-    if (snapshot.version === this.skillCatalogVersion) return ''
+    if (confirmed.version === this.skillCatalogVersion) return ''
 
-    this.skillCatalogVersion = snapshot.version
-    return renderSkillCatalogUpdate(snapshot)
+    this.skillCatalogVersion = confirmed.version
+    return renderSkillCatalogUpdate(confirmed)
   }
 
-  private async reloadNativeSkillsIfNeeded(snapshot: SkillCatalogSnapshot, force: boolean = false): Promise<boolean> {
+  /**
+   * Reload the CLI's native Skill registry and return the catalog to announce:
+   * exactly the discovered skills the SDK confirmed as invocable.
+   *
+   * A skill the SDK did not load (e.g. one that only exists in `~/.claude/skills`,
+   * a root the SDK-driven CLI does not scan) is dropped from the announcement
+   * and logged — it must NOT poison the rest. The previous all-or-nothing rule
+   * announced "no skills available" whenever a single expected name was missing,
+   * which hid every working skill from the model (measured: one stray user
+   * skill silenced the whole managed kit, including the economy-mode pair).
+   *
+   * Returns null only when the reload itself fails or the session has no query.
+   */
+  private async reloadNativeSkillsIfNeeded(
+    snapshot: SkillCatalogSnapshot,
+    force: boolean = false
+  ): Promise<SkillCatalogSnapshot | null> {
     const q = this.q
-    if (!q) return false
-    if (!force && snapshot.version === this.nativeSkillRegistryVersion) return true
+    if (!q) return null
+    if (!force && snapshot.version === this.nativeSkillRegistryVersion && this.nativeConfirmedSnapshot) {
+      return this.nativeConfirmedSnapshot
+    }
     try {
       const response = await q.reloadSkills()
       const loaded = new Set(response.skills.map((skill) => skill.name))
       const missing = snapshot.skills.map((skill) => skill.name).filter((name) => !loaded.has(name))
+      let confirmed = snapshot
+      // Retry on the next dispatch only for skills the CLI is known to scan
+      // (project .claude/skills, or the managed cache exposed through the native
+      // root) — an omission there is usually a race with a file still being
+      // written. A skill that lives only in ~/.claude/skills is never going to
+      // load through the SDK, so retrying would just spam reloadSkills().
+      let retry = false
       if (missing.length > 0) {
         console.warn(`[skills] native registry omitted expected skills: ${missing.join(', ')}`)
-        return false
+        const cacheSkillsDir = getCacheInfo().skillsDir
+        retry = snapshot.skills.some(
+          (skill) =>
+            !loaded.has(skill.name) &&
+            (skill.source === 'project-claude' || existsSync(join(cacheSkillsDir, skill.name, 'SKILL.md')))
+        )
+        confirmed = createSkillCatalogSnapshot(snapshot.skills.filter((skill) => loaded.has(skill.name)))
       }
       this.nativeSkillRegistryVersion = snapshot.version
-      this.managedSkillReloadPending = false
-      return true
+      this.nativeConfirmedSnapshot = confirmed
+      this.managedSkillReloadPending = retry
+      return confirmed
     } catch (error) {
       console.warn('[skills] native reload failed; catalog remains unchanged:', error)
-      return false
+      return null
     }
   }
 
