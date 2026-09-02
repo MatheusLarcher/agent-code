@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "3d-print-modeling": {
+      "source": "m-esm/3d-print-modeling",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "0460f1bb9a6d03c1e1d25f3acdf97032e201c0d26c605260d07081b91b7047f1"
+    },
     "adversarial-review": {
       "source": "poteto/noodle",
       "sourceType": "github",
