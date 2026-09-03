@@ -1287,4 +1287,66 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
     expect(describeImagesMock).toHaveBeenCalledWith(expect.any(Array), 'analise a tela')
     expect(pushedMessages(s).at(-1)!.message.content as string).toContain('arquitetura.md')
   })
+
+  it('docs inalterada não reenvia o bloco inteiro — só a nota de uma linha', async () => {
+    const outline = '[PROJECT_DOCS_CONTEXT]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_CONTEXT]'
+    projectOutlineMock.mockResolvedValue(outline)
+    const { s } = makeSession()
+
+    await s.send('primeira')
+    await s.send('segunda')
+    await s.send('terceira')
+
+    const contents = pushedMessages(s).map((m) => m.message.content as string)
+    // A 1ª leva o bloco de verdade; as demais só a nota (o modelo já tem o bloco).
+    expect(contents[0]).toContain('arquitetura.md')
+    expect(contents[1]).not.toContain('arquitetura.md')
+    expect(contents[2]).not.toContain('arquitetura.md')
+    expect(contents[1]).toContain('Unchanged since the project documentation block')
+    // O índice continua sendo relido a cada envio — o que muda é só o que é enviado.
+    expect(projectOutlineMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('docs mudou no meio da conversa: o bloco completo volta', async () => {
+    projectOutlineMock
+      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  antigo.md\n[/PROJECT_DOCS_CONTEXT]')
+      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  antigo.md\n[/PROJECT_DOCS_CONTEXT]')
+      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  novo.md\n[/PROJECT_DOCS_CONTEXT]')
+    const { s } = makeSession()
+
+    await s.send('a')
+    await s.send('b')
+    await s.send('c')
+
+    const contents = pushedMessages(s).map((m) => m.message.content as string)
+    expect(contents[0]).toContain('antigo.md')
+    expect(contents[1]).not.toContain('antigo.md')
+    expect(contents[2]).toContain('novo.md')
+  })
+
+  it('sessão nova recebe o bloco completo de novo (o contexto dela está vazio)', async () => {
+    const outline = '[PROJECT_DOCS_CONTEXT]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_CONTEXT]'
+    projectOutlineMock.mockResolvedValue(outline)
+    const primeira = makeSession()
+    await primeira.s.send('a')
+    await primeira.s.send('b')
+
+    const segunda = makeSession()
+    await segunda.s.send('c')
+
+    expect(pushedMessages(segunda.s).at(-1)!.message.content as string).toContain('arquitetura.md')
+  })
+
+  it('falha do outline não marca como entregue: o envio seguinte leva o bloco completo', async () => {
+    const outline = '[PROJECT_DOCS_CONTEXT]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_CONTEXT]'
+    projectOutlineMock.mockRejectedValueOnce(new Error('sem acesso')).mockResolvedValue(outline)
+    const { s } = makeSession()
+
+    await s.send('falhou')
+    await s.send('agora vai')
+
+    const contents = pushedMessages(s).map((m) => m.message.content as string)
+    expect(contents[0]).toContain('context unavailable for this dispatch')
+    expect(contents[1]).toContain('arquitetura.md')
+  })
 })

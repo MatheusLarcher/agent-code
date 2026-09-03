@@ -28,7 +28,7 @@ import {
   managedSkillsFilesystemVersion,
   syncCacheSkills
 } from './skillManager'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { fastModeTransport, isOllamaModel, isOpenAIModel, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
 import { ensureCodexProxyRunning, FAST_MODE_TOKEN_SUFFIX } from './codexProxy'
 import { isCodexConnected } from './codexAuth'
@@ -148,6 +148,28 @@ export function buildContextStamp(origin: MessageOrigin, now: Date = new Date(),
   const fuso = Intl.DateTimeFormat().resolvedOptions().timeZone
   const de = origin === 'celular' ? `do celular, pela ponte LAN do PC ${machine}` : `do PC ${machine}`
   return `[Contexto do sistema: mensagem enviada ${de} em ${quando} (${fuso}).]`
+}
+
+/** One-line stand-in for a `docs/` outline the model already received VERBATIM
+ *  earlier in this same conversation. The full block is tens of thousands of
+ *  tokens (measured: ~210 KB of root Markdown in this repo); re-sending an
+ *  identical copy on every message multiplies that by the message count and is
+ *  what fills the context window — not the docs themselves. The note keeps the
+ *  contract explicit for the model: the earlier block is still authoritative.
+ *  Any change to `docs/` produces a different hash and the full block returns. */
+export function unchangedOutlineNote(): string {
+  return (
+    '[PROJECT_DOCS_CONTEXT]\n' +
+    'Unchanged since the project documentation block earlier in this conversation — that block remains ' +
+    'authoritative and complete. Nothing in docs/ changed since it was sent.\n' +
+    '[/PROJECT_DOCS_CONTEXT]'
+  )
+}
+
+/** Stable digest of an outline block, used only to answer "is this byte-for-byte
+ *  what I already sent in this session?". Not security-sensitive. */
+export function outlineDigest(outline: string): string {
+  return createHash('sha1').update(outline).digest('hex')
 }
 
 // Shown to the model only when the "Modo econômico" toggle is ON in the UI.
@@ -342,6 +364,11 @@ export class AgentSession {
    *  interrupted exchange in its in-memory context (no API to drop it), so the
    *  next message is prefixed with a note telling the model to disregard it. */
   private canceledPending = false
+  /** Digest of the `docs/` outline already sent VERBATIM in this session. While
+   *  it matches, later messages carry a one-line note instead of the full block
+   *  (see `unchangedOutlineNote`). Per session on purpose: a resumed/new session
+   *  has no earlier block in its context, so it must get the real thing again. */
+  private lastOutlineDigest: string | null = null
   private liveId: string | null = null
   private liveText = ''
   /** Text lookup for UUIDs returned by the SDK interrupt receipt. Bounded so a
@@ -664,6 +691,13 @@ export class AgentSession {
     } catch {
       docsOutline = '[PROJECT_DOCS_CONTEXT]\ndocs/ [context unavailable for this dispatch]\n[/PROJECT_DOCS_CONTEXT]'
     }
+    // Identical to what this session already sent? The model still has that
+    // block in its context, so repeating it only burns the context window.
+    // The digest is updated ONLY on the dispatch that carries the full block,
+    // so a message that fails to reach the model never marks it as delivered.
+    const outlineDigestNow = outlineDigest(docsOutline)
+    const outlineIsRepeat = this.lastOutlineDigest === outlineDigestNow
+    if (outlineIsRepeat) docsOutline = unchangedOutlineNote()
     // Per-dispatch reminder: the system-prompt hint alone is not followed reliably
     // once the first message carries hundreds of KB of docs/memory/skill catalog
     // (measured with Haiku: skills never loaded, Bash never prefixed). Placed
@@ -698,6 +732,7 @@ export class AgentSession {
         merged = `${outText}\n\n[Observação do sistema: não foi possível analisar a(s) imagem(ns) anexada(s) automaticamente (${String(err)}). Responda com base apenas no texto acima.]`
       }
       this.turnActive = true
+      this.lastOutlineDigest = outlineDigestNow
       this.input.push({
         type: 'user',
         message: { role: 'user', content: stamped(merged) },
@@ -727,6 +762,7 @@ export class AgentSession {
       uuid
     } as SDKUserMessage
     this.turnActive = true
+    this.lastOutlineDigest = outlineDigestNow
     this.input.push(msg)
   }
 
