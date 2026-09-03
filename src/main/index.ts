@@ -68,7 +68,8 @@ import type {
   TabKind,
   PostgresConnectionDraft,
   ConversationUpsertDto,
-  ConversationDeleteDto
+  ConversationDeleteDto,
+  ConversationQueryDto
 } from '../shared/ipc'
 
 let mainWindow: BrowserWindow | null = null
@@ -854,8 +855,13 @@ function registerIpc(): void {
   ipcMain.handle(Channels.conversationsLoadAll, async () =>
     (await storageLifecycle.repository().loadConversations()).map((entry) => entry.payload)
   )
-  ipcMain.handle(Channels.conversationsLoadVersioned, () =>
-    storageLifecycle.repository().loadConversations({ includeDeleted: true })
+  // No query = the legacy "everything, tombstones included" read. A query narrows it
+  // (first page per project, one project, or specific ids for the change feed).
+  ipcMain.handle(Channels.conversationsLoadVersioned, (_e, query?: ConversationQueryDto) =>
+    storageLifecycle.repository().loadConversations(query ? { includeDeleted: true, ...query } : { includeDeleted: true })
+  )
+  ipcMain.handle(Channels.conversationsCountByProject, () =>
+    storageLifecycle.repository().countConversationsByProject()
   )
   ipcMain.handle(Channels.conversationsUpsert, async (_e, input: ConversationUpsertDto) => {
     if (!input || typeof input.id !== 'string' || !input.id || !input.payload || typeof input.payload !== 'object') {

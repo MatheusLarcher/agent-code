@@ -20,6 +20,8 @@ import {
   type RepositoryChange,
   type RepositoryChangeHandler,
   type VersionedConversation,
+  type ConversationQuery,
+  type ProjectConversationCount,
   type VersionedKv
 } from './types'
 
@@ -225,19 +227,60 @@ export class PostgresRepository implements PersistenceRepository {
     })
   }
 
-  async loadConversations(options?: { includeDeleted?: boolean }): Promise<VersionedConversation[]> {
+  async loadConversations(options?: ConversationQuery): Promise<VersionedConversation[]> {
     this.assertInitialized()
-    const where = options?.includeDeleted ? '' : 'WHERE c.deleted_at IS NULL'
-    const result = await this.pool.query<ConversationRow>(
-      `SELECT c.conversation_id, c.payload, c.revision, c.content_hash, c.created_at, c.updated_at,
-         c.deleted_at, s.state AS device_state, pd.local_path AS project_path
+    if (options?.ids && options.ids.length === 0) return []
+    // The folder a conversation belongs to ON THIS DEVICE — same rule `conversation()`
+    // applies to the row: the project's local path, else the device-state cwd.
+    const cwdExpr = "COALESCE(pd.local_path, s.state->>'cwd', '')"
+    const liveOnly = !options?.includeDeleted || options.perProject !== undefined || options.cwd !== undefined
+    const params: unknown[] = [this.installationId]
+    const clauses: string[] = []
+    if (liveOnly) clauses.push('c.deleted_at IS NULL')
+    if (options?.cwd !== undefined) {
+      params.push(options.cwd)
+      clauses.push(`${cwdExpr} = $${params.length}`)
+    }
+    if (options?.ids) {
+      params.push(options.ids)
+      clauses.push(`c.conversation_id = ANY($${params.length}::text[])`)
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    const columns = `c.conversation_id, c.payload, c.revision, c.content_hash, c.created_at, c.updated_at,
+         c.deleted_at, s.state AS device_state, pd.local_path AS project_path`
+    const joins = `FROM conversations c
+       LEFT JOIN conversation_device_state s ON s.conversation_id = c.conversation_id AND s.installation_id = $1
+       LEFT JOIN project_devices pd ON pd.project_id = c.project_id AND pd.installation_id = $1`
+    let sql: string
+    if (options?.perProject !== undefined) {
+      params.push(Math.max(1, Math.floor(options.perProject)))
+      sql = `SELECT conversation_id, payload, revision, content_hash, created_at, updated_at, deleted_at,
+               device_state, project_path
+             FROM (
+               SELECT ${columns},
+                      ROW_NUMBER() OVER (PARTITION BY ${cwdExpr} ORDER BY c.updated_at DESC, c.conversation_id) AS rn
+               ${joins} ${where}
+             ) q WHERE q.rn <= $${params.length}
+             ORDER BY updated_at DESC, conversation_id`
+    } else {
+      sql = `SELECT ${columns} ${joins} ${where} ORDER BY c.updated_at DESC, c.conversation_id`
+    }
+    const result = await this.pool.query<ConversationRow>(sql, params)
+    return result.rows.map(conversation)
+  }
+
+  async countConversationsByProject(): Promise<ProjectConversationCount[]> {
+    this.assertInitialized()
+    const result = await this.pool.query<{ cwd: string; total: string | number }>(
+      `SELECT COALESCE(pd.local_path, s.state->>'cwd', '') AS cwd, COUNT(*) AS total
        FROM conversations c
        LEFT JOIN conversation_device_state s ON s.conversation_id = c.conversation_id AND s.installation_id = $1
        LEFT JOIN project_devices pd ON pd.project_id = c.project_id AND pd.installation_id = $1
-       ${where} ORDER BY c.updated_at DESC, c.conversation_id`,
+       WHERE c.deleted_at IS NULL
+       GROUP BY 1`,
       [this.installationId]
     )
-    return result.rows.map(conversation)
+    return result.rows.map((row) => ({ cwd: row.cwd, total: Number(row.total) }))
   }
 
   async upsertConversation(write: ConversationWrite): Promise<VersionedConversation> {

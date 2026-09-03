@@ -80,6 +80,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     onStorageFlushRequested: vi.fn(() => () => {}),
     storageFlushReady: vi.fn(async () => {}),
     onStorageChanged: vi.fn(() => () => {}),
+    countConversationsByProject: vi.fn(async () => []),
     loadVersionedConversations: vi.fn(async () =>
       JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]').map(
         (payload: { id: string }) => ({

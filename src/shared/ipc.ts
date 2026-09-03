@@ -910,6 +910,24 @@ export interface PostgresPublicSettings {
 }
 
 /** Per-record conversation contract used by both SQLite and PostgreSQL. */
+/** Narrows what `conversations:load-versioned` returns. No query = every record
+ *  (tombstones included). `perProject` keeps only the N most recently updated
+ *  live conversations of EACH project — the sidebar's initial load — and `cwd`
+ *  fetches one project in full ("mostrar mais"). `ids` is for the change feed
+ *  and CAS rebasing, which must never pull the whole table again. */
+export interface ConversationQueryDto {
+  includeDeleted?: boolean
+  perProject?: number
+  cwd?: string
+  ids?: string[]
+}
+
+/** Live (non-deleted) conversation count per project folder. */
+export interface ProjectConversationCountDto {
+  cwd: string
+  total: number
+}
+
 export interface VersionedConversationDto {
   id: string
   payload: Record<string, unknown>
@@ -1003,6 +1021,7 @@ export const Channels = {
   /** Persist the full conversation list, split one db per project (`cwd`). */
   conversationsSaveAll: 'conversations:save-all',
   conversationsLoadVersioned: 'conversations:load-versioned',
+  conversationsCountByProject: 'conversations:count-by-project',
   conversationsUpsert: 'conversations:upsert',
   conversationsDelete: 'conversations:delete',
   agentStart: 'agent:start',

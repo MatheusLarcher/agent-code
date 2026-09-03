@@ -33,6 +33,9 @@ import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './t
 import { closeRunningTracks, isSubagentEvent, reduceTracks, type TrackMap } from './agentTracks'
 import {
   loadConversations,
+  loadProjectConversations,
+  loadProjectCounts,
+  CONVERSATIONS_PER_PROJECT,
   loadUi,
   saveConversations,
   saveUi,
@@ -367,6 +370,12 @@ export function App(): JSX.Element {
   // any one chat, so it must survive switching conversations. Keyed by
   // rateLimitType; only ever grows/updates, never reset by the UI itself.
   const [usageLimits, setUsageLimits] = useState<Record<string, RateLimitStatus>>({})
+  // Sidebar paging: the app opens with only the newest CONVERSATIONS_PER_PROJECT
+  // of each project. `projectTotals` is the real count from the database (badge),
+  // `fullyLoadedProjects` marks projects whose "mostrar mais" already ran.
+  const [projectTotals, setProjectTotals] = useState<Record<string, number>>({})
+  const [fullyLoadedProjects, setFullyLoadedProjects] = useState<Set<string>>(new Set())
+  const [loadingProjects, setLoadingProjects] = useState<Set<string>>(new Set())
   // Which subscriptions (Claude / GPT) the compact topbar badge shows. Persisted
   // with the rest of the UI state; the badge's own popover always shows both.
   const [usageProviders, setUsageProviders] = useState<UsageProviders>({ claude: true, gpt: true })
@@ -841,12 +850,16 @@ export function App(): JSX.Element {
     let cancelled = false
     void (async () => {
       try {
-        const [loaded, ui, limits, initialStorageStatus] = await Promise.all([
-          loadConversations(),
+        // Only the first page of each project comes down at startup; the badge
+        // still shows the real total, and "mostrar mais" fetches the rest.
+        const [loaded, counts, ui, limits, initialStorageStatus] = await Promise.all([
+          loadConversations({ perProject: CONVERSATIONS_PER_PROJECT }),
+          loadProjectCounts().catch(() => ({}) as Record<string, number>),
           loadUi(),
           loadUsageLimits(),
           window.api.getStorageStatus()
         ])
+        setProjectTotals(counts)
         if (!initialStorageStatus.writable) {
           throw new Error(initialStorageStatus.error?.message ?? 'Persistência autoritativa indisponível.')
         }
@@ -1237,6 +1250,7 @@ export function App(): JSX.Element {
       updatedAt: Date.now()
     }
     setConversations((prev) => [conv, ...prev])
+    setProjectTotals((totals) => ({ ...totals, [folder]: (totals[folder] ?? 0) + 1 }))
     setActiveId(conv.id)
     return conv
   }
@@ -1294,10 +1308,43 @@ export function App(): JSX.Element {
       setPermissions((p) => withoutKey(p, id))
       setMinimizedQuestions((m) => withoutKey(m, id))
       setQueue((q) => q.filter((m) => m.convId !== id))
+      const removed = convsRef.current.find((c) => c.id === id)
+      if (removed) {
+        setProjectTotals((totals) => ({
+          ...totals,
+          [removed.cwd]: Math.max(0, (totals[removed.cwd] ?? 1) - 1)
+        }))
+      }
       setConversations(next)
       if (activeIdRef.current === id) setActiveId(next[0]?.id ?? null)
     },
     [setConnected, setBusy]
+  )
+
+  // "Mostrar mais" in the sidebar: fetch the whole project and merge it in. Local
+  // objects win for ids already on screen — they may hold unsaved state.
+  const loadMoreProject = useCallback(
+    async (path: string): Promise<void> => {
+      setLoadingProjects((s) => new Set(s).add(path))
+      try {
+        const all = await loadProjectConversations(path)
+        setConversations((current) => {
+          const known = new Set(current.map((c) => c.id))
+          return [...current, ...all.filter((c) => !known.has(c.id))]
+        })
+        setProjectTotals((totals) => ({ ...totals, [path]: all.length }))
+        setFullyLoadedProjects((s) => new Set(s).add(path))
+      } catch (error) {
+        notify('erro', ipcErrorMessage(error, 'Não foi possível carregar as conversas do projeto.'))
+      } finally {
+        setLoadingProjects((s) => {
+          const next = new Set(s)
+          next.delete(path)
+          return next
+        })
+      }
+    },
+    [notify]
   )
 
   // ---- agent connection ----
@@ -2223,13 +2270,21 @@ export function App(): JSX.Element {
     }
     const recency = (cs: Conversation[]): number => Math.max(...cs.map((c) => c.updatedAt))
     return [...map.entries()]
-      .map(([path, cs]) => ({
-        path,
-        name: basename(path),
-        conversations: [...cs].sort((a, b) => b.updatedAt - a.updatedAt)
-      }))
+      .map(([path, cs]) => {
+        const fullyLoaded = fullyLoadedProjects.has(path)
+        // The badge is the REAL count (database), even while only a page is loaded.
+        const total = fullyLoaded ? cs.length : Math.max(cs.length, projectTotals[path] ?? cs.length)
+        return {
+          path,
+          name: basename(path),
+          conversations: [...cs].sort((a, b) => b.updatedAt - a.updatedAt),
+          total,
+          hasMore: !fullyLoaded && total > cs.length,
+          loadingMore: loadingProjects.has(path)
+        }
+      })
       .sort((a, b) => recency(b.conversations) - recency(a.conversations))
-  }, [conversations])
+  }, [conversations, projectTotals, fullyLoadedProjects, loadingProjects])
 
   const recents = useMemo<Conversation[]>(
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 15),
@@ -2307,6 +2362,7 @@ export function App(): JSX.Element {
         recents={recents}
         activeId={activeId}
         busyIds={busyIds}
+        onLoadMore={(path) => void loadMoreProject(path)}
         onSelect={selectConversation}
         onNewChat={newChat}
         onNewProject={newProject}

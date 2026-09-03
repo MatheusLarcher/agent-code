@@ -5470,3 +5470,29 @@ button svg {
   align-items: center;
   gap: 7px;
 }
+
+/* "Mostrar mais" under a project's conversations: only the first page of each
+   project is loaded at startup; this discreet link fetches the rest. Sits on
+   the same guide line as the nested rows so it reads as part of the list. */
+.project-more {
+  display: block;
+  margin: 2px 0 2px 14px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.project-more:hover:not(:disabled) {
+  background: var(--bg-3);
+  color: var(--text);
+}
+.project-more:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

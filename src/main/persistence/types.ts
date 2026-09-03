@@ -142,6 +142,21 @@ export interface RepositoryChange {
 
 export type RepositoryChangeHandler = (changes: RepositoryChange[]) => void
 
+/** See `ConversationQueryDto` in shared/ipc.ts — same shape, main-side. `perProject`
+ *  and `cwd` rank/filter LIVE conversations only (a tombstone must not occupy one
+ *  of the N visible slots); `ids` honours `includeDeleted`. */
+export interface ConversationQuery {
+  includeDeleted?: boolean
+  perProject?: number
+  cwd?: string
+  ids?: string[]
+}
+
+export interface ProjectConversationCount {
+  cwd: string
+  total: number
+}
+
 export interface PersistenceRepository {
   readonly backend: StorageBackend
 
@@ -152,7 +167,10 @@ export interface PersistenceRepository {
   getKv(address: KvAddress): Promise<VersionedKv | null>
   setKv(write: KvWrite): Promise<VersionedKv>
 
-  loadConversations(options?: { includeDeleted?: boolean }): Promise<VersionedConversation[]>
+  loadConversations(options?: ConversationQuery): Promise<VersionedConversation[]>
+  /** Live (non-deleted) conversation count per project folder — the sidebar
+   *  badge stays truthful while only the first page of each project is loaded. */
+  countConversationsByProject(): Promise<ProjectConversationCount[]>
   upsertConversation(write: ConversationWrite): Promise<VersionedConversation>
   deleteConversation(input: ConversationDelete): Promise<VersionedConversation>
   /** Compatibility bridge for the current renderer; removed after per-record IPC lands. */

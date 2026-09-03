@@ -35,6 +35,8 @@ import type {
   PostgresPublicSettings,
   StorageStatusDto,
   VersionedConversationDto,
+  ConversationQueryDto,
+  ProjectConversationCountDto,
   ConversationUpsertDto,
   ConversationDeleteDto,
   RepositoryChange
@@ -65,7 +67,10 @@ export interface AgentCodeApi {
   onStorageFlushRequested(cb: (requestId: string) => void): () => void
   storageFlushReady(requestId: string, error?: string): Promise<void>
   onStorageChanged(cb: (changes: RepositoryChange[]) => void): () => void
-  loadVersionedConversations(): Promise<VersionedConversationDto[]>
+  loadVersionedConversations(query?: ConversationQueryDto): Promise<VersionedConversationDto[]>
+  /** Live conversation count per project, for the sidebar badge when only the
+   *  first page of each project is loaded. */
+  countConversationsByProject(): Promise<ProjectConversationCountDto[]>
   upsertConversation(input: ConversationUpsertDto): Promise<VersionedConversationDto>
   deleteConversation(input: ConversationDeleteDto): Promise<VersionedConversationDto>
   /** Toggle the independent high-risk permission for controlling Windows apps. */

@@ -162,9 +162,14 @@ function normalizeConversation(record: VersionedConversationDto): Conversation {
   }
 }
 
-export async function loadConversations(): Promise<Conversation[]> {
-  const records = await window.api.loadVersionedConversations()
-  conversationRecords.clear()
+/** How many conversations of EACH project the app loads when it opens. The
+ *  sidebar shows this many per project and a "mostrar mais" fetches the rest. */
+export const CONVERSATIONS_PER_PROJECT = 6
+
+/** Normalize authoritative records into renderer conversations, remembering each
+ *  record's revision so later CAS writes and change-feed merges have a baseline.
+ *  Tombstones are remembered but never returned. */
+function absorbRecords(records: VersionedConversationDto[]): Conversation[] {
   const list: Conversation[] = []
   for (const record of records) {
     const normalized = normalizeConversation(record)
@@ -174,11 +179,38 @@ export async function loadConversations(): Promise<Conversation[]> {
     })
     if (!record.deletedAt) list.push(normalized)
   }
+  return list
+}
+
+/** Initial load. With `perProject`, only the N most recent conversations of each
+ *  project come down — the rest stays in the database until `loadProjectConversations`
+ *  is asked for it. Saving is per-record (upsert/delete by id), so a partially
+ *  loaded list is safe: records that were never loaded are never touched. */
+export async function loadConversations(options?: { perProject?: number }): Promise<Conversation[]> {
+  const records = await window.api.loadVersionedConversations(
+    options?.perProject ? { perProject: options.perProject } : undefined
+  )
+  conversationRecords.clear()
+  const list = absorbRecords(records)
   if (list.length) return compactOldConversations(list)
   // Only a genuinely successful empty authoritative read may consult the one-time
   // browser-local migration source. Storage errors deliberately propagate.
   const legacy = readLegacyLocalStorageConversations()
   return legacy ? compactOldConversations(legacy) : []
+}
+
+/** Every live conversation of one project ("mostrar mais"). Records already held
+ *  locally are refreshed only in the revision map; the caller decides which
+ *  conversation object wins on screen (the local one may carry unsaved state). */
+export async function loadProjectConversations(cwd: string): Promise<Conversation[]> {
+  const records = await window.api.loadVersionedConversations({ cwd })
+  return compactOldConversations(absorbRecords(records))
+}
+
+/** Live conversation count per project folder, straight from the database. */
+export async function loadProjectCounts(): Promise<Record<string, number>> {
+  const rows = await window.api.countConversationsByProject()
+  return Object.fromEntries(rows.map((row) => [row.cwd, row.total]))
 }
 
 function enqueueConversation(id: string, write: () => Promise<VersionedConversationDto>): Promise<void> {
@@ -202,7 +234,7 @@ function enqueueConversation(id: string, write: () => Promise<VersionedConversat
  * compare-and-set that lost the race, so a single stale revision cannot wedge
  * every later write of that conversation. */
 async function authoritativeRevision(id: string): Promise<number | undefined> {
-  const records = await window.api.loadVersionedConversations()
+  const records = await window.api.loadVersionedConversations({ ids: [id], includeDeleted: true })
   const record = records.find((entry) => entry.id === id)
   if (record) conversationRecords.set(id, record)
   else conversationRecords.delete(id)
@@ -299,7 +331,7 @@ export async function loadConversationChanges(changes: RepositoryChange[]): Prom
       .map((change) => change.entityId)
   )
   if (!ids.size) return new Map()
-  const records = await window.api.loadVersionedConversations()
+  const records = await window.api.loadVersionedConversations({ ids: [...ids], includeDeleted: true })
   const fetched = new Map(records.map((record) => [record.id, record]))
   const result = new Map<string, Conversation | null>()
   for (const id of ids) {

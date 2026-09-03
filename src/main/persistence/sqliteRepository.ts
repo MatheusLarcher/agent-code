@@ -22,6 +22,8 @@ import {
   type RepositoryChange,
   type RepositoryChangeHandler,
   type VersionedConversation,
+  type ConversationQuery,
+  type ProjectConversationCount,
   type VersionedKv
 } from './types'
 
@@ -209,16 +211,54 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     return result
   }
 
-  async loadConversations(options?: { includeDeleted?: boolean }): Promise<VersionedConversation[]> {
+  async loadConversations(options?: ConversationQuery): Promise<VersionedConversation[]> {
     return this.read((db) => {
-      const where = options?.includeDeleted ? '' : 'WHERE deleted_at IS NULL'
+      if (options?.ids && options.ids.length === 0) return []
+      // The per-project page and the "whole project" fetch only make sense over
+      // live rows: a tombstone in one of the N slots would hide a real chat.
+      const liveOnly = !options?.includeDeleted || options.perProject !== undefined || options.cwd !== undefined
+      const clauses: string[] = []
+      const params: unknown[] = []
+      if (liveOnly) clauses.push('deleted_at IS NULL')
+      if (options?.cwd !== undefined) {
+        clauses.push("COALESCE(json_extract(payload_json, '$.cwd'), '') = ?")
+        params.push(options.cwd)
+      }
+      if (options?.ids) {
+        clauses.push(`id IN (${options.ids.map(() => '?').join(', ')})`)
+        params.push(...options.ids)
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+      const columns = 'id, payload_json, revision, content_hash, created_at, updated_at, deleted_at'
+      let sql: string
+      if (options?.perProject !== undefined) {
+        // Newest N of EACH project (the sidebar's first page), not newest N overall.
+        sql = `SELECT ${columns} FROM (
+                 SELECT ${columns},
+                        ROW_NUMBER() OVER (
+                          PARTITION BY COALESCE(json_extract(payload_json, '$.cwd'), '')
+                          ORDER BY updated_at DESC, id
+                        ) AS rn
+                 FROM conversations_v2 ${where}
+               ) WHERE rn <= ? ORDER BY updated_at DESC, id`
+        params.push(Math.max(1, Math.floor(options.perProject)))
+      } else {
+        sql = `SELECT ${columns} FROM conversations_v2 ${where} ORDER BY updated_at DESC, id`
+      }
+      const rows = db.prepare(sql).all(...(params as never[])) as unknown as ConversationRow[]
+      return rows.map(conversationFromRow)
+    })
+  }
+
+  async countConversationsByProject(): Promise<ProjectConversationCount[]> {
+    return this.read((db) => {
       const rows = db
         .prepare(
-          `SELECT id, payload_json, revision, content_hash, created_at, updated_at, deleted_at
-           FROM conversations_v2 ${where} ORDER BY updated_at DESC, id`
+          `SELECT COALESCE(json_extract(payload_json, '$.cwd'), '') AS cwd, COUNT(*) AS total
+           FROM conversations_v2 WHERE deleted_at IS NULL GROUP BY 1`
         )
-        .all() as unknown as ConversationRow[]
-      return rows.map(conversationFromRow)
+        .all() as unknown as Array<{ cwd: string; total: number | bigint }>
+      return rows.map((row) => ({ cwd: String(row.cwd), total: Number(row.total) }))
     })
   }
 

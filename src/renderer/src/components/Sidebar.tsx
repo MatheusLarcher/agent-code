@@ -6,7 +6,13 @@ import { IconSpinner } from './Icons'
 export interface SidebarProject {
   path: string
   name: string
+  /** The conversations currently LOADED for this project (first page, or all). */
   conversations: Conversation[]
+  /** Real conversation count (database). Defaults to the loaded count. */
+  total?: number
+  /** True while the database holds more than what is loaded — shows "mostrar mais". */
+  hasMore?: boolean
+  loadingMore?: boolean
 }
 
 interface Props {
@@ -22,6 +28,8 @@ interface Props {
   onNewProject: () => void
   /** Start a new conversation inside a specific project folder. */
   onNewChatIn: (path: string) => void
+  /** Fetch the rest of a project's conversations ("mostrar mais"). */
+  onLoadMore?: (path: string) => void
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
   /** Open a search hit, scrolling to the matching message (null → just open). */
@@ -430,7 +438,10 @@ export function Sidebar(props: Props): JSX.Element {
                         {busy ? <IconSpinner className="spinner" size={15} /> : <IconFolder />}
                       </span>
                       <span className="project-name">{p.name}</span>
-                      <span className="project-count">{convs.length}</span>
+                      {/* Real total from the database; while filtering, the hit count. */}
+                      <span className="project-count" title={q ? 'Conversas encontradas' : 'Total de conversas do projeto'}>
+                        {q ? convs.length : p.total ?? convs.length}
+                      </span>
                     </button>
                     <button
                       className="project-add"
@@ -443,6 +454,22 @@ export function Sidebar(props: Props): JSX.Element {
                   {open && (
                     <div className="project-convs">
                       {convs.map(({ c, m }) => renderConv(c, true, `proj:${p.path}`, m))}
+                      {/* Only the first page is loaded; the rest stays in the database
+                          until asked for. Hidden while filtering — the filter only sees
+                          what is loaded, and a "more" here would mislead. */}
+                      {!q && p.hasMore && (
+                        <button
+                          type="button"
+                          className="project-more"
+                          onClick={() => props.onLoadMore?.(p.path)}
+                          disabled={p.loadingMore}
+                          title="Carregar as demais conversas deste projeto"
+                        >
+                          {p.loadingMore
+                            ? 'Carregando…'
+                            : `Mostrar mais ${(p.total ?? convs.length) - convs.length}`}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

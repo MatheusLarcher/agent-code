@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { Channels } from '../shared/ipc'
 import type { AgentCodeApi } from '../shared/api'
 import type {
+  ConversationQueryDto,
+  ProjectConversationCountDto,
   AgentEventMsg,
   AgentInterruptResult,
   AgentMessageKind,
@@ -74,8 +76,10 @@ const api: AgentCodeApi = {
   storageFlushReady: (requestId: string, error?: string): Promise<void> =>
     ipcRenderer.invoke(Channels.storageFlushReady, requestId, error),
   onStorageChanged: (cb: (changes: RepositoryChange[]) => void): (() => void) => on(Channels.storageChanged, cb),
-  loadVersionedConversations: (): Promise<VersionedConversationDto[]> =>
-    ipcRenderer.invoke(Channels.conversationsLoadVersioned),
+  loadVersionedConversations: (query?: ConversationQueryDto): Promise<VersionedConversationDto[]> =>
+    ipcRenderer.invoke(Channels.conversationsLoadVersioned, query),
+  countConversationsByProject: (): Promise<ProjectConversationCountDto[]> =>
+    ipcRenderer.invoke(Channels.conversationsCountByProject),
   upsertConversation: (input: ConversationUpsertDto): Promise<VersionedConversationDto> =>
     ipcRenderer.invoke(Channels.conversationsUpsert, input),
   deleteConversation: (input: ConversationDeleteDto): Promise<VersionedConversationDto> =>
