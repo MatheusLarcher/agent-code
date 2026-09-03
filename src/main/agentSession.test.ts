@@ -669,7 +669,7 @@ describe('AgentSession — vision_fallback_router', () => {
 
   it('modelo Ollama SEM visão (ex.: GLM) + imagem: intercepta, chama o relay e envia só texto com [VISUAL_CONTEXT]', async () => {
     describeImagesMock.mockResolvedValueOnce('Texto visível (OCR completo): Erro 500\nErros encontrados: servidor caiu')
-    const { s } = makeSession({ model: 'glm-5.2:cloud' })
+    const { s } = makeSession({ model: 'glm-5.3:cloud' })
 
     await s.send('o que é esse erro?', [{ mediaType: 'image/png', data: 'AAAA' }])
 
@@ -723,7 +723,7 @@ describe('AgentSession — vision_fallback_router', () => {
   })
 
   it('sem imagem: fluxo idêntico ao atual, relay nunca é chamado', async () => {
-    const { s } = makeSession({ model: 'glm-5.2:cloud' })
+    const { s } = makeSession({ model: 'glm-5.3:cloud' })
 
     await s.send('só texto, sem imagem')
 
@@ -1256,7 +1256,7 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
   it('não envia a documentação como pista para o relay de visão', async () => {
     describeImagesMock.mockResolvedValueOnce('descrição')
     projectOutlineMock.mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_CONTEXT]')
-    const { s } = makeSession({ model: 'glm-5.2:cloud' })
+    const { s } = makeSession({ model: 'glm-5.3:cloud' })
 
     await s.send('analise a tela', [{ mediaType: 'image/png', data: 'AAA' }])
 

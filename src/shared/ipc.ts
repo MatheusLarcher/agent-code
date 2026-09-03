@@ -583,7 +583,8 @@ export const OLLAMA_MODELS = [
   { id: 'gemma4:cloud', label: 'Gemma 4 (Ollama)' },
   { id: 'nemotron-3-super:cloud', label: 'Nemotron 3 Super (Ollama · assinatura)' },
   { id: 'deepseek-v4-pro:cloud', label: 'DeepSeek V4 Pro (Ollama · assinatura)' },
-  { id: 'glm-5.2:cloud', label: 'GLM 5.2 (Ollama · assinatura)' },
+  { id: 'glm-5.3:cloud', label: 'GLM 5.3 (Ollama · assinatura)' },
+  { id: 'glm-5.3-flash:cloud', label: 'GLM 5.3 Flash (Ollama · assinatura)' },
   { id: 'kimi-k3:cloud', label: 'Kimi K3 (Ollama · assinatura)' }
 ] as const
 
@@ -604,7 +605,11 @@ export function isOllamaModel(model: string | undefined): boolean {
  *  wrong entry sends a raw image straight to a model that 400s, exactly the bug
  *  this list exists to prevent. `kimi-k3:cloud` inherits the slot from the K2.7
  *  tag it replaced: Ollama's model card lists it as natively multimodal with
- *  image input, but that has NOT been re-probed live yet. */
+ *  image input, but that has NOT been re-probed live yet.
+ *  `glm-5.3-flash:cloud` is deliberately NOT here: its Ollama model card
+ *  advertises "Text, Image" input, but no live probe has confirmed it through
+ *  this endpoint. Until one does, it routes through the relay (safe fallback);
+ *  probe it before promoting. */
 const OLLAMA_VISION_MODELS = new Set(['kimi-k3:cloud'])
 
 /** Whether `model` can accept an image directly. All Claude models support
@@ -666,9 +671,9 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'gpt-5.6-sol': 1_050_000,
   // Ollama Cloud — native context windows (verified against each model's own
   // published specs, not a guess): gpt-oss keeps its documented 128K;
-  // DeepSeek V4 Pro and GLM-5.2 are actually 1M native — they were previously
+  // DeepSeek V4 Pro and the GLM-5.3 family are 1M native (GLM was previously
   // under-reported here, which made the context bar read as "full" way before
-  // the model's real limit. Nemotron 3 Ultra carries over the 256K limit of
+  // the model's real limit). Nemotron 3 Ultra carries over the 256K limit of
   // the qwen3-coder:480b-cloud tag it replaced — re-verify if that changed.
   'nemotron-3-ultra:cloud': 256_000,
   'gpt-oss:120b-cloud': 128_000,
@@ -679,7 +684,8 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   // max_length 131072. Keep the UI's decimal convention used by gpt-oss.
   'muse-glimmer:cloud': 128_000,
   'deepseek-v4-pro:cloud': 1_000_000,
-  'glm-5.2:cloud': 1_000_000,
+  'glm-5.3:cloud': 1_000_000,
+  'glm-5.3-flash:cloud': 1_000_000,
   'kimi-k3:cloud': 1_000_000
 }
 

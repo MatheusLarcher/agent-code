@@ -270,7 +270,7 @@ interface OpenAiConfig { apiKey: string; voice: string; speed: number }   // voz
 interface OllamaConfig { enabled: boolean; apiKey: string }   // Ollama Cloud (modelos via API compatível com a Anthropic)
 const OLLAMA_BASE_URL = 'https://ollama.com'                  // ANTHROPIC_BASE_URL no modo Ollama
 function isOllamaModel(model?: string): boolean               // true se o id termina em ':cloud'
-const CONTEXT_LIMITS: Record<string, number>                  // janela de contexto REAL por modelo (Opus/Sonnet/Fable=1M, Haiku=200K; Ollama: Nemotron 3 Ultra=256K, gpt-oss=128K, DeepSeek V4 Pro=1M, GLM-5.2=1M, Kimi K3=1M — verificados contra os specs de cada modelo)
+const CONTEXT_LIMITS: Record<string, number>                  // janela de contexto REAL por modelo (Opus/Sonnet/Fable=1M, Haiku=200K; Ollama: Nemotron 3 Ultra=256K, gpt-oss=128K, DeepSeek V4 Pro=1M, GLM-5.3 (e Flash)=1M, Kimi K3=1M — verificados contra os specs de cada modelo)
 const DEFAULT_CONTEXT_LIMIT = 200_000                          // fallback p/ modelo fora do mapa
 function contextLimitFor(model?: string): number              // limite do modelo (cai no DEFAULT) — denominador da barra de contexto
 function modelSupportsVision(model?: string): boolean          // Claude sempre true; Ollama só true p/ OLLAMA_VISION_MODELS (hoje só kimi-k3:cloud, multimodal nativo) — o resto passa pelo vision_fallback_router

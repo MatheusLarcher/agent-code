@@ -26,8 +26,9 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
     expect(contextLimitFor('claude-haiku-4-5')).toBe(200_000)
   })
 
-  it('Ollama Cloud: GLM-5.2 e Kimi K3 são 1M nativos (não 128K/200K)', () => {
-    expect(contextLimitFor('glm-5.2:cloud')).toBe(1_000_000)
+  it('Ollama Cloud: GLM-5.3 (e Flash) e Kimi K3 são 1M nativos (não 128K/200K)', () => {
+    expect(contextLimitFor('glm-5.3:cloud')).toBe(1_000_000)
+    expect(contextLimitFor('glm-5.3-flash:cloud')).toBe(1_000_000)
     expect(contextLimitFor('kimi-k3:cloud')).toBe(1_000_000)
   })
 
@@ -82,7 +83,10 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision('gemma4:cloud')).toBe(false)
     expect(modelSupportsVision('nemotron-3-super:cloud')).toBe(false)
     expect(modelSupportsVision('muse-glimmer:cloud')).toBe(false)
-    expect(modelSupportsVision('glm-5.2:cloud')).toBe(false)
+    expect(modelSupportsVision('glm-5.3:cloud')).toBe(false)
+    // Flash anuncia "Text, Image" no card do Ollama, mas sem probe ao vivo
+    // continua no relay — promover só depois de verificar contra a API.
+    expect(modelSupportsVision('glm-5.3-flash:cloud')).toBe(false)
   })
 })
 
