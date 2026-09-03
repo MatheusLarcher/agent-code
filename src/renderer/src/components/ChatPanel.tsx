@@ -7,7 +7,7 @@ import type {
   PickedElement,
   QueuedAfterInterrupt
 } from '@shared/ipc'
-import { contextLimitFor } from '@shared/ipc'
+import { contextLimitFor, fastModeTransport } from '@shared/ipc'
 import type { TodoPlan, TurnRecovery, UIMessage } from '../types'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
@@ -276,6 +276,22 @@ const fmtLimit = (n: number): string => {
 /** Context-window usage bar: how much of the model's input window the last
  *  request filled. `context` is the real input size (input + cache tokens) of
  *  the last model request; the denominator is the model's own context limit. */
+/** Tooltip for the fast-mode toggle. The trade-off genuinely differs by
+ *  provider, so the text must not be shared: Anthropic bills fast mode at a
+ *  higher per-token price, while the GPT models run on the ChatGPT subscription
+ *  and are not billed per token at all — promising a price increase there would
+ *  be simply false. */
+export function fastModeTitle(model: string, on: boolean): string {
+  const codex = fastModeTransport(model) === 'codex-priority'
+  const cost = codex
+    ? 'sem custo por token (usa sua assinatura ChatGPT), mas pode consumir o limite do plano mais rápido'
+    : 'com custo por token maior'
+  const gain = codex ? '~1,6x mais rápidas' : 'até ~2,5x mais rápidas'
+  return on
+    ? `Modo rápido ATIVO — respostas ${gain}, ${cost}. Clique para desativar.`
+    : `Modo rápido — respostas ${gain}, ${cost}. Bom para iteração e depuração ao vivo.`
+}
+
 function ContextBar({ context, model }: { context: number; model: string }): JSX.Element {
   const limit = contextLimitFor(model)
   const pct = Math.min(100, limit > 0 ? (context / limit) * 100 : 0)
@@ -501,11 +517,7 @@ export function ChatPanel(props: Props): JSX.Element {
           <button
             type="button"
             className={`fast-toggle${props.fastMode ? ' on' : ''}`}
-            title={
-              props.fastMode
-                ? 'Modo rápido ATIVO — respostas até ~2,5x mais rápidas, com custo por token maior. Clique para desativar.'
-                : 'Modo rápido — deixa o Opus até ~2,5x mais rápido, cobrando mais por token. Bom para iteração e depuração ao vivo.'
-            }
+            title={fastModeTitle(props.model, props.fastMode)}
             onClick={() => props.onFastModeChange(!props.fastMode)}
           >
             <span className="fast-icon">↯</span>

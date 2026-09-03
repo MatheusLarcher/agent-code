@@ -133,6 +133,10 @@ export interface CodexResponsesRequest {
   max_output_tokens?: number
   reasoning?: { effort: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'; context?: 'all_turns' }
   prompt_cache_key?: string
+  /** Codex fast mode. Only `'priority'` is ever set (and only when the user
+   *  enabled the toggle); omitted otherwise, which the backend treats as
+   *  `'default'`. See CODEX_FAST_SERVICE_TIER in codexProxy.ts. */
+  service_tier?: 'priority'
   stream: boolean
   store: false
 }

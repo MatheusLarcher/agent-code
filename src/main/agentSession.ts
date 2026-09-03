@@ -29,8 +29,8 @@ import {
   syncCacheSkills
 } from './skillManager'
 import { randomUUID } from 'node:crypto'
-import { isOllamaModel, isOpenAIModel, modelSupportsFastMode, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
-import { ensureCodexProxyRunning } from './codexProxy'
+import { fastModeTransport, isOllamaModel, isOpenAIModel, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
+import { ensureCodexProxyRunning, FAST_MODE_TOKEN_SUFFIX } from './codexProxy'
 import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import { buildProjectOutline } from './projectOutline'
@@ -489,7 +489,14 @@ export class AgentSession {
         openaiEnv = {
           ...process.env,
           ANTHROPIC_BASE_URL: baseUrl,
-          ANTHROPIC_AUTH_TOKEN: secret,
+          // The proxy is a single process-wide server shared by every
+          // conversation, but fast mode is per-conversation. The auth token is
+          // the only per-session channel we fully control end to end, so the
+          // opt-in rides on it as a suffix the proxy strips back off.
+          ANTHROPIC_AUTH_TOKEN:
+            this.opts.fastMode && fastModeTransport(this.opts.model) === 'codex-priority'
+              ? `${secret}${FAST_MODE_TOKEN_SUFFIX}`
+              : secret,
           ANTHROPIC_API_KEY: '',
           // Agent's model aliases normally resolve back to Claude model ids.
           // Pin every child-agent tier to the selected GPT model instead.
@@ -535,7 +542,9 @@ export class AgentSession {
       // Modo rápido: only sent when the chosen model actually supports it — the
       // API rejects a fast-mode request on an unsupported model instead of
       // quietly serving it at standard speed.
-      ...(this.opts.fastMode && modelSupportsFastMode(this.opts.model)
+      // GPT models carry fast mode in the Codex request body instead (see the
+      // ANTHROPIC_AUTH_TOKEN suffix below) — `settings.fastMode` is Anthropic-only.
+      ...(this.opts.fastMode && fastModeTransport(this.opts.model) === 'anthropic-setting'
         ? { settings: { fastMode: true } }
         : {}),
       ...(env ? { env } : {}),

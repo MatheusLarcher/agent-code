@@ -22,7 +22,8 @@ import {
   OLLAMA_MODELS,
   OPENAI_MODELS,
   MODEL_EFFORT,
-  DEFAULT_EFFORT
+  DEFAULT_EFFORT,
+  usageProviderOf
 } from '@shared/ipc'
 import type { EffortLevel, ProjectTree } from '@shared/ipc'
 import { fileTouches, turnsOf } from './projectActivity'
@@ -43,9 +44,10 @@ import {
 import { ChatPanel } from './components/ChatPanel'
 import { BrowserPanel } from './components/BrowserPanel'
 import { AgentsPanel } from './components/AgentsPanel'
-import { IconUsers } from './components/Icons'
+import { IconGlobe, IconUsers } from './components/Icons'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
-import { UsageBadge } from './components/UsageBadge'
+import { UsageBadge, type UsageProviders } from './components/UsageBadge'
+import { RightPaneTabs } from './components/RightPaneTabs'
 import { IconPower, IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
@@ -365,6 +367,9 @@ export function App(): JSX.Element {
   // any one chat, so it must survive switching conversations. Keyed by
   // rateLimitType; only ever grows/updates, never reset by the UI itself.
   const [usageLimits, setUsageLimits] = useState<Record<string, RateLimitStatus>>({})
+  // Which subscriptions (Claude / GPT) the compact topbar badge shows. Persisted
+  // with the rest of the UI state; the badge's own popover always shows both.
+  const [usageProviders, setUsageProviders] = useState<UsageProviders>({ claude: true, gpt: true })
   // Who is working inside each conversation (main agent + subagents), for the
   // agents panel. Deliberately OUTSIDE `Conversation`: this is live state, not
   // history — it never touches the chat feed nor gets persisted to disk.
@@ -680,7 +685,16 @@ export function App(): JSX.Element {
             markMessageError(cid, inflight.msgId, e.text || 'A resposta falhou. Tente de novo.')
           }
           delete inflightRef.current[cid]
-          const schedule = scheduleFailure(e.text || 'Erro transitório', usageLimitsRef.current)
+          // Only this conversation's subscription windows can say when its
+          // limit resets — a GPT window must not schedule a Claude retry.
+          const failedModel = convsRef.current.find((c) => c.id === cid)?.model
+          const failedProvider = isOpenAIModel(failedModel) ? 'gpt' : 'claude'
+          const relevantLimits = Object.fromEntries(
+            Object.entries(usageLimitsRef.current).filter(
+              ([, l]) => usageProviderOf(l.rateLimitType) === failedProvider
+            )
+          )
+          const schedule = scheduleFailure(e.text || 'Erro transitório', relevantLimits)
           const previousRecovery = convsRef.current.find((c) => c.id === cid)?.recovery
           const attempt = schedule.reason === 'transient' ? (previousRecovery?.attempt ?? 0) + 1 : 0
           const exhausted = schedule.reason === 'transient' && attempt >= MAX_GENERIC_RETRIES
@@ -865,6 +879,7 @@ export function App(): JSX.Element {
       setCollapsed(ui.collapsed)
       setBrowserMinimized(ui.browserMinimized)
       setBrowserWidth(ui.browserWidth)
+      setUsageProviders(ui.usageProviders)
       setActiveId(
         ui.activeId && loaded.some((c) => c.id === ui.activeId) ? ui.activeId : loaded[0]?.id ?? null
       )
@@ -1026,18 +1041,18 @@ export function App(): JSX.Element {
   }, [conversations, hydrated, notify])
   useEffect(() => {
     if (hydrated) {
-      void saveUi({ collapsed, activeId, browserMinimized, browserWidth }).catch(() =>
+      void saveUi({ collapsed, activeId, browserMinimized, browserWidth, usageProviders }).catch(() =>
         notify('erro', 'Não foi possível salvar o estado da interface.')
       )
     }
-  }, [collapsed, activeId, browserMinimized, browserWidth, hydrated, notify])
+  }, [collapsed, activeId, browserMinimized, browserWidth, usageProviders, hydrated, notify])
 
   // Close/reload is a durability boundary: pause the unload, flush the latest
   // conversation + UI state, then explicitly release the pending navigation.
   const hydratedRef = useRef(hydrated)
   hydratedRef.current = hydrated
-  const closeUiRef = useRef({ collapsed, activeId, browserMinimized, browserWidth })
-  closeUiRef.current = { collapsed, activeId, browserMinimized, browserWidth }
+  const closeUiRef = useRef({ collapsed, activeId, browserMinimized, browserWidth, usageProviders })
+  closeUiRef.current = { collapsed, activeId, browserMinimized, browserWidth, usageProviders }
   const allowUnloadRef = useRef(false)
   const unloadFlushRef = useRef<Promise<void> | null>(null)
   useEffect(() => {
@@ -2136,10 +2151,15 @@ export function App(): JSX.Element {
       })),
     [permissions, conversations]
   )
-  // Opening the agents panel takes over the right-hand slot from the browser.
+  // The right-hand pane holds ONE of two tabs (browser / agents); `agentsOpen`
+  // is the selected tab and `browserMinimized` collapses the whole pane.
   const openAgentsPanel = useCallback((): void => {
     setAgentsOpen(true)
-    setBrowserMinimized(true)
+    setBrowserMinimized(false)
+  }, [])
+  const selectRightPane = useCallback((pane: 'browser' | 'agents'): void => {
+    setAgentsOpen(pane === 'agents')
+    setBrowserMinimized(false)
   }, [])
 
   // ---- project map ----
@@ -2345,14 +2365,16 @@ export function App(): JSX.Element {
             </button>
           )}
           </div>
-          <UsageBadge limits={usageLimits} />
+          <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
           {/* Acesso permanente ao painel de agentes: sem isso ele só existiria
               enquanto houvesse subagente rodando, e não daria pra rever nada. */}
           <button
             className={`btn ghost agents-btn topbar-right${agentsOpen ? ' on' : ''}${
               runningTrackCount > 0 ? ' live' : ''
             }`}
-            onClick={() => (agentsOpen ? setAgentsOpen(false) : openAgentsPanel())}
+            onClick={() =>
+              agentsOpen && !browserMinimized ? selectRightPane('browser') : openAgentsPanel()
+            }
             title="Agentes: quem está trabalhando nesta conversa"
           >
             <IconUsers />
@@ -2456,59 +2478,73 @@ export function App(): JSX.Element {
             runningAgents={runningTrackCount}
             onOpenAgents={openAgentsPanel}
           />
-          {/* O divisor vale para QUALQUER painel da direita (navegador ou agentes):
+          {/* O divisor vale para o painel da direita inteiro (navegador ou agentes):
               sem ele, o mapa de fluxo ficava preso na largura padrão. */}
-          {(agentsOpen || !browserMinimized) && (
-            <div
-              className="splitter"
-              onMouseDown={startBrowserDrag}
-              title={
-                agentsOpen
-                  ? 'Arraste para expandir o painel de agentes'
-                  : 'Arraste para redimensionar o navegador'
-              }
-            />
+          {!browserMinimized && (
+            <>
+              <div
+                className="splitter"
+                onMouseDown={startBrowserDrag}
+                title="Arraste para redimensionar o painel"
+              />
+              <div className="right-pane" style={{ flex: `0 0 ${browserWidth}px` }}>
+                <RightPaneTabs
+                  active={agentsOpen ? 'agents' : 'browser'}
+                  onSelect={selectRightPane}
+                  onCollapse={() => setBrowserMinimized(true)}
+                  liveAgents={runningTrackCount}
+                  browserTabs={browserState.tabs.length}
+                />
+                {agentsOpen ? (
+                  <AgentsPanel
+                    tracks={activeTracks}
+                    busy={!!active && busyIds.has(active.id)}
+                    busySince={active ? busySince[active.id] ?? null : null}
+                    backgroundTasks={active?.backgroundTasks ?? []}
+                    pendingPermissions={pendingPermissionList}
+                    onFocusPermission={(convId) => {
+                      setActiveId(convId)
+                      setQuestionMinimized(false)
+                      setAgentsOpen(false)
+                    }}
+                    loading={!hydrated}
+                    onClose={() => setBrowserMinimized(true)}
+                    projectEntries={projectTree.nodes}
+                    projectTruncated={projectTree.truncated}
+                    projectMissing={projectTree.missing}
+                    projectSteps={active?.todoPlan?.items ?? []}
+                    touches={activeTouches}
+                    turns={activeTurns}
+                    projectName={projectName}
+                  />
+                ) : (
+                  <BrowserPanel
+                    state={browserState}
+                    minimized={false}
+                    onToggleMinimize={() => setBrowserMinimized(true)}
+                    onRequestNewTab={() => setNewTabOpen(true)}
+                    onRequestPickFile={(tabId) => setFilePicker({ replaceTabId: tabId })}
+                  />
+                )}
+              </div>
+            </>
           )}
-          {agentsOpen ? (
-            <AgentsPanel
-              tracks={activeTracks}
-              busy={!!active && busyIds.has(active.id)}
-              busySince={active ? busySince[active.id] ?? null : null}
-              backgroundTasks={active?.backgroundTasks ?? []}
-              pendingPermissions={pendingPermissionList}
-              onFocusPermission={(convId) => {
-                setActiveId(convId)
-                setQuestionMinimized(false)
-                setAgentsOpen(false)
-              }}
-              loading={!hydrated}
-              onClose={() => setAgentsOpen(false)}
-              projectEntries={projectTree.nodes}
-              projectTruncated={projectTree.truncated}
-              projectMissing={projectTree.missing}
-              projectSteps={active?.todoPlan?.items ?? []}
-              touches={activeTouches}
-              turns={activeTurns}
-              projectName={projectName}
-              width={browserWidth}
-            />
-          ) : (
-            <BrowserPanel
-              state={browserState}
-              minimized={browserMinimized}
-              onToggleMinimize={() => setBrowserMinimized((v) => !v)}
-              width={browserWidth}
-              onRequestNewTab={() => setNewTabOpen(true)}
-              onRequestPickFile={(tabId) => setFilePicker({ replaceTabId: tabId })}
-            />
-          )}
-          {/* Rail: with the browser minimized, the agents tab still needs a way in. */}
-          {browserMinimized && !agentsOpen && (
+          {/* Rail: pane collapsed — one button per tab, so either is one click away. */}
+          {browserMinimized && (
             <div className="right-rail">
               <button
                 type="button"
+                className="right-rail-btn"
+                onClick={() => selectRightPane('browser')}
+                title="Mostrar navegador"
+              >
+                <IconGlobe size={15} />
+                Navegador
+              </button>
+              <button
+                type="button"
                 className={`right-rail-btn${runningTrackCount > 0 ? ' live' : ''}`}
-                onClick={openAgentsPanel}
+                onClick={() => selectRightPane('agents')}
                 title="Ver os agentes trabalhando"
               >
                 <IconUsers size={15} />

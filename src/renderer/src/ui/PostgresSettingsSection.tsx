@@ -6,6 +6,7 @@ import type {
 } from '@shared/ipc'
 import { useUI } from './UiProvider'
 import { ipcErrorMessage } from '../ipcError'
+import { IconDatabase } from '../components/Icons'
 
 const DEFAULT_DRAFT: PostgresConnectionDraft = {
   host: 'localhost',
@@ -125,7 +126,7 @@ export function PostgresSettingsSection(): JSX.Element {
     <section className={`settings-section postgres-settings ${postgresActive ? 'on' : ''}`}>
       <div className="settings-row">
         <span>
-          <strong>🐘 PostgreSQL</strong>
+          <strong className="settings-inline-title"><IconDatabase size={15} /> PostgreSQL</strong>
           <span className="settings-desc">
             Backend opcional para compartilhar histórico e sessões entre computadores. A troca só ocorre pelo
             botão de migração depois da verificação; salvar as demais configurações não ativa o banco.

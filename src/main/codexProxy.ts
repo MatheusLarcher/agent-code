@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import type { RateLimitStatus } from '../shared/ipc'
 import { getValidCodexTokens, refreshCodexTokensAfter, type CodexTokens } from './codexAuth'
 import {
   CodexProtocolError,
@@ -54,6 +55,22 @@ const CODEX_ORIGINATOR = 'codex_cli_rs'
 // Keep it aligned with a released Codex client that supports those models.
 const CODEX_CLIENT_VERSION = '0.146.0'
 const CODEX_USER_AGENT = `${CODEX_ORIGINATOR}/${CODEX_CLIENT_VERSION}`
+/** Suffix `agentSession` appends to the loopback auth token to ask for fast
+ *  mode on that one conversation. The proxy is process-wide and shared by every
+ *  conversation, so a proxy-level flag would leak across chats; the token is the
+ *  only per-session value we control end to end. */
+export const FAST_MODE_TOKEN_SUFFIX = '+fast'
+
+/** Codex's only non-default `service_tier`. Measured on 2026-09-03 against
+ *  gpt-5.6-sol: ~1.6x output throughput and ~30% lower total latency over 10
+ *  paired runs (both orderings). Two traps worth keeping in mind:
+ *  1. The response echoes `service_tier: "default"` even when priority is
+ *     applied — the echo is NOT a usable confirmation, only timing is.
+ *  2. The backend rejects every unknown parameter and every other tier value
+ *     (`fast`, `auto`, `flex`, `scale` all return HTTP 400), so this exact
+ *     string is the whole supported surface. */
+const CODEX_FAST_SERVICE_TIER = 'priority'
+
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/
 export const DEFAULT_MAX_TOOL_ROUNDS = 64
@@ -224,6 +241,49 @@ export interface CodexProxyDeps {
   toolStateCache?: CodexToolStateCache
   maxToolRounds?: number
   log?: (line: string) => void
+  /** Called with the ChatGPT plan usage windows found on an upstream response
+   *  (see `parseCodexRateLimitHeaders`). Never called when the headers are absent. */
+  onRateLimit?: (limits: RateLimitStatus[]) => void
+}
+
+/** Reads the ChatGPT plan usage that the Codex backend attaches to every
+ *  response as `x-codex-{primary,secondary}-*` headers — the same headers the
+ *  official Codex CLI uses for its `/status` display. Primary is the short
+ *  window, secondary the long one; both carry the used percentage (0..100),
+ *  the window length in minutes and the seconds until reset. Two spellings of
+ *  the reset header exist across Codex versions, so both are accepted. Returns
+ *  [] when nothing usable is present (no header, or an unparsable percent). */
+export function parseCodexRateLimitHeaders(
+  headers: { get(name: string): string | null },
+  now: number = Date.now()
+): RateLimitStatus[] {
+  const num = (name: string): number | undefined => {
+    const raw = headers.get(name)
+    if (raw === null) return undefined
+    const value = Number(raw.trim())
+    return Number.isFinite(value) ? value : undefined
+  }
+  const out: RateLimitStatus[] = []
+  for (const [window, type] of [
+    ['primary', 'gpt_primary'],
+    ['secondary', 'gpt_secondary']
+  ] as const) {
+    const used = num(`x-codex-${window}-used-percent`)
+    if (used === undefined) continue
+    const utilization = Math.min(1, Math.max(0, used / 100))
+    const resetSeconds =
+      num(`x-codex-${window}-resets-in-seconds`) ?? num(`x-codex-${window}-reset-after-seconds`)
+    const windowMinutes = num(`x-codex-${window}-window-minutes`)
+    out.push({
+      rateLimitType: type,
+      status: utilization >= 1 ? 'rejected' : utilization >= 0.8 ? 'allowed_warning' : 'allowed',
+      utilization,
+      ...(resetSeconds !== undefined ? { resetsAt: now + resetSeconds * 1000 } : {}),
+      ...(windowMinutes !== undefined ? { windowMinutes } : {}),
+      updatedAt: now
+    })
+  }
+  return out
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -324,6 +384,22 @@ async function openWithAuthRetry(
   }
 }
 
+/** Validates the loopback `Authorization` header and reads the per-conversation
+ *  fast-mode opt-in off it. Returns null when the secret does not match, so an
+ *  unknown caller can never reach the upstream. The suffix is only honoured on
+ *  an otherwise exact secret match — it grants no access of its own. */
+export function parseProxyCredential(
+  header: string | string[] | undefined,
+  secret: string
+): { fastMode: boolean } | null {
+  const raw = Array.isArray(header) ? header[0] : header
+  if (typeof raw !== 'string' || !raw.startsWith('Bearer ')) return null
+  const token = raw.slice('Bearer '.length)
+  if (token === secret) return { fastMode: false }
+  if (token === `${secret}${FAST_MODE_TOKEN_SUFFIX}`) return { fastMode: true }
+  return null
+}
+
 async function handleMessages(
   request: IncomingMessage,
   response: ServerResponse,
@@ -331,7 +407,8 @@ async function handleMessages(
   cache: CodexToolStateCache,
   sessionAccounts: Map<string, string>
 ): Promise<void> {
-  if (request.headers.authorization !== `Bearer ${deps.secret}`) {
+  const credential = parseProxyCredential(request.headers.authorization, deps.secret)
+  if (!credential) {
     sendAnthropicError(response, 401, 'authentication_error', 'Invalid local proxy credentials.')
     return
   }
@@ -370,6 +447,7 @@ async function handleMessages(
   let codexBody: CodexResponsesRequest
   try {
     codexBody = toCodexRequest({ ...body, stream: true }, cache, cacheSessionId)
+    if (credential.fastMode) codexBody.service_tier = CODEX_FAST_SERVICE_TIER
   } catch (error) {
     sendAnthropicError(response, 400, 'invalid_request_error', String(error))
     return
@@ -398,6 +476,11 @@ async function handleMessages(
     const type = status === 401 ? 'authentication_error' : status === 429 ? 'rate_limit_error' : 'api_error'
     sendAnthropicError(response, status, type, friendlyCodexError(error))
     return
+  }
+
+  if (deps.onRateLimit) {
+    const limits = parseCodexRateLimitHeaders(upstream.headers)
+    if (limits.length > 0) deps.onRateLimit(limits)
   }
 
   response.writeHead(200, {
@@ -494,6 +577,14 @@ export function startCodexProxyServer(deps: CodexProxyDeps): Promise<CodexProxyH
 }
 
 let running: Promise<{ baseUrl: string; secret: string }> | null = null
+let rateLimitListener: ((limits: RateLimitStatus[]) => void) | null = null
+
+/** Registers the single process-wide consumer of GPT usage snapshots (the main
+ *  process forwards them to the renderer as `rate-limit` events). The proxy is
+ *  shared by every conversation, so this is account-level, not per chat. */
+export function onCodexRateLimit(listener: ((limits: RateLimitStatus[]) => void) | null): void {
+  rateLimitListener = listener
+}
 
 export function ensureCodexProxyRunning(log?: (line: string) => void): Promise<{ baseUrl: string; secret: string }> {
   if (running) return running
@@ -502,7 +593,8 @@ export function ensureCodexProxyRunning(log?: (line: string) => void): Promise<{
     getTokens: getValidCodexTokens,
     refreshTokens: refreshCodexTokensAfter,
     secret,
-    log
+    log,
+    onRateLimit: (limits) => rateLimitListener?.(limits)
   })
     .then((handle) => ({ baseUrl: `http://127.0.0.1:${handle.port}`, secret }))
     .catch((error) => {

@@ -523,3 +523,83 @@ describe('Codex proxy HTTP — ciclo real do servidor', () => {
     expect(calls[0].signal?.aborted).toBe(true)
   })
 })
+
+// Modo rápido do GPT. Vale medido em 2026-09-03 contra o backend real: só
+// `service_tier: 'priority'` é aceito (todo outro valor e todo parâmetro
+// desconhecido voltam HTTP 400), e a RESPOSTA ecoa "default" mesmo quando
+// priority foi aplicado — por isso o contrato que testamos é o que sai na
+// requisição, nunca o eco.
+describe('Codex proxy HTTP — modo rápido por conversa (service_tier)', () => {
+  const body = { model: MODEL, stream: true, messages: [{ role: 'user', content: 'oi' }] }
+
+  it('token com sufixo +fast: manda service_tier=priority', async () => {
+    const { fetchImpl, calls } = captureFetch(() => providerResponse([finalTextEvent('ok')]))
+    const { baseUrl } = await start(fetchImpl)
+    const res = await post(baseUrl, body, { secret: `${SECRET}+fast` })
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(calls[0].body.service_tier).toBe('priority')
+  })
+
+  it('token normal: NÃO manda service_tier (cai no padrão do backend)', async () => {
+    const { fetchImpl, calls } = captureFetch(() => providerResponse([finalTextEvent('ok')]))
+    const { baseUrl } = await start(fetchImpl)
+    const res = await post(baseUrl, body)
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(calls[0].body).not.toHaveProperty('service_tier')
+  })
+
+  // O sufixo é uma preferência, não uma credencial: sozinho não abre a porta.
+  it('segredo errado, mesmo com o sufixo: 401 e nenhuma chamada ao upstream', async () => {
+    const { fetchImpl, calls } = captureFetch(() => providerResponse([finalTextEvent('ok')]))
+    const { baseUrl } = await start(fetchImpl)
+    const res = await post(baseUrl, body, { secret: 'segredo-errado+fast' })
+    expect(res.status).toBe(401)
+    expect(calls).toHaveLength(0)
+  })
+})
+
+describe('parseCodexRateLimitHeaders — consumo do plano ChatGPT', () => {
+  it('lê primary/secondary com percentual, janela e reset (duas grafias do reset)', async () => {
+    const { parseCodexRateLimitHeaders } = await import('./codexProxy')
+    const headers = new Headers({
+      'x-codex-primary-used-percent': '42.5',
+      'x-codex-primary-window-minutes': '300',
+      'x-codex-primary-resets-in-seconds': '600',
+      'x-codex-secondary-used-percent': '90',
+      'x-codex-secondary-window-minutes': '10080',
+      'x-codex-secondary-reset-after-seconds': '3600'
+    })
+    const now = 1_000_000
+    const limits = parseCodexRateLimitHeaders(headers, now)
+    expect(limits).toEqual([
+      {
+        rateLimitType: 'gpt_primary',
+        status: 'allowed',
+        utilization: 0.425,
+        resetsAt: now + 600_000,
+        windowMinutes: 300,
+        updatedAt: now
+      },
+      {
+        rateLimitType: 'gpt_secondary',
+        status: 'allowed_warning',
+        utilization: 0.9,
+        resetsAt: now + 3_600_000,
+        windowMinutes: 10080,
+        updatedAt: now
+      }
+    ])
+  })
+
+  it('sem header de percentual não inventa janela; percentual inválido é ignorado', async () => {
+    const { parseCodexRateLimitHeaders } = await import('./codexProxy')
+    expect(parseCodexRateLimitHeaders(new Headers())).toEqual([])
+    const bad = new Headers({ 'x-codex-primary-used-percent': 'abc', 'x-codex-secondary-used-percent': '120' })
+    const limits = parseCodexRateLimitHeaders(bad, 5)
+    expect(limits).toHaveLength(1)
+    expect(limits[0]).toMatchObject({ rateLimitType: 'gpt_secondary', utilization: 1, status: 'rejected' })
+    expect(limits[0].resetsAt).toBeUndefined()
+  })
+})

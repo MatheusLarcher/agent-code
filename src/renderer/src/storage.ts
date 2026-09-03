@@ -25,6 +25,8 @@ export interface UiState {
   browserMinimized: boolean
   /** Width (CSS px) of the browser panel, set by dragging the splitter. */
   browserWidth: number
+  /** Which subscriptions the topbar usage badge shows in its compact form. */
+  usageProviders: { claude: boolean; gpt: boolean }
 }
 
 const DEFAULT_BROWSER_WIDTH = 720
@@ -325,11 +327,19 @@ export async function loadUi(): Promise<UiState> {
     collapsed: false,
     activeId: null,
     browserMinimized: false,
-    browserWidth: DEFAULT_BROWSER_WIDTH
+    browserWidth: DEFAULT_BROWSER_WIDTH,
+    usageProviders: { claude: true, gpt: true }
   }
   try {
     const raw = await readMigrating(UI_KEY)
-    if (raw) return { ...fallback, ...JSON.parse(raw) }
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<UiState>
+      return {
+        ...fallback,
+        ...parsed,
+        usageProviders: { ...fallback.usageProviders, ...(parsed.usageProviders ?? {}) }
+      }
+    }
   } catch {
     /* ignore */
   }

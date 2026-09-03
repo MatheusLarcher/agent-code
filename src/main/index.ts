@@ -30,6 +30,7 @@ import { stopLocalSpeech, transcribeLocal } from './speech'
 import { isAuthenticated, logoutClaude } from './auth'
 import { runClaudeLogin } from './login'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin } from './codexAuth'
+import { onCodexRateLimit } from './codexProxy'
 import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir } from './store'
 import { storageLifecycle } from './persistence/lifecycle'
@@ -1276,6 +1277,14 @@ app.whenReady().then(async () => {
   authLog('=== main started (new build) ===')
   registerIpc()
   createWindow()
+  // ChatGPT plan usage read off the Codex proxy responses. Account-level, so it
+  // is not tied to any conversation: the renderer routes `rate-limit` events
+  // straight into its global usage state without looking at `convId`.
+  onCodexRateLimit((limits) => {
+    for (const status of limits) {
+      send(Channels.agentEvent, { convId: 'codex', event: { kind: 'rate-limit', limits: status } })
+    }
+  })
   storageLifecycle.subscribe((status) => {
     send(Channels.storageStatusChanged, status)
     if (status.state === 'postgres-offline') {

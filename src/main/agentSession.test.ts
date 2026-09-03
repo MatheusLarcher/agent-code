@@ -25,7 +25,12 @@ vi.mock('./config', () => ({
   })
 }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => codexState.connected }))
-vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: ensureCodexProxyMock }))
+vi.mock('./codexProxy', () => ({
+  ensureCodexProxyRunning: ensureCodexProxyMock,
+  // Keep in sync with the real constant — agentSession appends it to the proxy
+  // auth token to request fast mode for this conversation.
+  FAST_MODE_TOKEN_SUFFIX: '+fast'
+}))
 vi.mock('./store', () => ({
   getCacheInfo: () => ({ ...cacheState })
 }))
@@ -761,6 +766,25 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
     const { s } = makeSession({ model: 'claude-sonnet-5', fastMode: true })
     await s.start()
     expect(optionsOfLastQuery().settings).toBeUndefined()
+  })
+
+  // GPT tem modo rápido, mas por outro canal: `service_tier` no corpo do Codex.
+  // Mandar `settings.fastMode` para lá seria um campo Anthropic num backend que
+  // rejeita parâmetro desconhecido com HTTP 400.
+  it('GPT + flag ligada: NÃO manda settings, e pede fast mode pelo token do proxy', async () => {
+    const { s } = makeSession({ model: 'gpt-5.6-sol', fastMode: true })
+    await s.start()
+    const options = optionsOfLastQuery()
+    expect(options.settings).toBeUndefined()
+    expect((options.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toMatch(/\+fast$/)
+  })
+
+  it('GPT + flag desligada: token do proxy sai sem o sufixo', async () => {
+    const { s } = makeSession({ model: 'gpt-5.6-sol', fastMode: false })
+    await s.start()
+    const options = optionsOfLastQuery()
+    expect(options.settings).toBeUndefined()
+    expect((options.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).not.toMatch(/\+fast$/)
   })
 })
 

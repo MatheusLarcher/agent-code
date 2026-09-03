@@ -94,6 +94,11 @@ export interface RateLimitStatus {
     | 'seven_day_sonnet'
     | 'seven_day_overage_included'
     | 'overage'
+    /** ChatGPT subscription windows (Codex backend `x-codex-*` headers): the
+     *  short "primary" window and the long "secondary" one. Their length is
+     *  not fixed by name — `windowMinutes` says how long each really is. */
+    | 'gpt_primary'
+    | 'gpt_secondary'
   status: 'allowed' | 'allowed_warning' | 'rejected'
   /** Fraction of the window used, 0..1, when known. */
   utilization?: number
@@ -101,6 +106,15 @@ export interface RateLimitStatus {
   resetsAt?: number
   /** Epoch ms when this snapshot was produced locally (for stale-checking + persistence). */
   updatedAt?: number
+  /** Window length in minutes, when the provider reports it (GPT windows). */
+  windowMinutes?: number
+}
+
+/** Which subscription a rate-limit window belongs to. Claude windows come from
+ *  the Anthropic SDK; GPT windows from the Codex proxy. */
+export type UsageProvider = 'claude' | 'gpt'
+export function usageProviderOf(type: RateLimitStatus['rateLimitType']): UsageProvider {
+  return type.startsWith('gpt_') ? 'gpt' : 'claude'
 }
 
 /** An image attached to a user message, sent to the agent as a base64 block. */
@@ -536,10 +550,29 @@ export const DEFAULT_EFFORT: EffortLevel = 'high'
  *  doesn't support it produces a rejected request, not a silent fallback. */
 const FAST_MODE_MODELS = new Set(['claude-opus-5', 'claude-opus-4-8'])
 
+/** How a model's fast mode is actually requested. The toggle in the UI is one
+ *  control, but the two providers expose the capability through completely
+ *  different channels, and sending the wrong one is a hard error, not a silent
+ *  no-op:
+ *  - `anthropic-setting` — `settings.fastMode` on the Agent SDK options.
+ *  - `codex-priority` — `service_tier: 'priority'` in the Codex Responses body
+ *    (see codexProxy.ts). The ChatGPT backend validates this field strictly and
+ *    rejects any unknown parameter, so it must never be sent to Anthropic and
+ *    `settings.fastMode` must never be sent to Codex. */
+export type FastModeTransport = 'anthropic-setting' | 'codex-priority'
+
+/** Which channel carries fast mode for `model`, or null when it has none.
+ *  Single source of truth for both the UI gate and the two request builders. */
+export function fastModeTransport(model: string | undefined): FastModeTransport | null {
+  if (!model) return null
+  if (FAST_MODE_MODELS.has(model)) return 'anthropic-setting'
+  if (isOpenAIModel(model)) return 'codex-priority'
+  return null
+}
+
 /** Whether `model` can run in fast mode (gates the toggle in the UI). */
 export function modelSupportsFastMode(model: string | undefined): boolean {
-  if (!model) return false
-  return FAST_MODE_MODELS.has(model)
+  return fastModeTransport(model) !== null
 }
 
 // ---- App configuration (persisted in the main process) ------------------

@@ -230,6 +230,67 @@ export const IconSparkStar = (p: IconProps): JSX.Element => (
   </Svg>
 )
 
+/** Settings: general (sliders). */
+export const IconSliders = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h8M16 17h4" />
+    <circle cx="16" cy="7" r="2" />
+    <circle cx="8" cy="12" r="2" />
+    <circle cx="14" cy="17" r="2" />
+  </Svg>
+)
+
+/** Settings: models & accounts (a key). */
+export const IconKey = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="8" cy="15" r="4" />
+    <path d="M10.8 12.2 20 3M15 8l3 3M18 5l2 2" />
+  </Svg>
+)
+
+/** Settings: storage (database cylinder). */
+export const IconDatabase = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <ellipse cx="12" cy="5.5" rx="8" ry="3" />
+    <path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13" />
+    <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+  </Svg>
+)
+
+/** Settings: Windows control (monitor). */
+export const IconMonitor = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="12" rx="2" />
+    <path d="M8 20h8M12 16v4" />
+  </Svg>
+)
+
+/** Unlocked padlock — "allow everything". */
+export const IconUnlock = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <rect x="4" y="11" width="16" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 0 1 7.5-1.9" />
+  </Svg>
+)
+
+/** Show a secret. */
+export const IconEye = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z" />
+    <circle cx="12" cy="12" r="3" />
+  </Svg>
+)
+
+/** Hide a secret. */
+export const IconEyeOff = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M3 3l18 18" />
+    <path d="M10.6 5.2A11 11 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3 3.9" />
+    <path d="M6.2 6.2A16.3 16.3 0 0 0 2 12s3.6 7 10 7c1.6 0 3-.4 4.3-1" />
+    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+  </Svg>
+)
+
 /** Windows-style spinning ring (apply the `.spinner` CSS class for the animation). */
 export const IconSpinner = ({ size = 14, ...rest }: IconProps): JSX.Element => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...rest}>

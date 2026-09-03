@@ -25,8 +25,9 @@ interface Props {
   state: BrowserState
   minimized: boolean
   onToggleMinimize: () => void
-  /** Panel width in CSS px (ignored when minimized). */
-  width: number
+  /** Panel width in CSS px (ignored when minimized). Omit when a parent
+   *  (`.right-pane`) already sizes the panel. */
+  width?: number
   /** Open the "new tab" modal. */
   onRequestNewTab: () => void
   /** Open the project file picker for an empty file tab (passes its tab id so it
@@ -239,7 +240,7 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
   }
 
   return (
-    <section className="browser-panel" style={{ flex: `0 0 ${width}px` }}>
+    <section className="browser-panel" style={width !== undefined ? { flex: `0 0 ${width}px` } : undefined}>
       <BrowserTabs tabs={state.tabs} onRequestNewTab={onRequestNewTab} />
       <div className="browser-toolbar">
         <button className="nav-btn" onClick={onToggleMinimize} title="Minimizar navegador">

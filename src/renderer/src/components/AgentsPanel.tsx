@@ -48,7 +48,9 @@ interface Props {
   turns: Turn[]
   /** Project folder name — the root node of the map. */
   projectName: string
-  width: number
+  /** Fixed width when the panel sits directly in the workspace row. Omit when a
+   *  parent (`.right-pane`) already sizes it. */
+  width?: number
 }
 
 function fmtElapsed(ms: number): string {
@@ -188,7 +190,7 @@ export function AgentsPanel({
   const now = useNow(busy || running.length > 0)
 
   return (
-    <section className="agents-panel" style={{ flex: `0 0 ${width}px` }}>
+    <section className="agents-panel" style={width !== undefined ? { flex: `0 0 ${width}px` } : undefined}>
       <header className="agents-head">
         <span className="agents-title">
           <IconUsers size={15} />
