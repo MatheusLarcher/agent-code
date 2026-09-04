@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, act, configure } from '@testing-library/react'
 import { UiProvider } from './ui/UiProvider'
-import { App } from './App'
+import { App, expireResetUsage } from './App'
 import type { AgentEventMsg, ChatEvent } from '@shared/ipc'
 import type { TodoItem } from './types'
 
@@ -895,7 +895,7 @@ describe('App — uso da conta (5h/semana) na topbar, global (não é por conver
     expect(screen.queryByText('0%')).toBeNull()
   })
 
-  it('aceita o 0% quando o horário de reset já passou (reset de verdade)', async () => {
+  it('zera sozinho quando o horário de reset já passou (sem esperar novo turno)', async () => {
     render(
       <UiProvider>
         <App />
@@ -910,12 +910,8 @@ describe('App — uso da conta (5h/semana) na topbar, global (não é por conver
         resetsAt: Date.now() - 1000 // reset já aconteceu
       }
     })
-    await waitFor(() => expect(screen.getByText('62%')).toBeTruthy())
-    await emit({
-      kind: 'rate-limit',
-      limits: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0 }
-    })
     await waitFor(() => expect(screen.getByText('0%')).toBeTruthy())
+    expect(screen.queryByText('62%')).toBeNull()
   })
 
   it('carrega o último snapshot salvo ao abrir o app', async () => {
@@ -947,6 +943,31 @@ function savedConv(): {
   const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
   return list.find((c: { id: string }) => c.id === 'c1')
 }
+
+describe('expireResetUsage — janela que já resetou vai a 0 sem esperar o LLM', () => {
+  const now = 1_700_000_000_000
+
+  it('zera Claude e GPT quando o resetsAt já passou', () => {
+    const out = expireResetUsage(
+      {
+        five_hour: { rateLimitType: 'five_hour', status: 'rejected', utilization: 1, resetsAt: now - 1 },
+        gpt_primary: { rateLimitType: 'gpt_primary', status: 'allowed_warning', utilization: 0.9, resetsAt: now - 5_000 }
+      },
+      now
+    )
+    expect(out.five_hour).toMatchObject({ utilization: 0, status: 'allowed', updatedAt: now })
+    expect(out.five_hour.resetsAt).toBeUndefined()
+    expect(out.gpt_primary).toMatchObject({ utilization: 0, status: 'allowed' })
+  })
+
+  it('não mexe em janela futura nem em janela sem resetsAt, e mantém a identidade', () => {
+    const limits = {
+      five_hour: { rateLimitType: 'five_hour' as const, status: 'allowed' as const, utilization: 0.4, resetsAt: now + 60_000 },
+      seven_day: { rateLimitType: 'seven_day' as const, status: 'allowed' as const, utilization: 0.2 }
+    }
+    expect(expireResetUsage(limits, now)).toBe(limits)
+  })
+})
 
 describe('App — Loop e Econômico por conversa', () => {
   it('persiste o toggle Loop e Econômico o desativa', async () => {

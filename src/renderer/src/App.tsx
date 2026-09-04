@@ -128,6 +128,37 @@ export function isSpuriousUsageZero(prev: RateLimitStatus | undefined, next: Rat
   return typeof prev.resetsAt === 'number' && prev.resetsAt > Date.now()
 }
 
+/** Zero out every usage window whose reset time has already passed, without
+ *  waiting for a new model call to report it. Returns the SAME object when
+ *  nothing changed, so callers can skip a re-render. A window with no known
+ *  `resetsAt` is left untouched (we can't tell when it flips). */
+export function expireResetUsage(
+  limits: Record<string, RateLimitStatus>,
+  now: number
+): Record<string, RateLimitStatus> {
+  let changed = false
+  const next: Record<string, RateLimitStatus> = {}
+  for (const [type, limit] of Object.entries(limits)) {
+    const expired =
+      typeof limit.resetsAt === 'number' &&
+      limit.resetsAt <= now &&
+      ((limit.utilization ?? 0) > 0 || limit.status !== 'allowed')
+    if (!expired) {
+      next[type] = limit
+      continue
+    }
+    changed = true
+    next[type] = {
+      ...limit,
+      utilization: 0,
+      status: 'allowed',
+      resetsAt: undefined,
+      updatedAt: now
+    }
+  }
+  return changed ? next : limits
+}
+
 /** A message waiting in the per-conversation outbox while the agent is busy. */
 interface QueuedMessage {
   id: string
@@ -904,7 +935,8 @@ export function App(): JSX.Element {
         for (const [type, stored] of Object.entries(limits)) {
           if (prev[type] && isSpuriousUsageZero(stored, prev[type])) merged[type] = stored
         }
-        return merged
+        // A stored window may have reset while the app was closed.
+        return expireResetUsage(merged, Date.now())
       })
       setHydrated(true)
       } catch (error) {
@@ -989,16 +1021,27 @@ export function App(): JSX.Element {
     if (hydrated) void window.api.setActiveBrowser(activeId)
   }, [activeId, hydrated])
 
-  // Poll the latest account-wide usage every 5 minutes on any connected
-  // session, so the badge reflects reality even when the agent isn't answering.
+  // Poll the latest account-wide usage every minute on any connected session,
+  // so the badge reflects reality even when the agent isn't answering.
   useEffect(() => {
     const id = setInterval(() => {
       const target =
         activeId && connectedIds.has(activeId) ? activeId : Array.from(connectedIds)[0]
       if (target) void window.api.refreshUsage(target)
-    }, 5 * 60 * 1000)
+    }, 60 * 1000)
     return () => clearInterval(id)
   }, [activeId, connectedIds])
+
+  // Zero out any window (Claude or GPT) whose reset time has passed, without
+  // waiting for a new model call: the badge must not keep showing stale usage
+  // for a window that already rolled over.
+  useEffect(() => {
+    const tick = (): void =>
+      setUsageLimits((prev) => expireResetUsage(prev, Date.now()))
+    tick()
+    const id = setInterval(tick, 60 * 1000)
+    return () => clearInterval(id)
+  }, [])
 
   // Verify the active conversation's project folder still exists, so the composer
   // can block typing when it's gone (instead of only failing at send time). Re-check
