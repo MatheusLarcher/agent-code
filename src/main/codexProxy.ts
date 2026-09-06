@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isUsageExhausted } from './providerQuota'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { RateLimitStatus } from '../shared/ipc'
 import { getValidCodexTokens, refreshCodexTokensAfter, type CodexTokens } from './codexAuth'
@@ -51,9 +52,9 @@ export type {
 export const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses'
 const CODEX_ORIGINATOR = 'codex_cli_rs'
 // The ChatGPT Codex router uses this protocol version together with the
-// originator when resolving newer model aliases (including GPT-5.6 Luna).
+// originator when resolving newer model aliases (including GPT-6 Astra).
 // Keep it aligned with a released Codex client that supports those models.
-const CODEX_CLIENT_VERSION = '0.146.0'
+const CODEX_CLIENT_VERSION = '0.153.4'
 const CODEX_USER_AGENT = `${CODEX_ORIGINATOR}/${CODEX_CLIENT_VERSION}`
 /** Suffix `agentSession` appends to the loopback auth token to ask for fast
  *  mode on that one conversation. The proxy is process-wide and shared by every
@@ -126,7 +127,7 @@ async function openCodexResponsesStream(
   fetchImpl: FetchLike,
   signal?: AbortSignal
 ): Promise<Response> {
-  const responsesLite = body.model.startsWith('gpt-5.6-')
+  const responsesLite = body.model.startsWith('gpt-5.6-') || body.model === 'gpt-6-astra'
   const wireBody = toCodexWireRequest(body, sessionId)
   const response = await fetchImpl(CODEX_RESPONSES_URL, {
     method: 'POST',
@@ -473,6 +474,12 @@ async function handleMessages(
   } catch (error) {
     if (controller.signal.aborted || response.destroyed) return
     const status = error instanceof CodexHttpError ? error.status : 502
+    // An exhausted subscription cannot recover via the SDK's exponential 429
+    // retry loop. End this turn promptly so the session owner can hand it off.
+    if (status === 429 && error instanceof CodexHttpError && isUsageExhausted(error.responseDetail)) {
+      sendAnthropicError(response, 400, 'invalid_request_error', friendlyCodexError(error))
+      return
+    }
     const type = status === 401 ? 'authentication_error' : status === 429 ? 'rate_limit_error' : 'api_error'
     sendAnthropicError(response, status, type, friendlyCodexError(error))
     return
@@ -507,7 +514,10 @@ export function friendlyCodexError(error: unknown): string {
   const status = error instanceof CodexHttpError ? error.status : (error as { status?: number } | undefined)?.status
   if (status === 401) return 'Sua sessão do ChatGPT expirou. Reconecte em Configurações → OpenAI.'
   if (status === 403) return 'A OpenAI recusou esta chamada do Codex. Reconecte a conta ou tente novamente.'
-  if (status === 429) return 'O limite de uso do seu plano ChatGPT foi atingido. Aguarde o reset ou troque de modelo.'
+  if (error instanceof CodexHttpError && isUsageExhausted(error.responseDetail)) {
+    return 'O limite de uso do seu plano ChatGPT foi atingido. Aguarde o reset ou troque de modelo.'
+  }
+  if (status === 429) return 'O ChatGPT limitou temporariamente a frequência das chamadas. Tente novamente em instantes.'
   if (typeof status === 'number' && status >= 500) return 'O backend do Codex está instável. Tente novamente em instantes.'
   if (status === 400) {
     const detail = error instanceof CodexHttpError ? friendlyProviderDetail(error.responseDetail) : undefined
@@ -525,7 +535,7 @@ function friendlyProviderDetail(raw: string | undefined): string | undefined {
     const parsed: unknown = JSON.parse(raw)
     if (isRecord(parsed)) {
       const error = parsed.error
-      const message = isRecord(error) ? error.message : parsed.message
+      const message = (isRecord(error) ? error.message : undefined) ?? parsed.message ?? parsed.detail
       if (typeof message === 'string') return cleanProviderMessage(message)
     }
   } catch {

@@ -443,7 +443,7 @@ export function toCodexRequest(
  * transport used by GPT-5.6. Lite carries tools and instructions inside the
  * input prefix instead of their regular top-level fields. */
 export function toCodexWireRequest(req: CodexResponsesRequest, sessionId: string): CodexResponsesRequest {
-  if (!req.model.startsWith('gpt-5.6-')) return { ...req, stream: true }
+  if (!req.model.startsWith('gpt-5.6-') && req.model !== 'gpt-6-astra') return { ...req, stream: true }
 
   const prefix: CodexInputItem[] = []
   if (req.tools?.length) prefix.push({ type: 'additional_tools', role: 'developer', tools: req.tools })

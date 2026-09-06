@@ -599,6 +599,8 @@ export function App(): JSX.Element {
               ? c.messages
               : [...c.messages, e as UIMessage]
           }
+        } else if (e.kind === 'provider-switch') {
+          next = { ...c, model: e.model, effort: e.effort, fastMode: e.fastMode, messages: reduceMessages(c.messages, e), updatedAt: Date.now() }
         } else {
           next = { ...c, messages: reduceMessages(c.messages, e), updatedAt: Date.now() }
         }
@@ -706,7 +708,7 @@ export function App(): JSX.Element {
         // terminal frame as an error. The user already received an answer, so
         // that is a completed turn — never resurrect the retry card afterward.
         const receivedResponse = inflightRef.current[cid]?.responseReceived === true
-        const failed = !receivedResponse && shouldRecoverTerminal(e.kind, e.kind === 'result' && e.isError, wasInterrupted)
+        const failed = (!receivedResponse || (e.kind === 'error' && e.retryable === false)) && shouldRecoverTerminal(e.kind, e.kind === 'result' && e.isError, wasInterrupted)
 
         if (e.kind === 'result' && !e.isError) setLastDuration((m) => ({ ...m, [cid]: e.durationMs }))
 
@@ -737,7 +739,7 @@ export function App(): JSX.Element {
           const schedule = scheduleFailure(e.text || 'Erro transitório', relevantLimits)
           const previousRecovery = convsRef.current.find((c) => c.id === cid)?.recovery
           const attempt = schedule.reason === 'transient' ? (previousRecovery?.attempt ?? 0) + 1 : 0
-          const exhausted = schedule.reason === 'transient' && attempt >= MAX_GENERIC_RETRIES
+          const exhausted = (e.kind === 'error' && e.retryable === false) || (schedule.reason === 'transient' && attempt >= MAX_GENERIC_RETRIES)
           patchConv(cid, (c) => {
             return {
               ...c,

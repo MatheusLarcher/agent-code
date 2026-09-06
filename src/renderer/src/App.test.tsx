@@ -769,7 +769,39 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
 })
 
 describe('App — modelo GPT conectado por OAuth', () => {
-  it('mostra o GPT, preserva esforço e inicia sem consultar o login Anthropic', async () => {
+  it('avisa a troca, atualiza o modelo e mantém a fila até o resultado do novo provedor', async () => {
+    api.codexStatus.mockResolvedValue({ connected: true })
+    const view = render(<UiProvider><App /></UiProvider>)
+    await send('tarefa em andamento')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(partial)
+    await send('próxima tarefa')
+    await emit({ kind: 'provider-switch', id: 'switch-1', fromModel: 'claude-opus-5', model: 'gpt-6-astra', effort: 'high', fastMode: false, text: 'Troquei automaticamente para GPT-6 Astra.' })
+    expect(screen.getByText('Troquei automaticamente para GPT-6 Astra.').getAttribute('role')).toBe('status')
+    expect((view.container.querySelector('select.model-select') as HTMLSelectElement).value).toBe('gpt-6-astra')
+    expect(screen.getByTitle('Parar tarefa atual')).toBeTruthy()
+    expect(api.sendMessage).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(/Tentar novamente em/)).toBeNull()
+    await emit({ ...result, id: 'replacement-result' })
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+  })
+
+  it('suspende a fila sem repetição automática quando ambos os provedores esgotam após texto parcial', async () => {
+    render(<UiProvider><App /></UiProvider>)
+    await send('tarefa')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(partial)
+    await send('fila')
+    await emit({ kind: 'error', id: 'both-limited', retryable: false, text: 'Claude e GPT atingiram o limite de uso.' })
+    expect(api.sendMessage).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTitle('Parar tarefa atual')).toBeNull()
+    expect(screen.getAllByText(/Claude e GPT atingiram/).length).toBeGreaterThan(0)
+  })
+  it.each(['gpt-5.6-sol', 'gpt-6-astra'])('mostra %s, preserva esforço e inicia sem consultar o login Anthropic', async (model) => {
     api.codexStatus.mockResolvedValue({ connected: true })
     const { container } = render(
       <UiProvider>
@@ -779,15 +811,15 @@ describe('App — modelo GPT conectado por OAuth', () => {
     const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
 
     await waitFor(() => {
-      expect(Array.from(select().options).some((option) => option.value === 'gpt-5.6-sol')).toBe(true)
+      expect(Array.from(select().options).some((option) => option.value === model)).toBe(true)
     })
-    fireEvent.change(select(), { target: { value: 'gpt-5.6-sol' } })
+    fireEvent.change(select(), { target: { value: model } })
     await waitFor(() => expect(container.querySelector('.effort-trigger')?.textContent).toContain('Alto'))
 
     await send('use uma ferramenta')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     expect(api.startAgent.mock.calls[0][0]).toMatchObject({
-      model: 'gpt-5.6-sol',
+      model,
       effort: 'high'
     })
     expect(api.authStatus).not.toHaveBeenCalled()

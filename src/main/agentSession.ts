@@ -1,5 +1,7 @@
 import { query, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
 import { AsyncQueue } from './asyncQueue'
+import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
+import { composeUserPrompt } from './promptEnvelope'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
 import { createAndroidMcpServer } from './android/androidTools'
@@ -344,6 +346,14 @@ export interface SkillRuntimePaths {
   userHome?: string
 }
 
+export interface AgentContinuationState {
+  approvedTools: string[]
+  loopActive: boolean
+  loopCycles: number
+  loopLimit: number
+  loopScheduledThisIteration: boolean
+}
+
 export class AgentSession {
   private input = new AsyncQueue<SDKUserMessage>()
   private q: ReturnType<typeof query> | null = null
@@ -413,6 +423,8 @@ export class AgentSession {
   private turnActive = false
   private idleWaiters = new Set<() => void>()
   private mirrorFailed = false
+  private quotaRejected = false
+  private providerContinuation = false
   private handoffReady: Promise<void> = Promise.resolve()
 
   constructor(
@@ -548,7 +560,12 @@ export class AgentSession {
           ...process.env,
           ANTHROPIC_BASE_URL: OLLAMA_BASE_URL,
           ANTHROPIC_AUTH_TOKEN: ollamaKey,
-          ANTHROPIC_API_KEY: ''
+          ANTHROPIC_API_KEY: '',
+          ANTHROPIC_DEFAULT_SONNET_MODEL: this.opts.model,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: this.opts.model,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: this.opts.model,
+          ANTHROPIC_DEFAULT_FABLE_MODEL: this.opts.model,
+          CLAUDE_CODE_SUBAGENT_MODEL: this.opts.model
         }
       : openaiEnv
 
@@ -615,7 +632,7 @@ export class AgentSession {
         if (!this.disposed) this.handleMessage(message)
       }
     } catch (err) {
-      if (!this.disposed) this.emit({ kind: 'error', id: nextId(), text: `Agent stopped: ${String(err)}` })
+      if (!this.disposed) this.emit({ kind: 'error', id: nextId(), text: `Agent stopped: ${String(err)}`, usageExhausted: isUsageExhausted(err) || this.quotaRejected })
     } finally {
       this.markTurnIdle()
       if (this.q === q) this.q = null
@@ -630,6 +647,7 @@ export class AgentSession {
     messageKind: AgentMessageKind = 'normal'
   ): Promise<void> {
     await this.handoffReady
+    this.quotaRejected = false
     if (this.mirrorFailed) {
       this.emit({
         kind: 'error',
@@ -652,10 +670,13 @@ export class AgentSession {
       this.opts.economyMode !== true &&
       !startsWithSlashCommand
     const explicitLoop = /^\/loop(?:\s|$)/iu.test(trimmed)
-    this.loopActive = this.opts.loopEnabled === true && this.opts.economyMode !== true && (shouldAutoLoop || explicitLoop)
-    this.loopCycles = 0
-    this.loopLimit = loopLimitFromPrompt(text)
-    this.loopScheduledThisIteration = false
+    if (!this.providerContinuation) {
+      this.loopActive = this.opts.loopEnabled === true && this.opts.economyMode !== true && (shouldAutoLoop || explicitLoop)
+      this.loopCycles = 0
+      this.loopLimit = loopLimitFromPrompt(text)
+      this.loopScheduledThisIteration = false
+    }
+    this.providerContinuation = false
     const uuid = messageUuid || randomUUID()
     const receiptText = text.length > 500 ? `${text.slice(0, 500)}…` : text
     this.submittedMessages.set(uuid, receiptText)
@@ -703,17 +724,9 @@ export class AgentSession {
     // (measured with Haiku: skills never loaded, Bash never prefixed). Placed
     // LAST in the context block, right next to the user's own text.
     const economyReminder = this.opts.economyMode ? ECONOMY_TURN_REMINDER : ''
-    const stamped = (body: string): string => {
-      const context = [stamp, docsOutline, memoryCatalogUpdate, skillCatalogUpdate, economyReminder]
-        .filter(Boolean)
-        .join('\n\n')
-      const loopMatch = body.match(/^\s*\/loop(?:\s+|$)/iu)
-      if (loopMatch) {
-        const task = body.slice(loopMatch[0].length)
-        return task ? `/loop ${context}\n\n${task}` : `/loop ${context}`
-      }
-      return body ? `${context}\n\n${body}` : context
-    }
+    const stamped = (body: string): string => composeUserPrompt(body, {
+      stamp, docs: docsOutline, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, reminder: economyReminder
+    })
 
     // vision_fallback_router — the picked model can't see images (most Ollama
     // Cloud models are text-only): intercept BEFORE it ever reaches the SDK.
@@ -769,6 +782,30 @@ export class AgentSession {
   async waitForIdle(): Promise<void> {
     if (this.turnActive) await new Promise<void>((resolve) => this.idleWaiters.add(resolve))
     await this.handoffReady
+  }
+
+  async resumeAfterQuota(): Promise<string> {
+    await this.waitForIdle()
+    if (this.mirrorFailed || !this.watchedSessionId) {
+      throw new Error('Não foi possível verificar o histórico para trocar de provedor com segurança. A tarefa foi preservada.')
+    }
+    // Also verify abnormal iterator termination, which may have no SDK result.
+    await this.onTurnDurable?.(this.watchedSessionId, this.mirrorFailed)
+    return this.watchedSessionId
+  }
+
+  continuationState(): AgentContinuationState {
+    return { approvedTools: [...this.approvedTools], loopActive: this.loopActive, loopCycles: this.loopCycles,
+      loopLimit: this.loopLimit, loopScheduledThisIteration: this.loopScheduledThisIteration }
+  }
+
+  restoreContinuation(state: AgentContinuationState): void {
+    this.approvedTools = new Set(state.approvedTools)
+    this.loopActive = state.loopActive
+    this.loopCycles = state.loopCycles
+    this.loopLimit = state.loopLimit
+    this.loopScheduledThisIteration = state.loopScheduledThisIteration
+    this.providerContinuation = true
   }
 
   async interrupt(): Promise<AgentInterruptResult> {
@@ -1264,6 +1301,10 @@ export class AgentSession {
         break
 
       case 'assistant': {
+        if (!(message as { parent_tool_use_id?: string | null }).parent_tool_use_id && sdkUsageExhausted(message)) {
+          this.quotaRejected = true
+          break
+        }
         // Each assistant message carries the usage of THAT model request. Its
         // input (fresh + cache read + cache write) is the real context-window
         // occupancy at this point — unlike result.usage, which sums the turn.
@@ -1314,6 +1355,7 @@ export class AgentSession {
         // Mirrors the parent_tool_use_id filter already used for the
         // `assistant` case below (context-token tracking).
         if (r.origin?.kind === 'peer') break
+        const usageExhausted = this.quotaRejected || sdkUsageExhausted(message)
         if (this.watchedSessionId && this.onTurnDurable) {
           const sessionId = this.watchedSessionId
           this.handoffReady = this.onTurnDurable(sessionId, this.mirrorFailed).catch((error) => {
@@ -1329,7 +1371,7 @@ export class AgentSession {
         // If an active loop iteration reaches a successful terminal result
         // without requesting another wakeup, its condition is complete. The CLI
         // has nothing pending and the local guard must not authorize a stale call.
-        if (this.loopActive && !r.is_error && !this.loopScheduledThisIteration) {
+        if (this.loopActive && !r.is_error && !usageExhausted && !this.loopScheduledThisIteration) {
           this.loopActive = false
           console.log(`[loop] conversation=${this.opts.convId} completed after ${this.loopCycles} cycle(s)`)
         }
@@ -1344,7 +1386,8 @@ export class AgentSession {
         this.emit({
           kind: 'result',
           id: nextId(),
-          isError: r.is_error,
+          isError: r.is_error || usageExhausted,
+          usageExhausted,
           text: r.result ?? (r.subtype === 'success' ? 'Done.' : r.subtype),
           durationMs: r.duration_ms,
           costUsd: r.total_cost_usd,

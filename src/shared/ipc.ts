@@ -6,6 +6,7 @@ export type ChatEvent =
   | { kind: 'system'; sessionId: string; model: string; cwd: string; tools: string[] }
   | { kind: 'assistant-text'; id: string; text: string; final: boolean; aborted?: true }
   | { kind: 'thinking'; id: string; text: string }
+  | { kind: 'provider-switch'; id: string; fromModel: string; model: string; effort?: string; fastMode: boolean; text: string }
   /** `parentToolUseId` identifies the TRACK this call belongs to: `null` is the
    *  main agent, anything else is the `Task` tool-use that spawned the subagent
    *  running it. The chat feed only renders the main track; the rest feeds the
@@ -37,13 +38,14 @@ export type ChatEvent =
       isError: boolean
       text: string
       durationMs: number
+      usageExhausted?: boolean
       costUsd?: number
       /** Real context-window size after this turn (last model request input). */
       contextTokens?: number
       usage?: TokenUsage
     }
   | { kind: 'status'; id: string; text: string }
-  | { kind: 'error'; id: string; text: string }
+  | { kind: 'error'; id: string; text: string; usageExhausted?: boolean; retryable?: boolean }
   /** Anthropic ACCOUNT rate-limit status (5h session / weekly / etc.) — not
    *  tied to this conversation. The renderer routes this straight into a
    *  global (not per-conversation) state; it never becomes a chat bubble. */
@@ -535,7 +537,8 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-5.6-terra': ['low', 'medium', 'high', 'xhigh', 'max'],
-  'gpt-5.6-sol': ['low', 'medium', 'high', 'xhigh', 'max']
+  'gpt-5.6-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max']
 }
 
 /** Default effort when none is selected — "high" is the Anthropic default. */
@@ -663,12 +666,12 @@ export function modelSupportsVision(model: string | undefined): boolean {
 // to agentSession.ts just like the Ollama Cloud branch (env-var redirect).
 //
 // Model ids aren't discoverable from a public catalog (undocumented backend).
-// Restricted to the GPT-5.6 family the user's ChatGPT plan actually offers —
-// Luna, Terra and Sol — instead of a guessed generic id.
+// Model ids verified against the local Codex model catalog.
 export const OPENAI_MODELS = [
   { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (ChatGPT)' },
   { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (ChatGPT)' },
-  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (ChatGPT)' }
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (ChatGPT)' },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra (ChatGPT)' }
 ] as const
 
 /** True when `model` is a GPT model routed through the Codex OAuth proxy. */
@@ -702,6 +705,8 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'gpt-5.6-luna': 1_050_000,
   'gpt-5.6-terra': 1_050_000,
   'gpt-5.6-sol': 1_050_000,
+  // Default window from the local Codex catalog; extended context is opt-in.
+  'gpt-6-astra': 272_000,
   // Ollama Cloud — native context windows (verified against each model's own
   // published specs, not a guess): gpt-oss keeps its documented 128K;
   // DeepSeek V4 Pro and the GLM-5.3 family are 1M native (GLM was previously

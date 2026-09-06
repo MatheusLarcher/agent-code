@@ -287,14 +287,14 @@ describe('Codex proxy HTTP — ciclo real do servidor', () => {
     expect(calls).toHaveLength(2)
     expect(calls.map((call) => call.headers.get('session_id'))).toEqual([SESSION_ID, SESSION_ID])
     expect(calls.map((call) => call.headers.get('originator'))).toEqual(['codex_cli_rs', 'codex_cli_rs'])
-    expect(calls.map((call) => call.headers.get('version'))).toEqual(['0.146.0', '0.146.0'])
+    expect(calls.map((call) => call.headers.get('version'))).toEqual(['0.153.4', '0.153.4'])
     expect(calls.map((call) => call.headers.get('x-openai-internal-codex-responses-lite'))).toEqual([
       'true',
       'true'
     ])
     expect(calls.map((call) => call.headers.get('user-agent'))).toEqual([
-      'codex_cli_rs/0.146.0',
-      'codex_cli_rs/0.146.0'
+      'codex_cli_rs/0.153.4',
+      'codex_cli_rs/0.153.4'
     ])
     expect(calls.map((call) => call.headers.get('authorization'))).toEqual([
       'Bearer access-old',
@@ -355,9 +355,18 @@ describe('Codex proxy HTTP — ciclo real do servidor', () => {
     expect(calls).toHaveLength(1)
   })
 
+  it('ends an exhausted subscription without the SDK retrying its 429 backoff', async () => {
+    const { fetchImpl, calls } = captureFetch(() => new Response(JSON.stringify({ error: { code: 'usage_limit_reached', message: 'Limit reached' } }), { status: 429 }))
+    const { baseUrl } = await start(fetchImpl)
+    const response = await post(baseUrl, { model: MODEL, messages: [{ role: 'user', content: 'hello' }] })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ error: { type: 'invalid_request_error', message: expect.stringMatching(/limite de uso/i) } })
+    expect(calls).toHaveLength(1)
+  })
+
   it.each([
     [403, 'api_error', /recusou/i],
-    [429, 'rate_limit_error', /limite de uso/i]
+    [429, 'rate_limit_error', /frequência/i]
   ])('preserva o HTTP %i do upstream sem tentar refresh', async (status, type, message) => {
     const { fetchImpl, calls } = captureFetch(() => new Response('provider error', { status }))
     const { baseUrl, refreshTokens } = await start(fetchImpl)

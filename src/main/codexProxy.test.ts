@@ -38,8 +38,8 @@ describe('Codex proxy headers and session correlation', () => {
       Authorization: 'Bearer at_test',
       'chatgpt-account-id': 'account_test',
       originator: 'codex_cli_rs',
-      'User-Agent': 'codex_cli_rs/0.146.0',
-      version: '0.146.0',
+      'User-Agent': 'codex_cli_rs/0.153.4',
+      version: '0.153.4',
       session_id: 'session_12345678',
       'session-id': 'session_12345678',
       'thread-id': 'session_12345678'
@@ -86,10 +86,15 @@ describe('Codex proxy headers and session correlation', () => {
 })
 
 describe('friendlyCodexError', () => {
+  it('preserves the real Astra version rejection returned in detail', () => {
+    const detail = "The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."
+    expect(friendlyCodexError(new CodexHttpError(400, 'bad', JSON.stringify({ detail })))).toContain(detail)
+  })
+
   it.each([
     [401, /reconecte/i],
     [403, /recusou/i],
-    [429, /limite de uso/i],
+    [429, /frequência/i],
     [502, /instável/i]
   ])('maps HTTP %s to an actionable message', (status, expected) => {
     expect(friendlyCodexError(new CodexHttpError(status, 'detail'))).toMatch(expected)

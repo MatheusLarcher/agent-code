@@ -586,6 +586,8 @@ export function MessageList({
                 Session ready · {m.model} · {m.cwd}
               </div>
             )
+          case 'provider-switch':
+            return <div key={`provider-switch:${m.id}`} className="msg system-note" role="status">{m.text}</div>
           case 'result':
             // Not rendered: the answer is already in the chat and the cost is
             // shown in the token meter header.

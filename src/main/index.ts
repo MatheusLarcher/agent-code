@@ -14,6 +14,7 @@ import {
 import { homedir } from 'node:os'
 import { BrowserController } from './browserController'
 import { AgentSession, type MessageOrigin } from './agentSession'
+import { ProviderFailoverSession } from './providerFailover'
 import { RemoteServer } from './remote/remoteServer'
 import { RelayClient } from './remote/relayClient'
 import { buildRemoteApk } from './remote/buildApk'
@@ -29,7 +30,7 @@ import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAud
 import { stopLocalSpeech, transcribeLocal } from './speech'
 import { isAuthenticated, logoutClaude } from './auth'
 import { runClaudeLogin } from './login'
-import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin } from './codexAuth'
+import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin, isCodexConnected } from './codexAuth'
 import { onCodexRateLimit } from './codexProxy'
 import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir } from './store'
@@ -51,6 +52,7 @@ import { discoverSkills } from './skillDiscovery'
 import { syncCacheSkills } from './skillManager'
 import type {
   AgentMessageKind,
+  ChatEvent,
   AppConfig,
   BrowserInput,
   FileAttachment,
@@ -89,7 +91,7 @@ const pendingStorageFlushes = new Map<
 
 // One independent agent session per conversation — they run concurrently, so
 // switching/sending in one conversation never cancels another's running task.
-const sessions = new Map<string, AgentSession>()
+const sessions = new Map<string, ProviderFailoverSession>()
 const sessionLeases = new Map<
   string,
   { repository: PersistenceRepository; lease: ConversationLease; heartbeat: ReturnType<typeof setInterval> }
@@ -1063,17 +1065,18 @@ function registerIpc(): void {
       await releaseSessionLease(convId)
       throw error
     }
-    let s!: AgentSession
-    s = new AgentSession(
-      opts,
+    let s!: ProviderFailoverSession
+    const emit = (event: ChatEvent): void => {
+      send(Channels.agentEvent, { convId, event })
+      remote.broadcast(convId, event)
+    }
+    s = new ProviderFailoverSession(opts, (sessionOptions, sessionEmit, sessionComplete) => new AgentSession(
+      sessionOptions,
       getBrowser(convId),
       // Tag every event/permission with the conversation so the renderer can
       // route it to the right chat, even across concurrent sessions. Events are
       // also teed to any connected phones over the remote bridge (SSE).
-      (event) => {
-        send(Channels.agentEvent, { convId, event })
-        remote.broadcast(convId, event)
-      },
+      sessionEmit,
       (req) => send(Channels.agentPermissionRequest, { convId, req }),
       (id) => send(Channels.agentPermissionExpired, { convId, id }),
       sessionStore,
@@ -1093,10 +1096,10 @@ function registerIpc(): void {
         await repository.markSessionResumeReady(convId, sessionId, true, hashJson(normalizeJson(entries)))
       },
       { appRoot: app.getAppPath() },
-      async () => {
+      sessionComplete
+    ), emit, async (provider) => provider === 'gpt' ? isCodexConnected() : isAuthenticated(), async () => {
         if (sessions.get(convId) === s) await releaseSessionLease(convId)
-      }
-    )
+    })
     sessions.set(convId, s)
     let ok = false
     try {

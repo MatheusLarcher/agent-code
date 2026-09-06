@@ -341,7 +341,7 @@ export function translateCodexEvent(raw: Record<string, unknown>, state: StreamS
     const response = isRecord(raw.response) ? raw.response : undefined
     const error = isRecord(response?.error) ? response.error : isRecord(raw.error) ? raw.error : undefined
     const message = typeof error?.message === 'string' ? error.message : 'Codex response failed'
-    throw new CodexProtocolError(message)
+    throw new CodexProtocolError(typeof error?.code === 'string' ? `${error.code}: ${message}` : message)
   }
   return events
 }

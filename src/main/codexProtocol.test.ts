@@ -96,12 +96,13 @@ describe('Codex protocol — Anthropic request to Responses request', () => {
     expect(out.include).toEqual(['reasoning.encrypted_content'])
   })
 
-  it('shapes GPT-5.6 requests for Responses Lite', () => {
+  it.each(['gpt-5.6-sol', 'gpt-6-astra'])('shapes %s requests for Responses Lite', (model) => {
     const canonical = toCodexRequest(
       toolRequest({ type: 'any', disable_parallel_tool_use: false }),
       undefined,
       SESSION_A
     )
+    canonical.model = model
     canonical.instructions = 'Use the available tools.'
 
     const wire = toCodexWireRequest(canonical, SESSION_A)
