@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { isOpenAIModel, MODEL_EFFORT, modelSupportsFastMode } from '../shared/ipc'
 import type { ChatEvent, StartAgentOptions, UsageProvider } from '../shared/ipc'
 import type { AgentSession } from './agentSession'
+import { appRestart } from './appRestartRuntime'
 
 export const FAILOVER_CONTINUATION = '[PROVIDER_CONTINUATION]\n' +
   'O provedor anterior ficou sem limite de uso. Continue a tarefa pendente do usuário a partir do histórico desta mesma sessão, ' +
@@ -29,6 +30,7 @@ export class ProviderFailoverSession {
   private switching: Promise<void> | null = null
   private tried = new Set<UsageProvider>()
   private lastModels: Partial<Record<UsageProvider, string>> = {}
+  private restartRegistration?: { remove(): void }
 
   constructor(
     options: StartAgentOptions,
@@ -38,6 +40,7 @@ export class ProviderFailoverSession {
     private readonly complete: () => void | Promise<void>
   ) {
     this.options = { ...options }
+    this.restartRegistration = appRestart?.register(`${options.convId} (failover)`, () => ({ busy: !!this.switching }))
     this.create()
   }
 
@@ -56,6 +59,7 @@ export class ProviderFailoverSession {
           // Defer work until switching is assigned, even with synchronous fakes.
           this.switching = Promise.resolve().then(() => this.switchProvider(generation)).finally(() => {
             this.switching = null
+            appRestart?.changed()
           })
         } else {
           void this.switching.then(() => { if (this.turn === turn) onEvent(event) })
@@ -81,6 +85,7 @@ export class ProviderFailoverSession {
     const from = providerForModel(this.options.model)
     const active = (): boolean => !this.disposed && !this.stopped && generation === this.generation
     try {
+      appRestart?.assertOpen()
       if (!from) throw new Error('Não há troca automática para este provedor.')
       this.tried.add(from)
       const to = from === 'claude' ? 'gpt' : 'claude'
@@ -152,6 +157,7 @@ export class ProviderFailoverSession {
     this.disposed = true
     ++this.generation
     this.current.dispose()
+    this.restartRegistration?.remove()
   }
   setBypass(on: boolean): void {
     this.options.skipPermissions = on

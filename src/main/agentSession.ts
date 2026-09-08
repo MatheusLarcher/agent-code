@@ -1,5 +1,8 @@
 import { query, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
 import { AsyncQueue } from './asyncQueue'
+import { createAppMcpServer, APP_RESTART_HINT } from './appTools'
+import { appRestart } from './appRestartRuntime'
+import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
 import { composeUserPrompt } from './promptEnvelope'
 import type { BrowserController } from './browserController'
@@ -426,6 +429,21 @@ export class AgentSession {
   private quotaRejected = false
   private providerContinuation = false
   private handoffReady: Promise<void> = Promise.resolve()
+  private restartInitializing = true
+  private restartPersisting = false
+  private restartBackground: number | null = null
+  private restartUncertain = false
+  private restartRegistration: ReturnType<NonNullable<typeof appRestart>['register']> | undefined
+
+  restartActivity(): RestartActivity {
+    return {
+      busy: this.restartInitializing || this.restartPersisting || this.turnActive || this.pendingPermissions.size > 0,
+      unsafe: this.restartUncertain ? 'Trabalho autônomo sem prova de término.'
+        : this.restartBackground === null ? 'Estado de background desconhecido.'
+        : this.restartBackground > 0 ? 'Tarefas em background ativas.'
+        : this.loopActive ? 'Loop/agendamento ativo.' : this.mirrorFailed ? 'Persistência não verificada.' : undefined
+    }
+  }
 
   constructor(
     private readonly opts: StartAgentOptions,
@@ -440,7 +458,10 @@ export class AgentSession {
     private readonly skillRuntime?: SkillRuntimePaths,
     /** Called after the SDK has emitted the terminal result for a turn. */
     private readonly onTurnComplete?: () => void | Promise<void>
-  ) {}
+  ) {
+    // Native class fields run before constructor parameter properties are assigned.
+    this.restartRegistration = appRestart?.register(opts.convId, () => this.restartActivity())
+  }
 
   async start(): Promise<boolean> {
     if (this.disposed) return false
@@ -450,7 +471,8 @@ export class AgentSession {
 
     const mcpServers: Record<string, McpServerConfig> = {
       browser: createBrowserMcpServer(this.browser),
-      android: createAndroidMcpServer(this.browser)
+      android: createAndroidMcpServer(this.browser),
+      ...(this.restartRegistration ? { app: createAppMcpServer(this.restartRegistration.request) } : {})
     }
     if (process.platform === 'win32') {
       mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
@@ -481,7 +503,7 @@ export class AgentSession {
     this.nativeSkillRegistryVersion = ''
     const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
-    append += `\n\n${memorySnapshot.catalog}`
+    append += `\n\n${memorySnapshot.catalog}\n\n${APP_RESTART_HINT}`
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
 
     // Modo econômico: when the user toggled it on for THIS conversation, tell the
@@ -610,6 +632,27 @@ export class AgentSession {
       settingSources: ['user', 'project', 'local'],
       systemPrompt: { type: 'preset', preset: 'claude_code', append },
       mcpServers,
+      hooks: {
+        UserPromptSubmit: [{ hooks: [async () => {
+          if (appRestart?.reserved) return { decision: 'block' as const, reason: 'Reinício reservado; novo turno recusado.' }
+          this.turnActive = true
+          return {}
+        }] }],
+        PreToolUse: [{ hooks: [async (input) => {
+          if (input.hook_event_name !== 'PreToolUse') return {}
+          const name = input.tool_name
+          if (appRestart?.reserved && name !== 'mcp__app__app_restart') {
+            return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
+              permissionDecisionReason: 'Reinício preparado. Termine o turno sem iniciar outro trabalho.' } }
+          }
+          // SDK task-level snapshots cover managed tasks, but arbitrary shell,
+          // remote agents, custom MCPs and cron may outlive that registry.
+          if (!['Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'mcp__app__app_restart'].includes(name)) {
+            this.restartUncertain = true
+          }
+          return {}
+        }] }]
+      },
       // Always route through our gate. "Allow all" is handled inside
       // handlePermission via the bypassAll flag so it can be toggled live.
       canUseTool: (toolName, input) => this.handlePermission(toolName, input)
@@ -646,6 +689,8 @@ export class AgentSession {
     origin: MessageOrigin = 'pc',
     messageKind: AgentMessageKind = 'normal'
   ): Promise<void> {
+    appRestart?.assertOpen()
+    this.turnActive = true
     await this.handoffReady
     this.quotaRejected = false
     if (this.mirrorFailed) {
@@ -935,6 +980,9 @@ export class AgentSession {
 
   dispose(): void {
     if (this.disposed) return
+    const restartState = this.restartActivity()
+    if (!restartState.busy && !restartState.unsafe) this.restartRegistration?.remove()
+    else this.restartUncertain = true // Closing SDK is not proof detached work ended.
     this.disposed = true
     this.clearLoopState()
     this.windowsControlScope.cancel()
@@ -1093,6 +1141,10 @@ export class AgentSession {
   }
 
   private handlePermission(toolName: string, input: Record<string, unknown>): Promise<PermissionResult> {
+    if (toolName === 'mcp__app__app_restart' && this.restartRegistration && !this.disposed) {
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    }
+    if (appRestart?.reserved) return Promise.resolve({ behavior: 'deny', message: 'Reinício reservado; finalize o turno.' })
     if (this.disposed) {
       return Promise.resolve({ behavior: 'deny', message: 'Agent session is closed.' })
     }
@@ -1260,6 +1312,8 @@ export class AgentSession {
     switch (message.type) {
       case 'system':
         if (message.subtype === 'init') {
+          this.restartInitializing = false
+          if (!this.opts.resume && !this.restartUncertain) this.restartBackground = 0
           this.emit({
             kind: 'system',
             sessionId: message.session_id,
@@ -1285,6 +1339,8 @@ export class AgentSession {
           const tasks = (message as unknown as {
             tasks: Array<{ task_id: string; task_type: string; description: string }>
           }).tasks
+          this.restartBackground = Array.isArray(tasks) ? tasks.length : null
+          appRestart?.changed()
           this.emit({
             kind: 'background-tasks',
             tasks: tasks.map((task) => ({
@@ -1367,6 +1423,7 @@ export class AgentSession {
             })
           })
         }
+        this.restartPersisting = true
         this.markTurnIdle()
         // If an active loop iteration reaches a successful terminal result
         // without requesting another wakeup, its condition is complete. The CLI
@@ -1406,7 +1463,11 @@ export class AgentSession {
         // A lease protects one active turn, not an idle conversation. Release it
         // as soon as the SDK is done so another process cannot be blocked by an
         // abandoned writer; the next send reacquires it in the main process.
-        void this.onTurnComplete?.()
+        void this.handoffReady.then(async () => {
+          await this.onTurnComplete?.()
+          this.restartPersisting = false
+          appRestart?.changed()
+        })
         // Refresh the account-wide usage badge as soon as the turn finishes,
         // even if the SDK did not push a spontaneous rate_limit_event.
         void this.refreshUsage()

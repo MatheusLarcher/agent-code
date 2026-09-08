@@ -15,6 +15,9 @@ import { homedir } from 'node:os'
 import { BrowserController } from './browserController'
 import { AgentSession, type MessageOrigin } from './agentSession'
 import { ProviderFailoverSession } from './providerFailover'
+import { AppRestartCoordinator } from './appRestart'
+import { configureAppRestart, appRestart } from './appRestartRuntime'
+import { armAppRelauncher } from './appRelauncher'
 import { RemoteServer } from './remote/remoteServer'
 import { RelayClient } from './remote/relayClient'
 import { buildRemoteApk } from './remote/buildApk'
@@ -88,6 +91,20 @@ const pendingStorageFlushes = new Map<
   string,
   { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
 >()
+
+configureAppRestart(new AppRestartCoordinator({
+  arm: () => armAppRelauncher({
+    packaged: app.isPackaged, appRoot: app.getAppPath(), resourcesPath: process.resourcesPath,
+    userData: app.getPath('userData'), executable: process.execPath, pid: process.pid,
+    createdAt: process.getCreationTime(), portableExecutable: process.env.PORTABLE_EXECUTABLE_FILE
+  }),
+  flush: async () => {
+    if (quitRequested || closeRequested) throw new Error('Outro fechamento já está em andamento.')
+    await requestStorageFlush()
+  },
+  quit: () => app.quit(),
+  report: (message) => console.warn('[app-restart]', message)
+}))
 
 // One independent agent session per conversation — they run concurrently, so
 // switching/sending in one conversation never cancels another's running task.
