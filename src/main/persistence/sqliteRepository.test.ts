@@ -224,14 +224,52 @@ describe('SqliteRepository', () => {
         (await import('./hashes')).hashText((await import('./sqliteSchema')).SQLITE_V2_SCHEMA)
       )
       db.prepare(
-        "INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES(2, 'future', 'x', ?)"
-      ).run(new Date().toISOString())
+        "INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES(?, 'future', 'x', ?)"
+      ).run((await import('./sqliteSchema')).SQLITE_MIGRATIONS.at(-1)!.version + 1, new Date().toISOString())
     } finally {
       db.close()
     }
     await expect(new SqliteRepository(cache, dbPath, 'device-b').initialize()).rejects.toMatchObject({
       code: 'SCHEMA_TOO_NEW'
     })
+  })
+
+  it('atualiza um banco v2 existente com as migrations adicionais sem perder dados', async () => {
+    const { cache, dbPath } = await tempCache()
+    const { SQLITE_MIGRATIONS, SQLITE_V2_SCHEMA } = await import('./sqliteSchema')
+    const { hashText } = await import('./hashes')
+    // A db produced by the previous release: only migration 1 recorded, no task tables.
+    const db = new DatabaseSync(dbPath)
+    try {
+      db.exec(SQLITE_V2_SCHEMA)
+      db.prepare(
+        "INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES(1, 'sqlite-v2-base', ?, ?)"
+      ).run(hashText(SQLITE_V2_SCHEMA), new Date().toISOString())
+      db.prepare(
+        `INSERT INTO conversations_v2(id, payload_json, revision, content_hash, created_at, updated_at, deleted_at)
+         VALUES('c1', '{"id":"c1"}', 1, 'h', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL)`
+      ).run()
+    } finally {
+      db.close()
+    }
+
+    const repository = new SqliteRepository(cache, dbPath, 'device-a')
+    await repository.initialize()
+
+    expect((await repository.loadConversations()).map((entry) => entry.id)).toEqual(['c1'])
+    const created = await repository.createTask({ projectCwd: 'C:/repo', title: 'T', goal: 'G' })
+    expect(created.status).toBe('pending')
+    const applied = new DatabaseSync(dbPath, { readOnly: true })
+    try {
+      const rows = applied.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version').all() as Array<{
+        version: number
+        checksum: string
+      }>
+      expect(rows).toEqual(SQLITE_MIGRATIONS.map((entry) => ({ version: entry.version, checksum: entry.checksum })))
+    } finally {
+      applied.close()
+    }
+    await repository.close()
   })
 
   it('protege a conversa com lease local e fencing', async () => {

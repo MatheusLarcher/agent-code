@@ -222,6 +222,200 @@ CREATE TRIGGER conversation_device_state_change AFTER INSERT OR UPDATE ON conver
   FOR EACH ROW EXECUTE FUNCTION agent_code_record_change('conversation', 'device');
 `
 
+const TASK_STATUS_CHECK = "CHECK (status IN ('pending', 'running', 'blocked', 'review', 'done', 'failed', 'cancelled'))"
+
+/** Task ledger — same columns as the SQLite tables so both repositories share
+ *  one row mapper. `task_events` feeds change_log as entity 'task'. */
+const TASK_LEDGER = `
+CREATE TABLE tasks (
+  id text PRIMARY KEY,
+  conversation_id text,
+  project_cwd text NOT NULL,
+  title text NOT NULL,
+  goal text NOT NULL,
+  acceptance_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL ${TASK_STATUS_CHECK},
+  owner_agent text,
+  write_scope_json jsonb NOT NULL DEFAULT '{"allow":[],"deny":[]}'::jsonb,
+  parent_task_id text REFERENCES tasks(id),
+  attempts integer NOT NULL DEFAULT 0,
+  max_attempts integer NOT NULL DEFAULT 3,
+  lease_token text,
+  lease_expires_at timestamptz,
+  fencing_epoch bigint NOT NULL DEFAULT 0,
+  revision bigint NOT NULL DEFAULT 1,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_by uuid REFERENCES installations(installation_id)
+);
+CREATE INDEX tasks_status_created_at ON tasks(status, created_at);
+CREATE INDEX tasks_project_cwd ON tasks(project_cwd);
+CREATE TABLE task_steps (
+  id text PRIMARY KEY,
+  task_id text NOT NULL REFERENCES tasks(id),
+  seq integer NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('analyze', 'implement', 'verify', 'review', 'handoff')),
+  status text NOT NULL ${TASK_STATUS_CHECK},
+  agent text,
+  sdk_session_id text,
+  started_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  finished_at timestamptz,
+  error_json jsonb,
+  revision bigint NOT NULL DEFAULT 1,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (task_id, seq)
+);
+CREATE TABLE task_deliverables (
+  id text PRIMARY KEY,
+  task_id text NOT NULL REFERENCES tasks(id),
+  step_id text REFERENCES task_steps(id),
+  kind text NOT NULL CHECK (kind IN ('diff', 'test_run', 'note', 'file', 'screenshot')),
+  summary text NOT NULL,
+  payload_path text,
+  payload_hash text,
+  verified boolean NOT NULL DEFAULT false,
+  verified_by text,
+  revision bigint NOT NULL DEFAULT 1,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX task_deliverables_task_id ON task_deliverables(task_id);
+CREATE TABLE task_events (
+  id text PRIMARY KEY,
+  ordinal bigserial NOT NULL UNIQUE,
+  task_id text NOT NULL REFERENCES tasks(id),
+  step_id text,
+  at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  kind text NOT NULL,
+  data_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  installation_id uuid REFERENCES installations(installation_id)
+);
+CREATE INDEX task_events_task_ordinal ON task_events(task_id, ordinal);
+CREATE OR REPLACE FUNCTION agent_code_record_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  new_id bigint;
+  entity_name text;
+  entity_key text;
+  entity_scope text;
+  entity_revision bigint;
+  author uuid;
+BEGIN
+  entity_name := TG_ARGV[0]; entity_scope := TG_ARGV[1];
+  IF TG_TABLE_NAME = 'global_kv' THEN
+    entity_key := NEW.key; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'device_kv' THEN
+    entity_key := NEW.key; entity_revision := NEW.revision; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'conversations' THEN
+    entity_key := NEW.conversation_id; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'conversation_device_state' THEN
+    entity_key := NEW.conversation_id; entity_revision := NEW.revision; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'projects' THEN
+    entity_key := NEW.project_id::text; entity_revision := NULL; author := NULL;
+  ELSIF TG_TABLE_NAME = 'task_events' THEN
+    entity_key := NEW.task_id; entity_revision := NEW.ordinal; author := NEW.installation_id;
+  ELSE
+    entity_key := NEW.conversation_id; entity_revision := NEW.fencing_epoch; author := NEW.owner_installation_id;
+  END IF;
+  INSERT INTO change_log(entity, entity_id, scope, revision, installation_id)
+    VALUES(entity_name, entity_key, entity_scope, entity_revision, author)
+    RETURNING change_id INTO new_id;
+  PERFORM pg_notify('agent_code_changes', new_id::text);
+  RETURN NEW;
+END $$;
+CREATE TRIGGER task_event_change AFTER INSERT ON task_events
+  FOR EACH ROW EXECUTE FUNCTION agent_code_record_change('task', 'global');
+`
+
+const MEMORY_SCOPE_CHECK = "CHECK (scope IN ('user', 'project', 'domain'))"
+
+/** Memory service — same columns as SQLite so both repositories share one row
+ *  mapper. `memory_entries` feeds change_log as entity 'memory' (key = rel_path). */
+const MEMORY_SERVICE = `
+CREATE TABLE memory_entries (
+  id text PRIMARY KEY,
+  rel_path text NOT NULL UNIQUE,
+  title text NOT NULL,
+  hook text NOT NULL,
+  scope text NOT NULL ${MEMORY_SCOPE_CHECK},
+  project_cwd text,
+  domain text,
+  body text NOT NULL,
+  body_hash text NOT NULL,
+  revision bigint NOT NULL DEFAULT 1,
+  status text NOT NULL CHECK (status IN ('active', 'retired')),
+  origin_conversation_id text,
+  origin_message_id text,
+  origin_agent text,
+  supersedes_id text REFERENCES memory_entries(id),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_by uuid REFERENCES installations(installation_id)
+);
+CREATE INDEX memory_entries_status ON memory_entries(status);
+CREATE TABLE memory_proposals (
+  id text PRIMARY KEY,
+  entry_id text REFERENCES memory_entries(id),
+  op text NOT NULL CHECK (op IN ('create', 'update', 'retire')),
+  rel_path text NOT NULL,
+  title text,
+  hook text,
+  body text,
+  scope text NOT NULL ${MEMORY_SCOPE_CHECK},
+  project_cwd text,
+  domain text,
+  origin_conversation_id text,
+  origin_message_id text,
+  origin_agent text,
+  status text NOT NULL CHECK (status IN ('pending', 'applied', 'rejected', 'conflict')),
+  reason text,
+  proposed_by text NOT NULL,
+  expected_revision bigint,
+  attempts integer NOT NULL DEFAULT 0,
+  lease_token text,
+  lease_expires_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_by uuid REFERENCES installations(installation_id)
+);
+CREATE INDEX memory_proposals_status_created_at ON memory_proposals(status, created_at);
+CREATE OR REPLACE FUNCTION agent_code_record_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  new_id bigint;
+  entity_name text;
+  entity_key text;
+  entity_scope text;
+  entity_revision bigint;
+  author uuid;
+BEGIN
+  entity_name := TG_ARGV[0]; entity_scope := TG_ARGV[1];
+  IF TG_TABLE_NAME = 'global_kv' THEN
+    entity_key := NEW.key; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'device_kv' THEN
+    entity_key := NEW.key; entity_revision := NEW.revision; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'conversations' THEN
+    entity_key := NEW.conversation_id; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'conversation_device_state' THEN
+    entity_key := NEW.conversation_id; entity_revision := NEW.revision; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'projects' THEN
+    entity_key := NEW.project_id::text; entity_revision := NULL; author := NULL;
+  ELSIF TG_TABLE_NAME = 'task_events' THEN
+    entity_key := NEW.task_id; entity_revision := NEW.ordinal; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'memory_entries' THEN
+    entity_key := NEW.rel_path; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSE
+    entity_key := NEW.conversation_id; entity_revision := NEW.fencing_epoch; author := NEW.owner_installation_id;
+  END IF;
+  INSERT INTO change_log(entity, entity_id, scope, revision, installation_id)
+    VALUES(entity_name, entity_key, entity_scope, entity_revision, author)
+    RETURNING change_id INTO new_id;
+  PERFORM pg_notify('agent_code_changes', new_id::text);
+  RETURN NEW;
+END $$;
+CREATE TRIGGER memory_entry_change AFTER INSERT OR UPDATE ON memory_entries
+  FOR EACH ROW EXECUTE FUNCTION agent_code_record_change('memory', 'global');
+`
+
 function migration(version: number, name: string, sql: string): PostgresMigration {
   return { version, name, sql, checksum: hashText(sql) }
 }
@@ -229,7 +423,9 @@ function migration(version: number, name: string, sql: string): PostgresMigratio
 export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(1, 'postgres-base-schema', BASE_SCHEMA),
   migration(2, 'postgres-change-feed', CHANGE_FEED),
-  migration(3, 'postgres-device-state-feed', DEVICE_STATE_CHANGE_FEED)
+  migration(3, 'postgres-device-state-feed', DEVICE_STATE_CHANGE_FEED),
+  migration(4, 'postgres-task-ledger', TASK_LEDGER),
+  migration(5, 'postgres-memory-service', MEMORY_SERVICE)
 ]
 
 const MIGRATION_TABLE = `

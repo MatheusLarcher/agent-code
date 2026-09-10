@@ -334,17 +334,38 @@ export async function runMemoryCuratorOnce(options: CuratorRunOptions = {}): Pro
   return { transcripts: transcriptCount, chunks: chunkCount }
 }
 
+export interface CuratorSchedulerOptions {
+  now?: () => number
+  runOnce?: (options: CuratorRunOptions) => Promise<CuratorRunResult>
+  readCheckpoint?: () => Promise<string | null>
+  writeCheckpoint?: (value: string) => Promise<void>
+}
+
 /** Daily in-process scheduler. It catches up after app startup without creating
  *  an OS task and never emits anything into a user's chat. */
-export async function startMemoryCuratorScheduler(): Promise<() => void> {
+export async function startMemoryCuratorScheduler(options: CuratorSchedulerOptions = {}): Promise<() => void> {
+  const now = options.now ?? Date.now
+  const runOnce = options.runOnce ?? runMemoryCuratorOnce
+  const readCheckpoint = options.readCheckpoint ?? (() => readPersistedKv(CURATOR_STATE_KEY))
+  const writeCheckpoint = options.writeCheckpoint ?? ((value: string) => writePersistedKv(CURATOR_STATE_KEY, value))
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | null = null
 
   let saved = 0
+  let checkpointLoaded = false
+  const loadCheckpoint = async (): Promise<number> => {
+    const raw = await readCheckpoint()
+    const value = raw === null ? 0 : Number(raw)
+    if (!Number.isFinite(value) || value < 0 || (raw !== null && !raw.trim())) {
+      throw new Error('Invalid memory curator checkpoint')
+    }
+    return value
+  }
   try {
-    saved = Number((await readPersistedKv(CURATOR_STATE_KEY)) ?? 0)
-  } catch {
-    /* store unavailable: run the cheap mtime gate now */
+    saved = await loadCheckpoint()
+    checkpointLoaded = true
+  } catch (error) {
+    console.warn('[memory-curator] checkpoint unavailable; scan deferred:', error)
   }
   // Carried across runs so a scan can catch up since the last successful
   // completion instead of only the last 24h (see runMemoryCuratorOnce).
@@ -356,24 +377,29 @@ export async function startMemoryCuratorScheduler(): Promise<() => void> {
   }
   const run = async (): Promise<void> => {
     if (stopped) return
-    const since = lastRunAt
     try {
-      await runMemoryCuratorOnce({ lastRunAt: since })
-    } catch (error) {
-      console.warn('[memory-curator] daily job failed:', error)
-    } finally {
-      const finishedAt = Date.now()
-      lastRunAt = finishedAt
-      try {
-        await writePersistedKv(CURATOR_STATE_KEY, String(finishedAt))
-      } catch (error) {
-        console.warn('[memory-curator] could not persist last run:', error)
+      if (!checkpointLoaded) {
+        saved = await loadCheckpoint()
+        lastRunAt = saved > 0 ? saved : undefined
+        checkpointLoaded = true
+        if (memoryCuratorDelay(saved, now()) > 0) return
       }
+      if (stopped) return
+      const since = lastRunAt
+      const runStartedAt = now()
+      await runOnce({ lastRunAt: since, now: runStartedAt })
+      // Persist before advancing the in-memory cursor. Either failure leaves
+      // the previous window intact; changes during the scan belong to the next run.
+      await writeCheckpoint(String(runStartedAt))
+      lastRunAt = runStartedAt
+    } catch (error) {
+      console.warn('[memory-curator] daily job or checkpoint failed:', error)
+    } finally {
       schedule(CURATOR_INTERVAL_MS)
     }
   }
 
-  const dueIn = memoryCuratorDelay(saved, Date.now())
+  const dueIn = memoryCuratorDelay(saved, now())
   schedule(dueIn)
   return () => {
     stopped = true

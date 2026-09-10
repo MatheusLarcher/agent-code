@@ -10,10 +10,12 @@ import {
 import { StorageError, type ConversationRecord, type KvScope } from './types'
 import { writeDbAtomically } from '../atomicDb'
 
-const MIGRATION_VERSION = 1
 const LEGACY_CONVERSATIONS_KEY = 'agentcode.conversations.v1'
 const DATA_DIRNAME = 'data'
 
+/** Migration 1 — the v2 base. Its text is frozen: the checksum stored in every
+ *  existing install is `hashText(SQLITE_V2_SCHEMA)`, so new tables go into
+ *  later, additive migrations instead of editing this string. */
 export const SQLITE_V2_SCHEMA = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -66,6 +68,157 @@ export const SQLITE_V2_SCHEMA = `
     PRIMARY KEY(project_key, session_id)
   );
 `
+
+const TASK_STATUS_CHECK = "CHECK(status IN ('pending', 'running', 'blocked', 'review', 'done', 'failed', 'cancelled'))"
+
+/** Migration 2 — task ledger (see docs/superpowers/specs/2026-09-10-registro-de-tarefas…). */
+export const SQLITE_TASKS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT,
+    project_cwd TEXT NOT NULL,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    acceptance_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL ${TASK_STATUS_CHECK},
+    owner_agent TEXT,
+    write_scope_json TEXT NOT NULL DEFAULT '{"allow":[],"deny":[]}',
+    parent_task_id TEXT REFERENCES tasks(id),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    lease_token TEXT,
+    lease_expires_at TEXT,
+    fencing_epoch INTEGER NOT NULL DEFAULT 0,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS tasks_status_created_at ON tasks(status, created_at);
+  CREATE INDEX IF NOT EXISTS tasks_project_cwd ON tasks(project_cwd);
+  CREATE TABLE IF NOT EXISTS task_steps (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    seq INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('analyze', 'implement', 'verify', 'review', 'handoff')),
+    status TEXT NOT NULL ${TASK_STATUS_CHECK},
+    agent TEXT,
+    sdk_session_id TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    error_json TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(task_id, seq)
+  );
+  CREATE TABLE IF NOT EXISTS task_deliverables (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    step_id TEXT REFERENCES task_steps(id),
+    kind TEXT NOT NULL CHECK(kind IN ('diff', 'test_run', 'note', 'file', 'screenshot')),
+    summary TEXT NOT NULL,
+    payload_path TEXT,
+    payload_hash TEXT,
+    verified INTEGER NOT NULL DEFAULT 0,
+    verified_by TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS task_deliverables_task_id ON task_deliverables(task_id);
+  CREATE TABLE IF NOT EXISTS task_events (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    step_id TEXT,
+    at TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    data_json TEXT NOT NULL DEFAULT '{}'
+  );
+  CREATE INDEX IF NOT EXISTS task_events_task_at ON task_events(task_id, at);
+`
+
+const MEMORY_SCOPE_CHECK = "CHECK(scope IN ('user', 'project', 'domain'))"
+
+/** Migration 3 — memory service (memory_entries + memory_proposals queue). */
+export const SQLITE_MEMORY_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS memory_entries (
+    id TEXT PRIMARY KEY,
+    rel_path TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    hook TEXT NOT NULL,
+    scope TEXT NOT NULL ${MEMORY_SCOPE_CHECK},
+    project_cwd TEXT,
+    domain TEXT,
+    body TEXT NOT NULL,
+    body_hash TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL CHECK(status IN ('active', 'retired')),
+    origin_conversation_id TEXT,
+    origin_message_id TEXT,
+    origin_agent TEXT,
+    supersedes_id TEXT REFERENCES memory_entries(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS memory_entries_status ON memory_entries(status);
+  CREATE TABLE IF NOT EXISTS memory_proposals (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT REFERENCES memory_entries(id),
+    op TEXT NOT NULL CHECK(op IN ('create', 'update', 'retire')),
+    rel_path TEXT NOT NULL,
+    title TEXT,
+    hook TEXT,
+    body TEXT,
+    scope TEXT NOT NULL ${MEMORY_SCOPE_CHECK},
+    project_cwd TEXT,
+    domain TEXT,
+    origin_conversation_id TEXT,
+    origin_message_id TEXT,
+    origin_agent TEXT,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'applied', 'rejected', 'conflict')),
+    reason TEXT,
+    proposed_by TEXT NOT NULL,
+    expected_revision INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    lease_expires_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS memory_proposals_status_created_at ON memory_proposals(status, created_at);
+`
+
+export interface SqliteMigration {
+  version: number
+  name: string
+  sql: string
+  checksum: string
+}
+
+function migration(version: number, name: string, sql: string): SqliteMigration {
+  return { version, name, sql, checksum: hashText(sql) }
+}
+
+/** Ordered, additive. Every statement is `IF NOT EXISTS`, so the concatenation
+ *  (`SQLITE_SCHEMA`) can be re-run on every write as an idempotent guard. */
+export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
+  migration(1, 'sqlite-v2-base', SQLITE_V2_SCHEMA),
+  migration(2, 'sqlite-v2-tasks', SQLITE_TASKS_SCHEMA),
+  migration(3, 'sqlite-v2-memory', SQLITE_MEMORY_SCHEMA)
+]
+
+export const SQLITE_SCHEMA = SQLITE_MIGRATIONS.map((entry) => entry.sql).join('\n')
+
+const LATEST_VERSION = SQLITE_MIGRATIONS.at(-1)!.version
+
+/** Marks every migration as applied in a freshly built db (all DDL already executed). */
+export function recordSqliteMigrations(db: DatabaseSync, appliedAt: string): void {
+  const insert = db.prepare(
+    `INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES(?, ?, ?, ?)
+     ON CONFLICT(version) DO NOTHING`
+  )
+  for (const entry of SQLITE_MIGRATIONS) insert.run(entry.version, entry.name, entry.checksum, appliedAt)
+}
 
 interface LegacyKv {
   key: string
@@ -219,45 +372,83 @@ function isoFromRecord(value: unknown, fallback: string): string {
   return Number.isNaN(date.valueOf()) ? fallback : date.toISOString()
 }
 
-function hasMigration(dbPath: string): boolean {
-  if (!existsSync(dbPath)) return false
+/** Versions already recorded in `schema_migrations`, after verifying each one's
+ *  checksum. Empty when the file is missing or still pre-v2 (legacy `kv` only). */
+function appliedMigrations(dbPath: string): Set<number> {
+  if (!existsSync(dbPath)) return new Set()
   return withReadableDb(dbPath, (db) => {
     const table = db
       .prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
       .get()
-    if (!table) return false
-    const newest = db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get() as {
-      version: number | null
+    if (!table) return new Set<number>()
+    const rows = db.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version').all() as unknown as Array<{
+      version: number
+      checksum: string
+    }>
+    const applied = new Set<number>()
+    for (const row of rows) {
+      const version = Number(row.version)
+      if (version > LATEST_VERSION) {
+        throw new StorageError('SCHEMA_TOO_NEW', 'O schema SQLite foi criado por uma versão mais nova do Agent Code.')
+      }
+      const known = SQLITE_MIGRATIONS.find((entry) => entry.version === version)
+      if (!known || known.checksum !== row.checksum) {
+        throw new StorageError('SCHEMA_CHECKSUM_MISMATCH', `O checksum da migration SQLite ${version} não confere.`)
+      }
+      applied.add(version)
     }
-    if (Number(newest.version ?? 0) > MIGRATION_VERSION) {
-      throw new StorageError('SCHEMA_TOO_NEW', 'O schema SQLite foi criado por uma versão mais nova do Agent Code.')
+    if (applied.has(1)) {
+      for (const name of [
+        'persistent_kv_v2',
+        'conversations_v2',
+        'sdk_sessions_v2',
+        'sdk_session_entries_v2',
+        'sdk_session_summaries_v2'
+      ]) {
+        const found = db
+          .prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .get(name)
+        if (!found) throw new StorageError('INVALID_PERSISTED_DATA', `Tabela SQLite v2 ausente: ${name}.`)
+      }
     }
-    const row = db.prepare('SELECT checksum FROM schema_migrations WHERE version = ?').get(MIGRATION_VERSION) as
-      | { checksum: string }
-      | undefined
-    if (!row) return false
-    if (row.checksum !== hashText(SQLITE_V2_SCHEMA)) {
-      throw new StorageError('SCHEMA_CHECKSUM_MISMATCH', 'O checksum da migration SQLite v2 não confere.')
-    }
-    for (const name of [
-      'persistent_kv_v2',
-      'conversations_v2',
-      'sdk_sessions_v2',
-      'sdk_session_entries_v2',
-      'sdk_session_summaries_v2'
-    ]) {
-      const found = db
-        .prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?")
-        .get(name)
-      if (!found) throw new StorageError('INVALID_PERSISTED_DATA', `Tabela SQLite v2 ausente: ${name}.`)
-    }
-    return true
+    return applied
   })
+}
+
+/** Additive upgrade of an existing v2 db: run only the missing migrations, each
+ *  recorded in the same transaction, on an atomically swapped copy. */
+function applyPendingMigrations(dbPath: string, applied: Set<number>): void {
+  const pending = SQLITE_MIGRATIONS.filter((entry) => !applied.has(entry.version))
+  if (pending.length === 0) return
+  const appliedAt = new Date().toISOString()
+  writeDbAtomically(
+    dbPath,
+    (db) => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        for (const entry of pending) {
+          db.exec(entry.sql)
+          db.prepare(
+            `INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES(?, ?, ?, ?)`
+          ).run(entry.version, entry.name, entry.checksum, appliedAt)
+        }
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+    },
+    { seed: true }
+  )
 }
 
 export function initializeSqliteV2(cacheDir: string, dbPath: string): void {
   mkdirSync(cacheDir, { recursive: true })
-  if (hasMigration(dbPath)) return
+  const applied = appliedMigrations(dbPath)
+  if (applied.has(1)) {
+    applyPendingMigrations(dbPath, applied)
+    return
+  }
 
   const appliedAt = new Date().toISOString()
   const legacyKv = readLegacyKv(dbPath)
@@ -279,7 +470,7 @@ export function initializeSqliteV2(cacheDir: string, dbPath: string): void {
   writeDbAtomically(
     dbPath,
     (db) => {
-      db.exec(SQLITE_V2_SCHEMA)
+      db.exec(SQLITE_SCHEMA)
       db.exec('BEGIN IMMEDIATE')
       try {
         for (const entry of legacyKv) {
@@ -305,10 +496,7 @@ export function initializeSqliteV2(cacheDir: string, dbPath: string): void {
             isoFromRecord(record.updatedAt, appliedAt)
           )
         }
-        db.prepare(
-          `INSERT INTO schema_migrations(version, name, checksum, applied_at)
-           VALUES(?, 'sqlite-v2-base', ?, ?)`
-        ).run(MIGRATION_VERSION, hashText(SQLITE_V2_SCHEMA), appliedAt)
+        recordSqliteMigrations(db, appliedAt)
         db.exec('COMMIT')
       } catch (error) {
         db.exec('ROLLBACK')

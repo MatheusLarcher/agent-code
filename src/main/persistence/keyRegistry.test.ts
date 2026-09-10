@@ -25,6 +25,7 @@ const EXPECTED_KEYS = [
   'config.openai.voice',
   'config.remoteEnabled',
   'config.remoteToken',
+  'config.secretVaultEnabled',
   'config.skipPermissions',
   'config.transcribeEngine',
   'config.windowsControlEnabled',

@@ -857,6 +857,8 @@ export interface AppConfig {
   skipPermissions: boolean
   /** Independent high-risk gate for controlling arbitrary Windows applications. */
   windowsControlEnabled: boolean
+  /** Live gate for model reads/writes to the device-local encrypted secret vault. */
+  secretVaultEnabled: boolean
   /** Fixed pairing token for the LAN remote bridge. Generated once and reused on
    *  every start so a paired phone never has to re-pair. Empty until first use. */
   remoteToken: string
@@ -956,7 +958,7 @@ export interface ConversationDeleteDto {
 
 export interface RepositoryChange {
   changeId: string
-  entity: 'global-kv' | 'device-kv' | 'conversation' | 'lease' | 'project'
+  entity: 'global-kv' | 'device-kv' | 'conversation' | 'lease' | 'project' | 'task'
   entityId: string
   revision?: number
   installationId?: string
@@ -969,6 +971,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   ollama: { enabled: false, apiKey: '' },
   skipPermissions: false,
   windowsControlEnabled: false,
+  secretVaultEnabled: true,
   remoteToken: '',
   remoteEnabled: false
 }

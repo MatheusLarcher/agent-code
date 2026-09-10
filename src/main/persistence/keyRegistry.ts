@@ -18,6 +18,7 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.ollama.apiKey': { scope: 'device', sensitive: true, source: 'main-kv' },
   'config.skipPermissions': { scope: 'global', source: 'main-kv' },
   'config.windowsControlEnabled': { scope: 'device', source: 'main-kv' },
+  'config.secretVaultEnabled': { scope: 'device', source: 'main-kv' },
   'config.remoteToken': { scope: 'device', sensitive: true, source: 'main-kv' },
   'config.remoteEnabled': { scope: 'device', source: 'main-kv' },
   codexAuth: { scope: 'device', sensitive: true, source: 'main-kv' },

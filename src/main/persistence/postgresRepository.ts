@@ -2,12 +2,52 @@ import { randomUUID } from 'node:crypto'
 import type { SessionStore } from '@anthropic-ai/claude-agent-sdk'
 import type { ClientConfig, Pool, PoolClient } from 'pg'
 import { parseStoredAppConfig } from './configData'
+import { lockPostgresTransferRecords, postgresTransferClock, prepareTransferRecords, readPostgresTransferRecords, type TransferRecords } from './transferRecords'
 import { hashAggregate, hashJson, hashText, normalizeJson, type JsonValue } from './hashes'
 import { PostgresChangeFeed } from './postgresChangeFeed'
 import { createPostgresSessionStore } from './postgresSessionStore'
 import { decodePostgresJson, decodePostgresText, encodePostgresJson, encodePostgresText } from './postgresEncoding'
 import {
+  assertDeliverableKind,
+  assertStepFinalStatus,
+  assertStepKind,
+  assertTaskFence,
+  assertTaskTransition,
+  normalizeTaskCreate,
+  TASK_LEASE_TTL_MS,
+  taskDeliverableFromRow,
+  taskEventFromRow,
+  taskFromRow,
+  taskStepFromRow,
+  TERMINAL_TASK_STATUSES,
+  type TaskDeliverableRow,
+  type TaskEventRow,
+  type TaskRow,
+  type TaskStepRow
+} from '../tasks/taskModel'
+import {
+  assertProposalLease,
+  assertMemoryProposalApplication,
+  MEMORY_ENTRY_COLUMNS,
+  MEMORY_PROPOSAL_COLUMNS,
+  MEMORY_PROPOSAL_LEASE_TTL_MS,
+  memoryEntryFromRow,
+  memoryProposalFromRow,
+  newMemoryId,
+  normalizeMemoryEntryWrite,
+  type MemoryEntryRow,
+  type MemoryProposalRow
+} from '../memory/memoryModel'
+import {
   StorageError,
+  type MemoryEntry,
+  type MemoryEntryStatus,
+  type MemoryEntryWrite,
+  type MemoryProposal,
+  type MemoryProposalClaim,
+  type MemoryProposalCreate,
+  type MemoryProposalQuery,
+  type MemoryProposalSettle,
   type ApplicationSnapshot,
   type ConversationDelete,
   type ConversationLease,
@@ -16,14 +56,82 @@ import {
   type ExportSnapshot,
   type KvAddress,
   type KvWrite,
+  type LeaseFence,
   type PersistenceRepository,
   type RepositoryChange,
   type RepositoryChangeHandler,
   type VersionedConversation,
   type ConversationQuery,
   type ProjectConversationCount,
+  type Task,
+  type TaskClaim,
+  type TaskCreate,
+  type TaskDeliverable,
+  type TaskDeliverableAdd,
+  type TaskEvent,
+  type TaskEventAppend,
+  type TaskQuery,
+  type TaskStep,
+  type TaskStepAppend,
+  type TaskStepFinish,
+  type TaskTransition,
   type VersionedKv
 } from './types'
+
+const TASK_COLUMNS = `id, conversation_id, project_cwd, title, goal, acceptance_json, status, owner_agent,
+  write_scope_json, parent_task_id, attempts, max_attempts, lease_token, lease_expires_at, fencing_epoch,
+  revision, created_at, updated_at`
+const STEP_COLUMNS = `id, task_id, seq, kind, status, agent, sdk_session_id, started_at, finished_at, error_json,
+  revision, created_at, updated_at`
+const DELIVERABLE_COLUMNS = `id, task_id, step_id, kind, summary, payload_path, payload_hash, verified, verified_by,
+  revision, created_at, updated_at`
+const EVENT_COLUMNS = 'id, task_id, step_id, at, kind, data_json'
+
+type LockedTaskRow = TaskRow & { lease_live: boolean | null }
+
+function decodeTaskRow(row: TaskRow): TaskRow {
+  return {
+    ...row,
+    title: decodePostgresText(row.title),
+    goal: decodePostgresText(row.goal),
+    acceptance_json: decodePostgresJson(normalizeJson(row.acceptance_json)),
+    write_scope_json: decodePostgresJson(normalizeJson(row.write_scope_json))
+  }
+}
+
+function decodeStepRow(row: TaskStepRow): TaskStepRow {
+  return {
+    ...row,
+    error_json: row.error_json === null ? null : decodePostgresJson(normalizeJson(row.error_json))
+  }
+}
+
+function decodeDeliverableRow(row: TaskDeliverableRow): TaskDeliverableRow {
+  return { ...row, summary: decodePostgresText(row.summary) }
+}
+
+function decodeEventRow(row: TaskEventRow): TaskEventRow {
+  return { ...row, data_json: decodePostgresJson(normalizeJson(row.data_json)) }
+}
+
+function decodeMemoryEntryRow(row: MemoryEntryRow): MemoryEntryRow {
+  return {
+    ...row,
+    title: decodePostgresText(row.title),
+    hook: decodePostgresText(row.hook),
+    body: decodePostgresText(row.body)
+  }
+}
+
+function decodeMemoryProposalRow(row: MemoryProposalRow): MemoryProposalRow {
+  return {
+    ...row,
+    title: row.title === null ? null : decodePostgresText(row.title),
+    hook: row.hook === null ? null : decodePostgresText(row.hook),
+    body: row.body === null ? null : decodePostgresText(row.body),
+    reason: row.reason === null ? null : decodePostgresText(row.reason)
+  }
+}
 
 interface KvRow {
   key: string
@@ -152,6 +260,24 @@ export class PostgresRepository implements PersistenceRepository {
     this.handlers.clear()
     await this.feed.close()
     await this.pool.end()
+  }
+
+  async loadTransferRecords(): Promise<TransferRecords> {
+    this.assertInitialized()
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ')
+      await lockPostgresTransferRecords(client)
+      const records = await readPostgresTransferRecords(client)
+      const snapshot = prepareTransferRecords(records, await postgresTransferClock(client))
+      await client.query('COMMIT')
+      return snapshot
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      client.release()
+    }
   }
 
   async loadSnapshot(): Promise<ApplicationSnapshot> {
@@ -456,6 +582,552 @@ export class PostgresRepository implements PersistenceRepository {
        WHERE conversation_id = $1 AND owner_installation_id = $2 AND token = $3 AND fencing_epoch = $4`,
       [lease.conversationId, this.installationId, lease.token, lease.fencingEpoch]
     )
+  }
+
+  // -------------------------------------------------------------------------
+  // Task ledger. Each mutation is one transaction that locks the task row
+  // (FOR UPDATE), checks fence + state machine and appends its task_events row;
+  // the trigger on task_events fans the change out to other installations.
+  // -------------------------------------------------------------------------
+
+  async createTask(input: TaskCreate): Promise<Task> {
+    this.assertInitialized()
+    const create = normalizeTaskCreate(input)
+    return transaction(this.pool, async (client) => {
+      if (create.parentTaskId) {
+        const parent = await client.query('SELECT 1 FROM tasks WHERE id = $1', [create.parentTaskId])
+        if (!parent.rowCount) {
+          throw new StorageError('INVALID_PERSISTED_DATA', `Tarefa-mãe ${create.parentTaskId} não existe.`)
+        }
+      }
+      const existing = await client.query('SELECT 1 FROM tasks WHERE id = $1', [create.id])
+      if (existing.rowCount) throw new StorageError('REVISION_CONFLICT', `Tarefa ${create.id} já existe.`)
+      await client.query(
+        `INSERT INTO tasks(id, conversation_id, project_cwd, title, goal, acceptance_json, status, write_scope_json,
+           parent_task_id, max_attempts, updated_by)
+         VALUES($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10)`,
+        [
+          create.id,
+          create.conversationId,
+          create.projectCwd,
+          encodePostgresText(create.title),
+          encodePostgresText(create.goal),
+          encodePostgresJson(create.acceptance),
+          encodePostgresJson(normalizeJson(create.writeScope)),
+          create.parentTaskId,
+          create.maxAttempts,
+          this.installationId
+        ]
+      )
+      await this.insertTaskEvent(client, create.id, null, 'created', { title: create.title })
+      return this.requireTask(client, create.id)
+    })
+  }
+
+  async claimTask(agentId: string): Promise<TaskClaim | null> {
+    this.assertInitialized()
+    if (!agentId.trim()) throw new TypeError('agentId é obrigatório para reivindicar uma tarefa.')
+    return transaction(this.pool, async (client) => {
+      // SKIP LOCKED: two installations claiming at once each get a different task.
+      const candidate = await client.query<{ id: string; fencing_epoch: string | number }>(
+        `SELECT id, fencing_epoch FROM tasks
+         WHERE status = 'pending' AND attempts < max_attempts
+           AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+         ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`
+      )
+      const row = candidate.rows[0]
+      if (!row) return null
+      const token = randomUUID()
+      const fencingEpoch = Number(row.fencing_epoch) + 1
+      const updated = await client.query<{ lease_expires_at: Date | string }>(
+        `UPDATE tasks SET lease_token = $2, lease_expires_at = clock_timestamp() + ($3::int * interval '1 millisecond'),
+           fencing_epoch = $4, owner_agent = $5, attempts = attempts + 1, revision = revision + 1,
+           updated_at = clock_timestamp(), updated_by = $6
+         WHERE id = $1 RETURNING lease_expires_at`,
+        [row.id, token, TASK_LEASE_TTL_MS, fencingEpoch, agentId, this.installationId]
+      )
+      await this.insertTaskEvent(client, row.id, null, 'claimed', { agent: agentId, fencingEpoch })
+      return {
+        task: await this.requireTask(client, row.id),
+        token,
+        fencingEpoch,
+        expiresAt: iso(updated.rows[0].lease_expires_at)
+      }
+    })
+  }
+
+  async renewTaskLease(taskId: string, fence: LeaseFence): Promise<TaskClaim> {
+    this.assertInitialized()
+    return transaction(this.pool, async (client) => {
+      const locked = await this.lockTask(client, taskId)
+      assertTaskFence(taskFromRow(locked), fence, locked.lease_live === true)
+      const updated = await client.query<{ lease_expires_at: Date | string }>(
+        `UPDATE tasks SET lease_expires_at = clock_timestamp() + ($2::int * interval '1 millisecond'),
+           updated_at = clock_timestamp()
+         WHERE id = $1 RETURNING lease_expires_at`,
+        [taskId, TASK_LEASE_TTL_MS]
+      )
+      return {
+        task: await this.requireTask(client, taskId),
+        token: fence.token,
+        fencingEpoch: fence.fencingEpoch,
+        expiresAt: iso(updated.rows[0].lease_expires_at)
+      }
+    })
+  }
+
+  async transitionTask(input: TaskTransition): Promise<Task> {
+    this.assertInitialized()
+    return transaction(this.pool, async (client) => {
+      const locked = await this.lockTask(client, input.taskId)
+      const current = taskFromRow(locked)
+      assertTaskFence(current, input.fence, locked.lease_live === true)
+      assertTaskTransition(current, input.from, input.to)
+      const ownerAgent = input.to === 'pending' ? null : input.agent ?? current.ownerAgent
+      await client.query(
+        `UPDATE tasks SET status = $2, owner_agent = $3, revision = revision + 1, updated_at = clock_timestamp(),
+           updated_by = $5,
+           lease_expires_at = CASE WHEN $4::boolean THEN clock_timestamp() ELSE lease_expires_at END
+         WHERE id = $1`,
+        [input.taskId, input.to, ownerAgent, TERMINAL_TASK_STATUSES.has(input.to), this.installationId]
+      )
+      await this.insertTaskEvent(client, input.taskId, null, 'transition', {
+        from: input.from,
+        to: input.to,
+        ...(input.agent ? { agent: input.agent } : {}),
+        ...(input.reason ? { reason: input.reason } : {})
+      })
+      return this.requireTask(client, input.taskId)
+    })
+  }
+
+  async appendTaskStep(input: TaskStepAppend): Promise<TaskStep> {
+    this.assertInitialized()
+    assertStepKind(input.kind)
+    return transaction(this.pool, async (client) => {
+      const locked = await this.lockTask(client, input.taskId)
+      assertTaskFence(taskFromRow(locked), input.fence, locked.lease_live === true)
+      const id = randomUUID()
+      const inserted = await client.query<{ seq: string | number }>(
+        `INSERT INTO task_steps(id, task_id, seq, kind, status, agent, sdk_session_id)
+         SELECT $1::text, $2::text, COALESCE(MAX(seq), 0) + 1, $3::text, 'running', $4::text, $5::text
+         FROM task_steps WHERE task_id = $2::text
+         RETURNING seq`,
+        [id, input.taskId, input.kind, input.agent ?? null, input.sdkSessionId ?? null]
+      )
+      await this.insertTaskEvent(client, input.taskId, id, 'step_started', {
+        kind: input.kind,
+        seq: Number(inserted.rows[0].seq),
+        ...(input.agent ? { agent: input.agent } : {})
+      })
+      return this.requireStep(client, id)
+    })
+  }
+
+  async finishTaskStep(input: TaskStepFinish): Promise<TaskStep> {
+    this.assertInitialized()
+    assertStepFinalStatus(input.status)
+    return transaction(this.pool, async (client) => {
+      const stepRow = await client.query<TaskStepRow>(
+        `SELECT ${STEP_COLUMNS} FROM task_steps WHERE id = $1 FOR UPDATE`,
+        [input.stepId]
+      )
+      const step = stepRow.rows[0]
+      if (!step) throw new StorageError('INVALID_PERSISTED_DATA', `Etapa ${input.stepId} não existe.`)
+      const locked = await this.lockTask(client, step.task_id)
+      assertTaskFence(taskFromRow(locked), input.fence, locked.lease_live === true)
+      if (step.finished_at) {
+        throw new StorageError('TASK_INVALID_TRANSITION', `Etapa ${input.stepId} já foi finalizada.`)
+      }
+      await client.query(
+        `UPDATE task_steps SET status = $2, finished_at = clock_timestamp(), error_json = $3,
+           revision = revision + 1, updated_at = clock_timestamp()
+         WHERE id = $1`,
+        [input.stepId, input.status, input.error ? encodePostgresJson(normalizeJson(input.error)) : null]
+      )
+      await this.insertTaskEvent(client, step.task_id, input.stepId, 'step_finished', {
+        kind: step.kind,
+        seq: Number(step.seq),
+        status: input.status,
+        ...(input.error ? { error: input.error } : {})
+      })
+      return this.requireStep(client, input.stepId)
+    })
+  }
+
+  async addTaskDeliverable(input: TaskDeliverableAdd): Promise<TaskDeliverable> {
+    this.assertInitialized()
+    assertDeliverableKind(input.kind)
+    if (!input.summary.trim()) throw new StorageError('INVALID_PERSISTED_DATA', 'Entrega precisa de resumo.')
+    return transaction(this.pool, async (client) => {
+      const locked = await this.lockTask(client, input.taskId)
+      assertTaskFence(taskFromRow(locked), input.fence, locked.lease_live === true)
+      if (input.stepId) {
+        const step = await client.query('SELECT 1 FROM task_steps WHERE id = $1 AND task_id = $2', [
+          input.stepId,
+          input.taskId
+        ])
+        if (!step.rowCount) {
+          throw new StorageError('INVALID_PERSISTED_DATA', `Etapa ${input.stepId} não pertence à tarefa ${input.taskId}.`)
+        }
+      }
+      const id = randomUUID()
+      await client.query(
+        `INSERT INTO task_deliverables(id, task_id, step_id, kind, summary, payload_path, payload_hash, verified, verified_by)
+         VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          id,
+          input.taskId,
+          input.stepId ?? null,
+          input.kind,
+          encodePostgresText(input.summary),
+          input.payloadPath ?? null,
+          input.payloadHash ?? null,
+          input.verified === true,
+          input.verifiedBy ?? null
+        ]
+      )
+      await this.insertTaskEvent(client, input.taskId, input.stepId ?? null, 'deliverable_added', {
+        deliverableId: id,
+        kind: input.kind,
+        summary: input.summary
+      })
+      const result = await client.query<TaskDeliverableRow>(
+        `SELECT ${DELIVERABLE_COLUMNS} FROM task_deliverables WHERE id = $1`,
+        [id]
+      )
+      return taskDeliverableFromRow(decodeDeliverableRow(result.rows[0]))
+    })
+  }
+
+  async appendTaskEvent(input: TaskEventAppend): Promise<TaskEvent> {
+    this.assertInitialized()
+    if (!input.kind.trim()) throw new StorageError('INVALID_PERSISTED_DATA', 'Evento precisa de tipo.')
+    return transaction(this.pool, async (client) => {
+      await this.lockTask(client, input.taskId)
+      if (input.stepId != null) {
+        const step = await client.query('SELECT 1 FROM task_steps WHERE id = $1 AND task_id = $2', [
+          input.stepId,
+          input.taskId
+        ])
+        if (!step.rowCount) {
+          throw new StorageError('INVALID_PERSISTED_DATA', `Etapa ${input.stepId} não pertence à tarefa ${input.taskId}.`)
+        }
+      }
+      return this.insertTaskEvent(client, input.taskId, input.stepId ?? null, input.kind, input.data ?? {})
+    })
+  }
+
+  async getTask(taskId: string): Promise<Task | null> {
+    this.assertInitialized()
+    const result = await this.pool.query<TaskRow>(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = $1`, [taskId])
+    return result.rows[0] ? taskFromRow(decodeTaskRow(result.rows[0])) : null
+  }
+
+  async listTasks(query?: TaskQuery): Promise<Task[]> {
+    this.assertInitialized()
+    if (query?.ids && query.ids.length === 0) return []
+    const clauses: string[] = []
+    const params: unknown[] = []
+    if (query?.status !== undefined) {
+      const statuses = Array.isArray(query.status) ? query.status : [query.status]
+      if (statuses.length === 0) return []
+      params.push(statuses)
+      clauses.push(`status = ANY($${params.length}::text[])`)
+    }
+    if (query?.projectCwd !== undefined) {
+      params.push(query.projectCwd)
+      clauses.push(`project_cwd = $${params.length}`)
+    }
+    if (query?.conversationId !== undefined) {
+      params.push(query.conversationId)
+      clauses.push(`conversation_id = $${params.length}`)
+    }
+    if (query?.parentTaskId !== undefined) {
+      if (query.parentTaskId === null) clauses.push('parent_task_id IS NULL')
+      else {
+        params.push(query.parentTaskId)
+        clauses.push(`parent_task_id = $${params.length}`)
+      }
+    }
+    if (query?.ids) {
+      params.push(query.ids)
+      clauses.push(`id = ANY($${params.length}::text[])`)
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    let limit = ''
+    if (query?.limit !== undefined) {
+      params.push(Math.max(1, Math.floor(query.limit)))
+      limit = ` LIMIT $${params.length}`
+    }
+    const result = await this.pool.query<TaskRow>(
+      `SELECT ${TASK_COLUMNS} FROM tasks ${where} ORDER BY created_at, id${limit}`,
+      params
+    )
+    return result.rows.map((row) => taskFromRow(decodeTaskRow(row)))
+  }
+
+  async listTaskSteps(taskId: string): Promise<TaskStep[]> {
+    this.assertInitialized()
+    const result = await this.pool.query<TaskStepRow>(
+      `SELECT ${STEP_COLUMNS} FROM task_steps WHERE task_id = $1 ORDER BY seq`,
+      [taskId]
+    )
+    return result.rows.map((row) => taskStepFromRow(decodeStepRow(row)))
+  }
+
+  async listTaskDeliverables(taskId: string): Promise<TaskDeliverable[]> {
+    this.assertInitialized()
+    const result = await this.pool.query<TaskDeliverableRow>(
+      `SELECT ${DELIVERABLE_COLUMNS} FROM task_deliverables WHERE task_id = $1 ORDER BY created_at, id`,
+      [taskId]
+    )
+    return result.rows.map((row) => taskDeliverableFromRow(decodeDeliverableRow(row)))
+  }
+
+  async listTaskEvents(taskId: string): Promise<TaskEvent[]> {
+    this.assertInitialized()
+    const result = await this.pool.query<TaskEventRow>(
+      `SELECT ${EVENT_COLUMNS} FROM task_events WHERE task_id = $1 ORDER BY ordinal`,
+      [taskId]
+    )
+    return result.rows.map((row) => taskEventFromRow(decodeEventRow(row)))
+  }
+
+  /** Row lock + lease liveness evaluated on the server clock, so fence checks
+   *  never depend on the client's wall time. */
+  private async lockTask(client: PoolClient, taskId: string): Promise<LockedTaskRow> {
+    const result = await client.query<LockedTaskRow>(
+      `SELECT ${TASK_COLUMNS}, lease_expires_at > clock_timestamp() AS lease_live
+       FROM tasks WHERE id = $1 FOR UPDATE`,
+      [taskId]
+    )
+    const row = result.rows[0]
+    if (!row) throw new StorageError('INVALID_PERSISTED_DATA', `Tarefa ${taskId} não existe.`)
+    return { ...decodeTaskRow(row), lease_live: row.lease_live }
+  }
+
+  private async requireTask(client: PoolClient, taskId: string): Promise<Task> {
+    const result = await client.query<TaskRow>(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = $1`, [taskId])
+    if (!result.rows[0]) throw new StorageError('INVALID_PERSISTED_DATA', `Tarefa ${taskId} não existe.`)
+    return taskFromRow(decodeTaskRow(result.rows[0]))
+  }
+
+  private async requireStep(client: PoolClient, stepId: string): Promise<TaskStep> {
+    const result = await client.query<TaskStepRow>(`SELECT ${STEP_COLUMNS} FROM task_steps WHERE id = $1`, [stepId])
+    if (!result.rows[0]) throw new StorageError('INVALID_PERSISTED_DATA', `Etapa ${stepId} não existe.`)
+    return taskStepFromRow(decodeStepRow(result.rows[0]))
+  }
+
+  private async insertTaskEvent(
+    client: PoolClient,
+    taskId: string,
+    stepId: string | null,
+    kind: string,
+    data: Record<string, unknown>
+  ): Promise<TaskEvent> {
+    const id = randomUUID()
+    const result = await client.query<TaskEventRow>(
+      `INSERT INTO task_events(id, task_id, step_id, kind, data_json, installation_id)
+       VALUES($1, $2, $3, $4, $5, $6)
+       RETURNING ${EVENT_COLUMNS}`,
+      [id, taskId, stepId, kind, encodePostgresJson(normalizeJson(data)), this.installationId]
+    )
+    return taskEventFromRow(decodeEventRow(result.rows[0]))
+  }
+
+  // -------------------------------------------------------------------------
+  // Memory service. Same contract as SQLite; the trigger on memory_entries fans
+  // every committed revision out to the other installations.
+  // -------------------------------------------------------------------------
+
+  async listMemoryEntries(query?: { status?: MemoryEntryStatus }): Promise<MemoryEntry[]> {
+    this.assertInitialized()
+    const result = query?.status
+      ? await this.pool.query<MemoryEntryRow>(
+          `SELECT ${MEMORY_ENTRY_COLUMNS} FROM memory_entries WHERE status = $1 ORDER BY rel_path`,
+          [query.status]
+        )
+      : await this.pool.query<MemoryEntryRow>(`SELECT ${MEMORY_ENTRY_COLUMNS} FROM memory_entries ORDER BY rel_path`)
+    return result.rows.map((row) => memoryEntryFromRow(decodeMemoryEntryRow(row)))
+  }
+
+  async getMemoryEntryByPath(relPath: string): Promise<MemoryEntry | null> {
+    this.assertInitialized()
+    const result = await this.pool.query<MemoryEntryRow>(
+      `SELECT ${MEMORY_ENTRY_COLUMNS} FROM memory_entries WHERE rel_path = $1`,
+      [relPath]
+    )
+    return result.rows[0] ? memoryEntryFromRow(decodeMemoryEntryRow(result.rows[0])) : null
+  }
+
+  async writeMemoryEntry(write: MemoryEntryWrite): Promise<MemoryEntry> {
+    this.assertInitialized()
+    return transaction(this.pool, (client) => this.writeMemoryEntryInTx(client, write))
+  }
+
+  async enqueueMemoryProposal(input: MemoryProposalCreate): Promise<MemoryProposal> {
+    this.assertInitialized()
+    const id = input.id?.trim() || newMemoryId()
+    const result = await this.pool.query<MemoryProposalRow>(
+      `INSERT INTO memory_proposals(id, op, rel_path, title, hook, body, scope, project_cwd, domain,
+         origin_conversation_id, origin_message_id, origin_agent, status, proposed_by, expected_revision, updated_by)
+       VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending', $13, $14, $15)
+       RETURNING ${MEMORY_PROPOSAL_COLUMNS}`,
+      [
+        id,
+        input.op,
+        input.relPath,
+        input.title == null ? null : encodePostgresText(input.title),
+        input.hook == null ? null : encodePostgresText(input.hook),
+        input.body == null ? null : encodePostgresText(input.body),
+        input.scope,
+        input.projectCwd ?? null,
+        input.domain ?? null,
+        input.originConversationId ?? null,
+        input.originMessageId ?? null,
+        input.originAgent ?? null,
+        input.proposedBy,
+        input.expectedRevision ?? null,
+        this.installationId
+      ]
+    )
+    return memoryProposalFromRow(decodeMemoryProposalRow(result.rows[0]))
+  }
+
+  async claimMemoryProposal(): Promise<MemoryProposalClaim | null> {
+    this.assertInitialized()
+    return transaction(this.pool, async (client) => {
+      const candidate = await client.query<{ id: string }>(
+        `SELECT id FROM memory_proposals
+         WHERE status = 'pending' AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+         ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`
+      )
+      const row = candidate.rows[0]
+      if (!row) return null
+      const token = randomUUID()
+      const updated = await client.query<MemoryProposalRow>(
+        `UPDATE memory_proposals SET lease_token = $2,
+           lease_expires_at = clock_timestamp() + ($3::int * interval '1 millisecond'),
+           attempts = attempts + 1, updated_at = clock_timestamp(), updated_by = $4
+         WHERE id = $1 RETURNING ${MEMORY_PROPOSAL_COLUMNS}`,
+        [row.id, token, MEMORY_PROPOSAL_LEASE_TTL_MS, this.installationId]
+      )
+      const proposal = memoryProposalFromRow(decodeMemoryProposalRow(updated.rows[0]))
+      return { proposal, token, expiresAt: proposal.leaseExpiresAt! }
+    })
+  }
+
+  async settleMemoryProposal(input: MemoryProposalSettle): Promise<MemoryProposal> {
+    this.assertInitialized()
+    return transaction(this.pool, async (client) => {
+      const locked = await client.query<MemoryProposalRow & { lease_live: boolean | null }>(
+        `SELECT ${MEMORY_PROPOSAL_COLUMNS}, lease_expires_at > clock_timestamp() AS lease_live
+         FROM memory_proposals WHERE id = $1 FOR UPDATE`,
+        [input.proposalId]
+      )
+      const row = locked.rows[0]
+      if (!row) throw new StorageError('INVALID_PERSISTED_DATA', `Proposta de memória ${input.proposalId} não existe.`)
+      const current = memoryProposalFromRow(decodeMemoryProposalRow(row))
+      // Liveness comes from the server clock; assertProposalLease only compares token + status.
+      assertProposalLease(
+        { ...current, leaseExpiresAt: row.lease_live === true ? current.leaseExpiresAt : null },
+        input.token,
+        Number.NEGATIVE_INFINITY
+      )
+      if (input.outcome === 'applied') {
+        assertMemoryProposalApplication(current, input.entry)
+        const entryId = (await this.writeMemoryEntryInTx(client, input.entry)).id
+        await client.query(
+          `UPDATE memory_proposals SET status = 'applied', entry_id = $2, reason = NULL, lease_token = NULL,
+             lease_expires_at = NULL, updated_at = clock_timestamp(), updated_by = $3 WHERE id = $1`,
+          [input.proposalId, entryId ?? null, this.installationId]
+        )
+      } else if (input.outcome === 'requeue') {
+        await client.query(
+          `UPDATE memory_proposals SET reason = $2, lease_token = NULL, lease_expires_at = NULL,
+             updated_at = clock_timestamp(), updated_by = $3 WHERE id = $1`,
+          [input.proposalId, encodePostgresText(input.reason), this.installationId]
+        )
+      } else {
+        await client.query(
+          `UPDATE memory_proposals SET status = $2, reason = $3, lease_token = NULL, lease_expires_at = NULL,
+             updated_at = clock_timestamp(), updated_by = $4 WHERE id = $1`,
+          [input.proposalId, input.outcome, encodePostgresText(input.reason), this.installationId]
+        )
+      }
+      const result = await client.query<MemoryProposalRow>(
+        `SELECT ${MEMORY_PROPOSAL_COLUMNS} FROM memory_proposals WHERE id = $1`,
+        [input.proposalId]
+      )
+      return memoryProposalFromRow(decodeMemoryProposalRow(result.rows[0]))
+    })
+  }
+
+  async listMemoryProposals(query?: MemoryProposalQuery): Promise<MemoryProposal[]> {
+    this.assertInitialized()
+    const params: unknown[] = []
+    let where = ''
+    if (query?.status !== undefined) {
+      const statuses = Array.isArray(query.status) ? query.status : [query.status]
+      if (statuses.length === 0) return []
+      params.push(statuses)
+      where = `WHERE status = ANY($${params.length}::text[])`
+    }
+    let limit = ''
+    if (query?.limit !== undefined) {
+      params.push(Math.max(1, Math.floor(query.limit)))
+      limit = ` LIMIT $${params.length}`
+    }
+    const result = await this.pool.query<MemoryProposalRow>(
+      `SELECT ${MEMORY_PROPOSAL_COLUMNS} FROM memory_proposals ${where} ORDER BY created_at, id${limit}`,
+      params
+    )
+    return result.rows.map((row) => memoryProposalFromRow(decodeMemoryProposalRow(row)))
+  }
+
+  private async writeMemoryEntryInTx(client: PoolClient, write: MemoryEntryWrite): Promise<MemoryEntry> {
+    const next = normalizeMemoryEntryWrite(write)
+    // A row lock cannot protect an absent path. Serialize inserts and updates on
+    // the same path so concurrent creates deterministically fail revision CAS.
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`memory:${next.relPath}`])
+    const current = await client.query<{ revision: string | number }>(
+      'SELECT revision FROM memory_entries WHERE rel_path = $1 FOR UPDATE',
+      [next.relPath]
+    )
+    this.assertRevision(next.expectedRevision, current.rows[0]?.revision, `Memória ${next.relPath}`)
+    const params = [
+      next.relPath,
+      encodePostgresText(next.title),
+      encodePostgresText(next.hook),
+      next.scope,
+      next.projectCwd,
+      next.domain,
+      encodePostgresText(next.body),
+      next.bodyHash,
+      next.status,
+      next.originConversationId,
+      next.originMessageId,
+      next.originAgent,
+      next.supersedesId,
+      this.installationId
+    ]
+    const result = current.rows[0]
+      ? await client.query<MemoryEntryRow>(
+          `UPDATE memory_entries SET title = $2, hook = $3, scope = $4, project_cwd = $5, domain = $6, body = $7,
+             body_hash = $8, revision = revision + 1, status = $9, origin_conversation_id = $10, origin_message_id = $11,
+             origin_agent = $12, supersedes_id = $13, updated_at = clock_timestamp(), updated_by = $14
+           WHERE rel_path = $1 RETURNING ${MEMORY_ENTRY_COLUMNS}`,
+          params
+        )
+      : await client.query<MemoryEntryRow>(
+          `INSERT INTO memory_entries(rel_path, title, hook, scope, project_cwd, domain, body, body_hash, status,
+             origin_conversation_id, origin_message_id, origin_agent, supersedes_id, updated_by, id)
+           VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+           RETURNING ${MEMORY_ENTRY_COLUMNS}`,
+          [...params, newMemoryId()]
+        )
+    return memoryEntryFromRow(decodeMemoryEntryRow(result.rows[0]))
   }
 
   subscribe(handler: RepositoryChangeHandler): () => void {

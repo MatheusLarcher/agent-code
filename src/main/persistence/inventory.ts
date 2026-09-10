@@ -50,6 +50,7 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.ollama.apiKey',
       'config.skipPermissions',
       'config.windowsControlEnabled',
+      'config.secretVaultEnabled',
       'config.remoteToken',
       'config.remoteEnabled'
     ]
@@ -61,6 +62,13 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
     postgresScope: 'device',
     authoritativeInPostgresMode: 'postgres',
     keys: ['codexAuth']
+  },
+  {
+    id: 'secret-vault',
+    owner: 'src/main/memory/secretVault.ts',
+    surface: 'filesystem',
+    postgresScope: 'local-only',
+    authoritativeInPostgresMode: 'filesystem'
   },
   {
     id: 'memory-curator-state',

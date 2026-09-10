@@ -4,11 +4,51 @@ import type { SessionKey, SessionStore } from '@anthropic-ai/claude-agent-sdk'
 import { existsSync } from 'node:fs'
 import { hashAggregate, hashJson, hashText, normalizeJson, type JsonValue } from './hashes'
 import { parseStoredAppConfig } from './configData'
-import { initializeSqliteV2, SQLITE_V2_SCHEMA } from './sqliteSchema'
+import { decodeSqliteRecordRow, prepareTransferRecords, readSqliteTransferRecords, sqliteRecordSelectColumns, type TransferRecords } from './transferRecords'
+import { initializeSqliteV2, SQLITE_SCHEMA } from './sqliteSchema'
 import { createSqliteSessionStore, type SqliteStoreIo } from './sqliteSessionStore'
 import { writeDbAtomically } from '../atomicDb'
 import {
+  assertDeliverableKind,
+  assertStepFinalStatus,
+  assertStepKind,
+  assertTaskFence,
+  assertTaskTransition,
+  normalizeTaskCreate,
+  TASK_LEASE_TTL_MS,
+  taskDeliverableFromRow,
+  taskEventFromRow,
+  taskFromRow,
+  taskStepFromRow,
+  TERMINAL_TASK_STATUSES,
+  type TaskDeliverableRow,
+  type TaskEventRow,
+  type TaskRow,
+  type TaskStepRow
+} from '../tasks/taskModel'
+import {
+  assertProposalLease,
+  assertMemoryProposalApplication,
+  MEMORY_ENTRY_COLUMNS,
+  MEMORY_PROPOSAL_COLUMNS,
+  MEMORY_PROPOSAL_LEASE_TTL_MS,
+  memoryEntryFromRow,
+  memoryProposalFromRow,
+  newMemoryId,
+  normalizeMemoryEntryWrite,
+  type MemoryEntryRow,
+  type MemoryProposalRow
+} from '../memory/memoryModel'
+import {
   StorageError,
+  type MemoryEntry,
+  type MemoryEntryStatus,
+  type MemoryEntryWrite,
+  type MemoryProposal,
+  type MemoryProposalClaim,
+  type MemoryProposalCreate,
+  type MemoryProposalQuery,
+  type MemoryProposalSettle,
   type ApplicationSnapshot,
   type ConversationDelete,
   type ConversationLease,
@@ -24,8 +64,38 @@ import {
   type VersionedConversation,
   type ConversationQuery,
   type ProjectConversationCount,
+  type Task,
+  type TaskClaim,
+  type TaskCreate,
+  type TaskDeliverable,
+  type TaskDeliverableAdd,
+  type TaskEvent,
+  type TaskEventAppend,
+  type TaskQuery,
+  type TaskStep,
+  type TaskStepAppend,
+  type TaskStepFinish,
+  type TaskTransition,
   type VersionedKv
 } from './types'
+
+const TASK_COLUMNS = `id, conversation_id, project_cwd, title, goal, acceptance_json, status, owner_agent,
+  write_scope_json, parent_task_id, attempts, max_attempts, lease_token, lease_expires_at, fencing_epoch,
+  revision, created_at, updated_at`
+const STEP_COLUMNS = `id, task_id, seq, kind, status, agent, sdk_session_id, started_at, finished_at, error_json,
+  revision, created_at, updated_at`
+const DELIVERABLE_COLUMNS = `id, task_id, step_id, kind, summary, payload_path, payload_hash, verified, verified_by,
+  revision, created_at, updated_at`
+const EVENT_COLUMNS = 'id, task_id, step_id, at, kind, data_json'
+
+// Keep SELECT expressions separate from INSERT column lists. Decoding the BLOB
+// aliases before row mapping preserves embedded NUL without changing DB bytes.
+const TASK_SELECT_COLUMNS = sqliteRecordSelectColumns('tasks')
+const STEP_SELECT_COLUMNS = sqliteRecordSelectColumns('task_steps')
+const DELIVERABLE_SELECT_COLUMNS = sqliteRecordSelectColumns('task_deliverables')
+const EVENT_SELECT_COLUMNS = sqliteRecordSelectColumns('task_events')
+const MEMORY_ENTRY_SELECT_COLUMNS = sqliteRecordSelectColumns('memory_entries')
+const MEMORY_PROPOSAL_SELECT_COLUMNS = sqliteRecordSelectColumns('memory_proposals')
 
 interface KvRow {
   scope: 'global' | 'device'
@@ -136,12 +206,28 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     writeDbAtomically(
       this.dbPath,
       (db) => {
-        db.exec(SQLITE_V2_SCHEMA)
+        db.exec(SQLITE_SCHEMA)
         result = fn(db)
       },
       { seed: true }
     )
     return result as T
+  }
+
+  async loadTransferRecords(): Promise<TransferRecords> {
+    return this.read((db) => {
+      db.exec('BEGIN')
+      try {
+        const records = readSqliteTransferRecords(db)
+        const clock = db.prepare("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AS now").get() as { now: string }
+        const snapshot = prepareTransferRecords(records, Date.parse(clock.now))
+        db.exec('COMMIT')
+        return snapshot
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+    })
   }
 
   async loadSnapshot(): Promise<ApplicationSnapshot> {
@@ -414,6 +500,553 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     if (current.token !== fence.token || current.fencingEpoch !== fence.fencingEpoch) {
       throw new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'Esta conversa possui outro writer ativo.')
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Task ledger. Each mutation runs inside one atomic write (writeDbAtomically
+  // serialises writers in-process), and every state change appends its
+  // task_events row in that same write.
+  // -------------------------------------------------------------------------
+
+  async createTask(input: TaskCreate): Promise<Task> {
+    const create = normalizeTaskCreate(input)
+    const task = this.write((db) => {
+      if (create.parentTaskId && !this.taskRow(db, create.parentTaskId)) {
+        throw new StorageError('INVALID_PERSISTED_DATA', `Tarefa-mãe ${create.parentTaskId} não existe.`)
+      }
+      if (this.taskRow(db, create.id)) {
+        throw new StorageError('REVISION_CONFLICT', `Tarefa ${create.id} já existe.`)
+      }
+      const now = new Date().toISOString()
+      db.prepare(
+        `INSERT INTO tasks(${TASK_COLUMNS})
+         VALUES(?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, 0, ?, NULL, NULL, 0, 1, ?, ?)`
+      ).run(
+        create.id,
+        create.conversationId,
+        create.projectCwd,
+        create.title,
+        create.goal,
+        JSON.stringify(create.acceptance),
+        JSON.stringify(create.writeScope),
+        create.parentTaskId,
+        create.maxAttempts,
+        now,
+        now
+      )
+      this.insertTaskEvent(db, create.id, null, 'created', { title: create.title }, now)
+      return taskFromRow(this.requireTaskRow(db, create.id))
+    })
+    this.emit('task', task.id, task.revision)
+    return task
+  }
+
+  async claimTask(agentId: string): Promise<TaskClaim | null> {
+    if (!agentId.trim()) throw new TypeError('agentId é obrigatório para reivindicar uma tarefa.')
+    const claim = this.write((db) => {
+      const now = new Date()
+      const nowIso = now.toISOString()
+      const row = decodeSqliteRecordRow(db
+        .prepare(
+          `SELECT ${TASK_SELECT_COLUMNS} FROM tasks
+           WHERE status = 'pending' AND attempts < max_attempts
+             AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+           ORDER BY created_at, id LIMIT 1`
+        )
+        .get(nowIso) as TaskRow | undefined)
+      if (!row) return null
+      const token = randomUUID()
+      const fencingEpoch = Number(row.fencing_epoch) + 1
+      const expiresAt = new Date(now.getTime() + TASK_LEASE_TTL_MS).toISOString()
+      db.prepare(
+        `UPDATE tasks SET lease_token = ?, lease_expires_at = ?, fencing_epoch = ?, owner_agent = ?,
+           attempts = attempts + 1, revision = revision + 1, updated_at = ?
+         WHERE id = ?`
+      ).run(token, expiresAt, fencingEpoch, agentId, nowIso, row.id)
+      this.insertTaskEvent(db, row.id, null, 'claimed', { agent: agentId, fencingEpoch }, nowIso)
+      return { task: taskFromRow(this.requireTaskRow(db, row.id)), token, fencingEpoch, expiresAt }
+    })
+    if (claim) this.emit('task', claim.task.id, claim.task.revision)
+    return claim
+  }
+
+  async renewTaskLease(taskId: string, fence: LeaseFence): Promise<TaskClaim> {
+    return this.write((db) => {
+      const row = this.requireTaskRow(db, taskId)
+      const task = taskFromRow(row)
+      assertTaskFence(task, fence, this.taskLeaseLive(row))
+      const now = Date.now()
+      const expiresAt = new Date(now + TASK_LEASE_TTL_MS).toISOString()
+      db.prepare('UPDATE tasks SET lease_expires_at = ?, updated_at = ? WHERE id = ?').run(
+        expiresAt,
+        new Date(now).toISOString(),
+        taskId
+      )
+      return { task: taskFromRow(this.requireTaskRow(db, taskId)), token: fence.token, fencingEpoch: fence.fencingEpoch, expiresAt }
+    })
+  }
+
+  async transitionTask(input: TaskTransition): Promise<Task> {
+    const task = this.write((db) => {
+      const row = this.requireTaskRow(db, input.taskId)
+      const current = taskFromRow(row)
+      assertTaskFence(current, input.fence, this.taskLeaseLive(row))
+      assertTaskTransition(current, input.from, input.to)
+      const now = new Date().toISOString()
+      const releaseLease = TERMINAL_TASK_STATUSES.has(input.to)
+      const ownerAgent = input.to === 'pending' ? null : input.agent ?? current.ownerAgent
+      db.prepare(
+        `UPDATE tasks SET status = ?, owner_agent = ?, revision = revision + 1, updated_at = ?,
+           lease_expires_at = CASE WHEN ? THEN ? ELSE lease_expires_at END
+         WHERE id = ?`
+      ).run(input.to, ownerAgent, now, releaseLease ? 1 : 0, now, input.taskId)
+      this.insertTaskEvent(
+        db,
+        input.taskId,
+        null,
+        'transition',
+        {
+          from: input.from,
+          to: input.to,
+          ...(input.agent ? { agent: input.agent } : {}),
+          ...(input.reason ? { reason: input.reason } : {})
+        },
+        now
+      )
+      return taskFromRow(this.requireTaskRow(db, input.taskId))
+    })
+    this.emit('task', task.id, task.revision)
+    return task
+  }
+
+  async appendTaskStep(input: TaskStepAppend): Promise<TaskStep> {
+    assertStepKind(input.kind)
+    const step = this.write((db) => {
+      const row = this.requireTaskRow(db, input.taskId)
+      assertTaskFence(taskFromRow(row), input.fence, this.taskLeaseLive(row))
+      const { seq } = db
+        .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM task_steps WHERE task_id = ?')
+        .get(input.taskId) as { seq: number | bigint }
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      db.prepare(
+        `INSERT INTO task_steps(${STEP_COLUMNS})
+         VALUES(?, ?, ?, ?, 'running', ?, ?, ?, NULL, NULL, 1, ?, ?)`
+      ).run(id, input.taskId, Number(seq), input.kind, input.agent ?? null, input.sdkSessionId ?? null, now, now, now)
+      this.insertTaskEvent(
+        db,
+        input.taskId,
+        id,
+        'step_started',
+        { kind: input.kind, seq: Number(seq), ...(input.agent ? { agent: input.agent } : {}) },
+        now
+      )
+      return taskStepFromRow(this.requireStepRow(db, id))
+    })
+    this.emit('task', step.taskId)
+    return step
+  }
+
+  async finishTaskStep(input: TaskStepFinish): Promise<TaskStep> {
+    assertStepFinalStatus(input.status)
+    const step = this.write((db) => {
+      const stepRow = this.requireStepRow(db, input.stepId)
+      const taskRow = this.requireTaskRow(db, stepRow.task_id)
+      assertTaskFence(taskFromRow(taskRow), input.fence, this.taskLeaseLive(taskRow))
+      if (stepRow.finished_at) {
+        throw new StorageError('TASK_INVALID_TRANSITION', `Etapa ${input.stepId} já foi finalizada.`)
+      }
+      const now = new Date().toISOString()
+      db.prepare(
+        `UPDATE task_steps SET status = ?, finished_at = ?, error_json = ?, revision = revision + 1, updated_at = ?
+         WHERE id = ?`
+      ).run(input.status, now, input.error ? JSON.stringify(input.error) : null, now, input.stepId)
+      this.insertTaskEvent(
+        db,
+        stepRow.task_id,
+        input.stepId,
+        'step_finished',
+        { kind: stepRow.kind, seq: Number(stepRow.seq), status: input.status, ...(input.error ? { error: input.error } : {}) },
+        now
+      )
+      return taskStepFromRow(this.requireStepRow(db, input.stepId))
+    })
+    this.emit('task', step.taskId)
+    return step
+  }
+
+  async addTaskDeliverable(input: TaskDeliverableAdd): Promise<TaskDeliverable> {
+    assertDeliverableKind(input.kind)
+    if (!input.summary.trim()) throw new StorageError('INVALID_PERSISTED_DATA', 'Entrega precisa de resumo.')
+    const deliverable = this.write((db) => {
+      const taskRow = this.requireTaskRow(db, input.taskId)
+      assertTaskFence(taskFromRow(taskRow), input.fence, this.taskLeaseLive(taskRow))
+      if (input.stepId) {
+        const stepRow = this.stepRow(db, input.stepId)
+        if (!stepRow || stepRow.task_id !== input.taskId) {
+          throw new StorageError('INVALID_PERSISTED_DATA', `Etapa ${input.stepId} não pertence à tarefa ${input.taskId}.`)
+        }
+      }
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      db.prepare(
+        `INSERT INTO task_deliverables(${DELIVERABLE_COLUMNS})
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+      ).run(
+        id,
+        input.taskId,
+        input.stepId ?? null,
+        input.kind,
+        input.summary,
+        input.payloadPath ?? null,
+        input.payloadHash ?? null,
+        input.verified ? 1 : 0,
+        input.verifiedBy ?? null,
+        now,
+        now
+      )
+      this.insertTaskEvent(
+        db,
+        input.taskId,
+        input.stepId ?? null,
+        'deliverable_added',
+        { deliverableId: id, kind: input.kind, summary: input.summary },
+        now
+      )
+      const row = db
+        .prepare(`SELECT ${DELIVERABLE_SELECT_COLUMNS} FROM task_deliverables WHERE id = ?`)
+        .get(id) as unknown as TaskDeliverableRow
+      return taskDeliverableFromRow(decodeSqliteRecordRow(row))
+    })
+    this.emit('task', deliverable.taskId)
+    return deliverable
+  }
+
+  async appendTaskEvent(input: TaskEventAppend): Promise<TaskEvent> {
+    if (!input.kind.trim()) throw new StorageError('INVALID_PERSISTED_DATA', 'Evento precisa de tipo.')
+    const event = this.write((db) => {
+      this.requireTaskRow(db, input.taskId)
+      if (input.stepId != null) {
+        const step = this.stepRow(db, input.stepId)
+        if (!step || step.task_id !== input.taskId) {
+          throw new StorageError('INVALID_PERSISTED_DATA', `Etapa ${input.stepId} não pertence à tarefa ${input.taskId}.`)
+        }
+      }
+      return this.insertTaskEvent(db, input.taskId, input.stepId ?? null, input.kind, input.data ?? {}, new Date().toISOString())
+    })
+    this.emit('task', event.taskId)
+    return event
+  }
+
+  async getTask(taskId: string): Promise<Task | null> {
+    return this.read((db) => {
+      const row = this.taskRow(db, taskId)
+      return row ? taskFromRow(row) : null
+    })
+  }
+
+  async listTasks(query?: TaskQuery): Promise<Task[]> {
+    return this.read((db) => {
+      if (query?.ids && query.ids.length === 0) return []
+      const clauses: string[] = []
+      const params: unknown[] = []
+      if (query?.status !== undefined) {
+        const statuses = Array.isArray(query.status) ? query.status : [query.status]
+        if (statuses.length === 0) return []
+        clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`)
+        params.push(...statuses)
+      }
+      if (query?.projectCwd !== undefined) {
+        clauses.push('project_cwd = ?')
+        params.push(query.projectCwd)
+      }
+      if (query?.conversationId !== undefined) {
+        clauses.push('conversation_id = ?')
+        params.push(query.conversationId)
+      }
+      if (query?.parentTaskId !== undefined) {
+        if (query.parentTaskId === null) clauses.push('parent_task_id IS NULL')
+        else {
+          clauses.push('parent_task_id = ?')
+          params.push(query.parentTaskId)
+        }
+      }
+      if (query?.ids) {
+        clauses.push(`id IN (${query.ids.map(() => '?').join(', ')})`)
+        params.push(...query.ids)
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+      const limit = query?.limit !== undefined ? ` LIMIT ${Math.max(1, Math.floor(query.limit))}` : ''
+      const rows = db
+        .prepare(`SELECT ${TASK_SELECT_COLUMNS} FROM tasks ${where} ORDER BY created_at, id${limit}`)
+        .all(...(params as never[])) as unknown as TaskRow[]
+      return rows.map((row) => taskFromRow(decodeSqliteRecordRow(row)))
+    })
+  }
+
+  async listTaskSteps(taskId: string): Promise<TaskStep[]> {
+    return this.read((db) => {
+      const rows = db
+        .prepare(`SELECT ${STEP_SELECT_COLUMNS} FROM task_steps WHERE task_id = ? ORDER BY seq`)
+        .all(taskId) as unknown as TaskStepRow[]
+      return rows.map((row) => taskStepFromRow(decodeSqliteRecordRow(row)))
+    })
+  }
+
+  async listTaskDeliverables(taskId: string): Promise<TaskDeliverable[]> {
+    return this.read((db) => {
+      const rows = db
+        .prepare(`SELECT ${DELIVERABLE_SELECT_COLUMNS} FROM task_deliverables WHERE task_id = ? ORDER BY created_at, rowid`)
+        .all(taskId) as unknown as TaskDeliverableRow[]
+      return rows.map((row) => taskDeliverableFromRow(decodeSqliteRecordRow(row)))
+    })
+  }
+
+  async listTaskEvents(taskId: string): Promise<TaskEvent[]> {
+    return this.read((db) => {
+      const rows = db
+        .prepare(`SELECT ${EVENT_SELECT_COLUMNS} FROM task_events WHERE task_id = ? ORDER BY rowid`)
+        .all(taskId) as unknown as TaskEventRow[]
+      return rows.map((row) => taskEventFromRow(decodeSqliteRecordRow(row)))
+    })
+  }
+
+  private taskRow(db: DatabaseSync, id: string): TaskRow | undefined {
+    return decodeSqliteRecordRow(db.prepare(`SELECT ${TASK_SELECT_COLUMNS} FROM tasks WHERE id = ?`).get(id) as TaskRow | undefined)
+  }
+
+  private requireTaskRow(db: DatabaseSync, id: string): TaskRow {
+    const row = this.taskRow(db, id)
+    if (!row) throw new StorageError('INVALID_PERSISTED_DATA', `Tarefa ${id} não existe.`)
+    return row
+  }
+
+  private stepRow(db: DatabaseSync, id: string): TaskStepRow | undefined {
+    return decodeSqliteRecordRow(db.prepare(`SELECT ${STEP_SELECT_COLUMNS} FROM task_steps WHERE id = ?`).get(id) as TaskStepRow | undefined)
+  }
+
+  private requireStepRow(db: DatabaseSync, id: string): TaskStepRow {
+    const row = this.stepRow(db, id)
+    if (!row) throw new StorageError('INVALID_PERSISTED_DATA', `Etapa ${id} não existe.`)
+    return row
+  }
+
+  private taskLeaseLive(row: TaskRow): boolean {
+    return row.lease_expires_at !== null && Date.parse(String(row.lease_expires_at)) > Date.now()
+  }
+
+  private insertTaskEvent(
+    db: DatabaseSync,
+    taskId: string,
+    stepId: string | null,
+    kind: string,
+    data: Record<string, unknown>,
+    at: string
+  ): TaskEvent {
+    const id = randomUUID()
+    const dataJson = JSON.stringify(normalizeJson(data))
+    db.prepare(`INSERT INTO task_events(${EVENT_COLUMNS}) VALUES(?, ?, ?, ?, ?, ?)`).run(
+      id,
+      taskId,
+      stepId,
+      at,
+      kind,
+      dataJson
+    )
+    return { id, taskId, stepId, at, kind, data: JSON.parse(dataJson) as Record<string, unknown> }
+  }
+
+  // -------------------------------------------------------------------------
+  // Memory service. `memory_entries` is keyed by rel_path with revision CAS;
+  // `memory_proposals` is the queue the worker claims with a lease.
+  // -------------------------------------------------------------------------
+
+  async listMemoryEntries(query?: { status?: MemoryEntryStatus }): Promise<MemoryEntry[]> {
+    return this.read((db) => {
+      const where = query?.status ? 'WHERE status = ?' : ''
+      const params = query?.status ? [query.status] : []
+      const rows = db
+        .prepare(`SELECT ${MEMORY_ENTRY_SELECT_COLUMNS} FROM memory_entries ${where} ORDER BY rel_path`)
+        .all(...(params as never[])) as unknown as MemoryEntryRow[]
+      return rows.map((row) => memoryEntryFromRow(decodeSqliteRecordRow(row)))
+    })
+  }
+
+  async getMemoryEntryByPath(relPath: string): Promise<MemoryEntry | null> {
+    return this.read((db) => {
+      const row = this.memoryEntryRow(db, relPath)
+      return row ? memoryEntryFromRow(row) : null
+    })
+  }
+
+  async writeMemoryEntry(write: MemoryEntryWrite): Promise<MemoryEntry> {
+    const entry = this.write((db) => this.writeMemoryEntryInDb(db, write))
+    this.emit('memory', entry.relPath, entry.revision)
+    return entry
+  }
+
+  async enqueueMemoryProposal(input: MemoryProposalCreate): Promise<MemoryProposal> {
+    return this.write((db) => {
+      const id = input.id?.trim() || newMemoryId()
+      const now = new Date().toISOString()
+      db.prepare(
+        `INSERT INTO memory_proposals(${MEMORY_PROPOSAL_COLUMNS})
+         VALUES(?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, 0, NULL, NULL, ?, ?)`
+      ).run(
+        id,
+        input.op,
+        input.relPath,
+        input.title ?? null,
+        input.hook ?? null,
+        input.body ?? null,
+        input.scope,
+        input.projectCwd ?? null,
+        input.domain ?? null,
+        input.originConversationId ?? null,
+        input.originMessageId ?? null,
+        input.originAgent ?? null,
+        input.proposedBy,
+        input.expectedRevision ?? null,
+        now,
+        now
+      )
+      return memoryProposalFromRow(this.requireMemoryProposalRow(db, id))
+    })
+  }
+
+  async claimMemoryProposal(): Promise<MemoryProposalClaim | null> {
+    return this.write((db) => {
+      const now = new Date()
+      const nowIso = now.toISOString()
+      const row = decodeSqliteRecordRow(db
+        .prepare(
+          `SELECT ${MEMORY_PROPOSAL_SELECT_COLUMNS} FROM memory_proposals
+           WHERE status = 'pending' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+           ORDER BY created_at, id LIMIT 1`
+        )
+        .get(nowIso) as MemoryProposalRow | undefined)
+      if (!row) return null
+      const token = randomUUID()
+      const expiresAt = new Date(now.getTime() + MEMORY_PROPOSAL_LEASE_TTL_MS).toISOString()
+      db.prepare(
+        `UPDATE memory_proposals SET lease_token = ?, lease_expires_at = ?, attempts = attempts + 1, updated_at = ?
+         WHERE id = ?`
+      ).run(token, expiresAt, nowIso, row.id)
+      return { proposal: memoryProposalFromRow(this.requireMemoryProposalRow(db, row.id)), token, expiresAt }
+    })
+  }
+
+  async settleMemoryProposal(input: MemoryProposalSettle): Promise<MemoryProposal> {
+    let written: MemoryEntry | null = null
+    const proposal = this.write((db) => {
+      const current = memoryProposalFromRow(this.requireMemoryProposalRow(db, input.proposalId))
+      assertProposalLease(current, input.token, Date.now())
+      const now = new Date().toISOString()
+      if (input.outcome === 'applied') {
+        assertMemoryProposalApplication(current, input.entry)
+        written = this.writeMemoryEntryInDb(db, input.entry)
+        const entryId = written.id
+        db.prepare(
+          `UPDATE memory_proposals SET status = 'applied', entry_id = ?, reason = NULL, lease_token = NULL,
+             lease_expires_at = NULL, updated_at = ? WHERE id = ?`
+        ).run(entryId ?? null, now, input.proposalId)
+      } else if (input.outcome === 'requeue') {
+        db.prepare(
+          `UPDATE memory_proposals SET reason = ?, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+           WHERE id = ?`
+        ).run(input.reason, now, input.proposalId)
+      } else {
+        db.prepare(
+          `UPDATE memory_proposals SET status = ?, reason = ?, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+           WHERE id = ?`
+        ).run(input.outcome, input.reason, now, input.proposalId)
+      }
+      return memoryProposalFromRow(this.requireMemoryProposalRow(db, input.proposalId))
+    })
+    if (written) this.emit('memory', (written as MemoryEntry).relPath, (written as MemoryEntry).revision)
+    return proposal
+  }
+
+  async listMemoryProposals(query?: MemoryProposalQuery): Promise<MemoryProposal[]> {
+    return this.read((db) => {
+      const params: unknown[] = []
+      let where = ''
+      if (query?.status !== undefined) {
+        const statuses = Array.isArray(query.status) ? query.status : [query.status]
+        if (statuses.length === 0) return []
+        where = `WHERE status IN (${statuses.map(() => '?').join(', ')})`
+        params.push(...statuses)
+      }
+      const limit = query?.limit !== undefined ? ` LIMIT ${Math.max(1, Math.floor(query.limit))}` : ''
+      const rows = db
+        .prepare(`SELECT ${MEMORY_PROPOSAL_SELECT_COLUMNS} FROM memory_proposals ${where} ORDER BY created_at, id${limit}`)
+        .all(...(params as never[])) as unknown as MemoryProposalRow[]
+      return rows.map((row) => memoryProposalFromRow(decodeSqliteRecordRow(row)))
+    })
+  }
+
+  private memoryEntryRow(db: DatabaseSync, relPath: string): MemoryEntryRow | undefined {
+    return decodeSqliteRecordRow(db.prepare(`SELECT ${MEMORY_ENTRY_SELECT_COLUMNS} FROM memory_entries WHERE rel_path = ?`).get(relPath) as MemoryEntryRow | undefined)
+  }
+
+  private requireMemoryProposalRow(db: DatabaseSync, id: string): MemoryProposalRow {
+    const row = decodeSqliteRecordRow(db.prepare(`SELECT ${MEMORY_PROPOSAL_SELECT_COLUMNS} FROM memory_proposals WHERE id = ?`).get(id) as MemoryProposalRow | undefined)
+    if (!row) throw new StorageError('INVALID_PERSISTED_DATA', `Proposta de memória ${id} não existe.`)
+    return row
+  }
+
+  private writeMemoryEntryInDb(db: DatabaseSync, write: MemoryEntryWrite): MemoryEntry {
+    const next = normalizeMemoryEntryWrite(write)
+    const current = this.memoryEntryRow(db, next.relPath)
+    this.assertExpectedRevision(next.expectedRevision, current ? Number(current.revision) : undefined, `Memória ${next.relPath}`)
+    const now = new Date().toISOString()
+    if (!current) {
+      const id = newMemoryId()
+      db.prepare(
+        `INSERT INTO memory_entries(${MEMORY_ENTRY_COLUMNS})
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id,
+        next.relPath,
+        next.title,
+        next.hook,
+        next.scope,
+        next.projectCwd,
+        next.domain,
+        next.body,
+        next.bodyHash,
+        next.status,
+        next.originConversationId,
+        next.originMessageId,
+        next.originAgent,
+        next.supersedesId,
+        now,
+        now
+      )
+    } else {
+      db.prepare(
+        `UPDATE memory_entries SET title = ?, hook = ?, scope = ?, project_cwd = ?, domain = ?, body = ?, body_hash = ?,
+           revision = revision + 1, status = ?, origin_conversation_id = ?, origin_message_id = ?, origin_agent = ?,
+           supersedes_id = ?, updated_at = ?
+         WHERE rel_path = ?`
+      ).run(
+        next.title,
+        next.hook,
+        next.scope,
+        next.projectCwd,
+        next.domain,
+        next.body,
+        next.bodyHash,
+        next.status,
+        next.originConversationId,
+        next.originMessageId,
+        next.originAgent,
+        next.supersedesId,
+        now,
+        next.relPath
+      )
+    }
+    return memoryEntryFromRow(this.memoryEntryRow(db, next.relPath)!)
   }
 
   subscribe(handler: RepositoryChangeHandler): () => void {

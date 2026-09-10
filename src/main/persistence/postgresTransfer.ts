@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { foldSessionSummary, type SessionStoreEntry, type SessionSummaryEntry } from '@anthropic-ai/claude-agent-sdk'
 import type { Pool, PoolClient } from 'pg'
-import { hashAggregate, hashJson, hashText, normalizeJson, type JsonValue } from './hashes'
+import { hashAggregate, hashJson, normalizeJson, type JsonValue } from './hashes'
 import { writeDbAtomically } from '../atomicDb'
-import { SQLITE_V2_SCHEMA } from './sqliteSchema'
+import { recordSqliteMigrations, SQLITE_SCHEMA } from './sqliteSchema'
 import { importSessions, readSessions, type SessionBundle } from './postgresSessionTransfer'
 import { attachProjectIdentityForMigration } from './projectIdentity'
 import { decodePostgresJson, encodePostgresJson, encodePostgresText } from './postgresEncoding'
@@ -15,6 +15,10 @@ import type {
   VersionedKv
 } from './types'
 import { StorageError } from './types'
+import {
+  importPostgresTransferRecords, insertSqliteTransferRecords, lockPostgresTransferRecords,
+  readSqliteTransferRecords, transferRecordItems, type TransferRecords
+} from './transferRecords'
 
 interface ImportedItem {
   entity: string
@@ -252,9 +256,10 @@ export async function importRepositoryToPostgres(
   installationId: string,
   transitionId: string
 ): Promise<{ migrationRunId: string; sourceHash: string; targetHash: string }> {
-  const [snapshot, rawConversations] = await Promise.all([
+  const [snapshot, rawConversations, records] = await Promise.all([
     source.loadSnapshot(),
-    source.loadConversations({ includeDeleted: true })
+    source.loadConversations({ includeDeleted: true }),
+    source.loadTransferRecords()
   ])
   const conversations = await Promise.all(rawConversations.map(async (entry) => ({
     ...entry,
@@ -266,6 +271,7 @@ export async function importRepositoryToPostgres(
   // by safeStorage), so this obsolete blob must never cross into PostgreSQL.
   const transferableKv = snapshot.kv.filter((entry) => entry.key !== 'config')
   const sourceItems: ImportedItem[] = [
+    ...transferRecordItems(records),
     ...transferableKv.map((entry) => ({ entity: `${entry.scope}-kv`, id: entry.key, contentHash: entry.contentHash })),
     ...conversations.map((entry) => ({ entity: 'conversation', id: entry.id, contentHash: entry.contentHash })),
     ...sessions.map((session) => ({
@@ -278,12 +284,18 @@ export async function importRepositoryToPostgres(
   const client = await pool.connect()
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE')
+    // Acquire all record locks before the first SELECT establishes the MVCC
+    // snapshot; otherwise a writer could commit while we wait on a later lock.
+    await lockPostgresTransferRecords(client)
     const prior = await client.query<{ migration_run_id: string; source_hash: string; target_hash: string }>(
       `SELECT migration_run_id, source_hash, target_hash FROM migration_runs
        WHERE transition_id = $1 AND direction = 'sqlite-to-postgres' AND status = 'committed'`,
       [transitionId]
     )
     if (prior.rows[0]) {
+      if (prior.rows[0].source_hash !== sourceHash) {
+        throw new StorageError('MIGRATION_VERIFICATION_FAILED', 'O conteúdo da origem mudou desde a ativação confirmada; use uma nova transição.')
+      }
       await client.query('ROLLBACK')
       return {
         migrationRunId: prior.rows[0].migration_run_id,
@@ -302,6 +314,7 @@ export async function importRepositoryToPostgres(
     await importConversations(client, conversations, installationId, imported)
     imported.push(...await importSessions(client, sessions, installationId))
     await verifyItems(client, imported, installationId)
+    imported.push(...await importPostgresTransferRecords(client, records, installationId))
     for (const item of imported) {
       await client.query(
         `INSERT INTO migration_items(migration_run_id, entity, entity_id, content_hash)
@@ -334,8 +347,11 @@ export async function hasCommittedActivation(pool: Pool, transitionId: string): 
   return Boolean(result.rowCount)
 }
 
-export function snapshotHash(snapshot: ApplicationSnapshot): string {
+/** A full export hash requires the atomic task/memory records; accepting just
+ * the lightweight UI snapshot would silently omit durable data again. */
+export function snapshotHash(snapshot: ApplicationSnapshot, records: TransferRecords): string {
   return hashAggregate([
+    ...transferRecordItems(records),
     ...snapshot.kv.map((entry) => ({ entity: `${entry.scope}-kv`, id: entry.key, contentHash: entry.contentHash })),
     ...snapshot.conversations.map((entry) => ({
       entity: 'conversation',
@@ -349,16 +365,19 @@ export async function writeRepositoryToSqlite(
   source: PersistenceRepository,
   dbPath: string
 ): Promise<{ sourceHash: string; targetHash: string }> {
-  const [snapshot, conversations] = await Promise.all([
+  const [snapshot, conversations, records] = await Promise.all([
     source.loadSnapshot(),
-    source.loadConversations({ includeDeleted: true })
+    source.loadConversations({ includeDeleted: true }),
+    source.loadTransferRecords()
   ])
   const sessions = await readSessions(source, conversations)
   const sqliteConversations = conversations.map((entry) => ({
     ...entry,
     contentHash: hashJson(normalizeJson(entry.payload))
   }))
+  const recordItems = transferRecordItems(records)
   const sourceItems = [
+    ...recordItems,
     ...snapshot.kv.map((entry) => ({ entity: `${entry.scope}-kv`, id: entry.key, contentHash: entry.contentHash })),
     ...sqliteConversations.map((entry) => ({ entity: 'conversation', id: entry.id, contentHash: entry.contentHash })),
     ...sessions.map((session) => ({
@@ -369,14 +388,10 @@ export async function writeRepositoryToSqlite(
   ]
   const sourceHash = hashAggregate(sourceItems)
   writeDbAtomically(dbPath, (db) => {
-    db.exec(SQLITE_V2_SCHEMA)
+    db.exec(SQLITE_SCHEMA)
     db.exec('BEGIN IMMEDIATE')
     try {
-      const migration = db.prepare(
-        `INSERT INTO schema_migrations(version, name, checksum, applied_at)
-         VALUES(1, 'sqlite-v2-base', ?, ?)`
-      )
-      migration.run(hashText(SQLITE_V2_SCHEMA), new Date().toISOString())
+      recordSqliteMigrations(db, new Date().toISOString())
       const insertKv = db.prepare(
         `INSERT INTO persistent_kv_v2(scope, key, value_text, revision, content_hash, updated_at)
          VALUES(?, ?, ?, ?, ?, ?)`
@@ -434,6 +449,14 @@ export async function writeRepositoryToSqlite(
         }
         if (summary) insertSummary.run(session.conversationId, session.sessionId, summary.mtime, JSON.stringify(summary.data))
       }
+      insertSqliteTransferRecords(db, records)
+      // Verify actual row contents (not stored hashes) BEFORE atomic publication.
+      // A missing child, changed body, reordered event or active token must never
+      // replace an existing usable SQLite database.
+      const writtenRecordHash = hashAggregate(transferRecordItems(readSqliteTransferRecords(db)))
+      if (writtenRecordHash !== hashAggregate(recordItems)) {
+        throw new StorageError('MIGRATION_VERIFICATION_FAILED', 'Os registros de tarefas/memória do snapshot SQLite não conferem.')
+      }
       db.exec('COMMIT')
     } catch (error) {
       db.exec('ROLLBACK')
@@ -463,6 +486,7 @@ export async function writeRepositoryToSqlite(
       path.entries.push(JSON.parse(row.entry_json) as SessionStoreEntry)
     }
     targetHash = hashAggregate([
+      ...transferRecordItems(readSqliteTransferRecords(verifyDb)),
       ...kvRows.map((row) => ({ entity: `${row.scope}-kv`, id: row.key, contentHash: row.content_hash })),
       ...conversationRows.map((row) => ({ entity: 'conversation', id: row.id, contentHash: row.content_hash })),
       ...[...grouped].map(([id, paths]) => ({ entity: 'sdk-session', id, contentHash: hashJson(normalizeJson(paths)) }))

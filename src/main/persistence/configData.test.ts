@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { defaultAppConfig, mergeAppConfig, parseStoredAppConfig } from './configData'
 
 describe('configuração persistida', () => {
+  it('habilita o cofre por padrão e preserva a desativação explícita', () => {
+    expect(defaultAppConfig().secretVaultEnabled).toBe(true)
+    expect(parseStoredAppConfig('{}').secretVaultEnabled).toBe(true)
+    const disabled = mergeAppConfig(defaultAppConfig(), { secretVaultEnabled: false })
+    expect(parseStoredAppConfig(JSON.stringify(disabled)).secretVaultEnabled).toBe(false)
+    expect(mergeAppConfig(disabled, { skipPermissions: true }).secretVaultEnabled).toBe(false)
+    expect(() => mergeAppConfig(disabled, { secretVaultEnabled: 'true' })).toThrow()
+  })
+
   it('preenche campos ausentes e faz merge profundo dos grupos', () => {
     const parsed = parseStoredAppConfig(
       JSON.stringify({

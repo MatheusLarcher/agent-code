@@ -22,6 +22,7 @@ const FIELDS: Field[] = [
   { key: 'config.ollama.apiKey', sensitive: true, get: (c) => c.ollama.apiKey, patch: (v) => ({ ollama: { apiKey: v as string } as AppConfig['ollama'] }) },
   { key: 'config.skipPermissions', get: (c) => c.skipPermissions, patch: (v) => ({ skipPermissions: v as boolean }) },
   { key: 'config.windowsControlEnabled', get: (c) => c.windowsControlEnabled, patch: (v) => ({ windowsControlEnabled: v as boolean }) },
+  { key: 'config.secretVaultEnabled', get: (c) => c.secretVaultEnabled, patch: (v) => ({ secretVaultEnabled: v as boolean }) },
   { key: 'config.remoteToken', sensitive: true, get: (c) => c.remoteToken, patch: (v) => ({ remoteToken: v as string }) },
   { key: 'config.remoteEnabled', get: (c) => c.remoteEnabled, patch: (v) => ({ remoteEnabled: v as boolean }) }
 ]
