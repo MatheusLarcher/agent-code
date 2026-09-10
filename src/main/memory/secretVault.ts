@@ -5,6 +5,8 @@ import { constants, lstatSync, mkdirSync, openSync, closeSync, fstatSync, readFi
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path'
 import type { SecureStorageAdapter } from '../persistence/bootstrapStore'
 
+/** Nome do arquivo do cofre. Contrato com quem monta o caminho. */
+export const VAULT_FILENAME = 'secret-vault.json'
 const MAX_VALUE_BYTES = 64 * 1024
 const MAX_CIPHERTEXT_BYTES = 128 * 1024
 const MAX_FILE_BYTES = 4 * 1024 * 1024
@@ -29,11 +31,15 @@ export class SecretVaultError extends Error {
 }
 export interface SecretMetadata { name: string; createdAt: string; updatedAt: string }
 interface SecretRecord extends SecretMetadata { ciphertext: string }
-interface Envelope { version: 1; records: SecretRecord[] }
+/** v2 guarda a CHAVE junto dos segredos: os dois só valem em par, então
+ *  separá-los é o que faz uma migração perder a senha para sempre. */
+interface Envelope { version: 2; key: string; records: SecretRecord[] }
 export interface SecretVaultOptions {
   directory: string
   enabled: () => boolean
   secureStorage: SecureStorageAdapter
+  /** A chave em base64, gravada no mesmo envelope. Sem isto o cofre não persiste. */
+  keyMaterial?: () => string
   /** Receives only successful action/name pairs. Never pass secret values to audit sinks. */
   audit?: (event: { action: 'get' | 'put' | 'delete'; name: string }) => void
 }
@@ -75,7 +81,7 @@ export class SecretVault {
         options.directory.includes('\0') || typeof options.enabled !== 'function' ||
         !options.secureStorage) throw new SecretVaultError('INVALID_INPUT')
     this.directory = resolve(options.directory)
-    this.file = join(this.directory, 'secret-vault.json')
+    this.file = join(this.directory, VAULT_FILENAME)
     this.queueKey = process.platform === 'win32' ? this.directory.toLowerCase() : this.directory
   }
 
@@ -142,7 +148,7 @@ export class SecretVault {
       const data = this.load()
       const records = data.records.filter((record) => record.name !== name)
       if (records.length === data.records.length) return false
-      this.persist({ version: 1, records }, () => {})
+      this.persist({ ...data, records }, () => {})
       this.audit('delete', name)
       return true
     })
@@ -208,7 +214,7 @@ export class SecretVault {
   }
 
   private load(): Envelope {
-    if (!this.checkDirectories(false) || !this.targetExists()) return { version: 1, records: [] }
+    if (!this.checkDirectories(false) || !this.targetExists()) return this.emptyEnvelope()
     const fd = openSync(this.file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
     let text: string
     try {
@@ -219,7 +225,8 @@ export class SecretVault {
     } finally { closeSync(fd) }
     try {
       const data = JSON.parse(text) as Envelope
-      if (!data || data.version !== 1 || Object.keys(data).sort().join() !== 'records,version' ||
+      if (!data || data.version !== 2 || Object.keys(data).sort().join() !== 'key,records,version' ||
+          typeof data.key !== 'string' || Buffer.from(data.key, 'base64').length !== 32 ||
           !Array.isArray(data.records) || data.records.length > MAX_RECORDS) throw new Error()
       const names = new Set<string>()
       for (const record of data.records) {
@@ -237,7 +244,23 @@ export class SecretVault {
     } catch { throw new SecretVaultError('INVALID_DATA') }
   }
 
-  private persist(data: Envelope, authorize: () => void): void {
+  private emptyEnvelope(): Envelope {
+    return { version: 2, key: this.keyMaterial(), records: [] }
+  }
+
+  private keyMaterial(): string {
+    const material = this.options.keyMaterial?.()
+    // Sem chave não há como reabrir depois: recusar é preservar o dado.
+    if (typeof material !== 'string' || Buffer.from(material, 'base64').length !== 32) {
+      throw new SecretVaultError('UNAVAILABLE')
+    }
+    return material
+  }
+
+  private persist(input: Envelope, authorize: () => void): void {
+    // A chave vai SEMPRE junto: um envelope gravado sem ela seria um arquivo de
+    // senhas que ninguém mais consegue abrir.
+    const data: Envelope = { ...input, version: 2, key: this.keyMaterial() }
     const serialized = JSON.stringify(data)
     if (Buffer.byteLength(serialized) > MAX_FILE_BYTES) throw new SecretVaultError('INVALID_INPUT')
     authorize()

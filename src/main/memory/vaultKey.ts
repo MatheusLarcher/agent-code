@@ -1,52 +1,64 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import type { SecureStorageAdapter } from '../persistence/bootstrapStore'
-import { readPersistedKv, writePersistedKv } from '../persistence/kvFacade'
 
-/** Chave do cofre, no banco do Agent Code. */
-export const VAULT_KEY_ID = 'agentcode.secret-vault-key.v1'
 const ALGORITHM = 'aes-256-gcm'
 const KEY_BYTES = 32
 const IV_BYTES = 12
 const TAG_BYTES = 16
 
+export interface VaultCipher extends SecureStorageAdapter {
+  /** A chave em base64, para o cofre gravar no MESMO arquivo dos segredos. */
+  keyMaterial(): string
+}
+
 /**
- * Criptografia do cofre com chave própria, guardada no banco do Agent Code.
+ * Criptografia do cofre, com a chave guardada no PRÓPRIO arquivo do cofre.
  *
- * NÃO é o `safeStorage` do sistema operacional. A diferença importa e é uma
- * escolha explícita do usuário: aqui a chave mora ao lado do texto cifrado, então
- * quem tem o arquivo do banco consegue abrir as senhas. O que isto entrega é que
- * a senha nunca fica em texto puro no disco nem em backup/sincronização — não
- * proteção contra alguém com acesso à máquina.
+ * Por que junto e não no banco: a chave e o texto cifrado só valem em par. Em
+ * lugares diferentes, migrar leva um e deixa o outro, e perder um dos dois é
+ * perder a senha para sempre — não existe recuperação de AES sem chave. Num
+ * arquivo só, dentro da pasta de dados (do lado do banco e das memórias),
+ * copiar a pasta leva tudo, e uma corrupção do `agent-code.db` não alcança as
+ * senhas. O `agent-code.db` deste usuário já corrompeu 3× — não é hipótese.
  *
- * AES-256-GCM (não CBC): o GCM autentica, então texto cifrado adulterado falha
- * na abertura em vez de devolver lixo silenciosamente.
+ * O que isso protege: a senha nunca em texto puro no disco. O que NÃO protege:
+ * quem tem o arquivo tem a chave. Foi a escolha explícita do usuário, que
+ * preferiu não depender da criptografia do sistema operacional.
+ *
+ * AES-256-GCM (não CBC): autentica, então arquivo adulterado falha na abertura
+ * em vez de devolver lixo silenciosamente.
  */
-export function createDatabaseSecureStorage(): SecureStorageAdapter {
+export function createVaultCipher(vaultFile: string): VaultCipher {
+  let cached: Buffer | null = null
+
+  // Lê a chave do arquivo do cofre; gera uma nova só quando ainda não existe
+  // nenhuma. Síncrono de propósito: o cofre cifra dentro de um único turno de
+  // JS, e é isso que garante que o interruptor não muda no meio da gravação.
+  const key = (): Buffer => {
+    if (cached) return cached
+    cached = readKey(vaultFile) ?? randomBytes(KEY_BYTES)
+    return cached
+  }
+
   return {
-    // A chave é criada sob demanda; a única forma de não estar disponível é o
-    // banco estar offline, e aí o cofre precisa falhar fechado.
-    isEncryptionAvailable(): boolean {
-      try {
-        return vaultKey().length === KEY_BYTES
-      } catch {
-        return false
-      }
+    isEncryptionAvailable: () => {
+      try { return key().length === KEY_BYTES } catch { return false }
     },
-    encryptString(value: string): Buffer {
+    keyMaterial: () => key().toString('base64'),
+    encryptString: (value: string): Buffer => {
       const iv = randomBytes(IV_BYTES)
-      const cipher = createCipheriv(ALGORITHM, vaultKey(), iv)
+      const cipher = createCipheriv(ALGORITHM, key(), iv)
       const body = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
-      // iv | tag | corpo — tudo num buffer só, para caber no contrato do adaptador.
+      // iv | tag | corpo, num buffer só, para caber no contrato do adaptador.
       return Buffer.concat([iv, cipher.getAuthTag(), body])
     },
-    decryptString(value: Buffer): string {
+    decryptString: (value: Buffer): string => {
       if (!Buffer.isBuffer(value) || value.length <= IV_BYTES + TAG_BYTES) {
         throw new Error('Texto cifrado do cofre é inválido.')
       }
-      const iv = value.subarray(0, IV_BYTES)
-      const tag = value.subarray(IV_BYTES, IV_BYTES + TAG_BYTES)
-      const decipher = createDecipheriv(ALGORITHM, vaultKey(), iv)
-      decipher.setAuthTag(tag)
+      const decipher = createDecipheriv(ALGORITHM, key(), value.subarray(0, IV_BYTES))
+      decipher.setAuthTag(value.subarray(IV_BYTES, IV_BYTES + TAG_BYTES))
       return Buffer.concat([
         decipher.update(value.subarray(IV_BYTES + TAG_BYTES)),
         decipher.final()
@@ -55,40 +67,23 @@ export function createDatabaseSecureStorage(): SecureStorageAdapter {
   }
 }
 
-let cached: Buffer | null = null
-
 /**
- * Carrega a chave do banco (criando na primeira vez) e a mantém em memória.
+ * Lê só o campo `key` do arquivo do cofre.
  *
- * O cache não é otimização, é necessidade: o cofre cifra dentro de um único
- * turno de JS (é assim que ele garante que o interruptor não muda no meio da
- * gravação), e o KV é assíncrono. Então a chave é resolvida ANTES, aqui.
- *
- * Chamar de novo ao trocar a pasta de dados é obrigatório — a chave do banco
- * antigo cifraria segredo no banco novo, e o erro só apareceria depois, na
- * forma de uma senha que não abre mais.
+ * Arquivo ausente devolve null (cofre novo). Arquivo presente mas com chave
+ * ilegível/truncada TAMBÉM devolve null aqui — e é de propósito que isso não
+ * gere uma chave nova por cima: quem escreve o arquivo é o cofre, que valida o
+ * envelope inteiro e recusa dado inválido antes de gravar. Substituir a chave
+ * silenciosamente tornaria todo segredo já salvo indecifrável.
  */
-export async function loadVaultKey(): Promise<void> {
-  const stored = await readPersistedKv(VAULT_KEY_ID)
-  if (stored) {
-    const key = Buffer.from(stored, 'base64')
-    // Chave corrompida/truncada: gerar outra por cima tornaria todo segredo já
-    // salvo indecifrável sem avisar. Melhor recusar e deixar o erro aparecer.
-    if (key.length !== KEY_BYTES) throw new Error('Chave do cofre inválida no banco.')
-    cached = key
-    return
+function readKey(vaultFile: string): Buffer | null {
+  let parsed: { key?: unknown }
+  try {
+    parsed = JSON.parse(readFileSync(vaultFile, 'utf8')) as { key?: unknown }
+  } catch {
+    return null // ausente ou ilegível: o cofre trata o envelope inválido.
   }
-  const key = randomBytes(KEY_BYTES)
-  await writePersistedKv(VAULT_KEY_ID, key.toString('base64'))
-  cached = key
-}
-
-/** Esquece a chave carregada (troca de pasta de dados / backend offline). */
-export function forgetVaultKey(): void {
-  cached = null
-}
-
-function vaultKey(): Buffer {
-  if (!cached) throw new Error('Chave do cofre não carregada.')
-  return cached
+  if (typeof parsed?.key !== 'string') return null
+  const key = Buffer.from(parsed.key, 'base64')
+  return key.length === KEY_BYTES ? key : null
 }

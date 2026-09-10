@@ -64,21 +64,13 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
     keys: ['codexAuth']
   },
   {
+    // Chave E senhas no mesmo arquivo, dentro da pasta de dados: separá-los
+    // faria uma migração levar um e deixar o outro, e sem o par não há resgate.
     id: 'secret-vault',
     owner: 'src/main/memory/secretVault.ts',
     surface: 'filesystem',
     postgresScope: 'local-only',
     authoritativeInPostgresMode: 'filesystem'
-  },
-  {
-    // A chave que abre o cofre. Fica no banco (não no keychain do SO) por
-    // escolha do usuário; o texto cifrado continua sendo arquivo local.
-    id: 'secret-vault-key',
-    owner: 'src/main/memory/vaultKey.ts',
-    surface: 'main-kv',
-    postgresScope: 'device',
-    authoritativeInPostgresMode: 'postgres',
-    keys: ['agentcode.secret-vault-key.v1']
   },
   {
     id: 'memory-curator-state',

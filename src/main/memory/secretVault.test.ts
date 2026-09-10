@@ -11,6 +11,10 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, renameSync: vi.fn(actual.renameSync), writeFileSync: vi.fn(actual.writeFileSync) }
 })
 
+/** Chave de teste: o cofre agora grava a chave no mesmo envelope. */
+const TEST_KEY = Buffer.alloc(32, 7).toString('base64')
+const keyMaterial = (): string => TEST_KEY
+
 const VALUE = 'isolated-test-credential-12345'
 function fakeCrypto(): SecureStorageAdapter {
   return {
@@ -41,7 +45,7 @@ describe('SecretVault (isolated encrypted device file)', () => {
     enabled = true
     crypto = fakeCrypto()
     audit = vi.fn()
-    vault = new SecretVault({ directory, enabled: () => enabled, secureStorage: crypto, audit })
+    vault = new SecretVault({ directory, enabled: () => enabled, secureStorage: crypto, audit , keyMaterial })
   })
   afterEach(async () => { await rm(root, { recursive: true, force: true }) })
 
@@ -55,7 +59,7 @@ describe('SecretVault (isolated encrypted device file)', () => {
     const ciphertext = JSON.parse(text).records[0].ciphertext
     expect(Buffer.from(ciphertext, 'base64').toString()).not.toContain(VALUE)
     expect(await readdir(directory)).toEqual(['secret-vault.json'])
-    const reopened = new SecretVault({ directory, enabled: () => true, secureStorage: crypto })
+    const reopened = new SecretVault({ directory, enabled: () => true, secureStorage: crypto , keyMaterial })
     expect(await reopened.get('service.key')).toBe(VALUE)
   })
 
@@ -156,7 +160,7 @@ describe('SecretVault (isolated encrypted device file)', () => {
   })
 
   it('serializes concurrent writes across instances of the same root', async () => {
-    const second = new SecretVault({ directory: join(directory, '.'), enabled: () => true, secureStorage: crypto })
+    const second = new SecretVault({ directory: join(directory, '.'), enabled: () => true, secureStorage: crypto , keyMaterial })
     await Promise.all(Array.from({ length: 40 }, (_, i) =>
       (i % 2 ? vault : second).put(`key.${i}`, `value-${i}`)))
     expect(await vault.listMetadataForManagement()).toHaveLength(40)
@@ -182,7 +186,7 @@ describe('SecretVault (isolated encrypted device file)', () => {
   })
 
   it('requires an absolute directory and an enabled callback', () => {
-    expect(() => new SecretVault({ directory: 'relative', enabled: () => true, secureStorage: crypto }))
+    expect(() => new SecretVault({ directory: 'relative', enabled: () => true, secureStorage: crypto , keyMaterial }))
       .toThrow(SecretVaultError)
     expect(() => new SecretVault({ directory, secureStorage: crypto } as never)).toThrow(SecretVaultError)
   })
@@ -283,7 +287,7 @@ describe('SecretVault (isolated encrypted device file)', () => {
     const real = join(root, 'real')
     await mkdir(real)
     await symlink(real, directory, process.platform === 'win32' ? 'junction' : 'dir')
-    const nested = new SecretVault({ directory: join(directory, 'nested'), enabled: () => true, secureStorage: crypto })
+    const nested = new SecretVault({ directory: join(directory, 'nested'), enabled: () => true, secureStorage: crypto , keyMaterial })
     await expect(nested.put('key', VALUE)).rejects.toMatchObject({ code: 'UNSAFE_PATH' })
     await expect(nested.get('key')).rejects.toMatchObject({ code: 'UNSAFE_PATH' })
     expect(await readdir(real)).toEqual([])

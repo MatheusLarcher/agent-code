@@ -1,9 +1,10 @@
+import { join } from 'node:path'
 import { loadConfig } from '../config'
 import { getCacheInfo } from '../store'
 import type { MemoryRepository } from '../persistence/types'
 import { MemoryService } from './memoryService'
-import { SecretVault, type SecretMetadata } from './secretVault'
-import { createDatabaseSecureStorage } from './vaultKey'
+import { SecretVault, VAULT_FILENAME, type SecretMetadata } from './secretVault'
+import { createVaultCipher, type VaultCipher } from './vaultKey'
 import type { SecretSink } from './memorySecrets'
 
 /**
@@ -18,14 +19,16 @@ import type { SecretSink } from './memorySecrets'
 let service: MemoryService | null = null
 let vault: SecretVault | null = null
 let memoriesDir: string | null = null
-let secureStorage: SecretVaultDeps['secureStorage'] | null = null
+let cipher: VaultCipher | null = null
 let vaultDir: string | null = null
 
 export interface SecretVaultDeps {
-  /** Absolute, device-local directory. Never the cache folder the user can move. */
+  /**
+   * Pasta do cofre. Fica DENTRO da pasta de dados, do lado do `agent-code.db` e
+   * das memórias: é a unidade que o usuário move e faz backup, e é o que faz a
+   * senha viajar junto em vez de ficar para trás numa migração.
+   */
   directory: string
-  /** Só os testes injetam; em produção a chave vem do banco do Agent Code. */
-  secureStorage?: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
 }
 
 /** Live read of the user's switch. Checked per operation, never cached. */
@@ -36,13 +39,15 @@ export function secretVaultEnabled(): boolean {
 /**
  * Called once at startup, before any session can ask for a secret.
  *
- * A criptografia usa uma chave do PRÓPRIO banco do Agent Code
- * (`createDatabaseSecureStorage`), não o `safeStorage` do sistema. `loadVaultKey`
- * precisa ter rodado antes: o cofre cifra de forma síncrona e o banco é assíncrono.
+ * A criptografia usa uma chave própria guardada no MESMO arquivo dos segredos
+ * (`vaultKey.ts`), não o `safeStorage` do sistema nem o banco: chave e texto
+ * cifrado só valem em par, e separá-los é o que faz uma migração perder tudo.
  */
 export function configureSecretVault(deps: SecretVaultDeps | null): void {
-  secureStorage = deps?.secureStorage ?? createDatabaseSecureStorage()
   vaultDir = deps?.directory ?? null
+  // A chave mora no próprio arquivo do cofre, então o cifrador precisa saber
+  // qual é o arquivo — e não há nada assíncrono para esperar no boot.
+  cipher = vaultDir ? createVaultCipher(join(vaultDir, VAULT_FILENAME)) : null
   vault = null
 }
 
@@ -98,8 +103,16 @@ export function memoryRoot(): string | null {
  * actually used, instead of blocking startup.
  */
 function activeVault(): SecretVault | null {
-  if (!vaultDir || !secureStorage) return null
-  if (!vault) vault = new SecretVault({ directory: vaultDir, enabled: secretVaultEnabled, secureStorage })
+  if (!vaultDir || !cipher) return null
+  const active = cipher
+  if (!vault) {
+    vault = new SecretVault({
+      directory: vaultDir,
+      enabled: secretVaultEnabled,
+      secureStorage: active,
+      keyMaterial: () => active.keyMaterial()
+    })
+  }
   return vault
 }
 

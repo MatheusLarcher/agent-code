@@ -22,9 +22,6 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.remoteToken': { scope: 'device', sensitive: true, source: 'main-kv' },
   'config.remoteEnabled': { scope: 'device', source: 'main-kv' },
   codexAuth: { scope: 'device', sensitive: true, source: 'main-kv' },
-  // Chave que cifra o cofre de senhas. Fica no banco por escolha explícita do
-  // usuário — ver vaultKey.ts para o que isso protege e o que não protege.
-  'agentcode.secret-vault-key.v1': { scope: 'device', sensitive: true, source: 'main-kv' },
   'memory-curator:last-run-at': { scope: 'device', source: 'main-kv' },
   'agentcode.ui.v1': { scope: 'device', source: 'main-kv' },
   'agentcode.usage-limits.v1': { scope: 'device', source: 'main-kv' },

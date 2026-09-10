@@ -1,91 +1,138 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { SecretVault, VAULT_FILENAME } from './secretVault'
+import { createVaultCipher } from './vaultKey'
 
-// KV falso no lugar do banco: guarda o que foi gravado para o teste inspecionar
-// a chave como ela realmente fica persistida.
-const store = new Map<string, string>()
-vi.mock('../persistence/kvFacade', () => ({
-  readPersistedKv: async (key: string) => store.get(key) ?? null,
-  writePersistedKv: async (key: string, value: string) => void store.set(key, value)
-}))
-
-import { VAULT_KEY_ID, createDatabaseSecureStorage, forgetVaultKey, loadVaultKey } from './vaultKey'
-
-beforeEach(() => {
-  store.clear()
-  forgetVaultKey()
+const roots: string[] = []
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
-afterEach(() => forgetVaultKey())
 
-describe('cofre cifrado com chave do banco', () => {
-  it('cria a chave na primeira carga e reusa a mesma depois', async () => {
-    await loadVaultKey()
-    const first = store.get(VAULT_KEY_ID)
-    expect(Buffer.from(first!, 'base64')).toHaveLength(32)
+/** Um "computador": uma pasta de dados com o cofre dentro. */
+function machine(): { dir: string; vault: SecretVault; file: string } {
+  const root = mkdtempSync(join(tmpdir(), 'agent-code-vault-'))
+  roots.push(root)
+  const dir = join(root, 'vault')
+  const file = join(dir, VAULT_FILENAME)
+  const cipher = createVaultCipher(file)
+  return {
+    dir,
+    file,
+    vault: new SecretVault({
+      directory: dir,
+      enabled: () => true,
+      secureStorage: cipher,
+      keyMaterial: () => cipher.keyMaterial()
+    })
+  }
+}
 
-    forgetVaultKey()
-    await loadVaultKey()
-    expect(store.get(VAULT_KEY_ID)).toBe(first)
+describe('cofre: chave e senhas no mesmo arquivo', () => {
+  it('guarda e devolve a senha, sem deixá-la legível no arquivo', async () => {
+    const { vault, file } = machine()
+    await vault.put('banco-prod', 'senha-real-123')
+
+    const raw = readFileSync(file, 'utf8')
+    expect(raw).not.toContain('senha-real-123')
+    expect(await vault.get('banco-prod')).toBe('senha-real-123')
   })
 
-  it('vai e volta, e o texto cifrado não contém a senha', async () => {
-    await loadVaultKey()
-    const crypto = createDatabaseSecureStorage()
-    const secret = 'senha-do-banco-2026'
+  it('o arquivo carrega a chave junto: copiar para outra máquina abre a senha', async () => {
+    const origem = machine()
+    await origem.vault.put('vps', 'senha-da-vps')
+    const copia = readFileSync(origem.file)
 
-    const sealed = crypto.encryptString(secret)
-    // O ponto do recurso: o valor nunca fica legível em disco.
-    expect(sealed.toString('utf8')).not.toContain(secret)
-    expect(sealed.toString('base64')).not.toContain(Buffer.from(secret).toString('base64'))
-    expect(crypto.decryptString(sealed)).toBe(secret)
+    // Outra máquina, outra pasta de dados, nenhum banco em comum.
+    const destino = machine()
+    destino.vault // força a criação da pasta antes de escrever o arquivo
+    await destino.vault.put('temporaria', 'x')
+    writeFileSync(destino.file, copia)
+
+    // É ESTE o caso que a separação chave/senha quebrava: migrar levava a chave
+    // e deixava a senha para trás (ou o contrário), e sem o par não há resgate.
+    const migrado = machine()
+    await migrado.vault.put('semente', 'y') // cria a pasta
+    writeFileSync(migrado.file, copia)
+    const cipherMigrado = createVaultCipher(migrado.file)
+    const vaultMigrado = new SecretVault({
+      directory: migrado.dir,
+      enabled: () => true,
+      secureStorage: cipherMigrado,
+      keyMaterial: () => cipherMigrado.keyMaterial()
+    })
+    expect(await vaultMigrado.get('vps')).toBe('senha-da-vps')
   })
 
-  it('cifra o mesmo valor de forma diferente a cada vez', async () => {
-    await loadVaultKey()
-    const crypto = createDatabaseSecureStorage()
-    // IV aleatório: dois campos iguais não podem produzir o mesmo texto cifrado,
-    // senão dá para saber que duas senhas guardadas são iguais sem abrir nenhuma.
-    expect(crypto.encryptString('igual').toString('base64')).not.toBe(
-      crypto.encryptString('igual').toString('base64')
-    )
+  it('apagar uma senha não descarta a chave das outras', async () => {
+    const { vault, file } = machine()
+    await vault.put('primeira', 'senha-1')
+    await vault.put('segunda', 'senha-2')
+    const chaveAntes = (JSON.parse(readFileSync(file, 'utf8')) as { key: string }).key
+
+    await vault.deleteForManagement('primeira')
+
+    // Regravar o envelope sem a chave transformaria o resto em lixo cifrado.
+    expect((JSON.parse(readFileSync(file, 'utf8')) as { key: string }).key).toBe(chaveAntes)
+    expect(await vault.get('segunda')).toBe('senha-2')
   })
 
-  it('recusa texto cifrado adulterado em vez de devolver lixo', async () => {
-    await loadVaultKey()
-    const crypto = createDatabaseSecureStorage()
-    const sealed = crypto.encryptString('senha')
-    sealed[sealed.length - 1] ^= 0xff // um bit trocado no corpo
+  it('a chave não é trocada entre gravações', async () => {
+    const { vault, file } = machine()
+    await vault.put('a', '1')
+    const primeira = (JSON.parse(readFileSync(file, 'utf8')) as { key: string }).key
+    await vault.put('b', '2')
 
-    // GCM autentica; é isso que transforma adulteração em erro, não em texto errado.
-    expect(() => crypto.decryptString(sealed)).toThrow()
+    expect((JSON.parse(readFileSync(file, 'utf8')) as { key: string }).key).toBe(primeira)
+    expect(await vault.get('a')).toBe('1')
   })
 
-  it('não abre com a chave de outro banco', async () => {
-    await loadVaultKey()
-    const sealed = createDatabaseSecureStorage().encryptString('senha')
-
-    store.clear() // outra instalação, chave nova
-    forgetVaultKey()
-    await loadVaultKey()
-
-    expect(() => createDatabaseSecureStorage().decryptString(sealed)).toThrow()
+  it('cifra o mesmo valor de forma diferente a cada vez', () => {
+    const { file } = machine()
+    const cipher = createVaultCipher(file)
+    // IV aleatório: senhas iguais não podem gerar o mesmo texto cifrado, senão
+    // dá para saber que dois campos são iguais sem abrir nenhum.
+    expect(cipher.encryptString('igual').toString('base64'))
+      .not.toBe(cipher.encryptString('igual').toString('base64'))
   })
 
-  it('recusa chave corrompida no banco em vez de gerar outra por cima', async () => {
-    store.set(VAULT_KEY_ID, Buffer.alloc(8).toString('base64'))
-    // Gerar uma chave nova aqui tornaria todo segredo já salvo indecifrável, em
-    // silêncio. Falhar é o comportamento que preserva o dado.
-    await expect(loadVaultKey()).rejects.toThrow()
+  it('recusa texto cifrado adulterado em vez de devolver lixo', () => {
+    const { file } = machine()
+    const cipher = createVaultCipher(file)
+    const sealed = cipher.encryptString('senha')
+    sealed[sealed.length - 1] ^= 0xff
+
+    expect(() => cipher.decryptString(sealed)).toThrow()
   })
 
-  it('sem chave carregada, não cifra nem se diz disponível', async () => {
-    const crypto = createDatabaseSecureStorage()
-    expect(crypto.isEncryptionAvailable()).toBe(false)
-    expect(() => crypto.encryptString('senha')).toThrow()
+  it('não abre com a chave de outro cofre', async () => {
+    const origem = machine()
+    await origem.vault.put('x', 'senha')
+    const cifrado = (JSON.parse(readFileSync(origem.file, 'utf8')) as { records: Array<{ ciphertext: string }> })
+      .records[0].ciphertext
+
+    const outro = machine()
+    await outro.vault.put('y', 'outra') // gera uma chave diferente
+    expect(() => createVaultCipher(outro.file).decryptString(Buffer.from(cifrado, 'base64'))).toThrow()
   })
 
-  it('rejeita buffer curto demais para conter iv e tag', async () => {
-    await loadVaultKey()
-    expect(() => createDatabaseSecureStorage().decryptString(Buffer.alloc(8))).toThrow()
+  it('arquivo com chave truncada é recusado, não regravado por cima', async () => {
+    const { vault, file, dir } = machine()
+    await vault.put('a', '1')
+    const envelope = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    writeFileSync(file, JSON.stringify({ ...envelope, key: Buffer.alloc(8).toString('base64') }))
+
+    // Gerar uma chave nova aqui apagaria o acesso a tudo que já está salvo.
+    const cipher = createVaultCipher(file)
+    const quebrado = new SecretVault({
+      directory: dir,
+      enabled: () => true,
+      secureStorage: cipher,
+      keyMaterial: () => cipher.keyMaterial()
+    })
+    await expect(quebrado.get('a')).rejects.toThrow()
+    expect((JSON.parse(readFileSync(file, 'utf8')) as { key: string }).key).toHaveLength(12)
   })
 })
