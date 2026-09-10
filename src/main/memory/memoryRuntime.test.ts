@@ -13,6 +13,10 @@ vi.mock('../config', () => ({ loadConfig: () => ({}) }))
 const roots: string[] = []
 const repositories: SqliteRepository[] = []
 afterEach(async () => {
+  // A adoção roda em segundo plano; apagar a pasta antes de ela terminar dá
+  // ENOTEMPTY. `reconcile` é serializado dentro do serviço, então aguardar uma
+  // chamada nova drena o que ficou pendente.
+  await memoryService()?.reconcile().catch(() => undefined)
   configureMemoryRuntime(null)
   await Promise.all(repositories.splice(0).map((repo) => repo.close()))
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))

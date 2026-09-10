@@ -1384,4 +1384,83 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
     expect(contents[0]).toContain('context unavailable for this dispatch')
     expect(contents[1]).toContain('arquitetura.md')
   })
+  // Reinício só pode ser recusado por trabalho que de fato não terminou. A regra
+  // antiga era um latch: a 1ª chamada de Bash bloqueava o reinício pelo resto da
+  // vida do processo, inclusive depois da conversa fechar.
+  const OPAQUE = 'Trabalho autônomo sem prova de término.'
+  describe('incerteza de reinício', () => {
+    type Hook = (input: Record<string, unknown>) => Promise<unknown>
+    function hooks(): { pre: Hook; post: Hook; fail: Hook } {
+      const options = queryMock.mock.calls.at(-1)![0].options as {
+        hooks: Record<string, Array<{ hooks: Hook[] }>>
+      }
+      return {
+        pre: options.hooks.PreToolUse[0].hooks[0],
+        post: options.hooks.PostToolUse[0].hooks[0],
+        fail: options.hooks.PostToolUseFailure[0].hooks[0]
+      }
+    }
+    async function started() {
+      const session = makeSession()
+      await session.s.start()
+      return { ...session, ...hooks() }
+    }
+    const call = (name: string, id: string, input: unknown = {}) => ({
+      hook_event_name: 'PreToolUse',
+      tool_name: name,
+      tool_use_id: id,
+      tool_input: input
+    })
+
+    it('Bash em voo bloqueia; ao retornar, libera', async () => {
+      const { s, pre, post } = await started()
+      await pre(call('Bash', 'call-1'))
+      expect(s.restartActivity().unsafe).toBe(OPAQUE)
+
+      // Retornar É a prova de que a ferramenta terminou.
+      await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'call-1', tool_input: {}, tool_response: {} })
+      expect(s.restartActivity().unsafe).not.toBe(OPAQUE)
+    })
+
+    it('erro da ferramenta também encerra a chamada', async () => {
+      const { s, pre, fail } = await started()
+      await pre(call('mcp__terceiro__coisa', 'call-2'))
+      expect(s.restartActivity().unsafe).toBeDefined()
+
+      await fail({ hook_event_name: 'PostToolUseFailure', tool_name: 'mcp__terceiro__coisa', tool_use_id: 'call-2', tool_input: {}, error: 'quebrou' })
+      expect(s.restartActivity().unsafe).not.toBe(OPAQUE)
+    })
+
+    it('várias chamadas em voo: libera só quando a última retorna', async () => {
+      const { s, pre, post } = await started()
+      await pre(call('Bash', 'a'))
+      await pre(call('Bash', 'b'))
+      await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'a', tool_input: {}, tool_response: {} })
+      expect(s.restartActivity().unsafe).toBeDefined()
+
+      await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'b', tool_input: {}, tool_response: {} })
+      expect(s.restartActivity().unsafe).not.toBe(OPAQUE)
+    })
+
+    it('ferramenta verificável nunca gera incerteza', async () => {
+      const { s, pre } = await started()
+      await pre(call('Read', 'call-3'))
+      expect(s.restartActivity().unsafe).not.toBe(OPAQUE)
+    })
+
+    it('trabalho destacado continua incerto mesmo depois de retornar', async () => {
+      const { s, pre, post } = await started()
+      // run_in_background devolve na hora e segue rodando: o retorno não prova nada.
+      await pre(call('Bash', 'bg', { run_in_background: true }))
+      await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'bg', tool_input: { run_in_background: true }, tool_response: {} })
+      expect(s.restartActivity().unsafe).toBe(OPAQUE)
+    })
+
+    it('cron destacado continua incerto', async () => {
+      const { s, pre, post } = await started()
+      await pre(call('CronCreate', 'cron'))
+      await post({ hook_event_name: 'PostToolUse', tool_name: 'CronCreate', tool_use_id: 'cron', tool_input: {}, tool_response: {} })
+      expect(s.restartActivity().unsafe).toBeDefined()
+    })
+  })
 })

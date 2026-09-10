@@ -261,6 +261,32 @@ current Markdown contents. If anything changed, one complete authoritative repla
 automatically; unchanged catalogs are never duplicated in the conversation.`
 }
 
+/**
+ * Ferramentas cujo efeito termina junto com a chamada, então não deixam dúvida
+ * sobre reiniciar. Tudo fora desta lista conta como opaco ENQUANTO estiver em
+ * voo (ver `restartOpaqueCalls`) — a diferença entre "não sei o que isso fez" e
+ * "isso ainda está rodando".
+ */
+const VERIFIED_TOOLS = [
+  'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
+  'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'mcp__app__app_restart'
+]
+
+/**
+ * Trabalho que segue vivo DEPOIS de a chamada retornar: o retorno não prova
+ * nada, então a sessão fica permanentemente incerta. É o caso que justifica um
+ * latch — e o único.
+ */
+function startsDetachedWork(toolName: string, input: unknown): boolean {
+  if (toolName === 'CronCreate' || toolName === 'RemoteTrigger' || toolName === 'Workflow') return true
+  // Bash/Agent com run_in_background devolvem na hora e continuam rodando.
+  return (
+    typeof input === 'object' &&
+    input !== null &&
+    (input as { run_in_background?: unknown }).run_in_background === true
+  )
+}
+
 // Tools auto-approved without prompting the user.
 const READ_ONLY = new Set([
   'Read',
@@ -439,12 +465,24 @@ export class AgentSession {
   private restartPersisting = false
   private restartBackground: number | null = null
   private restartUncertain = false
+  /**
+   * Chamadas de ferramenta EM VOO cujo efeito não é verificável (shell, MCP de
+   * terceiro, subagente). Entram no PreToolUse e saem quando a ferramenta
+   * retorna — retornar É a prova de que terminou.
+   *
+   * Antes isto era um booleano que, uma vez ligado, nunca desligava: a primeira
+   * chamada de Bash de qualquer conversa bloqueava o reinício pelo resto da vida
+   * do processo (e `dispose` mantém o registro quando há incerteza, então nem
+   * fechar a conversa liberava). O recurso de reinício ficava inalcançável.
+   */
+  private readonly restartOpaqueCalls = new Set<string>()
   private restartRegistration: ReturnType<NonNullable<typeof appRestart>['register']> | undefined
 
   restartActivity(): RestartActivity {
     return {
       busy: this.restartInitializing || this.restartPersisting || this.turnActive || this.pendingPermissions.size > 0,
-      unsafe: this.restartUncertain ? 'Trabalho autônomo sem prova de término.'
+      unsafe: this.restartUncertain || this.restartOpaqueCalls.size > 0
+        ? 'Trabalho autônomo sem prova de término.'
         : this.restartBackground === null ? 'Estado de background desconhecido.'
         : this.restartBackground > 0 ? 'Tarefas em background ativas.'
         : this.loopActive ? 'Loop/agendamento ativo.' : this.mirrorFailed ? 'Persistência não verificada.' : undefined
@@ -666,9 +704,21 @@ export class AgentSession {
           }
           // SDK task-level snapshots cover managed tasks, but arbitrary shell,
           // remote agents, custom MCPs and cron may outlive that registry.
-          if (!['Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'mcp__app__app_restart'].includes(name)) {
-            this.restartUncertain = true
-          }
+          if (!VERIFIED_TOOLS.includes(name)) this.restartOpaqueCalls.add(input.tool_use_id)
+          // Trabalho lançado DESTACADO não termina quando a chamada retorna, então
+          // aqui a incerteza é permanente na sessão — é o caso que o booleano
+          // antigo tratava certo e o único que precisa dele.
+          if (startsDetachedWork(name, input.tool_input)) this.restartUncertain = true
+          return {}
+        }] }],
+        // Uma ferramenta que retornou (com sucesso ou erro) acabou. Sem estes dois,
+        // a incerteza nunca é retirada e o reinício fica bloqueado para sempre.
+        PostToolUse: [{ hooks: [async (input) => {
+          if (input.hook_event_name === 'PostToolUse') this.restartOpaqueCalls.delete(input.tool_use_id)
+          return {}
+        }] }],
+        PostToolUseFailure: [{ hooks: [async (input) => {
+          if (input.hook_event_name === 'PostToolUseFailure') this.restartOpaqueCalls.delete(input.tool_use_id)
           return {}
         }] }]
       },

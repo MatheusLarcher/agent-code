@@ -362,6 +362,12 @@ Sequência: **confere o guarda → espera 5 s → fecha → espera 5 s → reabr
 - O carimbo `at` transforma o arquivo num **heartbeat**. Se o app travar ou morrer, o timestamp para de andar; o script trata estado com mais de 15 s, ausente ou ilegível como **desconhecido e recusa** (`exit 2`). Falhar fechado é o único comportamento seguro: assumir "ocioso" mataria um turno em andamento. Pelo mesmo motivo o arquivo é **apagado no shutdown** — um snapshot "ocioso" deixado por um app morto seria exatamente a resposta errada.
 - Agente ocupado → `exit 3`, com o motivo no log. `-Force` pula o guarda (uso manual do usuário, não do agente).
 
+**Incerteza vem de trabalho não terminado, não de "usou shell alguma vez".** `AgentSession` marca cada chamada de ferramenta fora de `VERIFIED_TOOLS` como opaca **enquanto está em voo** (`restartOpaqueCalls`, alimentado por `PreToolUse` e esvaziado por `PostToolUse`/`PostToolUseFailure`) — uma ferramenta que retornou, com sucesso ou erro, é prova de que terminou.
+
+Antes isso era um booleano de mão única: a **primeira** chamada de `Bash` de qualquer conversa marcava a sessão como "trabalho autônomo sem prova de término" e nunca desmarcava. Pior, `dispose()` só desregistra a sessão quando ela não está `unsafe`, então o registro sobrevivia à conversa e **bloqueava o reinício pelo resto da vida do processo**, para o `app_restart` e para o script externo. O recurso era inalcançável na prática: bastava um comando de terminal.
+
+O latch permanente continua existindo, mas só para o caso que o justifica — trabalho **destacado**, que segue vivo depois de a chamada retornar (`startsDetachedWork`: `run_in_background: true`, `CronCreate`, `RemoteTrigger`, `Workflow`). Aí o retorno realmente não prova nada.
+
 Os dois atrasos de 5 s têm função. O primeiro dá tempo de o agente terminar a resposta que disparou o pedido. O segundo é obrigatório: o Electron usa **trava de instância única por `userData`**, então reabrir com o processo antigo ainda vivo faz o novo se ver como segunda instância e fechar na hora, **sem erro na tela** (foi assim que o teste do exe portátil pareceu "quebrado" quando o app de dev estava aberto). O fechamento usa `CloseMainWindow` antes de forçar, para o app salvar o que precisa.
 
 Tudo vai para `%TEMP%\agent-code-relaunch.log`, com o motivo de cada recusa — silêncio não é prova de que reabriu.
