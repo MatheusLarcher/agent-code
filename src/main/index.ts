@@ -51,6 +51,7 @@ import { storageErrorForIpc, upsertConversationWithLeaseRecovery } from './persi
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService } from './memory/memoryRuntime'
+import { loadVaultKey } from './memory/vaultKey'
 import { startRestartGuardFile } from './restartGuardFile'
 import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
@@ -1321,10 +1322,10 @@ app.whenReady().then(async () => {
   if (!ownsSingleInstance) return
   initStore() // prepares the legacy SQLite source and cache folders before the v2 migration
   const cacheInfo = getCacheInfo()
-  // Secrets live in userData, NOT in the movable cache folder and NOT in the KV
-  // that syncs to PostgreSQL: the safeStorage key belongs to this machine, so a
-  // copy on another PC would be undecryptable dead weight.
-  configureSecretVault({ directory: join(app.getPath('userData'), 'vault'), secureStorage: safeStorage })
+  // O texto cifrado das senhas fica em userData (device-local, fora da pasta de
+  // cache que o usuário move). A CHAVE fica no banco do Agent Code — escolha
+  // explícita do usuário; ver vaultKey.ts para o alcance real dessa proteção.
+  configureSecretVault({ directory: join(app.getPath('userData'), 'vault') })
   // Publica "algum agente ocupado?" em disco para o relançador externo
   // (scripts/relaunch-agent-code.ps1). Vem ANTES de inicializar o armazenamento
   // de propósito: ocupação é sobre conversas, não sobre banco. Se a inicialização
@@ -1342,6 +1343,12 @@ app.whenReady().then(async () => {
   if (storageAvailable) {
     await initializeConfigPersistence()
     await initializeCodexAuthPersistence()
+    // A chave do cofre vem do banco, então só pode ser carregada depois dele. O
+    // cofre cifra de forma síncrona; sem isto ele falha fechado em vez de gravar
+    // senha em texto puro.
+    await loadVaultKey().catch((error) => {
+      console.error(`[vault] chave não carregada: ${error instanceof Error ? error.message : String(error)}`)
+    })
   }
   const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir)
   for (const error of skillSync.errors) console.error(`[skills] ${error}`)

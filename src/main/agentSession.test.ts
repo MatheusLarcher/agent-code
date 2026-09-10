@@ -62,6 +62,12 @@ import {
 import type { BrowserController } from './browserController'
 import type { SkillRuntimePaths } from './agentSession'
 
+const secretsForPrompt = vi.hoisted(() => vi.fn(async () => [] as Array<{ name: string; value: string }>))
+vi.mock('./memory/memoryRuntime', async () => {
+  const actual = await vi.importActual<typeof import('./memory/memoryRuntime')>('./memory/memoryRuntime')
+  return { ...actual, readSecretsForPrompt: () => secretsForPrompt() }
+})
+
 const describeImagesMock = vi.fn()
 vi.mock('./visionRelay', async () => {
   const actual = await vi.importActual<typeof import('./visionRelay')>('./visionRelay')
@@ -1461,6 +1467,48 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
       await pre(call('CronCreate', 'cron'))
       await post({ hook_event_name: 'PostToolUse', tool_name: 'CronCreate', tool_use_id: 'cron', tool_input: {}, tool_response: {} })
       expect(s.restartActivity().unsafe).toBeDefined()
+    })
+  })
+  // O usuário quer a senha no prompt, mas só quando ele marca a opção. O
+  // interruptor é a única coisa entre o cofre e a janela do modelo.
+  describe('senhas do cofre no prompt', () => {
+    function appended(): string {
+      const options = queryMock.mock.calls.at(-1)![0].options as {
+        systemPrompt: { append: string }
+      }
+      return options.systemPrompt.append
+    }
+
+    it('injeta as senhas em texto puro quando a opção está ligada', async () => {
+      secretsForPrompt.mockResolvedValue([
+        { name: 'banco-prod', value: 'senha-real-123' },
+        { name: 'smtp', value: 'outra-senha' }
+      ])
+      const { s } = makeSession()
+      await s.start()
+
+      const append = appended()
+      expect(append).toContain('banco-prod: senha-real-123')
+      expect(append).toContain('smtp: outra-senha')
+      // Não basta entregar o valor: o modelo precisa saber que é segredo.
+      expect(append).toContain('# Senhas do cofre')
+    })
+
+    it('não injeta nada quando o cofre está desligado ou vazio', async () => {
+      secretsForPrompt.mockResolvedValue([])
+      const { s } = makeSession()
+      await s.start()
+
+      expect(appended()).not.toContain('# Senhas do cofre')
+    })
+
+    it('falha na leitura do cofre não impede a sessão de iniciar', async () => {
+      // Cofre indisponível degrada o turno; travar a abertura da conversa seria pior.
+      secretsForPrompt.mockRejectedValue(new Error('cofre indisponível'))
+      const { s } = makeSession()
+
+      await expect(s.start()).resolves.not.toThrow()
+      expect(appended()).not.toContain('# Senhas do cofre')
     })
   })
 })

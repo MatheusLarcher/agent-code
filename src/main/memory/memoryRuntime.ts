@@ -3,6 +3,7 @@ import { getCacheInfo } from '../store'
 import type { MemoryRepository } from '../persistence/types'
 import { MemoryService } from './memoryService'
 import { SecretVault, type SecretMetadata } from './secretVault'
+import { createDatabaseSecureStorage } from './vaultKey'
 import type { SecretSink } from './memorySecrets'
 
 /**
@@ -23,7 +24,8 @@ let vaultDir: string | null = null
 export interface SecretVaultDeps {
   /** Absolute, device-local directory. Never the cache folder the user can move. */
   directory: string
-  secureStorage: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
+  /** Só os testes injetam; em produção a chave vem do banco do Agent Code. */
+  secureStorage?: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
 }
 
 /** Live read of the user's switch. Checked per operation, never cached. */
@@ -31,9 +33,15 @@ export function secretVaultEnabled(): boolean {
   return loadConfig().secretVaultEnabled === true
 }
 
-/** Called once at startup, before any session can ask for a secret. */
+/**
+ * Called once at startup, before any session can ask for a secret.
+ *
+ * A criptografia usa uma chave do PRÓPRIO banco do Agent Code
+ * (`createDatabaseSecureStorage`), não o `safeStorage` do sistema. `loadVaultKey`
+ * precisa ter rodado antes: o cofre cifra de forma síncrona e o banco é assíncrono.
+ */
 export function configureSecretVault(deps: SecretVaultDeps | null): void {
-  secureStorage = deps?.secureStorage ?? null
+  secureStorage = deps?.secureStorage ?? createDatabaseSecureStorage()
   vaultDir = deps?.directory ?? null
   vault = null
 }
@@ -114,6 +122,29 @@ export async function readSecret(name: string): Promise<string | null> {
   const instance = activeVault()
   if (!instance || !secretVaultEnabled()) return null
   return instance.get(name)
+}
+
+/**
+ * Todas as senhas em texto puro, para irem no prompt — SÓ com o interruptor
+ * ligado. É o pedido explícito do usuário: o modelo precisa da senha real para
+ * usá-la, e um interruptor desligado é o que garante que ela não sai do disco.
+ *
+ * Devolve lista vazia (nunca lança) quando desligado, sem cofre ou se a leitura
+ * falhar: uma senha ausente degrada o turno, mas não pode impedir o envio.
+ */
+export async function readSecretsForPrompt(): Promise<Array<{ name: string; value: string }>> {
+  const instance = activeVault()
+  if (!instance || !secretVaultEnabled()) return []
+  try {
+    const out: Array<{ name: string; value: string }> = []
+    for (const item of await instance.listMetadataForManagement()) {
+      const value = await instance.get(item.name)
+      if (value !== null) out.push({ name: item.name, value })
+    }
+    return out
+  } catch {
+    return []
+  }
 }
 
 /** Names and dates only — never a value. For the settings screen. */

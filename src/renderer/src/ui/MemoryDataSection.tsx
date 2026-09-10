@@ -95,10 +95,12 @@ export function MemoryDataSection(): JSX.Element {
               <IconKey size={15} /> Cofre de chaves do agente
             </strong>
             <span className="settings-desc">
-              Quando o agente salva uma memória com chave, token ou senha, o valor vai para um cofre
-              criptografado desta máquina e o texto guarda só um marcador. Ligado, o agente pode ler o
-              valor de volta para executar a tarefa. Desligado, ele não lê nem grava — as chaves já
-              guardadas continuam salvas. Isso não apaga um valor que já foi enviado ao modelo antes.
+              Chave, token ou senha que o agente salva vai criptografada para um cofre desta máquina,
+              e o texto guarda só um marcador. <strong>Ligado, as senhas guardadas são enviadas em
+              texto puro no início de cada conversa nova</strong> — é o que permite ao agente usá-las,
+              e significa que elas chegam ao provedor do modelo e ficam no histórico. Desligado (o
+              padrão), nada sai do cofre e as senhas já guardadas continuam lá. Desligar não apaga o
+              que já foi enviado numa conversa anterior.
             </span>
           </span>
           <input

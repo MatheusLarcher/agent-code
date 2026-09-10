@@ -989,7 +989,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   ollama: { enabled: false, apiKey: '' },
   skipPermissions: false,
   windowsControlEnabled: false,
-  secretVaultEnabled: true,
+  // Desligado por padrão: ligado, as senhas guardadas vão em texto puro no
+  // system prompt e chegam ao provedor. Isso só acontece se o usuário marcar.
+  secretVaultEnabled: false,
   remoteToken: '',
   remoteEnabled: false
 }

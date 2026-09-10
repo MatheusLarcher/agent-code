@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { defaultAppConfig, mergeAppConfig, parseStoredAppConfig } from './configData'
 
 describe('configuração persistida', () => {
-  it('habilita o cofre por padrão e preserva a desativação explícita', () => {
-    expect(defaultAppConfig().secretVaultEnabled).toBe(true)
-    expect(parseStoredAppConfig('{}').secretVaultEnabled).toBe(true)
-    const disabled = mergeAppConfig(defaultAppConfig(), { secretVaultEnabled: false })
-    expect(parseStoredAppConfig(JSON.stringify(disabled)).secretVaultEnabled).toBe(false)
-    expect(mergeAppConfig(disabled, { skipPermissions: true }).secretVaultEnabled).toBe(false)
-    expect(() => mergeAppConfig(disabled, { secretVaultEnabled: 'true' })).toThrow()
+  it('mantém o cofre DESLIGADO por padrão e preserva a ativação explícita', () => {
+    // Ligado, as senhas guardadas vão em texto puro no prompt e chegam ao
+    // provedor. Isso não pode ser o padrão — só acontece se o usuário marcar.
+    expect(defaultAppConfig().secretVaultEnabled).toBe(false)
+    expect(parseStoredAppConfig('{}').secretVaultEnabled).toBe(false)
+    const enabled = mergeAppConfig(defaultAppConfig(), { secretVaultEnabled: true })
+    expect(parseStoredAppConfig(JSON.stringify(enabled)).secretVaultEnabled).toBe(true)
+    expect(mergeAppConfig(enabled, { skipPermissions: true }).secretVaultEnabled).toBe(true)
+    expect(() => mergeAppConfig(enabled, { secretVaultEnabled: 'true' })).toThrow()
   })
 
   it('preenche campos ausentes e faz merge profundo dos grupos', () => {

@@ -71,6 +71,16 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
     authoritativeInPostgresMode: 'filesystem'
   },
   {
+    // A chave que abre o cofre. Fica no banco (não no keychain do SO) por
+    // escolha do usuário; o texto cifrado continua sendo arquivo local.
+    id: 'secret-vault-key',
+    owner: 'src/main/memory/vaultKey.ts',
+    surface: 'main-kv',
+    postgresScope: 'device',
+    authoritativeInPostgresMode: 'postgres',
+    keys: ['agentcode.secret-vault-key.v1']
+  },
+  {
     id: 'memory-curator-state',
     owner: 'src/main/memoryCurator.ts',
     surface: 'main-kv',

@@ -62,10 +62,30 @@ describe('Configurações → Dados: cofre e conflitos', () => {
     expect(screen.queryByText(/mostrar valor/i)).toBeNull()
   })
 
-  it('desligar o cofre aplica na hora e avisa que as chaves continuam salvas', async () => {
+  it('nasce desligado: nenhuma senha vai ao modelo sem o usuário marcar', async () => {
+    stubApi()
+    view()
+    const toggle = (await screen.findAllByRole('checkbox'))[0] as HTMLInputElement
+    await waitFor(() => expect(toggle.checked).toBe(false))
+  })
+
+  it('ligar aplica na hora e o aviso diz que a senha vai em texto puro', async () => {
     const api = stubApi()
     view()
     const toggle = (await screen.findAllByRole('checkbox'))[0]
+    await click(toggle)
+    await waitFor(() => expect(api.setConfig).toHaveBeenCalledWith({ secretVaultEnabled: true }))
+    // A consequência precisa estar escrita onde o usuário decide, não só na doc.
+    expect(await screen.findAllByText(/texto puro/i)).not.toHaveLength(0)
+  })
+
+  it('desligar aplica na hora e avisa que as chaves continuam salvas', async () => {
+    const api = stubApi({
+      getConfig: vi.fn(async (): Promise<AppConfig> => ({ ...DEFAULT_CONFIG, secretVaultEnabled: true }))
+    })
+    view()
+    const toggle = (await screen.findAllByRole('checkbox'))[0] as HTMLInputElement
+    await waitFor(() => expect(toggle.checked).toBe(true))
     await click(toggle)
     await waitFor(() => expect(api.setConfig).toHaveBeenCalledWith({ secretVaultEnabled: false }))
     // O texto aparece na descrição e no toast: basta existir no toast.
@@ -76,9 +96,12 @@ describe('Configurações → Dados: cofre e conflitos', () => {
     const api = stubApi({ setConfig: vi.fn(async () => { throw new Error('storage offline') }) })
     view()
     const toggle = (await screen.findAllByRole('checkbox'))[0] as HTMLInputElement
+    await waitFor(() => expect(toggle.checked).toBe(false))
     await click(toggle)
     await waitFor(() => expect(api.setConfig).toHaveBeenCalled())
-    await waitFor(() => expect(toggle.checked).toBe(true))
+    // Falhou a gravação: o interruptor volta a desligado. Mostrar "ligado" faria
+    // o usuário crer que autorizou o envio das senhas quando não autorizou.
+    await waitFor(() => expect(toggle.checked).toBe(false))
     expect(await screen.findByText(/não foi possível alterar o cofre/i)).toBeTruthy()
   })
 

@@ -471,6 +471,19 @@ O agente tem uma **memória de longo prazo por usuário**, em arquivos Markdown 
 
 **Acesso ao disco** — a pasta fica fora do `cwd` do projeto, então `start()` a libera via `additionalDirectories: [memoriesDir]`; sem isso o limite do workspace bloquearia a leitura/escrita dos `.md`. As ferramentas de arquivo (`Read`/`Write`/`Glob`…) agem nela normalmente.
 
+### Cofre de senhas e a opção de mandá-las no prompt
+
+Chave, token ou senha que apareça numa memória é detectada, **redigida do texto** e guardada num cofre cifrado; a memória fica só com um marcador. O que o modelo recebe depende de um interruptor em **Configurações → Dados**, **desligado por padrão**.
+
+- **Criptografia com chave própria, no banco do Agent Code** (`vaultKey.ts`, AES-256-GCM). Não é o `safeStorage` do sistema operacional, e a diferença é deliberada: a chave mora ao lado do texto cifrado, então **quem tiver o arquivo do banco abre as senhas**. O que isso entrega é que a senha nunca fica em texto puro no disco, em backup ou em sincronização — não proteção contra alguém com acesso à máquina. Foi a escolha explícita do usuário, em troca de não depender de criptografia do SO.
+- **GCM e não CBC:** o modo autentica, então texto cifrado adulterado falha na abertura em vez de devolver lixo silenciosamente. O IV é aleatório por gravação, então dois campos com a mesma senha não produzem o mesmo texto cifrado (senão dava para saber que são iguais sem abrir nenhum).
+- **A chave é carregada no boot, depois do banco** (`loadVaultKey`), porque o cofre cifra dentro de um único turno de JS e o KV é assíncrono. Sem chave carregada o cofre **falha fechado** — recusa gravar em vez de escrever senha em texto puro. Trocar a pasta de dados exige recarregar: a chave do banco antigo cifraria no banco novo, e o erro só apareceria depois, como uma senha que não abre mais.
+- **Chave corrompida no banco não é substituída.** Gerar outra por cima tornaria todo segredo já salvo indecifrável em silêncio; o cofre prefere falhar.
+- **O interruptor governa a entrega.** Ligado, `buildSecretsHint()` injeta as senhas **em texto puro no system prompt** de cada conversa nova. Isso é o que permite o agente usá-las — e significa que elas vão ao provedor do modelo e ficam no histórico da conversa. Vai no system prompt, e não anexado a cada mensagem, para a senha aparecer **uma vez por sessão** em vez de ser recopiada em todo turno.
+- **Ligar vale só na sessão seguinte**, porque o system prompt já foi enviado — e não há como retirar da janela do modelo o que já entrou nela. Desligar também não apaga o que já foi enviado numa conversa anterior; a tela diz isso.
+- Falha do cofre **não impede a conversa de abrir**: degrada para "sem senhas" e segue.
+- A tela lista **só nome e data**, nunca o valor, e o único botão é apagar.
+
 **Adoção do acervo já existente** — quando o banco vira a autoridade da memória, um acervo que já estava em disco precisa entrar nele. `configureMemoryRuntime` dispara um `reconcile()` a cada ligação de repositório (`memoryRuntime.ts`), então a adoção acontece na inicialização e em toda troca de backend.
 
 A alternativa era esperar o `reconcile` que o `memory_propose` já provoca — e isso deixava o acervo **invisível ao banco até um agente por acaso salvar algo**. Medido num acervo real de 162 memórias: os arquivos estavam lá e o banco vazio.

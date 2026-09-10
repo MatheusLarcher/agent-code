@@ -14,7 +14,13 @@ import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { memoryWriteDenial } from './memory/memoryPaths'
 import { createMemoryMcpServer } from './memory/memoryTools'
-import { memoryService, readSecret, secretSink, secretVaultEnabled } from './memory/memoryRuntime'
+import {
+  memoryService,
+  readSecret,
+  readSecretsForPrompt,
+  secretSink,
+  secretVaultEnabled
+} from './memory/memoryRuntime'
 import {
   createMemoryCatalogSnapshot,
   memoryCatalogFilesystemVersion,
@@ -227,6 +233,30 @@ explicitamente no texto. Somente uma condição de saída explícita encerra o l
 // cache folder (next to the SQLite db — see store.ts), so the PATH is per-user/per-machine,
 // but THESE INSTRUCTIONS ship with the project, so every install behaves the same.
 // Built per session because the folder path and the current index are dynamic.
+/**
+ * Entrega as senhas guardadas ao modelo, em texto puro, quando o usuário liga a
+ * opção em Configurações. Desligado (o padrão), devolve string vazia e nada sai
+ * do cofre.
+ *
+ * O interruptor é lido AQUI, na montagem da sessão. Ligar depois só vale na
+ * sessão seguinte — o system prompt já foi enviado, e não há como retirar da
+ * janela do modelo o que já entrou nela.
+ */
+async function buildSecretsHint(): Promise<string> {
+  // Cofre indisponível degrada o turno; impedir a conversa de abrir seria pior.
+  const secrets = await readSecretsForPrompt().catch(() => [])
+  if (!secrets.length) return ''
+  const lines = secrets.map((secret) => `- ${secret.name}: ${secret.value}`).join('\n')
+  return `\n\n# Senhas do cofre
+
+O usuário autorizou o acesso a estas credenciais em Configurações. Os valores
+abaixo são reais — use-os quando a tarefa precisar e trate-os como segredo:
+não os repita na resposta, em log, em commit, nem em arquivo, a menos que o
+usuário peça explicitamente.
+
+${lines}`
+}
+
 function buildMemoryHint(memoriesDir: string): string {
   return `You have a PERSISTENT MEMORY for this user, kept as Markdown files in this folder:
 ${memoriesDir}
@@ -561,6 +591,10 @@ export class AgentSession {
     const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     append += `\n\n${memorySnapshot.catalog}\n\n${APP_RESTART_HINT}`
+    // Senhas em texto puro no prompt, só com o interruptor ligado. Vai no system
+    // prompt, e não anexado a cada mensagem, para a senha aparecer UMA vez por
+    // sessão em vez de ser recopiada em todo turno do histórico.
+    append += await buildSecretsHint()
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
 
     // Modo econômico: when the user toggled it on for THIS conversation, tell the
