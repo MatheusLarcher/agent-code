@@ -1,11 +1,12 @@
 import { query, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk'
-import { appendFile, readFile, readdir, stat, writeFile } from 'node:fs/promises'
-import { existsSync, realpathSync } from 'node:fs'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { getCacheInfo } from './store'
 import { readPersistedKv, writePersistedKv } from './persistence/kvFacade'
-import { listMemoryFiles, memoryIndexLine } from './memoryIndex'
+import { realPathInside } from './memory/memoryPaths'
+import { createMemoryMcpServer } from './memory/memoryTools'
+import { memoryService, secretSink, secretVaultEnabled } from './memory/memoryRuntime'
 
 export const CURATOR_MARKER = 'AGENT_CODE_MEMORY_CURATOR_V1'
 export const CURATOR_STATE_KEY = 'memory-curator:last-run-at'
@@ -21,10 +22,14 @@ convenção não derivável do código/git ou tentativa que falhou e cujo caminh
 ensinou. Ignore debug resolvido pelo próprio LLM, decisões triviais, preferências óbvias e fatos
 já deriváveis do repositório.
 
+Você NÃO escreve arquivos. Para salvar, use a ferramenta memory_propose; ela grava o arquivo e
+regenera o índice. Use memory_list para achar o tópico existente e a revisão dele.
+
 Para cada correção realmente relevante:
-1. Leia MEMORY.md e a memória do mesmo tópico, se houver. Atualize/complemente a existente; não
-   duplique. Nunca apague arquivo, regra, linha de índice nem marque conteúdo como obsoleto.
-2. Memória nova: um fato por <slug-kebab>.md, com este formato:
+1. Procure a memória do mesmo tópico (memory_list / Read). Existindo, use op "update" com o
+   expected_revision devolvido, complementando o texto. Nunca apague conteúdo nem marque como
+   obsoleto; op "retire" só quando o fato virou falso.
+2. Memória nova: op "create", um fato por <slug-kebab>.md, com este corpo:
 ---
 name: slug-kebab
 description: gancho curto e específico
@@ -36,15 +41,15 @@ Rule: regra aprendida.
 Why: erro/tentativa que motivou a correção.
 How to apply: quando e como usar a regra.
 Fix applied: correção concreta que o LLM fez depois do feedback.
-3. MEMORY.md (na RAIZ da pasta) deve ter exatamente uma entrada por tópico no formato
-   - [Título](arquivo.md) — gancho curto
-   Mantenha cada linha perto de 150 caracteres. Atualize a entrada do tópico ao complementar.
+3. O índice MEMORY.md é gerado pelo app a partir do title e do hook que você passar — não tente
+   editá-lo. Escreva o hook curto e específico, perto de 150 caracteres.
 4. A pasta pode ter subpastas de agrupamento (ex.: "2D/"). O nome da subpasta é contexto: memória
-   sobre aquele assunto vai DENTRO dela, e o link no índice leva a subpasta junto — [Título](2D/arquivo.md).
-   Ao procurar o tópico existente, olhe também dentro das subpastas.
+   sobre aquele assunto usa rel_path "2D/arquivo.md". Ao procurar o tópico existente, olhe também
+   dentro das subpastas.
+5. Se o trecho contiver uma credencial (chave, token, senha), passe-a em secrets: [{name, value}];
+   o valor vai para o cofre cifrado e o texto guarda só o marcador.
 
-Se não houver correção qualificada, não toque em nenhum arquivo. Use apenas Read/Glob/Grep para
-inspecionar e Write (só arquivo novo) ou Edit (arquivo existente) dentro da pasta de memórias.`
+Se não houver correção qualificada, não proponha nada. Use apenas Read/Glob/Grep para inspecionar.`
 
 type AgentRunner = (args: {
   memoriesDir: string
@@ -75,21 +80,6 @@ export function memoryCuratorDelay(lastRunAt: number, now: number): number {
   return Number.isFinite(lastRunAt) ? Math.max(0, lastRunAt + CURATOR_INTERVAL_MS - now) : 0
 }
 
-function inside(root: string, candidate: string): boolean {
-  const rel = relative(resolve(root), resolve(candidate))
-  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
-}
-
-function realPathInside(root: string, candidate: string): boolean {
-  if (!inside(root, candidate)) return false
-  try {
-    const existing = existsSync(candidate) ? candidate : dirname(candidate)
-    return inside(realpathSync(root), realpathSync(existing))
-  } catch {
-    return false
-  }
-}
-
 /** Auto-approval gate with no renderer prompt and no write access outside memories. */
 export function memoryCuratorPermission(
   memoriesDir: string,
@@ -115,19 +105,19 @@ export function memoryCuratorPermission(
       : deny('O curador só pode pesquisar a pasta de memórias.')
   }
 
+  // Saving goes through the memory service, exactly like a chat session: the
+  // curator no longer writes the .md or the index itself.
+  if (toolName.startsWith('mcp__memory__')) return allow()
+  if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(toolName)) {
+    return deny('O curador não escreve arquivos; use memory_propose (create/update/retire).')
+  }
+
   const rawPath = input.file_path
-  if (!['Read', 'Write', 'Edit'].includes(toolName) || typeof rawPath !== 'string') {
-    return deny('Ferramenta indisponível no job add-only de memórias.')
+  if (toolName !== 'Read' || typeof rawPath !== 'string') {
+    return deny('Ferramenta indisponível no job de memórias.')
   }
-  const target = resolve(memoriesDir, rawPath)
-  if (!realPathInside(memoriesDir, target)) {
+  if (!realPathInside(memoriesDir, resolve(memoriesDir, rawPath))) {
     return deny('O curador só pode acessar arquivos dentro da pasta de memórias.')
-  }
-  if (toolName === 'Write' && existsSync(target)) {
-    return deny('Arquivo existente não pode ser sobrescrito; use Edit para complementar.')
-  }
-  if (toolName === 'Edit' && !existsSync(target)) {
-    return deny('Edit exige uma memória existente; use Write para criar uma nova.')
   }
   return allow()
 }
@@ -247,6 +237,12 @@ export async function findRecentTranscripts(projectsDir: string, since: number):
 }
 
 export async function runMemoryCuratorAgent(args: Parameters<AgentRunner>[0]): Promise<void> {
+  const service = memoryService()
+  if (!service) {
+    // Storage offline or not bound yet. Skipping is the honest outcome: the old
+    // direct-write path would put the files out of sync with the database.
+    throw new Error('Serviço de memória indisponível; curadoria adiada.')
+  }
   const options: Options = {
     cwd: args.memoriesDir,
     executable: 'node',
@@ -254,7 +250,19 @@ export async function runMemoryCuratorAgent(args: Parameters<AgentRunner>[0]): P
     permissionMode: 'default',
     settingSources: [],
     additionalDirectories: [args.memoriesDir],
-    tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit'],
+    tools: ['Read', 'Glob', 'Grep', 'mcp__memory__memory_propose', 'mcp__memory__memory_list'],
+    mcpServers: {
+      memory: createMemoryMcpServer({
+        service,
+        vault: secretSink(),
+        secretVaultEnabled,
+        // The curator reads transcripts in bulk; it may STORE a secret it finds,
+        // but it has no reason to read one back out of the vault.
+        readSecret: null,
+        conversationId: 'curator',
+        agent: 'curator'
+      })
+    },
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
@@ -270,30 +278,6 @@ export async function runMemoryCuratorAgent(args: Parameters<AgentRunner>[0]): P
   if (failure) throw new Error(failure)
 }
 
-function indexTargets(markdown: string): Set<string> {
-  const targets = new Set<string>()
-  for (const match of markdown.matchAll(/^- \[[^\]]+\]\(([^)]+\.md)\)/gm)) targets.add(match[1])
-  return targets
-}
-
-/** Add missing index links deterministically; never rewrites or removes existing lines. */
-export async function reconcileMemoryIndex(memoriesDir: string): Promise<void> {
-  const indexPath = join(memoriesDir, 'MEMORY.md')
-  const current = existsSync(indexPath) ? await readFile(indexPath, 'utf8') : '# Memórias\n'
-  const targets = indexTargets(current)
-  const additions: string[] = []
-  // Recursive: a memory filed under "2D/" must reach the index too, keeping the
-  // folder in the link so the grouping survives.
-  for (const file of listMemoryFiles(memoriesDir)) {
-    if (targets.has(file.relPath)) continue
-    additions.push(memoryIndexLine(file))
-  }
-  if (!existsSync(indexPath)) await writeFile(indexPath, current, 'utf8')
-  if (additions.length) {
-    const separator = current.endsWith('\n') ? '' : '\n'
-    await appendFile(indexPath, `${separator}${additions.join('\n')}\n`, 'utf8')
-  }
-}
 
 export async function runMemoryCuratorOnce(options: CuratorRunOptions = {}): Promise<CuratorRunResult> {
   const now = options.now ?? Date.now()
@@ -330,7 +314,9 @@ export async function runMemoryCuratorOnce(options: CuratorRunOptions = {}): Pro
       chunkCount++
     }
   }
-  if (chunkCount > 0) await reconcileMemoryIndex(memoriesDir)
+  // MEMORY.md is now generated from the database, so the old add-only patcher
+  // would fight it. Reconciling re-projects whatever a crash left behind.
+  if (chunkCount > 0) await memoryService()?.reconcile()
   return { transcripts: transcriptCount, chunks: chunkCount }
 }
 

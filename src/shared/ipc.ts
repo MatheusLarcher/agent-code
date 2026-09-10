@@ -964,6 +964,24 @@ export interface RepositoryChange {
   installationId?: string
 }
 
+/** A vault entry as shown in Configurações — the value never leaves the main process. */
+export interface SecretVaultItem {
+  name: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** A memory proposal that did not apply, shown read-only so it is not silent. */
+export interface MemoryConflictItem {
+  id: string
+  op: 'create' | 'update' | 'retire'
+  relPath: string
+  status: 'conflict' | 'rejected'
+  reason: string | null
+  proposedBy: string
+  updatedAt: string
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   openai: { apiKey: '', voice: 'alloy', speed: 1 },
   transcribeEngine: 'cloud',
@@ -1021,6 +1039,14 @@ export const Channels = {
   /** Pick a new cache folder (native dialog) and switch to it; returns the new CacheInfo. */
   cacheChooseDir: 'cache:choose-dir',
   /** Read a value (JSON string) from the cache-folder SQLite key→value store. */
+  /** Vault: names/dates only, never a value. */
+  secretVaultList: 'secret-vault:list',
+  /** Vault: explicit deletion from the settings screen. */
+  secretVaultDelete: 'secret-vault:delete',
+  /** Memory proposals that failed, for the settings screen. */
+  memoryConflicts: 'memory:conflicts',
+  /** Drops a settled (conflict/rejected) proposal from the list. */
+  memoryDiscardProposal: 'memory:discard-proposal',
   kvGet: 'kv:get',
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet: 'kv:set',

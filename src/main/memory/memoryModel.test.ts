@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { normalizeMemoryEntryWrite, normalizeMemoryProposal, normalizeMemoryRelPath, parseMemoryIndexBullets, renderMemoryIndexFile } from './memoryModel'
+import { normalizeMemoryEntryWrite, normalizeMemoryProposal, normalizeMemoryRelPath, parseMemoryIndexBullets, parseMemoryIndexSections, renderMemoryIndexFile } from './memoryModel'
 
 const root = process.platform === 'win32' ? 'C:/fixture/memories' : '/fixture/memories'
 
@@ -37,5 +37,44 @@ describe('memory path and proposal rules', () => {
     expect(markdown).toBe(renderMemoryIndexFile([...entries].reverse()))
     expect(markdown.indexOf('Root hook')).toBeLessThan(markdown.indexOf('## folder'))
     expect(parseMemoryIndexBullets(markdown).get('folder/Legacy Notes.md')).toEqual({ title: 'Legacy', hook: hook.trim() })
+  })
+
+  it('preserva o título de seção escrito à mão ao regerar o índice', () => {
+    const original = [
+      '# Memórias',
+      '',
+      '- [Raiz](raiz.md) — na raiz',
+      '',
+      '## 2D — NF-e e banco',
+      '',
+      '- [ERP](2D/erp.md) — o ERP da 2D',
+      '',
+      '## Treino local (pasta `treino-local/`)',
+      '',
+      '- [Receita](treino-local/receita.md) — como treinar'
+    ].join('\n')
+
+    const sections = parseMemoryIndexSections(original)
+    expect(sections.get('2D')).toBe('2D — NF-e e banco')
+    expect(sections.get('treino-local')).toBe('Treino local (pasta `treino-local/`)')
+
+    const entries = [
+      { relPath: 'raiz.md', title: 'Raiz', hook: 'na raiz' },
+      { relPath: '2D/erp.md', title: 'ERP', hook: 'o ERP da 2D' },
+      { relPath: 'treino-local/receita.md', title: 'Receita', hook: 'como treinar' }
+    ]
+    const rendered = renderMemoryIndexFile(entries, sections)
+    expect(rendered).toContain('## 2D — NF-e e banco')
+    expect(rendered).toContain('## Treino local (pasta `treino-local/`)')
+    // Reler o índice gerado devolve os mesmos títulos: não degrada a cada volta.
+    expect(parseMemoryIndexSections(rendered)).toEqual(sections)
+    // Sem título guardado, cai no nome da pasta.
+    expect(renderMemoryIndexFile(entries)).toContain('## 2D\n')
+  })
+
+  it('ignora cabeçalho que já é o nome da pasta ou que não rotula pasta nenhuma', () => {
+    expect(parseMemoryIndexSections('## 2D\n\n- [ERP](2D/erp.md) — x').size).toBe(0)
+    expect(parseMemoryIndexSections('## Solta\n\n- [Raiz](raiz.md) — x').size).toBe(0)
+    expect(parseMemoryIndexSections('## Vazia\n\n## 2D — real\n\n- [ERP](2D/erp.md) — x').get('2D')).toBe('2D — real')
   })
 })

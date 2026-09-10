@@ -367,10 +367,16 @@ export function memoryIndexBullet(entry: IndexBullet): string {
   return `- [${entry.title}](${entry.relPath}) — ${entry.hook}`
 }
 
-/** Root memories first, then one `## <folder>` section per subfolder — the
- *  grouping `renderMemoryIndex` also surfaces. Sorted by path so the output is
- *  deterministic across backends. */
-export function renderMemoryIndexFile(entries: readonly IndexBullet[]): string {
+/**
+ * Root memories first, then one section per subfolder. The heading text comes
+ * from `headings` when the user wrote one by hand (`## 2D — NF-e e banco`);
+ * otherwise it is the folder name. Sorted by path so the output is
+ * deterministic across backends.
+ */
+export function renderMemoryIndexFile(
+  entries: readonly IndexBullet[],
+  headings: ReadonlyMap<string, string> = new Map()
+): string {
   const sorted = [...entries].sort((a, b) => a.relPath.localeCompare(b.relPath))
   const root: string[] = []
   const grouped = new Map<string, string[]>()
@@ -387,11 +393,42 @@ export function renderMemoryIndexFile(entries: readonly IndexBullet[]): string {
   }
   const blocks = [MEMORY_INDEX_NOTICE]
   if (root.length) blocks.push(root.join('\n'))
-  for (const [folder, bullets] of grouped) blocks.push(`## ${folder}\n\n${bullets.join('\n')}`)
+  for (const [folder, bullets] of grouped) {
+    blocks.push(`## ${headings.get(folder) ?? folder}\n\n${bullets.join('\n')}`)
+  }
   return `${blocks.join('\n\n')}\n`
 }
 
 const INDEX_BULLET = /^- \[(.+?)\]\(([^)]+\.md)\) — (.*)$/i
+
+/**
+ * Hand-written section titles from an existing MEMORY.md, keyed by the folder
+ * their bullets point at (`## 2D — NF-e e banco` → `2D`). The heading itself
+ * does not name the folder, so the following bullets are what identify it.
+ * A heading equal to the folder name is dropped: that one is already generated.
+ */
+export function parseMemoryIndexSections(markdown: string): Map<string, string> {
+  const out = new Map<string, string>()
+  let heading: string | null = null
+  for (const raw of markdown.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (line.startsWith('## ')) {
+      heading = line.slice(3).trim()
+      continue
+    }
+    const match = INDEX_BULLET.exec(line)
+    if (!heading || !match) continue
+    const relPath = match[2].replace(/\\/g, '/').replace(/^\.?\//, '')
+    const slash = relPath.lastIndexOf('/')
+    // The first bullet under the heading decides the folder; a section mixing
+    // folders is ambiguous, so later bullets never overwrite it.
+    if (slash === -1) { heading = null; continue }
+    const folder = relPath.slice(0, slash)
+    if (!out.has(folder) && heading !== folder) out.set(folder, heading)
+    heading = null
+  }
+  return out
+}
 
 /** Title + hook per path from an existing (hand-written) MEMORY.md, so the
  *  import keeps the user's curated bullets instead of re-deriving them. */

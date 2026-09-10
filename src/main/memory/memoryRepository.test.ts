@@ -83,6 +83,44 @@ describe('SQLite memory transaction contract (isolated fixture)', () => {
     expect(await repository.getMemoryEntryByPath(entry.relPath)).toMatchObject({ revision: 1 })
   })
 
+  it('discards settled proposals, refuses in-flight/applied ones and never touches the entry', async () => {
+    const repository = await fixture()
+    const settled = async (outcome: 'conflict' | 'rejected') => {
+      const enqueued = await repository.enqueueMemoryProposal({ ...proposal, id: undefined })
+      const claim = (await repository.claimMemoryProposal())!
+      expect(claim.proposal.id).toBe(enqueued.id)
+      await repository.settleMemoryProposal({ proposalId: enqueued.id, token: claim.token, outcome, reason: 'fixture' })
+      return enqueued.id
+    }
+    const conflictId = await settled('conflict')
+    const rejectedId = await settled('rejected')
+    expect(await repository.deleteMemoryProposal(conflictId)).toBe(true)
+    expect(await repository.deleteMemoryProposal(rejectedId)).toBe(true)
+    expect(await repository.listMemoryProposals()).toEqual([])
+    // Idempotent for the caller: an already discarded or unknown id is not an error.
+    expect(await repository.deleteMemoryProposal(conflictId)).toBe(false)
+    expect(await repository.deleteMemoryProposal('missing')).toBe(false)
+
+    const pending = await repository.enqueueMemoryProposal({ ...proposal, id: undefined })
+    await expect(repository.deleteMemoryProposal(pending.id)).rejects.toMatchObject({ code: 'INVALID_PERSISTED_DATA' })
+    const claim = (await repository.claimMemoryProposal())!
+    await expect(repository.deleteMemoryProposal(pending.id)).rejects.toMatchObject({ code: 'INVALID_PERSISTED_DATA' })
+    const applied = await repository.settleMemoryProposal({ proposalId: pending.id, token: claim.token, outcome: 'applied', entry })
+    await expect(repository.deleteMemoryProposal(applied.id)).rejects.toMatchObject({ code: 'INVALID_PERSISTED_DATA' })
+    expect((await repository.listMemoryProposals()).map((row) => row.id)).toEqual([applied.id])
+    expect(await repository.getMemoryEntryByPath(entry.relPath)).toMatchObject({ revision: 1, body: 'Body' })
+  })
+
+  it('discarding a settled proposal leaves the entry it references intact', async () => {
+    const repository = await fixture()
+    const stored = await repository.writeMemoryEntry(entry)
+    const enqueued = await repository.enqueueMemoryProposal({ ...proposal, id: undefined, op: 'update', expectedRevision: 99 })
+    const claim = (await repository.claimMemoryProposal())!
+    await repository.settleMemoryProposal({ proposalId: enqueued.id, token: claim.token, outcome: 'conflict', reason: 'revisão errada' })
+    expect(await repository.deleteMemoryProposal(enqueued.id)).toBe(true)
+    expect(await repository.getMemoryEntryByPath(entry.relPath)).toMatchObject({ id: stored.id, revision: 1, body: 'Body' })
+  })
+
   it('rejects stale direct updates and preserves retirement revision metadata', async () => {
     const repository = await fixture()
     const created = await repository.writeMemoryEntry(entry)

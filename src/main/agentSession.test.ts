@@ -880,6 +880,41 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(dispatched).not.toContain('CORPO_NAO_VAI_NO_PROMPT')
   })
 
+  it('nega escrita direta na pasta de memórias mesmo com "Permitir tudo"', async () => {
+    const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-gate-'))
+    cacheState.memoriesDir = memories
+    const { s } = makeSession()
+    s.setBypass(true)
+
+    const denied = [
+      ['Write', { file_path: join(memories, 'nota.md'), content: 'x' }],
+      ['Edit', { file_path: join(memories, 'MEMORY.md'), old_string: 'a', new_string: 'b' }],
+      // Subpasta que ainda não existe: é onde o modelo tenta agrupar memórias.
+      ['Write', { file_path: join(memories, '2D', 'nota.md'), content: 'x' }],
+      ['Bash', { command: `echo oi >> "${join(memories, 'MEMORY.md')}"` }]
+    ] as const
+    for (const [tool, input] of denied) {
+      const result = (await gate(s, tool, input)) as { behavior: string; message: string }
+      expect(result.behavior).toBe('deny')
+      expect(result.message).toContain('memory_propose')
+    }
+
+    // Ler a pasta e escrever fora dela seguem liberados.
+    expect(await gate(s, 'Read', { file_path: join(memories, 'nota.md') })).toMatchObject({ behavior: 'allow' })
+    expect(await gate(s, 'Write', { file_path: join(tmpdir(), 'fora.md'), content: 'x' })).toMatchObject({
+      behavior: 'allow'
+    })
+  })
+
+  it('instrui o modelo a propor a memória em vez de escrever o arquivo', async () => {
+    const { s } = makeSession()
+    await s.start()
+    const append = (optionsOfLastQuery().systemPrompt as { append: string }).append
+    expect(append).toContain('memory_propose')
+    expect(append).not.toContain('just\nwrite into it with your tools')
+    expect(append).not.toContain('The folder already exists; just')
+  })
+
   it('envia todas as memórias uma vez no system prompt inicial', async () => {
     const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-start-'))
     await mkdir(join(memories, 'produto'))

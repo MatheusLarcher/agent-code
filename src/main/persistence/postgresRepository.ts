@@ -1086,6 +1086,24 @@ export class PostgresRepository implements PersistenceRepository {
     return result.rows.map((row) => memoryProposalFromRow(decodeMemoryProposalRow(row)))
   }
 
+  async deleteMemoryProposal(id: string): Promise<boolean> {
+    this.assertInitialized()
+    return transaction(this.pool, async (client) => {
+      const locked = await client.query<MemoryProposalRow>(
+        `SELECT ${MEMORY_PROPOSAL_COLUMNS} FROM memory_proposals WHERE id = $1 FOR UPDATE`,
+        [id]
+      )
+      const row = locked.rows[0]
+      if (!row) return false
+      const status = memoryProposalFromRow(decodeMemoryProposalRow(row)).status
+      if (status !== 'conflict' && status !== 'rejected') {
+        throw new StorageError('INVALID_PERSISTED_DATA', `Proposta de memória ${id} está em ${status}; só propostas em conflict/rejected podem ser descartadas.`)
+      }
+      await client.query('DELETE FROM memory_proposals WHERE id = $1', [id])
+      return true
+    })
+  }
+
   private async writeMemoryEntryInTx(client: PoolClient, write: MemoryEntryWrite): Promise<MemoryEntry> {
     const next = normalizeMemoryEntryWrite(write)
     // A row lock cannot protect an absent path. Serialize inserts and updates on

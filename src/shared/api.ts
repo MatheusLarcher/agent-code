@@ -1,4 +1,6 @@
 import type {
+  SecretVaultItem,
+  MemoryConflictItem,
   AgentEventMsg,
   AgentInterruptResult,
   AgentMessageKind,
@@ -112,6 +114,14 @@ export interface AgentCodeApi {
   /** Pick a new cache folder and switch to it; resolves null if the dialog was canceled. */
   chooseCacheDir(): Promise<CacheInfo | null>
   /** Read a value (JSON string) from the cache-folder SQLite key→value store. */
+  /** Vault entries for Configurações: names and dates, never a value. */
+  listSecrets(): Promise<SecretVaultItem[]>
+  /** Explicit deletion of one vault entry. */
+  deleteSecret(name: string): Promise<boolean>
+  /** Memory proposals that failed to apply. */
+  listMemoryConflicts(): Promise<MemoryConflictItem[]>
+  /** Removes one settled proposal from the conflicts list. */
+  discardMemoryProposal(id: string): Promise<boolean>
   kvGet(key: string): Promise<string | null>
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet(key: string, value: string): Promise<void>

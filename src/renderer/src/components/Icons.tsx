@@ -187,6 +187,15 @@ export const IconClock = (p: IconProps): JSX.Element => (
   </Svg>
 )
 
+/** Warning triangle — a state that needs the user's attention, not an error. */
+export const IconWarning = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M12 4.5 21 19.5H3L12 4.5z" />
+    <line x1="12" y1="10" x2="12" y2="14" />
+    <circle cx="12" cy="16.8" r="0.1" fill="currentColor" stroke="currentColor" strokeWidth="1.5" />
+  </Svg>
+)
+
 export const IconHelp = (p: IconProps): JSX.Element => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="9" />

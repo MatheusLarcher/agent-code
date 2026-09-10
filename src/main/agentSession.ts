@@ -12,6 +12,9 @@ import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsCo
 import { windowsControl } from './windowsControl/service'
 import { loadConfig } from './config'
 import { getCacheInfo } from './store'
+import { memoryWriteDenial } from './memory/memoryPaths'
+import { createMemoryMcpServer } from './memory/memoryTools'
+import { memoryService, readSecret, secretSink, secretVaultEnabled } from './memory/memoryRuntime'
 import {
   createMemoryCatalogSnapshot,
   memoryCatalogFilesystemVersion,
@@ -230,8 +233,10 @@ ${memoriesDir}
 
 This folder is part of the user's cache folder (next to the app's database) and survives across
 conversations. The memories are private to THIS user/machine — always use the ABSOLUTE path above
-(your working directory is the user's project, NOT this folder). The folder already exists; just
-write into it with your tools.
+(your working directory is the user's project, NOT this folder). READING the folder is free
+(Read/Glob/Grep). WRITING it directly is blocked: Write/Edit on these files is denied even with
+"Permitir tudo" on, because the app keeps the files and MEMORY.md consistent from its own database.
+To save, use the "memory_propose" tool (op create/update/retire); it writes the file AND the index.
 
 SUBFOLDERS — the user may group memories in subfolders (e.g. "2D/"). The folder name IS context:
 every memory listed under a folder section below is about that subject. When the current task is
@@ -240,13 +245,14 @@ about that subject, those memories apply; save new memories on that subject INTO
 
 SAVING — when the user asks you to remember, save, note, or memorize something ("lembra disso",
 "salva na memória", "anota", "memorize", "remember this", etc.):
-- Write ONE fact per file as <short-kebab-name>.md inside the folder above (or inside the matching
-  subfolder, when the fact clearly belongs to an existing group).
-- Keep a MEMORY.md index in the ROOT of that folder: one bullet per memory —
-  "- [Title](file.md) — short hook", using the path WITH the subfolder when there is one
-  ("- [Title](2D/file.md) — ...").
-- Before creating a file, check the index for an existing memory on the same topic and UPDATE that
-  file instead of making a duplicate. Delete a memory file (and its index line) if it becomes wrong.
+- Call "memory_propose" with ONE fact per file: rel_path "<short-kebab-name>.md" (or
+  "<subfolder>/<short-kebab-name>.md" when the fact belongs to an existing group), plus "title"
+  and "hook" — those two become the MEMORY.md bullet, which the app regenerates for you.
+- Before creating, check the index/"memory_list" for an existing memory on the same topic and use
+  op "update" (with its "expected_revision") instead of creating a duplicate. Use op "retire" when
+  a memory becomes wrong — never delete the file by hand.
+- If the fact includes a credential (key, token, password), pass it in "secrets: [{name, value}]".
+  The value goes to the app's encrypted vault and the note keeps only a "{{secret:<name>}}" marker.
 - Do NOT save things already evident from the project's code, git history, or CLAUDE.md.
 
 RECALLING — these files are your long-term knowledge about this user and their projects. The complete
@@ -476,6 +482,19 @@ export class AgentSession {
     }
     if (process.platform === 'win32') {
       mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
+    }
+    // Only when the service is bound to an authoritative repository: without it
+    // the tool would accept a memory and quietly drop it.
+    const memory = memoryService()
+    if (memory) {
+      mcpServers.memory = createMemoryMcpServer({
+        service: memory,
+        vault: secretSink(),
+        secretVaultEnabled,
+        readSecret,
+        conversationId: this.opts.convId,
+        agent: 'session'
+      })
     }
     // Tell the model where its per-user memory lives (and pre-load the complete catalog), so
     // "lembra disso" saves into the cache folder and recall works across chats.
@@ -1252,6 +1271,17 @@ export class AgentSession {
           message: 'Controle do Windows desativado. Ative “Permitir controle do Windows” nas Configurações.'
         })
       }
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    }
+    // Checked BEFORE bypassAll: whether MEMORY.md matches the database must not
+    // depend on the permission toggle. Reading the folder stays allowed.
+    const memoryDenial = memoryWriteDenial(getCacheInfo().memoriesDir, toolName, input)
+    if (memoryDenial) return Promise.resolve({ behavior: 'deny', message: memoryDenial })
+    // The memory tools are the sanctioned replacement for the blocked direct
+    // writes, and they only touch the user's own memory store — prompting for
+    // each one would just train the user to click through. The vault switch in
+    // Configurações, not this gate, is what authorizes reading a secret.
+    if (toolName.startsWith('mcp__memory__')) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     if (

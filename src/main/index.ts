@@ -50,6 +50,8 @@ import { exportConversationsParquet } from './conversationParquet'
 import { storageErrorForIpc, upsertConversationWithLeaseRecovery } from './persistence/conversationWriteRecovery'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
+import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService } from './memory/memoryRuntime'
+import { startRestartGuardFile } from './restartGuardFile'
 import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
 import { syncCacheSkills } from './skillManager'
@@ -74,11 +76,14 @@ import type {
   PostgresConnectionDraft,
   ConversationUpsertDto,
   ConversationDeleteDto,
-  ConversationQueryDto
+  ConversationQueryDto,
+  SecretVaultItem,
+  MemoryConflictItem
 } from '../shared/ipc'
 
 let mainWindow: BrowserWindow | null = null
 let stopMemoryCurator: (() => void) | null = null
+let stopRestartGuardFile: (() => void) | null = null
 let closeRequested = false
 let closeReady = false
 let closeRequestTimer: ReturnType<typeof setInterval> | null = null
@@ -866,6 +871,35 @@ function registerIpc(): void {
     send(Channels.windowsControlChanged, enabled)
     return info
   })
+  // Names and dates only. The value never crosses to the renderer: the model
+  // gets it through the vault tool, the settings screen never displays it.
+  ipcMain.handle(Channels.secretVaultList, async (): Promise<SecretVaultItem[]> =>
+    (await listSecretMetadata()).map((item) => ({
+      name: item.name,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt
+    }))
+  )
+  ipcMain.handle(Channels.secretVaultDelete, (_e, name: string) => deleteSecret(name))
+  ipcMain.handle(Channels.memoryConflicts, async (): Promise<MemoryConflictItem[]> => {
+    const service = memoryService()
+    if (!service) return []
+    const proposals = await service.listProposals({ status: ['conflict', 'rejected'], limit: 200 })
+    return proposals.map((item) => ({
+      id: item.id,
+      op: item.op,
+      relPath: item.relPath,
+      status: item.status as 'conflict' | 'rejected',
+      reason: item.reason,
+      proposedBy: item.proposedBy,
+      updatedAt: item.updatedAt
+    }))
+  })
+  ipcMain.handle(Channels.memoryDiscardProposal, async (_e, id: string) => {
+    const service = memoryService()
+    if (!service) throw new StorageError('STORAGE_OFFLINE', 'Persistência autoritativa offline.', true)
+    return service.discardProposal(id)
+  })
   ipcMain.handle(Channels.kvGet, (_e, key: string) => readPersistedKv(key))
   ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => {
     assertStorageWritable(true)
@@ -1287,6 +1321,10 @@ app.whenReady().then(async () => {
   if (!ownsSingleInstance) return
   initStore() // prepares the legacy SQLite source and cache folders before the v2 migration
   const cacheInfo = getCacheInfo()
+  // Secrets live in userData, NOT in the movable cache folder and NOT in the KV
+  // that syncs to PostgreSQL: the safeStorage key belongs to this machine, so a
+  // copy on another PC would be undecryptable dead weight.
+  configureSecretVault({ directory: join(app.getPath('userData'), 'vault'), secureStorage: safeStorage })
   await storageLifecycle.initialize({
     location: cacheInfo,
     userDataDir: app.getPath('userData'),
@@ -1350,6 +1388,9 @@ app.whenReady().then(async () => {
   // Runs outside every chat session. The cheap transcript mtime gate happens
   // before any agent is started, and the persisted timestamp keeps it daily.
   if (storageAvailable) stopMemoryCurator = await startMemoryCuratorScheduler()
+  // Publica "algum agente ocupado?" em disco para o relançador externo
+  // (scripts/relaunch-agent-code.ps1) checar antes de fechar o app.
+  if (appRestart) stopRestartGuardFile = startRestartGuardFile(appRestart, app.getPath('userData'))
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
   // a paired phone reconnects on its own (the fixed token is already persisted).
   if (storageAvailable && loadConfig().remoteEnabled) {
@@ -1398,4 +1439,6 @@ app.on('before-quit', (event) => {
   stopLocalSpeech()
   stopMemoryCurator?.()
   stopMemoryCurator = null
+  stopRestartGuardFile?.()
+  stopRestartGuardFile = null
 })

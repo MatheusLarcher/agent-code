@@ -10,7 +10,6 @@ import {
   memoryCuratorDelay,
   memoryCuratorPermission,
   normalizeTranscript,
-  reconcileMemoryIndex,
   runMemoryCuratorAgent,
   runMemoryCuratorOnce
 } from './memoryCurator'
@@ -132,7 +131,6 @@ describe('memory curator — isolated add-only execution', () => {
           'ASSISTANT ACTION: [TOOL Edit] {"file_path":"client.ts","new_string":"connect({ transport: \\\"stream\\\" })"}'
         ].join('\n\n')
       })
-      await reconcileMemoryIndex(memories)
       const files = await import('node:fs/promises').then((fs) => fs.readdir(memories))
       const memoryFiles = files.filter((name) => name.endsWith('.md') && name !== 'MEMORY.md')
       expect(memoryFiles.length).toBeGreaterThan(0)
@@ -142,7 +140,6 @@ describe('memory curator — isolated add-only execution', () => {
       expect(memory).toMatch(/Why:/i)
       expect(memory).toMatch(/How to apply:/i)
       expect(memory).toMatch(/Fix applied:/i)
-      expect(await readFile(join(memories, 'MEMORY.md'), 'utf8')).toContain(`(${memoryFiles[0]})`)
     },
     180_000
   )
@@ -160,43 +157,25 @@ describe('memory curator — isolated add-only execution', () => {
     expect(runAgent).not.toHaveBeenCalled()
   })
 
-  it('runs the isolated agent for a real transcript and reconciles the index add-only', async () => {
+  it('não remenda o MEMORY.md por fora do serviço de memória', async () => {
     const root = await temp()
     const projects = join(root, 'projects', 'encoded')
     const memories = join(root, 'memories')
     await mkdir(projects, { recursive: true })
     await mkdir(memories)
     await writeFile(join(projects, 'session.jsonl'), JSON.stringify({ type: 'user', message: { role: 'user', content: 'Use a API v2, não v1.' } }))
-    await writeFile(join(memories, 'MEMORY.md'), '# Memórias\n\n- [Antiga](antiga.md) — manter\n')
-    await writeFile(join(memories, 'antiga.md'), '# Antiga\n')
-    const runAgent = vi.fn(async ({ memoriesDir }) => {
-      await writeFile(join(memoriesDir, 'api-v2.md'), '---\nname: api-v2\ndescription: usar a API v2\nmetadata:\n  type: feedback\n---\n# API v2\nRule: use v2\nWhy: v1 falhou\nHow to apply: integrações\nFix applied: chamada migrada\n')
-    })
+    const original = '# Memórias\n\n- [Antiga](antiga.md) — manter\n'
+    await writeFile(join(memories, 'MEMORY.md'), original)
+    const runAgent = vi.fn(async () => {})
 
     await expect(runMemoryCuratorOnce({ projectsDir: join(root, 'projects'), memoriesDir: memories, runAgent }))
       .resolves.toEqual({ transcripts: 1, chunks: 1 })
-    const index = await readFile(join(memories, 'MEMORY.md'), 'utf8')
-    expect(index).toContain('[Antiga](antiga.md) — manter')
-    expect(index).toContain('[API v2](api-v2.md) — usar a API v2')
+    // O índice é projeção do banco: sem serviço ligado, o curador não inventa linha.
+    expect(await readFile(join(memories, 'MEMORY.md'), 'utf8')).toBe(original)
   })
 
-  it('indexa memória salva dentro de subpasta, com a pasta no link', async () => {
-    const memories = await temp()
-    await mkdir(join(memories, '2D'))
-    await writeFile(join(memories, 'MEMORY.md'), '# Memórias\n')
-    await writeFile(join(memories, '2D', 'erp.md'), '---\ndescription: ERP da 2D usa X\n---\n# ERP da 2D\n')
 
-    await reconcileMemoryIndex(memories)
-    const index = await readFile(join(memories, 'MEMORY.md'), 'utf8')
-    expect(index).toContain('[ERP da 2D](2D/erp.md) — ERP da 2D usa X')
-
-    // add-only: rodar de novo não duplica a linha
-    await reconcileMemoryIndex(memories)
-    const again = await readFile(join(memories, 'MEMORY.md'), 'utf8')
-    expect(again.match(/2D\/erp\.md/g)).toHaveLength(1)
-  })
-
-  it('allows writes only inside memories and refuses overwrite with Write', async () => {
+  it('nega escrita direta e libera só leitura e as ferramentas de memória', async () => {
     const root = await temp()
     const memories = join(root, 'memories')
     await mkdir(memories)
@@ -204,9 +183,13 @@ describe('memory curator — isolated add-only execution', () => {
     await writeFile(existing, '# Memórias')
 
     await expect(memoryCuratorPermission(memories, 'Write', { file_path: join(memories, 'nova.md') }))
-      .resolves.toMatchObject({ behavior: 'allow' })
-    await expect(memoryCuratorPermission(memories, 'Write', { file_path: existing }))
       .resolves.toMatchObject({ behavior: 'deny' })
+    await expect(memoryCuratorPermission(memories, 'Edit', { file_path: existing }))
+      .resolves.toMatchObject({ behavior: 'deny' })
+    await expect(memoryCuratorPermission(memories, 'mcp__memory__memory_propose', { op: 'create' }))
+      .resolves.toMatchObject({ behavior: 'allow' })
+    await expect(memoryCuratorPermission(memories, 'Read', { file_path: existing }))
+      .resolves.toMatchObject({ behavior: 'allow' })
     await expect(memoryCuratorPermission(memories, 'Read', { file_path: join(root, 'fora.txt') }))
       .resolves.toMatchObject({ behavior: 'deny' })
     await expect(memoryCuratorPermission(memories, 'Glob', { pattern: join(root, '*.md') }))
@@ -215,14 +198,4 @@ describe('memory curator — isolated add-only execution', () => {
       .resolves.toMatchObject({ behavior: 'deny' })
   })
 
-  it('reconcileMemoryIndex adds missing links but never removes existing entries', async () => {
-    const memories = await temp()
-    await writeFile(join(memories, 'MEMORY.md'), '# Memórias\n- [Existente](existente.md) — não remover\n')
-    await writeFile(join(memories, 'existente.md'), '# Existente\n')
-    await writeFile(join(memories, 'nova.md'), '---\nname: nova\ndescription: regra nova\n---\n# Nova regra\n')
-    await reconcileMemoryIndex(memories)
-    const index = await readFile(join(memories, 'MEMORY.md'), 'utf8')
-    expect(index).toContain('[Existente](existente.md) — não remover')
-    expect(index.match(/\(nova\.md\)/g)).toHaveLength(1)
-  })
 })

@@ -436,6 +436,9 @@ export interface MemoryRepository {
   /** Finishes a claimed proposal. Applied requires a matching entry CAS; write and settlement commit atomically. */
   settleMemoryProposal(input: MemoryProposalSettle): Promise<MemoryProposal>
   listMemoryProposals(query?: MemoryProposalQuery): Promise<MemoryProposal[]>
+  /** Removes a settled (`conflict`/`rejected`) proposal row. Returns false when it does not exist.
+   * Never touches the referenced entry; `pending`/`applied` proposals are refused. */
+  deleteMemoryProposal(id: string): Promise<boolean>
 }
 
 export interface PersistenceRepository extends TaskRepository, MemoryRepository {

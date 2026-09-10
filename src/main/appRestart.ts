@@ -14,6 +14,18 @@ export interface RestartHost {
 }
 export interface RestartReply { ok: boolean; prepared: boolean; message: string }
 
+/** Same question `blocker()` answers, exposed for an outside restarter script. */
+export interface RestartGuardStatus {
+  /** True only when NO conversation is busy and nothing is starting/sending. */
+  idle: boolean
+  /** What is holding it, when not idle. */
+  blockedBy: string | null
+  /** How many sessions were registered — 0 means the app just started. */
+  sessions: number
+  /** ISO time this snapshot was produced; a stale file must not be trusted. */
+  at: string
+}
+
 /** Main-process authority. Models only receive a closure bound to a live registration. */
 export class AppRestartCoordinator {
   private sessions = new Map<symbol, { id: string; read: () => RestartActivity }>()
@@ -41,6 +53,31 @@ export class AppRestartCoordinator {
     if (this.reservation) throw new Error('Reinício preparado: novo trabalho recusado. Tente novamente após o reinício ou cancelamento.')
   }
   get reserved(): boolean { return !!this.reservation }
+
+  /**
+   * Guard state for a caller OUTSIDE the app (the restarter script). Uses the
+   * same rule as an internal request, but with no caller to exempt: every busy
+   * conversation counts, including the one that would be asking.
+   */
+  status(): RestartGuardStatus {
+    const blockedBy = this.operations.size ? 'Inicialização ou envio pendente.' : this.anySessionBusy()
+    return {
+      idle: !blockedBy && !this.reservation,
+      blockedBy: blockedBy ?? (this.reservation ? 'Já existe uma reserva de reinício.' : null),
+      sessions: this.sessions.size,
+      at: new Date().toISOString()
+    }
+  }
+
+  private anySessionBusy(): string | undefined {
+    for (const session of this.sessions.values()) {
+      let state: RestartActivity
+      try { state = session.read() } catch { return `Estado desconhecido: ${session.id}.` }
+      if (state.unsafe) return `${session.id}: ${state.unsafe}`
+      if (state.busy) return `Conversa ocupada: ${session.id}.`
+    }
+    return undefined
+  }
 
   private blocker(caller: symbol, includeCaller: boolean): string | undefined {
     if (!this.sessions.has(caller)) return 'Sessão solicitante desconhecida.'

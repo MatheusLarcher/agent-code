@@ -1,6 +1,7 @@
 import type { PostgresConnectionDraft, PostgresPublicSettings } from '../../shared/ipc'
 import { BootstrapStore, POSTGRES_DATABASE, type SecureStorageAdapter } from './bootstrapStore'
 import { configureKvRepository, configureKvRepositoryOffline } from './kvFacade'
+import { configureMemoryRuntime } from '../memory/memoryRuntime'
 import { postgresClientConfig, provisionPostgres, testPostgresConnection } from './postgresProvisioning'
 import { PostgresRepository } from './postgresRepository'
 import { hasCommittedActivation, importRepositoryToPostgres, writeRepositoryToSqlite } from './postgresTransfer'
@@ -114,6 +115,7 @@ export class StorageLifecycleService {
       await next.close().catch(() => undefined)
       const error = this.storageError(cause, 'Não foi possível inicializar o SQLite.')
       configureKvRepositoryOffline()
+      configureMemoryRuntime(null)
       this.setStatus(this.makeStatus('sqlite', 'fatal', false, false, error))
       throw error
     }
@@ -188,6 +190,7 @@ export class StorageLifecycleService {
 
   async close(): Promise<void> {
     configureKvRepositoryOffline()
+    configureMemoryRuntime(null)
     this.repositoryUnsubscribe?.()
     this.repositoryUnsubscribe = null
     const current = this.active
@@ -366,6 +369,9 @@ export class StorageLifecycleService {
     this.repositoryUnsubscribe?.()
     this.active = next
     configureKvRepository(next)
+    // The memory service writes through the authoritative repository, so it has
+    // to follow every backend swap instead of holding a replaced one.
+    configureMemoryRuntime(next)
     this.repositoryUnsubscribe = next.subscribe((changes) => {
       for (const handler of this.changeHandlers) handler(changes)
     })
@@ -374,6 +380,7 @@ export class StorageLifecycleService {
   private setOffline(cause: unknown): void {
     const error = this.storageError(cause, 'PostgreSQL indisponível.', true)
     configureKvRepositoryOffline()
+    configureMemoryRuntime(null)
     this.repositoryUnsubscribe?.()
     this.repositoryUnsubscribe = null
     const current = this.active

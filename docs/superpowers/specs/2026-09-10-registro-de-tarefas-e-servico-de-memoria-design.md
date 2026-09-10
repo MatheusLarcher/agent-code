@@ -91,6 +91,7 @@ Máquina de estados válida: `pending→running`, `running→blocked|review|fail
   2. `update`: exige `expected_revision`; se divergente → `conflict`. Senão nova revisão, reescreve arquivo, regenera índice.
   3. `retire`: marca `retired`, move o arquivo para `memories/.retired/<rel_path>`, regenera índice.
   **Banco primeiro:** a atualização CAS da entrada e o resultado da proposta são confirmados na mesma transação. Só depois os arquivos são projetados por temporário + rename. Banco, arquivo e índice NÃO formam uma transação única: uma queda pode deixar a projeção atrasada, que deve ser reaplicada sem repetir a revisão já confirmada. Falha da projeção não transforma aplicação confirmada em proposta pendente.
+  **Índice gerado, títulos preservados:** o `MEMORY.md` passa a ser projeção do banco (ordem alfabética por caminho), mas o texto de cada bullet e os **títulos de seção escritos à mão** (`## 2D — NF-e e banco`) são mantidos — o título é lido do índice atual e guardado no diário local, então não se perde nas regerações seguintes. Ensaio contra uma cópia do acervo real (162 memórias): 162 bullets antes e depois, nenhum perdido, 0 conflitos, seções idênticas.
 - `reconcile()`: importa arquivos legados desconhecidos, mas nunca promove automaticamente divergência de entrada existente ou arquivo reaparecido de entrada aposentada. O histórico local de hashes distingue projeção anterior de alteração externa; divergências manuais são preservadas e reportadas, não sobrescritas. Arquivo ausente pode ser refeito a partir do banco. O índice é uma projeção das entradas ativas, com agrupamento por pasta. A etapa 2 permanece desconectada do startup e do acervo real até concluir integração, cofre e transições de backend.
 - Propostas em `conflict` ficam visíveis (lista em Configurações → Dados, só leitura, com botão "descartar"); não travam as demais.
 
@@ -106,6 +107,14 @@ O usuário às vezes precisa que o agente guarde chaves. Em vez de recusar, a me
 - **UI mínima:** em Configurações → Dados, lista de nomes do cofre com data e botão "apagar" (nunca mostra o valor). Sem edição por ali nesta fase.
 - **Fora:** exportar/importar cofre, sincronizar entre PCs, mostrar valor na tela.
 
+**Estado (10/09/2026):** implementado. O servidor MCP `memory` expõe `memory_propose`, `memory_list`,
+`memory_status` e — só com o cofre ligado — `memory_secret_get`. Sessão e curador usam o mesmo caminho;
+`Write`/`Edit`/`MultiEdit`/`NotebookEdit` e comando de shell que cite a pasta são negados **antes** do
+"Permitir tudo". O cofre vive em `<userData>/vault/secret-vault.json`, fora do cache móvel e das
+transferências de banco. Configurações → Dados tem o interruptor do cofre (aplica na hora), a lista de
+nomes/datas com "apagar" e a lista de propostas em conflito com "descartar". Falta a validação do
+portátil com `safeStorage` real.
+
 ### Ferramenta MCP `memory_propose`
 Servidor MCP em processo `memory` registrado em `agentSession` ao lado de `browser`/`android`. Ferramentas: `memory_propose({ op, rel_path?, title, hook, body, scope, expected_revision?, secrets? })` e, só com o cofre ligado, `memory_secret_get({ name })`. Auto-aprovada no gate (não altera código do projeto). O `buildMemoryHint` passa a dizer: "para salvar, use `memory_propose`; nunca escreva em `memories/` diretamente". `memories/` sai de `additionalDirectories` para escrita — continua legível via `Read`/`Glob`; a implementação prática é negar `Write`/`Edit`/`Bash` cujo alvo resolva dentro de `memoriesDir` no `handlePermission` (o SDK não separa leitura de escrita por diretório), reaproveitando `realPathInside` do curador.
 
@@ -113,6 +122,8 @@ Servidor MCP em processo `memory` registrado em `agentSession` ao lado de `brows
 
 ### Curador
 - Troca `tools: [..., 'Write', 'Edit']` por `['Read','Glob','Grep', 'mcp__memory__memory_propose']`.
+- Sem serviço de memória ligado (storage offline), a execução **falha explicitamente** em vez de cair
+  no caminho antigo de escrita direta; a marca d'água não avança e a varredura fica para a próxima.
 - Marca d'água: `runStartedAt` capturado antes de `findRecentTranscripts`; persistido em `memory-curator:last-run-at` **somente** se `runMemoryCuratorOnce` resolveu sem exceção. Chave nova `memory-curator:last-failure` (device) com `{ at, error }` para diagnóstico. Sem transcrições novas também conta como sucesso.
 - `reconcileMemoryIndex` é removido; substituído por `MemoryService.reconcile()`.
 

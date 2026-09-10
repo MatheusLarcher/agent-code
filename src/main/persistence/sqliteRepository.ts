@@ -985,6 +985,19 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     })
   }
 
+  async deleteMemoryProposal(id: string): Promise<boolean> {
+    return this.write((db) => {
+      const row = decodeSqliteRecordRow(db.prepare(`SELECT ${MEMORY_PROPOSAL_SELECT_COLUMNS} FROM memory_proposals WHERE id = ?`).get(id) as MemoryProposalRow | undefined)
+      if (!row) return false
+      const status = memoryProposalFromRow(row).status
+      if (status !== 'conflict' && status !== 'rejected') {
+        throw new StorageError('INVALID_PERSISTED_DATA', `Proposta de memória ${id} está em ${status}; só propostas em conflict/rejected podem ser descartadas.`)
+      }
+      db.prepare('DELETE FROM memory_proposals WHERE id = ?').run(id)
+      return true
+    })
+  }
+
   private memoryEntryRow(db: DatabaseSync, relPath: string): MemoryEntryRow | undefined {
     return decodeSqliteRecordRow(db.prepare(`SELECT ${MEMORY_ENTRY_SELECT_COLUMNS} FROM memory_entries WHERE rel_path = ?`).get(relPath) as MemoryEntryRow | undefined)
   }

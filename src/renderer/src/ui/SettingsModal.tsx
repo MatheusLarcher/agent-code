@@ -9,6 +9,7 @@ import {
 } from '@shared/ipc'
 import { useUI } from './UiProvider'
 import { PostgresSettingsSection } from './PostgresSettingsSection'
+import { MemoryDataSection } from './MemoryDataSection'
 import {
   IconDatabase,
   IconEye,
@@ -38,7 +39,7 @@ const TABS: { id: Tab; label: string; hint: string; icon: JSX.Element }[] = [
   { id: 'geral', label: 'Geral', hint: 'Permissões do agente', icon: <IconSliders size={16} /> },
   { id: 'modelos', label: 'Modelos e contas', hint: 'Claude, ChatGPT, Ollama', icon: <IconKey size={16} /> },
   { id: 'voz', label: 'Voz', hint: 'Ditado e leitura', icon: <IconMic size={16} /> },
-  { id: 'dados', label: 'Dados', hint: 'Pasta e PostgreSQL', icon: <IconDatabase size={16} /> }
+  { id: 'dados', label: 'Dados', hint: 'Pasta, cofre e PostgreSQL', icon: <IconDatabase size={16} /> }
 ]
 
 /** Eye toggle for secret fields — replaces the old emoji buttons. */
@@ -507,6 +508,8 @@ export function SettingsModal({
                     </span>
                   </label>
                 </section>
+
+                <MemoryDataSection />
 
                 <PostgresSettingsSection />
               </>

@@ -15,6 +15,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Ciclo de vida da sessão do agente](#ciclo-de-vida-da-sessão-do-agente)
 - [Tradução de mensagens do SDK em eventos de UI](#tradução-de-mensagens-do-sdk-em-eventos-de-ui)
 - [Permissões de ferramentas](#permissões-de-ferramentas)
+- [Reiniciar o app pelo agente](#reiniciar-o-app-pelo-agente)
 - [Modal de pergunta interativa (AskUserQuestion)](#modal-de-pergunta-interativa-askuserquestion)
 - [Voz no chat (OpenAI)](#voz-no-chat-openai)
 - [Modelos via Ollama Cloud](#modelos-via-ollama-cloud)
@@ -340,6 +341,32 @@ A maioria dos modelos do Ollama Cloud da lista (`OLLAMA_MODELS`) é **texto-only
 - **O relay** (`src/main/visionRelay.ts`): `describeImages(images, userText)` dispara um `query()` **avulso** do SDK (não é a sessão principal) contra um modelo multimodal fixo (`claude-sonnet-5`), com `tools: []` (sem ferramentas — é só um intérprete, não um agente) e `maxTurns: 1`. O prompt pede uma extração estruturada em 8 seções fixas: **Texto visível (OCR completo)**, **Erros encontrados**, **Elementos de interface**, **Layout visual**, **Contexto técnico**, **Logs ou stack traces**, **Componentes relevantes**, **Possíveis problemas identificados**. `buildVisualContextBlock` envolve o resultado em `[VISUAL_CONTEXT]\n…\n[/VISUAL_CONTEXT]`; `mergeUserTextWithVisualContext` monta o texto final ("Mensagem original do usuário: …" + o bloco + "Agora responda considerando a análise visual acima.").
 - **Interceptação** (`AgentSession.send`, agora `async`): se há imagens **e** `!modelSupportsVision(this.opts.model)`, chama o relay e envia **só o texto mesclado** pra fila do SDK — a imagem em si nunca chega ao modelo principal. Se o relay falhar (rede, etc.), degrada sem travar o envio: acrescenta uma nota curta ao texto avisando que a imagem não pôde ser analisada, e segue. Com um modelo que já vê imagem (Claude ou Kimi K3), ou sem nenhuma imagem anexada, o fluxo é **idêntico ao anterior** — os blocos de imagem vão direto no `content` da mensagem, sem relay.
 - Testes: `visionRelay.test.ts` (prompt/parsing do relay isolado, com `query` mockado) e `agentSession.test.ts` → "vision_fallback_router" (os 5 ramos: sem visão + sucesso, sem visão + falha do relay degradando, Claude pulando o relay, Kimi K3 pulando o relay, sem imagem).
+
+---
+
+## Reiniciar o app pelo agente
+
+O agente roda **dentro** do app: ele não consegue se fechar e reabrir sozinho — matar o processo mataria a própria sessão no meio. Por isso o reinício é feito por um script **externo e destacado**, `scripts/relaunch-agent-code.ps1`.
+
+```powershell
+Start-Process powershell -WindowStyle Hidden -ArgumentList `
+  '-NoProfile','-ExecutionPolicy','Bypass','-File','scripts\relaunch-agent-code.ps1'
+```
+
+Sequência: **confere o guarda → espera 5 s → fecha → espera 5 s → reabre**.
+
+**Só reinicia se nenhum agente estiver rodando.** Essa é a regra central, e ela **não é decidida pelo script**: um script enxerga processos, nunca conversas. Quem sabe é o main, que já tem essa lógica no `AppRestartCoordinator` (a mesma que sustenta a ferramenta `app_restart`): `blocker()` recusa enquanto qualquer conversa estiver ocupada, houver estado `unsafe` ou um start/send pendente.
+
+- `AppRestartCoordinator.status()` expõe essa resposta para fora, **sem isentar ninguém** — no `app_restart` a conversa que pede é exceção (senão ela bloquearia a si mesma); para o script externo não há quem isentar, então toda conversa ocupada conta.
+- `restartGuardFile.ts` grava esse retorno em `<userData>/restart-guard.json` **a cada 2 s**, por temporário + `rename` (o script nunca lê um arquivo pela metade).
+- O carimbo `at` transforma o arquivo num **heartbeat**. Se o app travar ou morrer, o timestamp para de andar; o script trata estado com mais de 15 s, ausente ou ilegível como **desconhecido e recusa** (`exit 2`). Falhar fechado é o único comportamento seguro: assumir "ocioso" mataria um turno em andamento. Pelo mesmo motivo o arquivo é **apagado no shutdown** — um snapshot "ocioso" deixado por um app morto seria exatamente a resposta errada.
+- Agente ocupado → `exit 3`, com o motivo no log. `-Force` pula o guarda (uso manual do usuário, não do agente).
+
+Os dois atrasos de 5 s têm função. O primeiro dá tempo de o agente terminar a resposta que disparou o pedido. O segundo é obrigatório: o Electron usa **trava de instância única por `userData`**, então reabrir com o processo antigo ainda vivo faz o novo se ver como segunda instância e fechar na hora, **sem erro na tela** (foi assim que o teste do exe portátil pareceu "quebrado" quando o app de dev estava aberto). O fechamento usa `CloseMainWindow` antes de forçar, para o app salvar o que precisa.
+
+Tudo vai para `%TEMP%\agent-code-relaunch.log`, com o motivo de cada recusa — silêncio não é prova de que reabriu.
+
+> A ferramenta `app_restart` continua sendo o caminho **interno** (com relançador armado, flush do histórico e verificação pós-commit). O script é a rota externa, útil quando o app é o **exe portátil**: ele fecha e reabre o executável, sem depender do relançador.
 
 ---
 

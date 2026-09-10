@@ -4,7 +4,7 @@ import { dirname, join, parse, resolve } from 'node:path'
 import { memorySummary } from '../memoryIndex'
 import { hashText } from '../persistence/hashes'
 import { StorageError, type MemoryEntry, type MemoryEntryStatus, type MemoryEntryWrite, type MemoryProposal, type MemoryProposalQuery, type MemoryRepository } from '../persistence/types'
-import { MEMORY_INDEX_FILENAME, MEMORY_PROPOSAL_MAX_ATTEMPTS, MEMORY_RETIRED_DIRNAME, normalizeMemoryProposal, normalizeMemoryRelPath, parseMemoryIndexBullets, renderMemoryIndexFile, type MemoryProposeInput } from './memoryModel'
+import { MEMORY_INDEX_FILENAME, MEMORY_PROPOSAL_MAX_ATTEMPTS, MEMORY_RETIRED_DIRNAME, normalizeMemoryProposal, normalizeMemoryRelPath, parseMemoryIndexBullets, parseMemoryIndexSections, renderMemoryIndexFile, type MemoryProposeInput } from './memoryModel'
 
 export type { MemoryProposeInput } from './memoryModel'
 export interface MemoryServiceOptions { log?: (line: string) => void }
@@ -24,7 +24,15 @@ export interface MemoryReconcileSummary { imported: number; conflicts: MemoryPro
 
 const JOURNAL = '.memory-projection.json'
 const LEGACY_INDEX = '.memory-legacy-index.md'
-interface ProjectionJournal { version: 1; files: Record<string, string[]> }
+interface ProjectionJournal {
+  version: 1
+  files: Record<string, string[]>
+  /** Folder → hand-written section title of MEMORY.md, so regenerating the
+   *  index does not flatten "## 2D — NF-e e banco" into "## 2D". Kept here
+   *  because the generated index would otherwise be the only source, and it
+   *  no longer carries the original wording. */
+  sections?: Record<string, string>
+}
 // Instances in this process sharing a local root must never race their journals or projections.
 // This is NOT a distributed lock: independent processes/machines/OneDrive can still race.
 // Run a single local writer. File checks reject existing links, not hostile concurrent link swaps.
@@ -38,8 +46,11 @@ const rootChains = new Map<string, Promise<unknown>>()
  * Unknown legacy files are imported once; known drift is preserved and reported, never imported.
  * The journal is local evidence, not a cross-device consensus protocol. Losing/corrupting it
  * fails conservatively (divergence needs manual resolution). An edit identical to a recorded
- * projection is inherently indistinguishable from that projection. No vault hook/startup wiring
- * exists here: live use must wait for secret-vault integration.
+ * projection is inherently indistinguishable from that projection. Live use is wired through
+ * `memoryRuntime`: the FIRST apply/reconcile against an existing hand-written corpus imports it
+ * and regenerates MEMORY.md from the database. Bullets and hand-written section titles are
+ * preserved verbatim; the ordering becomes alphabetical by path.
+ * `.memory-legacy-index.md` keeps a full copy of the original index either way.
  */
 export class MemoryService {
   private readonly repository: MemoryRepository
@@ -64,6 +75,8 @@ export class MemoryService {
 
   listProposals(query?: MemoryProposalQuery): Promise<MemoryProposal[]> { return this.repository.listMemoryProposals(query) }
   listEntries(query?: { status?: MemoryEntryStatus }): Promise<MemoryEntry[]> { return this.repository.listMemoryEntries(query) }
+  /** Drops a settled proposal row. No projection work: a settled proposal owns no file. */
+  discardProposal(id: string): Promise<boolean> { return this.repository.deleteMemoryProposal(id) }
   applyPending(): Promise<ApplyPendingSummary> { return this.serialize(() => this.drain()) }
   reconcile(): Promise<MemoryReconcileSummary> { return this.serialize(() => this.reconcileNow()) }
 
@@ -308,7 +321,23 @@ export class MemoryService {
         await this.saveJournal(journal)
       }
     }
-    await this.project(MEMORY_INDEX_FILENAME, renderMemoryIndexFile([...byPath.values()].filter((entry) => entry.status === 'active')), journal, summary)
+    // Section titles the user wrote by hand survive the first regeneration and
+    // every later one; renaming a section in MEMORY.md is picked up here too.
+    const sections = { ...(journal.sections ?? {}) }
+    for (const [folder, heading] of parseMemoryIndexSections(index ?? '')) sections[folder] = heading
+    if (JSON.stringify(sections) !== JSON.stringify(journal.sections ?? {})) {
+      journal.sections = sections
+      await this.saveJournal(journal)
+    }
+    await this.project(
+      MEMORY_INDEX_FILENAME,
+      renderMemoryIndexFile(
+        [...byPath.values()].filter((entry) => entry.status === 'active'),
+        new Map(Object.entries(sections))
+      ),
+      journal,
+      summary
+    )
     return summary
   }
 
