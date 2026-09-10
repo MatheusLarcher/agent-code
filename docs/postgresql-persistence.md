@@ -53,3 +53,48 @@ Ele mostra apenas a recuperação, com retry e edição das credenciais.
 
 O Parquet diário lê o repositório autoritativo e grava `backend` e `watermark`
 em cada registro; memórias Markdown continuam vindo do filesystem local.
+
+## Registro de tarefas e memórias no PostgreSQL
+
+As migrations 4 (`tasks`, `task_steps`, `task_deliverables`, `task_events`) e 5
+(`memory_entries`, `memory_proposals`) espelham o schema do SQLite, e cada uma
+substitui a função de gatilho do change feed para mapear a tabela nova — o ramo
+`ELSE` original só sabia ler `conversation_id`.
+
+O que o PostgreSQL faz diferente do SQLite não é o contrato, é a concorrência
+entre instalações, e é isso que os testes de integração exercitam:
+
+- `claimTask` e `claimMemoryProposal` usam `FOR UPDATE SKIP LOCKED`: duas
+  instalações reivindicando ao mesmo tempo pegam itens **diferentes**, em vez
+  de uma esperar a outra e as duas acabarem no mesmo trabalho.
+- `writeMemoryEntry` toma `pg_advisory_xact_lock` por `rel_path` **antes** do
+  `SELECT ... FOR UPDATE`. Um lock de linha não protege uma linha *ausente*:
+  sem ele, duas criações simultâneas do mesmo caminho leem "não existe" e as
+  duas inserem. Com ele, uma vence e a outra recebe `REVISION_CONFLICT`.
+- Leases de tarefa e de proposta comparam contra `clock_timestamp()` — o
+  relógio do servidor —, não o de quem chama.
+
+### Lista para coluna `jsonb` vai serializada
+
+`acceptance_json` é `jsonb` e recebe uma **lista**. Passar um array JS direto
+como parâmetro não funciona: o node-postgres o renderiza como array do
+Postgres, então `[]` chega como `{}` (um objeto vazio, silenciosamente errado)
+e `['a','b']` vira `{"a","b"}`, que falha com `invalid input syntax for type
+json`. Por isso todo parâmetro `jsonb` do repositório passa por
+`encodePostgresJsonParam`, que serializa com `JSON.stringify` — texto explícito
+é inequívoco para qualquer forma. Um objeto funcionava por acaso (o driver o
+serializa como JSON), e foi o que escondeu o problema até um teste com
+`acceptance` preenchido.
+
+### Rodar os testes de integração
+
+Ficam desligados por padrão; `AGENT_CODE_PG_INTEGRATION=1` os liga. Os arquivos
+recriam o mesmo banco `agent-code`, então precisam rodar em série — em paralelo
+um derruba as conexões do outro (`FATAL 57P01`) e a falha parece um bug:
+
+```bash
+docker run -d --name agent-code-pg-test -p 55432:5432 \
+  -e POSTGRES_PASSWORD=agent-code-test-password postgres:16-alpine
+AGENT_CODE_PG_INTEGRATION=1 npx vitest run --no-file-parallelism \
+  src/main/persistence/postgres*.test.ts
+```

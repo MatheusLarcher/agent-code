@@ -1,3 +1,13 @@
+// Integração real com PostgreSQL. Ligada por AGENT_CODE_PG_INTEGRATION=1; sem
+// a variável, os casos são pulados e a suíte normal roda sem precisar de banco.
+//
+// Suba o servidor e rode SEM paralelismo entre arquivos: este arquivo e
+// postgresRepository.test.ts recriam o MESMO banco 'agent-code', então em
+// paralelo um derruba as conexões do outro (FATAL 57P01) e a falha parece um
+// bug do código.
+//
+//   docker run -d --name agent-code-pg-test -p 55432:5432 -e POSTGRES_PASSWORD=agent-code-test-password postgres:16-alpine
+//   AGENT_CODE_PG_INTEGRATION=1 npx vitest run --no-file-parallelism src/main/persistence/postgres*.test.ts
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { Client } from 'pg'

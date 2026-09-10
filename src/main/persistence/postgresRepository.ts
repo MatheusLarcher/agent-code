@@ -6,7 +6,12 @@ import { lockPostgresTransferRecords, postgresTransferClock, prepareTransferReco
 import { hashAggregate, hashJson, hashText, normalizeJson, type JsonValue } from './hashes'
 import { PostgresChangeFeed } from './postgresChangeFeed'
 import { createPostgresSessionStore } from './postgresSessionStore'
-import { decodePostgresJson, decodePostgresText, encodePostgresJson, encodePostgresText } from './postgresEncoding'
+import {
+  decodePostgresJson,
+  decodePostgresText,
+  encodePostgresJsonParam,
+  encodePostgresText
+} from './postgresEncoding'
 import {
   assertDeliverableKind,
   assertStepFinalStatus,
@@ -440,7 +445,7 @@ export class PostgresRepository implements PersistenceRepository {
            content_hash = EXCLUDED.content_hash, updated_at = clock_timestamp(), deleted_at = NULL,
            updated_by = EXCLUDED.updated_by
          RETURNING conversation_id, payload, revision, content_hash, created_at, updated_at, deleted_at`,
-        [write.id, projectId, encodePostgresJson(normalizedShared), revision, contentHash, this.installationId]
+        [write.id, projectId, encodePostgresJsonParam(normalizedShared), revision, contentHash, this.installationId]
       )
       await this.writeDeviceConversationState(client, write.id, device)
       return conversation({ ...result.rows[0], device_state: device })
@@ -612,8 +617,8 @@ export class PostgresRepository implements PersistenceRepository {
           create.projectCwd,
           encodePostgresText(create.title),
           encodePostgresText(create.goal),
-          encodePostgresJson(create.acceptance),
-          encodePostgresJson(normalizeJson(create.writeScope)),
+          encodePostgresJsonParam(create.acceptance),
+          encodePostgresJsonParam(normalizeJson(create.writeScope)),
           create.parentTaskId,
           create.maxAttempts,
           this.installationId
@@ -743,7 +748,7 @@ export class PostgresRepository implements PersistenceRepository {
         `UPDATE task_steps SET status = $2, finished_at = clock_timestamp(), error_json = $3,
            revision = revision + 1, updated_at = clock_timestamp()
          WHERE id = $1`,
-        [input.stepId, input.status, input.error ? encodePostgresJson(normalizeJson(input.error)) : null]
+        [input.stepId, input.status, input.error ? encodePostgresJsonParam(normalizeJson(input.error)) : null]
       )
       await this.insertTaskEvent(client, step.task_id, input.stepId, 'step_finished', {
         kind: step.kind,
@@ -931,7 +936,7 @@ export class PostgresRepository implements PersistenceRepository {
       `INSERT INTO task_events(id, task_id, step_id, kind, data_json, installation_id)
        VALUES($1, $2, $3, $4, $5, $6)
        RETURNING ${EVENT_COLUMNS}`,
-      [id, taskId, stepId, kind, encodePostgresJson(normalizeJson(data)), this.installationId]
+      [id, taskId, stepId, kind, encodePostgresJsonParam(normalizeJson(data)), this.installationId]
     )
     return taskEventFromRow(decodeEventRow(result.rows[0]))
   }
@@ -1184,7 +1189,7 @@ export class PostgresRepository implements PersistenceRepository {
        VALUES($1, $2, $3, 1)
        ON CONFLICT(conversation_id, installation_id) DO UPDATE SET state = EXCLUDED.state,
          revision = conversation_device_state.revision + 1, updated_at = clock_timestamp()`,
-      [conversationId, this.installationId, encodePostgresJson(normalizeJson(device))]
+      [conversationId, this.installationId, encodePostgresJsonParam(normalizeJson(device))]
     )
   }
 

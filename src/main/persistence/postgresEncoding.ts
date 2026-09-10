@@ -47,6 +47,19 @@ export function encodePostgresJson(value: JsonValue): JsonValue {
   return value
 }
 
+/**
+ * Encodes a value AND serializes it for a `jsonb` parameter.
+ *
+ * Never pass a JS array straight to a jsonb column: node-postgres renders an
+ * array as a Postgres ARRAY literal, not as JSON. `[]` arrives as `{}` — a
+ * silently wrong empty OBJECT — and `['a','b']` becomes `{"a","b"}`, which
+ * fails with `invalid input syntax for type json`. Explicit text is
+ * unambiguous for every shape, so this is the only safe way in.
+ */
+export function encodePostgresJsonParam(value: JsonValue): string {
+  return JSON.stringify(encodePostgresJson(value))
+}
+
 export function decodePostgresJson(value: JsonValue): JsonValue {
   if (typeof value === 'string') return decodePostgresText(value)
   if (Array.isArray(value)) return value.map(decodePostgresJson)
