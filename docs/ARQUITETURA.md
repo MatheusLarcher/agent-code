@@ -465,6 +465,23 @@ O agente tem uma **memória de longo prazo por usuário**, em arquivos Markdown 
 
 **Acesso ao disco** — a pasta fica fora do `cwd` do projeto, então `start()` a libera via `additionalDirectories: [memoriesDir]`; sem isso o limite do workspace bloquearia a leitura/escrita dos `.md`. As ferramentas de arquivo (`Read`/`Write`/`Glob`…) agem nela normalmente.
 
+**Adoção do acervo já existente** — quando o banco vira a autoridade da memória, um acervo que já estava em disco precisa entrar nele. `configureMemoryRuntime` dispara um `reconcile()` a cada ligação de repositório (`memoryRuntime.ts`), então a adoção acontece na inicialização e em toda troca de backend.
+
+A alternativa era esperar o `reconcile` que o `memory_propose` já provoca — e isso deixava o acervo **invisível ao banco até um agente por acaso salvar algo**. Medido num acervo real de 162 memórias: os arquivos estavam lá e o banco vazio.
+
+O que a adoção faz e o que ela deliberadamente não faz:
+
+- **Importa** todo `.md` que existe em disco e não no banco, recursivamente (subpasta de agrupamento incluída). Título e gancho vêm do bullet curado do `MEMORY.md` quando o caminho casa; só quando não casa é que são derivados do corpo.
+- **Não reescreve corpo.** Arquivo cujo conteúdo divergiu do banco é **preservado e reportado** como conflito, nunca sobrescrito nem importado por cima.
+- **Não apaga nada** para "ficar igual" a um banco vazio. Remoção só acontece por entrada marcada como retirada no banco.
+- O único arquivo regenerado é o `MEMORY.md`, e o original vai antes para `.memory-legacy-index.md`. Os títulos de seção escritos à mão são capturados no journal e sobrevivem; a ordem passa a ser alfabética por caminho.
+- **Idempotente** — a segunda passada importa 0, então religar o repositório não duplica.
+- **Não bloqueia o boot e nunca o derruba:** roda em segundo plano e só registra a falha. Importar memória se recupera na passada seguinte; abrir o app, não.
+
+Validado contra uma **cópia** do acervo real antes de rodar no original: 162 importadas, 0 conflitos, 0 corpos alterados, 162 bullets no índice antes e depois, as duas seções preservadas, backup do índice idêntico ao original, 2,4 s. Testes em `memoryRuntime.test.ts`.
+
+> A pasta é sincronizada por OneDrive na máquina onde isso foi medido, e o serviço **não** protege contra um segundo escritor mexendo nos arquivos ao mesmo tempo. Backup antes de importar não é zelo excessivo.
+
 > Como o código do main agora puxa `node:sqlite` (via `config → store`), o teste `agentSession.test.ts` roda no ambiente **node** (`// @vitest-environment node`) em vez do `jsdom` padrão (que não externaliza o builtin `node:sqlite` e tentaria empacotá-lo).
 
 ---

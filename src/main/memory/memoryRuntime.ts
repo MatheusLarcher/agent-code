@@ -45,6 +45,36 @@ export function configureSecretVault(deps: SecretVaultDeps | null): void {
 export function configureMemoryRuntime(repository: MemoryRepository | null, dir?: string): void {
   memoriesDir = dir ?? (repository ? getCacheInfo().memoriesDir : memoriesDir)
   service = repository && memoriesDir ? new MemoryService(repository, memoriesDir) : null
+  if (service) adoptExistingMemories(service)
+}
+
+/**
+ * Adopts .md files that exist on disk but not in the database.
+ *
+ * Sem isto, um acervo já existente fica invisível ao banco até um agente por
+ * acaso chamar memory_propose — a única outra porta que chega ao reconcile. Era
+ * o caso de um usuário real com 162 memórias: os arquivos estavam lá, o banco
+ * vazio, e MEMORY.md sem dono definido. Vale para toda máquina nova e para toda
+ * troca de backend, não só para a primeira instalação.
+ *
+ * Deliberadamente não bloqueia o boot e nunca o derruba: importar memória é
+ * recuperável na próxima passada, abrir o app não. `reconcile` é idempotente
+ * (a 2ª passada importa 0) e serializado dentro do serviço, então rodar aqui não
+ * corre com um propose que chegue em seguida.
+ */
+function adoptExistingMemories(current: MemoryService): void {
+  void current
+    .reconcile()
+    .then((summary) => {
+      if (summary.imported) console.log(`[memory] ${summary.imported} memória(s) adotada(s) do disco`)
+      for (const conflict of summary.conflicts) {
+        console.warn(`[memory] ${conflict.relPath}: ${conflict.reason}`)
+      }
+    })
+    .catch((error) => {
+      // Só registra: o acervo em disco continua intacto e a próxima chamada tenta de novo.
+      console.error(`[memory] adoção do acervo falhou: ${error instanceof Error ? error.message : String(error)}`)
+    })
 }
 
 export function memoryService(): MemoryService | null {
