@@ -73,6 +73,16 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
     authoritativeInPostgresMode: 'filesystem'
   },
   {
+    // Cópia do cofre no banco. Existe para migração: qualquer uma das duas
+    // cópias (arquivo ou banco) sozinha reabre todas as senhas.
+    id: 'secret-vault-mirror',
+    owner: 'src/main/memory/vaultMirror.ts',
+    surface: 'main-kv',
+    postgresScope: 'device',
+    authoritativeInPostgresMode: 'postgres',
+    keys: ['agentcode.secret-vault-mirror.v1']
+  },
+  {
     id: 'memory-curator-state',
     owner: 'src/main/memoryCurator.ts',
     surface: 'main-kv',

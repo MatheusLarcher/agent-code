@@ -5,6 +5,7 @@ import type { MemoryRepository } from '../persistence/types'
 import { MemoryService } from './memoryService'
 import { SecretVault, VAULT_FILENAME, type SecretMetadata } from './secretVault'
 import { createVaultCipher, type VaultCipher } from './vaultKey'
+import { mirrorVaultToDatabase, restoreVaultFromDatabase } from './vaultMirror'
 import type { SecretSink } from './memorySecrets'
 
 /**
@@ -116,13 +117,41 @@ function activeVault(): SecretVault | null {
   return vault
 }
 
+/** Caminho do arquivo do cofre, quando há um configurado. */
+function vaultFile(): string | null {
+  return vaultDir ? join(vaultDir, VAULT_FILENAME) : null
+}
+
+/**
+ * Reconstrói o cofre a partir do espelho no banco quando o arquivo falta.
+ * Chamado na inicialização, DEPOIS do banco: é o caminho de quem migrou
+ * levando só o `agent-code.db`.
+ */
+export async function restoreVault(): Promise<'restored' | 'kept-existing' | 'no-mirror' | 'failed'> {
+  const file = vaultFile()
+  if (!file) return 'failed'
+  return restoreVaultFromDatabase(file)
+}
+
+/** Reespelha o cofre no banco. Toda gravação passa por aqui. */
+async function mirror(): Promise<void> {
+  const file = vaultFile()
+  if (file) await mirrorVaultToDatabase(file)
+}
+
 /** The narrow slice `sanitizeProposal` needs. Null when unavailable on this device. */
 export function secretSink(): SecretSink | null {
   const instance = activeVault()
   if (!instance) return null
   return {
     enabled: secretVaultEnabled,
-    put: (name, value) => instance.put(name, value)
+    put: async (name, value) => {
+      const metadata = await instance.put(name, value)
+      // Espelha DEPOIS de o arquivo estar gravado: o espelho nunca vai à frente
+      // do que de fato existe em disco.
+      await mirror()
+      return metadata
+    }
   }
 }
 
@@ -169,5 +198,9 @@ export async function listSecretMetadata(): Promise<SecretMetadata[]> {
 /** Explicit user action in the settings screen; never called when disabling. */
 export async function deleteSecret(name: string): Promise<boolean> {
   const instance = activeVault()
-  return instance ? instance.deleteForManagement(name) : false
+  if (!instance) return false
+  const removed = await instance.deleteForManagement(name)
+  // Sem isto, o espelho ressuscitaria a senha apagada na próxima restauração.
+  if (removed) await mirror()
+  return removed
 }

@@ -22,6 +22,9 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.remoteToken': { scope: 'device', sensitive: true, source: 'main-kv' },
   'config.remoteEnabled': { scope: 'device', source: 'main-kv' },
   codexAuth: { scope: 'device', sensitive: true, source: 'main-kv' },
+  // Cópia do cofre (chave + segredos cifrados) no banco. Redundância proposital:
+  // migrar só o banco tem de reabrir tudo. Ver vaultMirror.ts.
+  'agentcode.secret-vault-mirror.v1': { scope: 'device', sensitive: true, source: 'main-kv' },
   'memory-curator:last-run-at': { scope: 'device', source: 'main-kv' },
   'agentcode.ui.v1': { scope: 'device', source: 'main-kv' },
   'agentcode.usage-limits.v1': { scope: 'device', source: 'main-kv' },

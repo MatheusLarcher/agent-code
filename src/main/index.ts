@@ -50,7 +50,7 @@ import { exportConversationsParquet } from './conversationParquet'
 import { storageErrorForIpc, upsertConversationWithLeaseRecovery } from './persistence/conversationWriteRecovery'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
-import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService } from './memory/memoryRuntime'
+import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, restoreVault } from './memory/memoryRuntime'
 import { startRestartGuardFile } from './restartGuardFile'
 import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
@@ -1342,6 +1342,11 @@ app.whenReady().then(async () => {
   if (storageAvailable) {
     await initializeConfigPersistence()
     await initializeCodexAuthPersistence()
+    // Migrou levando só o banco? O cofre é reconstruído do espelho. Precisa do
+    // banco pronto, por isso não fica junto do configureSecretVault.
+    const restored = await restoreVault()
+    if (restored === 'restored') console.log('[vault] cofre restaurado do banco')
+    if (restored === 'failed') console.error('[vault] falha ao restaurar o cofre do banco')
   }
   const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir)
   for (const error of skillSync.errors) console.error(`[skills] ${error}`)

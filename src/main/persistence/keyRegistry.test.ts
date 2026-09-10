@@ -13,6 +13,7 @@ const EXPECTED_KEYS = [
   'agentcode.micId',
   'agentcode.pgraph.hidden-kinds.v1',
   'agentcode.pgraph.hidden-types.v1',
+  'agentcode.secret-vault-mirror.v1',
   'agentcode.ui.v1',
   'agentcode.usage-limits.v1',
   'codexAuth',

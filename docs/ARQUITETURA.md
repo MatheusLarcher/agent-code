@@ -482,6 +482,13 @@ Chave, token ou senha que apareça numa memória é detectada, **redigida do tex
 - **A chave vai em toda gravação do envelope.** `persist()` a reescreve sempre, inclusive ao **apagar** um segredo — a versão anterior regravava `{version:1, records}` e teria descartado a chave, transformando o resto do cofre em lixo cifrado.
 - **Chave truncada/ilegível no arquivo não é substituída.** Gerar outra por cima tornaria todo segredo já salvo indecifrável em silêncio; o cofre falha e preserva o arquivo.
 - **Nada é assíncrono no caminho da chave:** ela sai do próprio arquivo do cofre, lido de forma síncrona — o que elimina a antiga dependência de carregar a chave do banco antes de qualquer uso.
+- **Espelho no banco: nenhuma senha se perde em migração** (`vaultMirror.ts`). O envelope inteiro (chave + segredos cifrados) é copiado para o KV a cada gravação, e **qualquer uma das duas cópias sozinha reabre tudo**:
+  - levaram só o `agent-code.db` → na inicialização, `restoreVault()` reconstrói o arquivo a partir do espelho;
+  - o `agent-code.db` corrompeu → o arquivo continua íntegro (já corrompeu 3× nesta máquina);
+  - levaram a pasta inteira → as duas vão juntas.
+- **A restauração nunca destrói o que já existe.** Arquivo íntegro vence o espelho (pode ter uma senha mais nova); arquivo ilegível é **movido para `.corrupt-<timestamp>`** antes de ser substituído, nunca sobrescrito. Espelho inválido é ignorado, e lixo nunca é espelhado por cima de uma cópia boa.
+- **Apagar um segredo reespelha na hora** — sem isso, a próxima restauração ressuscitaria a senha apagada.
+- Espelhar é redundância: falha ao gravar o espelho **não** derruba a gravação que já aconteceu no arquivo; a próxima tenta de novo.
 - **O interruptor governa a entrega.** Ligado, `buildSecretsHint()` injeta as senhas **em texto puro no system prompt** de cada conversa nova. Isso é o que permite o agente usá-las — e significa que elas vão ao provedor do modelo e ficam no histórico da conversa. Vai no system prompt, e não anexado a cada mensagem, para a senha aparecer **uma vez por sessão** em vez de ser recopiada em todo turno.
 - **Ligar vale só na sessão seguinte**, porque o system prompt já foi enviado — e não há como retirar da janela do modelo o que já entrou nela. Desligar também não apaga o que já foi enviado numa conversa anterior; a tela diz isso.
 - Falha do cofre **não impede a conversa de abrir**: degrada para "sem senhas" e segue.
