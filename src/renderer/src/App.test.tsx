@@ -233,6 +233,13 @@ async function flushConnect(ok = true): Promise<void> {
 }
 async function send(text: string): Promise<HTMLElement> {
   const ta = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+  // A hidratação é assíncrona e o campo nasce DESABILITADO enquanto não há
+  // conversa ativa. O textarea já existe nesse meio-tempo, então digitar cedo
+  // demais é engolido em silêncio e o teste falha depois, longe da causa, num
+  // "startAgent foi chamado 0 vezes". Esperar o campo habilitar é o que torna
+  // o envio determinístico. (`readOnly` é outra coisa — é a pasta do projeto
+  // sumida — e continua livre para os testes que exercitam esse estado.)
+  await waitFor(() => expect((ta as HTMLTextAreaElement).disabled).toBe(false))
   fireEvent.change(ta, { target: { value: text } })
   fireEvent.keyDown(ta, { key: 'Enter' })
   return ta

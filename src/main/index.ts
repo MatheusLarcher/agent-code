@@ -1325,6 +1325,13 @@ app.whenReady().then(async () => {
   // that syncs to PostgreSQL: the safeStorage key belongs to this machine, so a
   // copy on another PC would be undecryptable dead weight.
   configureSecretVault({ directory: join(app.getPath('userData'), 'vault'), secureStorage: safeStorage })
+  // Publica "algum agente ocupado?" em disco para o relançador externo
+  // (scripts/relaunch-agent-code.ps1). Vem ANTES de inicializar o armazenamento
+  // de propósito: ocupação é sobre conversas, não sobre banco. Se a inicialização
+  // falhar, o app fica vivo na tela de recuperação — e é exatamente aí que
+  // reiniciar resolve. Publicado depois, um app nesse estado nunca escreveria o
+  // arquivo e o script recusaria para sempre, sem ninguém entender por quê.
+  if (appRestart) stopRestartGuardFile = startRestartGuardFile(appRestart, app.getPath('userData'))
   await storageLifecycle.initialize({
     location: cacheInfo,
     userDataDir: app.getPath('userData'),
@@ -1388,9 +1395,6 @@ app.whenReady().then(async () => {
   // Runs outside every chat session. The cheap transcript mtime gate happens
   // before any agent is started, and the persisted timestamp keeps it daily.
   if (storageAvailable) stopMemoryCurator = await startMemoryCuratorScheduler()
-  // Publica "algum agente ocupado?" em disco para o relançador externo
-  // (scripts/relaunch-agent-code.ps1) checar antes de fechar o app.
-  if (appRestart) stopRestartGuardFile = startRestartGuardFile(appRestart, app.getPath('userData'))
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
   // a paired phone reconnects on its own (the fixed token is already persisted).
   if (storageAvailable && loadConfig().remoteEnabled) {

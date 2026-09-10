@@ -366,6 +366,10 @@ Os dois atrasos de 5 s têm função. O primeiro dá tempo de o agente terminar 
 
 Tudo vai para `%TEMP%\agent-code-relaunch.log`, com o motivo de cada recusa — silêncio não é prova de que reabriu.
 
+O `restart-guard.json` é publicado **antes** de inicializar o armazenamento, e a ordem é deliberada: ocupação é sobre conversas, não sobre banco. Se a inicialização falhar, o app continua vivo na tela de recuperação — e é exatamente aí que reiniciar resolve. Publicado depois, um app nesse estado nunca escreveria o arquivo e o script recusaria para sempre, sem ninguém entender por quê.
+
+> **Testar o guarda: use `dist/win-unpacked/Agent Code.exe`, não o portátil.** O exe portátil é um stub que se descompacta e relança o app, e **não repassa os argumentos de linha de comando** — um `--user-data-dir=<sandbox>` é silenciosamente ignorado, então o teste observa uma pasta que nunca virou `userData` e conclui que o guarda não funciona. O app descompactado é um Electron normal e honra a flag, o que permite validar sem tocar na instância que o usuário está usando (é obrigatório isolar: sem `--user-data-dir` próprio, a trava de instância única faz a cópia de teste fechar na hora).
+
 > A ferramenta `app_restart` continua sendo o caminho **interno** (com relançador armado, flush do histórico e verificação pós-commit). O script é a rota externa, útil quando o app é o **exe portátil**: ele fecha e reabre o executável, sem depender do relançador.
 
 ---
