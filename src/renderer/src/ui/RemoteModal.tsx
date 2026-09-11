@@ -187,7 +187,30 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
                 <div className={`relay-status ${info.relayConnected ? 'on' : 'off'}`}>
                   {info.relayConnected
                     ? '🌐 Acesso remoto pronto (conectado ao servidor)'
-                    : '⏳ Conectando ao servidor remoto…'}
+                    : info.relayState === 'busy'
+                      ? '⚠️ Outro PC já está usando este token no servidor — o celular continua ligado àquele PC. Este assume quando aquele desligar.'
+                      : info.relayState === 'denied'
+                        ? '❌ O servidor recusou a conexão (chave do relay). Desligue e ligue a ponte para tentar de novo.'
+                        : '⏳ Conectando ao servidor remoto…'}
+                </div>
+                <div className="remote-field">
+                  <span>Celular pareado</span>
+                  {info.pairedDevice ? (
+                    <span className="remote-paired">
+                      <code>{info.pairedDevice.name}</code>
+                      <button
+                        className="btn ghost small"
+                        onClick={async () => {
+                          setInfo(await window.api.remoteUnpair())
+                          notify('sucesso', 'Celular despareado. O próximo que escanear o QR será o pareado.')
+                        }}
+                      >
+                        Desparear
+                      </button>
+                    </span>
+                  ) : (
+                    <code>nenhum — o primeiro celular a escanear o QR fica pareado</code>
+                  )}
                 </div>
                 <label className="remote-field">
                   <span>Endereço</span>

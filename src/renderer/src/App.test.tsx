@@ -189,6 +189,10 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     onRemoteSetModel: vi.fn(() => () => {}),
     onRemoteRecoveryAction: vi.fn(() => () => {}),
     onRemotePermissionResponse: vi.fn(() => () => {}),
+    onRemoteInterrupt: vi.fn(() => () => {}),
+    onRemoteSetMode: vi.fn(() => () => {}),
+    onRemoteConversationAction: vi.fn(() => () => {}),
+    remoteUnpair: vi.fn(async () => ({ running: false, url: '', ip: '', port: 0, token: '', clients: 0, relayConnected: false })),
     onRemoteBuildProgress: vi.fn(() => () => {}),
     onRemoteClients: vi.fn(() => () => {})
   }

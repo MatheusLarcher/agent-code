@@ -344,3 +344,118 @@ describe('RemoteServer — ponte LAN', () => {
     req.destroy()
   })
 })
+
+describe('RemoteServer — um celular por PC + novas ações do celular', () => {
+  const interrupts: string[] = []
+  const modes: Array<{ convId: string; mode: string; on: boolean }> = []
+  const actions: unknown[] = []
+  let paired: { id: string; name: string; pairedAt: number } | null = null
+  const srv = new RemoteServer({
+    onInbound: () => undefined,
+    apkPath: () => 'C:/nonexistent/agent-remote.apk',
+    wwwDir: () => 'C:/nonexistent/www',
+    onInterrupt: (id) => interrupts.push(id),
+    onSetMode: (convId, mode, on) => modes.push({ convId, mode, on }),
+    onConversationAction: (a) => actions.push(a),
+    loadPairedDevice: () => paired,
+    savePairedDevice: (d) => {
+      paired = d
+    }
+  })
+  let b = ''
+  let tok = ''
+  const call = (path: string, payload?: unknown): Promise<{ status: number; json: unknown }> =>
+    new Promise((resolve, reject) => {
+      const data = payload === undefined ? '' : JSON.stringify(payload)
+      const req = request(
+        b + path,
+        {
+          method: payload === undefined ? 'GET' : 'POST',
+          headers: payload === undefined ? {} : { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+        },
+        (res) => {
+          let body = ''
+          res.on('data', (d) => (body += d))
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, json: body ? JSON.parse(body) : null }))
+        }
+      )
+      req.on('error', reject)
+      if (data) req.write(data)
+      req.end()
+    })
+
+  beforeAll(async () => {
+    const info = await srv.start()
+    tok = info.token
+    b = `http://127.0.0.1:${info.port}`
+    srv.setState({ conversations: [{ ...conv, id: 'c9' }], projects: ['/proj'] })
+  })
+  afterAll(async () => {
+    await srv.stop()
+  })
+
+  it('o primeiro celular a chamar fica pareado; outro celular recebe 409; sem `dev` (cliente antigo) passa', async () => {
+    expect((await call(`/api/state?token=${tok}&dev=fone-A&devname=Galaxy`)).status).toBe(200)
+    expect(paired?.id).toBe('fone-A')
+    expect(paired?.name).toBe('Galaxy')
+    const other = await call(`/api/state?token=${tok}&dev=fone-B`)
+    expect(other.status).toBe(409)
+    expect((other.json as { error: string; pairedName: string }).pairedName).toBe('Galaxy')
+    expect((await call(`/api/state?token=${tok}`)).status).toBe(200)
+    expect(srv.info().pairedDevice?.id).toBe('fone-A')
+  })
+
+  it('POST /api/pair toma o lugar do celular anterior (é o gesto de escanear o QR); depois o antigo recebe 409', async () => {
+    const r = await call(`/api/pair?token=${tok}&dev=fone-B`, { deviceId: 'fone-B', name: 'Pixel' })
+    expect(r.status).toBe(200)
+    expect((r.json as { replaced: string | null }).replaced).toBe('Galaxy')
+    expect(paired?.id).toBe('fone-B')
+    expect((await call(`/api/state?token=${tok}&dev=fone-A`)).status).toBe(409)
+    expect((await call(`/api/state?token=${tok}&dev=fone-B`)).status).toBe(200)
+  })
+
+  it('unpair() libera: o celular despareado (que segue fazendo poll) NÃO se repareia sozinho; um novo pareia', async () => {
+    srv.unpair()
+    expect(paired).toBeNull()
+    expect((await call(`/api/state?token=${tok}&dev=fone-B`)).status).toBe(409)
+    expect(paired).toBeNull()
+    expect((await call(`/api/state?token=${tok}&dev=fone-C`)).status).toBe(200)
+    expect(paired?.id).toBe('fone-C')
+  })
+
+  it('/api/interrupt, /api/set-mode e /api/conversation chegam às deps com validação', async () => {
+    expect((await call(`/api/interrupt?token=${tok}&dev=fone-C`, { convId: 'c9' })).status).toBe(200)
+    expect(interrupts).toEqual(['c9'])
+    expect((await call(`/api/interrupt?token=${tok}&dev=fone-C`, {})).status).toBe(400)
+
+    expect((await call(`/api/set-mode?token=${tok}&dev=fone-C`, { convId: 'c9', mode: 'loop', on: true })).status).toBe(200)
+    expect(modes).toEqual([{ convId: 'c9', mode: 'loop', on: true }])
+    expect((await call(`/api/set-mode?token=${tok}&dev=fone-C`, { convId: 'c9', mode: 'turbo', on: true })).status).toBe(400)
+    // Eco otimista no snapshot.
+    const st = (await call(`/api/state?token=${tok}&dev=fone-C`)).json as { conversations: Array<{ id: string; loopEnabled?: boolean }> }
+    expect(st.conversations.find((c) => c.id === 'c9')?.loopEnabled).toBe(true)
+
+    const created = await call(`/api/conversation?token=${tok}&dev=fone-C`, { type: 'create', cwd: '/proj' })
+    expect(created.status).toBe(200)
+    expect(typeof (created.json as { convId: string }).convId).toBe('string')
+    expect((await call(`/api/conversation?token=${tok}&dev=fone-C`, { type: 'create', cwd: '/nao-conhecido' })).status).toBe(400)
+    expect((await call(`/api/conversation?token=${tok}&dev=fone-C`, { type: 'rename', convId: 'c9', title: 'Novo' })).status).toBe(200)
+    expect((await call(`/api/conversation?token=${tok}&dev=fone-C`, { type: 'delete', convId: 'c9' })).status).toBe(200)
+    expect(actions.map((a) => (a as { type: string }).type)).toEqual(['create', 'rename', 'delete'])
+  })
+
+  it('/api/state expõe uso, projetos, celular pareado e estado do relay', async () => {
+    srv.setRelayConnected(false, 'busy')
+    const st = (await call(`/api/state?token=${tok}&dev=fone-C`)).json as {
+      projects: string[]
+      pairedDevice: { id: string }
+      relayState: string
+      usage: unknown
+    }
+    expect(st.projects).toEqual(['/proj'])
+    expect(st.pairedDevice.id).toBe('fone-C')
+    expect(st.relayState).toBe('busy')
+    expect(st.usage).toEqual({})
+    expect(srv.info().relayState).toBe('busy')
+  })
+})

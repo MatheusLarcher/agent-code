@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, powerMonitor, safeStorage, shell } from 'electron'
 import type { MessageBoxOptions } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { getSessionInfo, getSessionMessages, importSessionToStore } from '@anthropic-ai/claude-agent-sdk'
@@ -20,6 +20,7 @@ import { configureAppRestart, appRestart } from './appRestartRuntime'
 import { armAppRelauncher } from './appRelauncher'
 import { RemoteServer } from './remote/remoteServer'
 import { RelayClient } from './remote/relayClient'
+import { RemotePairingStore } from './remote/remotePairing'
 import { buildRemoteApk } from './remote/buildApk'
 import {
   Channels,
@@ -531,14 +532,23 @@ function takeOrigin(convId: string, outgoing: string): MessageOrigin {
 
 // LAN bridge: phones POST commands here; we forward them to the renderer (which
 // dispatches into the right conversation) and tee live agent events back over SSE.
+// Identidade desta instalação perante o broker + o único celular pareado: por
+// PC (userData), nunca na pasta de dados sincronizável.
+const remotePairing = new RemotePairingStore(app.getPath('userData'))
+
 const remote = new RemoteServer({
-  onInbound: (convId, text, images) => {
+  onInbound: (convId, text, images, files) => {
     // A mensagem do celular dá a volta pelo renderer (que a despacha na conversa
     // certa) e só então volta para cá no `agent:send`. Guardamos a marca aqui,
     // que é o único ponto que SABE que a origem é o celular.
     markRemoteInbound(convId, text)
-    send(Channels.remoteInbound, { convId, text, images })
+    send(Channels.remoteInbound, { convId, text, images, files })
   },
+  onInterrupt: (convId) => send(Channels.remoteInterrupt, { convId }),
+  onSetMode: (convId, mode, on) => send(Channels.remoteSetMode, { convId, mode, on }),
+  onConversationAction: (action) => send(Channels.remoteConversationAction, action),
+  loadPairedDevice: () => remotePairing.pairedDevice(),
+  savePairedDevice: (device) => remotePairing.setPairedDevice(device),
   onSetSkipPerms: (on) => send(Channels.remoteSetSkipPerms, { on }),
   onSetModel: (convId, model, effort) => send(Channels.remoteSetModel, { convId, model, effort }),
   onRecoveryAction: (convId, action) => send(Channels.remoteRecoveryAction, { convId, action }),
@@ -572,8 +582,10 @@ const remote = new RemoteServer({
 const relay = new RelayClient({
   brokerUrl: REMOTE_RELAY_WS,
   getToken: () => remote.info().token,
+  getInstanceId: () => remotePairing.instanceId(),
   getPort: () => remote.info().port,
-  onStatus: (connected) => remote.setRelayConnected(connected)
+  onStatus: (connected, state) => remote.setRelayConnected(connected, state),
+  log: (line) => console.log(`[remote] ${line}`)
 })
 
 /** Get (creating if needed) the browser dedicated to a conversation. */
@@ -1299,6 +1311,14 @@ function registerIpc(): void {
     return info
   })
   ipcMain.handle(Channels.remoteStatus, () => remote.info())
+  ipcMain.handle(Channels.remoteUnpair, () => {
+    remote.unpair()
+    return remote.info()
+  })
+  // Depois de dormir ou mudar de rede o WebSocket com o broker quase sempre está
+  // morto sem o SO avisar — reconecta na hora em vez de esperar o heartbeat.
+  powerMonitor.on('resume', () => relay.kick())
+  powerMonitor.on('unlock-screen', () => relay.kick())
   ipcMain.handle(Channels.remotePublishState, (_e, state: RemoteStatePayload) => {
     remote.setState(state)
   })

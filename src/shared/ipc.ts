@@ -1173,7 +1173,15 @@ export const Channels = {
   /** Phone asked to retry/cancel a suspended turn. */
   remoteRecoveryAction: 'remote:recovery-action',
   /** Phone answered a pending permission/question. */
-  remotePermissionResponse: 'remote:permission-response'
+  remotePermissionResponse: 'remote:permission-response',
+  /** Phone asked to stop the running turn of a conversation. */
+  remoteInterrupt: 'remote:interrupt',
+  /** Phone toggled a per-conversation mode (economy/loop/fast). */
+  remoteSetMode: 'remote:set-mode',
+  /** Phone created/renamed/deleted a conversation. */
+  remoteConversationAction: 'remote:conversation-action',
+  /** Renderer → main: forget the paired phone (next one to scan the QR pairs). */
+  remoteUnpair: 'remote:unpair'
 } as const
 
 /** A progress line emitted while an Android device/emulator boots, tagged with
@@ -1208,6 +1216,20 @@ export interface RemoteInfo {
   clients: number
   /** Whether the PC is connected to the VPS broker (remote access ready). */
   relayConnected: boolean
+  /** Finer relay status: `busy` = another PC already owns this token on the
+   *  broker (the phone keeps talking to THAT PC); `denied` = broker refused
+   *  the relay key. Optional for older snapshots. */
+  relayState?: 'off' | 'connecting' | 'connected' | 'busy' | 'denied'
+  /** The single phone paired with this PC, if any (one phone per PC). */
+  pairedDevice?: RemotePairedDevice
+}
+
+/** The phone currently paired with this PC. Stored per installation (never in
+ *  the synced config), so each PC pairs its own phone. */
+export interface RemotePairedDevice {
+  id: string
+  name: string
+  pairedAt: number
 }
 
 /** One conversation as mirrored to the phone (history + live status). The
@@ -1237,6 +1259,15 @@ export interface RemoteConversation {
   /** Per-conversation execution modes mirrored from the desktop. */
   economyMode?: boolean
   loopEnabled?: boolean
+  fastMode?: boolean
+  /** Whether the current model can run in fast mode (gates the phone toggle). */
+  fastModeAvailable?: boolean
+  /** The agent's live task plan (TodoWrite / TaskCreate), same shape the desktop card renders. */
+  todoPlan?: { items: { content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm: string }[]; active: boolean }
+  /** Epoch ms since the running turn went silent (stall watchdog), if stalled. */
+  stalledSince?: number
+  /** Context/output/cost accounting shown in the desktop header. */
+  tokens?: { context: number; output: number; cost: number; contextLimit: number }
   /** Pending permission/AskUserQuestion request, if any — same shape the desktop
    *  modal uses. The phone answers via `POST /api/permission-respond`. */
   permission?: PermissionRequest
@@ -1253,6 +1284,10 @@ export interface RemoteStatePayload {
   modelEffort?: Record<string, string[]>
   /** Human labels per effort level (pt-BR), so the phone doesn't hardcode them. */
   effortLabels?: Record<string, string>
+  /** Account usage windows (Claude 5h/week, GPT primary/secondary) — same data as the desktop badge. */
+  usage?: Record<string, RateLimitStatus>
+  /** Project folders known to the desktop (for "new conversation in project" on the phone). */
+  projects?: string[]
 }
 
 /** A command received from a phone, forwarded to the renderer to dispatch into
@@ -1262,7 +1297,22 @@ export interface RemoteInboundMsg {
   text: string
   /** Optional images attached on the phone, forwarded to the agent. */
   images?: ImageAttachment[]
+  /** Optional non-image files attached on the phone (saved to disk by main). */
+  files?: FileAttachment[]
 }
+
+/** A per-conversation execution mode toggled from a phone. */
+export interface RemoteSetModeMsg {
+  convId: string
+  mode: 'economy' | 'loop' | 'fast'
+  on: boolean
+}
+
+/** Conversation management requested from a phone (mirrors the sidebar). */
+export type RemoteConversationAction =
+  | { type: 'create'; cwd: string; convId: string }
+  | { type: 'rename'; convId: string; title: string }
+  | { type: 'delete'; convId: string }
 
 /** A model/effort change requested from a phone, forwarded to the renderer
  *  (which applies it with the same rules as the PC's own pickers). */

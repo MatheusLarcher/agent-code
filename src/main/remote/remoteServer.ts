@@ -8,10 +8,13 @@ import { extname, join, normalize, sep } from 'node:path'
 import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from '../downloadAllowlist'
 import type {
   ChatEvent,
+  FileAttachment,
   ImageAttachment,
   PermissionResponse,
   RemoteConversation,
+  RemoteConversationAction,
   RemoteInfo,
+  RemotePairedDevice,
   RemoteStatePayload
 } from '../../shared/ipc'
 
@@ -27,7 +30,16 @@ import type {
 
 export interface RemoteServerDeps {
   /** A phone sent a command — dispatch it into its conversation (phone → PC → agent). */
-  onInbound: (convId: string, text: string, images?: ImageAttachment[]) => void
+  onInbound: (convId: string, text: string, images?: ImageAttachment[], files?: FileAttachment[]) => void
+  /** A phone asked to stop the running turn of a conversation. */
+  onInterrupt?: (convId: string) => void
+  /** A phone toggled a per-conversation mode (economy / loop / fast). */
+  onSetMode?: (convId: string, mode: 'economy' | 'loop' | 'fast', on: boolean) => void
+  /** A phone managed conversations: create in a project, rename, delete. */
+  onConversationAction?: (action: RemoteConversationAction) => void
+  /** Read / persist the single paired phone (per installation, never synced). */
+  loadPairedDevice?: () => RemotePairedDevice | null
+  savePairedDevice?: (device: RemotePairedDevice | null) => void
   /** Absolute path to the built APK served at /download (may not exist yet). */
   apkPath: () => string
   /** Absolute path to the bundled web client served at /app (browser fallback). */
@@ -133,6 +145,11 @@ export class RemoteServer {
   private keepAlive: ReturnType<typeof setInterval> | null = null
   /** Whether the PC is connected to the VPS broker (set by the RelayClient). */
   private relayConnected = false
+  private relayState: RemoteInfo['relayState'] = 'off'
+  /** The one phone paired with this PC (null = none yet; first phone to call pairs). */
+  private pairedDevice: RemotePairedDevice | null = null
+  /** Phone id explicitly unpaired from the PC UI; barred from implicit re-pairing. */
+  private unpairedId: string | null = null
   /** Downloadable paths seen live via `broadcast()`, independent of `setState()`.
    *  `setState()` comes from the renderer (a round-trip after it processes the
    *  same event), so a phone that taps "Baixar" the instant the button appears
@@ -153,15 +170,36 @@ export class RemoteServer {
       token: this.token,
       clients: this.clients.size,
       relayConnected: this.relayConnected,
+      relayState: this.relayState,
+      pairedDevice: this.pairedDevice ?? undefined,
       url: running && this.ip ? `http://${this.ip}:${this.port}/?token=${this.token}` : ''
     }
   }
 
   /** Update broker-connection status (from the RelayClient) and notify the UI. */
-  setRelayConnected(connected: boolean): void {
-    if (this.relayConnected === connected) return
+  setRelayConnected(connected: boolean, state?: RemoteInfo['relayState']): void {
+    const nextState = state ?? (connected ? 'connected' : 'connecting')
+    if (this.relayConnected === connected && this.relayState === nextState) return
     this.relayConnected = connected
+    this.relayState = nextState
     this.deps.onClientsChanged?.(this.info())
+  }
+
+  /** Forget the paired phone: the next phone to scan the QR becomes the one.
+   *  The old phone keeps polling every few seconds, so it would silently
+   *  re-pair itself through the implicit first-caller rule — remember its id and
+   *  refuse it until an explicit `/api/pair` (a new QR scan) happens. */
+  unpair(): void {
+    this.unpairedId = this.pairedDevice?.id ?? null
+    this.setPaired(null)
+    for (const c of this.clients) c.end()
+    this.clients.clear()
+    this.notifyClients()
+  }
+
+  private setPaired(device: RemotePairedDevice | null): void {
+    this.pairedDevice = device
+    this.deps.savePairedDevice?.(device)
   }
 
   /** Start listening (idempotent — returns current info if already running). */
@@ -177,6 +215,7 @@ export class RemoteServer {
       this.token = randomBytes(16).toString('hex')
       await this.deps.saveToken?.(this.token)
     }
+    this.pairedDevice = this.deps.loadPairedDevice?.() ?? null
     const server = createServer((req, res) => {
       this.handle(req, res).catch((err) => {
         if (!res.headersSent) res.writeHead(500)
@@ -230,8 +269,29 @@ export class RemoteServer {
     this.deps.onClientsChanged?.(this.info())
   }
 
-  private authed(req: IncomingMessage, url: URL): boolean {
+  private authed(_req: IncomingMessage, url: URL): boolean {
     return url.searchParams.get('token') === this.token && this.token !== ''
+  }
+
+  /**
+   * One phone per PC. Every /api call carries the phone's device id (`dev`).
+   *  - no phone paired yet → the first one to call becomes the paired phone;
+   *  - same id → ok;
+   *  - different id → 409 (`another-device`), except `POST /api/pair`, which is
+   *    the explicit act of scanning the QR / typing the address and TAKES OVER.
+   * Calls without `dev` (older clients, tests) are still accepted.
+   */
+  private deviceAllowed(url: URL, path: string, method: string | undefined): 'ok' | 'another-device' {
+    const dev = (url.searchParams.get('dev') ?? '').trim()
+    if (!dev) return 'ok'
+    if (path === '/api/pair' && method === 'POST') return 'ok'
+    if (!this.pairedDevice) {
+      if (dev === this.unpairedId) return 'another-device'
+      this.setPaired({ id: dev, name: (url.searchParams.get('devname') ?? '').trim() || 'celular', pairedAt: Date.now() })
+      this.notifyClients()
+      return 'ok'
+    }
+    return this.pairedDevice.id === dev ? 'ok' : 'another-device'
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -260,7 +320,16 @@ export class RemoteServer {
         res.end(JSON.stringify({ error: 'token inválido' }))
         return
       }
+      if (this.deviceAllowed(url, path, req.method) === 'another-device') {
+        res.writeHead(409, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'another-device', pairedName: this.pairedDevice?.name ?? 'outro celular' }))
+        return
+      }
       if (path === '/api/state') return this.serveState(res)
+      if (path === '/api/pair' && req.method === 'POST') return this.servePair(req, url, res)
+      if (path === '/api/interrupt' && req.method === 'POST') return this.serveInterrupt(req, res)
+      if (path === '/api/set-mode' && req.method === 'POST') return this.serveSetMode(req, res)
+      if (path === '/api/conversation' && req.method === 'POST') return this.serveConversationAction(req, res)
       if (path === '/api/skip-perms' && req.method === 'POST') return this.serveSetSkipPerms(req, res)
       if (path === '/api/set-model' && req.method === 'POST') return this.serveSetModel(req, res)
       if (path === '/api/recovery' && req.method === 'POST') return this.serveRecovery(req, res)
@@ -388,9 +457,108 @@ export class RemoteServer {
         skipPerms: this.state.skipPerms ?? false,
         models: this.state.models ?? [],
         modelEffort: this.state.modelEffort ?? {},
-        effortLabels: this.state.effortLabels ?? {}
+        effortLabels: this.state.effortLabels ?? {},
+        usage: this.state.usage ?? {},
+        projects: this.state.projects ?? [],
+        pairedDevice: this.pairedDevice ?? null,
+        relayState: this.relayState
       })
     )
+  }
+
+  /** Phone → PC: explicit pairing (QR scan / manual connect). Takes over from any
+   *  previously paired phone — the scan is the user's intent. */
+  private async servePair(req: IncomingMessage, url: URL, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    let deviceId = ''
+    let name = ''
+    try {
+      const j = JSON.parse(body || '{}') as { deviceId?: string; name?: string }
+      deviceId = String(j.deviceId ?? '').trim()
+      name = String(j.name ?? '').trim()
+    } catch {
+      /* fall through */
+    }
+    deviceId = deviceId || (url.searchParams.get('dev') ?? '').trim()
+    if (!deviceId) return sendJson(res, 400, { ok: false, error: 'deviceId obrigatório' })
+    const replaced = this.pairedDevice && this.pairedDevice.id !== deviceId ? this.pairedDevice.name : null
+    this.unpairedId = null
+    this.setPaired({ id: deviceId, name: name || 'celular', pairedAt: Date.now() })
+    if (replaced) {
+      // The old phone's event stream is closed so it notices right away (its next
+      // call gets 409 and it shows "another phone paired").
+      for (const c of this.clients) c.end()
+      this.clients.clear()
+    }
+    this.notifyClients()
+    sendJson(res, 200, { ok: true, replaced })
+  }
+
+  private async serveInterrupt(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    let convId = ''
+    try {
+      convId = String((JSON.parse(body ?? '') as { convId?: string }).convId ?? '').trim()
+    } catch {
+      /* fall through */
+    }
+    if (!convId) return sendJson(res, 400, { ok: false, error: 'convId obrigatório' })
+    this.deps.onInterrupt?.(convId)
+    sendJson(res, 200, { ok: true })
+  }
+
+  private async serveSetMode(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    let convId = ''
+    let mode: 'economy' | 'loop' | 'fast' | null = null
+    let on = false
+    try {
+      const j = JSON.parse(body ?? '') as { convId?: string; mode?: string; on?: boolean }
+      convId = String(j.convId ?? '').trim()
+      mode = j.mode === 'economy' || j.mode === 'loop' || j.mode === 'fast' ? j.mode : null
+      on = !!j.on
+    } catch {
+      /* fall through */
+    }
+    if (!convId || !mode) return sendJson(res, 400, { ok: false, error: 'convId e mode (economy|loop|fast) são obrigatórios' })
+    this.deps.onSetMode?.(convId, mode, on)
+    // Optimistic echo (same idea as set-model); the renderer's publish confirms.
+    const key = mode === 'economy' ? 'economyMode' : mode === 'loop' ? 'loopEnabled' : 'fastMode'
+    this.state = {
+      ...this.state,
+      conversations: this.state.conversations.map((c) => (c.id === convId ? { ...c, [key]: on } : c))
+    }
+    sendJson(res, 200, { ok: true })
+  }
+
+  private async serveConversationAction(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    let j: { type?: string; cwd?: string; convId?: string; title?: string } = {}
+    try {
+      j = (JSON.parse(body ?? 'null') as typeof j | null) ?? {}
+    } catch {
+      return sendJson(res, 400, { ok: false, error: 'JSON inválido' })
+    }
+    const convId = String(j.convId ?? '').trim()
+    let action: RemoteConversationAction | null = null
+    if (j.type === 'create') {
+      const cwd = String(j.cwd ?? '').trim()
+      if (!cwd) return sendJson(res, 400, { ok: false, error: 'cwd obrigatório' })
+      // Only folders the desktop already knows: the phone can't pick arbitrary paths.
+      const known = new Set<string>([...(this.state.projects ?? []), ...this.state.conversations.map((c) => c.cwd)])
+      if (!known.has(cwd)) return sendJson(res, 400, { ok: false, error: 'projeto desconhecido' })
+      action = { type: 'create', cwd, convId: `c-${randomBytes(6).toString('hex')}` }
+    } else if (j.type === 'rename') {
+      const title = String(j.title ?? '').trim()
+      if (!convId || !title) return sendJson(res, 400, { ok: false, error: 'convId e title são obrigatórios' })
+      action = { type: 'rename', convId, title }
+    } else if (j.type === 'delete') {
+      if (!convId) return sendJson(res, 400, { ok: false, error: 'convId obrigatório' })
+      action = { type: 'delete', convId }
+    }
+    if (!action) return sendJson(res, 400, { ok: false, error: 'type inválido' })
+    this.deps.onConversationAction?.(action)
+    sendJson(res, 200, { ok: true, convId: action.type === 'create' ? action.convId : convId })
   }
 
   /** Phone → PC: change a conversation's model and/or reasoning effort. */
@@ -400,7 +568,7 @@ export class RemoteServer {
     let model: string | undefined
     let effort: string | undefined
     try {
-      const j = JSON.parse(body) as { convId?: string; model?: string; effort?: string }
+      const j = JSON.parse(body ?? '') as { convId?: string; model?: string; effort?: string }
       convId = (j.convId ?? '').trim()
       model = typeof j.model === 'string' && j.model.trim() ? j.model.trim() : undefined
       effort = typeof j.effort === 'string' && j.effort.trim() ? j.effort.trim() : undefined
@@ -425,7 +593,7 @@ export class RemoteServer {
   private async serveRecovery(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readBody(req)
     try {
-      const data = JSON.parse(body) as { convId?: string; action?: string }
+      const data = JSON.parse(body ?? '') as { convId?: string; action?: string }
       const convId = String(data.convId ?? '').trim()
       const action = data.action === 'retry' || data.action === 'cancel' ? data.action : null
       if (!convId || !action) return sendJson(res, 400, { ok: false, error: 'convId/action inválidos' })
@@ -442,7 +610,7 @@ export class RemoteServer {
   private async servePermissionRespond(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readBody(req)
     try {
-      const data = JSON.parse(body) as {
+      const data = JSON.parse(body ?? '') as {
         convId?: string
         id?: string
         behavior?: string
@@ -474,7 +642,7 @@ export class RemoteServer {
     const body = await readBody(req)
     let on = false
     try {
-      on = !!(JSON.parse(body) as { on?: boolean }).on
+      on = !!(JSON.parse(body ?? '') as { on?: boolean }).on
     } catch {
       /* fall through to default */
     }
@@ -492,7 +660,7 @@ export class RemoteServer {
     let audioBase64 = ''
     let mimeType = ''
     try {
-      const j = JSON.parse(body) as { audioBase64?: string; mimeType?: string }
+      const j = JSON.parse(body ?? '') as { audioBase64?: string; mimeType?: string }
       audioBase64 = String(j.audioBase64 ?? '')
       mimeType = String(j.mimeType ?? '')
     } catch {
@@ -515,7 +683,7 @@ export class RemoteServer {
     const body = await readBody(req)
     let text = ''
     try {
-      text = String((JSON.parse(body) as { text?: string }).text ?? '').trim()
+      text = String((JSON.parse(body ?? '') as { text?: string }).text ?? '').trim()
     } catch {
       /* fall through */
     }
@@ -605,20 +773,23 @@ export class RemoteServer {
     let convId = ''
     let text = ''
     let images: ImageAttachment[] = []
+    let files: FileAttachment[] = []
+    if (body === null) return sendJson(res, 413, { error: 'mensagem grande demais (limite de 24 MB)' })
     try {
-      const j = JSON.parse(body) as { convId?: string; text?: string; images?: ImageAttachment[] }
+      const j = JSON.parse(body ?? '') as { convId?: string; text?: string; images?: ImageAttachment[]; files?: FileAttachment[] }
       convId = (j.convId ?? '').trim()
       text = (j.text ?? '').trim()
       images = sanitizeImages(j.images)
+      files = sanitizeFiles(j.files)
     } catch {
       /* fall through to validation */
     }
-    if (!convId || (!text && images.length === 0)) {
+    if (!convId || (!text && images.length === 0 && files.length === 0)) {
       res.writeHead(400, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'convId e (text ou imagem) são obrigatórios' }))
+      res.end(JSON.stringify({ error: 'convId e (text, imagem ou arquivo) são obrigatórios' }))
       return
     }
-    this.deps.onInbound(convId, text, images)
+    this.deps.onInbound(convId, text, images, files)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: true }))
   }
@@ -660,17 +831,48 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-/** Read at most ~24MB of a request body as a string (images travel as base64). */
-function readBody(req: IncomingMessage): Promise<string> {
+/** Read at most ~24MB of a request body as a string (images travel as base64).
+ *  Resolves `null` when the cap is hit — a truncated JSON would otherwise fail
+ *  as a confusing 400 instead of a clear 413. */
+function readBody(req: IncomingMessage): Promise<string | null> {
   return new Promise((resolve) => {
     let data = ''
+    let overflow = false
     req.on('data', (chunk: Buffer) => {
+      if (overflow) return
       data += chunk.toString()
-      if (data.length > 25_165_824) req.destroy()
+      if (data.length > 25_165_824) {
+        // Keep draining (don't destroy the socket) so the 413 the caller writes
+        // can actually reach the client — destroying would kill the response too.
+        overflow = true
+        data = ''
+        resolve(null)
+      }
     })
-    req.on('end', () => resolve(data))
-    req.on('error', () => resolve(data))
+    req.on('end', () => resolve(overflow ? null : data))
+    req.on('error', () => resolve(overflow ? null : data))
   })
+}
+
+/** Validate/limit non-image attachments from a phone (name + base64 payload). */
+function sanitizeFiles(input: unknown): FileAttachment[] {
+  if (!Array.isArray(input)) return []
+  return input
+    .filter(
+      (x): x is FileAttachment =>
+        !!x &&
+        typeof (x as FileAttachment).name === 'string' &&
+        typeof (x as FileAttachment).mediaType === 'string' &&
+        typeof (x as FileAttachment).data === 'string' &&
+        (x as FileAttachment).data.length > 0
+    )
+    .slice(0, 8)
+    .map((x) => ({
+      name: x.name,
+      mediaType: x.mediaType,
+      data: x.data,
+      size: Number.isFinite(x.size) && x.size > 0 ? x.size : Math.floor((x.data.length * 3) / 4)
+    }))
 }
 
 /** Validate/limit attachments from a phone: keep well-formed image blocks only. */

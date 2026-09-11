@@ -41,6 +41,7 @@ beforeAll(async () => {
     relay = new RelayClient({
       brokerUrl: `ws://127.0.0.1:${brokerPort}/__relay`,
       getToken: () => 'tok-pc',
+      getInstanceId: () => 'pc-teste',
       getPort: () => localPort,
       onStatus: (c) => {
         if (c) {
@@ -104,5 +105,33 @@ describe('RelayClient — PC disca pro broker e repassa pro RemoteServer local',
   it('token de PC não conectado → 503', async () => {
     const r = await get('/api/state?token=ninguem')
     expect(r.status).toBe(503)
+  })
+
+  it('segundo PC com o mesmo token (outra instalação) fica em "busy" — o primeiro continua atendendo', async () => {
+    const states: string[] = []
+    const second = new RelayClient({
+      brokerUrl: `ws://127.0.0.1:${brokerPort}/__relay`,
+      getToken: () => 'tok-pc',
+      getInstanceId: () => 'outra-instalacao',
+      getPort: () => localPort,
+      onStatus: (_c, s) => states.push(s)
+    })
+    second.start()
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('sem busy')), 4000)
+      const poll = setInterval(() => {
+        if (second.getState() === 'busy') {
+          clearTimeout(t)
+          clearInterval(poll)
+          resolve()
+        }
+      }, 20)
+    })
+    expect(second.isConnected()).toBe(false)
+    expect(relay.isConnected()).toBe(true)
+    const r = await get('/api/state?token=tok-pc')
+    expect(r.status).toBe(200) // ainda roteado pro primeiro
+    second.stop()
+    expect(second.getState()).toBe('off')
   })
 })

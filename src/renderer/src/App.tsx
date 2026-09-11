@@ -16,6 +16,7 @@ import type {
   TabKind
 } from '@shared/ipc'
 import {
+  contextLimitFor,
   isOllamaModel,
   isOpenAIModel,
   modelSupportsFastMode,
@@ -1244,17 +1245,24 @@ export function App(): JSX.Element {
           effort: c.effort ?? DEFAULT_EFFORT,
           economyMode: c.economyMode === true,
           loopEnabled: c.loopEnabled === true,
+          fastMode: c.fastMode === true,
+          fastModeAvailable: modelSupportsFastMode(c.model),
+          todoPlan: c.todoPlan,
+          stalledSince: stalledSince[c.id],
+          tokens: { context: c.tokens.context, output: c.tokens.output, cost: c.tokens.cost, contextLimit: contextLimitFor(c.model) },
           permission: permissions[c.id]
         })),
         skipPerms: skipPermsRef.current,
         // Catalog for the phone's selectors — same options the PC picker offers.
         models,
         modelEffort: MODEL_EFFORT,
-        effortLabels: EFFORT_LABELS
+        effortLabels: EFFORT_LABELS,
+        usage: usageLimitsRef.current,
+        projects: Array.from(new Set(convsRef.current.map((c) => c.cwd).filter(Boolean)))
       })
     }, 400)
     return () => clearTimeout(pubTimer.current)
-  }, [conversations, queue, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models, permissions])
+  }, [conversations, queue, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models, permissions, stalledSince, usageLimits])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
   // page viewport follows (BrowserPanel reports its new size to main).
@@ -1282,7 +1290,7 @@ export function App(): JSX.Element {
   }, [])
 
   // ---- conversation management ----
-  const createConversation = (folder: string): Conversation => {
+  const createConversation = (folder: string, id?: string): Conversation => {
     // New conversations in a known project inherit that project's execution
     // modes; otherwise fall back to the active conversation's settings.
     const sameFolder = convsRef.current.find((c) => c.cwd === folder)
@@ -1293,7 +1301,7 @@ export function App(): JSX.Element {
       ? false
       : (sameFolder?.loopEnabled ?? active?.loopEnabled ?? false)
     const conv: Conversation = {
-      id: uid('c'),
+      id: id ?? uid('c'),
       title: DEFAULT_TITLE,
       cwd: folder,
       model,
@@ -1947,7 +1955,7 @@ export function App(): JSX.Element {
   // Commands arriving from a phone (phone → PC → Claude Code): route into the
   // matching conversation via the same dispatch path the composer uses.
   useEffect(() => {
-    const off = window.api.onRemoteInbound(({ convId, text, images }) => {
+    const off = window.api.onRemoteInbound(({ convId, text, images, files }) => {
       const conv = convsRef.current.find((c) => c.id === convId)
       if (!conv) {
         notify('aviso', 'Comando remoto para uma conversa inexistente foi ignorado.')
@@ -1955,7 +1963,7 @@ export function App(): JSX.Element {
       }
       const imgs = images ?? []
       const thumbs = imgs.map((img) => `data:${img.mediaType};base64,${img.data}`)
-      void dispatch(conv, text, text, imgs, thumbs, [])
+      void dispatch(conv, text, text, imgs, thumbs, files ?? [])
     })
     return off
   }, [dispatch, notify])
@@ -2164,9 +2172,7 @@ export function App(): JSX.Element {
 
   const tts = useMemo(() => ({ speakingId, onToggleSpeak: toggleSpeak }), [speakingId, toggleSpeak])
 
-  const interrupt = useCallback((): void => {
-    const cid = activeIdRef.current
-    if (!cid) return
+  const interruptConv = useCallback((cid: string): void => {
     // Stop the current task AND drop anything queued for this conversation. The
     // SDK ends an interrupt by emitting a `result` (not `error`); with the queue
     // cleared, the turn-end handler finds nothing to dispatch and just goes idle
@@ -2207,6 +2213,34 @@ export function App(): JSX.Element {
         }))
       })
   }, [patchConv, notify])
+
+  const interrupt = useCallback((): void => {
+    const cid = activeIdRef.current
+    if (cid) interruptConv(cid)
+  }, [interruptConv])
+
+  // Phone → PC: stop a conversation's turn, toggle its modes, manage conversations.
+  // Same code paths the desktop buttons use, so behaviour can't diverge.
+  useEffect(() => window.api.onRemoteInterrupt(({ convId }) => interruptConv(convId)), [interruptConv])
+  useEffect(
+    () =>
+      window.api.onRemoteSetMode(({ convId, mode, on }) => {
+        if (!convsRef.current.some((c) => c.id === convId)) return
+        if (mode === 'economy') changeEconomyMode(convId, on)
+        else if (mode === 'loop') changeLoopEnabled(convId, on)
+        else changeFastMode(convId, on)
+      }),
+    [changeEconomyMode, changeLoopEnabled, changeFastMode]
+  )
+  useEffect(
+    () =>
+      window.api.onRemoteConversationAction((action) => {
+        if (action.type === 'create') createConversation(action.cwd, action.convId)
+        else if (action.type === 'rename') renameConversation(action.convId, action.title)
+        else if (action.type === 'delete') deleteConversation(action.convId)
+      }),
+    [renameConversation, deleteConversation]
+  )
 
   // Open a preview tab from the modal. newTab returns a status string, so we can
   // surface success/errors (e.g. Android failing because the toolchain is missing)

@@ -14,8 +14,21 @@
 
 var CONFIG_KEY = 'agent-remote-config'
 var LAST_CONV_KEY = 'agent-remote-last-conv'
+var DEVICE_KEY = 'agent-remote-device'
+/** Timeout das chamadas HTTP normais: um endereço de LAN morto (celular saiu da
+ *  rede) não pode segurar a tela por minutos até o TCP desistir. */
+var FETCH_TIMEOUT_MS = 12000
 
 var state = {
+  usage: {},         // account usage windows (Claude/GPT), mirrored from the PC
+  pairedDevice: null, // phone paired on the PC (id/name) — is it us?
+  blocked: false,    // another phone is paired with this PC (409)
+  files: [],         // staged non-image attachments {name, mediaType, data, size}
+  failures: 0,       // consecutive /api/state failures (re-pick LAN vs VPS after 2)
+  recoveryTimer: null,
+  stallTimer: null,
+  todoOpen: true,
+  convMenu: null,    // conversation id with the row menu open (drawer)
   base: '',          // currently active endpoint — may be publicBase or lanBase
   publicBase: '',    // VPS/public origin from pairing (fixed, the "resting" fallback)
   lanBase: '',       // raw 'ip:port' of the PC on the LAN from the paired QR, if any
@@ -122,9 +135,67 @@ function loadConfig() {
 function saveConfig(cfg) { localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)) }
 function clearConfig() { localStorage.removeItem(CONFIG_KEY) }
 
+/** Identidade estável deste celular (1 celular por PC — o PC compara este id). */
+function deviceId() {
+  var id = localStorage.getItem(DEVICE_KEY)
+  if (!id) {
+    id = 'ph-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+    localStorage.setItem(DEVICE_KEY, id)
+  }
+  return id
+}
+function deviceName() {
+  var ua = navigator.userAgent || ''
+  var m = /Android [\d.]+; ([^;)]+)/.exec(ua)
+  if (m && m[1] && !/^[a-z]{2}-[a-z]{2}$/i.test(m[1].trim())) return m[1].trim().slice(0, 40)
+  if (/iPhone/.test(ua)) return 'iPhone'
+  return 'celular'
+}
+
 function api(path) {
   var sep = path.indexOf('?') >= 0 ? '&' : '?'
-  return state.base + path + sep + 'token=' + encodeURIComponent(state.token)
+  return state.base + path + sep + 'token=' + encodeURIComponent(state.token) +
+    '&dev=' + encodeURIComponent(deviceId()) + '&devname=' + encodeURIComponent(deviceName())
+}
+
+/** `fetch` com timeout duro. Rejeita com Error cuja `.status` é o HTTP (se houve
+ *  resposta) ou 0 (rede/timeout) — quem chama decide a mensagem pelo status. */
+function fetchApi(path, opts) {
+  opts = opts || {}
+  var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
+  var timer = setTimeout(function () { if (ctrl) ctrl.abort() }, opts.timeout || FETCH_TIMEOUT_MS)
+  var init = { method: opts.method || 'GET', signal: ctrl ? ctrl.signal : undefined }
+  if (opts.body !== undefined) {
+    init.headers = { 'Content-Type': 'application/json' }
+    init.body = JSON.stringify(opts.body)
+  }
+  return fetch(api(path), init).then(function (res) {
+    clearTimeout(timer)
+    if (res.status === 409) { onAnotherDevice(res); throw httpError(409) }
+    if (!res.ok) throw httpError(res.status)
+    return res.json()
+  }, function (err) {
+    clearTimeout(timer)
+    throw httpError(0, err)
+  })
+}
+function httpError(status, cause) {
+  var e = new Error(status ? 'HTTP ' + status : 'network')
+  e.status = status
+  e.cause = cause
+  return e
+}
+/** Texto humano para o que deu errado — 503/504 vêm do broker (o PC não está lá),
+ *  401 do PC (token), 0 é a rede do celular. */
+function errorText(err) {
+  var s = err && err.status
+  if (s === 401) return 'O PC não aceitou o token salvo. Escaneie o QR de novo se a ponte foi reconfigurada.'
+  if (s === 409) return 'Outro celular está pareado com este PC.'
+  if (s === 503) return 'O PC não está conectado ao servidor remoto (ponte desligada, PC desligado ou sem internet).'
+  if (s === 504 || s === 502) return 'O PC não respondeu a tempo. Ele pode ter acabado de dormir ou perder a rede.'
+  if (s === 413) return 'Anexo grande demais para enviar pelo celular.'
+  if (s) return 'Erro HTTP ' + s + ' ao falar com o PC.'
+  return 'Sem conexão. Verifique a internet do celular.'
 }
 
 // ---- message reducer (mirrors renderer reduceMessages) --------------------
@@ -132,10 +203,27 @@ function api(path) {
 // Eventos que são ESTADO, não conteúdo: uso da conta e "o turno emudeceu".
 // Sem isto eles caem no push do fim e engordam a lista a cada ocorrência —
 // invisíveis (a renderização é whitelist), mas acumulando mesmo assim.
-var STATE_ONLY = { 'rate-limit': 1, 'stall-status': 1 }
+var STATE_ONLY = { 'rate-limit': 1, 'stall-status': 1, 'task-list': 1, 'background-tasks': 1 }
+// Chamadas que o PC desvia do feed: o plano de tarefas vira o card fixo
+// (renderTodoPlan), não uma ferramenta na lista.
+var PLAN_TOOLS = { TodoWrite: 1, TaskCreate: 1, TaskUpdate: 1 }
+
+/** Trabalho de subagente nunca entra no feed — no PC ele vai pro painel de
+ *  agentes; aqui só poluiria a conversa principal. */
+function isSubagentEvent(e) {
+  return (e.kind === 'tool-use' || e.kind === 'tool-result') && e.parentToolUseId != null
+}
+function isHiddenMessage(m) {
+  if (!m) return true
+  if (STATE_ONLY[m.kind]) return true
+  if (isSubagentEvent(m)) return true
+  if (m.kind === 'tool-use' && PLAN_TOOLS[m.name]) return true
+  return false
+}
 
 function reduce(list, e) {
-  if (STATE_ONLY[e.kind]) return list
+  if (STATE_ONLY[e.kind] || isSubagentEvent(e)) return list
+  if (e.kind === 'tool-use' && PLAN_TOOLS[e.name]) return list
   if (e.kind === 'assistant-text') {
     for (var i = 0; i < list.length; i++) {
       if (list[i].kind === 'assistant-text' && list[i].id === e.id) {
@@ -459,6 +547,7 @@ function renderMessages() {
   box.innerHTML = ''
   var scrollTarget = null
   state.messages.forEach(function (m) {
+    if (isHiddenMessage(m)) return
     if (m.kind === 'user') {
       var wrap = el('msg-row user')
       var u = el('msg user')
@@ -472,6 +561,11 @@ function renderMessages() {
           gal.appendChild(im)
         })
         u.appendChild(gal)
+      }
+      if (m.files && m.files.length) {
+        var fl = el('msg-files')
+        m.files.forEach(function (f) { fl.appendChild(el('file-chip', '📎 ' + (f.name || 'arquivo') + (f.size ? ' · ' + fmtBytes(f.size) : ''))) })
+        u.appendChild(fl)
       }
       if (m.text) u.appendChild(document.createTextNode(m.text))
       wrap.appendChild(u)
@@ -512,7 +606,20 @@ function renderMessages() {
       }
       box.appendChild(a)
     } else if (m.kind === 'thinking') {
-      box.appendChild(el('msg thinking', m.text))
+      // Recolhido por padrão (como no PC): o raciocínio é longo e raramente é o
+      // que se quer ler no celular — toque para abrir.
+      var th = el('msg thinking' + (state.openTools[m.id] ? ' open' : ''))
+      var thHead = el('thinking-head', state.openTools[m.id] ? '▾ Pensando…' : '▸ Pensando…')
+      var thBody = el('thinking-body', m.text)
+      thBody.hidden = !state.openTools[m.id]
+      thHead.addEventListener('click', function () {
+        if (state.openTools[m.id]) delete state.openTools[m.id]
+        else state.openTools[m.id] = true
+        renderMessages()
+      })
+      th.appendChild(thHead)
+      th.appendChild(thBody)
+      box.appendChild(th)
     } else if (m.kind === 'system') {
       box.appendChild(el('msg system', 'sessão pronta' + (m.model ? ' · ' + m.model : '')))
     } else if (m.kind === 'error') {
@@ -623,10 +730,13 @@ function setStatus(on) {
 }
 
 function fetchState() {
-  return fetch(api('/api/state'))
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+  return fetchApi('/api/state')
     .then(function (data) {
+      state.failures = 0
       state.conversations = data.conversations || []
+      state.projects = data.projects || []
+      state.usage = data.usage || {}
+      state.pairedDevice = data.pairedDevice || null
       var wasReady = state.voiceReady
       state.voiceReady = !!data.voiceReady
       var mic = $('mic')
@@ -643,16 +753,146 @@ function fetchState() {
       var sb = $('hist-search-input')
       if (!$('history').hidden && !(sb && sb.value.trim())) renderHistory()
       updateConvTitle()
-      var cur = current()
-      $('busy').hidden = !(cur && cur.busy)
+      renderBusy()
       syncQueuedMessages()
       renderTurnRecovery()
+      renderTodoPlan()
+      renderUsage()
       renderQuestionMap()
       renderPermission()
       // If voice availability flipped, refresh so the "Ouvir" buttons appear/hide.
       if (wasReady !== state.voiceReady) scheduleRender()
       return data
+    }, function (err) {
+      // Duas falhas seguidas no chat: o endereço em uso pode ter morrido (saímos da
+      // Wi‑Fi do PC) — reavalia LAN × VPS antes da próxima tentativa.
+      state.failures++
+      if (state.failures >= 2 && !$('chat').hidden) repickBase()
+      throw err
     })
+}
+
+var repicking = false
+/** Reescolhe entre a LAN e a VPS. Nunca rejeita; troca `state.base` se mudou e
+ *  religa o SSE nele. É o que faz sair da rede do PC funcionar sem reabrir o app. */
+function repickBase() {
+  if (repicking || !state.publicBase) return Promise.resolve(state.base)
+  repicking = true
+  return pickBestBase(state.publicBase, state.lanBase, state.token).then(function (base) {
+    repicking = false
+    if (base !== state.base) {
+      state.base = base
+      state.failures = 0
+      if (!$('chat').hidden) openEvents()
+    }
+    return base
+  })
+}
+
+/** Faixa "trabalhando…" + botão Parar; vira "sem resposta há Xs" quando o PC
+ *  diz que o turno emudeceu (stall watchdog) — mesma leitura do desktop. */
+function renderBusy() {
+  var cur = current()
+  var bar = $('busy')
+  var busy = !!(cur && cur.busy)
+  bar.hidden = !busy
+  if (state.stallTimer) { clearInterval(state.stallTimer); state.stallTimer = null }
+  var text = $('busy-text')
+  if (!busy) return
+  var since = cur.stalledSince
+  bar.classList.toggle('stalled', !!since)
+  if (!since) { text.textContent = 'trabalhando…'; return }
+  var tick = function () {
+    var s = Math.max(0, Math.round((Date.now() - since) / 1000))
+    text.textContent = 'Sem resposta há ' + (s >= 60 ? Math.floor(s / 60) + 'min ' + (s % 60) + 's' : s + 's')
+  }
+  tick()
+  state.stallTimer = setInterval(tick, 1000)
+}
+
+function interruptTurn() {
+  if (!state.convId) return
+  fetchApi('/api/interrupt', { method: 'POST', body: { convId: state.convId } })
+    .then(fetchState).catch(function () {})
+}
+
+// ---- task plan card (TodoWrite / TaskCreate), fixed above the composer -------
+
+function renderTodoPlan() {
+  var box = $('todo-plan')
+  var cur = current()
+  var plan = cur && cur.todoPlan
+  if (!plan || !plan.items || !plan.items.length) { box.hidden = true; return }
+  box.hidden = false
+  box.innerHTML = ''
+  var done = plan.items.filter(function (t) { return t.status === 'completed' }).length
+  var head = el('todo-head')
+  var running = plan.items.find(function (t) { return t.status === 'in_progress' })
+  head.appendChild(el('todo-title', (plan.active ? '◔ ' : '✓ ') + done + '/' + plan.items.length + (running && !state.todoOpen ? ' · ' + (running.activeForm || running.content) : ' etapas')))
+  head.appendChild(el('todo-caret', state.todoOpen ? '▾' : '▸'))
+  head.addEventListener('click', function () { state.todoOpen = !state.todoOpen; renderTodoPlan() })
+  box.appendChild(head)
+  if (!state.todoOpen) return
+  var list = el('todo-list')
+  plan.items.forEach(function (t) {
+    var row = el('todo-item ' + t.status)
+    row.appendChild(el('todo-mark', t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○'))
+    row.appendChild(el('todo-text', t.status === 'in_progress' ? (t.activeForm || t.content) : t.content))
+    list.appendChild(row)
+  })
+  box.appendChild(list)
+}
+
+// ---- account usage (5h / week) + context, in Settings --------------------------
+
+var USAGE_LABELS = {
+  five_hour: 'Claude · sessão 5h', seven_day: 'Claude · semana', seven_day_opus: 'Claude · semana Opus',
+  seven_day_sonnet: 'Claude · semana Sonnet', seven_day_overage_included: 'Claude · excedente incluído',
+  overage: 'Claude · excedente', gpt_primary: 'GPT · janela curta', gpt_secondary: 'GPT · janela longa'
+}
+function fmtReset(ts) {
+  if (!ts) return ''
+  var ms = ts * (ts < 1e12 ? 1000 : 1) - Date.now()
+  if (ms <= 0) return 'já resetou'
+  var m = Math.round(ms / 60000)
+  if (m < 60) return 'reseta em ' + m + ' min'
+  var h = Math.round(m / 60)
+  if (h < 48) return 'reseta em ' + h + ' h'
+  return 'reseta em ' + Math.round(h / 24) + ' dias'
+}
+function fmtTokens(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
+  if (n >= 1e3) return Math.round(n / 1e3) + 'k'
+  return String(n || 0)
+}
+function renderUsage() {
+  var box = $('cfg-usage')
+  if (!box) return
+  box.innerHTML = ''
+  var keys = Object.keys(state.usage || {})
+  var cur = current()
+  if (cur && cur.tokens) {
+    var t = cur.tokens
+    var pct = t.contextLimit ? Math.min(100, Math.round(t.context / t.contextLimit * 100)) : 0
+    box.appendChild(usageRow('Contexto desta conversa', pct, fmtTokens(t.context) + ' / ' + fmtTokens(t.contextLimit) + ' · ↑ ' + fmtTokens(t.output) + ' saída' + (t.cost ? ' · ~$' + t.cost.toFixed(2) : '')))
+  }
+  keys.forEach(function (k) {
+    var u = state.usage[k]
+    var pct = Math.round((u.utilization || 0) * 100)
+    box.appendChild(usageRow(USAGE_LABELS[k] || k, pct, pct + '% usado' + (u.resetsAt ? ' · ' + fmtReset(u.resetsAt) : '')))
+  })
+  if (!box.children.length) box.appendChild(el('cfg-desc', 'Sem dados de uso ainda.'))
+}
+function usageRow(label, pct, detail) {
+  var row = el('usage-row')
+  row.appendChild(el('usage-label', label))
+  var track = el('usage-track')
+  var fill = el('usage-fill' + (pct >= 95 ? ' crit' : pct >= 80 ? ' warn' : ''))
+  fill.style.width = pct + '%'
+  track.appendChild(fill)
+  row.appendChild(track)
+  row.appendChild(el('usage-detail', detail))
+  return row
 }
 
 function current() {
@@ -704,14 +944,36 @@ function renderModelBar() {
   // Effort: only for models that support it (Ollama models don't → hide).
   var eSel = $('effort-select')
   var levels = state.modelEffort[cur.model] || []
-  if (!levels.length) { eSel.hidden = true; return }
-  eSel.hidden = false
-  fillSelect(
-    eSel,
-    levels.map(function (l) { return { value: l, label: state.effortLabels[l] || l } }),
-    cur.effort || 'high'
-  )
-  eSel.disabled = busy
+  eSel.hidden = !levels.length
+  if (levels.length) {
+    fillSelect(
+      eSel,
+      levels.map(function (l) { return { value: l, label: state.effortLabels[l] || l } }),
+      cur.effort || 'high'
+    )
+    eSel.disabled = busy
+  }
+  // Per-conversation modes (same three toggles as the desktop composer).
+  var eco = $('mode-economy'), loop = $('mode-loop'), fast = $('mode-fast')
+  eco.classList.toggle('on', !!cur.economyMode)
+  loop.classList.toggle('on', !!cur.loopEnabled)
+  fast.classList.toggle('on', !!cur.fastMode)
+  fast.hidden = !cur.fastModeAvailable
+}
+
+/** Alterna econômico / loop / rápido da conversa atual (otimista; o PC confirma). */
+function setMode(mode) {
+  var cur = current()
+  if (!cur) return
+  var key = mode === 'economy' ? 'economyMode' : mode === 'loop' ? 'loopEnabled' : 'fastMode'
+  var on = !cur[key]
+  if (mode === 'loop' && on && cur.economyMode) { alert('Desative o modo econômico para ligar o loop.'); return }
+  cur[key] = on
+  if (on && mode === 'economy') cur.loopEnabled = false
+  if (on && mode === 'loop') cur.economyMode = false
+  renderModelBar()
+  fetchApi('/api/set-mode', { method: 'POST', body: { convId: state.convId, mode: mode, on: on } })
+    .then(function () { fetchState() }).catch(function () { fetchState().catch(function () {}) })
 }
 
 // Push a model/effort change to the PC. Optimistic on the local snapshot; the
@@ -741,22 +1003,91 @@ function renderHistory() {
     if (!groups[k]) { groups[k] = []; order.push(k) }
     groups[k].push(c)
   })
+  // Projects the PC knows but that have no loaded conversation still get a "+".
+  ;(state.projects || []).forEach(function (p) { if (p && !groups[p]) { groups[p] = []; order.push(p) } })
   order.forEach(function (k) {
     var g = el('hist-group')
     var proj = el('hist-project')
     proj.appendChild(icon('folder', 14))
     proj.appendChild(document.createTextNode(' ' + basename(k)))
+    var plus = document.createElement('button')
+    plus.className = 'hist-plus'
+    plus.title = 'Nova conversa neste projeto'
+    plus.textContent = '+'
+    plus.addEventListener('click', function (e) { e.stopPropagation(); createConversation(k) })
+    proj.appendChild(plus)
     g.appendChild(proj)
     groups[k].forEach(function (c) {
       var row = el('hist-row' + (c.id === state.convId ? ' active' : ''))
       row.appendChild(el('hist-title', c.title || 'Conversa'))
       if (c.busy) { var hb = el('hist-busy'); hb.appendChild(icon('clock', 13)); row.appendChild(hb) }
+      var more = document.createElement('button')
+      more.className = 'hist-more'
+      more.setAttribute('aria-label', 'Opções da conversa')
+      more.textContent = '⋯'
+      more.addEventListener('click', function (e) {
+        e.stopPropagation()
+        state.convMenu = state.convMenu === c.id ? null : c.id
+        renderHistory()
+      })
+      row.appendChild(more)
       row.addEventListener('click', function () { selectConv(c.id); closeDrawer() })
       g.appendChild(row)
+      if (state.convMenu === c.id) {
+        var menu = el('hist-menu')
+        var ren = document.createElement('button')
+        ren.textContent = 'Renomear'
+        ren.addEventListener('click', function () {
+          var title = prompt('Novo nome da conversa', c.title || '')
+          state.convMenu = null
+          if (title && title.trim()) conversationAction({ type: 'rename', convId: c.id, title: title.trim() })
+          else renderHistory()
+        })
+        var del = document.createElement('button')
+        del.className = 'danger'
+        del.textContent = 'Excluir'
+        del.addEventListener('click', function () {
+          state.convMenu = null
+          if (confirm('Excluir a conversa "' + (c.title || 'Conversa') + '"? Isso apaga no PC também.')) {
+            conversationAction({ type: 'delete', convId: c.id })
+          } else renderHistory()
+        })
+        menu.appendChild(ren)
+        menu.appendChild(del)
+        g.appendChild(menu)
+      }
     })
     list.appendChild(g)
   })
   updateConvTitle()
+}
+
+function conversationAction(body) {
+  return fetchApi('/api/conversation', { method: 'POST', body: body }).then(function (r) {
+    if (body.type === 'rename') { var c = state.conversations.find(function (x) { return x.id === body.convId }); if (c) c.title = body.title }
+    if (body.type === 'delete') {
+      state.conversations = state.conversations.filter(function (x) { return x.id !== body.convId })
+      if (state.convId === body.convId) {
+        var next = state.conversations[0]
+        if (next) selectConv(next.id)
+        else { state.convId = null; state.messages = []; renderMessages(); updateConvTitle() }
+      }
+    }
+    renderHistory()
+    // The PC applies it asynchronously; a refresh a moment later confirms.
+    setTimeout(function () { fetchState().catch(function () {}) }, 600)
+    return r
+  }).catch(function (err) { alert(errorText(err)) })
+}
+
+function createConversation(cwd) {
+  conversationAction({ type: 'create', cwd: cwd }).then(function (r) {
+    if (!r || !r.convId) return
+    // Optimistic row until the PC's snapshot arrives.
+    state.conversations.unshift({ id: r.convId, title: 'Nova conversa', cwd: cwd, busy: false, connected: false, updatedAt: Date.now(), queued: [] })
+    selectConv(r.convId)
+    closeDrawer()
+  })
 }
 
 // Search across the user's own prompts (server-side, every conversation).
@@ -833,6 +1164,7 @@ function openSettings() {
   $('cfg-addr').textContent = state.base ? state.base.replace(/^https?:\/\//, '') : '—'
   $('cfg-token').textContent = state.token || '—'
   syncSkipToggle()
+  renderUsage()
   $('settings').hidden = false
 }
 function closeSettings() {
@@ -960,9 +1292,19 @@ function scheduleReconnect() {
   state.retry++
   state.reconnect = setTimeout(function () {
     state.reconnect = null
-    openEvents()
-    // Refresh state too, so the conversation list/history catch up after a drop.
-    fetchState().catch(function () {})
+    // O SSE não diz POR QUE caiu. Antes de reabrir, reavalia o endereço (a LAN pode
+    // ter sumido — saímos da Wi‑Fi do PC) e confere com uma chamada normal, que
+    // devolve um status legível: 503 = PC fora do servidor, 401 = token, 409 = outro
+    // celular. Só religa o stream quando o PC responde.
+    var attempt = state.retry
+    repickBase().then(function () { return fetchState() }).then(function () {
+      openEvents()
+    }, function (err) {
+      if (err && err.status === 409) return // showBlocked já assumiu a tela
+      var label = $('reconnect-text')
+      if (label) label.textContent = 'reconectando… ' + errorText(err)
+      if (attempt === state.retry) scheduleReconnect()
+    })
   }, delay)
 }
 
@@ -992,16 +1334,23 @@ function renderTurnRecovery() {
   var box = $('turn-recovery')
   var cur = current()
   var recovery = cur && cur.recovery
+  if (state.recoveryTimer) { clearInterval(state.recoveryTimer); state.recoveryTimer = null }
   if (!recovery) { box.hidden = true; return }
   box.hidden = false
   $('turn-recovery-title').textContent = recovery.reason === 'limit' ? 'Limite do Claude atingido' : 'Resposta interrompida'
   if (recovery.scheduledAt <= 0) {
     $('turn-recovery-time').textContent = 'Tentativas automáticas encerradas (' + recovery.attempt + '/' + recovery.maxAttempts + ')'
-  } else {
+    return
+  }
+  // Relógio local de 1 s — o snapshot do PC só chega a cada 4 s e a contagem
+  // pulava de 4 em 4.
+  var tick = function () {
     var seconds = Math.max(0, Math.ceil((recovery.scheduledAt - Date.now()) / 1000))
     var clock = new Date(recovery.scheduledAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     $('turn-recovery-time').textContent = 'Nova tentativa em ' + seconds + 's · ' + clock
   }
+  tick()
+  state.recoveryTimer = setInterval(tick, 1000)
 }
 
 // ---- pending permission / AskUserQuestion modal ---------------------------
@@ -1200,31 +1549,44 @@ function recoveryAction(action) {
 }
 
 function pairingErrorText(err) {
-  var msg = err && err.message ? err.message : String(err || '')
-  if (msg.indexOf('HTTP 401') >= 0) return 'O PC não aceitou o token salvo. Vou continuar tentando enquanto a ponte reinicia.'
-  return 'Não encontrei o PC agora. Vou tentar de novo automaticamente.'
+  return errorText(err) + ' Vou tentar de novo automaticamente.'
 }
 
 /** Retry the saved pairing without ever discarding it. The QR screen is only
  * reached by an explicit cancel/logout action. */
 function attemptPairingReconnect() {
   clearPairingRetry()
+  // O usuário pode ter cancelado (config apagada) enquanto o probe LAN×VPS rodava.
+  if (!state.publicBase || !state.token || !$('pair').hidden) return
   fetchState().then(function (data) {
     state.pairingAttempt = 0
     showConnectedChat(data)
   }).catch(function (err) {
+    if (err && err.status === 409) return // outro celular pareado: tela própria
     $('pairing-detail').textContent = pairingErrorText(err)
     var delay = Math.min(15000, 1000 * Math.pow(2, state.pairingAttempt))
     state.pairingAttempt++
     $('pairing-status').textContent = 'Tentando novamente em ' + Math.ceil(delay / 1000) + ' s…'
-    state.pairingRetry = setTimeout(attemptPairingReconnect, delay)
+    // Cada tentativa reavalia LAN × VPS: o celular pode ter trocado de rede
+    // enquanto esperava.
+    state.pairingRetry = setTimeout(function () {
+      pickBestBase(state.publicBase, state.lanBase, state.token).then(function (base) {
+        state.base = base
+        attemptPairingReconnect()
+      })
+    }, delay)
   })
 }
 
-function beginPairingReconnect() {
+/** `explicit` = veio de um QR/endereço digitado agora: pareia ESTE celular no PC
+ *  (tomando o lugar de outro, se houver). Auto-conexão ao abrir o app nunca
+ *  toma o lugar de ninguém — só o gesto de escanear é intenção do usuário. */
+function beginPairingReconnect(explicit) {
   if (!state.publicBase || !state.token) { showPair(); return }
+  state.blocked = false
   $('pair').hidden = true
   $('chat').hidden = true
+  $('blocked').hidden = true
   $('pairing').hidden = false
   $('pairing-detail').textContent = 'Procurando a ponte do seu PC…'
   $('pairing-status').textContent = 'Conectando…'
@@ -1232,8 +1594,35 @@ function beginPairingReconnect() {
   // rede entre uma sessão e outra) — nunca falha, sempre cai no público.
   pickBestBase(state.publicBase, state.lanBase, state.token).then(function (base) {
     state.base = base
-    attemptPairingReconnect()
+    if (!explicit) { attemptPairingReconnect(); return }
+    fetchApi('/api/pair', { method: 'POST', body: { deviceId: deviceId(), name: deviceName() } })
+      .then(function () { attemptPairingReconnect() }, function (err) {
+        // 401/503/rede: cai no laço normal, que mostra o motivo e insiste.
+        if (err && err.status === 409) return
+        attemptPairingReconnect()
+      })
   })
+}
+
+/** O PC respondeu 409: outro celular é o pareado. Mostra quem, e oferece tomar
+ *  o lugar (equivale a escanear o QR de novo) ou cancelar. */
+function onAnotherDevice(res) {
+  if (state.blocked) return
+  state.blocked = true
+  var name = 'outro celular'
+  res.clone().json().then(function (j) {
+    if (j && j.pairedName) { name = j.pairedName; $('blocked-name').textContent = name }
+  }).catch(function () {})
+  $('blocked-name').textContent = name
+  if (state.es) { try { state.es.close() } catch (e) {} state.es = null }
+  if (state.poll) { clearInterval(state.poll); state.poll = null }
+  if (state.reconnect) { clearTimeout(state.reconnect); state.reconnect = null }
+  clearPairingRetry()
+  $('reconnect').hidden = true
+  $('chat').hidden = true
+  $('pairing').hidden = true
+  $('pair').hidden = true
+  $('blocked').hidden = false
 }
 
 function openEvents() {
@@ -1261,21 +1650,37 @@ function openEvents() {
   es.onmessage = function (ev) {
     var msg
     try { msg = JSON.parse(ev.data) } catch (e) { return }
-    if (!msg || msg.convId !== state.convId) {
-      // Event for another conversation — refresh the list (busy flags/titles).
-      fetchState()
+    if (!msg || !msg.event) return
+    var ev = msg.event
+    // Estado da conta / do turno, não conteúdo: atualiza os painéis e sai.
+    if (ev.kind === 'rate-limit') {
+      if (ev.limits && ev.limits.rateLimitType) { state.usage[ev.limits.rateLimitType] = ev.limits; renderUsage() }
       return
     }
-    reduce(state.messages, msg.event)
+    if (ev.kind === 'stall-status') {
+      var c0 = state.conversations.find(function (c) { return c.id === msg.convId })
+      if (c0) { c0.stalledSince = ev.stalled ? ev.since : undefined; if (c0.id === state.convId) renderBusy() }
+      return
+    }
+    if (msg.convId !== state.convId) {
+      // Event for another conversation — refresh the list (busy flags/titles).
+      fetchState().catch(function () {})
+      return
+    }
+    if (isSubagentEvent(ev) || STATE_ONLY[ev.kind]) {
+      if (ev.kind === 'task-list') fetchState().catch(function () {})
+      return
+    }
+    reduce(state.messages, ev)
     scheduleRender()
-    if (msg.event.kind === 'result' || msg.event.kind === 'error') {
+    if (ev.kind === 'result' || ev.kind === 'error') {
       $('busy').hidden = true
-      fetchState()
+      fetchState().catch(function () {})
     } else {
       $('busy').hidden = false
-      // A tool call often means a permission/AskUserQuestion is coming right
-      // after — refresh promptly instead of waiting for a coincidental poll.
-      if (msg.event.kind === 'tool-use') fetchState()
+      // A tool call often means a permission/AskUserQuestion (or a plan update)
+      // is coming right after — refresh promptly instead of waiting for a poll.
+      if (ev.kind === 'tool-use') fetchState().catch(function () {})
     }
   }
 }
@@ -1284,38 +1689,45 @@ function selectConv(convId) {
   state.convId = convId
   localStorage.setItem(LAST_CONV_KEY, convId)
   updateConvTitle()
-  var cur = current()
-  $('busy').hidden = !(cur && cur.busy)
+  renderBusy()
   renderModelBar()
+  renderTodoPlan()
+  renderTurnRecovery()
+  renderUsage()
   // A pending permission belongs to a specific conversation — force a rebuild
   // so switching chats doesn't show/hide the wrong one.
   state.permReqId = null
   renderPermission()
-  loadHistory(convId)
+  loadHistory(convId).catch(function () {})
 }
 
 function send() {
   var input = $('input')
   var text = input.value.trim()
   var imgs = state.images.slice()
-  if ((!text && !imgs.length) || !state.convId) return
+  var files = state.files.slice()
+  if ((!text && !imgs.length && !files.length) || !state.convId) return
   var thumbs = imgs.map(function (im) { return 'data:' + im.mediaType + ';base64,' + im.data })
   // Optimistic echo (the PC adds the user message locally; SSE only carries
   // agent events, so there's no duplicate).
   var cur = current()
-  reduce(state.messages, { kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs, ts: Date.now(), queued: !!(cur && cur.busy) })
+  reduce(state.messages, {
+    kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs, ts: Date.now(), queued: !!(cur && cur.busy),
+    files: files.map(function (f) { return { name: f.name, size: f.size } })
+  })
   renderMessages()
   input.value = ''
   state.images = []
+  state.files = []
   renderPreview()
   autoGrow()
   $('busy').hidden = false
   // Token goes in the query string (like the GET/SSE routes); body is the command.
-  fetch(api('/api/send'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ convId: state.convId, text: text, images: imgs })
-  }).catch(function () { setStatus(false) })
+  fetchApi('/api/send', { method: 'POST', body: { convId: state.convId, text: text, images: imgs, files: files }, timeout: 60000 })
+    .catch(function (err) {
+      setStatus(false)
+      if (err && err.status) alert('Não enviei: ' + errorText(err))
+    })
 }
 
 // ---- voice: mic (STT) + read aloud (TTS), both processed on the PC ----------
@@ -1493,19 +1905,52 @@ function fileToAttachment(file) {
   })
 }
 
+var MAX_FILE_BYTES = 16 * 1024 * 1024
+
+function fmtBytes(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB'
+  if (n >= 1024) return Math.round(n / 1024) + ' KB'
+  return n + ' B'
+}
+
+/** Qualquer arquivo (planilha, PDF, código…): vai em base64, o PC salva em disco
+ *  e passa o caminho ao agente — igual ao composer do desktop. */
+function fileToBlobAttachment(file) {
+  return new Promise(function (resolve, reject) {
+    if (file.size > MAX_FILE_BYTES) { reject(new Error(file.name + ' passa de 16 MB')); return }
+    var r = new FileReader()
+    r.onload = function () {
+      var s = String(r.result)
+      var i = s.indexOf('base64,')
+      resolve({ name: file.name || 'arquivo', mediaType: file.type || 'application/octet-stream', data: i >= 0 ? s.slice(i + 7) : '', size: file.size })
+    }
+    r.onerror = function () { reject(new Error('falha ao ler ' + file.name)) }
+    r.readAsDataURL(file)
+  })
+}
+
 function addFiles(files) {
-  var list = [].slice.call(files).filter(function (f) { return f.type.indexOf('image/') === 0 })
-  if (!list.length) return
-  Promise.all(list.map(fileToAttachment)).then(function (atts) {
-    state.images = state.images.concat(atts).slice(0, 8)
-    renderPreview()
-  }).catch(function () {})
+  var all = [].slice.call(files)
+  var imgs = all.filter(function (f) { return f.type.indexOf('image/') === 0 })
+  var others = all.filter(function (f) { return f.type.indexOf('image/') !== 0 })
+  if (imgs.length) {
+    Promise.all(imgs.map(fileToAttachment)).then(function (atts) {
+      state.images = state.images.concat(atts).slice(0, 8)
+      renderPreview()
+    }).catch(function () {})
+  }
+  if (others.length) {
+    Promise.all(others.map(fileToBlobAttachment)).then(function (atts) {
+      state.files = state.files.concat(atts).slice(0, 8)
+      renderPreview()
+    }).catch(function (e) { alert('Anexo ignorado: ' + (e && e.message ? e.message : 'erro')) })
+  }
 }
 
 function renderPreview() {
   var tray = $('preview')
   tray.innerHTML = ''
-  if (!state.images.length) { tray.hidden = true; return }
+  if (!state.images.length && !state.files.length) { tray.hidden = true; return }
   tray.hidden = false
   state.images.forEach(function (im, i) {
     var item = el('preview-item')
@@ -1522,14 +1967,29 @@ function renderPreview() {
     item.appendChild(rm)
     tray.appendChild(item)
   })
+  state.files.forEach(function (f, i) {
+    var item = el('preview-item preview-file')
+    item.appendChild(el('file-chip', '📎 ' + f.name + ' · ' + fmtBytes(f.size)))
+    var rm = document.createElement('button')
+    rm.className = 'rm'
+    rm.textContent = '✕'
+    rm.addEventListener('click', function () {
+      state.files.splice(i, 1)
+      renderPreview()
+    })
+    item.appendChild(rm)
+    tray.appendChild(item)
+  })
 }
 
 // ---- screens --------------------------------------------------------------
 
 function showConnectedChat(data) {
   clearPairingRetry()
+  state.blocked = false
   $('pair').hidden = true
   $('pairing').hidden = true
+  $('blocked').hidden = true
   $('chat').hidden = false
   state.retry = 0
   requestWakeLock()
@@ -1555,8 +2015,12 @@ function showPair(error) {
   $('reconnect').hidden = true
   releaseWakeLock()
   if (typeof stopScan === 'function') stopScan()
+  if (state.recoveryTimer) { clearInterval(state.recoveryTimer); state.recoveryTimer = null }
+  if (state.stallTimer) { clearInterval(state.stallTimer); state.stallTimer = null }
+  state.blocked = false
   $('chat').hidden = true
   $('pairing').hidden = true
+  $('blocked').hidden = true
   $('pair').hidden = false
   // Reset to the QR-first layout (manual entry collapsed behind the link).
   $('manual').hidden = true
@@ -1589,7 +2053,7 @@ function applyConfig(cfg) {
   saveConfig(cfg)
   $('addr').value = cfg.base
   $('token').value = cfg.token
-  beginPairingReconnect()
+  beginPairingReconnect(true)
 }
 
 function cancelPairingReconnect() {
@@ -1765,6 +2229,13 @@ function init() {
   $('cfg-exit').addEventListener('click', confirmExit)
   $('cfg-skip').addEventListener('change', function (e) { setSkipPerms(e.target.checked) })
   $('send').addEventListener('click', send)
+  $('stop').addEventListener('click', interruptTurn)
+  $('mode-economy').addEventListener('click', function () { setMode('economy') })
+  $('mode-loop').addEventListener('click', function () { setMode('loop') })
+  $('mode-fast').addEventListener('click', function () { setMode('fast') })
+  // Outro celular pareado: tomar o lugar (= escanear o QR de novo) ou sair.
+  $('blocked-takeover').addEventListener('click', function () { beginPairingReconnect(true) })
+  $('blocked-cancel').addEventListener('click', cancelPairingReconnect)
   $('mic').addEventListener('click', toggleMic)
   // blur() right after choosing: Android keeps the <select> focused after its
   // native dialog closes, and a focused select blocks renderModelBar's rebuild

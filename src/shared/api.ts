@@ -29,6 +29,8 @@ import type {
   RemoteInboundMsg,
   RemotePermissionResponseMsg,
   RemoteSetModelMsg,
+  RemoteSetModeMsg,
+  RemoteConversationAction,
   RemoteInfo,
   RemoteStatePayload,
   StartAgentOptions,
@@ -231,6 +233,14 @@ export interface AgentCodeApi {
   onRemoteRecoveryAction(cb: (m: { convId: string; action: 'retry' | 'cancel' }) => void): () => void
   /** A phone answered a pending permission/question — resolve it locally too. */
   onRemotePermissionResponse(cb: (m: RemotePermissionResponseMsg) => void): () => void
+  /** A phone asked to stop the running turn of a conversation. */
+  onRemoteInterrupt(cb: (m: { convId: string }) => void): () => void
+  /** A phone toggled a per-conversation mode (economy/loop/fast). */
+  onRemoteSetMode(cb: (m: RemoteSetModeMsg) => void): () => void
+  /** A phone created/renamed/deleted a conversation. */
+  onRemoteConversationAction(cb: (m: RemoteConversationAction) => void): () => void
+  /** Forget the paired phone so a new one can pair. */
+  remoteUnpair(): Promise<RemoteInfo>
   /** Progress lines while the remote APK is built. */
   onRemoteBuildProgress(cb: (m: RemoteBuildProgressMsg) => void): () => void
   /** The connected-phone count changed. */

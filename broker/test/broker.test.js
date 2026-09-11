@@ -142,3 +142,87 @@ describe('broker — roteamento por token', () => {
     expect(received[0]).toContain('"text":"oi"')
   })
 })
+
+/** Conecta um PC com identidade; resolve com {ws, outcome} onde outcome é 'ready' | 'busy' | 'denied'. */
+function connectHostWithId(token, instanceId, onOpen) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/__relay`)
+    sockets.push(ws)
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', token, instanceId })))
+    ws.on('message', (raw) => {
+      const msg = JSON.parse(raw.toString())
+      if (msg.type === 'ready' || msg.type === 'busy' || msg.type === 'denied') resolve({ ws, outcome: msg.type })
+      else if (msg.type === 'open' && onOpen) onOpen(ws, msg)
+    })
+  })
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+describe('broker — posse do token e conexões mortas', () => {
+  it('o primeiro PC vence: outro PC (instanceId diferente) com o mesmo token recebe busy e o celular segue no primeiro', async () => {
+    const a = await connectHostWithId('tok-dono', 'pc-A', (ws, msg) => reply(ws, msg.rid, 200, {}, 'sou-A'))
+    expect(a.outcome).toBe('ready')
+    const b = await connectHostWithId('tok-dono', 'pc-B', (ws, msg) => reply(ws, msg.rid, 200, {}, 'sou-B'))
+    expect(b.outcome).toBe('busy')
+    const r = await get('/x?token=tok-dono')
+    expect(r.body).toBe('sou-A')
+  })
+
+  it('o MESMO PC reconectando (mesmo instanceId) substitui a conexão antiga na hora', async () => {
+    const first = await connectHostWithId('tok-mesmo', 'pc-X', (ws, msg) => reply(ws, msg.rid, 200, {}, 'velho'))
+    expect(first.outcome).toBe('ready')
+    const second = await connectHostWithId('tok-mesmo', 'pc-X', (ws, msg) => reply(ws, msg.rid, 200, {}, 'novo'))
+    expect(second.outcome).toBe('ready')
+    const r = await get('/x?token=tok-mesmo')
+    expect(r.body).toBe('novo')
+    // A conexão velha foi encerrada pelo broker.
+    await wait(50)
+    expect(first.ws.readyState).toBe(WebSocket.CLOSED)
+  })
+
+  it('PC mudo além do limite é derrubado no sweep → 503 depois, e o token fica livre para outro PC', async () => {
+    const a = await connectHostWithId('tok-mudo', 'pc-M1', (ws, msg) => reply(ws, msg.rid, 200, {}, 'M1'))
+    expect(a.outcome).toBe('ready')
+    // Simula silêncio: avança o relógio além de HOST_DEAD_MS só para este host.
+    const host = broker.hosts.get('tok-mudo')
+    host.lastSeen = Date.now() - 10 * 60_000
+    broker.sweep()
+    expect(broker.hosts.has('tok-mudo')).toBe(false)
+    const r = await get('/x?token=tok-mudo')
+    expect(r.status).toBe(503)
+    const b = await connectHostWithId('tok-mudo', 'pc-M2', (ws, msg) => reply(ws, msg.rid, 200, {}, 'M2'))
+    expect(b.outcome).toBe('ready')
+    expect((await get('/x?token=tok-mudo')).body).toBe('M2')
+  })
+
+  it('PC que não responde a request a tempo → 504 no celular (em vez de pendurar)', async () => {
+    const slow = createBroker({ headTimeoutMs: 150 })
+    await new Promise((resolve) => slow.listen(0, resolve))
+    const slowPort = slow.server.address().port
+    const ws = new WebSocket(`ws://127.0.0.1:${slowPort}/__relay`)
+    sockets.push(ws)
+    await new Promise((resolve) => {
+      ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', token: 'tok-lento' })))
+      ws.on('message', (raw) => { if (JSON.parse(raw.toString()).type === 'ready') resolve() })
+    })
+    const r = await new Promise((resolve, reject) => {
+      httpGet(`http://127.0.0.1:${slowPort}/x?token=tok-lento`, (res) => {
+        let body = ''
+        res.on('data', (d) => (body += d))
+        res.on('end', () => resolve({ status: res.statusCode, body }))
+      }).on('error', reject)
+    })
+    expect(r.status).toBe(504)
+    await slow.close()
+  })
+
+  it('ping de aplicação do PC recebe pong', async () => {
+    const a = await connectHostWithId('tok-ping', 'pc-P')
+    const pong = await new Promise((resolve) => {
+      a.ws.on('message', (raw) => { const m = JSON.parse(raw.toString()); if (m.type === 'pong') resolve(m) })
+      a.ws.send(JSON.stringify({ type: 'ping' }))
+    })
+    expect(pong.type).toBe('pong')
+  })
+})

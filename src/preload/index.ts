@@ -32,6 +32,8 @@ import type {
   RemoteInboundMsg,
   RemotePermissionResponseMsg,
   RemoteSetModelMsg,
+  RemoteSetModeMsg,
+  RemoteConversationAction,
   RemoteInfo,
   RemoteStatePayload,
   StartAgentOptions,
@@ -220,6 +222,11 @@ const api: AgentCodeApi = {
     on(Channels.remoteRecoveryAction, cb),
   onRemotePermissionResponse: (cb: (m: RemotePermissionResponseMsg) => void): (() => void) =>
     on(Channels.remotePermissionResponse, cb),
+  onRemoteInterrupt: (cb: (m: { convId: string }) => void): (() => void) => on(Channels.remoteInterrupt, cb),
+  onRemoteSetMode: (cb: (m: RemoteSetModeMsg) => void): (() => void) => on(Channels.remoteSetMode, cb),
+  onRemoteConversationAction: (cb: (m: RemoteConversationAction) => void): (() => void) =>
+    on(Channels.remoteConversationAction, cb),
+  remoteUnpair: (): Promise<RemoteInfo> => ipcRenderer.invoke(Channels.remoteUnpair),
   onRemoteBuildProgress: (cb: (m: RemoteBuildProgressMsg) => void): (() => void) =>
     on(Channels.remoteBuildProgress, cb),
   onRemoteClients: (cb: (info: RemoteInfo) => void): (() => void) => on(Channels.remoteClients, cb)
