@@ -4,6 +4,7 @@ import { createAppMcpServer, APP_RESTART_HINT } from './appTools'
 import { appRestart } from './appRestartRuntime'
 import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
+import { isStalled, STALL_POLL_MS } from './stallWatch'
 import { composeUserPrompt } from './promptEnvelope'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
@@ -14,6 +15,8 @@ import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { memoryWriteDenial } from './memory/memoryPaths'
 import { createMemoryMcpServer } from './memory/memoryTools'
+import { createTaskMcpServer } from './tasks/taskTools'
+import { taskLedger } from './tasks/taskRuntime'
 import {
   memoryService,
   readSecret,
@@ -256,6 +259,22 @@ usuário peça explicitamente.
 
 ${lines}`
 }
+
+/**
+ * Só entra no prompt quando o registro está ligado a um repositório. Diz ao
+ * modelo O QUE é a fila e a disciplina mínima (reivindicar → running → evidência
+ * → estado final); as regras duras vivem no repositório e voltam como texto
+ * legível quando violadas.
+ */
+const TASKS_HINT = `You have a durable TASK LEDGER shared by the agent team (tools task_*).
+Use it when work should be delegated, decomposed, or tracked beyond this turn:
+- task_create registers a task with a goal and verifiable acceptance criteria; it starts "pending".
+- task_claim takes the oldest pending task and returns a LEASE (lease_token + fencing_epoch).
+  Keep both: every write to that task must carry them, and no other agent can claim it while the lease lives.
+- After claiming, move it with task_transition pending→running. Open task_step_start per phase and close with task_step_finish.
+- Record EVIDENCE with task_deliverable_add (diff, test_run, note, file, screenshot) before declaring done. "done" without deliverables is just a claim.
+- Finish with task_transition to review or done; on failure use failed with a reason so the next executor does not repeat it.
+Invalid transitions and stale leases are refused by the ledger and explained in the reply; read task_get and adjust instead of retrying blindly.`
 
 function buildMemoryHint(memoriesDir: string): string {
   return `You have a PERSISTENT MEMORY for this user, kept as Markdown files in this folder:
@@ -508,6 +527,72 @@ export class AgentSession {
   private readonly restartOpaqueCalls = new Set<string>()
   private restartRegistration: ReturnType<NonNullable<typeof appRestart>['register']> | undefined
 
+  /**
+   * Detecção de travamento. "Ocupado" sozinho é otimista: liga ao enviar e só
+   * desliga no `result`/`error`, então uma sessão travada e uma trabalhando são
+   * indistinguíveis na tela — e é justamente com muitos agentes ao mesmo tempo
+   * que isso acontece.
+   *
+   * `toolsInFlight` é PARALELO a `restartOpaqueCalls` e não se confunde com ele:
+   * aquele rastreia só ferramenta não verificável (é sobre reiniciar com
+   * segurança), este rastreia QUALQUER ferramenta (é sobre quanto tempo de
+   * silêncio é normal — um build legítimo fica minutos sem emitir nada).
+   */
+  private lastActivityAt = Date.now()
+  private readonly toolsInFlight = new Set<string>()
+  private stalled = false
+  private stallTimer: ReturnType<typeof setInterval> | undefined
+
+  /**
+   * O turno começou. Precisa ser chamado em TODO ponto que liga `turnActive`,
+   * não só no hook `UserPromptSubmit`: o hook só dispara quando o CLI de fato
+   * processa o prompt, e o caso mais grave de travamento é justamente o
+   * processo que nunca chega lá. Ligando o watchdog só no hook, ele perderia
+   * exatamente o silêncio que existe para detectar.
+   */
+  private beginTurn(): void {
+    this.turnActive = true
+    this.markActivity()
+    this.startStallWatch()
+  }
+
+  /** Qualquer sinal de vida do turno: mensagem do SDK ou ferramenta mudando de
+   *  estado. Sai do travado na hora, sem esperar o próximo tique. */
+  private markActivity(): void {
+    this.lastActivityAt = Date.now()
+    if (this.stalled) {
+      this.stalled = false
+      this.emit({ kind: 'stall-status', stalled: false, since: this.lastActivityAt })
+    }
+  }
+
+  private checkStall(): void {
+    // Fora de um turno o silêncio é o estado normal, não uma falha.
+    if (!this.turnActive || this.disposed) return
+    if (this.stalled) return
+    if (!isStalled(Date.now(), this.lastActivityAt, this.toolsInFlight.size > 0)) return
+    this.stalled = true
+    this.emit({ kind: 'stall-status', stalled: true, since: this.lastActivityAt })
+  }
+
+  private startStallWatch(): void {
+    if (this.stallTimer) return
+    // `unref` para o intervalo nunca segurar o processo vivo no encerramento.
+    this.stallTimer = setInterval(() => this.checkStall(), STALL_POLL_MS)
+    this.stallTimer.unref?.()
+  }
+
+  private stopStallWatch(): void {
+    if (this.stallTimer) clearInterval(this.stallTimer)
+    this.stallTimer = undefined
+    // O turno acabou: se a tela estava mostrando "sem resposta", desfaz — senão
+    // o aviso ficaria colado depois de a resposta chegar.
+    if (this.stalled) {
+      this.stalled = false
+      this.emit({ kind: 'stall-status', stalled: false, since: Date.now() })
+    }
+  }
+
   restartActivity(): RestartActivity {
     return {
       busy: this.restartInitializing || this.restartPersisting || this.turnActive || this.pendingPermissions.size > 0,
@@ -564,6 +649,18 @@ export class AgentSession {
         agent: 'session'
       })
     }
+    // Registro de tarefas: a porta de entrada do multi-agent (item 5 do
+    // subprojeto). Mesma regra do memory: só com repositório autoritativo,
+    // senão a ferramenta aceitaria a tarefa e a perderia em silêncio.
+    const ledger = taskLedger()
+    if (ledger) {
+      mcpServers.tasks = createTaskMcpServer({
+        ledger,
+        conversationId: this.opts.convId,
+        projectCwd: this.opts.cwd,
+        agent: `session:${this.opts.convId}`
+      })
+    }
     // Tell the model where its per-user memory lives (and pre-load the complete catalog), so
     // "lembra disso" saves into the cache folder and recall works across chats.
     const cacheInfo = getCacheInfo()
@@ -591,6 +688,7 @@ export class AgentSession {
     const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     append += `\n\n${memorySnapshot.catalog}\n\n${APP_RESTART_HINT}`
+    if (ledger) append += `\n\n${TASKS_HINT}`
     // Senhas em texto puro no prompt, só com o interruptor ligado. Vai no system
     // prompt, e não anexado a cada mensagem, para a senha aparecer UMA vez por
     // sessão em vez de ser recopiada em todo turno do histórico.
@@ -726,7 +824,7 @@ export class AgentSession {
       hooks: {
         UserPromptSubmit: [{ hooks: [async () => {
           if (appRestart?.reserved) return { decision: 'block' as const, reason: 'Reinício reservado; novo turno recusado.' }
-          this.turnActive = true
+          this.beginTurn()
           return {}
         }] }],
         PreToolUse: [{ hooks: [async (input) => {
@@ -743,16 +841,28 @@ export class AgentSession {
           // aqui a incerteza é permanente na sessão — é o caso que o booleano
           // antigo tratava certo e o único que precisa dele.
           if (startsDetachedWork(name, input.tool_input)) this.restartUncertain = true
+          // Qualquer ferramenta (verificável ou não) estende a tolerância de
+          // silêncio: build e download legítimos passam minutos sem emitir.
+          this.toolsInFlight.add(input.tool_use_id)
+          this.markActivity()
           return {}
         }] }],
         // Uma ferramenta que retornou (com sucesso ou erro) acabou. Sem estes dois,
         // a incerteza nunca é retirada e o reinício fica bloqueado para sempre.
         PostToolUse: [{ hooks: [async (input) => {
-          if (input.hook_event_name === 'PostToolUse') this.restartOpaqueCalls.delete(input.tool_use_id)
+          if (input.hook_event_name === 'PostToolUse') {
+            this.restartOpaqueCalls.delete(input.tool_use_id)
+            this.toolsInFlight.delete(input.tool_use_id)
+            this.markActivity()
+          }
           return {}
         }] }],
         PostToolUseFailure: [{ hooks: [async (input) => {
-          if (input.hook_event_name === 'PostToolUseFailure') this.restartOpaqueCalls.delete(input.tool_use_id)
+          if (input.hook_event_name === 'PostToolUseFailure') {
+            this.restartOpaqueCalls.delete(input.tool_use_id)
+            this.toolsInFlight.delete(input.tool_use_id)
+            this.markActivity()
+          }
           return {}
         }] }]
       },
@@ -793,7 +903,7 @@ export class AgentSession {
     messageKind: AgentMessageKind = 'normal'
   ): Promise<void> {
     appRestart?.assertOpen()
-    this.turnActive = true
+    this.beginTurn()
     await this.handoffReady
     this.quotaRejected = false
     if (this.mirrorFailed) {
@@ -892,7 +1002,7 @@ export class AgentSession {
         // text, plus a note explaining the image couldn't be read this time.
         merged = `${outText}\n\n[Observação do sistema: não foi possível analisar a(s) imagem(ns) anexada(s) automaticamente (${String(err)}). Responda com base apenas no texto acima.]`
       }
-      this.turnActive = true
+      this.beginTurn()
       this.lastOutlineDigest = outlineDigestNow
       this.input.push({
         type: 'user',
@@ -922,7 +1032,7 @@ export class AgentSession {
       parent_tool_use_id: null,
       uuid
     } as SDKUserMessage
-    this.turnActive = true
+    this.beginTurn()
     this.lastOutlineDigest = outlineDigestNow
     this.input.push(msg)
   }
@@ -1088,6 +1198,10 @@ export class AgentSession {
     else this.restartUncertain = true // Closing SDK is not proof detached work ended.
     this.disposed = true
     this.clearLoopState()
+    // Antes do resto: um intervalo sobrevivendo à sessão emitiria evento de uma
+    // conversa que já não existe.
+    if (this.stallTimer) clearInterval(this.stallTimer)
+    this.stallTimer = undefined
     this.windowsControlScope.cancel()
     this.stopTaskWatch?.()
     this.stopTaskWatch = null
@@ -1368,6 +1482,13 @@ export class AgentSession {
     if (toolName.startsWith('mcp__memory__')) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
+    // O registro de tarefas é contabilidade interna do time de agentes: só
+    // escreve no banco do próprio app, nunca no projeto. Lease, fence e máquina
+    // de estados são impostos pelo repositório, não por um clique do usuário —
+    // um modal aqui só ensinaria a clicar sem ler.
+    if (toolName.startsWith('mcp__tasks__')) {
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    }
     if (
       this.bypassAll ||
       READ_ONLY.has(toolName) ||
@@ -1423,6 +1544,9 @@ export class AgentSession {
   }
 
   private handleMessage(message: SDKMessage): void {
+    // Toda mensagem do SDK é sinal de vida — inclusive um delta de streaming,
+    // que é o que mantém um turno longo e saudável fora do estado "travado".
+    this.markActivity()
     switch (message.type) {
       case 'system':
         if (message.subtype === 'init') {
@@ -1631,6 +1755,9 @@ export class AgentSession {
   private markTurnIdle(): void {
     if (!this.turnActive && this.idleWaiters.size === 0) return
     this.turnActive = false
+    // Nada mais deve rodar: fora do turno, silêncio é o normal.
+    this.stopStallWatch()
+    this.toolsInFlight.clear()
     for (const resolve of this.idleWaiters) resolve()
     this.idleWaiters.clear()
   }

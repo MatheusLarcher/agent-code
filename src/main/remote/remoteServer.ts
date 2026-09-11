@@ -5,7 +5,7 @@ import { networkInterfaces } from 'node:os'
 import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
-import { isDownloadableFile, parseDownloads } from '../../shared/ipc'
+import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from '../downloadAllowlist'
 import type {
   ChatEvent,
   ImageAttachment,
@@ -216,13 +216,7 @@ export class RemoteServer {
   /** Mirrors `downloadablePaths()`'s two sources, but runs synchronously as each
    *  event is teed to the phone — no renderer round-trip in the loop. */
   private trackDownloadable(event: ChatEvent): void {
-    if (event.kind === 'tool-use' && event.name === 'Write') {
-      const input = (event.input ?? {}) as Record<string, unknown>
-      const p = input.file_path
-      if (typeof p === 'string' && p && isDownloadableFile(p)) this.liveDownloadable.add(normalize(p))
-    } else if (event.kind === 'assistant-text') {
-      for (const p of parseDownloads(event.text).paths) this.liveDownloadable.add(normalize(p))
-    }
+    for (const p of downloadablesFromEvent(event)) this.liveDownloadable.add(canonicalPath(p))
   }
 
   /** Replace the served conversation snapshot (renderer is the source of truth). */
@@ -340,7 +334,7 @@ export class RemoteServer {
    */
   private async serveFile(url: URL, res: ServerResponse): Promise<void> {
     const requested = url.searchParams.get('path') ?? ''
-    if (!requested || !this.downloadablePaths().has(normalize(requested))) {
+    if (!requested || !this.downloadablePaths().has(canonicalPath(requested))) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
       res.end('arquivo não disponível para download')
       return
@@ -376,16 +370,7 @@ export class RemoteServer {
   private downloadablePaths(): Set<string> {
     const out = new Set<string>(this.liveDownloadable)
     for (const conv of this.state.conversations) {
-      for (const m of conv.messages as Array<Record<string, unknown>>) {
-        if (!m) continue
-        if (m.kind === 'tool-use' && String(m.name) === 'Write') {
-          const input = (m.input ?? {}) as Record<string, unknown>
-          const p = input.file_path
-          if (typeof p === 'string' && p && isDownloadableFile(p)) out.add(normalize(p))
-        } else if (m.kind === 'assistant-text' && typeof m.text === 'string') {
-          for (const p of parseDownloads(m.text).paths) out.add(normalize(p))
-        }
-      }
+      for (const p of downloadablesFromMessages(conv.messages)) out.add(canonicalPath(p))
     }
     return out
   }

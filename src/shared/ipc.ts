@@ -50,6 +50,12 @@ export type ChatEvent =
    *  tied to this conversation. The renderer routes this straight into a
    *  global (not per-conversation) state; it never becomes a chat bubble. */
   | { kind: 'rate-limit'; limits: RateLimitStatus }
+  /** The running turn went quiet past the stall threshold, or came back. Says
+   *  "no answer since X", never "it died" — the turn may still finish, so this
+   *  only changes what the busy banner reads. Like `rate-limit`, it is state,
+   *  not content: the renderer must not turn it into a chat bubble.
+   *  `since` is the epoch ms of the last sign of life. */
+  | { kind: 'stall-status'; stalled: boolean; since: number }
   /** Full snapshot of the agent's task plan, read from the CLI's own task
    *  storage (see sessionTasks.ts). Authoritative: it replaces whatever the
    *  renderer built from the live TaskCreate/TaskUpdate events, which go stale

@@ -38,6 +38,7 @@ import { onCodexRateLimit } from './codexProxy'
 import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir } from './store'
 import { storageLifecycle } from './persistence/lifecycle'
+import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlist'
 import { readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
 import { hashJson, normalizeJson } from './persistence/hashes'
@@ -114,6 +115,10 @@ configureAppRestart(new AppRestartCoordinator({
 // One independent agent session per conversation — they run concurrently, so
 // switching/sending in one conversation never cancels another's running task.
 const sessions = new Map<string, ProviderFailoverSession>()
+
+// Which files the agent actually offered for download. Fed from the event tee
+// below, consulted by the `fileDownload` handler.
+const downloadAllowlist = new DownloadAllowlist()
 const sessionLeases = new Map<
   string,
   { repository: PersistenceRepository; lease: ConversationLease; heartbeat: ReturnType<typeof setInterval> }
@@ -1044,6 +1049,19 @@ function registerIpc(): void {
     Channels.fileDownload,
     async (_e, path: string): Promise<{ ok: boolean; message: string; saved?: string }> => {
       if (!path) return { ok: false, message: 'Caminho de arquivo ausente.' }
+      // Same rule the phone bridge applies: only a file the agent actually
+      // offered (a `Write` deliverable or a `[[download:]]` marker) can be
+      // copied out. Without this the channel would copy any path it is handed.
+      const allowed = await downloadAllowlist.allows(path, async () => {
+        const conversations = await storageLifecycle.repository().loadConversations()
+        return conversations.map((c) => {
+          const messages = (c.payload as Record<string, unknown>).messages
+          return Array.isArray(messages) ? messages : []
+        })
+      })
+      if (!allowed) {
+        return { ok: false, message: 'Esse arquivo não foi disponibilizado para download pelo agente.' }
+      }
       try {
         const src = await fsStat(path)
         if (!src.isFile()) return { ok: false, message: 'O caminho não é um arquivo.' }
@@ -1120,6 +1138,9 @@ function registerIpc(): void {
     const emit = (event: ChatEvent): void => {
       send(Channels.agentEvent, { convId, event })
       remote.broadcast(convId, event)
+      // Recorded here, not inside the bridge: the desktop download must be
+      // authorized whether or not the phone bridge is running.
+      downloadAllowlist.track(event)
     }
     s = new ProviderFailoverSession(opts, (sessionOptions, sessionEmit, sessionComplete) => new AgentSession(
       sessionOptions,

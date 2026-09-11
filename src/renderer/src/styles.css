@@ -868,6 +868,24 @@ button svg {
     transform: translateX(350%);
   }
 }
+/* Sem resposta há tempo demais: âmbar, não vermelho — o turno não falhou, só
+   emudeceu, e ainda pode terminar sozinho. A varredura da borda para, porque
+   uma animação de progresso durante um silêncio é exatamente a informação
+   errada; o anel continua girando, já que o trabalho segue em aberto. */
+.working-banner.stalled {
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-2));
+  border-bottom-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  color: var(--warn);
+}
+.working-banner.stalled::after {
+  animation: none;
+  width: 100%;
+  background: color-mix(in srgb, var(--warn) 35%, transparent);
+}
+.working-banner.stalled .working-ring {
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+  border-top-color: var(--warn);
+}
 .working-ring {
   width: 15px;
   height: 15px;

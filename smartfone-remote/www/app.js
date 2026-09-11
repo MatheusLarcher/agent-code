@@ -129,7 +129,13 @@ function api(path) {
 
 // ---- message reducer (mirrors renderer reduceMessages) --------------------
 
+// Eventos que são ESTADO, não conteúdo: uso da conta e "o turno emudeceu".
+// Sem isto eles caem no push do fim e engordam a lista a cada ocorrência —
+// invisíveis (a renderização é whitelist), mas acumulando mesmo assim.
+var STATE_ONLY = { 'rate-limit': 1, 'stall-status': 1 }
+
 function reduce(list, e) {
+  if (STATE_ONLY[e.kind]) return list
   if (e.kind === 'assistant-text') {
     for (var i = 0; i < list.length; i++) {
       if (list[i].kind === 'assistant-text' && list[i].id === e.id) {

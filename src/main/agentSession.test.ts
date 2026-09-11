@@ -2,7 +2,8 @@
 // Main-process code: pulls in node builtins (via config → store → node:sqlite),
 // so it must run in the node env, not the default jsdom (which can't externalize
 // the newer node:sqlite builtin and tries to bundle it).
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { STALL_THRESHOLD_MS, STALL_THRESHOLD_TOOL_MS } from './stallWatch'
 import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1467,6 +1468,111 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
       await pre(call('CronCreate', 'cron'))
       await post({ hook_event_name: 'PostToolUse', tool_name: 'CronCreate', tool_use_id: 'cron', tool_input: {}, tool_response: {} })
       expect(s.restartActivity().unsafe).toBeDefined()
+    })
+  })
+
+  // "Ocupado" sozinho não distingue trabalhando de travado. Aqui o relógio é
+  // falso de propósito: esperar 60s de verdade tornaria o teste inútil.
+  describe('detecção de turno travado', () => {
+    type Hook = (input: Record<string, unknown>) => Promise<unknown>
+    async function started(): Promise<ReturnType<typeof makeSession> & { prompt: Hook; pre: Hook; post: Hook }> {
+      const session = makeSession()
+      await session.s.start()
+      const options = queryMock.mock.calls.at(-1)![0].options as {
+        hooks: Record<string, Array<{ hooks: Hook[] }>>
+      }
+      return {
+        ...session,
+        prompt: options.hooks.UserPromptSubmit[0].hooks[0],
+        pre: options.hooks.PreToolUse[0].hooks[0],
+        post: options.hooks.PostToolUse[0].hooks[0]
+      }
+    }
+    const stalls = (emit: ReturnType<typeof vi.fn>): unknown[] =>
+      emit.mock.calls.map((c) => c[0]).filter((e: { kind?: string }) => e?.kind === 'stall-status')
+
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it('turno mudo além do limiar avisa uma vez só', async () => {
+      const { emit, prompt } = await started()
+      await prompt({ hook_event_name: 'UserPromptSubmit' })
+
+      vi.advanceTimersByTime(STALL_THRESHOLD_MS - 1_000)
+      expect(stalls(emit)).toHaveLength(0) // ainda dentro do normal
+
+      vi.advanceTimersByTime(10_000)
+      expect(stalls(emit)).toEqual([expect.objectContaining({ kind: 'stall-status', stalled: true })])
+
+      // Continuar mudo não repete o aviso: o estado já é esse.
+      vi.advanceTimersByTime(60_000)
+      expect(stalls(emit)).toHaveLength(1)
+    })
+
+    it('trava ANTES do CLI processar o prompt também é detectada', async () => {
+      // O pior travamento é o processo que nunca chega a processar a mensagem:
+      // aí o hook UserPromptSubmit nunca dispara. Ligar o watchdog só no hook
+      // fazia o recurso perder exatamente o caso que ele existe para pegar.
+      const { s, emit } = await started()
+      await s.send('oi')
+
+      vi.advanceTimersByTime(STALL_THRESHOLD_MS + 5_000)
+      expect(stalls(emit)).toEqual([expect.objectContaining({ stalled: true })])
+    })
+
+    it('conversa parada nunca é acusada de travada', async () => {
+      const { emit } = await started()
+      // Sem turno em andamento o silêncio é o estado normal, não uma falha.
+      vi.advanceTimersByTime(STALL_THRESHOLD_MS * 3)
+      expect(stalls(emit)).toHaveLength(0)
+    })
+
+    it('ferramenta em voo tolera minutos de silêncio', async () => {
+      const { emit, prompt, pre } = await started()
+      await prompt({ hook_event_name: 'UserPromptSubmit' })
+      // Um build legítimo passa minutos sem emitir nada — acusar aqui seria
+      // falso positivo, que é o que desqualifica um aviso desses.
+      await pre({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'build', tool_input: {} })
+
+      vi.advanceTimersByTime(STALL_THRESHOLD_MS * 2)
+      expect(stalls(emit)).toHaveLength(0)
+
+      vi.advanceTimersByTime(STALL_THRESHOLD_TOOL_MS)
+      expect(stalls(emit)).toEqual([expect.objectContaining({ stalled: true })])
+    })
+
+    it('ferramenta que retorna volta ao limiar curto', async () => {
+      const { emit, prompt, pre, post } = await started()
+      await prompt({ hook_event_name: 'UserPromptSubmit' })
+      await pre({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'x', tool_input: {} })
+      await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'x', tool_input: {}, tool_response: {} })
+
+      vi.advanceTimersByTime(STALL_THRESHOLD_MS + 5_000)
+      expect(stalls(emit)).toEqual([expect.objectContaining({ stalled: true })])
+    })
+
+    it('sinal de vida desfaz o aviso', async () => {
+      const { s, emit, prompt } = await started()
+      await prompt({ hook_event_name: 'UserPromptSubmit' })
+      vi.advanceTimersByTime(STALL_THRESHOLD_MS + 5_000)
+      expect(stalls(emit)).toHaveLength(1)
+
+      // Qualquer mensagem do SDK conta, inclusive um delta de streaming.
+      ;(s as unknown as { handleMessage: (m: unknown) => void }).handleMessage({
+        type: 'stream_event',
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'oi' } }
+      })
+      expect(stalls(emit).at(-1)).toEqual(expect.objectContaining({ stalled: false }))
+    })
+
+    it('descartar a sessão não deixa o intervalo emitindo', async () => {
+      const { s, emit, prompt } = await started()
+      await prompt({ hook_event_name: 'UserPromptSubmit' })
+      s.dispose()
+
+      vi.advanceTimersByTime(STALL_THRESHOLD_MS * 3)
+      // Um evento depois do dispose seria de uma conversa que não existe mais.
+      expect(stalls(emit)).toHaveLength(0)
     })
   })
   // O usuário quer a senha no prompt, mas só quando ele marca a opção. O

@@ -14,6 +14,11 @@ export const STALL_THRESHOLD_MS = 60_000
  *  tool calls can run for minutes without emitting anything. */
 export const STALL_THRESHOLD_TOOL_MS = 5 * 60_000
 
+/** How often the session re-checks. Well under the shortest threshold, so the
+ *  banner flips within a few seconds of the turn actually going quiet, while
+ *  costing one comparison per tick. */
+export const STALL_POLL_MS = 5_000
+
 /** Whether a turn that's been quiet since `lastActivityAt` should be flagged as
  *  stalled at time `now`, given whether a tool call is currently in flight. */
 export function isStalled(now: number, lastActivityAt: number, toolInFlight: boolean): boolean {

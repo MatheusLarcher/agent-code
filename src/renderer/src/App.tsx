@@ -401,6 +401,10 @@ export function App(): JSX.Element {
   // any one chat, so it must survive switching conversations. Keyed by
   // rateLimitType; only ever grows/updates, never reset by the UI itself.
   const [usageLimits, setUsageLimits] = useState<Record<string, RateLimitStatus>>({})
+  // Conversas cujo turno está sem sinal de vida há tempo demais → epoch ms da
+  // última atividade. Só muda o texto da faixa "trabalhando": o turno pode
+  // muito bem terminar sozinho, então nada é cancelado por causa disto.
+  const [stalledSince, setStalledSince] = useState<Record<string, number>>({})
   // Sidebar paging: the app opens with only the newest CONVERSATIONS_PER_PROJECT
   // of each project. `projectTotals` is the real count from the database (badge),
   // `fullyLoadedProjects` marks projects whose "mostrar mais" already ran.
@@ -576,6 +580,18 @@ export function App(): JSX.Element {
             ? prev
             : { ...prev, [e.limits.rateLimitType]: e.limits }
         )
+        return
+      }
+      // Estado da conversa, não conteúdo dela: também não passa pelo reducer,
+      // senão viraria uma bolha no chat a cada vez que o turno emudece.
+      if (e.kind === 'stall-status') {
+        setStalledSince((prev) => {
+          if (e.stalled) return { ...prev, [cid]: e.since }
+          if (!(cid in prev)) return prev
+          const next = { ...prev }
+          delete next[cid]
+          return next
+        })
         return
       }
       // Agents panel: `Task` calls open a track, subagent calls feed it, and the
@@ -2524,6 +2540,9 @@ export function App(): JSX.Element {
             messages={messages}
             hasActive={!!active}
             busy={showBusy}
+            // Atrelado ao `busy`: uma entrada que sobrou (sessão morreu sem
+            // emitir o "voltou") não pode acusar travamento num chat parado.
+            stalledSince={showBusy && active ? stalledSince[active.id] : undefined}
             windowsControlEnabled={windowsControlEnabled}
             onDisableWindowsControl={() => void toggleWindowsControl(false)}
             tokens={tokens}

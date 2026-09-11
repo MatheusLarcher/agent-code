@@ -118,7 +118,17 @@ for await (const message of this.q) this.handleMessage(message)
 - **Interromper:** `interrupt()` chama `q.interrupt()` (ignora erro se não houver turno ativo).
 - **Encerrar:** `dispose()` fecha a fila de entrada (encerra o loop do SDK).
 
-> **Watchdog de travamento (`src/main/stallWatch.ts`) — base pronta, ainda NÃO integrada ao `AgentSession`.** Hoje "ocupado" é 100% otimista (liga ao enviar, só desliga com `result`/`error`); quando muitos agentes rodam ao mesmo tempo e o sistema não consegue processar, não há como distinguir "ainda trabalhando" de "travou". `stallWatch.ts` traz a lógica pura pra detectar isso: `isStalled(now, lastActivityAt, toolInFlight)` compara o tempo parado contra um limiar curto (`STALL_THRESHOLD_MS = 60s`, sem ferramenta em voo) ou longo (`STALL_THRESHOLD_TOOL_MS = 5min`, com ferramenta em voo — builds/downloads legítimos não devem disparar falso positivo). O plano (pausado, não implementado): a `AgentSession` rastreia `lastActivityAt`/ferramentas em voo, um `setInterval` chama `isStalled` e emite um novo `ChatEvent` `stall-status` quando o estado muda; o `ChatPanel` trocaria o banner "trabalhando" por um aviso "sem resposta há Xs" enquanto travado.
+**Watchdog de travamento (`src/main/stallWatch.ts`)** — "ocupado" sozinho é otimista: liga ao enviar e só desliga com `result`/`error`, então uma sessão travada e uma trabalhando ficam idênticas na tela — e é justamente com muitos agentes ao mesmo tempo que isso acontece.
+
+`isStalled(now, lastActivityAt, toolInFlight)` compara o tempo parado contra um limiar curto (`STALL_THRESHOLD_MS` = 60 s, sem ferramenta em voo) ou longo (`STALL_THRESHOLD_TOOL_MS` = 5 min, com ferramenta em voo). Os dois limiares existem porque um build ou download legítimo passa minutos sem emitir nada: um aviso que dispara nesse caso é falso positivo, e falso positivo é o que faz o usuário parar de acreditar no aviso.
+
+- A `AgentSession` guarda `lastActivityAt` e um `setInterval` (`STALL_POLL_MS` = 5 s, com `unref`) chama `isStalled`. Ele **só roda durante um turno**: fora dele o silêncio é o estado normal, não uma falha.
+- **Sinal de vida** é qualquer `SDKMessage` (inclusive um delta de streaming) e qualquer ferramenta entrando ou saindo de voo. Sair do estado travado é imediato, sem esperar o próximo tique.
+- `toolsInFlight` é **paralelo** a `restartOpaqueCalls` e não se confunde com ele: aquele rastreia só ferramenta não verificável (é sobre reiniciar com segurança), este rastreia **qualquer** ferramenta (é sobre quanto silêncio é normal).
+- A mudança de estado vira o `ChatEvent` `stall-status` (`{ stalled, since }`). Como o `rate-limit`, é **estado e não conteúdo**: o `App.tsx` o intercepta antes do reducer e ele nunca vira bolha. O mesmo vale no celular — `reduce()` em `app.js` tem um conjunto `STATE_ONLY`, senão o evento cairia no `push` final e engordaria a lista a cada ocorrência (invisível, porque a renderização é whitelist, mas acumulando).
+- No `ChatPanel`, a faixa "Claude está trabalhando…" vira **"Sem resposta há Xs"** em âmbar, com a varredura da borda parada (animação de progresso durante silêncio é a informação errada) e o anel ainda girando (o trabalho segue em aberto). O texto afirma o observável, não um diagnóstico: **nada é cancelado** por causa disso e o turno pode terminar sozinho.
+- O contador fica num componente próprio (`WorkingBanner`) por causa do relógio: um `now` tiquetaqueando no corpo do `ChatPanel` re-renderizaria a lista de mensagens inteira a cada segundo.
+- No renderer o aviso é atrelado ao `busy`: uma entrada que sobrou (sessão morta sem emitir o "voltou") não pode acusar travamento num chat parado. E `dispose()` limpa o intervalo antes de tudo — um tique sobrevivendo à sessão emitiria evento de uma conversa que já não existe.
 
 ---
 
@@ -494,6 +504,21 @@ Chave, token ou senha que apareça numa memória é detectada, **redigida do tex
 - Falha do cofre **não impede a conversa de abrir**: degrada para "sem senhas" e segue.
 - A tela lista **só nome e data**, nunca o valor, e o único botão é apagar.
 
+### Registro de tarefas — a fila do time de agentes
+
+O objetivo maior do projeto é deixar de ter **um agente com contexto gigante** e passar a ter um **time coordenado de especialistas** (supervisor/tech lead que delega e cobra evidência, crítico, agente de memória, navegador de código). O primeiro subprojeto aprovado para isso é o **registro durável de tarefas** (`TaskLedger`, `src/main/tasks/`), no SQLite/PostgreSQL — não RabbitMQ — e a ferramenta MCP `tasks` é a **porta de entrada** dele para o modelo.
+
+- **Tabelas**: `tasks`, `task_steps`, `task_deliverables`, `task_events` (migration 2 no SQLite, 4 no PostgreSQL). Toda mutação gera um `task_events`; no PostgreSQL, `task_events` alimenta o `change_log` para o outro PC enxergar.
+- **Máquina de estados** (imposta pelo repositório, não pela ferramenta): `pending→running`; `running→blocked|review|failed|cancelled`; `blocked→running|cancelled`; `review→done|running|failed`; `failed→pending` só por retomada explícita e enquanto `attempts < max_attempts`. Fora disso é `TASK_INVALID_TRANSITION`.
+- **Lease + fence**: `task_claim` pega a `pending` mais antiga sem lease vivo (`FOR UPDATE SKIP LOCKED` no PostgreSQL — duas instalações reivindicando juntas pegam tarefas diferentes) e devolve `lease_token` + `fencing_epoch`. Enquanto o lease vive, **toda escrita exige o fence**; fence velho ou ausente é `TASK_FENCE_STALE`. O lease impõe posse atual, não exactly-once de efeitos externos; e é por tarefa — não tranca recurso compartilhado por tarefas diferentes.
+- **Ferramentas** (`src/main/tasks/taskTools.ts`, servidor MCP `tasks`): `task_create`, `task_list`, `task_get`, `task_claim`, `task_renew_lease`, `task_transition`, `task_step_start`, `task_step_finish`, `task_deliverable_add`, `task_event`. Cada resposta é **texto em pt-BR que o modelo consegue agir em cima** — uma recusa por fence velho diz "reivindique de novo com task_claim", uma transição inválida aponta para `task_get`. Nunca um stack trace.
+- **Só com repositório autoritativo**: `taskRuntime.ts` segue o `memoryRuntime` — o ciclo de vida do armazenamento publica o repositório ativo em toda troca de backend, e a sessão só registra o servidor MCP (e o `TASKS_HINT` no system prompt) quando o registro está ligado. Sem banco, a ferramenta aceitaria a tarefa e a perderia em silêncio.
+- **Auto-aprovado** no gate de permissão (`mcp__tasks__`), como o `memory`: é contabilidade interna do time, só escreve no banco do próprio app, e as regras duras vivem no repositório — um modal aqui só ensinaria o usuário a clicar sem ler.
+- **Evidência antes de "done"**: o hint instrui a registrar `task_deliverable_add` (diff, test_run, note, file, screenshot) antes de fechar. É o que o supervisor vai avaliar; "done" sem entregável é só uma afirmação.
+- **Testes** (`taskTools.test.ts`) rodam contra um `SqliteRepository` **real**, de propósito: um dublê que aceitasse tudo provaria só que a ferramenta repassa argumentos, não que o modelo recebe uma recusa legível quando erra o fence ou a transição.
+
+Uma lacuna que **não** foi fechada aqui: `project_cwd` continua sendo o caminho cru da máquina local nos registros compartilhados do PostgreSQL — o mapeamento estável de projeto entre PCs segue em aberto. O `TaskLedger` foi removido por engano num passo anterior por "não ter consumidor"; ele **não tinha consumidor porque este era o próximo passo**. Fundação antes do consumidor não é código morto.
+
 **Adoção do acervo já existente** — quando o banco vira a autoridade da memória, um acervo que já estava em disco precisa entrar nele. `configureMemoryRuntime` dispara um `reconcile()` a cada ligação de repositório (`memoryRuntime.ts`), então a adoção acontece na inicialização e em toda troca de backend.
 
 A alternativa era esperar o `reconcile` que o `memory_propose` já provoca — e isso deixava o acervo **invisível ao banco até um agente por acaso salvar algo**. Medido num acervo real de 162 memórias: os arquivos estavam lá e o banco vazio.
@@ -607,7 +632,13 @@ Dois caminhos levam um arquivo do agente até um botão **Baixar** na conversa (
 
 **No celular** o botão aponta para `GET /api/file?path=…&token=…` da ponte LAN. O servidor só serve caminhos da **allowlist** do snapshot atual — arquivos criados por `Write` com extensão entregável **ou** expostos por um marcador `[[download:]]` numa mensagem do assistente (`downloadablePaths()` em `remoteServer.ts`) — e nunca um caminho arbitrário. O `MainActivity` do app (instalado pelo `buildApk.ts`) tem um `DownloadListener` que salva via **DownloadManager** na pasta Downloads do aparelho, com notificação.
 
-> Revisão adversarial (skill `adversarial-review`) deste recurso apontou que o handler `app:file-download` do desktop ainda **não** confina o caminho às mesmas raízes da ponte — hardening pendente; ver o histórico da sessão.
+**A regra de "o que pode ser baixado" é uma só** (`src/main/downloadAllowlist.ts`), usada pela ponte **e** pelo desktop. Antes cada lado tinha a sua: a ponte filtrava por allowlist e o `app:file-download` do desktop copiava **qualquer** caminho que recebesse (achado da revisão adversarial). Dois critérios para a mesma pergunta é como um deles vira o frouxo sem ninguém notar.
+
+- `downloadablesFromEvent` / `downloadablesFromMessages` aplicam as duas fontes de sempre (`Write` com extensão entregável, marcador `[[download:]]`) sobre um evento ao vivo ou sobre mensagens persistidas.
+- `canonicalPath` normaliza e, **no Windows, compara sem diferenciar maiúscula** — caminho do Windows não diferencia, e um mismatch de caixa negaria o arquivo certo sem erro visível.
+- A `DownloadAllowlist` do desktop é alimentada no **tee de eventos** do `index.ts`, não dentro da ponte: o download tem de ser autorizado com a ponte desligada, que é o caso comum.
+- Caminho que o conjunto vivo não conhece **não é recusado de imediato** — pode vir de conversa restaurada do disco depois de reiniciar o app. Aí as conversas persistidas são varridas uma vez e o resultado fica em cache curto (`PERSISTED_TTL_MS`). A varredura é preguiçosa: custa uma leitura do banco e só acontece quando o usuário clica num download anterior a esta sessão.
+- Falha do armazenamento **nega**, não libera: um download recusado o usuário refaz; um `allow` errado é justamente o que o módulo existe para impedir.
 
 ---
 

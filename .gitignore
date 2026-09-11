@@ -9,9 +9,12 @@ dist/
 # Portable Node downloaded by start.bat when the system has no Node
 .node/
 
-# Environment variables / secrets — never commit these
+# Environment variables / secrets — never commit these.
+# O hífen importa: `.env.*` NÃO casa com `.env-prod`, que é justamente o nome
+# que o broker/README.md e o docker-compose mandam criar.
 .env
 .env.*
+.env-*
 
 # Build artifacts
 *.tsbuildinfo

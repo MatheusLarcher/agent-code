@@ -50,6 +50,43 @@ function RunTimer({ since, lastMs }: { since: number | null; lastMs: number | nu
   return null
 }
 
+/**
+ * A faixa de "ocupado". Enquanto o turno responde, é a mensagem de sempre;
+ * quando o main avisa que ele emudeceu além do limiar, vira o tempo de silêncio.
+ *
+ * É um componente à parte por causa do relógio: o contador precisa de um tique
+ * por segundo, e mantê-lo no corpo do `ChatPanel` re-renderizaria a lista de
+ * mensagens inteira a cada segundo. Aqui o tique só repinta a faixa — e só
+ * existe enquanto há silêncio a contar.
+ *
+ * O texto afirma o que é observável ("sem resposta há X"), não um diagnóstico:
+ * o turno continua vivo e pode terminar sozinho. Nada é cancelado por isto.
+ */
+function WorkingBanner({ stalledSince }: { stalledSince?: number }): JSX.Element {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!stalledSince) return
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [stalledSince])
+
+  return (
+    <div className={`working-banner${stalledSince ? ' stalled' : ''}`} role="status" aria-live="polite">
+      <span className="working-ring" />
+      <span className="working-text">
+        {stalledSince ? (
+          <>Sem resposta há {fmtDuration(Math.max(0, now - stalledSince))}</>
+        ) : (
+          <>
+            Claude está trabalhando<span className="working-dots" />
+          </>
+        )}
+      </span>
+    </div>
+  )
+}
+
 function RecoveryCard({ recovery, onRetry, onCancel }: { recovery: TurnRecovery; onRetry: () => void; onCancel: () => void }): JSX.Element {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
@@ -79,6 +116,9 @@ interface Props {
   /** Whether a conversation is selected (composer enabled). */
   hasActive: boolean
   busy: boolean
+  /** Epoch ms do último sinal de vida, quando o turno está sem responder além
+   *  do limiar. Ausente = trabalhando normalmente. */
+  stalledSince?: number
   /** Independent high-risk permission warning, constrained to the chat column. */
   windowsControlEnabled: boolean
   onDisableWindowsControl: () => void
@@ -342,14 +382,7 @@ export function ChatPanel(props: Props): JSX.Element {
         </div>
       )}
 
-      {busy && (
-        <div className="working-banner" role="status" aria-live="polite">
-          <span className="working-ring" />
-          <span className="working-text">
-            Claude está trabalhando<span className="working-dots" />
-          </span>
-        </div>
-      )}
+      {busy && <WorkingBanner stalledSince={props.stalledSince} />}
 
       {messages.length === 0 && (
         <div className="empty-state">
