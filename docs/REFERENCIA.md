@@ -201,7 +201,7 @@ Projeto **Node separado** (`broker/`, próprio `package.json`, deps: `ws`; Docke
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `src/broker.js` | `createBroker({relayKey})`: HTTP (celular) + WS `/__relay` (PCs) na mesma porta; mapa `token→conexão`; relay HTTP↔WS com **SSE em streaming**; cookie `relay_token` (fallback); `RELAY_KEY` opcional; um PC por token (isolamento). |
+| `src/broker.js` | `createBroker({relayKey, pingIntervalMs, hostDeadMs, headTimeoutMs})`: HTTP (celular) + WS `/__relay` (PCs) na mesma porta; mapa `token→conexão`; relay HTTP↔WS com **SSE em streaming**; cookie `relay_token` (fallback); `RELAY_KEY` opcional. **Posse do token:** o `hello` leva `instanceId`; outro PC com o mesmo token recebe `busy` (o primeiro vence), o mesmo PC reconectando substitui a conexão velha. `sweep()` pinga e **derruba PC mudo** por mais de `HOST_DEAD_MS` (70 s); request sem `head` em `HEAD_TIMEOUT_MS` (60 s) vira **504**; corpo acima de 32 MB vira **413**; `ping` JSON do PC recebe `pong`. |
 | `server.js` | Entrypoint (env `PORT`/`RELAY_KEY`; SIGINT/SIGTERM). |
 | `test/broker.test.js` | Integração real (round-trip http↔ws, isolamento por token, SSE, POST com corpo). Config próprio em `vitest.config.mjs`. |
 | `Dockerfile` / `docker-compose.yml` | Imagem `node:22-alpine`; expõe `127.0.0.1:8099` (só o Nginx fala); `env_file` `.env`+`.env-prod` (padrão do projeto). |
