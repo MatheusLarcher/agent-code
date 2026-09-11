@@ -24,7 +24,7 @@ import {
   taskEventFromRow,
   taskFromRow,
   taskStepFromRow,
-  TERMINAL_TASK_STATUSES,
+  LEASE_RELEASING_STATUSES,
   type TaskDeliverableRow,
   type TaskEventRow,
   type TaskRow,
@@ -698,7 +698,7 @@ export class PostgresRepository implements PersistenceRepository {
            updated_by = $5,
            lease_expires_at = CASE WHEN $4::boolean THEN clock_timestamp() ELSE lease_expires_at END
          WHERE id = $1`,
-        [input.taskId, input.to, ownerAgent, TERMINAL_TASK_STATUSES.has(input.to), this.installationId]
+        [input.taskId, input.to, ownerAgent, LEASE_RELEASING_STATUSES.has(input.to), this.installationId]
       )
       await this.insertTaskEvent(client, input.taskId, null, 'transition', {
         from: input.from,

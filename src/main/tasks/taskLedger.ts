@@ -21,6 +21,7 @@ import type {
 export {
   TASK_TRANSITIONS,
   TERMINAL_TASK_STATUSES,
+  LEASE_RELEASING_STATUSES,
   TASK_LEASE_TTL_MS,
   assertTaskTransition,
   assertTaskFence

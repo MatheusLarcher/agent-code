@@ -232,10 +232,26 @@ describe('AgentSession — escopo de escrita da tarefa reivindicada (imposto for
   const cwd = process.platform === 'win32' ? 'C:\\proj' : '/proj'
   const file = (rel: string): string => (process.platform === 'win32' ? `${cwd}\\${rel.replace(/\//g, '\\')}` : `${cwd}/${rel}`)
 
+  const hold = (s: AgentSession, overrides: Record<string, unknown> = {}): void => {
+    scoped(s).set('t1', {
+      id: 't1',
+      title: 'Só tasks',
+      projectCwd: cwd,
+      writeScope: { allow: ['src/tasks/**'], deny: [] },
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      holder: null,
+      ...overrides
+    })
+  }
+  // handlePermission é privado; o 4º argumento é o agentID do SDK.
+  const gateAs = (s: AgentSession, agentId: string | undefined, name: string, input: Record<string, unknown>): Promise<unknown> =>
+    (s as unknown as { handlePermission(n: string, i: Record<string, unknown>, a?: string): Promise<unknown> })
+      .handlePermission(name, input, agentId)
+
   it('com "Permitir tudo" ligado, Write fora do escopo ainda é recusado; dentro, liberado com updatedInput', async () => {
     const { s } = makeSession({ cwd })
     s.setBypass(true)
-    scoped(s).set('t1', { id: 't1', title: 'Só tasks', projectCwd: cwd, writeScope: { allow: ['src/tasks/**'], deny: [] } })
+    hold(s)
 
     const denied = (await gate(s, 'Write', { file_path: file('src/memory/x.ts'), content: '' })) as { behavior: string; message: string }
     expect(denied.behavior).toBe('deny')
@@ -243,6 +259,36 @@ describe('AgentSession — escopo de escrita da tarefa reivindicada (imposto for
 
     const input = { file_path: file('src/tasks/x.ts'), content: 'ok' }
     expect(await gate(s, 'Write', input)).toEqual({ behavior: 'allow', updatedInput: input })
+  })
+
+  it('lease expirado solta o gate — subagente que morre não prende a sessão para sempre', async () => {
+    const { s } = makeSession({ cwd })
+    s.setBypass(true)
+    hold(s, { leaseExpiresAt: new Date(Date.now() - 1).toISOString() })
+    const input = { file_path: file('src/memory/x.ts'), content: '' }
+    expect(await gate(s, 'Write', input)).toEqual({ behavior: 'allow', updatedInput: input })
+  })
+
+  it('escopo preso por um subagente não bloqueia o supervisor, mas bloqueia o próprio subagente', async () => {
+    const { s } = makeSession({ cwd })
+    s.setBypass(true)
+    hold(s, { holder: 'sub-a' })
+    const input = { file_path: file('src/memory/x.ts'), content: '' }
+
+    // Supervisor (sem agentID) segue livre enquanto delega.
+    expect(await gateAs(s, undefined, 'Write', input)).toEqual({ behavior: 'allow', updatedInput: input })
+    // O executor que reivindicou, não.
+    expect(await gateAs(s, 'sub-a', 'Write', input)).toMatchObject({ behavior: 'deny' })
+  })
+
+  it('task_claim registra o agente dono do escopo', async () => {
+    const { s } = makeSession({ cwd })
+    s.setBypass(true)
+    const claiming = (): unknown => (s as unknown as { claimingAgent: string | null }).claimingAgent
+    await gateAs(s, 'sub-b', 'mcp__tasks__task_claim', { task_id: 't9' })
+    expect(claiming()).toBe('sub-b')
+    await gateAs(s, undefined, 'mcp__tasks__task_claim', {})
+    expect(claiming()).toBeNull()
   })
 
   it('sem tarefa com escopo, o gate não muda', async () => {

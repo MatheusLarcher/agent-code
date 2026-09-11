@@ -44,6 +44,25 @@ export const TASK_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]
 export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set(['done', 'failed', 'cancelled'])
 
 /**
+ * Estados em que a transição LIBERA o lease — maiores que os terminais de
+ * propósito.
+ *
+ * O lease existe para proteger UM escritor ativo. Em `review` o executor já
+ * entregou e quem age é o crítico; em `blocked` ninguém está escrevendo. Se o
+ * lease sobrevivesse a esses dois, o crítico — que é outro agente e nunca teve
+ * o fence — receberia `TASK_FENCE_STALE` em `review → done` e a tarefa ficaria
+ * intransponível até o lease expirar. Com TTL de 15 min isso trava o ciclo do
+ * time inteiro; era o caso antes desta constante existir.
+ */
+export const LEASE_RELEASING_STATUSES: ReadonlySet<TaskStatus> = new Set([
+  'review',
+  'blocked',
+  'done',
+  'failed',
+  'cancelled'
+])
+
+/**
  * 15 min, não 60 s. O writer é um modelo: entre duas chamadas de ferramenta
  * passam minutos (raciocínio, build, testes). Com 60 s, toda escrita depois do
  * primeiro minuto voltava `TASK_FENCE_STALE` para o próprio dono — o registro

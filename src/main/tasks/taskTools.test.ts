@@ -110,7 +110,7 @@ describe('ferramentas MCP do registro de tarefas', () => {
 
     const refused = await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running' })
     expect(refused).toMatch(/^task_transition falhou:/)
-    expect(refused).toContain('task_claim') // diz o que fazer, não só que falhou
+    expect(refused).toContain('task_get') // diz onde olhar, não só que falhou
     expect(refused).not.toMatch(/\n\s+at /) // sem stack trace
   })
 
@@ -128,7 +128,7 @@ describe('ferramentas MCP do registro de tarefas', () => {
 
     const refused = await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running', ...stale })
     expect(refused).toMatch(/task_transition falhou/)
-    expect(refused).toMatch(/reivindique de novo/)
+    expect(refused).toMatch(/não é mais sua/)
   })
 
   it('transição fora da máquina de estados é recusada apontando para task_get', async () => {
@@ -178,26 +178,88 @@ describe('ferramentas MCP do registro de tarefas', () => {
     expect(Date.parse(after)).toBeGreaterThan(Date.parse(before))
   })
 
-  it('onClaim/onRelease acompanham a posse da tarefa', async () => {
+  it('onHold/onRelease acompanham a posse, e a renovação estende a validade', async () => {
     const cache = await mkdtemp(join(tmpdir(), 'agent-code-task-tools-'))
     tempDirs.push(cache)
     const repository = new SqliteRepository(cache, join(cache, 'agent-code.db'), 'device-a')
     await repository.initialize()
     const ledger = new TaskLedger(repository)
-    const claimed: string[] = []
+    const held: Array<{ id: string; expiresAt: string }> = []
     const released: string[] = []
     const tools = buildTaskTools({
       ledger, conversationId: 'c', projectCwd: 'C:/projeto', agent: 'a',
-      onClaim: (task) => claimed.push(task.id),
+      onHold: (task, expiresAt) => held.push({ id: task.id, expiresAt }),
       onRelease: (taskId) => released.push(taskId)
     })
     const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G', write_scope_allow: ['src/**'] }))![1]
     const fence = fenceFrom(await call(tools, 'task_claim', {}))
-    expect(claimed).toEqual([id])
+    expect(held.map((h) => h.id)).toEqual([id])
+
+    await new Promise((resolve) => setTimeout(resolve, 15))
     await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running', ...fence })
     expect(released).toEqual([])
+    // A renovação reemite o hold com validade maior — é o que impede o escopo
+    // de expirar no gate enquanto o executor ainda trabalha.
+    expect(held).toHaveLength(2)
+    expect(Date.parse(held[1].expiresAt)).toBeGreaterThan(Date.parse(held[0].expiresAt))
+
     await call(tools, 'task_transition', { task_id: id, from: 'running', to: 'review', ...fence })
     expect(released).toEqual([id])
+  })
+
+  it('review solta o lease: o crítico fecha a tarefa SEM fence', async () => {
+    const { tools, ledger } = await setup()
+    const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G' }))![1]
+    const fence = fenceFrom(await call(tools, 'task_claim', {}))
+    await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running', ...fence })
+    await call(tools, 'task_transition', { task_id: id, from: 'running', to: 'review', ...fence })
+
+    // O executor entregou; o lease morreu junto.
+    expect((await ledger.getTask(id))!.leaseExpiresAt).not.toBeNull()
+    expect(Date.parse((await ledger.getTask(id))!.leaseExpiresAt!)).toBeLessThanOrEqual(Date.now())
+
+    // O crítico é outro agente e nunca teve fence: sem ele, fecha.
+    expect(await call(tools, 'task_transition', { task_id: id, from: 'review', to: 'done' })).toContain('[done]')
+  })
+
+  it('blocked também solta o lease, para o supervisor poder destravar', async () => {
+    const { tools } = await setup()
+    const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G' }))![1]
+    const fence = fenceFrom(await call(tools, 'task_claim', {}))
+    await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running', ...fence })
+    await call(tools, 'task_transition', { task_id: id, from: 'running', to: 'blocked', reason: 'falta acesso', ...fence })
+    expect(await call(tools, 'task_transition', { task_id: id, from: 'blocked', to: 'running' })).toContain('[running]')
+  })
+
+  it('fence reusado depois do handoff explica que basta repetir sem fence', async () => {
+    const { tools } = await setup()
+    const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G' }))![1]
+    const fence = fenceFrom(await call(tools, 'task_claim', {}))
+    await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running', ...fence })
+    await call(tools, 'task_transition', { task_id: id, from: 'running', to: 'review', ...fence })
+
+    const refused = await call(tools, 'task_transition', { task_id: id, from: 'review', to: 'done', ...fence })
+    expect(refused).toMatch(/SEM lease_token/)
+    // E não manda reivindicar: uma tarefa em review não é reivindicável.
+    expect(refused).not.toMatch(/reivindique de novo com task_claim/)
+  })
+
+  it('o ciclo de retrabalho devolve a tarefa à fila: review→failed→pending→claim', async () => {
+    const { tools } = await setup()
+    const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G' }))![1]
+    const fence = fenceFrom(await call(tools, 'task_claim', {}))
+    await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running', ...fence })
+    await call(tools, 'task_transition', { task_id: id, from: 'running', to: 'review', ...fence })
+
+    // O crítico reprova (sem fence — o lease já foi solto no review).
+    expect(await call(tools, 'task_transition', { task_id: id, from: 'review', to: 'failed', reason: 'sem teste' }))
+      .toContain('[failed]')
+    expect(await call(tools, 'task_transition', { task_id: id, from: 'failed', to: 'pending' })).toContain('[pending]')
+
+    // Só assim outro executor consegue pegá-la de novo.
+    const again = await call(tools, 'task_claim', {})
+    expect(again).toContain(`Tarefa reivindicada: ${id}`)
+    expect(fenceFrom(again).fencing_epoch).toBeGreaterThan(fence.fencing_epoch)
   })
 
   it('task_list por padrão esconde as terminadas e respeita o limite', async () => {

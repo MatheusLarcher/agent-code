@@ -19,6 +19,35 @@ export interface ScopedTask {
   title: string
   projectCwd: string
   writeScope: WriteScope
+  /**
+   * Fim do lease (ISO). O escopo vale exatamente enquanto a posse vale: sem
+   * isto, um subagente que morre sem transicionar deixaria a sessão restrita
+   * para sempre, e o supervisor nunca mais escreveria fora daquele escopo.
+   * Cada escrita renova o lease, então um executor vivo nunca expira.
+   */
+  leaseExpiresAt: string
+  /**
+   * Qual agente reivindicou: `null` = o agente principal (supervisor).
+   * Escopo do supervisor vale para todo mundo (ele é o dono da conversa);
+   * escopo de um subagente prende só aquele subagente — senão um executor
+   * trabalhando em `src/tasks/**` impediria o supervisor de escrever em
+   * qualquer outro lugar enquanto delega.
+   */
+  holder: string | null
+}
+
+/** O escopo de uma tarefa só vincula quem o detém (e todo mundo, se for do supervisor). */
+export function bindsAgent(task: ScopedTask, agentId: string | null): boolean {
+  return task.holder === null || task.holder === agentId
+}
+
+/** Tarefas cuja posse ainda vale para este agente, agora. */
+export function activeScopesFor(
+  tasks: Iterable<ScopedTask>,
+  agentId: string | null,
+  now = Date.now()
+): ScopedTask[] {
+  return [...tasks].filter((task) => Date.parse(task.leaseExpiresAt) > now && bindsAgent(task, agentId))
 }
 
 /** Ferramentas que gravam arquivo e o campo que traz o caminho. */
@@ -116,6 +145,8 @@ export function writeScopeDenial(
   }
   return (
     `${toolName} recusado pelo escopo de escrita da tarefa em andamento — ${reasons.join('; ')}. ` +
-    'Se esse arquivo precisa mudar, registre um task_event "blocker" e peça ao supervisor para ampliar o escopo ou abrir outra tarefa; não contorne por Bash.'
+    'Se esse arquivo precisa mudar, registre um task_event "blocker" com o caminho e devolva a tarefa ao supervisor ' +
+    '(task_transition para "review" ou "blocked", com o motivo). O supervisor abre outra tarefa com o escopo certo. ' +
+    'Não contorne por Bash: o escopo é o contrato da tarefa, não um obstáculo técnico.'
   )
 }

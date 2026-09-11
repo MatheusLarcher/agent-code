@@ -17,7 +17,7 @@ import { memoryWriteDenial } from './memory/memoryPaths'
 import { createMemoryMcpServer } from './memory/memoryTools'
 import { createTaskMcpServer } from './tasks/taskTools'
 import { taskLedger } from './tasks/taskRuntime'
-import { writeScopeDenial, type ScopedTask } from './tasks/writeScopeGuard'
+import { activeScopesFor, writeScopeDenial, type ScopedTask } from './tasks/writeScopeGuard'
 import {
   memoryService,
   readSecret,
@@ -272,10 +272,15 @@ const TASKS_HINT = `You have a durable TASK LEDGER shared by the agent team (too
 ROLES
 - SUPERVISOR (you, in the main conversation, for any non-trivial request): decompose the request into tasks with task_create — each with a goal, VERIFIABLE acceptance criteria and a write_scope_allow (the files the executor may touch). Then delegate each task to a subagent via the Agent tool, passing the task id and telling it to claim the task with task_claim(task_id=...). Do not implement delegated tasks yourself.
 - EXECUTOR (a subagent given a task id): task_claim(task_id) → task_transition pending→running → task_step_start per phase → do the work → task_deliverable_add for every piece of EVIDENCE (diff, test_run, note, file, screenshot) → task_transition running→review with a short reason. Never declare done yourself.
-- CRITIC/REVIEWER (the supervisor, or a second subagent for large tasks): read task_get, check every acceptance criterion against the deliverables (run the tests yourself if a test_run is claimed), then task_transition review→done, or review→running with a reason listing exactly what is missing.
+- CRITIC/REVIEWER (the supervisor, or a second subagent for large tasks): read task_get, check every acceptance criterion against the deliverables (run the tests yourself if a test_run is claimed), then either task_transition review→done, or send it back.
+
+SENDING WORK BACK — pick by who will redo it
+- The SAME live executor will fix it now: task_transition review→running, then it keeps working under the same task.
+- A NEW executor will redo it (the usual case: the first subagent already finished): task_transition review→failed with a reason listing exactly what is missing, then task_transition failed→pending. Only a "pending" task can be claimed, so this is what puts it back in the queue; skipping it leaves the task stranded in "running" with nobody able to take it. Each claim spends one attempt, and a task out of attempts stops being handed out — that is the anti-loop budget.
 
 RULES THE LEDGER ENFORCES (not you)
 - task_claim returns a LEASE (lease_token + fencing_epoch). Every write to that task must carry both. Another agent cannot claim the task while the lease lives; the lease is renewed automatically on every write you make.
+- Moving a task to review or blocked RELEASES the lease — the executor is handing off. From then on, call the task's tools WITHOUT lease_token/fencing_epoch (that is how the critic closes it). Reusing the old fence after a handoff is refused.
 - While you hold a task with write_scope, Write/Edit outside that scope are REFUSED by the permission gate, even with "allow all" on. If a file outside scope must change, record a task_event "blocker" and ask the supervisor to widen the scope or open another task. Do not work around it with Bash.
 - Invalid transitions and stale leases are refused and explained in the reply; read task_get and adjust instead of retrying blindly.
 - "done" without deliverables is just a claim. A reviewer that finds no evidence sends the task back.
@@ -564,9 +569,22 @@ export class AgentSession {
    */
   private readonly scopedTasks = new Map<string, ScopedTask>()
 
-  /** Exposto para testes e para a UI listar o que a sessão está executando. */
-  activeScopedTasks(): ScopedTask[] {
-    return [...this.scopedTasks.values()]
+  /**
+   * Quem chamou o último `task_claim`: o gate vê o `agentID` do SDK
+   * (`undefined` = agente principal) e o servidor MCP, não. Guardado aqui entre
+   * a autorização e a execução da ferramenta, que são consecutivas, para o
+   * escopo saber a quem pertence.
+   */
+  private claimingAgent: string | null = null
+
+  /**
+   * Escopos que valem para este agente agora. Filtra os expirados (subagente
+   * que morreu sem transicionar deixaria a sessão restrita para sempre) e os
+   * de OUTRO subagente (um executor em `src/tasks/**` não pode impedir o
+   * supervisor de escrever enquanto delega).
+   */
+  activeScopedTasks(agentId: string | null = null): ScopedTask[] {
+    return activeScopesFor(this.scopedTasks.values(), agentId)
   }
 
   private beginTurn(): void {
@@ -680,8 +698,19 @@ export class AgentSession {
         agent: `session:${this.opts.convId}`,
         // O escopo declarado na tarefa passa a valer no gate assim que esta
         // sessão vira o writer, e deixa de valer quando ela larga a tarefa.
-        onClaim: (task) => {
-          this.scopedTasks.set(task.id, { id: task.id, title: task.title, projectCwd: task.projectCwd, writeScope: task.writeScope })
+        // Também roda a cada renovação de lease, então a validade acompanha a
+        // posse real em vez de congelar no instante da reivindicação.
+        onHold: (task, leaseExpiresAt) => {
+          const held = this.scopedTasks.get(task.id)
+          this.scopedTasks.set(task.id, {
+            id: task.id,
+            title: task.title,
+            projectCwd: task.projectCwd,
+            writeScope: task.writeScope,
+            leaseExpiresAt,
+            // Na renovação o dono já é conhecido; só a reivindicação o define.
+            holder: held ? held.holder : this.claimingAgent
+          })
         },
         onRelease: (taskId) => {
           this.scopedTasks.delete(taskId)
@@ -895,7 +924,7 @@ export class AgentSession {
       },
       // Always route through our gate. "Allow all" is handled inside
       // handlePermission via the bypassAll flag so it can be toggled live.
-      canUseTool: (toolName, input) => this.handlePermission(toolName, input)
+      canUseTool: (toolName, input, options) => this.handlePermission(toolName, input, options?.agentID)
     }
 
     if (this.disposed) return false
@@ -1384,7 +1413,12 @@ export class AgentSession {
     this.loopScheduledThisIteration = false
   }
 
-  private handlePermission(toolName: string, input: Record<string, unknown>): Promise<PermissionResult> {
+  private handlePermission(
+    toolName: string,
+    input: Record<string, unknown>,
+    /** `undefined` quando quem chama é o agente principal; id do subagente quando é um filho. */
+    agentId?: string
+  ): Promise<PermissionResult> {
     if (toolName === 'mcp__app__app_restart' && this.restartRegistration && !this.disposed) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
@@ -1505,8 +1539,11 @@ export class AgentSession {
     // Escopo de escrita da tarefa reivindicada: contrato do time, imposto fora do
     // modelo. Também ANTES do bypassAll — "Permitir tudo" é o usuário confiando
     // no modelo; não anula o que a tarefa declarou que pode ser tocado.
-    const scopeDenial = writeScopeDenial(this.activeScopedTasks(), toolName, input)
+    const scopeDenial = writeScopeDenial(this.activeScopedTasks(agentId ?? null), toolName, input)
     if (scopeDenial) return Promise.resolve({ behavior: 'deny', message: scopeDenial })
+    // O servidor MCP não recebe o agentID; o gate sim, e roda imediatamente
+    // antes da ferramenta. É aqui que se sabe a quem o escopo vai pertencer.
+    if (toolName === 'mcp__tasks__task_claim') this.claimingAgent = agentId ?? null
     // The memory tools are the sanctioned replacement for the blocked direct
     // writes, and they only touch the user's own memory store — prompting for
     // each one would just train the user to click through. The vault switch in

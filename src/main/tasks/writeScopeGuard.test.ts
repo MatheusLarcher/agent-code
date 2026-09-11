@@ -1,12 +1,21 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { globToRegExp, writeScopeDenial, type ScopedTask } from './writeScopeGuard'
+import { activeScopesFor, globToRegExp, writeScopeDenial, type ScopedTask } from './writeScopeGuard'
 
 const CWD = process.platform === 'win32' ? 'C:\\repo' : '/repo'
 const inRepo = (rel: string): string => (process.platform === 'win32' ? `${CWD}\\${rel.replace(/\//g, '\\')}` : `${CWD}/${rel}`)
+const FUTURE = new Date(Date.now() + 60_000).toISOString()
 
 function task(allow: string[], deny: string[] = [], overrides: Partial<ScopedTask> = {}): ScopedTask {
-  return { id: 't1', title: 'Tarefa', projectCwd: CWD, writeScope: { allow, deny }, ...overrides }
+  return {
+    id: 't1',
+    title: 'Tarefa',
+    projectCwd: CWD,
+    writeScope: { allow, deny },
+    leaseExpiresAt: FUTURE,
+    holder: null,
+    ...overrides
+  }
 }
 
 describe('globToRegExp', () => {
@@ -75,6 +84,29 @@ describe('writeScopeDenial', () => {
 
   it.runIf(process.platform === 'win32')('no Windows, maiúscula não recusa o arquivo certo', () => {
     expect(writeScopeDenial([task(['src/tasks/**'])], 'Write', { file_path: 'C:\\REPO\\SRC\\Tasks\\A.ts' })).toBeNull()
+  })
+
+  it('escopo com lease expirado não prende mais ninguém', () => {
+    // Um subagente que morre sem transicionar deixaria a sessão restrita para
+    // sempre; a posse morta é o que solta o gate.
+    const dead = task(['src/tasks/**'], [], { leaseExpiresAt: new Date(Date.now() - 1).toISOString() })
+    expect(activeScopesFor([dead], null)).toEqual([])
+    expect(writeScopeDenial(activeScopesFor([dead], null), 'Write', { file_path: inRepo('src/outro.ts') })).toBeNull()
+    // Ainda vivo, continua recusando.
+    expect(activeScopesFor([task(['src/tasks/**'])], null)).toHaveLength(1)
+  })
+
+  it('escopo de um subagente não prende o supervisor nem outro subagente', () => {
+    const held = task(['src/tasks/**'], [], { holder: 'sub-a' })
+    expect(activeScopesFor([held], null)).toEqual([]) // supervisor segue livre
+    expect(activeScopesFor([held], 'sub-b')).toEqual([]) // outro executor também
+    expect(activeScopesFor([held], 'sub-a')).toHaveLength(1) // o dono, não
+  })
+
+  it('escopo do supervisor vale para todo mundo, inclusive subagentes', () => {
+    const held = task(['src/tasks/**'], [], { holder: null })
+    expect(activeScopesFor([held], null)).toHaveLength(1)
+    expect(activeScopesFor([held], 'sub-a')).toHaveLength(1)
   })
 
   it('NotebookEdit usa notebook_path', () => {

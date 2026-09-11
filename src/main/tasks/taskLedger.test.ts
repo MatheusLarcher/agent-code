@@ -157,21 +157,27 @@ describe('TaskLedger (SQLite)', () => {
     await newTask(ledger)
     const { id, fence } = await startTask(ledger)
 
-    const path: Array<[TaskStatus, TaskStatus]> = [
-      ['running', 'blocked'],
-      ['blocked', 'running'],
-      ['running', 'review'],
-      ['review', 'running'],
-      ['running', 'review'],
-      ['review', 'done']
+    // `blocked` e `review` são handoffs: soltam o lease. Daí em diante o
+    // writer seguinte age SEM fence — é assim que o crítico fecha a tarefa sem
+    // nunca ter reivindicado nada.
+    const path: Array<[TaskStatus, TaskStatus, 'fenced' | 'unfenced']> = [
+      ['running', 'blocked', 'fenced'],
+      ['blocked', 'running', 'unfenced'],
+      ['running', 'review', 'unfenced'],
+      ['review', 'running', 'unfenced'],
+      ['running', 'review', 'unfenced'],
+      ['review', 'done', 'unfenced']
     ]
-    for (const [from, to] of path) {
-      const task = await ledger.transitionTask(id, from, to, fence, { agent: 'agent-1' })
+    for (const [from, to, carry] of path) {
+      const task = await ledger.transitionTask(id, from, to, carry === 'fenced' ? fence : undefined, { agent: 'agent-1' })
       expect(task.status).toBe(to)
     }
     const events = await ledger.listEvents(id)
     const transitions = events.filter((event) => event.kind === 'transition')
-    expect(transitions.map((event) => [event.data.from, event.data.to])).toEqual([['pending', 'running'], ...path])
+    expect(transitions.map((event) => [event.data.from, event.data.to])).toEqual([
+      ['pending', 'running'],
+      ...path.map(([from, to]) => [from, to])
+    ])
     expect(events.map((event) => event.kind).slice(0, 3)).toEqual(['created', 'claimed', 'transition'])
     // Terminal state released the lease: a plain (unfenced) read-model write is
     // no longer blocked, but done has no outgoing transitions.

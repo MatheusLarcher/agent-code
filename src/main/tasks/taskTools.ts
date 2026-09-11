@@ -2,6 +2,7 @@ import { createSdkMcpServer, tool, type SdkMcpToolDefinition } from '@anthropic-
 import { z } from 'zod'
 import { StorageError, type LeaseFence, type Task, type TaskStatus } from '../persistence/types'
 import type { TaskLedger } from './taskLedger'
+import { LEASE_RELEASING_STATUSES } from './taskModel'
 
 /**
  * A porta de entrada do registro de tarefas para o modelo — a primeira peça do
@@ -40,23 +41,29 @@ export interface TaskToolDeps {
   /** Identidade do chamador nos leases e eventos (ex.: "session:<convId>"). */
   agent: string
   /**
-   * Ganchos para a sessão impor o `write_scope` fora do LLM (`writeScopeGuard`):
-   * `onClaim` quando esta sessão passa a ser o writer de uma tarefa; `onRelease`
-   * quando ela larga a tarefa (review, estado terminal). Opcionais: os testes e
-   * um chamador sem gate não precisam deles.
+   * Ganchos para a sessão impor o `write_scope` fora do LLM (`writeScopeGuard`).
+   * `onHold` dispara ao reivindicar E a cada renovação do lease — é o que faz o
+   * escopo durar exatamente o que a posse dura; `onRelease`, quando a tarefa sai
+   * das mãos do writer. Opcionais: os testes e um chamador sem gate não precisam.
    */
-  onClaim?: (task: Task) => void
+  onHold?: (task: Task, leaseExpiresAt: string) => void
   onRelease?: (taskId: string) => void
 }
-
-/** Estados em que o writer larga a tarefa e o escopo deixa de valer para ele. */
-const RELEASING_STATUSES: ReadonlySet<TaskStatus> = new Set(['review', 'done', 'failed', 'cancelled'])
 
 function describeError(error: unknown): string {
   if (error instanceof StorageError) {
     // Os dois códigos que o modelo precisa distinguir para reagir certo.
     if (error.code === 'TASK_FENCE_STALE') {
-      return `${error.message} O lease desta tarefa não é mais seu: reivindique de novo com task_claim antes de escrever.`
+      // Dois casos distintos com a mesma causa raiz, e o segundo é o do crítico:
+      // ao entrar em review/blocked a tarefa SOLTA o lease, então o fence que o
+      // executor recebeu morreu — e insistir com ele falha, enquanto a mesma
+      // chamada sem fence passa. Dizer só "reivindique de novo" mandaria o
+      // crítico a um task_claim que nunca funciona (só tarefa pending é
+      // reivindicável) e a tarefa ficaria parada.
+      return (
+        `${error.message} Se a tarefa está em review ou blocked, o lease já foi liberado: repita a chamada ` +
+        'SEM lease_token/fencing_epoch. Se outro agente assumiu a tarefa, ela não é mais sua — veja task_get.'
+      )
     }
     if (error.code === 'TASK_INVALID_TRANSITION') {
       return `${error.message} Consulte task_get para ver o estado atual e escolha uma transição válida.`
@@ -96,9 +103,12 @@ function fenceOf(a: { lease_token?: string; fencing_epoch?: number }): LeaseFenc
  * é a prova de vida que mantém a posse. Best-effort: a escrita já aconteceu, e
  * uma renovação recusada (tarefa acabou de fechar) não pode desfazê-la.
  */
-async function touch(ledger: TaskToolDeps['ledger'], taskId: string, fence: LeaseFence | undefined): Promise<void> {
+async function touch(deps: TaskToolDeps, taskId: string, fence: LeaseFence | undefined): Promise<void> {
   if (!fence) return
-  await ledger.renewTaskLease(taskId, fence).catch(() => undefined)
+  const claim = await deps.ledger.renewTaskLease(taskId, fence).catch(() => null)
+  // Renovou: o escopo de escrita acompanha a nova validade, senão expiraria
+  // no gate enquanto o executor ainda está legitimamente trabalhando.
+  if (claim) deps.onHold?.(claim.task, claim.expiresAt)
 }
 
 function taskLine(task: Task): string {
@@ -238,7 +248,7 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
                 : 'Nenhuma tarefa pending disponível para reivindicar neste projeto.'
             )
           }
-          deps.onClaim?.(claim.task)
+          deps.onHold?.(claim.task, claim.expiresAt)
           return text(
             [
               `Tarefa reivindicada: ${claim.task.id} [${claim.task.status}] ${claim.task.title}`,
@@ -283,8 +293,10 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
             agent: deps.agent,
             reason: a.reason
           })
-          if (RELEASING_STATUSES.has(task.status)) deps.onRelease?.(task.id)
-          else await touch(deps.ledger, task.id, fence)
+          // Mesmo conjunto que o repositório usa para soltar o lease: o escopo
+          // de escrita e a posse têm de morrer no mesmo instante.
+          if (LEASE_RELEASING_STATUSES.has(task.status)) deps.onRelease?.(task.id)
+          else await touch(deps, task.id, fence)
           return text(`Tarefa ${task.id} agora está [${task.status}] (revisão ${task.revision}).`)
         })
     )),
@@ -307,7 +319,7 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
             sdkSessionId: deps.conversationId,
             fence
           })
-          await touch(deps.ledger, a.task_id, fence)
+          await touch(deps, a.task_id, fence)
           return text(`Passo aberto: ${step.id} (#${step.seq} ${step.kind}). Feche com task_step_finish.`)
         })
     )),
@@ -330,7 +342,7 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
             error: a.error ?? null,
             fence
           })
-          await touch(deps.ledger, step.taskId, fence)
+          await touch(deps, step.taskId, fence)
           return text(`Passo ${step.id} fechado como [${step.status}].`)
         })
     )),
@@ -357,7 +369,7 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
             payloadPath: a.payload_path ?? null,
             fence
           })
-          await touch(deps.ledger, a.task_id, fence)
+          await touch(deps, a.task_id, fence)
           return text(`Entregável registrado: ${item.id} (${item.kind}).`)
         })
     )),

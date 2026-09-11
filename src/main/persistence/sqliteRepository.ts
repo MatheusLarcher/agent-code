@@ -20,7 +20,7 @@ import {
   taskEventFromRow,
   taskFromRow,
   taskStepFromRow,
-  TERMINAL_TASK_STATUSES,
+  LEASE_RELEASING_STATUSES,
   type TaskDeliverableRow,
   type TaskEventRow,
   type TaskRow,
@@ -598,7 +598,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       assertTaskFence(current, input.fence, this.taskLeaseLive(row))
       assertTaskTransition(current, input.from, input.to)
       const now = new Date().toISOString()
-      const releaseLease = TERMINAL_TASK_STATUSES.has(input.to)
+      const releaseLease = LEASE_RELEASING_STATUSES.has(input.to)
       const ownerAgent = input.to === 'pending' ? null : input.agent ?? current.ownerAgent
       db.prepare(
         `UPDATE tasks SET status = ?, owner_agent = ?, revision = revision + 1, updated_at = ?,
