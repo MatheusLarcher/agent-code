@@ -43,7 +43,15 @@ export const TASK_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]
 
 export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set(['done', 'failed', 'cancelled'])
 
-export const TASK_LEASE_TTL_MS = 60_000
+/**
+ * 15 min, não 60 s. O writer é um modelo: entre duas chamadas de ferramenta
+ * passam minutos (raciocínio, build, testes). Com 60 s, toda escrita depois do
+ * primeiro minuto voltava `TASK_FENCE_STALE` para o próprio dono — o registro
+ * era inutilizável no uso real. A ferramenta ainda renova o lease a cada escrita
+ * com fence; este TTL é o silêncio máximo tolerado antes de outro agente poder
+ * assumir uma tarefa cujo executor morreu.
+ */
+export const TASK_LEASE_TTL_MS = 15 * 60_000
 export const DEFAULT_MAX_ATTEMPTS = 3
 
 export function isTaskStatus(value: unknown): value is TaskStatus {

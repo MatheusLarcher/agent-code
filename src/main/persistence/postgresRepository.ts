@@ -70,6 +70,7 @@ import {
   type ProjectConversationCount,
   type Task,
   type TaskClaim,
+  type TaskClaimFilter,
   type TaskCreate,
   type TaskDeliverable,
   type TaskDeliverableAdd,
@@ -629,7 +630,7 @@ export class PostgresRepository implements PersistenceRepository {
     })
   }
 
-  async claimTask(agentId: string): Promise<TaskClaim | null> {
+  async claimTask(agentId: string, filter: TaskClaimFilter = {}): Promise<TaskClaim | null> {
     this.assertInitialized()
     if (!agentId.trim()) throw new TypeError('agentId é obrigatório para reivindicar uma tarefa.')
     return transaction(this.pool, async (client) => {
@@ -638,7 +639,10 @@ export class PostgresRepository implements PersistenceRepository {
         `SELECT id, fencing_epoch FROM tasks
          WHERE status = 'pending' AND attempts < max_attempts
            AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
-         ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`
+           AND ($1::text IS NULL OR project_cwd = $1)
+           AND ($2::text IS NULL OR id = $2)
+         ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        [filter.projectCwd ?? null, filter.taskId ?? null]
       )
       const row = candidate.rows[0]
       if (!row) return null

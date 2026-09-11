@@ -226,6 +226,33 @@ describe('AgentSession — fluxo de permissão', () => {
   })
 })
 
+describe('AgentSession — escopo de escrita da tarefa reivindicada (imposto fora do LLM)', () => {
+  const scoped = (s: AgentSession): Map<string, unknown> =>
+    (s as unknown as { scopedTasks: Map<string, unknown> }).scopedTasks
+  const cwd = process.platform === 'win32' ? 'C:\\proj' : '/proj'
+  const file = (rel: string): string => (process.platform === 'win32' ? `${cwd}\\${rel.replace(/\//g, '\\')}` : `${cwd}/${rel}`)
+
+  it('com "Permitir tudo" ligado, Write fora do escopo ainda é recusado; dentro, liberado com updatedInput', async () => {
+    const { s } = makeSession({ cwd })
+    s.setBypass(true)
+    scoped(s).set('t1', { id: 't1', title: 'Só tasks', projectCwd: cwd, writeScope: { allow: ['src/tasks/**'], deny: [] } })
+
+    const denied = (await gate(s, 'Write', { file_path: file('src/memory/x.ts'), content: '' })) as { behavior: string; message: string }
+    expect(denied.behavior).toBe('deny')
+    expect(denied.message).toContain('Só tasks')
+
+    const input = { file_path: file('src/tasks/x.ts'), content: 'ok' }
+    expect(await gate(s, 'Write', input)).toEqual({ behavior: 'allow', updatedInput: input })
+  })
+
+  it('sem tarefa com escopo, o gate não muda', async () => {
+    const { s } = makeSession({ cwd })
+    s.setBypass(true)
+    const input = { file_path: file('qualquer.ts'), content: '' }
+    expect(await gate(s, 'Write', input)).toEqual({ behavior: 'allow', updatedInput: input })
+  })
+})
+
 describe('AgentSession — controle seguro do /loop', () => {
   const wakeup = {
     delaySeconds: 60,

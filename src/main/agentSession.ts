@@ -17,6 +17,7 @@ import { memoryWriteDenial } from './memory/memoryPaths'
 import { createMemoryMcpServer } from './memory/memoryTools'
 import { createTaskMcpServer } from './tasks/taskTools'
 import { taskLedger } from './tasks/taskRuntime'
+import { writeScopeDenial, type ScopedTask } from './tasks/writeScopeGuard'
 import {
   memoryService,
   readSecret,
@@ -266,15 +267,20 @@ ${lines}`
  * → estado final); as regras duras vivem no repositório e voltam como texto
  * legível quando violadas.
  */
-const TASKS_HINT = `You have a durable TASK LEDGER shared by the agent team (tools task_*).
-Use it when work should be delegated, decomposed, or tracked beyond this turn:
-- task_create registers a task with a goal and verifiable acceptance criteria; it starts "pending".
-- task_claim takes the oldest pending task and returns a LEASE (lease_token + fencing_epoch).
-  Keep both: every write to that task must carry them, and no other agent can claim it while the lease lives.
-- After claiming, move it with task_transition pending→running. Open task_step_start per phase and close with task_step_finish.
-- Record EVIDENCE with task_deliverable_add (diff, test_run, note, file, screenshot) before declaring done. "done" without deliverables is just a claim.
-- Finish with task_transition to review or done; on failure use failed with a reason so the next executor does not repeat it.
-Invalid transitions and stale leases are refused by the ledger and explained in the reply; read task_get and adjust instead of retrying blindly.`
+const TASKS_HINT = `You have a durable TASK LEDGER shared by the agent team (tools task_*). It is how work is delegated, scoped and verified across agents.
+
+ROLES
+- SUPERVISOR (you, in the main conversation, for any non-trivial request): decompose the request into tasks with task_create — each with a goal, VERIFIABLE acceptance criteria and a write_scope_allow (the files the executor may touch). Then delegate each task to a subagent via the Agent tool, passing the task id and telling it to claim the task with task_claim(task_id=...). Do not implement delegated tasks yourself.
+- EXECUTOR (a subagent given a task id): task_claim(task_id) → task_transition pending→running → task_step_start per phase → do the work → task_deliverable_add for every piece of EVIDENCE (diff, test_run, note, file, screenshot) → task_transition running→review with a short reason. Never declare done yourself.
+- CRITIC/REVIEWER (the supervisor, or a second subagent for large tasks): read task_get, check every acceptance criterion against the deliverables (run the tests yourself if a test_run is claimed), then task_transition review→done, or review→running with a reason listing exactly what is missing.
+
+RULES THE LEDGER ENFORCES (not you)
+- task_claim returns a LEASE (lease_token + fencing_epoch). Every write to that task must carry both. Another agent cannot claim the task while the lease lives; the lease is renewed automatically on every write you make.
+- While you hold a task with write_scope, Write/Edit outside that scope are REFUSED by the permission gate, even with "allow all" on. If a file outside scope must change, record a task_event "blocker" and ask the supervisor to widen the scope or open another task. Do not work around it with Bash.
+- Invalid transitions and stale leases are refused and explained in the reply; read task_get and adjust instead of retrying blindly.
+- "done" without deliverables is just a claim. A reviewer that finds no evidence sends the task back.
+
+Trivial requests (one file, obvious change, no verification needed) do not need the ledger.`
 
 function buildMemoryHint(memoriesDir: string): string {
   return `You have a PERSISTENT MEMORY for this user, kept as Markdown files in this folder:
@@ -550,6 +556,19 @@ export class AgentSession {
    * processo que nunca chega lá. Ligando o watchdog só no hook, ele perderia
    * exatamente o silêncio que existe para detectar.
    */
+  /**
+   * Tarefas que esta sessão reivindicou e ainda não largou, com o `write_scope`
+   * delas. Alimentado pelos ganchos do servidor MCP `tasks`; lido no gate de
+   * permissão para recusar Write/Edit fora do escopo — fora do LLM e antes do
+   * "Permitir tudo". Vazio = comportamento de sempre.
+   */
+  private readonly scopedTasks = new Map<string, ScopedTask>()
+
+  /** Exposto para testes e para a UI listar o que a sessão está executando. */
+  activeScopedTasks(): ScopedTask[] {
+    return [...this.scopedTasks.values()]
+  }
+
   private beginTurn(): void {
     this.turnActive = true
     this.markActivity()
@@ -658,7 +677,15 @@ export class AgentSession {
         ledger,
         conversationId: this.opts.convId,
         projectCwd: this.opts.cwd,
-        agent: `session:${this.opts.convId}`
+        agent: `session:${this.opts.convId}`,
+        // O escopo declarado na tarefa passa a valer no gate assim que esta
+        // sessão vira o writer, e deixa de valer quando ela larga a tarefa.
+        onClaim: (task) => {
+          this.scopedTasks.set(task.id, { id: task.id, title: task.title, projectCwd: task.projectCwd, writeScope: task.writeScope })
+        },
+        onRelease: (taskId) => {
+          this.scopedTasks.delete(taskId)
+        }
       })
     }
     // Tell the model where its per-user memory lives (and pre-load the complete catalog), so
@@ -1475,6 +1502,11 @@ export class AgentSession {
     // depend on the permission toggle. Reading the folder stays allowed.
     const memoryDenial = memoryWriteDenial(getCacheInfo().memoriesDir, toolName, input)
     if (memoryDenial) return Promise.resolve({ behavior: 'deny', message: memoryDenial })
+    // Escopo de escrita da tarefa reivindicada: contrato do time, imposto fora do
+    // modelo. Também ANTES do bypassAll — "Permitir tudo" é o usuário confiando
+    // no modelo; não anula o que a tarefa declarou que pode ser tocado.
+    const scopeDenial = writeScopeDenial(this.activeScopedTasks(), toolName, input)
+    if (scopeDenial) return Promise.resolve({ behavior: 'deny', message: scopeDenial })
     // The memory tools are the sanctioned replacement for the blocked direct
     // writes, and they only touch the user's own memory store — prompting for
     // each one would just train the user to click through. The vault switch in

@@ -151,7 +151,53 @@ describe('ferramentas MCP do registro de tarefas', () => {
 
   it('task_claim sem tarefa pendente responde em texto, não em erro', async () => {
     const { tools } = await setup()
-    expect(await call(tools, 'task_claim', {})).toBe('Nenhuma tarefa pending disponível para reivindicar.')
+    expect(await call(tools, 'task_claim', {})).toBe('Nenhuma tarefa pending disponível para reivindicar neste projeto.')
+  })
+
+  it('task_claim só pega tarefa do projeto da conversa, salvo any_project ou task_id', async () => {
+    const { tools, ledger } = await setup()
+    const other = await ledger.createTask({ projectCwd: 'D:/outro', title: 'de outro projeto', goal: 'G' })
+    // A mais antiga é de OUTRO projeto: sem filtro ela seria entregue por engano.
+    expect(await call(tools, 'task_claim', {})).toMatch(/Nenhuma tarefa pending/)
+    const mine = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'minha', goal: 'G' }))![1]
+    expect(await call(tools, 'task_claim', {})).toContain(`Tarefa reivindicada: ${mine}`)
+    // task_id atravessa o filtro de projeto: é como o subagente delegado pega a sua.
+    expect(await call(tools, 'task_claim', { task_id: other.id })).toContain(`Tarefa reivindicada: ${other.id}`)
+    // task_id indisponível responde o motivo, não "nenhuma".
+    expect(await call(tools, 'task_claim', { task_id: other.id })).toMatch(/não está disponível/)
+  })
+
+  it('cada escrita com fence renova o lease (o modelo não precisa lembrar de task_renew_lease)', async () => {
+    const { tools, ledger } = await setup()
+    const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G' }))![1]
+    const fence = fenceFrom(await call(tools, 'task_claim', {}))
+    const before = (await ledger.getTask(id))!.leaseExpiresAt!
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running', ...fence })
+    const after = (await ledger.getTask(id))!.leaseExpiresAt!
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before))
+  })
+
+  it('onClaim/onRelease acompanham a posse da tarefa', async () => {
+    const cache = await mkdtemp(join(tmpdir(), 'agent-code-task-tools-'))
+    tempDirs.push(cache)
+    const repository = new SqliteRepository(cache, join(cache, 'agent-code.db'), 'device-a')
+    await repository.initialize()
+    const ledger = new TaskLedger(repository)
+    const claimed: string[] = []
+    const released: string[] = []
+    const tools = buildTaskTools({
+      ledger, conversationId: 'c', projectCwd: 'C:/projeto', agent: 'a',
+      onClaim: (task) => claimed.push(task.id),
+      onRelease: (taskId) => released.push(taskId)
+    })
+    const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G', write_scope_allow: ['src/**'] }))![1]
+    const fence = fenceFrom(await call(tools, 'task_claim', {}))
+    expect(claimed).toEqual([id])
+    await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running', ...fence })
+    expect(released).toEqual([])
+    await call(tools, 'task_transition', { task_id: id, from: 'running', to: 'review', ...fence })
+    expect(released).toEqual([id])
   })
 
   it('task_list por padrão esconde as terminadas e respeita o limite', async () => {

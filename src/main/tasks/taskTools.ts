@@ -39,7 +39,18 @@ export interface TaskToolDeps {
   projectCwd: string
   /** Identidade do chamador nos leases e eventos (ex.: "session:<convId>"). */
   agent: string
+  /**
+   * Ganchos para a sessão impor o `write_scope` fora do LLM (`writeScopeGuard`):
+   * `onClaim` quando esta sessão passa a ser o writer de uma tarefa; `onRelease`
+   * quando ela larga a tarefa (review, estado terminal). Opcionais: os testes e
+   * um chamador sem gate não precisam deles.
+   */
+  onClaim?: (task: Task) => void
+  onRelease?: (taskId: string) => void
 }
+
+/** Estados em que o writer larga a tarefa e o escopo deixa de valer para ele. */
+const RELEASING_STATUSES: ReadonlySet<TaskStatus> = new Set(['review', 'done', 'failed', 'cancelled'])
 
 function describeError(error: unknown): string {
   if (error instanceof StorageError) {
@@ -77,6 +88,17 @@ function fenceOf(a: { lease_token?: string; fencing_epoch?: number }): LeaseFenc
     throw new Error('lease_token e fencing_epoch andam juntos: informe os dois ou nenhum.')
   }
   return { token: a.lease_token, fencingEpoch: a.fencing_epoch }
+}
+
+/**
+ * Renova o lease depois de uma escrita com fence que deu certo. Um modelo nunca
+ * vai lembrar de chamar task_renew_lease no ritmo certo; cada escrita legítima
+ * é a prova de vida que mantém a posse. Best-effort: a escrita já aconteceu, e
+ * uma renovação recusada (tarefa acabou de fechar) não pode desfazê-la.
+ */
+async function touch(ledger: TaskToolDeps['ledger'], taskId: string, fence: LeaseFence | undefined): Promise<void> {
+  if (!fence) return
+  await ledger.renewTaskLease(taskId, fence).catch(() => undefined)
 }
 
 function taskLine(task: Task): string {
@@ -196,14 +218,27 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
 
     erase(tool(
       'task_claim',
-      'Reivindica a tarefa "pending" mais antiga sem lease vivo e devolve o LEASE (lease_token + fencing_epoch). Guarde os dois: toda escrita nesta tarefa exige esse fence, e outro agente NÃO consegue reivindicar a mesma tarefa enquanto o lease viver. A tarefa continua "pending" até você chamar task_transition para "running".',
+      'Reivindica UMA tarefa "pending" sem lease vivo e devolve o LEASE (lease_token + fencing_epoch). Por padrão só do projeto desta conversa; informe task_id para pegar uma tarefa específica (é o que um subagente delegado deve fazer). Guarde os dois valores: toda escrita nesta tarefa exige esse fence, e outro agente NÃO consegue reivindicar a mesma tarefa enquanto o lease viver. A tarefa continua "pending" até você chamar task_transition para "running". Se a tarefa tem write_scope, Write/Edit fora dele passam a ser recusados nesta sessão.',
       {
+        task_id: z.string().optional().describe('Id de uma tarefa específica. Sem ele, a pending mais antiga do projeto.'),
+        project_cwd: z.string().optional().describe('Projeto de onde reivindicar. Padrão: a pasta desta conversa.'),
+        any_project: z.boolean().optional().describe('true para aceitar tarefa de qualquer projeto (raro; só um supervisor global).'),
         agent: z.string().optional().describe('Identidade de quem executa. Padrão: esta sessão.')
       },
       async (a) =>
         guard('task_claim', async () => {
-          const claim = await deps.ledger.claimTask(a.agent ?? deps.agent)
-          if (!claim) return text('Nenhuma tarefa pending disponível para reivindicar.')
+          const claim = await deps.ledger.claimTask(a.agent ?? deps.agent, {
+            taskId: a.task_id,
+            projectCwd: a.any_project || a.task_id ? undefined : a.project_cwd ?? deps.projectCwd
+          })
+          if (!claim) {
+            return text(
+              a.task_id
+                ? `A tarefa ${a.task_id} não está disponível: não existe, não está pending, esgotou as tentativas ou outro agente tem o lease. Veja task_get.`
+                : 'Nenhuma tarefa pending disponível para reivindicar neste projeto.'
+            )
+          }
+          deps.onClaim?.(claim.task)
           return text(
             [
               `Tarefa reivindicada: ${claim.task.id} [${claim.task.status}] ${claim.task.title}`,
@@ -243,10 +278,13 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
       },
       async (a) =>
         guard('task_transition', async () => {
-          const task = await deps.ledger.transitionTask(a.task_id, a.from, a.to, fenceOf(a), {
+          const fence = fenceOf(a)
+          const task = await deps.ledger.transitionTask(a.task_id, a.from, a.to, fence, {
             agent: deps.agent,
             reason: a.reason
           })
+          if (RELEASING_STATUSES.has(task.status)) deps.onRelease?.(task.id)
+          else await touch(deps.ledger, task.id, fence)
           return text(`Tarefa ${task.id} agora está [${task.status}] (revisão ${task.revision}).`)
         })
     )),
@@ -261,13 +299,15 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
       },
       async (a) =>
         guard('task_step_start', async () => {
+          const fence = fenceOf(a)
           const step = await deps.ledger.appendStep({
             taskId: a.task_id,
             kind: a.kind,
             agent: deps.agent,
             sdkSessionId: deps.conversationId,
-            fence: fenceOf(a)
+            fence
           })
+          await touch(deps.ledger, a.task_id, fence)
           return text(`Passo aberto: ${step.id} (#${step.seq} ${step.kind}). Feche com task_step_finish.`)
         })
     )),
@@ -283,12 +323,14 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
       },
       async (a) =>
         guard('task_step_finish', async () => {
+          const fence = fenceOf(a)
           const step = await deps.ledger.finishStep({
             stepId: a.step_id,
             status: a.status,
             error: a.error ?? null,
-            fence: fenceOf(a)
+            fence
           })
+          await touch(deps.ledger, step.taskId, fence)
           return text(`Passo ${step.id} fechado como [${step.status}].`)
         })
     )),
@@ -306,14 +348,16 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
       },
       async (a) =>
         guard('task_deliverable_add', async () => {
+          const fence = fenceOf(a)
           const item = await deps.ledger.addDeliverable({
             taskId: a.task_id,
             stepId: a.step_id ?? null,
             kind: a.kind,
             summary: a.summary,
             payloadPath: a.payload_path ?? null,
-            fence: fenceOf(a)
+            fence
           })
+          await touch(deps.ledger, a.task_id, fence)
           return text(`Entregável registrado: ${item.id} (${item.kind}).`)
         })
     )),

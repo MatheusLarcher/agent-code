@@ -306,10 +306,20 @@ export interface TaskQuery {
   limit?: number
 }
 
+/**
+ * Narrows what a claim may pick. Without it the oldest `pending` task of ANY
+ * project would be handed out — a supervisor in project A would silently take
+ * work meant for project B.
+ */
+export interface TaskClaimFilter {
+  projectCwd?: string
+  taskId?: string
+}
+
 export interface TaskRepository {
   createTask(input: TaskCreate): Promise<Task>
-  /** Oldest `pending` task without a live lease, or `null`. Atomic: two claimants never share a task. */
-  claimTask(agentId: string): Promise<TaskClaim | null>
+  /** Oldest `pending` task (within `filter`) without a live lease, or `null`. Atomic: two claimants never share a task. */
+  claimTask(agentId: string, filter?: TaskClaimFilter): Promise<TaskClaim | null>
   renewTaskLease(taskId: string, fence: LeaseFence): Promise<TaskClaim>
   transitionTask(input: TaskTransition): Promise<Task>
   appendTaskStep(input: TaskStepAppend): Promise<TaskStep>

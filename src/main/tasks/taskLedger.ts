@@ -3,6 +3,7 @@ import type {
   PersistenceRepository,
   Task,
   TaskClaim,
+  TaskClaimFilter,
   TaskCreate,
   TaskDeliverable,
   TaskDeliverableAdd,
@@ -50,8 +51,8 @@ export class TaskLedger {
   }
 
   /** Oldest claimable `pending` task, leased to `agentId`; `null` when there is none. */
-  claimTask(agentId: string): Promise<TaskClaim | null> {
-    return this.repository.claimTask(agentId)
+  claimTask(agentId: string, filter?: TaskClaimFilter): Promise<TaskClaim | null> {
+    return this.repository.claimTask(agentId, filter)
   }
 
   renewTaskLease(taskId: string, fence: LeaseFence): Promise<TaskClaim> {

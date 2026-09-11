@@ -66,6 +66,7 @@ import {
   type ProjectConversationCount,
   type Task,
   type TaskClaim,
+  type TaskClaimFilter,
   type TaskCreate,
   type TaskDeliverable,
   type TaskDeliverableAdd,
@@ -541,8 +542,10 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     return task
   }
 
-  async claimTask(agentId: string): Promise<TaskClaim | null> {
+  async claimTask(agentId: string, filter: TaskClaimFilter = {}): Promise<TaskClaim | null> {
     if (!agentId.trim()) throw new TypeError('agentId é obrigatório para reivindicar uma tarefa.')
+    const projectCwd = filter.projectCwd ?? null
+    const taskId = filter.taskId ?? null
     const claim = this.write((db) => {
       const now = new Date()
       const nowIso = now.toISOString()
@@ -551,9 +554,11 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
           `SELECT ${TASK_SELECT_COLUMNS} FROM tasks
            WHERE status = 'pending' AND attempts < max_attempts
              AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+             AND (? IS NULL OR project_cwd = ?)
+             AND (? IS NULL OR id = ?)
            ORDER BY created_at, id LIMIT 1`
         )
-        .get(nowIso) as TaskRow | undefined)
+        .get(nowIso, projectCwd, projectCwd, taskId, taskId) as TaskRow | undefined)
       if (!row) return null
       const token = randomUUID()
       const fencingEpoch = Number(row.fencing_epoch) + 1
