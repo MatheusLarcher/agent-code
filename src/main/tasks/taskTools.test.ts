@@ -222,6 +222,29 @@ describe('ferramentas MCP do registro de tarefas', () => {
     expect(await call(tools, 'task_transition', { task_id: id, from: 'review', to: 'done' })).toContain('[done]')
   })
 
+  it('task_get não anuncia lease vivo depois do handoff — soltar não limpa o token', async () => {
+    const { tools } = await setup()
+    const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G' }))![1]
+    const fence = fenceFrom(await call(tools, 'task_claim', {}))
+    await call(tools, 'task_transition', { task_id: id, from: 'pending', to: 'running', ...fence })
+
+    // Com o executor trabalhando, a posse é real e o fence é exigido mesmo.
+    const working = await call(tools, 'task_get', { task_id: id })
+    expect(working).toContain('Lease: vivo até')
+    expect(working).toContain('exigem o fence')
+
+    await call(tools, 'task_transition', { task_id: id, from: 'running', to: 'review', ...fence })
+
+    // O repositório expira a data mas MANTÉM o token, então um ramo binário
+    // ("tem token → vivo") mandaria o crítico buscar um fence que ele nunca teve
+    // e que aqui seria recusado — parando a tarefa que ele consegue fechar.
+    const handed = await call(tools, 'task_get', { task_id: id })
+    expect(handed).not.toContain('Lease: vivo até')
+    expect(handed).not.toContain('exigem o fence')
+    expect(handed).toContain('solto no handoff para review')
+    expect(handed).toContain('SEM lease_token/fencing_epoch')
+  })
+
   it('blocked também solta o lease, para o supervisor poder destravar', async () => {
     const { tools } = await setup()
     const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G' }))![1]

@@ -88,13 +88,31 @@ serializa como JSON), e foi o que escondeu o problema até um teste com
 
 ### Rodar os testes de integração
 
-Ficam desligados por padrão; `AGENT_CODE_PG_INTEGRATION=1` os liga. Os arquivos
-recriam o mesmo banco `agent-code`, então precisam rodar em série — em paralelo
-um derruba as conexões do outro (`FATAL 57P01`) e a falha parece um bug:
+Ficam desligados por padrão; `AGENT_CODE_PG_INTEGRATION=1` os liga. Um comando
+só, com Docker Desktop rodando:
 
 ```bash
-docker run -d --name agent-code-pg-test -p 55432:5432 \
-  -e POSTGRES_PASSWORD=agent-code-test-password postgres:16-alpine
-AGENT_CODE_PG_INTEGRATION=1 npx vitest run --no-file-parallelism \
-  src/main/persistence/postgres*.test.ts
+npm run test:pg
+```
+
+`scripts/run-postgres-tests.mjs` sobe um `postgres:16-alpine` descartável,
+espera ele aceitar conexão TCP, roda `src/main/persistence/postgres*.test.ts` e
+`src/main/tasks/taskLedger.test.ts` com `--no-file-parallelism` e remove o
+container no fim — também quando o teste falha ou você dá Ctrl+C. Um container
+órfão segurando a porta é o que faz a execução seguinte falhar sem motivo
+aparente. Falha de teste sai com código diferente de zero.
+
+O `--no-file-parallelism` não é zelo: os arquivos recriam o mesmo banco
+`agent-code`, então em paralelo um derruba as conexões do outro (`FATAL 57P01`)
+e a falha parece um bug do código.
+
+A porta padrão é 15432. O Windows reserva faixas inteiras para o WinNAT/Hyper-V
+(veja `netsh interface ipv4 show excludedportrange protocol=tcp`) e os 55432 que
+este roteiro usava antes caem dentro de uma delas nesta máquina — o `docker run`
+morre com `bind: An attempt was made to access a socket in a way forbidden by
+its access permissions`. Para trocar, use as mesmas variáveis que os testes
+leem, e o script alinha o container a elas:
+
+```bash
+AGENT_CODE_PG_PORT=15433 AGENT_CODE_PG_PASSWORD=outra npm run test:pg
 ```

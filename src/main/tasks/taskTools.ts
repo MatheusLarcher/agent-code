@@ -91,6 +91,35 @@ async function guard(label: string, work: () => Promise<Text>): Promise<Text> {
   }
 }
 
+/**
+ * A linha de lease que o modelo lê em `task_get`.
+ *
+ * Soltar o lease **não limpa o token** — o repositório grava
+ * `lease_expires_at = agora`. Então `leaseToken` continua preenchido em `review`
+ * e um ramo binário (tem token → "vivo") anuncia posse viva com um prazo já
+ * vencido, exigindo um fence que na verdade é recusado. O crítico é justamente
+ * quem lê isso primeiro: ele nunca teve fence, concluiria que precisa de um e
+ * pararia numa tarefa que ele consegue fechar. O painel (`taskBoard`) já separa
+ * os três casos; o texto que o modelo lê precisa separar também.
+ */
+function describeLeaseLine(task: Task, now: number): string {
+  if (!task.leaseToken) return `Lease: nenhum (epoch ${task.fencingEpoch}).`
+  if (LEASE_RELEASING_STATUSES.has(task.status)) {
+    return (
+      `Lease: solto no handoff para ${task.status} (epoch ${task.fencingEpoch}). ` +
+      'Chame as ferramentas desta tarefa SEM lease_token/fencing_epoch.'
+    )
+  }
+  const expiresAt = Date.parse(task.leaseExpiresAt ?? '')
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+    return (
+      `Lease: expirado em ${task.leaseExpiresAt} (epoch ${task.fencingEpoch}). ` +
+      'O dono sumiu sem transicionar; o reaper devolve a tarefa à fila.'
+    )
+  }
+  return `Lease: vivo até ${task.leaseExpiresAt} (epoch ${task.fencingEpoch}). Escritas exigem o fence de quem reivindicou.`
+}
+
 /** Fence opcional vindo do modelo. Os dois campos juntos ou nenhum. */
 const fenceFields = {
   lease_token: z.string().optional().describe('Token do lease devolvido por task_claim. Obrigatório enquanto a tarefa tiver lease vivo.'),
@@ -210,9 +239,7 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
             `Aceite: ${task.acceptance.length ? task.acceptance.map((item) => `\n  - ${item}`).join('') : '(nenhum declarado)'}`,
             `Escopo de escrita: allow=${JSON.stringify(task.writeScope.allow)} deny=${JSON.stringify(task.writeScope.deny)}`,
             `Dono: ${task.ownerAgent ?? '—'} · tentativas ${task.attempts}/${task.maxAttempts} · revisão ${task.revision}`,
-            task.leaseToken
-              ? `Lease: vivo até ${task.leaseExpiresAt} (epoch ${task.fencingEpoch}). Escritas exigem o fence de quem reivindicou.`
-              : `Lease: nenhum (epoch ${task.fencingEpoch}).`
+            describeLeaseLine(task, Date.now())
           ]
           if (task.parentTaskId) lines.push(`Tarefa-mãe: ${task.parentTaskId}`)
           lines.push(

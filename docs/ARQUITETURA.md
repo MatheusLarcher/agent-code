@@ -591,19 +591,29 @@ A infraestrutura do time está ligada; o **protocolo** ainda não foi exercitado
 
 **Entregue e coberto por teste, mas ainda não visto rodando:** o reaper (sobe com o armazenamento — `startTaskReaper` só é chamado sob `storageAvailable`), a terceira visão do painel e a gravação/leitura da identidade de projeto. Nada aqui é suposição sobre o código; é que ninguém observou o comportamento na tela ou em produção.
 
-**Ligado, mas nunca exercitado:**
+**O protocolo rodou numa tarefa real** (12/09/2026) — e é isso que separa "implementado" de "funciona".
 
-- **O ciclo completo nunca rodou numa tarefa real** — a fila está vazia, zero tarefas criadas fora dos testes. Supervisor decompõe → executor reivindica → evidência → crítico fecha existe em teste, não em uso.
-- **O gate de escopo** (incluindo `Bash`) só foi provado em unidade. Em produção ele depende de uma tarefa **reivindicada de fato**, e não houve nenhuma.
+A tarefa foi o próprio item 3 desta lista (a suíte PostgreSQL que ninguém rodava). Ciclo completo em uma tentativa: supervisor cria com aceite verificável e `write_scope` → executor reivindica **pelo `task_id`** (que atravessa o filtro de projeto) → passos → entregáveis → `review` → crítico confere e fecha `done`. O crítico **reexecutou** cada número alegado em vez de aceitar o relatório; o executor respeitou o escopo e registrou um `blocker` como `note` em vez de escrever fora dele. Nada do protocolo foi contornado.
+
+O que só apareceu no uso real:
+
+- **`task_get` mentia sobre o lease depois do handoff.** Soltar o lease não limpa o token (o repositório grava `lease_expires_at = agora`), e o ramo era binário: token presente → "vivo até \<data já vencida\>, escritas exigem o fence". O crítico é justamente quem lê isso primeiro, nunca teve fence, e concluiria que precisa de um — parando numa tarefa que ele consegue fechar. O painel já separava os três casos; o texto que o modelo lê não. Corrigido em `describeLeaseLine` (vivo / solto no handoff / expirado), com teste que falha se o ramo binário voltar.
+- **O TTL de 15 min não distingue executor morto de build longo.** A renovação automática é a escrita com fence (`touch`), e durante uma suíte pesada não há escrita nenhuma — o executor precisou de `task_renew_lease` manual no meio. Funciona, mas depende de o modelo lembrar; o mesmo motivo pelo qual o `touch` existe. Não foi mexido: o conserto certo (renovar enquanto uma ferramenta longa está em voo) é maior que o problema observado, e o reaper ainda tem os 5 min de folga por cima.
+- **Escopo de escrita tem efeito colateral de inventário.** `docs/REFERENCIA.md` não estava no `write_scope`, então o script novo nasceu fora do inventário que se declara completo. É o comportamento certo do gate — mas quem decompõe precisa lembrar que documentar a mudança também é escrita.
+
+**Ligado, mas ainda não visto:**
+
+- **O gate de escopo não chegou a recusar nada** nesta rodada: o executor trabalhou dentro do escopo do começo ao fim. A recusa continua provada só em unidade.
 - **O reaper nunca foi visto agindo**: precisa de um lease morto há mais de 20 min (15 de TTL + 5 de folga), e nenhum executor foi abandonado até agora.
 
-**Falta fazer, em ordem de dependência:**
+**Falta fazer:**
 
-1. **Rodar o protocolo numa tarefa real.** É o único teste do que a unidade não alcança: o modelo pedir revisão sem registrar evidência, o crítico fechar sem conferir, o executor não reivindicar pelo `task_id` que recebeu. Enquanto isso não acontecer, o `TASKS_HINT` é hipótese.
-2. **Selecionar quais memórias e quais arquivos cada especialista recebe.** Hoje "contexto por especialidade" é só a superfície de ferramentas. O resto depende de recuperação por relevância — a busca semântica de memórias, que a spec deixou como subprojeto próprio.
-3. **Cobrir o caminho PostgreSQL no fluxo normal de teste.** A suíte de integração só roda com `AGENT_CODE_PG_INTEGRATION=1` e um container de pé — foi exatamente por isso que um teste quebrado atravessou dois commits sem acusar (ver abaixo). Sem gancho de CI, mexer em persistência exige rodá-la à mão.
+1. **Selecionar quais memórias e quais arquivos cada especialista recebe.** Hoje "contexto por especialidade" é só a superfície de ferramentas. O resto depende de recuperação por relevância — a busca semântica de memórias, que a spec deixou como subprojeto próprio. É o maior item aberto do multi-agent.
+2. **Histórico completo em `task_get`.** Os eventos são truncados com "(N anteriores omitidos)" e não há como paginar. Não atrapalhou aqui porque os entregáveis bastaram, mas numa disputa sobre *quando* o executor decidiu algo, o crítico não tem como puxar a trilha inteira.
 
 > **O teste que ficou quebrado por dois commits.** `taskLedger.test.ts` reusava o fence depois de `review`, que passou a **soltar** o lease em `5b6250a`. O código estava certo e o teste é que mentia; ele nunca acusou porque o caminho PostgreSQL fica desligado por padrão. Corrigido em `abe0530` — agora ele prova a recusa **e** fecha sem fence, como o crítico faz de verdade. O caso equivalente no SQLite (`review → done` sem fence) já estava certo, então o contrato nunca esteve sem cobertura: o que faltava era a cobertura **rodar**.
+>
+> Hoje ela roda com **um comando**: `npm run test:pg` sobe o container, espera o Postgres aceitar conexão, roda os cinco arquivos em série e derruba o container inclusive quando o teste falha — órfão segurando a porta é o que faz a execução seguinte falhar sem motivo aparente. Um ritual de três passos documentado é um ritual que ninguém executa; foi essa a lição, e ela virou a primeira tarefa real da fila.
 
 **Adoção do acervo já existente** — quando o banco vira a autoridade da memória, um acervo que já estava em disco precisa entrar nele. `configureMemoryRuntime` dispara um `reconcile()` a cada ligação de repositório (`memoryRuntime.ts`), então a adoção acontece na inicialização e em toda troca de backend.
 
