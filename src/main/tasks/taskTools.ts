@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { StorageError, type LeaseFence, type Task, type TaskStatus } from '../persistence/types'
 import type { TaskLedger } from './taskLedger'
 import { LEASE_RELEASING_STATUSES } from './taskModel'
+import { resolveProjectCwds } from './projectScope'
 
 /**
  * A porta de entrada do registro de tarefas para o modelo — a primeira peça do
@@ -34,12 +35,19 @@ export interface TaskToolDeps {
     TaskLedger,
     | 'createTask' | 'claimTask' | 'renewTaskLease' | 'transitionTask' | 'appendStep' | 'finishStep'
     | 'addDeliverable' | 'appendEvent' | 'getTask' | 'listTasks' | 'listSteps' | 'listDeliverables' | 'listEvents'
+    | 'recordProjectIdentity' | 'projectCwdsForIdentity'
   >
   conversationId: string
   /** Pasta do projeto da conversa: padrão de `project_cwd` quando o modelo não informa. */
   projectCwd: string
   /** Identidade do chamador nos leases e eventos (ex.: "session:<convId>"). */
   agent: string
+  /**
+   * Os caminhos que são o MESMO projeto que este (ver `projectScope.ts`). Vem
+   * por dependência para o teste poder fixar a lista sem git nem banco; sem
+   * ela, resolve pela identidade estável.
+   */
+  resolveProjectCwds?: (projectCwd: string) => Promise<string[]>
   /**
    * Ganchos para a sessão impor o `write_scope` fora do LLM (`writeScopeGuard`).
    * `onHold` dispara ao reivindicar E a cada renovação do lease — é o que faz o
@@ -237,9 +245,13 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
       },
       async (a) =>
         guard('task_claim', async () => {
+          // Reivindicar "deste projeto" precisa alcançar a tarefa que o OUTRO
+          // PC deixou: lá o `project_cwd` é outro caminho para o mesmo projeto.
+          const scoped = a.any_project || a.task_id ? undefined : a.project_cwd ?? deps.projectCwd
+          const scopeOf = deps.resolveProjectCwds ?? ((cwd: string) => resolveProjectCwds(deps.ledger, cwd))
           const claim = await deps.ledger.claimTask(a.agent ?? deps.agent, {
             taskId: a.task_id,
-            projectCwd: a.any_project || a.task_id ? undefined : a.project_cwd ?? deps.projectCwd
+            ...(scoped ? { projectCwds: await scopeOf(scoped) } : {})
           })
           if (!claim) {
             return text(

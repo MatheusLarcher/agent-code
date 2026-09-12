@@ -188,6 +188,36 @@ export const SQLITE_MEMORY_SCHEMA = `
   CREATE INDEX IF NOT EXISTS memory_proposals_status_created_at ON memory_proposals(status, created_at);
 `
 
+/**
+ * Migration 4 — identidade estável de projeto para o registro de tarefas.
+ *
+ * `tasks.project_cwd` é o caminho local, então o MESMO projeto em dois PCs
+ * (`C:\GitHub\agent-code` e `D:\dev\agent-code`) parecia dois projetos
+ * diferentes no PostgreSQL compartilhado — cada máquina só enxergava a própria
+ * fila. A identidade estável já existe (`resolveProjectIdentity`: remote do git
+ * + commit raiz); faltava onde guardá-la.
+ *
+ * **Por que uma tabela de mapeamento e não uma coluna em `tasks`.** Este schema
+ * inteiro é re-executado a cada escrita como guarda idempotente
+ * (`db.exec(SQLITE_SCHEMA)`), e o SQLite não tem `ADD COLUMN IF NOT EXISTS`:
+ * um `ALTER TABLE` numa migração quebraria toda escrita a partir da segunda.
+ * `CREATE TABLE IF NOT EXISTS` é idempotente por construção, então a tabela
+ * atravessa a guarda sem tocar no framework de migração.
+ *
+ * Cada PC grava a própria linha (caminho dele → id do projeto). Ler quem mais
+ * compartilha aquele `project_id` devolve os caminhos dos outros PCs — é isso
+ * que faz `claim`/`list` enxergarem a fila inteira do projeto.
+ */
+export const SQLITE_TASK_PROJECT_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS task_project_identity (
+    project_cwd TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    signature TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS task_project_identity_project ON task_project_identity(project_id);
+`
+
 export interface SqliteMigration {
   version: number
   name: string
@@ -204,7 +234,8 @@ function migration(version: number, name: string, sql: string): SqliteMigration 
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   migration(1, 'sqlite-v2-base', SQLITE_V2_SCHEMA),
   migration(2, 'sqlite-v2-tasks', SQLITE_TASKS_SCHEMA),
-  migration(3, 'sqlite-v2-memory', SQLITE_MEMORY_SCHEMA)
+  migration(3, 'sqlite-v2-memory', SQLITE_MEMORY_SCHEMA),
+  migration(4, 'sqlite-v2-task-project-identity', SQLITE_TASK_PROJECT_SCHEMA)
 ]
 
 export const SQLITE_SCHEMA = SQLITE_MIGRATIONS.map((entry) => entry.sql).join('\n')

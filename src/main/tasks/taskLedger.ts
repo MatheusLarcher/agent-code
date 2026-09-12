@@ -86,6 +86,16 @@ export class TaskLedger {
     return this.repository.appendTaskEvent(input)
   }
 
+  /** Registra o caminho local deste PC sob a identidade estável do projeto. */
+  recordProjectIdentity(row: { projectCwd: string; projectId: string; signature: string }): Promise<void> {
+    return this.repository.recordProjectIdentity(row)
+  }
+
+  /** Caminhos equivalentes do mesmo projeto, de todos os PCs que já registraram. */
+  projectCwdsForIdentity(projectId: string): Promise<string[]> {
+    return this.repository.projectCwdsForIdentity(projectId)
+  }
+
   getTask(taskId: string): Promise<Task | null> {
     return this.repository.getTask(taskId)
   }

@@ -100,6 +100,22 @@ const CRITIC_TOOLS = [
 
 const NAVIGATOR_TOOLS = ['Read', 'Glob', 'Grep']
 
+/**
+ * O que o executor NÃO recebe. Ele precisa herdar o resto — implementa tarefa
+ * arbitrária, e uma lista de permitidos viraria uma corrida atrás do que
+ * faltou. Mas duas famílias não pertencem ao papel em nenhuma hipótese, e cada
+ * ferramenta excluída é um schema a menos no contexto de toda requisição dele:
+ *
+ * - `mcp__windows`: dirigir OUTROS aplicativos do Windows não faz parte de
+ *   implementar uma tarefa com escopo de escrita declarado. É a permissão mais
+ *   perigosa do app (o usuário liga à mão em Configurações) e o subagente que
+ *   ela alcança nem é o que o usuário está olhando.
+ * - `mcp__app`: reiniciar o app é decisão de quem enxerga TODAS as conversas —
+ *   a thread principal. Um executor reiniciando o app mata o supervisor que o
+ *   delegou, no meio do trabalho dos outros.
+ */
+const EXECUTOR_DENIED_TOOLS = ['mcp__windows', 'mcp__app']
+
 const MEMORY_TOOLS = [
   'Read',
   'Glob',
@@ -128,12 +144,17 @@ export function buildSpecialistAgents(ctx: SpecialistContext): Record<string, Ag
     agents.executor = {
       description:
         'Executa UMA tarefa do registro de ponta a ponta: reivindica pelo task_id, trabalha dentro do write_scope, registra evidência e entrega para revisão. Passe o task_id no prompt. Nunca declara a tarefa concluída.',
+      disallowedTools: EXECUTOR_DENIED_TOOLS,
       prompt: EXECUTOR_PROMPT
     }
     agents.critico = {
       description:
         'Confere uma tarefa em "review" critério por critério contra os entregáveis, roda os testes alegados e fecha como "done" ou devolve para a fila com o motivo. Só lê código — não corrige o que revisa.',
       tools: CRITIC_TOOLS,
+      // A revisão de diff já está escrita como skill neste projeto. Pré-carregar
+      // é o único lugar onde ADICIONAR contexto paga: evita o crítico inventar
+      // um método de revisão a cada tarefa, e ele não tem Write para o `--fix`.
+      skills: ['code-review'],
       prompt: CRITIC_PROMPT
     }
   }

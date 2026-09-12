@@ -65,6 +65,43 @@ describe.runIf(integration).sequential('PostgresRepository', () => {
     await Promise.all(opened.splice(0).map((entry) => entry.close().catch(() => undefined)))
   })
 
+  it('a fila do projeto é uma só para dois PCs com caminhos diferentes', async () => {
+    // O ponto do registro compartilhado. Antes da identidade estável, cada
+    // instalação filtrava pelo `project_cwd` DELA e só via a própria fila.
+    const pcA = await repository(randomUUID())
+    const pcB = await repository(randomUUID())
+    opened.push(pcA, pcB)
+
+    const cwdA = 'C:/GitHub/agent-code'
+    const cwdB = '/home/matheus/dev/agent-code'
+    await pcA.recordProjectIdentity({ projectCwd: cwdA, projectId: 'proj-1', signature: 'sig-1' })
+    await pcB.recordProjectIdentity({ projectCwd: cwdB, projectId: 'proj-1', signature: 'sig-1' })
+    // Um projeto diferente não pode vazar para dentro do recorte.
+    await pcB.recordProjectIdentity({ projectCwd: '/home/matheus/outro', projectId: 'proj-2', signature: 'sig-2' })
+
+    const cwds = await pcA.projectCwdsForIdentity('proj-1')
+    expect([...cwds].sort()).toEqual([cwdA, cwdB].sort())
+
+    // Tarefa deixada no PC B, com o caminho de lá.
+    const task = await pcB.createTask({ projectCwd: cwdB, title: 'do outro PC', goal: 'g' })
+    await pcA.createTask({ projectCwd: '/home/matheus/outro', title: 'de outro projeto', goal: 'g' })
+
+    // Do PC A: pelo caminho local não aparece; pelos equivalentes, sim.
+    expect(await pcA.listTasks({ projectCwd: cwdA })).toHaveLength(0)
+    expect((await pcA.listTasks({ projectCwds: cwds })).map((t) => t.id)).toEqual([task.id])
+
+    const claim = await pcA.claimTask('session:pc-a', { projectCwds: cwds })
+    expect(claim?.task.id).toBe(task.id)
+
+    // Recorte vazio é "nenhum projeto", nunca "todos".
+    expect(await pcA.listTasks({ projectCwds: [] })).toEqual([])
+    expect(await pcA.claimTask('session:pc-a', { projectCwds: [] })).toBeNull()
+
+    // Upsert: o mesmo caminho reapontado não duplica linha.
+    await pcA.recordProjectIdentity({ projectCwd: cwdA, projectId: 'proj-1', signature: 'sig-nova' })
+    expect(await pcA.projectCwdsForIdentity('proj-1')).toHaveLength(2)
+  })
+
   it('isola KV device, compartilha KV global e aplica CAS/tombstone', async () => {
     const left = await repository(randomUUID())
     const right = await repository(randomUUID())

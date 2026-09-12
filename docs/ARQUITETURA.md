@@ -540,6 +540,10 @@ Supervisor, executor e crítico existiam só como texto de prompt: qualquer suba
 
 Dois detalhes que não são acidentais: **não existe subagente "supervisor"** (quem supervisiona é a thread principal — um segundo dono da decomposição só brigaria com ela), e cada papel só é anunciado quando o serviço de que depende está no ar (executor/crítico exigem o registro; `memoria` exige o serviço de memória). Anunciar um crítico sem registro seria oferecer ao modelo um papel que falha na primeira chamada.
 
+**A superfície de ferramentas é o contexto por especialidade.** Toda requisição carrega o schema de cada ferramenta exposta, então quem não implementa não recebe o harness inteiro: crítico, navegador e agente de memória têm listas explícitas — nenhum deles enxerga `mcp__browser`, `mcp__android`, `mcp__windows` ou `mcp__app`. O **executor herda** o resto, porque implementa tarefa arbitrária e uma lista de permitidos viraria uma corrida atrás do que faltou; mas duas famílias não pertencem ao papel em hipótese nenhuma e entram em `disallowedTools`: `mcp__windows` (dirigir OUTROS aplicativos não faz parte de implementar uma tarefa com escopo declarado, e é a permissão mais perigosa do app) e `mcp__app` (reiniciar o app é decisão de quem enxerga todas as conversas — um executor reiniciando mata o supervisor que o delegou, no meio do trabalho dos outros). O único lugar onde **adicionar** contexto paga é o crítico: ele já nasce com a skill `code-review` pré-carregada, em vez de inventar um método de revisão por tarefa.
+
+> O que **não** está feito: selecionar *quais memórias e quais arquivos* cada especialista recebe. Isso depende de recuperação por relevância — a "busca semântica de memórias", que a spec também deixou para um subprojeto próprio.
+
 Ficam em **código, e não em `.claude/agents/`**, porque `.claude/` é gitignorado neste projeto — foi por isso que o kit de skills passou a morar em `.agents/skills` com sincronização própria. Repetir aquela máquina para quatro definições estáticas seria custo sem retorno: aqui elas são versionadas, tipadas, testáveis e já vão no exe portátil sem passo de cópia.
 
 #### O reaper: a primeira regra do time fora do modelo (`taskReaper.ts`)
@@ -558,9 +562,23 @@ O que ela mostra e a lista de subagentes não tem é justamente o que o registro
 
 Um detalhe que só apareceu rodando: soltar o lease **não limpa o token**, o repositório grava `lease_expires_at = agora`. Então "expirado" sozinho não distingue handoff limpo de executor morto — quem distingue é o estado, e é por isso que `review` mostra "lease solto" e `running` mostra "lease expirado há X" em vermelho.
 
-Uma lacuna que **não** foi fechada aqui: `project_cwd` continua sendo o caminho cru da máquina local nos registros compartilhados do PostgreSQL — o mapeamento estável de projeto entre PCs segue em aberto. O `TaskLedger` foi removido por engano num passo anterior por "não ter consumidor"; ele **não tinha consumidor porque este era o próximo passo**. Fundação antes do consumidor não é código morto.
+#### Identidade estável de projeto entre PCs (`projectScope.ts`)
 
-**Por que essa lacuna ainda não foi fechada, medido:** a identidade estável já existe (`resolveProjectIdentity` — remote do git + commit raiz), o que falta é onde guardá-la, e as duas rotas custam mais do que parecem. Guardar numa coluna `tasks.project_id` exige `ALTER TABLE`, e no SQLite **não existe** `ADD COLUMN IF NOT EXISTS` — só que `sqliteRepository.ts` re-executa **o schema inteiro a cada escrita** como guarda idempotente (`db.exec(SQLITE_SCHEMA)`), então um `ALTER` numa migração quebraria toda escrita a partir da segunda; fazer isso direito significa separar "SQL de migração" de "SQL de guarda" no framework de persistência inteiro. A outra rota — resolver pelo `conversation_id`, já que a conversa carrega `projectId` — não precisa de migração, mas exige uma consulta nova nos dois repositórios ou uma varredura de conversas a cada leitura do painel. Nenhuma das duas é improviso aceitável no volume de um poll, e a lacuna só machuca com dois PCs no mesmo PostgreSQL e o repo em caminhos diferentes.
+`tasks.project_cwd` é o caminho **local**. No PostgreSQL compartilhado, o mesmo repositório clonado em `C:\GitHub\agent-code` e em `D:\dev\agent-code` parecia dois projetos: cada máquina só enxergava a própria fila, e a tarefa que um PC deixou pendente nunca era reivindicada pelo outro — justamente o cenário que o registro compartilhado existe para servir.
+
+A identidade estável já existia para as conversas (`resolveProjectIdentity`: remote do git normalizado + commit raiz, com o nome da pasta como último recurso). Faltava o registro de tarefas usá-la, e o obstáculo era **onde guardá-la**.
+
+**Por que uma tabela de mapeamento, e não uma coluna em `tasks`.** O primeiro instinto — `tasks.project_id` — esbarra num invariante do SQLite aqui: `sqliteRepository.ts` re-executa **o schema inteiro a cada escrita** como guarda idempotente (`db.exec(SQLITE_SCHEMA)`), e o SQLite não tem `ADD COLUMN IF NOT EXISTS`. Um `ALTER TABLE` numa migração passaria na primeira vez e quebraria **toda escrita** a partir da segunda; fazer certo exigiria separar "SQL de migração" de "SQL de guarda" no framework de persistência inteiro. `CREATE TABLE IF NOT EXISTS` é idempotente por construção e atravessa a guarda sem tocar em nada disso — por isso a solução é a tabela `task_project_identity` (migration 4 no SQLite, 6 no PostgreSQL), e não a coluna.
+
+Como funciona: cada PC **grava a própria linha** (`project_cwd` local → `project_id` estável) e **lê os irmãos** (todos os caminhos sob o mesmo `project_id`). Nenhuma máquina precisa conhecer o caminho da outra de antemão. `TaskQuery.projectCwds` e `TaskClaimFilter.projectCwds` recebem essa lista e **vencem** o `projectCwd` único; lista vazia significa "nenhum projeto" e não devolve nada — o oposto seria vazar a fila de outro projeto, que é o bug que o filtro existe para impedir.
+
+Três decisões que sustentam isso:
+
+- **Cache de 60 s** (`PROJECT_SCOPE_TTL_MS`). `resolveProjectIdentity` roda `git` como processo externo e o painel consulta em poll; a lista só muda quando **outro PC aparece**, então esperar um minuto por isso é barato e pagar `git rev-list` a cada 6 s não é.
+- **Degrada para o caminho local, nunca lança.** Pasta que sumiu, git ausente, banco fora do ar: volta a valer só o `projectCwd` — "vejo menos" é o lado certo de errar.
+- **Sem gatilho de change feed.** Ninguém precisa ser acordado quando outro PC registra o caminho dele; a leitura acontece sob demanda, no claim e no painel.
+
+> O `TaskLedger` foi removido por engano num passo anterior por "não ter consumidor"; ele **não tinha consumidor porque este era o próximo passo**. Fundação antes do consumidor não é código morto.
 
 **Adoção do acervo já existente** — quando o banco vira a autoridade da memória, um acervo que já estava em disco precisa entrar nele. `configureMemoryRuntime` dispara um `reconcile()` a cada ligação de repositório (`memoryRuntime.ts`), então a adoção acontece na inicialização e em toda troca de backend.
 

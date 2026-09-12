@@ -40,9 +40,32 @@ describe('cadastro de especialistas', () => {
     expect(nav.tools).toEqual(['Read', 'Glob', 'Grep'])
   })
 
-  it('o executor herda todas as ferramentas — ele implementa', () => {
+  it('o executor herda as ferramentas — ele implementa tarefa arbitrária', () => {
     const executor = buildSpecialistAgents({ ledger: true, memory: true }).executor
     expect(executor.tools).toBeUndefined()
+  })
+
+  it('mas o executor não dirige outros apps nem reinicia o app', () => {
+    // Reiniciar mataria o supervisor que o delegou, no meio do trabalho dos
+    // outros; dirigir o Windows não faz parte de implementar uma tarefa.
+    const executor = buildSpecialistAgents({ ledger: true, memory: true }).executor
+    expect(executor.disallowedTools).toEqual(['mcp__windows', 'mcp__app'])
+  })
+
+  it('o crítico já vem com a skill de revisão carregada', () => {
+    const critic = buildSpecialistAgents({ ledger: true, memory: false }).critico
+    expect(critic.skills).toEqual(['code-review'])
+  })
+
+  it('quem não implementa não recebe ferramenta de escrita nem MCP pesado', () => {
+    const agents = buildSpecialistAgents({ ledger: true, memory: true })
+    for (const name of ['critico', 'navegador-de-codigo', 'memoria']) {
+      const tools = agents[name].tools ?? []
+      expect(tools.length, name).toBeGreaterThan(0)
+      for (const heavy of ['mcp__browser', 'mcp__android', 'mcp__windows', 'mcp__app']) {
+        expect(tools.some((t) => t.startsWith(heavy)), `${name} × ${heavy}`).toBe(false)
+      }
+    }
   })
 
   it('nenhum especialista fixa modelo: o do usuário vale', () => {

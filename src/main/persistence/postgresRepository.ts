@@ -694,9 +694,36 @@ export class PostgresRepository implements PersistenceRepository {
     })
   }
 
+  async recordProjectIdentity(row: {
+    projectCwd: string
+    projectId: string
+    signature: string
+  }): Promise<void> {
+    this.assertInitialized()
+    await this.pool.query(
+      `INSERT INTO task_project_identity(project_cwd, project_id, signature, updated_at)
+       VALUES($1, $2, $3, clock_timestamp())
+       ON CONFLICT (project_cwd) DO UPDATE SET
+         project_id = EXCLUDED.project_id,
+         signature = EXCLUDED.signature,
+         updated_at = clock_timestamp()`,
+      [row.projectCwd, row.projectId, row.signature]
+    )
+  }
+
+  async projectCwdsForIdentity(projectId: string): Promise<string[]> {
+    this.assertInitialized()
+    const result = await this.pool.query<{ project_cwd: string }>(
+      'SELECT project_cwd FROM task_project_identity WHERE project_id = $1 ORDER BY project_cwd',
+      [projectId]
+    )
+    return result.rows.map((row) => String(row.project_cwd))
+  }
+
   async claimTask(agentId: string, filter: TaskClaimFilter = {}): Promise<TaskClaim | null> {
     this.assertInitialized()
     if (!agentId.trim()) throw new TypeError('agentId é obrigatório para reivindicar uma tarefa.')
+    if (filter.projectCwds !== undefined && filter.projectCwds.length === 0) return null
     return transaction(this.pool, async (client) => {
       // SKIP LOCKED: two installations claiming at once each get a different task.
       const candidate = await client.query<{ id: string; fencing_epoch: string | number }>(
@@ -704,9 +731,15 @@ export class PostgresRepository implements PersistenceRepository {
          WHERE status = 'pending' AND attempts < max_attempts
            AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
            AND ($1::text IS NULL OR project_cwd = $1)
+           AND ($3::text[] IS NULL OR project_cwd = ANY($3::text[]))
            AND ($2::text IS NULL OR id = $2)
          ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`,
-        [filter.projectCwd ?? null, filter.taskId ?? null]
+        [
+          // A lista, quando presente, é o filtro; o caminho único sai de cena.
+          filter.projectCwds === undefined ? filter.projectCwd ?? null : null,
+          filter.taskId ?? null,
+          filter.projectCwds ?? null
+        ]
       )
       const row = candidate.rows[0]
       if (!row) return null
@@ -908,7 +941,13 @@ export class PostgresRepository implements PersistenceRepository {
       params.push(statuses)
       clauses.push(`status = ANY($${params.length}::text[])`)
     }
-    if (query?.projectCwd !== undefined) {
+    // Caminhos equivalentes vencem o caminho único: é o mesmo projeto visto de
+    // PCs diferentes, e é aqui que essa distinção de fato aparece.
+    if (query?.projectCwds !== undefined) {
+      if (query.projectCwds.length === 0) return []
+      params.push(query.projectCwds)
+      clauses.push(`project_cwd = ANY($${params.length}::text[])`)
+    } else if (query?.projectCwd !== undefined) {
       params.push(query.projectCwd)
       clauses.push(`project_cwd = $${params.length}`)
     }

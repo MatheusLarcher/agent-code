@@ -583,8 +583,12 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
 
   async claimTask(agentId: string, filter: TaskClaimFilter = {}): Promise<TaskClaim | null> {
     if (!agentId.trim()) throw new TypeError('agentId é obrigatório para reivindicar uma tarefa.')
-    const projectCwd = filter.projectCwd ?? null
+    // Caminhos equivalentes vencem o caminho único (mesmo projeto, outro PC).
+    const cwds = filter.projectCwds
+    if (cwds !== undefined && cwds.length === 0) return null
+    const projectCwd = cwds === undefined ? filter.projectCwd ?? null : null
     const taskId = filter.taskId ?? null
+    const cwdClause = cwds === undefined ? '' : `AND project_cwd IN (${cwds.map(() => '?').join(', ')})`
     const claim = this.write((db) => {
       const now = new Date()
       const nowIso = now.toISOString()
@@ -594,10 +598,11 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
            WHERE status = 'pending' AND attempts < max_attempts
              AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
              AND (? IS NULL OR project_cwd = ?)
+             ${cwdClause}
              AND (? IS NULL OR id = ?)
            ORDER BY created_at, id LIMIT 1`
         )
-        .get(nowIso, projectCwd, projectCwd, taskId, taskId) as TaskRow | undefined)
+        .get(nowIso, projectCwd, projectCwd, ...(cwds ?? []), taskId, taskId) as TaskRow | undefined)
       if (!row) return null
       const token = randomUUID()
       const fencingEpoch = Number(row.fencing_epoch) + 1
@@ -789,6 +794,33 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     })
   }
 
+  async recordProjectIdentity(row: {
+    projectCwd: string
+    projectId: string
+    signature: string
+  }): Promise<void> {
+    this.write((db) => {
+      db.prepare(
+        `INSERT INTO task_project_identity(project_cwd, project_id, signature, updated_at)
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(project_cwd) DO UPDATE SET
+           project_id = excluded.project_id,
+           signature = excluded.signature,
+           updated_at = excluded.updated_at`
+      ).run(row.projectCwd, row.projectId, row.signature, new Date().toISOString())
+      return null
+    })
+  }
+
+  async projectCwdsForIdentity(projectId: string): Promise<string[]> {
+    return this.read((db) => {
+      const rows = db
+        .prepare('SELECT project_cwd FROM task_project_identity WHERE project_id = ? ORDER BY project_cwd')
+        .all(projectId) as unknown as Array<{ project_cwd: string }>
+      return rows.map((row) => String(row.project_cwd))
+    })
+  }
+
   async listTasks(query?: TaskQuery): Promise<Task[]> {
     return this.read((db) => {
       if (query?.ids && query.ids.length === 0) return []
@@ -800,7 +832,14 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`)
         params.push(...statuses)
       }
-      if (query?.projectCwd !== undefined) {
+      // A lista de caminhos equivalentes vence o caminho único: é o mesmo
+      // projeto visto de PCs diferentes, e filtrar por um só esconderia metade
+      // da fila. Lista vazia é "nenhum projeto", não "todos".
+      if (query?.projectCwds !== undefined) {
+        if (query.projectCwds.length === 0) return []
+        clauses.push(`project_cwd IN (${query.projectCwds.map(() => '?').join(', ')})`)
+        params.push(...query.projectCwds)
+      } else if (query?.projectCwd !== undefined) {
         clauses.push('project_cwd = ?')
         params.push(query.projectCwd)
       }

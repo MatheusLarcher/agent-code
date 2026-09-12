@@ -420,12 +420,35 @@ function migration(version: number, name: string, sql: string): PostgresMigratio
   return { version, name, sql, checksum: hashText(sql) }
 }
 
+/**
+ * Migration 6 — identidade estável de projeto (espelha a 4 do SQLite).
+ *
+ * É aqui que ela importa de verdade: no PostgreSQL compartilhado, o mesmo
+ * projeto em dois PCs tem `project_cwd` diferente e cada máquina só via a
+ * própria fila. Cada PC grava a própria linha; ler quem compartilha o
+ * `project_id` devolve os caminhos de todos.
+ *
+ * Sem gatilho de change feed de propósito: ninguém precisa ser acordado quando
+ * outro PC registra o caminho dele — a leitura acontece sob demanda, no claim e
+ * no painel.
+ */
+const TASK_PROJECT_IDENTITY = `
+CREATE TABLE IF NOT EXISTS task_project_identity (
+  project_cwd text PRIMARY KEY,
+  project_id text NOT NULL,
+  signature text NOT NULL DEFAULT '',
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS task_project_identity_project ON task_project_identity(project_id);
+`
+
 export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(1, 'postgres-base-schema', BASE_SCHEMA),
   migration(2, 'postgres-change-feed', CHANGE_FEED),
   migration(3, 'postgres-device-state-feed', DEVICE_STATE_CHANGE_FEED),
   migration(4, 'postgres-task-ledger', TASK_LEDGER),
-  migration(5, 'postgres-memory-service', MEMORY_SERVICE)
+  migration(5, 'postgres-memory-service', MEMORY_SERVICE),
+  migration(6, 'postgres-task-project-identity', TASK_PROJECT_IDENTITY)
 ]
 
 const MIGRATION_TABLE = `

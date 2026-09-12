@@ -10,6 +10,7 @@ import type {
 import { TASK_BOARD_LIMIT } from '../../shared/ipc'
 import type { Task, TaskDeliverable, TaskEvent, TaskStep } from '../persistence/types'
 import type { TaskLedger } from './taskLedger'
+import { resolveProjectCwds } from './projectScope'
 
 /**
  * Read-only projection of the task ledger for the agents panel.
@@ -148,9 +149,14 @@ export async function buildTaskBoard(
   const status = query.includeFinished
     ? [...OPEN_TASK_STATUSES, ...CLOSED_TASK_STATUSES]
     : OPEN_TASK_STATUSES
+  // Filtra pelos caminhos equivalentes, não pelo caminho local: o mesmo projeto
+  // em outro PC tem outro `project_cwd`, e o painel mostraria meia fila.
+  const projectCwds = query.projectCwd
+    ? await resolveProjectCwds(ledger, query.projectCwd)
+    : undefined
   const tasks = await ledger.listTasks({
     status,
-    ...(query.projectCwd ? { projectCwd: query.projectCwd } : {}),
+    ...(projectCwds ? { projectCwds } : {}),
     limit: query.limit ?? TASK_BOARD_LIMIT
   })
 

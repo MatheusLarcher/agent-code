@@ -308,10 +308,25 @@ export interface TaskEventAppend {
 export interface TaskQuery {
   status?: TaskStatus | TaskStatus[]
   projectCwd?: string
+  /**
+   * Todos os caminhos que são o MESMO projeto (este PC + os outros que já
+   * gravaram a identidade). Vence `projectCwd` quando presente: é o que faz a
+   * fila do projeto ser uma só num PostgreSQL compartilhado, em vez de uma por
+   * máquina. Lista vazia significa "nenhum projeto" e não devolve nada.
+   */
+  projectCwds?: string[]
   conversationId?: string
   parentTaskId?: string | null
   ids?: string[]
   limit?: number
+}
+
+/** Caminho local ↔ identidade estável do projeto (git remote + commit raiz). */
+export interface ProjectIdentityRow {
+  projectCwd: string
+  projectId: string
+  signature: string
+  updatedAt: string
 }
 
 /**
@@ -321,6 +336,8 @@ export interface TaskQuery {
  */
 export interface TaskClaimFilter {
   projectCwd?: string
+  /** Como em `TaskQuery`: os caminhos equivalentes do mesmo projeto. Vence `projectCwd`. */
+  projectCwds?: string[]
   taskId?: string
 }
 
@@ -334,6 +351,10 @@ export interface TaskRepository {
   finishTaskStep(input: TaskStepFinish): Promise<TaskStep>
   addTaskDeliverable(input: TaskDeliverableAdd): Promise<TaskDeliverable>
   appendTaskEvent(input: TaskEventAppend): Promise<TaskEvent>
+  /** Registra (upsert) o caminho local deste PC sob a identidade estável do projeto. */
+  recordProjectIdentity(row: Omit<ProjectIdentityRow, 'updatedAt'>): Promise<void>
+  /** Todos os caminhos locais já registrados sob a mesma identidade, em qualquer PC. */
+  projectCwdsForIdentity(projectId: string): Promise<string[]>
   getTask(taskId: string): Promise<Task | null>
   listTasks(query?: TaskQuery): Promise<Task[]>
   listTaskSteps(taskId: string): Promise<TaskStep[]>

@@ -433,7 +433,13 @@ describe.runIf(integration).sequential('TaskLedger (PostgreSQL)', () => {
     await ledgerA.finishStep({ stepId: step.id, status: 'done', error: null, fence })
     await ledgerA.addDeliverable({ taskId: task.id, stepId: step.id, kind: 'note', summary: 'ok\0nul', fence })
     await ledgerA.transitionTask(task.id, 'running', 'review', fence)
-    const done = await ledgerA.transitionTask(task.id, 'review', 'done', fence)
+    // `review` SOLTA o lease: quem fecha é o crítico, que nunca teve o fence.
+    // Reusar o fence antigo aqui é recusado de propósito — este teste reusava, e
+    // só não acusava porque o caminho PostgreSQL fica desligado por padrão.
+    await expect(ledgerA.transitionTask(task.id, 'review', 'done', fence)).rejects.toMatchObject({
+      code: 'TASK_FENCE_STALE'
+    })
+    const done = await ledgerA.transitionTask(task.id, 'review', 'done')
     expect(done.status).toBe('done')
 
     // Terminal state released the lease; other installation reads the same ledger.
