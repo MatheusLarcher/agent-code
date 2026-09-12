@@ -580,6 +580,31 @@ Três decisões que sustentam isso:
 
 > O `TaskLedger` foi removido por engano num passo anterior por "não ter consumidor"; ele **não tinha consumidor porque este era o próximo passo**. Fundação antes do consumidor não é código morto.
 
+#### O que está no ar e o que falta (medido em 12/09/2026)
+
+A infraestrutura do time está ligada; o **protocolo** ainda não foi exercitado em trabalho real. A distinção importa: teste unitário prova a regra do repositório, não prova que o modelo segue o combinado.
+
+**Observado em runtime** (não inferido do código):
+
+- **Os quatro especialistas são tipos reais de subagente.** Depois que o app recarregou com o commit, `executor`, `critico`, `memoria` e `navegador-de-codigo` passaram a aparecer na lista de agentes do harness — isso é o `Options.agents` valendo em runtime, não só o cadastro compilando.
+- **O registro responde com repositório autoritativo.** `task_list` devolve "nenhuma tarefa nesses estados" em vez de erro. Sem banco, o servidor MCP `tasks` nem chega a ser registrado (`agentSession.ts` só o monta `if (ledger)`), então a resposta vazia **é** a prova de que ele está ligado.
+
+**Entregue e coberto por teste, mas ainda não visto rodando:** o reaper (sobe com o armazenamento — `startTaskReaper` só é chamado sob `storageAvailable`), a terceira visão do painel e a gravação/leitura da identidade de projeto. Nada aqui é suposição sobre o código; é que ninguém observou o comportamento na tela ou em produção.
+
+**Ligado, mas nunca exercitado:**
+
+- **O ciclo completo nunca rodou numa tarefa real** — a fila está vazia, zero tarefas criadas fora dos testes. Supervisor decompõe → executor reivindica → evidência → crítico fecha existe em teste, não em uso.
+- **O gate de escopo** (incluindo `Bash`) só foi provado em unidade. Em produção ele depende de uma tarefa **reivindicada de fato**, e não houve nenhuma.
+- **O reaper nunca foi visto agindo**: precisa de um lease morto há mais de 20 min (15 de TTL + 5 de folga), e nenhum executor foi abandonado até agora.
+
+**Falta fazer, em ordem de dependência:**
+
+1. **Rodar o protocolo numa tarefa real.** É o único teste do que a unidade não alcança: o modelo pedir revisão sem registrar evidência, o crítico fechar sem conferir, o executor não reivindicar pelo `task_id` que recebeu. Enquanto isso não acontecer, o `TASKS_HINT` é hipótese.
+2. **Selecionar quais memórias e quais arquivos cada especialista recebe.** Hoje "contexto por especialidade" é só a superfície de ferramentas. O resto depende de recuperação por relevância — a busca semântica de memórias, que a spec deixou como subprojeto próprio.
+3. **Cobrir o caminho PostgreSQL no fluxo normal de teste.** A suíte de integração só roda com `AGENT_CODE_PG_INTEGRATION=1` e um container de pé — foi exatamente por isso que um teste quebrado atravessou dois commits sem acusar (ver abaixo). Sem gancho de CI, mexer em persistência exige rodá-la à mão.
+
+> **O teste que ficou quebrado por dois commits.** `taskLedger.test.ts` reusava o fence depois de `review`, que passou a **soltar** o lease em `5b6250a`. O código estava certo e o teste é que mentia; ele nunca acusou porque o caminho PostgreSQL fica desligado por padrão. Corrigido em `abe0530` — agora ele prova a recusa **e** fecha sem fence, como o crítico faz de verdade. O caso equivalente no SQLite (`review → done` sem fence) já estava certo, então o contrato nunca esteve sem cobertura: o que faltava era a cobertura **rodar**.
+
 **Adoção do acervo já existente** — quando o banco vira a autoridade da memória, um acervo que já estava em disco precisa entrar nele. `configureMemoryRuntime` dispara um `reconcile()` a cada ligação de repositório (`memoryRuntime.ts`), então a adoção acontece na inicialização e em toda troca de backend.
 
 A alternativa era esperar o `reconcile` que o `memory_propose` já provoca — e isso deixava o acervo **invisível ao banco até um agente por acaso salvar algo**. Medido num acervo real de 162 memórias: os arquivos estavam lá e o banco vazio.
