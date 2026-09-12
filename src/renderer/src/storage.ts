@@ -1,5 +1,10 @@
 import { DEFAULT_TITLE, type Conversation, type UIMessage } from './types'
-import type { RateLimitStatus, RepositoryChange, VersionedConversationDto } from '@shared/ipc'
+import type {
+  RateLimitStatus,
+  RepositoryChange,
+  StorageStatusDto,
+  VersionedConversationDto
+} from '@shared/ipc'
 import { ipcStorageErrorCode } from './ipcError'
 
 // Persistence for the conversation history + UI state. Conversations are backed
@@ -166,6 +171,24 @@ function normalizeConversation(record: VersionedConversationDto): Conversation {
  *  sidebar shows this many per project and a "mostrar mais" fetches the rest. */
 export const CONVERSATIONS_PER_PROJECT = 6
 
+/** Quantos projetos entram na PRIMEIRA leitura de conversas. O resto vem em
+ *  segundo plano, projeto a projeto, depois que a tela já está montada — com o
+ *  banco autoritativo remoto, uma leitura só com todos os projetos é dezenas de
+ *  MB de payload na frente da primeira pintura. */
+export const PROJECTS_IN_FIRST_PAGE = 4
+
+/** Tamanho de cada lote de projetos carregado em segundo plano. */
+export const PROJECTS_PER_BACKGROUND_BATCH = 4
+
+/** Um projeto como o banco o conhece, SEM payload nenhum: é o que deixa a barra
+ *  lateral aparecer inteira (nome + total) antes de qualquer conversa chegar. */
+export interface ProjectSummary {
+  cwd: string
+  total: number
+  /** Epoch ms da conversa mais recente do projeto — a ordem da barra lateral. */
+  updatedAt: number
+}
+
 /** Normalize authoritative records into renderer conversations, remembering each
  *  record's revision so later CAS writes and change-feed merges have a baseline.
  *  Tombstones are remembered but never returned. */
@@ -183,12 +206,19 @@ function absorbRecords(records: VersionedConversationDto[]): Conversation[] {
 }
 
 /** Initial load. With `perProject`, only the N most recent conversations of each
- *  project come down — the rest stays in the database until `loadProjectConversations`
- *  is asked for it. Saving is per-record (upsert/delete by id), so a partially
- *  loaded list is safe: records that were never loaded are never touched. */
-export async function loadConversations(options?: { perProject?: number }): Promise<Conversation[]> {
+ *  project come down; with `cwds`, only those projects. The rest stays in the
+ *  database until `loadProjectsPage`/`loadProjectConversations` asks for it.
+ *  Saving is per-record (upsert/delete by id), so a partially loaded list is
+ *  safe: records that were never loaded are never touched. */
+export async function loadConversations(options?: {
+  perProject?: number
+  cwds?: string[]
+}): Promise<Conversation[]> {
+  const query: { perProject?: number; cwds?: string[] } = {}
+  if (options?.perProject) query.perProject = options.perProject
+  if (options?.cwds) query.cwds = options.cwds
   const records = await window.api.loadVersionedConversations(
-    options?.perProject ? { perProject: options.perProject } : undefined
+    Object.keys(query).length ? query : undefined
   )
   conversationRecords.clear()
   const list = absorbRecords(records)
@@ -199,6 +229,22 @@ export async function loadConversations(options?: { perProject?: number }): Prom
   return legacy ? compactOldConversations(legacy) : []
 }
 
+/** A primeira página de mais alguns projetos, SEM zerar o que já está carregado —
+ *  é o que o carregamento em segundo plano usa, lote a lote. */
+export async function loadProjectsPage(cwds: string[], perProject: number): Promise<Conversation[]> {
+  if (!cwds.length) return []
+  const records = await window.api.loadVersionedConversations({ cwds, perProject })
+  return compactOldConversations(absorbRecords(records))
+}
+
+/** Conversas específicas por id (a conversa ativa da sessão anterior, por
+ *  exemplo), sem zerar o que já está carregado. */
+export async function loadConversationsByIds(ids: string[]): Promise<Conversation[]> {
+  if (!ids.length) return []
+  const records = await window.api.loadVersionedConversations({ ids })
+  return compactOldConversations(absorbRecords(records))
+}
+
 /** Every live conversation of one project ("mostrar mais"). Records already held
  *  locally are refreshed only in the revision map; the caller decides which
  *  conversation object wins on screen (the local one may carry unsaved state). */
@@ -207,10 +253,56 @@ export async function loadProjectConversations(cwd: string): Promise<Conversatio
   return compactOldConversations(absorbRecords(records))
 }
 
-/** Live conversation count per project folder, straight from the database. */
-export async function loadProjectCounts(): Promise<Record<string, number>> {
+/**
+ * Espera a persistência autoritativa sair de `booting`.
+ *
+ * A janela abre ANTES de o banco estar pronto (ver `app.whenReady()` em
+ * src/main/index.ts): com um PostgreSQL remoto, conectar e migrar leva segundos,
+ * e prender a interface nisso era o que fazia o app "não abrir". Sem esta espera
+ * a primeira leitura do renderer chegaria com o backend ainda subindo e voltaria
+ * STORAGE_OFFLINE — uma tela de erro para uma condição passageira.
+ */
+export function waitForStorageReady(): Promise<StorageStatusDto> {
+  return new Promise((resolve) => {
+    let off: (() => void) | null = null
+    let settled = false
+    const finish = (status: StorageStatusDto): void => {
+      if (settled) return
+      settled = true
+      off?.()
+      resolve(status)
+    }
+    off = window.api.onStorageStatusChanged((status) => {
+      if (status.state !== 'booting') finish(status)
+    })
+    if (settled) return
+    // Corrida: o backend pode ter ficado pronto antes de assinarmos.
+    void window.api
+      .getStorageStatus()
+      .then((status) => {
+        if (status.state !== 'booting') finish(status)
+      })
+      .catch(() => undefined)
+  })
+}
+
+/**
+ * Os projetos do banco (pasta + total + data da conversa mais recente), do mais
+ * recente para o mais antigo. É uma agregação — não traz payload de conversa
+ * nenhuma —, então a barra lateral pode aparecer completa enquanto as conversas
+ * ainda estão vindo. Projeto sem pasta (`cwd` vazio) fica de fora: a barra
+ * lateral não tem onde mostrá-lo.
+ */
+export async function loadProjectSummaries(): Promise<ProjectSummary[]> {
   const rows = await window.api.countConversationsByProject()
-  return Object.fromEntries(rows.map((row) => [row.cwd, row.total]))
+  return rows
+    .filter((row) => row.cwd)
+    .map((row) => ({
+      cwd: row.cwd,
+      total: row.total,
+      updatedAt: Number.isFinite(Date.parse(row.updatedAt)) ? Date.parse(row.updatedAt) : 0
+    }))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 function enqueueConversation(id: string, write: () => Promise<VersionedConversationDto>): Promise<void> {

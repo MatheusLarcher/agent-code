@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { WriteScope } from '../persistence/types'
+import { scanBashWrites } from './bashWriteScan'
 
 /**
  * Imposição DETERMINÍSTICA do `write_scope` de uma tarefa, fora do LLM.
@@ -10,6 +11,10 @@ import type { WriteScope } from '../persistence/types'
  * reivindicada com escopo declarado, `Write`/`Edit` fora dele é recusado no gate
  * de permissão — antes do "Permitir tudo", que é sobre o usuário confiar no
  * modelo, não sobre o modelo respeitar o contrato da tarefa.
+ *
+ * `Bash` também passa por aqui, pelos destinos que `scanBashWrites` consegue
+ * extrair do comando. Os limites desse reconhecimento estão documentados em
+ * `bashWriteScan.ts`: é uma trava contra descuido e deriva, não um sandbox.
  *
  * Sem tarefa com escopo, nada muda: o gate segue como sempre.
  */
@@ -108,24 +113,10 @@ export function relativeToProject(projectCwd: string, filePath: string): string 
 }
 
 /**
- * `null` = pode escrever. Texto = motivo da recusa, legível pelo modelo.
- *
- * Regra: a escrita é permitida se AO MENOS UMA tarefa ativa a autoriza —
- * dentro do projeto dela, casando um `allow` (ou `allow` vazio = tudo do
- * projeto) e nenhum `deny`. Tarefas sem escopo nenhum não contam para nada.
+ * Um caminho contra as tarefas ativas. `null` = autorizado por alguma delas;
+ * caso contrário, os motivos de cada recusa (para o texto devolvido ao modelo).
  */
-export function writeScopeDenial(
-  tasks: readonly ScopedTask[],
-  toolName: string,
-  input: Record<string, unknown>
-): string | null {
-  const field = FILE_TOOLS[toolName]
-  if (!field) return null
-  const scoped = tasks.filter((t) => t.writeScope.allow.length || t.writeScope.deny.length)
-  if (!scoped.length) return null
-  const filePath = input[field]
-  if (typeof filePath !== 'string' || !filePath.trim()) return null
-
+function pathDenialReasons(scoped: readonly ScopedTask[], filePath: string): string[] | null {
   const reasons: string[] = []
   for (const task of scoped) {
     const rel = relativeToProject(task.projectCwd, filePath)
@@ -143,10 +134,61 @@ export function writeScopeDenial(
     }
     return null
   }
+  return reasons
+}
+
+function refusal(toolName: string, reasons: string[]): string {
   return (
     `${toolName} recusado pelo escopo de escrita da tarefa em andamento — ${reasons.join('; ')}. ` +
     'Se esse arquivo precisa mudar, registre um task_event "blocker" com o caminho e devolva a tarefa ao supervisor ' +
     '(task_transition para "review" ou "blocked", com o motivo). O supervisor abre outra tarefa com o escopo certo. ' +
-    'Não contorne por Bash: o escopo é o contrato da tarefa, não um obstáculo técnico.'
+    'O escopo é o contrato da tarefa, não um obstáculo técnico.'
   )
+}
+
+/**
+ * `null` = pode escrever. Texto = motivo da recusa, legível pelo modelo.
+ *
+ * Regra: a escrita é permitida se AO MENOS UMA tarefa ativa a autoriza —
+ * dentro do projeto dela, casando um `allow` (ou `allow` vazio = tudo do
+ * projeto) e nenhum `deny`. Tarefas sem escopo nenhum não contam para nada.
+ *
+ * `Bash` entra pela mesma porta, com os destinos extraídos do comando
+ * (`scanBashWrites`). Comando cuja escrita não dá para fixar — `cd` seguido de
+ * caminho relativo, destino vindo de variável, `git checkout`, `eval` — é
+ * recusado com o motivo, em vez de passar batido: o ponto do gate é justamente
+ * não deixar o escopo virar sugestão. O que o scanner não reconhece como
+ * escrita continua passando, e isso está documentado nele.
+ */
+export function writeScopeDenial(
+  tasks: readonly ScopedTask[],
+  toolName: string,
+  input: Record<string, unknown>
+): string | null {
+  const scoped = tasks.filter((t) => t.writeScope.allow.length || t.writeScope.deny.length)
+  if (!scoped.length) return null
+
+  if (toolName === 'Bash') {
+    const command = input.command
+    if (typeof command !== 'string' || !command.trim()) return null
+    const scan = scanBashWrites(command)
+    if (scan.unbounded) {
+      return refusal('Bash', [
+        `não dá para conferir o destino da escrita: ${scan.reason}`,
+        'reescreva com caminho absoluto dentro do escopo, ou use Write/Edit'
+      ])
+    }
+    for (const target of scan.targets) {
+      const reasons = pathDenialReasons(scoped, target)
+      if (reasons) return refusal('Bash', reasons)
+    }
+    return null
+  }
+
+  const field = FILE_TOOLS[toolName]
+  if (!field) return null
+  const filePath = input[field]
+  if (typeof filePath !== 'string' || !filePath.trim()) return null
+  const reasons = pathDenialReasons(scoped, filePath)
+  return reasons ? refusal(toolName, reasons) : null
 }

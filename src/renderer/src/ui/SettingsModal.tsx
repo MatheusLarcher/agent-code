@@ -17,6 +17,7 @@ import {
   IconKey,
   IconMic,
   IconMonitor,
+  IconMoon,
   IconSettings,
   IconSliders,
   IconUnlock
@@ -256,6 +257,33 @@ export function SettingsModal({
                       type="checkbox"
                       checked={windowsControlEnabled}
                       onChange={(event) => onToggleWindowsControl(event.target.checked)}
+                    />
+                    <span className="switch-visual" aria-hidden="true" />
+                  </label>
+                </section>
+
+                <section className={`settings-section settings-switch-section ${cfg.preventSleepWhileBusy ? 'on' : ''}`}>
+                  <label className="settings-switch-row">
+                    <span className="settings-switch-text">
+                      <strong>
+                        <IconMoon size={15} /> Impedir suspensão enquanto o agente trabalha
+                      </strong>
+                      <span className="settings-desc">
+                        Enquanto houver uma conversa no meio de um turno, o PC não entra em suspensão por
+                        ociosidade — e a tela fica acesa, porque neste Windows é o único pedido que o sistema
+                        de fato respeita. Ao terminar o turno tudo volta ao normal e a tela apaga sozinha.
+                        Fechar a tampa ou suspender pelo menu continua valendo.
+                      </span>
+                    </span>
+                    <input
+                      className="switch-input"
+                      type="checkbox"
+                      checked={cfg.preventSleepWhileBusy}
+                      onChange={(event) => {
+                        const on = event.target.checked
+                        setCfg((c) => ({ ...c, preventSleepWhileBusy: on }))
+                        void window.api.setConfig({ preventSleepWhileBusy: on })
+                      }}
                     />
                     <span className="switch-visual" aria-hidden="true" />
                   </label>

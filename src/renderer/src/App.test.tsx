@@ -1808,3 +1808,111 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
     expect(api.kvSet.mock.invocationCallOrder[0]).toBeLessThan(api.appReloadReady.mock.invocationCallOrder[0])
   })
 })
+
+describe('App — abertura em etapas (projetos em segundo plano)', () => {
+  /** Conversa `<cwd>-1` de cada projeto, no formato que o main devolve. */
+  function recordFor(cwd: string) {
+    const id = `${cwd.replace(/\W+/g, '')}-1`
+    return {
+      id,
+      payload: { id, cwd, title: `Conversa de ${cwd}`, messages: [], createdAt: 1, updatedAt: 2 },
+      revision: 1,
+      contentHash: id,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString()
+    }
+  }
+
+  it('lê só os 4 projetos mais recentes, lista todos na barra e completa por lote', async () => {
+    // 6 projetos no banco, do mais recente para o mais antigo.
+    const projects = ['/p1', '/p2', '/p3', '/p4', '/p5', '/p6']
+    api.countConversationsByProject.mockImplementation(async () =>
+      projects.map((cwd, index) => ({
+        cwd,
+        total: 3,
+        updatedAt: new Date(Date.UTC(2026, 8, 10 - index)).toISOString()
+      }))
+    )
+    api.loadVersionedConversations.mockImplementation(async (query?: { cwds?: string[] }) =>
+      (query?.cwds ?? []).map(recordFor)
+    )
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+
+    // Primeira leitura: SÓ os quatro primeiros, e com a página por projeto.
+    await waitFor(() => expect(api.loadVersionedConversations).toHaveBeenCalled())
+    expect(api.loadVersionedConversations.mock.calls[0][0]).toEqual({
+      perProject: 6,
+      cwds: ['/p1', '/p2', '/p3', '/p4']
+    })
+
+    // Mesmo antes de o resto chegar, os SEIS projetos já estão na barra lateral:
+    // nome e total vêm da agregação, não das conversas.
+    for (const cwd of projects) {
+      expect((await screen.findAllByTitle(cwd)).length).toBeGreaterThan(0)
+    }
+
+    // O restante é buscado sozinho, em lote, sem nenhuma ação do usuário.
+    await waitFor(() =>
+      expect(
+        api.loadVersionedConversations.mock.calls.some(
+          (call: unknown[]) =>
+            JSON.stringify((call[0] as { cwds?: string[] } | undefined)?.cwds) ===
+            JSON.stringify(['/p5', '/p6'])
+        )
+      ).toBe(true)
+    )
+    expect((await screen.findAllByText('Conversa de /p6')).length).toBeGreaterThan(0)
+    // E nunca houve uma leitura sem recorte — nada de "a tabela inteira de uma
+    // vez". Todo pedido traz `cwds` (lote de projetos) ou `ids` (conversa certa).
+    const semRecorte = api.loadVersionedConversations.mock.calls.filter((call: unknown[]) => {
+      const query = call[0] as { cwds?: string[]; ids?: string[] } | undefined
+      return !query || (query.cwds === undefined && query.ids === undefined)
+    })
+    expect(semRecorte).toEqual([])
+  })
+
+  it('só lê depois que a persistência sai de "booting" — a janela abre antes do banco', async () => {
+    // Vários assinantes de verdade (a espera do boot e o efeito de status): o
+    // mock precisa avisar TODOS, como o IPC real faz.
+    const handlers = new Set<(status: unknown) => void>()
+    const notify = (status: unknown): void => {
+      for (const handler of [...handlers]) handler(status)
+    }
+    const booting = {
+      backend: 'postgres',
+      state: 'booting',
+      writable: false,
+      installationId: '00000000-0000-4000-8000-000000000001',
+      targetDatabase: 'agent-code',
+      hasPassword: true
+    }
+    api.getStorageStatus.mockImplementation(async () => booting)
+    api.onStorageStatusChanged.mockImplementation((handler: (status: unknown) => void) => {
+      handlers.add(handler)
+      return () => handlers.delete(handler)
+    })
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+
+    await waitFor(() => expect(handlers.size).toBeGreaterThan(0))
+    // Enquanto o banco sobe: nada é lido e NENHUMA tela de erro aparece.
+    expect(api.loadVersionedConversations).not.toHaveBeenCalled()
+    expect(api.countConversationsByProject).not.toHaveBeenCalled()
+    expect(document.querySelector('.storage-recovery')).toBeNull()
+
+    await act(async () => {
+      notify({ ...booting, state: 'postgres-ready', writable: true })
+    })
+    await waitFor(() => expect(api.countConversationsByProject).toHaveBeenCalled())
+    expect(document.querySelector('.storage-recovery')).toBeNull()
+  })
+})

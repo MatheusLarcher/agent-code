@@ -52,7 +52,8 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.windowsControlEnabled',
       'config.secretVaultEnabled',
       'config.remoteToken',
-      'config.remoteEnabled'
+      'config.remoteEnabled',
+      'config.preventSleepWhileBusy'
     ]
   },
   {

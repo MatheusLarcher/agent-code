@@ -24,6 +24,7 @@ const EXPECTED_KEYS = [
   'config.openai.apiKey',
   'config.openai.speed',
   'config.openai.voice',
+  'config.preventSleepWhileBusy',
   'config.remoteEnabled',
   'config.remoteToken',
   'config.secretVaultEnabled',

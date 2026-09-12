@@ -5553,3 +5553,334 @@ button svg {
   cursor: default;
   opacity: 0.6;
 }
+
+/* ---- Painel de agentes → aba "Tarefas" (registro durável) ----
+   A barra de filtros fica FORA do corpo rolável: filtrar é uma ação sobre a
+   lista inteira, e ela sumir ao rolar esconderia a razão de a lista estar curta. */
+.task-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.task-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.task-chip .n {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.task-chip.on {
+  color: var(--text);
+  border-color: var(--accent-dim);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.task-chip.off {
+  opacity: 0.45;
+}
+.task-scope-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.task-scope-toggle input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.task {
+  position: relative;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 7px;
+  overflow: hidden;
+}
+.task.review {
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--line));
+}
+.task.running {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.task.failed {
+  border-color: color-mix(in srgb, var(--err) 35%, var(--line));
+}
+.task-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.task-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  margin-top: 4px;
+  background: var(--muted);
+}
+.task-dot.running {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.task-dot.review {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 15%, transparent);
+}
+.task-dot.blocked {
+  background: #8a86f0;
+}
+.task-dot.done {
+  background: var(--ok);
+}
+.task-dot.failed,
+.task-dot.cancelled {
+  background: var(--err);
+}
+.task-main {
+  flex: 1;
+  min-width: 0;
+}
+.task-title {
+  display: block;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.task-owner {
+  color: var(--text);
+  opacity: 0.85;
+}
+.task-sep {
+  opacity: 0.4;
+}
+.task-lease {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.task-lease.stale {
+  color: var(--err);
+}
+.task-scope {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  background: var(--bg-3);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.task-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+.task-attempts {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.task-attempts.last {
+  color: var(--warn);
+}
+.task-evid {
+  font-size: 10px;
+  color: var(--muted);
+}
+.task-evid.none {
+  color: var(--err);
+  opacity: 0.85;
+}
+.task-caret {
+  color: var(--muted);
+  margin-top: 2px;
+  transition: transform 0.15s ease;
+}
+.task.open .task-caret {
+  transform: rotate(180deg);
+}
+.task-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  overflow: hidden;
+}
+.task-progress::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: task-sweep 1.6s linear infinite;
+}
+@keyframes task-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+.task-detail {
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  padding: 9px 10px 10px;
+}
+.td-goal {
+  margin: 0 0 9px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.td-block {
+  margin-bottom: 9px;
+}
+.td-block:last-of-type {
+  margin-bottom: 0;
+}
+.td-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.td-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.td-list li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  line-height: 1.35;
+  font-size: 12px;
+}
+.td-list .mk {
+  flex: 0 0 auto;
+  width: 13px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 1px;
+}
+.td-list .mk.ok {
+  color: var(--ok);
+}
+.td-list .mk.run {
+  color: var(--accent);
+}
+.td-steps li {
+  color: var(--muted);
+  font-size: 11px;
+}
+.td-err {
+  color: var(--err);
+}
+.td-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 9px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.td-evid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.evid {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+.evid.unver {
+  border-style: dashed;
+  color: var(--muted);
+}
+.td-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--err);
+  opacity: 0.85;
+}
+.td-foot {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+.td-btn {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.td-btn:hover {
+  border-color: var(--accent-dim);
+}
+.td-id {
+  margin-left: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+}

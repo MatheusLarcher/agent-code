@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, powerMonitor, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, powerMonitor, powerSaveBlocker, safeStorage, shell } from 'electron'
 import type { MessageBoxOptions } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { getSessionInfo, getSessionMessages, importSessionToStore } from '@anthropic-ai/claude-agent-sdk'
@@ -36,11 +36,11 @@ import { isAuthenticated, logoutClaude } from './auth'
 import { runClaudeLogin } from './login'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin, isCodexConnected } from './codexAuth'
 import { onCodexRateLimit } from './codexProxy'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir } from './store'
 import { storageLifecycle } from './persistence/lifecycle'
 import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlist'
-import { readPersistedKv, writePersistedKv } from './persistence/kvFacade'
+import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
 import { hashJson, normalizeJson } from './persistence/hashes'
 import {
@@ -48,12 +48,16 @@ import {
   isMissingProjectFolderError,
   preserveProjectIdentityForMissingPersistedWrite
 } from './persistence/projectIdentity'
-import { exportConversationsParquet } from './conversationParquet'
+import { dailyParquetPath, exportConversationsParquet } from './conversationParquet'
 import { storageErrorForIpc, upsertConversationWithLeaseRecovery } from './persistence/conversationWriteRecovery'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
+import { taskLedger } from './tasks/taskRuntime'
+import { buildTaskBoard, buildTaskDetail, type TaskBoardQuery } from './tasks/taskBoard'
+import { startTaskReaper } from './tasks/taskReaper'
 import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, restoreVault } from './memory/memoryRuntime'
 import { startRestartGuardFile } from './restartGuardFile'
+import { startSleepGuard } from './sleepGuard'
 import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
 import { syncCacheSkills } from './skillManager'
@@ -85,7 +89,9 @@ import type {
 
 let mainWindow: BrowserWindow | null = null
 let stopMemoryCurator: (() => void) | null = null
+let stopTaskReaper: (() => void) | null = null
 let stopRestartGuardFile: (() => void) | null = null
+let stopSleepGuard: (() => void) | null = null
 let closeRequested = false
 let closeReady = false
 let closeRequestTimer: ReturnType<typeof setInterval> | null = null
@@ -690,6 +696,25 @@ function createWindow(): void {
   })
 }
 
+/**
+ * Cronômetro de cada etapa da abertura, no mesmo arquivo de diagnóstico.
+ * Com o banco autoritativo num PostgreSQL remoto, "o app demora a abrir" é uma
+ * pergunta sobre QUAL etapa demorou — e sem isto não há como responder.
+ */
+function bootStage<T>(name: string, run: () => Promise<T>): Promise<T> {
+  const started = Date.now()
+  return run().then(
+    (value) => {
+      authLog(`boot ${name}: ${Date.now() - started}ms`)
+      return value
+    },
+    (error: unknown) => {
+      authLog(`boot ${name}: ${Date.now() - started}ms (falhou)`)
+      throw error
+    }
+  )
+}
+
 // TEMP login diagnostics → auth-debug.log in the cache folder (removed once the
 // OAuth flow is confirmed end-to-end).
 function authLog(line: string): void {
@@ -916,6 +941,23 @@ function registerIpc(): void {
     const service = memoryService()
     if (!service) throw new StorageError('STORAGE_OFFLINE', 'Persistência autoritativa offline.', true)
     return service.discardProposal(id)
+  })
+  // Read-only window onto the task ledger. It degrades instead of throwing:
+  // the panel is an observation surface, and a storage hiccup must not become
+  // an error dialog on top of the chat.
+  ipcMain.handle(Channels.tasksBoard, async (_e, query?: TaskBoardQuery) => {
+    try {
+      return await buildTaskBoard(taskLedger(), query)
+    } catch {
+      return { available: false, items: [] }
+    }
+  })
+  ipcMain.handle(Channels.tasksDetail, async (_e, taskId: string) => {
+    try {
+      return await buildTaskDetail(taskLedger(), taskId)
+    } catch {
+      return null
+    }
   })
   ipcMain.handle(Channels.kvGet, (_e, key: string) => readPersistedKv(key))
   ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => {
@@ -1373,27 +1415,31 @@ app.whenReady().then(async () => {
   // reiniciar resolve. Publicado depois, um app nesse estado nunca escreveria o
   // arquivo e o script recusaria para sempre, sem ninguém entender por quê.
   if (appRestart) stopRestartGuardFile = startRestartGuardFile(appRestart, app.getPath('userData'))
-  await storageLifecycle.initialize({
-    location: cacheInfo,
-    userDataDir: app.getPath('userData'),
-    secureStorage: safeStorage,
-    appVersion: app.getVersion()
-  })
-  const storageAvailable = storageLifecycle.canMutate()
-  if (storageAvailable) {
-    await initializeConfigPersistence()
-    await initializeCodexAuthPersistence()
-    // Migrou levando só o banco? O cofre é reconstruído do espelho. Precisa do
-    // banco pronto, por isso não fica junto do configureSecretVault.
-    const restored = await restoreVault()
-    if (restored === 'restored') console.log('[vault] cofre restaurado do banco')
-    if (restored === 'failed') console.error('[vault] falha ao restaurar o cofre do banco')
+  // Mesma pergunta ("algum agente ocupado?"), outro consumidor: enquanto houver
+  // turno vivo, o sistema não entra em suspensão por ociosidade — o Windows não
+  // conta o trabalho do agente como atividade e dormia no meio da tarefa. Sai
+  // do ar assim que o turno termina, e a tela continua apagando normalmente.
+  if (appRestart) {
+    const coordinator = appRestart
+    stopSleepGuard = startSleepGuard({
+      blocker: powerSaveBlocker,
+      isBusy: () => coordinator.busyNow(),
+      isEnabled: () => loadConfig().preventSleepWhileBusy !== false
+    })
   }
-  const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir)
-  for (const error of skillSync.errors) console.error(`[skills] ${error}`)
   authLog('=== main started (new build) ===')
+  // Nada de KV antes de o backend autoritativo existir. Sem isto, `kvFacade`
+  // fica em "não configurado" e cai no SQLite LEGADO em silêncio — com a janela
+  // abrindo antes do banco, seria config velha lida como se fosse a boa.
+  configureKvRepositoryOffline()
+  // A JANELA VEM ANTES DO BANCO, de propósito. O backend autoritativo pode ser um
+  // PostgreSQL remoto: conectar, migrar e ler leva segundos numa rede boa — e numa
+  // ruim pode simplesmente não voltar. Com a ordem antiga, qualquer tropeço aqui
+  // (uma leitura pendurada, uma exceção antes de `createWindow`) deixava o processo
+  // vivo e SEM JANELA NENHUMA: nada na tela, nada para clicar, nada para entender.
+  // Agora a interface sobe primeiro e acompanha o estado da persistência pelo
+  // `storageStatusChanged` — que por isso é assinado antes de `initialize()`.
   registerIpc()
-  createWindow()
   // ChatGPT plan usage read off the Codex proxy responses. Account-level, so it
   // is not tied to any conversation: the renderer routes `rate-limit` events
   // straight into its global usage state without looking at `convId`.
@@ -1427,20 +1473,57 @@ app.whenReady().then(async () => {
       authLog(`change feed apply failed: ${error instanceof Error ? error.message : String(error)}`)
     })
   })
+  createWindow()
+  // Sincrono e recursivo em disco (e a pasta de dados pode estar no OneDrive):
+  // fora do caminho da janela, onde só atrasava a primeira pintura.
+  const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir)
+  for (const error of skillSync.errors) console.error(`[skills] ${error}`)
+  await bootStage('storage', () =>
+    storageLifecycle.initialize({
+      location: cacheInfo,
+      userDataDir: app.getPath('userData'),
+      secureStorage: safeStorage,
+      appVersion: app.getVersion()
+    })
+  )
+  const storageAvailable = storageLifecycle.canMutate()
   if (storageAvailable) {
-    const exportSnapshot = await storageLifecycle.repository().readExportSnapshot()
-    parquetExportPromise = exportConversationsParquet(
-      cacheInfo.dir,
-      exportSnapshot.conversations,
-      cacheInfo.memoriesDir,
-      { backend: exportSnapshot.backend, watermark: exportSnapshot.watermark }
-    ).catch((error) => {
+    await bootStage('config', () => initializeConfigPersistence())
+    await bootStage('codex-auth', () => initializeCodexAuthPersistence())
+    // Migrou levando só o banco? O cofre é reconstruído do espelho. Precisa do
+    // banco pronto, por isso não fica junto do configureSecretVault.
+    const restored = await bootStage('vault', () => restoreVault())
+    if (restored === 'restored') console.log('[vault] cofre restaurado do banco')
+    if (restored === 'failed') console.error('[vault] falha ao restaurar o cofre do banco')
+  }
+  // A persistência já está pronta (ou já falhou de forma conhecida): só agora a
+  // interface pode ler config e conversas sem tomar STORAGE_OFFLINE.
+  send(Channels.storageStatusChanged, storageLifecycle.status())
+  // Export DIÁRIO — e o arquivo do dia é o gate. `readExportSnapshot()` baixa
+  // TODA conversa (payload inteiro) do backend autoritativo; com PostgreSQL
+  // remoto isso são dezenas de MB pela internet, e rodava a cada abertura do
+  // app mesmo com o arquivo de hoje já gravado. Agora só baixa quando há
+  // export a fazer, e nunca na frente da janela: `void`, não `await`.
+  if (storageAvailable && !existsSync(dailyParquetPath(cacheInfo.dir))) {
+    parquetExportPromise = (async () => {
+      const exportSnapshot = await storageLifecycle.repository().readExportSnapshot()
+      return exportConversationsParquet(
+        cacheInfo.dir,
+        exportSnapshot.conversations,
+        cacheInfo.memoriesDir,
+        { backend: exportSnapshot.backend, watermark: exportSnapshot.watermark }
+      )
+    })().catch((error) => {
       authLog(`daily conversation parquet export failed: ${error instanceof Error ? error.message : String(error)}`)
     })
   }
   // Runs outside every chat session. The cheap transcript mtime gate happens
   // before any agent is started, and the persisted timestamp keeps it daily.
   if (storageAvailable) stopMemoryCurator = await startMemoryCuratorScheduler()
+  // Devolve à fila a tarefa cujo executor morreu. É a primeira regra do time
+  // que roda fora do modelo: quem some no meio do trabalho pode ser justamente
+  // o supervisor, então não dá para depender de alguém perceber e agir.
+  if (storageAvailable) stopTaskReaper = startTaskReaper(undefined, (line) => console.log(line))
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
   // a paired phone reconnects on its own (the fixed token is already persisted).
   if (storageAvailable && loadConfig().remoteEnabled) {
@@ -1489,6 +1572,10 @@ app.on('before-quit', (event) => {
   stopLocalSpeech()
   stopMemoryCurator?.()
   stopMemoryCurator = null
+  stopTaskReaper?.()
+  stopTaskReaper = null
   stopRestartGuardFile?.()
   stopRestartGuardFile = null
+  stopSleepGuard?.()
+  stopSleepGuard = null
 })

@@ -145,19 +145,27 @@ export interface RepositoryChange {
 
 export type RepositoryChangeHandler = (changes: RepositoryChange[]) => void
 
-/** See `ConversationQueryDto` in shared/ipc.ts — same shape, main-side. `perProject`
- *  and `cwd` rank/filter LIVE conversations only (a tombstone must not occupy one
- *  of the N visible slots); `ids` honours `includeDeleted`. */
+/** See `ConversationQueryDto` in shared/ipc.ts — same shape, main-side. `perProject`,
+ *  `cwd` and `cwds` rank/filter LIVE conversations only (a tombstone must not occupy
+ *  one of the N visible slots); `ids` honours `includeDeleted`. */
 export interface ConversationQuery {
   includeDeleted?: boolean
   perProject?: number
   cwd?: string
+  /** Restrict to these project folders. Combined with `perProject`, this is how the
+   *  app opens: the first handful of projects come down, the rest follow em segundo
+   *  plano. Empty array means "nenhum projeto" and returns nothing. */
+  cwds?: string[]
   ids?: string[]
 }
 
 export interface ProjectConversationCount {
   cwd: string
   total: number
+  /** Newest `updated_at` among the project's live conversations (ISO 8601). Lets the
+   *  app order projects — and decide which ones to load first — without reading a
+   *  single conversation payload. */
+  updatedAt: string
 }
 
 // ---------------------------------------------------------------------------
@@ -458,10 +466,21 @@ export interface PersistenceRepository extends TaskRepository, MemoryRepository 
   close(): Promise<void>
 
   loadSnapshot(): Promise<ApplicationSnapshot>
+  /** "Dá para ler este backend?" — sonda LIMITADA, para abrir um backend que já
+   * está confirmado. Toca as mesmas tabelas que o app usa (KV + conversas) sem
+   * baixar nenhum payload. A releitura completa do `loadSnapshot()` continua
+   * sendo obrigatória nas TRANSIÇÕES de backend, onde o que se verifica é que os
+   * dados importados voltam inteiros — aqui não há importação para verificar, e
+   * com PostgreSQL remoto essa leitura custava dezenas de MB antes da janela. */
+  verifyReadable(): Promise<void>
   /** Full task/memory export, including history and retired entries. Atomic;
    * rejects live leases and strips expired tokens using the source DB clock. */
   loadTransferRecords(): Promise<TransferRecords>
   getKv(address: KvAddress): Promise<VersionedKv | null>
+  /** Várias chaves do MESMO escopo em uma consulta. Chave ausente simplesmente
+   * não aparece no resultado. Existe pelo boot: a configuração tem uma dúzia de
+   * campos e, um `getKv` por campo, cada um é uma ida e volta à rede. */
+  getKvMany(scope: KvScope, keys: string[]): Promise<VersionedKv[]>
   setKv(write: KvWrite): Promise<VersionedKv>
 
   loadConversations(options?: ConversationQuery): Promise<VersionedConversation[]>

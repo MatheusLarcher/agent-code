@@ -438,6 +438,10 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   applied_by uuid NOT NULL
 )`
 
+/** Mesmo teto do provisionamento: corta a ESPERA pelo lock, não trabalho real
+ *  (as migrations criam tabelas vazias e índices sobre elas). */
+const MIGRATION_STATEMENT_TIMEOUT_MS = 30_000
+
 export async function applyPostgresMigrations(
   client: PoolClient,
   installationId: string,
@@ -445,6 +449,11 @@ export async function applyPostgresMigrations(
 ): Promise<void> {
   await client.query('BEGIN')
   try {
+    // `SET LOCAL`: vale só dentro desta transação e some no COMMIT/ROLLBACK, então
+    // o pool de dados (onde uma importação pode levar minutos) não é afetado. O
+    // teto existe pelo lock abaixo — sem ele, uma migração já em andamento noutra
+    // máquina segura a abertura do app indefinidamente.
+    await client.query(`SET LOCAL statement_timeout = ${MIGRATION_STATEMENT_TIMEOUT_MS}`)
     await client.query('SELECT pg_advisory_xact_lock($1)', [7_420_260_829])
     await client.query(MIGRATION_TABLE)
     const existing = await client.query<{ version: number; checksum: string }>(

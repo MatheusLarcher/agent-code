@@ -27,6 +27,12 @@ function sslOptions(draft: PostgresConnectionDraft): ClientConfig['ssl'] {
   return { rejectUnauthorized: false }
 }
 
+/** Teto para as consultas de provisionamento/migração — catálogo e DDL de tabela
+ *  vazia. Generoso de propósito: o que ele existe para cortar é a ESPERA por um
+ *  lock, não trabalho real. Não vale para o pool de dados, onde uma importação
+ *  pode legitimamente levar minutos. */
+const PROVISION_STATEMENT_TIMEOUT_MS = 30_000
+
 export function validatePostgresDraft(value: unknown): PostgresConnectionDraft {
   const parsed = draftSchema.safeParse(value)
   if (!parsed.success) {
@@ -143,6 +149,14 @@ export async function provisionPostgres(
   let createdDatabase = false
   try {
     await maintenance.connect()
+    // O lock serializa "criar o banco agent-code" entre máquinas, e a seção que
+    // ele protege são três consultas ao catálogo — nunca demora. Sem um teto,
+    // porém, `pg_advisory_lock` espera PARA SEMPRE: um par segurando o lock (ou
+    // uma sessão órfã no servidor, depois de uma queda de rede) prendia a
+    // abertura do app numa espera invisível, com o socket conectado e nada na
+    // tela. Excedido o tempo, o erro é tratado como qualquer outra falha de
+    // conexão: o app abre no estado offline, com "Tentar novamente".
+    await maintenance.query(`SET statement_timeout = ${PROVISION_STATEMENT_TIMEOUT_MS}`)
     await maintenance.query('SELECT pg_advisory_lock($1)', [7_420_260_828])
     try {
       const found = await maintenance.query<{ exists: boolean }>(

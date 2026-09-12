@@ -1,6 +1,8 @@
 import type {
   SecretVaultItem,
   MemoryConflictItem,
+  TaskBoard,
+  TaskBoardDetail,
   AgentEventMsg,
   AgentInterruptResult,
   AgentMessageKind,
@@ -124,6 +126,10 @@ export interface AgentCodeApi {
   listMemoryConflicts(): Promise<MemoryConflictItem[]>
   /** Removes one settled proposal from the conflicts list. */
   discardMemoryProposal(id: string): Promise<boolean>
+  /** Task ledger queue for the agents panel. Read-only: the panel never moves a task. */
+  tasksBoard(query?: { projectCwd?: string; includeFinished?: boolean }): Promise<TaskBoard>
+  /** Steps, deliverables and events of one task — only fetched when it is expanded. */
+  tasksDetail(taskId: string): Promise<TaskBoardDetail | null>
   kvGet(key: string): Promise<string | null>
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet(key: string, value: string): Promise<void>

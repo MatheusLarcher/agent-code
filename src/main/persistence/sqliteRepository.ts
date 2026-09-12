@@ -56,6 +56,7 @@ import {
   type ConversationWrite,
   type ExportSnapshot,
   type KvAddress,
+  type KvScope,
   type KvWrite,
   type LeaseFence,
   type PersistenceRepository,
@@ -252,6 +253,14 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     }
   }
 
+  async verifyReadable(): Promise<void> {
+    this.read((db) => {
+      db.prepare('SELECT 1 FROM persistent_kv_v2 LIMIT 1').get()
+      db.prepare('SELECT 1 FROM conversations_v2 LIMIT 1').get()
+      return null
+    })
+  }
+
   async getKv(address: KvAddress): Promise<VersionedKv | null> {
     return this.read((db) => {
       const row = db
@@ -261,6 +270,20 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         )
         .get(address.scope, address.key) as KvRow | undefined
       return row ? kvFromRow(row) : null
+    })
+  }
+
+  async getKvMany(scope: KvScope, keys: string[]): Promise<VersionedKv[]> {
+    if (!keys.length) return []
+    return this.read((db) => {
+      const placeholders = keys.map(() => '?').join(', ')
+      const rows = db
+        .prepare(
+          `SELECT scope, key, value_text, revision, content_hash, updated_at
+           FROM persistent_kv_v2 WHERE scope = ? AND key IN (${placeholders})`
+        )
+        .all(scope, ...keys) as unknown as KvRow[]
+      return rows.map(kvFromRow)
     })
   }
 
@@ -301,15 +324,26 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
   async loadConversations(options?: ConversationQuery): Promise<VersionedConversation[]> {
     return this.read((db) => {
       if (options?.ids && options.ids.length === 0) return []
+      if (options?.cwds && options.cwds.length === 0) return []
       // The per-project page and the "whole project" fetch only make sense over
       // live rows: a tombstone in one of the N slots would hide a real chat.
-      const liveOnly = !options?.includeDeleted || options.perProject !== undefined || options.cwd !== undefined
+      const liveOnly =
+        !options?.includeDeleted ||
+        options.perProject !== undefined ||
+        options.cwd !== undefined ||
+        options.cwds !== undefined
       const clauses: string[] = []
       const params: unknown[] = []
       if (liveOnly) clauses.push('deleted_at IS NULL')
       if (options?.cwd !== undefined) {
         clauses.push("COALESCE(json_extract(payload_json, '$.cwd'), '') = ?")
         params.push(options.cwd)
+      }
+      if (options?.cwds !== undefined) {
+        clauses.push(
+          `COALESCE(json_extract(payload_json, '$.cwd'), '') IN (${options.cwds.map(() => '?').join(', ')})`
+        )
+        params.push(...options.cwds)
       }
       if (options?.ids) {
         clauses.push(`id IN (${options.ids.map(() => '?').join(', ')})`)
@@ -341,11 +375,16 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     return this.read((db) => {
       const rows = db
         .prepare(
-          `SELECT COALESCE(json_extract(payload_json, '$.cwd'), '') AS cwd, COUNT(*) AS total
+          `SELECT COALESCE(json_extract(payload_json, '$.cwd'), '') AS cwd, COUNT(*) AS total,
+                  MAX(updated_at) AS updated_at
            FROM conversations_v2 WHERE deleted_at IS NULL GROUP BY 1`
         )
-        .all() as unknown as Array<{ cwd: string; total: number | bigint }>
-      return rows.map((row) => ({ cwd: String(row.cwd), total: Number(row.total) }))
+        .all() as unknown as Array<{ cwd: string; total: number | bigint; updated_at: string | null }>
+      return rows.map((row) => ({
+        cwd: String(row.cwd),
+        total: Number(row.total),
+        updatedAt: row.updated_at ?? new Date(0).toISOString()
+      }))
     })
   }
 

@@ -872,6 +872,8 @@ export interface AppConfig {
    *  on the next app launch — the user shouldn't have to re-enable it every time.
    *  Set true on "Ligar ponte", false only on explicit "Desligar". */
   remoteEnabled: boolean
+  /** Keep the machine awake while an agent is mid-turn (display may still sleep). */
+  preventSleepWhileBusy: boolean
 }
 
 export type PostgresTlsMode = 'disable' | 'prefer' | 'require' | 'verify-full'
@@ -932,6 +934,9 @@ export interface ConversationQueryDto {
   includeDeleted?: boolean
   perProject?: number
   cwd?: string
+  /** Restrict to these project folders — how the app opens in stages instead of
+   *  pulling every project's conversations at once. */
+  cwds?: string[]
   ids?: string[]
 }
 
@@ -939,6 +944,9 @@ export interface ConversationQueryDto {
 export interface ProjectConversationCountDto {
   cwd: string
   total: number
+  /** Newest conversation of the project (ISO 8601) — orders the sidebar, and picks
+   *  which projects load first, without reading any conversation payload. */
+  updatedAt: string
 }
 
 export interface VersionedConversationDto {
@@ -977,6 +985,90 @@ export interface SecretVaultItem {
   updatedAt: string
 }
 
+export type TaskBoardStatus =
+  | 'pending'
+  | 'running'
+  | 'blocked'
+  | 'review'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+
+/**
+ * One task of the ledger, flattened for the renderer. The panel is read-only on
+ * purpose: the state machine lives in the repository, and a button here would
+ * be a second owner of the same rules.
+ */
+export interface TaskBoardItem {
+  id: string
+  title: string
+  goal: string
+  status: TaskBoardStatus
+  acceptance: string[]
+  ownerAgent: string | null
+  writeScopeAllow: string[]
+  writeScopeDeny: string[]
+  attempts: number
+  maxAttempts: number
+  /** ISO; `null` when no lease is held (claim never happened, or handoff released it). */
+  leaseExpiresAt: string | null
+  conversationId: string | null
+  projectCwd: string
+  createdAt: string
+  updatedAt: string
+  /**
+   * Evidence count, resolved only for the statuses where its absence is
+   * actionable (`review`/`done`) — elsewhere it would cost one query per task
+   * to say something nobody acts on. `null` = not counted, not "zero".
+   */
+  deliverables: number | null
+}
+
+export interface TaskBoardStep {
+  id: string
+  seq: number
+  kind: string
+  status: TaskBoardStatus
+  agent: string | null
+  startedAt: string
+  finishedAt: string | null
+  error: string | null
+}
+
+export interface TaskBoardDeliverable {
+  id: string
+  kind: string
+  summary: string
+  verified: boolean
+  createdAt: string
+}
+
+export interface TaskBoardEvent {
+  id: string
+  at: string
+  kind: string
+  summary: string
+}
+
+export interface TaskBoardDetail {
+  steps: TaskBoardStep[]
+  deliverables: TaskBoardDeliverable[]
+  events: TaskBoardEvent[]
+}
+
+/**
+ * `available: false` means there is no authoritative repository — which is NOT
+ * the same as an empty queue, and the panel says so instead of showing a
+ * misleading "nothing here".
+ */
+export interface TaskBoard {
+  available: boolean
+  items: TaskBoardItem[]
+}
+
+/** How many tasks the board asks for at once — the panel is a triage view, not an archive. */
+export const TASK_BOARD_LIMIT = 60
+
 /** A memory proposal that did not apply, shown read-only so it is not silent. */
 export interface MemoryConflictItem {
   id: string
@@ -999,7 +1091,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   // system prompt e chegam ao provedor. Isso só acontece se o usuário marcar.
   secretVaultEnabled: false,
   remoteToken: '',
-  remoteEnabled: false
+  remoteEnabled: false,
+  // Ligado por padrão: o PC dormir no meio de um turno perde o trabalho, e o
+  // bloqueio só vale enquanto o agente está ocupado (a tela apaga normalmente).
+  preventSleepWhileBusy: true
 }
 
 /** Where per-user data lives: the SQLite db (config/token/conversations) + .md memories. */
@@ -1055,6 +1150,10 @@ export const Channels = {
   memoryConflicts: 'memory:conflicts',
   /** Drops a settled (conflict/rejected) proposal from the list. */
   memoryDiscardProposal: 'memory:discard-proposal',
+  /** Task ledger queue for the agents panel (read-only). */
+  tasksBoard: 'tasks:board',
+  /** Steps, deliverables and events of one task — fetched only when expanded. */
+  tasksDetail: 'tasks:detail',
   kvGet: 'kv:get',
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet: 'kv:set',

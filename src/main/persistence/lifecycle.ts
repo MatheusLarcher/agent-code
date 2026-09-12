@@ -306,7 +306,10 @@ export class StorageLifecycleService {
     const next = this.createPostgresRepository(provisioned.pool, draft)
     try {
       await next.initialize()
-      await next.loadSnapshot()
+      // Sonda limitada, não `loadSnapshot()`: este backend JÁ está confirmado no
+      // bootstrap, então não há importação para verificar — só "dá para ler?".
+      // A releitura completa continua nas transições (activate/deactivate/recover).
+      await next.verifyReadable()
       await this.swapRepository(next)
       this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, Boolean(draft.password)))
     } catch (error) {

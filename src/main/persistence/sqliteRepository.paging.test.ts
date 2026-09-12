@@ -56,13 +56,31 @@ describe('SqliteRepository — paginação por projeto', () => {
     await repository.close()
   })
 
-  it('countConversationsByProject conta só as vivas', async () => {
+  it('countConversationsByProject conta só as vivas e traz a recência do projeto', async () => {
     const repository = await seeded()
-    const counts = await repository.countConversationsByProject()
-    expect(counts.sort((x, y) => x.cwd.localeCompare(y.cwd))).toEqual([
+    const counts = [...(await repository.countConversationsByProject())].sort((x, y) =>
+      x.cwd.localeCompare(y.cwd)
+    )
+    expect(counts.map(({ cwd, total }) => ({ cwd, total }))).toEqual([
       { cwd: 'C:/a', total: 8 },
       { cwd: 'C:/b', total: 2 }
     ])
+    // `updatedAt` é o que ordena a barra lateral e escolhe quais projetos abrem
+    // primeiro — sem ele o app teria de ler conversa para saber a ordem.
+    for (const row of counts) expect(Number.isFinite(Date.parse(row.updatedAt))).toBe(true)
+    // B foi escrito depois de A (a9 de A é tombstone e não conta).
+    expect(Date.parse(counts[1].updatedAt)).toBeGreaterThanOrEqual(Date.parse(counts[0].updatedAt))
+    await repository.close()
+  })
+
+  it('cwds lê só os projetos pedidos — é assim que o app abre em etapas', async () => {
+    const repository = await seeded()
+    const onlyB = await repository.loadConversations({ cwds: ['C:/b'], perProject: 6 })
+    expect(onlyB.map((c) => c.id)).toEqual(['b2', 'b1'])
+    const both = await repository.loadConversations({ cwds: ['C:/a', 'C:/b'], perProject: 2 })
+    expect(both.map((c) => c.id).sort()).toEqual(['a7', 'a8', 'b1', 'b2'])
+    // Nenhum projeto pedido = nenhuma conversa (e nenhuma consulta desperdiçada).
+    expect(await repository.loadConversations({ cwds: [] })).toEqual([])
     await repository.close()
   })
 })

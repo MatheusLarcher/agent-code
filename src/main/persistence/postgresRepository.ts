@@ -60,6 +60,7 @@ import {
   type ConversationWrite,
   type ExportSnapshot,
   type KvAddress,
+  type KvScope,
   type KvWrite,
   type LeaseFence,
   type PersistenceRepository,
@@ -307,6 +308,17 @@ export class PostgresRepository implements PersistenceRepository {
     }
   }
 
+  async verifyReadable(): Promise<void> {
+    this.assertInitialized()
+    // Uma linha de cada tabela que o boot depende: prova conexão, schema e
+    // permissão de leitura sem trazer payload nenhum.
+    await Promise.all([
+      this.pool.query('SELECT 1 FROM global_kv LIMIT 1'),
+      this.pool.query('SELECT 1 FROM device_kv WHERE installation_id = $1 LIMIT 1', [this.installationId]),
+      this.pool.query('SELECT 1 FROM conversations LIMIT 1')
+    ])
+  }
+
   async getKv(address: KvAddress): Promise<VersionedKv | null> {
     this.assertInitialized()
     const result =
@@ -321,6 +333,24 @@ export class PostgresRepository implements PersistenceRepository {
             [this.installationId, address.key]
           )
     return result.rows[0] ? kv(result.rows[0], address.scope) : null
+  }
+
+  async getKvMany(scope: KvScope, keys: string[]): Promise<VersionedKv[]> {
+    this.assertInitialized()
+    if (!keys.length) return []
+    const result =
+      scope === 'global'
+        ? await this.pool.query<KvRow>(
+            `SELECT key, value_text, revision, content_hash, updated_at FROM global_kv
+             WHERE key = ANY($1::text[])`,
+            [keys]
+          )
+        : await this.pool.query<KvRow>(
+            `SELECT key, value_text, revision, content_hash, updated_at FROM device_kv
+             WHERE installation_id = $1 AND key = ANY($2::text[])`,
+            [this.installationId, keys]
+          )
+    return result.rows.map((row) => kv(row, scope))
   }
 
   async setKv(write: KvWrite): Promise<VersionedKv> {
@@ -362,16 +392,25 @@ export class PostgresRepository implements PersistenceRepository {
   async loadConversations(options?: ConversationQuery): Promise<VersionedConversation[]> {
     this.assertInitialized()
     if (options?.ids && options.ids.length === 0) return []
+    if (options?.cwds && options.cwds.length === 0) return []
     // The folder a conversation belongs to ON THIS DEVICE — same rule `conversation()`
     // applies to the row: the project's local path, else the device-state cwd.
     const cwdExpr = "COALESCE(pd.local_path, s.state->>'cwd', '')"
-    const liveOnly = !options?.includeDeleted || options.perProject !== undefined || options.cwd !== undefined
+    const liveOnly =
+      !options?.includeDeleted ||
+      options.perProject !== undefined ||
+      options.cwd !== undefined ||
+      options.cwds !== undefined
     const params: unknown[] = [this.installationId]
     const clauses: string[] = []
     if (liveOnly) clauses.push('c.deleted_at IS NULL')
     if (options?.cwd !== undefined) {
       params.push(options.cwd)
       clauses.push(`${cwdExpr} = $${params.length}`)
+    }
+    if (options?.cwds !== undefined) {
+      params.push(options.cwds)
+      clauses.push(`${cwdExpr} = ANY($${params.length}::text[])`)
     }
     if (options?.ids) {
       params.push(options.ids)
@@ -383,28 +422,49 @@ export class PostgresRepository implements PersistenceRepository {
     const joins = `FROM conversations c
        LEFT JOIN conversation_device_state s ON s.conversation_id = c.conversation_id AND s.installation_id = $1
        LEFT JOIN project_devices pd ON pd.project_id = c.project_id AND pd.installation_id = $1`
-    let sql: string
     if (options?.perProject !== undefined) {
+      // DUAS consultas de propósito, e é a diferença entre abrir em segundos e
+      // abrir em dezenas deles.
+      //
+      // A partição é por `COALESCE(pd.local_path, s.state->>'cwd', '')`, uma
+      // expressão sobre TRÊS tabelas — nenhum índice pode cobri-la, então o
+      // ROW_NUMBER() só sai de um Sort do resultado já juntado. Com `payload` na
+      // lista do subselect, esse Sort carrega o payload junto: o servidor
+      // "destoasta" a conversa inteira de TODA linha candidata (megabytes cada)
+      // e derrama em arquivo temporário, só para depois jogar fora tudo que não
+      // é uma das N mais recentes. Medido num PostgreSQL remoto: 37,5 s para
+      // devolver 2,4 MB — o custo era ler o que seria descartado.
+      //
+      // Passo 1 roda a mesma janela sem payload nenhum (linhas minúsculas);
+      // passo 2 busca só os ids escolhidos, pela chave primária.
       params.push(Math.max(1, Math.floor(options.perProject)))
-      sql = `SELECT conversation_id, payload, revision, content_hash, created_at, updated_at, deleted_at,
-               device_state, project_path
-             FROM (
-               SELECT ${columns},
-                      ROW_NUMBER() OVER (PARTITION BY ${cwdExpr} ORDER BY c.updated_at DESC, c.conversation_id) AS rn
-               ${joins} ${where}
-             ) q WHERE q.rn <= $${params.length}
-             ORDER BY updated_at DESC, conversation_id`
-    } else {
-      sql = `SELECT ${columns} ${joins} ${where} ORDER BY c.updated_at DESC, c.conversation_id`
+      const ranked = await this.pool.query<{ conversation_id: string }>(
+        `SELECT conversation_id FROM (
+           SELECT c.conversation_id,
+                  ROW_NUMBER() OVER (PARTITION BY ${cwdExpr} ORDER BY c.updated_at DESC, c.conversation_id) AS rn
+           ${joins} ${where}
+         ) q WHERE q.rn <= $${params.length}`,
+        params
+      )
+      if (!ranked.rowCount) return []
+      const result = await this.pool.query<ConversationRow>(
+        `SELECT ${columns} ${joins}
+         WHERE c.conversation_id = ANY($2::text[])
+         ORDER BY c.updated_at DESC, c.conversation_id`,
+        [this.installationId, ranked.rows.map((row) => row.conversation_id)]
+      )
+      return result.rows.map(conversation)
     }
+    const sql = `SELECT ${columns} ${joins} ${where} ORDER BY c.updated_at DESC, c.conversation_id`
     const result = await this.pool.query<ConversationRow>(sql, params)
     return result.rows.map(conversation)
   }
 
   async countConversationsByProject(): Promise<ProjectConversationCount[]> {
     this.assertInitialized()
-    const result = await this.pool.query<{ cwd: string; total: string | number }>(
-      `SELECT COALESCE(pd.local_path, s.state->>'cwd', '') AS cwd, COUNT(*) AS total
+    const result = await this.pool.query<{ cwd: string; total: string | number; updated_at: Date | string }>(
+      `SELECT COALESCE(pd.local_path, s.state->>'cwd', '') AS cwd, COUNT(*) AS total,
+              MAX(c.updated_at) AS updated_at
        FROM conversations c
        LEFT JOIN conversation_device_state s ON s.conversation_id = c.conversation_id AND s.installation_id = $1
        LEFT JOIN project_devices pd ON pd.project_id = c.project_id AND pd.installation_id = $1
@@ -412,7 +472,11 @@ export class PostgresRepository implements PersistenceRepository {
        GROUP BY 1`,
       [this.installationId]
     )
-    return result.rows.map((row) => ({ cwd: row.cwd, total: Number(row.total) }))
+    return result.rows.map((row) => ({
+      cwd: row.cwd,
+      total: Number(row.total),
+      updatedAt: row.updated_at ? iso(row.updated_at) : new Date(0).toISOString()
+    }))
   }
 
   async upsertConversation(write: ConversationWrite): Promise<VersionedConversation> {

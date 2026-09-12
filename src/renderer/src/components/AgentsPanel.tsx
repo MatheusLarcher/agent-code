@@ -5,6 +5,7 @@ import { sortTracks } from '../agentTracks'
 import type { Touch, Turn } from '../projectActivity'
 import type { TodoItem } from '../types'
 import { ProjectGraph } from './ProjectGraph'
+import { TasksBoard } from './TasksBoard'
 import {
   IconChevronDown,
   IconClock,
@@ -48,6 +49,10 @@ interface Props {
   turns: Turn[]
   /** Project folder name — the root node of the map. */
   projectName: string
+  /** Project folder of the active conversation — scopes the task board. */
+  projectCwd: string
+  /** Jumps to the conversation a ledger task belongs to. */
+  onOpenConversation: (convId: string) => void
   /** Fixed width when the panel sits directly in the workspace row. Omit when a
    *  parent (`.right-pane`) already sizes it. */
   width?: number
@@ -180,9 +185,11 @@ export function AgentsPanel({
   touches,
   turns,
   projectName,
+  projectCwd,
+  onOpenConversation,
   width
 }: Props): JSX.Element {
-  const [view, setView] = useState<'list' | 'project'>('list')
+  const [view, setView] = useState<'list' | 'tasks' | 'project'>('list')
   const list = useMemo(() => sortTracks(tracks), [tracks])
   const running = list.filter((t) => t.status === 'running')
   const finished = list.filter((t) => t.status !== 'running')
@@ -210,6 +217,14 @@ export function AgentsPanel({
             </button>
             <button
               type="button"
+              className={view === 'tasks' ? 'on' : ''}
+              onClick={() => setView('tasks')}
+              title="Ver a fila do registro de tarefas"
+            >
+              Tarefas
+            </button>
+            <button
+              type="button"
               className={view === 'project' ? 'on' : ''}
               onClick={() => setView('project')}
               title="Ver o mapa do projeto"
@@ -228,6 +243,11 @@ export function AgentsPanel({
         </button>
       </header>
 
+      {/* A aba de tarefas traz a própria barra de filtros ACIMA do corpo rolável,
+          então ela não cabe dentro do `agents-body` das outras duas visões. */}
+      {view === 'tasks' && !loading ? (
+        <TasksBoard projectCwd={projectCwd} busy={busy} onOpenConversation={onOpenConversation} />
+      ) : (
       <div className={`agents-body${view !== 'list' && !loading ? ' flow' : ''}`}>
         {loading ? (
           <Skeleton />
@@ -339,6 +359,7 @@ export function AgentsPanel({
           </>
         )}
       </div>
+      )}
     </section>
   )
 }

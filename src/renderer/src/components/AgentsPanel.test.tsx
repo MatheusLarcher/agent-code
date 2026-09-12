@@ -35,6 +35,8 @@ const base = {
   touches: [],
   turns: [],
   projectName: 'projeto',
+  projectCwd: 'C:\\proj',
+  onOpenConversation: vi.fn(),
   width: 480
 }
 

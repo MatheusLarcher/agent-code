@@ -69,6 +69,25 @@ export class AppRestartCoordinator {
     }
   }
 
+  /**
+   * "Existe trabalho acontecendo AGORA?" — usado pelo bloqueio de suspensão.
+   * Deliberadamente ignora `unsafe`: aquele campo é um latch (loop ativo,
+   * trabalho destacado) que sobrevive ao fim do turno, e mantê-lo acordaria a
+   * máquina para sempre. Aqui só conta turno vivo, permissão pendente e
+   * start/send em andamento.
+   */
+  busyNow(): boolean {
+    if (this.operations.size) return true
+    for (const session of this.sessions.values()) {
+      try {
+        if (session.read().busy) return true
+      } catch {
+        /* Estado ilegível não vira latch de "acordado": o próximo tique reavalia. */
+      }
+    }
+    return false
+  }
+
   private anySessionBusy(): string | undefined {
     for (const session of this.sessions.values()) {
       let state: RestartActivity

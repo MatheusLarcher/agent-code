@@ -41,9 +41,11 @@ describe('writeScopeDenial', () => {
     expect(writeScopeDenial([task([], [])], 'Write', { file_path: inRepo('qualquer.ts') })).toBeNull()
   })
 
-  it('só olha ferramentas que gravam arquivo', () => {
+  it('só olha ferramentas que gravam', () => {
     expect(writeScopeDenial([task(['src/tasks/**'])], 'Read', { file_path: inRepo('src/memory/a.ts') })).toBeNull()
+    // Bash entra no gate, mas um comando que não grava nada continua passando.
     expect(writeScopeDenial([task(['src/tasks/**'])], 'Bash', { command: 'echo' })).toBeNull()
+    expect(writeScopeDenial([task(['src/tasks/**'])], 'Bash', { command: 'npm test' })).toBeNull()
   })
 
   it('permite dentro do allow e recusa fora, com instrução para o modelo', () => {
@@ -111,5 +113,49 @@ describe('writeScopeDenial', () => {
 
   it('NotebookEdit usa notebook_path', () => {
     expect(writeScopeDenial([task(['notebooks/**'])], 'NotebookEdit', { notebook_path: inRepo('src/a.ipynb') })).not.toBeNull()
+  })
+})
+
+/**
+ * O buraco que o gate tinha: o escopo valia para `Write`/`Edit` e o `Bash`
+ * gravava em qualquer lugar, com só o hint pedindo para não contornar.
+ */
+describe('writeScopeDenial com Bash', () => {
+  const tasks = [task(['src/tasks/**'])]
+
+  it('grava dentro do escopo: passa', () => {
+    expect(writeScopeDenial(tasks, 'Bash', { command: 'echo x > src/tasks/nota.txt' })).toBeNull()
+  })
+
+  it('grava fora do escopo: recusa com o caminho e a instrução', () => {
+    const denial = writeScopeDenial(tasks, 'Bash', { command: 'echo x > src/memory/nota.txt' })
+    expect(denial).toContain('não casa o allow')
+    expect(denial).toContain('src/memory/nota.txt')
+    expect(denial).toContain('task_event')
+  })
+
+  it('basta UM destino fora para o comando inteiro ser recusado', () => {
+    const command = 'cp a.ts src/tasks/a.ts && cp b.ts src/renderer/b.ts'
+    expect(writeScopeDenial(tasks, 'Bash', { command })).not.toBeNull()
+  })
+
+  it('apagar também é gravar', () => {
+    expect(writeScopeDenial(tasks, 'Bash', { command: 'rm -rf src/renderer' })).not.toBeNull()
+    expect(writeScopeDenial(tasks, 'Bash', { command: 'rm -rf src/tasks/tmp' })).toBeNull()
+  })
+
+  it('destino que o scanner não consegue fixar é recusado, com o porquê', () => {
+    const denial = writeScopeDenial(tasks, 'Bash', { command: 'echo x > "$DEST/a.txt"' })
+    expect(denial).toContain('não dá para conferir o destino')
+    expect(denial).toContain('caminho absoluto')
+  })
+
+  it('sem tarefa com escopo, Bash segue livre como sempre', () => {
+    expect(writeScopeDenial([], 'Bash', { command: 'rm -rf /' })).toBeNull()
+  })
+
+  it('gravar fora do projeto da tarefa é recusado', () => {
+    const outside = process.platform === 'win32' ? 'D:/outro/a.txt' : '/outro/a.txt'
+    expect(writeScopeDenial(tasks, 'Bash', { command: `echo x > ${outside}` })).toContain('fora do projeto')
   })
 })

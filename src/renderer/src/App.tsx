@@ -34,9 +34,15 @@ import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './t
 import { closeRunningTracks, isSubagentEvent, reduceTracks, type TrackMap } from './agentTracks'
 import {
   loadConversations,
+  loadConversationsByIds,
   loadProjectConversations,
-  loadProjectCounts,
+  waitForStorageReady,
+  loadProjectsPage,
+  loadProjectSummaries,
   CONVERSATIONS_PER_PROJECT,
+  PROJECTS_IN_FIRST_PAGE,
+  PROJECTS_PER_BACKGROUND_BATCH,
+  type ProjectSummary,
   loadUi,
   saveConversations,
   saveUi,
@@ -361,6 +367,35 @@ function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
   return [...prev, e as UIMessage]
 }
 
+/**
+ * Deixa uma conversa vinda do banco pronta para a tela. Estado vivo do SDK não
+ * sobrevive a um restart do processo: sem isto, o histórico persistido pintaria
+ * spinner de turno em andamento e aviso de interrupção que já não existem.
+ * Usada tanto na primeira leitura quanto nos lotes de segundo plano.
+ */
+function hydrateStoredConversation(conversation: Conversation): Conversation {
+  return {
+    ...conversation,
+    // Corrupt/legacy state must never resurrect both mutually-exclusive
+    // modes. Economy wins because it is the stricter execution mode.
+    loopEnabled: conversation.economyMode === true ? false : conversation.loopEnabled === true,
+    backgroundTasks: [],
+    queuedAfterInterrupt: undefined,
+    // A turn interrupted by the app closing never delivers its result/error
+    // event, so a persisted `active: true` (and any `in_progress` item) would
+    // show a spinner forever.
+    todoPlan: conversation.todoPlan
+      ? {
+          ...conversation.todoPlan,
+          active: false,
+          items: conversation.todoPlan.items.map((item) =>
+            item.status === 'in_progress' ? { ...item, status: 'pending' as const } : item
+          )
+        }
+      : undefined
+  }
+}
+
 export function App(): JSX.Element {
   const { notify } = useUI()
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -407,11 +442,18 @@ export function App(): JSX.Element {
   // muito bem terminar sozinho, então nada é cancelado por causa disto.
   const [stalledSince, setStalledSince] = useState<Record<string, number>>({})
   // Sidebar paging: the app opens with only the newest CONVERSATIONS_PER_PROJECT
-  // of each project. `projectTotals` is the real count from the database (badge),
-  // `fullyLoadedProjects` marks projects whose "mostrar mais" already ran.
+  // of each project, and só dos PROJECTS_IN_FIRST_PAGE projetos mais recentes —
+  // o resto chega em segundo plano. `projectSummaries` é a lista de projetos do
+  // banco (pasta + total + recência, sem payload): é ela que desenha a barra
+  // lateral inteira antes de as conversas chegarem. `fullyLoadedProjects` marca
+  // os projetos cujo "mostrar mais" já rodou.
   const [projectTotals, setProjectTotals] = useState<Record<string, number>>({})
+  const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([])
   const [fullyLoadedProjects, setFullyLoadedProjects] = useState<Set<string>>(new Set())
   const [loadingProjects, setLoadingProjects] = useState<Set<string>>(new Set())
+  // Fila dos projetos que ainda não tiveram a primeira página lida, consumida em
+  // lotes depois que a tela já está montada.
+  const [pendingProjects, setPendingProjects] = useState<string[]>([])
   // Which subscriptions (Claude / GPT) the compact topbar badge shows. Persisted
   // with the rest of the UI state; the badge's own popover always shows both.
   const [usageProviders, setUsageProviders] = useState<UsageProviders>({ claude: true, gpt: true })
@@ -900,45 +942,47 @@ export function App(): JSX.Element {
     let cancelled = false
     void (async () => {
       try {
-        // Only the first page of each project comes down at startup; the badge
-        // still shows the real total, and "mostrar mais" fetches the rest.
-        const [loaded, counts, ui, limits, initialStorageStatus] = await Promise.all([
-          loadConversations({ perProject: CONVERSATIONS_PER_PROJECT }),
-          loadProjectCounts().catch(() => ({}) as Record<string, number>),
+        // A janela sobe antes do banco; nada pode ser lido enquanto o backend
+        // ainda está subindo, ou a primeira leitura volta STORAGE_OFFLINE.
+        const initialStorageStatus = await waitForStorageReady()
+        if (cancelled) return
+        setStorageStatus(initialStorageStatus)
+        // Abertura em etapas. Primeiro só o que é barato: a lista de projetos é
+        // uma agregação (pasta + total + recência, zero payload) e o estado da
+        // UI são duas chaves. Com isso a barra lateral já aparece inteira.
+        const [summaries, ui, limits] = await Promise.all([
+          loadProjectSummaries().catch(() => [] as ProjectSummary[]),
           loadUi(),
-          loadUsageLimits(),
-          window.api.getStorageStatus()
+          loadUsageLimits()
         ])
-        setProjectTotals(counts)
+        if (cancelled) return
+        setProjectSummaries(summaries)
+        setProjectTotals(Object.fromEntries(summaries.map((p) => [p.cwd, p.total])))
+        // Só então as conversas — e apenas dos projetos mais recentes. O resto
+        // vem em segundo plano, já com a tela montada (ver o efeito abaixo).
+        const firstProjects = summaries.slice(0, PROJECTS_IN_FIRST_PAGE).map((p) => p.cwd)
+        const loaded = await loadConversations({
+          perProject: CONVERSATIONS_PER_PROJECT,
+          ...(summaries.length ? { cwds: firstProjects } : {})
+        })
+        // A conversa aberta na sessão anterior pode estar num projeto que ainda
+        // não veio; sem isto o app abriria em outra conversa e só "pularia" para
+        // a certa quando o segundo plano terminasse.
+        if (ui.activeId && !loaded.some((c) => c.id === ui.activeId)) {
+          const active = await loadConversationsByIds([ui.activeId]).catch(() => [] as Conversation[])
+          for (const conversation of active) {
+            if (!loaded.some((c) => c.id === conversation.id)) loaded.push(conversation)
+          }
+        }
         if (!initialStorageStatus.writable) {
           throw new Error(initialStorageStatus.error?.message ?? 'Persistência autoritativa indisponível.')
         }
       if (cancelled) return
       setStorageStatus(initialStorageStatus)
-      // Live SDK state never survives an app process restart. Avoid briefly
-      // painting stale background/interrupt warnings from persisted history.
-      setConversations(
-        loaded.map((conversation) => ({
-          ...conversation,
-          // Corrupt/legacy state must never resurrect both mutually-exclusive
-          // modes. Economy wins because it is the stricter execution mode.
-          loopEnabled: conversation.economyMode === true ? false : conversation.loopEnabled === true,
-          backgroundTasks: [],
-          queuedAfterInterrupt: undefined,
-          // A turn interrupted by the app closing never delivers its
-          // result/error event, so a persisted `active: true` (and any
-          // `in_progress` item) would show a spinner forever.
-          todoPlan: conversation.todoPlan
-            ? {
-                ...conversation.todoPlan,
-                active: false,
-                items: conversation.todoPlan.items.map((item) =>
-                  item.status === 'in_progress' ? { ...item, status: 'pending' as const } : item
-                )
-              }
-            : undefined
-        }))
-      )
+      setConversations(loaded.map(hydrateStoredConversation))
+      // Os projetos que ficaram de fora da primeira leitura, do mais recente
+      // para o mais antigo — o efeito de segundo plano consome esta fila.
+      setPendingProjects(summaries.slice(PROJECTS_IN_FIRST_PAGE).map((p) => p.cwd))
       setCollapsed(ui.collapsed)
       setBrowserMinimized(ui.browserMinimized)
       setBrowserWidth(ui.browserWidth)
@@ -969,12 +1013,49 @@ export function App(): JSX.Element {
     }
   }, [])
 
+  // ---- resto dos projetos, em segundo plano ----------------------------------
+  // A barra lateral já mostra TODOS os projetos (nome e total vêm da agregação,
+  // sem payload); aqui só chegam as conversas, um lote de projetos por vez, para
+  // que uma base grande num PostgreSQL remoto não segure a primeira pintura.
+  useEffect(() => {
+    if (!hydrated || pendingProjects.length === 0) return
+    let cancelled = false
+    const batch = pendingProjects.slice(0, PROJECTS_PER_BACKGROUND_BATCH)
+    void (async () => {
+      let more: Conversation[] = []
+      try {
+        more = await loadProjectsPage(batch, CONVERSATIONS_PER_PROJECT)
+      } catch {
+        // Lote que falhou não trava a fila nem some da barra: o projeto continua
+        // listado com o total real e o "mostrar mais" busca sob demanda.
+      }
+      if (cancelled) return
+      if (more.length) {
+        setConversations((current) => {
+          const known = new Set(current.map((c) => c.id))
+          const fresh = more.filter((c) => !known.has(c.id)).map(hydrateStoredConversation)
+          return fresh.length ? [...current, ...fresh] : current
+        })
+      }
+      setPendingProjects((rest) => rest.filter((cwd) => !batch.includes(cwd)))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [hydrated, pendingProjects])
+
   useEffect(() => {
     const offStatus = window.api.onStorageStatusChanged((status) => {
       setStorageStatus(status)
-      if (!status.writable) {
+      // `booting` é passageiro: a janela abre antes do banco, e transformar isso
+      // em "persistência indisponível" trocaria a tela do app por um erro em toda
+      // abertura. Só um estado já resolvido e não gravável é falha de verdade.
+      if (!status.writable && status.state !== 'booting') {
         setStorageLoadError(status.error?.message ?? 'Persistência autoritativa indisponível.')
       }
+      // E a recuperação também tem de aparecer: sem limpar, a tela de erro
+      // continuava no lugar mesmo depois de o banco voltar.
+      if (status.writable) setStorageLoadError(null)
     })
     const offChanges = window.api.onStorageChanged((changes: RepositoryChange[]) => {
       if (changes.some((change) => change.entity.endsWith('-kv') && change.entityId.startsWith('config.'))) {
@@ -1017,19 +1098,31 @@ export function App(): JSX.Element {
     void saveUsageLimits(usageLimits)
   }, [usageLimits])
 
-  // Load persisted app config once (e.g. the "Permitir tudo" toggle).
+  // Load persisted app config once (e.g. the "Permitir tudo" toggle). Depende do
+  // banco, que sobe DEPOIS da janela: pedir antes da hora só traria
+  // STORAGE_OFFLINE e deixaria os interruptores presos no padrão.
   useEffect(() => {
-    void window.api.getConfig()
-      .then((c) => {
-        skipPermsRef.current = c.skipPermissions
-        setSkipPerms(c.skipPermissions)
-        setWindowsControlEnabled(c.windowsControlEnabled === true)
-        setVoiceReady(!!c.openai?.apiKey?.trim())
-        setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
-        voiceSpeedRef.current = c.openai?.speed || 1
-      })
-      .catch(() => undefined)
-    void window.api.codexStatus().then((s) => setCodexReady(s.connected))
+    let cancelled = false
+    void (async () => {
+      await waitForStorageReady()
+      if (cancelled) return
+      await window.api.getConfig()
+        .then((c) => {
+          if (cancelled) return
+          skipPermsRef.current = c.skipPermissions
+          setSkipPerms(c.skipPermissions)
+          setWindowsControlEnabled(c.windowsControlEnabled === true)
+          setVoiceReady(!!c.openai?.apiKey?.trim())
+          setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
+          voiceSpeedRef.current = c.openai?.speed || 1
+        })
+        .catch(() => undefined)
+      if (cancelled) return
+      await window.api.codexStatus().then((s) => setCodexReady(s.connected)).catch(() => undefined)
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => window.api.onWindowsControlChanged(setWindowsControlEnabled), [])
@@ -2358,12 +2451,19 @@ export function App(): JSX.Element {
 
   const projects = useMemo<SidebarProject[]>(() => {
     const map = new Map<string, Conversation[]>()
+    // Projeto conhecido pelo banco entra na lista MESMO sem conversa carregada:
+    // é isso que faz a barra lateral aparecer inteira enquanto os lotes de
+    // segundo plano ainda estão chegando (nome e total não custam payload).
+    for (const summary of projectSummaries) map.set(summary.cwd, [])
     for (const c of conversations) {
       const arr = map.get(c.cwd)
       if (arr) arr.push(c)
       else map.set(c.cwd, [c])
     }
-    const recency = (cs: Conversation[]): number => Math.max(...cs.map((c) => c.updatedAt))
+    const pending = new Set(pendingProjects)
+    const summaryRecency = new Map(projectSummaries.map((p) => [p.cwd, p.updatedAt]))
+    const recency = (path: string, cs: Conversation[]): number =>
+      Math.max(summaryRecency.get(path) ?? 0, ...cs.map((c) => c.updatedAt), 0)
     return [...map.entries()]
       .map(([path, cs]) => {
         const fullyLoaded = fullyLoadedProjects.has(path)
@@ -2375,11 +2475,14 @@ export function App(): JSX.Element {
           conversations: [...cs].sort((a, b) => b.updatedAt - a.updatedAt),
           total,
           hasMore: !fullyLoaded && total > cs.length,
-          loadingMore: loadingProjects.has(path)
+          loadingMore: loadingProjects.has(path) || pending.has(path)
         }
       })
-      .sort((a, b) => recency(b.conversations) - recency(a.conversations))
-  }, [conversations, projectTotals, fullyLoadedProjects, loadingProjects])
+      // Projeto que ficou sem nenhuma conversa (todas apagadas) sai da barra —
+      // o resumo do banco não some sozinho depois de um delete local.
+      .filter((p) => p.conversations.length > 0 || p.total > 0)
+      .sort((a, b) => recency(b.path, b.conversations) - recency(a.path, a.conversations))
+  }, [conversations, projectSummaries, pendingProjects, projectTotals, fullyLoadedProjects, loadingProjects])
 
   const recents = useMemo<Conversation[]>(
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 15),
@@ -2670,6 +2773,8 @@ export function App(): JSX.Element {
                     touches={activeTouches}
                     turns={activeTurns}
                     projectName={projectName}
+                    projectCwd={activeCwd}
+                    onOpenConversation={(convId) => setActiveId(convId)}
                   />
                 ) : (
                   <BrowserPanel

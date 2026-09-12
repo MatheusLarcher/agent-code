@@ -19,7 +19,8 @@ const partialConfigSchema = z
     windowsControlEnabled: z.boolean().optional(),
     secretVaultEnabled: z.boolean().optional(),
     remoteToken: z.string().optional(),
-    remoteEnabled: z.boolean().optional()
+    remoteEnabled: z.boolean().optional(),
+    preventSleepWhileBusy: z.boolean().optional()
   })
   .strict()
 

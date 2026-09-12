@@ -2,7 +2,7 @@ import { safeStorage } from 'electron'
 import type { AppConfig } from '../shared/ipc'
 import { kvGet } from './store'
 import { defaultAppConfig, mergeAppConfig, parseStoredAppConfig } from './persistence/configData'
-import { readPersistedKv, writePersistedKv } from './persistence/kvFacade'
+import { readPersistedKvMany, writePersistedKv } from './persistence/kvFacade'
 import { StorageError } from './persistence/types'
 
 type Field = {
@@ -24,8 +24,16 @@ const FIELDS: Field[] = [
   { key: 'config.windowsControlEnabled', get: (c) => c.windowsControlEnabled, patch: (v) => ({ windowsControlEnabled: v as boolean }) },
   { key: 'config.secretVaultEnabled', get: (c) => c.secretVaultEnabled, patch: (v) => ({ secretVaultEnabled: v as boolean }) },
   { key: 'config.remoteToken', sensitive: true, get: (c) => c.remoteToken, patch: (v) => ({ remoteToken: v as string }) },
-  { key: 'config.remoteEnabled', get: (c) => c.remoteEnabled, patch: (v) => ({ remoteEnabled: v as boolean }) }
+  { key: 'config.remoteEnabled', get: (c) => c.remoteEnabled, patch: (v) => ({ remoteEnabled: v as boolean }) },
+  { key: 'config.preventSleepWhileBusy', get: (c) => c.preventSleepWhileBusy, patch: (v) => ({ preventSleepWhileBusy: v as boolean }) }
 ]
+
+/** Every KV key the config persists, in write order. Exported so a test can hold
+ *  it against `PERSISTED_KEY_REGISTRY`: a field added here without a matching
+ *  registry entry makes `persistedKeyDefinition` throw inside
+ *  `initializeConfigPersistence` — which runs BEFORE the window is created, so the
+ *  app boots into an invisible, hung process. */
+export const CONFIG_PERSISTED_KEYS: readonly string[] = FIELDS.map((field) => field.key)
 
 let initialized = false
 let snapshot = defaultAppConfig()
@@ -68,11 +76,13 @@ async function writeFields(config: AppConfig, only?: Set<string>): Promise<void>
 }
 
 export async function initializeConfigPersistence(): Promise<AppConfig> {
-  const legacyRaw = await readPersistedKv('config')
-  let next = parseStoredAppConfig(legacyRaw)
+  // Uma leitura por escopo, não uma por campo: isto roda no caminho de abertura
+  // do app e, com PostgreSQL remoto, cada campo custava uma ida e volta à rede.
+  const stored = await readPersistedKvMany(['config', ...CONFIG_PERSISTED_KEYS])
+  let next = parseStoredAppConfig(stored.get('config') ?? null)
   const missing = new Set<string>()
   for (const field of FIELDS) {
-    const raw = await readPersistedKv(field.key)
+    const raw = stored.get(field.key) ?? null
     if (raw === null) {
       missing.add(field.key)
       continue

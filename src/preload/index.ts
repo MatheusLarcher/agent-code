@@ -44,7 +44,9 @@ import type {
   VersionedConversationDto,
   ConversationUpsertDto,
   ConversationDeleteDto,
-  RepositoryChange
+  RepositoryChange,
+  TaskBoard,
+  TaskBoardDetail
 } from '../shared/ipc'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -123,6 +125,10 @@ const api: AgentCodeApi = {
   deleteSecret: (name: string) => ipcRenderer.invoke(Channels.secretVaultDelete, name),
   listMemoryConflicts: () => ipcRenderer.invoke(Channels.memoryConflicts),
   discardMemoryProposal: (id: string) => ipcRenderer.invoke(Channels.memoryDiscardProposal, id),
+  tasksBoard: (query?: { projectCwd?: string; includeFinished?: boolean }): Promise<TaskBoard> =>
+    ipcRenderer.invoke(Channels.tasksBoard, query),
+  tasksDetail: (taskId: string): Promise<TaskBoardDetail | null> =>
+    ipcRenderer.invoke(Channels.tasksDetail, taskId),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
   kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),
   loadAllConversations: (): Promise<unknown[]> => ipcRenderer.invoke(Channels.conversationsLoadAll),
