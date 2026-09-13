@@ -13,6 +13,7 @@ import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
 import { TodoPlanCard } from './TodoPlanCard'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
+import { VigiaChip } from './VigiaChip'
 import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
 
 function fmtDuration(ms: number): string {
@@ -167,6 +168,12 @@ interface Props {
   pendingQuestion: boolean
   /** Reopens the minimized question modal (chip's onClick). */
   onReopenQuestion: () => void
+  /** Dúvida levantada pelo vigia nesta conversa (null = nenhuma pendente). */
+  vigiaAlert?: string | null
+  /** Descarta o aviso do vigia. */
+  onDismissVigia?: () => void
+  /** Manda a dúvida ao agente pelo caminho normal de envio (entra na fila). */
+  onAskVigia?: (text: string) => void
   /** The active conversation's current TodoWrite plan, fixed above the composer. */
   todoPlan?: TodoPlan
   /** Quantos subagentes estão trabalhando agora nesta conversa (0 = nada a mostrar). */
@@ -434,6 +441,14 @@ export function ChatPanel(props: Props): JSX.Element {
             </div>
           ))}
         </div>
+      )}
+
+      {props.vigiaAlert && (
+        <VigiaChip
+          text={props.vigiaAlert}
+          onDismiss={() => props.onDismissVigia?.()}
+          onAsk={() => props.onAskVigia?.(props.vigiaAlert as string)}
+        />
       )}
 
       {props.pendingQuestion && (

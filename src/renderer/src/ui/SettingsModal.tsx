@@ -3,6 +3,7 @@ import {
   DEFAULT_CONFIG,
   LOCAL_SPEECH_MODELS,
   OPENAI_VOICES,
+  VIGIA_MODELS,
   type AppConfig,
   type CacheInfo,
   type CodexStatus
@@ -18,6 +19,7 @@ import {
   IconMic,
   IconMonitor,
   IconMoon,
+  IconShieldCheck,
   IconSettings,
   IconSliders,
   IconUnlock
@@ -86,7 +88,10 @@ export function SettingsModal({
 
   useEffect(() => {
     void window.api.getConfig()
-      .then((c) => setCfg(c))
+      // Cai nos defaults por campo ausente: a tela de Configurações não pode
+      // quebrar por causa de uma config antiga/parcial vinda do banco — e um
+      // grupo aninhado ausente (ex.: `vigia`) derrubaria a aba inteira.
+      .then((c) => setCfg({ ...DEFAULT_CONFIG, ...c }))
       .catch(() => undefined)
       .finally(() => setLoaded(true))
     void window.api.getCacheInfo().then(setCache)
@@ -287,6 +292,59 @@ export function SettingsModal({
                     />
                     <span className="switch-visual" aria-hidden="true" />
                   </label>
+                </section>
+
+                <section className={`settings-section settings-switch-section ${cfg.vigia.enabled ? 'on' : ''}`}>
+                  <label className="settings-switch-row">
+                    <span className="settings-switch-text">
+                      <strong>
+                        <IconShieldCheck size={15} /> Vigia — questionar as premissas em paralelo
+                      </strong>
+                      <span className="settings-desc">
+                        Uma segunda sessão, barata, acompanha a conversa e faz uma pergunta só: alguma premissa
+                        deste trabalho depende de algo que só você sabe e não foi confirmado? Quando acha que
+                        sim, aparece um aviso acima da caixa de mensagem. Ele não conversa com o agente, não
+                        interrompe nada e só fala uma vez por mensagem sua.
+                      </span>
+                    </span>
+                    <input
+                      className="switch-input"
+                      type="checkbox"
+                      checked={cfg.vigia.enabled}
+                      onChange={(event) => {
+                        const on = event.target.checked
+                        setCfg((c) => ({ ...c, vigia: { ...c.vigia, enabled: on } }))
+                        void window.api.setConfig({ vigia: { ...cfg.vigia, enabled: on } })
+                      }}
+                    />
+                    <span className="switch-visual" aria-hidden="true" />
+                  </label>
+                  {cfg.vigia.enabled && (
+                    <div className="settings-row">
+                      <span>
+                        <strong>Modelo do vigia</strong>
+                        <span className="settings-desc">
+                          Quem observa não precisa ser o modelo mais forte — precisa ser barato o bastante para
+                          rodar em todo turno.
+                        </span>
+                      </span>
+                      <select
+                        className="settings-input"
+                        value={cfg.vigia.model}
+                        onChange={(event) => {
+                          const model = event.target.value
+                          setCfg((c) => ({ ...c, vigia: { ...c.vigia, model } }))
+                          void window.api.setConfig({ vigia: { ...cfg.vigia, model } })
+                        }}
+                      >
+                        {VIGIA_MODELS.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </section>
               </>
             )}

@@ -432,6 +432,10 @@ export function App(): JSX.Element {
   // between the message history and the composer (ChatPanel) reopens it. Only the
   // modal's own "Cancelar" button actually discards the question.
   const [minimizedQuestions, setMinimizedQuestions] = useState<Record<string, boolean>>({})
+  // Dúvida do vigia por conversa (o observador paralelo). É aviso, não estado da
+  // conversa: não persiste, não vira mensagem e não bloqueia nada — some ao
+  // dispensar, ao trocar por um alerta novo ou ao fechar o app.
+  const [vigiaAlerts, setVigiaAlerts] = useState<Record<string, string>>({})
   // Account-wide rate-limit usage (5h session / weekly / etc.) — deliberately
   // GLOBAL, not per-conversation: it comes from the Anthropic account, not from
   // any one chat, so it must survive switching conversations. Keyed by
@@ -923,6 +927,10 @@ export function App(): JSX.Element {
       setPermissions((p) => (p[convId]?.id === id ? withoutKey(p, convId) : p))
       setMinimizedQuestions((m) => withoutKey(m, convId))
     })
+    // O vigia avisa o USUÁRIO; nada aqui toca a sessão nem a lista de mensagens.
+    const offVigia = window.api.onVigiaAlert(({ convId, text }) => {
+      setVigiaAlerts((v) => ({ ...v, [convId]: text }))
+    })
     const offState = window.api.onBrowserState(setBrowserState)
     const offPicked = window.api.onBrowserPicked((el) => {
       setChips((c) => [...c, el])
@@ -932,6 +940,7 @@ export function App(): JSX.Element {
       offEvent()
       offPerm()
       offExpired()
+      offVigia()
       offState()
       offPicked()
     }
@@ -1469,6 +1478,7 @@ export function App(): JSX.Element {
       setLastDuration((m) => withoutKey(m, id))
       setPermissions((p) => withoutKey(p, id))
       setMinimizedQuestions((m) => withoutKey(m, id))
+      setVigiaAlerts((v) => withoutKey(v, id))
       setQueue((q) => q.filter((m) => m.convId !== id))
       const removed = convsRef.current.find((c) => c.id === id)
       if (removed) {
@@ -2729,6 +2739,15 @@ export function App(): JSX.Element {
             onFastModeChange={(on) => active && changeFastMode(active.id, on)}
             pendingQuestion={!!activePermission?.questions && questionMinimized}
             onReopenQuestion={() => setQuestionMinimized(false)}
+            vigiaAlert={active ? vigiaAlerts[active.id] ?? null : null}
+            onDismissVigia={() => active && setVigiaAlerts((v) => withoutKey(v, active.id))}
+            onAskVigia={(text) => {
+              if (!active) return
+              setVigiaAlerts((v) => withoutKey(v, active.id))
+              // Caminho normal de envio: com o agente ocupado, entra na fila —
+              // o turno em andamento não é interrompido.
+              void sendMessage(text)
+            }}
             todoPlan={active?.todoPlan}
             backgroundTasks={active?.backgroundTasks ?? []}
             queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}

@@ -748,6 +748,38 @@ export interface OllamaConfig {
   apiKey: string
 }
 
+/** Vigia — a second, cheap session that watches the conversation and asks ONE
+ *  question: does a premise of this work depend on something only the user
+ *  knows and hasn't confirmed? It never talks to the main agent and never stops
+ *  a turn; it raises a chip for the user. On by default (the toggle exists to
+ *  turn it off); the model is the one it runs on, not the one being watched. */
+export interface VigiaConfig {
+  enabled: boolean
+  /** Model id used for the watch call (a cheaper one than the conversation's). */
+  model: string
+}
+
+/** Models offered for the vigia. Short list on purpose: it is a cheap reader,
+ *  not the model doing the work — the point is that it costs less than the
+ *  conversation it watches. A better model here is a one-line change. */
+export const VIGIA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'claude-sonnet-5', label: 'Sonnet 5 (recomendado)' },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5 (mais barato)' },
+  { id: 'claude-opus-5', label: 'Opus 5 (mais caro)' }
+]
+
+/** An alert raised by the vigia for one conversation. Travels on its OWN IPC
+ *  channel, never as a `ChatEvent`: it is for the user, not for the model, and
+ *  an unknown event kind would pile up in the phone client's message list. */
+export interface VigiaAlertMsg {
+  convId: string
+  id: string
+  /** One sentence, phrased as a question to the user. */
+  text: string
+  /** epoch ms when it was produced. */
+  at: number
+}
+
 /** OpenAI integration (optional). When an API key is set, the chat gets voice
  *  input (speech→text, gpt-4o-mini-transcribe) and read-aloud (text→speech,
  *  gpt-4o-mini-tts). The key is stored only in the cache-folder SQLite db. */
@@ -874,6 +906,8 @@ export interface AppConfig {
   remoteEnabled: boolean
   /** Keep the machine awake while an agent is mid-turn (display may still sleep). */
   preventSleepWhileBusy: boolean
+  /** The parallel watcher that questions premises (see VigiaConfig). */
+  vigia: VigiaConfig
 }
 
 export type PostgresTlsMode = 'disable' | 'prefer' | 'require' | 'verify-full'
@@ -1094,7 +1128,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   remoteEnabled: false,
   // Ligado por padrão: o PC dormir no meio de um turno perde o trabalho, e o
   // bloqueio só vale enquanto o agente está ocupado (a tela apaga normalmente).
-  preventSleepWhileBusy: true
+  preventSleepWhileBusy: true,
+  // Ligado por padrão: o estado inicial já tem que servir, e o custo é uma
+  // chamada curta e sem ferramentas por turno, num modelo mais barato.
+  vigia: { enabled: true, model: 'claude-sonnet-5' }
 }
 
 /** Where per-user data lives: the SQLite db (config/token/conversations) + .md memories. */
@@ -1252,6 +1289,9 @@ export const Channels = {
   agentPermissionRequest: 'agent:permission-request',
   /** main → renderer: a pending permission/question timed out and was auto-resolved. */
   agentPermissionExpired: 'agent:permission-expired',
+  /** main → renderer: the vigia raised a doubt about a premise of the work.
+   *  Deliberately NOT a ChatEvent — it is for the user, not for the model. */
+  vigiaAlert: 'vigia:alert',
   /** main → renderer: the Windows-control permission changed. */
   windowsControlChanged: 'windows-control:changed',
   browserFrame: 'browser:frame',

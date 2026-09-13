@@ -17,6 +17,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Permissões de ferramentas](#permissões-de-ferramentas)
 - [Reiniciar o app pelo agente](#reiniciar-o-app-pelo-agente)
 - [Modal de pergunta interativa (AskUserQuestion)](#modal-de-pergunta-interativa-askuserquestion)
+- [Vigia — o observador que questiona premissas](#vigia--o-observador-que-questiona-premissas)
 - [Voz no chat (OpenAI)](#voz-no-chat-openai)
 - [Modelos via Ollama Cloud](#modelos-via-ollama-cloud)
 - [Pasta de dados (cache) e SQLite](#pasta-de-dados-cache-e-sqlite)
@@ -248,6 +249,30 @@ Quando o agente chama a ferramenta **`AskUserQuestion`** (pergunta de múltipla 
 - **No chat, a `AskUserQuestion` NÃO é pintada como erro.** Como a resposta volta sempre como um `deny` (`is_error: true`), o card da ferramenta apareceria vermelho mesmo respondido corretamente. Por isso o `ToolCard` (`MessageList.tsx`, e o equivalente em `smartfone-remote/www/app.js`) trata `AskUserQuestion` como caso especial: ignora o `tool-error` e mostra o badge **"respondido"** (ou **"sem resposta"** quando a mensagem indica timeout). O verbo do card vira **"Pergunta"** (detalhe = `header` da 1ª pergunta).
 
 **Clicar fora ou Esc MINIMIZA, não cancela** — só o botão **"Cancelar"** do `QuestionModal` descarta a pergunta de verdade (`respond('deny', false)`). Clicar no overlay ou apertar Esc chama `onMinimize` em vez de `onCancel`: a pergunta continua pendente em `permissions[convId]` (nada é respondido nem descartado), só o modal some. `App.tsx` guarda esse estado por conversa em `minimizedQuestions: Record<string, boolean>` (resetado sempre que uma pergunta **nova** chega, para nunca nascer minimizada por acidente; limpo junto de `permissions` em todo ponto que hoje descarta uma pergunta — responder, cancelar, expirar por timeout, excluir/parar a conversa). Enquanto minimizada, um **chip evidente** (`.pending-question-chip`, ícone de interrogação + cor de destaque + leve pulso) aparece no `ChatPanel` entre o histórico de mensagens e o composer; clicar nele desminimiza e reabre o mesmo pedido pendente (`permissions[convId]` nunca mudou). O `QuestionModal` **desmonta** ao minimizar (`!questionMinimized && <QuestionModal/>` em `App.tsx`) — então as opções que o usuário já tinha marcado num rascunho de resposta **não** sobrevivem ao ciclo minimizar→reabrir (o React reinicia o `useState` local do componente); só a pergunta em si (o pedido pendente) persiste, não o preenchimento parcial.
+
+---
+
+## Vigia — o observador que questiona premissas
+
+O agente principal executa o que foi pedido. Quando a **premissa** está errada — uma medida que só o usuário conhece, uma intenção ambígua, uma restrição não declarada — o erro só aparece na entrega, e o trabalho inteiro é refeito. O `critico` do registro de tarefas não cobre isso: ele confere entregáveis contra critérios, e antes da primeira linha de código não existe entregável.
+
+O **vigia** (`src/main/vigia/`) é uma segunda sessão, barata, com uma pergunta só: *alguma premissa deste trabalho depende de algo que só o usuário sabe e não foi confirmado?* Ele **não fala com o agente**, não interrompe turno e não decide nada — levanta um chip na tela e o usuário resolve. Design em `docs/superpowers/specs/2026-09-12-vigia-questionador-paralelo-design.md`.
+
+**Não é subagente, de propósito.** Um subagente devolve a resposta *para o agente principal* e morre no fim do turno — seria um segundo dono da decisão, exatamente o que não se quer, amarrado ao ciclo de vida de quem observa. O vigia vive no main e lê o **mesmo tee de eventos** que abastece a ponte do celular e a allowlist de download (`emit`, em `index.ts`).
+
+**Quando roda** — uma análise por turno do usuário, no primeiro destes: `VIGIA_CALL_TRIGGER` (3) chamadas de ferramenta acumuladas, ou o `result` do turno. Antes das primeiras ações só existe o pedido; muito depois, o aviso chega tarde. `noteUserMessage` é chamado no `agentSend`, então retomada de sessão e recuperação de turno **não** disparam nada: sem pedido do usuário não há premissa do usuário para questionar. Turno que morre em `error` não é analisado — aquilo é falha, não premissa errada.
+
+**Por que ele fala pouco** — cooldown de 60 s por conversa, digest capado (2000 caracteres do pedido, até 12 chamadas, 200 por chamada) e **dedupe por conteúdo** (`alertFingerprint`, insensível a caixa/acento/pontuação): uma premissa não resolvida geraria o mesmo texto a cada turno, e repetir o aviso é exatamente como se perde o usuário — a mesma lição dos dois limiares do watchdog de travamento.
+
+**A chamada** é um `query()` avulso no molde do `visionRelay`: `tools: []`, `maxTurns: 1`, modelo da config (`vigia.model`, default `claude-sonnet-5`). Sem ferramentas **é** parte do contrato: se a dúvida pode ser respondida lendo o projeto, não é dúvida para o usuário. O digest carrega só o alvo de cada ação (`summarizeCall` devolve o `file_path`, nunca o `new_string`) — conteúdo de arquivo, imagem e segredo do cofre não entram. Falha de rede/SDK **degrada em silêncio**: o observador não pode derrubar o observado.
+
+**A resposta é uma linha**, `OK` ou `ALERTA: <pergunta>`. `parseVigiaVerdict` falha **fechada** — o que não casa com o formato vira silêncio, nunca um alerta inventado. Medido contra o modelo real (`scripts/vigia-probe.ts`): pedido com medida do mundo real ("prender o eixo da extrusora… grosso pra não quebrar") → alerta perguntando o diâmetro do eixo e dos furos; pedido fechado (renomear função e atualizar chamadas) → `OK`.
+
+**A saída não é um `ChatEvent`.** Vai por um canal próprio (`Channels.vigiaAlert`), por dois motivos: o cliente do celular tem um conjunto `STATE_ONLY` e um `push` final, então um `kind` desconhecido engordaria a lista de mensagens a cada ocorrência, invisível e acumulando; e alerta no stream de eventos é, por construção, algo que também entra no histórico que o modelo relê — e este aviso é para o **usuário**.
+
+**Na tela** (`VigiaChip.tsx`), entre o histórico e o composer, no molde do chip de pergunta pendente, em âmbar e **sem pulso**: o vigia avisa, não cobra resposta. Clicar expande; as ações são **Dispensar** e **Perguntar ao agente**, que manda o texto pelo caminho normal de envio — com o agente ocupado, entra na fila, sem interromper o turno. O estado (`vigiaAlerts` no `App.tsx`) é por conversa e **não persiste**: é aviso, não dado da conversa.
+
+**Configuração** em **Configurações → Geral**: interruptor (**ligado** por padrão — o estado inicial já tem que servir) e seletor de modelo (`VIGIA_MODELS`). A config é lida **a cada análise**, então desligar vale na hora, sem reiniciar sessão.
 
 ---
 

@@ -20,7 +20,8 @@ const partialConfigSchema = z
     secretVaultEnabled: z.boolean().optional(),
     remoteToken: z.string().optional(),
     remoteEnabled: z.boolean().optional(),
-    preventSleepWhileBusy: z.boolean().optional()
+    preventSleepWhileBusy: z.boolean().optional(),
+    vigia: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional()
   })
   .strict()
 
@@ -29,7 +30,8 @@ export function defaultAppConfig(): AppConfig {
     ...DEFAULT_CONFIG,
     openai: { ...DEFAULT_CONFIG.openai },
     localSpeech: { ...DEFAULT_CONFIG.localSpeech },
-    ollama: { ...DEFAULT_CONFIG.ollama }
+    ollama: { ...DEFAULT_CONFIG.ollama },
+    vigia: { ...DEFAULT_CONFIG.vigia }
   }
 }
 
@@ -45,7 +47,8 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
     ...parsed.data,
     openai: { ...current.openai, ...(parsed.data.openai ?? {}) },
     localSpeech: { ...current.localSpeech, ...(parsed.data.localSpeech ?? {}) },
-    ollama: { ...current.ollama, ...(parsed.data.ollama ?? {}) }
+    ollama: { ...current.ollama, ...(parsed.data.ollama ?? {}) },
+    vigia: { ...current.vigia, ...(parsed.data.vigia ?? {}) }
   }
 }
 

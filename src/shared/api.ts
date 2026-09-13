@@ -24,6 +24,7 @@ import type {
   ResolvedPastedRef,
   SkillInfo,
   PermissionExpiredMsg,
+  VigiaAlertMsg,
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
@@ -186,6 +187,9 @@ export interface AgentCodeApi {
   /** Subscribe to permission/question timeouts (auto-resolved) so the renderer
    *  can close the matching modal. Returns an unsubscribe function. */
   onPermissionExpired(cb: (m: PermissionExpiredMsg) => void): () => void
+  /** Subscribe to the parallel watcher's doubts about a premise of the work.
+   *  Advisory only: nothing is paused, the user decides what to do. */
+  onVigiaAlert(cb: (m: VigiaAlertMsg) => void): () => void
 
   launchBrowser(): Promise<void>
   navigate(url: string): Promise<string>

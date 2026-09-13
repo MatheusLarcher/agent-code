@@ -53,7 +53,9 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.secretVaultEnabled',
       'config.remoteToken',
       'config.remoteEnabled',
-      'config.preventSleepWhileBusy'
+      'config.preventSleepWhileBusy',
+      'config.vigia.enabled',
+      'config.vigia.model'
     ]
   },
   {

@@ -25,7 +25,9 @@ const FIELDS: Field[] = [
   { key: 'config.secretVaultEnabled', get: (c) => c.secretVaultEnabled, patch: (v) => ({ secretVaultEnabled: v as boolean }) },
   { key: 'config.remoteToken', sensitive: true, get: (c) => c.remoteToken, patch: (v) => ({ remoteToken: v as string }) },
   { key: 'config.remoteEnabled', get: (c) => c.remoteEnabled, patch: (v) => ({ remoteEnabled: v as boolean }) },
-  { key: 'config.preventSleepWhileBusy', get: (c) => c.preventSleepWhileBusy, patch: (v) => ({ preventSleepWhileBusy: v as boolean }) }
+  { key: 'config.preventSleepWhileBusy', get: (c) => c.preventSleepWhileBusy, patch: (v) => ({ preventSleepWhileBusy: v as boolean }) },
+  { key: 'config.vigia.enabled', get: (c) => c.vigia.enabled, patch: (v) => ({ vigia: { enabled: v as boolean } as AppConfig['vigia'] }) },
+  { key: 'config.vigia.model', get: (c) => c.vigia.model, patch: (v) => ({ vigia: { model: v as string } as AppConfig['vigia'] }) }
 ]
 
 /** Every KV key the config persists, in write order. Exported so a test can hold
@@ -40,7 +42,13 @@ let snapshot = defaultAppConfig()
 let writeQueue: Promise<unknown> = Promise.resolve()
 
 function cloneConfig(config: AppConfig): AppConfig {
-  return { ...config, openai: { ...config.openai }, localSpeech: { ...config.localSpeech }, ollama: { ...config.ollama } }
+  return {
+    ...config,
+    openai: { ...config.openai },
+    localSpeech: { ...config.localSpeech },
+    ollama: { ...config.ollama },
+    vigia: { ...config.vigia }
+  }
 }
 
 function loadLegacyConfig(): AppConfig {

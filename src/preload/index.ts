@@ -25,6 +25,7 @@ import type {
   ResolvedPastedRef,
   SkillInfo,
   PermissionExpiredMsg,
+  VigiaAlertMsg,
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
@@ -177,6 +178,7 @@ const api: AgentCodeApi = {
     on(Channels.agentPermissionRequest, cb),
   onPermissionExpired: (cb: (m: PermissionExpiredMsg) => void): (() => void) =>
     on(Channels.agentPermissionExpired, cb),
+  onVigiaAlert: (cb: (m: VigiaAlertMsg) => void): (() => void) => on(Channels.vigiaAlert, cb),
 
   // browser
   launchBrowser: (): Promise<void> => ipcRenderer.invoke(Channels.browserLaunch),

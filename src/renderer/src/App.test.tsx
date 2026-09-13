@@ -38,7 +38,8 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
       skipPermissions: false,
       windowsControlEnabled: false,
       remoteToken: '',
-      remoteEnabled: false
+      remoteEnabled: false,
+      vigia: { enabled: true, model: 'claude-sonnet-5' }
     })),
     setConfig: vi.fn(async () => {}),
     onAppCloseRequested: vi.fn((cb: () => void) => {
@@ -161,6 +162,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     }),
     onPermissionRequest: vi.fn(() => () => {}),
     onPermissionExpired: vi.fn(() => () => {}),
+    onVigiaAlert: vi.fn(() => () => {}),
     launchBrowser: vi.fn(async () => {}),
     navigate: vi.fn(async () => ''),
     browserBack: vi.fn(async () => {}),

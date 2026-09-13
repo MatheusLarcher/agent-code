@@ -40,6 +40,7 @@ import { appendFileSync, existsSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir } from './store'
 import { storageLifecycle } from './persistence/lifecycle'
 import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlist'
+import { Vigia } from './vigia/vigia'
 import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
 import { hashJson, normalizeJson } from './persistence/hashes'
@@ -202,6 +203,14 @@ const EMPTY_BROWSER_STATE = {
   launched: false,
   tabs: []
 }
+
+// O observador paralelo: assiste ao tee de eventos e, quando uma premissa do
+// trabalho depende de algo que só o usuário sabe, levanta um chip na tela. Não
+// fala com o agente, não interrompe turno, e falha em silêncio.
+const vigia = new Vigia({
+  config: () => loadConfig().vigia,
+  emit: (alert) => send(Channels.vigiaAlert, alert)
+})
 
 function send(channel: string, payload: unknown): void {
   const window = mainWindow
@@ -1195,6 +1204,9 @@ function registerIpc(): void {
       // Recorded here, not inside the bridge: the desktop download must be
       // authorized whether or not the phone bridge is running.
       downloadAllowlist.track(event)
+      // O vigia lê o mesmo tee — e a saída dele NÃO volta por aqui: alerta é
+      // para o usuário, não para o modelo (canal próprio, ver vigia.ts).
+      vigia.observe(convId, event)
     }
     s = new ProviderFailoverSession(opts, (sessionOptions, sessionEmit, sessionComplete) => new AgentSession(
       sessionOptions,
@@ -1262,6 +1274,9 @@ function registerIpc(): void {
       const saved: Array<{ name: string; path: string }> =
         files && files.length > 0 ? await saveAttachments(convId, files) : []
       const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
+      // O vigia só julga premissa de um pedido do usuário: é aqui que o turno
+      // dele começa (retomada e recuperação de turno não passam por aqui).
+      vigia.noteUserMessage(convId, text)
       await sessions.get(convId)?.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }
   )
@@ -1281,6 +1296,7 @@ function registerIpc(): void {
   ipcMain.handle(Channels.agentDispose, (_e, convId: string) => {
     sessions.get(convId)?.dispose()
     sessions.delete(convId)
+    vigia.dispose(convId)
     void releaseSessionLease(convId)
   })
 

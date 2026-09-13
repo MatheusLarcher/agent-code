@@ -30,6 +30,8 @@ const EXPECTED_KEYS = [
   'config.secretVaultEnabled',
   'config.skipPermissions',
   'config.transcribeEngine',
+  'config.vigia.enabled',
+  'config.vigia.model',
   'config.windowsControlEnabled',
   'memory-curator:last-run-at'
 ]
