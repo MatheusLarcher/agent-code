@@ -108,6 +108,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.listSkills, root),
   projectTree: (root: string, keep: string[] = []): Promise<ProjectTree> =>
     ipcRenderer.invoke(Channels.projectTree, root, keep),
+  projectIcon: (root: string): Promise<string | null> =>
+    ipcRenderer.invoke(Channels.projectIcon, root),
   downloadFile: (path: string): Promise<{ ok: boolean; message: string; saved?: string }> =>
     ipcRenderer.invoke(Channels.fileDownload, path),
   readFile: (path: string): Promise<string> => ipcRenderer.invoke(Channels.fileRead, path),

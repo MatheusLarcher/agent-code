@@ -79,12 +79,18 @@ Entrada: o digest (pedido + ações). Saída: **uma linha**.
 
 ```
 OK
-ALERTA: <uma frase — a dúvida, na forma de pergunta ao usuário>
+ALERTA: <uma frase — a dúvida, na forma de pergunta ao usuário> | <resposta provável> | <resposta provável>
 ```
 
 `parseVigiaVerdict` aceita as duas formas, ignora cercas de código e devolve
 `null` para qualquer coisa que não case (falha fechada: silêncio, não alerta
 inventado).
+
+As respostas prováveis (de 2 a 4, atalhos de clique no card) vieram depois, e
+falham **abertas**: lista malformada some e sobra a pergunta com o campo de
+texto — o comportamento original. Pergunta de resposta aberta (uma medida, um
+nome, um caminho) sai **sem opção nenhuma** de propósito: ali uma lista
+inventada enviesaria a resposta, que é justamente o dado que só o usuário tem.
 
 Falha de rede/SDK **degrada em silêncio** — o vigia nunca pode derrubar ou
 atrasar a conversa que observa.
@@ -109,21 +115,26 @@ O alerta **não** entra no fluxo de `ChatEvent`. Dois motivos:
 Canal novo: `Channels.vigiaAlert` (`vigia:alert`), main → renderer,
 `VigiaAlertMsg { convId, id, text, at }`.
 
-## Interface
+## Interface: ele pergunta, o usuário responde, a resposta vai ao agente
 
-Um **chip** no `ChatPanel`, entre o histórico e o composer, no mesmo lugar e
-molde do chip de pergunta pendente (`.pending-question-chip`), em âmbar:
+Um card no `ChatPanel`, entre o histórico e o composer, em âmbar. Ele **nasce
+aberto e com o campo focado** — é uma pergunta ao usuário, não um aviso que ele
+precisa ir buscar — com a dúvida, uma caixa de texto e duas ações:
 
-> ⚠ O vigia levantou uma dúvida — toque para ver
-
-Clicar expande o texto no próprio chip, com duas ações:
-
+- **Responder** (ou Enter; Shift+Enter quebra linha) — manda a resposta pelo
+  **caminho normal de envio**: com o agente ocupado ela entra na fila e chega
+  **na próxima chamada ao modelo**, sem interromper o turno. A resposta vai
+  acompanhada da pergunta, porque o agente **nunca viu a dúvida** (ela é do
+  vigia, para o usuário) e uma resposta solta chegaria sem referente.
 - **Dispensar** — some (estado do renderer, não persiste).
-- **Perguntar ao agente** — enfileira o texto como mensagem do usuário pelo
-  caminho normal de envio. Não interrompe o turno; entra na fila como qualquer
-  mensagem enviada com o agente ocupado.
 
-Não é modal, não rouba foco, não pausa nada.
+Resposta em branco não envia. Não é modal e não pausa nada: dá para ignorar o
+card e seguir digitando no composer.
+
+> **A primeira versão errou aqui**, e vale registrar: o botão era "Perguntar ao
+> agente", o que transformava a dúvida numa decisão do usuário sobre
+> *repassá-la* — em vez de uma pergunta que ele responde. O papel invertido
+> fazia o recurso parecer burocracia.
 
 ## Configuração
 
@@ -169,7 +180,12 @@ repetido é suprimido; falha do SDK não lança e não emite.
 
 1. Conversa com premissa ambígua gera **um** alerta, e o agente principal segue
    trabalhando sem nenhuma interrupção.
-2. Conversa trivial (pedido claro) não gera alerta nenhum.
-3. Desligar na config para de chamar o modelo — verificável pela ausência de
+2. Conversa trivial (pedido claro) não gera alerta nenhum. A barra é dupla: a
+   dúvida tem que ser respondível em uma frase **e** mudar o que o agente vai
+   fazer — se as duas respostas possíveis levam ao mesmo trabalho, o veredito
+   é `OK`.
+3. Responder no card entrega a resposta ao agente **sem cancelar a tarefa**:
+   com ele ocupado, ela entra na fila e chega na próxima chamada ao modelo.
+4. Desligar na config para de chamar o modelo — verificável pela ausência de
    chamada ao SDK.
-4. `npm run typecheck`, `npm test` e `npm run build` verdes.
+5. `npm run typecheck`, `npm test` e `npm run build` verdes.

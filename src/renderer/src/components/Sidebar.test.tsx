@@ -165,6 +165,61 @@ describe('Sidebar — busca por projeto', () => {
     expect(screen.getByText('Conversa B')).toBeTruthy()
   })
 
+  it('mostra o ícone do projeto quando a pasta tem um, e só nele', () => {
+    const { container } = render(
+      <UiProvider>
+        <Sidebar
+          collapsed={false}
+          onToggleCollapse={() => {}}
+          projects={[
+            { path: 'C:/com-icone', name: 'com-icone', icon: 'data:image/png;base64,AAA', conversations: [] },
+            { path: 'C:/sem-icone', name: 'sem-icone', conversations: [] }
+          ]}
+          recents={[]}
+          activeId={null}
+          busyIds={new Set()}
+          onSelect={() => {}}
+          onNewChat={() => {}}
+          onNewProject={() => {}}
+          onNewChatIn={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onSelectResult={() => {}}
+        />
+      </UiProvider>
+    )
+    const imgs = container.querySelectorAll('img.project-icon-img')
+    expect(imgs).toHaveLength(1)
+    expect(imgs[0].getAttribute('src')).toBe('data:image/png;base64,AAA')
+    // O projeto sem ícone continua com o glifo de pasta (nenhuma imagem quebrada).
+    expect(screen.getByText('sem-icone')).toBeTruthy()
+  })
+
+  it('volta ao glifo de pasta se a imagem não decodificar', () => {
+    const { container } = render(
+      <UiProvider>
+        <Sidebar
+          collapsed={false}
+          onToggleCollapse={() => {}}
+          projects={[{ path: 'C:/quebrado', name: 'quebrado', icon: 'data:image/png;base64,zzz', conversations: [] }]}
+          recents={[]}
+          activeId={null}
+          busyIds={new Set()}
+          onSelect={() => {}}
+          onNewChat={() => {}}
+          onNewProject={() => {}}
+          onNewChatIn={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onSelectResult={() => {}}
+        />
+      </UiProvider>
+    )
+    fireEvent.error(container.querySelector('img.project-icon-img')!)
+    expect(container.querySelector('img.project-icon-img')).toBeNull()
+    expect(screen.getByText('quebrado')).toBeTruthy()
+  })
+
   it('mantém o id da mensagem ao abrir resultado de prompt', () => {
     const onSelectResult = renderSearch([{ path: 'C:/outro', name: 'outro', conversations: [makeSearchConv('c3', 'Resumo', 1, 'preciso procurar orçamento')] }])
     fireEvent.change(screen.getByPlaceholderText('Buscar conversas ou projetos…'), { target: { value: 'orçamento' } })

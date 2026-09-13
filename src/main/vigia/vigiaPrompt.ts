@@ -19,6 +19,11 @@ export const VIGIA_MAX_CALLS = 12
 export const VIGIA_MAX_USER_CHARS = 2000
 export const VIGIA_MAX_CALL_CHARS = 200
 
+/** Tetos das opções de resposta. Quatro é o limite do que se escolhe sem ler:
+ *  uma lista maior custa mais atenção do que digitar a resposta custaria. */
+export const VIGIA_MAX_OPTIONS = 4
+export const VIGIA_MAX_OPTION_CHARS = 60
+
 /** Uma ação do agente, já reduzida ao que cabe no digest. */
 export interface VigiaCall {
   tool: string
@@ -29,6 +34,14 @@ export interface VigiaCall {
 export interface VigiaTurn {
   userText: string
   calls: VigiaCall[]
+}
+
+/** A dúvida pronta para a tela: a pergunta e os atalhos de resposta. `options`
+ *  pode vir vazio — aí sobra o campo de texto, que é o caminho que sempre
+ *  existe e o único possível quando a resposta é uma medida ou um nome. */
+export interface VigiaVerdict {
+  question: string
+  options: string[]
 }
 
 /**
@@ -47,9 +60,18 @@ Alerte apenas quando a dúvida for desse tipo:
 
 NÃO alerte sobre: estilo, organização de código, desempenho, sugestões de melhoria, risco genérico, nem sobre qualquer coisa que o agente possa descobrir sozinho lendo o projeto. Na dúvida entre alertar e calar, cale.
 
+Antes de alertar, aplique os dois cortes abaixo. Se qualquer um falhar, responda OK:
+
+1. O usuário consegue responder isso em uma frase, sem pesquisar nada?
+2. A resposta dele MUDA o que o agente vai fazer? (Se as duas respostas possíveis levam ao mesmo trabalho, a pergunta é irrelevante — cale.)
+
+A pergunta é feita DIRETAMENTE ao usuário. Escreva como se falasse com ele: pergunta única, curta, concreta, sem preâmbulo e sem pedir confirmação genérica ("confirma?", "está correto?"). Uma pergunta só — nunca duas.
+
+Depois da pergunta, ofereça de 2 a ${VIGIA_MAX_OPTIONS} respostas prováveis, separadas por "|", cada uma com no máximo ${VIGIA_MAX_OPTION_CHARS} caracteres. São atalhos de clique: precisam ser as respostas que o usuário realmente daria, excludentes entre si e já escritas como resposta ("12 mm", "só no Android"), nunca rótulos vagos ("sim", "outro", "depende"). NÃO invente um valor preciso que você não tem como saber: se as respostas possíveis forem abertas demais para listar (uma medida, um nome, um caminho), mande só a pergunta, sem opção nenhuma — o usuário digita.
+
 Responda em UMA linha, em português, num destes dois formatos exatos:
 OK
-ALERTA: <a dúvida, escrita como uma pergunta curta e direta ao usuário>`
+ALERTA: <a pergunta ao usuário> | <resposta provável 1> | <resposta provável 2>`
 
 /** Monta o texto que o vigia lê: o pedido e a lista de ações, ambos capados. */
 export function buildVigiaDigest(turn: VigiaTurn): string {
@@ -69,19 +91,46 @@ export function buildVigiaPrompt(turn: VigiaTurn): string {
 }
 
 /**
- * Extrai o alerta da resposta, ou `null`.
+ * Extrai a dúvida da resposta, ou `null`.
  *
- * Falha FECHADA: resposta que não case com nenhum dos dois formatos vira
- * silêncio, nunca um alerta inventado — o custo de um aviso errado aqui é o
- * usuário parar de ler os avisos.
+ * A PERGUNTA falha FECHADA: resposta que não case com nenhum dos dois formatos
+ * vira silêncio, nunca um alerta inventado — o custo de um aviso errado aqui é
+ * o usuário parar de ler os avisos.
+ *
+ * As OPÇÕES falham ABERTO, e por outro motivo: uma lista malformada não
+ * invalida a pergunta. Sem opção legível sobram a pergunta e o campo de texto,
+ * que é exatamente o comportamento que existia antes delas.
  */
-export function parseVigiaVerdict(raw: string): string | null {
+export function parseVigiaVerdict(raw: string): VigiaVerdict | null {
   const text = raw.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim()
   if (!text) return null
   const match = /ALERTA\s*:\s*(.+)/i.exec(text)
   if (!match) return null
-  const alert = match[1].split('\n')[0].trim().replace(/^["'“]|["'”]$/g, '').trim()
-  return alert.length >= 8 ? alert : null
+  const [head, ...rest] = match[1].split('\n')[0].split('|')
+  const question = unquote(head)
+  if (question.length < 8) return null
+  return { question, options: cleanOptions(rest) }
+}
+
+/** Filtra os atalhos: sem vazio, sem repetido, sem gigante, sem excesso. Uma
+ *  opção sozinha não é escolha — ou saem duas, ou não sai nenhuma. */
+function cleanOptions(raw: string[]): string[] {
+  const seen = new Set<string>()
+  const options: string[] = []
+  for (const item of raw) {
+    const option = clip(unquote(item), VIGIA_MAX_OPTION_CHARS)
+    if (!option) continue
+    const key = option.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    options.push(option)
+    if (options.length >= VIGIA_MAX_OPTIONS) break
+  }
+  return options.length >= 2 ? options : []
+}
+
+function unquote(text: string): string {
+  return text.trim().replace(/^["'“]|["'”]$/g, '').trim()
 }
 
 /** Identidade do alerta para o dedupe: uma premissa não resolvida não pode

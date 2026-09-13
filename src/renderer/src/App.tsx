@@ -52,6 +52,7 @@ import {
   markConversationsDirty
 } from './storage'
 import { ChatPanel } from './components/ChatPanel'
+import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
 import { AgentsPanel } from './components/AgentsPanel'
 import { IconGlobe, IconUsers } from './components/Icons'
@@ -435,7 +436,7 @@ export function App(): JSX.Element {
   // Dúvida do vigia por conversa (o observador paralelo). É aviso, não estado da
   // conversa: não persiste, não vira mensagem e não bloqueia nada — some ao
   // dispensar, ao trocar por um alerta novo ou ao fechar o app.
-  const [vigiaAlerts, setVigiaAlerts] = useState<Record<string, string>>({})
+  const [vigiaAlerts, setVigiaAlerts] = useState<Record<string, VigiaDoubt>>({})
   // Account-wide rate-limit usage (5h session / weekly / etc.) — deliberately
   // GLOBAL, not per-conversation: it comes from the Anthropic account, not from
   // any one chat, so it must survive switching conversations. Keyed by
@@ -742,6 +743,11 @@ export function App(): JSX.Element {
       if (isActivity && !busyRef.current.has(cid)) {
         setBusy(cid, true)
         setBusySince((m) => (m[cid] ? m : { ...m, [cid]: Date.now() }))
+        // Atividade numa conversa ociosa é um turno NOVO — e um turno novo não
+        // é o turno que o usuário parou. É aqui que a marca de "parado" cai
+        // quando o turno seguinte não veio do app (uma mensagem que sobreviveu
+        // ao Stop, por exemplo); os envios normais limpam no próprio despacho.
+        interruptedRef.current.delete(cid)
       }
 
       if (e.kind === 'result' || e.kind === 'error') {
@@ -760,7 +766,14 @@ export function App(): JSX.Element {
 
         // Did the user just stop this turn? A user interrupt/stop ends with a
         // `result` (sometimes flagged is_error); that's intentional, not a failure.
-        const wasInterrupted = interruptedRef.current.delete(cid)
+        //
+        // CONSULTA, não consumo: um Stop costuma render DOIS eventos terminais
+        // (o `result` do CLI e o `error` do fim do stream). Consumindo a marca,
+        // o segundo passava por falha genuína, a recuperação automática entrava
+        // e o turno que o usuário acabara de parar era reenviado sozinho — era
+        // assim que o Stop "não parava". A marca é limpa no próximo turno de
+        // verdade (`sendMessage`/reenvio), que é onde ela deixa de valer.
+        const wasInterrupted = interruptedRef.current.has(cid)
         if (!wasInterrupted) {
           patchConv(cid, (c) => ({ ...c, queuedAfterInterrupt: undefined }))
         }
@@ -928,8 +941,8 @@ export function App(): JSX.Element {
       setMinimizedQuestions((m) => withoutKey(m, convId))
     })
     // O vigia avisa o USUÁRIO; nada aqui toca a sessão nem a lista de mensagens.
-    const offVigia = window.api.onVigiaAlert(({ convId, text }) => {
-      setVigiaAlerts((v) => ({ ...v, [convId]: text }))
+    const offVigia = window.api.onVigiaAlert(({ convId, text, options }) => {
+      setVigiaAlerts((v) => ({ ...v, [convId]: { question: text, options: options ?? [] } }))
     })
     const offState = window.api.onBrowserState(setBrowserState)
     const offPicked = window.api.onBrowserPicked((el) => {
@@ -2275,6 +2288,25 @@ export function App(): JSX.Element {
 
   const tts = useMemo(() => ({ speakingId, onToggleSpeak: toggleSpeak }), [speakingId, toggleSpeak])
 
+  /**
+   * Encerra o estado "trabalhando" por conta própria depois de um Stop.
+   *
+   * O Stop pode pegar a mensagem ANTES de o turno começar: o SDK a descarta e
+   * não emite `result` nenhum — não havia turno para terminar. Esperando esse
+   * evento, a conversa ficava com o "…" e o botão vermelho para sempre, e era
+   * assim que o Stop "não parava" mesmo tendo parado.
+   *
+   * Desligar cedo é seguro justamente porque existe o autocorretor lá em cima:
+   * se o agente ainda estiver produzindo, a primeira atividade religa o estado
+   * (é o mesmo mecanismo que cobre um `result` prematuro).
+   */
+  const goIdleAfterStop = useCallback((cid: string): void => {
+    setBusy(cid, false)
+    setBusySince((m) => withoutKey(m, cid))
+    setStalledSince((m) => withoutKey(m, cid))
+    delete inflightRef.current[cid]
+  }, [setBusy])
+
   const interruptConv = useCallback((cid: string): void => {
     // Stop the current task AND drop anything queued for this conversation. The
     // SDK ends an interrupt by emitting a `result` (not `error`); with the queue
@@ -2304,9 +2336,12 @@ export function App(): JSX.Element {
             'aviso',
             `${receipt.stillQueued.length} mensagem(ns) sobreviveram ao Stop e ainda serão processadas.`
           )
+          return // o turno continua de verdade; quem encerra é o `result` dele
         }
+        goIdleAfterStop(cid)
       })
       .catch(() => {
+        goIdleAfterStop(cid)
         if (!inflight) return
         patchConv(cid, (c) => ({
           ...c,
@@ -2315,7 +2350,7 @@ export function App(): JSX.Element {
           )
         }))
       })
-  }, [patchConv, notify])
+  }, [patchConv, notify, goIdleAfterStop])
 
   const interrupt = useCallback((): void => {
     const cid = activeIdRef.current
@@ -2459,6 +2494,14 @@ export function App(): JSX.Element {
     [active, activeTouches]
   )
 
+  /**
+   * Icon found inside each project folder (data URL), or null when it has none.
+   * Looked up once per folder, after the projects are known — a folder without
+   * an icon keeps the folder glyph, so a miss costs nothing visually.
+   */
+  const [projectIcons, setProjectIcons] = useState<Record<string, string | null>>({})
+  const iconRequested = useRef<Set<string>>(new Set())
+
   const projects = useMemo<SidebarProject[]>(() => {
     const map = new Map<string, Conversation[]>()
     // Projeto conhecido pelo banco entra na lista MESMO sem conversa carregada:
@@ -2482,6 +2525,7 @@ export function App(): JSX.Element {
         return {
           path,
           name: basename(path),
+          icon: projectIcons[path] ?? null,
           conversations: [...cs].sort((a, b) => b.updatedAt - a.updatedAt),
           total,
           hasMore: !fullyLoaded && total > cs.length,
@@ -2492,7 +2536,47 @@ export function App(): JSX.Element {
       // o resumo do banco não some sozinho depois de um delete local.
       .filter((p) => p.conversations.length > 0 || p.total > 0)
       .sort((a, b) => recency(b.path, b.conversations) - recency(a.path, a.conversations))
-  }, [conversations, projectSummaries, pendingProjects, projectTotals, fullyLoadedProjects, loadingProjects])
+  }, [
+    conversations,
+    projectSummaries,
+    pendingProjects,
+    projectTotals,
+    fullyLoadedProjects,
+    loadingProjects,
+    projectIcons
+  ])
+
+  /** Stable key of the project list — the icon lookup only cares about paths. */
+  const projectPathsKey = projects.map((p) => p.path).join('\n')
+
+  // Fetch the icon of every project that appeared in the list, once each. The
+  // lookup only reads a small file inside the folder, so it can run right after
+  // the projects load without competing with the conversations.
+  //
+  // Deliberately NOT cancelled on cleanup: the list re-renders while the
+  // conversations stream in, and an "alive" flag would abort the in-flight
+  // lookup while `iconRequested` already marked the path as done — the icon
+  // would then never arrive.
+  useEffect(() => {
+    if (typeof window.api?.projectIcon !== 'function') return
+    const missing = projectPathsKey
+      .split('\n')
+      .filter((path) => path && !iconRequested.current.has(path))
+    if (missing.length === 0) return
+    for (const path of missing) iconRequested.current.add(path)
+    void (async () => {
+      for (const path of missing) {
+        let icon: string | null = null
+        try {
+          icon = await window.api.projectIcon(path)
+        } catch {
+          icon = null
+        }
+        // Only a real icon changes state — a miss would re-render for nothing.
+        if (icon) setProjectIcons((prev) => (prev[path] === icon ? prev : { ...prev, [path]: icon }))
+      }
+    })()
+  }, [projectPathsKey])
 
   const recents = useMemo<Conversation[]>(
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 15),
@@ -2563,6 +2647,20 @@ export function App(): JSX.Element {
 
   return (
     <div className="app">
+      {/* A casca já está montada, mas vazia: as conversas só existem depois que
+          a persistência responde, e num banco em pasta sincronizada isso leva
+          segundos. Sem este aviso, a janela aberta e sem nada dentro é o que o
+          usuário lê como "o app demora a abrir". */}
+      {!hydrated && (
+        <div className="app-boot" role="status">
+          <div className="spin" />
+          <div className="label">
+            {storageStatus && storageStatus.state !== 'booting'
+              ? 'Carregando conversas…'
+              : 'Abrindo o Agent Code…'}
+          </div>
+        </div>
+      )}
       <Sidebar
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed((v) => !v)}
@@ -2741,12 +2839,17 @@ export function App(): JSX.Element {
             onReopenQuestion={() => setQuestionMinimized(false)}
             vigiaAlert={active ? vigiaAlerts[active.id] ?? null : null}
             onDismissVigia={() => active && setVigiaAlerts((v) => withoutKey(v, active.id))}
-            onAskVigia={(text) => {
+            onAnswerVigia={(question, answer) => {
               if (!active) return
               setVigiaAlerts((v) => withoutKey(v, active.id))
-              // Caminho normal de envio: com o agente ocupado, entra na fila —
-              // o turno em andamento não é interrompido.
-              void sendMessage(text)
+              // Caminho normal de envio: com o agente ocupado a resposta entra
+              // na fila e é entregue na próxima chamada ao modelo — o turno em
+              // andamento NÃO é interrompido. A pergunta acompanha a resposta
+              // porque o agente nunca viu a dúvida (ela é do vigia, para o
+              // usuário), e sem ela a resposta chegaria solta.
+              void sendMessage(
+                `O vigia (observador em paralelo) me perguntou: "${question}"\n\nMinha resposta: ${answer}\n\nLeve isso em conta a partir de agora; se contradisser o que você assumiu, corrija.`
+              )
             }}
             todoPlan={active?.todoPlan}
             backgroundTasks={active?.backgroundTasks ?? []}

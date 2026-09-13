@@ -51,5 +51,8 @@ for (const caso of CASES) {
   console.log(`\n[${got === caso.esperado ? 'OK ' : 'XX '}] ${caso.nome}`)
   console.log(`  esperado: ${caso.esperado}   obtido: ${got}`)
   console.log(`  cru: ${raw.replace(/\n/g, ' ⏎ ').slice(0, 300)}`)
-  if (verdict) console.log(`  alerta: ${verdict}`)
+  if (verdict) {
+    console.log(`  alerta: ${verdict.question}`)
+    console.log(`  opções: ${verdict.options.length ? verdict.options.join(' | ') : '(nenhuma — resposta aberta)'}`)
+  }
 }

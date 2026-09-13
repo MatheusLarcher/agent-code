@@ -44,12 +44,15 @@ describe('digest do vigia', () => {
 
 describe('leitura do veredito', () => {
   it('aceita o alerta e devolve só a frase', () => {
-    expect(parseVigiaVerdict('ALERTA: Qual o diâmetro real do eixo?')).toBe('Qual o diâmetro real do eixo?')
+    expect(parseVigiaVerdict('ALERTA: Qual o diâmetro real do eixo?')).toEqual({
+      question: 'Qual o diâmetro real do eixo?',
+      options: []
+    })
   })
 
   it('aceita alerta cercado em crase e com texto antes', () => {
     const raw = '```\nAnalisando…\nALERTA: O furo é para o eixo de 12 mm ou 11,9 mm?\n```'
-    expect(parseVigiaVerdict(raw)).toBe('O furo é para o eixo de 12 mm ou 11,9 mm?')
+    expect(parseVigiaVerdict(raw)?.question).toBe('O furo é para o eixo de 12 mm ou 11,9 mm?')
   })
 
   it('OK não é alerta', () => {
@@ -61,6 +64,33 @@ describe('leitura do veredito', () => {
     expect(parseVigiaVerdict('acho que talvez seja bom revisar depois')).toBeNull()
     expect(parseVigiaVerdict('')).toBeNull()
     expect(parseVigiaVerdict('ALERTA: curto')).toBeNull()
+  })
+})
+
+describe('respostas prováveis', () => {
+  it('separa a pergunta das opções', () => {
+    expect(parseVigiaVerdict('ALERTA: O alvo é o app ou a extensão? | só o app | só a extensão | os dois')).toEqual({
+      question: 'O alvo é o app ou a extensão?',
+      options: ['só o app', 'só a extensão', 'os dois']
+    })
+  })
+
+  it('descarta vazio e repetido, e capa no teto', () => {
+    const raw = `ALERTA: Qual ambiente você usa? | prod |  | PROD | homolog | dev | teste | ${'x'.repeat(200)}`
+    const verdict = parseVigiaVerdict(raw)
+    expect(verdict?.options).toEqual(['prod', 'homolog', 'dev', 'teste'])
+  })
+
+  // Uma opção só não é escolha: ou o usuário tem alternativas, ou digita.
+  it('uma opção sozinha vira nenhuma', () => {
+    expect(parseVigiaVerdict('ALERTA: Qual o diâmetro do eixo? | 12 mm')?.options).toEqual([])
+  })
+
+  // Falha ABERTA, ao contrário da pergunta: lista ilegível não derruba a dúvida.
+  it('opção gigante é cortada, não descarta o alerta', () => {
+    const verdict = parseVigiaVerdict(`ALERTA: Escolhe? | ${'a'.repeat(200)} | ${'b'.repeat(200)}`)
+    expect(verdict?.question).toBe('Escolhe?')
+    expect(verdict?.options.every((o) => o.length <= 60)).toBe(true)
   })
 })
 

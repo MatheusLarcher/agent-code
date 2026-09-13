@@ -384,6 +384,12 @@ const nextId = (): string => `e${Date.now().toString(36)}-${counter++}`
 // auto-denies (never auto-allow a tool the user never saw).
 const PERMISSION_TIMEOUT_MS = 7 * 60_000
 
+// Quanto o Stop espera o recibo da interrupção antes de desistir de esperar. O
+// recibo é informação (quais mensagens sobreviveram), não a interrupção em si:
+// se o CLI estiver ocupado demais para responder, segurar a resposta do Stop
+// só faz a tela ficar parada em "trabalhando" sem ninguém saber por quê.
+const INTERRUPT_ACK_TIMEOUT_MS = 5_000
+
 // `AskUserQuestion` is the tool the model uses to ask the user a multiple-choice
 // question. The bundled CLI can't render it without a terminal, so we intercept it
 // (see handlePermission) and surface the questions to our own UI. This pulls the
@@ -1131,21 +1137,66 @@ export class AgentSession {
   async interrupt(): Promise<AgentInterruptResult> {
     this.windowsControlScope.cancel()
     this.clearLoopState()
-    if (!this.q) return { stillQueued: [] }
-    try {
-      const receipt = (await this.q.interrupt()) as unknown as { still_queued?: string[] } | undefined
-      // Manual cancel: flag the conversation so the next message tells the model
-      // to disregard the canceled request (set only on a real interrupt).
-      this.canceledPending = true
-      return {
-        stillQueued: (receipt?.still_queued ?? []).map((messageId: string) => ({
-          messageId,
-          text: this.submittedMessages.get(messageId)
-        }))
-      }
-    } catch {
-      /* not in a turn */
+    const q = this.q
+    if (!q) {
+      this.releasePendingPermissions('O usuário parou o turno.')
       return { stillQueued: [] }
+    }
+
+    // O pedido sai ANTES do await e ANTES de soltar as permissões, nesta ordem
+    // de propósito. Um turno parado num pedido de permissão não está rodando do
+    // ponto de vista do CLI — ele está pendurado na promessa do `canUseTool`
+    // deste processo, que o `interrupt()` sozinho não resolve. Soltar primeiro
+    // daria ao modelo o resultado da ferramenta e ele emendaria a próxima
+    // chamada antes de o abort chegar; soltar só depois do await trava, porque
+    // o recibo não vem enquanto o CLI espera a permissão.
+    const receipt = (async () => q.interrupt())().then(
+      (value) => ({ ok: true as const, value: value as { still_queued?: string[] } | undefined }),
+      () => ({ ok: false as const, value: undefined }) // fora de turno: não havia o que cancelar
+    )
+    this.releasePendingPermissions('O usuário parou o turno.')
+
+    let timer: NodeJS.Timeout | undefined
+    const ack = await Promise.race([
+      receipt,
+      new Promise<{ ok: 'timeout' }>((resolve) => {
+        timer = setTimeout(() => resolve({ ok: 'timeout' }), INTERRUPT_ACK_TIMEOUT_MS)
+        timer.unref?.()
+      })
+    ])
+    if (timer) clearTimeout(timer)
+
+    // Manual cancel: flag the conversation so the next message tells the model
+    // to disregard the canceled request. Vale também quando o recibo não veio a
+    // tempo — o pedido de interrupção foi enviado do mesmo jeito; só o `false`
+    // (o CLI recusou porque não havia turno) é que não cancela nada.
+    if (ack.ok === false) return { stillQueued: [] }
+    this.canceledPending = true
+    const stillQueued = ack.ok === 'timeout' ? [] : ack.value?.still_queued ?? []
+    // Nada sobreviveu: acabou aqui. Quando o Stop pega a mensagem ANTES de o
+    // turno começar, o SDK a descarta e não emite `result` nenhum — sem isto,
+    // `turnActive` ficava de pé para sempre e com ele o bloqueio de suspensão e
+    // o "tem agente ocupado" do relançador. Se o CLI ainda estiver produzindo,
+    // o primeiro sinal de vida religa o turno (mesmo autocorretor da tela).
+    if (stillQueued.length === 0) this.markTurnIdle()
+    return {
+      stillQueued: stillQueued.map((messageId: string) => ({
+        messageId,
+        text: this.submittedMessages.get(messageId)
+      }))
+    }
+  }
+
+  /** Solta toda permissão/pergunta pendente com uma NEGATIVA. Chamado pelo Stop:
+   *  enquanto uma dessas promessas estiver de pé, o turno do CLI não termina —
+   *  é o caso em que o botão parecia não fazer nada. */
+  private releasePendingPermissions(reason: string): void {
+    if (this.pendingPermissions.size === 0) return
+    for (const [id, pending] of this.pendingPermissions) {
+      clearTimeout(pending.timer)
+      pending.resolve({ behavior: 'deny', message: reason })
+      this.pendingPermissions.delete(id)
+      this.onPermissionExpire(id) // fecha o modal: a pergunta morreu com o turno
     }
   }
 

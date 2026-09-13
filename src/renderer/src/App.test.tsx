@@ -609,6 +609,63 @@ describe('App — indicador "trabalhando" se autocorrige após um result prematu
   })
 })
 
+// O Stop rendia DOIS eventos terminais (o `result` do CLI e o `error` do fim do
+// stream). Consumindo a marca de "parado" no primeiro, o segundo passava por
+// falha genuína: a recuperação automática entrava e reenviava o turno que o
+// usuário acabara de parar — era assim que o botão "não parava".
+describe('App — o que o Stop para, fica parado', () => {
+  const stopButton = (): Element | null => document.querySelector('.btn.stop')
+
+  // O Stop pode pegar a mensagem antes de o turno começar: o SDK a descarta e
+  // não emite `result` nenhum. Esperando esse evento, a conversa ficava com o
+  // "…" e o botão vermelho para sempre — parada, mas parecendo trabalhando.
+  it('sem nenhum evento terminal, o Stop mesmo assim deixa a conversa ociosa', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    expect(stopButton()).toBeTruthy()
+
+    await act(async () => {
+      fireEvent.click(stopButton() as Element)
+    })
+    await waitFor(() => expect(stopButton()).toBeNull())
+
+    // …e se o agente ainda estiver produzindo, a atividade religa o indicador.
+    await emit(partial)
+    expect(stopButton()).toBeTruthy()
+  })
+
+  it('dois eventos terminais depois do Stop não ressuscitam o turno', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      fireEvent.click(stopButton() as Element)
+    })
+    await waitFor(() => expect(api.interrupt).toHaveBeenCalledWith('c1'))
+
+    await emit({ kind: 'result', id: 'r1', isError: true, text: 'interrompido', durationMs: 1 })
+    await emit({ kind: 'error', id: 'e1', text: 'Agent stopped: AbortError' })
+
+    expect(api.sendMessage).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('.recovery-card')).toBeNull()
+    expect(stopButton()).toBeNull() // e a conversa ficou ociosa de verdade
+  })
+})
+
 describe('App — barra de limite de contexto', () => {
   it('mostra o uso da janela de entrada sobre o limite do modelo (Opus = 1M) e atualiza no fim do turno', async () => {
     const { container } = render(

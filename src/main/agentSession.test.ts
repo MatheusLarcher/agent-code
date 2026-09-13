@@ -546,6 +546,39 @@ describe('AgentSession — AskUserQuestion (pergunta interativa)', () => {
   })
 })
 
+// O Stop tem um caso que parecia "o botão não funciona": o turno não estava
+// rodando, estava PENDURADO numa permissão/pergunta esperando o usuário. O
+// `interrupt()` do SDK não resolve essa promessa — quem resolve é isto aqui.
+describe('AgentSession — Stop com pedido pendente na tela', () => {
+  const askInput = { questions: [{ header: 'X', question: 'Q?', multiSelect: false, options: [{ label: 'A', description: '' }] }] }
+
+  it('nega a permissão pendente e fecha o modal', async () => {
+    const { s, ask, expire } = makeSession()
+    const p = gate(s, 'Bash', { command: 'npm run build' })
+    const { id } = ask.mock.calls[0][0]
+    await s.interrupt()
+    const res = (await p) as { behavior: string; message: string }
+    expect(res.behavior).toBe('deny')
+    expect(res.message).toMatch(/parou o turno/i)
+    expect(expire).toHaveBeenCalledWith(id)
+  })
+
+  it('uma pergunta aberta morre junto com o turno parado', async () => {
+    const { s, ask, expire } = makeSession()
+    const p = gate(s, 'AskUserQuestion', askInput)
+    const { id } = ask.mock.calls[0][0]
+    await s.interrupt()
+    await expect(p).resolves.toMatchObject({ behavior: 'deny' })
+    expect(expire).toHaveBeenCalledWith(id)
+  })
+
+  it('sem nada pendente, o Stop não inventa negativa nenhuma', async () => {
+    const { s, expire } = makeSession()
+    await expect(s.interrupt()).resolves.toEqual({ stillQueued: [] })
+    expect(expire).not.toHaveBeenCalled()
+  })
+})
+
 describe('AgentSession — auto-timeout (sem resposta do usuário)', () => {
   const askInput = { questions: [{ header: 'X', question: 'Q?', multiSelect: false, options: [{ label: 'A', description: '' }] }] }
 

@@ -61,6 +61,7 @@ import { startRestartGuardFile } from './restartGuardFile'
 import { startSleepGuard } from './sleepGuard'
 import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
+import { readProjectIcon } from './projectIcon'
 import { syncCacheSkills } from './skillManager'
 import type {
   AgentMessageKind,
@@ -1106,6 +1107,16 @@ function registerIpc(): void {
     }
   )
 
+  // Sidebar: the project's own icon, if the folder happens to have one. Null is
+  // the normal answer (the sidebar keeps the folder glyph), never an error.
+  ipcMain.handle(Channels.projectIcon, async (_e, root: string): Promise<string | null> => {
+    try {
+      return await readProjectIcon(root)
+    } catch {
+      return null
+    }
+  })
+
   // Save a copy of a file the agent created into the user's Downloads folder and
   // reveal it (so "baixar" works on the desktop too, not only on the phone).
   ipcMain.handle(
@@ -1418,7 +1429,13 @@ if (app.isPackaged && !process.env.PLAYWRIGHT_BROWSERS_PATH) {
 
 app.whenReady().then(async () => {
   if (!ownsSingleInstance) return
+  // Marcos da abertura, na mesma trilha do `bootStage`. "Demora para abrir" é
+  // uma reclamação sem conserto enquanto não se sabe QUAL etapa demora: o
+  // Electron subindo, o banco (que pode estar numa pasta sincronizada) ou a
+  // interface. Sem estes dois, o log só começava depois do trecho mais lento.
+  const bootStarted = Date.now()
   initStore() // prepares the legacy SQLite source and cache folders before the v2 migration
+  const storeReadyAt = Date.now()
   const cacheInfo = getCacheInfo()
   // Cofre DENTRO da pasta de dados, com a chave no próprio arquivo: é a mesma
   // unidade que o usuário move e faz backup (banco + memórias). Em userData,
@@ -1490,6 +1507,10 @@ app.whenReady().then(async () => {
     })
   })
   createWindow()
+  authLog(
+    `boot electron: ${Math.round(process.uptime() * 1000) - (Date.now() - bootStarted)}ms; ` +
+      `boot store: ${storeReadyAt - bootStarted}ms; boot janela: ${Date.now() - bootStarted}ms`
+  )
   // Sincrono e recursivo em disco (e a pasta de dados pode estar no OneDrive):
   // fora do caminho da janela, onde só atrasava a primeira pintura.
   const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir)

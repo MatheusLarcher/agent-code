@@ -6,6 +6,8 @@ import { IconSpinner } from './Icons'
 export interface SidebarProject {
   path: string
   name: string
+  /** Icon found inside the project folder (data URL); null when it has none. */
+  icon?: string | null
   /** The conversations currently LOADED for this project (first page, or all). */
   conversations: Conversation[]
   /** Real conversation count (database). Defaults to the loaded count. */
@@ -56,6 +58,16 @@ const IconFolder = (): JSX.Element => (
     <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
   </svg>
 )
+/**
+ * The project's own icon when the folder has one, otherwise the folder glyph.
+ * A file that fails to decode (corrupt/unsupported) falls back to the glyph too —
+ * a broken-image box in the sidebar would be worse than no icon at all.
+ */
+function ProjectGlyph({ icon }: { icon?: string | null }): JSX.Element {
+  const [broken, setBroken] = useState(false)
+  if (!icon || broken) return <IconFolder />
+  return <img className="project-icon-img" src={icon} alt="" onError={() => setBroken(true)} />
+}
 const IconChat = (): JSX.Element => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...sv}>
     <path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.4 8.4 0 0 1 21 11.5z" />
@@ -335,7 +347,7 @@ export function Sidebar(props: Props): JSX.Element {
                 if (p.conversations[0]) props.onSelect(p.conversations[0].id)
               }}
             >
-              <IconFolder />
+              <ProjectGlyph key={p.icon ?? 'folder'} icon={p.icon} />
             </button>
           ))}
         </div>
@@ -435,7 +447,11 @@ export function Sidebar(props: Props): JSX.Element {
                     <button className="project-row-main" onClick={() => toggleProject(p.path)} title={p.path}>
                       <IconChevron open={open} />
                       <span className="project-folder">
-                        {busy ? <IconSpinner className="spinner" size={15} /> : <IconFolder />}
+                        {busy ? (
+                          <IconSpinner className="spinner" size={15} />
+                        ) : (
+                          <ProjectGlyph key={p.icon ?? 'folder'} icon={p.icon} />
+                        )}
                       </span>
                       <span className="project-name">{p.name}</span>
                       {/* Real total from the database; while filtering, the hit count. */}

@@ -13,7 +13,7 @@ import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
 import { TodoPlanCard } from './TodoPlanCard'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
-import { VigiaChip } from './VigiaChip'
+import { VigiaChip, type VigiaDoubt } from './VigiaChip'
 import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
 
 function fmtDuration(ms: number): string {
@@ -169,11 +169,11 @@ interface Props {
   /** Reopens the minimized question modal (chip's onClick). */
   onReopenQuestion: () => void
   /** Dúvida levantada pelo vigia nesta conversa (null = nenhuma pendente). */
-  vigiaAlert?: string | null
+  vigiaAlert?: VigiaDoubt | null
   /** Descarta o aviso do vigia. */
   onDismissVigia?: () => void
-  /** Manda a dúvida ao agente pelo caminho normal de envio (entra na fila). */
-  onAskVigia?: (text: string) => void
+  /** Manda a RESPOSTA do usuário ao agente pelo caminho normal (entra na fila). */
+  onAnswerVigia?: (question: string, answer: string) => void
   /** The active conversation's current TodoWrite plan, fixed above the composer. */
   todoPlan?: TodoPlan
   /** Quantos subagentes estão trabalhando agora nesta conversa (0 = nada a mostrar). */
@@ -445,9 +445,10 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {props.vigiaAlert && (
         <VigiaChip
-          text={props.vigiaAlert}
+          question={props.vigiaAlert.question}
+          options={props.vigiaAlert.options}
           onDismiss={() => props.onDismissVigia?.()}
-          onAsk={() => props.onAskVigia?.(props.vigiaAlert as string)}
+          onAnswer={(answer) => props.onAnswerVigia?.(props.vigiaAlert!.question, answer)}
         />
       )}
 

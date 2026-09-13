@@ -101,6 +101,8 @@ export interface AgentCodeApi {
    *  `keep` = paths the caller is showing now, so the reply can report which of
    *  them were deleted (see ProjectTree.missing). */
   projectTree(root: string, keep?: string[]): Promise<ProjectTree>
+  /** Icon found inside the project folder (data URL), or null when it has none. */
+  projectIcon(root: string): Promise<string | null>
   /** Save a copy of a file (created by the agent) to Downloads and reveal it. */
   downloadFile(path: string): Promise<{ ok: boolean; message: string; saved?: string }>
   /** Read the content of a local file (e.g. for previewing in the UI). */

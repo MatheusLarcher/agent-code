@@ -119,13 +119,21 @@ export class Vigia {
       return // degrada em silêncio: o vigia nunca atrapalha a conversa
     }
 
-    const alert = parseVigiaVerdict(raw)
-    if (!alert) return
-    const fingerprint = alertFingerprint(alert)
+    const verdict = parseVigiaVerdict(raw)
+    if (!verdict) return
+    // O dedupe é da PERGUNTA, não das opções: a mesma premissa não resolvida
+    // não pode voltar a cada turno só porque os atalhos saíram diferentes.
+    const fingerprint = alertFingerprint(verdict.question)
     if (conv.seen.has(fingerprint)) return
     conv.seen.add(fingerprint)
 
-    this.deps.emit({ convId, id: `vigia-${now}-${++this.seq}`, text: alert, at: now })
+    this.deps.emit({
+      convId,
+      id: `vigia-${now}-${++this.seq}`,
+      text: verdict.question,
+      options: verdict.options,
+      at: now
+    })
   }
 }
 

@@ -776,6 +776,10 @@ export interface VigiaAlertMsg {
   id: string
   /** One sentence, phrased as a question to the user. */
   text: string
+  /** Likely answers, offered as one-click shortcuts (2–4, or none). Empty/absent
+   *  whenever the answer is open-ended (a measurement, a name): there the only
+   *  honest option is the text field, and a made-up list would bias the answer. */
+  options?: string[]
   /** epoch ms when it was produced. */
   at: number
 }
@@ -1224,6 +1228,8 @@ export const Channels = {
   listSkills: 'app:list-skills',
   /** Project map (grafo): every folder/file under the project, capped. */
   projectTree: 'app:project-tree',
+  /** Icon found inside the project folder (data URL), for the sidebar. */
+  projectIcon: 'app:project-icon',
   /** Save a copy of an agent-created file to the Downloads folder and reveal it. */
   fileDownload: 'app:file-download',
   /** Read the content of a local file. */

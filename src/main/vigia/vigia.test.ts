@@ -123,6 +123,15 @@ describe('o que o vigia emite', () => {
     expect(alerts).toHaveLength(1)
   })
 
+  it('as respostas prováveis chegam ao alerta, separadas da pergunta', async () => {
+    const { vigia, alerts } = setup({ reply: 'ALERTA: O alvo é o app ou a extensão? | só o app | os dois' })
+    vigia.noteUserMessage('c1', 'pedido')
+    vigia.observe('c1', result())
+    await vi.waitFor(() => expect(alerts).toHaveLength(1))
+    expect(alerts[0].text).toBe('O alvo é o app ou a extensão?')
+    expect(alerts[0].options).toEqual(['só o app', 'os dois'])
+  })
+
   it('o mesmo alerta em OUTRA conversa passa', async () => {
     const { vigia, alerts } = setup()
     vigia.noteUserMessage('c1', 'pedido')
