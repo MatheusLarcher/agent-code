@@ -440,10 +440,24 @@ function describeTool(name, input) {
   }
 }
 
-// Ask the PC bridge to stream the file; the WebView's download listener saves it
-// to the phone's Downloads folder (works even on Android, in the installed app).
+// Ask the PC bridge to stream the file.
+//
+// No app instalado (Android), um `<a download>` apontando para o PC NÃO baixa:
+// o Capacitor externaliza navegação para um host diferente do dele, então o
+// toque saía do app e abria o Chrome — medido no emulador, nada chegava em
+// Downloads. Por isso, quando a ponte nativa existe (`AgentDownload`, instalada
+// pelo MainActivity), o caminho é uma CHAMADA, não uma navegação: a URL vai
+// direto pro DownloadManager, que salva em Downloads com notificação.
+// No navegador comum segue valendo o `<a download>`.
 function triggerDownload(path) {
   var url = api('/api/file?path=' + encodeURIComponent(path))
+  var native = window.AgentDownload
+  if (native && typeof native.enqueue === 'function') {
+    try {
+      native.enqueue(url, basename(path))
+      return
+    } catch (e) { /* cai no anchor abaixo */ }
+  }
   var a = document.createElement('a')
   a.href = url
   a.setAttribute('download', basename(path))

@@ -159,8 +159,22 @@ async function ensureMicrophonePermission(androidDir: string, onLine: Progress):
 }
 
 /** Java source installed into the (gitignored, regenerated) Android project so the
- *  WebView saves files streamed by the PC bridge to the phone's Downloads. */
-const MAIN_ACTIVITY_JAVA = `package com.matheus.agentremote;
+ *  WebView saves files streamed by the PC bridge to the phone's Downloads.
+ *
+ *  Two paths, and the second is the one that actually runs in the app:
+ *   - `setDownloadListener` only fires for a navigation the WebView itself
+ *     handles. Measured on a real emulator: tapping "Baixar" with an
+ *     `<a download href="http://<pc>/api/file…">` never reached it — Capacitor
+ *     externalizes navigation to a host other than its own, so the tap **left
+ *     the app and opened Chrome**, and nothing landed in Downloads. It stays
+ *     only as a safety net for in-app navigations.
+ *   - `AgentDownload.enqueue(url, name)` is a JavaScript interface the web
+ *     client calls directly (see `triggerDownload` in www/app.js). No
+ *     navigation, so nothing can be hijacked: the URL goes straight to
+ *     DownloadManager. The URL is not taken on trust — it must point at the
+ *     bridge the app is currently paired with (`/api/file`), so a page can't
+ *     turn this into an arbitrary downloader. */
+export const MAIN_ACTIVITY_JAVA = `package com.matheus.agentremote;
 
 import android.Manifest;
 import android.app.DownloadManager;
@@ -170,6 +184,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.webkit.JavascriptInterface;
 import android.webkit.URLUtil;
 import android.widget.Toast;
 
@@ -178,9 +193,6 @@ import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.BridgeActivity;
 
-// Wires a WebView download listener so files streamed by the PC bridge
-// (GET /api/file, Content-Disposition: attachment) are saved to the phone's
-// public Downloads folder via DownloadManager. Managed by buildApk.ts.
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -193,20 +205,46 @@ public class MainActivity extends BridgeActivity {
                     this, new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE }, 1);
         }
 
+        getBridge().getWebView().addJavascriptInterface(new DownloadBridge(), "AgentDownload");
+
         getBridge().getWebView().setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            enqueue(url, URLUtil.guessFileName(url, contentDisposition, mimeType), mimeType);
+        });
+    }
+
+    /** Called from the web client (www/app.js) instead of navigating. */
+    public class DownloadBridge {
+        @JavascriptInterface
+        public void enqueue(String url, String fileName) {
+            MainActivity.this.enqueue(url, fileName, null);
+        }
+    }
+
+    private void enqueue(String url, String fileName, String mimeType) {
+        runOnUiThread(() -> {
             try {
-                String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
-                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
-                request.setMimeType(mimeType);
-                if (userAgent != null) request.addRequestHeader("User-Agent", userAgent);
-                request.setTitle(fileName);
+                Uri uri = Uri.parse(url);
+                String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
+                boolean isBridgeFile = ("http".equals(scheme) || "https".equals(scheme))
+                        && uri.getPath() != null && uri.getPath().endsWith("/api/file");
+                if (!isBridgeFile) {
+                    Toast.makeText(getApplicationContext(), "Download recusado: endereço inválido.", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                String name = (fileName == null || fileName.trim().isEmpty())
+                        ? URLUtil.guessFileName(url, null, mimeType)
+                        : fileName.replaceAll("[\\\\\\\\/:*?\\"<>|]", "_");
+                DownloadManager.Request request = new DownloadManager.Request(uri);
+                if (mimeType != null) request.setMimeType(mimeType);
+                request.setTitle(name);
                 request.setDescription("Agent Remote");
                 request.allowScanningByMediaScanner();
                 request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
                 DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-                if (dm != null) dm.enqueue(request);
-                Toast.makeText(getApplicationContext(), "Baixando " + fileName + "…", Toast.LENGTH_SHORT).show();
+                if (dm == null) throw new IllegalStateException("DownloadManager indisponível");
+                dm.enqueue(request);
+                Toast.makeText(getApplicationContext(), "Baixando " + name + "…", Toast.LENGTH_SHORT).show();
             } catch (Exception e) {
                 Toast.makeText(getApplicationContext(), "Falha no download: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
