@@ -39,6 +39,7 @@ import { onCodexRateLimit } from './codexProxy'
 import { appendFileSync, existsSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir } from './store'
 import { storageLifecycle } from './persistence/lifecycle'
+import { ConversationLeaseKeeper } from './persistence/leaseKeeper'
 import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlist'
 import { Vigia } from './vigia/vigia'
 import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
@@ -128,41 +129,39 @@ const sessions = new Map<string, ProviderFailoverSession>()
 // Which files the agent actually offered for download. Fed from the event tee
 // below, consulted by the `fileDownload` handler.
 const downloadAllowlist = new DownloadAllowlist()
-const sessionLeases = new Map<
-  string,
-  { repository: PersistenceRepository; lease: ConversationLease; heartbeat: ReturnType<typeof setInterval> }
->()
+const sessionLeases = new Map<string, ConversationLeaseKeeper>()
 
 async function releaseSessionLease(convId: string): Promise<void> {
-  const held = sessionLeases.get(convId)
-  if (!held) return
+  const keeper = sessionLeases.get(convId)
+  if (!keeper) return
   sessionLeases.delete(convId)
-  clearInterval(held.heartbeat)
-  await held.repository.releaseConversationLease(held.lease).catch(() => undefined)
+  await keeper.release()
 }
 
 async function acquireSessionLease(convId: string): Promise<{ repository: PersistenceRepository; lease: ConversationLease }> {
   await releaseSessionLease(convId)
   const repository = storageLifecycle.repository()
   const lease = await repository.acquireConversationLease(convId)
-  const heartbeat = setInterval(() => {
-    const held = sessionLeases.get(convId)
-    if (!held) return
-    void held.repository
-      .renewConversationLease(held.lease)
-      .then((renewed) => { held.lease = renewed })
-      .catch((error) => {
-        clearInterval(held.heartbeat)
-        sessionLeases.delete(convId)
-        sessions.get(convId)?.dispose()
-        send(Channels.agentEvent, {
-          convId,
-          event: { kind: 'error', id: randomUUID(), text: `Lease perdido: ${error instanceof Error ? error.message : String(error)}` }
-        })
+  // Only a lease that provably moved to another installation ends the session.
+  // Killing a running turn because one heartbeat could not reach Postgres is
+  // what made tasks die mid-run on a connection blip; the keeper retries those.
+  // A database that is really gone still lands on the `postgres-offline` path,
+  // which waits for the turn to go idle before disposing the session.
+  const keeper = new ConversationLeaseKeeper(repository, lease, {
+    onLost: (error) => {
+      if (sessionLeases.get(convId) !== keeper) return
+      sessionLeases.delete(convId)
+      sessions.get(convId)?.dispose()
+      send(Channels.agentEvent, {
+        convId,
+        event: { kind: 'error', id: randomUUID(), text: `Lease perdido: ${error.message}` }
       })
-  }, 20_000)
-  heartbeat.unref?.()
-  sessionLeases.set(convId, { repository, lease, heartbeat })
+    },
+    onTransientFailure: (error) => {
+      console.warn(`[lease] renovação falhou para ${convId}, tentando de novo:`, error)
+    }
+  }).start()
+  sessionLeases.set(convId, keeper)
   return { repository, lease }
 }
 

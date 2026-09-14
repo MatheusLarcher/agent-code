@@ -56,6 +56,13 @@ export function postgresClientConfig(
     database,
     ssl: sslOptions(draft),
     connectionTimeoutMillis: 8_000,
+    // pg drops idle pooled connections after 10s by default. With a lease
+    // heartbeat every 20s, every renewal paid for a fresh TCP+TLS handshake to
+    // the (usually remote) server — and a handshake slower than the timeout
+    // above surfaces as "Connection terminated due to connection timeout".
+    // Holding the connection open across heartbeats keeps them off the wire.
+    idleTimeoutMillis: 30_000,
+    keepAlive: true,
     application_name: 'agent-code'
   }
 }
