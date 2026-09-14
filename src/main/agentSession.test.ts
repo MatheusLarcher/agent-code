@@ -5,9 +5,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { STALL_THRESHOLD_MS, STALL_THRESHOLD_TOOL_MS } from './stallWatch'
 import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-const configState = vi.hoisted(() => ({ windowsControlEnabled: false as unknown }))
+const configState = vi.hoisted(() => ({
+  windowsControlEnabled: false as unknown,
+  ollama: { enabled: false, apiKey: '' }
+}))
 const codexState = vi.hoisted(() => ({ connected: true }))
 const cacheState = vi.hoisted(() => ({
   dir: 'C:\\test\\agent-code',
@@ -22,7 +26,7 @@ vi.mock('./config', () => ({
     windowsControlEnabled: configState.windowsControlEnabled,
     // start() reads these two; the permission-gate tests never call start(), but
     // the fast-mode test below does.
-    ollama: { enabled: false, apiKey: '' }
+    ollama: configState.ollama
   })
 }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => codexState.connected }))
@@ -129,6 +133,7 @@ const handle = (s: AgentSession, message: unknown): void =>
 
 beforeEach(() => {
   configState.windowsControlEnabled = false
+  configState.ollama = { enabled: false, apiKey: '' }
   codexState.connected = true
   cacheState.dir = 'C:\\test\\agent-code'
   cacheState.memoriesDir = 'C:\\test\\agent-code\\memories'
@@ -898,6 +903,69 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
     const options = optionsOfLastQuery()
     expect(options.settings).toBeUndefined()
     expect((options.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).not.toMatch(/\+fast$/)
+  })
+})
+
+// O CLI prefere a credencial guardada do login do claude.ai ao token que a
+// gente passa. Com o ANTHROPIC_BASE_URL fora da Anthropic, ele mandava o
+// `sk-ant-…` do usuário para o proxy do Codex, que respondia 401 — e o CLI
+// reentrava para sempre. O turno nunca terminava: sem resposta e sem erro.
+describe('AgentSession — backend de fora não recebe o login guardado', () => {
+  const optionsOfLastQuery = (): Record<string, unknown> =>
+    (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
+
+  let home = ''
+  let cache = ''
+  let previousConfigDir: string | undefined
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'cli-home-'))
+    cache = await mkdtemp(join(tmpdir(), 'cli-cache-'))
+    await writeFile(join(home, 'CLAUDE.md'), '# instruções globais do usuário', 'utf8')
+    await writeFile(join(home, 'settings.json'), '{"a":1}', 'utf8')
+    await writeFile(join(home, '.credentials.json'), '{"token":"sk-ant-SEGREDO"}', 'utf8')
+    previousConfigDir = process.env['CLAUDE_CONFIG_DIR']
+    process.env['CLAUDE_CONFIG_DIR'] = home
+    cacheState.dir = cache
+  })
+
+  afterEach(async () => {
+    if (previousConfigDir === undefined) delete process.env['CLAUDE_CONFIG_DIR']
+    else process.env['CLAUDE_CONFIG_DIR'] = previousConfigDir
+    cacheState.dir = 'C:\\test\\agent-code'
+    await rm(home, { recursive: true, force: true })
+    await rm(cache, { recursive: true, force: true })
+  })
+
+  it('GPT: aponta o CLI para um diretório SEM credencial, levando CLAUDE.md e settings', async () => {
+    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+    await s.start()
+    const env = optionsOfLastQuery().env as Record<string, string>
+    const dir = env.CLAUDE_CONFIG_DIR
+
+    expect(dir).toBeTruthy()
+    expect(dir).not.toBe(home) // é o ponto: a credencial do usuário não vai junto
+    expect(existsSync(join(dir, '.credentials.json'))).toBe(false)
+    // …mas o que o usuário percebe se sumir continua lá.
+    expect(await readFile(join(dir, 'CLAUDE.md'), 'utf8')).toContain('instruções globais')
+    expect(existsSync(join(dir, 'settings.json'))).toBe(true)
+  })
+
+  it('Ollama: mesmo desvio — o backend também não é a Anthropic', async () => {
+    configState.ollama = { enabled: true, apiKey: 'chave-ollama' }
+    const { s } = makeSession({ model: 'gpt-oss:20b-cloud' })
+    await s.start()
+    const env = optionsOfLastQuery().env as Record<string, string>
+    expect(env.CLAUDE_CONFIG_DIR).toBeTruthy()
+    expect(existsSync(join(env.CLAUDE_CONFIG_DIR, '.credentials.json'))).toBe(false)
+  })
+
+  // O desvio existe só por causa do backend de fora. Numa sessão da Anthropic o
+  // login guardado é exatamente o que deve valer.
+  it('Claude: NÃO desvia nada (o login guardado é o certo ali)', async () => {
+    const { s } = makeSession({ model: 'claude-opus-5' })
+    await s.start()
+    expect(optionsOfLastQuery().env).toBeUndefined()
   })
 })
 

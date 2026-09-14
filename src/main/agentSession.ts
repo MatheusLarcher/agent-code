@@ -33,7 +33,7 @@ import {
   renderMemoryCatalogUpdate,
   type MemoryCatalogSnapshot
 } from './memoryIndex'
-import { hostname } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import {
   createSkillCatalogSnapshot,
   discoverSkills,
@@ -62,7 +62,7 @@ import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import { buildProjectOutline } from './projectOutline'
 import { pathWithRtk } from './rtk'
-import { existsSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AskQuestion,
@@ -397,6 +397,49 @@ const PERMISSION_TIMEOUT_MS = 7 * 60_000
 // se o CLI estiver ocupado demais para responder, segurar a resposta do Stop
 // só faz a tela ficar parada em "trabalhando" sem ninguém saber por quê.
 const INTERRUPT_ACK_TIMEOUT_MS = 5_000
+
+/** Arquivos do diretório de configuração do CLI que precisam sobreviver ao
+ *  desvio abaixo: são o que o usuário percebe se sumir. */
+const CLI_CONFIG_CARRY_OVER = ['CLAUDE.md', 'settings.json']
+
+/**
+ * Diretório de configuração para o CLI nas sessões que **não** falam com a
+ * Anthropic (GPT pelo proxy do Codex, Ollama).
+ *
+ * O CLI prefere a credencial guardada do login do claude.ai a qualquer
+ * `ANTHROPIC_AUTH_TOKEN` que a gente passe. Com o `ANTHROPIC_BASE_URL`
+ * apontando para outro backend, ele mandava o `sk-ant-…` do usuário para lá: o
+ * proxy respondia 401, o CLI reentrava para sempre e o turno **nunca
+ * terminava** — sem resposta, sem erro e sem fim. Apontar o CLI para um
+ * diretório onde não existe credencial nenhuma é o que o faz usar o token que
+ * a gente passou. (Limpar `ANTHROPIC_API_KEY` não bastava: o login por OAuth
+ * não vem de variável de ambiente, vem do disco.)
+ *
+ * O diretório é semeado com o `CLAUDE.md` e o `settings.json` do usuário para
+ * as instruções globais e as configurações continuarem valendo — some a
+ * credencial, não o resto. Melhor esforço: nada aqui pode derrubar um turno.
+ */
+function cliConfigDirWithoutStoredLogin(cacheDir: string): string | undefined {
+  try {
+    const source = process.env['CLAUDE_CONFIG_DIR']?.trim() || join(homedir(), '.claude')
+    const target = join(cacheDir, 'cli-config-sem-login')
+    mkdirSync(target, { recursive: true })
+    for (const name of CLI_CONFIG_CARRY_OVER) {
+      const from = join(source, name)
+      const to = join(target, name)
+      if (!existsSync(from)) continue
+      // Copia só quando muda: isto roda a cada sessão.
+      const fresh = existsSync(to) && statSync(to).mtimeMs >= statSync(from).mtimeMs
+      if (!fresh) copyFileSync(from, to)
+    }
+    return target
+  } catch (error) {
+    // Sem o desvio o turno falharia com 401 em silêncio, que é pior do que um
+    // aviso no log — mas derrubar a sessão aqui seria pior ainda.
+    console.warn('[cli-config] não consegui preparar o diretório sem credencial:', error)
+    return undefined
+  }
+}
 
 // `AskUserQuestion` is the tool the model uses to ask the user a multiple-choice
 // question. The bundled CLI can't render it without a terminal, so we intercept it
@@ -809,12 +852,19 @@ export class AgentSession {
       })
       return false
     }
+    // Vale para os dois desvios abaixo: com o `ANTHROPIC_BASE_URL` fora da
+    // Anthropic, o login guardado do claude.ai não pode continuar vencendo o
+    // token que estamos passando (ver `cliConfigDirWithoutStoredLogin`).
+    const foreignCliConfigDir =
+      openaiOn || ollamaOn ? cliConfigDirWithoutStoredLogin(cacheInfo.dir) : undefined
+
     let openaiEnv: typeof process.env | undefined
     if (openaiOn) {
       try {
         const { baseUrl, secret } = await ensureCodexProxyRunning((line) => console.log(`[codex-proxy] ${line}`))
         openaiEnv = {
           ...process.env,
+          ...(foreignCliConfigDir ? { CLAUDE_CONFIG_DIR: foreignCliConfigDir } : {}),
           ANTHROPIC_BASE_URL: baseUrl,
           // The proxy is a single process-wide server shared by every
           // conversation, but fast mode is per-conversation. The auth token is
@@ -846,6 +896,7 @@ export class AgentSession {
     let env = ollamaOn
       ? {
           ...process.env,
+          ...(foreignCliConfigDir ? { CLAUDE_CONFIG_DIR: foreignCliConfigDir } : {}),
           ANTHROPIC_BASE_URL: OLLAMA_BASE_URL,
           ANTHROPIC_AUTH_TOKEN: ollamaKey,
           ANTHROPIC_API_KEY: '',
