@@ -72,6 +72,86 @@ export interface TaskItem {
   activeForm: string
 }
 
+/** O status que o agente declara ao CLI. Mesmo vocabulário do `TaskItem` — o
+ *  quadro não inventa estado novo. */
+export type BoardItemStatus = TaskItem['status']
+
+/** Quem criou o cartão. `agent` é a esmagadora maioria (veio do snapshot
+ *  autoritativo do CLI); `po` é a tarefa que o agente nunca declarou e o PO
+ *  percebeu no meio do trabalho. A distinção importa porque só o cartão de
+ *  origem `agent` tem esqueleto determinístico por trás. */
+export type BoardItemOrigin = 'agent' | 'po'
+
+/**
+ * Um cartão do quadro de tarefas do projeto. Duas camadas, deliberadamente
+ * separadas:
+ *
+ * - `source*` — o que o AGENTE declarou. Só a ingestão do snapshot escreve
+ *   aqui; o PO nunca toca, então um PO errado nunca apaga o fato.
+ * - `po*` — o que o PO acrescentou por cima (título legível, observação e a
+ *   conclusão que o agente esqueceu de marcar), sempre com motivo e carimbo:
+ *   correção automática que não dá para auditar é pior do que nenhuma.
+ *
+ * A tela mostra a sobreposição (`po ?? source`), nunca uma terceira verdade.
+ */
+export interface BoardItem {
+  id: string
+  /** Identidade estável do projeto, não o caminho local — é o que faz o mesmo
+   *  repositório clonado em dois PCs ter UM quadro. */
+  projectId: string
+  /** Caminho deste PC. Só auditoria; nunca é chave de consulta. */
+  projectCwd: string
+  conversationId: string
+  origin: BoardItemOrigin
+  /** Id da tarefa no CLI. `null` só em cartão de origem `po`. */
+  sourceId: string | null
+  sourceTitle: string
+  sourceStatus: BoardItemStatus
+  activeForm: string | null
+  /** Ordem dentro da conversa, como o CLI a numera. */
+  seq: number
+  poTitle: string | null
+  poNote: string | null
+  /** Sobrepõe `sourceStatus` quando presente. Exige `poReason`. */
+  poStatus: BoardItemStatus | null
+  poReason: string | null
+  poAt: string | null
+  /** Cartão arquivado pelo usuário: some do quadro sem ser apagado. */
+  dismissedAt: string | null
+  revision: number
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * A sobreposição das duas camadas do cartão. Mora aqui, e não no main, porque
+ * é a MESMA regra dos dois lados: o main ordena o quadro por ela e a tela pinta
+ * por ela. Em duas cópias, o dia em que a regra ganhar um caso novo o main
+ * ordena por um critério e a tela mostra outro — divergência que não quebra
+ * teste nenhum, porque cada cópia teria a sua suíte.
+ */
+export function boardItemTitle(item: BoardItem): string {
+  return item.poTitle ?? item.sourceTitle
+}
+
+export function boardItemStatus(item: BoardItem): BoardItemStatus {
+  return item.poStatus ?? item.sourceStatus
+}
+
+/** `true` quando o PO discorda do agente sobre o estado — o que a UI marca
+ *  como corrigido e o que dá para auditar depois. */
+export function isBoardItemPoCorrected(item: BoardItem): boolean {
+  return item.poStatus !== null && item.poStatus !== item.sourceStatus
+}
+
+/** O que a aba Quadro recebe numa consulta. `available: false` distingue "sem
+ *  repositório autoritativo" de "quadro vazio" — a tela explica em vez de
+ *  mostrar um vazio enganoso, mesmo critério do `TaskBoard`. */
+export interface ProjectBoard {
+  available: boolean
+  items: BoardItem[]
+}
+
 /** One task the SDK reports as still running in the background. */
 export interface BackgroundTask {
   id: string
@@ -768,6 +848,26 @@ export const VIGIA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'claude-opus-5', label: 'Opus 5 (mais caro)' }
 ]
 
+/**
+ * O quadro de tarefas do projeto e quem o mantém honesto.
+ *
+ * `requirePlan` é a TRAVA: o gate de permissão recusa a primeira escrita de
+ * arquivo do turno enquanto o agente não declarou o plano. É o que garante que
+ * o quadro exista — instrução no prompt o modelo esquece.
+ *
+ * `po` é o agente auditor que roda em paralelo (molde do vigia): compara o que
+ * o agente declarou com o que de fato aconteceu e conserta o buraco. Ligado por
+ * padrão; o custo é uma chamada curta por turno num modelo mais barato.
+ */
+export interface BoardConfig {
+  requirePlan: boolean
+  po: { enabled: boolean; model: string }
+}
+
+/** Modelos oferecidos para o PO. Mesma lista curta do vigia, pelo mesmo motivo:
+ *  é um leitor barato, não o modelo que faz o trabalho. */
+export const PO_MODELS = VIGIA_MODELS
+
 /** An alert raised by the vigia for one conversation. Travels on its OWN IPC
  *  channel, never as a `ChatEvent`: it is for the user, not for the model, and
  *  an unknown event kind would pile up in the phone client's message list. */
@@ -912,6 +1012,8 @@ export interface AppConfig {
   preventSleepWhileBusy: boolean
   /** The parallel watcher that questions premises (see VigiaConfig). */
   vigia: VigiaConfig
+  /** O quadro de tarefas: a trava do plano e o agente PO (see BoardConfig). */
+  board: BoardConfig
 }
 
 export type PostgresTlsMode = 'disable' | 'prefer' | 'require' | 'verify-full'
@@ -1135,7 +1237,11 @@ export const DEFAULT_CONFIG: AppConfig = {
   preventSleepWhileBusy: true,
   // Ligado por padrão: o estado inicial já tem que servir, e o custo é uma
   // chamada curta e sem ferramentas por turno, num modelo mais barato.
-  vigia: { enabled: true, model: 'claude-sonnet-5' }
+  vigia: { enabled: true, model: 'claude-sonnet-5' },
+  // Também ligados por padrão: sem a trava o quadro fica vazio nas tarefas em
+  // que ele mais importa, e sem o PO ninguém fecha o cartão que o agente
+  // esqueceu — as duas metades do que torna o quadro confiável.
+  board: { requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5' } }
 }
 
 /** Where per-user data lives: the SQLite db (config/token/conversations) + .md memories. */
@@ -1195,6 +1301,12 @@ export const Channels = {
   tasksBoard: 'tasks:board',
   /** Steps, deliverables and events of one task — fetched only when expanded. */
   tasksDetail: 'tasks:detail',
+  /** Quadro de tarefas do projeto (cartões do agente + camada do PO). */
+  boardList: 'board:list',
+  /** Arquiva/desarquiva um cartão — a única escrita que parte do usuário. */
+  boardDismiss: 'board:dismiss',
+  /** Main → renderer: o quadro daquele projeto mudou, recarregue. */
+  boardChanged: 'board:changed',
   kvGet: 'kv:get',
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet: 'kv:set',

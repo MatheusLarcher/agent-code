@@ -294,7 +294,9 @@ function TaskRow({
 
 export function TasksBoard({ projectCwd, busy, onOpenConversation }: Props): JSX.Element {
   const [board, setBoard] = useState<TaskBoard | null>(null)
-  const [includeFinished, setIncludeFinished] = useState(false)
+  // O quadro preserva a história por padrão; o chip permite voltar ao recorte
+  // apenas de tarefas abertas quando isso for o que a pessoa precisa.
+  const [includeFinished, setIncludeFinished] = useState(true)
   const [onlyProject, setOnlyProject] = useState(true)
   const [hidden, setHidden] = useState<TaskBoardStatus[]>([])
   const reqRef = useRef(0)

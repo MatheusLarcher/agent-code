@@ -1,6 +1,6 @@
-import { IconCollapseRight, IconGlobe, IconUsers } from './Icons'
+import { IconBoard, IconCollapseRight, IconGlobe, IconUsers } from './Icons'
 
-export type RightPane = 'browser' | 'agents'
+export type RightPane = 'browser' | 'agents' | 'board'
 
 interface Props {
   active: RightPane
@@ -11,14 +11,23 @@ interface Props {
   liveAgents: number
   /** Open preview tabs — shown as a small count on the Navegador tab. */
   browserTabs: number
+  /** Progresso do quadro (concluídas/total) — `null` quando não há tarefa. */
+  boardProgress: { done: number; total: number } | null
 }
 
 /**
- * Segmented switch at the top of the right-hand pane: Navegador ⇄ Agentes.
- * Both panels live in the same slot, so this is the one place the user goes to
- * flip between them (the topbar button and the composer link only preselect).
+ * Segmented switch at the top of the right-hand pane: Navegador ⇄ Agentes ⇄
+ * Quadro. Os três painéis dividem o mesmo slot, então este é o único lugar onde
+ * o usuário alterna (o botão da topbar e o link do composer só pré-selecionam).
  */
-export function RightPaneTabs({ active, onSelect, onCollapse, liveAgents, browserTabs }: Props): JSX.Element {
+export function RightPaneTabs({
+  active,
+  onSelect,
+  onCollapse,
+  liveAgents,
+  browserTabs,
+  boardProgress
+}: Props): JSX.Element {
   return (
     <div className="pane-tabs" role="tablist" aria-label="Painel da direita">
       <button
@@ -44,6 +53,20 @@ export function RightPaneTabs({ active, onSelect, onCollapse, liveAgents, browse
         <IconUsers size={14} />
         Agentes
         {liveAgents > 0 && <span className="pane-tab-badge">{liveAgents}</span>}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'board'}
+        className={`pane-tab${active === 'board' ? ' on' : ''}`}
+        onClick={() => onSelect('board')}
+        title="Quadro: as tarefas do projeto, marcadas sozinhas conforme o agente conclui"
+      >
+        <IconBoard size={14} />
+        Quadro
+        {boardProgress && boardProgress.total > 0 && (
+          <span className="pane-tab-count">{`${boardProgress.done}/${boardProgress.total}`}</span>
+        )}
       </button>
       <button type="button" className="nav-btn pane-collapse" onClick={onCollapse} title="Recolher painel">
         <IconCollapseRight />

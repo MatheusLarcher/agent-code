@@ -6068,3 +6068,434 @@ button svg {
   white-space: nowrap;
   max-width: 45%;
 }
+
+/* ---------------------------------------------------------------------------
+   Quadro de tarefas do projeto (aba "Quadro" do painel da direita).
+
+   Reaproveita a linguagem visual do painel de agentes (mesmas variáveis, mesmo
+   raio, mesma densidade) de propósito: é a terceira aba do MESMO slot, e um
+   visual próprio faria parecer outro aplicativo.
+   --------------------------------------------------------------------------- */
+.board-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg);
+  position: relative;
+}
+.board-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.board-bar-spacer {
+  flex: 1;
+}
+.board-count {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.board-seg {
+  display: flex;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2px;
+}
+.board-seg button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 5px 11px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.board-seg button.on {
+  background: var(--bg-3);
+  color: var(--text);
+}
+.board-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--muted);
+  border-radius: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.board-chip:hover {
+  color: var(--text);
+}
+.board-chip.on {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* A linha do PO: discreta, mas presente — é o que avisa que existe um segundo
+   escritor no quadro. Sem ela, uma correção automática pareceria mágica. */
+.board-po-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: rgba(217, 119, 87, 0.07);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.board-po-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: board-pulse 2.2s infinite;
+}
+@keyframes board-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(217, 119, 87, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(217, 119, 87, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(217, 119, 87, 0);
+  }
+}
+
+.board-empty {
+  padding: 26px 20px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  text-align: center;
+}
+
+.board-columns {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.board-column {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 110px;
+}
+.board-column-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 1px 2px 4px;
+}
+.board-column-count {
+  margin-left: auto;
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 6px;
+  line-height: 16px;
+}
+.board-key {
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+}
+.board-key.todo {
+  background: #5b5854;
+}
+.board-key.doing {
+  background: var(--warn);
+}
+.board-key.done {
+  background: var(--ok);
+}
+
+.board-card {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+.board-card:hover {
+  border-color: #4a4744;
+}
+.board-card.in_progress {
+  border-color: var(--warn);
+  box-shadow: inset 0 0 0 1px rgba(224, 164, 88, 0.18);
+}
+.board-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.board-card-title {
+  font-size: 13px;
+  line-height: 1.35;
+}
+.board-card.completed .board-card-title {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(163, 160, 155, 0.5);
+}
+.board-card-detail {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-left: 23px;
+}
+.board-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-left: 23px;
+}
+.board-card-tags:empty {
+  display: none;
+}
+
+.board-check {
+  width: 15px;
+  height: 15px;
+  border-radius: 5px;
+  border: 1.5px solid #5b5854;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: transparent;
+}
+.board-check.completed {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: var(--bg);
+}
+.board-check.in_progress {
+  border-color: var(--warn);
+  border-style: dashed;
+}
+
+.board-tag {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--bg-2);
+  white-space: nowrap;
+}
+.board-tag.po {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.board-tag.auto {
+  border-color: rgba(127, 174, 111, 0.5);
+  color: var(--ok);
+}
+
+/* Lista */
+.board-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0 12px;
+}
+.board-group {
+  padding: 8px 12px;
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.board-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid #2e2c2a;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.board-row:hover {
+  background: var(--bg-2);
+}
+.board-row-title {
+  flex: 1;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-row-title.completed {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(163, 160, 155, 0.5);
+}
+.board-row-when {
+  font-size: 11px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.board-muted {
+  color: var(--muted);
+}
+
+/* Detalhe: sobe por cima do quadro, sem tomar a tela inteira. */
+.board-detail {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 13px 14px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+  max-height: 62%;
+  overflow: auto;
+}
+.board-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.board-detail-head h3 {
+  margin: 0 0 8px;
+  font-size: 14.5px;
+  flex: 1;
+  line-height: 1.35;
+}
+.board-detail-kv {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 7px 12px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.board-detail-kv dt {
+  color: var(--muted);
+}
+.board-detail-kv dd {
+  margin: 0;
+}
+.board-status.in_progress {
+  color: var(--warn);
+}
+.board-status.completed {
+  color: var(--ok);
+}
+.board-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.board-detail-trail {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  display: flex;
+  gap: 9px;
+  font-size: 12px;
+  color: var(--muted);
+  align-items: flex-start;
+}
+.board-who {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.board-who.po {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.board-detail-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+.board-dismiss {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 7px;
+  padding: 6px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.board-dismiss:hover {
+  color: var(--text);
+  border-color: #4a4744;
+}
+
+/* Atalho deixado onde ficava a visão "Tarefas" do painel de agentes. */
+.board-shortcut {
+  padding: 30px 22px;
+  text-align: center;
+}
+.board-shortcut-title {
+  font-size: 13.5px;
+  margin: 0 0 6px;
+}
+.board-shortcut-sub {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 0;
+}
+.board-shortcut-btn {
+  margin-top: 14px;
+  background: var(--accent);
+  color: var(--bg);
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}

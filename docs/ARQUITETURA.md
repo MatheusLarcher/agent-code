@@ -18,6 +18,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Reiniciar o app pelo agente](#reiniciar-o-app-pelo-agente)
 - [Modal de pergunta interativa (AskUserQuestion)](#modal-de-pergunta-interativa-askuserquestion)
 - [Vigia — o observador que questiona premissas](#vigia--o-observador-que-questiona-premissas)
+- [Quadro de tarefas do projeto (trava do plano + agente PO)](#quadro-de-tarefas-do-projeto-trava-do-plano--agente-po)
 - [Voz no chat (OpenAI)](#voz-no-chat-openai)
 - [Modelos via Ollama Cloud](#modelos-via-ollama-cloud)
 - [Pasta de dados (cache) e SQLite](#pasta-de-dados-cache-e-sqlite)
@@ -281,6 +282,132 @@ A resposta sai pelo **caminho normal de envio**: com o agente ocupado ela entra 
 Uma versão anterior tinha o botão "Perguntar ao agente", e ele invertia o papel: transformava a dúvida numa decisão do usuário sobre *repassá-la*, em vez de uma pergunta que ele responde. O chip não é modal em nenhum dos casos — dá para ignorar e seguir digitando no composer. O estado (`vigiaAlerts` no `App.tsx`) é por conversa e **não persiste**: é pergunta viva, não dado da conversa.
 
 **Configuração** em **Configurações → Geral**: interruptor (**ligado** por padrão — o estado inicial já tem que servir) e seletor de modelo (`VIGIA_MODELS`). A config é lida **a cada análise**, então desligar vale na hora, sem reiniciar sessão.
+
+---
+
+## Quadro de tarefas do projeto (trava do plano + agente PO)
+
+O `TodoPlanCard` acima do composer mostra o plano do turno e some do campo de visão assim que a
+conversa rola. O que faltava era um lugar onde **o trabalho do projeto inteiro** fique visível e
+se marque sozinho conforme o agente conclui — e que continue certo depois de fechar o app.
+
+O quadro é a aba **Quadro** do painel da direita, ao lado de Navegador e Agentes. A visão
+"Tarefas" do painel de agentes (a fila do registro multi-agente) saiu de lá e o lugar dela virou
+o **atalho** para cá: tirar o botão sem deixar rastro faria quem já usava concluir que o recurso
+sumiu.
+
+**Três peças, e cada uma existe porque as outras duas não cobrem o buraco dela.**
+
+### 1. O esqueleto é determinístico (`board/boardService.ts`)
+
+A entrada é o `ChatEvent` **`task-list`** — o snapshot autoritativo que a sessão lê dos arquivos
+do próprio CLI (`sessionTasks.ts`), o mesmo que já corrige o card do chat. Os eventos incrementais
+(`TaskCreate`/`TaskUpdate`) foram descartados de propósito: incremento perdido congela o quadro
+num estado antigo, e o quadro do projeto é justamente o que precisa continuar certo depois de o
+app ter ficado fechado.
+
+O serviço lê o mesmo **tee de eventos** do vigia (`emit`, em `index.ts`) e grava. Duas amarrações:
+**uma escrita por vez por conversa** (o snapshot chega em rajada, e duas sincronizações
+concorrentes se atropelariam no `DELETE` do que sumiu) e **falha silenciosa** — banco fora do ar
+ou identidade de projeto que não resolve degradam sem derrubar a conversa.
+
+**Snapshot vazio não apaga o quadro.** "Esta sessão nunca usou tarefas" e "o plano ficou vazio"
+são indistinguíveis na leitura; tratar o primeiro como o segundo torraria o quadro inteiro de uma
+conversa por causa de uma leitura sem sorte.
+
+### 2. A trava do plano (`board/planGate.ts`)
+
+O esqueleto só existe se o agente declarar alguma coisa. Pedir isso no prompt é instrução, e
+instrução o modelo esquece — foi essa a lição que transformou o escopo de escrita no
+`writeScopeGuard` em vez de uma frase no `TASKS_HINT`.
+
+O gate de permissão recusa a **primeira escrita de arquivo do turno** enquanto o plano não foi
+declarado, com uma recusa que diz exatamente o que fazer. Vale **antes do `bypassAll`**: "Permitir
+tudo" é o usuário confiando no modelo para executar, não dispensa de dizer o que vai fazer.
+
+O que ela deliberadamente **não** faz, e o porquê:
+
+- **Não cobre `Bash`.** Rodar teste, build ou `git status` antes de planejar é investigação
+  legítima; travar isso tornaria a regra um estorvo, e regra que atrapalha trabalho legítimo é
+  desligada no primeiro dia (mesmo princípio do `bashWriteScan`).
+- **Não vale para subagente.** Um executor trabalha dentro de uma tarefa já decomposta pelo
+  supervisor; exigir um plano próprio dele duplicaria o quadro com o mesmo trabalho.
+- **Não vale fora de um turno.** Sem pedido do usuário não há o que planejar.
+- **Recusa uma vez por turno.** Se o agente insistir, a segunda escrita passa: o objetivo é
+  lembrar, não impedir quem decidiu que a tarefa é trivial demais para um plano.
+- **`declared` atravessa turnos.** O plano da conversa é reaproveitado e atualizado; exigir
+  declaração nova a cada mensagem transformaria a trava em ruído.
+
+### 3. O PO (`po/po.ts`, `po/poPrompt.ts`)
+
+Sobra um buraco que nem a trava nem o snapshot alcançam: **o agente fez e esqueceu de marcar**.
+Isso não tem momento fixo para travar — só dá para auditar depois.
+
+O PO é irmão do vigia, no mesmo molde e pelos mesmos motivos: `query()` avulso com `tools: []` e
+`maxTurns: 1`, modelo barato configurável (`board.po.model`, default `claude-sonnet-5`), digest
+capado, cooldown por conversa, e **falha em silêncio**. Difere do vigia em duas coisas: escreve no
+**quadro** em vez de perguntar ao usuário, e roda **uma vez por turno, no `result`** — é no fim que
+dá para ver o que terminou, e rodar no meio custaria o dobro para responder com menos informação.
+Turno que morreu em erro não é analisado: aquilo é falha, não esquecimento.
+
+Ele faz três coisas e só três: fecha o cartão concluído, reescreve título técnico e acrescenta a
+tarefa que surgiu e nunca foi declarada.
+
+**Ele não é o autor do quadro, e a separação é física.** As duas camadas vivem em colunas
+diferentes: `source_*` (o que o agente declarou, escrito só pela ingestão) e `po_*` (o que o PO
+pôs por cima). A ingestão nunca toca a segunda e o PO nunca toca a primeira — é isso que garante
+que uma releitura do snapshot não desfaça a correção, e que um PO errado nunca apague o fato.
+
+**Três barreiras antes de o palpite virar escrita**, porque um modelo pequeno vai errar alguma hora:
+
+1. `parsePoVerdict` falha **fechada** por linha — o que não casa com o formato vira silêncio, nunca
+   uma operação inventada; e a operação precisa citar um **id que está no quadro**, então o PO não
+   alcança um cartão que não viu.
+2. `rejectUnsafeOps` descarta o que contraria o esqueleto — hoje, concluir o que **já está
+   concluído**. Uma versão anterior também barrava cartão `in_progress`, e isso matava o
+   recurso: o caso central ("fez e esqueceu de marcar") deixa o cartão exatamente nesse estado,
+   porque o agente marcou o início e não marcou o fim. O snapshot do CLI não tem noção de
+   "agora", e o PO só roda com o turno **já encerrado** — "em andamento" ali é estado parado.
+   Quem segura o exagero é a exigência de evidência no prompt, não uma proibição que também
+   barra o caso certo.
+3. Toda escrita exige **motivo**, gravado com carimbo e mostrado no cartão. Correção automática que
+   não dá para auditar é pior do que nenhuma — quando ele errar, dá para ver que foi ele.
+
+### Persistência: por projeto, não por conversa
+
+Tabela nova (`board_items`, migration **5** no SQLite / **7** no PostgreSQL) em vez de reaproveitar
+`tasks`: são ciclos de vida diferentes. `tasks` é contrato de delegação (lease, fence, tentativas,
+escopo de escrita); um cartão do quadro é um passo que se marca sozinho. Espremer os dois na mesma
+tabela daria a um `status` dois significados.
+
+Como em toda migração deste projeto, só `CREATE TABLE IF NOT EXISTS` — o `sqliteRepository`
+reexecuta o schema inteiro a cada escrita como guarda idempotente, e um `ALTER TABLE` quebraria
+toda escrita a partir da segunda. No PostgreSQL a migration **substitui a função do change feed**,
+porque o ramo `ELSE` lê `fencing_epoch`/`owner_installation_id`, colunas que `board_items` não tem.
+
+A chave é o **`project_id` estável** (remote do git + commit raiz), não o `project_cwd` local: é o
+que faz o mesmo repositório clonado em dois PCs ter **um** quadro. Sem git, cai num id derivado do
+caminho — degrada para "dois quadros", que é o lado certo de errar; o contrário misturaria
+projetos.
+
+### A tela (`components/BoardPanel.tsx`)
+
+Duas visões (**Quadro** em três colunas, **Lista** agrupada por conversa de origem), recorte entre
+**esta conversa** e **projeto inteiro**, e o detalhe do cartão com a trilha do PO. O rótulo da aba
+carrega `concluídas/total` mesmo com a aba fechada — é o contador que avisa que existe trabalho lá
+dentro.
+
+É **somente leitura**, com uma exceção: arquivar um cartão. Quem move o estado é o agente e o PO;
+um terceiro dono do mesmo estado só criaria conflito — a mesma razão pela qual o painel do registro
+de tarefas também não move nada. E **tarefa pendente não se auto-conclui quando a conversa acaba**:
+ela fica na lista, agrupada pela conversa de origem, e o usuário dispensa se quiser — senão o
+quadro durável acumularia pendência morta para sempre.
+
+Atualiza por evento (`board:changed`, o caminho rápido) **e** por poll (rede de segurança para a
+mudança que veio de outro PC pelo change feed do PostgreSQL).
+
+**Configuração** em **Configurações → Geral**: dois interruptores (trava e PO, ambos **ligados** por
+padrão) e o seletor de modelo do PO. Lidos a cada uso, então desligar vale na hora.
 
 ---
 
@@ -591,7 +718,9 @@ Não toca `review` nem `blocked`: ali o handoff foi deliberado e quem age é o c
 
 O painel de agentes ganhou uma terceira visão, ao lado de Lista e Projeto, que lê o registro por dois canais novos (`tasks:board`, `tasks:detail`). Ela é **somente leitura**: a máquina de estados vive no repositório, e um botão aqui que movesse tarefa seria um segundo dono das mesmas regras.
 
-O que ela mostra e a lista de subagentes não tem é justamente o que o registro sabe: **dono**, **lease**, **tentativas** e **evidência**. A ordem é por quem precisa de ação (revisão → executando → bloqueadas → fila), não por data. "sem evidência" aparece em vermelho só onde a ausência é acionável (`review`/`done`) — em tarefa da fila seria acusação sobre trabalho que nem começou, então ali o contador é `null`, que significa "não contei" e não "zero".
+O que ela mostra e a lista de subagentes não tem é justamente o que o registro sabe: **dono**, **lease**, **tentativas** e **evidência**. A ordem é por quem precisa de ação (revisão → executando → bloqueadas → fila), não por data. Estados terminais (`done`, `failed`, `cancelled`) aparecem por padrão para preservar o histórico; o chip **Terminadas** desliga esse recorte e pede apenas estados abertos. Os chips de estado restantes são filtros visuais locais: escondem cartões já carregados sem disparar nova consulta. "sem evidência" aparece em vermelho só onde a ausência é acionável (`review`/`done`) — em tarefa da fila seria acusação sobre trabalho que nem começou, então ali o contador é `null`, que significa "não contei" e não "zero".
+
+A atualização continua em polling (5 s enquanto há trabalho, 30 s parado). Diferentemente do quadro de cartões, o registro de tarefas não tem um evento IPC/change-feed seguro que carregue o recorte correto de projeto e filtro; adicionar um evento incremental poderia perder snapshots e exibir uma fila velha. Por isso não há transição imediata: o polling é a rede de segurança autoritativa.
 
 Um detalhe que só apareceu rodando: soltar o lease **não limpa o token**, o repositório grava `lease_expires_at = agora`. Então "expirado" sozinho não distingue handoff limpo de executor morto — quem distingue é o estado, e é por isso que `review` mostra "lease solto" e `running` mostra "lease expirado há X" em vermelho.
 

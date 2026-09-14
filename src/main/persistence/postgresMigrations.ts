@@ -442,13 +442,91 @@ CREATE TABLE IF NOT EXISTS task_project_identity (
 CREATE INDEX IF NOT EXISTS task_project_identity_project ON task_project_identity(project_id);
 `
 
+/**
+ * Migration 7 — quadro de tarefas do agente (espelha a 5 do SQLite).
+ *
+ * Substitui de novo a função do change feed porque o ramo `ELSE` lê
+ * `fencing_epoch`/`owner_installation_id`, colunas que `board_items` não tem —
+ * sem um ramo próprio, todo INSERT no quadro estouraria dentro do gatilho.
+ *
+ * A chave é `project_id` (identidade estável), não o caminho local: no
+ * PostgreSQL compartilhado é justamente isso que faz dois PCs verem UM quadro,
+ * que é o motivo de a migration 6 existir.
+ */
+const BOARD_ITEMS = `
+CREATE TABLE IF NOT EXISTS board_items (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  project_cwd text NOT NULL,
+  conversation_id text NOT NULL,
+  origin text NOT NULL CHECK (origin IN ('agent', 'po')),
+  source_id text,
+  source_title text NOT NULL DEFAULT '',
+  source_status text NOT NULL CHECK (source_status IN ('pending', 'in_progress', 'completed')),
+  active_form text,
+  seq integer NOT NULL DEFAULT 0,
+  po_title text,
+  po_note text,
+  po_status text CHECK (po_status IS NULL OR po_status IN ('pending', 'in_progress', 'completed')),
+  po_reason text,
+  po_at timestamptz,
+  dismissed_at timestamptz,
+  revision bigint NOT NULL DEFAULT 1,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS board_items_project ON board_items(project_id, conversation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS board_items_source
+  ON board_items(conversation_id, source_id)
+  WHERE source_id IS NOT NULL;
+CREATE OR REPLACE FUNCTION agent_code_record_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  new_id bigint;
+  entity_name text;
+  entity_key text;
+  entity_scope text;
+  entity_revision bigint;
+  author uuid;
+BEGIN
+  entity_name := TG_ARGV[0]; entity_scope := TG_ARGV[1];
+  IF TG_TABLE_NAME = 'global_kv' THEN
+    entity_key := NEW.key; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'device_kv' THEN
+    entity_key := NEW.key; entity_revision := NEW.revision; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'conversations' THEN
+    entity_key := NEW.conversation_id; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'conversation_device_state' THEN
+    entity_key := NEW.conversation_id; entity_revision := NEW.revision; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'projects' THEN
+    entity_key := NEW.project_id::text; entity_revision := NULL; author := NULL;
+  ELSIF TG_TABLE_NAME = 'task_events' THEN
+    entity_key := NEW.task_id; entity_revision := NEW.ordinal; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'memory_entries' THEN
+    entity_key := NEW.rel_path; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'board_items' THEN
+    entity_key := NEW.id; entity_revision := NEW.revision; author := NULL;
+  ELSE
+    entity_key := NEW.conversation_id; entity_revision := NEW.fencing_epoch; author := NEW.owner_installation_id;
+  END IF;
+  INSERT INTO change_log(entity, entity_id, scope, revision, installation_id)
+    VALUES(entity_name, entity_key, entity_scope, entity_revision, author)
+    RETURNING change_id INTO new_id;
+  PERFORM pg_notify('agent_code_changes', new_id::text);
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS board_item_change ON board_items;
+CREATE TRIGGER board_item_change AFTER INSERT OR UPDATE ON board_items
+  FOR EACH ROW EXECUTE FUNCTION agent_code_record_change('board', 'global');
+`
+
 export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(1, 'postgres-base-schema', BASE_SCHEMA),
   migration(2, 'postgres-change-feed', CHANGE_FEED),
   migration(3, 'postgres-device-state-feed', DEVICE_STATE_CHANGE_FEED),
   migration(4, 'postgres-task-ledger', TASK_LEDGER),
   migration(5, 'postgres-memory-service', MEMORY_SERVICE),
-  migration(6, 'postgres-task-project-identity', TASK_PROJECT_IDENTITY)
+  migration(6, 'postgres-task-project-identity', TASK_PROJECT_IDENTITY),
+  migration(7, 'postgres-board-items', BOARD_ITEMS)
 ]
 
 const MIGRATION_TABLE = `

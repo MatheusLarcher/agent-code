@@ -89,6 +89,7 @@ export function watchSessionTasks(
   const parent = join(root, 'tasks')
   let watcher: FSWatcher | null = null
   let parentWatcher: FSWatcher | null = null
+  let rootWatcher: FSWatcher | null = null
   let timer: NodeJS.Timeout | null = null
   let disposed = false
 
@@ -113,8 +114,17 @@ export function watchSessionTasks(
     }
   }
 
-  if (!watchDir() && existsSync(parent)) {
-    // The folder is only created on the session's first TaskCreate — wait for it.
+  const attachParentWatcher = (): void => {
+    if (parentWatcher || watcher || !existsSync(parent)) return
+
+    // `tasks/` and the session directory can be created in one filesystem
+    // operation. In that case there is no child event left for this watcher;
+    // always probe before waiting for a future parent event.
+    if (watchDir()) {
+      fire()
+      return
+    }
+
     try {
       parentWatcher = watch(parent, () => {
         if (watchDir()) {
@@ -129,10 +139,34 @@ export function watchSessionTasks(
     }
   }
 
+  const attachRootWatcher = (): void => {
+    if (rootWatcher || watcher || existsSync(parent)) return
+    try {
+      // `tasks/` itself is created lazily by the CLI. Watching its stable
+      // parent means we also notice that first directory creation.
+      rootWatcher = watch(root, () => {
+        if (existsSync(parent)) {
+          rootWatcher?.close()
+          rootWatcher = null
+          attachParentWatcher()
+        }
+      })
+      rootWatcher.on('error', () => {})
+    } catch {
+      /* the per-turn snapshot remains the fallback */
+    }
+  }
+
+  if (!watchDir()) {
+    attachParentWatcher()
+    attachRootWatcher()
+  }
+
   return () => {
     disposed = true
     if (timer) clearTimeout(timer)
     watcher?.close()
     parentWatcher?.close()
+    rootWatcher?.close()
   }
 }

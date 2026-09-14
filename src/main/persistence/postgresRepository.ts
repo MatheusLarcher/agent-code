@@ -13,6 +13,16 @@ import {
   encodePostgresText
 } from './postgresEncoding'
 import {
+  assertPoCreate,
+  assertPoWrite,
+  BOARD_COLUMNS,
+  boardItemFromRow,
+  boardItemId,
+  compareBoardItems,
+  normalizeSourceItems,
+  type BoardItemRow
+} from '../board/boardModel'
+import {
   assertDeliverableKind,
   assertStepFinalStatus,
   assertStepKind,
@@ -54,6 +64,11 @@ import {
   type MemoryProposalQuery,
   type MemoryProposalSettle,
   type ApplicationSnapshot,
+  type BoardItem,
+  type BoardPoCreate,
+  type BoardPoWrite,
+  type BoardQuery,
+  type BoardSyncInput,
   type ConversationDelete,
   type ConversationLease,
   type ConversationRecord,
@@ -95,6 +110,34 @@ const DELIVERABLE_COLUMNS = `id, task_id, step_id, kind, summary, payload_path, 
 const EVENT_COLUMNS = 'id, task_id, step_id, at, kind, data_json'
 
 type LockedTaskRow = TaskRow & { lease_live: boolean | null }
+
+/** Texto opcional do PO: string vazia vira `null` (limpar o campo), e o resto
+ *  passa pelo mesmo escape de texto das outras colunas. */
+function nullableText(value: string | null): string | null {
+  if (value === null) return null
+  const trimmed = value.trim()
+  return trimmed ? encodePostgresText(trimmed) : null
+}
+
+/** O driver devolve `timestamptz` como `Date`; o modelo do quadro trabalha com
+ *  ISO em texto, igual ao SQLite. Converter aqui mantém os dois backends
+ *  devolvendo exatamente a mesma forma. */
+function decodeBoardRow(row: BoardItemRow): BoardItemRow {
+  const stamp = (value: unknown): string | null =>
+    value === null || value === undefined ? null : iso(value as Date | string)
+  return {
+    ...row,
+    source_title: decodePostgresText(row.source_title ?? ''),
+    active_form: row.active_form === null ? null : decodePostgresText(row.active_form),
+    po_title: row.po_title === null ? null : decodePostgresText(row.po_title),
+    po_note: row.po_note === null ? null : decodePostgresText(row.po_note),
+    po_reason: row.po_reason === null ? null : decodePostgresText(row.po_reason),
+    po_at: stamp(row.po_at),
+    dismissed_at: stamp(row.dismissed_at),
+    created_at: stamp(row.created_at) ?? new Date(0).toISOString(),
+    updated_at: stamp(row.updated_at) ?? new Date(0).toISOString()
+  }
+}
 
 function decodeTaskRow(row: TaskRow): TaskRow {
   return {
@@ -718,6 +761,160 @@ export class PostgresRepository implements PersistenceRepository {
       [projectId]
     )
     return result.rows.map((row) => String(row.project_cwd))
+  }
+
+  // -------------------------------------------------------------------------
+  // Quadro de tarefas (board_items). O que muda aqui em relação ao SQLite não é
+  // o contrato, é a concorrência: a sincronização do snapshot roda numa
+  // transação só, então dois PCs observando a MESMA conversa não intercalam
+  // escrita pela metade.
+  // -------------------------------------------------------------------------
+
+  async syncBoardItems(input: BoardSyncInput): Promise<BoardItem[]> {
+    this.assertInitialized()
+    const items = normalizeSourceItems(input.items)
+    // Snapshot vazio nunca apaga o quadro — ver o comentário do contrato em
+    // `BoardSyncInput`: "nunca usou tarefas" é indistinguível de "ficou vazio".
+    if (items.length === 0) {
+      return this.listBoardItems({ projectIds: [input.projectId], conversationId: input.conversationId })
+    }
+    await transaction(this.pool, async (client) => {
+      for (const item of items) {
+        const id = boardItemId(input.conversationId, item.sourceId)
+        // A camada `po_*` fica de fora do UPDATE de propósito: a ingestão
+        // escreve só o que o agente declarou, então uma releitura do snapshot
+        // não desfaz a correção do PO.
+        await client.query(
+          `INSERT INTO board_items(id, project_id, project_cwd, conversation_id, origin, source_id,
+             source_title, source_status, active_form, seq)
+           VALUES($1, $2, $3, $4, 'agent', $5, $6, $7, $8, $9)
+           ON CONFLICT (id) DO UPDATE SET
+             project_id = EXCLUDED.project_id,
+             project_cwd = EXCLUDED.project_cwd,
+             source_title = EXCLUDED.source_title,
+             source_status = EXCLUDED.source_status,
+             active_form = EXCLUDED.active_form,
+             seq = EXCLUDED.seq,
+             revision = board_items.revision + 1,
+             updated_at = clock_timestamp()
+           WHERE board_items.source_title IS DISTINCT FROM EXCLUDED.source_title
+              OR board_items.source_status IS DISTINCT FROM EXCLUDED.source_status
+              OR board_items.active_form IS DISTINCT FROM EXCLUDED.active_form
+              OR board_items.seq IS DISTINCT FROM EXCLUDED.seq
+              OR board_items.project_id IS DISTINCT FROM EXCLUDED.project_id`,
+          [
+            id,
+            input.projectId,
+            input.projectCwd,
+            input.conversationId,
+            item.sourceId,
+            encodePostgresText(item.title),
+            item.status,
+            item.activeForm === null ? null : encodePostgresText(item.activeForm),
+            item.seq
+          ]
+        )
+      }
+      const keep = items.map((item) => boardItemId(input.conversationId, item.sourceId))
+      await client.query(
+        `DELETE FROM board_items
+         WHERE conversation_id = $1 AND origin = 'agent' AND NOT (id = ANY($2::text[]))`,
+        [input.conversationId, keep]
+      )
+    })
+    return this.listBoardItems({ projectIds: [input.projectId], conversationId: input.conversationId })
+  }
+
+  async listBoardItems(query: BoardQuery): Promise<BoardItem[]> {
+    this.assertInitialized()
+    // Lista vazia = nenhum projeto, nunca "todos".
+    if (!query.projectIds || query.projectIds.length === 0) return []
+    const clauses = ['project_id = ANY($1::text[])']
+    const params: unknown[] = [query.projectIds]
+    if (query.conversationId !== undefined) {
+      params.push(query.conversationId)
+      clauses.push(`conversation_id = $${params.length}`)
+    }
+    if (!query.includeDismissed) clauses.push('dismissed_at IS NULL')
+    const result = await this.pool.query<BoardItemRow>(
+      `SELECT ${BOARD_COLUMNS} FROM board_items WHERE ${clauses.join(' AND ')}`,
+      params
+    )
+    return result.rows.map((row) => boardItemFromRow(decodeBoardRow(row))).sort(compareBoardItems)
+  }
+
+  async applyBoardPo(input: BoardPoWrite): Promise<BoardItem> {
+    this.assertInitialized()
+    assertPoWrite(input)
+    return transaction(this.pool, async (client) => {
+      const locked = await client.query<BoardItemRow>(
+        `SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = $1 FOR UPDATE`,
+        [input.id]
+      )
+      const current = locked.rows[0]
+      if (!current) throw new StorageError('INVALID_PERSISTED_DATA', `Cartão inexistente: ${input.id}`)
+      await client.query(
+        `UPDATE board_items SET
+           po_title = $2, po_note = $3, po_status = $4, po_reason = $5,
+           po_at = clock_timestamp(), revision = revision + 1, updated_at = clock_timestamp()
+         WHERE id = $1`,
+        [
+          input.id,
+          input.poTitle === undefined ? current.po_title : nullableText(input.poTitle),
+          input.poNote === undefined ? current.po_note : nullableText(input.poNote),
+          input.poStatus === undefined ? current.po_status : input.poStatus,
+          input.poReason === undefined ? current.po_reason : nullableText(input.poReason)
+        ]
+      )
+      return this.requireBoardItem(client, input.id)
+    })
+  }
+
+  async createBoardPoItem(input: BoardPoCreate): Promise<BoardItem> {
+    this.assertInitialized()
+    assertPoCreate(input)
+    const id = `bi-po-${randomUUID().slice(0, 12)}`
+    return transaction(this.pool, async (client) => {
+      await client.query(
+        `INSERT INTO board_items(id, project_id, project_cwd, conversation_id, origin, source_id,
+           source_title, source_status, seq, po_reason, po_at)
+         VALUES($1, $2, $3, $4, 'po', NULL, $5, $6,
+           (SELECT COALESCE(MAX(seq), -1) + 1 FROM board_items WHERE conversation_id = $4),
+           $7, clock_timestamp())`,
+        [
+          id,
+          input.projectId,
+          input.projectCwd,
+          input.conversationId,
+          encodePostgresText(input.title),
+          input.status,
+          encodePostgresText(input.reason)
+        ]
+      )
+      return this.requireBoardItem(client, id)
+    })
+  }
+
+  async dismissBoardItem(id: string, dismissed: boolean): Promise<BoardItem> {
+    this.assertInitialized()
+    return transaction(this.pool, async (client) => {
+      const updated = await client.query(
+        `UPDATE board_items
+         SET dismissed_at = ${dismissed ? 'clock_timestamp()' : 'NULL'},
+             revision = revision + 1, updated_at = clock_timestamp()
+         WHERE id = $1`,
+        [id]
+      )
+      if (!updated.rowCount) throw new StorageError('INVALID_PERSISTED_DATA', `Cartão inexistente: ${id}`)
+      return this.requireBoardItem(client, id)
+    })
+  }
+
+  private async requireBoardItem(client: PoolClient, id: string): Promise<BoardItem> {
+    const result = await client.query<BoardItemRow>(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = $1`, [id])
+    const row = result.rows[0]
+    if (!row) throw new StorageError('INVALID_PERSISTED_DATA', `Cartão inexistente: ${id}`)
+    return boardItemFromRow(decodeBoardRow(row))
   }
 
   async claimTask(agentId: string, filter: TaskClaimFilter = {}): Promise<TaskClaim | null> {

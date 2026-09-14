@@ -146,9 +146,12 @@ export async function buildTaskBoard(
   // No authoritative repository is not an empty queue, and the panel says so.
   if (!ledger) return { available: false, items: [] }
 
-  const status = query.includeFinished
-    ? [...OPEN_TASK_STATUSES, ...CLOSED_TASK_STATUSES]
-    : OPEN_TASK_STATUSES
+  // O quadro é uma memória do trabalho, não só uma fila viva: estados terminais
+  // aparecem por padrão. `includeFinished: false` continua disponível para um
+  // recorte estritamente aberto.
+  const status = query.includeFinished === false
+    ? OPEN_TASK_STATUSES
+    : [...OPEN_TASK_STATUSES, ...CLOSED_TASK_STATUSES]
   // Filtra pelos caminhos equivalentes, não pelo caminho local: o mesmo projeto
   // em outro PC tem outro `project_cwd`, e o painel mostraria meia fila.
   const projectCwds = query.projectCwd

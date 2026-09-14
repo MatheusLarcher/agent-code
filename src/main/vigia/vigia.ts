@@ -1,4 +1,4 @@
-import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { askObserver } from '../observerQuery'
 import type { ChatEvent, VigiaAlertMsg, VigiaConfig } from '../../shared/ipc'
 import {
   alertFingerprint,
@@ -137,35 +137,5 @@ export class Vigia {
   }
 }
 
-/** A chamada real: um `query()` avulso, sem ferramentas e de um turno só — o
- *  vigia é um leitor, não um agente do projeto (mesmo molde do visionRelay). */
-export async function askVigia(prompt: string, model: string): Promise<string> {
-  async function* single(): AsyncIterable<SDKUserMessage> {
-    yield {
-      type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text: prompt }] },
-      parent_tool_use_id: null
-    } as SDKUserMessage
-  }
-
-  const options: Options = {
-    model,
-    executable: 'node',
-    tools: [],
-    maxTurns: 1,
-    includePartialMessages: false,
-    permissionMode: 'bypassPermissions'
-  }
-
-  const q = query({ prompt: single(), options })
-  let text = ''
-  for await (const message of q) {
-    if (message.type === 'assistant') {
-      const content = (message.message as { content?: Array<{ type: string; text?: string }> }).content ?? []
-      for (const block of content) {
-        if (block.type === 'text' && typeof block.text === 'string') text += block.text
-      }
-    }
-  }
-  return text.trim()
-}
+/** A chamada real é a mesma de todo observador do app (ver observerQuery.ts). */
+export const askVigia = askObserver

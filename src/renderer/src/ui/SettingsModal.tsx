@@ -4,6 +4,7 @@ import {
   LOCAL_SPEECH_MODELS,
   OPENAI_VOICES,
   VIGIA_MODELS,
+  PO_MODELS,
   type AppConfig,
   type CacheInfo,
   type CodexStatus
@@ -12,6 +13,7 @@ import { useUI } from './UiProvider'
 import { PostgresSettingsSection } from './PostgresSettingsSection'
 import { MemoryDataSection } from './MemoryDataSection'
 import {
+  IconBoard,
   IconDatabase,
   IconEye,
   IconEyeOff,
@@ -338,6 +340,85 @@ export function SettingsModal({
                         }}
                       >
                         {VIGIA_MODELS.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </section>
+
+                <section className={`settings-section settings-switch-section ${cfg.board.requirePlan ? 'on' : ''}`}>
+                  <label className="settings-switch-row">
+                    <span className="settings-switch-text">
+                      <strong>
+                        <IconBoard size={15} /> Exigir o plano antes de escrever
+                      </strong>
+                      <span className="settings-desc">
+                        O agente só escreve arquivo no projeto depois de declarar as tarefas que vai executar —
+                        é o que alimenta o Quadro. Vale uma vez por mensagem sua: se ele insistir sem declarar
+                        nada, a escrita seguinte passa. Desligue se preferir que ele trabalhe sem plano nenhum.
+                      </span>
+                    </span>
+                    <input
+                      className="switch-input"
+                      type="checkbox"
+                      checked={cfg.board.requirePlan}
+                      onChange={(event) => {
+                        const on = event.target.checked
+                        setCfg((c) => ({ ...c, board: { ...c.board, requirePlan: on } }))
+                        void window.api.setConfig({ board: { ...cfg.board, requirePlan: on } })
+                      }}
+                    />
+                    <span className="switch-visual" aria-hidden="true" />
+                  </label>
+                </section>
+
+                <section className={`settings-section settings-switch-section ${cfg.board.po.enabled ? 'on' : ''}`}>
+                  <label className="settings-switch-row">
+                    <span className="settings-switch-text">
+                      <strong>
+                        <IconBoard size={15} /> PO — manter o Quadro honesto
+                      </strong>
+                      <span className="settings-desc">
+                        No fim de cada mensagem sua, uma sessão barata compara o que o agente declarou com o que
+                        ele de fato fez: fecha o cartão que ele concluiu e esqueceu de marcar, reescreve título
+                        técnico e acrescenta a tarefa que surgiu no meio. Toda correção fica no cartão com o
+                        motivo — quando ele errar, dá para ver que foi ele.
+                      </span>
+                    </span>
+                    <input
+                      className="switch-input"
+                      type="checkbox"
+                      checked={cfg.board.po.enabled}
+                      onChange={(event) => {
+                        const on = event.target.checked
+                        setCfg((c) => ({ ...c, board: { ...c.board, po: { ...c.board.po, enabled: on } } }))
+                        void window.api.setConfig({ board: { ...cfg.board, po: { ...cfg.board.po, enabled: on } } })
+                      }}
+                    />
+                    <span className="switch-visual" aria-hidden="true" />
+                  </label>
+                  {cfg.board.po.enabled && (
+                    <div className="settings-row">
+                      <span>
+                        <strong>Modelo do PO</strong>
+                        <span className="settings-desc">
+                          Ele só lê e compara — não precisa ser o modelo mais forte, precisa ser barato o
+                          bastante para rodar a cada mensagem.
+                        </span>
+                      </span>
+                      <select
+                        className="settings-input"
+                        value={cfg.board.po.model}
+                        onChange={(event) => {
+                          const model = event.target.value
+                          setCfg((c) => ({ ...c, board: { ...c.board, po: { ...c.board.po, model } } }))
+                          void window.api.setConfig({ board: { ...cfg.board, po: { ...cfg.board.po, model } } })
+                        }}
+                      >
+                        {PO_MODELS.map((m) => (
                           <option key={m.id} value={m.id}>
                             {m.label}
                           </option>

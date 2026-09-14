@@ -55,10 +55,14 @@ import { ChatPanel } from './components/ChatPanel'
 import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
 import { AgentsPanel } from './components/AgentsPanel'
-import { IconGlobe, IconUsers } from './components/Icons'
+import { IconBoard, IconGlobe, IconUsers } from './components/Icons'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
-import { RightPaneTabs } from './components/RightPaneTabs'
+import { RightPaneTabs, type RightPane } from './components/RightPaneTabs'
+import { BoardPanel, boardProgress } from './components/BoardPanel'
+
+/** Poll do contador da aba Quadro com o painel FECHADO. Lento: é um badge. */
+const BOARD_BADGE_POLL_MS = 60_000
 import { IconPower, IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
@@ -404,9 +408,10 @@ export function App(): JSX.Element {
   const [collapsed, setCollapsed] = useState(false)
   const [browserMinimized, setBrowserMinimized] = useState(false)
   const [browserWidth, setBrowserWidth] = useState(720)
-  // Right-hand panel: the browser, the agents panel, or neither (rail only).
-  // They share the same slot — two panels at once would squeeze the chat.
-  const [agentsOpen, setAgentsOpen] = useState(false)
+  // Right-hand panel: browser, agents panel or the project board — os três
+  // dividem o MESMO slot (dois painéis ao mesmo tempo espremeriam o chat).
+  const [rightPane, setRightPane] = useState<RightPane>('browser')
+  const agentsOpen = rightPane === 'agents'
   // Flow view (full-screen map of who spawned whom). Opened from the panel.
   const [hydrated, setHydrated] = useState(false)
   const [storageStatus, setStorageStatus] = useState<StorageStatusDto | null>(null)
@@ -2433,20 +2438,59 @@ export function App(): JSX.Element {
   )
   // The right-hand pane holds ONE of two tabs (browser / agents); `agentsOpen`
   // is the selected tab and `browserMinimized` collapses the whole pane.
-  const openAgentsPanel = useCallback((): void => {
-    setAgentsOpen(true)
+  const selectRightPane = useCallback((pane: RightPane): void => {
+    setRightPane(pane)
     setBrowserMinimized(false)
   }, [])
-  const selectRightPane = useCallback((pane: 'browser' | 'agents'): void => {
-    setAgentsOpen(pane === 'agents')
-    setBrowserMinimized(false)
-  }, [])
+  const openAgentsPanel = useCallback((): void => selectRightPane('agents'), [selectRightPane])
+
+  // id → título, para o quadro nomear a conversa de origem de cada cartão sem
+  // o main precisar consultar conversas (o renderer já tem todas na mão).
+  const conversationTitles = useMemo(
+    () => Object.fromEntries(conversations.map((conv) => [conv.id, conv.title])),
+    [conversations]
+  )
 
   // ---- project map ----
   // The tree is only scanned once the panel is actually open: it walks the disk,
   // and doing it for every conversation switch in the background would be work
   // nobody asked for.
   const activeCwd = active?.cwd ?? ''
+
+  // Progresso do quadro para o rótulo da aba. Consultado mesmo com a aba
+  // fechada — é o contador que avisa que existe trabalho lá dentro —, mas só
+  // quando o quadro muda de verdade (evento) ou o projeto troca.
+  const [boardTabProgress, setBoardTabProgress] = useState<{ done: number; total: number } | null>(null)
+  const boardPaneOpen = rightPane === 'board' && !browserMinimized
+  useEffect(() => {
+    // Com o painel aberto quem informa o contador é ele (`onProgress`), então
+    // aqui não se consulta nada: seriam duas consultas idênticas por mudança.
+    if (boardPaneOpen) return
+    let alive = true
+    const refresh = (): void => {
+      if (!activeCwd) {
+        setBoardTabProgress(null)
+        return
+      }
+      void window.api
+        .boardList({ projectCwd: activeCwd })
+        .then((board) => {
+          if (alive) setBoardTabProgress(board.available ? boardProgress(board.items) : null)
+        })
+        .catch(() => undefined)
+    }
+    refresh()
+    const off = window.api.onBoardChanged(refresh)
+    // O evento só cobre escrita DESTA instalação; com o painel fechado não há
+    // ninguém em poll, então uma mudança vinda de outro PC deixaria o contador
+    // congelado até trocar de projeto. Lento de propósito: é só um badge.
+    const id = setInterval(refresh, BOARD_BADGE_POLL_MS)
+    return () => {
+      alive = false
+      off()
+      clearInterval(id)
+    }
+  }, [activeCwd, boardPaneOpen])
   const [projectTree, setProjectTree] = useState<ProjectTree>({
     nodes: [],
     truncated: false,
@@ -2868,13 +2912,24 @@ export function App(): JSX.Element {
               />
               <div className="right-pane" style={{ flex: `0 0 ${browserWidth}px` }}>
                 <RightPaneTabs
-                  active={agentsOpen ? 'agents' : 'browser'}
+                  active={rightPane}
                   onSelect={selectRightPane}
                   onCollapse={() => setBrowserMinimized(true)}
                   liveAgents={runningTrackCount}
                   browserTabs={browserState.tabs.length}
+                  boardProgress={boardTabProgress}
                 />
-                {agentsOpen ? (
+                {rightPane === 'board' ? (
+                  <BoardPanel
+                    projectCwd={activeCwd}
+                    conversationId={active?.id ?? ''}
+                    conversationTitles={conversationTitles}
+                    busy={!!active && busyIds.has(active.id)}
+                    onClose={() => setBrowserMinimized(true)}
+                    onOpenConversation={(convId) => setActiveId(convId)}
+                    onProgress={setBoardTabProgress}
+                  />
+                ) : agentsOpen ? (
                   <AgentsPanel
                     tracks={activeTracks}
                     busy={!!active && busyIds.has(active.id)}
@@ -2884,7 +2939,8 @@ export function App(): JSX.Element {
                     onFocusPermission={(convId) => {
                       setActiveId(convId)
                       setQuestionMinimized(false)
-                      setAgentsOpen(false)
+                      // Sai do painel para o chat: a pergunta é lá que se responde.
+                      setRightPane('browser')
                     }}
                     loading={!hydrated}
                     onClose={() => setBrowserMinimized(true)}
@@ -2897,6 +2953,7 @@ export function App(): JSX.Element {
                     projectName={projectName}
                     projectCwd={activeCwd}
                     onOpenConversation={(convId) => setActiveId(convId)}
+                    onOpenBoard={() => selectRightPane('board')}
                   />
                 ) : (
                   <BrowserPanel
@@ -2931,6 +2988,18 @@ export function App(): JSX.Element {
                 <IconUsers size={15} />
                 Agentes
                 {runningTrackCount > 0 && <span className="rail-badge">{runningTrackCount}</span>}
+              </button>
+              <button
+                type="button"
+                className="right-rail-btn"
+                onClick={() => selectRightPane('board')}
+                title="Ver o quadro de tarefas do projeto"
+              >
+                <IconBoard size={15} />
+                Quadro
+                {boardTabProgress && boardTabProgress.total > 0 && (
+                  <span className="rail-badge">{`${boardTabProgress.done}/${boardTabProgress.total}`}</span>
+                )}
               </button>
             </div>
           )}

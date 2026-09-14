@@ -115,7 +115,7 @@ describe('projeção do registro de tarefas para o painel', () => {
     expect(Date.parse(board.items[0].leaseExpiresAt as string)).toBeLessThanOrEqual(Date.now())
   })
 
-  it('esconde as terminadas por padrão e as traz quando pedido', async () => {
+  it('mostra as terminadas por padrão e permite recorte só das abertas', async () => {
     const ledger = await setup()
     const task = await ledger.createTask({ projectCwd: 'C:/projeto', title: 'terminada', goal: 'g' })
     const claim = await ledger.claimTask('session:conv-1', { projectCwd: 'C:/projeto' })
@@ -124,9 +124,10 @@ describe('projeção do registro de tarefas para o painel', () => {
     await ledger.transitionTask(task.id, 'running', 'review', fence)
     await ledger.transitionTask(task.id, 'review', 'done')
 
-    expect((await buildTaskBoard(ledger, { projectCwd: 'C:/projeto' })).items).toHaveLength(0)
-    const all = await buildTaskBoard(ledger, { projectCwd: 'C:/projeto', includeFinished: true })
+    const all = await buildTaskBoard(ledger, { projectCwd: 'C:/projeto' })
     expect(all.items.map((item) => item.status)).toEqual(['done'])
+    const open = await buildTaskBoard(ledger, { projectCwd: 'C:/projeto', includeFinished: false })
+    expect(open.items).toHaveLength(0)
     // `done` sem evidência é um "done" que é só afirmação — por isso conta.
     expect(all.items[0].deliverables).toBe(0)
   })

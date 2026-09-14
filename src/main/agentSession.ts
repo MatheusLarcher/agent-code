@@ -18,6 +18,7 @@ import { createMemoryMcpServer } from './memory/memoryTools'
 import { createTaskMcpServer } from './tasks/taskTools'
 import { taskLedger } from './tasks/taskRuntime'
 import { activeScopesFor, writeScopeDenial, type ScopedTask } from './tasks/writeScopeGuard'
+import { newPlanGateState, notePlanTool, notePlanTurn, planGateDenial } from './board/planGate'
 import { buildSpecialistAgents } from './agents/specialists'
 import {
   memoryService,
@@ -48,7 +49,14 @@ import {
   syncCacheSkills
 } from './skillManager'
 import { createHash, randomUUID } from 'node:crypto'
-import { fastModeTransport, isOllamaModel, isOpenAIModel, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
+import {
+  DEFAULT_CONFIG,
+  fastModeTransport,
+  isOllamaModel,
+  isOpenAIModel,
+  modelSupportsVision,
+  OLLAMA_BASE_URL
+} from '../shared/ipc'
 import { ensureCodexProxyRunning, FAST_MODE_TOKEN_SUFFIX } from './codexProxy'
 import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
@@ -597,9 +605,14 @@ export class AgentSession {
 
   private beginTurn(): void {
     this.turnActive = true
+    notePlanTurn(this.planGate)
     this.markActivity()
     this.startStallWatch()
   }
+
+  /** Estado da trava do plano, por sessão. `declared` atravessa turnos de
+   *  propósito — ver `notePlanTurn`. */
+  private readonly planGate = newPlanGateState()
 
   /** Qualquer sinal de vida do turno: mensagem do SDK ou ferramenta mudando de
    *  estado. Sai do travado na hora, sem esperar o próximo tique. */
@@ -1598,6 +1611,21 @@ export class AgentSession {
     // no modelo; não anula o que a tarefa declarou que pode ser tocado.
     const scopeDenial = writeScopeDenial(this.activeScopedTasks(agentId ?? null), toolName, input)
     if (scopeDenial) return Promise.resolve({ behavior: 'deny', message: scopeDenial })
+    // A trava do quadro, também ANTES do bypassAll: "Permitir tudo" é o usuário
+    // confiando no modelo para executar, não dispensa de dizer o que vai fazer.
+    const planDenial = planGateDenial(this.planGate, toolName, {
+      // Grupo aninhado ausente (config antiga/parcial vinda do banco) cai no
+      // padrão em vez de derrubar o gate — que roda em TODA chamada de
+      // ferramenta e levaria a conversa junto.
+      enabled: loadConfig().board?.requirePlan ?? DEFAULT_CONFIG.board.requirePlan,
+      // `Boolean`, não `!== undefined`: as linhas vizinhas normalizam com
+      // `agentId ?? null`, ou seja, o SDK pode devolver `null` para a thread
+      // principal — e aí `!== undefined` classificaria o agente principal como
+      // subagente e desligaria a trava inteira, sem sintoma nenhum.
+      isSubagent: Boolean(agentId),
+      inTurn: this.turnActive
+    })
+    if (planDenial) return Promise.resolve({ behavior: 'deny', message: planDenial })
     // O servidor MCP não recebe o agentID; o gate sim, e roda imediatamente
     // antes da ferramenta. É aqui que se sabe a quem o escopo vai pertencer.
     if (toolName === 'mcp__tasks__task_claim') this.claimingAgent = agentId ?? null
@@ -1920,6 +1948,9 @@ export class AgentSession {
         if (track.parentToolUseId) continue
         this.emit({ kind: 'thinking', id: nextId(), text: block.thinking })
       } else if (block.type === 'tool_use') {
+        // O plano declarado abre a trava do quadro. Marcado aqui, e não no gate,
+        // porque a ferramenta de plano é auto-aprovada e pode nem chegar lá.
+        if (!track.parentToolUseId) notePlanTool(this.planGate, block.name ?? '')
         this.emit({
           kind: 'tool-use',
           id: block.id ?? nextId(),

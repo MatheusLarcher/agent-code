@@ -53,6 +53,8 @@ interface Props {
   projectCwd: string
   /** Jumps to the conversation a ledger task belongs to. */
   onOpenConversation: (convId: string) => void
+  /** Leva para a aba Quadro — o lugar para onde as tarefas se mudaram. */
+  onOpenBoard: () => void
   /** Fixed width when the panel sits directly in the workspace row. Omit when a
    *  parent (`.right-pane`) already sizes it. */
   width?: number
@@ -187,6 +189,7 @@ export function AgentsPanel({
   projectName,
   projectCwd,
   onOpenConversation,
+  onOpenBoard,
   width
 }: Props): JSX.Element {
   const [view, setView] = useState<'list' | 'tasks' | 'project'>('list')
@@ -243,10 +246,21 @@ export function AgentsPanel({
         </button>
       </header>
 
-      {/* A aba de tarefas traz a própria barra de filtros ACIMA do corpo rolável,
-          então ela não cabe dentro do `agents-body` das outras duas visões. */}
+      {/* As tarefas saíram daqui para a aba Quadro (painel próprio, por projeto).
+          O lugar antigo virou o atalho — tirar o botão sem deixar rastro faria
+          quem já usava a visão concluir que o recurso sumiu. */}
       {view === 'tasks' && !loading ? (
-        <TasksBoard projectCwd={projectCwd} busy={busy} onOpenConversation={onOpenConversation} />
+        <div className="agents-body flow">
+          <div className="board-shortcut">
+            <p className="board-shortcut-title">As tarefas agora vivem no Quadro</p>
+            <p className="board-shortcut-sub">
+              Quadro por projeto, atualizado sozinho enquanto o agente trabalha.
+            </p>
+            <button type="button" className="board-shortcut-btn" onClick={onOpenBoard}>
+              Abrir o Quadro →
+            </button>
+          </div>
+        </div>
       ) : (
       <div className={`agents-body${view !== 'list' && !loading ? ' flow' : ''}`}>
         {loading ? (

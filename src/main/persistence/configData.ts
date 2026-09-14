@@ -21,7 +21,14 @@ const partialConfigSchema = z
     remoteToken: z.string().optional(),
     remoteEnabled: z.boolean().optional(),
     preventSleepWhileBusy: z.boolean().optional(),
-    vigia: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional()
+    vigia: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional(),
+    board: z
+      .object({
+        requirePlan: z.boolean().optional(),
+        po: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional()
+      })
+      .strict()
+      .optional()
   })
   .strict()
 
@@ -31,7 +38,8 @@ export function defaultAppConfig(): AppConfig {
     openai: { ...DEFAULT_CONFIG.openai },
     localSpeech: { ...DEFAULT_CONFIG.localSpeech },
     ollama: { ...DEFAULT_CONFIG.ollama },
-    vigia: { ...DEFAULT_CONFIG.vigia }
+    vigia: { ...DEFAULT_CONFIG.vigia },
+    board: { ...DEFAULT_CONFIG.board, po: { ...DEFAULT_CONFIG.board.po } }
   }
 }
 
@@ -48,7 +56,14 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
     openai: { ...current.openai, ...(parsed.data.openai ?? {}) },
     localSpeech: { ...current.localSpeech, ...(parsed.data.localSpeech ?? {}) },
     ollama: { ...current.ollama, ...(parsed.data.ollama ?? {}) },
-    vigia: { ...current.vigia, ...(parsed.data.vigia ?? {}) }
+    vigia: { ...current.vigia, ...(parsed.data.vigia ?? {}) },
+    // `po` é aninhado: o spread raso do `board` apagaria o modelo ao gravar só
+    // o interruptor (mesma armadilha do merge aninhado do `openai`).
+    board: {
+      ...current.board,
+      ...(parsed.data.board ?? {}),
+      po: { ...current.board.po, ...(parsed.data.board?.po ?? {}) }
+    }
   }
 }
 

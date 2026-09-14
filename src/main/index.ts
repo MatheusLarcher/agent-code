@@ -24,6 +24,7 @@ import { RemotePairingStore } from './remote/remotePairing'
 import { buildRemoteApk } from './remote/buildApk'
 import {
   Channels,
+  DEFAULT_CONFIG,
   DEFAULT_LOCAL_SPEECH_MODEL,
   LOCAL_SPEECH_MODELS,
   REMOTE_RELAY_WS,
@@ -42,6 +43,8 @@ import { storageLifecycle } from './persistence/lifecycle'
 import { ConversationLeaseKeeper } from './persistence/leaseKeeper'
 import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlist'
 import { Vigia } from './vigia/vigia'
+import { BoardService } from './board/boardService'
+import { Po } from './po/po'
 import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
 import { hashJson, normalizeJson } from './persistence/hashes'
@@ -125,6 +128,9 @@ configureAppRestart(new AppRestartCoordinator({
 // One independent agent session per conversation — they run concurrently, so
 // switching/sending in one conversation never cancels another's running task.
 const sessions = new Map<string, ProviderFailoverSession>()
+/** Pasta do projeto de cada conversa viva. O quadro é por projeto, e quem
+ *  precisa dela (PO) age fora do caminho onde `opts.cwd` está em escopo. */
+const sessionCwds = new Map<string, string>()
 
 // Which files the agent actually offered for download. Fed from the event tee
 // below, consulted by the `fileDownload` handler.
@@ -211,6 +217,18 @@ const vigia = new Vigia({
   config: () => loadConfig().vigia,
   emit: (alert) => send(Channels.vigiaAlert, alert)
 })
+
+// O quadro de tarefas do projeto. Lê o mesmo tee do vigia, mas só o snapshot
+// autoritativo do CLI; sem repositório gravável ele simplesmente não grava (o
+// chat nunca pode quebrar porque o quadro não conseguiu persistir).
+const board = new BoardService({
+  repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+  onChanged: (projectId) => send(Channels.boardChanged, { projectId })
+})
+
+// O PO: audita o quadro no fim de cada turno e conserta o que o agente esqueceu
+// de marcar. Escreve no quadro, nunca no chat; falha em silêncio.
+const po = new Po({ config: () => loadConfig().board ?? DEFAULT_CONFIG.board, board })
 
 function send(channel: string, payload: unknown): void {
   const window = mainWindow
@@ -961,6 +979,33 @@ function registerIpc(): void {
       return { available: false, items: [] }
     }
   })
+  ipcMain.handle(
+    Channels.boardList,
+    async (_e, query: { projectCwd: string; conversationId?: string; includeDismissed?: boolean }) => {
+      // Sem repositório gravável o quadro não é "vazio", é indisponível — e a
+      // tela precisa dessa diferença para explicar em vez de mentir.
+      if (!storageLifecycle.canMutate()) return { available: false, items: [] }
+      try {
+        const items = await board.list(query?.projectCwd ?? '', {
+          conversationId: query?.conversationId,
+          includeDismissed: query?.includeDismissed
+        })
+        // `null` = não deu para ler (pasta do projeto fora do ar). Devolver
+        // lista vazia aqui faria a tela dizer "nenhuma tarefa ainda" sobre um
+        // quadro que pode estar cheio.
+        return items === null ? { available: false, items: [] } : { available: true, items }
+      } catch {
+        return { available: false, items: [] }
+      }
+    }
+  )
+  ipcMain.handle(Channels.boardDismiss, async (_e, id: string, dismissed: boolean) => {
+    try {
+      return await board.dismiss(id, dismissed)
+    } catch {
+      return null
+    }
+  })
   ipcMain.handle(Channels.tasksDetail, async (_e, taskId: string) => {
     try {
       return await buildTaskDetail(taskLedger(), taskId)
@@ -1196,6 +1241,7 @@ function registerIpc(): void {
     const { convId } = opts
     const project = await fsStat(opts.cwd).catch(() => null)
     if (!project?.isDirectory()) throw new Error('A pasta local do projeto não foi localizada nesta instalação.')
+    sessionCwds.set(convId, opts.cwd)
     // Replace only THIS conversation's session; others keep running.
     sessions.get(convId)?.dispose()
     await releaseSessionLease(convId)
@@ -1217,6 +1263,13 @@ function registerIpc(): void {
       // O vigia lê o mesmo tee — e a saída dele NÃO volta por aqui: alerta é
       // para o usuário, não para o modelo (canal próprio, ver vigia.ts).
       vigia.observe(convId, event)
+      // O quadro se alimenta do MESMO tee, e só do snapshot autoritativo
+      // (`task-list`) — nunca dos eventos incrementais, que congelam o quadro
+      // quando o app perde um deles (ver boardService.ts).
+      board.observe(convId, opts.cwd, event)
+      // O PO lê o mesmo tee, mas só age no fim do turno — é lá que dá para ver
+      // o que terminou de verdade.
+      po.observe(convId, event)
     }
     s = new ProviderFailoverSession(opts, (sessionOptions, sessionEmit, sessionComplete) => new AgentSession(
       sessionOptions,
@@ -1287,6 +1340,8 @@ function registerIpc(): void {
       // O vigia só julga premissa de um pedido do usuário: é aqui que o turno
       // dele começa (retomada e recuperação de turno não passam por aqui).
       vigia.noteUserMessage(convId, text)
+      // O PO precisa do mesmo marco, e da pasta do projeto para achar o quadro.
+      po.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
       await sessions.get(convId)?.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }
   )
@@ -1307,6 +1362,9 @@ function registerIpc(): void {
     sessions.get(convId)?.dispose()
     sessions.delete(convId)
     vigia.dispose(convId)
+    po.dispose(convId)
+    board.dispose(convId)
+    sessionCwds.delete(convId)
     void releaseSessionLease(convId)
   })
 

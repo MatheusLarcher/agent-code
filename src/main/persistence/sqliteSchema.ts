@@ -218,6 +218,53 @@ export const SQLITE_TASK_PROJECT_SCHEMA = `
   CREATE INDEX IF NOT EXISTS task_project_identity_project ON task_project_identity(project_id);
 `
 
+const BOARD_STATUS_VALUES = "('pending', 'in_progress', 'completed')"
+
+/**
+ * Migration 5 — quadro de tarefas do agente.
+ *
+ * Tabela nova em vez de reaproveitar `tasks`: são ciclos de vida diferentes.
+ * `tasks` é contrato de delegação (lease, fence, tentativas, escopo de escrita);
+ * um cartão do quadro é um passo que o agente declarou e que se marca sozinho
+ * quando ele conclui. Espremer os dois na mesma tabela obrigaria um dos dois a
+ * carregar colunas que nunca usa e um `status` com dois significados.
+ *
+ * As duas camadas ficam em colunas separadas (`source_*` do agente, `po_*` do
+ * PO) porque a separação é a garantia: a ingestão do snapshot reescreve só a
+ * primeira, então um PO que erre nunca apaga o que o agente declarou.
+ *
+ * A chave de projeto é `project_id` (identidade estável), e não `project_cwd`
+ * como em `tasks` — o mesmo repositório clonado em dois PCs tem UM quadro. O
+ * caminho local fica junto só para auditoria.
+ */
+export const SQLITE_BOARD_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS board_items (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    project_cwd TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK(origin IN ('agent', 'po')),
+    source_id TEXT,
+    source_title TEXT NOT NULL DEFAULT '',
+    source_status TEXT NOT NULL CHECK(source_status IN ${BOARD_STATUS_VALUES}),
+    active_form TEXT,
+    seq INTEGER NOT NULL DEFAULT 0,
+    po_title TEXT,
+    po_note TEXT,
+    po_status TEXT CHECK(po_status IS NULL OR po_status IN ${BOARD_STATUS_VALUES}),
+    po_reason TEXT,
+    po_at TEXT,
+    dismissed_at TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS board_items_project ON board_items(project_id, conversation_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS board_items_source
+    ON board_items(conversation_id, source_id)
+    WHERE source_id IS NOT NULL;
+`
+
 export interface SqliteMigration {
   version: number
   name: string
@@ -235,7 +282,8 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   migration(1, 'sqlite-v2-base', SQLITE_V2_SCHEMA),
   migration(2, 'sqlite-v2-tasks', SQLITE_TASKS_SCHEMA),
   migration(3, 'sqlite-v2-memory', SQLITE_MEMORY_SCHEMA),
-  migration(4, 'sqlite-v2-task-project-identity', SQLITE_TASK_PROJECT_SCHEMA)
+  migration(4, 'sqlite-v2-task-project-identity', SQLITE_TASK_PROJECT_SCHEMA),
+  migration(5, 'sqlite-v2-board', SQLITE_BOARD_SCHEMA)
 ]
 
 export const SQLITE_SCHEMA = SQLITE_MIGRATIONS.map((entry) => entry.sql).join('\n')

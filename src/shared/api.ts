@@ -3,6 +3,8 @@ import type {
   MemoryConflictItem,
   TaskBoard,
   TaskBoardDetail,
+  BoardItem,
+  ProjectBoard,
   AgentEventMsg,
   AgentInterruptResult,
   AgentMessageKind,
@@ -133,6 +135,16 @@ export interface AgentCodeApi {
   tasksBoard(query?: { projectCwd?: string; includeFinished?: boolean }): Promise<TaskBoard>
   /** Steps, deliverables and events of one task — only fetched when it is expanded. */
   tasksDetail(taskId: string): Promise<TaskBoardDetail | null>
+  /** Quadro de tarefas do projeto: cartões do agente com a camada do PO por cima. */
+  boardList(query: {
+    projectCwd: string
+    conversationId?: string
+    includeDismissed?: boolean
+  }): Promise<ProjectBoard>
+  /** Arquiva/desarquiva um cartão — a única escrita do usuário no quadro. */
+  boardDismiss(id: string, dismissed: boolean): Promise<BoardItem | null>
+  /** O quadro daquele projeto mudou (o agente avançou, ou o PO corrigiu). */
+  onBoardChanged(cb: (msg: { projectId: string }) => void): () => void
   kvGet(key: string): Promise<string | null>
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet(key: string, value: string): Promise<void>

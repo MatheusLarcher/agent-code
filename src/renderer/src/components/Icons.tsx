@@ -232,6 +232,14 @@ export const IconUsers = (p: IconProps): JSX.Element => (
   </Svg>
 )
 
+/** O quadro de tarefas: colunas dentro de uma moldura (kanban). */
+export const IconBoard = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M9 4v16M15 4v16" />
+  </Svg>
+)
+
 /** A single agent/work unit — used on each track row. */
 export const IconSparkStar = (p: IconProps): JSX.Element => (
   <Svg {...p}>

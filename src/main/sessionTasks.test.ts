@@ -103,6 +103,28 @@ describe('watchSessionTasks', () => {
     expect(seen).toEqual([])
   })
 
+  it('conecta quando tasks/ e a pasta da sessão surgem juntos', async () => {
+    const seen: TaskItem[][] = []
+    const stop = watchSessionTasks(SESSION, (items) => seen.push(items), root)
+    try {
+      // Simulate the CLI creating both directories before the root watcher can
+      // react to the tasks/ creation event.
+      writeTask('1', { status: 'pending' })
+      await new Promise((r) => setTimeout(r, 700))
+      expect(seen.at(-1)?.map((task) => [task.id, task.status])).toEqual([['1', 'pending']])
+
+      writeTask('1', { status: 'in_progress' })
+      await new Promise((r) => setTimeout(r, 700))
+      expect(seen.at(-1)?.[0].status).toBe('in_progress')
+
+      writeTask('1', { status: 'completed' })
+      await new Promise((r) => setTimeout(r, 700))
+      expect(seen.at(-1)?.[0].status).toBe('completed')
+    } finally {
+      stop()
+    }
+  })
+
   it('não quebra quando a pasta da sessão ainda não existe', async () => {
     const stop = watchSessionTasks('ainda-nao', () => {}, root)
     expect(typeof stop).toBe('function')

@@ -1,5 +1,7 @@
 import type { SessionStore } from '@anthropic-ai/claude-agent-sdk'
-import type { AppConfig } from '../../shared/ipc'
+import type { AppConfig, BoardItem, BoardItemStatus } from '../../shared/ipc'
+
+export type { BoardItem, BoardItemOrigin, BoardItemStatus } from '../../shared/ipc'
 import type { TransferRecords } from './transferRecords'
 
 export type StorageBackend = 'sqlite' | 'postgres'
@@ -133,7 +135,15 @@ export interface ExportSnapshot {
   watermark: string
 }
 
-export type RepositoryChangeEntity = 'global-kv' | 'device-kv' | 'conversation' | 'lease' | 'project' | 'task' | 'memory'
+export type RepositoryChangeEntity =
+  | 'global-kv'
+  | 'device-kv'
+  | 'conversation'
+  | 'lease'
+  | 'project'
+  | 'task'
+  | 'memory'
+  | 'board'
 
 export interface RepositoryChange {
   changeId: string
@@ -363,6 +373,71 @@ export interface TaskRepository {
 }
 
 // ---------------------------------------------------------------------------
+// Quadro de tarefas do agente (board_items)
+// ---------------------------------------------------------------------------
+
+/** Um cartão do snapshot do CLI, já resolvido para o formato do quadro. */
+export interface BoardSourceItem {
+  sourceId: string
+  title: string
+  status: BoardItemStatus
+  activeForm: string | null
+  seq: number
+}
+
+/**
+ * O snapshot inteiro de UMA conversa. É substituição, não incremento: o CLI
+ * reescreve a lista toda, então o que sumiu do snapshot sumiu de verdade.
+ *
+ * Um cuidado que a implementação precisa honrar: snapshot vazio **não** apaga
+ * o quadro. "Esta sessão nunca usou tarefas" e "o plano agora está vazio" são
+ * indistinguíveis na leitura, e tratar o primeiro como o segundo torraria o
+ * quadro inteiro de uma conversa por causa de uma leitura sem sorte.
+ */
+export interface BoardSyncInput {
+  projectId: string
+  projectCwd: string
+  conversationId: string
+  items: BoardSourceItem[]
+}
+
+/** Escrita do PO. Só os campos dele; `undefined` deixa como está, `null` limpa. */
+export interface BoardPoWrite {
+  id: string
+  poTitle?: string | null
+  poNote?: string | null
+  poStatus?: BoardItemStatus | null
+  /** Obrigatório quando `poStatus` muda: é o que aparece na trilha do cartão. */
+  poReason?: string | null
+}
+
+/** Cartão que o agente nunca declarou, criado pelo PO. */
+export interface BoardPoCreate {
+  projectId: string
+  projectCwd: string
+  conversationId: string
+  title: string
+  status: BoardItemStatus
+  reason: string
+}
+
+export interface BoardQuery {
+  /** Caminhos equivalentes do MESMO projeto. Lista vazia = nenhum projeto. */
+  projectIds: string[]
+  conversationId?: string
+  includeDismissed?: boolean
+}
+
+export interface BoardRepository {
+  /** Aplica o snapshot de uma conversa preservando os campos do PO. */
+  syncBoardItems(input: BoardSyncInput): Promise<BoardItem[]>
+  listBoardItems(query: BoardQuery): Promise<BoardItem[]>
+  applyBoardPo(input: BoardPoWrite): Promise<BoardItem>
+  createBoardPoItem(input: BoardPoCreate): Promise<BoardItem>
+  dismissBoardItem(id: string, dismissed: boolean): Promise<BoardItem>
+}
+
+// ---------------------------------------------------------------------------
 // Memory service (memory_entries / memory_proposals)
 // ---------------------------------------------------------------------------
 
@@ -480,7 +555,7 @@ export interface MemoryRepository {
   deleteMemoryProposal(id: string): Promise<boolean>
 }
 
-export interface PersistenceRepository extends TaskRepository, MemoryRepository {
+export interface PersistenceRepository extends TaskRepository, MemoryRepository, BoardRepository {
   readonly backend: StorageBackend
 
   initialize(): Promise<void>

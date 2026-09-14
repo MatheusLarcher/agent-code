@@ -130,17 +130,17 @@ describe('TasksBoard', () => {
     render(<TasksBoard projectCwd="C:/proj" busy={false} onOpenConversation={vi.fn()} />)
 
     await waitFor(() =>
-      expect(api.tasksBoard).toHaveBeenCalledWith({ projectCwd: 'C:/proj', includeFinished: false })
+      expect(api.tasksBoard).toHaveBeenCalledWith({ projectCwd: 'C:/proj', includeFinished: true })
     )
     fireEvent.click(screen.getByRole('checkbox'))
-    await waitFor(() => expect(api.tasksBoard).toHaveBeenCalledWith({ includeFinished: false }))
+    await waitFor(() => expect(api.tasksBoard).toHaveBeenCalledWith({ includeFinished: true }))
   })
 
   it('sem projeto aberto, não afirma um recorte que não aplicou', async () => {
     const api = mockApi({ available: true, items: [] })
     render(<TasksBoard projectCwd="" busy={false} onOpenConversation={vi.fn()} />)
 
-    await waitFor(() => expect(api.tasksBoard).toHaveBeenCalledWith({ includeFinished: false }))
+    await waitFor(() => expect(api.tasksBoard).toHaveBeenCalledWith({ includeFinished: true }))
     const box = screen.getByRole('checkbox') as HTMLInputElement
     expect(box.disabled).toBe(true)
     expect(box.checked).toBe(false)

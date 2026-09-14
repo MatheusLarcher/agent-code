@@ -37,6 +37,7 @@ const base = {
   projectName: 'projeto',
   projectCwd: 'C:\\proj',
   onOpenConversation: vi.fn(),
+  onOpenBoard: vi.fn(),
   width: 480
 }
 

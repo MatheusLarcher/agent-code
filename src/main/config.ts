@@ -27,7 +27,10 @@ const FIELDS: Field[] = [
   { key: 'config.remoteEnabled', get: (c) => c.remoteEnabled, patch: (v) => ({ remoteEnabled: v as boolean }) },
   { key: 'config.preventSleepWhileBusy', get: (c) => c.preventSleepWhileBusy, patch: (v) => ({ preventSleepWhileBusy: v as boolean }) },
   { key: 'config.vigia.enabled', get: (c) => c.vigia.enabled, patch: (v) => ({ vigia: { enabled: v as boolean } as AppConfig['vigia'] }) },
-  { key: 'config.vigia.model', get: (c) => c.vigia.model, patch: (v) => ({ vigia: { model: v as string } as AppConfig['vigia'] }) }
+  { key: 'config.vigia.model', get: (c) => c.vigia.model, patch: (v) => ({ vigia: { model: v as string } as AppConfig['vigia'] }) },
+  { key: 'config.board.requirePlan', get: (c) => c.board.requirePlan, patch: (v) => ({ board: { requirePlan: v as boolean } as AppConfig['board'] }) },
+  { key: 'config.board.po.enabled', get: (c) => c.board.po.enabled, patch: (v) => ({ board: { po: { enabled: v as boolean } } as AppConfig['board'] }) },
+  { key: 'config.board.po.model', get: (c) => c.board.po.model, patch: (v) => ({ board: { po: { model: v as string } } as AppConfig['board'] }) }
 ]
 
 /** Every KV key the config persists, in write order. Exported so a test can hold
@@ -47,7 +50,8 @@ function cloneConfig(config: AppConfig): AppConfig {
     openai: { ...config.openai },
     localSpeech: { ...config.localSpeech },
     ollama: { ...config.ollama },
-    vigia: { ...config.vigia }
+    vigia: { ...config.vigia },
+    board: { ...config.board, po: { ...config.board.po } }
   }
 }
 

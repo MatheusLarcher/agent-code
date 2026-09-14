@@ -10,6 +10,8 @@ import type {
   AndroidProgressMsg,
   SpeechSetupProgress,
   AppConfig,
+  BoardItem,
+  ProjectBoard,
   BrowserFrame,
   BrowserInput,
   BrowserState,
@@ -132,6 +134,14 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.tasksBoard, query),
   tasksDetail: (taskId: string): Promise<TaskBoardDetail | null> =>
     ipcRenderer.invoke(Channels.tasksDetail, taskId),
+  boardList: (query: {
+    projectCwd: string
+    conversationId?: string
+    includeDismissed?: boolean
+  }): Promise<ProjectBoard> => ipcRenderer.invoke(Channels.boardList, query),
+  boardDismiss: (id: string, dismissed: boolean): Promise<BoardItem | null> =>
+    ipcRenderer.invoke(Channels.boardDismiss, id, dismissed),
+  onBoardChanged: (cb: (m: { projectId: string }) => void): (() => void) => on(Channels.boardChanged, cb),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
   kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),
   loadAllConversations: (): Promise<unknown[]> => ipcRenderer.invoke(Channels.conversationsLoadAll),

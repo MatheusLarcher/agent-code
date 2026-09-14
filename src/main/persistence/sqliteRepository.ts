@@ -27,6 +27,16 @@ import {
   type TaskStepRow
 } from '../tasks/taskModel'
 import {
+  assertPoCreate,
+  assertPoWrite,
+  BOARD_COLUMNS,
+  boardItemFromRow,
+  boardItemId,
+  compareBoardItems,
+  normalizeSourceItems,
+  type BoardItemRow
+} from '../board/boardModel'
+import {
   assertProposalLease,
   assertMemoryProposalApplication,
   MEMORY_ENTRY_COLUMNS,
@@ -50,6 +60,11 @@ import {
   type MemoryProposalQuery,
   type MemoryProposalSettle,
   type ApplicationSnapshot,
+  type BoardItem,
+  type BoardPoCreate,
+  type BoardPoWrite,
+  type BoardQuery,
+  type BoardSyncInput,
   type ConversationDelete,
   type ConversationLease,
   type ConversationRecord,
@@ -819,6 +834,212 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         .all(projectId) as unknown as Array<{ project_cwd: string }>
       return rows.map((row) => String(row.project_cwd))
     })
+  }
+
+  // -------------------------------------------------------------------------
+  // Quadro de tarefas (board_items)
+  // -------------------------------------------------------------------------
+
+  async syncBoardItems(input: BoardSyncInput): Promise<BoardItem[]> {
+    const items = normalizeSourceItems(input.items)
+    // Snapshot vazio NÃO apaga o quadro: "esta sessão nunca usou tarefas" e "o
+    // plano ficou vazio" são indistinguíveis aqui, e tratar um como o outro
+    // torraria o quadro inteiro da conversa por uma leitura sem sorte.
+    if (items.length === 0) {
+      return this.listBoardItems({ projectIds: [input.projectId], conversationId: input.conversationId })
+    }
+    const changed = this.write((db) => {
+      const now = new Date().toISOString()
+      const touched: string[] = []
+      // Statements preparados UMA vez fora do laço: o snapshot é reemitido a
+      // cada avanço do plano, e recompilá-los por item multiplicava o trabalho
+      // pelo tamanho do plano dentro de uma transação que segura o write lock.
+      const selectOne = db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`)
+      const insertOne = db.prepare(
+        `INSERT INTO board_items(${BOARD_COLUMNS})
+         VALUES(?, ?, ?, ?, 'agent', ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 1, ?, ?)`
+      )
+      const updateOne = db.prepare(
+        `UPDATE board_items SET
+           project_id = ?, project_cwd = ?, source_title = ?, source_status = ?,
+           active_form = ?, seq = ?, revision = revision + 1, updated_at = ?
+         WHERE id = ?`
+      )
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        for (const item of items) {
+          const id = boardItemId(input.conversationId, item.sourceId)
+          const current = selectOne.get(id) as unknown as BoardItemRow | undefined
+          if (!current) {
+            insertOne.run(
+              id,
+              input.projectId,
+              input.projectCwd,
+              input.conversationId,
+              item.sourceId,
+              item.title,
+              item.status,
+              item.activeForm,
+              item.seq,
+              now,
+              now
+            )
+            touched.push(id)
+            continue
+          }
+          const same =
+            current.source_title === item.title &&
+            current.source_status === item.status &&
+            (current.active_form ?? null) === item.activeForm &&
+            Number(current.seq) === item.seq &&
+            current.project_id === input.projectId
+          if (same) continue
+          // A ingestão escreve SÓ a camada do agente. Os campos `po_*` passam
+          // intactos de propósito: é isso que impede a próxima leitura do
+          // snapshot de desfazer, sem aviso, a correção do PO.
+          updateOne.run(
+            input.projectId,
+            input.projectCwd,
+            item.title,
+            item.status,
+            item.activeForm,
+            item.seq,
+            now,
+            id
+          )
+          touched.push(id)
+        }
+        // O que sumiu do snapshot sumiu de verdade (o CLI reescreve a lista
+        // toda). Só cartão de origem `agent`: o que o PO criou não tem
+        // esqueleto no CLI e desapareceria a cada sincronização.
+        const keep = items.map((item) => boardItemId(input.conversationId, item.sourceId))
+        const placeholders = keep.map(() => '?').join(', ')
+        const gone = db
+          .prepare(
+            `SELECT id FROM board_items
+             WHERE conversation_id = ? AND origin = 'agent'
+               AND id NOT IN (${placeholders})`
+          )
+          .all(input.conversationId, ...keep) as unknown as Array<{ id: string }>
+        if (gone.length > 0) {
+          db.prepare(
+            `DELETE FROM board_items
+             WHERE conversation_id = ? AND origin = 'agent' AND id NOT IN (${placeholders})`
+          ).run(input.conversationId, ...keep)
+          for (const row of gone) touched.push(String(row.id))
+        }
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+      return touched
+    })
+    // UM evento por sincronização, não um por cartão: cada `board:changed` faz
+    // a tela recarregar a lista inteira, então N eventos por snapshot viravam
+    // N recargas idênticas. O consumidor recarrega tudo de qualquer forma.
+    if (changed.length > 0) this.emit('board', input.conversationId)
+    return this.listBoardItems({ projectIds: [input.projectId], conversationId: input.conversationId })
+  }
+
+  async listBoardItems(query: BoardQuery): Promise<BoardItem[]> {
+    // Lista vazia é "nenhum projeto", nunca "todos" — o contrário vazaria o
+    // quadro de outro projeto, que é o que o filtro existe para impedir.
+    if (!query.projectIds || query.projectIds.length === 0) return []
+    return this.read((db) => {
+      const clauses = [`project_id IN (${query.projectIds.map(() => '?').join(', ')})`]
+      const params: string[] = [...query.projectIds]
+      if (query.conversationId !== undefined) {
+        clauses.push('conversation_id = ?')
+        params.push(query.conversationId)
+      }
+      if (!query.includeDismissed) clauses.push('dismissed_at IS NULL')
+      const rows = db
+        .prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE ${clauses.join(' AND ')}`)
+        .all(...params) as unknown as BoardItemRow[]
+      return rows.map(boardItemFromRow).sort(compareBoardItems)
+    })
+  }
+
+  async applyBoardPo(input: BoardPoWrite): Promise<BoardItem> {
+    assertPoWrite(input)
+    const item = this.write((db) => {
+      const current = db
+        .prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`)
+        .get(input.id) as unknown as BoardItemRow | undefined
+      if (!current) throw new TypeError(`Cartão inexistente: ${input.id}`)
+      const now = new Date().toISOString()
+      const next = {
+        poTitle: input.poTitle === undefined ? current.po_title : input.poTitle,
+        poNote: input.poNote === undefined ? current.po_note : input.poNote,
+        poStatus: input.poStatus === undefined ? current.po_status : input.poStatus,
+        poReason: input.poReason === undefined ? current.po_reason : input.poReason
+      }
+      db.prepare(
+        `UPDATE board_items SET
+           po_title = ?, po_note = ?, po_status = ?, po_reason = ?, po_at = ?,
+           revision = revision + 1, updated_at = ?
+         WHERE id = ?`
+      ).run(next.poTitle, next.poNote, next.poStatus, next.poReason, now, now, input.id)
+      return boardItemFromRow(
+        db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(input.id) as unknown as BoardItemRow
+      )
+    })
+    this.emit('board', item.id, item.revision)
+    return item
+  }
+
+  async createBoardPoItem(input: BoardPoCreate): Promise<BoardItem> {
+    assertPoCreate(input)
+    const item = this.write((db) => {
+      const now = new Date().toISOString()
+      const id = `bi-po-${randomUUID().slice(0, 12)}`
+      const seq =
+        Number(
+          (
+            db
+              .prepare('SELECT COALESCE(MAX(seq), -1) + 1 AS next FROM board_items WHERE conversation_id = ?')
+              .get(input.conversationId) as { next?: number }
+          )?.next ?? 0
+        ) || 0
+      db.prepare(
+        `INSERT INTO board_items(${BOARD_COLUMNS})
+         VALUES(?, ?, ?, ?, 'po', NULL, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, NULL, 1, ?, ?)`
+      ).run(
+        id,
+        input.projectId,
+        input.projectCwd,
+        input.conversationId,
+        input.title,
+        input.status,
+        seq,
+        input.reason,
+        now,
+        now,
+        now
+      )
+      return boardItemFromRow(
+        db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
+      )
+    })
+    this.emit('board', item.id, item.revision)
+    return item
+  }
+
+  async dismissBoardItem(id: string, dismissed: boolean): Promise<BoardItem> {
+    const item = this.write((db) => {
+      const current = db.prepare('SELECT id FROM board_items WHERE id = ?').get(id)
+      if (!current) throw new TypeError(`Cartão inexistente: ${id}`)
+      const now = new Date().toISOString()
+      db.prepare(
+        'UPDATE board_items SET dismissed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ?'
+      ).run(dismissed ? now : null, now, id)
+      return boardItemFromRow(
+        db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
+      )
+    })
+    this.emit('board', item.id, item.revision)
+    return item
   }
 
   async listTasks(query?: TaskQuery): Promise<Task[]> {

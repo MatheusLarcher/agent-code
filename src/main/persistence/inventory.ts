@@ -55,7 +55,10 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.remoteEnabled',
       'config.preventSleepWhileBusy',
       'config.vigia.enabled',
-      'config.vigia.model'
+      'config.vigia.model',
+      'config.board.requirePlan',
+      'config.board.po.enabled',
+      'config.board.po.model'
     ]
   },
   {
