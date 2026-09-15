@@ -102,7 +102,7 @@ export function renderMemoryCatalog(files: MemoryCatalogFile[], rootDir = ''): s
     .map(
     (file) => `--- MEMORY FILE: ${file.relPath} ---\n${file.content.trim() || '(empty memory file)'}`
     )
-  return `[AUTHORITATIVE PERSISTENT MEMORY CATALOG]
+  return redactMemorySecrets(`[AUTHORITATIVE PERSISTENT MEMORY CATALOG]
 This is the complete MEMORY.md index for this user at conversation startup. The other memory files are
 not injected automatically; read them from the configured memories directory when they are relevant.
 The configured memories directory is:
@@ -111,7 +111,7 @@ Use the Read tool with this directory and the relative path listed in MEMORY.md 
 A later [PERSISTENT_MEMORY_UPDATE] replaces this entire index; do not combine stale entries with the replacement.
 
 ${entries.length > 0 ? entries.join('\n\n') : '(no persistent memory files are currently available)'}
-[/AUTHORITATIVE PERSISTENT MEMORY CATALOG]`
+[/AUTHORITATIVE PERSISTENT MEMORY CATALOG]`)
 }
 
 /** Reads every Markdown memory only when a conversation starts or metadata changed. */
@@ -244,6 +244,19 @@ const MAX_EXCERPT_CHARS = 1_600
 const MAX_TOTAL_EXCERPT_CHARS = 4_000
 const STOP_WORDS = new Set(['a', 'ao', 'as', 'com', 'da', 'de', 'do', 'e', 'em', 'eu', 'me', 'na', 'no', 'o', 'os', 'para', 'por', 'que', 'um', 'uma'])
 
+/** Memory values belong in the encrypted vault, never in automatic context.
+ * Old/manual notes can still contain common credential assignments, so protect
+ * the automatic excerpt path even though normal memory_propose writes only a
+ * {{secret:name}} reference. */
+function redactMemorySecrets(text: string): string {
+  return text
+    .replace(/\{\{secret:[^}]+\}\}/giu, '[secret reference withheld]')
+    .replace(
+      /^(\s*(?:api[_ -]?key|access[_ -]?token|auth(?:orization)?|client[_ -]?secret|password|passwd|secret)\s*[:=]\s*)(\S.*)$/gimu,
+      '$1[redacted]'
+    )
+}
+
 function normalizedTerms(text: string): string[] {
   return [...new Set(text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [])]
     .filter((term) => !STOP_WORDS.has(term))
@@ -306,7 +319,7 @@ export function buildDynamicMemoryContext(dir: string, query: string, includeInd
   const excerpts: string[] = []
   for (const match of ranked.slice(0, MAX_SELECTED_MEMORIES)) {
     if (remaining <= 0) break
-    const excerpt = match.body.trim().slice(0, Math.min(MAX_EXCERPT_CHARS, remaining))
+    const excerpt = redactMemorySecrets(match.body).trim().slice(0, Math.min(MAX_EXCERPT_CHARS, remaining))
     if (!excerpt) continue
     remaining -= excerpt.length
     excerpts.push(`--- Memória relevante: ${match.file.relPath} ---\n${excerpt}`)

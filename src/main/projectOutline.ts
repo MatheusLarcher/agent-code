@@ -12,7 +12,8 @@ interface OutlineEntry {
   path: string
   depth: number
   kind: 'directory' | 'file' | 'symlink'
-  headings?: string[]
+  /** The first three physical lines of nested Markdown, never parsed headings. */
+  preview?: string[]
   content?: string
   marker?: string
 }
@@ -120,23 +121,31 @@ export function extractMarkdownHeadings(text: string, maxHeadings: number = MAX_
   return headings
 }
 
-async function readMarkdownHeadings(
+async function readMarkdownPreview(
   path: string,
   canonicalRoot: string
-): Promise<{ headings: string[]; marker?: string }> {
+): Promise<{ preview: string[]; marker?: string }> {
   const { handle, before } = await openVerifiedRegularFile(path, canonicalRoot)
   try {
-    const buffer = Buffer.alloc(MAX_MARKDOWN_BYTES)
+    // Nested Markdown is deliberately bounded: callers receive the path plus
+    // the first three *physical* lines, not a heading-derived summary. Keep the
+    // existing I/O ceiling so an unterminated giant first line cannot exhaust us.
+    const buffer = Buffer.alloc(Math.min(before.size, MAX_MARKDOWN_BYTES))
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
     const after = await handle.stat()
-    if (!stableFile(before, after)) return { headings: [], marker: '[changed during read]' }
-    const found = extractMarkdownHeadings(buffer.subarray(0, bytesRead).toString('utf8'), MAX_HEADINGS + 1)
-    const limits: string[] = []
-    if (before.size > bytesRead) limits.push('first 64 KiB scanned')
-    if (found.length > MAX_HEADINGS) limits.push(`first ${MAX_HEADINGS} headings shown`)
+    if (!stableFile(before, after)) return { preview: [], marker: '[changed during read]' }
+    const text = buffer.subarray(0, bytesRead)
+    if (text.includes(0)) return { preview: [], marker: '[binary markdown omitted]' }
+    const decoded = text.toString('utf8')
+    // Never pass a truncated physical line as if it were documentation. If the
+    // bounded scan cannot establish all first three lines, omit the preview
+    // rather than violating the "first three physical lines" contract.
+    if (before.size > bytesRead && (decoded.match(/\r\n|\r|\n/g) ?? []).length < 3) {
+      return { preview: [], marker: '[first 3 physical lines exceed 64 KiB read limit]' }
+    }
     return {
-      headings: found.slice(0, MAX_HEADINGS),
-      marker: limits.length ? `[heading metadata limited: ${limits.join('; ')}]` : undefined
+      preview: decoded.split(/\r\n|\r|\n/).slice(0, 3),
+      ...(before.size > bytesRead ? { marker: '[first 64 KiB scanned]' } : {})
     }
   } finally {
     await handle.close()
@@ -218,8 +227,8 @@ async function walk(
               entry.content = result.content
               if (result.marker) entry.marker = result.marker
             } else {
-              const result = await readMarkdownHeadings(absolutePath, canonicalRoot)
-              entry.headings = result.headings
+              const result = await readMarkdownPreview(absolutePath, canonicalRoot)
+              entry.preview = result.preview
               if (result.marker) entry.marker = result.marker
             }
           } catch (err) {
@@ -255,7 +264,7 @@ export async function buildProjectOutline(cwd: string): Promise<string> {
 
   const lines = [
     '[PROJECT_DOCS_CONTEXT]',
-    'Fresh authoritative project documentation at message dispatch time. Replace earlier project-docs blocks with this one. Root Markdown files are complete; nested Markdown files include headings only.'
+    'Fresh authoritative project documentation at request time. Root Markdown files are complete; nested Markdown files include their path and first three physical lines only.'
   ]
   for (const entry of entries) {
     const suffix = entry.kind === 'directory' ? '/' : ''
@@ -266,8 +275,10 @@ export async function buildProjectOutline(cwd: string): Promise<string> {
       lines.push(entry.content || '(empty markdown file)')
       lines.push(`--- END PROJECT DOC FILE: ${entry.path} ---`)
     }
-    for (const heading of entry.headings ?? []) {
-      lines.push(`${'  '.repeat(entry.depth + 1)}${heading}`)
+    if (entry.preview !== undefined) {
+      lines.push(`--- PROJECT DOC PREVIEW (first 3 physical lines): ${entry.path} ---`)
+      lines.push(...entry.preview)
+      lines.push(`--- END PROJECT DOC PREVIEW: ${entry.path} ---`)
     }
   }
   lines.push('[/PROJECT_DOCS_CONTEXT]')

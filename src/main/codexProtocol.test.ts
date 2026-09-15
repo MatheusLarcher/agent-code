@@ -122,8 +122,8 @@ describe('Codex protocol — Anthropic request to Responses request', () => {
     expect(wire.prompt_cache_key).toBe(SESSION_A)
   })
 
-  it('preserva catálogo de skills e memória no developer prompt do GPT-5.6', () => {
-    const marker = 'SKILL_CATALOG_SENTINEL\nMEMORY_EXCERPT_SENTINEL'
+  it('preserva o contexto vivo de docs/memória na camada developer do GPT-5.6', () => {
+    const marker = 'PROJECT_DOCS_CONTEXT_SENTINEL\nMEMORY_EXCERPT_SENTINEL\nSKILL_CATALOG_SENTINEL'
     const canonical = toCodexRequest(
       request({
         system: marker,

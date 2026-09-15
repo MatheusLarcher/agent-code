@@ -5,7 +5,7 @@ import { appRestart } from './appRestartRuntime'
 import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
 import { isStalled, STALL_POLL_MS } from './stallWatch'
-import { composeUserPrompt } from './promptEnvelope'
+import { composeRequestContext, composeUserPrompt } from './promptEnvelope'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
 import { createAndroidMcpServer } from './android/androidTools'
@@ -31,6 +31,7 @@ import {
   createMemoryCatalogSnapshot,
   memoryCatalogFilesystemVersion,
   renderMemoryCatalogUpdate,
+  buildDynamicMemoryContext,
   type MemoryCatalogSnapshot
 } from './memoryIndex'
 import { homedir, hostname } from 'node:os'
@@ -48,7 +49,7 @@ import {
   managedSkillsFilesystemVersion,
   syncCacheSkills
 } from './skillManager'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import {
   DEFAULT_CONFIG,
   fastModeTransport,
@@ -175,28 +176,6 @@ export function buildContextStamp(origin: MessageOrigin, now: Date = new Date(),
   const fuso = Intl.DateTimeFormat().resolvedOptions().timeZone
   const de = origin === 'celular' ? `do celular, pela ponte LAN do PC ${machine}` : `do PC ${machine}`
   return `[Contexto do sistema: mensagem enviada ${de} em ${quando} (${fuso}).]`
-}
-
-/** One-line stand-in for a `docs/` outline the model already received VERBATIM
- *  earlier in this same conversation. The full block is tens of thousands of
- *  tokens (measured: ~210 KB of root Markdown in this repo); re-sending an
- *  identical copy on every message multiplies that by the message count and is
- *  what fills the context window — not the docs themselves. The note keeps the
- *  contract explicit for the model: the earlier block is still authoritative.
- *  Any change to `docs/` produces a different hash and the full block returns. */
-export function unchangedOutlineNote(): string {
-  return (
-    '[PROJECT_DOCS_CONTEXT]\n' +
-    'Unchanged since the project documentation block earlier in this conversation — that block remains ' +
-    'authoritative and complete. Nothing in docs/ changed since it was sent.\n' +
-    '[/PROJECT_DOCS_CONTEXT]'
-  )
-}
-
-/** Stable digest of an outline block, used only to answer "is this byte-for-byte
- *  what I already sent in this session?". Not security-sensitive. */
-export function outlineDigest(outline: string): string {
-  return createHash('sha1').update(outline).digest('hex')
 }
 
 // Shown to the model only when the "Modo econômico" toggle is ON in the UI.
@@ -326,9 +305,11 @@ SAVING — when the user asks you to remember, save, note, or memorize something
 - Do NOT save things already evident from the project's code, git history, or CLAUDE.md.
 
 RECALLING — these files are your long-term knowledge about this user and their projects. The complete
-catalog is loaded once when this conversation starts. Before every user dispatch, Agent Code hashes the
-current Markdown contents. If anything changed, one complete authoritative replacement is attached
-automatically; unchanged catalogs are never duplicated in the conversation.`
+catalog is loaded once when this conversation starts. On every actual provider request, Agent Code also
+adds only bounded excerpts relevant to the active task (without the whole catalog and without vault values).
+Before every user dispatch, Agent Code hashes the current Markdown contents. If anything changed, one
+complete authoritative replacement is attached automatically; unchanged catalogs are never duplicated in
+the conversation.`
 }
 
 /**
@@ -528,11 +509,9 @@ export class AgentSession {
    *  interrupted exchange in its in-memory context (no API to drop it), so the
    *  next message is prefixed with a note telling the model to disregard it. */
   private canceledPending = false
-  /** Digest of the `docs/` outline already sent VERBATIM in this session. While
-   *  it matches, later messages carry a one-line note instead of the full block
-   *  (see `unchangedOutlineNote`). Per session on purpose: a resumed/new session
-   *  has no earlier block in its context, so it must get the real thing again. */
-  private lastOutlineDigest: string | null = null
+  /** Original task text for bounded memory retrieval across the model's tool
+   * loop. The full docs context is re-read by SDK hooks for every request. */
+  private activeMemoryQuery = ''
   private liveId: string | null = null
   private liveText = ''
   /** Text lookup for UUIDs returned by the SDK interrupt receipt. Bounded so a
@@ -954,11 +933,28 @@ export class AgentSession {
       agents: buildSpecialistAgents({ ledger: !!ledger, memory: !!memory }),
       mcpServers,
       hooks: {
+        // `additionalContext` is the Agent SDK's supported live injection
+        // channel. It reaches the request without being written into the user's
+        // message history, unlike prefixing the SDK user payload.
         UserPromptSubmit: [{ hooks: [async () => {
           if (appRestart?.reserved) return { decision: 'block' as const, reason: 'Reinício reservado; novo turno recusado.' }
           this.beginTurn()
-          return {}
+          return {
+            hookSpecificOutput: {
+              hookEventName: 'UserPromptSubmit' as const,
+              additionalContext: await this.buildLiveRequestContext()
+            }
+          }
         }] }],
+        // A tool batch is the Agent SDK's documented point immediately before
+        // the following model call. Rebuild here so a docs edit made while a
+        // tool ran is present on that provider request as well.
+        PostToolBatch: [{ hooks: [async () => ({
+          hookSpecificOutput: {
+            hookEventName: 'PostToolBatch' as const,
+            additionalContext: await this.buildLiveRequestContext()
+          }
+        })] }],
         PreToolUse: [{ hooks: [async (input) => {
           if (input.hook_event_name !== 'PreToolUse') return {}
           const name = input.tool_name
@@ -1092,30 +1088,14 @@ export class AgentSession {
       const loopBody = text.slice(loopPrefix.length)
       outText = `${loopPrefix.trimEnd()} ${taskText.slice(0, taskText.length - text.length)}${loopBody}`
     }
-    // Data/hora, máquina de origem e o índice fresco de `docs/`, sempre. Ficam
-    // FORA do `outText` de propósito: o relay de visão abaixo recebe a mensagem
-    // crua do usuário como pista da imagem. O contexto é colado só no payload final.
+    // Keep only user-owned material in the SDK's persisted user turn. The
+    // complete docs outline and bounded relevant-memory excerpts are generated
+    // by live request hooks, not copied into history or passed to vision relay.
     const stamp = buildContextStamp(origin)
-    let docsOutline: string
-    try {
-      docsOutline = await buildProjectOutline(this.opts.cwd)
-    } catch {
-      docsOutline = '[PROJECT_DOCS_CONTEXT]\ndocs/ [context unavailable for this dispatch]\n[/PROJECT_DOCS_CONTEXT]'
-    }
-    // Identical to what this session already sent? The model still has that
-    // block in its context, so repeating it only burns the context window.
-    // The digest is updated ONLY on the dispatch that carries the full block,
-    // so a message that fails to reach the model never marks it as delivered.
-    const outlineDigestNow = outlineDigest(docsOutline)
-    const outlineIsRepeat = this.lastOutlineDigest === outlineDigestNow
-    if (outlineIsRepeat) docsOutline = unchangedOutlineNote()
-    // Per-dispatch reminder: the system-prompt hint alone is not followed reliably
-    // once the first message carries hundreds of KB of docs/memory/skill catalog
-    // (measured with Haiku: skills never loaded, Bash never prefixed). Placed
-    // LAST in the context block, right next to the user's own text.
+    this.activeMemoryQuery = outText
     const economyReminder = this.opts.economyMode ? ECONOMY_TURN_REMINDER : ''
     const stamped = (body: string): string => composeUserPrompt(body, {
-      stamp, docs: docsOutline, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, reminder: economyReminder
+      stamp, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, reminder: economyReminder
     })
 
     // vision_fallback_router — the picked model can't see images (most Ollama
@@ -1135,7 +1115,6 @@ export class AgentSession {
         merged = `${outText}\n\n[Observação do sistema: não foi possível analisar a(s) imagem(ns) anexada(s) automaticamente (${String(err)}). Responda com base apenas no texto acima.]`
       }
       this.beginTurn()
-      this.lastOutlineDigest = outlineDigestNow
       this.input.push({
         type: 'user',
         message: { role: 'user', content: stamped(merged) },
@@ -1165,7 +1144,6 @@ export class AgentSession {
       uuid
     } as SDKUserMessage
     this.beginTurn()
-    this.lastOutlineDigest = outlineDigestNow
     this.input.push(msg)
   }
 
@@ -1433,6 +1411,31 @@ export class AgentSession {
 
   private readMemoryCatalogSnapshot(memoriesDir: string = getCacheInfo().memoriesDir): MemoryCatalogSnapshot {
     return createMemoryCatalogSnapshot(memoriesDir)
+  }
+
+  /**
+   * Recreate host-owned context at the two documented request boundaries. This
+   * is deliberately independent from the persisted SDK user messages: hooks
+   * provide the full current docs block to Claude, the Codex proxy and Ollama
+   * through the same Agent SDK request path without bloating history.
+   */
+  private async buildLiveRequestContext(): Promise<string> {
+    let docs: string
+    try {
+      docs = await buildProjectOutline(this.opts.cwd)
+    } catch {
+      docs = '[PROJECT_DOCS_CONTEXT]\ndocs/ [context unavailable for this request]\n[/PROJECT_DOCS_CONTEXT]'
+    }
+
+    let memory = ''
+    try {
+      // Do not inject the memory index here: this runs for every provider
+      // request. The selector is capped and redacts vault references/secrets.
+      memory = buildDynamicMemoryContext(getCacheInfo().memoriesDir, this.activeMemoryQuery, false)
+    } catch {
+      // Memory recall is optional context; docs and the user request still run.
+    }
+    return composeRequestContext({ docs, memory })
   }
 
   private refreshMemoriesIfChanged(): string {

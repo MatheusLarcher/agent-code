@@ -32,12 +32,12 @@ describe('buildProjectOutline', () => {
     expect(await buildProjectOutline(cwd)).toContain('docs/ [not present]')
   })
 
-  it('envia Markdown da raiz completo e subpastas apenas por cabeçalhos', async () => {
+  it('envia Markdown da raiz completo e subpastas com exatamente as três primeiras linhas físicas', async () => {
     const cwd = await fixture()
     await mkdir(join(cwd, 'docs', 'nested', 'empty'), { recursive: true })
     await writeFile(join(cwd, 'docs', 'z.txt'), 'conteúdo que não deve entrar')
     await writeFile(join(cwd, 'docs', 'A.MD'), '# Principal\n## Detalhe\ncorpo completo da raiz')
-    await writeFile(join(cwd, 'docs', 'nested', 'guia.md'), '# Guia interno\n## Passo\ncorpo secreto aninhado')
+    await writeFile(join(cwd, 'docs', 'nested', 'guia.md'), '# Guia interno\n## Passo\nterceira linha\nquarta linha privada')
     await writeFile(join(cwd, 'docs', 'nested', 'b.json'), '{"secret":true}')
 
     const outline = await buildProjectOutline(cwd)
@@ -47,9 +47,8 @@ describe('buildProjectOutline', () => {
     expect(outline).toContain('nested/')
     expect(outline).toContain('empty/')
     expect(outline).toContain('guia.md')
-    expect(outline).toContain('# Guia interno')
-    expect(outline).toContain('## Passo')
-    expect(outline).not.toContain('corpo secreto aninhado')
+    expect(outline).toContain('--- PROJECT DOC PREVIEW (first 3 physical lines): docs/nested/guia.md ---\n# Guia interno\n## Passo\nterceira linha\n--- END PROJECT DOC PREVIEW: docs/nested/guia.md ---')
+    expect(outline).not.toContain('quarta linha privada')
     expect(outline).toContain('b.json [json]')
     expect(outline).toContain('z.txt [text]')
     expect(outline).not.toContain('conteúdo que não deve entrar')
@@ -65,7 +64,7 @@ describe('buildProjectOutline', () => {
     expect(await buildProjectOutline(cwd)).toContain('novo.md')
   })
 
-  it('limita cabeçalhos aninhados, mas não trunca Markdown da raiz', async () => {
+  it('limita preview aninhado sem truncar Markdown da raiz', async () => {
     const cwd = await fixture()
     await mkdir(join(cwd, 'docs', 'nested'), { recursive: true })
     const large = `# Início\n${'x'.repeat(70 * 1024)}\n# Depois`
@@ -75,7 +74,7 @@ describe('buildProjectOutline', () => {
     const outline = await buildProjectOutline(cwd)
     expect(outline).toContain('--- PROJECT DOC FILE: docs/completo.md ---')
     expect(outline).toContain('# Depois')
-    expect(outline).toContain('grande.md [heading metadata limited: first 64 KiB scanned]')
+    expect(outline).toContain('grande.md [first 3 physical lines exceed 64 KiB read limit]')
     expect(outline).toContain('sempre-listado.bin [bin]')
   })
 

@@ -83,6 +83,18 @@ describe('memoryIndex', () => {
     expect(buildDynamicMemoryContext(dir, 'segredo')).not.toContain('Memória relevante: grande.md')
   })
 
+  it('redige referências e atribuições de segredo nos excertos automáticos', async () => {
+    const dir = await fixture()
+    await writeFile(join(dir, 'raiz.md'), '# Credencial ERP\napi_key: valor-real-nunca-vaza\n{{secret:erp-token}}', 'utf8')
+
+    const context = buildDynamicMemoryContext(dir, 'credencial ERP raiz', false)
+    expect(context).toContain('Memória relevante: raiz.md')
+    expect(context).toContain('api_key: [redacted]')
+    expect(context).toContain('[secret reference withheld]')
+    expect(context).not.toContain('valor-real-nunca-vaza')
+    expect(context).not.toContain('{{secret:erp-token}}')
+  })
+
   it('carrega apenas MEMORY.md e referencia a pasta para leitura sob demanda', async () => {
     const dir = await fixture()
     const snapshot = createMemoryCatalogSnapshot(dir)
@@ -101,6 +113,24 @@ describe('memoryIndex', () => {
     expect(snapshot.catalog).not.toContain('--- MEMORY FILE: raiz.md ---')
     expect(snapshot.catalog).toContain('read them from the configured memories directory')
     expect(snapshot.filesystemVersion).toBe(memoryCatalogFilesystemVersion(dir))
+  })
+
+  it('redige marcadores de segredo do catálogo inicial e da substituição sem perder o índice útil', async () => {
+    const dir = await fixture()
+    await writeFile(
+      join(dir, 'MEMORY.md'),
+      '# Preferências\n\n- [ERP](raiz.md) — usar fluxo real\nToken no cofre: {{secret:erp-token}}',
+      'utf8'
+    )
+
+    const snapshot = createMemoryCatalogSnapshot(dir)
+    const update = renderMemoryCatalogUpdate(snapshot)
+    for (const prompt of [snapshot.catalog, update]) {
+      expect(prompt).toContain('- [ERP](raiz.md) — usar fluxo real')
+      expect(prompt).toContain('[secret reference withheld]')
+      expect(prompt).not.toMatch(/\{\{secret:/iu)
+      expect(prompt).not.toContain('erp-token')
+    }
   })
 
   it('a versão por conteúdo acompanha adição, alteração e remoção', async () => {

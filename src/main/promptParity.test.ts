@@ -13,7 +13,8 @@ vi.mock('./skillManager', () => ({ ensureNativeSkillRoot: () => ({ root: '/nativ
 vi.mock('./memoryIndex', () => ({
   memoryCatalogFilesystemVersion: () => 'memory-v1',
   createMemoryCatalogSnapshot: () => ({ version: 'memory-v1', filesystemVersion: 'memory-v1', catalog: 'MEMORY_SENTINEL' }),
-  renderMemoryCatalogUpdate: () => 'MEMORY_SENTINEL'
+  renderMemoryCatalogUpdate: () => 'MEMORY_SENTINEL',
+  buildDynamicMemoryContext: () => 'MEMORY_EXCERPT_SENTINEL'
 }))
 vi.mock('./skillDiscovery', async (original) => ({
   ...await original<typeof import('./skillDiscovery')>(),
@@ -50,7 +51,7 @@ describe('provider-neutral prompt contract', () => {
       expect(ask).not.toHaveBeenCalled()
     } finally { session.dispose() }
   })
-  it('all selectable models get identical application system/user/docs/memory/skills and source settings', async () => {
+  it('all selectable models get one identical live docs/memory contract while persisted user history remains lean', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-05T12:00:00Z'))
     const models = [...Object.keys(CONTEXT_LIMITS).filter((m) => m.startsWith('claude-')), ...OPENAI_MODELS.map((m) => m.id), ...OLLAMA_MODELS.map((m) => m.id)]
@@ -62,11 +63,15 @@ describe('provider-neutral prompt contract', () => {
         await session.send('USER_SENTINEL\n[Anexo: /project/file.pdf]')
         const args = capture.queries.at(-1)!
         const content = args.prompt.values[0].message.content
-        const contract = { system: args.options.systemPrompt, content, skills: args.options.skills, sources: args.options.settingSources, directories: args.options.additionalDirectories }
+        const hook = (args.options.hooks as { UserPromptSubmit: Array<{ hooks: Array<(input: unknown) => Promise<unknown>> }> }).UserPromptSubmit[0].hooks[0]
+        const live = await hook({ hook_event_name: 'UserPromptSubmit' })
+        const contract = { system: args.options.systemPrompt, content, live, skills: args.options.skills, sources: args.options.settingSources, directories: args.options.additionalDirectories }
         expected ??= contract
         expect(contract, model).toEqual(expected)
         expect(JSON.stringify(contract)).toContain('MEMORY_SENTINEL')
-        expect(content).toContain('DOC_SENTINEL')
+        expect(JSON.stringify(live)).toContain('DOC_SENTINEL')
+        expect(JSON.stringify(live)).toContain('MEMORY_EXCERPT_SENTINEL')
+        expect(content).not.toContain('DOC_SENTINEL')
         expect(content).toContain('SKILL_SENTINEL')
         expect(content).toContain('USER_SENTINEL')
         if (model.startsWith('gpt-') || OLLAMA_MODELS.some((m) => m.id === model)) {

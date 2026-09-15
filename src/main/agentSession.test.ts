@@ -852,9 +852,10 @@ describe('AgentSession — vision_fallback_router', () => {
 
     expect(describeImagesMock).not.toHaveBeenCalled()
     const [msg] = pushedMessages(s)
-    // O texto recebe carimbo, documentação e a atualização inicial sem passar pelo relay.
+    // O texto persistido recebe o carimbo e atualizações de catálogo, mas nunca
+    // o bloco completo de docs: ele é anexado pelo hook imediatamente antes da request.
     const content = msg.message.content as string
-    expect(content).toContain('[PROJECT_DOCS_CONTEXT]\ndocs/\n[/PROJECT_DOCS_CONTEXT]')
+    expect(content).not.toContain('[PROJECT_DOCS_CONTEXT]')
     expect(content).toContain('[PERSISTENT_MEMORY_UPDATE]')
     expect(content).toContain('só texto, sem imagem')
   })
@@ -1117,6 +1118,31 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('Sempre usar o fluxo real.')
   })
 
+  it('não entrega marcadores de segredo no catálogo inicial a nenhum provedor, preservando o índice', async () => {
+    const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-redaction-'))
+    await writeFile(
+      join(memories, 'MEMORY.md'),
+      '# Índice\n\n- [ERP](erp.md) — usar o fluxo real\nCofre: {{secret:erp-token}}',
+      'utf8'
+    )
+    cacheState.memoriesDir = memories
+    configState.ollama = { enabled: true, apiKey: 'chave-ollama' }
+
+    let expectedAppend: string | undefined
+    for (const model of ['claude-opus-5', 'gpt-5.6-sol', 'gpt-oss:20b-cloud']) {
+      const { s } = makeSession({ model })
+      await s.start()
+      const append = (optionsOfLastQuery().systemPrompt as { append: string }).append
+      expect(append, model).toContain('- [ERP](erp.md) — usar o fluxo real')
+      expect(append, model).toContain('[secret reference withheld]')
+      expect(append, model).not.toContain('{{secret:erp-token}}')
+      expect(append, model).not.toContain('erp-token')
+      expectedAppend ??= append
+      expect(append, model).toBe(expectedAppend)
+      s.dispose()
+    }
+  })
+
   it('atualiza uma vez a conversa aberta ao adicionar, alterar ou remover memória', async () => {
     const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-refresh-'))
     const memoryFile = join(memories, 'MEMORY.md')
@@ -1125,11 +1151,14 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     const { s } = makeSession({ model: 'gpt-5.6-sol' })
     await s.start()
 
-    await writeFile(memoryFile, '# Regra\nVersão atualizada e maior.', 'utf8')
+    await writeFile(memoryFile, '# Regra\nVersão atualizada e maior.\n{{secret:erp-token}}', 'utf8')
     await s.send('depois da alteração')
     const changed = String(pushedMessages(s).at(-1)?.message.content)
     expect(changed).toContain('[PERSISTENT_MEMORY_UPDATE]')
     expect(changed).toContain('Versão atualizada e maior.')
+    expect(changed).toContain('[secret reference withheld]')
+    expect(changed).not.toMatch(/\{\{secret:/iu)
+    expect(changed).not.toContain('erp-token')
     expect(changed).not.toContain('Versão inicial.')
 
     await s.send('não repetir')
@@ -1466,104 +1495,68 @@ describe('AgentSession — carimbo de data/hora e máquina', () => {
 })
 
 describe('AgentSession — documentação do projeto em cada mensagem', () => {
-  it('recalcula e anexa o contexto autoritativo em cada envio', async () => {
+  type ContextHook = (input: Record<string, unknown>) => Promise<{ hookSpecificOutput?: { additionalContext?: string } }>
+
+  function requestHooks(): { user: ContextHook; postToolBatch: ContextHook } {
+    const options = queryMock.mock.calls.at(-1)![0].options as {
+      hooks: Record<string, Array<{ hooks: ContextHook[] }>>
+    }
+    return {
+      user: options.hooks.UserPromptSubmit[0].hooks[0],
+      postToolBatch: options.hooks.PostToolBatch[0].hooks[0]
+    }
+  }
+
+  it('injeta docs frescos em cada request, sem gravá-los no histórico do usuário', async () => {
     projectOutlineMock
-      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  primeiro.md\n[/PROJECT_DOCS_CONTEXT]')
-      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  segundo.md\n[/PROJECT_DOCS_CONTEXT]')
+      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  antes.md\n[/PROJECT_DOCS_CONTEXT]')
+      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  depois-da-ferramenta.md\n[/PROJECT_DOCS_CONTEXT]')
     const { s } = makeSession()
+    await s.start()
+    await s.send('use o guia')
 
-    await s.send('primeira')
-    await s.send('segunda')
+    const persisted = pushedMessages(s).at(-1)!.message.content as string
+    expect(persisted).toContain('use o guia')
+    expect(persisted).not.toContain('[PROJECT_DOCS_CONTEXT]')
 
-    const messages = pushedMessages(s)
-    expect(messages[0].message.content).toContain('primeiro.md')
-    expect(messages[1].message.content).toContain('segundo.md')
+    const hooks = requestHooks()
+    await expect(hooks.user({ hook_event_name: 'UserPromptSubmit' })).resolves.toMatchObject({
+      hookSpecificOutput: { additionalContext: expect.stringContaining('antes.md') }
+    })
+    await expect(hooks.postToolBatch({ hook_event_name: 'PostToolBatch' })).resolves.toMatchObject({
+      hookSpecificOutput: { additionalContext: expect.stringContaining('depois-da-ferramenta.md') }
+    })
     expect(projectOutlineMock).toHaveBeenCalledTimes(2)
     expect(projectOutlineMock).toHaveBeenCalledWith('/proj')
   })
 
-  it('falha do contexto não bloqueia nem perde a mensagem', async () => {
+  it('falha do outline não bloqueia nem perde a mensagem e marca apenas o contexto vivo', async () => {
     projectOutlineMock.mockRejectedValueOnce(new Error('sem acesso'))
     const { s } = makeSession()
-
+    await s.start()
     await s.send('continue mesmo assim')
 
-    const content = pushedMessages(s).at(-1)!.message.content as string
-    expect(content).toContain('context unavailable for this dispatch')
-    expect(content.endsWith('\n\ncontinue mesmo assim')).toBe(true)
+    const persisted = pushedMessages(s).at(-1)!.message.content as string
+    expect(persisted).not.toContain('context unavailable')
+    expect(persisted.endsWith('\n\ncontinue mesmo assim')).toBe(true)
+    await expect(requestHooks().user({ hook_event_name: 'UserPromptSubmit' })).resolves.toMatchObject({
+      hookSpecificOutput: { additionalContext: expect.stringContaining('context unavailable for this request') }
+    })
   })
 
-  it('não envia a documentação como pista para o relay de visão', async () => {
+  it('não envia a documentação como pista para o relay de visão; o hook a injeta no request', async () => {
     describeImagesMock.mockResolvedValueOnce('descrição')
     projectOutlineMock.mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_CONTEXT]')
+    configState.ollama = { enabled: true, apiKey: 'synthetic' }
     const { s } = makeSession({ model: 'glm-5.3:cloud' })
-
+    await s.start()
     await s.send('analise a tela', [{ mediaType: 'image/png', data: 'AAA' }])
 
     expect(describeImagesMock).toHaveBeenCalledWith(expect.any(Array), 'analise a tela')
-    expect(pushedMessages(s).at(-1)!.message.content as string).toContain('arquitetura.md')
-  })
-
-  it('docs inalterada não reenvia o bloco inteiro — só a nota de uma linha', async () => {
-    const outline = '[PROJECT_DOCS_CONTEXT]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_CONTEXT]'
-    projectOutlineMock.mockResolvedValue(outline)
-    const { s } = makeSession()
-
-    await s.send('primeira')
-    await s.send('segunda')
-    await s.send('terceira')
-
-    const contents = pushedMessages(s).map((m) => m.message.content as string)
-    // A 1ª leva o bloco de verdade; as demais só a nota (o modelo já tem o bloco).
-    expect(contents[0]).toContain('arquitetura.md')
-    expect(contents[1]).not.toContain('arquitetura.md')
-    expect(contents[2]).not.toContain('arquitetura.md')
-    expect(contents[1]).toContain('Unchanged since the project documentation block')
-    // O índice continua sendo relido a cada envio — o que muda é só o que é enviado.
-    expect(projectOutlineMock).toHaveBeenCalledTimes(3)
-  })
-
-  it('docs mudou no meio da conversa: o bloco completo volta', async () => {
-    projectOutlineMock
-      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  antigo.md\n[/PROJECT_DOCS_CONTEXT]')
-      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  antigo.md\n[/PROJECT_DOCS_CONTEXT]')
-      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  novo.md\n[/PROJECT_DOCS_CONTEXT]')
-    const { s } = makeSession()
-
-    await s.send('a')
-    await s.send('b')
-    await s.send('c')
-
-    const contents = pushedMessages(s).map((m) => m.message.content as string)
-    expect(contents[0]).toContain('antigo.md')
-    expect(contents[1]).not.toContain('antigo.md')
-    expect(contents[2]).toContain('novo.md')
-  })
-
-  it('sessão nova recebe o bloco completo de novo (o contexto dela está vazio)', async () => {
-    const outline = '[PROJECT_DOCS_CONTEXT]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_CONTEXT]'
-    projectOutlineMock.mockResolvedValue(outline)
-    const primeira = makeSession()
-    await primeira.s.send('a')
-    await primeira.s.send('b')
-
-    const segunda = makeSession()
-    await segunda.s.send('c')
-
-    expect(pushedMessages(segunda.s).at(-1)!.message.content as string).toContain('arquitetura.md')
-  })
-
-  it('falha do outline não marca como entregue: o envio seguinte leva o bloco completo', async () => {
-    const outline = '[PROJECT_DOCS_CONTEXT]\ndocs/\n  arquitetura.md\n[/PROJECT_DOCS_CONTEXT]'
-    projectOutlineMock.mockRejectedValueOnce(new Error('sem acesso')).mockResolvedValue(outline)
-    const { s } = makeSession()
-
-    await s.send('falhou')
-    await s.send('agora vai')
-
-    const contents = pushedMessages(s).map((m) => m.message.content as string)
-    expect(contents[0]).toContain('context unavailable for this dispatch')
-    expect(contents[1]).toContain('arquitetura.md')
+    expect(pushedMessages(s).at(-1)!.message.content as string).not.toContain('arquitetura.md')
+    await expect(requestHooks().user({ hook_event_name: 'UserPromptSubmit' })).resolves.toMatchObject({
+      hookSpecificOutput: { additionalContext: expect.stringContaining('arquitetura.md') }
+    })
   })
   // Reinício só pode ser recusado por trabalho que de fato não terminou. A regra
   // antiga era um latch: a 1ª chamada de Bash bloqueava o reinício pelo resto da
