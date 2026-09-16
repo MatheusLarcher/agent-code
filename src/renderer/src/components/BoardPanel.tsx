@@ -69,6 +69,21 @@ function fmtAgo(iso: string | null, now: number): string {
   return `há ${Math.floor(h / 24)} d`
 }
 
+/**
+ * O PO escreveu um status neste cartão e o agente, no fim, disse a mesma coisa.
+ *
+ * Acontece de verdade quando o PO abre o cartão em andamento e a reabertura de
+ * fim de turno o devolve para "a fazer", que é onde o snapshot do agente já
+ * estava: `isPoCorrected` fica `false` — e fica certo, porque ninguém está
+ * discordando de ninguém — mas o cartão TEM uma trilha do PO para ler. Sem este
+ * caso, o mesmo cartão apareceria marcado na Lista (que olha `poStatus`) e
+ * limpo no Quadro, e o usuário não teria motivo para clicar e descobrir por que
+ * o trabalho voltou para a primeira coluna.
+ */
+function poAgreed(item: BoardItem): boolean {
+  return item.poStatus !== null && !isPoCorrected(item) && item.origin === 'agent' && !item.poTitle
+}
+
 function Card({
   item,
   now,
@@ -96,6 +111,7 @@ function Card({
         {item.poTitle && item.origin === 'agent' && !isPoCorrected(item) && (
           <span className="board-tag po">PO reescreveu</span>
         )}
+        {poAgreed(item) && <span className="board-tag po">PO revisou</span>}
         {status === 'completed' && <span className="board-tag auto">{fmtAgo(item.updatedAt, now)}</span>}
       </span>
     </button>

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import type { BoardItem } from '../persistence/types'
+import type { BoardItem, BoardSourceItem } from '../persistence/types'
 import {
   boardItemStatus as effectiveStatus,
   boardItemTitle as effectiveTitle,
@@ -10,8 +10,11 @@ import {
   assertPoCreate,
   assertPoWrite,
   boardItemId,
+  boardItemsToReopen,
   compareBoardItems,
-  normalizeSourceItems
+  normalizeSourceItems,
+  planBoardSourceSync,
+  type BoardSyncCurrent
 } from './boardModel'
 
 function item(patch: Partial<BoardItem> = {}): BoardItem {
@@ -104,6 +107,108 @@ describe('normalizeSourceItems', () => {
       { sourceId: '1', title: 'x', status: 'wat' as never, activeForm: null, seq: 0 }
     ])
     expect(items[0].status).toBe('pending')
+  })
+})
+
+describe('boardItemsToReopen', () => {
+  it('devolve só o que ficou em andamento', () => {
+    const stale = boardItemsToReopen([
+      item({ id: 'a', sourceStatus: 'in_progress' }),
+      item({ id: 'b', sourceStatus: 'pending' }),
+      item({ id: 'c', sourceStatus: 'completed' })
+    ])
+    expect(stale.map((entry) => entry.id)).toEqual(['a'])
+  })
+
+  it('cartão que o PO concluiu NÃO é reaberto — o status efetivo é que manda', () => {
+    const stale = boardItemsToReopen([
+      item({ sourceStatus: 'in_progress', poStatus: 'completed', poReason: 'o agente esqueceu de marcar' })
+    ])
+    expect(stale).toEqual([])
+  })
+
+  it('cartão já reaberto não volta a ser reaberto — a correção é idempotente', () => {
+    const stale = boardItemsToReopen([
+      item({ sourceStatus: 'in_progress', poStatus: 'pending', poReason: 'o turno terminou sem concluir esta tarefa' })
+    ])
+    expect(stale).toEqual([])
+  })
+
+  it('cartão arquivado fica onde está', () => {
+    const stale = boardItemsToReopen([
+      item({ sourceStatus: 'in_progress', dismissedAt: '2026-09-14T12:00:00.000Z' })
+    ])
+    expect(stale).toEqual([])
+  })
+})
+
+describe('planBoardSourceSync', () => {
+  function current(patch: Partial<BoardSyncCurrent> = {}): BoardSyncCurrent {
+    return {
+      project_id: 'p1',
+      source_title: 'uma',
+      source_status: 'in_progress',
+      active_form: null,
+      seq: 0,
+      po_status: null,
+      ...patch
+    }
+  }
+
+  const incoming = (patch: Partial<BoardSourceItem> = {}): BoardSourceItem => ({
+    sourceId: '1',
+    title: 'uma',
+    status: 'in_progress',
+    activeForm: null,
+    seq: 0,
+    ...patch
+  })
+
+  it('o mesmo snapshot de novo não é escrita nenhuma', () => {
+    expect(planBoardSourceSync(current(), incoming(), 'p1')).toEqual({ unchanged: true, clearPoStatus: false })
+  })
+
+  it('status novo do agente solta a correção de status do PO', () => {
+    const plan = planBoardSourceSync(current({ po_status: 'pending' }), incoming({ status: 'completed' }), 'p1')
+    expect(plan).toEqual({ unchanged: false, clearPoStatus: true })
+  })
+
+  it('o MESMO status de novo preserva a correção do PO — é aqui que uma ingestão descuidada a apagaria', () => {
+    const plan = planBoardSourceSync(current({ po_status: 'completed' }), incoming(), 'p1')
+    expect(plan).toEqual({ unchanged: true, clearPoStatus: false })
+  })
+
+  it('cartão reaberto que o agente volta a declarar em andamento solta a reabertura', () => {
+    // O `source_status` nem muda: o cartão reaberto continua `in_progress` na
+    // lista do CLI. Sem esta metade da regra ele ficaria travado em "a fazer"
+    // com o agente trabalhando nele.
+    const plan = planBoardSourceSync(current({ po_status: 'pending' }), incoming(), 'p1')
+    expect(plan).toEqual({ unchanged: false, clearPoStatus: true })
+  })
+
+  it('o "concluído" do PO não cai com o snapshot em andamento reemitido', () => {
+    const plan = planBoardSourceSync(current({ po_status: 'completed' }), incoming(), 'p1')
+    expect(plan).toEqual({ unchanged: true, clearPoStatus: false })
+  })
+
+  it('mudar só o título não mexe no PO: título legível não é estado', () => {
+    const plan = planBoardSourceSync(current({ po_status: 'completed' }), incoming({ title: 'uma, agora melhor' }), 'p1')
+    expect(plan).toEqual({ unchanged: false, clearPoStatus: false })
+  })
+
+  it('mudar só activeForm ou seq também não mexe no PO', () => {
+    const base = current({ po_status: 'completed' })
+    expect(planBoardSourceSync(base, incoming({ activeForm: 'Fazendo uma' }), 'p1').clearPoStatus).toBe(false)
+    expect(planBoardSourceSync(base, incoming({ seq: 3 }), 'p1').clearPoStatus).toBe(false)
+  })
+
+  it('status novo sem correção do PO não pede limpeza à toa', () => {
+    const plan = planBoardSourceSync(current(), incoming({ status: 'completed' }), 'p1')
+    expect(plan).toEqual({ unchanged: false, clearPoStatus: false })
+  })
+
+  it('projeto que mudou de identidade é escrita, não silêncio', () => {
+    expect(planBoardSourceSync(current(), incoming(), 'p2').unchanged).toBe(false)
   })
 })
 

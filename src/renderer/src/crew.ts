@@ -241,22 +241,42 @@ function poMember(po: PoProviderDiagnosticMsg | null): CrewMember {
     id: 'role:po',
     role: 'po',
     name: 'PO',
-    kind: 'auditor do quadro',
+    // A pílula é o papel inteiro, não a rodada: ele abre o quadro e o fecha. E é
+    // CUIDAR, não possuir — o esqueleto do quadro é do agente (`source_*`), o PO
+    // só escreve a camada de cima (`po_*`). Chamá-lo de dono diria ao usuário o
+    // contrário do que o desenho garante.
+    kind: 'cuida do quadro',
     state: 'idle',
-    line: [txt('audita o quadro no fim de cada turno')],
+    // O estado parado é onde o cartão passa a maior parte do tempo, então é ele
+    // que ensina o papel. São DUAS rodadas por turno, e dizer só a auditoria do
+    // fim faria o usuário estranhar a rodada da abertura como trabalho repetido.
+    line: [txt('registra o pedido na abertura e audita no fim do turno')],
     badge: { text: 'disponível', tone: 'plain' },
     group: 'observadores'
   }
   if (!po) return base
 
   const model = po.actualProvider === 'gpt-luna' ? 'gpt-5.6-luna' : 'claude'
+  // O PO roda DUAS vezes por turno e as duas rodadas acendem o mesmo cartão. Sem
+  // dizer qual é qual, o usuário vê o mesmo "auditando" duas vezes e conclui que
+  // o observador está repetindo trabalho. `round` ausente é o diagnóstico antigo
+  // (ou de um main mais velho): cai no texto de sempre, nunca em "undefined".
+  const abertura = po.round === 'open'
   if (po.phase === 'audit-finished') {
     const n = po.appliedOps ?? 0
     base.line = [
       txt(
-        n === 0
-          ? 'auditou no fim do turno · nada a corrigir'
-          : `auditou no fim do turno · ${n} ${n > 1 ? 'cartões corrigidos' : 'cartão corrigido'}`
+        abertura
+          ? n === 0
+            ? 'conferiu o pedido · nada a registrar'
+            : // A abertura tanto ABRE cartão quanto marca ANDAMENTO num que já
+              // existia, e a contagem não distingue os dois. "Aberto" descreveria
+              // metade dos casos; "em andamento" é o estado em que a rodada
+              // deixa o cartão nos DOIS caminhos.
+              `registrou o pedido · ${n} ${n > 1 ? 'cartões' : 'cartão'} em andamento`
+          : n === 0
+            ? 'auditou no fim do turno · nada a corrigir'
+            : `auditou no fim do turno · ${n} ${n > 1 ? 'cartões corrigidos' : 'cartão corrigido'}`
       )
     ]
     base.badge = { text: model, tone: 'ok' }
@@ -265,7 +285,13 @@ function poMember(po: PoProviderDiagnosticMsg | null): CrewMember {
   }
   if (po.phase === 'gpt-luna-unavailable') {
     base.state = 'failed'
-    base.line = [txt('não consegui auditar · GPT Luna indisponível')]
+    base.line = [
+      txt(
+        abertura
+          ? 'não consegui registrar o pedido · GPT Luna indisponível'
+          : 'não consegui auditar · GPT Luna indisponível'
+      )
+    ]
     base.badge = { text: 'falhou', tone: 'err' }
     base.endedAt = po.at
     return base
@@ -275,10 +301,16 @@ function poMember(po: PoProviderDiagnosticMsg | null): CrewMember {
   delete base.badge
   base.line =
     po.phase === 'gpt-luna-started'
-      ? [tool('auditando'), txt(` · continuando com ${model}`)]
+      ? abertura
+        ? [tool('registrando'), txt(` o pedido · continuando com ${model}`)]
+        : [tool('auditando'), txt(` · continuando com ${model}`)]
       : po.phase === 'po-provider-switch' || po.phase === 'claude-unavailable'
-        ? [txt('trocando de provedor · '), tool(model)]
-        : [tool('auditando'), txt(' o quadro desta conversa')]
+        ? // A troca de provedor é a mesma nas duas rodadas: o que mudou é o
+          // modelo, e é ele que a linha precisa mostrar.
+          [txt('trocando de provedor · '), tool(model)]
+        : abertura
+          ? [tool('registrando'), txt(' o pedido no quadro')]
+          : [tool('auditando'), txt(' o quadro desta conversa')]
   return base
 }
 

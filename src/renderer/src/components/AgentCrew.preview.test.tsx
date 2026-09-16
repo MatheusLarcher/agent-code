@@ -106,7 +106,7 @@ const CREW: CrewMember[] = [
     id: 'role:po',
     role: 'po',
     name: 'PO',
-    kind: 'auditor do quadro',
+    kind: 'cuida do quadro',
     state: 'idle',
     line: [{ kind: 'text', text: 'auditou no fim do turno · 2 cartões corrigidos' }],
     endedAt: s(60),

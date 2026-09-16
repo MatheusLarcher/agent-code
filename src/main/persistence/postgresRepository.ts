@@ -20,6 +20,7 @@ import {
   boardItemId,
   compareBoardItems,
   normalizeSourceItems,
+  planBoardSourceSync,
   type BoardItemRow
 } from '../board/boardModel'
 import {
@@ -781,37 +782,63 @@ export class PostgresRepository implements PersistenceRepository {
     await transaction(this.pool, async (client) => {
       for (const item of items) {
         const id = boardItemId(input.conversationId, item.sourceId)
-        // A camada `po_*` fica de fora do UPDATE de propósito: a ingestão
-        // escreve só o que o agente declarou, então uma releitura do snapshot
-        // não desfaz a correção do PO.
+        // Lê o cartão travado antes de escrever, em vez de decidir tudo num
+        // `ON CONFLICT ... WHERE`: o que muda e o que a mudança faz com a
+        // camada do PO é `planBoardSourceSync`, a MESMA função que o SQLite
+        // usa. Traduzida para SQL aqui, a regra viraria uma segunda versão,
+        // livre para divergir entre os dois backends sem quebrar teste nenhum.
+        // O custo é uma consulta a mais por cartão, dentro da transação que já
+        // existia — o snapshot de um plano tem dezenas de linhas, não milhões.
+        const locked = await client.query<BoardItemRow>(
+          `SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = $1 FOR UPDATE`,
+          [id]
+        )
+        const current = locked.rows[0]
+        if (!current) {
+          await client.query(
+            `INSERT INTO board_items(id, project_id, project_cwd, conversation_id, origin, source_id,
+               source_title, source_status, active_form, seq)
+             VALUES($1, $2, $3, $4, 'agent', $5, $6, $7, $8, $9)
+             ON CONFLICT (id) DO NOTHING`,
+            [
+              id,
+              input.projectId,
+              input.projectCwd,
+              input.conversationId,
+              item.sourceId,
+              encodePostgresText(item.title),
+              item.status,
+              item.activeForm === null ? null : encodePostgresText(item.activeForm),
+              item.seq
+            ]
+          )
+          continue
+        }
+        // Compara contra a linha DECODIFICADA: o texto é gravado escapado, e
+        // comparar o escapado com o cru acharia diferença onde não há.
+        const plan = planBoardSourceSync(decodeBoardRow(current), item, input.projectId)
+        if (plan.unchanged) continue
+        // `po_title`/`po_note` nem aparecem no UPDATE: a ingestão escreve só a
+        // camada do agente, e é isso que impede uma releitura do snapshot de
+        // desfazer a correção do PO. O `po_status` é reescrito com o valor já
+        // lido sob o `FOR UPDATE` — ou com `NULL`, quando o agente mudou o
+        // status e passou a ser ele quem falou por último sobre o estado.
         await client.query(
-          `INSERT INTO board_items(id, project_id, project_cwd, conversation_id, origin, source_id,
-             source_title, source_status, active_form, seq)
-           VALUES($1, $2, $3, $4, 'agent', $5, $6, $7, $8, $9)
-           ON CONFLICT (id) DO UPDATE SET
-             project_id = EXCLUDED.project_id,
-             project_cwd = EXCLUDED.project_cwd,
-             source_title = EXCLUDED.source_title,
-             source_status = EXCLUDED.source_status,
-             active_form = EXCLUDED.active_form,
-             seq = EXCLUDED.seq,
-             revision = board_items.revision + 1,
-             updated_at = clock_timestamp()
-           WHERE board_items.source_title IS DISTINCT FROM EXCLUDED.source_title
-              OR board_items.source_status IS DISTINCT FROM EXCLUDED.source_status
-              OR board_items.active_form IS DISTINCT FROM EXCLUDED.active_form
-              OR board_items.seq IS DISTINCT FROM EXCLUDED.seq
-              OR board_items.project_id IS DISTINCT FROM EXCLUDED.project_id`,
+          `UPDATE board_items SET
+             project_id = $2, project_cwd = $3, source_title = $4, source_status = $5,
+             active_form = $6, seq = $7, po_status = $8, po_reason = $9,
+             revision = revision + 1, updated_at = clock_timestamp()
+           WHERE id = $1`,
           [
             id,
             input.projectId,
             input.projectCwd,
-            input.conversationId,
-            item.sourceId,
             encodePostgresText(item.title),
             item.status,
             item.activeForm === null ? null : encodePostgresText(item.activeForm),
-            item.seq
+            item.seq,
+            plan.clearPoStatus ? null : current.po_status,
+            plan.clearPoStatus ? null : current.po_reason
           ]
         )
       }

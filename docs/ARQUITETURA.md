@@ -315,6 +315,36 @@ ou identidade de projeto que não resolve degradam sem derrubar a conversa.
 são indistinguíveis na leitura; tratar o primeiro como o segundo torraria o quadro inteiro de uma
 conversa por causa de uma leitura sem sorte.
 
+**Fim de turno: o que continuou "fazendo" volta para "a fazer".** "Em andamento" só quer dizer
+alguma coisa enquanto existe trabalho acontecendo, e o snapshot do CLI não tem noção de "agora":
+o cartão que o agente marcou ao começar e esqueceu de fechar ficaria em andamento para sempre,
+e o quadro passaria a mostrar um trabalho que ninguém está fazendo. Nos **dois** jeitos de um
+turno acabar (`result`, o fim normal, e `error`, o que morreu no meio) o serviço relê o quadro
+daquela conversa e devolve para "a fazer" o que sobrou em andamento, gravando o motivo — que diz
+o fato ("o turno terminou sem concluir esta tarefa"), não uma intenção: o quadro não tem como
+saber se o agente desistiu ou esqueceu. Aqui não entra LLM nenhum, porque não há o que julgar.
+
+A **ordem** é a parte delicada, e é ela que a dependência `poSettled` compra: primeiro a fila de
+escrita da conversa (reabrir sem o último snapshot gravado reabriria em cima de um estado velho),
+**depois a auditoria do PO** (reabrir antes desfaria o "concluído" que ele ainda ia gravar), e só
+então a reabertura. A espera pelo PO tem teto de 30 s — análise pendurada não pode segurar para
+sempre o conserto que existe justamente para o quadro não ficar errado. A reabertura é idempotente
+porque olha o status **efetivo** (`po_status ?? source_status`): cartão já reaberto não aparece de
+novo, e o "concluído" que o PO acabou de gravar não é desfeito.
+
+**O que ela deliberadamente não faz: varrer o banco no boot.** Seria a correção óbvia para o app
+fechado no meio de um turno, e é a errada aqui — com PostgreSQL compartilhado, o "fazendo" que a
+varredura apagaria pode ser de um agente rodando **agora** em outro PC. Duas limitações conhecidas
+saem dessa escolha:
+
+- App fechado ou derrubado no meio de um turno deixa o cartão em andamento até o **próximo turno
+  daquela conversa**, que é quando o fechamento seguinte roda. O quadro fica otimista por um
+  tempo; nunca erra sobre trabalho de outra máquina.
+- Existe uma janela estreita entre a reabertura e um snapshot **atrasado** do mesmo turno: se ele
+  chegar depois, a ingestão lê "o agente declara em andamento" e solta o `po_status` (ver a
+  invalidação, abaixo), desfazendo a reabertura. Esperar a fila de escrita antes de reabrir é o
+  que estreita a janela, e o fim do turno seguinte corrige.
+
 ### 2. A trava do plano (`board/planGate.ts`)
 
 O esqueleto só existe se o agente declarar alguma coisa. Pedir isso no prompt é instrução, e
@@ -345,32 +375,82 @@ Isso não tem momento fixo para travar — só dá para auditar depois.
 
 O PO é irmão do vigia, no mesmo molde e pelos mesmos motivos: `query()` avulso com `tools: []` e
 `maxTurns: 1`, modelo barato configurável (`board.po.model`, default `claude-sonnet-5`), digest
-capado, cooldown por conversa, e **falha em silêncio**. Difere do vigia em duas coisas: escreve no
-**quadro** em vez de perguntar ao usuário, e roda **uma vez por turno, no `result`** — é no fim que
-dá para ver o que terminou, e rodar no meio custaria o dobro para responder com menos informação.
-Turno que morreu em erro não é analisado: aquilo é falha, não esquecimento.
+capado, cooldown por conversa, e **falha em silêncio**. Difere do vigia em escrever no **quadro**
+em vez de perguntar ao usuário. Turno que morreu em erro não é auditado: aquilo é falha, não
+esquecimento — mas o fechamento determinístico do quadro roda assim mesmo, e é ele que evita o
+cartão preso em andamento.
 
-Ele faz três coisas e só três: fecha o cartão concluído, reescreve título técnico e acrescenta a
-tarefa que surgiu e nunca foi declarada.
+**Ele roda duas vezes por turno, e as duas rodadas respondem a perguntas opostas.**
+
+- **Abertura**, quando o pedido chega (`po.noteUserMessage`, no mesmo ponto em que o turno do vigia
+  começa): *o que vai começar?* O pedido precisa virar cartão **antes** de o agente trabalhar —
+  auditar só no fim não alcança o pedido que o agente nunca declarou, porque quando o PO olha ele
+  já passou e não sobrou o que reconhecer. Operações: **`ANDAMENTO <id>`** (um cartão que já existe
+  cobre o pedido) e **`NOVA`** (cria o cartão **já em andamento**, porque o trabalho está começando
+  agora — não é intenção para depois). O prompt insiste que pergunta, dúvida e pedido de status
+  **não** viram cartão: responder não é trabalho de quadro.
+- **Fechamento**, no `result`: *o que terminou?* Só aqui existe turno para julgar, com as ações
+  como evidência. Operações: **`CONCLUIR <id>`**, **`TITULO <id>`**, **`FEITA`** (o trabalho
+  aconteceu neste turno e nenhum cartão o registra — o cartão nasce concluído) e **`NOVA`** (ficou
+  faltando — nasce pendente).
+
+São **prompts separados** de propósito: um prompt que faz as duas perguntas ao mesmo tempo convida
+o modelo a responder a errada. O **cooldown é por fase** pelo mesmo motivo — com um contador só, a
+abertura gastaria a janela do minuto e o fechamento daquele turno nunca rodaria. E turno que o
+cooldown do fechamento pulou não se perde: pedido e ações entram no digest da próxima auditoria
+daquela conversa, dentro dos mesmos tetos, e voltam para a fila se a análise que os levou não
+chegar ao fim — um pedido que nunca passou pelo PO é exatamente o buraco que ele existe para
+fechar.
 
 **Ele não é o autor do quadro, e a separação é física.** As duas camadas vivem em colunas
 diferentes: `source_*` (o que o agente declarou, escrito só pela ingestão) e `po_*` (o que o PO
-pôs por cima). A ingestão nunca toca a segunda e o PO nunca toca a primeira — é isso que garante
-que uma releitura do snapshot não desfaça a correção, e que um PO errado nunca apague o fato.
+pôs por cima). O PO nunca toca a primeira — é o que garante que um PO errado jamais apague o fato.
 
-**Três barreiras antes de o palpite virar escrita**, porque um modelo pequeno vai errar alguma hora:
+**A segunda não é intocável: o `po_status` expira quando o agente volta a falar do estado.**
+Preservá-lo sempre travaria o cartão — depois da primeira correção, nada que o agente declarasse
+voltaria a aparecer. A distinção que `planBoardSourceSync` faz é entre **reemitir o mesmo
+snapshot** e **mudar de estado**. Releitura idêntica não refuta nada e a camada do PO fica de pé;
+mas há dois casos em que ela cai:
+
+1. O `source_status` **mudou de valor** — quem falou por último foi o agente.
+2. O cartão está "a fazer" **por reabertura** e o agente declara `in_progress`. Aqui o
+   `source_status` pode nem ter mudado: a reabertura não mexe nele, então o cartão continua
+   `in_progress` na lista do CLI e o agente que retoma o trabalho reemite exatamente esse valor.
+   A reabertura é uma afirmação sobre um **momento** ("no fim daquele turno ninguém estava
+   trabalhando nisto") e expira assim que alguém volta a trabalhar; sem esta metade, o cartão
+   ficaria travado em "a fazer" com o agente mexendo nele.
+
+`po_title` e `po_note` sobrevivem aos dois casos: título legível não é estado e não envelhece
+quando o trabalho anda. E um "concluído" do PO não cai por releitura — aquilo é afirmação sobre o
+**trabalho**, e snapshot velho reemitido não a refuta. A regra mora em `boardModel.ts`, e não no
+SQL de cada repositório, porque SQLite e PostgreSQL precisam decidir a mesma coisa: em duas
+versões, o quadro divergiria conforme o PC e nenhum teste quebraria.
+
+**As barreiras antes de o palpite virar escrita**, porque um modelo pequeno vai errar alguma hora:
 
 1. `parsePoVerdict` falha **fechada** por linha — o que não casa com o formato vira silêncio, nunca
-   uma operação inventada; e a operação precisa citar um **id que está no quadro**, então o PO não
-   alcança um cartão que não viu.
-2. `rejectUnsafeOps` descarta o que contraria o esqueleto — hoje, concluir o que **já está
-   concluído**. Uma versão anterior também barrava cartão `in_progress`, e isso matava o
-   recurso: o caso central ("fez e esqueceu de marcar") deixa o cartão exatamente nesse estado,
-   porque o agente marcou o início e não marcou o fim. O snapshot do CLI não tem noção de
-   "agora", e o PO só roda com o turno **já encerrado** — "em andamento" ali é estado parado.
-   Quem segura o exagero é a exigência de evidência no prompt, não uma proibição que também
-   barra o caso certo.
-3. Toda escrita exige **motivo**, gravado com carimbo e mostrado no cartão. Correção automática que
+   uma operação inventada; a operação precisa citar um **id que está no quadro**, então o PO não
+   alcança um cartão que não viu; e precisa ser da **fase certa**. Um `CONCLUIR` na abertura
+   falaria de trabalho que ainda não começou e um `ANDAMENTO` no fechamento reabriria o que acabou
+   de terminar: nos dois casos o modelo respondeu a pergunta errada, e resposta errada não vira
+   escrita.
+2. `rejectUnsafeOps` descarta o que contraria o esqueleto. **Título duplicado não cria cartão** —
+   a comparação é normalizada (sem acento, minúscula, espaços colapsados, a mesma regra de busca
+   do resto do projeto) e roda contra as **duas** camadas, porque o cartão pode ter sido renomeado
+   pelo PO e comparar só com o título do agente deixaria passar a cópia. Sem isso o PO recria o
+   mesmo cartão a cada turno: ele não lembra do que criou ontem. **`ANDAMENTO` só no que ainda está
+   pendente** (remarcar o que já começou é escrita à toa, e "reabrir" o concluído é o PO desfazendo
+   um fato). **`CONCLUIR` em tudo que não está concluído**: uma versão anterior exigia cartão
+   pendente e isso matava o recurso, porque o caso central ("fez e esqueceu de marcar") deixa o
+   cartão exatamente em `in_progress` — o agente marcou o início e não marcou o fim. Quem segura o
+   exagero é a exigência de evidência no prompt, não uma proibição que também barra o caso certo.
+3. **Antes de criar, o quadro é relido.** Entre a lista que montou o digest e a escrita passou a
+   consulta ao modelo — segundos em que a **outra fase do mesmo turno** pode ter criado o cartão
+   que este está prestes a criar de novo. Criar é a única operação irreversível daqui (cartão
+   duplicado fica lá e ninguém sabe qual seguir), então as barreiras de título são reaplicadas
+   contra a lista fresca. Sem lista fresca, falha fechada: não cria, e o que ficou de fora volta na
+   próxima auditoria.
+4. Toda escrita exige **motivo**, gravado com carimbo e mostrado no cartão. Correção automática que
    não dá para auditar é pior do que nenhuma — quando ele errar, dá para ver que foi ele.
 
 ### Persistência: por projeto, não por conversa
@@ -396,6 +476,15 @@ Duas visões (**Quadro** em três colunas, **Lista** agrupada por conversa de or
 **esta conversa** e **projeto inteiro**, e o detalhe do cartão com a trilha do PO. O rótulo da aba
 carrega `concluídas/total` mesmo com a aba fechada — é o contador que avisa que existe trabalho lá
 dentro.
+
+**O motivo é o que torna a correção automática auditável, então ele aparece.** No detalhe, a trilha
+diz quem mexeu e por quê — inclusive o motivo da reabertura, que é a resposta para "por que este
+cartão voltou para *A fazer*?". Na face do cartão, um selo distingue o que o PO acrescentou, o que
+ele corrigiu e o que ele reescreveu; e existe um quarto caso, fácil de perder: quando o status do
+PO **coincide** com o do agente (o cartão que ele abriu em andamento e a reabertura devolveu para
+"a fazer", onde o snapshot já estava), não há divergência para marcar, mas há trilha para ler — sem
+o selo, o mesmo cartão apareceria marcado na Lista e limpo no Quadro, e ninguém teria motivo para
+clicar.
 
 É **somente leitura**, com uma exceção: arquivar um cartão. Quem move o estado é o agente e o PO;
 um terceiro dono do mesmo estado só criaria conflito — a mesma razão pela qual o painel do registro

@@ -17,6 +17,8 @@ import { join } from 'node:path'
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk'
 import { Client } from 'pg'
 import type { PostgresConnectionDraft } from '../../shared/ipc'
+import { boardItemStatus } from '../../shared/ipc'
+import type { BoardItem, BoardSourceItem } from './types'
 import { POSTGRES_DATABASE } from './bootstrapStore'
 import { postgresClientConfig, provisionPostgres } from './postgresProvisioning'
 import { PostgresRepository } from './postgresRepository'
@@ -55,6 +57,33 @@ async function repository(installationId: string): Promise<PostgresRepository> {
   )
   await result.initialize()
   return result
+}
+
+const BOARD_PROJECT = 'proj-board'
+const BOARD_CWD = 'C:/GitHub/agent-code'
+const BOARD_CONVERSATION = 'conv-board'
+
+function boardSource(
+  sourceId: string,
+  title: string,
+  status: BoardSourceItem['status'],
+  patch: Partial<BoardSourceItem> = {}
+): BoardSourceItem {
+  return { sourceId, title, status, activeForm: null, seq: 0, ...patch }
+}
+
+/** O snapshot que o agente reescreve inteiro a cada mudança na lista dele. */
+function syncBoard(target: PostgresRepository, items: BoardSourceItem[]): Promise<BoardItem[]> {
+  return target.syncBoardItems({
+    projectId: BOARD_PROJECT,
+    projectCwd: BOARD_CWD,
+    conversationId: BOARD_CONVERSATION,
+    items
+  })
+}
+
+function readBoard(target: PostgresRepository): Promise<BoardItem[]> {
+  return target.listBoardItems({ projectIds: [BOARD_PROJECT] })
 }
 
 describe.runIf(integration).sequential('PostgresRepository', () => {
@@ -509,5 +538,209 @@ describe.runIf(integration).sequential('PostgresRepository', () => {
     })
     expect(await right.deleteMemoryProposal(pending.id)).toBe(true)
     expect(await right.deleteMemoryProposal(pending.id)).toBe(false)
+  })
+
+  // ---------------------------------------------------------------------
+  // Quadro de tarefas. A REGRA da ingestão é uma só e mora em
+  // `planBoardSourceSync`; o que existe em duas versões é o SQL que a aplica, e
+  // o do PostgreSQL nunca tinha sido executado por teste nenhum. O risco é
+  // silencioso: o BoardService degrada sem erro visível, então um SQL quebrado
+  // faria o quadro simplesmente parar de gravar para quem usa PostgreSQL.
+  // ---------------------------------------------------------------------
+
+  it('grava o snapshot do agente e devolve o cartão inteiro na releitura', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const synced = await syncBoard(target, [
+      boardSource('1', 'primeira', 'completed'),
+      boardSource('2', 'segunda', 'in_progress', { seq: 1, activeForm: 'fazendo a segunda' }),
+      boardSource('3', 'terceira', 'pending', { seq: 2 })
+    ])
+
+    expect(synced.map((entry) => entry.sourceTitle)).toEqual(['segunda', 'terceira', 'primeira'])
+    // A releitura devolve exatamente o mesmo objeto: é aqui que uma coluna
+    // esquecida no INSERT apareceria — `seq` perdido reordena o quadro,
+    // `active_form` perdido apaga o "fazendo isto" da tela.
+    expect(await readBoard(target)).toEqual(synced)
+    expect(synced.find((entry) => entry.sourceId === '2')).toMatchObject({
+      origin: 'agent',
+      sourceStatus: 'in_progress',
+      activeForm: 'fazendo a segunda',
+      seq: 1,
+      poStatus: null,
+      revision: 1
+    })
+    expect(synced.every((entry) => entry.origin === 'agent')).toBe(true)
+  })
+
+  it('reemitir o mesmo snapshot não toca no cartão que não mudou', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const snapshot = () => [boardSource('1', 'uma', 'pending'), boardSource('2', 'duas', 'pending', { seq: 1 })]
+    const first = await syncBoard(target, snapshot())
+    expect(await syncBoard(target, snapshot())).toEqual(first)
+
+    // Agora só o segundo cartão anda. Sem o `unchanged` do plano, o UPDATE
+    // rodaria para os dois: `revision` e `updated_at` do primeiro subiriam por
+    // nada e o change feed acordaria a tela a cada leitura do mesmo plano.
+    const moved = await syncBoard(target, [
+      boardSource('1', 'uma', 'pending'),
+      boardSource('2', 'duas', 'in_progress', { seq: 1 })
+    ])
+    const untouched = moved.find((entry) => entry.sourceId === '1')
+    expect(untouched).toEqual(first.find((entry) => entry.sourceId === '1'))
+    expect(untouched?.revision).toBe(1)
+    expect(moved.find((entry) => entry.sourceId === '2')).toMatchObject({
+      sourceStatus: 'in_progress',
+      revision: 2
+    })
+  })
+
+  it('snapshot vazio NÃO apaga o quadro', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const before = await syncBoard(target, [boardSource('1', 'uma', 'pending')])
+    // "Esta sessão nunca usou tarefas" e "o plano ficou vazio" são
+    // indistinguíveis na leitura; tratar o primeiro como o segundo torraria o
+    // quadro inteiro da conversa por causa de uma leitura sem sorte.
+    expect(await syncBoard(target, [])).toEqual(before)
+  })
+
+  it('cartão que sumiu do snapshot é apagado, e o cartão do PO sobrevive', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    await syncBoard(target, [boardSource('1', 'uma', 'pending'), boardSource('2', 'duas', 'pending', { seq: 1 })])
+    const poCard = await target.createBoardPoItem({
+      projectId: BOARD_PROJECT,
+      projectCwd: BOARD_CWD,
+      conversationId: BOARD_CONVERSATION,
+      title: 'testar com duas conversas',
+      status: 'pending',
+      reason: 'surgiu no meio do trabalho'
+    })
+
+    const after = await syncBoard(target, [boardSource('1', 'uma', 'pending')])
+
+    // O DELETE limpa o que saiu do snapshot desta conversa; sem o
+    // `origin = 'agent'` ele levaria junto o cartão que o agente nunca declarou.
+    expect(after.map((entry) => entry.sourceTitle).sort()).toEqual(['testar com duas conversas', 'uma'])
+    expect(after.find((entry) => entry.origin === 'po')).toEqual(poCard)
+  })
+
+  it('o status novo do agente limpa a correção do PO e preserva o título reescrito', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const [card] = await syncBoard(target, [boardSource('1', 'add board table 5/7', 'pending')])
+    await target.applyBoardPo({
+      id: card.id,
+      poTitle: 'Criar a tabela do quadro',
+      poNote: 'inclui a migration',
+      poStatus: 'completed',
+      poReason: 'o agente concluiu e esqueceu de marcar'
+    })
+
+    const after = await syncBoard(target, [boardSource('1', 'add board table 5/7', 'in_progress')])
+
+    expect(after[0]).toMatchObject({
+      sourceStatus: 'in_progress',
+      poStatus: null,
+      poReason: null,
+      // Título não é estado: ele não envelhece quando o trabalho anda.
+      poTitle: 'Criar a tabela do quadro',
+      poNote: 'inclui a migration'
+    })
+  })
+
+  it('o "concluído" do PO sobrevive à reemissão do mesmo snapshot', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const [card] = await syncBoard(target, [boardSource('1', 'add board table + migration 5/7', 'pending')])
+    await target.applyBoardPo({
+      id: card.id,
+      poTitle: 'Criar a tabela do quadro e a migration',
+      poStatus: 'completed',
+      poReason: 'o agente concluiu e esqueceu de marcar'
+    })
+
+    // O agente reescreve a lista inteira a cada mudança — é exatamente aqui que
+    // uma ingestão descuidada apagaria a correção. Snapshot velho reemitido não
+    // refuta uma afirmação sobre o TRABALHO.
+    const after = await syncBoard(target, [boardSource('1', 'add board table + migration 5/7', 'pending')])
+
+    expect(after[0]).toMatchObject({
+      poTitle: 'Criar a tabela do quadro e a migration',
+      poStatus: 'completed',
+      poReason: 'o agente concluiu e esqueceu de marcar',
+      sourceStatus: 'pending'
+    })
+  })
+
+  it('o ciclo completo do cartão reaberto: fazendo → a fazer → fazendo', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const [card] = await syncBoard(target, [boardSource('1', 'uma', 'in_progress')])
+    expect(boardItemStatus(card)).toBe('in_progress')
+
+    // O turno acaba sem concluir: a reabertura devolve o cartão para "a fazer".
+    await target.applyBoardPo({
+      id: card.id,
+      poStatus: 'pending',
+      poReason: 'o turno terminou sem concluir esta tarefa'
+    })
+    const reopened = (await readBoard(target))[0]
+    expect(boardItemStatus(reopened)).toBe('pending')
+    expect(reopened.sourceStatus).toBe('in_progress')
+
+    // O agente retoma e reemite o MESMO `in_progress`: o `source_status` nem
+    // mudou de valor, então quem solta a camada do PO é só a segunda metade de
+    // `planBoardSourceSync` (a reabertura expirou). Sem ela o cartão ficaria
+    // travado em "a fazer" com o agente trabalhando nele.
+    const after = await syncBoard(target, [boardSource('1', 'uma', 'in_progress')])
+
+    expect(after[0]).toMatchObject({ sourceStatus: 'in_progress', poStatus: null, poReason: null })
+    expect(boardItemStatus(after[0])).toBe('in_progress')
+  })
+
+  it('grava e relê a camada do PO, inclusive o cartão que só o PO conhece', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const [card] = await syncBoard(target, [boardSource('1', 'uma', 'pending')])
+
+    const written = await target.applyBoardPo({
+      id: card.id,
+      poTitle: 'Título legível',
+      poNote: 'nota do PO',
+      poStatus: 'completed',
+      poReason: 'o agente concluiu e esqueceu de marcar'
+    })
+    expect(written).toMatchObject({
+      poTitle: 'Título legível',
+      poNote: 'nota do PO',
+      poStatus: 'completed',
+      poReason: 'o agente concluiu e esqueceu de marcar',
+      revision: 2
+    })
+    expect(written.poAt).not.toBeNull()
+
+    const created = await target.createBoardPoItem({
+      projectId: BOARD_PROJECT,
+      projectCwd: BOARD_CWD,
+      conversationId: BOARD_CONVERSATION,
+      title: 'cartão que o agente não declarou',
+      status: 'in_progress',
+      reason: 'surgiu no meio do trabalho'
+    })
+    // O `seq` do cartão do PO sai do MAX da conversa: ele entra DEPOIS do que o
+    // agente já numerou, em vez de disputar posição com o cartão de `seq` 0.
+    expect(created).toMatchObject({ origin: 'po', sourceId: null, seq: 1, sourceStatus: 'in_progress' })
+
+    // Releitura pelo caminho da tela, não pelo retorno da escrita.
+    const board = await readBoard(target)
+    expect(board.map((entry) => entry.sourceTitle)).toEqual(['cartão que o agente não declarou', 'uma'])
+    expect(board.find((entry) => entry.id === created.id)).toEqual(created)
+    expect(board.find((entry) => entry.id === card.id)).toEqual(written)
+
+    await expect(target.applyBoardPo({ id: card.id, poStatus: 'pending' })).rejects.toThrow(/motivo/i)
+    await expect(target.applyBoardPo({ id: 'bi-nao-existe', poTitle: 'x' })).rejects.toThrow(/inexistente/i)
   })
 })

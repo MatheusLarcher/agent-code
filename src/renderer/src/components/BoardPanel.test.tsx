@@ -112,6 +112,33 @@ describe('BoardPanel', () => {
     expect(await screen.findByText(/os arquivos foram escritos e o teste passou/)).toBeTruthy()
   })
 
+  it('o detalhe explica POR QUE o cartão voltou para "a fazer" no fim do turno', async () => {
+    mockApi({
+      available: true,
+      items: [
+        card({
+          sourceStatus: 'in_progress',
+          poStatus: 'pending',
+          poReason: 'o turno terminou sem concluir esta tarefa'
+        })
+      ]
+    })
+    render(panel())
+    fireEvent.click(await screen.findByText('add board table'))
+    expect(await screen.findByText(/marcou como a fazer: o turno terminou sem concluir esta tarefa/)).toBeTruthy()
+  })
+
+  it('cartão com trilha do PO é distinguível mesmo quando o PO não contradiz o agente', async () => {
+    // A reabertura por cima de um cartão que o PO tinha aberto: os dois status
+    // acabam iguais, então não é "correção" — mas o cartão tem motivo para ler.
+    mockApi({
+      available: true,
+      items: [card({ poStatus: 'pending', poReason: 'o turno terminou sem concluir esta tarefa' })]
+    })
+    render(panel())
+    expect(await screen.findByText('PO revisou')).toBeTruthy()
+  })
+
   it('quadro vazio e quadro indisponível dizem coisas DIFERENTES', async () => {
     mockApi({ available: true, items: [] })
     const { unmount } = render(panel())

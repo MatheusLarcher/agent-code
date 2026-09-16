@@ -1967,6 +1967,28 @@ describe('App — diagnóstico seguro do failover do PO', () => {
         fallbackReason: 'claude_plan'
       })
     })
+    // Sem rodada (diagnóstico de um main anterior às duas fases) o texto é o de
+    // sempre — a auditoria era a única rodada que existia.
     expect(await screen.findByText('GPT Luna indisponível para a auditoria do quadro.')).toBeTruthy()
+  })
+
+  it('a falha na abertura fala do pedido, não da auditoria', async () => {
+    render(<UiProvider><App /></UiProvider>)
+    await act(async () => {
+      poProviderDiagnosticCb?.({
+        id: 'po-3',
+        at: 1,
+        conversationId: 'c1',
+        correlationId: 'correlation',
+        round: 'open',
+        phase: 'gpt-luna-unavailable',
+        requestedProvider: 'claude',
+        actualProvider: 'gpt-luna',
+        fallbackReason: 'claude_plan'
+      })
+    })
+    expect(
+      await screen.findByText('GPT Luna indisponível para registrar o pedido no quadro.')
+    ).toBeTruthy()
   })
 })

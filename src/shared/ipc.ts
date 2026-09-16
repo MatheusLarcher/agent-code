@@ -884,10 +884,21 @@ export interface VigiaAlertMsg {
   at: number
 }
 
+/** Which of the PO's two rounds per turn produced something: the OPEN one (the
+ *  user's request just arrived) or the CLOSE one (the turn ended). Declared
+ *  here, not in the main process, because `shared` is the only side both
+ *  processes may depend on. */
+export type PoRound = 'open' | 'close'
+
 /** Safe, provider-neutral diagnostic for the PO observer's fixed fallback. */
 export interface PoProviderDiagnostic {
   conversationId: string
   correlationId: string
+  /** Which round emitted this. Named `round` because `phase` below is already
+   *  the provider-fallback moment. OPTIONAL on purpose: a diagnostic from
+   *  before the two rounds stays valid, and the crew panel falls back to the
+   *  text it has always shown instead of half a sentence. */
+  round?: PoRound
   phase:
     | 'claude-started'
     | 'claude-unavailable'

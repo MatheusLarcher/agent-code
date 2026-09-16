@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatEvent, TaskItem } from '../../shared/ipc'
-import type { BoardSyncInput, PersistenceRepository } from '../persistence/types'
+import type { BoardItem, BoardPoWrite, BoardSyncInput, PersistenceRepository } from '../persistence/types'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,6 +19,11 @@ function taskList(items: TaskItem[]): ChatEvent {
   return { kind: 'task-list', items }
 }
 
+/** O fim normal do turno — o gatilho do fechamento do quadro. */
+function turnResult(): ChatEvent {
+  return { kind: 'result', id: 'r1', isError: false, text: '', durationMs: 1 }
+}
+
 function fakeRepo(overrides: Partial<PersistenceRepository> = {}) {
   const syncs: BoardSyncInput[] = []
   const repo = {
@@ -30,6 +35,46 @@ function fakeRepo(overrides: Partial<PersistenceRepository> = {}) {
     ...overrides
   } as unknown as PersistenceRepository
   return { repo, syncs }
+}
+
+function card(patch: Partial<BoardItem> = {}): BoardItem {
+  return {
+    id: 'bi-1',
+    projectId: 'p1',
+    projectCwd: CWD,
+    conversationId: 'conv-1',
+    origin: 'agent',
+    sourceId: '1',
+    sourceTitle: 'uma',
+    sourceStatus: 'in_progress',
+    activeForm: null,
+    seq: 0,
+    poTitle: null,
+    poNote: null,
+    poStatus: null,
+    poReason: null,
+    poAt: null,
+    dismissedAt: null,
+    revision: 1,
+    createdAt: '2026-09-14T12:00:00.000Z',
+    updatedAt: '2026-09-14T12:00:00.000Z',
+    ...patch
+  }
+}
+
+/** Repositório fake com quadro: `listBoardItems` devolve os cartões dados e
+ *  `applyBoardPo` registra a escrita do PO, que é o que a reabertura usa. */
+function boardRepo(cards: BoardItem[]) {
+  const applied: BoardPoWrite[] = []
+  const repo = {
+    syncBoardItems: vi.fn(async () => []),
+    listBoardItems: vi.fn(async () => cards),
+    applyBoardPo: vi.fn(async (input: BoardPoWrite) => {
+      applied.push(input)
+      return card({ id: input.id })
+    })
+  } as unknown as PersistenceRepository
+  return { repo, applied }
 }
 
 describe('toSourceItems', () => {
@@ -119,6 +164,125 @@ describe('BoardService', () => {
   it('pasta que não existe NÃO ganha id inventado — id falso faria a tela dizer "nenhuma tarefa"', async () => {
     const service = new BoardService({ repository: () => null })
     expect(await service.projectId('C:/pasta/que/nao/existe')).toBe('')
+  })
+
+  it('cartão em andamento no fim do turno volta para "a fazer", com o motivo', async () => {
+    const { repo, applied } = boardRepo([card({ id: 'bi-andando', sourceStatus: 'in_progress' })])
+    const service = new BoardService({ repository: () => repo })
+    service.observe('conv-1', CWD, turnResult())
+    await service.turnClosed('conv-1')
+
+    expect(applied).toEqual([
+      { id: 'bi-andando', poStatus: 'pending', poReason: 'o turno terminou sem concluir esta tarefa' }
+    ])
+  })
+
+  it('turno que morreu no meio grava o motivo da interrupção, não o do fim normal', async () => {
+    const { repo, applied } = boardRepo([card({ sourceStatus: 'in_progress' })])
+    const service = new BoardService({ repository: () => repo })
+    service.observe('conv-1', CWD, { kind: 'error', id: 'e1', text: 'estourou' })
+    await service.turnClosed('conv-1')
+
+    expect(applied[0].poReason).toBe('o turno foi interrompido com esta tarefa em andamento')
+  })
+
+  it('o que já está concluído não é reaberto — nem pelo agente, nem pelo PO', async () => {
+    const { repo, applied } = boardRepo([
+      card({ id: 'bi-pronto', sourceStatus: 'completed' }),
+      card({ id: 'bi-po', sourceStatus: 'in_progress', poStatus: 'completed', poReason: 'o agente esqueceu' }),
+      card({ id: 'bi-a-fazer', sourceStatus: 'pending' })
+    ])
+    const service = new BoardService({ repository: () => repo })
+    service.observe('conv-1', CWD, turnResult())
+    await service.turnClosed('conv-1')
+
+    expect(applied).toEqual([])
+  })
+
+  it('a reabertura só acontece DEPOIS do PO — antes dele, desfaria o "concluído" que ele ia gravar', async () => {
+    const { repo, applied } = boardRepo([card({ sourceStatus: 'in_progress' })])
+    let releasePo: (() => void) | null = null
+    const service = new BoardService({
+      repository: () => repo,
+      poSettled: () => new Promise<void>((resolve) => (releasePo = resolve))
+    })
+    service.observe('conv-1', CWD, turnResult())
+
+    await vi.waitFor(() => expect(releasePo).not.toBeNull())
+    expect(applied).toEqual([]) // o PO ainda está analisando
+    releasePo!()
+    await service.turnClosed('conv-1')
+
+    expect(applied).toHaveLength(1)
+  })
+
+  it('PO que nunca responde não segura o fechamento para sempre', async () => {
+    const { repo, applied } = boardRepo([card({ sourceStatus: 'in_progress' })])
+    const service = new BoardService({
+      repository: () => repo,
+      poSettled: () => new Promise<void>(() => undefined), // nunca resolve
+      poWaitMs: 5
+    })
+    service.observe('conv-1', CWD, turnResult())
+    await service.turnClosed('conv-1')
+
+    expect(applied).toHaveLength(1)
+  })
+
+  it('PO que falha não impede a reabertura', async () => {
+    const { repo, applied } = boardRepo([card({ sourceStatus: 'in_progress' })])
+    const service = new BoardService({
+      repository: () => repo,
+      poSettled: () => Promise.reject(new Error('modelo fora do ar'))
+    })
+    service.observe('conv-1', CWD, turnResult())
+    await service.turnClosed('conv-1')
+
+    expect(applied).toHaveLength(1)
+  })
+
+  it('sem repositório o fechamento não faz nada e não lança', async () => {
+    const service = new BoardService({ repository: () => null })
+    service.observe('conv-1', CWD, turnResult())
+    await expect(service.turnClosed('conv-1')).resolves.toBeUndefined()
+  })
+
+  it('falha ao gravar a reabertura degrada em silêncio', async () => {
+    const { repo } = boardRepo([card({ sourceStatus: 'in_progress' })])
+    const failing = {
+      ...repo,
+      applyBoardPo: vi.fn(async () => {
+        throw new Error('banco fora do ar')
+      })
+    } as unknown as PersistenceRepository
+    const service = new BoardService({ repository: () => failing })
+    service.observe('conv-1', CWD, turnResult())
+    await expect(service.turnClosed('conv-1')).resolves.toBeUndefined()
+  })
+
+  it('o fechamento espera a fila de escrita do quadro — senão releria um estado velho', async () => {
+    const order: string[] = []
+    const { applied } = boardRepo([card({ sourceStatus: 'in_progress' })])
+    const repo = {
+      syncBoardItems: vi.fn(async () => {
+        await Promise.resolve()
+        order.push('sync')
+        return []
+      }),
+      listBoardItems: vi.fn(async () => [card({ sourceStatus: 'in_progress' })]),
+      applyBoardPo: vi.fn(async (input: BoardPoWrite) => {
+        order.push('reabertura')
+        applied.push(input)
+        return card({ id: input.id })
+      })
+    } as unknown as PersistenceRepository
+
+    const service = new BoardService({ repository: () => repo })
+    service.observe('conv-1', CWD, taskList([task('1', 'uma', 'in_progress')]))
+    service.observe('conv-1', CWD, turnResult())
+    await service.turnClosed('conv-1')
+
+    expect(order).toEqual(['sync', 'reabertura'])
   })
 
   it('pasta real sem git ainda tem id estável, e o cache o reaproveita', async () => {

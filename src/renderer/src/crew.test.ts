@@ -9,6 +9,7 @@ import {
   type CrewInput
 } from './crew'
 import type { AgentTrack } from './agentTracks'
+import type { PoProviderDiagnosticMsg } from '@shared/ipc'
 
 const T = 1_700_000_000_000
 
@@ -133,6 +134,67 @@ describe('buildCrew', () => {
     expect(fim.state).toBe('idle')
     expect(lineText(fim.line)).toBe('auditou no fim do turno · 2 cartões corrigidos')
     expect(fim.badge).toEqual({ text: 'gpt-5.6-luna', tone: 'ok' })
+  })
+
+  it('o cartão do PO diz qual das duas rodadas do turno está acontecendo', () => {
+    // Parado é como o cartão passa a maior parte do tempo: ali ele descreve o
+    // papel inteiro, as duas rodadas, e não só a auditoria do fim.
+    const parado = buildCrew(input()).find((m) => m.role === 'po')!
+    expect(lineText(parado.line)).toBe('registra o pedido na abertura e audita no fim do turno')
+    // A pílula fica ao lado do nome o tempo todo — chamá-lo de auditor esconderia
+    // a rodada da abertura, que é metade do que ele faz, e chamá-lo de dono diria
+    // que o quadro é dele: o esqueleto é do agente, o PO só cuida por cima.
+    expect(parado.kind).toBe('cuida do quadro')
+
+    const comum = {
+      conversationId: 'c1',
+      correlationId: 'x',
+      requestedProvider: 'claude' as const,
+      actualProvider: 'claude' as const,
+      phase: 'claude-started' as const,
+      id: 'd1',
+      at: T - 1_000
+    }
+    const linha = (over: Partial<PoProviderDiagnosticMsg>): string => {
+      const po = buildCrew(input({ po: { ...comum, ...over } })).find((m) => m.role === 'po')!
+      return lineText(po.line)
+    }
+
+    expect(linha({ round: 'open' })).toBe('registrando o pedido no quadro')
+    expect(linha({ round: 'close' })).toBe('auditando o quadro desta conversa')
+    // Diagnóstico sem rodada (de um main anterior às duas fases) não pode piscar
+    // "undefined": fica exatamente com o texto que o cartão sempre teve.
+    expect(linha({})).toBe('auditando o quadro desta conversa')
+
+    expect(linha({ round: 'open', phase: 'audit-finished', appliedOps: 0 })).toBe(
+      'conferiu o pedido · nada a registrar'
+    )
+    // A abertura fecha tanto abrindo cartão quanto marcando andamento num que já
+    // existia; a contagem é a mesma nos dois, então a frase não pode dizer
+    // "aberto" — só o estado em que o cartão ficou.
+    expect(linha({ round: 'open', phase: 'audit-finished', appliedOps: 1 })).toBe(
+      'registrou o pedido · 1 cartão em andamento'
+    )
+    expect(linha({ round: 'open', phase: 'audit-finished', appliedOps: 2 })).toBe(
+      'registrou o pedido · 2 cartões em andamento'
+    )
+    expect(linha({ round: 'close', phase: 'audit-finished', appliedOps: 0 })).toBe(
+      'auditou no fim do turno · nada a corrigir'
+    )
+    expect(linha({ phase: 'audit-finished', appliedOps: 2 })).toBe(
+      'auditou no fim do turno · 2 cartões corrigidos'
+    )
+
+    expect(
+      linha({ round: 'open', phase: 'gpt-luna-unavailable', actualProvider: 'gpt-luna' })
+    ).toBe('não consegui registrar o pedido · GPT Luna indisponível')
+    expect(linha({ phase: 'gpt-luna-unavailable', actualProvider: 'gpt-luna' })).toBe(
+      'não consegui auditar · GPT Luna indisponível'
+    )
+    // A troca de provedor não muda com a rodada: o que importa ali é o modelo.
+    expect(linha({ round: 'open', phase: 'po-provider-switch', actualProvider: 'gpt-luna' })).toBe(
+      'trocando de provedor · gpt-5.6-luna'
+    )
   })
 
   it('a dúvida do vigia é o único estado que pede ação', () => {

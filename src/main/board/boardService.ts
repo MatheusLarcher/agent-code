@@ -1,3 +1,4 @@
+import { boardItemsToReopen } from './boardModel'
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
 import type {
   BoardItem,
@@ -27,15 +28,39 @@ import type { ChatEvent, TaskItem } from '../../shared/ipc'
  * 2. **Uma escrita por vez por conversa.** O snapshot chega em rajada; duas
  *    sincronizações concorrentes da mesma conversa se atropelariam no
  *    `DELETE` do que sumiu.
+ *
+ * E um fechamento de turno determinístico: no `result`/`error`, o que continuou
+ * "fazendo" volta para "a fazer". Ver `closeTurn`.
  */
 
 const IDENTITY_TTL_MS = 60_000
+
+/** Teto da espera pelo PO. Ver `poSettled`. */
+const PO_WAIT_MS = 30_000
+
+/** O motivo gravado no cartão reaberto, por como o turno acabou. Diz o FATO —
+ *  o quadro não sabe (nem tem como saber) se o agente desistiu ou esqueceu. */
+const REOPEN_REASON = {
+  result: 'o turno terminou sem concluir esta tarefa',
+  error: 'o turno foi interrompido com esta tarefa em andamento'
+} as const
 
 export interface BoardServiceDeps {
   /** `null` enquanto não há repositório autoritativo — o quadro simplesmente não grava. */
   repository(): PersistenceRepository | null
   /** Avisa o renderer que o quadro daquele projeto mudou. */
   onChanged?(projectId: string): void
+  /**
+   * Espera a análise do PO daquela conversa terminar, quando existe um PO.
+   *
+   * Dependência INJETADA e opcional porque o PO já depende deste serviço:
+   * importá-lo aqui fecharia um ciclo. Sem ela o fechamento roda assim mesmo —
+   * o que se perde é só a ordem, e a ordem importa: reabrir ANTES do PO
+   * desfaria o "concluído" que ele ainda ia gravar.
+   */
+  poSettled?(convId: string): Promise<void>
+  /** Teto da espera pelo PO, em ms. Existe para o teste não esperar 30s. */
+  poWaitMs?: number
 }
 
 interface CachedIdentity {
@@ -47,6 +72,12 @@ export class BoardService {
   private readonly identities = new Map<string, CachedIdentity>()
   /** Fila de escrita por conversa: a promessa da última sincronização. */
   private readonly writes = new Map<string, Promise<void>>()
+  /**
+   * Fila dos fechamentos de turno, SEPARADA da de escrita de propósito: o PO
+   * espera por `settled()` antes de analisar, e o fechamento espera pelo PO.
+   * Na mesma fila, um estaria esperando o outro pelos dois lados.
+   */
+  private readonly closures = new Map<string, Promise<void>>()
 
   constructor(private readonly deps: BoardServiceDeps) {}
 
@@ -76,8 +107,13 @@ export class BoardService {
 
   /** Alimentado pelo tee de eventos do main. Nunca lança. */
   observe(convId: string, cwd: string, event: ChatEvent): void {
-    if (event.kind !== 'task-list') return
-    this.enqueue(convId, cwd, event.items)
+    if (event.kind === 'task-list') {
+      this.enqueue(convId, cwd, event.items)
+      return
+    }
+    // Os dois jeitos de um turno acabar: `result` é o fim normal, `error` é o
+    // que morreu no meio. Nos dois casos ninguém está mais trabalhando.
+    if (event.kind === 'result' || event.kind === 'error') this.closeTurn(convId, cwd, REOPEN_REASON[event.kind])
   }
 
   private enqueue(convId: string, cwd: string, items: TaskItem[]): void {
@@ -108,6 +144,67 @@ export class BoardService {
    *  um quadro pela metade. */
   async settled(convId: string): Promise<void> {
     await this.writes.get(convId)?.catch(() => undefined)
+  }
+
+  /** Espera o fechamento de turno daquela conversa. Igual a `settled`, mas da
+   *  outra fila — e, como ela, existe para o teste não depender de relógio. */
+  async turnClosed(convId: string): Promise<void> {
+    await this.closures.get(convId)?.catch(() => undefined)
+  }
+
+  /**
+   * Fim de turno: o que ficou "fazendo" volta para "a fazer".
+   *
+   * Determinístico, sem depender do LLM — o PO é quem julga o que ficou pronto,
+   * e ele pode não estar configurado, falhar ou simplesmente não ver o cartão.
+   * Aqui não há julgamento nenhum: acabou o turno, ninguém está trabalhando,
+   * então nada pode continuar em andamento.
+   *
+   * A ordem é a parte delicada. Primeiro a fila de escrita (o último snapshot
+   * do turno precisa estar gravado, senão a releitura reabre em cima de um
+   * estado velho), depois o PO (reabrir antes desfaria o "concluído" que ele
+   * ainda ia gravar), e só então a reabertura. O que NÃO acontece aqui: uma
+   * varredura de todo cartão `in_progress` do banco — com PostgreSQL
+   * compartilhado, isso apagaria o "fazendo" de um agente rodando em outro PC.
+   */
+  private closeTurn(convId: string, cwd: string, reason: string): void {
+    const previous = this.closures.get(convId) ?? Promise.resolve()
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        await this.settled(convId)
+        await this.waitForPo(convId)
+        await this.reopenStale(convId, cwd, reason)
+      })
+      .catch(() => undefined)
+    this.closures.set(convId, next)
+  }
+
+  /** A espera pelo PO com teto: análise que trava (modelo pendurado, rede
+   *  parada) não pode segurar o fechamento para sempre — o quadro fica errado,
+   *  que é justamente o que esta correção veio consertar. */
+  private async waitForPo(convId: string): Promise<void> {
+    const wait = this.deps.poSettled?.(convId)
+    if (!wait) return
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, this.deps.poWaitMs ?? PO_WAIT_MS)
+      timer.unref?.()
+      void wait.then(() => resolve(), () => resolve()).finally(() => clearTimeout(timer))
+    })
+  }
+
+  private async reopenStale(convId: string, cwd: string, reason: string): Promise<void> {
+    // Relê depois de todo mundo ter escrito: o que o PO acabou de corrigir só
+    // aparece aqui, e `null` é quadro indisponível — não há o que reabrir.
+    const cards = await this.list(cwd, { conversationId: convId })
+    if (!cards) return
+    for (const card of boardItemsToReopen(cards)) {
+      try {
+        await this.applyPo({ id: card.id, poStatus: 'pending', poReason: reason })
+      } catch {
+        // Cartão que sumiu entre a leitura e a escrita não derruba os outros.
+      }
+    }
   }
 
   /**
@@ -154,6 +251,7 @@ export class BoardService {
 
   dispose(convId: string): void {
     this.writes.delete(convId)
+    this.closures.delete(convId)
   }
 }
 

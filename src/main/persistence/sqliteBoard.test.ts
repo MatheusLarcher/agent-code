@@ -85,6 +85,45 @@ describe('SqliteRepository — quadro de tarefas', () => {
     expect(after[0].sourceStatus).toBe('pending')
   })
 
+  it('o quadro destrava quando o agente volta a trabalhar no cartão reaberto', async () => {
+    const repository = await repo()
+    // 1. o agente começa a tarefa
+    const [card] = await sync(repository, [source('1', 'uma', 'in_progress')])
+    // 2. o turno acaba sem que ela tenha sido concluída: volta para "a fazer"
+    await repository.applyBoardPo({
+      id: card.id,
+      poStatus: 'pending',
+      poReason: 'o turno terminou sem concluir esta tarefa'
+    })
+    expect((await repository.listBoardItems({ projectIds: ['proj-1'] }))[0].poStatus).toBe('pending')
+
+    // 3. o agente retoma e declara a tarefa em andamento de novo — sem soltar a
+    //    camada do PO, o cartão ficaria "a fazer" com o agente trabalhando nele.
+    const after = await sync(repository, [source('1', 'uma', 'in_progress')])
+
+    expect(after[0].sourceStatus).toBe('in_progress')
+    expect(after[0].poStatus).toBeNull()
+    expect(after[0].poReason).toBeNull()
+  })
+
+  it('o título que o PO reescreveu sobrevive à mudança de status — título não é estado', async () => {
+    const repository = await repo()
+    const [card] = await sync(repository, [source('1', 'add board table 5/7', 'pending')])
+    await repository.applyBoardPo({
+      id: card.id,
+      poTitle: 'Criar a tabela do quadro',
+      poNote: 'inclui a migration',
+      poStatus: 'completed',
+      poReason: 'o agente concluiu e esqueceu de marcar'
+    })
+
+    const after = await sync(repository, [source('1', 'add board table 5/7', 'in_progress')])
+
+    expect(after[0].poTitle).toBe('Criar a tabela do quadro')
+    expect(after[0].poNote).toBe('inclui a migration')
+    expect(after[0].poStatus).toBeNull()
+  })
+
   it('snapshot vazio NÃO apaga o quadro', async () => {
     const repository = await repo()
     await sync(repository, [source('1', 'uma', 'pending')])

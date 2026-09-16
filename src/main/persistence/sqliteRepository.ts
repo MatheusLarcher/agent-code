@@ -34,6 +34,7 @@ import {
   boardItemId,
   compareBoardItems,
   normalizeSourceItems,
+  planBoardSourceSync,
   type BoardItemRow
 } from '../board/boardModel'
 import {
@@ -865,6 +866,17 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
            active_form = ?, seq = ?, revision = revision + 1, updated_at = ?
          WHERE id = ?`
       )
+      // A MESMA escrita, soltando a correção de status do PO. Duas consultas em
+      // vez de um CASE no SQL porque QUANDO soltar é decisão de
+      // `planBoardSourceSync` — em SQL ela viraria uma segunda versão da regra,
+      // livre para divergir do PostgreSQL sem quebrar teste nenhum.
+      const updateOneClearingPo = db.prepare(
+        `UPDATE board_items SET
+           project_id = ?, project_cwd = ?, source_title = ?, source_status = ?,
+           active_form = ?, seq = ?, po_status = NULL, po_reason = NULL,
+           revision = revision + 1, updated_at = ?
+         WHERE id = ?`
+      )
       db.exec('BEGIN IMMEDIATE')
       try {
         for (const item of items) {
@@ -887,17 +899,15 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
             touched.push(id)
             continue
           }
-          const same =
-            current.source_title === item.title &&
-            current.source_status === item.status &&
-            (current.active_form ?? null) === item.activeForm &&
-            Number(current.seq) === item.seq &&
-            current.project_id === input.projectId
-          if (same) continue
-          // A ingestão escreve SÓ a camada do agente. Os campos `po_*` passam
-          // intactos de propósito: é isso que impede a próxima leitura do
-          // snapshot de desfazer, sem aviso, a correção do PO.
-          updateOne.run(
+          const plan = planBoardSourceSync(current, item, input.projectId)
+          if (plan.unchanged) continue
+          // A ingestão escreve SÓ a camada do agente, e `po_title`/`po_note`
+          // passam intactos de propósito: é isso que impede a próxima leitura
+          // do snapshot de desfazer, sem aviso, a correção do PO. A exceção é
+          // o `po_status` quando o agente muda o status — ver
+          // `planBoardSourceSync`.
+          const statement = plan.clearPoStatus ? updateOneClearingPo : updateOne
+          statement.run(
             input.projectId,
             input.projectCwd,
             item.title,

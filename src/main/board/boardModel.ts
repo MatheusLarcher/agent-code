@@ -140,6 +140,88 @@ export function normalizeSourceItems(items: BoardSourceItem[]): BoardSourceItem[
   return out
 }
 
+/**
+ * Os cartões que o fim do turno precisa devolver para "a fazer".
+ *
+ * "Em andamento" só quer dizer alguma coisa enquanto existe trabalho
+ * acontecendo. O snapshot do CLI não tem noção de "agora": o cartão que o
+ * agente marcou ao começar e esqueceu de fechar fica em andamento para sempre,
+ * e o quadro passa a mostrar um trabalho que ninguém está fazendo.
+ *
+ * Usa o status EFETIVO (`poStatus ?? sourceStatus`) de propósito — ler o
+ * `source_status` cru desfaria, no mesmo instante, o "concluído" que o PO
+ * acabou de gravar em cima de um cartão que o agente deixou em andamento. E é
+ * isso que torna a reabertura idempotente: o cartão já reaberto tem
+ * `poStatus = 'pending'` e não aparece de novo.
+ */
+export function boardItemsToReopen(items: BoardItem[]): BoardItem[] {
+  return items.filter((item) => item.dismissedAt === null && boardItemStatus(item) === 'in_progress')
+}
+
+/** O estado atual de um cartão, na forma que a ingestão precisa comparar. */
+export type BoardSyncCurrent = Pick<
+  BoardItemRow,
+  'project_id' | 'source_title' | 'source_status' | 'active_form' | 'seq' | 'po_status'
+>
+
+export interface BoardSyncPlan {
+  /** Nada mudou no que o agente declarou: pular a escrita evita inflar `revision`. */
+  unchanged: boolean
+  /** Soltar `po_status`/`po_reason` — ver `planBoardSourceSync`. */
+  clearPoStatus: boolean
+}
+
+/**
+ * O que a ingestão do snapshot faz com um cartão que já existe.
+ *
+ * A camada `po_*` sobrevive à releitura do MESMO snapshot — é isso que impede
+ * o agente de desfazer, sem aviso, a correção do PO. Mas preservá-la sempre
+ * trava o cartão: depois que o PO grava um `po_status`, nada que o agente
+ * declare volta a aparecer no quadro, e um cartão reaberto continuaria "a
+ * fazer" com o agente trabalhando nele de novo.
+ *
+ * A regra do meio-termo tem duas metades, e as duas tratam a mesma pergunta:
+ * quem falou por último sobre o estado?
+ *
+ * 1. O `source_status` MUDOU de valor: foi o agente. A correção do PO cai.
+ * 2. O cartão está "a fazer" por correção e o agente declara trabalho EM
+ *    ANDAMENTO. Aqui o `source_status` pode nem ter mudado — o cartão que a
+ *    reabertura devolveu para "a fazer" continua `in_progress` na lista do
+ *    CLI, e o agente que retoma o trabalho reemite exatamente esse valor. A
+ *    reabertura é uma afirmação sobre um MOMENTO ("no fim daquele turno
+ *    ninguém estava trabalhando nisto") e ela expira assim que alguém volta a
+ *    trabalhar; sem esta metade, o cartão ficaria travado em "a fazer" com o
+ *    agente mexendo nele, que é o oposto do que a reabertura quer.
+ *
+ * Um "concluído" do PO NÃO cai por releitura: aquilo é afirmação sobre o
+ * TRABALHO, e snapshot velho reemitido não o refuta — só o agente mudando o
+ * status. E `po_title`/`po_note` ficam nos dois casos, porque título legível
+ * não é estado e não envelhece quando o trabalho anda.
+ *
+ * Mora aqui, e não no SQL de cada repositório, porque SQLite e PostgreSQL
+ * precisam decidir a MESMA coisa: em duas versões, o quadro cross-device
+ * divergiria conforme o PC — e nenhum teste quebraria, porque cada cópia teria
+ * a sua.
+ */
+export function planBoardSourceSync(
+  current: BoardSyncCurrent,
+  incoming: BoardSourceItem,
+  projectId: string
+): BoardSyncPlan {
+  const statusChanged = current.source_status !== incoming.status
+  const reopenExpired = current.po_status === 'pending' && incoming.status === 'in_progress'
+  const clearPoStatus = current.po_status !== null && (statusChanged || reopenExpired)
+  const sourceSame =
+    !statusChanged &&
+    current.source_title === incoming.title &&
+    (current.active_form ?? null) === incoming.activeForm &&
+    Number(current.seq) === incoming.seq &&
+    current.project_id === projectId
+  // Soltar o `po_status` É uma mudança no cartão: sem isto, a escrita seria
+  // pulada justamente no caso em que só a camada do PO muda.
+  return { unchanged: sourceSame && !clearPoStatus, clearPoStatus }
+}
+
 export function assertPoWrite(input: BoardPoWrite): void {
   if (!input.id?.trim()) throw new TypeError('id do cartão é obrigatório.')
   if (input.poStatus !== undefined && input.poStatus !== null && !isBoardStatus(input.poStatus)) {

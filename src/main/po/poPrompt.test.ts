@@ -60,6 +60,27 @@ describe('digest', () => {
     expect(prompt).toContain('CONCLUIR')
     expect(prompt).toContain('PEDIDO DO USUÁRIO')
   })
+
+  it('a abertura não leva seção de ações — o turno ainda nem começou', () => {
+    const open = buildPoDigest({ userText: 'arruma o login', cards: [], calls: [], phase: 'open' })
+    expect(open).toContain('PEDIDO DO USUÁRIO')
+    expect(open).toContain('QUADRO ATUAL')
+    expect(open).not.toContain('AÇÕES DESTE TURNO')
+  })
+
+  it('cada fase carrega as SUAS operações, e só elas', () => {
+    const open = buildPoPrompt({ userText: 'x', cards: [], calls: [], phase: 'open' })
+    expect(open).toContain('ANDAMENTO <id>')
+    expect(open).toContain('NOVA | <título>')
+    expect(open).not.toContain('CONCLUIR <id>')
+    // A regra que impede o quadro de virar registro de conversa.
+    expect(open).toContain('NÃO viram cartão')
+
+    const close = buildPoPrompt({ userText: 'x', cards: [], calls: [], phase: 'close' })
+    expect(close).toContain('CONCLUIR <id>')
+    expect(close).toContain('FEITA | <título>')
+    expect(close).not.toContain('ANDAMENTO <id>')
+  })
 })
 
 describe('summarizeCall', () => {
@@ -90,16 +111,50 @@ describe('parsePoVerdict', () => {
     expect(parsePoVerdict('OK', ids)).toEqual([])
   })
 
-  it('lê as três operações', () => {
+  it('lê as operações do fechamento', () => {
     const ops = parsePoVerdict(
-      ['CONCLUIR bi-1 | o arquivo foi escrito e o teste passou', 'TITULO bi-2 | Criar a tabela do quadro', 'NOVA | Documentar o PO | o agente disse que falta'].join('\n'),
-      ids
+      [
+        'CONCLUIR bi-1 | o arquivo foi escrito e o teste passou',
+        'TITULO bi-2 | Criar a tabela do quadro',
+        'NOVA | Documentar o PO | o agente disse que falta',
+        'FEITA | Arrumar o login | o arquivo foi escrito neste turno'
+      ].join('\n'),
+      ids,
+      'close'
     )
     expect(ops).toEqual([
       { kind: 'complete', id: 'bi-1', reason: 'o arquivo foi escrito e o teste passou' },
       { kind: 'retitle', id: 'bi-2', title: 'Criar a tabela do quadro' },
-      { kind: 'create', title: 'Documentar o PO', reason: 'o agente disse que falta' }
+      { kind: 'create', title: 'Documentar o PO', reason: 'o agente disse que falta', status: 'pending' },
+      // FEITA nasce CONCLUÍDA: é o trabalho que já aconteceu e não tinha cartão.
+      { kind: 'create', title: 'Arrumar o login', reason: 'o arquivo foi escrito neste turno', status: 'completed' }
     ])
+  })
+
+  it('lê as operações da abertura — cartão novo já nasce em andamento', () => {
+    const ops = parsePoVerdict(
+      ['NOVA | Arrumar o login | o usuário pediu agora', 'ANDAMENTO bi-1 | o pedido é este cartão'].join('\n'),
+      ids,
+      'open'
+    )
+    expect(ops).toEqual([
+      { kind: 'create', title: 'Arrumar o login', reason: 'o usuário pediu agora', status: 'in_progress' },
+      { kind: 'start', id: 'bi-1', reason: 'o pedido é este cartão' }
+    ])
+  })
+
+  it('operação da fase errada é DESCARTADA — o modelo respondeu outra pergunta', () => {
+    // Concluir na abertura falaria de um trabalho que ainda nem começou.
+    expect(parsePoVerdict('CONCLUIR bi-1 | terminou', ids, 'open')).toEqual([])
+    expect(parsePoVerdict('TITULO bi-1 | Outro título', ids, 'open')).toEqual([])
+    expect(parsePoVerdict('FEITA | Já foi | aconteceu', ids, 'open')).toEqual([])
+    // E reabrir no fechamento desfaria o que o turno acabou de terminar.
+    expect(parsePoVerdict('ANDAMENTO bi-1 | começando', ids, 'close')).toEqual([])
+  })
+
+  it('sem fase informada continua sendo o PO de fechamento', () => {
+    expect(parsePoVerdict('CONCLUIR bi-1 | terminou', ids)).toHaveLength(1)
+    expect(parsePoVerdict('ANDAMENTO bi-1 | começando', ids)).toEqual([])
   })
 
   it('id que não está no quadro é DESCARTADO — o PO não mexe no que não viu', () => {
@@ -170,5 +225,43 @@ describe('rejectUnsafeOps — a última barreira antes do banco', () => {
 
   it('cartão inexistente é barrado mesmo se passar pelo parser', () => {
     expect(rejectUnsafeOps([{ kind: 'retitle', id: 'sumiu', title: 'x' }], [card()])).toEqual([])
+  })
+
+  it('põe em andamento só o cartão que ainda não começou', () => {
+    const start = { kind: 'start' as const, id: 'bi-1', reason: 'é este o pedido' }
+    expect(rejectUnsafeOps([start], [card()])).toHaveLength(1)
+    // Já está em andamento: marcar de novo é escrita à toa.
+    expect(rejectUnsafeOps([start], [card({ sourceStatus: 'in_progress' })])).toEqual([])
+    // E reabrir o concluído seria o PO desfazendo um fato do agente.
+    expect(rejectUnsafeOps([start], [card({ sourceStatus: 'completed' })])).toEqual([])
+    expect(rejectUnsafeOps([start], [card({ poStatus: 'completed', poReason: 'antes' })])).toEqual([])
+  })
+
+  it('não recria cartão que já existe — acento e caixa não fazem título novo', () => {
+    const create = (title: string) => [{ kind: 'create' as const, title, reason: 'x', status: 'in_progress' as const }]
+    const cards = [card({ sourceTitle: 'Corrigir a exportação de XML' })]
+    expect(rejectUnsafeOps(create('corrigir a exportacao de xml'), cards)).toEqual([])
+    expect(rejectUnsafeOps(create('CORRIGIR   A   EXPORTAÇÃO DE XML'), cards)).toEqual([])
+    // Trabalho de verdade diferente continua entrando.
+    expect(rejectUnsafeOps(create('Corrigir a importação de XML'), cards)).toHaveLength(1)
+  })
+
+  it('o título comparado é o das DUAS camadas — inclusive o que o PO renomeou', () => {
+    const cards = [card({ sourceTitle: 'add xml export', poTitle: 'Corrigir a exportação de XML' })]
+    expect(rejectUnsafeOps(
+      [{ kind: 'create', title: 'corrigir a exportacao de xml', reason: 'x', status: 'completed' }],
+      cards
+    )).toEqual([])
+  })
+
+  it('dois cartões equivalentes na mesma resposta viram um', () => {
+    const ops = rejectUnsafeOps(
+      [
+        { kind: 'create', title: 'Documentar o quadro', reason: 'a', status: 'pending' },
+        { kind: 'create', title: 'documentar o QUADRO', reason: 'b', status: 'pending' }
+      ],
+      [card()]
+    )
+    expect(ops).toHaveLength(1)
   })
 })

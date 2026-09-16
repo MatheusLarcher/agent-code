@@ -223,11 +223,20 @@ const vigia = new Vigia({
 // chat nunca pode quebrar porque o quadro não conseguiu persistir).
 const board = new BoardService({
   repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
-  onChanged: (projectId) => send(Channels.boardChanged, { projectId })
+  onChanged: (projectId) => send(Channels.boardChanged, { projectId }),
+  // O fechamento de turno espera a auditoria do PO antes de devolver para "a
+  // fazer" o que ficou em andamento — reabrir primeiro desfaria o "concluído"
+  // que ele ainda ia gravar. A referência é preguiçosa de propósito: `po` é
+  // declarado abaixo (ele depende do `board`), e esta função só roda quando um
+  // turno termina, muito depois de os dois existirem. O tipo de retorno é
+  // explícito porque sem ele o `tsc` tentaria inferir `po` para tipar `board` e
+  // `board` para tipar `po` — o mesmo ciclo, agora entre os dois tipos.
+  poSettled: (convId: string): Promise<void> => po.settled(convId)
 })
 
-// O PO: audita o quadro no fim de cada turno e conserta o que o agente esqueceu
-// de marcar. Escreve no quadro, nunca no chat; falha em silêncio.
+// O PO: audita o quadro na abertura do turno (o pedido vira cartão antes de o
+// trabalho começar) e no fechamento (o que terminou de fato). Escreve no
+// quadro, nunca no chat; falha em silêncio.
 const po = new Po({
   config: () => loadConfig().board ?? DEFAULT_CONFIG.board,
   board,
@@ -1271,12 +1280,24 @@ function registerIpc(): void {
       // O vigia lê o mesmo tee — e a saída dele NÃO volta por aqui: alerta é
       // para o usuário, não para o modelo (canal próprio, ver vigia.ts).
       vigia.observe(convId, event)
-      // O quadro se alimenta do MESMO tee, e só do snapshot autoritativo
+      // O quadro se alimenta do MESMO tee: do snapshot autoritativo
       // (`task-list`) — nunca dos eventos incrementais, que congelam o quadro
-      // quando o app perde um deles (ver boardService.ts).
+      // quando o app perde um deles — e do fim do turno (`result`/`error`), que
+      // é quando o que ficou "fazendo" volta para "a fazer" (ver boardService.ts).
       board.observe(convId, opts.cwd, event)
-      // O PO lê o mesmo tee, mas só age no fim do turno — é lá que dá para ver
-      // o que terminou de verdade.
+      // O PO lê o mesmo tee e fecha o turno com a auditoria — é lá que dá para
+      // ver o que terminou de verdade (a abertura entra pelo `noteUserMessage`).
+      //
+      // O fechamento que o `board.observe` acabou de enfileirar espera pelo
+      // `po.settled`, e quem registra a análise em voo é a chamada abaixo. O que
+      // garante essa ordem não é a posição das linhas aqui: `Po.start`
+      // (po.ts:165) põe a análise no conjunto de forma SÍNCRONA, ainda neste
+      // tick, enquanto `closeTurn` (boardService.ts:170) só encadeia uma closure
+      // — o `waitForPo` de dentro dela roda num microtask posterior, quando o
+      // registro já aconteceu nas duas ordens possíveis. Trocar estas duas
+      // linhas de lugar não muda nada; o que quebraria a garantia é registrar a
+      // análise depois de um `await` em `Po.start`, ou perguntar pelo
+      // `poSettled` ainda no tick do evento.
       po.observe(convId, event)
     }
     s = new ProviderFailoverSession(opts, (sessionOptions, sessionEmit, sessionComplete) => new AgentSession(
@@ -1349,6 +1370,8 @@ function registerIpc(): void {
       // dele começa (retomada e recuperação de turno não passam por aqui).
       vigia.noteUserMessage(convId, text)
       // O PO precisa do mesmo marco, e da pasta do projeto para achar o quadro.
+      // Aqui também começa a ABERTURA dele: o pedido tem que virar cartão antes
+      // de o agente trabalhar, senão o que ele nunca declarar não deixa rastro.
       po.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
       await sessions.get(convId)?.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }

@@ -970,7 +970,16 @@ export function App(): JSX.Element {
       if (msg.phase === 'gpt-luna-started') {
         notify('aviso', 'Claude indisponível para o PO; continuando com GPT Luna.')
       } else if (msg.phase === 'gpt-luna-unavailable') {
-        notify('erro', 'GPT Luna indisponível para a auditoria do quadro.')
+        // São DUAS rodadas por turno: na abertura o PO registra o pedido, no fim
+        // ele audita. Dizer "auditoria" nas duas manda o usuário procurar um erro
+        // na parte errada do turno. `round` ausente é o diagnóstico antigo — fica
+        // com a frase de sempre em vez de uma frase meio inventada.
+        notify(
+          'erro',
+          msg.round === 'open'
+            ? 'GPT Luna indisponível para registrar o pedido no quadro.'
+            : 'GPT Luna indisponível para a auditoria do quadro.'
+        )
       }
     }) ?? (() => undefined)
     const offState = window.api.onBrowserState(setBrowserState)
