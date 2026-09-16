@@ -7,15 +7,18 @@ import {
 } from '../observerQuery'
 import type { BoardConfig, BoardItem, ChatEvent, PoProviderDiagnostic } from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
+import { taskLedger } from '../tasks/taskRuntime'
 import {
   buildPoPrompt,
   parsePoVerdict,
   PO_COOLDOWN_MS,
   PO_MAX_CALLS,
+  PO_MAX_LEDGER_TASKS,
   PO_MAX_USER_CHARS,
   rejectUnsafeOps,
   summarizeCall,
   type PoCall,
+  type PoLedgerTask,
   type PoOp,
   type PoPhase
 } from './poPrompt'
@@ -53,6 +56,14 @@ export interface PoDeps {
   diagnose?(diagnostic: PoProviderDiagnostic): void
   now?(): number
   newCorrelationId?(): string
+  /**
+   * As tarefas do registro (mcp__tasks) ligadas a esta conversa — evidência
+   * que sobrevive ao teto de PO_MAX_CALLS porque não depende do histórico de
+   * ações. Sem injeção (produção), consulta o registro ativo; sem registro,
+   * ou se a consulta falhar, devolve vazio — o PO nunca quebra por causa
+   * disso, só perde a seção extra do digest.
+   */
+  listConvTasks?(convId: string): Promise<PoLedgerTask[]>
 }
 
 /** A fila dos turnos que ainda não passaram pelo PO. */
@@ -254,6 +265,24 @@ export class Po {
     return rejectUnsafeOps(ops, fresh)
   }
 
+  /** Consulta o registro de tarefas ativo. Nunca lança: sem registro ou com a
+   *  consulta falhando, o PO segue só com a evidência de ações — degrada, não
+   *  quebra. */
+  private async listConvTasks(convId: string): Promise<PoLedgerTask[]> {
+    // O catch cobre as DUAS origens (a injetada e o registro real): uma
+    // consulta injetada em produção pode falhar tanto quanto o registro em
+    // si, e das duas formas o PO segue só sem a seção extra, nunca aborta.
+    try {
+      if (this.deps.listConvTasks) return await this.deps.listConvTasks(convId)
+      const ledger = taskLedger()
+      if (!ledger) return []
+      const tasks = await ledger.listTasks({ conversationId: convId, limit: PO_MAX_LEDGER_TASKS })
+      return tasks.map((task) => ({ title: task.title, status: task.status }))
+    } catch {
+      return []
+    }
+  }
+
   private nextCorrelationId(): string {
     return this.deps.newCorrelationId?.() ?? `po-${Date.now().toString(36)}-${this.correlations++}`
   }
@@ -352,6 +381,7 @@ export class Po {
         conv.deferred = null
       }
       const merged = phase === 'close' ? this.mergeDeferred(taken, turn) : turn
+      const ledgerTasks = await this.listConvTasks(convId)
       const prompt = buildPoPrompt({
         userText: merged.userText,
         cards: cards.map((card) => ({
@@ -360,7 +390,8 @@ export class Po {
           status: card.poStatus ?? card.sourceStatus
         })),
         calls: [...merged.calls],
-        phase
+        phase,
+        ledgerTasks
       })
       const request: PoObserverRequest = Object.freeze({
         prompt,

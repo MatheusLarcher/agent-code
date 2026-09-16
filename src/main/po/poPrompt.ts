@@ -42,8 +42,22 @@ export type PoPhase = 'open' | 'close'
 export const PO_COOLDOWN_MS = 60_000
 /** Tetos do digest: o custo não pode crescer com o tamanho da conversa. */
 export const PO_MAX_USER_CHARS = 1200
-export const PO_MAX_CALLS = 20
+/**
+ * Numa sessão longa e cheia de delegação (dezenas de turnos por hora, cada
+ * um com um subagente), o cooldown de 60s pula quase todo fechamento e
+ * `mergeDeferred` mantém só as ÚLTIMAS ações de todos os turnos acumulados.
+ * Com o teto antigo (20), a evidência de "o arquivo foi escrito, o teste
+ * rodou" que provava a conclusão de um cartão saía da janela bem antes de o
+ * cooldown liberar uma análise — e o PO, corretamente pela própria regra
+ * ("só conclua com evidência"), nunca tinha motivo para marcar CONCLUIR.
+ * 60 não elimina o limite, mas dá margem para o volume real deste modo de
+ * trabalho sem inflar o prompt a cada turno de uma sessão comum.
+ */
+export const PO_MAX_CALLS = 60
 export const PO_MAX_CARDS = 30
+/** Teto da seção de tarefas do registro (mcp__tasks) no digest — mesmo
+ *  espírito de PO_MAX_CARDS: uma lista longa não ajuda o modelo a decidir. */
+export const PO_MAX_LEDGER_TASKS = 15
 /** Teto de operações por análise. Um PO que reescreve o quadro inteiro de uma
  *  vez é quase certamente um PO que entendeu tudo errado. */
 export const PO_MAX_OPS = 6
@@ -89,6 +103,8 @@ Regras inegociáveis:
 - Um pedido é UM cartão. Não quebre o pedido em passos: quem decompõe é o agente, e o plano
   dele entra no quadro sozinho.
 - O título diz o que o usuário pediu, em uma linha e em português claro.
+- Se houver uma seção "TAREFAS DO REGISTRO NESTA CONVERSA" com uma tarefa do MESMO assunto,
+  trate como cartão já existente — não crie outro.
 - No máximo ${PO_MAX_OPS} operações. Sem texto fora das linhas de operação.`
 
 export const PO_SYSTEM_PROMPT_CLOSE = `Você é o PO (product owner) de um quadro de tarefas.
@@ -130,6 +146,9 @@ Regras inegociáveis:
 - Ação de apoio não é cartão: ler arquivo, rodar teste, typecheck e build fazem parte do
   trabalho — não crie um cartão para cada uma delas.
 - Se já existe cartão com o mesmo assunto, não crie outro.
+- Se houver uma seção "TAREFAS DO REGISTRO NESTA CONVERSA", uma tarefa marcada [done] ali é
+  evidência de conclusão tão válida quanto uma ação direta desta lista — use para CONCLUIR ou
+  FEITA mesmo sem ver o arquivo sendo escrito nas AÇÕES DESTE TURNO.
 - No máximo ${PO_MAX_OPS} operações. Sem texto fora das linhas de operação.`
 
 function clamp(text: string, max: number): string {
@@ -159,6 +178,15 @@ function normalizeTitle(text: string): string {
     .trim()
 }
 
+/** Uma tarefa do registro (mcp__tasks), reduzida ao que o PO precisa: título e
+ *  status. `done`/`failed` são evidência DURÁVEL de que algo aconteceu — ao
+ *  contrário do histórico de ações, não se perde no teto de PO_MAX_CALLS
+ *  quando o cooldown empurra a análise para muitos turnos à frente. */
+export interface PoLedgerTask {
+  title: string
+  status: string
+}
+
 /** A fase é opcional e cai em `close` porque o fechamento é o PO que já existia:
  *  quem chamava antes da abertura existir continua recebendo o mesmo prompt. */
 export function buildPoDigest(input: {
@@ -166,6 +194,7 @@ export function buildPoDigest(input: {
   cards: { id: string; title: string; status: BoardItemStatus }[]
   calls: PoCall[]
   phase?: PoPhase
+  ledgerTasks?: PoLedgerTask[]
 }): string {
   const cards = input.cards.slice(0, PO_MAX_CARDS)
   const calls = input.calls.slice(0, PO_MAX_CALLS)
@@ -186,6 +215,16 @@ export function buildPoDigest(input: {
       '',
       'AÇÕES DESTE TURNO:',
       ...(calls.length === 0 ? ['(nenhuma)'] : calls.map((call) => `- ${call.tool}: ${call.detail}`))
+    )
+  }
+  // Só aparece quando há algo a mostrar: uma seção vazia ensinaria o modelo a
+  // esperar por uma fonte de evidência que não existe nesta conversa.
+  const ledgerTasks = (input.ledgerTasks ?? []).slice(0, PO_MAX_LEDGER_TASKS)
+  if (ledgerTasks.length > 0) {
+    lines.push(
+      '',
+      'TAREFAS DO REGISTRO NESTA CONVERSA:',
+      ...ledgerTasks.map((task) => `- ${clamp(task.title, PO_MAX_TITLE_CHARS)} [${task.status}]`)
     )
   }
   return lines.join('\n')

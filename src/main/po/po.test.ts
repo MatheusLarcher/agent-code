@@ -5,7 +5,7 @@ import type { BoardService } from '../board/boardService'
 import { classifyClaudeObserverFailure } from '../observerQuery'
 import type { BoardPoCreate } from '../persistence/types'
 import { Po, type PoObserverRequest } from './po'
-import { PO_MAX_USER_CHARS, type PoPhase } from './poPrompt'
+import { PO_MAX_CALLS, PO_MAX_USER_CHARS, type PoPhase } from './poPrompt'
 
 function card(over: Partial<BoardItem> = {}): BoardItem {
   return {
@@ -479,7 +479,7 @@ describe('Po — fechamento (a auditoria do turno)', () => {
     const ask = askPhases()
     const po = new Po({ config: () => config(), board, ask })
     po.noteUserMessage('conv-1', 'C:/p', 'x')
-    for (let i = 0; i < 40; i += 1) {
+    for (let i = 0; i < PO_MAX_CALLS + 5; i += 1) {
       po.observe('conv-1', toolUse('Read', { file_path: `leitura-${i}.ts` }))
     }
     po.observe('conv-1', toolUse('Bash', { command: 'npx vitest run' }))
@@ -806,5 +806,95 @@ describe('Po — failover Claude → Luna', () => {
     expect(request.prompt).toContain('src/turn-a.ts')
     expect(request.prompt).not.toContain('pedido do turno B')
     expect(request.prompt).not.toContain('teste-do-turno-b')
+  })
+})
+
+describe('Po — evidência durável do registro de tarefas', () => {
+  it('a seção de tarefas do registro entra no digest quando há alguma', async () => {
+    const board = fakeBoard([card()])
+    const ask = askPhases()
+    const listConvTasks = vi.fn(async () => [{ title: 'Corrigir a exportação de XML', status: 'done' }])
+    const po = new Po({ config: () => config(), board, ask, listConvTasks })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(listConvTasks).toHaveBeenCalledWith('conv-1')
+    for (const prompt of [...prompts(ask, 'open'), ...prompts(ask, 'close')]) {
+      expect(prompt).toContain('TAREFAS DO REGISTRO NESTA CONVERSA:')
+      expect(prompt).toContain('Corrigir a exportação de XML [done]')
+    }
+  })
+
+  it('sem tarefa nenhuma no registro, a seção simplesmente não aparece', async () => {
+    const board = fakeBoard([card()])
+    const ask = askPhases()
+    const listConvTasks = vi.fn(async () => [])
+    const po = new Po({ config: () => config(), board, ask, listConvTasks })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    po.observe('conv-1', result)
+    await flush()
+
+    for (const prompt of [...prompts(ask, 'open'), ...prompts(ask, 'close')]) {
+      expect(prompt).not.toContain('TAREFAS DO REGISTRO NESTA CONVERSA:')
+    }
+  })
+
+  it('registro lançando não derruba a análise — só falta a seção extra', async () => {
+    const board = fakeBoard([card()])
+    const ask = askPhases({ close: 'CONCLUIR bi-1 | evidência só de ações' })
+    const listConvTasks = vi.fn(async () => {
+      throw new Error('registro fora do ar')
+    })
+    const po = new Po({ config: () => config(), board, ask, listConvTasks })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    po.observe('conv-1', toolUse('Edit', { file_path: 'src/quadro.ts' }))
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(board.applyPo).toHaveBeenCalledWith({ id: 'bi-1', poStatus: 'completed', poReason: 'evidência só de ações' })
+  })
+
+  it('conclui com base numa tarefa DONE do registro mesmo sem evidência de ações no digest', async () => {
+    // O caso real que motivou isto: numa sessão longa, cheia de delegação, o
+    // histórico de ações do turno que terminou o cartão já saiu do teto de
+    // PO_MAX_CALLS quando o cooldown finalmente libera uma auditoria. Sem a
+    // seção do registro, não haveria evidência nenhuma e o cartão ficaria
+    // preso em "em andamento" para sempre — exatamente o bug relatado.
+    const board = fakeBoard([card({ sourceStatus: 'in_progress' })])
+    const ask = askPhases({ close: 'CONCLUIR bi-1 | o registro marca a tarefa como concluída' })
+    const listConvTasks = vi.fn(async () => [{ title: 'add board table', status: 'done' }])
+    const po = new Po({ config: () => config(), board, ask, listConvTasks })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    // Nenhuma ação de arquivo no digest — só o que o registro sabe.
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(board.applyPo).toHaveBeenCalledWith({
+      id: 'bi-1',
+      poStatus: 'completed',
+      poReason: 'o registro marca a tarefa como concluída'
+    })
+  })
+
+  it('sem `listConvTasks` injetado, sem registro ativo, degrada em silêncio (produção sem taskRuntime configurado)', async () => {
+    const board = fakeBoard([card()])
+    const ask = askPhases()
+    // Nenhum listConvTasks passado: cai no caminho padrão de produção, que
+    // consulta taskLedger() — null neste ambiente de teste (nenhum
+    // configureTaskRuntime chamado) — e devolve vazio sem lançar.
+    const po = new Po({ config: () => config(), board, ask })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    po.observe('conv-1', result)
+    await flush()
+
+    for (const prompt of [...prompts(ask, 'open'), ...prompts(ask, 'close')]) {
+      expect(prompt).not.toContain('TAREFAS DO REGISTRO NESTA CONVERSA:')
+    }
   })
 })
