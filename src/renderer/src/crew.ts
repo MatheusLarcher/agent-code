@@ -1,4 +1,4 @@
-import type { PoProviderDiagnosticMsg } from '@shared/ipc'
+import type { MemoristaProviderDiagnosticMsg, PoProviderDiagnosticMsg } from '@shared/ipc'
 import type { AgentTrack, TrackMap, TrackStep } from './agentTracks'
 
 /**
@@ -229,9 +229,15 @@ export interface CrewInput {
   vigia: { at: number } | null
   /** Último diagnóstico do PO desta conversa. */
   po: PoProviderDiagnosticMsg | null
+  /** Último diagnóstico do memorista desta conversa. Ele NÃO ganha cartão
+   *  próprio: acende o do papel `memoria`, que já está no elenco. */
+  memorista?: MemoristaProviderDiagnosticMsg | null
   /** O observador está ligado nas configurações? Desligado, some do elenco. */
   poEnabled: boolean
   vigiaEnabled: boolean
+  /** Desligado nas Configurações, o cartão `memoria` volta a ser só o do
+   *  subagente delegado — não some, porque o papel continua existindo. */
+  memoristaEnabled?: boolean
   /** Injetável para o teste fixar o "acabou de começar". */
   now?: number
 }
@@ -314,6 +320,60 @@ function poMember(po: PoProviderDiagnosticMsg | null): CrewMember {
   return base
 }
 
+/**
+ * O cartão do papel `memoria` quando quem o acende é o MEMORISTA (o observador
+ * do main), e não uma delegação do agente principal.
+ *
+ * Ele reusa o cartão que já existe em vez de ganhar um próprio porque para o
+ * usuário é o mesmo papel — quem cuida do que o app lembra. Dois cartões de
+ * memória lado a lado só fariam perguntar qual dos dois é o de verdade.
+ */
+function memoristaMember(memorista: MemoristaProviderDiagnosticMsg | null): CrewMember {
+  const base: CrewMember = {
+    id: 'role:memoria',
+    role: 'memoria',
+    name: roleName('memoria'),
+    kind: 'guarda o que você ensina',
+    state: 'idle',
+    // O estado parado é onde o cartão fica quase sempre, então é ele que ensina
+    // o papel — e o que surpreende aqui é o SOZINHO: ninguém precisa pedir.
+    line: [txt('anota sozinho, no fim do turno, o que vale lembrar')],
+    badge: { text: 'disponível', tone: 'plain' },
+    group: 'conversa'
+  }
+  if (!memorista) return base
+
+  const model = memorista.actualProvider === 'gpt-luna' ? 'gpt-5.6-luna' : 'claude'
+  if (memorista.phase === 'analysis-finished') {
+    const n = memorista.savedMemories ?? 0
+    // Zero é o caso NORMAL, não uma falha: a maioria dos turnos não ensina nada
+    // que valha guardar. Dizer "nada a guardar" evita ler silêncio como erro.
+    base.line = [
+      txt(n === 0 ? 'leu a conversa · nada a guardar' : `guardou ${n} ${n > 1 ? 'memórias' : 'memória'}`)
+    ]
+    base.badge = { text: model, tone: 'ok' }
+    base.endedAt = memorista.at
+    return base
+  }
+  if (memorista.phase === 'gpt-luna-unavailable') {
+    base.state = 'failed'
+    base.line = [txt('não consegui ler a conversa · GPT Luna indisponível')]
+    base.badge = { text: 'falhou', tone: 'err' }
+    base.endedAt = memorista.at
+    return base
+  }
+  base.state = 'working'
+  base.startedAt = memorista.at
+  delete base.badge
+  base.line =
+    memorista.phase === 'gpt-luna-started'
+      ? [tool('lendo'), txt(` a conversa · continuando com ${model}`)]
+      : memorista.phase === 'memorista-provider-switch' || memorista.phase === 'claude-unavailable'
+        ? [txt('trocando de provedor · '), tool(model)]
+        : [tool('lendo'), txt(' a conversa')]
+  return base
+}
+
 function vigiaMember(vigia: { at: number } | null): CrewMember {
   if (!vigia) {
     return {
@@ -384,9 +444,17 @@ export function buildCrew(input: CrewInput): CrewMember[] {
   for (const role of SPECIALIST_ROLES) {
     const list = byRole.get(role) ?? []
     const track = pickTrack(list)
+    if (track) {
+      members.push(memberFromTrack(role, track, list.filter((t) => t.status === 'running').length, now))
+      continue
+    }
+    // Sem delegação em cena, o cartão de `memoria` é do memorista. A delegação
+    // ganha do observador porque ela é trabalho DESTE turno, com passos para
+    // mostrar; o memorista só entra quando o slot estaria parado de qualquer
+    // jeito — e assim o cartão nunca muda de posição, só de conteúdo.
     members.push(
-      track
-        ? memberFromTrack(role, track, list.filter((t) => t.status === 'running').length, now)
+      role === 'memoria' && input.memoristaEnabled
+        ? memoristaMember(input.memorista ?? null)
         : idleMember(role)
     )
   }

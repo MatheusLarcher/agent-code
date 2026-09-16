@@ -22,6 +22,7 @@ const partialConfigSchema = z
     remoteEnabled: z.boolean().optional(),
     preventSleepWhileBusy: z.boolean().optional(),
     vigia: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional(),
+    memorista: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional(),
     board: z
       .object({
         requirePlan: z.boolean().optional(),
@@ -39,6 +40,7 @@ export function defaultAppConfig(): AppConfig {
     localSpeech: { ...DEFAULT_CONFIG.localSpeech },
     ollama: { ...DEFAULT_CONFIG.ollama },
     vigia: { ...DEFAULT_CONFIG.vigia },
+    memorista: { ...DEFAULT_CONFIG.memorista },
     board: { ...DEFAULT_CONFIG.board, po: { ...DEFAULT_CONFIG.board.po } }
   }
 }
@@ -57,6 +59,7 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
     localSpeech: { ...current.localSpeech, ...(parsed.data.localSpeech ?? {}) },
     ollama: { ...current.ollama, ...(parsed.data.ollama ?? {}) },
     vigia: { ...current.vigia, ...(parsed.data.vigia ?? {}) },
+    memorista: { ...current.memorista, ...(parsed.data.memorista ?? {}) },
     // `po` é aninhado: o spread raso do `board` apagaria o modelo ao gravar só
     // o interruptor (mesma armadilha do merge aninhado do `openai`).
     board: {

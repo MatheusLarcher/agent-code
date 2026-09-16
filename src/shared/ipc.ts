@@ -868,6 +868,27 @@ export interface BoardConfig {
  *  é um leitor barato, não o modelo que faz o trabalho. */
 export const PO_MODELS = VIGIA_MODELS
 
+/**
+ * Memorista — o terceiro observador, no mesmo molde do vigia e do PO.
+ *
+ * Ele lê o fim de cada turno e grava o que vale lembrar amanhã. Existe porque a
+ * memória só era escrita quando alguém pedia ("salva isso"), quando o agente
+ * principal lembrava de delegar, ou na varredura diária do curador — que só
+ * aceita correção explícita. Resultado medido: conhecimento que o usuário
+ * ensinou numa conversa não virava memória nenhuma.
+ *
+ * Ligado por padrão pelo mesmo motivo dos irmãos: uma memória que depende de o
+ * usuário lembrar de ligar é uma memória que não acontece.
+ */
+export interface MemoristaConfig {
+  enabled: boolean
+  /** Model id da análise (mais barato que o da conversa observada). */
+  model: string
+}
+
+/** Modelos oferecidos para o memorista. Mesma lista curta do vigia e do PO. */
+export const MEMORISTA_MODELS = VIGIA_MODELS
+
 /** An alert raised by the vigia for one conversation. Travels on its OWN IPC
  *  channel, never as a `ChatEvent`: it is for the user, not for the model, and
  *  an unknown event kind would pile up in the phone client's message list. */
@@ -916,6 +937,39 @@ export interface PoProviderDiagnostic {
 }
 
 export interface PoProviderDiagnosticMsg extends PoProviderDiagnostic {
+  id: string
+  at: number
+}
+
+/**
+ * O mesmo diagnóstico seguro do PO, para o memorista.
+ *
+ * É um tipo próprio, e não o do PO reaproveitado, porque o que cada um informa
+ * no fim é diferente (`appliedOps` no quadro, `savedMemories` no acervo) e
+ * porque o painel do elenco precisa saber QUAL papel está trabalhando — com um
+ * tipo só, um diagnóstico do memorista acenderia a linha do PO.
+ */
+export interface MemoristaProviderDiagnostic {
+  conversationId: string
+  correlationId: string
+  phase:
+    | 'claude-started'
+    | 'claude-unavailable'
+    | 'memorista-provider-switch'
+    | 'gpt-luna-started'
+    | 'gpt-luna-unavailable'
+    /** A análise acabou. Sem um FIM, o painel mostraria o memorista trabalhando
+     *  para sempre em qualquer saída antecipada. */
+    | 'analysis-finished'
+  requestedProvider: 'claude'
+  actualProvider: 'claude' | 'gpt-luna'
+  fallbackReason?: 'claude_plan' | 'claude_auth' | 'claude_authorization'
+  /** Só em `analysis-finished`: memórias propostas nesta análise (0 é o normal
+   *  — a maioria dos turnos não ensina nada que valha guardar). */
+  savedMemories?: number
+}
+
+export interface MemoristaProviderDiagnosticMsg extends MemoristaProviderDiagnostic {
   id: string
   at: number
 }
@@ -1048,6 +1102,8 @@ export interface AppConfig {
   preventSleepWhileBusy: boolean
   /** The parallel watcher that questions premises (see VigiaConfig). */
   vigia: VigiaConfig
+  /** O observador que grava memória sozinho ao fim do turno (see MemoristaConfig). */
+  memorista: MemoristaConfig
   /** O quadro de tarefas: a trava do plano e o agente PO (see BoardConfig). */
   board: BoardConfig
 }
@@ -1274,6 +1330,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Ligado por padrão: o estado inicial já tem que servir, e o custo é uma
   // chamada curta e sem ferramentas por turno, num modelo mais barato.
   vigia: { enabled: true, model: 'claude-sonnet-5' },
+  // Ligado por padrão, e é o ponto do recurso: a memória que depende de alguém
+  // lembrar de pedir é a memória que não é escrita — foi o que aconteceu com o
+  // conhecimento que o usuário ensinou e nunca virou arquivo.
+  memorista: { enabled: true, model: 'claude-sonnet-5' },
   // Também ligados por padrão: sem a trava o quadro fica vazio nas tarefas em
   // que ele mais importa, e sem o PO ninguém fecha o cartão que o agente
   // esqueceu — as duas metades do que torna o quadro confiável.
@@ -1448,6 +1508,9 @@ export const Channels = {
   vigiaAlert: 'vigia:alert',
   /** main → renderer: safe PO observer provider diagnostics (never chat content). */
   poProviderDiagnostic: 'po:provider-diagnostic',
+  /** main → renderer: o mesmo diagnóstico seguro, do memorista. Nunca leva o
+   *  conteúdo da memória — só qual provedor rodou e quantas foram propostas. */
+  memoristaProviderDiagnostic: 'memorista:provider-diagnostic',
   /** main → renderer: the Windows-control permission changed. */
   windowsControlChanged: 'windows-control:changed',
   browserFrame: 'browser:frame',

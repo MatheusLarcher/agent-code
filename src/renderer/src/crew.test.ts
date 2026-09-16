@@ -6,10 +6,11 @@ import {
   lineText,
   roleFromSubagentType,
   workingMembers,
-  type CrewInput
+  type CrewInput,
+  type CrewMember
 } from './crew'
 import type { AgentTrack } from './agentTracks'
-import type { PoProviderDiagnosticMsg } from '@shared/ipc'
+import type { MemoristaProviderDiagnosticMsg, PoProviderDiagnosticMsg } from '@shared/ipc'
 
 const T = 1_700_000_000_000
 
@@ -207,6 +208,73 @@ describe('buildCrew', () => {
   it('observador desligado não entra no elenco', () => {
     const crew = buildCrew(input({ poEnabled: false, vigiaEnabled: false }))
     expect(crew.some((m) => m.role === 'po' || m.role === 'vigia')).toBe(false)
+  })
+
+  it('o cartão de memória conta o que o memorista fez, fase por fase', () => {
+    const comum = {
+      conversationId: 'c1',
+      correlationId: 'x',
+      requestedProvider: 'claude' as const,
+      actualProvider: 'claude' as const,
+      phase: 'claude-started' as const,
+      id: 'd1',
+      at: T - 1_000
+    }
+    const cartao = (over?: Partial<MemoristaProviderDiagnosticMsg>): CrewMember =>
+      buildCrew(
+        input({ memoristaEnabled: true, memorista: over ? { ...comum, ...over } : null })
+      ).find((m) => m.role === 'memoria')!
+
+    // Parado, o cartão ensina o papel — e o que surpreende é ser sozinho.
+    expect(lineText(cartao().line)).toBe('anota sozinho, no fim do turno, o que vale lembrar')
+    expect(cartao().state).toBe('idle')
+
+    expect(lineText(cartao({}).line)).toBe('lendo a conversa')
+    expect(cartao({}).state).toBe('working')
+
+    // Zero é o caso normal, não falha: não pode sair com cara de erro.
+    const nada = cartao({ phase: 'analysis-finished', savedMemories: 0 })
+    expect(lineText(nada.line)).toBe('leu a conversa · nada a guardar')
+    expect(nada.badge).toEqual({ text: 'claude', tone: 'ok' })
+    expect(lineText(cartao({ phase: 'analysis-finished', savedMemories: 1 }).line)).toBe(
+      'guardou 1 memória'
+    )
+    expect(lineText(cartao({ phase: 'analysis-finished', savedMemories: 3 }).line)).toBe(
+      'guardou 3 memórias'
+    )
+
+    const falhou = cartao({ phase: 'gpt-luna-unavailable', actualProvider: 'gpt-luna' })
+    expect(falhou.state).toBe('failed')
+    expect(lineText(falhou.line)).toBe('não consegui ler a conversa · GPT Luna indisponível')
+    expect(
+      lineText(cartao({ phase: 'memorista-provider-switch', actualProvider: 'gpt-luna' }).line)
+    ).toBe('trocando de provedor · gpt-5.6-luna')
+  })
+
+  it('a delegação em cena ganha do memorista no mesmo cartão, sem duplicar o papel', () => {
+    const crew = buildCrew(
+      input({
+        tracks: { t9: track({ id: 't9', subagentType: 'memoria', label: 'memoria: buscar' }) },
+        memoristaEnabled: true,
+        memorista: {
+          conversationId: 'c1',
+          correlationId: 'x',
+          requestedProvider: 'claude',
+          actualProvider: 'claude',
+          phase: 'claude-started',
+          id: 'd1',
+          at: T - 1_000
+        }
+      })
+    )
+    const memoria = crew.filter((m) => m.role === 'memoria')
+    expect(memoria).toHaveLength(1)
+    expect(memoria[0]!.steps).toBeDefined()
+  })
+
+  it('memorista desligado devolve o cartão de memória ao especialista parado', () => {
+    const memoria = buildCrew(input({ memoristaEnabled: false })).find((m) => m.role === 'memoria')!
+    expect(lineText(memoria.line)).toBe('parado')
   })
 })
 

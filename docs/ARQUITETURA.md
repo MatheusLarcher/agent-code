@@ -18,6 +18,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Reiniciar o app pelo agente](#reiniciar-o-app-pelo-agente)
 - [Modal de pergunta interativa (AskUserQuestion)](#modal-de-pergunta-interativa-askuserquestion)
 - [Vigia — o observador que questiona premissas](#vigia--o-observador-que-questiona-premissas)
+- [Memorista — o observador que grava memória sozinho](#memorista--o-observador-que-grava-memória-sozinho)
 - [Quadro de tarefas do projeto (trava do plano + agente PO)](#quadro-de-tarefas-do-projeto-trava-do-plano--agente-po)
 - [Voz no chat (OpenAI)](#voz-no-chat-openai)
 - [Modelos via Ollama Cloud](#modelos-via-ollama-cloud)
@@ -282,6 +283,40 @@ A resposta sai pelo **caminho normal de envio**: com o agente ocupado ela entra 
 Uma versão anterior tinha o botão "Perguntar ao agente", e ele invertia o papel: transformava a dúvida numa decisão do usuário sobre *repassá-la*, em vez de uma pergunta que ele responde. O chip não é modal em nenhum dos casos — dá para ignorar e seguir digitando no composer. O estado (`vigiaAlerts` no `App.tsx`) é por conversa e **não persiste**: é pergunta viva, não dado da conversa.
 
 **Configuração** em **Configurações → Geral**: interruptor (**ligado** por padrão — o estado inicial já tem que servir) e seletor de modelo (`VIGIA_MODELS`). A config é lida **a cada análise**, então desligar vale na hora, sem reiniciar sessão.
+
+---
+
+## Memorista — o observador que grava memória sozinho
+
+O acervo de memórias só era escrito em três situações: o usuário pedir ("salva isso"), o agente principal lembrar de delegar ao subagente `memoria`, ou a varredura diária do curador encontrar uma correção explícita. O resultado medido foi: **conhecimento que o usuário ensinou numa conversa normal não virava memória nenhuma** — ninguém tinha errado nada, então nada qualificava.
+
+O **memorista** (`src/main/memoria/`) é o terceiro observador do app, no mesmo molde do vigia e do PO: vive no main, lê o **mesmo tee de eventos** (`emit`, em `index.ts`), não fala com o agente, não interrompe turno e falha em silêncio. A diferença é o destino da saída — ela vai para o **acervo de memórias**, nunca para o chat.
+
+**Quando roda** — uma análise por turno, no `result`. `noteUserMessage` marca o começo do turno no `agentSend` (retomada e recuperação não disparam nada); turno que morre em `error` não é analisado, porque falha não é conhecimento. Cooldown de 60 s por conversa, como o vigia — mas aqui o turno pulado **não some**: ele entra numa fila e é lido junto no próximo digest desta conversa, já que um turno nunca lido é exatamente o conhecimento que o recurso existe para não perder.
+
+**A régua é mais larga que a do curador**, e é essa a razão de ele existir. O curador aceita só **correção explícita** — "o usuário ensinou algo que o modelo não teria acertado". O memorista aceita seis categorias, validadas no parser: `instrucao`, `preferencia`, `conhecimento` (domínio, não código), `decisao` **com o motivo**, `infra` e também `correcao`. Decisão sem motivo vira dogma; o motivo é o que permite rever depois.
+
+**A divisão de trabalho com o curador diário** (`memoryCurator.ts`, 1×/24 h) — e por que os dois continuam valendo:
+
+| | memorista | curador diário |
+|---|---|---|
+| Quando | todo turno, ao vivo | 1×/24 h, em lote |
+| O que lê | o digest do turno (pedido + alvo das ações) | as **transcrições** inteiras, em blocos de 180 k caracteres |
+| Régua | seis categorias do usuário | só correção explícita |
+| Teto | 3 operações por análise | o que a varredura achar |
+| Forte em | pegar o fato **enquanto o contexto existe** | ver o que **atravessou** várias conversas |
+
+Um não substitui o outro: o memorista vê um turno por vez e nunca enxerga o padrão que só aparece relendo a semana; o curador relê tudo, mas com a régua estreita e um dia de atraso — e um dia depois o usuário já repetiu a instrução que ninguém guardou. Os dois escrevem pela mesma porta e o CAS do serviço resolve a corrida (o `expectedRevision` do memorista vem de uma leitura **fresca**, feita depois da consulta ao modelo, justamente porque o curador pode ter mexido no arquivo enquanto ela rodava).
+
+**Como ele escreve** — sempre pelo serviço de memória (`propose` + um `applyPending` por lote), o mesmo caminho do `memory_propose` do chat. `Write`/`Edit` na pasta de memórias pulariam a fila de propostas, o CAS e a varredura de segredos — e a varredura é obrigatória: uma credencial que o usuário citou de passagem vai para o cofre, e no arquivo fica o marcador. `update` **complementa**, nunca apaga. Teto de 3 operações por análise: quem grava seis memórias num turno está transcrevendo a conversa, não guardando um fato. Proposta recusada (caminho inválido, colisão, CAS) não cancela as outras nem derruba a análise.
+
+**O que entra no prompt** — o mesmo `summarizeCall` do vigia e do PO (o **alvo** da ação, nunca o conteúdo do arquivo), até 20 chamadas, e 4000 caracteres do texto do usuário: o digest mais folgado de todos os observadores, porque é do pedido dele que sai instrução e conhecimento. O índice do acervo entra só como título + gancho (até 40 memórias), o bastante para o modelo dizer "isso já está salvo".
+
+**Provedor e diagnóstico** — Claude primeiro, GPT Luna como reserva, como o PO. O andamento sai por um canal próprio (`Channels.memoristaProviderDiagnostic`), com **tipo próprio** e não o do PO reaproveitado: o painel do elenco precisa saber qual papel está trabalhando, e o que cada um informa no fim é diferente (`appliedOps` no quadro, `savedMemories` no acervo). O diagnóstico **nunca leva o conteúdo** da memória — só qual provedor rodou e quantas foram propostas.
+
+**No elenco**, ele acende o cartão do papel `memoria` que já existe (`crew.ts`), em vez de ganhar um próprio: para o usuário é o mesmo papel — quem cuida do que o app lembra. Uma delegação em cena ganha do observador no mesmo cartão, então o slot nunca duplica nem muda de posição. `savedMemories: 0` é o caso **normal** e aparece como "nada a guardar", não como falha: a maioria dos turnos não ensina nada que valha guardar.
+
+**Configuração** em **Configurações → Geral**, ao lado do vigia e do PO: interruptor (**ligado** por padrão — uma memória que depende de o usuário lembrar de ligar é uma memória que não acontece) e seletor de modelo (`MEMORISTA_MODELS`, default `claude-sonnet-5`). A config é lida uma vez por análise, então mudar na tela não redireciona uma análise em voo.
 
 ---
 

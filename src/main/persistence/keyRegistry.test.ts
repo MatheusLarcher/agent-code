@@ -22,6 +22,8 @@ const EXPECTED_KEYS = [
   'config.board.po.model',
   'config.board.requirePlan',
   'config.localSpeech.model',
+  'config.memorista.enabled',
+  'config.memorista.model',
   'config.ollama.apiKey',
   'config.ollama.enabled',
   'config.openai.apiKey',

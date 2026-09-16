@@ -56,6 +56,8 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.preventSleepWhileBusy',
       'config.vigia.enabled',
       'config.vigia.model',
+      'config.memorista.enabled',
+      'config.memorista.model',
       'config.board.requirePlan',
       'config.board.po.enabled',
       'config.board.po.model'

@@ -11,6 +11,7 @@ import type {
   PickedElement,
   QuestionAnswer,
   PoProviderDiagnosticMsg,
+  MemoristaProviderDiagnosticMsg,
   RateLimitStatus,
   RepositoryChange,
   StorageStatusDto,
@@ -451,9 +452,12 @@ export function App(): JSX.Element {
   // Último ciclo do PO por conversa. É o que dá ao cartão dele um começo e um
   // fim; sem o evento de fim o elenco o mostraria auditando para sempre.
   const [poDiagnostics, setPoDiagnostics] = useState<Record<string, PoProviderDiagnosticMsg>>({})
+  // Último ciclo do memorista por conversa. Mesmo formato do PO: sem o fim
+  // ("analysis-finished") o elenco mostraria o memorista analisando para sempre.
+  const [memoristaDiagnostics, setMemoristaDiagnostics] = useState<Record<string, MemoristaProviderDiagnosticMsg>>({})
   // Observador desligado nas Configurações some do elenco — mostrá-lo parado
   // para sempre seria dizer que existe alguém que não vai agir nunca.
-  const [observersOn, setObserversOn] = useState({ po: true, vigia: true })
+  const [observersOn, setObserversOn] = useState({ po: true, vigia: true, memorista: true })
   // Account-wide rate-limit usage (5h session / weekly / etc.) — deliberately
   // GLOBAL, not per-conversation: it comes from the Anthropic account, not from
   // any one chat, so it must survive switching conversations. Keyed by
@@ -982,6 +986,16 @@ export function App(): JSX.Element {
         )
       }
     }) ?? (() => undefined)
+    // Mesmo padrão do PO acima: preload antigo sem esta assinatura não derruba
+    // o resto do renderer, o memorista só fica silencioso.
+    const offMemoristaProvider = window.api.onMemoristaProviderDiagnostic?.((msg) => {
+      setMemoristaDiagnostics((m) => ({ ...m, [msg.conversationId]: msg }))
+      if (msg.phase === 'gpt-luna-started') {
+        notify('aviso', 'Claude indisponível para o memorista; continuando com GPT Luna.')
+      } else if (msg.phase === 'gpt-luna-unavailable') {
+        notify('erro', 'GPT Luna indisponível para a análise do memorista.')
+      }
+    }) ?? (() => undefined)
     const offState = window.api.onBrowserState(setBrowserState)
     const offPicked = window.api.onBrowserPicked((el) => {
       setChips((c) => [...c, el])
@@ -993,6 +1007,7 @@ export function App(): JSX.Element {
       offExpired()
       offVigia()
       offPoProvider()
+      offMemoristaProvider()
       offState()
       offPicked()
     }
@@ -2238,7 +2253,11 @@ export function App(): JSX.Element {
     void window.api.getConfig().then((c) => {
       setVoiceReady(!!c.openai?.apiKey?.trim())
       setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
-      setObserversOn({ po: c.board?.po?.enabled !== false, vigia: c.vigia?.enabled !== false })
+      setObserversOn({
+        po: c.board?.po?.enabled !== false,
+        vigia: c.vigia?.enabled !== false,
+        memorista: c.memorista?.enabled !== false
+      })
       voiceSpeedRef.current = c.openai?.speed || 1
     })
     void window.api.codexStatus().then((s) => setCodexReady(s.connected))
@@ -2250,7 +2269,11 @@ export function App(): JSX.Element {
     void window.api
       .getConfig()
       .then((c) =>
-        setObserversOn({ po: c.board?.po?.enabled !== false, vigia: c.vigia?.enabled !== false })
+        setObserversOn({
+          po: c.board?.po?.enabled !== false,
+          vigia: c.vigia?.enabled !== false,
+          memorista: c.memorista?.enabled !== false
+        })
       )
       .catch(() => undefined)
   }, [])
@@ -2480,9 +2503,21 @@ export function App(): JSX.Element {
         vigia: activeId && vigiaAlerts[activeId] ? { at: vigiaAt[activeId] ?? Date.now() } : null,
         po: activeId ? poDiagnostics[activeId] ?? null : null,
         poEnabled: observersOn.po,
-        vigiaEnabled: observersOn.vigia
+        vigiaEnabled: observersOn.vigia,
+        memorista: activeId ? memoristaDiagnostics[activeId] ?? null : null,
+        memoristaEnabled: observersOn.memorista
       }),
-    [activeTracks, activeId, busyIds, busySince, vigiaAlerts, vigiaAt, poDiagnostics, observersOn]
+    [
+      activeTracks,
+      activeId,
+      busyIds,
+      busySince,
+      vigiaAlerts,
+      vigiaAt,
+      poDiagnostics,
+      memoristaDiagnostics,
+      observersOn
+    ]
   )
   const crewWorking = useMemo(() => workingMembers(crew), [crew])
   const runningTrackCount = useMemo(

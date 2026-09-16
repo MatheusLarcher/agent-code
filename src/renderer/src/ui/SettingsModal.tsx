@@ -5,6 +5,7 @@ import {
   OPENAI_VOICES,
   VIGIA_MODELS,
   PO_MODELS,
+  MEMORISTA_MODELS,
   type AppConfig,
   type CacheInfo,
   type CodexStatus
@@ -340,6 +341,57 @@ export function SettingsModal({
                         }}
                       >
                         {VIGIA_MODELS.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </section>
+
+                <section className={`settings-section settings-switch-section ${cfg.memorista.enabled ? 'on' : ''}`}>
+                  <label className="settings-switch-row">
+                    <span className="settings-switch-text">
+                      <strong>
+                        <IconDatabase size={15} /> Memorista — guardar o que você ensina
+                      </strong>
+                      <span className="settings-desc">
+                        No fim de cada mensagem sua, uma sessão barata anota na memória o que vale lembrar
+                        amanhã — sem você pedir "salva isso". Na maioria dos turnos não guarda nada.
+                      </span>
+                    </span>
+                    <input
+                      className="switch-input"
+                      type="checkbox"
+                      checked={cfg.memorista.enabled}
+                      onChange={(event) => {
+                        const on = event.target.checked
+                        setCfg((c) => ({ ...c, memorista: { ...c.memorista, enabled: on } }))
+                        void window.api.setConfig({ memorista: { ...cfg.memorista, enabled: on } })
+                      }}
+                    />
+                    <span className="switch-visual" aria-hidden="true" />
+                  </label>
+                  {cfg.memorista.enabled && (
+                    <div className="settings-row">
+                      <span>
+                        <strong>Modelo do memorista</strong>
+                        <span className="settings-desc">
+                          Ele só lê a conversa e decide o que anotar — barato o bastante para rodar em todo
+                          turno.
+                        </span>
+                      </span>
+                      <select
+                        className="settings-input"
+                        value={cfg.memorista.model}
+                        onChange={(event) => {
+                          const model = event.target.value
+                          setCfg((c) => ({ ...c, memorista: { ...c.memorista, model } }))
+                          void window.api.setConfig({ memorista: { ...cfg.memorista, model } })
+                        }}
+                      >
+                        {MEMORISTA_MODELS.map((m) => (
                           <option key={m.id} value={m.id}>
                             {m.label}
                           </option>

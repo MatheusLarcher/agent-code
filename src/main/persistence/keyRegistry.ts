@@ -24,6 +24,8 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.preventSleepWhileBusy': { scope: 'device', source: 'main-kv' },
   'config.vigia.enabled': { scope: 'device', source: 'main-kv' },
   'config.vigia.model': { scope: 'device', source: 'main-kv' },
+  'config.memorista.enabled': { scope: 'device', source: 'main-kv' },
+  'config.memorista.model': { scope: 'device', source: 'main-kv' },
   'config.board.requirePlan': { scope: 'device', source: 'main-kv' },
   'config.board.po.enabled': { scope: 'device', source: 'main-kv' },
   'config.board.po.model': { scope: 'device', source: 'main-kv' },

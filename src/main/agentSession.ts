@@ -1819,10 +1819,18 @@ export class AgentSession {
           this.syncTasks(message.session_id)
         } else if ((message as { subtype?: string }).subtype === 'mirror_error') {
           this.mirrorFailed = true
+          const mirrorError = message as unknown as { error?: string; key?: { sessionId?: string; subpath?: string } }
+          console.warn(
+            `[session-store] mirror_error conversation=${this.opts.convId} session=${mirrorError.key?.sessionId ?? '?'}` +
+              (mirrorError.key?.subpath ? ` subpath=${mirrorError.key.subpath}` : '') +
+              `: ${mirrorError.error ?? '(sem detalhe)'}`
+          )
           this.emit({
             kind: 'error',
             id: nextId(),
-            text: 'Falha ao espelhar o transcript no backend autoritativo. Novos envios foram bloqueados.'
+            text: `Falha ao espelhar o transcript no backend autoritativo. Novos envios foram bloqueados.${
+              mirrorError.error ? ` Detalhe: ${mirrorError.error}` : ''
+            }`
           })
         } else if ((message as { subtype?: string }).subtype === 'background_tasks_changed') {
           const tasks = (message as unknown as {

@@ -28,6 +28,7 @@ import type {
   PermissionExpiredMsg,
   VigiaAlertMsg,
   PoProviderDiagnosticMsg,
+  MemoristaProviderDiagnosticMsg,
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
@@ -207,6 +208,8 @@ export interface AgentCodeApi {
   onVigiaAlert(cb: (m: VigiaAlertMsg) => void): () => void
   /** Safe lifecycle notifications for the PO Claude → GPT Luna fallback. */
   onPoProviderDiagnostic(cb: (m: PoProviderDiagnosticMsg) => void): () => void
+  /** Safe lifecycle notifications for the memorista's Claude → GPT Luna fallback. */
+  onMemoristaProviderDiagnostic(cb: (m: MemoristaProviderDiagnosticMsg) => void): () => void
 
   launchBrowser(): Promise<void>
   navigate(url: string): Promise<string>

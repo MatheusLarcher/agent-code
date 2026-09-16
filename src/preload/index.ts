@@ -29,6 +29,7 @@ import type {
   PermissionExpiredMsg,
   VigiaAlertMsg,
   PoProviderDiagnosticMsg,
+  MemoristaProviderDiagnosticMsg,
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
@@ -194,6 +195,8 @@ const api: AgentCodeApi = {
   onVigiaAlert: (cb: (m: VigiaAlertMsg) => void): (() => void) => on(Channels.vigiaAlert, cb),
   onPoProviderDiagnostic: (cb: (m: PoProviderDiagnosticMsg) => void): (() => void) =>
     on(Channels.poProviderDiagnostic, cb),
+  onMemoristaProviderDiagnostic: (cb: (m: MemoristaProviderDiagnosticMsg) => void): (() => void) =>
+    on(Channels.memoristaProviderDiagnostic, cb),
 
   // browser
   launchBrowser: (): Promise<void> => ipcRenderer.invoke(Channels.browserLaunch),

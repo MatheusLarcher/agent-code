@@ -45,6 +45,7 @@ import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlis
 import { Vigia } from './vigia/vigia'
 import { BoardService } from './board/boardService'
 import { Po } from './po/po'
+import { Memorista } from './memoria/memorista'
 import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
 import { hashJson, normalizeJson } from './persistence/hashes'
@@ -60,7 +61,7 @@ import { startMemoryCuratorScheduler } from './memoryCurator'
 import { taskLedger } from './tasks/taskRuntime'
 import { buildTaskBoard, buildTaskDetail, type TaskBoardQuery } from './tasks/taskBoard'
 import { startTaskReaper } from './tasks/taskReaper'
-import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, restoreVault } from './memory/memoryRuntime'
+import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, restoreVault, secretSink } from './memory/memoryRuntime'
 import { startRestartGuardFile } from './restartGuardFile'
 import { startSleepGuard } from './sleepGuard'
 import { windowsControl } from './windowsControl/service'
@@ -241,6 +242,22 @@ const po = new Po({
   config: () => loadConfig().board ?? DEFAULT_CONFIG.board,
   board,
   diagnose: (diagnostic) => send(Channels.poProviderDiagnostic, {
+    ...diagnostic,
+    id: randomUUID(),
+    at: Date.now()
+  })
+})
+
+// O memorista: o terceiro observador. Lê o fim de cada turno e grava sozinho o
+// que vale lembrar amanhã. A memória e o cofre são funções, não valores: os dois
+// só existem depois que a pasta de dados ativa carrega (`configureMemoryRuntime`),
+// muito depois deste módulo ser avaliado — capturar o valor aqui congelaria um
+// `null` e o observador nunca escreveria nada.
+const memorista = new Memorista({
+  config: () => loadConfig().memorista ?? DEFAULT_CONFIG.memorista,
+  memory: () => memoryService(),
+  vault: () => secretSink(),
+  diagnose: (diagnostic) => send(Channels.memoristaProviderDiagnostic, {
     ...diagnostic,
     id: randomUUID(),
     at: Date.now()
@@ -1299,6 +1316,10 @@ function registerIpc(): void {
       // análise depois de um `await` em `Po.start`, ou perguntar pelo
       // `poSettled` ainda no tick do evento.
       po.observe(convId, event)
+      // O memorista lê o MESMO tee: as chamadas de ferramenta viram evidência do
+      // que o turno fez e o `result` dispara a análise. Ele escreve no acervo de
+      // memórias, nunca no chat — nada daqui volta para este `emit`.
+      memorista.observe(convId, event)
     }
     s = new ProviderFailoverSession(opts, (sessionOptions, sessionEmit, sessionComplete) => new AgentSession(
       sessionOptions,
@@ -1373,6 +1394,9 @@ function registerIpc(): void {
       // Aqui também começa a ABERTURA dele: o pedido tem que virar cartão antes
       // de o agente trabalhar, senão o que ele nunca declarar não deixa rastro.
       po.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
+      // O memorista precisa do mesmo marco: é a mensagem do usuário que pode
+      // ENSINAR algo, e a pasta do projeto entra na memória como contexto.
+      memorista.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
       await sessions.get(convId)?.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }
   )
@@ -1394,6 +1418,7 @@ function registerIpc(): void {
     sessions.delete(convId)
     vigia.dispose(convId)
     po.dispose(convId)
+    memorista.dispose(convId)
     board.dispose(convId)
     sessionCwds.delete(convId)
     void releaseSessionLease(convId)

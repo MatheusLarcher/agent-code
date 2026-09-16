@@ -28,6 +28,8 @@ const FIELDS: Field[] = [
   { key: 'config.preventSleepWhileBusy', get: (c) => c.preventSleepWhileBusy, patch: (v) => ({ preventSleepWhileBusy: v as boolean }) },
   { key: 'config.vigia.enabled', get: (c) => c.vigia.enabled, patch: (v) => ({ vigia: { enabled: v as boolean } as AppConfig['vigia'] }) },
   { key: 'config.vigia.model', get: (c) => c.vigia.model, patch: (v) => ({ vigia: { model: v as string } as AppConfig['vigia'] }) },
+  { key: 'config.memorista.enabled', get: (c) => c.memorista.enabled, patch: (v) => ({ memorista: { enabled: v as boolean } as AppConfig['memorista'] }) },
+  { key: 'config.memorista.model', get: (c) => c.memorista.model, patch: (v) => ({ memorista: { model: v as string } as AppConfig['memorista'] }) },
   { key: 'config.board.requirePlan', get: (c) => c.board.requirePlan, patch: (v) => ({ board: { requirePlan: v as boolean } as AppConfig['board'] }) },
   { key: 'config.board.po.enabled', get: (c) => c.board.po.enabled, patch: (v) => ({ board: { po: { enabled: v as boolean } } as AppConfig['board'] }) },
   { key: 'config.board.po.model', get: (c) => c.board.po.model, patch: (v) => ({ board: { po: { model: v as string } } as AppConfig['board'] }) }
@@ -51,6 +53,7 @@ function cloneConfig(config: AppConfig): AppConfig {
     localSpeech: { ...config.localSpeech },
     ollama: { ...config.ollama },
     vigia: { ...config.vigia },
+    memorista: { ...config.memorista },
     board: { ...config.board, po: { ...config.board.po } }
   }
 }
