@@ -1,29 +1,69 @@
 import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 
-/**
- * A chamada que todo OBSERVADOR do app faz: um `query()` avulso, sem
- * ferramentas e de um turno só.
- *
- * O vigia e o PO tinham este corpo copiado byte a byte. Em duas cópias,
- * qualquer mudança no contrato do SDK (nome de campo, bloco de conteúdo novo)
- * precisa ser aplicada nas duas — e como os dois degradam em silêncio por
- * design, esquecer uma deixa aquele observador devolvendo string vazia sem
- * aparecer em log nem em teste.
- *
- * `tools: []` é parte do contrato, não economia: se a dúvida pode ser
- * respondida lendo o projeto, não é trabalho de um observador.
- */
-export async function askObserver(prompt: string, model: string): Promise<string> {
-  async function* single(): AsyncIterable<SDKUserMessage> {
-    yield {
-      type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text: prompt }] },
-      parent_tool_use_id: null
-    } as SDKUserMessage
-  }
+/** A reason the PO may safely expose and use to move from Claude to Luna. */
+export type SafeProviderReason = 'claude_plan' | 'claude_auth' | 'claude_authorization'
 
+export type ObserverAttempt =
+  | { provider: 'claude' | 'gpt-luna'; state: 'completed'; text: string }
+  | { provider: 'claude' | 'gpt-luna'; state: 'not-started' | 'failed'; reason?: SafeProviderReason }
+
+export interface ObserverRuntime {
+  cwd?: string
+  env?: NodeJS.ProcessEnv
+}
+
+export interface ObserverRequest extends ObserverRuntime {
+  prompt: string
+  model: string
+  provider: 'claude' | 'gpt-luna'
+}
+
+/**
+ * Reduces only explicit provider codes emitted by the SDK to the three PO
+ * failover reasons. HTTP status, message text and arbitrary exceptions are
+ * deliberately not interpreted: a 401/403 without an SDK classification is
+ * ambiguous and must not start a second provider.
+ */
+export function classifyClaudeObserverFailure(value: unknown): SafeProviderReason | undefined {
+  if (!value || typeof value !== 'object') return undefined
+
+  // Agent SDK 0.3.257 exposes classified provider failures on the assistant
+  // frame. Do not broaden this to lookalike exception/status fields: that
+  // would turn arbitrary HTTP failures into an unsafe second-provider call.
+  const failure = value as { type?: unknown; error?: unknown }
+  if (failure.type !== 'assistant') return undefined
+
+  switch (failure.error) {
+    case 'billing_error':
+    case 'account_on_hold':
+      return 'claude_plan'
+    case 'authentication_failed':
+      return 'claude_auth'
+    case 'oauth_org_not_allowed':
+      return 'claude_authorization'
+    default:
+      return undefined
+  }
+}
+
+async function* singlePrompt(prompt: string): AsyncIterable<SDKUserMessage> {
+  yield {
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'text', text: prompt }] },
+    parent_tool_use_id: null
+  } as SDKUserMessage
+}
+
+/**
+ * Runs exactly one observer request. The caller owns policy (whether a failed
+ * Claude attempt can proceed to Luna); this adapter only extracts text and
+ * preserves recognized, structured Claude failures.
+ */
+export async function runObserverAttempt(request: ObserverRequest): Promise<ObserverAttempt> {
   const options: Options = {
-    model,
+    cwd: request.cwd,
+    model: request.model,
+    ...(request.env ? { env: request.env } : {}),
     executable: 'node',
     tools: [],
     maxTurns: 1,
@@ -31,15 +71,33 @@ export async function askObserver(prompt: string, model: string): Promise<string
     permissionMode: 'bypassPermissions'
   }
 
-  const q = query({ prompt: single(), options })
   let text = ''
-  for await (const message of q) {
-    if (message.type === 'assistant') {
-      const content = (message.message as { content?: Array<{ type: string; text?: string }> }).content ?? []
-      for (const block of content) {
-        if (block.type === 'text' && typeof block.text === 'string') text += block.text
+  let reason: SafeProviderReason | undefined
+  try {
+    const q = query({ prompt: singlePrompt(request.prompt), options })
+    for await (const message of q) {
+      if (message.type === 'assistant') {
+        const content = (message.message as { content?: Array<{ type: string; text?: string }> }).content ?? []
+        for (const block of content) {
+          if (block.type === 'text' && typeof block.text === 'string') text += block.text
+        }
       }
+      if (request.provider === 'claude') reason ??= classifyClaudeObserverFailure(message)
     }
+  } catch (error) {
+    if (request.provider === 'claude') reason ??= classifyClaudeObserverFailure(error)
   }
-  return text.trim()
+
+  const usable = text.trim()
+  if (usable) return { provider: request.provider, state: 'completed', text: usable }
+  return { provider: request.provider, state: 'failed', ...(reason ? { reason } : {}) }
+}
+
+/**
+ * Compatibility wrapper for the vigia and existing consumers. They retain the
+ * old best-effort string contract; only the PO consumes typed attempts.
+ */
+export async function askObserver(prompt: string, model: string): Promise<string> {
+  const attempt = await runObserverAttempt({ prompt, model, provider: 'claude' })
+  return attempt.state === 'completed' ? attempt.text : ''
 }

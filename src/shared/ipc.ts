@@ -884,6 +884,21 @@ export interface VigiaAlertMsg {
   at: number
 }
 
+/** Safe, provider-neutral diagnostic for the PO observer's fixed fallback. */
+export interface PoProviderDiagnostic {
+  conversationId: string
+  correlationId: string
+  phase: 'claude-started' | 'claude-unavailable' | 'po-provider-switch' | 'gpt-luna-started' | 'gpt-luna-unavailable'
+  requestedProvider: 'claude'
+  actualProvider: 'claude' | 'gpt-luna'
+  fallbackReason?: 'claude_plan' | 'claude_auth' | 'claude_authorization'
+}
+
+export interface PoProviderDiagnosticMsg extends PoProviderDiagnostic {
+  id: string
+  at: number
+}
+
 /** OpenAI integration (optional). When an API key is set, the chat gets voice
  *  input (speech→text, gpt-4o-mini-transcribe) and read-aloud (text→speech,
  *  gpt-4o-mini-tts). The key is stored only in the cache-folder SQLite db. */
@@ -1410,6 +1425,8 @@ export const Channels = {
   /** main → renderer: the vigia raised a doubt about a premise of the work.
    *  Deliberately NOT a ChatEvent — it is for the user, not for the model. */
   vigiaAlert: 'vigia:alert',
+  /** main → renderer: safe PO observer provider diagnostics (never chat content). */
+  poProviderDiagnostic: 'po:provider-diagnostic',
   /** main → renderer: the Windows-control permission changed. */
   windowsControlChanged: 'windows-control:changed',
   browserFrame: 'browser:frame',

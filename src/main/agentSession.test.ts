@@ -961,6 +961,35 @@ describe('AgentSession — backend de fora não recebe o login guardado', () => 
     expect(existsSync(join(env.CLAUDE_CONFIG_DIR, '.credentials.json'))).toBe(false)
   })
 
+  it('GPT falha fechada se não puder criar a raiz isolada, sem iniciar o proxy', async () => {
+    await rm(cache, { recursive: true, force: true })
+    cache = join(home, 'cache-file')
+    await writeFile(cache, 'not a directory', 'utf8')
+    cacheState.dir = cache
+
+    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+    await expect(s.start()).resolves.toBe(false)
+
+    expect(ensureCodexProxyMock).not.toHaveBeenCalled()
+    expect(queryMock).not.toHaveBeenCalled()
+  })
+
+  it('GPT lê snapshots task-list da raiz isolada efetiva, não da raiz Claude do processo', async () => {
+    const { s, emit } = makeSession({ model: 'gpt-5.6-sol' })
+    await s.start()
+    const env = optionsOfLastQuery().env as Record<string, string>
+    const taskDir = join(env.CLAUDE_CONFIG_DIR, 'tasks', 'gpt-session')
+    await mkdir(taskDir, { recursive: true })
+    await writeFile(join(taskDir, '1.json'), JSON.stringify({ id: '1', subject: 'Snapshot GPT', status: 'in_progress' }))
+
+    handle(s, { type: 'system', subtype: 'init', session_id: 'gpt-session', model: 'gpt', cwd: '/project', tools: [] })
+
+    expect(emit).toHaveBeenCalledWith({
+      kind: 'task-list',
+      items: [{ id: '1', content: 'Snapshot GPT', status: 'in_progress', activeForm: 'Snapshot GPT' }]
+    })
+  })
+
   // O desvio existe só por causa do backend de fora. Numa sessão da Anthropic o
   // login guardado é exatamente o que deve valer.
   it('Claude: NÃO desvia nada (o login guardado é o certo ali)', async () => {

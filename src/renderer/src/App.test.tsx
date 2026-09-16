@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, act, configure } from '@testing-library/react'
 import { UiProvider } from './ui/UiProvider'
 import { App, expireResetUsage } from './App'
-import type { AgentEventMsg, ChatEvent } from '@shared/ipc'
+import type { AgentEventMsg, ChatEvent, PoProviderDiagnosticMsg } from '@shared/ipc'
 import type { TodoItem } from './types'
 
 // This file mounts the full app dozens of times. Under the complete parallel
@@ -22,12 +22,14 @@ class RO {
 // Captured from the mock so tests can drive the agent event stream and control
 // when `startAgent` (the connect IPC) resolves.
 let agentEventCb: ((m: AgentEventMsg) => void) | null = null
+let poProviderDiagnosticCb: ((m: PoProviderDiagnosticMsg) => void) | null = null
 let appCloseCb: (() => void) | null = null
 let appReloadCb: (() => void) | null = null
 let resolveStart: Array<(v: { ok: boolean }) => void> = []
 
 function installApi(): Record<string, ReturnType<typeof vi.fn>> {
   agentEventCb = null
+  poProviderDiagnosticCb = null
   appCloseCb = null
   appReloadCb = null
   resolveStart = []
@@ -163,6 +165,12 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     onPermissionRequest: vi.fn(() => () => {}),
     onPermissionExpired: vi.fn(() => () => {}),
     onVigiaAlert: vi.fn(() => () => {}),
+    onPoProviderDiagnostic: vi.fn((cb: (m: PoProviderDiagnosticMsg) => void) => {
+      poProviderDiagnosticCb = cb
+      return () => {
+        if (poProviderDiagnosticCb === cb) poProviderDiagnosticCb = null
+      }
+    }),
     onBoardChanged: vi.fn(() => () => {}),
     boardList: vi.fn(async () => ({ available: true, items: [] })),
     boardDismiss: vi.fn(async () => null),
@@ -1976,5 +1984,41 @@ describe('App — abertura em etapas (projetos em segundo plano)', () => {
     })
     await waitFor(() => expect(api.countConversationsByProject).toHaveBeenCalled())
     expect(document.querySelector('.storage-recovery')).toBeNull()
+  })
+})
+
+describe('App — diagnóstico seguro do failover do PO', () => {
+  it('mostra toast de aviso somente quando GPT Luna efetivamente iniciou', async () => {
+    render(<UiProvider><App /></UiProvider>)
+    await act(async () => {
+      poProviderDiagnosticCb?.({
+        id: 'po-1',
+        at: 1,
+        conversationId: 'c1',
+        correlationId: 'correlation',
+        phase: 'gpt-luna-started',
+        requestedProvider: 'claude',
+        actualProvider: 'gpt-luna',
+        fallbackReason: 'claude_auth'
+      })
+    })
+    expect(await screen.findByText('Claude indisponível para o PO; continuando com GPT Luna.')).toBeTruthy()
+  })
+
+  it('mostra erro seguro se Luna não fica disponível', async () => {
+    render(<UiProvider><App /></UiProvider>)
+    await act(async () => {
+      poProviderDiagnosticCb?.({
+        id: 'po-2',
+        at: 1,
+        conversationId: 'c1',
+        correlationId: 'correlation',
+        phase: 'gpt-luna-unavailable',
+        requestedProvider: 'claude',
+        actualProvider: 'gpt-luna',
+        fallbackReason: 'claude_plan'
+      })
+    })
+    expect(await screen.findByText('GPT Luna indisponível para a auditoria do quadro.')).toBeTruthy()
   })
 })

@@ -949,6 +949,16 @@ export function App(): JSX.Element {
     const offVigia = window.api.onVigiaAlert(({ convId, text, options }) => {
       setVigiaAlerts((v) => ({ ...v, [convId]: { question: text, options: options ?? [] } }))
     })
+    // Older preload bundles (and focused renderer harnesses) can briefly lack
+    // this additive subscription during an app upgrade; the PO remains silent
+    // rather than preventing the whole renderer from mounting.
+    const offPoProvider = window.api.onPoProviderDiagnostic?.(({ phase }) => {
+      if (phase === 'gpt-luna-started') {
+        notify('aviso', 'Claude indisponível para o PO; continuando com GPT Luna.')
+      } else if (phase === 'gpt-luna-unavailable') {
+        notify('erro', 'GPT Luna indisponível para a auditoria do quadro.')
+      }
+    }) ?? (() => undefined)
     const offState = window.api.onBrowserState(setBrowserState)
     const offPicked = window.api.onBrowserPicked((el) => {
       setChips((c) => [...c, el])
@@ -959,6 +969,7 @@ export function App(): JSX.Element {
       offPerm()
       offExpired()
       offVigia()
+      offPoProvider()
       offState()
       offPicked()
     }

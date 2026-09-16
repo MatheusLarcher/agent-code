@@ -400,7 +400,7 @@ const CLI_CONFIG_CARRY_OVER = ['CLAUDE.md', 'settings.json']
  * as instruções globais e as configurações continuarem valendo — some a
  * credencial, não o resto. Melhor esforço: nada aqui pode derrubar um turno.
  */
-function cliConfigDirWithoutStoredLogin(cacheDir: string): string | undefined {
+export function cliConfigDirWithoutStoredLogin(cacheDir: string): string | undefined {
   try {
     const source = process.env['CLAUDE_CONFIG_DIR']?.trim() || join(homedir(), '.claude')
     const target = join(cacheDir, 'cli-config-sem-login')
@@ -419,6 +419,52 @@ function cliConfigDirWithoutStoredLogin(cacheDir: string): string | undefined {
     // aviso no log — mas derrubar a sessão aqui seria pior ainda.
     console.warn('[cli-config] não consegui preparar o diretório sem credencial:', error)
     return undefined
+  }
+}
+
+/** Runtime-only preparation shared by regular GPT sessions and the PO Luna
+ * observer. Its result is never serialized: it keeps the local proxy secret,
+ * OAuth handling and isolated CLI config on the GPT side of the boundary. */
+export interface GptObserverRuntime {
+  env: NodeJS.ProcessEnv
+}
+
+export async function prepareGptRuntime(
+  model: string,
+  fastMode = false,
+  /** Receives the proxy failure detail. The PO observer ignores it; a normal
+   * GPT session still shows the cause, as it did before this extraction. */
+  onError?: (detail: string) => void
+): Promise<GptObserverRuntime | null> {
+  if (!isOpenAIModel(model) || !isCodexConnected()) return null
+  const cacheInfo = getCacheInfo()
+  const foreignCliConfigDir = cliConfigDirWithoutStoredLogin(cacheInfo.dir)
+  // A foreign backend must never inherit the process-level Claude root: that
+  // root can contain an OAuth/API credential the CLI gives precedence to.
+  if (!foreignCliConfigDir) return null
+  try {
+    const { baseUrl, secret } = await ensureCodexProxyRunning((line) => console.log(`[codex-proxy] ${line}`))
+    return {
+      env: {
+        ...process.env,
+        ...(foreignCliConfigDir ? { CLAUDE_CONFIG_DIR: foreignCliConfigDir } : {}),
+        ANTHROPIC_BASE_URL: baseUrl,
+        ANTHROPIC_AUTH_TOKEN:
+          fastMode && fastModeTransport(model) === 'codex-priority'
+            ? `${secret}${FAST_MODE_TOKEN_SUFFIX}`
+            : secret,
+        ANTHROPIC_API_KEY: '',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+        ANTHROPIC_DEFAULT_FABLE_MODEL: model,
+        CLAUDE_CODE_SUBAGENT_MODEL: model
+      }
+    }
+  } catch (error) {
+    console.warn('[codex-proxy] não consegui preparar runtime GPT do observador:', error)
+    onError?.(String(error))
+    return null
   }
 }
 
@@ -548,6 +594,9 @@ export class AgentSession {
    *  can hand us a different session id, and then we re-point the watcher). */
   private stopTaskWatch: (() => void) | null = null
   private watchedSessionId: string | null = null
+  /** Effective CLI root of this SDK process. GPT points it at the isolated
+   * config so task-list snapshots never leak to the default Claude root. */
+  private sessionTasksRoot: string | undefined
   private disposed = false
   private loopActive = false
   private loopCycles = 0
@@ -831,45 +880,31 @@ export class AgentSession {
       })
       return false
     }
-    // Vale para os dois desvios abaixo: com o `ANTHROPIC_BASE_URL` fora da
-    // Anthropic, o login guardado do claude.ai não pode continuar vencendo o
-    // token que estamos passando (ver `cliConfigDirWithoutStoredLogin`).
-    const foreignCliConfigDir =
-      openaiOn || ollamaOn ? cliConfigDirWithoutStoredLogin(cacheInfo.dir) : undefined
+    // A rota Ollama precisa do mesmo isolamento. A rota GPT prepara esse
+    // diretório dentro de `prepareGptRuntime`, compartilhada pelo PO Luna.
+    const foreignCliConfigDir = ollamaOn ? cliConfigDirWithoutStoredLogin(cacheInfo.dir) : undefined
 
     let openaiEnv: typeof process.env | undefined
     if (openaiOn) {
-      try {
-        const { baseUrl, secret } = await ensureCodexProxyRunning((line) => console.log(`[codex-proxy] ${line}`))
-        openaiEnv = {
-          ...process.env,
-          ...(foreignCliConfigDir ? { CLAUDE_CONFIG_DIR: foreignCliConfigDir } : {}),
-          ANTHROPIC_BASE_URL: baseUrl,
-          // The proxy is a single process-wide server shared by every
-          // conversation, but fast mode is per-conversation. The auth token is
-          // the only per-session channel we fully control end to end, so the
-          // opt-in rides on it as a suffix the proxy strips back off.
-          ANTHROPIC_AUTH_TOKEN:
-            this.opts.fastMode && fastModeTransport(this.opts.model) === 'codex-priority'
-              ? `${secret}${FAST_MODE_TOKEN_SUFFIX}`
-              : secret,
-          ANTHROPIC_API_KEY: '',
-          // Agent's model aliases normally resolve back to Claude model ids.
-          // Pin every child-agent tier to the selected GPT model instead.
-          ANTHROPIC_DEFAULT_SONNET_MODEL: this.opts.model,
-          ANTHROPIC_DEFAULT_OPUS_MODEL: this.opts.model,
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: this.opts.model,
-          ANTHROPIC_DEFAULT_FABLE_MODEL: this.opts.model,
-          CLAUDE_CODE_SUBAGENT_MODEL: this.opts.model
+      let detail = ''
+      const runtime = await prepareGptRuntime(
+        this.opts.model ?? '',
+        this.opts.fastMode === true,
+        (cause) => {
+          detail = cause
         }
-      } catch (err) {
+      )
+      if (!runtime) {
         this.emit({
           kind: 'error',
           id: nextId(),
-          text: `Não consegui iniciar o proxy do Codex: ${String(err)}`
+          text: detail
+            ? `Não consegui iniciar o proxy do Codex: ${detail}`
+            : 'Não consegui iniciar o proxy do Codex.'
         })
         return false
       }
+      openaiEnv = runtime.env
     }
 
     let env = ollamaOn
@@ -896,6 +931,10 @@ export class AgentSession {
       const rtkPath = pathWithRtk()
       if (rtkPath) env = { ...(env ?? process.env), PATH: rtkPath }
     }
+
+    // The bundled CLI receives this environment rather than inheriting our
+    // process. Task snapshots must resolve from that same effective root.
+    this.sessionTasksRoot = env?.CLAUDE_CONFIG_DIR
 
     const options: Options = {
       cwd: this.opts.cwd,
@@ -1381,9 +1420,13 @@ export class AgentSession {
     if (this.watchedSessionId === sessionId && this.stopTaskWatch) return
     this.stopTaskWatch?.()
     this.watchedSessionId = sessionId
-    const items = readSessionTasks(sessionId)
+    const items = readSessionTasks(sessionId, this.sessionTasksRoot)
     if (items) this.emit({ kind: 'task-list', items })
-    this.stopTaskWatch = watchSessionTasks(sessionId, (list) => this.emit({ kind: 'task-list', items: list }))
+    this.stopTaskWatch = watchSessionTasks(
+      sessionId,
+      (list) => this.emit({ kind: 'task-list', items: list }),
+      this.sessionTasksRoot
+    )
   }
 
   // ---- internals ----
@@ -1883,7 +1926,7 @@ export class AgentSession {
         // ever misses a write (network drive, antivirus, watcher limits), the card
         // still lands on the truth instead of drifting for the rest of the chat.
         if (this.watchedSessionId) {
-          const tasks = readSessionTasks(this.watchedSessionId)
+          const tasks = readSessionTasks(this.watchedSessionId, this.sessionTasksRoot)
           if (tasks) this.emit({ kind: 'task-list', items: tasks })
         }
         this.emit({

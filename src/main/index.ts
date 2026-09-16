@@ -228,7 +228,15 @@ const board = new BoardService({
 
 // O PO: audita o quadro no fim de cada turno e conserta o que o agente esqueceu
 // de marcar. Escreve no quadro, nunca no chat; falha em silêncio.
-const po = new Po({ config: () => loadConfig().board ?? DEFAULT_CONFIG.board, board })
+const po = new Po({
+  config: () => loadConfig().board ?? DEFAULT_CONFIG.board,
+  board,
+  diagnose: (diagnostic) => send(Channels.poProviderDiagnostic, {
+    ...diagnostic,
+    id: randomUUID(),
+    at: Date.now()
+  })
+})
 
 function send(channel: string, payload: unknown): void {
   const window = mainWindow

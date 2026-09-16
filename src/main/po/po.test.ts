@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
-import type { BoardConfig, BoardItem, ChatEvent } from '../../shared/ipc'
+import type { BoardConfig, BoardItem, ChatEvent, PoProviderDiagnostic } from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
-import { Po } from './po'
+import { classifyClaudeObserverFailure } from '../observerQuery'
+import { Po, type PoObserverRequest } from './po'
 
 function card(over: Partial<BoardItem> = {}): BoardItem {
   return {
@@ -268,5 +269,164 @@ describe('Po', () => {
     po.observe('conv-1', result)
     await flush()
     expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('mantém Claude como única tentativa quando ele conclui', async () => {
+    const board = fakeBoard([card()])
+    const runClaude = vi.fn(async () => ({ provider: 'claude' as const, state: 'completed' as const, text: 'OK' }))
+    const runLuna = vi.fn()
+    const po = new Po({ config: () => config(), board, runClaude, runLuna })
+    po.noteUserMessage('conv-1', 'C:/p', 'x')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(runClaude).toHaveBeenCalledTimes(1)
+    expect(runLuna).not.toHaveBeenCalled()
+  })
+
+  it.each(['claude_plan', 'claude_auth', 'claude_authorization'] as const)('troca uma vez para Luna somente por %s estruturado', async (reason) => {
+    const board = fakeBoard([card()])
+    const runClaude = vi.fn(async () => ({ provider: 'claude' as const, state: 'failed' as const, reason }))
+    const runLuna = vi.fn(async (request, started) => {
+      started()
+      return { provider: 'gpt-luna' as const, state: 'completed' as const, text: 'CONCLUIR bi-1 | confirmado pela Luna' }
+    })
+    const diagnostics: PoProviderDiagnostic[] = []
+    const po = new Po({ config: () => config(), board, runClaude, runLuna, diagnose: (event) => diagnostics.push(event) })
+    po.noteUserMessage('conv-1', 'C:/p', 'x')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(runLuna).toHaveBeenCalledTimes(1)
+    expect(board.applyPo).toHaveBeenCalledTimes(1)
+    expect(diagnostics.map(({ phase }) => phase)).toEqual([
+      'claude-started',
+      'claude-unavailable',
+      'po-provider-switch',
+      'gpt-luna-started'
+    ])
+    expect(diagnostics.slice(1)).toEqual([
+      expect.objectContaining({ phase: 'claude-unavailable', actualProvider: 'claude', fallbackReason: reason }),
+      expect.objectContaining({ phase: 'po-provider-switch', actualProvider: 'gpt-luna', fallbackReason: reason }),
+      expect.objectContaining({ phase: 'gpt-luna-started', actualProvider: 'gpt-luna', fallbackReason: reason })
+    ])
+  })
+
+  it('faz uma única chamada Luna por account_on_hold estruturado do SDK', async () => {
+    const reason = classifyClaudeObserverFailure({ type: 'assistant', error: 'account_on_hold' })
+    if (reason !== 'claude_plan') throw new Error('account_on_hold precisa ser elegível ao failover')
+
+    const board = fakeBoard([card()])
+    const runClaude = vi.fn(async () => ({ provider: 'claude' as const, state: 'failed' as const, reason }))
+    const runLuna = vi.fn(async (_request, started) => {
+      started()
+      return { provider: 'gpt-luna' as const, state: 'completed' as const, text: 'OK' }
+    })
+    const po = new Po({ config: () => config(), board, runClaude, runLuna })
+    po.noteUserMessage('conv-1', 'C:/p', 'x')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(runClaude).toHaveBeenCalledTimes(1)
+    expect(runLuna).toHaveBeenCalledTimes(1)
+  })
+
+  it('não troca para Luna por falha ambígua e não escreve no quadro', async () => {
+    const board = fakeBoard([card()])
+    const runLuna = vi.fn()
+    const po = new Po({
+      config: () => config(),
+      board,
+      runClaude: async () => ({ provider: 'claude', state: 'failed' }),
+      runLuna
+    })
+    po.noteUserMessage('conv-1', 'C:/p', 'x')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(runLuna).not.toHaveBeenCalled()
+    expect(board.applyPo).not.toHaveBeenCalled()
+  })
+
+  it('falha de Luna não persiste parcialmente e só emite diagnóstico seguro', async () => {
+    const board = fakeBoard([card()])
+    const diagnostics: unknown[] = []
+    const po = new Po({
+      config: () => config(),
+      board,
+      runClaude: async () => ({ provider: 'claude', state: 'failed', reason: 'claude_auth' }),
+      runLuna: async (_request, started) => {
+        started()
+        return { provider: 'gpt-luna', state: 'failed' }
+      },
+      diagnose: (event) => diagnostics.push(event)
+    })
+    po.noteUserMessage('conv-1', 'C:/p', 'x')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(board.applyPo).not.toHaveBeenCalled()
+    expect(board.createPoItem).not.toHaveBeenCalled()
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'gpt-luna-unavailable', actualProvider: 'gpt-luna', fallbackReason: 'claude_auth' })
+    ]))
+  })
+
+  it('congela cwd, cartões e correlação no pedido Luna', async () => {
+    const board = fakeBoard([card({ projectId: 'project-a', projectCwd: 'C:/a' })])
+    const seen: unknown[] = []
+    const configValue = config()
+    const po = new Po({
+      config: () => configValue,
+      board,
+      newCorrelationId: () => 'correlation-a',
+      runClaude: async () => ({ provider: 'claude', state: 'failed', reason: 'claude_plan' }),
+      runLuna: async (request, started) => {
+        started()
+        seen.push(request)
+        configValue.po.model = 'claude-other'
+        return { provider: 'gpt-luna', state: 'completed', text: 'OK' }
+      }
+    })
+    po.noteUserMessage('conv-1', 'C:/a', 'x')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(seen).toEqual([expect.objectContaining({
+      cwd: 'C:/a',
+      conversationId: 'conv-1',
+      projectId: 'project-a',
+      correlationId: 'correlation-a',
+      model: 'claude-sonnet-5'
+    })])
+  })
+
+  it('preserva a evidência do turno quando o próximo começa durante a fila do quadro', async () => {
+    const board = fakeBoard([card()])
+    let releaseSettled: (() => void) | undefined
+    board.settled.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseSettled = resolve
+    }))
+    const runClaude = vi.fn(async (_request: PoObserverRequest) => ({ provider: 'claude' as const, state: 'completed' as const, text: 'OK' }))
+    const po = new Po({ config: () => config(), board, runClaude })
+
+    po.noteUserMessage('conv-1', 'C:/turn-a', 'pedido do turno A')
+    po.observe('conv-1', toolUse('Edit', { file_path: 'src/turn-a.ts' }))
+    po.observe('conv-1', result)
+    expect(releaseSettled).toBeDefined()
+
+    po.noteUserMessage('conv-1', 'C:/turn-b', 'pedido do turno B')
+    po.observe('conv-1', toolUse('Bash', { command: 'teste-do-turno-b' }))
+    releaseSettled!()
+    await flush()
+
+    expect(board.list).toHaveBeenCalledWith('C:/turn-a', { conversationId: 'conv-1' })
+    const request = runClaude.mock.calls[0]?.[0]
+    expect(request).toBeDefined()
+    if (!request) throw new Error('Claude não recebeu o pedido do PO')
+    expect(request.prompt).toContain('pedido do turno A')
+    expect(request.prompt).toContain('src/turn-a.ts')
+    expect(request.prompt).not.toContain('pedido do turno B')
+    expect(request.prompt).not.toContain('teste-do-turno-b')
   })
 })

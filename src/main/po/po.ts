@@ -1,5 +1,11 @@
-import { askObserver } from '../observerQuery'
-import type { BoardConfig, ChatEvent } from '../../shared/ipc'
+import { prepareGptRuntime } from '../agentSession'
+import {
+  askObserver,
+  runObserverAttempt,
+  type ObserverAttempt,
+  type SafeProviderReason
+} from '../observerQuery'
+import type { BoardConfig, BoardItem, ChatEvent, PoProviderDiagnostic } from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
 import {
   buildPoPrompt,
@@ -11,36 +17,38 @@ import {
   type PoCall
 } from './poPrompt'
 
-/**
- * O PO: a segunda metade do que torna o quadro confiável.
- *
- * A primeira é a trava (`planGate`), que garante que o plano EXISTA. Esta
- * garante que ele fique honesto até o fim: o buraco que nem a trava nem o
- * snapshot do CLI cobrem é "o agente fez e esqueceu de marcar", que não tem
- * momento fixo para travar — só dá para auditar depois.
- *
- * Mesmas três invariantes do vigia, pelos mesmos motivos:
- *
- * 1. **Não fala com o agente principal.** Ele escreve no quadro, não no chat.
- * 2. **Não interrompe nada.** Falha de rede/SDK/banco degrada em silêncio.
- * 3. **Fala pouco.** Uma análise por turno, no fim do turno, com cooldown.
- *
- * Roda no `result` e não no meio do turno de propósito: é no fim que dá para
- * ver o que terminou, e rodar duas vezes custaria o dobro para responder a
- * mesma pergunta com menos informação.
- */
+export const PO_LUNA_MODEL = 'gpt-5.6-luna'
 
+/** Immutable, provider-neutral intent created once for both observer attempts. */
+export interface PoObserverRequest {
+  prompt: string
+  model: string
+  conversationId: string
+  cwd: string
+  projectId: string
+  cards: readonly Pick<BoardItem, 'id' | 'projectId' | 'projectCwd' | 'conversationId' | 'sourceTitle' | 'sourceStatus' | 'poTitle' | 'poStatus'>[]
+  correlationId: string
+}
+
+/**
+ * O PO: audita o quadro no fim de um turno sem falar com o agente principal.
+ * Claude é sempre a primeira tentativa. Somente uma falha Claude estruturada
+ * e elegível pode disparar uma única consulta Luna, antes de qualquer escrita.
+ */
 export interface PoDeps {
-  /** Lido a cada análise: desligar na tela vale na hora. */
+  /** Lido uma vez por análise: mudanças durante o fallback não trocam a rota. */
   config(): BoardConfig
   board: BoardService
-  /** A chamada ao modelo. Injetável para o teste não subir o SDK. */
+  /** Compatibilidade para testes e consumidores do PO original. */
   ask?(prompt: string, model: string): Promise<string>
+  runClaude?(request: PoObserverRequest): Promise<ObserverAttempt>
+  runLuna?(request: PoObserverRequest, onStarted: () => void): Promise<ObserverAttempt>
+  diagnose?(diagnostic: PoProviderDiagnostic): void
   now?(): number
+  newCorrelationId?(): string
 }
 
 interface ConvState {
-  /** null = nenhum turno do usuário em aberto; sem isso o PO não roda. */
   userText: string | null
   cwd: string
   calls: PoCall[]
@@ -48,13 +56,19 @@ interface ConvState {
   lastRunAt: number
 }
 
+/** Evidence captured synchronously with a result, before board ingestion yields. */
+interface PoTurnSnapshot {
+  userText: string
+  cwd: string
+  calls: readonly PoCall[]
+}
+
 export class Po {
   private readonly state = new Map<string, ConvState>()
+  private correlations = 0
 
   constructor(private readonly deps: PoDeps) {}
 
-  /** Um turno começou. Retomada de sessão e recuperação não passam por aqui —
-   *  sem pedido do usuário não há trabalho novo para auditar. */
   noteUserMessage(convId: string, cwd: string, text: string): void {
     const conv = this.conv(convId)
     conv.userText = text
@@ -63,25 +77,26 @@ export class Po {
     conv.fired = false
   }
 
-  /** Alimentado pelo tee de eventos do main. Nunca lança. */
   observe(convId: string, event: ChatEvent): void {
     const conv = this.conv(convId)
     if (conv.userText === null || conv.fired) return
     if (event.kind === 'tool-use') {
-      // Guarda as ÚLTIMAS chamadas, não as primeiras: um turno começa lendo e
-      // termina escrevendo/testando, e é o fim que prova que a tarefa acabou.
-      // Truncar pelo começo deixava o PO cego justamente nos turnos longos —
-      // os que mais acumulam cartão esquecido.
       conv.calls.push({ tool: event.name, detail: summarizeCall(event.name, event.input) })
       if (conv.calls.length > PO_MAX_CALLS) conv.calls.shift()
       return
     }
     if (event.kind === 'result') {
-      void this.run(convId)
+      // A later user message resets the mutable conversation accumulator while
+      // this audit awaits board ingestion. Preserve this turn's evidence now.
+      const turn: PoTurnSnapshot = Object.freeze({
+        userText: conv.userText,
+        cwd: conv.cwd,
+        calls: Object.freeze([...conv.calls])
+      })
+      conv.fired = true
+      void this.run(convId, turn)
       return
     }
-    // Turno que morreu em erro não é "esqueceu de marcar" — é falha. Fecha sem
-    // analisar, para o PO não concluir tarefa de um trabalho que não terminou.
     if (event.kind === 'error') conv.userText = null
   }
 
@@ -98,11 +113,62 @@ export class Po {
     return conv
   }
 
-  private async run(convId: string): Promise<void> {
-    const conv = this.conv(convId)
-    if (conv.userText === null || conv.fired) return
-    conv.fired = true
+  private nextCorrelationId(): string {
+    return this.deps.newCorrelationId?.() ?? `po-${Date.now().toString(36)}-${this.correlations++}`
+  }
 
+  private async runClaude(request: PoObserverRequest): Promise<ObserverAttempt> {
+    if (this.deps.runClaude) return this.deps.runClaude(request)
+    if (this.deps.ask) {
+      try {
+        return { provider: 'claude', state: 'completed', text: await this.deps.ask(request.prompt, request.model) }
+      } catch {
+        return { provider: 'claude', state: 'failed' }
+      }
+    }
+    return runObserverAttempt({
+      prompt: request.prompt,
+      model: request.model,
+      provider: 'claude',
+      cwd: request.cwd
+    })
+  }
+
+  private async runLuna(request: PoObserverRequest, onStarted: () => void): Promise<ObserverAttempt> {
+    if (this.deps.runLuna) return this.deps.runLuna(request, onStarted)
+    const runtime = await prepareGptRuntime(PO_LUNA_MODEL)
+    if (!runtime) return { provider: 'gpt-luna', state: 'not-started' }
+    onStarted()
+    return runObserverAttempt({
+      prompt: request.prompt,
+      model: PO_LUNA_MODEL,
+      provider: 'gpt-luna',
+      cwd: request.cwd,
+      env: runtime.env
+    })
+  }
+
+  private diagnostic(
+    request: PoObserverRequest,
+    phase: PoProviderDiagnostic['phase'],
+    actualProvider: 'claude' | 'gpt-luna',
+    fallbackReason?: SafeProviderReason
+  ): void {
+    this.deps.diagnose?.({
+      conversationId: request.conversationId,
+      correlationId: request.correlationId,
+      phase,
+      requestedProvider: 'claude',
+      actualProvider,
+      ...(fallbackReason ? { fallbackReason } : {})
+    })
+  }
+
+  private async run(convId: string, turn: PoTurnSnapshot): Promise<void> {
+    const conv = this.conv(convId)
+
+    // This is the logical-request snapshot. Do not reread config between
+    // providers; a settings change cannot redirect an in-flight audit.
     const cfg = this.deps.config()
     if (!cfg.po.enabled) return
     const now = this.deps.now?.() ?? Date.now()
@@ -110,26 +176,63 @@ export class Po {
     conv.lastRunAt = now
 
     try {
-      // A ingestão do snapshot é assíncrona: sem esperar por ela, o PO leria o
-      // quadro de antes deste turno e reclamaria de algo já resolvido.
       await this.deps.board.settled(convId)
-      const cards = await this.deps.board.list(conv.cwd, { conversationId: convId })
-      // `null` (quadro ilegível) e `[]` (nada declarado) não viram chamada ao
-      // modelo — não há o que auditar em nenhum dos dois casos.
+      const cards = await this.deps.board.list(turn.cwd, { conversationId: convId })
       if (!cards || cards.length === 0) return
 
       const prompt = buildPoPrompt({
-        userText: conv.userText,
+        userText: turn.userText,
         cards: cards.map((card) => ({
           id: card.id,
           title: card.poTitle ?? card.sourceTitle,
           status: card.poStatus ?? card.sourceStatus
         })),
-        calls: conv.calls
+        calls: [...turn.calls]
       })
-      const raw = await (this.deps.ask ?? askPo)(prompt, cfg.po.model)
+      const request: PoObserverRequest = Object.freeze({
+        prompt,
+        model: cfg.po.model,
+        conversationId: convId,
+        cwd: turn.cwd,
+        projectId: cards[0].projectId,
+        cards: Object.freeze(cards.map((card) => Object.freeze({
+          id: card.id,
+          projectId: card.projectId,
+          projectCwd: card.projectCwd,
+          conversationId: card.conversationId,
+          sourceTitle: card.sourceTitle,
+          sourceStatus: card.sourceStatus,
+          poTitle: card.poTitle,
+          poStatus: card.poStatus
+        }))),
+        correlationId: this.nextCorrelationId()
+      })
+
+      this.diagnostic(request, 'claude-started', 'claude')
+      let attempt = await this.runClaude(request)
+      if (attempt.provider === 'claude' && attempt.state !== 'completed' && attempt.reason) {
+        const fallbackReason = attempt.reason
+        this.diagnostic(request, 'claude-unavailable', 'claude', fallbackReason)
+        this.diagnostic(request, 'po-provider-switch', 'gpt-luna', fallbackReason)
+        let lunaStarted = false
+        attempt = await this.runLuna(request, () => {
+          lunaStarted = true
+          this.diagnostic(request, 'gpt-luna-started', 'gpt-luna', fallbackReason)
+        })
+        if (attempt.state !== 'completed') {
+          // Setup failure has no preceding Luna-started notice; a started Luna
+          // gets an error after its own failed attempt. Both are safe and transient.
+          this.diagnostic(request, 'gpt-luna-unavailable', 'gpt-luna', fallbackReason)
+          return
+        }
+        // Defensive: injected runners must announce their actual start before
+        // claiming a completed Luna response.
+        if (!lunaStarted) return
+      }
+      if (attempt.state !== 'completed') return
+
       const ops = rejectUnsafeOps(
-        parsePoVerdict(raw, cards.map((card) => card.id)),
+        parsePoVerdict(attempt.text, cards.map((card) => card.id)),
         cards
       )
       if (ops.length === 0) return
@@ -152,10 +255,10 @@ export class Po {
         }
       }
     } catch {
-      // O observador não pode derrubar o observado, nem o quadro.
+      // The observer cannot take down the observed turn or write a partial board.
     }
   }
 }
 
-/** A chamada real é a mesma de todo observador do app (ver observerQuery.ts). */
+/** Compatibility alias used by existing tests and external imports. */
 export const askPo = askObserver

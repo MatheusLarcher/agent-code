@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -104,7 +105,8 @@ const NOT_ICON_WORDS = new Set([
   'placeholder',
   'header',
   'footer',
-  'splash'
+  'splash',
+  'dark'
 ])
 
 /** Extension → mime, in order of preference. `.ico` renders in <img> on Chromium. */
@@ -180,9 +182,11 @@ function rank(fileName: string, depth: number): Rank | null {
 
 /** True when `a` is a better icon candidate than `b`. */
 function better(a: Rank, b: Rank): boolean {
+  // An explicit root-level mark is more trustworthy than an image buried in a
+  // build folder; brand-word preference breaks ties within that same depth.
+  if (a.depth !== b.depth) return a.depth < b.depth
   if (a.brand !== b.brand) return a.brand < b.brand
   if (a.extras !== b.extras) return a.extras < b.extras
-  if (a.depth !== b.depth) return a.depth < b.depth
   if (a.ext !== b.ext) return a.ext < b.ext
   return a.size > b.size
 }
@@ -208,13 +212,14 @@ export async function readProjectIcon(root: string): Promise<string | null> {
 
   while (queue.length > 0 && listed < MAX_DIRS) {
     const { dir, depth } = queue.shift()!
-    let entries: Awaited<ReturnType<typeof readdir>> | null = null
+    let entries: Dirent<string>[] | null = null
     try {
       entries = await readdir(dir, { withFileTypes: true })
       listed++
     } catch {
       continue
     }
+    if (!entries) continue
     for (const entry of entries) {
       if (entry.isDirectory()) {
         if (worthDescending(entry.name, depth + 1)) {

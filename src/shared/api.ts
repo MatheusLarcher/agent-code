@@ -27,6 +27,7 @@ import type {
   SkillInfo,
   PermissionExpiredMsg,
   VigiaAlertMsg,
+  PoProviderDiagnosticMsg,
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
@@ -204,6 +205,8 @@ export interface AgentCodeApi {
   /** Subscribe to the parallel watcher's doubts about a premise of the work.
    *  Advisory only: nothing is paused, the user decides what to do. */
   onVigiaAlert(cb: (m: VigiaAlertMsg) => void): () => void
+  /** Safe lifecycle notifications for the PO Claude → GPT Luna fallback. */
+  onPoProviderDiagnostic(cb: (m: PoProviderDiagnosticMsg) => void): () => void
 
   launchBrowser(): Promise<void>
   navigate(url: string): Promise<string>
