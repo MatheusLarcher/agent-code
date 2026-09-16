@@ -3,6 +3,7 @@ import { render, cleanup } from '@testing-library/react'
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { AgentCrew } from './AgentCrew'
+import { CrewChip } from './CrewChip'
 import type { CrewMember } from '../crew'
 
 /**
@@ -115,6 +116,45 @@ const CREW: CrewMember[] = [
 ]
 
 describe('AgentCrew — prova visual', () => {
+  it('gera mockups/_preview-chip-chat.html — o chip no lugar novo, sobre o composer', () => {
+    const { container } = render(
+      <CrewChip working={CREW.filter((m) => m.state === 'working')} onOpen={() => undefined} />
+    )
+    expect(container.querySelectorAll('.crew-mini')).toHaveLength(3)
+
+    const html = `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Chip do elenco — acima do composer</title>
+<link rel="stylesheet" href="../src/renderer/src/styles.css" />
+<style>
+  body { margin: 0; padding: 28px; background: #171615; }
+  h1 { font: 600 18px var(--font); color: var(--text); margin: 0 0 4px; }
+  p.lead { font: 14px var(--font); color: var(--muted); margin: 0 0 22px; }
+  .chat {
+    width: 720px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 14px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .bubble { align-self: flex-end; background: var(--bg-3); border-radius: 12px;
+            padding: 10px 13px; font: 13px var(--font); color: var(--text); max-width: 70%; }
+  .composer-bar { border: 1px solid var(--line); background: var(--bg-2); border-radius: 12px;
+                  padding: 11px 13px; color: #6f6c68; font: 13px var(--font); }
+</style>
+</head>
+<body>
+<h1>Chip do elenco — agora acima da barra de digitação</h1>
+<p class="lead">Saiu da topbar. Aparece só quando alguém está trabalhando.</p>
+<div class="chat">
+  <div class="bubble">revisa o diff e fecha a tarefa</div>
+  ${container.innerHTML}
+  <div class="composer-bar">Escreva uma mensagem…</div>
+</div>
+</body>
+</html>`
+    writeFileSync(resolve(process.cwd(), 'mockups/_preview-chip-chat.html'), html, 'utf8')
+  })
+
   it('gera mockups/_preview-equipe.html a partir do componente real', () => {
     const { container } = render(<AgentCrew crew={CREW} />)
 

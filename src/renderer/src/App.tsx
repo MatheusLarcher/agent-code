@@ -2825,9 +2825,6 @@ export function App(): JSX.Element {
             </button>
           )}
           </div>
-          {/* Quem está trabalhando AGORA, fora do painel: saber disso não pode
-              depender de manter a aba Agentes aberta. */}
-          <CrewChip working={crewWorking} onOpen={openAgentsPanel} />
           <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
           {/* Acesso permanente ao painel de agentes: sem isso ele só existiria
               enquanto houvesse subagente rodando, e não daria pra rever nada. */}
@@ -2952,10 +2949,9 @@ export function App(): JSX.Element {
                 `O vigia (observador em paralelo) me perguntou: "${question}"\n\nMinha resposta: ${answer}\n\nLeve isso em conta a partir de agora; se contradisser o que você assumiu, corrija.`
               )
             }}
-            todoPlan={active?.todoPlan}
             backgroundTasks={active?.backgroundTasks ?? []}
             queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}
-            runningAgents={runningTrackCount}
+            crewWorking={crewWorking}
             onOpenAgents={openAgentsPanel}
           />
           {/* O divisor vale para o painel da direita inteiro (navegador ou agentes):

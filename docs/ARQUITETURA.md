@@ -570,7 +570,11 @@ A linha "o que está fazendo" é **composta**, não uma string: a ferramenta sai
 
 O **PO ganhou um evento de fim** (`audit-finished`, com quantos cartões corrigiu). Ele já anunciava o início; sem o fim, o cartão dele ficaria auditando para sempre. O vigia continua sem evento de início — ele só aparece quando tem dúvida, que é o único momento em que depende de você.
 
-Fora do painel, o **chip da topbar** (`CrewChip`) empilha os mini-avatares de quem trabalha agora. Sem ele, saber que um agente entrou em campo exigiria manter a aba aberta — que é justamente o que não acontece. O chip **some quando ninguém trabalha**: um chip permanente com "0" vira mobília e para de ser lido.
+Fora do painel, o **chip do elenco** (`CrewChip`) empilha os mini-avatares de quem trabalha agora — **logo acima da barra de digitação**, que é onde o usuário está olhando enquanto espera. Sem ele, saber que um agente entrou em campo exigiria manter a aba aberta, que é justamente o que não acontece. Um clique abre o elenco. O chip **some quando ninguém trabalha**: um chip permanente com "0" vira mobília e para de ser lido.
+
+Ele substituiu a linha "N subagentes trabalhando" que ocupava esse lugar: mesma informação, com o papel de cada um — e duas faixas dizendo o mesmo seria ruído.
+
+> **O cartão de etapas saiu do chat.** O `TodoPlanCard` mostrava o plano do turno fixo acima do composer; com o Quadro, a mesma informação passou a ter um lugar próprio, durável e por projeto. O dado (`Conversation.todoPlan`) continua vivo: alimenta a faixa de etapas do mapa **Projeto** e o quadro.
 
 A segunda visão, **Linha do tempo**, mostra uma faixa por agente sobre a janela do turno: quem rodou junto de quem, e quem ainda está vivo.
 

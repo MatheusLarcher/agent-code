@@ -8,10 +8,11 @@ import type {
   QueuedAfterInterrupt
 } from '@shared/ipc'
 import { contextLimitFor, fastModeTransport } from '@shared/ipc'
-import type { TodoPlan, TurnRecovery, UIMessage } from '../types'
+import type { TurnRecovery, UIMessage } from '../types'
+import type { CrewMember } from '../crew'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
-import { TodoPlanCard } from './TodoPlanCard'
+import { CrewChip } from './CrewChip'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
 import { VigiaChip, type VigiaDoubt } from './VigiaChip'
 import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
@@ -174,11 +175,9 @@ interface Props {
   onDismissVigia?: () => void
   /** Manda a RESPOSTA do usuário ao agente pelo caminho normal (entra na fila). */
   onAnswerVigia?: (question: string, answer: string) => void
-  /** The active conversation's current TodoWrite plan, fixed above the composer. */
-  todoPlan?: TodoPlan
-  /** Quantos subagentes estão trabalhando agora nesta conversa (0 = nada a mostrar). */
-  runningAgents?: number
-  /** Abre o painel de agentes (a linha de status é só o atalho pra ele). */
+  /** Quem do elenco está trabalhando agora — o chip acima do composer. */
+  crewWorking?: CrewMember[]
+  /** Abre o painel de agentes (o chip é só o atalho pra ele). */
   onOpenAgents?: () => void
   backgroundTasks?: BackgroundTask[]
   queuedAfterInterrupt?: QueuedAfterInterrupt[]
@@ -459,21 +458,12 @@ export function ChatPanel(props: Props): JSX.Element {
         </button>
       )}
 
-      {/* Sinal discreto de que há subagentes trabalhando — sem cartão por evento
-          no feed. Um clique abre o painel de agentes, onde está o detalhe. */}
-      {(props.runningAgents ?? 0) > 0 && (
-        <button type="button" className="agents-status-line" onClick={props.onOpenAgents}>
-          <span className="agents-status-dot" aria-hidden="true" />
-          <span className="agents-status-text">
-            {props.runningAgents === 1
-              ? '1 subagente trabalhando'
-              : `${props.runningAgents} subagentes trabalhando`}
-          </span>
-          <span className="agents-status-open">ver</span>
-        </button>
-      )}
-
-      {props.todoPlan && <TodoPlanCard key={`todo-plan:${props.convId ?? 'none'}`} plan={props.todoPlan} />}
+      {/* Quem está trabalhando agora, à mão do composer — é para cá que o
+          usuário olha enquanto espera. Um clique abre o elenco, com o detalhe.
+          Some sozinho quando ninguém trabalha.
+          Substitui a antiga linha "N subagentes trabalhando": mesma informação,
+          com o papel de cada um, e sem duas faixas dizendo o mesmo. */}
+      <CrewChip working={props.crewWorking ?? []} onOpen={() => props.onOpenAgents?.()} />
 
       <BackgroundTasksCard tasks={props.backgroundTasks ?? []} />
       <InterruptQueueWarning messages={props.queuedAfterInterrupt ?? []} />

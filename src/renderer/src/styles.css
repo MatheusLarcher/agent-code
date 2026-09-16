@@ -961,83 +961,6 @@ button svg {
   }
 }
 
-/* ---- TodoWrite plan card: fixed above the composer, one live checklist ---- */
-.todo-plan-card {
-  flex-shrink: 0;
-  margin: 0 16px 6px;
-  background: var(--bg-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
-  overflow: hidden;
-  font-size: 12.5px;
-}
-.todo-plan-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 11px;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.todo-plan-head:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-.todo-plan-check-all {
-  flex-shrink: 0;
-  color: var(--ok);
-  font-weight: 700;
-}
-.todo-plan-title {
-  flex: 1;
-  min-width: 0;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.todo-plan-dots {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.todo-plan-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--line);
-}
-.todo-plan-dot.completed {
-  background: var(--ok);
-}
-.todo-plan-dot.in_progress {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
-  /* Same halo-pulse pattern as .pending-question-chip (defined further down)
-     — reused instead of declaring a near-identical second keyframe. */
-  animation: pending-question-pulse 1.3s ease-in-out infinite;
-}
-.todo-plan-count {
-  flex-shrink: 0;
-  font-size: 10.5px;
-  color: var(--muted);
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 20px;
-  padding: 2px 7px;
-}
-.todo-plan-caret {
-  flex-shrink: 0;
-  color: var(--muted);
-  transition: transform 140ms ease;
-}
-.todo-plan-card.open .todo-plan-caret {
-  transform: rotate(180deg);
-}
 
 /* SDK level snapshots: these cards are replaced wholesale on each event. */
 .background-tasks-card,
@@ -4980,47 +4903,9 @@ button svg {
   animation: badge-pop 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Linha compacta acima do composer que abre o painel. */
-.agents-status-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 12px 8px;
-  padding: 7px 11px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  animation: track-in 0.2s ease;
-  transition: background 0.14s ease, transform 0.14s ease;
-}
-.agents-status-line:hover {
-  transform: translateY(-1px);
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-2));
-}
-.agents-status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: bg-pulse 1.8s ease-out infinite;
-  flex: 0 0 auto;
-}
-.agents-status-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agents-status-open {
-  margin-left: auto;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 600;
-  flex: 0 0 auto;
-}
+/* A linha "N subagentes trabalhando" que ficava acima do composer saiu daqui:
+   o chip do elenco (`.crew-chip`, no fim deste arquivo) ocupa o mesmo lugar e
+   diz mais — QUEM está trabalhando, não só quantos. */
 
 @media (prefers-reduced-motion: reduce) {
   .agents-panel,
@@ -6907,11 +6792,17 @@ button svg {
   background: var(--bg-3);
   border-radius: 999px;
   /* É um <button>: sem `font: inherit` o Chromium aplica a fonte de controle
-     do sistema e o rótulo destoa do resto da topbar. */
+     do sistema e o rótulo destoa do resto da tela. */
   font: inherit;
   font-size: 12.5px;
   color: var(--text);
   cursor: pointer;
+  /* Vive acima do composer, numa coluna flex: sem isto o botão esticaria de
+     ponta a ponta e viraria uma faixa — ele é um chip. A margem lateral é a
+     mesma da antiga linha de status, para cair no lugar já conhecido. */
+  align-self: flex-start;
+  flex-shrink: 0;
+  margin: 0 12px 8px;
 }
 .crew-chip:hover {
   border-color: var(--accent-dim);

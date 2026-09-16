@@ -1261,8 +1261,9 @@ describe('App — plano sincronizado com as tarefas reais do CLI (task-list)', (
         <App />
       </UiProvider>
     )
-    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
-    expect(screen.getByText('1/2')).toBeTruthy()
+    // O cartão de etapas saiu do chat (o Quadro assumiu), então o que se
+    // observa aqui é o PLANO PERSISTIDO — que é o que o quadro consome.
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(2))
 
     // Ao reconectar, o main manda o estado real lido de ~/.claude/tasks/<sessão>.
     await emit(
@@ -1279,10 +1280,9 @@ describe('App — plano sincronizado com as tarefas reais do CLI (task-list)', (
       expect(plan?.items[1].status).toBe('completed')
       expect(plan?.items[2].status).toBe('in_progress')
     })
-    expect(screen.getByText('2/3')).toBeTruthy()
   })
 
-  it('durante o turno o card volta a girar no item certo', async () => {
+  it('durante o turno o plano marca o item em andamento, e o result o encerra', async () => {
     render(
       <UiProvider>
         <App />
@@ -1294,11 +1294,15 @@ describe('App — plano sincronizado com as tarefas reais do CLI (task-list)', (
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
 
     await emit(taskList([{ id: '1', content: 'M3 — Pipeline', status: 'in_progress', activeForm: 'Trocando o pipeline' }]))
-    await waitFor(() => expect(screen.getByText('Trocando o pipeline')).toBeTruthy())
-    expect(document.querySelector('.todo-plan-card .spinner')).toBeTruthy()
+    await waitFor(() => {
+      const plan = savedConv()?.todoPlan
+      expect(plan?.items[0].status).toBe('in_progress')
+      expect(plan?.active).toBe(true)
+    })
 
+    // Fim do turno: o plano deixa de estar "ativo" (nada mais girando).
     await emit(result)
-    await waitFor(() => expect(document.querySelector('.todo-plan-card .spinner')).toBeNull())
+    await waitFor(() => expect(savedConv()?.todoPlan?.active).toBe(false))
   })
 
   it('lista vazia não apaga um plano de TodoWrite (que não vem das tarefas do CLI)', async () => {
@@ -1317,7 +1321,7 @@ describe('App — plano sincronizado com as tarefas reais do CLI (task-list)', (
 
     await emit(taskList([]))
     expect(savedConv()?.todoPlan?.items).toHaveLength(1)
-    expect(screen.getByText('Fazendo o passo 1')).toBeTruthy()
+    expect(savedConv()?.todoPlan?.items[0].activeForm).toBe('Fazendo o passo 1')
   })
 })
 
@@ -1333,8 +1337,8 @@ describe('App — TodoPlanCard renderizado de verdade (end-to-end)', () => {
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
 
-    // Sem TodoWrite ainda — nenhum card no DOM.
-    expect(document.querySelector('.todo-plan-card')).toBeNull()
+    // Sem TodoWrite ainda — nenhum plano salvo.
+    expect(savedConv()?.todoPlan).toBeUndefined()
 
     await emit(
       todoWriteEvent([
@@ -1343,13 +1347,10 @@ describe('App — TodoPlanCard renderizado de verdade (end-to-end)', () => {
         { content: 'Rodar testes', status: 'pending', activeForm: 'Rodando os testes' }
       ])
     )
-    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
-    expect(screen.getByText('Corrigindo X')).toBeTruthy()
-    // 0 itens completed ainda (1 in_progress + 2 pending).
-    expect(screen.getByText('0/3')).toBeTruthy()
-    expect(document.querySelectorAll('.todo-plan-dot')).toHaveLength(3)
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(3))
+    expect(savedConv()?.todoPlan?.items[0].status).toBe('in_progress')
 
-    // Avança — MESMO card atualiza (não duplica: continua só 1 .todo-plan-card).
+    // Avança — o MESMO plano é atualizado, não acumula uma segunda lista.
     await emit(
       todoWriteEvent([
         { content: 'Corrigir X', status: 'completed', activeForm: 'Corrigindo X' },
@@ -1357,19 +1358,17 @@ describe('App — TodoPlanCard renderizado de verdade (end-to-end)', () => {
         { content: 'Rodar testes', status: 'pending', activeForm: 'Rodando os testes' }
       ])
     )
-    await waitFor(() => expect(screen.getByText('Corrigindo Y')).toBeTruthy())
-    expect(document.querySelectorAll('.todo-plan-card')).toHaveLength(1)
-    // 1 item completed agora ("Corrigir X").
-    expect(screen.getByText('1/3')).toBeTruthy()
+    await waitFor(() => expect(savedConv()?.todoPlan?.items[1].status).toBe('in_progress'))
+    expect(savedConv()?.todoPlan?.items).toHaveLength(3)
+    expect(savedConv()?.todoPlan?.items[0].status).toBe('completed')
 
-    // Turno termina — card recolhe (resumo), continua visível.
+    // Turno termina — o plano continua salvo, só deixa de estar ativo.
     await emit(result)
-    await waitFor(() => expect(screen.getByText('1/3 concluído')).toBeTruthy())
-    expect(document.querySelector('.todo-plan-card')).toBeTruthy() // nunca some
-    expect(document.querySelector('.todo-plan-card .spinner')).toBeNull() // spinner parou
+    await waitFor(() => expect(savedConv()?.todoPlan?.active).toBe(false))
+    expect(savedConv()?.todoPlan?.items).toHaveLength(3)
   })
 
-  it('trocar de conversa mostra o todoPlan da conversa nova (ou nenhum card, se ela nunca usou TodoWrite)', async () => {
+  it('o plano é por conversa — o da c1 não vaza para uma conversa que nunca usou TodoWrite', async () => {
     const conv2 = {
       id: 'c2',
       title: 'Conversa 2',
@@ -1394,70 +1393,20 @@ describe('App — TodoPlanCard renderizado de verdade (end-to-end)', () => {
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
     await emit(todoWriteEvent([{ content: 'Passo 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' }]))
-    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(1))
 
-    // Troca pra Conversa 2 (nunca usou TodoWrite) — o card some, sem vazar o da c1.
+    // Troca pra Conversa 2 (nunca usou TodoWrite): o plano é POR CONVERSA.
     // Duas entradas na sidebar mostram "Conversa 2" (o próprio projeto + a
     // conversa dentro dele) — clicar em qualquer uma seleciona a conversa.
     fireEvent.click(screen.getAllByText('Conversa 2')[0])
-    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeNull())
+    await waitFor(() => {
+      const all = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+      expect(all.find((c: { id: string }) => c.id === 'c2')?.todoPlan).toBeUndefined()
+    })
   })
 
-  it('expandir o card numa conversa não deixa o card da OUTRA conversa nascer já aberto', async () => {
-    const conv2 = {
-      id: 'c2',
-      title: 'Conversa 2',
-      cwd: '/proj2',
-      model: 'claude-opus-4-8',
-      sdkSessionId: null,
-      messages: [],
-      tokens: { context: 0, output: 0, cost: 0 },
-      createdAt: 1,
-      updatedAt: 2
-    }
-    const seeded = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
-    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([...seeded, conv2]))
-
-    render(
-      <UiProvider>
-        <App />
-      </UiProvider>
-    )
-    await send('tarefa complexa na conversa 1')
-    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
-    await flushConnect()
-    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
-    await emit(todoWriteEvent([{ content: 'Passo 1 da conversa 1', status: 'in_progress', activeForm: 'Fazendo o passo 1' }]))
-    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
-
-    // Expande o card da conversa 1 — a lista completa fica visível.
-    fireEvent.click(screen.getByRole('button', { name: /Fazendo o passo 1/ }))
-    await waitFor(() => expect(screen.getByText('Passo 1 da conversa 1')).toBeTruthy())
-
-    // Troca pra conversa 2 e dá a ela seu PRÓPRIO todoPlan (também ativo).
-    fireEvent.click(screen.getAllByText('Conversa 2')[0])
-    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1)) // ainda não mandou nada na c2
-    fireEvent.change(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { target: { value: 'tarefa na c2' } })
-    fireEvent.keyDown(screen.getByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
-    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
-    await flushConnect()
-    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
-    await emit(
-      {
-        kind: 'tool-use',
-        id: 'tw-c2',
-        name: 'TodoWrite',
-        input: { todos: [{ content: 'Passo 1 da conversa 2', status: 'in_progress', activeForm: 'Fazendo outra coisa' }] },
-        parentToolUseId: null
-      },
-      'c2'
-    )
-
-    // O card da c2 deve nascer FECHADO — o texto completo do item não aparece
-    // até o usuário clicar, mesmo tendo expandido o card da c1 antes.
-    await waitFor(() => expect(screen.getByText('Fazendo outra coisa')).toBeTruthy())
-    expect(screen.queryByText('Passo 1 da conversa 2')).toBeNull()
-  })
+  // O teste do estado de expansão do cartão saiu junto com o cartão: ele
+  // cobria uma UI que não existe mais (o Quadro assumiu as etapas).
 })
 
 // TaskCreate/TaskUpdate: the pair actually used in practice today (see
@@ -1681,8 +1630,8 @@ describe('App — TaskCreate/TaskUpdate também vira um plano fixo, não um card
   })
 })
 
-describe('App — TodoPlanCard renderizado de verdade via TaskCreate/TaskUpdate (end-to-end)', () => {
-  it('card aparece fixo acima da composer, atualiza ao vivo, e recolhe quando o turno termina', async () => {
+describe('App — plano montado de verdade via TaskCreate/TaskUpdate (end-to-end)', () => {
+  it('o plano nasce, atualiza ao vivo e encerra junto com o turno', async () => {
     render(
       <UiProvider>
         <App />
@@ -1693,8 +1642,8 @@ describe('App — TodoPlanCard renderizado de verdade via TaskCreate/TaskUpdate 
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
 
-    // Sem TaskCreate ainda — nenhum card no DOM.
-    expect(document.querySelector('.todo-plan-card')).toBeNull()
+    // Sem TaskCreate ainda — nenhum plano.
+    expect(savedConv()?.todoPlan).toBeUndefined()
 
     await emit(taskCreateEvent('cA', 'Corrigir X', 'Corrigindo X'))
     await emit(taskCreatedResult('cA', '1', 'Corrigir X'))
@@ -1704,28 +1653,24 @@ describe('App — TodoPlanCard renderizado de verdade via TaskCreate/TaskUpdate 
     await emit(taskCreatedResult('cC', '3', 'Rodar testes'))
     await emit(taskUpdateEvent('u1', '1', { status: 'in_progress' }))
 
-    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
-    expect(screen.getByText('Corrigindo X')).toBeTruthy()
-    // 0 itens completed ainda.
-    expect(screen.getByText('0/3')).toBeTruthy()
-    expect(document.querySelectorAll('.todo-plan-dot')).toHaveLength(3)
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(3))
+    expect(savedConv()?.todoPlan?.items[0].status).toBe('in_progress')
 
-    // Avança — MESMO card atualiza (não duplica: continua só 1 .todo-plan-card).
+    // Avança — o MESMO plano é atualizado, sem acumular uma segunda lista.
     await emit(taskUpdateEvent('u2', '1', { status: 'completed' }))
     await emit(taskUpdateEvent('u3', '2', { status: 'in_progress' }))
 
-    await waitFor(() => expect(screen.getByText('Corrigindo Y')).toBeTruthy())
-    expect(document.querySelectorAll('.todo-plan-card')).toHaveLength(1)
-    expect(screen.getByText('1/3')).toBeTruthy()
+    await waitFor(() => expect(savedConv()?.todoPlan?.items[1].status).toBe('in_progress'))
+    expect(savedConv()?.todoPlan?.items).toHaveLength(3)
+    expect(savedConv()?.todoPlan?.items[0].status).toBe('completed')
 
-    // Turno termina — card recolhe (resumo), continua visível.
+    // Turno termina — o plano continua salvo, só deixa de estar ativo.
     await emit(result)
-    await waitFor(() => expect(screen.getByText('1/3 concluído')).toBeTruthy())
-    expect(document.querySelector('.todo-plan-card')).toBeTruthy() // nunca some
-    expect(document.querySelector('.todo-plan-card .spinner')).toBeNull() // spinner parou
+    await waitFor(() => expect(savedConv()?.todoPlan?.active).toBe(false))
+    expect(savedConv()?.todoPlan?.items).toHaveLength(3)
   })
 
-  it('trocar de conversa mostra o todoPlan da conversa nova (ou nenhum card, se ela nunca usou Task*)', async () => {
+  it('o plano é por conversa — o da c1 não vaza para uma que nunca usou Task*', async () => {
     const conv2 = {
       id: 'c2',
       title: 'Conversa 2',
@@ -1751,11 +1696,14 @@ describe('App — TodoPlanCard renderizado de verdade via TaskCreate/TaskUpdate 
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
     await emit(taskCreateEvent('c1', 'Passo 1'))
     await emit(taskCreatedResult('c1', '1', 'Passo 1'))
-    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeTruthy())
+    await waitFor(() => expect(savedConv()?.todoPlan?.items).toHaveLength(1))
 
-    // Troca pra Conversa 2 (nunca usou Task*) — o card some, sem vazar o da c1.
+    // Troca pra Conversa 2 (nunca usou Task*): o plano da c1 não pode vazar.
     fireEvent.click(screen.getAllByText('Conversa 2')[0])
-    await waitFor(() => expect(document.querySelector('.todo-plan-card')).toBeNull())
+    await waitFor(() => {
+      const all = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+      expect(all.find((c: { id: string }) => c.id === 'c2')?.todoPlan).toBeUndefined()
+    })
   })
 })
 

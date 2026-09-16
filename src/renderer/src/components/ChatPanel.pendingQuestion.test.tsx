@@ -107,14 +107,13 @@ describe('ChatPanel — toggle Loop', () => {
 })
 
 describe('ChatPanel - identidade estavel dos filhos do feed', () => {
-  it('nao colide keys quando o plano e mensagens com ids iguais coexistem', () => {
+  // O cartão de etapas saía daqui e disputava key com o feed; ele foi removido
+  // (o Quadro assumiu esse papel), mas mensagens com ids repetidos continuam
+  // chegando do SDK — é isso que este teste protege.
+  it('nao colide keys quando mensagens com ids iguais coexistem', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     renderPanel(false, vi.fn(), {
-      todoPlan: {
-        active: true,
-        items: [{ id: '1', content: 'Passo', activeForm: 'Fazendo o passo', status: 'in_progress' }]
-      },
       messages: [
         { kind: 'user', id: 'shared', text: 'Pergunta' },
         { kind: 'assistant-text', id: 'shared', text: 'Resposta', final: true },
