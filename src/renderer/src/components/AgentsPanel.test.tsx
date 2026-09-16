@@ -1,28 +1,49 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { AgentsPanel } from './AgentsPanel'
-import type { AgentTrack, TrackMap } from '../agentTracks'
+import { buildCrew } from '../crew'
+import type { AgentTrack } from '../agentTracks'
 
 afterEach(cleanup)
 
 function track(over: Partial<AgentTrack> = {}): AgentTrack {
   return {
     id: 't1',
-    label: 'Explore: mapear rotas',
+    label: 'executor: implementar o failover',
+    subagentType: 'executor',
     status: 'running',
     startedAt: Date.now() - 5_000,
     stepCount: 2,
     steps: [
-      { id: 's1', name: 'Grep', input: { pattern: 'rota' }, startedAt: Date.now() - 4_000, endedAt: Date.now() - 3_000, result: 'achou 3' },
+      {
+        id: 's1',
+        name: 'Grep',
+        input: { pattern: 'rota' },
+        startedAt: Date.now() - 4_000,
+        endedAt: Date.now() - 3_000,
+        result: 'achou 3'
+      },
       { id: 's2', name: 'Read', input: { file_path: 'C:\\proj\\src\\rotas.ts' }, startedAt: Date.now() - 1_000 }
     ],
     ...over
   }
 }
 
+/** O elenco montado pelo App — o painel só o renderiza. */
+function crewOf(over: Partial<Parameters<typeof buildCrew>[0]> = {}): ReturnType<typeof buildCrew> {
+  return buildCrew({
+    tracks: {},
+    busy: false,
+    busySince: null,
+    vigia: null,
+    po: null,
+    poEnabled: true,
+    vigiaEnabled: true,
+    ...over
+  })
+}
+
 const base = {
-  busy: false,
-  busySince: null,
   backgroundTasks: [],
   pendingPermissions: [],
   onFocusPermission: vi.fn(),
@@ -35,13 +56,12 @@ const base = {
   touches: [],
   turns: [],
   projectName: 'projeto',
-  projectCwd: 'C:\\proj',
-  onOpenConversation: vi.fn(),
   onOpenBoard: vi.fn(),
-  width: 480
+  width: 480,
+  crew: crewOf()
 }
 
-// jsdom não tem ResizeObserver (usado pelo mapa embutido no modo Fluxo).
+// jsdom não tem ResizeObserver (usado pelo mapa embutido no modo Projeto).
 class RO {
   observe(): void {}
   unobserve(): void {}
@@ -53,44 +73,65 @@ describe('AgentsPanel', () => {
   it('mostra o skeleton enquanto carrega — e nenhum conteúdo real ainda', () => {
     render(<AgentsPanel {...base} loading tracks={{ t1: track() }} />)
     expect(document.querySelectorAll('.agents-skeleton .sk-track').length).toBeGreaterThan(0)
-    expect(screen.queryByText('Explore: mapear rotas')).toBeNull()
+    expect(document.querySelector('.crew-roster')).toBeNull()
   })
 
-  it('lista a trilha com o que ela está executando agora', () => {
-    render(<AgentsPanel {...base} tracks={{ t1: track() }} />)
-    expect(screen.getByText('Explore: mapear rotas')).toBeTruthy()
-    expect(screen.getByText('Read')).toBeTruthy() // ferramenta atual
-    expect(screen.getByText('src/rotas.ts')).toBeTruthy() // detalhe legível, não o input cru
-    expect(screen.getByText('2 ações')).toBeTruthy()
-    expect(document.querySelector('.agent-track.running')).toBeTruthy()
-  })
-
-  it('trilha recém-aberta diz "iniciando", nunca "concluído"', () => {
-    render(<AgentsPanel {...base} tracks={{ t1: track({ stepCount: 0, steps: [] }) }} />)
-    expect(screen.getByText('iniciando…')).toBeTruthy()
-    expect(screen.queryByText('concluído')).toBeNull()
-  })
-
-  it('expandir mostra os passos daquele subagente', () => {
-    render(<AgentsPanel {...base} tracks={{ t1: track() }} />)
-    expect(screen.queryByText('achou 3')).toBeNull()
-    fireEvent.click(screen.getByText('Explore: mapear rotas'))
-    expect(screen.getByText('achou 3')).toBeTruthy()
-    expect(document.querySelectorAll('.agent-step').length).toBe(2)
-  })
-
-  it('sem subagente, explica o que vai aparecer ali (estado vazio ≠ carregando)', () => {
+  it('o elenco inteiro está em cena mesmo com ninguém trabalhando', () => {
     render(<AgentsPanel {...base} tracks={{}} />)
-    expect(screen.getByText(/Nenhum subagente foi disparado/)).toBeTruthy()
-    expect(document.querySelector('.agents-skeleton')).toBeNull()
+    for (const name of ['Principal', 'executor', 'critico', 'navegador-de-codigo', 'memoria', 'PO', 'vigia']) {
+      expect(screen.getByText(name)).toBeTruthy()
+    }
+    // Parado é recuado, não ausente: é o contraste que faz "começou" aparecer.
+    expect(document.querySelectorAll('.crew-agent.idle').length).toBeGreaterThan(0)
+    expect(document.querySelector('.crew-agent.working')).toBeNull()
   })
 
-  it('agente principal reflete o turno em andamento', () => {
-    const { rerender } = render(<AgentsPanel {...base} tracks={{}} />)
-    expect(screen.getByText('Ocioso')).toBeTruthy()
-    rerender(<AgentsPanel {...base} tracks={{ t1: track() }} busy busySince={Date.now() - 3_000} />)
-    expect(screen.getByText('Trabalhando na sua tarefa')).toBeTruthy()
-    expect(screen.getByText('coordenando 1 subagente')).toBeTruthy()
+  it('quem começa a trabalhar acende, com a ferramenta e o pulso de chegada', () => {
+    // Entrou em campo agora: é o instante que o recurso existe para tornar visível.
+    const recemChegado = track({ startedAt: Date.now() - 500 })
+    const crew = crewOf({ tracks: { t1: recemChegado }, busy: true, busySince: Date.now() - 30_000 })
+    render(<AgentsPanel {...base} crew={crew} tracks={{ t1: recemChegado }} />)
+    const working = document.querySelectorAll('.crew-agent.working')
+    expect(working.length).toBe(2) // principal + executor
+    // A ferramenta atual aparece em destaque na linha do cartão. O seletor é
+    // específico porque o Principal também tem a sua ("Agent", delegando) e o
+    // mesmo nome ainda se repete na lista de passos.
+    const card = [...working].find((el) => el.querySelector('.crew-name')?.textContent?.startsWith('executor'))
+    expect(card?.querySelector('.crew-tool')?.textContent).toBe('Read')
+    expect(screen.getByText('rotas.ts')).toBeTruthy()
+    // Começou agora: o pulso de chegada está ligado.
+    expect(document.querySelector('.crew-agent.just-started')).toBeTruthy()
+  })
+
+  it('cartão que está trabalhando já abre com os passos, sem precisar clicar', () => {
+    const crew = crewOf({ tracks: { t1: track() } })
+    render(<AgentsPanel {...base} crew={crew} tracks={{ t1: track() }} />)
+    expect(document.querySelectorAll('.crew-step').length).toBe(2)
+    fireEvent.click(screen.getByText('executor'))
+    expect(document.querySelectorAll('.crew-step').length).toBe(0)
+  })
+
+  it('a dúvida do vigia é o único estado que pede ação', () => {
+    const crew = crewOf({ vigia: { at: Date.now() - 40_000 } })
+    render(<AgentsPanel {...base} crew={crew} tracks={{}} />)
+    expect(screen.getByText('1 dúvida esperando você')).toBeTruthy()
+    expect(document.querySelector('.crew-agent.asking')).toBeTruthy()
+    expect(screen.getByText('responder')).toBeTruthy()
+  })
+
+  it('observador desligado nas Configurações some do elenco', () => {
+    const crew = crewOf({ poEnabled: false, vigiaEnabled: false })
+    render(<AgentsPanel {...base} crew={crew} tracks={{}} />)
+    expect(screen.queryByText('PO')).toBeNull()
+    expect(screen.queryByText('vigia')).toBeNull()
+  })
+
+  it('a linha do tempo mostra uma faixa por quem trabalhou', () => {
+    const crew = crewOf({ tracks: { t1: track() }, busy: true, busySince: Date.now() - 9_000 })
+    render(<AgentsPanel {...base} crew={crew} tracks={{ t1: track() }} />)
+    fireEvent.click(screen.getByText('Linha do tempo'))
+    expect(document.querySelectorAll('.crew-tl-row').length).toBe(2)
+    expect(document.querySelectorAll('.crew-tl-bar.live').length).toBe(2)
   })
 
   it('mostra quem está travado esperando resposta e leva até lá', () => {
@@ -109,12 +150,11 @@ describe('AgentsPanel', () => {
     expect(onFocus).toHaveBeenCalledWith('c9')
   })
 
-  it('só existem os modos Lista e Projeto — o fluxo foi removido', () => {
+  it('os modos são Equipe, Tarefas e Projeto', () => {
     render(<AgentsPanel {...base} tracks={{ t1: track() }} />)
-    expect(screen.queryByTitle('Ver como fluxo')).toBeNull()
-    expect(screen.queryByTitle('Expandir o fluxo')).toBeNull()
-    expect(screen.getByTitle('Ver como lista')).toBeTruthy()
+    expect(screen.getByTitle('Ver a equipe')).toBeTruthy()
     expect(screen.getByTitle('Ver o mapa do projeto')).toBeTruthy()
+    expect(screen.queryByTitle('Ver como lista')).toBeNull()
   })
 
   it('etapas do projeto: minimizar deixa só as bolinhas, e volta ao clicar', () => {
@@ -125,14 +165,12 @@ describe('AgentsPanel', () => {
     render(<AgentsPanel {...base} tracks={{}} projectSteps={steps} />)
     fireEvent.click(screen.getByTitle('Ver o mapa do projeto'))
 
-    // aberto: texto das etapas na tela (a atual usa o activeForm)
     expect(screen.getByText('Primeira etapa')).toBeTruthy()
     expect(screen.getByText('Fazendo a segunda')).toBeTruthy()
     expect(screen.getByText('1/2')).toBeTruthy()
 
     fireEvent.click(screen.getByTitle('Minimizar as etapas'))
 
-    // minimizado: o texto SAI do DOM, sobram a contagem e as bolinhas
     expect(screen.queryByText('Primeira etapa')).toBeNull()
     expect(screen.queryByText('Fazendo a segunda')).toBeNull()
     expect(screen.getByText('1/2')).toBeTruthy()
@@ -142,15 +180,13 @@ describe('AgentsPanel', () => {
     expect(screen.getByText('Primeira etapa')).toBeTruthy()
   })
 
-  it('trilha concluída para de girar e a com erro fica marcada', () => {
-    const map: TrackMap = {
-      ok: track({ id: 'ok', label: 'terminada', status: 'done', endedAt: Date.now() }),
-      bad: track({ id: 'bad', label: 'quebrada', status: 'error', endedAt: Date.now() })
-    }
-    render(<AgentsPanel {...base} tracks={map} />)
-    expect(document.querySelector('.agent-track.error')).toBeTruthy()
+  it('trilha que terminou para de girar; a que falhou fica marcada', () => {
+    const done = track({ id: 'ok', status: 'done', endedAt: Date.now() - 1_000 })
+    const bad = track({ id: 'bad', subagentType: 'critico', status: 'error', endedAt: Date.now() - 500 })
+    const crew = crewOf({ tracks: { ok: done, bad } })
+    render(<AgentsPanel {...base} crew={crew} tracks={{ ok: done, bad }} />)
+    expect(document.querySelector('.crew-agent.failed')).toBeTruthy()
     expect(screen.getByText('terminou com erro')).toBeTruthy()
-    // nenhuma barra de progresso sobrando numa trilha que já acabou
-    expect(document.querySelectorAll('.agent-track-progress').length).toBe(0)
+    expect(document.querySelector('.crew-agent.working')).toBeNull()
   })
 })

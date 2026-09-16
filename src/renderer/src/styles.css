@@ -6499,3 +6499,469 @@ button svg {
   font-weight: 600;
   cursor: pointer;
 }
+
+/* ===========================================================================
+   ELENCO DE AGENTES (aba Agentes → Equipe)
+
+   Uma cor por papel: o time fica reconhecível de relance e a MESMA cor
+   reaparece no cartão, no chip da topbar e na faixa da linha do tempo. Cada
+   cartão recebe `--role`, e daí saem borda, anel, ícone e varredura.
+   ======================================================================== */
+:root {
+  --crew-principal: #d97757;
+  --crew-executor: #6f9bd1;
+  --crew-critico: #a98bd1;
+  --crew-navegador-de-codigo: #6fbdad;
+  --crew-memoria: #c98bb8;
+  --crew-po: #7fae6f;
+  --crew-vigia: #e0a458;
+  --crew-subagente: #8d8a86;
+}
+
+.crew {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.crew-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 10px;
+}
+.crew-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.crew-seg {
+  margin-left: auto;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.crew-seg button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.crew-seg button.on {
+  background: var(--bg-3);
+  color: var(--text);
+}
+
+.crew-roster {
+  flex: 1;
+  overflow: auto;
+  padding: 0 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.crew-group-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #757370;
+  margin: 10px 2px 2px;
+}
+
+.crew-agent {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg-2);
+  position: relative;
+  overflow: hidden;
+  text-align: left;
+  transition:
+    border-color 0.25s,
+    background 0.25s,
+    opacity 0.25s;
+}
+.crew-agent.clickable {
+  cursor: pointer;
+}
+/* PARADO: presente, mas recuado. É o contraste com este estado que faz
+   "começou a trabalhar" ser percebido sem o usuário estar olhando. */
+.crew-agent.idle {
+  opacity: 0.48;
+  background: transparent;
+}
+.crew-agent.working {
+  border-color: color-mix(in srgb, var(--role) 55%, var(--line));
+}
+.crew-agent.working::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--role), transparent);
+  animation: crew-sweep 1.9s linear infinite;
+}
+@keyframes crew-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
+}
+.crew-agent.asking {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 7%, var(--bg-2));
+}
+.crew-agent.failed {
+  border-color: var(--err);
+}
+
+.crew-av {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  color: var(--role);
+}
+.crew-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--role) 45%, transparent);
+}
+.crew-agent.working .crew-ring {
+  border-color: transparent;
+  border-top-color: var(--role);
+  border-right-color: var(--role);
+  animation: crew-spin 1.1s linear infinite;
+}
+@keyframes crew-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Pulso de chegada: toca 2× e para. Piscar para sempre vira ruído de fundo. */
+.crew-agent.just-started .crew-av::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--role);
+  animation: crew-ping 1.4s ease-out 2;
+}
+@keyframes crew-ping {
+  from {
+    transform: scale(0.7);
+    opacity: 0.85;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+.crew-agent.idle .crew-av {
+  color: var(--muted);
+}
+.crew-agent.idle .crew-ring {
+  border-color: var(--line);
+}
+
+.crew-who {
+  min-width: 0;
+}
+.crew-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.crew-kind {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 5px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+.crew-doing {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crew-agent.working .crew-doing {
+  color: #c9c5c0;
+}
+.crew-tool {
+  color: var(--role);
+  font-weight: 600;
+}
+.crew-add {
+  color: var(--ok);
+}
+.crew-del {
+  color: var(--err);
+}
+
+.crew-meta {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.crew-elapsed {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Só o cronômetro de quem trabalha ganha o branco vivo; em qualquer outro
+   estado ele fica recuado, como o resto do cartão parado. */
+.crew-agent.working .crew-elapsed {
+  color: var(--text);
+}
+.crew-steps {
+  font-size: 10.5px;
+  color: #757370;
+  white-space: nowrap;
+}
+.crew-badge {
+  font-size: 10.5px;
+  border-radius: 999px;
+  padding: 1px 7px;
+  line-height: 16px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.crew-badge.ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.crew-badge.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.crew-badge.err {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
+}
+
+.crew-steps-list {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  list-style: none;
+}
+.crew-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.crew-st-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  flex: 0 0 6px;
+}
+.crew-step.done .crew-st-dot {
+  background: var(--ok);
+}
+.crew-step.err .crew-st-dot {
+  background: var(--err);
+}
+.crew-step.run .crew-st-dot {
+  background: var(--role);
+  animation: crew-blink 1.1s ease-in-out infinite;
+}
+@keyframes crew-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+.crew-st-name {
+  color: #c9c5c0;
+  font-weight: 600;
+}
+.crew-st-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crew-st-time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: #757370;
+}
+
+/* ---- linha do tempo ---- */
+.crew-timeline {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 14px 14px;
+}
+.crew-tl-lead,
+.crew-empty {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+  margin: 2px 0 12px;
+}
+.crew-tl-row {
+  display: grid;
+  grid-template-columns: 104px 1fr;
+  gap: 9px;
+  align-items: center;
+  margin-bottom: 7px;
+}
+.crew-tl-name {
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crew-tl-name svg {
+  color: var(--role);
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+}
+.crew-tl-track {
+  height: 17px;
+  background: var(--bg-2);
+  border-radius: 5px;
+  position: relative;
+  overflow: hidden;
+}
+.crew-tl-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--role) 62%, transparent);
+}
+.crew-tl-bar.live {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--role) 55%, transparent), var(--role));
+}
+.crew-tl-bar.live::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  opacity: 0.55;
+  animation: crew-blink 1.1s ease-in-out infinite;
+}
+.crew-tl-axis {
+  display: grid;
+  grid-template-columns: 104px 1fr;
+  gap: 9px;
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: #757370;
+}
+.crew-tl-ticks {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ---- chip da topbar: quem trabalha agora, sem abrir o painel ---- */
+.crew-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  border-radius: 999px;
+  /* É um <button>: sem `font: inherit` o Chromium aplica a fonte de controle
+     do sistema e o rótulo destoa do resto da topbar. */
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+.crew-chip:hover {
+  border-color: var(--accent-dim);
+}
+.crew-stack {
+  display: flex;
+}
+.crew-mini {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  border: 1.5px solid var(--role);
+  color: var(--role);
+  margin-left: -6px;
+}
+/* O pulso é do avatar ATIVO. O chip só lista quem trabalha hoje, mas deixar a
+   animação presa ao modificador evita um avatar parado pulsando amanhã. */
+.crew-mini.pulse {
+  animation: crew-minipulse 1.6s ease-in-out infinite;
+}
+.crew-mini:first-child {
+  margin-left: 0;
+}
+.crew-av svg {
+  width: 17px;
+  height: 17px;
+}
+.crew-mini svg {
+  width: 11px;
+  height: 11px;
+}
+@keyframes crew-minipulse {
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--role) 22%, transparent);
+  }
+}
+.crew-chip-n {
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crew-agent.working::after,
+  .crew-agent.working .crew-ring,
+  .crew-agent.just-started .crew-av::before,
+  .crew-step.run .crew-st-dot,
+  .crew-tl-bar.live::after,
+  .crew-mini {
+    animation: none;
+  }
+}

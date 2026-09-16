@@ -888,10 +888,20 @@ export interface VigiaAlertMsg {
 export interface PoProviderDiagnostic {
   conversationId: string
   correlationId: string
-  phase: 'claude-started' | 'claude-unavailable' | 'po-provider-switch' | 'gpt-luna-started' | 'gpt-luna-unavailable'
+  phase:
+    | 'claude-started'
+    | 'claude-unavailable'
+    | 'po-provider-switch'
+    | 'gpt-luna-started'
+    | 'gpt-luna-unavailable'
+    /** The audit ended. Carries how many board writes it made — the crew panel
+     *  needs an END, not only a start, to stop showing the PO as working. */
+    | 'audit-finished'
   requestedProvider: 'claude'
   actualProvider: 'claude' | 'gpt-luna'
   fallbackReason?: 'claude_plan' | 'claude_auth' | 'claude_authorization'
+  /** Only on `audit-finished`: board operations actually applied (0 is normal). */
+  appliedOps?: number
 }
 
 export interface PoProviderDiagnosticMsg extends PoProviderDiagnostic {

@@ -152,7 +152,8 @@ export class Po {
     request: PoObserverRequest,
     phase: PoProviderDiagnostic['phase'],
     actualProvider: 'claude' | 'gpt-luna',
-    fallbackReason?: SafeProviderReason
+    fallbackReason?: SafeProviderReason,
+    appliedOps?: number
   ): void {
     this.deps.diagnose?.({
       conversationId: request.conversationId,
@@ -160,7 +161,8 @@ export class Po {
       phase,
       requestedProvider: 'claude',
       actualProvider,
-      ...(fallbackReason ? { fallbackReason } : {})
+      ...(fallbackReason ? { fallbackReason } : {}),
+      ...(appliedOps === undefined ? {} : { appliedOps })
     })
   }
 
@@ -209,50 +211,61 @@ export class Po {
       })
 
       this.diagnostic(request, 'claude-started', 'claude')
-      let attempt = await this.runClaude(request)
-      if (attempt.provider === 'claude' && attempt.state !== 'completed' && attempt.reason) {
-        const fallbackReason = attempt.reason
-        this.diagnostic(request, 'claude-unavailable', 'claude', fallbackReason)
-        this.diagnostic(request, 'po-provider-switch', 'gpt-luna', fallbackReason)
-        let lunaStarted = false
-        attempt = await this.runLuna(request, () => {
-          lunaStarted = true
-          this.diagnostic(request, 'gpt-luna-started', 'gpt-luna', fallbackReason)
-        })
-        if (attempt.state !== 'completed') {
-          // Setup failure has no preceding Luna-started notice; a started Luna
-          // gets an error after its own failed attempt. Both are safe and transient.
-          this.diagnostic(request, 'gpt-luna-unavailable', 'gpt-luna', fallbackReason)
-          return
-        }
-        // Defensive: injected runners must announce their actual start before
-        // claiming a completed Luna response.
-        if (!lunaStarted) return
-      }
-      if (attempt.state !== 'completed') return
-
-      const ops = rejectUnsafeOps(
-        parsePoVerdict(attempt.text, cards.map((card) => card.id)),
-        cards
-      )
-      if (ops.length === 0) return
-
-      const first = cards[0]
-      for (const op of ops) {
-        if (op.kind === 'complete') {
-          await this.deps.board.applyPo({ id: op.id, poStatus: 'completed', poReason: op.reason })
-        } else if (op.kind === 'retitle') {
-          await this.deps.board.applyPo({ id: op.id, poTitle: op.title })
-        } else {
-          await this.deps.board.createPoItem({
-            projectId: first.projectId,
-            projectCwd: first.projectCwd,
-            conversationId: convId,
-            title: op.title,
-            status: 'pending',
-            reason: op.reason
+      // From here the audit has started, so it must also announce its END —
+      // otherwise the crew panel would show the PO working forever on any of
+      // the early returns below. `provider` follows whichever route ran.
+      let provider: 'claude' | 'gpt-luna' = 'claude'
+      let applied = 0
+      try {
+        let attempt = await this.runClaude(request)
+        if (attempt.provider === 'claude' && attempt.state !== 'completed' && attempt.reason) {
+          const fallbackReason = attempt.reason
+          this.diagnostic(request, 'claude-unavailable', 'claude', fallbackReason)
+          this.diagnostic(request, 'po-provider-switch', 'gpt-luna', fallbackReason)
+          provider = 'gpt-luna'
+          let lunaStarted = false
+          attempt = await this.runLuna(request, () => {
+            lunaStarted = true
+            this.diagnostic(request, 'gpt-luna-started', 'gpt-luna', fallbackReason)
           })
+          if (attempt.state !== 'completed') {
+            // Setup failure has no preceding Luna-started notice; a started Luna
+            // gets an error after its own failed attempt. Both are safe and transient.
+            this.diagnostic(request, 'gpt-luna-unavailable', 'gpt-luna', fallbackReason)
+            return
+          }
+          // Defensive: injected runners must announce their actual start before
+          // claiming a completed Luna response.
+          if (!lunaStarted) return
         }
+        if (attempt.state !== 'completed') return
+
+        const ops = rejectUnsafeOps(
+          parsePoVerdict(attempt.text, cards.map((card) => card.id)),
+          cards
+        )
+        if (ops.length === 0) return
+
+        const first = cards[0]
+        for (const op of ops) {
+          if (op.kind === 'complete') {
+            await this.deps.board.applyPo({ id: op.id, poStatus: 'completed', poReason: op.reason })
+          } else if (op.kind === 'retitle') {
+            await this.deps.board.applyPo({ id: op.id, poTitle: op.title })
+          } else {
+            await this.deps.board.createPoItem({
+              projectId: first.projectId,
+              projectCwd: first.projectCwd,
+              conversationId: convId,
+              title: op.title,
+              status: 'pending',
+              reason: op.reason
+            })
+          }
+          applied++
+        }
+      } finally {
+        this.diagnostic(request, 'audit-finished', provider, undefined, applied)
       }
     } catch {
       // The observer cannot take down the observed turn or write a partial board.

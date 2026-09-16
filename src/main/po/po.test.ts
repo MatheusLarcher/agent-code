@@ -299,17 +299,24 @@ describe('Po', () => {
 
     expect(runLuna).toHaveBeenCalledTimes(1)
     expect(board.applyPo).toHaveBeenCalledTimes(1)
+    // A auditoria também ANUNCIA O FIM: sem isso o elenco mostraria o PO
+    // trabalhando para sempre depois de um turno.
     expect(diagnostics.map(({ phase }) => phase)).toEqual([
       'claude-started',
       'claude-unavailable',
       'po-provider-switch',
-      'gpt-luna-started'
+      'gpt-luna-started',
+      'audit-finished'
     ])
-    expect(diagnostics.slice(1)).toEqual([
+    expect(diagnostics.slice(1, 4)).toEqual([
       expect.objectContaining({ phase: 'claude-unavailable', actualProvider: 'claude', fallbackReason: reason }),
       expect.objectContaining({ phase: 'po-provider-switch', actualProvider: 'gpt-luna', fallbackReason: reason }),
       expect.objectContaining({ phase: 'gpt-luna-started', actualProvider: 'gpt-luna', fallbackReason: reason })
     ])
+    // O fim conta o que foi de fato escrito no quadro, e pela rota vencedora.
+    expect(diagnostics[4]).toEqual(
+      expect.objectContaining({ phase: 'audit-finished', actualProvider: 'gpt-luna', appliedOps: 1 })
+    )
   })
 
   it('faz uma única chamada Luna por account_on_hold estruturado do SDK', async () => {

@@ -10,6 +10,7 @@ import type {
   PermissionResponse,
   PickedElement,
   QuestionAnswer,
+  PoProviderDiagnosticMsg,
   RateLimitStatus,
   RepositoryChange,
   StorageStatusDto,
@@ -55,6 +56,8 @@ import { ChatPanel } from './components/ChatPanel'
 import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
 import { AgentsPanel } from './components/AgentsPanel'
+import { CrewChip } from './components/CrewChip'
+import { buildCrew, workingMembers } from './crew'
 import { IconBoard, IconGlobe, IconUsers } from './components/Icons'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
@@ -442,6 +445,15 @@ export function App(): JSX.Element {
   // conversa: não persiste, não vira mensagem e não bloqueia nada — some ao
   // dispensar, ao trocar por um alerta novo ou ao fechar o app.
   const [vigiaAlerts, setVigiaAlerts] = useState<Record<string, VigiaDoubt>>({})
+  // Quando a dúvida do vigia chegou, por conversa — o elenco mostra "há X".
+  // Fica fora de `VigiaDoubt` porque o chip do chat não precisa saber disso.
+  const [vigiaAt, setVigiaAt] = useState<Record<string, number>>({})
+  // Último ciclo do PO por conversa. É o que dá ao cartão dele um começo e um
+  // fim; sem o evento de fim o elenco o mostraria auditando para sempre.
+  const [poDiagnostics, setPoDiagnostics] = useState<Record<string, PoProviderDiagnosticMsg>>({})
+  // Observador desligado nas Configurações some do elenco — mostrá-lo parado
+  // para sempre seria dizer que existe alguém que não vai agir nunca.
+  const [observersOn, setObserversOn] = useState({ po: true, vigia: true })
   // Account-wide rate-limit usage (5h session / weekly / etc.) — deliberately
   // GLOBAL, not per-conversation: it comes from the Anthropic account, not from
   // any one chat, so it must survive switching conversations. Keyed by
@@ -946,16 +958,18 @@ export function App(): JSX.Element {
       setMinimizedQuestions((m) => withoutKey(m, convId))
     })
     // O vigia avisa o USUÁRIO; nada aqui toca a sessão nem a lista de mensagens.
-    const offVigia = window.api.onVigiaAlert(({ convId, text, options }) => {
+    const offVigia = window.api.onVigiaAlert(({ convId, text, options, at }) => {
       setVigiaAlerts((v) => ({ ...v, [convId]: { question: text, options: options ?? [] } }))
+      setVigiaAt((v) => ({ ...v, [convId]: at || Date.now() }))
     })
     // Older preload bundles (and focused renderer harnesses) can briefly lack
     // this additive subscription during an app upgrade; the PO remains silent
     // rather than preventing the whole renderer from mounting.
-    const offPoProvider = window.api.onPoProviderDiagnostic?.(({ phase }) => {
-      if (phase === 'gpt-luna-started') {
+    const offPoProvider = window.api.onPoProviderDiagnostic?.((msg) => {
+      setPoDiagnostics((p) => ({ ...p, [msg.conversationId]: msg }))
+      if (msg.phase === 'gpt-luna-started') {
         notify('aviso', 'Claude indisponível para o PO; continuando com GPT Luna.')
-      } else if (phase === 'gpt-luna-unavailable') {
+      } else if (msg.phase === 'gpt-luna-unavailable') {
         notify('erro', 'GPT Luna indisponível para a auditoria do quadro.')
       }
     }) ?? (() => undefined)
@@ -1508,6 +1522,7 @@ export function App(): JSX.Element {
       setPermissions((p) => withoutKey(p, id))
       setMinimizedQuestions((m) => withoutKey(m, id))
       setVigiaAlerts((v) => withoutKey(v, id))
+      setVigiaAt((v) => withoutKey(v, id))
       setQueue((q) => q.filter((m) => m.convId !== id))
       const removed = convsRef.current.find((c) => c.id === id)
       if (removed) {
@@ -2214,9 +2229,21 @@ export function App(): JSX.Element {
     void window.api.getConfig().then((c) => {
       setVoiceReady(!!c.openai?.apiKey?.trim())
       setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
+      setObserversOn({ po: c.board?.po?.enabled !== false, vigia: c.vigia?.enabled !== false })
       voiceSpeedRef.current = c.openai?.speed || 1
     })
     void window.api.codexStatus().then((s) => setCodexReady(s.connected))
+  }, [])
+
+  // Quem está no elenco também depende das Configurações; ler uma vez na
+  // abertura evita o cartão de um observador desligado piscar na tela.
+  useEffect(() => {
+    void window.api
+      .getConfig()
+      .then((c) =>
+        setObserversOn({ po: c.board?.po?.enabled !== false, vigia: c.vigia?.enabled !== false })
+      )
+      .catch(() => undefined)
   }, [])
 
   // Stop any read-aloud in progress and invalidate its pending synthesis.
@@ -2433,6 +2460,22 @@ export function App(): JSX.Element {
 
   // ---- agents panel (supervisor view) ----
   const activeTracks = useMemo(() => (activeId ? tracks[activeId] ?? {} : {}), [tracks, activeId])
+  // O elenco da conversa ativa: papéis + observadores, montado num lugar só
+  // para o painel e o chip da topbar nunca discordarem sobre quem trabalha.
+  const crew = useMemo(
+    () =>
+      buildCrew({
+        tracks: activeTracks,
+        busy: !!activeId && busyIds.has(activeId),
+        busySince: activeId ? busySince[activeId] ?? null : null,
+        vigia: activeId && vigiaAlerts[activeId] ? { at: vigiaAt[activeId] ?? Date.now() } : null,
+        po: activeId ? poDiagnostics[activeId] ?? null : null,
+        poEnabled: observersOn.po,
+        vigiaEnabled: observersOn.vigia
+      }),
+    [activeTracks, activeId, busyIds, busySince, vigiaAlerts, vigiaAt, poDiagnostics, observersOn]
+  )
+  const crewWorking = useMemo(() => workingMembers(crew), [crew])
   const runningTrackCount = useMemo(
     () => Object.values(activeTracks).filter((t) => t.status === 'running').length,
     [activeTracks]
@@ -2782,6 +2825,9 @@ export function App(): JSX.Element {
             </button>
           )}
           </div>
+          {/* Quem está trabalhando AGORA, fora do painel: saber disso não pode
+              depender de manter a aba Agentes aberta. */}
+          <CrewChip working={crewWorking} onOpen={openAgentsPanel} />
           <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
           {/* Acesso permanente ao painel de agentes: sem isso ele só existiria
               enquanto houvesse subagente rodando, e não daria pra rever nada. */}
@@ -2943,8 +2989,7 @@ export function App(): JSX.Element {
                 ) : agentsOpen ? (
                   <AgentsPanel
                     tracks={activeTracks}
-                    busy={!!active && busyIds.has(active.id)}
-                    busySince={active ? busySince[active.id] ?? null : null}
+                    crew={crew}
                     backgroundTasks={active?.backgroundTasks ?? []}
                     pendingPermissions={pendingPermissionList}
                     onFocusPermission={(convId) => {
@@ -2962,8 +3007,6 @@ export function App(): JSX.Element {
                     touches={activeTouches}
                     turns={activeTurns}
                     projectName={projectName}
-                    projectCwd={activeCwd}
-                    onOpenConversation={(convId) => setActiveId(convId)}
                     onOpenBoard={() => selectRightPane('board')}
                   />
                 ) : (

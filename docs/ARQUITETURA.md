@@ -554,7 +554,27 @@ O `restart-guard.json` é publicado **antes** de inicializar o armazenamento, e 
 
 ## Painel de agentes: três visões do mesmo trabalho
 
-O painel do lado direito (`AgentsPanel`) alterna entre **Lista**, **Tarefas** e **Projeto** — três recortes do mesmo trabalho, e a diferença entre eles é a fonte. **Lista** lê o store de trilhas (`agentTracks.ts`, alimentado pelos `ChatEvent` com `parentToolUseId`): quem está executando *nesta conversa, agora*. **Tarefas** lê o registro durável (ver [A fila na tela](#a-fila-na-tela-tasksboardtsx)): a fila do projeto, que sobrevive a fechar o app e enxerga o que outra conversa deixou em revisão. **Projeto** **não usa store nenhum** — deriva tudo das mensagens do chat.
+O painel do lado direito (`AgentsPanel`) alterna entre **Equipe**, **Tarefas** e **Projeto** — três recortes do mesmo trabalho, e a diferença entre eles é a fonte. **Equipe** é o elenco (abaixo). **Tarefas** lê o registro durável (ver [A fila na tela](#a-fila-na-tela-tasksboardtsx)): a fila do projeto, que sobrevive a fechar o app e enxerga o que outra conversa deixou em revisão. **Projeto** **não usa store nenhum** — deriva tudo das mensagens do chat.
+
+### Equipe — o elenco (`crew.ts`, `AgentCrew.tsx`)
+
+Antes havia aqui uma **lista de trilhas**: uma linha por delegação, que nascia e morria. Ela respondia "o que aconteceu", e era a pergunta errada — o usuário queria **ver quando alguém começa a trabalhar**, e uma lista que só cresce não tem transição para notar de canto de olho.
+
+O eixo mudou de *delegação* para **papel**. Todo agente está sempre em cena: parado, fica recuado (opacidade 48%); ao começar, **acende** na cor do papel, com anel girando, cronômetro correndo, varredura na borda e um pulso de chegada que toca 2× e para. **É o contraste com o estado parado que faz a transição ser percebida** — por isso o parado continua listado em vez de sumir.
+
+Quatro estados, e só quatro: **parado**, **trabalhando**, **esperando você** (âmbar, exclusivo do vigia — o único que pede ação) e **falhou/devolveu** (vermelho, com o motivo na própria linha). Uma cor por papel, e a mesma cor reaparece no cartão, no chip da topbar e na faixa da linha do tempo.
+
+A linha "o que está fazendo" é **composta**, não uma string: a ferramenta sai na cor do papel e os contadores de linha em verde/vermelho, e a posição de cada pedaço muda com o caso (`delegando · Agent → critico` contra `começou agora · task_get`).
+
+**Nada disso inventa fonte nova.** Os quatro especialistas vêm do `agentTracks.ts`; o Principal, do `busy`/`busySince` que a faixa "está trabalhando" já usa; o vigia, do `vigia:alert`; o PO, do `po:provider-diagnostic`. Duas regras que o modelo puro carrega: a **ordem dos papéis é fixa** (o cartão de um agente não pode pular de lugar quando outro começa) e duas trilhas do mesmo papel viram **um** cartão com "N em paralelo", em vez de duplicar a linha.
+
+O **PO ganhou um evento de fim** (`audit-finished`, com quantos cartões corrigiu). Ele já anunciava o início; sem o fim, o cartão dele ficaria auditando para sempre. O vigia continua sem evento de início — ele só aparece quando tem dúvida, que é o único momento em que depende de você.
+
+Fora do painel, o **chip da topbar** (`CrewChip`) empilha os mini-avatares de quem trabalha agora. Sem ele, saber que um agente entrou em campo exigiria manter a aba aberta — que é justamente o que não acontece. O chip **some quando ninguém trabalha**: um chip permanente com "0" vira mobília e para de ser lido.
+
+A segunda visão, **Linha do tempo**, mostra uma faixa por agente sobre a janela do turno: quem rodou junto de quem, e quem ainda está vivo.
+
+> As classes CSS levam prefixo `crew-`. O mockup usava `.agent`, `.badge`, `.step` — genéricos demais para uma folha de 6,5 mil linhas. A aparência é a mesma; o risco de colisão, não.
 
 ### Visão "Projeto" — o mapa do repositório
 
