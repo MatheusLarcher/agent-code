@@ -11,6 +11,8 @@ import type {
   SpeechSetupProgress,
   AppConfig,
   BoardItem,
+  BoardItemEvent,
+  BoardItemStatus,
   ProjectBoard,
   BrowserFrame,
   BrowserInput,
@@ -132,8 +134,9 @@ const api: AgentCodeApi = {
   deleteSecret: (name: string) => ipcRenderer.invoke(Channels.secretVaultDelete, name),
   listMemoryConflicts: () => ipcRenderer.invoke(Channels.memoryConflicts),
   discardMemoryProposal: (id: string) => ipcRenderer.invoke(Channels.memoryDiscardProposal, id),
-  tasksBoard: (query?: { projectCwd?: string; includeFinished?: boolean }): Promise<TaskBoard> =>
-    ipcRenderer.invoke(Channels.tasksBoard, query),
+  tasksBoard: (
+    query?: { projectCwd?: string; conversationId?: string; includeFinished?: boolean }
+  ): Promise<TaskBoard> => ipcRenderer.invoke(Channels.tasksBoard, query),
   tasksDetail: (taskId: string): Promise<TaskBoardDetail | null> =>
     ipcRenderer.invoke(Channels.tasksDetail, taskId),
   boardList: (query: {
@@ -143,6 +146,10 @@ const api: AgentCodeApi = {
   }): Promise<ProjectBoard> => ipcRenderer.invoke(Channels.boardList, query),
   boardDismiss: (id: string, dismissed: boolean): Promise<BoardItem | null> =>
     ipcRenderer.invoke(Channels.boardDismiss, id, dismissed),
+  boardMove: (id: string, toStatus: BoardItemStatus): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke(Channels.boardMove, id, toStatus),
+  boardItemEvents: (boardItemId: string): Promise<BoardItemEvent[]> =>
+    ipcRenderer.invoke(Channels.boardItemEvents, boardItemId),
   onBoardChanged: (cb: (m: { projectId: string }) => void): (() => void) => on(Channels.boardChanged, cb),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
   kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),

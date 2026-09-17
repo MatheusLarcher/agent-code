@@ -30,11 +30,15 @@ import {
   assertPoCreate,
   assertPoWrite,
   BOARD_COLUMNS,
+  BOARD_EVENT_COLUMNS,
+  boardItemEventFromRow,
   boardItemFromRow,
   boardItemId,
   compareBoardItems,
+  newBoardItemEvent,
   normalizeSourceItems,
   planBoardSourceSync,
+  type BoardItemEventRow,
   type BoardItemRow
 } from '../board/boardModel'
 import {
@@ -62,6 +66,8 @@ import {
   type MemoryProposalSettle,
   type ApplicationSnapshot,
   type BoardItem,
+  type BoardItemEvent,
+  type BoardItemStatus,
   type BoardPoCreate,
   type BoardPoWrite,
   type BoardQuery,
@@ -94,6 +100,7 @@ import {
   type TaskStepAppend,
   type TaskStepFinish,
   type TaskTransition,
+  type TaskBoardLinkWrite,
   type VersionedKv
 } from './types'
 
@@ -837,6 +844,34 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     })
   }
 
+  // `task_id` é PK: vincular de novo é upsert (reaponta o cartão), não é
+  // rejeitado. Um vínculo obsoleto (ex.: o executor recriou o cartão) não
+  // pode travar a tarefa para sempre.
+  async linkTaskToBoardItem(input: TaskBoardLinkWrite): Promise<void> {
+    this.write((db) => {
+      db.prepare(
+        `INSERT INTO task_board_links(task_id, board_item_id, linked_by, created_at)
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(task_id) DO UPDATE SET
+           board_item_id = excluded.board_item_id,
+           linked_by = excluded.linked_by,
+           created_at = excluded.created_at`
+      ).run(input.taskId, input.boardItemId, input.linkedBy, new Date().toISOString())
+      return null
+    })
+  }
+
+  async boardItemIdsForTasks(taskIds: string[]): Promise<Map<string, string>> {
+    if (taskIds.length === 0) return new Map()
+    return this.read((db) => {
+      const placeholders = taskIds.map(() => '?').join(', ')
+      const rows = db
+        .prepare(`SELECT task_id, board_item_id FROM task_board_links WHERE task_id IN (${placeholders})`)
+        .all(...taskIds) as unknown as Array<{ task_id: string; board_item_id: string }>
+      return new Map(rows.map((row) => [String(row.task_id), String(row.board_item_id)]))
+    })
+  }
+
   // -------------------------------------------------------------------------
   // Quadro de tarefas (board_items)
   // -------------------------------------------------------------------------
@@ -856,6 +891,21 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       // cada avanço do plano, e recompilá-los por item multiplicava o trabalho
       // pelo tamanho do plano dentro de uma transação que segura o write lock.
       const selectOne = db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`)
+      const insertEvent = db.prepare(
+        `INSERT INTO board_item_events(${BOARD_EVENT_COLUMNS}) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      const logEvent = (event: BoardItemEvent): void => {
+        insertEvent.run(
+          event.id,
+          event.boardItemId,
+          event.at,
+          event.kind,
+          event.actor,
+          event.fromStatus,
+          event.toStatus,
+          event.note
+        )
+      }
       const insertOne = db.prepare(
         `INSERT INTO board_items(${BOARD_COLUMNS})
          VALUES(?, ?, ?, ?, 'agent', ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 1, ?, ?)`
@@ -896,6 +946,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
               now,
               now
             )
+            logEvent(newBoardItemEvent({ boardItemId: id, at: now, kind: 'created', actor: 'agent', toStatus: item.status }))
             touched.push(id)
             continue
           }
@@ -917,6 +968,18 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
             now,
             id
           )
+          if (current.source_status !== item.status) {
+            logEvent(
+              newBoardItemEvent({
+                boardItemId: id,
+                at: now,
+                kind: 'status_changed',
+                actor: 'agent',
+                fromStatus: current.source_status as BoardItemStatus,
+                toStatus: item.status
+              })
+            )
+          }
           touched.push(id)
         }
         // O que sumiu do snapshot sumiu de verdade (o CLI reescreve a lista
@@ -971,6 +1034,15 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     })
   }
 
+  async getBoardItem(id: string): Promise<BoardItem | null> {
+    return this.read((db) => {
+      const row = db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(id) as unknown as
+        | BoardItemRow
+        | undefined
+      return row ? boardItemFromRow(row) : null
+    })
+  }
+
   async applyBoardPo(input: BoardPoWrite): Promise<BoardItem> {
     assertPoWrite(input)
     const item = this.write((db) => {
@@ -991,6 +1063,26 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
            revision = revision + 1, updated_at = ?
          WHERE id = ?`
       ).run(next.poTitle, next.poNote, next.poStatus, next.poReason, now, now, input.id)
+      // Uma escrita do PO conta UM fato: status ganha prioridade sobre
+      // título/observação porque é o que a reabertura e a auditoria mais
+      // precisam enxergar na linha do tempo.
+      const priorEffective = current.po_status ?? current.source_status
+      const actor = input.actor ?? 'po'
+      if (input.poStatus !== undefined && next.poStatus !== priorEffective) {
+        this.logBoardEvent(db, {
+          boardItemId: input.id,
+          at: now,
+          kind: 'status_changed',
+          actor,
+          fromStatus: priorEffective as BoardItemStatus,
+          toStatus: next.poStatus as BoardItemStatus | null,
+          note: next.poReason
+        })
+      } else if (input.poTitle !== undefined && input.poTitle !== current.po_title) {
+        this.logBoardEvent(db, { boardItemId: input.id, at: now, kind: 'retitled', actor, note: next.poTitle })
+      } else if (input.poNote !== undefined && input.poNote !== current.po_note) {
+        this.logBoardEvent(db, { boardItemId: input.id, at: now, kind: 'note_changed', actor, note: next.poNote })
+      }
       return boardItemFromRow(
         db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(input.id) as unknown as BoardItemRow
       )
@@ -1028,6 +1120,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         now,
         now
       )
+      this.logBoardEvent(db, { boardItemId: id, at: now, kind: 'created', actor: 'po', toStatus: input.status, note: input.reason })
       return boardItemFromRow(
         db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
       )
@@ -1044,12 +1137,50 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       db.prepare(
         'UPDATE board_items SET dismissed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ?'
       ).run(dismissed ? now : null, now, id)
+      this.logBoardEvent(db, { boardItemId: id, at: now, kind: dismissed ? 'dismissed' : 'restored', actor: 'po' })
       return boardItemFromRow(
         db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
       )
     })
     this.emit('board', item.id, item.revision)
     return item
+  }
+
+  async listBoardItemEvents(boardItemId: string): Promise<BoardItemEvent[]> {
+    return this.read((db) => {
+      const rows = db
+        .prepare(`SELECT ${BOARD_EVENT_COLUMNS} FROM board_item_events WHERE board_item_id = ? ORDER BY at ASC`)
+        .all(boardItemId) as unknown as BoardItemEventRow[]
+      return rows.map(boardItemEventFromRow)
+    })
+  }
+
+  /** Escreve UMA linha da história do cartão, na MESMA transação da escrita
+   *  que a motivou — nunca depois, senão um evento sobreviveria a um rollback
+   *  que já desfez o fato que ele descreve. */
+  private logBoardEvent(
+    db: DatabaseSync,
+    input: {
+      boardItemId: string
+      at: string
+      kind: BoardItemEvent['kind']
+      actor: BoardItemEvent['actor']
+      fromStatus?: BoardItemStatus | null
+      toStatus?: BoardItemStatus | null
+      note?: string | null
+    }
+  ): void {
+    const event = newBoardItemEvent(input)
+    db.prepare(`INSERT INTO board_item_events(${BOARD_EVENT_COLUMNS}) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      event.id,
+      event.boardItemId,
+      event.at,
+      event.kind,
+      event.actor,
+      event.fromStatus,
+      event.toStatus,
+      event.note
+    )
   }
 
   async listTasks(query?: TaskQuery): Promise<Task[]> {

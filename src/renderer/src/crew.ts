@@ -478,6 +478,21 @@ export function workingMembers(crew: CrewMember[]): CrewMember[] {
   return crew.filter((m) => m.state === 'working')
 }
 
+/** Papéis que o Quadro mostra no CABEÇALHO DA COLUNA, não no cartão: eles só
+ *  sabem em qual CONVERSA estão, nunca em qual cartão — diferente do
+ *  `executor`, que ganha bolinha própria por cartão via `boardItemId`. */
+const BOARD_HEADER_ROLES: CrewRole[] = ['critico', 'po', 'vigia', 'memoria']
+
+/**
+ * Do elenco de uma conversa, quem entra nas bolinhas do cabeçalho de coluna do
+ * Quadro: só os papéis de `BOARD_HEADER_ROLES`, e só enquanto ATIVOS — parado
+ * ("disponível") é o estado da maior parte do tempo, e mostrá-lo sempre viraria
+ * mobília em toda coluna, de toda conversa.
+ */
+export function activeColumnCrew(crew: CrewMember[]): CrewMember[] {
+  return crew.filter((m) => BOARD_HEADER_ROLES.includes(m.role) && m.state !== 'idle')
+}
+
 export interface CrewLane {
   member: CrewMember
   /** 0..100 — começo e largura da faixa dentro da janela do turno. */

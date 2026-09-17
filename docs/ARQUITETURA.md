@@ -542,11 +542,43 @@ PO **coincide** com o do agente (o cartão que ele abriu em andamento e a reaber
 o selo, o mesmo cartão apareceria marcado na Lista e limpo no Quadro, e ninguém teria motivo para
 clicar.
 
-É **somente leitura**, com uma exceção: arquivar um cartão. Quem move o estado é o agente e o PO;
-um terceiro dono do mesmo estado só criaria conflito — a mesma razão pela qual o painel do registro
-de tarefas também não move nada. E **tarefa pendente não se auto-conclui quando a conversa acaba**:
-ela fica na lista, agrupada pela conversa de origem, e o usuário dispensa se quiser — senão o
-quadro durável acumularia pendência morta para sempre.
+O detalhe também tem um bloco de **metadados** (criado em, atualizado em, quem criou, nº da
+revisão) e uma **linha do tempo** completa — não só o último `poReason`. `po_reason`/`po_status`
+guardam só o ÚLTIMO fato; para o histórico inteiro existe `board_item_events` (migration **6** no
+SQLite / **8** no PostgreSQL, mesmo padrão do `task_events`): uma linha por acontecimento (criação,
+mudança de status por agente ou por PO, retitular, mudar observação, dispensar/restaurar), nunca
+sobrescrita. `board_item_events.board_item_id` referencia `board_items(id)` com `ON DELETE CASCADE`
+— o cartão de origem `agent` que sumiu do snapshot do CLI é apagado por `syncBoardItems`, e sem
+cascade esse `DELETE` bateria na FK assim que o cartão tivesse qualquer evento (o próprio "created"
+já basta). A tela busca a timeline **preguiçosamente**, só quando o detalhe abre (mesmo padrão do
+`TaskRow` em `TasksBoard.tsx`), e degrada em silêncio — consulta falhando ou repositório indisponível
+devolve `[]`, nunca quebra a tela; a timeline é aditiva, não substitui a trilha do `poReason` já
+existente.
+
+Além de arquivar um cartão, o usuário também pode **arrastar** um cartão entre as três colunas do
+Quadro (`draggable` nativo do HTML5, sem biblioteca — só quando o recorte é "esta conversa" e a
+visão é "Quadro"; em "projeto inteiro" e na visão Lista o cartão não é arrastável, porque mover
+exige saber sem ambiguidade a conversa dona do cartão). O drag-and-drop controla o agente de
+verdade, não só o quadro:
+
+- soltar em **Fazendo**, vindo de outra coluna: manda uma mensagem para o agente daquela conversa
+  começar a tarefa — reaproveitando o MESMO `AgentSession.send()` do Composer, que já enfileira
+  sozinho se o agente estiver ocupado. Sem sessão viva (conversa nunca aberta nesta execução do
+  processo), nada é gravado: a tela mostra o motivo e desfaz a posição do cartão.
+- sair de **Fazendo** para qualquer outra coluna: interrompe de verdade o turno em andamento, pelo
+  mesmo caminho de `Channels.agentInterrupt`.
+- troca direta entre **A fazer** e **Concluído** (sem passar por Fazendo): só grava.
+
+A escrita usa o MESMO caminho do PO (`BoardService.applyPo`/`BoardRepository.applyBoardPo`), com
+`actor: 'user'` no evento do histórico — um terceiro tipo de escritor, distinto de `agent` e `po`
+(`board_item_events.actor`, migration **7** no SQLite / **9** no PostgreSQL, aditiva sobre a
+migration 6/8). O canal `board:move` (`BoardService.move`) decide a ação a partir do status EFETIVO
+atual do cartão; `sendToSession`/`interruptSession` são injetados em `BoardServiceDeps` porque o
+`Map` de sessões é privado de `main/index.ts` e o serviço do quadro não pode importá-lo.
+
+**Tarefa pendente não se auto-conclui quando a conversa acaba**: ela fica na lista, agrupada pela
+conversa de origem, e o usuário dispensa se quiser — senão o quadro durável acumularia pendência
+morta para sempre.
 
 Atualiza por evento (`board:changed`, o caminho rápido) **e** por poll (rede de segurança para a
 mudança que veio de outro PC pelo change feed do PostgreSQL).
@@ -1292,7 +1324,7 @@ O valor do contexto é memoizado (`useMemo`) para os consumidores não re-render
 - **Ícone** (`scripts/make-icon.mjs`): usa o Playwright para renderizar `build/icon.svg` e salvar `icon.png` (512) e `icon.ico` (256, ICO de uma imagem PNG). Rodar com `npm run icon`.
 - **Scripts auxiliares** (`scripts/`): `screenshot.mjs` (gera o print do README dirigindo o app via `_electron`), `ui-tab-test.mjs` (smoke test do sistema de abas) e `android-probe.mjs` (verifica o caminho do preview Android). São utilitários de desenvolvimento, executados com `node scripts/<arquivo>.mjs`.
 - **Controle do Windows** (`src/main/windowsControl/`): as ferramentas `windows_*` (`windows_list_windows`/`list_apps`/`launch_app`/`activate_window`/`get_state`/`click`/`click_element`/`type_text`/`press_key`/`scroll`/`drag`/`set_value`/`secondary_action`) falam com um **helper nativo em C#** (`native/`, .NET 8, UI Automation + input) por um cliente de linha de comando (`client.ts`). O helper é compilado por `scripts/build-windows-control.mjs` (`dotnet publish`, `win-x64`, *self-contained*, single-file) para `out/windows-control/` — rodado automaticamente por `npm run dev` e `npm run build`, e **ignorado fora do Windows**. `resolveHelperPath()` procura o exe em `resources/windows-control` (empacotado), `out/windows-control` (dev) e no `bin/Release` do projeto .NET, nessa ordem; se não achar, lança pedindo `npm run windows-control:build`. A capacidade é *gated* pela config `windowsControlEnabled` (não é ligada por padrão).
-- **Exe portátil** (`npm run package:portable` → `electron-builder.yml`): roda `npm run build`, depois `scripts/stage-chromium.mjs` e por fim `electron-builder --win portable` (artefato `dist/AgentCode-<versão>-portable.exe`). Três decisões que não podem ser desfeitas sem quebrar o pacote:
+- **Instalador Windows** (`npm run package:win` → `electron-builder.yml`): roda `npm run build`, depois `scripts/stage-chromium.mjs` e por fim `electron-builder --win` (alvo `nsis`, artefato `dist/AgentCode-<versão>-setup.exe`). Instala os arquivos uma vez em disco (com atalho de desktop/menu iniciar) em vez de autoextrair a cada abertura — era isso que tornava o antigo exe portátil lento para abrir (300 MB reextraídos para um diretório temp novo toda vez). Três decisões que não podem ser desfeitas sem quebrar o pacote:
   - **`asar: false`** de propósito — o `claude.exe` do Agent SDK e o Playwright **executam binários de dentro de `node_modules`**, e dentro do asar eles não rodam.
   - **Chromium embutido** — `stage-chromium.mjs` copia o Chromium do Playwright (e o `winldd` opcional) de `%LOCALAPPDATA%\ms-playwright` para `out/ms-playwright/`, e o `extraResources` o leva para `resources/ms-playwright`. Em produção, `index.ts` aponta `PLAYWRIGHT_BROWSERS_PATH` para lá (`app.isPackaged` e a env ainda não definida) — o pacote não tem acesso ao cache da máquina de build. O caminho no `extraResources.from` é **relativo**: um caminho absoluto é resolvido contra a raiz do projeto pelo electron-builder e falha **em silêncio**.
   - **Skills no pacote** — `.agents/skills/**` entra em `files`, porque no exe `app.getAppPath()` é `resources/app`, exatamente a raiz de onde o `skillManager` sincroniza para `<cacheDir>/skills` (ver [Skills](#skills-kit-portátil)). O helper do controle do Windows e o Chromium são **excluídos de `files`** (`!out/windows-control/**`, `!out/ms-playwright/**`) porque vão como `extraResources`, onde o código os procura.

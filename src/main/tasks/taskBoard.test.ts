@@ -16,12 +16,12 @@ import type { TaskBoardItem } from '../../shared/ipc'
 
 const tempDirs: string[] = []
 
-async function setup(): Promise<TaskLedger> {
+async function setup(): Promise<{ ledger: TaskLedger; repository: SqliteRepository }> {
   const cache = await mkdtemp(join(tmpdir(), 'agent-code-task-board-'))
   tempDirs.push(cache)
   const repository = new SqliteRepository(cache, join(cache, 'agent-code.db'), 'device-a')
   await repository.initialize()
-  return new TaskLedger(repository)
+  return { ledger: new TaskLedger(repository), repository }
 }
 
 afterEach(async () => {
@@ -35,12 +35,12 @@ describe('projeção do registro de tarefas para o painel', () => {
   })
 
   it('banco ligado e sem tarefa nenhuma é disponível com fila vazia', async () => {
-    const ledger = await setup()
+    const { ledger } = await setup()
     expect(await buildTaskBoard(ledger)).toEqual({ available: true, items: [] })
   })
 
   it('lista a tarefa do projeto com escopo, tentativas e critérios', async () => {
-    const ledger = await setup()
+    const { ledger } = await setup()
     await ledger.createTask({
       projectCwd: 'C:/projeto',
       title: 'Painel de tarefas',
@@ -65,7 +65,7 @@ describe('projeção do registro de tarefas para o painel', () => {
   })
 
   it('não mistura projeto: o filtro é o da conversa', async () => {
-    const ledger = await setup()
+    const { ledger } = await setup()
     await ledger.createTask({ projectCwd: 'C:/a', title: 'do A', goal: 'g' })
     await ledger.createTask({ projectCwd: 'C:/b', title: 'do B', goal: 'g' })
 
@@ -74,7 +74,7 @@ describe('projeção do registro de tarefas para o painel', () => {
   })
 
   it('tarefa reivindicada mostra dono e lease vivo', async () => {
-    const ledger = await setup()
+    const { ledger } = await setup()
     await ledger.createTask({ projectCwd: 'C:/projeto', title: 'em execução', goal: 'g' })
     const claim = await ledger.claimTask('session:conv-1', { projectCwd: 'C:/projeto' })
     expect(claim).not.toBeNull()
@@ -88,7 +88,7 @@ describe('projeção do registro de tarefas para o painel', () => {
   })
 
   it('em review, conta a evidência — inclusive quando não há nenhuma', async () => {
-    const ledger = await setup()
+    const { ledger } = await setup()
     const task = await ledger.createTask({ projectCwd: 'C:/projeto', title: 'entregue', goal: 'g' })
     const claim = await ledger.claimTask('session:conv-1', { projectCwd: 'C:/projeto' })
     const fence = { token: claim!.token, fencingEpoch: claim!.fencingEpoch }
@@ -116,7 +116,7 @@ describe('projeção do registro de tarefas para o painel', () => {
   })
 
   it('mostra as terminadas por padrão e permite recorte só das abertas', async () => {
-    const ledger = await setup()
+    const { ledger } = await setup()
     const task = await ledger.createTask({ projectCwd: 'C:/projeto', title: 'terminada', goal: 'g' })
     const claim = await ledger.claimTask('session:conv-1', { projectCwd: 'C:/projeto' })
     const fence = { token: claim!.token, fencingEpoch: claim!.fencingEpoch }
@@ -132,8 +132,47 @@ describe('projeção do registro de tarefas para o painel', () => {
     expect(all.items[0].deliverables).toBe(0)
   })
 
+  it('mostra o cartão vinculado, e null quando não há vínculo', async () => {
+    const { ledger, repository } = await setup()
+    const vinculada = await ledger.createTask({ projectCwd: 'C:/projeto', title: 'vinculada', goal: 'g' })
+    await ledger.createTask({ projectCwd: 'C:/projeto', title: 'solta', goal: 'g' })
+    const card = await repository.createBoardPoItem({
+      projectId: 'proj-1',
+      projectCwd: 'C:/projeto',
+      conversationId: 'conv-1',
+      title: 'cartão do PO',
+      status: 'pending',
+      reason: 'setup do teste'
+    })
+    await ledger.linkTaskToBoardItem({ taskId: vinculada.id, boardItemId: card.id, linkedBy: 'po' })
+
+    const board = await buildTaskBoard(ledger, { projectCwd: 'C:/projeto' })
+    const byTitle = new Map(board.items.map((item) => [item.title, item.boardItemId]))
+    expect(byTitle.get('vinculada')).toBe(card.id)
+    expect(byTitle.get('solta')).toBeNull()
+  })
+
+  it('filtra por conversationId sem misturar outras conversas do mesmo projeto', async () => {
+    const { ledger } = await setup()
+    await ledger.createTask({
+      projectCwd: 'C:/projeto',
+      conversationId: 'conv-1',
+      title: 'da conversa 1',
+      goal: 'g'
+    })
+    await ledger.createTask({
+      projectCwd: 'C:/projeto',
+      conversationId: 'conv-2',
+      title: 'da conversa 2',
+      goal: 'g'
+    })
+
+    const board = await buildTaskBoard(ledger, { projectCwd: 'C:/projeto', conversationId: 'conv-1' })
+    expect(board.items.map((item) => item.title)).toEqual(['da conversa 1'])
+  })
+
   it('o detalhe traz passos, evidências e eventos da tarefa', async () => {
-    const ledger = await setup()
+    const { ledger } = await setup()
     const task = await ledger.createTask({ projectCwd: 'C:/projeto', title: 'com detalhe', goal: 'g' })
     const claim = await ledger.claimTask('session:conv-1', { projectCwd: 'C:/projeto' })
     const fence = { token: claim!.token, fencingEpoch: claim!.fencingEpoch }
@@ -165,7 +204,8 @@ describe('ordenação e resumo', () => {
     conversationId: null,
     projectCwd: 'C:/p',
     createdAt: '2026-09-11T00:00:00.000Z',
-    deliverables: null
+    deliverables: null,
+    boardItemId: null
   }
   const at = (status: TaskBoardItem['status'], id: string, updatedAt: string): TaskBoardItem => ({
     ...base,

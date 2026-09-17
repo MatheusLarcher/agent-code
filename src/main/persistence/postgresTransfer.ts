@@ -4,7 +4,7 @@ import { foldSessionSummary, type SessionStoreEntry, type SessionSummaryEntry } 
 import type { Pool, PoolClient } from 'pg'
 import { hashAggregate, hashJson, normalizeJson, type JsonValue } from './hashes'
 import { writeDbAtomically } from '../atomicDb'
-import { recordSqliteMigrations, SQLITE_SCHEMA } from './sqliteSchema'
+import { recordSqliteMigrations, SQLITE_SCHEMA_FULL } from './sqliteSchema'
 import { importSessions, readSessions, type SessionBundle } from './postgresSessionTransfer'
 import { attachProjectIdentityForMigration } from './projectIdentity'
 import { decodePostgresJson, encodePostgresJson, encodePostgresText } from './postgresEncoding'
@@ -388,7 +388,11 @@ export async function writeRepositoryToSqlite(
   ]
   const sourceHash = hashAggregate(sourceItems)
   writeDbAtomically(dbPath, (db) => {
-    db.exec(SQLITE_SCHEMA)
+    // Completo, não o guarda de write(): este banco SQLite é criado do zero
+    // aqui (exportação Postgres→SQLite), então precisa do `sql` real de toda
+    // migração — inclusive o recreate da migração 7 — e não do atalho barato
+    // que existe só para não repeti-lo a cada escrita comum.
+    db.exec(SQLITE_SCHEMA_FULL)
     db.exec('BEGIN IMMEDIATE')
     try {
       recordSqliteMigrations(db, new Date().toISOString())

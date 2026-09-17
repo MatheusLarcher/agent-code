@@ -28,6 +28,7 @@ import {
   DEFAULT_LOCAL_SPEECH_MODEL,
   LOCAL_SPEECH_MODELS,
   REMOTE_RELAY_WS,
+  type BoardItemStatus,
   type SpeechSetupProgress
 } from '../shared/ipc'
 import { initializeConfigPersistence, loadConfig, updateConfig } from './config'
@@ -232,7 +233,24 @@ const board = new BoardService({
   // turno termina, muito depois de os dois existirem. O tipo de retorno é
   // explícito porque sem ele o `tsc` tentaria inferir `po` para tipar `board` e
   // `board` para tipar `po` — o mesmo ciclo, agora entre os dois tipos.
-  poSettled: (convId: string): Promise<void> => po.settled(convId)
+  poSettled: (convId: string): Promise<void> => po.settled(convId),
+  // O drag-and-drop no Quadro controla o agente de verdade: manda mensagem
+  // (reaproveitando o MESMO `AgentSession.send` do Composer, que já enfileira
+  // sozinho) ou interrompe o turno (mesmo caminho de `Channels.agentInterrupt`).
+  // `sessions` é módulo-privado deste arquivo — por isso a injeção, em vez de
+  // o BoardService importá-lo.
+  sendToSession: async (convId: string, text: string): Promise<boolean> => {
+    const s = sessions.get(convId)
+    if (!s) return false
+    await s.send(text)
+    return true
+  },
+  interruptSession: async (convId: string): Promise<boolean> => {
+    const s = sessions.get(convId)
+    if (!s) return false
+    await s.interrupt()
+    return true
+  }
 })
 
 // O PO: audita o quadro na abertura do turno (o pedido vira cartão antes de o
@@ -1038,6 +1056,20 @@ function registerIpc(): void {
       return await board.dismiss(id, dismissed)
     } catch {
       return null
+    }
+  })
+  ipcMain.handle(Channels.boardMove, async (_e, id: string, toStatus: BoardItemStatus) => {
+    try {
+      return await board.move(id, toStatus)
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Não foi possível mover o cartão.' }
+    }
+  })
+  ipcMain.handle(Channels.boardItemEvents, async (_e, boardItemId: string) => {
+    try {
+      return await board.listItemEvents(boardItemId)
+    } catch {
+      return []
     }
   })
   ipcMain.handle(Channels.tasksDetail, async (_e, taskId: string) => {

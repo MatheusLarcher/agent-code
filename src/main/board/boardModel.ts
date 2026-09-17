@@ -1,7 +1,10 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { boardItemStatus } from '../../shared/ipc'
 import type {
   BoardItem,
+  BoardItemEvent,
+  BoardItemEventActor,
+  BoardItemEventKind,
   BoardItemOrigin,
   BoardItemStatus,
   BoardPoCreate,
@@ -262,4 +265,58 @@ export function assertPoCreate(input: BoardPoCreate): void {
   if (!input.title?.trim()) throw new TypeError('Cartão do PO precisa de título.')
   if (!input.reason?.trim()) throw new TypeError('Cartão criado pelo PO exige um motivo.')
   if (!isBoardStatus(input.status)) throw new TypeError(`Status inválido: ${String(input.status)}`)
+}
+
+// ---------------------------------------------------------------------------
+// Histórico do cartão (board_item_events) — a linha do tempo que `po_reason`
+// sozinho não guarda, porque ele só tem o ÚLTIMO motivo.
+// ---------------------------------------------------------------------------
+
+export const BOARD_EVENT_COLUMNS = `id, board_item_id, at, kind, actor, from_status, to_status, note`
+
+export interface BoardItemEventRow {
+  id: string
+  board_item_id: string
+  at: string
+  kind: string
+  actor: string
+  from_status: string | null
+  to_status: string | null
+  note: string | null
+}
+
+export function boardItemEventFromRow(row: BoardItemEventRow): BoardItemEvent {
+  return {
+    id: String(row.id),
+    boardItemId: String(row.board_item_id),
+    at: String(row.at),
+    kind: row.kind as BoardItemEventKind,
+    actor: row.actor as BoardItemEventActor,
+    fromStatus: isBoardStatus(row.from_status) ? row.from_status : null,
+    toStatus: isBoardStatus(row.to_status) ? row.to_status : null,
+    note: text(row.note)
+  }
+}
+
+/** Um evento novo, pronto para `INSERT` — id gerado aqui para não duplicar a
+ *  regra nos dois repositórios. */
+export function newBoardItemEvent(input: {
+  boardItemId: string
+  at: string
+  kind: BoardItemEventKind
+  actor: BoardItemEventActor
+  fromStatus?: BoardItemStatus | null
+  toStatus?: BoardItemStatus | null
+  note?: string | null
+}): BoardItemEvent {
+  return {
+    id: `bie-${randomUUID().slice(0, 20)}`,
+    boardItemId: input.boardItemId,
+    at: input.at,
+    kind: input.kind,
+    actor: input.actor,
+    fromStatus: input.fromStatus ?? null,
+    toStatus: input.toStatus ?? null,
+    note: input.note ?? null
+  }
 }

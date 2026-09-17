@@ -5,7 +5,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0.."
 
 echo ============================================
-echo   Agent Code - gerando exe portatil...
+echo   Agent Code - gerando instalador...
 echo ============================================
 echo.
 
@@ -26,9 +26,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Executando npm run package:portable...
+echo Executando npm run package:win...
 echo.
-call npm run package:portable
+call npm run package:win
 if errorlevel 1 (
     echo.
     echo [ERRO] A geracao do exe falhou.
@@ -40,7 +40,7 @@ if errorlevel 1 (
 
 echo.
 set "ARTIFACT="
-for /f "delims=" %%F in ('dir /b /a:-d /o-d "dist\AgentCode-*-portable.exe" 2^>nul') do if not defined ARTIFACT set "ARTIFACT=dist\%%F"
+for /f "delims=" %%F in ('dir /b /a:-d /o-d "dist\AgentCode-*-setup.exe" 2^>nul') do if not defined ARTIFACT set "ARTIFACT=dist\%%F"
 
 if not defined ARTIFACT (
     echo [ERRO] O empacotamento terminou, mas nenhum exe foi encontrado em dist\.

@@ -898,3 +898,181 @@ describe('Po — evidência durável do registro de tarefas', () => {
     }
   })
 })
+
+describe('Po — vínculo automático tarefa↔cartão quando o cartão entra em andamento', () => {
+  it('vincula quando sobra EXATAMENTE UMA tarefa candidata', async () => {
+    const board = fakeBoard([card()])
+    const linkableLedgerTasks = vi.fn(async () => [
+      { id: 'task-1', status: 'running', createdAt: '2026-09-17T10:00:01.000Z' }
+    ])
+    const linkedBoardItemsFor = vi.fn(async () => new Map<string, string>())
+    const linkTaskToBoardItem = vi.fn(async () => undefined)
+    const po = new Po({
+      config: () => config(),
+      board,
+      ask: askPhases({ open: 'ANDAMENTO bi-1 | o pedido é exatamente este cartão' }),
+      now: () => Date.parse('2026-09-17T10:00:00.000Z'),
+      linkableLedgerTasks,
+      linkedBoardItemsFor,
+      linkTaskToBoardItem
+    })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    await flush()
+
+    expect(board.applyPo).toHaveBeenCalledWith({
+      id: 'bi-1',
+      poStatus: 'in_progress',
+      poReason: 'o pedido é exatamente este cartão'
+    })
+    expect(linkableLedgerTasks).toHaveBeenCalledWith('conv-1')
+    expect(linkedBoardItemsFor).toHaveBeenCalledWith(['task-1'])
+    expect(linkTaskToBoardItem).toHaveBeenCalledWith('task-1', 'bi-1')
+  })
+
+  it('não vincula quando não sobra candidata nenhuma (status fora da janela ou tarefa anterior à promoção)', async () => {
+    const board = fakeBoard([card()])
+    const linkableLedgerTasks = vi.fn(async () => [
+      // Status fora da janela aceita (done não é running/pending/review).
+      { id: 'task-done', status: 'done', createdAt: '2026-09-17T10:00:01.000Z' },
+      // Criada ANTES da promoção do cartão: não pode ser o mesmo trabalho.
+      { id: 'task-antiga', status: 'running', createdAt: '2026-09-17T09:59:00.000Z' }
+    ])
+    const linkedBoardItemsFor = vi.fn(async () => new Map<string, string>())
+    const linkTaskToBoardItem = vi.fn(async () => undefined)
+    const po = new Po({
+      config: () => config(),
+      board,
+      ask: askPhases({ open: 'ANDAMENTO bi-1 | o pedido é exatamente este cartão' }),
+      now: () => Date.parse('2026-09-17T10:00:00.000Z'),
+      linkableLedgerTasks,
+      linkedBoardItemsFor,
+      linkTaskToBoardItem
+    })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    await flush()
+
+    expect(linkedBoardItemsFor).not.toHaveBeenCalled()
+    expect(linkTaskToBoardItem).not.toHaveBeenCalled()
+  })
+
+  it('não vincula quando sobra mais de uma candidata — melhor nenhum vínculo do que um errado', async () => {
+    const board = fakeBoard([card()])
+    const linkableLedgerTasks = vi.fn(async () => [
+      { id: 'task-1', status: 'running', createdAt: '2026-09-17T10:00:01.000Z' },
+      { id: 'task-2', status: 'pending', createdAt: '2026-09-17T10:00:02.000Z' }
+    ])
+    const linkedBoardItemsFor = vi.fn(async () => new Map<string, string>())
+    const linkTaskToBoardItem = vi.fn(async () => undefined)
+    const po = new Po({
+      config: () => config(),
+      board,
+      ask: askPhases({ open: 'ANDAMENTO bi-1 | o pedido é exatamente este cartão' }),
+      now: () => Date.parse('2026-09-17T10:00:00.000Z'),
+      linkableLedgerTasks,
+      linkedBoardItemsFor,
+      linkTaskToBoardItem
+    })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    await flush()
+
+    expect(linkedBoardItemsFor).toHaveBeenCalledWith(['task-1', 'task-2'])
+    expect(linkTaskToBoardItem).not.toHaveBeenCalled()
+  })
+
+  it('descarta as candidatas que já têm vínculo antes de decidir', async () => {
+    const board = fakeBoard([card()])
+    const linkableLedgerTasks = vi.fn(async () => [
+      { id: 'task-1', status: 'running', createdAt: '2026-09-17T10:00:01.000Z' },
+      { id: 'task-2', status: 'pending', createdAt: '2026-09-17T10:00:02.000Z' }
+    ])
+    // task-2 já está vinculada a outro cartão: só task-1 é candidata de fato.
+    const linkedBoardItemsFor = vi.fn(async () => new Map([['task-2', 'bi-outro']]))
+    const linkTaskToBoardItem = vi.fn(async () => undefined)
+    const po = new Po({
+      config: () => config(),
+      board,
+      ask: askPhases({ open: 'ANDAMENTO bi-1 | o pedido é exatamente este cartão' }),
+      now: () => Date.parse('2026-09-17T10:00:00.000Z'),
+      linkableLedgerTasks,
+      linkedBoardItemsFor,
+      linkTaskToBoardItem
+    })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    await flush()
+
+    expect(linkTaskToBoardItem).toHaveBeenCalledWith('task-1', 'bi-1')
+  })
+
+  it('vincula também quando o cartão nasce em andamento por criação (NOVA na abertura)', async () => {
+    const board = fakeBoard([])
+    const linkableLedgerTasks = vi.fn(async () => [
+      { id: 'task-1', status: 'running', createdAt: '2026-09-17T10:00:01.000Z' }
+    ])
+    const linkedBoardItemsFor = vi.fn(async () => new Map<string, string>())
+    const linkTaskToBoardItem = vi.fn(async () => undefined)
+    const po = new Po({
+      config: () => config(),
+      board,
+      ask: askPhases({ open: 'NOVA | Corrigir a exportação de XML | o usuário pediu agora' }),
+      now: () => Date.parse('2026-09-17T10:00:00.000Z'),
+      linkableLedgerTasks,
+      linkedBoardItemsFor,
+      linkTaskToBoardItem
+    })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'corrige a exportação de XML')
+    await flush()
+
+    expect(board.createPoItem).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Corrigir a exportação de XML', status: 'in_progress' })
+    )
+    expect(linkTaskToBoardItem).toHaveBeenCalledWith('task-1', 'bi-po-1')
+  })
+
+  it('registro indisponível ou consulta com erro não derruba o fluxo do PO', async () => {
+    const board = fakeBoard([card()])
+    const linkableLedgerTasks = vi.fn(async () => {
+      throw new Error('registro fora do ar')
+    })
+    const linkTaskToBoardItem = vi.fn(async () => undefined)
+    const po = new Po({
+      config: () => config(),
+      board,
+      ask: askPhases({ open: 'ANDAMENTO bi-1 | o pedido é exatamente este cartão' }),
+      linkableLedgerTasks,
+      linkTaskToBoardItem
+    })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    await expect(flush()).resolves.toBeUndefined()
+
+    expect(board.applyPo).toHaveBeenCalledWith({
+      id: 'bi-1',
+      poStatus: 'in_progress',
+      poReason: 'o pedido é exatamente este cartão'
+    })
+    expect(linkTaskToBoardItem).not.toHaveBeenCalled()
+  })
+
+  it('sem nenhuma dependência de vínculo injetada e sem registro ativo, o fluxo do PO continua normal', async () => {
+    const board = fakeBoard([card()])
+    const po = new Po({
+      config: () => config(),
+      board,
+      ask: askPhases({ open: 'ANDAMENTO bi-1 | o pedido é exatamente este cartão' })
+    })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    await expect(flush()).resolves.toBeUndefined()
+
+    expect(board.applyPo).toHaveBeenCalledWith({
+      id: 'bi-1',
+      poStatus: 'in_progress',
+      poReason: 'o pedido é exatamente este cartão'
+    })
+  })
+})

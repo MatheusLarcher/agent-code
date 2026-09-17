@@ -16,11 +16,15 @@ import {
   assertPoCreate,
   assertPoWrite,
   BOARD_COLUMNS,
+  BOARD_EVENT_COLUMNS,
+  boardItemEventFromRow,
   boardItemFromRow,
   boardItemId,
   compareBoardItems,
+  newBoardItemEvent,
   normalizeSourceItems,
   planBoardSourceSync,
+  type BoardItemEventRow,
   type BoardItemRow
 } from '../board/boardModel'
 import {
@@ -66,6 +70,8 @@ import {
   type MemoryProposalSettle,
   type ApplicationSnapshot,
   type BoardItem,
+  type BoardItemEvent,
+  type BoardItemStatus,
   type BoardPoCreate,
   type BoardPoWrite,
   type BoardQuery,
@@ -98,6 +104,7 @@ import {
   type TaskStepAppend,
   type TaskStepFinish,
   type TaskTransition,
+  type TaskBoardLinkWrite,
   type VersionedKv
 } from './types'
 
@@ -764,6 +771,32 @@ export class PostgresRepository implements PersistenceRepository {
     return result.rows.map((row) => String(row.project_cwd))
   }
 
+  // `task_id` é PK: vincular de novo é upsert (reaponta o cartão), não é
+  // rejeitado. Um vínculo obsoleto (ex.: o executor recriou o cartão) não
+  // pode travar a tarefa para sempre.
+  async linkTaskToBoardItem(input: TaskBoardLinkWrite): Promise<void> {
+    this.assertInitialized()
+    await this.pool.query(
+      `INSERT INTO task_board_links(task_id, board_item_id, linked_by, created_at)
+       VALUES($1, $2, $3, clock_timestamp())
+       ON CONFLICT (task_id) DO UPDATE SET
+         board_item_id = EXCLUDED.board_item_id,
+         linked_by = EXCLUDED.linked_by,
+         created_at = clock_timestamp()`,
+      [input.taskId, input.boardItemId, input.linkedBy]
+    )
+  }
+
+  async boardItemIdsForTasks(taskIds: string[]): Promise<Map<string, string>> {
+    if (taskIds.length === 0) return new Map()
+    this.assertInitialized()
+    const result = await this.pool.query<{ task_id: string; board_item_id: string }>(
+      'SELECT task_id, board_item_id FROM task_board_links WHERE task_id = ANY($1)',
+      [taskIds]
+    )
+    return new Map(result.rows.map((row) => [String(row.task_id), String(row.board_item_id)]))
+  }
+
   // -------------------------------------------------------------------------
   // Quadro de tarefas (board_items). O que muda aqui em relação ao SQLite não é
   // o contrato, é a concorrência: a sincronização do snapshot roda numa
@@ -812,11 +845,13 @@ export class PostgresRepository implements PersistenceRepository {
               item.seq
             ]
           )
+          await this.logBoardEvent(client, { boardItemId: id, kind: 'created', actor: 'agent', toStatus: item.status })
           continue
         }
         // Compara contra a linha DECODIFICADA: o texto é gravado escapado, e
         // comparar o escapado com o cru acharia diferença onde não há.
-        const plan = planBoardSourceSync(decodeBoardRow(current), item, input.projectId)
+        const decodedCurrent = decodeBoardRow(current)
+        const plan = planBoardSourceSync(decodedCurrent, item, input.projectId)
         if (plan.unchanged) continue
         // `po_title`/`po_note` nem aparecem no UPDATE: a ingestão escreve só a
         // camada do agente, e é isso que impede uma releitura do snapshot de
@@ -841,6 +876,15 @@ export class PostgresRepository implements PersistenceRepository {
             plan.clearPoStatus ? null : current.po_reason
           ]
         )
+        if (decodedCurrent.source_status !== item.status) {
+          await this.logBoardEvent(client, {
+            boardItemId: id,
+            kind: 'status_changed',
+            actor: 'agent',
+            fromStatus: decodedCurrent.source_status as BoardItemStatus,
+            toStatus: item.status
+          })
+        }
       }
       const keep = items.map((item) => boardItemId(input.conversationId, item.sourceId))
       await client.query(
@@ -870,6 +914,13 @@ export class PostgresRepository implements PersistenceRepository {
     return result.rows.map((row) => boardItemFromRow(decodeBoardRow(row))).sort(compareBoardItems)
   }
 
+  async getBoardItem(id: string): Promise<BoardItem | null> {
+    this.assertInitialized()
+    const result = await this.pool.query<BoardItemRow>(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = $1`, [id])
+    const row = result.rows[0]
+    return row ? boardItemFromRow(decodeBoardRow(row)) : null
+  }
+
   async applyBoardPo(input: BoardPoWrite): Promise<BoardItem> {
     this.assertInitialized()
     assertPoWrite(input)
@@ -880,6 +931,9 @@ export class PostgresRepository implements PersistenceRepository {
       )
       const current = locked.rows[0]
       if (!current) throw new StorageError('INVALID_PERSISTED_DATA', `Cartão inexistente: ${input.id}`)
+      const nextPoTitle = input.poTitle === undefined ? current.po_title : nullableText(input.poTitle)
+      const nextPoStatus = input.poStatus === undefined ? current.po_status : input.poStatus
+      const nextPoReason = input.poReason === undefined ? current.po_reason : nullableText(input.poReason)
       await client.query(
         `UPDATE board_items SET
            po_title = $2, po_note = $3, po_status = $4, po_reason = $5,
@@ -887,12 +941,33 @@ export class PostgresRepository implements PersistenceRepository {
          WHERE id = $1`,
         [
           input.id,
-          input.poTitle === undefined ? current.po_title : nullableText(input.poTitle),
+          nextPoTitle,
           input.poNote === undefined ? current.po_note : nullableText(input.poNote),
-          input.poStatus === undefined ? current.po_status : input.poStatus,
-          input.poReason === undefined ? current.po_reason : nullableText(input.poReason)
+          nextPoStatus,
+          nextPoReason
         ]
       )
+      // Uma escrita do PO conta UM fato: status ganha prioridade sobre
+      // título/observação porque é o que a reabertura e a auditoria mais
+      // precisam enxergar na linha do tempo. `note` aqui é sempre o valor
+      // PLANO (não escapado) — `logBoardEvent` faz o próprio encode, e passar
+      // o já-escapado dobraria o escape na leitura.
+      const priorEffective = (current.po_status ?? current.source_status) as BoardItemStatus
+      const actor = input.actor ?? 'po'
+      if (input.poStatus !== undefined && nextPoStatus !== priorEffective) {
+        await this.logBoardEvent(client, {
+          boardItemId: input.id,
+          kind: 'status_changed',
+          actor,
+          fromStatus: priorEffective,
+          toStatus: nextPoStatus as BoardItemStatus | null,
+          note: input.poReason ?? null
+        })
+      } else if (input.poTitle !== undefined && nextPoTitle !== current.po_title) {
+        await this.logBoardEvent(client, { boardItemId: input.id, kind: 'retitled', actor, note: input.poTitle })
+      } else if (input.poNote !== undefined && input.poNote !== current.po_note) {
+        await this.logBoardEvent(client, { boardItemId: input.id, kind: 'note_changed', actor, note: input.poNote })
+      }
       return this.requireBoardItem(client, input.id)
     })
   }
@@ -918,6 +993,7 @@ export class PostgresRepository implements PersistenceRepository {
           encodePostgresText(input.reason)
         ]
       )
+      await this.logBoardEvent(client, { boardItemId: id, kind: 'created', actor: 'po', toStatus: input.status, note: input.reason })
       return this.requireBoardItem(client, id)
     })
   }
@@ -933,8 +1009,53 @@ export class PostgresRepository implements PersistenceRepository {
         [id]
       )
       if (!updated.rowCount) throw new StorageError('INVALID_PERSISTED_DATA', `Cartão inexistente: ${id}`)
+      await this.logBoardEvent(client, { boardItemId: id, kind: dismissed ? 'dismissed' : 'restored', actor: 'po' })
       return this.requireBoardItem(client, id)
     })
+  }
+
+  async listBoardItemEvents(boardItemId: string): Promise<BoardItemEvent[]> {
+    this.assertInitialized()
+    const result = await this.pool.query<BoardItemEventRow>(
+      `SELECT ${BOARD_EVENT_COLUMNS} FROM board_item_events WHERE board_item_id = $1 ORDER BY at ASC`,
+      [boardItemId]
+    )
+    return result.rows.map((row) =>
+      boardItemEventFromRow({
+        ...row,
+        at: iso(row.at as unknown as Date | string),
+        note: row.note === null ? null : decodePostgresText(row.note)
+      })
+    )
+  }
+
+  /** Escreve UMA linha da história do cartão, na MESMA transação da escrita
+   *  que a motivou. */
+  private async logBoardEvent(
+    client: PoolClient,
+    input: {
+      boardItemId: string
+      kind: BoardItemEvent['kind']
+      actor: BoardItemEvent['actor']
+      fromStatus?: BoardItemStatus | null
+      toStatus?: BoardItemStatus | null
+      note?: string | null
+    }
+  ): Promise<void> {
+    const event = newBoardItemEvent({ ...input, at: '' })
+    await client.query(
+      `INSERT INTO board_item_events(id, board_item_id, kind, actor, from_status, to_status, note)
+       VALUES($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        event.id,
+        event.boardItemId,
+        event.kind,
+        event.actor,
+        event.fromStatus,
+        event.toStatus,
+        event.note === null ? null : encodePostgresText(event.note)
+      ]
+    )
   }
 
   private async requireBoardItem(client: PoolClient, id: string): Promise<BoardItem> {

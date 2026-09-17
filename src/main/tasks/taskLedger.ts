@@ -5,6 +5,7 @@ import type {
   TaskClaim,
   TaskClaimFilter,
   TaskCreate,
+  TaskBoardLinkWrite,
   TaskDeliverable,
   TaskDeliverableAdd,
   TaskEvent,
@@ -94,6 +95,16 @@ export class TaskLedger {
   /** Caminhos equivalentes do mesmo projeto, de todos os PCs que já registraram. */
   projectCwdsForIdentity(projectId: string): Promise<string[]> {
     return this.repository.projectCwdsForIdentity(projectId)
+  }
+
+  /** Vincula (upsert) uma tarefa do ledger a um cartão do quadro. */
+  linkTaskToBoardItem(input: TaskBoardLinkWrite): Promise<void> {
+    return this.repository.linkTaskToBoardItem(input)
+  }
+
+  /** `task_id -> board_item_id` das tarefas informadas que têm vínculo. */
+  boardItemIdsForTasks(taskIds: string[]): Promise<Map<string, string>> {
+    return this.repository.boardItemIdsForTasks(taskIds)
   }
 
   getTask(taskId: string): Promise<Task | null> {

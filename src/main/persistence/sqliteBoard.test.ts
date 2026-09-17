@@ -1,9 +1,11 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SqliteRepository } from './sqliteRepository'
+import { SQLITE_MIGRATIONS } from './sqliteSchema'
 import type { BoardSourceItem } from './types'
 
 const tempDirs: string[] = []
@@ -202,5 +204,203 @@ describe('SqliteRepository — quadro de tarefas', () => {
     })
     await sync(repository, [source('1', 'uma', 'pending')])
     expect(seen).toHaveLength(1)
+  })
+})
+
+describe('SqliteRepository — histórico do cartão (board_item_events)', () => {
+  it('o cartão nasce com um evento "created"', async () => {
+    const repository = await repo()
+    const [card] = await sync(repository, [source('1', 'uma', 'pending')])
+    const events = await repository.listBoardItemEvents(card.id)
+    expect(events.map((e) => e.kind)).toEqual(['created'])
+    expect(events[0].actor).toBe('agent')
+    expect(events[0].toStatus).toBe('pending')
+  })
+
+  it('o agente mudando de status vira um evento — sem mudança, sem evento', async () => {
+    const repository = await repo()
+    const [card] = await sync(repository, [source('1', 'uma', 'pending')])
+    await sync(repository, [source('1', 'uma', 'pending')]) // reingestão idêntica
+    await sync(repository, [source('1', 'uma', 'completed')])
+
+    const events = await repository.listBoardItemEvents(card.id)
+    expect(events.map((e) => e.kind)).toEqual(['created', 'status_changed'])
+    expect(events[1]).toMatchObject({ actor: 'agent', fromStatus: 'pending', toStatus: 'completed' })
+  })
+
+  it('o PO concluindo o cartão vira um evento com o motivo na nota', async () => {
+    const repository = await repo()
+    const [card] = await sync(repository, [source('1', 'uma', 'in_progress')])
+    await repository.applyBoardPo({ id: card.id, poStatus: 'completed', poReason: 'o agente esqueceu de marcar' })
+
+    const events = await repository.listBoardItemEvents(card.id)
+    const last = events[events.length - 1]
+    expect(last).toMatchObject({
+      kind: 'status_changed',
+      actor: 'po',
+      fromStatus: 'in_progress',
+      toStatus: 'completed',
+      note: 'o agente esqueceu de marcar'
+    })
+  })
+
+  it('retitular sem mudar status vira "retitled", não "status_changed"', async () => {
+    const repository = await repo()
+    const [card] = await sync(repository, [source('1', 'add board table 5/7', 'pending')])
+    await repository.applyBoardPo({ id: card.id, poTitle: 'Criar a tabela do quadro' })
+
+    const events = await repository.listBoardItemEvents(card.id)
+    expect(events[events.length - 1]).toMatchObject({ kind: 'retitled', actor: 'po', note: 'Criar a tabela do quadro' })
+  })
+
+  it('dispensar e restaurar viram eventos próprios', async () => {
+    const repository = await repo()
+    const [card] = await sync(repository, [source('1', 'uma', 'pending')])
+    await repository.dismissBoardItem(card.id, true)
+    await repository.dismissBoardItem(card.id, false)
+
+    const events = await repository.listBoardItemEvents(card.id)
+    expect(events.map((e) => e.kind)).toEqual(['created', 'dismissed', 'restored'])
+  })
+
+  it('cartão criado pelo PO nasce com "created" e actor po', async () => {
+    const repository = await repo()
+    const item = await repository.createBoardPoItem({
+      projectId: 'proj-1',
+      projectCwd: 'C:/GitHub/agent-code',
+      conversationId: 'conv-1',
+      title: 'surgiu no meio do trabalho',
+      status: 'pending',
+      reason: 'o agente disse que ia fazer depois'
+    })
+
+    const events = await repository.listBoardItemEvents(item.id)
+    expect(events).toEqual([
+      expect.objectContaining({ kind: 'created', actor: 'po', toStatus: 'pending', note: 'o agente disse que ia fazer depois' })
+    ])
+  })
+
+  it('cartão sem eventos (banco vazio) devolve lista vazia, não erro', async () => {
+    const repository = await repo()
+    expect(await repository.listBoardItemEvents('bi-nao-existe')).toEqual([])
+  })
+
+  it('escrita com actor "user" (drag-and-drop) vira evento distinto do PO', async () => {
+    const repository = await repo()
+    const [card] = await sync(repository, [source('1', 'uma', 'in_progress')])
+    await repository.applyBoardPo({
+      id: card.id,
+      poStatus: 'pending',
+      poReason: 'o usuário moveu o cartão para "a fazer" pelo quadro',
+      actor: 'user'
+    })
+
+    const events = await repository.listBoardItemEvents(card.id)
+    const last = events[events.length - 1]
+    expect(last).toMatchObject({
+      kind: 'status_changed',
+      actor: 'user',
+      fromStatus: 'in_progress',
+      toStatus: 'pending'
+    })
+  })
+
+  it('sem `actor` explícito, a escrita continua logando "po" (compatibilidade com quem já chama sem o campo)', async () => {
+    const repository = await repo()
+    const [card] = await sync(repository, [source('1', 'uma', 'in_progress')])
+    await repository.applyBoardPo({ id: card.id, poStatus: 'completed', poReason: 'o agente esqueceu de marcar' })
+
+    const events = await repository.listBoardItemEvents(card.id)
+    expect(events[events.length - 1].actor).toBe('po')
+  })
+})
+
+describe('SqliteRepository — migration 7 é aditiva (actor "user")', () => {
+  it('um cartão com eventos antigos (actor agent/po) continua legível depois da migration, e o novo actor "user" passa a ser aceito', async () => {
+    const cache = await mkdtemp(join(tmpdir(), 'agent-code-board-migration7-'))
+    tempDirs.push(cache)
+    const dbPath = join(cache, 'agent-code.db')
+    const appliedAt = new Date().toISOString()
+
+    // Simula um banco parado na migration 6 — antes de `actor` aceitar 'user'.
+    const pre = new DatabaseSync(dbPath)
+    for (const entry of SQLITE_MIGRATIONS.filter((m) => m.version <= 6)) pre.exec(entry.sql)
+    const insertMigration = pre.prepare(
+      'INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES(?, ?, ?, ?)'
+    )
+    for (const entry of SQLITE_MIGRATIONS.filter((m) => m.version <= 6)) {
+      insertMigration.run(entry.version, entry.name, entry.checksum, appliedAt)
+    }
+    pre.prepare(
+      `INSERT INTO board_items(
+         id, project_id, project_cwd, conversation_id, origin, source_id, source_title, source_status,
+         seq, revision, created_at, updated_at
+       ) VALUES(?, ?, ?, ?, 'agent', ?, ?, ?, ?, 1, ?, ?)`
+    ).run('bi-old', 'proj-1', 'C:/GitHub/agent-code', 'conv-1', '1', 'uma', 'pending', 0, appliedAt, appliedAt)
+    pre.prepare(
+      `INSERT INTO board_item_events(id, board_item_id, at, kind, actor, from_status, to_status, note)
+       VALUES(?, 'bi-old', ?, 'created', 'po', NULL, 'pending', ?)`
+    ).run('bie-old', appliedAt, 'motivo antigo')
+    pre.close()
+
+    // A migration 7 roda sozinha (é a única pendente) ao inicializar de novo.
+    const repository = new SqliteRepository(cache, dbPath, 'device-a')
+    await repository.initialize()
+
+    const events = await repository.listBoardItemEvents('bi-old')
+    expect(events).toEqual([expect.objectContaining({ kind: 'created', actor: 'po', note: 'motivo antigo' })])
+
+    // O CHECK novo aceita 'user' sem recriar a tabela de novo.
+    await repository.applyBoardPo({
+      id: 'bi-old',
+      poStatus: 'in_progress',
+      poReason: 'o usuário moveu pelo quadro',
+      actor: 'user'
+    })
+    const after = await repository.listBoardItemEvents('bi-old')
+    expect(after).toHaveLength(2)
+    expect(after[1]).toMatchObject({ actor: 'user', kind: 'status_changed', toStatus: 'in_progress' })
+  })
+})
+
+describe('SqliteRepository — vínculo tarefa↔cartão (task_board_links)', () => {
+  it('vincula uma tarefa a um cartão e lê de volta por boardItemIdsForTasks', async () => {
+    const repository = await repo()
+    const task = await repository.createTask({ projectCwd: 'C:/GitHub/agent-code', title: 'T', goal: 'g' })
+    const [card] = await sync(repository, [source('1', 'uma', 'pending')])
+
+    await repository.linkTaskToBoardItem({ taskId: task.id, boardItemId: card.id, linkedBy: 'agent' })
+
+    const map = await repository.boardItemIdsForTasks([task.id, 'task-sem-vinculo'])
+    expect(map.get(task.id)).toBe(card.id)
+    expect(map.has('task-sem-vinculo')).toBe(false)
+  })
+
+  it('vincular de novo é upsert — reaponta para o novo cartão em vez de rejeitar', async () => {
+    const repository = await repo()
+    const task = await repository.createTask({ projectCwd: 'C:/GitHub/agent-code', title: 'T', goal: 'g' })
+    const [cardA] = await sync(repository, [source('1', 'uma', 'pending')])
+    const [, cardB] = await sync(repository, [source('1', 'uma', 'pending'), source('2', 'duas', 'pending', 1)])
+
+    await repository.linkTaskToBoardItem({ taskId: task.id, boardItemId: cardA.id, linkedBy: 'agent' })
+    await repository.linkTaskToBoardItem({ taskId: task.id, boardItemId: cardB.id, linkedBy: 'po' })
+
+    const map = await repository.boardItemIdsForTasks([task.id])
+    expect(map.get(task.id)).toBe(cardB.id)
+  })
+
+  it('o vínculo sobrevive a várias chamadas de write() de outras operações', async () => {
+    const repository = await repo()
+    const task = await repository.createTask({ projectCwd: 'C:/GitHub/agent-code', title: 'T', goal: 'g' })
+    const [card] = await sync(repository, [source('1', 'uma', 'pending')])
+    await repository.linkTaskToBoardItem({ taskId: task.id, boardItemId: card.id, linkedBy: 'agent' })
+
+    // Cada uma destas chamadas reexecuta SQLITE_SCHEMA (o guarda de write()).
+    await sync(repository, [source('1', 'uma', 'in_progress')])
+    await repository.dismissBoardItem(card.id, true)
+    await repository.dismissBoardItem(card.id, false)
+
+    const map = await repository.boardItemIdsForTasks([task.id])
+    expect(map.get(task.id)).toBe(card.id)
   })
 })

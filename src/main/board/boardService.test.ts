@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatEvent, TaskItem } from '../../shared/ipc'
 import type { BoardItem, BoardPoWrite, BoardSyncInput, PersistenceRepository } from '../persistence/types'
+import type { BoardServiceDeps } from './boardService'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -322,3 +323,151 @@ describe('BoardService', () => {
     }
   })
 })
+
+/** Repositório fake para `move()`: `getBoardItem` devolve o cartão dado, e
+ *  `applyBoardPo` registra a escrita (mesma forma de `boardRepo`, mas com o
+ *  método de leitura por id que o drag-and-drop precisa). */
+function moveRepo(item: BoardItem) {
+  const applied: BoardPoWrite[] = []
+  const repo = {
+    getBoardItem: vi.fn(async (id: string) => (id === item.id ? item : null)),
+    applyBoardPo: vi.fn(async (input: BoardPoWrite) => {
+      applied.push(input)
+      return card({ id: input.id, poStatus: input.poStatus ?? null })
+    })
+  } as unknown as PersistenceRepository
+  return { repo, applied }
+}
+
+describe('BoardService — move (drag-and-drop do usuário)', () => {
+  it('destino "fazendo": manda mensagem para a sessão e só então grava com actor "user"', async () => {
+    const item = card({ sourceStatus: 'pending' })
+    const { repo, applied } = moveRepo(item)
+    const sendToSession = vi.fn(async () => true)
+    const service = new BoardService({ repository: () => repo, sendToSession })
+
+    const result = await service.move(item.id, 'in_progress')
+
+    expect(result).toEqual({ ok: true })
+    expect(sendToSession).toHaveBeenCalledWith(item.conversationId, expect.stringContaining(item.sourceTitle))
+    expect(applied).toEqual([
+      {
+        id: item.id,
+        poStatus: 'in_progress',
+        poReason: expect.stringContaining('fazendo'),
+        actor: 'user'
+      }
+    ])
+  })
+
+  it('agente ocupado: a mensagem enfileira (a promessa demora) e o quadro só grava depois dela resolver', async () => {
+    const item = card({ sourceStatus: 'pending' })
+    const { repo, applied } = moveRepo(item)
+    let releaseSend: (() => void) | null = null
+    const sendToSession = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseSend = () => resolve(true)
+        })
+    )
+    const service = new BoardService({ repository: () => repo, sendToSession })
+
+    const pending = service.move(item.id, 'in_progress')
+    await vi.waitFor(() => expect(sendToSession).toHaveBeenCalled())
+    expect(applied).toEqual([]) // ainda enfileirado, nada gravado
+
+    releaseSend!()
+    await pending
+
+    expect(applied).toHaveLength(1)
+  })
+
+  it('saindo de "fazendo": interrompe o turno de verdade antes de gravar', async () => {
+    const item = card({ sourceStatus: 'in_progress' })
+    const { repo, applied } = moveRepo(item)
+    const interruptSession = vi.fn(async () => true)
+    const service = new BoardService({ repository: () => repo, interruptSession })
+
+    const result = await service.move(item.id, 'pending')
+
+    expect(result).toEqual({ ok: true })
+    expect(interruptSession).toHaveBeenCalledWith(item.conversationId)
+    expect(applied).toEqual([
+      { id: item.id, poStatus: 'pending', poReason: expect.stringContaining('a fazer'), actor: 'user' }
+    ])
+  })
+
+  it('troca direta "a fazer" ↔ "concluído": só grava, sem enviar nem interromper', async () => {
+    const item = card({ sourceStatus: 'pending' })
+    const { repo, applied } = moveRepo(item)
+    const sendToSession = vi.fn(async () => true)
+    const interruptSession = vi.fn(async () => true)
+    const service = new BoardService({ repository: () => repo, sendToSession, interruptSession })
+
+    await service.move(item.id, 'completed')
+
+    expect(sendToSession).not.toHaveBeenCalled()
+    expect(interruptSession).not.toHaveBeenCalled()
+    expect(applied).toHaveLength(1)
+  })
+
+  it('sem sessão viva para o envio: recusa com mensagem e NÃO grava nada', async () => {
+    const item = card({ sourceStatus: 'pending' })
+    const { repo, applied } = moveRepo(item)
+    const sendToSession = vi.fn(async () => false)
+    const service = new BoardService({ repository: () => repo, sendToSession })
+
+    const result = await service.move(item.id, 'in_progress')
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toMatch(/abra esta conversa/i)
+    expect(applied).toEqual([])
+  })
+
+  it('sem sendToSession configurado, o comportamento é o mesmo de "sem sessão viva"', async () => {
+    const item = card({ sourceStatus: 'pending' })
+    const { repo, applied } = moveRepo(item)
+    const service = new BoardService({ repository: () => repo })
+
+    const result = await service.move(item.id, 'in_progress')
+
+    expect(result.ok).toBe(false)
+    expect(applied).toEqual([])
+  })
+
+  it('cartão já na coluna de destino: no-op, sem chamar sessão nem gravar', async () => {
+    const item = card({ sourceStatus: 'in_progress' })
+    const { repo, applied } = moveRepo(item)
+    const sendToSession = vi.fn(async () => true)
+    const service = new BoardService({ repository: () => repo, sendToSession })
+
+    const result = await service.move(item.id, 'in_progress')
+
+    expect(result).toEqual({ ok: true })
+    expect(sendToSession).not.toHaveBeenCalled()
+    expect(applied).toEqual([])
+  })
+
+  it('cartão inexistente: recusa com mensagem', async () => {
+    const item = card()
+    const { repo } = moveRepo(item)
+    const service = new BoardService({ repository: () => repo })
+
+    const result = await service.move('bi-nao-existe', 'in_progress')
+
+    expect(result.ok).toBe(false)
+  })
+
+  it('sem repositório autoritativo: recusa com mensagem, e nunca lança', async () => {
+    const service = new BoardService({ repository: () => null })
+    await expect(service.move('bi-1', 'in_progress')).resolves.toMatchObject({ ok: false })
+  })
+})
+
+// Garante que a injeção compila com as duas dependências novas (documenta o
+// contrato de `BoardServiceDeps` cobrado no aceite desta tarefa).
+void ((): BoardServiceDeps => ({
+  repository: () => null,
+  sendToSession: async () => true,
+  interruptSession: async () => true
+}))

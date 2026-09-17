@@ -4,6 +4,8 @@ import type {
   TaskBoard,
   TaskBoardDetail,
   BoardItem,
+  BoardItemEvent,
+  BoardItemStatus,
   ProjectBoard,
   AgentEventMsg,
   AgentInterruptResult,
@@ -134,7 +136,7 @@ export interface AgentCodeApi {
   /** Removes one settled proposal from the conflicts list. */
   discardMemoryProposal(id: string): Promise<boolean>
   /** Task ledger queue for the agents panel. Read-only: the panel never moves a task. */
-  tasksBoard(query?: { projectCwd?: string; includeFinished?: boolean }): Promise<TaskBoard>
+  tasksBoard(query?: { projectCwd?: string; conversationId?: string; includeFinished?: boolean }): Promise<TaskBoard>
   /** Steps, deliverables and events of one task — only fetched when it is expanded. */
   tasksDetail(taskId: string): Promise<TaskBoardDetail | null>
   /** Quadro de tarefas do projeto: cartões do agente com a camada do PO por cima. */
@@ -145,6 +147,14 @@ export interface AgentCodeApi {
   }): Promise<ProjectBoard>
   /** Arquiva/desarquiva um cartão — a única escrita do usuário no quadro. */
   boardDismiss(id: string, dismissed: boolean): Promise<BoardItem | null>
+  /** Drag-and-drop no Quadro: move o cartão de coluna. Quando o destino é
+   *  "fazendo", manda o agente começar (enfileira se ele estiver ocupado);
+   *  quando o cartão SAI de "fazendo", interrompe o turno de verdade. `ok:
+   *  false` quando não há sessão viva para mandar a mensagem — nada é
+   *  gravado, e a UI deve desfazer a posição do cartão. */
+  boardMove(id: string, toStatus: BoardItemStatus): Promise<{ ok: boolean; message?: string }>
+  /** A linha do tempo de um cartão — só buscada quando o detalhe abre. */
+  boardItemEvents(boardItemId: string): Promise<BoardItemEvent[]>
   /** O quadro daquele projeto mudou (o agente avançou, ou o PO corrigiu). */
   onBoardChanged(cb: (msg: { projectId: string }) => void): () => void
   kvGet(key: string): Promise<string | null>

@@ -1,7 +1,14 @@
 import type { SessionStore } from '@anthropic-ai/claude-agent-sdk'
-import type { AppConfig, BoardItem, BoardItemStatus } from '../../shared/ipc'
+import type { AppConfig, BoardItem, BoardItemEvent, BoardItemStatus } from '../../shared/ipc'
 
-export type { BoardItem, BoardItemOrigin, BoardItemStatus } from '../../shared/ipc'
+export type {
+  BoardItem,
+  BoardItemEvent,
+  BoardItemEventActor,
+  BoardItemEventKind,
+  BoardItemOrigin,
+  BoardItemStatus
+} from '../../shared/ipc'
 import type { TransferRecords } from './transferRecords'
 
 export type StorageBackend = 'sqlite' | 'postgres'
@@ -340,6 +347,26 @@ export interface ProjectIdentityRow {
 }
 
 /**
+ * Vínculo entre uma tarefa do ledger e um cartão do quadro. `taskId` é a
+ * chave — uma tarefa aponta para no máximo um cartão — então vincular de novo
+ * é upsert: reescreve o cartão de destino, não é rejeitado. É o mesmo
+ * comportamento de `recordProjectIdentity`, e evita que um vínculo obsoleto
+ * (ex.: o executor recriou o cartão) trave a tarefa para sempre.
+ */
+export interface TaskBoardLink {
+  taskId: string
+  boardItemId: string
+  linkedBy: 'agent' | 'po'
+  createdAt: string
+}
+
+export interface TaskBoardLinkWrite {
+  taskId: string
+  boardItemId: string
+  linkedBy: 'agent' | 'po'
+}
+
+/**
  * Narrows what a claim may pick. Without it the oldest `pending` task of ANY
  * project would be handed out — a supervisor in project A would silently take
  * work meant for project B.
@@ -365,6 +392,11 @@ export interface TaskRepository {
   recordProjectIdentity(row: Omit<ProjectIdentityRow, 'updatedAt'>): Promise<void>
   /** Todos os caminhos locais já registrados sob a mesma identidade, em qualquer PC. */
   projectCwdsForIdentity(projectId: string): Promise<string[]>
+  /** Vincula (upsert) uma tarefa do ledger a um cartão do quadro. */
+  linkTaskToBoardItem(input: TaskBoardLinkWrite): Promise<void>
+  /** `task_id -> board_item_id` para as tarefas informadas que têm vínculo; as
+   *  sem vínculo simplesmente não aparecem no mapa. Uma query só, nunca N+1. */
+  boardItemIdsForTasks(taskIds: string[]): Promise<Map<string, string>>
   getTask(taskId: string): Promise<Task | null>
   listTasks(query?: TaskQuery): Promise<Task[]>
   listTaskSteps(taskId: string): Promise<TaskStep[]>
@@ -409,6 +441,10 @@ export interface BoardPoWrite {
   poStatus?: BoardItemStatus | null
   /** Obrigatório quando `poStatus` muda: é o que aparece na trilha do cartão. */
   poReason?: string | null
+  /** Quem fez a escrita, para o evento do histórico. Padrão `'po'` quando
+   *  omitido — preserva quem já chama sem este campo. O drag-and-drop do
+   *  usuário passa `'user'`: é um terceiro tipo de escritor, distinto do PO. */
+  actor?: 'po' | 'user'
 }
 
 /** Cartão que o agente nunca declarou, criado pelo PO. */
@@ -432,9 +468,16 @@ export interface BoardRepository {
   /** Aplica o snapshot de uma conversa preservando os campos do PO. */
   syncBoardItems(input: BoardSyncInput): Promise<BoardItem[]>
   listBoardItems(query: BoardQuery): Promise<BoardItem[]>
+  /** Um cartão pelo id, ou `null` se não existir. Usado pelo drag-and-drop
+   *  para decidir a ação (enviar/interromper) a partir do status ATUAL, antes
+   *  de escrever — sem repetir a busca por (projectId, conversationId) que
+   *  `listBoardItems` exige. */
+  getBoardItem(id: string): Promise<BoardItem | null>
   applyBoardPo(input: BoardPoWrite): Promise<BoardItem>
   createBoardPoItem(input: BoardPoCreate): Promise<BoardItem>
   dismissBoardItem(id: string, dismissed: boolean): Promise<BoardItem>
+  /** A linha do tempo de um cartão, em ordem cronológica. */
+  listBoardItemEvents(boardItemId: string): Promise<BoardItemEvent[]>
 }
 
 // ---------------------------------------------------------------------------

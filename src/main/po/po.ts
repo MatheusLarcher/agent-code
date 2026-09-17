@@ -64,6 +64,28 @@ export interface PoDeps {
    * disso, só perde a seção extra do digest.
    */
   listConvTasks?(convId: string): Promise<PoLedgerTask[]>
+  /**
+   * Todas as tarefas do registro (mcp__tasks) desta conversa, para a heurística
+   * de vínculo automático tarefa↔cartão — sem filtro de status ou data, quem
+   * filtra é `Po` (assim o teste exercita a regra real, não uma cópia dela no
+   * dublê). Mesmo contrato de tolerância a falha de `listConvTasks`: sem
+   * injeção consulta o registro ativo, e sem registro ou com a consulta
+   * falhando devolve vazio — nunca quebra o PO.
+   */
+  linkableLedgerTasks?(convId: string): Promise<PoLinkableTask[]>
+  /** `task_id -> board_item_id` já vinculados, para não vincular de novo.
+   *  Mesmo contrato de tolerância a falha das outras pontes com o registro. */
+  linkedBoardItemsFor?(taskIds: string[]): Promise<Map<string, string>>
+  /** Vincula (upsert) uma tarefa do registro a um cartão do quadro. Mesmo
+   *  contrato de tolerância a falha das outras pontes com o registro. */
+  linkTaskToBoardItem?(taskId: string, boardItemId: string): Promise<void>
+}
+
+/** Uma tarefa do registro, reduzida ao que a heurística de vínculo precisa. */
+export interface PoLinkableTask {
+  id: string
+  status: string
+  createdAt: string
 }
 
 /** A fila dos turnos que ainda não passaram pelo PO. */
@@ -286,6 +308,85 @@ export class Po {
     }
   }
 
+  /** Todas as tarefas do registro desta conversa, sem filtro — quem filtra é
+   *  `linkLedgerTaskToCard`. Nunca lança: mesma tolerância de `listConvTasks`. */
+  private async linkableLedgerTasks(convId: string): Promise<PoLinkableTask[]> {
+    try {
+      if (this.deps.linkableLedgerTasks) return await this.deps.linkableLedgerTasks(convId)
+      const ledger = taskLedger()
+      if (!ledger) return []
+      const tasks = await ledger.listTasks({ conversationId: convId })
+      return tasks.map((task) => ({ id: task.id, status: task.status, createdAt: task.createdAt }))
+    } catch {
+      return []
+    }
+  }
+
+  /** `task_id -> board_item_id` já vinculados dentre os candidatos. Nunca lança. */
+  private async linkedBoardItemsFor(taskIds: string[]): Promise<Map<string, string>> {
+    if (taskIds.length === 0) return new Map()
+    try {
+      if (this.deps.linkedBoardItemsFor) return await this.deps.linkedBoardItemsFor(taskIds)
+      const ledger = taskLedger()
+      if (!ledger) return new Map()
+      return await ledger.boardItemIdsForTasks(taskIds)
+    } catch {
+      return new Map()
+    }
+  }
+
+  /** Grava o vínculo. Nunca lança: um vínculo perdido não é motivo para
+   *  derrubar a análise que já escreveu o cartão no quadro. */
+  private async linkTaskToBoardCard(taskId: string, boardItemId: string): Promise<void> {
+    try {
+      if (this.deps.linkTaskToBoardItem) {
+        await this.deps.linkTaskToBoardItem(taskId, boardItemId)
+        return
+      }
+      const ledger = taskLedger()
+      if (!ledger) return
+      await ledger.linkTaskToBoardItem({ taskId, boardItemId, linkedBy: 'po' })
+    } catch {
+      // O vínculo é conveniência, não fonte da verdade: falhar aqui não pode
+      // derrubar a auditoria que já promoveu o cartão.
+    }
+  }
+
+  /**
+   * Tenta vincular uma tarefa do registro ao cartão que ACABOU de entrar em
+   * andamento nesta mesma conversa.
+   *
+   * Critério deliberadamente conservador: só vincula quando sobra EXATAMENTE
+   * UMA candidata. Zero candidatas é "nada para vincular ainda"; mais de uma é
+   * "não dá para saber qual" — nos dois casos, não vincular é o correto, porque
+   * um vínculo errado é pior do que nenhum (o `critico` julgaria a tarefa
+   * errada pelo cartão errado).
+   *
+   * `promotedAt` é o instante em que ESTA análise decidiu promover o cartão —
+   * não existe, no que chega até aqui, um timestamp mais preciso do próprio
+   * evento de promoção (o quadro guarda o cartão, não o "quando" da escrita do
+   * PO). Usar o início da análise como aproximação é seguro na direção que
+   * importa: uma tarefa aberta antes deste turno nunca é candidata, mesmo que
+   * o registro e o quadro tenham relógios levemente diferentes.
+   */
+  private async linkLedgerTaskToCard(convId: string, boardItemId: string, promotedAt: number): Promise<void> {
+    try {
+      const tasks = await this.linkableLedgerTasks(convId)
+      const candidates = tasks.filter(
+        (task) =>
+          (task.status === 'running' || task.status === 'pending' || task.status === 'review') &&
+          Date.parse(task.createdAt) > promotedAt
+      )
+      if (candidates.length === 0) return
+      const linked = await this.linkedBoardItemsFor(candidates.map((task) => task.id))
+      const unlinked = candidates.filter((task) => !linked.has(task.id))
+      if (unlinked.length !== 1) return
+      await this.linkTaskToBoardCard(unlinked[0].id, boardItemId)
+    } catch {
+      // Best-effort: o vínculo nunca deve derrubar a auditoria do PO.
+    }
+  }
+
   private nextCorrelationId(): string {
     return this.deps.newCorrelationId?.() ?? `po-${Date.now().toString(36)}-${this.correlations++}`
   }
@@ -461,10 +562,14 @@ export class Po {
             await this.deps.board.applyPo({ id: op.id, poStatus: 'completed', poReason: op.reason })
           } else if (op.kind === 'start') {
             await this.deps.board.applyPo({ id: op.id, poStatus: 'in_progress', poReason: op.reason })
+            // O cartão acabou de entrar em andamento: tenta achar a tarefa do
+            // registro que é este mesmo trabalho, para o quadro e o registro
+            // apontarem para a mesma coisa sem depender de o agente lembrar.
+            await this.linkLedgerTaskToCard(convId, op.id, now)
           } else if (op.kind === 'retitle') {
             await this.deps.board.applyPo({ id: op.id, poTitle: op.title })
           } else {
-            await this.deps.board.createPoItem({
+            const created = await this.deps.board.createPoItem({
               projectId,
               projectCwd: turn.cwd,
               conversationId: convId,
@@ -472,6 +577,7 @@ export class Po {
               status: op.status,
               reason: op.reason
             })
+            if (created && op.status === 'in_progress') await this.linkLedgerTaskToCard(convId, created.id, now)
           }
           applied++
         }

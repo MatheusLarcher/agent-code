@@ -588,6 +588,8 @@ export function MessageList({
             )
           case 'provider-switch':
             return <div key={`provider-switch:${m.id}`} className="msg system-note" role="status">{m.text}</div>
+          case 'status':
+            return <div key={`status:${m.id}`} className="msg system-note" role="status">{m.text}</div>
           case 'result':
             // Not rendered: the answer is already in the chat and the cost is
             // shown in the token meter header.

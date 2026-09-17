@@ -715,6 +715,32 @@ describe('AgentSession — novos sinais de interrupção e background', () => {
   })
 })
 
+describe('AgentSession — /compact (system/compact_boundary)', () => {
+  it('manual (usuário digitou /compact): emite kind:"status" com a contagem de tokens', () => {
+    const { s, emit } = makeSession()
+    handle(s, {
+      type: 'system',
+      subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'manual', pre_tokens: 120000, post_tokens: 8000 }
+    })
+    expect(emit).toHaveBeenLastCalledWith({
+      kind: 'status',
+      id: expect.any(String),
+      text: 'Conversa compactada (manual) — 120.000 → 8.000 tokens'
+    })
+  })
+
+  it('automática (janela de contexto cheia): usa o rótulo correto e ainda funciona sem metadados de tokens', () => {
+    const { s, emit } = makeSession()
+    handle(s, { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } })
+    expect(emit).toHaveBeenLastCalledWith({
+      kind: 'status',
+      id: expect.any(String),
+      text: 'Conversa compactada (automática (contexto cheio))'
+    })
+  })
+})
+
 describe('AgentSession — rate_limit_event (uso de 5h/semana da conta)', () => {
   it('emite kind:"rate-limit" com os campos do rate_limit_info', () => {
     const { s, emit } = makeSession()

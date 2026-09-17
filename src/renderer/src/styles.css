@@ -6088,6 +6088,12 @@ button svg {
   flex-direction: column;
   gap: 8px;
   min-height: 110px;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+/* Coluna-alvo do drag-and-drop: destaque de borda enquanto o cartão paira. */
+.board-column.drag-over {
+  border-color: var(--accent);
+  background: var(--bg-3);
 }
 .board-column-head {
   display: flex;
@@ -6134,9 +6140,19 @@ button svg {
   font: inherit;
   color: inherit;
   width: 100%;
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 .board-card:hover {
   border-color: #4a4744;
+}
+.board-card[draggable='true'] {
+  cursor: grab;
+}
+/* Cartão sendo arrastado: opacidade + leve rotação, feedback visual do drag. */
+.board-card.dragging {
+  opacity: 0.55;
+  transform: rotate(-1.5deg) scale(0.98);
+  cursor: grabbing;
 }
 .board-card.in_progress {
   border-color: var(--warn);
@@ -6266,6 +6282,178 @@ button svg {
   color: var(--muted);
 }
 
+/* Conversas fora desta esperando o usuário — o que a antiga aba Agentes
+   mostrava em "Esperando você". */
+.board-pending-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 7px 12px;
+  background: rgba(224, 164, 88, 0.08);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.board-pending-chip {
+  border: 1px solid rgba(224, 164, 88, 0.5);
+  background: transparent;
+  color: var(--warn);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.board-pending-chip:hover {
+  background: rgba(224, 164, 88, 0.12);
+}
+
+/* ---- bolinhas de agente: executor por cartão, po/vigia/crítico/memória por
+   cabeçalho de coluna. Reaproveita `.crew-mini` (tamanho, cor do papel, pulso)
+   já usado no chip da topbar — só o ponto de ancoragem do balão é novo. */
+.board-card-agents,
+.board-agent-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.board-card-agents {
+  margin-left: 23px;
+}
+.board-agent-dots {
+  margin-left: 6px;
+}
+.board-agent-dot-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.board-agent-dot {
+  cursor: pointer;
+  border: 1.5px solid var(--role);
+  padding: 0;
+}
+span.board-agent-dot {
+  /* O ponto do cartão é um <span role="button">, não um <button> — o cartão
+     inteiro já É um <button>, e HTML não aceita botão dentro de botão. */
+  border: 1.5px solid var(--role);
+}
+
+/* Balão: mesmo espírito do mockup aprovado — tamanho do conteúdo, ancorado na
+   bolinha, nunca um painel cheio. */
+.board-balloon {
+  position: absolute;
+  z-index: 30;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  width: max-content;
+  max-width: 280px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text);
+  text-align: left;
+  cursor: default;
+}
+.board-balloon-title {
+  margin: 0 0 2px;
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-balloon-tag {
+  font-size: 9.5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+  color: var(--muted);
+}
+.board-balloon-owner {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.board-balloon-block {
+  margin-top: 7px;
+  font-size: 11.5px;
+}
+.board-balloon-label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 3px;
+}
+.board-balloon-list {
+  margin: 0;
+  padding-left: 14px;
+}
+.board-balloon-list li {
+  margin-bottom: 2px;
+}
+.board-balloon-empty {
+  margin: 0;
+  color: var(--muted);
+}
+.board-balloon-evid {
+  font-size: 10.5px;
+  color: var(--ok);
+  border: 1px solid rgba(127, 174, 111, 0.4);
+  border-radius: 999px;
+  padding: 0 6px;
+  display: inline-block;
+  margin: 0 4px 4px 0;
+}
+.board-balloon-loading {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.board-balloon-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.board-balloon-foot.plain {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 6px;
+}
+.board-balloon-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.board-balloon-id {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: ui-monospace, Consolas, monospace;
+}
+.board-balloon-lease {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.board-balloon-lease.stale {
+  color: var(--warn);
+}
+.board-balloon-evidcount {
+  font-size: 10.5px;
+  color: var(--ok);
+}
+
 /* Detalhe: sobe por cima do quadro, sem tomar a tela inteira. */
 .board-detail {
   position: absolute;
@@ -6340,6 +6528,62 @@ button svg {
   border-color: var(--accent-dim);
   color: var(--accent);
 }
+.board-who.agent {
+  border-color: var(--line);
+  color: var(--muted);
+}
+.board-who.user {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.board-detail-meta {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+.board-detail-meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.board-detail-meta-row span:first-child {
+  color: var(--muted);
+}
+.board-detail-timeline {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.board-detail-timeline-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+.board-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.board-timeline-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.board-timeline-text {
+  flex: 1;
+}
+.board-timeline-when {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
 .board-detail-actions {
   margin-top: 12px;
   display: flex;
@@ -6383,6 +6627,61 @@ button svg {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Erro do drag-and-drop (ex.: sem sessão viva para mandar a mensagem) — texto
+ * simples no rodapé, sem inventar um sistema de notificação novo. */
+.board-move-error {
+  margin: 0 12px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger, #c96a5a);
+  border-radius: 8px;
+  color: var(--danger, #c96a5a);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* Mapa do projeto (ProjectGraph): botão "Mapa" na barra do Quadro abre este
+   overlay por cima do painel inteiro — ponto de entrada mínimo, sem recriar
+   a antiga aba Agentes. */
+.board-map-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.board-map-modal {
+  width: 100%;
+  height: 100%;
+  max-width: 920px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.board-map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text);
+  flex: 0 0 auto;
+}
+.board-map-modal .pgraph {
+  flex: 1;
+  min-height: 0;
 }
 
 /* ===========================================================================

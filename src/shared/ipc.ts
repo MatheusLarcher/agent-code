@@ -152,6 +152,36 @@ export interface ProjectBoard {
   items: BoardItem[]
 }
 
+/** Quem fez a mudança que o evento registra. `user` é o drag-and-drop no
+ *  quadro: nem o agente (snapshot do CLI) nem o PO (auditoria automática) —
+ *  um terceiro tipo de escritor, e é para distinguir isso que este campo
+ *  existe. */
+export type BoardItemEventActor = 'agent' | 'po' | 'user'
+
+export type BoardItemEventKind =
+  | 'created'
+  | 'status_changed'
+  | 'retitled'
+  | 'note_changed'
+  | 'dismissed'
+  | 'restored'
+
+/**
+ * Um fato append-only sobre um cartão — o que `poReason` sozinho não guarda,
+ * porque ele só tem o ÚLTIMO motivo. Mesmo espírito do `task_events` do
+ * registro de tarefas: uma linha por acontecimento, nunca sobrescrita.
+ */
+export interface BoardItemEvent {
+  id: string
+  boardItemId: string
+  at: string
+  kind: BoardItemEventKind
+  actor: BoardItemEventActor
+  fromStatus: BoardItemStatus | null
+  toStatus: BoardItemStatus | null
+  note: string | null
+}
+
 /** One task the SDK reports as still running in the background. */
 export interface BackgroundTask {
   id: string
@@ -1254,6 +1284,8 @@ export interface TaskBoardItem {
    * to say something nobody acts on. `null` = not counted, not "zero".
    */
   deliverables: number | null
+  /** Cartão do quadro vinculado a esta tarefa, quando existe (`task_board_links`). */
+  boardItemId: string | null
 }
 
 export interface TaskBoardStep {
@@ -1401,6 +1433,11 @@ export const Channels = {
   boardList: 'board:list',
   /** Arquiva/desarquiva um cartão — a única escrita que parte do usuário. */
   boardDismiss: 'board:dismiss',
+  /** Drag-and-drop no Quadro: move um cartão entre colunas e, quando o
+   *  destino/origem é "fazendo", manda ou interrompe o agente de verdade. */
+  boardMove: 'board:move',
+  /** A linha do tempo de um cartão — fetch preguiçoso, só ao abrir o detalhe. */
+  boardItemEvents: 'board:item-events',
   /** Main → renderer: o quadro daquele projeto mudou, recarregue. */
   boardChanged: 'board:changed',
   kvGet: 'kv:get',

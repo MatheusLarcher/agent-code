@@ -1,13 +1,15 @@
-import { IconBoard, IconCollapseRight, IconGlobe, IconUsers } from './Icons'
+import { IconBoard, IconCollapseRight, IconGlobe } from './Icons'
 
-export type RightPane = 'browser' | 'agents' | 'board'
+export type RightPane = 'browser' | 'board'
 
 interface Props {
   active: RightPane
   onSelect: (pane: RightPane) => void
   /** Collapses the whole right pane into the vertical rail. */
   onCollapse: () => void
-  /** Subagents running right now — shown as a badge on the Agentes tab. */
+  /** Subagents running right now — acende a aba Quadro, que agora é onde o
+   *  elenco inteiro (executor por cartão, po/vigia/crítico/memória por coluna)
+   *  vive. */
   liveAgents: number
   /** Open preview tabs — shown as a small count on the Navegador tab. */
   browserTabs: number
@@ -16,9 +18,11 @@ interface Props {
 }
 
 /**
- * Segmented switch at the top of the right-hand pane: Navegador ⇄ Agentes ⇄
- * Quadro. Os três painéis dividem o mesmo slot, então este é o único lugar onde
- * o usuário alterna (o botão da topbar e o link do composer só pré-selecionam).
+ * Segmented switch at the top of the right-hand pane: Navegador ⇄ Quadro. A
+ * aba "Agentes" foi fundida aqui dentro — o elenco de quem trabalha aparece
+ * como bolinhas no próprio Quadro (por cartão para o executor, por cabeçalho
+ * de coluna para po/vigia/crítico/memória), então um terceiro slot só para o
+ * elenco virou redundante.
  */
 export function RightPaneTabs({
   active,
@@ -45,22 +49,10 @@ export function RightPaneTabs({
       <button
         type="button"
         role="tab"
-        aria-selected={active === 'agents'}
-        className={`pane-tab${active === 'agents' ? ' on' : ''}${liveAgents > 0 ? ' live' : ''}`}
-        onClick={() => onSelect('agents')}
-        title="Agentes: quem está trabalhando nesta conversa"
-      >
-        <IconUsers size={14} />
-        Agentes
-        {liveAgents > 0 && <span className="pane-tab-badge">{liveAgents}</span>}
-      </button>
-      <button
-        type="button"
-        role="tab"
         aria-selected={active === 'board'}
-        className={`pane-tab${active === 'board' ? ' on' : ''}`}
+        className={`pane-tab${active === 'board' ? ' on' : ''}${liveAgents > 0 ? ' live' : ''}`}
         onClick={() => onSelect('board')}
-        title="Quadro: as tarefas do projeto, marcadas sozinhas conforme o agente conclui"
+        title="Quadro: as tarefas do projeto e quem está trabalhando em cada uma"
       >
         <IconBoard size={14} />
         Quadro

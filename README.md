@@ -46,13 +46,13 @@ npm install   # instala as dependências + baixa o Chromium
 npm run dev   # abre o app
 ```
 
-**Gerar o executável portátil:**
+**Gerar o instalador:**
 
 ```bash
-npm run package:portable   # → dist/AgentCode-<versão>-portable.exe
+npm run package:win   # → dist/AgentCode-<versão>-setup.exe
 ```
 
-Um arquivo só, sem instalação: o Chromium do Playwright, o helper do controle do Windows e o kit de skills vão embutidos.
+Instalador NSIS: copia os arquivos uma vez (Chromium do Playwright, helper do controle do Windows e kit de skills embutidos) e cria atalho. Aberturas seguintes não precisam mais extrair nada, ao contrário do antigo exe portátil.
 
 **Requisitos:** Node.js 20+ (o `start.bat` baixa uma cópia portátil se necessário). Na primeira conversa com Claude, o app abre o login no navegador; alternativamente, use `ANTHROPIC_API_KEY`. Para voz, configure uma chave OpenAI em **Configurações**. Essa chave OpenAI é exclusivamente para voz: os modelos GPT usam login OAuth do ChatGPT + backend Codex/proxy local, nunca a OpenAI API com chave. Modelos Ollama Cloud exigem a chave do Ollama, também em **Configurações**.
 

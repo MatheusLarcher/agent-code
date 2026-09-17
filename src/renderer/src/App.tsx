@@ -56,7 +56,6 @@ import {
 import { ChatPanel } from './components/ChatPanel'
 import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
-import { AgentsPanel } from './components/AgentsPanel'
 import { CrewChip } from './components/CrewChip'
 import { buildCrew, workingMembers } from './crew'
 import { IconBoard, IconGlobe, IconUsers } from './components/Icons'
@@ -412,10 +411,12 @@ export function App(): JSX.Element {
   const [collapsed, setCollapsed] = useState(false)
   const [browserMinimized, setBrowserMinimized] = useState(false)
   const [browserWidth, setBrowserWidth] = useState(720)
-  // Right-hand panel: browser, agents panel or the project board — os três
-  // dividem o MESMO slot (dois painéis ao mesmo tempo espremeriam o chat).
+  // Right-hand panel: browser ou o Quadro do projeto — os dois dividem o
+  // MESMO slot (dois painéis ao mesmo tempo espremeriam o chat). O elenco de
+  // quem trabalha (antes uma terceira aba, "Agentes") mora dentro do Quadro
+  // agora: bolinha por cartão para o executor, bolinha por cabeçalho de
+  // coluna para po/vigia/crítico/memória.
   const [rightPane, setRightPane] = useState<RightPane>('browser')
-  const agentsOpen = rightPane === 'agents'
   // Flow view (full-screen map of who spawned whom). Opened from the panel.
   const [hydrated, setHydrated] = useState(false)
   const [storageStatus, setStorageStatus] = useState<StorageStatusDto | null>(null)
@@ -2534,13 +2535,16 @@ export function App(): JSX.Element {
       })),
     [permissions, conversations]
   )
-  // The right-hand pane holds ONE of two tabs (browser / agents); `agentsOpen`
-  // is the selected tab and `browserMinimized` collapses the whole pane.
+  // The right-hand pane holds ONE of two tabs (browser / board); `browserMinimized`
+  // collapses the whole pane.
   const selectRightPane = useCallback((pane: RightPane): void => {
     setRightPane(pane)
     setBrowserMinimized(false)
   }, [])
-  const openAgentsPanel = useCallback((): void => selectRightPane('agents'), [selectRightPane])
+  // O chip "quem está trabalhando" do composer (`CrewChip`) e o antigo botão
+  // fixo da topbar abriam o painel de Agentes; agora o destino equivalente é
+  // o Quadro, onde o elenco vive.
+  const openAgentsPanel = useCallback((): void => selectRightPane('board'), [selectRightPane])
 
   // id → título, para o quadro nomear a conversa de origem de cada cartão sem
   // o main precisar consultar conversas (o renderer já tem todas na mão).
@@ -2560,6 +2564,61 @@ export function App(): JSX.Element {
   // quando o quadro muda de verdade (evento) ou o projeto troca.
   const [boardTabProgress, setBoardTabProgress] = useState<{ done: number; total: number } | null>(null)
   const boardPaneOpen = rightPane === 'board' && !browserMinimized
+
+  // O Mapa do projeto (ProjectGraph) hoje só abre de DENTRO do Quadro (um botão
+  // no BoardPanel) — não é mais uma aba própria. O estado continua aqui: é o
+  // App que já tem o histórico de mensagens da conversa ativa, e refazer essa
+  // leitura dentro do BoardPanel duplicaria o que `fileTouches`/`turnsOf` já
+  // calculam a partir dele.
+  const [projectTree, setProjectTree] = useState<ProjectTree>({
+    nodes: [],
+    truncated: false,
+    missing: []
+  })
+  // Paths currently on the map, sent along on each re-read so the main process
+  // can answer which of them were actually DELETED (vs. merely pushed out of
+  // the "most recent" ranking) — the map animates destruction only for those.
+  const shownPaths = useRef<string[]>([])
+  useEffect(() => {
+    shownPaths.current = projectTree.nodes.filter((n) => !n.isDir).map((n) => n.path)
+  }, [projectTree])
+
+  const touchCount = active ? active.messages.length : 0
+  useEffect(() => {
+    // Só escaneia com o Quadro aberto (o único lugar de onde o Mapa é
+    // alcançável agora) — escanear o disco em toda troca de conversa em
+    // segundo plano seria trabalho que ninguém pediu.
+    if (!boardPaneOpen || !activeCwd) return
+    let alive = true
+    // Re-read shortly after activity settles: a file the agent just created or
+    // deleted should show up without the user having to reopen the panel.
+    const run = (): void => {
+      void window.api.projectTree(activeCwd, shownPaths.current).then((t) => {
+        if (alive) setProjectTree(t)
+      })
+    }
+    const id = setTimeout(run, shownPaths.current.length ? 1200 : 0)
+    return () => {
+      alive = false
+      clearTimeout(id)
+    }
+  }, [boardPaneOpen, activeCwd, touchCount])
+
+  const projectName = useMemo(
+    () => activeCwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'projeto',
+    [activeCwd]
+  )
+  /** The map reads the SAME messages the chat renders — no second store. */
+  const activeTouches = useMemo(
+    () => (active ? fileTouches(active.messages, active.cwd) : []),
+    [active]
+  )
+
+  /** The user's messages that produced work — the map's step-by-step filter. */
+  const activeTurns = useMemo(
+    () => (active ? turnsOf(active.messages, activeTouches) : []),
+    [active, activeTouches]
+  )
   useEffect(() => {
     // Com o painel aberto quem informa o contador é ele (`onProgress`), então
     // aqui não se consulta nada: seriam duas consultas idênticas por mudança.
@@ -2589,53 +2648,6 @@ export function App(): JSX.Element {
       clearInterval(id)
     }
   }, [activeCwd, boardPaneOpen])
-  const [projectTree, setProjectTree] = useState<ProjectTree>({
-    nodes: [],
-    truncated: false,
-    missing: []
-  })
-  // Paths currently on the map, sent along on each re-read so the main process
-  // can answer which of them were actually DELETED (vs. merely pushed out of
-  // the "most recent" ranking) — the map animates destruction only for those.
-  const shownPaths = useRef<string[]>([])
-  useEffect(() => {
-    shownPaths.current = projectTree.nodes.filter((n) => !n.isDir).map((n) => n.path)
-  }, [projectTree])
-
-  const touchCount = active ? active.messages.length : 0
-  useEffect(() => {
-    if (!agentsOpen || !activeCwd) return
-    let alive = true
-    // Re-read shortly after activity settles: a file the agent just created or
-    // deleted should show up without the user having to reopen the panel.
-    const run = (): void => {
-      void window.api.projectTree(activeCwd, shownPaths.current).then((t) => {
-        if (alive) setProjectTree(t)
-      })
-    }
-    const id = setTimeout(run, shownPaths.current.length ? 1200 : 0)
-    return () => {
-      alive = false
-      clearTimeout(id)
-    }
-  }, [agentsOpen, activeCwd, touchCount])
-
-  const projectName = useMemo(
-    () => activeCwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'projeto',
-    [activeCwd]
-  )
-  /** The map reads the SAME messages the chat renders — no second store. */
-  const activeTouches = useMemo(
-    () => (active ? fileTouches(active.messages, active.cwd) : []),
-    [active]
-  )
-
-  /** The user's messages that produced work — the map's step-by-step filter. */
-  const activeTurns = useMemo(
-    () => (active ? turnsOf(active.messages, activeTouches) : []),
-    [active, activeTouches]
-  )
-
   /**
    * Icon found inside each project folder (data URL), or null when it has none.
    * Looked up once per folder, after the projects are known — a folder without
@@ -2870,16 +2882,17 @@ export function App(): JSX.Element {
           )}
           </div>
           <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
-          {/* Acesso permanente ao painel de agentes: sem isso ele só existiria
-              enquanto houvesse subagente rodando, e não daria pra rever nada. */}
+          {/* Acesso permanente ao Quadro (elenco fundido aqui): sem isso ele só
+              existiria enquanto houvesse subagente rodando, e não daria pra rever
+              nada. */}
           <button
-            className={`btn ghost agents-btn topbar-right${agentsOpen ? ' on' : ''}${
+            className={`btn ghost agents-btn topbar-right${rightPane === 'board' ? ' on' : ''}${
               runningTrackCount > 0 ? ' live' : ''
             }`}
             onClick={() =>
-              agentsOpen && !browserMinimized ? selectRightPane('browser') : openAgentsPanel()
+              rightPane === 'board' && !browserMinimized ? selectRightPane('browser') : openAgentsPanel()
             }
-            title="Agentes: quem está trabalhando nesta conversa"
+            title="Quadro: tarefas e quem está trabalhando nesta conversa"
           >
             <IconUsers />
             {runningTrackCount > 0 && <span className="agents-btn-badge">{runningTrackCount}</span>}
@@ -2998,8 +3011,8 @@ export function App(): JSX.Element {
             crewWorking={crewWorking}
             onOpenAgents={openAgentsPanel}
           />
-          {/* O divisor vale para o painel da direita inteiro (navegador ou agentes):
-              sem ele, o mapa de fluxo ficava preso na largura padrão. */}
+          {/* O divisor vale para o painel da direita inteiro (navegador ou Quadro):
+              sem ele, o painel ficava preso na largura padrão. */}
           {!browserMinimized && (
             <>
               <div
@@ -3025,12 +3038,7 @@ export function App(): JSX.Element {
                     onClose={() => setBrowserMinimized(true)}
                     onOpenConversation={(convId) => setActiveId(convId)}
                     onProgress={setBoardTabProgress}
-                  />
-                ) : agentsOpen ? (
-                  <AgentsPanel
-                    tracks={activeTracks}
                     crew={crew}
-                    backgroundTasks={active?.backgroundTasks ?? []}
                     pendingPermissions={pendingPermissionList}
                     onFocusPermission={(convId) => {
                       setActiveId(convId)
@@ -3038,16 +3046,15 @@ export function App(): JSX.Element {
                       // Sai do painel para o chat: a pergunta é lá que se responde.
                       setRightPane('browser')
                     }}
-                    loading={!hydrated}
-                    onClose={() => setBrowserMinimized(true)}
-                    projectEntries={projectTree.nodes}
-                    projectTruncated={projectTree.truncated}
-                    projectMissing={projectTree.missing}
-                    projectSteps={active?.todoPlan?.items ?? []}
-                    touches={activeTouches}
-                    turns={activeTurns}
-                    projectName={projectName}
-                    onOpenBoard={() => selectRightPane('board')}
+                    project={{
+                      entries: projectTree.nodes,
+                      touches: activeTouches,
+                      turns: activeTurns,
+                      missing: projectTree.missing,
+                      truncated: projectTree.truncated,
+                      steps: active?.todoPlan?.items ?? [],
+                      name: projectName
+                    }}
                   />
                 ) : (
                   <BrowserPanel
@@ -3076,18 +3083,8 @@ export function App(): JSX.Element {
               <button
                 type="button"
                 className={`right-rail-btn${runningTrackCount > 0 ? ' live' : ''}`}
-                onClick={() => selectRightPane('agents')}
-                title="Ver os agentes trabalhando"
-              >
-                <IconUsers size={15} />
-                Agentes
-                {runningTrackCount > 0 && <span className="rail-badge">{runningTrackCount}</span>}
-              </button>
-              <button
-                type="button"
-                className="right-rail-btn"
                 onClick={() => selectRightPane('board')}
-                title="Ver o quadro de tarefas do projeto"
+                title="Ver o quadro de tarefas e quem está trabalhando"
               >
                 <IconBoard size={15} />
                 Quadro

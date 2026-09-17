@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import type { Pool, PoolClient } from 'pg'
 import { SqliteRepository } from './sqliteRepository'
 import { PostgresRepository } from './postgresRepository'
-import { SQLITE_SCHEMA } from './sqliteSchema'
+import { SQLITE_SCHEMA_FULL } from './sqliteSchema'
 import * as recordTransfer from './transferRecords'
 import { hashAggregate } from './hashes'
 import { encodePostgresJson, encodePostgresText } from './postgresEncoding'
@@ -87,7 +87,7 @@ async function source(records = fixture()): Promise<SqliteRepository> {
 function postgresFixture() {
   const db = new DatabaseSync(join(temp(), 'postgres-contract.db'))
   databases.push(db)
-  db.exec(SQLITE_SCHEMA)
+  db.exec(SQLITE_SCHEMA_FULL)
   db.exec(`
     PRAGMA foreign_keys = ON;
     ALTER TABLE tasks ADD COLUMN updated_by TEXT;

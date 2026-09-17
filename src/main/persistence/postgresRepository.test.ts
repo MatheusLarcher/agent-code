@@ -414,6 +414,24 @@ describe.runIf(integration).sequential('PostgresRepository', () => {
     expect((await right.listTaskEvents('feed'))[0]?.kind).toBe('created')
   })
 
+  it('vincula uma tarefa a um cartão do quadro e devolve o mapa numa query só', async () => {
+    const left = await repository(randomUUID())
+    opened.push(left)
+    await left.createTask({ projectCwd: 'C:/proj', id: 'task-linked', title: 'T', goal: 'meta' })
+    const [card] = await syncBoard(left, [boardSource('1', 'uma', 'pending')])
+
+    await left.linkTaskToBoardItem({ taskId: 'task-linked', boardItemId: card.id, linkedBy: 'agent' })
+
+    const map = await left.boardItemIdsForTasks(['task-linked', 'task-sem-vinculo'])
+    expect(map.get('task-linked')).toBe(card.id)
+    expect(map.has('task-sem-vinculo')).toBe(false)
+
+    // Vincular de novo é upsert — reaponta em vez de rejeitar.
+    const [, cardB] = await syncBoard(left, [boardSource('1', 'uma', 'pending'), boardSource('2', 'duas', 'pending')])
+    await left.linkTaskToBoardItem({ taskId: 'task-linked', boardItemId: cardB.id, linkedBy: 'po' })
+    expect((await left.boardItemIdsForTasks(['task-linked'])).get('task-linked')).toBe(cardB.id)
+  })
+
   it('serializa criação concorrente da mesma memória: uma vence, a outra é conflito', async () => {
     const left = await repository(randomUUID())
     const right = await repository(randomUUID())
@@ -742,5 +760,80 @@ describe.runIf(integration).sequential('PostgresRepository', () => {
 
     await expect(target.applyBoardPo({ id: card.id, poStatus: 'pending' })).rejects.toThrow(/motivo/i)
     await expect(target.applyBoardPo({ id: 'bi-nao-existe', poTitle: 'x' })).rejects.toThrow(/inexistente/i)
+  })
+
+  it('o cartão nasce com um evento "created", e o agente mudando de status vira outro', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const [card] = await syncBoard(target, [boardSource('1', 'uma', 'pending')])
+    await syncBoard(target, [boardSource('1', 'uma', 'pending')]) // reingestão idêntica: sem evento novo
+    await syncBoard(target, [boardSource('1', 'uma', 'completed')])
+
+    const events = await target.listBoardItemEvents(card.id)
+    expect(events.map((e) => e.kind)).toEqual(['created', 'status_changed'])
+    expect(events[0]).toMatchObject({ actor: 'agent', toStatus: 'pending' })
+    expect(events[1]).toMatchObject({ actor: 'agent', fromStatus: 'pending', toStatus: 'completed' })
+  })
+
+  it('o PO concluindo o cartão vira um evento com o motivo, e retitular sem status vira "retitled"', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const [card] = await syncBoard(target, [boardSource('1', 'add board table 5/7', 'in_progress')])
+    await target.applyBoardPo({ id: card.id, poStatus: 'completed', poReason: 'o agente esqueceu de marcar' })
+    await target.applyBoardPo({ id: card.id, poTitle: 'Criar a tabela do quadro' })
+
+    const events = await target.listBoardItemEvents(card.id)
+    expect(events[1]).toMatchObject({
+      kind: 'status_changed',
+      actor: 'po',
+      fromStatus: 'in_progress',
+      toStatus: 'completed',
+      note: 'o agente esqueceu de marcar'
+    })
+    expect(events[2]).toMatchObject({ kind: 'retitled', actor: 'po', note: 'Criar a tabela do quadro' })
+  })
+
+  it('dispensar e restaurar viram eventos próprios, e o cartão do PO nasce com "created"', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const [card] = await syncBoard(target, [boardSource('1', 'uma', 'pending')])
+    await target.dismissBoardItem(card.id, true)
+    await target.dismissBoardItem(card.id, false)
+
+    const events = await target.listBoardItemEvents(card.id)
+    expect(events.map((e) => e.kind)).toEqual(['created', 'dismissed', 'restored'])
+
+    const poCard = await target.createBoardPoItem({
+      projectId: BOARD_PROJECT,
+      projectCwd: BOARD_CWD,
+      conversationId: BOARD_CONVERSATION,
+      title: 'surgiu no meio do trabalho',
+      status: 'pending',
+      reason: 'o agente disse que ia fazer depois'
+    })
+    const poEvents = await target.listBoardItemEvents(poCard.id)
+    expect(poEvents).toEqual([
+      expect.objectContaining({ kind: 'created', actor: 'po', toStatus: 'pending', note: 'o agente disse que ia fazer depois' })
+    ])
+  })
+
+  it('escrita com actor "user" (drag-and-drop) vira evento distinto do PO — migration 9 aditiva', async () => {
+    const target = await repository(randomUUID())
+    opened.push(target)
+    const [card] = await syncBoard(target, [boardSource('1', 'uma', 'in_progress')])
+    await target.applyBoardPo({
+      id: card.id,
+      poStatus: 'pending',
+      poReason: 'o usuário moveu o cartão para "a fazer" pelo quadro',
+      actor: 'user'
+    })
+
+    const events = await target.listBoardItemEvents(card.id)
+    expect(events[events.length - 1]).toMatchObject({
+      kind: 'status_changed',
+      actor: 'user',
+      fromStatus: 'in_progress',
+      toStatus: 'pending'
+    })
   })
 })

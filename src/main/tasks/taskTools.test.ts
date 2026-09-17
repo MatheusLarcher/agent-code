@@ -318,6 +318,48 @@ describe('ferramentas MCP do registro de tarefas', () => {
     expect(await call(tools, 'task_get', { task_id: 'nao-existe' })).toBe('Não existe tarefa nao-existe.')
   })
 
+  it('task_create sem board_item_id não grava vínculo — comportamento inalterado', async () => {
+    const { tools, ledger } = await setup()
+    const created = await call(tools, 'task_create', { title: 'sem cartão', goal: 'G' })
+    expect(created).not.toContain('vinculada ao cartão')
+    const id = /Tarefa criada: (\S+)/.exec(created)![1]
+    const links = await ledger.boardItemIdsForTasks([id])
+    expect(links.has(id)).toBe(false)
+  })
+
+  it('task_create com board_item_id de um cartão real grava o vínculo, consultável via boardItemIdsForTasks', async () => {
+    const { tools, ledger } = await setup()
+    // Reaproveita o MESMO arquivo de banco do ledger criado em `setup()`: o
+    // board_item precisa existir na mesma base para a FK de task_board_links
+    // aceitar o vínculo.
+    const cache = tempDirs.at(-1)!
+    const boardRepo = new SqliteRepository(cache, join(cache, 'agent-code.db'), 'device-a')
+    await boardRepo.initialize()
+    const [item] = await boardRepo.syncBoardItems({
+      projectId: 'proj-1',
+      projectCwd: 'C:/projeto',
+      conversationId: 'conv-board',
+      items: [{ sourceId: 's1', title: 'Cartão real', status: 'pending', activeForm: null, seq: 0 }]
+    })
+
+    const created = await call(tools, 'task_create', { title: 'com cartão', goal: 'G', board_item_id: item.id })
+    expect(created).toContain(`vinculada ao cartão ${item.id}`)
+    const id = /Tarefa criada: (\S+)/.exec(created)![1]
+    const links = await ledger.boardItemIdsForTasks([id])
+    expect(links.get(id)).toBe(item.id)
+  })
+
+  it('task_create com board_item_id inexistente devolve erro claro e não grava vínculo órfão', async () => {
+    const { tools, ledger } = await setup()
+    const created = await call(tools, 'task_create', { title: 'cartão errado', goal: 'G', board_item_id: 'nao-existe' })
+    expect(created).toMatch(/Tarefa criada: (\S+)/)
+    expect(created).toContain('vínculo com o cartão nao-existe')
+    expect(created).toContain('falhou')
+    const id = /Tarefa criada: (\S+)/.exec(created)![1]
+    const links = await ledger.boardItemIdsForTasks([id])
+    expect(links.has(id)).toBe(false)
+  })
+
   it('task_event anota na trilha com a identidade do chamador', async () => {
     const { tools, ledger } = await setup()
     const id = /Tarefa criada: (\S+)/.exec(await call(tools, 'task_create', { title: 'T', goal: 'G' }))![1]

@@ -29,10 +29,13 @@ extraResources:
 
 win:
   target:
-    - target: portable
+    - target: nsis
       arch: [x64]
   icon: build/icon.ico
 
-portable:
-  artifactName: AgentCode-${version}-portable.exe
-  unicode: false
+nsis:
+  artifactName: AgentCode-${version}-setup.exe
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

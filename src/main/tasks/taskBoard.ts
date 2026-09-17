@@ -53,6 +53,8 @@ const COUNT_EVIDENCE_FOR: TaskBoardStatus[] = ['review', 'done']
 export interface TaskBoardQuery {
   /** Restrict to one project — the panel defaults to the conversation's folder. */
   projectCwd?: string
+  /** Restrict to one conversation — avoids pulling the whole project's queue. */
+  conversationId?: string
   includeFinished?: boolean
   limit?: number
 }
@@ -74,7 +76,11 @@ export function summarizeData(data: Record<string, unknown> | null, fallback: st
   return keys.length ? keys.slice(0, 4).join(', ') : fallback
 }
 
-export function toBoardItem(task: Task, deliverables: number | null): TaskBoardItem {
+export function toBoardItem(
+  task: Task,
+  deliverables: number | null,
+  boardItemId: string | null
+): TaskBoardItem {
   return {
     id: task.id,
     title: task.title,
@@ -95,7 +101,8 @@ export function toBoardItem(task: Task, deliverables: number | null): TaskBoardI
     projectCwd: task.projectCwd,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
-    deliverables
+    deliverables,
+    boardItemId
   }
 }
 
@@ -160,16 +167,21 @@ export async function buildTaskBoard(
   const tasks = await ledger.listTasks({
     status,
     ...(projectCwds ? { projectCwds } : {}),
+    ...(query.conversationId ? { conversationId: query.conversationId } : {}),
     limit: query.limit ?? TASK_BOARD_LIMIT
   })
 
+  // Uma consulta em lote para todo o vínculo tarefa↔cartão, não uma por task.
+  const boardItemIds = await ledger.boardItemIdsForTasks(tasks.map((task) => task.id))
+
   const items = await Promise.all(
     tasks.map(async (task) => {
-      if (!COUNT_EVIDENCE_FOR.includes(task.status)) return toBoardItem(task, null)
+      const boardItemId = boardItemIds.get(task.id) ?? null
+      if (!COUNT_EVIDENCE_FOR.includes(task.status)) return toBoardItem(task, null, boardItemId)
       // One extra query only for the handful of tasks where "no evidence" is
       // the thing the user needs to see.
       const deliverables = await ledger.listDeliverables(task.id)
-      return toBoardItem(task, deliverables.length)
+      return toBoardItem(task, deliverables.length, boardItemId)
     })
   )
 

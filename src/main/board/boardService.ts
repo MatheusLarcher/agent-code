@@ -2,12 +2,13 @@ import { boardItemsToReopenBefore } from './boardModel'
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
 import type {
   BoardItem,
+  BoardItemEvent,
   BoardPoCreate,
   BoardPoWrite,
   BoardSourceItem,
   PersistenceRepository
 } from '../persistence/types'
-import type { ChatEvent, TaskItem } from '../../shared/ipc'
+import { boardItemStatus, boardItemTitle, type BoardItemStatus, type ChatEvent, type TaskItem } from '../../shared/ipc'
 
 /**
  * O serviço do quadro: liga o esqueleto determinístico do agente à tabela
@@ -61,6 +62,26 @@ export interface BoardServiceDeps {
   poSettled?(convId: string): Promise<void>
   /** Teto da espera pelo PO, em ms. Existe para o teste não esperar 30s. */
   poWaitMs?: number
+  /**
+   * Manda uma mensagem para o agente da conversa (o drag-and-drop para
+   * "fazendo"). Enfileira sozinho se o agente já estiver ocupado — é o mesmo
+   * `AgentSession.send` que o Composer usa, sem fila nova. Devolve `false`
+   * quando a sessão nunca foi iniciada nesta execução do processo (não tenta
+   * iniciar uma nova); `true` quando a mensagem foi de fato entregue/enfileirada.
+   */
+  sendToSession?(convId: string, text: string): Promise<boolean>
+  /**
+   * Interrompe de verdade o turno em andamento da conversa (o drag-and-drop
+   * saindo de "fazendo") — o mesmo caminho de `Channels.agentInterrupt`.
+   * Devolve `false` quando não há sessão viva (nada a interromper).
+   */
+  interruptSession?(convId: string): Promise<boolean>
+}
+
+const MOVE_STATUS_LABEL: Record<BoardItemStatus, string> = {
+  pending: 'a fazer',
+  in_progress: 'fazendo',
+  completed: 'concluído'
 }
 
 interface CachedIdentity {
@@ -256,6 +277,64 @@ export class BoardService {
     const item = await repository.dismissBoardItem(id, dismissed)
     this.deps.onChanged?.(item.projectId)
     return item
+  }
+
+  /**
+   * O drag-and-drop do usuário: além de gravar o novo status pelo MESMO
+   * caminho do PO (`applyPo`, `actor: 'user'`), faz o quadro controlar o
+   * agente de verdade:
+   *
+   * - destino "fazendo" e o cartão não estava lá: manda uma mensagem para o
+   *   agente da conversa começar. Sem sessão viva (nunca iniciada nesta
+   *   execução do processo), NADA é gravado — a UI mostra a mensagem e desfaz
+   *   a posição do cartão.
+   * - saindo de "fazendo" para qualquer outro destino: interrompe o turno de
+   *   verdade.
+   * - troca direta "a fazer" ↔ "concluído" (nenhum dos dois lados é
+   *   "fazendo"): só grava.
+   */
+  async move(id: string, toStatus: BoardItemStatus): Promise<{ ok: boolean; message?: string }> {
+    const repository = this.deps.repository()
+    if (!repository) return { ok: false, message: 'O quadro está indisponível agora.' }
+    const current = await repository.getBoardItem(id)
+    if (!current) return { ok: false, message: 'Cartão não encontrado.' }
+    const fromStatus = boardItemStatus(current)
+    if (fromStatus === toStatus) return { ok: true }
+    const convId = current.conversationId
+
+    if (toStatus === 'in_progress') {
+      const sent =
+        (await this.deps.sendToSession?.(convId, `Comece a trabalhar nesta tarefa: "${boardItemTitle(current)}"`)) ??
+        false
+      if (!sent) {
+        return {
+          ok: false,
+          message: 'Abra esta conversa e mande uma mensagem para o agente começar antes de mover pelo quadro.'
+        }
+      }
+    } else if (fromStatus === 'in_progress') {
+      await this.deps.interruptSession?.(convId)
+    }
+
+    const item = await this.applyPo({
+      id,
+      poStatus: toStatus,
+      poReason: `o usuário moveu o cartão para "${MOVE_STATUS_LABEL[toStatus]}" pelo quadro`,
+      actor: 'user'
+    })
+    return item ? { ok: true } : { ok: false, message: 'Não foi possível gravar a mudança no quadro.' }
+  }
+
+  /** A linha do tempo de um cartão. Sem repositório, ou se a consulta falhar,
+   *  devolve `[]` — a timeline é aditiva, nunca derruba o detalhe do cartão. */
+  async listItemEvents(boardItemId: string): Promise<BoardItemEvent[]> {
+    const repository = this.deps.repository()
+    if (!repository) return []
+    try {
+      return await repository.listBoardItemEvents(boardItemId)
+    } catch {
+      return []
+    }
   }
 
   dispose(convId: string): void {

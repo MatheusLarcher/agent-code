@@ -519,6 +519,97 @@ CREATE TRIGGER board_item_change AFTER INSERT OR UPDATE ON board_items
   FOR EACH ROW EXECUTE FUNCTION agent_code_record_change('board', 'global');
 `
 
+/**
+ * Migration 8 — histórico append-only do quadro (`board_item_events`), espelha
+ * a 6 do SQLite. Reescreve a função do change feed de novo (mesmo motivo da
+ * migration 7): o ramo novo lê `ordinal`, coluna que só esta tabela tem.
+ */
+const BOARD_ITEM_EVENTS = `
+CREATE TABLE IF NOT EXISTS board_item_events (
+  id text PRIMARY KEY,
+  ordinal bigserial NOT NULL UNIQUE,
+  board_item_id text NOT NULL REFERENCES board_items(id) ON DELETE CASCADE,
+  at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  kind text NOT NULL CHECK (kind IN ('created', 'status_changed', 'retitled', 'note_changed', 'dismissed', 'restored')),
+  actor text NOT NULL CHECK (actor IN ('agent', 'po')),
+  from_status text,
+  to_status text,
+  note text
+);
+CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);
+CREATE OR REPLACE FUNCTION agent_code_record_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  new_id bigint;
+  entity_name text;
+  entity_key text;
+  entity_scope text;
+  entity_revision bigint;
+  author uuid;
+BEGIN
+  entity_name := TG_ARGV[0]; entity_scope := TG_ARGV[1];
+  IF TG_TABLE_NAME = 'global_kv' THEN
+    entity_key := NEW.key; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'device_kv' THEN
+    entity_key := NEW.key; entity_revision := NEW.revision; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'conversations' THEN
+    entity_key := NEW.conversation_id; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'conversation_device_state' THEN
+    entity_key := NEW.conversation_id; entity_revision := NEW.revision; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'projects' THEN
+    entity_key := NEW.project_id::text; entity_revision := NULL; author := NULL;
+  ELSIF TG_TABLE_NAME = 'task_events' THEN
+    entity_key := NEW.task_id; entity_revision := NEW.ordinal; author := NEW.installation_id;
+  ELSIF TG_TABLE_NAME = 'memory_entries' THEN
+    entity_key := NEW.rel_path; entity_revision := NEW.revision; author := NEW.updated_by;
+  ELSIF TG_TABLE_NAME = 'board_items' THEN
+    entity_key := NEW.id; entity_revision := NEW.revision; author := NULL;
+  ELSIF TG_TABLE_NAME = 'board_item_events' THEN
+    entity_key := NEW.board_item_id; entity_revision := NEW.ordinal; author := NULL;
+  ELSE
+    entity_key := NEW.conversation_id; entity_revision := NEW.fencing_epoch; author := NEW.owner_installation_id;
+  END IF;
+  INSERT INTO change_log(entity, entity_id, scope, revision, installation_id)
+    VALUES(entity_name, entity_key, entity_scope, entity_revision, author)
+    RETURNING change_id INTO new_id;
+  PERFORM pg_notify('agent_code_changes', new_id::text);
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS board_item_event_change ON board_item_events;
+CREATE TRIGGER board_item_event_change AFTER INSERT ON board_item_events
+  FOR EACH ROW EXECUTE FUNCTION agent_code_record_change('board', 'global');
+`
+
+/**
+ * Migration 9 — actor `'user'` em `board_item_events` (espelha a migration 7
+ * do SQLite).
+ *
+ * O drag-and-drop no Quadro é um TERCEIRO tipo de escritor no histórico do
+ * cartão — nem o agente (snapshot do CLI) nem o PO (auditoria automática).
+ * PostgreSQL altera `CHECK` sem recriar a tabela: basta trocar a constraint.
+ */
+const BOARD_ITEM_EVENTS_ACTOR_USER = `
+ALTER TABLE board_item_events DROP CONSTRAINT board_item_events_actor_check;
+ALTER TABLE board_item_events ADD CONSTRAINT board_item_events_actor_check CHECK (actor IN ('agent', 'po', 'user'));
+`
+
+/**
+ * Migration 10 — vínculo entre uma tarefa do ledger e um cartão do quadro
+ * (`task_board_links`), espelha a migration 8 do SQLite.
+ *
+ * `task_id` é PK: uma tarefa vincula a no máximo um cartão. Sem gatilho de
+ * change feed próprio — a linha é lida sob demanda (claim/painel), não algo
+ * que precise acordar outra instalação.
+ */
+const TASK_BOARD_LINKS = `
+CREATE TABLE IF NOT EXISTS task_board_links (
+  task_id text PRIMARY KEY REFERENCES tasks(id),
+  board_item_id text NOT NULL REFERENCES board_items(id) ON DELETE CASCADE,
+  linked_by text NOT NULL CHECK (linked_by IN ('agent', 'po')),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS task_board_links_board_item ON task_board_links(board_item_id);
+`
+
 export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(1, 'postgres-base-schema', BASE_SCHEMA),
   migration(2, 'postgres-change-feed', CHANGE_FEED),
@@ -526,7 +617,10 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(4, 'postgres-task-ledger', TASK_LEDGER),
   migration(5, 'postgres-memory-service', MEMORY_SERVICE),
   migration(6, 'postgres-task-project-identity', TASK_PROJECT_IDENTITY),
-  migration(7, 'postgres-board-items', BOARD_ITEMS)
+  migration(7, 'postgres-board-items', BOARD_ITEMS),
+  migration(8, 'postgres-board-item-events', BOARD_ITEM_EVENTS),
+  migration(9, 'postgres-board-item-events-actor-user', BOARD_ITEM_EVENTS_ACTOR_USER),
+  migration(10, 'postgres-task-board-links', TASK_BOARD_LINKS)
 ]
 
 const MIGRATION_TABLE = `

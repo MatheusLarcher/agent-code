@@ -1832,6 +1832,24 @@ export class AgentSession {
               mirrorError.error ? ` Detalhe: ${mirrorError.error}` : ''
             }`
           })
+        } else if ((message as { subtype?: string }).subtype === 'compact_boundary') {
+          // The CLI already knows how to compact (manual `/compact` or automatic
+          // when the context window fills up) — it rewrites its own transcript
+          // and keeps going. This app only translates that into a visible line,
+          // like the real Claude Code CLI shows "Conversation compacted".
+          const meta = (message as unknown as {
+            compact_metadata?: { trigger?: 'manual' | 'auto'; pre_tokens?: number; post_tokens?: number }
+          }).compact_metadata
+          const trigger = meta?.trigger === 'auto' ? 'automática (contexto cheio)' : 'manual'
+          const savings =
+            typeof meta?.pre_tokens === 'number' && typeof meta?.post_tokens === 'number'
+              ? ` — ${meta.pre_tokens.toLocaleString('pt-BR')} → ${meta.post_tokens.toLocaleString('pt-BR')} tokens`
+              : ''
+          this.emit({
+            kind: 'status',
+            id: nextId(),
+            text: `Conversa compactada (${trigger})${savings}`
+          })
         } else if ((message as { subtype?: string }).subtype === 'background_tasks_changed') {
           const tasks = (message as unknown as {
             tasks: Array<{ task_id: string; task_type: string; description: string }>

@@ -265,15 +265,107 @@ export const SQLITE_BOARD_SCHEMA = `
     WHERE source_id IS NOT NULL;
 `
 
+/**
+ * Migration 6 — histórico append-only do quadro (`board_item_events`).
+ *
+ * O cartão só guarda o ÚLTIMO `po_reason`; sem um log separado, a tela de
+ * detalhe não tem como mostrar "o que aconteceu com este cartão" — só "o que
+ * é verdade agora". Mesmo espírito do `task_events` (migration 2): uma linha
+ * por fato, nunca sobrescrita.
+ *
+ * `ON DELETE CASCADE`: `syncBoardItems` apaga o cartão de origem `agent` que
+ * sumiu do snapshot do CLI — sem cascade, o `DELETE` bate na FK e falha assim
+ * que o cartão já tem QUALQUER evento (o próprio "created" basta). A história
+ * de um cartão que não existe mais não serve pra nada.
+ */
+export const SQLITE_BOARD_EVENTS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS board_item_events (
+    id TEXT PRIMARY KEY,
+    board_item_id TEXT NOT NULL REFERENCES board_items(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('created', 'status_changed', 'retitled', 'note_changed', 'dismissed', 'restored')),
+    actor TEXT NOT NULL CHECK(actor IN ('agent', 'po')),
+    from_status TEXT,
+    to_status TEXT,
+    note TEXT
+  );
+  CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);
+`
+
+/**
+ * Migration 7 — actor `'user'` em `board_item_events` (espelha a migration 9
+ * do PostgreSQL).
+ *
+ * O drag-and-drop no Quadro é um TERCEIRO tipo de escritor no histórico do
+ * cartão — nem o agente (snapshot do CLI) nem o PO (auditoria automática) —
+ * e é exatamente para distinguir isso que a tabela de eventos existe.
+ *
+ * SQLite não altera `CHECK` inline com `ALTER TABLE`: a migration recria a
+ * tabela preservando as linhas existentes, para que um cartão com eventos
+ * antigos (`agent`/`po`) continue legível depois dela.
+ */
+export const SQLITE_BOARD_EVENTS_ACTOR_USER_SCHEMA = `
+  PRAGMA foreign_keys=OFF;
+  CREATE TABLE board_item_events_v2 (
+    id TEXT PRIMARY KEY,
+    board_item_id TEXT NOT NULL REFERENCES board_items(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('created','status_changed','retitled','note_changed','dismissed','restored')),
+    actor TEXT NOT NULL CHECK(actor IN ('agent','po','user')),
+    from_status TEXT,
+    to_status TEXT,
+    note TEXT
+  );
+  INSERT INTO board_item_events_v2 SELECT * FROM board_item_events;
+  DROP TABLE board_item_events;
+  ALTER TABLE board_item_events_v2 RENAME TO board_item_events;
+  CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);
+  PRAGMA foreign_keys=ON;
+`
+
+/**
+ * Migration 8 — vínculo entre uma tarefa do ledger e um cartão do quadro
+ * (`task_board_links`).
+ *
+ * Tabela de mapeamento nova, não uma coluna em `tasks` ou `board_items`: mesmo
+ * motivo da migration 4 — este schema inteiro reexecuta a cada `write()` como
+ * guarda idempotente, e SQLite não tem `ADD COLUMN IF NOT EXISTS`. Um `ALTER
+ * TABLE` numa migração quebraria toda escrita a partir da segunda vez;
+ * `CREATE TABLE IF NOT EXISTS` atravessa o guarda sem custo.
+ *
+ * `task_id` é PK: uma tarefa vincula a no máximo um cartão. `board_item_id`
+ * tem `ON DELETE CASCADE` porque um vínculo para um cartão apagado não serve
+ * pra nada — mesmo espírito de `board_item_events.board_item_id`.
+ */
+export const SQLITE_TASK_BOARD_LINKS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS task_board_links (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+    board_item_id TEXT NOT NULL REFERENCES board_items(id) ON DELETE CASCADE,
+    linked_by TEXT NOT NULL CHECK(linked_by IN ('agent', 'po')),
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS task_board_links_board_item ON task_board_links(board_item_id);
+`
+
 export interface SqliteMigration {
   version: number
   name: string
   sql: string
+  /**
+   * SQL rodado pelo guarda idempotente de `write()` (`SQLITE_SCHEMA`), que
+   * reexecuta a cada escrita — não só uma vez, como a migração versionada.
+   * Por padrão é o mesmo `sql`, e só faz sentido divergir quando `sql` não é
+   * seguro de repetir para sempre (ex.: um recreate de tabela). Nesse caso,
+   * `writeGuardSql` é a versão barata e idempotente de verdade (`IF NOT
+   * EXISTS` puro) que garante o estado final sem refazer o trabalho pesado —
+   * ele já rodou uma vez, de forma correta, via `applyPendingMigrations`.
+   */
+  writeGuardSql: string
   checksum: string
 }
 
-function migration(version: number, name: string, sql: string): SqliteMigration {
-  return { version, name, sql, checksum: hashText(sql) }
+function migration(version: number, name: string, sql: string, writeGuardSql: string = sql): SqliteMigration {
+  return { version, name, sql, writeGuardSql, checksum: hashText(sql) }
 }
 
 /** Ordered, additive. Every statement is `IF NOT EXISTS`, so the concatenation
@@ -283,10 +375,35 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   migration(2, 'sqlite-v2-tasks', SQLITE_TASKS_SCHEMA),
   migration(3, 'sqlite-v2-memory', SQLITE_MEMORY_SCHEMA),
   migration(4, 'sqlite-v2-task-project-identity', SQLITE_TASK_PROJECT_SCHEMA),
-  migration(5, 'sqlite-v2-board', SQLITE_BOARD_SCHEMA)
+  migration(5, 'sqlite-v2-board', SQLITE_BOARD_SCHEMA),
+  migration(6, 'sqlite-v2-board-events', SQLITE_BOARD_EVENTS_SCHEMA),
+  // `sql` (o recreate de tabela) roda EXATAMENTE uma vez — no bootstrap de
+  // instalação nova (`db.exec(SQLITE_SCHEMA)`, que só executa quando o banco
+  // ainda não existe) e na migração de um banco existente
+  // (`applyPendingMigrations`, gravado em `schema_migrations`). O guarda de
+  // `write()` reexecuta a cada escrita para sempre; se ele repetisse o
+  // recreate, toda escrita da vida do app — mesmo numa tabela sem nenhuma
+  // relação com o quadro — copiaria o histórico inteiro de `board_item_events`
+  // para uma tabela nova e a recriaria. `writeGuardSql` aqui só garante o
+  // estado final (o índice), porque o recreate em si já rodou.
+  migration(
+    7,
+    'sqlite-v2-board-events-actor-user',
+    SQLITE_BOARD_EVENTS_ACTOR_USER_SCHEMA,
+    'CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);'
+  ),
+  migration(8, 'sqlite-v2-task-board-links', SQLITE_TASK_BOARD_LINKS_SCHEMA)
 ]
 
-export const SQLITE_SCHEMA = SQLITE_MIGRATIONS.map((entry) => entry.sql).join('\n')
+/** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */
+export const SQLITE_SCHEMA = SQLITE_MIGRATIONS.map((entry) => entry.writeGuardSql).join('\n')
+
+/** SQL completo de toda migração, na ordem — usado só onde a execução é
+ *  garantidamente ÚNICA num banco novo: o bootstrap de instalação nova
+ *  (abaixo) e a exportação Postgres→SQLite (`postgresTransfer.ts`). Nunca
+ *  chame isto de `write()`; é exatamente para não repetir o `sql` pesado de
+ *  migrações como a 7 que `writeGuardSql` existe. */
+export const SQLITE_SCHEMA_FULL = SQLITE_MIGRATIONS.map((entry) => entry.sql).join('\n')
 
 const LATEST_VERSION = SQLITE_MIGRATIONS.at(-1)!.version
 
@@ -549,7 +666,11 @@ export function initializeSqliteV2(cacheDir: string, dbPath: string): void {
   writeDbAtomically(
     dbPath,
     (db) => {
-      db.exec(SQLITE_SCHEMA)
+      // Completo, não o guarda: esta é a ÚNICA vez que este banco vai existir
+      // e passar por toda migração — precisa do `sql` de verdade (o recreate
+      // da migração 7 incluído), não do atalho barato que `SQLITE_SCHEMA`
+      // (o guarda de `write()`) usa para não repetir esse recreate para sempre.
+      db.exec(SQLITE_SCHEMA_FULL)
       db.exec('BEGIN IMMEDIATE')
       try {
         for (const entry of legacyKv) {

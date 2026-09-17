@@ -35,7 +35,7 @@ export interface TaskToolDeps {
     TaskLedger,
     | 'createTask' | 'claimTask' | 'renewTaskLease' | 'transitionTask' | 'appendStep' | 'finishStep'
     | 'addDeliverable' | 'appendEvent' | 'getTask' | 'listTasks' | 'listSteps' | 'listDeliverables' | 'listEvents'
-    | 'recordProjectIdentity' | 'projectCwdsForIdentity'
+    | 'recordProjectIdentity' | 'projectCwdsForIdentity' | 'linkTaskToBoardItem'
   >
   conversationId: string
   /** Pasta do projeto da conversa: padrão de `project_cwd` quando o modelo não informa. */
@@ -171,7 +171,8 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
         write_scope_allow: z.array(z.string()).optional().describe('Globs (relativos ao projeto) que o executor PODE alterar.'),
         write_scope_deny: z.array(z.string()).optional().describe('Globs que o executor NÃO pode alterar, mesmo dentro do allow.'),
         parent_task_id: z.string().optional().describe('Id da tarefa-mãe, quando esta é uma subtarefa.'),
-        max_attempts: z.number().int().positive().optional().describe('Quantas vezes pode voltar a pending depois de falhar (padrão 3).')
+        max_attempts: z.number().int().positive().optional().describe('Quantas vezes pode voltar a pending depois de falhar (padrão 3).'),
+        board_item_id: z.string().optional().describe('Id do cartão do Quadro que esta tarefa cumpre, quando conhecido.')
       },
       async (a) =>
         guard('task_create', async () => {
@@ -187,7 +188,32 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
             parentTaskId: a.parent_task_id ?? null,
             maxAttempts: a.max_attempts
           })
-          return text(`Tarefa criada: ${task.id} [${task.status}] ${task.title}. Para executá-la, reivindique com task_claim.`)
+          // A tarefa já existe neste ponto; o vínculo é uma segunda escrita.
+          // Em vez de reimplementar aqui a checagem de existência do cartão
+          // (que pertence ao módulo do quadro, fora do escopo desta tool), o
+          // vínculo se apoia na FK de `task_board_links.board_item_id` — o
+          // mesmo motivo por trás de a tool nunca reimplementar a máquina de
+          // estados: a integridade é do repositório, a tool só traduz o erro.
+          // Um `board_item_id` inexistente rejeita o INSERT sem gravar nada, e
+          // a tarefa (já criada) continua íntegra — perder a tarefa por causa
+          // de um id de cartão digitado errado seria pior do que devolvê-la
+          // sem o vínculo.
+          if (a.board_item_id) {
+            try {
+              await deps.ledger.linkTaskToBoardItem({ taskId: task.id, boardItemId: a.board_item_id, linkedBy: 'agent' })
+            } catch (error) {
+              return text(
+                `Tarefa criada: ${task.id} [${task.status}] ${task.title}, mas o vínculo com o cartão ${a.board_item_id} ` +
+                `falhou (cartão inexistente ou inválido): ${describeError(error)}. A tarefa não tem vínculo; confira o ` +
+                'id do cartão e repita com um board_item_id válido, se quiser vinculá-la.'
+              )
+            }
+          }
+          return text(
+            `Tarefa criada: ${task.id} [${task.status}] ${task.title}` +
+              (a.board_item_id ? ` · vinculada ao cartão ${a.board_item_id}` : '') +
+              '. Para executá-la, reivindique com task_claim.'
+          )
         })
     )),
 
