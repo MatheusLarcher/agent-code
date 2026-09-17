@@ -1,4 +1,4 @@
-import { boardItemsToReopen } from './boardModel'
+import { boardItemsToReopenBefore } from './boardModel'
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
 import type {
   BoardItem,
@@ -166,15 +166,24 @@ export class BoardService {
    * ainda ia gravar), e só então a reabertura. O que NÃO acontece aqui: uma
    * varredura de todo cartão `in_progress` do banco — com PostgreSQL
    * compartilhado, isso apagaria o "fazendo" de um agente rodando em outro PC.
+   *
+   * `closedAt` é capturado AQUI, na hora do evento `result`/`error` — não no
+   * momento em que `reopenStale` finalmente executa. Entre os dois pode haver
+   * segundos (a espera pelo PO), tempo em que o usuário já mandou a próxima
+   * mensagem e a rodada de ABERTURA do PO já promoveu o mesmo cartão de volta
+   * para "em andamento". Sem o carimbo do instante REAL de fim do turno,
+   * `reopenStale` releria esse cartão já promovido e o derrubaria de novo —
+   * ver `boardItemsToReopenBefore`.
    */
   private closeTurn(convId: string, cwd: string, reason: string): void {
+    const closedAt = Date.now()
     const previous = this.closures.get(convId) ?? Promise.resolve()
     const next = previous
       .catch(() => undefined)
       .then(async () => {
         await this.settled(convId)
         await this.waitForPo(convId)
-        await this.reopenStale(convId, cwd, reason)
+        await this.reopenStale(convId, cwd, reason, closedAt)
       })
       .catch(() => undefined)
     this.closures.set(convId, next)
@@ -193,12 +202,12 @@ export class BoardService {
     })
   }
 
-  private async reopenStale(convId: string, cwd: string, reason: string): Promise<void> {
+  private async reopenStale(convId: string, cwd: string, reason: string, closedAt: number): Promise<void> {
     // Relê depois de todo mundo ter escrito: o que o PO acabou de corrigir só
     // aparece aqui, e `null` é quadro indisponível — não há o que reabrir.
     const cards = await this.list(cwd, { conversationId: convId })
     if (!cards) return
-    for (const card of boardItemsToReopen(cards)) {
+    for (const card of boardItemsToReopenBefore(cards, closedAt)) {
       try {
         await this.applyPo({ id: card.id, poStatus: 'pending', poReason: reason })
       } catch {

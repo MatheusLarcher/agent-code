@@ -216,6 +216,31 @@ describe('BoardService', () => {
     expect(applied).toHaveLength(1)
   })
 
+  it('cartão que a rodada de ABERTURA já promoveu de volta, enquanto a reabertura ainda esperava o PO, não é derrubado de novo', async () => {
+    // A reabertura espera o PO (waitForPo). É exatamente essa janela que, na
+    // vida real, dá tempo da PRÓXIMA mensagem do usuário chegar e o PO da
+    // abertura promover o mesmo cartão de volta para "em andamento" antes da
+    // releitura da reabertura acontecer — sem o corte por `poAt`, a
+    // reabertura desfaria essa promoção e o cartão ficava preso em "a fazer".
+    const cards = [card({ sourceStatus: 'in_progress' })]
+    const { repo, applied } = boardRepo(cards)
+    const service = new BoardService({
+      repository: () => repo,
+      poSettled: async () => {
+        cards[0] = {
+          ...cards[0],
+          poStatus: 'in_progress',
+          poReason: 'a mensagem seguinte retomou o trabalho',
+          poAt: new Date(Date.now() + 5000).toISOString()
+        }
+      }
+    })
+    service.observe('conv-1', CWD, turnResult())
+    await service.turnClosed('conv-1')
+
+    expect(applied).toEqual([])
+  })
+
   it('PO que nunca responde não segura o fechamento para sempre', async () => {
     const { repo, applied } = boardRepo([card({ sourceStatus: 'in_progress' })])
     const service = new BoardService({

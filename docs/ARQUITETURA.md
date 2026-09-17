@@ -379,6 +379,16 @@ saem dessa escolha:
   chegar depois, a ingestão lê "o agente declara em andamento" e solta o `po_status` (ver a
   invalidação, abaixo), desfazendo a reabertura. Esperar a fila de escrita antes de reabrir é o
   que estreita a janela, e o fim do turno seguinte corrige.
+- A espera pelo PO (`poSettled`) também abre uma janela do OUTRO lado: enquanto a reabertura
+  aguarda a auditoria de FECHAMENTO deste turno, o usuário pode já ter mandado a próxima
+  mensagem, e a rodada de ABERTURA do PO promove o mesmo cartão de volta para "em andamento"
+  antes de a reabertura terminar de esperar. Sem cuidado, a releitura da reabertura pegaria esse
+  cartão já promovido e o derrubaria de novo — desfazendo um trabalho que já recomeçou de
+  verdade. A correção é um corte por tempo: `closeTurn` carimba o instante REAL do fim do turno
+  (`closedAt`, capturado na hora do evento `result`/`error`, não quando a reabertura finalmente
+  executa) e `boardItemsToReopenBefore` (`board/boardModel.ts`) só reabre o cartão cujo `po_at`
+  é anterior a esse carimbo — um cartão que o PO tocou DEPOIS do fim do turno tem uma decisão
+  mais recente que a reabertura, e prevalece.
 
 ### 2. A trava do plano (`board/planGate.ts`)
 

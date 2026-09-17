@@ -158,6 +158,28 @@ export function boardItemsToReopen(items: BoardItem[]): BoardItem[] {
   return items.filter((item) => item.dismissedAt === null && boardItemStatus(item) === 'in_progress')
 }
 
+/**
+ * A mesma seleção acima, descartando o cartão que o PO tocou DEPOIS do
+ * instante em que este turno terminou (`cutoffMs`).
+ *
+ * A reabertura é assíncrona — espera a fila de escrita e o PO terminar de
+ * analisar — e pode levar segundos: tempo suficiente para o usuário já ter
+ * mandado a próxima mensagem e a rodada de ABERTURA do PO já ter promovido o
+ * mesmo cartão de volta para "em andamento" antes desta releitura acontecer.
+ * Sem o corte por tempo, a reabertura pegaria o quadro já promovido e o
+ * derrubaria de novo para "a fazer" — desfazendo um trabalho que já
+ * recomeçou de verdade. `poAt` é o carimbo de toda escrita do PO; um cartão
+ * escrito depois do fim do turno tem uma decisão mais recente que a
+ * reabertura, e prevalece.
+ */
+export function boardItemsToReopenBefore(items: BoardItem[], cutoffMs: number): BoardItem[] {
+  return boardItemsToReopen(items).filter((item) => {
+    if (!item.poAt) return true
+    const poAtMs = Date.parse(item.poAt)
+    return !Number.isFinite(poAtMs) || poAtMs <= cutoffMs
+  })
+}
+
 /** O estado atual de um cartão, na forma que a ingestão precisa comparar. */
 export type BoardSyncCurrent = Pick<
   BoardItemRow,

@@ -11,6 +11,7 @@ import {
   assertPoWrite,
   boardItemId,
   boardItemsToReopen,
+  boardItemsToReopenBefore,
   compareBoardItems,
   normalizeSourceItems,
   planBoardSourceSync,
@@ -139,6 +140,38 @@ describe('boardItemsToReopen', () => {
       item({ sourceStatus: 'in_progress', dismissedAt: '2026-09-14T12:00:00.000Z' })
     ])
     expect(stale).toEqual([])
+  })
+})
+
+describe('boardItemsToReopenBefore — a race entre a reabertura e a abertura seguinte', () => {
+  const closedAt = Date.parse('2026-09-17T01:00:00.000Z')
+
+  it('cartão tocado pelo PO DEPOIS do fim do turno não é reaberto — ele já foi promovido de novo', () => {
+    const stale = boardItemsToReopenBefore(
+      [
+        item({
+          sourceStatus: 'in_progress',
+          poStatus: 'in_progress',
+          poReason: 'a mensagem seguinte retomou o trabalho',
+          poAt: '2026-09-17T01:00:05.000Z' // depois do corte
+        })
+      ],
+      closedAt
+    )
+    expect(stale).toEqual([])
+  })
+
+  it('cartão sem toque do PO depois do corte continua sendo reaberto normalmente', () => {
+    const stale = boardItemsToReopenBefore(
+      [item({ id: 'a', sourceStatus: 'in_progress', poAt: '2026-09-17T00:59:00.000Z' })],
+      closedAt
+    )
+    expect(stale.map((entry) => entry.id)).toEqual(['a'])
+  })
+
+  it('cartão sem poAt nenhum (nunca tocado pelo PO) é reaberto — sem carimbo, não há como provar recência', () => {
+    const stale = boardItemsToReopenBefore([item({ id: 'a', sourceStatus: 'in_progress', poAt: null })], closedAt)
+    expect(stale.map((entry) => entry.id)).toEqual(['a'])
   })
 })
 
