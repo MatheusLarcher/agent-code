@@ -17,7 +17,7 @@ import type { Touch, Turn } from '../projectActivity'
 import type { TodoItem } from '../types'
 import { fmtAgo as fmtCrewAgo, fmtClock } from './AgentCrew'
 import { CrewRoleIcon } from './CrewIcons'
-import { IconCollapseRight, IconSpinner } from './Icons'
+import { IconCollapseRight, IconSpinner, IconTrash } from './Icons'
 import { ProjectGraph } from './ProjectGraph'
 
 /**
@@ -407,6 +407,7 @@ function Card({
   item,
   now,
   onOpen,
+  onDelete,
   draggable,
   dragging,
   onDragStart,
@@ -419,6 +420,9 @@ function Card({
   item: BoardItem
   now: number
   onOpen: (item: BoardItem) => void
+  /** Exclusão rápida direto do cartão, sem abrir o detalhe — reversível
+   *  (é o mesmo dismiss do botão "Dispensar cartão" do detalhe). */
+  onDelete: (item: BoardItem) => void
   /** Só arrastável na visão Quadro e no recorte "Esta conversa" — na visão
    *  Lista e em "Projeto inteiro" o cartão não é `draggable`. */
   draggable?: boolean
@@ -433,42 +437,58 @@ function Card({
 }): JSX.Element {
   const status = effectiveStatus(item)
   return (
-    <button
-      type="button"
-      className={`board-card ${status}${dragging ? ' dragging' : ''}`}
-      draggable={draggable}
-      onDragStart={draggable ? (e) => onDragStart?.(e, item) : undefined}
-      onDragEnd={draggable ? onDragEnd : undefined}
-      onClick={() => onOpen(item)}
-    >
-      <span className="board-card-top">
-        <span className={`board-check ${status}`} aria-hidden="true">
-          {status === 'completed' ? '✓' : ''}
+    <div className="board-card-wrap">
+      <button
+        type="button"
+        className={`board-card ${status}${dragging ? ' dragging' : ''}`}
+        draggable={draggable}
+        onDragStart={draggable ? (e) => onDragStart?.(e, item) : undefined}
+        onDragEnd={draggable ? onDragEnd : undefined}
+        onClick={() => onOpen(item)}
+      >
+        <span className="board-card-top">
+          <span className={`board-check ${status}`} aria-hidden="true">
+            {status === 'completed' ? '✓' : ''}
+          </span>
+          <span className="board-card-title">{effectiveTitle(item)}</span>
         </span>
-        <span className="board-card-title">{effectiveTitle(item)}</span>
-      </span>
-      {status === 'in_progress' && item.activeForm && (
-        <span className="board-card-detail">{item.activeForm}</span>
-      )}
-      {execTasks && execTasks.length > 0 && (
-        <ExecutorDots
-          tasks={execTasks}
-          now={now}
-          openKey={openBalloon}
-          onToggle={onToggleBalloon}
-          onOpenConversation={onOpenConversation}
-        />
-      )}
-      <span className="board-card-tags">
-        {item.origin === 'po' && <span className="board-tag po">PO acrescentou</span>}
-        {isPoCorrected(item) && <span className="board-tag po">PO corrigiu</span>}
-        {item.poTitle && item.origin === 'agent' && !isPoCorrected(item) && (
-          <span className="board-tag po">PO reescreveu</span>
+        {status === 'in_progress' && item.activeForm && (
+          <span className="board-card-detail">{item.activeForm}</span>
         )}
-        {poAgreed(item) && <span className="board-tag po">PO revisou</span>}
-        {status === 'completed' && <span className="board-tag auto">{fmtAgo(item.updatedAt, now)}</span>}
-      </span>
-    </button>
+        {execTasks && execTasks.length > 0 && (
+          <ExecutorDots
+            tasks={execTasks}
+            now={now}
+            openKey={openBalloon}
+            onToggle={onToggleBalloon}
+            onOpenConversation={onOpenConversation}
+          />
+        )}
+        <span className="board-card-tags">
+          {item.origin === 'po' && <span className="board-tag po">PO acrescentou</span>}
+          {isPoCorrected(item) && <span className="board-tag po">PO corrigiu</span>}
+          {item.poTitle && item.origin === 'agent' && !isPoCorrected(item) && (
+            <span className="board-tag po">PO reescreveu</span>
+          )}
+          {poAgreed(item) && <span className="board-tag po">PO revisou</span>}
+          {status === 'completed' && <span className="board-tag auto">{fmtAgo(item.updatedAt, now)}</span>}
+        </span>
+      </button>
+      <button
+        type="button"
+        className="board-card-delete"
+        title="Excluir cartão"
+        onClick={(e) => {
+          // Fora do <button> do cartão de propósito (nada de botão dentro de
+          // botão) — o stopPropagation aqui é só contra o próprio clique
+          // borbulhando pro wrap, não uma dependência do aninhamento evitado.
+          e.stopPropagation()
+          onDelete(item)
+        }}
+      >
+        <IconTrash size={13} />
+      </button>
+    </div>
   )
 }
 
@@ -995,6 +1015,7 @@ export function BoardPanel({
                   item={item}
                   now={now}
                   onOpen={setSelected}
+                  onDelete={dismiss}
                   draggable={dragEnabled}
                   dragging={draggingId === item.id}
                   onDragStart={handleDragStart}

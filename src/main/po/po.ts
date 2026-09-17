@@ -102,10 +102,12 @@ interface ConvState {
   /** Uma janela de cooldown por FASE: a abertura não pode gastar a do
    *  fechamento, senão o turno que acabou de ser aberto nunca seria auditado. */
   lastRunAt: Record<PoPhase, number>
-  /** O turno que o cooldown de fechamento pulou. Ele não some: entra no digest
-   *  da próxima auditoria desta conversa, porque um pedido que nunca passou
-   *  pelo PO é exatamente o buraco que este recurso existe para fechar. */
-  deferred: PoDeferred | null
+  /** Uma fila por FASE, pelo mesmo motivo do cooldown ser por fase: o turno
+   *  que a abertura pulou tem que voltar numa abertura futura, não ser
+   *  engolido pelo fechamento que rodar primeiro (e vice-versa) — cada fase
+   *  audita a evidência da SUA fila, nunca a da outra. Um pedido que nunca
+   *  passou pelo PO é exatamente o buraco que este recurso existe para fechar. */
+  deferred: Record<PoPhase, PoDeferred | null>
 }
 
 /** Evidence captured synchronously with a result, before board ingestion yields. */
@@ -188,7 +190,14 @@ export class Po {
   private conv(convId: string): ConvState {
     let conv = this.state.get(convId)
     if (!conv) {
-      conv = { userText: null, cwd: '', calls: [], fired: false, lastRunAt: { open: 0, close: 0 }, deferred: null }
+      conv = {
+        userText: null,
+        cwd: '',
+        calls: [],
+        fired: false,
+        lastRunAt: { open: 0, close: 0 },
+        deferred: { open: null, close: null }
+      }
       this.state.set(convId, conv)
     }
     return conv
@@ -209,15 +218,16 @@ export class Po {
     void work.then(forget, forget)
   }
 
-  /** Guarda o turno que o cooldown pulou, com os mesmos tetos do digest — o
-   *  acumulado não pode crescer com o número de turnos pulados. */
-  private defer(conv: ConvState, turn: PoTurnSnapshot): void {
-    const deferred = conv.deferred ?? { texts: [], calls: [] }
+  /** Guarda o turno que o cooldown pulou, na fila DESSA fase — com os mesmos
+   *  tetos do digest, para o acumulado não crescer com o número de turnos
+   *  pulados. */
+  private defer(conv: ConvState, phase: PoPhase, turn: PoTurnSnapshot): void {
+    const deferred = conv.deferred[phase] ?? { texts: [], calls: [] }
     deferred.texts.push(turn.userText)
     deferred.calls.push(...turn.calls)
     while (deferred.texts.length > 1 && deferred.texts.join(' ').length > PO_MAX_USER_CHARS) deferred.texts.shift()
     if (deferred.calls.length > PO_MAX_CALLS) deferred.calls.splice(0, deferred.calls.length - PO_MAX_CALLS)
-    conv.deferred = deferred
+    conv.deferred[phase] = deferred
   }
 
   /**
@@ -251,16 +261,16 @@ export class Po {
    * NUNCA passaram pelo PO — exatamente o buraco que o acúmulo tapa. Tirar da
    * fila é um empréstimo até a análise terminar, não uma baixa.
    */
-  private restoreDeferred(conv: ConvState, taken: PoDeferred): void {
+  private restoreDeferred(conv: ConvState, phase: PoPhase, taken: PoDeferred): void {
     if (taken.texts.length === 0 && taken.calls.length === 0) return
-    const queue = conv.deferred ?? { texts: [], calls: [] }
+    const queue = conv.deferred[phase] ?? { texts: [], calls: [] }
     // O que volta é mais ANTIGO do que o que entrou na fila enquanto a análise
     // rodava, então volta na frente — e os mesmos tetos continuam valendo.
     queue.texts.unshift(...taken.texts)
     queue.calls.unshift(...taken.calls)
     while (queue.texts.length > 1 && queue.texts.join(' ').length > PO_MAX_USER_CHARS) queue.texts.shift()
     if (queue.calls.length > PO_MAX_CALLS) queue.calls.splice(0, queue.calls.length - PO_MAX_CALLS)
-    conv.deferred = queue
+    conv.deferred[phase] = queue
   }
 
   /**
@@ -454,10 +464,13 @@ export class Po {
     if (!cfg.po.enabled) return
     const now = this.deps.now?.() ?? Date.now()
     if (now - conv.lastRunAt[phase] < PO_COOLDOWN_MS) {
-      // Turno pulado não é turno perdido: o pedido e as ações esperam a próxima
-      // auditoria desta conversa. (A abertura não acumula — o pedido dela volta
-      // inteiro no digest do fechamento.)
-      if (phase === 'close') this.defer(conv, turn)
+      // Turno pulado não é turno perdido: o pedido e as ações esperam a
+      // PRÓXIMA análise DESTA FASE. Sem isso, um pedido que caísse no cooldown
+      // da abertura (ex.: mensagens em sequência rápida) sumia sem nunca mover
+      // cartão nenhum para "fazendo" — e por fila SEPARADA por fase, porque a
+      // abertura e o fechamento rodam em cadências diferentes; se dividissem
+      // uma fila só, quem rodasse primeiro esvaziaria o que era da outra.
+      this.defer(conv, phase, turn)
       return
     }
     conv.lastRunAt[phase] = now
@@ -480,11 +493,9 @@ export class Po {
       const projectId = await this.deps.board.projectId(turn.cwd)
       if (!projectId) return
 
-      if (phase === 'close') {
-        taken = conv.deferred
-        conv.deferred = null
-      }
-      const merged = phase === 'close' ? this.mergeDeferred(taken, turn) : turn
+      taken = conv.deferred[phase]
+      conv.deferred[phase] = null
+      const merged = this.mergeDeferred(taken, turn)
       const ledgerTasks = await this.listConvTasks(convId)
       const prompt = buildPoPrompt({
         userText: merged.userText,
@@ -590,7 +601,7 @@ export class Po {
     } catch {
       // The observer cannot take down the observed turn or write a partial board.
     } finally {
-      if (!audited && taken) this.restoreDeferred(conv, taken)
+      if (!audited && taken) this.restoreDeferred(conv, phase, taken)
     }
   }
 }

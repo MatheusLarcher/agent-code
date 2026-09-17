@@ -183,6 +183,41 @@ export function boardItemsToReopenBefore(items: BoardItem[], cutoffMs: number): 
   })
 }
 
+/** Só expira quando o projeto tem MAIS que este tanto de concluídos — com 5 ou
+ *  menos, todos ficam, não importa a idade. */
+export const COMPLETED_EXPIRY_MIN_COUNT = 5
+/** Idade (desde `updatedAt`, o mesmo carimbo do badge "há X" na tela) a partir
+ *  da qual um concluído passa a ser candidato à expiração. */
+export const COMPLETED_EXPIRY_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000
+
+/**
+ * Os cartões concluídos que devem sumir do quadro (via dismiss, reversível).
+ *
+ * A regra tem duas partes independentes: o LIMIAR (`> 5 concluídos no total`)
+ * liga ou desliga a expiração inteira — com poucos concluídos, nada é velho
+ * demais. Ligado o limiar, cada concluído é julgado pela PRÓPRIA idade, sem
+ * piso: não existe "manter os 5 mais recentes" aqui, só "sumir com quem passou
+ * de 5 dias". `dismissedAt` já dispensado nunca é candidato de novo — expirar
+ * um cartão que o usuário já escondeu não faz sentido nenhum.
+ *
+ * Usa o status EFETIVO (`boardItemStatus`), pelo mesmo motivo de sempre: um
+ * concluído pelo PO sobre um `source_status` desatualizado ainda é concluído.
+ */
+export function boardItemsToExpire(
+  items: readonly BoardItem[],
+  now: number,
+  opts: { minCount?: number; maxAgeMs?: number } = {}
+): BoardItem[] {
+  const minCount = opts.minCount ?? COMPLETED_EXPIRY_MIN_COUNT
+  const maxAgeMs = opts.maxAgeMs ?? COMPLETED_EXPIRY_MAX_AGE_MS
+  const completed = items.filter((item) => item.dismissedAt === null && boardItemStatus(item) === 'completed')
+  if (completed.length <= minCount) return []
+  return completed.filter((item) => {
+    const updatedMs = Date.parse(item.updatedAt)
+    return Number.isFinite(updatedMs) && now - updatedMs > maxAgeMs
+  })
+}
+
 /** O estado atual de um cartão, na forma que a ingestão precisa comparar. */
 export type BoardSyncCurrent = Pick<
   BoardItemRow,

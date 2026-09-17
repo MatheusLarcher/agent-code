@@ -464,6 +464,83 @@ describe('BoardService — move (drag-and-drop do usuário)', () => {
   })
 })
 
+describe('BoardService — expiração automática de concluídos ao listar', () => {
+  const OLD = '2000-01-01T00:00:00.000Z'
+
+  function completed(id: string, updatedAt = OLD): BoardItem {
+    return card({ id, sourceStatus: 'completed', updatedAt })
+  }
+
+  it('com mais de 5 concluídos velhos, list() dispensa os excedentes antes de devolver', async () => {
+    const cards = Array.from({ length: 6 }, (_, i) => completed(`c${i}`))
+    const dismissed: string[] = []
+    const repo = {
+      syncBoardItems: vi.fn(async () => []),
+      listBoardItems: vi.fn(async () => cards),
+      dismissBoardItem: vi.fn(async (id: string) => {
+        dismissed.push(id)
+        return card({ id })
+      })
+    } as unknown as PersistenceRepository
+    const service = new BoardService({ repository: () => repo })
+
+    await service.list(CWD)
+
+    expect(dismissed).toHaveLength(6)
+    expect(repo.listBoardItems).toHaveBeenCalledWith({ projectIds: expect.any(Array) })
+  })
+
+  it('com 5 ou menos concluídos, list() nunca chama dismiss', async () => {
+    const cards = Array.from({ length: 5 }, (_, i) => completed(`c${i}`))
+    const dismissBoardItem = vi.fn(async (id: string) => card({ id }))
+    const repo = {
+      syncBoardItems: vi.fn(async () => []),
+      listBoardItems: vi.fn(async () => cards),
+      dismissBoardItem
+    } as unknown as PersistenceRepository
+    const service = new BoardService({ repository: () => repo })
+
+    await service.list(CWD)
+
+    expect(dismissBoardItem).not.toHaveBeenCalled()
+  })
+
+  it('pedido explícito de dispensados (includeDismissed) não dispara a expiração', async () => {
+    const cards = Array.from({ length: 6 }, (_, i) => completed(`c${i}`))
+    const dismissBoardItem = vi.fn(async (id: string) => card({ id }))
+    const repo = {
+      syncBoardItems: vi.fn(async () => []),
+      listBoardItems: vi.fn(async () => cards),
+      dismissBoardItem
+    } as unknown as PersistenceRepository
+    const service = new BoardService({ repository: () => repo })
+
+    await service.list(CWD, { includeDismissed: true })
+
+    expect(dismissBoardItem).not.toHaveBeenCalled()
+  })
+
+  it('a falha de um dismiss não impede os outros nem derruba a leitura do quadro', async () => {
+    const cards = Array.from({ length: 6 }, (_, i) => completed(`c${i}`))
+    const dismissed: string[] = []
+    const repo = {
+      syncBoardItems: vi.fn(async () => []),
+      listBoardItems: vi.fn(async () => cards),
+      dismissBoardItem: vi.fn(async (id: string) => {
+        if (id === 'c0') throw new Error('falhou')
+        dismissed.push(id)
+        return card({ id })
+      })
+    } as unknown as PersistenceRepository
+    const service = new BoardService({ repository: () => repo })
+
+    const result = await service.list(CWD)
+
+    expect(result).toEqual(cards)
+    expect(dismissed).toHaveLength(5)
+  })
+})
+
 // Garante que a injeção compila com as duas dependências novas (documenta o
 // contrato de `BoardServiceDeps` cobrado no aceite desta tarefa).
 void ((): BoardServiceDeps => ({

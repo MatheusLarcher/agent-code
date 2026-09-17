@@ -213,6 +213,44 @@ describe('Po — abertura (o pedido vira cartão antes do trabalho)', () => {
     expect(digest).not.toContain('primeiro pedido')
   })
 
+  it('a abertura pulada pelo cooldown não se perde: entra na próxima abertura, sem roubar a fila do fechamento', async () => {
+    const board = fakeBoard([card()])
+    const ask = askPhases()
+    let now = 1_000_000
+    const po = new Po({ config: () => config(), board, ask, now: () => now })
+
+    // Primeira abertura roda na hora (cooldown zerado).
+    po.noteUserMessage('conv-1', 'C:/p', 'primeiro pedido')
+    await flush()
+    expect(prompts(ask, 'open')).toHaveLength(1)
+
+    // Segunda mensagem cai dentro do cooldown de 60s da abertura: antes da
+    // correção, ela simplesmente sumia sem mover cartão nenhum. Não fecha o
+    // turno (sem `observe(result)`) para isolar só a fila da abertura.
+    now += 5_000
+    po.noteUserMessage('conv-1', 'C:/p', 'pedido pulado pela abertura')
+    await flush()
+    expect(prompts(ask, 'open')).toHaveLength(1) // ainda não rodou de novo
+
+    // Passado o cooldown, a próxima abertura tem que trazer o que foi pulado.
+    now += 120_000
+    po.noteUserMessage('conv-1', 'C:/p', 'pedido de agora')
+    await flush()
+
+    const opens = prompts(ask, 'open')
+    expect(opens).toHaveLength(2)
+    expect(opens[1]).toContain('pedido pulado pela abertura')
+    expect(opens[1]).toContain('pedido de agora')
+
+    // Fila do FECHAMENTO nunca deve ver o que era da abertura: são filas
+    // separadas por fase, senão quem rodasse primeiro vazava a da outra.
+    po.observe('conv-1', result)
+    await flush()
+    const closes = prompts(ask, 'close')
+    expect(closes).toHaveLength(1)
+    expect(closes[0]).not.toContain('pedido pulado pela abertura')
+  })
+
   it('o pedido de AGORA não é empurrado para fora do digest pelo acumulado', async () => {
     const board = fakeBoard([card()])
     const ask = askPhases()

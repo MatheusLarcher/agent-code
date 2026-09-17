@@ -1,4 +1,4 @@
-import { boardItemsToReopenBefore } from './boardModel'
+import { boardItemsToExpire, boardItemsToReopenBefore } from './boardModel'
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
 import type {
   BoardItem,
@@ -252,7 +252,35 @@ export class BoardService {
     if (!repository) return null
     const projectId = await this.projectId(cwd)
     if (!projectId) return null
+    // A faxina de concluídos velhos é escopada ao PROJETO INTEIRO, não ao
+    // recorte pedido aqui (`options.conversationId` pode filtrar uma única
+    // conversa) — senão a mesma contagem de "mais de 5 concluídos" daria
+    // respostas diferentes conforme quem perguntou. Pulada quando o pedido já
+    // é por dispensados: não faz sentido expirar o que se está tentando ver.
+    if (!options.includeDismissed) await this.expireOldCompleted(repository, projectId)
     return repository.listBoardItems({ projectIds: [projectId], ...options })
+  }
+
+  /**
+   * Dispensa (soft) os concluídos velhos demais deste projeto — ver
+   * `boardItemsToExpire`. Checado sob demanda, a cada `list()`, em vez de um
+   * scheduler de fundo: mais simples, e o quadro só precisa estar certo
+   * quando alguém de fato olha para ele. Nunca lança: faxina não pode
+   * derrubar a leitura do quadro que a chamou.
+   */
+  private async expireOldCompleted(repository: PersistenceRepository, projectId: string): Promise<void> {
+    try {
+      const all = await repository.listBoardItems({ projectIds: [projectId] })
+      for (const item of boardItemsToExpire(all, Date.now())) {
+        try {
+          await this.dismiss(item.id, true)
+        } catch {
+          // Um cartão que falhou não impede a faxina dos outros.
+        }
+      }
+    } catch {
+      // Sem lista fresca, não há o que expirar agora — a próxima passada tenta de novo.
+    }
   }
 
   async applyPo(input: BoardPoWrite): Promise<BoardItem | null> {

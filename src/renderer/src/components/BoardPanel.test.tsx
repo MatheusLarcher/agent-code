@@ -231,6 +231,16 @@ describe('BoardPanel', () => {
     await waitFor(() => expect(api.boardDismiss).toHaveBeenCalledWith('bi-1', true))
   })
 
+  it('o botão de excluir no próprio cartão dispensa direto, sem abrir o detalhe', async () => {
+    const api = mockApi({ available: true, items: [card()] })
+    render(panel())
+    await screen.findByText('add board table')
+    fireEvent.click(screen.getByTitle('Excluir cartão'))
+    await waitFor(() => expect(api.boardDismiss).toHaveBeenCalledWith('bi-1', true))
+    // Não abriu o detalhe: o botão "Dispensar cartão" (só existe lá dentro) não aparece.
+    expect(screen.queryByText('Dispensar cartão')).toBeNull()
+  })
+
   it('o detalhe mostra metadados e busca a linha do tempo só ao abrir', async () => {
     const api = mockApi({ available: true, items: [card()] })
     api.boardItemEvents.mockResolvedValue([

@@ -10,6 +10,7 @@ import {
   assertPoCreate,
   assertPoWrite,
   boardItemId,
+  boardItemsToExpire,
   boardItemsToReopen,
   boardItemsToReopenBefore,
   compareBoardItems,
@@ -172,6 +173,45 @@ describe('boardItemsToReopenBefore — a race entre a reabertura e a abertura se
   it('cartão sem poAt nenhum (nunca tocado pelo PO) é reaberto — sem carimbo, não há como provar recência', () => {
     const stale = boardItemsToReopenBefore([item({ id: 'a', sourceStatus: 'in_progress', poAt: null })], closedAt)
     expect(stale.map((entry) => entry.id)).toEqual(['a'])
+  })
+})
+
+describe('boardItemsToExpire — concluídos somem depois de 5 dias, só com mais de 5 no total', () => {
+  const now = Date.parse('2026-09-17T12:00:00.000Z')
+  const OLD = '2026-09-01T12:00:00.000Z' // bem mais que 5 dias antes de `now`
+  const RECENT = '2026-09-16T12:00:00.000Z' // menos de 5 dias antes de `now`
+
+  function completedItems(count: number, updatedAt: string): BoardItem[] {
+    return Array.from({ length: count }, (_, i) => item({ id: `c${i}`, sourceStatus: 'completed', updatedAt }))
+  }
+
+  it('com 5 ou menos concluídos, nada expira mesmo muito velho', () => {
+    expect(boardItemsToExpire(completedItems(5, OLD), now)).toEqual([])
+  })
+
+  it('com mais de 5 concluídos, só os que passaram de 5 dias expiram', () => {
+    const items = [...completedItems(4, OLD), ...completedItems(3, RECENT)]
+    const expired = boardItemsToExpire(items, now)
+    expect(expired).toHaveLength(4)
+    expect(expired.every((entry) => entry.updatedAt === OLD)).toBe(true)
+  })
+
+  it('mais de 5 concluídos, mas todos recentes: nenhum expira ainda', () => {
+    expect(boardItemsToExpire(completedItems(6, RECENT), now)).toEqual([])
+  })
+
+  it('cartão já dispensado nunca é candidato de novo', () => {
+    const items = [
+      ...completedItems(6, OLD).map((entry) => ({ ...entry, id: `${entry.id}-x` })),
+      { ...item({ id: 'already-dismissed', sourceStatus: 'completed', updatedAt: OLD }), dismissedAt: OLD }
+    ]
+    const expired = boardItemsToExpire(items, now)
+    expect(expired.map((entry) => entry.id)).not.toContain('already-dismissed')
+  })
+
+  it('pendente/em andamento nunca conta pro limiar nem expira', () => {
+    const items = [...completedItems(2, OLD), item({ id: 'p', sourceStatus: 'pending', updatedAt: OLD })]
+    expect(boardItemsToExpire(items, now)).toEqual([])
   })
 })
 

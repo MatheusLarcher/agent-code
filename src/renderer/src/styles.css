@@ -6127,6 +6127,11 @@ button svg {
   background: var(--ok);
 }
 
+/* O cartão em si é um <button>; a lixeira é um botão IRMÃO, nunca aninhado
+   dentro dele (botão dentro de botão é HTML inválido) — por isso o wrap. */
+.board-card-wrap {
+  position: relative;
+}
 .board-card {
   background: var(--bg-3);
   border: 1px solid var(--line);
@@ -6141,6 +6146,30 @@ button svg {
   color: inherit;
   width: 100%;
   transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.board-card-delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.board-card-wrap:hover .board-card-delete,
+.board-card-delete:focus-visible {
+  opacity: 1;
+}
+.board-card-delete:hover {
+  background: rgba(224, 88, 88, 0.15);
+  color: var(--err, #e05858);
 }
 .board-card:hover {
   border-color: #4a4744;
