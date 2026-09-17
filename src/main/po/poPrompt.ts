@@ -97,6 +97,10 @@ Regras inegociáveis:
   — responder não é trabalho de quadro, e um quadro cheio de conversa não serve para nada.
 - Se algum cartão do quadro JÁ cobre o pedido, use ANDAMENTO nele em vez de criar outro. Dois
   cartões para o mesmo trabalho é pior do que nenhum: ninguém sabe qual seguir.
+- Um pedido de CONTINUAÇÃO ("continua", "pode", "sim", "beleza", uma instrução extra sobre o
+  mesmo assunto) não é diferente de um pedido novo quando já existe um cartão "a fazer" cobrindo
+  aquele trabalho: use ANDAMENTO nele. Não responda OK só porque a mensagem, isolada, não parece
+  um pedido "novo" — o trabalho está retomando, e o cartão tem que acompanhar.
 - NOVA aqui cria o cartão JÁ EM ANDAMENTO, porque o trabalho está começando agora — não é uma
   intenção para depois.
 - O <id> tem que ser um dos ids listados no quadro. Não invente id.
@@ -318,37 +322,87 @@ export function parsePoVerdict(raw: string, knownIds: Iterable<string>, phase: P
 }
 
 /**
- * Descarta as operações que contrariam o esqueleto — a última barreira antes do
- * banco, e a que protege o invariante do recurso: o PO corrige o que o agente
- * esqueceu, não discute com o que o agente acabou de dizer.
+ * Descarta (ou, num caso, TRANSFORMA) as operações que contrariam o esqueleto —
+ * a última barreira antes do banco, e a que protege o invariante do recurso: o
+ * PO corrige o que o agente esqueceu, não discute com o que o agente acabou de
+ * dizer.
+ *
+ * A fase importa para um caso: um `create` rejeitado pelo dedupe de título, na
+ * ABERTURA, contra um cartão existente que ainda está `pending`. Descartar em
+ * silêncio perderia a intenção real do modelo ("isso está começando agora") —
+ * e é exatamente essa perda que prende um cartão em "a fazer" enquanto o
+ * trabalho de fato continua (o pedido virou uma continuação, "NOVA" colidiu
+ * com o que já existe, e ninguém promoveu o cartão para `in_progress`). Em vez
+ * de só rejeitar, convertemos em `start` no cartão colidido — uma garantia de
+ * código, que não depende do modelo escolher a operação certa na próxima
+ * rodada. No fechamento não existe ANDAMENTO, então a conversão não se aplica:
+ * um `create`/`FEITA` duplicado ali continua simplesmente descartado, como
+ * sempre foi.
  */
-export function rejectUnsafeOps(ops: PoOp[], cards: BoardItem[]): PoOp[] {
+export function rejectUnsafeOps(ops: PoOp[], cards: BoardItem[], phase: PoPhase = 'close'): PoOp[] {
   const byId = new Map(cards.map((card) => [card.id, card]))
   // Os títulos que a conversa já tem, nas DUAS camadas: o cartão pode ter sido
   // renomeado pelo PO, e comparar só com o do agente deixaria passar a cópia.
+  // `titleToCard` guarda o cartão por trás do título — só ele permite converter
+  // um dedupe em `start`; um título que colide com outra operação desta MESMA
+  // resposta (ainda sem cartão nenhum) não tem para onde converter.
   const titles = new Set<string>()
+  const titleToCard = new Map<string, BoardItem>()
   for (const card of cards) {
-    titles.add(normalizeTitle(card.sourceTitle))
-    if (card.poTitle) titles.add(normalizeTitle(card.poTitle))
+    const sourceKey = normalizeTitle(card.sourceTitle)
+    titles.add(sourceKey)
+    titleToCard.set(sourceKey, card)
+    if (card.poTitle) {
+      const poKey = normalizeTitle(card.poTitle)
+      titles.add(poKey)
+      titleToCard.set(poKey, card)
+    }
   }
-  return ops.filter((op) => {
+  // Ids que já vão sair com `start` — seja porque o próprio modelo emitiu essa
+  // operação nesta resposta, seja porque uma conversão anterior já a criou.
+  // Sem isso, um segundo `create` duplicado para o mesmo cartão viraria um
+  // segundo `start`, e `applyPo` seria chamado duas vezes à toa para o mesmo id.
+  const startedIds = new Set(ops.filter((op) => op.kind === 'start').map((op) => op.id))
+
+  const out: PoOp[] = []
+  for (const op of ops) {
     if (op.kind === 'create') {
       // Sem esta barreira o PO recria o mesmo cartão a cada turno: ele não se
       // lembra do que criou ontem, e o quadro vira uma pilha de duplicatas que
       // ninguém sabe qual seguir. Um título só acrescenta trabalho ao quadro
       // quando ele é um trabalho NOVO.
       const title = normalizeTitle(op.title)
-      if (!title || titles.has(title)) return false
+      if (!title) continue
+      if (titles.has(title)) {
+        const existing = titleToCard.get(title)
+        if (
+          phase === 'open' &&
+          existing &&
+          boardItemStatus(existing) === 'pending' &&
+          !startedIds.has(existing.id)
+        ) {
+          startedIds.add(existing.id)
+          out.push({ kind: 'start', id: existing.id, reason: op.reason })
+        }
+        continue
+      }
       titles.add(title)
-      return true
+      out.push(op)
+      continue
     }
     const card = byId.get(op.id)
-    if (!card) return false
-    if (op.kind === 'retitle') return op.title.trim() !== card.sourceTitle.trim()
-    // Só entra em andamento o que ainda não começou: marcar de novo o que já
-    // está em andamento é escrita à toa, e "reabrir" o que foi concluído é o PO
-    // desfazendo um fato que o agente já registrou.
-    if (op.kind === 'start') return boardItemStatus(card) === 'pending'
+    if (!card) continue
+    if (op.kind === 'retitle') {
+      if (op.title.trim() !== card.sourceTitle.trim()) out.push(op)
+      continue
+    }
+    if (op.kind === 'start') {
+      // Só entra em andamento o que ainda não começou: marcar de novo o que já
+      // está em andamento é escrita à toa, e "reabrir" o que foi concluído é o
+      // PO desfazendo um fato que o agente já registrou.
+      if (boardItemStatus(card) === 'pending') out.push(op)
+      continue
+    }
     // Concluir: tudo o que ainda não está concluído.
     //
     // Uma versão anterior exigia `sourceStatus === 'pending'` aqui, e isso
@@ -359,6 +413,7 @@ export function rejectUnsafeOps(ops: PoOp[], cards: BoardItem[]): PoOp[] {
     // não trabalho acontecendo. Quem segura o exagero é o prompt (exige
     // evidência nas ações) e o motivo gravado no cartão, não uma proibição que
     // também barra o caso certo.
-    return boardItemStatus(card) !== 'completed'
-  })
+    if (boardItemStatus(card) !== 'completed') out.push(op)
+  }
+  return out
 }

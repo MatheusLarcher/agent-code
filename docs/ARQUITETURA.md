@@ -469,16 +469,27 @@ versões, o quadro divergiria conforme o PC e nenhum teste quebraria.
    falaria de trabalho que ainda não começou e um `ANDAMENTO` no fechamento reabriria o que acabou
    de terminar: nos dois casos o modelo respondeu a pergunta errada, e resposta errada não vira
    escrita.
-2. `rejectUnsafeOps` descarta o que contraria o esqueleto. **Título duplicado não cria cartão** —
-   a comparação é normalizada (sem acento, minúscula, espaços colapsados, a mesma regra de busca
-   do resto do projeto) e roda contra as **duas** camadas, porque o cartão pode ter sido renomeado
-   pelo PO e comparar só com o título do agente deixaria passar a cópia. Sem isso o PO recria o
-   mesmo cartão a cada turno: ele não lembra do que criou ontem. **`ANDAMENTO` só no que ainda está
-   pendente** (remarcar o que já começou é escrita à toa, e "reabrir" o concluído é o PO desfazendo
-   um fato). **`CONCLUIR` em tudo que não está concluído**: uma versão anterior exigia cartão
-   pendente e isso matava o recurso, porque o caso central ("fez e esqueceu de marcar") deixa o
-   cartão exatamente em `in_progress` — o agente marcou o início e não marcou o fim. Quem segura o
-   exagero é a exigência de evidência no prompt, não uma proibição que também barra o caso certo.
+2. `rejectUnsafeOps` descarta o que contraria o esqueleto — e recebe a **fase**, porque um dos casos
+   abaixo só faz sentido numa delas. **Título duplicado não cria cartão** — a comparação é
+   normalizada (sem acento, minúscula, espaços colapsados, a mesma regra de busca do resto do
+   projeto) e roda contra as **duas** camadas, porque o cartão pode ter sido renomeado pelo PO e
+   comparar só com o título do agente deixaria passar a cópia. Sem isso o PO recria o mesmo cartão a
+   cada turno: ele não lembra do que criou ontem. **`ANDAMENTO` só no que ainda está pendente**
+   (remarcar o que já começou é escrita à toa, e "reabrir" o concluído é o PO desfazendo um fato).
+   **`CONCLUIR` em tudo que não está concluído**: uma versão anterior exigia cartão pendente e isso
+   matava o recurso, porque o caso central ("fez e esqueceu de marcar") deixa o cartão exatamente em
+   `in_progress` — o agente marcou o início e não marcou o fim. Quem segura o exagero é a exigência
+   de evidência no prompt, não uma proibição que também barra o caso certo.
+   **Na ABERTURA, um `create` rejeitado pelo dedupe de título vira `ANDAMENTO` — não silêncio —
+   quando o cartão colidido ainda está `pending`.** Esse é o segundo caminho para o bug "o PO criou
+   a tarefa mas deixou em 'a fazer' enquanto o agente trabalhava": quando o pedido é uma
+   continuação ("continua", "pode", "sim") de um trabalho que já tem cartão, o modelo às vezes tenta
+   `NOVA` de novo para o mesmo assunto — o dedupe corretamente rejeita a duplicata, mas descartar em
+   silêncio perdia a intenção real ("isso está começando agora"), e nada promovia o cartão existente.
+   A conversão preserva o **motivo** do `create` original e não duplica quando o próprio modelo já
+   emitiu um `start` para o mesmo id na mesma resposta (evita chamar `applyPo` duas vezes no mesmo
+   cartão). Fora da abertura, ou quando o cartão colidido já está `in_progress`/`completed`, a
+   duplicata continua simplesmente descartada — não existe `ANDAMENTO` no fechamento.
 3. **Antes de criar, o quadro é relido.** Entre a lista que montou o digest e a escrita passou a
    consulta ao modelo — segundos em que a **outra fase do mesmo turno** pode ter criado o cartão
    que este está prestes a criar de novo. Criar é a única operação irreversível daqui (cartão

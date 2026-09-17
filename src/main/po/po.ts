@@ -254,15 +254,18 @@ export class Po {
    * o custo é uma leitura só quando há criação — diferente de esperar a
    * abertura terminar, que atrasaria toda auditoria e comeria a janela que o
    * quadro espera pelo PO.
+   *
+   * A fase segue para `rejectUnsafeOps`: é ela quem decide se um `create`
+   * duplicado contra a lista fresca vira `start` (só faz sentido na abertura).
    */
-  private async confirmCreates(ops: PoOp[], convId: string, cwd: string): Promise<PoOp[]> {
+  private async confirmCreates(ops: PoOp[], convId: string, cwd: string, phase: PoPhase): Promise<PoOp[]> {
     if (!ops.some((op) => op.kind === 'create')) return ops
     const fresh = await this.deps.board.list(cwd, { conversationId: convId })
     // Sem lista fresca não dá para afirmar que o cartão não existe. Falha
     // fechada: duplicar é pior do que registrar depois, e o que ficou de fora
     // volta na próxima auditoria.
     if (!fresh) return ops.filter((op) => op.kind !== 'create')
-    return rejectUnsafeOps(ops, fresh)
+    return rejectUnsafeOps(ops, fresh, phase)
   }
 
   /** Consulta o registro de tarefas ativo. Nunca lança: sem registro ou com a
@@ -445,12 +448,13 @@ export class Po {
 
         const verdict = rejectUnsafeOps(
           parsePoVerdict(attempt.text, cards.map((card) => card.id), phase),
-          cards
+          cards,
+          phase
         )
         // A lista que o modelo julgou é de antes da consulta. Antes de criar,
         // confere contra o quadro de agora — a outra fase deste mesmo turno
         // pode ter criado o cartão nesse meio-tempo.
-        const ops = await this.confirmCreates(verdict, convId, turn.cwd)
+        const ops = await this.confirmCreates(verdict, convId, turn.cwd, phase)
 
         for (const op of ops) {
           if (op.kind === 'complete') {

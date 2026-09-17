@@ -75,6 +75,10 @@ describe('digest', () => {
     expect(open).not.toContain('CONCLUIR <id>')
     // A regra que impede o quadro de virar registro de conversa.
     expect(open).toContain('NÃO viram cartão')
+    // A regra que reconhece continuação de um cartão já existente — sem ela o
+    // PO responde OK para "continua"/"pode" só porque a mensagem, isolada, não
+    // parece um pedido novo, e o cartão fica preso em "a fazer".
+    expect(open).toContain('CONTINUAÇÃO')
 
     const close = buildPoPrompt({ userText: 'x', cards: [], calls: [], phase: 'close' })
     expect(close).toContain('CONCLUIR <id>')
@@ -263,5 +267,46 @@ describe('rejectUnsafeOps — a última barreira antes do banco', () => {
       [card()]
     )
     expect(ops).toHaveLength(1)
+  })
+
+  describe('create duplicado na ABERTURA vira ANDAMENTO — a intenção não pode se perder', () => {
+    it('cartão colidido pending: o create duplicado converte em start', () => {
+      const cards = [card({ sourceStatus: 'pending' })]
+      const create = { kind: 'create' as const, title: 'add board table', reason: 'o pedido é este', status: 'in_progress' as const }
+      const ops = rejectUnsafeOps([create], cards, 'open')
+      // O motivo do create original sobrevive na conversão — é ele que explica
+      // por que o cartão pulou para "em andamento".
+      expect(ops).toEqual([{ kind: 'start', id: 'bi-1', reason: 'o pedido é este' }])
+    })
+
+    it('na fase CLOSE não existe ANDAMENTO: o create duplicado continua só descartado', () => {
+      const cards = [card({ sourceStatus: 'pending' })]
+      const create = { kind: 'create' as const, title: 'add board table', reason: 'x', status: 'pending' as const }
+      expect(rejectUnsafeOps([create], cards, 'close')).toEqual([])
+      // Sem fase informada o comportamento é o de fechamento (mesmo default de parsePoVerdict).
+      expect(rejectUnsafeOps([create], cards)).toEqual([])
+    })
+
+    it('cartão colidido já em andamento ou concluído: sem conversão, create continua descartado', () => {
+      const create = { kind: 'create' as const, title: 'add board table', reason: 'x', status: 'in_progress' as const }
+      expect(rejectUnsafeOps([create], [card({ sourceStatus: 'in_progress' })], 'open')).toEqual([])
+      expect(rejectUnsafeOps([create], [card({ sourceStatus: 'completed' })], 'open')).toEqual([])
+      expect(rejectUnsafeOps([create], [card({ poStatus: 'completed', poReason: 'antes' })], 'open')).toEqual([])
+    })
+
+    it('não duplica quando o modelo já emitiu seu próprio start pro mesmo id', () => {
+      const cards = [card({ sourceStatus: 'pending' })]
+      const ops = rejectUnsafeOps(
+        [
+          { kind: 'start', id: 'bi-1', reason: 'o modelo já viu o cartão' },
+          { kind: 'create', title: 'add board table', reason: 'duplicado', status: 'in_progress' }
+        ],
+        cards,
+        'open'
+      )
+      // Só o start explícito do modelo sobrevive — a conversão do create não
+      // aplica `applyPo` duas vezes no mesmo cartão.
+      expect(ops).toEqual([{ kind: 'start', id: 'bi-1', reason: 'o modelo já viu o cartão' }])
+    })
   })
 })
