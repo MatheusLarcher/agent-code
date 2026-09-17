@@ -715,28 +715,52 @@ describe('AgentSession — novos sinais de interrupção e background', () => {
   })
 })
 
-describe('AgentSession — /compact (system/compact_boundary)', () => {
-  it('manual (usuário digitou /compact): emite kind:"status" com a contagem de tokens', () => {
+describe('AgentSession — "/compact" (verificado ao vivo: o SDK não intercepta o comando)', () => {
+  // Confirmado contra uma sessão real (LIVE_AGENT=1): mandar o texto literal
+  // "/compact" nunca gera um system/compact_boundary neste modo — o modelo só
+  // responde "não reconheço esse comando". send() por isso intercepta ele
+  // localmente, sem gastar um turno com uma resposta que ninguém quer.
+  it('não envia nada ao SDK e avisa que a compactação manual não está disponível', async () => {
     const { s, emit } = makeSession()
-    handle(s, {
-      type: 'system',
-      subtype: 'compact_boundary',
-      compact_metadata: { trigger: 'manual', pre_tokens: 120000, post_tokens: 8000 }
-    })
-    expect(emit).toHaveBeenLastCalledWith({
-      kind: 'status',
-      id: expect.any(String),
-      text: 'Conversa compactada (manual) — 120.000 → 8.000 tokens'
-    })
+    await s.send('/compact')
+    expect(pushedMessages(s)).toEqual([])
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'status', text: expect.stringContaining('Compactação manual não está disponível') })
+    )
   })
 
-  it('automática (janela de contexto cheia): usa o rótulo correto e ainda funciona sem metadados de tokens', () => {
-    const { s, emit } = makeSession()
-    handle(s, { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } })
-    expect(emit).toHaveBeenLastCalledWith({
-      kind: 'status',
-      id: expect.any(String),
-      text: 'Conversa compactada (automática (contexto cheio))'
+  it('não intercepta "/compact" como parte de um texto maior', async () => {
+    const { s } = makeSession()
+    await s.send('/compact isso aqui não é o comando')
+    expect(pushedMessages(s).length).toBeGreaterThan(0)
+  })
+
+  // Defensivo: se uma versão futura do SDK vier a emitir esse evento (ele existe
+  // nos tipos e no parser de transcript do próprio pacote), a tradução para a UI
+  // já está pronta — mas hoje isto nunca é atingido por digitação manual.
+  describe('handler de system/compact_boundary (código defensivo, ainda não observado ao vivo)', () => {
+    it('emite kind:"status" com a contagem de tokens quando o campo existe', () => {
+      const { s, emit } = makeSession()
+      handle(s, {
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: { trigger: 'manual', pre_tokens: 120000, post_tokens: 8000 }
+      })
+      expect(emit).toHaveBeenLastCalledWith({
+        kind: 'status',
+        id: expect.any(String),
+        text: 'Conversa compactada (manual) — 120.000 → 8.000 tokens'
+      })
+    })
+
+    it('usa o rótulo automático e funciona sem metadados de tokens', () => {
+      const { s, emit } = makeSession()
+      handle(s, { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } })
+      expect(emit).toHaveBeenLastCalledWith({
+        kind: 'status',
+        id: expect.any(String),
+        text: 'Conversa compactada (automática (contexto cheio))'
+      })
     })
   })
 })

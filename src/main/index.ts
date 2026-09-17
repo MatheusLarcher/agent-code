@@ -1421,7 +1421,7 @@ function registerIpc(): void {
       const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
       // O vigia só julga premissa de um pedido do usuário: é aqui que o turno
       // dele começa (retomada e recuperação de turno não passam por aqui).
-      vigia.noteUserMessage(convId, text)
+      vigia.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
       // O PO precisa do mesmo marco, e da pasta do projeto para achar o quadro.
       // Aqui também começa a ABERTURA dele: o pedido tem que virar cartão antes
       // de o agente trabalhar, senão o que ele nunca declarar não deixa rastro.

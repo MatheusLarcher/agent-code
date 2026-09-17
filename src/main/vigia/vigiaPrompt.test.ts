@@ -7,6 +7,10 @@ import {
   parseVigiaVerdict,
   summarizeCall,
   VIGIA_MAX_CALLS,
+  VIGIA_MAX_DOCS_CHARS,
+  VIGIA_MAX_HISTORY_CHARS,
+  VIGIA_MAX_HISTORY_TURNS,
+  VIGIA_MAX_MEMORY_CHARS,
   VIGIA_MAX_USER_CHARS
 } from './vigiaPrompt'
 
@@ -39,6 +43,62 @@ describe('digest do vigia', () => {
     const prompt = buildVigiaPrompt({ userText: 'medida do eixo', calls: [] })
     expect(prompt).toContain('SÓ O USUÁRIO')
     expect(prompt).toContain('medida do eixo')
+  })
+})
+
+describe('contexto extra do digest: histórico, memória e docs', () => {
+  it('sem histórico/memória/docs, nenhuma das três seções aparece', () => {
+    const digest = buildVigiaDigest({ userText: 'oi', calls: [] })
+    expect(digest).not.toContain('Histórico recente')
+    expect(digest).not.toContain('Memórias relevantes')
+    expect(digest).not.toContain('Documentação do projeto')
+  })
+
+  it('histórico presente aparece antes do pedido, na ordem', () => {
+    const digest = buildVigiaDigest({
+      userText: 'terceiro pedido',
+      calls: [],
+      history: ['"primeiro pedido"', '"segundo pedido" (o vigia alertou)']
+    })
+    expect(digest).toContain('Histórico recente da conversa')
+    expect(digest).toContain('primeiro pedido')
+    expect(digest).toContain('segundo pedido')
+    expect(digest.indexOf('Histórico recente')).toBeLessThan(digest.indexOf('Pedido do usuário'))
+  })
+
+  it('capa o histórico no número de turnos e em caracteres', () => {
+    const history = Array.from({ length: VIGIA_MAX_HISTORY_TURNS + 3 }, (_, i) => `"pedido ${i}"`)
+    const digest = buildVigiaDigest({ userText: 'x', calls: [], history })
+    expect(digest).not.toContain('"pedido 0"')
+    expect(digest).toContain(`"pedido ${VIGIA_MAX_HISTORY_TURNS + 2}"`)
+
+    const bigHistory = ['x'.repeat(VIGIA_MAX_HISTORY_CHARS + 200)]
+    const digestBig = buildVigiaDigest({ userText: 'x', calls: [], history: bigHistory })
+    expect(digestBig).toContain('…')
+  })
+
+  it('memória e docs aparecem, cada uma na sua seção e capadas', () => {
+    const digest = buildVigiaDigest({
+      userText: 'x',
+      calls: [],
+      memory: 'usuário prefere respostas curtas',
+      docs: 'ARQUITETURA.md: como o app funciona'
+    })
+    expect(digest).toContain('Memórias relevantes do usuário')
+    expect(digest).toContain('usuário prefere respostas curtas')
+    expect(digest).toContain('Documentação do projeto')
+    expect(digest).toContain('ARQUITETURA.md')
+
+    const cappedMemory = buildVigiaDigest({ userText: 'x', calls: [], memory: 'm'.repeat(VIGIA_MAX_MEMORY_CHARS + 100) })
+    expect(cappedMemory).toContain('…')
+    const cappedDocs = buildVigiaDigest({ userText: 'x', calls: [], docs: 'd'.repeat(VIGIA_MAX_DOCS_CHARS + 100) })
+    expect(cappedDocs).toContain('…')
+  })
+
+  it('memória/docs em branco não geram seção vazia', () => {
+    const digest = buildVigiaDigest({ userText: 'x', calls: [], memory: '   ', docs: '' })
+    expect(digest).not.toContain('Memórias relevantes')
+    expect(digest).not.toContain('Documentação do projeto')
   })
 })
 

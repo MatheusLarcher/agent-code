@@ -19,6 +19,13 @@ export const VIGIA_MAX_CALLS = 12
 export const VIGIA_MAX_USER_CHARS = 2000
 export const VIGIA_MAX_CALL_CHARS = 200
 
+/** Tetos do contexto extra (histórico, memória, docs) — o mesmo motivo: sem
+ *  teto, o custo por análise cresceria com o tamanho da conversa/projeto. */
+export const VIGIA_MAX_HISTORY_TURNS = 5
+export const VIGIA_MAX_HISTORY_CHARS = 800
+export const VIGIA_MAX_MEMORY_CHARS = 1500
+export const VIGIA_MAX_DOCS_CHARS = 1500
+
 /** Tetos das opções de resposta. Quatro é o limite do que se escolhe sem ler:
  *  uma lista maior custa mais atenção do que digitar a resposta custaria. */
 export const VIGIA_MAX_OPTIONS = 4
@@ -30,10 +37,19 @@ export interface VigiaCall {
   detail: string
 }
 
-/** O turno observado: o pedido e o que o agente fez com ele. */
+/** O turno observado: o pedido e o que o agente fez com ele, mais o contexto
+ *  que o vigia acumulou/buscou para julgar sem perguntar à toa. Os três campos
+ *  extras são opcionais e independentes — cada um some do digest se vazio. */
 export interface VigiaTurn {
   userText: string
   calls: VigiaCall[]
+  /** Um resumo de uma linha por turno anterior da mesma conversa, do mais
+   *  antigo ao mais recente. Mantido pelo próprio vigia, sem store externo. */
+  history?: string[]
+  /** Memórias do usuário relevantes ao pedido (mesmo seletor do agente principal). */
+  memory?: string
+  /** Outline/docs do projeto (mesmo construtor do agente principal). */
+  docs?: string
 }
 
 /** A dúvida pronta para a tela: a pergunta e os atalhos de resposta. `options`
@@ -60,10 +76,13 @@ Alerte apenas quando a dúvida for desse tipo:
 
 NÃO alerte sobre: estilo, organização de código, desempenho, sugestões de melhoria, risco genérico, nem sobre qualquer coisa que o agente possa descobrir sozinho lendo o projeto. Na dúvida entre alertar e calar, cale.
 
-Antes de alertar, aplique os dois cortes abaixo. Se qualquer um falhar, responda OK:
+Você recebe, quando existirem, três fontes que o agente também teria como consultar: o histórico da conversa, memórias do usuário e a documentação do projeto. Antes de alertar, confira se a resposta já está em alguma delas — se estiver, a pergunta não vale, porque o agente principal tem como descobrir sozinho, sem precisar do usuário. O padrão é CONFIAR que o agente principal é competente e vai resolver isso sozinho; alertar é a exceção, nunca o meio-termo.
+
+Antes de alertar, aplique os três cortes abaixo. Se qualquer um falhar, responda OK:
 
 1. O usuário consegue responder isso em uma frase, sem pesquisar nada?
 2. A resposta dele MUDA o que o agente vai fazer? (Se as duas respostas possíveis levam ao mesmo trabalho, a pergunta é irrelevante — cale.)
+3. A resposta NÃO está já no histórico, nas memórias ou na documentação do projeto que você recebeu?
 
 A pergunta é feita DIRETAMENTE ao usuário. Escreva como se falasse com ele: pergunta única, curta, concreta, sem preâmbulo e sem pedir confirmação genérica ("confirma?", "está correto?"). Uma pergunta só — nunca duas.
 
@@ -73,7 +92,9 @@ Responda em UMA linha, em português, num destes dois formatos exatos:
 OK
 ALERTA: <a pergunta ao usuário> | <resposta provável 1> | <resposta provável 2>`
 
-/** Monta o texto que o vigia lê: o pedido e a lista de ações, ambos capados. */
+/** Monta o texto que o vigia lê: contexto (histórico/memória/docs, quando
+ *  houver) seguido do pedido do turno e da lista de ações, tudo capado. Uma
+ *  seção de contexto vazia não aparece — não vale gastar linha em "(vazio)". */
 export function buildVigiaDigest(turn: VigiaTurn): string {
   const pedido = clip(turn.userText.trim(), VIGIA_MAX_USER_CHARS) || '(sem texto)'
   const calls = turn.calls.slice(0, VIGIA_MAX_CALLS)
@@ -82,7 +103,21 @@ export function buildVigiaDigest(turn: VigiaTurn): string {
     : '- (nenhuma ação ainda)'
   const omitidas = turn.calls.length - calls.length
   const nota = omitidas > 0 ? `\n- (+${omitidas} ações omitidas)` : ''
-  return `Pedido do usuário:\n${pedido}\n\nO que o agente fez até agora:\n${acoes}${nota}`
+
+  const sections: string[] = []
+  const history = (turn.history ?? []).slice(-VIGIA_MAX_HISTORY_TURNS)
+  if (history.length) {
+    const texto = clip(history.map((h) => `- ${h}`).join('\n'), VIGIA_MAX_HISTORY_CHARS)
+    sections.push(`Histórico recente da conversa:\n${texto}`)
+  }
+  const memory = turn.memory?.trim()
+  if (memory) sections.push(`Memórias relevantes do usuário:\n${clip(memory, VIGIA_MAX_MEMORY_CHARS)}`)
+  const docs = turn.docs?.trim()
+  if (docs) sections.push(`Documentação do projeto:\n${clip(docs, VIGIA_MAX_DOCS_CHARS)}`)
+
+  sections.push(`Pedido do usuário:\n${pedido}`)
+  sections.push(`O que o agente fez até agora:\n${acoes}${nota}`)
+  return sections.join('\n\n')
 }
 
 /** O prompt completo da chamada avulsa (papel + digest). */

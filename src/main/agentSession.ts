@@ -1070,6 +1070,23 @@ export class AgentSession {
     messageKind: AgentMessageKind = 'normal'
   ): Promise<void> {
     appRestart?.assertOpen()
+    // "/compact" only exists as a command in Claude Code's own terminal UI — the
+    // Agent SDK's streaming-input mode (what this app uses) never intercepts it;
+    // a literal "/compact" message is just sent to the model, which replies that
+    // it doesn't recognize the command. Verified against a real session before
+    // writing this: no compact_boundary event, no local-command handling exists
+    // in the SDK's Query interface. So this short-circuits it locally instead of
+    // wasting a turn on a reply nobody wants. Manual compaction isn't available
+    // in this integration; autoCompactEnabled (see the Options below) is the only
+    // real compaction this app gets, and it's automatic, not on-demand.
+    if (messageKind === 'normal' && text.trim() === '/compact') {
+      this.emit({
+        kind: 'status',
+        id: nextId(),
+        text: 'Compactação manual não está disponível aqui: o SDK usado por este app não expõe esse comando (ele só existe no terminal do Claude Code). A conversa é compactada automaticamente quando o contexto enche.'
+      })
+      return
+    }
     this.beginTurn()
     await this.handoffReady
     this.quotaRejected = false

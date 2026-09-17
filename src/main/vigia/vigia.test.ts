@@ -12,14 +12,20 @@ function result(): ChatEvent {
   return { kind: 'result', id: 'r1', isError: false, text: '', durationMs: 10 } as ChatEvent
 }
 
-function setup(opts?: { enabled?: boolean; reply?: string; now?: () => number }) {
+function setup(opts?: {
+  enabled?: boolean
+  reply?: string
+  now?: () => number
+  projectContext?: (cwd: string, query: string) => Promise<{ memory: string; docs: string }>
+}) {
   const alerts: VigiaAlertMsg[] = []
-  const ask = vi.fn(async () => opts?.reply ?? 'ALERTA: Qual o diâmetro real do eixo?')
+  const ask = vi.fn(async (_prompt: string, _model: string) => opts?.reply ?? 'ALERTA: Qual o diâmetro real do eixo?')
   const vigia = new Vigia({
     config: () => ({ enabled: opts?.enabled ?? true, model: 'claude-sonnet-5' }),
     emit: (a) => alerts.push(a),
     ask,
-    now: opts?.now
+    now: opts?.now,
+    projectContext: opts?.projectContext ?? (async () => ({ memory: '', docs: '' }))
   })
   return { vigia, alerts, ask }
 }
@@ -28,7 +34,7 @@ function setup(opts?: { enabled?: boolean; reply?: string; now?: () => number })
 describe('quando o vigia roda', () => {
   it('dispara uma vez, na 3ª chamada de ferramenta', async () => {
     const { vigia, alerts, ask } = setup()
-    vigia.noteUserMessage('c1', 'faz o suporte')
+    vigia.noteUserMessage('c1', '', 'faz o suporte')
     vigia.observe('c1', toolUse('Read'))
     vigia.observe('c1', toolUse('Read'))
     expect(ask).not.toHaveBeenCalled()
@@ -42,7 +48,7 @@ describe('quando o vigia roda', () => {
 
   it('turno curto ainda é analisado, no result', async () => {
     const { vigia, alerts } = setup()
-    vigia.noteUserMessage('c1', 'faz o suporte')
+    vigia.noteUserMessage('c1', '', 'faz o suporte')
     vigia.observe('c1', result())
     await vi.waitFor(() => expect(alerts).toHaveLength(1))
   })
@@ -61,7 +67,7 @@ describe('quando o vigia roda', () => {
 
   it('turno que morreu em erro não é analisado', async () => {
     const { vigia, ask } = setup()
-    vigia.noteUserMessage('c1', 'faz o suporte')
+    vigia.noteUserMessage('c1', '', 'faz o suporte')
     vigia.observe('c1', { kind: 'error', id: 'e1', text: 'boom' } as ChatEvent)
     vigia.observe('c1', result())
     await Promise.resolve()
@@ -71,25 +77,25 @@ describe('quando o vigia roda', () => {
   it('respeita o cooldown entre turnos da mesma conversa', async () => {
     let now = 1_000_000
     const { vigia, ask } = setup({ now: () => now })
-    vigia.noteUserMessage('c1', 'primeiro pedido')
+    vigia.noteUserMessage('c1', '', 'primeiro pedido')
     vigia.observe('c1', result())
     await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1))
 
     now += VIGIA_COOLDOWN_MS - 1
-    vigia.noteUserMessage('c1', 'segundo pedido')
+    vigia.noteUserMessage('c1', '', 'segundo pedido')
     vigia.observe('c1', result())
     await Promise.resolve()
     expect(ask).toHaveBeenCalledTimes(1)
 
     now += 2
-    vigia.noteUserMessage('c1', 'terceiro pedido')
+    vigia.noteUserMessage('c1', '', 'terceiro pedido')
     vigia.observe('c1', result())
     await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(2))
   })
 
   it('desligado na config não chama o modelo', async () => {
     const { vigia, ask, alerts } = setup({ enabled: false })
-    vigia.noteUserMessage('c1', 'faz o suporte')
+    vigia.noteUserMessage('c1', '', 'faz o suporte')
     vigia.observe('c1', result())
     await Promise.resolve()
     expect(ask).not.toHaveBeenCalled()
@@ -100,7 +106,7 @@ describe('quando o vigia roda', () => {
 describe('o que o vigia emite', () => {
   it('OK do modelo não vira aviso', async () => {
     const { vigia, alerts, ask } = setup({ reply: 'OK' })
-    vigia.noteUserMessage('c1', 'pedido claro')
+    vigia.noteUserMessage('c1', '', 'pedido claro')
     vigia.observe('c1', result())
     await vi.waitFor(() => expect(ask).toHaveBeenCalled())
     expect(alerts).toHaveLength(0)
@@ -111,12 +117,12 @@ describe('o que o vigia emite', () => {
   it('não repete o mesmo alerta na mesma conversa', async () => {
     let now = 1_000_000
     const { vigia, alerts } = setup({ now: () => now })
-    vigia.noteUserMessage('c1', 'pedido 1')
+    vigia.noteUserMessage('c1', '', 'pedido 1')
     vigia.observe('c1', result())
     await vi.waitFor(() => expect(alerts).toHaveLength(1))
 
     now += VIGIA_COOLDOWN_MS + 1
-    vigia.noteUserMessage('c1', 'pedido 2')
+    vigia.noteUserMessage('c1', '', 'pedido 2')
     vigia.observe('c1', result())
     await Promise.resolve()
     await Promise.resolve()
@@ -125,7 +131,7 @@ describe('o que o vigia emite', () => {
 
   it('as respostas prováveis chegam ao alerta, separadas da pergunta', async () => {
     const { vigia, alerts } = setup({ reply: 'ALERTA: O alvo é o app ou a extensão? | só o app | os dois' })
-    vigia.noteUserMessage('c1', 'pedido')
+    vigia.noteUserMessage('c1', '', 'pedido')
     vigia.observe('c1', result())
     await vi.waitFor(() => expect(alerts).toHaveLength(1))
     expect(alerts[0].text).toBe('O alvo é o app ou a extensão?')
@@ -134,10 +140,10 @@ describe('o que o vigia emite', () => {
 
   it('o mesmo alerta em OUTRA conversa passa', async () => {
     const { vigia, alerts } = setup()
-    vigia.noteUserMessage('c1', 'pedido')
+    vigia.noteUserMessage('c1', '', 'pedido')
     vigia.observe('c1', result())
     await vi.waitFor(() => expect(alerts).toHaveLength(1))
-    vigia.noteUserMessage('c2', 'pedido')
+    vigia.noteUserMessage('c2', '', 'pedido')
     vigia.observe('c2', result())
     await vi.waitFor(() => expect(alerts).toHaveLength(2))
     expect(alerts[1].convId).toBe('c2')
@@ -153,7 +159,7 @@ describe('o que o vigia emite', () => {
         throw new Error('rede caiu')
       }
     })
-    vigia.noteUserMessage('c1', 'pedido')
+    vigia.noteUserMessage('c1', '', 'pedido')
     expect(() => vigia.observe('c1', result())).not.toThrow()
     await Promise.resolve()
     await Promise.resolve()
@@ -162,10 +168,65 @@ describe('o que o vigia emite', () => {
 
   it('dispose esquece a conversa', async () => {
     const { vigia, ask } = setup()
-    vigia.noteUserMessage('c1', 'pedido')
+    vigia.noteUserMessage('c1', '', 'pedido')
     vigia.dispose('c1')
     vigia.observe('c1', result())
     await Promise.resolve()
     expect(ask).not.toHaveBeenCalled()
+  })
+})
+
+describe('contexto extra: histórico, memória e docs', () => {
+  it('cwd novo em noteUserMessage não quebra o fluxo', async () => {
+    const { vigia, alerts } = setup()
+    vigia.noteUserMessage('c1', 'C:/projeto', 'faz o suporte')
+    vigia.observe('c1', result())
+    await vi.waitFor(() => expect(alerts).toHaveLength(1))
+  })
+
+  it('o histórico do turno anterior chega ao prompt do turno seguinte', async () => {
+    let now = 1_000_000
+    const { vigia, ask } = setup({ now: () => now })
+    vigia.noteUserMessage('c1', '', 'primeiro pedido bem específico')
+    vigia.observe('c1', result())
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1))
+
+    now += VIGIA_COOLDOWN_MS + 1
+    vigia.noteUserMessage('c1', '', 'segundo pedido')
+    vigia.observe('c1', result())
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(2))
+
+    const [promptSegundoTurno] = ask.mock.calls[1]
+    expect(promptSegundoTurno).toContain('Histórico recente da conversa')
+    expect(promptSegundoTurno).toContain('primeiro pedido bem específico')
+  })
+
+  it('memória e docs do projectContext injetado entram no prompt', async () => {
+    const { vigia, ask } = setup({
+      projectContext: async () => ({ memory: 'usuário prefere TypeScript', docs: 'ARQUITETURA.md: ...' })
+    })
+    vigia.noteUserMessage('c1', 'C:/projeto', 'pedido qualquer')
+    vigia.observe('c1', result())
+    await vi.waitFor(() => expect(ask).toHaveBeenCalled())
+
+    const [prompt] = ask.mock.calls[0]
+    expect(prompt).toContain('usuário prefere TypeScript')
+    expect(prompt).toContain('ARQUITETURA.md')
+  })
+
+  // Mesma tolerância a falha do PO: a busca de contexto nunca pode derrubar o vigia.
+  it('erro no projectContext injetado degrada em silêncio, sem quebrar a análise', async () => {
+    const { vigia, alerts } = setup({
+      projectContext: async () => {
+        throw new Error('falhou')
+      }
+    })
+    vigia.noteUserMessage('c1', 'C:/projeto', 'pedido')
+    expect(() => vigia.observe('c1', result())).not.toThrow()
+    // Sem tratamento de erro dentro do Vigia, a rejeição derrubaria a promise:
+    // aqui verificamos que o teste não trava e nada quebra — mesmo padrão do
+    // teste de falha do modelo (`ask`) já existente.
+    await Promise.resolve()
+    await Promise.resolve()
   })
 })

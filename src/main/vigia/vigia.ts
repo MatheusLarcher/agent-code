@@ -1,5 +1,8 @@
 import { askObserver } from '../observerQuery'
 import type { ChatEvent, VigiaAlertMsg, VigiaConfig } from '../../shared/ipc'
+import { getCacheInfo } from '../store'
+import { buildProjectOutline } from '../projectOutline'
+import { buildDynamicMemoryContext } from '../memoryIndex'
 import {
   alertFingerprint,
   buildVigiaPrompt,
@@ -8,6 +11,7 @@ import {
   VIGIA_CALL_TRIGGER,
   VIGIA_COOLDOWN_MS,
   VIGIA_MAX_CALLS,
+  VIGIA_MAX_HISTORY_TURNS,
   type VigiaCall
 } from './vigiaPrompt'
 
@@ -36,16 +40,31 @@ export interface VigiaDeps {
   /** A chamada ao modelo. Injetável para o teste não subir o SDK. */
   ask?(prompt: string, model: string): Promise<string>
   now?(): number
+  /**
+   * Memórias do usuário e docs do projeto relevantes ao pedido do turno.
+   * Sem injeção (produção), chama `buildProjectOutline`/`buildDynamicMemoryContext`
+   * — os mesmos construtores do agente principal. Nunca lança: sem `cwd`, sem
+   * dado, ou com a busca falhando, devolve tudo vazio — o vigia só perde a
+   * seção extra do digest, nunca quebra por causa disso.
+   */
+  projectContext?(cwd: string, query: string): Promise<{ memory: string; docs: string }>
 }
 
 interface ConvState {
   /** null = nenhum turno do usuário em aberto; sem isso o vigia não roda. */
   userText: string | null
+  cwd: string
   calls: VigiaCall[]
   /** Uma análise por turno: marcado ANTES da chamada (que é assíncrona). */
   fired: boolean
   lastRunAt: number
   seen: Set<string>
+  /** Um resumo de uma linha por turno anterior, do mais antigo ao mais
+   *  recente — a memória de curto prazo do próprio vigia, sem store externo. */
+  history: string[]
+  /** Se a análise do turno atual já emitiu um alerta — usado só para compor
+   *  o resumo desse turno quando o próximo `noteUserMessage` o arquivar. */
+  alertedThisTurn: boolean
 }
 
 export class Vigia {
@@ -56,13 +75,21 @@ export class Vigia {
 
   /** Um turno começou. Só a partir daqui há algo para julgar — retomada de
    *  sessão e turno de recuperação não passam por aqui, e é o que se quer. */
-  noteUserMessage(convId: string, text: string): void {
+  noteUserMessage(convId: string, cwd: string, text: string): void {
     // O cooldown e o dedupe são da CONVERSA, não do turno: precisam sobreviver
     // ao turno novo, senão o mesmo alerta voltaria a cada mensagem.
     const conv = this.conv(convId)
+    // Arquiva o turno anterior no histórico ANTES de sobrescrevê-lo — é assim
+    // que o vigia acumula contexto turno a turno, sem ler um histórico externo.
+    if (conv.userText !== null) {
+      conv.history.push(summarizeTurn(conv.userText, conv.alertedThisTurn))
+      if (conv.history.length > VIGIA_MAX_HISTORY_TURNS) conv.history.shift()
+    }
     conv.userText = text
+    conv.cwd = cwd
     conv.calls = []
     conv.fired = false
+    conv.alertedThisTurn = false
   }
 
   /** Alimentado pelo tee de eventos do main. Nunca lança. */
@@ -94,7 +121,16 @@ export class Vigia {
   private conv(convId: string): ConvState {
     let conv = this.state.get(convId)
     if (!conv) {
-      conv = { userText: null, calls: [], fired: false, lastRunAt: 0, seen: new Set() }
+      conv = {
+        userText: null,
+        cwd: '',
+        calls: [],
+        fired: false,
+        lastRunAt: 0,
+        seen: new Set(),
+        history: [],
+        alertedThisTurn: false
+      }
       this.state.set(convId, conv)
     }
     return conv
@@ -111,7 +147,23 @@ export class Vigia {
     if (now - conv.lastRunAt < VIGIA_COOLDOWN_MS) return
     conv.lastRunAt = now
 
-    const prompt = buildVigiaPrompt({ userText: conv.userText, calls: conv.calls })
+    // Tolerância a falha da MESMA injeção, não só do fallback: uma dependência
+    // injetada que rejeita não pode derrubar a análise, igual ao `listConvTasks`
+    // do PO — o vigia só perde a seção extra do digest.
+    let memory = ''
+    let docs = ''
+    try {
+      ;({ memory, docs } = await (this.deps.projectContext ?? defaultProjectContext)(conv.cwd, conv.userText))
+    } catch {
+      // segue sem contexto extra
+    }
+    const prompt = buildVigiaPrompt({
+      userText: conv.userText,
+      calls: conv.calls,
+      history: conv.history,
+      memory,
+      docs
+    })
     let raw: string
     try {
       raw = await (this.deps.ask ?? askVigia)(prompt, cfg.model)
@@ -126,6 +178,7 @@ export class Vigia {
     const fingerprint = alertFingerprint(verdict.question)
     if (conv.seen.has(fingerprint)) return
     conv.seen.add(fingerprint)
+    conv.alertedThisTurn = true
 
     this.deps.emit({
       convId,
@@ -139,3 +192,26 @@ export class Vigia {
 
 /** A chamada real é a mesma de todo observador do app (ver observerQuery.ts). */
 export const askVigia = askObserver
+
+/** Resumo de uma linha do turno para o histórico interno do vigia. */
+function summarizeTurn(userText: string, alerted: boolean): string {
+  const pedido = userText.trim().replace(/\s+/g, ' ').slice(0, 200) || '(sem texto)'
+  return `"${pedido}"${alerted ? ' (o vigia alertou)' : ''}`
+}
+
+/** Fallback de produção: os mesmos construtores que o agente principal usa
+ *  para docs/memória (ver `agentSession.ts`), tolerante a falha e sem `cwd`. */
+async function defaultProjectContext(
+  cwd: string,
+  query: string
+): Promise<{ memory: string; docs: string }> {
+  if (!cwd) return { memory: '', docs: '' }
+  try {
+    const docsPromise = buildProjectOutline(cwd)
+    const memory = buildDynamicMemoryContext(getCacheInfo().memoriesDir, query, false)
+    const docs = await docsPromise
+    return { memory, docs }
+  } catch {
+    return { memory: '', docs: '' }
+  }
+}
