@@ -5,7 +5,8 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0.."
 
 echo ============================================
-echo   Agent Code - gerando instalador...
+echo   Agent Code - Larcher Tech
+echo   gerando instalador...
 echo ============================================
 echo.
 
@@ -26,6 +27,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM --- Controle de versao automatico: incrementa o patch a cada execucao ---
+set "VERSAO="
+for /f "delims=" %%V in ('node "%~dp0bump-version.mjs"') do set "VERSAO=%%V"
+if not defined VERSAO (
+    echo [ERRO] Nao foi possivel incrementar a versao em package.json.
+    echo.
+    pause
+    exit /b 1
+)
+echo Versao desta build: !VERSAO!
+echo.
+
 echo Executando npm run package:win...
 echo.
 call npm run package:win
@@ -40,7 +53,7 @@ if errorlevel 1 (
 
 echo.
 set "ARTIFACT="
-for /f "delims=" %%F in ('dir /b /a:-d /o-d "dist\AgentCode-*-setup.exe" 2^>nul') do if not defined ARTIFACT set "ARTIFACT=dist\%%F"
+if exist "dist\AgentCode-!VERSAO!-setup.exe" set "ARTIFACT=dist\AgentCode-!VERSAO!-setup.exe"
 
 if not defined ARTIFACT (
     echo [ERRO] O empacotamento terminou, mas nenhum exe foi encontrado em dist\.

@@ -238,6 +238,8 @@ export function renderMemoryIndex(dir: string, rootIndex: string): string {
 }
 
 const MAX_SCANNED_MEMORIES = 250
+/** Guarda de tamanho: uma memória acima disso é PULADA, nunca cortada ao meio.
+ * Injetar meio arquivo é pior que não injetar — o modelo age no que faltou. */
 const MAX_MEMORY_BYTES = 64 * 1024
 const MAX_SELECTED_MEMORIES = 3
 const MAX_EXCERPT_CHARS = 1_600
@@ -248,7 +250,7 @@ const STOP_WORDS = new Set(['a', 'ao', 'as', 'com', 'da', 'de', 'do', 'e', 'em',
  * Old/manual notes can still contain common credential assignments, so protect
  * the automatic excerpt path even though normal memory_propose writes only a
  * {{secret:name}} reference. */
-function redactMemorySecrets(text: string): string {
+export function redactMemorySecrets(text: string): string {
   return text
     .replace(/\{\{secret:[^}]+\}\}/giu, '[secret reference withheld]')
     .replace(
@@ -279,21 +281,37 @@ export function buildMemoryIndexContext(dir: string): string {
   return renderMemoryIndex(dir, readRootIndex(dir))
 }
 
-/** Fresh optional index plus bounded excerpts relevant to this user turn. Never throws. */
-export function buildDynamicMemoryContext(dir: string, query: string, includeIndex = true): string {
-  const index = includeIndex ? buildMemoryIndexContext(dir) : ''
+export interface RankedMemory {
+  file: MemoryFile
+  /** Body read while scoring. Do not inject it: it can be stale by request time. */
+  body: string
+  score: number
+}
+
+/** Pontuação mínima para um trecho lexical valer a pena no prompt. */
+export const MIN_LEXICAL_SCORE = 3
+
+/**
+ * Score every candidate memory against this user turn, best first. The only
+ * relevance ranker in the app — the TypeSafe selector reuses it as its
+ * pre-filter when there are more candidates than `choice` accepts. Never throws.
+ *
+ * `candidates` defaults to the first `MAX_SCANNED_MEMORIES` files on disk; pass
+ * an explicit list to rank a different (or complete) set.
+ */
+export function rankMemoriesByQuery(dir: string, query: string, candidates?: MemoryFile[]): RankedMemory[] {
   const terms = normalizedTerms(query)
-  if (terms.length === 0) return index
+  if (terms.length === 0) return []
 
   let root: string
   try {
     root = realpathSync(dir)
   } catch {
-    return index
+    return []
   }
 
-  const ranked: Array<{ file: MemoryFile; body: string; score: number }> = []
-  for (const file of listMemoryFiles(dir).slice(0, MAX_SCANNED_MEMORIES)) {
+  const ranked: RankedMemory[] = []
+  for (const file of candidates ?? listMemoryFiles(dir).slice(0, MAX_SCANNED_MEMORIES)) {
     try {
       const full = realpathSync(join(root, ...file.relPath.split('/')))
       const size = statSync(full).size
@@ -308,13 +326,50 @@ export function buildDynamicMemoryContext(dir: string, query: string, includeInd
         else if (metadata.some((value) => value.includes(term) || term.includes(value))) score += 3
         if (content.includes(term)) score += 1
       }
-      if (score >= 3) ranked.push({ file, body, score })
+      ranked.push({ file, body, score })
     } catch {
       // A memory can disappear or become unreadable while a message is being sent.
     }
   }
 
   ranked.sort((a, b) => b.score - a.score || a.file.relPath.localeCompare(b.file.relPath))
+  return ranked
+}
+
+/**
+ * The COMPLETE current text of one memory, re-read from disk and redacted.
+ *
+ * `relPath` is treated as untrusted (it can come back from a remote decision):
+ * the resolved path must stay inside the memories root. `null` when it escapes,
+ * is unreadable, empty, binary or larger than `MAX_MEMORY_BYTES` — a memory is
+ * skipped whole, never truncated.
+ */
+export function readMemoryBody(dir: string, relPath: string): string | null {
+  try {
+    const root = realpathSync(dir)
+    const full = realpathSync(join(root, ...relPath.split('/')))
+    if (!pathInside(root, full)) return null
+    const size = statSync(full).size
+    if (size === 0 || size > MAX_MEMORY_BYTES) return null
+    const body = readFileSync(full, 'utf8')
+    if (body.includes('\0')) return null
+    const redacted = redactMemorySecrets(body).trim()
+    return redacted || null
+  } catch {
+    return null
+  }
+}
+
+/** O cabeçalho de uma memória injetada. Um só formato, os dois seletores. */
+export function memoryContextBlock(relPath: string, text: string): string {
+  return `--- Memória relevante: ${relPath} ---\n${text}`
+}
+
+/** Fresh optional index plus bounded excerpts relevant to this user turn. Never throws. */
+export function buildDynamicMemoryContext(dir: string, query: string, includeIndex = true): string {
+  const index = includeIndex ? buildMemoryIndexContext(dir) : ''
+  const ranked = rankMemoriesByQuery(dir, query).filter((match) => match.score >= MIN_LEXICAL_SCORE)
+
   let remaining = MAX_TOTAL_EXCERPT_CHARS
   const excerpts: string[] = []
   for (const match of ranked.slice(0, MAX_SELECTED_MEMORIES)) {
@@ -322,7 +377,7 @@ export function buildDynamicMemoryContext(dir: string, query: string, includeInd
     const excerpt = redactMemorySecrets(match.body).trim().slice(0, Math.min(MAX_EXCERPT_CHARS, remaining))
     if (!excerpt) continue
     remaining -= excerpt.length
-    excerpts.push(`--- Memória relevante: ${match.file.relPath} ---\n${excerpt}`)
+    excerpts.push(memoryContextBlock(match.file.relPath, excerpt))
   }
   if (excerpts.length === 0) return index
   return index ? `${index}\n\n${excerpts.join('\n\n')}` : excerpts.join('\n\n')

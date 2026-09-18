@@ -25,6 +25,7 @@ import {
   IconShieldCheck,
   IconSettings,
   IconSliders,
+  IconSparkStar,
   IconUnlock
 } from '../components/Icons'
 
@@ -82,6 +83,11 @@ export function SettingsModal({
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
   const [showOpenAiKey, setShowOpenAiKey] = useState(false)
   const [showOllamaKey, setShowOllamaKey] = useState(false)
+  const [showTypeSafeKey, setShowTypeSafeKey] = useState(false)
+  /** A chave do TypeSafe já gravada. A aba Geral não tem botão Salvar: o campo
+   *  persiste ao perder o foco, e isto evita reescrever o que não mudou (cada
+   *  gravação passa por cifra + banco). */
+  const savedTypeSafeKey = useRef('')
   const [loaded, setLoaded] = useState(false)
   const [cache, setCache] = useState<CacheInfo | null>(null)
   const [codex, setCodex] = useState<CodexStatus>({ connected: false })
@@ -94,7 +100,11 @@ export function SettingsModal({
       // Cai nos defaults por campo ausente: a tela de Configurações não pode
       // quebrar por causa de uma config antiga/parcial vinda do banco — e um
       // grupo aninhado ausente (ex.: `vigia`) derrubaria a aba inteira.
-      .then((c) => setCfg({ ...DEFAULT_CONFIG, ...c }))
+      .then((c) => {
+        const merged = { ...DEFAULT_CONFIG, ...c }
+        savedTypeSafeKey.current = merged.typesafe.apiKey
+        setCfg(merged)
+      })
       .catch(() => undefined)
       .finally(() => setLoaded(true))
     void window.api.getCacheInfo().then(setCache)
@@ -137,12 +147,25 @@ export function SettingsModal({
     if (!next) return
     setCache(next)
     // Re-read config from the newly selected folder so the screen reflects it.
-    void window.api.getConfig().then(setCfg)
+    void window.api.getConfig().then((c) => {
+      savedTypeSafeKey.current = c.typesafe.apiKey
+      setCfg(c)
+    })
     notify(
       'sucesso',
       `Pasta de dados movida para: ${next.dir}. Seus dados (banco + memórias) foram transferidos.`
     )
     window.dispatchEvent(new Event('agent-code-request-reload'))
+  }
+
+  /** Grava a chave do TypeSafe ao sair do campo. Salvar a cada tecla cifraria e
+   *  escreveria no banco caractere por caractere. */
+  const commitTypeSafeKey = (): void => {
+    const apiKey = cfg.typesafe.apiKey.trim()
+    if (apiKey === savedTypeSafeKey.current) return
+    savedTypeSafeKey.current = apiKey
+    setCfg((c) => ({ ...c, typesafe: { ...c.typesafe, apiKey } }))
+    void window.api.setConfig({ typesafe: { ...cfg.typesafe, apiKey } })
   }
 
   const connectCodex = async (): Promise<void> => {
@@ -477,6 +500,60 @@ export function SettingsModal({
                         ))}
                       </select>
                     </div>
+                  )}
+                </section>
+
+                <section className={`settings-section settings-switch-section ${cfg.typesafe.enabled ? 'on' : ''}`}>
+                  <label className="settings-switch-row">
+                    <span className="settings-switch-text">
+                      <strong>
+                        <IconSparkStar size={15} /> TypeSafe — decisões rápidas em vez de uma conversa inteira
+                      </strong>
+                      <span className="settings-desc">
+                        Um serviço externo (typesafe.ai) que responde perguntas fechadas — escolher entre
+                        opções, dar uma nota, sim ou não — em cerca de 100 ms, com a probabilidade de cada
+                        resposta. Serve para as decisões pequenas que hoje custam uma chamada inteira de
+                        modelo. Precisa de chave própria e é cobrado por token de entrada; se falhar ou
+                        demorar, o app segue sem a decisão.
+                      </span>
+                    </span>
+                    <input
+                      className="switch-input"
+                      type="checkbox"
+                      checked={cfg.typesafe.enabled}
+                      onChange={(event) => {
+                        const on = event.target.checked
+                        setCfg((c) => ({ ...c, typesafe: { ...c.typesafe, enabled: on } }))
+                        void window.api.setConfig({ typesafe: { ...cfg.typesafe, enabled: on } })
+                      }}
+                    />
+                    <span className="switch-visual" aria-hidden="true" />
+                  </label>
+                  {cfg.typesafe.enabled && (
+                    <label className="settings-field">
+                      <span className="settings-field-label">API key do TypeSafe</span>
+                      <div className="settings-key-row">
+                        <input
+                          className="settings-input"
+                          type={showTypeSafeKey ? 'text' : 'password'}
+                          value={cfg.typesafe.apiKey}
+                          placeholder="Cole a key de typesafe.ai"
+                          autoComplete="off"
+                          spellCheck={false}
+                          disabled={!loaded}
+                          onChange={(e) =>
+                            setCfg((c) => ({ ...c, typesafe: { ...c.typesafe, apiKey: e.target.value } }))
+                          }
+                          onBlur={commitTypeSafeKey}
+                        />
+                        <RevealButton shown={showTypeSafeKey} onToggle={() => setShowTypeSafeKey((v) => !v)} />
+                      </div>
+                      <span className="settings-hint">
+                        Gere em typesafe.ai. Fica cifrada só no seu computador e é salva ao sair do campo. Se
+                        deixar em branco, o app procura a credencial <code>typesafe_api_key</code> no cofre de
+                        segredos.
+                      </span>
+                    </label>
                   )}
                 </section>
               </>

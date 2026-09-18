@@ -23,12 +23,15 @@ import { RelayClient } from './remote/relayClient'
 import { RemotePairingStore } from './remote/remotePairing'
 import { buildRemoteApk } from './remote/buildApk'
 import {
+  AUTO_MODEL,
   Channels,
   DEFAULT_CONFIG,
   DEFAULT_LOCAL_SPEECH_MODEL,
+  isAutoModel,
   LOCAL_SPEECH_MODELS,
   REMOTE_RELAY_WS,
   type BoardItemStatus,
+  type EffortLevel,
   type SpeechSetupProgress
 } from '../shared/ipc'
 import { initializeConfigPersistence, loadConfig, updateConfig } from './config'
@@ -47,6 +50,7 @@ import { Vigia } from './vigia/vigia'
 import { BoardService } from './board/boardService'
 import { Po } from './po/po'
 import { Memorista } from './memoria/memorista'
+import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
 import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
 import { hashJson, normalizeJson } from './persistence/hashes'
@@ -69,6 +73,7 @@ import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
 import { readProjectIcon } from './projectIcon'
 import { syncCacheSkills } from './skillManager'
+import { resolveAutoStart, type AutoStartDecision } from './typesafe'
 import type {
   AgentMessageKind,
   ChatEvent,
@@ -133,6 +138,13 @@ const sessions = new Map<string, ProviderFailoverSession>()
 /** Pasta do projeto de cada conversa viva. O quadro é por projeto, e quem
  *  precisa dela (PO) age fora do caminho onde `opts.cwd` está em escopo. */
 const sessionCwds = new Map<string, string>()
+/** O par modelo+esforço em que cada conversa no modo Automático está rodando
+ *  AGORA. Existe primeiro por custo de boot: o modelo é fixo pela vida da sessão
+ *  do SDK, então mudar de par obriga a recriar a sessão — e recriá-la quando a
+ *  escolha do turno repete a anterior seria pagar um boot por nada. O `decided`
+ *  diz se esse par saiu de uma decisão do TypeSafe: só ele entra na histerese do
+ *  turno seguinte (ver `AutoLivePair` em `typesafe/execution.ts`). */
+const autoSessions = new Map<string, { model: string; effort: EffortLevel; decided: boolean }>()
 
 // Which files the agent actually offered for download. Fed from the event tee
 // below, consulted by the `fileDownload` handler.
@@ -275,6 +287,9 @@ const memorista = new Memorista({
   config: () => loadConfig().memorista ?? DEFAULT_CONFIG.memorista,
   memory: () => memoryService(),
   vault: () => secretSink(),
+  // O que o agente já tinha em mãos neste turno: um fato já injetado não vira
+  // memória nova, vira duplicata (ver memoriasUsadas.ts).
+  usedMemories: (convId) => usedMemories(convId),
   diagnose: (diagnostic) => send(Channels.memoristaProviderDiagnostic, {
     ...diagnostic,
     id: randomUUID(),
@@ -1302,11 +1317,63 @@ function registerIpc(): void {
     }
   )
 
+  /**
+   * O modo Automático, resolvido AQUI e não no renderer.
+   *
+   * A sessão do SDK fixa o modelo pela vida dela, então a escolha do turno tem
+   * de acontecer antes de a sessão existir — e este handler é o único ponto que
+   * tem ao mesmo tempo a mensagem que vai ser enviada e o poder de criar a
+   * sessão. A decisão em si mora em `typesafe/execution.ts` (testável sem
+   * Electron); aqui fica só o IO dela.
+   */
+  const autoStart = async (opts: StartAgentOptions): Promise<AutoStartDecision> => {
+    const decision = await resolveAutoStart({
+      autoPrompt: opts.autoPrompt,
+      live: autoSessions.get(opts.convId),
+      hasSession: sessions.has(opts.convId)
+    })
+    // A escolha é anunciada em TODO turno, inclusive quando repete o par
+    // anterior: o que o usuário precisa saber é COM QUE modelo a mensagem dele
+    // saiu, não se isso mudou desde a última. Vai como `provider-switch`, que o
+    // chat e o cliente do celular já renderizam como nota de sistema.
+    //
+    // Sem nota não há o que anunciar — um religar sem turno não escolheu nada.
+    if (decision.note) {
+      const event: ChatEvent = {
+        kind: 'provider-switch',
+        id: randomUUID(),
+        fromModel: AUTO_MODEL,
+        model: decision.execution.model,
+        effort: decision.execution.effort,
+        fastMode: false,
+        text: decision.note
+      }
+      send(Channels.agentEvent, { convId: opts.convId, event })
+      remote.broadcast(opts.convId, event)
+    }
+    return decision
+  }
+
   ipcMain.handle(Channels.agentStart, async (_e, opts: StartAgentOptions) => {
     assertStorageWritable()
     const { convId } = opts
     const project = await fsStat(opts.cwd).catch(() => null)
     if (!project?.isDirectory()) throw new Error('A pasta local do projeto não foi localizada nesta instalação.')
+    if (isAutoModel(opts.model)) {
+      const auto = await autoStart(opts)
+      // Guardado ANTES do atalho de reaproveitamento: mesmo com o par repetindo,
+      // a origem dele pode ter mudado (o fallback do turno anterior virou
+      // decisão agora), e é a origem que manda no turno seguinte.
+      autoSessions.set(convId, auto.live)
+      if (auto.reuse) return { ok: true }
+      // O sentinel `auto` NUNCA chega ao provedor: daqui para baixo a sessão é
+      // montada no par concreto que a decisão devolveu. O parâmetro é reatribuído
+      // de propósito — todo o resto do handler já lê deste objeto, e duplicá-lo
+      // num segundo nome abriria espaço para um caminho continuar no sentinel.
+      opts = { ...opts, model: auto.execution.model, effort: auto.execution.effort }
+    } else {
+      autoSessions.delete(convId)
+    }
     sessionCwds.set(convId, opts.cwd)
     // Replace only THIS conversation's session; others keep running.
     sessions.get(convId)?.dispose()
@@ -1448,9 +1515,11 @@ function registerIpc(): void {
   ipcMain.handle(Channels.agentDispose, (_e, convId: string) => {
     sessions.get(convId)?.dispose()
     sessions.delete(convId)
+    autoSessions.delete(convId)
     vigia.dispose(convId)
     po.dispose(convId)
     memorista.dispose(convId)
+    forgetUsedMemories(convId)
     board.dispose(convId)
     sessionCwds.delete(convId)
     void releaseSessionLease(convId)
@@ -1633,6 +1702,7 @@ app.whenReady().then(async () => {
         void session.waitForIdle().catch(() => undefined).finally(() => {
           session.dispose()
           sessions.delete(convId)
+          autoSessions.delete(convId)
           void releaseSessionLease(convId)
         })
       }

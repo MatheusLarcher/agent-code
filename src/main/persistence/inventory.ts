@@ -60,8 +60,19 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.memorista.model',
       'config.board.requirePlan',
       'config.board.po.enabled',
-      'config.board.po.model'
+      'config.board.po.model',
+      'config.typesafe.enabled',
+      'config.typesafe.apiKey',
+      'config.typesafe.minConfidence'
     ]
+  },
+  {
+    id: 'typesafe-usage',
+    owner: 'src/main/typesafe/usage.ts',
+    surface: 'main-kv',
+    postgresScope: 'device',
+    authoritativeInPostgresMode: 'postgres',
+    keys: ['agentcode.typesafe.usage.v1']
   },
   {
     id: 'codex-auth',

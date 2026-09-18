@@ -4,13 +4,16 @@ import { OPENAI_MODELS, OLLAMA_MODELS, CONTEXT_LIMITS } from '../shared/ipc'
 import { toCodexRequest, toCodexWireRequest } from './codexProtocol'
 
 const capture = vi.hoisted(() => ({ queries: [] as Array<{ options: Record<string, unknown>; prompt: { values: Array<{ message: { content: string } }> } }> }))
-vi.mock('./config', () => ({ loadConfig: () => ({ windowsControlEnabled: false, ollama: { apiKey: 'synthetic', enabled: true } }) }))
+// `typesafe` desligado: o contrato de prompt verificado aqui é o de sempre —
+// catálogo no system prompt e excertos lexicais no contexto vivo.
+vi.mock('./config', () => ({ loadConfig: () => ({ windowsControlEnabled: false, ollama: { apiKey: 'synthetic', enabled: true }, typesafe: { enabled: false, apiKey: '', minConfidence: 0.6 } }) }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => true }))
 vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: async () => ({ baseUrl: 'http://127.0.0.1:1', secret: 'test' }), FAST_MODE_TOKEN_SUFFIX: '+fast' }))
 vi.mock('./store', () => ({ getCacheInfo: () => ({ dir: '/cache', skillsDir: '/cache/skills', memoriesDir: '/cache/memories' }) }))
 vi.mock('./projectOutline', () => ({ buildProjectOutline: async () => '[PROJECT_DOCS_CONTEXT]\nDOC_SENTINEL\n[/PROJECT_DOCS_CONTEXT]' }))
 vi.mock('./skillManager', () => ({ ensureNativeSkillRoot: () => ({ root: '/native', errors: [] }) }))
-vi.mock('./memoryIndex', () => ({
+vi.mock('./memoryIndex', async (original) => ({
+  ...await original<typeof import('./memoryIndex')>(),
   memoryCatalogFilesystemVersion: () => 'memory-v1',
   createMemoryCatalogSnapshot: () => ({ version: 'memory-v1', filesystemVersion: 'memory-v1', catalog: 'MEMORY_SENTINEL' }),
   renderMemoryCatalogUpdate: () => 'MEMORY_SENTINEL',

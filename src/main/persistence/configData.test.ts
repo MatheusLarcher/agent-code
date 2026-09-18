@@ -13,6 +13,24 @@ describe('configuração persistida', () => {
     expect(() => mergeAppConfig(enabled, { secretVaultEnabled: 'true' })).toThrow()
   })
 
+  it('mantém o TypeSafe DESLIGADO por padrão e faz merge profundo do bloco', () => {
+    // Serviço externo e pago, com chave do usuário: não pode ligar sozinho.
+    expect(defaultAppConfig().typesafe).toEqual({ enabled: false, apiKey: '', minConfidence: 0.6 })
+    expect(parseStoredAppConfig('{}').typesafe.enabled).toBe(false)
+
+    // Gravar só o interruptor não pode apagar a chave (armadilha do spread raso).
+    const comChave = mergeAppConfig(defaultAppConfig(), { typesafe: { apiKey: 'ts-key' } })
+    expect(mergeAppConfig(comChave, { typesafe: { enabled: true } }).typesafe).toEqual({
+      enabled: true,
+      apiKey: 'ts-key',
+      minConfidence: 0.6
+    })
+
+    // Limiar fora de 0..1 não significa nada: ou cala o serviço, ou aceita chute.
+    expect(() => mergeAppConfig(defaultAppConfig(), { typesafe: { minConfidence: 1.5 } })).toThrow()
+    expect(() => mergeAppConfig(defaultAppConfig(), { typesafe: { enabled: 'sim' } })).toThrow()
+  })
+
   it('preenche campos ausentes e faz merge profundo dos grupos', () => {
     const parsed = parseStoredAppConfig(
       JSON.stringify({

@@ -18,7 +18,10 @@ import type {
   TabKind
 } from '@shared/ipc'
 import {
+  AUTO_MODEL_OPTION,
+  CLAUDE_MODELS,
   contextLimitFor,
+  isAutoModel,
   isOllamaModel,
   isOpenAIModel,
   modelSupportsFastMode,
@@ -28,7 +31,7 @@ import {
   DEFAULT_EFFORT,
   usageProviderOf
 } from '@shared/ipc'
-import type { EffortLevel, ProjectTree } from '@shared/ipc'
+import type { AutoPrompt, AutoPromptTurn, EffortLevel, ProjectTree } from '@shared/ipc'
 import { fileTouches, turnsOf } from './projectActivity'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
@@ -79,12 +82,10 @@ import { ipcErrorMessage } from './ipcError'
 
 export type { UserMessage, UIMessage } from './types'
 
-const MODELS = [
-  { id: 'claude-opus-5', label: 'Opus 5' },
-  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
-  { id: 'claude-fable-5-1', label: 'Fable 5.1' }
-]
+/** The Claude models in the selector. Defined in the shared contract because
+ *  the "Automático" mode picks from this SAME list in the main process — see
+ *  CLAUDE_MODELS there. */
+const MODELS: ReadonlyArray<{ id: string; label: string }> = CLAUDE_MODELS
 
 /** Labels for models no longer offered in the selector (Opus 4.8 was retired from
  *  the list when Opus 5 shipped). Old conversations keep running on whatever model
@@ -124,6 +125,44 @@ function effortLevelsFor(modelId: string | undefined): { value: string; label: s
   const levels = MODEL_EFFORT[modelId]
   if (!levels || levels.length === 0) return []
   return levels.map((v) => ({ value: v, label: EFFORT_LABELS[v] || v }))
+}
+
+/** Quantas falas anteriores acompanham a escolha automática de modelo. A decisão
+ *  é sobre a mensagem NOVA; o histórico só existe para ela não ser lida no vácuo
+ *  ("não funcionou" não se classifica sozinha), e o `state` do serviço tem teto. */
+const AUTO_HISTORY_TURNS = 6
+
+/** Corte por fala. Uma resposta de 40 mil caracteres não classifica melhor a
+ *  mensagem seguinte do que o começo dela. */
+const AUTO_HISTORY_CHARS = 1000
+
+/** O modelo que a conversa está DE FATO rodando. Em Automático o campo `model`
+ *  guarda o sentinel, e quem precisa de uma propriedade do modelo real (o teto
+ *  de contexto, por exemplo) tem de olhar para o par escolhido no último turno.
+ *  Antes do primeiro turno ainda não há par: aí só resta o sentinel, e quem
+ *  consome cai no padrão. */
+export function runningModel(conv: Pick<Conversation, 'model' | 'autoModel'>): string {
+  return isAutoModel(conv.model) ? (conv.autoModel ?? conv.model) : conv.model
+}
+
+/** O que a escolha automática vê: a mensagem que está saindo, e a cauda recente
+ *  da conversa como contexto. */
+export function autoPromptFor(conv: Conversation, message: string): AutoPrompt {
+  const history: AutoPromptTurn[] = []
+  for (const m of conv.messages) {
+    if (m.kind === 'user') history.push({ who: 'user', text: m.text })
+    else if (m.kind === 'assistant-text' && m.final) history.push({ who: 'agent', text: m.text })
+  }
+  // A mensagem que está saindo pode JÁ ter sido pintada na conversa — o caminho
+  // da fila anexa o balão antes de despachar. Ela é o `message`, não histórico:
+  // repetida nos dois lugares, ela pesaria duas vezes na decisão.
+  if (history.at(-1)?.who === 'user' && history.at(-1)?.text === message) history.pop()
+  return {
+    message,
+    history: history
+      .slice(-AUTO_HISTORY_TURNS)
+      .map((turn) => ({ who: turn.who, text: turn.text.slice(0, AUTO_HISTORY_CHARS) }))
+  }
 }
 
 const EMPTY_TOKENS = { context: 0, output: 0, cost: 0, lastOutput: 0, lastCost: 0 }
@@ -512,9 +551,11 @@ export function App(): JSX.Element {
   const [ollamaReady, setOllamaReady] = useState(false)
   // Whether a Codex (ChatGPT subscription) login exists — adds GPT models to the selector.
   const [codexReady, setCodexReady] = useState(false)
-  // Models offered in the selector: Claude always, Ollama Cloud / GPT when configured.
+  // Models offered in the selector: "Automático" and Claude always, Ollama Cloud
+  // / GPT when configured. Automático comes first because it is the one entry
+  // that isn't a model — it's the decision to not pick one.
   const models = useMemo(() => {
-    let list = MODELS as { id: string; label: string }[]
+    let list: { id: string; label: string }[] = [AUTO_MODEL_OPTION, ...MODELS]
     if (ollamaReady) list = [...list, ...OLLAMA_MODELS]
     if (codexReady) list = [...list, ...OPENAI_MODELS]
     return list
@@ -595,7 +636,7 @@ export function App(): JSX.Element {
   // source order; it reaches them through these refs (assigned once those
   // callbacks are created below) instead of closing over the not-yet-initialized
   // consts directly, which would throw (TDZ) on every render.
-  const connectRef = useRef<((conv: Conversation) => Promise<void>) | null>(null)
+  const connectRef = useRef<((conv: Conversation, auto?: AutoPrompt) => Promise<void>) | null>(null)
   const stopSessionRef = useRef<((id: string, opts?: { silent?: boolean }) => Promise<void>) | null>(null)
 
   const getActive = (): Conversation | null =>
@@ -679,14 +720,29 @@ export function App(): JSX.Element {
           next = {
             ...c,
             sdkSessionId: e.sessionId,
-            model: e.model || c.model,
+            // Em Automático o modelo da CONVERSA é o sentinel e tem de continuar
+            // sendo: sobrescrevê-lo com o que a sessão reportou fixaria a
+            // conversa num modelo e o próximo turno nunca mais perguntaria. O id
+            // concreto vai para `autoModel`.
+            ...(isAutoModel(c.model)
+              ? { autoModel: e.model || c.autoModel }
+              : { model: e.model || c.model }),
             // Only keep one "session ready" note even across resumes.
             messages: c.messages.some((m) => m.kind === 'system')
               ? c.messages
               : [...c.messages, e as UIMessage]
           }
         } else if (e.kind === 'provider-switch') {
-          next = { ...c, model: e.model, effort: e.effort, fastMode: e.fastMode, messages: reduceMessages(c.messages, e), updatedAt: Date.now() }
+          // Mesmo cuidado: em Automático este evento é o ANÚNCIO da escolha do
+          // turno, não uma troca de configuração da conversa.
+          next = {
+            ...c,
+            ...(isAutoModel(c.model)
+              ? { autoModel: e.model }
+              : { model: e.model, effort: e.effort, fastMode: e.fastMode }),
+            messages: reduceMessages(c.messages, e),
+            updatedAt: Date.now()
+          }
         } else {
           next = { ...c, messages: reduceMessages(c.messages, e), updatedAt: Date.now() }
         }
@@ -914,7 +970,20 @@ export function App(): JSX.Element {
               await stopSessionRef.current?.(cid, { silent: true })
               setBusy(cid, true) // stopSession() clears busy; the handoff stays busy
               const fresh = convsRef.current.find((c) => c.id === cid)
-              if (fresh) await connectRef.current?.(fresh)
+              // Em Automático NÃO se conecta aqui: o `connect` logo abaixo já
+              // monta a sessão com a escolha DESTE turno e com a config nova
+              // (a sessão morreu no stopSession acima). Conectar duas vezes
+              // criaria uma sessão no par padrão só para derrubá-la na linha
+              // seguinte — um boot pago e jogado fora a cada troca de config.
+              if (fresh && !isAutoModel(fresh.model)) await connectRef.current?.(fresh)
+            }
+            // Automático: a mensagem da fila é um TURNO NOVO e merece a própria
+            // escolha. Sem isto ela sairia no modelo do turno anterior — que foi
+            // decidido para outra mensagem. Este caminho não passa por
+            // `dispatch`, então a chamada é feita aqui também.
+            const auto = convsRef.current.find((c) => c.id === cid)
+            if (auto && isAutoModel(auto.model)) {
+              await connectRef.current?.(auto, autoPromptFor(auto, next.text))
             }
             await window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid)
           })()
@@ -1419,7 +1488,7 @@ export function App(): JSX.Element {
           fastModeAvailable: modelSupportsFastMode(c.model),
           todoPlan: c.todoPlan,
           stalledSince: stalledSince[c.id],
-          tokens: { context: c.tokens.context, output: c.tokens.output, cost: c.tokens.cost, contextLimit: contextLimitFor(c.model) },
+          tokens: { context: c.tokens.context, output: c.tokens.output, cost: c.tokens.cost, contextLimit: contextLimitFor(runningModel(c)) },
           permission: permissions[c.id]
         })),
         skipPerms: skipPermsRef.current,
@@ -1606,8 +1675,12 @@ export function App(): JSX.Element {
   )
 
   const connect = useCallback(
-    (conv: Conversation): Promise<void> => {
-      if (connectedRef.current.has(conv.id)) return Promise.resolve()
+    (conv: Conversation, auto?: AutoPrompt): Promise<void> => {
+      // Em Automático a sessão é REVALIDADA a cada mensagem, mesmo já conectada:
+      // o modelo do turno só se conhece depois que o main pergunta ao TypeSafe, e
+      // o SDK fixa o modelo pela vida da sessão. Quando o par escolhido repete o
+      // que já está no ar, o main mantém a sessão e isto sai de graça.
+      if (!auto && connectedRef.current.has(conv.id)) return Promise.resolve()
       const inflight = connectingRef.current.get(conv.id)
       if (inflight) return inflight
       const p = (async () => {
@@ -1641,7 +1714,8 @@ export function App(): JSX.Element {
           effort: conv.effort,
           economyMode: conv.economyMode === true,
           loopEnabled: conv.loopEnabled === true,
-          fastMode: conv.fastMode === true
+          fastMode: conv.fastMode === true,
+          ...(auto ? { autoPrompt: auto } : {})
         })
         if (!started.ok) throw new Error('a sessão do agente não iniciou')
         setConnected(conv.id, true)
@@ -1947,7 +2021,11 @@ export function App(): JSX.Element {
 
       try {
         // Lazily (re)start the agent for this conversation, resuming if possible.
-        if (!connectedRef.current.has(conv.id)) await connect(conv)
+        // Em Automático, `connect` é chamado SEMPRE e leva a mensagem junto: é o
+        // main que escolhe o par modelo+esforço deste turno e decide se a sessão
+        // viva serve ou tem de ser recriada.
+        const auto = isAutoModel(conv.model) ? autoPromptFor(conv, text) : undefined
+        if (auto || !connectedRef.current.has(conv.id)) await connect(conv, auto)
         await window.api.sendMessage(conv.id, full, images, files, fileRefs, sdkUuid)
       } catch (err) {
         // Couldn't even reach the agent → keep the message, flag it with the error
@@ -2975,6 +3053,10 @@ export function App(): JSX.Element {
             tts={tts}
             models={modelsFor(models, active?.model)}
             model={active?.model ?? MODELS[0].id}
+            // O seletor mostra a escolha (o sentinel `auto` incluso); a barra de
+            // contexto precisa do modelo concreto do turno — o mesmo que o
+            // snapshot do celular já usa logo acima.
+            runningModel={active ? runningModel(active) : MODELS[0].id}
             modelLocked={!active}
             onModelChange={(m) => active && changeModel(active.id, m)}
             onModelLockedClick={() => notify('aviso', 'Selecione uma conversa para trocar o modelo.')}

@@ -634,6 +634,12 @@ export interface StartAgentOptions {
    *  output speed for a higher per-token price. Only meaningful for the models in
    *  FAST_MODE_MODELS — see modelSupportsFastMode. */
   fastMode?: boolean
+  /** Only meaningful when `model` is AUTO_MODEL: the turn this session is about
+   *  to run. The SDK fixes a session's model for its whole life, so the decision
+   *  has to happen HERE, before the session exists — main asks the TypeSafe what
+   *  this message deserves and starts on the answer. Absent, there is nothing to
+   *  decide on and main uses AUTO_MODEL_FALLBACK. */
+  autoPrompt?: AutoPrompt
 }
 
 /** Reasoning effort levels a model may support. */
@@ -659,6 +665,89 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
 
 /** Default effort when none is selected — "high" is the Anthropic default. */
 export const DEFAULT_EFFORT: EffortLevel = 'high'
+
+/** The effort ladder, cheapest to deepest. It is ORDERED, and the order is load
+ *  bearing twice: it is what makes the automatic mode's `score` answer mean
+ *  anything (the number is a POSITION on this ladder), and it is what
+ *  `clampEffortToModel` walks down when a model can't go as deep as asked. */
+export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max']
+
+/** `effort` cut down to what `model` actually supports: the deepest supported
+ *  level that is not above the one asked for.
+ *
+ *  Haiku stops at `high`, and the provider REJECTS an unsupported pair instead
+ *  of quietly serving the nearest one — so a model+effort pair that was decided
+ *  in two independent steps has to pass through here before it leaves the
+ *  process. A model with no entry in MODEL_EFFORT has nothing to clamp against
+ *  (Ollama), and its effort is returned untouched. */
+export function clampEffortToModel(model: string | undefined, effort: EffortLevel): EffortLevel {
+  const supported = model ? MODEL_EFFORT[model] : undefined
+  if (!supported || supported.length === 0) return effort
+  if (supported.includes(effort)) return effort
+  const wanted = EFFORT_LEVELS.indexOf(effort)
+  const allowed = EFFORT_LEVELS.filter((level) => supported.includes(level))
+  if (allowed.length === 0) return effort
+  let best = allowed[0]
+  for (const level of allowed) if (EFFORT_LEVELS.indexOf(level) <= wanted) best = level
+  return best
+}
+
+/** The Claude models offered in the model selector.
+ *
+ *  Lives in the shared contract rather than in the renderer because the
+ *  automatic mode picks from this SAME list, in the main process. Two lists
+ *  would drift, and a drifted list means either a candidate the user can't see
+ *  or a model the automatic mode can never choose. Keep MODEL_EFFORT and
+ *  CONTEXT_LIMITS in sync when adding one. */
+export const CLAUDE_MODELS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' }
+]
+
+/** The value a conversation carries while it is in "Automático".
+ *
+ *  It is a SENTINEL, not a model id: it must never reach a provider. Every turn
+ *  of such a conversation resolves it to a real model+effort pair before the
+ *  session starts (see src/main/typesafe/execution.ts). */
+export const AUTO_MODEL = 'auto'
+
+/** The "Automático" entry of the model selector. */
+export const AUTO_MODEL_OPTION = { id: AUTO_MODEL, label: 'Automático' }
+
+/** Whether this conversation lets the TypeSafe choose the model of each turn. */
+export function isAutoModel(model: string | undefined): boolean {
+  return model === AUTO_MODEL
+}
+
+/** The pair the automatic mode falls back to when no decision happens — service
+ *  off, no key, timeout, error, or no message to decide on.
+ *
+ *  Explicit on purpose: the user's message has to go out either way, and the
+ *  sentinel alone would reach the provider as a bogus `--model auto`. The choice
+ *  of the most capable model mirrors the rule the model question itself is
+ *  given: between two candidates, take the stronger one — a bad answer costs
+ *  more than the model does. */
+export const AUTO_MODEL_FALLBACK: { model: string; effort: EffortLevel } = {
+  model: 'claude-opus-5',
+  effort: DEFAULT_EFFORT
+}
+
+/** One earlier turn of the conversation, as the automatic decision sees it. */
+export interface AutoPromptTurn {
+  who: 'user' | 'agent'
+  text: string
+}
+
+/** What the automatic decision looks at: the message about to be sent, plus the
+ *  conversation so far as CONTEXT only. A mid-conversation "não funcionou" or
+ *  "agora faz o resto" does not classify itself — without what came before, the
+ *  choice is made on noise. */
+export interface AutoPrompt {
+  message: string
+  history?: readonly AutoPromptTurn[]
+}
 
 /** Models that accept fast mode (`settings.fastMode`), which trades a higher
  *  per-token price for up to ~2.5x output speed. Anthropic only offers it on the
@@ -916,8 +1005,54 @@ export interface MemoristaConfig {
   model: string
 }
 
-/** Modelos oferecidos para o memorista. Mesma lista curta do vigia e do PO. */
-export const MEMORISTA_MODELS = VIGIA_MODELS
+/** Modelos oferecidos para o memorista: a mesma lista curta do vigia e do PO,
+ *  mais o Automático — ele é o único dos três observadores cujo custo varia
+ *  tanto quanto o do turno que ele lê (uma conversa trivial não merece o modelo
+ *  caro, uma cheia de decisão merece), então é nele que a escolha por mensagem
+ *  paga. Vigia e PO seguem com lista fixa. */
+export const MEMORISTA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
+  AUTO_MODEL_OPTION,
+  ...VIGIA_MODELS
+]
+
+/** Os modelos entre os quais o Automático DO MEMORISTA escolhe: exatamente os
+ *  que o seletor dele oferece, menos o próprio Automático.
+ *
+ *  Não é CLAUDE_MODELS. A lista do memorista é curta de propósito — ele é um
+ *  leitor barato —, e escolher sobre a lista da conversa deixaria o observador
+ *  cair num modelo mais caro do que o topo do que o usuário consegue escolher
+ *  para ele à mão. */
+export const MEMORISTA_AUTO_MODELS: readonly string[] = MEMORISTA_MODELS.filter(
+  (model) => !isAutoModel(model.id)
+).map((model) => model.id)
+
+/**
+ * TypeSafe AI — decisões estruturadas rápidas (~100ms) pelo modelo Jev.
+ *
+ * Não é um LLM gerador de texto: responde perguntas tipadas (escolha, nota,
+ * sim/não) com probabilidade calibrada. Serve para os pontos discretos que hoje
+ * custam uma chamada inteira de conversa — classificar, rotear, medir
+ * severidade — sem que o fluxo de controle saia do código.
+ *
+ * DESLIGADO por padrão: é um serviço externo pago, com chave própria. Nada sai
+ * da máquina enquanto o usuário não ligar e informar a chave.
+ */
+export interface TypeSafeConfig {
+  enabled: boolean
+  /** Chave da API (typesafe.ai). Guardada cifrada, como a da OpenAI. */
+  apiKey: string
+  /**
+   * Piso de confiança para AGIR sozinho com base numa resposta. Abaixo dele o
+   * chamador ignora a decisão e segue pelo caminho que já valia — uma decisão
+   * incerta que muda o comportamento é pior que decisão nenhuma.
+   */
+  minConfidence: number
+}
+
+/** Piso padrão de confiança. Metade é o acaso puro numa escolha entre duas
+ *  opções; 0,6 exige alguma margem sobre isso sem calar o serviço em decisão
+ *  de baixo risco. Cada consumidor pode exigir mais quando a ação é cara. */
+export const DEFAULT_TYPESAFE_MIN_CONFIDENCE = 0.6
 
 /** An alert raised by the vigia for one conversation. Travels on its OWN IPC
  *  channel, never as a `ChatEvent`: it is for the user, not for the model, and
@@ -1136,6 +1271,8 @@ export interface AppConfig {
   memorista: MemoristaConfig
   /** O quadro de tarefas: a trava do plano e o agente PO (see BoardConfig). */
   board: BoardConfig
+  /** Decisões estruturadas rápidas pelo TypeSafe AI (see TypeSafeConfig). */
+  typesafe: TypeSafeConfig
 }
 
 export type PostgresTlsMode = 'disable' | 'prefer' | 'require' | 'verify-full'
@@ -1369,7 +1506,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Também ligados por padrão: sem a trava o quadro fica vazio nas tarefas em
   // que ele mais importa, e sem o PO ninguém fecha o cartão que o agente
   // esqueceu — as duas metades do que torna o quadro confiável.
-  board: { requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5' } }
+  board: { requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5' } },
+  // Desligado por padrão, ao contrário dos observadores acima: depende de um
+  // serviço externo e de uma chave que só o usuário tem.
+  typesafe: { enabled: false, apiKey: '', minConfidence: DEFAULT_TYPESAFE_MIN_CONFIDENCE }
 }
 
 /** Where per-user data lives: the SQLite db (config/token/conversations) + .md memories. */

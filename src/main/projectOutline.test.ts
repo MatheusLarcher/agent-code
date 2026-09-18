@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { buildProjectOutline, extractMarkdownHeadings } from './projectOutline'
+import { buildDocsIndex, buildProjectOutline, extractMarkdownHeadings, MAX_HEADINGS } from './projectOutline'
 
 const dirs: string[] = []
 
@@ -113,5 +113,74 @@ describe('buildProjectOutline', () => {
     const outline = await buildProjectOutline(cwd)
     expect(outline).toContain('link [symlink]')
     expect(outline).not.toContain('fora.md')
+  })
+})
+
+/**
+ * O índice existe para o gate `noul` responder "isso já está documentado?".
+ * Um corte SILENCIOSO ali é pior que um índice curto: o gate lê a lista parcial
+ * como se fosse completa e conclui "não está documentado" sobre uma seção que
+ * existe — e aí o memorista grava memória do que o docs/ já cobre.
+ */
+describe('buildDocsIndex — todo corte é anunciado', () => {
+  /** Um .md com `count` seções, para estourar o teto por arquivo. */
+  function comSecoes(count: number): string {
+    return Array.from({ length: count }, (_, i) => `## Secao ${i}`).join('\n\nparágrafo\n\n')
+  }
+
+  it('lista as seções e NÃO anuncia corte quando o arquivo cabe', async () => {
+    const cwd = await fixture()
+    await mkdir(join(cwd, 'docs'), { recursive: true })
+    await writeFile(join(cwd, 'docs', 'curto.md'), comSecoes(MAX_HEADINGS))
+
+    const index = await buildDocsIndex(cwd)
+
+    expect(index).toContain('## Secao 0')
+    expect(index).toContain(`## Secao ${MAX_HEADINGS - 1}`)
+    expect(index).not.toContain('omitidas)')
+  })
+
+  it('arquivo com mais seções que o teto ganha marcador, logo abaixo das que couberam', async () => {
+    const cwd = await fixture()
+    await mkdir(join(cwd, 'docs'), { recursive: true })
+    await writeFile(join(cwd, 'docs', 'longo.md'), comSecoes(MAX_HEADINGS + 5))
+
+    const index = await buildDocsIndex(cwd)
+    const lines = index.split('\n')
+
+    expect(index).toContain(`## Secao ${MAX_HEADINGS - 1}`)
+    // A seção 32 não entrou — e é por isso que o marcador precisa existir.
+    expect(index).not.toContain(`## Secao ${MAX_HEADINGS}`)
+    const marker = lines.findIndex((line) => line.includes(`seções além das ${MAX_HEADINGS} primeiras omitidas`))
+    expect(marker).toBeGreaterThan(-1)
+    expect(lines[marker - 1]).toContain(`## Secao ${MAX_HEADINGS - 1}`)
+  })
+
+  it('um marcador por arquivo: o arquivo curto ao lado do longo continua sem ele', async () => {
+    const cwd = await fixture()
+    await mkdir(join(cwd, 'docs'), { recursive: true })
+    await writeFile(join(cwd, 'docs', 'a-longo.md'), comSecoes(MAX_HEADINGS + 1))
+    await writeFile(join(cwd, 'docs', 'b-curto.md'), '# So uma\n')
+
+    const index = await buildDocsIndex(cwd)
+    const lines = index.split('\n')
+    const curto = lines.findIndex((line) => line.trim().startsWith('b-curto.md'))
+
+    expect(index.match(/primeiras omitidas/g)).toHaveLength(1)
+    // O marcador ficou no arquivo que cortou, não na vizinhança dele.
+    expect(lines.slice(curto).join('\n')).not.toContain('primeiras omitidas')
+  })
+
+  it('o índice continua sendo o MAPA: caminhos e títulos sim, conteúdo nunca', async () => {
+    const cwd = await fixture()
+    await mkdir(join(cwd, 'docs', 'nested'), { recursive: true })
+    await writeFile(join(cwd, 'docs', 'nested', 'guia.md'), '# Guia\n\ncorpo secreto do guia\n\n## Passo')
+
+    const index = await buildDocsIndex(cwd)
+
+    expect(index).toContain('guia.md')
+    expect(index).toContain('# Guia')
+    expect(index).toContain('## Passo')
+    expect(index).not.toContain('corpo secreto do guia')
   })
 })

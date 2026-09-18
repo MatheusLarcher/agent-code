@@ -1,8 +1,23 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
+import { MEMORISTA_AUTO_MODELS } from '../../shared/ipc'
 import type { ChatEvent, MemoristaConfig, MemoristaProviderDiagnostic } from '../../shared/ipc'
 import type { MemoryProposeInput } from '../memory/memoryModel'
 import type { MemoryEntry } from '../persistence/types'
+import type { MemoryGateInput } from '../typesafe'
+
+/** Só a decisão automática é dublada; o resto da pasta typesafe segue real —
+ *  é o caminho SEM `deps.autoModel`, o de produção, que precisa ser visto. */
+const chooseAutoExecution = vi.fn(async () => ({
+  model: 'claude-haiku-4-5',
+  effort: 'low' as const,
+  source: 'typesafe' as const
+}))
+vi.mock('../typesafe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../typesafe')>()),
+  chooseAutoExecution: (...args: unknown[]) => chooseAutoExecution(...(args as []))
+}))
+
 import { Memorista, type MemoristaMemoryPort, type MemoristaObserverRequest } from './memorista'
 import { MEMORISTA_COOLDOWN_MS, MEMORISTA_MAX_CALLS, MEMORISTA_MAX_USER_CHARS } from './memoristaPrompt'
 
@@ -547,6 +562,262 @@ describe('Memorista — nunca derruba o turno observado', () => {
   })
 })
 
+/**
+ * O ponto central do M3: o memorista gastava um LLM em TODO turno. Agora um
+ * gate `noul` (~100ms) responde antes, e o modelo caro só roda quando ele
+ * aprova — ou quando não há gate nenhum para consultar.
+ */
+describe('Memorista — o gate do TypeSafe decide se o modelo roda', () => {
+  const answered: ChatEvent = { kind: 'result', id: 'r', isError: false, text: 'A retenção aqui é de 5%.', durationMs: 1 }
+
+  it('veredito NÃO impede a chamada ao modelo', async () => {
+    const memory = fakeMemory()
+    const ask = answer('NOVA | instrucao | x.md | X | quando | fato')
+    const gate = vi.fn(async () => false)
+    const memorista = new Memorista({ config, memory: () => memory, ask, gate })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'bom dia, tudo certo por aqui')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    // A prova é a contagem: zero chamadas ao LLM, e nada escrito.
+    expect(ask).not.toHaveBeenCalled()
+    expect(memory.propose).not.toHaveBeenCalled()
+    expect(memory.applyPending).not.toHaveBeenCalled()
+    // Dois gates no turno: a mensagem do usuário e a resposta final.
+    expect(gate).toHaveBeenCalledTimes(2)
+  })
+
+  it('veredito SIM dispara o memorista com o contexto ampliado', async () => {
+    const memory = fakeMemory([entry()])
+    const ask = answer('OK')
+    const memorista = new Memorista({
+      config,
+      memory: () => memory,
+      ask,
+      gate: async () => true,
+      usedMemories: () => ['fiscal/nota.md'],
+      docsIndex: async () => '[PROJECT_DOCS_INDEX] indice',
+      docs: async () => '[PROJECT_DOCS_CONTEXT] documentacao completa do projeto'
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'a retenção subiu para 5%')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    expect(ask).toHaveBeenCalledTimes(1)
+    const digest = String(ask.mock.calls[0][0])
+    // Conversa: pergunta e resposta.
+    expect(digest).toContain('a retenção subiu para 5%')
+    expect(digest).toContain('A retenção aqui é de 5%.')
+    // As memórias usadas naquele prompt e os cabeçalhos das demais.
+    expect(digest).toContain('MEMÓRIAS QUE O AGENTE JÁ TINHA NESTE TURNO:')
+    expect(digest).toContain('- fiscal/nota.md')
+    expect(digest).toContain('fiscal/nota.md — Nota de serviço: ao emitir nota')
+    // E os docs do projeto COMPLETOS: aqui é um Claude de 200k.
+    expect(digest).toContain('documentacao completa do projeto')
+    expect(digest).not.toContain('[PROJECT_DOCS_INDEX]')
+  })
+
+  it('o gate recebe a resposta, a pergunta, as memórias usadas, os cabeçalhos e o ÍNDICE do docs', async () => {
+    const memory = fakeMemory([entry()])
+    const seen: MemoryGateInput[] = []
+    const memorista = new Memorista({
+      config,
+      memory: () => memory,
+      ask: answer('OK'),
+      gate: async (input) => {
+        seen.push(input)
+        return false
+      },
+      usedMemories: () => ['fiscal/nota.md'],
+      docsIndex: async () => '[PROJECT_DOCS_INDEX] caminhos e titulos',
+      docs: async () => '[PROJECT_DOCS_CONTEXT] nao deveria chegar ao gate'
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'a retenção subiu para 5%')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    const [early, late] = seen
+    // Na mensagem do usuário ainda não existe resposta.
+    expect(early.userText).toContain('a retenção subiu para 5%')
+    expect(early.answerText).toBeUndefined()
+    // No fim do turno, a resposta final entra.
+    expect(late.answerText).toBe('A retenção aqui é de 5%.')
+    expect(late.usedMemories).toEqual(['fiscal/nota.md'])
+    expect(late.memoryHeaders).toEqual(['fiscal/nota.md — Nota de serviço: ao emitir nota'])
+    // O gate vê o ÍNDICE; o docs completo não cabe no state do Jev.
+    expect(late.docsIndex).toBe('[PROJECT_DOCS_INDEX] caminhos e titulos')
+  })
+
+  it('SIM na mensagem do usuário basta, mesmo com NÃO na resposta final', async () => {
+    const memory = fakeMemory()
+    const ask = answer('OK')
+    let call = 0
+    const memorista = new Memorista({
+      config,
+      memory: () => memory,
+      ask,
+      gate: async () => (++call === 1 ? true : false)
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'nunca rode migração direto em produção')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    expect(ask).toHaveBeenCalledTimes(1)
+  })
+
+  it('gate indisponível (null) NÃO bloqueia: o memorista volta a decidir sozinho', async () => {
+    const memory = fakeMemory()
+    const ask = answer('NOVA | instrucao | pnpm.md | pnpm | ao instalar | Use pnpm neste projeto.')
+    const memorista = new Memorista({ config, memory: () => memory, ask, gate: async () => null })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'use pnpm')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    expect(ask).toHaveBeenCalledTimes(1)
+    expect(proposals(memory)).toHaveLength(1)
+  })
+
+  it('gate lançando é o mesmo que gate indisponível', async () => {
+    const memory = fakeMemory()
+    const ask = answer('OK')
+    const memorista = new Memorista({
+      config,
+      memory: () => memory,
+      ask,
+      gate: async () => {
+        throw new Error('typesafe fora do ar')
+      }
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'use pnpm')
+    memorista.observe('conv-1', answered)
+    await expect(memorista.settled('conv-1')).resolves.toBeUndefined()
+    expect(ask).toHaveBeenCalledTimes(1)
+  })
+
+  it('sem gate configurado o comportamento é o de hoje', async () => {
+    const memory = fakeMemory()
+    const ask = answer('NOVA | instrucao | pnpm.md | pnpm | ao instalar | Use pnpm neste projeto.')
+    const memorista = new Memorista({ config, memory: () => memory, ask, gateActive: async () => false })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'use pnpm')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    expect(ask).toHaveBeenCalledTimes(1)
+  })
+
+  it('turno recusado pelo gate foi julgado: não volta para a fila nem consome o cooldown', async () => {
+    const memory = fakeMemory()
+    const ask = answer('OK')
+    let allow = false
+    let now = 1_000_000
+    const memorista = new Memorista({
+      config,
+      memory: () => memory,
+      ask,
+      now: () => now,
+      gate: async () => allow
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'bom dia, tudo certo por aqui')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+    expect(ask).not.toHaveBeenCalled()
+
+    // Sem avançar o relógio: nenhuma chamada foi feita, então o cooldown — que
+    // existe para limitar o LLM — não pode estar valendo.
+    allow = true
+    memorista.noteUserMessage('conv-1', 'C:/p', 'sempre use pnpm neste projeto')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    expect(ask).toHaveBeenCalledTimes(1)
+    const digest = userSection(String(ask.mock.calls[0][0]))
+    expect(digest).toContain('sempre use pnpm neste projeto')
+    expect(digest).not.toContain('bom dia, tudo certo por aqui')
+  })
+
+  it('o cooldown continua valendo depois de uma análise de verdade, e o gate nem é consultado', async () => {
+    const memory = fakeMemory()
+    const ask = answer('OK')
+    const gate = vi.fn(async () => true)
+    let now = 1_000_000
+    const memorista = new Memorista({ config, memory: () => memory, ask, now: () => now, gate })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'primeiro turno')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+    expect(ask).toHaveBeenCalledTimes(1)
+
+    now += 1_000
+    gate.mockClear()
+    memorista.noteUserMessage('conv-1', 'C:/p', 'segundo turno, dentro do cooldown')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    expect(ask).toHaveBeenCalledTimes(1)
+    // NENHUM dos dois gates roda dentro do cooldown: o do fim do turno porque a
+    // análise para antes dele, e o da mensagem do usuário porque o veredito
+    // dele seria descartado ali mesmo.
+    expect(gate).not.toHaveBeenCalled()
+
+    now += MEMORISTA_COOLDOWN_MS
+    memorista.noteUserMessage('conv-1', 'C:/p', 'terceiro turno')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    expect(userSection(String(ask.mock.calls[1][0]))).toContain('segundo turno, dentro do cooldown')
+  })
+
+  it('a escrita aprovada pelo gate continua passando pelo serviço com a varredura de segredos', async () => {
+    const memory = fakeMemory()
+    const sanitize = vi.fn(async (input: MemoryProposeInput) => ({ input, stored: [], skipped: [], notes: [] }))
+    const memorista = new Memorista({
+      config,
+      memory: () => memory,
+      sanitize: sanitize as never,
+      ask: answer('NOVA | instrucao | pnpm.md | pnpm | ao instalar | Use pnpm neste projeto.'),
+      gate: async () => true
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'use pnpm')
+    memorista.observe('conv-1', answered)
+    await memorista.settled('conv-1')
+
+    expect(sanitize).toHaveBeenCalledTimes(1)
+    expect(memory.propose).toHaveBeenCalledTimes(1)
+    expect(memory.applyPending).toHaveBeenCalledTimes(1)
+  })
+
+  it('a resposta do agente vem do último bloco quando o result chega sem texto', async () => {
+    const memory = fakeMemory()
+    const seen: MemoryGateInput[] = []
+    const memorista = new Memorista({
+      config,
+      memory: () => memory,
+      ask: answer('OK'),
+      gate: async (input) => {
+        seen.push(input)
+        return false
+      }
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'e aí?')
+    memorista.observe('conv-1', { kind: 'assistant-text', id: 'a1', text: 'parcial', final: false })
+    memorista.observe('conv-1', { kind: 'assistant-text', id: 'a2', text: 'a resposta fechada', final: true })
+    memorista.observe('conv-1', result)
+    await memorista.settled('conv-1')
+
+    expect(seen.at(-1)?.answerText).toBe('a resposta fechada')
+  })
+})
+
 describe('Memorista — diagnóstico para o painel do elenco', () => {
   it('anuncia início e fim, com quantas memórias foram propostas', async () => {
     const memory = fakeMemory()
@@ -589,5 +860,100 @@ describe('Memorista — diagnóstico para o painel do elenco', () => {
       'analysis-finished'
     ])
     expect(seen.at(-1)?.actualProvider).toBe('gpt-luna')
+  })
+})
+
+describe('Memorista — modo Automático', () => {
+  it('em Automático o modelo da análise sai da decisão, nunca o sentinel', async () => {
+    const memory = fakeMemory()
+    const autoModel = vi.fn(async () => 'claude-haiku-4-5')
+    const seen: MemoristaObserverRequest[] = []
+    const memorista = new Memorista({
+      config: () => config({ model: 'auto' }),
+      memory: () => memory,
+      autoModel,
+      runClaude: async (request) => {
+        seen.push(request)
+        return { provider: 'claude', state: 'completed', text: 'OK' }
+      }
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'use pnpm neste projeto')
+    memorista.observe('conv-1', result)
+    await memorista.settled('conv-1')
+
+    expect(seen[0]?.model).toBe('claude-haiku-4-5')
+    // A decisão vê a mensagem do usuário — é sobre ela que o turno foi.
+    expect(autoModel).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'use pnpm neste projeto' })
+    )
+  })
+
+  it('fora do Automático não consulta ninguém: o modelo é o da configuração', async () => {
+    const memory = fakeMemory()
+    const autoModel = vi.fn(async () => 'claude-haiku-4-5')
+    const seen: MemoristaObserverRequest[] = []
+    const memorista = new Memorista({
+      config,
+      memory: () => memory,
+      autoModel,
+      runClaude: async (request) => {
+        seen.push(request)
+        return { provider: 'claude', state: 'completed', text: 'OK' }
+      }
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'use pnpm neste projeto')
+    memorista.observe('conv-1', result)
+    await memorista.settled('conv-1')
+
+    expect(seen[0]?.model).toBe('claude-sonnet-5')
+    expect(autoModel).not.toHaveBeenCalled()
+  })
+
+  it('o gate vem ANTES da escolha: turno recusado não gasta a decisão', async () => {
+    const memory = fakeMemory()
+    const autoModel = vi.fn(async () => 'claude-haiku-4-5')
+    const memorista = new Memorista({
+      config: () => config({ model: 'auto' }),
+      memory: () => memory,
+      autoModel,
+      gateActive: async () => true,
+      gate: async () => false,
+      runClaude: async () => ({ provider: 'claude', state: 'completed', text: 'OK' })
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'oi')
+    memorista.observe('conv-1', result)
+    await memorista.settled('conv-1')
+
+    expect(autoModel).not.toHaveBeenCalled()
+  })
+
+  it('a escolha é restrita à lista DO MEMORISTA, não à da conversa', async () => {
+    const memory = fakeMemory()
+    const seen: MemoristaObserverRequest[] = []
+    // Sem `autoModel`: é o caminho de produção que precisa ser visto aqui.
+    const memorista = new Memorista({
+      config: () => config({ model: 'auto' }),
+      memory: () => memory,
+      runClaude: async (request) => {
+        seen.push(request)
+        return { provider: 'claude', state: 'completed', text: 'OK' }
+      }
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'use pnpm neste projeto')
+    memorista.observe('conv-1', result)
+    await memorista.settled('conv-1')
+
+    expect(chooseAutoExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'use pnpm neste projeto' }),
+      { models: MEMORISTA_AUTO_MODELS }
+    )
+    // A lista do seletor do memorista, e nada além dela: o Fable 5.1 é mais
+    // caro que o topo do que o usuário consegue escolher para ele à mão.
+    expect(MEMORISTA_AUTO_MODELS).toEqual(['claude-sonnet-5', 'claude-haiku-4-5', 'claude-opus-5'])
+    expect(seen[0]?.model).toBe('claude-haiku-4-5')
   })
 })

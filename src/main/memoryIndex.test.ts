@@ -8,6 +8,9 @@ import {
   createMemoryCatalogSnapshot,
   listMemoryFiles,
   memoryCatalogFilesystemVersion,
+  MIN_LEXICAL_SCORE,
+  rankMemoriesByQuery,
+  readMemoryBody,
   renderMemoryCatalog,
   renderMemoryCatalogUpdate,
   renderMemoryIndex
@@ -177,5 +180,43 @@ describe('memoryIndex', () => {
     const first = await fixture()
     const second = await fixture()
     expect(memoryCatalogFilesystemVersion(first)).not.toBe(memoryCatalogFilesystemVersion(second))
+  })
+
+  it('o ranqueamento lexical ordena todas as candidatas — o seletor do TypeSafe usa o mesmo', async () => {
+    const dir = await fixture()
+    await writeFile(join(dir, '2D', 'erp.md'), '---\ndescription: ERP da 2D usa X\n---\n# ERP da 2D\nO banco chama FALCAO.', 'utf8')
+
+    const ranked = rankMemoriesByQuery(dir, 'ERP FALCAO')
+
+    expect(ranked[0].file.relPath).toBe('2D/erp.md')
+    expect(ranked[0].score).toBeGreaterThanOrEqual(MIN_LEXICAL_SCORE)
+    // Diferente do caminho de excertos, aqui nada é filtrado: o pré-filtro das
+    // >255 candidatas precisa de uma ordem sobre a lista inteira.
+    expect(ranked.map((match) => match.file.relPath).sort()).toEqual(['2D/erp.md', '2D/nota.md', 'raiz.md'])
+  })
+
+  it('sem palavra aproveitável na mensagem, o ranqueamento é vazio', async () => {
+    expect(rankMemoriesByQuery(await fixture(), 'a de o')).toEqual([])
+  })
+
+  it('readMemoryBody devolve o arquivo INTEIRO e atual, redigido', async () => {
+    const dir = await fixture()
+    const corpo = `# Longa\n${'linha de conteúdo. '.repeat(300)}\napi_key: nunca-vaza\n`
+    await writeFile(join(dir, 'raiz.md'), corpo, 'utf8')
+
+    const body = readMemoryBody(dir, 'raiz.md')
+
+    expect(body!.length).toBeGreaterThan(1_600)
+    expect(body).toContain('api_key: [redacted]')
+    expect(body).not.toContain('nunca-vaza')
+  })
+
+  it('readMemoryBody recusa caminho fora da pasta, arquivo ausente e arquivo grande demais', async () => {
+    const dir = await fixture()
+    await writeFile(join(dir, 'grande.md'), `# Gigante\n${'x '.repeat(40_000)}`, 'utf8')
+
+    expect(readMemoryBody(dir, '../segredo.md')).toBeNull()
+    expect(readMemoryBody(dir, 'nao-existe.md')).toBeNull()
+    expect(readMemoryBody(dir, 'grande.md')).toBeNull()
   })
 })

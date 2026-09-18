@@ -76,6 +76,11 @@ export interface Conversation {
   /** Project folder the agent runs in. */
   cwd: string
   model: string
+  /** The concrete model the last turn actually ran on, when `model` is the
+   *  AUTO_MODEL sentinel. `model` must KEEP the sentinel — it is what the
+   *  selector shows and what makes the next turn ask again — so the real id
+   *  lives here, for the things that need it (the context-usage denominator). */
+  autoModel?: string
   /** Reasoning effort for the model (low / medium / high / xhigh / max). */
   effort?: string
   /** Per-conversation "modo econômico" — when on, the LLM skips validation/build

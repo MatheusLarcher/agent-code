@@ -29,6 +29,16 @@ const partialConfigSchema = z
         po: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional()
       })
       .strict()
+      .optional(),
+    typesafe: z
+      .object({
+        enabled: z.boolean().optional(),
+        apiKey: z.string().optional(),
+        // Fora de 0..1 o limiar não significa nada: ou cala o serviço para
+        // sempre, ou deixa passar decisão que ele próprio diz ser um chute.
+        minConfidence: z.number().min(0).max(1).optional()
+      })
+      .strict()
       .optional()
   })
   .strict()
@@ -41,7 +51,8 @@ export function defaultAppConfig(): AppConfig {
     ollama: { ...DEFAULT_CONFIG.ollama },
     vigia: { ...DEFAULT_CONFIG.vigia },
     memorista: { ...DEFAULT_CONFIG.memorista },
-    board: { ...DEFAULT_CONFIG.board, po: { ...DEFAULT_CONFIG.board.po } }
+    board: { ...DEFAULT_CONFIG.board, po: { ...DEFAULT_CONFIG.board.po } },
+    typesafe: { ...DEFAULT_CONFIG.typesafe }
   }
 }
 
@@ -66,7 +77,8 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
       ...current.board,
       ...(parsed.data.board ?? {}),
       po: { ...current.board.po, ...(parsed.data.board?.po ?? {}) }
-    }
+    },
+    typesafe: { ...current.typesafe, ...(parsed.data.typesafe ?? {}) }
   }
 }
 

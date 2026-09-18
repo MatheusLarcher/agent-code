@@ -32,7 +32,10 @@ const FIELDS: Field[] = [
   { key: 'config.memorista.model', get: (c) => c.memorista.model, patch: (v) => ({ memorista: { model: v as string } as AppConfig['memorista'] }) },
   { key: 'config.board.requirePlan', get: (c) => c.board.requirePlan, patch: (v) => ({ board: { requirePlan: v as boolean } as AppConfig['board'] }) },
   { key: 'config.board.po.enabled', get: (c) => c.board.po.enabled, patch: (v) => ({ board: { po: { enabled: v as boolean } } as AppConfig['board'] }) },
-  { key: 'config.board.po.model', get: (c) => c.board.po.model, patch: (v) => ({ board: { po: { model: v as string } } as AppConfig['board'] }) }
+  { key: 'config.board.po.model', get: (c) => c.board.po.model, patch: (v) => ({ board: { po: { model: v as string } } as AppConfig['board'] }) },
+  { key: 'config.typesafe.enabled', get: (c) => c.typesafe.enabled, patch: (v) => ({ typesafe: { enabled: v as boolean } as AppConfig['typesafe'] }) },
+  { key: 'config.typesafe.apiKey', sensitive: true, get: (c) => c.typesafe.apiKey, patch: (v) => ({ typesafe: { apiKey: v as string } as AppConfig['typesafe'] }) },
+  { key: 'config.typesafe.minConfidence', get: (c) => c.typesafe.minConfidence, patch: (v) => ({ typesafe: { minConfidence: v as number } as AppConfig['typesafe'] }) }
 ]
 
 /** Every KV key the config persists, in write order. Exported so a test can hold
@@ -54,7 +57,8 @@ function cloneConfig(config: AppConfig): AppConfig {
     ollama: { ...config.ollama },
     vigia: { ...config.vigia },
     memorista: { ...config.memorista },
-    board: { ...config.board, po: { ...config.board.po } }
+    board: { ...config.board, po: { ...config.board.po } },
+    typesafe: { ...config.typesafe }
   }
 }
 

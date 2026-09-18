@@ -5,10 +5,23 @@ import {
   type ObserverAttempt,
   type SafeProviderReason
 } from '../observerQuery'
-import type { ChatEvent, MemoristaConfig, MemoristaProviderDiagnostic } from '../../shared/ipc'
+import { isAutoModel, MEMORISTA_AUTO_MODELS } from '../../shared/ipc'
+import type {
+  AutoPrompt,
+  ChatEvent,
+  MemoristaConfig,
+  MemoristaProviderDiagnostic
+} from '../../shared/ipc'
 import type { MemoryProposeInput } from '../memory/memoryModel'
 import type { MemoryService } from '../memory/memoryService'
 import { sanitizeProposal, type SecretSink } from '../memory/memorySecrets'
+import { buildDocsIndex, buildProjectOutline } from '../projectOutline'
+import {
+  chooseAutoExecution,
+  memoryGateActive,
+  shouldSaveMemory,
+  type MemoryGateInput
+} from '../typesafe'
 import {
   appendFact,
   buildMemoristaPrompt,
@@ -19,6 +32,7 @@ import {
   parseMemoristaVerdict,
   summarizeCall,
   type MemoristaCall,
+  type MemoristaMemory,
   type MemoristaOp
 } from './memoristaPrompt'
 
@@ -43,6 +57,13 @@ export const MEMORISTA_AGENT = 'memorista'
  *    análise, cooldown por conversa, e a escrita passa SEMPRE pelo serviço de
  *    memória (o mesmo caminho do `memory_propose`): `Write`/`Edit` na pasta de
  *    memórias pulariam a fila de propostas, o CAS e a varredura de segredos.
+ *
+ * A quarta, mais nova: **o modelo caro só roda quando vale.** Antes de montar o
+ * digest, um gate `noul` do TypeSafe (~100ms) responde "isso merece virar
+ * memória?" — uma vez na mensagem do usuário e outra na resposta final. "Não"
+ * encerra a análise sem consultar o LLM. "Sem decisão" (desligado, sem chave,
+ * timeout, erro) NÃO encerra nada: cai no comportamento de sempre, em que o
+ * próprio memorista decide. Falha do gate nunca pode virar "parou de salvar".
  */
 
 /** Pedido imutável, criado uma vez e usado pelas duas tentativas de provedor. */
@@ -81,6 +102,33 @@ export interface MemoristaDeps {
   diagnose?(diagnostic: MemoristaProviderDiagnostic): void
   now?(): number
   newCorrelationId?(): string
+  /**
+   * O gate do TypeSafe. `true` = vale gastar o modelo, `false` = não gaste,
+   * `null` = NÃO houve decisão e o memorista segue como sempre seguiu.
+   *
+   * Sem injeção (produção), é o `shouldSaveMemory` da pasta typesafe.
+   */
+  gate?(input: MemoryGateInput): Promise<boolean | null>
+  /** O gate está de pé nesta máquina? Sem ele, nem o índice do docs/ é lido —
+   *  varrer a pasta para ninguém perguntar nada é I/O jogado fora. */
+  gateActive?(): Promise<boolean>
+  /** O ÍNDICE do docs/ — caminhos e títulos — para o gate. Nunca o conteúdo:
+   *  o `state` do Jev aceita 32k tokens e o docs/ deste projeto passa de 85k. */
+  docsIndex?(cwd: string): Promise<string>
+  /** O docs/ COMPLETO, para o memorista aprovado: ali é um Claude de 200k. */
+  docs?(cwd: string): Promise<string>
+  /** As memórias que entraram no prompt do agente nesta conversa (ver
+   *  `memoriasUsadas.ts`). Vazio quando ninguém registrou. */
+  usedMemories?(convId: string): readonly string[]
+  /**
+   * O modelo do turno quando a configuração do memorista está em Automático.
+   * Mesma decisão que escolhe o modelo da conversa, pelo mesmo caminho — aqui
+   * só o modelo importa: o esforço de raciocínio do memorista não é
+   * configurável, ele faz uma leitura curta e sem ferramentas.
+   *
+   * Sem injeção (produção), é o `chooseAutoExecution` da pasta typesafe.
+   */
+  autoModel?(prompt: AutoPrompt): Promise<string>
 }
 
 /** A fila dos turnos que ainda não passaram pelo memorista. */
@@ -93,6 +141,9 @@ interface ConvState {
   userText: string | null
   cwd: string
   calls: MemoristaCall[]
+  /** O último bloco de texto que o agente fechou neste turno. Reserva para
+   *  quando o `result` chega sem texto. */
+  answerText: string
   fired: boolean
   lastRunAt: number
   /** Os turnos que ainda não foram lidos — pulados pelo cooldown ou com a
@@ -100,6 +151,8 @@ interface ConvState {
    *  conversa, porque um turno que nunca foi lido é exatamente o conhecimento
    *  que este recurso existe para não perder. */
   deferred: MemoristaDeferred | null
+  /** O gate disparado na MENSAGEM DO USUÁRIO, ainda em voo. Nunca rejeita. */
+  gate: Promise<boolean | null> | null
 }
 
 /** Evidência capturada junto com o `result`, antes de qualquer await. */
@@ -107,6 +160,12 @@ interface MemoristaTurnSnapshot {
   userText: string
   cwd: string
   calls: readonly MemoristaCall[]
+  /** A resposta final do agente neste turno. */
+  answerText: string
+  /** O gate disparado na mensagem que abriu ESTE turno. Congelado junto com o
+   *  resto: a próxima mensagem do usuário troca o da conversa, e a análise em
+   *  voo estaria esperando o veredito de outro turno. */
+  gate: Promise<boolean | null> | null
 }
 
 /** Vários turnos num digest só, numerados: sem a numeração o modelo lê a emenda
@@ -118,8 +177,9 @@ function joinTexts(texts: string[]): string {
 
 export class Memorista {
   private readonly state = new Map<string, ConvState>()
-  /** As análises em voo por conversa — é o que `settled` espera. */
-  private readonly inFlight = new Map<string, Set<Promise<void>>>()
+  /** O trabalho de fundo em voo por conversa — análises e os gates disparados
+   *  na mensagem do usuário. É o que `settled` espera. */
+  private readonly inFlight = new Map<string, Set<Promise<unknown>>>()
   private correlations = 0
 
   constructor(private readonly deps: MemoristaDeps) {}
@@ -131,7 +191,27 @@ export class Memorista {
     conv.userText = text
     conv.cwd = cwd
     conv.calls = []
+    conv.answerText = ''
     conv.fired = false
+    // Zerado ANTES de qualquer saída: o gate é do turno, e deixar aqui o da
+    // mensagem anterior faria a análise deste turno esperar o veredito de outro.
+    conv.gate = null
+    // Dentro do cooldown, o fim do turno vai cair em `defer()` e o veredito seria
+    // jogado fora. A chamada ao TypeSafe é paga; não se faz uma pergunta cuja
+    // resposta já se sabe que ninguém vai ler. O turno não fica sem julgamento:
+    // ele volta no digest da próxima análise, que roda o gate com o texto
+    // acumulado e a resposta do agente em mãos.
+    const now = this.deps.now?.() ?? Date.now()
+    if (now - conv.lastRunAt < MEMORISTA_COOLDOWN_MS) return
+    // O primeiro dos dois gates do turno, com o que existe AGORA: a mensagem do
+    // usuário ainda sem resposta. Ele NÃO pode ser disparado e esquecido: a
+    // análise do fim do turno só aguarda `turn.gate` quando chega até lá, e o
+    // caminho do cooldown retorna antes disso. Registrado como trabalho em voo,
+    // `settled` passa a esperar por ele — hoje é o que o app usa para saber que
+    // o memorista acabou — e `dispose` não deixa a promise pendurada.
+    const gate = this.askGate(convId, cwd, text, '')
+    conv.gate = gate
+    this.track(convId, gate)
   }
 
   /** Alimentado pelo tee de eventos do main. Nunca lança. */
@@ -143,13 +223,22 @@ export class Memorista {
       if (conv.calls.length > MEMORISTA_MAX_CALLS) conv.calls.shift()
       return
     }
+    // A resposta do agente é metade do que o gate julga — é nela que aparece o
+    // fato de infraestrutura que o turno descobriu. Vale o ÚLTIMO bloco fechado;
+    // o `result` costuma trazer o mesmo texto e tem preferência quando traz.
+    if (event.kind === 'assistant-text') {
+      if (event.final && event.text) conv.answerText = event.text
+      return
+    }
     if (event.kind === 'result') {
       // A próxima mensagem do usuário reinicia o acumulador desta conversa
       // enquanto a análise ainda espera o modelo. Congela a evidência agora.
       const turn: MemoristaTurnSnapshot = Object.freeze({
         userText: conv.userText,
         cwd: conv.cwd,
-        calls: Object.freeze([...conv.calls])
+        calls: Object.freeze([...conv.calls]),
+        answerText: event.text || conv.answerText,
+        gate: conv.gate
       })
       conv.fired = true
       this.start(convId, turn)
@@ -179,7 +268,16 @@ export class Memorista {
   private conv(convId: string): ConvState {
     let conv = this.state.get(convId)
     if (!conv) {
-      conv = { userText: null, cwd: '', calls: [], fired: false, lastRunAt: 0, deferred: null }
+      conv = {
+        userText: null,
+        cwd: '',
+        calls: [],
+        answerText: '',
+        fired: false,
+        lastRunAt: 0,
+        deferred: null,
+        gate: null
+      }
       this.state.set(convId, conv)
     }
     return conv
@@ -187,8 +285,13 @@ export class Memorista {
 
   /** Dispara uma análise e a registra como em voo até o fim das escritas. */
   private start(convId: string, turn: MemoristaTurnSnapshot): void {
-    const work = this.run(convId, turn)
-    const inFlight = this.inFlight.get(convId) ?? new Set<Promise<void>>()
+    this.track(convId, this.run(convId, turn))
+  }
+
+  /** Registra um trabalho de fundo da conversa: é o conjunto que `settled`
+   *  espera e que `dispose` descarta. */
+  private track(convId: string, work: Promise<unknown>): void {
+    const inFlight = this.inFlight.get(convId) ?? new Set<Promise<unknown>>()
     this.inFlight.set(convId, inFlight)
     inFlight.add(work)
     const forget = (): void => {
@@ -224,8 +327,8 @@ export class Memorista {
     const kept = [...deferred.texts, turn.userText].filter((text) => text.trim().length > 0)
     while (kept.length > 1 && joinTexts(kept).length > MEMORISTA_MAX_USER_CHARS) kept.shift()
     return Object.freeze({
+      ...turn,
       userText: joinTexts(kept) || turn.userText,
-      cwd: turn.cwd,
       calls: Object.freeze([...deferred.calls, ...turn.calls].slice(-MEMORISTA_MAX_CALLS))
     })
   }
@@ -251,8 +354,107 @@ export class Memorista {
     conv.deferred = queue
   }
 
+  /**
+   * Os dois vereditos do turno viram um.
+   *
+   * "Sim" de qualquer um dos dois basta: o usuário pode ensinar na pergunta e a
+   * resposta pode revelar o fato, e perder qualquer um dos dois é perder
+   * memória. Só quando NENHUM dos dois decidiu (`null` nos dois) o resultado é
+   * "sem decisão" — e aí o memorista roda, como sempre rodou.
+   */
+  private static combine(early: boolean | null, late: boolean | null): boolean | null {
+    if (early === null && late === null) return null
+    return early === true || late === true
+  }
+
+  /**
+   * Uma rodada do gate. Nunca lança, nunca bloqueia: qualquer tropeço vira
+   * `null`, e `null` é "siga como antes".
+   *
+   * A ordem das checagens é econômica — `gateActive` vem antes de listar o
+   * acervo e de varrer o docs/, porque sem serviço configurado nada disso seria
+   * lido por ninguém.
+   */
+  private async askGate(
+    convId: string,
+    cwd: string,
+    userText: string,
+    answerText: string,
+    knownHeaders?: readonly string[]
+  ): Promise<boolean | null> {
+    try {
+      if (!this.deps.config().enabled) return null
+      // Um gate injetado dispensa a sonda de produção: quem injetou já decidiu
+      // que há a quem perguntar.
+      const active = this.deps.gateActive ?? (this.deps.gate ? async () => true : memoryGateActive)
+      if (!(await active())) return null
+
+      const memoryHeaders = knownHeaders ?? (await this.readHeaders())
+      const gate = this.deps.gate ?? shouldSaveMemory
+      return await gate({
+        userText,
+        ...(answerText ? { answerText } : {}),
+        usedMemories: this.deps.usedMemories?.(convId) ?? [],
+        memoryHeaders,
+        // O ÍNDICE, nunca o docs completo: o `state` do Jev aceita 32k tokens.
+        docsIndex: await this.fetchDocs(cwd, 'index')
+      })
+    } catch {
+      // Gate indisponível não é "não". O memorista segue e decide sozinho.
+      return null
+    }
+  }
+
+  /** Os cabeçalhos de TODAS as memórias ativas — o que o gate vê do acervo. */
+  private async readHeaders(): Promise<string[]> {
+    const memory = this.deps.memory()
+    if (!memory) return []
+    const entries = await memory.listEntries({ status: 'active' })
+    return entries.filter((entry) => entry.status === 'active').map(Memorista.header)
+  }
+
+  private static header(entry: { relPath: string; title: string; hook: string }): string {
+    return `${entry.relPath} — ${entry.title}: ${entry.hook}`
+  }
+
+  /** Docs do projeto, no recorte pedido. Falha vira string vazia: o observador
+   *  perde uma seção do contexto, nunca a análise. */
+  private async fetchDocs(cwd: string, mode: 'index' | 'full'): Promise<string> {
+    if (!cwd) return ''
+    try {
+      const build = mode === 'index' ? (this.deps.docsIndex ?? buildDocsIndex) : (this.deps.docs ?? buildProjectOutline)
+      return await build(cwd)
+    } catch {
+      return ''
+    }
+  }
+
   private nextCorrelationId(): string {
     return this.deps.newCorrelationId?.() ?? `memorista-${Date.now().toString(36)}-${this.correlations++}`
+  }
+
+  /**
+   * O modelo desta análise. Fora do Automático é o da configuração, sem
+   * chamada nenhuma; nele, sai do MESMO caminho que escolhe o modelo da
+   * conversa — o que o memorista lê é o que o agente acabou de fazer, então o
+   * turno que merecia o modelo caro é o mesmo cuja leitura merece.
+   *
+   * Roda depois do gate de propósito: o gate já recusou os turnos que não vão
+   * virar memória, e perguntar qual modelo usar num turno que não vai rodar
+   * seria gastar uma chamada para jogar fora. Falha vira par padrão — a
+   * decisão nunca lança.
+   */
+  private async resolveModel(cfg: MemoristaConfig, userText: string, answerText: string): Promise<string> {
+    if (!isAutoModel(cfg.model)) return cfg.model
+    const prompt: AutoPrompt = {
+      message: userText,
+      history: answerText ? [{ who: 'agent', text: answerText }] : []
+    }
+    if (this.deps.autoModel) return this.deps.autoModel(prompt)
+    // Sobre a lista DELE, não sobre a da conversa: o memorista é um leitor
+    // barato, e escolher sobre CLAUDE_MODELS o deixaria cair num modelo acima
+    // do teto que o seletor dele oferece ao usuário.
+    return (await chooseAutoExecution(prompt, { models: MEMORISTA_AUTO_MODELS })).model
   }
 
   private async runClaude(request: MemoristaObserverRequest): Promise<ObserverAttempt> {
@@ -362,7 +564,6 @@ export class Memorista {
       this.defer(conv, turn)
       return
     }
-    conv.lastRunAt = now
 
     // O acumulado sai da fila para entrar nesta análise, mas continua sendo
     // dela só enquanto ela andar: se não chegar ao fim, volta para a fila.
@@ -379,13 +580,41 @@ export class Memorista {
       conv.deferred = null
       const merged = this.mergeDeferred(taken, turn)
 
+      // O segundo gate do turno, agora com a resposta final em mãos, somado ao
+      // que a mensagem do usuário já tinha respondido.
+      const verdict = Memorista.combine(
+        await (turn.gate ?? Promise.resolve(null)),
+        await this.askGate(convId, turn.cwd, merged.userText, turn.answerText, entries.map(Memorista.header))
+      )
+      if (verdict === false) {
+        // O turno FOI julgado. Não volta para a fila — repeti-lo seria fazer a
+        // mesma pergunta de novo — e não consome o cooldown, que existe para
+        // limitar chamadas ao LLM e nenhuma foi feita.
+        analyzed = true
+        return
+      }
+
+      // Daqui em diante o modelo caro entra em cena: é este o ponto que o
+      // cooldown protege.
+      conv.lastRunAt = now
+
+      const memories: MemoristaMemory[] = entries.map((entry) => ({
+        relPath: entry.relPath,
+        title: entry.title,
+        hook: entry.hook
+      }))
       const request: MemoristaObserverRequest = Object.freeze({
         prompt: buildMemoristaPrompt({
           userText: merged.userText,
           calls: [...merged.calls],
-          memories: entries.map((entry) => ({ relPath: entry.relPath, title: entry.title, hook: entry.hook }))
+          memories,
+          answerText: turn.answerText,
+          usedMemories: this.deps.usedMemories?.(convId) ?? [],
+          // Aprovado, o memorista recebe o docs COMPLETO: ele roda num Claude de
+          // 200k, onde os ~85k tokens do docs/ cabem — ao contrário do gate.
+          docs: await this.fetchDocs(turn.cwd, 'full')
         }),
-        model: cfg.model,
+        model: await this.resolveModel(cfg, merged.userText, turn.answerText),
         conversationId: convId,
         cwd: turn.cwd,
         correlationId: this.nextCorrelationId()

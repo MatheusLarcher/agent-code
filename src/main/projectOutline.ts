@@ -4,9 +4,24 @@ import { extname, isAbsolute, join, relative, sep } from 'node:path'
 
 const MAX_MARKDOWN_BYTES = 64 * 1024
 const MAX_ROOT_MARKDOWN_TOTAL_BYTES = 8 * 1024 * 1024
-const MAX_HEADINGS = 32
+/** Teto de títulos POR ARQUIVO no índice. Quando corta, o índice diz que cortou
+ *  (ver `buildDocsIndex`) — exportado para o teste ler o mesmo número. */
+export const MAX_HEADINGS = 32
 const MAX_HEADING_LENGTH = 160
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd'])
+
+/**
+ * Quanto de cada arquivo a varredura captura.
+ *
+ * - `full` — o contexto de sempre: Markdown de raiz inteiro, aninhado com as
+ *   três primeiras linhas físicas. É o que vai para o agente e para o memorista.
+ * - `index` — só o MAPA: caminho de cada .md e os títulos das seções. Existe
+ *   porque o `docs/` deste projeto passa de 85k tokens e o `state` do Jev aceita
+ *   no máximo 32k: o gate precisa saber o que JÁ está documentado, não ler a
+ *   documentação. Mesma varredura, mesma checagem de caminho — o que muda é o
+ *   que se lê de dentro do arquivo.
+ */
+type OutlineMode = 'full' | 'index'
 
 interface OutlineEntry {
   path: string
@@ -15,6 +30,12 @@ interface OutlineEntry {
   /** The first three physical lines of nested Markdown, never parsed headings. */
   preview?: string[]
   content?: string
+  /** Só no modo `index`: os títulos das seções, na ordem em que aparecem. */
+  headings?: string[]
+  /** O arquivo tem MAIS seções do que `MAX_HEADINGS`. Sem este sinal, um índice
+   *  cortado é indistinguível de um arquivo curto, e o gate conclui "isso não
+   *  está documentado" sobre uma seção que existe e ficou de fora. */
+  headingsTruncated?: boolean
   marker?: string
 }
 
@@ -152,6 +173,37 @@ async function readMarkdownPreview(
   }
 }
 
+/**
+ * Os títulos das seções de um Markdown, pela MESMA leitura verificada do
+ * preview: realpath dentro do docs/, `O_NOFOLLOW`, e o arquivo tem que estar
+ * estável entre o `stat` de antes e o de depois. Um índice não vale relaxar a
+ * barreira de caminho que o resto do módulo mantém.
+ */
+async function readMarkdownHeadings(
+  path: string,
+  canonicalRoot: string
+): Promise<{ headings: string[]; truncated: boolean; marker?: string }> {
+  const { handle, before } = await openVerifiedRegularFile(path, canonicalRoot)
+  try {
+    const buffer = Buffer.alloc(Math.min(before.size, MAX_MARKDOWN_BYTES))
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+    const after = await handle.stat()
+    if (!stableFile(before, after)) return { headings: [], truncated: false, marker: '[changed during read]' }
+    const text = buffer.subarray(0, bytesRead)
+    if (text.includes(0)) return { headings: [], truncated: false, marker: '[binary markdown omitted]' }
+    // Um título A MAIS do que cabe: é o único jeito de saber que houve corte sem
+    // varrer o arquivo duas vezes. O extra é descartado, só o SINAL sobrevive.
+    const found = extractMarkdownHeadings(text.toString('utf8'), MAX_HEADINGS + 1)
+    return {
+      headings: found.slice(0, MAX_HEADINGS),
+      truncated: found.length > MAX_HEADINGS,
+      ...(before.size > bytesRead ? { marker: '[first 64 KiB scanned]' } : {})
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
 interface RootMarkdownBudget {
   remainingBytes: number
 }
@@ -192,7 +244,8 @@ async function walk(
   canonicalRoot: string,
   depth: number,
   entries: OutlineEntry[],
-  budget: RootMarkdownBudget
+  budget: RootMarkdownBudget,
+  mode: OutlineMode
 ): Promise<void> {
   let children
   try {
@@ -217,12 +270,17 @@ async function walk(
         entries.push({ path, depth, kind: 'symlink', marker: '[symlink]' })
       } else if (stat.isDirectory()) {
         entries.push({ path, depth, kind: 'directory' })
-        await walk(cwd, absolutePath, canonicalRoot, depth + 1, entries, budget)
+        await walk(cwd, absolutePath, canonicalRoot, depth + 1, entries, budget, mode)
       } else {
         const entry: OutlineEntry = { path, depth, kind: 'file', marker: fileMarker(path) }
         if (MARKDOWN_EXTENSIONS.has(extname(path).toLowerCase())) {
           try {
-            if (depth === 1) {
+            if (mode === 'index') {
+              const result = await readMarkdownHeadings(absolutePath, canonicalRoot)
+              entry.headings = result.headings
+              if (result.truncated) entry.headingsTruncated = true
+              if (result.marker) entry.marker = result.marker
+            } else if (depth === 1) {
               const result = await readRootMarkdown(absolutePath, canonicalRoot, budget)
               entry.content = result.content
               if (result.marker) entry.marker = result.marker
@@ -243,24 +301,33 @@ async function walk(
   }
 }
 
-export async function buildProjectOutline(cwd: string): Promise<string> {
+/** A varredura do docs/, ou o motivo de não haver nenhuma. Uma função só para
+ *  os dois modos: a checagem da raiz é a mesma, e duplicá-la é como uma das
+ *  cópias deixa de recusar um symlink. */
+async function scanDocs(
+  cwd: string,
+  mode: OutlineMode
+): Promise<{ entries: OutlineEntry[] } | { unavailable: string }> {
   const docsDir = join(cwd, 'docs')
-  const entries: OutlineEntry[] = []
   let canonicalRoot: string
 
   try {
     const stat = await lstat(docsDir)
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      return '[PROJECT_DOCS_CONTEXT]\ndocs/ [not a directory]\n[/PROJECT_DOCS_CONTEXT]'
-    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return { unavailable: '[not a directory]' }
     canonicalRoot = await realpath(docsDir)
   } catch (err) {
-    const marker = safeReason(err) === 'ENOENT' ? '[not present]' : `[unavailable: ${safeReason(err)}]`
-    return `[PROJECT_DOCS_CONTEXT]\ndocs/ ${marker}\n[/PROJECT_DOCS_CONTEXT]`
+    return { unavailable: safeReason(err) === 'ENOENT' ? '[not present]' : `[unavailable: ${safeReason(err)}]` }
   }
 
-  entries.push({ path: 'docs', depth: 0, kind: 'directory' })
-  await walk(cwd, docsDir, canonicalRoot, 1, entries, { remainingBytes: MAX_ROOT_MARKDOWN_TOTAL_BYTES })
+  const entries: OutlineEntry[] = [{ path: 'docs', depth: 0, kind: 'directory' }]
+  await walk(cwd, docsDir, canonicalRoot, 1, entries, { remainingBytes: MAX_ROOT_MARKDOWN_TOTAL_BYTES }, mode)
+  return { entries }
+}
+
+export async function buildProjectOutline(cwd: string): Promise<string> {
+  const scan = await scanDocs(cwd, 'full')
+  if ('unavailable' in scan) return `[PROJECT_DOCS_CONTEXT]\ndocs/ ${scan.unavailable}\n[/PROJECT_DOCS_CONTEXT]`
+  const entries = scan.entries
 
   const lines = [
     '[PROJECT_DOCS_CONTEXT]',
@@ -282,5 +349,56 @@ export async function buildProjectOutline(cwd: string): Promise<string> {
     }
   }
   lines.push('[/PROJECT_DOCS_CONTEXT]')
+  return lines.join('\n')
+}
+
+/**
+ * Orçamento global de títulos do índice.
+ *
+ * O teto por arquivo (`MAX_HEADINGS`) não limita nada quando a pasta tem
+ * centenas de .md — e o índice existe justamente para caber num `state` de 32k
+ * tokens. Passando daqui, o índice continua listando os CAMINHOS (que é o mapa)
+ * e para de listar seções.
+ */
+const MAX_INDEX_HEADINGS = 600
+
+/**
+ * O MAPA do docs/: cada arquivo pelo caminho, cada Markdown pelos títulos das
+ * seções. Nunca o conteúdo.
+ *
+ * É o que o gate `noul` recebe para responder "isso já está documentado?" sem
+ * carregar os ~85k tokens do docs/ inteiro num `state` que aceita 32k. Nunca
+ * lança: pasta ausente ou ilegível vira um marcador, não uma exceção.
+ */
+export async function buildDocsIndex(cwd: string): Promise<string> {
+  const scan = await scanDocs(cwd, 'index')
+  if ('unavailable' in scan) return `[PROJECT_DOCS_INDEX]\ndocs/ ${scan.unavailable}\n[/PROJECT_DOCS_INDEX]`
+
+  const lines = [
+    '[PROJECT_DOCS_INDEX]',
+    'Índice da documentação do projeto: o caminho de cada arquivo e os títulos das seções. É o mapa, não o conteúdo.'
+  ]
+  let budget = MAX_INDEX_HEADINGS
+  for (const entry of scan.entries) {
+    const suffix = entry.kind === 'directory' ? '/' : ''
+    const marker = entry.marker ? ` ${entry.marker}` : ''
+    lines.push(`${'  '.repeat(entry.depth)}${entry.path.split('/').at(-1)}${suffix}${marker}`)
+    let listed = 0
+    for (const heading of entry.headings ?? []) {
+      if (budget <= 0) break
+      budget--
+      listed++
+      lines.push(`${'  '.repeat(entry.depth + 1)}${heading}`)
+    }
+    // O corte por arquivo tem de aparecer, como o global já aparecia: sem isto o
+    // gate lê o índice como se fosse a lista COMPLETA de seções do arquivo.
+    // Só quando o que sumiu foi por causa deste teto — se o orçamento global
+    // estourou antes, a linha de fechamento abaixo já explica o que houve.
+    if (entry.headingsTruncated && listed === (entry.headings?.length ?? 0)) {
+      lines.push(`${'  '.repeat(entry.depth + 1)}(seções além das ${MAX_HEADINGS} primeiras omitidas)`)
+    }
+  }
+  if (budget <= 0) lines.push(`(títulos além de ${MAX_INDEX_HEADINGS} omitidos; os caminhos estão todos aqui)`)
+  lines.push('[/PROJECT_DOCS_INDEX]')
   return lines.join('\n')
 }

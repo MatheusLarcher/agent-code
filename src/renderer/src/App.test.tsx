@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, act, configure } from '@testing-library/react'
 import { UiProvider } from './ui/UiProvider'
-import { App, expireResetUsage } from './App'
+import { App, autoPromptFor, expireResetUsage, runningModel } from './App'
 import type { AgentEventMsg, ChatEvent, PoProviderDiagnosticMsg } from '@shared/ipc'
 import type { TodoItem } from './types'
 
@@ -1990,5 +1990,180 @@ describe('App — diagnóstico seguro do failover do PO', () => {
     expect(
       await screen.findByText('GPT Luna indisponível para registrar o pedido no quadro.')
     ).toBeTruthy()
+  })
+})
+
+describe('App — modo Automático', () => {
+  const selectModel = (container: HTMLElement): HTMLSelectElement =>
+    container.querySelector('select.model-select') as HTMLSelectElement
+
+  it('"Automático" é uma opção do seletor que já existe', async () => {
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(selectModel(container)).toBeTruthy())
+
+    const auto = Array.from(selectModel(container).options).find((o) => o.value === 'auto')
+    expect(auto?.textContent).toBe('Automático')
+  })
+
+  it('a mensagem viaja junto do start para o main decidir o par do turno', async () => {
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(selectModel(container)).toBeTruthy())
+    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+
+    await send('reescreve o agendador inteiro')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+
+    const opts = api.startAgent.mock.calls[0][0] as {
+      model: string
+      autoPrompt?: { message: string }
+    }
+    expect(opts.model).toBe('auto')
+    expect(opts.autoPrompt?.message).toBe('reescreve o agendador inteiro')
+  })
+
+  it('cada mensagem revalida a sessão: o turno seguinte também é decidido', async () => {
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(selectModel(container)).toBeTruthy())
+    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+
+    await send('primeira')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(result)
+
+    await send('segunda')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
+    const second = api.startAgent.mock.calls[1][0] as { autoPrompt?: { message: string } }
+    expect(second.autoPrompt?.message).toBe('segunda')
+  })
+
+  it('o anúncio da escolha aparece SEM tirar a conversa do Automático', async () => {
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(selectModel(container)).toBeTruthy())
+    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+    await send('tarefa')
+    await flushConnect()
+
+    await emit({
+      kind: 'provider-switch',
+      id: 'auto-1',
+      fromModel: 'auto',
+      model: 'claude-haiku-4-5',
+      effort: 'medium',
+      fastMode: false,
+      text: 'Automático: Haiku 4.5, esforço médio.'
+    })
+
+    expect(screen.getByText('Automático: Haiku 4.5, esforço médio.').getAttribute('role')).toBe('status')
+    // Se o evento fixasse `model`, a conversa sairia do Automático e o turno
+    // seguinte nunca mais perguntaria.
+    expect(selectModel(container).value).toBe('auto')
+  })
+
+  it('troca de configuração com a fila: UMA sessão nova, já com a escolha do turno', async () => {
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(selectModel(container)).toBeTruthy())
+    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(partial) // ainda ocupado
+    await send('msg2') // vai para a fila
+    fireEvent.click(screen.getByText('Econômico')) // config trocada no meio do turno
+
+    await emit(result) // fim do turno → handoff da fila
+    await waitFor(() => expect(api.disposeAgent).toHaveBeenCalledWith('c1'))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+
+    // DUAS sessões no total, não três: conectar aqui sem prompt criaria uma
+    // sessão no par padrão só para derrubá-la na linha seguinte.
+    expect(api.startAgent).toHaveBeenCalledTimes(2)
+    const second = api.startAgent.mock.calls[1][0] as {
+      autoPrompt?: { message: string }
+      economyMode: boolean
+    }
+    // A única sessão criada já traz a escolha DESTE turno e a config nova.
+    expect(second.autoPrompt?.message).toBe('msg2')
+    expect(second.economyMode).toBe(true)
+  })
+
+  it('o `system` da sessão também não tira a conversa do Automático', async () => {
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(selectModel(container)).toBeTruthy())
+    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+    await send('tarefa')
+    await flushConnect()
+
+    await emit({ kind: 'system', sessionId: 's1', model: 'claude-haiku-4-5', cwd: 'C:/p', tools: [] })
+
+    expect(selectModel(container).value).toBe('auto')
+  })
+})
+
+describe('autoPromptFor / runningModel', () => {
+  const conv = (messages: unknown[]): Parameters<typeof autoPromptFor>[0] =>
+    ({ messages } as Parameters<typeof autoPromptFor>[0])
+
+  it('separa a mensagem nova do histórico e traduz quem falou', () => {
+    const prompt = autoPromptFor(
+      conv([
+        { kind: 'user', id: 'u1', text: 'cria o parser', ts: 1 },
+        { kind: 'assistant-text', id: 'a1', text: 'pronto', final: true }
+      ]),
+      'agora faz o resto'
+    )
+
+    expect(prompt).toEqual({
+      message: 'agora faz o resto',
+      history: [
+        { who: 'user', text: 'cria o parser' },
+        { who: 'agent', text: 'pronto' }
+      ]
+    })
+  })
+
+  it('ignora texto parcial do agente — só fala fechada é histórico', () => {
+    const prompt = autoPromptFor(
+      conv([{ kind: 'assistant-text', id: 'a1', text: 'pensando', final: false }]),
+      'oi'
+    )
+
+    expect(prompt.history).toEqual([])
+  })
+
+  it('não conta duas vezes a mensagem que já foi pintada na conversa', () => {
+    const prompt = autoPromptFor(
+      conv([
+        { kind: 'user', id: 'u1', text: 'antes', ts: 1 },
+        { kind: 'user', id: 'u2', text: 'esta', ts: 2 }
+      ]),
+      'esta'
+    )
+
+    expect(prompt.history).toEqual([{ who: 'user', text: 'antes' }])
+  })
+
+  it('leva só a cauda recente e corta fala gigante', () => {
+    const long = 'x'.repeat(5000)
+    const prompt = autoPromptFor(
+      conv(
+        Array.from({ length: 20 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: long, ts: i }))
+      ),
+      'nova'
+    )
+
+    expect(prompt.history).toHaveLength(6)
+    expect(prompt.history?.[0].text).toHaveLength(1000)
+  })
+
+  it('o modelo em uso é o escolhido, não o sentinel', () => {
+    expect(runningModel({ model: 'auto', autoModel: 'claude-sonnet-5' })).toBe('claude-sonnet-5')
+    expect(runningModel({ model: 'auto' })).toBe('auto')
+    expect(runningModel({ model: 'claude-opus-5', autoModel: 'claude-haiku-4-5' })).toBe('claude-opus-5')
   })
 })

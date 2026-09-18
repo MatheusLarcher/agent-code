@@ -29,6 +29,20 @@ export const MEMORISTA_COOLDOWN_MS = 60_000
 export const MEMORISTA_MAX_USER_CHARS = 4000
 export const MEMORISTA_MAX_CALLS = 20
 export const MEMORISTA_MAX_CALL_CHARS = 200
+/** A resposta do agente. Folgada como a do usuário, e pelo mesmo motivo: é onde
+ *  aparece o fato de infraestrutura que o turno descobriu. */
+export const MEMORISTA_MAX_ANSWER_CHARS = 4000
+/**
+ * A documentação do projeto no digest.
+ *
+ * O memorista só chega aqui quando o gate aprovou, e roda num modelo Claude de
+ * 200k — o `docs/` inteiro (~85k tokens) cabe. O teto existe para o caso de um
+ * projeto com documentação muito maior do que este, onde o digest levaria o
+ * prompt inteiro para fora da janela e a análise falharia em todo turno.
+ */
+export const MEMORISTA_MAX_DOCS_CHARS = 400_000
+/** Memórias que entraram no prompt do agente neste turno (o seletor devolve 3). */
+export const MEMORISTA_MAX_USED_MEMORIES = 10
 /** O índice entra só como título + gancho: é o bastante para o modelo dizer
  *  "isso já está salvo" sem carregar o acervo inteiro no prompt. */
 export const MEMORISTA_MAX_MEMORIES = 40
@@ -157,13 +171,29 @@ export interface MemoristaTurn {
   userText: string
   calls: MemoristaCall[]
   memories: MemoristaMemory[]
+  /** A resposta final do agente neste turno. */
+  answerText?: string
+  /** Caminhos das memórias que ENTRARAM no prompt do agente neste turno. */
+  usedMemories?: readonly string[]
+  /** A documentação do projeto, completa (ver `buildProjectOutline`). */
+  docs?: string
 }
 
-/** O que o modelo vê. O índice vem PRIMEIRO de propósito: a primeira pergunta é
- *  "isso já está salvo?", e essa pergunta só existe se a lista chegar antes. */
+/**
+ * O que o modelo vê.
+ *
+ * A ordem não é estética. O índice vem PRIMEIRO porque a primeira pergunta é
+ * "isso já está salvo?", e essa pergunta só existe se a lista chegar antes;
+ * logo depois vem o que o agente já tinha em mãos (memórias injetadas e docs),
+ * que é a segunda forma de duplicar; e só então o turno. A resposta do agente
+ * fica por ÚLTIMO e numa linha só — é a parte mais longa e a menos decisiva.
+ */
 export function buildMemoristaDigest(turn: MemoristaTurn): string {
   const memories = turn.memories.slice(0, MEMORISTA_MAX_MEMORIES)
   const calls = turn.calls.slice(0, MEMORISTA_MAX_CALLS)
+  const used = (turn.usedMemories ?? []).slice(0, MEMORISTA_MAX_USED_MEMORIES)
+  const docs = (turn.docs ?? '').slice(0, MEMORISTA_MAX_DOCS_CHARS)
+  const answer = clamp(turn.answerText ?? '', MEMORISTA_MAX_ANSWER_CHARS)
   const omitted = turn.memories.length - memories.length
   return [
     'MEMÓRIAS JÁ SALVAS:',
@@ -172,13 +202,18 @@ export function buildMemoristaDigest(turn: MemoristaTurn): string {
       : memories.map((memory) => `${memory.relPath} — ${clamp(memory.title, MEMORISTA_MAX_TITLE_CHARS)}: ${clamp(memory.hook, MEMORISTA_MAX_HOOK_CHARS)}`)),
     ...(omitted > 0 ? [`(+${omitted} memórias omitidas)`] : []),
     '',
+    'MEMÓRIAS QUE O AGENTE JÁ TINHA NESTE TURNO:',
+    ...(used.length === 0 ? ['(nenhuma)'] : used.map((relPath) => `- ${relPath}`)),
+    ...(docs ? ['', 'DOCUMENTAÇÃO DO PROJETO (o que já está escrito não precisa virar memória):', docs] : []),
+    '',
     'O QUE O USUÁRIO DISSE NESTE TURNO:',
     clamp(turn.userText, MEMORISTA_MAX_USER_CHARS) || '(sem texto)',
     '',
     'AÇÕES DESTE TURNO:',
     ...(calls.length === 0
       ? ['(nenhuma)']
-      : calls.map((call) => `- ${call.tool}${call.detail ? `: ${clamp(call.detail, MEMORISTA_MAX_CALL_CHARS)}` : ''}`))
+      : calls.map((call) => `- ${call.tool}${call.detail ? `: ${clamp(call.detail, MEMORISTA_MAX_CALL_CHARS)}` : ''}`)),
+    ...(answer ? ['', 'O QUE O AGENTE RESPONDEU:', answer] : [])
   ].join('\n')
 }
 

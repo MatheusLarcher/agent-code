@@ -1,6 +1,6 @@
 appId: com.larchertech.agentcode
 productName: Agent Code
-copyright: Matheus
+copyright: Larcher Tech
 
 directories:
   output: dist
@@ -28,6 +28,7 @@ extraResources:
     to: ms-playwright
 
 win:
+  publisherName: Larcher Tech
   target:
     - target: nsis
       arch: [x64]

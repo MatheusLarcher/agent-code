@@ -200,6 +200,17 @@ interface Props {
    *  there's no active conversation to apply it to. */
   models: { id: string; label: string }[]
   model: string
+  /**
+   * O modelo em que o turno REALMENTE roda — `runningModel(conv)`, não o valor
+   * do seletor.
+   *
+   * Existe separado de `model` porque em Automático o seletor guarda o sentinel
+   * `auto`, que não está em `CONTEXT_LIMITS`: derivar a barra de contexto dali
+   * mostrava o denominador padrão de 200k mesmo num turno rodando num modelo de
+   * 1M. O seletor precisa do sentinel (é o que ele exibe como escolha); a barra
+   * precisa do modelo concreto.
+   */
+  runningModel: string
   modelLocked: boolean
   onModelChange: (id: string) => void
   /** Called when the user clicks the model picker while it's locked (no active
@@ -369,7 +380,7 @@ export function ChatPanel(props: Props): JSX.Element {
         <span className="chat-title">Chat</span>
         <div className="token-meter" title="Consumo geral desta conversa">
           <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
-          <ContextBar context={tokens.context} model={props.model} />
+          <ContextBar context={tokens.context} model={props.runningModel} />
           <span className="tok out">↑ {fmt(tokens.output)} saída</span>
           <span className="tok cost">~${tokens.cost.toFixed(2)}</span>
         </div>

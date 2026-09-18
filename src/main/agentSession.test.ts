@@ -42,6 +42,54 @@ vi.mock('./store', () => ({
 const projectOutlineMock = vi.hoisted(() => vi.fn(async () => '[PROJECT_DOCS_CONTEXT]\ndocs/\n[/PROJECT_DOCS_CONTEXT]'))
 vi.mock('./projectOutline', () => ({ buildProjectOutline: projectOutlineMock }))
 
+// O seletor de memória do TypeSafe é exercitado por inteiro em
+// typesafe/memorySelection.test.ts. Aqui só importa o CONTRATO com a sessão:
+// quantas vezes ele roda e o que a decisão dele faz com o prompt.
+const typeSafeState = vi.hoisted(() => ({
+  active: false,
+  /** `null` = não houve decisão (desligado, sem chave, timeout, erro). */
+  selection: null as { block: string; relPaths: string[] } | null,
+  queries: [] as string[],
+  /** Liga o SELETOR DE VERDADE (só o serviço fica falso). É o que torna o teste
+   *  do registro de memórias usadas uma integração, e não uma encenação. */
+  passthrough: false,
+  /**
+   * Decisões EM VOO sob controle do teste: com a fila ligada, cada chamada
+   * devolve uma promessa que só resolve quando o teste mandar, na ordem que o
+   * teste quiser. É o que permite provocar a corrida do ordinal (turno N
+   * resolvendo depois do turno N+1) sem depender de relógio — teste por tempo é
+   * teste instável.
+   */
+  emVoo: null as null | Array<(selection: { block: string; relPaths: string[] } | null) => void>
+}))
+vi.mock('./typesafe', () => ({
+  typeSafeMemorySelectionActive: async () => typeSafeState.active,
+  selectMemoriesWithTypeSafe: async (dir: string, query: string) => {
+    typeSafeState.queries.push(query)
+    if (typeSafeState.emVoo) {
+      const fila = typeSafeState.emVoo
+      return new Promise<{ block: string; relPaths: string[] } | null>((resolve) => {
+        fila.push(resolve)
+      })
+    }
+    if (!typeSafeState.passthrough) return typeSafeState.selection
+    // Import dinâmico: só este módulo, e só quando o teste pede o caminho real.
+    const real = await import('./typesafe/memorySelection')
+    return real.selectMemoriesWithTypeSafe(dir, query)
+  }
+}))
+
+// O serviço do TypeSafe no modo passthrough: a decisão vem daqui, o resto do
+// seletor (varredura da pasta, limiar, releitura do disco) roda de verdade.
+const typeSafeService = vi.hoisted(() => ({ probabilities: null as Record<string, number> | null }))
+vi.mock('./typesafe/client', () => ({
+  typeSafeEnabled: () => true,
+  typeSafeApiKey: async () => 'chave-de-teste',
+  typeSafeMinConfidence: () => 0.6,
+  askTypeSafe: async () =>
+    typeSafeService.probabilities === null ? null : { memoria: { probabilities: typeSafeService.probabilities } }
+}))
+
 // Captures the Options object start() hands to the SDK, and ends the stream at
 // once so start() returns instead of waiting on a real agent.
 const queryMock = vi.hoisted(() => vi.fn())
@@ -66,6 +114,10 @@ import {
 } from './agentSession'
 import type { BrowserController } from './browserController'
 import type { SkillRuntimePaths } from './agentSession'
+// Os módulos REAIS do registro de memórias usadas e do gate: nada aqui é
+// injetado na sessão, é o mesmo caminho que `index.ts` liga em produção.
+import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
+import { buildMemoryGateState } from './typesafe/memoryGate'
 
 const secretsForPrompt = vi.hoisted(() => vi.fn(async () => [] as Array<{ name: string; value: string }>))
 vi.mock('./memory/memoryRuntime', async () => {
@@ -142,6 +194,13 @@ beforeEach(() => {
   ensureCodexProxyMock.mockClear()
   projectOutlineMock.mockReset()
   projectOutlineMock.mockResolvedValue('[PROJECT_DOCS_CONTEXT]\ndocs/\n[/PROJECT_DOCS_CONTEXT]')
+  typeSafeState.active = false
+  typeSafeState.selection = null
+  typeSafeState.queries = []
+  typeSafeState.passthrough = false
+  typeSafeState.emVoo = null
+  typeSafeService.probabilities = null
+  forgetUsedMemories('c1')
 })
 
 describe('AgentSession — fluxo de permissão', () => {
@@ -1861,6 +1920,362 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
 
       await expect(s.start()).resolves.not.toThrow()
       expect(appended()).not.toContain('# Senhas do cofre')
+    })
+  })
+})
+
+describe('AgentSession — o TypeSafe escolhe as memórias do turno', () => {
+  type ContextHook = (input: Record<string, unknown>) => Promise<{ hookSpecificOutput?: { additionalContext?: string } }>
+
+  function requestHooks(): { user: ContextHook; postToolBatch: ContextHook } {
+    const options = queryMock.mock.calls.at(-1)![0].options as {
+      hooks: Record<string, Array<{ hooks: ContextHook[] }>>
+    }
+    return {
+      user: options.hooks.UserPromptSubmit[0].hooks[0],
+      postToolBatch: options.hooks.PostToolBatch[0].hooks[0]
+    }
+  }
+
+  async function liveContext(hook: ContextHook, event: string): Promise<string> {
+    return (await hook({ hook_event_name: event })).hookSpecificOutput?.additionalContext ?? ''
+  }
+
+  function appendedSystemPrompt(): string {
+    const options = queryMock.mock.calls.at(-1)![0].options as { systemPrompt: { append: string } }
+    return options.systemPrompt.append
+  }
+
+  /** Pasta de memórias real, para o caminho lexical de fallback ter o que achar. */
+  async function memoriesFixture(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'agent-session-typesafe-'))
+    await writeFile(join(dir, 'MEMORY.md'), '# Índice\n\n- [ERP](erp.md) — o ERP da 2D\n', 'utf8')
+    await writeFile(join(dir, 'erp.md'), '---\ndescription: o ERP da 2D\n---\n# ERP\nO banco chama FALCAO.\n', 'utf8')
+    cacheState.memoriesDir = dir
+    return dir
+  }
+
+  it('decide UMA vez por mensagem, não a cada volta do loop de ferramentas', async () => {
+    typeSafeState.active = true
+    typeSafeState.selection = { block: '--- Memória relevante: erp.md ---\nO banco chama FALCAO.', relPaths: ['erp.md'] }
+    const { s } = makeSession()
+    await s.start()
+    await s.send('e o ERP?')
+
+    const hooks = requestHooks()
+    const contexts = [
+      await liveContext(hooks.user, 'UserPromptSubmit'),
+      await liveContext(hooks.postToolBatch, 'PostToolBatch'),
+      await liveContext(hooks.postToolBatch, 'PostToolBatch')
+    ]
+
+    expect(typeSafeState.queries).toHaveLength(1)
+    for (const context of contexts) expect(context).toContain('O banco chama FALCAO.')
+
+    await s.send('e agora?')
+    await liveContext(requestHooks().postToolBatch, 'PostToolBatch')
+    expect(typeSafeState.queries).toEqual(['e o ERP?', 'e agora?'])
+  })
+
+  it('com o seletor no ar, catálogo e atualização de catálogo somem do prompt', async () => {
+    await memoriesFixture()
+    typeSafeState.active = true
+    typeSafeState.selection = { block: '--- Memória relevante: erp.md ---\nO banco chama FALCAO.', relPaths: ['erp.md'] }
+    const { s } = makeSession()
+    await s.start()
+
+    const append = appendedSystemPrompt()
+    expect(append).not.toContain('AUTHORITATIVE PERSISTENT MEMORY CATALOG')
+    // O cabeçalho de memória NÃO escolhida não pode vazar por caminho nenhum.
+    expect(append).not.toContain('- [ERP](erp.md) — o ERP da 2D')
+
+    await s.send('e o ERP?')
+    const persisted = String(pushedMessages(s).at(-1)!.message.content)
+    expect(persisted).not.toContain('[PERSISTENT_MEMORY_UPDATE]')
+    expect(persisted).not.toContain('- [ERP](erp.md) — o ERP da 2D')
+
+    const live = await liveContext(requestHooks().user, 'UserPromptSubmit')
+    expect(live).toContain('--- Memória relevante: erp.md ---')
+    expect(live).not.toContain('MEMORY.md (índice da raiz)')
+  })
+
+  it('ZERO memórias escolhidas significa prompt sem memória — sem compensar pelo caminho lexical', async () => {
+    await memoriesFixture()
+    typeSafeState.active = true
+    typeSafeState.selection = { block: '', relPaths: [] }
+    const { s } = makeSession()
+    await s.start()
+    await s.send('oi')
+
+    const live = await liveContext(requestHooks().user, 'UserPromptSubmit')
+    expect(live).not.toContain('Memória relevante')
+    expect(live).not.toContain('FALCAO')
+    expect(live).toContain('[PROJECT_DOCS_CONTEXT]')
+  })
+
+  it('desligado ou sem chave: catálogo e excertos lexicais voltam intactos', async () => {
+    await memoriesFixture()
+    typeSafeState.active = false
+    typeSafeState.selection = null
+    const { s } = makeSession()
+    await s.start()
+    await s.send('me lembra do ERP')
+
+    const append = appendedSystemPrompt()
+    expect(append).toContain('AUTHORITATIVE PERSISTENT MEMORY CATALOG')
+    expect(append).toContain('- [ERP](erp.md) — o ERP da 2D')
+
+    const live = await liveContext(requestHooks().user, 'UserPromptSubmit')
+    expect(live).toContain('--- Memória relevante: erp.md ---')
+    expect(live).toContain('FALCAO')
+  })
+
+  it('timeout ou erro na decisão mantém o fallback lexical vivo', async () => {
+    await memoriesFixture()
+    // Catálogo suprimido na abertura (havia chave), decisão indisponível na hora:
+    // o turno não fica sem memória — o caminho lexical assume.
+    typeSafeState.active = true
+    typeSafeState.selection = null
+    const { s } = makeSession()
+    await s.start()
+    await s.send('me lembra do ERP')
+
+    const live = await liveContext(requestHooks().user, 'UserPromptSubmit')
+    expect(live).toContain('--- Memória relevante: erp.md ---')
+    expect(live).toContain('FALCAO')
+  })
+
+  it('desligar o recurso no meio da conversa devolve o catálogo completo no despacho seguinte', async () => {
+    await memoriesFixture()
+    typeSafeState.active = true
+    typeSafeState.selection = { block: '', relPaths: [] }
+    const { s } = makeSession()
+    await s.start()
+    await s.send('primeira')
+    expect(String(pushedMessages(s).at(-1)!.message.content)).not.toContain('[PERSISTENT_MEMORY_UPDATE]')
+
+    typeSafeState.active = false
+    typeSafeState.selection = null
+    await s.send('segunda')
+
+    const persisted = String(pushedMessages(s).at(-1)!.message.content)
+    expect(persisted).toContain('[PERSISTENT_MEMORY_UPDATE]')
+    expect(persisted).toContain('- [ERP](erp.md) — o ERP da 2D')
+  })
+
+  /**
+   * Integração de ponta a ponta do registro de memórias usadas: seletor real,
+   * sessão real, registro real. A única coisa falsa é a resposta do serviço.
+   *
+   * Nada de `usedMemories` injetado — é a MESMA função exportada que `index.ts`
+   * entrega ao memorista. Sem isto, o gate lia `[]` para sempre e ninguém via.
+   */
+  describe('o que foi escolhido chega ao gate do memorista', () => {
+    /** Duas memórias: dá para trocar a escolha entre um turno e o seguinte. */
+    async function acervo(): Promise<string> {
+      const dir = await mkdtemp(join(tmpdir(), 'agent-session-usadas-'))
+      await writeFile(join(dir, 'MEMORY.md'), '# Índice\n\n- [ERP](erp.md) — o ERP da 2D\n', 'utf8')
+      await writeFile(join(dir, 'erp.md'), '---\ndescription: o ERP da 2D\n---\n# ERP\nO banco chama FALCAO.\n', 'utf8')
+      await writeFile(join(dir, 'nota.md'), '---\ndescription: nota fiscal\n---\n# Nota\nEmitir pela SEFAZ.\n', 'utf8')
+      cacheState.memoriesDir = dir
+      typeSafeState.active = true
+      typeSafeState.passthrough = true
+      return dir
+    }
+
+    /** O que o gate do memorista veria neste momento para esta conversa. */
+    function gateVeria(convId: string): string[] {
+      return buildMemoryGateState({ userText: 'qualquer', usedMemories: usedMemories(convId) })
+        .memorias_usadas_neste_turno
+    }
+
+    it('o gate recebe os relPath do turno — não uma lista vazia', async () => {
+      await acervo()
+      typeSafeService.probabilities = { 'erp.md': 0.9, 'nota.md': 0.1 }
+      const { s } = makeSession()
+      await s.start()
+      await s.send('e o ERP?')
+
+      // O prompt do turno recebeu a memória de verdade...
+      const live = await liveContext(requestHooks().user, 'UserPromptSubmit')
+      expect(live).toContain('--- Memória relevante: erp.md ---')
+      expect(live).toContain('FALCAO')
+      // ...e o gate enxerga exatamente essa memória.
+      expect(usedMemories('c1')).toEqual(['erp.md'])
+      expect(gateVeria('c1')).toEqual(['erp.md'])
+    })
+
+    it('a lista do turno SUBSTITUI a do turno anterior da mesma conversa', async () => {
+      await acervo()
+      typeSafeService.probabilities = { 'erp.md': 0.9, 'nota.md': 0.1 }
+      const { s } = makeSession()
+      await s.start()
+      await s.send('e o ERP?')
+      await liveContext(requestHooks().user, 'UserPromptSubmit')
+      expect(usedMemories('c1')).toEqual(['erp.md'])
+
+      typeSafeService.probabilities = { 'erp.md': 0.1, 'nota.md': 0.9 }
+      await s.send('e a nota?')
+      await liveContext(requestHooks().user, 'UserPromptSubmit')
+
+      // Acumular faria o gate ver memória que não está no prompt DESTE turno.
+      expect(usedMemories('c1')).toEqual(['nota.md'])
+    })
+
+    it('ZERO memórias escolhidas grava lista vazia, sem lançar', async () => {
+      await acervo()
+      // Nenhuma bate o limiar: decisão legítima de não injetar memória alguma.
+      typeSafeService.probabilities = { 'erp.md': 0.4, 'nota.md': 0.4 }
+      const { s } = makeSession()
+      await s.start()
+      await s.send('oi')
+
+      const live = await liveContext(requestHooks().user, 'UserPromptSubmit')
+      expect(live).not.toContain('Memória relevante')
+      expect(usedMemories('c1')).toEqual([])
+      expect(gateVeria('c1')).toEqual([])
+    })
+
+    it('sem decisão do TypeSafe o registro fica vazio e o gate segue de pé', async () => {
+      await acervo()
+      // `null` do serviço: timeout, sem chave, erro. O turno cai no caminho
+      // lexical, e o que foi injetado por ali não é escolha registrada.
+      typeSafeService.probabilities = null
+      const { s } = makeSession()
+      await s.start()
+      await s.send('me lembra do ERP')
+
+      const live = await liveContext(requestHooks().user, 'UserPromptSubmit')
+      expect(live).toContain('FALCAO')
+      expect(usedMemories('c1')).toEqual([])
+      expect(gateVeria('c1')).toEqual([])
+    })
+
+    it('o fim da conversa limpa o registro — nada vaza para a conversa seguinte', async () => {
+      await acervo()
+      typeSafeService.probabilities = { 'erp.md': 0.9, 'nota.md': 0.1 }
+      const { s } = makeSession()
+      await s.start()
+      await s.send('e o ERP?')
+      await liveContext(requestHooks().user, 'UserPromptSubmit')
+      expect(usedMemories('c1')).toEqual(['erp.md'])
+
+      s.dispose()
+
+      expect(usedMemories('c1')).toEqual([])
+    })
+
+    /**
+     * A corrida de verdade: a decisão do turno N chegando DEPOIS de o turno N+1
+     * já ter gravado a dele. Aqui a ordem de resolução é do teste, não do
+     * relógio — cada chamada ao seletor devolve uma promessa parada até o teste
+     * mandar resolver. Sem a guarda `selectionTurn === this.memorySelectionTurn`
+     * a decisão atrasada escreve por cima e o gate julga um turno com as
+     * memórias de outra mensagem.
+     */
+    describe('decisão em voo (corrida do ordinal)', () => {
+      /** Drena as microtasks pendentes: setImmediate roda depois de todas. */
+      const drenar = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve))
+
+      const decisao = (relPath: string): { block: string; relPaths: string[] } => ({
+        block: `--- Memória relevante: ${relPath} ---\nconteúdo`,
+        relPaths: [relPath]
+      })
+
+      function avisosDeDegradacao(emit: ReturnType<typeof vi.fn>): unknown[] {
+        return emit.mock.calls
+          .map((c) => c[0])
+          .filter((e: { text?: string }) => typeof e?.text === 'string' && e.text.includes('decisão indisponível'))
+      }
+
+      beforeEach(() => {
+        typeSafeState.active = true
+        typeSafeState.emVoo = []
+      })
+
+      it('decisão ATRASADA do turno anterior não escreve por cima da lista do turno mais novo', async () => {
+        const { s } = makeSession()
+        await s.start()
+        await s.send('e o ERP?')
+        await s.send('e a nota?')
+        // Duas decisões em voo, nenhuma resolvida: nada foi gravado ainda.
+        const [resolveTurno1, resolveTurno2] = typeSafeState.emVoo!
+        expect(typeSafeState.emVoo).toHaveLength(2)
+        expect(usedMemories('c1')).toEqual([])
+
+        // O turno mais novo resolve primeiro e grava.
+        resolveTurno2(decisao('nota.md'))
+        await drenar()
+        expect(usedMemories('c1')).toEqual(['nota.md'])
+
+        // E só então chega a decisão do turno velho.
+        resolveTurno1(decisao('erp.md'))
+        await drenar()
+        expect(usedMemories('c1')).toEqual(['nota.md'])
+        expect(gateVeria('c1')).toEqual(['nota.md'])
+      })
+
+      it('decisão ATRASADA e VAZIA do turno anterior não apaga a lista do turno mais novo', async () => {
+        const { s } = makeSession()
+        await s.start()
+        await s.send('e o ERP?')
+        await s.send('e a nota?')
+        const [resolveTurno1, resolveTurno2] = typeSafeState.emVoo!
+
+        resolveTurno2(decisao('nota.md'))
+        await drenar()
+        // `null` grava lista VAZIA quando é do turno corrente — aqui é do velho,
+        // então não pode zerar o que o turno novo já decidiu.
+        resolveTurno1(null)
+        await drenar()
+        expect(usedMemories('c1')).toEqual(['nota.md'])
+      })
+
+      it('decisão ATRASADA de turno superado não emite o aviso de degradação', async () => {
+        const { s, emit } = makeSession()
+        await s.start()
+        await s.send('e o ERP?')
+        await s.send('e a nota?')
+        const [resolveTurno1, resolveTurno2] = typeSafeState.emVoo!
+
+        resolveTurno1(null)
+        await drenar()
+        expect(avisosDeDegradacao(emit)).toHaveLength(0)
+
+        // Contraprova: a mesma ausência de decisão, agora no turno CORRENTE,
+        // avisa — o silêncio acima é da guarda, não de o aviso estar morto.
+        resolveTurno2(null)
+        await drenar()
+        expect(avisosDeDegradacao(emit)).toHaveLength(1)
+      })
+
+      it('dispose() com decisão em voo: o que chega depois não repovoa o registro', async () => {
+        const { s } = makeSession()
+        await s.start()
+        await s.send('e o ERP?')
+        const [resolveTurno1] = typeSafeState.emVoo!
+
+        s.dispose()
+        expect(usedMemories('c1')).toEqual([])
+
+        // A conversa morreu; a decisão que chega depois não pode ressuscitar o
+        // registro dela — seria vazamento por conversa morta.
+        resolveTurno1(decisao('erp.md'))
+        await drenar()
+        expect(usedMemories('c1')).toEqual([])
+      })
+
+      it('dispose() com decisão em voo: nenhum aviso de degradação após o fim', async () => {
+        const { s, emit } = makeSession()
+        await s.start()
+        await s.send('e o ERP?')
+        const [resolveTurno1] = typeSafeState.emVoo!
+
+        s.dispose()
+        resolveTurno1(null)
+        await drenar()
+        expect(avisosDeDegradacao(emit)).toHaveLength(0)
+      })
     })
   })
 })

@@ -50,6 +50,7 @@ function renderPanel(
       tts={{ speakingId: null, onToggleSpeak: () => {} }}
       models={[]}
       model="claude-opus-4-8"
+      runningModel="claude-opus-4-8"
       modelLocked={false}
       onModelChange={() => {}}
       onModelLockedClick={() => {}}

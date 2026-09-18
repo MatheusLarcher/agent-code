@@ -34,6 +34,8 @@ import {
   buildDynamicMemoryContext,
   type MemoryCatalogSnapshot
 } from './memoryIndex'
+import { selectMemoriesWithTypeSafe, typeSafeMemorySelectionActive, type MemorySelection } from './typesafe'
+import { forgetUsedMemories, recordUsedMemories } from './memoria/memoriasUsadas'
 import { homedir, hostname } from 'node:os'
 import {
   createSkillCatalogSnapshot,
@@ -558,6 +560,19 @@ export class AgentSession {
   /** Original task text for bounded memory retrieval across the model's tool
    * loop. The full docs context is re-read by SDK hooks for every request. */
   private activeMemoryQuery = ''
+  /**
+   * A decisão do TypeSafe sobre quais memórias vão neste turno, memoizada.
+   *
+   * `buildLiveRequestContext` roda a cada request do provedor — várias vezes
+   * dentro do loop de ferramentas de UMA mensagem. A escolha é da mensagem, não
+   * do request: a promessa é criada uma vez, junto de `activeMemoryQuery`, e
+   * todos os requests do turno esperam a mesma. `null` enquanto nenhuma
+   * mensagem do usuário abriu um turno.
+   */
+  private activeMemorySelection: Promise<MemorySelection | null> | null = null
+  /** Ordinal da decisão de memória. Uma decisão que demora não pode sobrescrever
+   *  o registro de uma mensagem posterior que já decidiu. */
+  private memorySelectionTurn = 0
   private liveId: string | null = null
   private liveText = ''
   /** Text lookup for UUIDs returned by the SDK interrupt receipt. Bounded so a
@@ -821,9 +836,14 @@ export class AgentSession {
     const nativeRoot = ensureNativeSkillRoot(cacheInfo.dir, cacheSkillsDir)
     if (nativeRoot.errors.length > 0) console.warn('[skills] native skill root:', nativeRoot.errors.join('\n'))
     const nativeSkillDirs = nativeRoot.errors.length === 0 ? [nativeRoot.root] : []
-    const memorySnapshot = this.readMemoryCatalogSnapshot(memoriesDir)
-    this.memoryFilesystemVersion = memorySnapshot.filesystemVersion
-    this.memoryCatalogVersion = memorySnapshot.version
+    // O seletor do TypeSafe substitui o catálogo: com ele no ar, nem o índice
+    // completo entra no system prompt nem as versões são marcadas como
+    // entregues — desligar o recurso no meio da conversa faz o próximo despacho
+    // injetar o catálogo inteiro.
+    const memorySelectorActive = await typeSafeMemorySelectionActive()
+    const memorySnapshot = memorySelectorActive ? null : this.readMemoryCatalogSnapshot(memoriesDir)
+    this.memoryFilesystemVersion = memorySnapshot?.filesystemVersion ?? ''
+    this.memoryCatalogVersion = memorySnapshot?.version ?? ''
     this.skillFilesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, this.skillRuntime?.userHome)
     const skillSnapshot = this.readSkillCatalogSnapshot()
     // The authoritative filesystem catalog is injected with the first user
@@ -835,7 +855,8 @@ export class AgentSession {
     this.nativeSkillRegistryVersion = ''
     const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
-    append += `\n\n${memorySnapshot.catalog}\n\n${APP_RESTART_HINT}`
+    if (memorySnapshot) append += `\n\n${memorySnapshot.catalog}`
+    append += `\n\n${APP_RESTART_HINT}`
     if (ledger) append += `\n\n${TASKS_HINT}`
     // Senhas em texto puro no prompt, só com o interruptor ligado. Vai no system
     // prompt, e não anexado a cada mensagem, para a senha aparecer UMA vez por
@@ -1098,7 +1119,7 @@ export class AgentSession {
       })
       return
     }
-    const memoryCatalogUpdate = this.refreshMemoriesIfChanged()
+    const memoryCatalogUpdate = await this.refreshMemoriesIfChanged()
     const skillCatalogUpdate = await this.refreshSkillsIfChanged()
     // A real user dispatch starts a fresh loop budget. Dynamic wakeups are
     // injected by the CLI and do not pass through this method. Internal
@@ -1149,6 +1170,23 @@ export class AgentSession {
     // by live request hooks, not copied into history or passed to vision relay.
     const stamp = buildContextStamp(origin)
     this.activeMemoryQuery = outText
+    // UMA decisão por mensagem do usuário. Disparada aqui, e não no hook de
+    // request, porque o hook roda outra vez a cada volta do loop de ferramentas.
+    const selectionTurn = ++this.memorySelectionTurn
+    this.activeMemorySelection = selectMemoriesWithTypeSafe(getCacheInfo().memoriesDir, outText)
+      .catch(() => null)
+      .then(async (selection) => {
+        // O gate do memorista precisa saber o que o agente JÁ tinha em mãos
+        // neste turno — é aqui, e só aqui, que a escolha e a conversa coexistem.
+        // Grava sempre: turno sem seleção é LISTA VAZIA, não a lista do turno
+        // anterior. Uma decisão atrasada não escreve por cima de uma mensagem
+        // mais nova que já decidiu.
+        if (selectionTurn === this.memorySelectionTurn) {
+          recordUsedMemories(this.opts.convId, selection?.relPaths ?? [])
+          await this.warnMemorySelectorDown(selectionTurn, selection)
+        }
+        return selection
+      })
     const economyReminder = this.opts.economyMode ? ECONOMY_TURN_REMINDER : ''
     const stamped = (body: string): string => composeUserPrompt(body, {
       stamp, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, reminder: economyReminder
@@ -1409,6 +1447,12 @@ export class AgentSession {
     else this.restartUncertain = true // Closing SDK is not proof detached work ended.
     this.disposed = true
     this.clearLoopState()
+    // O registro de memórias usadas é do turno corrente desta conversa: some com
+    // ela. O ordinal avança para que uma decisão ainda em voo não repovoe o
+    // registro depois do fim — seria vazamento por conversa morta.
+    this.memorySelectionTurn++
+    this.activeMemorySelection = null
+    forgetUsedMemories(this.opts.convId)
     // Antes do resto: um intervalo sobrevivendo à sessão emitiria evento de uma
     // conversa que já não existe.
     if (this.stallTimer) clearInterval(this.stallTimer)
@@ -1491,14 +1535,57 @@ export class AgentSession {
     try {
       // Do not inject the memory index here: this runs for every provider
       // request. The selector is capped and redacts vault references/secrets.
-      memory = buildDynamicMemoryContext(getCacheInfo().memoriesDir, this.activeMemoryQuery, false)
+      //
+      // A decisão do TypeSafe, quando existe, é soberana: `''` significa "este
+      // turno não precisa de memória nenhuma" e nada é injetado. Só a AUSÊNCIA
+      // de decisão (`null` — desligado, sem chave, timeout, erro) volta ao
+      // caminho lexical de sempre.
+      const selected = this.activeMemorySelection ? await this.activeMemorySelection : null
+      // `selected?.block` preserva a distinção: `''` (decidiu zero) NÃO aciona o
+      // `??`; só a ausência de decisão (`null`) cai no caminho lexical.
+      memory = selected?.block ?? buildDynamicMemoryContext(getCacheInfo().memoriesDir, this.activeMemoryQuery, false)
     } catch {
       // Memory recall is optional context; docs and the user request still run.
     }
     return composeRequestContext({ docs, memory })
   }
 
-  private refreshMemoriesIfChanged(): string {
+  /**
+   * Avisa que o turno perdeu o seletor de memória e caiu na busca lexical.
+   *
+   * Sem isto a degradação é INVISÍVEL: a abertura da conversa já suprimiu o
+   * catálogo por haver chave, e quando a decisão não vem o turno roda com
+   * excertos lexicais sem que nada apareça na tela — só um `console.error` que
+   * ninguém lê. O usuário precisa saber que a memória daquele turno foi montada
+   * por outro critério.
+   *
+   * `null` também é o estado normal de quem não configurou o recurso, e ali não
+   * há nada a anunciar: por isso o aviso depende de o seletor estar ATIVO.
+   * Uma nota por turno, e nenhuma para uma mensagem que já foi superada por
+   * outra mais nova (mesma guarda do ordinal que protege `recordUsedMemories`).
+   */
+  private async warnMemorySelectorDown(selectionTurn: number, selection: MemorySelection | null): Promise<void> {
+    if (selection !== null) return
+    try {
+      if (!(await typeSafeMemorySelectionActive())) return
+    } catch {
+      return
+    }
+    if (selectionTurn !== this.memorySelectionTurn || this.disposed) return
+    this.emit({
+      kind: 'status',
+      id: nextId(),
+      text: 'Memória: decisão indisponível neste turno — usando busca local nas memórias.'
+    })
+  }
+
+  private async refreshMemoriesIfChanged(): Promise<string> {
+    // Com o seletor no ar, o catálogo inteiro não vai ao prompt: mandar os 227
+    // cabeçalhos aqui anularia o objetivo de só o escolhido aparecer. As versões
+    // ficam deliberadamente sem atualizar — se o usuário desligar o recurso no
+    // meio da conversa, o próximo despacho vê a divergência e entrega o catálogo
+    // completo de uma vez.
+    if (await typeSafeMemorySelectionActive()) return ''
     const memoriesDir = getCacheInfo().memoriesDir
     const filesystemVersion = memoryCatalogFilesystemVersion(memoriesDir)
     if (filesystemVersion === this.memoryFilesystemVersion) return ''
