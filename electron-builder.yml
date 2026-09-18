@@ -28,7 +28,6 @@ extraResources:
     to: ms-playwright
 
 win:
-  publisherName: Larcher Tech
   target:
     - target: nsis
       arch: [x64]
