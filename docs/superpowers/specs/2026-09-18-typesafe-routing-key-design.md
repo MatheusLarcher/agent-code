@@ -20,8 +20,10 @@ contrato, sem bloquear o turno do usuário.
 O objetivo é centralizar a decisão por turno, preservar o custo de cache quando
 isso for seguro e manter o contrato existente de seleção manual. A decisão deve
 ser determinística quanto às listas oferecidas, validação e fallback, embora a
-classificação do serviço seja probabilística. A confiança retornada é
-informativa; ela não é um gate para aceitar uma resposta estruturalmente válida.
+classificação do serviço seja probabilística. A confiança retornada participa do
+gate somente quando já existe um par live decidido. O piso padrão é
+`minConfidence = 0.20`: abaixo dele, preserva-se o par live; sem par live, uma
+resposta estruturalmente válida continua aceita.
 
 Ficam fora de escopo:
 
@@ -46,6 +48,8 @@ Ficam fora de escopo:
   `unprompted`);
 - `AutoLivePair` acrescenta `decided`, distinguindo uma escolha real de um
   par temporário de fallback;
+- `minConfidence` define o piso padrão `0.20` para o gate aplicado a um par live
+  decidido;
 - `clampEffortToModel` é a última barreira antes de o par deixar o processo.
 
 A lista candidata deve ser derivada do mesmo catálogo mostrado ao usuário. Uma
@@ -74,11 +78,13 @@ A sequência de resolução é:
    preserva o par vivo quando existir.
 2. Se não houver duas opções em nenhuma dimensão, não se faz uma pergunta
    desnecessária; na ausência de decisão, usa-se `fallback`.
-3. Qualquer resposta estruturalmente válida é usada, independentemente do
-   valor de `confidence`; confiança baixa não preserva automaticamente o par
-   anterior nem impede a troca.
-4. O esforço é recortado contra o modelo escolhido, depois que ambos são
-   conhecidos.
+3. Se houver um par live decidido, a resposta só substitui esse par quando
+   `confidence >= minConfidence`; com o piso padrão `minConfidence = 0.20`, uma
+   resposta abaixo de `0.20` preserva o par live. Sem par live decidido, uma
+   resposta estruturalmente válida é aceita mesmo abaixo do piso.
+4. O modelo e o esforço permanecem validados contra as listas e limites
+   oferecidos; o esforço é recortado contra o modelo escolhido, depois que
+   ambos são conhecidos.
 5. O handler de sessão usa `reuse` somente quando a sessão viva já corresponde
    exatamente ao par resolvido; caso contrário, recria a sessão antes do turno.
 6. A nota de sistema informa ao usuário a escolha TypeSafe ou o fallback, mas
@@ -88,8 +94,10 @@ A sequência de resolução é:
 
 A origem do par é essencial. Um fallback não vira uma decisão persistente: no
 próximo turno, uma nova decisão pode escolher outro par. Uma resposta
-`typesafe` estruturalmente válida é aplicada mesmo com confidence baixa e o par
-resultante é propagado durante reconexão sem turno. O contador
+`typesafe` estruturalmente válida abaixo de `minConfidence` preserva um par live
+decidido, mas é aplicada sem live decidido; uma resposta
+válida acima ou igual ao piso substitui o par quando validada. O par resultante
+é propagado durante reconexão sem turno. O contador
 `agentcode.typesafe.usage.v1` é informativo e best-effort; falha de storage não
 pode desfazer uma escolha já entregue.
 
@@ -100,8 +108,9 @@ pode desfazer uma escolha já entregue.
 - `effort` final deve ser um item de `EFFORT_LEVELS` e compatível com
   `MODEL_EFFORT[model]` quando houver teto conhecido.
 - Respostas TypeSafe ausentes, `noul`, fora da lista, `NaN`, infinitas ou fora
-  da faixa caem em comportamento seguro e não produzem `undefined`; confidence
-  baixa, por si só, não é motivo para fallback.
+  da faixa caem em comportamento seguro e não produzem `undefined`; `confidence`
+  abaixo de `minConfidence` preserva o par live decidido, mas não impede uma
+  resposta válida quando não existe par live.
 - `modelo_atual` só é enviado se o par vivo estiver entre os candidatos; caso
   contrário usa o marcador `nenhum`.
 - Histórico serve apenas como contexto; não pode substituir a mensagem nova
@@ -144,13 +153,17 @@ A implementação deve manter ou ampliar os testes existentes em
    quando não há escolha.
 3. **Validação:** escolha fora da lista, score negativo/acima da faixa,
    `NaN`/infinito, resposta `noul` ou ausência estrutural produzem fallback
-   seguro; confidence baixa em resposta estruturalmente válida é aceita.
+   seguro; modelo e esforço continuam validados; com par live decidido,
+   resposta válida abaixo de `minConfidence = 0.20` preserva o par, enquanto
+   resposta válida em `0.20` ou acima é aceita; sem par live, resposta válida
+   abaixo de `0.20` também é aceita.
 4. **Compatibilidade:** Haiku nunca recebe esforço acima de `high`; todos os
    modelos suportados aceitam os pares previstos; `auto` nunca é passado ao
    provider.
-5. **Decisão por turno:** qualquer par estruturalmente válido pode substituir o
-   par anterior, sem gate de confidence; fallback não se torna decisão; reconexão
-   sem turno preserva o par correto sem emitir nota.
+5. **Decisão por turno:** com par live decidido, resposta abaixo de `0.20`
+   preserva o par e resposta válida em `0.20` ou acima pode substituí-lo; sem
+   live, resposta estruturalmente válida abaixo do piso é aceita; fallback não
+   se torna decisão; reconexão sem turno preserva o par correto sem emitir nota.
 6. **Sessão:** mesmo par reutiliza sessão; mudança de modelo/esforço recria;
    mensagem nova sempre segue mesmo quando TypeSafe falha.
 7. **Uso:** chamadas concorrentes somam tokens e chamadas sem perder uma escrita;
