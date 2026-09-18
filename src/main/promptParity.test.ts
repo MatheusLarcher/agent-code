@@ -6,7 +6,7 @@ import { toCodexRequest, toCodexWireRequest } from './codexProtocol'
 const capture = vi.hoisted(() => ({ queries: [] as Array<{ options: Record<string, unknown>; prompt: { values: Array<{ message: { content: string } }> } }> }))
 // `typesafe` desligado: o contrato de prompt verificado aqui é o de sempre —
 // catálogo no system prompt e excertos lexicais no contexto vivo.
-vi.mock('./config', () => ({ loadConfig: () => ({ windowsControlEnabled: false, ollama: { apiKey: 'synthetic', enabled: true }, typesafe: { enabled: false, apiKey: '', minConfidence: 0.6 } }) }))
+vi.mock('./config', () => ({ loadConfig: () => ({ windowsControlEnabled: false, ollama: { apiKey: 'synthetic', enabled: true }, typesafe: { enabled: false, apiKey: '', minConfidence: 0.2 } }) }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => true }))
 vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: async () => ({ baseUrl: 'http://127.0.0.1:1', secret: 'test' }), FAST_MODE_TOKEN_SUFFIX: '+fast' }))
 vi.mock('./store', () => ({ getCacheInfo: () => ({ dir: '/cache', skillsDir: '/cache/skills', memoriesDir: '/cache/memories' }) }))

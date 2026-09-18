@@ -15,7 +15,7 @@ describe('configuração persistida', () => {
 
   it('mantém o TypeSafe DESLIGADO por padrão e faz merge profundo do bloco', () => {
     // Serviço externo e pago, com chave do usuário: não pode ligar sozinho.
-    expect(defaultAppConfig().typesafe).toEqual({ enabled: false, apiKey: '', minConfidence: 0.6 })
+    expect(defaultAppConfig().typesafe).toEqual({ enabled: false, apiKey: '', minConfidence: 0.2 })
     expect(parseStoredAppConfig('{}').typesafe.enabled).toBe(false)
 
     // Gravar só o interruptor não pode apagar a chave (armadilha do spread raso).
@@ -23,7 +23,7 @@ describe('configuração persistida', () => {
     expect(mergeAppConfig(comChave, { typesafe: { enabled: true } }).typesafe).toEqual({
       enabled: true,
       apiKey: 'ts-key',
-      minConfidence: 0.6
+      minConfidence: 0.2
     })
 
     // Limiar fora de 0..1 não significa nada: ou cala o serviço, ou aceita chute.

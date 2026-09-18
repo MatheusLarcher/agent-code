@@ -1049,10 +1049,10 @@ export interface TypeSafeConfig {
   minConfidence: number
 }
 
-/** Piso padrão de confiança. Metade é o acaso puro numa escolha entre duas
- *  opções; 0,6 exige alguma margem sobre isso sem calar o serviço em decisão
- *  de baixo risco. Cada consumidor pode exigir mais quando a ação é cara. */
-export const DEFAULT_TYPESAFE_MIN_CONFIDENCE = 0.6
+/** Piso padrão de confiança. Baixo de propósito, para o serviço quase nunca
+ *  calar em decisão de baixo risco — cada consumidor pode exigir mais quando
+ *  a ação é cara. */
+export const DEFAULT_TYPESAFE_MIN_CONFIDENCE = 0.2
 
 /** An alert raised by the vigia for one conversation. Travels on its OWN IPC
  *  channel, never as a `ChatEvent`: it is for the user, not for the model, and

@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AUTO_MODEL_FALLBACK, clampEffortToModel, DEFAULT_EFFORT, EFFORT_LEVELS } from '../../shared/ipc'
 
 const askTypeSafe = vi.fn()
-/** O piso configurado pelo usuário. O padrão do app é 0,6. */
-const minConfidence = { value: 0.6 }
+/** O piso configurado pelo usuário. O padrão do app é 0,2. */
+const minConfidence = { value: 0.2 }
 vi.mock('./client', () => ({ askTypeSafe, typeSafeMinConfidence: () => minConfidence.value }))
 
 const {
@@ -39,7 +39,7 @@ function answers(model: string, score: number): void {
 
 beforeEach(() => {
   askTypeSafe.mockReset()
-  minConfidence.value = 0.6
+  minConfidence.value = 0.2
   answers('claude-sonnet-5', 1)
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
 })
@@ -411,12 +411,12 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
     })
   })
 
-  it('escolha FRACA mantém o par vivo: 0,26 não troca o modelo de uma conversa', async () => {
+  it('escolha FRACA mantém o par vivo: 0,15 não troca o modelo de uma conversa', async () => {
     // `typeSafeMinConfidence()` existe desde sempre e a escolha de execução o
-    // ignorava — 0,26 valia tanto quanto 0,95.
+    // ignorava — 0,15 valia tanto quanto 0,95.
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-haiku-4-5', 0.26),
-      which_effort: scoreAnswer(0, 0.26)
+      which_model: choiceAnswer('claude-haiku-4-5', 0.15),
+      which_effort: scoreAnswer(0, 0.15)
     })
 
     expect(await chooseAutoExecution({ message: 'e aí?' }, { live })).toEqual({ ...live, source: 'typesafe' })
@@ -456,8 +456,8 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
 
   it('o par recuado continua sendo recortado para o que o modelo suporta', async () => {
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-opus-5', 0.2),
-      which_effort: scoreAnswer(4, 0.2)
+      which_model: choiceAnswer('claude-opus-5', 0.1),
+      which_effort: scoreAnswer(4, 0.1)
     })
 
     // Par vivo inválido (Haiku para em `high`): o recuo não pode reintroduzi-lo cru.
@@ -468,8 +468,8 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
 
   it('`resolveAutoStart` repassa o par da conversa — não é opção só de quem chama direto', async () => {
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-haiku-4-5', 0.3),
-      which_effort: scoreAnswer(0, 0.3)
+      which_model: choiceAnswer('claude-haiku-4-5', 0.1),
+      which_effort: scoreAnswer(0, 0.1)
     })
 
     const decision = await resolveAutoStart({
