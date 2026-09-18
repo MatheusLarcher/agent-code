@@ -204,6 +204,13 @@ export async function provisionPostgres(
   }
 
   const pool = new Pool({ ...postgresClientConfig(draft, POSTGRES_DATABASE), max: 10 })
+  // Sem este listener, um cliente ocioso do pool derrubado pelo servidor (rede
+  // caiu, servidor reiniciou a conexão) vira uma exceção não tratada e derruba
+  // o processo main do Electron inteiro. O pool já descarta sozinho o cliente
+  // morto e cria outro na próxima consulta — aqui só evitamos o crash.
+  pool.on('error', (error) => {
+    console.error('[postgres] erro em conexão ociosa do pool:', error)
+  })
   const client = await pool.connect().catch((error) => {
     throw typedPostgresError(error, 'connect')
   })
