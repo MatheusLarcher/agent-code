@@ -5436,6 +5436,16 @@ button svg {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.settings-nav-version {
+  margin-top: auto;
+  padding: 8px 10px 2px;
+  font-size: 10.5px;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .settings-pane-head {
   display: flex;
   align-items: baseline;
@@ -5502,6 +5512,9 @@ button svg {
 @media (max-width: 720px) {
   .settings-nav {
     flex-basis: 56px;
+  }
+  .settings-nav-version {
+    display: none;
   }
   .settings-nav-text {
     display: none;

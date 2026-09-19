@@ -90,6 +90,7 @@ export function SettingsModal({
   const savedTypeSafeKey = useRef('')
   const [loaded, setLoaded] = useState(false)
   const [cache, setCache] = useState<CacheInfo | null>(null)
+  const [appVersion, setAppVersion] = useState('')
   const [codex, setCodex] = useState<CodexStatus>({ connected: false })
   const [codexBusy, setCodexBusy] = useState(false)
   const [claudeBusy, setClaudeBusy] = useState(false)
@@ -108,6 +109,7 @@ export function SettingsModal({
       .catch(() => undefined)
       .finally(() => setLoaded(true))
     void window.api.getCacheInfo().then(setCache)
+    void window.api.getAppVersion().then(setAppVersion)
     void window.api.codexStatus().then(setCodex)
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
@@ -241,6 +243,7 @@ export function SettingsModal({
                 </span>
               </button>
             ))}
+            {appVersion && <div className="settings-nav-version">Agent Code v{appVersion}</div>}
           </nav>
 
           <div className="settings-scroll" role="tabpanel" key={tab}>

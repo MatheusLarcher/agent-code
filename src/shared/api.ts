@@ -57,6 +57,8 @@ import type {
 
 /** The surface exposed on `window.api` by the preload script. */
 export interface AgentCodeApi {
+  /** App version from package.json (matches the installer/build). */
+  getAppVersion(): Promise<string>
   /** Read the persisted app configuration. */
   getConfig(): Promise<AppConfig>
   /** Persist a partial app configuration (merged with what's on disk). */

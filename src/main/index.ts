@@ -850,6 +850,7 @@ function registerIpc(): void {
     else pending.resolve()
   })
   // App configuration (Settings screen).
+  ipcMain.handle(Channels.appGetVersion, () => app.getVersion())
   ipcMain.handle(Channels.configGet, () => {
     storageLifecycle.repository()
     return loadConfig()

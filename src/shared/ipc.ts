@@ -1528,6 +1528,8 @@ export interface CacheInfo {
 export const Channels = {
   // renderer -> main (invoke)
   /** Read the persisted app configuration (Settings screen). */
+  /** Read the app version from package.json (shown in the Settings screen). */
+  appGetVersion: 'app:get-version',
   configGet: 'config:get',
   /** Persist the app configuration (Settings screen). */
   configSet: 'config:set',

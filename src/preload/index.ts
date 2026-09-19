@@ -64,6 +64,7 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: AgentCodeApi = {
   // app config (Settings screen)
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke(Channels.appGetVersion),
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke(Channels.configGet),
   setConfig: (patch: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke(Channels.configSet, patch),
   onAppCloseRequested: (cb: () => void): (() => void) => on(Channels.appCloseRequested, cb),
