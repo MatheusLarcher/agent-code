@@ -25,16 +25,18 @@ import { buildRemoteApk } from './remote/buildApk'
 import {
   AUTO_MODEL,
   Channels,
+  CLAUDE_MODELS,
   DEFAULT_CONFIG,
   DEFAULT_LOCAL_SPEECH_MODEL,
   isAutoModel,
   LOCAL_SPEECH_MODELS,
+  OPENAI_MODELS,
   REMOTE_RELAY_WS,
   type BoardItemStatus,
   type EffortLevel,
   type SpeechSetupProgress
 } from '../shared/ipc'
-import { initializeConfigPersistence, loadConfig, updateConfig } from './config'
+import { ensureConfigLoaded, initializeConfigPersistence, loadConfig, updateConfig } from './config'
 import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAudioSegment } from './openai'
 import { stopLocalSpeech, transcribeLocal } from './speech'
 import { isAuthenticated, logoutClaude } from './auth'
@@ -74,6 +76,7 @@ import { discoverSkills } from './skillDiscovery'
 import { readProjectIcon } from './projectIcon'
 import { syncCacheSkills } from './skillManager'
 import { resolveAutoStart, type AutoStartDecision } from './typesafe'
+import { typeSafeConfigured } from './typesafe/client'
 import type {
   AgentMessageKind,
   ChatEvent,
@@ -852,16 +855,21 @@ export function registerIpc(): void {
     if (error) pending.reject(new Error(error))
     else pending.resolve()
   })
-  // App configuration (Settings screen).
   ipcMain.handle(Channels.appGetVersion, () => app.getVersion())
-  ipcMain.handle(Channels.configGet, () => {
+  // App configuration (Settings screen).
+  ipcMain.handle(Channels.configGet, async () => {
     storageLifecycle.repository()
+    // Sem isto, uma chamada logo após o boot (a UI monta assim que o storage
+    // fica pronto, mas a config em si só termina de carregar depois) via o
+    // fallback local e devolvia interruptores "desligados" mesmo já ativados.
+    await ensureConfigLoaded()
     return loadConfig()
   })
   ipcMain.handle(Channels.configSet, (_e, patch: Partial<AppConfig>) => {
     assertStorageWritable()
     return updateAppConfig(patch)
   })
+  ipcMain.handle(Channels.typesafeIsConfigured, () => typeSafeConfigured())
   ipcMain.handle(Channels.appCloseReady, async () => {
     if (!closeRequested || !mainWindow) return
     if (closeRequestTimer) clearInterval(closeRequestTimer)
@@ -1341,11 +1349,25 @@ export function registerIpc(): void {
    * Electron); aqui fica só o IO dela.
    */
   const autoStart = async (opts: StartAgentOptions): Promise<AutoStartDecision> => {
-    const decision = await resolveAutoStart({
-      autoPrompt: opts.autoPrompt,
-      live: autoSessions.get(opts.convId),
-      hasSession: sessions.has(opts.convId)
-    })
+    // Os candidatos são a MESMA lista que o seletor manual oferece agora: Claude
+    // sempre, e os GPT só com login do ChatGPT no ar. A checagem mora aqui, e não
+    // em `typesafe/execution.ts`, para aquela camada continuar pura (testável sem
+    // Electron nem IO). Sem login, `models` fica ausente e vale o padrão de lá.
+    //
+    // `codexStatus()` e não `isCodexConnected()`: a versão assíncrona espera a
+    // carga dos tokens em vez de ler "deslogado" de uma carga que ainda não
+    // terminou — a primeira mensagem logo após abrir o app cairia nisso.
+    const models = (await codexStatus()).connected
+      ? [...CLAUDE_MODELS, ...OPENAI_MODELS].map((model) => model.id)
+      : undefined
+    const decision = await resolveAutoStart(
+      {
+        autoPrompt: opts.autoPrompt,
+        live: autoSessions.get(opts.convId),
+        hasSession: sessions.has(opts.convId)
+      },
+      models ? { models } : {}
+    )
     // A escolha é anunciada em TODO turno, inclusive quando repete o par
     // anterior: o que o usuário precisa saber é COM QUE modelo a mensagem dele
     // saiu, não se isso mudou desde a última. Vai como `provider-switch`, que o
@@ -1463,6 +1485,7 @@ export function registerIpc(): void {
       sessionComplete,
       // Grava cada chamada de LLM em `llm_calls` (árvore de consumo de tokens).
       // O mesmo `repository` já em escopo para `markSessionResumeReady` acima.
+      // Durable FIFO for messages submitted while the SDK is busy/restarting.
       repository
     ), emit, async (provider) => provider === 'gpt' ? isCodexConnected() : isAuthenticated(), async () => {
         if (sessions.get(convId) === s) await releaseSessionLease(convId)

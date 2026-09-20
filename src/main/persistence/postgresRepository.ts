@@ -5,6 +5,7 @@ import { parseStoredAppConfig } from './configData'
 import { lockPostgresTransferRecords, postgresTransferClock, prepareTransferRecords, readPostgresTransferRecords, type TransferRecords } from './transferRecords'
 import { hashAggregate, hashJson, hashText, normalizeJson, type JsonValue } from './hashes'
 import { PostgresChangeFeed } from './postgresChangeFeed'
+import { ChangeLogPruner } from './changeLogPruner'
 import { TokenUsagePruner } from './tokenUsagePruner'
 import { createPostgresSessionStore } from './postgresSessionStore'
 import {
@@ -90,6 +91,7 @@ import {
   type LlmCallInsert,
   type LlmUsageTotal,
   type PersistenceRepository,
+  type AgentInputQueueItem,
   type RepositoryChange,
   type RepositoryChangeHandler,
   type VersionedConversation,
@@ -361,6 +363,7 @@ export class PostgresRepository implements PersistenceRepository {
   readonly backend = 'postgres' as const
   private readonly handlers = new Set<RepositoryChangeHandler>()
   private readonly feed: PostgresChangeFeed
+  private readonly changeLogPruner: ChangeLogPruner
   private readonly tokenUsagePruner: TokenUsagePruner
   private initialized = false
 
@@ -376,6 +379,11 @@ export class PostgresRepository implements PersistenceRepository {
       installationId,
       (changes) => this.emit(changes),
       onOffline
+    )
+    // Manutenção, não uma operação do usuário: uma falha aqui só loga, nunca
+    // derruba a conexão (ver changeLogPruner.ts).
+    this.changeLogPruner = new ChangeLogPruner(this.pool, (error) =>
+      console.error('[postgres] falha ao podar change_log:', error)
     )
     // Mesma lógica: manutenção, não uma operação do usuário (ver tokenUsagePruner.ts).
     this.tokenUsagePruner = new TokenUsagePruner(
@@ -406,6 +414,7 @@ export class PostgresRepository implements PersistenceRepository {
       )
     })
     await this.feed.start()
+    this.changeLogPruner.start()
     this.tokenUsagePruner.start()
     this.initialized = true
   }
@@ -413,6 +422,7 @@ export class PostgresRepository implements PersistenceRepository {
   async close(): Promise<void> {
     this.initialized = false
     this.handlers.clear()
+    this.changeLogPruner.stop()
     this.tokenUsagePruner.stop()
     await this.feed.close()
     await this.pool.end()
@@ -1779,6 +1789,28 @@ export class PostgresRepository implements PersistenceRepository {
         )
     return memoryEntryFromRow(decodeMemoryEntryRow(result.rows[0]))
   }
+
+  async enqueueAgentInput(conversationId: string, message: import('@anthropic-ai/claude-agent-sdk').SDKUserMessage, messageUuid = randomUUID()): Promise<AgentInputQueueItem> {
+    return transaction(this.pool, async (client) => {
+      const existing = await client.query('SELECT * FROM agent_input_queue WHERE conversation_id=$1 AND message_uuid=$2', [conversationId, messageUuid])
+      if (existing.rows[0]) return this.queueItem(existing.rows[0])
+      const result = await client.query(`INSERT INTO agent_input_queue(conversation_id, sequence, message_uuid, payload_json) VALUES($1, COALESCE((SELECT MAX(sequence)+1 FROM agent_input_queue WHERE conversation_id=$1),1), $2, $3) RETURNING *`, [conversationId, messageUuid, JSON.stringify(message)])
+      return this.queueItem(result.rows[0])
+    })
+  }
+  async claimNextAgentInput(conversationId: string): Promise<AgentInputQueueItem | null> {
+    return transaction(this.pool, async (client) => {
+      const result = await client.query(`SELECT * FROM agent_input_queue q WHERE conversation_id=$1 AND status='pending' AND available_at <= clock_timestamp() AND NOT EXISTS (SELECT 1 FROM agent_input_queue p WHERE p.conversation_id=q.conversation_id AND p.sequence<q.sequence AND p.status='processing') ORDER BY sequence LIMIT 1 FOR UPDATE`, [conversationId])
+      if (!result.rows[0]) return null
+      const updated = await client.query(`UPDATE agent_input_queue SET status='processing', attempt_count=attempt_count+1, processing_started_at=clock_timestamp(), updated_at=clock_timestamp() WHERE id=$1 RETURNING *`, [result.rows[0].id])
+      return this.queueItem(updated.rows[0])
+    })
+  }
+  async completeAgentInput(id: number): Promise<void> { await this.pool.query("DELETE FROM agent_input_queue WHERE id=$1 AND status='processing'", [id]) }
+  async requeueAgentInput(id: number, error?: string): Promise<void> { await this.pool.query("UPDATE agent_input_queue SET status='pending', processing_started_at=NULL, last_error=$2, updated_at=clock_timestamp() WHERE id=$1 AND status='processing'", [id, error ?? null]) }
+  async recoverAgentInput(conversationId?: string): Promise<number> { const result = await this.pool.query(`UPDATE agent_input_queue SET status='pending', processing_started_at=NULL, updated_at=clock_timestamp() WHERE status='processing' ${conversationId ? 'AND conversation_id=$1' : ''}`, conversationId ? [conversationId] : []); return result.rowCount ?? 0 }
+  async listAgentInputs(conversationId: string): Promise<AgentInputQueueItem[]> { const result = await this.pool.query('SELECT * FROM agent_input_queue WHERE conversation_id=$1 ORDER BY sequence', [conversationId]); return result.rows.map((row) => this.queueItem(row)) }
+  private queueItem(row: Record<string, unknown>): AgentInputQueueItem { const isoValue = (value: unknown) => value instanceof Date ? value.toISOString() : String(value); return { id: Number(row.id), conversationId: String(row.conversation_id), messageUuid: String(row.message_uuid), message: (typeof row.payload_json === 'string' ? JSON.parse(row.payload_json) : row.payload_json) as AgentInputQueueItem['message'], sequence: Number(row.sequence), status: row.status as AgentInputQueueItem['status'], attemptCount: Number(row.attempt_count), availableAt: isoValue(row.available_at), processingStartedAt: row.processing_started_at ? isoValue(row.processing_started_at) : null, lastError: row.last_error ? String(row.last_error) : null, createdAt: isoValue(row.created_at), updatedAt: isoValue(row.updated_at) } }
 
   subscribe(handler: RepositoryChangeHandler): () => void {
     this.handlers.add(handler)

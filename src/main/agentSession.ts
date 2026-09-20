@@ -79,7 +79,7 @@ import type {
   StartAgentOptions,
   TokenUsage
 } from '../shared/ipc'
-import type { TokenUsageRepository } from './persistence/types'
+import type { AgentInputQueueRepository, TokenUsageRepository } from './persistence/types'
 
 export const OPENAI_MAX_TURNS = 64
 export const DEFAULT_LOOP_LIMIT = 100
@@ -658,6 +658,8 @@ export class AgentSession {
    * config so task-list snapshots never leak to the default Claude root. */
   private sessionTasksRoot: string | undefined
   private disposed = false
+  private inputDrain: Promise<void> = Promise.resolve()
+  private currentInputId: number | null = null
   private loopActive = false
   private loopCycles = 0
   private loopLimit = DEFAULT_LOOP_LIMIT
@@ -825,7 +827,9 @@ export class AgentSession {
      *  docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md).
      *  Optional: a session with none simply skips persistence but still emits
      *  the live `llm-call` ChatEvent. */
-    private readonly tokenUsageRepository?: TokenUsageRepository
+    private readonly tokenUsageRepository?: TokenUsageRepository,
+    /** Durable FIFO for messages submitted while the SDK is busy or restarting. */
+    private readonly inputQueueRepository?: AgentInputQueueRepository
   ) {
     // Native class fields run before constructor parameter properties are assigned.
     this.restartRegistration = appRestart?.register(opts.convId, () => this.restartActivity())
@@ -1132,7 +1136,49 @@ export class AgentSession {
       return false
     }
     void this.consumeMessages(this.q)
+    // Processing rows left by a crashed/restarted session is safe: the queue
+    // claims in sequence order and rows are completed only after handing the
+    // exact SDK message to the input stream.
+    if (this.inputQueueRepository) {
+      void this.inputQueueRepository.recoverAgentInput(this.opts.convId)
+        .then(() => this.drainPersistedInputs())
+        .catch((error) => console.warn('[agent-input-queue] recovery failed:', error))
+    }
     return true
+  }
+
+  private async drainPersistedInputs(): Promise<void> {
+    if (!this.inputQueueRepository || this.disposed) return
+    const run = this.inputDrain.then(async () => {
+      // The SDK may still be processing the item previously pushed. Keep the
+      // durable queue strictly FIFO: only the terminal result for that item
+      // may clear currentInputId and schedule the next claim.
+      if (this.currentInputId !== null) return
+      const item = await this.inputQueueRepository!.claimNextAgentInput(this.opts.convId)
+      if (!item || this.disposed) return
+      try {
+        // Reserve the slot before handing the message to the SDK. A synchronous
+        // push/result callback must observe the same item, and no other drain
+        // may claim the next row until this one reaches a terminal result.
+        this.currentInputId = item.id
+        this.input.push(item.message)
+      } catch (error) {
+        if (this.currentInputId === item.id) this.currentInputId = null
+        await this.inputQueueRepository!.requeueAgentInput(item.id, String(error)).catch(() => undefined)
+        void this.drainPersistedInputs()
+      }
+    })
+    this.inputDrain = run.catch(() => undefined)
+    await run
+  }
+
+  private async enqueueInput(message: SDKUserMessage, messageUuid: string): Promise<void> {
+    if (!this.inputQueueRepository) {
+      this.input.push(message)
+      return
+    }
+    await this.inputQueueRepository.enqueueAgentInput(this.opts.convId, message, messageUuid)
+    await this.drainPersistedInputs()
   }
 
   private async consumeMessages(q: NonNullable<typeof this.q>): Promise<void> {
@@ -1274,12 +1320,12 @@ export class AgentSession {
         merged = `${outText}\n\n[Observação do sistema: não foi possível analisar a(s) imagem(ns) anexada(s) automaticamente (${String(err)}). Responda com base apenas no texto acima.]`
       }
       this.beginTurn()
-      this.input.push({
+      await this.enqueueInput({
         type: 'user',
         message: { role: 'user', content: stamped(merged) },
         parent_tool_use_id: null,
         uuid
-      } as SDKUserMessage)
+      } as SDKUserMessage, uuid)
       return
     }
 
@@ -1303,7 +1349,7 @@ export class AgentSession {
       uuid
     } as SDKUserMessage
     this.beginTurn()
-    this.input.push(msg)
+    await this.enqueueInput(msg, uuid)
   }
 
   async waitForIdle(): Promise<void> {
@@ -2095,6 +2141,19 @@ export class AgentSession {
         // `assistant` case below (context-token tracking).
         if (r.origin?.kind === 'peer') break
         const usageExhausted = this.quotaRejected || sdkUsageExhausted(message)
+        if (this.currentInputId !== null && this.inputQueueRepository) {
+          const inputId = this.currentInputId
+          this.currentInputId = null
+          if (r.is_error || usageExhausted) {
+            void this.inputQueueRepository.requeueAgentInput(inputId, r.result ?? 'Agent turn failed')
+              .then(() => this.drainPersistedInputs())
+              .catch((error) => console.warn('[agent-input-queue] requeue failed:', error))
+          } else {
+            void this.inputQueueRepository.completeAgentInput(inputId)
+              .then(() => this.drainPersistedInputs())
+              .catch((error) => console.warn('[agent-input-queue] completion failed:', error))
+          }
+        }
         if (this.watchedSessionId && this.onTurnDurable) {
           const sessionId = this.watchedSessionId
           this.handoffReady = this.onTurnDurable(sessionId, this.mirrorFailed).catch((error) => {

@@ -86,6 +86,7 @@ import {
   type LlmCallInsert,
   type LlmUsageTotal,
   type PersistenceRepository,
+  type AgentInputQueueItem,
   type RepositoryChange,
   type RepositoryChangeHandler,
   type VersionedConversation,
@@ -1678,6 +1679,43 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       return rows.map(llmUsageTotalFromRow)
     })
   }
+
+  async enqueueAgentInput(conversationId: string, message: import('@anthropic-ai/claude-agent-sdk').SDKUserMessage, messageUuid = randomUUID()): Promise<AgentInputQueueItem> {
+    const now = new Date().toISOString()
+    return this.write((db) => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        const existing = db.prepare('SELECT * FROM agent_input_queue WHERE conversation_id = ? AND message_uuid = ?').get(conversationId, messageUuid) as Record<string, unknown> | undefined
+        if (existing) { db.exec('COMMIT'); return this.queueItem(existing) }
+        const seq = Number((db.prepare('SELECT COALESCE(MAX(sequence), 0) AS n FROM agent_input_queue WHERE conversation_id = ?').get(conversationId) as { n: number }).n) + 1
+        const result = db.prepare(`INSERT INTO agent_input_queue(conversation_id, sequence, message_uuid, payload_json, available_at, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`).run(conversationId, seq, messageUuid, JSON.stringify(message), now, now, now)
+        db.exec('COMMIT')
+        return this.queueItem(db.prepare('SELECT * FROM agent_input_queue WHERE id = ?').get(Number(result.lastInsertRowid)) as Record<string, unknown>)
+      } catch (error) { db.exec('ROLLBACK'); throw error }
+    })
+  }
+
+  async claimNextAgentInput(conversationId: string): Promise<AgentInputQueueItem | null> {
+    return this.write((db) => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        const row = db.prepare(`SELECT * FROM agent_input_queue WHERE conversation_id = ? AND status = 'pending' AND available_at <= ? ORDER BY sequence LIMIT 1`).get(conversationId, new Date().toISOString()) as Record<string, unknown> | undefined
+        if (!row) { db.exec('COMMIT'); return null }
+        const blocked = db.prepare(`SELECT 1 FROM agent_input_queue WHERE conversation_id = ? AND sequence < ? AND status != 'pending'`).get(conversationId, Number(row.sequence))
+        if (blocked) { db.exec('COMMIT'); return null }
+        const now = new Date().toISOString()
+        db.prepare(`UPDATE agent_input_queue SET status = 'processing', attempt_count = attempt_count + 1, processing_started_at = ?, updated_at = ? WHERE id = ?`).run(now, now, Number(row.id))
+        db.exec('COMMIT')
+        return this.queueItem(db.prepare('SELECT * FROM agent_input_queue WHERE id = ?').get(Number(row.id)) as Record<string, unknown>)
+      } catch (error) { db.exec('ROLLBACK'); throw error }
+    })
+  }
+
+  async completeAgentInput(id: number): Promise<void> { this.write((db) => { db.prepare("DELETE FROM agent_input_queue WHERE id = ? AND status = 'processing'").run(id) }) }
+  async requeueAgentInput(id: number, error?: string): Promise<void> { this.write((db) => { db.prepare("UPDATE agent_input_queue SET status = 'pending', processing_started_at = NULL, last_error = ?, available_at = ?, updated_at = ? WHERE id = ? AND status = 'processing'").run(error ?? null, new Date().toISOString(), new Date().toISOString(), id) }) }
+  async recoverAgentInput(conversationId?: string): Promise<number> { return this.write((db) => { const result = db.prepare(`UPDATE agent_input_queue SET status = 'pending', processing_started_at = NULL, updated_at = ? WHERE status = 'processing' ${conversationId ? 'AND conversation_id = ?' : ''}`).run(new Date().toISOString(), ...(conversationId ? [conversationId] : [])); return Number(result.changes) }) }
+  async listAgentInputs(conversationId: string): Promise<AgentInputQueueItem[]> { return this.read((db) => (db.prepare('SELECT * FROM agent_input_queue WHERE conversation_id = ? ORDER BY sequence').all(conversationId) as Record<string, unknown>[]).map((row) => this.queueItem(row))) }
+  private queueItem(row: Record<string, unknown>): AgentInputQueueItem { return { id: Number(row.id), conversationId: String(row.conversation_id), messageUuid: String(row.message_uuid), message: JSON.parse(String(row.payload_json)), sequence: Number(row.sequence), status: row.status as AgentInputQueueItem['status'], attemptCount: Number(row.attempt_count), availableAt: String(row.available_at), processingStartedAt: row.processing_started_at ? String(row.processing_started_at) : null, lastError: row.last_error ? String(row.last_error) : null, createdAt: String(row.created_at), updatedAt: String(row.updated_at) } }
 
   subscribe(handler: RepositoryChangeHandler): () => void {
     this.handlers.add(handler)

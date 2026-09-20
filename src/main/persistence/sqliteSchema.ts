@@ -360,6 +360,26 @@ export const SQLITE_TASK_BOARD_LINKS_SCHEMA = `
  * `UNIQUE`/`PRIMARY KEY` — duas linhas "sem subagente" no mesmo dia/modelo
  * duplicariam o agregado da raiz em vez de somar na mesma linha.
  */
+export const SQLITE_AGENT_INPUT_QUEUE_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS agent_input_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    message_uuid TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'processing')) DEFAULT 'pending',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    available_at TEXT NOT NULL,
+    processing_started_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(conversation_id, message_uuid),
+    UNIQUE(conversation_id, sequence)
+  );
+  CREATE INDEX IF NOT EXISTS agent_input_queue_fifo ON agent_input_queue(conversation_id, status, sequence);
+`
+
 export const SQLITE_TOKEN_USAGE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS llm_calls (
     id TEXT PRIMARY KEY,
@@ -444,7 +464,8 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     'CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);'
   ),
   migration(8, 'sqlite-v2-task-board-links', SQLITE_TASK_BOARD_LINKS_SCHEMA),
-  migration(9, 'sqlite-v2-token-usage', SQLITE_TOKEN_USAGE_SCHEMA)
+  migration(9, 'sqlite-v2-token-usage', SQLITE_TOKEN_USAGE_SCHEMA),
+  migration(10, 'sqlite-v2-agent-input-queue', SQLITE_AGENT_INPUT_QUEUE_SCHEMA)
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

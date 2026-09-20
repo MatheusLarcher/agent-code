@@ -1,4 +1,4 @@
-import type { SessionStore } from '@anthropic-ai/claude-agent-sdk'
+import type { SessionStore, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AppConfig, BoardItem, BoardItemEvent, BoardItemStatus } from '../../shared/ipc'
 
 export type {
@@ -676,7 +676,33 @@ export interface TokenUsageRepository {
   listLlmUsageTotals(convId: string): Promise<LlmUsageTotal[]>
 }
 
-export interface PersistenceRepository extends TaskRepository, MemoryRepository, BoardRepository, TokenUsageRepository {
+export type AgentInputQueueStatus = 'pending' | 'processing'
+
+export interface AgentInputQueueItem {
+  id: number
+  conversationId: string
+  messageUuid: string
+  message: SDKUserMessage
+  sequence: number
+  status: AgentInputQueueStatus
+  attemptCount: number
+  availableAt: string
+  processingStartedAt: string | null
+  lastError: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AgentInputQueueRepository {
+  enqueueAgentInput(conversationId: string, message: SDKUserMessage, messageUuid?: string): Promise<AgentInputQueueItem>
+  claimNextAgentInput(conversationId: string): Promise<AgentInputQueueItem | null>
+  completeAgentInput(id: number): Promise<void>
+  requeueAgentInput(id: number, error?: string): Promise<void>
+  recoverAgentInput(conversationId?: string): Promise<number>
+  listAgentInputs(conversationId: string): Promise<AgentInputQueueItem[]>
+}
+
+export interface PersistenceRepository extends TaskRepository, MemoryRepository, BoardRepository, TokenUsageRepository, AgentInputQueueRepository {
   readonly backend: StorageBackend
 
   initialize(): Promise<void>

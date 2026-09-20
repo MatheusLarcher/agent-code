@@ -663,6 +663,17 @@ CREATE TABLE IF NOT EXISTS llm_usage_totals (
 CREATE INDEX IF NOT EXISTS llm_usage_totals_conv_id ON llm_usage_totals(conv_id);
 `
 
+const AGENT_INPUT_QUEUE = `
+CREATE TABLE IF NOT EXISTS agent_input_queue (
+ id bigserial PRIMARY KEY, conversation_id text NOT NULL, sequence bigint NOT NULL,
+ message_uuid uuid NOT NULL, payload_json jsonb NOT NULL, status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing')),
+ attempt_count integer NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT clock_timestamp(), processing_started_at timestamptz,
+ last_error text, created_at timestamptz NOT NULL DEFAULT clock_timestamp(), updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(conversation_id, message_uuid), UNIQUE(conversation_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS agent_input_queue_fifo ON agent_input_queue(conversation_id, status, sequence);
+`
+
 export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(1, 'postgres-base-schema', BASE_SCHEMA),
   migration(2, 'postgres-change-feed', CHANGE_FEED),
@@ -674,7 +685,8 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(8, 'postgres-board-item-events', BOARD_ITEM_EVENTS),
   migration(9, 'postgres-board-item-events-actor-user', BOARD_ITEM_EVENTS_ACTOR_USER),
   migration(10, 'postgres-task-board-links', TASK_BOARD_LINKS),
-  migration(11, 'postgres-token-usage', TOKEN_USAGE)
+  migration(11, 'postgres-token-usage', TOKEN_USAGE),
+  migration(12, 'postgres-agent-input-queue', AGENT_INPUT_QUEUE)
 ]
 
 const MIGRATION_TABLE = `
