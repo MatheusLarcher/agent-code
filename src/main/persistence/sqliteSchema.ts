@@ -347,6 +347,57 @@ export const SQLITE_TASK_BOARD_LINKS_SCHEMA = `
   CREATE INDEX IF NOT EXISTS task_board_links_board_item ON task_board_links(board_item_id);
 `
 
+/**
+ * Migration 9 — árvore de consumo de tokens por chamada de LLM (`llm_calls` +
+ * `llm_usage_totals`), ver
+ * docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md.
+ *
+ * `llm_usage_totals` é um agregado incremental (upsert a cada INSERT em
+ * `llm_calls`, na mesma escrita) para não depender da poda de 15 dias rodar:
+ * o total da conversa continua correto mesmo depois que o detalhe já foi
+ * apagado. `subagent_type` entra com `''` (nunca `NULL`) na chave primária da
+ * tabela de totais porque SQLite trata `NULL` como distinto de si mesmo em
+ * `UNIQUE`/`PRIMARY KEY` — duas linhas "sem subagente" no mesmo dia/modelo
+ * duplicariam o agregado da raiz em vez de somar na mesma linha.
+ */
+export const SQLITE_TOKEN_USAGE_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS llm_calls (
+    id TEXT PRIMARY KEY,
+    conv_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    parent_node_id TEXT,
+    subagent_type TEXT,
+    task_description TEXT,
+    seq INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL,
+    input_preview TEXT,
+    output_preview TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS llm_calls_conv_id ON llm_calls(conv_id, created_at);
+  CREATE INDEX IF NOT EXISTS llm_calls_created_at ON llm_calls(created_at);
+  CREATE TABLE IF NOT EXISTS llm_usage_totals (
+    conv_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    model TEXT NOT NULL,
+    subagent_type TEXT NOT NULL DEFAULT '',
+    sum_input INTEGER NOT NULL DEFAULT 0,
+    sum_output INTEGER NOT NULL DEFAULT 0,
+    sum_cache_read INTEGER NOT NULL DEFAULT 0,
+    sum_cache_write INTEGER NOT NULL DEFAULT 0,
+    sum_cost REAL,
+    call_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(conv_id, day, model, subagent_type)
+  );
+  CREATE INDEX IF NOT EXISTS llm_usage_totals_conv_id ON llm_usage_totals(conv_id);
+`
+
 export interface SqliteMigration {
   version: number
   name: string
@@ -392,7 +443,8 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     SQLITE_BOARD_EVENTS_ACTOR_USER_SCHEMA,
     'CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);'
   ),
-  migration(8, 'sqlite-v2-task-board-links', SQLITE_TASK_BOARD_LINKS_SCHEMA)
+  migration(8, 'sqlite-v2-task-board-links', SQLITE_TASK_BOARD_LINKS_SCHEMA),
+  migration(9, 'sqlite-v2-token-usage', SQLITE_TOKEN_USAGE_SCHEMA)
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

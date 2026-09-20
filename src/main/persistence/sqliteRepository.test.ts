@@ -346,3 +346,100 @@ describe('conversation lease only fences other installations', () => {
     await theirs.close()
   })
 })
+
+describe('token usage — llm_calls / llm_usage_totals', () => {
+  it('grava a chamada, incrementa o agregado do dia e devolve tudo por conv_id', async () => {
+    const { cache, dbPath } = await tempCache()
+    const repository = new SqliteRepository(cache, dbPath, 'device-a')
+    await repository.initialize()
+
+    const root = await repository.insertLlmCall({
+      convId: 'conv-1',
+      turnId: 'turn-1',
+      nodeId: 'turn-1',
+      parentNodeId: null,
+      seq: 1,
+      model: 'claude-test',
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 0,
+      costUsd: 0.01,
+      inputPreview: 'oi',
+      outputPreview: 'olá'
+    })
+    expect(root.convId).toBe('conv-1')
+    expect(root.parentNodeId).toBeNull()
+    expect(root.subagentType).toBeNull()
+
+    const child = await repository.insertLlmCall({
+      convId: 'conv-1',
+      turnId: 'turn-1',
+      nodeId: 'sub-1',
+      parentNodeId: 'turn-1',
+      subagentType: 'general-purpose',
+      taskDescription: 'pesquisar X',
+      seq: 1,
+      model: 'claude-test',
+      inputTokens: 50,
+      outputTokens: 10,
+      costUsd: 0.02
+    })
+    expect(child.parentNodeId).toBe('turn-1')
+    expect(child.subagentType).toBe('general-purpose')
+
+    // Segunda chamada no MESMO dia/modelo/subagente (raiz) — soma no lugar de duplicar.
+    await repository.insertLlmCall({
+      convId: 'conv-1',
+      turnId: 'turn-2',
+      nodeId: 'turn-2',
+      seq: 1,
+      model: 'claude-test',
+      inputTokens: 30,
+      outputTokens: 5
+    })
+
+    const calls = await repository.listLlmCalls('conv-1')
+    expect(calls).toHaveLength(3)
+    expect(calls.map((c) => c.nodeId)).toEqual(['turn-1', 'sub-1', 'turn-2'])
+
+    const totals = await repository.listLlmUsageTotals('conv-1')
+    // Uma linha para a raiz (subagentType null → chave '') e outra para o subagente.
+    expect(totals).toHaveLength(2)
+    const rootTotal = totals.find((t) => t.subagentType === null)!
+    expect(rootTotal.callCount).toBe(2)
+    expect(rootTotal.sumInput).toBe(130)
+    expect(rootTotal.sumOutput).toBe(25)
+    expect(rootTotal.sumCost).toBeCloseTo(0.01)
+    const subTotal = totals.find((t) => t.subagentType === 'general-purpose')!
+    expect(subTotal.callCount).toBe(1)
+    expect(subTotal.sumInput).toBe(50)
+    expect(subTotal.sumCost).toBeCloseTo(0.02)
+
+    expect(await repository.listLlmCalls('conv-outra')).toEqual([])
+    expect(await repository.listLlmUsageTotals('conv-outra')).toEqual([])
+
+    await repository.close()
+  })
+
+  it('cost_usd nulo não quebra o agregado (fica null quando nenhuma chamada tem preço)', async () => {
+    const { cache, dbPath } = await tempCache()
+    const repository = new SqliteRepository(cache, dbPath, 'device-a')
+    await repository.initialize()
+
+    await repository.insertLlmCall({
+      convId: 'conv-2',
+      turnId: 'turn-1',
+      nodeId: 'turn-1',
+      seq: 1,
+      model: 'modelo-sem-preco',
+      inputTokens: 10,
+      outputTokens: 2
+    })
+    const totals = await repository.listLlmUsageTotals('conv-2')
+    expect(totals).toHaveLength(1)
+    expect(totals[0].sumCost).toBeNull()
+
+    await repository.close()
+  })
+})

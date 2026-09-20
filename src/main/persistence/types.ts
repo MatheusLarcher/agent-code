@@ -598,7 +598,85 @@ export interface MemoryRepository {
   deleteMemoryProposal(id: string): Promise<boolean>
 }
 
-export interface PersistenceRepository extends TaskRepository, MemoryRepository, BoardRepository {
+// ---------------------------------------------------------------------------
+// Árvore de consumo de tokens por chamada de LLM (llm_calls / llm_usage_totals)
+// ---------------------------------------------------------------------------
+
+/** Uma chamada real ao modelo — uma linha por mensagem `assistant` do stream,
+ *  atribuída ao nó da árvore de delegação (`nodeId`) que a originou. Ver
+ *  docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md. */
+export interface LlmCall {
+  id: string
+  convId: string
+  /** Nasce quando o usuário envia uma mensagem; é o `nodeId` do nó-raiz do turno. */
+  turnId: string
+  /** `id` do tool-use que abriu este nó (subagente), ou `turnId` na raiz. */
+  nodeId: string
+  /** `null` na raiz (delegou o agente principal); `nodeId` de outro nó quando
+   *  quem delegou foi um subagente — dá profundidade arbitrária à árvore. */
+  parentNodeId: string | null
+  subagentType: string | null
+  taskDescription: string | null
+  /** Ordem desta chamada dentro do nó (um subagente troca várias mensagens). */
+  seq: number
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  /** `null` quando não há tabela de preço confiável para o modelo — nunca estimado. */
+  costUsd: number | null
+  inputPreview: string | null
+  outputPreview: string | null
+  createdAt: string
+}
+
+export interface LlmCallInsert {
+  id?: string
+  convId: string
+  turnId: string
+  nodeId: string
+  parentNodeId?: string | null
+  subagentType?: string | null
+  taskDescription?: string | null
+  seq: number
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  costUsd?: number | null
+  inputPreview?: string | null
+  outputPreview?: string | null
+}
+
+/** Agregado incremental, atualizado (upsert) na mesma escrita de `insertLlmCall` —
+ *  não depende da poda de 15 dias rodar para estar correto, e sobrevive a ela. */
+export interface LlmUsageTotal {
+  convId: string
+  /** Data (UTC, `YYYY-MM-DD`) de `createdAt` da chamada agregada. */
+  day: string
+  model: string
+  /** `null` agrega o agente principal (raiz), sem subagente. */
+  subagentType: string | null
+  sumInput: number
+  sumOutput: number
+  sumCacheRead: number
+  sumCacheWrite: number
+  sumCost: number | null
+  callCount: number
+}
+
+export interface TokenUsageRepository {
+  /** Grava a chamada e incrementa `llm_usage_totals` na mesma escrita (atômico). */
+  insertLlmCall(input: LlmCallInsert): Promise<LlmCall>
+  /** Todas as chamadas de uma conversa, em ordem cronológica — para reconstruir a árvore. */
+  listLlmCalls(convId: string): Promise<LlmCall[]>
+  /** Os totais agregados de uma conversa (sobrevivem à poda de `llm_calls`). */
+  listLlmUsageTotals(convId: string): Promise<LlmUsageTotal[]>
+}
+
+export interface PersistenceRepository extends TaskRepository, MemoryRepository, BoardRepository, TokenUsageRepository {
   readonly backend: StorageBackend
 
   initialize(): Promise<void>

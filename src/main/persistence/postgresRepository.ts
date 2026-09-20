@@ -5,6 +5,7 @@ import { parseStoredAppConfig } from './configData'
 import { lockPostgresTransferRecords, postgresTransferClock, prepareTransferRecords, readPostgresTransferRecords, type TransferRecords } from './transferRecords'
 import { hashAggregate, hashJson, hashText, normalizeJson, type JsonValue } from './hashes'
 import { PostgresChangeFeed } from './postgresChangeFeed'
+import { TokenUsagePruner } from './tokenUsagePruner'
 import { createPostgresSessionStore } from './postgresSessionStore'
 import {
   decodePostgresJson,
@@ -85,6 +86,9 @@ import {
   type KvScope,
   type KvWrite,
   type LeaseFence,
+  type LlmCall,
+  type LlmCallInsert,
+  type LlmUsageTotal,
   type PersistenceRepository,
   type RepositoryChange,
   type RepositoryChangeHandler,
@@ -116,6 +120,9 @@ const STEP_COLUMNS = `id, task_id, seq, kind, status, agent, sdk_session_id, sta
 const DELIVERABLE_COLUMNS = `id, task_id, step_id, kind, summary, payload_path, payload_hash, verified, verified_by,
   revision, created_at, updated_at`
 const EVENT_COLUMNS = 'id, task_id, step_id, at, kind, data_json'
+const LLM_CALL_COLUMNS = `id, conv_id, turn_id, node_id, parent_node_id, subagent_type, task_description, seq,
+  model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, input_preview,
+  output_preview, created_at`
 
 type LockedTaskRow = TaskRow & { lease_live: boolean | null }
 
@@ -188,6 +195,85 @@ function decodeMemoryProposalRow(row: MemoryProposalRow): MemoryProposalRow {
     hook: row.hook === null ? null : decodePostgresText(row.hook),
     body: row.body === null ? null : decodePostgresText(row.body),
     reason: row.reason === null ? null : decodePostgresText(row.reason)
+  }
+}
+
+interface LlmCallRow {
+  id: string
+  conv_id: string
+  turn_id: string
+  node_id: string
+  parent_node_id: string | null
+  subagent_type: string | null
+  task_description: string | null
+  seq: string | number
+  model: string
+  input_tokens: string | number
+  output_tokens: string | number
+  cache_read_tokens: string | number
+  cache_write_tokens: string | number
+  cost_usd: string | number | null
+  input_preview: string | null
+  output_preview: string | null
+  created_at: Date | string
+}
+
+function decodeLlmCallRow(row: LlmCallRow): LlmCallRow {
+  return {
+    ...row,
+    task_description: row.task_description === null ? null : decodePostgresText(row.task_description),
+    input_preview: row.input_preview === null ? null : decodePostgresText(row.input_preview),
+    output_preview: row.output_preview === null ? null : decodePostgresText(row.output_preview)
+  }
+}
+
+function llmCallFromRow(row: LlmCallRow): LlmCall {
+  return {
+    id: row.id,
+    convId: row.conv_id,
+    turnId: row.turn_id,
+    nodeId: row.node_id,
+    parentNodeId: row.parent_node_id,
+    subagentType: row.subagent_type,
+    taskDescription: row.task_description,
+    seq: Number(row.seq),
+    model: row.model,
+    inputTokens: Number(row.input_tokens),
+    outputTokens: Number(row.output_tokens),
+    cacheReadTokens: Number(row.cache_read_tokens),
+    cacheWriteTokens: Number(row.cache_write_tokens),
+    costUsd: row.cost_usd === null ? null : Number(row.cost_usd),
+    inputPreview: row.input_preview,
+    outputPreview: row.output_preview,
+    createdAt: iso(row.created_at)
+  }
+}
+
+interface LlmUsageTotalRow {
+  conv_id: string
+  day: string
+  model: string
+  subagent_type: string
+  sum_input: string | number
+  sum_output: string | number
+  sum_cache_read: string | number
+  sum_cache_write: string | number
+  sum_cost: string | number | null
+  call_count: string | number
+}
+
+function llmUsageTotalFromRow(row: LlmUsageTotalRow): LlmUsageTotal {
+  return {
+    convId: row.conv_id,
+    day: row.day,
+    model: row.model,
+    subagentType: row.subagent_type === '' ? null : row.subagent_type,
+    sumInput: Number(row.sum_input),
+    sumOutput: Number(row.sum_output),
+    sumCacheRead: Number(row.sum_cache_read),
+    sumCacheWrite: Number(row.sum_cache_write),
+    sumCost: row.sum_cost === null ? null : Number(row.sum_cost),
+    callCount: Number(row.call_count)
   }
 }
 
@@ -275,6 +361,7 @@ export class PostgresRepository implements PersistenceRepository {
   readonly backend = 'postgres' as const
   private readonly handlers = new Set<RepositoryChangeHandler>()
   private readonly feed: PostgresChangeFeed
+  private readonly tokenUsagePruner: TokenUsagePruner
   private initialized = false
 
   constructor(
@@ -289,6 +376,15 @@ export class PostgresRepository implements PersistenceRepository {
       installationId,
       (changes) => this.emit(changes),
       onOffline
+    )
+    // Mesma lógica: manutenção, não uma operação do usuário (ver tokenUsagePruner.ts).
+    this.tokenUsagePruner = new TokenUsagePruner(
+      {
+        deleteLlmCallsOlderThan: async (days) => {
+          await this.pool.query('DELETE FROM llm_calls WHERE created_at < now() - make_interval(days => $1)', [days])
+        }
+      },
+      (error) => console.error('[postgres] falha ao podar llm_calls:', error)
     )
   }
 
@@ -310,12 +406,14 @@ export class PostgresRepository implements PersistenceRepository {
       )
     })
     await this.feed.start()
+    this.tokenUsagePruner.start()
     this.initialized = true
   }
 
   async close(): Promise<void> {
     this.initialized = false
     this.handlers.clear()
+    this.tokenUsagePruner.stop()
     await this.feed.close()
     await this.pool.end()
   }
@@ -1267,6 +1365,83 @@ export class PostgresRepository implements PersistenceRepository {
       }
       return this.insertTaskEvent(client, input.taskId, input.stepId ?? null, input.kind, input.data ?? {})
     })
+  }
+
+  async insertLlmCall(input: LlmCallInsert): Promise<LlmCall> {
+    this.assertInitialized()
+    const id = input.id ?? randomUUID()
+    const day = new Date().toISOString().slice(0, 10)
+    const subagentType = input.subagentType ?? null
+    const subagentKey = subagentType ?? ''
+    const cacheReadTokens = input.cacheReadTokens ?? 0
+    const cacheWriteTokens = input.cacheWriteTokens ?? 0
+    const costUsd = input.costUsd ?? null
+    return transaction(this.pool, async (client) => {
+      await client.query(
+        `INSERT INTO llm_calls(
+           id, conv_id, turn_id, node_id, parent_node_id, subagent_type, task_description,
+           seq, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+           cost_usd, input_preview, output_preview
+         ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+        [
+          id,
+          input.convId,
+          input.turnId,
+          input.nodeId,
+          input.parentNodeId ?? null,
+          subagentType,
+          input.taskDescription ? encodePostgresText(input.taskDescription) : null,
+          input.seq,
+          input.model,
+          input.inputTokens,
+          input.outputTokens,
+          cacheReadTokens,
+          cacheWriteTokens,
+          costUsd,
+          input.inputPreview ? encodePostgresText(input.inputPreview) : null,
+          input.outputPreview ? encodePostgresText(input.outputPreview) : null
+        ]
+      )
+      // Agregado incremental na MESMA transação: o total da conversa continua
+      // correto mesmo que a poda de 15 dias já tenha apagado o detalhe.
+      await client.query(
+        `INSERT INTO llm_usage_totals(
+           conv_id, day, model, subagent_type, sum_input, sum_output, sum_cache_read, sum_cache_write, sum_cost, call_count
+         ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
+         ON CONFLICT(conv_id, day, model, subagent_type) DO UPDATE SET
+           sum_input = llm_usage_totals.sum_input + EXCLUDED.sum_input,
+           sum_output = llm_usage_totals.sum_output + EXCLUDED.sum_output,
+           sum_cache_read = llm_usage_totals.sum_cache_read + EXCLUDED.sum_cache_read,
+           sum_cache_write = llm_usage_totals.sum_cache_write + EXCLUDED.sum_cache_write,
+           sum_cost = CASE
+             WHEN EXCLUDED.sum_cost IS NULL THEN llm_usage_totals.sum_cost
+             ELSE COALESCE(llm_usage_totals.sum_cost, 0) + EXCLUDED.sum_cost
+           END,
+           call_count = llm_usage_totals.call_count + EXCLUDED.call_count`,
+        [input.convId, day, input.model, subagentKey, input.inputTokens, input.outputTokens, cacheReadTokens, cacheWriteTokens, costUsd]
+      )
+      const result = await client.query<LlmCallRow>(`SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE id = $1`, [id])
+      return llmCallFromRow(decodeLlmCallRow(result.rows[0]))
+    })
+  }
+
+  async listLlmCalls(convId: string): Promise<LlmCall[]> {
+    this.assertInitialized()
+    const result = await this.pool.query<LlmCallRow>(
+      `SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE conv_id = $1 ORDER BY created_at ASC, seq ASC`,
+      [convId]
+    )
+    return result.rows.map((row) => llmCallFromRow(decodeLlmCallRow(row)))
+  }
+
+  async listLlmUsageTotals(convId: string): Promise<LlmUsageTotal[]> {
+    this.assertInitialized()
+    const result = await this.pool.query<LlmUsageTotalRow>(
+      `SELECT conv_id, day, model, subagent_type, sum_input, sum_output, sum_cache_read, sum_cache_write, sum_cost, call_count
+       FROM llm_usage_totals WHERE conv_id = $1 ORDER BY day ASC, model ASC, subagent_type ASC`,
+      [convId]
+    )
+    return result.rows.map(llmUsageTotalFromRow)
   }
 
   async getTask(taskId: string): Promise<Task | null> {

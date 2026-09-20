@@ -148,6 +148,7 @@ function makeSession(opts: {
   economyMode?: boolean
   loopEnabled?: boolean
   skillRuntime?: SkillRuntimePaths
+  tokenUsageRepository?: { insertLlmCall: ReturnType<typeof vi.fn> }
 } = {}): {
   s: AgentSession
   emit: ReturnType<typeof vi.fn>
@@ -158,7 +159,7 @@ function makeSession(opts: {
   const ask = vi.fn()
   const expire = vi.fn()
   const browser = {} as BrowserController
-  const { skillRuntime, ...agentOpts } = opts
+  const { skillRuntime, tokenUsageRepository, ...agentOpts } = opts
   const s = new AgentSession(
     { convId: 'c1', cwd: '/proj', ...agentOpts },
     browser,
@@ -167,7 +168,9 @@ function makeSession(opts: {
     expire,
     undefined,
     undefined,
-    skillRuntime
+    skillRuntime,
+    undefined,
+    tokenUsageRepository as never
   )
   return { s, emit, ask, expire }
 }
@@ -2277,5 +2280,169 @@ describe('AgentSession — o TypeSafe escolhe as memórias do turno', () => {
         expect(avisosDeDegradacao(emit)).toHaveLength(0)
       })
     })
+  })
+})
+
+// docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md — cada
+// mensagem `assistant` vira uma linha `llm_calls`/`ChatEvent('llm-call')`,
+// atribuída ao nó (raiz do turno ou subagente) que a originou.
+describe('AgentSession — árvore de consumo de tokens (llm-call)', () => {
+  const turnIdOf = (s: AgentSession): string => (s as unknown as { getTurnId(): string }).getTurnId()
+
+  const assistantMsg = (overrides: {
+    parent_tool_use_id: string | null
+    content: unknown[]
+    subagent_type?: string
+    task_description?: string
+    usage?: Record<string, number>
+    model?: string
+  }): Record<string, unknown> => ({
+    type: 'assistant',
+    parent_tool_use_id: overrides.parent_tool_use_id,
+    ...(overrides.subagent_type ? { subagent_type: overrides.subagent_type } : {}),
+    ...(overrides.task_description ? { task_description: overrides.task_description } : {}),
+    message: {
+      model: overrides.model ?? 'claude-sonnet-5',
+      usage: overrides.usage ?? {
+        input_tokens: 10,
+        output_tokens: 20,
+        cache_read_input_tokens: 1,
+        cache_creation_input_tokens: 2
+      },
+      content: overrides.content
+    }
+  })
+
+  const llmCallEvents = (emit: ReturnType<typeof vi.fn>): Array<Record<string, unknown>> =>
+    emit.mock.calls.map((c) => c[0]).filter((e) => (e as { kind?: string }).kind === 'llm-call')
+
+  it('agente principal: node_id = turnId, parent_node_id = null', () => {
+    const { s, emit } = makeSession()
+    const turnId = turnIdOf(s)
+    handle(
+      s,
+      assistantMsg({ parent_tool_use_id: null, content: [{ type: 'text', text: 'oi' }] })
+    )
+    const calls = llmCallEvents(emit)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({
+      kind: 'llm-call',
+      node_id: turnId,
+      parent_node_id: null,
+      seq: 1,
+      model: 'claude-sonnet-5',
+      tokens: { input: 10, output: 20, cacheRead: 1, cacheWrite: 2 },
+      outputPreview: 'oi'
+    })
+  })
+
+  it('grava via o repositório ativo quando injetado', () => {
+    const insertLlmCall = vi.fn(async () => ({}) as never)
+    const { s } = makeSession({ tokenUsageRepository: { insertLlmCall } })
+    const turnId = turnIdOf(s)
+    handle(s, assistantMsg({ parent_tool_use_id: null, content: [{ type: 'text', text: 'oi' }] }))
+    expect(insertLlmCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        convId: 'c1',
+        turnId,
+        nodeId: turnId,
+        parentNodeId: null,
+        seq: 1,
+        model: 'claude-sonnet-5',
+        inputTokens: 10,
+        outputTokens: 20,
+        cacheReadTokens: 1,
+        cacheWriteTokens: 2
+      })
+    )
+  })
+
+  it('subagente de 1 nível: node_id = tool-use do Task, parent_node_id = turnId', () => {
+    const { s, emit } = makeSession()
+    const turnId = turnIdOf(s)
+    // O agente principal delega a um subagente via a ferramenta "Task".
+    handle(
+      s,
+      assistantMsg({
+        parent_tool_use_id: null,
+        content: [{ type: 'tool_use', id: 'toolu_1', name: 'Task', input: { description: 'explorar' } }]
+      })
+    )
+    // O subagente responde: sua mensagem chega com parent_tool_use_id = id do Task.
+    handle(
+      s,
+      assistantMsg({
+        parent_tool_use_id: 'toolu_1',
+        subagent_type: 'Explore',
+        task_description: 'procurar X',
+        content: [{ type: 'text', text: 'achei' }]
+      })
+    )
+    const calls = llmCallEvents(emit)
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toMatchObject({
+      kind: 'llm-call',
+      node_id: 'toolu_1',
+      parent_node_id: turnId,
+      seq: 1,
+      subagentType: 'Explore',
+      taskDescription: 'procurar X',
+      outputPreview: 'achei'
+    })
+  })
+
+  it('subagente de subagente (2+ níveis): parent_node_id encadeia através dos Task tool-use', () => {
+    const { s, emit } = makeSession()
+    const turnId = turnIdOf(s)
+    // Agente principal delega ao subagente A.
+    handle(
+      s,
+      assistantMsg({
+        parent_tool_use_id: null,
+        content: [{ type: 'tool_use', id: 'toolu_A', name: 'Task', input: {} }]
+      })
+    )
+    // Subagente A, por sua vez, delega ao subagente B.
+    handle(
+      s,
+      assistantMsg({
+        parent_tool_use_id: 'toolu_A',
+        subagent_type: 'Explore',
+        content: [{ type: 'tool_use', id: 'toolu_B', name: 'Agent', input: {} }]
+      })
+    )
+    // Subagente B responde.
+    handle(
+      s,
+      assistantMsg({
+        parent_tool_use_id: 'toolu_B',
+        subagent_type: 'general-purpose',
+        content: [{ type: 'text', text: 'pronto' }]
+      })
+    )
+    const calls = llmCallEvents(emit)
+    expect(calls).toHaveLength(3)
+    expect(calls[0]).toMatchObject({ node_id: turnId, parent_node_id: null })
+    expect(calls[1]).toMatchObject({ node_id: 'toolu_A', parent_node_id: turnId })
+    expect(calls[2]).toMatchObject({ node_id: 'toolu_B', parent_node_id: 'toolu_A' })
+  })
+
+  it('inputPreview vem do tool_result anterior do mesmo nó', () => {
+    const { s, emit } = makeSession()
+    // Subagente abre.
+    handle(
+      s,
+      assistantMsg({ parent_tool_use_id: null, content: [{ type: 'tool_use', id: 'toolu_1', name: 'Task', input: {} }] })
+    )
+    // Um tool_result chega para o nó do subagente antes da resposta dele.
+    handle(s, {
+      type: 'user',
+      parent_tool_use_id: 'toolu_1',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'x', content: 'conteúdo do arquivo' }] }
+    })
+    handle(s, assistantMsg({ parent_tool_use_id: 'toolu_1', content: [{ type: 'text', text: 'ok' }] }))
+    const calls = llmCallEvents(emit)
+    const subagentCall = calls.find((c) => c.node_id === 'toolu_1')
+    expect(subagentCall).toMatchObject({ inputPreview: 'conteúdo do arquivo' })
   })
 })

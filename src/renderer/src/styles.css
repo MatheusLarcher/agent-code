@@ -5586,6 +5586,147 @@ button svg {
   padding: 0 5px;
   line-height: 15px;
 }
+
+/* ---- Token usage panel (aba "Tokens") ---- */
+.token-usage-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  font-size: 12.5px;
+}
+.token-usage-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.token-usage-header-title {
+  font-weight: 600;
+  margin-right: auto;
+}
+.token-usage-call-count {
+  color: var(--muted);
+  font-size: 11px;
+}
+.token-usage-empty {
+  color: var(--muted);
+  padding: 16px;
+  text-align: center;
+}
+.token-usage-body {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  flex: 1;
+}
+.token-tree {
+  padding: 8px 6px;
+}
+.token-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 6px;
+}
+.token-tree-row.selected {
+  background: var(--bg-3);
+}
+.token-tree-toggle,
+.token-tree-toggle-spacer {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.token-tree-label {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-tree-task,
+.token-tree-model {
+  color: var(--muted);
+  font-weight: 400;
+}
+.token-badges {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.token-calls-list {
+  border-top: 1px solid var(--line);
+  padding: 8px 12px;
+}
+.token-calls-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.token-calls-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.token-call-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  text-align: left;
+}
+.token-call-row.selected {
+  background: var(--bg-3);
+}
+.token-call-time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.token-call-detail {
+  border-top: 1px solid var(--line);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+.token-call-detail pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-3);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 4px 0 0;
+  max-height: 160px;
+  overflow: auto;
+}
 .pane-tab-badge {
   min-width: 16px;
   height: 16px;

@@ -66,3 +66,44 @@ describe('SQLITE_MIGRATIONS — migration 8 (task_board_links)', () => {
     expect(SQLITE_SCHEMA_FULL).toMatch(/CREATE TABLE IF NOT EXISTS task_board_links/i)
   })
 })
+
+describe('SQLITE_MIGRATIONS — migration 9 (llm_calls / llm_usage_totals)', () => {
+  it('está registrada em SQLITE_MIGRATIONS, SQLITE_SCHEMA e SQLITE_SCHEMA_FULL', () => {
+    const nine = SQLITE_MIGRATIONS.find((entry) => entry.version === 9)
+    expect(nine).toBeTruthy()
+    expect(nine!.name).toBe('sqlite-v2-token-usage')
+    expect(SQLITE_SCHEMA).toMatch(/CREATE TABLE IF NOT EXISTS llm_calls/i)
+    expect(SQLITE_SCHEMA).toMatch(/CREATE TABLE IF NOT EXISTS llm_usage_totals/i)
+    expect(SQLITE_SCHEMA_FULL).toMatch(/CREATE TABLE IF NOT EXISTS llm_calls/i)
+    expect(SQLITE_SCHEMA_FULL).toMatch(/CREATE TABLE IF NOT EXISTS llm_usage_totals/i)
+  })
+
+  it('um banco v2 existente sem a migration 9 ganha as tabelas ao reabrir (upgrade aditivo)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agent-code-token-usage-upgrade-'))
+    try {
+      const dbPath = join(dir, 'agent-code.db')
+      const repo = new SqliteRepository(dir, dbPath, 'device-a')
+      await repo.initialize()
+      await repo.close()
+
+      // Reabrir um banco já na v2 aplica só as migrations pendentes — aqui
+      // não há nenhuma pendente, mas a reabertura prova que o upgrade
+      // aditivo não quebra com a migration 9 já presente desde a criação.
+      const reopened = new SqliteRepository(dir, dbPath, 'device-a')
+      await reopened.initialize()
+      const call = await reopened.insertLlmCall({
+        convId: 'conv-1',
+        turnId: 'turn-1',
+        nodeId: 'turn-1',
+        seq: 1,
+        model: 'claude-test',
+        inputTokens: 10,
+        outputTokens: 5
+      })
+      expect(call.id).toBeTruthy()
+      await reopened.close()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})

@@ -61,11 +61,13 @@ import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
 import { CrewChip } from './components/CrewChip'
 import { buildCrew, workingMembers } from './crew'
-import { IconBoard, IconGlobe, IconUsers } from './components/Icons'
+import { IconBoard, IconDatabase, IconGlobe, IconUsers } from './components/Icons'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
 import { RightPaneTabs, type RightPane } from './components/RightPaneTabs'
 import { BoardPanel, boardProgress } from './components/BoardPanel'
+import { TokenUsagePanel } from './components/TokenUsagePanel'
+import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
 
 /** Poll do contador da aba Quadro com o painel FECHADO. Lento: é um badge. */
 const BOARD_BADGE_POLL_MS = 60_000
@@ -368,7 +370,9 @@ function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
   // TodoWrite/TaskCreate/TaskUpdate calls never join the message feed — they
   // update Conversation.todoPlan instead (handled in onEvent, alongside this call).
   if (isTodoWriteToolUse(e) || isTaskCreateToolUse(e) || isTaskUpdateToolUse(e)) return prev
-  if (e.kind === 'background-tasks' || e.kind === 'task-list') return prev
+  // `llm-call` alimenta só a árvore de consumo de tokens (ver TokenUsagePanel);
+  // uma bolha por chamada ao modelo inundaria o chat.
+  if (e.kind === 'background-tasks' || e.kind === 'task-list' || e.kind === 'llm-call') return prev
   if (e.kind === 'assistant-text') {
     const i = prev.findIndex((m) => m.kind === 'assistant-text' && m.id === e.id)
     if (i >= 0) {
@@ -527,6 +531,10 @@ export function App(): JSX.Element {
   // agents panel. Deliberately OUTSIDE `Conversation`: this is live state, not
   // history — it never touches the chat feed nor gets persisted to disk.
   const [tracks, setTracks] = useState<Record<string, TrackMap>>({})
+  // Árvore de consumo de tokens ao vivo, por conversa — alimentada pelos
+  // eventos `llm-call` (ver TokenUsagePanel, que funde isto com o histórico
+  // persistido lido do banco ao trocar de conversa).
+  const [usageMaps, setUsageMaps] = useState<Record<string, UsageMap>>({})
   const [chips, setChips] = useState<PickedElement[]>([])
   // Whether the "new preview tab" modal is open (rendered at the app root so it
   // isn't clipped by the horizontally-scrolling tab strip).
@@ -2603,6 +2611,17 @@ export function App(): JSX.Element {
     () => Object.values(activeTracks).filter((t) => t.status === 'running').length,
     [activeTracks]
   )
+  // Aba Tokens: acumulador ao vivo da conversa ativa e a contagem que vira o
+  // badge da aba (só o que já chegou nesta sessão — o histórico completo do
+  // banco é responsabilidade do próprio TokenUsagePanel).
+  const activeUsageMap = useMemo(
+    () => (active ? usageMaps[active.id] ?? emptyUsageMap : emptyUsageMap),
+    [active, usageMaps]
+  )
+  const activeTokenCallCount = useMemo(
+    () => Object.values(activeUsageMap.nodes).reduce((n, node) => n + node.calls.length, 0),
+    [activeUsageMap]
+  )
   /** Every conversation stuck waiting on the user — the supervisor's real lever. */
   const pendingPermissionList = useMemo(
     () =>
@@ -3110,8 +3129,11 @@ export function App(): JSX.Element {
                   liveAgents={runningTrackCount}
                   browserTabs={browserState.tabs.length}
                   boardProgress={boardTabProgress}
+                  tokenCallCount={activeTokenCallCount}
                 />
-                {rightPane === 'board' ? (
+                {rightPane === 'tokens' ? (
+                  <TokenUsagePanel convId={active?.id ?? null} liveMap={activeUsageMap} />
+                ) : rightPane === 'board' ? (
                   <BoardPanel
                     projectCwd={activeCwd}
                     conversationId={active?.id ?? ''}
@@ -3172,6 +3194,18 @@ export function App(): JSX.Element {
                 Quadro
                 {boardTabProgress && boardTabProgress.total > 0 && (
                   <span className="rail-badge">{`${boardTabProgress.done}/${boardTabProgress.total}`}</span>
+                )}
+              </button>
+              <button
+                type="button"
+                className="right-rail-btn"
+                onClick={() => selectRightPane('tokens')}
+                title="Ver o consumo de tokens desta conversa"
+              >
+                <IconDatabase size={15} />
+                Tokens
+                {activeTokenCallCount > 0 && (
+                  <span className="rail-badge">{activeTokenCallCount}</span>
                 )}
               </button>
             </div>

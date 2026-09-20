@@ -158,6 +158,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     respondPermission: vi.fn(async () => {}),
     disposeAgent: vi.fn(async () => {}),
     refreshUsage: vi.fn(async () => {}),
+    getTokenUsageHistory: vi.fn(async () => ({ calls: [], totals: [] })),
     onAgentEvent: vi.fn((cb: (m: AgentEventMsg) => void) => {
       agentEventCb = cb
       return () => {}
@@ -2102,6 +2103,16 @@ describe('App — modo Automático', () => {
     await emit({ kind: 'system', sessionId: 's1', model: 'claude-haiku-4-5', cwd: 'C:/p', tools: [] })
 
     expect(selectModel(container).value).toBe('auto')
+  })
+})
+
+describe('App — aba Tokens do painel da direita', () => {
+  it('mostra o botão Tokens e troca o painel visível ao clicar', async () => {
+    render(<UiProvider><App /></UiProvider>)
+    const tab = await screen.findByRole('tab', { name: /Tokens/i })
+    fireEvent.click(tab)
+    expect(await screen.findByText('Nenhuma chamada ao modelo ainda.')).toBeTruthy()
+    expect(api.getTokenUsageHistory).toHaveBeenCalledWith('c1')
   })
 })
 

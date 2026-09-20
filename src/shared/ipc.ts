@@ -61,6 +61,27 @@ export type ChatEvent =
    *  renderer built from the live TaskCreate/TaskUpdate events, which go stale
    *  whenever the app misses them (closed app, machine restart, resumed chat). */
   | { kind: 'task-list'; items: TaskItem[] }
+  /** One real call to the model, for the "Tokens" panel's usage tree (see
+   *  docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md).
+   *  `node_id` is the `Task`/`Agent` tool-use id that owns this call, or the
+   *  turn id for the main agent's root node. `parent_node_id` is `null` for
+   *  the root, or another node's `node_id` when a subagent delegated to a
+   *  further subagent — nesting is arbitrary depth, not just 2 levels. */
+  | {
+      kind: 'llm-call'
+      node_id: string
+      parent_node_id: string | null
+      /** Order of this call within its node — assistant messages can arrive
+       *  out of order across nodes, so nodes sort their calls by this. */
+      seq: number
+      model: string
+      tokens: TokenUsage
+      inputPreview: string
+      outputPreview: string
+      subagentType?: string
+      taskDescription?: string
+      createdAt: number
+    }
 
 /** One task in the agent's plan, as stored by the CLI. */
 export interface TaskItem {
@@ -180,6 +201,53 @@ export interface BoardItemEvent {
   fromStatus: BoardItemStatus | null
   toStatus: BoardItemStatus | null
   note: string | null
+}
+
+/**
+ * Uma chamada real ao modelo, para a árvore de consumo de tokens. Mesma forma
+ * de `LlmCall` em `main/persistence/types.ts` — duplicada aqui porque aquele
+ * módulo importa `SessionStore` do SDK (main-only) e não pode ser importado
+ * pelo renderer. Ver docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md.
+ */
+export interface LlmCall {
+  id: string
+  convId: string
+  turnId: string
+  nodeId: string
+  parentNodeId: string | null
+  subagentType: string | null
+  taskDescription: string | null
+  seq: number
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  costUsd: number | null
+  inputPreview: string | null
+  outputPreview: string | null
+  createdAt: string
+}
+
+/** Mesma forma de `LlmUsageTotal` em `main/persistence/types.ts`. */
+export interface LlmUsageTotal {
+  convId: string
+  day: string
+  model: string
+  subagentType: string | null
+  sumInput: number
+  sumOutput: number
+  sumCacheRead: number
+  sumCacheWrite: number
+  sumCost: number | null
+  callCount: number
+}
+
+/** Payload de `agent:token-usage:history`: as chamadas e os totais agregados
+ *  de uma conversa, para reconstruir a árvore ao reabrir uma conversa antiga. */
+export interface TokenUsageHistory {
+  calls: LlmCall[]
+  totals: LlmUsageTotal[]
 }
 
 /** One task the SDK reports as still running in the background. */
@@ -1682,6 +1750,9 @@ export const Channels = {
   agentPermissionRequest: 'agent:permission-request',
   /** main → renderer: a pending permission/question timed out and was auto-resolved. */
   agentPermissionExpired: 'agent:permission-expired',
+  /** Chamadas e totais persistidos de uma conversa, para reconstruir a árvore
+   *  de consumo de tokens ao reabrir uma conversa antiga. */
+  tokenUsageHistory: 'agent:token-usage:history',
   /** main → renderer: the vigia raised a doubt about a premise of the work.
    *  Deliberately NOT a ChatEvent — it is for the user, not for the model. */
   vigiaAlert: 'vigia:alert',

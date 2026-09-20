@@ -94,4 +94,14 @@ describe('preload — contrato IPC do Codex e do agente', () => {
     unsubscribe()
     expect(electronMock.removeListener).toHaveBeenCalledWith(Channels.agentPermissionRequest, listener)
   })
+
+  it('busca o histórico de consumo de tokens pelo canal agent:token-usage:history', async () => {
+    const history = { calls: [], totals: [] }
+    electronMock.invoke.mockResolvedValue(history)
+
+    const result = await api.getTokenUsageHistory('c1')
+
+    expect(electronMock.invoke).toHaveBeenCalledWith(Channels.tokenUsageHistory, 'c1')
+    expect(result).toBe(history)
+  })
 })

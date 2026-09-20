@@ -53,7 +53,8 @@ import type {
   ConversationDeleteDto,
   RepositoryChange,
   TaskBoard,
-  TaskBoardDetail
+  TaskBoardDetail,
+  TokenUsageHistory
 } from '../shared/ipc'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -195,6 +196,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.agentPermissionResponse, convId, res),
   disposeAgent: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentDispose, convId),
   refreshUsage: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentRefreshUsage, convId),
+  getTokenUsageHistory: (convId: string): Promise<TokenUsageHistory> =>
+    ipcRenderer.invoke(Channels.tokenUsageHistory, convId),
   onAgentEvent: (cb: (e: AgentEventMsg) => void): (() => void) => on(Channels.agentEvent, cb),
   onPermissionRequest: (cb: (m: PermissionRequestMsg) => void): (() => void) =>
     on(Channels.agentPermissionRequest, cb),

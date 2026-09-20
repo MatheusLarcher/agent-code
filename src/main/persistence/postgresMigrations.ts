@@ -610,6 +610,59 @@ CREATE TABLE IF NOT EXISTS task_board_links (
 CREATE INDEX IF NOT EXISTS task_board_links_board_item ON task_board_links(board_item_id);
 `
 
+/**
+ * Migration 11 — árvore de consumo de tokens por chamada de LLM (`llm_calls` +
+ * `llm_usage_totals`), espelha a migration 9 do SQLite. Ver
+ * docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md.
+ *
+ * Sem gatilho de change feed: métrica local por conversa, ninguém mais
+ * precisa ser acordado quando uma chamada é gravada — a leitura acontece sob
+ * demanda (IPC `agent:token-usage:history`), mesmo espírito de
+ * `task_project_identity`/`task_board_links`.
+ *
+ * `subagent_type` entra com `''` (nunca `NULL`) na chave primária de
+ * `llm_usage_totals`: PostgreSQL, como SQLite, não deduplica `NULL` numa
+ * `PRIMARY KEY` — duas linhas "sem subagente" no mesmo dia/modelo
+ * duplicariam o agregado da raiz em vez de somar na mesma linha.
+ */
+const TOKEN_USAGE = `
+CREATE TABLE IF NOT EXISTS llm_calls (
+  id text PRIMARY KEY,
+  conv_id text NOT NULL,
+  turn_id text NOT NULL,
+  node_id text NOT NULL,
+  parent_node_id text,
+  subagent_type text,
+  task_description text,
+  seq integer NOT NULL,
+  model text NOT NULL,
+  input_tokens bigint NOT NULL DEFAULT 0,
+  output_tokens bigint NOT NULL DEFAULT 0,
+  cache_read_tokens bigint NOT NULL DEFAULT 0,
+  cache_write_tokens bigint NOT NULL DEFAULT 0,
+  cost_usd double precision,
+  input_preview text,
+  output_preview text,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS llm_calls_conv_id ON llm_calls(conv_id, created_at);
+CREATE INDEX IF NOT EXISTS llm_calls_created_at ON llm_calls(created_at);
+CREATE TABLE IF NOT EXISTS llm_usage_totals (
+  conv_id text NOT NULL,
+  day text NOT NULL,
+  model text NOT NULL,
+  subagent_type text NOT NULL DEFAULT '',
+  sum_input bigint NOT NULL DEFAULT 0,
+  sum_output bigint NOT NULL DEFAULT 0,
+  sum_cache_read bigint NOT NULL DEFAULT 0,
+  sum_cache_write bigint NOT NULL DEFAULT 0,
+  sum_cost double precision,
+  call_count bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY(conv_id, day, model, subagent_type)
+);
+CREATE INDEX IF NOT EXISTS llm_usage_totals_conv_id ON llm_usage_totals(conv_id);
+`
+
 export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(1, 'postgres-base-schema', BASE_SCHEMA),
   migration(2, 'postgres-change-feed', CHANGE_FEED),
@@ -620,7 +673,8 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(7, 'postgres-board-items', BOARD_ITEMS),
   migration(8, 'postgres-board-item-events', BOARD_ITEM_EVENTS),
   migration(9, 'postgres-board-item-events-actor-user', BOARD_ITEM_EVENTS_ACTOR_USER),
-  migration(10, 'postgres-task-board-links', TASK_BOARD_LINKS)
+  migration(10, 'postgres-task-board-links', TASK_BOARD_LINKS),
+  migration(11, 'postgres-token-usage', TOKEN_USAGE)
 ]
 
 const MIGRATION_TABLE = `

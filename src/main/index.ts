@@ -97,7 +97,8 @@ import type {
   ConversationDeleteDto,
   ConversationQueryDto,
   SecretVaultItem,
-  MemoryConflictItem
+  MemoryConflictItem,
+  TokenUsageHistory
 } from '../shared/ipc'
 
 let mainWindow: BrowserWindow | null = null
@@ -819,7 +820,9 @@ function authLog(line: string): void {
   }
 }
 
-function registerIpc(): void {
+// Exportado só para main/index.test.ts invocar isoladamente sem passar por
+// `app.whenReady()` (que dispara o boot inteiro do app).
+export function registerIpc(): void {
   ipcMain.handle(Channels.storageStatusGet, () => storageLifecycle.status())
   ipcMain.handle(Channels.storagePostgresSettingsGet, () => storageLifecycle.postgresSettings())
   ipcMain.handle(Channels.storagePostgresTest, (_event, draft: PostgresConnectionDraft) =>
@@ -1094,6 +1097,16 @@ function registerIpc(): void {
     } catch {
       return null
     }
+  })
+  // Chamadas e totais persistidos de uma conversa (`llm_calls`/`llm_usage_totals`),
+  // para reconstruir a árvore de consumo de tokens ao reabrir uma conversa antiga.
+  ipcMain.handle(Channels.tokenUsageHistory, async (_e, convId: string): Promise<TokenUsageHistory> => {
+    const repository = storageLifecycle.repository()
+    const [calls, totals] = await Promise.all([
+      repository.listLlmCalls(convId),
+      repository.listLlmUsageTotals(convId)
+    ])
+    return { calls, totals }
   })
   ipcMain.handle(Channels.kvGet, (_e, key: string) => readPersistedKv(key))
   ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => {
@@ -1447,7 +1460,10 @@ function registerIpc(): void {
         await repository.markSessionResumeReady(convId, sessionId, true, hashJson(normalizeJson(entries)))
       },
       { appRoot: app.getAppPath() },
-      sessionComplete
+      sessionComplete,
+      // Grava cada chamada de LLM em `llm_calls` (árvore de consumo de tokens).
+      // O mesmo `repository` já em escopo para `markSessionResumeReady` acima.
+      repository
     ), emit, async (provider) => provider === 'gpt' ? isCodexConnected() : isAuthenticated(), async () => {
         if (sessions.get(convId) === s) await releaseSessionLease(convId)
     })

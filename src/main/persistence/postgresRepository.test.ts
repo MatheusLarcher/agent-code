@@ -414,6 +414,67 @@ describe.runIf(integration).sequential('PostgresRepository', () => {
     expect((await right.listTaskEvents('feed'))[0]?.kind).toBe('created')
   })
 
+  it('grava chamada de LLM, incrementa o agregado e consulta por conv_id', async () => {
+    const repo = await repository(randomUUID())
+    opened.push(repo)
+
+    const root = await repo.insertLlmCall({
+      convId: 'conv-pg-1',
+      turnId: 'turn-1',
+      nodeId: 'turn-1',
+      seq: 1,
+      model: 'claude-test',
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 5,
+      costUsd: 0.01,
+      inputPreview: 'oi',
+      outputPreview: 'olá'
+    })
+    expect(root.convId).toBe('conv-pg-1')
+    expect(root.subagentType).toBeNull()
+
+    await repo.insertLlmCall({
+      convId: 'conv-pg-1',
+      turnId: 'turn-1',
+      nodeId: 'sub-1',
+      parentNodeId: 'turn-1',
+      subagentType: 'general-purpose',
+      taskDescription: 'pesquisar X',
+      seq: 1,
+      model: 'claude-test',
+      inputTokens: 50,
+      outputTokens: 10,
+      costUsd: 0.02
+    })
+    // Segunda chamada da raiz no mesmo dia/modelo — soma no agregado, não duplica.
+    await repo.insertLlmCall({
+      convId: 'conv-pg-1',
+      turnId: 'turn-2',
+      nodeId: 'turn-2',
+      seq: 1,
+      model: 'claude-test',
+      inputTokens: 30,
+      outputTokens: 5
+    })
+
+    const calls = await repo.listLlmCalls('conv-pg-1')
+    expect(calls.map((c) => c.nodeId)).toEqual(['turn-1', 'sub-1', 'turn-2'])
+    expect(calls[0].inputPreview).toBe('oi')
+
+    const totals = await repo.listLlmUsageTotals('conv-pg-1')
+    expect(totals).toHaveLength(2)
+    const rootTotal = totals.find((t) => t.subagentType === null)!
+    expect(rootTotal.callCount).toBe(2)
+    expect(rootTotal.sumInput).toBe(130)
+    expect(rootTotal.sumCost).toBeCloseTo(0.01)
+    const subTotal = totals.find((t) => t.subagentType === 'general-purpose')!
+    expect(subTotal.sumInput).toBe(50)
+    expect(subTotal.sumCost).toBeCloseTo(0.02)
+
+    expect(await repo.listLlmCalls('conv-outra')).toEqual([])
+  })
+
   it('vincula uma tarefa a um cartão do quadro e devolve o mapa numa query só', async () => {
     const left = await repository(randomUUID())
     opened.push(left)

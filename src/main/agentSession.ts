@@ -76,8 +76,10 @@ import type {
   PermissionRequest,
   PermissionResponse,
   RateLimitStatus,
-  StartAgentOptions
+  StartAgentOptions,
+  TokenUsage
 } from '../shared/ipc'
+import type { TokenUsageRepository } from './persistence/types'
 
 export const OPENAI_MAX_TURNS = 64
 export const DEFAULT_LOOP_LIMIT = 100
@@ -512,6 +514,34 @@ interface TrackInfo {
 
 const EMPTY_TRACK: TrackInfo = { parentToolUseId: null }
 
+/** Tool names that open a subagent node in the token-usage tree — same set
+ *  `agentTracks.ts` in the renderer uses for live delegation tracks. */
+const SPAWN_TOOLS = new Set(['Task', 'Agent'])
+
+/** Reconstructs what an assistant message "said" for the token-usage preview:
+ *  text, thinking, and a compact rendering of each tool call. Not a byte-exact
+ *  copy of the HTTP request (see docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md),
+ *  truncated like every other stored preview in this file. */
+function buildOutputPreview(blocks: AssistantBlock[]): string {
+  const parts: string[] = []
+  for (const block of blocks) {
+    if (block.type === 'text' && block.text) {
+      parts.push(block.text)
+    } else if (block.type === 'thinking' && block.thinking) {
+      parts.push(`[thinking] ${block.thinking}`)
+    } else if (block.type === 'tool_use') {
+      let inputStr = ''
+      try {
+        inputStr = JSON.stringify(block.input)
+      } catch {
+        inputStr = ''
+      }
+      parts.push(`[tool_use: ${block.name ?? 'tool'}] ${inputStr}`)
+    }
+  }
+  return parts.join('\n').slice(0, 4000)
+}
+
 function trackOf(message: unknown, parentToolUseId: string | null): TrackInfo {
   if (!parentToolUseId) return EMPTY_TRACK
   const m = message as { subagent_type?: unknown; task_description?: unknown }
@@ -581,6 +611,21 @@ export class AgentSession {
   /** Context-window size of the most recent model request (last `assistant`
    *  message's input usage) — the true "context used", not the per-turn sum. */
   private lastContextTokens = 0
+  /** Root `node_id` of the CURRENT turn — the token-usage tree's root node for
+   *  the main agent. Lazily created (see `getTurnId`) and replaced on every
+   *  new user turn (`beginTurn`). */
+  private currentTurnId: string | null = null
+  /** `nodeId -> parentNodeId` for the token-usage tree, populated when a
+   *  `Task`/`Agent` tool-use is observed. Cleared every turn: a subagent's
+   *  tool-use id never repeats across turns, so nothing is lost by starting
+   *  fresh. */
+  private readonly llmNodeParents = new Map<string, string | null>()
+  /** Per-node call counter for `llm_calls.seq` — a subagent exchanges several
+   *  messages with the model over its lifetime. */
+  private readonly llmNodeSeq = new Map<string, number>()
+  /** Latest reconstructed input (user text / tool result) seen for a node,
+   *  consumed by the NEXT assistant message on that same node. */
+  private readonly llmNodeInputPreview = new Map<string, string>()
   /** Version of the complete persistent-memory catalog already loaded into this session. */
   private memoryCatalogVersion = ''
   /** Content signature checked before materializing a replacement catalog. */
@@ -691,9 +736,24 @@ export class AgentSession {
 
   private beginTurn(): void {
     this.turnActive = true
+    // A new turn is a new root node for the token-usage tree: fresh turnId,
+    // fresh delegation map (a subagent's tool-use id from a past turn will
+    // never come back, so nothing is lost by dropping it here).
+    this.currentTurnId = randomUUID()
+    this.llmNodeParents.clear()
+    this.llmNodeSeq.clear()
+    this.llmNodeInputPreview.clear()
     notePlanTurn(this.planGate)
     this.markActivity()
     this.startStallWatch()
+  }
+
+  /** Root `node_id` of the current turn — lazily created so code paths that
+   *  observe SDK messages without going through `beginTurn` first (tests
+   *  driving `handleMessage` directly) still get a stable id for the turn. */
+  private getTurnId(): string {
+    if (!this.currentTurnId) this.currentTurnId = randomUUID()
+    return this.currentTurnId
   }
 
   /** Estado da trava do plano, por sessão. `declared` atravessa turnos de
@@ -760,7 +820,12 @@ export class AgentSession {
     private readonly onTurnDurable?: (sessionId: string, mirrorFailed: boolean) => Promise<void>,
     private readonly skillRuntime?: SkillRuntimePaths,
     /** Called after the SDK has emitted the terminal result for a turn. */
-    private readonly onTurnComplete?: () => void | Promise<void>
+    private readonly onTurnComplete?: () => void | Promise<void>,
+    /** Persists `llm_calls` for the token-usage tree (see
+     *  docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md).
+     *  Optional: a session with none simply skips persistence but still emits
+     *  the live `llm-call` ChatEvent. */
+    private readonly tokenUsageRepository?: TokenUsageRepository
   ) {
     // Native class fields run before constructor parameter properties are assigned.
     this.restartRegistration = appRestart?.register(opts.convId, () => this.restartActivity())
@@ -1992,11 +2057,10 @@ export class AgentSession {
           this.lastContextTokens =
             (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
         }
-        this.handleAssistant(
-          message.message.content as unknown as AssistantBlock[],
-          (message as { aborted?: boolean }).aborted === true,
-          trackOf(message, parentToolUseId)
-        )
+        const blocks = message.message.content as unknown as AssistantBlock[]
+        const track = trackOf(message, parentToolUseId)
+        this.recordLlmCall(message, blocks, track)
+        this.handleAssistant(blocks, (message as { aborted?: boolean }).aborted === true, track)
         break
       }
 
@@ -2201,20 +2265,117 @@ export class AgentSession {
   }
 
   private handleUser(content: AssistantBlock[] | string, parentToolUseId: string | null = null): void {
-    if (typeof content === 'string') return
+    // Whatever came in feeds `inputPreview` of the NEXT llm-call on this same
+    // node — the user's own message for the root, or a tool result for a
+    // node whose last turn was a tool call.
+    const nodeId = parentToolUseId ?? this.getTurnId()
+    if (typeof content === 'string') {
+      if (content) this.llmNodeInputPreview.set(nodeId, content.slice(0, 4000))
+      return
+    }
+    const previewParts: string[] = []
     for (const block of content) {
       if (block.type === 'tool_result') {
         const raw = (block as unknown as { content?: unknown; tool_use_id?: string; is_error?: boolean })
+        const text = stringifyToolResult(raw.content)
+        previewParts.push(text)
         this.emit({
           kind: 'tool-result',
           id: nextId(),
           toolUseId: raw.tool_use_id ?? '',
           isError: Boolean(raw.is_error),
-          text: stringifyToolResult(raw.content),
+          text,
           parentToolUseId
         })
+      } else if (block.type === 'text' && block.text) {
+        previewParts.push(block.text)
       }
     }
+    if (previewParts.length > 0) this.llmNodeInputPreview.set(nodeId, previewParts.join('\n').slice(0, 4000))
+  }
+
+  /**
+   * One row for the "Tokens" panel's usage tree — a real call to the model,
+   * attributed to the node (turn root or subagent) that made it. See
+   * docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md.
+   */
+  private recordLlmCall(message: unknown, blocks: AssistantBlock[], track: TrackInfo): void {
+    const m = message as {
+      message?: {
+        model?: string
+        usage?: {
+          input_tokens?: number
+          output_tokens?: number
+          cache_read_input_tokens?: number
+          cache_creation_input_tokens?: number
+        }
+      }
+    }
+    const usage = m.message?.usage
+    const model = m.message?.model ?? this.opts.model ?? ''
+    const nodeId = track.parentToolUseId ?? this.getTurnId()
+    const parentNodeId = this.llmNodeParents.get(nodeId) ?? null
+
+    // A `Task`/`Agent` tool-use spawns a new node whose parent is THIS node —
+    // registered before the seq/preview bookkeping below so a subagent's
+    // future calls can already resolve their parent.
+    for (const block of blocks) {
+      if (block.type === 'tool_use' && block.id && SPAWN_TOOLS.has(block.name ?? '')) {
+        this.llmNodeParents.set(block.id, nodeId)
+      }
+    }
+
+    const seq = (this.llmNodeSeq.get(nodeId) ?? 0) + 1
+    this.llmNodeSeq.set(nodeId, seq)
+
+    const tokens: TokenUsage = {
+      input: usage?.input_tokens ?? 0,
+      output: usage?.output_tokens ?? 0,
+      cacheRead: usage?.cache_read_input_tokens ?? 0,
+      cacheWrite: usage?.cache_creation_input_tokens ?? 0
+    }
+    const outputPreview = buildOutputPreview(blocks)
+    const inputPreview = this.llmNodeInputPreview.get(nodeId) ?? ''
+    const createdAt = Date.now()
+
+    this.emit({
+      kind: 'llm-call',
+      node_id: nodeId,
+      parent_node_id: parentNodeId,
+      seq,
+      model,
+      tokens,
+      inputPreview,
+      outputPreview,
+      ...(track.subagentType ? { subagentType: track.subagentType } : {}),
+      ...(track.taskDescription ? { taskDescription: track.taskDescription } : {}),
+      createdAt
+    })
+
+    void this.tokenUsageRepository
+      ?.insertLlmCall({
+        convId: this.opts.convId,
+        turnId: this.getTurnId(),
+        nodeId,
+        parentNodeId,
+        subagentType: track.subagentType ?? null,
+        taskDescription: track.taskDescription ?? null,
+        seq,
+        model,
+        inputTokens: tokens.input,
+        outputTokens: tokens.output,
+        cacheReadTokens: tokens.cacheRead,
+        cacheWriteTokens: tokens.cacheWrite,
+        inputPreview,
+        outputPreview
+      })
+      .catch((error) => {
+        console.warn(
+          `[token-usage] falha ao gravar llm_calls conv=${this.opts.convId} node=${nodeId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      })
   }
 }
 

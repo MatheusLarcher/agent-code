@@ -8,6 +8,7 @@ import { decodeSqliteRecordRow, prepareTransferRecords, readSqliteTransferRecord
 import { initializeSqliteV2, SQLITE_SCHEMA } from './sqliteSchema'
 import { createSqliteSessionStore, type SqliteStoreIo } from './sqliteSessionStore'
 import { writeDbAtomically } from '../atomicDb'
+import { TokenUsagePruner } from './tokenUsagePruner'
 import {
   assertDeliverableKind,
   assertStepFinalStatus,
@@ -81,6 +82,9 @@ import {
   type KvScope,
   type KvWrite,
   type LeaseFence,
+  type LlmCall,
+  type LlmCallInsert,
+  type LlmUsageTotal,
   type PersistenceRepository,
   type RepositoryChange,
   type RepositoryChangeHandler,
@@ -112,6 +116,9 @@ const STEP_COLUMNS = `id, task_id, seq, kind, status, agent, sdk_session_id, sta
 const DELIVERABLE_COLUMNS = `id, task_id, step_id, kind, summary, payload_path, payload_hash, verified, verified_by,
   revision, created_at, updated_at`
 const EVENT_COLUMNS = 'id, task_id, step_id, at, kind, data_json'
+const LLM_CALL_COLUMNS = `id, conv_id, turn_id, node_id, parent_node_id, subagent_type, task_description, seq,
+  model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, input_preview,
+  output_preview, created_at`
 
 // Keep SELECT expressions separate from INSERT column lists. Decoding the BLOB
 // aliases before row mapping preserves embedded NUL without changing DB bytes.
@@ -172,6 +179,76 @@ function conversationFromRow(row: ConversationRow): VersionedConversation {
   }
 }
 
+interface LlmCallRow {
+  id: string
+  conv_id: string
+  turn_id: string
+  node_id: string
+  parent_node_id: string | null
+  subagent_type: string | null
+  task_description: string | null
+  seq: number
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  cost_usd: number | null
+  input_preview: string | null
+  output_preview: string | null
+  created_at: string
+}
+
+function llmCallFromRow(row: LlmCallRow): LlmCall {
+  return {
+    id: row.id,
+    convId: row.conv_id,
+    turnId: row.turn_id,
+    nodeId: row.node_id,
+    parentNodeId: row.parent_node_id,
+    subagentType: row.subagent_type,
+    taskDescription: row.task_description,
+    seq: Number(row.seq),
+    model: row.model,
+    inputTokens: Number(row.input_tokens),
+    outputTokens: Number(row.output_tokens),
+    cacheReadTokens: Number(row.cache_read_tokens),
+    cacheWriteTokens: Number(row.cache_write_tokens),
+    costUsd: row.cost_usd === null ? null : Number(row.cost_usd),
+    inputPreview: row.input_preview,
+    outputPreview: row.output_preview,
+    createdAt: row.created_at
+  }
+}
+
+interface LlmUsageTotalRow {
+  conv_id: string
+  day: string
+  model: string
+  subagent_type: string
+  sum_input: number
+  sum_output: number
+  sum_cache_read: number
+  sum_cache_write: number
+  sum_cost: number | null
+  call_count: number
+}
+
+function llmUsageTotalFromRow(row: LlmUsageTotalRow): LlmUsageTotal {
+  return {
+    convId: row.conv_id,
+    day: row.day,
+    model: row.model,
+    subagentType: row.subagent_type === '' ? null : row.subagent_type,
+    sumInput: Number(row.sum_input),
+    sumOutput: Number(row.sum_output),
+    sumCacheRead: Number(row.sum_cache_read),
+    sumCacheWrite: Number(row.sum_cache_write),
+    sumCost: row.sum_cost === null ? null : Number(row.sum_cost),
+    callCount: Number(row.call_count)
+  }
+}
+
 function scopeStore(base: SessionStore, conversationId: string): SessionStore {
   const scope = (key: SessionKey): SessionKey => ({
     ...key,
@@ -196,15 +273,30 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
   private handlers = new Set<RepositoryChangeHandler>()
   private leases = new Map<string, ConversationLease>()
   private leaseEpochs = new Map<string, number>()
+  private readonly tokenUsagePruner: TokenUsagePruner
 
   constructor(
     private readonly cacheDir: string,
     private readonly dbPath: string,
     private readonly installationId: string
-  ) {}
+  ) {
+    // Mesma lógica do Postgres: manutenção, não uma operação do usuário
+    // (ver tokenUsagePruner.ts). `created_at` é gravado como texto ISO, então a
+    // poda compara por string em vez do dialeto de data do Postgres.
+    this.tokenUsagePruner = new TokenUsagePruner(
+      {
+        deleteLlmCallsOlderThan: async (days) => {
+          const cutoff = new Date(Date.now() - days * 24 * 60 * 60_000).toISOString()
+          this.write((db) => db.prepare('DELETE FROM llm_calls WHERE created_at < ?').run(cutoff))
+        }
+      },
+      (error) => console.error('[sqlite] falha ao podar llm_calls:', error)
+    )
+  }
 
   async initialize(): Promise<void> {
     initializeSqliteV2(this.cacheDir, this.dbPath)
+    this.tokenUsagePruner.start()
     this.initialized = true
   }
 
@@ -213,6 +305,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     this.handlers.clear()
     this.leases.clear()
     this.leaseEpochs.clear()
+    this.tokenUsagePruner.stop()
   }
 
   read<T>(fn: (db: DatabaseSync) => T): T {
@@ -1505,6 +1598,85 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       )
     }
     return memoryEntryFromRow(this.memoryEntryRow(db, next.relPath)!)
+  }
+
+  async insertLlmCall(input: LlmCallInsert): Promise<LlmCall> {
+    const id = input.id ?? randomUUID()
+    const createdAt = new Date().toISOString()
+    const day = createdAt.slice(0, 10)
+    const subagentType = input.subagentType ?? null
+    const subagentKey = subagentType ?? ''
+    const cacheReadTokens = input.cacheReadTokens ?? 0
+    const cacheWriteTokens = input.cacheWriteTokens ?? 0
+    const costUsd = input.costUsd ?? null
+    return this.write((db) => {
+      db.prepare(
+        `INSERT INTO llm_calls(
+           id, conv_id, turn_id, node_id, parent_node_id, subagent_type, task_description,
+           seq, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+           cost_usd, input_preview, output_preview, created_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id,
+        input.convId,
+        input.turnId,
+        input.nodeId,
+        input.parentNodeId ?? null,
+        subagentType,
+        input.taskDescription ?? null,
+        input.seq,
+        input.model,
+        input.inputTokens,
+        input.outputTokens,
+        cacheReadTokens,
+        cacheWriteTokens,
+        costUsd,
+        input.inputPreview ?? null,
+        input.outputPreview ?? null,
+        createdAt
+      )
+      // Agregado incremental na MESMA escrita: o total da conversa continua
+      // correto mesmo que a poda de 15 dias já tenha apagado o detalhe.
+      db.prepare(
+        `INSERT INTO llm_usage_totals(
+           conv_id, day, model, subagent_type, sum_input, sum_output, sum_cache_read, sum_cache_write, sum_cost, call_count
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+         ON CONFLICT(conv_id, day, model, subagent_type) DO UPDATE SET
+           sum_input = sum_input + excluded.sum_input,
+           sum_output = sum_output + excluded.sum_output,
+           sum_cache_read = sum_cache_read + excluded.sum_cache_read,
+           sum_cache_write = sum_cache_write + excluded.sum_cache_write,
+           sum_cost = CASE
+             WHEN excluded.sum_cost IS NULL THEN sum_cost
+             ELSE COALESCE(sum_cost, 0) + excluded.sum_cost
+           END,
+           call_count = call_count + excluded.call_count`
+      ).run(input.convId, day, input.model, subagentKey, input.inputTokens, input.outputTokens, cacheReadTokens, cacheWriteTokens, costUsd)
+      return llmCallFromRow(
+        db.prepare(`SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE id = ?`).get(id) as unknown as LlmCallRow
+      )
+    })
+  }
+
+  async listLlmCalls(convId: string): Promise<LlmCall[]> {
+    return this.read((db) => {
+      const rows = db
+        .prepare(`SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE conv_id = ? ORDER BY created_at ASC, seq ASC`)
+        .all(convId) as unknown as LlmCallRow[]
+      return rows.map(llmCallFromRow)
+    })
+  }
+
+  async listLlmUsageTotals(convId: string): Promise<LlmUsageTotal[]> {
+    return this.read((db) => {
+      const rows = db
+        .prepare(
+          `SELECT conv_id, day, model, subagent_type, sum_input, sum_output, sum_cache_read, sum_cache_write, sum_cost, call_count
+           FROM llm_usage_totals WHERE conv_id = ? ORDER BY day ASC, model ASC, subagent_type ASC`
+        )
+        .all(convId) as unknown as LlmUsageTotalRow[]
+      return rows.map(llmUsageTotalFromRow)
+    })
   }
 
   subscribe(handler: RepositoryChangeHandler): () => void {

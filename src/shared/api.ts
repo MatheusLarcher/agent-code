@@ -52,7 +52,8 @@ import type {
   ProjectConversationCountDto,
   ConversationUpsertDto,
   ConversationDeleteDto,
-  RepositoryChange
+  RepositoryChange,
+  TokenUsageHistory
 } from './ipc'
 
 /** The surface exposed on `window.api` by the preload script. */
@@ -210,6 +211,9 @@ export interface AgentCodeApi {
   disposeAgent(convId: string): Promise<void>
   /** Poll the latest account-wide rate-limit snapshot for a connected session. */
   refreshUsage(convId: string): Promise<void>
+  /** Persisted LLM calls + aggregated totals of a conversation, to rebuild the
+   *  token-usage tree when reopening an old conversation. */
+  getTokenUsageHistory(convId: string): Promise<TokenUsageHistory>
   onAgentEvent(cb: (e: AgentEventMsg) => void): () => void
   onPermissionRequest(cb: (m: PermissionRequestMsg) => void): () => void
   /** Subscribe to permission/question timeouts (auto-resolved) so the renderer
