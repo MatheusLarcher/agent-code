@@ -2,7 +2,13 @@
 // Código do processo principal: `./client` é trocado por um duplo, então a
 // cadeia config → store → `node:sqlite` nunca é carregada aqui.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AUTO_MODEL_FALLBACK, clampEffortToModel, DEFAULT_EFFORT, EFFORT_LEVELS } from '../../shared/ipc'
+import {
+  AUTO_MODEL_FALLBACK,
+  clampEffortToModel,
+  DEFAULT_EFFORT,
+  EFFORT_LEVELS,
+  OPENAI_MODELS
+} from '../../shared/ipc'
 
 const askTypeSafe = vi.fn()
 /** O piso configurado pelo usuário. O padrão do app é 0,2. */
@@ -14,6 +20,7 @@ const {
   autoExecutionNote,
   autoExecutionUnprompted,
   autoModelCandidates,
+  autoModelLabel,
   buildAutoExecutionPayload,
   chooseAutoExecution,
   effortFromScore,
@@ -64,6 +71,29 @@ describe('candidatos', () => {
 
   it('oferece a escada de esforço INTEIRA, na ordem', () => {
     expect(autoEffortCandidates()).toEqual([...EFFORT_LEVELS])
+  })
+
+  it('os GPT ficam fora do padrão, mas prontos para quando o ChatGPT estiver logado', () => {
+    const gpt = OPENAI_MODELS.map((model) => model.id)
+
+    // O padrão é só Claude: sem login do ChatGPT, oferecer GPT seria escolher um
+    // modelo que a sessão não consegue abrir. Quem tem o login é o main (ver
+    // `autoStart` em src/main/index.ts), e é ele que amplia a lista.
+    for (const model of gpt) expect(autoModelCandidates()).not.toContain(model)
+    // Mas a descrição tem de existir ANTES: sem ela o Jev receberia o id cru.
+    for (const model of gpt) expect(AUTO_MODEL_DESCRIPTIONS[model]).toBeTruthy()
+    // E a nota do turno precisa do rótulo humano, não do id.
+    for (const { id, label } of OPENAI_MODELS) expect(autoModelLabel(id)).toBe(label)
+  })
+
+  it('escolhe entre os GPT quando eles são os candidatos oferecidos', async () => {
+    answers('gpt-5.6-sol', 2)
+    const models = [...autoModelCandidates(), ...OPENAI_MODELS.map((model) => model.id)]
+
+    const execution = await chooseAutoExecution({ message: 'refatora o agendador inteiro' }, { models })
+
+    expect(execution).toEqual({ model: 'gpt-5.6-sol', effort: 'high', source: 'typesafe' })
+    expect(autoExecutionNote(execution)).toBe('Automático: GPT-5.6 Sol (ChatGPT), esforço alto.')
   })
 })
 

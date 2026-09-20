@@ -64,10 +64,11 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api: AgentCodeApi = {
-  // app config (Settings screen)
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(Channels.appGetVersion),
+  // app config (Settings screen)
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke(Channels.configGet),
   setConfig: (patch: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke(Channels.configSet, patch),
+  isTypeSafeConfigured: (): Promise<boolean> => ipcRenderer.invoke(Channels.typesafeIsConfigured),
   onAppCloseRequested: (cb: () => void): (() => void) => on(Channels.appCloseRequested, cb),
   appCloseReady: (): Promise<void> => ipcRenderer.invoke(Channels.appCloseReady),
   onAppReloadRequested: (cb: () => void): (() => void) => on(Channels.appReloadRequested, cb),

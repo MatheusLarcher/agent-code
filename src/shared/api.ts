@@ -64,6 +64,8 @@ export interface AgentCodeApi {
   getConfig(): Promise<AppConfig>
   /** Persist a partial app configuration (merged with what's on disk). */
   setConfig(patch: Partial<AppConfig>): Promise<void>
+  /** Whether TypeSafe is enabled and has a usable API key (config or vault). */
+  isTypeSafeConfigured(): Promise<boolean>
   /** Flush request sent before Electron allows the window to close. */
   onAppCloseRequested(cb: () => void): () => void
   /** Confirm that pending durable writes finished and the window may close. */

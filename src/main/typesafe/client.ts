@@ -4,7 +4,7 @@ import {
   type Questions,
   type SystemOneResult
 } from '@typesafe-ai/sdk'
-import { loadConfig } from '../config'
+import { ensureConfigLoaded, loadConfig } from '../config'
 import { readSecret } from '../memory/memoryRuntime'
 import { recordTypeSafeUsage } from './usage'
 
@@ -56,6 +56,20 @@ export async function typeSafeApiKey(): Promise<string | null> {
     // esta camada é o mesmo que não ter chave.
     return null
   }
+}
+
+/** Ligado E com chave utilizável (config ou cofre) — o que a UI precisa saber
+ *  antes de deixar escolher "Automático".
+ *
+ *  Espera `ensureConfigLoaded()` primeiro: chamado logo após o boot (o
+ *  seletor de modelo consulta isto ao montar), a leitura direta de
+ *  `typeSafeEnabled()` podia cair no fallback local ANTES de a config
+ *  autoritativa terminar de carregar e responder "desativado" mesmo já
+ *  ativado — mesma corrida que existia em `codexStatus()`. */
+export async function typeSafeConfigured(): Promise<boolean> {
+  await ensureConfigLoaded()
+  if (!typeSafeEnabled()) return false
+  return (await typeSafeApiKey()) !== null
 }
 
 export interface AskTypeSafeOptions {

@@ -48,6 +48,13 @@ export const CONFIG_PERSISTED_KEYS: readonly string[] = FIELDS.map((field) => fi
 let initialized = false
 let snapshot = defaultAppConfig()
 let writeQueue: Promise<unknown> = Promise.resolve()
+// Dedupe concorrência de boot: `configGet`/`typesafe:is-configured` podem
+// chegar do renderer assim que `waitForStorageReady()` resolve — ANTES de o
+// próprio boot chamar `initializeConfigPersistence()`. Sem isto, essa corrida
+// fazia `loadConfig()` cair no fallback `loadLegacyConfig()` (o KV local
+// antigo) e responder "TypeSafe desativado" / "sem key de voz" mesmo com as
+// duas já configuradas — só sumia depois de algo chamar `getConfig()` de novo.
+let initPromise: Promise<AppConfig> | null = null
 
 function cloneConfig(config: AppConfig): AppConfig {
   return {
@@ -94,24 +101,38 @@ async function writeFields(config: AppConfig, only?: Set<string>): Promise<void>
   }
 }
 
-export async function initializeConfigPersistence(): Promise<AppConfig> {
-  // Uma leitura por escopo, não uma por campo: isto roda no caminho de abertura
-  // do app e, com PostgreSQL remoto, cada campo custava uma ida e volta à rede.
-  const stored = await readPersistedKvMany(['config', ...CONFIG_PERSISTED_KEYS])
-  let next = parseStoredAppConfig(stored.get('config') ?? null)
-  const missing = new Set<string>()
-  for (const field of FIELDS) {
-    const raw = stored.get(field.key) ?? null
-    if (raw === null) {
-      missing.add(field.key)
-      continue
-    }
-    next = mergeAppConfig(next, field.patch(decode(raw, field.sensitive)))
+export function initializeConfigPersistence(): Promise<AppConfig> {
+  if (!initPromise) {
+    initPromise = (async () => {
+      // Uma leitura por escopo, não uma por campo: isto roda no caminho de
+      // abertura do app e, com PostgreSQL remoto, cada campo custava uma ida
+      // e volta à rede.
+      const stored = await readPersistedKvMany(['config', ...CONFIG_PERSISTED_KEYS])
+      let next = parseStoredAppConfig(stored.get('config') ?? null)
+      const missing = new Set<string>()
+      for (const field of FIELDS) {
+        const raw = stored.get(field.key) ?? null
+        if (raw === null) {
+          missing.add(field.key)
+          continue
+        }
+        next = mergeAppConfig(next, field.patch(decode(raw, field.sensitive)))
+      }
+      if (missing.size) await writeFields(next, missing)
+      snapshot = next
+      initialized = true
+      return cloneConfig(snapshot)
+    })()
   }
-  if (missing.size) await writeFields(next, missing)
-  snapshot = next
-  initialized = true
-  return cloneConfig(snapshot)
+  return initPromise
+}
+
+/** Espera a config persistida carregar, se ainda não carregou. Quem precisa
+ *  de uma resposta correta (não do fallback local) antes do boot terminar de
+ *  ler o banco autoritativo chama isto antes de `loadConfig()`. */
+export async function ensureConfigLoaded(): Promise<void> {
+  if (initialized) return
+  await initializeConfigPersistence()
 }
 
 export function loadConfig(): AppConfig {

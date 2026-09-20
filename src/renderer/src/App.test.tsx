@@ -44,6 +44,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
       vigia: { enabled: true, model: 'claude-sonnet-5' }
     })),
     setConfig: vi.fn(async () => {}),
+    isTypeSafeConfigured: vi.fn(async () => true),
     onAppCloseRequested: vi.fn((cb: () => void) => {
       appCloseCb = cb
       return () => {
@@ -2004,6 +2005,22 @@ describe('App — modo Automático', () => {
 
     const auto = Array.from(selectModel(container).options).find((o) => o.value === 'auto')
     expect(auto?.textContent).toBe('Automático')
+  })
+
+  it('sem TypeSafe configurado, selecionar Automático não muda o modelo e abre Configurações', async () => {
+    api.isTypeSafeConfigured.mockResolvedValue(false)
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(selectModel(container)).toBeTruthy())
+    const before = selectModel(container).value
+    expect(before).not.toBe('auto')
+
+    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+
+    expect(
+      await screen.findByText('Ative o TypeSafe e informe a API key nas Configurações para usar o modo Automático.')
+    ).toBeTruthy()
+    expect(selectModel(container).value).toBe(before)
+    expect(await screen.findByRole('dialog')).toBeTruthy()
   })
 
   it('a mensagem viaja junto do start para o main decidir o par do turno', async () => {

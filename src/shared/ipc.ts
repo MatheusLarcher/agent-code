@@ -1595,12 +1595,14 @@ export interface CacheInfo {
 // Channel name constants — single source of truth.
 export const Channels = {
   // renderer -> main (invoke)
-  /** Read the persisted app configuration (Settings screen). */
   /** Read the app version from package.json (shown in the Settings screen). */
   appGetVersion: 'app:get-version',
+  /** Read the persisted app configuration (Settings screen). */
   configGet: 'config:get',
   /** Persist the app configuration (Settings screen). */
   configSet: 'config:set',
+  /** Whether TypeSafe is enabled AND has a usable API key (config or vault). */
+  typesafeIsConfigured: 'typesafe:is-configured',
   /** Main asks the renderer to flush durable state before the window closes. */
   appCloseRequested: 'app:close-requested',
   /** Renderer confirms every pending durable write completed. */

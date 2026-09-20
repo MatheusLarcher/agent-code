@@ -31,8 +31,9 @@ import {
 
 interface Props {
   onClose: () => void
-  /** When 'openai', open the Voice tab, highlight + focus the OpenAI key. */
-  focus?: 'openai' | null
+  /** When 'openai', open the Voice tab, highlight + focus the OpenAI key. When
+   *  'typesafe', highlight the TypeSafe section (already on the Geral tab). */
+  focus?: 'openai' | 'typesafe' | null
   /** Global "allow all tools" switch — applies live (not gated by Save). */
   skipPerms: boolean
   onToggleSkipPerms: (on: boolean) => void
@@ -95,6 +96,8 @@ export function SettingsModal({
   const [codexBusy, setCodexBusy] = useState(false)
   const [claudeBusy, setClaudeBusy] = useState(false)
   const openAiRef = useRef<HTMLInputElement>(null)
+  const typeSafeSectionRef = useRef<HTMLElement>(null)
+  const typeSafeToggleRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void window.api.getConfig()
@@ -123,6 +126,15 @@ export function SettingsModal({
     if (focus === 'openai' && loaded && tab === 'voz') {
       openAiRef.current?.scrollIntoView({ block: 'center' })
       openAiRef.current?.focus()
+    }
+  }, [focus, loaded, tab])
+
+  // When opened to nudge TypeSafe (the "Automático" model needs it), scroll to
+  // that section — it already lives on the default "Geral" tab.
+  useEffect(() => {
+    if (focus === 'typesafe' && loaded && tab === 'geral') {
+      typeSafeSectionRef.current?.scrollIntoView({ block: 'center' })
+      typeSafeToggleRef.current?.focus()
     }
   }, [focus, loaded, tab])
 
@@ -506,7 +518,10 @@ export function SettingsModal({
                   )}
                 </section>
 
-                <section className={`settings-section settings-switch-section ${cfg.typesafe.enabled ? 'on' : ''}`}>
+                <section
+                  ref={typeSafeSectionRef}
+                  className={`settings-section settings-switch-section ${cfg.typesafe.enabled ? 'on' : ''} ${focus === 'typesafe' ? 'settings-highlight' : ''}`}
+                >
                   <label className="settings-switch-row">
                     <span className="settings-switch-text">
                       <strong>
@@ -519,8 +534,14 @@ export function SettingsModal({
                         modelo. Precisa de chave própria e é cobrado por token de entrada; se falhar ou
                         demorar, o app segue sem a decisão.
                       </span>
+                      {focus === 'typesafe' && !cfg.typesafe.enabled && (
+                        <span className="settings-warn">
+                          Ative o TypeSafe e informe a API key para usar o modo Automático.
+                        </span>
+                      )}
                     </span>
                     <input
+                      ref={typeSafeToggleRef}
                       className="switch-input"
                       type="checkbox"
                       checked={cfg.typesafe.enabled}

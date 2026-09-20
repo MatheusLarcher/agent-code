@@ -120,8 +120,30 @@ function cleanConversation(conversation: Conversation): Conversation {
   ) as Conversation
 }
 
+/**
+ * Serialização ESTÁVEL: chaves de objeto em ordem alfabética, recursivamente.
+ *
+ * Existe por causa do PostgreSQL. O payload é uma coluna `jsonb`, e JSONB não
+ * guarda a ordem das chaves — ele devolve na ordem interna dele (comprimento,
+ * depois bytes), inclusive nos objetos aninhados. Com `JSON.stringify` cru, a
+ * comparação "isso mudou?" do autosave NUNCA dava igual contra o que voltou do
+ * banco, e cada tick reescrevia todas as conversas carregadas: no servidor
+ * deste usuário isso virou 200 mil updates numa tabela de 52 linhas. Sob
+ * SQLite o texto voltava na ordem original e o problema não aparecia.
+ *
+ * Arrays mantêm a ordem — nelas a ordem é dado, não formatação.
+ */
 function serialized(value: unknown): string {
-  return JSON.stringify(value)
+  return JSON.stringify(stable(value))
+}
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable)
+  if (value === null || typeof value !== 'object') return value
+  const source = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(source).sort()) out[key] = stable(source[key])
+  return out
 }
 
 function finiteNumber(value: unknown, fallback = 0): number {

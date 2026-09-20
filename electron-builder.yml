@@ -13,6 +13,9 @@ asar: false
 files:
   - out/**
   - package.json
+  # O main é externalizado pelo electron-vite; mantenha o SDK usado em
+  # produção dentro do instalador mesmo quando `files` está customizado.
+  - node_modules/@typesafe-ai/sdk/**
   # Kit de skills empacotado: `app.getAppPath()` no exe é resources/app, e o
   # skillManager sincroniza de <appRoot>/.agents/skills para <cacheDir>/skills.
   - .agents/skills/**

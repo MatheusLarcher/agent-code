@@ -186,6 +186,51 @@ describe('revision conflict rebases instead of surfacing an error', () => {
     expect(upsertConversation.mock.calls[2][0].expectedRevision).toBe(12)
   })
 
+  it('uma conversa já gravada não é reescrita de novo só porque o JSONB reordenou as chaves', async () => {
+    // O PostgreSQL guarda o payload em `jsonb`, que NÃO preserva ordem de chave:
+    // devolve na ordem interna dele (comprimento, depois bytes), inclusive nos
+    // objetos aninhados. A resposta do upsert é o que vira a baseline do próximo
+    // "isso mudou?" — então, sem uma comparação estável, a conversa ficava suja
+    // para sempre e era reescrita a cada tick de autosave. Foi o que encheu o
+    // servidor de 200 mil updates numa tabela de 52 linhas.
+    const jsonbOrder = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(jsonbOrder)
+      if (value === null || typeof value !== 'object') return value
+      const source = value as Record<string, unknown>
+      const out: Record<string, unknown> = {}
+      const keys = Object.keys(source).sort((a, b) => (a.length - b.length) || (a < b ? -1 : a > b ? 1 : 0))
+      for (const key of keys) out[key] = jsonbOrder(source[key])
+      return out
+    }
+
+    const upsertConversation = vi.fn(async (input: { payload: Record<string, unknown> }) => ({
+      id: 'jsonb',
+      payload: jsonbOrder(input.payload) as Record<string, unknown>,
+      revision: 4,
+      contentHash: 'hash',
+      createdAt: '2026-09-01T12:00:00.000Z',
+      updatedAt: '2026-09-01T12:00:00.000Z'
+    }))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        loadVersionedConversations: vi.fn(async () => [stored('jsonb', 3)]),
+        upsertConversation,
+        getStorageStatus: vi.fn(async () => ({ installationId: 'this-pc' }))
+      }
+    })
+
+    const [conversation] = await loadConversations()
+    const editada = { ...conversation, title: 'Editado' }
+    await saveConversations([editada])
+    expect(upsertConversation).toHaveBeenCalledTimes(1)
+
+    // Nada mudou desde a gravação: o tick seguinte não pode escrever nada.
+    await saveConversations([editada])
+    await saveConversations([editada])
+    expect(upsertConversation).toHaveBeenCalledTimes(1)
+  })
+
   it('propagates a failure that is not a revision conflict', async () => {
     const upsertConversation = vi.fn().mockRejectedValue(new Error('[agent-code-storage-error:STORAGE_OFFLINE:retryable] offline'))
     Object.defineProperty(window, 'api', {

@@ -248,11 +248,11 @@ describe('Codex OAuth login and secure persistence', () => {
 
   it('rejects legacy plaintext and malformed encrypted token records', async () => {
     storeState.value = JSON.stringify({ plain: JSON.stringify(validTokens()) })
-    expect(codexStatus()).toEqual({ connected: false })
+    expect(await codexStatus()).toEqual({ connected: false })
     expect(isCodexConnected()).toBe(false)
 
     storeState.value = encryptedWrapper({ ...validTokens(), accountId: '' })
-    expect(codexStatus()).toEqual({ connected: false })
+    expect(await codexStatus()).toEqual({ connected: false })
     await expect(getValidCodexTokens()).resolves.toBeNull()
   })
 
@@ -278,7 +278,7 @@ describe('Codex OAuth login and secure persistence', () => {
     dispatchValidCallback(authorizeUrl, valid)
     await expect(promise).resolves.toEqual({ ok: true })
     expect(valid.status).toBe(200)
-    expect(codexStatus()).toMatchObject({ connected: true, accountId: 'account-test' })
+    expect(await codexStatus()).toMatchObject({ connected: true, accountId: 'account-test' })
   })
 })
 
@@ -299,7 +299,7 @@ describe('Codex OAuth response validation', () => {
     expect(result.ok).toBe(false)
     expect(response.status).toBe(500)
     expect(storeMock.kvSet).not.toHaveBeenCalled()
-    expect(codexStatus()).toEqual({ connected: false })
+    expect(await codexStatus()).toEqual({ connected: false })
   })
 })
 
@@ -347,7 +347,7 @@ describe('Codex OAuth refresh', () => {
     await expect(refreshCodexTokens()).resolves.toBeNull()
 
     expect(storeState.value).toBe('null')
-    expect(codexStatus()).toEqual({ connected: false })
+    expect(await codexStatus()).toEqual({ connected: false })
   })
 
   it('keeps the saved login after a transient server failure', async () => {
@@ -357,7 +357,7 @@ describe('Codex OAuth refresh', () => {
     await expect(refreshCodexTokens()).resolves.toBeNull()
 
     expect(storeState.value).toBe(original)
-    expect(codexStatus().connected).toBe(true)
+    expect((await codexStatus()).connected).toBe(true)
   })
 
   it.each([
@@ -371,7 +371,7 @@ describe('Codex OAuth refresh', () => {
     await expect(refreshCodexTokens()).rejects.toThrow()
 
     expect(storeState.value).toBe(original)
-    expect(codexStatus().connected).toBe(true)
+    expect((await codexStatus()).connected).toBe(true)
   })
 
   it('ignores a successful refresh that finishes after logout', async () => {
@@ -387,7 +387,7 @@ describe('Codex OAuth refresh', () => {
 
     await expect(refreshing).resolves.toBeNull()
     expect(storeState.value).toBe('null')
-    expect(codexStatus()).toEqual({ connected: false })
+    expect(await codexStatus()).toEqual({ connected: false })
   })
 
   it.each([
@@ -413,10 +413,81 @@ describe('Codex OAuth refresh', () => {
     const { promise, authorizeUrl } = beginLogin()
     dispatchValidCallback(authorizeUrl, fakeResponse())
     await expect(promise).resolves.toEqual({ ok: true })
-    expect(codexStatus()).toMatchObject({ connected: true, accountId: 'account-b' })
+    expect(await codexStatus()).toMatchObject({ connected: true, accountId: 'account-b' })
 
     resolveOldRefresh?.(oldResult())
     await expect(staleRefresh).resolves.toBeNull()
-    expect(codexStatus()).toMatchObject({ connected: true, accountId: 'account-b' })
+    expect(await codexStatus()).toMatchObject({ connected: true, accountId: 'account-b' })
+  })
+})
+
+describe('Codex status durante a carga inicial dos tokens', () => {
+  /** Um módulo NOVO por teste: `initPromise`/`cachedTokens` são estado de
+   *  módulo, e a corrida que interessa só existe antes da primeira carga. */
+  async function freshModules(): Promise<{
+    codexAuth: typeof import('./codexAuth')
+    kvFacade: typeof import('./persistence/kvFacade')
+  }> {
+    vi.resetModules()
+    const kvFacade = await import('./persistence/kvFacade')
+    const codexAuth = await import('./codexAuth')
+    return { codexAuth, kvFacade }
+  }
+
+  function deferredRepository(): {
+    repository: Parameters<typeof import('./persistence/kvFacade').configureKvRepository>[0]
+    getKv: ReturnType<typeof vi.fn>
+    resolve: (value: { value: string } | null) => void
+  } {
+    let resolve!: (value: { value: string } | null) => void
+    const pending = new Promise<{ value: string } | null>((r) => {
+      resolve = r
+    })
+    const getKv = vi.fn(() => pending)
+    return {
+      repository: { getKv } as unknown as Parameters<
+        typeof import('./persistence/kvFacade').configureKvRepository
+      >[0],
+      getKv,
+      resolve
+    }
+  }
+
+  it('espera a carga em vez de responder "deslogado" para um login que só não carregou ainda', async () => {
+    const { codexAuth, kvFacade } = await freshModules()
+    const { repository, resolve } = deferredRepository()
+    kvFacade.configureKvRepository(repository)
+
+    const status = codexAuth.codexStatus()
+    let settled = false
+    void status.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    // O bug era exatamente este ponto: a resposta saía aqui, como `connected:
+    // false`, e o seletor perdia os modelos GPT até algo chamar isto de novo.
+    expect(settled).toBe(false)
+
+    resolve({ value: encryptedWrapper(validTokens()) })
+    await expect(status).resolves.toMatchObject({ connected: true, accountId: 'account-test' })
+
+    kvFacade.configureKvRepository(null)
+  })
+
+  it('a carga do boot e um status concorrente compartilham UMA leitura', async () => {
+    const { codexAuth, kvFacade } = await freshModules()
+    const { repository, getKv, resolve } = deferredRepository()
+    kvFacade.configureKvRepository(repository)
+
+    const boot = codexAuth.initializeCodexAuthPersistence()
+    const status = codexAuth.codexStatus()
+    resolve({ value: encryptedWrapper(validTokens()) })
+
+    await boot
+    await expect(status).resolves.toMatchObject({ connected: true })
+    expect(getKv).toHaveBeenCalledTimes(1)
+
+    kvFacade.configureKvRepository(null)
   })
 })

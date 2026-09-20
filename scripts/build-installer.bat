@@ -73,6 +73,7 @@ for %%F in ("!ARTIFACT!") do (
 echo.
 echo O arquivo esta na pasta dist\.
 echo.
+start "" explorer.exe "%CD%\dist"
 pause
 endlocal
 exit /b 0

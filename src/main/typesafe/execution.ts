@@ -6,6 +6,7 @@ import {
   DEFAULT_EFFORT,
   EFFORT_LEVELS,
   MODEL_EFFORT,
+  OPENAI_MODELS,
   type AutoPrompt,
   type EffortLevel
 } from '../../shared/ipc'
@@ -52,7 +53,19 @@ export const AUTO_MODEL_DESCRIPTIONS: Record<string, string> = {
   'claude-opus-5':
     'Bem mais caro e bem mais capaz. Vale quando o problema é de fato difícil: desenhar arquitetura, bug não óbvio ou intermitente, concorrência, segurança, mudança que atravessa várias partes do código.',
   'claude-fable-5-1':
-    'O mais caro de todos e o mais capaz. Reserve para raciocínio realmente exigente e para trabalho agêntico longo, de muitas etapas encadeadas — em qualquer coisa menor que isso o custo não se paga.'
+    'O mais caro de todos e o mais capaz. Reserve para raciocínio realmente exigente e para trabalho agêntico longo, de muitas etapas encadeadas — em qualquer coisa menor que isso o custo não se paga.',
+  // Os GPT só entram na lista quando há login do ChatGPT (ver o `autoStart` em
+  // src/main/index.ts). Eles não são cobrados por token da API e sim pela
+  // ASSINATURA do usuário, então a escada aqui é de CAPACIDADE, não de preço —
+  // dizer "mais barato" sobre eles seria inventar um número que não existe.
+  'gpt-5.6-luna':
+    'O mais rápido dos GPT, e o que o app já usa nas tarefas de fundo. Tarefa simples e bem definida: pergunta factual, tradução, resumo, renomear, edição pontual óbvia.',
+  'gpt-5.6-terra':
+    'O meio-termo dos GPT: trabalho de código do dia a dia — implementar uma mudança já descrita, corrigir um bug localizado, escrever um teste.',
+  'gpt-5.6-sol':
+    'O mais capaz da geração 5.6. Vale quando o problema é de fato difícil: desenhar arquitetura, bug não óbvio ou intermitente, mudança que atravessa várias partes do código.',
+  'gpt-6-astra':
+    'O GPT mais novo e mais capaz da lista, e o de menor contexto entre eles. Reserve para raciocínio realmente exigente e trabalho agêntico longo, de muitas etapas encadeadas.'
 }
 
 /** O que cada degrau de esforço significa, na ordem de EFFORT_LEVELS. */
@@ -432,9 +445,15 @@ export async function resolveAutoStart(
   return { execution, reuse, note: autoExecutionNote(execution), live: nextLivePair(execution, input.live) }
 }
 
-/** O rótulo humano de um modelo, para a linha que a UI mostra no turno. */
+/** O rótulo humano de um modelo, para a linha que a UI mostra no turno. Olha
+ *  também os GPT: eles entram na escolha quando há login do ChatGPT, e sem isso
+ *  a nota do turno mostraria o id cru justamente nesses casos. */
 export function autoModelLabel(model: string): string {
-  return CLAUDE_MODELS.find((candidate) => candidate.id === model)?.label ?? model
+  return (
+    CLAUDE_MODELS.find((candidate) => candidate.id === model)?.label ??
+    OPENAI_MODELS.find((candidate) => candidate.id === model)?.label ??
+    model
+  )
 }
 
 /** O rótulo humano de um esforço, no mesmo vocabulário do seletor manual. */

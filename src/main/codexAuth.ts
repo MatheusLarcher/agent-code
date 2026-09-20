@@ -132,6 +132,11 @@ function claimsFromIdToken(idToken: string): { accountId: string; email?: string
 
 let tokensInitialized = false
 let cachedTokens: CodexTokens | null = null
+// Dedupes concurrent loaders: the boot sequence calls this once, and any
+// `codexStatus()` racing it before boot finishes must join the SAME read
+// instead of returning a premature "logged out" for a login that is really
+// just still loading off disk.
+let initPromise: Promise<void> | null = null
 
 function decodeStoredTokens(raw: string | null): CodexTokens | null {
   if (!raw) return null
@@ -145,9 +150,14 @@ function decodeStoredTokens(raw: string | null): CodexTokens | null {
   }
 }
 
-export async function initializeCodexAuthPersistence(): Promise<void> {
-  cachedTokens = decodeStoredTokens(await readPersistedKv(KV_KEY))
-  tokensInitialized = true
+export function initializeCodexAuthPersistence(): Promise<void> {
+  if (!initPromise) {
+    initPromise = readPersistedKv(KV_KEY).then((raw) => {
+      cachedTokens = decodeStoredTokens(raw)
+      tokensInitialized = true
+    })
+  }
+  return initPromise
 }
 
 async function persist(tokens: CodexTokens): Promise<void> {
@@ -172,6 +182,15 @@ function loadTokens(): CodexTokens | null {
   return tokensInitialized ? cachedTokens : null
 }
 
+/** Joins the boot-time load if it hasn't finished yet, instead of reading a
+ *  `tokensInitialized = false` that is just "not loaded yet" as if it meant
+ *  "logged out". Only relevant for the repository path — the legacy path
+ *  reads synchronously and has nothing to wait for. */
+async function ensureTokensLoaded(): Promise<void> {
+  if (tokensInitialized || !hasConfiguredKvRepository()) return
+  await initializeCodexAuthPersistence()
+}
+
 /** Erases the saved Codex login. */
 export async function codexLogout(): Promise<void> {
   invalidateRefreshes()
@@ -182,8 +201,18 @@ export async function codexLogout(): Promise<void> {
   }
 }
 
-/** Status for the Settings screen — never exposes the tokens themselves. */
-export function codexStatus(): { connected: boolean; accountId?: string; email?: string; planType?: string } {
+/** Status for the Settings screen and the app-boot model selector — never
+ *  exposes the tokens themselves. Async because it may have to wait for the
+ *  boot-time token load (see `ensureTokensLoaded`); a synchronous read here
+ *  raced that load and reported "logged out" right after startup even with a
+ *  saved login, until something else (opening Settings) called this again. */
+export async function codexStatus(): Promise<{
+  connected: boolean
+  accountId?: string
+  email?: string
+  planType?: string
+}> {
+  await ensureTokensLoaded()
   const cur = loadTokens()
   if (!cur) return { connected: false }
   return { connected: true, accountId: cur.accountId, email: cur.email, planType: cur.planType }

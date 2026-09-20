@@ -552,9 +552,11 @@ export function App(): JSX.Element {
   // accidental click never kills a running turn). Holds the conversation id.
   const [stopConfirm, setStopConfirm] = useState<string | null>(null)
   // When opening Settings to nudge a missing key, focus that section.
-  const [settingsFocus, setSettingsFocus] = useState<'openai' | null>(null)
+  const [settingsFocus, setSettingsFocus] = useState<'openai' | 'typesafe' | null>(null)
   // Whether an OpenAI key is set — gates the mic and read-aloud buttons.
   const [voiceReady, setVoiceReady] = useState(false)
+  // Whether TypeSafe is enabled with a usable key — gates the "Automático" model option.
+  const [typesafeReady, setTypesafeReady] = useState(false)
   // Whether Ollama Cloud is enabled with a key — adds its models to the selector.
   const [ollamaReady, setOllamaReady] = useState(false)
   // Whether a Codex (ChatGPT subscription) login exists — adds GPT models to the selector.
@@ -719,6 +721,13 @@ export function App(): JSX.Element {
       setTracks((prev) => {
         const map = prev[cid] ?? {}
         const next = reduceTracks(map, e)
+        return next === map ? prev : { ...prev, [cid]: next }
+      })
+      // Aba Tokens: acumula fora do reducer de mensagens, pelo mesmo motivo
+      // das tracks — é estado do painel, não da conversa em si.
+      setUsageMaps((prev) => {
+        const map = prev[cid] ?? emptyUsageMap
+        const next = reduceUsage(map, e)
         return next === map ? prev : { ...prev, [cid]: next }
       })
 
@@ -1219,6 +1228,7 @@ export function App(): JSX.Element {
           setWindowsControlEnabled(config.windowsControlEnabled === true)
           setVoiceReady(Boolean(config.openai.apiKey.trim()))
           setOllamaReady(config.ollama.enabled && Boolean(config.ollama.apiKey.trim()))
+          void window.api.isTypeSafeConfigured?.().then(setTypesafeReady).catch(() => undefined)
           voiceSpeedRef.current = config.openai.speed || 1
         }).catch(() => undefined)
       }
@@ -1270,6 +1280,10 @@ export function App(): JSX.Element {
           setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
           voiceSpeedRef.current = c.openai?.speed || 1
         })
+        .catch(() => undefined)
+      if (cancelled) return
+      await window.api.isTypeSafeConfigured?.()
+        .then((ready) => { if (!cancelled) setTypesafeReady(ready) })
         .catch(() => undefined)
       if (cancelled) return
       await window.api.codexStatus().then((s) => setCodexReady(s.connected)).catch(() => undefined)
@@ -2333,10 +2347,19 @@ export function App(): JSX.Element {
     setSettingsOpen(true)
   }, [notify])
 
+  // "Automático" needs TypeSafe ligado + key. When missing, open Settings on
+  // that section instead of silently switching model — same pattern as voice.
+  const needTypesafeKey = useCallback((): void => {
+    notify('aviso', 'Ative o TypeSafe e informe a API key nas Configurações para usar o modo Automático.')
+    setSettingsFocus('typesafe')
+    setSettingsOpen(true)
+  }, [notify])
+
   // Close Settings and re-read whether an OpenAI key now exists.
   const closeSettings = useCallback((): void => {
     setSettingsOpen(false)
     setSettingsFocus(null)
+    void window.api.isTypeSafeConfigured?.().then(setTypesafeReady).catch(() => undefined)
     void window.api.getConfig().then((c) => {
       setVoiceReady(!!c.openai?.apiKey?.trim())
       setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
@@ -3077,7 +3100,16 @@ export function App(): JSX.Element {
             // snapshot do celular já usa logo acima.
             runningModel={active ? runningModel(active) : MODELS[0].id}
             modelLocked={!active}
-            onModelChange={(m) => active && changeModel(active.id, m)}
+            onModelChange={(m) => {
+              if (!active) return
+              // "Automático" sem TypeSafe configurado não troca de modelo — pede a
+              // key nas Configurações e mantém o que já estava selecionado.
+              if (isAutoModel(m) && !typesafeReady) {
+                needTypesafeKey()
+                return
+              }
+              changeModel(active.id, m)
+            }}
             onModelLockedClick={() => notify('aviso', 'Selecione uma conversa para trocar o modelo.')}
             effortLevels={effortLevelsFor(active?.model)}
             effort={active?.effort ?? DEFAULT_EFFORT}
