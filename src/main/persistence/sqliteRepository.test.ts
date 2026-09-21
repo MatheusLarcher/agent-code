@@ -419,6 +419,23 @@ describe('token usage — llm_calls / llm_usage_totals', () => {
     expect(await repository.listLlmCalls('conv-outra')).toEqual([])
     expect(await repository.listLlmUsageTotals('conv-outra')).toEqual([])
 
+    const corrected = await repository.updateLlmCall(root.id, {
+      inputTokens: 140,
+      outputTokens: 33,
+      cacheReadTokens: 8,
+      cacheWriteTokens: 2,
+      costUsd: 0.015
+    })
+    expect(corrected).toMatchObject({ inputTokens: 140, outputTokens: 33, cacheReadTokens: 8, cacheWriteTokens: 2, costUsd: 0.015 })
+    const correctedTotals = await repository.listLlmUsageTotals('conv-1')
+    const correctedRoot = correctedTotals.find((t) => t.subagentType === null)!
+    expect(correctedRoot.sumInput).toBe(170)
+    expect(correctedRoot.sumOutput).toBe(38)
+    expect(correctedRoot.sumCacheRead).toBe(8)
+    expect(correctedRoot.sumCacheWrite).toBe(2)
+    expect(correctedRoot.sumCost).toBeCloseTo(0.015)
+    expect(await repository.updateLlmCall('missing', { inputTokens: 1, outputTokens: 1 })).toBeNull()
+
     await repository.close()
   })
 

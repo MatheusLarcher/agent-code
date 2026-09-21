@@ -650,6 +650,15 @@ export interface LlmCallInsert {
   outputPreview?: string | null
 }
 
+/** Replacement values for usage initially unavailable on streamed assistant messages. */
+export interface LlmCallUsageUpdate {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  costUsd?: number | null
+}
+
 /** Agregado incremental, atualizado (upsert) na mesma escrita de `insertLlmCall` —
  *  não depende da poda de 15 dias rodar para estar correto, e sobrevive a ela. */
 export interface LlmUsageTotal {
@@ -670,6 +679,8 @@ export interface LlmUsageTotal {
 export interface TokenUsageRepository {
   /** Grava a chamada e incrementa `llm_usage_totals` na mesma escrita (atômico). */
   insertLlmCall(input: LlmCallInsert): Promise<LlmCall>
+  /** Replaces usage for an existing call and applies only the delta to totals. */
+  updateLlmCall(id: string, usage: LlmCallUsageUpdate): Promise<LlmCall | null>
   /** Todas as chamadas de uma conversa, em ordem cronológica — para reconstruir a árvore. */
   listLlmCalls(convId: string): Promise<LlmCall[]>
   /** Os totais agregados de uma conversa (sobrevivem à poda de `llm_calls`). */

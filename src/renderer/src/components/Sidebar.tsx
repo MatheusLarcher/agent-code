@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import type { Conversation } from '../types'
 import { useUI } from '../ui/UiProvider'
 import { IconSpinner } from './Icons'
@@ -270,6 +270,9 @@ export function Sidebar(props: Props): JSX.Element {
   const [editValue, setEditValue] = useState('')
   // Free-text search over the user's own prompts across every conversation.
   const [query, setQuery] = useState('')
+  // Index of the project marker currently under the pointer in the collapsed rail.
+  // Keeping this local means the expanded sidebar and navigation remain unchanged.
+  const [hoveredRailProject, setHoveredRailProject] = useState<number | null>(null)
 
   const toggleProject = (path: string): void =>
     setCollapsedProjects((prev) => {
@@ -336,12 +339,16 @@ export function Sidebar(props: Props): JSX.Element {
         <button className="rail-btn accent" title="Nova conversa" onClick={props.onNewChat}>
           <IconPlus />
         </button>
-        <div className="rail-projects">
-          {projects.map((p) => (
+        <div className="rail-projects" onMouseLeave={() => setHoveredRailProject(null)}>
+          {projects.map((p, index) => {
+            const distance = hoveredRailProject == null ? null : Math.abs(index - hoveredRailProject)
+            return (
             <button
               key={p.path}
               className={`rail-btn ${p.conversations.some((c) => c.id === activeId) ? 'active' : ''}`}
               title={p.name}
+              style={distance == null ? undefined : ({ '--rail-distance': distance } as CSSProperties)}
+              onMouseEnter={() => setHoveredRailProject(index)}
               onClick={() => {
                 props.onToggleCollapse()
                 if (p.conversations[0]) props.onSelect(p.conversations[0].id)
@@ -349,7 +356,8 @@ export function Sidebar(props: Props): JSX.Element {
             >
               <ProjectGlyph key={p.icon ?? 'folder'} icon={p.icon} />
             </button>
-          ))}
+            )
+          })}
         </div>
       </aside>
     )

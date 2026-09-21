@@ -73,7 +73,13 @@ export function reduceUsage(map: UsageMap, e: ChatEvent): UsageMap {
         // overwrite a known parent with a later, differently-reported one.
         subagentType: existing.subagentType ?? e.subagentType,
         taskDescription: existing.taskDescription ?? e.taskDescription,
-        calls: sortCalls([...existing.calls, call])
+        // The SDK may emit a corrected snapshot for the same model call while
+        // the turn is still live. Sequence numbers identify the call within a
+        // node, so replace that entry instead of inflating the displayed usage.
+        calls: sortCalls([
+          ...existing.calls.filter((previous) => previous.seq !== call.seq),
+          call
+        ])
       }
     : {
         ...newNode(e.node_id, e.parent_node_id),

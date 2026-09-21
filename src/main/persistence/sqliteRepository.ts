@@ -84,6 +84,7 @@ import {
   type LeaseFence,
   type LlmCall,
   type LlmCallInsert,
+  type LlmCallUsageUpdate,
   type LlmUsageTotal,
   type PersistenceRepository,
   type AgentInputQueueItem,
@@ -1656,6 +1657,23 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       return llmCallFromRow(
         db.prepare(`SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE id = ?`).get(id) as unknown as LlmCallRow
       )
+    })
+  }
+
+  async updateLlmCall(id: string, usage: LlmCallUsageUpdate): Promise<LlmCall | null> {
+    const cacheReadTokens = usage.cacheReadTokens ?? 0
+    const cacheWriteTokens = usage.cacheWriteTokens ?? 0
+    return this.write((db) => {
+      const old = db.prepare(`SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE id = ?`).get(id) as unknown as LlmCallRow | undefined
+      if (!old) return null
+      const oldCost = old.cost_usd == null ? null : Number(old.cost_usd)
+      const newCost = usage.costUsd === undefined ? oldCost : usage.costUsd
+      db.prepare(`UPDATE llm_calls SET input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ?, cost_usd = ? WHERE id = ?`)
+        .run(usage.inputTokens, usage.outputTokens, cacheReadTokens, cacheWriteTokens, newCost, id)
+      const delta = (a: number, b: number) => b - a
+      db.prepare(`UPDATE llm_usage_totals SET sum_input = sum_input + ?, sum_output = sum_output + ?, sum_cache_read = sum_cache_read + ?, sum_cache_write = sum_cache_write + ?, sum_cost = CASE WHEN ? IS NULL THEN sum_cost ELSE COALESCE(sum_cost, 0) + ? END WHERE conv_id = ? AND day = substr(?, 1, 10) AND model = ? AND subagent_type = ?`)
+        .run(delta(Number(old.input_tokens), usage.inputTokens), delta(Number(old.output_tokens), usage.outputTokens), delta(Number(old.cache_read_tokens), cacheReadTokens), delta(Number(old.cache_write_tokens), cacheWriteTokens), oldCost == null || newCost == null ? null : newCost - oldCost, oldCost == null || newCost == null ? null : newCost - oldCost, old.conv_id, old.created_at, old.model, old.subagent_type ?? '')
+      return llmCallFromRow(db.prepare(`SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE id = ?`).get(id) as unknown as LlmCallRow)
     })
   }
 

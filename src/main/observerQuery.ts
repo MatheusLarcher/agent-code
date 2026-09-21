@@ -27,7 +27,7 @@ export interface ObserverRequest extends ObserverRuntime {
 export function classifyClaudeObserverFailure(value: unknown): SafeProviderReason | undefined {
   if (!value || typeof value !== 'object') return undefined
 
-  // Agent SDK 0.3.257 exposes classified provider failures on the assistant
+  // Agent SDK 0.3.278 exposes classified provider failures on the assistant
   // frame. Do not broaden this to lookalike exception/status fields: that
   // would turn arbitrary HTTP failures into an unsafe second-provider call.
   const failure = value as { type?: unknown; error?: unknown }

@@ -167,7 +167,7 @@ export function SettingsModal({
     })
     notify(
       'sucesso',
-      `Pasta de dados movida para: ${next.dir}. Seus dados (banco + memórias) foram transferidos.`
+      `Pasta de dados movida para: ${next.dir}. Apenas memórias e skills foram sincronizadas/movidas; o banco de dados permanece local.`
     )
     window.dispatchEvent(new Event('agent-code-request-reload'))
   }
@@ -805,7 +805,7 @@ export function SettingsModal({
               <>
                 <section className="settings-section">
                   <label className="settings-field">
-                    <span className="settings-field-label">Pasta de dados (cache)</span>
+                    <span className="settings-field-label">Salvar dados</span>
                     <div className="settings-key-row">
                       <input
                         className="settings-input"
@@ -820,11 +820,11 @@ export function SettingsModal({
                       </button>
                     </div>
                     <span className="settings-hint">
-                      Onde ficam o banco SQLite (configurações, token do Android, conversas) e as memórias
-                      (.md). É por usuário, não por projeto. Uma pasta <code>agent-code</code> é criada dentro
-                      do local selecionado. Se a pasta nova estiver vazia, seus dados atuais são movidos para
-                      lá; se já tiver dados do Agent Code, eles são carregados. Pode ficar no OneDrive/Google
-                      Drive — o app não trava os arquivos, então o backup funciona com o app aberto.
+                      Somente as memórias (.md) e as skills são sincronizadas neste local. As configurações, o token do Android
+                      e as conversas ficam armazenados localmente neste computador, fora da pasta sincronizada.
+                      Uma pasta <code>agent-code</code> é criada dentro do local selecionado. Se a pasta nova estiver
+                      vazia, as memórias e skills atuais são movidas para lá; se já tiver dados do Agent Code, eles
+                      são carregados.
                     </span>
                   </label>
                 </section>

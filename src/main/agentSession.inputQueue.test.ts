@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import { AgentSession } from './agentSession'
 import type { BrowserController } from './browserController'

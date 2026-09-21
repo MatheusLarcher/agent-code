@@ -148,6 +148,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     }),
     getCacheInfo: vi.fn(async () => ({ dir: '', dbPath: '', memoriesDir: '', skillsDir: '' })),
     chooseCacheDir: vi.fn(async () => null),
+    getAppVersion: vi.fn(async () => 'test'),
     downloadFile: vi.fn(async () => ({ ok: true, message: '' })),
     resolvePastedPath: vi.fn(async () => ({ ok: false, error: 'not used in these tests' })),
     downloadPastedUrl: vi.fn(async () => ({ ok: false, error: 'not used in these tests' })),

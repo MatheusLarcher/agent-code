@@ -89,6 +89,7 @@ import {
   type LeaseFence,
   type LlmCall,
   type LlmCallInsert,
+  type LlmCallUsageUpdate,
   type LlmUsageTotal,
   type PersistenceRepository,
   type AgentInputQueueItem,
@@ -1430,6 +1431,24 @@ export class PostgresRepository implements PersistenceRepository {
            call_count = llm_usage_totals.call_count + EXCLUDED.call_count`,
         [input.convId, day, input.model, subagentKey, input.inputTokens, input.outputTokens, cacheReadTokens, cacheWriteTokens, costUsd]
       )
+      const result = await client.query<LlmCallRow>(`SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE id = $1`, [id])
+      return llmCallFromRow(decodeLlmCallRow(result.rows[0]))
+    })
+  }
+
+  async updateLlmCall(id: string, usage: LlmCallUsageUpdate): Promise<LlmCall | null> {
+    this.assertInitialized()
+    const cacheReadTokens = usage.cacheReadTokens ?? 0
+    const cacheWriteTokens = usage.cacheWriteTokens ?? 0
+    return transaction(this.pool, async (client) => {
+      const oldResult = await client.query<LlmCallRow>(`SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE id = $1 FOR UPDATE`, [id])
+      const old = oldResult.rows[0]
+      if (!old) return null
+      const oldCost = old.cost_usd == null ? null : Number(old.cost_usd)
+      const newCost = usage.costUsd === undefined ? oldCost : usage.costUsd
+      await client.query(`UPDATE llm_calls SET input_tokens = $1, output_tokens = $2, cache_read_tokens = $3, cache_write_tokens = $4, cost_usd = $5 WHERE id = $6`, [usage.inputTokens, usage.outputTokens, cacheReadTokens, cacheWriteTokens, newCost, id])
+      const deltaCost = oldCost == null || newCost == null ? null : newCost - oldCost
+      await client.query(`UPDATE llm_usage_totals SET sum_input = sum_input + $1, sum_output = sum_output + $2, sum_cache_read = sum_cache_read + $3, sum_cache_write = sum_cache_write + $4, sum_cost = CASE WHEN $5::double precision IS NULL THEN sum_cost ELSE COALESCE(sum_cost, 0) + $5 END WHERE conv_id = $6 AND day = substring($7, 1, 10) AND model = $8 AND subagent_type = $9`, [usage.inputTokens - Number(old.input_tokens), usage.outputTokens - Number(old.output_tokens), cacheReadTokens - Number(old.cache_read_tokens), cacheWriteTokens - Number(old.cache_write_tokens), deltaCost, old.conv_id, old.created_at, old.model, old.subagent_type ?? ''])
       const result = await client.query<LlmCallRow>(`SELECT ${LLM_CALL_COLUMNS} FROM llm_calls WHERE id = $1`, [id])
       return llmCallFromRow(decodeLlmCallRow(result.rows[0]))
     })

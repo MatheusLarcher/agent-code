@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
+import { app } from 'electron'
 import { createHash } from 'node:crypto'
 import { basename, join, resolve } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, copyFileSync, rmSync } from 'node:fs'
@@ -28,8 +29,15 @@ const LEGACY_CONVERSATIONS_KEY = 'agentcode.conversations.v1'
 /** A conversation as seen by this layer: opaque JSON, only `cwd` matters for grouping. */
 export type ConversationRecord = Record<string, unknown>
 
-function dataDir(cacheDir: string): string {
-  return join(cacheDir, DATA_DIRNAME)
+/** Conversation SQLite files are deliberately kept outside the user-selected
+ * sync root. The root remains for portable memories/skills; SQLite lives under
+ * Electron's per-user data directory. */
+function localConversationRoot(): string {
+  return join(app.getPath('userData'), 'agent-code-local')
+}
+
+function dataDir(): string {
+  return join(localConversationRoot(), DATA_DIRNAME)
 }
 
 /**
@@ -107,9 +115,9 @@ function writeConversations(path: string, list: ConversationRecord[]): void {
   unreadableFiles.delete(path)
 }
 
-function listProjectFiles(cacheDir: string): string[] {
+function listProjectFiles(): string[] {
   try {
-    return readdirSync(dataDir(cacheDir)).filter((f) => f.toLowerCase().endsWith('.db'))
+    return readdirSync(dataDir()).filter((f) => f.toLowerCase().endsWith('.db'))
   } catch {
     return []
   }
@@ -220,9 +228,9 @@ function deleteLegacyConversationsKey(cacheDir: string): void {
  * the `.bak` file is the safety net, not a dead key kept around forever.
  */
 function migrateLegacyConversations(cacheDir: string): void {
-  if (existsSync(dataDir(cacheDir))) return // already migrated (or nothing to migrate)
+  if (existsSync(dataDir())) return // already migrated (or nothing to migrate)
   const legacyList = readLegacyConversations(cacheDir)
-  mkdirSync(dataDir(cacheDir), { recursive: true }) // marks migration as done, even if there was nothing to migrate
+  mkdirSync(dataDir(), { recursive: true }) // marks migration as done, even if there was nothing to migrate
   if (!legacyList.length) return
 
   const legacyPath = join(cacheDir, DB_NAME)
@@ -236,7 +244,7 @@ function migrateLegacyConversations(cacheDir: string): void {
   }
 
   for (const [file, records] of groupByProject(dedupeById(legacyList))) {
-    writeConversations(join(dataDir(cacheDir), file), records)
+    writeConversations(join(dataDir(), file), records)
   }
   deleteLegacyConversationsKey(cacheDir)
 }
@@ -261,11 +269,13 @@ let seenFiles = new Set<string>()
  *  same "load everything at once" contract the single-blob store used to offer.
  *  A file that can't be read is skipped instead of aborting the whole load. */
 export function loadAllConversationRecords(cacheDir: string): ConversationRecord[] {
-  migrateLegacyConversations(cacheDir)
+  // Conversations always live under Electron's local userData root; cacheDir is
+  // retained only as the legacy migration API input for compatibility.
+  migrateLegacyConversations(localConversationRoot())
   const merged: ConversationRecord[] = []
   const seen = new Set<string>()
-  for (const file of listProjectFiles(cacheDir)) {
-    const records = readConversations(join(dataDir(cacheDir), file))
+  for (const file of listProjectFiles()) {
+    const records = readConversations(join(dataDir(), file))
     if (records === null) continue // unreadable — leave it out AND leave it alone
     seen.add(file)
     merged.push(...records)
@@ -281,19 +291,21 @@ export function loadAllConversationRecords(cacheDir: string): ConversationRecord
  * never-run load can never be read as "erase every project".
  */
 export function saveAllConversationRecords(cacheDir: string, list: ConversationRecord[]): void {
-  migrateLegacyConversations(cacheDir)
-  mkdirSync(dataDir(cacheDir), { recursive: true })
+  // Conversations always live under Electron's local userData root; cacheDir is
+  // retained only as the legacy migration API input for compatibility.
+  migrateLegacyConversations(localConversationRoot())
+  mkdirSync(dataDir(), { recursive: true })
   const grouped = groupByProject(dedupeById(list))
-  const stale = new Set(listProjectFiles(cacheDir))
+  const stale = new Set(listProjectFiles())
   for (const [file, records] of grouped) {
-    writeConversations(join(dataDir(cacheDir), file), records)
+    writeConversations(join(dataDir(), file), records)
     stale.delete(file)
     seenFiles.add(file) // we just wrote it, so we know exactly what's in it
   }
   for (const file of stale) {
     if (!seenFiles.has(file)) continue
     try {
-      rmSync(join(dataDir(cacheDir), file), { force: true })
+      rmSync(join(dataDir(), file), { force: true })
       seenFiles.delete(file)
     } catch {
       /* best-effort */

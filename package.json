@@ -1,13 +1,13 @@
 {
   "name": "agent-code-desktop",
-  "version": "0.1.11",
+  "version": "0.1.14",
   "description": "Desktop UI for Claude Code with an embedded agent-driven browser (Claude Desktop style)",
   "type": "module",
   "main": "./out/main/index.js",
   "author": "Larcher Tech",
   "scripts": {
     "dev": "npm run windows-control:build && electron-vite dev",
-    "build": "electron-vite build && npm run windows-control:build",
+    "build": "electron-vite build && node scripts/build-storage-migration.mjs && npm run windows-control:build",
     "windows-control:build": "node scripts/build-windows-control.mjs",
     "windows-control:test": "dotnet run --project src/main/windowsControl/native/AgentCode.WindowsControl.csproj -c Release -- --self-test",
     "start": "electron-vite preview",
@@ -16,10 +16,12 @@
     "package:win": "npm run build && node scripts/stage-chromium.mjs && electron-builder --win",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "test:pg": "node scripts/run-postgres-tests.mjs"
+    "test:pg": "node scripts/run-postgres-tests.mjs",
+    "test:migrate-storage": "node --test scripts/migrate-storage.test.mjs",
+    "migrate-storage": "node scripts/migrate-storage.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.257",
+    "@anthropic-ai/claude-agent-sdk": "0.3.278",
     "@typesafe-ai/sdk": "^0.6.0",
     "highlight.js": "^11.11.1",
     "parquetjs-lite": "^0.8.7",

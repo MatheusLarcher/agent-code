@@ -4,6 +4,11 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, statSync, writeFileSync, copyFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { migrateLegacyStorage } from './storageMigration'
+
+const electronMock = vi.hoisted(() => ({ getPath: vi.fn() }))
+vi.mock('electron', () => ({ app: electronMock }))
+
 import {
   projectFileName,
   loadAllConversationRecords,
@@ -12,13 +17,16 @@ import {
 } from './projectStore'
 
 let cacheDir: string
+let testRoot: string
 
 beforeEach(() => {
-  cacheDir = mkdtempSync(join(tmpdir(), 'agent-code-projectstore-'))
+  testRoot = mkdtempSync(join(tmpdir(), 'agent-code-projectstore-'))
+  cacheDir = join(testRoot, 'agent-code-local')
+  electronMock.getPath.mockReturnValue(testRoot)
 })
 
 afterEach(() => {
-  rmSync(cacheDir, { recursive: true, force: true })
+  rmSync(testRoot, { recursive: true, force: true })
 })
 
 function conv(id: string, cwd: string): ConversationRecord {
@@ -228,6 +236,20 @@ describe('nunca perder dados por causa de um load que falhou', () => {
 })
 
 describe('migração do blob legado', () => {
+  it('carrega e salva bancos migrados somente na raiz local', () => {
+    const syncDir = join(testRoot, 'OneDrive', 'agent-code')
+    const record = conv('migrada', 'C:\Projects\migrado')
+    seedLegacyDb(syncDir, [record])
+
+    migrateLegacyStorage({ legacyRoot: syncDir, localRoot: cacheDir })
+    expect(loadAllConversationRecords(syncDir)).toEqual([record])
+
+    saveAllConversationRecords(syncDir, [{ ...record, title: 'salva localmente' }])
+    expect(loadAllConversationRecords(syncDir)).toEqual([{ ...record, title: 'salva localmente' }])
+    expect(existsSync(join(syncDir, 'data'))).toBe(false)
+    expect(readdirSync(join(cacheDir, 'data'))).toContain(projectFileName(record.cwd))
+  })
+
   it('divide o array único antigo em arquivos por projeto e preserva tudo', () => {
     seedLegacyDb(cacheDir, [conv('old1', 'C:\\Projects\\legado'), conv('old2', 'C:\\Projects\\legado'), conv('old3', 'C:\\Projects\\outro')])
 

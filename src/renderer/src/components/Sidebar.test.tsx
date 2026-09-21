@@ -83,6 +83,53 @@ describe('Sidebar — renomear conversa', () => {
   })
 })
 
+describe('Sidebar — dock recolhido', () => {
+  function renderCollapsed() {
+    const projects = ['A', 'B', 'C'].map((name) => ({
+      path: `C:/${name}`,
+      name,
+      conversations: [{ ...makeConv(), id: name }]
+    }))
+    render(
+      <UiProvider>
+        <Sidebar
+          collapsed
+          onToggleCollapse={() => {}}
+          projects={projects}
+          recents={[]}
+          activeId={null}
+          busyIds={new Set()}
+          onSelect={() => {}}
+          onNewChat={() => {}}
+          onNewProject={() => {}}
+          onNewChatIn={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onSelectResult={() => {}}
+        />
+      </UiProvider>
+    )
+  }
+
+  it('cresce o marcador sob o mouse e proporcionalmente os vizinhos', () => {
+    renderCollapsed()
+    const markers = ['A', 'B', 'C'].map((name) => screen.getByTitle(name))
+    fireEvent.mouseEnter(markers[1])
+    expect(markers[0].getAttribute('style')).toContain('--rail-distance: 1')
+    expect(markers[1].getAttribute('style')).toContain('--rail-distance: 0')
+    expect(markers[2].getAttribute('style')).toContain('--rail-distance: 1')
+  })
+
+  it('limpa o efeito ao sair da lista de marcadores', () => {
+    renderCollapsed()
+    const markers = ['A', 'B', 'C'].map((name) => screen.getByTitle(name))
+    fireEvent.mouseEnter(markers[1])
+    fireEvent.mouseLeave(markers[1].parentElement!)
+    expect(markers[0].getAttribute('style')).toBe('')
+    expect(markers[1].getAttribute('style')).toBe('')
+  })
+})
+
 describe('Sidebar — busca por projeto', () => {
   function makeSearchConv(id: string, title: string, updatedAt: number, text?: string): Conversation {
     return {

@@ -626,6 +626,8 @@ export class AgentSession {
   /** Latest reconstructed input (user text / tool result) seen for a node,
    *  consumed by the NEXT assistant message on that same node. */
   private readonly llmNodeInputPreview = new Map<string, string>()
+  /** Calls emitted during the current turn, retained for terminal usage reconciliation. */
+  private readonly turnLlmCalls = new Map<string, { nodeId: string; seq: number; model: string; tokens: TokenUsage; persistentId?: string }>()
   /** Version of the complete persistent-memory catalog already loaded into this session. */
   private memoryCatalogVersion = ''
   /** Content signature checked before materializing a replacement catalog. */
@@ -745,6 +747,7 @@ export class AgentSession {
     this.llmNodeParents.clear()
     this.llmNodeSeq.clear()
     this.llmNodeInputPreview.clear()
+    this.turnLlmCalls.clear()
     notePlanTurn(this.planGate)
     this.markActivity()
     this.startStallWatch()
@@ -2129,6 +2132,12 @@ export class AgentSession {
             cache_read_input_tokens?: number
             cache_creation_input_tokens?: number
           }
+          modelUsage?: Record<string, {
+            inputTokens?: number
+            outputTokens?: number
+            cacheReadInputTokens?: number
+            cacheCreationInputTokens?: number
+          }>
           origin?: { kind?: string }
         }
         // A background subagent (Task tool) finishing sends its OWN `result`
@@ -2182,6 +2191,8 @@ export class AgentSession {
           const tasks = readSessionTasks(this.watchedSessionId, this.sessionTasksRoot)
           if (tasks) this.emit({ kind: 'task-list', items: tasks })
         }
+        const reconciledUsage = reconcileResultUsage(r.usage, r.modelUsage)
+        this.reconcileLiveLlmCalls(r.modelUsage)
         this.emit({
           kind: 'result',
           id: nextId(),
@@ -2193,14 +2204,7 @@ export class AgentSession {
           // `|| undefined` so the renderer's `?? fallback` kicks in if we never
           // saw a main-thread assistant usage (0 would otherwise stick).
           contextTokens: this.lastContextTokens || undefined,
-          usage: r.usage
-            ? {
-                input: r.usage.input_tokens ?? 0,
-                output: r.usage.output_tokens ?? 0,
-                cacheRead: r.usage.cache_read_input_tokens ?? 0,
-                cacheWrite: r.usage.cache_creation_input_tokens ?? 0
-              }
-            : undefined
+          usage: reconciledUsage
         })
         // A lease protects one active turn, not an idle conversation. Release it
         // as soon as the SDK is done so another process cannot be blocked by an
@@ -2358,6 +2362,49 @@ export class AgentSession {
    * attributed to the node (turn root or subagent) that made it. See
    * docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md.
    */
+  private reconcileLiveLlmCalls(modelUsage: Record<string, {
+    inputTokens?: number
+    outputTokens?: number
+    cacheReadInputTokens?: number
+    cacheCreationInputTokens?: number
+  }> | undefined): void {
+    if (!modelUsage) return
+    for (const [key, call] of this.turnLlmCalls) {
+      const totals = modelUsage[call.model]
+      if (!totals) continue
+      const tokens: TokenUsage = {
+        input: totals.inputTokens ?? 0,
+        output: totals.outputTokens ?? 0,
+        cacheRead: totals.cacheReadInputTokens ?? 0,
+        cacheWrite: totals.cacheCreationInputTokens ?? 0
+      }
+      this.turnLlmCalls.set(key, { ...call, tokens })
+      if (call.persistentId) {
+        void this.tokenUsageRepository
+          ?.updateLlmCall(call.persistentId, {
+            inputTokens: tokens.input,
+            outputTokens: tokens.output,
+            cacheReadTokens: tokens.cacheRead,
+            cacheWriteTokens: tokens.cacheWrite
+          })
+          .catch((error) => {
+            console.warn(`[token-usage] falha ao corrigir llm_call id=${call.persistentId}: ${error instanceof Error ? error.message : String(error)}`)
+          })
+      }
+      this.emit({
+        kind: 'llm-call',
+        node_id: call.nodeId,
+        parent_node_id: this.llmNodeParents.get(call.nodeId) ?? null,
+        seq: call.seq,
+        model: call.model,
+        tokens,
+        inputPreview: '',
+        outputPreview: '',
+        createdAt: Date.now()
+      })
+    }
+  }
+
   private recordLlmCall(message: unknown, blocks: AssistantBlock[], track: TrackInfo): void {
     const m = message as {
       message?: {
@@ -2397,6 +2444,7 @@ export class AgentSession {
     const inputPreview = this.llmNodeInputPreview.get(nodeId) ?? ''
     const createdAt = Date.now()
 
+    this.turnLlmCalls.set(`${nodeId}\u0000${seq}`, { nodeId, seq, model, tokens })
     this.emit({
       kind: 'llm-call',
       node_id: nodeId,
@@ -2428,6 +2476,23 @@ export class AgentSession {
         inputPreview,
         outputPreview
       })
+      .then((stored) => {
+        const key = `${nodeId}\u0000${seq}`
+        const current = this.turnLlmCalls.get(key)
+        if (current) {
+          this.turnLlmCalls.set(key, { ...current, persistentId: stored.id })
+          {
+            void this.tokenUsageRepository
+              ?.updateLlmCall(stored.id, {
+                inputTokens: current.tokens.input,
+                outputTokens: current.tokens.output,
+                cacheReadTokens: current.tokens.cacheRead,
+                cacheWriteTokens: current.tokens.cacheWrite
+              })
+              .catch((error) => console.warn(`[token-usage] falha ao corrigir llm_call id=${stored.id}: ${error instanceof Error ? error.message : String(error)}`))
+          }
+        }
+      })
       .catch((error) => {
         console.warn(
           `[token-usage] falha ao gravar llm_calls conv=${this.opts.convId} node=${nodeId}: ${
@@ -2436,6 +2501,55 @@ export class AgentSession {
         )
       })
   }
+}
+
+function reconcileResultUsage(
+  usage:
+    | {
+        input_tokens?: number
+        output_tokens?: number
+        cache_read_input_tokens?: number
+        cache_creation_input_tokens?: number
+      }
+    | undefined,
+  modelUsage:
+    | Record<string, {
+        inputTokens?: number
+        outputTokens?: number
+        cacheReadInputTokens?: number
+        cacheCreationInputTokens?: number
+      }>
+    | undefined
+): { input: number; output: number; cacheRead: number; cacheWrite: number } | undefined {
+  if (!usage && !modelUsage) return undefined
+
+  const reconciled = {
+    input: usage?.input_tokens ?? 0,
+    output: usage?.output_tokens ?? 0,
+    cacheRead: usage?.cache_read_input_tokens ?? 0,
+    cacheWrite: usage?.cache_creation_input_tokens ?? 0
+  }
+
+  // Claude Code's final result can report zeros while modelUsage contains the
+  // authoritative per-model totals. Sum all models because a turn may include
+  // both the main model and subagents; never discard already-populated fields.
+  if (modelUsage) {
+    const final = Object.values(modelUsage).reduce(
+      (totals, model) => ({
+        input: totals.input + (model.inputTokens ?? 0),
+        output: totals.output + (model.outputTokens ?? 0),
+        cacheRead: totals.cacheRead + (model.cacheReadInputTokens ?? 0),
+        cacheWrite: totals.cacheWrite + (model.cacheCreationInputTokens ?? 0)
+      }),
+      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    )
+    if (reconciled.input === 0) reconciled.input = final.input
+    if (reconciled.output === 0) reconciled.output = final.output
+    if (reconciled.cacheRead === 0) reconciled.cacheRead = final.cacheRead
+    if (reconciled.cacheWrite === 0) reconciled.cacheWrite = final.cacheWrite
+  }
+
+  return reconciled
 }
 
 function stringifyToolResult(content: unknown): string {

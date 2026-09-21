@@ -2,8 +2,9 @@ import { DatabaseSync } from 'node:sqlite'
 import { app } from 'electron'
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { isReadableDb, quarantineDb, writeDbAtomically } from './atomicDb'
+import { migrateLegacyStorage, moveSyncData } from './storageMigration'
 
 /**
  * Persistence layout (per user, NOT per project):
@@ -79,8 +80,12 @@ function writePointer(dir: string): void {
   }
 }
 
-function dbPath(dir: string): string {
-  return join(dir, DB_NAME)
+function localDataDir(): string {
+  return join(app.getPath('userData'), 'agent-code-local')
+}
+
+function dbPath(_dir: string): string {
+  return join(localDataDir(), DB_NAME)
 }
 
 /**
@@ -119,6 +124,8 @@ export function initStore(): void {
   const saved = readPointer()
   const firstRun = !saved
   cacheDir = saved || defaultCacheDir()
+  // SQLite/config are local; only the selected root's memories and skills sync.
+  migrateLegacyStorage({ legacyRoot: cacheDir, localRoot: localDataDir() })
   prepare(cacheDir)
   writePointer(cacheDir)
   if (firstRun) migrateLegacyConfig()
@@ -181,65 +188,6 @@ export function getCacheInfo(): CacheInfo {
 }
 
 /**
- * Move every entry from `from` into `to`. Tries a fast rename first; on a
- * cross-device move (different drive, or a cloud-synced folder on another volume)
- * falls back to a recursive copy + delete. Existing entries in `to` are left
- * untouched (never overwritten). Best-effort per entry.
- */
-function moveAllContents(from: string, to: string): void {
-  let entries: string[]
-  try {
-    entries = readdirSync(from)
-  } catch {
-    return // source unreadable/absent — nothing to move
-  }
-  mkdirSync(to, { recursive: true })
-  for (const name of entries) {
-    const src = join(from, name)
-    const dest = join(to, name)
-    if (existsSync(dest)) continue // keep whatever is already in the target
-    try {
-      renameSync(src, dest)
-    } catch {
-      // EXDEV / locked: copy then remove the original.
-      try {
-        cpSync(src, dest, { recursive: true })
-        rmSync(src, { recursive: true, force: true })
-      } catch {
-        /* leave the source in place if we couldn't copy it */
-      }
-    }
-  }
-}
-
-/** Recursively true if `dir` contains at least one `.md` file. */
-function hasMarkdown(dir: string): boolean {
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = readdirSync(dir, { withFileTypes: true })
-  } catch {
-    return false
-  }
-  for (const e of entries) {
-    if (e.isDirectory()) {
-      if (hasMarkdown(join(dir, e.name))) return true
-    } else if (e.name.toLowerCase().endsWith('.md')) {
-      return true
-    }
-  }
-  return false
-}
-
-/**
- * True if the folder already holds Agent Code cache data — the SQLite db and/or
- * any `.md` memory file. When this is the case the folder is loaded as-is and
- * nothing is moved into it.
- */
-function hasCacheData(dir: string): boolean {
-  return existsSync(dbPath(dir)) || hasMarkdown(dir)
-}
-
-/**
  * Point the store at a new cache folder and reload from it. The folder name is
  * always `agent-code`: if the user picks a folder already named that, it's used
  * as-is; otherwise an `agent-code` subfolder is created inside the chosen path.
@@ -261,9 +209,8 @@ export function setCacheDir(chosen: string): CacheInfo {
   if (resolve(target) === resolve(from)) return getCacheInfo()
 
   mkdirSync(target, { recursive: true })
-  // Move only into an empty target. If it already has the db and/or .md memories,
-  // load it as-is.
-  if (!hasCacheData(target)) moveAllContents(from, target)
+  // The selected folder is a sync root: only these two trees are portable.
+  moveSyncData(from, target)
 
   prepare(target) // ensure schema (no-op if the db was moved/already present)
   cacheDir = target

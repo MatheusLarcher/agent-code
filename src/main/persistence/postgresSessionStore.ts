@@ -11,7 +11,7 @@ import { decodePostgresJson, encodePostgresJson } from './postgresEncoding'
 
 /** Versão exata do Agent SDK usada para gravar sessões. Mantida em sinc com a
  *  dependência fixada no package.json — ver docs/postgresql-persistence.md. */
-export const SDK_VERSION = '0.3.257'
+export const SDK_VERSION = '0.3.278'
 
 interface EntryRow {
   entry: SessionStoreEntry

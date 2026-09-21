@@ -83,6 +83,26 @@ describe('tokenUsageTree', () => {
     expect(tree[0].calls.map((c) => c.model)).toEqual(['first', 'second', 'third'])
   })
 
+  it('replaces a duplicate live call with the newest token snapshot', () => {
+    let map = reduceUsage(emptyUsageMap, llmCall({ node_id: 'root-1', seq: 0, tokens: usage(100, 50), model: 'initial' }))
+    map = reduceUsage(map, llmCall({ node_id: 'root-1', seq: 0, tokens: usage(125, 75), model: 'updated' }))
+
+    const calls = map.nodes['root-1'].calls
+    expect(calls).toHaveLength(1)
+    expect(calls[0].model).toBe('updated')
+    expect(calls[0].tokens).toEqual(usage(125, 75))
+  })
+
+  it('keeps calls with different sequence numbers additive', () => {
+    let map = reduceUsage(emptyUsageMap, llmCall({ node_id: 'root-1', seq: 0, tokens: usage(100, 50) }))
+    map = reduceUsage(map, llmCall({ node_id: 'root-1', seq: 1, tokens: usage(200, 100) }))
+
+    const calls = map.nodes['root-1'].calls
+    expect(calls).toHaveLength(2)
+    expect(calls.map((call) => call.seq)).toEqual([0, 1])
+    expect(totalTokens(buildUsageTree(map)[0])).toEqual(usage(300, 150))
+  })
+
   it('handles an out-of-order event: child arrives before its parent node', () => {
     let map = emptyUsageMap
     // The subagent's call streams in first (its parent Task tool-use hasn't
