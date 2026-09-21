@@ -148,7 +148,7 @@ function makeSession(opts: {
   economyMode?: boolean
   loopEnabled?: boolean
   skillRuntime?: SkillRuntimePaths
-  tokenUsageRepository?: { insertLlmCall: ReturnType<typeof vi.fn> }
+  tokenUsageRepository?: { insertLlmCall: ReturnType<typeof vi.fn>; updateLlmCall?: ReturnType<typeof vi.fn> }
 } = {}): {
   s: AgentSession
   emit: ReturnType<typeof vi.fn>
@@ -713,6 +713,37 @@ describe('AgentSession — result de subagente NÃO encerra o turno principal', 
     const { s, emit } = makeSession()
     handle(s, baseResult)
     expect(emit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'result', isError: false }))
+  })
+
+  it('reconcilia usage vazio do assistant com modelUsage final do result', () => {
+    const { s, emit } = makeSession()
+    handle(s, {
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        model: 'claude-sonnet-5',
+        usage: {},
+        content: [{ type: 'text', text: 'resposta' }]
+      }
+    })
+    handle(s, {
+      ...baseResult,
+      usage: { input_tokens: 0, output_tokens: 0 },
+      modelUsage: {
+        'claude-sonnet-5': {
+          inputTokens: 31,
+          outputTokens: 17,
+          cacheReadInputTokens: 5,
+          cacheCreationInputTokens: 2
+        }
+      }
+    })
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'result',
+        usage: { input: 31, output: 17, cacheRead: 5, cacheWrite: 2 }
+      })
+    )
   })
 
   it('result com origin humano/normal (kind !== "peer"): emite normalmente', () => {
@@ -1535,10 +1566,9 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(String(messages.at(-1)?.message.content)).toContain('[SKILL_CATALOG_UPDATE]')
   })
 
-  it('skill só do usuário que o SDK não carrega sai do catálogo sem esconder as outras', async () => {
-    // Regressão real: `graphify` existia só em ~/.claude/skills (raiz que o CLI
-    // via SDK não lê). O tudo-ou-nada antigo anunciava "nenhuma skill" e o
-    // modelo parava de chamar caveman/rtk mesmo com o registro nativo cheio.
+  it('skill instalada só em ~/.claude é importada para o cache e entra no catálogo junto com as outras', async () => {
+    // `graphify` existe só em ~/.claude/skills (raiz que o CLI via SDK não lê):
+    // o Agent Code a importa para o cache, que o SDK lê, e a anuncia com as demais.
     const project = await mkdtemp(join(tmpdir(), 'agent-session-skill-partial-'))
     const home = join(project, 'home')
     const cache = join(project, 'cache')
@@ -1557,7 +1587,10 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     await s.start()
 
     const reloadSkills = vi.fn(async () => ({
-      skills: [{ name: 'caveman', description: 'terse', argumentHint: '' }]
+      skills: [
+        { name: 'caveman', description: 'terse', argumentHint: '' },
+        { name: 'graphify', description: 'grafo', argumentHint: '' }
+      ]
     }))
     ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -1571,7 +1604,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     const first = String(pushedMessages(s).at(-2)?.message.content)
     expect(first).toContain('[SKILL_CATALOG_UPDATE]')
     expect(first).toContain('/caveman')
-    expect(first).not.toContain('/graphify')
+    expect(first).toContain('/graphify')
     expect(first).not.toContain('no filesystem skills')
     // Skill só do usuário não dispara re-recarga a cada mensagem.
     expect(reloadSkills).toHaveBeenCalledTimes(1)
@@ -2355,6 +2388,26 @@ describe('AgentSession — árvore de consumo de tokens (llm-call)', () => {
         cacheWriteTokens: 2
       })
     )
+  })
+
+  it('corrige a chamada persistida com modelUsage no resultado terminal', async () => {
+    const insertLlmCall = vi.fn(async () => ({ id: 'llm-call-1' }) as never)
+    const updateLlmCall = vi.fn(async () => null)
+    const { s } = makeSession({ tokenUsageRepository: { insertLlmCall, updateLlmCall } })
+    const turnId = turnIdOf(s)
+    handle(s, assistantMsg({ parent_tool_use_id: null, content: [{ type: 'text', text: 'oi' }] }))
+    await Promise.resolve()
+    handle(s, { type: 'result', subtype: 'success', is_error: false, duration_ms: 1, modelUsage: {
+      'claude-sonnet-5': { inputTokens: 40, outputTokens: 50, cacheReadInputTokens: 6, cacheCreationInputTokens: 7 }
+    } })
+    await Promise.resolve()
+    expect(updateLlmCall).toHaveBeenCalledWith('llm-call-1', {
+      inputTokens: 40,
+      outputTokens: 50,
+      cacheReadTokens: 6,
+      cacheWriteTokens: 7
+    })
+    expect(insertLlmCall).toHaveBeenCalledWith(expect.objectContaining({ nodeId: turnId, seq: 1 }))
   })
 
   it('subagente de 1 nível: node_id = tool-use do Task, parent_node_id = turnId', () => {

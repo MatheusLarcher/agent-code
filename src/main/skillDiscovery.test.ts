@@ -112,17 +112,25 @@ describe('skillDiscovery', () => {
     ])
   })
 
-  it('não anuncia skill cujo diretório diverge do nome nativo', async () => {
+  it('identifica a skill pela pasta, mesmo com nome de exibição no frontmatter', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-name-mismatch-'))
-    await skill(join(project, '.claude', 'skills'), 'diretorio', 'outro-nome', 'inválida para o SDK')
-    expect(discoverSkills(project, join(project, 'home'))).toEqual([])
+    await skill(join(project, '.claude', 'skills'), 'web-security', 'Web Application Security Testing', 'OWASP')
+    await mkdir(join(project, '.claude', 'skills', 'vazia'), { recursive: true })
+    await writeFile(join(project, '.claude', 'skills', 'vazia', 'SKILL.md'), '', 'utf8')
+    expect(discoverSkills(project, join(project, 'home')).map(({ name, description }) => ({ name, description }))).toEqual([
+      { name: 'vazia', description: '' },
+      { name: 'web-security', description: 'OWASP' }
+    ])
   })
 
   it('pasta ausente, skill malformada e raiz relativa não quebram', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-empty-'))
     await mkdir(join(project, '.claude', 'skills', 'bad'), { recursive: true })
     await writeFile(join(project, '.claude', 'skills', 'bad', 'SKILL.md'), 'sem frontmatter', 'utf8')
-    expect(discoverSkills(project, join(project, 'home'))).toEqual([])
+    // sem frontmatter a skill continua existindo para o SDK, só sem descrição
+    expect(discoverSkills(project, join(project, 'home')).map(({ name, description }) => ({ name, description }))).toEqual([
+      { name: 'bad', description: '' }
+    ])
     expect(discoverSkills('relativo', join(project, 'home'))).toEqual([])
   })
 })

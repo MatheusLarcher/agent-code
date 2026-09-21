@@ -49,7 +49,7 @@ npm run dev   # abre o app
 **Gerar o instalador:**
 
 ```bash
-npm run package:win   # → dist/AgentCode-<versão>-setup.exe
+npm run package:win   # → dist/AgentCode-setup.exe
 ```
 
 Instalador NSIS: copia os arquivos uma vez (Chromium do Playwright, helper do controle do Windows e kit de skills embutidos) e cria atalho. Aberturas seguintes não precisam mais extrair nada, ao contrário do antigo exe portátil.

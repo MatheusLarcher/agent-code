@@ -26,6 +26,15 @@ export interface SkillCatalogSnapshot {
 }
 
 export function parseSkillFrontmatter(md: string): { name: string; description: string } | null {
+  const fields = parseFrontmatterFields(md)
+  if (!fields || !VALID_SKILL_NAME.test(fields.name)) return null
+  return fields
+}
+
+/** Frontmatter fields without validating `name`. The SDK identifies a skill by
+ * its folder, so a display name ("Web Application Security Testing") must not
+ * hide it from the catalog. */
+function parseFrontmatterFields(md: string): { name: string; description: string } | null {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md)
   if (!m) return null
   const lines = m[1].split(/\r?\n/)
@@ -51,7 +60,6 @@ export function parseSkillFrontmatter(md: string): { name: string; description: 
       description = inline.replace(/^['"]|['"]$/g, '')
     }
   }
-  if (!VALID_SKILL_NAME.test(name)) return null
   return { name, description: description.replace(/\s+/g, ' ').trim() }
 }
 
@@ -141,10 +149,11 @@ export function discoverSkills(
       try {
         const skillFile = realpathSync(join(root, entry.name, 'SKILL.md'))
         const metadata = statSync(skillFile)
-        const parsed = parseSkillFrontmatter(readFrontmatterPrefix(skillFile))
-        if (!parsed || parsed.name !== entry.name || byName.has(parsed.name)) continue
-        byName.set(parsed.name, {
-          ...parsed,
+        if (!VALID_SKILL_NAME.test(entry.name) || byName.has(entry.name)) continue
+        const parsed = parseFrontmatterFields(readFrontmatterPrefix(skillFile))
+        byName.set(entry.name, {
+          name: entry.name,
+          description: parsed?.description ?? '',
           skillFile,
           root,
           source: candidateRoot.source,

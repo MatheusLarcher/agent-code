@@ -53,7 +53,7 @@ if errorlevel 1 (
 
 echo.
 set "ARTIFACT="
-if exist "dist\AgentCode-!VERSAO!-setup.exe" set "ARTIFACT=dist\AgentCode-!VERSAO!-setup.exe"
+if exist "dist\AgentCode-setup.exe" set "ARTIFACT=dist\AgentCode-setup.exe"
 
 if not defined ARTIFACT (
     echo [ERRO] O empacotamento terminou, mas nenhum exe foi encontrado em dist\.

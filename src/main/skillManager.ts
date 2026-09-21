@@ -18,6 +18,7 @@ import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'no
 
 const MANIFEST_NAME = '.agent-code-managed.json'
 const BUNDLED_MANIFEST_NAME = '.agent-code-bundled.json'
+const IMPORTED_MANIFEST_NAME = '.agent-code-imported.json'
 const VALID_SKILL_DIRECTORY = /^[\p{L}\p{N}][\p{L}\p{N}._:-]*$/u
 
 interface ManagedManifest {
@@ -222,6 +223,7 @@ export function exposeCacheSkills(skillsDir: string, userHome: string = homedir(
   mkdirSync(skillsDir, { recursive: true })
   mkdirSync(globalRoot, { recursive: true })
 
+  errors.push(...importUserSkills(skillsDir, userHome))
   const available = skillNames(skillsDir)
   const availableSet = new Set(available)
   const previouslyManaged = readManagedLinks(globalRoot)
@@ -295,6 +297,55 @@ export function exposeCacheSkills(skillsDir: string, userHome: string = homedir(
   return { skillsDir, available, errors }
 }
 
+/**
+ * Pull skills the user installed for Claude itself (real directories in
+ * `~/.claude/skills`) into the cache, the single copy the SDK-driven CLI reads.
+ * Nothing is linked back, so a skill is never listed twice. Never touches what
+ * Agent Code exposed there, and never overrides a bundled or user-made cache
+ * skill of the same name. Imports that vanished from `~/.claude` are removed.
+ */
+export function importUserSkills(skillsDir: string, userHome: string = homedir()): string[] {
+  const errors: string[] = []
+  const globalRoot = join(userHome, '.claude', 'skills')
+  const managedByUs = readManagedLinks(globalRoot)
+  const bundled = readManaged(skillsDir, BUNDLED_MANIFEST_NAME)
+  const previouslyImported = readManaged(skillsDir, IMPORTED_MANIFEST_NAME)
+  const imported = new Set<string>()
+
+  for (const name of skillNames(globalRoot)) {
+    const source = safeSkillPath(globalRoot, name)
+    const destination = safeSkillPath(skillsDir, name)
+    if (!source || !destination || managedByUs.has(name) || bundled.has(name)) continue
+    try {
+      if (lstatSync(source).isSymbolicLink()) continue
+      if (existsSync(destination) && !previouslyImported.has(name)) continue
+      replaceDirectory(source, destination)
+      imported.add(name)
+    } catch (error) {
+      errors.push(`Não foi possível importar a skill ${name} de ${globalRoot}: ${String(error)}`)
+      if (previouslyImported.has(name)) imported.add(name)
+    }
+  }
+
+  for (const stale of previouslyImported) {
+    if (imported.has(stale)) continue
+    const target = safeSkillPath(skillsDir, stale)
+    if (!target || bundled.has(stale)) continue
+    try {
+      rmSync(target, { recursive: true, force: true })
+    } catch (error) {
+      errors.push(`Não foi possível remover a skill importada ${stale}: ${String(error)}`)
+      imported.add(stale)
+    }
+  }
+  try {
+    if (imported.size > 0 || previouslyImported.size > 0) writeManaged(skillsDir, [...imported], IMPORTED_MANIFEST_NAME)
+  } catch (error) {
+    errors.push(`Não foi possível salvar o manifesto de skills importadas: ${String(error)}`)
+  }
+  return errors
+}
+
 /** `<cacheDir>/native` — the extra root handed to the SDK (`additionalDirectories`). */
 export function nativeSkillRoot(cacheDir: string): string {
   return join(cacheDir, 'native')
@@ -304,7 +355,7 @@ export function nativeSkillRoot(cacheDir: string): string {
  * Make the cache skills reachable by the Claude Code CLI the way it actually
  * discovers them when driven through the Agent SDK.
  *
- * Measured against the bundled CLI (SDK 0.3.257): with `skills: 'all'` and
+ * Measured against the bundled CLI (SDK 0.3.278): with `skills: 'all'` and
  * `settingSources: ['user','project','local']` it loads `<cwd>/.claude/skills`
  * and `<additionalDirectory>/.claude/skills`, but NOT `~/.claude/skills` — the
  * user root that `exposeCacheSkills` fills was silently ignored, so every

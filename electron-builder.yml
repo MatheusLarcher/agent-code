@@ -37,7 +37,7 @@ win:
   icon: build/icon.ico
 
 nsis:
-  artifactName: AgentCode-${version}-setup.exe
+  artifactName: AgentCode-setup.exe
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true

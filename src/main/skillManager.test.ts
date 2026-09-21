@@ -165,6 +165,43 @@ describe('syncCacheSkills', () => {
     expect(await readFile(join(home, '.claude', 'skills', 'shared', 'SKILL.md'), 'utf8')).toContain('do usuário')
   })
 
+  it('importa skills instaladas em ~/.claude sem duplicar, atualiza e remove as sumidas', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-import-'))
+    const skills = join(root, 'cache', 'skills')
+    const home = join(root, 'home')
+    const userSkills = join(home, '.claude', 'skills')
+    await seedSkill(userSkills, 'web-security', 'v1')
+    await seedSkill(userSkills, 'conflito', 'do usuário')
+    await seedSkill(skills, 'conflito', 'do cache')
+
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+    expect(await readFile(join(skills, 'web-security', 'SKILL.md'), 'utf8')).toContain('v1')
+    expect(await readFile(join(skills, 'conflito', 'SKILL.md'), 'utf8')).toContain('do cache')
+    // continua um diretório real do usuário, sem link nem cópia extra
+    expect((await lstat(join(userSkills, 'web-security'))).isSymbolicLink()).toBe(false)
+
+    await seedSkill(userSkills, 'web-security', 'v2')
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+    expect(await readFile(join(skills, 'web-security', 'SKILL.md'), 'utf8')).toContain('v2')
+
+    await rm(join(userSkills, 'web-security'), { recursive: true })
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+    expect(existsSync(join(skills, 'web-security'))).toBe(false)
+    expect(existsSync(join(skills, 'conflito'))).toBe(true)
+  })
+
+  it('não reimporta o que o Agent Code expôs em ~/.claude', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-noreimport-'))
+    const skills = join(root, 'cache', 'skills')
+    const home = join(root, 'home')
+    await seedSkill(skills, 'propria', 'cache')
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+    await rm(join(skills, 'propria'), { recursive: true })
+    expect(exposeCacheSkills(skills, home).errors).toEqual([])
+    expect(existsSync(join(skills, 'propria'))).toBe(false)
+    expect(existsSync(join(home, '.claude', 'skills', 'propria'))).toBe(false)
+  })
+
   it('migra manifesto v1 antes de remover uma junction gerenciada obsoleta', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skill-manager-v1-stale-'))
     const app = join(root, 'app')

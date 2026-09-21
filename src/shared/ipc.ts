@@ -1566,7 +1566,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   preventSleepWhileBusy: true,
   // Ligado por padrão: o estado inicial já tem que servir, e o custo é uma
   // chamada curta e sem ferramentas por turno, num modelo mais barato.
-  vigia: { enabled: true, model: 'claude-sonnet-5' },
+  vigia: { enabled: false, model: 'claude-sonnet-5' },
   // Ligado por padrão, e é o ponto do recurso: a memória que depende de alguém
   // lembrar de pedir é a memória que não é escrita — foi o que aconteceu com o
   // conhecimento que o usuário ensinou e nunca virou arquivo.
