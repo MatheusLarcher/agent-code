@@ -41,13 +41,11 @@ export function autoEffortCandidates(): EffortLevel[] {
  * O que cada modelo significa. O id cru não diz ao Jev qual é mais capaz nem
  * qual custa mais — sem isto a escolha sai do nome, não do trabalho pedido.
  *
- * Preços por milhão de tokens (entrada/saída) do catálogo da Anthropic: Haiku
- * 4.5 $1/$5, Sonnet 5 $2/$10, Opus 5 $5/$25, Fable 5.1 $10/$50. A escada de
+ * Preços por milhão de tokens (entrada/saída) do catálogo da Anthropic: Fable
+ * 5.1 $10/$50, Sonnet 5 $2/$10, Opus 5 $5/$25. A escada de
  * custo é também a de capacidade, e é isso que as descrições dizem.
  */
 export const AUTO_MODEL_DESCRIPTIONS: Record<string, string> = {
-  'claude-haiku-4-5':
-    'O mais rápido e barato, e o de menor contexto. Tarefa simples e bem definida: pergunta factual, tradução, resumo, renomear, edição pontual óbvia.',
   'claude-sonnet-5':
     'Equilíbrio entre custo e capacidade. O padrão do trabalho de código do dia a dia: implementar uma mudança já descrita, corrigir um bug localizado, escrever um teste.',
   'claude-opus-5':

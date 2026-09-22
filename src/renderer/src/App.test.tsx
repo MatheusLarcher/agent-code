@@ -846,8 +846,8 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     expect(select().value).toBe('claude-opus-4-8')
     expect(Array.from(select().options).find((o) => o.value === 'claude-opus-4-8')?.textContent).toContain('antigo')
 
-    fireEvent.change(select(), { target: { value: 'claude-haiku-4-5' } })
-    expect(select().value).toBe('claude-haiku-4-5')
+    fireEvent.change(select(), { target: { value: 'claude-fable-5-1' } })
+    expect(select().value).toBe('claude-fable-5-1')
     expect(api.disposeAgent).not.toHaveBeenCalled()
   })
 })
@@ -2068,10 +2068,10 @@ describe('App — modo Automático', () => {
       kind: 'provider-switch',
       id: 'auto-1',
       fromModel: 'auto',
-      model: 'claude-haiku-4-5',
+      model: 'claude-fable-5-1',
       effort: 'medium',
       fastMode: false,
-      text: 'Automático: Haiku 4.5, esforço médio.'
+      text: 'Automático: Fable 5.1, esforço médio.'
     })
 
     expect(screen.getByText('Automático: Haiku 4.5, esforço médio.').getAttribute('role')).toBe('status')
@@ -2118,7 +2118,7 @@ describe('App — modo Automático', () => {
     await send('tarefa')
     await flushConnect()
 
-    await emit({ kind: 'system', sessionId: 's1', model: 'claude-haiku-4-5', cwd: 'C:/p', tools: [] })
+    await emit({ kind: 'system', sessionId: 's1', model: 'claude-fable-5-1', cwd: 'C:/p', tools: [] })
 
     expect(selectModel(container).value).toBe('auto')
   })
@@ -2198,6 +2198,6 @@ describe('autoPromptFor / runningModel', () => {
   it('o modelo em uso é o escolhido, não o sentinel', () => {
     expect(runningModel({ model: 'auto', autoModel: 'claude-sonnet-5' })).toBe('claude-sonnet-5')
     expect(runningModel({ model: 'auto' })).toBe('auto')
-    expect(runningModel({ model: 'claude-opus-5', autoModel: 'claude-haiku-4-5' })).toBe('claude-opus-5')
+    expect(runningModel({ model: 'claude-opus-5', autoModel: 'claude-fable-5-1' })).toBe('claude-opus-5')
   })
 })

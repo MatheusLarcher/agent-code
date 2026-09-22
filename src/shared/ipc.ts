@@ -713,8 +713,7 @@ export interface StartAgentOptions {
 /** Reasoning effort levels a model may support. */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
-/** Which effort levels each model supports. Haiku stops at high; Opus/Sonnet/Fable go to max.
- *  Ollama models don't support effort at all. */
+/** Which effort levels each model supports. Ollama models don't support effort at all. */
 export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-opus-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -722,7 +721,6 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-opus-4-6': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh', 'max'],
-  'claude-haiku-4-5': ['low', 'medium', 'high'],
   'claude-fable-5-1': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -770,7 +768,6 @@ export function clampEffortToModel(model: string | undefined, effort: EffortLeve
 export const CLAUDE_MODELS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'claude-opus-5', label: 'Opus 5' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1' }
 ]
 
@@ -958,7 +955,7 @@ export const DEFAULT_CONTEXT_LIMIT = 200_000
 
 /** Context-window size (max input tokens) per model — the denominator of the
  *  context-usage bar. Anthropic values are authoritative (Anthropic model
- *  catalog): Opus 5, the Opus 4.x family, and Sonnet 5 are 1M, Haiku 4.5 is 200K.
+ *  catalog): Opus 5, the Opus 4.x family, Sonnet 5, and Fable are 1M.
  *  Ollama Cloud values are best-effort native context windows. Unknown models
  *  fall back to DEFAULT_CONTEXT_LIMIT. Keep this in sync when adding a model to
  *  the selector (App.tsx MODELS / OLLAMA_MODELS) — a wrong limit makes the bar
@@ -971,7 +968,6 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'claude-opus-4-6': 1_000_000,
   'claude-opus-4-5': 1_000_000,
   'claude-sonnet-5': 1_000_000,
-  'claude-haiku-4-5': 200_000,
   'claude-fable-5-1': 1_000_000,
   'claude-fable-5': 1_000_000,
   // OpenAI GPT-5.6 family — official model catalog.
@@ -1031,7 +1027,7 @@ export interface VigiaConfig {
  *  conversation it watches. A better model here is a one-line change. */
 export const VIGIA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'claude-sonnet-5', label: 'Sonnet 5 (recomendado)' },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5 (mais barato)' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1 (mais barato)' },
   { id: 'claude-opus-5', label: 'Opus 5 (mais caro)' }
 ]
 

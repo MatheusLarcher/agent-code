@@ -18,12 +18,11 @@ describe('controle do Windows — contrato compartilhado', () => {
 })
 
 describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
-  it('Claude: Opus/Sonnet/Fable = 1M, Haiku = 200K', () => {
+  it('Claude: Opus/Sonnet/Fable = 1M', () => {
     expect(contextLimitFor('claude-opus-4-8')).toBe(1_000_000)
     expect(contextLimitFor('claude-sonnet-5')).toBe(1_000_000)
     expect(contextLimitFor('claude-fable-5-1')).toBe(1_000_000)
     expect(contextLimitFor('claude-fable-5')).toBe(1_000_000)
-    expect(contextLimitFor('claude-haiku-4-5')).toBe(200_000)
   })
 
   it('Ollama Cloud: GLM-5.3 (e Flash) e Kimi K3 são 1M nativos (não 128K/200K)', () => {
@@ -100,9 +99,8 @@ describe('modelSupportsFastMode — quais modelos aceitam o modo rápido', () =>
     expect(modelSupportsFastMode('claude-opus-4-7')).toBe(false)
   })
 
-  it('Sonnet/Haiku/Fable, Ollama e desconhecidos ficam de fora (a API rejeitaria)', () => {
+  it('Sonnet/Fable, Ollama e desconhecidos ficam de fora (a API rejeitaria)', () => {
     expect(modelSupportsFastMode('claude-sonnet-5')).toBe(false)
-    expect(modelSupportsFastMode('claude-haiku-4-5')).toBe(false)
     expect(modelSupportsFastMode('claude-fable-5-1')).toBe(false)
     expect(modelSupportsFastMode('claude-fable-5')).toBe(false)
     expect(modelSupportsFastMode('nemotron-3-ultra:cloud')).toBe(false)
@@ -118,7 +116,6 @@ describe('MODEL_EFFORT — esforço máximo do SDK', () => {
     expect(MODEL_EFFORT['claude-sonnet-5']).toContain('max')
     expect(MODEL_EFFORT['claude-fable-5-1']).toContain('max')
     expect(MODEL_EFFORT['claude-fable-5']).toContain('max')
-    expect(MODEL_EFFORT['claude-haiku-4-5']).toEqual(['low', 'medium', 'high'])
   })
 
   it('oferece low até max para toda a família GPT-5.6', () => {

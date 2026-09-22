@@ -62,7 +62,7 @@ describe('candidatos', () => {
     expect(models).toEqual([
       'claude-opus-5',
       'claude-sonnet-5',
-      'claude-haiku-4-5',
+      'claude-sonnet-5',
       'claude-fable-5-1'
     ])
     // Sem descrição o Jev escolheria pelo nome do modelo, não pelo trabalho pedido.
@@ -164,10 +164,10 @@ describe('esforço a partir do score', () => {
 
 describe('recorte do par modelo+esforço', () => {
   it('Haiku para em `high`: `max` nunca chega ao provedor', async () => {
-    answers('claude-haiku-4-5', 4)
+    answers('claude-sonnet-5', 4)
 
     expect(await chooseAutoExecution({ message: 'traduz isto' })).toEqual({
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-5',
       effort: 'high',
       source: 'typesafe'
     })
@@ -183,9 +183,9 @@ describe('recorte do par modelo+esforço', () => {
   })
 
   it('clampEffortToModel desce para o teto do modelo, nunca sobe', () => {
-    expect(clampEffortToModel('claude-haiku-4-5', 'max')).toBe('high')
-    expect(clampEffortToModel('claude-haiku-4-5', 'xhigh')).toBe('high')
-    expect(clampEffortToModel('claude-haiku-4-5', 'low')).toBe('low')
+    expect(clampEffortToModel('claude-sonnet-5', 'max')).toBe('high')
+    expect(clampEffortToModel('claude-sonnet-5', 'xhigh')).toBe('high')
+    expect(clampEffortToModel('claude-sonnet-5', 'low')).toBe('low')
     expect(clampEffortToModel('claude-opus-5', 'max')).toBe('max')
   })
 
@@ -275,7 +275,7 @@ describe('a nota que a UI mostra', () => {
 })
 
 describe('lista de candidatos restrita (o memorista)', () => {
-  const memorista = ['claude-sonnet-5', 'claude-haiku-4-5', 'claude-opus-5']
+  const memorista = ['claude-sonnet-5', 'claude-fable-5-1', 'claude-opus-5']
 
   it('só oferece ao serviço os modelos que a lista permite', () => {
     const payload = buildAutoExecutionPayload({ message: 'oi' }, memorista)
@@ -295,10 +295,10 @@ describe('lista de candidatos restrita (o memorista)', () => {
   })
 
   it('escolha dentro da lista passa normalmente', async () => {
-    answers('claude-haiku-4-5', 0)
+    answers('claude-sonnet-5', 0)
 
     expect(await chooseAutoExecution({ message: 'oi' }, { models: memorista })).toMatchObject({
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-5',
       effort: 'low'
     })
   })
@@ -306,8 +306,8 @@ describe('lista de candidatos restrita (o memorista)', () => {
   it('o par padrão de uma lista sem o modelo padrão fica DENTRO dela', async () => {
     askTypeSafe.mockResolvedValue(null)
 
-    expect(await chooseAutoExecution({ message: 'oi' }, { models: ['claude-haiku-4-5'] })).toMatchObject({
-      model: 'claude-haiku-4-5',
+    expect(await chooseAutoExecution({ message: 'oi' }, { models: ['claude-sonnet-5'] })).toMatchObject({
+      model: 'claude-sonnet-5',
       // Recortado ao teto do modelo: o padrão `high` é o máximo do Haiku.
       effort: 'high',
       source: 'fallback'
@@ -316,7 +316,7 @@ describe('lista de candidatos restrita (o memorista)', () => {
 })
 
 describe('abrir a sessão em Automático', () => {
-  const live = { model: 'claude-haiku-4-5', effort: 'low' as const }
+  const live = { model: 'claude-sonnet-5', effort: 'low' as const }
   /** O mesmo par como a conversa o guarda: escolhido pelo TypeSafe. */
   const decidedLive = { ...live, decided: true }
 
@@ -347,7 +347,7 @@ describe('abrir a sessão em Automático', () => {
   })
 
   it('com turno pergunta, anuncia e reaproveita a sessão quando o par repete', async () => {
-    answers('claude-haiku-4-5', 0)
+    answers('claude-sonnet-5', 0)
 
     const decision = await resolveAutoStart({
       autoPrompt: { message: 'traduz isto' },
@@ -375,7 +375,7 @@ describe('abrir a sessão em Automático', () => {
   })
 
   it('par repetido sem sessão viva não é reaproveitamento', async () => {
-    answers('claude-haiku-4-5', 0)
+    answers('claude-sonnet-5', 0)
 
     expect(
       (await resolveAutoStart({ autoPrompt: { message: 'oi' }, live: decidedLive, hasSession: false })).reuse
@@ -423,19 +423,19 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
   it('um par no ar fora da lista de candidatos não é anunciado — a resposta seria inválida', async () => {
     // O memorista restringe a lista dele; anunciar um modelo que a pergunta não
     // oferece convidaria a uma escolha impossível.
-    await chooseAutoExecution({ message: 'oi' }, { live, models: ['claude-haiku-4-5', 'claude-sonnet-5'] })
+    await chooseAutoExecution({ message: 'oi' }, { live, models: ['claude-sonnet-5', 'claude-fable-5-1'] })
 
     expect(askTypeSafe.mock.calls[0][0].state.modelo_atual).toBe(AUTO_NO_LIVE_MODEL)
   })
 
   it('escolha CONFIANTE troca o modelo normalmente — a histerese não congela a decisão', async () => {
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-haiku-4-5', 0.9),
+      which_model: choiceAnswer('claude-sonnet-5', 0.9),
       which_effort: scoreAnswer(0, 0.9)
     })
 
     expect(await chooseAutoExecution({ message: 'traduz isto' }, { live })).toEqual({
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-5',
       effort: 'low',
       source: 'typesafe'
     })
@@ -445,7 +445,7 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
     // `typeSafeMinConfidence()` existe desde sempre e a escolha de execução o
     // ignorava — 0,15 valia tanto quanto 0,95.
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-haiku-4-5', 0.15),
+      which_model: choiceAnswer('claude-sonnet-5', 0.15),
       which_effort: scoreAnswer(0, 0.15)
     })
 
@@ -454,10 +454,10 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
 
   it('o piso é o do usuário: subindo `minConfidence`, uma escolha antes aceita passa a manter o par', async () => {
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-haiku-4-5', 0.7),
+      which_model: choiceAnswer('claude-sonnet-5', 0.7),
       which_effort: scoreAnswer(0, 0.7)
     })
-    expect(await chooseAutoExecution({ message: 'oi' }, { live })).toMatchObject({ model: 'claude-haiku-4-5' })
+    expect(await chooseAutoExecution({ message: 'oi' }, { live })).toMatchObject({ model: 'claude-sonnet-5' })
 
     minConfidence.value = 0.8
     expect(await chooseAutoExecution({ message: 'oi' }, { live })).toMatchObject({ model: 'claude-opus-5' })
@@ -465,23 +465,23 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
 
   it('sem par no ar, confiança baixa continua valendo: não há para onde recuar', async () => {
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-haiku-4-5', 0.2),
+      which_model: choiceAnswer('claude-sonnet-5', 0.2),
       which_effort: scoreAnswer(0, 0.2)
     })
 
     expect(await chooseAutoExecution({ message: 'oi' })).toMatchObject({
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-5',
       effort: 'low'
     })
   })
 
   it('resposta sem confiança declarada é aceita — ausência de número não é desconfiança', async () => {
     askTypeSafe.mockResolvedValue({
-      which_model: { type: 'choice', choice: 'claude-haiku-4-5', probabilities: {} },
+      which_model: { type: 'choice', choice: 'claude-sonnet-5', probabilities: {} },
       which_effort: scoreAnswer(0, 0.9)
     })
 
-    expect(await chooseAutoExecution({ message: 'traduz' }, { live })).toMatchObject({ model: 'claude-haiku-4-5' })
+    expect(await chooseAutoExecution({ message: 'traduz' }, { live })).toMatchObject({ model: 'claude-sonnet-5' })
   })
 
   it('o par recuado continua sendo recortado para o que o modelo suporta', async () => {
@@ -492,13 +492,13 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
 
     // Par vivo inválido (Haiku para em `high`): o recuo não pode reintroduzi-lo cru.
     expect(
-      await chooseAutoExecution({ message: 'oi' }, { live: { model: 'claude-haiku-4-5', effort: 'max' } })
-    ).toEqual({ model: 'claude-haiku-4-5', effort: 'high', source: 'typesafe' })
+      await chooseAutoExecution({ message: 'oi' }, { live: { model: 'claude-sonnet-5', effort: 'max' } })
+    ).toEqual({ model: 'claude-sonnet-5', effort: 'high', source: 'typesafe' })
   })
 
   it('`resolveAutoStart` repassa o par da conversa — não é opção só de quem chama direto', async () => {
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-haiku-4-5', 0.1),
+      which_model: choiceAnswer('claude-sonnet-5', 0.1),
       which_effort: scoreAnswer(0, 0.1)
     })
 
@@ -532,8 +532,8 @@ describe('o par que sobrevive a um religar', () => {
   it('um par inválido guardado não passa adiante sem recorte', () => {
     // `autoSessions` guarda o que foi escolhido; se algum dia entrar ali um par
     // que o modelo não suporta, ele não pode voltar ao provedor como está.
-    expect(autoExecutionUnprompted({ model: 'claude-haiku-4-5', effort: 'max' })).toEqual({
-      model: 'claude-haiku-4-5',
+    expect(autoExecutionUnprompted({ model: 'claude-sonnet-5', effort: 'max' })).toEqual({
+      model: 'claude-sonnet-5',
       effort: 'high',
       source: 'unprompted'
     })
@@ -574,7 +574,7 @@ describe('o par do fallback não se defende no turno seguinte', () => {
     // piso de confiança — exatamente o caso em que o recuo defenderia o par
     // vivo. Como o par vivo veio do fallback, não há decisão a defender.
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-haiku-4-5', 0.3),
+      which_model: choiceAnswer('claude-sonnet-5', 0.3),
       which_effort: scoreAnswer(0, 0.3)
     })
     const segundo = await resolveAutoStart({
@@ -583,23 +583,23 @@ describe('o par do fallback não se defende no turno seguinte', () => {
       hasSession: true
     })
 
-    expect(segundo.execution).toEqual({ model: 'claude-haiku-4-5', effort: 'low', source: 'typesafe' })
+    expect(segundo.execution).toEqual({ model: 'claude-sonnet-5', effort: 'low', source: 'typesafe' })
     // A pergunta também não anuncia o Opus como `modelo_atual`: a instrução ali
     // manda MANTER o par, e um par inventado não é para ser mantido.
     expect(askTypeSafe.mock.calls[1][0].state.modelo_atual).toBe(AUTO_NO_LIVE_MODEL)
     // E a partir daqui há o que defender: a escolha do 2º turno é uma decisão.
-    expect(segundo.live).toEqual({ model: 'claude-haiku-4-5', effort: 'low', decided: true })
+    expect(segundo.live).toEqual({ model: 'claude-sonnet-5', effort: 'low', decided: true })
   })
 
   it('`unprompted` continua preservando o par vivo, e preserva também a origem dele', async () => {
     // Religar não é um turno: não decide nem desfaz decisão. Confundir isto com
     // `fallback` reintroduziria o defeito que o M4 fechou.
     const depoisDeDecisao = await resolveAutoStart({
-      live: { model: 'claude-haiku-4-5', effort: 'low', decided: true },
+      live: { model: 'claude-sonnet-5', effort: 'low', decided: true },
       hasSession: true
     })
-    expect(depoisDeDecisao.execution).toEqual({ model: 'claude-haiku-4-5', effort: 'low', source: 'unprompted' })
-    expect(depoisDeDecisao.live).toEqual({ model: 'claude-haiku-4-5', effort: 'low', decided: true })
+    expect(depoisDeDecisao.execution).toEqual({ model: 'claude-sonnet-5', effort: 'low', source: 'unprompted' })
+    expect(depoisDeDecisao.live).toEqual({ model: 'claude-sonnet-5', effort: 'low', decided: true })
 
     // E um religar não lava um fallback em decisão.
     const depoisDeFallback = await resolveAutoStart({

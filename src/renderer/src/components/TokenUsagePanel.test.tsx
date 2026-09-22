@@ -91,7 +91,7 @@ describe('TokenUsagePanel', () => {
       node_id: 'sub-1',
       parent_node_id: 'root-1',
       seq: 0,
-      model: 'claude-haiku-4-5',
+      model: 'claude-fable-5-1',
       tokens: { input: 20, output: 10, cacheRead: 0, cacheWrite: 0 },
       inputPreview: 'sub-in',
       outputPreview: 'sub-out',
