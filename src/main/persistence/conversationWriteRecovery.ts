@@ -38,6 +38,7 @@ export function storageErrorForIpc(cause: unknown): Error {
     error.name = 'StorageError'
     return error
   }
+  console.error('[conversationWriteRecovery] Unexpected storage error:', cause instanceof Error ? cause.stack : String(cause))
   const error = new Error('A persistência rejeitou a gravação por uma falha inesperada.')
   error.name = 'StorageError'
   return error
