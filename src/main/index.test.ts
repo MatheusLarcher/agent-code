@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { tmpdir } from 'node:os'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 // index.ts é o entrypoint do processo main: registra centenas de handlers de
 // IPC e, no topo do módulo, referencia `app`/`BrowserWindow`/etc de forma
@@ -8,6 +9,20 @@ import { describe, expect, it, vi } from 'vitest'
 // sem passar pelo `app.whenReady()` que dispara o boot inteiro do app.
 
 const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
+
+// Espiões da ligação do planejamento: os quatro observadores e as sessões que o
+// agent:start cria (com o `emit` do tee que ele entregou a cada uma).
+type CreatedSession = {
+  opts: { convId: string; model?: string; effort?: string }
+  emit: (event: unknown) => void
+  send: ReturnType<typeof vi.fn>
+}
+const spy = vi.hoisted(() => ({
+  observe: { vigia: vi.fn(), board: vi.fn(), po: vi.fn(), memorista: vi.fn() },
+  note: { vigia: vi.fn(), po: vi.fn(), memorista: vi.fn() },
+  sessions: [] as CreatedSession[],
+  planningConfig: { model: 'claude-opus-5-5', effort: 'high' }
+}))
 
 vi.mock('electron', () => ({
   app: {
@@ -39,7 +54,18 @@ vi.mock('electron', () => ({
 
 vi.mock('./browserController', () => ({ BrowserController: class {} }))
 vi.mock('./agentSession', () => ({ AgentSession: class {} }))
-vi.mock('./providerFailover', () => ({ ProviderFailoverSession: class {} }))
+vi.mock('./providerFailover', () => ({
+  ProviderFailoverSession: class {
+    send = vi.fn(async () => undefined)
+    constructor(opts: CreatedSession['opts'], _factory: unknown, emit: (event: unknown) => void) {
+      spy.sessions.push({ opts, emit, send: this.send })
+    }
+    async start(): Promise<boolean> {
+      return true
+    }
+    dispose(): void {}
+  }
+}))
 vi.mock('./appRestart', () => ({ AppRestartCoordinator: class {} }))
 vi.mock('./appRestartRuntime', () => ({ configureAppRestart: vi.fn(), appRestart: null }))
 vi.mock('./appRelauncher', () => ({ armAppRelauncher: vi.fn() }))
@@ -50,7 +76,7 @@ vi.mock('./remote/buildApk', () => ({ buildRemoteApk: vi.fn() }))
 vi.mock('./config', () => ({
   ensureConfigLoaded: vi.fn(),
   initializeConfigPersistence: vi.fn(),
-  loadConfig: () => ({}),
+  loadConfig: () => ({ planning: spy.planningConfig }),
   updateConfig: vi.fn()
 }))
 vi.mock('./openai', () => ({
@@ -76,24 +102,59 @@ const listLlmCalls = vi.fn()
 const listLlmUsageTotals = vi.fn()
 vi.mock('./persistence/lifecycle', () => ({
   storageLifecycle: {
-    repository: () => ({ listLlmCalls, listLlmUsageTotals }),
+    repository: () => ({
+      listLlmCalls,
+      listLlmUsageTotals,
+      acquireConversationLease: async () => ({}),
+      createSessionStore: () => ({})
+    }),
     canMutate: () => true,
-    status: vi.fn(),
+    status: vi.fn(() => ({ state: 'sqlite' })),
     subscribe: vi.fn(),
     subscribeChanges: vi.fn()
   }
 }))
-vi.mock('./persistence/leaseKeeper', () => ({ ConversationLeaseKeeper: class {} }))
+vi.mock('./persistence/leaseKeeper', () => ({
+  ConversationLeaseKeeper: class {
+    start(): this {
+      return this
+    }
+    async release(): Promise<void> {}
+  }
+}))
 vi.mock('./downloadAllowlist', () => ({
   DownloadAllowlist: class {
     track(): void {}
   },
   downloadablesFromMessages: vi.fn()
 }))
-vi.mock('./vigia/vigia', () => ({ Vigia: class { observe(): void {} } }))
-vi.mock('./board/boardService', () => ({ BoardService: class { observe(): void {} } }))
-vi.mock('./po/po', () => ({ Po: class { observe(): void {} } }))
-vi.mock('./memoria/memorista', () => ({ Memorista: class { observe(): void {} } }))
+vi.mock('./vigia/vigia', () => ({
+  Vigia: class {
+    observe = spy.observe.vigia
+    noteUserMessage = spy.note.vigia
+    dispose(): void {}
+  }
+}))
+vi.mock('./board/boardService', () => ({
+  BoardService: class {
+    observe = spy.observe.board
+    dispose(): void {}
+  }
+}))
+vi.mock('./po/po', () => ({
+  Po: class {
+    observe = spy.observe.po
+    noteUserMessage = spy.note.po
+    dispose(): void {}
+  }
+}))
+vi.mock('./memoria/memorista', () => ({
+  Memorista: class {
+    observe = spy.observe.memorista
+    noteUserMessage = spy.note.memorista
+    dispose(): void {}
+  }
+}))
 vi.mock('./memoria/memoriasUsadas', () => ({ forgetUsedMemories: vi.fn(), usedMemories: new Set() }))
 vi.mock('./persistence/kvFacade', () => ({
   configureKvRepositoryOffline: vi.fn(),
@@ -138,8 +199,9 @@ vi.mock('./skillManager', () => ({ syncCacheSkills: vi.fn() }))
 vi.mock('./typesafe', () => ({ resolveAutoStart: vi.fn() }))
 vi.mock('./typesafe/client', () => ({ typeSafeConfigured: vi.fn() }))
 
-const { Channels } = await import('../shared/ipc')
+const { AUTO_MODEL, Channels } = await import('../shared/ipc')
 const { registerIpc } = await import('./index')
+const { resolveAutoStart } = await import('./typesafe')
 
 describe('registerIpc — agent:token-usage:history', () => {
   it('devolve as chamadas e os totais do repositório ativo para o convId pedido', async () => {
@@ -157,5 +219,67 @@ describe('registerIpc — agent:token-usage:history', () => {
     expect(listLlmCalls).toHaveBeenCalledWith('conv-1')
     expect(listLlmUsageTotals).toHaveBeenCalledWith('conv-1')
     expect(result).toEqual({ calls, totals })
+  })
+})
+
+describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
+  const cwd = tmpdir()
+  const event = { kind: 'result', id: 'r1', isError: false, text: 'ok', durationMs: 1 }
+  const call = (channel: string, ...args: unknown[]): Promise<unknown> =>
+    Promise.resolve(handlers.get(channel)!(null, ...args))
+  const sessionOf = (convId: string): CreatedSession => spy.sessions.filter((s) => s.opts.convId === convId).at(-1)!
+  const observers = (): ReturnType<typeof vi.fn>[] => [...Object.values(spy.observe), ...Object.values(spy.note)]
+
+  beforeAll(() => registerIpc())
+
+  it('agent:start resolve modelo/esforço pelo planejamento e NÃO passa pelo Automático da conversa', async () => {
+    vi.mocked(resolveAutoStart).mockClear()
+    spy.planningConfig = { model: 'claude-opus-5-5', effort: 'high' }
+    const result = await call(Channels.agentStart, { convId: 'plan-1', cwd, model: AUTO_MODEL, planning: { slug: 'checkout' } })
+    expect(result).toEqual({ ok: true })
+    expect(resolveAutoStart).not.toHaveBeenCalled()
+    expect(sessionOf('plan-1').opts).toMatchObject({ model: 'claude-opus-5-5', effort: 'high', planning: { slug: 'checkout' } })
+  })
+
+  it('a conversa do Manager não alimenta vigia, quadro, PO nem memorista', async () => {
+    for (const fn of observers()) fn.mockClear()
+    await call(Channels.agentStart, { convId: 'plan-2', cwd, model: 'claude-sonnet-5', planning: { slug: 'checkout' } })
+    const session = sessionOf('plan-2')
+    session.emit(event)
+    await call(Channels.agentSend, 'plan-2', 'separa as etapas')
+    for (const fn of observers()) expect(fn).not.toHaveBeenCalled()
+    // A mensagem segue para a sessão normalmente.
+    expect(session.send).toHaveBeenCalled()
+  })
+
+  it('regressão: conversa comum alimenta os quatro no tee e os três no agent:send', async () => {
+    for (const fn of observers()) fn.mockClear()
+    await call(Channels.agentStart, { convId: 'comum', cwd, model: 'claude-sonnet-5' })
+    sessionOf('comum').emit(event)
+    await call(Channels.agentSend, 'comum', 'corrige o bug')
+    expect(spy.observe.vigia).toHaveBeenCalledWith('comum', event)
+    expect(spy.observe.board).toHaveBeenCalledWith('comum', cwd, event)
+    expect(spy.observe.po).toHaveBeenCalledWith('comum', event)
+    expect(spy.observe.memorista).toHaveBeenCalledWith('comum', event)
+    expect(spy.note.vigia).toHaveBeenCalledWith('comum', cwd, 'corrige o bug')
+    expect(spy.note.po).toHaveBeenCalledWith('comum', cwd, 'corrige o bug')
+    expect(spy.note.memorista).toHaveBeenCalledWith('comum', cwd, 'corrige o bug')
+  })
+
+  it('agent:dispose limpa a conversa do registro de planejamento', async () => {
+    await call(Channels.agentStart, { convId: 'plan-3', cwd, model: 'claude-sonnet-5', planning: { slug: 'checkout' } })
+    await call(Channels.agentDispose, 'plan-3')
+    for (const fn of observers()) fn.mockClear()
+    // Mesmo id reaproveitado depois do descarte: já não é mais do Manager.
+    await call(Channels.agentSend, 'plan-3', 'oi')
+    expect(spy.note.vigia).toHaveBeenCalledWith('plan-3', '', 'oi')
+  })
+
+  it('slug inválido é recusado na fronteira, sem criar sessão', async () => {
+    const before = spy.sessions.length
+    await expect(
+      call(Channels.agentStart, { convId: 'plan-x', cwd, model: 'claude-sonnet-5', planning: { slug: '../fora' } })
+    ).rejects.toThrow(/slug do planejamento inválido/)
+    expect(spy.sessions.length).toBe(before)
   })
 })

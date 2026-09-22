@@ -20,6 +20,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Vigia — o observador que questiona premissas](#vigia--o-observador-que-questiona-premissas)
 - [Memorista — o observador que grava memória sozinho](#memorista--o-observador-que-grava-memória-sozinho)
 - [Quadro de tarefas do projeto (trava do plano + agente PO)](#quadro-de-tarefas-do-projeto-trava-do-plano--agente-po)
+- [Tela de Planejamento (Agent Manager)](#tela-de-planejamento-agent-manager)
 - [Voz no chat (OpenAI)](#voz-no-chat-openai)
 - [Modelos via Ollama Cloud](#modelos-via-ollama-cloud)
 - [Pasta de dados (cache) e SQLite](#pasta-de-dados-cache-e-sqlite)
@@ -585,6 +586,357 @@ mudança que veio de outro PC pelo change feed do PostgreSQL).
 
 **Configuração** em **Configurações → Geral**: dois interruptores (trava e PO, ambos **ligados** por
 padrão) e o seletor de modelo do PO. Lidos a cada uso, então desligar vale na hora.
+
+---
+
+## Tela de Planejamento (Agent Manager)
+
+Uma conversa comum mistura duas coisas que pedem posturas opostas: decidir **o que** fazer e
+**fazer**. No mesmo fio, o plano vira um parágrafo que rola para fora da tela, a dúvida é resolvida
+por suposição do modelo e o que foi decidido não sobrevive à conversa. A Tela de Planejamento
+separa as duas: uma conversa em que um agente próprio — o **Agent Manager** — só planeja e grava o
+plano em arquivos do projeto; e, com o plano pronto, uma conversa **nova** que só executa, recebendo
+o plano como prompt.
+
+### O fluxo do usuário
+
+1. **Novo planejamento**, pelo ícone de roteiro ao lado do nome do projeto na barra lateral
+   (`NewPlanningDialog`). O título vira o slug (`planningSlug.ts`: sem acento, `[a-z0-9-]`, até 64
+   caracteres, com `-2`, `-3`… contra os planos que já existem na pasta) e o diálogo lista os planos
+   existentes para reabrir. O main cria `docs/spec/<slug>/` (`planning:create`).
+2. Nasce uma **conversa de planejamento** (`Conversation.mode === 'planning'`, com `planningSlug`), e
+   ela **é** a tela: quando ativa, o `PlanningWorkspace` ocupa o lugar do workspace normal. Um plano
+   que já tem conversa carregada nesta pasta volta para ela — duas sessões do Manager no mesmo plano
+   só brigariam pelos arquivos.
+3. A tela tem três colunas: o **roteiro** (checklist das etapas, recolhível), o **canvas** (uma coluna
+   por etapa, com os cards embaixo) e o **chat do Manager** — o mesmo `<ChatPanel>` de qualquer
+   conversa, só que em outro lugar. O usuário conversa; o Manager separa as etapas e registra
+   requisitos, decisões, sugestões e ambiguidades como cards, e a tela se atualiza sozinha. O
+   usuário também edita tudo à mão: card, ligação, status da etapa.
+4. **Enviar para implementação** (botão no cabeçalho, `HandoffDialog`): conferência, geração do
+   prompt e revisão. Ao enviar, nasce uma conversa **nova** de implementação (`Implementação:
+   <título>`, marcada com `handoffSlug`) e os prompts vão para ela, na ordem.
+
+Por que "a conversa é a tela", e não uma aba ou um modal: o plano precisa de uma sessão do agente
+viva, com histórico, retomada e fila — tudo o que a conversa já tem. Reaproveitá-la dá isso de
+graça, inclusive o lugar na barra lateral (o ícone de roteiro distingue a conversa de planejamento)
+e a persistência.
+
+### O formato em disco (`planning/planningModel.ts`, `planning/planningStore.ts`)
+
+```
+docs/spec/<slug>/
+  _roteiro.md                # "# título", "<!-- rev: N -->" e uma etapa por linha: "- [status] id: título"
+  _canvas.json               # posições dos cards e o viewport (pan/zoom)
+  cards/<id>.md              # frontmatter (id, tipo, titulo, etapa, status, links, fonte, rev) + corpo em markdown
+  _handoff/AAAA-MM-DD-NN.md  # cada prompt de handoff gravado, numerado por dia
+  _sandbox/                  # código de teste descartável do Manager (gitignorado)
+```
+
+O plano mora **no projeto**, em markdown, e não no banco do app: é o que deixa o git versionar o
+plano junto do código, o usuário (ou outro agente) ler e editar num editor qualquer, e a conversa de
+implementação consultar os cards com `Read`, sem ferramenta especial. Tipos de card: `etapa`,
+`requisito`, `decisao`, `sugestao` (exige `fonte` http/https — sugestão sem fonte verificável é
+opinião), `ambiguidade` (`status` `aberta`/`resolvida`) e `nota`. `[[id]]` no corpo cita outro card;
+`links` são as ligações que o canvas desenha.
+
+O que decorre de "arquivo que se edita à mão":
+
+- O **frontmatter** é um subconjunto de YAML feito à mão: cada valor é gravado como JSON (que também
+  é YAML válido), então o round-trip é exato sem dependência nova; na leitura, valor sem aspas e
+  lista `[a, b]` escritos à mão também passam.
+- O **rev do roteiro** é um comentário HTML (`<!-- rev: N -->`), invisível no markdown renderizado.
+  Roteiro sem essa linha (gravado antes de o rev existir) vale rev 0. Título do roteiro e das etapas
+  são gravados em **uma linha só** (CR/LF viram espaço): uma quebra no título forjaria a linha do rev
+  ou uma etapa na próxima leitura.
+- Um card **malformado não derruba o plano**: `openPlan` o põe em `invalid` com o motivo, a tela
+  mostra o arquivo e o erro, e os válidos seguem. Id do frontmatter diferente do nome do arquivo
+  também é inválido.
+- **O layout fica fora dos `.md`.** Posição e zoom mudam a cada arrasto; no frontmatter, arrastar um
+  card viraria diff no git e conflito de `rev` com o Manager editando o mesmo card por algo que não é
+  conteúdo. `_canvas.json` concentra o que é só visual — e perdê-lo não perde plano nenhum: o layout
+  é recalculado.
+- **`_sandbox/` é gitignorado.** `createPlan` chama `ensureSandboxGitignore`, que acrescenta
+  `docs/spec/*/_sandbox/` ao `.gitignore` da raiz sem duplicar nem mexer no resto: protótipo e medição
+  do Manager são descartáveis e não podem entrar num commit por descuido.
+- **`_handoff/` numera por dia com criação exclusiva** (`wx`): duas gravações simultâneas nunca
+  pegam o mesmo número, e um prompt gravado nunca é sobrescrito.
+
+Todo caminho passa por `resolvePlanPath`: nome fora de `[a-z0-9-]` é recusado, e também qualquer
+destino que escape da pasta do plano — inclusive por symlink, conferindo o caminho real de cada
+ancestral. Toda gravação é atômica (tmp + rename).
+
+A tela chega ao store pelos canais `planning:*` (`planningIpc.ts`, a fronteira): todo payload passa
+por zod antes de tocar o disco, e **nenhuma exceção atravessa o IPC** — a resposta é sempre um
+`PlanningResult` (`ok: true` ou `code` `rev_conflict` / `roteiro_conflict` / `invalid` / `not_found` /
+`io`). Um `_canvas.json` com JSON quebrado vira `invalid`, não falha de disco: é dado editado à mão,
+e a mensagem precisa dizer isso.
+
+### Concorrência: rev otimista + fila por arquivo
+
+Duas mãos editam o mesmo plano ao mesmo tempo — o usuário na tela e o Manager pelas ferramentas —, e
+às vezes uma terceira por fora (editor, git). Card e roteiro carregam um **`rev`**: gravar exige o rev
+que está em disco (`expectedRev`), e o novo é sempre o do disco + 1. Rev velho não grava: volta
+`RevConflictError`/`RoteiroConflictError` **com a versão atual**, porque quem perdeu a corrida precisa
+dela para refazer — a tela avisa, recarrega e reabre o editor na versão do disco; o Manager recebe o
+card ou o roteiro atual em texto e refaz. "Última gravação vence" apagaria em silêncio o que o outro
+lado acabou de gravar.
+
+Onde reaplicar é seguro, reaplica: marcar **uma** etapa é um campo só, então tanto
+`plan_etapa_marcar` quanto o clique no roteiro (`toggleEtapa`, em `usePlanning`) reaplicam **uma
+vez** sobre o roteiro atual que veio no conflito. `plan_roteiro_set`, não: ele substitui a lista
+inteira, e reaplicar por cima apagaria a etapa que o usuário acabou de marcar — devolve o roteiro
+atual para o modelo refazer.
+
+O rev sozinho não basta dentro do processo: a tela (via IPC) e o Manager (via `plan_*`) vivem **no
+mesmo main**, e dois ler-conferir-gravar intercalados leriam o mesmo rev e passariam os dois. Por
+isso `saveCard`, `deleteCard` e `saveRoteiro` rodam numa **fila por arquivo** (`inFileQueue`, chave em
+minúsculas no Windows); arquivos diferentes seguem em paralelo. A fila não alcança quem escreve fora
+do processo, e um editor externo nem incrementa o rev; para esse caso o que existe é o vigia, que
+faz a tela recarregar o que está em disco.
+
+### O vigia de arquivos (`planningWatcher.ts`, `planningWrites.ts`, `planningEvents.ts`)
+
+O plano aberto precisa acompanhar o disco: o usuário edita um card no editor, faz `git pull`, ou o
+Manager grava. O vigia abre **um `fs.watch` recursivo por plano aberto**, com contagem de referências,
+ligado por `planning:open` e solto por `planning:close`. Reabrir para recarregar depois de um aviso
+não pode inflar a contagem, então o IPC lembra qual janela abriu qual plano. E abrir e fechar rápido
+não pode vazar vigia: o open lê do disco antes de registrar, e um close que chega nesse meio-tempo
+não tem o que soltar. Por isso o IPC conta os closes por chave (janela + plano), o open anota o
+contador **antes** do primeiro await e, se ele mudou quando a leitura termina, devolve o plano sem
+registrar a vigia.
+
+- **Debounce**: salvar é tmp + rename, e um `git checkout` mexe em vários arquivos de uma vez; a
+  rajada vira **um** aviso depois de 150 ms de silêncio, com teto de 1 s — uma rajada contínua não
+  pode adiar o aviso para sempre.
+- **Ignorados**: `_sandbox/**` (o Manager rodando teste não é mudança de plano), `_handoff/**` (não é
+  parte do plano que a tela desenha; quem precisa saber de um prompt novo é avisado por quem o
+  gravou) e `*.tmp`.
+- **Eco das próprias gravações, por hash.** Sem isto, cada gravação do app voltaria como "mudou por
+  fora" e a tela recarregaria a si mesma, às vezes no meio de um arrasto. `planningWrites` guarda,
+  por caminho, o sha256 do que **o próprio app** gravou por último — anotado **antes** do rename,
+  para o vigia nunca ver o arquivo novo sem o registro. O vigia relê o arquivo alterado e, se o
+  conteúdo é exatamente esse, é eco. Hash, e não horário, porque só o conteúdo diz se houve mudança;
+  e o registro é descartado assim que o disco diverge, para uma edição externa que depois volta ao
+  mesmo conteúdo ainda ser vista como mudança. O registro fica no **store**, não na tela: toda
+  gravação do app passa por ele, venha da tela ou do Manager.
+- **Falha não derruba**: pasta apagada ou erro do SO deixam mudo o vigia daquele plano (com
+  `console.warn`), e ele tenta de novo na próxima abertura.
+
+Isso abre um buraco: as `plan_*` gravam pelo store, então **também** são gravações próprias, e o
+vigia as ignora — a tela aberta não veria o Manager criar um card. `planningEvents` fecha o buraco:
+toda ferramenta que grava chama `notifyPlanningChanged`, e o `planningIpc` registra como destino o
+mesmo `send(planning:changed)` do vigia. Um canal, duas fontes. O aviso nunca lança — a gravação já
+aconteceu e não pode "falhar" por causa dele. Na tela, `usePlanning` só recarrega com evento **do
+mesmo plano** (o evento é global) e preserva a posição arrastada que ainda não foi gravada.
+
+### A sessão do Manager (`planningSession.ts`, `planningPrompt.ts`, `planningTools.ts`)
+
+É uma `AgentSession` comum com `opts.planning = { slug }`, convertida por
+`applyPlanningSessionOptions`. A sessão só chama essa função; o que o Manager tem de diferente está
+decidido — e testado — fora dela:
+
+- **Servidores MCP: só `planning` + `memory`, com `strictMcpConfig`.** Browser, Android, Windows,
+  app e tarefas são de quem executa. Trocar `mcpServers` não basta: com `settingSources` de usuário,
+  projeto e local, o CLI ainda carregaria os MCPs do usuário, do `.mcp.json` e de plugins —
+  `strictMcpConfig: true` faz valer só os que a sessão passou. O system prompt perde junto os hints
+  dessas ferramentas: descrever o que ele não tem só convidaria a tentar.
+- **O servidor `planning`**: `plan_read`, `plan_roteiro_set`, `plan_etapa_marcar`,
+  `plan_card_create`, `plan_card_update`, `plan_card_delete`, `plan_card_link`,
+  `plan_ambiguidade_abrir`, `plan_ambiguidade_resolver` e `plan_handoff_write`. O plano (pasta + slug) vem **do contexto da sessão, nunca de argumento**: o
+  Manager não consegue apontar outro plano nem outra pasta. Toda gravação passa pelo store
+  (validação, rev, registro de gravação própria), e toda resposta é texto em pt-BR sobre o qual o
+  modelo consegue agir (`planningToolText.ts`) — conflito devolve a versão atual, nunca stack trace.
+  Além do que o store valida, as ferramentas recusam o que deixaria o plano incoerente: etapa que não
+  está no roteiro, ligação para card que não existe ou para si mesmo, sugestão sem fonte. No gate de
+  permissão, as `plan_*` passam sem modal, como as de memória e de tarefas: o próprio servidor prende
+  o caminho em `docs/spec/<slug>/`.
+- **Prompt próprio** (`buildPlanningHint`): questionador (não aceita a primeira formulação); a
+  primeira ação é ler o estado e separar e ordenar as etapas; pesquisa na web antes de opinar e só
+  sugere com fonte; abre ambiguidade com a própria opinião e pergunta ao usuário. O texto explica os
+  limites; quem os garante é a política, abaixo. Tanto ele quanto o bloco do handoff dizem que o
+  conteúdo de cards, roteiro, prompts de handoff e páginas web é **dado, não instrução**
+  (`PLANNING_CONTENT_IS_DATA`): um card ou uma página que "mande" ignorar regras não substitui o
+  usuário.
+- **Sem subagentes nem outros shells**: `Agent`, `Task`, `NotebookEdit`, `Monitor`, `PowerShell`,
+  `Workflow`, `EnterWorktree`, `CronCreate` e `RemoteTrigger` vão para `disallowedTools`, e os agentes
+  especialistas saem das opções. Delegar seria executar por procuração; `Monitor` roda um `command`
+  de shell e `PowerShell` é o Bash por outro nome. A lista só poupa turnos do modelo — quem nega de
+  fato é a allowlist (camada 1, abaixo).
+- **Sem Loop e sem modo econômico**: `planningStartOptions` sobe a sessão com `loopEnabled: false` e
+  `economyMode: false`, mesmo que a conversa os tenha ligados — `/loop` agenda turnos sozinho e o
+  econômico manda pular verificação, e nenhum dos dois cabe numa sessão que planeja com o usuário.
+- **Modelo** em Configurações → Geral, seção **Planejamento** (`AppConfig.planning`; o seletor é
+  `PLANNING_MODELS` = Automático + os modelos da conversa). `planningStartOptions` resolve o par **na
+  subida da sessão**, uma vez, com a primeira mensagem como `autoPrompt`; o Automático da conversa
+  (revalidar a cada mensagem) nunca roda para ela, e a conversa nasce com um modelo concreto de
+  placeholder para nenhum caminho `isAutoModel(conv.model)` do App pegá-la. Manual: o par da
+  configuração, com o esforço recortado para o modelo. Automático (`resolvePlanningExecution`): o
+  mesmo `chooseAutoExecution` do TypeSafe, restrito aos modelos do seletor do Manager e, se o usuário
+  restringiu o Automático, à interseção com `typesafe.allowedAutoModels`. O **recuo** é **Sonnet 5 em
+  esforço médio** (`PLANNING_AUTO_FALLBACK`), e não o `AUTO_MODEL_FALLBACK` da conversa: aquele vai no
+  modelo mais caro porque a conversa não pode errar; o Manager roda por muitas mensagens de
+  planejamento, e o Sonnet médio basta. Por isso só passa um par que o TypeSafe **decidiu** (`source
+  === 'typesafe'`) — o recuo de lá é o par caro. TypeSafe desligado ou sem chave, interseção vazia,
+  resposta fora dos candidatos, erro: recuo. Nunca lança — a mensagem do usuário tem de sair. O
+  cabeçalho da tela mostra o modelo em que a sessão subiu.
+- **Fora dos observadores**: vigia, quadro, PO e memorista não acompanham a conversa do Manager
+  (`PlanningConversations.observed`, em `planningConversations.ts`). Não há turno de execução para o
+  quadro registrar nem para o PO auditar, nem trabalho para o memorista aprender, e o vigia
+  questionaria premissas que o próprio Manager existe para questionar. A trava do plano (`planGate`)
+  também fica desligada: ele planeja, e a única escrita dele é código descartável no `_sandbox`.
+
+### Segurança em camadas — e o limite honesto (`planning/planningPolicy.ts`)
+
+O Manager lê o projeto inteiro (`Read`, `Glob`, `Grep`, git) para ancorar o plano no código real, e
+pode escrever e rodar código de teste. O que ele **não** pode é implementar. Cada camada existe
+porque a anterior tem um buraco:
+
+1. **Allowlist de ferramentas** (`planningToolDenial`, `MANAGER_ALLOWED_TOOLS`). Uma lista do que
+   **não** pode (a `disallowedTools`) sempre fica atrás do CLI: cada versão nova traz ferramenta nova,
+   e o CLI embutido já tem `Monitor`, que roda um `command` de shell sem passar pelo escopo nem pela
+   aprovação do `Bash`. O Manager só chama: `Read`, `Glob`, `Grep`, `LS`; `Write`, `Edit`,
+   `MultiEdit` (com o escopo); `Bash` (escopo + aprovação), `BashOutput`, `KillShell`/`KillBash`;
+   `WebFetch`, `WebSearch`; `TodoWrite` e `TaskCreate`/`TaskUpdate`/`TaskList`/`TaskGet`;
+   `AskUserQuestion`; `Skill` (com a camada 5); `ToolSearch`; e `mcp__planning__*`/`mcp__memory__*`.
+   O resto é negado com um motivo que lista o que vale — no hook e, de novo, no topo do gate, antes do
+   "Permitir tudo" e do reinício.
+2. **Escopo de escrita só no `_sandbox` — pelo texto e pelo caminho real.** `planningScopedTask`
+   monta um `ScopedTask` do `writeScopeGuard` com `allow: ['docs/spec/<slug>/_sandbox/**']`, holder
+   `null` (vale para a sessão toda) e lease que não expira, somado aos escopos das tarefas por
+   `sessionWriteScopes`. Reusar o `writeScopeDenial` das tarefas — mesmo casamento de glob, mesmo
+   scanner de `Bash` — evita uma segunda regra para manter em sincronia. Roda **antes** do "Permitir
+   tudo" e nega sem perguntar. Cards e roteiro ficam **fora** do escopo de propósito: só mudam pelas
+   `plan_*`, que validam e carregam o rev. Mas o glob compara **texto**: `_sandbox/x/a.ts` casa mesmo
+   se `_sandbox/x` for uma junction (ou symlink) para `src/`. Por isso o hook confere também o caminho
+   **real** (`planningSandboxReal.ts`, o mesmo molde do `resolvePlanPath`): cada destino de
+   `Write`/`Edit`/`MultiEdit` e cada alvo de escrita do `Bash` (`scanBashWrites`) é resolvido pelo
+   ancestral existente mais profundo (`realpath`) e tem de continuar dentro do `realpath` do
+   `_sandbox`. Link quebrado (gravar nele criaria o arquivo onde ele aponta), `_sandbox` que é ele
+   mesmo um link e erro de disco na conferência também negam — falha fechada.
+3. **Hook `PreToolUse`, contra as regras do `settings.json`** (`planningPreToolDecision`, assíncrono
+   por causa do `realpath`; o hook o aguarda). O `canUseTool` só é consultado quando o SDK ainda não
+   decidiu a permissão, e a sessão carrega as regras de usuário, projeto e local (`settingSources`):
+   um `allow` de `Bash`, `Edit`, `Write` ou `Skill` de lá é aplicado **antes** do `canUseTool`, que nem
+   chega a ver a chamada — as camadas 1, 2 e 5 ficariam contornadas por uma regra que o usuário
+   escreveu para outro contexto. O `PreToolUse` roda antes dessas regras e o `deny`/`ask` dele
+   prevalece sobre um `allow` delas, então a política é repetida ali, nesta ordem: fora da allowlist,
+   skill bloqueada, escrita que o escopo recusa (inclusive `Bash` com destino fora dele ou
+   indeterminável) e escrita cujo caminho real sai do `_sandbox` viram **`deny`** com o motivo; `Bash`
+   que passou por tudo isso vira **`ask`**, e o SDK leva o pedido ao `canUseTool` e ao usuário. Fora
+   do Manager o hook não opina.
+   Um detalhe de encanamento: a chamada negada ali não entra no registro de ferramentas em voo — o
+   SDK não dispara `PostToolUse` para ela, e registrá-la a deixaria presa (e o reinício do app
+   bloqueado). O mesmo vale, em **qualquer** sessão, para a negada pelo `canUseTool`: o `PreToolUse`
+   já a registrou, e o `canUseTool` a tira do registro (`options.toolUseID`) quando devolve `deny`.
+4. **`Bash` sempre com aprovação, e é o único shell** (`planningRequiresBashApproval`): nem o
+   "Permitir tudo", nem um "sempre permitir" anterior, nem a lista de leitura liberam — e ligar o
+   "Permitir tudo" com um pedido pendente não aprova esse pedido. O escopo lê o destino declarado na
+   linha de comando; o que o comando faz por dentro, só quem o lê sabe. `PowerShell` e `Monitor` nem
+   passam da allowlist. O prompt pede parcimônia (prefira `Read`/`Glob`/`Grep`, junte comandos)
+   justamente porque cada um vai ao usuário.
+5. **Skills de execução e de replanejamento bloqueadas** (`planningSkillDenial`): `planejar`,
+   `brainstorming`, `writing-plans`, `executing-plans`, `subagent-driven-development`,
+   `finishing-a-development-branch`, `using-git-worktrees` e variantes (`base.x`, `base-x`,
+   `plugin:base`), recusadas antes do "Permitir tudo" com uma mensagem que aponta as `plan_*`. O plano
+   vive nos cards; uma skill que planeja em outro lugar criaria um segundo plano.
+
+**O que não está coberto, dito com todas as letras:**
+
+- **O que um programa escreve por dentro.** `node <sandbox>/teste.js` passa pelo escopo (a linha de
+  comando não grava fora) e pelo usuário (que aprovou rodar o teste); se o script gravar em `src/`,
+  nada no app vê. O scanner lê a linha de comando, não o processo. A defesa real aqui é a aprovação
+  um a um: o usuário vê cada comando antes de ele rodar.
+- **`/planejar` digitado pelo usuário.** Um slash command digitado no composer é expandido pelo
+  próprio CLI no prompt — não passa pela ferramenta `Skill`, e o gate nunca o vê. É o usuário
+  pedindo, não o modelo escolhendo; a recusa cobre só o que o modelo invoca.
+- **O intervalo entre conferir e gravar.** O caminho real é conferido no hook, antes de a ferramenta
+  rodar; um link criado **depois** disso (por um comando que já estava rodando) não é visto. Criar
+  esse link exige um `Bash` — que o usuário aprovou lendo o comando.
+
+### Handoff: do plano à conversa de implementação (`HandoffDialog.tsx`, `handoffReadiness.ts`, `handoffFlow.ts`)
+
+O diálogo tem três passos, e cada um existe por um motivo:
+
+1. **Conferir** (`handoffReadiness`, puro). **Ambiguidade aberta bloqueia**: a implementação teria de
+   adivinhar justo o ponto que o plano deixou em aberto. Só passa marcando "enviar mesmo assim", e aí
+   as ambiguidades vão como pendentes de confirmação do usuário. O resto só **avisa** — roteiro
+   vazio, etapa sem card, etapa não concluída, card inválido: incompleto não é o mesmo que errado, e
+   quem decide se basta é o usuário.
+2. **Gerar**, de dois jeitos. **Pelo Manager**: o diálogo manda um pedido fixo
+   (`managerHandoffRequest`) pela conversa de planejamento, pelo caminho normal de envio, e o Manager
+   grava **um ou mais** prompts autocontidos com `plan_handoff_write` — mais de um só se o trabalho não
+   couber numa conversa. O diálogo espera arquivos **novos** em `_handoff/`: nome que não existia antes
+   do pedido **e** criado depois dele (com 2 s de folga para o relógio do disco), relistando a cada
+   `planning:changed` e a cada fim de turno do Manager. Ou o **rascunho automático**
+   (`buildDraftHandoff`): markdown determinístico montado do plano (mesmo plano, mesmo texto), gravado
+   em `_handoff/` pela tela — sem gastar um turno do Manager.
+3. **Revisar**: cada prompt é editável. **O `_handoff/` guarda exatamente o que foi enviado**: o prompt
+   editado vira um **arquivo novo** antes do envio (o original fica), e se essa gravação falha nada é
+   enviado. É o registro do que a implementação recebeu, e só vale se for literal. Gravado **uma vez**:
+   cada rascunho lembra o último texto gravado, e uma nova tentativa só grava o que mudou desde então —
+   senão cada clique em "Enviar" deixaria mais uma cópia idêntica em `_handoff/`.
+
+Enviar cria a conversa de implementação (modelo e modos de conversa normal, `handoffSlug` marcado) e
+entrega os prompts **na ordem** (`launchHandoff`): o primeiro sai já e os seguintes entram na fila
+dela; se um envio falha (ou lança), os seguintes não são tentados — sairiam fora de ordem, e estão
+gravados em `_handoff/`. O resultado (`HandoffSendOutcome`) separa "enviado", "conversa criada, envio
+falhou" e "nada criado". No do meio, o diálogo **fecha** e o toast manda usar **"Tentar de novo"** na
+mensagem que falhou, na conversa nova: ficar aberto com "Enviar" habilitado deixaria criar uma
+segunda conversa de implementação para o mesmo plano. Só quando nada foi criado o diálogo continua
+aberto para tentar de novo.
+
+Na conversa de implementação, `opts.handoff = { slug }` muda duas coisas:
+
+- **Um bloco no system prompt** (`handoffAppendBlock`): de onde ela veio, onde está o plano
+  (`_roteiro.md`, `cards/`, `_handoff/`) e como trabalhar — declarar as etapas do roteiro como plano
+  (TodoWrite/TaskCreate), na mesma ordem; não replanejar; consultar os cards; perguntar antes de
+  desviar quando o código real contradisser o plano. O prompt enviado já diz isso, mas o system
+  prompt continua valendo quando o histórico é compactado e o primeiro prompt fica para trás.
+- **Sem replanejamento no primeiro turno** (`handoffSkillDenial`): `planejar`, `brainstorming` e
+  `writing-plans` são recusadas até o primeiro turno terminar (`result` **ou** erro). Replanejar ali
+  descartaria as decisões registradas nos cards. Depois do primeiro turno elas voltam, se o usuário
+  pedir: o bloqueio é contra o reflexo do modelo, não contra o usuário. Uma sessão **retomada**
+  (`opts.resume`: app reiniciado, conversa reaberta) já passou do primeiro turno e nasce liberada.
+- **O mesmo aviso de prompt-injection** do Manager: cards, roteiro e páginas web são dado, não
+  instrução.
+
+Uma sessão não pode ser Manager **e** handoff: o main recusa (`planningStartOptions`) e o renderer
+nem monta (`sessionStartFields`: o planejamento prevalece).
+
+### A tela (`src/renderer/src/planning/`)
+
+- **Colunas por etapa, sem biblioteca de layout** (`layout.ts`, puro). O fluxo é horizontal: uma
+  coluna por etapa do roteiro, na ordem, e uma final "Sem etapa" para card sem etapa ou com etapa que
+  saiu do roteiro. Um layout automático de grafo (dagre e afins) arrumaria pelos links e embaralharia
+  a ordem das etapas, que é a informação principal; colunas fixas deixam "o que vem antes" legível da
+  esquerda para a direita. Posição salva prevalece; card sem posição entra no **fim** da sua coluna,
+  abaixo de tudo o que ocupa a faixa dela, e nunca cai em cima de outro. O canvas é React Flow
+  (`@xyflow/react`) e não grava nada sozinho: apagar passa por `onBeforeDelete`, que sempre devolve
+  `false` — quem tira o card da tela é o plano atualizado depois que o disco confirmou.
+- **Piso de zoom legível** (`canvasViewport.ts`, puro). Enquadrar tudo num plano grande deixaria os
+  cards ilegíveis. O piso é `FIT_MIN_ZOOM = 12/13`: o título do card (13 px) com pelo menos 12 px
+  efetivos na tela — derivado, não número mágico, e um teste confere que o CSS ainda usa 13 px. Se o
+  plano inteiro cabe acima do piso, enquadra tudo (sem ampliar além de 1); se não, fica no piso e
+  **foca a etapa em andamento** (senão a primeira pendente, senão a primeira), sem deixar vazio antes
+  da primeira coluna nem depois da última. O resto se alcança arrastando.
+- **Viewport restaurado.** Pan e zoom do usuário vão para `_canvas.json` junto das posições, no mesmo
+  debounce de 400 ms (arrastar não grava a cada pixel), e reabrir o plano volta exatamente como estava
+  (zoom recortado aos limites do canvas). Só o movimento **do usuário** é gravado: gravar o
+  enquadramento automático o congelaria, e a próxima abertura restauraria o foco antigo em vez de
+  focar a etapa que está em andamento agora.
+- **Divisor e roteiro recolhível** (`ChatSplitter.tsx`, `paneSizes.ts`). O chat do Manager tem largura
+  arrastável (e ajustável pelo teclado) entre 320 px e metade da área; o roteiro recolhe num trilho
+  estreito com o contador e uma marca por etapa. As duas escolhas ficam no `localStorage` — síncrono,
+  então a tela já abre como o usuário deixou, sem piscar.
+- **Composer em coluna estreita, por container query.** O `.chat-panel` é um container (`chat`), e
+  abaixo de 560 px o composer se reorganiza: a caixa de texto ocupa a linha inteira, os botões descem
+  para a linha de baixo e o quadro "Última resposta" vira uma linha só. Media query não serviria: o
+  que é estreito é a **coluna**, não a janela — o mesmo `ChatPanel` numa conversa comum continua como
+  sempre foi. Pelo mesmo motivo o canvas esconde a dica e o minimapa quando **ele** estreita. E numa
+  coluna estreita o rodapé do chat cresce já na primeira pintura e escondia a última mensagem:
+  `useKeepEndOnResize` (`components/MessageListAnchor.tsx`) mantém no fim quem estava no fim quando a
+  caixa da lista muda de tamanho, e deixa onde está quem rolou para ler o histórico.
 
 ---
 
@@ -1279,6 +1631,14 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `remoteStart` / `remoteStop` / `remoteStatus` | `remote:start` / `:stop` / `:status` | liga/desliga/consulta a ponte LAN | — → `RemoteInfo` |
 | `remotePublishState` | `remote:publish-state` | publica o snapshot das conversas para a ponte servir | `RemoteStatePayload` |
 | `remoteBuildApk` | `remote:build-apk` | gera o APK do app remoto (progresso por `remote:build-progress`) | — → `{ ok, apkPath?, message }` |
+| `planningList` | `planning:list` | slugs dos planos de `<cwd>/docs/spec/` (só pastas com `_roteiro.md`) — `planningIpc.ts` | `{ projectCwd }` → `PlanningResult<{ slugs }>` |
+| `planningCreate` | `planning:create` | cria `docs/spec/<slug>/` (roteiro rev 1, `_canvas.json`, `cards/`, `_sandbox/` + linha no `.gitignore`); recusa plano que já existe | `PlanningRef` + `titulo` → `PlanningResult<{ plan }>` |
+| `planningOpen` | `planning:open` | abre o plano e passa a vigiá-lo (idempotente por janela: reabrir para recarregar não infla a contagem do vigia) | `PlanningRef` → `PlanningResult<{ plan: OpenedPlanningDto }>` |
+| `planningClose` | `planning:close` | solta a vigia aberta por esta janela (não exige a pasta existir) | `PlanningRef` → `PlanningResult` |
+| `planningSaveCard` / `planningDeleteCard` | `planning:saveCard` / `planning:deleteCard` | grava / apaga um card com rev otimista (`rev_conflict` devolve o card em disco) | `PlanningRef` + `card`/`id` + `expectedRev` → `PlanningResult` |
+| `planningSaveRoteiro` | `planning:saveRoteiro` | grava o roteiro com rev otimista (`roteiro_conflict` devolve o roteiro em disco) | `PlanningRef` + `roteiro` + `expectedRev` → `PlanningResult<{ roteiro }>` |
+| `planningSaveLayout` | `planning:saveLayout` | grava `_canvas.json` (posições + viewport) | `PlanningRef` + `layout` → `PlanningResult` |
+| `planningListHandoffs` / `planningWriteHandoff` | `planning:listHandoffs` / `planning:writeHandoff` | lista os prompts de `_handoff/` na ordem em que foram gravados / grava um novo `AAAA-MM-DD-NN.md` | `PlanningRef` (+ `conteudo`) → `PlanningResult<{ handoffs }>` / `PlanningResult<{ name }>` |
 
 > Os controles manuais do painel (`launch`/`navigate`/`back`/`forward`/`reload`/`set-select-mode`/`input`/`close`) agem sempre no navegador da **conversa ativa** (`activeConvId`).
 
@@ -1300,6 +1660,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `remoteSetModel` | `remote:set-model` | `RemoteSetModelMsg` `{ convId, model?, effort? }` (um celular trocou modelo/esforço da conversa) |
 | `remoteRecoveryAction` | `remote:recovery-action` | `{ convId, action: 'retry' \| 'cancel' }` (um celular agiu no cartão de recuperação de turno) |
 | `remotePermissionResponse` | `remote:permission-response` | `RemotePermissionResponseMsg` `{ convId, res: PermissionResponse }` (um celular respondeu uma permissão/`AskUserQuestion` pendente; o renderer chama `respondToPermission` — o mesmo caminho de `window.api.respondPermission` que o desktop usa — pra fechar o modal dos dois lados) |
+| `planningChanged` | `planning:changed` | `PlanningChangedMsg` `{ projectCwd, slug }` — arquivos de um plano aberto mudaram por fora do app (vigia, com o eco das gravações próprias descartado por hash) ou pelas `plan_*` do Agent Manager (`planningEvents`); a tela recarrega só se for o plano dela |
 
 ---
 

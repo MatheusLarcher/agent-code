@@ -71,6 +71,81 @@ describe('race de boot da config persistida', () => {
     expect(kvFacade.readPersistedKvMany).toHaveBeenCalledTimes(1)
   })
 
+  it('planejamento: carrega config.planning.*, normaliza valor inválido e grava o padrão do que falta', async () => {
+    kvFacade.readPersistedKvMany.mockResolvedValue(
+      new Map([
+        ['config.planning.model', JSON.stringify('modelo-que-saiu-do-catalogo')],
+        ['config.planning.effort', JSON.stringify('xhigh')]
+      ])
+    )
+    const { initializeConfigPersistence, updateConfig } = await import('./config')
+
+    const loaded = await initializeConfigPersistence()
+    expect(loaded.planning).toEqual({ model: 'auto', effort: 'xhigh' })
+
+    kvFacade.writePersistedKv.mockClear()
+    const next = await updateConfig({ planning: { model: 'claude-sonnet-5', effort: 'xhigh' } })
+    expect(next.planning).toEqual({ model: 'claude-sonnet-5', effort: 'xhigh' })
+    // Só o campo que mudou vai para o banco.
+    expect(kvFacade.writePersistedKv.mock.calls).toEqual([['config.planning.model', JSON.stringify('claude-sonnet-5')]])
+  })
+
+  it('TypeSafe: a lista do Automático sobrevive a salvar e reabrir o app', async () => {
+    // KV falso compartilhado entre as duas "execuções" do app.
+    const kv = new Map<string, string>()
+    kvFacade.writePersistedKv.mockImplementation(async (...args: unknown[]) => {
+      kv.set(args[0] as string, args[1] as string)
+      return undefined
+    })
+    kvFacade.readPersistedKvMany.mockImplementation(
+      async (keys: string[]) => new Map(keys.map((key) => [key, kv.get(key) ?? null]))
+    )
+
+    const first = await import('./config')
+    expect((await first.initializeConfigPersistence()).typesafe.allowedAutoModels).toEqual([])
+    // O boot grava o padrão do campo que faltava: é isto que antes nunca ia ao banco.
+    expect(kv.get('config.typesafe.allowedAutoModels')).toBe('[]')
+
+    kvFacade.writePersistedKv.mockClear()
+    const lista = ['claude-sonnet-5', 'claude-opus-5-5']
+    const saved = await first.updateConfig({ typesafe: { ...first.loadConfig().typesafe, allowedAutoModels: lista } })
+    expect(saved.typesafe.allowedAutoModels).toEqual(lista)
+    // Só o campo que mudou vai para o banco, como JSON de array.
+    expect(kvFacade.writePersistedKv.mock.calls).toEqual([['config.typesafe.allowedAutoModels', JSON.stringify(lista)]])
+
+    // "Reinicia": módulo novo, mesmo banco.
+    vi.resetModules()
+    const second = await import('./config')
+    expect((await second.initializeConfigPersistence()).typesafe.allowedAutoModels).toEqual(lista)
+    expect(second.loadConfig().typesafe.allowedAutoModels).toEqual(lista)
+    // A cópia devolvida não é o array do snapshot.
+    second.loadConfig().typesafe.allowedAutoModels.push('mutado')
+    expect(second.loadConfig().typesafe.allowedAutoModels).toEqual(lista)
+  })
+
+  it.each([
+    ['texto', JSON.stringify('claude-sonnet-5')],
+    ['objeto', JSON.stringify({ a: 1 })],
+    ['número', '42'],
+    ['null', 'null'],
+    ['itens numéricos', JSON.stringify([1, 2])],
+    ['item misto', JSON.stringify(['claude-sonnet-5', 3])],
+    ['item vazio', JSON.stringify(['claude-sonnet-5', ''])]
+  ])('TypeSafe: lista do Automático inválida (%s) cai em [] sem derrubar o boot', async (_nome, raw) => {
+    kvFacade.readPersistedKvMany.mockResolvedValue(
+      new Map([
+        ['config.typesafe.allowedAutoModels', raw],
+        ['config.typesafe.enabled', 'true']
+      ])
+    )
+    const { initializeConfigPersistence } = await import('./config')
+
+    const loaded = await initializeConfigPersistence()
+    expect(loaded.typesafe.allowedAutoModels).toEqual([])
+    // Os vizinhos do bloco continuam carregados.
+    expect(loaded.typesafe.enabled).toBe(true)
+  })
+
   it('depois de carregada, ensureConfigLoaded não lê de novo', async () => {
     kvFacade.readPersistedKvMany.mockResolvedValue(new Map())
     const { ensureConfigLoaded } = await import('./config')

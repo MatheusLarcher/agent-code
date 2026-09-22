@@ -53,7 +53,15 @@ import type {
   ConversationUpsertDto,
   ConversationDeleteDto,
   RepositoryChange,
-  TokenUsageHistory
+  TokenUsageHistory,
+  OpenedPlanningDto,
+  PlanningCardDto,
+  PlanningChangedMsg,
+  PlanningHandoffDto,
+  PlanningLayoutDto,
+  PlanningRef,
+  PlanningResult,
+  PlanningRoteiroDto
 } from './ipc'
 
 /** The surface exposed on `window.api` by the preload script. */
@@ -162,6 +170,31 @@ export interface AgentCodeApi {
   boardItemEvents(boardItemId: string): Promise<BoardItemEvent[]>
   /** O quadro daquele projeto mudou (o agente avançou, ou o PO corrigiu). */
   onBoardChanged(cb: (msg: { projectId: string }) => void): () => void
+  /** Tela de Planejamento (docs/spec/<slug>/). Nada lança: erro vem como
+   *  `{ ok: false, code }` — 'rev_conflict' traz o card atual em disco e
+   *  'roteiro_conflict', o roteiro atual. */
+  planningList(req: { projectCwd: string }): Promise<PlanningResult<{ slugs: string[] }>>
+  planningCreate(req: PlanningRef & { titulo: string }): Promise<PlanningResult<{ plan: OpenedPlanningDto }>>
+  /** Abre e passa a vigiar a pasta; reabrir (para recarregar) não duplica a vigia. */
+  planningOpen(req: PlanningRef): Promise<PlanningResult<{ plan: OpenedPlanningDto }>>
+  /** Para de vigiar o planejamento aberto por esta janela. */
+  planningClose(req: PlanningRef): Promise<PlanningResult>
+  /** Grava se `expectedRev` é o rev em disco (0 = card novo); devolve o card com rev + 1. */
+  planningSaveCard(
+    req: PlanningRef & { card: PlanningCardDto; expectedRev: number }
+  ): Promise<PlanningResult<{ card: PlanningCardDto }>>
+  planningDeleteCard(req: PlanningRef & { id: string; expectedRev: number }): Promise<PlanningResult>
+  /** Grava se `expectedRev` é o rev do roteiro em disco; devolve o roteiro com rev + 1. */
+  planningSaveRoteiro(
+    req: PlanningRef & { roteiro: Omit<PlanningRoteiroDto, 'rev'>; expectedRev: number }
+  ): Promise<PlanningResult<{ roteiro: PlanningRoteiroDto }>>
+  planningSaveLayout(req: PlanningRef & { layout: PlanningLayoutDto }): Promise<PlanningResult>
+  /** Os prompts de docs/spec/<slug>/_handoff/, na ordem em que foram gravados. */
+  planningListHandoffs(req: PlanningRef): Promise<PlanningResult<{ handoffs: PlanningHandoffDto[] }>>
+  /** Grava um prompt em _handoff/AAAA-MM-DD-NN.md; devolve o nome do arquivo novo. */
+  planningWriteHandoff(req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>>
+  /** Arquivos de um planejamento aberto mudaram por fora do app — recarregue. */
+  onPlanningChanged(cb: (msg: PlanningChangedMsg) => void): () => void
   kvGet(key: string): Promise<string | null>
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet(key: string, value: string): Promise<void>

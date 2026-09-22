@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { defaultAppConfig, mergeAppConfig, parseStoredAppConfig } from './configData'
+import { DEFAULT_CONFIG } from '../../shared/ipc'
+import { defaultAppConfig, mergeAppConfig, normalizeAllowedAutoModels, parseStoredAppConfig } from './configData'
 
 describe('configuração persistida', () => {
   it('mantém o cofre DESLIGADO por padrão e preserva a ativação explícita', () => {
@@ -35,6 +36,65 @@ describe('configuração persistida', () => {
     // Limiar fora de 0..1 não significa nada: ou cala o serviço, ou aceita chute.
     expect(() => mergeAppConfig(defaultAppConfig(), { typesafe: { minConfidence: 1.5 } })).toThrow()
     expect(() => mergeAppConfig(defaultAppConfig(), { typesafe: { enabled: 'sim' } })).toThrow()
+  })
+
+  it('TypeSafe: lista do Automático normalizada campo a campo, e o padrão nunca é compartilhado', () => {
+    expect(normalizeAllowedAutoModels(['claude-sonnet-5', 'claude-opus-5-5'])).toEqual(['claude-sonnet-5', 'claude-opus-5-5'])
+    expect(normalizeAllowedAutoModels(['claude-sonnet-5', 'claude-sonnet-5'])).toEqual(['claude-sonnet-5'])
+    expect(normalizeAllowedAutoModels([])).toEqual([])
+    for (const invalido of [undefined, null, 'claude-sonnet-5', 42, { a: 1 }, [1], ['claude-sonnet-5', 2], ['  ']]) {
+      expect(normalizeAllowedAutoModels(invalido), JSON.stringify(invalido)).toEqual([])
+    }
+
+    // Merge pelo bloco preserva a lista ao gravar só o interruptor.
+    const comLista = mergeAppConfig(defaultAppConfig(), { typesafe: { allowedAutoModels: ['claude-sonnet-5'] } })
+    expect(mergeAppConfig(comLista, { typesafe: { enabled: true } }).typesafe.allowedAutoModels).toEqual(['claude-sonnet-5'])
+    // Na fronteira (IPC), item que não é texto continua sendo recusado.
+    expect(() => mergeAppConfig(defaultAppConfig(), { typesafe: { allowedAutoModels: [1] } })).toThrow()
+
+    // Mexer na lista de um default não mexe no DEFAULT_CONFIG nem no próximo default.
+    defaultAppConfig().typesafe.allowedAutoModels.push('mutado')
+    expect(DEFAULT_CONFIG.typesafe.allowedAutoModels).toEqual([])
+    expect(defaultAppConfig().typesafe.allowedAutoModels).toEqual([])
+  })
+
+  it('planejamento: Automático + médio por padrão, merge por campo', () => {
+    expect(defaultAppConfig().planning).toEqual({ model: 'auto', effort: 'medium' })
+    expect(parseStoredAppConfig('{}').planning).toEqual({ model: 'auto', effort: 'medium' })
+
+    // Gravar só o modelo não pode apagar o esforço (armadilha do spread raso).
+    const comEsforco = mergeAppConfig(defaultAppConfig(), { planning: { effort: 'xhigh' } })
+    expect(mergeAppConfig(comEsforco, { planning: { model: 'claude-fable-5-1' } }).planning).toEqual({
+      model: 'claude-fable-5-1',
+      effort: 'xhigh'
+    })
+    // O default nunca é o objeto compartilhado: mexer num não mexe no outro.
+    expect(defaultAppConfig().planning).not.toBe(defaultAppConfig().planning)
+  })
+
+  it('planejamento: modelo fora de PLANNING_MODELS ou esforço fora de EFFORT_LEVELS volta ao padrão', () => {
+    const atual = mergeAppConfig(defaultAppConfig(), { planning: { model: 'claude-sonnet-5', effort: 'high' } })
+
+    expect(mergeAppConfig(atual, { planning: { model: 'claude-opus-4-1' } }).planning).toEqual({
+      model: 'auto',
+      effort: 'high'
+    })
+    expect(mergeAppConfig(atual, { planning: { effort: 'ultra' } }).planning).toEqual({
+      model: 'claude-sonnet-5',
+      effort: 'medium'
+    })
+    // Tipo errado também normaliza em vez de lançar: cada campo é aplicado
+    // sozinho no boot, e lançar ali derrubaria a abertura do app.
+    expect(mergeAppConfig(atual, { planning: { model: 42, effort: null } }).planning).toEqual({
+      model: 'auto',
+      effort: 'medium'
+    })
+    expect(parseStoredAppConfig(JSON.stringify({ planning: { model: 'gpt-x', effort: 'max' } })).planning).toEqual({
+      model: 'auto',
+      effort: 'max'
+    })
+    // Chave desconhecida dentro do bloco continua sendo corrupção.
+    expect(() => mergeAppConfig(atual, { planning: { temperatura: 1 } })).toThrow()
   })
 
   it('preenche campos ausentes e faz merge profundo dos grupos', () => {

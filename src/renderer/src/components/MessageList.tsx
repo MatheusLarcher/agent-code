@@ -13,6 +13,7 @@ import { fileMeta, fmtSize } from '../files'
 import { IconSpeaker, IconStopSmall } from './Icons'
 import { CodeBlock, extToLang } from './CodeBlock'
 import { Markdown } from './Markdown'
+import { useKeepEndOnResize } from './MessageListAnchor'
 
 /** Read-aloud controls passed down from App (TTS state lives there so audio
  *  survives message re-renders and conversation switches). */
@@ -352,6 +353,15 @@ export function MessageList({
   const loadingOlder = useRef(false) // are we prepending older messages right now?
   const loadAnchor = useRef<{ node: HTMLElement; top: number } | null>(null)
   const first = useRef(true)
+
+  // The footer (composer, "Última resposta"…) grew or shrank → the list box
+  // changed size: stay pinned to the end if the user was there ("there" = the
+  // same 120px margin that decides whether new messages are followed). Not
+  // while prepending older pages or centering a search hit — those own the scroll.
+  useKeepEndOnResize(
+    scrollRef,
+    () => atBottom.current && !loadingOlder.current && !(effectiveTarget != null && effectiveSeq !== lastSeq.current)
+  )
 
   // Only the last `visible` messages are actually rendered.
   const total = messages.length

@@ -41,6 +41,79 @@ describe('conversation storage normalization', () => {
     await saveConversations(loaded)
     expect(upsertConversation).not.toHaveBeenCalled()
   })
+
+  it('a conversa de planejamento volta do banco com mode e planningSlug', async () => {
+    // Ida: o que o renderer grava. Volta: o que o banco devolve na próxima
+    // abertura. storage.ts não conhece os campos novos — eles passam por serem
+    // parte do objeto.
+    const saved: Record<string, unknown>[] = []
+    const upsertConversation = vi.fn(async (input: { id: string; payload: Record<string, unknown> }) => {
+      saved.push(input.payload)
+      return {
+        id: input.id,
+        payload: input.payload,
+        revision: 1,
+        contentHash: 'hash',
+        createdAt: '2026-09-22T12:00:00.000Z',
+        updatedAt: '2026-09-22T12:00:00.000Z'
+      }
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        loadVersionedConversations: vi.fn(async () => []),
+        upsertConversation,
+        getStorageStatus: vi.fn(async () => ({ installationId: 'this-pc' }))
+      }
+    })
+    // Zera o cache de revisões do módulo (sobra de outros testes): senão o save
+    // tentaria apagar as conversas que eles carregaram.
+    await loadConversations()
+    const now = Date.now()
+    await saveConversations([
+      {
+        id: 'plan-roundtrip',
+        title: 'Planejamento: Checkout',
+        cwd: 'C:/proj',
+        model: 'claude-sonnet-5',
+        mode: 'planning',
+        planningSlug: 'checkout',
+        sdkSessionId: null,
+        messages: [],
+        tokens: { context: 0, output: 0, cost: 0 },
+        createdAt: now,
+        updatedAt: now
+      }
+    ])
+    expect(saved).toHaveLength(1)
+    expect(saved[0]).toMatchObject({ mode: 'planning', planningSlug: 'checkout' })
+
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        loadVersionedConversations: vi.fn(async () => [
+          {
+            id: 'plan-roundtrip',
+            payload: saved[0],
+            revision: 1,
+            contentHash: 'hash',
+            createdAt: '2026-09-22T12:00:00.000Z',
+            updatedAt: '2026-09-22T12:00:00.000Z'
+          }
+        ]),
+        upsertConversation: vi.fn(),
+        getStorageStatus: vi.fn(async () => ({ installationId: 'this-pc' }))
+      }
+    })
+    const [loaded] = await loadConversations()
+    expect(loaded).toMatchObject({
+      id: 'plan-roundtrip',
+      mode: 'planning',
+      planningSlug: 'checkout',
+      title: 'Planejamento: Checkout',
+      model: 'claude-sonnet-5'
+    })
+  })
 })
 
 /** The reported bug: a message shows up and vanishes about a second later.

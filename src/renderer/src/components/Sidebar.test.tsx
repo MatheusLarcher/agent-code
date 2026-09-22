@@ -267,6 +267,78 @@ describe('Sidebar — busca por projeto', () => {
     expect(screen.getByText('quebrado')).toBeTruthy()
   })
 
+  it('conversa de planejamento tem o glifo "Planejamento"; a normal continua com o de chat', () => {
+    const planning: Conversation = {
+      ...makeConv(),
+      id: 'p1',
+      title: 'Planejamento: Checkout',
+      mode: 'planning',
+      planningSlug: 'checkout'
+    }
+    const { container } = render(
+      <UiProvider>
+        <Sidebar
+          collapsed={false}
+          onToggleCollapse={() => {}}
+          projects={[{ path: 'C:/proj', name: 'proj', conversations: [planning, makeConv()] }]}
+          recents={[]}
+          activeId={null}
+          busyIds={new Set()}
+          onSelect={() => {}}
+          onNewChat={() => {}}
+          onNewProject={() => {}}
+          onNewChatIn={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onSelectResult={() => {}}
+        />
+      </UiProvider>
+    )
+    const rows = container.querySelectorAll('.conv-row')
+    expect(rows).toHaveLength(2)
+    // Classe própria: `.planning` é a raiz da Tela de Planejamento no planning.css.
+    expect(rows[0].classList.contains('planning-conv')).toBe(true)
+    expect(rows[0].classList.contains('planning')).toBe(false)
+    expect(rows[0].querySelector('.conv-ico')?.getAttribute('title')).toBe('Planejamento')
+    expect(rows[1].classList.contains('planning-conv')).toBe(false)
+    expect(rows[1].querySelector('.conv-ico')?.getAttribute('title')).toBeNull()
+  })
+
+  it('"Novo planejamento" fica ao lado do "+" do projeto e avisa qual pasta', () => {
+    const onNewPlanningIn = vi.fn()
+    const onNewChatIn = vi.fn()
+    render(
+      <UiProvider>
+        <Sidebar
+          collapsed={false}
+          onToggleCollapse={() => {}}
+          projects={[{ path: 'C:/proj', name: 'proj', conversations: [makeConv()] }]}
+          recents={[]}
+          activeId={null}
+          busyIds={new Set()}
+          onSelect={() => {}}
+          onNewChat={() => {}}
+          onNewProject={() => {}}
+          onNewChatIn={onNewChatIn}
+          onNewPlanningIn={onNewPlanningIn}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onSelectResult={() => {}}
+        />
+      </UiProvider>
+    )
+    const button = screen.getByRole('button', { name: 'Novo planejamento' })
+    expect(button.previousElementSibling?.getAttribute('title')).toBe('Nova conversa neste projeto')
+    fireEvent.click(button)
+    expect(onNewPlanningIn).toHaveBeenCalledWith('C:/proj')
+    expect(onNewChatIn).not.toHaveBeenCalled()
+  })
+
+  it('sem onNewPlanningIn, o botão de planejamento não aparece', () => {
+    renderSearch([{ path: 'C:/proj', name: 'proj', conversations: [makeSearchConv('c9', 'Qualquer', 1)] }])
+    expect(screen.queryByRole('button', { name: 'Novo planejamento' })).toBeNull()
+  })
+
   it('mantém o id da mensagem ao abrir resultado de prompt', () => {
     const onSelectResult = renderSearch([{ path: 'C:/outro', name: 'outro', conversations: [makeSearchConv('c3', 'Resumo', 1, 'preciso procurar orçamento')] }])
     fireEvent.change(screen.getByPlaceholderText('Buscar conversas ou projetos…'), { target: { value: 'orçamento' } })

@@ -1,0 +1,198 @@
+/* Diálogo "Enviar para implementação" (HandoffDialog.tsx). Arquivo próprio:
+   usa só as variáveis globais (--bg, --line, --accent…) e as classes base do
+   modal (.modal-overlay/.modal-card/.modal-actions). */
+
+.pl-handoff-btn { white-space: nowrap; }
+
+.modal-card.pl-handoff-modal {
+  display: flex;
+  flex-direction: column;
+  max-width: 580px;
+  max-height: calc(100vh - 48px);
+}
+.modal-card.pl-handoff-modal.wide { max-width: 820px; }
+
+.pl-handoff-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.pl-handoff-eyebrow {
+  overflow: hidden;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.pl-handoff-head .modal-title { margin-bottom: 10px; }
+
+/* Passos 1-2-3 */
+.pl-handoff-steps {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pl-handoff-steps li {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.pl-handoff-step-n {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  font-size: 11px;
+  font-weight: 700;
+}
+.pl-handoff-steps li.on {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+.pl-handoff-steps li.on .pl-handoff-step-n { background: var(--accent); color: #1a1a1a; }
+.pl-handoff-steps li.done .pl-handoff-step-n { background: color-mix(in srgb, var(--ok) 35%, var(--bg-3)); color: var(--text); }
+
+.pl-handoff-modal .modal-message code,
+.pl-handoff-files code,
+.pl-handoff-prompt-head code {
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 11.5px;
+}
+
+/* Bloqueios e avisos */
+.pl-handoff-issues {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+.pl-handoff-issues.block { border-left-color: var(--err); background: color-mix(in srgb, var(--err) 7%, var(--bg)); }
+.pl-handoff-issues.warn { border-left-color: var(--warn); }
+.pl-handoff-issues h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pl-handoff-issues.block h4 { color: var(--err); }
+.pl-handoff-issues.warn h4 { color: var(--warn); }
+.pl-handoff-issues ul {
+  max-height: 150px;
+  margin: 0;
+  padding-left: 18px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.pl-handoff-override {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.pl-handoff-override input { accent-color: var(--accent); }
+.pl-handoff-ok {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ok) 8%, var(--bg));
+  font-size: 13px;
+}
+
+.pl-handoff-spacer { flex: 1; }
+
+/* Esperando o Manager */
+.pl-handoff-wait {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.pl-handoff-wait .spinner { flex: none; margin-top: 2px; color: var(--accent); }
+.pl-handoff-wait div { display: flex; flex-direction: column; gap: 3px; }
+.pl-handoff-wait strong { font-size: 13.5px; }
+.pl-handoff-wait span { font-size: 12.5px; color: var(--muted); }
+.pl-handoff-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  margin: 10px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.pl-handoff-files li { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12.5px; }
+.pl-handoff-files li span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+
+/* Revisar prompt(s) */
+.pl-handoff-prompts {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  margin-top: 12px;
+  overflow: auto;
+}
+.pl-handoff-prompt { display: flex; flex-direction: column; gap: 6px; }
+.pl-handoff-prompt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.pl-handoff-prompt-n { font-weight: 700; }
+.pl-handoff-badge,
+.pl-handoff-queue {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pl-handoff-badge { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.pl-handoff-queue { background: var(--bg-3); color: var(--muted); }
+.pl-handoff-prompt textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 140px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: none;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.pl-handoff-prompt textarea:focus { border-color: var(--accent); }
+.pl-handoff-empty { font-size: 12px; color: var(--err); }

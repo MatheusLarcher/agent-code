@@ -1,7 +1,12 @@
 import { safeStorage } from 'electron'
 import type { AppConfig } from '../shared/ipc'
 import { kvGet } from './store'
-import { defaultAppConfig, mergeAppConfig, parseStoredAppConfig } from './persistence/configData'
+import {
+  defaultAppConfig,
+  mergeAppConfig,
+  normalizeAllowedAutoModels,
+  parseStoredAppConfig
+} from './persistence/configData'
 import { readPersistedKvMany, writePersistedKv } from './persistence/kvFacade'
 import { StorageError } from './persistence/types'
 
@@ -33,9 +38,14 @@ const FIELDS: Field[] = [
   { key: 'config.board.requirePlan', get: (c) => c.board.requirePlan, patch: (v) => ({ board: { requirePlan: v as boolean } as AppConfig['board'] }) },
   { key: 'config.board.po.enabled', get: (c) => c.board.po.enabled, patch: (v) => ({ board: { po: { enabled: v as boolean } } as AppConfig['board'] }) },
   { key: 'config.board.po.model', get: (c) => c.board.po.model, patch: (v) => ({ board: { po: { model: v as string } } as AppConfig['board'] }) },
+  { key: 'config.planning.model', get: (c) => c.planning.model, patch: (v) => ({ planning: { model: v as string } as AppConfig['planning'] }) },
+  { key: 'config.planning.effort', get: (c) => c.planning.effort, patch: (v) => ({ planning: { effort: v as AppConfig['planning']['effort'] } as AppConfig['planning'] }) },
   { key: 'config.typesafe.enabled', get: (c) => c.typesafe.enabled, patch: (v) => ({ typesafe: { enabled: v as boolean } as AppConfig['typesafe'] }) },
   { key: 'config.typesafe.apiKey', sensitive: true, get: (c) => c.typesafe.apiKey, patch: (v) => ({ typesafe: { apiKey: v as string } as AppConfig['typesafe'] }) },
-  { key: 'config.typesafe.minConfidence', get: (c) => c.typesafe.minConfidence, patch: (v) => ({ typesafe: { minConfidence: v as number } as AppConfig['typesafe'] }) }
+  { key: 'config.typesafe.minConfidence', get: (c) => c.typesafe.minConfidence, patch: (v) => ({ typesafe: { minConfidence: v as number } as AppConfig['typesafe'] }) },
+  // Lista (não escalar): vai como JSON de array pelo mesmo encode. Valor lido que
+  // não é lista de textos volta ao padrão [] em vez de derrubar o boot.
+  { key: 'config.typesafe.allowedAutoModels', get: (c) => c.typesafe.allowedAutoModels, patch: (v) => ({ typesafe: { allowedAutoModels: normalizeAllowedAutoModels(v) } as AppConfig['typesafe'] }) }
 ]
 
 /** Every KV key the config persists, in write order. Exported so a test can hold
@@ -64,8 +74,9 @@ function cloneConfig(config: AppConfig): AppConfig {
     ollama: { ...config.ollama },
     vigia: { ...config.vigia },
     memorista: { ...config.memorista },
+    planning: { ...config.planning },
     board: { ...config.board, po: { ...config.board.po } },
-    typesafe: { ...config.typesafe }
+    typesafe: { ...config.typesafe, allowedAutoModels: [...config.typesafe.allowedAutoModels] }
   }
 }
 

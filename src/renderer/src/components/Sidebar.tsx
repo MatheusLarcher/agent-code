@@ -2,6 +2,8 @@ import { useState, type CSSProperties } from 'react'
 import type { Conversation } from '../types'
 import { useUI } from '../ui/UiProvider'
 import { IconSpinner } from './Icons'
+import { IconPlanning } from '../planning/PlanningIcon'
+import { isPlanningConversation } from '../planning/planningConversation'
 
 export interface SidebarProject {
   path: string
@@ -30,6 +32,8 @@ interface Props {
   onNewProject: () => void
   /** Start a new conversation inside a specific project folder. */
   onNewChatIn: (path: string) => void
+  /** "Novo planejamento" do projeto (abre o diálogo de criar/reabrir). */
+  onNewPlanningIn?: (path: string) => void
   /** Fetch the rest of a project's conversations ("mostrar mais"). */
   onLoadMore?: (path: string) => void
   onRename: (id: string, title: string) => void
@@ -201,9 +205,10 @@ function ConvRow({
   onCancel,
   onDelete
 }: ConvRowProps): JSX.Element {
+  const planning = isPlanningConversation(c)
   return (
     <div
-      className={`conv-row ${active ? 'active' : ''} ${nested ? 'nested' : ''}`}
+      className={`conv-row ${active ? 'active' : ''} ${nested ? 'nested' : ''}${planning ? ' planning-conv' : ''}`}
       onClick={() => {
         if (!editing) onSelect(c.id)
       }}
@@ -213,8 +218,8 @@ function ConvRow({
       }}
       title={editing ? undefined : `${c.title} — duplo-clique para renomear`}
     >
-      <span className="conv-ico">
-        {busy ? <IconSpinner className="spinner" /> : <IconChat />}
+      <span className="conv-ico" title={planning ? 'Planejamento' : undefined}>
+        {busy ? <IconSpinner className="spinner" /> : planning ? <IconPlanning /> : <IconChat />}
       </span>
       {editing ? (
         <input
@@ -474,6 +479,16 @@ export function Sidebar(props: Props): JSX.Element {
                     >
                       <IconPlus />
                     </button>
+                    {props.onNewPlanningIn && (
+                      <button
+                        className="project-add"
+                        title="Novo planejamento neste projeto"
+                        aria-label="Novo planejamento"
+                        onClick={() => props.onNewPlanningIn?.(p.path)}
+                      >
+                        <IconPlanning size={15} />
+                      </button>
+                    )}
                   </div>
                   {open && (
                     <div className="project-convs">

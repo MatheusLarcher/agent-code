@@ -20,6 +20,8 @@ import { taskLedger } from './tasks/taskRuntime'
 import { activeScopesFor, writeScopeDenial, type ScopedTask } from './tasks/writeScopeGuard'
 import { newPlanGateState, notePlanTool, notePlanTurn, planGateDenial } from './board/planGate'
 import { buildSpecialistAgents } from './agents/specialists'
+import { applyPlanningSessionOptions, handoffAppendBlock, planGateApplies, sessionSkillDenial, sessionWriteScopes } from './planning/planningSession'
+import { planningPreToolDecision, planningRequiresBashApproval, planningToolDenial } from './planning/planningPolicy'
 import {
   memoryService,
   readSecret,
@@ -770,6 +772,11 @@ export class AgentSession {
    *  propósito — ver `notePlanTurn`. */
   private readonly planGate = newPlanGateState()
 
+  /** Conversa de handoff (`opts.handoff`): o primeiro turno já terminou (result
+   *  ou erro)? Até lá as skills de replanejamento são recusadas no gate.
+   *  Sessão retomada (`opts.resume`) já passou do 1º turno — ver o construtor. */
+  private handoffFirstTurnDone = false
+
   /** Qualquer sinal de vida do turno: mensagem do SDK ou ferramenta mudando de
    *  estado. Sai do travado na hora, sem esperar o próximo tique. */
   private markActivity(): void {
@@ -841,6 +848,8 @@ export class AgentSession {
   ) {
     // Native class fields run before constructor parameter properties are assigned.
     this.restartRegistration = appRestart?.register(opts.convId, () => this.restartActivity())
+    // Um handoff retomado (app reiniciado, conversa reaberta) já teve o 1º turno.
+    this.handoffFirstTurnDone = Boolean(opts.resume)
   }
 
   async start(): Promise<boolean> {
@@ -948,6 +957,10 @@ export class AgentSession {
     } else if (this.opts.loopEnabled) {
       append += `\n\n${LOOP_HINT}`
     }
+    // Conversa nascida de um handoff do planejamento: de onde veio, onde está o
+    // plano e que o roteiro vira o plano dela. `null` em qualquer outra sessão.
+    const handoffBlock = handoffAppendBlock(this.opts)
+    if (handoffBlock) append += `\n\n${handoffBlock}`
 
     // Ollama Cloud routing: when the chosen model is an Ollama model, point the
     // bundled Claude Code CLI at Ollama's Anthropic-compatible API instead of
@@ -1099,6 +1112,19 @@ export class AgentSession {
             return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
               permissionDecisionReason: 'Reinício preparado. Termine o turno sem iniciar outro trabalho.' } }
           }
+          // Agent Manager: a política do planejamento também aqui, não só no
+          // canUseTool — um `allow` do settings.json pula o canUseTool, não o
+          // PreToolUse. Negada, a ferramenta não roda e o SDK não dispara
+          // PostToolUse nem PostToolUseFailure para ela: registrá-la em voo a
+          // deixaria presa (e o reinício bloqueado). Com `ask` ela ainda pode
+          // rodar, então segue o registro de sempre abaixo. Assíncrona: confere o
+          // caminho REAL das escritas (junction/symlink para fora do _sandbox).
+          const planning = await planningPreToolDecision(this.opts, name, input.tool_input)
+          if (planning?.decision === 'deny') {
+            this.markActivity()
+            return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
+              permissionDecisionReason: planning.reason } }
+          }
           // SDK task-level snapshots cover managed tasks, but arbitrary shell,
           // remote agents, custom MCPs and cron may outlive that registry.
           if (!VERIFIED_TOOLS.includes(name)) this.restartOpaqueCalls.add(input.tool_use_id)
@@ -1110,6 +1136,10 @@ export class AgentSession {
           // silêncio: build e download legítimos passam minutos sem emitir.
           this.toolsInFlight.add(input.tool_use_id)
           this.markActivity()
+          if (planning) {
+            return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: planning.decision,
+              permissionDecisionReason: planning.reason } }
+          }
           return {}
         }] }],
         // Uma ferramenta que retornou (com sucesso ou erro) acabou. Sem estes dois,
@@ -1133,7 +1163,26 @@ export class AgentSession {
       },
       // Always route through our gate. "Allow all" is handled inside
       // handlePermission via the bypassAll flag so it can be toggled live.
-      canUseTool: (toolName, input, options) => this.handlePermission(toolName, input, options?.agentID)
+      canUseTool: async (toolName, input, options) => {
+        const result = await this.handlePermission(toolName, input, options?.agentID)
+        // Negada aqui, a ferramenta não roda e o SDK não dispara PostToolUse nem
+        // PostToolUseFailure: o registro feito no PreToolUse ficaria preso (o
+        // watchdog tolerando silêncio e o reinício bloqueado para sempre).
+        if (result.behavior === 'deny' && options?.toolUseID) {
+          this.restartOpaqueCalls.delete(options.toolUseID)
+          this.toolsInFlight.delete(options.toolUseID)
+        }
+        return result
+      }
+    }
+    // Sessão do Agent Manager (Tela de Planejamento): só `planning` + `memory`,
+    // o prompt dele + a memória, sem subagentes — ver planning/planningSession.ts.
+    if (this.opts.planning) {
+      applyPlanningSessionOptions(options, {
+        projectCwd: this.opts.cwd,
+        slug: this.opts.planning.slug,
+        memoryBlocks: [memory ? buildMemoryHint(memoriesDir) : '', memorySnapshot?.catalog ?? '']
+      })
     }
 
     if (this.disposed) return false
@@ -1196,6 +1245,8 @@ export class AgentSession {
       }
     } catch (err) {
       if (!this.disposed) this.emit({ kind: 'error', id: nextId(), text: `Agent stopped: ${String(err)}`, usageExhausted: isUsageExhausted(err) || this.quotaRejected })
+      // Erro também encerra o turno: o primeiro turno de um handoff acabou.
+      this.handoffFirstTurnDone = true
     } finally {
       this.markTurnIdle()
       if (this.q === q) this.q = null
@@ -1485,9 +1536,11 @@ export class AgentSession {
     this.bypassAll = on
     if (on) {
       // Auto-approve anything currently waiting on the user — EXCEPT an
-      // AskUserQuestion, which still needs a real answer (it isn't a permission).
+      // AskUserQuestion, which still needs a real answer (it isn't a permission),
+      // and the Agent Manager's Bash, which the user approves one by one.
       for (const [id, pending] of this.pendingPermissions) {
         if (pending.toolName === 'AskUserQuestion') continue
+        if (planningRequiresBashApproval(this.opts, pending.toolName)) continue
         clearTimeout(pending.timer)
         pending.resolve({ behavior: 'allow', updatedInput: pending.input })
         this.pendingPermissions.delete(id)
@@ -1845,6 +1898,11 @@ ${lines}
     /** `undefined` quando quem chama é o agente principal; id do subagente quando é um filho. */
     agentId?: string
   ): Promise<PermissionResult> {
+    // Agent Manager: allowlist de ferramentas, antes de tudo (inclusive do
+    // reinício e do "Permitir tudo"). O hook PreToolUse já nega o mesmo; aqui é
+    // a segunda porta, para o caso de a chamada chegar ao gate sem passar nele.
+    const planningDenial = planningToolDenial(this.opts, toolName)
+    if (planningDenial) return Promise.resolve({ behavior: 'deny', message: planningDenial })
     if (toolName === 'mcp__app__app_restart' && this.restartRegistration && !this.disposed) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
@@ -1868,6 +1926,10 @@ ${lines}
     }
     if (toolName === 'Skill') {
       const skill = typeof input.skill === 'string' ? input.skill : typeof input.name === 'string' ? input.name : ''
+      // Planejamento, ANTES do bypassAll: o Agent Manager não roda skill de
+      // execução/replanejamento, e o handoff não replaneja no primeiro turno.
+      const planningSkillDenial = sessionSkillDenial(this.opts, skill, this.handoffFirstTurnDone)
+      if (planningSkillDenial) return Promise.resolve({ behavior: 'deny', message: planningSkillDenial })
       if (/^(?:[^:]+:)?loop$/iu.test(skill.trim())) {
         if (this.opts.loopEnabled !== true || this.opts.economyMode === true) {
           return Promise.resolve({
@@ -1965,11 +2027,13 @@ ${lines}
     // Escopo de escrita da tarefa reivindicada: contrato do time, imposto fora do
     // modelo. Também ANTES do bypassAll — "Permitir tudo" é o usuário confiando
     // no modelo; não anula o que a tarefa declarou que pode ser tocado.
-    const scopeDenial = writeScopeDenial(this.activeScopedTasks(agentId ?? null), toolName, input)
+    // No Agent Manager soma-se o escopo do _sandbox do planejamento.
+    const scopeDenial = writeScopeDenial(sessionWriteScopes(this.opts, this.activeScopedTasks(agentId ?? null)), toolName, input)
     if (scopeDenial) return Promise.resolve({ behavior: 'deny', message: scopeDenial })
     // A trava do quadro, também ANTES do bypassAll: "Permitir tudo" é o usuário
     // confiando no modelo para executar, não dispensa de dizer o que vai fazer.
-    const planDenial = planGateDenial(this.planGate, toolName, {
+    // Desligada no Agent Manager, que planeja e só escreve no _sandbox.
+    const planDenial = planGateApplies(this.opts) && planGateDenial(this.planGate, toolName, {
       // Grupo aninhado ausente (config antiga/parcial vinda do banco) cai no
       // padrão em vez de derrubar o gate — que roda em TODA chamada de
       // ferramenta e levaria a conversa junto.
@@ -1999,12 +2063,21 @@ ${lines}
     if (toolName.startsWith('mcp__tasks__')) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
+    // As plan_* do Agent Manager só gravam pelo planningStore (validação, rev,
+    // caminho preso em docs/spec/<slug>/) — mesmo motivo das de memória e tarefas.
+    if (this.opts.planning && toolName.startsWith('mcp__planning__')) {
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    }
+    // No Agent Manager, o Bash vai SEMPRE ao usuário: nem "Permitir tudo", nem
+    // "sempre permitir", nem lista de leitura o liberam. O que escreve fora do
+    // _sandbox já foi negado acima, sem perguntar.
     if (
-      this.bypassAll ||
-      READ_ONLY.has(toolName) ||
-      toolName.startsWith('mcp__browser__') ||
-      ANDROID_AUTO.has(toolName) ||
-      this.approvedTools.has(toolName)
+      !planningRequiresBashApproval(this.opts, toolName) &&
+      (this.bypassAll ||
+        READ_ONLY.has(toolName) ||
+        toolName.startsWith('mcp__browser__') ||
+        ANDROID_AUTO.has(toolName) ||
+        this.approvedTools.has(toolName))
     ) {
       // IMPORTANT: an "allow" result MUST echo the tool input back as `updatedInput`.
       // The CLI runs the tool with whatever `updatedInput` it receives; omitting it
@@ -2190,6 +2263,8 @@ ${lines}
         // Mirrors the parent_tool_use_id filter already used for the
         // `assistant` case below (context-token tracking).
         if (r.origin?.kind === 'peer') break
+        // Fim do turno principal (sucesso ou erro): o 1º turno de um handoff acabou.
+        this.handoffFirstTurnDone = true
         const usageExhausted = this.quotaRejected || sdkUsageExhausted(message)
         if (this.currentInputId !== null && this.inputQueueRepository) {
           const inputId = this.currentInputId

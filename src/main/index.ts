@@ -50,6 +50,8 @@ import { ConversationLeaseKeeper } from './persistence/leaseKeeper'
 import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlist'
 import { Vigia } from './vigia/vigia'
 import { BoardService } from './board/boardService'
+import { registerPlanningIpc, type PlanningIpcHandle } from './planning/planningIpc'
+import { PlanningConversations, planningStartOptions } from './planning/planningConversations'
 import { Po } from './po/po'
 import { Memorista } from './memoria/memorista'
 import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
@@ -109,6 +111,8 @@ let stopMemoryCurator: (() => void) | null = null
 let stopTaskReaper: (() => void) | null = null
 let stopRestartGuardFile: (() => void) | null = null
 let stopSleepGuard: (() => void) | null = null
+/** Handlers planning:* e os vigias de pasta deles (fechados ao sair). */
+let planningIpc: PlanningIpcHandle | null = null
 let closeRequested = false
 let closeReady = false
 let closeRequestTimer: ReturnType<typeof setInterval> | null = null
@@ -149,6 +153,9 @@ const sessionCwds = new Map<string, string>()
  *  diz se esse par saiu de uma decisão do TypeSafe: só ele entra na histerese do
  *  turno seguinte (ver `AutoLivePair` em `typesafe/execution.ts`). */
 const autoSessions = new Map<string, { model: string; effort: EffortLevel; decided: boolean }>()
+/** Conversas que são sessões do Agent Manager (Tela de Planejamento): não
+ *  alimentam vigia, quadro, PO nem memorista (ver planning/planningConversations.ts). */
+const planningConversations = new PlanningConversations()
 
 // Which files the agent actually offered for download. Fed from the event tee
 // below, consulted by the `fileDownload` handler.
@@ -1099,6 +1106,8 @@ export function registerIpc(): void {
       return []
     }
   })
+  // Tela de Planejamento: toda a lógica (validação, vigia, erros) mora em planningIpc.
+  planningIpc = registerPlanningIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), send })
   ipcMain.handle(Channels.tasksDetail, async (_e, taskId: string) => {
     try {
       return await buildTaskDetail(taskLedger(), taskId)
@@ -1404,6 +1413,10 @@ export function registerIpc(): void {
     const { convId } = opts
     const project = await fsStat(opts.cwd).catch(() => null)
     if (!project?.isDirectory()) throw new Error('A pasta local do projeto não foi localizada nesta instalação.')
+    // Agent Manager: modelo e esforço vêm da configuração do planejamento e saem
+    // concretos — o Automático da conversa (logo abaixo) não roda para ele.
+    opts = await planningStartOptions(opts, { config: () => loadConfig().planning })
+    planningConversations.track(opts)
     if (isAutoModel(opts.model)) {
       const auto = await autoStart(opts)
       // Guardado ANTES do atalho de reaproveitamento: mesmo com o par repetindo,
@@ -1438,6 +1451,9 @@ export function registerIpc(): void {
       // Recorded here, not inside the bridge: the desktop download must be
       // authorized whether or not the phone bridge is running.
       downloadAllowlist.track(event)
+      // Daqui para baixo só observadores (vigia, quadro, PO, memorista), e a
+      // conversa do Agent Manager não alimenta nenhum deles.
+      if (!planningConversations.observed(convId)) return
       // O vigia lê o mesmo tee — e a saída dele NÃO volta por aqui: alerta é
       // para o usuário, não para o modelo (canal próprio, ver vigia.ts).
       vigia.observe(convId, event)
@@ -1535,16 +1551,18 @@ export function registerIpc(): void {
       const saved: Array<{ name: string; path: string }> =
         files && files.length > 0 ? await saveAttachments(convId, files) : []
       const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
+      // Conversa do Agent Manager: nenhum dos três observadores abaixo a acompanha.
+      const observed = planningConversations.observed(convId)
       // O vigia só julga premissa de um pedido do usuário: é aqui que o turno
       // dele começa (retomada e recuperação de turno não passam por aqui).
-      vigia.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
+      if (observed) vigia.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
       // O PO precisa do mesmo marco, e da pasta do projeto para achar o quadro.
       // Aqui também começa a ABERTURA dele: o pedido tem que virar cartão antes
       // de o agente trabalhar, senão o que ele nunca declarar não deixa rastro.
-      po.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
+      if (observed) po.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
       // O memorista precisa do mesmo marco: é a mensagem do usuário que pode
       // ENSINAR algo, e a pasta do projeto entra na memória como contexto.
-      memorista.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
+      if (observed) memorista.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
       await sessions.get(convId)?.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }
   )
@@ -1571,6 +1589,7 @@ export function registerIpc(): void {
     forgetUsedMemories(convId)
     board.dispose(convId)
     sessionCwds.delete(convId)
+    planningConversations.forget(convId)
     void releaseSessionLease(convId)
   })
 
@@ -1846,6 +1865,7 @@ app.on('window-all-closed', () => {
   browsers.clear()
   for (const s of sessions.values()) s.dispose()
   sessions.clear()
+  planningIpc?.close()
   relay.stop()
   void remote.stop()
   if (process.platform !== 'darwin') app.quit()
@@ -1879,4 +1899,5 @@ app.on('before-quit', (event) => {
   stopRestartGuardFile = null
   stopSleepGuard?.()
   stopSleepGuard = null
+  planningIpc?.close()
 })

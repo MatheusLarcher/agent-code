@@ -1,0 +1,80 @@
+/*
+ * Espaço da Tela de Planejamento: o divisor entre canvas e chat e o roteiro
+ * recolhido (trilho). Separado do planning.css, que está no limite de tamanho
+ * do repo; mesmas variáveis do styles.css.
+ */
+
+/* ---- divisor canvas | chat ---- */
+/* Ocupa 1px no layout (margens negativas), mas pega o mouse numa faixa de 7px. */
+.pl-splitter {
+  position: relative;
+  z-index: 6;
+  flex: 0 0 7px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.pl-splitter::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--line);
+  transition: background 0.12s ease, left 0.12s ease, width 0.12s ease;
+}
+.pl-splitter:hover::after,
+.pl-splitter:active::after,
+.pl-splitter:focus-visible::after { left: 2px; width: 3px; background: var(--accent); }
+
+/* ---- roteiro: botão de recolher e o trilho ---- */
+.planning .pl-progress-head { align-items: center; gap: 6px; }
+.planning .pl-progress-head .pl-progress-count { margin-left: auto; }
+.pl-rail-toggle {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.pl-rail-toggle:hover { background: var(--bg-3); color: var(--text); }
+
+.planning .pl-progress.pl-rail {
+  flex: 0 0 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  overflow-x: hidden;
+}
+.pl-rail .pl-progress-count { font-size: 11.5px; }
+.pl-rail-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.pl-rail-step {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.pl-rail-step:hover { background: var(--bg-3); }
+.pl-rail-step.em_andamento { color: var(--warn); }
+.pl-rail-step.concluida { color: var(--ok); }
+
+.pl-rail-toggle:focus-visible,
+.pl-rail-step:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-splitter::after { transition: none; }
+}

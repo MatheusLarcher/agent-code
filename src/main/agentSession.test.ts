@@ -1903,6 +1903,43 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
       expect(stalls(emit)).toEqual([expect.objectContaining({ stalled: true })])
     })
 
+    type CanUse = (
+      name: string,
+      input: Record<string, unknown>,
+      opts: { signal: AbortSignal; toolUseID: string }
+    ) => Promise<{ behavior: string }>
+    const canUseToolOf = (): CanUse => (queryMock.mock.calls.at(-1)![0].options as { canUseTool: CanUse }).canUseTool
+    const inFlightOf = (s: AgentSession): { toolsInFlight: Set<string>; restartOpaqueCalls: Set<string> } =>
+      s as unknown as { toolsInFlight: Set<string>; restartOpaqueCalls: Set<string> }
+
+    it('ferramenta negada no canUseTool sai do registro em voo (o SDK não manda Post* para ela)', async () => {
+      const { s, emit, prompt, pre } = await started()
+      const inFlight = inFlightOf(s)
+      await prompt({ hook_event_name: 'UserPromptSubmit' })
+      await pre({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_use_id: 'negada', tool_input: { skill: 'loop' } })
+      expect(inFlight.toolsInFlight.has('negada')).toBe(true)
+      expect(inFlight.restartOpaqueCalls.has('negada')).toBe(true)
+
+      // Loop desligado nesta conversa: o gate nega.
+      const res = await canUseToolOf()('Skill', { skill: 'loop' }, { signal: new AbortController().signal, toolUseID: 'negada' })
+      expect(res.behavior).toBe('deny')
+      expect(inFlight.toolsInFlight.has('negada')).toBe(false)
+      expect(inFlight.restartOpaqueCalls.has('negada')).toBe(false)
+      // Sem nada em voo, o limiar curto volta a valer (antes ficava o de ferramenta, para sempre).
+      vi.advanceTimersByTime(STALL_THRESHOLD_MS + 5_000)
+      expect(stalls(emit)).toEqual([expect.objectContaining({ stalled: true })])
+    })
+
+    it('ferramenta aprovada no canUseTool segue em voo até retornar', async () => {
+      const { s, pre } = await started()
+      s.setBypass(true)
+      await pre({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'ok', tool_input: { command: 'ls' } })
+      const res = await canUseToolOf()('Bash', { command: 'ls' }, { signal: new AbortController().signal, toolUseID: 'ok' })
+      expect(res.behavior).toBe('allow')
+      expect(inFlightOf(s).toolsInFlight.has('ok')).toBe(true)
+      expect(inFlightOf(s).restartOpaqueCalls.has('ok')).toBe(true)
+    })
+
     it('sinal de vida desfaz o aviso', async () => {
       const { s, emit, prompt } = await started()
       await prompt({ hook_event_name: 'UserPromptSubmit' })

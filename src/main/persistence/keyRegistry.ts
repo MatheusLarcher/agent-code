@@ -29,9 +29,12 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.board.requirePlan': { scope: 'device', source: 'main-kv' },
   'config.board.po.enabled': { scope: 'device', source: 'main-kv' },
   'config.board.po.model': { scope: 'device', source: 'main-kv' },
+  'config.planning.model': { scope: 'device', source: 'main-kv' },
+  'config.planning.effort': { scope: 'device', source: 'main-kv' },
   'config.typesafe.enabled': { scope: 'device', source: 'main-kv' },
   'config.typesafe.apiKey': { scope: 'device', sensitive: true, source: 'main-kv' },
   'config.typesafe.minConfidence': { scope: 'device', source: 'main-kv' },
+  'config.typesafe.allowedAutoModels': { scope: 'device', source: 'main-kv' },
   'agentcode.typesafe.usage.v1': { scope: 'device', source: 'main-kv' },
   codexAuth: { scope: 'device', sensitive: true, source: 'main-kv' },
   // Cópia do cofre (chave + segredos cifrados) no banco. Redundância proposital:

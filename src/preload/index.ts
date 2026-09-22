@@ -54,7 +54,15 @@ import type {
   RepositoryChange,
   TaskBoard,
   TaskBoardDetail,
-  TokenUsageHistory
+  TokenUsageHistory,
+  OpenedPlanningDto,
+  PlanningCardDto,
+  PlanningChangedMsg,
+  PlanningHandoffDto,
+  PlanningLayoutDto,
+  PlanningRef,
+  PlanningResult,
+  PlanningRoteiroDto
 } from '../shared/ipc'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -154,6 +162,28 @@ const api: AgentCodeApi = {
   boardItemEvents: (boardItemId: string): Promise<BoardItemEvent[]> =>
     ipcRenderer.invoke(Channels.boardItemEvents, boardItemId),
   onBoardChanged: (cb: (m: { projectId: string }) => void): (() => void) => on(Channels.boardChanged, cb),
+  planningList: (req: { projectCwd: string }): Promise<PlanningResult<{ slugs: string[] }>> =>
+    ipcRenderer.invoke(Channels.planningList, req),
+  planningCreate: (req: PlanningRef & { titulo: string }): Promise<PlanningResult<{ plan: OpenedPlanningDto }>> =>
+    ipcRenderer.invoke(Channels.planningCreate, req),
+  planningOpen: (req: PlanningRef): Promise<PlanningResult<{ plan: OpenedPlanningDto }>> =>
+    ipcRenderer.invoke(Channels.planningOpen, req),
+  planningClose: (req: PlanningRef): Promise<PlanningResult> => ipcRenderer.invoke(Channels.planningClose, req),
+  planningSaveCard: (
+    req: PlanningRef & { card: PlanningCardDto; expectedRev: number }
+  ): Promise<PlanningResult<{ card: PlanningCardDto }>> => ipcRenderer.invoke(Channels.planningSaveCard, req),
+  planningDeleteCard: (req: PlanningRef & { id: string; expectedRev: number }): Promise<PlanningResult> =>
+    ipcRenderer.invoke(Channels.planningDeleteCard, req),
+  planningSaveRoteiro: (
+    req: PlanningRef & { roteiro: Omit<PlanningRoteiroDto, 'rev'>; expectedRev: number }
+  ): Promise<PlanningResult<{ roteiro: PlanningRoteiroDto }>> => ipcRenderer.invoke(Channels.planningSaveRoteiro, req),
+  planningSaveLayout: (req: PlanningRef & { layout: PlanningLayoutDto }): Promise<PlanningResult> =>
+    ipcRenderer.invoke(Channels.planningSaveLayout, req),
+  planningListHandoffs: (req: PlanningRef): Promise<PlanningResult<{ handoffs: PlanningHandoffDto[] }>> =>
+    ipcRenderer.invoke(Channels.planningListHandoffs, req),
+  planningWriteHandoff: (req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>> =>
+    ipcRenderer.invoke(Channels.planningWriteHandoff, req),
+  onPlanningChanged: (cb: (m: PlanningChangedMsg) => void): (() => void) => on(Channels.planningChanged, cb),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
   kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),
   loadAllConversations: (): Promise<unknown[]> => ipcRenderer.invoke(Channels.conversationsLoadAll),

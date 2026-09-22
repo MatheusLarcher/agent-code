@@ -708,6 +708,12 @@ export interface StartAgentOptions {
    *  this message deserves and starts on the answer. Absent, there is nothing to
    *  decide on and main uses AUTO_MODEL_FALLBACK. */
   autoPrompt?: AutoPrompt
+  /** Sessão do Agent Manager da Tela de Planejamento: o planejamento
+   *  (docs/spec/<slug>/) que ela conduz. Liga as ferramentas plan_*, o prompt e a
+   *  política do Manager (escrita só no _sandbox do slug). */
+  planning?: { slug: string }
+  /** Sessão de implementação nascida de um handoff do planejamento <slug>. */
+  handoff?: { slug: string }
 }
 
 /** Reasoning effort levels a model may support. */
@@ -1091,6 +1097,37 @@ export const MEMORISTA_AUTO_MODELS: readonly string[] = MEMORISTA_MODELS.filter(
 ).map((model) => model.id)
 
 /**
+ * Planejamento — o modelo do Agent Manager da Tela de Planejamento.
+ *
+ * Mesmo molde do memorista (modelo fixo ou Automático), com uma diferença: o
+ * Manager é quem CONVERSA com o usuário, não um leitor barato — então a lista
+ * é a da conversa (CLAUDE_MODELS) e o esforço é configurável no modo manual.
+ * No Automático o esforço guardado aqui não vale: quem decide é o TypeSafe,
+ * e sem ele o par é PLANNING_AUTO_FALLBACK.
+ */
+export interface PlanningConfig {
+  /** Model id do Agent Manager, ou AUTO_MODEL. */
+  model: string
+  /** Esforço no modo manual (recortado para o que o modelo suporta). */
+  effort: EffortLevel
+}
+
+/** Modelos oferecidos para o Agent Manager: Automático + a lista da conversa. */
+export const PLANNING_MODELS: ReadonlyArray<{ id: string; label: string }> = [
+  AUTO_MODEL_OPTION,
+  ...CLAUDE_MODELS
+]
+
+/** O par do Automático do Agent Manager quando o TypeSafe não decide (desligado,
+ *  sem chave, timeout, erro). NÃO é o AUTO_MODEL_FALLBACK: aquele vai no modelo
+ *  mais caro porque a conversa não pode errar; aqui o Manager roda por muitas
+ *  mensagens de planejamento e o Sonnet em esforço médio basta. */
+export const PLANNING_AUTO_FALLBACK: { model: string; effort: EffortLevel } = {
+  model: 'claude-sonnet-5',
+  effort: 'medium'
+}
+
+/**
  * TypeSafe AI — decisões estruturadas rápidas (~100ms) pelo modelo Jev.
  *
  * Não é um LLM gerador de texto: responde perguntas tipadas (escolha, nota,
@@ -1341,6 +1378,8 @@ export interface AppConfig {
   vigia: VigiaConfig
   /** O observador que grava memória sozinho ao fim do turno (see MemoristaConfig). */
   memorista: MemoristaConfig
+  /** O modelo do Agent Manager da Tela de Planejamento (see PlanningConfig). */
+  planning: PlanningConfig
   /** O quadro de tarefas: a trava do plano e o agente PO (see BoardConfig). */
   board: BoardConfig
   /** Decisões estruturadas rápidas pelo TypeSafe AI (see TypeSafeConfig). */
@@ -1575,6 +1614,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   // lembrar de pedir é a memória que não é escrita — foi o que aconteceu com o
   // conhecimento que o usuário ensinou e nunca virou arquivo.
   memorista: { enabled: true, model: 'claude-sonnet-5' },
+  // Automático por padrão: sem TypeSafe ele já cai no PLANNING_AUTO_FALLBACK
+  // (Sonnet 5, médio); o esforço só vale quando o usuário fixa um modelo.
+  planning: { model: AUTO_MODEL, effort: 'medium' },
   // Também ligados por padrão: sem a trava o quadro fica vazio nas tarefas em
   // que ele mais importa, e sem o PO ninguém fecha o cartão que o agente
   // esqueceu — as duas metades do que torna o quadro confiável.
@@ -1661,6 +1703,24 @@ export const Channels = {
   boardItemEvents: 'board:item-events',
   /** Main → renderer: o quadro daquele projeto mudou, recarregue. */
   boardChanged: 'board:changed',
+  /** Tela de Planejamento (docs/spec/<slug>/). Toda resposta é PlanningResult. */
+  planningList: 'planning:list',
+  planningCreate: 'planning:create',
+  /** Abre e passa a vigiar a pasta do planejamento (idempotente por janela). */
+  planningOpen: 'planning:open',
+  /** Para de vigiar o planejamento aberto por esta janela. */
+  planningClose: 'planning:close',
+  planningSaveCard: 'planning:saveCard',
+  planningDeleteCard: 'planning:deleteCard',
+  planningSaveRoteiro: 'planning:saveRoteiro',
+  planningSaveLayout: 'planning:saveLayout',
+  /** Os prompts gravados em docs/spec/<slug>/_handoff/, na ordem em que foram gravados. */
+  planningListHandoffs: 'planning:listHandoffs',
+  /** Grava um prompt de handoff em _handoff/AAAA-MM-DD-NN.md (o que vai ser enviado). */
+  planningWriteHandoff: 'planning:writeHandoff',
+  /** Main → renderer: arquivos de um planejamento aberto mudaram por fora do
+   *  app (editor, git, agente). Gravações do próprio app não disparam. */
+  planningChanged: 'planning:changed',
   kvGet: 'kv:get',
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet: 'kv:set',
@@ -1949,4 +2009,78 @@ export interface RemoteBuildProgressMsg {
   /** Set on the terminal line: whether the build finished successfully. */
   done?: boolean
   ok?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Tela de Planejamento — contrato do IPC (Channels.planning*).
+// Espelham os tipos de src/main/planning (planningModel/planningStore); o
+// typecheck do planningIpc falha se os dois lados divergirem.
+// ---------------------------------------------------------------------------
+
+export type PlanningCardType = 'etapa' | 'requisito' | 'decisao' | 'sugestao' | 'ambiguidade' | 'nota'
+export type PlanningStageStatus = 'pendente' | 'em_andamento' | 'concluida'
+
+export interface PlanningCardDto {
+  id: string
+  tipo: PlanningCardType
+  titulo: string
+  etapa?: string
+  /** Em 'ambiguidade': 'aberta' | 'resolvida'. */
+  status?: string
+  links: string[]
+  /** URL http/https; obrigatória em 'sugestao'. */
+  fonte?: string
+  /** Revisão otimista: gravar exige o rev que está em disco. */
+  rev: number
+  corpo: string
+}
+
+export interface PlanningRoteiroDto {
+  titulo: string
+  /** Revisão otimista do _roteiro.md, como a dos cards. O main sempre preenche;
+   *  ausente vale 0 (roteiro gravado antes do rev existir). */
+  rev?: number
+  etapas: { id: string; titulo: string; status: PlanningStageStatus }[]
+}
+
+export interface PlanningLayoutDto {
+  positions: Record<string, { x: number; y: number }>
+  viewport?: { x: number; y: number; zoom: number }
+}
+
+export interface OpenedPlanningDto {
+  slug: string
+  roteiro: PlanningRoteiroDto
+  cards: PlanningCardDto[]
+  layout: PlanningLayoutDto
+  /** Cards que não carregaram (arquivo relativo à pasta + motivo). */
+  invalid: { file: string; error: string }[]
+}
+
+/** Falha de uma chamada planning:* — nunca exceção atravessando o IPC. */
+export type PlanningFailure =
+  /** rev desatualizado; `current` é o card como está em disco (null = não existe). */
+  | { ok: false; code: 'rev_conflict'; current: PlanningCardDto | null }
+  /** rev do roteiro desatualizado; `current` é o roteiro em disco (com o rev atual). */
+  | { ok: false; code: 'roteiro_conflict'; message: string; current: PlanningRoteiroDto }
+  | { ok: false; code: 'invalid' | 'not_found' | 'io'; message: string }
+
+export type PlanningResult<T extends object = object> = ({ ok: true } & T) | PlanningFailure
+
+/** Identifica um planejamento: pasta do projeto (absoluta) + slug [a-z0-9-]. */
+export interface PlanningRef {
+  projectCwd: string
+  slug: string
+}
+
+/** Payload de Channels.planningChanged. */
+export type PlanningChangedMsg = PlanningRef
+
+/** Um prompt de handoff em docs/spec/<slug>/_handoff/ (Channels.planningListHandoffs). */
+export interface PlanningHandoffDto {
+  /** Nome do arquivo (AAAA-MM-DD-NN.md). */
+  name: string
+  /** Quando o arquivo foi criado, em ms desde a época. */
+  createdAt: number
+  content: string
 }

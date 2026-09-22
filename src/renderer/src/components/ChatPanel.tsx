@@ -216,6 +216,9 @@ interface Props {
    * precisa do modelo concreto.
    */
   runningModel: string
+  /** Esconde modelo, esforço, Econômico e Loop: na conversa de planejamento
+   *  quem escolhe como o Agent Manager roda é o main, não a conversa. */
+  hideModelControls?: boolean
   modelLocked: boolean
   onModelChange: (id: string) => void
   /** Called when the user clicks the model picker while it's locked (no active
@@ -511,6 +514,7 @@ export function ChatPanel(props: Props): JSX.Element {
       </div>
 
       <div className="composer-bar">
+        {!props.hideModelControls && (<>
         <select
           className={`model-select${props.modelLocked ? ' locked' : ''}`}
           value={props.model}
@@ -585,6 +589,7 @@ export function ChatPanel(props: Props): JSX.Element {
           <span className="loop-icon">↻</span>
           <span className="loop-label">Loop</span>
         </button>
+        </>)}
         {props.fastModeAvailable && (
           <button
             type="button"

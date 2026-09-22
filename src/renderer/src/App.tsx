@@ -80,6 +80,17 @@ import { FilePickerModal } from './ui/FilePickerModal'
 import { RemoteModal } from './ui/RemoteModal'
 import { SettingsModal } from './ui/SettingsModal'
 import { ipcErrorMessage } from './ipcError'
+import { PlanningWorkspace } from './planning/PlanningWorkspace'
+import { NewPlanningDialog } from './planning/NewPlanningDialog'
+import { HandoffButton } from './planning/HandoffDialog'
+import { handoffOutcome, launchHandoff, type HandoffSendOutcome } from './planning/handoffFlow'
+import {
+  handoffConversationFields,
+  isPlanningConversation,
+  planningConversationFields,
+  revalidatesAuto,
+  sessionStartFields
+} from './planning/planningConversation'
 
 export type { UserMessage, UIMessage } from './types'
 
@@ -991,14 +1002,21 @@ export function App(): JSX.Element {
               // (a sessão morreu no stopSession acima). Conectar duas vezes
               // criaria uma sessão no par padrão só para derrubá-la na linha
               // seguinte — um boot pago e jogado fora a cada troca de config.
-              if (fresh && !isAutoModel(fresh.model)) await connectRef.current?.(fresh)
+              // Planejamento: a sessão nova do Manager sobe já com a mensagem
+              // deste turno, para o Automático DELE decidir no start.
+              if (fresh && !revalidatesAuto(fresh)) {
+                await connectRef.current?.(
+                  fresh,
+                  isPlanningConversation(fresh) ? autoPromptFor(fresh, next.text) : undefined
+                )
+              }
             }
             // Automático: a mensagem da fila é um TURNO NOVO e merece a própria
             // escolha. Sem isto ela sairia no modelo do turno anterior — que foi
             // decidido para outra mensagem. Este caminho não passa por
             // `dispatch`, então a chamada é feita aqui também.
             const auto = convsRef.current.find((c) => c.id === cid)
-            if (auto && isAutoModel(auto.model)) {
+            if (auto && revalidatesAuto(auto)) {
               await connectRef.current?.(auto, autoPromptFor(auto, next.text))
             }
             await window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid)
@@ -1550,11 +1568,14 @@ export function App(): JSX.Element {
   }, [])
 
   // ---- conversation management ----
-  const createConversation = (folder: string, id?: string): Conversation => {
+  const createConversation = (folder: string, id?: string, extra?: Partial<Conversation>): Conversation => {
     // New conversations in a known project inherit that project's execution
     // modes; otherwise fall back to the active conversation's settings.
-    const sameFolder = convsRef.current.find((c) => c.cwd === folder)
-    const active = getActive()
+    // Conversas de planejamento não servem de molde: o modelo delas é o do
+    // Agent Manager (decidido no main), não uma escolha do usuário.
+    const sameFolder = convsRef.current.find((c) => c.cwd === folder && !isPlanningConversation(c))
+    const current = getActive()
+    const active = isPlanningConversation(current) ? null : current
     const model = sameFolder?.model || active?.model || MODELS[0].id
     const inheritedEconomy = sameFolder?.economyMode ?? active?.economyMode ?? false
     const inheritedLoop = inheritedEconomy
@@ -1576,7 +1597,8 @@ export function App(): JSX.Element {
       messages: [],
       tokens: { ...EMPTY_TOKENS },
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      ...extra
     }
     setConversations((prev) => [conv, ...prev])
     setProjectTotals((totals) => ({ ...totals, [folder]: (totals[folder] ?? 0) + 1 }))
@@ -1606,6 +1628,20 @@ export function App(): JSX.Element {
   // button next to the project name in the sidebar).
   const newChatIn = useCallback((folder: string): void => {
     createConversation(folder)
+  }, [])
+
+  // "Novo planejamento" (barra lateral): o diálogo cria o plano no main ou
+  // escolhe um existente; aqui nasce a conversa que É a Tela de Planejamento.
+  // Um plano que já tem conversa carregada nesta pasta volta para ela — duas
+  // sessões do Agent Manager no mesmo plano só brigariam pelos arquivos.
+  const [planningDialogFor, setPlanningDialogFor] = useState<string | null>(null)
+  const openPlanningConversation = useCallback((folder: string, slug: string, titulo?: string): void => {
+    setPlanningDialogFor(null)
+    const existing = convsRef.current.find(
+      (c) => c.cwd === folder && isPlanningConversation(c) && c.planningSlug === slug
+    )
+    if (existing) setActiveId(existing.id)
+    else createConversation(folder, undefined, planningConversationFields(slug, titulo))
   }, [])
 
   const selectConversation = useCallback((id: string): void => {
@@ -1701,7 +1737,9 @@ export function App(): JSX.Element {
       // o modelo do turno só se conhece depois que o main pergunta ao TypeSafe, e
       // o SDK fixa o modelo pela vida da sessão. Quando o par escolhido repete o
       // que já está no ar, o main mantém a sessão e isto sai de graça.
-      if (!auto && connectedRef.current.has(conv.id)) return Promise.resolve()
+      // Planejamento nunca revalida: o prompt só vale na SUBIDA da sessão, onde o
+      // main decide o modelo do Agent Manager (uma vez).
+      if ((!auto || isPlanningConversation(conv)) && connectedRef.current.has(conv.id)) return Promise.resolve()
       const inflight = connectingRef.current.get(conv.id)
       if (inflight) return inflight
       const p = (async () => {
@@ -1736,7 +1774,9 @@ export function App(): JSX.Element {
           economyMode: conv.economyMode === true,
           loopEnabled: conv.loopEnabled === true,
           fastMode: conv.fastMode === true,
-          ...(auto ? { autoPrompt: auto } : {})
+          // autoPrompt (quando há) e, na conversa de planejamento, o plano que o
+          // Agent Manager conduz.
+          ...sessionStartFields(conv, auto)
         })
         if (!started.ok) throw new Error('a sessão do agente não iniciou')
         setConnected(conv.id, true)
@@ -2045,8 +2085,11 @@ export function App(): JSX.Element {
         // Em Automático, `connect` é chamado SEMPRE e leva a mensagem junto: é o
         // main que escolhe o par modelo+esforço deste turno e decide se a sessão
         // viva serve ou tem de ser recriada.
-        const auto = isAutoModel(conv.model) ? autoPromptFor(conv, text) : undefined
-        if (auto || !connectedRef.current.has(conv.id)) await connect(conv, auto)
+        // Planejamento: sem revalidação por mensagem — a mensagem só acompanha a
+        // SUBIDA da sessão, para o Automático do Agent Manager decidir no start.
+        const auto = revalidatesAuto(conv) ? autoPromptFor(conv, text) : undefined
+        const opening = !auto && isPlanningConversation(conv) ? autoPromptFor(conv, text) : undefined
+        if (auto || !connectedRef.current.has(conv.id)) await connect(conv, auto ?? opening)
         await window.api.sendMessage(conv.id, full, images, files, fileRefs, sdkUuid)
       } catch (err) {
         // Couldn't even reach the agent → keep the message, flag it with the error
@@ -2157,6 +2200,45 @@ export function App(): JSX.Element {
       const thumbs = images.map((img) => `data:${img.mediaType};base64,${img.data}`)
       setChips([]) // chips were consumed into `full`
       await dispatch(conv, full, text, images, thumbs, files, fileRefs)
+    },
+    [dispatch]
+  )
+
+  // ---- handoff: Tela de Planejamento → conversa de implementação ----
+  // O pedido ao Agent Manager vai para a conversa de planejamento pelo mesmo
+  // `dispatch` do composer (fila, busy e bolha), sem os chips da página.
+  const askPlanningManager = useCallback(
+    (convId: string, text: string): void => {
+      const conv = convsRef.current.find((c) => c.id === convId)
+      if (conv) void dispatch(conv, text, text, [], [], [])
+    },
+    [dispatch]
+  )
+
+  // Cria a conversa de implementação (nova, ativa, modelo/modos de conversa
+  // normal, marcada com handoffSlug) e envia os prompts pelo `dispatch`: o 1º
+  // sai já, os demais entram na fila dela, na ordem.
+  // O resultado distingue "conversa criada, envio falhou" de "nada criado": no
+  // primeiro, o diálogo fecha em vez de deixar criar uma segunda conversa.
+  const startHandoff = useCallback(
+    async (folder: string, slug: string, titulo: string, prompts: string[]): Promise<HandoffSendOutcome> => {
+      const launched = await launchHandoff(prompts, {
+        create: () => {
+          const conv = createConversation(folder, undefined, handoffConversationFields(slug, titulo))
+          // O estado novo só chega a convsRef no próximo render, e o connect
+          // persiste convsRef ANTES do startAgent (o lease exige a linha da
+          // conversa no banco). Sem isto, o 1º envio corre contra o render.
+          if (!convsRef.current.some((c) => c.id === conv.id)) convsRef.current = [conv, ...convsRef.current]
+          return conv
+        },
+        // Entregue = a conversa ficou ocupada (enviado agora ou na fila). O
+        // `dispatch` não lança: falha fica marcada na bolha, com o toast dele.
+        send: async (conv, text) => {
+          await dispatch(conv, text, text, [], [], [])
+          return busyRef.current.has(conv.id)
+        }
+      })
+      return handoffOutcome(launched)
     },
     [dispatch]
   )
@@ -2589,6 +2671,8 @@ export function App(): JSX.Element {
 
   // ---- derived view state ----
   const active = conversations.find((c) => c.id === activeId) ?? null
+  // Conversa de planejamento: a tela troca o workspace pela Tela de Planejamento.
+  const activePlanning = isPlanningConversation(active) ? active : null
   const activeConnected = activeId !== null && connectedIds.has(activeId)
   const showBusy = activeId !== null && busyIds.has(activeId)
   const activePermission = activeId ? permissions[activeId] : undefined
@@ -2914,6 +2998,102 @@ export function App(): JSX.Element {
     )
   }
 
+  // O painel de conversa, montado UMA vez: o workspace normal o põe à esquerda
+  // do painel da direita; a Tela de Planejamento, como a sua coluna de chat.
+  const chatPanel = (
+    <ChatPanel
+      messages={messages}
+      hasActive={!!active}
+      busy={showBusy}
+      // Atrelado ao `busy`: uma entrada que sobrou (sessão morreu sem
+      // emitir o "voltou") não pode acusar travamento num chat parado.
+      stalledSince={showBusy && active ? stalledSince[active.id] : undefined}
+      windowsControlEnabled={windowsControlEnabled}
+      onDisableWindowsControl={() => void toggleWindowsControl(false)}
+      tokens={tokens}
+      usageMap={activeUsageMap}
+      chips={chips}
+      onRemoveChip={(i) => setChips((c) => c.filter((_, idx) => idx !== i))}
+      onSend={sendMessage}
+      onInterrupt={interrupt}
+      onRetry={(msgId) => active && void retryMessage(active.id, msgId)}
+      composerRef={composerRef}
+      projects={projects}
+      projectRoot={active?.cwd ?? null}
+      convId={active?.id ?? null}
+      scrollToId={scrollTarget && scrollTarget.convId === activeId ? scrollTarget.msgId : null}
+      scrollSeq={scrollTarget?.seq ?? 0}
+      draft={active?.draft ?? ''}
+      onDraftChange={onDraftChange}
+      projectMissing={projectMissing}
+      projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
+      onSelectProjectFolder={() => void selectProjectFolder()}
+      queued={activeQueue}
+      onDeleteQueued={deleteQueued}
+      recovery={active?.recovery}
+      onRetryRecovery={retryRecoveryNow}
+      onCancelRecovery={cancelRecovery}
+      runningSince={runningSince}
+      lastDurationMs={lastDurationMs}
+      onStart={connectStart}
+      voiceReady={voiceReady}
+      onNeedVoiceKey={needVoiceKey}
+      tts={tts}
+      models={modelsFor(models, active?.model)}
+      model={active?.model ?? MODELS[0].id}
+      // O seletor mostra a escolha (o sentinel `auto` incluso); a barra de
+      // contexto precisa do modelo concreto do turno — o mesmo que o
+      // snapshot do celular já usa logo acima.
+      runningModel={active ? runningModel(active) : MODELS[0].id}
+      // Planejamento: o modelo do Agent Manager é decidido no main.
+      hideModelControls={!!activePlanning}
+      modelLocked={!active}
+      onModelChange={(m) => {
+        if (!active) return
+        // "Automático" sem TypeSafe configurado não troca de modelo — pede a
+        // key nas Configurações e mantém o que já estava selecionado.
+        if (isAutoModel(m) && !typesafeReady) {
+          needTypesafeKey()
+          return
+        }
+        changeModel(active.id, m)
+      }}
+      onModelLockedClick={() => notify('aviso', 'Selecione uma conversa para trocar o modelo.')}
+      effortLevels={effortLevelsFor(active?.model)}
+      effort={active?.effort ?? DEFAULT_EFFORT}
+      effortLocked={!active}
+      onEffortChange={(e) => active && changeEffort(active.id, e)}
+      economyMode={active?.economyMode === true}
+      onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
+      loopEnabled={active?.loopEnabled === true}
+      loopLocked={active?.economyMode === true}
+      onLoopEnabledChange={(on) => active && changeLoopEnabled(active.id, on)}
+      fastModeAvailable={!!active && modelSupportsFastMode(active.model)}
+      fastMode={active?.fastMode === true}
+      onFastModeChange={(on) => active && changeFastMode(active.id, on)}
+      pendingQuestion={!!activePermission?.questions && questionMinimized}
+      onReopenQuestion={() => setQuestionMinimized(false)}
+      vigiaAlert={active ? vigiaAlerts[active.id] ?? null : null}
+      onDismissVigia={() => active && setVigiaAlerts((v) => withoutKey(v, active.id))}
+      onAnswerVigia={(question, answer) => {
+        if (!active) return
+        setVigiaAlerts((v) => withoutKey(v, active.id))
+        // Caminho normal de envio: com o agente ocupado a resposta entra
+        // na fila e é entregue na próxima chamada ao modelo — o turno em
+        // andamento NÃO é interrompido. A pergunta acompanha a resposta
+        // porque o agente nunca viu a dúvida (ela é do vigia, para o
+        // usuário), e sem ela a resposta chegaria solta.
+        void sendMessage(
+          `O vigia (observador em paralelo) me perguntou: "${question}"\n\nMinha resposta: ${answer}\n\nLeve isso em conta a partir de agora; se contradisser o que você assumiu, corrija.`
+        )
+      }}
+      backgroundTasks={active?.backgroundTasks ?? []}
+      queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}
+      crewWorking={crewWorking}
+      onOpenAgents={openAgentsPanel}
+    />
+  )
+
   return (
     <div className="app">
       {/* A casca já está montada, mas vazia: as conversas só existem depois que
@@ -2942,6 +3122,7 @@ export function App(): JSX.Element {
         onNewChat={newChat}
         onNewProject={newProject}
         onNewChatIn={newChatIn}
+        onNewPlanningIn={setPlanningDialogFor}
         onRename={renameConversation}
         onDelete={deleteConversation}
         onSelectResult={selectConversationAt}
@@ -3044,96 +3225,29 @@ export function App(): JSX.Element {
           ) : null}
         </header>
 
-        <div className="workspace" ref={workspaceRef}>
-          <ChatPanel
-            messages={messages}
-            hasActive={!!active}
-            busy={showBusy}
-            // Atrelado ao `busy`: uma entrada que sobrou (sessão morreu sem
-            // emitir o "voltou") não pode acusar travamento num chat parado.
-            stalledSince={showBusy && active ? stalledSince[active.id] : undefined}
-            windowsControlEnabled={windowsControlEnabled}
-            onDisableWindowsControl={() => void toggleWindowsControl(false)}
-            tokens={tokens}
-            usageMap={activeUsageMap}
-            chips={chips}
-            onRemoveChip={(i) => setChips((c) => c.filter((_, idx) => idx !== i))}
-            onSend={sendMessage}
-            onInterrupt={interrupt}
-            onRetry={(msgId) => active && void retryMessage(active.id, msgId)}
-            composerRef={composerRef}
-            projects={projects}
-            projectRoot={active?.cwd ?? null}
-            convId={active?.id ?? null}
-            scrollToId={scrollTarget && scrollTarget.convId === activeId ? scrollTarget.msgId : null}
-            scrollSeq={scrollTarget?.seq ?? 0}
-            draft={active?.draft ?? ''}
-            onDraftChange={onDraftChange}
-            projectMissing={projectMissing}
-            projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
-            onSelectProjectFolder={() => void selectProjectFolder()}
-            queued={activeQueue}
-            onDeleteQueued={deleteQueued}
-            recovery={active?.recovery}
-            onRetryRecovery={retryRecoveryNow}
-            onCancelRecovery={cancelRecovery}
-            runningSince={runningSince}
-            lastDurationMs={lastDurationMs}
-            onStart={connectStart}
-            voiceReady={voiceReady}
-            onNeedVoiceKey={needVoiceKey}
-            tts={tts}
-            models={modelsFor(models, active?.model)}
-            model={active?.model ?? MODELS[0].id}
-            // O seletor mostra a escolha (o sentinel `auto` incluso); a barra de
-            // contexto precisa do modelo concreto do turno — o mesmo que o
-            // snapshot do celular já usa logo acima.
-            runningModel={active ? runningModel(active) : MODELS[0].id}
-            modelLocked={!active}
-            onModelChange={(m) => {
-              if (!active) return
-              // "Automático" sem TypeSafe configurado não troca de modelo — pede a
-              // key nas Configurações e mantém o que já estava selecionado.
-              if (isAutoModel(m) && !typesafeReady) {
-                needTypesafeKey()
-                return
-              }
-              changeModel(active.id, m)
-            }}
-            onModelLockedClick={() => notify('aviso', 'Selecione uma conversa para trocar o modelo.')}
-            effortLevels={effortLevelsFor(active?.model)}
-            effort={active?.effort ?? DEFAULT_EFFORT}
-            effortLocked={!active}
-            onEffortChange={(e) => active && changeEffort(active.id, e)}
-            economyMode={active?.economyMode === true}
-            onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
-            loopEnabled={active?.loopEnabled === true}
-            loopLocked={active?.economyMode === true}
-            onLoopEnabledChange={(on) => active && changeLoopEnabled(active.id, on)}
-            fastModeAvailable={!!active && modelSupportsFastMode(active.model)}
-            fastMode={active?.fastMode === true}
-            onFastModeChange={(on) => active && changeFastMode(active.id, on)}
-            pendingQuestion={!!activePermission?.questions && questionMinimized}
-            onReopenQuestion={() => setQuestionMinimized(false)}
-            vigiaAlert={active ? vigiaAlerts[active.id] ?? null : null}
-            onDismissVigia={() => active && setVigiaAlerts((v) => withoutKey(v, active.id))}
-            onAnswerVigia={(question, answer) => {
-              if (!active) return
-              setVigiaAlerts((v) => withoutKey(v, active.id))
-              // Caminho normal de envio: com o agente ocupado a resposta entra
-              // na fila e é entregue na próxima chamada ao modelo — o turno em
-              // andamento NÃO é interrompido. A pergunta acompanha a resposta
-              // porque o agente nunca viu a dúvida (ela é do vigia, para o
-              // usuário), e sem ela a resposta chegaria solta.
-              void sendMessage(
-                `O vigia (observador em paralelo) me perguntou: "${question}"\n\nMinha resposta: ${answer}\n\nLeve isso em conta a partir de agora; se contradisser o que você assumiu, corrija.`
-              )
-            }}
-            backgroundTasks={active?.backgroundTasks ?? []}
-            queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}
-            crewWorking={crewWorking}
-            onOpenAgents={openAgentsPanel}
+        {activePlanning ? (
+          <PlanningWorkspace
+            projectCwd={activePlanning.cwd}
+            slug={activePlanning.planningSlug}
+            chat={chatPanel}
+            // O modelo que o main anunciou (evento `system` da sessão); antes de
+            // a sessão subir o da conversa é só placeholder.
+            managerModel={activePlanning.sdkSessionId ? runningModel(activePlanning) : null}
+            headerActions={
+              <HandoffButton
+                projectCwd={activePlanning.cwd}
+                slug={activePlanning.planningSlug}
+                managerBusy={busyIds.has(activePlanning.id)}
+                onAskManager={(text) => askPlanningManager(activePlanning.id, text)}
+                onSend={(prompts, titulo) =>
+                  startHandoff(activePlanning.cwd, activePlanning.planningSlug, titulo, prompts)
+                }
+              />
+            }
           />
+        ) : (
+        <div className="workspace" ref={workspaceRef}>
+          {chatPanel}
           {/* O divisor vale para o painel da direita inteiro (navegador ou Quadro):
               sem ele, o painel ficava preso na largura padrão. */}
           {!browserMinimized && (
@@ -3218,7 +3332,17 @@ export function App(): JSX.Element {
             </div>
           )}
         </div>
+        )}
       </div>
+
+      {planningDialogFor && (
+        <NewPlanningDialog
+          projectCwd={planningDialogFor}
+          projectName={basename(planningDialogFor)}
+          onOpen={(slug, titulo) => openPlanningConversation(planningDialogFor, slug, titulo)}
+          onClose={() => setPlanningDialogFor(null)}
+        />
+      )}
 
       {activePermission &&
         (activePermission.questions ? (

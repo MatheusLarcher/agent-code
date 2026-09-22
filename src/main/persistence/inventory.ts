@@ -61,9 +61,12 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.board.requirePlan',
       'config.board.po.enabled',
       'config.board.po.model',
+      'config.planning.model',
+      'config.planning.effort',
       'config.typesafe.enabled',
       'config.typesafe.apiKey',
-      'config.typesafe.minConfidence'
+      'config.typesafe.minConfidence',
+      'config.typesafe.allowedAutoModels'
     ]
   },
   {

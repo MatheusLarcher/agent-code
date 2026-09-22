@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup, act, configure } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, act, configure, within } from '@testing-library/react'
 import { UiProvider } from './ui/UiProvider'
 import { App, autoPromptFor, expireResetUsage, runningModel } from './App'
 import type { AgentEventMsg, ChatEvent, PoProviderDiagnosticMsg } from '@shared/ipc'
 import type { TodoItem } from './types'
+import { makePlan } from './planning/planningTestUtils'
 
 // This file mounts the full app dozens of times. Under the complete parallel
 // suite, jsdom can spend over 1s transforming/settling sibling files even though
@@ -2199,5 +2200,298 @@ describe('autoPromptFor / runningModel', () => {
     expect(runningModel({ model: 'auto', autoModel: 'claude-sonnet-5' })).toBe('claude-sonnet-5')
     expect(runningModel({ model: 'auto' })).toBe('auto')
     expect(runningModel({ model: 'claude-opus-5', autoModel: 'claude-fable-5-1' })).toBe('claude-opus-5')
+  })
+})
+
+describe('App — conversa de planejamento', () => {
+  const planConv = {
+    id: 'p1',
+    title: 'Planejamento: Checkout',
+    cwd: '/proj',
+    model: 'claude-sonnet-5',
+    effort: 'medium',
+    mode: 'planning',
+    planningSlug: 'checkout',
+    sdkSessionId: null,
+    messages: [],
+    tokens: { context: 0, output: 0, cost: 0 },
+    createdAt: 1,
+    updatedAt: 3
+  }
+
+  /** Semeia a conversa de planejamento ao lado da normal (c1) e escolhe a ativa. */
+  function seedPlanning(activeId = 'p1'): void {
+    const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as unknown[]
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([...list, planConv]))
+    localStorage.setItem('agentcode.ui.v1', JSON.stringify({ collapsed: false, activeId, browserMinimized: false }))
+  }
+
+  /** O lado planning:* do window.api. Plano vazio: a tela abre sem o canvas. */
+  function addPlanningApi(): void {
+    const blank = (slug: string) =>
+      makePlan({ slug, roteiro: { titulo: 'Checkout com Pix', etapas: [] }, cards: [] })
+    Object.assign(api, {
+      planningOpen: vi.fn(async (req: { slug: string }) => ({ ok: true, plan: blank(req.slug) })),
+      planningClose: vi.fn(async () => ({ ok: true })),
+      onPlanningChanged: vi.fn(() => () => {}),
+      planningList: vi.fn(async () => ({ ok: true, slugs: ['checkout'] })),
+      planningCreate: vi.fn(async (req: { slug: string }) => ({ ok: true, plan: blank(req.slug) }))
+    })
+  }
+
+  it('abre a Tela de Planejamento no lugar do workspace, com o chat e sem seletor de modelo', async () => {
+    seedPlanning()
+    addPlanningApi()
+    const { container } = render(<UiProvider><App /></UiProvider>)
+
+    expect(await screen.findByRole('heading', { name: 'Checkout com Pix' })).toBeTruthy()
+    expect(api.planningOpen).toHaveBeenCalledWith({ projectCwd: '/proj', slug: 'checkout' })
+    // O MESMO ChatPanel, agora como coluna de chat da tela.
+    expect(container.querySelector('.planning-workspace .pl-chat .chat-panel')).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
+    expect(container.querySelector('select.model-select')).toBeNull()
+    // Nada do workspace normal: nem divisor, nem painel/rail da direita.
+    expect(container.querySelector('.splitter')).toBeNull()
+    expect(container.querySelector('.right-pane')).toBeNull()
+    expect(container.querySelector('.right-rail')).toBeNull()
+    expect(screen.getByTestId('pl-manager-model').textContent).toBe('definido ao iniciar')
+  })
+
+  it('sobe como Agent Manager com a 1ª mensagem como autoPrompt; a 2ª não revalida', async () => {
+    seedPlanning()
+    addPlanningApi()
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findByRole('heading', { name: 'Checkout com Pix' })
+
+    await send('quero planejar o checkout')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    const opts = api.startAgent.mock.calls[0][0] as {
+      convId: string
+      model: string
+      planning?: { slug: string }
+      autoPrompt?: { message: string }
+    }
+    expect(opts).toMatchObject({ convId: 'p1', cwd: '/proj', planning: { slug: 'checkout' } })
+    expect(opts.autoPrompt?.message).toBe('quero planejar o checkout')
+    expect(opts.model).not.toBe('auto')
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    // O main anuncia o modelo real da sessão: é ele que o cabeçalho mostra.
+    await emit({ kind: 'system', sessionId: 's1', model: 'claude-fable-5-1', cwd: '/proj', tools: [] }, 'p1')
+    expect(screen.getByTestId('pl-manager-model').textContent).toBe('Fable 5.1')
+    await emit(result, 'p1')
+
+    await send('agora a etapa de pagamento')
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    // Sem revalidação por mensagem: a sessão do Manager é a mesma.
+    expect(api.startAgent).toHaveBeenCalledTimes(1)
+  })
+
+  it('regressão: a conversa normal continua com o ChatPanel + painel da direita e sem `planning`', async () => {
+    seedPlanning('c1')
+    addPlanningApi()
+    const { container } = render(<UiProvider><App /></UiProvider>)
+
+    await send('oi')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    expect(api.startAgent.mock.calls[0][0]).not.toHaveProperty('planning')
+    expect(api.startAgent.mock.calls[0][0]).not.toHaveProperty('handoff')
+    expect(container.querySelector('.workspace > .chat-panel')).toBeTruthy()
+    expect(container.querySelector('.workspace > .right-pane')).toBeTruthy()
+    expect(container.querySelector('select.model-select')).toBeTruthy()
+    expect(container.querySelector('.planning-workspace')).toBeNull()
+    expect(api.planningOpen).not.toHaveBeenCalled()
+  })
+
+  it('"Novo planejamento" na barra lateral cria o plano e abre a conversa dele', async () => {
+    addPlanningApi()
+    render(<UiProvider><App /></UiProvider>)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Novo planejamento' }))
+    const dialog = await screen.findByRole('dialog')
+    await within(dialog).findByRole('button', { name: /checkout/ })
+    fireEvent.change(within(dialog).getByLabelText('Título'), { target: { value: 'Checkout' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Criar planejamento' }))
+
+    await waitFor(() =>
+      expect(api.planningCreate).toHaveBeenCalledWith({ projectCwd: '/proj', slug: 'checkout-2', titulo: 'Checkout' })
+    )
+    expect(await screen.findByRole('heading', { name: 'Checkout com Pix' })).toBeTruthy()
+    expect(api.planningOpen).toHaveBeenCalledWith({ projectCwd: '/proj', slug: 'checkout-2' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getAllByText('Planejamento: Checkout').length).toBeGreaterThan(0)
+  })
+
+  it('reabrir um plano que já tem conversa carregada volta para ela (sem duplicar)', async () => {
+    seedPlanning('c1')
+    addPlanningApi()
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findAllByText('Planejamento: Checkout')
+    const before = screen.getAllByText('Planejamento: Checkout').length
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Novo planejamento' }))
+    fireEvent.click(await within(await screen.findByRole('dialog')).findByRole('button', { name: /checkout/ }))
+
+    expect(await screen.findByRole('heading', { name: 'Checkout com Pix' })).toBeTruthy()
+    expect(api.planningCreate).not.toHaveBeenCalled()
+    expect(screen.getAllByText('Planejamento: Checkout')).toHaveLength(before)
+  })
+})
+
+describe('App — enviar para implementação (handoff)', () => {
+  const planConv = {
+    id: 'p1',
+    title: 'Planejamento: Checkout',
+    cwd: '/proj',
+    model: 'claude-sonnet-5',
+    effort: 'medium',
+    mode: 'planning',
+    planningSlug: 'checkout',
+    sdkSessionId: null,
+    messages: [],
+    tokens: { context: 0, output: 0, cost: 0 },
+    createdAt: 1,
+    updatedAt: 3
+  }
+  type Handoff = { name: string; createdAt: number; content: string }
+  const stored = (): Array<{ id: string; title?: string; handoffSlug?: string }> =>
+    JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+
+  /** planning:* com um _handoff/ em memória e o planning:changed controlável. */
+  function addPlanningApi(): { handoffs: Handoff[]; changed: () => Promise<void> } {
+    const handoffs: Handoff[] = []
+    const listeners = new Set<(m: { projectCwd: string; slug: string }) => void>()
+    const plan = makePlan({
+      slug: 'checkout',
+      roteiro: { titulo: 'Checkout com Pix', rev: 1, etapas: [{ id: 'pagamento', titulo: 'Pagamento', status: 'concluida' }] },
+      cards: [{ id: 'pix', tipo: 'requisito', titulo: 'Aceitar Pix', etapa: 'pagamento', links: [], rev: 1, corpo: '' }]
+    })
+    Object.assign(api, {
+      planningOpen: vi.fn(async () => ({ ok: true, plan })),
+      planningClose: vi.fn(async () => ({ ok: true })),
+      planningList: vi.fn(async () => ({ ok: true, slugs: ['checkout'] })),
+      planningListHandoffs: vi.fn(async () => ({ ok: true, handoffs: structuredClone(handoffs) })),
+      planningWriteHandoff: vi.fn(async (req: { conteudo: string }) => {
+        const name = `2026-09-22-${String(handoffs.length + 1).padStart(2, '0')}.md`
+        handoffs.push({ name, createdAt: Date.now(), content: req.conteudo })
+        return { ok: true, name }
+      }),
+      onPlanningChanged: vi.fn((cb: (m: { projectCwd: string; slug: string }) => void) => {
+        listeners.add(cb)
+        return () => void listeners.delete(cb)
+      })
+    })
+    const changed = async (): Promise<void> => {
+      await act(async () => {
+        for (const cb of [...listeners]) cb({ projectCwd: '/proj', slug: 'checkout' })
+      })
+    }
+    return { handoffs, changed }
+  }
+
+  function seed(extra: Record<string, unknown>[] = [planConv], activeId = 'p1'): void {
+    const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as unknown[]
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([...list, ...extra]))
+    localStorage.setItem('agentcode.ui.v1', JSON.stringify({ collapsed: false, activeId, browserMinimized: false }))
+  }
+
+  it('pede ao Manager pelo caminho normal, cria a conversa de implementação e envia o 1º prompt; o 2º vai para a fila', async () => {
+    seed()
+    const fs = addPlanningApi()
+    // Registra se a conversa nova já estava gravada quando o main recebeu o
+    // startAgent dela: o lease exige a linha da conversa no banco.
+    const savedAtStart = new Map<string, boolean>()
+    api.startAgent.mockImplementation((opts: { convId: string }) => {
+      savedAtStart.set(opts.convId, stored().some((c) => c.id === opts.convId))
+      return new Promise<{ ok: boolean }>((res) => resolveStart.push(res))
+    })
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findByRole('heading', { name: 'Checkout com Pix' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Enviar para implementação' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Pedir ao Agent Manager' }))
+
+    // O pedido vai para a conversa de planejamento (Agent Manager), pelo dispatch.
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    expect(api.startAgent.mock.calls[0][0]).toMatchObject({ convId: 'p1', planning: { slug: 'checkout' } })
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    expect(api.sendMessage.mock.calls[0][0]).toBe('p1')
+    expect(String(api.sendMessage.mock.calls[0][1])).toContain('mcp__planning__plan_handoff_write')
+
+    // O Manager grava dois prompts em _handoff/ e o turno dele termina.
+    fs.handoffs.push(
+      { name: '2026-09-22-01.md', createdAt: Date.now(), content: '# Parte 1\nbackend' },
+      { name: '2026-09-22-02.md', createdAt: Date.now(), content: '# Parte 2\ntela' }
+    )
+    await fs.changed()
+    await emit(result, 'p1')
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Revisar 2 prompts' }))
+    fireEvent.change(within(dialog).getByLabelText('Prompt 1'), { target: { value: '# Parte 1\nbackend, revisado' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Enviar para implementação' }))
+
+    // Conversa nova, no mesmo projeto, marcada como handoff — sem `planning`.
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
+    const opts = api.startAgent.mock.calls[1][0] as { convId: string; cwd: string; model: string }
+    expect(opts).toMatchObject({ cwd: '/proj', handoff: { slug: 'checkout' } })
+    expect(opts).not.toHaveProperty('planning')
+    expect(opts.convId).not.toBe('p1')
+    expect(opts.model).toBe('claude-opus-4-8') // o da conversa normal do projeto, não o do Manager
+    // Sem corrida com o render: a conversa já estava gravada quando a sessão subiu.
+    expect(savedAtStart.get(opts.convId)).toBe(true)
+    // O editado foi gravado como arquivo novo ANTES do envio.
+    expect(fs.handoffs.map((h) => h.content)).toEqual(['# Parte 1\nbackend', '# Parte 2\ntela', '# Parte 1\nbackend, revisado'])
+
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    expect(api.sendMessage.mock.calls[1].slice(0, 2)).toEqual([opts.convId, '# Parte 1\nbackend, revisado'])
+    expect(await screen.findByText('Plano enviado para implementação: 1º prompt enviado e 1 na fila da conversa nova.')).toBeTruthy()
+
+    // A conversa nova está ativa (a Tela de Planejamento saiu) e titulada.
+    expect(screen.queryByRole('heading', { name: 'Checkout com Pix' })).toBeNull()
+    expect(screen.getAllByText('Implementação: Checkout com Pix').length).toBeGreaterThan(0)
+    await waitFor(() =>
+      expect(stored().find((c) => c.id === opts.convId)).toMatchObject({
+        title: 'Implementação: Checkout com Pix',
+        handoffSlug: 'checkout'
+      })
+    )
+
+    // O 2º prompt só sai quando o 1º turno termina (fila da conversa, na ordem).
+    expect(api.sendMessage).toHaveBeenCalledTimes(2)
+    await emit(result, opts.convId)
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
+    expect(api.sendMessage.mock.calls[2].slice(0, 2)).toEqual([opts.convId, '# Parte 2\ntela'])
+  })
+
+  it('conversa criada mas o envio falhou: o diálogo fecha e não dá para criar uma segunda', async () => {
+    seed()
+    addPlanningApi()
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findByRole('heading', { name: 'Checkout com Pix' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Enviar para implementação' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Usar rascunho automático' }))
+    await within(dialog).findByLabelText('Prompt 1')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Enviar para implementação' }))
+
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect(false) // a sessão da conversa nova não sobe
+    expect(await screen.findByText(/"Implementação: Checkout com Pix" foi criada[\s\S]*"Tentar de novo"/)).toBeTruthy()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(stored().filter((c) => c.handoffSlug === 'checkout')).toHaveLength(1)
+  })
+
+  it('conversa de handoff reaberta sobe de novo com `handoff: { slug }`', async () => {
+    seed([{ ...planConv, id: 'h1', title: 'Implementação: Checkout', mode: undefined, planningSlug: undefined, handoffSlug: 'checkout' }], 'h1')
+    addPlanningApi()
+    render(<UiProvider><App /></UiProvider>)
+    await send('continua')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    const opts = api.startAgent.mock.calls[0][0]
+    expect(opts).toMatchObject({ convId: 'h1', handoff: { slug: 'checkout' } })
+    expect(opts).not.toHaveProperty('planning')
   })
 })

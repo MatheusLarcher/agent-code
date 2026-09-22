@@ -1,0 +1,492 @@
+/*
+ * Tela de Planejamento. Tudo escopado em .planning e montado sobre as
+ * variáveis do styles.css (--bg, --bg-2, --bg-3, --line, --text, --muted,
+ * --accent, --ok, --warn, --err, --font, --radius, --crew-*): o tema do app
+ * vale aqui também. Regras curtas numa linha só, para o arquivo caber no
+ * limite de 500 linhas do repo.
+ */
+
+.planning {
+  /* Cor por tipo de card — o canvas, o minimapa e o editor usam as mesmas. */
+  --pl-etapa: var(--crew-executor, #6f9bd1);
+  --pl-requisito: var(--crew-critico, #a98bd1);
+  --pl-decisao: var(--ok);
+  --pl-sugestao: var(--warn);
+  --pl-ambiguidade: var(--err);
+  --pl-nota: var(--crew-subagente, #8d8a86);
+  --pl-mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+.planning [data-tipo='etapa'] { --pl-tipo: var(--pl-etapa); }
+.planning [data-tipo='requisito'] { --pl-tipo: var(--pl-requisito); }
+.planning [data-tipo='decisao'] { --pl-tipo: var(--pl-decisao); }
+.planning [data-tipo='sugestao'] { --pl-tipo: var(--pl-sugestao); }
+.planning [data-tipo='ambiguidade'] { --pl-tipo: var(--pl-ambiguidade); }
+.planning [data-tipo='nota'] { --pl-tipo: var(--pl-nota); }
+
+/* ---- cabeçalho ---- */
+.pl-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 54px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.pl-head-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pl-eyebrow { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.pl-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pl-head-progress {
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pl-head-spacer { flex: 1; }
+.pl-head-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ---- aviso de cards inválidos ---- */
+.pl-invalid {
+  margin: 10px 16px 0;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 8%, var(--bg-2));
+  font-size: 12.5px;
+}
+.pl-invalid-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pl-invalid-head svg { color: var(--warn); }
+.pl-invalid-head span, .pl-invalid-why { color: var(--muted); }
+.pl-invalid ul { margin: 6px 0 0; padding-left: 20px; max-height: 96px; overflow: auto; }
+.pl-invalid li { margin: 2px 0; }
+.pl-invalid code {
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  font-family: var(--pl-mono);
+  font-size: 11.5px;
+}
+
+/* ---- corpo: roteiro | canvas | chat ---- */
+.pl-body { flex: 1; display: flex; min-height: 0; }
+.pl-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.pl-state.error strong { color: var(--err); font-weight: 600; }
+.pl-state-detail { max-width: 460px; font-size: 12px; }
+/* Largura vem do divisor (--pl-chat-w, lembrada); nunca < 320px nem > metade da área. */
+.pl-chat {
+  flex: 0 0 var(--pl-chat-w, 380px);
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  max-width: 50%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* ---- roteiro (checklist) ---- */
+.pl-progress {
+  flex: 0 0 clamp(184px, 17%, 236px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px 8px 14px 12px;
+  border-right: 1px solid var(--line);
+  background: var(--bg-2);
+  overflow: auto;
+}
+.pl-progress-head { display: flex; align-items: baseline; justify-content: space-between; padding: 0 6px 0 4px; }
+.pl-progress-title { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.pl-progress-count { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pl-progress-bar { height: 3px; margin: 8px 6px 10px 4px; border-radius: 2px; background: var(--bg-3); overflow: hidden; }
+.pl-progress-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--ok); transition: width 0.3s ease; }
+.pl-progress-empty { margin: 2px 6px 0 4px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.pl-progress-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.pl-step { display: flex; align-items: center; border-radius: 7px; }
+.pl-step:hover { background: var(--bg-3); }
+.pl-step-check {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.pl-step-check:hover { background: var(--line); }
+.pl-step.em_andamento .pl-step-check { color: var(--warn); }
+.pl-step.concluida .pl-step-check { color: var(--ok); }
+.pl-step-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 6px 5px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.pl-step-num { flex: 0 0 auto; min-width: 12px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pl-step-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pl-step.em_andamento .pl-step-title { font-weight: 600; }
+.pl-step.concluida .pl-step-title {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
+/* ---- área do canvas ---- */
+.pl-stage-area { position: relative; flex: 1; display: flex; min-width: 280px; min-height: 0; }
+.pl-canvas { flex: 1; min-width: 0; min-height: 0; container-type: inline-size; }
+/* Canvas estreito: some a dica e o minimapa, fica o essencial ('+ Card' e o zoom). */
+@container (max-width: 620px) {
+  .pl-hint { display: none; }
+}
+@container (max-width: 480px) {
+  .planning .react-flow__minimap { display: none; }
+}
+.pl-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background-image: radial-gradient(var(--line) 1.2px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+.pl-empty-card {
+  max-width: 380px;
+  padding: 22px 24px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  text-align: center;
+}
+.pl-empty-card h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.pl-empty-card p { margin: 0 0 14px; font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+
+/* React Flow com as cores do app (só variáveis; o layout interno dele fica intacto). */
+.planning .react-flow {
+  --xy-background-color: var(--bg);
+  --xy-background-pattern-dots-color: var(--line);
+  --xy-edge-stroke: var(--muted);
+  --xy-edge-stroke-width: 1.4;
+  --xy-edge-stroke-selected: var(--accent);
+  --xy-connectionline-stroke: var(--accent);
+  --xy-connectionline-stroke-width: 1.5;
+  --xy-node-border-radius: 10px;
+  --xy-node-boxshadow-hover: none;
+  --xy-node-boxshadow-selected: none;
+  --xy-handle-background-color: var(--bg-2);
+  --xy-handle-border-color: var(--muted);
+  --xy-selection-background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  --xy-selection-border: 1px dashed var(--accent);
+  --xy-minimap-background-color: var(--bg-2);
+  --xy-minimap-mask-background-color: rgba(0, 0, 0, 0.35);
+  --xy-minimap-mask-stroke-color: var(--line);
+  --xy-controls-button-background-color: var(--bg-2);
+  --xy-controls-button-background-color-hover: var(--bg-3);
+  --xy-controls-button-color: var(--text);
+  --xy-controls-button-color-hover: var(--text);
+  --xy-controls-button-border-color: var(--line);
+  --xy-controls-box-shadow: none;
+  --xy-attribution-background-color: transparent;
+  font-family: var(--font);
+}
+.planning .react-flow__controls,
+.planning .react-flow__minimap { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.planning .react-flow__attribution a { color: var(--muted); opacity: 0.6; }
+
+/* barra do canvas: '+ Card' e a dica de uso */
+.planning .pl-toolbar { display: flex; align-items: center; gap: 12px; margin: 12px; max-width: calc(100% - 24px); }
+.pl-add {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.pl-add:hover { border-color: var(--accent); color: var(--accent); }
+.pl-hint { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11.5px; color: var(--muted); opacity: 0.85; }
+
+/* arestas: sequência entre etapas tracejada; ligação entre cards discreta */
+.planning .react-flow__edge.pl-edge-seq .react-flow__edge-path { stroke: var(--muted); stroke-dasharray: 4 4; opacity: 0.7; }
+.planning .react-flow__edge.pl-edge-link .react-flow__edge-path { stroke: color-mix(in srgb, var(--muted) 70%, transparent); }
+.planning .react-flow__edge.pl-edge-link:hover .react-flow__edge-path,
+.planning .react-flow__edge.pl-edge-link.selected .react-flow__edge-path { stroke: var(--accent); stroke-width: 2; }
+
+/* ---- cabeçalho de coluna (etapa) ---- */
+.pl-stage {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 248px;
+  height: 56px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-3);
+  cursor: default;
+}
+.pl-stage.sem-etapa { border-style: dashed; background: transparent; }
+.pl-stage.em_andamento { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.pl-stage-num { flex: 0 0 auto; font-family: var(--pl-mono); font-size: 12px; color: var(--muted); }
+.pl-stage.em_andamento .pl-stage-num, .pl-stage.em_andamento .pl-stage-status { color: var(--warn); }
+.pl-stage.concluida .pl-stage-num, .pl-stage.concluida .pl-stage-status { color: var(--ok); }
+.pl-stage-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pl-stage-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-stage.sem-etapa .pl-stage-title { color: var(--muted); }
+.pl-stage-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.pl-stage-status { display: inline-flex; align-items: center; gap: 4px; }
+.planning .pl-handle-hidden { width: 1px; height: 1px; min-width: 0; min-height: 0; border: 0; opacity: 0; pointer-events: none; }
+
+/* ---- card ---- */
+.pl-card {
+  --pl-tipo: var(--pl-nota);
+  position: relative;
+  box-sizing: border-box;
+  width: 248px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+  box-shadow: inset 3px 0 0 var(--pl-tipo); /* a faixa do tipo, por dentro da borda arredondada */
+  color: var(--text);
+  cursor: grab;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.react-flow__node:hover .pl-card { border-color: color-mix(in srgb, var(--pl-tipo) 45%, var(--line)); }
+.pl-card.selected { border-color: var(--pl-tipo); background: color-mix(in srgb, var(--pl-tipo) 7%, var(--bg-2)); }
+.react-flow__node.dragging .pl-card { cursor: grabbing; }
+/* Teto de altura = CARD_H do layout.ts (140px com a borda); senão cards empilhados se sobrepõem. */
+.pl-card-inner { max-height: 138px; overflow: hidden; padding: 10px 12px 10px 15px; }
+.pl-card-top { display: flex; align-items: center; gap: 8px; height: 16px; margin-bottom: 6px; }
+.pl-card-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pl-tipo);
+}
+.pl-seal { margin-left: auto; padding: 0 7px; border: 1px solid; border-radius: 999px; font-size: 10.5px; line-height: 15px; }
+.pl-seal.aberta {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 50%, transparent);
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+.pl-seal.resolvida {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+.pl-card-source {
+  margin-left: auto;
+  max-width: 130px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--pl-sugestao);
+  text-decoration: none;
+  cursor: pointer;
+}
+.pl-card-source:hover { text-decoration: underline; }
+.pl-card-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.pl-card-body { margin-top: 4px; font-size: 12px; line-height: 16.5px; color: var(--muted); }
+.pl-card-body p { margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* alças de ligação: só aparecem quando interessam */
+.planning .pl-handle { width: 10px; height: 10px; border: 1.5px solid var(--muted); background: var(--bg-2); opacity: 0; transition: opacity 0.12s ease; }
+.planning .react-flow__node:hover .pl-handle,
+.planning .react-flow__node.selected .pl-handle,
+.planning .react-flow__handle.connectingfrom,
+.planning .react-flow__handle.connectingto { opacity: 1; }
+.planning .pl-handle:hover,
+.planning .react-flow__handle.connectingto { border-color: var(--accent); background: var(--accent); }
+
+/* ---- editor lateral ---- */
+.pl-editor {
+  --pl-tipo: var(--pl-nota);
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
+  width: min(400px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--pl-tipo);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  animation: pl-editor-in 0.16s ease-out;
+}
+@keyframes pl-editor-in {
+  from { opacity: 0; transform: translateX(10px); }
+}
+.pl-editor-form { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.pl-editor-head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 8px 16px; }
+.pl-editor-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.pl-editor-id { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: var(--pl-mono); font-size: 11px; color: var(--muted); }
+.pl-editor-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pl-editor-close:hover { background: var(--bg-3); color: var(--text); }
+.pl-editor-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  padding: 4px 16px 14px;
+  overflow: auto;
+}
+.pl-field { display: flex; flex-direction: column; gap: 6px; }
+.pl-field-grow { flex: 1; min-height: 220px; }
+.pl-field-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pl-field label,
+.pl-field-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.pl-input,
+.pl-select,
+.pl-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: none;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.pl-input:focus, .pl-select:focus, .pl-textarea:focus { border-color: var(--accent); }
+.pl-textarea { flex: 1; min-height: 180px; resize: vertical; font-family: var(--pl-mono); font-size: 12.5px; line-height: 1.55; }
+.pl-preview {
+  flex: 1;
+  min-height: 180px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow: auto;
+}
+.pl-preview-empty { margin: 0; color: var(--muted); font-style: italic; }
+.pl-types { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.pl-type {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background-color 0.12s ease;
+}
+.pl-type:hover { color: var(--text); border-color: color-mix(in srgb, var(--pl-tipo) 50%, var(--line)); }
+.pl-type.on { color: var(--pl-tipo); border-color: var(--pl-tipo); background: color-mix(in srgb, var(--pl-tipo) 10%, transparent); }
+.pl-seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.pl-seg button { padding: 5px 12px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.pl-seg button + button { border-left: 1px solid var(--line); }
+.pl-seg button.on { background: var(--bg-3); color: var(--text); }
+.pl-seg button.on.aberta { color: var(--err); }
+.pl-seg button.on.resolvida { color: var(--ok); }
+.pl-seg.small button { padding: 3px 10px; font-size: 11.5px; }
+.pl-editor-error { margin: 0; font-size: 12px; color: var(--err); }
+.pl-editor-foot { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 16px; border-top: 1px solid var(--line); }
+.pl-spacer { flex: 1; }
+.pl-kbd { font-size: 11px; color: var(--muted); opacity: 0.8; }
+.planning .btn.pl-danger { border-color: transparent; color: var(--err); }
+.planning .btn.pl-danger:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
+
+/* foco visível pelo teclado em tudo o que é clicável */
+.pl-step-check:focus-visible,
+.pl-step-name:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pl-type:focus-visible,
+.pl-seg button:focus-visible,
+.pl-add:focus-visible,
+.pl-editor-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-editor { animation: none; }
+  .pl-progress-bar > span, .pl-card, .pl-handle, .pl-add, .pl-type { transition: none; }
+}
