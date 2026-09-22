@@ -675,7 +675,24 @@ export class Po {
     } catch {
       // The observer cannot take down the observed turn or write a partial board.
     } finally {
-      if (!audited && taken) this.restoreDeferred(conv, phase, taken)
+      // O que volta para a fila não pode ser só `taken`: ele é o acumulado de
+      // ANTES desta análise começar, mas o `turn` que a disparou (o pedido e
+      // as ações que a fizeram rodar agora, fora do cooldown) também nunca
+      // passou pelo PO se ela não chegar ao fim. Antes desta correção, uma
+      // análise que falhasse SEM acumulado prévio (`taken` null — o caso mais
+      // comum: a primeira tentativa de um turno isolado) não devolvia nada
+      // para a fila, e a evidência daquele turno — inclusive a tarefa que
+      // acabou de terminar — desaparecia para sempre, sem outra chance de
+      // auditoria. Juntar os dois aqui, na ordem cronológica certa (o que já
+      // estava esperando primeiro, o turno de agora depois), é o que faz
+      // `restoreDeferred` (que só soma ao que se acumulou DURANTE a análise)
+      // devolver o turno inteiro, não só a metade que já estava na fila.
+      if (!audited) {
+        this.restoreDeferred(conv, phase, {
+          texts: [...(taken?.texts ?? []), turn.userText],
+          calls: [...(taken?.calls ?? []), ...turn.calls]
+        })
+      }
     }
   }
 }

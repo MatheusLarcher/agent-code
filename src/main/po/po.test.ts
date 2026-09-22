@@ -633,6 +633,54 @@ describe('Po — o quadro como fonte, e o silêncio como falha', () => {
     await expect(po.settled('conv-1')).resolves.toBeUndefined()
   })
 
+  it('uma análise que falha SEM acumulado prévio ainda assim devolve o próprio turno para a fila — a tarefa que ele terminou não pode sumir', async () => {
+    // O bug real: a auditoria de fechamento do PRIMEIRO turno (sem nada
+    // pulado por cooldown antes dele — `taken` é `null`) falha uma vez
+    // (Claude indisponível, rede caiu). Antes da correção, `restoreDeferred`
+    // só era chamado quando havia acumulado prévio (`!audited && taken`), e
+    // sem ele a evidência do PRÓPRIO turno que disparou a análise — a ação
+    // que provava que a tarefa tinha terminado — desaparecia para sempre,
+    // mesmo a conversa continuando. É exatamente "várias tarefas finalizadas
+    // ao longo da conversa e o PO nunca corrigiu": basta UMA falha transitória
+    // no meio para apagar a prova daquele turno sem chance de auditoria futura.
+    const board = fakeBoard([card({ sourceStatus: 'in_progress' })])
+    let closeAttempts = 0
+    const ask = vi.fn(async (prompt: string) => {
+      if (!isClose(prompt)) return 'OK'
+      closeAttempts += 1
+      if (closeAttempts === 1) throw new Error('Claude indisponível')
+      return 'CONCLUIR bi-1 | o arquivo foi escrito e o teste passou'
+    })
+    let now = 1_000_000
+    const po = new Po({ config: () => config(), board, ask, now: () => now })
+
+    // Turno 1: termina a tarefa de fato, mas a auditoria de fechamento falha.
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela do quadro')
+    po.observe('conv-1', toolUse('Edit', { file_path: 'src/quadro.ts' }))
+    po.observe('conv-1', result)
+    await flush()
+    expect(closeAttempts).toBe(1)
+    expect(board.applyPo).not.toHaveBeenCalled()
+
+    // Turno 2, fora do cooldown: nenhuma ação nova prova nada por si só, mas a
+    // auditoria tem que carregar a evidência do turno 1 que a falha anterior
+    // não descartou.
+    now += 120_000
+    po.noteUserMessage('conv-1', 'C:/p', 'confirma que terminou')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(closeAttempts).toBe(2)
+    const secondClosePrompt = ask.mock.calls.map((call) => String(call[0])).filter(isClose)[1] ?? ''
+    expect(secondClosePrompt).toContain('termina a tabela do quadro')
+    expect(secondClosePrompt).toContain('src/quadro.ts')
+    expect(board.applyPo).toHaveBeenCalledWith({
+      id: 'bi-1',
+      poStatus: 'completed',
+      poReason: 'o arquivo foi escrito e o teste passou'
+    })
+  })
+
   it('dispose esquece a conversa', async () => {
     const board = fakeBoard([card()])
     const ask = askPhases()
