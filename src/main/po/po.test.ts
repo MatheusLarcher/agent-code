@@ -106,6 +106,21 @@ async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+/** Um `scheduleFlush` injetado: captura o que o PO agendou em vez de esperar
+ *  de verdade, no mesmo espírito do `now` manual — o teste dispara o `fn()`
+ *  na hora que quiser, simulando "a janela do cooldown terminou". */
+function fakeScheduler() {
+  const scheduled: { delayMs: number; fn: () => void; cancelled: boolean }[] = []
+  const scheduleFlush = vi.fn((delayMs: number, fn: () => void) => {
+    const entry = { delayMs, fn, cancelled: false }
+    scheduled.push(entry)
+    return () => {
+      entry.cancelled = true
+    }
+  })
+  return { scheduleFlush, scheduled }
+}
+
 describe('Po — abertura (o pedido vira cartão antes do trabalho)', () => {
   it('abre o cartão do pedido mesmo com o quadro VAZIO — é o caso que o fechamento nunca cobriu', async () => {
     const board = fakeBoard([])
@@ -627,6 +642,85 @@ describe('Po — o quadro como fonte, e o silêncio como falha', () => {
     po.observe('conv-1', result)
     await flush()
     expect(prompts(ask, 'close')).toHaveLength(0)
+  })
+
+  it('o fechamento adiado pelo cooldown é julgado sozinho quando a janela termina, mesmo sem outro turno', async () => {
+    const board = fakeBoard([card({ sourceStatus: 'in_progress' })])
+    let closeCalls = 0
+    const ask = vi.fn(async (prompt: string) => {
+      if (!isClose(prompt)) return 'OK'
+      closeCalls += 1
+      // A PRIMEIRA auditoria (turno 1) ainda não tem evidência de conclusão;
+      // só a que julga o turno 2 (adiado pelo cooldown) tem.
+      return closeCalls === 1 ? 'OK' : 'CONCLUIR bi-1 | terminou'
+    })
+    let now = 1_000_000
+    const { scheduleFlush, scheduled } = fakeScheduler()
+    const po = new Po({ config: () => config(), board, ask, now: () => now, scheduleFlush })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela')
+    po.observe('conv-1', result)
+    await flush()
+    expect(closeCalls).toBe(1)
+
+    // Segundo turno cai no cooldown de 60s: a auditoria fica na fila, e o PO
+    // agenda o próprio flush para quando a janela acabar.
+    now += 5_000
+    po.noteUserMessage('conv-1', 'C:/p', 'mais uma coisa')
+    po.observe('conv-1', toolUse('Write', { file_path: 'a.txt' }))
+    po.observe('conv-1', result)
+    await flush()
+    expect(closeCalls).toBe(1)
+    // As duas fases (abertura e fechamento) caíram no cooldown deste turno,
+    // então as duas têm um flush agendado — dispara os dois, como o timer
+    // real dispararia cada um independente do outro.
+    const armed = scheduled.filter((entry) => !entry.cancelled)
+    expect(armed.length).toBe(2)
+
+    // Ninguém manda mais nada nesta conversa — mas a janela do cooldown passa,
+    // e o flush agendado (não um terceiro turno) dispara a auditoria sozinho.
+    now += 60_000
+    armed.forEach((entry) => entry.fn())
+    await flush()
+
+    expect(closeCalls).toBe(2)
+    expect(board.applyPo).toHaveBeenCalledWith({ id: 'bi-1', poStatus: 'completed', poReason: 'terminou' })
+  })
+
+  it('dispose audita de última vez o que ainda estava na fila, antes de descartar a conversa', async () => {
+    const board = fakeBoard([card({ sourceStatus: 'in_progress' })])
+    let closeCalls = 0
+    const ask = vi.fn(async (prompt: string) => {
+      if (!isClose(prompt)) return 'OK'
+      closeCalls += 1
+      return closeCalls === 1 ? 'OK' : 'CONCLUIR bi-1 | terminou'
+    })
+    let now = 1_000_000
+    const { scheduleFlush, scheduled } = fakeScheduler()
+    const po = new Po({ config: () => config(), board, ask, now: () => now, scheduleFlush })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela')
+    po.observe('conv-1', result)
+    await flush()
+    expect(closeCalls).toBe(1)
+
+    now += 5_000
+    po.noteUserMessage('conv-1', 'C:/p', 'mais uma coisa')
+    po.observe('conv-1', toolUse('Write', { file_path: 'a.txt' }))
+    po.observe('conv-1', result)
+    await flush()
+    expect(closeCalls).toBe(1)
+
+    // A conversa é descartada (usuário fechou/excluiu) antes do cooldown
+    // acabar e sem mandar outra mensagem — a fila não pode ficar presa para
+    // sempre esperando um turno que nunca mais chega.
+    po.dispose('conv-1')
+    await flush()
+
+    expect(closeCalls).toBe(2)
+    expect(board.applyPo).toHaveBeenCalledWith({ id: 'bi-1', poStatus: 'completed', poReason: 'terminou' })
+    // O flush que tinha sido agendado não fica esperando à toa depois disto.
+    expect(scheduled.every((entry) => entry.cancelled)).toBe(true)
   })
 })
 

@@ -79,6 +79,13 @@ export interface PoDeps {
   /** Vincula (upsert) uma tarefa do registro a um cartão do quadro. Mesmo
    *  contrato de tolerância a falha das outras pontes com o registro. */
   linkTaskToBoardItem?(taskId: string, boardItemId: string): Promise<void>
+  /**
+   * Agenda `fn` para depois de `delayMs` e devolve um cancelador. Produção usa
+   * `setTimeout`/`clearTimeout` reais (sem segurar o processo vivo — `unref`);
+   * testes injetam a própria implementação para disparar o flush do cooldown
+   * sob controle, sem esperar de verdade, no mesmo espírito de `now`.
+   */
+  scheduleFlush?(delayMs: number, fn: () => void): () => void
 }
 
 /** Uma tarefa do registro, reduzida ao que a heurística de vínculo precisa. */
@@ -108,6 +115,22 @@ interface ConvState {
    *  audita a evidência da SUA fila, nunca a da outra. Um pedido que nunca
    *  passou pelo PO é exatamente o buraco que este recurso existe para fechar. */
   deferred: Record<PoPhase, PoDeferred | null>
+  /** Cancelador do flush agendado para quando o cooldown desta fase terminar
+   *  — null quando não há nada agendado. Existe para o acumulado não ficar
+   *  preso para sempre esperando um próximo turno que pode nunca chegar (o
+   *  turno que terminou a conversa, por exemplo). Um só por fase: o turno que
+   *  chega ENQUANTO o flush está agendado só se soma à mesma fila, não precisa
+   *  de outro temporizador. */
+  flushCancel: Record<PoPhase, (() => void) | null>
+}
+
+/** `PoDeps.scheduleFlush` padrão: `setTimeout`/`clearTimeout` reais, sem
+ *  segurar o processo vivo (`unref`) — um flush pendente não pode ser o que
+ *  impede o app de fechar. */
+function defaultScheduleFlush(delayMs: number, fn: () => void): () => void {
+  const timer = setTimeout(fn, delayMs)
+  timer.unref?.()
+  return () => clearTimeout(timer)
 }
 
 /** Evidence captured synchronously with a result, before board ingestion yields. */
@@ -183,8 +206,51 @@ export class Po {
   }
 
   dispose(convId: string): void {
+    const conv = this.state.get(convId)
+    if (conv) {
+      for (const phase of ['open', 'close'] as const) {
+        conv.flushCancel[phase]?.()
+        conv.flushCancel[phase] = null
+        // Última chance: a conversa está indo embora, e não existe "próximo
+        // turno" nenhum depois disto para carregar o que ficou na fila — ou
+        // esta evidência é julgada agora, ou some para sempre. `force`: o
+        // cooldown pode nem ter terminado ainda (dispose pode acontecer a
+        // qualquer momento), e reavaliá-lo aqui só adiaria de novo o que já
+        // não tem mais para onde ser adiado.
+        if (conv.deferred[phase]) this.start(convId, phase, this.emptyTurn(conv), true)
+      }
+    }
     this.state.delete(convId)
     this.inFlight.delete(convId)
+  }
+
+  /** Um turno "vazio": só carrega o acumulado da fila, sem pedido novo nenhum
+   *  próprio. Usado pelo flush automático e pelo flush de última chance do
+   *  `dispose`, onde não existe um turno real disparando a análise. */
+  private emptyTurn(conv: ConvState): PoTurnSnapshot {
+    return Object.freeze({ userText: '', cwd: conv.cwd, calls: Object.freeze([] as PoCall[]) })
+  }
+
+  /** Agenda (ou reaproveita) o flush desta fase para quando o cooldown que
+   *  acabou de adiá-la terminar — sem isso, o acumulado só é julgado se um
+   *  PRÓXIMO turno chegar. Uma conversa que termina sem mais mensagens (o
+   *  caso comum: o usuário viu o trabalho pronto e foi embora) nunca teria
+   *  esse próximo turno, e a evidência ficava presa na fila para sempre —
+   *  inclusive some no restart do app, porque a fila só vive em memória. */
+  private armFlush(convId: string, phase: PoPhase, conv: ConvState, now: number): void {
+    if (conv.flushCancel[phase]) return
+    const delay = Math.max(0, PO_COOLDOWN_MS - (now - conv.lastRunAt[phase]))
+    const schedule = this.deps.scheduleFlush ?? defaultScheduleFlush
+    conv.flushCancel[phase] = schedule(delay, () => {
+      conv.flushCancel[phase] = null
+      // Um turno real pode ter chegado nesse meio-tempo e já drenado a fila
+      // (ou disparado ela por conta própria) — só dispara se sobrou algo.
+      // `force`: este flush É a resposta ao cooldown que adiou a fase: rodar
+      // `run` sem ele reavaliaria o mesmo cooldown (com o relógio de agora) e
+      // poderia adiar de novo — inclusive na hora, se `dispose` disparar isto
+      // antes da janela realmente terminar.
+      if (conv.deferred[phase]) this.start(convId, phase, this.emptyTurn(conv), true)
+    })
   }
 
   private conv(convId: string): ConvState {
@@ -196,16 +262,19 @@ export class Po {
         calls: [],
         fired: false,
         lastRunAt: { open: 0, close: 0 },
-        deferred: { open: null, close: null }
+        deferred: { open: null, close: null },
+        flushCancel: { open: null, close: null }
       }
       this.state.set(convId, conv)
     }
     return conv
   }
 
-  /** Dispara uma análise e a registra como em voo até o fim das escritas. */
-  private start(convId: string, phase: PoPhase, turn: PoTurnSnapshot): void {
-    const work = this.run(convId, phase, turn)
+  /** Dispara uma análise e a registra como em voo até o fim das escritas.
+   *  `force` pula o cooldown — só usado pelo próprio flush do cooldown
+   *  (automático ou de última chance no `dispose`), nunca por um turno real. */
+  private start(convId: string, phase: PoPhase, turn: PoTurnSnapshot, force = false): void {
+    const work = this.run(convId, phase, turn, force)
     const inFlight = this.inFlight.get(convId) ?? new Set<Promise<void>>()
     this.inFlight.set(convId, inFlight)
     inFlight.add(work)
@@ -455,7 +524,7 @@ export class Po {
     })
   }
 
-  private async run(convId: string, phase: PoPhase, turn: PoTurnSnapshot): Promise<void> {
+  private async run(convId: string, phase: PoPhase, turn: PoTurnSnapshot, force = false): Promise<void> {
     const conv = this.conv(convId)
 
     // This is the logical-request snapshot. Do not reread config between
@@ -463,7 +532,7 @@ export class Po {
     const cfg = this.deps.config()
     if (!cfg.po.enabled) return
     const now = this.deps.now?.() ?? Date.now()
-    if (now - conv.lastRunAt[phase] < PO_COOLDOWN_MS) {
+    if (!force && now - conv.lastRunAt[phase] < PO_COOLDOWN_MS) {
       // Turno pulado não é turno perdido: o pedido e as ações esperam a
       // PRÓXIMA análise DESTA FASE. Sem isso, um pedido que caísse no cooldown
       // da abertura (ex.: mensagens em sequência rápida) sumia sem nunca mover
@@ -471,9 +540,14 @@ export class Po {
       // abertura e o fechamento rodam em cadências diferentes; se dividissem
       // uma fila só, quem rodasse primeiro esvaziaria o que era da outra.
       this.defer(conv, phase, turn)
+      this.armFlush(convId, phase, conv, now)
       return
     }
     conv.lastRunAt[phase] = now
+    // Esta análise já vai drenar a fila (real ou vazia) — um flush agendado
+    // para o mesmo motivo não tem mais o que fazer.
+    conv.flushCancel[phase]?.()
+    conv.flushCancel[phase] = null
 
     // O acumulado sai da fila para entrar nesta análise, mas continua sendo
     // dela só enquanto ela andar: se não chegar ao fim, volta para a fila.
