@@ -131,10 +131,32 @@ export function writeDbAtomically(
   let damaged = quarantineFirst
   try {
     if (seed && existsSync(dest)) {
-      // Probe the copy: a damaged source must not become the new file.
+      // A cloud-sync client (OneDrive) can hold `dest` locked, or mid-download
+      // as a placeholder, for a moment — that's not corruption. Retry the copy
+      // itself before giving up, same as `replaceFile` does for the rename
+      // below. Only an open/read failure on a *successfully copied* file means
+      // the source bytes are actually damaged.
+      let copied = false
+      let lastCopyError: unknown
+      for (let attempt = 0; attempt < 20 && !copied; attempt += 1) {
+        try {
+          copyFileSync(dest, tmp)
+          copied = true
+        } catch (error) {
+          lastCopyError = error
+          const code = (error as NodeJS.ErrnoException).code ?? ''
+          if (!RETRYABLE_REPLACE_ERRORS.has(code) || attempt === 19) break
+          waitForFileUnlock(attempt)
+        }
+      }
+      if (!copied) {
+        // Couldn't even read `dest` after retrying — a transient lock/IO
+        // error, not proof of corruption. Surface it instead of silently
+        // quarantining a healthy database and losing its contents.
+        throw lastCopyError
+      }
       let probe: DatabaseSync | null = null
       try {
-        copyFileSync(dest, tmp)
         probe = openPrepared(tmp)
       } catch {
         damaged = true
