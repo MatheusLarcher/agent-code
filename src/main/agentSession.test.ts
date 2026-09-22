@@ -39,6 +39,16 @@ vi.mock('./codexProxy', () => ({
 vi.mock('./store', () => ({
   getCacheInfo: () => ({ ...cacheState })
 }))
+const projectsState = vi.hoisted(() => ({
+  list: [] as { cwd: string; total: number; updatedAt: string }[]
+}))
+vi.mock('./persistence/lifecycle', () => ({
+  storageLifecycle: {
+    repository: () => ({
+      countConversationsByProject: async () => projectsState.list
+    })
+  }
+}))
 const projectOutlineMock = vi.hoisted(() => vi.fn(async () => '[PROJECT_DOCS_CONTEXT]\ndocs/\n[/PROJECT_DOCS_CONTEXT]'))
 vi.mock('./projectOutline', () => ({ buildProjectOutline: projectOutlineMock }))
 
@@ -204,6 +214,7 @@ beforeEach(() => {
   typeSafeState.emVoo = null
   typeSafeService.probabilities = null
   forgetUsedMemories('c1')
+  projectsState.list = []
 })
 
 describe('AgentSession — fluxo de permissão', () => {
@@ -1957,6 +1968,52 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
       await expect(s.start()).resolves.not.toThrow()
       expect(appended()).not.toContain('# Senhas do cofre')
     })
+  })
+})
+
+describe('AgentSession — projetos conhecidos nesta máquina', () => {
+  it('injeta nome + caminho de cada projeto no primeiro envio, e não repete quando nada muda', async () => {
+    projectsState.list = [
+      { cwd: '/proj', total: 3, updatedAt: '2026-09-22T10:00:00.000Z' },
+      { cwd: '/outro/projeto-b', total: 1, updatedAt: '2026-09-22T09:00:00.000Z' }
+    ]
+    const { s } = makeSession()
+    await s.start()
+
+    await s.send('oi')
+    await s.send('de novo')
+
+    const first = String(pushedMessages(s).at(-2)?.message.content)
+    const second = String(pushedMessages(s).at(-1)?.message.content)
+    expect(first).toContain('[PROJECTS_ON_THIS_MACHINE]')
+    expect(first).toContain('proj — /proj')
+    expect(first).toContain('projeto-b — /outro/projeto-b')
+    expect(first).toContain('THIS machine')
+    expect(second).not.toContain('[PROJECTS_ON_THIS_MACHINE]')
+  })
+
+  it('reaparece quando um projeto novo entra na lista', async () => {
+    projectsState.list = [{ cwd: '/proj', total: 1, updatedAt: '2026-09-22T10:00:00.000Z' }]
+    const { s } = makeSession()
+    await s.start()
+    await s.send('primeiro')
+
+    projectsState.list = [
+      { cwd: '/proj', total: 1, updatedAt: '2026-09-22T10:00:00.000Z' },
+      { cwd: '/novo-projeto', total: 1, updatedAt: '2026-09-22T11:00:00.000Z' }
+    ]
+    await s.send('segundo')
+
+    expect(String(pushedMessages(s).at(-1)?.message.content)).toContain('novo-projeto — /novo-projeto')
+  })
+
+  it('lista vazia (sem conversas ainda) não injeta nada', async () => {
+    projectsState.list = []
+    const { s } = makeSession()
+    await s.start()
+    await s.send('oi')
+
+    expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('[PROJECTS_ON_THIS_MACHINE]')
   })
 })
 

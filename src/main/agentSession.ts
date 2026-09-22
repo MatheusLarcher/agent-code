@@ -66,7 +66,7 @@ import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import { buildProjectOutline } from './projectOutline'
 import { pathWithRtk } from './rtk'
 import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type {
   AskQuestion,
   AgentInterruptResult,
@@ -79,7 +79,8 @@ import type {
   StartAgentOptions,
   TokenUsage
 } from '../shared/ipc'
-import type { AgentInputQueueRepository, TokenUsageRepository } from './persistence/types'
+import { storageLifecycle } from './persistence/lifecycle'
+import type { AgentInputQueueRepository, ProjectConversationCount, TokenUsageRepository } from './persistence/types'
 
 export const OPENAI_MAX_TURNS = 64
 export const DEFAULT_LOOP_LIMIT = 100
@@ -640,6 +641,10 @@ export class AgentSession {
    *  separate so a transient reload failure is retried without duplicating the
    *  catalog update already delivered to the model. */
   private nativeSkillRegistryVersion = ''
+  /** Signature of the last projects-on-this-machine list delivered to the
+   *  model. Recomputed before every user dispatch; unchanged since last turn
+   *  means nothing is re-sent (same "only when it changes" rule as memory/skills). */
+  private projectsCatalogVersion = ''
   /** The catalog actually announced for `nativeSkillRegistryVersion` — the
    *  discovered snapshot minus whatever the SDK refused to load. */
   private nativeConfirmedSnapshot: SkillCatalogSnapshot | null = null
@@ -1235,6 +1240,7 @@ export class AgentSession {
     }
     const memoryCatalogUpdate = await this.refreshMemoriesIfChanged()
     const skillCatalogUpdate = await this.refreshSkillsIfChanged()
+    const projectsCatalogUpdate = await this.refreshProjectsIfChanged()
     // A real user dispatch starts a fresh loop budget. Dynamic wakeups are
     // injected by the CLI and do not pass through this method. Internal
     // recovery prompts must never start a fresh loop just because the toggle
@@ -1303,7 +1309,7 @@ export class AgentSession {
       })
     const economyReminder = this.opts.economyMode ? ECONOMY_TURN_REMINDER : ''
     const stamped = (body: string): string => composeUserPrompt(body, {
-      stamp, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, reminder: economyReminder
+      stamp, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, projects: projectsCatalogUpdate, reminder: economyReminder
     })
 
     // vision_fallback_router — the picked model can't see images (most Ollama
@@ -1738,6 +1744,41 @@ export class AgentSession {
 
     this.skillCatalogVersion = confirmed.version
     return renderSkillCatalogUpdate(confirmed)
+  }
+
+  /**
+   * The list of every project folder with at least one conversation on this
+   * machine (name + absolute path) — so the model knows these are real local
+   * projects, not remote/hypothetical ones, and can act on one named by the
+   * user without being told the path. Same "only when it changes" rule as
+   * memory/skills: recomputed before every dispatch, but only returned (and
+   * so only added to history) when the set of projects actually changed.
+   *
+   * Read failures (storage offline, still booting) degrade to no update —
+   * this is a convenience, not something worth blocking the turn over.
+   */
+  private async refreshProjectsIfChanged(): Promise<string> {
+    let projects: ProjectConversationCount[]
+    try {
+      projects = await storageLifecycle.repository().countConversationsByProject()
+    } catch {
+      return ''
+    }
+
+    const sorted = [...projects].sort((a, b) => a.cwd.localeCompare(b.cwd))
+    const version = sorted.map((p) => p.cwd).join('\u001f')
+    if (version === this.projectsCatalogVersion) return ''
+    this.projectsCatalogVersion = version
+
+    if (sorted.length === 0) return ''
+    const lines = sorted.map((p) => `- ${basename(p.cwd)} — ${p.cwd}`).join('\n')
+    return `[PROJECTS_ON_THIS_MACHINE]
+Every project folder Agent Code has a conversation with, on THIS machine — real local
+folders, not remote or hypothetical ones. The user may refer to one by name ("abre o
+outro projeto", "olha no <nome>") without giving the path.
+
+${lines}
+[/PROJECTS_ON_THIS_MACHINE]`
   }
 
   /**

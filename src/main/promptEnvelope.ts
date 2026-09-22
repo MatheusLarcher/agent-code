@@ -5,6 +5,9 @@ export interface PromptContext {
   /** Change-only catalog updates that are intentionally part of history. */
   memory: string
   skills: string
+  /** Change-only list of projects known on this machine — same "only when it
+   *  changes" rule as memory/skills, so it lands in history once, not every turn. */
+  projects: string
   reminder: string
 }
 
@@ -21,7 +24,9 @@ export interface RequestContext {
  * Agent SDK hooks instead (composeRequestContext).
  */
 export function composeUserPrompt(body: string, parts: PromptContext): string {
-  const context = [parts.stamp, parts.memory, parts.skills, parts.reminder].filter(Boolean).join('\n\n')
+  const context = [parts.stamp, parts.memory, parts.skills, parts.projects, parts.reminder]
+    .filter(Boolean)
+    .join('\n\n')
   const loopMatch = body.match(/^\s*\/loop(?:\s+|$)/iu)
   if (loopMatch) {
     const task = body.slice(loopMatch[0].length)
