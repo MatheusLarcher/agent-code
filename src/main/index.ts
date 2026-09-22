@@ -75,7 +75,7 @@ import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
 import { readProjectIcon } from './projectIcon'
 import { syncCacheSkills } from './skillManager'
-import { resolveAutoStart, type AutoStartDecision } from './typesafe'
+import { autoModelCandidates, resolveAutoStart, type AutoStartDecision } from './typesafe'
 import { typeSafeConfigured } from './typesafe/client'
 import type {
   AgentMessageKind,
@@ -1357,16 +1357,25 @@ export function registerIpc(): void {
     // `codexStatus()` e não `isCodexConnected()`: a versão assíncrona espera a
     // carga dos tokens em vez de ler "deslogado" de uma carga que ainda não
     // terminou — a primeira mensagem logo após abrir o app cairia nisso.
-    const models = (await codexStatus()).connected
+    const candidates = (await codexStatus()).connected
       ? [...CLAUDE_MODELS, ...OPENAI_MODELS].map((model) => model.id)
       : undefined
+    // O usuário pode restringir ainda mais essa lista nas configurações do
+    // TypeSafe (Geral → seção do Automático). Vazio = sem restrição — o
+    // filtro só entra quando há algo marcado, e nunca esvazia a lista por
+    // completo (um subconjunto vazio por engano não pode travar o envio).
+    const allowed = loadConfig().typesafe.allowedAutoModels
+    const models =
+      allowed.length > 0
+        ? (candidates ?? autoModelCandidates()).filter((model) => allowed.includes(model))
+        : candidates
     const decision = await resolveAutoStart(
       {
         autoPrompt: opts.autoPrompt,
         live: autoSessions.get(opts.convId),
         hasSession: sessions.has(opts.convId)
       },
-      models ? { models } : {}
+      models && models.length > 0 ? { models } : {}
     )
     // A escolha é anunciada em TODO turno, inclusive quando repete o par
     // anterior: o que o usuário precisa saber é COM QUE modelo a mensagem dele

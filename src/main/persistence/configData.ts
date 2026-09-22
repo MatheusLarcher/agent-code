@@ -36,7 +36,8 @@ const partialConfigSchema = z
         apiKey: z.string().optional(),
         // Fora de 0..1 o limiar não significa nada: ou cala o serviço para
         // sempre, ou deixa passar decisão que ele próprio diz ser um chute.
-        minConfidence: z.number().min(0).max(1).optional()
+        minConfidence: z.number().min(0).max(1).optional(),
+        allowedAutoModels: z.array(z.string().min(1)).optional()
       })
       .strict()
       .optional()

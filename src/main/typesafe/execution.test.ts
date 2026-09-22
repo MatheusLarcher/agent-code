@@ -7,7 +7,9 @@ import {
   clampEffortToModel,
   DEFAULT_EFFORT,
   EFFORT_LEVELS,
-  OPENAI_MODELS
+  MODEL_EFFORT,
+  OPENAI_MODELS,
+  type EffortLevel
 } from '../../shared/ipc'
 
 const askTypeSafe = vi.fn()
@@ -44,27 +46,30 @@ function answers(model: string, score: number): void {
   askTypeSafe.mockResolvedValue({ which_model: choiceAnswer(model), which_effort: scoreAnswer(score) })
 }
 
+/** Nenhum modelo real do catálogo atual tem teto de esforço abaixo de `max` —
+ *  este id sintético existe só para exercitar o recorte de `clampEffortToModel`
+ *  sem prender os testes a um modelo real que pode mudar de teto ou sair do
+ *  catálogo (era `claude-haiku-4-5`, removido). */
+const MODELO_TETO_HIGH = '__teste_teto_high__'
+
 beforeEach(() => {
   askTypeSafe.mockReset()
   minConfidence.value = 0.2
   answers('claude-sonnet-5', 1)
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  ;(MODEL_EFFORT as Record<string, EffortLevel[]>)[MODELO_TETO_HIGH] = ['low', 'medium', 'high']
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
+  delete (MODEL_EFFORT as Record<string, EffortLevel[]>)[MODELO_TETO_HIGH]
 })
 
 describe('candidatos', () => {
   it('oferece os modelos reais do seletor, e cada um com descrição', () => {
     const models = autoModelCandidates()
 
-    expect(models).toEqual([
-      'claude-opus-5',
-      'claude-sonnet-5',
-      'claude-sonnet-5',
-      'claude-fable-5-1'
-    ])
+    expect(models).toEqual(['claude-opus-5', 'claude-sonnet-5', 'claude-fable-5-1'])
     // Sem descrição o Jev escolheria pelo nome do modelo, não pelo trabalho pedido.
     for (const model of models) expect(AUTO_MODEL_DESCRIPTIONS[model]).toBeTruthy()
   })
@@ -163,11 +168,11 @@ describe('esforço a partir do score', () => {
 })
 
 describe('recorte do par modelo+esforço', () => {
-  it('Haiku para em `high`: `max` nunca chega ao provedor', async () => {
-    answers('claude-sonnet-5', 4)
+  it('um modelo com teto reduzido para em `high`: `max` nunca chega ao provedor', async () => {
+    answers(MODELO_TETO_HIGH, 4)
 
-    expect(await chooseAutoExecution({ message: 'traduz isto' })).toEqual({
-      model: 'claude-sonnet-5',
+    expect(await chooseAutoExecution({ message: 'traduz isto' }, { models: [MODELO_TETO_HIGH] })).toEqual({
+      model: MODELO_TETO_HIGH,
       effort: 'high',
       source: 'typesafe'
     })
@@ -183,9 +188,9 @@ describe('recorte do par modelo+esforço', () => {
   })
 
   it('clampEffortToModel desce para o teto do modelo, nunca sobe', () => {
-    expect(clampEffortToModel('claude-sonnet-5', 'max')).toBe('high')
-    expect(clampEffortToModel('claude-sonnet-5', 'xhigh')).toBe('high')
-    expect(clampEffortToModel('claude-sonnet-5', 'low')).toBe('low')
+    expect(clampEffortToModel(MODELO_TETO_HIGH, 'max')).toBe('high')
+    expect(clampEffortToModel(MODELO_TETO_HIGH, 'xhigh')).toBe('high')
+    expect(clampEffortToModel(MODELO_TETO_HIGH, 'low')).toBe('low')
     expect(clampEffortToModel('claude-opus-5', 'max')).toBe('max')
   })
 
@@ -284,10 +289,9 @@ describe('lista de candidatos restrita (o memorista)', () => {
   })
 
   it('um modelo fora da lista na resposta é resposta inválida, não escolha', async () => {
-    // Fable 5.1 é um modelo REAL — e mais caro que o topo da lista do
-    // memorista. Aceitá-lo poria o observador acima do teto que o usuário
-    // consegue escolher para ele à mão.
-    answers('claude-fable-5-1', 1)
+    // GPT é um modelo REAL, mas não está na lista do memorista — aceitá-lo
+    // furaria a restrição que a lista foi feita para impor.
+    answers('gpt-5.6-sol', 1)
 
     expect(await chooseAutoExecution({ message: 'oi' }, { models: memorista })).toMatchObject({
       model: AUTO_MODEL_FALLBACK.model
@@ -358,7 +362,7 @@ describe('abrir a sessão em Automático', () => {
     expect(askTypeSafe).toHaveBeenCalledTimes(1)
     expect(decision.execution).toEqual({ ...live, source: 'typesafe' })
     expect(decision.reuse).toBe(true)
-    expect(decision.note).toBe('Automático: Haiku 4.5, esforço baixo.')
+    expect(decision.note).toBe('Automático: Sonnet 5, esforço baixo.')
   })
 
   it('com turno e par diferente, a sessão viva não serve', async () => {
@@ -490,10 +494,13 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
       which_effort: scoreAnswer(4, 0.1)
     })
 
-    // Par vivo inválido (Haiku para em `high`): o recuo não pode reintroduzi-lo cru.
+    // Par vivo inválido (este modelo para em `high`): o recuo não pode reintroduzi-lo cru.
     expect(
-      await chooseAutoExecution({ message: 'oi' }, { live: { model: 'claude-sonnet-5', effort: 'max' } })
-    ).toEqual({ model: 'claude-sonnet-5', effort: 'high', source: 'typesafe' })
+      await chooseAutoExecution(
+        { message: 'oi' },
+        { live: { model: MODELO_TETO_HIGH, effort: 'max' }, models: [MODELO_TETO_HIGH, 'claude-opus-5'] }
+      )
+    ).toEqual({ model: MODELO_TETO_HIGH, effort: 'high', source: 'typesafe' })
   })
 
   it('`resolveAutoStart` repassa o par da conversa — não é opção só de quem chama direto', async () => {
@@ -532,8 +539,8 @@ describe('o par que sobrevive a um religar', () => {
   it('um par inválido guardado não passa adiante sem recorte', () => {
     // `autoSessions` guarda o que foi escolhido; se algum dia entrar ali um par
     // que o modelo não suporta, ele não pode voltar ao provedor como está.
-    expect(autoExecutionUnprompted({ model: 'claude-sonnet-5', effort: 'max' })).toEqual({
-      model: 'claude-sonnet-5',
+    expect(autoExecutionUnprompted({ model: MODELO_TETO_HIGH, effort: 'max' })).toEqual({
+      model: MODELO_TETO_HIGH,
       effort: 'high',
       source: 'unprompted'
     })

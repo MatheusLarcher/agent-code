@@ -1111,6 +1111,14 @@ export interface TypeSafeConfig {
    * incerta que muda o comportamento é pior que decisão nenhuma.
    */
   minConfidence: number
+  /**
+   * Modelos que o modo Automático pode escolher. Vazio = sem restrição (todos
+   * os candidatos que o seletor manual oferece — Claude sempre, GPT com login
+   * do ChatGPT no ar). Um subconjunto aqui restringe a lista ANTES da pergunta
+   * ao TypeSafe: menos opção não é o serviço escolhendo mal, é o usuário
+   * decidindo que um modelo caro nunca deve sair do automático sem ele saber.
+   */
+  allowedAutoModels: string[]
 }
 
 /** Piso padrão de confiança. Baixo de propósito, para o serviço quase nunca
@@ -1573,7 +1581,12 @@ export const DEFAULT_CONFIG: AppConfig = {
   board: { requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5' } },
   // Desligado por padrão, ao contrário dos observadores acima: depende de um
   // serviço externo e de uma chave que só o usuário tem.
-  typesafe: { enabled: false, apiKey: '', minConfidence: DEFAULT_TYPESAFE_MIN_CONFIDENCE }
+  typesafe: {
+    enabled: false,
+    apiKey: '',
+    minConfidence: DEFAULT_TYPESAFE_MIN_CONFIDENCE,
+    allowedAutoModels: []
+  }
 }
 
 /** Where per-user data lives: the SQLite db (config/token/conversations) + .md memories. */

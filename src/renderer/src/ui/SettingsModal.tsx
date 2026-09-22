@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  CLAUDE_MODELS,
   DEFAULT_CONFIG,
   LOCAL_SPEECH_MODELS,
+  OPENAI_MODELS,
   OPENAI_VOICES,
   VIGIA_MODELS,
   PO_MODELS,
@@ -16,6 +18,7 @@ import { MemoryDataSection } from './MemoryDataSection'
 import {
   IconBoard,
   IconDatabase,
+  IconChevronDown,
   IconEye,
   IconEyeOff,
   IconKey,
@@ -85,6 +88,10 @@ export function SettingsModal({
   const [showOpenAiKey, setShowOpenAiKey] = useState(false)
   const [showOllamaKey, setShowOllamaKey] = useState(false)
   const [showTypeSafeKey, setShowTypeSafeKey] = useState(false)
+  /** Oculto por padrão — a lista de modelos do Automático só aparece quando o
+   *  usuário pede para ver, para não empilhar checkboxes em cima do que já é
+   *  a seção mais carregada da aba Geral. */
+  const [showAutoModels, setShowAutoModels] = useState(false)
   /** A chave do TypeSafe já gravada. A aba Geral não tem botão Salvar: o campo
    *  persiste ao perder o foco, e isto evita reescrever o que não mudou (cada
    *  gravação passa por cifra + banco). */
@@ -180,6 +187,25 @@ export function SettingsModal({
     savedTypeSafeKey.current = apiKey
     setCfg((c) => ({ ...c, typesafe: { ...c.typesafe, apiKey } }))
     void window.api.setConfig({ typesafe: { ...cfg.typesafe, apiKey } })
+  }
+
+  /** Modelos que o Automático pode escolher. Lista completa do seletor manual:
+   *  Claude sempre, GPT também quando há login do ChatGPT — a mesma condição
+   *  usada em `autoStart` no main. */
+  const autoModelOptions = codex.connected ? [...CLAUDE_MODELS, ...OPENAI_MODELS] : CLAUDE_MODELS
+
+  /** Liga/desliga um modelo na lista permitida do Automático. Vazio continua
+   *  significando "sem restrição" — desmarcar todos não trava o modo
+   *  Automático, só devolve o comportamento padrão. */
+  const toggleAutoModel = (id: string): void => {
+    setCfg((c) => {
+      const current = c.typesafe.allowedAutoModels
+      const allowedAutoModels = current.includes(id)
+        ? current.filter((m) => m !== id)
+        : [...current, id]
+      void window.api.setConfig({ typesafe: { ...c.typesafe, allowedAutoModels } })
+      return { ...c, typesafe: { ...c.typesafe, allowedAutoModels } }
+    })
   }
 
   const connectCodex = async (): Promise<void> => {
@@ -578,6 +604,45 @@ export function SettingsModal({
                         segredos.
                       </span>
                     </label>
+                  )}
+                  {cfg.typesafe.enabled && (
+                    <div className="settings-field settings-auto-models">
+                      <button
+                        type="button"
+                        className="settings-auto-models-toggle"
+                        onClick={() => setShowAutoModels((v) => !v)}
+                        aria-expanded={showAutoModels}
+                      >
+                        <IconChevronDown
+                          size={14}
+                          className={`settings-chevron ${showAutoModels ? 'open' : ''}`}
+                        />
+                        <span>Modelos do modo Automático</span>
+                        <span className="settings-hint">
+                          {cfg.typesafe.allowedAutoModels.length === 0
+                            ? '(todos)'
+                            : `(${cfg.typesafe.allowedAutoModels.length} selecionado${cfg.typesafe.allowedAutoModels.length > 1 ? 's' : ''})`}
+                        </span>
+                      </button>
+                      {showAutoModels && (
+                        <div className="settings-auto-models-list">
+                          <span className="settings-hint">
+                            Sem nada marcado, o Automático pode escolher qualquer modelo da lista. Marque um ou
+                            mais para restringir a escolha a eles.
+                          </span>
+                          {autoModelOptions.map((m) => (
+                            <label key={m.id} className="settings-checkbox-row">
+                              <input
+                                type="checkbox"
+                                checked={cfg.typesafe.allowedAutoModels.includes(m.id)}
+                                onChange={() => toggleAutoModel(m.id)}
+                              />
+                              <span>{m.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </section>
               </>

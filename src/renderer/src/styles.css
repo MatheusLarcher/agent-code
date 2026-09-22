@@ -3948,6 +3948,46 @@ button svg {
   color: var(--muted);
   line-height: 1.45;
 }
+/* Lista de modelos do Automático — oculta por padrão atrás de um botão de
+   expandir, para não empilhar checkboxes em cima da seção do TypeSafe. */
+.settings-auto-models {
+  gap: 8px;
+}
+.settings-auto-models-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.settings-chevron {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.settings-chevron.open {
+  transform: rotate(180deg);
+}
+.settings-auto-models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
 /* Listas curtas dentro de uma seção (cofre de chaves, conflitos de memória).
    Rolam internamente: a lista pode crescer sem empurrar o resto da aba. */
 .settings-list {

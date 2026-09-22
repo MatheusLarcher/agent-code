@@ -2074,7 +2074,7 @@ describe('App — modo Automático', () => {
       text: 'Automático: Fable 5.1, esforço médio.'
     })
 
-    expect(screen.getByText('Automático: Haiku 4.5, esforço médio.').getAttribute('role')).toBe('status')
+    expect(screen.getByText('Automático: Fable 5.1, esforço médio.').getAttribute('role')).toBe('status')
     // Se o evento fixasse `model`, a conversa sairia do Automático e o turno
     // seguinte nunca mais perguntaria.
     expect(selectModel(container).value).toBe('auto')
