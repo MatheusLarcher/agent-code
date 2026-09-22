@@ -2124,13 +2124,18 @@ describe('App — modo Automático', () => {
   })
 })
 
-describe('App — aba Tokens do painel da direita', () => {
-  it('mostra o botão Tokens e troca o painel visível ao clicar', async () => {
+describe('App — painel de tokens expansível no cabeçalho do chat', () => {
+  it('mostra o painel de tokens ao clicar na seta e esconde ao clicar de novo', async () => {
     render(<UiProvider><App /></UiProvider>)
-    const tab = await screen.findByRole('tab', { name: /Tokens/i })
-    fireEvent.click(tab)
+    const toggle = await screen.findByRole('button', { name: /Detalhar consumo de tokens/i })
+    fireEvent.click(toggle)
     expect(await screen.findByText('Nenhuma chamada ao modelo ainda.')).toBeTruthy()
     expect(api.getTokenUsageHistory).toHaveBeenCalledWith('c1')
+
+    fireEvent.click(toggle)
+    await waitFor(() =>
+      expect(screen.queryByText('Nenhuma chamada ao modelo ainda.')).toBeNull()
+    )
   })
 })
 

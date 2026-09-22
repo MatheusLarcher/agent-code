@@ -61,12 +61,11 @@ import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
 import { CrewChip } from './components/CrewChip'
 import { buildCrew, workingMembers } from './crew'
-import { IconBoard, IconDatabase, IconGlobe, IconUsers } from './components/Icons'
+import { IconBoard, IconGlobe, IconUsers } from './components/Icons'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
 import { RightPaneTabs, type RightPane } from './components/RightPaneTabs'
 import { BoardPanel, boardProgress } from './components/BoardPanel'
-import { TokenUsagePanel } from './components/TokenUsagePanel'
 import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
 
 /** Poll do contador da aba Quadro com o painel FECHADO. Lento: é um badge. */
@@ -2634,16 +2633,12 @@ export function App(): JSX.Element {
     () => Object.values(activeTracks).filter((t) => t.status === 'running').length,
     [activeTracks]
   )
-  // Aba Tokens: acumulador ao vivo da conversa ativa e a contagem que vira o
-  // badge da aba (só o que já chegou nesta sessão — o histórico completo do
-  // banco é responsabilidade do próprio TokenUsagePanel).
+  // Painel de tokens (expansível no cabeçalho do chat): acumulador ao vivo da
+  // conversa ativa — o histórico completo do banco é responsabilidade do
+  // próprio TokenUsagePanel.
   const activeUsageMap = useMemo(
     () => (active ? usageMaps[active.id] ?? emptyUsageMap : emptyUsageMap),
     [active, usageMaps]
-  )
-  const activeTokenCallCount = useMemo(
-    () => Object.values(activeUsageMap.nodes).reduce((n, node) => n + node.calls.length, 0),
-    [activeUsageMap]
   )
   /** Every conversation stuck waiting on the user — the supervisor's real lever. */
   const pendingPermissionList = useMemo(
@@ -3060,6 +3055,7 @@ export function App(): JSX.Element {
             windowsControlEnabled={windowsControlEnabled}
             onDisableWindowsControl={() => void toggleWindowsControl(false)}
             tokens={tokens}
+            usageMap={activeUsageMap}
             chips={chips}
             onRemoveChip={(i) => setChips((c) => c.filter((_, idx) => idx !== i))}
             onSend={sendMessage}
@@ -3155,11 +3151,8 @@ export function App(): JSX.Element {
                   liveAgents={runningTrackCount}
                   browserTabs={browserState.tabs.length}
                   boardProgress={boardTabProgress}
-                  tokenCallCount={activeTokenCallCount}
                 />
-                {rightPane === 'tokens' ? (
-                  <TokenUsagePanel convId={active?.id ?? null} liveMap={activeUsageMap} />
-                ) : rightPane === 'board' ? (
+                {rightPane === 'board' ? (
                   <BoardPanel
                     projectCwd={activeCwd}
                     conversationId={active?.id ?? ''}
@@ -3220,18 +3213,6 @@ export function App(): JSX.Element {
                 Quadro
                 {boardTabProgress && boardTabProgress.total > 0 && (
                   <span className="rail-badge">{`${boardTabProgress.done}/${boardTabProgress.total}`}</span>
-                )}
-              </button>
-              <button
-                type="button"
-                className="right-rail-btn"
-                onClick={() => selectRightPane('tokens')}
-                title="Ver o consumo de tokens desta conversa"
-              >
-                <IconDatabase size={15} />
-                Tokens
-                {activeTokenCallCount > 0 && (
-                  <span className="rail-badge">{activeTokenCallCount}</span>
                 )}
               </button>
             </div>

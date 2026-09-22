@@ -16,6 +16,8 @@ import { CrewChip } from './CrewChip'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
 import { VigiaChip, type VigiaDoubt } from './VigiaChip'
 import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
+import { TokenUsagePanel } from './TokenUsagePanel'
+import { emptyUsageMap, type UsageMap } from '../tokenUsageTree'
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -125,6 +127,9 @@ interface Props {
   windowsControlEnabled: boolean
   onDisableWindowsControl: () => void
   tokens: { context: number; output: number; cost: number; lastOutput?: number; lastCost?: number }
+  /** Acumulador ao vivo de consumo de tokens desta conversa, para o painel
+   *  expansível no cabeçalho (ver TokenUsagePanel). */
+  usageMap?: UsageMap
   chips: PickedElement[]
   onRemoveChip: (i: number) => void
   onSend: (
@@ -374,6 +379,7 @@ function ContextBar({ context, model }: { context: number; model: string }): JSX
 
 export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
+  const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
   return (
     <section className="chat-panel">
       <div className="chat-header">
@@ -383,8 +389,24 @@ export function ChatPanel(props: Props): JSX.Element {
           <ContextBar context={tokens.context} model={props.runningModel} />
           <span className="tok out">↑ {fmt(tokens.output)} saída</span>
           <span className="tok cost">~${tokens.cost.toFixed(2)}</span>
+          <button
+            type="button"
+            className={`token-meter-expand${tokenPanelOpen ? ' open' : ''}`}
+            onClick={() => setTokenPanelOpen((v) => !v)}
+            title={tokenPanelOpen ? 'Esconder detalhamento de tokens' : 'Ver detalhamento de tokens por agente/subagente'}
+            aria-expanded={tokenPanelOpen}
+            aria-label="Detalhar consumo de tokens"
+          >
+            <IconChevronDown size={13} />
+          </button>
         </div>
       </div>
+
+      {tokenPanelOpen && (
+        <div className="token-meter-panel">
+          <TokenUsagePanel convId={props.convId} liveMap={props.usageMap ?? emptyUsageMap} />
+        </div>
+      )}
 
       {props.windowsControlEnabled && (
         <div className="windows-control-banner" role="status" aria-live="polite">

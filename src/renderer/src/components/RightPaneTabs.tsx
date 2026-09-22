@@ -1,6 +1,6 @@
-import { IconBoard, IconCollapseRight, IconDatabase, IconGlobe } from './Icons'
+import { IconBoard, IconCollapseRight, IconGlobe } from './Icons'
 
-export type RightPane = 'browser' | 'board' | 'tokens'
+export type RightPane = 'browser' | 'board'
 
 interface Props {
   active: RightPane
@@ -15,8 +15,6 @@ interface Props {
   browserTabs: number
   /** Progresso do quadro (concluídas/total) — `null` quando não há tarefa. */
   boardProgress: { done: number; total: number } | null
-  /** Total de chamadas ao modelo na conversa ativa — contador da aba Tokens. */
-  tokenCallCount: number
 }
 
 /**
@@ -32,8 +30,7 @@ export function RightPaneTabs({
   onCollapse,
   liveAgents,
   browserTabs,
-  boardProgress,
-  tokenCallCount
+  boardProgress
 }: Props): JSX.Element {
   return (
     <div className="pane-tabs" role="tablist" aria-label="Painel da direita">
@@ -62,18 +59,6 @@ export function RightPaneTabs({
         {boardProgress && boardProgress.total > 0 && (
           <span className="pane-tab-count">{`${boardProgress.done}/${boardProgress.total}`}</span>
         )}
-      </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={active === 'tokens'}
-        className={`pane-tab${active === 'tokens' ? ' on' : ''}`}
-        onClick={() => onSelect('tokens')}
-        title="Tokens: consumo de tokens desta conversa, por agente/subagente"
-      >
-        <IconDatabase size={14} />
-        Tokens
-        {tokenCallCount > 0 && <span className="pane-tab-count">{tokenCallCount}</span>}
       </button>
       <button type="button" className="nav-btn pane-collapse" onClick={onCollapse} title="Recolher painel">
         <IconCollapseRight />
