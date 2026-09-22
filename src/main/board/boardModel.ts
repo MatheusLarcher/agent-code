@@ -116,10 +116,11 @@ export function boardItemId(conversationId: string, sourceId: string): string {
 }
 
 /** Ordenação estável do quadro: em andamento, pendente, concluído; dentro de
- *  cada faixa, a ordem que o próprio CLI numerou. */
+ *  cada faixa, o mais recentemente modificado primeiro. */
 export function compareBoardItems(a: BoardItem, b: BoardItem): number {
   const byStatus = STATUS_RANK[boardItemStatus(a)] - STATUS_RANK[boardItemStatus(b)]
   if (byStatus !== 0) return byStatus
+  if (a.updatedAt !== b.updatedAt) return b.updatedAt.localeCompare(a.updatedAt)
   if (a.conversationId !== b.conversationId) return a.conversationId.localeCompare(b.conversationId)
   if (a.seq !== b.seq) return a.seq - b.seq
   return a.id.localeCompare(b.id)

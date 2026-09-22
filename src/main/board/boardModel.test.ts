@@ -87,9 +87,12 @@ describe('compareBoardItems', () => {
     expect(ordered.map((entry) => entry.id)).toEqual(['c', 'b', 'a'])
   })
 
-  it('dentro do mesmo status mantém a ordem numerada pelo CLI', () => {
-    const ordered = [item({ id: 'b', seq: 10 }), item({ id: 'a', seq: 2 })].sort(compareBoardItems)
-    expect(ordered.map((entry) => entry.id)).toEqual(['a', 'b'])
+  it('dentro do mesmo status, o modificado mais recentemente vem primeiro', () => {
+    const ordered = [
+      item({ id: 'a', updatedAt: '2026-09-14T10:00:00.000Z' }),
+      item({ id: 'b', updatedAt: '2026-09-14T12:00:00.000Z' })
+    ].sort(compareBoardItems)
+    expect(ordered.map((entry) => entry.id)).toEqual(['b', 'a'])
   })
 })
 
