@@ -3046,13 +3046,7 @@ export function App(): JSX.Element {
                 Parar sessão
               </button>
             </>
-          ) : (
-            // Shown even with no conversation: on first run it picks a folder,
-            // creates the first chat and connects (see connectStart).
-            <button className="btn primary" onClick={connectStart}>
-              Conectar
-            </button>
-          )}
+          ) : null}
         </header>
 
         <div className="workspace" ref={workspaceRef}>
