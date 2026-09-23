@@ -953,7 +953,7 @@ describe('Memorista — modo Automático', () => {
     )
     // A lista do seletor do memorista, e nada além dela: o Fable 5.1 é mais
     // caro que o topo do que o usuário consegue escolher para ele à mão.
-    expect(MEMORISTA_AUTO_MODELS).toEqual(['claude-sonnet-5', 'claude-fable-5-1', 'claude-opus-5'])
+    expect(MEMORISTA_AUTO_MODELS).toEqual(['claude-sonnet-5', 'claude-fable-5-1', 'claude-opus-5-5'])
     expect(seen[0]?.model).toBe('claude-sonnet-5')
   })
 })

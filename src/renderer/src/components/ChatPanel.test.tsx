@@ -1,79 +1,150 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { createRef, type ComponentProps } from 'react'
+import { createRef, type ComponentProps, type ReactNode } from 'react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, cleanup, screen } from '@testing-library/react'
+import { render, cleanup, screen, fireEvent } from '@testing-library/react'
 import { ChatPanel } from './ChatPanel'
+import { ChatDisplayContext } from './chatDisplay'
+import { ManagerChatFloat } from '../planning/ManagerChatFloat'
 import { UiProvider } from '../ui/UiProvider'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  localStorage.clear()
+})
 
 // jsdom não implementa scrollIntoView — o MessageList chama isso ao montar.
 Element.prototype.scrollIntoView = vi.fn()
 
-function renderPanel(overrides: Partial<ComponentProps<typeof ChatPanel>> = {}) {
+function renderPanel(
+  overrides: Partial<ComponentProps<typeof ChatPanel>> = {},
+  wrap: (panel: ReactNode) => ReactNode = (panel) => panel
+) {
   return render(
     <UiProvider>
-      <ChatPanel
-        messages={[]}
-        hasActive
-        busy={false}
-        windowsControlEnabled={false}
-        onDisableWindowsControl={() => {}}
-        tokens={{ context: 0, output: 0, cost: 0 }}
-        chips={[]}
-        onRemoveChip={() => {}}
-        onSend={() => {}}
-        onInterrupt={() => {}}
-        onRetry={() => {}}
-        composerRef={createRef()}
-        projects={[]}
-        projectRoot={null}
-        convId="c1"
-        draft=""
-        onDraftChange={() => {}}
-        projectMissing={false}
-        projectMissingMsg=""
-        queued={[]}
-        onDeleteQueued={() => {}}
-        onRetryRecovery={() => {}}
-        onCancelRecovery={() => {}}
-        runningSince={null}
-        lastDurationMs={null}
-        voiceReady={false}
-        onNeedVoiceKey={() => {}}
-        tts={{ speakingId: null, onToggleSpeak: () => {} }}
-        models={[
-          { id: 'claude-opus-5-5', label: 'Opus 5.5' },
-          { id: 'claude-sonnet-5', label: 'Sonnet 5' }
-        ]}
-        model="claude-opus-5-5"
-        runningModel="claude-opus-5-5"
-        modelLocked={false}
-        onModelChange={() => {}}
-        onModelLockedClick={() => {}}
-        effortLevels={[
-          { value: 'low', label: 'Baixo' },
-          { value: 'high', label: 'Alto' }
-        ]}
-        effort="high"
-        effortLocked={false}
-        onEffortChange={() => {}}
-        economyMode={false}
-        onEconomyModeChange={() => {}}
-        loopEnabled={false}
-        loopLocked={false}
-        onLoopEnabledChange={() => {}}
-        fastModeAvailable={false}
-        fastMode={false}
-        onFastModeChange={() => {}}
-        pendingQuestion={false}
-        onReopenQuestion={() => {}}
-        {...overrides}
-      />
+      {wrap(
+        <ChatPanel
+          messages={[]}
+          hasActive
+          busy={false}
+          windowsControlEnabled={false}
+          onDisableWindowsControl={() => {}}
+          tokens={{ context: 0, output: 0, cost: 0 }}
+          chips={[]}
+          onRemoveChip={() => {}}
+          onSend={() => {}}
+          onInterrupt={() => {}}
+          onRetry={() => {}}
+          composerRef={createRef()}
+          projects={[]}
+          projectRoot={null}
+          convId="c1"
+          draft=""
+          onDraftChange={() => {}}
+          projectMissing={false}
+          projectMissingMsg=""
+          queued={[]}
+          onDeleteQueued={() => {}}
+          onRetryRecovery={() => {}}
+          onCancelRecovery={() => {}}
+          runningSince={null}
+          lastDurationMs={null}
+          voiceReady={false}
+          onNeedVoiceKey={() => {}}
+          tts={{ speakingId: null, onToggleSpeak: () => {} }}
+          models={[
+            { id: 'claude-opus-5-5', label: 'Opus 5.5' },
+            { id: 'claude-sonnet-5', label: 'Sonnet 5' }
+          ]}
+          model="claude-opus-5-5"
+          runningModel="claude-opus-5-5"
+          modelLocked={false}
+          onModelChange={() => {}}
+          onModelLockedClick={() => {}}
+          effortLevels={[
+            { value: 'low', label: 'Baixo' },
+            { value: 'high', label: 'Alto' }
+          ]}
+          effort="high"
+          effortLocked={false}
+          onEffortChange={() => {}}
+          economyMode={false}
+          onEconomyModeChange={() => {}}
+          loopEnabled={false}
+          loopLocked={false}
+          onLoopEnabledChange={() => {}}
+          fastModeAvailable={false}
+          fastMode={false}
+          onFastModeChange={() => {}}
+          pendingQuestion={false}
+          onReopenQuestion={() => {}}
+          {...overrides}
+        />
+      )}
     </UiProvider>
   )
 }
+
+const consumo = (c: HTMLElement) => ({
+  header: c.querySelector('.chat-header .token-meter'),
+  last: c.querySelector('.last-usage-float'),
+  windows: screen.queryByText('Controle do Windows ativo')
+})
+
+describe('ChatPanel — modo compacto (ChatDisplayContext)', () => {
+  const withMessages = {
+    messages: [{ kind: 'user' as const, id: 'u1', text: 'Oi' }],
+    windowsControlEnabled: true,
+    tokens: { context: 1200, output: 300, cost: 0.12, lastOutput: 40, lastCost: 0.01 }
+  }
+
+  it('sem o contexto (chat normal), mostra o consumo, a "Última resposta" e o aviso do Windows', () => {
+    const { container } = renderPanel(withMessages)
+    const seen = consumo(container)
+    expect(seen.header).toBeTruthy()
+    expect(seen.last).toBeTruthy()
+    expect(seen.windows).toBeTruthy()
+    expect(screen.getByText('↑ 300 saída')).toBeTruthy()
+  })
+
+  it('compacto: sem consumo nem aviso do Windows — a conversa e o composer ficam', () => {
+    const { container } = renderPanel(withMessages, (panel) => (
+      <ChatDisplayContext.Provider value={{ compact: true }}>{panel}</ChatDisplayContext.Provider>
+    ))
+    const seen = consumo(container)
+    expect(container.querySelector('.chat-header')).toBeNull()
+    expect(seen.header).toBeNull()
+    expect(seen.last).toBeNull()
+    expect(seen.windows).toBeNull()
+    expect(screen.queryByText(/saída/)).toBeNull()
+    expect(screen.getByText('Oi')).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
+  })
+
+  it('contexto explícito com compact: false é o chat normal', () => {
+    const { container } = renderPanel(withMessages, (panel) => (
+      <ChatDisplayContext.Provider value={{ compact: false }}>{panel}</ChatDisplayContext.Provider>
+    ))
+    expect(classesOf(container.querySelector('.chat-panel'))).toEqual([
+      'chat-header',
+      'windows-control-banner',
+      'message-list-wrap',
+      'last-usage-float',
+      'composer-bar',
+      'composer'
+    ])
+  })
+
+  it('no painel flutuante do planejamento: maximizado mostra tudo, minimizado esconde, e volta ao maximizar', () => {
+    const { container } = renderPanel(withMessages, (panel) => <ManagerChatFloat>{panel}</ManagerChatFloat>)
+    expect(Object.values(consumo(container)).every(Boolean)).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Minimizar o chat do Agent Manager' }))
+    expect(Object.values(consumo(container)).some(Boolean)).toBe(false)
+    expect(screen.getByText('Oi')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Maximizar o chat do Agent Manager' }))
+    expect(Object.values(consumo(container)).every(Boolean)).toBe(true)
+  })
+})
 
 describe('ChatPanel — hideModelControls (conversa de planejamento)', () => {
   it('sem a prop (conversa normal), modelo, esforço, Econômico e Loop continuam na barra', () => {

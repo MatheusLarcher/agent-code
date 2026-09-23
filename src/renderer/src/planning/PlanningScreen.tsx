@@ -1,11 +1,14 @@
 /**
  * Tela de Planejamento: cabeçalho com o título do plano (e o espaço
  * `headerActions`, onde a integração põe o botão de enviar), o roteiro como
- * checklist à esquerda (recolhível num trilho), o canvas no centro e o chat
- * (`chatSlot`) à direita, com um divisor arrastável entre os dois.
+ * checklist à esquerda (largura arrastável, recolhível num trilho), o canvas
+ * ocupando o resto e o chat (`chatSlot`) flutuando sobre ele
+ * (ManagerChatFloat: maximizado ou minimizado), que recebe os cards do plano
+ * para o '[[' do Composer e o destaque de [[Nome]] nas mensagens.
  *
  * Componente isolado: recebe só projectCwd + slug e conversa com o main pelo
- * usePlanning. Largura do chat e roteiro recolhido valem entre sessões.
+ * usePlanning. Largura do roteiro, roteiro recolhido e chat minimizado valem
+ * entre sessões.
  */
 import '@xyflow/react/dist/style.css'
 import './planning.css'
@@ -16,12 +19,13 @@ import type { OpenedPlanningDto, PlanningCardDto } from '@shared/ipc'
 import { IconSpinner, IconWarning } from '../components/Icons'
 import { useUI } from '../ui/UiProvider'
 import { CardEditor } from './CardEditor'
-import { ChatSplitter } from './ChatSplitter'
+import { ManagerChatFloat } from './ManagerChatFloat'
 import { PlanningCanvas } from './PlanningCanvas'
 import { ProgressList } from './ProgressList'
+import { RoteiroSplitter } from './RoteiroSplitter'
 import { FIT_MIN_ZOOM } from './canvasViewport'
 import { columnFocusPoint, computeLayout } from './layout'
-import { loadChatWidth, loadRoteiroCollapsed, saveChatWidth, saveRoteiroCollapsed } from './paneSizes'
+import { loadRoteiroCollapsed, loadRoteiroWidth, saveRoteiroCollapsed, saveRoteiroWidth } from './paneSizes'
 import { PlanningPlanContext } from './planningPlanContext'
 import { usePlanning } from './usePlanning'
 
@@ -30,7 +34,7 @@ export interface PlanningScreenProps {
   projectCwd: string
   /** Plano em docs/spec/<slug>/. */
   slug: string
-  /** Painel de conversa com o agente, à direita. */
+  /** Painel de conversa com o agente, flutuando sobre o canvas. */
   chatSlot?: ReactNode
   /** Ações no canto direito do cabeçalho (ex.: enviar para implementação).
    *  Leem o plano aberto por useOpenedPlan (planningPlanContext). */
@@ -40,6 +44,10 @@ export interface PlanningScreenProps {
 interface Editing {
   card: PlanningCardDto
   isNew: boolean
+  /** Cada abertura do editor é uma sessão nova (o `key` dele): gravar não remonta. */
+  session: number
+  /** O plano em que o card foi aberto: trocar de plano desmonta o editor (e ele grava no plano dele). */
+  planKey: string
 }
 
 function blankCard(etapa?: string): PlanningCardDto {
@@ -76,7 +84,7 @@ function EmptyPlan({ onNewCard }: { onNewCard: () => void }): JSX.Element {
       <div className="pl-empty-card">
         <h2>Plano em branco</h2>
         <p>
-          Converse com o agente ao lado para separar o trabalho em etapas — cada etapa vira uma coluna aqui, com os
+          Converse com o Agent Manager para separar o trabalho em etapas — cada etapa vira uma coluna aqui, com os
           requisitos, decisões e dúvidas embaixo.
         </p>
         <button type="button" className="pl-add" onClick={onNewCard}>
@@ -87,19 +95,20 @@ function EmptyPlan({ onNewCard }: { onNewCard: () => void }): JSX.Element {
   )
 }
 
-/** Largura do chat (arrastável, lembrada) e roteiro recolhido (lembrado). */
+/** Largura do roteiro (arrastável, lembrada) e roteiro recolhido (lembrado).
+ *  Recolher não esquece a largura: expandir volta a ela. */
 function usePanes(): {
-  chatWidth: number
-  setChatWidth: (w: number) => void
-  commitChatWidth: (w: number) => void
+  roteiroWidth: number
+  setRoteiroWidth: (w: number) => void
+  commitRoteiroWidth: (w: number) => void
   roteiroCollapsed: boolean
   toggleRoteiro: () => void
 } {
-  const [chatWidth, setChatWidth] = useState(loadChatWidth)
+  const [roteiroWidth, setRoteiroWidth] = useState(loadRoteiroWidth)
   const [roteiroCollapsed, setRoteiroCollapsed] = useState(loadRoteiroCollapsed)
-  const commitChatWidth = useCallback((w: number) => {
-    setChatWidth(w)
-    saveChatWidth(w)
+  const commitRoteiroWidth = useCallback((w: number) => {
+    setRoteiroWidth(w)
+    saveRoteiroWidth(w)
   }, [])
   const toggleRoteiro = useCallback(() => {
     setRoteiroCollapsed((v) => {
@@ -107,7 +116,7 @@ function usePanes(): {
       return !v
     })
   }, [])
-  return { chatWidth, setChatWidth, commitChatWidth, roteiroCollapsed, toggleRoteiro }
+  return { roteiroWidth, setRoteiroWidth, commitRoteiroWidth, roteiroCollapsed, toggleRoteiro }
 }
 
 function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: PlanningScreenProps): JSX.Element {
@@ -115,12 +124,17 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
     projectCwd,
     slug
   )
-  const { confirm } = useUI()
+  const { confirm, notify } = useUI()
   const flow = useReactFlow()
   const [editing, setEditing] = useState<Editing | null>(null)
-  const { chatWidth, setChatWidth, commitChatWidth, roteiroCollapsed, toggleRoteiro } = usePanes()
+  const editorSession = useRef(0)
+  const planKey = `${projectCwd}\u0000${slug}`
+  const { roteiroWidth, setRoteiroWidth, commitRoteiroWidth, roteiroCollapsed, toggleRoteiro } = usePanes()
   const bodyRef = useRef<HTMLDivElement>(null)
   const bodyWidth = useCallback(() => bodyRef.current?.getBoundingClientRect().width ?? 0, [])
+  // Clicar no canvas encolhe o chat flutuante do Manager, se estiver maximizado.
+  const [chatCollapseSignal, setChatCollapseSignal] = useState(0)
+  const collapseChat = useCallback(() => setChatCollapseSignal((n) => n + 1), [])
 
   // Trocar de plano fecha o editor: o card aberto era do plano anterior.
   useEffect(() => setEditing(null), [projectCwd, slug])
@@ -133,22 +147,33 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
     [roteiro, cards, positions]
   )
 
-  const openCard = useCallback((card: PlanningCardDto) => setEditing({ card, isNew: false }), [])
-  const newCard = useCallback((etapa?: string) => setEditing({ card: blankCard(etapa), isNew: true }), [])
-
-  const handleSave = useCallback(
-    async (card: PlanningCardDto, expectedRev: number): Promise<void> => {
-      const out = await saveCard(card, expectedRev)
-      if (out.ok) setEditing(null)
-      // Conflito: o editor reabre com a versão do disco (o toast já avisou).
-      else if (out.conflict) setEditing(out.current ? { card: out.current, isNew: false } : null)
-    },
-    [saveCard]
+  // Abrir outro card troca a sessão: o editor anterior desmonta e grava o que mudou.
+  const openCard = useCallback(
+    (card: PlanningCardDto) => setEditing({ card, isNew: false, session: ++editorSession.current, planKey }),
+    [planKey]
+  )
+  const newCard = useCallback(
+    (etapa?: string) => setEditing({ card: blankCard(etapa), isNew: true, session: ++editorSession.current, planKey }),
+    [planKey]
   )
 
+  // O editor grava sozinho; no conflito ele mescla e avisa (daí o quietConflict).
+  const saveFromEditor = useCallback(
+    (card: PlanningCardDto, expectedRev: number) => saveCard(card, expectedRev, { quietConflict: true }),
+    [saveCard]
+  )
+  // Card novo gravado passa a ser um card como os outros (o Apagar e a versão viva
+  // valem). Só a sessão que gravou: a gravação de um editor que já fechou não mexe no aberto.
+  const onEditorSaved = useCallback(
+    (session: number, card: PlanningCardDto) =>
+      setEditing((e) => (e && e.session === session ? { ...e, card, isNew: false } : e)),
+    []
+  )
+  const closeEditor = useCallback(() => setEditing(null), [])
+
   const deleteCards = useCallback(
-    async (list: PlanningCardDto[]): Promise<void> => {
-      if (!list.length) return
+    async (list: PlanningCardDto[]): Promise<boolean> => {
+      if (!list.length) return false
       const one = list.length === 1
       const ok = await confirm({
         title: one ? 'Apagar card?' : `Apagar ${list.length} cards?`,
@@ -158,13 +183,23 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
         confirmLabel: 'Apagar',
         danger: true
       })
-      if (!ok) return
+      if (!ok) return false
+      let all = true
       for (const card of list) {
         if (await deleteCard(card.id, card.rev)) setEditing((e) => (e?.card.id === card.id ? null : e))
+        else all = false
       }
+      return all
     },
     [confirm, deleteCard]
   )
+  const deleteFromCanvas = useCallback(
+    async (list: PlanningCardDto[]): Promise<void> => {
+      await deleteCards(list)
+    },
+    [deleteCards]
+  )
+  const deleteFromEditor = useCallback((card: PlanningCardDto) => deleteCards([card]), [deleteCards])
 
   const link = useCallback(
     (source: string, target: string): void => {
@@ -201,6 +236,11 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
   const done = etapas.filter((e) => e.status === 'concluida').length
   const title = roteiro?.titulo || slug
   const isEmpty = !!plan && plan.roteiro.etapas.length === 0 && plan.cards.length === 0
+  const existingIds = useMemo(() => (cards ?? []).map((c) => c.id), [cards])
+  // O editor recebe a versão viva do card: sem edição pendente, adota a do Manager.
+  const editorOpen = editing && editing.planKey === planKey ? editing : null
+  const editorCard =
+    editorOpen && !editorOpen.isNew ? (cards?.find((c) => c.id === editorOpen.card.id) ?? editorOpen.card) : editorOpen?.card
 
   return (
     <div className="planning">
@@ -226,22 +266,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
 
       {plan && plan.invalid.length > 0 && <InvalidCards invalid={plan.invalid} />}
 
-      <div className="pl-body" ref={bodyRef}>
-        {status === 'loading' && (
-          <div className="pl-state" role="status">
-            <IconSpinner className="spinner" size={16} />
-            Carregando o planejamento…
-          </div>
-        )}
-        {status === 'error' && (
-          <div className="pl-state error" role="alert">
-            <strong>Não consegui abrir este planejamento.</strong>
-            <span className="pl-state-detail">{error}</span>
-            <button type="button" className="btn small" onClick={() => void reload()}>
-              Tentar de novo
-            </button>
-          </div>
-        )}
+      <div className="pl-body" ref={bodyRef} style={{ '--pl-roteiro-w': `${roteiroWidth}px` } as CSSProperties}>
         {status === 'ready' && plan && layout && (
           <>
             <ProgressList
@@ -251,6 +276,34 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
               collapsed={roteiroCollapsed}
               onToggleCollapsed={toggleRoteiro}
             />
+            {!roteiroCollapsed && (
+              <RoteiroSplitter
+                width={roteiroWidth}
+                getContainerWidth={bodyWidth}
+                onResize={setRoteiroWidth}
+                onCommit={commitRoteiroWidth}
+              />
+            )}
+          </>
+        )}
+        {/* O canvas (ou o estado) ocupa o resto; o chat flutua sobre ele. */}
+        <div className="pl-main">
+          {status === 'loading' && (
+            <div className="pl-state" role="status">
+              <IconSpinner className="spinner" size={16} />
+              Carregando o planejamento…
+            </div>
+          )}
+          {status === 'error' && (
+            <div className="pl-state error" role="alert">
+              <strong>Não consegui abrir este planejamento.</strong>
+              <span className="pl-state-detail">{error}</span>
+              <button type="button" className="btn small" onClick={() => void reload()}>
+                Tentar de novo
+              </button>
+            </div>
+          )}
+          {status === 'ready' && plan && layout && (
             <main className="pl-stage-area">
               {isEmpty ? (
                 <EmptyPlan onNewCard={() => newCard()} />
@@ -261,41 +314,39 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
                   onMoveCards={saveLayout}
                   onOpenCard={openCard}
                   onNewCard={newCard}
-                  onDeleteCards={deleteCards}
+                  onDeleteCards={deleteFromCanvas}
                   onLink={link}
                   onUnlink={unlink}
                   onViewportChange={saveViewport}
+                  onCanvasClick={collapseChat}
                 />
               )}
-              {editing && (
+              {editorOpen && editorCard && (
                 <CardEditor
-                  // Remonta quando o card muda de versão (conflito): o formulário recomeça do disco.
-                  key={`${editing.card.id || 'novo'}:${editing.card.rev}`}
-                  card={editing.card}
-                  isNew={editing.isNew}
+                  key={`${editorOpen.planKey}\u0000${editorOpen.session}`}
+                  card={editorCard}
+                  isNew={editorOpen.isNew}
                   etapas={etapas}
-                  existingIds={plan.cards.map((c) => c.id)}
-                  onSave={handleSave}
-                  onDelete={(card) => void deleteCards([card])}
-                  onCancel={() => setEditing(null)}
+                  existingIds={existingIds}
+                  cards={plan.cards}
+                  projectCwd={projectCwd}
+                  slug={slug}
+                  onSave={saveFromEditor}
+                  onSaved={(saved) => onEditorSaved(editorOpen.session, saved)}
+                  onDelete={deleteFromEditor}
+                  onClose={closeEditor}
+                  notify={notify}
                 />
               )}
             </main>
-          </>
-        )}
-        {chatSlot && (
-          <>
-            <ChatSplitter
-              width={chatWidth}
-              getContainerWidth={bodyWidth}
-              onResize={setChatWidth}
-              onCommit={commitChatWidth}
-            />
-            <aside className="pl-chat nokey" style={{ '--pl-chat-w': `${chatWidth}px` } as CSSProperties}>
+          )}
+          {/* Os cards do canvas vão para o chat: '[[' sugere e [[Nome]] ganha a cor do tipo. */}
+          {chatSlot && (
+            <ManagerChatFloat cards={cards} collapseSignal={chatCollapseSignal}>
               {chatSlot}
-            </aside>
-          </>
-        )}
+            </ManagerChatFloat>
+          )}
+        </div>
       </div>
     </div>
   )

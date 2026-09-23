@@ -137,6 +137,26 @@ describe('computeLayout — arestas', () => {
     const links = computeLayout(roteiro, cards, undefined).edges.filter((e) => e.kind === 'link')
     expect(links.map((e) => `${e.source}>${e.target}`)).toEqual(['a>b', 'b>a'])
   })
+
+  it('[[Título]] no corpo vira seta, resolvida pelo título sem acento/caixa e, por compatibilidade, pelo id', () => {
+    const cards = [
+      card('login', { titulo: 'Login com SSO', corpo: 'Depende de [[usar postgres]] e de [[relatorio]].' }),
+      card('banco', { titulo: 'Usar Postgres' }),
+      card('relatorio', { titulo: 'Relatório mensal', corpo: 'Ver [[Ação de cobrança]]' }),
+      card('acao', { titulo: 'Acao de Cobranca' })
+    ]
+    const refs = computeLayout(roteiro, cards, undefined).edges.filter((e) => e.kind === 'ref')
+    expect(refs.map((e) => `${e.id}`)).toEqual(['ref:login>banco', 'ref:login>relatorio', 'ref:relatorio>acao'])
+  })
+
+  it('referência que já é link explícito não duplica a seta; a que não resolve (ou aponta para si) não gera seta', () => {
+    const cards = [
+      card('a', { titulo: 'Card A', links: ['b'], corpo: '[[Card B]] [[card b]] [[Fantasma]] [[Card A]] [[b]]' }),
+      card('b', { titulo: 'Card B', corpo: '[[Card A]]' })
+    ]
+    const edges = computeLayout(roteiro, cards, undefined).edges.filter((e) => e.kind !== 'sequence')
+    expect(edges.map((e) => e.id)).toEqual(['link:a>b', 'ref:b>a'])
+  })
 })
 
 describe('columnFocusPoint', () => {

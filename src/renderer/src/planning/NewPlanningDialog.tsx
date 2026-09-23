@@ -1,17 +1,22 @@
 /**
- * "Novo planejamento" de um projeto: título → slug (derivado e único contra os
- * planos que já existem na pasta) e a lista desses planos, para reabrir.
+ * "Novo planejamento" de um projeto: cria na hora, SEM pedir nome — o plano
+ * nasce "Sem nome" numa pasta plano-AAAAMMDD-HHMM (única contra os planos que
+ * já existem) e o nome de verdade sai da primeira mensagem da conversa (ver
+ * conversationTitle.ts). Continua listando os planos da pasta, para reabrir:
+ * a conversa de um plano reaberto leva o título do roteiro dele
+ * (existingPlanTitle), não o slug.
  *
  * Mesmo padrão de modal do app (.modal-overlay/.modal-card; Esc ou clique fora
  * fecha). Falha de IPC vira toast 'erro' — nada aqui lança.
  */
 import './planningWorkspace.css'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PlanningFailure } from '@shared/ipc'
 import { IconSpinner } from '../components/Icons'
 import { useUI } from '../ui/UiProvider'
 import { IconPlanning } from './PlanningIcon'
-import { derivePlanningSlug } from './planningSlug'
+import { existingPlanTitle, PLANNING_UNTITLED } from './planningConversation'
+import { generatePlanningSlug } from './planningSlug'
 
 export interface NewPlanningDialogProps {
   projectCwd: string
@@ -34,9 +39,18 @@ function failureText(f: PlanningFailure): string {
 
 export function NewPlanningDialog({ projectCwd, projectName, onOpen, onClose }: NewPlanningDialogProps): JSX.Element {
   const { notify } = useUI()
-  const [titulo, setTitulo] = useState('')
   const [list, setList] = useState<ListState>({ status: 'loading' })
   const [creating, setCreating] = useState(false)
+  /** Slug do plano existente cujo título está sendo lido para reabrir. */
+  const [opening, setOpening] = useState<string | null>(null)
+  const mounted = useRef(true)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -69,20 +83,31 @@ export function NewPlanningDialog({ projectCwd, projectName, onOpen, onClose }: 
   }, [projectCwd, notify])
 
   const existing = useMemo(() => (list.status === 'ready' ? list.slugs : []), [list])
-  const slug = useMemo(() => derivePlanningSlug(titulo, existing), [titulo, existing])
+  const busy = creating || opening !== null
   // Com a lista ainda carregando o slug pode colidir; com ela em erro, o main
   // continua recusando duplicata (e isso vira toast).
-  const canCreate = !!slug && !creating && list.status !== 'loading'
+  const canCreate = !busy && list.status !== 'loading'
 
-  const create = async (e: FormEvent): Promise<void> => {
-    e.preventDefault()
+  /** Reabre um plano existente com o título do roteiro dele ("Sem nome" vira
+   *  título automático na 1ª mensagem); sem título legível, o slug. */
+  const reopen = async (slug: string): Promise<void> => {
+    if (busy) return
+    setOpening(slug)
+    const titulo = await existingPlanTitle(window.api, { projectCwd, slug })
+    // Fechado (Esc/Cancelar) enquanto lia: o usuário desistiu, nada abre.
+    if (!mounted.current) return
+    onOpen(slug, titulo)
+  }
+
+  const create = async (): Promise<void> => {
     if (!canCreate) return
-    const name = titulo.trim()
+    // Gerado uma vez, no clique: é a pasta do plano e não muda mais.
+    const slug = generatePlanningSlug(new Date(), existing)
     setCreating(true)
     try {
-      const res = await window.api.planningCreate({ projectCwd, slug, titulo: name })
+      const res = await window.api.planningCreate({ projectCwd, slug, titulo: PLANNING_UNTITLED })
       if (res.ok) {
-        onOpen(slug, name)
+        onOpen(slug, PLANNING_UNTITLED)
         return
       }
       notify('erro', `Não consegui criar o planejamento: ${failureText(res)}`)
@@ -105,41 +130,23 @@ export function NewPlanningDialog({ projectCwd, projectName, onOpen, onClose }: 
           Novo planejamento
         </h3>
         <p className="modal-message">
-          Em <strong>{projectName}</strong>: o Agent Manager conversa com você para montar o roteiro e os cards.
+          Em <strong>{projectName}</strong>: o Agent Manager conversa com você para montar o roteiro e os cards. O
+          nome do planejamento sai da sua primeira mensagem — dá para renomear depois.
         </p>
-        <form className="pl-new-form" onSubmit={(e) => void create(e)}>
-          <label className="pl-new-label" htmlFor="pl-new-titulo">
-            Título
-          </label>
-          <input
-            id="pl-new-titulo"
-            className="pl-new-input"
+        <div className="modal-actions pl-new-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn primary"
             autoFocus
-            value={titulo}
-            maxLength={200}
-            placeholder="Ex.: Checkout com Pix"
-            onChange={(e) => setTitulo(e.target.value)}
-          />
-          <div className="pl-new-slug" aria-live="polite">
-            {slug ? (
-              <>
-                Pasta do plano: <code data-testid="pl-new-slug">docs/spec/{slug}/</code>
-              </>
-            ) : titulo.trim() ? (
-              'Use ao menos uma letra ou número no título.'
-            ) : (
-              'A pasta do plano sai do título.'
-            )}
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="btn ghost" onClick={onClose}>
-              Cancelar
-            </button>
-            <button type="submit" className="btn primary" disabled={!canCreate}>
-              {creating ? 'Criando…' : 'Criar planejamento'}
-            </button>
-          </div>
-        </form>
+            disabled={!canCreate}
+            onClick={() => void create()}
+          >
+            {creating ? 'Criando…' : 'Criar planejamento'}
+          </button>
+        </div>
 
         <section className="pl-new-existing" aria-label="Planejamentos desta pasta">
           <h4 className="pl-new-existing-title">Já existem nesta pasta</h4>
@@ -156,10 +163,16 @@ export function NewPlanningDialog({ projectCwd, projectName, onOpen, onClose }: 
             <ul className="pl-new-list">
               {list.slugs.map((s) => (
                 <li key={s}>
-                  <button type="button" className="pl-new-open" onClick={() => onOpen(s)} title={`Reabrir docs/spec/${s}/`}>
+                  <button
+                    type="button"
+                    className="pl-new-open"
+                    disabled={busy}
+                    onClick={() => void reopen(s)}
+                    title={`Reabrir docs/spec/${s}/`}
+                  >
                     <IconPlanning size={14} />
                     <span className="pl-new-open-slug">{s}</span>
-                    <span className="pl-new-open-cta">Abrir</span>
+                    <span className="pl-new-open-cta">{opening === s ? 'Abrindo…' : 'Abrir'}</span>
                   </button>
                 </li>
               ))}

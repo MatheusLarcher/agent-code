@@ -27,6 +27,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM --- Motor: atualiza o Claude Code CLI (Agent SDK) para a ultima versao ---
+REM O motor tem que viajar DENTRO do setup; senao um update feito em outra
+REM maquina nao chega aqui (e vice-versa).
+echo Verificando o motor (Claude Code CLI)...
+call node "%~dp0sync-engine.mjs"
+if errorlevel 1 (
+    echo.
+    echo [ERRO] Nao foi possivel garantir o motor atualizado.
+    echo.
+    pause
+    exit /b 1
+)
+echo.
+
 REM --- Controle de versao automatico: incrementa o patch a cada execucao ---
 set "VERSAO="
 for /f "delims=" %%V in ('node "%~dp0bump-version.mjs"') do set "VERSAO=%%V"
@@ -57,6 +71,16 @@ if exist "dist\AgentCode-setup.exe" set "ARTIFACT=dist\AgentCode-setup.exe"
 
 if not defined ARTIFACT (
     echo [ERRO] O empacotamento terminou, mas nenhum exe foi encontrado em dist\.
+    echo.
+    pause
+    exit /b 1
+)
+
+REM --- Confere que o motor foi mesmo embutido, na versao desta build ---
+call node "%~dp0sync-engine.mjs" --verify "dist\win-unpacked\resources\app"
+if errorlevel 1 (
+    echo.
+    echo [ERRO] O instalador saiu sem o motor, ou com versao diferente.
     echo.
     pause
     exit /b 1

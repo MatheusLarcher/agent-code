@@ -1022,13 +1022,13 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
   beforeEach(() => queryMock.mockClear())
 
   it('modelo suportado + flag ligada: manda settings.fastMode', async () => {
-    const { s } = makeSession({ model: 'claude-opus-5', fastMode: true })
+    const { s } = makeSession({ model: 'claude-opus-5-5', fastMode: true })
     await s.start()
     expect(optionsOfLastQuery().settings).toEqual({ fastMode: true })
   })
 
   it('flag desligada: não manda settings (fica no padrão da conta)', async () => {
-    const { s } = makeSession({ model: 'claude-opus-5', fastMode: false })
+    const { s } = makeSession({ model: 'claude-opus-5-5', fastMode: false })
     await s.start()
     expect(optionsOfLastQuery().settings).toBeUndefined()
   })

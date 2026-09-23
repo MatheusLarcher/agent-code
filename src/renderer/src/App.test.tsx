@@ -947,7 +947,7 @@ describe('App — modo rápido (fast mode)', () => {
     })
 
     // Voltar para um Opus suportado traz o toggle de volta, ainda desligado.
-    fireEvent.change(select(), { target: { value: 'claude-opus-5' } })
+    fireEvent.change(select(), { target: { value: 'claude-opus-5-5' } })
     await waitFor(() => expect(fastToggle()).toBeTruthy())
     expect(fastToggle()?.className).not.toContain('on')
   })
@@ -2304,23 +2304,24 @@ describe('App — conversa de planejamento', () => {
     expect(api.planningOpen).not.toHaveBeenCalled()
   })
 
-  it('"Novo planejamento" na barra lateral cria o plano e abre a conversa dele', async () => {
+  it('"Novo planejamento" na barra lateral cria o plano SEM pedir nome e abre a conversa dele', async () => {
     addPlanningApi()
     render(<UiProvider><App /></UiProvider>)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Novo planejamento' }))
     const dialog = await screen.findByRole('dialog')
     await within(dialog).findByRole('button', { name: /checkout/ })
-    fireEvent.change(within(dialog).getByLabelText('Título'), { target: { value: 'Checkout' } })
+    expect(within(dialog).queryByRole('textbox')).toBeNull()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Criar planejamento' }))
 
-    await waitFor(() =>
-      expect(api.planningCreate).toHaveBeenCalledWith({ projectCwd: '/proj', slug: 'checkout-2', titulo: 'Checkout' })
-    )
+    await waitFor(() => expect(api.planningCreate).toHaveBeenCalledTimes(1))
+    const req = api.planningCreate.mock.calls[0][0] as { projectCwd: string; slug: string; titulo: string }
+    expect(req).toMatchObject({ projectCwd: '/proj', titulo: 'Sem nome' })
+    expect(req.slug).toMatch(/^plano-\d{8}-\d{4}$/)
     expect(await screen.findByRole('heading', { name: 'Checkout com Pix' })).toBeTruthy()
-    expect(api.planningOpen).toHaveBeenCalledWith({ projectCwd: '/proj', slug: 'checkout-2' })
+    expect(api.planningOpen).toHaveBeenCalledWith({ projectCwd: '/proj', slug: req.slug })
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(screen.getAllByText('Planejamento: Checkout').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Sem nome').length).toBeGreaterThan(0)
   })
 
   it('reabrir um plano que já tem conversa carregada volta para ela (sem duplicar)', async () => {
@@ -2493,5 +2494,234 @@ describe('App — enviar para implementação (handoff)', () => {
     const opts = api.startAgent.mock.calls[0][0]
     expect(opts).toMatchObject({ convId: 'h1', handoff: { slug: 'checkout' } })
     expect(opts).not.toHaveProperty('planning')
+  })
+})
+
+describe('App — título automático (recuo na hora, nome curto do LLM depois)', () => {
+  type Stored = { id: string; title: string; titleSource?: string; planningSlug?: string }
+  const storedConv = (id = 'c1'): Stored | undefined =>
+    (JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as Stored[]).find((c) => c.id === id)
+
+  function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+    let resolve!: (v: T) => void
+    const promise = new Promise<T>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+
+  /** c1 volta ao título padrão: é a conversa que ainda não tem nome. */
+  function seedUntitled(): void {
+    const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as Array<Record<string, unknown>>
+    localStorage.setItem(
+      'agentcode.conversations.v1',
+      JSON.stringify(list.map((c) => (c.id === 'c1' ? { ...c, title: 'Nova conversa' } : c)))
+    )
+  }
+
+  function mockSuggest(): { resolve: (v: { ok: true; title: string } | { ok: false }) => void } {
+    const pending = deferred<{ ok: true; title: string } | { ok: false }>()
+    api.suggestConversationTitle = vi.fn(() => pending.promise)
+    return pending
+  }
+
+  function captureRemoteAction(): () => ((a: { type: 'rename'; convId: string; title: string }) => void) | null {
+    let cb: ((a: { type: 'rename'; convId: string; title: string }) => void) | null = null
+    api.onRemoteConversationAction.mockImplementation((fn: typeof cb) => {
+      cb = fn
+      return () => {}
+    })
+    return () => cb
+  }
+
+  const settle = (): Promise<void> =>
+    act(async () => {
+      await new Promise((r) => setTimeout(r, 20))
+    })
+
+  const sidebarTitles = (container: HTMLElement, text: string): HTMLElement[] =>
+    [...container.querySelectorAll<HTMLElement>('.conv-row .conv-title')].filter((el) => el.textContent === text)
+
+  it('recuo imediato com o começo da mensagem; o nome do LLM entra depois (origem llm)', async () => {
+    seedUntitled()
+    const llm = mockSuggest()
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await send('quero corrigir o login com SSO\nmais detalhes do problema')
+
+    await waitFor(() => expect(storedConv()).toMatchObject({ title: 'quero corrigir o login com SSO', titleSource: 'auto' }))
+    expect(api.suggestConversationTitle).toHaveBeenCalledTimes(1)
+    expect(api.suggestConversationTitle).toHaveBeenCalledWith({ text: 'quero corrigir o login com SSO\nmais detalhes do problema' })
+
+    await act(async () => llm.resolve({ ok: true, title: 'Login com SSO' }))
+    await waitFor(() => expect(storedConv()).toMatchObject({ title: 'Login com SSO', titleSource: 'llm' }))
+    expect(sidebarTitles(container, 'Login com SSO').length).toBeGreaterThan(0)
+    // Já tem nome: a 2ª mensagem não pede outro.
+    await flushConnect()
+    await emit(result)
+    await send('e o logout também')
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    expect(api.suggestConversationTitle).toHaveBeenCalledTimes(1)
+  })
+
+  it('renomear pela barra lateral trava: o LLM que chega atrasado não sobrescreve', async () => {
+    seedUntitled()
+    const llm = mockSuggest()
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await send('refatorar o parser de markdown')
+    await waitFor(() => expect(storedConv()?.titleSource).toBe('auto'))
+
+    fireEvent.doubleClick(sidebarTitles(container, 'refatorar o parser de markdown')[0].closest('.conv-row')!)
+    const input = container.querySelector<HTMLInputElement>('input.conv-rename')!
+    fireEvent.change(input, { target: { value: 'Meu nome' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(storedConv()).toMatchObject({ title: 'Meu nome', titleSource: 'user' }))
+
+    await act(async () => llm.resolve({ ok: true, title: 'Nome do LLM' }))
+    await settle()
+    expect(sidebarTitles(container, 'Meu nome').length).toBeGreaterThan(0)
+    expect(sidebarTitles(container, 'Nome do LLM')).toHaveLength(0)
+    expect(storedConv()).toMatchObject({ title: 'Meu nome', titleSource: 'user' })
+  })
+
+  it('renomear pelo celular também trava', async () => {
+    const remote = captureRemoteAction()
+    seedUntitled()
+    const llm = mockSuggest()
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await send('configurar o CI')
+    await waitFor(() => expect(storedConv()?.titleSource).toBe('auto'))
+    await act(async () => remote()?.({ type: 'rename', convId: 'c1', title: '  Pipeline  ' }))
+    await waitFor(() => expect(storedConv()).toMatchObject({ title: 'Pipeline', titleSource: 'user' }))
+    await act(async () => llm.resolve({ ok: true, title: 'Nome do LLM' }))
+    await settle()
+    expect(sidebarTitles(container, 'Pipeline').length).toBeGreaterThan(0)
+    expect(sidebarTitles(container, 'Nome do LLM')).toHaveLength(0)
+    expect(storedConv()).toMatchObject({ title: 'Pipeline', titleSource: 'user' })
+  })
+
+  it('uso do Claude acima de 90% em alguma janela: nem chama o IPC, fica o recuo', async () => {
+    seedUntitled()
+    mockSuggest()
+    render(<UiProvider><App /></UiProvider>)
+    await emit({
+      kind: 'rate-limit',
+      limits: { rateLimitType: 'seven_day', status: 'allowed_warning', utilization: 0.93, resetsAt: Date.now() + 3_600_000 }
+    })
+    await send('ajustar o deploy')
+    await waitFor(() => expect(storedConv()).toMatchObject({ title: 'ajustar o deploy', titleSource: 'auto' }))
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    expect(api.suggestConversationTitle).not.toHaveBeenCalled()
+  })
+
+  it('LLM sem resposta (ok:false) deixa o recuo', async () => {
+    seedUntitled()
+    const llm = mockSuggest()
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await send('ajustar o deploy')
+    await act(async () => llm.resolve({ ok: false }))
+    await settle()
+    expect(sidebarTitles(container, 'ajustar o deploy').length).toBeGreaterThan(0)
+    await waitFor(() => expect(storedConv()).toMatchObject({ title: 'ajustar o deploy', titleSource: 'auto' }))
+  })
+
+  it('conversa que já tem nome não chama o LLM', async () => {
+    mockSuggest()
+    render(<UiProvider><App /></UiProvider>)
+    await send('oi')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    expect(api.suggestConversationTitle).not.toHaveBeenCalled()
+    expect(storedConv()?.title).toBe('Conversa')
+  })
+
+  describe('planejamento', () => {
+    function addPlanningApi(roteiroTitulo = 'Sem nome'): void {
+      const roteiro = {
+        titulo: roteiroTitulo,
+        rev: 1,
+        etapas: [{ id: 'requisitos', titulo: 'Requisitos', status: 'pendente' as const }]
+      }
+      const plan = (slug: string) => makePlan({ slug, roteiro, cards: [] })
+      Object.assign(api, {
+        planningOpen: vi.fn(async (req: { slug: string }) => ({ ok: true, plan: plan(req.slug) })),
+        planningClose: vi.fn(async () => ({ ok: true })),
+        onPlanningChanged: vi.fn(() => () => {}),
+        planningList: vi.fn(async () => ({ ok: true, slugs: [] })),
+        planningCreate: vi.fn(async (req: { slug: string }) => ({ ok: true, plan: plan(req.slug) })),
+        planningSaveRoteiro: vi.fn(async (req: { roteiro: object; expectedRev: number }) => ({
+          ok: true,
+          roteiro: { ...req.roteiro, rev: req.expectedRev + 1 }
+        }))
+      })
+    }
+
+    it('nasce "Sem nome"; o nome do LLM vai para a conversa e para o título do roteiro (mesma pasta)', async () => {
+      addPlanningApi()
+      const llm = mockSuggest()
+      render(<UiProvider><App /></UiProvider>)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Novo planejamento' }))
+      const dialog = await screen.findByRole('dialog')
+      await within(dialog).findByText('Nenhum planejamento ainda.')
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Criar planejamento' }))
+      await waitFor(() => expect(api.planningCreate).toHaveBeenCalledTimes(1))
+      const { slug } = api.planningCreate.mock.calls[0][0] as { slug: string }
+      expect(await screen.findByRole('heading', { name: 'Sem nome' })).toBeTruthy()
+
+      await send('quero planejar o checkout com pix')
+      await waitFor(() => expect(api.suggestConversationTitle).toHaveBeenCalledTimes(1))
+      await act(async () => llm.resolve({ ok: true, title: 'Checkout com Pix' }))
+
+      await waitFor(() =>
+        expect(api.planningSaveRoteiro).toHaveBeenCalledWith({
+          projectCwd: '/proj',
+          slug,
+          roteiro: { titulo: 'Checkout com Pix', etapas: [{ id: 'requisitos', titulo: 'Requisitos', status: 'pendente' }] },
+          expectedRev: 1
+        })
+      )
+      const all = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as Stored[]
+      const conv = all.find((c) => c.planningSlug === slug)
+      expect(conv).toBeTruthy()
+      await waitFor(() => expect(storedConv(conv!.id)).toMatchObject({ title: 'Checkout com Pix', titleSource: 'llm' }))
+      // A tela desse plano está aberta: a vigia é dela, a sincronia não a fecha.
+      expect(api.planningClose).not.toHaveBeenCalled()
+    })
+
+    it('renomear um planejamento leva o nome para o roteiro (1 retentativa em conflito)', async () => {
+      const remote = captureRemoteAction()
+      const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as unknown[]
+      const planConv = {
+        id: 'p1',
+        title: 'Planejamento: checkout',
+        cwd: '/proj',
+        model: 'claude-sonnet-5',
+        mode: 'planning',
+        planningSlug: 'checkout',
+        sdkSessionId: null,
+        messages: [],
+        tokens: { context: 0, output: 0, cost: 0 },
+        createdAt: 1,
+        updatedAt: 3
+      }
+      localStorage.setItem('agentcode.conversations.v1', JSON.stringify([...list, planConv]))
+      addPlanningApi('Checkout')
+      const current = { titulo: 'Checkout', rev: 4, etapas: [{ id: 'nova', titulo: 'Nova etapa', status: 'em_andamento' }] }
+      api.planningSaveRoteiro.mockResolvedValueOnce({ ok: false, code: 'roteiro_conflict', message: 'x', current })
+      render(<UiProvider><App /></UiProvider>)
+      await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+      await waitFor(() => expect(remote()).toBeTruthy())
+
+      await act(async () => remote()?.({ type: 'rename', convId: 'p1', title: 'Checkout com Pix' }))
+      await waitFor(() => expect(api.planningSaveRoteiro).toHaveBeenCalledTimes(2))
+      expect(api.planningSaveRoteiro.mock.calls[1][0]).toEqual({
+        projectCwd: '/proj',
+        slug: 'checkout',
+        roteiro: { titulo: 'Checkout com Pix', etapas: current.etapas },
+        expectedRev: 4
+      })
+      await waitFor(() =>
+        expect(storedConv('p1')).toMatchObject({ title: 'Checkout com Pix', titleSource: 'user', planningSlug: 'checkout' })
+      )
+      // A tela desse plano NÃO está aberta (c1 é a ativa): a vigia aberta para ler o roteiro é fechada.
+      await waitFor(() => expect(api.planningClose).toHaveBeenCalledWith({ projectCwd: '/proj', slug: 'checkout' }))
+    })
   })
 })

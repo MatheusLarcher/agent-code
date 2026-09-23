@@ -222,6 +222,17 @@ describe('registerIpc — agent:token-usage:history', () => {
   })
 })
 
+describe('registerIpc — conversation:suggestTitle', () => {
+  it('registra o canal; payload inválido volta { ok: false } sem chamar o modelo', async () => {
+    registerIpc()
+    const handler = handlers.get(Channels.conversationSuggestTitle)
+    expect(handler).toBeTypeOf('function')
+    for (const bad of [undefined, { text: 1 }, { text: '   ' }, { text: 'x', extra: 1 }]) {
+      await expect(Promise.resolve(handler!(null, bad))).resolves.toEqual({ ok: false })
+    }
+  })
+})
+
 describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
   const cwd = tmpdir()
   const event = { kind: 'result', id: 'r1', isError: false, text: 'ok', durationMs: 1 }

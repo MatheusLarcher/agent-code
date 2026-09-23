@@ -87,7 +87,7 @@
   font-size: 11.5px;
 }
 
-/* ---- corpo: roteiro | canvas | chat ---- */
+/* ---- corpo: roteiro | canvas (o chat flutua sobre ele: planningChat.css) ---- */
 .pl-body { flex: 1; display: flex; min-height: 0; }
 .pl-state {
   flex: 1;
@@ -103,20 +103,11 @@
 }
 .pl-state.error strong { color: var(--err); font-weight: 600; }
 .pl-state-detail { max-width: 460px; font-size: 12px; }
-/* Largura vem do divisor (--pl-chat-w, lembrada); nunca < 320px nem > metade da área. */
-.pl-chat {
-  flex: 0 0 var(--pl-chat-w, 380px);
-  display: flex;
-  flex-direction: column;
-  min-width: 320px;
-  max-width: 50%;
-  min-height: 0;
-  background: var(--bg);
-}
 
 /* ---- roteiro (checklist) ---- */
+/* Largura vem da alça (--pl-roteiro-w, lembrada); os limites estão no planningLayout.css. */
 .pl-progress {
-  flex: 0 0 clamp(184px, 17%, 236px);
+  flex: 0 0 var(--pl-roteiro-w, 220px);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -184,24 +175,27 @@
 @container (max-width: 480px) {
   .planning .react-flow__minimap { display: none; }
 }
+/* Plano em branco: uma faixa no topo — o centro é do chat maximizado, que o cobriria. */
 .pl-empty {
   flex: 1;
-  display: grid;
-  place-items: center;
-  padding: 24px;
+  display: flex;
+  align-items: flex-start;
+  padding: 12px;
   background-image: radial-gradient(var(--line) 1.2px, transparent 1.2px);
   background-size: 22px 22px;
 }
 .pl-empty-card {
-  max-width: 380px;
-  padding: 22px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 10px 8px 14px;
   border: 1px dashed var(--line);
-  border-radius: var(--radius);
+  border-radius: 10px;
   background: var(--bg-2);
-  text-align: center;
 }
-.pl-empty-card h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
-.pl-empty-card p { margin: 0 0 14px; font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+.pl-empty-card h2 { flex: none; margin: 0; font-size: 13.5px; font-weight: 600; }
+.pl-empty-card p { flex: 1; min-width: 0; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px; color: var(--muted); }
 
 /* React Flow com as cores do app (só variáveis; o layout interno dele fica intacto). */
 .planning .react-flow {
@@ -236,7 +230,8 @@
 .planning .react-flow__attribution a { color: var(--muted); opacity: 0.6; }
 
 /* barra do canvas: '+ Card' e a dica de uso */
-.planning .pl-toolbar { display: flex; align-items: center; gap: 12px; margin: 12px; max-width: calc(100% - 24px); }
+/* Não chega ao minimapa, no canto de cima à direita (15 + 168 + folga). */
+.planning .pl-toolbar { display: flex; align-items: center; gap: 12px; margin: 12px; max-width: calc(100% - 215px); }
 .pl-add {
   flex: 0 0 auto;
   white-space: nowrap;
@@ -262,6 +257,8 @@
 .planning .react-flow__edge.pl-edge-link .react-flow__edge-path { stroke: color-mix(in srgb, var(--muted) 70%, transparent); }
 .planning .react-flow__edge.pl-edge-link:hover .react-flow__edge-path,
 .planning .react-flow__edge.pl-edge-link.selected .react-flow__edge-path { stroke: var(--accent); stroke-width: 2; }
+/* [[referência]] no texto: pontilhada, para não confundir com a ligação feita à mão */
+.planning .react-flow__edge.pl-edge-ref .react-flow__edge-path { stroke: color-mix(in srgb, var(--muted) 70%, transparent); stroke-dasharray: 2 4; }
 
 /* ---- cabeçalho de coluna (etapa) ---- */
 .pl-stage {
@@ -342,6 +339,8 @@
   cursor: pointer;
 }
 .pl-card-source:hover { text-decoration: underline; }
+.pl-card-source.file { font-family: var(--pl-mono); font-size: 10.5px; cursor: default; }
+.pl-card-source.file:hover { text-decoration: none; }
 .pl-card-title {
   display: -webkit-box;
   -webkit-line-clamp: 2;

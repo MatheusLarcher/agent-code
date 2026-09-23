@@ -259,6 +259,33 @@ describe('registerPlanningIpc', () => {
     expect(sent).toEqual([{ channel: 'planning:changed', payload: { projectCwd: cwd, slug: 'p' } }])
   })
 
+  it('saveRoteiro gravado avisa planning:changed do plano (o vigia ignora a gravação própria); conflito e inválido não', async () => {
+    setup()
+    const ref = { projectCwd: cwd, slug: 'p' }
+    await call(Channels.planningCreate, { ...ref, titulo: 'Sem nome' })
+    await call(Channels.planningOpen, ref) // a tela aberta
+    expect(sent).toEqual([])
+
+    // O título que a conversa sincroniza (conversationTitle.ts) chega por aqui.
+    const renamed = { titulo: 'Checkout com Pix', etapas: [] }
+    expect(await call(Channels.planningSaveRoteiro, { ...ref, roteiro: renamed, expectedRev: 1 })).toEqual({
+      ok: true,
+      roteiro: { ...renamed, rev: 2 }
+    })
+    expect(sent).toEqual([{ channel: 'planning:changed', payload: ref }])
+    // Quem recarrega por esse aviso já vê o nome novo.
+    expect((await call(Channels.planningOpen, ref)).plan.roteiro.titulo).toBe('Checkout com Pix')
+
+    sent.length = 0
+    const stale = await call(Channels.planningSaveRoteiro, { ...ref, roteiro: { titulo: 'Velho', etapas: [] }, expectedRev: 1 })
+    expect(stale).toMatchObject({ ok: false, code: 'roteiro_conflict' })
+    const bad = await call(Channels.planningSaveRoteiro, { ...ref, roteiro: { titulo: 'x', etapas: [] } })
+    expect(bad).toMatchObject({ ok: false, code: 'invalid' })
+    const missing = await call(Channels.planningSaveRoteiro, { projectCwd: cwd, slug: 'nada', roteiro: renamed, expectedRev: 0 })
+    expect(missing).toMatchObject({ ok: false })
+    expect(sent).toEqual([])
+  })
+
   it('handoffs: writeHandoff grava em _handoff/ e listHandoffs devolve na ordem, sem planning:changed', async () => {
     setup()
     const ref = { projectCwd: cwd, slug: 'p' }

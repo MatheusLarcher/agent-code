@@ -69,7 +69,7 @@ describe('candidatos', () => {
   it('oferece os modelos reais do seletor, e cada um com descrição', () => {
     const models = autoModelCandidates()
 
-    expect(models).toEqual(['claude-opus-5', 'claude-sonnet-5', 'claude-fable-5-1'])
+    expect(models).toEqual(['claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5-1'])
     // Sem descrição o Jev escolheria pelo nome do modelo, não pelo trabalho pedido.
     for (const model of models) expect(AUTO_MODEL_DESCRIPTIONS[model]).toBeTruthy()
   })
@@ -179,10 +179,10 @@ describe('recorte do par modelo+esforço', () => {
   })
 
   it('o recorte é DEPOIS das duas respostas — modelo capaz mantém `max`', async () => {
-    answers('claude-opus-5', 4)
+    answers('claude-opus-5-5', 4)
 
     expect(await chooseAutoExecution({ message: 'projeta a arquitetura do zero' })).toMatchObject({
-      model: 'claude-opus-5',
+      model: 'claude-opus-5-5',
       effort: 'max'
     })
   })
@@ -191,7 +191,7 @@ describe('recorte do par modelo+esforço', () => {
     expect(clampEffortToModel(MODELO_TETO_HIGH, 'max')).toBe('high')
     expect(clampEffortToModel(MODELO_TETO_HIGH, 'xhigh')).toBe('high')
     expect(clampEffortToModel(MODELO_TETO_HIGH, 'low')).toBe('low')
-    expect(clampEffortToModel('claude-opus-5', 'max')).toBe('max')
+    expect(clampEffortToModel('claude-opus-5-5', 'max')).toBe('max')
   })
 
   it('modelo sem tabela de esforço não tem contra o que recortar', () => {
@@ -267,7 +267,7 @@ describe('a nota que a UI mostra', () => {
   })
 
   it('avisa quando o par é o padrão, para a escolha não parecer uma decisão', () => {
-    expect(autoExecutionNote({ model: 'claude-opus-5', effort: 'high', source: 'fallback' })).toContain(
+    expect(autoExecutionNote({ model: 'claude-opus-5-5', effort: 'high', source: 'fallback' })).toContain(
       'par padrão'
     )
   })
@@ -275,12 +275,12 @@ describe('a nota que a UI mostra', () => {
   it('não anuncia nada quando não havia turno para decidir', () => {
     // O defeito que isto tranca: dizer "o TypeSafe não respondeu a tempo ou
     // está desligado" com o serviço no ar, só porque ninguém enviou mensagem.
-    expect(autoExecutionNote({ model: 'claude-opus-5', effort: 'high', source: 'unprompted' })).toBeNull()
+    expect(autoExecutionNote({ model: 'claude-opus-5-5', effort: 'high', source: 'unprompted' })).toBeNull()
   })
 })
 
 describe('lista de candidatos restrita (o memorista)', () => {
-  const memorista = ['claude-sonnet-5', 'claude-fable-5-1', 'claude-opus-5']
+  const memorista = ['claude-sonnet-5', 'claude-fable-5-1', 'claude-opus-5-5']
 
   it('só oferece ao serviço os modelos que a lista permite', () => {
     const payload = buildAutoExecutionPayload({ message: 'oi' }, memorista)
@@ -366,7 +366,7 @@ describe('abrir a sessão em Automático', () => {
   })
 
   it('com turno e par diferente, a sessão viva não serve', async () => {
-    answers('claude-opus-5', 4)
+    answers('claude-opus-5-5', 4)
 
     const decision = await resolveAutoStart({
       autoPrompt: { message: 'projeta isto' },
@@ -375,7 +375,7 @@ describe('abrir a sessão em Automático', () => {
     })
 
     expect(decision.reuse).toBe(false)
-    expect(decision.execution).toMatchObject({ model: 'claude-opus-5', effort: 'max' })
+    expect(decision.execution).toMatchObject({ model: 'claude-opus-5-5', effort: 'max' })
   })
 
   it('par repetido sem sessão viva não é reaproveitamento', async () => {
@@ -405,7 +405,7 @@ describe('abrir a sessão em Automático', () => {
  * comparação de reaproveitamento.
  */
 describe('histerese: o par que já está no ar entra na decisão', () => {
-  const live = { model: 'claude-opus-5', effort: 'high' as const }
+  const live = { model: 'claude-opus-5-5', effort: 'high' as const }
   /** O mesmo par como a conversa o guarda: escolhido pelo TypeSafe. */
   const decidedLive = { ...live, decided: true }
 
@@ -413,7 +413,7 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
     await chooseAutoExecution({ message: 'e agora?' }, { live })
 
     const [request] = askTypeSafe.mock.calls[0]
-    expect(request.state.modelo_atual).toBe('claude-opus-5')
+    expect(request.state.modelo_atual).toBe('claude-opus-5-5')
     expect(AUTO_MODEL_INSTRUCTION).toContain('state.modelo_atual')
     expect(AUTO_MODEL_INSTRUCTION).toContain('MANTENHA')
   })
@@ -464,7 +464,7 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
     expect(await chooseAutoExecution({ message: 'oi' }, { live })).toMatchObject({ model: 'claude-sonnet-5' })
 
     minConfidence.value = 0.8
-    expect(await chooseAutoExecution({ message: 'oi' }, { live })).toMatchObject({ model: 'claude-opus-5' })
+    expect(await chooseAutoExecution({ message: 'oi' }, { live })).toMatchObject({ model: 'claude-opus-5-5' })
   })
 
   it('sem par no ar, confiança baixa continua valendo: não há para onde recuar', async () => {
@@ -490,7 +490,7 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
 
   it('o par recuado continua sendo recortado para o que o modelo suporta', async () => {
     askTypeSafe.mockResolvedValue({
-      which_model: choiceAnswer('claude-opus-5', 0.1),
+      which_model: choiceAnswer('claude-opus-5-5', 0.1),
       which_effort: scoreAnswer(4, 0.1)
     })
 
@@ -498,7 +498,7 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
     expect(
       await chooseAutoExecution(
         { message: 'oi' },
-        { live: { model: MODELO_TETO_HIGH, effort: 'max' }, models: [MODELO_TETO_HIGH, 'claude-opus-5'] }
+        { live: { model: MODELO_TETO_HIGH, effort: 'max' }, models: [MODELO_TETO_HIGH, 'claude-opus-5-5'] }
       )
     ).toEqual({ model: MODELO_TETO_HIGH, effort: 'high', source: 'typesafe' })
   })
@@ -515,7 +515,7 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
       hasSession: true
     })
 
-    expect(askTypeSafe.mock.calls[0][0].state.modelo_atual).toBe('claude-opus-5')
+    expect(askTypeSafe.mock.calls[0][0].state.modelo_atual).toBe('claude-opus-5-5')
     // Manteve o par: a sessão viva serve, e nada é recriado.
     expect(decision.execution).toEqual({ ...live, source: 'typesafe' })
     expect(decision.reuse).toBe(true)
@@ -575,7 +575,7 @@ describe('o par do fallback não se defende no turno seguinte', () => {
     // 1º turno: TypeSafe fora do ar. A mensagem sai no par padrão (Opus).
     askTypeSafe.mockResolvedValue(null)
     const primeiro = await resolveAutoStart({ autoPrompt: { message: 'e agora?' }, hasSession: false })
-    expect(primeiro.execution).toMatchObject({ model: 'claude-opus-5', source: 'fallback' })
+    expect(primeiro.execution).toMatchObject({ model: 'claude-opus-5-5', source: 'fallback' })
 
     // 2º turno: serviço de volta, mensagem trivial, e a escolha vem ABAIXO do
     // piso de confiança — exatamente o caso em que o recuo defenderia o par
@@ -610,25 +610,25 @@ describe('o par do fallback não se defende no turno seguinte', () => {
 
     // E um religar não lava um fallback em decisão.
     const depoisDeFallback = await resolveAutoStart({
-      live: { model: 'claude-opus-5', effort: 'high', decided: false },
+      live: { model: 'claude-opus-5-5', effort: 'high', decided: false },
       hasSession: true
     })
-    expect(depoisDeFallback.execution).toEqual({ model: 'claude-opus-5', effort: 'high', source: 'unprompted' })
+    expect(depoisDeFallback.execution).toEqual({ model: 'claude-opus-5-5', effort: 'high', source: 'unprompted' })
     expect(depoisDeFallback.live.decided).toBe(false)
   })
 
   it('o reaproveitamento da sessão continua olhando o par REAL, decidido ou não', async () => {
     // A sessão existe e está no par do fallback; se a decisão desta vez repetir
     // esse par, recriar a sessão seria pagar um boot por nada.
-    answers('claude-opus-5', 2)
+    answers('claude-opus-5-5', 2)
 
     const decision = await resolveAutoStart({
       autoPrompt: { message: 'e aí?' },
-      live: { model: 'claude-opus-5', effort: 'high', decided: false },
+      live: { model: 'claude-opus-5-5', effort: 'high', decided: false },
       hasSession: true
     })
 
     expect(decision.reuse).toBe(true)
-    expect(decision.live).toEqual({ model: 'claude-opus-5', effort: 'high', decided: true })
+    expect(decision.live).toEqual({ model: 'claude-opus-5-5', effort: 'high', decided: true })
   })
 })

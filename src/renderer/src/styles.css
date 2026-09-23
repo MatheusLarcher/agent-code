@@ -2215,6 +2215,16 @@ button svg {
   border-radius: 10px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
+/* "[[" referência a card (só com cards no contexto — o chat do Agent Manager).
+   A lista é a .pl-refs do planejamento (cardEditor.css); aqui só o lugar dela:
+   acima da caixa, como o menu "@". */
+.composer-card-refs {
+  position: absolute;
+  left: 12px;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  width: min(440px, calc(100% - 24px));
+}
 .mention-item {
   display: flex;
   align-items: center;

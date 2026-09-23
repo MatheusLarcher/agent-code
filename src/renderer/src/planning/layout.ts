@@ -9,8 +9,14 @@
  * posição salva entra no FIM da sua coluna — abaixo de tudo o que já ocupa a
  * faixa horizontal dela, inclusive card salvo que alguém arrastou para lá —,
  * então nunca cai em cima de outro.
+ *
+ * Setas entre cards: os `links` explícitos e as referências [[Título]] (ou
+ * [[id]]) no corpo — resolvidas pelo título normalizado (cardRefs.ts). A
+ * referência que já é um link explícito não ganha seta repetida; a que não
+ * resolve não gera seta.
  */
 import type { PlanningCardDto, PlanningRoteiroDto, PlanningStageStatus } from '@shared/ipc'
+import { extractRefs, makeRefResolver } from './cardRefs'
 
 /** Largura fixa do card (o CSS usa a mesma). */
 export const CARD_W = 248
@@ -48,8 +54,9 @@ export interface LayoutEdge {
   id: string
   source: string
   target: string
-  /** 'link' = ligação entre cards; 'sequence' = seta entre etapas seguidas. */
-  kind: 'link' | 'sequence'
+  /** 'link' = ligação explícita entre cards; 'ref' = [[referência]] no corpo;
+   *  'sequence' = seta entre etapas seguidas. */
+  kind: 'link' | 'ref' | 'sequence'
 }
 
 export interface PlanLayout {
@@ -153,8 +160,29 @@ export function computeLayout(
       edges.push({ id, source: card.id, target, kind: 'link' })
     }
   }
+  edges.push(...refEdges(cards, seen))
 
   return { columns, positions, edges }
+}
+
+/** Setas das [[referências]] no corpo; `seen` traz as dos links explícitos. */
+function refEdges(cards: PlanningCardDto[], seen: Set<string>): LayoutEdge[] {
+  const unique = new Map<string, PlanningCardDto>()
+  for (const card of cards) if (!unique.has(card.id)) unique.set(card.id, card)
+  const list = [...unique.values()]
+  const resolve = makeRefResolver(list)
+  const out: LayoutEdge[] = []
+  for (const card of list) {
+    for (const label of extractRefs(card.corpo)) {
+      const target = resolve(label)?.id
+      if (!target || target === card.id || seen.has(`link:${card.id}>${target}`)) continue
+      const id = `ref:${card.id}>${target}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      out.push({ id, source: card.id, target, kind: 'ref' })
+    }
+  }
+  return out
 }
 
 /** Quanto da coluna cabe na tela ao centralizar (colunas longas: o topo). */

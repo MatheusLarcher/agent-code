@@ -22,14 +22,14 @@ function renderWorkspace(managerModel: string | null) {
 }
 
 describe('PlanningWorkspace', () => {
-  it('monta a PlanningScreen do plano com o chat recebido na coluna da direita', async () => {
+  it('monta a PlanningScreen do plano com o chat recebido no painel flutuante do Agent Manager', async () => {
     const { api } = mockPlanningApi()
     const { container } = renderWorkspace('claude-sonnet-5')
     expect(await screen.findByRole('heading', { name: 'Plano de teste' })).toBeTruthy()
     expect(api.planningOpen).toHaveBeenCalledWith({ projectCwd: CWD, slug: SLUG })
-    // O chat é o elemento recebido, dentro da coluna de chat da tela.
+    // O chat é o elemento recebido, dentro do painel flutuante da tela.
     const chat = screen.getByTestId('chat-slot')
-    expect(chat.closest('.pl-chat')).toBeTruthy()
+    expect(chat.closest('.pl-chat-float')).toBe(screen.getByRole('region', { name: 'Agent Manager' }))
     // Ocupa o lugar do workspace normal.
     expect(container.querySelector('.workspace.planning-workspace .planning')).toBeTruthy()
   })

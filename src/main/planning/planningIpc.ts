@@ -11,7 +11,7 @@ import {
   type PlanningResult,
   type PlanningRoteiroDto
 } from '../../shared/ipc'
-import { setPlanningChangeSink } from './planningEvents'
+import { notifyPlanningChanged, setPlanningChangeSink } from './planningEvents'
 import { CARD_TYPES, isValidName, PlanningValidationError, STAGE_STATUSES } from './planningModel'
 import * as realStore from './planningStore'
 import { PlanNotFoundError, PlanningPathError, planDirPath, RevConflictError, RoteiroConflictError } from './planningStore'
@@ -274,13 +274,18 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
     }
   )
 
+  // A gravação é própria (o vigia a ignora), mas nem sempre sai da tela que
+  // está aberta: o título sincronizado pela conversa (conversationTitle.ts)
+  // também chega por aqui. Sem o aviso, o cabeçalho da tela aberta só veria o
+  // nome novo no próximo planning:changed. Conflito/erro não gravou: sem aviso.
   register(
     Channels.planningSaveRoteiro,
     SaveRoteiroReq,
-    async ({ projectCwd, slug, roteiro, expectedRev }): Promise<PlanningResult<{ roteiro: PlanningRoteiroDto }>> => ({
-      ok: true,
-      roteiro: await store.saveRoteiro(projectCwd, slug, roteiro, expectedRev)
-    })
+    async ({ projectCwd, slug, roteiro, expectedRev }): Promise<PlanningResult<{ roteiro: PlanningRoteiroDto }>> => {
+      const saved = await store.saveRoteiro(projectCwd, slug, roteiro, expectedRev)
+      notifyPlanningChanged({ projectCwd, slug })
+      return { ok: true, roteiro: saved }
+    }
   )
 
   register(Channels.planningSaveLayout, SaveLayoutReq, async ({ projectCwd, slug, layout }): Promise<PlanningResult> => {

@@ -2,147 +2,201 @@
  * Painel lateral de edição de card: título, tipo, etapa, fonte (sugestão),
  * selo (ambiguidade) e corpo em markdown com prévia (o Markdown do chat).
  *
- * O `expectedRev` enviado ao salvar é o rev do card COMO FOI ABERTO — se o
- * agente mudar o card enquanto o painel está aberto, a gravação volta
- * 'rev_conflict' em vez de atropelar a versão nova.
+ * Sem botão Salvar (cardDraft.ts): cada alteração vai para um rascunho em
+ * cache e o arquivo é gravado quando o editor perde o foco (clique fora), ao
+ * fechar, ao trocar de card e no unmount — só se algo mudou e se o card é
+ * válido. 'Fechar' grava e fecha; se o card não pode ser gravado, mostra o
+ * motivo e o segundo clique fecha deixando o texto no rascunho.
+ *
+ * '[[' no conteúdo abre as sugestões de card (CardRefSuggestions): a
+ * referência entra pelo NOME, [[Título do card]], e vira seta no canvas; na
+ * prévia aparece com a cor do tipo do card citado.
  */
-import { useState, type FormEvent, type KeyboardEvent } from 'react'
-import type { PlanningCardDto, PlanningCardType } from '@shared/ipc'
+import './cardEditor.css'
+import { useMemo, useRef, useState, type FocusEvent, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react'
+import type { PlanningCardDto } from '@shared/ipc'
 import { Markdown } from '../components/Markdown'
+import { CardRefSuggestions, useCardRefAutocomplete } from './CardRefSuggestions'
 import { AMBIGUITY_STATUSES, CARD_TYPE_LABEL, CARD_TYPE_ORDER, TypeIcon } from './cardTypes'
+import { TITLE_MAX, useCardAutosave, type CardAutosave, type CardFields } from './cardDraft'
+import { isRefHref, makeRefResolver, refsToMarkdownLinks, type RefCard } from './cardRefs'
+import type { SaveCardOutcome } from './usePlanning'
+
+export { makeCardId } from './cardDraft'
 
 export interface CardEditorProps {
-  /** O card como foi aberto; card novo vem com id '' e rev 0. */
+  /** O card como foi aberto (ou a versão viva dele); card novo vem com id '' e rev 0. */
   card: PlanningCardDto
   isNew: boolean
   etapas: { id: string; titulo: string }[]
   /** Ids em uso, para o id do card novo não colidir. */
   existingIds: string[]
-  onSave: (card: PlanningCardDto, expectedRev: number) => Promise<unknown> | void
-  onDelete?: (card: PlanningCardDto) => void
-  onCancel: () => void
+  /** Cards do plano: sugestões do '[[' e cores das referências na prévia. */
+  cards?: readonly RefCard[]
+  /** Projeto + plano: chave do rascunho em cache. */
+  projectCwd?: string
+  slug?: string
+  onSave: (card: PlanningCardDto, expectedRev: number) => Promise<SaveCardOutcome>
+  /** Cada gravação que deu certo (o card novo passa a ter id e rev). */
+  onSaved?: (card: PlanningCardDto) => void
+  /** Quem recebe confirma; true = apagado. */
+  onDelete?: (card: PlanningCardDto) => Promise<boolean | void> | boolean | void
+  onClose: () => void
+  notify?: (tipo: 'aviso' | 'erro', msg: string) => void
 }
 
-const TITLE_MAX = 1000
+const NO_CARDS: readonly RefCard[] = []
 
-export function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
-  } catch {
-    return false
-  }
+function statusText(a: CardAutosave): string {
+  if (a.status === 'saving') return 'Gravando…'
+  if (a.status === 'gone') return 'Card apagado fora daqui — o texto está no rascunho'
+  if (a.status === 'invalid' || a.status === 'failed') return 'Não gravado — o texto está no rascunho'
+  if (a.dirty) return 'Rascunho guardado · grava ao sair'
+  return a.status === 'saved' ? 'Gravado' : 'Grava sozinho ao sair do card'
 }
 
-/** Id [a-z0-9-] a partir do título, único entre `existing`. */
-export function makeCardId(titulo: string, existing: Iterable<string>): string {
-  const taken = new Set(existing)
-  const base =
-    titulo
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 48)
-      .replace(/-+$/, '') || 'card'
-  if (!taken.has(base)) return base
-  for (let i = 2; i < 1000; i++) {
-    const id = `${base}-${i}`
-    if (!taken.has(id)) return id
-  }
-  return `${base}-${Date.now().toString(36)}`
-}
-
-export function CardEditor({ card, isNew, etapas, existingIds, onSave, onDelete, onCancel }: CardEditorProps): JSX.Element {
-  // Congelado na abertura: é o rev que o disco precisa ter para a gravação valer.
-  const [openedRev] = useState(card.rev)
-  const [titulo, setTitulo] = useState(card.titulo)
-  const [tipo, setTipo] = useState<PlanningCardType>(card.tipo)
-  const [etapa, setEtapa] = useState(card.etapa ?? '')
-  const [fonte, setFonte] = useState(card.fonte ?? '')
-  const [status, setStatus] = useState(card.status === 'resolvida' ? 'resolvida' : 'aberta')
-  const [corpo, setCorpo] = useState(card.corpo)
+export function CardEditor({
+  card,
+  isNew,
+  etapas,
+  existingIds,
+  cards = NO_CARDS,
+  projectCwd = '',
+  slug = '',
+  onSave,
+  onSaved,
+  onDelete,
+  onClose,
+  notify
+}: CardEditorProps): JSX.Element {
+  const auto = useCardAutosave({ card, isNew, existingIds, projectCwd, slug, onSave, onSaved, notify })
+  const { fields, base } = auto
   const [tab, setTab] = useState<'escrever' | 'previa'>('escrever')
-  const [erro, setErro] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
+  // Fechar com card que não grava: o 1º clique explica, o 2º fecha (o rascunho fica).
+  const [closeArmed, setCloseArmed] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const corpoRef = useRef<HTMLTextAreaElement>(null)
+
+  function change<K extends keyof CardFields>(key: K, value: CardFields[K]): void {
+    setCloseArmed(false)
+    auto.setField(key, value)
+  }
+
+  const selfId = auto.persisted ? base.id : undefined
+  const refs = useCardRefAutocomplete({
+    cards,
+    excludeId: selfId,
+    value: fields.corpo,
+    onChange: (text) => change('corpo', text),
+    inputRef: corpoRef
+  })
+  const resolve = useMemo(() => makeRefResolver(cards), [cards])
+  const previewText = useMemo(
+    () => (tab === 'previa' ? refsToMarkdownLinks(fields.corpo, resolve) : ''),
+    [tab, fields.corpo, resolve]
+  )
 
   // Etapa que saiu do roteiro continua selecionável: trocar sozinho seria mudar o card sem pedir.
+  const etapa = fields.etapa
   const etapaOptions = etapa && !etapas.some((e) => e.id === etapa) ? [...etapas, { id: etapa, titulo: `${etapa} (fora do roteiro)` }] : etapas
+  const situacao = fields.status === 'resolvida' ? 'resolvida' : 'aberta'
+  const isNewCard = !auto.persisted
+  const outros = cards.filter((c) => c.id !== selfId).length
 
-  function build(): PlanningCardDto | string {
-    const t = titulo.trim()
-    if (!t) return 'Dê um título ao card.'
-    if (t.length > TITLE_MAX) return `Título longo demais (máximo ${TITLE_MAX} caracteres).`
-    const f = fonte.trim()
-    if (tipo === 'sugestao' && !isHttpUrl(f)) return 'Sugestão precisa de uma fonte: um link http(s).'
-    const next: PlanningCardDto = {
-      id: isNew ? makeCardId(t, existingIds) : card.id,
-      tipo,
-      titulo: t,
-      links: card.links,
-      rev: card.rev,
-      corpo
-    }
-    if (etapa) next.etapa = etapa
-    if (tipo === 'ambiguidade') next.status = status
-    else if (card.tipo !== 'ambiguidade' && card.status) next.status = card.status
-    if (tipo === 'sugestao') next.fonte = f
-    else if (card.fonte) next.fonte = card.fonte
-    return next
+  async function close(): Promise<void> {
+    if (busy) return
+    if (closeArmed) return onClose()
+    setBusy(true)
+    const result = await auto.flush()
+    setBusy(false)
+    if (result === 'invalid' || result === 'failed') setCloseArmed(true)
+    else onClose()
   }
 
-  async function submit(e?: FormEvent): Promise<void> {
-    e?.preventDefault()
-    if (saving) return
-    const next = build()
-    if (typeof next === 'string') {
-      setErro(next)
-      return
-    }
-    setErro(null)
-    setSaving(true)
+  async function remove(): Promise<void> {
+    if (!onDelete || busy) return
+    auto.hold(true) // o foco vai para a confirmação: esse blur não grava
+    setBusy(true)
+    let deleted = false
     try {
-      await onSave(next, openedRev)
+      deleted = (await onDelete(base)) === true
     } finally {
-      setSaving(false)
+      if (deleted) auto.forget()
+      else {
+        auto.hold(false)
+        setBusy(false)
+      }
     }
+  }
+
+  // Clique fora (o foco sai do painel): grava. Foco andando por dentro, não.
+  function onBlur(e: FocusEvent<HTMLElement>): void {
+    const to = e.relatedTarget as Node | null
+    if (to && e.currentTarget.contains(to)) return
+    void auto.flush()
+  }
+
+  function onSubmit(e: FormEvent): void {
+    e.preventDefault()
+    void auto.flush()
   }
 
   function onKeyDown(e: KeyboardEvent): void {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
-      void submit()
+      void auto.flush()
     }
+  }
+
+  // Referência na prévia é um link '#card-ref/…' só para ganhar cor: não navega.
+  function onPreviewClick(e: MouseEvent): void {
+    const a = (e.target as HTMLElement).closest?.('a')
+    if (a && isRefHref(a.getAttribute('href'))) e.preventDefault()
   }
 
   return (
     // nokey: Delete/Backspace digitado aqui nunca apaga card no canvas.
-    <aside className="pl-editor nokey" data-tipo={tipo} role="dialog" aria-label={isNew ? 'Novo card' : 'Editar card'}>
-      <form className="pl-editor-form" onSubmit={(e) => void submit(e)} onKeyDown={onKeyDown}>
+    <aside
+      className="pl-editor nokey"
+      data-tipo={fields.tipo}
+      role="dialog"
+      aria-label={isNewCard ? 'Novo card' : 'Editar card'}
+      tabIndex={-1}
+      onBlur={onBlur}
+    >
+      <form className="pl-editor-form" onSubmit={onSubmit} onKeyDown={onKeyDown}>
         <header className="pl-editor-head">
-          <h2>{isNew ? 'Novo card' : 'Editar card'}</h2>
-          {!isNew && (
-            <span className="pl-editor-id" title={`${card.id} · rev ${openedRev}`}>
-              {card.id}
+          <h2>{isNewCard ? 'Novo card' : 'Editar card'}</h2>
+          {!isNewCard && (
+            <span className="pl-editor-id" title={`${base.id} · rev ${base.rev}`}>
+              {base.id}
             </span>
           )}
-          <button type="button" className="pl-editor-close" onClick={onCancel} aria-label="Fechar editor" title="Fechar">
+          <button type="button" className="pl-editor-close" onClick={() => void close()} aria-label="Fechar editor" title="Fechar">
             ×
           </button>
         </header>
 
         <div className="pl-editor-body">
+          {auto.restored && (
+            <p className="pl-editor-restored" role="status">
+              Reaplicado um rascunho que não tinha sido gravado.{' '}
+              <button type="button" className="pl-link" onClick={auto.discardDraft}>
+                Descartar
+              </button>
+            </p>
+          )}
+
           <div className="pl-field">
             <label htmlFor="pl-ed-titulo">Título</label>
             <input
               id="pl-ed-titulo"
               className="pl-input"
-              value={titulo}
+              value={fields.titulo}
               maxLength={TITLE_MAX}
               autoFocus
               placeholder="O que este card registra?"
-              onChange={(e) => setTitulo(e.target.value)}
+              onChange={(e) => change('titulo', e.target.value)}
             />
           </div>
 
@@ -156,10 +210,10 @@ export function CardEditor({ card, isNew, etapas, existingIds, onSave, onDelete,
                   key={t}
                   type="button"
                   role="radio"
-                  aria-checked={tipo === t}
+                  aria-checked={fields.tipo === t}
                   data-tipo={t}
-                  className={`pl-type${tipo === t ? ' on' : ''}`}
-                  onClick={() => setTipo(t)}
+                  className={`pl-type${fields.tipo === t ? ' on' : ''}`}
+                  onClick={() => change('tipo', t)}
                 >
                   <TypeIcon tipo={t} size={13} />
                   {CARD_TYPE_LABEL[t]}
@@ -170,7 +224,7 @@ export function CardEditor({ card, isNew, etapas, existingIds, onSave, onDelete,
 
           <div className="pl-field">
             <label htmlFor="pl-ed-etapa">Etapa</label>
-            <select id="pl-ed-etapa" className="pl-select" value={etapa} onChange={(e) => setEtapa(e.target.value)}>
+            <select id="pl-ed-etapa" className="pl-select" value={etapa} onChange={(e) => change('etapa', e.target.value)}>
               <option value="">Sem etapa</option>
               {etapaOptions.map((e) => (
                 <option key={e.id} value={e.id}>
@@ -180,21 +234,25 @@ export function CardEditor({ card, isNew, etapas, existingIds, onSave, onDelete,
             </select>
           </div>
 
-          {tipo === 'sugestao' && (
+          {fields.tipo === 'sugestao' && (
             <div className="pl-field">
               <label htmlFor="pl-ed-fonte">Fonte</label>
               <input
                 id="pl-ed-fonte"
                 className="pl-input"
-                type="url"
-                value={fonte}
-                placeholder="https://… (de onde veio a sugestão)"
-                onChange={(e) => setFonte(e.target.value)}
+                value={fields.fonte}
+                spellCheck={false}
+                placeholder="https://… ou src/arquivo.ts:12"
+                aria-describedby="pl-ed-fonte-dica"
+                onChange={(e) => change('fonte', e.target.value)}
               />
+              <span className="pl-field-hint" id="pl-ed-fonte-dica">
+                Link http(s) ou arquivo do projeto (caminho relativo, ":linha" opcional).
+              </span>
             </div>
           )}
 
-          {tipo === 'ambiguidade' && (
+          {fields.tipo === 'ambiguidade' && (
             <div className="pl-field">
               <span className="pl-field-label">Situação</span>
               <div className="pl-seg" role="radiogroup" aria-label="Situação da ambiguidade">
@@ -203,9 +261,9 @@ export function CardEditor({ card, isNew, etapas, existingIds, onSave, onDelete,
                     key={s}
                     type="button"
                     role="radio"
-                    aria-checked={status === s}
-                    className={status === s ? `on ${s}` : ''}
-                    onClick={() => setStatus(s)}
+                    aria-checked={situacao === s}
+                    className={situacao === s ? `on ${s}` : ''}
+                    onClick={() => change('status', s)}
                   >
                     {s === 'aberta' ? 'Aberta' : 'Resolvida'}
                   </button>
@@ -227,40 +285,60 @@ export function CardEditor({ card, isNew, etapas, existingIds, onSave, onDelete,
               </div>
             </div>
             {tab === 'escrever' ? (
-              <textarea
-                id="pl-ed-corpo"
-                className="pl-textarea"
-                value={corpo}
-                placeholder="Markdown. Use [[id]] para citar outro card."
-                onChange={(e) => setCorpo(e.target.value)}
-              />
+              <div className="pl-corpo">
+                <textarea
+                  id="pl-ed-corpo"
+                  ref={corpoRef}
+                  className="pl-textarea"
+                  value={fields.corpo}
+                  placeholder="Markdown. Digite [[ para citar outro card pelo nome."
+                  {...refs.inputAria}
+                  onChange={(e) => {
+                    change('corpo', e.target.value)
+                    refs.sync(e.target.value, e.target.selectionStart)
+                  }}
+                  onSelect={(e) => refs.sync(e.currentTarget.value, e.currentTarget.selectionStart)}
+                  onKeyDown={(e) => void refs.handleKeyDown(e)}
+                  onBlur={() => refs.close(false)}
+                />
+                {refs.open && (
+                  <CardRefSuggestions
+                    className="pl-editor-refs"
+                    id={refs.listId}
+                    items={refs.items}
+                    active={refs.active}
+                    onPick={refs.pick}
+                    onActiveChange={refs.setActive}
+                    emptyText={outros ? 'Nenhum card com esse nome' : 'Nenhum outro card no plano'}
+                  />
+                )}
+              </div>
             ) : (
-              <div className="pl-preview">
-                {corpo.trim() ? <Markdown text={corpo} /> : <p className="pl-preview-empty">Nada escrito ainda.</p>}
+              <div className="pl-preview" onClick={onPreviewClick} onAuxClick={onPreviewClick}>
+                {fields.corpo.trim() ? <Markdown text={previewText} /> : <p className="pl-preview-empty">Nada escrito ainda.</p>}
               </div>
             )}
           </div>
 
-          {erro && (
+          {auto.erro && (
             <p className="pl-editor-error" role="alert">
-              {erro}
+              {auto.erro}
             </p>
           )}
         </div>
 
         <footer className="pl-editor-foot">
-          {!isNew && onDelete && (
-            <button type="button" className="btn small ghost pl-danger" onClick={() => onDelete(card)} disabled={saving}>
+          {!isNewCard && onDelete && (
+            <button type="button" className="btn small ghost pl-danger" onClick={() => void remove()} disabled={busy}>
               Apagar
             </button>
           )}
-          <span className="pl-kbd">Ctrl+Enter salva</span>
+          <span className="pl-autosave" data-status={auto.status} aria-live="polite">
+            {statusText(auto)}
+          </span>
           <span className="pl-spacer" />
-          <button type="button" className="btn small ghost" onClick={onCancel} disabled={saving}>
-            Cancelar
-          </button>
-          <button type="submit" className="btn small primary" disabled={saving}>
-            {saving ? 'Salvando…' : 'Salvar'}
+          <button type="button" className="btn small" onClick={() => void close()} disabled={busy}>
+            {closeArmed ? 'Fechar mesmo assim' : 'Fechar'}
           </button>
         </footer>
       </form>

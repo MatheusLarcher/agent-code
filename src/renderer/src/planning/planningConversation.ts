@@ -9,11 +9,13 @@
  * - Ela nasce com um modelo concreto de placeholder — nunca o sentinel do
  *   Automático — para nenhum caminho `isAutoModel(conv.model)` do App pegá-la.
  */
+import type { AgentCodeApi } from '@shared/api'
 import {
   isAutoModel,
   PLANNING_AUTO_FALLBACK,
   PLANNING_MODELS,
   type AutoPrompt,
+  type PlanningRef,
   type StartAgentOptions
 } from '@shared/ipc'
 import type { Conversation } from '../types'
@@ -57,8 +59,39 @@ export function handoffConversationFields(
   return { handoffSlug: slug, title: `Implementação: ${titulo?.trim() || slug}` }
 }
 
+/** Título com que nasce um planejamento criado sem pedir nome (roteiro e
+ *  conversa). A 1ª mensagem troca pelo nome automático (conversationTitle.ts). */
+export const PLANNING_UNTITLED = 'Sem nome'
+
+/**
+ * O título do roteiro de um plano que JÁ existe (o que o cabeçalho da tela
+ * mostra), para a conversa que o reabre nascer com o mesmo nome. "Sem nome"
+ * volta como está: a conversa nasce "Sem nome" e a 1ª mensagem dá o nome
+ * (conversationTitle.ts), como num plano recém-criado. Nunca lança: plano
+ * ilegível, IPC fora ou título vazio → undefined (fica "Planejamento: <slug>").
+ *
+ * Não fecha o que abriu: o planningOpen registra a vigia do plano nesta
+ * janela e a tela que abre logo em seguida só a reaproveita. Fechar aqui
+ * desligaria a vigia de uma tela desse plano que já estivesse aberta.
+ */
+export async function existingPlanTitle(
+  api: Pick<AgentCodeApi, 'planningOpen'>,
+  ref: PlanningRef
+): Promise<string | undefined> {
+  try {
+    const res = await api.planningOpen(ref)
+    const titulo = res?.ok ? res.plan.roteiro.titulo?.trim() : ''
+    return titulo || undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** O que uma conversa nova precisa para ser a Tela de Planejamento de `slug`.
- *  Modelo/esforço são só placeholder: o main os troca pelo par do Manager. */
+ *  Modelo/esforço são só placeholder: o main os troca pelo par do Manager.
+ *  Com `titulo` (o plano acabou de nascer, ou o do roteiro ao reabrir — ver
+ *  existingPlanTitle) a conversa leva o MESMO nome do roteiro — é o que mantém
+ *  a barra lateral e o cabeçalho da tela iguais; sem ele, usa o slug. */
 export function planningConversationFields(
   slug: string,
   titulo?: string
@@ -69,7 +102,7 @@ export function planningConversationFields(
   return {
     mode: 'planning',
     planningSlug: slug,
-    title: `Planejamento: ${titulo?.trim() || slug}`,
+    title: titulo?.trim() || `Planejamento: ${slug}`,
     model: PLANNING_AUTO_FALLBACK.model,
     effort: PLANNING_AUTO_FALLBACK.effort,
     economyMode: false,

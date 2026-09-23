@@ -90,8 +90,8 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
 })
 
 describe('modelSupportsFastMode — quais modelos aceitam o modo rápido', () => {
-  it('só os Opus suportados pela Anthropic (Opus 5 e 4.8)', () => {
-    expect(modelSupportsFastMode('claude-opus-5')).toBe(true)
+  it('só os Opus suportados pela Anthropic (Opus 5.5 e 4.8)', () => {
+    expect(modelSupportsFastMode('claude-opus-5-5')).toBe(true)
     expect(modelSupportsFastMode('claude-opus-4-8')).toBe(true)
   })
 

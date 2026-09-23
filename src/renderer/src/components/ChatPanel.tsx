@@ -18,6 +18,7 @@ import { VigiaChip, type VigiaDoubt } from './VigiaChip'
 import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
 import { TokenUsagePanel } from './TokenUsagePanel'
 import { emptyUsageMap, type UsageMap } from '../tokenUsageTree'
+import { useChatDisplay } from './chatDisplay'
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -383,35 +384,39 @@ function ContextBar({ context, model }: { context: number; model: string }): JSX
 export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
   const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
+  // Compacto (chat minimizado do planejamento): sem consumo e sem o aviso do Windows.
+  const { compact } = useChatDisplay()
   return (
     <section className="chat-panel">
-      <div className="chat-header">
-        <span className="chat-title">Chat</span>
-        <div className="token-meter" title="Consumo geral desta conversa">
-          <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
-          <ContextBar context={tokens.context} model={props.runningModel} />
-          <span className="tok out">↑ {fmt(tokens.output)} saída</span>
-          <span className="tok cost">~${tokens.cost.toFixed(2)}</span>
-          <button
-            type="button"
-            className={`token-meter-expand${tokenPanelOpen ? ' open' : ''}`}
-            onClick={() => setTokenPanelOpen((v) => !v)}
-            title={tokenPanelOpen ? 'Esconder detalhamento de tokens' : 'Ver detalhamento de tokens por agente/subagente'}
-            aria-expanded={tokenPanelOpen}
-            aria-label="Detalhar consumo de tokens"
-          >
-            <IconChevronDown size={13} />
-          </button>
+      {!compact && (
+        <div className="chat-header">
+          <span className="chat-title">Chat</span>
+          <div className="token-meter" title="Consumo geral desta conversa">
+            <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
+            <ContextBar context={tokens.context} model={props.runningModel} />
+            <span className="tok out">↑ {fmt(tokens.output)} saída</span>
+            <span className="tok cost">~${tokens.cost.toFixed(2)}</span>
+            <button
+              type="button"
+              className={`token-meter-expand${tokenPanelOpen ? ' open' : ''}`}
+              onClick={() => setTokenPanelOpen((v) => !v)}
+              title={tokenPanelOpen ? 'Esconder detalhamento de tokens' : 'Ver detalhamento de tokens por agente/subagente'}
+              aria-expanded={tokenPanelOpen}
+              aria-label="Detalhar consumo de tokens"
+            >
+              <IconChevronDown size={13} />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
-      {tokenPanelOpen && (
+      {!compact && tokenPanelOpen && (
         <div className="token-meter-panel">
           <TokenUsagePanel convId={props.convId} liveMap={props.usageMap ?? emptyUsageMap} />
         </div>
       )}
 
-      {props.windowsControlEnabled && (
+      {!compact && props.windowsControlEnabled && (
         <div className="windows-control-banner" role="status" aria-live="polite">
           <span className="windows-control-banner-icon" aria-hidden="true">⚠</span>
           <span className="windows-control-banner-text">
@@ -504,14 +509,16 @@ export function ChatPanel(props: Props): JSX.Element {
       <BackgroundTasksCard tasks={props.backgroundTasks ?? []} />
       <InterruptQueueWarning messages={props.queuedAfterInterrupt ?? []} />
 
-      <div className="last-usage-float" aria-label="Consumo da última resposta">
-        <span className="last-usage-title">Última resposta</span>
-        <span className="tok in" title="Tokens de entrada enviados ao modelo na última resposta">
-          ↓ {fmt(tokens.context)} entrada
-        </span>
-        <span className="tok out">↑ {fmt(tokens.lastOutput ?? 0)} saída</span>
-        <span className="tok cost">~${(tokens.lastCost ?? 0).toFixed(2)}</span>
-      </div>
+      {!compact && (
+        <div className="last-usage-float" aria-label="Consumo da última resposta">
+          <span className="last-usage-title">Última resposta</span>
+          <span className="tok in" title="Tokens de entrada enviados ao modelo na última resposta">
+            ↓ {fmt(tokens.context)} entrada
+          </span>
+          <span className="tok out">↑ {fmt(tokens.lastOutput ?? 0)} saída</span>
+          <span className="tok cost">~${(tokens.lastCost ?? 0).toFixed(2)}</span>
+        </div>
+      )}
 
       <div className="composer-bar">
         {!props.hideModelControls && (<>

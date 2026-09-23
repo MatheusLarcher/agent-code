@@ -22,9 +22,14 @@ import { useUI } from '../ui/UiProvider'
 import { frameRms, newVadState, shouldRotatePreroll, vadStep, type VadState } from '../vad'
 import { encodeWav } from '../wav'
 import { looksLikeFileUrl, looksLikeLocalPath } from '@shared/mime'
+import { useChatDisplay } from './chatDisplay'
+import { detectRefTrigger, type RefCard } from '../planning/cardRefs'
+import { CardRefSuggestions, useCardRefAutocomplete } from '../planning/CardRefSuggestions'
 
 /** Max size for a single non-image attachment (keeps the IPC payload sane). */
 const MAX_FILE_BYTES = 25 * 1024 * 1024
+
+const NO_CARDS: readonly RefCard[] = []
 
 const MAX_LINES = 8
 
@@ -302,6 +307,12 @@ export function Composer(props: Props): JSX.Element {
   const pickerOpen = picker !== null && pickerItems.length > 0
   // Mirror layer behind the textarea that paints the gray pill under @/ tokens.
   const composerHl = useRef<HTMLDivElement>(null)
+
+  // ---- "[[" referência a card (só com cards no contexto: o chat do Agent Manager) ----
+  // Mesmo hook/lista do editor de card (CardRefSuggestions): insere [[Título]].
+  // Sem cards no contexto, nada disto age — o Composer fica como sempre.
+  const cardRefs = useChatDisplay().cardRefs ?? NO_CARDS
+  const cardAc = useCardRefAutocomplete({ cards: cardRefs, value, onChange: updateValue, inputRef: props.textareaRef })
 
   // ---- voice dictation (mic → text, OpenAI gpt-4o-transcribe) ----
   // Records one utterance per segment, cut at NATURAL PAUSES by a local VAD (voice
@@ -708,6 +719,14 @@ export function Composer(props: Props): JSX.Element {
     props.textareaRef.current?.blur()
   }
 
+  // A lista do "[[" só aparece com algum card casando (como o menu @//): sem
+  // casamento nada abre, e Enter/Esc seguem normais.
+  const refsOn = cardRefs.length > 0 && !props.disabled && !blocked
+  const refsOpen = refsOn && cardAc.open && cardAc.items.length > 0
+  const syncCardRefs = (text: string, caret: number | null): void => {
+    if (refsOn) cardAc.sync(text, caret)
+  }
+
   const submit = (): void => {
     if (props.disabled || blocked) return
     if (resolvingCount > 0) return // still resolving pasted path(s)/URL(s)
@@ -729,9 +748,12 @@ export function Composer(props: Props): JSX.Element {
     setFileRefs([])
     setPicker(null)
     setPickerItems([])
+    cardAc.close(false)
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // Lista do "[[" aberta: setas, Enter/Tab (escolhe o card, não envia) e Esc são dela.
+    if (refsOpen && cardAc.handleKeyDown(e)) return
     // While the picker menu is open, the arrow keys / Enter / Tab / Esc drive it
     // instead of the textarea (Enter must pick an item, not send the message).
     if (pickerOpen) {
@@ -980,7 +1002,8 @@ export function Composer(props: Props): JSX.Element {
 
   // Recompute the active @mention from the box's current text + caret position.
   const syncPicker = (text: string, caret: number): void => {
-    if (props.disabled || blocked) {
+    // Dentro de um "[[" aberto quem sugere é a lista de cards, não o menu @//.
+    if (props.disabled || blocked || (refsOn && detectRefTrigger(text, caret))) {
       setPicker(null)
       return
     }
@@ -1264,6 +1287,16 @@ export function Composer(props: Props): JSX.Element {
           ))}
         </div>
       )}
+      {refsOpen && (
+        <CardRefSuggestions
+          className="composer-card-refs"
+          id={cardAc.listId}
+          items={cardAc.items}
+          active={cardAc.active}
+          onPick={cardAc.pick}
+          onActiveChange={cardAc.setActive}
+        />
+      )}
       <div className="composer-row" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
         <div className="ref-wrap" ref={refMenu}>
           <button
@@ -1363,18 +1396,26 @@ export function Composer(props: Props): JSX.Element {
             value={value}
             disabled={props.disabled}
             readOnly={blocked}
+            {...(refsOn ? cardAc.inputAria : undefined)}
             onMouseDown={blocked ? onBlocked : undefined}
             onFocusCapture={blocked ? () => onBlocked() : undefined}
             onChange={(e) => {
               updateValue(e.target.value)
               syncPicker(e.target.value, e.target.selectionStart ?? e.target.value.length)
+              syncCardRefs(e.target.value, e.target.selectionStart)
             }}
+            // O cursor andou (clique, setas): o "[[" em volta dele decide a lista de cards.
+            onSelect={(e) => syncCardRefs(e.currentTarget.value, e.currentTarget.selectionStart)}
             onKeyDown={onKey}
             // "Salvar quando o usuário clica em outra coisa": the mention/skill
             // picker's own items use mousedown+preventDefault specifically to
             // avoid blurring the box while picking, so this only fires on a
-            // real "left the composer" — never mid-autocomplete.
-            onBlur={() => flushDraft(props.convId, value)}
+            // real "left the composer" — never mid-autocomplete (the "[[" card
+            // list does the same; leaving the box just hides it).
+            onBlur={() => {
+              flushDraft(props.convId, value)
+              cardAc.close(false)
+            }}
             onClick={(e) => syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
             onKeyUp={(e) => {
               // Re-detect the token when the caret moves (not while the menu is

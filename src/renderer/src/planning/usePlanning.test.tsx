@@ -113,6 +113,22 @@ describe('usePlanning — gravações', () => {
     expect(mock.api.planningOpen).toHaveBeenCalledTimes(2)
   })
 
+  it('quietConflict: no rev_conflict recarrega sem toast (quem chamou avisa)', async () => {
+    const mock = mockPlanningApi()
+    const current = makeCard('login', { titulo: 'Versão do agente', rev: 7, etapa: 'requisitos' })
+    mock.api.planningSaveCard.mockResolvedValueOnce({ ok: false, code: 'rev_conflict', current } as never)
+    const { result } = setup()
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    mock.setPlan(makePlan({ cards: [current] }))
+    let out: Awaited<ReturnType<typeof result.current.saveCard>> | undefined
+    await act(async () => {
+      out = await result.current.saveCard({ ...result.current.plan!.cards[0], titulo: 'Minha' }, 4, { quietConflict: true })
+    })
+    expect(out).toEqual({ ok: false, conflict: true, current })
+    await waitFor(() => expect(result.current.plan!.cards[0]).toMatchObject({ titulo: 'Versão do agente', rev: 7 }))
+    expect(screen.queryByText(CONFLICT_MSG)).toBeNull()
+  })
+
   it('outra falha vira toast de erro com a mensagem', async () => {
     const mock = mockPlanningApi()
     mock.api.planningDeleteCard.mockResolvedValueOnce({ ok: false, code: 'io', message: 'disco cheio' } as never)

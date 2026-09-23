@@ -35,6 +35,16 @@ import type { AutoPrompt, AutoPromptTurn, EffortLevel, ProjectTree } from '@shar
 import { fileTouches, turnsOf } from './projectActivity'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
+import {
+  claudeUsageAllowsLlmTitle,
+  deriveTitle,
+  requestLlmTitle,
+  syncRoteiroTitle,
+  wantsAutoTitle,
+  withFallbackTitle,
+  withLlmTitle,
+  withUserTitle
+} from './conversationTitle'
 import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
 import { closeRunningTracks, isSubagentEvent, reduceTracks, type TrackMap } from './agentTracks'
 import {
@@ -245,12 +255,6 @@ interface QueuedMessage {
 function basename(p: string): string {
   const parts = p.split(/[\\/]+/).filter(Boolean)
   return parts[parts.length - 1] || p
-}
-
-function deriveTitle(text: string): string {
-  const first = text.trim().split('\n')[0].trim()
-  if (!first) return DEFAULT_TITLE
-  return first.length > 48 ? first.slice(0, 48) + '…' : first
 }
 
 function uid(prefix: string): string {
@@ -666,6 +670,36 @@ export function App(): JSX.Element {
     setConversations((prev) => prev.map((c) => (c.id === id ? fn(c) : c)))
   }, [])
 
+  // Título automático (conversationTitle.ts). `pendingTitlesRef`: conversas com
+  // o nome do LLM a caminho — renomear ou apagar tira daqui, e a resposta
+  // atrasada é descartada em vez de passar por cima do usuário.
+  const pendingTitlesRef = useRef<Set<string>>(new Set())
+  const syncPlanningTitle = useCallback((conv: Conversation | null | undefined, title: string): void => {
+    if (!isPlanningConversation(conv)) return
+    const ref = { projectCwd: conv.cwd, slug: conv.planningSlug }
+    void syncRoteiroTitle(ref, title, {
+      api: window.api,
+      isOnScreen: () => {
+        const active = convsRef.current.find((c) => c.id === activeIdRef.current)
+        return isPlanningConversation(active) && active.cwd === ref.projectCwd && active.planningSlug === ref.slug
+      }
+    })
+  }, [])
+  // Chamado com a conversa de ANTES do recuo (ver withFallbackTitle).
+  const autoTitle = useCallback(
+    (conv: Conversation, text: string): void => {
+      if (!wantsAutoTitle(conv, text)) return
+      pendingTitlesRef.current.add(conv.id)
+      void (async () => {
+        const llm = claudeUsageAllowsLlmTitle(usageLimitsRef.current) ? await requestLlmTitle(window.api, text) : null
+        if (!pendingTitlesRef.current.delete(conv.id)) return
+        if (llm) patchConv(conv.id, (c) => withLlmTitle(c, llm))
+        syncPlanningTitle(conv, llm ?? deriveTitle(text))
+      })()
+    },
+    [patchConv, syncPlanningTitle]
+  )
+
   // Set/clear busy for a conversation, keeping the ref in sync for the async
   // send path (which reads busyRef right after awaiting connect()).
   const setBusy = useCallback((id: string, on: boolean): void => {
@@ -962,9 +996,9 @@ export function App(): JSX.Element {
         if (next) {
           setQueue((cur) => cur.filter((m) => m.id !== next.id))
           const nextMsgId = uid('u')
+          const beforeTitle = convsRef.current.find((c) => c.id === cid)
           patchConv(cid, (c) => ({
-            ...c,
-            title: c.title === DEFAULT_TITLE && next.text.trim() ? deriveTitle(next.text) : c.title,
+            ...withFallbackTitle(c, next.text),
             messages: [
               ...c.messages,
               {
@@ -981,6 +1015,7 @@ export function App(): JSX.Element {
             ],
             updatedAt: Date.now()
           }))
+          if (beforeTitle) autoTitle(beforeTitle, next.text)
           const sdkUuid = crypto.randomUUID()
           inflightRef.current[cid] = {
             msgId: nextMsgId,
@@ -1040,7 +1075,7 @@ export function App(): JSX.Element {
         }
       }
     },
-    [patchConv, notify, setBusy, setConnected, markMessageError]
+    [patchConv, notify, setBusy, setConnected, markMessageError, autoTitle]
   )
 
   useEffect(() => {
@@ -1656,14 +1691,22 @@ export function App(): JSX.Element {
     if (msgId) setScrollTarget((prev) => ({ convId: id, msgId, seq: (prev?.seq ?? 0) + 1 }))
   }, [])
 
+  // Sidebar e celular: nome escolhido pelo usuário trava o título (o LLM
+  // atrasado é descartado) e, no planejamento, vira o título do roteiro.
   const renameConversation = useCallback(
-    (id: string, title: string): void => patchConv(id, (c) => ({ ...c, title: title.trim() || c.title })),
-    [patchConv]
+    (id: string, title: string): void => {
+      if (!title.trim()) return
+      pendingTitlesRef.current.delete(id)
+      patchConv(id, (c) => withUserTitle(c, title))
+      syncPlanningTitle(convsRef.current.find((c) => c.id === id), title.trim())
+    },
+    [patchConv, syncPlanningTitle]
   )
 
   const deleteConversation = useCallback(
     (id: string): void => {
       const next = convsRef.current.filter((c) => c.id !== id)
+      pendingTitlesRef.current.delete(id)
       void window.api.disposeAgent(id)
       void window.api.disposeBrowser(id)
       setConnected(id, false)
@@ -2057,9 +2100,9 @@ export function App(): JSX.Element {
       interruptedRef.current.delete(conv.id) // fresh turn: clear any stale stop flag
       setBusy(conv.id, true)
       setBusySince((m) => ({ ...m, [conv.id]: Date.now() }))
+      const beforeTitle = convsRef.current.find((c) => c.id === conv.id) ?? conv
       patchConv(conv.id, (c) => ({
-        ...c,
-        title: c.title === DEFAULT_TITLE && text.trim() ? deriveTitle(text) : c.title,
+        ...withFallbackTitle(c, text),
         messages: [
           ...c.messages,
           {
@@ -2076,6 +2119,7 @@ export function App(): JSX.Element {
         ],
         updatedAt: Date.now()
       }))
+      autoTitle(beforeTitle, text)
       // Remember this as the in-flight message so a failing turn can mark it.
       const sdkUuid = crypto.randomUUID()
       inflightRef.current[conv.id] = { msgId, sdkUuid, full, images, files, fileRefs }
@@ -2102,7 +2146,7 @@ export function App(): JSX.Element {
         notify('erro', `Falha ao enviar: ${String(err)}`)
       }
     },
-    [connect, patchConv, setBusy, notify, ensureProject, markMessageError]
+    [connect, patchConv, setBusy, notify, ensureProject, markMessageError, autoTitle]
   )
 
   const runRecovery = useCallback(

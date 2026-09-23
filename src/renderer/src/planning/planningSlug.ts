@@ -39,3 +39,15 @@ export function derivePlanningSlug(titulo: string, taken: Iterable<string>): str
   const base = slugFromTitle(titulo)
   return base ? uniqueSlug(base, taken) : ''
 }
+
+/**
+ * Slug de um plano criado SEM pedir nome: `plano-AAAAMMDD-HHMM` na hora local
+ * de `now`, único contra `taken` (-2, -3… quando dois nascem no mesmo minuto).
+ * É gerado uma vez, no clique, e não muda depois: o nome do plano (título do
+ * roteiro) vem da conversa, a pasta fica.
+ */
+export function generatePlanningSlug(now: Date, taken: Iterable<string>): string {
+  const p = (n: number): string => String(n).padStart(2, '0')
+  const stamp = `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}`
+  return uniqueSlug(`plano-${stamp}`, taken)
+}

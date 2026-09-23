@@ -4,7 +4,8 @@
  * - Abre com planningOpen e fecha com planningClose no unmount ou quando o
  *   plano (projectCwd + slug) muda — é isso que liga e desliga a vigia da pasta.
  * - Recarrega em onPlanningChanged SÓ do mesmo plano: o evento é global.
- * - Toda gravação de card leva o expectedRev; 'rev_conflict' recarrega e avisa.
+ * - Toda gravação de card leva o expectedRev; 'rev_conflict' recarrega e avisa
+ *   (com quietConflict só recarrega: o editor de card mescla e avisa ele mesmo).
  *   Qualquer outra falha vira toast de erro. Nada aqui lança.
  * - O roteiro também: toggleEtapa manda o rev carregado e, em
  *   'roteiro_conflict', reaplica UMA vez sobre o roteiro atual que veio junto.
@@ -37,13 +38,19 @@ export type SaveCardOutcome =
   | { ok: false; conflict: true; current: PlanningCardDto | null }
   | { ok: false; conflict: false }
 
+export interface SaveCardOptions {
+  quietConflict?: boolean
+}
+
 export interface PlanningController {
   status: PlanningStatus
   plan: OpenedPlanningDto | null
   /** Motivo da falha ao abrir (status 'error'). */
   error: string | null
   reload: () => Promise<void>
-  saveCard: (card: PlanningCardDto, expectedRev: number) => Promise<SaveCardOutcome>
+  /** `quietConflict`: no 'rev_conflict' recarrega sem toast — quem chamou avisa
+   *  (o editor de card faz merge e dá um aviso só). */
+  saveCard: (card: PlanningCardDto, expectedRev: number, opts?: SaveCardOptions) => Promise<SaveCardOutcome>
   deleteCard: (id: string, expectedRev: number) => Promise<boolean>
   /** Otimista; grava depois de LAYOUT_DEBOUNCE_MS sem novas chamadas. */
   saveLayout: (positions: Record<string, Point>) => void
@@ -230,7 +237,7 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
   const reload = useCallback(() => load(planRef.current ? 'reload' : 'initial'), [load])
 
   const saveCard = useCallback(
-    async (card: PlanningCardDto, expectedRev: number): Promise<SaveCardOutcome> => {
+    async (card: PlanningCardDto, expectedRev: number, opts?: SaveCardOptions): Promise<SaveCardOutcome> => {
       const dto = toCardDto(card)
       const res = await safe(() => window.api.planningSaveCard({ projectCwd, slug, card: dto, expectedRev }))
       if (res.ok) {
@@ -242,10 +249,11 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
         })
         return { ok: true, card: saved }
       }
-      fail(res, 'Não consegui salvar o card')
+      if (res.code === 'rev_conflict' && opts?.quietConflict) void load('reload')
+      else fail(res, 'Não consegui salvar o card')
       return res.code === 'rev_conflict' ? { ok: false, conflict: true, current: res.current } : { ok: false, conflict: false }
     },
-    [projectCwd, slug, myKey, updatePlan, fail]
+    [projectCwd, slug, myKey, updatePlan, fail, load]
   )
 
   const deleteCard = useCallback(

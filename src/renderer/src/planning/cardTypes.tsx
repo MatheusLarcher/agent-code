@@ -24,9 +24,21 @@ export const STAGE_STATUS_LABEL: Record<PlanningStageStatus, string> = {
 
 export const AMBIGUITY_STATUSES = ['aberta', 'resolvida'] as const
 
-/** Cor do tipo como var CSS (definida no .planning) — serve em `style`. */
+/** A mesma cor do planning.css, a partir das variáveis globais do app: vale
+ *  também FORA da tela de planejamento (ex.: sugestões de [[card]] no chat). */
+const TYPE_COLOR_FALLBACK: Record<PlanningCardType, string> = {
+  etapa: 'var(--crew-executor, #6f9bd1)',
+  requisito: 'var(--crew-critico, #a98bd1)',
+  decisao: 'var(--ok)',
+  sugestao: 'var(--warn)',
+  ambiguidade: 'var(--err)',
+  nota: 'var(--crew-subagente, #8d8a86)'
+}
+
+/** Cor do tipo como var CSS (a do .planning, com a global de reserva) — serve em `style`. */
 export function typeColorVar(tipo: PlanningCardType): string {
-  return `var(--pl-${tipo})`
+  const known = tipo in TYPE_COLOR_FALLBACK ? tipo : 'nota'
+  return `var(--pl-${known}, ${TYPE_COLOR_FALLBACK[known]})`
 }
 
 const PATHS: Record<PlanningCardType, JSX.Element> = {

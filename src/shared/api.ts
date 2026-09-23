@@ -61,7 +61,8 @@ import type {
   PlanningLayoutDto,
   PlanningRef,
   PlanningResult,
-  PlanningRoteiroDto
+  PlanningRoteiroDto,
+  SuggestTitleResult
 } from './ipc'
 
 /** The surface exposed on `window.api` by the preload script. */
@@ -202,6 +203,9 @@ export interface AgentCodeApi {
   loadAllConversations(): Promise<unknown[]>
   /** Persist the full conversation list, split one db per project (`cwd`). */
   saveAllConversations(list: unknown[]): Promise<void>
+  /** Nome curto (claude-haiku-4-5, one-shot) para a conversa a partir da 1ª
+   *  mensagem. Nunca lança: `ok: false` quando não houver título. */
+  suggestConversationTitle(req: { text: string }): Promise<SuggestTitleResult>
 
   /** Transcribe recorded audio (base64) to text via OpenAI. `error: 'no-key'`
    *  means the user hasn't set an OpenAI API key yet. */

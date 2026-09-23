@@ -1,10 +1,13 @@
 /*
- * Espaço da Tela de Planejamento: o divisor entre canvas e chat e o roteiro
+ * Espaço da Tela de Planejamento: a alça entre roteiro e canvas e o roteiro
  * recolhido (trilho). Separado do planning.css, que está no limite de tamanho
  * do repo; mesmas variáveis do styles.css.
  */
 
-/* ---- divisor canvas | chat ---- */
+/* ---- largura do roteiro: a da alça (--pl-roteiro-w), entre 180px e 40% da área ---- */
+.planning .pl-progress { min-width: 180px; max-width: 40%; }
+
+/* ---- alça roteiro | canvas ---- */
 /* Ocupa 1px no layout (margens negativas), mas pega o mouse numa faixa de 7px. */
 .pl-splitter {
   position: relative;
@@ -25,6 +28,8 @@
   background: var(--line);
   transition: background 0.12s ease, left 0.12s ease, width 0.12s ease;
 }
+/* A borda do roteiro já desenha a linha: a da alça só aparece ao passar o mouse ou focar. */
+.pl-roteiro-splitter::after { background: transparent; }
 .pl-splitter:hover::after,
 .pl-splitter:active::after,
 .pl-splitter:focus-visible::after { left: 2px; width: 3px; background: var(--accent); }
@@ -49,6 +54,8 @@
 
 .planning .pl-progress.pl-rail {
   flex: 0 0 44px;
+  min-width: 0;
+  max-width: none;
   align-items: center;
   gap: 10px;
   padding: 10px 0;

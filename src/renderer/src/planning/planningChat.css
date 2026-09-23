@@ -1,0 +1,113 @@
+/*
+ * O chat do Agent Manager flutuando sobre o canvas (ManagerChatFloat).
+ * Separado do planning.css, que está no limite de tamanho do repo; mesmas
+ * variáveis do styles.css.
+ */
+
+/* A área do canvas (e dos estados carregando/erro): é nela que o painel flutua. */
+.pl-main { position: relative; flex: 1; display: flex; min-width: 0; min-height: 0; }
+
+/* ---- o painel ---- */
+.pl-chat-float {
+  /* line-height do texto das mensagens (.bubble: 14px × 1.5): a unidade do minimizado. */
+  --pl-chat-line: 21px;
+  position: absolute;
+  /* Acima do canvas (o React Flow é um contexto z-index 0), abaixo do editor de card (10). */
+  z-index: 8;
+  left: 0;
+  right: 0;
+  /* Até a medição (ManagerChatFloat): o `top` inline é 20% da JANELA, contado da janela. */
+  top: 20vh;
+  bottom: 12px;
+  width: clamp(420px, 55%, 860px);
+  /* Canvas estreito: não cobre os controles de zoom, à esquerda. */
+  max-width: calc(100% - 112px);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+/* Encolhido, também fica translúcido — some visualmente sem tirar o canvas de vista
+   atrás dele — e volta opaco ao passar o mouse ou focar algo dentro (ler/digitar
+   não deve competir com o card por trás). Clicar nele expande (ManagerChatFloat). */
+.pl-chat-float.minimized {
+  top: auto;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  backdrop-filter: blur(6px);
+}
+.pl-chat-float.minimized:hover,
+.pl-chat-float.minimized:focus-within {
+  background: var(--bg);
+  backdrop-filter: none;
+}
+
+.pl-chat-float-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.pl-chat-float-title { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.pl-chat-float-toggle {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.pl-chat-float-toggle:hover { background: var(--bg-3); color: var(--text); }
+.pl-chat-float-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Maximizado: a seta aponta para baixo (minimizar); minimizado, para cima. */
+.pl-chat-float.minimized .pl-chat-float-toggle svg { transform: rotate(180deg); }
+
+.pl-chat-float-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* O ChatPanel ocupa o painel; o min-width de 380px dele não vale aqui (o painel já tem o seu). */
+.pl-chat-float-body > .chat-panel { flex: 1; min-width: 0; min-height: 0; }
+
+/* ---- minimizado: 5 linhas de conversa, 3 de digitação ---- */
+.pl-chat-float.minimized .pl-chat-float-body,
+.pl-chat-float.minimized .chat-panel { flex: none; }
+/* A lista tem a altura de 5 linhas do texto das mensagens; o fim da conversa fica
+   à vista (useKeepEndOnResize reancora quem estava no fim quando a caixa encolhe). */
+.pl-chat-float.minimized .message-list-wrap { flex: none; height: calc(5 * var(--pl-chat-line)); }
+.pl-chat-float.minimized .message-list { padding: 2px 14px; gap: 6px; }
+.pl-chat-float.minimized .bubble { padding: 3px 12px; }
+.pl-chat-float.minimized .empty-state { display: none; }
+.pl-chat-float.minimized .composer { padding: 8px 10px 10px; }
+/* 3 linhas fixas (+ os 4,5px de respiro em cima e embaixo da caixa); o auto-crescimento
+   do Composer põe `height` inline, que min/max-height sobrepõem. Mais texto rola. */
+.pl-chat-float.minimized .composer-input {
+  min-height: calc(3 * var(--pl-chat-line) + 9px);
+  max-height: calc(3 * var(--pl-chat-line) + 9px);
+  overflow-y: auto !important;
+}
+/* A lista do "[[" abre acima da caixa; minimizado, cabe no espaço da conversa +
+   cabeçalho (o painel corta o que passa dele) e rola o resto. */
+.pl-chat-float.minimized .composer-card-refs { max-height: calc(5 * var(--pl-chat-line) + 24px); }
+
+/* ---- [[Nome]] nas mensagens: a pílula da prévia do card, na cor do tipo (--pl-ref inline) ---- */
+.pl-card-ref {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--pl-ref) 14%, transparent);
+  color: var(--pl-ref);
+  font-weight: 600;
+}
+/* Na bolha do usuário (fundo na cor de destaque) a pílula leva o fundo escuro do painel. */
+.msg.user .pl-card-ref { background: color-mix(in srgb, var(--pl-ref) 14%, var(--bg-2)); }

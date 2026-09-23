@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { FONTE_RULE_TEXT } from '../../shared/planningFonte'
 import { setPlanningChangeSink, type PlanningChangeNotice } from './planningEvents'
 import type { Roteiro, StageStatus } from './planningModel'
 import * as realStore from './planningStore'
@@ -34,6 +35,11 @@ async function call(name: string, args: unknown, list: Tool[] = tools): Promise<
   const result = (await found.handler(args as never, undefined)) as Result
   return result.content.map((part) => part.text ?? '').join('\n')
 }
+
+/** A recusa de sugestão sem fonte válida, por inteiro: a regra única + onde buscar. */
+const SUGESTAO_MSG =
+  `card do tipo "sugestao" exige fonte verificável em "fonte": ${FONTE_RULE_TEXT}. ` +
+  'Pesquise com WebSearch/WebFetch ou localize o trecho com Read/Grep; sugestão sem fonte verificável não entra no planejamento.'
 
 const cardPath = (id: string): string => path.join(cwd, 'docs', 'spec', SLUG, 'cards', `${id}.md`)
 const cardOf = async (id: string) => (await openPlan(cwd, SLUG)).cards.find((c) => c.id === id)
@@ -120,7 +126,6 @@ describe('roteiro', () => {
     await call('plan_etapa_marcar', { id: 'requisitos', status: 'concluida' })
     notify.mockClear()
     const out = await call('plan_roteiro_set', {
-      titulo: 'Checkout v2',
       etapas: [
         { id: 'pagamento', titulo: 'Integrar pagamento' },
         { id: 'requisitos', titulo: 'Levantar requisitos' },
@@ -130,7 +135,7 @@ describe('roteiro', () => {
     expect(out).toMatch(/Roteiro gravado \(3 etapas\)/)
     const { roteiro } = await openPlan(cwd, SLUG)
     expect(roteiro).toEqual({
-      titulo: 'Checkout v2',
+      titulo: 'Checkout novo',
       rev: 4, // createPlan 1 → withRoteiro 2 → etapa_marcar 3 → este 4
       etapas: [
         { id: 'pagamento', titulo: 'Integrar pagamento', status: 'pendente' },
@@ -139,6 +144,17 @@ describe('roteiro', () => {
       ]
     })
     expect(notify).toHaveBeenCalledWith({ projectCwd: cwd, slug: SLUG })
+  })
+
+  it('plan_roteiro_set não tem campo de título e preserva o título atual em disco', async () => {
+    const roteiroSet = tools.find((t) => t.name === 'plan_roteiro_set')
+    expect(Object.keys(roteiroSet?.inputSchema as Record<string, unknown>)).toEqual(['etapas'])
+    expect(roteiroSet?.description).toMatch(/Não mexe no título do planejamento/)
+    // O usuário renomeou pela tela: o Manager tenta mandar outro título (argumento extra).
+    await realStore.saveRoteiro(cwd, SLUG, { titulo: 'Renomeado pelo usuário', etapas: [] }, 1)
+    const out = await call('plan_roteiro_set', { titulo: 'Título do Manager', etapas: [{ id: 'a', titulo: 'A' }] })
+    expect(out).toMatch(/Roteiro gravado \(1 etapas\)/)
+    expect((await openPlan(cwd, SLUG)).roteiro).toMatchObject({ titulo: 'Renomeado pelo usuário', rev: 3 })
   })
 
   it('plan_roteiro_set avisa sobre cards cuja etapa saiu do roteiro', async () => {
@@ -291,16 +307,35 @@ describe('cards', () => {
     expect(notify).not.toHaveBeenCalled()
   })
 
-  it('sugestao sem fonte URL é recusada com mensagem clara e nada é gravado', async () => {
-    for (const fonte of [undefined, 'ftp://x.org/a', 'minha cabeça']) {
+  it('sugestao sem fonte válida é recusada com a regra única (FONTE_RULE_TEXT) e nada é gravado', async () => {
+    for (const fonte of [undefined, 'ftp://x.org/a', 'minha cabeça', '../x', '/etc/passwd', 'C:\\x.ts']) {
       const out = await call('plan_card_create', { id: 's1', tipo: 'sugestao', titulo: 'Usar Stripe', fonte })
-      expect(out, String(fonte)).toMatch(/Card não criado: card do tipo "sugestao" exige fonte: a URL http\/https/)
+      expect(out, String(fonte)).toMatch(/Card não criado: card do tipo "sugestao" exige fonte verificável em "fonte"/)
+      expect(out, String(fonte)).toContain(FONTE_RULE_TEXT)
       expect(out).toMatch(/WebSearch\/WebFetch/)
     }
     await expect(fs.access(cardPath('s1'))).rejects.toThrow()
     expect(notify).not.toHaveBeenCalled()
     const ok = await call('plan_card_create', { id: 's1', tipo: 'sugestao', titulo: 'Usar Stripe', fonte: 'https://docs.stripe.com/payments' })
     expect(ok).toMatch(/Card criado: s1 \[sugestao\] Usar Stripe · fonte https:\/\/docs.stripe.com\/payments/)
+  })
+
+  it('sugestao com fonte de arquivo do projeto (src/x.ts:12) é aceita; "../x" é recusada com FONTE_RULE_TEXT', async () => {
+    const ok = await call('plan_card_create', { id: 's1', tipo: 'sugestao', titulo: 'Extrair helper', fonte: 'src/x.ts:12' })
+    expect(ok).toMatch(/Card criado: s1 \[sugestao\] Extrair helper · fonte src\/x\.ts:12/)
+    expect((await cardOf('s1'))?.fonte).toBe('src/x.ts:12')
+    expect(notify).toHaveBeenCalledTimes(1)
+
+    notify.mockClear()
+    const bad = await call('plan_card_create', { id: 's2', tipo: 'sugestao', titulo: 'Fora do projeto', fonte: '../x' })
+    expect(bad).toBe(`Card não criado: ${SUGESTAO_MSG}`)
+    await expect(fs.access(cardPath('s2'))).rejects.toThrow()
+    expect(notify).not.toHaveBeenCalled()
+
+    // A mesma regra vale ao alterar: trocar para arquivo passa, sair do projeto não.
+    expect(await call('plan_card_update', { id: 's1', expected_rev: 1, fonte: './Makefile' })).toMatch(/Card atualizado: s1/)
+    expect(await call('plan_card_update', { id: 's1', expected_rev: 2, fonte: '../x' })).toBe(`Card não alterado: ${SUGESTAO_MSG}`)
+    expect((await cardOf('s1'))?.fonte).toBe('./Makefile')
   })
 
   it('etapa fora do roteiro e link para card inexistente são recusados', async () => {
@@ -335,6 +370,14 @@ describe('cards', () => {
     expect((await cardOf('r1'))?.titulo).toBe('R1 pela tela')
     expect(notify).not.toHaveBeenCalled()
     expect(await call('plan_card_update', { id: 'zzz', expected_rev: 0, titulo: 'x' })).toMatch(/Não existe card zzz/)
+  })
+
+  it('plan_card_create descreve a citação por [[Título]] e as duas formas de fonte', () => {
+    const create = tools.find((t) => t.name === 'plan_card_create')
+    expect(create?.description).toMatch(/\[\[Título do card\]\] — vira seta no canvas/)
+    expect(create?.description).not.toMatch(/\[\[id\]\]/)
+    const fonte = (create?.inputSchema as Record<string, { description?: string }>).fonte
+    expect(fonte.description).toMatch(/URL http\/https[\s\S]*arquivo do projeto, relativo à raiz, com ":linha" opcional/)
   })
 
   it('plan_card_update não deixa uma sugestao perder a fonte', async () => {
@@ -373,13 +416,15 @@ describe('cards', () => {
     expect(notify).toHaveBeenCalledTimes(2)
   })
 
-  it('plan_read resume roteiro, cards e inválidos; card_id traz o card inteiro', async () => {
+  it('plan_read resume roteiro, cards (título em destaque, [[Título]]) e inválidos; card_id traz o card inteiro', async () => {
     await withRoteiro()
     await call('plan_card_create', { id: 'r1', tipo: 'requisito', titulo: 'R1', etapa: 'requisitos', corpo: 'Linha 1\nLinha 2' })
     await fs.writeFile(cardPath('quebrado'), 'sem frontmatter', 'utf8')
     const out = await call('plan_read', {})
     expect(out).toMatch(/Roteiro \(2 etapas, na ordem\):\n {2}1\. \[pendente\] requisitos: Levantar requisitos/)
-    expect(out).toMatch(/- r1 \[requisito\] R1 · etapa requisitos · rev 1 — Linha 1 Linha 2/)
+    expect(out).toMatch(/Cards \(1\) — \[\[Título\]\] é o nome com que o usuário cita o card; as ferramentas pedem o id:/)
+    expect(out).toMatch(/\n {2}- \[\[R1\]\] \(id r1, requisito\) · etapa requisitos · rev 1 — Linha 1 Linha 2/)
+    expect(tools.find((t) => t.name === 'plan_read')?.description).toMatch(/título em destaque, \[\[Título\]\]/)
     expect(out).toMatch(/Arquivos inválidos \(1\)[\s\S]*cards\/quebrado\.md: card sem frontmatter/)
     expect(await call('plan_read', { card_id: 'r1' })).toBe('r1 [requisito] R1 · etapa requisitos · rev 1\n---\nLinha 1\nLinha 2')
     expect(await call('plan_read', { card_id: 'x' })).toMatch(/Não existe card x/)
@@ -400,7 +445,8 @@ describe('ambiguidades e handoff', () => {
     expect(out).toMatch(/Card criado: amb-frete \[ambiguidade\] .* · status aberta · links r1 · rev 1/)
     const card = await cardOf('amb-frete')
     expect(card).toMatchObject({ tipo: 'ambiguidade', status: 'aberta', links: ['r1'] })
-    expect(card?.corpo).toMatch(/## Cards envolvidos\n\n- \[\[r1\]\] — Frete grátis/)
+    // Envolvidos citados pelo título, [[Título]], como o usuário e o canvas os nomeiam.
+    expect(card?.corpo).toMatch(/## Cards envolvidos\n\n- \[\[Frete grátis\]\]\n/)
     expect(card?.corpo).toMatch(/## Opinião do Manager\n\nSó capitais no início/)
     expect(notify).toHaveBeenCalledTimes(1)
     expect(

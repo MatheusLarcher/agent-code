@@ -1,10 +1,13 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { AUTO_MODEL, isAutoModel } from '@shared/ipc'
+import { wantsAutoTitle } from '../conversationTitle'
 import {
+  existingPlanTitle,
   handoffConversationFields,
   isPlanningConversation,
   managerModelLabel,
   planningConversationFields,
+  PLANNING_UNTITLED,
   revalidatesAuto,
   sessionStartFields
 } from './planningConversation'
@@ -73,9 +76,9 @@ describe('handoffConversationFields', () => {
 })
 
 describe('planningConversationFields', () => {
-  it('marca a conversa, titula e nasce num modelo concreto (nunca o sentinel)', () => {
+  it('marca a conversa, leva o mesmo nome do roteiro e nasce num modelo concreto (nunca o sentinel)', () => {
     const f = planningConversationFields('checkout', '  Checkout com Pix ')
-    expect(f).toMatchObject({ mode: 'planning', planningSlug: 'checkout', title: 'Planejamento: Checkout com Pix' })
+    expect(f).toMatchObject({ mode: 'planning', planningSlug: 'checkout', title: 'Checkout com Pix' })
     expect(isAutoModel(f.model)).toBe(false)
     expect(f.model).toBeTruthy()
     expect(f.loopEnabled).toBe(false)
@@ -84,6 +87,54 @@ describe('planningConversationFields', () => {
 
   it('reabrir sem título usa o slug', () => {
     expect(planningConversationFields('checkout').title).toBe('Planejamento: checkout')
+  })
+
+  it('plano criado sem nome: a conversa nasce "Sem nome" (entra no título automático)', () => {
+    expect(PLANNING_UNTITLED).toBe('Sem nome')
+    expect(planningConversationFields('plano-20260922-1430', PLANNING_UNTITLED).title).toBe('Sem nome')
+  })
+})
+
+describe('existingPlanTitle (reabrir um plano existente)', () => {
+  const ref = { projectCwd: '/proj', slug: 'checkout' }
+  const opened = (titulo: string) => ({
+    ok: true as const,
+    plan: { slug: 'checkout', roteiro: { titulo, rev: 2, etapas: [] }, cards: [], layout: { positions: {} }, invalid: [] }
+  })
+
+  it('usa o título do roteiro (planningOpen), não o slug — e não fecha a vigia', async () => {
+    const api = { planningOpen: vi.fn(async () => opened('  Checkout com Pix ')), planningClose: vi.fn() }
+    const titulo = await existingPlanTitle(api, ref)
+    expect(titulo).toBe('Checkout com Pix')
+    expect(api.planningOpen).toHaveBeenCalledWith(ref)
+    expect(api.planningClose).not.toHaveBeenCalled()
+    const conv = planningConversationFields('checkout', titulo)
+    expect(conv.title).toBe('Checkout com Pix')
+    // Nome de verdade: nada automático mexe nele.
+    expect(wantsAutoTitle(conv, 'primeira mensagem')).toBe(false)
+  })
+
+  it('plano "Sem nome": a conversa nasce "Sem nome" e entra no título automático normal', async () => {
+    const titulo = await existingPlanTitle({ planningOpen: async () => opened(PLANNING_UNTITLED) }, ref)
+    expect(titulo).toBe('Sem nome')
+    const conv = planningConversationFields('checkout', titulo)
+    expect(conv.title).toBe('Sem nome')
+    expect(wantsAutoTitle(conv, 'quero planejar o checkout')).toBe(true)
+  })
+
+  it('título vazio, plano ilegível ou IPC fora: undefined (a conversa fica com o slug); nunca lança', async () => {
+    const cases = [
+      async () => opened('   '),
+      async () => ({ ok: false as const, code: 'invalid' as const, message: 'roteiro quebrado' }),
+      async () => {
+        throw new Error('canal fechado')
+      }
+    ]
+    for (const planningOpen of cases) {
+      const titulo = await existingPlanTitle({ planningOpen } as never, ref)
+      expect(titulo).toBeUndefined()
+      expect(planningConversationFields('checkout', titulo).title).toBe('Planejamento: checkout')
+    }
   })
 })
 

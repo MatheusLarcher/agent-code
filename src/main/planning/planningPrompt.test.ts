@@ -25,7 +25,7 @@ describe('buildPlanningHint', () => {
     // Primeira ação: separar e ordenar as etapas.
     expect(hint).toMatch(/Primeira ação[\s\S]*SEPARE E ORDENE AS ETAPAS[\s\S]*mcp__planning__plan_roteiro_set/)
     expect(hint).toMatch(/WebSearch\/WebFetch/)
-    expect(hint).toMatch(/"sugestao" com a URL da fonte/)
+    expect(hint).toMatch(/card tipo "sugestao" com o porquê/)
     expect(hint).toMatch(/plan_ambiguidade_abrir[\s\S]*SUA opinião/)
     expect(hint).toMatch(/Pode ler o projeto inteiro/)
     expect(hint).toMatch(/SOMENTE nesta pasta/)
@@ -36,6 +36,39 @@ describe('buildPlanningHint', () => {
     expect(hint).toMatch(/subir ou derrubar serviço/)
     expect(hint).toMatch(/dependências do projeto/)
     expect(hint).toMatch(/Você NÃO implementa o projeto/)
+  })
+
+  it('(1) sugestões só quando relevantes para o objetivo e verificáveis — nada que desvie, aumente escopo ou atrapalhe', () => {
+    expect(hint).toMatch(/Sugestões só quando forem RELEVANTES para o objetivo do usuário e verificáveis/)
+    expect(hint).toMatch(/Nada que desvie do objetivo, aumente o escopo sem motivo ou atrapalhe/)
+  })
+
+  it('(2) para cada pedido, avalia se há forma melhor; melhor = mais curto e de menor custo para o usuário', () => {
+    expect(hint).toMatch(/Para cada coisa que o usuário pedir, avalie se existe forma melhor de fazer/)
+    expect(hint).toMatch(/O melhor caminho é o mais curto e de menor custo para o usuário: tempo, dinheiro, complexidade e manutenção/)
+  })
+
+  it('(3) opção melhor vira "sugestao" com porquê, ganho e fonte (URL ou arquivo:linha) e pergunta; senão, "decisao"', () => {
+    const melhor = hint.match(/- Se existir opção melhor que a do usuário: [^\n]*/)?.[0] ?? ''
+    expect(melhor).toMatch(/card tipo "sugestao" com o porquê, o ganho concreto para ele e a fonte em "fonte"/)
+    expect(melhor).toMatch(/a URL http\/https de onde saiu/)
+    expect(melhor).toMatch(/o arquivo do projeto \(caminho relativo, ":linha" opcional, ex\.: src\/x\.ts:12\)/)
+    expect(melhor).toMatch(/pergunte se ele quer seguir por ela/)
+    expect(hint).toMatch(/- Se não existir opção melhor: registre a escolha do usuário como card tipo "decisao", com o porquê\./)
+  })
+
+  it('(4) cards pelo nome, [[Nome do card]]: resolve pelo título sem maiúsculas/acentos e cita [[Título]] nos corpos', () => {
+    expect(hint).toMatch(/O usuário se refere aos cards pelo NOME, no formato \[\[Nome do card\]\]/)
+    expect(hint).toMatch(/Resolva pelo título do card, ignorando maiúsculas e acentos/)
+    expect(hint).toMatch(/\[\[decisao do banco\]\] é o card "Decisão do Banco"/)
+    expect(hint).toMatch(/mcp__planning__plan_read lista cada card com o título em destaque/)
+    expect(hint).toMatch(/Nos corpos dos cards, cite outros cards do mesmo jeito, \[\[Título\]\][\s\S]*vira seta no canvas/)
+    expect(hint).not.toMatch(/\[\[id\]\]/)
+  })
+
+  it('(5) o título do planejamento é do usuário/app: o Manager nunca o altera', () => {
+    expect(hint).toMatch(/O título do planejamento é do usuário e do app: você NUNCA o altera/)
+    expect(hint).toMatch(/plan_roteiro_set mexe só nas etapas e preserva o título atual/)
   })
 
   it('avisa que cada Bash pede aprovação e manda preferir Read/Glob/Grep', () => {

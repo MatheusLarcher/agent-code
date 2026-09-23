@@ -1,12 +1,14 @@
 /**
  * Nó de card no canvas: faixa de cor e ícone pelo tipo, título e as 3
- * primeiras linhas do corpo. Sugestão mostra o link da fonte; ambiguidade, o
+ * primeiras linhas do corpo. Sugestão mostra a fonte (link se é URL, texto se
+ * é arquivo do projeto); ambiguidade, o
  * selo aberta/resolvida. Altura limitada a CARD_H pelo CSS — o layout conta
  * com isso para empilhar sem sobrepor.
  */
 import { memo } from 'react'
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { PlanningCardDto } from '@shared/ipc'
+import { fonteKind } from '@shared/planningFonte'
 import { CARD_TYPE_LABEL, TypeIcon } from './cardTypes'
 
 export type CardNodeData = { card: PlanningCardDto }
@@ -34,10 +36,25 @@ export function sourceHost(url: string): string {
   }
 }
 
+export type SourceDisplay = { kind: 'url'; label: string; href: string } | { kind: 'arquivo'; label: string }
+
+/**
+ * Como a fonte aparece no card (regra de src/shared/planningFonte): URL vira
+ * link (o domínio); arquivo do projeto vira texto (nome:linha) — não há o que
+ * abrir no navegador. Fonte que não é nenhum dos dois não aparece.
+ */
+export function sourceDisplay(fonte: string | undefined): SourceDisplay | null {
+  const kind = fonteKind(fonte)
+  if (!fonte || !kind) return null
+  if (kind === 'url') return { kind, label: sourceHost(fonte), href: fonte }
+  return { kind, label: fonte.split(/[\\/]/).pop() || fonte }
+}
+
 function CardNodeView({ data, selected }: NodeProps<CardFlowNode>): JSX.Element {
   const { card } = data
   const preview = bodyPreview(card.corpo)
   const resolved = card.status === 'resolvida'
+  const source = card.tipo === 'sugestao' ? sourceDisplay(card.fonte) : null
   return (
     <div className={`pl-card${selected ? ' selected' : ''}`} data-tipo={card.tipo} data-testid={`pl-card-${card.id}`}>
       <Handle type="target" position={Position.Left} className="pl-handle" />
@@ -51,18 +68,23 @@ function CardNodeView({ data, selected }: NodeProps<CardFlowNode>): JSX.Element 
           {card.tipo === 'ambiguidade' && (
             <span className={`pl-seal ${resolved ? 'resolvida' : 'aberta'}`}>{resolved ? 'resolvida' : 'aberta'}</span>
           )}
-          {card.tipo === 'sugestao' && card.fonte && (
+          {source?.kind === 'url' && (
             <a
               className="pl-card-source nodrag"
-              href={card.fonte}
+              href={source.href}
               target="_blank"
               rel="noreferrer"
-              title={card.fonte}
+              title={source.href}
               onClick={(e) => e.stopPropagation()}
               onDoubleClick={(e) => e.stopPropagation()}
             >
-              {sourceHost(card.fonte)} ↗
+              {source.label} ↗
             </a>
+          )}
+          {source?.kind === 'arquivo' && (
+            <span className="pl-card-source file" title={`Arquivo do projeto: ${card.fonte}`}>
+              {source.label}
+            </span>
           )}
         </div>
         <div className="pl-card-title" title={card.titulo}>

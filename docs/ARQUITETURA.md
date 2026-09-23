@@ -608,9 +608,10 @@ o plano como prompt.
    ela **é** a tela: quando ativa, o `PlanningWorkspace` ocupa o lugar do workspace normal. Um plano
    que já tem conversa carregada nesta pasta volta para ela — duas sessões do Manager no mesmo plano
    só brigariam pelos arquivos.
-3. A tela tem três colunas: o **roteiro** (checklist das etapas, recolhível), o **canvas** (uma coluna
-   por etapa, com os cards embaixo) e o **chat do Manager** — o mesmo `<ChatPanel>` de qualquer
-   conversa, só que em outro lugar. O usuário conversa; o Manager separa as etapas e registra
+3. A tela tem o **roteiro** à esquerda (checklist das etapas, de largura ajustável e recolhível), o
+   **canvas** no resto (uma coluna por etapa, com os cards embaixo) e, flutuando sobre ele, o **chat
+   do Manager** — o mesmo `<ChatPanel>` de qualquer conversa, só que em outro lugar, maximizado ou
+   minimizado. O usuário conversa; o Manager separa as etapas e registra
    requisitos, decisões, sugestões e ambiguidades como cards, e a tela se atualiza sozinha. O
    usuário também edita tudo à mão: card, ligação, status da etapa.
 4. **Enviar para implementação** (botão no cabeçalho, `HandoffDialog`): conferência, geração do
@@ -925,16 +926,39 @@ nem monta (`sessionStartFields`: o planejamento prevalece).
   (zoom recortado aos limites do canvas). Só o movimento **do usuário** é gravado: gravar o
   enquadramento automático o congelaria, e a próxima abertura restauraria o foco antigo em vez de
   focar a etapa que está em andamento agora.
-- **Divisor e roteiro recolhível** (`ChatSplitter.tsx`, `paneSizes.ts`). O chat do Manager tem largura
-  arrastável (e ajustável pelo teclado) entre 320 px e metade da área; o roteiro recolhe num trilho
-  estreito com o contador e uma marca por etapa. As duas escolhas ficam no `localStorage` — síncrono,
-  então a tela já abre como o usuário deixou, sem piscar.
-- **Composer em coluna estreita, por container query.** O `.chat-panel` é um container (`chat`), e
+- **Roteiro redimensionável e recolhível** (`RoteiroSplitter.tsx`, `paneSizes.ts`). A borda direita
+  do roteiro é uma alça (`role="separator"`, arrasto ou setas de 16 px, Home/End nos limites) entre
+  180 px e 40% da área da tela; o CSS repete os dois limites, então encolher a janela nunca deixa o
+  roteiro engolir o canvas. Recolhido, vira um trilho estreito com o contador e uma marca por etapa,
+  sem alça, e expandir volta à última largura. Largura, recolhido e chat minimizado ficam no
+  `localStorage` — síncrono, então a tela já abre como o usuário deixou, sem piscar.
+- **Chat flutuante sobre o canvas** (`ManagerChatFloat.tsx`, `planningChat.css`). O chat deixou de ser
+  coluna: o canvas ocupa toda a largura e o painel "Agent Manager" flutua centralizado sobre ele
+  (largura `clamp(420px, 55%, 860px)` da área do canvas), com um botão de minimizar/maximizar.
+  **Maximizado**, a borda de cima fica a 20% da altura da **janela** e a de baixo a 12 px do fim;
+  como o painel mora na área do canvas (que começa abaixo da barra do app e do cabeçalho da tela), o
+  `top` é medido — 20% de `innerHeight` menos o topo da área, refeito por `ResizeObserver` e no
+  `resize`. **Minimizado**, ele desce para baixo com ~5 linhas de conversa (a lista tem 5 × o
+  line-height das mensagens, 21 px) e 3 de digitação; o `useKeepEndOnResize` mantém o fim da conversa
+  à vista quando a caixa encolhe. O painel é uma caixa comum, sem véu: fora dela o canvas recebe mouse
+  e roda normalmente. O **minimapa** foi para o canto de cima à direita (embaixo fica o chat
+  minimizado); se o painel maximizado cruzar a coluna dele (canvas estreito), o `top` desce para
+  baixo do minimapa. Os controles de zoom, embaixo à esquerda, ficam fora da caixa do painel
+  (`max-width: calc(100% - 112px)` em canvas muito estreito). O plano em branco virou uma faixa no
+  topo do canvas, acima do painel.
+- **Modo compacto do chat, por contexto** (`components/chatDisplay.ts`). Minimizado, o `ChatPanel`
+  não mostra o cabeçalho de consumo (entrada/saída/custo), o painel de tokens, o quadro "Última
+  resposta" nem o aviso "Controle do Windows ativo". Isso entra por um `ChatDisplayContext`
+  (`{ compact }`, padrão `false`) que o painel flutuante fornece — o `ChatPanel` chega pronto do App,
+  com as mesmas props de qualquer conversa, e a tela não pode (nem precisa) mexer nelas. Sem
+  provider, o chat normal fica como sempre. Alternar só muda o valor do contexto e uma classe: o
+  `ChatPanel` não remonta, e rolagem, rascunho e foco ficam.
+- **Composer em painel estreito, por container query.** O `.chat-panel` é um container (`chat`), e
   abaixo de 560 px o composer se reorganiza: a caixa de texto ocupa a linha inteira, os botões descem
   para a linha de baixo e o quadro "Última resposta" vira uma linha só. Media query não serviria: o
-  que é estreito é a **coluna**, não a janela — o mesmo `ChatPanel` numa conversa comum continua como
-  sempre foi. Pelo mesmo motivo o canvas esconde a dica e o minimapa quando **ele** estreita. E numa
-  coluna estreita o rodapé do chat cresce já na primeira pintura e escondia a última mensagem:
+  que é estreito é o **painel**, não a janela — o mesmo `ChatPanel` numa conversa comum continua como
+  sempre foi. Pelo mesmo motivo o canvas esconde a dica e o minimapa quando **ele** estreita. E num
+  painel estreito o rodapé do chat cresce já na primeira pintura e escondia a última mensagem:
   `useKeepEndOnResize` (`components/MessageListAnchor.tsx`) mantém no fim quem estava no fim quando a
   caixa da lista muda de tamanho, e deixa onde está quem rolou para ler o histórico.
 

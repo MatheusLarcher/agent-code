@@ -1,6 +1,6 @@
 {
   "name": "agent-code-desktop",
-  "version": "0.1.17",
+  "version": "0.1.24",
   "description": "Desktop UI for Claude Code with an embedded agent-driven browser (Claude Desktop style)",
   "type": "module",
   "main": "./out/main/index.js",
@@ -12,6 +12,8 @@
     "windows-control:test": "dotnet run --project src/main/windowsControl/native/AgentCode.WindowsControl.csproj -c Release -- --self-test",
     "start": "electron-vite preview",
     "icon": "node scripts/make-icon.mjs",
+    "engine:sync": "node scripts/sync-engine.mjs",
+    "engine:check": "node scripts/sync-engine.mjs --check",
     "postinstall": "playwright install chromium",
     "package:win": "npm run build && node scripts/stage-chromium.mjs && electron-builder --win",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
@@ -21,7 +23,7 @@
     "migrate-storage": "node scripts/migrate-storage.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.278",
+    "@anthropic-ai/claude-agent-sdk": "0.3.280",
     "@typesafe-ai/sdk": "^0.6.0",
     "@xyflow/react": "^12.11.6",
     "highlight.js": "^11.11.1",

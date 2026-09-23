@@ -721,6 +721,7 @@ export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** Which effort levels each model supports. Ollama models don't support effort at all. */
 export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
+  'claude-opus-5-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-7': ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -772,7 +773,7 @@ export function clampEffortToModel(model: string | undefined, effort: EffortLeve
  *  or a model the automatic mode can never choose. Keep MODEL_EFFORT and
  *  CONTEXT_LIMITS in sync when adding one. */
 export const CLAUDE_MODELS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1' }
 ]
@@ -801,7 +802,7 @@ export function isAutoModel(model: string | undefined): boolean {
  *  given: between two candidates, take the stronger one — a bad answer costs
  *  more than the model does. */
 export const AUTO_MODEL_FALLBACK: { model: string; effort: EffortLevel } = {
-  model: 'claude-opus-5',
+  model: 'claude-opus-5-5',
   effort: DEFAULT_EFFORT
 }
 
@@ -827,7 +828,7 @@ export interface AutoPrompt {
  *  requests instead of serving them at standard speed). Keep this list in sync
  *  with https://code.claude.com/docs/en/fast-mode — offering it on a model that
  *  doesn't support it produces a rejected request, not a silent fallback. */
-const FAST_MODE_MODELS = new Set(['claude-opus-5', 'claude-opus-4-8'])
+const FAST_MODE_MODELS = new Set(['claude-opus-5-5', 'claude-opus-4-8'])
 
 /** How a model's fast mode is actually requested. The toggle in the UI is one
  *  control, but the two providers expose the capability through completely
@@ -968,6 +969,7 @@ export const DEFAULT_CONTEXT_LIMIT = 200_000
  *  read wrong. */
 export const CONTEXT_LIMITS: Record<string, number> = {
   // Anthropic — authoritative
+  'claude-opus-5-5': 1_000_000,
   'claude-opus-5': 1_000_000,
   'claude-opus-4-8': 1_000_000,
   'claude-opus-4-7': 1_000_000,
@@ -1034,7 +1036,7 @@ export interface VigiaConfig {
 export const VIGIA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'claude-sonnet-5', label: 'Sonnet 5 (recomendado)' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1 (mais barato)' },
-  { id: 'claude-opus-5', label: 'Opus 5 (mais caro)' }
+  { id: 'claude-opus-5-5', label: 'Opus 5.5 (mais caro)' }
 ]
 
 /**
@@ -1732,6 +1734,8 @@ export const Channels = {
   conversationsCountByProject: 'conversations:count-by-project',
   conversationsUpsert: 'conversations:upsert',
   conversationsDelete: 'conversations:delete',
+  /** Nome curto para a conversa a partir da 1ª mensagem (LLM barato, one-shot). */
+  conversationSuggestTitle: 'conversation:suggestTitle',
   agentStart: 'agent:start',
   agentSend: 'agent:send',
   agentInterrupt: 'agent:interrupt',
@@ -2028,7 +2032,9 @@ export interface PlanningCardDto {
   /** Em 'ambiguidade': 'aberta' | 'resolvida'. */
   status?: string
   links: string[]
-  /** URL http/https; obrigatória em 'sugestao'. */
+  /** URL http/https ou arquivo do projeto (caminho relativo, sem '..', com
+   *  ':linha' opcional — ex.: src/a.ts:12); obrigatória em 'sugestao'. Regra
+   *  única em src/shared/planningFonte.ts (isValidFonte). */
   fonte?: string
   /** Revisão otimista: gravar exige o rev que está em disco. */
   rev: number
@@ -2084,3 +2090,7 @@ export interface PlanningHandoffDto {
   createdAt: number
   content: string
 }
+
+/** Resposta de Channels.conversationSuggestTitle. `ok: false` = sem título
+ *  (entrada inválida, LLM falhou, estourou o tempo): quem chamou fica com o recuo. */
+export type SuggestTitleResult = { ok: true; title: string } | { ok: false }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { derivePlanningSlug, PLANNING_SLUG_MAX, slugFromTitle, uniqueSlug } from './planningSlug'
+import { derivePlanningSlug, generatePlanningSlug, PLANNING_SLUG_MAX, slugFromTitle, uniqueSlug } from './planningSlug'
 
 describe('slugFromTitle', () => {
   it('tira acento (NFD) e põe em minúsculas', () => {
@@ -45,5 +45,24 @@ describe('uniqueSlug / derivePlanningSlug', () => {
 
   it('título sem letra nem número não gera slug', () => {
     expect(derivePlanningSlug('***', [])).toBe('')
+  })
+})
+
+describe('generatePlanningSlug', () => {
+  // Hora local: é o que o usuário vê no relógio quando cria.
+  const at = new Date(2026, 8, 2, 7, 5) // 02/09/2026 07:05
+
+  it('plano-AAAAMMDD-HHMM com zero à esquerda', () => {
+    expect(generatePlanningSlug(at, [])).toBe('plano-20260902-0705')
+  })
+
+  it('único contra a pasta: -2, -3 no mesmo minuto', () => {
+    expect(generatePlanningSlug(at, ['plano-20260902-0705'])).toBe('plano-20260902-0705-2')
+    expect(generatePlanningSlug(at, ['plano-20260902-0705', 'plano-20260902-0705-2'])).toBe('plano-20260902-0705-3')
+    expect(generatePlanningSlug(at, ['plano-20260902-0706'])).toBe('plano-20260902-0705')
+  })
+
+  it('cabe no formato que o main aceita', () => {
+    expect(generatePlanningSlug(new Date(2026, 11, 31, 23, 59), [])).toMatch(/^[a-z0-9-]{1,64}$/)
   })
 })

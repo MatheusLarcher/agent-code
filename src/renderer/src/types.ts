@@ -73,6 +73,11 @@ export interface TodoPlan {
 export interface Conversation {
   id: string
   title: string
+  /** De onde veio o título: 'auto' = recuo com o começo da 1ª mensagem (o LLM
+   *  ainda pode trocar), 'llm' = nome curto do LLM, 'user' = renomeada pelo
+   *  usuário — trava: nada automático mexe mais nele. Ausente = título padrão
+   *  ou conversa anterior a este campo. Ver conversationTitle.ts. */
+  titleSource?: 'auto' | 'llm' | 'user'
   /** Project folder the agent runs in. */
   cwd: string
   model: string

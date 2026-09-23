@@ -3,8 +3,9 @@
  * painel da direita) quando a conversa ativa é de planejamento.
  *
  * O chat chega PRONTO (`chat`): é o mesmo <ChatPanel> que o App monta para
- * qualquer conversa, com as mesmas props — aqui ele só muda de lugar e vira a
- * coluna da direita da PlanningScreen. Nada de uma segunda lista de props.
+ * qualquer conversa, com as mesmas props — aqui ele só muda de lugar e vira o
+ * painel flutuante da PlanningScreen (ManagerChatFloat), que o põe em modo
+ * compacto quando minimizado. Nada de uma segunda lista de props.
  *
  * O cabeçalho mostra o modelo que o main anunciou para o Agent Manager e
  * guarda `headerActions` para o botão de enviar para implementação.

@@ -1,7 +1,8 @@
 import { createSdkMcpServer, tool, type SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { notifyPlanningChanged, type PlanningChangeNotice } from './planningEvents'
-import { CARD_TYPES, isHttpUrl, STAGE_STATUSES, type CardType, type PlanCard, type Roteiro, type StageStatus } from './planningModel'
+import { FONTE_RULE_TEXT, isValidFonte } from '../../shared/planningFonte'
+import { CARD_TYPES, STAGE_STATUSES, type CardType, type PlanCard, type Roteiro, type StageStatus } from './planningModel'
 import * as realStore from './planningStore'
 import { RevConflictError, RoteiroConflictError, type OpenedPlan } from './planningStore'
 import { cardHeader, describeCard, describeError, describePlan, etapaLines, text, type ToolText as Text } from './planningToolText'
@@ -21,6 +22,8 @@ import { cardHeader, describeCard, describeError, describePlan, etapaLines, text
  * - O roteiro também tem rev: as ferramentas gravam com o rev que acabaram de
  *   ler; plan_etapa_marcar reaplica UMA vez em conflito (é um campo só), e
  *   plan_roteiro_set devolve o roteiro atual para o modelo refazer.
+ * - O título do planejamento é do usuário e do app: plan_roteiro_set não tem
+ *   campo de título e regrava sempre o título lido do disco.
  */
 
 export const PLANNING_MCP_SERVER = 'planning'
@@ -68,9 +71,16 @@ async function guard(label: string, work: () => Promise<Text>): Promise<Text> {
   }
 }
 
+/** As duas formas de fonte aceitas, para a descrição do parâmetro "fonte". */
+const FONTE_FORMAS =
+  'a URL http/https de onde a informação saiu (documentação, artigo, issue) ou, quando vier da análise do código, ' +
+  'o caminho de um arquivo do projeto, relativo à raiz, com ":linha" opcional (ex.: src/x.ts:12)'
+
+/** Recusa de sugestão sem fonte válida: a regra ÚNICA (src/shared/planningFonte),
+ *  a mesma do store e da tela, e onde buscar uma fonte. */
 const SUGESTAO_SEM_FONTE =
-  'card do tipo "sugestao" exige fonte: a URL http/https (documentação, artigo, issue) de onde a sugestão saiu. ' +
-  'Pesquise com WebSearch/WebFetch e informe em "fonte"; sugestão sem fonte verificável não entra no planejamento.'
+  `card do tipo "sugestao" exige fonte verificável em "fonte": ${FONTE_RULE_TEXT}. ` +
+  'Pesquise com WebSearch/WebFetch ou localize o trecho com Read/Grep; sugestão sem fonte verificável não entra no planejamento.'
 
 function slugify(value: string): string {
   return value
@@ -94,7 +104,7 @@ function isoDay(now: Date): string {
 
 /** Motivo de recusa de um card que o store aceitaria, mas que deixaria o plano incoerente. */
 function coherenceProblem(plan: OpenedPlan, card: PlanCard, selfId?: string): string | null {
-  if (card.tipo === 'sugestao' && !isHttpUrl(card.fonte)) return SUGESTAO_SEM_FONTE
+  if (card.tipo === 'sugestao' && !isValidFonte(card.fonte)) return SUGESTAO_SEM_FONTE
   const etapas = plan.roteiro.etapas.map((e) => e.id)
   if (card.etapa && !etapas.includes(card.etapa)) {
     return `a etapa "${card.etapa}" não está no roteiro (etapas: ${etapas.join(', ') || 'nenhuma'}).`
@@ -184,7 +194,7 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
   return [
     erase(tool(
       'plan_read',
-      'Lê o planejamento desta sessão: o roteiro (etapas na ordem, com status), os cards resumidos (id, tipo, título, etapa, status, links, rev e um trecho do corpo) e os arquivos inválidos. Informe card_id para ler um card inteiro — é de onde vem o rev para alterá-lo.',
+      'Lê o planejamento desta sessão: o roteiro (etapas na ordem, com status), os cards resumidos e os arquivos inválidos. Cada card aparece com o título em destaque, [[Título]] — o nome com que o usuário o cita —, seguido de id, tipo, etapa, status, links, rev e um trecho do corpo. Informe card_id para ler um card inteiro — é de onde vem o rev para alterá-lo.',
       { card_id: Name.optional().describe('Id de um card para ler por inteiro.') },
       async (a) =>
         guard('plan_read', async () => {
@@ -197,9 +207,8 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
 
     erase(tool(
       'plan_roteiro_set',
-      'Substitui a lista ORDENADA de etapas do roteiro. Mande a lista inteira, na ordem em que devem acontecer. Etapa que já existia mantém o status se você não informar outro; etapa nova nasce "pendente". Se o roteiro mudar no meio (ex.: o usuário marcou uma etapa na tela), nada é gravado e a resposta traz o roteiro atual para você refazer.',
+      'Substitui a lista ORDENADA de etapas do roteiro. Mande a lista inteira, na ordem em que devem acontecer. Etapa que já existia mantém o status se você não informar outro; etapa nova nasce "pendente". Não mexe no título do planejamento: ele é do usuário e do app, não há campo para ele e o atual é sempre preservado. Se o roteiro mudar no meio (ex.: o usuário marcou uma etapa na tela), nada é gravado e a resposta traz o roteiro atual para você refazer.',
       {
-        titulo: Title.optional().describe('Novo título do planejamento. Omitido, mantém o atual.'),
         etapas: z
           .array(
             z.object({
@@ -220,10 +229,10 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
             titulo: e.titulo.trim(),
             status: e.status ?? before.get(e.id) ?? 'pendente'
           }))
-          const titulo = a.titulo?.trim() || plan.roteiro.titulo
-          // Com o rev lido agora: se a tela mexeu no meio, nada é gravado e o
-          // modelo recebe o roteiro atual para refazer (describeError).
-          const saved = await store.saveRoteiro(projectCwd, slug, { titulo, etapas }, plan.roteiro.rev)
+          // O título é o que está em disco (o Manager não o altera). Com o rev
+          // lido agora: se a tela mexeu no meio — inclusive no título —, nada é
+          // gravado e o modelo recebe o roteiro atual para refazer (describeError).
+          const saved = await store.saveRoteiro(projectCwd, slug, { titulo: plan.roteiro.titulo, etapas }, plan.roteiro.rev)
           changed()
           const ids = new Set(saved.etapas.map((e) => e.id))
           const orphans = plan.cards.filter((c) => c.etapa && !ids.has(c.etapa)).map((c) => c.id)
@@ -261,7 +270,7 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
 
     erase(tool(
       'plan_card_create',
-      'Cria um card no planejamento. Tipos: etapa, requisito, decisao, sugestao (EXIGE fonte URL), ambiguidade (prefira plan_ambiguidade_abrir), nota. Use [[id]] no corpo para citar outros cards; "links" são as ligações que a tela desenha.',
+      'Cria um card no planejamento. Tipos: etapa, requisito, decisao, sugestao (EXIGE fonte: URL ou arquivo do projeto), ambiguidade (prefira plan_ambiguidade_abrir), nota. Para citar outro card no corpo, use o título dele: [[Título do card]] — vira seta no canvas; "links" (ids) são as ligações que a tela desenha.',
       {
         id: Name.optional().describe('Id do card. Omitido, é derivado do tipo e do título.'),
         tipo: z.enum(CARD_TYPES).describe('Tipo do card.'),
@@ -269,12 +278,12 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
         etapa: Name.optional().describe('Id da etapa do roteiro a que o card pertence.'),
         status: z.string().max(64).optional().describe('Status livre (em ambiguidade: aberta | resolvida).'),
         links: z.array(Name).max(1000).optional().describe('Ids de cards existentes a ligar a este.'),
-        fonte: z.string().max(4096).optional().describe('URL http/https de onde a informação saiu (obrigatória em sugestao).'),
+        fonte: z.string().max(4096).optional().describe(`De onde a informação saiu (obrigatória em sugestao): ${FONTE_FORMAS}.`),
         corpo: Body.optional().describe('Conteúdo em markdown.')
       },
       async (a) =>
         guard('plan_card_create', async () => {
-          if (a.tipo === 'sugestao' && !isHttpUrl(a.fonte)) return text(`Card não criado: ${SUGESTAO_SEM_FONTE}`)
+          if (a.tipo === 'sugestao' && !isValidFonte(a.fonte)) return text(`Card não criado: ${SUGESTAO_SEM_FONTE}`)
           const plan = await open()
           return createCard(plan, draftCard(a), a.id !== undefined)
         })
@@ -381,10 +390,8 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
         guard('plan_ambiguidade_abrir', async () => {
           const plan = await open()
           const envolvidos = [...new Set(a.envolvidos ?? [])]
-          const lista = envolvidos.map((id) => {
-            const card = find(plan, id)
-            return `- [[${id}]]${card ? ` — ${card.titulo}` : ''}`
-          })
+          // Citados pelo título, [[Título]], como o usuário e o canvas os nomeiam.
+          const lista = envolvidos.map((id) => `- [[${find(plan, id)?.titulo ?? id}]]`)
           const corpo = [
             '## O que está ambíguo',
             '',

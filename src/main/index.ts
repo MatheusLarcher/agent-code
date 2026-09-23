@@ -52,6 +52,7 @@ import { Vigia } from './vigia/vigia'
 import { BoardService } from './board/boardService'
 import { registerPlanningIpc, type PlanningIpcHandle } from './planning/planningIpc'
 import { PlanningConversations, planningStartOptions } from './planning/planningConversations'
+import { registerConversationTitleIpc } from './titles/conversationTitleIpc'
 import { Po } from './po/po'
 import { Memorista } from './memoria/memorista'
 import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
@@ -1108,6 +1109,8 @@ export function registerIpc(): void {
   })
   // Tela de Planejamento: toda a lógica (validação, vigia, erros) mora em planningIpc.
   planningIpc = registerPlanningIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), send })
+  // Título automático da conversa (claude-haiku-4-5): a lógica mora em titles/.
+  registerConversationTitleIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener) })
   ipcMain.handle(Channels.tasksDetail, async (_e, taskId: string) => {
     try {
       return await buildTaskDetail(taskLedger(), taskId)

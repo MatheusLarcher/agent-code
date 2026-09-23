@@ -50,6 +50,17 @@ describe('cards', () => {
     expect(validateCard({ ...sug, fonte: 'https://exemplo.com/a' }).fonte).toBe('https://exemplo.com/a')
   })
 
+  it('fonte aceita arquivo do projeto (a mesma regra do renderer), e recusa fora do projeto', () => {
+    const sug: PlanCard = { id: 's1', tipo: 'sugestao', titulo: 'Reusar o parser', links: [], rev: 0, corpo: '' }
+    expect(validateCard({ ...sug, fonte: 'src/a.ts:12' }).fonte).toBe('src/a.ts:12')
+    expect(parseCard(serializeCard({ ...sug, fonte: 'src/main/x.ts' })).fonte).toBe('src/main/x.ts')
+    for (const bad of ['../x', 'C:\\x', '/etc/passwd', '', 'minha cabeça']) {
+      expect(() => validateCard({ ...sug, fonte: bad }), bad).toThrow(/fonte/)
+    }
+    // Vale para qualquer tipo que traga fonte, não só sugestão.
+    expect(() => validateCard({ ...base, fonte: '../fora.ts' })).toThrow(/fonte/)
+  })
+
   it('ambiguidade exige status aberta|resolvida', () => {
     const amb: PlanCard = { id: 'a1', tipo: 'ambiguidade', titulo: 'Qual banco?', links: [], rev: 0, corpo: '' }
     expect(() => validateCard(amb)).toThrow(/ambiguidade/)

@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent
@@ -12,8 +13,10 @@ import { useUI } from '../ui/UiProvider'
 import { fileMeta, fmtSize } from '../files'
 import { IconSpeaker, IconStopSmall } from './Icons'
 import { CodeBlock, extToLang } from './CodeBlock'
-import { Markdown } from './Markdown'
+import { CardRefText, Markdown } from './Markdown'
 import { useKeepEndOnResize } from './MessageListAnchor'
+import { useChatDisplay } from './chatDisplay'
+import { makeRefResolver } from '../planning/cardRefs'
 
 /** Read-aloud controls passed down from App (TTS state lives there so audio
  *  survives message re-renders and conversation switches). */
@@ -347,6 +350,10 @@ export function MessageList({
   const effectiveTarget = mapScroll?.id ?? scrollToId
   const effectiveSeq = mapScroll?.seq ?? scrollSeq
   const pendingScroll = effectiveTarget != null && effectiveSeq !== lastSeq.current
+  // Chat do Agent Manager (cards no contexto): [[Nome]] de um card sai com a cor
+  // do tipo dele. Sem cards (qualquer outra conversa), o texto fica como sempre.
+  const { cardRefs } = useChatDisplay()
+  const resolveRef = useMemo(() => (cardRefs?.length ? makeRefResolver(cardRefs) : null), [cardRefs])
 
   // Refs coordinating the two scroll behaviors below.
   const atBottom = useRef(true) // was the user pinned to the bottom?
@@ -526,7 +533,7 @@ export function MessageList({
                       })}
                     </div>
                   )}
-                  {m.text}
+                  {resolveRef ? <CardRefText text={m.text} resolveRef={resolveRef} /> : m.text}
                 </div>
                 {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
                 {m.error && (
@@ -556,7 +563,7 @@ export function MessageList({
                 className={`msg assistant ${m.answer ? '' : 'narration'} ${m.aborted ? 'aborted' : ''}`}
               >
                 <div className="bubble">
-                  {clean && <Markdown text={clean} />}
+                  {clean && <Markdown text={clean} resolveRef={resolveRef} />}
                   {paths.map((p, k) => (
                     <DownloadChip key={k} path={p} />
                   ))}

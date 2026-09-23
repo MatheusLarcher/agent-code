@@ -48,6 +48,7 @@ import {
   sameViewport,
   type Viewport
 } from './canvasViewport'
+import { MINIMAP_H, MINIMAP_W } from './paneSizes'
 
 type FlowNode = CardFlowNode | StageFlowNode
 
@@ -65,6 +66,8 @@ export interface PlanningCanvasProps {
   onUnlink: (pairs: { source: string; target: string }[]) => void
   /** Pan/zoom que o usuário fez (fim do movimento), para gravar. */
   onViewportChange?: (viewport: Viewport) => void
+  /** Qualquer clique no canvas — inclusive em cards e nós — para encolher o chat flutuante. */
+  onCanvasClick?: () => void
 }
 
 // Fora do componente: objeto novo a cada render faria o React Flow remontar os nós.
@@ -73,7 +76,7 @@ const DELETE_KEYS = ['Delete', 'Backspace']
 // Só o botão "enquadrar" dos Controls: pedido explícito de ver o plano todo.
 const FIT_VIEW = { padding: 0.15, maxZoom: 1 }
 const PRO_OPTIONS = { hideAttribution: false }
-const MINIMAP_STYLE = { width: 168, height: 108 }
+const MINIMAP_STYLE = { width: MINIMAP_W, height: MINIMAP_H }
 // Hex, não var(): a cor entra no id do marcador, que vira url(#…).
 const SEQ_COLOR = '#8d8a86'
 const LINK_COLOR = '#a3a09b'
@@ -111,13 +114,25 @@ function buildEdges(layout: PlanLayout): Edge[] {
           focusable: false,
           markerEnd: { type: MarkerType.ArrowClosed, color: SEQ_COLOR, width: 16, height: 16 }
         }
-      : {
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          className: 'pl-edge-link',
-          markerEnd: { type: MarkerType.ArrowClosed, color: LINK_COLOR, width: 16, height: 16 }
-        }
+      : e.kind === 'ref'
+        ? {
+            // Vem do [[texto]] no corpo: some quando o texto sai, não pelo Delete.
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            className: 'pl-edge-ref',
+            selectable: false,
+            deletable: false,
+            focusable: false,
+            markerEnd: { type: MarkerType.ArrowClosed, color: LINK_COLOR, width: 16, height: 16 }
+          }
+        : {
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            className: 'pl-edge-link',
+            markerEnd: { type: MarkerType.ArrowClosed, color: LINK_COLOR, width: 16, height: 16 }
+          }
   )
 }
 
@@ -190,7 +205,8 @@ export const PlanningCanvas = memo(function PlanningCanvas({
   onDeleteCards,
   onLink,
   onUnlink,
-  onViewportChange
+  onViewportChange,
+  onCanvasClick
 }: PlanningCanvasProps): JSX.Element {
   const { defaultViewport, onMoveEnd } = useInitialViewport(plan, layout, onViewportChange)
   const [nodes, setNodes] = useState<FlowNode[]>(() => buildNodes(plan, layout))
@@ -262,7 +278,7 @@ export const PlanningCanvas = memo(function PlanningCanvas({
   )
 
   return (
-    <div className="pl-canvas">
+    <div className="pl-canvas" onClick={onCanvasClick}>
       <ReactFlow<FlowNode, Edge>
         nodes={nodes}
         edges={edges}
@@ -285,8 +301,9 @@ export const PlanningCanvas = memo(function PlanningCanvas({
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} />
         <Controls showInteractive={false} position="bottom-left" fitViewOptions={FIT_VIEW} />
+        {/* Em cima à direita: embaixo fica o chat do Manager minimizado (ManagerChatFloat). */}
         <MiniMap<FlowNode>
-          position="bottom-right"
+          position="top-right"
           style={MINIMAP_STYLE}
           pannable
           zoomable

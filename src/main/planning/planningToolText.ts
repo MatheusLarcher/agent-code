@@ -13,14 +13,27 @@ export const text = (t: string): ToolText => ({ content: [{ type: 'text', text: 
 const EXCERPT_CHARS = 160
 const MAX_CARDS_LISTED = 200
 
-export function cardHeader(card: PlanCard): string {
-  const parts = [`${card.id} [${card.tipo}] ${card.titulo}`]
+/** O que vem depois do nome do card: etapa, status, links, fonte e rev. */
+function cardMeta(card: PlanCard): string[] {
+  const parts: string[] = []
   if (card.etapa) parts.push(`etapa ${card.etapa}`)
   if (card.status) parts.push(`status ${card.status}`)
   if (card.links.length) parts.push(`links ${card.links.join(', ')}`)
   if (card.fonte) parts.push(`fonte ${card.fonte}`)
   parts.push(`rev ${card.rev}`)
-  return parts.join(' · ')
+  return parts
+}
+
+export function cardHeader(card: PlanCard): string {
+  return [`${card.id} [${card.tipo}] ${card.titulo}`, ...cardMeta(card)].join(' · ')
+}
+
+/**
+ * A linha do card na lista do plan_read: o título em destaque, no formato em
+ * que o usuário o cita ([[Título]]), e ao lado o id que as ferramentas pedem.
+ */
+export function cardListLine(card: PlanCard): string {
+  return [`[[${card.titulo}]] (id ${card.id}, ${card.tipo})`, ...cardMeta(card)].join(' · ')
 }
 
 export function describeCard(card: PlanCard): string {
@@ -48,10 +61,14 @@ export function describePlan(plan: OpenedPlan): string {
   const etapas = plan.roteiro.etapas
   lines.push(etapas.length ? `Roteiro (${etapas.length} etapas, na ordem):` : 'Roteiro: vazio — separe e ordene as etapas com plan_roteiro_set.')
   lines.push(...etapaLines(etapas))
-  lines.push(plan.cards.length ? `Cards (${plan.cards.length}):` : 'Cards: nenhum.')
+  lines.push(
+    plan.cards.length
+      ? `Cards (${plan.cards.length}) — [[Título]] é o nome com que o usuário cita o card; as ferramentas pedem o id:`
+      : 'Cards: nenhum.'
+  )
   for (const card of plan.cards.slice(0, MAX_CARDS_LISTED)) {
     const body = excerpt(card.corpo)
-    lines.push(`  - ${cardHeader(card)}${body ? ` — ${body}` : ''}`)
+    lines.push(`  - ${cardListLine(card)}${body ? ` — ${body}` : ''}`)
   }
   if (plan.cards.length > MAX_CARDS_LISTED) {
     lines.push(`  … mais ${plan.cards.length - MAX_CARDS_LISTED} cards; leia um a um com plan_read(card_id).`)

@@ -6,6 +6,7 @@
  * um subconjunto de YAML feito à mão: cada valor é gravado como JSON (que
  * também é YAML válido), então o round-trip é exato sem dependência nova.
  */
+import { FONTE_RULE_TEXT, isValidFonte } from '../../shared/planningFonte'
 
 export const CARD_TYPES = ['etapa', 'requisito', 'decisao', 'sugestao', 'ambiguidade', 'nota'] as const
 export type CardType = (typeof CARD_TYPES)[number]
@@ -62,16 +63,6 @@ export function assertValidName(value: unknown, what: string): asserts value is 
   }
 }
 
-export function isHttpUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-  try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
 /** Ids referenciados por [[id]] no corpo, sem repetição e na ordem em que aparecem. */
 export function extractLinks(body: string): string[] {
   const out: string[] = []
@@ -97,11 +88,12 @@ export function validateCard(card: PlanCard): PlanCard {
     throw new PlanningValidationError('links devem ser ids válidos')
   }
   if (card.etapa !== undefined) assertValidName(card.etapa, 'etapa do card')
-  if (card.fonte !== undefined && !isHttpUrl(card.fonte)) {
-    throw new PlanningValidationError('fonte deve ser URL http/https')
+  // Regra única (src/shared/planningFonte): URL http/https ou arquivo do projeto.
+  if (card.fonte !== undefined && !isValidFonte(card.fonte)) {
+    throw new PlanningValidationError(FONTE_RULE_TEXT)
   }
   if (card.tipo === 'sugestao' && !card.fonte) {
-    throw new PlanningValidationError('card de sugestão exige fonte (URL http/https)')
+    throw new PlanningValidationError('card de sugestão exige fonte (URL http/https ou arquivo do projeto, ex.: src/a.ts:12)')
   }
   if (card.tipo === 'ambiguidade') {
     if (!(AMBIGUITY_STATUSES as readonly string[]).includes(card.status ?? '')) {

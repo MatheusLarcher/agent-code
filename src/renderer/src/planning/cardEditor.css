@@ -1,0 +1,100 @@
+/*
+ * Editor de card (salvamento automático) e a lista de sugestões do '[['.
+ * O resto do editor (campos, tipos, rodapé) está no planning.css.
+ *
+ * .pl-refs é genérico: não depende de estar dentro de .planning — a cor de
+ * cada item vem inline em --pl-ref-color (typeColorVar), que tem reserva nas
+ * variáveis globais do app. O posicionamento fica com quem usa (ex.: .pl-editor-refs).
+ */
+
+.pl-editor:focus { outline: none; }
+.pl-editor-restored {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  font-size: 12px;
+  color: var(--muted);
+}
+.pl-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.pl-field-hint { font-size: 11px; color: var(--muted); }
+.pl-corpo { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 180px; }
+.pl-autosave {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--muted);
+}
+.pl-autosave[data-status='invalid'],
+.pl-autosave[data-status='failed'],
+.pl-autosave[data-status='gone'] { color: var(--warn); }
+
+/* ---- sugestões do '[[' ---- */
+.pl-refs {
+  box-sizing: border-box;
+  max-height: 232px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.pl-refs ul { list-style: none; margin: 0; padding: 4px; }
+.pl-refs-empty { margin: 0; padding: 8px 10px; color: var(--muted); font-style: italic; }
+.pl-ref-item {
+  --pl-ref-color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 6px;
+  box-shadow: inset 3px 0 0 var(--pl-ref-color);
+  cursor: pointer;
+}
+.pl-ref-item.active { background: color-mix(in srgb, var(--pl-ref-color) 14%, transparent); }
+.pl-ref-icon { display: inline-flex; flex: none; color: var(--pl-ref-color); }
+.pl-ref-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pl-ref-type {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pl-ref-color);
+}
+/* No editor: flutua na base do campo de conteúdo. */
+.pl-editor-refs { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 2; }
+
+/* ---- [[Título]] na prévia: destaque com a cor do tipo do card citado ---- */
+.pl-preview a[href^='#card-ref/'] {
+  --pl-ref: var(--accent);
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--pl-ref) 14%, transparent);
+  color: var(--pl-ref);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: default;
+}
+.pl-preview a[href^='#card-ref/etapa/'] { --pl-ref: var(--pl-etapa); }
+.pl-preview a[href^='#card-ref/requisito/'] { --pl-ref: var(--pl-requisito); }
+.pl-preview a[href^='#card-ref/decisao/'] { --pl-ref: var(--pl-decisao); }
+.pl-preview a[href^='#card-ref/sugestao/'] { --pl-ref: var(--pl-sugestao); }
+.pl-preview a[href^='#card-ref/ambiguidade/'] { --pl-ref: var(--pl-ambiguidade); }
+.pl-preview a[href^='#card-ref/nota/'] { --pl-ref: var(--pl-nota); }
+
+.pl-link:focus-visible,
+.pl-ref-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
