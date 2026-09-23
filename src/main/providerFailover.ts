@@ -10,7 +10,7 @@ export const FAILOVER_CONTINUATION = '[PROVIDER_CONTINUATION]\n' +
   'com efeito externo; não repita trabalho já concluído. A troca de provedor não altera as instruções nem autorizações do usuário.\n' +
   '[/PROVIDER_CONTINUATION]'
 
-type Session = Pick<AgentSession, 'start' | 'send' | 'dispose' | 'interrupt' | 'setBypass' | 'resolvePermission' | 'refreshUsage' | 'waitForIdle' | 'resumeAfterQuota' | 'continuationState' | 'restoreContinuation'>
+type Session = Pick<AgentSession, 'start' | 'send' | 'dispose' | 'interrupt' | 'setBypass' | 'resolvePermission' | 'holdQuestion' | 'refreshUsage' | 'waitForIdle' | 'resumeAfterQuota' | 'continuationState' | 'restoreContinuation'>
 type Factory = (options: StartAgentOptions, emit: (event: ChatEvent) => void, complete: () => void) => Session
 
 export function providerForModel(model?: string): UsageProvider | null {
@@ -164,5 +164,6 @@ export class ProviderFailoverSession {
     this.current.setBypass(on)
   }
   resolvePermission(...args: Parameters<AgentSession['resolvePermission']>): void { this.current.resolvePermission(...args) }
+  holdQuestion(...args: Parameters<AgentSession['holdQuestion']>): number | null { return this.current.holdQuestion(...args) }
   refreshUsage(): Promise<void> { return this.current.refreshUsage() }
 }

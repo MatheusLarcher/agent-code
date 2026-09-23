@@ -24,7 +24,7 @@ function stub() {
   return {
     start: vi.fn(async () => true), send: vi.fn(async (..._args: unknown[]) => {}),
     dispose: vi.fn(), interrupt: vi.fn(async () => ({ stillQueued: [] })),
-    setBypass: vi.fn(), resolvePermission: vi.fn(), refreshUsage: vi.fn(async () => {}),
+    setBypass: vi.fn(), resolvePermission: vi.fn(), holdQuestion: vi.fn(() => null), refreshUsage: vi.fn(async () => {}),
     waitForIdle: vi.fn(async () => {}), resumeAfterQuota: vi.fn(async () => 'durable-session'),
     continuationState: vi.fn(() => ({ approvedTools: ['Write'], loopActive: true, loopCycles: 7, loopLimit: 100, loopScheduledThisIteration: false })),
     restoreContinuation: vi.fn()

@@ -583,8 +583,9 @@ export class AgentSession {
       toolName: string
       input: Record<string, unknown>
       resolve: (r: PermissionResult) => void
-      /** Auto-resolve timer (cleared if the user answers first). */
-      timer: ReturnType<typeof setTimeout>
+      /** Auto-resolve timer (cleared if the user answers first; undefined while a
+       *  minimized question waits with no deadline). */
+      timer: ReturnType<typeof setTimeout> | undefined
     }
   >()
   private approvedTools = new Set<string>()
@@ -2102,10 +2103,25 @@ ${lines}
     input: Record<string, unknown>,
     resolve: (r: PermissionResult) => void
   ): void {
+    this.pendingPermissions.set(id, { toolName, input, resolve, timer: this.armExpiry(id) })
+  }
+
+  private armExpiry(id: string): ReturnType<typeof setTimeout> {
     const timer = setTimeout(() => this.expirePermission(id), PERMISSION_TIMEOUT_MS)
     // Don't let a pending prompt keep the process alive (e.g. on quit).
     timer.unref?.()
-    this.pendingPermissions.set(id, { toolName, input, resolve, timer })
+    return timer
+  }
+
+  /** Pergunta (AskUserQuestion) minimizada espera sem prazo — o usuário só a
+   *  deixou para depois; reaberta ou tocada no modal, ganha o prazo inteiro de
+   *  novo. Devolve o novo deadline (null: pausada, ou não é uma pergunta pendente). */
+  holdQuestion(id: string, paused: boolean): number | null {
+    const pending = this.pendingPermissions.get(id)
+    if (!pending || pending.toolName !== 'AskUserQuestion') return null
+    clearTimeout(pending.timer)
+    pending.timer = paused ? undefined : this.armExpiry(id)
+    return paused ? null : Date.now() + PERMISSION_TIMEOUT_MS
   }
 
   /** No answer in time: a question proceeds (model told nobody answered); a tool

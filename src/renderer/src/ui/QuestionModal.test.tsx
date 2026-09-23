@@ -46,6 +46,18 @@ describe('QuestionModal — clicar fora ou Esc minimiza, não cancela', () => {
     expect(onCancel).not.toHaveBeenCalled()
   })
 
+  it('qualquer clique dentro do card renova o prazo (onActivity); clicar fora não', () => {
+    const onActivity = vi.fn()
+    const { container } = render(
+      <QuestionModal request={makeRequest()} onAnswer={vi.fn()} onCancel={vi.fn()} onMinimize={vi.fn()} onActivity={onActivity} />
+    )
+    fireEvent.pointerDown(screen.getByText('Qual caminho seguir?'))
+    fireEvent.pointerDown(screen.getByText('Opção B'))
+    expect(onActivity).toHaveBeenCalledTimes(2)
+    fireEvent.pointerDown(container.querySelector('.modal-overlay')!)
+    expect(onActivity).toHaveBeenCalledTimes(2)
+  })
+
   it('Esc chama onMinimize, nunca onCancel', () => {
     const onMinimize = vi.fn()
     const onCancel = vi.fn()

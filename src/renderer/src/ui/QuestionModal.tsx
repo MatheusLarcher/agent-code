@@ -10,6 +10,8 @@ interface Props {
    *  pendente, só escondida; o chip do ChatPanel reabre o modal. Só o botão
    *  "Cancelar" descarta a pergunta de verdade. */
   onMinimize: () => void
+  /** Qualquer clique dentro do modal: o usuário está respondendo, o prazo recomeça. */
+  onActivity?: () => void
 }
 
 const OTHER = '__other__'
@@ -20,7 +22,7 @@ const OTHER = '__other__'
  * always offered (the SDK leaves the "Other" choice to the host). The picks are
  * fed back to the model as the tool's answer.
  */
-export function QuestionModal({ request, onAnswer, onCancel, onMinimize }: Props): JSX.Element {
+export function QuestionModal({ request, onAnswer, onCancel, onMinimize, onActivity }: Props): JSX.Element {
   const questions = useMemo(() => request.questions ?? [], [request.questions])
   // Per question: the set of selected option labels (single-select keeps one).
   const [picked, setPicked] = useState<string[][]>(() => questions.map(() => []))
@@ -71,6 +73,7 @@ export function QuestionModal({ request, onAnswer, onCancel, onMinimize }: Props
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
+        onPointerDown={onActivity}
       >
         <h3 className="modal-title">O agente está perguntando</h3>
         {questions.map((q, qi) => {

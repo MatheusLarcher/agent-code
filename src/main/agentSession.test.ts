@@ -702,6 +702,46 @@ describe('AgentSession — auto-timeout (sem resposta do usuário)', () => {
     }
   })
 
+  it('pergunta minimizada espera sem prazo; reaberta, ganha o prazo inteiro de novo', async () => {
+    vi.useFakeTimers()
+    try {
+      const { s, ask, expire } = makeSession()
+      void gate(s, 'AskUserQuestion', askInput)
+      const { id } = ask.mock.calls[0][0]
+      vi.advanceTimersByTime(6 * 60_000)
+      expect(s.holdQuestion(id, true)).toBeNull()
+      vi.advanceTimersByTime(60 * 60_000)
+      expect(expire).not.toHaveBeenCalled()
+      const deadline = s.holdQuestion(id, false)
+      expect(deadline).toBe(Date.now() + 7 * 60_000)
+      vi.advanceTimersByTime(7 * 60_000 - 10)
+      expect(expire).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(20)
+      expect(expire).toHaveBeenCalledWith(id)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clique no modal renova o prazo da pergunta; permissão de ferramenta não é afetada', async () => {
+    vi.useFakeTimers()
+    try {
+      const { s, ask, expire } = makeSession()
+      void gate(s, 'AskUserQuestion', askInput)
+      void gate(s, 'Bash', { command: 'ls' })
+      const qId = ask.mock.calls[0][0].id
+      const bashId = ask.mock.calls[1][0].id
+      vi.advanceTimersByTime(6 * 60_000)
+      expect(s.holdQuestion(qId, false)).toBeGreaterThan(Date.now())
+      expect(s.holdQuestion(bashId, false)).toBeNull()
+      vi.advanceTimersByTime(2 * 60_000)
+      expect(expire).toHaveBeenCalledWith(bashId)
+      expect(expire).not.toHaveBeenCalledWith(qId)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('se o usuário responde a tempo, o timeout é cancelado (não dispara expire)', async () => {
     vi.useFakeTimers()
     try {

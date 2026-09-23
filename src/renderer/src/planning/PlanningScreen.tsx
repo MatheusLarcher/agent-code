@@ -25,6 +25,7 @@ import { PlanningCanvas } from './PlanningCanvas'
 import { ProgressList } from './ProgressList'
 import { RoteiroSplitter } from './RoteiroSplitter'
 import { FIT_MIN_ZOOM } from './canvasViewport'
+import { buildFlowPdf } from './flowPdf'
 import { columnFocusPoint, computeLayout } from './layout'
 import { loadRoteiroCollapsed, loadRoteiroWidth, saveRoteiroCollapsed, saveRoteiroWidth } from './paneSizes'
 import { PlanningPlanContext } from './planningPlanContext'
@@ -234,6 +235,30 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
   const etapas = roteiro?.etapas ?? []
   const done = etapas.filter((e) => e.status === 'concluida').length
   const title = roteiro?.titulo || slug
+
+  // PDF do flow inteiro (todos os cards, não só o trecho na tela): o DOM do
+  // canvas vira uma página autocontida e o main imprime (flowPdf.ts).
+  const stageRef = useRef<HTMLElement>(null)
+  const [exporting, setExporting] = useState(false)
+  const exportPdf = useCallback(async (): Promise<void> => {
+    const nodes = flow.getNodes()
+    const stage = stageRef.current
+    const req = stage && nodes.length ? buildFlowPdf(stage, flow.getNodesBounds(nodes), title) : null
+    if (!req) {
+      notify('aviso', 'Não há cards no canvas para exportar.')
+      return
+    }
+    setExporting(true)
+    try {
+      const res = await window.api.planningExportPdf(req)
+      if (res.ok) notify('sucesso', `PDF salvo em ${res.path}`)
+      else if (!res.canceled) notify('erro', `Não consegui gerar o PDF: ${res.message ?? 'erro desconhecido'}`)
+    } catch (err) {
+      notify('erro', `Não consegui gerar o PDF: ${String(err)}`)
+    } finally {
+      setExporting(false)
+    }
+  }, [flow, title, notify])
   const isEmpty = !!plan && plan.roteiro.etapas.length === 0 && plan.cards.length === 0
   const existingIds = useMemo(() => (cards ?? []).map((c) => c.id), [cards])
   // O editor recebe a versão viva do card: sem edição pendente, adota a do Manager.
@@ -303,7 +328,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
             </div>
           )}
           {status === 'ready' && plan && layout && (
-            <main className="pl-stage-area">
+            <main className="pl-stage-area" ref={stageRef}>
               {isEmpty ? (
                 <EmptyPlan onNewCard={() => newCard()} />
               ) : (
@@ -318,6 +343,8 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
                   onUnlink={unlink}
                   onViewportChange={saveViewport}
                   onCanvasClick={collapseChat}
+                  onExportPdf={() => void exportPdf()}
+                  exporting={exporting}
                 />
               )}
               {editorOpen && editorCard && (

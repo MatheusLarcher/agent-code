@@ -68,6 +68,10 @@ export interface PlanningCanvasProps {
   onViewportChange?: (viewport: Viewport) => void
   /** Qualquer clique no canvas — inclusive em cards e nós — para encolher o chat flutuante. */
   onCanvasClick?: () => void
+  /** Botão "PDF" da barra: salva o flow inteiro em PDF. Sem ele, o botão não aparece. */
+  onExportPdf?: () => void
+  /** Exportação em andamento: o botão fica desabilitado. */
+  exporting?: boolean
 }
 
 // Fora do componente: objeto novo a cada render faria o React Flow remontar os nós.
@@ -206,7 +210,9 @@ export const PlanningCanvas = memo(function PlanningCanvas({
   onLink,
   onUnlink,
   onViewportChange,
-  onCanvasClick
+  onCanvasClick,
+  onExportPdf,
+  exporting
 }: PlanningCanvasProps): JSX.Element {
   const { defaultViewport, onMoveEnd } = useInitialViewport(plan, layout, onViewportChange)
   const [nodes, setNodes] = useState<FlowNode[]>(() => buildNodes(plan, layout))
@@ -316,6 +322,17 @@ export const PlanningCanvas = memo(function PlanningCanvas({
           <button type="button" className="pl-add" onClick={() => onNewCard()} title="Criar um card">
             + Card
           </button>
+          {onExportPdf && (
+            <button
+              type="button"
+              className="pl-add"
+              onClick={onExportPdf}
+              disabled={exporting}
+              title="Salvar o flow inteiro (todos os cards e ligações) em PDF"
+            >
+              {exporting ? 'Exportando…' : 'Exportar PDF'}
+            </button>
+          )}
           <span className="pl-hint">
             Duplo clique abre · Delete apaga · arraste do ponto na borda de um card até outro para ligar
           </span>

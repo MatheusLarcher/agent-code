@@ -2488,6 +2488,23 @@ export function App(): JSX.Element {
     setMinimizedQuestions((m) => ({ ...m, [cid]: minimized }))
   }, [])
 
+  // Prazo da pergunta pendente: minimizada, espera sem prazo (paused); reaberta
+  // ou tocada no modal, ganha o prazo inteiro de novo. O main é quem manda no
+  // timer; aqui só se atualiza o deadline que a barrinha desenha.
+  const holdQuestion = useCallback((convId: string, req: PermissionRequest | undefined, paused: boolean): void => {
+    if (!req?.questions) return
+    window.api.holdQuestion(convId, req.id, paused).then(
+      (deadline) =>
+        setPermissions((p) => {
+          const cur = p[convId]
+          if (cur?.id !== req.id) return p
+          const { deadline: _old, ...rest } = cur
+          return { ...p, [convId]: deadline === null ? rest : { ...rest, deadline } }
+        }),
+      () => {}
+    )
+  }, [])
+
   // Voice features need an OpenAI key. When missing, open Settings on that field.
   const needVoiceKey = useCallback((): void => {
     notify('aviso', 'Adicione sua API key da OpenAI nas Configurações para usar voz.')
@@ -3154,7 +3171,10 @@ export function App(): JSX.Element {
       fastMode={active?.fastMode === true}
       onFastModeChange={(on) => active && changeFastMode(active.id, on)}
       pendingQuestion={!!activePermission?.questions && questionMinimized}
-      onReopenQuestion={() => setQuestionMinimized(false)}
+      onReopenQuestion={() => {
+        setQuestionMinimized(false)
+        if (activeId) holdQuestion(activeId, activePermission, false)
+      }}
       vigiaAlert={active ? vigiaAlerts[active.id] ?? null : null}
       onDismissVigia={() => active && setVigiaAlerts((v) => withoutKey(v, active.id))}
       onAnswerVigia={(question, answer) => {
@@ -3361,7 +3381,8 @@ export function App(): JSX.Element {
                     pendingPermissions={pendingPermissionList}
                     onFocusPermission={(convId) => {
                       setActiveId(convId)
-                      setQuestionMinimized(false)
+                      setMinimizedQuestions((m) => withoutKey(m, convId))
+                      if (minimizedQuestions[convId]) holdQuestion(convId, permissions[convId], false)
                       // Sai do painel para o chat: a pergunta é lá que se responde.
                       setRightPane('browser')
                     }}
@@ -3433,7 +3454,11 @@ export function App(): JSX.Element {
               request={activePermission}
               onAnswer={answerQuestion}
               onCancel={() => respond('deny', false)}
-              onMinimize={() => setQuestionMinimized(true)}
+              onMinimize={() => {
+                setQuestionMinimized(true)
+                if (activeId) holdQuestion(activeId, activePermission, true)
+              }}
+              onActivity={() => activeId && holdQuestion(activeId, activePermission, false)}
             />
           )
         ) : (

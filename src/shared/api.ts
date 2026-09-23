@@ -57,6 +57,8 @@ import type {
   OpenedPlanningDto,
   PlanningCardDto,
   PlanningChangedMsg,
+  FlowPdfRequest,
+  FlowPdfResult,
   PlanningHandoffDto,
   PlanningLayoutDto,
   PlanningRef,
@@ -194,6 +196,8 @@ export interface AgentCodeApi {
   planningListHandoffs(req: PlanningRef): Promise<PlanningResult<{ handoffs: PlanningHandoffDto[] }>>
   /** Grava um prompt em _handoff/AAAA-MM-DD-NN.md; devolve o nome do arquivo novo. */
   planningWriteHandoff(req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>>
+  /** Pergunta onde salvar e grava o flow do planejamento em PDF. */
+  planningExportPdf(req: FlowPdfRequest): Promise<FlowPdfResult>
   /** Arquivos de um planejamento aberto mudaram por fora do app — recarregue. */
   onPlanningChanged(cb: (msg: PlanningChangedMsg) => void): () => void
   kvGet(key: string): Promise<string | null>
@@ -246,6 +250,9 @@ export interface AgentCodeApi {
   /** Toggle "allow all" on a conversation's running session. */
   setBypass(convId: string, on: boolean): Promise<void>
   respondPermission(convId: string, res: PermissionResponse): Promise<void>
+  /** Pausa (pergunta minimizada) ou renova o prazo de uma pergunta pendente;
+   *  devolve o novo deadline, ou null quando pausada. */
+  holdQuestion(convId: string, id: string, paused: boolean): Promise<number | null>
   /** Dispose a conversation's agent session (on chat deletion). */
   disposeAgent(convId: string): Promise<void>
   /** Poll the latest account-wide rate-limit snapshot for a connected session. */

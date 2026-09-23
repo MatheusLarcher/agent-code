@@ -1732,6 +1732,8 @@ export const Channels = {
   planningListHandoffs: 'planning:listHandoffs',
   /** Grava um prompt de handoff em _handoff/AAAA-MM-DD-NN.md (o que vai ser enviado). */
   planningWriteHandoff: 'planning:writeHandoff',
+  /** Salva o flow do planejamento em PDF (diálogo "Salvar como" + printToPDF). */
+  planningExportPdf: 'planning:exportPdf',
   /** Main → renderer: arquivos de um planejamento aberto mudaram por fora do
    *  app (editor, git, agente). Gravações do próprio app não disparam. */
   planningChanged: 'planning:changed',
@@ -1753,6 +1755,7 @@ export const Channels = {
   agentInterrupt: 'agent:interrupt',
   agentSetBypass: 'agent:set-bypass',
   agentPermissionResponse: 'agent:permission-response',
+  agentQuestionHold: 'agent:question-hold',
   agentRefreshUsage: 'agent:refresh-usage',
   /** Dispose a conversation's agent session (e.g. when the chat is deleted). */
   agentDispose: 'agent:dispose',
@@ -2102,6 +2105,18 @@ export interface PlanningHandoffDto {
   createdAt: number
   content: string
 }
+
+/** Pedido de Channels.planningExportPdf: página HTML autocontida do flow e o tamanho dela (px CSS). */
+export interface FlowPdfRequest {
+  html: string
+  width: number
+  height: number
+  /** Nome sugerido do arquivo, sem extensão. */
+  name: string
+}
+
+/** Resposta de Channels.planningExportPdf. `canceled`: o usuário fechou o "Salvar como". */
+export type FlowPdfResult = { ok: true; path: string } | { ok: false; canceled?: true; message?: string }
 
 /** Resposta de Channels.conversationSuggestTitle. `ok: false` = sem título
  *  (entrada inválida, LLM falhou, estourou o tempo): quem chamou fica com o recuo. */

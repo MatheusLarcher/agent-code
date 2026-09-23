@@ -51,6 +51,7 @@ import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlis
 import { Vigia } from './vigia/vigia'
 import { BoardService } from './board/boardService'
 import { registerPlanningIpc, type PlanningIpcHandle } from './planning/planningIpc'
+import { exportFlowPdf } from './planning/flowPdfExport'
 import { PlanningConversations, planningStartOptions } from './planning/planningConversations'
 import { registerConversationTitleIpc } from './titles/conversationTitleIpc'
 import { Po } from './po/po'
@@ -1118,6 +1119,7 @@ export function registerIpc(): void {
   })
   // Tela de Planejamento: toda a lógica (validação, vigia, erros) mora em planningIpc.
   planningIpc = registerPlanningIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), send })
+  ipcMain.handle(Channels.planningExportPdf, (e, req: unknown) => exportFlowPdf(e.sender, req))
   // Título automático da conversa (claude-haiku-4-5): a lógica mora em titles/.
   registerConversationTitleIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener) })
   ipcMain.handle(Channels.tasksDetail, async (_e, taskId: string) => {
@@ -1589,6 +1591,11 @@ export function registerIpc(): void {
 
   ipcMain.handle(Channels.agentPermissionResponse, (_e, convId: string, res: PermissionResponse) => {
     sessions.get(convId)?.resolvePermission(res)
+  })
+
+  ipcMain.handle(Channels.agentQuestionHold, (_e, convId: string, id: string, paused: boolean) => {
+    if (typeof id !== 'string' || typeof paused !== 'boolean') return null
+    return sessions.get(convId)?.holdQuestion(id, paused) ?? null
   })
 
   ipcMain.handle(Channels.agentDispose, (_e, convId: string) => {

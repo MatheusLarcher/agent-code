@@ -58,6 +58,8 @@ import type {
   OpenedPlanningDto,
   PlanningCardDto,
   PlanningChangedMsg,
+  FlowPdfRequest,
+  FlowPdfResult,
   PlanningHandoffDto,
   PlanningLayoutDto,
   PlanningRef,
@@ -184,6 +186,7 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.planningListHandoffs, req),
   planningWriteHandoff: (req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>> =>
     ipcRenderer.invoke(Channels.planningWriteHandoff, req),
+  planningExportPdf: (req: FlowPdfRequest): Promise<FlowPdfResult> => ipcRenderer.invoke(Channels.planningExportPdf, req),
   onPlanningChanged: (cb: (m: PlanningChangedMsg) => void): (() => void) => on(Channels.planningChanged, cb),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
   kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),
@@ -228,6 +231,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.agentSetBypass, convId, on),
   respondPermission: (convId: string, res: PermissionResponse): Promise<void> =>
     ipcRenderer.invoke(Channels.agentPermissionResponse, convId, res),
+  holdQuestion: (convId: string, id: string, paused: boolean): Promise<number | null> =>
+    ipcRenderer.invoke(Channels.agentQuestionHold, convId, id, paused),
   disposeAgent: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentDispose, convId),
   refreshUsage: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentRefreshUsage, convId),
   getTokenUsageHistory: (convId: string): Promise<TokenUsageHistory> =>
