@@ -4,6 +4,14 @@
  * variáveis do styles.css.
  */
 
+/* Opacidade do fundo do chat. Registrada para poder ter transição — uma
+   variável comum troca de valor num salto, e o painel "piscava". */
+@property --pl-chat-fill {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 78%;
+}
+
 /* A área do canvas (e dos estados carregando/erro): é nela que o painel flutua. */
 .pl-main { position: relative; flex: 1; display: flex; min-width: 0; min-height: 0; }
 
@@ -27,29 +35,31 @@
   flex-direction: column;
   min-height: 0;
   /* Translúcido: o canvas continua à vista atrás do chat. `--pl-chat-fill` é a
-     opacidade do fundo; as barras internas seguem a mesma (ver abaixo). */
-  --pl-chat-fill: 72%;
-  --pl-chat-blur: 8px;
+     opacidade do fundo; as barras internas seguem a mesma (ver abaixo).
+     Sem backdrop-filter de propósito: o desfoque é recalculado a cada mudança
+     do canvas por trás (card nascendo, rastro animado) e do conteúdo que chega,
+     e o painel piscava a cada mensagem do agente. */
+  --pl-chat-fill: 78%;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--bg) var(--pl-chat-fill), transparent);
-  backdrop-filter: blur(var(--pl-chat-blur));
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25);
   overflow: hidden;
+  /* A troca de opacidade (minimizar, hover, foco) é gradual, não um salto
+     (o @property lá em cima é o que deixa a variável animar). */
+  transition: --pl-chat-fill 180ms ease;
 }
 /* Encolhido, ainda mais transparente; ao passar o mouse ou focar algo dentro
    volta à translucidez do maximizado (ler/digitar não compete com o card por
    trás). Clicar nele expande (ManagerChatFloat). */
 .pl-chat-float.minimized {
-  --pl-chat-fill: 38%;
-  --pl-chat-blur: 3px;
+  --pl-chat-fill: 40%;
   top: auto;
   cursor: pointer;
 }
 .pl-chat-float.minimized:hover,
 .pl-chat-float.minimized:focus-within {
-  --pl-chat-fill: 72%;
-  --pl-chat-blur: 8px;
+  --pl-chat-fill: 78%;
 }
 /* As barras do ChatPanel (cabeçalho, composer, seletor de modelo) têm fundo
    opaco próprio: aqui seguem a translucidez do painel. A caixa de digitação

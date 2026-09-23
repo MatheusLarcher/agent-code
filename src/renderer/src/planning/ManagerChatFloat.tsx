@@ -7,8 +7,9 @@
  *   fim. Mostra tudo o que o chat mostra.
  * - **Minimizado**: ancorado embaixo, com ~5 linhas de conversa e 3 de
  *   digitação (planningChat.css). O `ChatPanel` entra em modo compacto pelo
- *   `ChatDisplayContext`: some o consumo. Fica também translúcido (volta opaco
- *   no hover/foco) e qualquer clique nele expande.
+ *   `ChatDisplayContext`: some o consumo. Fica mais translúcido que o
+ *   maximizado (volta à translucidez dele no hover/foco) e qualquer clique
+ *   nele expande.
  *
  * O aviso "Controle do Windows ativo" não aparece em nenhum dos dois estados.
  *
