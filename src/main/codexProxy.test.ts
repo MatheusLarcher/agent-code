@@ -38,8 +38,8 @@ describe('Codex proxy headers and session correlation', () => {
       Authorization: 'Bearer at_test',
       'chatgpt-account-id': 'account_test',
       originator: 'codex_cli_rs',
-      'User-Agent': 'codex_cli_rs/0.153.4',
-      version: '0.153.4',
+      'User-Agent': 'codex_cli_rs/0.156.1',
+      version: '0.156.1',
       session_id: 'session_12345678',
       'session-id': 'session_12345678',
       'thread-id': 'session_12345678'

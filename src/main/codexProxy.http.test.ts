@@ -287,14 +287,14 @@ describe('Codex proxy HTTP — ciclo real do servidor', () => {
     expect(calls).toHaveLength(2)
     expect(calls.map((call) => call.headers.get('session_id'))).toEqual([SESSION_ID, SESSION_ID])
     expect(calls.map((call) => call.headers.get('originator'))).toEqual(['codex_cli_rs', 'codex_cli_rs'])
-    expect(calls.map((call) => call.headers.get('version'))).toEqual(['0.153.4', '0.153.4'])
+    expect(calls.map((call) => call.headers.get('version'))).toEqual(['0.156.1', '0.156.1'])
     expect(calls.map((call) => call.headers.get('x-openai-internal-codex-responses-lite'))).toEqual([
       'true',
       'true'
     ])
     expect(calls.map((call) => call.headers.get('user-agent'))).toEqual([
-      'codex_cli_rs/0.153.4',
-      'codex_cli_rs/0.153.4'
+      'codex_cli_rs/0.156.1',
+      'codex_cli_rs/0.156.1'
     ])
     expect(calls.map((call) => call.headers.get('authorization'))).toEqual([
       'Bearer access-old',
