@@ -11,8 +11,10 @@
  */
 import type { AgentCodeApi } from '@shared/api'
 import {
+  clampEffortToModel,
   isAutoModel,
   PLANNING_AUTO_FALLBACK,
+  type PlanningConfig,
   PLANNING_MODELS,
   type AutoPrompt,
   type PlanningRef,
@@ -51,12 +53,22 @@ export function sessionStartFields(
 }
 
 /** O que uma conversa nova precisa para ser a implementação do handoff de `slug`.
- *  Modelo e modos ficam os de uma conversa normal (quem cria decide). */
+ *  Modelo e esforço são os do Agent Manager NA HORA do envio (o último que o
+ *  usuário escolheu na Tela de Planejamento). Automático segue Automático: a
+ *  conversa leva o sentinel e o Automático dela revalida a cada mensagem, como
+ *  em qualquer conversa. Loop e econômico ficam os de uma conversa normal. */
 export function handoffConversationFields(
   slug: string,
-  titulo?: string
-): Pick<Conversation, 'handoffSlug' | 'title'> {
-  return { handoffSlug: slug, title: `Implementação: ${titulo?.trim() || slug}` }
+  titulo: string | undefined,
+  manager: PlanningConfig
+): Pick<Conversation, 'handoffSlug' | 'title' | 'model' | 'effort' | 'fastMode'> {
+  return {
+    handoffSlug: slug,
+    title: `Implementação: ${titulo?.trim() || slug}`,
+    model: manager.model,
+    effort: isAutoModel(manager.model) ? manager.effort : clampEffortToModel(manager.model, manager.effort),
+    fastMode: false
+  }
 }
 
 /** Título com que nasce um planejamento criado sem pedir nome (roteiro e

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { AUTO_MODEL, isAutoModel } from '@shared/ipc'
+import { AUTO_MODEL, clampEffortToModel, isAutoModel, MODEL_EFFORT } from '@shared/ipc'
 import { wantsAutoTitle } from '../conversationTitle'
 import {
   existingPlanTitle,
@@ -59,17 +59,42 @@ describe('sessionStartFields', () => {
 })
 
 describe('handoffConversationFields', () => {
+  const opus = { model: 'claude-opus-5-5', effort: 'high' as const }
+
   it('marca a conversa com o slug e titula "Implementação: <título do plano>"', () => {
-    expect(handoffConversationFields('checkout', ' Checkout com Pix ')).toEqual({
+    expect(handoffConversationFields('checkout', ' Checkout com Pix ', opus)).toMatchObject({
       handoffSlug: 'checkout',
       title: 'Implementação: Checkout com Pix'
     })
-    expect(handoffConversationFields('checkout').title).toBe('Implementação: checkout')
+    expect(handoffConversationFields('checkout', undefined, opus).title).toBe('Implementação: checkout')
   })
 
-  it('não mexe em modelo nem em modos: fica o padrão da conversa normal', () => {
-    const f = handoffConversationFields('checkout', 'X') as Record<string, unknown>
-    for (const key of ['mode', 'planningSlug', 'model', 'effort', 'economyMode', 'loopEnabled', 'fastMode']) {
+  it('nasce com o modelo e o esforço do Agent Manager (o último escolhido no planejamento)', () => {
+    expect(handoffConversationFields('checkout', 'X', opus)).toMatchObject({
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      fastMode: false
+    })
+  })
+
+  it('Automático no planejamento → Automático na implementação (o sentinel, revalidado a cada mensagem)', () => {
+    const f = handoffConversationFields('checkout', 'X', { model: AUTO_MODEL, effort: 'medium' })
+    expect(isAutoModel(f.model)).toBe(true)
+    expect(revalidatesAuto({ ...f, mode: undefined, planningSlug: undefined })).toBe(true)
+  })
+
+  it('esforço que o modelo não aceita é ajustado ao dele', () => {
+    for (const model of Object.keys(MODEL_EFFORT)) {
+      for (const effort of ['low', 'xhigh', 'max'] as const) {
+        const f = handoffConversationFields('checkout', 'X', { model, effort })
+        expect(f.effort, `${model}/${effort}`).toBe(clampEffortToModel(model, effort))
+      }
+    }
+  })
+
+  it('não vira conversa de planejamento nem mexe em loop/econômico', () => {
+    const f = handoffConversationFields('checkout', 'X', opus) as Record<string, unknown>
+    for (const key of ['mode', 'planningSlug', 'economyMode', 'loopEnabled']) {
       expect(f, key).not.toHaveProperty(key)
     }
   })

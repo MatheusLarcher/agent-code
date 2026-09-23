@@ -1958,6 +1958,8 @@ export function App(): JSX.Element {
   // (config global), não os da conversa. O main o lê quando a sessão sobe, então
   // a troca reinicia a sessão do mesmo jeito que na conversa comum.
   const planningModel = usePlanningModel()
+  const planningConfigRef = useRef(planningModel.config)
+  planningConfigRef.current = planningModel.config
   const changeManagerModel = useCallback(
     (id: string, model: string): void => {
       planningModel.setModel(model)
@@ -2289,9 +2291,15 @@ export function App(): JSX.Element {
   // primeiro, o diálogo fecha em vez de deixar criar uma segunda conversa.
   const startHandoff = useCallback(
     async (folder: string, slug: string, titulo: string, prompts: string[]): Promise<HandoffSendOutcome> => {
+      // O modelo do Manager lido agora (o último escolhido, inclusive em
+      // Configurações); sem o IPC, o que a tela conhece.
+      const manager = await window.api
+        .getConfig()
+        .then((c) => c.planning ?? planningConfigRef.current)
+        .catch(() => planningConfigRef.current)
       const launched = await launchHandoff(prompts, {
         create: () => {
-          const conv = createConversation(folder, undefined, handoffConversationFields(slug, titulo))
+          const conv = createConversation(folder, undefined, handoffConversationFields(slug, titulo, manager))
           // O estado novo só chega a convsRef no próximo render, e o connect
           // persiste convsRef ANTES do startAgent (o lease exige a linha da
           // conversa no banco). Sem isto, o 1º envio corre contra o render.

@@ -2416,6 +2416,9 @@ describe('App — enviar para implementação (handoff)', () => {
   it('pede ao Manager pelo caminho normal, cria a conversa de implementação e envia o 1º prompt; o 2º vai para a fila', async () => {
     seed()
     const fs = addPlanningApi()
+    // O modelo escolhido na Tela de Planejamento é o que a implementação herda.
+    const baseConfig = await (api.getConfig as () => Promise<Record<string, unknown>>)()
+    api.getConfig.mockResolvedValue({ ...baseConfig, planning: { model: 'claude-sonnet-5', effort: 'high' } })
     // Registra se a conversa nova já estava gravada quando o main recebeu o
     // startAgent dela: o lease exige a linha da conversa no banco.
     const savedAtStart = new Map<string, boolean>()
@@ -2451,11 +2454,13 @@ describe('App — enviar para implementação (handoff)', () => {
 
     // Conversa nova, no mesmo projeto, marcada como handoff — sem `planning`.
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
-    const opts = api.startAgent.mock.calls[1][0] as { convId: string; cwd: string; model: string }
+    const opts = api.startAgent.mock.calls[1][0] as { convId: string; cwd: string; model: string; effort: string }
     expect(opts).toMatchObject({ cwd: '/proj', handoff: { slug: 'checkout' } })
     expect(opts).not.toHaveProperty('planning')
     expect(opts.convId).not.toBe('p1')
-    expect(opts.model).toBe('claude-opus-4-8') // o da conversa normal do projeto, não o do Manager
+    // O do Agent Manager (o último escolhido no planejamento), não o da conversa normal do projeto.
+    expect(opts.model).toBe('claude-sonnet-5')
+    expect(opts.effort).toBe('high')
     // Sem corrida com o render: a conversa já estava gravada quando a sessão subiu.
     expect(savedAtStart.get(opts.convId)).toBe(true)
     // O editado foi gravado como arquivo novo ANTES do envio.
