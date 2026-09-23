@@ -1,74 +1,120 @@
-# Agent Code
+<h1 align="center">Agent Code</h1>
 
-> Interface desktop estilo **Claude Desktop** para o **Claude Code**, com um **navegador embutido que o próprio agente controla**.
+<p align="center">
+  <b>Você pede. Ele faz. E você vê cada passo acontecendo.</b>
+</p>
 
-Você conversa com o agente de um lado e ele pesquisa, abre sites e interage com páginas em um navegador renderizado **ao vivo dentro do app**, do outro lado — tudo em uma única janela.
+<p align="center">
+  Um app para Windows que dá ao <b>Claude Code</b> a interface que ele merecia:<br>
+  chat, um navegador que o próprio agente usa, planejamento visual, quadro de tarefas e o mapa do seu projeto — tudo numa janela só.
+</p>
 
-![Agent Code — chat com o agente à esquerda e o navegador embutido à direita](docs/screenshot.png)
+<p align="center">
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?style=flat-square">
+  <img alt="Claude Code" src="https://img.shields.io/badge/Claude%20Code-agente%20de%20verdade-D97757?style=flat-square">
+  <img alt="Português" src="https://img.shields.io/badge/idioma-portugu%C3%AAs-2EA043?style=flat-square">
+</p>
 
-### Veja o agente trabalhando no seu projeto
+<p align="center">
+  <img src="docs/media/hero.gif" width="900" alt="O agente cria a seção de cardápio de um site de cafeteria, abre no navegador embutido e testa o botão Adicionar">
+</p>
 
-O painel **Agentes** tem uma aba **Projeto**: um mapa do seu repositório onde cada pasta é uma bolinha e cada arquivo, uma menor. Quando o agente mexe em algo, um risco de luz sai da raiz do projeto e **percorre o caminho até o arquivo**; ele acende em verde quando a luz chega, com um balãozinho contando o que está sendo feito ali. O verde vai esfriando devagar, então bate o olho e você vê **em que parte do projeto o trabalho está acontecendo**. As etapas da tarefa ficam na faixa de cima.
+<p align="center"><sub>Gravação real, só acelerada nos trechos parados: o agente cria o cardápio de um site de cafeteria fictício, abre no navegador ao lado e testa o carrinho.</sub></p>
 
-![Mapa do projeto — o agente acendendo os arquivos em que está mexendo](docs/mapa-projeto.png)
+---
 
-Arquivo novo aparece **se montando** peça por peça, arquivo apagado **se desfaz**, e um arquivo antigo que o agente resolveu abrir **chega voando lá do fundo**. O mapa mostra os 100 arquivos mexidos mais recentemente, para não virar uma parede de bolinhas.
+## 💬 Converse de um lado, veja o resultado do outro
 
-## O que dá pra fazer
+Você escreve o que quer em português. O agente lê o projeto, escreve o código, **abre o resultado no navegador ao lado e testa sozinho** — e cada ação dele aparece como um cartão no chat, para você acompanhar sem ler log.
 
-- 💬 **Conversar com o agente** (Claude) com streaming, markdown, cartões de ferramenta e medidor de tokens/custo.
-- 🎙️ **Voz no chat** — ditado por microfone (transcrição) e **leitura das respostas em voz alta**, com velocidade ajustável _(usa sua chave OpenAI)_.
-- ✍️ **Sua mensagem nunca se perde** — **rascunho salvo por conversa** (sobrevive a trocar de conversa e reabrir o app) e, se a resposta der erro, a mensagem fica marcada com **"Tentar de novo"** para reenviar em 1 clique.
-- ❓ **Perguntas do agente sem interromper seu fluxo** — perguntas interativas podem ser minimizadas e reabertas pelo chip pendente acima do composer; pedidos sem resposta expiram com segurança após 7 minutos.
-- 🌐 **Navegador embutido controlado pelo agente** — agora um **Chrome de verdade** (perfil persistente por conversa, copiar/colar, captura nítida); ele navega, lê e clica em páginas e você vê tudo ao vivo.
-- 🗂️ **Abas de preview** — várias páginas/dispositivos abertos ao mesmo tempo, e o agente sabe (e controla) qual aba está ativa.
-- 📱 **Preview Android** — o agente sobe um emulador, gera o APK e testa o app ao vivo numa **moldura de celular**, podendo trocar entre modelos (S26 Ultra, Pixel, tablets…) ou resolução custom. _(iPhone planejado.)_
-- 📡 **Controle remoto pelo celular** — um app Android moderno (pareado por QR, **token fixo**, **auto-reconexão**) mostra o histórico, envia comandos **e imagens**, renderiza **markdown** e mantém-se conectado. _(As permissões continuam aprovadas no PC.)_
-- 🦙 **Modelos Claude e Ollama Cloud** — escolha o modelo e o nível de esforço por conversa; modelos sem visão recebem uma análise visual estruturada dos anexos automaticamente.
-- ⬇️ **Baixar arquivos pelo chat** — entregáveis criados pelo agente (APK, zip, PDF…) viram um botão **Baixar**, no PC e no celular.
-- 📎 **Anexar imagens e qualquer arquivo** (Excel, PDF, zip, código…) por colar, arrastar ou pelo botão.
-- 🖱️ **Selecionar um elemento da página** e enviá-lo pro chat com um clique.
-- 🗄️ **Pasta de dados escolhida por você** — um SQLite (configs, API key, token Android) + memórias `.md` na pasta que você selecionar (por usuário, não por projeto).
-- 🧩 **Skills para todos os modelos** — skills versionadas no repo, disponíveis também nas conversas GPT/Codex, mesmo sem junction global.
-- 📚 **Documentação sempre contextualizada** — cada mensagem recebe um índice fresco de todos os arquivos e subpastas em `docs/`, com os cabeçalhos Markdown, sem reenviar os arquivos inteiros.
-- 🗺️ **Mapa do projeto ao vivo** — veja os arquivos acendendo conforme o agente trabalha, com as etapas da tarefa no topo (aba **Projeto**, no painel Agentes).
-- 👥 **Painel de agentes** — quem está trabalhando na conversa, o que cada subagente está fazendo agora e quem ficou travado esperando sua resposta.
-- 📁 **Histórico por projeto** · ⚡ **Várias conversas em paralelo** · 📊 **Uso e limite da conta** · 🔒 **Permissões por ferramenta** ("permitir tudo" liga/desliga na hora).
+Medidor de contexto e estimativa de gasto, nível de esforço, fila de mensagens, rascunho que não se perde, "Tentar de novo" em um clique e perguntas do agente com opções clicáveis. Escolha entre **Opus 5.5**, **Sonnet 5** e **Fable 5.1** — ou deixe no **Automático** (com uma chave TypeSafe).
 
-## Como rodar
+## 🧭 Planeje antes de construir
 
-**Windows (recomendado):** dê duplo-clique em `start.bat` — ele instala tudo e abre o app.
+A tela mais bonita do app. Clique em **Novo planejamento**, conte a ideia e o **Agent Manager** monta o roteiro com você: questiona, pesquisa e vai registrando tudo num canvas — **uma coluna por etapa**, com cards de requisito, decisão, sugestão (com a fonte), ambiguidade e nota, ligados entre si.
 
-Ou manualmente:
+Enquanto houver ambiguidade aberta, nada segue adiante. Quando o plano fechar, **Enviar para implementação** abre uma conversa nova que executa o roteiro etapa por etapa. E o plano fica salvo dentro do seu projeto, em `docs/spec/`, pronto para ir junto no git.
 
-```bash
-npm install   # instala as dependências + baixa o Chromium
-npm run dev   # abre o app
-```
+<p align="center">
+  <img src="docs/media/planejamento.gif" width="900" alt="O Agent Manager monta 4 etapas e 14 cards de requisito, decisão, sugestão, ambiguidade e nota ao vivo no canvas">
+</p>
 
-**Gerar o instalador:**
+<p align="center"><sub>Um pedido, quatro etapas, catorze cards nascendo ao vivo — e um deles aberto no editor no final.</sub></p>
 
-```bash
-npm run package:win   # → dist/AgentCode-setup.exe
-```
+## 🗺️ Veja onde o agente está mexendo
 
-Instalador NSIS: copia os arquivos uma vez (Chromium do Playwright, helper do controle do Windows e kit de skills embutidos) e cria atalho. Aberturas seguintes não precisam mais extrair nada, ao contrário do antigo exe portátil.
+No **Mapa do projeto**, cada pasta é um nó e cada arquivo, um ponto. Quando o agente age, **um rastro de luz corre até o arquivo**, o ponto acende na cor da ação (procurou, leu, editou, web) e um balão conta o que está sendo feito. Arquivo novo se monta na tela; arquivo apagado se desfaz.
 
-**Requisitos:** Node.js 20+ (o `start.bat` baixa uma cópia portátil se necessário). Na primeira conversa com Claude, o app abre o login no navegador; alternativamente, use `ANTHROPIC_API_KEY`. Para voz, configure uma chave OpenAI em **Configurações**. Essa chave OpenAI é exclusivamente para voz: os modelos GPT usam login OAuth do ChatGPT + backend Codex/proxy local, nunca a OpenAI API com chave. Modelos Ollama Cloud exigem a chave do Ollama, também em **Configurações**.
+Mostra os 100 arquivos mexidos mais recentemente, com filtros por mensagem e por tipo.
 
-**Roda 100% nativo no Windows — não precisa de WSL/Subsistema Linux.** O agente (CLI do Claude Code) é o binário nativo Windows que o Agent SDK distribui (`@anthropic-ai/claude-agent-sdk-win32-x64`, `claude.exe`), executado direto pelo Node do sistema. Nada no app depende de Linux, WSL ou de qualquer camada de compatibilidade.
+<p align="center">
+  <img src="docs/media/mapa.gif" width="760" alt="Mapa do projeto: rastros de luz saindo da raiz até os arquivos que o agente procura, lê e edita">
+</p>
 
-## Dados e segurança
+## ✅ Um quadro que se arruma sozinho
 
-- Configurações, conversas e o token do celular ficam no SQLite da pasta de dados escolhida em **Configurações**; memórias persistentes ficam em arquivos `.md` na mesma pasta e o índice/trechos relevantes acompanham cada mensagem, inclusive nos modelos GPT/Codex.
-- A ponte do celular usa um token persistente e continua exigindo que as permissões sejam aprovadas no PC. Use-a apenas em redes confiáveis.
-- As skills versionadas em `.agents/skills` são sincronizadas pelo próprio app (processo principal, depois de carregar a pasta de dados) para `<pasta de dados>/skills`, e de lá expostas ao Claude Code — inclusive no perfil global (`%USERPROFILE%\.claude\skills`) para o `claude` interativo. O app também as descobre diretamente e inclui no catálogo e nas permissões de leitura da sessão, inclusive quando o modelo selecionado é GPT/Codex.
+O **Quadro** mostra o trabalho em **A fazer · Fazendo · Concluído** (ou em lista), só desta conversa ou do projeto inteiro. Um **PO** acompanha o agente: confere o que foi feito e corrige ou cria cartões, sempre dizendo o porquê. Arraste um cartão para "Fazendo" e o agente começa.
 
-## Stack
+<p align="center">
+  <img src="docs/media/tela-quadro.png" width="820" alt="Quadro em lista, projeto inteiro: tarefas concluídas agrupadas por conversa, conferidas pelo PO">
+</p>
 
-Electron + React + TypeScript, usando o **Claude Agent SDK** (o agente) e o **Playwright** (o navegador embutido).
+## 🌐 Um navegador que o agente usa de verdade
 
-## Documentação
+É um **Chrome real** dentro do app, com perfil próprio por conversa. O agente abre páginas, clica, digita, lê e tira print — e você vê tudo ao vivo (no GIF lá de cima, é ele quem testa o botão "Adicionar"). Viu algo errado na página? Clique em **Selecionar**, aponte o elemento e ele vai direto para o chat.
 
-- [docs/ARQUITETURA.md](docs/ARQUITETURA.md) — como o app funciona por dentro (processos, IPC, permissões, preview web/Android, build).
-- [docs/REFERENCIA.md](docs/REFERENCIA.md) — referência arquivo por arquivo do projeto.
+<p align="center">
+  <img src="docs/media/tela-codigo.png" width="900" alt="O agente conta no chat o que mudou e o que testou; ao lado, o site aberto no navegador embutido com o carrinho em 3">
+</p>
+
+---
+
+## ✨ E tem mais
+
+| | |
+| --- | --- |
+| 🧠 **Memória que fica** | O que vale lembrar vira nota em `.md` numa pasta sua — o Memorista anota sozinho. |
+| 👀 **Vigia** | Opcional: levanta as premissas que só você sabe responder, antes que virem retrabalho. |
+| 🔐 **Cofre de senhas** | Senhas ficam guardadas num cofre cifrado. |
+| 🎙️ **Voz** | Dite a mensagem e ouça as respostas em voz alta (com sua chave OpenAI). |
+| 📱 **Controle pelo celular** | App Android pareado por QR: acompanhe, mande texto e imagem, aprove permissões, pare o agente. |
+| 🤖 **Preview Android** | O agente roda seu app num emulador ou aparelho, dentro de uma moldura de celular. |
+| 🔁 **Loop** | Repete o pedido até uma condição ser atendida (até 100 ciclos). |
+| 💸 **Econômico** | Respostas mais enxutas quando você só quer o essencial. |
+| ⚡ **Várias conversas em paralelo** | Cada uma com seu histórico, com busca, organizado por projeto. |
+| 📎 **Anexe qualquer coisa** | Imagem, PDF, planilha, zip, código — colando, arrastando ou pelo botão. |
+| ⬇️ **Entregáveis com botão Baixar** | APK, PDF, zip: o que o agente gera vira download no chat. |
+| 🧩 **Skills** | Digite `/` e use as skills do seu kit. |
+| 🦙 **Outros modelos** | GPT pelo login do ChatGPT (experimental) e Ollama Cloud com a sua chave. |
+| 🖥️ **Controle do Windows** | Opcional: o agente opera outros programas do PC por você. |
+
+---
+
+## 🚀 Comece em 1 minuto
+
+1. **Clone** este repositório ou baixe o ZIP (botão **Code → Download ZIP**).
+2. Dê **duplo clique no `start.bat`**. Na primeira vez ele instala tudo sozinho e abre o app.
+3. **Entre com a sua conta Claude** quando o app pedir. Pronto.
+
+**O que você precisa**
+
+- Windows 10 ou 11 (64 bits)
+- [.NET SDK 8 ou mais novo](https://dotnet.microsoft.com/download) — o `start.bat` compila um componente do app e não abre sem ele
+- Uma conta [Claude](https://claude.ai)
+- Node.js não é obrigatório: se faltar, o `start.bat` baixa uma cópia portátil
+
+<details>
+<summary>Prefere um instalador?</summary>
+
+Gere o seu com `npm run package:win` — o resultado sai em `dist/`.
+
+</details>
+
+## 🛠️ Para devs
+
+Electron + React + TypeScript sobre o **Claude Agent SDK**, com Playwright no navegador embutido. Roda nativo no Windows, sem WSL.
+
+- [docs/ARQUITETURA.md](docs/ARQUITETURA.md) — como o app funciona por dentro.
+- [docs/REFERENCIA.md](docs/REFERENCIA.md) — referência arquivo por arquivo.
+
+<p align="center"><sub>© Larcher Tech</sub></p>
