@@ -1,0 +1,76 @@
+/*
+ * O nascimento de um card criado pelo Agent Manager (CardBirthFlow): o fluxo
+ * na cor do tipo saindo do chat e a chegada do card. Separado do planning.css,
+ * que está no limite de tamanho do repo.
+ */
+
+/* Por cima do canvas e do chat (8), abaixo do editor de card (10); nunca pega clique. */
+.pl-birth-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+  overflow: hidden;
+}
+.pl-birth-stream {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  animation: pl-birth-fade 320ms ease-in 720ms forwards;
+}
+
+/* O rastro: desenha do chat até o card no mesmo tempo da faísca. */
+.pl-birth-glow,
+.pl-birth-core {
+  fill: none;
+  stroke: var(--pl-flow);
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pl-birth-draw 720ms cubic-bezier(0.45, 0, 0.2, 1) forwards;
+}
+.pl-birth-glow { stroke-width: 9; opacity: 0.22; filter: blur(4px); }
+.pl-birth-core { stroke-width: 2.25; opacity: 0.95; }
+
+/* A faísca que corre na frente do rastro. */
+.pl-birth-spark {
+  fill: var(--pl-flow);
+  filter: drop-shadow(0 0 6px var(--pl-flow)) drop-shadow(0 0 14px var(--pl-flow));
+}
+
+@keyframes pl-birth-draw { to { stroke-dashoffset: 0; } }
+@keyframes pl-birth-fade { to { opacity: 0; } }
+
+/* A chegada: o card surge do ponto onde a faísca bateu, com um halo da cor do tipo. */
+.pl-card[data-born='arrive'] {
+  animation: pl-card-born 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes pl-card-born {
+  0% {
+    opacity: 0;
+    transform: scale(0.82);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--pl-tipo) 70%, transparent);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.03);
+    box-shadow:
+      0 0 0 5px color-mix(in srgb, var(--pl-tipo) 32%, transparent),
+      0 0 30px color-mix(in srgb, var(--pl-tipo) 55%, transparent);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-card[data-born='arrive'] { animation-name: pl-card-born-calm; }
+  @keyframes pl-card-born-calm {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}

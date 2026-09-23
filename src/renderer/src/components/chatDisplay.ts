@@ -23,6 +23,9 @@ export interface ChatDisplay {
   compact: boolean
   /** Esconde o aviso do Controle do Windows (o chat de planejamento). */
   hideWindowsBanner?: boolean
+  /** Pasta do plano aberto (docs/spec/<slug>, absoluta). Com ela, cada arquivo
+   *  que o agente cria lá dentro ganha um link "Abrir" no chat (PlanFileLink). */
+  planDir?: string
   /** Cards citáveis com [[Nome]] — os do plano aberto no canvas. */
   cardRefs?: readonly RefCard[]
 }

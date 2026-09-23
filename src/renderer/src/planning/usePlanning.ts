@@ -11,6 +11,8 @@
  *   'roteiro_conflict', reaplica UMA vez sobre o roteiro atual que veio junto.
  * - saveLayout é otimista e com debounce: arrastar não grava a cada pixel.
  *   saveViewport (pan/zoom) entra no mesmo debounce e na mesma gravação.
+ * - `born`: os cards que a recarga trouxe e a tela não tinha — o Manager os
+ *   criou. É o que a CardBirthFlow anima saindo do chat.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
@@ -32,6 +34,13 @@ export const ROTEIRO_CONFLICT_MSG = 'O roteiro mudou enquanto você mexia — ca
 export type PlanningStatus = 'loading' | 'ready' | 'error'
 export type PlanningViewport = { x: number; y: number; zoom: number }
 
+/** Cards que apareceram numa recarga vinda de fora (o Agent Manager os criou).
+ *  `seq` muda a cada leva: é o que dispara a animação de nascimento. */
+export interface CardBirth {
+  seq: number
+  cards: { id: string; tipo: PlanningCardDto['tipo'] }[]
+}
+
 export type SaveCardOutcome =
   | { ok: true; card: PlanningCardDto }
   /** `current` é o card em disco agora (null = não existe mais). */
@@ -47,6 +56,9 @@ export interface PlanningController {
   plan: OpenedPlanningDto | null
   /** Motivo da falha ao abrir (status 'error'). */
   error: string | null
+  /** A última leva de cards criados por fora (o Manager). Card criado aqui na
+   *  tela já está no estado quando a recarga chega — não conta. */
+  born: CardBirth | null
   reload: () => Promise<void>
   /** `quietConflict`: no 'rev_conflict' recarrega sem toast — quem chamou avisa
    *  (o editor de card faz merge e dá um aviso só). */
@@ -131,6 +143,8 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
   const [status, setStatus] = useState<PlanningStatus>('loading')
   const [plan, setPlan] = useState<OpenedPlanningDto | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [born, setBorn] = useState<CardBirth | null>(null)
+  const bornSeq = useRef(0)
   // Espelho síncrono do plano: o flush do layout e o toggle leem daqui.
   const planRef = useRef<OpenedPlanningDto | null>(null)
   // Cada load pega um número; resposta de load velho (ou de plano trocado) é descartada.
@@ -169,6 +183,13 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
         if (layoutDirty.current && local) {
           next = { ...next, layout: { ...next.layout, positions: { ...next.layout.positions, ...local.layout.positions } } }
         }
+        // Só na recarga (o evento de fora): o que não estava na tela nasceu agora.
+        // Vai no mesmo render do plano novo, para o card já nascer escondido.
+        if (mode === 'reload' && local) {
+          const before = new Set(local.cards.map((c) => c.id))
+          const fresh = next.cards.filter((c) => !before.has(c.id))
+          if (fresh.length) setBorn({ seq: ++bornSeq.current, cards: fresh.map(({ id, tipo }) => ({ id, tipo })) })
+        }
         commit(next)
         setError(null)
         setStatus('ready')
@@ -203,6 +224,7 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
     activeKey.current = `${projectCwd}\u0000${slug}`
     viewportRef.current = null // o do plano anterior já foi gravado no cleanup
     commit(null)
+    setBorn(null)
     setError(null)
     setStatus('loading')
     void load('initial')
@@ -345,5 +367,5 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
     [projectCwd, slug, myKey, updatePlan, fail, load]
   )
 
-  return { status, plan, error, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa }
+  return { status, plan, error, born, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa }
 }

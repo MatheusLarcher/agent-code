@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -17,6 +18,7 @@ import { CardRefText, Markdown } from './Markdown'
 import { useKeepEndOnResize } from './MessageListAnchor'
 import { useChatDisplay } from './chatDisplay'
 import { makeRefResolver } from '../planning/cardRefs'
+import { PlanFileLink, createdPlanFile } from '../planning/PlanFileLink'
 
 /** Read-aloud controls passed down from App (TTS state lives there so audio
  *  survives message re-renders and conversation switches). */
@@ -352,7 +354,7 @@ export function MessageList({
   const pendingScroll = effectiveTarget != null && effectiveSeq !== lastSeq.current
   // Chat do Agent Manager (cards no contexto): [[Nome]] de um card sai com a cor
   // do tipo dele. Sem cards (qualquer outra conversa), o texto fica como sempre.
-  const { cardRefs } = useChatDisplay()
+  const { cardRefs, planDir } = useChatDisplay()
   const resolveRef = useMemo(() => (cardRefs?.length ? makeRefResolver(cardRefs) : null), [cardRefs])
 
   // Refs coordinating the two scroll behaviors below.
@@ -595,8 +597,17 @@ export function MessageList({
                 <div className="bubble">{m.text}</div>
               </div>
             )
-          case 'tool-use':
-            return <ToolCard key={`tool:${m.id}`} m={m} />
+          case 'tool-use': {
+            // Planejamento: arquivo que o agente criou no plano ganha link logo abaixo.
+            const created = createdPlanFile(m.name, m.input, m.result, planDir)
+            if (!created) return <ToolCard key={`tool:${m.id}`} m={m} />
+            return (
+              <Fragment key={`tool:${m.id}`}>
+                <ToolCard m={m} />
+                <PlanFileLink path={created} />
+              </Fragment>
+            )
+          }
           case 'system':
             return (
               <div key={`system:${m.sessionId}:${idx}`} className="msg system-note">

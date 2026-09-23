@@ -18,6 +18,7 @@ import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
 import type { OpenedPlanningDto, PlanningCardDto } from '@shared/ipc'
 import { IconSpinner, IconWarning } from '../components/Icons'
 import { useUI } from '../ui/UiProvider'
+import { CardBirthFlow } from './CardBirthFlow'
 import { CardEditor } from './CardEditor'
 import { ManagerChatFloat } from './ManagerChatFloat'
 import { PlanningCanvas } from './PlanningCanvas'
@@ -120,10 +121,8 @@ function usePanes(): {
 }
 
 function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: PlanningScreenProps): JSX.Element {
-  const { status, plan, error, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa } = usePlanning(
-    projectCwd,
-    slug
-  )
+  const { status, plan, error, born, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa } =
+    usePlanning(projectCwd, slug)
   const { confirm, notify } = useUI()
   const flow = useReactFlow()
   const [editing, setEditing] = useState<Editing | null>(null)
@@ -342,10 +341,12 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
           )}
           {/* Os cards do canvas vão para o chat: '[[' sugere e [[Nome]] ganha a cor do tipo. */}
           {chatSlot && (
-            <ManagerChatFloat cards={cards} collapseSignal={chatCollapseSignal}>
+            <ManagerChatFloat cards={cards} collapseSignal={chatCollapseSignal} planDir={`${projectCwd}/docs/spec/${slug}`}>
               {chatSlot}
             </ManagerChatFloat>
           )}
+          {/* Card criado pelo Manager: um fluxo na cor do tipo sai do chat e o gera no canvas. */}
+          <CardBirthFlow birth={born} />
         </div>
       </div>
     </div>

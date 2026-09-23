@@ -113,20 +113,21 @@ export interface ManagerChatFloatProps {
   /** Sobe a cada clique no canvas (o "flow"): minimiza o chat, se estiver maximizado.
    *  Sentinela de "ainda não pediram" é o valor inicial — não minimiza sozinho na montagem. */
   collapseSignal?: number
+  /** Pasta do plano (docs/spec/<slug>, absoluta): arquivos criados nela viram link no chat. */
+  planDir?: string
 }
 
-export function ManagerChatFloat({ children, cards, collapseSignal }: ManagerChatFloatProps): JSX.Element {
+export function ManagerChatFloat({ children, cards, collapseSignal, planDir }: ManagerChatFloatProps): JSX.Element {
   const [minimized, setMinimized] = useState(loadChatMinimized)
   const ref = useRef<HTMLElement>(null)
   const top = useMaximizedTop(ref, !minimized)
   const cardRefs = useRefCards(cards)
-  const display = useMemo<ChatDisplay>(
-    () =>
-      cardRefs
-        ? { compact: minimized, hideWindowsBanner: true, cardRefs }
-        : { compact: minimized, hideWindowsBanner: true },
-    [minimized, cardRefs]
-  )
+  const display = useMemo<ChatDisplay>(() => {
+    const base: ChatDisplay = { compact: minimized, hideWindowsBanner: true }
+    if (cardRefs) base.cardRefs = cardRefs
+    if (planDir) base.planDir = planDir
+    return base
+  }, [minimized, cardRefs, planDir])
 
   const toggle = useCallback((e?: { stopPropagation: () => void }) => {
     e?.stopPropagation()

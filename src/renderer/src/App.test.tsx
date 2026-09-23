@@ -2000,6 +2000,15 @@ describe('App — diagnóstico seguro do failover do PO', () => {
 describe('App — modo Automático', () => {
   const selectModel = (container: HTMLElement): HTMLSelectElement =>
     container.querySelector('select.model-select') as HTMLSelectElement
+  // O App só aceita o Automático depois de saber (assíncrono, no boot) que o
+  // TypeSafe está configurado. Escolher antes disso é recusado — e o teste
+  // seguia com o modelo antigo, falhando ao acaso conforme a carga da máquina.
+  const pickAuto = async (container: HTMLElement): Promise<void> => {
+    await waitFor(() => expect(api.isTypeSafeConfigured).toHaveBeenCalled())
+    await act(async () => {})
+    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+    await waitFor(() => expect(selectModel(container).value).toBe('auto'))
+  }
 
   it('"Automático" é uma opção do seletor que já existe', async () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
@@ -2028,7 +2037,7 @@ describe('App — modo Automático', () => {
   it('a mensagem viaja junto do start para o main decidir o par do turno', async () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
     await waitFor(() => expect(selectModel(container)).toBeTruthy())
-    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+    await pickAuto(container)
 
     await send('reescreve o agendador inteiro')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
@@ -2044,7 +2053,7 @@ describe('App — modo Automático', () => {
   it('cada mensagem revalida a sessão: o turno seguinte também é decidido', async () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
     await waitFor(() => expect(selectModel(container)).toBeTruthy())
-    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+    await pickAuto(container)
 
     await send('primeira')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
@@ -2061,7 +2070,7 @@ describe('App — modo Automático', () => {
   it('o anúncio da escolha aparece SEM tirar a conversa do Automático', async () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
     await waitFor(() => expect(selectModel(container)).toBeTruthy())
-    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+    await pickAuto(container)
     await send('tarefa')
     await flushConnect()
 
@@ -2084,7 +2093,7 @@ describe('App — modo Automático', () => {
   it('troca de configuração com a fila: UMA sessão nova, já com a escolha do turno', async () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
     await waitFor(() => expect(selectModel(container)).toBeTruthy())
-    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+    await pickAuto(container)
 
     await send('msg1')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
@@ -2115,7 +2124,7 @@ describe('App — modo Automático', () => {
   it('o `system` da sessão também não tira a conversa do Automático', async () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
     await waitFor(() => expect(selectModel(container)).toBeTruthy())
-    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+    await pickAuto(container)
     await send('tarefa')
     await flushConnect()
 

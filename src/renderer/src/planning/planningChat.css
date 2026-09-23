@@ -101,6 +101,34 @@
    cabeçalho (o painel corta o que passa dele) e rola o resto. */
 .pl-chat-float.minimized .composer-card-refs { max-height: calc(5 * var(--pl-chat-line) + 24px); }
 
+/* ---- arquivo criado pelo agente no plano: link "Abrir" logo abaixo da ferramenta (PlanFileLink) ---- */
+.pl-file-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: -2px 0 2px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
+  color: var(--text);
+  font-size: 12.5px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.pl-file-link:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); }
+.pl-file-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pl-file-link-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+.pl-file-link-cta { flex: none; color: var(--accent); font-weight: 600; }
+
 /* ---- [[Nome]] nas mensagens: a pílula da prévia do card, na cor do tipo (--pl-ref inline) ---- */
 .pl-card-ref {
   padding: 0 4px;
