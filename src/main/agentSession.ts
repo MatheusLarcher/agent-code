@@ -1542,11 +1542,9 @@ export class AgentSession {
     this.bypassAll = on
     if (on) {
       // Auto-approve anything currently waiting on the user — EXCEPT an
-      // AskUserQuestion, which still needs a real answer (it isn't a permission),
-      // and the Agent Manager's Bash, which the user approves one by one.
+      // AskUserQuestion, which still needs a real answer (it isn't a permission).
       for (const [id, pending] of this.pendingPermissions) {
         if (pending.toolName === 'AskUserQuestion') continue
-        if (planningRequiresBashApproval(this.opts, pending.toolName)) continue
         clearTimeout(pending.timer)
         pending.resolve({ behavior: 'allow', updatedInput: pending.input })
         this.pendingPermissions.delete(id)
@@ -2074,16 +2072,16 @@ ${lines}
     if (this.opts.planning && toolName.startsWith('mcp__planning__')) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
-    // No Agent Manager, o Bash vai SEMPRE ao usuário: nem "Permitir tudo", nem
-    // "sempre permitir", nem lista de leitura o liberam. O que escreve fora do
-    // _sandbox já foi negado acima, sem perguntar.
+    // No Agent Manager, o Bash só é liberado pelo "Permitir tudo": sem ele, vai
+    // ao usuário a cada comando (nem "sempre permitir" nem lista de leitura o
+    // liberam). O que escreve fora do _sandbox já foi negado acima, sem perguntar.
     if (
-      !planningRequiresBashApproval(this.opts, toolName) &&
-      (this.bypassAll ||
-        READ_ONLY.has(toolName) ||
-        toolName.startsWith('mcp__browser__') ||
-        ANDROID_AUTO.has(toolName) ||
-        this.approvedTools.has(toolName))
+      this.bypassAll ||
+      (!planningRequiresBashApproval(this.opts, toolName) &&
+        (READ_ONLY.has(toolName) ||
+          toolName.startsWith('mcp__browser__') ||
+          ANDROID_AUTO.has(toolName) ||
+          this.approvedTools.has(toolName)))
     ) {
       // IMPORTANT: an "allow" result MUST echo the tool input back as `updatedInput`.
       // The CLI runs the tool with whatever `updatedInput` it receives; omitting it

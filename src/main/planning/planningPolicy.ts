@@ -17,8 +17,8 @@ import { planDirPath } from './planningStore'
  *   caminho real (planningSandboxReal: junction/symlink para fora é negado).
  *   Cards e roteiro só mudam pelas ferramentas plan_*, que gravam pelo
  *   planningStore — nunca por Write/Edit/Bash.
- * - Bash é o único shell, e cada comando pede aprovação, com ou sem
- *   "Permitir tudo".
+ * - Bash é o único shell, e cada comando pede aprovação — só o "Permitir
+ *   tudo" o libera (a agentSession aplica).
  * - Sem skills de execução/replanejamento: o plano vive nos cards.
  * - Conversa de handoff: no primeiro turno, nada de replanejar — o plano veio
  *   pronto no prompt.
@@ -130,11 +130,11 @@ export function planningToolDenial(role: { planning?: unknown }, toolName: strin
 const MANAGER_ALWAYS_ASK_TOOLS: ReadonlySet<string> = new Set(['Bash', 'PowerShell'])
 
 /**
- * `true` = no Agent Manager esta ferramenta NUNCA é auto-aprovada: nem pelo
- * "Permitir tudo", nem por um "sempre permitir" anterior, nem por lista de
- * leitura — vai sempre ao pedido de permissão. O Manager planeja; um comando de
- * shell é a exceção que o usuário vê um a um. As recusas de escopo (escrita fora
- * do _sandbox) continuam antes disto e negam sem perguntar.
+ * `true` = no Agent Manager esta ferramenta não é auto-aprovada por um
+ * "sempre permitir" anterior nem por lista de leitura — vai ao pedido de
+ * permissão, a menos que o "Permitir tudo" esteja ligado (a agentSession
+ * confere). As recusas de escopo (escrita fora do _sandbox) continuam antes
+ * disto e negam sem perguntar, com ou sem "Permitir tudo".
  */
 export function planningRequiresBashApproval(role: { planning?: unknown }, toolName: string): boolean {
   return Boolean(role.planning) && MANAGER_ALWAYS_ASK_TOOLS.has(toolName)

@@ -73,7 +73,7 @@ describe('buildPlanningHint', () => {
 
   it('avisa que cada Bash pede aprovação e manda preferir Read/Glob/Grep', () => {
     expect(hint).toMatch(/Cada comando Bash pede aprovação do usuário/)
-    expect(hint).toMatch(/mesmo com "Permitir tudo" ligado/)
+    expect(hint).toMatch(/a menos que ele tenha ligado "Permitir tudo"/)
     expect(hint).toMatch(/parcimônia/)
     expect(hint).toMatch(/prefira Read, Glob e Grep/)
   })

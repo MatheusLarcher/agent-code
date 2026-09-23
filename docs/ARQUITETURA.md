@@ -887,9 +887,9 @@ porque a anterior tem um buraco:
    SDK não dispara `PostToolUse` para ela, e registrá-la a deixaria presa (e o reinício do app
    bloqueado). O mesmo vale, em **qualquer** sessão, para a negada pelo `canUseTool`: o `PreToolUse`
    já a registrou, e o `canUseTool` a tira do registro (`options.toolUseID`) quando devolve `deny`.
-4. **`Bash` sempre com aprovação, e é o único shell** (`planningRequiresBashApproval`): nem o
-   "Permitir tudo", nem um "sempre permitir" anterior, nem a lista de leitura liberam — e ligar o
-   "Permitir tudo" com um pedido pendente não aprova esse pedido. O escopo lê o destino declarado na
+4. **`Bash` com aprovação, e é o único shell** (`planningRequiresBashApproval`): só o "Permitir
+   tudo" o libera (ligá-lo também aprova um pedido pendente); um "sempre permitir" anterior ou a
+   lista de leitura não. As recusas de escopo valem com ou sem ele. O escopo lê o destino declarado na
    linha de comando; o que o comando faz por dentro, só quem o lê sabe. `PowerShell` e `Monitor` nem
    passam da allowlist. O prompt pede parcimônia (prefira `Read`/`Glob`/`Grep`, junte comandos)
    justamente porque cada um vai ao usuário.

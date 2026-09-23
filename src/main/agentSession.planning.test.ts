@@ -209,7 +209,7 @@ describe('AgentSession — gate do Agent Manager com "Permitir tudo" ligado', ()
   })
 })
 
-describe('AgentSession — Bash do Agent Manager sempre pede aprovação', () => {
+describe('AgentSession — Bash do Agent Manager pede aprovação, salvo "Permitir tudo"', () => {
   /** Sessão com o `askPermission` observável: é por ele que o pedido chega ao usuário. */
   function withAsk(extra: Partial<StartAgentOptions>): { s: AgentSession; ask: ReturnType<typeof vi.fn>; g: Gate } {
     const ask = vi.fn()
@@ -219,9 +219,17 @@ describe('AgentSession — Bash do Agent Manager sempre pede aprovação', () =>
   }
   const lastAskId = (ask: ReturnType<typeof vi.fn>): string => (ask.mock.calls.at(-1)?.[0] as { id: string }).id
 
-  it('com "Permitir tudo" ligado, Bash `git status` no Manager vai ao pedido de permissão', async () => {
+  it('com "Permitir tudo" ligado, Bash `git status` no Manager passa sem perguntar', async () => {
     const { s, ask, g } = withAsk({ planning: { slug } })
     s.setBypass(true)
+    beginTurn(s)
+    const input = { command: 'git status' }
+    expect(await g('Bash', input)).toEqual({ behavior: 'allow', updatedInput: input })
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('sem "Permitir tudo", Bash `git status` no Manager vai ao pedido de permissão', async () => {
+    const { s, ask, g } = withAsk({ planning: { slug } })
     beginTurn(s)
     const input = { command: 'git status' }
 
@@ -240,7 +248,6 @@ describe('AgentSession — Bash do Agent Manager sempre pede aprovação', () =>
 
   it('"sempre permitir" não vale para o Bash do Manager: a próxima chamada pergunta de novo', async () => {
     const { s, ask, g } = withAsk({ planning: { slug } })
-    s.setBypass(true)
     const first = g('Bash', { command: 'git status' })
     s.resolvePermission({ id: lastAskId(ask), behavior: 'allow', always: true })
     expect((await first).behavior).toBe('allow')
@@ -251,17 +258,12 @@ describe('AgentSession — Bash do Agent Manager sempre pede aprovação', () =>
     expect(await second).toEqual({ behavior: 'deny', message: 'não' })
   })
 
-  it('ligar "Permitir tudo" com um Bash do Manager pendente não o aprova', async () => {
-    const { s, ask, g } = withAsk({ planning: { slug } })
-    let settled = false
-    const pending = g('Bash', { command: 'git status' }).finally(() => {
-      settled = true
-    })
+  it('ligar "Permitir tudo" com um Bash do Manager pendente o aprova', async () => {
+    const { s, g } = withAsk({ planning: { slug } })
+    const input = { command: 'git status' }
+    const pending = g('Bash', input)
     s.setBypass(true)
-    await Promise.resolve()
-    expect(settled).toBe(false)
-    s.resolvePermission({ id: lastAskId(ask), behavior: 'deny' })
-    expect((await pending).behavior).toBe('deny')
+    expect(await pending).toEqual({ behavior: 'allow', updatedInput: input })
   })
 
   it('Bash que escreve fora do _sandbox continua negado sem perguntar', async () => {
