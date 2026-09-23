@@ -17,7 +17,7 @@ export function PermissionModal({ request, onRespond }: Props): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [onRespond])
 
-  const niceName = request.toolName.replace(/^mcp__browser__/, '🌐 ').replace(/^mcp__[^_]+__/, '')
+  const niceName = request.toolName.replace(/^mcp__[^_]+__/, '')
 
   return (
     <div className="modal-overlay" onClick={() => onRespond('deny', false)}>

@@ -15,7 +15,7 @@ import { Composer, type RefProject } from './Composer'
 import { CrewChip } from './CrewChip'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
 import { VigiaChip, type VigiaDoubt } from './VigiaChip'
-import { IconClock, IconClose, IconHelp, IconChevronDown } from './Icons'
+import { IconClock, IconClose, IconHelp, IconChevronDown, IconLeaf, IconRepeat, IconWarning, IconZap } from './Icons'
 import { TokenUsagePanel } from './TokenUsagePanel'
 import { emptyUsageMap, type UsageMap } from '../tokenUsageTree'
 import { useChatDisplay } from './chatDisplay'
@@ -418,7 +418,7 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {!compact && !hideWindowsBanner && props.windowsControlEnabled && (
         <div className="windows-control-banner" role="status" aria-live="polite">
-          <span className="windows-control-banner-icon" aria-hidden="true">⚠</span>
+          <span className="windows-control-banner-icon" aria-hidden="true"><IconWarning size={14} /></span>
           <span className="windows-control-banner-text">
             <strong>Controle do Windows ativo</strong>
             <span>O agente pode ver e controlar outros aplicativos deste computador.</span>
@@ -577,7 +577,7 @@ export function ChatPanel(props: Props): JSX.Element {
           }
           onClick={() => props.onEconomyModeChange(!props.economyMode)}
         >
-          <span className="economy-icon">{props.economyMode ? '⚡' : '💰'}</span>
+          <span className="economy-icon"><IconLeaf size={13} /></span>
           <span className="economy-label">Econômico</span>
         </button>
         <button
@@ -593,7 +593,7 @@ export function ChatPanel(props: Props): JSX.Element {
           }
           onClick={() => props.onLoopEnabledChange(!props.loopEnabled)}
         >
-          <span className="loop-icon">↻</span>
+          <span className="loop-icon"><IconRepeat size={13} /></span>
           <span className="loop-label">Loop</span>
         </button>
         </>)}
@@ -604,7 +604,7 @@ export function ChatPanel(props: Props): JSX.Element {
             title={fastModeTitle(props.model, props.fastMode)}
             onClick={() => props.onFastModeChange(!props.fastMode)}
           >
-            <span className="fast-icon">↯</span>
+            <span className="fast-icon"><IconZap size={13} /></span>
             <span className="fast-label">Rápido</span>
           </button>
         )}

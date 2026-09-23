@@ -71,7 +71,7 @@ describe('link no chat', () => {
     ;(window as unknown as { api: unknown }).api = { openInEditor }
     renderList(PLAN)
     const links = screen.getAllByRole('link', { name: /Abrir/ })
-    expect(links.map((l) => l.textContent)).toEqual(['📄medir.tsAbrir', '📄2026-09-23-01.mdAbrir'])
+    expect(links.map((l) => l.textContent)).toEqual(['medir.tsAbrir', '2026-09-23-01.mdAbrir'])
     fireEvent.click(links[0])
     await waitFor(() => expect(openInEditor).toHaveBeenCalledWith(SANDBOX_FILE))
   })

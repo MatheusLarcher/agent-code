@@ -17,7 +17,8 @@ import {
   IconCollapseRight,
   IconHome,
   IconPointer,
-  IconRefresh
+  IconRefresh,
+  IconSmartphone
 } from './Icons'
 import { FilePreview } from './FilePreview'
 
@@ -363,7 +364,7 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
           <span className="picking-hint">Modo seleção — clique em qualquer elemento para adicioná-lo à sua mensagem</span>
         ) : isAndroid ? (
           <span className="title-text">
-            📱 {matchId ? findDevice(matchId)!.name : 'Personalizado'} · {cur.w}×{cur.h}
+            <IconSmartphone size={13} className="title-text-icon" /> {matchId ? findDevice(matchId)!.name : 'Personalizado'} · {cur.w}×{cur.h}
           </span>
         ) : isFile ? (
           <span className="title-text">Visualização de Arquivo: {state.title}</span>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { REMOTE_PUBLIC_HOST, type RemoteInfo } from '@shared/ipc'
+import { IconCheckCircle, IconGlobe, IconHammer, IconSmartphone, IconSpinner, IconWarning, IconXCircle } from '../components/Icons'
 import { useUI } from './UiProvider'
 
 interface Props {
@@ -147,7 +148,9 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card remote-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <h3 className="modal-title">📱 Controle remoto (Android)</h3>
+        <h3 className="modal-title modal-title-icon">
+          <IconSmartphone size={17} /> Controle remoto (Android)
+        </h3>
         <p className="modal-message">
           Ligue a ponte e escaneie o QR com o celular para enviar comandos ao Claude Code do seu PC.
           O QR conecta pela <b>VPS</b> (acesso remoto, de qualquer rede) assim que o status abaixo ficar
@@ -164,16 +167,24 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
               )}
             </div>
             {info.running && qr && (
-              <span className="remote-qr-caption">🌐 aponta para a VPS (acesso remoto)</span>
+              <span className="remote-qr-caption">
+                <IconGlobe size={13} /> aponta para a VPS (acesso remoto)
+              </span>
             )}
             {building && (
-              <span className="remote-build-badge building">⏳ Gerando APK…</span>
+              <span className="remote-build-badge building">
+                <IconSpinner className="spinner" size={13} /> Gerando APK…
+              </span>
             )}
             {!building && buildResult === 'ok' && (
-              <span className="remote-build-badge ok">✅ APK gerado — pode escanear o QR</span>
+              <span className="remote-build-badge ok">
+                <IconCheckCircle size={13} /> APK gerado — pode escanear o QR
+              </span>
             )}
             {!building && buildResult === 'fail' && (
-              <span className="remote-build-badge fail">❌ Falha ao gerar o APK</span>
+              <span className="remote-build-badge fail">
+                <IconXCircle size={13} /> Falha ao gerar o APK
+              </span>
             )}
           </div>
 
@@ -185,13 +196,22 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
             {info.running && (
               <>
                 <div className={`relay-status ${info.relayConnected ? 'on' : 'off'}`}>
+                  {info.relayConnected ? (
+                    <IconGlobe size={13} />
+                  ) : info.relayState === 'busy' ? (
+                    <IconWarning size={13} />
+                  ) : info.relayState === 'denied' ? (
+                    <IconXCircle size={13} />
+                  ) : (
+                    <IconSpinner className="spinner" size={13} />
+                  )}{' '}
                   {info.relayConnected
-                    ? '🌐 Acesso remoto pronto (conectado ao servidor)'
+                    ? 'Acesso remoto pronto (conectado ao servidor)'
                     : info.relayState === 'busy'
-                      ? '⚠️ Outro PC já está usando este token no servidor — o celular continua ligado àquele PC. Este assume quando aquele desligar.'
+                      ? 'Outro PC já está usando este token no servidor — o celular continua ligado àquele PC. Este assume quando aquele desligar.'
                       : info.relayState === 'denied'
-                        ? '❌ O servidor recusou a conexão (chave do relay). Desligue e ligue a ponte para tentar de novo.'
-                        : '⏳ Conectando ao servidor remoto…'}
+                        ? 'O servidor recusou a conexão (chave do relay). Desligue e ligue a ponte para tentar de novo.'
+                        : 'Conectando ao servidor remoto…'}
                 </div>
                 <div className="remote-field">
                   <span>Celular pareado</span>
@@ -249,7 +269,13 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
             Fechar
           </button>
           <button className="btn" onClick={build} disabled={building}>
-            {building ? 'Gerando APK…' : '🔨 Gerar APK'}
+            {building ? (
+              'Gerando APK…'
+            ) : (
+              <>
+                <IconHammer size={14} /> Gerar APK
+              </>
+            )}
           </button>
           <button className={`btn ${info.running ? 'danger-btn' : 'primary'}`} onClick={toggle} disabled={busy}>
             {info.running ? 'Desligar' : 'Ligar ponte'}

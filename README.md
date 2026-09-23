@@ -23,13 +23,13 @@
 
 ---
 
-## 💬 Converse de um lado, veja o resultado do outro
+## <img src="docs/media/icons/chat.svg" width="22" height="22" align="top" alt=""> Converse de um lado, veja o resultado do outro
 
 Você escreve o que quer em português. O agente lê o projeto, escreve o código, **abre o resultado no navegador ao lado e testa sozinho** — e cada ação dele aparece como um cartão no chat, para você acompanhar sem ler log.
 
 Medidor de contexto e estimativa de gasto, nível de esforço, fila de mensagens, rascunho que não se perde, "Tentar de novo" em um clique e perguntas do agente com opções clicáveis. Escolha entre **Opus 5.5**, **Sonnet 5** e **Fable 5.1** — ou deixe no **Automático** (com uma chave TypeSafe).
 
-## 🧭 Planeje antes de construir
+## <img src="docs/media/icons/compass.svg" width="22" height="22" align="top" alt=""> Planeje antes de construir
 
 A tela mais bonita do app. Clique em **Novo planejamento**, conte a ideia e o **Agent Manager** monta o roteiro com você: questiona, pesquisa e vai registrando tudo num canvas — **uma coluna por etapa**, com cards de requisito, decisão, sugestão (com a fonte), ambiguidade e nota, ligados entre si.
 
@@ -41,7 +41,7 @@ Enquanto houver ambiguidade aberta, nada segue adiante. Quando o plano fechar, *
 
 <p align="center"><sub>Um pedido, quatro etapas, catorze cards nascendo ao vivo — e um deles aberto no editor no final.</sub></p>
 
-## 🗺️ Veja onde o agente está mexendo
+## <img src="docs/media/icons/map.svg" width="22" height="22" align="top" alt=""> Veja onde o agente está mexendo
 
 No **Mapa do projeto**, cada pasta é um nó e cada arquivo, um ponto. Quando o agente age, **um rastro de luz corre até o arquivo**, o ponto acende na cor da ação (procurou, leu, editou, web) e um balão conta o que está sendo feito. Arquivo novo se monta na tela; arquivo apagado se desfaz.
 
@@ -51,7 +51,7 @@ Mostra os 100 arquivos mexidos mais recentemente, com filtros por mensagem e por
   <img src="docs/media/mapa.gif" width="760" alt="Mapa do projeto: rastros de luz saindo da raiz até os arquivos que o agente procura, lê e edita">
 </p>
 
-## ✅ Um quadro que se arruma sozinho
+## <img src="docs/media/icons/kanban.svg" width="22" height="22" align="top" alt=""> Um quadro que se arruma sozinho
 
 O **Quadro** mostra o trabalho em **A fazer · Fazendo · Concluído** (ou em lista), só desta conversa ou do projeto inteiro. Um **PO** acompanha o agente: confere o que foi feito e corrige ou cria cartões, sempre dizendo o porquê. Arraste um cartão para "Fazendo" e o agente começa.
 
@@ -59,7 +59,7 @@ O **Quadro** mostra o trabalho em **A fazer · Fazendo · Concluído** (ou em li
   <img src="docs/media/tela-quadro.png" width="820" alt="Quadro em lista, projeto inteiro: tarefas concluídas agrupadas por conversa, conferidas pelo PO">
 </p>
 
-## 🌐 Um navegador que o agente usa de verdade
+## <img src="docs/media/icons/globe.svg" width="22" height="22" align="top" alt=""> Um navegador que o agente usa de verdade
 
 É um **Chrome real** dentro do app, com perfil próprio por conversa. O agente abre páginas, clica, digita, lê e tira print — e você vê tudo ao vivo (no GIF lá de cima, é ele quem testa o botão "Adicionar"). Viu algo errado na página? Clique em **Selecionar**, aponte o elemento e ele vai direto para o chat.
 
@@ -69,28 +69,28 @@ O **Quadro** mostra o trabalho em **A fazer · Fazendo · Concluído** (ou em li
 
 ---
 
-## ✨ E tem mais
+## <img src="docs/media/icons/sparkles.svg" width="22" height="22" align="top" alt=""> E tem mais
 
 | | |
 | --- | --- |
-| 🧠 **Memória que fica** | O que vale lembrar vira nota em `.md` numa pasta sua — o Memorista anota sozinho. |
-| 👀 **Vigia** | Opcional: levanta as premissas que só você sabe responder, antes que virem retrabalho. |
-| 🔐 **Cofre de senhas** | Senhas ficam guardadas num cofre cifrado. |
-| 🎙️ **Voz** | Dite a mensagem e ouça as respostas em voz alta (com sua chave OpenAI). |
-| 📱 **Controle pelo celular** | App Android pareado por QR: acompanhe, mande texto e imagem, aprove permissões, pare o agente. |
-| 🤖 **Preview Android** | O agente roda seu app num emulador ou aparelho, dentro de uma moldura de celular. |
-| 🔁 **Loop** | Repete o pedido até uma condição ser atendida (até 100 ciclos). |
-| 💸 **Econômico** | Respostas mais enxutas quando você só quer o essencial. |
-| ⚡ **Várias conversas em paralelo** | Cada uma com seu histórico, com busca, organizado por projeto. |
-| 📎 **Anexe qualquer coisa** | Imagem, PDF, planilha, zip, código — colando, arrastando ou pelo botão. |
-| ⬇️ **Entregáveis com botão Baixar** | APK, PDF, zip: o que o agente gera vira download no chat. |
-| 🧩 **Skills** | Digite `/` e use as skills do seu kit. |
-| 🦙 **Outros modelos** | GPT pelo login do ChatGPT (experimental) e Ollama Cloud com a sua chave. |
-| 🖥️ **Controle do Windows** | Opcional: o agente opera outros programas do PC por você. |
+| <img src="docs/media/icons/brain.svg" width="18" height="18" align="top" alt=""> **Memória que fica** | O que vale lembrar vira nota em `.md` numa pasta sua — o Memorista anota sozinho. |
+| <img src="docs/media/icons/eye.svg" width="18" height="18" align="top" alt=""> **Vigia** | Opcional: levanta as premissas que só você sabe responder, antes que virem retrabalho. |
+| <img src="docs/media/icons/lock.svg" width="18" height="18" align="top" alt=""> **Cofre de senhas** | Senhas ficam guardadas num cofre cifrado. |
+| <img src="docs/media/icons/mic.svg" width="18" height="18" align="top" alt=""> **Voz** | Dite a mensagem e ouça as respostas em voz alta (com sua chave OpenAI). |
+| <img src="docs/media/icons/smartphone.svg" width="18" height="18" align="top" alt=""> **Controle pelo celular** | App Android pareado por QR: acompanhe, mande texto e imagem, aprove permissões, pare o agente. |
+| <img src="docs/media/icons/android.svg" width="18" height="18" align="top" alt=""> **Preview Android** | O agente roda seu app num emulador ou aparelho, dentro de uma moldura de celular. |
+| <img src="docs/media/icons/repeat.svg" width="18" height="18" align="top" alt=""> **Loop** | Repete o pedido até uma condição ser atendida (até 100 ciclos). |
+| <img src="docs/media/icons/leaf.svg" width="18" height="18" align="top" alt=""> **Econômico** | Respostas mais enxutas quando você só quer o essencial. |
+| <img src="docs/media/icons/layers.svg" width="18" height="18" align="top" alt=""> **Várias conversas em paralelo** | Cada uma com seu histórico, com busca, organizado por projeto. |
+| <img src="docs/media/icons/paperclip.svg" width="18" height="18" align="top" alt=""> **Anexe qualquer coisa** | Imagem, PDF, planilha, zip, código — colando, arrastando ou pelo botão. |
+| <img src="docs/media/icons/download.svg" width="18" height="18" align="top" alt=""> **Entregáveis com botão Baixar** | APK, PDF, zip: o que o agente gera vira download no chat. |
+| <img src="docs/media/icons/puzzle.svg" width="18" height="18" align="top" alt=""> **Skills** | Digite `/` e use as skills do seu kit. |
+| <img src="docs/media/icons/cpu.svg" width="18" height="18" align="top" alt=""> **Outros modelos** | GPT pelo login do ChatGPT (experimental) e Ollama Cloud com a sua chave. |
+| <img src="docs/media/icons/monitor.svg" width="18" height="18" align="top" alt=""> **Controle do Windows** | Opcional: o agente opera outros programas do PC por você. |
 
 ---
 
-## 🚀 Comece em 1 minuto
+## <img src="docs/media/icons/rocket.svg" width="22" height="22" align="top" alt=""> Comece em 1 minuto
 
 1. **Clone** este repositório ou baixe o ZIP (botão **Code → Download ZIP**).
 2. Dê **duplo clique no `start.bat`**. Na primeira vez ele instala tudo sozinho e abre o app.
@@ -110,7 +110,7 @@ Gere o seu com `npm run package:win` — o resultado sai em `dist/`.
 
 </details>
 
-## 🛠️ Para devs
+## <img src="docs/media/icons/code.svg" width="22" height="22" align="top" alt=""> Para devs
 
 Electron + React + TypeScript sobre o **Claude Agent SDK**, com Playwright no navegador embutido. Roda nativo no Windows, sem WSL.
 

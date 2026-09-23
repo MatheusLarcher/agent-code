@@ -172,7 +172,7 @@ function describeTool(name: string, input: unknown): ToolInfo {
       return { verb: 'Pergunta', detail: typeof first?.header === 'string' ? first.header : '', isSkill: false, stats: null }
     }
     default:
-      return { verb: name.replace(/^mcp__browser__/, '🌐 ').replace(/^mcp__[^_]+__/, ''), detail: '', isSkill: false, stats: null }
+      return { verb: name.replace(/^mcp__[^_]+__/, ''), detail: '', isSkill: false, stats: null }
   }
 }
 

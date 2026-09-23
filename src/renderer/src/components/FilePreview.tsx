@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { CodeBlock, extToLang } from './CodeBlock'
+import { IconFolder } from './Icons'
 import { Markdown } from './Markdown'
 
 /**
@@ -186,7 +187,7 @@ export function FilePreview({ url, onPick }: { url: string; onPick: () => void }
       <div className="browser-placeholder">
         <p>Nenhum arquivo aberto.</p>
         <button className="btn primary" onClick={onPick}>
-          📂 Selecionar arquivo do projeto
+          <IconFolder size={14} /> Selecionar arquivo do projeto
         </button>
       </div>
     )

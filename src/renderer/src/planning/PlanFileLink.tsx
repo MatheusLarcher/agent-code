@@ -12,6 +12,7 @@
  * sem `..` e sem os caracteres que o shell do `code "<path>"` interpretaria.
  */
 import type { MouseEvent } from 'react'
+import { IconFile } from '../components/Icons'
 import { useUI } from '../ui/UiProvider'
 
 export const HANDOFF_TOOL = 'mcp__planning__plan_handoff_write'
@@ -60,7 +61,7 @@ export function PlanFileLink({ path }: { path: string }): JSX.Element {
   return (
     <a className="pl-file-link" href="#" onClick={(e) => void open(e)} title={`Abrir no VS Code: ${path}`}>
       <span className="pl-file-link-icon" aria-hidden="true">
-        📄
+        <IconFile size={13} />
       </span>
       <span className="pl-file-link-name">{name}</span>
       <span className="pl-file-link-cta">Abrir</span>

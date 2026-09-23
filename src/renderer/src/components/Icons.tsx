@@ -324,6 +324,53 @@ export const IconEyeOff = (p: IconProps): JSX.Element => (
   </Svg>
 )
 
+export const IconCheck = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <polyline points="5 12.5 10 17.5 19 7" />
+  </Svg>
+)
+export const IconCheckCircle = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <polyline points="8.5 12.2 11 14.7 15.8 9.6" />
+  </Svg>
+)
+export const IconXCircle = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6" />
+  </Svg>
+)
+/** Lightning — fast mode. */
+export const IconZap = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M13 2.5L4.5 13.5H12l-1 8 8.5-11H12z" />
+  </Svg>
+)
+/** Leaf — economy mode (fewer tokens). */
+export const IconLeaf = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M5 19c0-8 5.5-13.5 15-14-.4 9.6-6 15-14 15" />
+    <path d="M5 19c3-3.5 6-6 9.5-8" />
+  </Svg>
+)
+/** Circular arrows — loop mode / retry. */
+export const IconRepeat = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M17 2.5l3 3-3 3" />
+    <path d="M4 11.5V10a4.5 4.5 0 0 1 4.5-4.5H20" />
+    <path d="M7 21.5l-3-3 3-3" />
+    <path d="M20 12.5V14a4.5 4.5 0 0 1-4.5 4.5H4" />
+  </Svg>
+)
+/** Hammer — build (generate the APK). */
+export const IconHammer = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M14.5 9.5L5 19a1.8 1.8 0 0 1-2.5-2.5L12 7" />
+    <path d="M17.5 12.5l4-4-2-2-1 1-3.5-3.5A4.5 4.5 0 0 0 9 4l4 4-1.5 1.5 3 3 1.5-1.5z" />
+  </Svg>
+)
+
 /** Windows-style spinning ring (apply the `.spinner` CSS class for the animation). */
 export const IconSpinner = ({ size = 14, ...rest }: IconProps): JSX.Element => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...rest}>

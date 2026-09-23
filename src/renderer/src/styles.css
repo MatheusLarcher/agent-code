@@ -2189,6 +2189,32 @@ button svg {
   font-size: 14px;
   line-height: 1;
 }
+/* Ícones de linha (Icons.tsx) no lugar dos antigos emojis: centralizados no
+   texto ao lado, sem herdar a altura de linha do rótulo. */
+.economy-icon,
+.loop-icon,
+.fast-icon,
+.fp-ico,
+.pl-file-link-icon,
+.windows-control-banner-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.fp-up,
+.fp-crumb svg,
+.remote-build-badge svg,
+.relay-status svg,
+.remote-qr-caption svg,
+.modal-title-icon svg,
+.title-text svg,
+.btn > svg {
+  vertical-align: -2px;
+  flex: none;
+}
+.fp-up {
+  display: inline-flex;
+  align-items: center;
+}
 .fast-label {
   font-weight: 500;
 }

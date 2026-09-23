@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MentionHit } from '@shared/ipc'
+import { IconArrowUp, IconFile, IconFolder } from '../components/Icons'
 
 interface Props {
   /** Absolute project root — browsing is scoped to inside this folder. */
@@ -93,10 +94,10 @@ export function FilePickerModal({ root, onPick, onClose }: Props): JSX.Element {
         <h3 className="modal-title">Selecionar arquivo do projeto</h3>
         <div className="fp-path" title={dir}>
           <button className="fp-up" onClick={goUp} disabled={atRoot} title="Pasta acima">
-            ⬆️
+            <IconArrowUp size={14} />
           </button>
           <span className="fp-crumb">
-            📁 {baseName(rootFwd)}
+            <IconFolder size={14} /> {baseName(rootFwd)}
             {relDir ? ` / ${relDir}` : ''}
           </span>
         </div>
@@ -116,7 +117,7 @@ export function FilePickerModal({ root, onPick, onClose }: Props): JSX.Element {
           ) : (
             hits.map((h) => (
               <button key={h.path} className="fp-row" onClick={() => openHit(h)}>
-                <span className="fp-ico">{h.isDir ? '📁' : '📄'}</span>
+                <span className="fp-ico">{h.isDir ? <IconFolder size={15} /> : <IconFile size={15} />}</span>
                 <span className="fp-name">{query ? h.path : h.name}</span>
                 {h.isDir && <span className="fp-chev">›</span>}
               </button>

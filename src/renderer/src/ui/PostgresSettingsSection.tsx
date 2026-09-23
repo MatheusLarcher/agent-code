@@ -6,7 +6,7 @@ import type {
 } from '@shared/ipc'
 import { useUI } from './UiProvider'
 import { ipcErrorMessage } from '../ipcError'
-import { IconDatabase } from '../components/Icons'
+import { IconDatabase, IconEye, IconEyeOff } from '../components/Icons'
 
 const DEFAULT_DRAFT: PostgresConnectionDraft = {
   host: 'localhost',
@@ -189,8 +189,14 @@ export function PostgresSettingsSection(): JSX.Element {
             autoComplete="new-password"
             onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))}
           />
-          <button className="btn ghost" type="button" onClick={() => setShowPassword((value) => !value)}>
-            {showPassword ? '🙈' : '👁️'}
+          <button
+            className="btn ghost"
+            type="button"
+            onClick={() => setShowPassword((value) => !value)}
+            title={showPassword ? 'Esconder a senha' : 'Mostrar a senha'}
+            aria-label={showPassword ? 'Esconder a senha' : 'Mostrar a senha'}
+          >
+            {showPassword ? <IconEyeOff size={15} /> : <IconEye size={15} />}
           </button>
         </div>
         <span className="settings-hint">
