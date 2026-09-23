@@ -9,7 +9,7 @@ const capture = vi.hoisted(() => ({ queries: [] as Array<{ options: Record<strin
 vi.mock('./config', () => ({ loadConfig: () => ({ windowsControlEnabled: false, ollama: { apiKey: 'synthetic', enabled: true }, typesafe: { enabled: false, apiKey: '', minConfidence: 0.2 } }) }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => true }))
 vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: async () => ({ baseUrl: 'http://127.0.0.1:1', secret: 'test' }), FAST_MODE_TOKEN_SUFFIX: '+fast' }))
-vi.mock('./store', () => ({ getCacheInfo: () => ({ dir: '/cache', skillsDir: '/cache/skills', memoriesDir: '/cache/memories' }) }))
+vi.mock('./store', () => ({ getCacheInfo: () => ({ dir: '/cache', skillsDir: '/cache/skills', memoriesDir: '/cache/memories', localDir: '/cache-local' }) }))
 vi.mock('./projectOutline', () => ({ buildProjectOutline: async () => '[PROJECT_DOCS_CONTEXT]\nDOC_SENTINEL\n[/PROJECT_DOCS_CONTEXT]' }))
 vi.mock('./skillManager', () => ({ ensureNativeSkillRoot: () => ({ root: '/native', errors: [] }) }))
 vi.mock('./memoryIndex', async (original) => ({

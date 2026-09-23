@@ -15,7 +15,7 @@ vi.mock('./codexAuth', () => ({
 
 const { startCodexProxyServer } = await import('./codexProxy')
 
-const MODEL = 'gpt-5.6-sol'
+const MODEL = 'gpt-6-sol'
 const SECRET = 'sdk-integration-secret'
 const QUERY_TIMEOUT_MS = 25_000
 

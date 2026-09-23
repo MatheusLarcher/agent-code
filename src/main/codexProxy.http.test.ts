@@ -26,7 +26,7 @@ type ParsedEvent = { event: string; data: Record<string, unknown> }
 
 const SECRET = 'proxy-test-secret'
 const SESSION_ID = 'session_http_123'
-const MODEL = 'gpt-5.6-luna'
+const MODEL = 'gpt-6-luna'
 const handles: ProxyHandle[] = []
 
 function tokens(accessToken: string, accountId = 'account-123'): TokenSet {

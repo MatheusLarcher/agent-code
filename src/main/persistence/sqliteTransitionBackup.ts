@@ -32,7 +32,9 @@ export async function backupSqliteForTransition(
   dbPath: string,
   transitionId: string
 ): Promise<string> {
-  const root = join(cacheDir, 'migration-manifests', transitionId)
+  // Beside the (local) db, not in the synced data folder: these are full db
+  // copies, tens of MB each.
+  const root = join(dirname(dbPath), 'migration-manifests', transitionId)
   await mkdir(root, { recursive: true })
   const items: BackupItem[] = []
   for (const [index, source] of (await existingSqliteSources(cacheDir, dbPath)).entries()) {

@@ -35,8 +35,8 @@ function ManagerModel({ model }: { model: string | null }): JSX.Element {
       className={`pl-manager-model${model ? '' : ' pending'}`}
       title={
         model
-          ? `A sessão do Agent Manager está rodando em ${label}. O modelo vem de Configurações → Planejamento.`
-          : 'O modelo do Agent Manager é escolhido quando a sessão sobe (Configurações → Planejamento).'
+          ? `A sessão do Agent Manager está rodando em ${label}. Troque pelo seletor de modelo no chat.`
+          : 'O modelo do Agent Manager é escolhido quando a sessão sobe (seletor de modelo no chat).'
       }
     >
       <span className="pl-manager-model-label">Modelo do Agent Manager</span>

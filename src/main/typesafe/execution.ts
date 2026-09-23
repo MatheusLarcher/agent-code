@@ -42,7 +42,7 @@ export function autoEffortCandidates(): EffortLevel[] {
  * qual custa mais — sem isto a escolha sai do nome, não do trabalho pedido.
  *
  * Preços por milhão de tokens (entrada/saída) do catálogo da Anthropic: Fable
- * 5.1 $10/$50, Sonnet 5 $2/$10, Opus 5.5 $5/$25. A escada de
+ * 5.1 $10/$50, Sonnet 5 $2/$10, Opus 5.5 $4/$20. A escada de
  * custo é também a de capacidade, e é isso que as descrições dizem.
  */
 export const AUTO_MODEL_DESCRIPTIONS: Record<string, string> = {
@@ -56,12 +56,10 @@ export const AUTO_MODEL_DESCRIPTIONS: Record<string, string> = {
   // src/main/index.ts). Eles não são cobrados por token da API e sim pela
   // ASSINATURA do usuário, então a escada aqui é de CAPACIDADE, não de preço —
   // dizer "mais barato" sobre eles seria inventar um número que não existe.
-  'gpt-5.6-luna':
+  'gpt-6-luna':
     'O mais rápido dos GPT, e o que o app já usa nas tarefas de fundo. Tarefa simples e bem definida: pergunta factual, tradução, resumo, renomear, edição pontual óbvia.',
-  'gpt-5.6-terra':
-    'O meio-termo dos GPT: trabalho de código do dia a dia — implementar uma mudança já descrita, corrigir um bug localizado, escrever um teste.',
-  'gpt-5.6-sol':
-    'O mais capaz da geração 5.6. Vale quando o problema é de fato difícil: desenhar arquitetura, bug não óbvio ou intermitente, mudança que atravessa várias partes do código.',
+  'gpt-6-sol':
+    'O meio-termo dos GPT: trabalho de código do dia a dia e problemas difíceis de verdade — implementar uma mudança já descrita, bug não óbvio, mudança que atravessa várias partes do código.',
   'gpt-6-astra':
     'O GPT mais novo e mais capaz da lista, e o de menor contexto entre eles. Reserve para raciocínio realmente exigente e trabalho agêntico longo, de muitas etapas encadeadas.'
 }

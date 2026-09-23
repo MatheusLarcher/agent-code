@@ -8,14 +8,9 @@ import {
   VIGIA_MODELS,
   PO_MODELS,
   MEMORISTA_MODELS,
-  PLANNING_MODELS,
-  MODEL_EFFORT,
-  clampEffortToModel,
-  isAutoModel,
   type AppConfig,
   type CacheInfo,
-  type CodexStatus,
-  type EffortLevel
+  type CodexStatus
 } from '@shared/ipc'
 import { useUI } from './UiProvider'
 import { PostgresSettingsSection } from './PostgresSettingsSection'
@@ -50,15 +45,6 @@ interface Props {
 }
 
 type Tab = 'geral' | 'modelos' | 'voz' | 'dados'
-
-/** Rótulos do esforço no seletor do Agent Manager (os mesmos do seletor da conversa). */
-const EFFORT_LABELS: Record<EffortLevel, string> = {
-  low: 'Baixo',
-  medium: 'Médio',
-  high: 'Alto',
-  xhigh: 'Muito alto',
-  max: 'Máximo'
-}
 
 const TABS: { id: Tab; label: string; hint: string; icon: JSX.Element }[] = [
   { id: 'geral', label: 'Geral', hint: 'Permissões do agente', icon: <IconSliders size={16} /> },
@@ -555,74 +541,6 @@ export function SettingsModal({
                         ))}
                       </select>
                     </div>
-                  )}
-                </section>
-
-                <section className="settings-section" aria-label="Planejamento">
-                  <span className="settings-switch-text">
-                    <strong>
-                      <IconBoard size={15} /> Planejamento — o Agent Manager
-                    </strong>
-                    <span className="settings-desc">
-                      Na Tela de Planejamento, o Agent Manager conversa com você para montar o roteiro e os cards.
-                      Aqui você escolhe em que modelo ele roda.
-                    </span>
-                  </span>
-                  <div className="settings-row">
-                    <span>
-                      <strong>Modelo do Agent Manager</strong>
-                      <span className="settings-desc">
-                        No Automático, o TypeSafe escolhe o modelo e o esforço a cada mensagem.
-                      </span>
-                    </span>
-                    <select
-                      className="settings-input"
-                      aria-label="Modelo do Agent Manager"
-                      value={cfg.planning.model}
-                      onChange={(event) => {
-                        const model = event.target.value
-                        const effort = clampEffortToModel(model, cfg.planning.effort)
-                        setCfg((c) => ({ ...c, planning: { ...c.planning, model, effort } }))
-                        void window.api.setConfig({ planning: { ...cfg.planning, model, effort } })
-                      }}
-                    >
-                      {PLANNING_MODELS.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {!isAutoModel(cfg.planning.model) && (MODEL_EFFORT[cfg.planning.model]?.length ?? 0) > 0 && (
-                    <div className="settings-row">
-                      <span>
-                        <strong>Esforço do Agent Manager</strong>
-                        <span className="settings-desc">
-                          Quanto maior, mais profundo o raciocínio — e mais lento e caro.
-                        </span>
-                      </span>
-                      <select
-                        className="settings-input"
-                        aria-label="Esforço do Agent Manager"
-                        value={cfg.planning.effort}
-                        onChange={(event) => {
-                          const effort = event.target.value as EffortLevel
-                          setCfg((c) => ({ ...c, planning: { ...c.planning, effort } }))
-                          void window.api.setConfig({ planning: { ...cfg.planning, effort } })
-                        }}
-                      >
-                        {MODEL_EFFORT[cfg.planning.model].map((level) => (
-                          <option key={level} value={level}>
-                            {EFFORT_LABELS[level]}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  {isAutoModel(cfg.planning.model) && !cfg.typesafe.enabled && (
-                    <span className="settings-warn">
-                      Sem o TypeSafe ligado, o Automático usa Sonnet 5 (esforço médio).
-                    </span>
                   )}
                 </section>
 

@@ -135,18 +135,21 @@ describe('ChatPanel — modo compacto (ChatDisplayContext)', () => {
     ])
   })
 
-  it('no painel flutuante do planejamento: maximizado mostra tudo, minimizado esconde, e volta ao maximizar', () => {
+  it('no painel flutuante do planejamento: consumo só maximizado, e o aviso do Windows nunca', () => {
     const { container } = renderPanel(withMessages, (panel) => <ManagerChatFloat>{panel}</ManagerChatFloat>)
-    expect(Object.values(consumo(container)).every(Boolean)).toBe(true)
+    expect(consumo(container).header).toBeTruthy()
+    expect(consumo(container).last).toBeTruthy()
+    expect(consumo(container).windows).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Minimizar o chat do Agent Manager' }))
     expect(Object.values(consumo(container)).some(Boolean)).toBe(false)
     expect(screen.getByText('Oi')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Maximizar o chat do Agent Manager' }))
-    expect(Object.values(consumo(container)).every(Boolean)).toBe(true)
+    expect(consumo(container).header).toBeTruthy()
+    expect(consumo(container).windows).toBeNull()
   })
 })
 
-describe('ChatPanel — hideModelControls (conversa de planejamento)', () => {
+describe('ChatPanel — hideSessionToggles (conversa de planejamento)', () => {
   it('sem a prop (conversa normal), modelo, esforço, Econômico e Loop continuam na barra', () => {
     const { container } = renderPanel()
     expect(container.querySelector('select.model-select')).toBeTruthy()
@@ -155,13 +158,15 @@ describe('ChatPanel — hideModelControls (conversa de planejamento)', () => {
     expect(screen.getByRole('button', { name: /Loop/ })).toBeTruthy()
   })
 
-  it('com a prop, somem modelo, esforço, Econômico e Loop — o composer fica', () => {
-    const { container } = renderPanel({ hideModelControls: true })
-    expect(container.querySelector('select.model-select')).toBeNull()
-    expect(container.querySelector('.effort-picker')).toBeNull()
+  it('com a prop, somem Econômico e Loop — modelo e esforço ficam para trocar o do Agent Manager', () => {
+    const onModelChange = vi.fn()
+    const { container } = renderPanel({ hideSessionToggles: true, onModelChange })
     expect(screen.queryByRole('button', { name: /Econômico/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Loop/ })).toBeNull()
-    expect(container.querySelector('.composer-bar')?.childElementCount).toBe(0)
+    expect(container.querySelector('.effort-picker')).toBeTruthy()
+    const select = container.querySelector('select.model-select') as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'claude-sonnet-5' } })
+    expect(onModelChange).toHaveBeenCalledWith('claude-sonnet-5')
     expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
   })
 })

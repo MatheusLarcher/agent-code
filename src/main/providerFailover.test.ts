@@ -7,7 +7,7 @@ import type { ChatEvent, StartAgentOptions } from '../shared/ipc'
 const quota: ChatEvent = { kind: 'result', id: 'quota', isError: true, usageExhausted: true, text: 'limit', durationMs: 1 }
 const done: ChatEvent = { kind: 'result', id: 'done', isError: false, text: 'done', durationMs: 1 }
 
-function harness(model = 'claude-opus-5') {
+function harness(model = 'claude-opus-5-5') {
   const records: Array<{ options: StartAgentOptions; event: (event: ChatEvent) => void; finish: () => void; session: ReturnType<typeof stub> }> = []
   const emit = vi.fn()
   const complete = vi.fn()
@@ -33,7 +33,7 @@ function stub() {
 const settled = async (): Promise<void> => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 
 describe('provider failover', () => {
-  it.each([['claude-opus-5', 'gpt-6-astra'], ['gpt-6-astra', 'claude-opus-5']])('continues %s on %s exactly once with the same transcript', async (from, to) => {
+  it.each([['claude-opus-5-5', 'gpt-6-astra'], ['gpt-6-astra', 'claude-opus-5-5']])('continues %s on %s exactly once with the same transcript', async (from, to) => {
     const h = harness(from)
     await h.session.start()
     await h.session.send('Crie um arquivo', [{ data: 'image', mediaType: 'image/png' }], 'user-id')

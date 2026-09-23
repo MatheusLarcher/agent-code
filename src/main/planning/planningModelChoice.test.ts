@@ -114,7 +114,7 @@ describe('resolvePlanningExecution', () => {
   })
 
   it('Automático: par "typesafe" fora da lista do Manager é descartado', async () => {
-    const d = deps({ model: 'gpt-5.6-sol', effort: 'high', source: 'typesafe' })
+    const d = deps({ model: 'gpt-6-sol', effort: 'high', source: 'typesafe' })
     const result = await resolvePlanningExecution({ model: AUTO_MODEL, effort: 'medium' }, PROMPT, d)
     expect(result).toEqual({ model: 'claude-sonnet-5', effort: 'medium', source: 'fallback' })
   })
@@ -131,7 +131,7 @@ describe('resolvePlanningExecution', () => {
   it('lista restrita: só a interseção com os do Manager vai para chooseAutoExecution', async () => {
     // GPT fica de fora: está na lista do usuário, mas não no seletor do Manager.
     const d = deps({ model: 'claude-sonnet-5', effort: 'high', source: 'typesafe' }, true, [
-      'gpt-5.6-sol',
+      'gpt-6-sol',
       'claude-sonnet-5',
       'claude-fable-5-1'
     ])
@@ -149,7 +149,7 @@ describe('resolvePlanningExecution', () => {
   })
 
   it('interseção vazia: recuo do Manager, sem chamar a escolha', async () => {
-    const d = deps({ model: 'gpt-5.6-sol', effort: 'high', source: 'typesafe' }, true, ['gpt-5.6-sol'])
+    const d = deps({ model: 'gpt-6-sol', effort: 'high', source: 'typesafe' }, true, ['gpt-6-sol'])
     const result = await resolvePlanningExecution({ model: AUTO_MODEL, effort: 'medium' }, PROMPT, d)
 
     expect(result).toEqual({ ...PLANNING_AUTO_FALLBACK, source: 'fallback' })
@@ -175,7 +175,7 @@ describe('resolvePlanningExecution', () => {
     expect(planningAutoCandidates(undefined)).toEqual(PLANNING_AUTO_MODELS)
     expect(planningAutoCandidates('claude-sonnet-5')).toEqual(PLANNING_AUTO_MODELS)
     expect(planningAutoCandidates(['claude-fable-5-1', STRONG])).toEqual([STRONG, 'claude-fable-5-1'])
-    expect(planningAutoCandidates(['gpt-5.6-sol'])).toEqual([])
+    expect(planningAutoCandidates(['gpt-6-sol'])).toEqual([])
   })
 
   it('configuração sem modelo utilizável: recuo, sem lançar', async () => {

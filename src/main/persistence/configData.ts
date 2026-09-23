@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  currentModelId,
   DEFAULT_CONFIG,
   EFFORT_LEVELS,
   PLANNING_MODELS,
@@ -40,7 +41,8 @@ export function normalizePlanningConfig(value: { model?: unknown; effort?: unkno
 export function normalizeAllowedAutoModels(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   if (!value.every((item): item is string => typeof item === 'string' && item.trim().length > 0)) return []
-  return [...new Set(value)]
+  // Modelo aposentado na lista vira o substituto (GPT-5.6 → GPT-6).
+  return [...new Set(value.map(currentModelId))]
 }
 
 const partialConfigSchema = z
@@ -126,7 +128,10 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
       ...(parsed.data.board ?? {}),
       po: { ...current.board.po, ...(parsed.data.board?.po ?? {}) }
     },
-    typesafe: { ...current.typesafe, ...(parsed.data.typesafe ?? {}) }
+    typesafe: (() => {
+      const typesafe = { ...current.typesafe, ...(parsed.data.typesafe ?? {}) }
+      return { ...typesafe, allowedAutoModels: normalizeAllowedAutoModels(typesafe.allowedAutoModels) }
+    })()
   }
 }
 

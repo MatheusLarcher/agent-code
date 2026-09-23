@@ -886,7 +886,7 @@ describe('App — modelo GPT conectado por OAuth', () => {
     expect(screen.queryByTitle('Parar tarefa atual')).toBeNull()
     expect(screen.getAllByText(/Claude e GPT atingiram/).length).toBeGreaterThan(0)
   })
-  it.each(['gpt-5.6-sol', 'gpt-6-astra'])('mostra %s, preserva esforço e inicia sem consultar o login Anthropic', async (model) => {
+  it.each(['gpt-6-sol', 'gpt-6-astra'])('mostra %s, preserva esforço e inicia sem consultar o login Anthropic', async (model) => {
     api.codexStatus.mockResolvedValue({ connected: true })
     const { container } = render(
       <UiProvider>
@@ -2239,7 +2239,7 @@ describe('App — conversa de planejamento', () => {
     })
   }
 
-  it('abre a Tela de Planejamento no lugar do workspace, com o chat e sem seletor de modelo', async () => {
+  it('abre a Tela de Planejamento no lugar do workspace, com o chat e o seletor do modelo do Agent Manager', async () => {
     seedPlanning()
     addPlanningApi()
     const { container } = render(<UiProvider><App /></UiProvider>)
@@ -2249,7 +2249,14 @@ describe('App — conversa de planejamento', () => {
     // O MESMO ChatPanel, agora como coluna de chat da tela.
     expect(container.querySelector('.planning-workspace .pl-chat .chat-panel')).toBeTruthy()
     expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
-    expect(container.querySelector('select.model-select')).toBeNull()
+    // O seletor do chat edita o modelo do Agent Manager (a config de planejamento),
+    // com o Automático; Econômico e Loop não existem para o Manager.
+    const select = container.querySelector('.pl-chat select.model-select') as HTMLSelectElement
+    expect([...select.options].map((o) => o.value)).toContain('auto')
+    expect(screen.queryByRole('button', { name: /Econômico/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Loop/ })).toBeNull()
+    fireEvent.change(select, { target: { value: 'claude-sonnet-5' } })
+    expect(api.setConfig).toHaveBeenCalledWith({ planning: expect.objectContaining({ model: 'claude-sonnet-5' }) })
     // Nada do workspace normal: nem divisor, nem painel/rail da direita.
     expect(container.querySelector('.splitter')).toBeNull()
     expect(container.querySelector('.right-pane')).toBeNull()

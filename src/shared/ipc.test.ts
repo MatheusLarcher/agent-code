@@ -6,7 +6,11 @@ import {
   CONTEXT_LIMITS,
   MODEL_EFFORT,
   DEFAULT_CONFIG,
-  Channels
+  Channels,
+  OPENAI_MODELS,
+  RETIRED_MODEL_REPLACEMENTS,
+  currentModelId,
+  isOpenAIModel
 } from './ipc'
 
 describe('controle do Windows — contrato compartilhado', () => {
@@ -40,10 +44,22 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
     expect(contextLimitFor('muse-glimmer:cloud')).toBe(128_000)
   })
 
-  it('GPT-5.6 Luna/Terra/Sol usam a janela oficial de 1,05M', () => {
-    expect(contextLimitFor('gpt-5.6-luna')).toBe(1_050_000)
-    expect(contextLimitFor('gpt-5.6-terra')).toBe(1_050_000)
-    expect(contextLimitFor('gpt-5.6-sol')).toBe(1_050_000)
+  it('GPT-6 Luna/Sol/Astra usam a janela padrão do catálogo do Codex (272k)', () => {
+    expect(contextLimitFor('gpt-6-luna')).toBe(272_000)
+    expect(contextLimitFor('gpt-6-sol')).toBe(272_000)
+    expect(contextLimitFor('gpt-6-astra')).toBe(272_000)
+  })
+
+  it('GPT-5.6 saiu do seletor; conversa/config salvas com ele viram GPT-6 e seguem no GPT', () => {
+    expect(OPENAI_MODELS.map((m) => m.id)).toEqual(['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra'])
+    expect(currentModelId('gpt-5.6-luna')).toBe('gpt-6-luna')
+    expect(currentModelId('gpt-5.6-terra')).toBe('gpt-6-sol')
+    expect(currentModelId('gpt-5.6-sol')).toBe('gpt-6-sol')
+    expect(currentModelId('claude-opus-5-5')).toBe('claude-opus-5-5')
+    for (const old of Object.keys(RETIRED_MODEL_REPLACEMENTS)) {
+      expect(isOpenAIModel(old)).toBe(false)
+      expect(isOpenAIModel(currentModelId(old))).toBe(true)
+    }
   })
 
   it('modelo desconhecido cai no fallback padrão', () => {
@@ -65,10 +81,10 @@ describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
     expect(modelSupportsVision(undefined)).toBe(true)
   })
 
-  it('GPT-5.6 mantém imagem nativa pelo tradutor Responses', () => {
-    expect(modelSupportsVision('gpt-5.6-luna')).toBe(true)
-    expect(modelSupportsVision('gpt-5.6-terra')).toBe(true)
-    expect(modelSupportsVision('gpt-5.6-sol')).toBe(true)
+  it('GPT-6 mantém imagem nativa pelo tradutor Responses', () => {
+    expect(modelSupportsVision('gpt-6-luna')).toBe(true)
+    expect(modelSupportsVision('gpt-6-sol')).toBe(true)
+    expect(modelSupportsVision('gpt-6-astra')).toBe(true)
   })
 
   it('Kimi K3 aceita imagem direto (multimodal nativo, herdou o slot do K2.7)', () => {
@@ -118,10 +134,10 @@ describe('MODEL_EFFORT — esforço máximo do SDK', () => {
     expect(MODEL_EFFORT['claude-fable-5']).toContain('max')
   })
 
-  it('oferece low até max para toda a família GPT-5.6', () => {
+  it('oferece low até max para toda a família GPT-6', () => {
     const expected = ['low', 'medium', 'high', 'xhigh', 'max']
-    expect(MODEL_EFFORT['gpt-5.6-luna']).toEqual(expected)
-    expect(MODEL_EFFORT['gpt-5.6-terra']).toEqual(expected)
-    expect(MODEL_EFFORT['gpt-5.6-sol']).toEqual(expected)
+    expect(MODEL_EFFORT['gpt-6-luna']).toEqual(expected)
+    expect(MODEL_EFFORT['gpt-6-sol']).toEqual(expected)
+    expect(MODEL_EFFORT['gpt-6-astra']).toEqual(expected)
   })
 })

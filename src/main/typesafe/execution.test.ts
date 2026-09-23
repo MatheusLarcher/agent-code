@@ -92,13 +92,13 @@ describe('candidatos', () => {
   })
 
   it('escolhe entre os GPT quando eles são os candidatos oferecidos', async () => {
-    answers('gpt-5.6-sol', 2)
+    answers('gpt-6-sol', 2)
     const models = [...autoModelCandidates(), ...OPENAI_MODELS.map((model) => model.id)]
 
     const execution = await chooseAutoExecution({ message: 'refatora o agendador inteiro' }, { models })
 
-    expect(execution).toEqual({ model: 'gpt-5.6-sol', effort: 'high', source: 'typesafe' })
-    expect(autoExecutionNote(execution)).toBe('Automático: GPT-5.6 Sol (ChatGPT), esforço alto.')
+    expect(execution).toEqual({ model: 'gpt-6-sol', effort: 'high', source: 'typesafe' })
+    expect(autoExecutionNote(execution)).toBe('Automático: GPT-6 Sol (ChatGPT), esforço alto.')
   })
 })
 
@@ -291,7 +291,7 @@ describe('lista de candidatos restrita (o memorista)', () => {
   it('um modelo fora da lista na resposta é resposta inválida, não escolha', async () => {
     // GPT é um modelo REAL, mas não está na lista do memorista — aceitá-lo
     // furaria a restrição que a lista foi feita para impor.
-    answers('gpt-5.6-sol', 1)
+    answers('gpt-6-sol', 1)
 
     expect(await chooseAutoExecution({ message: 'oi' }, { models: memorista })).toMatchObject({
       model: AUTO_MODEL_FALLBACK.model

@@ -730,9 +730,8 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5-1': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
-  'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
-  'gpt-5.6-terra': ['low', 'medium', 'high', 'xhigh', 'max'],
-  'gpt-5.6-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-6-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max']
 }
 
@@ -828,7 +827,7 @@ export interface AutoPrompt {
  *  requests instead of serving them at standard speed). Keep this list in sync
  *  with https://code.claude.com/docs/en/fast-mode — offering it on a model that
  *  doesn't support it produces a rejected request, not a silent fallback. */
-const FAST_MODE_MODELS = new Set(['claude-opus-5-5', 'claude-opus-4-8'])
+const FAST_MODE_MODELS = new Set(['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8'])
 
 /** How a model's fast mode is actually requested. The toggle in the UI is one
  *  control, but the two providers expose the capability through completely
@@ -945,11 +944,25 @@ export function modelSupportsVision(model: string | undefined): boolean {
 // Model ids aren't discoverable from a public catalog (undocumented backend).
 // Model ids verified against the local Codex model catalog.
 export const OPENAI_MODELS = [
-  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (ChatGPT)' },
-  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (ChatGPT)' },
-  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (ChatGPT)' },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna (ChatGPT)' },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol (ChatGPT)' },
   { id: 'gpt-6-astra', label: 'GPT-6 Astra (ChatGPT)' }
 ] as const
+
+/** Modelos que saíram do seletor → o que os substitui. Conversa e config salvas
+ *  com o id antigo continuam no mesmo provedor (sem isto, `gpt-5.6-luna` deixaria
+ *  de ser GPT e iria para a Anthropic). Terra não tem par na geração 6: vai para
+ *  o Sol, o degrau acima. */
+export const RETIRED_MODEL_REPLACEMENTS: Readonly<Record<string, string>> = {
+  'gpt-5.6-luna': 'gpt-6-luna',
+  'gpt-5.6-terra': 'gpt-6-sol',
+  'gpt-5.6-sol': 'gpt-6-sol'
+}
+
+/** O id em uso para `model`: o substituto se ele foi aposentado, senão ele mesmo. */
+export function currentModelId(model: string): string {
+  return RETIRED_MODEL_REPLACEMENTS[model] ?? model
+}
 
 /** True when `model` is a GPT model routed through the Codex OAuth proxy. */
 export function isOpenAIModel(model: string | undefined): boolean {
@@ -978,11 +991,10 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'claude-sonnet-5': 1_000_000,
   'claude-fable-5-1': 1_000_000,
   'claude-fable-5': 1_000_000,
-  // OpenAI GPT-5.6 family — official model catalog.
-  'gpt-5.6-luna': 1_050_000,
-  'gpt-5.6-terra': 1_050_000,
-  'gpt-5.6-sol': 1_050_000,
-  // Default window from the local Codex catalog; extended context is opt-in.
+  // OpenAI GPT-6 family — default window from the local Codex catalog
+  // (models_cache.json: context_window 272000); extended context is opt-in.
+  'gpt-6-luna': 272_000,
+  'gpt-6-sol': 272_000,
   'gpt-6-astra': 272_000,
   // Ollama Cloud — native context windows (verified against each model's own
   // published specs, not a guess): gpt-oss keeps its documented 128K;

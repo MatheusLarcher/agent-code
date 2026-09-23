@@ -262,7 +262,7 @@ function poMember(po: PoProviderDiagnosticMsg | null): CrewMember {
   }
   if (!po) return base
 
-  const model = po.actualProvider === 'gpt-luna' ? 'gpt-5.6-luna' : 'claude'
+  const model = po.actualProvider === 'gpt-luna' ? 'gpt-6-luna' : 'claude'
   // O PO roda DUAS vezes por turno e as duas rodadas acendem o mesmo cartão. Sem
   // dizer qual é qual, o usuário vê o mesmo "auditando" duas vezes e conclui que
   // o observador está repetindo trabalho. `round` ausente é o diagnóstico antigo
@@ -343,7 +343,7 @@ function memoristaMember(memorista: MemoristaProviderDiagnosticMsg | null): Crew
   }
   if (!memorista) return base
 
-  const model = memorista.actualProvider === 'gpt-luna' ? 'gpt-5.6-luna' : 'claude'
+  const model = memorista.actualProvider === 'gpt-luna' ? 'gpt-6-luna' : 'claude'
   if (memorista.phase === 'analysis-finished') {
     const n = memorista.savedMemories ?? 0
     // Zero é o caso NORMAL, não uma falha: a maioria dos turnos não ensina nada

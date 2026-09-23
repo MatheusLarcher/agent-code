@@ -1,42 +1,28 @@
-import { prepareGptRuntime } from '../agentSession'
-import {
-  askObserver,
-  runObserverAttempt,
-  type ObserverAttempt,
-  type SafeProviderReason
-} from '../observerQuery'
-import type { BoardConfig, BoardItem, ChatEvent, PoProviderDiagnostic } from '../../shared/ipc'
+import { askObserver } from '../observerQuery'
+import type { BoardConfig, ChatEvent } from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
-import { taskLedger } from '../tasks/taskRuntime'
+import { linkLedgerTaskToCard, listConvTasks, type PoLedgerDeps } from './poLedger'
 import {
   buildPoPrompt,
   parsePoVerdict,
   PO_COOLDOWN_MS,
   PO_MAX_CALLS,
-  PO_MAX_LEDGER_TASKS,
-  PO_MAX_USER_CHARS,
+  PO_MAX_RETRIES,
+  PO_RETRY_DELAY_MS,
   rejectUnsafeOps,
   summarizeCall,
   type PoCall,
-  type PoLedgerTask,
   type PoOp,
   type PoPhase
 } from './poPrompt'
+import { askBoardGate, consultWithFailover, diagnostic, type PoObserverRequest, type PoProviderDeps } from './poProviders'
+import { defer, mergeDeferred, requeueTurn, restoreTaken, type PoDeferred, type PoTurnSnapshot } from './poQueue'
 
-export const PO_LUNA_MODEL = 'gpt-5.6-luna'
-
-/** Immutable, provider-neutral intent created once for both observer attempts. */
-export interface PoObserverRequest {
-  prompt: string
-  model: string
-  conversationId: string
-  cwd: string
-  projectId: string
-  /** Abertura (o pedido chegou) ou fechamento (o turno acabou). */
-  phase: PoPhase
-  cards: readonly Pick<BoardItem, 'id' | 'projectId' | 'projectCwd' | 'conversationId' | 'sourceTitle' | 'sourceStatus' | 'poTitle' | 'poStatus'>[]
-  correlationId: string
-}
+// A API pública do PO continua saindo daqui, mesmo com as partes em módulos
+// próprios: quem importa de './po' não precisa saber como ele foi dividido.
+export { PO_LUNA_MODEL, type PoObserverRequest } from './poProviders'
+export { PO_MAX_RETRIES, PO_RETRY_DELAY_MS } from './poPrompt'
+export type { PoLinkableTask } from './poLedger'
 
 /**
  * O PO: acompanha o quadro em DUAS rodadas por turno, sem falar com o agente
@@ -44,61 +30,28 @@ export interface PoObserverRequest {
  * termina. Claude é sempre a primeira tentativa. Somente uma falha Claude
  * estruturada e elegível pode disparar uma única consulta Luna, antes de
  * qualquer escrita.
+ *
+ * As rotas de modelo (`ask`, `runClaude`, `runLuna`, `diagnose`) e o gate do
+ * TypeSafe (`gate`, `gateActive`) vêm de `PoProviderDeps` (poProviders.ts) e as
+ * pontes com o registro de tarefas
+ * (`listConvTasks`, `linkableLedgerTasks`, `linkedBoardItemsFor`,
+ * `linkTaskToBoardItem`) de `PoLedgerDeps` (poLedger.ts) — cada módulo declara
+ * o que consome, e aqui fica a soma.
  */
-export interface PoDeps {
+export interface PoDeps extends PoProviderDeps, PoLedgerDeps {
   /** Lido uma vez por análise: mudanças durante o fallback não trocam a rota. */
   config(): BoardConfig
   board: BoardService
-  /** Compatibilidade para testes e consumidores do PO original. */
-  ask?(prompt: string, model: string): Promise<string>
-  runClaude?(request: PoObserverRequest): Promise<ObserverAttempt>
-  runLuna?(request: PoObserverRequest, onStarted: () => void): Promise<ObserverAttempt>
-  diagnose?(diagnostic: PoProviderDiagnostic): void
   now?(): number
   newCorrelationId?(): string
-  /**
-   * As tarefas do registro (mcp__tasks) ligadas a esta conversa — evidência
-   * que sobrevive ao teto de PO_MAX_CALLS porque não depende do histórico de
-   * ações. Sem injeção (produção), consulta o registro ativo; sem registro,
-   * ou se a consulta falhar, devolve vazio — o PO nunca quebra por causa
-   * disso, só perde a seção extra do digest.
-   */
-  listConvTasks?(convId: string): Promise<PoLedgerTask[]>
-  /**
-   * Todas as tarefas do registro (mcp__tasks) desta conversa, para a heurística
-   * de vínculo automático tarefa↔cartão — sem filtro de status ou data, quem
-   * filtra é `Po` (assim o teste exercita a regra real, não uma cópia dela no
-   * dublê). Mesmo contrato de tolerância a falha de `listConvTasks`: sem
-   * injeção consulta o registro ativo, e sem registro ou com a consulta
-   * falhando devolve vazio — nunca quebra o PO.
-   */
-  linkableLedgerTasks?(convId: string): Promise<PoLinkableTask[]>
-  /** `task_id -> board_item_id` já vinculados, para não vincular de novo.
-   *  Mesmo contrato de tolerância a falha das outras pontes com o registro. */
-  linkedBoardItemsFor?(taskIds: string[]): Promise<Map<string, string>>
-  /** Vincula (upsert) uma tarefa do registro a um cartão do quadro. Mesmo
-   *  contrato de tolerância a falha das outras pontes com o registro. */
-  linkTaskToBoardItem?(taskId: string, boardItemId: string): Promise<void>
   /**
    * Agenda `fn` para depois de `delayMs` e devolve um cancelador. Produção usa
    * `setTimeout`/`clearTimeout` reais (sem segurar o processo vivo — `unref`);
    * testes injetam a própria implementação para disparar o flush do cooldown
-   * sob controle, sem esperar de verdade, no mesmo espírito de `now`.
+   * (e a retentativa, que usa o mesmo caminho) sob controle, sem esperar de
+   * verdade, no mesmo espírito de `now`.
    */
   scheduleFlush?(delayMs: number, fn: () => void): () => void
-}
-
-/** Uma tarefa do registro, reduzida ao que a heurística de vínculo precisa. */
-export interface PoLinkableTask {
-  id: string
-  status: string
-  createdAt: string
-}
-
-/** A fila dos turnos que ainda não passaram pelo PO. */
-interface PoDeferred {
-  texts: string[]
-  calls: PoCall[]
 }
 
 interface ConvState {
@@ -120,8 +73,14 @@ interface ConvState {
    *  preso para sempre esperando um próximo turno que pode nunca chegar (o
    *  turno que terminou a conversa, por exemplo). Um só por fase: o turno que
    *  chega ENQUANTO o flush está agendado só se soma à mesma fila, não precisa
-   *  de outro temporizador. */
+   *  de outro temporizador. A retentativa de uma análise que falhou usa este
+   *  MESMO lugar: as duas coisas são "julgar a fila desta fase mais tarde", e
+   *  dois temporizadores para isso só disputariam a mesma fila. */
   flushCancel: Record<PoPhase, (() => void) | null>
+  /** Retentativas SEGUIDAS já agendadas nesta fase (teto: PO_MAX_RETRIES).
+   *  Zera numa auditoria que chega ao fim — inclusive o "não" do gate — e
+   *  quando um turno real dispara a análise: aí a falha anterior é passado. */
+  retries: Record<PoPhase, number>
 }
 
 /** `PoDeps.scheduleFlush` padrão: `setTimeout`/`clearTimeout` reais, sem
@@ -131,20 +90,6 @@ function defaultScheduleFlush(delayMs: number, fn: () => void): () => void {
   const timer = setTimeout(fn, delayMs)
   timer.unref?.()
   return () => clearTimeout(timer)
-}
-
-/** Evidence captured synchronously with a result, before board ingestion yields. */
-interface PoTurnSnapshot {
-  userText: string
-  cwd: string
-  calls: readonly PoCall[]
-}
-
-/** Vários pedidos num digest só, numerados: sem a numeração o modelo lê a
- *  emenda como um pedido único e responde por um só. */
-function joinRequests(texts: string[]): string {
-  if (texts.length <= 1) return texts[0] ?? ''
-  return texts.map((text, index) => `(${index + 1}) ${text}`).join(' ')
 }
 
 export class Po {
@@ -231,26 +176,46 @@ export class Po {
     return Object.freeze({ userText: '', cwd: conv.cwd, calls: Object.freeze([] as PoCall[]) })
   }
 
-  /** Agenda (ou reaproveita) o flush desta fase para quando o cooldown que
-   *  acabou de adiá-la terminar — sem isso, o acumulado só é julgado se um
-   *  PRÓXIMO turno chegar. Uma conversa que termina sem mais mensagens (o
-   *  caso comum: o usuário viu o trabalho pronto e foi embora) nunca teria
-   *  esse próximo turno, e a evidência ficava presa na fila para sempre —
-   *  inclusive some no restart do app, porque a fila só vive em memória. */
-  private armFlush(convId: string, phase: PoPhase, conv: ConvState, now: number): void {
-    if (conv.flushCancel[phase]) return
-    const delay = Math.max(0, PO_COOLDOWN_MS - (now - conv.lastRunAt[phase]))
+  /** Agenda o flush desta fase daqui a `delayMs` — para quando o cooldown que
+   *  acabou de adiá-la terminar, ou para a retentativa de uma análise que
+   *  falhou. Sem isso, o acumulado só é julgado se um PRÓXIMO turno chegar.
+   *  Uma conversa que termina sem mais mensagens (o caso comum: o usuário viu
+   *  o trabalho pronto e foi embora) nunca teria esse próximo turno, e a
+   *  evidência ficava presa na fila para sempre — inclusive some no restart do
+   *  app, porque a fila só vive em memória. Devolve `false` quando já havia um
+   *  flush agendado nesta fase: ele é reaproveitado, nunca duplicado. */
+  private armFlush(convId: string, phase: PoPhase, conv: ConvState, delayMs: number): boolean {
+    if (conv.flushCancel[phase]) return false
     const schedule = this.deps.scheduleFlush ?? defaultScheduleFlush
-    conv.flushCancel[phase] = schedule(delay, () => {
+    conv.flushCancel[phase] = schedule(delayMs, () => {
       conv.flushCancel[phase] = null
       // Um turno real pode ter chegado nesse meio-tempo e já drenado a fila
       // (ou disparado ela por conta própria) — só dispara se sobrou algo.
-      // `force`: este flush É a resposta ao cooldown que adiou a fase: rodar
-      // `run` sem ele reavaliaria o mesmo cooldown (com o relógio de agora) e
-      // poderia adiar de novo — inclusive na hora, se `dispose` disparar isto
-      // antes da janela realmente terminar.
+      // `force`: este flush É a resposta ao cooldown que adiou a fase (ou à
+      // falha que pediu a retentativa): rodar `run` sem ele reavaliaria o
+      // mesmo cooldown (com o relógio de agora) e poderia adiar de novo —
+      // inclusive na hora, se `dispose` disparar isto antes da janela terminar.
       if (conv.deferred[phase]) this.start(convId, phase, this.emptyTurn(conv), true)
     })
+    return true
+  }
+
+  /**
+   * Agenda a retentativa de uma análise que passou do cooldown e não chegou ao
+   * fim. Pelo MESMO caminho do flush do cooldown (turno vazio, `force`), então o
+   * `dispose` a cancela e faz a última chance como já fazia com o flush.
+   *
+   * Três casos em que não agenda nada: a conversa não é mais esta (descartada
+   * ou recriada enquanto a análise rodava — não há "depois" para ela, e um
+   * temporizador aqui reviveria uma conversa morta); a fila ficou vazia (não
+   * há o que julgar); ou o teto de retentativas seguidas já foi gasto. Já
+   * havendo um flush agendado nesta fase, ele leva a evidência — sem segundo
+   * temporizador, e sem gastar uma retentativa que não foi agendada.
+   */
+  private armRetry(convId: string, phase: PoPhase, conv: ConvState): void {
+    if (this.state.get(convId) !== conv) return
+    if (!conv.deferred[phase] || conv.retries[phase] >= PO_MAX_RETRIES) return
+    if (this.armFlush(convId, phase, conv, PO_RETRY_DELAY_MS)) conv.retries[phase] += 1
   }
 
   private conv(convId: string): ConvState {
@@ -263,7 +228,8 @@ export class Po {
         fired: false,
         lastRunAt: { open: 0, close: 0 },
         deferred: { open: null, close: null },
-        flushCancel: { open: null, close: null }
+        flushCancel: { open: null, close: null },
+        retries: { open: 0, close: 0 }
       }
       this.state.set(convId, conv)
     }
@@ -272,7 +238,11 @@ export class Po {
 
   /** Dispara uma análise e a registra como em voo até o fim das escritas.
    *  `force` pula o cooldown — só usado pelo próprio flush do cooldown
-   *  (automático ou de última chance no `dispose`), nunca por um turno real. */
+   *  (automático, retentativa ou última chance no `dispose`), nunca por um
+   *  turno real; é também como `run` distingue um turno real de um flush.
+   *  O registro em `inFlight` é SÍNCRONO, ainda no tick de quem chamou, sem
+   *  `await` nenhum antes: é nisso que o `po.settled` do fechamento do quadro
+   *  se apoia (ver o comentário em `po.observe`, no index.ts). */
   private start(convId: string, phase: PoPhase, turn: PoTurnSnapshot, force = false): void {
     const work = this.run(convId, phase, turn, force)
     const inFlight = this.inFlight.get(convId) ?? new Set<Promise<void>>()
@@ -285,61 +255,6 @@ export class Po {
     // `then(forget, forget)` e não `finally`: aqui é onde a rejeição do
     // observador morre, para ela não virar unhandled rejection no processo.
     void work.then(forget, forget)
-  }
-
-  /** Guarda o turno que o cooldown pulou, na fila DESSA fase — com os mesmos
-   *  tetos do digest, para o acumulado não crescer com o número de turnos
-   *  pulados. */
-  private defer(conv: ConvState, phase: PoPhase, turn: PoTurnSnapshot): void {
-    const deferred = conv.deferred[phase] ?? { texts: [], calls: [] }
-    deferred.texts.push(turn.userText)
-    deferred.calls.push(...turn.calls)
-    while (deferred.texts.length > 1 && deferred.texts.join(' ').length > PO_MAX_USER_CHARS) deferred.texts.shift()
-    if (deferred.calls.length > PO_MAX_CALLS) deferred.calls.splice(0, deferred.calls.length - PO_MAX_CALLS)
-    conv.deferred[phase] = deferred
-  }
-
-  /**
-   * Junta os turnos pulados ao turno de agora, DENTRO do orçamento do digest.
-   *
-   * O teto tem que ser aplicado aqui, e descartando do mais ANTIGO para o mais
-   * novo: o `clamp` do digest corta pela cauda, então entregar tudo concatenado
-   * faria o acumulado cheio empurrar para fora justamente o pedido que acabou
-   * de chegar — o oposto do que este acúmulo existe para fazer. O pedido de
-   * AGORA entra sempre, mesmo quando sozinho já estoura o teto (aí ele é
-   * truncado, mas continua sendo ele). Nas ações vale o mesmo critério: as
-   * mais recentes sobrevivem, porque a evidência do fim é a que decide o que
-   * terminou.
-   */
-  private mergeDeferred(deferred: PoDeferred | null, turn: PoTurnSnapshot): PoTurnSnapshot {
-    if (!deferred || (deferred.texts.length === 0 && deferred.calls.length === 0)) return turn
-    const kept = [...deferred.texts, turn.userText].filter((text) => text.trim().length > 0)
-    while (kept.length > 1 && joinRequests(kept).length > PO_MAX_USER_CHARS) kept.shift()
-    return Object.freeze({
-      userText: joinRequests(kept) || turn.userText,
-      cwd: turn.cwd,
-      calls: Object.freeze([...deferred.calls, ...turn.calls].slice(-PO_MAX_CALLS))
-    })
-  }
-
-  /**
-   * Devolve à fila o acumulado que esta análise pegou e não chegou a auditar.
-   *
-   * Sem isso, uma falha depois da retirada (Claude indisponível, Luna sem
-   * configuração, quadro rejeitando a escrita) apaga para sempre turnos que
-   * NUNCA passaram pelo PO — exatamente o buraco que o acúmulo tapa. Tirar da
-   * fila é um empréstimo até a análise terminar, não uma baixa.
-   */
-  private restoreDeferred(conv: ConvState, phase: PoPhase, taken: PoDeferred): void {
-    if (taken.texts.length === 0 && taken.calls.length === 0) return
-    const queue = conv.deferred[phase] ?? { texts: [], calls: [] }
-    // O que volta é mais ANTIGO do que o que entrou na fila enquanto a análise
-    // rodava, então volta na frente — e os mesmos tetos continuam valendo.
-    queue.texts.unshift(...taken.texts)
-    queue.calls.unshift(...taken.calls)
-    while (queue.texts.length > 1 && queue.texts.join(' ').length > PO_MAX_USER_CHARS) queue.texts.shift()
-    if (queue.calls.length > PO_MAX_CALLS) queue.calls.splice(0, queue.calls.length - PO_MAX_CALLS)
-    conv.deferred[phase] = queue
   }
 
   /**
@@ -369,159 +284,8 @@ export class Po {
     return rejectUnsafeOps(ops, fresh, phase)
   }
 
-  /** Consulta o registro de tarefas ativo. Nunca lança: sem registro ou com a
-   *  consulta falhando, o PO segue só com a evidência de ações — degrada, não
-   *  quebra. */
-  private async listConvTasks(convId: string): Promise<PoLedgerTask[]> {
-    // O catch cobre as DUAS origens (a injetada e o registro real): uma
-    // consulta injetada em produção pode falhar tanto quanto o registro em
-    // si, e das duas formas o PO segue só sem a seção extra, nunca aborta.
-    try {
-      if (this.deps.listConvTasks) return await this.deps.listConvTasks(convId)
-      const ledger = taskLedger()
-      if (!ledger) return []
-      const tasks = await ledger.listTasks({ conversationId: convId, limit: PO_MAX_LEDGER_TASKS })
-      return tasks.map((task) => ({ title: task.title, status: task.status }))
-    } catch {
-      return []
-    }
-  }
-
-  /** Todas as tarefas do registro desta conversa, sem filtro — quem filtra é
-   *  `linkLedgerTaskToCard`. Nunca lança: mesma tolerância de `listConvTasks`. */
-  private async linkableLedgerTasks(convId: string): Promise<PoLinkableTask[]> {
-    try {
-      if (this.deps.linkableLedgerTasks) return await this.deps.linkableLedgerTasks(convId)
-      const ledger = taskLedger()
-      if (!ledger) return []
-      const tasks = await ledger.listTasks({ conversationId: convId })
-      return tasks.map((task) => ({ id: task.id, status: task.status, createdAt: task.createdAt }))
-    } catch {
-      return []
-    }
-  }
-
-  /** `task_id -> board_item_id` já vinculados dentre os candidatos. Nunca lança. */
-  private async linkedBoardItemsFor(taskIds: string[]): Promise<Map<string, string>> {
-    if (taskIds.length === 0) return new Map()
-    try {
-      if (this.deps.linkedBoardItemsFor) return await this.deps.linkedBoardItemsFor(taskIds)
-      const ledger = taskLedger()
-      if (!ledger) return new Map()
-      return await ledger.boardItemIdsForTasks(taskIds)
-    } catch {
-      return new Map()
-    }
-  }
-
-  /** Grava o vínculo. Nunca lança: um vínculo perdido não é motivo para
-   *  derrubar a análise que já escreveu o cartão no quadro. */
-  private async linkTaskToBoardCard(taskId: string, boardItemId: string): Promise<void> {
-    try {
-      if (this.deps.linkTaskToBoardItem) {
-        await this.deps.linkTaskToBoardItem(taskId, boardItemId)
-        return
-      }
-      const ledger = taskLedger()
-      if (!ledger) return
-      await ledger.linkTaskToBoardItem({ taskId, boardItemId, linkedBy: 'po' })
-    } catch {
-      // O vínculo é conveniência, não fonte da verdade: falhar aqui não pode
-      // derrubar a auditoria que já promoveu o cartão.
-    }
-  }
-
-  /**
-   * Tenta vincular uma tarefa do registro ao cartão que ACABOU de entrar em
-   * andamento nesta mesma conversa.
-   *
-   * Critério deliberadamente conservador: só vincula quando sobra EXATAMENTE
-   * UMA candidata. Zero candidatas é "nada para vincular ainda"; mais de uma é
-   * "não dá para saber qual" — nos dois casos, não vincular é o correto, porque
-   * um vínculo errado é pior do que nenhum (o `critico` julgaria a tarefa
-   * errada pelo cartão errado).
-   *
-   * `promotedAt` é o instante em que ESTA análise decidiu promover o cartão —
-   * não existe, no que chega até aqui, um timestamp mais preciso do próprio
-   * evento de promoção (o quadro guarda o cartão, não o "quando" da escrita do
-   * PO). Usar o início da análise como aproximação é seguro na direção que
-   * importa: uma tarefa aberta antes deste turno nunca é candidata, mesmo que
-   * o registro e o quadro tenham relógios levemente diferentes.
-   */
-  private async linkLedgerTaskToCard(convId: string, boardItemId: string, promotedAt: number): Promise<void> {
-    try {
-      const tasks = await this.linkableLedgerTasks(convId)
-      const candidates = tasks.filter(
-        (task) =>
-          (task.status === 'running' || task.status === 'pending' || task.status === 'review') &&
-          Date.parse(task.createdAt) > promotedAt
-      )
-      if (candidates.length === 0) return
-      const linked = await this.linkedBoardItemsFor(candidates.map((task) => task.id))
-      const unlinked = candidates.filter((task) => !linked.has(task.id))
-      if (unlinked.length !== 1) return
-      await this.linkTaskToBoardCard(unlinked[0].id, boardItemId)
-    } catch {
-      // Best-effort: o vínculo nunca deve derrubar a auditoria do PO.
-    }
-  }
-
   private nextCorrelationId(): string {
     return this.deps.newCorrelationId?.() ?? `po-${Date.now().toString(36)}-${this.correlations++}`
-  }
-
-  private async runClaude(request: PoObserverRequest): Promise<ObserverAttempt> {
-    if (this.deps.runClaude) return this.deps.runClaude(request)
-    if (this.deps.ask) {
-      try {
-        return { provider: 'claude', state: 'completed', text: await this.deps.ask(request.prompt, request.model) }
-      } catch {
-        return { provider: 'claude', state: 'failed' }
-      }
-    }
-    return runObserverAttempt({
-      prompt: request.prompt,
-      model: request.model,
-      provider: 'claude',
-      cwd: request.cwd
-    })
-  }
-
-  private async runLuna(request: PoObserverRequest, onStarted: () => void): Promise<ObserverAttempt> {
-    if (this.deps.runLuna) return this.deps.runLuna(request, onStarted)
-    const runtime = await prepareGptRuntime(PO_LUNA_MODEL)
-    if (!runtime) return { provider: 'gpt-luna', state: 'not-started' }
-    onStarted()
-    return runObserverAttempt({
-      prompt: request.prompt,
-      model: PO_LUNA_MODEL,
-      provider: 'gpt-luna',
-      cwd: request.cwd,
-      env: runtime.env
-    })
-  }
-
-  private diagnostic(
-    request: PoObserverRequest,
-    phase: PoProviderDiagnostic['phase'],
-    actualProvider: 'claude' | 'gpt-luna',
-    fallbackReason?: SafeProviderReason,
-    appliedOps?: number
-  ): void {
-    this.deps.diagnose?.({
-      conversationId: request.conversationId,
-      correlationId: request.correlationId,
-      // A rodada sai do próprio pedido, e não de um parâmetro novo: assim NENHUM
-      // diagnóstico pode ser emitido sem ela. Sem isso o elenco mostra os dois
-      // ciclos do turno com a mesma frase, e o usuário vê o PO trabalhar duas
-      // vezes sem saber o que mudou entre elas.
-      round: request.phase,
-      phase,
-      requestedProvider: 'claude',
-      actualProvider,
-      ...(fallbackReason ? { fallbackReason } : {}),
-      ...(appliedOps === undefined ? {} : { appliedOps })
-    })
   }
 
   private async run(convId: string, phase: PoPhase, turn: PoTurnSnapshot, force = false): Promise<void> {
@@ -539,19 +303,25 @@ export class Po {
       // cartão nenhum para "fazendo" — e por fila SEPARADA por fase, porque a
       // abertura e o fechamento rodam em cadências diferentes; se dividissem
       // uma fila só, quem rodasse primeiro esvaziaria o que era da outra.
-      this.defer(conv, phase, turn)
-      this.armFlush(convId, phase, conv, now)
+      conv.deferred[phase] = defer(conv.deferred[phase], turn)
+      this.armFlush(convId, phase, conv, Math.max(0, PO_COOLDOWN_MS - (now - conv.lastRunAt[phase])))
       return
     }
     conv.lastRunAt[phase] = now
     // Esta análise já vai drenar a fila (real ou vazia) — um flush agendado
-    // para o mesmo motivo não tem mais o que fazer.
+    // para o mesmo motivo (cooldown ou retentativa) não tem mais o que fazer.
     conv.flushCancel[phase]?.()
     conv.flushCancel[phase] = null
+    // Um turno REAL rodando é a prova de que a conversa seguiu: a sequência de
+    // falhas anterior não é mais "seguida", e esta análise ganha o teto inteiro.
+    if (!force) conv.retries[phase] = 0
 
     // O acumulado sai da fila para entrar nesta análise, mas continua sendo
     // dela só enquanto ela andar: se não chegar ao fim, volta para a fila.
+    // `tookQueue` separa "retirou uma fila vazia" (`taken` null) de "saiu antes
+    // de retirar" — os dois devolvem o turno em lugares diferentes da fila.
     let taken: PoDeferred | null = null
+    let tookQueue = false
     let audited = false
     try {
       await this.deps.board.settled(convId)
@@ -569,15 +339,36 @@ export class Po {
 
       taken = conv.deferred[phase]
       conv.deferred[phase] = null
-      const merged = this.mergeDeferred(taken, turn)
-      const ledgerTasks = await this.listConvTasks(convId)
+      tookQueue = true
+      const merged = mergeDeferred(taken, turn)
+      const ledgerTasks = await listConvTasks(this.deps, convId)
+      const digestCards = cards.map((card) => ({
+        id: card.id,
+        title: card.poTitle ?? card.sourceTitle,
+        status: card.poStatus ?? card.sourceStatus
+      }))
+
+      // O gate do TypeSafe vê o MESMO material que o modelo veria (pedido
+      // mesclado, quadro, ações, registro) e roda antes de qualquer rota. Um
+      // "não" é uma decisão sobre esta evidência: ela foi julgada, não volta
+      // para a fila, e nada é escrito nem anunciado — o elenco não mostra uma
+      // auditoria que não aconteceu. `null` (sem chave, desligado, erro) é
+      // ausência de decisão, não "não": segue exatamente como sempre seguiu.
+      const worthIt = await askBoardGate(this.deps, {
+        phase,
+        userText: merged.userText,
+        cards: digestCards.map(({ title, status }) => ({ title, status })),
+        calls: merged.calls,
+        ledgerTasks
+      })
+      if (worthIt === false) {
+        audited = true
+        return
+      }
+
       const prompt = buildPoPrompt({
         userText: merged.userText,
-        cards: cards.map((card) => ({
-          id: card.id,
-          title: card.poTitle ?? card.sourceTitle,
-          status: card.poStatus ?? card.sourceStatus
-        })),
+        cards: digestCards,
         calls: [...merged.calls],
         phase,
         ledgerTasks
@@ -602,38 +393,23 @@ export class Po {
         correlationId: this.nextCorrelationId()
       })
 
-      this.diagnostic(request, 'claude-started', 'claude')
+      diagnostic(this.deps, request, 'claude-started', 'claude')
       // From here the audit has started, so it must also announce its END —
       // otherwise the crew panel would show the PO working forever on any of
       // the early returns below. `provider` follows whichever route ran.
       let provider: 'claude' | 'gpt-luna' = 'claude'
       let applied = 0
       try {
-        let attempt = await this.runClaude(request)
-        if (attempt.provider === 'claude' && attempt.state !== 'completed' && attempt.reason) {
-          const fallbackReason = attempt.reason
-          this.diagnostic(request, 'claude-unavailable', 'claude', fallbackReason)
-          this.diagnostic(request, 'po-provider-switch', 'gpt-luna', fallbackReason)
+        // Claude primeiro; a Luna só numa falha Claude elegível (poProviders.ts).
+        // A troca de rota é avisada ANTES da consulta à Luna, para o
+        // `audit-finished` abaixo sair com a rota certa até se a Luna lançar.
+        const text = await consultWithFailover(this.deps, request, () => {
           provider = 'gpt-luna'
-          let lunaStarted = false
-          attempt = await this.runLuna(request, () => {
-            lunaStarted = true
-            this.diagnostic(request, 'gpt-luna-started', 'gpt-luna', fallbackReason)
-          })
-          if (attempt.state !== 'completed') {
-            // Setup failure has no preceding Luna-started notice; a started Luna
-            // gets an error after its own failed attempt. Both are safe and transient.
-            this.diagnostic(request, 'gpt-luna-unavailable', 'gpt-luna', fallbackReason)
-            return
-          }
-          // Defensive: injected runners must announce their actual start before
-          // claiming a completed Luna response.
-          if (!lunaStarted) return
-        }
-        if (attempt.state !== 'completed') return
+        })
+        if (text === null) return
 
         const verdict = rejectUnsafeOps(
-          parsePoVerdict(attempt.text, cards.map((card) => card.id), phase),
+          parsePoVerdict(text, cards.map((card) => card.id), phase),
           cards,
           phase
         )
@@ -650,7 +426,7 @@ export class Po {
             // O cartão acabou de entrar em andamento: tenta achar a tarefa do
             // registro que é este mesmo trabalho, para o quadro e o registro
             // apontarem para a mesma coisa sem depender de o agente lembrar.
-            await this.linkLedgerTaskToCard(convId, op.id, now)
+            await linkLedgerTaskToCard(this.deps, convId, op.id, now)
           } else if (op.kind === 'retitle') {
             await this.deps.board.applyPo({ id: op.id, poTitle: op.title })
           } else {
@@ -662,7 +438,7 @@ export class Po {
               status: op.status,
               reason: op.reason
             })
-            if (created && op.status === 'in_progress') await this.linkLedgerTaskToCard(convId, created.id, now)
+            if (created && op.status === 'in_progress') await linkLedgerTaskToCard(this.deps, convId, created.id, now)
           }
           applied++
         }
@@ -670,28 +446,24 @@ export class Po {
         // julgado e escrito, e não volta.
         audited = true
       } finally {
-        this.diagnostic(request, 'audit-finished', provider, undefined, applied)
+        diagnostic(this.deps, request, 'audit-finished', provider, undefined, applied)
       }
     } catch {
       // The observer cannot take down the observed turn or write a partial board.
     } finally {
-      // O que volta para a fila não pode ser só `taken`: ele é o acumulado de
-      // ANTES desta análise começar, mas o `turn` que a disparou (o pedido e
-      // as ações que a fizeram rodar agora, fora do cooldown) também nunca
-      // passou pelo PO se ela não chegar ao fim. Antes desta correção, uma
-      // análise que falhasse SEM acumulado prévio (`taken` null — o caso mais
-      // comum: a primeira tentativa de um turno isolado) não devolvia nada
-      // para a fila, e a evidência daquele turno — inclusive a tarefa que
-      // acabou de terminar — desaparecia para sempre, sem outra chance de
-      // auditoria. Juntar os dois aqui, na ordem cronológica certa (o que já
-      // estava esperando primeiro, o turno de agora depois), é o que faz
-      // `restoreDeferred` (que só soma ao que se acumulou DURANTE a análise)
-      // devolver o turno inteiro, não só a metade que já estava na fila.
-      if (!audited) {
-        this.restoreDeferred(conv, phase, {
-          texts: [...(taken?.texts ?? []), turn.userText],
-          calls: [...(taken?.calls ?? []), ...turn.calls]
-        })
+      if (audited) {
+        conv.retries[phase] = 0
+      } else {
+        // Nem o acumulado nem o turno que disparou esta análise passaram pelo
+        // PO: os dois voltam para a fila, na ordem cronológica (ver
+        // `restoreTaken` e `requeueTurn`, em poQueue.ts, para o porquê de cada
+        // caso). E voltar para a fila não basta: sem retentativa, a evidência
+        // só seria julgada no PRÓXIMO turno — que o turno que encerrou a
+        // conversa nunca tem.
+        conv.deferred[phase] = tookQueue
+          ? restoreTaken(conv.deferred[phase], taken, turn)
+          : requeueTurn(conv.deferred[phase], turn)
+        this.armRetry(convId, phase, conv)
       }
     }
   }

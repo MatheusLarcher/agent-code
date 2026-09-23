@@ -29,6 +29,7 @@ import {
   OPENAI_MODELS,
   MODEL_EFFORT,
   DEFAULT_EFFORT,
+  PLANNING_MODELS,
   usageProviderOf
 } from '@shared/ipc'
 import type { AutoPrompt, AutoPromptTurn, EffortLevel, ProjectTree } from '@shared/ipc'
@@ -91,6 +92,7 @@ import { RemoteModal } from './ui/RemoteModal'
 import { SettingsModal } from './ui/SettingsModal'
 import { ipcErrorMessage } from './ipcError'
 import { PlanningWorkspace } from './planning/PlanningWorkspace'
+import { usePlanningModel } from './planning/usePlanningModel'
 import { NewPlanningDialog } from './planning/NewPlanningDialog'
 import { HandoffButton } from './planning/HandoffDialog'
 import { handoffOutcome, launchHandoff, type HandoffSendOutcome } from './planning/handoffFlow'
@@ -109,12 +111,13 @@ export type { UserMessage, UIMessage } from './types'
  *  CLAUDE_MODELS there. */
 const MODELS: ReadonlyArray<{ id: string; label: string }> = CLAUDE_MODELS
 
-/** Labels for models no longer offered in the selector (Opus 4.8 was retired from
- *  the list when Opus 5 shipped). Old conversations keep running on whatever model
+/** Labels for models no longer offered in the selector (Opus 5 was retired from
+ *  the list when Opus 5.5 shipped). Old conversations keep running on whatever model
  *  they were created with, so the picker still has to be able to SHOW that model —
  *  otherwise the <select> falls back to its first option and the UI would claim a
  *  model the session isn't actually using. See modelsFor. */
 const LEGACY_MODEL_LABELS: Record<string, string> = {
+  'claude-opus-5': 'Opus 5 (antigo)',
   'claude-opus-4-8': 'Opus 4.8 (antigo)',
   'claude-opus-4-7': 'Opus 4.7 (antigo)',
   'claude-opus-4-6': 'Opus 4.6 (antigo)',
@@ -1910,6 +1913,21 @@ export function App(): JSX.Element {
   //   turn-succeeded handler applies it at the next queue handoff — the
   //   in-flight message finishes on the old model, the next queued one (or the
   //   next one you type) opens on the new one.
+  // `what` é o começo do aviso ("Modelo trocado"); `value`, o que entra.
+  const restartForSessionConfig = useCallback(
+    (id: string, what: string, value: string): void => {
+      if (!connectedRef.current.has(id)) return
+      if (busyRef.current.has(id)) {
+        pendingSessionConfigRef.current = withId(pendingSessionConfigRef.current, id)
+        notify('sucesso', `${what} — entra a partir da próxima mensagem da fila: ${value}.`)
+      } else {
+        void stopSession(id, { silent: true })
+        notify('sucesso', `${what} para a próxima mensagem: ${value}.`)
+      }
+    },
+    [stopSession, notify]
+  )
+
   const changeModel = useCallback(
     (id: string, model: string): void => {
       // When switching models, reset effort to the default if the new model
@@ -1922,32 +1940,37 @@ export function App(): JSX.Element {
         const fastMode = c.fastMode === true && modelSupportsFastMode(model)
         return { ...c, model, effort, fastMode }
       })
-      if (!connectedRef.current.has(id)) return
-      if (busyRef.current.has(id)) {
-        pendingSessionConfigRef.current = withId(pendingSessionConfigRef.current, id)
-        notify('sucesso', `Modelo trocado — entra a partir da próxima mensagem da fila: ${model}.`)
-      } else {
-        void stopSession(id, { silent: true })
-        notify('sucesso', `Modelo trocado para a próxima mensagem: ${model}.`)
-      }
+      restartForSessionConfig(id, 'Modelo trocado', model)
     },
-    [patchConv, stopSession, notify]
+    [patchConv, restartForSessionConfig]
   )
 
   // Effort selector — same deferred-while-busy logic as the model picker.
   const changeEffort = useCallback(
     (id: string, effort: string): void => {
       patchConv(id, (c) => ({ ...c, effort }))
-      if (!connectedRef.current.has(id)) return
-      if (busyRef.current.has(id)) {
-        pendingSessionConfigRef.current = withId(pendingSessionConfigRef.current, id)
-        notify('sucesso', `Esforço trocado — entra a partir da próxima mensagem da fila: ${effort}.`)
-      } else {
-        void stopSession(id, { silent: true })
-        notify('sucesso', `Esforço trocado para a próxima mensagem: ${effort}.`)
-      }
+      restartForSessionConfig(id, 'Esforço trocado', effort)
     },
-    [patchConv, stopSession, notify]
+    [patchConv, restartForSessionConfig]
+  )
+
+  // Planejamento: o seletor do chat edita o modelo/esforço do Agent Manager
+  // (config global), não os da conversa. O main o lê quando a sessão sobe, então
+  // a troca reinicia a sessão do mesmo jeito que na conversa comum.
+  const planningModel = usePlanningModel()
+  const changeManagerModel = useCallback(
+    (id: string, model: string): void => {
+      planningModel.setModel(model)
+      restartForSessionConfig(id, 'Modelo do Agent Manager trocado', model)
+    },
+    [planningModel, restartForSessionConfig]
+  )
+  const changeManagerEffort = useCallback(
+    (id: string, effort: EffortLevel): void => {
+      planningModel.setEffort(effort)
+      restartForSessionConfig(id, 'Esforço do Agent Manager trocado', effort)
+    },
+    [planningModel, restartForSessionConfig]
   )
 
   // onEvent (defined earlier in this component) reaches connect()/stopSession()
@@ -3083,17 +3106,28 @@ export function App(): JSX.Element {
       voiceReady={voiceReady}
       onNeedVoiceKey={needVoiceKey}
       tts={tts}
-      models={modelsFor(models, active?.model)}
-      model={active?.model ?? MODELS[0].id}
+      // Planejamento: o seletor edita o modelo/esforço do Agent Manager
+      // (config global, lida pelo main quando a sessão sobe), não os da conversa.
+      models={activePlanning ? [...PLANNING_MODELS] : modelsFor(models, active?.model)}
+      model={activePlanning ? planningModel.config.model : (active?.model ?? MODELS[0].id)}
       // O seletor mostra a escolha (o sentinel `auto` incluso); a barra de
       // contexto precisa do modelo concreto do turno — o mesmo que o
       // snapshot do celular já usa logo acima.
       runningModel={active ? runningModel(active) : MODELS[0].id}
-      // Planejamento: o modelo do Agent Manager é decidido no main.
-      hideModelControls={!!activePlanning}
+      // A sessão do Manager sobe sem Econômico e Loop.
+      hideSessionToggles={!!activePlanning}
       modelLocked={!active}
       onModelChange={(m) => {
         if (!active) return
+        if (activePlanning) {
+          // Sem TypeSafe, o Automático do Manager ainda funciona (recuo para
+          // Sonnet 5, médio) — só avisa, em vez de recusar.
+          if (isAutoModel(m) && !typesafeReady) {
+            notify('aviso', 'Sem o TypeSafe ligado, o Automático do Agent Manager usa Sonnet 5 (esforço médio).')
+          }
+          changeManagerModel(active.id, m)
+          return
+        }
         // "Automático" sem TypeSafe configurado não troca de modelo — pede a
         // key nas Configurações e mantém o que já estava selecionado.
         if (isAutoModel(m) && !typesafeReady) {
@@ -3103,16 +3137,20 @@ export function App(): JSX.Element {
         changeModel(active.id, m)
       }}
       onModelLockedClick={() => notify('aviso', 'Selecione uma conversa para trocar o modelo.')}
-      effortLevels={effortLevelsFor(active?.model)}
-      effort={active?.effort ?? DEFAULT_EFFORT}
+      effortLevels={effortLevelsFor(activePlanning ? planningModel.config.model : active?.model)}
+      effort={activePlanning ? planningModel.config.effort : (active?.effort ?? DEFAULT_EFFORT)}
       effortLocked={!active}
-      onEffortChange={(e) => active && changeEffort(active.id, e)}
+      onEffortChange={(e) => {
+        if (!active) return
+        if (activePlanning) changeManagerEffort(active.id, e as EffortLevel)
+        else changeEffort(active.id, e)
+      }}
       economyMode={active?.economyMode === true}
       onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
       loopEnabled={active?.loopEnabled === true}
       loopLocked={active?.economyMode === true}
       onLoopEnabledChange={(on) => active && changeLoopEnabled(active.id, on)}
-      fastModeAvailable={!!active && modelSupportsFastMode(active.model)}
+      fastModeAvailable={!!active && !activePlanning && modelSupportsFastMode(active.model)}
       fastMode={active?.fastMode === true}
       onFastModeChange={(on) => active && changeFastMode(active.id, on)}
       pendingQuestion={!!activePermission?.questions && questionMinimized}

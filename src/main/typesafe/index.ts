@@ -73,6 +73,15 @@ export {
   type MemoryGateInput
 } from './memoryGate'
 export {
+  boardGateActive,
+  buildBoardGateState,
+  shouldRunPo,
+  BOARD_GATE_CLOSE_QUESTION,
+  BOARD_GATE_MAX_STATE_CHARS,
+  BOARD_GATE_OPEN_QUESTION,
+  type BoardGateInput
+} from './boardGate'
+export {
   flushTypeSafeUsage,
   recordTypeSafeUsage,
   typeSafeUsage,

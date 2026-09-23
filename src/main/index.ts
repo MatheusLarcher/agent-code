@@ -43,7 +43,7 @@ import { isAuthenticated, logoutClaude } from './auth'
 import { runClaudeLogin } from './login'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin, isCodexConnected } from './codexAuth'
 import { onCodexRateLimit } from './codexProxy'
-import { appendFileSync, existsSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir } from './store'
 import { storageLifecycle } from './persistence/lifecycle'
 import { ConversationLeaseKeeper } from './persistence/leaseKeeper'
@@ -65,6 +65,7 @@ import {
   preserveProjectIdentityForMissingPersistedWrite
 } from './persistence/projectIdentity'
 import { dailyParquetPath, exportConversationsParquet } from './conversationParquet'
+import { relocateLocalLeftovers, type LeftoverRelocation } from './localLeftovers'
 import { storageErrorForIpc, upsertConversationWithLeaseRecovery } from './persistence/conversationWriteRecovery'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
@@ -821,14 +822,21 @@ function bootStage<T>(name: string, run: () => Promise<T>): Promise<T> {
   )
 }
 
-// TEMP login diagnostics → auth-debug.log in the cache folder (removed once the
-// OAuth flow is confirmed end-to-end).
+// TEMP login diagnostics → logs/auth-debug.log in the local (non-synced) root
+// (removed once the OAuth flow is confirmed end-to-end).
 function authLog(line: string): void {
   try {
-    appendFileSync(join(getCacheInfo().dir, 'auth-debug.log'), `[${new Date().toISOString()}] ${line}\n`)
+    const logsDir = join(getCacheInfo().localDir, 'logs')
+    mkdirSync(logsDir, { recursive: true })
+    appendFileSync(join(logsDir, 'auth-debug.log'), `[${new Date().toISOString()}] ${line}\n`)
   } catch {
     /* best-effort */
   }
+}
+
+function logLeftoverRelocation({ moved, failed }: LeftoverRelocation): void {
+  if (moved.length) console.log(`[storage] movido da pasta sincronizada para a local: ${moved.join(', ')}`)
+  if (failed.length) console.warn(`[storage] ficou na pasta sincronizada (nova tentativa na próxima abertura): ${failed.join(', ')}`)
 }
 
 // Exportado só para main/index.test.ts invocar isoladamente sem passar por
@@ -940,7 +948,7 @@ export function registerIpc(): void {
     // call — the API needs a file, but nothing here should outlive this request.
     let tempFile: string | null = null
     try {
-      tempFile = await writeTempAudioSegment(join(getCacheInfo().dir, 'tmp-audio'), audioBase64, mimeType)
+      tempFile = await writeTempAudioSegment(join(getCacheInfo().localDir, 'tmp-audio'), audioBase64, mimeType)
       const text = await transcribeAudio(apiKey, audioBase64, mimeType)
       return { ok: true, text }
     } catch (err) {
@@ -1022,6 +1030,7 @@ export function registerIpc(): void {
     }
     const skillSync = syncCacheSkills(app.getAppPath(), info.dir)
     for (const error of skillSync.errors) console.error(`[skills] ${error}`)
+    void relocateLocalLeftovers(info.dir, info.localDir).then(logLeftoverRelocation)
     const enabled = loadConfig().windowsControlEnabled === true
     windowsControl.setEnabled(enabled)
     send(Channels.windowsControlChanged, enabled)
@@ -1471,8 +1480,8 @@ export function registerIpc(): void {
       // O fechamento que o `board.observe` acabou de enfileirar espera pelo
       // `po.settled`, e quem registra a análise em voo é a chamada abaixo. O que
       // garante essa ordem não é a posição das linhas aqui: `Po.start`
-      // (po.ts:165) põe a análise no conjunto de forma SÍNCRONA, ainda neste
-      // tick, enquanto `closeTurn` (boardService.ts:170) só encadeia uma closure
+      // (po/po.ts) põe a análise no conjunto de forma SÍNCRONA, ainda neste
+      // tick, enquanto `closeTurn` (board/boardService.ts) só encadeia uma closure
       // — o `waitForPo` de dentro dela roda num microtask posterior, quando o
       // registro já aconteceu nas duas ordens possíveis. Trocar estas duas
       // linhas de lugar não muda nada; o que quebraria a garantia é registrar a
@@ -1726,6 +1735,10 @@ app.whenReady().then(async () => {
   // unidade que o usuário move e faz backup (banco + memórias). Em userData,
   // migrar a pasta levaria a chave e deixaria as senhas para trás.
   configureSecretVault({ directory: join(cacheInfo.dir, 'vault') })
+  // Cache/log/backup de versões antigas ainda na pasta sincronizada vão para a
+  // raiz local. Em segundo plano (pode ser 1 GB entre volumes); quem usa essas
+  // pastas espera por `localLeftoversSettled()`.
+  void relocateLocalLeftovers(cacheInfo.dir, cacheInfo.localDir).then(logLeftoverRelocation)
   // Publica "algum agente ocupado?" em disco para o relançador externo
   // (scripts/relaunch-agent-code.ps1). Vem ANTES de inicializar o armazenamento
   // de propósito: ocupação é sobre conversas, não sobre banco. Se a inicialização
@@ -1827,11 +1840,13 @@ app.whenReady().then(async () => {
   // remoto isso são dezenas de MB pela internet, e rodava a cada abertura do
   // app mesmo com o arquivo de hoje já gravado. Agora só baixa quando há
   // export a fazer, e nunca na frente da janela: `void`, não `await`.
-  if (storageAvailable && !existsSync(dailyParquetPath(cacheInfo.dir))) {
+  // Na raiz local: é um snapshot inteiro (dezenas de MB) por dia, não algo para
+  // a pasta sincronizada.
+  if (storageAvailable && !existsSync(dailyParquetPath(cacheInfo.localDir))) {
     parquetExportPromise = (async () => {
       const exportSnapshot = await storageLifecycle.repository().readExportSnapshot()
       return exportConversationsParquet(
-        cacheInfo.dir,
+        cacheInfo.localDir,
         exportSnapshot.conversations,
         cacheInfo.memoriesDir,
         { backend: exportSnapshot.backend, watermark: exportSnapshot.watermark }

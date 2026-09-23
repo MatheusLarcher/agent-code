@@ -31,7 +31,7 @@ describe('conversation storage normalization', () => {
       id: 'legacy-partial',
       title: 'Sessão recuperada',
       cwd: '',
-      model: 'claude-opus-5',
+      model: 'claude-opus-5-5',
       sdkSessionId: null,
       messages: [],
       tokens: { context: 0, output: 0, cost: 0 },

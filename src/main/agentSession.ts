@@ -13,6 +13,7 @@ import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsCo
 import { windowsControl } from './windowsControl/service'
 import { loadConfig } from './config'
 import { getCacheInfo } from './store'
+import { localLeftoversSettled } from './localLeftovers'
 import { memoryWriteDenial } from './memory/memoryPaths'
 import { createMemoryMcpServer } from './memory/memoryTools'
 import { createTaskMcpServer } from './tasks/taskTools'
@@ -407,10 +408,12 @@ const CLI_CONFIG_CARRY_OVER = ['CLAUDE.md', 'settings.json']
  * as instruções globais e as configurações continuarem valendo — some a
  * credencial, não o resto. Melhor esforço: nada aqui pode derrubar um turno.
  */
-export function cliConfigDirWithoutStoredLogin(cacheDir: string): string | undefined {
+export function cliConfigDirWithoutStoredLogin(localDir: string): string | undefined {
   try {
     const source = process.env['CLAUDE_CONFIG_DIR']?.trim() || join(homedir(), '.claude')
-    const target = join(cacheDir, 'cli-config-sem-login')
+    // Raiz local, não a pasta sincronizada: o CLI grava aqui transcrições,
+    // plugins e telemetria a cada turno.
+    const target = join(localDir, 'cli-config-sem-login')
     mkdirSync(target, { recursive: true })
     for (const name of CLI_CONFIG_CARRY_OVER) {
       const from = join(source, name)
@@ -445,7 +448,8 @@ export async function prepareGptRuntime(
 ): Promise<GptObserverRuntime | null> {
   if (!isOpenAIModel(model) || !isCodexConnected()) return null
   const cacheInfo = getCacheInfo()
-  const foreignCliConfigDir = cliConfigDirWithoutStoredLogin(cacheInfo.dir)
+  await localLeftoversSettled()
+  const foreignCliConfigDir = cliConfigDirWithoutStoredLogin(cacheInfo.localDir)
   // A foreign backend must never inherit the process-level Claude root: that
   // root can contain an OAuth/API credential the CLI gives precedence to.
   if (!foreignCliConfigDir) return null
@@ -993,7 +997,8 @@ export class AgentSession {
     }
     // A rota Ollama precisa do mesmo isolamento. A rota GPT prepara esse
     // diretório dentro de `prepareGptRuntime`, compartilhada pelo PO Luna.
-    const foreignCliConfigDir = ollamaOn ? cliConfigDirWithoutStoredLogin(cacheInfo.dir) : undefined
+    if (ollamaOn) await localLeftoversSettled()
+    const foreignCliConfigDir = ollamaOn ? cliConfigDirWithoutStoredLogin(cacheInfo.localDir) : undefined
 
     let openaiEnv: typeof process.env | undefined
     if (openaiOn) {

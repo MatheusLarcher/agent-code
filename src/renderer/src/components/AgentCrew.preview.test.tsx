@@ -110,7 +110,7 @@ const CREW: CrewMember[] = [
     state: 'idle',
     line: [{ kind: 'text', text: 'auditou no fim do turno · 2 cartões corrigidos' }],
     endedAt: s(60),
-    badge: { text: 'gpt-5.6-luna', tone: 'ok' },
+    badge: { text: 'gpt-6-luna', tone: 'ok' },
     group: 'observadores'
   }
 ]

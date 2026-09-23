@@ -68,7 +68,9 @@ O app faz o **login do Claude com um clique**: ao clicar em **Conectar** sem um 
 - **Login** (`src/main/login.ts`) — `runClaudeLogin(openUrl, log)` faz `spawn` de `claude auth login --claudeai` (`stdin: 'ignore'` para o CLI ver uma sessão não-interativa e usar o callback de loopback em vez de pedir para colar o código). Conforme o CLI imprime no stdout/stderr, `scan()` **raspa a primeira URL de OAuth** (filtra por `claude.ai`/`anthropic.com`/`/oauth`/`authorize`) e a abre no **navegador do sistema** via `openUrl` (garante a abertura mesmo se o auto-open do CLI não disparar). A conclusão é confirmada por **`auth status`** (não por esperar o CLI sair, que pode ficar travado esperando `[Enter]` que não podemos enviar): há um poll de backstop a cada 2,5 s, confirmação ao ver `"Login successful"`, no `exit` do processo e um timeout de 3 min. Um único login roda por vez — `inFlight` faz cliques concorrentes (ou várias conversas conectando juntas) **compartilharem** a mesma tentativa em vez de gerar vários processos `auth login`.
 - **IPC** — `auth:status` → `{ authenticated }`; `auth:login` → `{ ok }` (passa `shell.openExternal` como `openUrl`). No `src/renderer/src/App.tsx`, o `connect()` faz o **gate**: chama `authStatus()` e, se não logado, mostra um toast "abrindo o login… é só autenticar", chama `authLogin()` e, no sucesso, toast "Login concluído!" antes de chamar `startAgent`; se falhar, toast de erro e aborta o connect (lança para o caminho de envio não prosseguir).
 
-> Diagnóstico temporário: `index.ts` ainda mantém um `authLog()` que grava `auth-debug.log` na pasta de cache — é só instrumentação do fluxo de OAuth, não uma feature permanente.
+> Diagnóstico temporário: `index.ts` ainda mantém um `authLog()` que grava `logs/auth-debug.log` na raiz local (`userData/agent-code-local`) — é só instrumentação do fluxo de OAuth, não uma feature permanente.
+
+> **Pasta de dados × raiz local.** A pasta escolhida em Configurações (muitas vezes no OneDrive) guarda só o que é permanente e muda pouco: `memories/`, `skills/`, `vault/` e `native/`. Tudo que muda com frequência mora na raiz local `userData/agent-code-local` (`CacheInfo.localDir`): o SQLite, `logs/`, `tmp-audio/`, `cli-config-sem-login/` (sessões GPT/Ollama), `memorias-longo-praso/` (parquet diário) e `migration-manifests/` (backups de troca de banco). No boot, `relocateLocalLeftovers()` (`localLeftovers.ts`) move em segundo plano o que versões antigas deixaram na pasta sincronizada, sem sobrescrever o que já existe no destino; as sessões GPT/Ollama esperam por `localLeftoversSettled()` antes de abrir o diretório do CLI.
 
 ---
 
@@ -414,10 +416,19 @@ O que ela deliberadamente **não** faz, e o porquê:
 - **`declared` atravessa turnos.** O plano da conversa é reaproveitado e atualizado; exigir
   declaração nova a cada mensagem transformaria a trava em ruído.
 
-### 3. O PO (`po/po.ts`, `po/poPrompt.ts`)
+### 3. O PO (`po/`, `typesafe/boardGate.ts`)
 
 Sobra um buraco que nem a trava nem o snapshot alcançam: **o agente fez e esqueceu de marcar**.
 Isso não tem momento fixo para travar — só dá para auditar depois.
+
+**Divisão em arquivos.** `po/po.ts` é a orquestração (a classe `Po`: as duas rodadas, cooldown,
+fila por fase, flush, retentativa e a escrita no quadro) e continua sendo a API pública — quem
+importa de `./po` não precisa saber como ele foi dividido. Em volta dela: `po/poPrompt.ts` (regras
+puras: prompts das duas fases, digest, parser e barreiras, e as constantes de cadência),
+`po/poQueue.ts` (funções **puras** da fila adiada — recebem a fila e devolvem a nova; quem grava é
+o `Po`), `po/poLedger.ts` (a ponte, tolerante a falha, com o registro de tarefas) e
+`po/poProviders.ts` (Claude → Luna, os diagnósticos do elenco e a pergunta ao gate). O gate em si
+mora em `typesafe/boardGate.ts`, porque o SDK do TypeSafe fica contido naquela pasta.
 
 O PO é irmão do vigia, no mesmo molde e pelos mesmos motivos: `query()` avulso com `tools: []` e
 `maxTurns: 1`, modelo barato configurável (`board.po.model`, default `claude-sonnet-5`), digest
@@ -447,6 +458,52 @@ cooldown do fechamento pulou não se perde: pedido e ações entram no digest da
 daquela conversa, dentro dos mesmos tetos, e voltam para a fila se a análise que os levou não
 chegar ao fim — um pedido que nunca passou pelo PO é exatamente o buraco que ele existe para
 fechar.
+
+**O filtro TypeSafe (`typesafe/boardGate.ts`) decide se a rodada vale o modelo.** Boa parte das
+rodadas termina em "OK, nada a mudar" — a pergunta que não vira cartão, o "valeu" do fim da
+conversa —, e cada uma delas custava uma consulta ao modelo do PO. Antes de qualquer rota, o PO
+faz ao Jev uma pergunta `noul` barata (~100 ms), com pergunta e critérios **próprios de cada
+fase**: na abertura, *o pedido é trabalho que deve aparecer no quadro (começa ou retoma uma
+tarefa)?* — "não" para pergunta, opinião, agradecimento, pedido de status ou conversa; no
+fechamento, *o turno mudou o estado de algum trabalho, ou há cartão com status errado diante das
+ações e das tarefas do registro?* — "não" só para turno de conversa sem trabalho nenhum. O gate
+roda **depois** de montar o material do digest (quadro, tarefas do registro, turno mesclado com a
+fila) — ele julga a mesma evidência que o modelo julgaria — e **antes** do diagnóstico
+`claude-started`. O corte é `P(sim) >= typesafe.minConfidence`, e o `state` tem teto por campo (a
+conta do pior caso, 23,2 mil caracteres contra o limite de 32k tokens do Jev, está no módulo).
+
+- **"Não"** é uma decisão: não chama Claude nem Luna, não escreve no quadro, não emite diagnóstico
+  (o elenco não mostra uma auditoria que não aconteceu) e **conta como auditado** — o acumulado
+  que ela retirou não volta para a fila.
+- **`null`** — recurso desligado, sem chave, timeout, erro, gate lançando — é **ausência de
+  decisão, não "não"**: o PO segue exatamente como seguia antes do gate existir. Uma falha no
+  TypeSafe não pode virar "o quadro parou de ser auditado". É também o que acontece nos testes do
+  PO que não injetam gate: sem configuração, o TypeSafe fica inativo e nada muda.
+
+**Análise que falha agenda a própria retentativa.** Quando uma análise que já passou do cooldown
+termina sem auditar (modelo fora, Luna indisponível, quadro ilegível, sem identidade de projeto,
+exceção), a evidência voltava para a fila — e ficava lá até o **próximo turno**. O turno que
+encerra a conversa não tem próximo: a tarefa que ele terminou ficava "em andamento" no quadro até
+alguém voltar a falar. Agora a falha também agenda uma análise forçada com turno vazio, daqui a
+`PO_RETRY_DELAY_MS` (60 s, o mesmo intervalo do cooldown — a retentativa nunca consulta o modelo
+mais do que um turno real consultaria), pelo **mesmo** mecanismo do flush do cooldown
+(`scheduleFlush`/`flushCancel[fase]`): um temporizador só por fase, que o `dispose` continua
+cancelando antes de fazer a última chance. No máximo `PO_MAX_RETRIES` (2) retentativas seguidas
+por fase — uma falha que dura (chave revogada, quadro fora do ar) não pode virar uma consulta por
+minuto para sempre; esgotado o teto, a evidência fica na fila para o próximo turno ou para o
+`dispose`, como antes. O contador zera numa auditoria que chega ao fim (inclusive o "não" do gate)
+e quando um turno **real** dispara a análise. Uma conversa descartada ou recriada durante a
+análise não recebe temporizador nenhum: não há "depois" para ela. E a volta para a fila respeita a
+ordem cronológica também quando a análise sai **antes** de retirar a fila (quadro indisponível):
+o turno de agora vai para o **fim**, depois do acumulado antigo — antes ele entrava na frente, e
+com a retentativa esse caminho deixou de ser raro.
+
+**Por que não existe revisão periódica (a cada 10 min).** Abertura e fechamento já cobrem o fluxo
+normal: todo pedido e todo fim de turno passam pelo PO, e o cooldown não perde nada porque a fila
+e o flush carregam o que ele adiou. O buraco real era outro — a análise que **falhava** e deixava
+a evidência parada sem ninguém para julgá-la —, e esse a retentativa fecha com precisão, só quando
+há o que julgar. Um temporizador fixo gastaria modelo em conversas paradas, sem evidência nova,
+para achar o que as duas rodadas já acham.
 
 **Ele não é o autor do quadro, e a separação é física.** As duas camadas vivem em colunas
 diferentes: `source_*` (o que o agente declarou, escrito só pela ingestão) e `po_*` (o que o PO
@@ -1008,7 +1065,7 @@ Além do Claude (Opus/Sonnet/Haiku), o app pode rodar **modelos do Ollama Cloud*
 
 Como o campo `env` do SDK **substitui** todo o ambiente do subprocesso (não faz merge), espalhamos `...process.env` antes. Se um modelo Ollama for escolhido sem key configurada, a sessão emite um erro amigável e não inicia.
 
-**A quarta variável, e por que ela é obrigatória** (`cliConfigDirWithoutStoredLogin`, vale para Ollama **e** GPT) — esvaziar `ANTHROPIC_API_KEY` não basta, porque o **login do claude.ai não vem de variável de ambiente: vem do disco** (`~/.claude/.credentials.json`). Com o usuário logado no Claude, o CLI ignorava o `ANTHROPIC_AUTH_TOKEN` que passamos e mandava o `sk-ant-…` dele para o backend de fora. No proxy do Codex isso virava **401 em looping infinito**: o CLI reentrava para sempre, o turno nunca terminava, e a tela ficava "trabalhando" sem resposta e **sem erro** — o sintoma era "o app não responde", não "o login está errado". Por isso a sessão de backend externo recebe `CLAUDE_CONFIG_DIR` apontando para `<cacheDir>/cli-config-sem-login`, um diretório onde não existe credencial nenhuma; aí o CLI usa o token que passamos. O diretório é **semeado** com o `CLAUDE.md` e o `settings.json` do usuário (`CLI_CONFIG_CARRY_OVER`), copiados só quando mudam: some a credencial, não as instruções globais nem as configurações. Falha ao preparar o diretório degrada em silêncio (aviso no log) — derrubar o turno seria pior.
+**A quarta variável, e por que ela é obrigatória** (`cliConfigDirWithoutStoredLogin`, vale para Ollama **e** GPT) — esvaziar `ANTHROPIC_API_KEY` não basta, porque o **login do claude.ai não vem de variável de ambiente: vem do disco** (`~/.claude/.credentials.json`). Com o usuário logado no Claude, o CLI ignorava o `ANTHROPIC_AUTH_TOKEN` que passamos e mandava o `sk-ant-…` dele para o backend de fora. No proxy do Codex isso virava **401 em looping infinito**: o CLI reentrava para sempre, o turno nunca terminava, e a tela ficava "trabalhando" sem resposta e **sem erro** — o sintoma era "o app não responde", não "o login está errado". Por isso a sessão de backend externo recebe `CLAUDE_CONFIG_DIR` apontando para `<localDir>/cli-config-sem-login` (raiz local, fora da pasta sincronizada: o CLI grava transcrições ali a cada turno), um diretório onde não existe credencial nenhuma; aí o CLI usa o token que passamos. O diretório é **semeado** com o `CLAUDE.md` e o `settings.json` do usuário (`CLI_CONFIG_CARRY_OVER`), copiados só quando mudam: some a credencial, não as instruções globais nem as configurações. Falha ao preparar o diretório degrada em silêncio (aviso no log) — derrubar o turno seria pior.
 
 **UI** — a `SettingsModal.tsx` tem a seção **"🦙 Ollama Cloud"** (ativar + API key, mostrar/ocultar). Quando ativa **com key** (`ollamaReady` no `App.tsx`), os `OLLAMA_MODELS` são concatenados aos `MODELS` do Claude no **seletor de modelo** (acima do composer). O **gate de login do Claude** no `connect()` é **pulado** para modelos Ollama (`isOllamaModel`), já que a autenticação é a API key — não o OAuth da Anthropic.
 
@@ -1016,13 +1073,13 @@ Como o campo `env` do SDK **substitui** todo o ambiente do subprocesso (não faz
 
 ## GPT via assinatura ChatGPT (OAuth Codex)
 
-Os modelos GPT-5.6 Luna/Terra/Sol usam o **mesmo `AgentSession`, o mesmo `query()` do Claude Agent SDK e o mesmo harness do Claude Code**. O login é OAuth da conta ChatGPT; não há API key nem chamada à API faturada por chave. Para uma sessão GPT, `agentSession.ts` muda apenas o ambiente do subprocesso: `ANTHROPIC_BASE_URL` aponta para um proxy HTTP local em loopback, `ANTHROPIC_AUTH_TOKEN` recebe um segredo efêmero e `CLAUDE_CONFIG_DIR` desvia o CLI para um diretório sem credencial guardada (sem isso o login do claude.ai vence o segredo e o proxy responde 401 para sempre — ver a seção do Ollama). `systemPrompt: claude_code`, MCPs, `settingSources` e `canUseTool` continuam idênticos aos do Claude.
+Os modelos GPT-6 Luna/Sol/Astra usam o **mesmo `AgentSession`, o mesmo `query()` do Claude Agent SDK e o mesmo harness do Claude Code**. O login é OAuth da conta ChatGPT; não há API key nem chamada à API faturada por chave. Para uma sessão GPT, `agentSession.ts` muda apenas o ambiente do subprocesso: `ANTHROPIC_BASE_URL` aponta para um proxy HTTP local em loopback, `ANTHROPIC_AUTH_TOKEN` recebe um segredo efêmero e `CLAUDE_CONFIG_DIR` desvia o CLI para um diretório sem credencial guardada (sem isso o login do claude.ai vence o segredo e o proxy responde 401 para sempre — ver a seção do Ollama). `systemPrompt: claude_code`, MCPs, `settingSources` e `canUseTool` continuam idênticos aos do Claude.
 
 O proxy **não executa ferramentas**. `codexProtocol.ts` traduz definições Anthropic (`name`, `description`, `input_schema`) para functions da Responses API; converte o histórico `tool_use`/`tool_result` em `function_call`/`function_call_output`; preserva ids, imagens de entrada e imagens devolvidas por screenshots, esforço e limite de saída. `codexStream.ts` faz o caminho inverso no SSE, inclusive chamadas paralelas, recusas e deltas JSON. Ao receber `tool_use`, o próprio Claude Code pede permissão, executa `Read`/`Write`/`Bash`/MCP ou cria um filho com `Agent`, adiciona o `tool_result` ao histórico e chama o modelo novamente até a resposta final. Assim IPC, cards, trilhas de subagentes e permissões não têm um segundo fluxo específico para OpenAI.
 
 **Loop por conversa** — o toggle **Loop** fica ao lado de **Econômico** e persiste como `Conversation.loopEnabled` no SQLite por projeto. Os dois modos são mutuamente exclusivos: Econômico ligado desativa Loop e encerra a sessão viva para matar qualquer `ScheduleWakeup` em memória; desligar Loop faz o mesmo. O `AgentSession` só autoriza a skill `loop` e `ScheduleWakeup` quando o toggle estava ligado no início da sessão, rejeita campos fora do schema (incluindo o `noop` já emitido por GPT), bloqueia wakeup usado apenas para esperar subagente e conta no máximo 100 continuações por padrão. Um limite maior só é extraído quando o prompt o liga explicitamente a vezes/ciclos/iterações (teto técnico 10.000); números incidentais como portas e datas não alteram o orçamento. Em cada iteração o system prompt exige verificar primeiro a condição do usuário e usar `stop: true` ao concluí-la. Uma iteração que termina sem novo wakeup também fecha o estado local do loop. Como os jobs dinâmicos são session-scoped, interromper, descartar, ativar Econômico ou desligar Loop elimina wakeups antigos em vez de deixá-los ressuscitar a tarefa.
 
-**Contrato Responses Lite dos GPT-5.6** — Luna/Terra/Sol não recebem o envelope Responses convencional usado internamente pelo tradutor. Antes do `fetch`, `toCodexWireRequest()` transforma a requisição canônica no formato do backend ChatGPT: remove `tools`, `instructions` e `max_output_tokens` do topo; prefixa `input` com um item `additional_tools` de papel `developer` e, quando há system prompt, com uma mensagem `developer`; força `parallel_tool_calls: false`; adiciona `reasoning.context: "all_turns"` e usa o id estável da sessão em `prompt_cache_key`. O HTTP envia também `x-openai-internal-codex-responses-lite: true`, `session-id` e `thread-id`. Essa separação mantém a tradução Anthropic testável sem contaminar sua representação interna com detalhes do transporte Lite.
+**Contrato Responses Lite dos GPT-6** — Luna/Sol/Astra não recebem o envelope Responses convencional usado internamente pelo tradutor. Antes do `fetch`, `toCodexWireRequest()` transforma a requisição canônica no formato do backend ChatGPT: remove `tools`, `instructions` e `max_output_tokens` do topo; prefixa `input` com um item `additional_tools` de papel `developer` e, quando há system prompt, com uma mensagem `developer`; força `parallel_tool_calls: false`; adiciona `reasoning.context: "all_turns"` e usa o id estável da sessão em `prompt_cache_key`. O HTTP envia também `x-openai-internal-codex-responses-lite: true`, `session-id` e `thread-id`. Essa separação mantém a tradução Anthropic testável sem contaminar sua representação interna com detalhes do transporte Lite.
 
 O erro `HTTP 400 / Model not found gpt-5.6-luna` observado na integração tinha dois pontos de compatibilidade. O roteador do Codex exige `originator`, `User-Agent` e o header `version` coerentes com um cliente que conheça os aliases GPT-5.6; o proxy passou a enviar `codex_cli_rs`, `codex_cli_rs/0.146.0` e `version: 0.146.0`. Depois disso, o corpo também foi alinhado ao Responses Lite descrito acima, evitando enviar as dezenas de ferramentas do harness como `tools` convencionais para um modelo configurado no modo Lite. Detalhes brutos de erro do upstream ficam separados de `Error.message`; a UI só recebe mensagens estruturadas e sanitizadas.
 
@@ -1033,7 +1090,7 @@ O erro `HTTP 400 / Model not found gpt-5.6-luna` observado na integração tinha
 **Modo rápido nos dois provedores, por canais diferentes** — o toggle **↯ Rápido** é um controle só, mas a capacidade é pedida de formas incompatíveis, e mandar a errada é erro duro, não no-op. `fastModeTransport(model)` (`shared/ipc.ts`) é a fonte única que decide:
 
 - **`anthropic-setting`** (Opus 5 / Opus 4.8) → `settings: { fastMode: true }` nas `Options` do SDK.
-- **`codex-priority`** (GPT-5.6 Luna/Terra/Sol) → **`service_tier: 'priority'`** no corpo da requisição Codex.
+- **`codex-priority`** (GPT-6 Luna/Sol/Astra) → **`service_tier: 'priority'`** no corpo da requisição Codex.
 
 O backend Codex **valida o corpo estritamente**: qualquer parâmetro desconhecido (`fast`, `fast_mode`, `speed`, `priority`…) volta `400 Unsupported parameter`, e qualquer outro valor de tier (`fast`, `auto`, `flex`, `scale`) volta `400 Unsupported service_tier`. Só existem `default` e `priority` — foi o que permitiu enumerar a superfície inteira em vez de adivinhar. Headers do tipo `x-openai-internal-codex-fast` são aceitos e **ignorados** (sem efeito).
 

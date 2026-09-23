@@ -95,9 +95,9 @@ export class ProviderFailoverSession {
       // Await the eager mirror verification before disposing the old writer.
       const resume = await previous.resumeAfterQuota()
       if (!active()) return
-      const fromModel = this.options.model ?? 'claude-opus-5'
+      const fromModel = this.options.model ?? 'claude-opus-5-5'
       this.lastModels[from] = fromModel
-      const model = this.lastModels[to] ?? (to === 'gpt' ? 'gpt-6-astra' : 'claude-opus-5')
+      const model = this.lastModels[to] ?? (to === 'gpt' ? 'gpt-6-astra' : 'claude-opus-5-5')
       const effort = this.options.effort
       this.options = {
         ...this.options, model, resume,

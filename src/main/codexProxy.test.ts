@@ -59,7 +59,7 @@ describe('Codex proxy headers and session correlation', () => {
   it('prefers the validated Claude session header', () => {
     const request = { headers: { 'x-claude-code-session-id': 'header_session_123' } } as unknown as IncomingMessage
     const body = {
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       messages: [],
       metadata: { user_id: JSON.stringify({ session_id: 'metadata_session_123' }) }
     }
@@ -69,7 +69,7 @@ describe('Codex proxy headers and session correlation', () => {
   it('falls back to a validated session in metadata', () => {
     const request = { headers: {} } as IncomingMessage
     const body = {
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       messages: [],
       metadata: { user_id: JSON.stringify({ session_id: 'metadata_session_123' }) }
     }
@@ -80,7 +80,7 @@ describe('Codex proxy headers and session correlation', () => {
     const request = {
       headers: { 'x-claude-code-session-id': '../../other-session' }
     } as unknown as IncomingMessage
-    const body = { model: 'gpt-5.6-sol', messages: [], metadata: { user_id: '{bad-json' } }
+    const body = { model: 'gpt-6-sol', messages: [], metadata: { user_id: '{bad-json' } }
     expect(sessionIdOf(request, body)).toMatch(/^[0-9a-f-]{36}$/)
   })
 })
@@ -111,17 +111,17 @@ describe('friendlyCodexError', () => {
         new CodexHttpError(
           400,
           'Codex backend returned HTTP 400',
-          '{"error":{"message":"Model not found gpt-5.6-luna"}}'
+          '{"error":{"message":"Model not found gpt-6-luna"}}'
         )
       )
-    ).toContain('Model not found gpt-5.6-luna')
+    ).toContain('Model not found gpt-6-luna')
     expect(friendlyCodexError(new CodexHttpError(400, 'bad', '<html>secret</html>'))).not.toContain('secret')
   })
 })
 
 describe('Codex text stream fallbacks', () => {
   it('preserves text when output_text.done arrives without deltas', () => {
-    const state = initStreamState('gpt-5.6-sol', undefined, 'session_12345678')
+    const state = initStreamState('gpt-6-sol', undefined, 'session_12345678')
     const events = translateCodexEvent(
       { type: 'response.output_text.done', item_id: 'msg-1', output_index: 0, text: 'resposta final' },
       state
@@ -133,7 +133,7 @@ describe('Codex text stream fallbacks', () => {
   })
 
   it('uses response.completed when output_text.done omits its aggregate text', () => {
-    const state = initStreamState('gpt-5.6-sol', undefined, 'session_12345678')
+    const state = initStreamState('gpt-6-sol', undefined, 'session_12345678')
     expect(
       translateCodexEvent({ type: 'response.output_text.done', item_id: 'msg-1', output_index: 0 }, state)
     ).toEqual([])
@@ -176,7 +176,7 @@ describe('Codex resumed-history fallback', () => {
   it('replays an uncached completed tool cycle as transcript instead of invalid provider state', () => {
     const out = toCodexRequest(
       {
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6-sol',
         messages: [
           { role: 'assistant', content: [{ type: 'tool_use', id: 'old-call', name: 'Read', input: { file_path: 'a' } }] },
           { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old-call', content: 'conteúdo salvo' }] }
@@ -198,7 +198,7 @@ describe('Codex resumed-history fallback', () => {
     )
     const out = toCodexRequest(
       {
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6-sol',
         messages: [
           { role: 'assistant', content: [{ type: 'tool_use', id: 'same-call', name: 'Read', input: { file_path: 'a' } }] },
           { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'same-call', content: 'ok' }] }
@@ -213,7 +213,7 @@ describe('Codex resumed-history fallback', () => {
 
 describe('Codex terminal stream behavior', () => {
   it('maps refusal text, stop reason and final input/output usage', () => {
-    const state = initStreamState('gpt-5.6-sol', undefined, 'session_12345678')
+    const state = initStreamState('gpt-6-sol', undefined, 'session_12345678')
     const events = [
       ...translateCodexEvent({ type: 'response.refusal.delta', item_id: 'msg-r', output_index: 0, delta: 'não posso' }, state),
       ...translateCodexEvent({ type: 'response.refusal.done', item_id: 'msg-r', output_index: 0, refusal: 'não posso' }, state),
@@ -242,7 +242,7 @@ describe('Codex terminal stream behavior', () => {
         }
       })
     )
-    const state = initStreamState('gpt-5.6-sol', undefined, 'session_12345678')
+    const state = initStreamState('gpt-6-sol', undefined, 'session_12345678')
     await consumeCodexStream(response, (event) => {
       translateCodexEvent(event, state)
       return !state.terminal

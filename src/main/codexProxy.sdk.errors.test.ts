@@ -22,7 +22,7 @@ vi.mock('./codexAuth', () => ({
 
 const { startCodexProxyServer } = await import('./codexProxy')
 
-const MODEL = 'gpt-5.6-sol'
+const MODEL = 'gpt-6-sol'
 const SECRET = 'sdk-error-integration-secret'
 const tokens: CodexTokens = {
   accessToken: 'at_sdk_error_test',

@@ -134,7 +134,7 @@ describe('buildCrew', () => {
     ).find((m) => m.role === 'po')!
     expect(fim.state).toBe('idle')
     expect(lineText(fim.line)).toBe('auditou no fim do turno · 2 cartões corrigidos')
-    expect(fim.badge).toEqual({ text: 'gpt-5.6-luna', tone: 'ok' })
+    expect(fim.badge).toEqual({ text: 'gpt-6-luna', tone: 'ok' })
   })
 
   it('o cartão do PO diz qual das duas rodadas do turno está acontecendo', () => {
@@ -194,7 +194,7 @@ describe('buildCrew', () => {
     )
     // A troca de provedor não muda com a rodada: o que importa ali é o modelo.
     expect(linha({ round: 'open', phase: 'po-provider-switch', actualProvider: 'gpt-luna' })).toBe(
-      'trocando de provedor · gpt-5.6-luna'
+      'trocando de provedor · gpt-6-luna'
     )
   })
 
@@ -248,7 +248,7 @@ describe('buildCrew', () => {
     expect(lineText(falhou.line)).toBe('não consegui ler a conversa · GPT Luna indisponível')
     expect(
       lineText(cartao({ phase: 'memorista-provider-switch', actualProvider: 'gpt-luna' }).line)
-    ).toBe('trocando de provedor · gpt-5.6-luna')
+    ).toBe('trocando de provedor · gpt-6-luna')
   })
 
   it('a delegação em cena ganha do memorista no mesmo cartão, sem duplicar o papel', () => {

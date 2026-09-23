@@ -7,6 +7,9 @@
  * consumo (cabeçalho com entrada/saída/custo e o quadro "Última resposta") e o
  * aviso "Controle do Windows ativo"; conversa, fila e composer continuam.
  *
+ * `hideWindowsBanner`: sem o aviso "Controle do Windows ativo" mesmo maximizado
+ * — o chat de planejamento conversa sobre o plano, e o aviso só tomava espaço.
+ *
  * `cardRefs`: os cards do plano aberto (só na Tela de Planejamento). Com eles,
  * '[[' no Composer sugere os cards e [[Nome]] nas mensagens aparece com a cor
  * do tipo do card. Sem eles (ou lista vazia), nada disso existe.
@@ -18,6 +21,8 @@ import type { RefCard } from '../planning/cardRefs'
 
 export interface ChatDisplay {
   compact: boolean
+  /** Esconde o aviso do Controle do Windows (o chat de planejamento). */
+  hideWindowsBanner?: boolean
   /** Cards citáveis com [[Nome]] — os do plano aberto no canvas. */
   cardRefs?: readonly RefCard[]
 }

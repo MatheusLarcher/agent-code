@@ -127,7 +127,7 @@ async function openCodexResponsesStream(
   fetchImpl: FetchLike,
   signal?: AbortSignal
 ): Promise<Response> {
-  const responsesLite = body.model.startsWith('gpt-5.6-') || body.model === 'gpt-6-astra'
+  const responsesLite = body.model.startsWith('gpt-6-')
   const wireBody = toCodexWireRequest(body, sessionId)
   const response = await fetchImpl(CODEX_RESPONSES_URL, {
     method: 'POST',

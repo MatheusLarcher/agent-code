@@ -7,13 +7,15 @@
  *   fim. Mostra tudo o que o chat mostra.
  * - **Minimizado**: ancorado embaixo, com ~5 linhas de conversa e 3 de
  *   digitação (planningChat.css). O `ChatPanel` entra em modo compacto pelo
- *   `ChatDisplayContext`: some o consumo e o aviso do Windows. Fica também
- *   translúcido (volta opaco no hover/foco) e qualquer clique nele expande.
+ *   `ChatDisplayContext`: some o consumo. Fica também translúcido (volta opaco
+ *   no hover/foco) e qualquer clique nele expande.
+ *
+ * O aviso "Controle do Windows ativo" não aparece em nenhum dos dois estados.
  *
  * Além da seta, dois gestos alternam o estado: clicar no painel minimizado
- * expande (`expandFromClick`); clicar no canvas atrás dele — `collapseSignal`,
- * que o PlanningScreen sobe a cada clique no `PlanningCanvas` — encolhe, se
- * estiver maximizado.
+ * expande (`expandFromClick`); clicar em qualquer lugar fora dele encolhe e
+ * tira o foco dele (fica translúcido). `collapseSignal` — que o PlanningScreen
+ * sobe a cada clique no `PlanningCanvas` — faz o mesmo.
  *
  * O chat (`children`) é o mesmo elemento nos dois estados — só muda o valor
  * do contexto e a classe —, então alternar não remonta a conversa nem perde a
@@ -119,7 +121,10 @@ export function ManagerChatFloat({ children, cards, collapseSignal }: ManagerCha
   const top = useMaximizedTop(ref, !minimized)
   const cardRefs = useRefCards(cards)
   const display = useMemo<ChatDisplay>(
-    () => (cardRefs ? { compact: minimized, cardRefs } : { compact: minimized }),
+    () =>
+      cardRefs
+        ? { compact: minimized, hideWindowsBanner: true, cardRefs }
+        : { compact: minimized, hideWindowsBanner: true },
     [minimized, cardRefs]
   )
 
@@ -144,6 +149,29 @@ export function ManagerChatFloat({ children, cards, collapseSignal }: ManagerCha
       return true
     })
   }, [collapseSignal])
+
+  // Clicar em QUALQUER lugar fora do chat o minimiza e tira o foco dele — é o
+  // foco (`:focus-within`) que o mantinha opaco depois do clique no canvas, já
+  // que o React Flow não deixa o clique no fundo tirar o foco da caixa de texto.
+  // Captura: o canvas para a propagação do mousedown. Diálogos (permissão,
+  // pergunta do agente) ficam de fora: responder a eles não é sair do chat.
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent): void => {
+      const panel = ref.current
+      const target = e.target
+      if (!panel || !(target instanceof Node) || panel.contains(target)) return
+      if (target instanceof Element && target.closest('[role="dialog"], [aria-modal="true"]')) return
+      const focused = document.activeElement
+      if (focused instanceof HTMLElement && panel.contains(focused)) focused.blur()
+      setMinimized((v) => {
+        if (v) return v
+        saveChatMinimized(true)
+        return true
+      })
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [])
 
   // Clicar no painel minimizado o expande — é o gesto mais direto para voltar
   // a conversar. O próprio botão (que também alterna) chama stopPropagation,

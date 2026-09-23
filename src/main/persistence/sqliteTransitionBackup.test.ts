@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,5 +23,17 @@ describe('backupSqliteForTransition', () => {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
     expect(manifest.sources).toHaveLength(2)
     expect(manifest.sources.every((item: { sha256: string }) => item.sha256.length === 64)).toBe(true)
+  })
+
+  it('writes the backups beside the local db, never into the synced data folder', async () => {
+    const synced = await mkdtemp(join(tmpdir(), 'agent-code-synced-'))
+    const local = await mkdtemp(join(tmpdir(), 'agent-code-local-'))
+    const db = join(local, 'agent-code.db')
+    await writeFile(db, 'global')
+
+    const manifestPath = await backupSqliteForTransition(synced, db, '00000000-0000-4000-8000-000000000002')
+
+    expect(manifestPath.startsWith(join(local, 'migration-manifests'))).toBe(true)
+    expect(existsSync(join(synced, 'migration-manifests'))).toBe(false)
   })
 })

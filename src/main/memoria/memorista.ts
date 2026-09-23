@@ -36,7 +36,7 @@ import {
   type MemoristaOp
 } from './memoristaPrompt'
 
-export const MEMORISTA_LUNA_MODEL = 'gpt-5.6-luna'
+export const MEMORISTA_LUNA_MODEL = 'gpt-6-luna'
 
 /** Como o memorista se identifica no acervo — é o que permite, depois, saber
  *  qual memória veio do observador e qual veio do usuário pedindo. */

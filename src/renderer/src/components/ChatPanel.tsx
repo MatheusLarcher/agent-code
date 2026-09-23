@@ -217,9 +217,9 @@ interface Props {
    * precisa do modelo concreto.
    */
   runningModel: string
-  /** Esconde modelo, esforço, Econômico e Loop: na conversa de planejamento
-   *  quem escolhe como o Agent Manager roda é o main, não a conversa. */
-  hideModelControls?: boolean
+  /** Esconde Econômico e Loop: a sessão do Agent Manager (planejamento) sobe
+   *  sem eles. Modelo e esforço continuam — lá eles editam os do Manager. */
+  hideSessionToggles?: boolean
   modelLocked: boolean
   onModelChange: (id: string) => void
   /** Called when the user clicks the model picker while it's locked (no active
@@ -385,7 +385,7 @@ export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
   const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
   // Compacto (chat minimizado do planejamento): sem consumo e sem o aviso do Windows.
-  const { compact } = useChatDisplay()
+  const { compact, hideWindowsBanner } = useChatDisplay()
   return (
     <section className="chat-panel">
       {!compact && (
@@ -416,7 +416,7 @@ export function ChatPanel(props: Props): JSX.Element {
         </div>
       )}
 
-      {!compact && props.windowsControlEnabled && (
+      {!compact && !hideWindowsBanner && props.windowsControlEnabled && (
         <div className="windows-control-banner" role="status" aria-live="polite">
           <span className="windows-control-banner-icon" aria-hidden="true">⚠</span>
           <span className="windows-control-banner-text">
@@ -521,7 +521,6 @@ export function ChatPanel(props: Props): JSX.Element {
       )}
 
       <div className="composer-bar">
-        {!props.hideModelControls && (<>
         <select
           className={`model-select${props.modelLocked ? ' locked' : ''}`}
           value={props.model}
@@ -567,6 +566,7 @@ export function ChatPanel(props: Props): JSX.Element {
             onChange={props.onEffortChange}
           />
         )}
+        {!props.hideSessionToggles && (<>
         <button
           type="button"
           className={`economy-toggle${props.economyMode ? ' on' : ''}`}

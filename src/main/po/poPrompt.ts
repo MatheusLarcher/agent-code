@@ -40,6 +40,21 @@ export type PoPhase = 'open' | 'close'
  *  conversa. O cooldown é por fase de propósito: com um contador só, a abertura
  *  gastaria a janela e o fechamento daquele turno nunca rodaria. */
 export const PO_COOLDOWN_MS = 60_000
+/**
+ * A retentativa de uma análise que passou do cooldown e NÃO chegou ao fim
+ * (modelo fora, Luna indisponível, quadro ilegível, exceção). Sem ela, a
+ * evidência que voltou para a fila só era julgada no PRÓXIMO turno — e o turno
+ * que terminou a conversa não tem próximo: a tarefa concluída ficava "em
+ * andamento" no quadro até alguém voltar a falar. O intervalo é o do cooldown
+ * de propósito: a retentativa nunca consulta o modelo com mais frequência do
+ * que um turno real consultaria.
+ */
+export const PO_RETRY_DELAY_MS = 60_000
+/** Retentativas SEGUIDAS por fase. O teto existe porque uma falha que dura
+ *  (chave revogada, quadro fora do ar) não pode virar uma consulta por minuto
+ *  para sempre; esgotado, a evidência continua na fila para o próximo turno ou
+ *  para o `dispose`, como antes da retentativa existir. */
+export const PO_MAX_RETRIES = 2
 /** Tetos do digest: o custo não pode crescer com o tamanho da conversa. */
 export const PO_MAX_USER_CHARS = 1200
 /**

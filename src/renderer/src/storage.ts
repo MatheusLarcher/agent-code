@@ -1,3 +1,4 @@
+import { currentModelId } from '@shared/ipc'
 import { DEFAULT_TITLE, type Conversation, type UIMessage } from './types'
 import type {
   RateLimitStatus,
@@ -173,7 +174,9 @@ function normalizeConversation(record: VersionedConversationDto): Conversation {
     id: record.id,
     title: typeof payload.title === 'string' && payload.title.trim() ? payload.title : DEFAULT_TITLE,
     cwd: typeof payload.cwd === 'string' ? payload.cwd : '',
-    model: typeof payload.model === 'string' && payload.model ? payload.model : 'claude-opus-5',
+    // Modelo aposentado (ex.: GPT-5.6) vira o substituto — senão a conversa
+    // perderia o provedor e iria para a Anthropic com um id que ela não conhece.
+    model: typeof payload.model === 'string' && payload.model ? currentModelId(payload.model) : 'claude-opus-5-5',
     sdkSessionId: typeof payload.sdkSessionId === 'string' ? payload.sdkSessionId : null,
     messages: Array.isArray(payload.messages) ? payload.messages as UIMessage[] : [],
     tokens: {

@@ -48,6 +48,9 @@ export interface CacheInfo {
   memoriesDir: string
   /** Absolute path of the active skills folder inside it. */
   skillsDir: string
+  /** Machine-local root (never synced) for the db, caches, logs and backups —
+   *  everything that changes often stays out of `dir`. */
+  localDir: string
 }
 
 /** Default cache folder before the user picks one: Documents/agent-code. */
@@ -184,7 +187,13 @@ export function kvSet(key: string, value: string): void {
 
 export function getCacheInfo(): CacheInfo {
   const dir = ensureDir()
-  return { dir, dbPath: dbPath(dir), memoriesDir: join(dir, 'memories'), skillsDir: join(dir, 'skills') }
+  return {
+    dir,
+    dbPath: dbPath(dir),
+    memoriesDir: join(dir, 'memories'),
+    skillsDir: join(dir, 'skills'),
+    localDir: localDataDir()
+  }
 }
 
 /**

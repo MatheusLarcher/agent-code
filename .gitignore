@@ -47,3 +47,4 @@ docs/bench/lora-*/
 docs/bench/dataset/
 unsloth_compiled_cache/
 /dist-rel
+docs/spec/*/_sandbox/

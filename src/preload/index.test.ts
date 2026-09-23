@@ -36,7 +36,7 @@ describe('preload — contrato IPC do Codex e do agente', () => {
     await api.codexStatus()
     await api.codexLogin()
     await api.codexLogout()
-    await api.startAgent({ convId: 'c1', cwd: 'C:\\project', model: 'gpt-5.6-sol' })
+    await api.startAgent({ convId: 'c1', cwd: 'C:\\project', model: 'gpt-6-sol' })
 
     expect(electronMock.invoke).toHaveBeenNthCalledWith(1, Channels.codexStatus)
     expect(electronMock.invoke).toHaveBeenNthCalledWith(2, Channels.codexLogin)
@@ -44,7 +44,7 @@ describe('preload — contrato IPC do Codex e do agente', () => {
     expect(electronMock.invoke).toHaveBeenNthCalledWith(
       4,
       Channels.agentStart,
-      expect.objectContaining({ model: 'gpt-5.6-sol' })
+      expect.objectContaining({ model: 'gpt-6-sol' })
     )
   })
 

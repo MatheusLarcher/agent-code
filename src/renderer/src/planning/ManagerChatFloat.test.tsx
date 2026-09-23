@@ -63,6 +63,41 @@ describe('ManagerChatFloat — estados', () => {
     expect(localStorage.getItem('agentcode.planning.chatMinimized')).toBe('0')
   })
 
+  it('clicar fora do chat minimiza e tira o foco dele (fica translúcido); clicar dentro não', () => {
+    render(
+      <div>
+        <button type="button">fora</button>
+        <div role="dialog">
+          <button type="button">permitir</button>
+        </div>
+        <div className="pl-main">
+          <ManagerChatFloat>
+            <textarea aria-label="mensagem" />
+          </ManagerChatFloat>
+        </div>
+      </div>
+    )
+    const box = screen.getByLabelText('mensagem') as HTMLTextAreaElement
+    box.focus()
+    fireEvent.pointerDown(box)
+    expect(panel().classList.contains('minimized')).toBe(false)
+
+    // Responder um diálogo (permissão, pergunta) não é sair do chat.
+    fireEvent.pointerDown(screen.getByText('permitir'))
+    expect(panel().classList.contains('minimized')).toBe(false)
+
+    fireEvent.pointerDown(screen.getByText('fora'))
+    expect(panel().classList.contains('minimized')).toBe(true)
+    expect(document.activeElement).not.toBe(box)
+    expect(localStorage.getItem('agentcode.planning.chatMinimized')).toBe('1')
+
+    // Já minimizado: digitar e clicar fora de novo só solta o foco.
+    box.focus()
+    fireEvent.pointerDown(screen.getByText('fora'))
+    expect(document.activeElement).not.toBe(box)
+    expect(panel().classList.contains('minimized')).toBe(true)
+  })
+
   it('alternar não remonta o chat (rolagem, rascunho e foco ficam)', () => {
     const mounts = vi.fn()
     function Chat(): JSX.Element {

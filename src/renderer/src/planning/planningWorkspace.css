@@ -6,8 +6,8 @@
 
 /* ---- a tela no lugar do workspace ---- */
 .planning-workspace > .planning { flex: 1; min-width: 0; }
-/* O ChatPanel vai no painel flutuante (planningChat.css). Sem modelo/esforço/
-   Econômico/Loop (hideModelControls) a barra fica vazia: some. */
+/* O ChatPanel vai no painel flutuante (planningChat.css). Sem Econômico/Loop
+   (hideSessionToggles) a barra só tem modelo/esforço do Manager; vazia, some. */
 .planning-workspace .pl-chat-float .composer-bar:empty { display: none; }
 /* Medidor de tokens do cabeçalho: num painel estreito ele quebra em linhas,
    não no meio de cada número. */

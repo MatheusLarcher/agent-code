@@ -18,7 +18,7 @@ import {
   type StreamState
 } from './codexStream'
 
-const MODEL = 'gpt-5.6-sol'
+const MODEL = 'gpt-6-sol'
 const SESSION_A = 'session-alpha'
 const SESSION_B = 'session-bravo'
 
@@ -96,7 +96,7 @@ describe('Codex protocol — Anthropic request to Responses request', () => {
     expect(out.include).toEqual(['reasoning.encrypted_content'])
   })
 
-  it.each(['gpt-5.6-sol', 'gpt-6-astra'])('shapes %s requests for Responses Lite', (model) => {
+  it.each(['gpt-6-sol', 'gpt-6-astra'])('shapes %s requests for Responses Lite', (model) => {
     const canonical = toCodexRequest(
       toolRequest({ type: 'any', disable_parallel_tool_use: false }),
       undefined,
@@ -122,7 +122,7 @@ describe('Codex protocol — Anthropic request to Responses request', () => {
     expect(wire.prompt_cache_key).toBe(SESSION_A)
   })
 
-  it('preserva o contexto vivo de docs/memória na camada developer do GPT-5.6', () => {
+  it('preserva o contexto vivo de docs/memória na camada developer do GPT-6', () => {
     const marker = 'PROJECT_DOCS_CONTEXT_SENTINEL\nMEMORY_EXCERPT_SENTINEL\nSKILL_CATALOG_SENTINEL'
     const canonical = toCodexRequest(
       request({

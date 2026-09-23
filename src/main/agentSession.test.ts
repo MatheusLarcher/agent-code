@@ -16,7 +16,8 @@ const codexState = vi.hoisted(() => ({ connected: true }))
 const cacheState = vi.hoisted(() => ({
   dir: 'C:\\test\\agent-code',
   memoriesDir: 'C:\\test\\agent-code\\memories',
-  skillsDir: 'C:\\test\\agent-code\\skills'
+  skillsDir: 'C:\\test\\agent-code\\skills',
+  localDir: 'C:\\test\\agent-code-local'
 }))
 const ensureCodexProxyMock = vi.hoisted(() =>
   vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:43210', secret: 'local-test-secret' }))
@@ -392,7 +393,7 @@ describe('AgentSession — controle seguro do /loop', () => {
     expect(loopLimitFromPrompt('tente até 20 vezes')).toBe(DEFAULT_LOOP_LIMIT)
   })
 
-  it.each(['claude-opus-4-8', 'gpt-5.6-luna'])(
+  it.each(['claude-opus-4-8', 'gpt-6-luna'])(
     'transforma mensagem normal em /loop só no payload do SDK (%s)',
     async (model) => {
       const { s } = makeSession({ loopEnabled: true, model })
@@ -456,7 +457,7 @@ describe('AgentSession — controle seguro do /loop', () => {
     })
   })
 
-  it.each(['claude-opus-4-8', 'gpt-5.6-luna'])(
+  it.each(['claude-opus-4-8', 'gpt-6-luna'])(
     'autoriza wakeup válido no mesmo gate compartilhado (%s)',
     async (model) => {
     const { s, ask } = makeSession({ loopEnabled: true, model })
@@ -1045,7 +1046,7 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
   // Mandar `settings.fastMode` para lá seria um campo Anthropic num backend que
   // rejeita parâmetro desconhecido com HTTP 400.
   it('GPT + flag ligada: NÃO manda settings, e pede fast mode pelo token do proxy', async () => {
-    const { s } = makeSession({ model: 'gpt-5.6-sol', fastMode: true })
+    const { s } = makeSession({ model: 'gpt-6-sol', fastMode: true })
     await s.start()
     const options = optionsOfLastQuery()
     expect(options.settings).toBeUndefined()
@@ -1053,7 +1054,7 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
   })
 
   it('GPT + flag desligada: token do proxy sai sem o sufixo', async () => {
-    const { s } = makeSession({ model: 'gpt-5.6-sol', fastMode: false })
+    const { s } = makeSession({ model: 'gpt-6-sol', fastMode: false })
     await s.start()
     const options = optionsOfLastQuery()
     expect(options.settings).toBeUndefined()
@@ -1081,25 +1082,29 @@ describe('AgentSession — backend de fora não recebe o login guardado', () => 
     await writeFile(join(home, '.credentials.json'), '{"token":"sk-ant-SEGREDO"}', 'utf8')
     previousConfigDir = process.env['CLAUDE_CONFIG_DIR']
     process.env['CLAUDE_CONFIG_DIR'] = home
-    cacheState.dir = cache
+    cacheState.dir = join(cache, 'sincronizada')
+    cacheState.localDir = cache
   })
 
   afterEach(async () => {
     if (previousConfigDir === undefined) delete process.env['CLAUDE_CONFIG_DIR']
     else process.env['CLAUDE_CONFIG_DIR'] = previousConfigDir
     cacheState.dir = 'C:\\test\\agent-code'
+    cacheState.localDir = 'C:\\test\\agent-code-local'
     await rm(home, { recursive: true, force: true })
     await rm(cache, { recursive: true, force: true })
   })
 
   it('GPT: aponta o CLI para um diretório SEM credencial, levando CLAUDE.md e settings', async () => {
-    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+    const { s } = makeSession({ model: 'gpt-6-sol' })
     await s.start()
     const env = optionsOfLastQuery().env as Record<string, string>
     const dir = env.CLAUDE_CONFIG_DIR
 
     expect(dir).toBeTruthy()
     expect(dir).not.toBe(home) // é o ponto: a credencial do usuário não vai junto
+    // Na raiz local: o CLI grava transcrições ali a cada turno.
+    expect(dir).toBe(join(cache, 'cli-config-sem-login'))
     expect(existsSync(join(dir, '.credentials.json'))).toBe(false)
     // …mas o que o usuário percebe se sumir continua lá.
     expect(await readFile(join(dir, 'CLAUDE.md'), 'utf8')).toContain('instruções globais')
@@ -1119,9 +1124,9 @@ describe('AgentSession — backend de fora não recebe o login guardado', () => 
     await rm(cache, { recursive: true, force: true })
     cache = join(home, 'cache-file')
     await writeFile(cache, 'not a directory', 'utf8')
-    cacheState.dir = cache
+    cacheState.localDir = cache
 
-    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+    const { s } = makeSession({ model: 'gpt-6-sol' })
     await expect(s.start()).resolves.toBe(false)
 
     expect(ensureCodexProxyMock).not.toHaveBeenCalled()
@@ -1129,7 +1134,7 @@ describe('AgentSession — backend de fora não recebe o login guardado', () => 
   })
 
   it('GPT lê snapshots task-list da raiz isolada efetiva, não da raiz Claude do processo', async () => {
-    const { s, emit } = makeSession({ model: 'gpt-5.6-sol' })
+    const { s, emit } = makeSession({ model: 'gpt-6-sol' })
     await s.start()
     const env = optionsOfLastQuery().env as Record<string, string>
     const taskDir = join(env.CLAUDE_CONFIG_DIR, 'tasks', 'gpt-session')
@@ -1158,14 +1163,14 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
 
   it('preserva ferramentas/permissões e fixa todos os subagentes no GPT selecionado', async () => {
-    const { s } = makeSession({ model: 'gpt-5.6-sol', effort: 'max' })
+    const { s } = makeSession({ model: 'gpt-6-sol', effort: 'max' })
     await s.start()
 
     const options = optionsOfLastQuery()
     const env = options.env as Record<string, string>
     expect(options).toMatchObject({
       cwd: '/proj',
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       effort: 'max',
       maxTurns: OPENAI_MAX_TURNS,
       permissionMode: 'default',
@@ -1183,16 +1188,16 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:43210',
       ANTHROPIC_AUTH_TOKEN: 'local-test-secret',
       ANTHROPIC_API_KEY: '',
-      ANTHROPIC_DEFAULT_SONNET_MODEL: 'gpt-5.6-sol',
-      ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.6-sol',
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.6-sol',
-      ANTHROPIC_DEFAULT_FABLE_MODEL: 'gpt-5.6-sol',
-      CLAUDE_CODE_SUBAGENT_MODEL: 'gpt-5.6-sol'
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'gpt-6-sol',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-6-sol',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-6-sol',
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'gpt-6-sol',
+      CLAUDE_CODE_SUBAGENT_MODEL: 'gpt-6-sol'
     })
   })
 
   it('expõe a pasta de skills do cache ao GPT mesmo quando a conversa usa outro projeto', async () => {
-    const { s } = makeSession({ model: 'gpt-5.6-sol', cwd: 'C:\\outro-projeto-sem-skills' })
+    const { s } = makeSession({ model: 'gpt-6-sol', cwd: 'C:\\outro-projeto-sem-skills' })
     await s.start()
     const options = optionsOfLastQuery()
     expect(options.skills).toBe('all')
@@ -1214,7 +1219,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     )
     const { s } = makeSession({
       cwd: project,
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       skillRuntime: { appRoot: project, userHome: home }
     })
 
@@ -1286,7 +1291,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     await writeFile(join(memories, 'MEMORY.md'), '# Índice\n\n- [Preferência](produto/preferencia.md)', 'utf8')
     await writeFile(join(memories, 'produto', 'preferencia.md'), '# Preferência\nSempre usar o fluxo real.', 'utf8')
     cacheState.memoriesDir = memories
-    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+    const { s } = makeSession({ model: 'gpt-6-sol' })
 
     await s.start()
 
@@ -1312,7 +1317,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     configState.ollama = { enabled: true, apiKey: 'chave-ollama' }
 
     let expectedAppend: string | undefined
-    for (const model of ['claude-opus-5', 'gpt-5.6-sol', 'gpt-oss:20b-cloud']) {
+    for (const model of ['claude-opus-5', 'gpt-6-sol', 'gpt-oss:20b-cloud']) {
       const { s } = makeSession({ model })
       await s.start()
       const append = (optionsOfLastQuery().systemPrompt as { append: string }).append
@@ -1331,7 +1336,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     const memoryFile = join(memories, 'MEMORY.md')
     await writeFile(memoryFile, '# Regra\nVersão inicial.', 'utf8')
     cacheState.memoriesDir = memories
-    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+    const { s } = makeSession({ model: 'gpt-6-sol' })
     await s.start()
 
     await writeFile(memoryFile, '# Regra\nVersão atualizada e maior.\n{{secret:erp-token}}', 'utf8')
@@ -1364,7 +1369,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     await writeFile(memoryFile, '# Regra AAAA\n', 'utf8')
     const metadata = await stat(memoryFile)
     cacheState.memoriesDir = memories
-    const { s } = makeSession({ model: 'gpt-5.6-sol' })
+    const { s } = makeSession({ model: 'gpt-6-sol' })
     await s.start()
 
     await writeFile(memoryFile, '# Regra BBBB\n', 'utf8')
@@ -1392,7 +1397,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     )
     const { s } = makeSession({
       cwd: project,
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       skillRuntime: { appRoot: project, userHome: home }
     })
     await s.start()
@@ -1421,7 +1426,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     await writeFile(join(skillDir, 'SKILL.md'), '---\nname: dynamic\ndescription: versão inicial\n---', 'utf8')
     const { s } = makeSession({
       cwd: project,
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       skillRuntime: { appRoot: project, userHome: home }
     })
     await s.start()
@@ -1467,7 +1472,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     await writeFile(join(skillDir, 'SKILL.md'), '---\nname: retry\ndescription: inicial\n---', 'utf8')
     const { s } = makeSession({
       cwd: project,
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       skillRuntime: { appRoot: project, userHome: home }
     })
     await s.start()
@@ -1510,7 +1515,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     const original = await stat(sourceFile)
     const { s } = makeSession({
       cwd: project,
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       skillRuntime: { appRoot: project, userHome: home }
     })
     await s.start()
@@ -1549,7 +1554,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     await writeFile(join(skillDir, 'SKILL.md'), '---\nname: expected\ndescription: inicial\n---', 'utf8')
     const { s } = makeSession({
       cwd: project,
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       skillRuntime: { appRoot: project, userHome: home }
     })
     await s.start()
@@ -1592,7 +1597,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     await writeFile(join(userOnly, 'SKILL.md'), '---\nname: graphify\ndescription: grafo\n---', 'utf8')
     const { s } = makeSession({
       cwd: project,
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-sol',
       skillRuntime: { appRoot: project, userHome: home }
     })
     await s.start()
@@ -1632,7 +1637,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
 
   it('falha antes de iniciar o SDK quando o ChatGPT está desconectado', async () => {
     codexState.connected = false
-    const { s, emit } = makeSession({ model: 'gpt-5.6-luna' })
+    const { s, emit } = makeSession({ model: 'gpt-6-luna' })
     await expect(s.start()).resolves.toBe(false)
     expect(queryMock).not.toHaveBeenCalled()
     expect(ensureCodexProxyMock).not.toHaveBeenCalled()
