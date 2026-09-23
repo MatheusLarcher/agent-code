@@ -26,25 +26,41 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Translúcido: o canvas continua à vista atrás do chat. `--pl-chat-fill` é a
+     opacidade do fundo; as barras internas seguem a mesma (ver abaixo). */
+  --pl-chat-fill: 72%;
+  --pl-chat-blur: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) var(--pl-chat-fill), transparent);
+  backdrop-filter: blur(var(--pl-chat-blur));
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25);
   overflow: hidden;
 }
-/* Encolhido, também fica translúcido — some visualmente sem tirar o canvas de vista
-   atrás dele — e volta opaco ao passar o mouse ou focar algo dentro (ler/digitar
-   não deve competir com o card por trás). Clicar nele expande (ManagerChatFloat). */
+/* Encolhido, ainda mais transparente; ao passar o mouse ou focar algo dentro
+   volta à translucidez do maximizado (ler/digitar não compete com o card por
+   trás). Clicar nele expande (ManagerChatFloat). */
 .pl-chat-float.minimized {
+  --pl-chat-fill: 38%;
+  --pl-chat-blur: 3px;
   top: auto;
   cursor: pointer;
-  background: color-mix(in srgb, var(--bg) 80%, transparent);
-  backdrop-filter: blur(6px);
 }
 .pl-chat-float.minimized:hover,
 .pl-chat-float.minimized:focus-within {
-  background: var(--bg);
-  backdrop-filter: none;
+  --pl-chat-fill: 72%;
+  --pl-chat-blur: 8px;
+}
+/* As barras do ChatPanel (cabeçalho, composer, seletor de modelo) têm fundo
+   opaco próprio: aqui seguem a translucidez do painel. A caixa de digitação
+   fica um pouco mais cheia, para o texto digitado não brigar com o canvas. */
+.pl-chat-float .chat-header,
+.pl-chat-float .composer,
+.pl-chat-float .composer-bar {
+  background: color-mix(in srgb, var(--bg-2) calc(var(--pl-chat-fill) * 0.6), transparent);
+}
+.pl-chat-float .composer-row {
+  background: color-mix(in srgb, var(--bg-3) calc(var(--pl-chat-fill) + 10%), transparent);
 }
 
 .pl-chat-float-head {
@@ -55,7 +71,7 @@
   height: 34px;
   padding: 0 6px 0 14px;
   border-bottom: 1px solid var(--line);
-  background: var(--bg-2);
+  background: color-mix(in srgb, var(--bg-2) calc(var(--pl-chat-fill) * 0.6), transparent);
 }
 .pl-chat-float-title { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .pl-chat-float-toggle {

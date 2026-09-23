@@ -290,6 +290,15 @@ describe('ManagerChatFloat — o CSS que o posiciona e o encolhe', () => {
     expect(block('.pl-chat-float.minimized')).toMatch(/top: auto;/)
   })
 
+  it('translúcido maximizado e ainda mais minimizado; as barras internas seguem o painel', () => {
+    const fill = (selector: string): number => Number(/--pl-chat-fill: (\d+)%;/.exec(block(selector))?.[1])
+    expect(block('.pl-chat-float')).toMatch(/background: color-mix\(in srgb, var\(--bg\) var\(--pl-chat-fill\), transparent\);/)
+    expect(fill('.pl-chat-float')).toBeLessThan(100)
+    expect(fill('.pl-chat-float.minimized')).toBeLessThan(fill('.pl-chat-float'))
+    expect(block('.pl-chat-float .composer-bar')).toMatch(/var\(--pl-chat-fill\)/)
+    expect(block('.pl-chat-float-head')).toMatch(/var\(--pl-chat-fill\)/)
+  })
+
   it('minimizado: a lista tem 5 linhas do texto das mensagens e a caixa de digitação 3', () => {
     expect(block('.pl-chat-float')).toMatch(/--pl-chat-line: 21px;/)
     expect(block('.pl-chat-float.minimized .message-list-wrap')).toMatch(/height: calc\(5 \* var\(--pl-chat-line\)\);/)

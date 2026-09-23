@@ -3323,14 +3323,17 @@ export function App(): JSX.Element {
               <span className={`session-pill ${skipPerms ? 'danger' : ''}`}>
                 ● {skipPerms ? 'tudo liberado' : 'conectado'}
               </span>
-              <button
-                className="btn ghost stop-session-btn"
-                onClick={requestStopSession}
-                title="Parar a sessão (encerra o agente e libera a troca de modelo)"
-              >
-                <IconPower />
-                Parar sessão
-              </button>
+              {/* Na Tela de Planejamento o Manager não tem "Parar sessão" no topo. */}
+              {!activePlanning && (
+                <button
+                  className="btn ghost stop-session-btn"
+                  onClick={requestStopSession}
+                  title="Parar a sessão (encerra o agente e libera a troca de modelo)"
+                >
+                  <IconPower />
+                  Parar sessão
+                </button>
+              )}
             </>
           ) : null}
         </header>
