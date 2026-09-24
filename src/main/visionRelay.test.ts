@@ -31,10 +31,11 @@ describe('describeImages (vision_fallback_router)', () => {
 
     expect(result).toContain('OCR completo')
     expect(queryMock).toHaveBeenCalledTimes(1)
-    const call = queryMock.mock.calls[0][0] as { options: { model: string; tools: unknown; maxTurns: number } }
+    const call = queryMock.mock.calls[0][0] as { options: { model: string; tools: unknown; maxTurns: number; settings: unknown } }
     expect(call.options.model).toBe('claude-sonnet-5')
     expect(call.options.tools).toEqual([])
     expect(call.options.maxTurns).toBe(1)
+    expect(call.options.settings).toEqual({ autoMemoryEnabled: false })
   })
 
   it('concatena múltiplos blocos de texto do stream', async () => {

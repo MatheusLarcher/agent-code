@@ -51,7 +51,9 @@ export async function describeImages(images: ImageAttachment[], userText: string
     tools: [], // pure interpreter — no tool calls, just the analysis text
     maxTurns: 1,
     includePartialMessages: false,
-    permissionMode: 'bypassPermissions'
+    permissionMode: 'bypassPermissions',
+    // Sem a auto-memória do CLI: a única pasta de memória é a de Configurações.
+    settings: { autoMemoryEnabled: false }
   }
 
   const q = query({ prompt: single(), options })

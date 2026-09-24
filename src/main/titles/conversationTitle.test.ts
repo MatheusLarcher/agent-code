@@ -52,6 +52,7 @@ describe('suggestConversationTitle', () => {
     expect(options.tools).toEqual([])
     expect(options.maxTurns).toBe(1)
     expect(options.persistSession).toBe(false)
+    expect(options.settings).toEqual({ autoMemoryEnabled: false })
     expect(options.abortController).toBeInstanceOf(AbortController)
     expect(await promptText(calls[0])).toContain('quero montar o checkout com pix na loja')
   })

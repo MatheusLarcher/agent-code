@@ -94,6 +94,8 @@ async function askModel(text: string, run: TitleQuery, abortController: AbortCon
     includePartialMessages: false,
     permissionMode: 'bypassPermissions',
     persistSession: false,
+    // Sem a auto-memória do CLI: a única pasta de memória é a de Configurações.
+    settings: { autoMemoryEnabled: false },
     abortController
   }
   let out = ''

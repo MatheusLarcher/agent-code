@@ -249,6 +249,9 @@ export async function runMemoryCuratorAgent(args: Parameters<AgentRunner>[0]): P
     maxTurns: 12,
     permissionMode: 'default',
     settingSources: [],
+    // A única pasta de memória é a da pasta de dados (Configurações); a
+    // auto-memória do CLI poria ~/.claude/projects/<cwd>/memory no prompt.
+    settings: { autoMemoryEnabled: false },
     additionalDirectories: [args.memoriesDir],
     tools: ['Read', 'Glob', 'Grep', 'mcp__memory__memory_propose', 'mcp__memory__memory_list'],
     mcpServers: {

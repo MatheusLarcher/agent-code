@@ -68,7 +68,9 @@ export async function runObserverAttempt(request: ObserverRequest): Promise<Obse
     tools: [],
     maxTurns: 1,
     includePartialMessages: false,
-    permissionMode: 'bypassPermissions'
+    permissionMode: 'bypassPermissions',
+    // Sem a auto-memória do CLI: a única pasta de memória é a de Configurações.
+    settings: { autoMemoryEnabled: false }
   }
 
   let text = ''
