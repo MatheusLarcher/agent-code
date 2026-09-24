@@ -709,7 +709,7 @@ export interface StartAgentOptions {
    *  decide on and main uses AUTO_MODEL_FALLBACK. */
   autoPrompt?: AutoPrompt
   /** Sessão do Agent Manager da Tela de Planejamento: o planejamento
-   *  (docs/spec/<slug>/) que ela conduz. Liga as ferramentas plan_*, o prompt e a
+   *  <slug> que ela conduz (pasta no main: planDirPath). Liga as ferramentas plan_*, o prompt e a
    *  política do Manager (escrita só no _sandbox do slug). */
   planning?: { slug: string }
   /** Sessão de implementação nascida de um handoff do planejamento <slug>. */
@@ -1717,7 +1717,7 @@ export const Channels = {
   boardItemEvents: 'board:item-events',
   /** Main → renderer: o quadro daquele projeto mudou, recarregue. */
   boardChanged: 'board:changed',
-  /** Tela de Planejamento (docs/spec/<slug>/). Toda resposta é PlanningResult. */
+  /** Tela de Planejamento (<dataDir>/planning/<projeto>/<slug>/). Toda resposta é PlanningResult. */
   planningList: 'planning:list',
   planningCreate: 'planning:create',
   /** Abre e passa a vigiar a pasta do planejamento (idempotente por janela). */
@@ -1728,7 +1728,7 @@ export const Channels = {
   planningDeleteCard: 'planning:deleteCard',
   planningSaveRoteiro: 'planning:saveRoteiro',
   planningSaveLayout: 'planning:saveLayout',
-  /** Os prompts gravados em docs/spec/<slug>/_handoff/, na ordem em que foram gravados. */
+  /** Os prompts gravados em _handoff/ do planejamento, na ordem em que foram gravados. */
   planningListHandoffs: 'planning:listHandoffs',
   /** Grava um prompt de handoff em _handoff/AAAA-MM-DD-NN.md (o que vai ser enviado). */
   planningWriteHandoff: 'planning:writeHandoff',
@@ -2071,6 +2071,11 @@ export interface PlanningLayoutDto {
 
 export interface OpenedPlanningDto {
   slug: string
+  /** Pasta ABSOLUTA do planejamento, como o main a resolveu (na pasta de dados
+   *  do app: <dataDir>/planning/<projeto>/<slug>). O renderer nunca a monta. */
+  dir: string
+  /** Pasta ABSOLUTA do _sandbox do Agent Manager — no projeto, docs/spec/<slug>/_sandbox. */
+  sandboxDir: string
   roteiro: PlanningRoteiroDto
   cards: PlanningCardDto[]
   layout: PlanningLayoutDto
@@ -2097,7 +2102,7 @@ export interface PlanningRef {
 /** Payload de Channels.planningChanged. */
 export type PlanningChangedMsg = PlanningRef
 
-/** Um prompt de handoff em docs/spec/<slug>/_handoff/ (Channels.planningListHandoffs). */
+/** Um prompt de handoff em _handoff/ da pasta do planejamento (Channels.planningListHandoffs). */
 export interface PlanningHandoffDto {
   /** Nome do arquivo (AAAA-MM-DD-NN.md). */
   name: string

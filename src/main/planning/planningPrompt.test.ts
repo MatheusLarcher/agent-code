@@ -6,12 +6,16 @@ import { PLANNING_TOOL_NAMES } from './planningTools'
 
 const cwd = path.resolve('/projeto-planning/app')
 const sandboxDir = planningSandboxDir(cwd, 'checkout')
-const hint = buildPlanningHint({ slug: 'checkout', sandboxDir })
+const planDir = path.resolve('/dados/agent-code/planning/app/checkout')
+const hint = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir })
 
 describe('buildPlanningHint', () => {
-  it('nomeia o planejamento e a pasta de sandbox (inclusive na forma para o Bash)', () => {
+  it('nomeia o planejamento, a pasta REAL do plano e a de sandbox (inclusive na forma para o Bash)', () => {
     expect(hint).toContain('"checkout"')
-    expect(hint).toContain('docs/spec/checkout/')
+    expect(hint).toContain(planDir)
+    expect(hint).toMatch(new RegExp(`Nunca edite os arquivos de ${planDir.replace(/[\\.]/g, '\\$&')} com Write, Edit ou Bash`))
+    // Nada de caminho relativo montado à mão: o plano não mora mais no projeto.
+    expect(hint).not.toContain('docs/spec/checkout/)')
     expect(hint).toContain(sandboxDir)
     expect(hint).toContain(sandboxDir.replace(/\\/g, '/'))
   })
@@ -98,6 +102,6 @@ describe('buildPlanningHint', () => {
   })
 
   it('recusa slug inválido', () => {
-    expect(() => buildPlanningHint({ slug: '../x', sandboxDir })).toThrow(/slug inválido/)
+    expect(() => buildPlanningHint({ slug: '../x', planDir, sandboxDir })).toThrow(/slug inválido/)
   })
 })

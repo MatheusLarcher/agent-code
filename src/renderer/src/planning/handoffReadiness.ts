@@ -143,10 +143,11 @@ function detailSection(title: string, cards: PlanningCardDto[], render: (c: Plan
  * O rascunho automático do prompt de handoff: objetivo, etapas na ordem com os
  * seus cards, requisitos, decisões com o porquê, sugestões com a fonte,
  * ambiguidades resolvidas (e as ainda abertas, se o usuário enviar assim) e a
- * instrução de declarar as etapas como plano e consultar docs/spec/<slug>/.
+ * instrução de declarar as etapas como plano e consultar a pasta do plano —
+ * o caminho absoluto que o main informou (`plan.dir`, na pasta de dados do app).
  */
 export function buildDraftHandoff(plan: OpenedPlanningDto): string {
-  const { slug, roteiro } = plan
+  const { slug, roteiro, dir } = plan
   const titulo = roteiro.titulo.trim() || slug
   const cards = sortCards(plan, plan.cards)
   const of = (tipo: PlanningCardType): PlanningCardDto[] => cards.filter((c) => c.tipo === tipo)
@@ -157,7 +158,7 @@ export function buildDraftHandoff(plan: OpenedPlanningDto): string {
     `# Implementação: ${titulo}`,
     '',
     `Esta conversa implementa o planejamento **${titulo}**, feito com o usuário na Tela de Planejamento. ` +
-      `O plano detalhado está em \`docs/spec/${slug}/\`: \`_roteiro.md\` (as etapas, na ordem) e \`cards/\` (um arquivo por card).`,
+      `O plano detalhado está em \`${dir}\`: \`_roteiro.md\` (as etapas, na ordem) e \`cards/\` (um arquivo por card).`,
     '',
     '## Objetivo',
     '',
@@ -216,7 +217,7 @@ export function buildDraftHandoff(plan: OpenedPlanningDto): string {
     '## Como trabalhar',
     '',
     '- Antes de começar, declare as etapas acima como o seu plano (TodoWrite ou TaskCreate), na mesma ordem, e siga-as sem replanejar.',
-    `- Consulte \`docs/spec/${slug}/\` (roteiro e cards) sempre que precisar de detalhe: os cards são a fonte das decisões.`,
+    `- Consulte \`${dir}\` (roteiro e cards) sempre que precisar de detalhe: os cards são a fonte das decisões.`,
     '- Se o código real contradisser o plano, diga ao usuário o que encontrou e pergunte antes de desviar dele.',
     ''
   )

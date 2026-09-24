@@ -13,8 +13,11 @@ export const HANDOFF_CLOCK_SLACK_MS = 2_000
  * envio): gerar o handoff com plan_handoff_write, um ou mais prompts
  * autocontidos. Com ambiguidades abertas (o usuário escolheu enviar mesmo
  * assim), o Manager é avisado para registrar a leitura recomendada.
+ *
+ * `planDir` é a pasta ABSOLUTA do plano, como o main a informou (plan.dir):
+ * o renderer não a monta.
  */
-export function managerHandoffRequest(slug: string, openAmbiguities = 0): string {
+export function managerHandoffRequest(planDir: string, openAmbiguities = 0): string {
   const lines = [
     'Gere agora o handoff deste planejamento para a conversa de implementação.',
     '',
@@ -23,7 +26,7 @@ export function managerHandoffRequest(slug: string, openAmbiguities = 0): string
     '',
     'Cada prompt precisa trazer: o objetivo; as etapas do roteiro na ordem, com os cards de cada uma; os requisitos; as decisões com o porquê; ' +
       'as sugestões com a fonte; as ambiguidades resolvidas; riscos e critérios de aceite; e a instrução de declarar as etapas como plano ' +
-      `(TodoWrite/TaskCreate) e consultar docs/spec/${slug}/ sem replanejar. A conversa de implementação só verá esse texto e os cards.`,
+      `(TodoWrite/TaskCreate) e consultar ${planDir} sem replanejar. A conversa de implementação só verá esse texto e os cards.`,
     '',
     'Não implemente nada e não altere cards nem o roteiro agora: só grave os prompts e, no fim, diga quantos gravou.'
   ]

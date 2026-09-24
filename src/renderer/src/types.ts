@@ -119,9 +119,10 @@ export interface Conversation {
    *  Agent Manager do plano `planningSlug` (StartAgentOptions.planning) e o
    *  modelo dela é decidido no main, não pelo seletor. Ausente = conversa normal. */
   mode?: 'planning'
-  /** Plano em docs/spec/<planningSlug>/ na pasta `cwd`. Só com mode 'planning'. */
+  /** Slug do plano do projeto `cwd` (a pasta real, na pasta de dados do app,
+   *  o main resolve). Só com mode 'planning'. */
   planningSlug?: string
-  /** Conversa de implementação nascida do handoff do plano docs/spec/<handoffSlug>/:
+  /** Conversa de implementação nascida do handoff do plano <handoffSlug> do projeto `cwd`:
    *  a sessão sobe com StartAgentOptions.handoff. É uma conversa normal (sem `mode`). */
   handoffSlug?: string
 }

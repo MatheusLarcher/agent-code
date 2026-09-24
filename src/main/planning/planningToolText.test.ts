@@ -17,6 +17,8 @@ const card: PlanCard = {
 
 const plan = (cards: PlanCard[]): OpenedPlan => ({
   slug: 'checkout',
+  dir: '/dados/planning/app/checkout',
+  sandboxDir: '/app/docs/spec/checkout/_sandbox',
   roteiro: { titulo: 'Checkout novo', rev: 1, etapas: [{ id: 'dados', titulo: 'Modelar dados', status: 'pendente' }] },
   cards,
   layout: {} as OpenedPlan['layout'],

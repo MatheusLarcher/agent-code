@@ -13,6 +13,9 @@ import type {
 
 export const CWD = 'C:\\proj\\app'
 export const SLUG = 'plano'
+/** Pasta do plano como o main a devolve (na pasta de dados do app, fora do projeto). */
+export const PLAN_DIR = 'D:\\dados\\agent-code\\planning\\app\\plano'
+export const SANDBOX_DIR = 'C:\\proj\\app\\docs\\spec\\plano\\_sandbox'
 
 export function makeCard(id: string, over: Partial<PlanningCardDto> = {}): PlanningCardDto {
   return { id, tipo: 'requisito', titulo: `Card ${id}`, links: [], rev: 1, corpo: '', ...over }
@@ -21,6 +24,8 @@ export function makeCard(id: string, over: Partial<PlanningCardDto> = {}): Plann
 export function makePlan(over: Partial<OpenedPlanningDto> = {}): OpenedPlanningDto {
   return {
     slug: SLUG,
+    dir: PLAN_DIR,
+    sandboxDir: SANDBOX_DIR,
     roteiro: {
       titulo: 'Plano de teste',
       rev: 3,

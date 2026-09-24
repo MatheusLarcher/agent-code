@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildDraftHandoff, demoteHeadings, handoffReadiness, isOpenAmbiguity } from './handoffReadiness'
-import { makeCard, makePlan } from './planningTestUtils'
+import { makeCard, makePlan, PLAN_DIR } from './planningTestUtils'
 
 describe('handoffReadiness', () => {
   it('plano sem ambiguidade: nenhum bloqueio; avisa etapa sem card e etapas não concluídas', () => {
@@ -90,7 +90,9 @@ describe('buildDraftHandoff', () => {
   it('traz objetivo, etapas na ordem com os cards, decisões, sugestões com fonte e ambiguidades', () => {
     const md = buildDraftHandoff(richPlan())
     expect(md.startsWith('# Implementação: Plano de teste\n')).toBe(true)
-    expect(md).toContain('`docs/spec/plano/`')
+    // A pasta real do plano, como o main a devolveu (plan.dir).
+    expect(md).toContain(`O plano detalhado está em \`${PLAN_DIR}\``)
+    expect(md).not.toContain('docs/spec')
     expect(md).toContain('## Objetivo')
     expect(md).toContain('Entregar as 3 etapas do roteiro, na ordem')
 
@@ -113,12 +115,12 @@ describe('buildDraftHandoff', () => {
     expect(md).toContain('## Ambiguidades ainda abertas\n\n- **Frete grátis?** (`cards/amb-frete.md`) — sem decisão')
   })
 
-  it('termina com a instrução de declarar as etapas como plano e consultar docs/spec/<slug>/', () => {
+  it('termina com a instrução de declarar as etapas como plano e consultar a pasta real do plano', () => {
     const md = buildDraftHandoff(richPlan())
     const how = md.slice(md.indexOf('## Como trabalhar'))
     expect(how).toContain('declare as etapas acima como o seu plano (TodoWrite ou TaskCreate)')
     expect(how).toContain('sem replanejar')
-    expect(how).toContain('`docs/spec/plano/`')
+    expect(how).toContain(`Consulte \`${PLAN_DIR}\``)
   })
 
   it('sem ambiguidade aberta não há a seção; roteiro vazio muda o objetivo', () => {

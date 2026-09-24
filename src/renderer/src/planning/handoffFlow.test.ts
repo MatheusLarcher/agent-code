@@ -10,10 +10,13 @@ import {
 
 describe('managerHandoffRequest', () => {
   it('pede plan_handoff_write com um ou mais prompts autocontidos, sem implementar', () => {
-    const text = managerHandoffRequest('checkout')
+    const dir = 'D:\\dados\\agent-code\\planning\\app\\checkout'
+    const text = managerHandoffRequest(dir)
     expect(text).toContain('mcp__planning__plan_handoff_write')
     expect(text).toMatch(/UM OU MAIS prompts autocontidos/)
-    expect(text).toContain('docs/spec/checkout/')
+    // A pasta real que o main informou, não um docs/spec montado no renderer.
+    expect(text).toContain(`consultar ${dir} sem replanejar`)
+    expect(text).not.toContain('docs/spec')
     expect(text).toMatch(/TodoWrite\/TaskCreate/)
     expect(text).toMatch(/Não implemente nada/)
     expect(text).not.toMatch(/ambiguidade.*aberta/i)

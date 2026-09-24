@@ -40,6 +40,18 @@ describe('createdPlanFile', () => {
     )
   })
 
+  it('com as duas pastas do main (plano na pasta de dados, _sandbox no projeto), vale arquivo de qualquer uma', () => {
+    const dataPlan = 'D:\\dados\\agent-code\\planning\\app\\checkout'
+    const sandbox = 'C:\\proj\\app\\docs\\spec\\checkout\\_sandbox'
+    const handoff = `${dataPlan}\\_handoff\\2026-09-24-01.md`
+    const dirs = [dataPlan, sandbox]
+    expect(createdPlanFile('Write', { file_path: SANDBOX_FILE }, ok(), dirs)).toBe(SANDBOX_FILE)
+    expect(createdPlanFile(HANDOFF_TOOL, {}, ok(`Handoff gravado em ${handoff}`), dirs)).toBe(handoff)
+    // Fora das duas: nada (o plano não mora mais em docs/spec do projeto).
+    expect(createdPlanFile('Write', { file_path: 'C:\\proj\\app\\docs\\spec\\checkout\\cards\\x.md' }, ok(), dirs)).toBeNull()
+    expect(createdPlanFile('Write', { file_path: SANDBOX_FILE }, ok(), [])).toBeNull()
+  })
+
   it('não conta: fora do planejamento, Write que falhou, sem resultado, Edit e card', () => {
     expect(createdPlanFile('Write', { file_path: SANDBOX_FILE }, ok(), undefined)).toBeNull()
     expect(createdPlanFile('Write', { file_path: SANDBOX_FILE }, { isError: true, text: 'negado' }, PLAN)).toBeNull()

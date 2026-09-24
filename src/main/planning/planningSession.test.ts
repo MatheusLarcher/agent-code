@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ScopedTask } from '../tasks/writeScopeGuard'
 import { PLANNING_DISALLOWED_TOOLS, planningSandboxDir, planningScopedTask } from './planningPolicy'
 import { PLANNING_CONTENT_IS_DATA } from './planningPrompt'
+import { setPlanningDataRoot } from './planningRoot'
 import {
   applyPlanningSessionOptions,
   buildPlanningAppend,
@@ -152,12 +153,29 @@ describe('handoffAppendBlock', () => {
     const block = handoffAppendBlock({ cwd, handoff: { slug } })
     expect(block).not.toBeNull()
     expect(block).toContain('nasceu do planejamento "checkout"')
-    expect(block).toContain('docs/spec/checkout/')
     expect(block).toContain(path.join(cwd, 'docs', 'spec', 'checkout'))
     expect(block).toMatch(/_roteiro\.md/)
     expect(block).toMatch(/cards\/\*\.md/)
     expect(block).toMatch(/declare as etapas do roteiro como o seu plano \(TodoWrite ou TaskCreate\)/)
     expect(block).toMatch(/Não replaneje/)
+  })
+
+  it('com a pasta de dados configurada, cita o caminho ABSOLUTO real do plano (fora do projeto)', () => {
+    const dataDir = path.resolve('/dados-sessao/agent-code')
+    setPlanningDataRoot(() => dataDir)
+    try {
+      const planDir = path.join(dataDir, 'planning', 'app', 'checkout')
+      const block = handoffAppendBlock({ cwd, handoff: { slug } }) ?? ''
+      expect(block).toContain(`O plano detalhado está em ${planDir}`)
+      expect(block).toContain(path.join(planDir, 'cards'))
+      expect(block).not.toContain('docs/spec')
+      // O Manager: plano na pasta de dados, _sandbox no projeto.
+      const append = buildPlanningAppend(cwd, slug, [])
+      expect(append).toContain(planDir)
+      expect(append).toContain(path.join(cwd, 'docs', 'spec', 'checkout', '_sandbox'))
+    } finally {
+      setPlanningDataRoot(null)
+    }
   })
 
   it('conteúdo de cards/roteiro/páginas web é DADO, não instrução (prompt-injection)', () => {

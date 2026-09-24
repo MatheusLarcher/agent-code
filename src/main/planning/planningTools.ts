@@ -9,7 +9,8 @@ import { cardHeader, describeCard, describeError, describePlan, etapaLines, text
 
 /**
  * O servidor MCP `planning`: as ferramentas com que o Agent Manager lê e altera
- * o planejamento da sessão (docs/spec/<slug>/). Mesmo molde de taskTools.ts.
+ * o planejamento da sessão (a pasta dele é a de planDirPath, na pasta de dados
+ * do app). Mesmo molde de taskTools.ts.
  *
  * - O planejamento (projectCwd + slug) vem do contexto da sessão, NUNCA de
  *   argumento: o Manager não consegue apontar outro planejamento nem outra pasta.

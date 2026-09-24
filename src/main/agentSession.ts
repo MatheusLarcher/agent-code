@@ -23,6 +23,7 @@ import { newPlanGateState, notePlanTool, notePlanTurn, planGateDenial } from './
 import { buildSpecialistAgents } from './agents/specialists'
 import { applyPlanningSessionOptions, handoffAppendBlock, planGateApplies, sessionSkillDenial, sessionWriteScopes } from './planning/planningSession'
 import { planningPreToolDecision, planningRequiresBashApproval, planningToolDenial } from './planning/planningPolicy'
+import { planningDataDir } from './planning/planningRoot'
 import {
   memoryService,
   readSecret,
@@ -927,6 +928,10 @@ export class AgentSession {
     const nativeRoot = ensureNativeSkillRoot(cacheInfo.dir, cacheSkillsDir)
     if (nativeRoot.errors.length > 0) console.warn('[skills] native skill root:', nativeRoot.errors.join('\n'))
     const nativeSkillDirs = nativeRoot.errors.length === 0 ? [nativeRoot.root] : []
+    // Só quando já existe (o store a cria no primeiro plano): diretório
+    // adicional inexistente não serve para nada ao CLI.
+    const planningDir = cacheInfo.dir ? planningDataDir(cacheInfo.dir) : ''
+    const planningDirs = planningDir && existsSync(planningDir) ? [planningDir] : []
     // O seletor do TypeSafe substitui o catálogo: com ele no ar, nem o índice
     // completo entra no system prompt nem as versões são marcadas como
     // entregues — desligar o recurso no meio da conversa faz o próximo despacho
@@ -1077,7 +1082,12 @@ export class AgentSession {
       ...(openaiOn ? { maxTurns: OPENAI_MAX_TURNS } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
-      additionalDirectories: [...new Set([memoriesDir, cacheSkillsDir, ...nativeSkillDirs, ...skillRoots])],
+      // A pasta dos planejamentos (<dataDir>/planning) também: a conversa de
+      // handoff lê os cards de lá sem pedir permissão. Gravar nela o Manager não
+      // grava (fora do projeto = fora do escopo do _sandbox).
+      additionalDirectories: [
+        ...new Set([memoriesDir, cacheSkillsDir, ...planningDirs, ...nativeSkillDirs, ...skillRoots])
+      ],
       skills: 'all',
       // Resume a previous SDK session (loads its history) when continuing an old chat.
       ...(this.opts.resume ? { resume: this.opts.resume } : {}),
@@ -2076,7 +2086,7 @@ ${lines}
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     // As plan_* do Agent Manager só gravam pelo planningStore (validação, rev,
-    // caminho preso em docs/spec/<slug>/) — mesmo motivo das de memória e tarefas.
+    // caminho preso na pasta do planejamento) — mesmo motivo das de memória e tarefas.
     if (this.opts.planning && toolName.startsWith('mcp__planning__')) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }

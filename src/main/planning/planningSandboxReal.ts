@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { planDirPath } from './planningStore'
+import { planSandboxDirPath } from './planningRoot'
 
 /**
  * A conferência do _sandbox do Agent Manager pelo caminho REAL. O escopo do
@@ -67,8 +67,10 @@ export async function sandboxRealPathDenial(
   targets: readonly string[]
 ): Promise<string | null> {
   if (!targets.length) return null
-  const planDir = planDirPath(projectCwd, slug)
-  const sandbox = path.join(planDir, '_sandbox')
+  // O _sandbox mora no projeto (docs/spec/<slug>/_sandbox), não na pasta do
+  // plano — esta vive na pasta de dados do app, onde o Manager não grava.
+  const sandbox = planSandboxDirPath(projectCwd, slug)
+  const planDir = path.dirname(sandbox)
   const refuse = (why: string): string =>
     `${toolName} recusado no Agent Manager: ${why}. A escrita só vale dentro da pasta real ${sandbox} — ` +
     'junction, symlink ou link quebrado que aponte para fora dela não conta como _sandbox.'

@@ -168,7 +168,7 @@ export function NewPlanningDialog({ projectCwd, projectName, onOpen, onClose }: 
                     className="pl-new-open"
                     disabled={busy}
                     onClick={() => void reopen(s)}
-                    title={`Reabrir docs/spec/${s}/`}
+                    title={`Reabrir o planejamento ${s}`}
                   >
                     <IconPlanning size={14} />
                     <span className="pl-new-open-slug">{s}</span>

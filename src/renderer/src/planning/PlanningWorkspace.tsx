@@ -18,7 +18,7 @@ import { PlanningScreen } from './PlanningScreen'
 export interface PlanningWorkspaceProps {
   /** Pasta do projeto (a `cwd` da conversa). */
   projectCwd: string
-  /** Plano em docs/spec/<slug>/ (a `planningSlug` da conversa). */
+  /** Slug do plano (a `planningSlug` da conversa); a pasta real vem do main. */
   slug: string
   /** O painel de conversa com o Agent Manager. */
   chat: ReactNode

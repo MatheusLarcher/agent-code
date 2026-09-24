@@ -1,9 +1,8 @@
-import path from 'node:path'
 import { scanBashWrites } from '../tasks/bashWriteScan'
 import { writeScopeDenial, type ScopedTask } from '../tasks/writeScopeGuard'
 import { assertValidName } from './planningModel'
+import { planSandboxDirPath } from './planningRoot'
 import { sandboxRealPathDenial } from './planningSandboxReal'
-import { planDirPath } from './planningStore'
 
 /**
  * A política de permissão das sessões ligadas ao planejamento — sem sessão nem
@@ -12,11 +11,11 @@ import { planDirPath } from './planningStore'
  * - Agent Manager: ALLOWLIST de ferramentas (MANAGER_ALLOWED_TOOLS + os
  *   servidores planning e memory). O que não está nela é negado — inclusive
  *   ferramentas que o CLI embutido ganhar numa versão futura.
- * - Escreve SOMENTE em docs/spec/<slug>/_sandbox/** (código de teste
- *   descartável), conferido como texto (glob do writeScopeGuard) e pelo
+ * - Escreve SOMENTE em docs/spec/<slug>/_sandbox/** do projeto (código de
+ *   teste descartável), conferido como texto (glob do writeScopeGuard) e pelo
  *   caminho real (planningSandboxReal: junction/symlink para fora é negado).
- *   Cards e roteiro só mudam pelas ferramentas plan_*, que gravam pelo
- *   planningStore — nunca por Write/Edit/Bash.
+ *   Cards e roteiro (na pasta de dados do app, fora do projeto) só mudam pelas
+ *   ferramentas plan_*, que gravam pelo planningStore — nunca por Write/Edit/Bash.
  * - Bash é o único shell, e cada comando pede aprovação — só o "Permitir
  *   tudo" o libera (a agentSession aplica).
  * - Sem skills de execução/replanejamento: o plano vive nos cards.
@@ -33,9 +32,11 @@ export function planningSandboxGlob(slug: string): string {
   return `docs/spec/${slug}/_sandbox/**`
 }
 
-/** Pasta absoluta do _sandbox do planejamento (para o prompt do Manager). */
+/** Pasta absoluta do _sandbox do planejamento (para o prompt do Manager). Fica
+ *  no projeto, em docs/spec/<slug>/_sandbox — o plano em si mora na pasta de
+ *  dados do app, fora do projeto, e por isso fora do escopo de escrita. */
 export function planningSandboxDir(projectCwd: string, slug: string): string {
-  return path.join(planDirPath(projectCwd, slug), '_sandbox')
+  return planSandboxDirPath(projectCwd, slug)
 }
 
 /**
@@ -275,7 +276,7 @@ export function handoffSkillDenial(skillName: unknown, firstTurnDone: boolean): 
   if (!base) return null
   return (
     `A skill "${String(skillName)}" (${base}) está bloqueada no primeiro turno desta conversa de handoff: ` +
-    'o plano já foi feito na Tela de Planejamento e veio no prompt (docs/spec/<slug>/_handoff/). ' +
+    'o plano já foi feito na Tela de Planejamento e veio no prompt (gravado em _handoff/ da pasta do planejamento). ' +
     'Execute a partir dele — replanejar agora descartaria as decisões registradas nos cards. ' +
     'Depois do primeiro turno a skill volta a ficar disponível, se o usuário pedir.'
   )

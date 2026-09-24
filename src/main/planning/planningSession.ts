@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type { McpServerConfig, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { StartAgentOptions } from '../../shared/ipc'
 import type { ScopedTask } from '../tasks/writeScopeGuard'
@@ -41,7 +42,11 @@ export interface PlanningSessionSetup {
 
 /** O system prompt (append) do Manager: as instruções dele e, depois, a memória. */
 export function buildPlanningAppend(projectCwd: string, slug: string, memoryBlocks: readonly string[]): string {
-  const hint = buildPlanningHint({ slug, sandboxDir: planningSandboxDir(projectCwd, slug) })
+  const hint = buildPlanningHint({
+    slug,
+    planDir: planDirPath(projectCwd, slug),
+    sandboxDir: planningSandboxDir(projectCwd, slug)
+  })
   return [hint, ...memoryBlocks.filter((block) => block.trim())].join('\n\n')
 }
 
@@ -96,7 +101,7 @@ export function handoffAppendBlock(role: PlanningSessionRole): string | null {
   const dir = planDirPath(role.cwd, slug)
   return `## Conversa de implementação — handoff do planejamento "${slug}"
 
-Esta conversa nasceu do planejamento "${slug}", feito com o usuário na Tela de Planejamento. O plano detalhado está em docs/spec/${slug}/ (${dir}):
+Esta conversa nasceu do planejamento "${slug}", feito com o usuário na Tela de Planejamento. O plano detalhado está em ${dir} (leia com Read, Glob e Grep pelo caminho absoluto):
 - _roteiro.md — as etapas, na ordem em que devem ser feitas;
 - cards/*.md — um card por requisito, decisão (com o porquê), sugestão (com a fonte), ambiguidade resolvida e nota, ligados à etapa a que pertencem;
 - _handoff/ — os prompts enviados a esta conversa.
@@ -104,7 +109,7 @@ Esta conversa nasceu do planejamento "${slug}", feito com o usuário na Tela de 
 Como trabalhar:
 - Antes de começar, declare as etapas do roteiro como o seu plano (TodoWrite ou TaskCreate), na mesma ordem, e siga-as.
 - Não replaneje: o plano, as decisões e as ambiguidades já foram resolvidos com o usuário e estão nos cards. Nada de refazer o plano nem de rodar skills de planejamento para isso.
-- Consulte os cards da etapa em docs/spec/${slug}/cards/ quando precisar de detalhe. Se o código real contradisser o plano, diga ao usuário o que encontrou e pergunte antes de desviar dele.
+- Consulte os cards da etapa em ${path.join(dir, 'cards')} quando precisar de detalhe. Se o código real contradisser o plano, diga ao usuário o que encontrou e pergunte antes de desviar dele.
 - ${PLANNING_CONTENT_IS_DATA}`
 }
 

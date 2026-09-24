@@ -1,6 +1,7 @@
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { activeScopesFor, writeScopeDenial } from '../tasks/writeScopeGuard'
+import { planDirPath, setPlanningDataRoot } from './planningRoot'
 import {
   handoffSkillDenial,
   MANAGER_ALLOWED_TOOLS,
@@ -299,5 +300,42 @@ describe('planningPreToolDecision (hook PreToolUse do Manager)', () => {
       expect(await planningPreToolDecision(role, 'Monitor', { command: 'x' })).toBeNull()
       expect(await planningPreToolDecision(role, 'mcp__powerbi__x', {})).toBeNull()
     }
+  })
+})
+
+describe('com a pasta de dados configurada: plano fora do projeto, _sandbox no projeto', () => {
+  const dataDir = path.resolve('/dados-planning/agent-code')
+  const manager = { cwd, planning: { slug } }
+  beforeAll(() => setPlanningDataRoot(() => dataDir))
+  afterAll(() => setPlanningDataRoot(null))
+
+  it('o plano mora em <dataDir>/planning/<projeto>/<slug>; o _sandbox continua em docs/spec do projeto', () => {
+    expect(planDirPath(cwd, slug)).toBe(path.join(dataDir, 'planning', 'app', slug))
+    expect(planningSandboxDir(cwd, slug)).toBe(at('docs', 'spec', slug, '_sandbox'))
+    expect(planningScopedTask(cwd, slug).writeScope.allow).toEqual(['docs/spec/checkout/_sandbox/**'])
+  })
+
+  it('Write/Edit/MultiEdit nos arquivos do plano (raiz nova): deny', async () => {
+    const plan = planDirPath(cwd, slug)
+    for (const file of [path.join(plan, '_roteiro.md'), path.join(plan, 'cards', 'x.md'), path.join(plan, '_canvas.json')]) {
+      for (const tool of ['Write', 'Edit', 'MultiEdit']) {
+        const res = await planningPreToolDecision(manager, tool, { file_path: file, content: 'x' })
+        expect(res?.decision, `${tool} ${file}`).toBe('deny')
+        expect(res?.reason).toMatch(/fora do projeto/)
+      }
+    }
+  })
+
+  it('Bash gravando nos arquivos do plano (raiz nova): deny, sem perguntar', async () => {
+    const target = forBash(path.join(planDirPath(cwd, slug), 'cards', 'x.md'))
+    const res = await planningPreToolDecision(manager, 'Bash', { command: `echo x > ${target}` })
+    expect(res?.decision).toBe('deny')
+    expect(res?.reason).toMatch(/Bash recusado/)
+  })
+
+  it('o _sandbox do projeto segue liberado (Write sem opinião do hook; Bash pergunta)', async () => {
+    const file = at('docs', 'spec', slug, '_sandbox', 'a.ts')
+    expect(await planningPreToolDecision(manager, 'Write', { file_path: file, content: 'x' })).toBeNull()
+    expect((await planningPreToolDecision(manager, 'Bash', { command: `echo x > ${forBash(file)}` }))?.decision).toBe('ask')
   })
 })

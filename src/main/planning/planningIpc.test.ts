@@ -117,7 +117,16 @@ describe('registerPlanningIpc', () => {
     const opened = await call(Channels.planningOpen, ref)
     expect(opened).toEqual({
       ok: true,
-      plan: { slug: 'checkout', roteiro: { ...roteiro, rev: 2 }, cards: [{ ...card(), rev: 1 }], layout, invalid: [] }
+      plan: {
+        slug: 'checkout',
+        // O main diz ao renderer onde o plano mora — o renderer não monta caminho.
+        dir: path.join(cwd, 'docs', 'spec', 'checkout'),
+        sandboxDir: path.join(cwd, 'docs', 'spec', 'checkout', '_sandbox'),
+        roteiro: { ...roteiro, rev: 2 },
+        cards: [{ ...card(), rev: 1 }],
+        layout,
+        invalid: []
+      }
     })
     expect(await call(Channels.planningDeleteCard, { ...ref, id: 'req-1', expectedRev: 1 })).toEqual({ ok: true })
     expect((await call(Channels.planningOpen, ref)).plan.cards).toEqual([])

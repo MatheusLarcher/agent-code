@@ -8,8 +8,9 @@
  *
  * Abrir = VS Code (`openInEditor`), nunca o programa padrão do sistema: o
  * arquivo foi escrito pelo agente, e "abrir" um .bat/.exe no Windows é
- * executá-lo. Só vale caminho DENTRO da pasta do plano (docs/spec/<slug>/),
- * sem `..` e sem os caracteres que o shell do `code "<path>"` interpretaria.
+ * executá-lo. Só vale caminho DENTRO das pastas do plano que o main informou
+ * (a do plano, na pasta de dados do app, e o _sandbox, no projeto), sem `..`
+ * e sem os caracteres que o shell do `code "<path>"` interpretaria.
  */
 import type { MouseEvent } from 'react'
 import { IconFile } from '../components/Icons'
@@ -31,14 +32,15 @@ export function isInsidePlan(path: string, planDir: string): boolean {
   return !file.slice(root.length + 1).split('/').some((seg) => seg === '..' || seg === '.' || seg === '')
 }
 
-/** O arquivo que esta chamada de ferramenta criou na pasta do plano, ou null. */
+/** O arquivo que esta chamada de ferramenta criou numa das pastas do plano, ou null. */
 export function createdPlanFile(
   name: string,
   input: unknown,
   result: { text: string; isError?: boolean } | undefined,
-  planDir: string | undefined
+  planDir: string | readonly string[] | undefined
 ): string | null {
-  if (!planDir || !result || result.isError) return null
+  const dirs = (typeof planDir === 'string' ? [planDir] : planDir ?? []).filter(Boolean)
+  if (dirs.length === 0 || !result || result.isError) return null
   let path = ''
   if (name === 'Write') {
     const p = (input && typeof input === 'object' ? (input as Record<string, unknown>).file_path : '') ?? ''
@@ -46,7 +48,7 @@ export function createdPlanFile(
   } else if (name === HANDOFF_TOOL) {
     path = HANDOFF_RESULT.exec(result.text.trim())?.[1] ?? ''
   }
-  return path && isInsidePlan(path, planDir) ? path : null
+  return path && dirs.some((dir) => isInsidePlan(path, dir)) ? path : null
 }
 
 export function PlanFileLink({ path }: { path: string }): JSX.Element {

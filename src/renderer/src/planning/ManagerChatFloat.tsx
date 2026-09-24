@@ -114,8 +114,9 @@ export interface ManagerChatFloatProps {
   /** Sobe a cada clique no canvas (o "flow"): minimiza o chat, se estiver maximizado.
    *  Sentinela de "ainda não pediram" é o valor inicial — não minimiza sozinho na montagem. */
   collapseSignal?: number
-  /** Pasta do plano (docs/spec/<slug>, absoluta): arquivos criados nela viram link no chat. */
-  planDir?: string
+  /** Pastas do plano (absolutas, vindas do main: a do plano e o _sandbox):
+   *  arquivos criados nelas viram link no chat. */
+  planDir?: string | readonly string[]
 }
 
 export function ManagerChatFloat({ children, cards, collapseSignal, planDir }: ManagerChatFloatProps): JSX.Element {

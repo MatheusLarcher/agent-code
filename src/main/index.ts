@@ -53,6 +53,7 @@ import { BoardService } from './board/boardService'
 import { registerPlanningIpc, type PlanningIpcHandle } from './planning/planningIpc'
 import { exportFlowPdf } from './planning/flowPdfExport'
 import { PlanningConversations, planningStartOptions } from './planning/planningConversations'
+import { setPlanningDataRoot } from './planning/planningRoot'
 import { registerConversationTitleIpc } from './titles/conversationTitleIpc'
 import { Po } from './po/po'
 import { Memorista } from './memoria/memorista'
@@ -116,6 +117,10 @@ let stopRestartGuardFile: (() => void) | null = null
 let stopSleepGuard: (() => void) | null = null
 /** Handlers planning:* e os vigias de pasta deles (fechados ao sair). */
 let planningIpc: PlanningIpcHandle | null = null
+// Os planejamentos moram na pasta de dados do app (<dataDir>/planning/<projeto>/),
+// a mesma das memórias: acompanham o usuário entre PCs. Lida a cada chamada —
+// o usuário pode trocar a pasta de dados com o app aberto.
+setPlanningDataRoot(() => getCacheInfo().dir)
 let closeRequested = false
 let closeReady = false
 let closeRequestTimer: ReturnType<typeof setInterval> | null = null

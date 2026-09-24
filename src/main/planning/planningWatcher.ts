@@ -4,9 +4,13 @@ import { planDirPath } from './planningStore'
 import { isOwnWrite as defaultIsOwnWrite } from './planningWrites'
 
 /**
- * Vigia dos planejamentos ABERTOS: avisa quando os arquivos de
- * docs/spec/<slug>/ mudam no disco por fora do app (editor, git, agente
- * rodando comando) para a tela recarregar.
+ * Vigia dos planejamentos ABERTOS: avisa quando os arquivos da pasta do
+ * planejamento (planDirPath) mudam no disco por fora do app (editor, o
+ * sincronizador trazendo a edição do outro PC, agente rodando comando) para a
+ * tela recarregar.
+ *
+ * - A entrada é identificada por projeto + slug, não pela pasta: se a pasta de
+ *   dados trocar com o plano aberto, o unwatch ainda acha a vigia que abriu.
  *
  * - Um fs.watch recursivo por planejamento, com contagem de referências.
  * - Rajadas (tmp + rename, vários arquivos de uma vez) viram UM evento depois
@@ -94,8 +98,11 @@ interface Entry {
   firstEventAt: number
 }
 
-function keyOf(dir: string): string {
-  return process.platform === 'win32' ? dir.toLowerCase() : dir
+/** Chave da vigia: projeto + slug (valida os dois, como o planDirPath). */
+function keyOf(projectCwd: string, slug: string): string {
+  planDirPath(projectCwd, slug)
+  const key = `${path.resolve(projectCwd)}\u0000${slug}`
+  return process.platform === 'win32' ? key.toLowerCase() : key
 }
 
 export class PlanningWatcher {
@@ -119,7 +126,7 @@ export class PlanningWatcher {
   /** Começa (ou reforça) a vigia do planejamento. Lança só para slug/cwd inválidos. */
   watch(projectCwd: string, slug: string): void {
     const dir = planDirPath(projectCwd, slug)
-    const key = keyOf(dir)
+    const key = keyOf(projectCwd, slug)
     const existing = this.entries.get(key)
     if (existing) {
       existing.refs++
@@ -158,13 +165,13 @@ export class PlanningWatcher {
 
   /** Reabre a vigia que caiu, sem mexer na contagem (reabertura pela mesma tela). */
   revive(projectCwd: string, slug: string): void {
-    const entry = this.entries.get(keyOf(planDirPath(projectCwd, slug)))
+    const entry = this.entries.get(keyOf(projectCwd, slug))
     if (entry && !entry.handle) this.open(entry)
   }
 
   /** Solta uma referência; na última, fecha o fs.watch. */
   unwatch(projectCwd: string, slug: string): void {
-    const key = keyOf(planDirPath(projectCwd, slug))
+    const key = keyOf(projectCwd, slug)
     const entry = this.entries.get(key)
     if (!entry) return
     entry.refs--

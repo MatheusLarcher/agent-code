@@ -12,12 +12,41 @@ import {
   type PlanCard,
   type Roteiro
 } from './planningModel'
+import {
+  ensureMigrated,
+  legacySpecRoot,
+  planDirPath,
+  planningRootFor,
+  PlanningPathError,
+  planSandboxDirPath
+} from './planningRoot'
 import { forgetOwnWrite, recordOwnWrite } from './planningWrites'
+
+// A raiz (pasta de dados ou docs/spec) mora em planningRoot; quem já importava
+// daqui continua importando.
+export {
+  planDirPath,
+  planningDataDir,
+  planningRootFor,
+  PlanningPathError,
+  PLANNING_DATA_SUBDIR,
+  planSandboxDirPath,
+  setPlanningDataRoot
+} from './planningRoot'
 
 /**
  * Armazenamento em disco da Tela de Planejamento, por projeto:
- *   <cwd>/docs/spec/<slug>/_roteiro.md, _canvas.json, cards/<id>.md,
- *   _handoff/AAAA-MM-DD-NN.md e _sandbox/ (gitignorado).
+ *   <raiz>/<slug>/_roteiro.md, _canvas.json, cards/<id>.md e
+ *   _handoff/AAAA-MM-DD-NN.md.
+ *
+ * A raiz é a da pasta de dados do app (<dataDir>/planning/<projectKey>/, ver
+ * setPlanningDataRoot): o plano acompanha o usuário entre PCs como as
+ * conversas e as memórias. Sem resolvedor configurado (testes, ferramentas),
+ * vale a raiz legada <cwd>/docs/spec/ (planningRoot). Os planos que ainda estão
+ * na legada são copiados para a nova na listagem/abertura (planningMigration).
+ *
+ * O _sandbox/ (código descartável do Agent Manager) continua no projeto, em
+ * <cwd>/docs/spec/<slug>/_sandbox/ (gitignorado): é local de cada PC.
  *
  * Todo caminho passa por resolvePlanPath, que recusa nomes fora de [a-z0-9-]
  * e qualquer destino (inclusive via symlink) fora da pasta do planejamento.
@@ -39,19 +68,16 @@ export interface InvalidPlanFile {
 
 export interface OpenedPlan {
   slug: string
+  /** Pasta ABSOLUTA do planejamento (roteiro, cards, _handoff). */
+  dir: string
+  /** Pasta ABSOLUTA do _sandbox do Agent Manager, no projeto. */
+  sandboxDir: string
   roteiro: Roteiro
   cards: PlanCard[]
   layout: CanvasLayout
   /** Cards que falharam ao carregar (frontmatter quebrado, nome inválido…).
    *  Não derrubam o planejamento: os válidos seguem em `cards`. */
   invalid: InvalidPlanFile[]
-}
-
-export class PlanningPathError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'PlanningPathError'
-  }
 }
 
 /** O planejamento pedido não existe (sem _roteiro.md). */
@@ -115,19 +141,6 @@ async function inFileQueue<T>(file: string, work: () => Promise<T>): Promise<T> 
 
 const EMPTY_LAYOUT: CanvasLayout = { positions: {} }
 
-function specRoot(projectCwd: string): string {
-  if (typeof projectCwd !== 'string' || !path.isAbsolute(projectCwd)) {
-    throw new PlanningPathError('projectCwd deve ser caminho absoluto')
-  }
-  return path.join(path.resolve(projectCwd), 'docs', 'spec')
-}
-
-/** Pasta de um planejamento (<cwd>/docs/spec/<slug>), sem tocar o disco. */
-export function planDirPath(projectCwd: string, slug: string): string {
-  assertValidName(slug, 'slug')
-  return path.join(specRoot(projectCwd), slug)
-}
-
 function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child)
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
@@ -148,14 +161,14 @@ async function realOrSelf(p: string): Promise<string> {
  */
 async function resolvePlanPath(projectCwd: string, slug: string, ...parts: string[]): Promise<string> {
   assertValidName(slug, 'slug')
-  const root = specRoot(projectCwd)
+  const root = planningRootFor(projectCwd)
   const planDir = path.join(root, slug)
   const target = path.join(planDir, ...parts)
   if (!isInside(planDir, target)) throw new PlanningPathError('caminho fora da pasta do planejamento')
   const realRoot = await realOrSelf(root)
   const realPlan = await fs.realpath(planDir).catch(() => path.join(realRoot, slug))
   if (!isInside(realRoot, realPlan) || path.relative(realRoot, realPlan) !== slug) {
-    throw new PlanningPathError('pasta do planejamento escapa de docs/spec')
+    throw new PlanningPathError('pasta do planejamento escapa da raiz dos planejamentos')
   }
   // Confere cada ancestral existente do alvo (o alvo pode ainda não existir).
   let probe = target
@@ -211,9 +224,10 @@ async function readCard(projectCwd: string, slug: string, id: string): Promise<P
 }
 
 export async function listPlans(projectCwd: string): Promise<string[]> {
+  await ensureMigrated(projectCwd)
   let entries: import('node:fs').Dirent[]
   try {
-    entries = await fs.readdir(specRoot(projectCwd), { withFileTypes: true })
+    entries = await fs.readdir(planningRootFor(projectCwd), { withFileTypes: true })
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw err
@@ -260,6 +274,8 @@ function validateLayout(layout: CanvasLayout): CanvasLayout {
  * caminho (symlink para fora) e de disco continuam sendo exceção.
  */
 export async function openPlan(projectCwd: string, slug: string): Promise<OpenedPlan> {
+  assertValidName(slug, 'slug')
+  await ensureMigrated(projectCwd, slug)
   const roteiroText = await readIfExists(await resolvePlanPath(projectCwd, slug, '_roteiro.md'))
   if (roteiroText === null) throw new PlanNotFoundError(slug)
   const cardsDir = await resolvePlanPath(projectCwd, slug, 'cards')
@@ -289,12 +305,16 @@ export async function openPlan(projectCwd: string, slug: string): Promise<Opened
     }
   }
   const layout = parseLayout(await readIfExists(await resolvePlanPath(projectCwd, slug, '_canvas.json')))
-  return { slug, roteiro: parseRoteiro(roteiroText), cards, layout, invalid }
+  return { slug, ...planDirs(projectCwd, slug), roteiro: parseRoteiro(roteiroText), cards, layout, invalid }
+}
+
+function planDirs(projectCwd: string, slug: string): Pick<OpenedPlan, 'dir' | 'sandboxDir'> {
+  return { dir: planDirPath(projectCwd, slug), sandboxDir: planSandboxDirPath(projectCwd, slug) }
 }
 
 /** Garante SANDBOX_GITIGNORE_LINE no .gitignore da raiz, sem duplicar nem mexer no resto. */
 export async function ensureSandboxGitignore(projectCwd: string): Promise<void> {
-  specRoot(projectCwd)
+  legacySpecRoot(projectCwd)
   const file = path.join(path.resolve(projectCwd), '.gitignore')
   const current = await readIfExists(file)
   if (current === null) {
@@ -309,6 +329,10 @@ export async function ensureSandboxGitignore(projectCwd: string): Promise<void> 
 }
 
 export async function createPlan(projectCwd: string, slug: string, titulo: string): Promise<OpenedPlan> {
+  assertValidName(slug, 'slug')
+  // Um plano legado com este slug vem antes para a raiz nova: assim a colisão
+  // é conferida contra ele, e o novo nunca o esconde.
+  await ensureMigrated(projectCwd, slug)
   const roteiroPath = await resolvePlanPath(projectCwd, slug, '_roteiro.md')
   if ((await readIfExists(roteiroPath)) !== null) {
     throw new PlanningValidationError(`planejamento já existe: ${slug}`)
@@ -317,9 +341,10 @@ export async function createPlan(projectCwd: string, slug: string, titulo: strin
   await atomicWrite(roteiroPath, serializeRoteiro(roteiro))
   await atomicWrite(await resolvePlanPath(projectCwd, slug, '_canvas.json'), JSON.stringify(EMPTY_LAYOUT, null, 2) + '\n')
   await fs.mkdir(await resolvePlanPath(projectCwd, slug, 'cards'), { recursive: true })
-  await fs.mkdir(await resolvePlanPath(projectCwd, slug, '_sandbox'), { recursive: true })
+  // O _sandbox fica no projeto (código descartável, local deste PC), gitignorado.
+  await fs.mkdir(planSandboxDirPath(projectCwd, slug), { recursive: true })
   await ensureSandboxGitignore(projectCwd)
-  return { slug, roteiro, cards: [], layout: { positions: {} }, invalid: [] }
+  return { slug, ...planDirs(projectCwd, slug), roteiro, cards: [], layout: { positions: {} }, invalid: [] }
 }
 
 /**
@@ -394,7 +419,7 @@ function today(now: Date): string {
 /**
  * Grava o prompt enviado ao agente principal em _handoff/AAAA-MM-DD-NN.md;
  * devolve o caminho. Só num planejamento que existe (PlanNotFoundError): sem
- * isso, gravar criaria uma docs/spec/<slug>/ solta.
+ * isso, gravar criaria uma pasta de planejamento solta.
  */
 export async function writeHandoff(
   projectCwd: string,

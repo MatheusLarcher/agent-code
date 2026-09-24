@@ -124,7 +124,15 @@ describe('existingPlanTitle (reabrir um plano existente)', () => {
   const ref = { projectCwd: '/proj', slug: 'checkout' }
   const opened = (titulo: string) => ({
     ok: true as const,
-    plan: { slug: 'checkout', roteiro: { titulo, rev: 2, etapas: [] }, cards: [], layout: { positions: {} }, invalid: [] }
+    plan: {
+      slug: 'checkout',
+      dir: '/dados/planning/proj/checkout',
+      sandboxDir: '/proj/docs/spec/checkout/_sandbox',
+      roteiro: { titulo, rev: 2, etapas: [] },
+      cards: [],
+      layout: { positions: {} },
+      invalid: []
+    }
   })
 
   it('usa o título do roteiro (planningOpen), não o slug — e não fecha a vigia', async () => {

@@ -34,7 +34,7 @@ import { usePlanning } from './usePlanning'
 export interface PlanningScreenProps {
   /** Pasta do projeto (absoluta). */
   projectCwd: string
-  /** Plano em docs/spec/<slug>/. */
+  /** Slug do plano; a pasta real vem do main (plan.dir). */
   slug: string
   /** Painel de conversa com o agente, flutuando sobre o canvas. */
   chatSlot?: ReactNode
@@ -124,6 +124,14 @@ function usePanes(): {
 function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: PlanningScreenProps): JSX.Element {
   const { status, plan, error, born, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa } =
     usePlanning(projectCwd, slug)
+  // As pastas do plano vêm do main (na pasta de dados do app e, o _sandbox, no
+  // projeto): o renderer não sabe montá-las.
+  const planDir = plan?.dir
+  const sandboxDir = plan?.sandboxDir
+  const planDirs = useMemo(
+    () => (planDir && sandboxDir ? [planDir, sandboxDir] : undefined),
+    [planDir, sandboxDir]
+  )
   const { confirm, notify } = useUI()
   const flow = useReactFlow()
   const [editing, setEditing] = useState<Editing | null>(null)
@@ -368,7 +376,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
           )}
           {/* Os cards do canvas vão para o chat: '[[' sugere e [[Nome]] ganha a cor do tipo. */}
           {chatSlot && (
-            <ManagerChatFloat cards={cards} collapseSignal={chatCollapseSignal} planDir={`${projectCwd}/docs/spec/${slug}`}>
+            <ManagerChatFloat cards={cards} collapseSignal={chatCollapseSignal} planDir={planDirs}>
               {chatSlot}
             </ManagerChatFloat>
           )}

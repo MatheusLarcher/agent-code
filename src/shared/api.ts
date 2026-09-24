@@ -173,7 +173,8 @@ export interface AgentCodeApi {
   boardItemEvents(boardItemId: string): Promise<BoardItemEvent[]>
   /** O quadro daquele projeto mudou (o agente avançou, ou o PO corrigiu). */
   onBoardChanged(cb: (msg: { projectId: string }) => void): () => void
-  /** Tela de Planejamento (docs/spec/<slug>/). Nada lança: erro vem como
+  /** Tela de Planejamento (pasta de dados do app: <dataDir>/planning/<projeto>/<slug>/;
+   *  o plano aberto traz a pasta real em `dir`). Nada lança: erro vem como
    *  `{ ok: false, code }` — 'rev_conflict' traz o card atual em disco e
    *  'roteiro_conflict', o roteiro atual. */
   planningList(req: { projectCwd: string }): Promise<PlanningResult<{ slugs: string[] }>>
@@ -192,7 +193,7 @@ export interface AgentCodeApi {
     req: PlanningRef & { roteiro: Omit<PlanningRoteiroDto, 'rev'>; expectedRev: number }
   ): Promise<PlanningResult<{ roteiro: PlanningRoteiroDto }>>
   planningSaveLayout(req: PlanningRef & { layout: PlanningLayoutDto }): Promise<PlanningResult>
-  /** Os prompts de docs/spec/<slug>/_handoff/, na ordem em que foram gravados. */
+  /** Os prompts de _handoff/ do planejamento, na ordem em que foram gravados. */
   planningListHandoffs(req: PlanningRef): Promise<PlanningResult<{ handoffs: PlanningHandoffDto[] }>>
   /** Grava um prompt em _handoff/AAAA-MM-DD-NN.md; devolve o nome do arquivo novo. */
   planningWriteHandoff(req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>>

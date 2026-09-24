@@ -14,7 +14,7 @@ import {
 import { notifyPlanningChanged, setPlanningChangeSink } from './planningEvents'
 import { CARD_TYPES, isValidName, PlanningValidationError, STAGE_STATUSES } from './planningModel'
 import * as realStore from './planningStore'
-import { PlanNotFoundError, PlanningPathError, planDirPath, RevConflictError, RoteiroConflictError } from './planningStore'
+import { PlanNotFoundError, PlanningPathError, RevConflictError, RoteiroConflictError } from './planningStore'
 import { PlanningWatcher, type PlanningChange } from './planningWatcher'
 
 /**
@@ -151,9 +151,11 @@ function senderIdOf(event: unknown): number {
   return typeof id === 'number' ? id : 0
 }
 
+/** Chave de um plano aberto: projeto + slug, não a pasta — a pasta sai da pasta
+ *  de dados do app (planDirPath), que pode trocar entre o open e o close. */
 function planKey(projectCwd: string, slug: string): string {
-  const dir = planDirPath(projectCwd, slug)
-  return process.platform === 'win32' ? dir.toLowerCase() : dir
+  const key = `${path.resolve(projectCwd)}\u0000${slug}`
+  return process.platform === 'win32' ? key.toLowerCase() : key
 }
 
 export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
