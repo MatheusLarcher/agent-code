@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildDraftHandoff, demoteHeadings, handoffReadiness, isOpenAmbiguity } from './handoffReadiness'
+import type { PlanMediaDto } from '@shared/ipc'
 import { makeCard, makePlan, PLAN_DIR } from './planningTestUtils'
 
 describe('handoffReadiness', () => {
@@ -130,6 +131,192 @@ describe('buildDraftHandoff', () => {
     expect(vazio.startsWith('# Implementação: plano\n')).toBe(true)
     expect(vazio).toContain('O roteiro ainda não tem etapas')
     expect(vazio).not.toContain('## Etapas, na ordem')
+  })
+})
+
+describe('buildDraftHandoff com mídia', () => {
+  const MIDIA = `${PLAN_DIR}\\midia`
+  function media(name: string, over: Partial<PlanMediaDto> = {}): PlanMediaDto {
+    return { name, path: `${MIDIA}\\${name}`, kind: 'imagem', size: 10, mediaType: 'image/png', ...over }
+  }
+
+  /** O texto que o rascunho gerava ANTES de existir mídia (capturado do código anterior). */
+  const BEFORE_MEDIA = [
+    '# Implementação: Plano de teste',
+    '',
+    `Esta conversa implementa o planejamento **Plano de teste**, feito com o usuário na Tela de Planejamento. O plano detalhado está em \`${PLAN_DIR}\`: \`_roteiro.md\` (as etapas, na ordem) e \`cards/\` (um arquivo por card).`,
+    '',
+    '## Objetivo',
+    '',
+    'Plano de teste. Entregar as 3 etapas do roteiro, na ordem, respeitando os requisitos e as decisões abaixo.',
+    '',
+    '## Etapas, na ordem',
+    '',
+    '1. **Levantar requisitos** (`requisitos`) — concluída',
+    '   - Requisito: Login com SSO (`cards/login.md`)',
+    '2. **Desenhar a solução** (`desenho`) — pendente',
+    '   - Decisão: Usar Postgres (`cards/banco.md`)',
+    '   - Sugestão: Cache com Redis (`cards/cache.md`)',
+    '   - Ambiguidade: Pix ou boleto? (`cards/amb-pix.md`)',
+    '3. **Entregar** (`entrega`) — em andamento',
+    '   - Ambiguidade: Frete grátis? (`cards/amb-frete.md`)',
+    '',
+    '## Cards fora das etapas',
+    '',
+    '- Nota: Lembrar do LGPD (`cards/solto.md`)',
+    '',
+    '## Requisitos',
+    '',
+    '### Login com SSO (`cards/login.md`)',
+    '',
+    'Usar o IdP da empresa.',
+    '',
+    '## Decisões (com o porquê)',
+    '',
+    '### Usar Postgres (`cards/banco.md`)',
+    '',
+    '#### Por quê',
+    'Já temos operação.',
+    '',
+    '## Sugestões (com fonte)',
+    '',
+    '### Cache com Redis (`cards/cache.md`)',
+    '',
+    'Fonte: https://redis.io/docs/',
+    '',
+    'Reduz latência.',
+    '',
+    '## Ambiguidades resolvidas',
+    '',
+    '### Pix ou boleto? (`cards/amb-pix.md`)',
+    '',
+    '##### Decisão (2026-09-22)',
+    '',
+    'Pix.',
+    '',
+    '## Ambiguidades ainda abertas',
+    '',
+    '- **Frete grátis?** (`cards/amb-frete.md`) — sem decisão: confirme com o usuário antes de implementar o que depende dela.',
+    '',
+    '## Notas',
+    '',
+    '### Lembrar do LGPD (`cards/solto.md`)',
+    '',
+    'Ver com o jurídico.',
+    '',
+    '## Como trabalhar',
+    '',
+    '- Antes de começar, declare as etapas acima como o seu plano (TodoWrite ou TaskCreate), na mesma ordem, e siga-as sem replanejar.',
+    `- Consulte \`${PLAN_DIR}\` (roteiro e cards) sempre que precisar de detalhe: os cards são a fonte das decisões.`,
+    '- Se o código real contradisser o plano, diga ao usuário o que encontrou e pergunte antes de desviar dele.',
+    ''
+  ].join('\n')
+
+  function richPlan() {
+    const plan = makePlan()
+    plan.cards = [
+      makeCard('login', { etapa: 'requisitos', titulo: 'Login com SSO', corpo: 'Usar o IdP da empresa.\n' }),
+      makeCard('banco', { tipo: 'decisao', etapa: 'desenho', titulo: 'Usar Postgres', corpo: '# Por quê\nJá temos operação.\n' }),
+      makeCard('cache', {
+        tipo: 'sugestao',
+        etapa: 'desenho',
+        titulo: 'Cache com Redis',
+        fonte: 'https://redis.io/docs/',
+        corpo: 'Reduz latência.'
+      }),
+      makeCard('amb-pix', {
+        tipo: 'ambiguidade',
+        etapa: 'desenho',
+        titulo: 'Pix ou boleto?',
+        status: 'resolvida',
+        corpo: '## Decisão (2026-09-22)\n\nPix.'
+      }),
+      makeCard('amb-frete', { tipo: 'ambiguidade', etapa: 'entrega', titulo: 'Frete grátis?', status: 'aberta' }),
+      makeCard('solto', { tipo: 'nota', titulo: 'Lembrar do LGPD', corpo: 'Ver com o jurídico.' })
+    ]
+    return plan
+  }
+
+  it('plano sem mídia e sem anexo: exatamente o texto de antes (anexos [] também)', () => {
+    expect(buildDraftHandoff(richPlan())).toBe(BEFORE_MEDIA)
+    const vazios = richPlan()
+    vazios.cards = vazios.cards.map((c) => ({ ...c, anexos: [] }))
+    expect(buildDraftHandoff(vazios)).toBe(BEFORE_MEDIA)
+  })
+
+  it('card com anexos lista tipo + caminho absoluto; anexo sem arquivo sai "(arquivo não encontrado)"', () => {
+    const plan = richPlan()
+    plan.media = [media('a1b2c3-tela.png'), media('d4e5f6-contrato.pdf', { kind: 'pdf', mediaType: 'application/pdf' })]
+    plan.cards[0] = { ...plan.cards[0], anexos: ['a1b2c3-tela.png', 'sumiu-planilha.xlsx'] }
+    const md = buildDraftHandoff(plan)
+    expect(md).toContain(
+      [
+        '### Login com SSO (`cards/login.md`)',
+        '',
+        'Usar o IdP da empresa.',
+        '',
+        'Anexos:',
+        `- [Imagem] a1b2c3-tela.png — ${MIDIA}\\a1b2c3-tela.png`,
+        '- [Planilha] sumiu-planilha.xlsx — (arquivo não encontrado)',
+        ''
+      ].join('\n')
+    )
+  })
+
+  it('ambiguidade aberta e card de mídia também listam os anexos', () => {
+    const plan = richPlan()
+    plan.media = [media('a1b2c3-fluxo.png'), media('b2c3d4-demo.mp4', { kind: 'video', mediaType: 'video/mp4' })]
+    plan.cards[4] = { ...plan.cards[4], anexos: ['a1b2c3-fluxo.png'] }
+    plan.cards.push(makeCard('video', { tipo: 'midia', etapa: 'entrega', titulo: 'Demo gravada', anexos: ['b2c3d4-demo.mp4'] }))
+    const md = buildDraftHandoff(plan)
+    expect(md).toContain(
+      `- **Frete grátis?** (\`cards/amb-frete.md\`) — sem decisão: confirme com o usuário antes de implementar o que depende dela.\n  - Anexo: [Imagem] a1b2c3-fluxo.png — ${MIDIA}\\a1b2c3-fluxo.png`
+    )
+    expect(md).toContain('   - Mídia: Demo gravada (`cards/video.md`)')
+    expect(md).toContain(
+      `## Cards de mídia\n\n### Demo gravada (\`cards/video.md\`)\n\n_(sem texto no card)_\n\nAnexos:\n- [Vídeo] b2c3d4-demo.mp4 — ${MIDIA}\\b2c3d4-demo.mp4\n`
+    )
+  })
+
+  it('termina com "Mídias do plano (abra com Read)": todas as mídias, por nome, órfã marcada', () => {
+    const plan = richPlan()
+    plan.media = [media('z9-orfa.docx', { kind: 'documento' }), media('a1b2c3-tela.png')]
+    plan.cards[0] = { ...plan.cards[0], anexos: ['a1b2c3-tela.png'] }
+    const md = buildDraftHandoff(plan)
+    const sec = md.indexOf('## Mídias do plano (abra com Read)')
+    expect(sec).toBeGreaterThan(md.indexOf('## Como trabalhar'))
+    const tail = md.slice(sec)
+    expect(tail).toContain('Read')
+    expect(tail).toContain(
+      `- [Imagem] a1b2c3-tela.png — ${MIDIA}\\a1b2c3-tela.png\n- [Documento] z9-orfa.docx — ${MIDIA}\\z9-orfa.docx (sem card)\n`
+    )
+    expect(md.endsWith('(sem card)\n')).toBe(true)
+    // Mídia sem card nenhum citando ainda muda o texto (a seção final aparece).
+    const soOrfa = richPlan()
+    soOrfa.media = [media('z9-orfa.docx', { kind: 'documento' })]
+    expect(buildDraftHandoff(soOrfa).startsWith(BEFORE_MEDIA)).toBe(true)
+    expect(buildDraftHandoff(soOrfa)).not.toBe(BEFORE_MEDIA)
+  })
+})
+
+describe('handoffReadiness com mídia', () => {
+  it('anexo que não está em plan.media vira AVISO (não bloqueio); o que existe, nada', () => {
+    const plan = makePlan({
+      roteiro: { titulo: 'P', rev: 1, etapas: [{ id: 'requisitos', titulo: 'R', status: 'concluida' }] },
+      cards: [
+        makeCard('login', { etapa: 'requisitos', titulo: 'Login', anexos: ['a1-tela.png', 'b2-sumiu.pdf'] }),
+        makeCard('arq', { etapa: 'requisitos', tipo: 'midia', titulo: 'Arquivo', anexos: ['c3-foi.zip'] })
+      ],
+      media: [{ name: 'a1-tela.png', path: 'D:\\x\\midia\\a1-tela.png', kind: 'imagem', size: 1, mediaType: 'image/png' }]
+    })
+    const { blockers, warnings } = handoffReadiness(plan)
+    expect(blockers).toEqual([])
+    expect(warnings.map((w) => [w.kind, w.ref])).toEqual([
+      ['anexo-ausente', 'arq'],
+      ['anexo-ausente', 'login']
+    ])
+    expect(warnings[1].text).toContain('"b2-sumiu.pdf"')
+    expect(warnings[1].text).toContain('midia/')
   })
 })
 

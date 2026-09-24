@@ -159,7 +159,7 @@ async function realOrSelf(p: string): Promise<string> {
  * formato ('cards', '_handoff', ...) mais nomes já validados. Confere também
  * o caminho real: um symlink que aponte para fora da pasta é recusado.
  */
-async function resolvePlanPath(projectCwd: string, slug: string, ...parts: string[]): Promise<string> {
+export async function resolvePlanPath(projectCwd: string, slug: string, ...parts: string[]): Promise<string> {
   assertValidName(slug, 'slug')
   const root = planningRootFor(projectCwd)
   const planDir = path.join(root, slug)
@@ -190,7 +190,7 @@ async function resolvePlanPath(projectCwd: string, slug: string, ...parts: strin
  * anotado ANTES do rename, então o vigia nunca vê o arquivo novo sem o
  * registro correspondente (ver planningWrites).
  */
-async function atomicWrite(file: string, content: string): Promise<void> {
+export async function atomicWrite(file: string, content: string | Uint8Array): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true })
   const tmp = `${file}.${randomUUID()}.tmp`
   try {

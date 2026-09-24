@@ -1,6 +1,7 @@
 /**
  * Painel lateral de edição de card: título, tipo, etapa, fonte (sugestão),
- * selo (ambiguidade) e corpo em markdown com prévia (o Markdown do chat).
+ * selo (ambiguidade), anexos (CardAttachments) e corpo em markdown com
+ * prévia (o Markdown do chat).
  *
  * Sem botão Salvar (cardDraft.ts): cada alteração vai para um rascunho em
  * cache e o arquivo é gravado quando o editor perde o foco (clique fora), ao
@@ -14,8 +15,10 @@
  */
 import './cardEditor.css'
 import { useMemo, useRef, useState, type FocusEvent, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react'
-import type { PlanningCardDto } from '@shared/ipc'
+import type { PlanningCardDto, PlanMediaDto } from '@shared/ipc'
 import { Markdown } from '../components/Markdown'
+import { CardAttachments } from './CardAttachments'
+import type { DroppedFile } from './mediaDrop'
 import { CardRefSuggestions, useCardRefAutocomplete } from './CardRefSuggestions'
 import { AMBIGUITY_STATUSES, CARD_TYPE_LABEL, CARD_TYPE_ORDER, TypeIcon } from './cardTypes'
 import { TITLE_MAX, useCardAutosave, type CardAutosave, type CardFields } from './cardDraft'
@@ -43,6 +46,12 @@ export interface CardEditorProps {
   onDelete?: (card: PlanningCardDto) => Promise<boolean | void> | boolean | void
   onClose: () => void
   notify?: (tipo: 'aviso' | 'erro', msg: string) => void
+  /** Mídias do plano (plan.media): tipo, tamanho e se o anexo ainda existe. */
+  media?: readonly PlanMediaDto[]
+  /** "Anexar arquivo…": importa para midia/ (usePlanMedia.importFiles). */
+  onImportMedia?: (files: readonly DroppedFile[]) => Promise<PlanMediaDto[] | null>
+  /** "Abrir" de um anexo, no app padrão do sistema. */
+  onOpenMedia?: (name: string) => void
 }
 
 const NO_CARDS: readonly RefCard[] = []
@@ -67,7 +76,10 @@ export function CardEditor({
   onSaved,
   onDelete,
   onClose,
-  notify
+  notify,
+  media,
+  onImportMedia,
+  onOpenMedia
 }: CardEditorProps): JSX.Element {
   const auto = useCardAutosave({ card, isNew, existingIds, projectCwd, slug, onSave, onSaved, notify })
   const { fields, base } = auto
@@ -80,6 +92,14 @@ export function CardEditor({
   function change<K extends keyof CardFields>(key: K, value: CardFields[K]): void {
     setCloseArmed(false)
     auto.setField(key, value)
+  }
+
+  // Anexo novo já foi copiado para midia/: card que existe grava na hora
+  // (o seletor de arquivo tirou o foco antes, então o blur não grava isso).
+  function setAnexos(next: string[]): void {
+    const added = next.some((n) => !fields.anexos.includes(n))
+    change('anexos', next)
+    if (added && auto.persisted) void auto.flush()
   }
 
   const selfId = auto.persisted ? base.id : undefined
@@ -271,6 +291,14 @@ export function CardEditor({
               </div>
             </div>
           )}
+
+          <CardAttachments
+            anexos={fields.anexos}
+            media={media}
+            onChange={setAnexos}
+            onImport={onImportMedia}
+            onOpen={onOpenMedia}
+          />
 
           <div className="pl-field pl-field-grow">
             <div className="pl-field-row">

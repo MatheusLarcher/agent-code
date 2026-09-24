@@ -8,10 +8,14 @@ import {
   type PlanningChangedMsg,
   type PlanningFailure,
   type PlanningHandoffDto,
+  type PlanningMediaContentDto,
   type PlanningResult,
-  type PlanningRoteiroDto
+  type PlanningRoteiroDto,
+  type PlanMediaDto
 } from '../../shared/ipc'
+import { isValidMediaName, MAX_ANEXOS_POR_CARD, MAX_MEDIA_BYTES } from '../../shared/planningMedia'
 import { notifyPlanningChanged, setPlanningChangeSink } from './planningEvents'
+import * as realMedia from './planningMedia'
 import { CARD_TYPES, isValidName, PlanningValidationError, STAGE_STATUSES } from './planningModel'
 import * as realStore from './planningStore'
 import { PlanNotFoundError, PlanningPathError, RevConflictError, RoteiroConflictError } from './planningStore'
@@ -37,6 +41,13 @@ export interface PlanningStoreApi {
   writeHandoff: typeof realStore.writeHandoff
 }
 
+/** Mídia do plano (planningMedia); injetável nos testes como o store. */
+export interface PlanningMediaApi {
+  importMedia: typeof realMedia.importMedia
+  listMedia: typeof realMedia.listMedia
+  readMedia: typeof realMedia.readMedia
+}
+
 export interface PlanningWatcherLike {
   watch(projectCwd: string, slug: string): void
   unwatch(projectCwd: string, slug: string): void
@@ -52,6 +63,7 @@ export interface PlanningIpcDeps {
   /** Main → renderer (o send() do index.ts). */
   send: (channel: string, payload: unknown) => void
   store?: PlanningStoreApi
+  media?: PlanningMediaApi
   createWatcher?: (onChange: (change: PlanningChange) => void) => PlanningWatcherLike
   isDirectory?: (p: string) => Promise<boolean>
 }
@@ -81,6 +93,7 @@ const CardSchema = z.strictObject({
   status: z.string().max(64).optional(),
   links: z.array(Name).max(1000),
   fonte: z.string().max(4096).optional(),
+  anexos: z.array(z.string().refine(isValidMediaName, 'nome de mídia inválido')).max(MAX_ANEXOS_POR_CARD).optional(),
   rev: Rev,
   corpo: z.string().max(1_000_000)
 })
@@ -107,6 +120,19 @@ const WriteHandoffReq = z.strictObject({
   ...refShape,
   conteudo: z.string().max(1_000_000).refine((s) => s.trim() !== '', 'o prompt de handoff está vazio')
 })
+/** Base64 de até MAX_MEDIA_BYTES (o tamanho decodificado é conferido de novo no importMedia). */
+const Base64 = z
+  .string()
+  .max(Math.ceil(MAX_MEDIA_BYTES / 3) * 4)
+  .regex(/^[A-Za-z0-9+/]*={0,2}$/, 'data deve ser base64')
+const ImportFile = z.union([
+  z.strictObject({ name: z.string().min(1).max(255), data: Base64 }),
+  z.strictObject({
+    path: z.string().min(1).max(4096).refine((p) => path.isAbsolute(p), 'path deve ser caminho absoluto')
+  })
+])
+const ImportMediaReq = z.strictObject({ ...refShape, files: z.array(ImportFile).min(1).max(MAX_ANEXOS_POR_CARD) })
+const ReadMediaReq = z.strictObject({ ...refShape, name: z.string().refine(isValidMediaName, 'nome de mídia inválido') })
 
 function invalid(message: string): PlanningFailure {
   return { ok: false, code: 'invalid', message }
@@ -160,6 +186,7 @@ function planKey(projectCwd: string, slug: string): string {
 
 export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
   const store = deps.store ?? realStore
+  const media = deps.media ?? realMedia
   const isDirectory = deps.isDirectory ?? defaultIsDirectory
   const onChange = (change: PlanningChange): void => {
     const msg: PlanningChangedMsg = { projectCwd: change.projectCwd, slug: change.slug }
@@ -218,7 +245,7 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
     CreateReq,
     async ({ projectCwd, slug, titulo }): Promise<PlanningResult<{ plan: OpenedPlanningDto }>> => ({
       ok: true,
-      plan: await store.createPlan(projectCwd, slug, titulo)
+      plan: { ...(await store.createPlan(projectCwd, slug, titulo)), media: [] }
     })
   )
 
@@ -226,7 +253,8 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
     Channels.planningOpen,
     RefReq,
     async ({ projectCwd, slug }, senderId, closesAtStart): Promise<PlanningResult<{ plan: OpenedPlanningDto }>> => {
-      const plan = await store.openPlan(projectCwd, slug)
+      const opened = await store.openPlan(projectCwd, slug)
+      const plan: OpenedPlanningDto = { ...opened, media: await media.listMedia(projectCwd, slug) }
       const key = openerKey(senderId, projectCwd, slug)
       // Fechado enquanto abria: devolve o plano (a tela descarta), sem vigia.
       if ((closes.get(key) ?? 0) !== closesAtStart) return { ok: true, plan }
@@ -313,6 +341,30 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
       const file = await store.writeHandoff(projectCwd, slug, conteudo)
       return { ok: true, name: path.basename(file) }
     }
+  )
+
+  // Em ordem; se um falha, os anteriores já ficaram em midia/ (o vigia os
+  // ignora por serem gravação própria; a tela vê na próxima abertura).
+  register(
+    Channels.planningImportMedia,
+    ImportMediaReq,
+    async ({ projectCwd, slug, files }): Promise<PlanningResult<{ media: PlanMediaDto[] }>> => {
+      const out: PlanMediaDto[] = []
+      for (const f of files) {
+        const src = 'data' in f ? { name: f.name, data: Buffer.from(f.data, 'base64') } : { path: f.path }
+        out.push(await media.importMedia(projectCwd, slug, src))
+      }
+      return { ok: true, media: out }
+    }
+  )
+
+  register(
+    Channels.planningReadMedia,
+    ReadMediaReq,
+    async ({ projectCwd, slug, name }): Promise<PlanningResult<PlanningMediaContentDto>> => ({
+      ok: true,
+      ...(await media.readMedia(projectCwd, slug, name))
+    })
   )
 
   return {

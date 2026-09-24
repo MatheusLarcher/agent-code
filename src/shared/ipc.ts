@@ -1,5 +1,6 @@
 // Shared IPC contract between the Electron main process and the renderer.
 // Keep this file type-only so it can be imported from main, preload and renderer.
+import type { PlanMediaDto } from './planningMedia'
 
 /** A normalized chat event the renderer renders. Produced in main from SDKMessage. */
 export type ChatEvent =
@@ -1732,6 +1733,10 @@ export const Channels = {
   planningListHandoffs: 'planning:listHandoffs',
   /** Grava um prompt de handoff em _handoff/AAAA-MM-DD-NN.md (o que vai ser enviado). */
   planningWriteHandoff: 'planning:writeHandoff',
+  /** Importa arquivos para <plano>/midia/ (nome saneado); devolve os PlanMediaDto novos. */
+  planningImportMedia: 'planning:importMedia',
+  /** Uma mídia de <plano>/midia/ em base64, para pré-visualizar. */
+  planningReadMedia: 'planning:readMedia',
   /** Salva o flow do planejamento em PDF (diálogo "Salvar como" + printToPDF). */
   planningExportPdf: 'planning:exportPdf',
   /** Main → renderer: arquivos de um planejamento aberto mudaram por fora do
@@ -2036,8 +2041,9 @@ export interface RemoteBuildProgressMsg {
 // typecheck do planningIpc falha se os dois lados divergirem.
 // ---------------------------------------------------------------------------
 
-export type PlanningCardType = 'etapa' | 'requisito' | 'decisao' | 'sugestao' | 'ambiguidade' | 'nota'
+export type PlanningCardType = 'etapa' | 'requisito' | 'decisao' | 'sugestao' | 'ambiguidade' | 'nota' | 'midia'
 export type PlanningStageStatus = 'pendente' | 'em_andamento' | 'concluida'
+export type { MediaKind, PlanMediaDto } from './planningMedia'
 
 export interface PlanningCardDto {
   id: string
@@ -2051,6 +2057,9 @@ export interface PlanningCardDto {
    *  ':linha' opcional — ex.: src/a.ts:12); obrigatória em 'sugestao'. Regra
    *  única em src/shared/planningFonte.ts (isValidFonte). */
   fonte?: string
+  /** Nomes de arquivos em <plano>/midia/ (isValidMediaName, src/shared/planningMedia);
+   *  'midia' exige pelo menos um. Ausente ou [] = sem anexo. */
+  anexos?: string[]
   /** Revisão otimista: gravar exige o rev que está em disco. */
   rev: number
   corpo: string
@@ -2081,6 +2090,19 @@ export interface OpenedPlanningDto {
   layout: PlanningLayoutDto
   /** Cards que não carregaram (arquivo relativo à pasta + motivo). */
   invalid: { file: string; error: string }[]
+  /** Arquivos de <plano>/midia/ (inclusive os que nenhum card cita). */
+  media: PlanMediaDto[]
+}
+
+/** Um arquivo a importar em Channels.planningImportMedia: bytes em base64 (imagem
+ *  colada) ou caminho ABSOLUTO (arrastado do Explorer — window.api.getPathForFile). */
+export type PlanningImportFile = { name: string; data: string } | { path: string }
+
+/** Resposta de Channels.planningReadMedia (pré-visualização, até MAX_MEDIA_PREVIEW_BYTES). */
+export interface PlanningMediaContentDto {
+  mediaType: string
+  base64: string
+  size: number
 }
 
 /** Falha de uma chamada planning:* — nunca exceção atravessando o IPC. */

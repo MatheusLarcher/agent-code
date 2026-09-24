@@ -3,7 +3,19 @@ import { createServer, type Server } from 'node:http'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
+import { resolvePastedPath, downloadPastedUrl, buildAttachmentNote, imagesAsFiles } from './attachments'
+
+describe('imagesAsFiles — imagem colada vira arquivo para ganhar caminho', () => {
+  it('nomeia pela ordem e pela extensão do mime, preservando os bytes', () => {
+    const files = imagesAsFiles([
+      { mediaType: 'image/png', data: 'AAA' },
+      { mediaType: 'image/jpeg', data: 'BBB' },
+      { mediaType: 'image/svg+xml', data: 'CCC' }
+    ])
+    expect(files.map((f) => f.name)).toEqual(['imagem-colada-1.png', 'imagem-colada-2.jpg', 'imagem-colada-3.svg'])
+    expect(files[1]).toMatchObject({ mediaType: 'image/jpeg', data: 'BBB' })
+  })
+})
 
 describe('buildAttachmentNote — nota de anexos anexada ao texto do usuário', () => {
   it('retorna o texto original quando não há anexos', () => {

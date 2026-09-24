@@ -26,6 +26,19 @@ describe('managerHandoffRequest', () => {
     expect(managerHandoffRequest('checkout', 1)).toMatch(/Uma ambiguidade continua aberta/)
     expect(managerHandoffRequest('checkout', 3)).toMatch(/3 ambiguidades continuam abertas/)
   })
+
+  it('com mídia no plano, exige caminho absoluto + tipo das mídias relevantes em cada prompt', () => {
+    const dir = 'D:\\dados\\agent-code\\planning\\app\\checkout'
+    const text = managerHandoffRequest(dir, 0, 2)
+    expect(text).toContain('o plano tem 2 mídias em midia/')
+    expect(text).toMatch(/Em cada prompt, inclua o CAMINHO ABSOLUTO e o TIPO de toda mídia relevante/)
+    expect(text).toContain('"[Tipo] nome — caminho absoluto"')
+    expect(text).toMatch(/abri-la com Read/)
+    expect(managerHandoffRequest(dir, 0, 1)).toContain('o plano tem uma mídia em midia/')
+    // Sem mídia, o pedido é o de sempre.
+    expect(managerHandoffRequest(dir, 0, 0)).toBe(managerHandoffRequest(dir))
+    expect(managerHandoffRequest(dir)).not.toMatch(/mídia/i)
+  })
 })
 
 describe('newHandoffsSince', () => {

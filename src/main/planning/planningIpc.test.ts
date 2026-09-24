@@ -17,7 +17,9 @@ const PLANNING_CHANNELS = [
   Channels.planningSaveRoteiro,
   Channels.planningSaveLayout,
   Channels.planningListHandoffs,
-  Channels.planningWriteHandoff
+  Channels.planningWriteHandoff,
+  Channels.planningImportMedia,
+  Channels.planningReadMedia
 ]
 
 function fakeWatcher(): {
@@ -90,7 +92,7 @@ afterEach(async () => {
 })
 
 describe('registerPlanningIpc', () => {
-  it('registra os dez canais planning:*', () => {
+  it('registra os doze canais planning:*', () => {
     setup()
     expect([...handlers.keys()].sort()).toEqual([...PLANNING_CHANNELS].sort())
     expect(PLANNING_CHANNELS).toContain('planning:saveCard')
@@ -125,7 +127,8 @@ describe('registerPlanningIpc', () => {
         roteiro: { ...roteiro, rev: 2 },
         cards: [{ ...card(), rev: 1 }],
         layout,
-        invalid: []
+        invalid: [],
+        media: []
       }
     })
     expect(await call(Channels.planningDeleteCard, { ...ref, id: 'req-1', expectedRev: 1 })).toEqual({ ok: true })

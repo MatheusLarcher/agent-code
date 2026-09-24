@@ -5,7 +5,7 @@
  */
 import type { PlanningCardType, PlanningStageStatus } from '@shared/ipc'
 
-export const CARD_TYPE_ORDER: PlanningCardType[] = ['etapa', 'requisito', 'decisao', 'sugestao', 'ambiguidade', 'nota']
+export const CARD_TYPE_ORDER: PlanningCardType[] = ['etapa', 'requisito', 'decisao', 'sugestao', 'ambiguidade', 'nota', 'midia']
 
 export const CARD_TYPE_LABEL: Record<PlanningCardType, string> = {
   etapa: 'Etapa',
@@ -13,7 +13,8 @@ export const CARD_TYPE_LABEL: Record<PlanningCardType, string> = {
   decisao: 'Decisão',
   sugestao: 'Sugestão',
   ambiguidade: 'Ambiguidade',
-  nota: 'Nota'
+  nota: 'Nota',
+  midia: 'Mídia'
 }
 
 export const STAGE_STATUS_LABEL: Record<PlanningStageStatus, string> = {
@@ -32,7 +33,8 @@ const TYPE_COLOR_FALLBACK: Record<PlanningCardType, string> = {
   decisao: 'var(--ok)',
   sugestao: 'var(--warn)',
   ambiguidade: 'var(--err)',
-  nota: 'var(--crew-subagente, #8d8a86)'
+  nota: 'var(--crew-subagente, #8d8a86)',
+  midia: 'var(--crew-navegador-de-codigo, #6fbdad)'
 }
 
 /** Cor do tipo como var CSS (a do .planning, com a global de reserva) — serve em `style`. */
@@ -78,6 +80,15 @@ const PATHS: Record<PlanningCardType, JSX.Element> = {
       <path d="M5 4h14v10l-6 6H5z" />
       <path d="M13 20v-6h6" />
       <path d="M8.5 9h7" />
+    </>
+  ),
+  // Duas molduras empilhadas: o card junta arquivos (imagem, PDF, vídeo…).
+  midia: (
+    <>
+      <path d="M7 3h12a2 2 0 0 1 2 2v12" />
+      <rect x="3" y="7" width="14" height="14" rx="2" />
+      <circle cx="8" cy="12" r="1.3" />
+      <path d="M17 18l-4-4-7 7" />
     </>
   )
 }

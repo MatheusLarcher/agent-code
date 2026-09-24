@@ -131,7 +131,8 @@ describe('existingPlanTitle (reabrir um plano existente)', () => {
       roteiro: { titulo, rev: 2, etapas: [] },
       cards: [],
       layout: { positions: {} },
-      invalid: []
+      invalid: [],
+      media: []
     }
   })
 

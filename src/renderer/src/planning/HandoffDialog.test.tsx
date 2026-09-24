@@ -152,6 +152,22 @@ describe('HandoffDialog — gerar pelo Agent Manager', () => {
     expect(onAskManager.mock.calls[0][0]).toMatch(/Uma ambiguidade continua aberta/)
   })
 
+  it('plano com mídia: o pedido exige caminho absoluto + tipo; anexo sumido é aviso, não bloqueio', async () => {
+    mockPlanningApi()
+    const plan = makePlan({
+      media: [{ name: 'a1-tela.png', path: 'D:\\x\\midia\\a1-tela.png', kind: 'imagem', size: 1, mediaType: 'image/png' }]
+    })
+    plan.cards[0] = { ...plan.cards[0], anexos: ['a1-tela.png', 'b2-sumiu.pdf'] }
+    const { onAskManager } = renderDialog(plan)
+    const avisos = screen.getByRole('region', { name: 'Avisos' })
+    expect(within(avisos).getByText(/cita o anexo "b2-sumiu\.pdf"/)).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Bloqueios' })).toBeNull()
+    fireEvent.click(button('Pedir ao Agent Manager'))
+    await waitFor(() => expect(onAskManager).toHaveBeenCalled())
+    expect(onAskManager.mock.calls[0][0]).toContain('o plano tem uma mídia em midia/')
+    expect(onAskManager.mock.calls[0][0]).toMatch(/CAMINHO ABSOLUTO e o TIPO/)
+  })
+
   it('falha ao listar _handoff/ vira toast e não pede nada', async () => {
     const m = mockPlanningApi()
     m.api.planningListHandoffs.mockResolvedValueOnce({ ok: false, code: 'io', message: 'disco cheio' } as never)

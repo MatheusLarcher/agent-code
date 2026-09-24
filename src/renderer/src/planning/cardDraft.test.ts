@@ -9,6 +9,7 @@ import {
   mergeFields,
   readDraft,
   restoreDraft,
+  sameContent,
   sameFields,
   useCardAutosave,
   writeDraft,
@@ -37,6 +38,54 @@ describe('mergeFields — merge por campo', () => {
   it('os dois mudaram o mesmo campo: ganha o usuário', () => {
     const base = fieldsOf(makeCard('x', { corpo: 'c0' }))
     expect(mergeFields(base, { ...base, corpo: 'meu' }, { ...base, corpo: 'dele' }).corpo).toBe('meu')
+  })
+})
+
+describe('anexos no rascunho', () => {
+  it('fieldsOf/composeCard levam os anexos; sem anexos, a chave nem aparece', () => {
+    const c = makeCard('x', { tipo: 'midia', anexos: ['a1b2c3-tela.png'] })
+    const f = fieldsOf(c)
+    expect(f.anexos).toEqual(['a1b2c3-tela.png'])
+    expect(f.anexos).not.toBe(c.anexos) // cópia: editar não mexe no card aberto
+    expect(composeCard(f, c).anexos).toEqual(['a1b2c3-tela.png'])
+    expect('anexos' in composeCard({ ...f, anexos: [] }, c)).toBe(false)
+  })
+
+  it('sameFields/sameContent comparam os anexos pelo conteúdo e pela ordem', () => {
+    const c = makeCard('x', { anexos: ['a1b2c3-a.png', 'a1b2c3-b.png'] })
+    expect(sameFields(fieldsOf(c), fieldsOf({ ...c, anexos: [...c.anexos!] }))).toBe(true)
+    expect(sameFields(fieldsOf(c), fieldsOf({ ...c, anexos: ['a1b2c3-b.png', 'a1b2c3-a.png'] }))).toBe(false)
+    expect(sameContent(c, { ...c, anexos: ['a1b2c3-a.png'] })).toBe(false)
+    expect(sameContent(makeCard('y'), { ...makeCard('y'), anexos: [] })).toBe(true)
+  })
+
+  it('mergeFields: anexo que o usuário tirou fica tirado; o que só o Manager pôs, entra', () => {
+    const base = fieldsOf(makeCard('x', { anexos: ['a1b2c3-a.png'] }))
+    expect(mergeFields(base, { ...base, anexos: [] }, { ...base, corpo: 'dele' })).toMatchObject({ anexos: [], corpo: 'dele' })
+    expect(mergeFields(base, { ...base, titulo: 'meu' }, { ...base, anexos: ['a1b2c3-a.png', 'a1b2c3-b.png'] }).anexos).toEqual([
+      'a1b2c3-a.png',
+      'a1b2c3-b.png'
+    ])
+  })
+
+  it('cardProblem: mídia sem anexo, anexo repetido, nome inválido e anexos demais', () => {
+    const c = makeCard('x', { tipo: 'midia' })
+    expect(cardProblem(c)).toMatch(/Card de mídia precisa de pelo menos um anexo/)
+    expect(cardProblem({ ...c, anexos: ['a1b2c3-a.png'] })).toBeNull()
+    expect(cardProblem({ ...c, anexos: ['a1b2c3-a.png', 'a1b2c3-a.png'] })).toMatch(/duas vezes/)
+    expect(cardProblem({ ...c, anexos: ['../fora.png'] })).toMatch(/nome inválido/)
+    expect(cardProblem({ ...c, anexos: Array.from({ length: 21 }, (_, i) => `a1b2c3-${i}.png`) })).toMatch(/Anexos demais/)
+    // Anexo em card de outro tipo vale; sem anexo também.
+    expect(cardProblem(makeCard('n', { tipo: 'nota', anexos: ['a1b2c3-a.pdf'] }))).toBeNull()
+  })
+
+  it('rascunho de antes dos anexos (sem a chave) ainda abre, como "sem anexos"', () => {
+    const key = draftKey(CWD, SLUG, 'x')
+    const old = { titulo: 'T', tipo: 'nota', etapa: '', fonte: '', status: '', corpo: 'rascunho' }
+    localStorage.setItem(key, JSON.stringify({ v: 1, fields: old, base: { ...old, corpo: '' }, baseRev: 1, savedAt: 1 }))
+    expect(readDraft(key)?.fields).toEqual({ ...old, anexos: [] })
+    localStorage.setItem(key, JSON.stringify({ v: 1, fields: { ...old, anexos: [1] }, base: old, baseRev: 1, savedAt: 1 }))
+    expect(readDraft(key)).toBeNull()
   })
 })
 

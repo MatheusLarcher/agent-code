@@ -688,8 +688,19 @@ docs/spec/<slug>/
   _canvas.json               # posições dos cards e o viewport (pan/zoom)
   cards/<id>.md              # frontmatter (id, tipo, titulo, etapa, status, links, fonte, rev) + corpo em markdown
   _handoff/AAAA-MM-DD-NN.md  # cada prompt de handoff gravado, numerado por dia
+  midia/<prefixo>-<nome>.<ext>  # imagens e outros arquivos do plano (anexos dos cards)
   _sandbox/                  # código de teste descartável do Manager (gitignorado)
 ```
+
+**Mídia** (`planning/planningMedia.ts`, `shared/planningMedia.ts`; design em
+`docs/superpowers/specs/2026-09-24-midia-no-planejamento-design.md`): todo card pode ter `anexos`
+(nomes de arquivos em `midia/`) e o tipo `midia` é um card cujo conteúdo é o arquivo. O tipo de cada
+arquivo (imagem, PDF, vídeo, áudio, planilha…) sai da extensão. Na tela, soltar arquivos no canvas ou
+colar imagem cria um card `midia` (ou anexa ao card sob o cursor); o nó mostra miniatura. O Manager
+vê os anexos com tipo e caminho absoluto no `plan_read` (com `card_id`, as imagens vêm como imagem),
+traz arquivos para o plano com `plan_midia_importar` — inclusive a imagem colada no chat, que nas
+conversas do Manager também é salva em disco — e o handoff leva os caminhos + tipo para o agente
+principal, que abre com `Read`.
 
 O plano mora **no projeto**, em markdown, e não no banco do app: é o que deixa o git versionar o
 plano junto do código, o usuário (ou outro agente) ler e editar num editor qualquer, e a conversa de

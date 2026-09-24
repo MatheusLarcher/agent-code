@@ -3,7 +3,7 @@ import { createWriteStream } from 'node:fs'
 import { mkdir, writeFile, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import type { FileAttachment, ResolvedPastedRef } from '../shared/ipc'
+import type { FileAttachment, ImageAttachment, ResolvedPastedRef } from '../shared/ipc'
 import { extOf, isImageExt, mimeForExt } from '../shared/mime'
 
 /** Strip directory separators / traversal from a user-supplied file name. */
@@ -46,6 +46,20 @@ export function buildAttachmentNote(
   const refs = refItems.map((s) => `- ${s.name}: ${s.path}`).join('\n')
   const note = `Arquivos anexados pelo usuário (abra-os com suas ferramentas, ex.: Read, se forem relevantes):\n${refs}`
   return text ? `${text}\n\n${note}` : note
+}
+
+/**
+ * Pasted/attached images as files, so they can also be saved to disk and
+ * referenced by path (the Agent Manager imports them into the plan with
+ * plan_midia_importar — inline image blocks have no path). Pure/testable.
+ */
+export function imagesAsFiles(images: ImageAttachment[]): FileAttachment[] {
+  return images.map((img, i) => {
+    const sub = (img.mediaType.split('/')[1] || 'png').split('+')[0].toLowerCase()
+    const ext = sub === 'jpeg' ? 'jpg' : sub.replace(/[^a-z0-9]/g, '') || 'png'
+    const size = Buffer.byteLength(img.data, 'base64')
+    return { name: `imagem-colada-${i + 1}.${ext}`, mediaType: img.mediaType, data: img.data, size }
+  })
 }
 
 /**

@@ -67,4 +67,23 @@ describe('extOf / mimeForExt / isImageExt', () => {
     expect(isImageExt('png')).toBe(true)
     expect(isImageExt('pdf')).toBe(false)
   })
+
+  it('reconhece vídeo e áudio (mídia do planejamento)', () => {
+    const cases: Array<[string, string]> = [
+      ['mp4', 'video/mp4'],
+      ['webm', 'video/webm'],
+      ['mov', 'video/quicktime'],
+      ['mkv', 'video/x-matroska'],
+      ['avi', 'video/x-msvideo'],
+      ['mp3', 'audio/mpeg'],
+      ['wav', 'audio/wav'],
+      ['ogg', 'audio/ogg'],
+      ['m4a', 'audio/mp4'],
+      ['flac', 'audio/flac']
+    ]
+    for (const [ext, mime] of cases) {
+      expect(mimeForExt(ext), ext).toBe(mime)
+      expect(mimeForExt(ext.toUpperCase()), ext).toBe(mime)
+    }
+  })
 })

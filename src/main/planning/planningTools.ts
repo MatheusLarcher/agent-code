@@ -2,10 +2,13 @@ import { createSdkMcpServer, tool, type SdkMcpToolDefinition } from '@anthropic-
 import { z } from 'zod'
 import { notifyPlanningChanged, type PlanningChangeNotice } from './planningEvents'
 import { FONTE_RULE_TEXT, isValidFonte } from '../../shared/planningFonte'
+import * as realMedia from './planningMedia'
+import { anexosCheck, importAndAttach, loadMediaIndex, readCardWithMedia } from './planningMediaTools'
+import type { MediaToolDeps, PlanningToolMedia } from './planningMediaTools'
 import { CARD_TYPES, STAGE_STATUSES, type CardType, type PlanCard, type Roteiro, type StageStatus } from './planningModel'
 import * as realStore from './planningStore'
 import { RevConflictError, RoteiroConflictError, type OpenedPlan } from './planningStore'
-import { cardHeader, describeCard, describeError, describePlan, etapaLines, text, type ToolText as Text } from './planningToolText'
+import { cardHeader, describeError, describePlan, etapaLines, text, type ToolText as Text } from './planningToolText'
 
 /**
  * O servidor MCP `planning`: as ferramentas com que o Agent Manager lê e altera
@@ -25,6 +28,8 @@ import { cardHeader, describeCard, describeError, describePlan, etapaLines, text
  *   plan_roteiro_set devolve o roteiro atual para o modelo refazer.
  * - O título do planejamento é do usuário e do app: plan_roteiro_set não tem
  *   campo de título e regrava sempre o título lido do disco.
+ * - Mídia (anexos, blocos de imagem no plan_read, plan_midia_importar) mora
+ *   em planningMediaTools.ts.
  */
 
 export const PLANNING_MCP_SERVER = 'planning'
@@ -39,7 +44,8 @@ export const PLANNING_TOOL_NAMES = [
   'plan_card_link',
   'plan_ambiguidade_abrir',
   'plan_ambiguidade_resolver',
-  'plan_handoff_write'
+  'plan_handoff_write',
+  'plan_midia_importar'
 ] as const
 
 export type PlanningToolStore = Pick<
@@ -52,6 +58,8 @@ export interface PlanningToolContext {
   slug: string
   /** Injetável para teste; ausente, o planningStore real. */
   store?: PlanningToolStore
+  /** Mídia do plano (listar, ler, importar); injetável para teste, ausente, o planningMedia real. */
+  media?: PlanningToolMedia
   /** Aviso à tela depois de cada gravação; ausente, notifyPlanningChanged. */
   notify?: (change: PlanningChangeNotice) => void
   /** Relógio (data da decisão e numeração do handoff); ausente, agora. */
@@ -62,6 +70,7 @@ const Name = z.string().regex(/^[a-z0-9-]{1,64}$/, 'use [a-z0-9-], de 1 a 64 car
 const Title = z.string().min(1).max(1000)
 const Body = z.string().max(1_000_000)
 const Rev = z.number().int().min(0)
+const Anexos = z.array(z.string().max(200)).max(100)
 
 /** Mantém a falha dentro da conversa: o modelo corrige o input e tenta de novo. */
 async function guard(label: string, work: () => Promise<Text>): Promise<Text> {
@@ -106,6 +115,9 @@ function isoDay(now: Date): string {
 /** Motivo de recusa de um card que o store aceitaria, mas que deixaria o plano incoerente. */
 function coherenceProblem(plan: OpenedPlan, card: PlanCard, selfId?: string): string | null {
   if (card.tipo === 'sugestao' && !isValidFonte(card.fonte)) return SUGESTAO_SEM_FONTE
+  if (card.tipo === 'midia' && !card.anexos?.length) {
+    return 'card do tipo "midia" precisa de pelo menos um anexo em "anexos" (traga o arquivo com plan_midia_importar).'
+  }
   const etapas = plan.roteiro.etapas.map((e) => e.id)
   if (card.etapa && !etapas.includes(card.etapa)) {
     return `a etapa "${card.etapa}" não está no roteiro (etapas: ${etapas.join(', ') || 'nenhuma'}).`
@@ -140,6 +152,14 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
   const open = (): Promise<OpenedPlan> => store.openPlan(projectCwd, slug)
   const changed = (): void => notify({ projectCwd, slug })
   const find = (plan: OpenedPlan, id: string): PlanCard | undefined => plan.cards.find((c) => c.id === id)
+  const mediaDeps: MediaToolDeps = {
+    projectCwd,
+    slug,
+    media: ctx.media ?? realMedia,
+    open,
+    saveCard: (card, expectedRev) => store.saveCard(projectCwd, slug, card, expectedRev),
+    changed
+  }
 
   /** Grava um card novo (rev 0). Sem id explícito, deriva um livre de tipo + título. */
   async function createCard(plan: OpenedPlan, draft: PlanCard, explicitId: boolean): Promise<Text> {
@@ -189,20 +209,23 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
     const status = a.status ?? (a.tipo === 'ambiguidade' ? 'aberta' : undefined)
     if (status) card.status = status
     if (a.fonte) card.fonte = a.fonte
+    if (a.anexos?.length) card.anexos = [...new Set(a.anexos)]
     return card
   }
 
   return [
     erase(tool(
       'plan_read',
-      'Lê o planejamento desta sessão: o roteiro (etapas na ordem, com status), os cards resumidos e os arquivos inválidos. Cada card aparece com o título em destaque, [[Título]] — o nome com que o usuário o cita —, seguido de id, tipo, etapa, status, links, rev e um trecho do corpo. Informe card_id para ler um card inteiro — é de onde vem o rev para alterá-lo.',
+      'Lê o planejamento desta sessão: o roteiro (etapas na ordem, com status), os cards resumidos e os arquivos inválidos. Cada card aparece com o título em destaque, [[Título]] — o nome com que o usuário o cita —, seguido de id, tipo, etapa, status, links, rev e um trecho do corpo; os anexos vêm abaixo dele como [Tipo] nome — caminho absoluto, e o texto termina com "Mídias do plano" (todas as de midia/, inclusive as sem card). Informe card_id para ler um card inteiro — é de onde vem o rev para alterá-lo; as imagens anexadas a ele (png, jpeg, gif, webp; até 4, cada uma até 5 MB) vêm também como imagem.',
       { card_id: Name.optional().describe('Id de um card para ler por inteiro.') },
       async (a) =>
         guard('plan_read', async () => {
           const plan = await open()
-          if (!a.card_id) return text(describePlan(plan))
+          const index = await loadMediaIndex(mediaDeps, plan)
+          if (!a.card_id) return text(describePlan(plan, index))
           const card = find(plan, a.card_id)
-          return text(card ? describeCard(card) : `Não existe card ${a.card_id} neste planejamento; veja plan_read.`)
+          if (!card) return text(`Não existe card ${a.card_id} neste planejamento; veja plan_read.`)
+          return readCardWithMedia(mediaDeps, card, index)
         })
     )),
 
@@ -271,7 +294,7 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
 
     erase(tool(
       'plan_card_create',
-      'Cria um card no planejamento. Tipos: etapa, requisito, decisao, sugestao (EXIGE fonte: URL ou arquivo do projeto), ambiguidade (prefira plan_ambiguidade_abrir), nota. Para citar outro card no corpo, use o título dele: [[Título do card]] — vira seta no canvas; "links" (ids) são as ligações que a tela desenha.',
+      'Cria um card no planejamento. Tipos: etapa, requisito, decisao, sugestao (EXIGE fonte: URL ou arquivo do projeto), ambiguidade (prefira plan_ambiguidade_abrir), nota, midia (EXIGE anexos: um card feito só de arquivos). Para citar outro card no corpo, use o título dele: [[Título do card]] — vira seta no canvas; "links" (ids) são as ligações que a tela desenha.',
       {
         id: Name.optional().describe('Id do card. Omitido, é derivado do tipo e do título.'),
         tipo: z.enum(CARD_TYPES).describe('Tipo do card.'),
@@ -280,19 +303,22 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
         status: z.string().max(64).optional().describe('Status livre (em ambiguidade: aberta | resolvida).'),
         links: z.array(Name).max(1000).optional().describe('Ids de cards existentes a ligar a este.'),
         fonte: z.string().max(4096).optional().describe(`De onde a informação saiu (obrigatória em sugestao): ${FONTE_FORMAS}.`),
+        anexos: Anexos.optional().describe('Nomes de arquivos em midia/ (como plan_read e plan_midia_importar mostram). Obrigatório em midia.'),
         corpo: Body.optional().describe('Conteúdo em markdown.')
       },
       async (a) =>
         guard('plan_card_create', async () => {
           if (a.tipo === 'sugestao' && !isValidFonte(a.fonte)) return text(`Card não criado: ${SUGESTAO_SEM_FONTE}`)
           const plan = await open()
+          const problem = await anexosCheck(mediaDeps, plan, a.anexos)
+          if (problem) return text(`Card não criado: ${problem}`)
           return createCard(plan, draftCard(a), a.id !== undefined)
         })
     )),
 
     erase(tool(
       'plan_card_update',
-      'Altera um card existente. Exige expected_rev (o rev que você leu): se o card mudou desde então, nada é gravado e a resposta traz a versão atual. Campos omitidos ficam como estão; null em etapa/status/fonte remove o campo.',
+      'Altera um card existente. Exige expected_rev (o rev que você leu): se o card mudou desde então, nada é gravado e a resposta traz a versão atual. Campos omitidos ficam como estão; null em etapa/status/fonte remove o campo; anexos: [] tira todos os anexos.',
       {
         id: Name.describe('Id do card.'),
         expected_rev: Rev.describe('Rev do card na sua última leitura.'),
@@ -302,6 +328,7 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
         status: z.string().max(64).nullable().optional(),
         links: z.array(Name).max(1000).optional().describe('Substitui a lista inteira de links.'),
         fonte: z.string().max(4096).nullable().optional(),
+        anexos: Anexos.optional().describe('Substitui a lista inteira de anexos (nomes em midia/); [] tira todos.'),
         corpo: Body.optional().describe('Substitui o corpo inteiro.')
       },
       async (a) =>
@@ -315,6 +342,12 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
           if (a.titulo !== undefined) next.titulo = a.titulo.trim()
           if (a.links !== undefined) next.links = [...new Set(a.links)]
           if (a.corpo !== undefined) next.corpo = withNewline(a.corpo)
+          if (a.anexos !== undefined) {
+            const anexosError = await anexosCheck(mediaDeps, plan, a.anexos, current)
+            if (anexosError) return text(`Card não alterado: ${anexosError}`)
+            if (a.anexos.length) next.anexos = [...new Set(a.anexos)]
+            else delete next.anexos
+          }
           for (const key of ['etapa', 'status', 'fonte'] as const) {
             const value = a[key]
             if (value === null) delete next[key]
@@ -444,6 +477,17 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
           changed()
           return text(`Handoff gravado em ${file}`)
         })
+    )),
+
+    erase(tool(
+      'plan_midia_importar',
+      'Copia um arquivo (imagem, PDF, vídeo, áudio, planilha, documento… — um anexo do chat, um arquivo do projeto, algo do _sandbox) para a pasta midia/ do planejamento, com nome saneado, e devolve o nome (é ele que vai em "anexos"), o tipo e o caminho absoluto. Com card_id (exige expected_rev), já anexa ao card; se o card não existir ou o rev não bater, nada é copiado e a resposta traz o card atual.',
+      {
+        caminho: z.string().min(1).max(4096).describe('Arquivo de origem: caminho absoluto, ou relativo à raiz do projeto.'),
+        card_id: Name.optional().describe('Id do card ao qual anexar a mídia.'),
+        expected_rev: Rev.optional().describe('Rev do card na sua última leitura (obrigatório com card_id).')
+      },
+      async (a) => guard('plan_midia_importar', () => importAndAttach(mediaDeps, a))
     ))
   ]
 }

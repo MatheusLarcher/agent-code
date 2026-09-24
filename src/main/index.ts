@@ -69,7 +69,7 @@ import {
 import { dailyParquetPath, exportConversationsParquet } from './conversationParquet'
 import { relocateLocalLeftovers, type LeftoverRelocation } from './localLeftovers'
 import { storageErrorForIpc, upsertConversationWithLeaseRecovery } from './persistence/conversationWriteRecovery'
-import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote } from './attachments'
+import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote, imagesAsFiles } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { taskLedger } from './tasks/taskRuntime'
 import { buildTaskBoard, buildTaskDetail, type TaskBoardQuery } from './tasks/taskBoard'
@@ -1567,11 +1567,15 @@ export function registerIpc(): void {
       // open them with its own tools (Read, scripts, etc.). Pasted-by-reference
       // files (fileRefs) are already on disk — local path or main's own
       // download — so they join the same note without another save.
-      const saved: Array<{ name: string; path: string }> =
-        files && files.length > 0 ? await saveAttachments(convId, files) : []
-      const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
       // Conversa do Agent Manager: nenhum dos três observadores abaixo a acompanha.
       const observed = planningConversations.observed(convId)
+      // No Manager, a imagem colada também vai para o disco (além do bloco
+      // inline): sem caminho, ele não consegue trazê-la ao plano com
+      // plan_midia_importar.
+      const toSave = [...(files ?? []), ...(!observed && images?.length ? imagesAsFiles(images) : [])]
+      const saved: Array<{ name: string; path: string }> =
+        toSave.length > 0 ? await saveAttachments(convId, toSave) : []
+      const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
       // O vigia só julga premissa de um pedido do usuário: é aqui que o turno
       // dele começa (retomada e recuperação de turno não passam por aqui).
       if (observed) vigia.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)

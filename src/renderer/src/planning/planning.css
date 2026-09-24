@@ -14,6 +14,7 @@
   --pl-sugestao: var(--warn);
   --pl-ambiguidade: var(--err);
   --pl-nota: var(--crew-subagente, #8d8a86);
+  --pl-midia: var(--crew-navegador-de-codigo, #6fbdad);
   --pl-mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
   display: flex;
   flex-direction: column;
@@ -30,6 +31,7 @@
 .planning [data-tipo='sugestao'] { --pl-tipo: var(--pl-sugestao); }
 .planning [data-tipo='ambiguidade'] { --pl-tipo: var(--pl-ambiguidade); }
 .planning [data-tipo='nota'] { --pl-tipo: var(--pl-nota); }
+.planning [data-tipo='midia'] { --pl-tipo: var(--pl-midia); }
 
 /* ---- cabeçalho ---- */
 .pl-head {

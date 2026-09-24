@@ -34,10 +34,18 @@ export function contentHash(content: string | Uint8Array | null): string {
 }
 
 /** Anota que o app gravou `content` em `file` (null = o app removeu o arquivo). */
-export function recordOwnWrite(file: string, content: string | null): void {
+export function recordOwnWrite(file: string, content: string | Uint8Array | null): void {
+  recordOwnWriteHash(file, contentHash(content))
+}
+
+/**
+ * Como recordOwnWrite, mas com o hash já calculado (sha256 hex dos bytes):
+ * para arquivo grande copiado sem passar pela memória (mídia do plano).
+ */
+export function recordOwnWriteHash(file: string, hash: string): void {
   const key = keyOf(file)
   lastOwn.delete(key)
-  lastOwn.set(key, contentHash(content))
+  lastOwn.set(key, hash)
   if (lastOwn.size > MAX_ENTRIES) {
     const oldest = lastOwn.keys().next().value
     if (oldest !== undefined) lastOwn.delete(oldest)

@@ -22,7 +22,8 @@ import type {
   PlanningFailure,
   PlanningResult,
   PlanningRoteiroDto,
-  PlanningStageStatus
+  PlanningStageStatus,
+  PlanMediaDto
 } from '@shared/ipc'
 import { useUI } from '../ui/UiProvider'
 import type { Point } from './layout'
@@ -70,6 +71,9 @@ export interface PlanningController {
   saveViewport: (viewport: PlanningViewport) => void
   /** Sem `status`, avança pendente → em_andamento → concluida → pendente. */
   toggleEtapa: (id: string, status?: PlanningStageStatus) => Promise<boolean>
+  /** Mídias que esta tela acabou de importar (planning:importMedia não dispara
+   *  planning:changed): entram em plan.media sem recarregar. */
+  addMedia: (media: PlanMediaDto[]) => void
 }
 
 const NEXT_STATUS: Record<PlanningStageStatus, PlanningStageStatus> = {
@@ -124,6 +128,7 @@ export function toCardDto(card: PlanningCardDto): PlanningCardDto {
   if (card.etapa) out.etapa = card.etapa
   if (card.status) out.status = card.status
   if (card.fonte) out.fonte = card.fonte
+  if (card.anexos?.length) out.anexos = [...new Set(card.anexos)]
   return out
 }
 
@@ -367,5 +372,16 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
     [projectCwd, slug, myKey, updatePlan, fail, load]
   )
 
-  return { status, plan, error, born, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa }
+  const addMedia = useCallback(
+    (media: PlanMediaDto[]): void => {
+      if (!media.length) return
+      updatePlan(myKey, (p) => {
+        const names = new Set(media.map((m) => m.name))
+        return { ...p, media: [...(p.media ?? []).filter((m) => !names.has(m.name)), ...media] }
+      })
+    },
+    [myKey, updatePlan]
+  )
+
+  return { status, plan, error, born, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa, addMedia }
 }

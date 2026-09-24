@@ -55,7 +55,8 @@ describe('isIgnoredPlanPath', () => {
     for (const rel of ['_sandbox', '_sandbox\\a.txt', '_sandbox/x/y.md', '_handoff/2026-09-22-01.md', 'cards\\a.md.123.tmp', 'x.TMP']) {
       expect(isIgnoredPlanPath(rel)).toBe(true)
     }
-    for (const rel of ['cards\\a.md', 'cards', '_roteiro.md', '_canvas.json', 'sandbox/a.md']) {
+    // midia/ continua vigiada: mídia que chega por fora recarrega a tela.
+    for (const rel of ['cards\\a.md', 'cards', '_roteiro.md', '_canvas.json', 'sandbox/a.md', 'midia', 'midia\\a1b2c3-x.png']) {
       expect(isIgnoredPlanPath(rel)).toBe(false)
     }
   })

@@ -60,10 +60,13 @@ import type {
   FlowPdfRequest,
   FlowPdfResult,
   PlanningHandoffDto,
+  PlanningImportFile,
   PlanningLayoutDto,
+  PlanningMediaContentDto,
   PlanningRef,
   PlanningResult,
   PlanningRoteiroDto,
+  PlanMediaDto,
   SuggestTitleResult
 } from './ipc'
 
@@ -197,6 +200,14 @@ export interface AgentCodeApi {
   planningListHandoffs(req: PlanningRef): Promise<PlanningResult<{ handoffs: PlanningHandoffDto[] }>>
   /** Grava um prompt em _handoff/AAAA-MM-DD-NN.md; devolve o nome do arquivo novo. */
   planningWriteHandoff(req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>>
+  /** Importa arquivos para <plano>/midia/ (nome saneado): arrastado do Explorer vai
+   *  por `{ path }` (getPathForFile), colado vai por `{ name, data }` em base64.
+   *  Devolve as mídias novas, na ordem de `files`. */
+  planningImportMedia(
+    req: PlanningRef & { files: PlanningImportFile[] }
+  ): Promise<PlanningResult<{ media: PlanMediaDto[] }>>
+  /** Uma mídia de <plano>/midia/ em base64 (até MAX_MEDIA_PREVIEW_BYTES), para miniatura. */
+  planningReadMedia(req: PlanningRef & { name: string }): Promise<PlanningResult<PlanningMediaContentDto>>
   /** Pergunta onde salvar e grava o flow do planejamento em PDF. */
   planningExportPdf(req: FlowPdfRequest): Promise<FlowPdfResult>
   /** Arquivos de um planejamento aberto mudaram por fora do app — recarregue. */

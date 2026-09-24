@@ -8,7 +8,8 @@ import type {
   PlanningCardDto,
   PlanningChangedMsg,
   PlanningHandoffDto,
-  PlanningRoteiroDto
+  PlanningRoteiroDto,
+  PlanMediaDto
 } from '@shared/ipc'
 
 export const CWD = 'C:\\proj\\app'
@@ -41,6 +42,7 @@ export function makePlan(over: Partial<OpenedPlanningDto> = {}): OpenedPlanningD
     ],
     layout: { positions: {} },
     invalid: [],
+    media: [],
     ...over
   }
 }
@@ -72,6 +74,9 @@ export function mockPlanningApi(initial: OpenedPlanningDto = makePlan()) {
     planningListHandoffs: vi.fn(async () => ({ ok: true as const, handoffs: structuredClone(handoffs) })),
     /** Como o main: numera e grava; devolve o nome do arquivo novo. */
     planningWriteHandoff: vi.fn(async (req: { conteudo: string }) => ({ ok: true as const, name: addHandoff(req.conteudo) })),
+    /** Sem disco: nenhuma mídia nova; os testes da tela trocam a implementação. */
+    planningImportMedia: vi.fn(async () => ({ ok: true as const, media: [] as PlanMediaDto[] })),
+    planningReadMedia: vi.fn(async () => ({ ok: false as const, code: 'not_found' as const, message: 'mídia não encontrada' })),
     onPlanningChanged: vi.fn((cb: (msg: PlanningChangedMsg) => void) => {
       listeners.add(cb)
       return () => void listeners.delete(cb)

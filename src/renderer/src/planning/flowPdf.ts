@@ -3,8 +3,11 @@
  * o viewport do React Flow clonado, reposicionado para mostrar TODOS os cards
  * (não só o que está na tela), mais o CSS do app. Os ancestrais do viewport
  * vão junto, rasos, para os seletores do planning.css continuarem valendo.
+ *
+ * Mídia: o PDF leva só os NOMES dos anexos (lista em cada card); miniaturas
+ * (img com data:/blob:) não vão — embutir imagem no PDF está fora do escopo.
  */
-import type { FlowPdfRequest } from '@shared/ipc'
+import type { FlowPdfRequest, PlanningCardDto } from '@shared/ipc'
 
 export interface FlowBounds {
   x: number
@@ -63,18 +66,59 @@ function attrs(el: Element): string {
     .join('')
 }
 
+/** Classe da lista de anexos que o PDF acrescenta no card. */
+export const PDF_ANEXOS_CLASS = 'pl-pdf-anexos'
+
+/**
+ * No clone (nunca no canvas da tela): em cada card com anexos, a faixa de
+ * mídia do nó (`.pl-card-media`: miniaturas/etiquetas, até 3 e "+N") vira a
+ * lista com TODOS os nomes, logo abaixo do título. Miniatura que sobrar (card
+ * que não veio em `cards`) vira o nome dela (alt) — imagem não vai ao PDF.
+ */
+export function listAnexosInClone(root: HTMLElement, cards: readonly Pick<PlanningCardDto, 'id' | 'anexos'>[]): void {
+  const doc = root.ownerDocument
+  const byId = new Map(cards.filter((c) => (c.anexos?.length ?? 0) > 0).map((c) => [c.id, c.anexos as string[]]))
+  for (const node of Array.from(root.querySelectorAll<HTMLElement>('.react-flow__node[data-id]'))) {
+    const anexos = byId.get(node.getAttribute('data-id') ?? '')
+    if (!anexos) continue
+    const list = doc.createElement('div')
+    list.className = PDF_ANEXOS_CLASS
+    list.style.cssText = 'margin:4px 0;font-size:11px;line-height:1.35;opacity:.85;overflow-wrap:anywhere'
+    list.textContent = `Anexos: ${anexos.join(', ')}`
+    const strip = node.querySelector('.pl-card-media')
+    const title = node.querySelector('.pl-card-title')
+    if (strip) strip.replaceWith(list)
+    else if (title) title.after(list)
+    else (node.querySelector('.pl-card-inner') ?? node).appendChild(list)
+  }
+  for (const img of Array.from(root.querySelectorAll('.react-flow__node img'))) {
+    if (!/^(data:|blob:)/i.test(img.getAttribute('src') ?? '')) continue
+    const name = doc.createElement('span')
+    name.className = 'pl-pdf-media-name'
+    name.textContent = img.getAttribute('alt') ?? ''
+    img.replaceWith(name)
+  }
+}
+
 /**
  * `canvas`: o elemento que contém o `.react-flow` do planejamento.
  * `bounds`: caixa de todos os cards em coordenadas do flow (getNodesBounds).
+ * `cards`: os cards do plano, para listar os nomes dos anexos (opcional).
  * null quando não há flow montado.
  */
-export function buildFlowPdf(canvas: Element, bounds: FlowBounds, name: string): FlowPdfRequest | null {
+export function buildFlowPdf(
+  canvas: Element,
+  bounds: FlowBounds,
+  name: string,
+  cards: readonly Pick<PlanningCardDto, 'id' | 'anexos'>[] = []
+): FlowPdfRequest | null {
   const viewport = canvas.querySelector('.react-flow__viewport')
   const doc = canvas.ownerDocument
   if (!(viewport instanceof HTMLElement) || !doc.body) return null
   const { width, height, scale } = pageGeometry(bounds)
 
   const inner = viewport.cloneNode(true) as HTMLElement
+  listAnexosInClone(inner, cards)
   inner.style.transform = `translate(${(PDF_PADDING - bounds.x) * scale}px, ${(PDF_PADDING - bounds.y) * scale}px) scale(${scale})`
   inner.style.transformOrigin = '0 0'
 

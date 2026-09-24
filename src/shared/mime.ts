@@ -12,6 +12,8 @@ export const EXCEL_EXTS = ['xls', 'xlsx', 'csv', 'ods']
 export const PPT_EXTS = ['ppt', 'pptx', 'odp']
 export const TEXT_EXTS = ['txt', 'md', 'log']
 export const ARCHIVE_EXTS = ['zip', 'rar', '7z', 'tar', 'gz']
+export const VIDEO_EXTS = ['mp4', 'webm', 'mov', 'mkv', 'avi']
+export const AUDIO_EXTS = ['mp3', 'wav', 'ogg', 'm4a', 'flac']
 export const CODE_EXTS = [
   'js', 'ts', 'tsx', 'jsx', 'json', 'py', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'rb', 'php',
   'html', 'css', 'xml', 'yml', 'yaml', 'sh'
@@ -43,7 +45,17 @@ const MIME_BY_EXT: Record<string, string> = {
   json: 'application/json',
   zip: 'application/zip',
   rar: 'application/vnd.rar',
-  '7z': 'application/x-7z-compressed'
+  '7z': 'application/x-7z-compressed',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  mkv: 'video/x-matroska',
+  avi: 'video/x-msvideo',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  flac: 'audio/flac'
 }
 
 /** Extension (no dot, lowercase) from a file name or URL path, e.g. "pdf". */

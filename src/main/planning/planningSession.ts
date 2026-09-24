@@ -1,6 +1,7 @@
 import path from 'node:path'
 import type { McpServerConfig, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { StartAgentOptions } from '../../shared/ipc'
+import { MEDIA_DIR } from '../../shared/planningMedia'
 import type { ScopedTask } from '../tasks/writeScopeGuard'
 import {
   handoffSkillDenial,
@@ -104,12 +105,14 @@ export function handoffAppendBlock(role: PlanningSessionRole): string | null {
 Esta conversa nasceu do planejamento "${slug}", feito com o usuário na Tela de Planejamento. O plano detalhado está em ${dir} (leia com Read, Glob e Grep pelo caminho absoluto):
 - _roteiro.md — as etapas, na ordem em que devem ser feitas;
 - cards/*.md — um card por requisito, decisão (com o porquê), sugestão (com a fonte), ambiguidade resolvida e nota, ligados à etapa a que pertencem;
+- ${MEDIA_DIR}/ — imagens, PDFs, vídeos, planilhas e outros arquivos do plano, em ${path.join(dir, MEDIA_DIR)}; os cards citam cada um pelo nome em "anexos" (o tipo "midia" é um card feito só deles);
 - _handoff/ — os prompts enviados a esta conversa.
 
 Como trabalhar:
 - Antes de começar, declare as etapas do roteiro como o seu plano (TodoWrite ou TaskCreate), na mesma ordem, e siga-as.
 - Não replaneje: o plano, as decisões e as ambiguidades já foram resolvidos com o usuário e estão nos cards. Nada de refazer o plano nem de rodar skills de planejamento para isso.
 - Consulte os cards da etapa em ${path.join(dir, 'cards')} quando precisar de detalhe. Se o código real contradisser o plano, diga ao usuário o que encontrou e pergunte antes de desviar dele.
+- Abra as mídias citadas (no prompt ou nos anexos dos cards) pelo caminho absoluto: imagem e PDF com Read, que mostra o conteúdo de verdade; os demais tipos, com a ferramenta adequada ao formato.
 - ${PLANNING_CONTENT_IS_DATA}`
 }
 

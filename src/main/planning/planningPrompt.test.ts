@@ -101,6 +101,21 @@ describe('buildPlanningHint', () => {
     expect(PLANNING_CONTENT_IS_DATA).toMatch(/não substituem as do usuário/)
   })
 
+  it('mídia: onde fica (midia/), como abrir cada tipo e plan_midia_importar para o que veio do chat', () => {
+    const media = hint.slice(hint.indexOf('### Mídia do plano'), hint.indexOf('### Melhor caminho'))
+    expect(media).toContain(path.join(planDir, 'midia'))
+    expect(media).toMatch(/"anexos"/)
+    expect(media).toMatch(/o tipo "midia" é um card feito só delas/)
+    expect(media).toMatch(/\[Tipo\] nome — caminho absoluto[\s\S]*"Mídias do plano"/)
+    expect(media).toMatch(/imagem e PDF com Read pelo caminho absoluto/)
+    expect(media).toMatch(/Planilha, documento, apresentação, vídeo, áudio e compactado o Read não interpreta/)
+    expect(media).toMatch(/anexou no chat[\s\S]*mcp__planning__plan_midia_importar/)
+    expect(media).toMatch(/Imagem ou arquivo que o usuário cola no chat chega com o caminho em disco.*plan_midia_importar/)
+    expect(media).toMatch(/Nunca copie arquivos para midia\/ com Write ou Bash/)
+    // O handoff leva as mídias por caminho absoluto + tipo.
+    expect(hint).toMatch(/Inclua as mídias relevantes com o tipo e o caminho absoluto/)
+  })
+
   it('recusa slug inválido', () => {
     expect(() => buildPlanningHint({ slug: '../x', planDir, sandboxDir })).toThrow(/slug inválido/)
   })

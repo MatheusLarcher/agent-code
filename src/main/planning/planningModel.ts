@@ -7,8 +7,9 @@
  * também é YAML válido), então o round-trip é exato sem dependência nova.
  */
 import { FONTE_RULE_TEXT, isValidFonte } from '../../shared/planningFonte'
+import { isValidMediaName, MAX_ANEXOS_POR_CARD } from '../../shared/planningMedia'
 
-export const CARD_TYPES = ['etapa', 'requisito', 'decisao', 'sugestao', 'ambiguidade', 'nota'] as const
+export const CARD_TYPES = ['etapa', 'requisito', 'decisao', 'sugestao', 'ambiguidade', 'nota', 'midia'] as const
 export type CardType = (typeof CARD_TYPES)[number]
 
 export const AMBIGUITY_STATUSES = ['aberta', 'resolvida'] as const
@@ -25,6 +26,9 @@ export interface PlanCard {
   status?: string
   links: string[]
   fonte?: string
+  /** Nomes de arquivos em <plano>/midia/ (isValidMediaName). Só vai ao
+   *  frontmatter quando não vazio: card sem anexo fica byte a byte como antes. */
+  anexos?: string[]
   rev: number
   corpo: string
 }
@@ -100,11 +104,31 @@ export function validateCard(card: PlanCard): PlanCard {
       throw new PlanningValidationError("ambiguidade exige status 'aberta' ou 'resolvida'")
     }
   }
+  validateAnexos(card.anexos)
+  if (card.tipo === 'midia' && !card.anexos?.length) {
+    throw new PlanningValidationError('card de mídia exige ao menos um anexo')
+  }
   if (typeof card.corpo !== 'string') throw new PlanningValidationError('corpo deve ser texto')
   return card
 }
 
-const FM_KEYS = ['id', 'tipo', 'titulo', 'etapa', 'status', 'links', 'fonte', 'rev'] as const
+function validateAnexos(anexos: unknown): void {
+  if (anexos === undefined) return
+  if (!Array.isArray(anexos)) throw new PlanningValidationError('anexos devem ser uma lista de nomes')
+  if (anexos.length > MAX_ANEXOS_POR_CARD) {
+    throw new PlanningValidationError(`no máximo ${MAX_ANEXOS_POR_CARD} anexos por card`)
+  }
+  const seen = new Set<string>()
+  for (const name of anexos) {
+    if (!isValidMediaName(name)) {
+      throw new PlanningValidationError(`anexo inválido: ${String(name)} (use o nome do arquivo em midia/)`)
+    }
+    if (seen.has(name)) throw new PlanningValidationError(`anexo repetido: ${name}`)
+    seen.add(name)
+  }
+}
+
+const FM_KEYS = ['id', 'tipo', 'titulo', 'etapa', 'status', 'links', 'fonte', 'anexos', 'rev'] as const
 
 export function serializeCard(card: PlanCard): string {
   validateCard(card)
@@ -112,6 +136,7 @@ export function serializeCard(card: PlanCard): string {
   for (const key of FM_KEYS) {
     const value = card[key]
     if (value === undefined) continue
+    if (key === 'anexos' && !card.anexos?.length) continue
     lines.push(`${key}: ${JSON.stringify(value)}`)
   }
   lines.push('---', '')
@@ -161,6 +186,10 @@ export function parseCard(text: string): PlanCard {
   if (fm.etapa !== undefined) card.etapa = String(fm.etapa)
   if (fm.status !== undefined) card.status = String(fm.status)
   if (fm.fonte !== undefined) card.fonte = String(fm.fonte)
+  if (fm.anexos !== undefined) {
+    validateAnexos(fm.anexos)
+    if ((fm.anexos as string[]).length) card.anexos = fm.anexos as string[]
+  }
   return validateCard(card)
 }
 

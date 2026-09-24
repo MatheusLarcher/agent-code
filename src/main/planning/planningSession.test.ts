@@ -160,6 +160,13 @@ describe('handoffAppendBlock', () => {
     expect(block).toMatch(/Não replaneje/)
   })
 
+  it('cita a pasta midia/ (caminho absoluto) e manda abrir imagem e PDF com Read', () => {
+    const block = handoffAppendBlock({ cwd, handoff: { slug } }) ?? ''
+    expect(block).toContain(`- midia/ — imagens, PDFs, vídeos, planilhas e outros arquivos do plano, em ${path.join(cwd, 'docs', 'spec', 'checkout', 'midia')}`)
+    expect(block).toMatch(/os cards citam cada um pelo nome em "anexos"/)
+    expect(block).toMatch(/Abra as mídias citadas[\s\S]*pelo caminho absoluto: imagem e PDF com Read/)
+  })
+
   it('com a pasta de dados configurada, cita o caminho ABSOLUTO real do plano (fora do projeto)', () => {
     const dataDir = path.resolve('/dados-sessao/agent-code')
     setPlanningDataRoot(() => dataDir)

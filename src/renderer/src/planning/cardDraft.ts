@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PlanningCardDto, PlanningCardType } from '@shared/ipc'
 import { isValidFonte } from '@shared/planningFonte'
+import { MAX_ANEXOS_POR_CARD, isValidMediaName } from '@shared/planningMedia'
 import type { SaveCardOutcome } from './usePlanning'
 
 export const DRAFT_DEBOUNCE_MS = 300
@@ -27,7 +28,8 @@ export const RETRY_MSG = 'O card mudou de novo enquanto eu gravava — seu texto
 const DRAFT_PREFIX = 'agentcode.planning.draft:'
 const NEW_CARD_KEY = '__novo'
 
-/** O que o editor edita. `etapa`/`fonte`/`status` vazios = ausentes. */
+/** O que o editor edita. `etapa`/`fonte`/`status` vazios = ausentes; `anexos`
+ *  são nomes de arquivo em <plano>/midia/ (vazio = sem anexos). */
 export interface CardFields {
   titulo: string
   tipo: PlanningCardType
@@ -35,8 +37,20 @@ export interface CardFields {
   fonte: string
   status: string
   corpo: string
+  anexos: string[]
 }
-const FIELD_KEYS = ['titulo', 'tipo', 'etapa', 'fonte', 'status', 'corpo'] as const
+const TEXT_KEYS = ['titulo', 'tipo', 'etapa', 'fonte', 'status', 'corpo'] as const
+const FIELD_KEYS = [...TEXT_KEYS, 'anexos'] as const
+
+function sameList(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  const x = a ?? []
+  const y = b ?? []
+  return x.length === y.length && x.every((v, i) => v === y[i])
+}
+
+function sameField(k: keyof CardFields, a: CardFields, b: CardFields): boolean {
+  return k === 'anexos' ? sameList(a.anexos, b.anexos) : a[k] === b[k]
+}
 
 export interface CardDraft {
   v: 1
@@ -54,18 +68,19 @@ export function fieldsOf(card: PlanningCardDto): CardFields {
     etapa: card.etapa ?? '',
     fonte: card.fonte ?? '',
     status: card.status ?? '',
-    corpo: card.corpo
+    corpo: card.corpo,
+    anexos: [...(card.anexos ?? [])]
   }
 }
 
 export function sameFields(a: CardFields, b: CardFields): boolean {
-  return FIELD_KEYS.every((k) => a[k] === b[k])
+  return FIELD_KEYS.every((k) => sameField(k, a, b))
 }
 
 /** Campo que o usuário mudou (mine ≠ base) fica com o dele; o resto, com `theirs`. */
 export function mergeFields(base: CardFields, mine: CardFields, theirs: CardFields): CardFields {
   const out: CardFields = { ...theirs }
-  for (const k of FIELD_KEYS) if (mine[k] !== base[k]) (out as unknown as Record<string, string>)[k] = mine[k]
+  for (const k of FIELD_KEYS) if (!sameField(k, mine, base)) (out as unknown as Record<string, unknown>)[k] = mine[k]
   return out
 }
 
@@ -80,6 +95,7 @@ export function composeCard(fields: CardFields, over: PlanningCardDto, id = over
   if (fields.tipo === 'sugestao') {
     if (fonte) next.fonte = fonte
   } else if (over.fonte) next.fonte = over.fonte
+  if (fields.anexos.length) next.anexos = [...fields.anexos]
   return next
 }
 
@@ -91,7 +107,8 @@ export function sameContent(a: PlanningCardDto, b: PlanningCardDto): boolean {
     (a.etapa ?? '') === (b.etapa ?? '') &&
     (a.status ?? '') === (b.status ?? '') &&
     (a.fonte ?? '') === (b.fonte ?? '') &&
-    a.corpo === b.corpo
+    a.corpo === b.corpo &&
+    sameList(a.anexos, b.anexos)
   )
 }
 
@@ -99,6 +116,13 @@ export function sameContent(a: PlanningCardDto, b: PlanningCardDto): boolean {
 export function cardProblem(card: PlanningCardDto): string | null {
   if (!card.titulo) return 'Dê um título ao card.'
   if (card.titulo.length > TITLE_MAX) return `Título longo demais (máximo ${TITLE_MAX} caracteres).`
+  const anexos = card.anexos ?? []
+  if (card.tipo === 'midia' && anexos.length === 0) {
+    return 'Card de mídia precisa de pelo menos um anexo: use "Anexar arquivo…" ou solte um arquivo no card.'
+  }
+  if (anexos.length > MAX_ANEXOS_POR_CARD) return `Anexos demais (máximo ${MAX_ANEXOS_POR_CARD} por card).`
+  if (new Set(anexos).size !== anexos.length) return 'O mesmo anexo aparece duas vezes no card.'
+  if (anexos.some((a) => !isValidMediaName(a))) return 'Há um anexo com nome inválido — remova-o e anexe o arquivo de novo.'
   if (card.tipo === 'sugestao' && !card.fonte) {
     return 'Sugestão precisa de uma fonte: um link http(s) ou um arquivo do projeto (ex.: src/a.ts:12).'
   }
@@ -139,9 +163,13 @@ export function draftKey(projectCwd: string, slug: string, cardId: string): stri
   return DRAFT_PREFIX + JSON.stringify([normCwd(projectCwd), slug, cardId || NEW_CARD_KEY])
 }
 
-function isFields(v: unknown): v is CardFields {
+/** Rascunho gravado antes de existir `anexos` vale como "sem anexos". */
+function asFields(v: unknown): CardFields | null {
   const f = v as Record<string, unknown> | null
-  return !!f && typeof f === 'object' && FIELD_KEYS.every((k) => typeof f[k] === 'string')
+  if (!f || typeof f !== 'object' || !TEXT_KEYS.every((k) => typeof f[k] === 'string')) return null
+  const anexos = f.anexos ?? []
+  if (!Array.isArray(anexos) || !anexos.every((a) => typeof a === 'string')) return null
+  return { ...(f as unknown as CardFields), anexos: [...anexos] }
 }
 
 export function readDraft(key: string): CardDraft | null {
@@ -149,8 +177,10 @@ export function readDraft(key: string): CardDraft | null {
     const raw = localStorage.getItem(key)
     if (!raw) return null
     const d = JSON.parse(raw) as Partial<CardDraft>
-    if (d?.v !== 1 || !isFields(d.fields) || !isFields(d.base) || !Number.isInteger(d.baseRev)) return null
-    return d as CardDraft
+    const fields = asFields(d?.fields)
+    const base = asFields(d?.base)
+    if (d?.v !== 1 || !fields || !base || !Number.isInteger(d.baseRev)) return null
+    return { ...(d as CardDraft), fields, base }
   } catch {
     return null
   }

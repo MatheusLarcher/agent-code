@@ -176,7 +176,8 @@ vi.mock('./attachments', () => ({
   saveAttachments: vi.fn(),
   resolvePastedPath: vi.fn(),
   downloadPastedUrl: vi.fn(),
-  buildAttachmentNote: vi.fn()
+  buildAttachmentNote: vi.fn(),
+  imagesAsFiles: vi.fn(() => [])
 }))
 vi.mock('./memoryCurator', () => ({ startMemoryCuratorScheduler: vi.fn() }))
 vi.mock('./tasks/taskRuntime', () => ({ taskLedger: vi.fn() }))

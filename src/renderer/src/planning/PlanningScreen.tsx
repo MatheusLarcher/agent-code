@@ -29,6 +29,9 @@ import { buildFlowPdf } from './flowPdf'
 import { columnFocusPoint, computeLayout } from './layout'
 import { loadRoteiroCollapsed, loadRoteiroWidth, saveRoteiroCollapsed, saveRoteiroWidth } from './paneSizes'
 import { PlanningPlanContext } from './planningPlanContext'
+import type { DropTarget, DroppedFile } from './mediaDrop'
+import { PlanningMediaContext } from './mediaView'
+import { usePlanMedia } from './usePlanMedia'
 import { usePlanning } from './usePlanning'
 
 export interface PlanningScreenProps {
@@ -122,7 +125,7 @@ function usePanes(): {
 }
 
 function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: PlanningScreenProps): JSX.Element {
-  const { status, plan, error, born, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa } =
+  const { status, plan, error, born, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa, addMedia } =
     usePlanning(projectCwd, slug)
   // As pastas do plano vêm do main (na pasta de dados do app e, o _sandbox, no
   // projeto): o renderer não sabe montá-las.
@@ -134,6 +137,15 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
   )
   const { confirm, notify } = useUI()
   const flow = useReactFlow()
+  const planMedia = usePlanMedia({ projectCwd, slug, plan, saveCard, saveLayout, addMedia, notify })
+  const planMediaList = plan?.media
+  const mediaInfo = useMemo(() => ({ projectCwd, slug, media: planMediaList ?? [] }), [projectCwd, slug, planMediaList])
+  const { dropFiles, openMedia: openMediaAsync } = planMedia
+  const onDropFiles = useCallback(
+    (files: DroppedFile[], target: DropTarget) => void dropFiles(files, target),
+    [dropFiles]
+  )
+  const openMedia = useCallback((name: string) => void openMediaAsync(name), [openMediaAsync])
   const [editing, setEditing] = useState<Editing | null>(null)
   const editorSession = useRef(0)
   const planKey = `${projectCwd}\u0000${slug}`
@@ -251,7 +263,8 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
   const exportPdf = useCallback(async (): Promise<void> => {
     const nodes = flow.getNodes()
     const stage = stageRef.current
-    const req = stage && nodes.length ? buildFlowPdf(stage, flow.getNodesBounds(nodes), title) : null
+    // Os cards vão junto: o PDF lista os nomes dos anexos de cada um.
+    const req = stage && nodes.length ? buildFlowPdf(stage, flow.getNodesBounds(nodes), title, cards ?? []) : null
     if (!req) {
       notify('aviso', 'Não há cards no canvas para exportar.')
       return
@@ -266,7 +279,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
     } finally {
       setExporting(false)
     }
-  }, [flow, title, notify])
+  }, [flow, title, cards, notify])
   const isEmpty = !!plan && plan.roteiro.etapas.length === 0 && plan.cards.length === 0
   const existingIds = useMemo(() => (cards ?? []).map((c) => c.id), [cards])
   // O editor recebe a versão viva do card: sem edição pendente, adota a do Manager.
@@ -336,43 +349,49 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
             </div>
           )}
           {status === 'ready' && plan && layout && (
-            <main className="pl-stage-area" ref={stageRef}>
-              {isEmpty ? (
-                <EmptyPlan onNewCard={() => newCard()} />
-              ) : (
-                <PlanningCanvas
-                  plan={plan}
-                  layout={layout}
-                  onMoveCards={saveLayout}
-                  onOpenCard={openCard}
-                  onNewCard={newCard}
-                  onDeleteCards={deleteFromCanvas}
-                  onLink={link}
-                  onUnlink={unlink}
-                  onViewportChange={saveViewport}
-                  onCanvasClick={collapseChat}
-                  onExportPdf={() => void exportPdf()}
-                  exporting={exporting}
-                />
-              )}
-              {editorOpen && editorCard && (
-                <CardEditor
-                  key={`${editorOpen.planKey}\u0000${editorOpen.session}`}
-                  card={editorCard}
-                  isNew={editorOpen.isNew}
-                  etapas={etapas}
-                  existingIds={existingIds}
-                  cards={plan.cards}
-                  projectCwd={projectCwd}
-                  slug={slug}
-                  onSave={saveFromEditor}
-                  onSaved={(saved) => onEditorSaved(editorOpen.session, saved)}
-                  onDelete={deleteFromEditor}
-                  onClose={closeEditor}
-                  notify={notify}
-                />
-              )}
-            </main>
+            <PlanningMediaContext.Provider value={mediaInfo}>
+              <main className="pl-stage-area" ref={stageRef}>
+                {isEmpty ? (
+                  <EmptyPlan onNewCard={() => newCard()} />
+                ) : (
+                  <PlanningCanvas
+                    plan={plan}
+                    layout={layout}
+                    onMoveCards={saveLayout}
+                    onOpenCard={openCard}
+                    onNewCard={newCard}
+                    onDeleteCards={deleteFromCanvas}
+                    onLink={link}
+                    onUnlink={unlink}
+                    onViewportChange={saveViewport}
+                    onCanvasClick={collapseChat}
+                    onExportPdf={() => void exportPdf()}
+                    exporting={exporting}
+                    onDropFiles={onDropFiles}
+                  />
+                )}
+                {editorOpen && editorCard && (
+                  <CardEditor
+                    key={`${editorOpen.planKey}\u0000${editorOpen.session}`}
+                    card={editorCard}
+                    isNew={editorOpen.isNew}
+                    etapas={etapas}
+                    existingIds={existingIds}
+                    cards={plan.cards}
+                    projectCwd={projectCwd}
+                    slug={slug}
+                    onSave={saveFromEditor}
+                    onSaved={(saved) => onEditorSaved(editorOpen.session, saved)}
+                    onDelete={deleteFromEditor}
+                    onClose={closeEditor}
+                    notify={notify}
+                    media={plan.media}
+                    onImportMedia={planMedia.importFiles}
+                    onOpenMedia={openMedia}
+                  />
+                )}
+              </main>
+            </PlanningMediaContext.Provider>
           )}
           {/* Os cards do canvas vão para o chat: '[[' sugere e [[Nome]] ganha a cor do tipo. */}
           {chatSlot && (

@@ -95,6 +95,7 @@
 .pl-preview a[href^='#card-ref/sugestao/'] { --pl-ref: var(--pl-sugestao); }
 .pl-preview a[href^='#card-ref/ambiguidade/'] { --pl-ref: var(--pl-ambiguidade); }
 .pl-preview a[href^='#card-ref/nota/'] { --pl-ref: var(--pl-nota); }
+.pl-preview a[href^='#card-ref/midia/'] { --pl-ref: var(--pl-midia); }
 
 .pl-link:focus-visible,
 .pl-ref-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

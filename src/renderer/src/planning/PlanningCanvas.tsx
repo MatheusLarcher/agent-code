@@ -10,6 +10,9 @@
  * Enquadramento: viewport salvo volta como estava; sem ele, o do
  * canvasViewport.ts (nunca abaixo do zoom em que o card é legível). Só o
  * movimento do usuário sobe por onViewportChange, não o enquadramento inicial.
+ *
+ * Arquivo solto ou imagem colada (useCanvasFileDrop) também só sobe: quem
+ * importa e grava é o usePlanMedia.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -49,6 +52,8 @@ import {
   type Viewport
 } from './canvasViewport'
 import { MINIMAP_H, MINIMAP_W } from './paneSizes'
+import { useCanvasFileDrop } from './useCanvasFileDrop'
+import type { DropTarget, DroppedFile } from './mediaDrop'
 
 type FlowNode = CardFlowNode | StageFlowNode
 
@@ -72,6 +77,8 @@ export interface PlanningCanvasProps {
   onExportPdf?: () => void
   /** Exportação em andamento: o botão fica desabilitado. */
   exporting?: boolean
+  /** Arquivo solto (ou imagem colada com Ctrl+V) no canvas. Sem ele, o canvas não aceita. */
+  onDropFiles?: (files: DroppedFile[], target: DropTarget) => void
 }
 
 // Fora do componente: objeto novo a cada render faria o React Flow remontar os nós.
@@ -212,9 +219,11 @@ export const PlanningCanvas = memo(function PlanningCanvas({
   onViewportChange,
   onCanvasClick,
   onExportPdf,
-  exporting
+  exporting,
+  onDropFiles
 }: PlanningCanvasProps): JSX.Element {
   const { defaultViewport, onMoveEnd } = useInitialViewport(plan, layout, onViewportChange)
+  const fileDrop = useCanvasFileDrop(layout, onDropFiles)
   const [nodes, setNodes] = useState<FlowNode[]>(() => buildNodes(plan, layout))
   const [edges, setEdges] = useState<Edge[]>(() => buildEdges(layout))
   const cardsById = useMemo(() => new Map(plan.cards.map((c) => [c.id, c])), [plan.cards])
@@ -284,7 +293,12 @@ export const PlanningCanvas = memo(function PlanningCanvas({
   )
 
   return (
-    <div className="pl-canvas" onClick={onCanvasClick}>
+    <div
+      ref={fileDrop.ref}
+      className={`pl-canvas${fileDrop.dragging ? ' pl-dropping' : ''}`}
+      onClick={onCanvasClick}
+      {...fileDrop.handlers}
+    >
       <ReactFlow<FlowNode, Edge>
         nodes={nodes}
         edges={edges}
@@ -335,6 +349,7 @@ export const PlanningCanvas = memo(function PlanningCanvas({
           )}
           <span className="pl-hint">
             Duplo clique abre · Delete apaga · arraste do ponto na borda de um card até outro para ligar
+            {onDropFiles ? ' · solte arquivos ou cole imagem para anexar' : ''}
           </span>
         </Panel>
       </ReactFlow>

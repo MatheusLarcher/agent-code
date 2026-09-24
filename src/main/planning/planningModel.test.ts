@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { MAX_ANEXOS_POR_CARD } from '../../shared/planningMedia'
 import {
   extractLinks,
   isValidName,
@@ -72,6 +73,55 @@ describe('cards', () => {
     expect(() => validateCard({ ...base, tipo: 'xyz' as never })).toThrow(/tipo/)
     expect(() => validateCard({ ...base, id: '../x' })).toThrow(/id/)
     expect(() => parseCard('sem frontmatter')).toThrow(/frontmatter/)
+  })
+
+  it('card sem anexos (ou com anexos vazio) serializa byte a byte como antes', () => {
+    const legacy = [
+      '---',
+      'id: "req-login"',
+      'tipo: "requisito"',
+      'titulo: "Login com \\"e-mail\\": obrigatório"',
+      'etapa: "etapa-1"',
+      'links: ["dec-auth"]',
+      'rev: 3',
+      '---',
+      ''
+    ].join('\n') + base.corpo
+    expect(serializeCard(base)).toBe(legacy)
+    expect(serializeCard({ ...base, anexos: [] })).toBe(legacy)
+    expect(parseCard(legacy)).toEqual(base)
+    expect('anexos' in parseCard(legacy)).toBe(false)
+  })
+
+  it('round-trip com anexos; tipo midia exige ao menos um anexo', () => {
+    const comAnexo: PlanCard = { ...base, anexos: ['a1b2c3-tela.png', 'ffffff-spec.pdf'] }
+    const text = serializeCard(comAnexo)
+    expect(text).toContain('anexos: ["a1b2c3-tela.png","ffffff-spec.pdf"]')
+    expect(parseCard(text)).toEqual(comAnexo)
+    expect(serializeCard(parseCard(text))).toBe(text)
+
+    const midia: PlanCard = { id: 'm1', tipo: 'midia', titulo: 'Tela', links: [], rev: 0, corpo: '' }
+    expect(() => validateCard(midia)).toThrow(/anexo/)
+    expect(() => validateCard({ ...midia, anexos: [] })).toThrow(/anexo/)
+    expect(validateCard({ ...midia, anexos: ['a1b2c3-tela.png'] }).tipo).toBe('midia')
+    expect(parseCard(serializeCard({ ...midia, anexos: ['a1b2c3-tela.png'] })).anexos).toEqual(['a1b2c3-tela.png'])
+  })
+
+  it('anexos escritos à mão no frontmatter também são lidos', () => {
+    const text = '---\nid: m1\ntipo: midia\ntitulo: Tela\nanexos: [a1b2c3-tela.png, b.pdf]\nrev: 1\n---\n'
+    expect(parseCard(text).anexos).toEqual(['a1b2c3-tela.png', 'b.pdf'])
+  })
+
+  it('recusa anexo com nome inválido, repetido ou acima do limite', () => {
+    for (const bad of ['../x.png', 'A.png', 'a/b.png', 'a b.png', '', 'con.png']) {
+      expect(() => validateCard({ ...base, anexos: [bad] }), bad).toThrow(/anexo/)
+    }
+    expect(() => validateCard({ ...base, anexos: ['a.png', 'a.png'] })).toThrow(/repetido/)
+    const muitos = Array.from({ length: MAX_ANEXOS_POR_CARD + 1 }, (_, i) => `f${i}.png`)
+    expect(() => validateCard({ ...base, anexos: muitos })).toThrow(/anexos/)
+    expect(validateCard({ ...base, anexos: muitos.slice(0, MAX_ANEXOS_POR_CARD) }).anexos).toHaveLength(MAX_ANEXOS_POR_CARD)
+    expect(() => validateCard({ ...base, anexos: 'a.png' as never })).toThrow(/anexos/)
+    expect(() => parseCard('---\nid: n1\ntipo: nota\ntitulo: T\nanexos: 5\nrev: 1\n---\n')).toThrow(/anexos/)
   })
 
   it('extrai links [[id]] sem repetir', () => {

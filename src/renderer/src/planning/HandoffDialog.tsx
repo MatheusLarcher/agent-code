@@ -146,7 +146,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     waitingRef.current = { requestedAt: Date.now(), before: new Set(before.map((h) => h.name)) }
     setFound([])
     setStep('waiting')
-    onAskManager(managerHandoffRequest(plan.dir, override ? blockers.length : 0))
+    onAskManager(managerHandoffRequest(plan.dir, override ? blockers.length : 0, plan.media?.length ?? 0))
   }
 
   const writeAutoDraft = async (): Promise<void> => {

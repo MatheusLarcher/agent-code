@@ -15,9 +15,11 @@ export const HANDOFF_CLOCK_SLACK_MS = 2_000
  * assim), o Manager é avisado para registrar a leitura recomendada.
  *
  * `planDir` é a pasta ABSOLUTA do plano, como o main a informou (plan.dir):
- * o renderer não a monta.
+ * o renderer não a monta. Com mídia no plano (`mediaCount` > 0), o Manager é
+ * instruído a pôr em cada prompt o caminho absoluto + tipo das mídias que ele
+ * usa — a conversa de implementação não vê o plano, só o texto.
  */
-export function managerHandoffRequest(planDir: string, openAmbiguities = 0): string {
+export function managerHandoffRequest(planDir: string, openAmbiguities = 0, mediaCount = 0): string {
   const lines = [
     'Gere agora o handoff deste planejamento para a conversa de implementação.',
     '',
@@ -30,6 +32,16 @@ export function managerHandoffRequest(planDir: string, openAmbiguities = 0): str
     '',
     'Não implemente nada e não altere cards nem o roteiro agora: só grave os prompts e, no fim, diga quantos gravou.'
   ]
+  if (mediaCount > 0) {
+    const n = mediaCount === 1 ? 'uma mídia' : `${mediaCount} mídias`
+    lines.push(
+      '',
+      `Mídia: o plano tem ${n} em midia/ (o plan_read lista o tipo e o caminho absoluto de cada uma). ` +
+        'Em cada prompt, inclua o CAMINHO ABSOLUTO e o TIPO de toda mídia relevante ao que ele pede, no formato ' +
+        '"[Tipo] nome — caminho absoluto", e mande abri-la com Read (imagem e PDF o Read mostra de verdade). ' +
+        'Nome solto ou caminho relativo não serve: a conversa de implementação não acharia o arquivo.'
+    )
+  }
   if (openAmbiguities > 0) {
     const n = openAmbiguities === 1 ? 'Uma ambiguidade continua aberta' : `${openAmbiguities} ambiguidades continuam abertas`
     lines.push(

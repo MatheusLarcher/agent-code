@@ -61,10 +61,13 @@ import type {
   FlowPdfRequest,
   FlowPdfResult,
   PlanningHandoffDto,
+  PlanningImportFile,
   PlanningLayoutDto,
+  PlanningMediaContentDto,
   PlanningRef,
   PlanningResult,
   PlanningRoteiroDto,
+  PlanMediaDto,
   SuggestTitleResult
 } from '../shared/ipc'
 
@@ -186,6 +189,11 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.planningListHandoffs, req),
   planningWriteHandoff: (req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>> =>
     ipcRenderer.invoke(Channels.planningWriteHandoff, req),
+  planningImportMedia: (
+    req: PlanningRef & { files: PlanningImportFile[] }
+  ): Promise<PlanningResult<{ media: PlanMediaDto[] }>> => ipcRenderer.invoke(Channels.planningImportMedia, req),
+  planningReadMedia: (req: PlanningRef & { name: string }): Promise<PlanningResult<PlanningMediaContentDto>> =>
+    ipcRenderer.invoke(Channels.planningReadMedia, req),
   planningExportPdf: (req: FlowPdfRequest): Promise<FlowPdfResult> => ipcRenderer.invoke(Channels.planningExportPdf, req),
   onPlanningChanged: (cb: (m: PlanningChangedMsg) => void): (() => void) => on(Channels.planningChanged, cb),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
