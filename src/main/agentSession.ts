@@ -1062,9 +1062,17 @@ export class AgentSession {
       // quietly serving it at standard speed.
       // GPT models carry fast mode in the Codex request body instead (see the
       // ANTHROPIC_AUTH_TOKEN suffix below) — `settings.fastMode` is Anthropic-only.
-      ...(this.opts.fastMode && fastModeTransport(this.opts.model) === 'anthropic-setting'
-        ? { settings: { fastMode: true } }
-        : {}),
+      // autoMemoryEnabled: false — a memória do usuário é a pasta do app
+      // (memoriesDir, via memory_propose). Ligada, a auto-memória do CLI põe no
+      // preset claude_code uma seção "# Memory" apontando para
+      // ~/.claude/projects/<cwd>/memory, e o modelo (o Agent Manager sobretudo)
+      // lê e grava na pasta errada.
+      settings: {
+        autoMemoryEnabled: false,
+        ...(this.opts.fastMode && fastModeTransport(this.opts.model) === 'anthropic-setting'
+          ? { fastMode: true }
+          : {})
+      },
       ...(env ? { env } : {}),
       ...(openaiOn ? { maxTurns: OPENAI_MAX_TURNS } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —

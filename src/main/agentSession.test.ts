@@ -1065,31 +1065,31 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
   it('modelo suportado + flag ligada: manda settings.fastMode', async () => {
     const { s } = makeSession({ model: 'claude-opus-5-5', fastMode: true })
     await s.start()
-    expect(optionsOfLastQuery().settings).toEqual({ fastMode: true })
+    expect(optionsOfLastQuery().settings).toEqual({ autoMemoryEnabled: false, fastMode: true })
   })
 
-  it('flag desligada: não manda settings (fica no padrão da conta)', async () => {
+  it('flag desligada: não manda settings.fastMode (fica no padrão da conta)', async () => {
     const { s } = makeSession({ model: 'claude-opus-5-5', fastMode: false })
     await s.start()
-    expect(optionsOfLastQuery().settings).toBeUndefined()
+    expect(optionsOfLastQuery().settings).not.toHaveProperty('fastMode')
   })
 
   // A proteção que importa: mesmo se a flag vazar de uma conversa antiga, um
   // modelo sem suporte não pode receber fastMode — a API rejeitaria a request.
-  it('modelo sem suporte + flag ligada: settings NÃO vai junto', async () => {
+  it('modelo sem suporte + flag ligada: settings.fastMode NÃO vai junto', async () => {
     const { s } = makeSession({ model: 'claude-sonnet-5', fastMode: true })
     await s.start()
-    expect(optionsOfLastQuery().settings).toBeUndefined()
+    expect(optionsOfLastQuery().settings).not.toHaveProperty('fastMode')
   })
 
   // GPT tem modo rápido, mas por outro canal: `service_tier` no corpo do Codex.
   // Mandar `settings.fastMode` para lá seria um campo Anthropic num backend que
   // rejeita parâmetro desconhecido com HTTP 400.
-  it('GPT + flag ligada: NÃO manda settings, e pede fast mode pelo token do proxy', async () => {
+  it('GPT + flag ligada: NÃO manda settings.fastMode, e pede fast mode pelo token do proxy', async () => {
     const { s } = makeSession({ model: 'gpt-6-sol', fastMode: true })
     await s.start()
     const options = optionsOfLastQuery()
-    expect(options.settings).toBeUndefined()
+    expect(options.settings).not.toHaveProperty('fastMode')
     expect((options.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toMatch(/\+fast$/)
   })
 
@@ -1097,8 +1097,17 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
     const { s } = makeSession({ model: 'gpt-6-sol', fastMode: false })
     await s.start()
     const options = optionsOfLastQuery()
-    expect(options.settings).toBeUndefined()
+    expect(options.settings).not.toHaveProperty('fastMode')
     expect((options.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).not.toMatch(/\+fast$/)
+  })
+
+  // A memória do usuário é a pasta do app; a auto-memória do CLI
+  // (~/.claude/projects/<cwd>/memory) poria outra pasta no prompt e o modelo
+  // gravaria lá. Desligada em toda sessão, de qualquer provedor.
+  it.each(['claude-opus-5-5', 'claude-sonnet-5', 'gpt-6-sol'])('%s: auto-memória do CLI desligada', async (model) => {
+    const { s } = makeSession({ model, fastMode: false })
+    await s.start()
+    expect(optionsOfLastQuery().settings).toMatchObject({ autoMemoryEnabled: false })
   })
 })
 
