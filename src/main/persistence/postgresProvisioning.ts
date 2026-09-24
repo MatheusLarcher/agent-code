@@ -211,6 +211,17 @@ export async function provisionPostgres(
   pool.on('error', (error) => {
     console.error('[postgres] erro em conexão ociosa do pool:', error)
   })
+  // O listener acima só vale enquanto o cliente está OCIOSO: o pg-pool o remove
+  // no checkout. Se a conexão cai no meio de uma transação, o Client emite
+  // 'error' sem ouvinte e o EventEmitter lança — "Connection terminated
+  // unexpectedly" como Uncaught Exception no main. A consulta em curso já
+  // rejeita para quem a chamou e o pool descarta o cliente no release; este
+  // ouvinte permanente só impede o crash.
+  pool.on('connect', (client) => {
+    client.on('error', (error) => {
+      console.warn('[postgres] conexão em uso caiu:', error.message)
+    })
+  })
   const client = await pool.connect().catch((error) => {
     throw typedPostgresError(error, 'connect')
   })
