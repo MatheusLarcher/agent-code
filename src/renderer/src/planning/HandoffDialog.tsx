@@ -8,14 +8,12 @@
  *    normal de envio), que grave o(s) prompt(s) com plan_handoff_write, e
  *    espera arquivos NOVOS em _handoff/ criados depois do pedido (relista a
  *    cada planning:changed). Ou grava o rascunho automático (buildDraftHandoff).
- * 3. Revisar prompt(s) — cada um editável; o editado é gravado como arquivo
- *    novo em _handoff/ ANTES do envio (o _handoff guarda o que foi enviado),
- *    uma vez só: tentar de novo não regrava o que já está gravado.
- *    Enviar entrega os prompts ao App (`onSend`), que cria a conversa. Criada
- *    a conversa, o diálogo fecha mesmo se o envio falhar — enviar de novo por
- *    aqui criaria outra; o toast manda usar "Tentar de novo" na conversa nova.
+ * 3. Revisar prompt(s) — editável; o editado vira arquivo novo em _handoff/
+ *    antes do envio, uma vez só. `onSend` cria a conversa; criada, o diálogo
+ *    fecha mesmo se o envio falhar (enviar de novo criaria outra).
  *
- * Falha de IPC vira toast 'erro'; nada aqui lança.
+ * Esc/clique fora fecham sem perder nada (HandoffSession por plano). Falha de
+ * IPC vira toast 'erro'; nada aqui lança.
  */
 import './handoff.css'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -24,10 +22,13 @@ import type { OpenedPlanningDto, PlanningFailure, PlanningHandoffDto, PlanningRe
 import { IconSpinner, IconWarning } from '../components/Icons'
 import { useUI } from '../ui/UiProvider'
 import {
+  clearHandoffSession,
   handoffPartialMessage,
   latestHandoffBatch,
+  loadHandoffSession,
   managerHandoffRequest,
   newHandoffsSince,
+  saveHandoffSession,
   type HandoffSendOutcome
 } from './handoffFlow'
 import { buildDraftHandoff, handoffReadiness } from './handoffReadiness'
@@ -96,13 +97,15 @@ function firstLine(text: string): string {
 export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
   const { projectCwd, slug, plan, managerBusy, onAskManager, onSend, onClose } = props
   const { notify } = useUI()
-  const [step, setStep] = useState<Step>('review')
+  // Reaberto, o diálogo volta onde estava (pedido em espera, prompts editados).
+  const [session] = useState(() => loadHandoffSession<Draft>(projectCwd, slug))
+  const [step, setStep] = useState<Step>(session?.step ?? 'review')
   const [override, setOverride] = useState(false)
   const [found, setFound] = useState<PlanningHandoffDto[]>([])
-  const [drafts, setDrafts] = useState<Draft[]>([])
+  const [drafts, setDrafts] = useState<Draft[]>(session?.drafts ?? [])
   const [working, setWorking] = useState<null | 'ask' | 'draft' | 'send'>(null)
   // O pedido em espera; null = não está esperando (cancelado ou já revisando).
-  const waitingRef = useRef<{ requestedAt: number; before: Set<string> } | null>(null)
+  const waitingRef = useRef<{ requestedAt: number; before: Set<string> } | null>(session?.waiting ?? null)
   // Prompts JÁ gravados em _handoff/ (o último lote). É o que sobrevive a um
   // reinício: o diálogo não lembra do pedido, mas o arquivo está no disco.
   const [saved, setSaved] = useState<PlanningHandoffDto[]>([])
@@ -113,8 +116,8 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      // Com prompts em edição, Esc não descarta o que foi digitado.
-      if (e.key === 'Escape' && step !== 'prompts' && working !== 'send') onClose()
+      // Fechar não descarta nada: o estado fica guardado por plano.
+      if (e.key === 'Escape' && working !== 'send') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -127,18 +130,33 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     return null
   }, [projectCwd, slug, notify])
 
+  // Guarda onde o diálogo está: fechá-lo não perde o pedido nem as edições.
   useEffect(() => {
-    let alive = true
+    saveHandoffSession(projectCwd, slug, { step, waiting: waitingRef.current, drafts })
+  }, [projectCwd, slug, step, drafts])
+
+  // Os prompts gravados acompanham o disco (abrir, planning:changed, fim de turno);
+  // só vale a resposta da busca mais recente — podem chegar fora de ordem.
+  const seqRef = useRef(0)
+  const reloadSaved = useCallback((): void => {
+    const seq = ++seqRef.current
     void window.api
       .planningListHandoffs?.({ projectCwd, slug })
       .then((res) => {
-        if (alive && res?.ok) setSaved(latestHandoffBatch(res.handoffs))
+        if (seq === seqRef.current && res?.ok) setSaved(latestHandoffBatch(res.handoffs))
       })
       .catch(() => undefined)
-    return () => {
-      alive = false
-    }
   }, [projectCwd, slug])
+
+  useEffect(() => reloadSaved(), [reloadSaved, managerBusy])
+
+  useEffect(
+    () =>
+      window.api.onPlanningChanged?.((msg) => {
+        if (isSamePlan(msg, projectCwd, slug)) reloadSaved()
+      }),
+    [projectCwd, slug, reloadSaved]
+  )
 
   const reviewSaved = (): void => {
     waitingRef.current = null
@@ -172,6 +190,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     setWorking(null)
     if (!before) return
     waitingRef.current = { requestedAt: Date.now(), before: new Set(before.map((h) => h.name)) }
+    saveHandoffSession(projectCwd, slug, { step: 'waiting', waiting: waitingRef.current, drafts }) // fechou no list(): reabre em "Gerar"
     setFound([])
     setStep('waiting')
     onAskManager(managerHandoffRequest(plan.dir, override ? blockers.length : 0, plan.media?.length ?? 0))
@@ -240,6 +259,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
       setWorking(null)
       return
     }
+    if (outcome.status !== 'not-created') clearHandoffSession(projectCwd, slug)
     if (outcome.status === 'sent') {
       notify(
         'sucesso',
@@ -261,7 +281,10 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
   const stepIndex = STEPS.findIndex((s) => s.id === step)
 
   return createPortal(
-    <div className="modal-overlay pl-handoff-overlay">
+    <div
+      className="modal-overlay pl-handoff-overlay"
+      onMouseDown={(e) => e.target === e.currentTarget && working !== 'send' && onClose()}
+    >
       <div
         className={`modal-card pl-handoff-modal${step === 'prompts' ? ' wide' : ''}`}
         role="dialog"
@@ -288,6 +311,15 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
             <p className="modal-message">
               O plano vira o prompt de uma conversa <b>nova</b> de implementação neste projeto. Confira antes de gerar.
             </p>
+            {managerBusy && (
+              <div className="pl-handoff-wait" role="status">
+                <IconSpinner className="spinner" size={15} />
+                <div>
+                  <strong>O Agent Manager está trabalhando.</strong>
+                  <span>O que ele gravar em _handoff/ aparece aqui assim que ficar pronto.</span>
+                </div>
+              </div>
+            )}
             {blockers.length > 0 && (
               <section className="pl-handoff-issues block" aria-label="Bloqueios">
                 <h4>

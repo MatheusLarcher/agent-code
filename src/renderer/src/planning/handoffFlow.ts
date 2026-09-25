@@ -83,6 +83,34 @@ export function latestHandoffBatch(list: readonly PlanningHandoffDto[]): Plannin
   return byTime.slice(start).sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/**
+ * Onde o diálogo estava (passo, pedido em espera, prompts em revisão), por
+ * plano, enquanto o app estiver aberto: fechar o diálogo — Esc, clique fora —
+ * não perde o que o Agent Manager está gerando nem o que foi editado.
+ */
+export interface HandoffSession<D> {
+  step: 'review' | 'waiting' | 'prompts'
+  waiting: { requestedAt: number; before: Set<string> } | null
+  drafts: D[]
+}
+
+const sessions = new Map<string, HandoffSession<unknown>>()
+const sessionKey = (projectCwd: string, slug: string): string => `${projectCwd}\n${slug}`
+
+export function loadHandoffSession<D>(projectCwd: string, slug: string): HandoffSession<D> | null {
+  return (sessions.get(sessionKey(projectCwd, slug)) as HandoffSession<D> | undefined) ?? null
+}
+
+/** `review` sem pedido em espera é o estado inicial: não precisa ser guardado. */
+export function saveHandoffSession<D>(projectCwd: string, slug: string, s: HandoffSession<D>): void {
+  if (s.step === 'review' && !s.waiting) sessions.delete(sessionKey(projectCwd, slug))
+  else sessions.set(sessionKey(projectCwd, slug), s)
+}
+
+export function clearHandoffSession(projectCwd: string, slug: string): void {
+  sessions.delete(sessionKey(projectCwd, slug))
+}
+
 export interface HandoffLaunchDeps<C extends { id: string }> {
   /** Cria a conversa de implementação, ativa, e JÁ visível para o caminho de
    *  envio (estado e refs) — o envio logo abaixo não pode achar a conversa

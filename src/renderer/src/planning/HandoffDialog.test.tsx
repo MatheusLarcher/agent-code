@@ -1,14 +1,18 @@
+import { StrictMode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { OpenedPlanningDto } from '@shared/ipc'
 import { UiProvider } from '../ui/UiProvider'
 import { HandoffButton, HandoffDialog } from './HandoffDialog'
-import type { HandoffSendOutcome } from './handoffFlow'
+import { clearHandoffSession, type HandoffSendOutcome } from './handoffFlow'
 import { buildDraftHandoff } from './handoffReadiness'
 import { PlanningPlanContext } from './planningPlanContext'
 import { CWD, SLUG, makeCard, makePlan, mockPlanningApi } from './planningTestUtils'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  clearHandoffSession(CWD, SLUG)
+})
 
 function withAmbiguity(): OpenedPlanningDto {
   const plan = makePlan()
@@ -88,15 +92,39 @@ describe('HandoffDialog — conferir', () => {
     expect(button('Pedir ao Agent Manager').disabled).toBe(false)
   })
 
-  it('Esc fecha no conferir, mas não com prompts em edição', async () => {
+  it('Esc e clique fora fecham; reaberto, volta aos prompts em edição', async () => {
     mockPlanningApi()
-    const { onClose } = renderDialog()
+    const { onClose, view } = renderDialog()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
     fireEvent.click(button('Usar rascunho automático'))
-    await screen.findByLabelText('Prompt 1')
-    fireEvent.keyDown(window, { key: 'Escape' })
+    const area = (await screen.findByLabelText('Prompt 1')) as HTMLTextAreaElement
+    fireEvent.change(area, { target: { value: 'editado' } })
+    fireEvent.mouseDown(dialog())
     expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.mouseDown(document.querySelector('.pl-handoff-overlay') as HTMLElement)
+    expect(onClose).toHaveBeenCalledTimes(2)
+    view.unmount()
+    renderDialog()
+    expect((screen.getByLabelText('Prompt 1') as HTMLTextAreaElement).value).toBe('editado')
+  })
+
+  it('no StrictMode (o app usa), os prompts já gravados aparecem', async () => {
+    mockPlanningApi().addHandoff('# Prompt salvo')
+    render(
+      <StrictMode>
+        <UiProvider>
+          <HandoffDialog projectCwd={CWD} slug={SLUG} plan={makePlan()} managerBusy={false} onAskManager={vi.fn()} onSend={vi.fn(async () => SENT)} onClose={vi.fn()} />
+        </UiProvider>
+      </StrictMode>
+    )
+    expect(await screen.findByText('Prompt já gerado')).toBeTruthy()
+  })
+
+  it('com o Agent Manager num turno, o conferir mostra que ele está trabalhando', () => {
+    mockPlanningApi()
+    renderDialog(makePlan(), { managerBusy: true })
+    expect(screen.getByText('O Agent Manager está trabalhando.')).toBeTruthy()
   })
 })
 
