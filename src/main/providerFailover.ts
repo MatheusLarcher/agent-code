@@ -13,7 +13,7 @@ export const FAILOVER_CONTINUATION = '[PROVIDER_CONTINUATION]\n' +
   '[/PROVIDER_CONTINUATION]'
 
 type Session = Pick<AgentSession, 'start' | 'send' | 'dispose' | 'interrupt' | 'setBypass' | 'resolvePermission' | 'holdQuestion' | 'refreshUsage' | 'waitForIdle' | 'resumeAfterQuota' | 'continuationState' | 'restoreContinuation'> &
-  Partial<Pick<AgentSession, 'hasBackgroundWork'>>
+  Partial<Pick<AgentSession, 'hasBackgroundWork' | 'injectNow'>>
 type Factory = (options: StartAgentOptions, emit: (event: ChatEvent) => void, complete: () => void) => Session
 
 /** Troca de conta com o turno fechado: a de fim de turno e a manual do painel. */
@@ -300,6 +300,12 @@ export class ProviderFailoverSession {
     }
     this.tryPending()
     return { ok: true, scheduled }
+  }
+
+  /** Botão "agora": entra no turno em andamento; durante uma troca, não (fica na fila). */
+  injectNow(...args: Parameters<AgentSession['injectNow']>): boolean {
+    if (this.switching || this.disposed) return false
+    return this.current.injectNow?.(...args) ?? false
   }
 
   start(): Promise<boolean> { return this.current.start() }

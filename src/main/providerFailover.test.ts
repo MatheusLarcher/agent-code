@@ -130,4 +130,15 @@ describe('quota classification', () => {
   it.each(['HTTP 429', 'Too many requests', 'network failed', 'overloaded', 'authentication failed'])('does not confuse %s with exhausted credits', (text) => {
     expect(isUsageExhausted(text)).toBe(false)
   })
+
+  it('botão "agora" passa para a sessão atual, e não durante uma troca', async () => {
+    const h = harness()
+    const inject = vi.fn(() => true)
+    Object.assign(h.records[0].session, { injectNow: inject })
+    expect(h.session.injectNow('ajuste', undefined, 'u')).toBe(true)
+    expect(inject).toHaveBeenCalledWith('ajuste', undefined, 'u')
+    h.records[0].event(quota)
+    expect(h.session.injectNow('ajuste')).toBe(false)
+    await settled()
+  })
 })

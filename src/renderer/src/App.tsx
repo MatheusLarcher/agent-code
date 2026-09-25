@@ -2472,6 +2472,46 @@ export function App(): JSX.Element {
     setQueue((q) => q.filter((m) => m.id !== id))
   }, [])
 
+  // Botão "agora": a mensagem sai da fila e entra na tarefa em andamento, como
+  // ajuste (o main a marca e o CLI a lê entre uma ferramenta e outra). Sai da
+  // fila ANTES da chamada — senão o fim do turno podia drená-la em paralelo e
+  // mandá-la duas vezes. Se não havia turno, volta para o começo da fila.
+  const sendQueuedNow = useCallback(
+    async (id: string): Promise<void> => {
+      const item = queueRef.current.find((m) => m.id === id)
+      if (!item) return
+      setQueue((q) => q.filter((m) => m.id !== id))
+      const res = await window.api
+        .injectNow(item.convId, item.full, item.images, item.files, item.fileRefs, crypto.randomUUID())
+        .catch(() => ({ ok: false }))
+      if (!res.ok) {
+        setQueue((q) => [item, ...q])
+        notify('aviso', 'A tarefa está terminando — a mensagem continua na fila e sai em seguida.')
+        return
+      }
+      patchConv(item.convId, (c) => ({
+        ...c,
+        messages: [
+          ...c.messages,
+          {
+            kind: 'user',
+            id: uid('u'),
+            text: item.text,
+            images: item.thumbs.length ? item.thumbs : undefined,
+            files:
+              item.files.length || item.fileRefs.length
+                ? [...item.files, ...item.fileRefs].map((f) => ({ name: f.name, size: f.size }))
+                : undefined,
+            injected: true,
+            ts: Date.now()
+          }
+        ],
+        updatedAt: Date.now()
+      }))
+    },
+    [notify, patchConv]
+  )
+
   const retryRecoveryNow = useCallback((): void => {
     const id = activeIdRef.current
     if (id) void runRecovery(id, true)
@@ -3167,6 +3207,7 @@ export function App(): JSX.Element {
       onSelectProjectFolder={() => void selectProjectFolder()}
       queued={activeQueue}
       onDeleteQueued={deleteQueued}
+      onSendQueuedNow={(id) => void sendQueuedNow(id)}
       recovery={active?.recovery}
       onRetryRecovery={retryRecoveryNow}
       onCancelRecovery={cancelRecovery}

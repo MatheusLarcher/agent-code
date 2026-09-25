@@ -7533,3 +7533,25 @@ span.board-agent-dot {
   padding: 3px 9px;
   font-size: 11.5px;
 }
+
+/* Botão "agora" da fila: manda a mensagem para dentro da tarefa em andamento. */
+.queue-now {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text, inherit);
+  font-size: 11px;
+  cursor: pointer;
+}
+.queue-now:hover {
+  border-color: var(--accent, #6aa0ff);
+  color: var(--accent, #6aa0ff);
+}
+.msg-injected {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  margin-top: 2px;
+}

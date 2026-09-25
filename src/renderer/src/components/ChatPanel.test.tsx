@@ -231,3 +231,22 @@ describe('ChatPanel — coluna estreita sem mexer no chat em largura normal', ()
     expect(outside).not.toMatch(/\.composer-input-wrap[^{]*\{[^}]*order:/)
   })
 })
+
+describe('ChatPanel — botão "agora" na fila', () => {
+  const queued = [{ id: 'q1', text: 'usa a pasta X', thumbs: [] }]
+
+  it('cada item da fila tem "agora", que manda aquela mensagem para a tarefa em andamento', () => {
+    const onSendQueuedNow = vi.fn()
+    const onDeleteQueued = vi.fn()
+    renderPanel({ busy: true, queued, onSendQueuedNow, onDeleteQueued })
+    fireEvent.click(screen.getByRole('button', { name: 'agora' }))
+    expect(onSendQueuedNow).toHaveBeenCalledWith('q1')
+    expect(onDeleteQueued).not.toHaveBeenCalled()
+  })
+
+  it('sem o callback, o item só tem o remover', () => {
+    renderPanel({ busy: true, queued })
+    expect(screen.queryByRole('button', { name: 'agora' })).toBeNull()
+    expect(screen.getByTitle('Remover da fila')).toBeTruthy()
+  })
+})

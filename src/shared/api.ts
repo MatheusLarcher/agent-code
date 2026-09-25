@@ -274,6 +274,17 @@ export interface AgentCodeApi {
   codexLogout(): Promise<void>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }>
+  /** Botão "agora": põe a mensagem da fila no turno em andamento, sem
+   *  interromper. `ok: false` = não havia turno (ou era uma troca de conta): a
+   *  mensagem continua na fila. */
+  injectNow(
+    convId: string,
+    text: string,
+    images?: ImageAttachment[],
+    files?: FileAttachment[],
+    fileRefs?: FileRefAttachment[],
+    messageUuid?: string
+  ): Promise<{ ok: boolean }>
   sendMessage(
     convId: string,
     text: string,

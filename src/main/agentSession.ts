@@ -85,6 +85,7 @@ import type {
   TokenUsage
 } from '../shared/ipc'
 import { claudeAccounts } from './accounts'
+import { buildInjectedMessage } from './injectNow'
 import { storageLifecycle } from './persistence/lifecycle'
 import type { AgentInputQueueRepository, ProjectConversationCount, TokenUsageRepository } from './persistence/types'
 
@@ -1444,6 +1445,22 @@ export class AgentSession {
     } as SDKUserMessage
     this.beginTurn()
     await this.enqueueInput(msg, uuid)
+  }
+
+  /**
+   * Botão "agora": põe a mensagem no turno em andamento, sem interromper (ver
+   * injectNow.ts). Vai direto ao stream do SDK, fora da fila durável: ela não
+   * abre turno nem gera `result` próprio. `false` quando não há turno (quem
+   * chama manda pelo caminho normal) ou quando o modelo não vê a imagem.
+   */
+  injectNow(text: string, images?: ImageAttachment[], messageUuid?: string): boolean {
+    if (!this.turnActive || this.disposed || !this.q) return false
+    if (images && images.length > 0 && !modelSupportsVision(this.opts.model)) return false
+    const uuid = messageUuid || randomUUID()
+    this.submittedMessages.set(uuid, text.length > 500 ? `${text.slice(0, 500)}…` : text)
+    this.markActivity()
+    this.input.push(buildInjectedMessage(text, images, uuid))
+    return true
   }
 
   async waitForIdle(): Promise<void> {

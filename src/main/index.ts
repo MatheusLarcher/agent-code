@@ -1657,6 +1657,35 @@ export function registerIpc(): void {
     }
   )
 
+  // Botão "agora" da fila: a mensagem entra no turno em andamento, marcada como
+  // ajuste (ver injectNow.ts). Sem turno, `ok: false` e ela segue na fila.
+  ipcMain.handle(
+    Channels.agentInjectNow,
+    async (
+      _e,
+      convId: unknown,
+      text: unknown,
+      images?: ImageAttachment[],
+      files?: FileAttachment[],
+      fileRefs?: FileRefAttachment[],
+      messageUuid?: unknown
+    ) => {
+      if (typeof convId !== 'string' || typeof text !== 'string') return { ok: false }
+      const session = sessions.get(convId)
+      if (!session) return { ok: false }
+      assertStorageWritable()
+      const observed = planningConversations.observed(convId)
+      const toSave = [
+        ...(Array.isArray(files) ? files : []),
+        ...(!observed && Array.isArray(images) && images.length ? imagesAsFiles(images) : [])
+      ]
+      const saved = toSave.length > 0 ? await saveAttachments(convId, toSave) : []
+      const finalText = buildAttachmentNote(text, [...saved, ...(Array.isArray(fileRefs) ? fileRefs : [])])
+      const uuid = typeof messageUuid === 'string' ? messageUuid : undefined
+      return { ok: session.injectNow(finalText, Array.isArray(images) ? images : undefined, uuid) }
+    }
+  )
+
   ipcMain.handle(Channels.agentInterrupt, async (_e, convId: string) => {
     return (await sessions.get(convId)?.interrupt()) ?? { stillQueued: [] }
   })

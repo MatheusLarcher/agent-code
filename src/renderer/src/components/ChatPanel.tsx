@@ -169,6 +169,8 @@ interface Props {
   /** Messages waiting to be sent (agent busy), shown above the composer. */
   queued: { id: string; text: string; thumbs: string[] }[]
   onDeleteQueued: (id: string) => void
+  /** Botão "agora": manda a mensagem da fila para dentro da tarefa em andamento. */
+  onSendQueuedNow?: (id: string) => void
   recovery?: TurnRecovery
   onRetryRecovery: () => void
   onCancelRecovery: () => void
@@ -467,7 +469,7 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {props.queued.length > 0 && (
         <div className="queue">
-          <div className="queue-label"><IconClock size={13} /> Na fila ({props.queued.length}) — enviadas quando a tarefa atual terminar</div>
+          <div className="queue-label"><IconClock size={13} /> Na fila ({props.queued.length}) — enviadas quando a tarefa atual terminar, ou já com "agora"</div>
           {props.queued.map((q) => (
             <div className="queue-item" key={q.id}>
               {q.thumbs.length > 0 && (
@@ -478,6 +480,16 @@ export function ChatPanel(props: Props): JSX.Element {
                 </span>
               )}
               <span className="queue-text">{q.text.trim() || '(imagem)'}</span>
+              {props.onSendQueuedNow && (
+                <button
+                  type="button"
+                  className="queue-now"
+                  onClick={() => props.onSendQueuedNow?.(q.id)}
+                  title="Mandar agora: entra na tarefa em andamento como ajuste, sem interromper nem cancelar o pedido anterior"
+                >
+                  agora
+                </button>
+              )}
               <button className="queue-x" onClick={() => props.onDeleteQueued(q.id)} title="Remover da fila">
                 <IconClose size={13} />
               </button>

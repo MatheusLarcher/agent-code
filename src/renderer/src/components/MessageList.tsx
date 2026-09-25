@@ -542,6 +542,7 @@ export function MessageList({
                   {resolveRef ? <CardRefText text={m.text} resolveRef={resolveRef} /> : m.text}
                 </div>
                 {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
+                {m.injected && <div className="msg-injected">↳ ajuste enviado durante a tarefa</div>}
                 {m.error && (
                   <div className="msg-error">
                     <span className="msg-error-text" title={m.error}>

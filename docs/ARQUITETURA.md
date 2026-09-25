@@ -12,6 +12,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Modelo de processos e segurança](#modelo-de-processos-e-segurança)
 - [Autenticação (login do Claude)](#autenticação-login-do-claude)
 - [Contas Claude (várias contas, uma por conversa)](#contas-claude-várias-contas-uma-por-conversa)
+- [Fila e botão "agora"](#fila-e-botão-agora)
 - [Sequência de inicialização](#sequência-de-inicialização)
 - [Ciclo de vida da sessão do agente](#ciclo-de-vida-da-sessão-do-agente)
 - [Tradução de mensagens do SDK em eventos de UI](#tradução-de-mensagens-do-sdk-em-eventos-de-ui)
@@ -179,6 +180,17 @@ Várias contas Claude (assinatura Pro/Max) rodam ao mesmo tempo, **cada conversa
   - salvar key ou religar o modo pelas Configurações chama `typeSafePause.reset()`.
 - **Aviso:** o main avisa **uma vez**, ao entrar na pausa (`typesafe:paused`). O renderer mostra um toast amarelo "Roteamento IA pausado até HH:MM — motivo", e a tela do TypeSafe mostra o mesmo estado (`ui/TypeSafePauseNote.tsx`).
 - **Chamadas em sequência:** as consultas de um mesmo envio já rodam em paralelo. A única sequência é a do memorista (gate → escolha de modelo), que depende da resposta do gate e fica fora do caminho do usuário.
+
+## Fila e botão "agora"
+
+Com o agente trabalhando, a mensagem do usuário **não entra no turno em andamento**: ela espera na fila do renderer ("Na fila") e sai quando o turno fecha (`result`).
+
+O botão **"agora"** de um item da fila manda **aquela** mensagem para dentro da tarefa em andamento, **sem interromper**.
+- **Caminho:** `agent:inject-now` → `ProviderFailoverSession.injectNow` → `AgentSession.injectNow`. A mensagem vai direto ao stream do SDK com `priority: 'next'` (`injectNow.ts`), fora da fila durável.
+- **Como o CLI trata:** lê a mensagem entre uma ferramenta e outra e segue o **mesmo turno**, com um `result` só. Medido no SDK 0.3.281, o agente terminou o pedido original e aplicou o ajuste.
+- **Marca de ajuste:** a mensagem vai com `INJECT_NOW_MARKER` ("ajuste; NÃO cancela nem substitui o pedido anterior"), porque o risco não é perder histórico, é o modelo tomar o pedido novo como substituto.
+- **Quando não entra:** sem turno em andamento, no meio de uma troca de conta/provedor, ou com imagem num modelo sem visão, o main responde `ok: false`. A mensagem volta para o começo da fila e sai em seguida.
+- **Ordem no renderer:** o item sai da fila **antes** da chamada, senão o fim do turno poderia drená-lo em paralelo. A bolha ganha a nota "ajuste enviado durante a tarefa".
 
 ## Sequência de inicialização
 

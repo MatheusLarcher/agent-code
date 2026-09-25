@@ -1772,6 +1772,8 @@ export const Channels = {
   conversationSuggestTitle: 'conversation:suggestTitle',
   agentStart: 'agent:start',
   agentSend: 'agent:send',
+  /** Botão "agora" da fila: a mensagem entra no turno em andamento (sem interromper). */
+  agentInjectNow: 'agent:inject-now',
   agentInterrupt: 'agent:interrupt',
   agentSetBypass: 'agent:set-bypass',
   agentPermissionResponse: 'agent:permission-response',

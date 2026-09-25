@@ -16,6 +16,9 @@ export type UserMessage = {
   /** Set when the user manually canceled this message's turn — the chat shows a
    *  small "cancelada" note and the model is told to disregard it. */
   canceled?: boolean
+  /** Enviada pelo botão "agora" da fila: entrou no turno em andamento como
+   *  ajuste (não abriu um turno novo). */
+  injected?: boolean
 }
 
 /** Anything the message list can render (agent events + user messages). */
