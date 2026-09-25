@@ -1772,6 +1772,9 @@ export const Channels = {
   conversationSuggestTitle: 'conversation:suggestTitle',
   agentStart: 'agent:start',
   agentSend: 'agent:send',
+  /** Fila de espera das conversas, gravada no banco (sobrevive ao reinício). */
+  outboxList: 'outbox:list',
+  outboxReplace: 'outbox:replace',
   /** Botão "agora" da fila: a mensagem entra no turno em andamento (sem interromper). */
   agentInjectNow: 'agent:inject-now',
   agentInterrupt: 'agent:interrupt',
@@ -2159,6 +2162,13 @@ export interface PlanningRef {
 export type PlanningChangedMsg = PlanningRef
 
 /** Um prompt de handoff em _handoff/ da pasta do planejamento (Channels.planningListHandoffs). */
+/** Um item gravado da fila de espera de uma conversa (payload = item do renderer). */
+export interface OutboxEntryDto {
+  conversationId: string
+  id: string
+  payload: unknown
+}
+
 export interface PlanningHandoffDto {
   /** Nome do arquivo (AAAA-MM-DD-NN.md). */
   name: string

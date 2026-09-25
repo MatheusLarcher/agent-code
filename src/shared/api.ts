@@ -67,7 +67,8 @@ import type {
   PlanningResult,
   PlanningRoteiroDto,
   PlanMediaDto,
-  SuggestTitleResult
+  SuggestTitleResult,
+  OutboxEntryDto
 } from './ipc'
 import type {
   AccountUsageResult,
@@ -274,6 +275,10 @@ export interface AgentCodeApi {
   codexLogout(): Promise<void>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }>
+  /** Fila de espera gravada no banco: tudo, no boot. */
+  outboxList(): Promise<OutboxEntryDto[]>
+  /** Regrava a fila de UMA conversa (lista vazia apaga). */
+  outboxReplace(conversationId: string, items: Array<{ id: string; payload: unknown }>): Promise<{ ok: boolean }>
   /** Botão "agora": põe a mensagem da fila no turno em andamento, sem
    *  interromper. `ok: false` = não havia turno (ou era uma troca de conta): a
    *  mensagem continua na fila. */

@@ -131,6 +131,24 @@ describe.runIf(integration).sequential('PostgresRepository', () => {
     expect(await pcA.projectCwdsForIdentity('proj-1')).toHaveLength(2)
   })
 
+  it('fila de espera da conversa (conversation_outbox) sobrevive a reabrir e troca por conversa', async () => {
+    const installation = randomUUID()
+    const first = await repository(installation)
+    opened.push(first)
+    await first.replaceConversationOutbox('conv-a', [
+      { id: 'q1', payload: { text: 'um' } },
+      { id: 'q2', payload: { text: 'dois' } }
+    ])
+    await first.replaceConversationOutbox('conv-b', [{ id: 'q9', payload: { text: 'manager' } }])
+    await first.replaceConversationOutbox('conv-a', [{ id: 'q2', payload: { text: 'dois' } }])
+    const again = await repository(installation)
+    opened.push(again)
+    expect((await again.listConversationOutbox()).map((i) => [i.conversationId, i.id, i.payload])).toEqual([
+      ['conv-a', 'q2', { text: 'dois' }],
+      ['conv-b', 'q9', { text: 'manager' }]
+    ])
+  })
+
   it('isola KV device, compartilha KV global e aplica CAS/tombstone', async () => {
     const left = await repository(randomUUID())
     const right = await repository(randomUUID())

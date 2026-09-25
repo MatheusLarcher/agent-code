@@ -192,6 +192,13 @@ O botão **"agora"** de um item da fila manda **aquela** mensagem para dentro da
 - **Quando não entra:** sem turno em andamento, no meio de uma troca de conta/provedor, ou com imagem num modelo sem visão, o main responde `ok: false`. A mensagem volta para o começo da fila e sai em seguida.
 - **Ordem no renderer:** o item sai da fila **antes** da chamada, senão o fim do turno poderia drená-lo em paralelo. A bolha ganha a nota "ajuste enviado durante a tarefa".
 
+**A fila sobrevive ao reinício** (tabela `conversation_outbox`, migração SQLite 11 / Postgres 13).
+- **Onde fica gravada:** cada item da fila de espera, tanto do usuário quanto dos prompts 2..N que o handoff do planejamento enfileira, é gravado com a posição, o texto e os anexos. Não confundir com `agent_input_queue`, que guarda a mensagem já entregue ao SDK.
+- **Um só ponto de sincronização:** o hook `useOutboxPersistence` regrava a fila das conversas que mudaram. Isso cobre enfileirar, drenar no fim do turno, remover, "agora", Stop e apagar a conversa (`outboxSync.ts` decide quais conversas mudaram).
+- **Boot:** depois que as conversas carregam, `outbox:list` restaura a fila e um toast avisa. Nada é gravado antes da restauração.
+- **Depois do reinício:** a conversa está parada com fila e ninguém drenaria. Uma mensagem nova vai para o **fim** da fila e a cabeça sai na hora (`dispatch(..., fromQueue)`). O botão "agora" numa conversa parada simplesmente manda a mensagem.
+- **IPC:** `outbox:list` / `outbox:replace` (`outboxIpc.ts`, com zod). Limite de 200 itens e 50 MB por fila. Banco indisponível = fila só em memória, como antes.
+
 ## Sequência de inicialização
 
 `src/main/index.ts`:
@@ -1058,6 +1065,9 @@ O diálogo tem três passos, e cada um existe por um motivo:
    `planning:changed` e a cada fim de turno do Manager. Ou o **rascunho automático**
    (`buildDraftHandoff`): markdown determinístico montado do plano (mesmo plano, mesmo texto), gravado
    em `_handoff/` pela tela — sem gastar um turno do Manager.
+   **Prompts já gerados sobrevivem ao reinício**: ao abrir, o diálogo lista `_handoff/` e oferece o
+   último lote (arquivos gravados com até 10 min de distância, `latestHandoffBatch`) com "Revisar
+   estes prompts". O arquivo em disco é a fonte da verdade: nenhuma referência extra é guardada.
 3. **Revisar**: cada prompt é editável. **O `_handoff/` guarda exatamente o que foi enviado**: o prompt
    editado vira um **arquivo novo** antes do envio (o original fica), e se essa gravação falha nada é
    enviado. É o registro do que a implementação recebeu, e só vale se for literal. Gravado **uma vez**:

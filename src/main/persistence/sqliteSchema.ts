@@ -380,6 +380,25 @@ export const SQLITE_AGENT_INPUT_QUEUE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS agent_input_queue_fifo ON agent_input_queue(conversation_id, status, sequence);
 `
 
+/**
+ * A fila de ESPERA de cada conversa (mensagens enviadas com o agente ocupado,
+ * do usuário ou do Agent Manager), para sobreviver a um reinício do app. É
+ * diferente de `agent_input_queue`, que guarda a mensagem já entregue ao SDK.
+ * O renderer grava a fila inteira da conversa a cada mudança (`position` =
+ * ordem de envio).
+ */
+export const SQLITE_CONVERSATION_OUTBOX_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS conversation_outbox (
+    conversation_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(conversation_id, item_id)
+  );
+  CREATE INDEX IF NOT EXISTS conversation_outbox_order ON conversation_outbox(conversation_id, position);
+`
+
 export const SQLITE_TOKEN_USAGE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS llm_calls (
     id TEXT PRIMARY KEY,
@@ -465,7 +484,8 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   ),
   migration(8, 'sqlite-v2-task-board-links', SQLITE_TASK_BOARD_LINKS_SCHEMA),
   migration(9, 'sqlite-v2-token-usage', SQLITE_TOKEN_USAGE_SCHEMA),
-  migration(10, 'sqlite-v2-agent-input-queue', SQLITE_AGENT_INPUT_QUEUE_SCHEMA)
+  migration(10, 'sqlite-v2-agent-input-queue', SQLITE_AGENT_INPUT_QUEUE_SCHEMA),
+  migration(11, 'sqlite-v2-conversation-outbox', SQLITE_CONVERSATION_OUTBOX_SCHEMA)
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

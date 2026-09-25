@@ -318,6 +318,51 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     expect(screen.queryByText(/Na fila/)).toBeNull()
   })
 
+  it('a fila é gravada no banco a cada mudança (entra ao enfileirar, sai ao despachar)', async () => {
+    api.outboxList = vi.fn(async () => [])
+    api.outboxReplace = vi.fn(async () => ({ ok: true }))
+    Object.assign(window.api as object, { outboxList: api.outboxList, outboxReplace: api.outboxReplace })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(partial)
+    await send('msg2')
+    await waitFor(() =>
+      expect(api.outboxReplace).toHaveBeenCalledWith('c1', [expect.objectContaining({ payload: expect.objectContaining({ text: 'msg2' }) })])
+    )
+    await emit(result)
+    await waitFor(() => expect(api.outboxReplace).toHaveBeenLastCalledWith('c1', []))
+  })
+
+  it('fila restaurada do banco depois de reiniciar: aparece, avisa, e sai quando o usuário manda outra', async () => {
+    const restored = { full: 'da fila antiga', text: 'da fila antiga', images: [], thumbs: [], files: [], fileRefs: [] }
+    api.outboxList = vi.fn(async () => [{ conversationId: 'c1', id: 'q-old', payload: restored }])
+    api.outboxReplace = vi.fn(async () => ({ ok: true }))
+    Object.assign(window.api as object, { outboxList: api.outboxList, outboxReplace: api.outboxReplace })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    expect(await screen.findByText(/Na fila/)).toBeTruthy()
+    expect(screen.getAllByText(/voltou para a fila/).length).toBeGreaterThan(0)
+    // Conversa parada com fila: a mensagem nova vai para o fim e a antiga sai primeiro.
+    await send('nova')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    expect(String(api.sendMessage.mock.calls[0][1])).toContain('da fila antiga')
+    await emit(result)
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    expect(String(api.sendMessage.mock.calls[1][1])).toContain('nova')
+  })
+
   it('dois envios durante a conexão: UMA sessão (startAgent 1x) e o segundo vai pra fila', async () => {
     render(
       <UiProvider>

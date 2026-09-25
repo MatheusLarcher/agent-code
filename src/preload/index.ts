@@ -241,6 +241,8 @@ const api: AgentCodeApi = {
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }> =>
     ipcRenderer.invoke(Channels.agentStart, opts),
+  outboxList: () => ipcRenderer.invoke(Channels.outboxList),
+  outboxReplace: (conversationId, items) => ipcRenderer.invoke(Channels.outboxReplace, { conversationId, items }),
   injectNow: (convId, text, images, files, fileRefs, messageUuid) =>
     ipcRenderer.invoke(Channels.agentInjectNow, convId, text, images, files, fileRefs, messageUuid),
   sendMessage: (

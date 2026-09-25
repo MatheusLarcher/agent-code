@@ -87,6 +87,7 @@ const BOARD_BADGE_POLL_MS = 60_000
 import { IconPower, IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { typeSafePauseText } from './ui/typeSafePauseText'
+import { useOutboxPersistence } from './useOutboxPersistence'
 import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
 import { splitForSpeech, toSpeechText } from '@shared/speechText'
@@ -257,6 +258,20 @@ interface QueuedMessage {
   files: FileAttachment[]
   /** Attachments resolved from a pasted local path or URL (path only, no bytes). */
   fileRefs: FileRefAttachment[]
+}
+
+/** Valida um item da fila vindo do banco (o formato do QueuedMessage, sem id/convId). */
+function isQueuedPayload(value: unknown): value is Omit<QueuedMessage, 'id' | 'convId'> {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.full === 'string' &&
+    typeof v.text === 'string' &&
+    Array.isArray(v.images) &&
+    Array.isArray(v.thumbs) &&
+    Array.isArray(v.files) &&
+    Array.isArray(v.fileRefs)
+  )
 }
 
 function basename(p: string): string {
@@ -630,6 +645,21 @@ export function App(): JSX.Element {
   chipsRef.current = chips
   const queueRef = useRef(queue)
   queueRef.current = queue
+  // A fila é gravada no banco: reiniciar o app não perde o que esperava a vez.
+  useOutboxPersistence({
+    hydrated,
+    queue,
+    setQueue,
+    isPayload: isQueuedPayload,
+    onRestored: (restored) => {
+      const convs = new Set(restored.map((item) => item.convId)).size
+      notify(
+        'aviso',
+        `${restored.length === 1 ? '1 mensagem voltou' : `${restored.length} mensagens voltaram`} para a fila` +
+          `${convs > 1 ? ` de ${convs} conversas` : ''}. Elas saem quando você mandar outra mensagem ou clicar em "agora".`
+      )
+    }
+  })
   const usageLimitsRef = useRef(usageLimits)
   usageLimitsRef.current = usageLimits
 
@@ -2138,7 +2168,9 @@ export function App(): JSX.Element {
       images: ImageAttachment[],
       thumbs: string[],
       files: FileAttachment[],
-      fileRefs: FileRefAttachment[] = []
+      fileRefs: FileRefAttachment[] = [],
+      /** A mensagem É a cabeça da fila sendo drenada: não volta para a fila. */
+      fromQueue = false
     ): Promise<void> => {
       // Project folder gone → don't process or send to the LLM; just warn.
       if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) return
@@ -2151,12 +2183,21 @@ export function App(): JSX.Element {
 
       // Agent already busy on THIS conversation → queue instead of sending, so
       // the running task isn't cancelled. It'll be dispatched when the turn ends.
-      if (
-        busyRef.current.has(conv.id) ||
-        (conv.recovery && !stalledRecovery) ||
-        queueRef.current.some((m) => m.convId === conv.id)
-      ) {
-        setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs, files, fileRefs }])
+      const idle = !busyRef.current.has(conv.id) && !(conv.recovery && !stalledRecovery)
+      if (!idle || (!fromQueue && queueRef.current.some((m) => m.convId === conv.id))) {
+        const item = { id: uid('q'), convId: conv.id, full, text, images, thumbs, files, fileRefs }
+        queueRef.current = [...queueRef.current, item]
+        setQueue((q) => [...q, item])
+        // Conversa parada com fila (ex.: fila restaurada depois de reiniciar o
+        // app): ninguém ia drenar. A cabeça sai agora; o resto, no fim do turno.
+        if (idle) {
+          const head = queueRef.current.find((m) => m.convId === conv.id)
+          if (head) {
+            queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
+            setQueue((q) => q.filter((m) => m.id !== head.id))
+            void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true)
+          }
+        }
         return
       }
 
@@ -2216,6 +2257,9 @@ export function App(): JSX.Element {
     },
     [connect, patchConv, setBusy, notify, ensureProject, markMessageError, autoTitle]
   )
+  // `dispatch` chama a si mesmo para drenar a cabeça da fila (conversa parada).
+  const dispatchRef = useRef<typeof dispatch | null>(null)
+  dispatchRef.current = dispatch
 
   const runRecovery = useCallback(
     async (convId: string, force = false): Promise<void> => {
@@ -2480,7 +2524,15 @@ export function App(): JSX.Element {
     async (id: string): Promise<void> => {
       const item = queueRef.current.find((m) => m.id === id)
       if (!item) return
+      queueRef.current = queueRef.current.filter((m) => m.id !== id)
       setQueue((q) => q.filter((m) => m.id !== id))
+      // Conversa parada (ex.: fila restaurada depois de reiniciar): "agora" é
+      // simplesmente mandar — não há turno para entrar.
+      const conv = convsRef.current.find((c) => c.id === item.convId)
+      if (conv && !busyRef.current.has(conv.id)) {
+        await dispatch(conv, item.full, item.text, item.images, item.thumbs, item.files, item.fileRefs, true)
+        return
+      }
       const res = await window.api
         .injectNow(item.convId, item.full, item.images, item.files, item.fileRefs, crypto.randomUUID())
         .catch(() => ({ ok: false }))
@@ -2509,7 +2561,7 @@ export function App(): JSX.Element {
         updatedAt: Date.now()
       }))
     },
-    [notify, patchConv]
+    [notify, patchConv, dispatch]
   )
 
   const retryRecoveryNow = useCallback((): void => {

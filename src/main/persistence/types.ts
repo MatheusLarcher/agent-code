@@ -713,7 +713,28 @@ export interface AgentInputQueueRepository {
   listAgentInputs(conversationId: string): Promise<AgentInputQueueItem[]>
 }
 
-export interface PersistenceRepository extends TaskRepository, MemoryRepository, BoardRepository, TokenUsageRepository, AgentInputQueueRepository {
+/** Um item da fila de espera de uma conversa. `payload` é o item do renderer
+ *  (texto, anexos), opaco para o main. */
+export interface ConversationOutboxItem {
+  conversationId: string
+  id: string
+  payload: unknown
+}
+
+export interface ConversationOutboxRepository {
+  /** Todas as filas, por conversa e na ordem de envio. */
+  listConversationOutbox(): Promise<ConversationOutboxItem[]>
+  /** Troca a fila inteira de UMA conversa (vazia = apaga). */
+  replaceConversationOutbox(conversationId: string, items: ReadonlyArray<{ id: string; payload: unknown }>): Promise<void>
+}
+
+export interface PersistenceRepository
+  extends TaskRepository,
+    MemoryRepository,
+    BoardRepository,
+    TokenUsageRepository,
+    AgentInputQueueRepository,
+    ConversationOutboxRepository {
   readonly backend: StorageBackend
 
   initialize(): Promise<void>

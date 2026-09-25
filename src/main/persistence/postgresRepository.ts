@@ -93,6 +93,7 @@ import {
   type LlmUsageTotal,
   type PersistenceRepository,
   type AgentInputQueueItem,
+  type ConversationOutboxItem,
   type RepositoryChange,
   type RepositoryChangeHandler,
   type VersionedConversation,
@@ -1830,6 +1831,27 @@ export class PostgresRepository implements PersistenceRepository {
   async recoverAgentInput(conversationId?: string): Promise<number> { const result = await this.pool.query(`UPDATE agent_input_queue SET status='pending', processing_started_at=NULL, updated_at=clock_timestamp() WHERE status='processing' ${conversationId ? 'AND conversation_id=$1' : ''}`, conversationId ? [conversationId] : []); return result.rowCount ?? 0 }
   async listAgentInputs(conversationId: string): Promise<AgentInputQueueItem[]> { const result = await this.pool.query('SELECT * FROM agent_input_queue WHERE conversation_id=$1 ORDER BY sequence', [conversationId]); return result.rows.map((row) => this.queueItem(row)) }
   private queueItem(row: Record<string, unknown>): AgentInputQueueItem { const isoValue = (value: unknown) => value instanceof Date ? value.toISOString() : String(value); return { id: Number(row.id), conversationId: String(row.conversation_id), messageUuid: String(row.message_uuid), message: (typeof row.payload_json === 'string' ? JSON.parse(row.payload_json) : row.payload_json) as AgentInputQueueItem['message'], sequence: Number(row.sequence), status: row.status as AgentInputQueueItem['status'], attemptCount: Number(row.attempt_count), availableAt: isoValue(row.available_at), processingStartedAt: row.processing_started_at ? isoValue(row.processing_started_at) : null, lastError: row.last_error ? String(row.last_error) : null, createdAt: isoValue(row.created_at), updatedAt: isoValue(row.updated_at) } }
+
+  async listConversationOutbox(): Promise<ConversationOutboxItem[]> {
+    const result = await this.pool.query('SELECT conversation_id, item_id, payload_json FROM conversation_outbox ORDER BY conversation_id, position')
+    return result.rows.map((row) => ({
+      conversationId: String(row.conversation_id),
+      id: String(row.item_id),
+      payload: typeof row.payload_json === 'string' ? JSON.parse(row.payload_json) : row.payload_json
+    }))
+  }
+
+  async replaceConversationOutbox(conversationId: string, items: ReadonlyArray<{ id: string; payload: unknown }>): Promise<void> {
+    await transaction(this.pool, async (client) => {
+      await client.query('DELETE FROM conversation_outbox WHERE conversation_id=$1', [conversationId])
+      for (const [position, item] of items.entries()) {
+        await client.query(
+          'INSERT INTO conversation_outbox(conversation_id, item_id, position, payload_json) VALUES($1, $2, $3, $4)',
+          [conversationId, item.id, position, JSON.stringify(item.payload)]
+        )
+      }
+    })
+  }
 
   subscribe(handler: RepositoryChangeHandler): () => void {
     this.handlers.add(handler)

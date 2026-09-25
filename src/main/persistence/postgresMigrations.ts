@@ -674,6 +674,16 @@ CREATE TABLE IF NOT EXISTS agent_input_queue (
 CREATE INDEX IF NOT EXISTS agent_input_queue_fifo ON agent_input_queue(conversation_id, status, sequence);
 `
 
+// Fila de ESPERA de cada conversa (ver SQLITE_CONVERSATION_OUTBOX_SCHEMA).
+const CONVERSATION_OUTBOX = `
+CREATE TABLE IF NOT EXISTS conversation_outbox (
+ conversation_id text NOT NULL, item_id text NOT NULL, position integer NOT NULL,
+ payload_json jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(conversation_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS conversation_outbox_order ON conversation_outbox(conversation_id, position);
+`
+
 export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(1, 'postgres-base-schema', BASE_SCHEMA),
   migration(2, 'postgres-change-feed', CHANGE_FEED),
@@ -686,7 +696,8 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(9, 'postgres-board-item-events-actor-user', BOARD_ITEM_EVENTS_ACTOR_USER),
   migration(10, 'postgres-task-board-links', TASK_BOARD_LINKS),
   migration(11, 'postgres-token-usage', TOKEN_USAGE),
-  migration(12, 'postgres-agent-input-queue', AGENT_INPUT_QUEUE)
+  migration(12, 'postgres-agent-input-queue', AGENT_INPUT_QUEUE),
+  migration(13, 'postgres-conversation-outbox', CONVERSATION_OUTBOX)
 ]
 
 const MIGRATION_TABLE = `

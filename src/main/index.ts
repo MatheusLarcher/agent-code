@@ -55,6 +55,7 @@ import {
 } from './accounts'
 import { registerClaudeAccountsIpc } from './accounts/accountsIpc'
 import { setClaudeObserverEnvResolver } from './observerQuery'
+import { registerOutboxIpc } from './outboxIpc'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin, isCodexConnected } from './codexAuth'
 import { onCodexRateLimit } from './codexProxy'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
@@ -1180,6 +1181,11 @@ export function registerIpc(): void {
   ipcMain.handle(Channels.planningExportPdf, (e, req: unknown) => exportFlowPdf(e.sender, req))
   // Título automático da conversa (claude-haiku-4-5): a lógica mora em titles/.
   registerConversationTitleIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener) })
+  // Fila de espera das conversas, gravada no banco para sobreviver ao reinício.
+  registerOutboxIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null)
+  })
   ipcMain.handle(Channels.tasksDetail, async (_e, taskId: string) => {
     try {
       return await buildTaskDetail(taskLedger(), taskId)

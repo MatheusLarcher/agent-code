@@ -88,6 +88,7 @@ import {
   type LlmUsageTotal,
   type PersistenceRepository,
   type AgentInputQueueItem,
+  type ConversationOutboxItem,
   type RepositoryChange,
   type RepositoryChangeHandler,
   type VersionedConversation,
@@ -1734,6 +1735,30 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
   async recoverAgentInput(conversationId?: string): Promise<number> { return this.write((db) => { const result = db.prepare(`UPDATE agent_input_queue SET status = 'pending', processing_started_at = NULL, updated_at = ? WHERE status = 'processing' ${conversationId ? 'AND conversation_id = ?' : ''}`).run(new Date().toISOString(), ...(conversationId ? [conversationId] : [])); return Number(result.changes) }) }
   async listAgentInputs(conversationId: string): Promise<AgentInputQueueItem[]> { return this.read((db) => (db.prepare('SELECT * FROM agent_input_queue WHERE conversation_id = ? ORDER BY sequence').all(conversationId) as Record<string, unknown>[]).map((row) => this.queueItem(row))) }
   private queueItem(row: Record<string, unknown>): AgentInputQueueItem { return { id: Number(row.id), conversationId: String(row.conversation_id), messageUuid: String(row.message_uuid), message: JSON.parse(String(row.payload_json)), sequence: Number(row.sequence), status: row.status as AgentInputQueueItem['status'], attemptCount: Number(row.attempt_count), availableAt: String(row.available_at), processingStartedAt: row.processing_started_at ? String(row.processing_started_at) : null, lastError: row.last_error ? String(row.last_error) : null, createdAt: String(row.created_at), updatedAt: String(row.updated_at) } }
+
+  async listConversationOutbox(): Promise<ConversationOutboxItem[]> {
+    return this.read((db) =>
+      (db.prepare('SELECT conversation_id, item_id, payload_json FROM conversation_outbox ORDER BY conversation_id, position').all() as Record<string, unknown>[]).map(
+        (row) => ({ conversationId: String(row.conversation_id), id: String(row.item_id), payload: JSON.parse(String(row.payload_json)) })
+      )
+    )
+  }
+
+  async replaceConversationOutbox(conversationId: string, items: ReadonlyArray<{ id: string; payload: unknown }>): Promise<void> {
+    const now = new Date().toISOString()
+    this.write((db) => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        db.prepare('DELETE FROM conversation_outbox WHERE conversation_id = ?').run(conversationId)
+        const insert = db.prepare('INSERT INTO conversation_outbox(conversation_id, item_id, position, payload_json, created_at) VALUES(?, ?, ?, ?, ?)')
+        items.forEach((item, position) => insert.run(conversationId, item.id, position, JSON.stringify(item.payload), now))
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+    })
+  }
 
   subscribe(handler: RepositoryChangeHandler): () => void {
     this.handlers.add(handler)
