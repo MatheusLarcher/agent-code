@@ -44,7 +44,7 @@ describe('provider failover', () => {
     expect(h.records).toHaveLength(2)
     expect(h.records[1].options).toMatchObject({ model: to, resume: 'durable-session', cwd: '/project', economyMode: true, effort: 'max' })
     expect(h.records[1].session.send).toHaveBeenCalledExactlyOnceWith(FAILOVER_CONTINUATION, undefined, expect.any(String), 'pc', 'recovery')
-    expect(h.records[1].session.restoreContinuation).toHaveBeenCalledWith(expect.objectContaining({ approvedTools: ['Write'], loopCycles: 7, loopLimit: 100 }))
+    expect(h.records[1].session.restoreContinuation).toHaveBeenCalledWith(expect.objectContaining({ approvedTools: ['Write'], loopCycles: 7, loopLimit: 100 }), true)
     expect(h.emit.mock.calls.map(([e]) => e.kind)).toEqual(['assistant-text', 'provider-switch'])
     expect(h.complete).not.toHaveBeenCalled()
     h.records[1].event(done)

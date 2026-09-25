@@ -39,6 +39,7 @@ const {
   MEMORY_SELECTION_MIN_LIFT,
   MEMORY_SELECTION_NONE
 } = await import('./memorySelection')
+const { typeSafePause } = await import('./pause')
 
 function config(typesafe: Partial<AppConfig['typesafe']>): void {
   state.config = { ...DEFAULT_CONFIG, typesafe: { ...DEFAULT_CONFIG.typesafe, ...typesafe } }
@@ -73,6 +74,8 @@ async function fixture(): Promise<string> {
 }
 
 beforeEach(() => {
+  // A pausa é do processo: uma falha de um teste não pode calar o seguinte.
+  typeSafePause.reset()
   state.secret = null
   config({ enabled: true, apiKey: 'key-da-config' })
   systemOne.mockReset()

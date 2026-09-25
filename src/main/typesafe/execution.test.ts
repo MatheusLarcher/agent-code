@@ -31,6 +31,7 @@ const {
   AUTO_MODEL_INSTRUCTION,
   AUTO_NO_LIVE_MODEL
 } = await import('./execution')
+const { typeSafePause } = await import('./pause')
 
 /** Uma resposta de `choice` como o serviço a devolve. */
 function choiceAnswer(model: string, confidence = 0.7): unknown {
@@ -53,6 +54,8 @@ function answers(model: string, score: number): void {
 const MODELO_TETO_HIGH = '__teste_teto_high__'
 
 beforeEach(() => {
+  // A pausa é do processo: uma falha de um teste não pode calar o seguinte.
+  typeSafePause.reset()
   askTypeSafe.mockReset()
   minConfidence.value = 0.2
   answers('claude-sonnet-5', 1)

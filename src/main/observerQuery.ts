@@ -16,6 +16,38 @@ export interface ObserverRequest extends ObserverRuntime {
   prompt: string
   model: string
   provider: 'claude' | 'gpt-luna'
+  /** Conversa acompanhada: o observador Claude usa a MESMA conta dela. */
+  conversationId?: string
+}
+
+/** Resolve o env da conta Claude de uma conversa (undefined = login da máquina). */
+export type ClaudeObserverEnvResolver = (
+  conversationId: string | undefined,
+  model: string
+) => Promise<NodeJS.ProcessEnv | undefined>
+
+let claudeEnvResolver: ClaudeObserverEnvResolver | null = null
+
+/**
+ * Ligado no boot (index.ts) com as contas Claude. Injetado, não importado: o
+ * adaptador continua sem depender do store/electron — e os testes também.
+ */
+export function setClaudeObserverEnvResolver(resolver: ClaudeObserverEnvResolver | null): void {
+  claudeEnvResolver = resolver
+}
+
+/** Env de uma chamada Claude avulsa (observador, título, curador). Nunca lança. */
+export async function claudeObserverEnv(
+  conversationId: string | undefined,
+  model: string
+): Promise<NodeJS.ProcessEnv | undefined> {
+  if (!claudeEnvResolver) return undefined
+  try {
+    return await claudeEnvResolver(conversationId, model)
+  } catch (error) {
+    console.warn('[observador] conta da conversa indisponível, seguindo com o login da máquina:', (error as Error).message)
+    return undefined
+  }
 }
 
 /**
@@ -60,10 +92,14 @@ async function* singlePrompt(prompt: string): AsyncIterable<SDKUserMessage> {
  * preserves recognized, structured Claude failures.
  */
 export async function runObserverAttempt(request: ObserverRequest): Promise<ObserverAttempt> {
+  // Claude sem env explícito: a conta da conversa acompanhada. Luna já vem com
+  // o env do proxy do GPT.
+  const env =
+    request.env ?? (request.provider === 'claude' ? await claudeObserverEnv(request.conversationId, request.model) : undefined)
   const options: Options = {
     cwd: request.cwd,
     model: request.model,
-    ...(request.env ? { env: request.env } : {}),
+    ...(env ? { env } : {}),
     executable: 'node',
     tools: [],
     maxTurns: 1,
@@ -99,7 +135,7 @@ export async function runObserverAttempt(request: ObserverRequest): Promise<Obse
  * Compatibility wrapper for the vigia and existing consumers. They retain the
  * old best-effort string contract; only the PO consumes typed attempts.
  */
-export async function askObserver(prompt: string, model: string): Promise<string> {
-  const attempt = await runObserverAttempt({ prompt, model, provider: 'claude' })
+export async function askObserver(prompt: string, model: string, conversationId?: string): Promise<string> {
+  const attempt = await runObserverAttempt({ prompt, model, provider: 'claude', conversationId })
   return attempt.state === 'completed' ? attempt.text : ''
 }

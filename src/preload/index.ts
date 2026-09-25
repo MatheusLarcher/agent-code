@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { Channels } from '../shared/ipc'
 import type { AgentCodeApi } from '../shared/api'
+import type { AccountUsageResult, AddClaudeAccountResult, ClaudeAccountView, UseAccountResult } from '../shared/claudeAccounts'
+import type { TypeSafePauseStatus } from '../shared/typesafePause'
 import type {
   ConversationQueryDto,
   ProjectConversationCountDto,
@@ -201,7 +203,7 @@ const api: AgentCodeApi = {
   loadAllConversations: (): Promise<unknown[]> => ipcRenderer.invoke(Channels.conversationsLoadAll),
   saveAllConversations: (list: unknown[]): Promise<void> =>
     ipcRenderer.invoke(Channels.conversationsSaveAll, list),
-  suggestConversationTitle: (req: { text: string }): Promise<SuggestTitleResult> =>
+  suggestConversationTitle: (req: { text: string; convId?: string }): Promise<SuggestTitleResult> =>
     ipcRenderer.invoke(Channels.conversationSuggestTitle, req),
 
   // OpenAI voice (chat)
@@ -217,12 +219,27 @@ const api: AgentCodeApi = {
   authStatus: (): Promise<{ authenticated: boolean }> => ipcRenderer.invoke(Channels.authStatus),
   authLogin: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.authLogin),
   authLogout: (): Promise<ClaudeAuthStatus> => ipcRenderer.invoke(Channels.authLogout),
+  claudeAccountsList: (): Promise<ClaudeAccountView[]> => ipcRenderer.invoke(Channels.claudeAccountsList),
+  claudeAccountsAdd: (): Promise<AddClaudeAccountResult> => ipcRenderer.invoke(Channels.claudeAccountsAdd),
+  claudeAccountsRelogin: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.claudeAccountsRelogin, { id }),
+  claudeAccountsRename: (id: string, label: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(Channels.claudeAccountsRename, { id, label }),
+  claudeAccountsReorder: (ids: string[]): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.claudeAccountsReorder, { ids }),
+  claudeAccountsRemove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.claudeAccountsRemove, { id }),
+  claudeAccountsUsage: (force?: boolean, accountId?: string): Promise<AccountUsageResult[]> =>
+    ipcRenderer.invoke(Channels.claudeAccountsUsage, { force: force === true, ...(accountId ? { accountId } : {}) }),
+  claudeAccountsUseForConversation: (convId: string, accountId: string, continueTask?: boolean): Promise<UseAccountResult> =>
+    ipcRenderer.invoke(Channels.claudeAccountsUseForConversation, { convId, accountId, continueTask: continueTask === true }),
+  claudeAccountsAutoSwitch: (on?: boolean): Promise<boolean> =>
+    ipcRenderer.invoke(Channels.claudeAccountsAutoSwitch, typeof on === 'boolean' ? { on } : {}),
+  typeSafePauseStatus: (): Promise<TypeSafePauseStatus> => ipcRenderer.invoke(Channels.typesafePauseStatus),
+  onTypeSafePaused: (cb: (status: TypeSafePauseStatus) => void): (() => void) => on(Channels.typesafePaused, cb),
   codexStatus: (): Promise<CodexStatus> => ipcRenderer.invoke(Channels.codexStatus),
   codexLogin: (): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke(Channels.codexLogin),
   codexLogout: (): Promise<void> => ipcRenderer.invoke(Channels.codexLogout),
 
   // agent
-  startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>
+  startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }> =>
     ipcRenderer.invoke(Channels.agentStart, opts),
   sendMessage: (
     convId: string,

@@ -15,6 +15,8 @@ import {
 import { useUI } from './UiProvider'
 import { PostgresSettingsSection } from './PostgresSettingsSection'
 import { MemoryDataSection } from './MemoryDataSection'
+import { ClaudeAccountsSection } from './ClaudeAccountsSection'
+import { TypeSafePauseNote } from './TypeSafePauseNote'
 import {
   IconBoard,
   IconDatabase,
@@ -36,7 +38,7 @@ interface Props {
   onClose: () => void
   /** When 'openai', open the Voice tab, highlight + focus the OpenAI key. When
    *  'typesafe', highlight the TypeSafe section (already on the Geral tab). */
-  focus?: 'openai' | 'typesafe' | null
+  focus?: 'openai' | 'typesafe' | 'accounts' | null
   /** Global "allow all tools" switch — applies live (not gated by Save). */
   skipPerms: boolean
   onToggleSkipPerms: (on: boolean) => void
@@ -83,7 +85,7 @@ export function SettingsModal({
   onToggleWindowsControl
 }: Props): JSX.Element {
   const { notify } = useUI()
-  const [tab, setTab] = useState<Tab>(focus === 'openai' ? 'voz' : 'geral')
+  const [tab, setTab] = useState<Tab>(focus === 'openai' ? 'voz' : focus === 'accounts' ? 'modelos' : 'geral')
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
   const [showOpenAiKey, setShowOpenAiKey] = useState(false)
   const [showOllamaKey, setShowOllamaKey] = useState(false)
@@ -565,6 +567,7 @@ export function SettingsModal({
                           Ative o TypeSafe e informe a API key para usar o modo Automático.
                         </span>
                       )}
+                      <TypeSafePauseNote />
                     </span>
                     <input
                       ref={typeSafeToggleRef}
@@ -669,6 +672,8 @@ export function SettingsModal({
                     </button>
                   </div>
                 </section>
+
+                <ClaudeAccountsSection highlight={focus === 'accounts'} />
 
                 <section className={`settings-section ${codex.connected ? 'settings-connected' : ''}`}>
                   <div className="settings-row">

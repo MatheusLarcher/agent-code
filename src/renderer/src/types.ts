@@ -99,6 +99,8 @@ export interface Conversation {
   fastMode?: boolean
   /** SDK session id captured from the agent, used to resume the conversation later. */
   sdkSessionId: string | null
+  /** Conta Claude (várias contas) em que a conversa roda; gravada com ela. */
+  claudeAccountId?: string
   /** Unsent composer text for this conversation (draft). Kept across conversation
    *  switches and app restarts so a half-typed message is never lost. */
   draft?: string

@@ -37,8 +37,9 @@ export interface VigiaDeps {
   config(): VigiaConfig
   /** Entrega do alerta ao renderer (canal `vigia:alert`). */
   emit(alert: VigiaAlertMsg): void
-  /** A chamada ao modelo. Injetável para o teste não subir o SDK. */
-  ask?(prompt: string, model: string): Promise<string>
+  /** A chamada ao modelo. Injetável para o teste não subir o SDK. O
+   *  `convId` faz o vigia rodar na mesma conta Claude da conversa. */
+  ask?(prompt: string, model: string, convId: string): Promise<string>
   now?(): number
   /**
    * Memórias do usuário e docs do projeto relevantes ao pedido do turno.
@@ -166,7 +167,7 @@ export class Vigia {
     })
     let raw: string
     try {
-      raw = await (this.deps.ask ?? askVigia)(prompt, cfg.model)
+      raw = await (this.deps.ask ?? askVigia)(prompt, cfg.model, convId)
     } catch {
       return // degrada em silêncio: o vigia nunca atrapalha a conversa
     }

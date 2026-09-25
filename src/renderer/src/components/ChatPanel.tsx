@@ -142,6 +142,8 @@ interface Props {
   onInterrupt: () => void
   /** Resend a user message whose turn failed (its bubble shows a retry button). */
   onRetry: (msgId: string) => void
+  /** Troca manual de conta a partir de uma nota do chat. */
+  onUseAccount?: (accountId: string, continueTask: boolean) => void
   composerRef: RefObject<HTMLTextAreaElement | null>
   /** Projects from history, offered in the composer's @ reference menu. */
   projects: RefProject[]
@@ -456,6 +458,7 @@ export function ChatPanel(props: Props): JSX.Element {
         busy={busy}
         tts={props.tts}
         onRetry={props.onRetry}
+        onUseAccount={props.onUseAccount}
       />
 
       {props.recovery && (

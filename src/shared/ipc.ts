@@ -8,6 +8,18 @@ export type ChatEvent =
   | { kind: 'assistant-text'; id: string; text: string; final: boolean; aborted?: true }
   | { kind: 'thinking'; id: string; text: string }
   | { kind: 'provider-switch'; id: string; fromModel: string; model: string; effort?: string; fastMode: boolean; text: string }
+  /** Troca de conta Claude (várias contas). `turn-end` é a troca silenciosa de
+   *  fim de turno, `exhausted` a do estouro (continua a tarefa), `manual` a do
+   *  painel e `suggest` a sugestão com o interruptor desligado (o renderer
+   *  mostra o botão "Continuar na conta X" e NÃO muda a conta da conversa). */
+  | {
+      kind: 'account-switch'
+      id: string
+      reason: 'turn-end' | 'exhausted' | 'manual' | 'suggest' | 'scheduled'
+      fromAccountId?: string
+      toAccountId: string
+      text: string
+    }
   /** `parentToolUseId` identifies the TRACK this call belongs to: `null` is the
    *  main agent, anything else is the `Task` tool-use that spawned the subagent
    *  running it. The chat feed only renders the main track; the rest feeds the
@@ -715,6 +727,9 @@ export interface StartAgentOptions {
   planning?: { slug: string }
   /** Sessão de implementação nascida de um handoff do planejamento <slug>. */
   handoff?: { slug: string }
+  /** Conta Claude gravada com a conversa. O main confirma (ainda conectada?) ou
+   *  escolhe pela regra de conversa nova, e devolve a efetiva no `startAgent`. */
+  claudeAccountId?: string
 }
 
 /** Reasoning effort levels a model may support. */
@@ -1834,6 +1849,23 @@ export const Channels = {
   authLogin: 'auth:login',
   /** Erase the saved Claude OAuth login. */
   authLogout: 'auth:logout',
+  /** Contas Claude (uma pasta de login por conta): listar, adicionar, gerenciar. */
+  claudeAccountsList: 'claude-accounts:list',
+  claudeAccountsAdd: 'claude-accounts:add',
+  claudeAccountsRelogin: 'claude-accounts:relogin',
+  claudeAccountsRename: 'claude-accounts:rename',
+  claudeAccountsReorder: 'claude-accounts:reorder',
+  claudeAccountsRemove: 'claude-accounts:remove',
+  /** Consumo das contas, consultado de verdade (cache de 60 s). */
+  claudeAccountsUsage: 'claude-accounts:usage',
+  /** Troca manual da conta de uma conversa ("Usar nesta conversa"). */
+  claudeAccountsUseForConversation: 'claude-accounts:use-for-conversation',
+  /** Interruptor "Troca automática de conta": lê ({}) ou grava ({ on }). */
+  claudeAccountsAutoSwitch: 'claude-accounts:auto-switch',
+  /** Estado da pausa do roteamento TypeSafe (Modo Automático). */
+  typesafePauseStatus: 'typesafe:pause-status',
+  /** main → renderer: o roteamento TypeSafe entrou em pausa (aviso único). */
+  typesafePaused: 'typesafe:paused',
   /** Whether the user has a Codex (ChatGPT subscription) login saved. */
   codexStatus: 'codex:status',
   /** Run the Codex OAuth login (opens the browser); resolves when tokens are saved. */

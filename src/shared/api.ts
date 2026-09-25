@@ -69,6 +69,13 @@ import type {
   PlanMediaDto,
   SuggestTitleResult
 } from './ipc'
+import type {
+  AccountUsageResult,
+  AddClaudeAccountResult,
+  ClaudeAccountView,
+  UseAccountResult
+} from './claudeAccounts'
+import type { TypeSafePauseStatus } from './typesafePause'
 
 /** The surface exposed on `window.api` by the preload script. */
 export interface AgentCodeApi {
@@ -221,7 +228,7 @@ export interface AgentCodeApi {
   saveAllConversations(list: unknown[]): Promise<void>
   /** Nome curto (claude-haiku-4-5, one-shot) para a conversa a partir da 1ª
    *  mensagem. Nunca lança: `ok: false` quando não houver título. */
-  suggestConversationTitle(req: { text: string }): Promise<SuggestTitleResult>
+  suggestConversationTitle(req: { text: string; convId?: string }): Promise<SuggestTitleResult>
 
   /** Transcribe recorded audio (base64) to text via OpenAI. `error: 'no-key'`
    *  means the user hasn't set an OpenAI API key yet. */
@@ -239,6 +246,26 @@ export interface AgentCodeApi {
   authLogin(): Promise<{ ok: boolean }>
   /** Erase the saved Claude OAuth login (+ stale caches); resolves with the verified status. */
   authLogout(): Promise<ClaudeAuthStatus>
+  /** Contas Claude na ordem do usuário (sem token nenhum). */
+  claudeAccountsList(): Promise<ClaudeAccountView[]>
+  /** Login OAuth de uma conta nova pelo navegador, numa pasta própria. */
+  claudeAccountsAdd(): Promise<AddClaudeAccountResult>
+  /** "Entrar de novo" numa conta com login expirado. */
+  claudeAccountsRelogin(id: string): Promise<{ ok: boolean }>
+  claudeAccountsRename(id: string, label: string): Promise<{ ok: boolean }>
+  claudeAccountsReorder(ids: string[]): Promise<{ ok: boolean }>
+  /** Remove a conta e apaga a pasta dela (a conta padrão não sai). */
+  claudeAccountsRemove(id: string): Promise<{ ok: boolean }>
+  /** Consumo das contas, consultado de verdade (cache de 60 s; falha = última leitura). */
+  claudeAccountsUsage(force?: boolean, accountId?: string): Promise<AccountUsageResult[]>
+  /** "Usar nesta conversa" / "Continuar na conta X" (continueTask retoma a tarefa preservada). */
+  claudeAccountsUseForConversation(convId: string, accountId: string, continueTask?: boolean): Promise<UseAccountResult>
+  /** Lê (sem argumento) ou grava o interruptor "Troca automática de conta". */
+  claudeAccountsAutoSwitch(on?: boolean): Promise<boolean>
+  /** Pausa atual do roteamento TypeSafe. */
+  typeSafePauseStatus(): Promise<TypeSafePauseStatus>
+  /** main → renderer: o roteamento TypeSafe entrou em pausa. */
+  onTypeSafePaused(cb: (status: TypeSafePauseStatus) => void): () => void
   /** Whether a Codex (ChatGPT subscription) login already exists. */
   codexStatus(): Promise<CodexStatus>
   /** Trigger the Codex OAuth login (opens the system browser); resolves when tokens are saved. */
@@ -246,7 +273,7 @@ export interface AgentCodeApi {
   /** Erase the saved Codex login. */
   codexLogout(): Promise<void>
 
-  startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
+  startAgent(opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }>
   sendMessage(
     convId: string,
     text: string,

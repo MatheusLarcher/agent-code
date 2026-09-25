@@ -8,6 +8,7 @@ import {
 } from './keyRegistry'
 
 const EXPECTED_KEYS = [
+  'agentcode.claude-accounts.v1',
   'agentcode.conversations.legacy-checked.v1',
   'agentcode.conversations.v1',
   'agentcode.micId',

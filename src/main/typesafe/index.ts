@@ -24,6 +24,7 @@ export {
   TYPESAFE_TIMEOUT_MS,
   type AskTypeSafeOptions
 } from './client'
+export { typeSafePause, TYPESAFE_BLOCKING_TIMEOUT_MS, TYPESAFE_PAUSE_MS } from './pause'
 export {
   autoEffortCandidates,
   autoExecutionFallback,

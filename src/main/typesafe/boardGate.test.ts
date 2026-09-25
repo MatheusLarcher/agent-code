@@ -46,6 +46,7 @@ const {
   BOARD_GATE_MAX_USER_CHARS,
   BOARD_GATE_OPEN_QUESTION
 } = await import('./boardGate')
+const { typeSafePause } = await import('./pause')
 type BoardGateInput = import('./boardGate').BoardGateInput
 
 function config(typesafe: Partial<AppConfig['typesafe']>): void {
@@ -63,6 +64,8 @@ function sent(): { state: Record<string, unknown>; questions: { rodar: { instruc
 }
 
 beforeEach(() => {
+  // A pausa é do processo: uma falha de um teste não pode calar o seguinte.
+  typeSafePause.reset()
   systemOne.mockReset()
   state.secret = null
   state.configThrows = false

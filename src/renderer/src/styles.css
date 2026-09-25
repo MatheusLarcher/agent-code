@@ -4099,6 +4099,21 @@ button svg {
   padding: 3px 9px;
   font-size: 11.5px;
 }
+/* Contas Claude: arrastar a linha muda a ordem de escolha das contas. */
+.claude-account-row {
+  cursor: grab;
+}
+.claude-account-row.dragging {
+  opacity: 0.5;
+}
+.claude-account-handle {
+  color: var(--muted);
+  letter-spacing: -2px;
+  user-select: none;
+}
+.claude-account-row .settings-input {
+  width: 100%;
+}
 
 /* ============ Painel de agentes (visão de supervisor) ============
    Fica no painel da direita, ao lado do navegador: o chat continua só com a
@@ -7481,4 +7496,40 @@ span.board-agent-dot {
   .crew-mini {
     animation: none;
   }
+}
+
+/* Painel de consumo com várias contas Claude: a conta da conversa aberta fica
+   marcada; cada seção tem a idade da leitura e a troca manual. */
+.usage-account-active {
+  border-left: 2px solid var(--accent, #6aa0ff);
+  padding-left: 8px;
+}
+.usage-account-tag {
+  font-size: 10.5px;
+  color: var(--accent, #6aa0ff);
+}
+.usage-account-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.usage-account-foot .btn,
+.usage-manage {
+  padding: 3px 9px;
+  font-size: 11.5px;
+}
+.usage-manage {
+  align-self: flex-end;
+}
+.account-switch-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.account-switch-note .btn {
+  padding: 3px 9px;
+  font-size: 11.5px;
 }

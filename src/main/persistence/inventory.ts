@@ -78,6 +78,16 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
     keys: ['agentcode.typesafe.usage.v1']
   },
   {
+    // Lista das contas Claude (sem token: a credencial fica na pasta local de
+    // cada conta, em agent-code-local/claude-accounts/<id>).
+    id: 'claude-accounts',
+    owner: 'src/main/accounts/registry.ts',
+    surface: 'main-kv',
+    postgresScope: 'device',
+    authoritativeInPostgresMode: 'postgres',
+    keys: ['agentcode.claude-accounts.v1']
+  },
+  {
     id: 'codex-auth',
     owner: 'src/main/codexAuth.ts',
     surface: 'main-kv',

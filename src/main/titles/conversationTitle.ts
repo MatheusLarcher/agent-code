@@ -31,6 +31,8 @@ export type TitleQuery = (args: { prompt: AsyncIterable<SDKUserMessage>; options
 export interface TitleDeps {
   query?: TitleQuery
   timeoutMs?: number
+  /** Env da conta Claude da conversa; ausente = login da máquina. */
+  env?: NodeJS.ProcessEnv
 }
 
 async function* singlePrompt(text: string): AsyncIterable<SDKUserMessage> {
@@ -82,7 +84,12 @@ export function sanitizeTitle(raw: string): string | null {
   return title || null
 }
 
-async function askModel(text: string, run: TitleQuery, abortController: AbortController): Promise<string | null> {
+async function askModel(
+  text: string,
+  run: TitleQuery,
+  abortController: AbortController,
+  env: NodeJS.ProcessEnv | undefined
+): Promise<string | null> {
   const options: Options = {
     model: TITLE_MODEL,
     systemPrompt: TITLE_SYSTEM_PROMPT,
@@ -96,7 +103,8 @@ async function askModel(text: string, run: TitleQuery, abortController: AbortCon
     persistSession: false,
     // Sem a auto-memória do CLI: a única pasta de memória é a de Configurações.
     settings: { autoMemoryEnabled: false },
-    abortController
+    abortController,
+    ...(env ? { env } : {})
   }
   let out = ''
   for await (const message of run({ prompt: singlePrompt(text), options })) {
@@ -131,7 +139,7 @@ export async function suggestConversationTitle(text: string, deps: TitleDeps = {
     }, deps.timeoutMs ?? TITLE_TIMEOUT_MS)
   })
   try {
-    return await Promise.race([askModel(input, run, abortController), timeout])
+    return await Promise.race([askModel(input, run, abortController, deps.env), timeout])
   } catch {
     return null
   } finally {

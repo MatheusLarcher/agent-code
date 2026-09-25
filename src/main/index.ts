@@ -41,6 +41,20 @@ import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAud
 import { stopLocalSpeech, transcribeLocal } from './speech'
 import { isAuthenticated, logoutClaude } from './auth'
 import { runClaudeLogin } from './login'
+import {
+  claudeAccounts,
+  configureAccountLogin,
+  accountSwitchDepsFor,
+  conversationAccount,
+  forgetConversationAccount,
+  observerEnvFor,
+  queryAccountUsage,
+  queryAllAccountsUsage,
+  recordSessionRateLimit,
+  resolveSessionAccount
+} from './accounts'
+import { registerClaudeAccountsIpc } from './accounts/accountsIpc'
+import { setClaudeObserverEnvResolver } from './observerQuery'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin, isCodexConnected } from './codexAuth'
 import { onCodexRateLimit } from './codexProxy'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
@@ -82,6 +96,7 @@ import { discoverSkills } from './skillDiscovery'
 import { readProjectIcon } from './projectIcon'
 import { syncCacheSkills } from './skillManager'
 import { autoModelCandidates, resolveAutoStart, type AutoStartDecision } from './typesafe'
+import { typeSafePause, TYPESAFE_BLOCKING_TIMEOUT_MS } from './typesafe/pause'
 import { typeSafeConfigured } from './typesafe/client'
 import type {
   AgentMessageKind,
@@ -416,7 +431,12 @@ async function updateAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   if ('windowsControlEnabled' in patch && typeof patch.windowsControlEnabled !== 'boolean') {
     throw new TypeError('windowsControlEnabled deve ser booleano.')
   }
+  const before = loadConfig().typesafe
   const next = await updateConfig(patch)
+  // Chave nova salva ou Modo Automático religado: sai da pausa na hora.
+  if (patch.typesafe && (next.typesafe.apiKey !== before.apiKey || (next.typesafe.enabled && !before.enabled))) {
+    typeSafePause.reset()
+  }
   if (patch.windowsControlEnabled !== undefined) {
     windowsControl.setEnabled(next.windowsControlEnabled)
     send(Channels.windowsControlChanged, next.windowsControlEnabled)
@@ -892,6 +912,9 @@ export function registerIpc(): void {
     return updateAppConfig(patch)
   })
   ipcMain.handle(Channels.typesafeIsConfigured, () => typeSafeConfigured())
+  ipcMain.handle(Channels.typesafePauseStatus, () => typeSafePause.status())
+  // Aviso único ao ENTRAR na pausa; o renderer mostra o toast amarelo.
+  typeSafePause.setOnPause((status) => send(Channels.typesafePaused, status))
   ipcMain.handle(Channels.appCloseReady, async () => {
     if (!closeRequested || !mainWindow) return
     if (closeRequestTimer) clearInterval(closeRequestTimer)
@@ -964,7 +987,14 @@ export function registerIpc(): void {
     }
   })
   // Claude Code auth: status + the one-click OAuth login (no typed /login).
-  ipcMain.handle(Channels.authStatus, async () => ({ authenticated: await isAuthenticated() }))
+  ipcMain.handle(Channels.authStatus, async () => {
+    if (await isAuthenticated()) return { authenticated: true }
+    // Várias contas: o login da máquina pode ter caído e a conversa rodar noutra
+    // conta conectada — não força o login da conta 1 à toa. Uma conta só: igual.
+    await claudeAccounts.ensureLoaded()
+    if (!claudeAccounts.hasExtraAccounts()) return { authenticated: false }
+    return { authenticated: (await claudeAccounts.candidates()).some((account) => account.status === 'connected') }
+  })
   ipcMain.handle(Channels.authLogin, async () => {
     authLog('=== auth:login start ===')
     // The FIRST login opens the user's own SYSTEM browser (product decision) — not
@@ -976,6 +1006,29 @@ export function registerIpc(): void {
     const ok = await runClaudeLogin(openUrl, authLog)
     authLog(`=== auth:login done: authenticated=${ok} ===`)
     return { ok }
+  })
+  // Observadores (Vigia, Memorista, PO, título, curador) rodam na conta Claude
+  // da conversa que acompanham.
+  setClaudeObserverEnvResolver((convId, model) => observerEnvFor(convId, model))
+  // Contas Claude: o login de cada conta usa o mesmo navegador do sistema.
+  configureAccountLogin({
+    openUrl: (url) => {
+      authLog(`opening system browser (account): ${url}`)
+      void shell.openExternal(url)
+    },
+    log: authLog
+  })
+  registerClaudeAccountsIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    registry: claudeAccounts,
+    usage: async (force, accountId) =>
+      accountId ? [await queryAccountUsage(accountId, { force })] : queryAllAccountsUsage({ force }),
+    // A conversa da conta removida volta à regra de conversa nova no próximo início.
+    onRemoved: (id) => {
+      for (const convId of sessions.keys()) if (conversationAccount(convId) === id) forgetConversationAccount(convId)
+    },
+    useForConversation: (convId, accountId, continueTask) =>
+      sessions.get(convId)?.useAccount(accountId, continueTask) ?? null
   })
   ipcMain.handle(Channels.authLogout, async () => {
     assertStorageWritable()
@@ -1403,7 +1456,8 @@ export function registerIpc(): void {
         live: autoSessions.get(opts.convId),
         hasSession: sessions.has(opts.convId)
       },
-      models && models.length > 0 ? { models } : {}
+      // Teto de 3 s: é o caminho que segura o envio. Passou, sai o par padrão.
+      { ...(models && models.length > 0 ? { models } : {}), timeout: TYPESAFE_BLOCKING_TIMEOUT_MS }
     )
     // A escolha é anunciada em TODO turno, inclusive quando repete o par
     // anterior: o que o usuário precisa saber é COM QUE modelo a mensagem dele
@@ -1442,7 +1496,7 @@ export function registerIpc(): void {
       // a origem dele pode ter mudado (o fallback do turno anterior virou
       // decisão agora), e é a origem que manda no turno seguinte.
       autoSessions.set(convId, auto.live)
-      if (auto.reuse) return { ok: true }
+      if (auto.reuse) return { ok: true, claudeAccountId: conversationAccount(convId) }
       // O sentinel `auto` NUNCA chega ao provedor: daqui para baixo a sessão é
       // montada no par concreto que a decisão devolveu. O parâmetro é reatribuído
       // de propósito — todo o resto do handler já lê deste objeto, e duplicá-lo
@@ -1451,6 +1505,11 @@ export function registerIpc(): void {
     } else {
       autoSessions.delete(convId)
     }
+    // Conta Claude da conversa: a gravada (se ainda conectada) ou a regra de
+    // conversa nova, pela última leitura guardada — sem consultar, para não
+    // atrasar o primeiro envio. Os observadores seguem a mesma conta.
+    const claudeAccountId = await resolveSessionAccount(convId, opts.claudeAccountId, opts.model)
+    opts = { ...opts, claudeAccountId }
     sessionCwds.set(convId, opts.cwd)
     // Replace only THIS conversation's session; others keep running.
     sessions.get(convId)?.dispose()
@@ -1467,6 +1526,8 @@ export function registerIpc(): void {
     const emit = (event: ChatEvent): void => {
       send(Channels.agentEvent, { convId, event })
       remote.broadcast(convId, event)
+      // O consumo lido pela sessão vira a última leitura da conta dela.
+      if (event.kind === 'rate-limit') recordSessionRateLimit(convId, event.limits)
       // Recorded here, not inside the bridge: the desktop download must be
       // authorized whether or not the phone bridge is running.
       downloadAllowlist.track(event)
@@ -1531,9 +1592,15 @@ export function registerIpc(): void {
       // O mesmo `repository` já em escopo para `markSessionResumeReady` acima.
       // Durable FIFO for messages submitted while the SDK is busy/restarting.
       repository
-    ), emit, async (provider) => provider === 'gpt' ? isCodexConnected() : isAuthenticated(), async () => {
+    ), emit, async (provider) =>
+      provider === 'gpt' ? isCodexConnected() : claudeAccounts.isConnected(conversationAccount(convId) ?? claudeAccountId),
+    async () => {
         if (sessions.get(convId) === s) await releaseSessionLease(convId)
-    })
+    },
+    // Várias contas Claude: troca de conta no fim do turno e no estouro.
+    accountSwitchDepsFor(convId, async () => {
+      if (!sessionLeases.has(convId)) await acquireSessionLease(convId)
+    }))
     sessions.set(convId, s)
     let ok = false
     try {
@@ -1546,7 +1613,7 @@ export function registerIpc(): void {
       s.dispose()
       await releaseSessionLease(convId)
     }
-    return { ok }
+    return { ok, claudeAccountId }
   })
 
   ipcMain.handle(

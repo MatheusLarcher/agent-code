@@ -31,7 +31,12 @@ Seja literal e completo no OCR (transcreva o texto exatamente como aparece). Nã
 /** Runs a single, tool-free query against the vision model and returns its
  *  final text answer (concatenated across any text blocks). Throws on the
  *  underlying SDK/network failure — the caller decides how to degrade. */
-export async function describeImages(images: ImageAttachment[], userText: string): Promise<string> {
+export async function describeImages(
+  images: ImageAttachment[],
+  userText: string,
+  /** Env da conta Claude da conversa; ausente = login da máquina. */
+  env?: NodeJS.ProcessEnv
+): Promise<string> {
   const blocks: unknown[] = images.map((img) => ({
     type: 'image',
     source: { type: 'base64', media_type: img.mediaType, data: img.data }
@@ -53,7 +58,8 @@ export async function describeImages(images: ImageAttachment[], userText: string
     includePartialMessages: false,
     permissionMode: 'bypassPermissions',
     // Sem a auto-memória do CLI: a única pasta de memória é a de Configurações.
-    settings: { autoMemoryEnabled: false }
+    settings: { autoMemoryEnabled: false },
+    ...(env ? { env } : {})
   }
 
   const q = query({ prompt: single(), options })

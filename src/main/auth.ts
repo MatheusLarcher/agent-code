@@ -14,13 +14,22 @@ import { claudeCliPath } from './claudeCli'
 export interface ClaudeAuthStatus {
   loggedIn: boolean
   authMethod: string
+  /** E-mail e plano da conta logada, quando o CLI informa. Nunca o token. */
+  email?: string
+  subscriptionType?: string
+}
+
+/** Env do CLI para uma pasta de login específica (conta Claude), ou o herdado. */
+export function envForConfigDir(configDir?: string): NodeJS.ProcessEnv {
+  return configDir ? { ...process.env, CLAUDE_CONFIG_DIR: configDir } : { ...process.env }
 }
 
 /**
  * Ask the CLI for the saved login. Any failure (CLI missing, invalid JSON) is
  * reported as logged-out with `authMethod: 'none'` — the same shape the CLI uses.
+ * `configDir` asks about one account's login folder instead of the machine's.
  */
-export function claudeAuthStatus(): Promise<ClaudeAuthStatus> {
+export function claudeAuthStatus(configDir?: string): Promise<ClaudeAuthStatus> {
   return new Promise((resolve) => {
     const loggedOut: ClaudeAuthStatus = { loggedIn: false, authMethod: 'none' }
     let cli: string
@@ -33,13 +42,22 @@ export function claudeAuthStatus(): Promise<ClaudeAuthStatus> {
     execFile(
       cli,
       ['auth', 'status', '--json'],
-      { cwd: homedir(), windowsHide: true, timeout: 15_000 },
+      { cwd: homedir(), windowsHide: true, timeout: 15_000, env: envForConfigDir(configDir) },
       (_err, stdout) => {
         try {
-          const data = JSON.parse(String(stdout)) as { loggedIn?: boolean; authMethod?: string }
+          const data = JSON.parse(String(stdout)) as {
+            loggedIn?: boolean
+            authMethod?: string
+            email?: unknown
+            subscriptionType?: unknown
+          }
           resolve({
             loggedIn: data.loggedIn === true,
-            authMethod: typeof data.authMethod === 'string' ? data.authMethod : 'none'
+            authMethod: typeof data.authMethod === 'string' ? data.authMethod : 'none',
+            ...(typeof data.email === 'string' && data.email ? { email: data.email } : {}),
+            ...(typeof data.subscriptionType === 'string' && data.subscriptionType
+              ? { subscriptionType: data.subscriptionType }
+              : {})
           })
         } catch {
           resolve(loggedOut)
@@ -50,8 +68,8 @@ export function claudeAuthStatus(): Promise<ClaudeAuthStatus> {
 }
 
 /** True when a Claude OAuth login exists (per the CLI's own status check). */
-export async function isAuthenticated(): Promise<boolean> {
-  return (await claudeAuthStatus()).loggedIn
+export async function isAuthenticated(configDir?: string): Promise<boolean> {
+  return (await claudeAuthStatus(configDir)).loggedIn
 }
 
 /**

@@ -73,10 +73,12 @@ export function claudeUsageAllowsLlmTitle(limits: Record<string, RateLimitStatus
 /** Pede o nome ao main. Qualquer falha (canal ausente, erro, `ok: false`) → null. */
 export async function requestLlmTitle(
   api: Pick<AgentCodeApi, 'suggestConversationTitle'>,
-  text: string
+  text: string,
+  /** Conversa do título: o main roda o pedido na conta Claude dela. */
+  convId?: string
 ): Promise<string | null> {
   try {
-    const res = await api.suggestConversationTitle({ text })
+    const res = await api.suggestConversationTitle(convId ? { text, convId } : { text })
     return res && res.ok && typeof res.title === 'string' && res.title.trim() ? res.title.trim() : null
   } catch {
     return null

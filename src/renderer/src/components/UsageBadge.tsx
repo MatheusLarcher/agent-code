@@ -84,7 +84,7 @@ function labelOf(limit: RateLimitStatus): string {
  *  (`.ctx-bar*` classes), so the topbar and the chat header feel consistent.
  *  The reset time sits beside it in small, muted text — always visible, not
  *  just on hover (the hover tooltip still explains the concept + repeats it). */
-function UsagePill({ limit, dense = false }: { limit: RateLimitStatus; dense?: boolean }): JSX.Element {
+export function UsagePill({ limit, dense = false }: { limit: RateLimitStatus; dense?: boolean }): JSX.Element {
   const pct = Math.min(100, (limit.utilization ?? 0) * 100)
   const level = limit.status === 'rejected' || pct >= 95 ? 'crit' : limit.status === 'allowed_warning' || pct >= 80 ? 'warn' : 'ok'
   const label = labelOf(limit)

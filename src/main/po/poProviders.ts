@@ -75,7 +75,8 @@ export async function runClaude(deps: PoProviderDeps, request: PoObserverRequest
     prompt: request.prompt,
     model: request.model,
     provider: 'claude',
-    cwd: request.cwd
+    cwd: request.cwd,
+    conversationId: request.conversationId
   })
 }
 

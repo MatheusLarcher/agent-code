@@ -38,6 +38,7 @@ const {
   MEMORY_GATE_MAX_USED_CHARS,
   MEMORY_GATE_MAX_USER_CHARS
 } = await import('./memoryGate')
+const { typeSafePause } = await import('./pause')
 
 function config(typesafe: Partial<AppConfig['typesafe']>): void {
   state.config = { ...DEFAULT_CONFIG, typesafe: { ...DEFAULT_CONFIG.typesafe, ...typesafe } }
@@ -54,6 +55,8 @@ function sentState(): Record<string, unknown> {
 }
 
 beforeEach(() => {
+  // A pausa é do processo: uma falha de um teste não pode calar o seguinte.
+  typeSafePause.reset()
   systemOne.mockReset()
   state.secret = null
   config({ enabled: true, apiKey: 'sk-teste' })

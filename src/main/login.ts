@@ -8,7 +8,7 @@
 // file), so the chat session then starts already authenticated.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
-import { isAuthenticated } from './auth'
+import { envForConfigDir, isAuthenticated } from './auth'
 import { claudeCliPath } from './claudeCli'
 
 const URL_RE = /(https?:\/\/[^\s"')]+)/gi
@@ -18,24 +18,45 @@ const LOGIN_TIMEOUT_MS = 180_000 // 3 min for the user to authenticate in the br
 // multiple conversations connecting at once) share the same in-flight attempt
 // instead of spawning several `auth login` processes.
 let inFlight: Promise<boolean> | null = null
+// Pasta de login do login em andamento (undefined = a da máquina). Um pedido
+// para OUTRA conta não pode "entrar" no login em andamento: ele logaria a pasta errada.
+let inFlightDir: string | undefined
+
+/** True while an interactive login runs for a different login folder. */
+export function claudeLoginBusyFor(configDir?: string): boolean {
+  return inFlight !== null && inFlightDir !== configDir
+}
 
 /**
  * Run the login flow. `openUrl` gets the OAuth URL to open in the SYSTEM browser;
  * `log` receives diagnostic lines. Resolves true once the CLI reports a login.
+ * `configDir` logs in one Claude account's own folder (CLAUDE_CONFIG_DIR);
+ * without it, the machine's login — as before multiple accounts existed.
  */
-export function runClaudeLogin(openUrl: (url: string) => void, log: (line: string) => void): Promise<boolean> {
+export function runClaudeLogin(
+  openUrl: (url: string) => void,
+  log: (line: string) => void,
+  configDir?: string
+): Promise<boolean> {
   if (inFlight) {
+    if (inFlightDir !== configDir) {
+      log('another account login is in progress — refusing')
+      return Promise.resolve(false)
+    }
     log('login already in progress — joining it')
     return inFlight
   }
-  inFlight = doLogin(openUrl, log).finally(() => {
+  inFlightDir = configDir
+  inFlight = doLogin(openUrl, log, configDir).finally(() => {
     inFlight = null
+    inFlightDir = undefined
   })
   return inFlight
 }
 
-async function doLogin(openUrl: (url: string) => void, log: (line: string) => void): Promise<boolean> {
-  if (await isAuthenticated()) return true
+async function doLogin(openUrl: (url: string) => void, log: (line: string) => void, configDir?: string): Promise<boolean> {
+  const loggedIn = (): Promise<boolean> => isAuthenticated(configDir)
+  if (await loggedIn()) return true
 
   let cli: string
   try {
@@ -55,7 +76,7 @@ async function doLogin(openUrl: (url: string) => void, log: (line: string) => vo
         cwd: homedir(),
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env }
+        env: envForConfigDir(configDir)
       })
     } catch (err) {
       log(`spawn threw: ${String(err)}`)
@@ -84,7 +105,7 @@ async function doLogin(openUrl: (url: string) => void, log: (line: string) => vo
     const checkStatus = (): void => {
       if (checking || done) return
       checking = true
-      void isAuthenticated().then((ok) => {
+      void loggedIn().then((ok) => {
         checking = false
         if (ok) {
           log('auth status: logged in')
@@ -122,7 +143,7 @@ async function doLogin(openUrl: (url: string) => void, log: (line: string) => vo
     })
     child.on('exit', (code) => {
       log(`child exit: ${code}`)
-      void isAuthenticated().then((ok) => finish(ok))
+      void loggedIn().then((ok) => finish(ok))
     })
 
     // Backstop poll: the authoritative signal is the CLI's status flipping to
@@ -130,7 +151,7 @@ async function doLogin(openUrl: (url: string) => void, log: (line: string) => vo
     const poll = setInterval(checkStatus, 2500)
     const timer = setTimeout(() => {
       log('timeout (3 min) — giving up')
-      void isAuthenticated().then((ok) => finish(ok))
+      void loggedIn().then((ok) => finish(ok))
     }, LOGIN_TIMEOUT_MS)
   })
 }

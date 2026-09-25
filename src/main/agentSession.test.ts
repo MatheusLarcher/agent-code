@@ -994,7 +994,9 @@ describe('AgentSession — vision_fallback_router', () => {
     expect(describeImagesMock).toHaveBeenCalledTimes(1)
     expect(describeImagesMock).toHaveBeenCalledWith(
       [{ mediaType: 'image/png', data: 'AAAA' }],
-      'o que é esse erro?'
+      'o que é esse erro?',
+      // Conta padrão: o relay herda o login da máquina (env ausente).
+      undefined
     )
     const [msg] = pushedMessages(s)
     // Sem imagem nenhuma chegando ao modelo de texto — só a string com o bloco.
@@ -1791,7 +1793,7 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
     await s.start()
     await s.send('analise a tela', [{ mediaType: 'image/png', data: 'AAA' }])
 
-    expect(describeImagesMock).toHaveBeenCalledWith(expect.any(Array), 'analise a tela')
+    expect(describeImagesMock).toHaveBeenCalledWith(expect.any(Array), 'analise a tela', undefined)
     expect(pushedMessages(s).at(-1)!.message.content as string).not.toContain('arquitetura.md')
     await expect(requestHooks().user({ hook_event_name: 'UserPromptSubmit' })).resolves.toMatchObject({
       hookSpecificOutput: { additionalContext: expect.stringContaining('arquitetura.md') }

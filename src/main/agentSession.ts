@@ -39,6 +39,7 @@ import {
   type MemoryCatalogSnapshot
 } from './memoryIndex'
 import { selectMemoriesWithTypeSafe, typeSafeMemorySelectionActive, type MemorySelection } from './typesafe'
+import { TYPESAFE_BLOCKING_TIMEOUT_MS } from './typesafe/pause'
 import { forgetUsedMemories, recordUsedMemories } from './memoria/memoriasUsadas'
 import { homedir, hostname } from 'node:os'
 import {
@@ -83,6 +84,7 @@ import type {
   StartAgentOptions,
   TokenUsage
 } from '../shared/ipc'
+import { claudeAccounts } from './accounts'
 import { storageLifecycle } from './persistence/lifecycle'
 import type { AgentInputQueueRepository, ProjectConversationCount, TokenUsageRepository } from './persistence/types'
 
@@ -1044,6 +1046,11 @@ export class AgentSession {
         }
       : openaiEnv
 
+    // Conta Claude da conversa: uma conta extra roda com a pasta de login dela
+    // (CLAUDE_CONFIG_DIR). A conta padrão devolve `undefined` e a sessão herda o
+    // ambiente, como sempre. GPT e Ollama já têm o próprio desvio acima.
+    if (!ollamaOn && !openaiOn) env = claudeAccounts.envFor(this.opts.claudeAccountId)
+
     // Economy mode leans on the `rtk` proxy binary, which is installed per-user
     // and put on the user PATH — but a PATH change only reaches processes
     // started after it, so a running app would need a restart to see it.
@@ -1368,7 +1375,10 @@ export class AgentSession {
     // UMA decisão por mensagem do usuário. Disparada aqui, e não no hook de
     // request, porque o hook roda outra vez a cada volta do loop de ferramentas.
     const selectionTurn = ++this.memorySelectionTurn
-    this.activeMemorySelection = selectMemoriesWithTypeSafe(getCacheInfo().memoriesDir, outText)
+    this.activeMemorySelection = selectMemoriesWithTypeSafe(getCacheInfo().memoriesDir, outText, {
+      // A escolha segura a primeira chamada ao modelo: mesmo teto do início.
+      timeout: TYPESAFE_BLOCKING_TIMEOUT_MS
+    })
       .catch(() => null)
       .then(async (selection) => {
         // O gate do memorista precisa saber o que o agente JÁ tinha em mãos
@@ -1396,7 +1406,7 @@ export class AgentSession {
     if (images && images.length > 0 && !modelSupportsVision(this.opts.model)) {
       let merged: string
       try {
-        const analysis = await describeImages(images, outText)
+        const analysis = await describeImages(images, outText, claudeAccounts.envFor(this.opts.claudeAccountId))
         merged = mergeUserTextWithVisualContext(outText, analysis)
       } catch (err) {
         // Degrade without blocking the send: the model still gets the user's
@@ -1456,13 +1466,22 @@ export class AgentSession {
       loopLimit: this.loopLimit, loopScheduledThisIteration: this.loopScheduledThisIteration }
   }
 
-  restoreContinuation(state: AgentContinuationState): void {
+  /** `continuing` = a próxima mensagem continua a tarefa (troca no estouro).
+   *  A troca de conta no fim do turno passa `false`: a próxima mensagem é do
+   *  usuário e começa um turno novo, com o loop decidido do zero. */
+  restoreContinuation(state: AgentContinuationState, continuing = true): void {
     this.approvedTools = new Set(state.approvedTools)
     this.loopActive = state.loopActive
     this.loopCycles = state.loopCycles
     this.loopLimit = state.loopLimit
     this.loopScheduledThisIteration = state.loopScheduledThisIteration
-    this.providerContinuation = true
+    this.providerContinuation = continuing
+  }
+
+  /** Há trabalho que a troca de processo mataria (tarefa em background, loop
+   *  agendado, chamada autônoma sem prova de término)? */
+  hasBackgroundWork(): boolean {
+    return (this.restartBackground ?? 0) > 0 || this.loopActive || this.restartOpaqueCalls.size > 0
   }
 
   async interrupt(): Promise<AgentInterruptResult> {

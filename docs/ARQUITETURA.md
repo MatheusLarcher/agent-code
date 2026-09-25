@@ -11,6 +11,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Como rodar](#como-rodar)
 - [Modelo de processos e segurança](#modelo-de-processos-e-segurança)
 - [Autenticação (login do Claude)](#autenticação-login-do-claude)
+- [Contas Claude (várias contas, uma por conversa)](#contas-claude-várias-contas-uma-por-conversa)
 - [Sequência de inicialização](#sequência-de-inicialização)
 - [Ciclo de vida da sessão do agente](#ciclo-de-vida-da-sessão-do-agente)
 - [Tradução de mensagens do SDK em eventos de UI](#tradução-de-mensagens-do-sdk-em-eventos-de-ui)
@@ -73,6 +74,111 @@ O app faz o **login do Claude com um clique**: ao clicar em **Conectar** sem um 
 > **Pasta de dados × raiz local.** A pasta escolhida em Configurações (muitas vezes no OneDrive) guarda só o que é permanente e muda pouco: `memories/`, `skills/`, `vault/` e `native/`. Tudo que muda com frequência mora na raiz local `userData/agent-code-local` (`CacheInfo.localDir`): o SQLite, `logs/`, `tmp-audio/`, `cli-config-sem-login/` (sessões GPT/Ollama), `memorias-longo-praso/` (parquet diário) e `migration-manifests/` (backups de troca de banco). No boot, `relocateLocalLeftovers()` (`localLeftovers.ts`) move em segundo plano o que versões antigas deixaram na pasta sincronizada, sem sobrescrever o que já existe no destino; as sessões GPT/Ollama esperam por `localLeftoversSettled()` antes de abrir o diretório do CLI.
 
 ---
+
+## Contas Claude (várias contas, uma por conversa)
+
+Várias contas Claude (assinatura Pro/Max) rodam ao mesmo tempo, **cada conversa na sua conta**. O código mora em `src/main/accounts/`.
+
+**Uma pasta de login por conta, com o CLI oficial e sem proxy.**
+- Cada conta extra tem a própria pasta em `userData/agent-code-local/claude-accounts/<id>/`, na raiz **local** e nunca na pasta sincronizada. No Unix a pasta é criada com `0700`.
+- A sessão recebe a pasta como `CLAUDE_CONFIG_DIR` (`accounts/accountDirs.ts`). O `CLAUDE_CONFIG_DIR` herdado da máquina é trocado pelo da conta, para nada vazar para a conta errada.
+- A pasta recebe o `CLAUDE.md` e o `settings.json` do usuário, copiados só quando mudam. `skills/`, `agents/`, `commands/` e `plugins/` entram por link (junction no Windows), para que a conta 2 enxergue o mesmo kit.
+- Remover uma conta desfaz os links **antes** de apagar a pasta, para não apagar as skills do usuário. Ids fora de `[A-Za-z0-9_-]` são recusados.
+- Não há rotação de tráfego nem um token que junte contas: esse é o padrão que leva a banimento.
+
+**Conta 1 é o login que já existia.** O id é fixo (`default`) e usa `~/.claude` (ou o `CLAUDE_CONFIG_DIR` do sistema) como está.
+- Para essa conta, `envFor()` devolve `undefined` e a sessão herda o ambiente. Com uma conta só, nada muda.
+- Ela não pode ser removida pela lista. O "Trocar conta" do Claude continua deslogando esse login da máquina.
+
+**Registro** (`accounts/registry.ts`, chave KV `agentcode.claude-accounts.v1`, escopo do dispositivo):
+- Guarda id, apelido, e-mail, plano, `rateLimitTier` e a última leitura de consumo. **Nenhum token**: access e refresh token nunca saem do `.credentials.json` da pasta da conta.
+- O status é calculado pela validade do token, como o `oauthLive` do Nexos: `connected`, `expired` (sem refresh válido) ou `logged-out`. Conta com login expirado mostra "Entrar de novo" e não é candidata.
+- **Adicionar:** roda `claude auth login --claudeai` com o `CLAUDE_CONFIG_DIR` da pasta nova (`login.ts`, agora parametrizado por pasta), depois lê e-mail e plano com `claude auth status --json`.
+  - E-mail repetido descarta a pasta e avisa.
+  - A credencial de `~/.claude` **nunca é copiada**: o refresh token rotaciona e a cópia morreria.
+- IPC (`accounts/accountsIpc.ts`, com zod na fronteira): `claude-accounts:list|add|relogin|rename|reorder|remove|usage`.
+- Tela: Configurações → Modelos → **Contas Claude** (`ui/ClaudeAccountsSection.tsx`). Tem renomear, arrastar para reordenar e remover com confirmação.
+
+**Consumo por conta, sob demanda** (`accounts/usageQuery.ts`, `usageReader.ts`, `usageMath.ts`):
+- **Como a consulta funciona:** `queryAccountUsage(id)` abre uma `query()` com a pasta da conta, **sem mandar mensagem nenhuma**, e chama `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`. O dado vem de `api/oauth/usage` (leitura HTTP), não chama o modelo e **não gasta limite**.
+- **Tempo medido** em 24/09/2026 (SDK 0.3.281, Windows):
+  - 0,66–0,69 s de ponta a ponta com `settingSources: []`;
+  - 1,06–1,35 s com as configurações do usuário carregadas.
+  - Três consultas seguidas não mudaram os números.
+- **Limites da consulta:**
+  - timeout de 5 s;
+  - cache de 60 s por conta;
+  - pedidos simultâneos da mesma conta dividem a consulta, e várias contas são consultadas em paralelo;
+  - falha ou timeout devolve a última leitura (`fresh: false`).
+- Não há polling. A consulta roda ao abrir o painel de consumo e na hora de uma troca, os dois do handoff 2.
+- O `rate_limit_event` e o `refreshUsage()` da sessão ativa também atualizam a última leitura **da conta daquela sessão**, via o tee de eventos em `index.ts`.
+- **"Consumo" de uma conta** é o **maior** percentual entre as janelas que valem para o modelo da conversa:
+  - `five_hour`, `seven_day` e qualquer janela nova;
+  - `seven_day_opus`/`seven_day_sonnet` e o `model_scoped` (ex.: Fable) só para o modelo deles.
+  - Janela com `resets_at` vencido conta como zero, e conta sem leitura conta como "com folga".
+  - Ficam de fora `extra_usage`, `spend`, `seven_day_cowork` e `seven_day_oauth_apps`.
+  - `windowsFromUsage` lança se o formato mudar. É o teste de contrato da API experimental: a falha cai na última leitura.
+
+**Conta de cada conversa** (`accounts/selection.ts`, limite fixo `ACCOUNT_SWITCH_THRESHOLD = 95`):
+- **Conversa nova:** usa a primeira conta **da ordem do usuário** abaixo de 95%. Se todas estiverem em 95% ou mais, usa a de menor consumo que ainda não estourou. A escolha usa a última leitura guardada, sem consultar, para não atrasar o primeiro envio.
+- **Retomar:** usa a conta gravada com a conversa (`Conversation.claudeAccountId`) se ela ainda estiver conectada. Senão, aplica a regra de conversa nova.
+- **Quem decide:** o `agent:start` resolve a conta e devolve `claudeAccountId`, e o renderer grava na conversa. O histórico passa entre logins pelo `sessionStore` (sem copiar transcript).
+- **Observadores** (Vigia, Memorista, PO, título, relay de visão e curador) usam a **mesma conta da conversa** que acompanham:
+  - `observerQuery.ts` recebe um resolvedor injetado no boot (`setClaudeObserverEnvResolver`);
+  - sem conversa de origem (curador), vale a conta que a regra de conversa nova escolheria;
+  - o Agent Manager do planejamento é uma sessão normal e segue a mesma regra.
+**Troca automática de conta** (`accounts/switchPolicy.ts`, `accounts/sessionSwitch.ts`, `providerFailover.ts`):
+- **Onde fica:** a política é pura, em `switchPolicy.ts`. `sessionSwitch.ts` consulta o consumo e aplica a política. O `ProviderFailoverSession` executa a troca e recebe as dependências por `accountSwitchDepsFor(convId)`.
+- **Como troca:** trocar de conta é o mesmo caminho da troca de provedor. `resumeAfterQuota` (turno fechado e espelho verificado) → `dispose` → novo processo com o `CLAUDE_CONFIG_DIR` da conta nova e `resume`. O histórico vem do `sessionStore`, sem copiar transcript.
+- **Fim de turno (silenciosa)**, depois do `result`, sem nunca atrasar o envio:
+  - lê a conta da conversa, que vem da leitura do turno ou de `queryAccountUsage`;
+  - se ela está em **95% ou mais**, consulta **de verdade** as outras contas conectadas (`force`, em paralelo) e vai para a de **menor consumo**, desde que esteja abaixo de 95%. No empate, vence a primeira na ordem;
+  - todas em 95% ou mais → **não troca**. É o que impede a conversa de ir e voltar entre contas;
+  - não manda `FAILOVER_CONTINUATION` e restaura o estado com `continuing = false`, então a próxima mensagem começa um turno normal;
+  - com tarefa em background, loop ativo ou chamada autônoma (`AgentSession.hasBackgroundWork()`), a troca é **adiada** e acontece no próximo `result` ou quando o `background-tasks` vier vazio;
+  - se o usuário mandar mensagem durante a consulta, a decisão é descartada. Mensagem enviada durante a troca espera por ela (`send()`).
+  - O turno fechado soltou o lease, então a troca pega o lease de novo (`acquire`) antes de verificar o histórico e o solta no fim.
+- **Estouro (na hora):**
+  - vai para a conta de menor consumo **que ainda não estourou**, mesmo acima de 95%, e continua a tarefa com `FAILOVER_CONTINUATION`;
+  - cada conta entra **uma vez por turno** (`triedAccounts`);
+  - todas estouradas → **GPT** (a troca de provedor de sempre). Sem GPT: "A tarefa foi preservada; aguarde a renovação dos limites".
+- **Interruptor** "Troca automática de conta" (Configurações → Contas Claude, padrão **ligado**, guardado na mesma chave KV):
+  - desligado, nada troca sozinho, nem no fim do turno nem no estouro;
+  - no estouro aparece o erro de limite (`usageExhausted`) e uma nota `account-switch` com `reason: 'suggest'`, com o botão "Continuar nessa conta" (troca manual que retoma a tarefa).
+- **Troca manual:**
+  - "Usar nesta conversa" no painel e "Continuar nessa conta" no chat chamam `claude-accounts:use-for-conversation`, que leva a `useAccount`;
+  - segue as regras da troca de fim de turno: com o turno aberto ou com background, fica agendada ("Vai trocar para a conta X ao terminar");
+  - conversa sem sessão aberta só grava a conta, que vale no próximo início.
+- **Eventos:** `account-switch` (`reason`: `turn-end`, `exhausted`, `manual`, `scheduled`, `suggest`).
+  - O renderer grava `claudeAccountId` na conversa (exceto `suggest`/`scheduled`) e deixa a linha no histórico.
+  - A troca automática mostra um toast amarelo.
+  - Os observadores seguem a conta nova (`changed` → mapa `conversationAccounts`).
+- **Login:** conta com login expirado nunca é destino, nem na troca manual. Com várias contas, `auth:status` considera logado se **alguma** conta está conectada, para não forçar o login da conta 1 à toa.
+- **Uma conta só:** nada disso roda. O fim de turno não faz nada e o estouro segue Claude → GPT como antes.
+
+**Painel de consumo** (`components/AccountsUsageBadge.tsx`, usado só com 2 contas ou mais; com uma conta fica o `UsageBadge` de sempre):
+- **Barra fechada:** mostra a conta **da conversa aberta**, com o apelido ("Claude · Trabalho"), e o GPT.
+- **Painel aberto:**
+  - uma seção por conta, na ordem do usuário, com a conta da conversa marcada, e mais a seção do GPT;
+  - mostra na hora a última leitura, com "atualizando…";
+  - consulta cada conta em paralelo (`claude-accounts:usage` com `accountId`) e atualiza a seção dela quando a resposta chega;
+  - falha mantém o valor antigo com "atualizado há X min";
+  - o cache de 60 s do main garante no máximo uma consulta por conta por minuto, então abrir e fechar várias vezes não abre vários processos.
+- **Por conta:** "Entrar de novo" (login expirado), "Usar nesta conversa" e "mostrar na barra" (`UiState.usageAccounts`).
+- **Atalho:** "Gerenciar contas" abre Configurações → Contas Claude.
+
+**Modo Automático sem espera** (`typesafe/pause.ts`):
+- **Teto de 3 s** (`TYPESAFE_BLOCKING_TIMEOUT_MS`) no que segura o usuário: a decisão de modelo do `agent:start` e a escolha de memórias, que segura a primeira chamada ao modelo. Memorista, PO e planejamento mantêm os 8 s.
+- **Pausa de 10 min:**
+  - começa na hora depois de 401/403;
+  - começa depois de **2 falhas seguidas** (timeout, rede, 5xx);
+  - com 429, dura o `Retry-After` quando ele vem.
+- **Durante a pausa**, o `askTypeSafe` devolve `null` na hora e sai o par padrão.
+- **Saída da pausa:**
+  - uma key diferente sai sozinha (a pausa guarda só uma impressão digital da key);
+  - salvar key ou religar o modo pelas Configurações chama `typeSafePause.reset()`.
+- **Aviso:** o main avisa **uma vez**, ao entrar na pausa (`typesafe:paused`). O renderer mostra um toast amarelo "Roteamento IA pausado até HH:MM — motivo", e a tela do TypeSafe mostra o mesmo estado (`ui/TypeSafePauseNote.tsx`).
+- **Chamadas em sequência:** as consultas de um mesmo envio já rodam em paralelo. A única sequência é a do memorista (gate → escolha de modelo), que depende da resposta do gate e fica fora do caminho do usuário.
 
 ## Sequência de inicialização
 

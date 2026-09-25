@@ -32,6 +32,7 @@ vi.mock('@typesafe-ai/sdk', () => ({
 
 const { askTypeSafe, typeSafeApiKey, typeSafeEnabled, typeSafeMinConfidence, TYPESAFE_TIMEOUT_MS } =
   await import('./client')
+const { typeSafePause } = await import('./pause')
 
 function config(typesafe: Partial<AppConfig['typesafe']>): void {
   state.config = { ...DEFAULT_CONFIG, typesafe: { ...DEFAULT_CONFIG.typesafe, ...typesafe } }
@@ -47,6 +48,8 @@ beforeEach(() => {
   systemOne.mockReset()
   systemOne.mockResolvedValue(ANSWER)
   recordTypeSafeUsage.mockClear()
+  typeSafePause.reset()
+  typeSafePause.setOnPause(undefined)
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
 })
 
@@ -139,5 +142,49 @@ describe('cliente TypeSafe', () => {
     config({ enabled: true, minConfidence: 0.8 })
 
     expect(typeSafeMinConfidence()).toBe(0.8)
+  })
+})
+
+describe('pausa do TypeSafe no cliente', () => {
+  const httpError = (status: number, extra: Record<string, unknown> = {}): Error =>
+    Object.assign(new Error(`HTTP ${status}`), { status, ...extra })
+
+  it('401 pausa na hora, avisa uma vez e para de chamar o serviço', async () => {
+    const onPause = vi.fn()
+    typeSafePause.setOnPause(onPause)
+    systemOne.mockRejectedValue(httpError(401))
+
+    expect(await askTypeSafe({ state: 'oi', questions: QUESTIONS })).toBeNull()
+    expect(await askTypeSafe({ state: 'oi', questions: QUESTIONS })).toBeNull()
+    expect(await askTypeSafe({ state: 'oi', questions: QUESTIONS })).toBeNull()
+
+    expect(systemOne).toHaveBeenCalledTimes(1)
+    expect(onPause).toHaveBeenCalledTimes(1)
+    expect(onPause.mock.calls[0][0].reason).toBe('key recusada')
+  })
+
+  it('salvar outra chave sai da pausa e volta a consultar na hora', async () => {
+    systemOne.mockRejectedValueOnce(httpError(403))
+    await askTypeSafe({ state: 'oi', questions: QUESTIONS })
+    expect(typeSafePause.status().pausedUntil).not.toBeNull()
+
+    config({ enabled: true, apiKey: 'outra-key' })
+    expect(await askTypeSafe({ state: 'oi', questions: QUESTIONS })).toEqual(ANSWER.answers)
+    expect(systemOne).toHaveBeenCalledTimes(2)
+  })
+
+  it('duas falhas seguidas de rede pausam; uma só, não', async () => {
+    systemOne.mockRejectedValueOnce(Object.assign(new Error('timeout'), { name: 'APITimeoutError' }))
+    await askTypeSafe({ state: 'oi', questions: QUESTIONS })
+    expect(typeSafePause.status().pausedUntil).toBeNull()
+
+    systemOne.mockRejectedValueOnce(httpError(503))
+    await askTypeSafe({ state: 'oi', questions: QUESTIONS })
+    expect(typeSafePause.status().pausedUntil).not.toBeNull()
+  })
+
+  it('o teto curto do caminho que bloqueia chega ao SDK', async () => {
+    await askTypeSafe({ state: 'oi', questions: QUESTIONS }, { timeout: 3000 })
+    expect(systemOne).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ timeout: 3000 }))
   })
 })

@@ -88,6 +88,25 @@ vi.mock('./openai', () => ({
 vi.mock('./speech', () => ({ stopLocalSpeech: vi.fn(), transcribeLocal: vi.fn() }))
 vi.mock('./auth', () => ({ isAuthenticated: vi.fn(), logoutClaude: vi.fn() }))
 vi.mock('./login', () => ({ runClaudeLogin: vi.fn() }))
+// Contas Claude: uma conta só (a da máquina), como antes das contas existirem.
+vi.mock('./accounts', () => ({
+  claudeAccounts: {
+    isConnected: vi.fn(async () => true),
+    list: vi.fn(async () => []),
+    ensureLoaded: vi.fn(async () => {}),
+    hasExtraAccounts: vi.fn(() => false),
+    candidates: vi.fn(async () => [])
+  },
+  configureAccountLogin: vi.fn(),
+  conversationAccount: vi.fn(() => 'default'),
+  accountSwitchDepsFor: vi.fn(() => undefined),
+  forgetConversationAccount: vi.fn(),
+  observerEnvFor: vi.fn(async () => undefined),
+  queryAllAccountsUsage: vi.fn(async () => []),
+  queryAccountUsage: vi.fn(async () => ({ accountId: 'default', reading: null, fresh: false })),
+  recordSessionRateLimit: vi.fn(),
+  resolveSessionAccount: vi.fn(async () => 'default')
+}))
 vi.mock('./codexAuth', () => ({
   codexStatus: vi.fn(),
   codexLogout: vi.fn(),
@@ -248,7 +267,7 @@ describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
     vi.mocked(resolveAutoStart).mockClear()
     spy.planningConfig = { model: 'claude-opus-5-5', effort: 'high' }
     const result = await call(Channels.agentStart, { convId: 'plan-1', cwd, model: AUTO_MODEL, planning: { slug: 'checkout' } })
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, claudeAccountId: 'default' })
     expect(resolveAutoStart).not.toHaveBeenCalled()
     expect(sessionOf('plan-1').opts).toMatchObject({ model: 'claude-opus-5-5', effort: 'high', planning: { slug: 'checkout' } })
   })

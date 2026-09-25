@@ -9,6 +9,7 @@ import {
 } from 'react'
 import type { UIMessage } from '../types'
 import { QuestionMap } from './QuestionMap'
+import { AccountSwitchNote } from './AccountSwitchNote'
 import { isDownloadableFile, isTextPreviewable, parseDownloads } from '@shared/ipc'
 import { useUI } from '../ui/UiProvider'
 import { fileMeta, fmtSize } from '../files'
@@ -322,6 +323,7 @@ export function MessageList({
   busy,
   tts,
   onRetry,
+  onUseAccount,
   scrollToId,
   scrollSeq
 }: {
@@ -330,6 +332,8 @@ export function MessageList({
   tts: TtsControls
   /** Resend a user message whose turn failed. */
   onRetry: (msgId: string) => void
+  /** Troca manual de conta (botão "Continuar nessa conta" da nota de sugestão). */
+  onUseAccount?: (accountId: string, continueTask: boolean) => void
   /** Id of a message to scroll to (from a search hit), or null. */
   scrollToId?: string | null
   /** Bumped on each search-hit navigation so repeats re-trigger the scroll. */
@@ -616,6 +620,8 @@ export function MessageList({
             )
           case 'provider-switch':
             return <div key={`provider-switch:${m.id}`} className="msg system-note" role="status">{m.text}</div>
+          case 'account-switch':
+            return <AccountSwitchNote key={`account-switch:${m.id}`} event={m} onUseAccount={onUseAccount} />
           case 'status':
             return <div key={`status:${m.id}`} className="msg system-note" role="status">{m.text}</div>
           case 'result':

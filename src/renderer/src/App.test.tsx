@@ -2569,7 +2569,11 @@ describe('App — título automático (recuo na hora, nome curto do LLM depois)'
 
     await waitFor(() => expect(storedConv()).toMatchObject({ title: 'quero corrigir o login com SSO', titleSource: 'auto' }))
     expect(api.suggestConversationTitle).toHaveBeenCalledTimes(1)
-    expect(api.suggestConversationTitle).toHaveBeenCalledWith({ text: 'quero corrigir o login com SSO\nmais detalhes do problema' })
+    expect(api.suggestConversationTitle).toHaveBeenCalledWith({
+      text: 'quero corrigir o login com SSO\nmais detalhes do problema',
+      // O título roda na conta Claude da conversa.
+      convId: 'c1'
+    })
 
     await act(async () => llm.resolve({ ok: true, title: 'Login com SSO' }))
     await waitFor(() => expect(storedConv()).toMatchObject({ title: 'Login com SSO', titleSource: 'llm' }))

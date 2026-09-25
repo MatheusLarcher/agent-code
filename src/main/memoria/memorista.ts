@@ -466,7 +466,13 @@ export class Memorista {
         return { provider: 'claude', state: 'failed' }
       }
     }
-    return runObserverAttempt({ prompt: request.prompt, model: request.model, provider: 'claude', cwd: request.cwd })
+    return runObserverAttempt({
+      prompt: request.prompt,
+      model: request.model,
+      provider: 'claude',
+      cwd: request.cwd,
+      conversationId: request.conversationId
+    })
   }
 
   private async runLuna(request: MemoristaObserverRequest, onStarted: () => void): Promise<ObserverAttempt> {

@@ -4,8 +4,10 @@ import {
   type Questions,
   type SystemOneResult
 } from '@typesafe-ai/sdk'
+import { createHash } from 'node:crypto'
 import { ensureConfigLoaded, loadConfig } from '../config'
 import { readSecret } from '../memory/memoryRuntime'
+import { typeSafePause } from './pause'
 import { recordTypeSafeUsage } from './usage'
 
 /**
@@ -72,6 +74,11 @@ export async function typeSafeConfigured(): Promise<boolean> {
   return (await typeSafeApiKey()) !== null
 }
 
+/** Impressão digital da chave: a pausa compara chaves sem guardar a chave. */
+function keyFingerprint(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex').slice(0, 16)
+}
+
 export interface AskTypeSafeOptions {
   /** Cancela a chamada junto com o trabalho que a pediu. */
   signal?: AbortSignal
@@ -94,6 +101,10 @@ export async function askTypeSafe<const Q extends Questions>(
   if (!Object.keys(request.questions).length) return null
   const apiKey = await typeSafeApiKey()
   if (!apiKey) return null
+  // Em pausa (chave recusada, serviço fora): segue direto com o par padrão,
+  // sem esperar nada. Chave trocada sai da pausa sozinha.
+  const fingerprint = keyFingerprint(apiKey)
+  if (typeSafePause.isPaused(fingerprint)) return null
 
   try {
     const client = new TypeSafeClient({ apiKey })
@@ -105,8 +116,10 @@ export async function askTypeSafe<const Q extends Questions>(
     // Sem `await`: a resposta já está na mão, e a contabilidade não pode
     // atrasar quem está esperando a decisão.
     void recordTypeSafeUsage(usage)
+    typeSafePause.recordSuccess()
     return answers
   } catch (error) {
+    typeSafePause.recordFailure(error, fingerprint)
     // Só a mensagem do erro — nunca a chave, nunca o `state`, que carrega o
     // conteúdo da conversa.
     console.error(`[typesafe] decisão descartada: ${(error as Error)?.message ?? error}`)

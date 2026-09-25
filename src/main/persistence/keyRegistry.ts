@@ -37,6 +37,9 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.typesafe.allowedAutoModels': { scope: 'device', source: 'main-kv' },
   'agentcode.typesafe.usage.v1': { scope: 'device', source: 'main-kv' },
   codexAuth: { scope: 'device', sensitive: true, source: 'main-kv' },
+  // Contas Claude: id, apelido, e-mail, plano e última leitura de consumo. Sem
+  // token — a credencial fica na pasta local de cada conta.
+  'agentcode.claude-accounts.v1': { scope: 'device', source: 'main-kv' },
   // Cópia do cofre (chave + segredos cifrados) no banco. Redundância proposital:
   // migrar só o banco tem de reabrir tudo. Ver vaultMirror.ts.
   'agentcode.secret-vault-mirror.v1': { scope: 'device', sensitive: true, source: 'main-kv' },

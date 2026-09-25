@@ -33,6 +33,9 @@ export interface UiState {
   browserWidth: number
   /** Which subscriptions the topbar usage badge shows in its compact form. */
   usageProviders: { claude: boolean; gpt: boolean }
+  /** Várias contas Claude: "mostrar na barra" por conta (id → marcado). Conta
+   *  ausente conta como marcada. */
+  usageAccounts?: Record<string, boolean>
 }
 
 const DEFAULT_BROWSER_WIDTH = 720
@@ -178,6 +181,10 @@ function normalizeConversation(record: VersionedConversationDto): Conversation {
     // perderia o provedor e iria para a Anthropic com um id que ela não conhece.
     model: typeof payload.model === 'string' && payload.model ? currentModelId(payload.model) : 'claude-opus-5-5',
     sdkSessionId: typeof payload.sdkSessionId === 'string' ? payload.sdkSessionId : null,
+    claudeAccountId:
+      typeof payload.claudeAccountId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(payload.claudeAccountId)
+        ? payload.claudeAccountId
+        : undefined,
     messages: Array.isArray(payload.messages) ? payload.messages as UIMessage[] : [],
     tokens: {
       context: finiteNumber(rawTokens.context),

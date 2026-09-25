@@ -75,6 +75,9 @@ import { buildCrew, workingMembers } from './crew'
 import { IconBoard, IconGlobe, IconUsers } from './components/Icons'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
+import { AccountsUsageBadge } from './components/AccountsUsageBadge'
+import { useClaudeAccounts } from './accounts/useClaudeAccounts'
+import { useAccountActions } from './accounts/useAccountActions'
 import { RightPaneTabs, type RightPane } from './components/RightPaneTabs'
 import { BoardPanel, boardProgress } from './components/BoardPanel'
 import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
@@ -83,6 +86,7 @@ import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
 const BOARD_BADGE_POLL_MS = 60_000
 import { IconPower, IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
+import { typeSafePauseText } from './ui/typeSafePauseText'
 import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
 import { splitForSpeech, toSpeechText } from '@shared/speechText'
@@ -544,6 +548,8 @@ export function App(): JSX.Element {
   // Which subscriptions (Claude / GPT) the compact topbar badge shows. Persisted
   // with the rest of the UI state; the badge's own popover always shows both.
   const [usageProviders, setUsageProviders] = useState<UsageProviders>({ claude: true, gpt: true })
+  // Várias contas Claude: "mostrar na barra" por conta (e 'gpt').
+  const [usageAccounts, setUsageAccounts] = useState<Record<string, boolean>>({})
   // Who is working inside each conversation (main agent + subagents), for the
   // agents panel. Deliberately OUTSIDE `Conversation`: this is live state, not
   // history — it never touches the chat feed nor gets persisted to disk.
@@ -569,7 +575,7 @@ export function App(): JSX.Element {
   // accidental click never kills a running turn). Holds the conversation id.
   const [stopConfirm, setStopConfirm] = useState<string | null>(null)
   // When opening Settings to nudge a missing key, focus that section.
-  const [settingsFocus, setSettingsFocus] = useState<'openai' | 'typesafe' | null>(null)
+  const [settingsFocus, setSettingsFocus] = useState<'openai' | 'typesafe' | 'accounts' | null>(null)
   // Whether an OpenAI key is set — gates the mic and read-aloud buttons.
   const [voiceReady, setVoiceReady] = useState(false)
   // Whether TypeSafe is enabled with a usable key — gates the "Automático" model option.
@@ -673,6 +679,14 @@ export function App(): JSX.Element {
     setConversations((prev) => prev.map((c) => (c.id === id ? fn(c) : c)))
   }, [])
 
+  // Contas Claude: a lista (painel de consumo) e as ações de troca de conta.
+  const { accounts: claudeAccountList, refresh: refreshAccounts, refreshSoon: refreshAccountsSoon } = useClaudeAccounts()
+  const {
+    announce: announceAccountSwitch,
+    chooseAccount,
+    relogin: reloginAccount
+  } = useAccountActions({ notify, patchConv, refresh: refreshAccounts })
+
   // Título automático (conversationTitle.ts). `pendingTitlesRef`: conversas com
   // o nome do LLM a caminho — renomear ou apagar tira daqui, e a resposta
   // atrasada é descartada em vez de passar por cima do usuário.
@@ -694,7 +708,7 @@ export function App(): JSX.Element {
       if (!wantsAutoTitle(conv, text)) return
       pendingTitlesRef.current.add(conv.id)
       void (async () => {
-        const llm = claudeUsageAllowsLlmTitle(usageLimitsRef.current) ? await requestLlmTitle(window.api, text) : null
+        const llm = claudeUsageAllowsLlmTitle(usageLimitsRef.current) ? await requestLlmTitle(window.api, text, conv.id) : null
         if (!pendingTitlesRef.current.delete(conv.id)) return
         if (llm) patchConv(conv.id, (c) => withLlmTitle(c, llm))
         syncPlanningTitle(conv, llm ?? deriveTitle(text))
@@ -743,6 +757,8 @@ export function App(): JSX.Element {
       // Account-wide, not conversation-wide — skip patchConv entirely (no
       // message bubble, no per-conv token/turn bookkeeping applies here).
       if (e.kind === 'rate-limit') {
+        // O main grava a leitura na conta da conversa; o painel relê (≤ 1x/10 s).
+        refreshAccountsSoon()
         setUsageLimits((prev) =>
           isSpuriousUsageZero(prev[e.limits.rateLimitType], e.limits)
             ? prev
@@ -778,6 +794,8 @@ export function App(): JSX.Element {
         return next === map ? prev : { ...prev, [cid]: next }
       })
 
+      // Troca de conta: toast amarelo (automática) antes de a linha entrar no chat.
+      if (e.kind === 'account-switch') announceAccountSwitch(e)
       patchConv(cid, (c) => {
         let next: Conversation
         if (e.kind === 'system') {
@@ -795,6 +813,16 @@ export function App(): JSX.Element {
             messages: c.messages.some((m) => m.kind === 'system')
               ? c.messages
               : [...c.messages, e as UIMessage]
+          }
+        } else if (e.kind === 'account-switch') {
+          // A conversa passa a usar a conta nova (a sugestão e o agendamento
+          // não mudam nada ainda). A linha fica no histórico do chat.
+          const moved = e.reason !== 'suggest' && e.reason !== 'scheduled'
+          next = {
+            ...c,
+            ...(moved ? { claudeAccountId: e.toAccountId } : {}),
+            messages: reduceMessages(c.messages, e),
+            updatedAt: Date.now()
           }
         } else if (e.kind === 'provider-switch') {
           // Mesmo cuidado: em Automático este evento é o ANÚNCIO da escolha do
@@ -1078,7 +1106,7 @@ export function App(): JSX.Element {
         }
       }
     },
-    [patchConv, notify, setBusy, setConnected, markMessageError, autoTitle]
+    [patchConv, notify, setBusy, setConnected, markMessageError, autoTitle, refreshAccountsSoon, announceAccountSwitch]
   )
 
   useEffect(() => {
@@ -1111,6 +1139,12 @@ export function App(): JSX.Element {
     // Older preload bundles (and focused renderer harnesses) can briefly lack
     // this additive subscription during an app upgrade; the PO remains silent
     // rather than preventing the whole renderer from mounting.
+    // Modo Automático: o roteamento TypeSafe entrou em pausa. O main só avisa ao
+    // ENTRAR na pausa, então este toast sai uma vez por pausa.
+    const offTypeSafePause = window.api.onTypeSafePaused?.((status) => {
+      const text = typeSafePauseText(status)
+      if (text) notify('aviso', text)
+    })
     const offPoProvider = window.api.onPoProviderDiagnostic?.((msg) => {
       setPoDiagnostics((p) => ({ ...p, [msg.conversationId]: msg }))
       if (msg.phase === 'gpt-luna-started') {
@@ -1149,6 +1183,7 @@ export function App(): JSX.Element {
       offExpired()
       offVigia()
       offPoProvider()
+      offTypeSafePause?.()
       offMemoristaProvider()
       offState()
       offPicked()
@@ -1205,6 +1240,7 @@ export function App(): JSX.Element {
       setBrowserMinimized(ui.browserMinimized)
       setBrowserWidth(ui.browserWidth)
       setUsageProviders(ui.usageProviders)
+      setUsageAccounts(ui.usageAccounts ?? {})
       setActiveId(
         ui.activeId && loaded.some((c) => c.id === ui.activeId) ? ui.activeId : loaded[0]?.id ?? null
       )
@@ -1432,11 +1468,11 @@ export function App(): JSX.Element {
   }, [conversations, hydrated, notify])
   useEffect(() => {
     if (hydrated) {
-      void saveUi({ collapsed, activeId, browserMinimized, browserWidth, usageProviders }).catch(() =>
+      void saveUi({ collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts }).catch(() =>
         notify('erro', 'Não foi possível salvar o estado da interface.')
       )
     }
-  }, [collapsed, activeId, browserMinimized, browserWidth, usageProviders, hydrated, notify])
+  }, [collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts, hydrated, notify])
 
   // Close/reload is a durability boundary: pause the unload, flush the latest
   // conversation + UI state, then explicitly release the pending navigation.
@@ -1820,11 +1856,18 @@ export function App(): JSX.Element {
           economyMode: conv.economyMode === true,
           loopEnabled: conv.loopEnabled === true,
           fastMode: conv.fastMode === true,
+          // Conta Claude gravada com a conversa; o main confirma ou escolhe.
+          ...(conv.claudeAccountId ? { claudeAccountId: conv.claudeAccountId } : {}),
           // autoPrompt (quando há) e, na conversa de planejamento, o plano que o
           // Agent Manager conduz.
           ...sessionStartFields(conv, auto)
         })
         if (!started.ok) throw new Error('a sessão do agente não iniciou')
+        // A conta efetiva fica gravada com a conversa: retomar usa a mesma.
+        const account = started.claudeAccountId
+        if (account && account !== conv.claudeAccountId) {
+          patchConv(conv.id, (c) => ({ ...c, claudeAccountId: account }))
+        }
         setConnected(conv.id, true)
         setPermissions((pp) => withoutKey(pp, conv.id))
         setMinimizedQuestions((m) => withoutKey(m, conv.id))
@@ -1836,7 +1879,7 @@ export function App(): JSX.Element {
       )
       return p
     },
-    [setConnected, notify]
+    [setConnected, notify, patchConv]
   )
 
   // "Conectar" from the empty/first-run state (no project selected yet). Picks a
@@ -2532,6 +2575,7 @@ export function App(): JSX.Element {
   const closeSettings = useCallback((): void => {
     setSettingsOpen(false)
     setSettingsFocus(null)
+    refreshAccounts()
     void window.api.isTypeSafeConfigured?.().then(setTypesafeReady).catch(() => undefined)
     void window.api.getConfig().then((c) => {
       setVoiceReady(!!c.openai?.apiKey?.trim())
@@ -3109,6 +3153,7 @@ export function App(): JSX.Element {
       onSend={sendMessage}
       onInterrupt={interrupt}
       onRetry={(msgId) => active && void retryMessage(active.id, msgId)}
+      onUseAccount={(accountId, continueTask) => active && void chooseAccount(active.id, accountId, continueTask)}
       composerRef={composerRef}
       projects={projects}
       projectRoot={active?.cwd ?? null}
@@ -3287,7 +3332,25 @@ export function App(): JSX.Element {
             </button>
           )}
           </div>
-          <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
+          {claudeAccountList.length > 1 ? (
+            // Várias contas Claude: uma seção por conta. Uma conta só: o painel de sempre.
+            <AccountsUsageBadge
+              accounts={claudeAccountList}
+              activeAccountId={active ? (active.claudeAccountId ?? 'default') : null}
+              canUseInConversation={!!active && !isOpenAIModel(active.model) && !isOllamaModel(active.model)}
+              gptLimits={Object.values(usageLimits).filter((l) => usageProviderOf(l.rateLimitType) === 'gpt')}
+              shownInBar={usageAccounts}
+              onShownInBarChange={setUsageAccounts}
+              onUseAccount={(accountId) => active && void chooseAccount(active.id, accountId)}
+              onRelogin={(accountId) => void reloginAccount(accountId)}
+              onManage={() => {
+                setSettingsFocus('accounts')
+                setSettingsOpen(true)
+              }}
+            />
+          ) : (
+            <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
+          )}
           {/* Acesso permanente ao Quadro (elenco fundido aqui): sem isso ele só
               existiria enquanto houvesse subagente rodando, e não daria pra rever
               nada. */}

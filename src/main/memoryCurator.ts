@@ -3,6 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { getCacheInfo } from './store'
+import { claudeObserverEnv } from './observerQuery'
 import { readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { realPathInside } from './memory/memoryPaths'
 import { createMemoryMcpServer } from './memory/memoryTools'
@@ -243,10 +244,13 @@ export async function runMemoryCuratorAgent(args: Parameters<AgentRunner>[0]): P
     // direct-write path would put the files out of sync with the database.
     throw new Error('Serviço de memória indisponível; curadoria adiada.')
   }
+  // Sem conversa de origem: a conta que a regra de conversa nova escolheria.
+  const env = await claudeObserverEnv(undefined, '')
   const options: Options = {
     cwd: args.memoriesDir,
     executable: 'node',
     maxTurns: 12,
+    ...(env ? { env } : {}),
     permissionMode: 'default',
     settingSources: [],
     // A única pasta de memória é a da pasta de dados (Configurações); a

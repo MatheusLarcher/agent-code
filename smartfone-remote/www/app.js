@@ -638,7 +638,7 @@ function renderMessages() {
       box.appendChild(el('msg system', 'sessão pronta' + (m.model ? ' · ' + m.model : '')))
     } else if (m.kind === 'error') {
       box.appendChild(el('msg error', m.text))
-    } else if (m.kind === 'status' || m.kind === 'provider-switch') {
+    } else if (m.kind === 'status' || m.kind === 'provider-switch' || m.kind === 'account-switch') {
       box.appendChild(el('msg system', m.text))
     } else if (m.kind === 'tool-use') {
       box.appendChild(renderTool(m))

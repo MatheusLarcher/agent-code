@@ -19,7 +19,7 @@ describe('conversation:suggestTitle', () => {
     expect(Channels.conversationSuggestTitle).toBe('conversation:suggestTitle')
     expect(handlers.has(Channels.conversationSuggestTitle)).toBe(true)
     await expect(call({ text: 'monta o checkout' })).resolves.toEqual({ ok: true, title: 'Checkout com Pix' })
-    expect(spy).toHaveBeenCalledWith('monta o checkout')
+    expect(spy).toHaveBeenCalledWith('monta o checkout', undefined)
   })
 
   it('payload inválido é recusado na fronteira, sem chamar o modelo', async () => {
