@@ -387,7 +387,7 @@ export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
   const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
   // Compacto (chat minimizado do planejamento): sem consumo e sem o aviso do Windows.
-  const { compact, hideWindowsBanner } = useChatDisplay()
+  const { compact, hideWindowsBanner, hideLastUsage } = useChatDisplay()
   return (
     <section className="chat-panel">
       {!compact && (
@@ -512,7 +512,7 @@ export function ChatPanel(props: Props): JSX.Element {
       <BackgroundTasksCard tasks={props.backgroundTasks ?? []} />
       <InterruptQueueWarning messages={props.queuedAfterInterrupt ?? []} />
 
-      {!compact && (
+      {!compact && !hideLastUsage && (
         <div className="last-usage-float" aria-label="Consumo da última resposta">
           <span className="last-usage-title">Última resposta</span>
           <span className="tok in" title="Tokens de entrada enviados ao modelo na última resposta">

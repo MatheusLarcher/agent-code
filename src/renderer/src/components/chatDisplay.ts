@@ -10,6 +10,9 @@
  * `hideWindowsBanner`: sem o aviso "Controle do Windows ativo" mesmo maximizado
  * — o chat de planejamento conversa sobre o plano, e o aviso só tomava espaço.
  *
+ * `hideLastUsage`: sem o quadro "Última resposta" mesmo maximizado — pelo
+ * mesmo motivo, no chat de planejamento.
+ *
  * `cardRefs`: os cards do plano aberto (só na Tela de Planejamento). Com eles,
  * '[[' no Composer sugere os cards e [[Nome]] nas mensagens aparece com a cor
  * do tipo do card. Sem eles (ou lista vazia), nada disso existe.
@@ -23,6 +26,8 @@ export interface ChatDisplay {
   compact: boolean
   /** Esconde o aviso do Controle do Windows (o chat de planejamento). */
   hideWindowsBanner?: boolean
+  /** Esconde o quadro "Última resposta" (o chat de planejamento). */
+  hideLastUsage?: boolean
   /** Pastas do plano aberto (absolutas, como o main as resolveu): a do plano,
    *  na pasta de dados do app (handoffs), e o _sandbox, no projeto (código de
    *  teste). Cada arquivo que o agente cria dentro delas ganha um link "Abrir"

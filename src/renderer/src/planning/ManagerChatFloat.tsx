@@ -125,7 +125,7 @@ export function ManagerChatFloat({ children, cards, collapseSignal, planDir }: M
   const top = useMaximizedTop(ref, !minimized)
   const cardRefs = useRefCards(cards)
   const display = useMemo<ChatDisplay>(() => {
-    const base: ChatDisplay = { compact: minimized, hideWindowsBanner: true }
+    const base: ChatDisplay = { compact: minimized, hideWindowsBanner: true, hideLastUsage: true }
     if (cardRefs) base.cardRefs = cardRefs
     if (planDir) base.planDir = planDir
     return base

@@ -121,6 +121,19 @@ describe('ChatPanel — modo compacto (ChatDisplayContext)', () => {
     expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
   })
 
+  it('chat de planejamento maximizado (hideLastUsage): sem o quadro "Última resposta"; o resto fica', () => {
+    const { container } = renderPanel(withMessages, (panel) => (
+      <ChatDisplayContext.Provider value={{ compact: false, hideWindowsBanner: true, hideLastUsage: true }}>
+        {panel}
+      </ChatDisplayContext.Provider>
+    ))
+    const seen = consumo(container)
+    expect(seen.last).toBeNull()
+    expect(screen.queryByText('Última resposta')).toBeNull()
+    expect(seen.header).toBeTruthy()
+    expect(screen.getByText('Oi')).toBeTruthy()
+  })
+
   it('contexto explícito com compact: false é o chat normal', () => {
     const { container } = renderPanel(withMessages, (panel) => (
       <ChatDisplayContext.Provider value={{ compact: false }}>{panel}</ChatDisplayContext.Provider>
@@ -135,10 +148,10 @@ describe('ChatPanel — modo compacto (ChatDisplayContext)', () => {
     ])
   })
 
-  it('no painel flutuante do planejamento: consumo só maximizado, e o aviso do Windows nunca', () => {
+  it('no painel flutuante do planejamento: consumo só maximizado, sem "Última resposta" e sem aviso do Windows', () => {
     const { container } = renderPanel(withMessages, (panel) => <ManagerChatFloat>{panel}</ManagerChatFloat>)
     expect(consumo(container).header).toBeTruthy()
-    expect(consumo(container).last).toBeTruthy()
+    expect(consumo(container).last).toBeNull()
     expect(consumo(container).windows).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Minimizar o chat do Agent Manager' }))
     expect(Object.values(consumo(container)).some(Boolean)).toBe(false)
