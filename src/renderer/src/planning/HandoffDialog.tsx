@@ -23,7 +23,13 @@ import { createPortal } from 'react-dom'
 import type { OpenedPlanningDto, PlanningFailure, PlanningHandoffDto, PlanningResult } from '@shared/ipc'
 import { IconSpinner, IconWarning } from '../components/Icons'
 import { useUI } from '../ui/UiProvider'
-import { handoffPartialMessage, managerHandoffRequest, newHandoffsSince, type HandoffSendOutcome } from './handoffFlow'
+import {
+  handoffPartialMessage,
+  latestHandoffBatch,
+  managerHandoffRequest,
+  newHandoffsSince,
+  type HandoffSendOutcome
+} from './handoffFlow'
 import { buildDraftHandoff, handoffReadiness } from './handoffReadiness'
 import { useOpenedPlan } from './planningPlanContext'
 import { isSamePlan } from './usePlanning'
@@ -97,6 +103,9 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
   const [working, setWorking] = useState<null | 'ask' | 'draft' | 'send'>(null)
   // O pedido em espera; null = não está esperando (cancelado ou já revisando).
   const waitingRef = useRef<{ requestedAt: number; before: Set<string> } | null>(null)
+  // Prompts JÁ gravados em _handoff/ (o último lote). É o que sobrevive a um
+  // reinício: o diálogo não lembra do pedido, mas o arquivo está no disco.
+  const [saved, setSaved] = useState<PlanningHandoffDto[]>([])
 
   const { blockers, warnings } = useMemo(() => handoffReadiness(plan), [plan])
   const titulo = plan.roteiro.titulo.trim() || slug
@@ -117,6 +126,25 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     notify('erro', `Não consegui listar os prompts de _handoff/: ${failureText(res)}`)
     return null
   }, [projectCwd, slug, notify])
+
+  useEffect(() => {
+    let alive = true
+    void window.api
+      .planningListHandoffs?.({ projectCwd, slug })
+      .then((res) => {
+        if (alive && res?.ok) setSaved(latestHandoffBatch(res.handoffs))
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [projectCwd, slug])
+
+  const reviewSaved = (): void => {
+    waitingRef.current = null
+    setDrafts(saved.map((h) => draftOf(h.name, h.content)))
+    setStep('prompts')
+  }
 
   const refresh = useCallback(async (): Promise<void> => {
     const waiting = waitingRef.current
@@ -284,6 +312,22 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
                     <li key={`${i.kind}:${i.ref ?? ''}`}>{i.text}</li>
                   ))}
                 </ul>
+              </section>
+            )}
+            {saved.length > 0 && (
+              <section className="pl-handoff-saved" aria-label="Prompts já gerados">
+                <h4>{saved.length > 1 ? `${saved.length} prompts já gerados` : 'Prompt já gerado'}</h4>
+                <ul className="pl-handoff-files">
+                  {saved.map((h) => (
+                    <li key={h.name}>
+                      <code>_handoff/{h.name}</code>
+                      <span>{firstLine(h.content)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <button type="button" className="btn" disabled={working !== null} onClick={reviewSaved}>
+                  {saved.length > 1 ? 'Revisar estes prompts' : 'Revisar este prompt'}
+                </button>
               </section>
             )}
             {blockers.length === 0 && warnings.length === 0 && (

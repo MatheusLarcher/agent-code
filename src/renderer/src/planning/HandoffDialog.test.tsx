@@ -133,9 +133,10 @@ describe('HandoffDialog — gerar pelo Agent Manager', () => {
     fireEvent.click(button('Pedir ao Agent Manager'))
     await screen.findByText('Esperando o Agent Manager gravar o(s) prompt(s)…')
     // O texto aparece antes de o efeito do passo 'waiting' fazer a listagem
-    // inicial (1ª chamada = foto de antes do pedido; 2ª = o efeito). Contar
-    // antes dela deixa o teste sensível à carga da máquina.
-    await waitFor(() => expect(m.api.planningListHandoffs).toHaveBeenCalledTimes(2))
+    // inicial (1ª chamada = prompts já gravados, ao abrir; 2ª = foto de antes
+    // do pedido; 3ª = o efeito). Contar antes dela deixa o teste sensível à
+    // carga da máquina.
+    await waitFor(() => expect(m.api.planningListHandoffs).toHaveBeenCalledTimes(3))
     const calls = m.api.planningListHandoffs.mock.calls.length
     await act(async () => m.emitChanged({ projectCwd: CWD, slug: 'outro' }))
     expect(m.api.planningListHandoffs.mock.calls.length).toBe(calls)
@@ -170,8 +171,10 @@ describe('HandoffDialog — gerar pelo Agent Manager', () => {
 
   it('falha ao listar _handoff/ vira toast e não pede nada', async () => {
     const m = mockPlanningApi()
-    m.api.planningListHandoffs.mockResolvedValueOnce({ ok: false, code: 'io', message: 'disco cheio' } as never)
     const { onAskManager } = renderDialog()
+    // A listagem ao abrir (prompts já gravados) passa; a do pedido falha.
+    await waitFor(() => expect(m.api.planningListHandoffs).toHaveBeenCalledTimes(1))
+    m.api.planningListHandoffs.mockResolvedValueOnce({ ok: false, code: 'io', message: 'disco cheio' } as never)
     fireEvent.click(button('Pedir ao Agent Manager'))
     expect(await screen.findByText('Não consegui listar os prompts de _handoff/: disco cheio')).toBeTruthy()
     expect(onAskManager).not.toHaveBeenCalled()
@@ -304,5 +307,32 @@ describe('HandoffDialog — rascunho automático e envio', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled())
     expect(m.api.planningWriteHandoff).toHaveBeenCalledTimes(2) // nada regravado
     expect(onSend).toHaveBeenLastCalledWith(['editado uma vez'], 'Plano de teste')
+  })
+})
+
+describe('HandoffDialog — prompts já gerados (depois de reiniciar o app)', () => {
+  it('mostra o último lote gravado em _handoff/ e deixa revisar e enviar sem pedir de novo', async () => {
+    const m = mockPlanningApi()
+    const now = Date.now()
+    m.handoffs.push(
+      { name: '2026-09-22-01.md', createdAt: now, content: '# Handoff 1 de 2\nparte um' },
+      { name: '2026-09-22-02.md', createdAt: now + 1000, content: '# Handoff 2 de 2\nparte dois' }
+    )
+    const { onAskManager, onSend } = renderDialog()
+    expect(await screen.findByText('2 prompts já gerados')).toBeTruthy()
+    fireEvent.click(button('Revisar estes prompts'))
+    expect((screen.getByLabelText('Prompt 1') as HTMLTextAreaElement).value).toContain('parte um')
+    expect((screen.getByLabelText('Prompt 2') as HTMLTextAreaElement).value).toContain('parte dois')
+    fireEvent.click(button('Enviar para implementação'))
+    await waitFor(() => expect(onSend).toHaveBeenCalled())
+    expect((onSend.mock.calls[0] as unknown[])[0]).toEqual(['# Handoff 1 de 2\nparte um', '# Handoff 2 de 2\nparte dois'])
+    expect(onAskManager).not.toHaveBeenCalled()
+  })
+
+  it('sem nada gravado, a seção não aparece', async () => {
+    const m = mockPlanningApi()
+    renderDialog()
+    await waitFor(() => expect(m.api.planningListHandoffs).toHaveBeenCalled())
+    expect(screen.queryByText(/já gerado/)).toBeNull()
   })
 })

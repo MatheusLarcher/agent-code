@@ -65,6 +65,24 @@ export function newHandoffsSince(
   return list.filter((h) => !before.has(h.name) && h.createdAt >= requestedAt - HANDOFF_CLOCK_SLACK_MS)
 }
 
+/** Arquivos gravados com até 10 min de distância um do outro são o mesmo "lote"
+ *  de prompts (o Manager grava 1 de N, 2 de N… em sequência). */
+export const HANDOFF_BATCH_GAP_MS = 10 * 60_000
+
+/**
+ * O último lote de prompts já gravado em _handoff/ — o que o usuário quer
+ * rever depois de reiniciar o app, quando o diálogo não lembra mais do pedido.
+ * O arquivo em disco é a fonte da verdade: nada novo precisa ser guardado.
+ * Na ordem dos nomes (AAAA-MM-DD-NN), que é a ordem de envio.
+ */
+export function latestHandoffBatch(list: readonly PlanningHandoffDto[]): PlanningHandoffDto[] {
+  if (list.length === 0) return []
+  const byTime = [...list].sort((a, b) => a.createdAt - b.createdAt)
+  let start = byTime.length - 1
+  while (start > 0 && byTime[start].createdAt - byTime[start - 1].createdAt <= HANDOFF_BATCH_GAP_MS) start--
+  return byTime.slice(start).sort((a, b) => a.name.localeCompare(b.name))
+}
+
 export interface HandoffLaunchDeps<C extends { id: string }> {
   /** Cria a conversa de implementação, ativa, e JÁ visível para o caminho de
    *  envio (estado e refs) — o envio logo abaixo não pode achar a conversa

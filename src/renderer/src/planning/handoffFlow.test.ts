@@ -3,6 +3,7 @@ import {
   HANDOFF_CLOCK_SLACK_MS,
   handoffOutcome,
   handoffPartialMessage,
+  latestHandoffBatch,
   launchHandoff,
   managerHandoffRequest,
   newHandoffsSince
@@ -130,5 +131,21 @@ describe('handoffOutcome e handoffPartialMessage', () => {
       /prompt 2 de 3[\s\S]*o prompt seguinte está em _handoff\//
     )
     expect(handoffPartialMessage('C', { status: 'created-failed', delivered: 0, total: 3 })).toMatch(/os 2 prompts seguintes estão/)
+  })
+})
+
+describe('latestHandoffBatch (prompts já gravados, depois de reiniciar)', () => {
+  const h = (name: string, createdAt: number) => ({ name, createdAt, content: `# ${name}` })
+  it('pega só o último lote (arquivos próximos no tempo), na ordem dos nomes', () => {
+    const t = Date.parse('2026-09-25T10:00:00Z')
+    const list = [
+      h('2026-09-24-01.md', t - 86_400_000),
+      h('2026-09-25-02.md', t + 60_000),
+      h('2026-09-25-01.md', t)
+    ]
+    expect(latestHandoffBatch(list).map((x) => x.name)).toEqual(['2026-09-25-01.md', '2026-09-25-02.md'])
+  })
+  it('lista vazia, lote vazio', () => {
+    expect(latestHandoffBatch([])).toEqual([])
   })
 })
