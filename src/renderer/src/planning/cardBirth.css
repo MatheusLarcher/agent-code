@@ -1,7 +1,7 @@
 /*
  * O nascimento de um card criado pelo Agent Manager (CardBirthFlow): o fluxo
- * na cor do tipo saindo do chat e a chegada do card. Separado do planning.css,
- * que está no limite de tamanho do repo.
+ * na cor do tipo saindo do chat e a construção do card. Separado do
+ * planning.css, que está no limite de tamanho do repo.
  */
 
 /* Por cima do canvas e do chat (8), abaixo do editor de card (10); nunca pega clique. */
@@ -18,57 +18,200 @@
   width: 100%;
   height: 100%;
   overflow: visible;
-  animation: pl-birth-fade 320ms ease-in 720ms forwards;
+  animation: pl-birth-fade 320ms ease-in 820ms forwards;
 }
 
 /* O rastro: desenha do chat até o card no mesmo tempo da faísca. */
 .pl-birth-glow,
-.pl-birth-core {
+.pl-birth-core,
+.pl-birth-comet {
   fill: none;
   stroke: var(--pl-flow);
   stroke-linecap: round;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
-  animation: pl-birth-draw 720ms cubic-bezier(0.45, 0, 0.2, 1) forwards;
+  animation: pl-birth-draw 820ms cubic-bezier(0.45, 0, 0.2, 1) forwards;
 }
-.pl-birth-glow { stroke-width: 9; opacity: 0.22; filter: blur(4px); }
-.pl-birth-core { stroke-width: 2.25; opacity: 0.95; }
+.pl-birth-glow { stroke-width: 18; opacity: 0.32; filter: blur(7px); }
+.pl-birth-core { stroke-width: 3.5; opacity: 1; filter: drop-shadow(0 0 4px var(--pl-flow)); }
+/* A cauda clara colada na faísca: um trecho curto e branco que corre na frente. */
+.pl-birth-comet {
+  stroke: color-mix(in srgb, var(--pl-flow) 35%, white);
+  stroke-width: 2;
+  stroke-dasharray: 0.12 1;
+  stroke-dashoffset: 0.12;
+  animation-name: pl-birth-comet;
+}
 
 /* A faísca que corre na frente do rastro. */
 .pl-birth-spark {
-  fill: var(--pl-flow);
-  filter: drop-shadow(0 0 6px var(--pl-flow)) drop-shadow(0 0 14px var(--pl-flow));
+  fill: color-mix(in srgb, var(--pl-flow) 40%, white);
+  filter: drop-shadow(0 0 6px var(--pl-flow)) drop-shadow(0 0 16px var(--pl-flow)) drop-shadow(0 0 28px var(--pl-flow));
 }
 
 @keyframes pl-birth-draw { to { stroke-dashoffset: 0; } }
+@keyframes pl-birth-comet { to { stroke-dashoffset: -0.88; } }
 @keyframes pl-birth-fade { to { opacity: 0; } }
 
-/* A chegada: o card surge do ponto onde a faísca bateu, com um halo da cor do tipo. */
+/* ---- a construção: onda, contorno e cursor por cima do card ---- */
+.pl-build { position: absolute; }
+.pl-build-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  border: 2px solid var(--pl-flow);
+  opacity: 0;
+  animation: pl-build-ring 620ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+@keyframes pl-build-ring {
+  0% { opacity: 0.9; transform: scale(0.35); box-shadow: 0 0 24px var(--pl-flow); }
+  100% { opacity: 0; transform: scale(1.18); box-shadow: 0 0 0 transparent; }
+}
+.pl-build-trace {
+  position: absolute;
+  left: -4px;
+  top: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  overflow: visible;
+  animation: pl-birth-fade 360ms ease-in 1000ms forwards;
+}
+.pl-build-trace rect {
+  fill: none;
+  stroke: var(--pl-flow);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 5px var(--pl-flow));
+  stroke-dasharray: var(--pl-per);
+  stroke-dashoffset: var(--pl-per);
+  animation: pl-build-trace 680ms cubic-bezier(0.45, 0, 0.2, 1) 80ms forwards;
+}
+@keyframes pl-build-trace { to { stroke-dashoffset: 0; } }
+/* O cursor: sai de onde a faísca bateu (centro) e percorre o card enquanto ele se monta. */
+.pl-build-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+  animation: pl-build-cursor 1300ms cubic-bezier(0.45, 0, 0.2, 1) forwards;
+}
+.pl-build-cursor path {
+  fill: var(--pl-flow);
+  stroke: color-mix(in srgb, var(--pl-flow) 30%, black);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+@keyframes pl-build-cursor {
+  0% { opacity: 0; left: 50%; top: 50%; }
+  12% { opacity: 1; left: 50%; top: 50%; }
+  30% { left: 8px; top: 8px; }
+  48% { left: 14px; top: 34px; }
+  64% { left: 60%; top: 62%; }
+  80% { opacity: 1; left: 78%; top: 82%; }
+  100% { opacity: 0; left: 84%; top: 90%; }
+}
+
+/* ---- o card: surge como esqueleto e cada parte se desenha e vira conteúdo ---- */
 .pl-card[data-born='arrive'] {
-  animation: pl-card-born 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: pl-card-born 1400ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 @keyframes pl-card-born {
   0% {
     opacity: 0;
-    transform: scale(0.82);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--pl-tipo) 70%, transparent);
+    transform: scale(0.94);
+    border-color: var(--pl-tipo);
+    box-shadow: inset 3px 0 0 var(--pl-tipo), 0 0 0 0 color-mix(in srgb, var(--pl-tipo) 70%, transparent);
   }
-  40% {
+  18% {
     opacity: 1;
-    transform: scale(1.03);
+    transform: scale(1.02);
+    border-color: var(--pl-tipo);
     box-shadow:
-      0 0 0 5px color-mix(in srgb, var(--pl-tipo) 32%, transparent),
-      0 0 30px color-mix(in srgb, var(--pl-tipo) 55%, transparent);
+      inset 3px 0 0 var(--pl-tipo),
+      0 0 0 4px color-mix(in srgb, var(--pl-tipo) 28%, transparent),
+      0 0 34px color-mix(in srgb, var(--pl-tipo) 50%, transparent);
+  }
+  60% {
+    transform: scale(1);
+    border-color: color-mix(in srgb, var(--pl-tipo) 60%, var(--line));
+    box-shadow: inset 3px 0 0 var(--pl-tipo), 0 0 18px color-mix(in srgb, var(--pl-tipo) 22%, transparent);
   }
   100% {
     opacity: 1;
     transform: scale(1);
-    box-shadow: 0 0 0 0 transparent;
+    box-shadow: inset 3px 0 0 var(--pl-tipo);
   }
+}
+/* O brilho que varre o card enquanto ele se monta (o "gerando" do Stitch). */
+.pl-card[data-born='arrive']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    color-mix(in srgb, var(--pl-tipo) 22%, transparent) 46%,
+    color-mix(in srgb, white 14%, transparent) 50%,
+    color-mix(in srgb, var(--pl-tipo) 22%, transparent) 54%,
+    transparent 70%
+  ) 0 0 / 250% 100% no-repeat;
+  animation: pl-build-sweep 1150ms ease-in-out 120ms both;
+}
+@keyframes pl-build-sweep {
+  0% { background-position: 130% 0; opacity: 1; }
+  85% { opacity: 1; }
+  100% { background-position: -40% 0; opacity: 0; }
+}
+/* Cada parte: uma barra de esqueleto se desenha da esquerda para a direita e o texto a substitui. */
+.pl-card[data-born='arrive'] :is(.pl-card-top, .pl-card-title, .pl-card-media, .pl-card-body p) {
+  border-radius: 4px;
+  animation: pl-build-part 460ms cubic-bezier(0.3, 0.7, 0.2, 1) both;
+}
+.pl-card[data-born='arrive'] .pl-card-top { animation-delay: 180ms; }
+.pl-card[data-born='arrive'] .pl-card-title { animation-delay: 340ms; }
+.pl-card[data-born='arrive'] .pl-card-media { animation-delay: 500ms; }
+.pl-card[data-born='arrive'] .pl-card-body p:nth-child(1) { animation-delay: 600ms; }
+.pl-card[data-born='arrive'] .pl-card-body p:nth-child(2) { animation-delay: 720ms; }
+.pl-card[data-born='arrive'] .pl-card-body p:nth-child(3) { animation-delay: 840ms; }
+@keyframes pl-build-part {
+  0% {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+    color: transparent;
+    background-color: color-mix(in srgb, var(--pl-tipo) 26%, var(--bg-3, var(--bg-2)));
+  }
+  45% {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+    color: transparent;
+    background-color: color-mix(in srgb, var(--pl-tipo) 20%, var(--bg-3, var(--bg-2)));
+  }
+  100% {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+    background-color: transparent;
+  }
+}
+/* Ícone e anexos não somem só com `color`: ficam por baixo da barra até ela sair. */
+.pl-card[data-born='arrive'] :is(.pl-card-top svg, .pl-card-media > *) {
+  animation: pl-build-reveal 460ms ease both;
+}
+.pl-card[data-born='arrive'] .pl-card-top svg { animation-delay: 180ms; }
+.pl-card[data-born='arrive'] .pl-card-media > * { animation-delay: 500ms; }
+@keyframes pl-build-reveal {
+  0%, 45% { opacity: 0; }
+  100% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pl-card[data-born='arrive'] { animation-name: pl-card-born-calm; }
+  .pl-card[data-born='arrive'] { animation-name: pl-card-born-calm; animation-duration: 300ms; }
+  .pl-card[data-born='arrive']::after,
+  .pl-card[data-born='arrive'] :is(.pl-card-top, .pl-card-title, .pl-card-media, .pl-card-body p, .pl-card-top svg, .pl-card-media > *) {
+    animation: none;
+  }
   @keyframes pl-card-born-calm {
     from { opacity: 0; }
     to { opacity: 1; }

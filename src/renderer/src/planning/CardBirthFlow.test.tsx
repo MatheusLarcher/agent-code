@@ -94,10 +94,20 @@ describe('CardBirthFlow', () => {
     act(() => void vi.advanceTimersByTime(FLOW_MS))
     expect(card.dataset.born).toBe('arrive')
     expect(container.querySelector('style')).toBeNull()
+    // A construção: onda, contorno e cursor em cima do card, na cor do tipo.
+    const build = container.querySelector<HTMLElement>('.pl-build')!
+    expect(build).toBeTruthy()
+    expect(build.style.left).toBe('400px')
+    expect(build.style.top).toBe('100px')
+    expect(build.style.width).toBe('248px')
+    expect(build.style.getPropertyValue('--pl-flow')).toContain('--pl-decisao')
+    expect(build.querySelector('.pl-build-trace rect')).toBeTruthy()
+    expect(build.querySelector('.pl-build-cursor')).toBeTruthy()
 
     act(() => void vi.advanceTimersByTime(ARRIVE_MS))
     expect(card.dataset.born).toBeUndefined()
     expect(container.querySelector('svg.pl-birth-stream')).toBeNull()
+    expect(container.querySelector('.pl-build')).toBeNull()
   })
 
   it('sem chat na tela, o card chega sem fluxo; vários cards saem em cascata', () => {
@@ -124,6 +134,9 @@ describe('CardBirthFlow', () => {
     expect(css).toMatch(/\.pl-birth-layer \{[^}]*z-index: 9;/)
     expect(css).toMatch(/\.pl-card\[data-born='arrive'\] \{[^}]*animation: pl-card-born/)
     expect(css).toMatch(/var\(--pl-tipo\)/)
+    // As partes do card se constroem uma a uma (esqueleto → conteúdo).
+    expect(css).toMatch(/animation: pl-build-part/)
+    expect(css).toMatch(/\.pl-card-body p:nth-child\(3\) \{ animation-delay/)
     expect(css).toMatch(/prefers-reduced-motion: reduce/)
   })
 })
