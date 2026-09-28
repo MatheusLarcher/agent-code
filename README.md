@@ -16,6 +16,31 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/MatheusLarcher/agent-code/releases/latest/download/AgentCode-setup.exe">
+    <img alt="Baixar o Agent Code para Windows" src="https://img.shields.io/badge/⬇%20Baixar%20para%20Windows-instalador%20grátis-2EA043?style=for-the-badge">
+  </a>
+</p>
+
+## Nunca programou? Este app é para você.
+
+Imagine ter um assistente no computador que **não só responde, mas faz o trabalho**. Você escreve o que precisa, do jeito que falaria com uma pessoa, e ele coloca a mão na massa:
+
+- 🌐 *"Cria um site para a minha loja de bolos, com cardápio e botão de WhatsApp."*
+- 📊 *"Organiza essa planilha de vendas e me diz qual mês vendeu mais."*
+- 📄 *"Transforma essas anotações num PDF bonito para eu mandar para o cliente."*
+- 📱 *"Faz um aplicativo simples de lista de compras para o meu celular."*
+
+Você **vê cada passo acontecendo** na tela, sem precisar entender nada de código. Quando fica pronto, aparece um botão **Baixar** com o arquivo. Dá até para falar em vez de digitar, e acompanhar tudo pelo celular.
+
+**Como começar, em 3 passos:**
+
+1. Clique no botão verde **Baixar para Windows** acima.
+2. Abra o arquivo baixado (`AgentCode-setup.exe`) e siga a instalação.
+3. Entre com a sua conta [Claude](https://claude.ai) quando o app pedir. Pronto: é só escrever o que você quer.
+
+> O Windows pode mostrar o aviso *"O Windows protegeu o computador"*, porque o instalador ainda não tem assinatura digital. Clique em **Mais informações → Executar assim mesmo**.
+
+<p align="center">
   <img src="docs/media/hero.gif" width="900" alt="O agente cria a seção de cardápio de um site de cafeteria, abre no navegador embutido e testa o botão Adicionar">
 </p>
 
@@ -36,10 +61,10 @@ A tela mais bonita do app. Clique em **Novo planejamento**, conte a ideia e o **
 Enquanto houver ambiguidade aberta, nada segue adiante. Quando o plano fechar, **Enviar para implementação** abre uma conversa nova que executa o roteiro etapa por etapa. E o plano fica salvo dentro do seu projeto, em `docs/spec/`, pronto para ir junto no git.
 
 <p align="center">
-  <img src="docs/media/planejamento.gif" width="900" alt="O Agent Manager monta 4 etapas e 14 cards de requisito, decisão, sugestão, ambiguidade e nota ao vivo no canvas">
+  <img src="docs/media/planejamento.gif" width="900" alt="O Agent Manager monta 3 etapas e 12 cards ao vivo: cada card sai do chat num fluxo de luz e se constrói no canvas">
 </p>
 
-<p align="center"><sub>Um pedido, quatro etapas, catorze cards nascendo ao vivo — e um deles aberto no editor no final.</sub></p>
+<p align="center"><sub>Gravação real: um pedido, três etapas e doze cards. Cada card sai do chat num fluxo de luz e se constrói na tela, parte por parte.</sub></p>
 
 ## <img src="docs/media/icons/map.svg" width="22" height="22" align="top" alt=""> Veja onde o agente está mexendo
 
@@ -92,21 +117,18 @@ O **Quadro** mostra o trabalho em **A fazer · Fazendo · Concluído** (ou em li
 
 ## <img src="docs/media/icons/rocket.svg" width="22" height="22" align="top" alt=""> Comece em 1 minuto
 
-1. **Clone** este repositório ou baixe o ZIP (botão **Code → Download ZIP**).
-2. Dê **duplo clique no `start.bat`**. Na primeira vez ele instala tudo sozinho e abre o app.
-3. **Entre com a sua conta Claude** quando o app pedir. Pronto.
+**Jeito fácil (recomendado):** [baixe o instalador](https://github.com/MatheusLarcher/agent-code/releases/latest/download/AgentCode-setup.exe), abra e entre com a sua conta Claude. Todas as versões ficam em [Releases](https://github.com/MatheusLarcher/agent-code/releases).
 
-**O que você precisa**
-
-- Windows 10 ou 11 (64 bits)
-- [.NET SDK 8 ou mais novo](https://dotnet.microsoft.com/download) — o `start.bat` compila um componente do app e não abre sem ele
-- Uma conta [Claude](https://claude.ai)
-- Node.js não é obrigatório: se faltar, o `start.bat` baixa uma cópia portátil
+Você só precisa de Windows 10 ou 11 (64 bits) e uma conta [Claude](https://claude.ai).
 
 <details>
-<summary>Prefere um instalador?</summary>
+<summary>Prefere rodar pelo código-fonte?</summary>
 
-Gere o seu com `npm run package:win` — o resultado sai em `dist/`.
+1. **Clone** este repositório ou baixe o ZIP (botão **Code → Download ZIP**).
+2. Dê **duplo clique no `start.bat`**. Na primeira vez ele instala tudo sozinho e abre o app.
+3. **Entre com a sua conta Claude** quando o app pedir.
+
+Além do Windows e da conta Claude, precisa do [.NET SDK 8 ou mais novo](https://dotnet.microsoft.com/download) (o `start.bat` compila um componente do app). Node.js não é obrigatório: se faltar, o `start.bat` baixa uma cópia portátil. Para gerar o seu próprio instalador: `npm run package:win` (sai em `dist/`).
 
 </details>
 
