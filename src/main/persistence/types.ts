@@ -769,6 +769,10 @@ export interface PersistenceRepository
 
   readExportSnapshot(): Promise<ExportSnapshot>
   createSessionStore(conversationId: string): SessionStore
+  /** Store para o REPARO do espelho (replay do transcript local) que não duplica
+   *  entradas sem uuid. Ausente: quem repara embrulha `createSessionStore` com
+   *  `replayDedupStore` (replayDedup.ts). */
+  createSessionReplayStore?(conversationId: string): SessionStore
   sessionResumeReady(conversationId: string, sessionId: string): Promise<boolean>
   markSessionResumeReady(conversationId: string, sessionId: string, ready: boolean, verifiedHash?: string): Promise<void>
 

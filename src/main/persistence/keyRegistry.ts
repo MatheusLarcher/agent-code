@@ -31,6 +31,9 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.board.po.model': { scope: 'device', source: 'main-kv' },
   'config.planning.model': { scope: 'device', source: 'main-kv' },
   'config.planning.effort': { scope: 'device', source: 'main-kv' },
+  // Marcador one-shot: o esforço do Manager já está no formato em que o
+  // Automático do esforço é independente do do modelo (ver src/main/config.ts).
+  'config.planning.effortSplit': { scope: 'device', source: 'main-kv' },
   'config.typesafe.enabled': { scope: 'device', source: 'main-kv' },
   'config.typesafe.apiKey': { scope: 'device', sensitive: true, source: 'main-kv' },
   'config.typesafe.minConfidence': { scope: 'device', source: 'main-kv' },
@@ -40,6 +43,10 @@ export const PERSISTED_KEY_REGISTRY = {
   // Contas Claude: id, apelido, e-mail, plano e última leitura de consumo. Sem
   // token — a credencial fica na pasta local de cada conta.
   'agentcode.claude-accounts.v1': { scope: 'device', source: 'main-kv' },
+  // Cópia da credencial de cada conta extra, CIFRADA pelo safeStorage do sistema
+  // (DPAPI no Windows), para recriar a pasta da conta se ela sumir. Ver
+  // accounts/accountBackup.ts. Nunca em texto puro.
+  'agentcode.claude-account-credentials.v1': { scope: 'device', sensitive: true, source: 'main-kv' },
   // Cópia do cofre (chave + segredos cifrados) no banco. Redundância proposital:
   // migrar só o banco tem de reabrir tudo. Ver vaultMirror.ts.
   'agentcode.secret-vault-mirror.v1': { scope: 'device', sensitive: true, source: 'main-kv' },

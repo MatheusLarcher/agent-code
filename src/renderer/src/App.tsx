@@ -18,21 +18,21 @@ import type {
   TabKind
 } from '@shared/ipc'
 import {
-  AUTO_MODEL_OPTION,
+  AUTO_EFFORT,
+  AUTO_MODEL,
   CLAUDE_MODELS,
   contextLimitFor,
+  isAutoEffort,
   isAutoModel,
   isOllamaModel,
   isOpenAIModel,
   modelSupportsFastMode,
-  OLLAMA_MODELS,
-  OPENAI_MODELS,
   MODEL_EFFORT,
   DEFAULT_EFFORT,
   PLANNING_MODELS,
   usageProviderOf
 } from '@shared/ipc'
-import type { AutoPrompt, AutoPromptTurn, EffortLevel, ProjectTree } from '@shared/ipc'
+import type { AutoPrompt, AutoPromptTurn, EffortChoice, ProjectTree } from '@shared/ipc'
 import { fileTouches, turnsOf } from './projectActivity'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
@@ -47,6 +47,7 @@ import {
   withUserTitle
 } from './conversationTitle'
 import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
+import { queueHeadToDrain, requeueDeferredSend, withoutBubble } from './mirrorRepairQueue'
 import { closeRunningTracks, isSubagentEvent, reduceTracks, type TrackMap } from './agentTracks'
 import {
   loadConversations,
@@ -88,6 +89,9 @@ import { IconPower, IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { typeSafePauseText } from './ui/typeSafePauseText'
 import { useOutboxPersistence } from './useOutboxPersistence'
+import { readableMediaText } from '@shared/inlineMedia'
+import { userBubbleAttachments } from './inlineMedia/inlineAttachments'
+import { applyDraft, discardDraftCopies, draftCopyPaths, type DraftMedia } from './inlineMedia/draftMedia'
 import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
 import { splitForSpeech, toSpeechText } from '@shared/speechText'
@@ -100,9 +104,15 @@ import { PlanningWorkspace } from './planning/PlanningWorkspace'
 import { usePlanningModel } from './planning/usePlanningModel'
 import { NewPlanningDialog } from './planning/NewPlanningDialog'
 import { HandoffButton } from './planning/HandoffDialog'
-import { handoffOutcome, launchHandoff, type HandoffSendOutcome } from './planning/handoffFlow'
+import { reportMcpDropped, reportMcpFailed, useMcpInbound } from './useMcpInbound'
+import { isMcpTaskGone, isNoLiveSession, MCP_TASK_GONE_WARNING } from '@shared/mcpInbound'
+import { selectableModels } from '@shared/selectableModels'
+import { effortLevelsFor, remoteEffortCatalog, runningEffort, withAutoModelOption } from './effortOptions'
+import { effortForModelChange, isEffortLevel } from '@shared/autoEffort'
+import { handoffOutcome, launchHandoff, managerQuestionnaireRequest, type HandoffSendOutcome } from './planning/handoffFlow'
 import {
   handoffConversationFields,
+  handoffPlanOf,
   isPlanningConversation,
   planningConversationFields,
   revalidatesAuto,
@@ -141,21 +151,6 @@ function modelsFor(
   return [...list, { id: current, label: LEGACY_MODEL_LABELS[current] ?? current }]
 }
 
-const EFFORT_LABELS: Record<string, string> = {
-  low: 'Baixo',
-  medium: 'Médio',
-  high: 'Alto',
-  xhigh: 'Muito alto',
-  max: 'Máximo'
-}
-
-/** Effort levels available for a given model id (empty = no effort support, hide the selector). */
-function effortLevelsFor(modelId: string | undefined): { value: string; label: string }[] {
-  if (!modelId) return []
-  const levels = MODEL_EFFORT[modelId]
-  if (!levels || levels.length === 0) return []
-  return levels.map((v) => ({ value: v, label: EFFORT_LABELS[v] || v }))
-}
 
 /** Quantas falas anteriores acompanham a escolha automática de modelo. A decisão
  *  é sobre a mensagem NOVA; o histórico só existe para ela não ser lida no vácuo
@@ -258,6 +253,8 @@ interface QueuedMessage {
   files: FileAttachment[]
   /** Attachments resolved from a pasted local path or URL (path only, no bytes). */
   fileRefs: FileRefAttachment[]
+  /** Tarefa do MCP de entrada que este item leva (ver useMcpInbound). */
+  mcpTaskId?: string
 }
 
 /** Valida um item da fila vindo do banco (o formato do QueuedMessage, sem id/convId). */
@@ -500,6 +497,9 @@ export function App(): JSX.Element {
   const [hydrated, setHydrated] = useState(false)
   const [storageStatus, setStorageStatus] = useState<StorageStatusDto | null>(null)
   const [storageLoadError, setStorageLoadError] = useState<string | null>(null)
+  // A primeira leitura falhou (banco fora na abertura). Se o main reconectar
+  // sozinho depois, só recarregar a janela refaz essa leitura.
+  const hydrationFailedRef = useRef(false)
   // Whether the ACTIVE conversation's project folder is gone. When true the
   // composer is blocked (can't type) — we check on switch and on window focus.
   const [projectMissing, setProjectMissing] = useState(false)
@@ -599,15 +599,11 @@ export function App(): JSX.Element {
   const [ollamaReady, setOllamaReady] = useState(false)
   // Whether a Codex (ChatGPT subscription) login exists — adds GPT models to the selector.
   const [codexReady, setCodexReady] = useState(false)
-  // Models offered in the selector: "Automático" and Claude always, Ollama Cloud
-  // / GPT when configured. Automático comes first because it is the one entry
-  // that isn't a model — it's the decision to not pick one.
-  const models = useMemo(() => {
-    let list: { id: string; label: string }[] = [AUTO_MODEL_OPTION, ...MODELS]
-    if (ollamaReady) list = [...list, ...OLLAMA_MODELS]
-    if (codexReady) list = [...list, ...OPENAI_MODELS]
-    return list
-  }, [ollamaReady, codexReady])
+  // Models offered in the selector: Claude always, Ollama Cloud / GPT when
+  // configured. "Automático" is added where the list is used, by
+  // `withAutoModelOption` — only with TypeSafe ready or when it's the saved value.
+  // A regra mora em @shared/selectableModels: o MCP de entrada aceita a mesma lista.
+  const models = useMemo(() => selectableModels({ ollama: ollamaReady, codex: codexReady }), [ollamaReady, codexReady])
   // Read-aloud speed (config), applied as the audio playbackRate (deterministic).
   const voiceSpeedRef = useRef(1)
   // Read-aloud (TTS): id of the message currently playing, and the <audio> in use.
@@ -628,7 +624,7 @@ export function App(): JSX.Element {
     launched: false,
     tabs: []
   })
-  const composerRef = useRef<HTMLTextAreaElement>(null)
+  const composerRef = useRef<HTMLElement>(null)
 
   // Refs so async handlers / the once-registered event listener see current values.
   const convsRef = useRef(conversations)
@@ -675,6 +671,8 @@ export function App(): JSX.Element {
         images: ImageAttachment[]
         files: FileAttachment[]
         fileRefs: FileRefAttachment[]
+        /** Tarefa do MCP de entrada que esta mensagem leva (o reenvio a continua). */
+        mcpTaskId?: string
         /** The model already produced visible text for this turn. */
         responseReceived?: true
       }
@@ -685,7 +683,15 @@ export function App(): JSX.Element {
   const failedRef = useRef<
     Record<
       string,
-      { convId: string; full: string; images: ImageAttachment[]; files: FileAttachment[]; fileRefs: FileRefAttachment[] }
+      {
+        convId: string
+        full: string
+        images: ImageAttachment[]
+        files: FileAttachment[]
+        fileRefs: FileRefAttachment[]
+        /** Era de uma tarefa MCP: o "Tentar de novo" continua ELA (modelo e pin dela). */
+        mcpTaskId?: string
+      }
     >
   >({})
   // Conversations the user just interrupted/stopped — their next `result` is an
@@ -716,6 +722,12 @@ export function App(): JSX.Element {
     chooseAccount,
     relogin: reloginAccount
   } = useAccountActions({ notify, patchConv, refresh: refreshAccounts })
+  // A janela abre antes do banco: a leitura do mount só vê a conta padrão (o
+  // registry não lê a lista com a persistência offline). Relê quando ela sobe.
+  const storageWritable = storageStatus?.writable === true
+  useEffect(() => {
+    if (storageWritable) refreshAccounts()
+  }, [storageWritable, refreshAccounts])
 
   // Título automático (conversationTitle.ts). `pendingTitlesRef`: conversas com
   // o nome do LLM a caminho — renomear ou apagar tira daqui, e a resposta
@@ -808,6 +820,29 @@ export function App(): JSX.Element {
         })
         return
       }
+      // Reparo do espelho do transcript: estado, não bolha (mirrorRepairQueue.ts).
+      if (e.kind === 'mirror-repair') {
+        if (e.state === 'deferred') {
+          const conv = convsRef.current.find((c) => c.id === cid)
+          const plan = requeueDeferredSend(cid, e.messageUuid, inflightRef.current[cid], conv?.messages ?? [], uid('q'))
+          if (!plan) return
+          delete inflightRef.current[cid]
+          patchConv(cid, (c) => ({ ...c, messages: withoutBubble(c.messages, plan.bubbleId) }))
+          queueRef.current = [plan.item, ...queueRef.current]
+          setQueue((q) => [plan.item, ...q])
+          setBusy(cid, false)
+          setBusySince((m) => withoutKey(m, cid))
+          return
+        }
+        const conv = convsRef.current.find((c) => c.id === cid)
+        const blocked = busyRef.current.has(cid) || !!(conv?.recovery && conv.recovery.scheduledAt !== 0)
+        const head = queueHeadToDrain(queueRef.current, cid, blocked)
+        if (!conv || !head) return
+        queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
+        setQueue((q) => q.filter((m) => m.id !== head.id))
+        void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId)
+        return
+      }
       // Agents panel: `Task` calls open a track, subagent calls feed it, and the
       // Task's own result closes it. Kept apart from the message reducer below —
       // the chat feed must not change because of this.
@@ -839,6 +874,13 @@ export function App(): JSX.Element {
             ...(isAutoModel(c.model)
               ? { autoModel: e.model || c.autoModel }
               : { model: e.model || c.model }),
+            // Mesmo cuidado com o esforço: em Automático o nível com que a
+            // sessão subiu vai para `autoEffort`, e `effort` segue `auto`. Na
+            // conversa do Manager o `effort` é só placeholder (a escolha é a
+            // config dele), então o nível em uso também vai para `autoEffort`.
+            ...((isAutoEffort(c.effort) || isPlanningConversation(c)) && isEffortLevel(e.effort)
+              ? { autoEffort: e.effort }
+              : {}),
             // Only keep one "session ready" note even across resumes.
             messages: c.messages.some((m) => m.kind === 'system')
               ? c.messages
@@ -856,12 +898,20 @@ export function App(): JSX.Element {
           }
         } else if (e.kind === 'provider-switch') {
           // Mesmo cuidado: em Automático este evento é o ANÚNCIO da escolha do
-          // turno, não uma troca de configuração da conversa.
+          // turno (`fromModel` = sentinel), não uma troca de configuração da
+          // conversa — com o modelo fixo e o esforço em Automático ele não pode
+          // gravar o esforço concreto por cima do `auto`. Numa troca de
+          // provedor de verdade, o esforço em Automático também continua `auto`.
           next = {
             ...c,
             ...(isAutoModel(c.model)
               ? { autoModel: e.model }
-              : { model: e.model, effort: e.effort, fastMode: e.fastMode }),
+              : e.fromModel === AUTO_MODEL
+                ? {}
+                : { model: e.model, effort: isAutoEffort(c.effort) ? c.effort : e.effort, fastMode: e.fastMode }),
+            // O esforço que o decisor escolheu (ou o que a troca levou), para o
+            // "Auto · Alto" do seletor — sem tocar no `effort: 'auto'` gravado.
+            ...(isAutoEffort(c.effort) && isEffortLevel(e.effort) ? { autoEffort: e.effort } : {}),
             messages: reduceMessages(c.messages, e),
             updatedAt: Date.now()
           }
@@ -998,11 +1048,35 @@ export function App(): JSX.Element {
               full: inflight.full,
               images: inflight.images,
               files: inflight.files,
-              fileRefs: inflight.fileRefs
+              fileRefs: inflight.fileRefs,
+              ...(inflight.mcpTaskId ? { mcpTaskId: inflight.mcpTaskId } : {})
             }
             markMessageError(cid, inflight.msgId, e.text || 'A resposta falhou. Tente de novo.')
           }
           delete inflightRef.current[cid]
+          if (inflight?.mcpTaskId) {
+            // Regra 2: o app não repete sozinho um turno de tarefa MCP — nem erro
+            // transitório, nem 529, nem limite de uso. A tarefa já terminou em erro
+            // para o chamador (main), que decide reenviar; a conversa fica parada.
+            patchConv(cid, (c) => (c.recovery ? { ...c, recovery: undefined } : c))
+            setBusy(cid, false)
+            setBusySince((m) => withoutKey(m, cid))
+            notify('erro', `Tarefa do Forgia terminou em erro (o Forgia pode reenviar): ${e.text || 'erro sem mensagem'}`)
+            if (e.kind === 'error') setConnected(cid, false)
+            // O turno que falhou não volta, mas a fila da conversa segue: a
+            // próxima tarefa (ou mensagem) já enfileirada sai agora — sem isto
+            // ela ficava `na_fila` até alguém mandar outra coisa. O dispatch
+            // reconecta se a sessão caiu (`setConnected` acima).
+            const head = queueRef.current.find((m) => m.convId === cid)
+            const conv = convsRef.current.find((c) => c.id === cid)
+            if (head && conv) {
+              queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
+              setQueue((q) => q.filter((m) => m.id !== head.id))
+              const idle = { ...conv, recovery: undefined }
+              void dispatchRef.current?.(idle, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId)
+            }
+            return
+          }
           // Only this conversation's subscription windows can say when its
           // limit resets — a GPT window must not schedule a Claude retry.
           const failedModel = convsRef.current.find((c) => c.id === cid)?.model
@@ -1059,24 +1133,20 @@ export function App(): JSX.Element {
           const nextMsgId = uid('u')
           const beforeTitle = convsRef.current.find((c) => c.id === cid)
           patchConv(cid, (c) => ({
-            ...withFallbackTitle(c, next.text),
+            ...withFallbackTitle(c, readableMediaText(next.text)),
             messages: [
               ...c.messages,
               {
                 kind: 'user',
                 id: nextMsgId,
                 text: next.text,
-                images: next.thumbs.length ? next.thumbs : undefined,
-                files:
-                  next.files.length || next.fileRefs.length
-                    ? [...next.files, ...next.fileRefs].map((f) => ({ name: f.name, size: f.size }))
-                    : undefined,
+                ...userBubbleAttachments(next.thumbs, next.images, next.files, next.fileRefs),
                 ts: Date.now()
               }
             ],
             updatedAt: Date.now()
           }))
-          if (beforeTitle) autoTitle(beforeTitle, next.text)
+          if (beforeTitle) autoTitle(beforeTitle, readableMediaText(next.text))
           const sdkUuid = crypto.randomUUID()
           inflightRef.current[cid] = {
             msgId: nextMsgId,
@@ -1084,9 +1154,10 @@ export function App(): JSX.Element {
             full: next.full,
             images: next.images,
             files: next.files,
-            fileRefs: next.fileRefs
+            fileRefs: next.fileRefs,
+            ...(next.mcpTaskId ? { mcpTaskId: next.mcpTaskId } : {})
           }
-          void (async () => {
+          const sendQueued = async (): Promise<void> => {
             if (sessionConfigPending) {
               // Dispose the stale-config session and reconnect (same resume id, so
               // history carries over) before this queued message goes out.
@@ -1115,8 +1186,48 @@ export function App(): JSX.Element {
             if (auto && revalidatesAuto(auto)) {
               await connectRef.current?.(auto, autoPromptFor(auto, next.text))
             }
-            await window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid)
-          })()
+            // O id da tarefa MCP do item vai junto: é por ele (nunca pelo texto) que o
+            // main sabe qual tarefa sai, com o modelo e o pin dela.
+            await window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid, undefined, next.mcpTaskId)
+          }
+          void sendQueued().catch((err: unknown) => {
+            // O envio da fila falhou (ex.: a troca de modelo de uma tarefa MCP): a
+            // mensagem fica com o erro e o "Tentar de novo", a tarefa MCP dela
+            // vira erro, a conversa sai de ocupada e a fila segue — sem isto a
+            // conversa ficava "ocupada" para sempre e a fila parava.
+            const why = `Falha ao enviar: ${String(err)}`
+            if (inflightRef.current[cid]?.msgId === nextMsgId) delete inflightRef.current[cid]
+            if (isMcpTaskGone(err)) {
+              // Regra 1: tarefa MCP que não está mais viva — o main recusou. O item
+              // sai (a bolha some) com aviso; nunca vira mensagem do usuário.
+              patchConv(cid, (c) => ({ ...c, messages: withoutBubble(c.messages, nextMsgId) }))
+              notify('aviso', MCP_TASK_GONE_WARNING)
+            } else {
+              // O main não achou sessão viva: o "Tentar de novo" reconecta antes.
+              if (isNoLiveSession(err)) setConnected(cid, false)
+              failedRef.current[nextMsgId] = {
+                convId: cid,
+                full: next.full,
+                images: next.images,
+                files: next.files,
+                fileRefs: next.fileRefs,
+                ...(next.mcpTaskId ? { mcpTaskId: next.mcpTaskId } : {})
+              }
+              markMessageError(cid, nextMsgId, why)
+              notify('erro', why)
+              reportMcpFailed(next, why)
+            }
+            setBusy(cid, false)
+            setBusySince((m) => withoutKey(m, cid))
+            // `queueRef` ainda pode ter o próprio `next` (a fila acima só saiu do state).
+            const after = queueRef.current.find((m) => m.convId === cid && m.id !== next.id)
+            const conv = convsRef.current.find((c) => c.id === cid)
+            if (after && conv) {
+              queueRef.current = queueRef.current.filter((m) => m.id !== after.id && m.id !== next.id)
+              setQueue((q) => q.filter((m) => m.id !== after.id))
+              void dispatchRef.current?.(conv, after.full, after.text, after.images, after.thumbs, after.files, after.fileRefs, true, after.mcpTaskId)
+            }
+          })
           setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
         } else if (sessionConfigPending) {
           // No more queued messages: drop the session now so the next message the
@@ -1288,6 +1399,7 @@ export function App(): JSX.Element {
       setHydrated(true)
       } catch (error) {
         if (cancelled) return
+        hydrationFailedRef.current = true
         setStorageLoadError(ipcErrorMessage(error, 'Não foi possível carregar a persistência.'))
         void window.api.getStorageStatus().then(setStorageStatus).catch(() => undefined)
       }
@@ -1328,9 +1440,33 @@ export function App(): JSX.Element {
     }
   }, [hydrated, pendingProjects])
 
+  // A rede voltou: com o PostgreSQL offline por falha repetível, tenta já em vez
+  // de esperar o próximo degrau da reconexão automática (que chega a 1 hora). O
+  // evento vem do Chromium — o processo main do Electron não tem um equivalente.
+  const storageReconnectable = storageStatus?.state === 'postgres-offline' && storageStatus.error?.retryable !== false
+  useEffect(() => {
+    if (!storageReconnectable) return
+    const onOnline = (): void => {
+      void window.api.retryStorage().catch(() => undefined)
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [storageReconnectable])
+
+  // Último "dá para gravar?" já resolvido (fora de `booting`); `null` = nenhum ainda.
+  const storageWritableRef = useRef<boolean | null>(null)
+  // Um reload por recuperação: o "Tentar novamente" (ao resolver) e o aviso de
+  // status writable chegam os dois e cada um pedia o seu. Rearma na próxima queda.
+  const storageReloadRequestedRef = useRef(false)
+  const requestStorageReload = (): void => {
+    if (storageReloadRequestedRef.current) return
+    storageReloadRequestedRef.current = true
+    window.dispatchEvent(new Event('agent-code-request-reload'))
+  }
   useEffect(() => {
     const offStatus = window.api.onStorageStatusChanged((status) => {
       setStorageStatus(status)
+      if (!status.writable && status.state !== 'booting') storageReloadRequestedRef.current = false
       // `booting` é passageiro: a janela abre antes do banco, e transformar isso
       // em "persistência indisponível" trocaria a tela do app por um erro em toda
       // abertura. Só um estado já resolvido e não gravável é falha de verdade.
@@ -1340,6 +1476,24 @@ export function App(): JSX.Element {
       // E a recuperação também tem de aparecer: sem limpar, a tela de erro
       // continuava no lugar mesmo depois de o banco voltar.
       if (status.writable) setStorageLoadError(null)
+      // Reconexão automática (main) depois de uma abertura que não conseguiu ler:
+      // sem recarregar, a tela sairia do erro para um app vazio.
+      if (status.writable && hydrationFailedRef.current) {
+        hydrationFailedRef.current = false
+        storageWritableRef.current = true
+        requestStorageReload()
+        return
+      }
+      // Banco de volta depois de uma queda: regrava já o que ficou marcado como
+      // não salvo. `saveConversations` só escreve o que difere da última revisão
+      // confirmada, então o que já estava salvo não é regravado.
+      const recovered = status.writable && storageWritableRef.current === false
+      if (status.state !== 'booting') storageWritableRef.current = status.writable
+      if (recovered && hydratedRef.current) {
+        void saveConversations(convsRef.current).catch((error) => {
+          console.error('[conversation-storage]', ipcErrorMessage(error, 'A persistência rejeitou a gravação.'))
+        })
+      }
     })
     const offChanges = window.api.onStorageChanged((changes: RepositoryChange[]) => {
       if (changes.some((change) => change.entity.endsWith('-kv') && change.entityId.startsWith('config.'))) {
@@ -1636,9 +1790,15 @@ export function App(): JSX.Element {
         })),
         skipPerms: skipPermsRef.current,
         // Catalog for the phone's selectors — same options the PC picker offers.
-        models,
-        modelEffort: MODEL_EFFORT,
-        effortLabels: EFFORT_LABELS,
+        // O Automático (modelo e esforço) entra com o TypeSafe pronto, ou quando
+        // alguma conversa já o tem gravado — senão o seletor do celular ficaria
+        // em branco nela. O cliente rotula `auto` pelo `effortLabels`.
+        models: withAutoModelOption(
+          models,
+          typesafeReady || convsRef.current.some((c) => isAutoModel(c.model)),
+          undefined
+        ),
+        ...remoteEffortCatalog(typesafeReady || convsRef.current.some((c) => isAutoEffort(c.effort))),
         usage: usageLimitsRef.current,
         projects: Array.from(new Set(convsRef.current.map((c) => c.cwd).filter(Boolean)))
       })
@@ -1672,7 +1832,13 @@ export function App(): JSX.Element {
   }, [])
 
   // ---- conversation management ----
-  const createConversation = (folder: string, id?: string, extra?: Partial<Conversation>): Conversation => {
+  const createConversation = (
+    folder: string,
+    id?: string,
+    extra?: Partial<Conversation>,
+    /** false: nasce ao fundo, sem trocar a conversa que o usuário está vendo. */
+    activate = true
+  ): Conversation => {
     // New conversations in a known project inherit that project's execution
     // modes; otherwise fall back to the active conversation's settings.
     // Conversas de planejamento não servem de molde: o modelo delas é o do
@@ -1681,6 +1847,9 @@ export function App(): JSX.Element {
     const current = getActive()
     const active = isPlanningConversation(current) ? null : current
     const model = sameFolder?.model || active?.model || MODELS[0].id
+    // O esforço vem da MESMA conversa de onde veio o modelo: com os dois
+    // Automáticos independentes, misturar as origens mudaria o que o par quer dizer.
+    const effortSource = sameFolder?.model ? sameFolder : active
     const inheritedEconomy = sameFolder?.economyMode ?? active?.economyMode ?? false
     const inheritedLoop = inheritedEconomy
       ? false
@@ -1690,7 +1859,7 @@ export function App(): JSX.Element {
       title: DEFAULT_TITLE,
       cwd: folder,
       model,
-      effort: active?.effort || DEFAULT_EFFORT,
+      effort: effortSource?.effort || (isAutoModel(model) ? AUTO_EFFORT : DEFAULT_EFFORT),
       economyMode: inheritedEconomy,
       loopEnabled: inheritedLoop,
       // Fast mode is inherited like the other per-conversation settings, but only
@@ -1706,7 +1875,7 @@ export function App(): JSX.Element {
     }
     setConversations((prev) => [conv, ...prev])
     setProjectTotals((totals) => ({ ...totals, [folder]: (totals[folder] ?? 0) + 1 }))
-    setActiveId(conv.id)
+    if (activate) setActiveId(conv.id)
     return conv
   }
 
@@ -1786,8 +1955,11 @@ export function App(): JSX.Element {
       setMinimizedQuestions((m) => withoutKey(m, id))
       setVigiaAlerts((v) => withoutKey(v, id))
       setVigiaAt((v) => withoutKey(v, id))
+      reportMcpDropped(queueRef.current.filter((m) => m.convId === id), 'A conversa foi apagada no Agent Code.')
       setQueue((q) => q.filter((m) => m.convId !== id))
       const removed = convsRef.current.find((c) => c.id === id)
+      // As cópias em disco do rascunho dela eram só do rascunho: saem junto.
+      if (removed?.draftMedia?.length) discardDraftCopies(draftCopyPaths(removed.draftMedia))
       if (removed) {
         setProjectTotals((totals) => ({
           ...totals,
@@ -2003,15 +2175,14 @@ export function App(): JSX.Element {
 
   const changeModel = useCallback(
     (id: string, model: string): void => {
-      // When switching models, reset effort to the default if the new model
-      // doesn't support the current level (e.g. Haiku doesn't have xhigh/max).
       patchConv(id, (c) => {
-        const supported = MODEL_EFFORT[model] ?? []
-        const effort = c.effort && supported.includes(c.effort as EffortLevel) ? c.effort : DEFAULT_EFFORT
+        // Modelo e esforço são independentes: o esforço Automático continua
+        // Automático e o nível fixo continua (recortado ao teto do modelo novo).
+        const effort = effortForModelChange(model, c.effort, DEFAULT_EFFORT)
         // Fast mode only exists on some Opus models — drop it when moving to a
         // model that would have the API reject the request.
         const fastMode = c.fastMode === true && modelSupportsFastMode(model)
-        return { ...c, model, effort, fastMode }
+        return { ...c, model, effort, fastMode, autoEffort: undefined }
       })
       restartForSessionConfig(id, 'Modelo trocado', model)
     },
@@ -2021,7 +2192,9 @@ export function App(): JSX.Element {
   // Effort selector — same deferred-while-busy logic as the model picker.
   const changeEffort = useCallback(
     (id: string, effort: string): void => {
-      patchConv(id, (c) => ({ ...c, effort }))
+      // `autoEffort` era a decisão de um Automático anterior: sai, para o
+      // "Auto · X" não reaparecer com um nível velho antes do próximo turno.
+      patchConv(id, (c) => ({ ...c, effort, autoEffort: undefined }))
       restartForSessionConfig(id, 'Esforço trocado', effort)
     },
     [patchConv, restartForSessionConfig]
@@ -2036,16 +2209,19 @@ export function App(): JSX.Element {
   const changeManagerModel = useCallback(
     (id: string, model: string): void => {
       planningModel.setModel(model)
+      patchConv(id, (c) => ({ ...c, autoEffort: undefined }))
       restartForSessionConfig(id, 'Modelo do Agent Manager trocado', model)
     },
-    [planningModel, restartForSessionConfig]
+    [planningModel, patchConv, restartForSessionConfig]
   )
   const changeManagerEffort = useCallback(
-    (id: string, effort: EffortLevel): void => {
+    (id: string, effort: EffortChoice): void => {
       planningModel.setEffort(effort)
+      // O nível em uso era o da sessão anterior do Manager.
+      patchConv(id, (c) => ({ ...c, autoEffort: undefined }))
       restartForSessionConfig(id, 'Esforço do Agent Manager trocado', effort)
     },
-    [planningModel, restartForSessionConfig]
+    [planningModel, patchConv, restartForSessionConfig]
   )
 
   // onEvent (defined earlier in this component) reaches connect()/stopSession()
@@ -2170,7 +2346,10 @@ export function App(): JSX.Element {
       files: FileAttachment[],
       fileRefs: FileRefAttachment[] = [],
       /** A mensagem É a cabeça da fila sendo drenada: não volta para a fila. */
-      fromQueue = false
+      fromQueue = false,
+      /** Tarefa do MCP de entrada que esta mensagem leva: anda com ela pela fila
+       *  e vai no agent:send, onde o main a reconhece (nunca pelo texto). */
+      mcpTaskId?: string
     ): Promise<void> => {
       // Project folder gone → don't process or send to the LLM; just warn.
       if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) return
@@ -2185,7 +2364,17 @@ export function App(): JSX.Element {
       // the running task isn't cancelled. It'll be dispatched when the turn ends.
       const idle = !busyRef.current.has(conv.id) && !(conv.recovery && !stalledRecovery)
       if (!idle || (!fromQueue && queueRef.current.some((m) => m.convId === conv.id))) {
-        const item = { id: uid('q'), convId: conv.id, full, text, images, thumbs, files, fileRefs }
+        const item: QueuedMessage = {
+          id: uid('q'),
+          convId: conv.id,
+          full,
+          text,
+          images,
+          thumbs,
+          files,
+          fileRefs,
+          ...(mcpTaskId ? { mcpTaskId } : {})
+        }
         queueRef.current = [...queueRef.current, item]
         setQueue((q) => [...q, item])
         // Conversa parada com fila (ex.: fila restaurada depois de reiniciar o
@@ -2195,7 +2384,7 @@ export function App(): JSX.Element {
           if (head) {
             queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
             setQueue((q) => q.filter((m) => m.id !== head.id))
-            void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true)
+            void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId)
           }
         }
         return
@@ -2211,27 +2400,23 @@ export function App(): JSX.Element {
       setBusySince((m) => ({ ...m, [conv.id]: Date.now() }))
       const beforeTitle = convsRef.current.find((c) => c.id === conv.id) ?? conv
       patchConv(conv.id, (c) => ({
-        ...withFallbackTitle(c, text),
+        ...withFallbackTitle(c, readableMediaText(text)),
         messages: [
           ...c.messages,
           {
             kind: 'user',
             id: msgId,
             text,
-            images: thumbs.length ? thumbs : undefined,
-            files:
-              files.length || fileRefs.length
-                ? [...files, ...fileRefs].map((f) => ({ name: f.name, size: f.size }))
-                : undefined,
+            ...userBubbleAttachments(thumbs, images, files, fileRefs),
             ts: Date.now()
           }
         ],
         updatedAt: Date.now()
       }))
-      autoTitle(beforeTitle, text)
+      autoTitle(beforeTitle, readableMediaText(text))
       // Remember this as the in-flight message so a failing turn can mark it.
       const sdkUuid = crypto.randomUUID()
-      inflightRef.current[conv.id] = { msgId, sdkUuid, full, images, files, fileRefs }
+      inflightRef.current[conv.id] = { msgId, sdkUuid, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
 
       try {
         // Lazily (re)start the agent for this conversation, resuming if possible.
@@ -2243,19 +2428,36 @@ export function App(): JSX.Element {
         const auto = revalidatesAuto(conv) ? autoPromptFor(conv, text) : undefined
         const opening = !auto && isPlanningConversation(conv) ? autoPromptFor(conv, text) : undefined
         if (auto || !connectedRef.current.has(conv.id)) await connect(conv, auto ?? opening)
-        await window.api.sendMessage(conv.id, full, images, files, fileRefs, sdkUuid)
+        await window.api.sendMessage(conv.id, full, images, files, fileRefs, sdkUuid, undefined, mcpTaskId)
       } catch (err) {
         // Couldn't even reach the agent → keep the message, flag it with the error
         // and keep its payload so "Tentar de novo" can resend it.
         setBusy(conv.id, false)
         setBusySince((m) => withoutKey(m, conv.id))
         delete inflightRef.current[conv.id]
-        failedRef.current[msgId] = { convId: conv.id, full, images, files, fileRefs }
+        if (isMcpTaskGone(err)) {
+          // Regra 1: o item era de uma tarefa MCP que não está mais viva (ex.: fila
+          // restaurada depois de reiniciar). Sai com aviso — sem "Tentar de novo",
+          // nunca como mensagem do usuário — e a fila da conversa segue.
+          patchConv(conv.id, (c) => ({ ...c, messages: withoutBubble(c.messages, msgId) }))
+          notify('aviso', MCP_TASK_GONE_WARNING)
+          const head = queueRef.current.find((m) => m.convId === conv.id)
+          const fresh = convsRef.current.find((c) => c.id === conv.id)
+          if (head && fresh) {
+            queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
+            setQueue((q) => q.filter((m) => m.id !== head.id))
+            void dispatchRef.current?.(fresh, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId)
+          }
+          return
+        }
+        failedRef.current[msgId] = { convId: conv.id, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
+        // O main não achou sessão viva: o "Tentar de novo" reconecta antes de enviar.
+        if (isNoLiveSession(err)) setConnected(conv.id, false)
         markMessageError(conv.id, msgId, `Falha ao enviar: ${String(err)}`)
         notify('erro', `Falha ao enviar: ${String(err)}`)
       }
     },
-    [connect, patchConv, setBusy, notify, ensureProject, markMessageError, autoTitle]
+    [connect, patchConv, setBusy, setConnected, notify, ensureProject, markMessageError, autoTitle]
   )
   // `dispatch` chama a si mesmo para drenar a cabeça da fila (conversa parada).
   const dispatchRef = useRef<typeof dispatch | null>(null)
@@ -2295,6 +2497,15 @@ export function App(): JSX.Element {
         if (!connectedRef.current.has(convId)) await connect(conv)
         await window.api.sendMessage(convId, continuation, [], [], [], sdkUuid, 'recovery')
       } catch (err) {
+        if (isMcpTaskGone(err)) {
+          // Regra 2 (defesa do main): o turno era de tarefa MCP — sem retomada.
+          delete inflightRef.current[convId]
+          patchConv(convId, (c) => ({ ...c, recovery: undefined }))
+          setBusy(convId, false)
+          setBusySince((m) => withoutKey(m, convId))
+          notify('aviso', MCP_TASK_GONE_WARNING)
+          return
+        }
         const attempt = recovery.attempt + 1
         patchConv(convId, (c) => ({
           ...c,
@@ -2311,7 +2522,7 @@ export function App(): JSX.Element {
         setBusySince((m) => withoutKey(m, convId))
       }
     },
-    [clearMessageError, connect, ensureProject, patchConv, setBusy]
+    [clearMessageError, connect, ensureProject, patchConv, setBusy, notify]
   )
 
   // Restore persisted recoveries after reload and keep exactly one timer per
@@ -2377,7 +2588,7 @@ export function App(): JSX.Element {
   // O resultado distingue "conversa criada, envio falhou" de "nada criado": no
   // primeiro, o diálogo fecha em vez de deixar criar uma segunda conversa.
   const startHandoff = useCallback(
-    async (folder: string, slug: string, titulo: string, prompts: string[]): Promise<HandoffSendOutcome> => {
+    async (folder: string, slug: string, titulo: string, prompts: string[], names: string[]): Promise<HandoffSendOutcome> => {
       // O modelo do Manager lido agora (o último escolhido, inclusive em
       // Configurações); sem o IPC, o que a tela conhece.
       const manager = await window.api
@@ -2386,7 +2597,11 @@ export function App(): JSX.Element {
         .catch(() => planningConfigRef.current)
       const launched = await launchHandoff(prompts, {
         create: () => {
-          const conv = createConversation(folder, undefined, handoffConversationFields(slug, titulo, manager))
+          const conv = createConversation(
+            folder,
+            undefined,
+            handoffConversationFields(slug, titulo, manager, { projectCwd: folder, prompts: names })
+          )
           // O estado novo só chega a convsRef no próximo render, e o connect
           // persiste convsRef ANTES do startAgent (o lease exige a linha da
           // conversa no banco). Sem isto, o 1º envio corre contra o render.
@@ -2420,6 +2635,11 @@ export function App(): JSX.Element {
       const images = payload?.images ?? []
       const files = payload?.files ?? []
       const fileRefs = payload?.fileRefs ?? []
+      // Mensagem de uma tarefa MCP: o reenvio leva o id dela. Tarefa ainda viva
+      // (o envio falhou antes de o turno começar) roda no modelo dela, com pin;
+      // tarefa já encerrada (qualquer erro de turno a encerra — regra 2) é
+      // recusada pelo main (regra 1): aviso, e nunca vira mensagem do usuário.
+      const mcpTaskId = payload?.mcpTaskId
 
       // Project folder gone → keep the error, just warn (ensureProject toasts).
       if (!(await ensureProject(conv))) return
@@ -2432,22 +2652,26 @@ export function App(): JSX.Element {
       setBusy(convId, true)
       setBusySince((m) => ({ ...m, [convId]: Date.now() }))
       const sdkUuid = crypto.randomUUID()
-      inflightRef.current[convId] = { msgId, sdkUuid, full, images, files, fileRefs }
+      inflightRef.current[convId] = { msgId, sdkUuid, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
       delete failedRef.current[msgId]
 
       try {
         if (!connectedRef.current.has(convId)) await connect(conv)
-        await window.api.sendMessage(convId, full, images, files, fileRefs, sdkUuid)
+        await window.api.sendMessage(convId, full, images, files, fileRefs, sdkUuid, undefined, mcpTaskId)
       } catch (err) {
         setBusy(convId, false)
         setBusySince((m) => withoutKey(m, convId))
         delete inflightRef.current[convId]
-        failedRef.current[msgId] = { convId, full, images, files, fileRefs }
-        markMessageError(convId, msgId, `Falha ao enviar: ${String(err)}`)
-        notify('erro', `Falha ao enviar: ${String(err)}`)
+        // O payload guarda o id: um novo clique é recusado de novo, nunca reenviado sem ele.
+        failedRef.current[msgId] = { convId, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
+        // O main não achou sessão viva: o próximo clique reconecta antes de enviar.
+        if (isNoLiveSession(err)) setConnected(convId, false)
+        const gone = isMcpTaskGone(err)
+        markMessageError(convId, msgId, gone ? MCP_TASK_GONE_WARNING : `Falha ao enviar: ${String(err)}`)
+        notify(gone ? 'aviso' : 'erro', gone ? MCP_TASK_GONE_WARNING : `Falha ao enviar: ${String(err)}`)
       }
     },
-    [connect, ensureProject, patchConv, setBusy, notify, clearMessageError, markMessageError]
+    [connect, ensureProject, patchConv, setBusy, setConnected, notify, clearMessageError, markMessageError]
   )
 
   // Persist a composer draft onto a SPECIFIC conversation (debounced save keeps
@@ -2461,8 +2685,14 @@ export function App(): JSX.Element {
   // active" target would silently write the outgoing draft onto the wrong
   // conversation (or lose it). The explicit id keeps the write correct.
   const onDraftChange = useCallback(
-    (convId: string, text: string): void => {
-      patchConv(convId, (c) => (c.draft === text ? c : { ...c, draft: text }))
+    (convId: string, text: string, media?: DraftMedia[]): void => {
+      // Anexos no rascunho andam junto do texto (`{{midia:N}}` + referências em
+      // disco). Conteúdo igual: nem toca no estado, nada é regravado.
+      const cur = convsRef.current.find((c) => c.id === convId)
+      // Conversa apagada enquanto o rascunho dela copiava anexos: as cópias não têm mais dono.
+      if (!cur && media?.length) discardDraftCopies(draftCopyPaths(media))
+      if (cur && applyDraft(cur, text, media) === cur) return
+      patchConv(convId, (c) => applyDraft(c, text, media))
     },
     [patchConv]
   )
@@ -2482,6 +2712,19 @@ export function App(): JSX.Element {
     })
     return off
   }, [dispatch, notify])
+
+  // MCP de entrada: a tarefa entra pelo mesmo dispatch; a conversa nova nasce
+  // ao fundo (sem trocar a que o usuário está vendo).
+  useMcpInbound({
+    hydrated,
+    convsRef,
+    queueRef,
+    setQueue,
+    createBackground: (cwd, id, extra) => createConversation(cwd, id, extra, false),
+    addLoaded: (conv) => setConversations((prev) => (prev.some((c) => c.id === conv.id) ? prev : [conv, ...prev])),
+    dispatch: (conv, full, text, images, thumbs, taskId) => dispatch(conv, full, text, images, thumbs, [], [], false, taskId),
+    isBusy: (convId) => busyRef.current.has(convId)
+  })
 
   // A phone flipped "Permitir tudo" — apply it on the PC (persist + live sessions).
   useEffect(() => {
@@ -2513,6 +2756,7 @@ export function App(): JSX.Element {
   }, [patchConv, runRecovery, setBusy])
 
   const deleteQueued = useCallback((id: string): void => {
+    reportMcpDropped(queueRef.current.filter((m) => m.id === id), 'Removida da fila no Agent Code.')
     setQueue((q) => q.filter((m) => m.id !== id))
   }, [])
 
@@ -2522,23 +2766,39 @@ export function App(): JSX.Element {
   // mandá-la duas vezes. Se não havia turno, volta para o começo da fila.
   const sendQueuedNow = useCallback(
     async (id: string): Promise<void> => {
-      const item = queueRef.current.find((m) => m.id === id)
+      const at = queueRef.current.findIndex((m) => m.id === id)
+      const item = queueRef.current[at]
       if (!item) return
+      // Quem vinha depois dele: para uma recusa do main devolvê-lo ao MESMO lugar.
+      const later = new Set(queueRef.current.slice(at + 1).map((m) => m.id))
       queueRef.current = queueRef.current.filter((m) => m.id !== id)
       setQueue((q) => q.filter((m) => m.id !== id))
       // Conversa parada (ex.: fila restaurada depois de reiniciar): "agora" é
       // simplesmente mandar — não há turno para entrar.
       const conv = convsRef.current.find((c) => c.id === item.convId)
       if (conv && !busyRef.current.has(conv.id)) {
-        await dispatch(conv, item.full, item.text, item.images, item.thumbs, item.files, item.fileRefs, true)
+        await dispatch(conv, item.full, item.text, item.images, item.thumbs, item.files, item.fileRefs, true, item.mcpTaskId)
         return
       }
       const res = await window.api
-        .injectNow(item.convId, item.full, item.images, item.files, item.fileRefs, crypto.randomUUID())
-        .catch(() => ({ ok: false }))
+        // O id da tarefa MCP do item clicado: o main aceita ou recusa pelo modelo DELA.
+        .injectNow(item.convId, item.full, item.images, item.files, item.fileRefs, crypto.randomUUID(), item.mcpTaskId)
+        .catch((): { ok: boolean; reason?: string; gone?: boolean } => ({ ok: false }))
+      if (res.gone) {
+        // Regra 1: a tarefa MCP do item não está mais viva — ele NÃO volta à fila.
+        notify('aviso', MCP_TASK_GONE_WARNING)
+        return
+      }
       if (!res.ok) {
-        setQueue((q) => [item, ...q])
-        notify('aviso', 'A tarefa está terminando — a mensagem continua na fila e sai em seguida.')
+        // `reason`: o main recusou de propósito (tarefa MCP de outro modelo) — ela
+        // volta à posição original, e a ordem das tarefas do chamador não muda.
+        // Sem motivo (o turno estava terminando), vai para o começo: sai em seguida.
+        setQueue((q) => {
+          if (!res.reason) return [item, ...q]
+          const i = q.findIndex((m) => later.has(m.id))
+          return i < 0 ? [...q, item] : [...q.slice(0, i), item, ...q.slice(i)]
+        })
+        notify('aviso', res.reason ?? 'A tarefa está terminando — a mensagem continua na fila e sai em seguida.')
         return
       }
       patchConv(item.convId, (c) => ({
@@ -2549,11 +2809,7 @@ export function App(): JSX.Element {
             kind: 'user',
             id: uid('u'),
             text: item.text,
-            images: item.thumbs.length ? item.thumbs : undefined,
-            files:
-              item.files.length || item.fileRefs.length
-                ? [...item.files, ...item.fileRefs].map((f) => ({ name: f.name, size: f.size }))
-                : undefined,
+            ...userBubbleAttachments(item.thumbs, item.images, item.files, item.fileRefs),
             injected: true,
             ts: Date.now()
           }
@@ -2807,6 +3063,10 @@ export function App(): JSX.Element {
     // cleared, the turn-end handler finds nothing to dispatch and just goes idle
     // instead of auto-starting the next queued message.
     interruptedRef.current.add(cid) // intentional stop — don't flag the message as failed
+    reportMcpDropped(
+      queueRef.current.filter((m) => m.convId === cid),
+      'Cancelada: a conversa foi interrompida no Agent Code.'
+    )
     setQueue((q) => q.filter((m) => m.convId !== cid))
     // The receipt tells us whether the in-flight SDK message actually survived
     // the Stop. Only paint it as canceled when the SDK confirms it will not run.
@@ -3187,6 +3447,9 @@ export function App(): JSX.Element {
         <div className="storage-recovery-card">
           <h1>Persistência indisponível</h1>
           <p>{storageLoadError}</p>
+          {storageStatus?.backend === 'postgres' && storageStatus.error?.retryable !== false && (
+            <p>Tentando reconectar automaticamente; a tela volta sozinha quando o banco responder.</p>
+          )}
           <p>
             O backend selecionado continua sendo <strong>{storageStatus?.backend ?? 'desconhecido'}</strong>.
             O SQLite local não foi usado como fallback e nenhuma lista vazia foi assumida.
@@ -3198,7 +3461,7 @@ export function App(): JSX.Element {
                 type="button"
                 onClick={() => {
                   void window.api.retryStorage()
-                    .then(() => window.dispatchEvent(new Event('agent-code-request-reload')))
+                    .then(requestStorageReload)
                     .catch((error) =>
                       setStorageLoadError(ipcErrorMessage(error, 'A reconexão falhou.'))
                     )
@@ -3226,6 +3489,19 @@ export function App(): JSX.Element {
     )
   }
 
+  // Conversa de implementação: "Plano: <título>" reabre a Tela do plano de origem.
+  const handoffOrigin = active ? handoffPlanOf(active, conversations) : null
+  const handoffPlanLink = handoffOrigin ? (
+    <button
+      type="button"
+      className="chat-plan-link"
+      title="Abrir a Tela de Planejamento deste plano"
+      onClick={() => openPlanningConversation(handoffOrigin.projectCwd, handoffOrigin.slug, handoffOrigin.titulo)}
+    >
+      Plano: {handoffOrigin.titulo}
+    </button>
+  ) : null
+
   // O painel de conversa, montado UMA vez: o workspace normal o põe à esquerda
   // do painel da direita; a Tela de Planejamento, como a sua coluna de chat.
   const chatPanel = (
@@ -3250,9 +3526,15 @@ export function App(): JSX.Element {
       projects={projects}
       projectRoot={active?.cwd ?? null}
       convId={active?.id ?? null}
+      headerExtra={handoffPlanLink}
+      // Só no chat do Agent Manager; ocupado, o pedido entra na fila (dispatch).
+      onQuestionnaire={
+        activePlanning ? () => askPlanningManager(activePlanning.id, managerQuestionnaireRequest()) : undefined
+      }
       scrollToId={scrollTarget && scrollTarget.convId === activeId ? scrollTarget.msgId : null}
       scrollSeq={scrollTarget?.seq ?? 0}
       draft={active?.draft ?? ''}
+      draftMedia={active?.draftMedia}
       onDraftChange={onDraftChange}
       projectMissing={projectMissing}
       projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
@@ -3271,7 +3553,13 @@ export function App(): JSX.Element {
       tts={tts}
       // Planejamento: o seletor edita o modelo/esforço do Agent Manager
       // (config global, lida pelo main quando a sessão sobe), não os da conversa.
-      models={activePlanning ? [...PLANNING_MODELS] : modelsFor(models, active?.model)}
+      // O Automático só aparece com o TypeSafe pronto ou quando já é o valor
+      // gravado (nada troca a escolha salva sozinho).
+      models={
+        activePlanning
+          ? withAutoModelOption(PLANNING_MODELS, typesafeReady, planningModel.config.model)
+          : modelsFor(withAutoModelOption(models, typesafeReady, active?.model), active?.model)
+      }
       model={activePlanning ? planningModel.config.model : (active?.model ?? MODELS[0].id)}
       // O seletor mostra a escolha (o sentinel `auto` incluso); a barra de
       // contexto precisa do modelo concreto do turno — o mesmo que o
@@ -3283,11 +3571,9 @@ export function App(): JSX.Element {
       onModelChange={(m) => {
         if (!active) return
         if (activePlanning) {
-          // Sem TypeSafe, o Automático do Manager ainda funciona (recuo para
-          // Sonnet 5, médio) — só avisa, em vez de recusar.
-          if (isAutoModel(m) && !typesafeReady) {
-            notify('aviso', 'Sem o TypeSafe ligado, o Automático do Agent Manager usa Sonnet 5 (esforço médio).')
-          }
+          // Sem TypeSafe a lista do Manager só tem o Automático quando ele já é
+          // o valor gravado (withAutoModelOption), e escolher o mesmo valor não
+          // dispara troca — então aqui não chega um "auto" novo sem TypeSafe.
           changeManagerModel(active.id, m)
           return
         }
@@ -3303,10 +3589,18 @@ export function App(): JSX.Element {
       effortLevels={effortLevelsFor(activePlanning ? planningModel.config.model : active?.model)}
       effort={activePlanning ? planningModel.config.effort : (active?.effort ?? DEFAULT_EFFORT)}
       effortLocked={!active}
+      effortAutoAvailable={typesafeReady}
+      // No Manager a escolha é a config dele; o nível com que a sessão subiu
+      // fica em `autoEffort` da conversa de planejamento (evento `system`).
+      runningEffort={runningEffort(
+        activePlanning ? planningModel.config.effort : active?.effort,
+        active?.autoEffort
+      )}
       onEffortChange={(e) => {
         if (!active) return
-        if (activePlanning) changeManagerEffort(active.id, e as EffortLevel)
-        else changeEffort(active.id, e)
+        if (activePlanning) {
+          if (isEffortLevel(e) || isAutoEffort(e)) changeManagerEffort(active.id, e)
+        } else changeEffort(active.id, e)
       }}
       economyMode={active?.economyMode === true}
       onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
@@ -3508,9 +3802,11 @@ export function App(): JSX.Element {
                 slug={activePlanning.planningSlug}
                 managerBusy={busyIds.has(activePlanning.id)}
                 onAskManager={(text) => askPlanningManager(activePlanning.id, text)}
-                onSend={(prompts, titulo) =>
-                  startHandoff(activePlanning.cwd, activePlanning.planningSlug, titulo, prompts)
+                onSend={(prompts, titulo, names) =>
+                  startHandoff(activePlanning.cwd, activePlanning.planningSlug, titulo, prompts, names)
                 }
+                conversationExists={(id) => convsRef.current.some((c) => c.id === id)}
+                onOpenConversation={selectConversation}
               />
             }
           />

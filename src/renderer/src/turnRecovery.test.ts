@@ -17,6 +17,13 @@ describe('turnRecovery', () => {
     })
   })
 
+  it('estouro sem outra conta: o aviso do main (texto do CLI + explicação) ainda agenda para o reset', () => {
+    const now = Date.parse('2026-07-13T02:00:00.000Z')
+    const text = "You've hit your weekly limit · resets 12:20am (America/Sao_Paulo)\n" +
+      'Nenhuma outra conta Claude tem limite disponível. O limite de uso foi atingido e o ChatGPT não está conectado. A tarefa foi preservada; aguarde a renovação dos limites.'
+    expect(scheduleFailure(text, {}, now)).toEqual({ reason: 'limit', scheduledAt: Date.parse('2026-07-13T03:21:00.000Z') })
+  })
+
   it('usa o próximo reset conhecido quando o texto não traz horário', () => {
     const now = 1_000_000
     expect(

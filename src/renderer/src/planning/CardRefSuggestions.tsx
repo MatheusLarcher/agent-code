@@ -92,7 +92,8 @@ export interface CardRefAutocompleteOptions<T extends RefCard> {
   excludeId?: string
   value: string
   onChange: (text: string) => void
-  inputRef: RefObject<HTMLTextAreaElement | HTMLInputElement | null>
+  /** Textarea/input, ou o campo inline do composer (mesma fachada de cursor). */
+  inputRef: RefObject<Pick<HTMLTextAreaElement, 'selectionStart' | 'focus' | 'setSelectionRange'> | null>
   limit?: number
 }
 

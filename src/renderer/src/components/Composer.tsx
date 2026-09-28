@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -17,21 +18,21 @@ import type {
   SpeechSetupProgress
 } from '@shared/ipc'
 import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconShieldCheck, IconSpinner, IconStop } from './Icons'
-import { fileMeta, fmtSize } from '../files'
 import { useUI } from '../ui/UiProvider'
 import { frameRms, newVadState, shouldRotatePreroll, vadStep, type VadState } from '../vad'
 import { encodeWav } from '../wav'
-import { looksLikeFileUrl, looksLikeLocalPath } from '@shared/mime'
 import { useChatDisplay } from './chatDisplay'
 import { detectRefTrigger, type RefCard } from '../planning/cardRefs'
 import { CardRefSuggestions, useCardRefAutocomplete } from '../planning/CardRefSuggestions'
+import { InlineEditor, type EditorElement } from '../inlineMedia/InlineEditor'
+import { useInlineAttachments } from '../inlineMedia/useInlineAttachments'
+import { offsetFromPoint, TOKEN } from '../inlineMedia/editorModel'
+import type { DraftMedia, InlineAtt } from '../inlineMedia/inlineAttachments'
 
-/** Max size for a single non-image attachment (keeps the IPC payload sane). */
-const MAX_FILE_BYTES = 25 * 1024 * 1024
+import { boxMetrics, composerBoxHeight } from './composerHeight'
+import { useHasTextSignal, type HasTextListener } from './useHasTextSignal'
 
 const NO_CARDS: readonly RefCard[] = []
-
-const MAX_LINES = 8
 
 /** A project the user can reference (its folder path), shown in the @ menu. */
 export interface RefProject {
@@ -51,7 +52,8 @@ interface Props {
     fileRefs: FileRefAttachment[]
   ) => void
   onInterrupt: () => void
-  textareaRef: RefObject<HTMLTextAreaElement | null>
+  /** Recebe o campo de texto (o App só usa `focus()`). */
+  textareaRef: RefObject<HTMLElement | null>
   /** Projects from history, offered in the @ reference menu. */
   projects: RefProject[]
   /** Active conversation's project root — searched live by the "@" autocomplete. */
@@ -62,17 +64,23 @@ interface Props {
   onNeedVoiceKey: () => void
   /** Active conversation id — when it changes, the box loads that chat's draft. */
   convId: string | null
-  /** Saved draft text for the active conversation (restored into the box). */
+  /** Saved draft text for the active conversation (restored into the box).
+   *  Com anexos no texto, leva `{{midia:N}}` e a lista vem em `draftMedia`. */
   draft: string
+  draftMedia?: readonly unknown[]
   /** Persist a conversation's draft — called with an explicit convId (blur /
    *  conversation switch / send), NOT on every keystroke (that used to cause a
-   *  full app re-render per letter — see `flushDraft` below). */
-  onDraftChange: (convId: string, text: string) => void
+   *  full app re-render per letter — see `flushDraft` below). `media` só vem
+   *  quando o rascunho tem anexo. */
+  onDraftChange: (convId: string, text: string, media?: DraftMedia[]) => void
   /** True when the conversation's project folder no longer exists — blocks typing
    *  (the box becomes read-only and any interaction shows the error). */
   projectMissing: boolean
   /** Error shown when the user tries to use the box while the project is missing. */
   projectMissingMsg: string
+  /** Avisado só na troca "sem texto" ↔ "com texto" (anexo sozinho não é texto),
+   *  inclusive pelo rascunho restaurado ao trocar de conversa. Ver useHasTextSignal. */
+  onHasTextChange?: HasTextListener
 }
 
 /** Recording waveform (WhatsApp-style): number of bars in the scrolling strip and
@@ -134,38 +142,6 @@ export function stopRecording(
 }
 
 
-/** Read an image File as a base64 attachment (strips the data-URL prefix). */
-function fileToAttachment(file: File): Promise<ImageAttachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const m = /^data:([^;]+);base64,(.*)$/.exec(String(reader.result))
-      if (m) resolve({ mediaType: m[1], data: m[2] })
-      else reject(new Error('imagem inválida'))
-    }
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
-
-/** Read any file as a base64 FileAttachment (keeps name/type/size for the chip). */
-function fileToFileAttachment(file: File): Promise<FileAttachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const m = /^data:([^;]*);base64,(.*)$/.exec(String(reader.result))
-      resolve({
-        name: file.name || 'arquivo',
-        mediaType: m?.[1] || file.type || 'application/octet-stream',
-        data: m?.[2] || '',
-        size: file.size
-      })
-    }
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
-
 function baseName(p: string): string {
   const parts = p.split(/[\\/]+/).filter(Boolean)
   return parts[parts.length - 1] || p
@@ -216,14 +192,26 @@ function findToken(
  * textarea paints a gray pill under it — confirming a picked file/skill. Only
  * complete tokens (trigger + at least one char) are wrapped.
  */
-function highlightNodes(text: string): (string | JSX.Element)[] {
+function highlightNodes(text: string, token?: (k: number) => JSX.Element | null): (string | JSX.Element)[] {
   const nodes: (string | JSX.Element)[] = []
-  const re = /(^|\s)([@/]\S+)/g
+  const re = /(^|\s)([@/][^\s￼]+)/g
   let last = 0
   let m: RegExpExecArray | null
+  // Anexo no texto (U+FFFC): o espelho põe a MESMA imagem, invisível, para as
+  // pílulas seguintes continuarem alinhadas com o campo.
+  let k = 0
+  const plain = (s: string, key: number): void => {
+    s.split(TOKEN).forEach((part, i) => {
+      if (i > 0) {
+        const t = token?.(k++)
+        if (t) nodes.push(<span key={`t${key}-${i}`}>{t}</span>)
+      }
+      if (part) nodes.push(part)
+    })
+  }
   while ((m = re.exec(text)) !== null) {
     const tokenStart = m.index + m[1].length
-    if (tokenStart > last) nodes.push(text.slice(last, tokenStart))
+    if (tokenStart > last) plain(text.slice(last, tokenStart), last)
     nodes.push(
       <mark className="hl-mention" key={tokenStart}>
         {m[2]}
@@ -231,22 +219,33 @@ function highlightNodes(text: string): (string | JSX.Element)[] {
     )
     last = tokenStart + m[2].length
   }
-  if (last < text.length) nodes.push(text.slice(last))
+  if (last < text.length) plain(text.slice(last), last)
   return nodes
 }
 
 export function Composer(props: Props): JSX.Element {
   const { notify } = useUI()
-  const [value, setValue] = useState(props.draft)
-  const [menuOpen, setMenuOpen] = useState(false)
   // The conversation `value` currently belongs to. When the active conversation
   // changes we swap in that chat's saved draft (so switching never loses text).
   const convIdRef = useRef(props.convId)
+  // O campo (contenteditable com anexos no meio do texto; ver inlineMedia/).
+  // `value` tem 1 caractere TOKEN por anexo; `media.order` diz qual é qual.
+  const editorRef = useRef<EditorElement | null>(null)
+  const media = useInlineAttachments({
+    editorRef,
+    convIdRef,
+    notify,
+    initialDraft: props.draft,
+    initialMedia: props.draftMedia
+  })
+  const [value, setValue] = useState(media.initialValue)
+  const [menuOpen, setMenuOpen] = useState(false)
   // Mirrors `value` for code that needs the LATEST text without re-subscribing
   // effects/listeners on every keystroke (the conversation-switch effect and the
   // window-blur flush below both read this instead of depending on `value`).
   const valueRef = useRef(value)
   valueRef.current = value
+  useHasTextSignal(value, props.onHasTextChange)
 
   // Local-only edit — just updates the box. Does NOT persist to disk: saving on
   // every keystroke used to force a full app re-render per letter (slow while
@@ -258,8 +257,22 @@ export function Composer(props: Props): JSX.Element {
   // Save `text` as `convId`'s draft. Takes an explicit id (not "whatever's
   // active now") so a flush triggered by a conversation switch always targets
   // the OUTGOING conversation, never the one just switched into.
+  // Com anexo no texto, o rascunho leva `{{midia:N}}` + a lista dos anexos.
+  // Anexo sem cópia em disco é copiado antes (o rascunho guarda só o caminho):
+  // aí a gravação chega depois, e só vale se nenhuma mais nova veio no meio.
+  const draftSeq = useRef(new Map<string, number>())
   const flushDraft = (convId: string | null, text: string): void => {
-    if (convId) props.onDraftChange(convId, text)
+    if (!convId) return
+    const seq = (draftSeq.current.get(convId) ?? 0) + 1
+    draftSeq.current.set(convId, seq)
+    const save = (d: { text: string; media: DraftMedia[] }): void => {
+      if (draftSeq.current.get(convId) !== seq) return
+      if (d.media.length) props.onDraftChange(convId, d.text, d.media)
+      else props.onDraftChange(convId, d.text)
+    }
+    const d = media.draftOf(text, convId)
+    if (d instanceof Promise) void d.then(save)
+    else save(d)
   }
 
   // Switching conversations → flush the outgoing chat's unsaved text (never
@@ -269,7 +282,7 @@ export function Composer(props: Props): JSX.Element {
     if (convIdRef.current !== props.convId) {
       flushDraft(convIdRef.current, valueRef.current)
       convIdRef.current = props.convId
-      setValue(props.draft)
+      setValue(media.load(props.convId ?? '', props.draft, props.draftMedia))
     }
   }, [props.convId, props.draft])
 
@@ -283,14 +296,8 @@ export function Composer(props: Props): JSX.Element {
     return () => window.removeEventListener('blur', onWindowBlur)
   }, [])
 
-  const [images, setImages] = useState<ImageAttachment[]>([])
-  const [files, setFiles] = useState<FileAttachment[]>([])
-  // Attachments resolved from a pasted local path or URL (never read into
-  // memory by this app — main only stat'd/downloaded them). `resolvingCount`
-  // tracks in-flight resolutions so the composer can block sending until
-  // every pasted line has settled (resolved into a chip, or given up).
-  const [fileRefs, setFileRefs] = useState<FileRefAttachment[]>([])
-  const [resolvingCount, setResolvingCount] = useState(0)
+  // Anexos em resolução (arquivo sendo lido, caminho/URL colado): o envio espera.
+  const resolvingCount = media.resolving
   const refMenu = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -311,8 +318,9 @@ export function Composer(props: Props): JSX.Element {
   // ---- "[[" referência a card (só com cards no contexto: o chat do Agent Manager) ----
   // Mesmo hook/lista do editor de card (CardRefSuggestions): insere [[Título]].
   // Sem cards no contexto, nada disto age — o Composer fica como sempre.
-  const cardRefs = useChatDisplay().cardRefs ?? NO_CARDS
-  const cardAc = useCardRefAutocomplete({ cards: cardRefs, value, onChange: updateValue, inputRef: props.textareaRef })
+  const chatDisplay = useChatDisplay()
+  const cardRefs = chatDisplay.cardRefs ?? NO_CARDS
+  const cardAc = useCardRefAutocomplete({ cards: cardRefs, value, onChange: updateValue, inputRef: editorRef })
 
   // ---- voice dictation (mic → text, OpenAI gpt-4o-transcribe) ----
   // Records one utterance per segment, cut at NATURAL PAUSES by a local VAD (voice
@@ -551,7 +559,7 @@ export function Composer(props: Props): JSX.Element {
     streamRef.current = null
     stopRecording(null, stream, () => {
       setRecording(false)
-      props.textareaRef.current?.focus()
+      editorRef.current?.focus()
     })
   }
 
@@ -676,21 +684,44 @@ export function Composer(props: Props): JSX.Element {
     }
   }, [micMenuOpen])
 
-  // Auto-grow the textarea up to MAX_LINES, then scroll.
-  useEffect(() => {
-    const ta = props.textareaRef.current
+  // Auto-grow: 1 line when empty, +1 line per line of text up to MAX_LINES, then scroll.
+  // scrollHeight includes vertical padding (border-box); the floor is the CSS min-height.
+  const fitHeight = useCallback((): void => {
+    const ta = editorRef.current
     if (!ta) return
     ta.style.height = 'auto'
-    const cs = getComputedStyle(ta)
-    const lh = parseFloat(cs.lineHeight) || 21
-    // scrollHeight includes vertical padding (border-box), so the cap must too —
-    // otherwise the box scrolls one line before reaching MAX_LINES.
-    const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
-    const max = lh * MAX_LINES + padY
-    const next = Math.min(ta.scrollHeight, max)
-    ta.style.height = `${next}px`
-    ta.style.overflowY = ta.scrollHeight > max ? 'auto' : 'hidden'
-  }, [value, props.textareaRef])
+    const box = composerBoxHeight(boxMetrics(getComputedStyle(ta), ta.scrollHeight))
+    ta.style.height = `${box.height}px`
+    ta.style.overflowY = box.scroll ? 'auto' : 'hidden'
+  }, [])
+  // `compact` (Agent Manager minimizado) troca o teto da caixa no CSS (3 linhas): refaz também.
+  useEffect(() => fitHeight(), [value, media.version, fitHeight, chatDisplay.compact])
+  // A largura do campo muda sem o texto mudar (janela redimensionada, coluna abaixo ou
+  // acima de 560px, Agent Manager minimizado/maximizado): a quebra automática muda o
+  // número de linhas, então a altura é refeita. Só a largura conta — a altura é a
+  // que este próprio efeito aplica.
+  useEffect(() => {
+    const ta = editorRef.current
+    if (!ta || typeof ResizeObserver === 'undefined') return
+    let lastWidth = -1
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[entries.length - 1]?.contentRect.width ?? -1
+      if (width === lastWidth) return
+      lastWidth = width
+      fitHeight()
+    })
+    ro.observe(ta)
+    return () => ro.disconnect()
+  }, [fitHeight])
+
+  // O App foca o campo por `textareaRef` (atalhos, troca de conversa).
+  useEffect(() => {
+    const ref = props.textareaRef as { current: HTMLElement | null }
+    ref.current = editorRef.current
+    return () => {
+      if (ref.current === editorRef.current) ref.current = null
+    }
+  }, [props.textareaRef])
 
   // Close the @ menu on outside click or Escape.
   useEffect(() => {
@@ -716,7 +747,7 @@ export function Composer(props: Props): JSX.Element {
   const onBlocked = (e?: { preventDefault: () => void }): void => {
     e?.preventDefault()
     notify('erro', props.projectMissingMsg)
-    props.textareaRef.current?.blur()
+    editorRef.current?.blur()
   }
 
   // A lista do "[[" só aparece com algum card casando (como o menu @//): sem
@@ -730,28 +761,25 @@ export function Composer(props: Props): JSX.Element {
   const submit = (): void => {
     if (props.disabled || blocked) return
     if (resolvingCount > 0) return // still resolving pasted path(s)/URL(s)
-    if (
-      !value.trim() &&
-      props.chips.length === 0 &&
-      images.length === 0 &&
-      files.length === 0 &&
-      fileRefs.length === 0
-    )
-      return
-    props.onSend(value, images, files, fileRefs)
+    // Anexo no texto vira {{midia:N}} no ponto dele; sem anexo, o texto sai igual.
+    const msg = media.serialize(value)
+    const attached = msg.images.length + msg.files.length + msg.fileRefs.length
+    if (!msg.text.trim() && props.chips.length === 0 && attached === 0) return
+    props.onSend(msg.text, msg.images, msg.files, msg.fileRefs)
+    media.commitSend() // cópias do rascunho: a do arquivo enviado fica; as outras saem do disco
+    media.reset()
     updateValue('') // clears the box
     // The message was already sent — flush the now-empty draft explicitly so the
     // stale (pre-send) text doesn't reappear if the user comes back to this chat.
     flushDraft(props.convId, '')
-    setImages([])
-    setFiles([])
-    setFileRefs([])
     setPicker(null)
     setPickerItems([])
     cardAc.close(false)
   }
 
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+  const onKey = (e: KeyboardEvent<HTMLDivElement>): void => {
+    // Enter que confirma a composição do IME (acentos, japonês…) não é envio.
+    if (e.nativeEvent.isComposing) return
     // Lista do "[[" aberta: setas, Enter/Tab (escolhe o card, não envia) e Esc são dela.
     if (refsOpen && cardAc.handleKeyDown(e)) return
     // While the picker menu is open, the arrow keys / Enter / Tab / Esc drive it
@@ -784,177 +812,34 @@ export function Composer(props: Props): JSX.Element {
     }
   }
 
-  // The Composer isn't remounted per conversation (only MessageList is), so a
-  // slow resolution (a URL download, or stat'ing/reading a huge local file)
-  // must not land its result on whatever conversation happens to be open when
-  // it finishes. Callers capture `convIdRef.current` as `pastedConvId` right
-  // before starting an async resolution, then run every resulting state
-  // update through this guard — a conversation switch mid-resolution silently
-  // drops the result instead of attaching it to the wrong chat.
-  const applyIfStillActive = (pastedConvId: string | null, fn: () => void): void => {
-    if (convIdRef.current === pastedConvId) fn()
-  }
-
-  // Same size cap `readFileBytes` enforces in main — checked here BEFORE
-  // calling it so a huge image never gets read into memory just to be
-  // rejected; it falls back to a plain chip instead of a preview.
-  const MAX_IMAGE_PREVIEW_BYTES = 50 * 1024 * 1024
-
-  // Resolve a File that has a real path on disk (via webUtils.getPathForFile)
-  // but is too large for the base64/FileReader path (addFiles' `others`/`imgs`
-  // size check). Reuses `resolvePastedPath` (stat only, no bytes) — mirrors
-  // `resolvePastedLine` below, including the same anti-leak guard.
-  const resolveLargeFile = async (file: File, pastedConvId: string | null): Promise<void> => {
-    // getPathForFile throws (per Electron's own docs) if `file` isn't a real
-    // File — treat that the same as "no path" instead of letting the
-    // rejection skip addFiles' resolvingCount decrement and wedge send.
-    let path: string
-    try {
-      path = window.api.getPathForFile(file)
-    } catch {
-      path = ''
-    }
-    if (!path) {
-      applyIfStillActive(pastedConvId, () =>
-        notify('erro', `Arquivo maior que 25 MB precisa ter um caminho no disco: ${file.name}`)
-      )
-      return
-    }
-    const resolved = await window.api.resolvePastedPath(path)
-    if (!resolved.ok) {
-      applyIfStillActive(pastedConvId, () => notify('erro', `Arquivo não encontrado: ${resolved.error}`))
-      return
-    }
-    if (resolved.isImage && resolved.size <= MAX_IMAGE_PREVIEW_BYTES) {
-      const bytes = await window.api.readFileBytes(resolved.path)
-      if (!bytes.ok) {
-        applyIfStillActive(pastedConvId, () => notify('erro', `Falha ao ler imagem: ${bytes.error}`))
-        return
-      }
-      applyIfStillActive(pastedConvId, () =>
-        setImages((prev) => [...prev, { mediaType: resolved.mediaType, data: bytes.base64 }])
-      )
-      return
-    }
-    applyIfStillActive(pastedConvId, () =>
-      setFileRefs((prev) => [
-        ...prev,
-        { name: resolved.name, path: resolved.path, mediaType: resolved.mediaType, size: resolved.size }
-      ])
-    )
-  }
-
-  // Collect attachments (from the picker, paste, or drag-drop). Small files
-  // (≤MAX_FILE_BYTES) go through FileReader → base64, same as always. Larger
-  // ones are resolved by real disk path instead (resolveLargeFile) — no size
-  // cap, since the bytes never cross IPC.
-  const addFiles = async (list: FileList | File[]): Promise<void> => {
-    const arr = [...list]
-    const imgs = arr.filter((f) => f.type.startsWith('image/') && f.size <= MAX_FILE_BYTES)
-    const others = arr.filter((f) => !f.type.startsWith('image/') && f.size <= MAX_FILE_BYTES)
-    const large = arr.filter((f) => f.size > MAX_FILE_BYTES)
-    if (imgs.length) {
-      const attached = await Promise.all(imgs.map(fileToAttachment))
-      setImages((prev) => [...prev, ...attached])
-    }
-    if (others.length) {
-      const attached = await Promise.all(others.map(fileToFileAttachment))
-      setFiles((prev) => [...prev, ...attached])
-    }
-    if (large.length) {
-      const pastedConvId = convIdRef.current
-      setResolvingCount((n) => n + large.length)
-      await Promise.all(large.map((f) => resolveLargeFile(f, pastedConvId)))
-      setResolvingCount((n) => n - large.length)
-    }
-  }
-
-  // Resolve one pasted line already known to look like a local path or a file
-  // URL. Images go through `readFileBytes` (same as a blob paste — real
-  // preview + vision block); everything else becomes a `FileRefAttachment`
-  // (path only, no bytes ever cross IPC). Failures notify and are reported to
-  // the caller so the original line can be put back as plain text.
-  const resolvePastedLine = async (line: string, pastedConvId: string | null): Promise<{ ok: boolean; line: string }> => {
-    const isUrl = looksLikeFileUrl(line)
-    const resolved = isUrl
-      ? await window.api.downloadPastedUrl(line, props.convId ?? '')
-      : await window.api.resolvePastedPath(line)
-    if (!resolved.ok) {
-      applyIfStillActive(pastedConvId, () =>
-        notify('erro', `${isUrl ? 'Falha ao baixar' : 'Arquivo não encontrado'}: ${resolved.error}`)
-      )
-      return { ok: false, line }
-    }
-    if (resolved.isImage) {
-      const bytes = await window.api.readFileBytes(resolved.path)
-      if (!bytes.ok) {
-        applyIfStillActive(pastedConvId, () => notify('erro', `Falha ao ler imagem: ${bytes.error}`))
-        return { ok: false, line }
-      }
-      applyIfStillActive(pastedConvId, () =>
-        setImages((prev) => [...prev, { mediaType: resolved.mediaType, data: bytes.base64 }])
-      )
-    } else {
-      applyIfStillActive(pastedConvId, () =>
-        setFileRefs((prev) => [
-          ...prev,
-          { name: resolved.name, path: resolved.path, mediaType: resolved.mediaType, size: resolved.size }
-        ])
-      )
-    }
-    return { ok: true, line }
-  }
-
-  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
+  // Colar: arquivo/imagem vira anexo no cursor; texto entra SEMPRE como texto
+  // puro (nada de HTML no campo). Linha que é caminho local ou URL de arquivo
+  // vira anexo no lugar dela (ver useInlineAttachments.pasteText). A resolução
+  // que termina depois de trocar de conversa é descartada lá dentro.
+  const onPaste = (e: ClipboardEvent<HTMLDivElement>): void => {
     if (blocked) {
       onBlocked(e)
       return
     }
+    e.preventDefault()
     const pasted = [...e.clipboardData.items]
       .filter((it) => it.kind === 'file')
       .map((it) => it.getAsFile())
       .filter((f): f is File => f !== null)
     if (pasted.length) {
-      e.preventDefault()
-      void addFiles(pasted)
+      void media.addFiles(pasted)
       return
     }
-
-    // No real file in the clipboard — check if the pasted TEXT is one or more
-    // lines that look like a local path or a file URL. Only intercept the
-    // paste (preventDefault) when at least one line qualifies; a normal
-    // paragraph paste is untouched.
     const text = e.clipboardData.getData('text/plain')
-    const lines = text.split(/\r\n|\r|\n/)
-    const candidates = lines.filter((l) => l.trim() && (looksLikeLocalPath(l) || looksLikeFileUrl(l)))
-    if (candidates.length === 0) return
+    if (text) media.pasteText(text)
+  }
 
-    e.preventDefault()
-    const remaining = lines.filter((l) => !candidates.includes(l))
-    // Insert whatever text ISN'T a recognized path/URL at the caret, same as a
-    // normal paste would — the recognized lines are consumed into attachments.
-    const ta = props.textareaRef.current
-    const leftover = remaining.join('\n')
-    if (leftover) {
-      const start = ta?.selectionStart ?? value.length
-      const end = ta?.selectionEnd ?? value.length
-      updateValue(value.slice(0, start) + leftover + value.slice(end))
-    }
-
-    const pastedConvId = convIdRef.current
-    setResolvingCount((n) => n + candidates.length)
-    void Promise.all(candidates.map((line) => resolvePastedLine(line, pastedConvId))).then((results) => {
-      setResolvingCount((n) => n - results.length)
-      if (convIdRef.current !== pastedConvId) return // switched conversations mid-resolution
-      // Lines that failed to resolve go back into the box as plain text so
-      // nothing pasted is silently dropped. Reads valueRef (not `value`) since
-      // this runs after the paste event closure is long gone.
-      const failedLines = results.filter((r) => !r.ok).map((r) => r.line)
-      if (failedLines.length) {
-        const cur = valueRef.current
-        updateValue(`${cur}${cur ? '\n' : ''}${failedLines.join('\n')}`)
-      }
-    })
+  // Arrastar arquivos: entram no ponto do texto onde foram soltos.
+  const dropCaret = (e: DragEvent<HTMLDivElement>): number | null => {
+    const el = editorRef.current
+    const doc = el?.ownerDocument as (Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }) | undefined
+    const r = doc?.caretRangeFromPoint?.(e.clientX, e.clientY)
+    return el && r && el.contains(r.startContainer) ? offsetFromPoint(el, r.startContainer, r.startOffset) : null
   }
 
   const onDrop = (e: DragEvent<HTMLDivElement>): void => {
@@ -964,7 +849,14 @@ export function Composer(props: Props): JSX.Element {
     }
     if (e.dataTransfer.files.length) {
       e.preventDefault()
-      void addFiles(e.dataTransfer.files)
+      void media.addFiles(e.dataTransfer.files, dropCaret(e))
+      return
+    }
+    // Texto arrastado de fora também entra como texto puro.
+    const text = e.dataTransfer.getData('text/plain')
+    if (text && e.target instanceof Node && editorRef.current?.contains(e.target)) {
+      e.preventDefault()
+      editorRef.current.insertParts([text], dropCaret(e))
     }
   }
 
@@ -972,7 +864,7 @@ export function Composer(props: Props): JSX.Element {
   // native Read/Glob/LS tools — we don't read the file ourselves.
   const insertRef = (path: string): void => {
     const mention = `@${path} `
-    const ta = props.textareaRef.current
+    const ta = editorRef.current
     if (!ta) {
       updateValue(value + mention)
       return
@@ -1091,12 +983,12 @@ export function Composer(props: Props): JSX.Element {
     const onDown = (e: MouseEvent): void => {
       const t = e.target as Node
       if (pickerMenu.current?.contains(t)) return
-      if (props.textareaRef.current?.contains(t)) return
+      if (editorRef.current?.contains(t)) return
       setPicker(null)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [picker, props.textareaRef])
+  }, [picker])
 
   // Keep the highlighted item visible as you arrow through a long list.
   useEffect(() => {
@@ -1114,7 +1006,7 @@ export function Composer(props: Props): JSX.Element {
     updateValue(next)
     setPicker(null)
     setPickerItems([])
-    const ta = props.textareaRef.current
+    const ta = editorRef.current
     if (ta) {
       requestAnimationFrame(() => {
         ta.focus()
@@ -1122,6 +1014,21 @@ export function Composer(props: Props): JSX.Element {
         ta.setSelectionRange(pos, pos)
       })
     }
+  }
+
+  const placeholder = props.disabled
+    ? 'Inicie uma sessão primeiro…'
+    : blocked
+      ? 'A pasta do projeto não existe mais — não dá para digitar.'
+      : 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'
+
+  // O k-ésimo anexo do texto, no espelho: invisível, só ocupa o lugar. A miniatura
+  // tem tamanho fixo no CSS, então vai sem `src` (não repete a data: URL da foto);
+  // o chip leva o SVG pequeno, que dá a largura do nome.
+  const mirrorToken = (k: number): JSX.Element | null => {
+    const att: InlineAtt | undefined = media.atts.get(media.order[k] ?? '')
+    if (!att) return null
+    return <img className={`inline-att inline-att-${att.kind}`} src={att.kind === 'image' ? undefined : att.src} alt="" />
   }
 
   return (
@@ -1140,68 +1047,6 @@ export function Composer(props: Props): JSX.Element {
           ))}
         </div>
       )}
-      {images.length > 0 && (
-        <div className="img-previews">
-          {images.map((img, i) => (
-            <span className="img-thumb" key={i}>
-              <img src={`data:${img.mediaType};base64,${img.data}`} alt="anexo" />
-              <button
-                className="img-x"
-                title="Remover"
-                onClick={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
-              >
-                <IconClose size={12} />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      {files.length > 0 && (
-        <div className="file-chips">
-          {files.map((f, i) => {
-            const meta = fileMeta(f.name)
-            return (
-              <span className="file-chip" key={i} title={`${f.name} · ${fmtSize(f.size)}`}>
-                <span className={`file-badge kind-${meta.kind}`}>{meta.ext}</span>
-                <span className="file-chip-info">
-                  <span className="file-chip-name">{f.name}</span>
-                  {f.size > 0 && <span className="file-chip-size">{fmtSize(f.size)}</span>}
-                </span>
-                <button
-                  className="file-x"
-                  title="Remover"
-                  onClick={() => setFiles((prev) => prev.filter((_, idx) => idx !== i))}
-                >
-                  <IconClose size={12} />
-                </button>
-              </span>
-            )
-          })}
-        </div>
-      )}
-      {fileRefs.length > 0 && (
-        <div className="file-chips">
-          {fileRefs.map((f, i) => {
-            const meta = fileMeta(f.name)
-            return (
-              <span className="file-chip" key={i} title={`${f.name} · ${fmtSize(f.size)} · ${f.path}`}>
-                <span className={`file-badge kind-${meta.kind}`}>{meta.ext}</span>
-                <span className="file-chip-info">
-                  <span className="file-chip-name">{f.name}</span>
-                  {f.size > 0 && <span className="file-chip-size">{fmtSize(f.size)}</span>}
-                </span>
-                <button
-                  className="file-x"
-                  title="Remover"
-                  onClick={() => setFileRefs((prev) => prev.filter((_, idx) => idx !== i))}
-                >
-                  <IconClose size={12} />
-                </button>
-              </span>
-            )
-          })}
-        </div>
-      )}
       {resolvingCount > 0 && (
         <div className="file-resolving" role="status" aria-live="polite">
           <IconSpinner className="spinner" size={13} />
@@ -1214,7 +1059,7 @@ export function Composer(props: Props): JSX.Element {
         multiple
         style={{ display: 'none' }}
         onChange={(e) => {
-          if (e.target.files) void addFiles(e.target.files)
+          if (e.target.files) void media.addFiles(e.target.files)
           e.target.value = ''
         }}
       />
@@ -1378,34 +1223,34 @@ export function Composer(props: Props): JSX.Element {
           )}
         </div>
         <div className="composer-input-wrap">
-          {/* Mirror layer: same metrics as the textarea, paints the gray pills
-              behind @/ tokens. The textarea (transparent bg) sits on top. */}
+          {/* Mirror layer: same metrics as the box, paints the gray pills
+              behind @/ tokens (and the placeholder). The box (transparent bg) sits on top. */}
           <div className="composer-highlight" ref={composerHl} aria-hidden="true">
-            {highlightNodes(value)}
+            {value ? highlightNodes(value, mirrorToken) : <span className="composer-placeholder">{placeholder}</span>}
           </div>
-          <textarea
-            ref={props.textareaRef}
+          <InlineEditor
+            editorRef={editorRef}
             className="composer-input"
-            placeholder={
-              props.disabled
-                ? 'Inicie uma sessão primeiro…'
-                : blocked
-                  ? 'A pasta do projeto não existe mais — não dá para digitar.'
-                  : 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'
-            }
+            {...{ placeholder }}
+            aria-placeholder={placeholder}
+            aria-label="Mensagem"
+            aria-disabled={props.disabled || undefined}
+            aria-readonly={blocked || undefined}
             value={value}
-            disabled={props.disabled}
-            readOnly={blocked}
+            order={media.order}
+            atts={media.atts}
+            editable={!props.disabled && !blocked}
             {...(refsOn ? cardAc.inputAria : undefined)}
             onMouseDown={blocked ? onBlocked : undefined}
             onFocusCapture={blocked ? () => onBlocked() : undefined}
-            onChange={(e) => {
-              updateValue(e.target.value)
-              syncPicker(e.target.value, e.target.selectionStart ?? e.target.value.length)
-              syncCardRefs(e.target.value, e.target.selectionStart)
+            onEdit={(text, order, caret) => {
+              updateValue(text)
+              media.setOrder(order)
+              syncPicker(text, caret)
+              syncCardRefs(text, caret)
             }}
             // O cursor andou (clique, setas): o "[[" em volta dele decide a lista de cards.
-            onSelect={(e) => syncCardRefs(e.currentTarget.value, e.currentTarget.selectionStart)}
+            onCaret={(text, caret) => syncCardRefs(text, caret)}
             onKeyDown={onKey}
             // "Salvar quando o usuário clica em outra coisa": the mention/skill
             // picker's own items use mousedown+preventDefault specifically to
@@ -1416,19 +1261,18 @@ export function Composer(props: Props): JSX.Element {
               flushDraft(props.convId, value)
               cardAc.close(false)
             }}
-            onClick={(e) => syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+            onClick={() => syncPicker(value, editorRef.current?.selectionStart ?? 0)}
             onKeyUp={(e) => {
               // Re-detect the token when the caret moves (not while the menu is
               // driving the arrows — those are handled in onKeyDown).
               if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
-                syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
+                syncPicker(value, editorRef.current?.selectionStart ?? 0)
               }
             }}
             onScroll={(e) => {
               if (composerHl.current) composerHl.current.scrollTop = e.currentTarget.scrollTop
             }}
             onPaste={onPaste}
-            rows={1}
           />
         </div>
         {props.busy && (

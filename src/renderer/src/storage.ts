@@ -1,4 +1,5 @@
 import { currentModelId } from '@shared/ipc'
+import { migrateConversationEffort } from '@shared/autoEffort'
 import { DEFAULT_TITLE, type Conversation, type UIMessage } from './types'
 import type {
   RateLimitStatus,
@@ -105,7 +106,7 @@ function readLegacyLocalStorageConversations(): Conversation[] | null {
     const raw = localStorage.getItem('agentcode.conversations.v1')
     if (!raw) return null
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as Conversation[]) : null
+    return Array.isArray(parsed) ? (parsed as Conversation[]).map((c) => migrateConversationEffort(c)) : null
   } catch {
     return null
   }
@@ -117,8 +118,9 @@ const dirtyConversationIds = new Set<string>()
 const conversationGenerations = new Map<string, number>()
 
 function cleanConversation(conversation: Conversation): Conversation {
+  // Toda escrita carimba o marcador da separação dos Automáticos (autoEffort.ts).
   return JSON.parse(
-    JSON.stringify(compactOldConversations([conversation])[0], (key, value) =>
+    JSON.stringify({ ...compactOldConversations([conversation])[0], effortSplit: true }, (key, value) =>
       key === 'images' ? undefined : value
     )
   ) as Conversation
@@ -165,7 +167,9 @@ function timestamp(value: unknown, recordValue: string): number {
  * record. Normalize the renderer's required fields at this boundary so one
  * malformed conversation cannot make the entire history unavailable. */
 function normalizeConversation(record: VersionedConversationDto): Conversation {
-  const payload = record.payload
+  // Registro anterior à separação dos Automáticos → effort:'auto'. One-shot pelo
+  // marcador (ver migrateConversationEffort), que vai na próxima escrita dele.
+  const payload = migrateConversationEffort(record.payload)
   const rawTokens = payload.tokens && typeof payload.tokens === 'object'
     ? payload.tokens as Record<string, unknown>
     : {}

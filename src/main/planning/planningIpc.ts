@@ -7,13 +7,16 @@ import {
   type PlanningCardDto,
   type PlanningChangedMsg,
   type PlanningFailure,
-  type PlanningHandoffDto,
+  type PlanningHandoffListDto,
+  type PlanningHandoffSentDto,
   type PlanningMediaContentDto,
   type PlanningResult,
   type PlanningRoteiroDto,
   type PlanMediaDto
 } from '../../shared/ipc'
 import { isValidMediaName, MAX_ANEXOS_POR_CARD, MAX_MEDIA_BYTES } from '../../shared/planningMedia'
+import * as realSent from './handoffSent'
+import { HandoffSentMarkSchema } from './handoffSent'
 import { notifyPlanningChanged, setPlanningChangeSink } from './planningEvents'
 import * as realMedia from './planningMedia'
 import { CARD_TYPES, isValidName, PlanningValidationError, STAGE_STATUSES } from './planningModel'
@@ -48,6 +51,12 @@ export interface PlanningMediaApi {
   readMedia: typeof realMedia.readMedia
 }
 
+/** _handoff/enviados.json (handoffSent); injetável nos testes como o store. */
+export interface HandoffSentApi {
+  readHandoffsSent: typeof realSent.readHandoffsSent
+  markHandoffsSent: typeof realSent.markHandoffsSent
+}
+
 export interface PlanningWatcherLike {
   watch(projectCwd: string, slug: string): void
   unwatch(projectCwd: string, slug: string): void
@@ -64,6 +73,7 @@ export interface PlanningIpcDeps {
   send: (channel: string, payload: unknown) => void
   store?: PlanningStoreApi
   media?: PlanningMediaApi
+  sent?: HandoffSentApi
   createWatcher?: (onChange: (change: PlanningChange) => void) => PlanningWatcherLike
   isDirectory?: (p: string) => Promise<boolean>
 }
@@ -120,6 +130,7 @@ const WriteHandoffReq = z.strictObject({
   ...refShape,
   conteudo: z.string().max(1_000_000).refine((s) => s.trim() !== '', 'o prompt de handoff está vazio')
 })
+const MarkHandoffsSentReq = z.strictObject({ ...refShape, entries: z.array(HandoffSentMarkSchema).min(1).max(200) })
 /** Base64 de até MAX_MEDIA_BYTES (o tamanho decodificado é conferido de novo no importMedia). */
 const Base64 = z
   .string()
@@ -187,6 +198,7 @@ function planKey(projectCwd: string, slug: string): string {
 export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
   const store = deps.store ?? realStore
   const media = deps.media ?? realMedia
+  const sentStore = deps.sent ?? realSent
   const isDirectory = deps.isDirectory ?? defaultIsDirectory
   const onChange = (change: PlanningChange): void => {
     const msg: PlanningChangedMsg = { projectCwd: change.projectCwd, slug: change.slug }
@@ -326,9 +338,22 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
   register(
     Channels.planningListHandoffs,
     RefReq,
-    async ({ projectCwd, slug }): Promise<PlanningResult<{ handoffs: PlanningHandoffDto[] }>> => ({
+    async ({ projectCwd, slug }): Promise<PlanningResult<PlanningHandoffListDto>> => {
+      const [handoffs, sent] = await Promise.all([
+        store.listHandoffs(projectCwd, slug),
+        sentStore.readHandoffsSent(projectCwd, slug)
+      ])
+      return { ok: true, handoffs, sent: sent.entries, ...(sent.error ? { sentError: sent.error } : {}) }
+    }
+  )
+
+  // Mesma regra do writeHandoff: quem grava é a própria tela, sem planning:changed.
+  register(
+    Channels.planningMarkHandoffsSent,
+    MarkHandoffsSentReq,
+    async ({ projectCwd, slug, entries }): Promise<PlanningResult<{ sent: PlanningHandoffSentDto[] }>> => ({
       ok: true,
-      handoffs: await store.listHandoffs(projectCwd, slug)
+      sent: await sentStore.markHandoffsSent(projectCwd, slug, entries)
     })
   )
 

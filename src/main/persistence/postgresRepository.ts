@@ -5,9 +5,12 @@ import { parseStoredAppConfig } from './configData'
 import { lockPostgresTransferRecords, postgresTransferClock, prepareTransferRecords, readPostgresTransferRecords, type TransferRecords } from './transferRecords'
 import { hashAggregate, hashJson, hashText, normalizeJson, type JsonValue } from './hashes'
 import { PostgresChangeFeed } from './postgresChangeFeed'
-import { ChangeLogPruner } from './changeLogPruner'
+import { ChangeLogPruner, pruneInBatches } from './changeLogPruner'
 import { TokenUsagePruner } from './tokenUsagePruner'
 import { createPostgresSessionStore } from './postgresSessionStore'
+import { hotPathTransaction } from './postgresSessionSetup'
+import { rollbackOrDiscard } from './postgresTimeouts'
+import { mergeDeviceState, splitDeviceFields } from './conversationScope'
 import {
   decodePostgresJson,
   decodePostgresText,
@@ -319,8 +322,7 @@ function conversation(row: ConversationRow): VersionedConversation {
   return {
     id: row.conversation_id,
     payload: {
-      ...payload,
-      ...deviceState,
+      ...mergeDeviceState(payload, deviceState),
       cwd: typeof row.project_path === 'string'
         ? row.project_path
         : typeof deviceState.cwd === 'string' ? deviceState.cwd : ''
@@ -337,27 +339,24 @@ function splitConversationPayload(payload: ConversationRecord): {
   shared: ConversationRecord
   device: ConversationRecord
 } {
-  const shared = { ...payload }
-  const device: ConversationRecord = {}
-  if (typeof shared.cwd === 'string') device.cwd = shared.cwd
-  if (typeof shared.draft === 'string') device.draft = shared.draft
-  delete shared.cwd
-  delete shared.draft
-  return { shared, device }
+  // cwd, draft e draftMedia: estado deste dispositivo (ver conversationScope.ts).
+  const { shared, device } = splitDeviceFields(payload)
+  return { shared, device: device as ConversationRecord }
 }
 
 async function transaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect()
+  let discard: Error | undefined
   try {
     await client.query('BEGIN')
     const result = await fn(client)
     await client.query('COMMIT')
     return result
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined)
+    discard = await rollbackOrDiscard(client, error)
     throw error
   } finally {
-    client.release()
+    client.release(discard)
   }
 }
 
@@ -390,8 +389,16 @@ export class PostgresRepository implements PersistenceRepository {
     // Mesma lógica: manutenção, não uma operação do usuário (ver tokenUsagePruner.ts).
     this.tokenUsagePruner = new TokenUsagePruner(
       {
+        // Em lotes, cada um bem dentro do statement_timeout (ver pruneInBatches).
         deleteLlmCallsOlderThan: async (days) => {
-          await this.pool.query('DELETE FROM llm_calls WHERE created_at < now() - make_interval(days => $1)', [days])
+          await pruneInBatches(async (limit) => {
+            const result = await this.pool.query(
+              `DELETE FROM llm_calls WHERE id IN (
+                 SELECT id FROM llm_calls WHERE created_at < now() - make_interval(days => $1) LIMIT $2)`,
+              [days, limit]
+            )
+            return result.rowCount ?? 0
+          })
         }
       },
       (error) => console.error('[postgres] falha ao podar llm_calls:', error)
@@ -433,6 +440,7 @@ export class PostgresRepository implements PersistenceRepository {
   async loadTransferRecords(): Promise<TransferRecords> {
     this.assertInitialized()
     const client = await this.pool.connect()
+    let discard: Error | undefined
     try {
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ')
       await lockPostgresTransferRecords(client)
@@ -441,10 +449,10 @@ export class PostgresRepository implements PersistenceRepository {
       await client.query('COMMIT')
       return snapshot
     } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined)
+      discard = await rollbackOrDiscard(client, error)
       throw error
     } finally {
-      client.release()
+      client.release(discard)
     }
   }
 
@@ -732,6 +740,10 @@ export class PostgresRepository implements PersistenceRepository {
     return createPostgresSessionStore(this.pool, conversationId)
   }
 
+  createSessionReplayStore(conversationId: string): SessionStore {
+    return createPostgresSessionStore(this.pool, conversationId, { replay: true })
+  }
+
   async sessionResumeReady(conversationId: string, sessionId: string): Promise<boolean> {
     const result = await this.pool.query<{ resume_ready: boolean }>(
       'SELECT resume_ready FROM sdk_sessions WHERE conversation_id = $1 AND session_id = $2',
@@ -797,11 +809,17 @@ export class PostgresRepository implements PersistenceRepository {
   }
 
   async renewConversationLease(lease: ConversationLease): Promise<ConversationLease> {
-    const result = await this.pool.query<{ expires_at: Date | string }>(
-      `UPDATE conversation_leases SET heartbeat_at = clock_timestamp(), expires_at = clock_timestamp() + interval '60 seconds'
-       WHERE conversation_id = $1 AND owner_installation_id = $2 AND token = $3 AND fencing_epoch = $4
-       RETURNING expires_at`,
-      [lease.conversationId, this.installationId, lease.token, lease.fencingEpoch]
+    // Teto curto: o batimento é a cada 20s e o lease vence em 60s; uma renovação
+    // presa por 130s (o teto geral) seguraria a vaga à toa. Cada consulta leva
+    // POSTGRES_CALL_TIMEOUT_MS e a transação um lock_timeout menor, para uma
+    // espera pela linha do lease terminar com o erro do servidor, não do cliente.
+    const result = await hotPathTransaction(this.pool, (query) =>
+      query<{ expires_at: Date | string }>(
+        `UPDATE conversation_leases SET heartbeat_at = clock_timestamp(), expires_at = clock_timestamp() + interval '60 seconds'
+         WHERE conversation_id = $1 AND owner_installation_id = $2 AND token = $3 AND fencing_epoch = $4
+         RETURNING expires_at`,
+        [lease.conversationId, this.installationId, lease.token, lease.fencingEpoch]
+      )
     )
     if (!result.rowCount) throw new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'O lease não pertence mais a esta instalação.')
     return { ...lease, expiresAt: iso(result.rows[0].expires_at) }

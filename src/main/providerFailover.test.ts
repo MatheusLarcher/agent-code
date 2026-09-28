@@ -93,7 +93,11 @@ describe('provider failover', () => {
     await settled()
     expect(h.records).toHaveLength(1)
     expect(h.records[0].session.dispose).not.toHaveBeenCalled()
-    expect(h.emit).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'error', retryable: false }))
+    // Sem destino: o terminal de limite original segue (o renderer agenda o
+    // retry para o reset), com a explicação. Falha técnica: erro fatal.
+    expect(h.emit).toHaveBeenLastCalledWith(failure === 'missing-auth'
+      ? expect.objectContaining({ kind: 'result', isError: true, text: expect.stringContaining('não está conectado') })
+      : expect.objectContaining({ kind: 'error', retryable: false }))
   })
 
   it.each(['interrupt', 'dispose'] as const)('%s cancels a pending switch', async (action) => {
@@ -118,6 +122,105 @@ describe('provider failover', () => {
     expect(h.records[1].options.skipPermissions).toBe(true)
     expect(h.records[1].session.send.mock.calls[0][0]).toBe(FAILOVER_CONTINUATION)
     expect(h.records[1].session.send.mock.calls[1][0]).toBe('Agora liste o resultado')
+  })
+})
+
+describe('tarefa MCP com modelo pedido (pinModel)', () => {
+  function withAccounts(target: { to: string; toPct: number; fromPct: number } | null) {
+    const records: Array<{ options: StartAgentOptions; event: (event: ChatEvent) => void; session: ReturnType<typeof stub> }> = []
+    const emit = vi.fn()
+    const available = vi.fn(async () => true)
+    const accounts = {
+      multiple: () => true, autoEnabled: () => true, turnEndTarget: vi.fn(async () => null),
+      exhaustedTarget: vi.fn(async () => target), label: (id: string) => id, changed: vi.fn(), markExhausted: vi.fn()
+    }
+    const session = new ProviderFailoverSession({ convId: 'chat', cwd: '/p', model: 'claude-sonnet-5', claudeAccountId: 'a1' },
+      (options, event) => { const s = stub(); records.push({ options, event, session: s }); return s }, emit, available, vi.fn(), accounts)
+    return { session, records, emit, available }
+  }
+
+  it('troca para outra CONTA Claude com o mesmo modelo continua permitida', async () => {
+    const h = withAccounts({ to: 'a2', toPct: 10, fromPct: 100 })
+    h.session.pinModel(true)
+    await h.session.send('peça')
+    h.records[0].event(quota)
+    await settled()
+    expect(h.records).toHaveLength(2)
+    expect(h.records[1].options).toMatchObject({ model: 'claude-sonnet-5', claudeAccountId: 'a2' })
+    expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'account-switch', toAccountId: 'a2' }))
+  })
+
+  it.each(['claude-sonnet-5', 'gpt-6-astra'])('%s: sem conta com folga, NÃO troca de modelo nem de provedor — erro claro', async (model) => {
+    const h = model.startsWith('gpt') ? harness(model) : withAccounts(null)
+    h.session.pinModel(true)
+    await h.session.send('peça')
+    h.records[0].event(quota)
+    await settled()
+    expect(h.records).toHaveLength(1)
+    expect(h.available).not.toHaveBeenCalled()
+    expect(h.emit).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'provider-switch' }))
+    expect(h.emit).toHaveBeenLastCalledWith(expect.objectContaining({
+      kind: 'error', retryable: false, text: expect.stringContaining(`A cota do modelo ${model} acabou`)
+    }))
+  })
+
+  it('sem modelo pedido (pinModel(false)): a troca de provedor de sempre', async () => {
+    const h = harness()
+    h.session.pinModel(true)
+    h.session.pinModel(false)
+    await h.session.send('peça')
+    h.records[0].event(quota)
+    await settled()
+    expect(h.records[1].options.model).toBe('gpt-6-astra')
+  })
+
+  it.each([
+    ['resultado', (h: ReturnType<typeof harness>) => h.records[0].event(done)],
+    ['erro', (h: ReturnType<typeof harness>) => h.records[0].event({ kind: 'error', id: 'e', text: 'falhou', retryable: true })],
+    ['cancelamento', (h: ReturnType<typeof harness>) => void h.session.interrupt()]
+  ])('o fixado vale só para o turno da tarefa: depois do %s, o turno seguinte (sem refixar) troca como sempre', async (_n, end) => {
+    const h = harness()
+    h.session.pinModel(true)
+    await h.session.send('peça')
+    end(h)
+    await settled()
+    // Turno seguinte que ninguém fixou (ex.: envio sem tarefa): troca de provedor de sempre.
+    await h.session.send('próxima')
+    h.records[0].event(quota)
+    await settled()
+    expect(h.records).toHaveLength(2)
+    expect(h.records[1].options.model).toBe('gpt-6-astra')
+  })
+
+  it('turno autônomo (loop, sem agent:send) depois da tarefa não herda o fixado', async () => {
+    const h = harness()
+    h.session.pinModel(true)
+    await h.session.send('peça')
+    h.records[0].event(done)
+    h.records[0].event(quota)
+    await settled()
+    expect(h.records[1].options.model).toBe('gpt-6-astra')
+  })
+
+  it('depois do erro "A cota do modelo X acabou", o turno seguinte nasce livre', async () => {
+    const h = harness('gpt-6-astra')
+    h.session.pinModel(true)
+    await h.session.send('peça')
+    h.records[0].event(quota)
+    await settled()
+    expect(h.emit).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining('A cota do modelo') }))
+    await h.session.send('mensagem do usuário')
+    h.records[0].event(quota)
+    await settled()
+    expect(h.records[1].options.model).toBe('claude-opus-5-5')
+  })
+
+  it('liveOptions: o modelo em que a sessão está agora (depois da troca)', async () => {
+    const h = harness()
+    expect(h.session.liveOptions().model).toBe('claude-opus-5-5')
+    h.records[0].event(quota)
+    await settled()
+    expect(h.session.liveOptions().model).toBe('gpt-6-astra')
   })
 })
 

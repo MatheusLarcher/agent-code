@@ -4,6 +4,7 @@ import { wantsAutoTitle } from '../conversationTitle'
 import {
   existingPlanTitle,
   handoffConversationFields,
+  handoffPlanOf,
   isPlanningConversation,
   managerModelLabel,
   planningConversationFields,
@@ -33,6 +34,23 @@ describe('revalidatesAuto', () => {
     // quem decide é o main.
     expect(revalidatesAuto({ ...planning, model: AUTO_MODEL })).toBe(false)
   })
+
+  it('só o esforço em Automático também revalida a cada mensagem', () => {
+    expect(revalidatesAuto({ ...normal, model: 'claude-opus-5-5', effort: 'auto' })).toBe(true)
+    expect(revalidatesAuto({ ...normal, model: 'claude-opus-5-5', effort: 'high' })).toBe(false)
+    expect(revalidatesAuto({ ...planning, model: 'claude-opus-5-5', effort: 'auto' })).toBe(false)
+  })
+
+  it('handoff segue cada dimensão do Manager: esforço Automático continua Automático', () => {
+    expect(handoffConversationFields('x', 'X', { model: 'claude-opus-5-5', effort: 'auto' })).toMatchObject({
+      model: 'claude-opus-5-5',
+      effort: 'auto'
+    })
+    expect(handoffConversationFields('x', 'X', { model: AUTO_MODEL, effort: 'auto' })).toMatchObject({
+      model: AUTO_MODEL,
+      effort: 'auto'
+    })
+  })
 })
 
 describe('sessionStartFields', () => {
@@ -55,6 +73,34 @@ describe('sessionStartFields', () => {
     expect(sessionStartFields({ ...normal, handoffSlug: '' })).toEqual({})
     // Os dois marcados (não deveria acontecer): o main recusaria; o planejamento vence.
     expect(sessionStartFields({ ...planning, handoffSlug: 'x' })).toEqual({ planning: { slug: 'checkout' } })
+  })
+})
+
+describe('handoffPlanOf ("Plano: <título>" da conversa de implementação)', () => {
+  const opus = { model: 'claude-opus-5-5', effort: 'high' as const }
+  const origin = { projectCwd: 'C:\\proj', prompts: ['2026-09-25-01.md', '2026-09-25-02.md'] }
+
+  it('a conversa guarda o plano de origem e os arquivos que recebeu, na ordem', () => {
+    expect(handoffConversationFields('checkout', ' Checkout ', opus, origin).handoffPlan).toEqual({
+      projectCwd: 'C:\\proj',
+      slug: 'checkout',
+      titulo: 'Checkout',
+      prompts: ['2026-09-25-01.md', '2026-09-25-02.md']
+    })
+    expect(handoffConversationFields('checkout', 'Checkout', opus).handoffPlan).toBeUndefined()
+  })
+
+  it('prefere o título da conversa de planejamento do plano; sem ela, o gravado', () => {
+    const conv = { cwd: 'C:\\proj', ...handoffConversationFields('checkout', 'Checkout', opus, origin) }
+    const planning = { cwd: 'C:\\proj', mode: 'planning' as const, planningSlug: 'checkout', title: 'Checkout v2' }
+    expect(handoffPlanOf(conv, [planning])).toEqual({ projectCwd: 'C:\\proj', slug: 'checkout', titulo: 'Checkout v2' })
+    expect(handoffPlanOf(conv, [{ ...planning, cwd: 'C:\\outro' }])?.titulo).toBe('Checkout')
+  })
+
+  it('conversa de handoff antiga (só o slug) usa a pasta dela; conversa normal ou de planejamento: nada', () => {
+    expect(handoffPlanOf({ cwd: 'C:\\proj', handoffSlug: 'velho' }, [])).toEqual({ projectCwd: 'C:\\proj', slug: 'velho', titulo: 'velho' })
+    expect(handoffPlanOf({ cwd: 'C:\\proj' }, [])).toBeNull()
+    expect(handoffPlanOf({ cwd: 'C:\\proj', mode: 'planning', planningSlug: 'x', handoffSlug: 'x' }, [])).toBeNull()
   })
 })
 

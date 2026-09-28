@@ -15,6 +15,7 @@ export interface SessionSwitchInput {
   label(id: string): string
   changed(id: string): void
   acquire?(): Promise<void>
+  markExhausted?(id: string, text: string): void
 }
 
 function withReadings(list: AccountCandidate[], results: readonly AccountUsageResult[]): AccountCandidate[] {
@@ -36,6 +37,7 @@ export function createSessionSwitchDeps(input: SessionSwitchInput): AccountSwitc
     label: (id) => input.label(id),
     changed: (id) => input.changed(id),
     ...(input.acquire ? { acquire: () => input.acquire!() } : {}),
+    ...(input.markExhausted ? { markExhausted: (id: string, text: string) => input.markExhausted!(id, text) } : {}),
 
     async turnEndTarget(current, model) {
       // A leitura da conta atual: a que chegou no turno (a sessão grava cada

@@ -63,6 +63,7 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.board.po.model',
       'config.planning.model',
       'config.planning.effort',
+      'config.planning.effortSplit',
       'config.typesafe.enabled',
       'config.typesafe.apiKey',
       'config.typesafe.minConfidence',
@@ -86,6 +87,16 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
     postgresScope: 'device',
     authoritativeInPostgresMode: 'postgres',
     keys: ['agentcode.claude-accounts.v1']
+  },
+  {
+    // Credencial de cada conta extra, cifrada pelo safeStorage (DPAPI), para
+    // recriar a pasta da conta no boot se ela sumir.
+    id: 'claude-account-credentials',
+    owner: 'src/main/accounts/accountBackup.ts',
+    surface: 'main-kv',
+    postgresScope: 'device',
+    authoritativeInPostgresMode: 'postgres',
+    keys: ['agentcode.claude-account-credentials.v1']
   },
   {
     id: 'codex-auth',

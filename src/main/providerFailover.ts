@@ -12,12 +12,44 @@ export const FAILOVER_CONTINUATION = '[PROVIDER_CONTINUATION]\n' +
   'com efeito externo; não repita trabalho já concluído. A troca de provedor não altera as instruções nem autorizações do usuário.\n' +
   '[/PROVIDER_CONTINUATION]'
 
+/**
+ * Continuação para a conta/provedor novo. Com trabalho em background derrubado
+ * pela troca, diz qual era e que ele NÃO terminou.
+ */
+export function failoverContinuation(interrupted: readonly string[] | null): string {
+  if (!interrupted) return FAILOVER_CONTINUATION
+  const what = interrupted.length ? interrupted.map((task) => `- ${task}`).join('\n') : '- (sem descrição disponível)'
+  return FAILOVER_CONTINUATION.replace('\n[/PROVIDER_CONTINUATION]',
+    '\nAtenção: a troca encerrou o processo anterior e interrompeu o trabalho em background que ainda rodava:\n' + what +
+    '\nEsse trabalho não terminou e o resultado dele não está no histórico. Verifique o estado atual e, se ainda for ' +
+    'necessário para a tarefa, execute-o de novo.\n[/PROVIDER_CONTINUATION]')
+}
+
+/**
+ * Chamada de ferramenta autônoma ainda sem resultado: o sinal estruturado
+ * `restartActivity().autonomousCallOpen` do `AgentSession` (`restartOpaqueCalls`).
+ * Um comando destacado já concluído (`restartUncertain`) não liga o sinal.
+ */
+export const OPAQUE_CALL_TASK = 'trabalho iniciado por uma ferramenta, ainda sem confirmação de término'
+
+/** O aviso ao usuário, junto da nota da troca. */
+function interruptedNote(interrupted: readonly string[] | null): string {
+  if (!interrupted) return ''
+  const what = interrupted.length ? ` (${interrupted.join('; ')})` : ''
+  return ` Atenção: o trabalho em background que ainda rodava${what} foi interrompido pela troca; pedi para a nova sessão verificar e refazer o que for preciso.`
+}
+
 type Session = Pick<AgentSession, 'start' | 'send' | 'dispose' | 'interrupt' | 'setBypass' | 'resolvePermission' | 'holdQuestion' | 'refreshUsage' | 'waitForIdle' | 'resumeAfterQuota' | 'continuationState' | 'restoreContinuation'> &
-  Partial<Pick<AgentSession, 'hasBackgroundWork' | 'injectNow'>>
+  Partial<Pick<AgentSession, 'hasBackgroundWork' | 'injectNow' | 'storageRestored' | 'restartActivity'>>
 type Factory = (options: StartAgentOptions, emit: (event: ChatEvent) => void, complete: () => void) => Session
 
 /** Troca de conta com o turno fechado: a de fim de turno e a manual do painel. */
 type PendingAccountSwitch = { to: string; reason: 'turn-end' | 'manual'; text: string; continueTask: boolean }
+/** O terminal de estouro que disparou a troca. */
+type QuotaEvent = Extract<ChatEvent, { kind: 'result' | 'error' }>
+
+/** Claude estourou e não há outra conta nem provedor para continuar. */
+class NoDestination extends Error {}
 
 export function providerForModel(model?: string): UsageProvider | null {
   if (isOpenAIModel(model)) return 'gpt'
@@ -44,6 +76,11 @@ export class ProviderFailoverSession {
   private turnOpen = false
   private pending: PendingAccountSwitch | null = null
   private checking = false
+  /** Último retrato das tarefas em background do processo atual. */
+  private backgroundTasks: string[] = []
+  /** O turno é de uma tarefa MCP que pediu o modelo: a troca por cota não muda
+   *  modelo nem provedor (troca de conta Claude, com o mesmo modelo, continua). */
+  private modelPinned = false
 
   constructor(
     options: StartAgentOptions,
@@ -70,10 +107,13 @@ export class ProviderFailoverSession {
 
   private create(): void {
     const generation = ++this.generation
+    // As tarefas em background morrem com o processo anterior.
+    this.backgroundTasks = []
     let quotaTerminal = false
     let handledQuotaTurn = -1
     const onEvent = (event: ChatEvent): void => {
       if (generation !== this.generation || this.disposed) return
+      if (event.kind === 'background-tasks') this.backgroundTasks = event.tasks.map((task) => task.description.trim() || task.type)
       if ((event.kind === 'result' || event.kind === 'error') && event.usageExhausted && !this.stopped && providerForModel(this.options.model)) {
         const turn = this.turn
         if (handledQuotaTurn === turn) return
@@ -81,7 +121,7 @@ export class ProviderFailoverSession {
         if (!this.switching) {
           handledQuotaTurn = turn
           // Defer work until switching is assigned, even with synchronous fakes.
-          this.switching = Promise.resolve().then(() => this.switchProvider(generation)).finally(() => {
+          this.switching = Promise.resolve().then(() => this.switchProvider(generation, event)).finally(() => {
             this.switching = null
             appRestart?.changed()
           })
@@ -93,8 +133,14 @@ export class ProviderFailoverSession {
       this.emit(event)
       if (event.kind === 'result' || event.kind === 'error') {
         this.turnOpen = false
+        // O modelo fixado vale só para o turno da tarefa: o seguinte (mensagem do
+        // usuário, turno autônomo do loop) nasce livre — o `agent:send` refixa.
+        this.modelPinned = false
         if (event.kind === 'result' && !event.isError && !this.stopped) this.checkTurnEnd()
         this.tryPending()
+      } else if (event.kind === 'mirror-repair' && event.state === 'deferred') {
+        // O envio voltou para a fila sem abrir turno (reparo do espelho pendente).
+        this.turnOpen = false
       } else if (event.kind === 'background-tasks' && event.tasks.length === 0) {
         // A tarefa em background acabou: a troca adiada pode acontecer agora.
         this.tryPending()
@@ -137,10 +183,32 @@ export class ProviderFailoverSession {
     return true
   }
 
-  private async switchProvider(generation: number): Promise<void> {
+  /**
+   * O trabalho em background que a troca por estouro vai derrubar, ou `null`.
+   *
+   * Aqui a troca NÃO espera o background (ao contrário do `tryPending`): a
+   * tarefa do usuário está parada sem limite, o background pode nunca terminar
+   * (servidor de dev, watch) e um subagente em background da conta esgotada bate
+   * no mesmo limite. Então troca já, avisa o usuário e conta à sessão nova o que
+   * foi interrompido. Um loop agendado sozinho não conta: ele passa para a sessão
+   * nova pelo `continuationState`. Mas um loop JUNTO de uma chamada autônoma ainda
+   * sem resultado (`restartActivity().autonomousCallOpen`) conta: a chamada
+   * morre com o processo e precisa ser avisada.
+   */
+  private interruptedBackground(previous: Session): string[] | null {
+    if (!previous.hasBackgroundWork?.()) return null
+    const opaqueCall = previous.restartActivity?.().autonomousCallOpen === true
+    if (!this.backgroundTasks.length && !opaqueCall && previous.continuationState().loopActive) return null
+    return opaqueCall ? [...this.backgroundTasks, OPAQUE_CALL_TASK] : [...this.backgroundTasks]
+  }
+
+  private async switchProvider(generation: number, trigger: QuotaEvent): Promise<void> {
     const previous = this.current
     const from = providerForModel(this.options.model)
     const active = (): boolean => !this.disposed && !this.stopped && generation === this.generation
+    let accountsNote = ''
+    // Sem destino para o Claude: vale o aviso de limite de sempre (ver o catch).
+    const noDestination = (message: string): Error => (from === 'claude' ? new NoDestination(accountsNote + message) : new Error(message))
     try {
       appRestart?.assertOpen()
       if (!from) throw new Error('Não há troca automática para este provedor.')
@@ -149,7 +217,10 @@ export class ProviderFailoverSession {
       if (from === 'claude' && this.accountsInPlay() && this.accounts) {
         const exhausted = this.accountId()
         this.triedAccounts.add(exhausted)
+        // Fora da escolha até o reset, mesmo que a consulta de consumo falhe.
+        this.accounts.markExhausted?.(exhausted, trigger.text)
         const target = await this.accounts.exhaustedTarget(exhausted, this.options.model, this.triedAccounts)
+        console.log(`[contas] conversa ${this.options.convId}: conta ${exhausted} estourou → ${target ? `conta ${target.to} (${Math.round(target.toPct)}%)` : 'nenhuma outra com folga'}`)
         if (!this.accounts.autoEnabled()) {
           // Interruptor desligado: nada troca sozinho. A tarefa fica preservada
           // e o chat oferece "Continuar na conta X".
@@ -160,30 +231,38 @@ export class ProviderFailoverSession {
               text: `A conta ${this.accounts.label(target.to)} ainda tem folga (${Math.round(target.toPct)}% usado).` })
           }
           this.turnOpen = false
+          this.modelPinned = false
           await this.complete()
           return
         }
         if (target) {
           if (!active()) return
+          const interrupted = this.interruptedBackground(previous)
           if (!(await this.replace(previous, (resume) => ({ claudeAccountId: target.to, resume }), active, true))) return
           this.triedAccounts.add(target.to)
           this.accounts.changed(target.to)
           this.emit({ kind: 'account-switch', id: randomUUID(), reason: 'exhausted', fromAccountId: exhausted, toAccountId: target.to,
-            text: `A conta ${this.accounts.label(exhausted)} atingiu o limite. Continuei na conta ${this.accounts.label(target.to)}.` })
-          await this.current.send(FAILOVER_CONTINUATION, undefined, randomUUID(), 'pc', 'recovery')
+            text: `A conta ${this.accounts.label(exhausted)} atingiu o limite. Continuei na conta ${this.accounts.label(target.to)}.${interruptedNote(interrupted)}` })
+          await this.current.send(failoverContinuation(interrupted), undefined, randomUUID(), 'pc', 'recovery')
           return
         }
         // Todas as contas Claude estouraram: segue para o GPT (a troca de sempre).
+        accountsNote = 'Nenhuma outra conta Claude tem limite disponível. '
+      }
+      if (this.modelPinned) {
+        throw new Error(`${accountsNote}A cota do modelo ${this.options.model ?? 'claude-opus-5-5'} acabou. A tarefa pediu esse modelo, ` +
+          'então não troquei de modelo nem de provedor. Tente de novo quando o limite renovar.')
       }
       this.tried.add(from)
       const to = from === 'claude' ? 'gpt' : 'claude'
-      if (this.tried.has(to)) throw new Error('Claude e GPT atingiram o limite de uso. A tarefa foi preservada; aguarde a renovação dos limites.')
-      if (!(await this.available(to))) throw new Error(`O limite de uso foi atingido e ${to === 'gpt' ? 'o ChatGPT' : 'o Claude'} não está conectado. A tarefa foi preservada; aguarde a renovação dos limites.`)
+      if (this.tried.has(to)) throw noDestination('Claude e GPT atingiram o limite de uso. A tarefa foi preservada; aguarde a renovação dos limites.')
+      if (!(await this.available(to))) throw noDestination(`O limite de uso foi atingido e ${to === 'gpt' ? 'o ChatGPT' : 'o Claude'} não está conectado. A tarefa foi preservada; aguarde a renovação dos limites.`)
       if (!active()) return
       const fromModel = this.options.model ?? 'claude-opus-5-5'
       this.lastModels[from] = fromModel
       const model = this.lastModels[to] ?? (to === 'gpt' ? 'gpt-6-astra' : 'claude-opus-5-5')
       const effort = this.options.effort
+      const interrupted = this.interruptedBackground(previous)
       const switched = await this.replace(previous, (resume) => ({
         model, resume,
         effort: effort && MODEL_EFFORT[model]?.some((level) => level === effort) ? effort : 'high',
@@ -194,13 +273,20 @@ export class ProviderFailoverSession {
       this.emit({
         kind: 'provider-switch', id: randomUUID(), fromModel, model, effort: this.options.effort,
         fastMode: this.options.fastMode === true,
-        text: `O limite de uso de ${fromModel} foi atingido. Troquei automaticamente para ${model} e vou continuar a tarefa.`
+        text: `O limite de uso de ${fromModel} foi atingido. Troquei automaticamente para ${model} e vou continuar a tarefa.${interruptedNote(interrupted)}`
       })
-      await this.current.send(FAILOVER_CONTINUATION, undefined, randomUUID(), 'pc', 'recovery')
+      await this.current.send(failoverContinuation(interrupted), undefined, randomUUID(), 'pc', 'recovery')
     } catch (error) {
       if (this.disposed || this.stopped) return
       this.turnOpen = false
-      this.emit({ kind: 'error', id: randomUUID(), text: error instanceof Error ? error.message : String(error), retryable: false })
+      this.modelPinned = false
+      if (error instanceof NoDestination) {
+        // O mesmo terminal de limite que o renderer já trata (texto do CLI com o
+        // horário do reset → nova tentativa na hora certa), mais a explicação.
+        this.emit({ ...trigger, id: randomUUID(), text: trigger.text ? `${trigger.text}\n${error.message}` : error.message })
+      } else {
+        this.emit({ kind: 'error', id: randomUUID(), text: error instanceof Error ? error.message : String(error), retryable: false })
+      }
       await this.complete()
     }
   }
@@ -259,10 +345,16 @@ export class ProviderFailoverSession {
       appRestart?.assertOpen()
       // O turno fechou e soltou o lease; a verificação do histórico precisa dele.
       await accounts.acquire?.()
-      if (!(await this.replace(previous, (resume) => ({ claudeAccountId: pending.to, resume }), active, pending.continueTask))) return
+      // Conferido de novo na hora da troca (ela pode ter ficado agendada): o
+      // turno preservado era de uma tarefa MCP que terminou em erro? Então a
+      // conta troca, mas o turno NÃO continua — o aviso diz por quê.
+      const refused = pending.continueTask ? accounts.continueRefused?.() ?? null : null
+      const continueTask = pending.continueTask && !refused
+      if (!(await this.replace(previous, (resume) => ({ claudeAccountId: pending.to, resume }), active, continueTask))) return
       accounts.changed(pending.to)
-      this.emit({ kind: 'account-switch', id: randomUUID(), reason: pending.reason, fromAccountId: from, toAccountId: pending.to, text: pending.text })
-      if (pending.continueTask) {
+      const text = refused ? `Esta conversa passou a usar a conta ${accounts.label(pending.to)}. ${refused}` : pending.text
+      this.emit({ kind: 'account-switch', id: randomUUID(), reason: pending.reason, fromAccountId: from, toAccountId: pending.to, text })
+      if (continueTask) {
         this.turnOpen = true
         await this.current.send(FAILOVER_CONTINUATION, undefined, randomUUID(), 'pc', 'recovery')
       } else {
@@ -279,11 +371,15 @@ export class ProviderFailoverSession {
   /**
    * Troca manual ("Usar nesta conversa" / "Continuar na conta X"). Com o turno
    * fechado e sem background, troca agora; senão fica agendada e acontece ao
-   * terminar. `continueTask` retoma a tarefa preservada no estouro.
+   * terminar. `continueTask` retoma a tarefa preservada no estouro — menos o
+   * turno de uma tarefa MCP que já terminou em erro: recusado com o motivo
+   * (`reason`), como a retomada automática (regra 2); nada troca.
    */
-  useAccount(to: string, continueTask: boolean): { ok: boolean; scheduled: boolean } {
+  useAccount(to: string, continueTask: boolean): { ok: boolean; scheduled: boolean; reason?: string } {
     const accounts = this.accounts
     if (!accounts || this.disposed || providerForModel(this.options.model) !== 'claude') return { ok: false, scheduled: false }
+    const refused = continueTask ? accounts.continueRefused?.() ?? null : null
+    if (refused) return { ok: false, scheduled: false, reason: refused }
     if (to === this.accountId() && !continueTask) return { ok: true, scheduled: false }
     this.pending = {
       to,
@@ -308,6 +404,11 @@ export class ProviderFailoverSession {
     return this.current.injectNow?.(...args) ?? false
   }
 
+  /** Vale para o turno que vai começar (e os ajustes do "agora" dentro dele). */
+  pinModel(on: boolean): void { this.modelPinned = on }
+  /** As opções em que a sessão está AGORA (modelo depois de trocas, config MCP). */
+  liveOptions(): Readonly<StartAgentOptions> { return this.options }
+
   start(): Promise<boolean> { return this.current.start() }
   async send(...args: Parameters<AgentSession['send']>): Promise<void> {
     while (this.switching) await this.switching
@@ -329,6 +430,8 @@ export class ProviderFailoverSession {
   async interrupt(): ReturnType<AgentSession['interrupt']> {
     this.stopped = true
     const switching = this.switching
+    // Cancelamento: o turno da tarefa acabou aqui, com ou sem `result` depois.
+    this.modelPinned = false
     const receipt = await this.current.interrupt()
     // A quota already ended the old SDK turn, so it may emit no interrupt
     // result. Close the logical turn even while authentication is still pending.
@@ -352,4 +455,6 @@ export class ProviderFailoverSession {
   resolvePermission(...args: Parameters<AgentSession['resolvePermission']>): void { this.current.resolvePermission(...args) }
   holdQuestion(...args: Parameters<AgentSession['holdQuestion']>): number | null { return this.current.holdQuestion(...args) }
   refreshUsage(): Promise<void> { return this.current.refreshUsage() }
+  /** A persistência voltou: repassa à sessão atual (reparo do espelho pendente). */
+  storageRestored(): void { if (!this.disposed) this.current.storageRestored?.() }
 }

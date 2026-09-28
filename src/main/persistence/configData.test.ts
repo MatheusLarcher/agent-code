@@ -58,9 +58,14 @@ describe('configuração persistida', () => {
     expect(defaultAppConfig().typesafe.allowedAutoModels).toEqual([])
   })
 
-  it('planejamento: Automático + médio por padrão, merge por campo', () => {
-    expect(defaultAppConfig().planning).toEqual({ model: 'auto', effort: 'medium' })
-    expect(parseStoredAppConfig('{}').planning).toEqual({ model: 'auto', effort: 'medium' })
+  it('planejamento: Automático nas duas dimensões por padrão, merge por campo', () => {
+    expect(defaultAppConfig().planning).toEqual({ model: 'auto', effort: 'auto' })
+    expect(parseStoredAppConfig('{}').planning).toEqual({ model: 'auto', effort: 'auto' })
+    // O sentinel do esforço é valor válido, não corrupção.
+    expect(mergeAppConfig(defaultAppConfig(), { planning: { model: 'claude-sonnet-5', effort: 'auto' } }).planning).toEqual({
+      model: 'claude-sonnet-5',
+      effort: 'auto'
+    })
 
     // Gravar só o modelo não pode apagar o esforço (armadilha do spread raso).
     const comEsforco = mergeAppConfig(defaultAppConfig(), { planning: { effort: 'xhigh' } })
@@ -81,13 +86,13 @@ describe('configuração persistida', () => {
     })
     expect(mergeAppConfig(atual, { planning: { effort: 'ultra' } }).planning).toEqual({
       model: 'claude-sonnet-5',
-      effort: 'medium'
+      effort: 'auto'
     })
     // Tipo errado também normaliza em vez de lançar: cada campo é aplicado
     // sozinho no boot, e lançar ali derrubaria a abertura do app.
     expect(mergeAppConfig(atual, { planning: { model: 42, effort: null } }).planning).toEqual({
       model: 'auto',
-      effort: 'medium'
+      effort: 'auto'
     })
     expect(parseStoredAppConfig(JSON.stringify({ planning: { model: 'gpt-x', effort: 'max' } })).planning).toEqual({
       model: 'auto',

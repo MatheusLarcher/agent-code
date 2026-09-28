@@ -11,6 +11,7 @@ import { hashJson, normalizeJson, type JsonValue } from './hashes'
 import { StorageError, type PersistenceRepository, type VersionedConversation } from './types'
 import { decodePostgresJson, encodePostgresJson } from './postgresEncoding'
 import { SDK_VERSION } from './postgresSessionStore'
+import { splitDeviceFields } from './conversationScope'
 
 export interface ImportedSessionItem {
   entity: 'sdk-session' | 'conversation'
@@ -225,13 +226,9 @@ async function forkDivergentSession(
 ): Promise<ImportedSessionItem[]> {
   const forked = await forkSessionBundle(bundle)
   const conflictConversationId = `${bundle.conversationId}-session-conflict-${forked.sessionId.slice(0, 8)}`
-  const source = { ...bundle.conversationPayload }
+  // cwd, draft e draftMedia: estado deste dispositivo (ver conversationScope.ts).
+  const { shared: source, device } = splitDeviceFields(bundle.conversationPayload)
   const title = typeof source.title === 'string' && source.title.trim() ? source.title : 'Conversa'
-  const device: Record<string, unknown> = {}
-  if (typeof source.cwd === 'string') device.cwd = source.cwd
-  if (typeof source.draft === 'string') device.draft = source.draft
-  delete source.cwd
-  delete source.draft
   const shared = normalizeJson({
     ...source,
     id: conflictConversationId,

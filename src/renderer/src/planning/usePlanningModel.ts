@@ -8,12 +8,19 @@
  * está ocupada.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { clampEffortToModel, DEFAULT_CONFIG, type EffortLevel, type PlanningConfig } from '@shared/ipc'
+import { DEFAULT_CONFIG, PLANNING_AUTO_FALLBACK, type EffortChoice, type PlanningConfig } from '@shared/ipc'
+import { effortForModelChange } from '@shared/autoEffort'
 
 export interface PlanningModelControls {
   config: PlanningConfig
   setModel: (model: string) => void
-  setEffort: (effort: EffortLevel) => void
+  setEffort: (effort: EffortChoice) => void
+}
+
+/** O esforço ao trocar de modelo: dimensões independentes — o Automático do
+ *  esforço continua Automático, um nível fixo continua (recortado ao modelo). */
+export function effortForManagerModel(model: string, current: EffortChoice): EffortChoice {
+  return effortForModelChange(model, current, PLANNING_AUTO_FALLBACK.effort)
 }
 
 export function usePlanningModel(): PlanningModelControls {
@@ -38,10 +45,10 @@ export function usePlanningModel(): PlanningModelControls {
   }, [])
 
   const setModel = useCallback(
-    (model: string) => save({ model, effort: clampEffortToModel(model, config.effort) }),
+    (model: string) => save({ model, effort: effortForManagerModel(model, config.effort) }),
     [save, config.effort]
   )
-  const setEffort = useCallback((effort: EffortLevel) => save({ ...config, effort }), [save, config])
+  const setEffort = useCallback((effort: EffortChoice) => save({ ...config, effort }), [save, config])
 
   return { config, setModel, setEffort }
 }

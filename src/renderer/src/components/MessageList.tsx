@@ -16,6 +16,7 @@ import { fileMeta, fmtSize } from '../files'
 import { IconSpeaker, IconStopSmall } from './Icons'
 import { CodeBlock, extToLang } from './CodeBlock'
 import { CardRefText, Markdown } from './Markdown'
+import { InlineMediaText } from '../inlineMedia/InlineMediaText'
 import { useKeepEndOnResize } from './MessageListAnchor'
 import { useChatDisplay } from './chatDisplay'
 import { makeRefResolver } from '../planning/cardRefs'
@@ -516,14 +517,14 @@ export function MessageList({
             return (
               <div key={`user:${m.id}`} className="msg user" data-mid={m.id}>
                 <div className={`bubble ${m.error ? 'has-error' : ''}`}>
-                  {m.images && m.images.length > 0 && (
+                  {!m.media && m.images && m.images.length > 0 && (
                     <div className="msg-images">
                       {m.images.map((src, k) => (
                         <img key={k} className="msg-image" src={src} alt="anexo" />
                       ))}
                     </div>
                   )}
-                  {m.files && m.files.length > 0 && (
+                  {!m.media && m.files && m.files.length > 0 && (
                     <div className="msg-files">
                       {m.files.map((f, k) => {
                         const meta = fileMeta(f.name)
@@ -539,7 +540,20 @@ export function MessageList({
                       })}
                     </div>
                   )}
-                  {resolveRef ? <CardRefText text={m.text} resolveRef={resolveRef} /> : m.text}
+                  {m.media ? (
+                    // Anexos postos no meio do texto: cada {{midia:N}} vira o item no lugar.
+                    <InlineMediaText
+                      text={m.text}
+                      media={m.media}
+                      images={m.images}
+                      files={m.files}
+                      renderText={(t) => (resolveRef ? <CardRefText text={t} resolveRef={resolveRef} /> : t)}
+                    />
+                  ) : resolveRef ? (
+                    <CardRefText text={m.text} resolveRef={resolveRef} />
+                  ) : (
+                    m.text
+                  )}
                 </div>
                 {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
                 {m.injected && <div className="msg-injected">↳ ajuste enviado durante a tarefa</div>}

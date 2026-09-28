@@ -29,7 +29,7 @@ export interface ClaudeAccountsIpcDeps {
   /** Conversas da conta removida voltam à regra de conversa nova. */
   onRemoved?: (id: string) => void
   /** Troca manual na sessão aberta da conversa; `null` = conversa sem sessão. */
-  useForConversation?: (convId: string, accountId: string, continueTask: boolean) => { ok: boolean; scheduled: boolean } | null
+  useForConversation?: (convId: string, accountId: string, continueTask: boolean) => { ok: boolean; scheduled: boolean; reason?: string } | null
 }
 
 const accountId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)

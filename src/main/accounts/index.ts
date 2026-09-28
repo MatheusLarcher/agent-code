@@ -1,13 +1,15 @@
+import { safeStorage } from 'electron'
 import type { AccountUsageResult } from '../../shared/claudeAccounts'
 import { claudeAuthStatus } from '../auth'
 import { claudeLoginBusyFor, runClaudeLogin } from '../login'
 import { readPersistedKv, writePersistedKv } from '../persistence/kvFacade'
 import { getCacheInfo } from '../store'
+import { forgetAccountBackup, syncClaudeAccounts, type AccountSyncDeps } from './accountSync'
 import { createAccountRegistry, DEFAULT_ACCOUNT_ID } from './registry'
 import { accountForConversation } from './selection'
 import { createSessionSwitchDeps } from './sessionSwitch'
 import type { AccountSwitchDeps } from './switchDeps'
-import { mergeReading, windowFromRateLimitEvent } from './usageMath'
+import { exhaustedReading, mergeReading, windowFromRateLimitEvent } from './usageMath'
 import { fetchAccountWindows } from './usageQuery'
 import { createUsageReader } from './usageReader'
 
@@ -29,8 +31,64 @@ export const claudeAccounts = createAccountRegistry({
   writeKv: writePersistedKv,
   authStatus: claudeAuthStatus,
   login: (configDir) => runClaudeLogin(loginIo.openUrl, loginIo.log, configDir),
-  loginBusy: claudeLoginBusyFor
+  loginBusy: claudeLoginBusyFor,
+  onLogin: () => void syncAccountsWithDatabase(),
+  onRemove: (id) => {
+    void forgetAccountBackup(syncDeps, id).catch((error) => {
+      console.warn('[contas] não consegui tirar do banco a cópia da conta removida:', (error as Error).message)
+    })
+  }
 })
+
+/** `safeStorage` lido na hora do uso: módulos de teste mocam o electron sem ele. */
+const syncDeps: AccountSyncDeps = {
+  localDir: () => getCacheInfo().localDir,
+  readKv: readPersistedKv,
+  writeKv: writePersistedKv,
+  cipher: {
+    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+    encryptString: (plain) => safeStorage.encryptString(plain),
+    decryptString: (encrypted) => safeStorage.decryptString(encrypted),
+    // Só existe no Linux; sem chaveiro dá 'basic_text' e nada de credencial é gravado.
+    storageBackend: () => (process.platform === 'linux' ? safeStorage.getSelectedStorageBackend() : 'os')
+  },
+  registry: claudeAccounts
+}
+
+let accountSyncTimer: ReturnType<typeof setInterval> | null = null
+let accountSyncStopped = false
+
+/**
+ * Lista de contas × pastas × cópia no banco (ver accountSync.ts). Nunca lança:
+ * falhar aqui só adia para a próxima passada.
+ */
+export async function syncAccountsWithDatabase(): Promise<void> {
+  if (accountSyncStopped) return
+  try {
+    await syncClaudeAccounts(syncDeps)
+  } catch (error) {
+    console.warn('[contas] conferência das contas falhou:', (error as Error).message)
+  }
+}
+
+/** A cada 10 min: o CLI renova o token dentro da pasta, e a cópia acompanha. */
+export function startAccountSync(): void {
+  void syncAccountsWithDatabase()
+  if (accountSyncTimer) clearInterval(accountSyncTimer)
+  accountSyncTimer = setInterval(() => void syncAccountsWithDatabase(), 10 * 60_000)
+  accountSyncTimer.unref()
+}
+
+/**
+ * Fechamento do app (antes de fechar a persistência): para o relógio do sync e
+ * a nova tentativa de gravar a lista de contas — nada dispara contra o banco fechado.
+ */
+export function stopAccountSync(): void {
+  accountSyncStopped = true
+  if (accountSyncTimer) clearInterval(accountSyncTimer)
+  accountSyncTimer = null
+  claudeAccounts.dispose()
+}
 
 const usageReader = createUsageReader({
   fetchWindows: (accountId, signal) => fetchAccountWindows(claudeAccounts.envFor(accountId), signal),
@@ -89,7 +147,8 @@ export function accountSwitchDepsFor(convId: string, acquire: () => Promise<void
     label: (id) => claudeAccounts.labelOf(id),
     // Os observadores seguem a conta da conversa: trocam junto.
     changed: (id) => conversationAccounts.set(convId, id),
-    acquire
+    acquire,
+    markExhausted: (id, text) => claudeAccounts.saveUsage(id, exhaustedReading(claudeAccounts.loadUsage(id), text, Date.now()))
   })
 }
 

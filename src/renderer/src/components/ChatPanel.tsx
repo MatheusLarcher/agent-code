@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import type {
   BackgroundTask,
   FileAttachment,
@@ -12,7 +12,10 @@ import type { TurnRecovery, UIMessage } from '../types'
 import type { CrewMember } from '../crew'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
+import type { DraftMedia } from '../inlineMedia/inlineAttachments'
+import { readableMediaText } from '@shared/inlineMedia'
 import { CrewChip } from './CrewChip'
+import { EffortPicker } from './EffortPicker'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
 import { VigiaChip, type VigiaDoubt } from './VigiaChip'
 import { IconClock, IconClose, IconHelp, IconChevronDown, IconLeaf, IconRepeat, IconWarning, IconZap } from './Icons'
@@ -144,22 +147,29 @@ interface Props {
   onRetry: (msgId: string) => void
   /** Troca manual de conta a partir de uma nota do chat. */
   onUseAccount?: (accountId: string, continueTask: boolean) => void
-  composerRef: RefObject<HTMLTextAreaElement | null>
+  composerRef: RefObject<HTMLElement | null>
   /** Projects from history, offered in the composer's @ reference menu. */
   projects: RefProject[]
   /** Active conversation's project root — searched by the "@" autocomplete. */
   projectRoot: string | null
   /** Active conversation id — resets the message window when it changes. */
   convId: string | null
+  /** Ao lado do título "Chat" (ex.: o "Plano: …" da conversa de implementação). */
+  headerExtra?: ReactNode
+  /** Só no chat do Agent Manager: o botão "Iniciar questionário", à direita da
+   *  linha do modelo. Sem a prop, o chat não muda. */
+  onQuestionnaire?: () => void
   /** Id of a message to scroll to (from a search hit), or null. */
   scrollToId?: string | null
   /** Bumped on each search-hit navigation so repeats re-trigger the scroll. */
   scrollSeq?: number
   /** Saved draft for the active conversation (restored into the composer). */
   draft: string
+  /** Anexos do rascunho (ver Composer.draftMedia). */
+  draftMedia?: readonly unknown[]
   /** Persist a conversation's composer draft — called with an explicit convId
    *  (blur / conversation switch / send), not on every keystroke. */
-  onDraftChange: (convId: string, text: string) => void
+  onDraftChange: (convId: string, text: string, media?: DraftMedia[]) => void
   /** True when the active conversation's project folder no longer exists — the
    *  composer is blocked (read-only) and interacting shows the error. */
   projectMissing: boolean
@@ -229,9 +239,15 @@ interface Props {
   /** Called when the user clicks the model picker while it's locked (no active
    *  conversation), so App can show a hint. */
   onModelLockedClick: () => void
-  /** Reasoning effort selector — shown beside the model picker. */
+  /** Reasoning effort selector — shown beside the model picker. Os níveis
+   *  concretos do modelo; vazio (Ollama) esconde o controle. */
   effortLevels: { value: string; label: string }[]
   effort: string
+  /** TypeSafe configurado: o controle oferece a posição Automático. */
+  effortAutoAvailable?: boolean
+  /** O esforço que o decisor escolheu no último turno, com o esforço em
+   *  Automático — o botão mostra "Auto · Alto". */
+  runningEffort?: string
   effortLocked: boolean
   onEffortChange: (level: string) => void
   /** Modo econômico toggle — shown beside the model/effort pickers. */
@@ -246,86 +262,6 @@ interface Props {
   fastModeAvailable: boolean
   fastMode: boolean
   onFastModeChange: (on: boolean) => void
-}
-
-/** Custom popover replacing the plain <select> for reasoning effort: a button
- *  showing "Esforço <label>" that opens a small panel with a slider between
- *  "Mais rápido" and "Mais inteligente" (dots = available levels). */
-function EffortPicker(props: {
-  levels: { value: string; label: string }[]
-  value: string
-  locked: boolean
-  busy?: boolean
-  onChange: (level: string) => void
-  onLockedClick?: () => void
-}): JSX.Element {
-  const [open, setOpen] = useState(false)
-  const idx = Math.max(
-    0,
-    props.levels.findIndex((l) => l.value === props.value)
-  )
-  const current = props.levels[idx] ?? props.levels[0]
-
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent): void => {
-      if (!(e.target as HTMLElement).closest('.effort-picker')) setOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [open])
-
-  return (
-    <div className="effort-picker">
-      <button
-        type="button"
-        className={`effort-trigger${props.locked ? ' locked' : ''}`}
-        aria-expanded={open}
-        title={
-          props.locked
-            ? 'Selecione uma conversa para trocar o esforço.'
-            : props.busy
-              ? 'Muda a partir da próxima mensagem da fila (a tarefa atual continua no esforço atual).'
-              : 'Esforço de raciocínio — quanto maior, mais profundo (e mais lento/caro)'
-        }
-        onClick={() => {
-          if (props.locked) {
-            props.onLockedClick?.()
-            return
-          }
-          setOpen((v) => !v)
-        }}
-      >
-        <span>{current?.label ?? ''}</span>
-        <IconChevronDown size={12} className="effort-trigger-chevron" />
-      </button>
-      {open && (
-        <div className="effort-popover">
-          <div className="effort-popover-head">
-            <span>
-              Esforço <strong>{current?.label ?? ''}</strong>
-            </span>
-            <span className="effort-help" title="Controla o quanto o modelo 'pensa' antes de responder: mais esforço tende a ser mais preciso, porém mais lento e mais caro.">
-              <IconHelp size={14} />
-            </span>
-          </div>
-          <div className="effort-slider-labels">
-            <span>Mais rápido</span>
-            <span>Mais inteligente</span>
-          </div>
-          <input
-            type="range"
-            className="effort-slider"
-            min={0}
-            max={Math.max(0, props.levels.length - 1)}
-            step={1}
-            value={idx}
-            onChange={(e) => props.onChange(props.levels[Number(e.target.value)].value)}
-          />
-        </div>
-      )}
-    </div>
-  )
 }
 
 const fmt = (n: number): string => {
@@ -389,12 +325,13 @@ export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
   const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
   // Compacto (chat minimizado do planejamento): sem consumo e sem o aviso do Windows.
-  const { compact, hideWindowsBanner, hideLastUsage } = useChatDisplay()
+  const { compact, hideWindowsBanner, hideLastUsage, onComposerHasText } = useChatDisplay()
   return (
     <section className="chat-panel">
       {!compact && (
         <div className="chat-header">
           <span className="chat-title">Chat</span>
+          {props.headerExtra}
           <div className="token-meter" title="Consumo geral desta conversa">
             <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
             <ContextBar context={tokens.context} model={props.runningModel} />
@@ -479,7 +416,7 @@ export function ChatPanel(props: Props): JSX.Element {
                   ))}
                 </span>
               )}
-              <span className="queue-text">{q.text.trim() || '(imagem)'}</span>
+              <span className="queue-text">{readableMediaText(q.text).trim() || '(imagem)'}</span>
               {props.onSendQueuedNow && (
                 <button
                   type="button"
@@ -576,6 +513,8 @@ export function ChatPanel(props: Props): JSX.Element {
           <EffortPicker
             levels={props.effortLevels}
             value={props.effort}
+            autoAvailable={props.effortAutoAvailable === true}
+            running={props.runningEffort}
             locked={props.effortLocked}
             busy={props.busy}
             onChange={props.onEffortChange}
@@ -623,6 +562,17 @@ export function ChatPanel(props: Props): JSX.Element {
             <span className="fast-label">Rápido</span>
           </button>
         )}
+        {props.onQuestionnaire && (
+          <button
+            type="button"
+            className="questionnaire-btn"
+            title="O Agent Manager faz as perguntas em aberto deste planejamento, até 4 por vez. Com ele ocupado, o pedido entra na fila."
+            onClick={props.onQuestionnaire}
+          >
+            <IconHelp size={13} />
+            <span>Iniciar questionário</span>
+          </button>
+        )}
       </div>
 
       {props.projectMissing && (
@@ -650,10 +600,12 @@ export function ChatPanel(props: Props): JSX.Element {
         onNeedVoiceKey={props.onNeedVoiceKey}
         convId={props.convId}
         draft={props.draft}
+        draftMedia={props.draftMedia}
         onDraftChange={props.onDraftChange}
         projectMissing={props.projectMissing}
         projectMissingMsg={props.projectMissingMsg}
         projectRoot={props.projectRoot}
+        onHasTextChange={onComposerHasText}
       />
     </section>
   )

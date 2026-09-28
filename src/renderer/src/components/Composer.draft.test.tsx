@@ -152,7 +152,7 @@ describe('Composer — anexo por caminho/link colado não vaza entre conversas',
     rerender('c2', '')
 
     await new Promise((r) => setTimeout(r, 80)) // espera a resolução (tardia) terminar
-    expect(screen.queryByText('arquivo.txt')).toBeNull() // não vazou pra c2
+    expect(screen.queryByAltText(/arquivo\.txt/)).toBeNull() // não vazou pra c2
   })
 })
 
@@ -192,11 +192,11 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     })
     const { onSend } = renderComposer({ convId: 'c1' })
     pasteFile(bigFile('video.mp4', 5_000_000_000, 'video/mp4'))
-    await screen.findByText('video.mp4') // chip aparece
+    await screen.findByAltText(/Arquivo anexado: video\.mp4/) // chip aparece no texto
 
     fireEvent.keyDown(textarea(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('', [], [], [
-      { name: 'video.mp4', path: 'C:\\pasta\\video.mp4', mediaType: 'video/mp4', size: 5_000_000_000 }
+    expect(onSend).toHaveBeenCalledWith('{{midia:1}}', [], [], [
+      { name: 'video.mp4', path: 'C:\\pasta\\video.mp4', mediaType: 'video/mp4', size: 5_000_000_000, label: 'midia:1 = video.mp4' }
     ])
   })
 
@@ -205,7 +205,7 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     renderComposer({ convId: 'c1' })
     pasteFile(bigFile('sem-path.bin', 30_000_000))
     expect(await screen.findByText(/precisa ter um caminho no disco/)).toBeTruthy()
-    expect(screen.queryByText('sem-path.bin')).toBeNull()
+    expect(screen.queryByAltText(/sem-path\.bin/)).toBeNull()
   })
 
   it('getPathForFile lançando exceção não trava resolvingCount (envio continua liberado)', async () => {
@@ -236,8 +236,8 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     })
     renderComposer({ convId: 'c1' })
     pasteFile(bigFile('grande.png', 40_000_000, 'image/png'))
-    await screen.findByAltText('anexo') // <img> de preview real
-    expect(screen.queryByText('grande.png')).toBeNull() // não é um chip
+    await screen.findByAltText('Imagem anexada: grande.png') // <img> de preview real
+    expect(screen.queryByAltText(/Arquivo anexado: grande\.png/)).toBeNull() // não é um chip
   })
 
   it('imagem >50MB vira chip genérico (não tenta ler bytes)', async () => {
@@ -247,7 +247,7 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     })
     renderComposer({ convId: 'c1' })
     pasteFile(bigFile('gigante.png', 90_000_000, 'image/png'))
-    await screen.findByText('gigante.png') // chip, não preview
+    await screen.findByAltText(/Arquivo anexado: gigante\.png/) // chip, não preview
     expect(readFileBytes).not.toHaveBeenCalled()
   })
 
@@ -255,7 +255,7 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     const { getPathForFile } = stubApi({ path: 'C:\\nao-deveria-usar.txt' })
     renderComposer({ convId: 'c1' })
     pasteFile(bigFile('pequeno.txt', 1000, 'text/plain'))
-    await screen.findByText('pequeno.txt')
+    await screen.findByAltText(/Arquivo anexado: pequeno\.txt/)
     expect(getPathForFile).not.toHaveBeenCalled()
   })
 
@@ -278,6 +278,6 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     rerender('c2', '') // troca ANTES da resolução terminar
 
     await new Promise((r) => setTimeout(r, 80))
-    expect(screen.queryByText('lento.bin')).toBeNull() // não vazou pra c2
+    expect(screen.queryByAltText(/lento\.bin/)).toBeNull() // não vazou pra c2
   })
 })

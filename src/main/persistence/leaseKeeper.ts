@@ -38,7 +38,7 @@ function sleep(ms: number): Promise<void> {
  * comes back as LEASE_HELD_BY_OTHER_DEVICE and we stop then. */
 export class ConversationLeaseKeeper {
   private timer: ReturnType<typeof setTimeout> | null = null
-  private pending: Promise<void> | null = null
+  private pending: Promise<boolean> | null = null
   private stopped = false
   private held: ConversationLease
 
@@ -79,32 +79,52 @@ export class ConversationLeaseKeeper {
     this.timer = null
   }
 
+  /** Renova já, sem esperar o heartbeat — o banco acabou de voltar e o lease pode
+   * ter vencido durante a queda. Divide a renovação que já estiver em voo.
+   * `true` = o lease continua desta instalação e foi estendido; `false` = falhou
+   * (transitória: o keeper tenta de novo; perdido: `onLost` já foi chamado). */
+  renewNow(): Promise<boolean> {
+    if (this.stopped) return Promise.resolve(false)
+    if (this.pending) return this.pending
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    return this.startRenewal()
+  }
+
   private schedule(delay: number): void {
     if (this.stopped) return
     this.timer = setTimeout(() => {
       this.timer = null
-      this.pending = this.renew().finally(() => {
-        this.pending = null
-      })
+      void this.startRenewal()
     }, delay)
     this.timer.unref?.()
   }
 
-  private async renew(): Promise<void> {
+  private startRenewal(): Promise<boolean> {
+    const pending = this.renew().finally(() => {
+      if (this.pending === pending) this.pending = null
+    })
+    this.pending = pending
+    return pending
+  }
+
+  private async renew(): Promise<boolean> {
     try {
       const renewed = await this.repository.renewConversationLease(this.held)
-      if (this.stopped) return
+      if (this.stopped) return false
       this.held = renewed
       this.schedule(LEASE_HEARTBEAT_MS)
+      return true
     } catch (error) {
-      if (this.stopped) return
+      if (this.stopped) return false
       if (error instanceof StorageError && error.code === 'LEASE_HELD_BY_OTHER_DEVICE') {
         this.stop()
         this.options.onLost(error)
-        return
+        return false
       }
       this.options.onTransientFailure?.(error)
       this.schedule(LEASE_RETRY_MS)
+      return false
     }
   }
 }

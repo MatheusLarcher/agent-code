@@ -8,6 +8,8 @@ import { PostgresRepository } from './postgresRepository'
 import { hasCommittedActivation, importRepositoryToPostgres, writeRepositoryToSqlite } from './postgresTransfer'
 import { SqliteRepository } from './sqliteRepository'
 import { backupSqliteForTransition } from './sqliteTransitionBackup'
+import { StorageReconnector } from './storageReconnect'
+import { logTransitionFailure } from './storageTransitionLog'
 import {
   StorageError,
   type PersistenceRepository,
@@ -45,6 +47,17 @@ export class StorageLifecycleService {
   private repositoryUnsubscribe: (() => void) | null = null
   private transition: Promise<void> | null = null
   private currentStatus: StorageStatus = this.makeStatus('sqlite', 'booting', false)
+  private closed = false
+  private readonly reconnector = new StorageReconnector({
+    attempt: () => this.retryNow(),
+    shouldRun: () => !this.closed && !this.transition && this.currentStatus.state === 'postgres-offline',
+    isRetryable: (error) => this.storageError(error, 'PostgreSQL indisponível.', true).retryable,
+    onGiveUp: (error) => {
+      if (this.closed || this.currentStatus.state !== 'postgres-offline') return
+      const typed = this.storageError(error, 'PostgreSQL indisponível.', true)
+      this.setStatus(this.makeStatus('postgres', 'postgres-offline', false, this.currentStatus.hasPassword, typed))
+    }
+  })
 
   status(): StorageStatus {
     return {
@@ -73,6 +86,7 @@ export class StorageLifecycleService {
   }
 
   async initialize(options: StorageInitialization): Promise<void> {
+    this.closed = false
     this.location = options.location
     this.appVersion = options.appVersion
     this.bootstrap = new BootstrapStore(options.userDataDir, options.secureStorage)
@@ -110,14 +124,18 @@ export class StorageLifecycleService {
     const next = new SqliteRepository(location.dir, location.dbPath, this.installationId)
     try {
       await next.initialize()
+      // close() durante o initialize (retryNow de uma ativação não commitada):
+      // não religa o SQLite nem publica sqlite-ready depois do encerramento.
+      if (this.closed) throw this.closedError()
       await this.swapRepository(next)
       this.setStatus(this.makeStatus('sqlite', 'sqlite-ready', true))
     } catch (cause) {
       await next.close().catch(() => undefined)
+      if (this.closed) throw this.closedError()
       const error = this.storageError(cause, 'Não foi possível inicializar o SQLite.')
       configureKvRepositoryOffline()
       configureMemoryRuntime(null)
-    configureTaskRuntime(null)
+      configureTaskRuntime(null)
       this.setStatus(this.makeStatus('sqlite', 'fatal', false, false, error))
       throw error
     }
@@ -142,28 +160,43 @@ export class StorageLifecycleService {
   }
 
   async activatePostgres(raw: PostgresConnectionDraft, hooks: StorageTransitionHooks): Promise<void> {
-    if (this.transition) throw new StorageError('TRANSITION_IN_PROGRESS', 'Já existe uma transição em andamento.')
-    const work = this.activate(raw, hooks)
-    this.transition = work
-    try {
-      await work
-    } finally {
-      if (this.transition === work) this.transition = null
-    }
+    await this.runTransition(() => this.activate(raw, hooks))
   }
 
   async deactivatePostgres(hooks: StorageTransitionHooks): Promise<void> {
+    await this.runTransition(() => this.deactivate(hooks))
+  }
+
+  /** Queda durante a transição não agenda (`shouldRun`): a reconexão começa aqui. */
+  private async runTransition(start: () => Promise<void>): Promise<void> {
     if (this.transition) throw new StorageError('TRANSITION_IN_PROGRESS', 'Já existe uma transição em andamento.')
-    const work = this.deactivate(hooks)
+    const work = start()
     this.transition = work
     try {
       await work
     } finally {
       if (this.transition === work) this.transition = null
+      this.reconnector.schedule()
     }
   }
 
+  /** "Tentar novamente" (botão ou rede de volta). Sem rascunho divide a tentativa
+   *  automática (banco já de pé: no-op). Com rascunho ("Corrigir configuração")
+   *  zera o backoff e espera a automática em curso: nunca dois pools em paralelo. */
   async retryPostgres(raw?: PostgresConnectionDraft): Promise<void> {
+    if (!raw && this.currentStatus.state === 'postgres-ready') return
+    if (!raw) return this.reconnector.now()
+    return this.reconnector.nowWith(() => this.retryNow(raw))
+  }
+
+  /** O SO avisou que voltou da suspensão/desbloqueio: se o banco caiu enquanto
+   *  isso, tenta na hora em vez de esperar o próximo passo do backoff. */
+  resumeReconnect(): void {
+    if (this.closed || this.transition || this.currentStatus.state !== 'postgres-offline') return
+    void this.reconnector.now().catch(() => undefined)
+  }
+
+  private async retryNow(raw?: PostgresConnectionDraft): Promise<void> {
     const data = await this.requireBootstrap().load()
     if (raw) {
       const draft = await this.resolveDraft(raw)
@@ -174,11 +207,12 @@ export class StorageLifecycleService {
       try {
         if (await this.recoverActivation(data.transitionId)) return
         await this.requireBootstrap().abortTransition(data.transitionId)
+        if (this.closed) throw this.closedError()
         if (!this.location) throw new StorageError('STORAGE_OFFLINE', 'A origem SQLite não está disponível.')
         await this.initializeSqlite(this.location)
         return
       } catch (cause) {
-        this.setOffline(cause)
+        if (!this.closed) this.setOffline(cause)
         throw this.storageError(cause, 'Não foi possível recuperar a ativação PostgreSQL.', true)
       }
     }
@@ -191,6 +225,8 @@ export class StorageLifecycleService {
   }
 
   async close(): Promise<void> {
+    this.closed = true
+    this.reconnector.cancel()
     configureKvRepositoryOffline()
     configureMemoryRuntime(null)
     configureTaskRuntime(null)
@@ -238,9 +274,9 @@ export class StorageLifecycleService {
       confirmed = true
       this.bindRepository(target)
       this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, true))
-      await source.close().catch((error) => this.logTransitionFailure('close-sqlite-after-activation', error))
+      await source.close().catch((error) => logTransitionFailure('close-sqlite-after-activation', error))
     } catch (cause) {
-      this.logTransitionFailure('activate-postgres', cause)
+      logTransitionFailure('activate-postgres', cause)
       if (confirmed && target) {
         this.bindRepository(target)
         this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, true))
@@ -283,9 +319,9 @@ export class StorageLifecycleService {
       confirmed = true
       this.bindRepository(target)
       this.setStatus(this.makeStatus('sqlite', 'sqlite-ready', true, true))
-      await source.close().catch((error) => this.logTransitionFailure('close-postgres-after-deactivation', error))
+      await source.close().catch((error) => logTransitionFailure('close-postgres-after-deactivation', error))
     } catch (cause) {
-      this.logTransitionFailure('deactivate-postgres', cause)
+      logTransitionFailure('deactivate-postgres', cause)
       if (confirmed && target) {
         this.bindRepository(target)
         this.setStatus(this.makeStatus('sqlite', 'sqlite-ready', true, true))
@@ -294,8 +330,11 @@ export class StorageLifecycleService {
       }
       await target?.close().catch(() => undefined)
       await bootstrap.abortTransition(transitionId).catch(() => undefined)
-      this.bindRepository(source)
-      this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, true))
+      // Queda no meio: setOffline já fechou `source` — fica offline (runTransition reconecta).
+      if (this.active === source) {
+        this.bindRepository(source)
+        this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, true))
+      }
       throw this.storageError(cause, 'Não foi possível migrar de volta para SQLite.')
     }
   }
@@ -310,6 +349,9 @@ export class StorageLifecycleService {
       // bootstrap, então não há importação para verificar — só "dá para ler?".
       // A releitura completa continua nas transições (activate/deactivate/recover).
       await next.verifyReadable()
+      // Uma reconexão automática que termina com o app já fechando não pode
+      // reinstalar um repositório (e um pool vivo) depois do close().
+      if (this.closed) throw this.closedError()
       await this.swapRepository(next)
       this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, Boolean(draft.password)))
     } catch (error) {
@@ -322,15 +364,24 @@ export class StorageLifecycleService {
     const bootstrap = this.requireBootstrap()
     const draft = await bootstrap.connection()
     const provisioned = await provisionPostgres(draft, this.installationId, this.appVersion)
-    if (!(await hasCommittedActivation(provisioned.pool, transitionId))) {
-      await provisioned.pool.end()
-      return false
+    // Cada tentativa automática passa aqui: pool que não vira repositório é encerrado.
+    let next: PostgresRepository | null = null
+    try {
+      if (!(await hasCommittedActivation(provisioned.pool, transitionId))) {
+        await provisioned.pool.end()
+        return false
+      }
+      next = this.createPostgresRepository(provisioned.pool, draft)
+      await next.initialize()
+      await next.loadSnapshot()
+      await bootstrap.confirmBackend('postgres', transitionId)
+      // Como em openSelectedPostgres: app fechando não reinstala repositório.
+      if (this.closed) throw this.closedError()
+      await this.swapRepository(next)
+    } catch (error) {
+      await (next?.close() ?? provisioned.pool.end()).catch(() => provisioned.pool.end().catch(() => undefined))
+      throw error
     }
-    const next = this.createPostgresRepository(provisioned.pool, draft)
-    await next.initialize()
-    await next.loadSnapshot()
-    await bootstrap.confirmBackend('postgres', transitionId)
-    await this.swapRepository(next)
     this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, Boolean(draft.password)))
     return true
   }
@@ -348,7 +399,7 @@ export class StorageLifecycleService {
     const previous = this.active
     this.bindRepository(next)
     if (previous && previous !== next) {
-      await previous.close().catch((error) => this.logTransitionFailure('close-replaced-repository', error))
+      await previous.close().catch((error) => logTransitionFailure('close-replaced-repository', error))
     }
   }
 
@@ -397,22 +448,16 @@ export class StorageLifecycleService {
     this.active = null
     void current?.close().catch(() => undefined)
     this.setStatus(this.makeStatus('postgres', 'postgres-offline', false, this.currentStatus.hasPassword, error))
+    if (error.retryable) this.reconnector.schedule()
   }
 
   private storageError(cause: unknown, fallback: string, retryable = false): StorageError {
     return cause instanceof StorageError ? cause : new StorageError('STORAGE_OFFLINE', fallback, retryable, { cause })
   }
 
-  private logTransitionFailure(phase: string, cause: unknown): void {
-    const error = cause instanceof Error ? cause : new Error(String(cause))
-    const code = typeof (cause as { code?: unknown })?.code === 'string'
-      ? (cause as { code: string }).code
-      : undefined
-    const message = error.message
-      .replace(/password=[^\s]+/gi, 'password=[redacted]')
-      .replace(/postgres(?:ql)?:\/\/[^\s]+/gi, 'postgresql://[redacted]')
-      .slice(0, 1_000)
-    console.error('[storage-transition]', JSON.stringify({ phase, name: error.name, code, message }))
+  /** O app fechou no meio de uma tentativa: nada é reinstalado nem publicado. */
+  private closedError(): StorageError {
+    return new StorageError('STORAGE_OFFLINE', 'Persistência encerrada.', false)
   }
 
   private makeStatus(

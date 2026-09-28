@@ -3,8 +3,10 @@ import {
   currentModelId,
   DEFAULT_CONFIG,
   EFFORT_LEVELS,
+  isAutoEffort,
   PLANNING_MODELS,
   type AppConfig,
+  type EffortChoice,
   type EffortLevel,
   type PlanningConfig
 } from '../../shared/ipc'
@@ -12,7 +14,7 @@ import { StorageError } from './types'
 
 /**
  * O bloco `planning` normalizado: modelo fora de PLANNING_MODELS ou esforço fora
- * de EFFORT_LEVELS (incluindo tipo errado ou ausente) volta ao padrão, campo a
+ * de EFFORT_LEVELS + AUTO_EFFORT (incluindo tipo errado ou ausente) volta ao padrão, campo a
  * campo. Normaliza em vez de rejeitar, ao contrário dos outros grupos: um id de
  * modelo que saiu da lista (troca de catálogo) não é corrupção, e cada campo é
  * aplicado sozinho no boot — rejeitar ali derrubaria a abertura do app.
@@ -26,8 +28,8 @@ export function normalizePlanningConfig(value: { model?: unknown; effort?: unkno
         ? model
         : DEFAULT_CONFIG.planning.model,
     effort:
-      typeof effort === 'string' && EFFORT_LEVELS.includes(effort as EffortLevel)
-        ? (effort as EffortLevel)
+      typeof effort === 'string' && (EFFORT_LEVELS.includes(effort as EffortLevel) || isAutoEffort(effort))
+        ? (effort as EffortChoice)
         : DEFAULT_CONFIG.planning.effort
   }
 }

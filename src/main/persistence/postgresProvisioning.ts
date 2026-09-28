@@ -3,6 +3,9 @@ import { z } from 'zod'
 import type { PostgresConnectionDraft } from '../../shared/ipc'
 import { POSTGRES_DATABASE } from './bootstrapStore'
 import { applyPostgresMigrations } from './postgresMigrations'
+import { instrumentPool, pgStatActivitySnapshot } from './postgresPoolDiagnostics'
+import { applySessionTimeouts } from './postgresSessionSetup'
+import { POSTGRES_CONNECT_TIMEOUT_MS, POSTGRES_QUERY_TIMEOUT_MS } from './postgresTimeouts'
 import { StorageError } from './types'
 
 const draftSchema = z
@@ -55,7 +58,7 @@ export function postgresClientConfig(
     password: draft.password,
     database,
     ssl: sslOptions(draft),
-    connectionTimeoutMillis: 8_000,
+    connectionTimeoutMillis: POSTGRES_CONNECT_TIMEOUT_MS,
     // pg drops idle pooled connections after 10s by default. With a lease
     // heartbeat every 20s, every renewal paid for a fresh TCP+TLS handshake to
     // the (usually remote) server — and a handshake slower than the timeout
@@ -63,6 +66,20 @@ export function postgresClientConfig(
     // Holding the connection open across heartbeats keeps them off the wire.
     idleTimeoutMillis: 30_000,
     keepAlive: true,
+    // Sem atraso explícito o Node deixa o do SO — 2 HORAS no Windows. A conexão
+    // LISTEN fica muda por horas: um NAT/roteador descarta o mapeamento ocioso e
+    // o socket morre em silêncio (sem notificações, sem erro). Sondas a cada 30s
+    // mantêm o mapeamento vivo e fazem um socket morto aparecer como erro, que o
+    // change feed trata reconectando.
+    keepAliveInitialDelayMillis: 30_000,
+    // Sem tetos uma consulta que não termina (espera por trava segurada por
+    // uma sessão órfã, socket meio morto) segura a vaga do pool para sempre;
+    // com as 10 presas, todo pedido falha em "timeout exceeded when trying to
+    // connect". Ver postgresTimeouts.ts. Este é o do lado do cliente; os do
+    // servidor (lock/statement/idle_in_transaction) vão por SET depois de
+    // conectar — como parâmetro de startup o PgBouncer recusa a conexão
+    // (applySessionTimeouts, postgresSessionSetup.ts).
+    query_timeout: POSTGRES_QUERY_TIMEOUT_MS,
     application_name: 'agent-code'
   }
 }
@@ -133,6 +150,8 @@ export async function testPostgresConnection(raw: PostgresConnectionDraft): Prom
   const client = new Client(postgresClientConfig(draft, draft.maintenanceDatabase))
   try {
     await client.connect()
+    // Testa também o caminho dos tetos por SET, que o app usa em toda conexão.
+    await applySessionTimeouts(client)
     await client.query('SELECT 1')
   } catch (error) {
     throw typedPostgresError(error, 'connect')
@@ -156,6 +175,7 @@ export async function provisionPostgres(
   let createdDatabase = false
   try {
     await maintenance.connect()
+    await applySessionTimeouts(maintenance)
     // O lock serializa "criar o banco agent-code" entre máquinas, e a seção que
     // ele protege são três consultas ao catálogo — nunca demora. Sem um teto,
     // porém, `pg_advisory_lock` espera PARA SEMPRE: um par segurando o lock (ou
@@ -164,6 +184,9 @@ export async function provisionPostgres(
     // tela. Excedido o tempo, o erro é tratado como qualquer outra falha de
     // conexão: o app abre no estado offline, com "Tentar novamente".
     await maintenance.query(`SET statement_timeout = ${PROVISION_STATEMENT_TIMEOUT_MS}`)
+    // O lock_timeout da sessão (mais curto, aplicado acima) cortaria a espera
+    // antes; aqui vale o teto de sempre do provisionamento.
+    await maintenance.query(`SET lock_timeout = ${PROVISION_STATEMENT_TIMEOUT_MS}`)
     await maintenance.query('SELECT pg_advisory_lock($1)', [7_420_260_828])
     try {
       const found = await maintenance.query<{ exists: boolean }>(
@@ -203,7 +226,11 @@ export async function provisionPostgres(
     await maintenance.end().catch(() => undefined)
   }
 
-  const pool = new Pool({ ...postgresClientConfig(draft, POSTGRES_DATABASE), max: 10 })
+  const dataConfig = postgresClientConfig(draft, POSTGRES_DATABASE)
+  // onConnect: o pg-pool só entrega o cliente novo depois dos SETs; se falharem,
+  // descarta a conexão e o erro vai para quem pediu.
+  const pool = new Pool({ ...dataConfig, max: 10, onConnect: applySessionTimeouts })
+  instrumentPool(pool, { snapshot: () => pgStatActivitySnapshot(dataConfig) })
   // Sem este listener, um cliente ocioso do pool derrubado pelo servidor (rede
   // caiu, servidor reiniciou a conexão) vira uma exceção não tratada e derruba
   // o processo main do Electron inteiro. O pool já descarta sozinho o cliente

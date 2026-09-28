@@ -127,7 +127,7 @@ export interface HandoffFile {
  */
 const fileQueues = new Map<string, Promise<unknown>>()
 
-async function inFileQueue<T>(file: string, work: () => Promise<T>): Promise<T> {
+export async function inFileQueue<T>(file: string, work: () => Promise<T>): Promise<T> {
   const key = process.platform === 'win32' ? file.toLowerCase() : file
   const run = (fileQueues.get(key) ?? Promise.resolve()).then(work)
   const tail = run.catch(() => undefined)

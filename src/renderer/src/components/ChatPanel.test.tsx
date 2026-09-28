@@ -250,3 +250,18 @@ describe('ChatPanel — botão "agora" na fila', () => {
     expect(screen.getByTitle('Remover da fila')).toBeTruthy()
   })
 })
+
+describe('ChatPanel — "Iniciar questionário"', () => {
+  it('só aparece com onQuestionnaire (chat do Agent Manager) e chama no clique, mesmo ocupado', () => {
+    const { unmount } = renderPanel()
+    expect(screen.queryByRole('button', { name: /Iniciar questionário/ })).toBeNull()
+    unmount()
+    const onQuestionnaire = vi.fn()
+    renderPanel({ onQuestionnaire, busy: true })
+    const btn = screen.getByRole('button', { name: /Iniciar questionário/ }) as HTMLButtonElement
+    expect(btn.disabled).toBe(false) // ocupado: vai para a fila, não desabilita
+    expect(btn.closest('.composer-bar')).toBeTruthy()
+    fireEvent.click(btn)
+    expect(onQuestionnaire).toHaveBeenCalledTimes(1)
+  })
+})

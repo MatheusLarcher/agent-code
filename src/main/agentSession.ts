@@ -5,6 +5,7 @@ import { appRestart } from './appRestartRuntime'
 import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
 import { isStalled, STALL_POLL_MS } from './stallWatch'
+import { MirrorRepair, MIRROR_REPAIR_SEND_TIMEOUT_MS, mirrorRepairText } from './mirrorRepair'
 import { composeRequestContext, composeUserPrompt } from './promptEnvelope'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
@@ -85,7 +86,9 @@ import type {
   TokenUsage
 } from '../shared/ipc'
 import { claudeAccounts } from './accounts'
+import { sdkEffort } from '../shared/autoEffort'
 import { buildInjectedMessage } from './injectNow'
+import { imageContentBlocks } from '../shared/inlineMedia'
 import { storageLifecycle } from './persistence/lifecycle'
 import type { AgentInputQueueRepository, ProjectConversationCount, TokenUsageRepository } from './persistence/types'
 
@@ -603,6 +606,15 @@ export class AgentSession {
    * loop. The full docs context is re-read by SDK hooks for every request. */
   private activeMemoryQuery = ''
   /**
+   * O último contexto vivo (docs + memória) entregue ao modelo neste turno.
+   * O `additionalContext` de um hook fica na conversa — não some na chamada
+   * seguinte — e o Claude Code ainda grava cada um grande em disco
+   * (`tool-results/hook-*-additionalContext.txt`). Reenviar o mesmo bloco a cada
+   * lote de ferramentas empilhava cópias idênticas: 6,6 GB numa conversa.
+   * `null` = nada entregue ainda (início de turno, depois de compactar).
+   */
+  private lastLiveContext: string | null = null
+  /**
    * A decisão do TypeSafe sobre quais memórias vão neste turno, memoizada.
    *
    * `buildLiveRequestContext` roda a cada request do provedor — várias vezes
@@ -685,6 +697,9 @@ export class AgentSession {
   private turnActive = false
   private idleWaiters = new Set<() => void>()
   private mirrorFailed = false
+  /** Reparo automático do espelho após `mirror_error` (ver mirrorRepair.ts). */
+  private mirrorRepair: MirrorRepair | null = null
+  private mirrorRepairSessionId: string | null = null
   private quotaRejected = false
   private providerContinuation = false
   private handoffReady: Promise<void> = Promise.resolve()
@@ -830,7 +845,8 @@ export class AgentSession {
         ? 'Trabalho autônomo sem prova de término.'
         : this.restartBackground === null ? 'Estado de background desconhecido.'
         : this.restartBackground > 0 ? 'Tarefas em background ativas.'
-        : this.loopActive ? 'Loop/agendamento ativo.' : this.mirrorFailed ? 'Persistência não verificada.' : undefined
+        : this.loopActive ? 'Loop/agendamento ativo.' : this.mirrorFailed ? 'Persistência não verificada.' : undefined,
+      autonomousCallOpen: this.restartOpaqueCalls.size > 0
     }
   }
 
@@ -853,7 +869,11 @@ export class AgentSession {
      *  the live `llm-call` ChatEvent. */
     private readonly tokenUsageRepository?: TokenUsageRepository,
     /** Durable FIFO for messages submitted while the SDK is busy or restarting. */
-    private readonly inputQueueRepository?: AgentInputQueueRepository
+    private readonly inputQueueRepository?: AgentInputQueueRepository,
+    /** Reparo do espelho: reenvia o transcript local ao store e roda a MESMA
+     *  verificação do `onTurnDurable`. `configDir` = CLAUDE_CONFIG_DIR do CLI da
+     *  sessão (`undefined` = o do app). Sem ele, `mirror_error` bloqueia como antes. */
+    private readonly repairMirror?: (sessionId: string, configDir: string | undefined) => Promise<void>
   ) {
     // Native class fields run before constructor parameter properties are assigned.
     this.restartRegistration = appRestart?.register(opts.convId, () => this.restartActivity())
@@ -874,6 +894,13 @@ export class AgentSession {
     }
     if (process.platform === 'win32') {
       mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
+    }
+    // Tarefa do MCP de entrada: os servidores do chamador (ex.: o do Forgia), só
+    // nesta sessão. Nome reservado já foi recusado na validação; aqui não
+    // sobrescreve nada por garantia.
+    for (const [name, s] of Object.entries(this.opts.inboundMcp?.servers ?? {})) {
+      if (mcpServers[name]) continue
+      mcpServers[name] = { type: 'stdio', command: s.command, args: s.args, env: s.env }
     }
     // Only when the service is bound to an authoritative repository: without it
     // the tool would accept a memory and quietly drop it.
@@ -1066,10 +1093,13 @@ export class AgentSession {
     // process. Task snapshots must resolve from that same effective root.
     this.sessionTasksRoot = env?.CLAUDE_CONFIG_DIR
 
+    // Última barreira: o sentinel `auto` (ou qualquer texto fora da escada)
+    // nunca vira `--effort`, e um degrau acima do teto do modelo é recortado.
+    const effort = sdkEffort(this.opts.model, this.opts.effort)
     const options: Options = {
       cwd: this.opts.cwd,
       model: this.opts.model,
-      ...(this.opts.effort ? { effort: this.opts.effort as Options['effort'] } : {}),
+      ...(effort ? { effort: effort as Options['effort'] } : {}),
       // Modo rápido: only sent when the chosen model actually supports it — the
       // API rejects a fast-mode request on an unsupported model instead of
       // quietly serving it at standard speed.
@@ -1121,22 +1151,33 @@ export class AgentSession {
         UserPromptSubmit: [{ hooks: [async () => {
           if (appRestart?.reserved) return { decision: 'block' as const, reason: 'Reinício reservado; novo turno recusado.' }
           this.beginTurn()
+          // Início de turno: o contexto vai SEMPRE, mesmo igual ao anterior.
+          const context = await this.buildLiveRequestContext()
+          this.lastLiveContext = context
           return {
             hookSpecificOutput: {
               hookEventName: 'UserPromptSubmit' as const,
-              additionalContext: await this.buildLiveRequestContext()
+              additionalContext: context
             }
           }
         }] }],
         // A tool batch is the Agent SDK's documented point immediately before
         // the following model call. Rebuild here so a docs edit made while a
-        // tool ran is present on that provider request as well.
-        PostToolBatch: [{ hooks: [async () => ({
-          hookSpecificOutput: {
-            hookEventName: 'PostToolBatch' as const,
-            additionalContext: await this.buildLiveRequestContext()
+        // tool ran is present on that provider request as well — but only when
+        // something CHANGED: the block already sent stays in the conversation,
+        // and resending an identical copy per tool batch only piles up context
+        // (and hook-*-additionalContext.txt files on disk).
+        PostToolBatch: [{ hooks: [async () => {
+          const context = await this.buildLiveRequestContext()
+          if (context === this.lastLiveContext) return {}
+          this.lastLiveContext = context
+          return {
+            hookSpecificOutput: {
+              hookEventName: 'PostToolBatch' as const,
+              additionalContext: context
+            }
           }
-        })] }],
+        }] }],
         PreToolUse: [{ hooks: [async (input) => {
           if (input.hook_event_name !== 'PreToolUse') return {}
           const name = input.tool_name
@@ -1313,14 +1354,7 @@ export class AgentSession {
     this.beginTurn()
     await this.handoffReady
     this.quotaRejected = false
-    if (this.mirrorFailed) {
-      this.emit({
-        kind: 'error',
-        id: nextId(),
-        text: 'A sessão não está pronta para retomada: o espelhamento do transcript falhou. Reconecte após corrigir a persistência.'
-      })
-      return
-    }
+    if (this.mirrorFailed && !(await this.awaitMirrorRepair(messageKind === 'normal' ? messageUuid : undefined))) return
     const memoryCatalogUpdate = await this.refreshMemoriesIfChanged()
     const skillCatalogUpdate = await this.refreshSkillsIfChanged()
     const projectsCatalogUpdate = await this.refreshProjectsIfChanged()
@@ -1426,12 +1460,10 @@ export class AgentSession {
 
     // With images, send a content-block array (image blocks first, then the
     // text) instead of a plain string — the native Anthropic image format.
+    // Imagem posta no texto leva o rótulo `midia:N = nome` antes do bloco.
     let content: unknown = stamped(outText)
     if (images && images.length > 0) {
-      const blocks: unknown[] = images.map((img) => ({
-        type: 'image',
-        source: { type: 'base64', media_type: img.mediaType, data: img.data }
-      }))
+      const blocks: unknown[] = imageContentBlocks(images)
       // Antes o bloco de texto sumia quando a mensagem era só imagem; o carimbo
       // nunca é vazio, então agora ele sempre acompanha.
       blocks.push({ type: 'text', text: stamped(outText) })
@@ -1468,8 +1500,86 @@ export class AgentSession {
     await this.handoffReady
   }
 
+  /**
+   * Envio com o espelho quebrado. Com reparo pendente, tenta já: se o banco
+   * voltou, o envio segue. Senão, a mensagem do usuário (`deferUuid`) NÃO é
+   * enviada: volta para a fila de espera da conversa no renderer (a mesma do
+   * agente ocupado, gravada em conversation_outbox) e sai quando o reparo
+   * concluir (evento `mirror-repair`). Envio interno sem essa fila (recuperação,
+   * Quadro) espera o reparo aqui mesmo. Sem reparo possível, recusa como antes.
+   * `false` = não enviar.
+   */
+  private async awaitMirrorRepair(deferUuid?: string): Promise<boolean> {
+    const repair = this.mirrorRepair
+    if (repair?.pending) {
+      const outcome = await repair.tryNow(MIRROR_REPAIR_SEND_TIMEOUT_MS)
+      if (outcome === 'restored') return !this.disposed
+      if (outcome === 'pending' && deferUuid && !this.disposed) {
+        this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.queued })
+        this.emit({ kind: 'mirror-repair', state: 'deferred', messageUuid: deferUuid })
+        this.markTurnIdle()
+        return false
+      }
+      if (outcome === 'pending') {
+        this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.waiting })
+        // Esperar o banco não é o turno travado: o watchdog volta no beginTurn.
+        this.stopStallWatch()
+        if ((await repair.whenSettled()) && !this.disposed) {
+          this.beginTurn()
+          return true
+        }
+      }
+      if (!this.disposed) this.emit({ kind: 'error', id: nextId(), text: mirrorRepairText.notSent })
+      this.markTurnIdle()
+      return false
+    }
+    this.emit({
+      kind: 'error',
+      id: nextId(),
+      text: 'A sessão não está pronta para retomada: o espelhamento do transcript falhou. Reconecte após corrigir a persistência.'
+    })
+    return false
+  }
+
+  /** Liga o reparo do espelho. 'started' só na transição (um aviso por queda,
+   *  não um por lote descartado); `false` quando esta sessão não sabe reparar. */
+  private startMirrorRepair(sessionId: string | null): 'started' | 'already' | false {
+    if (!this.repairMirror || this.disposed) return false
+    if (sessionId) this.mirrorRepairSessionId = sessionId
+    this.mirrorRepair ??= new MirrorRepair({
+      attempt: async () => {
+        const target = this.mirrorRepairSessionId ?? this.watchedSessionId
+        if (!target) throw new Error('Sessão sem id para reparar.')
+        await this.repairMirror!(target, this.sessionTasksRoot)
+      },
+      onRestored: () => {
+        this.mirrorFailed = false
+        appRestart?.changed()
+        this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.restored })
+        this.emit({ kind: 'mirror-repair', state: 'restored' })
+      },
+      onGiveUp: (error) => {
+        console.warn(`[session-store] reparo do espelho desistiu conversation=${this.opts.convId}:`, error)
+        this.emit({ kind: 'error', id: nextId(), text: mirrorRepairText.gaveUp(error) })
+      },
+      onAttemptFailed: (error) =>
+        console.warn(`[session-store] reparo do espelho falhou, nova tentativa agendada conversation=${this.opts.convId}:`, error)
+    })
+    // O espelho vivo ainda grava até o fim do turno: as tentativas automáticas
+    // esperam por ele (um envio do usuário ainda pode tentar antes, via tryNow).
+    const idle = this.turnActive ? new Promise<void>((resolve) => this.idleWaiters.add(resolve)) : undefined
+    return this.mirrorRepair.begin(idle) ? 'started' : 'already'
+  }
+
+  /** A persistência voltou depois de uma queda: o reparo do espelho pendente
+   *  tenta já em vez de esperar o backoff dele. */
+  storageRestored(): void {
+    if (!this.disposed) this.mirrorRepair?.kick()
+  }
+
   async resumeAfterQuota(): Promise<string> {
     await this.waitForIdle()
+    if (this.mirrorFailed && this.mirrorRepair?.pending) await this.mirrorRepair.tryNow(MIRROR_REPAIR_SEND_TIMEOUT_MS)
     if (this.mirrorFailed || !this.watchedSessionId) {
       throw new Error('Não foi possível verificar o histórico para trocar de provedor com segurança. A tarefa foi preservada.')
     }
@@ -1677,6 +1787,7 @@ export class AgentSession {
     if (!restartState.busy && !restartState.unsafe) this.restartRegistration?.remove()
     else this.restartUncertain = true // Closing SDK is not proof detached work ended.
     this.disposed = true
+    this.mirrorRepair?.dispose()
     this.clearLoopState()
     // O registro de memórias usadas é do turno corrente desta conversa: some com
     // ela. O ordinal avança para que uma decisão ainda em voo não repovoe o
@@ -2208,12 +2319,16 @@ ${lines}
         if (message.subtype === 'init') {
           this.restartInitializing = false
           if (!this.opts.resume && !this.restartUncertain) this.restartBackground = 0
+          // O esforço com que a sessão subiu (o mesmo que foi ao SDK): com o
+          // esforço gravado em Automático, é o que o seletor mostra em uso.
+          const effort = sdkEffort(this.opts.model, this.opts.effort)
           this.emit({
             kind: 'system',
             sessionId: message.session_id,
             model: message.model,
             cwd: message.cwd,
-            tools: message.tools
+            tools: message.tools,
+            ...(effort ? { effort } : {})
           })
           // The level event is not emitted at process startup. Reset explicitly
           // so a resumed/restarted session never leaves stale tasks in the UI.
@@ -2230,6 +2345,11 @@ ${lines}
               (mirrorError.key?.subpath ? ` subpath=${mirrorError.key.subpath}` : '') +
               `: ${mirrorError.error ?? '(sem detalhe)'}`
           )
+          // Recuperável: o lote descartado está no transcript local. Aviso como
+          // `status` — um `error` no meio do turno o encerraria na tela.
+          const repair = this.startMirrorRepair(mirrorError.key?.sessionId ?? this.watchedSessionId)
+          if (repair === 'started') this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.started(mirrorError.error) })
+          if (repair !== false) break
           this.emit({
             kind: 'error',
             id: nextId(),
@@ -2238,6 +2358,9 @@ ${lines}
             }`
           })
         } else if ((message as { subtype?: string }).subtype === 'compact_boundary') {
+          // A compactação resume o que já foi entregue: o próximo lote de
+          // ferramentas volta a mandar o contexto vivo inteiro.
+          this.lastLiveContext = null
           // The CLI already knows how to compact (manual `/compact` or automatic
           // when the context window fills up) — it rewrites its own transcript
           // and keeps going. This app only translates that into a visible line,
@@ -2356,6 +2479,13 @@ ${lines}
           const sessionId = this.watchedSessionId
           this.handoffReady = this.onTurnDurable(sessionId, this.mirrorFailed).catch((error) => {
             this.mirrorFailed = true
+            // Verificação que caiu com o banco fora do ar (ou o espelho já em
+            // reparo) também se recupera sozinha: o reparo refaz a verificação.
+            const repair = this.startMirrorRepair(sessionId)
+            if (repair === 'started') {
+              this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.started(error instanceof Error ? error.message : String(error)) })
+            }
+            if (repair !== false) return
             this.emit({
               kind: 'error',
               id: nextId(),

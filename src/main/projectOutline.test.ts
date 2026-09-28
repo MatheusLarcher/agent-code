@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { buildDocsIndex, buildProjectOutline, extractMarkdownHeadings, MAX_HEADINGS } from './projectOutline'
+import { buildDocsIndex, buildProjectOutline, extractMarkdownHeadings, MAX_DOCS_CONTEXT_BYTES, MAX_HEADINGS } from './projectOutline'
 
 const dirs: string[] = []
 
@@ -32,28 +32,119 @@ describe('buildProjectOutline', () => {
     expect(await buildProjectOutline(cwd)).toContain('docs/ [not present]')
   })
 
-  it('envia Markdown da raiz completo e subpastas com exatamente as três primeiras linhas físicas', async () => {
+  it('envia Markdown da RAIZ do projeto completo e tudo em docs/ com exatamente as três primeiras linhas físicas', async () => {
     const cwd = await fixture()
     await mkdir(join(cwd, 'docs', 'nested', 'empty'), { recursive: true })
+    await writeFile(join(cwd, 'A.MD'), '# Principal\n## Detalhe\ncorpo completo da raiz')
     await writeFile(join(cwd, 'docs', 'z.txt'), 'conteúdo que não deve entrar')
-    await writeFile(join(cwd, 'docs', 'A.MD'), '# Principal\n## Detalhe\ncorpo completo da raiz')
+    await writeFile(join(cwd, 'docs', 'topo.md'), '# Topo do docs\nlinha 2\nlinha 3\nquarta linha do topo')
     await writeFile(join(cwd, 'docs', 'nested', 'guia.md'), '# Guia interno\n## Passo\nterceira linha\nquarta linha privada')
     await writeFile(join(cwd, 'docs', 'nested', 'b.json'), '{"secret":true}')
 
     const outline = await buildProjectOutline(cwd)
     expect(outline).toContain('[PROJECT_DOCS_CONTEXT]')
-    expect(outline).toContain('--- PROJECT DOC FILE: docs/A.MD ---')
-    expect(outline).toContain('# Principal\n## Detalhe\ncorpo completo da raiz')
+    expect(outline).toContain('--- PROJECT DOC FILE: A.MD ---\n# Principal\n## Detalhe\ncorpo completo da raiz\n--- END PROJECT DOC FILE: A.MD ---')
+    // O topo de docs/ também é aninhado em relação à raiz do projeto.
+    expect(outline).toContain('--- PROJECT DOC PREVIEW (first 3 physical lines): docs/topo.md ---\n# Topo do docs\nlinha 2\nlinha 3\n--- END PROJECT DOC PREVIEW: docs/topo.md ---')
+    expect(outline).not.toContain('PROJECT DOC FILE: docs/')
+    expect(outline).not.toContain('quarta linha do topo')
     expect(outline).toContain('nested/')
     expect(outline).toContain('empty/')
-    expect(outline).toContain('guia.md')
     expect(outline).toContain('--- PROJECT DOC PREVIEW (first 3 physical lines): docs/nested/guia.md ---\n# Guia interno\n## Passo\nterceira linha\n--- END PROJECT DOC PREVIEW: docs/nested/guia.md ---')
     expect(outline).not.toContain('quarta linha privada')
     expect(outline).toContain('b.json [json]')
     expect(outline).toContain('z.txt [text]')
     expect(outline).not.toContain('conteúdo que não deve entrar')
-    expect(outline.indexOf('A.MD')).toBeLessThan(outline.indexOf('nested/'))
+    expect(outline.indexOf('\nA.MD\n')).toBeLessThan(outline.indexOf('\ndocs/\n'))
     expect(await buildProjectOutline(cwd)).toBe(outline)
+  })
+
+  it('documento grande em docs/ (como um ARQUITETURA.md de 270 KB) entra só com caminho e três linhas', async () => {
+    const cwd = await fixture()
+    await mkdir(join(cwd, 'docs', 'sub'), { recursive: true })
+    const grande = `# Arquitetura\nlinha dois\nlinha três\n${'corpo-que-nao-entra '.repeat(14_000)}`
+    await writeFile(join(cwd, 'docs', 'ARQUITETURA.md'), grande)
+    await writeFile(join(cwd, 'docs', 'sub', 'REFERENCIA.md'), grande)
+
+    const outline = await buildProjectOutline(cwd)
+    expect(outline).toContain('--- PROJECT DOC PREVIEW (first 3 physical lines): docs/ARQUITETURA.md ---\n# Arquitetura\nlinha dois\nlinha três\n--- END')
+    expect(outline).toContain('docs/sub/REFERENCIA.md ---')
+    expect(outline).not.toContain('corpo-que-nao-entra')
+    expect(Buffer.byteLength(outline)).toBeLessThan(4 * 1024)
+  })
+
+  it('teto duro do bloco inteiro, com o corte anunciado, mesmo com muitos arquivos', async () => {
+    const cwd = await fixture()
+    await mkdir(join(cwd, 'docs', 'specs'), { recursive: true })
+    await writeFile(join(cwd, 'README.md'), `# Leia-me\n${'r'.repeat(20 * 1024)}`)
+    await Promise.all(Array.from({ length: 120 }, (_, i) => writeFile(
+      join(cwd, 'docs', 'specs', `spec-${String(i).padStart(3, '0')}.md`),
+      `# Spec ${i}\n${'a'.repeat(400)}\n${'b'.repeat(400)}`
+    )))
+
+    const outline = await buildProjectOutline(cwd)
+    expect(Buffer.byteLength(outline, 'utf8')).toBeLessThanOrEqual(MAX_DOCS_CONTEXT_BYTES)
+    expect(outline).toContain('--- PROJECT DOC FILE: README.md ---')
+    expect(outline).toMatch(/\.\.\. \d+ arquivos omitidos \(e 0 pastas\): teto de 48 KiB do bloco/)
+    expect(outline).toContain('spec-000.md')
+    expect(outline).not.toContain('spec-119.md')
+    expect(outline.endsWith('[/PROJECT_DOCS_CONTEXT]')).toBe(true)
+  })
+
+  it('Markdown da raiz maior que o teto vira marcador + três linhas, e o bloco respeita o teto', async () => {
+    const cwd = await fixture()
+    await mkdir(join(cwd, 'docs'))
+    await writeFile(join(cwd, 'a-pequeno.md'), '# Pequeno\ncabe inteiro')
+    await writeFile(join(cwd, 'b-enorme.md'), `# Enorme\nsegunda\nterceira\n${'x'.repeat(200 * 1024)}`)
+    await writeFile(join(cwd, 'c-medio.md'), `# Médio\n${'m'.repeat(40 * 1024)}`)
+    await writeFile(join(cwd, 'd-medio.md'), `# Médio 2\n${'n'.repeat(40 * 1024)}`)
+
+    const outline = await buildProjectOutline(cwd)
+    expect(Buffer.byteLength(outline, 'utf8')).toBeLessThanOrEqual(MAX_DOCS_CONTEXT_BYTES)
+    expect(outline).toContain('--- PROJECT DOC FILE: a-pequeno.md ---\n# Pequeno\ncabe inteiro')
+    expect(outline).toContain('b-enorme.md [full content omitted: 48 KiB docs context cap]\n--- PROJECT DOC PREVIEW (first 3 physical lines): b-enorme.md ---\n# Enorme\nsegunda\nterceira\n')
+    expect(outline).not.toContain('xxxxxxxxxxxxxxxx')
+    // c cabe; d já não cabe no que sobrou e degrada para três linhas.
+    expect(outline).toContain('--- PROJECT DOC FILE: c-medio.md ---')
+    expect(outline).toContain('d-medio.md [full content omitted: 48 KiB docs context cap]')
+    expect(outline).not.toContain('nnnnnnnnnnnnnnnn')
+  })
+
+  it('não entra nem percorre o que o .gitignore exclui, nem node_modules/out/dist/_sandbox/pastas ocultas', async () => {
+    const cwd = await fixture()
+    const pastas = [
+      ['docs', 'node_modules', 'pkg'], ['docs', 'out'], ['docs', 'dist'], ['docs', 'build'],
+      ['docs', 'spec', 'plano-1', '_sandbox', 'poc', '.venv', 'lib'], ['docs', '.uv-cache', 'x'],
+      ['docs', 'bench', 'lora-7b'], ['docs', 'bench', 'keep'], ['docs', 'gerado']
+    ]
+    for (const p of pastas) await mkdir(join(cwd, ...p), { recursive: true })
+    await writeFile(join(cwd, '.gitignore'), '# comentário\ndocs/bench/lora-*/\n/docs/gerado/\n*.log\nSEGREDO.md\n!docs/out/\n')
+    await writeFile(join(cwd, 'SEGREDO.md'), '# não deve entrar')
+    await writeFile(join(cwd, 'LEIAME.md'), '# entra')
+    await writeFile(join(cwd, 'docs', 'node_modules', 'pkg', 'README.md'), '# dependência')
+    await writeFile(join(cwd, 'docs', 'out', 'build.md'), '# saída')
+    await writeFile(join(cwd, 'docs', 'dist', 'dist.md'), '# dist')
+    await writeFile(join(cwd, 'docs', 'build', 'b.md'), '# build')
+    await writeFile(join(cwd, 'docs', 'spec', 'plano-1', '_sandbox', 'poc', '.venv', 'lib', 'LICENSE.md'), '# licença')
+    await writeFile(join(cwd, 'docs', 'spec', 'plano-1', 'roteiro.md'), '# roteiro')
+    await writeFile(join(cwd, 'docs', '.uv-cache', 'x', 'cache.md'), '# cache')
+    await writeFile(join(cwd, 'docs', 'bench', 'lora-7b', 'README.md'), '# pesos')
+    await writeFile(join(cwd, 'docs', 'bench', 'keep', 'SPEC.md'), '# spec do bench')
+    await writeFile(join(cwd, 'docs', 'gerado', 'g.md'), '# gerado')
+    await writeFile(join(cwd, 'docs', 'run.log'), 'log')
+
+    const outline = await buildProjectOutline(cwd)
+    for (const fora of ['  node_modules/', '  out/', '  dist/', '  build/', '_sandbox', '.venv', '.uv-cache', 'lora-7b', 'gerado', 'run.log', 'SEGREDO', 'dependência', 'licença']) {
+      expect(outline).not.toContain(fora)
+    }
+    expect(outline).toContain('--- PROJECT DOC FILE: LEIAME.md ---')
+    expect(outline).toContain('docs/spec/plano-1/roteiro.md ---')
+    expect(outline).toContain('docs/bench/keep/SPEC.md ---')
+    // O índice do gate usa a mesma varredura e as mesmas regras.
+    const index = await buildDocsIndex(cwd)
+    expect(index).not.toContain('_sandbox')
+    expect(index).not.toContain('lora-7b')
+    expect(index).toContain('roteiro.md')
   })
 
   it('recalcula o índice em cada chamada', async () => {
@@ -64,39 +155,28 @@ describe('buildProjectOutline', () => {
     expect(await buildProjectOutline(cwd)).toContain('novo.md')
   })
 
-  it('limita preview aninhado sem truncar Markdown da raiz', async () => {
+  it('limita preview aninhado cuja primeira linha passa do limite de leitura', async () => {
     const cwd = await fixture()
     await mkdir(join(cwd, 'docs', 'nested'), { recursive: true })
     const large = `# Início\n${'x'.repeat(70 * 1024)}\n# Depois`
-    await writeFile(join(cwd, 'docs', 'completo.md'), large)
     await writeFile(join(cwd, 'docs', 'nested', 'grande.md'), large)
     await writeFile(join(cwd, 'docs', 'sempre-listado.bin'), Buffer.from([0, 1, 2]))
     const outline = await buildProjectOutline(cwd)
-    expect(outline).toContain('--- PROJECT DOC FILE: docs/completo.md ---')
-    expect(outline).toContain('# Depois')
     expect(outline).toContain('grande.md [first 3 physical lines exceed 64 KiB read limit]')
+    expect(outline).not.toContain('# Depois')
     expect(outline).toContain('sempre-listado.bin [bin]')
   })
 
-  it('marca Markdown da raiz que ultrapassa o teto agregado', async () => {
+  it('arquivo Markdown binário na raiz também consome o orçamento de leitura', async () => {
     const cwd = await fixture()
     await mkdir(join(cwd, 'docs'))
-    await writeFile(join(cwd, 'docs', 'enorme.md'), `# Enorme\n${'x'.repeat(8 * 1024 * 1024)}`)
-
-    const outline = await buildProjectOutline(cwd)
-    expect(outline).toContain('enorme.md [full content omitted: 8 MiB root Markdown budget]')
-    expect(outline).not.toContain('xxxxxxxxxxxxxxxx')
-  })
-
-  it('arquivo Markdown binário também consome o teto agregado', async () => {
-    const cwd = await fixture()
-    await mkdir(join(cwd, 'docs'))
-    await writeFile(join(cwd, 'docs', 'a-binario.md'), Buffer.alloc(7 * 1024 * 1024, 0))
-    await writeFile(join(cwd, 'docs', 'b-texto.md'), `# Texto\n${'x'.repeat(2 * 1024 * 1024)}`)
+    await writeFile(join(cwd, 'a-binario.md'), Buffer.alloc(40 * 1024, 0))
+    await writeFile(join(cwd, 'b-texto.md'), `# Texto\nlinha 2\nlinha 3\n${'x'.repeat(20 * 1024)}`)
 
     const outline = await buildProjectOutline(cwd)
     expect(outline).toContain('a-binario.md [binary markdown omitted]')
-    expect(outline).toContain('b-texto.md [full content omitted: 8 MiB root Markdown budget]')
+    expect(outline).toContain('b-texto.md [full content omitted: 48 KiB docs context cap]')
+    expect(outline).not.toContain('xxxxxxxxxxxxxxxx')
   })
 
   it('lista symlink sem atravessá-lo', async () => {

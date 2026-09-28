@@ -106,7 +106,7 @@
 /* O ChatPanel ocupa o painel; o min-width de 380px dele não vale aqui (o painel já tem o seu). */
 .pl-chat-float-body > .chat-panel { flex: 1; min-width: 0; min-height: 0; }
 
-/* ---- minimizado: 5 linhas de conversa, 3 de digitação ---- */
+/* ---- minimizado: 5 linhas de conversa; a caixa de 1 a 3 linhas ---- */
 .pl-chat-float.minimized .pl-chat-float-body,
 .pl-chat-float.minimized .chat-panel { flex: none; }
 /* A lista tem a altura de 5 linhas do texto das mensagens; o fim da conversa fica
@@ -116,13 +116,28 @@
 .pl-chat-float.minimized .bubble { padding: 3px 12px; }
 .pl-chat-float.minimized .empty-state { display: none; }
 .pl-chat-float.minimized .composer { padding: 8px 10px 10px; }
-/* 3 linhas fixas (+ os 4,5px de respiro em cima e embaixo da caixa); o auto-crescimento
-   do Composer põe `height` inline, que min/max-height sobrepõem. Mais texto rola. */
-.pl-chat-float.minimized .composer-input {
-  min-height: calc(3 * var(--pl-chat-line) + 9px);
-  max-height: calc(3 * var(--pl-chat-line) + 9px);
-  overflow-y: auto !important;
+/* Teto de 3 linhas (+ o respiro de cima e de baixo); o piso de 1 linha é o do
+   styles.css. O auto-crescimento do Composer (composerHeight.ts) lê este max-height
+   do estilo computado e liga a rolagem acima dele.
+   O seletor é MAIS específico (0,5,0) que o da caixa no styles.css (0,3,0) de
+   propósito: vence pela especificidade, não pela ordem dos CSS no bundle (o
+   styles.css é importado depois deste). ManagerChatFloat.small.test confere. */
+.pl-chat-float.minimized .composer-input-wrap .composer-input[role='textbox'] {
+  max-height: calc(3lh + 2 * var(--composer-pad-y));
 }
+/* Sem texto digitado (`composer-small`, posto pelo ManagerChatFloat a partir do
+   onHasTextChange do Composer): só a faixa da caixa, de 1 linha, sem os botões
+   (@, anexo, microfone, revisar, enviar) nem a barra do modelo. Anexo sozinho
+   não é texto: a faixa fica. Ficam os que param algo em andamento: o "parar"
+   (.btn.stop, com um turno rodando) e o microfone GRAVANDO. */
+.pl-chat-float.minimized.composer-small .composer { padding: 6px 10px; }
+.pl-chat-float.minimized.composer-small .composer-row { padding: 0 12px; }
+.pl-chat-float.minimized.composer-small .composer-bar,
+.pl-chat-float.minimized.composer-small .composer-row > .ref-wrap,
+.pl-chat-float.minimized.composer-small .composer-row > .ref-btn,
+.pl-chat-float.minimized.composer-small .composer-row > .btn:not(.stop),
+.pl-chat-float.minimized.composer-small .composer-row > .mic-wrap:not(:has(.recording)),
+.pl-chat-float.minimized.composer-small .mic-caret { display: none; }
 /* A lista do "[[" abre acima da caixa; minimizado, cabe no espaço da conversa +
    cabeçalho (o painel corta o que passa dele) e rola o resto. */
 .pl-chat-float.minimized .composer-card-refs { max-height: calc(5 * var(--pl-chat-line) + 24px); }

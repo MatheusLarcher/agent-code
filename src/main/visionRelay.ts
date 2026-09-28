@@ -1,5 +1,6 @@
 import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ImageAttachment } from '../shared/ipc'
+import { imageContentBlocks, sanitizeMediaLabel } from '../shared/inlineMedia'
 
 /**
  * vision_fallback_router — lets a text-only model (most Ollama Cloud models)
@@ -37,13 +38,16 @@ export async function describeImages(
   /** Env da conta Claude da conversa; ausente = login da máquina. */
   env?: NodeJS.ProcessEnv
 ): Promise<string> {
-  const blocks: unknown[] = images.map((img) => ({
-    type: 'image',
-    source: { type: 'base64', media_type: img.mediaType, data: img.data }
-  }))
-  const prompt = userText
-    ? `${VISION_PROMPT}\n\nContexto da mensagem original do usuário (só para foco, não responda a ela): ${userText}`
+  // Imagem posta no texto vem rotulada (`midia:N = nome`): a descrição tem de
+  // dizer de qual N fala, porque o modelo principal só vê o marcador {{midia:N}}.
+  const blocks: unknown[] = imageContentBlocks(images)
+  const labeled = images.some((img) => sanitizeMediaLabel(img.label))
+  const base = labeled
+    ? `${VISION_PROMPT}\n\nCada imagem vem precedida do rótulo "midia:N = nome". Descreva cada uma sob o seu rótulo.`
     : VISION_PROMPT
+  const prompt = userText
+    ? `${base}\n\nContexto da mensagem original do usuário (só para foco, não responda a ela): ${userText}`
+    : base
   blocks.push({ type: 'text', text: prompt })
 
   async function* single(): AsyncIterable<SDKUserMessage> {

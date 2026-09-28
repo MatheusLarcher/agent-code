@@ -1,9 +1,17 @@
 import { constants, type Stats } from 'node:fs'
 import { open, realpath, readdir, lstat, stat, type FileHandle } from 'node:fs/promises'
 import { extname, isAbsolute, join, relative, sep } from 'node:path'
+import { loadDocsIgnore, type DocsIgnore } from './docsIgnore'
+import { MAX_DOCS_CONTEXT_BYTES, ROOT_BUDGET_MARKER, renderOutlineBlock, type OutlineEntry } from './projectOutlineRender'
+
+export { MAX_DOCS_CONTEXT_BYTES }
 
 const MAX_MARKDOWN_BYTES = 64 * 1024
-const MAX_ROOT_MARKDOWN_TOTAL_BYTES = 8 * 1024 * 1024
+/** Orçamento de LEITURA dos Markdown da raiz = o teto do bloco. */
+const MAX_ROOT_MARKDOWN_TOTAL_BYTES = MAX_DOCS_CONTEXT_BYTES
+/** Teto de entradas visitadas por varredura: o bloco é cortado em 48 KiB de
+ *  qualquer jeito, e visitar 50 mil arquivos a cada turno só custa I/O. */
+const MAX_WALK_ENTRIES = 5000
 /** Teto de títulos POR ARQUIVO no índice. Quando corta, o índice diz que cortou
  *  (ver `buildDocsIndex`) — exportado para o teste ler o mesmo número. */
 export const MAX_HEADINGS = 32
@@ -13,8 +21,9 @@ const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd'])
 /**
  * Quanto de cada arquivo a varredura captura.
  *
- * - `full` — o contexto de sempre: Markdown de raiz inteiro, aninhado com as
- *   três primeiras linhas físicas. É o que vai para o agente e para o memorista.
+ * - `full` — o contexto de sempre: todo Markdown dentro de docs/ é aninhado e
+ *   entra com as três primeiras linhas físicas (os da RAIZ do projeto, inteiros,
+ *   vêm de `scanRootMarkdown`). É o que vai para o agente e para o memorista.
  * - `index` — só o MAPA: caminho de cada .md e os títulos das seções. Existe
  *   porque o `docs/` deste projeto passa de 85k tokens e o `state` do Jev aceita
  *   no máximo 32k: o gate precisa saber o que JÁ está documentado, não ler a
@@ -22,22 +31,6 @@ const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd'])
  *   que se lê de dentro do arquivo.
  */
 type OutlineMode = 'full' | 'index'
-
-interface OutlineEntry {
-  path: string
-  depth: number
-  kind: 'directory' | 'file' | 'symlink'
-  /** The first three physical lines of nested Markdown, never parsed headings. */
-  preview?: string[]
-  content?: string
-  /** Só no modo `index`: os títulos das seções, na ordem em que aparecem. */
-  headings?: string[]
-  /** O arquivo tem MAIS seções do que `MAX_HEADINGS`. Sem este sinal, um índice
-   *  cortado é indistinguível de um arquivo curto, e o gate conclui "isso não
-   *  está documentado" sobre uma seção que existe e ficou de fora. */
-  headingsTruncated?: boolean
-  marker?: string
-}
 
 function safeReason(err: unknown): string {
   const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : 'unavailable'
@@ -204,20 +197,27 @@ async function readMarkdownHeadings(
   }
 }
 
-interface RootMarkdownBudget {
+/** Estado de UMA varredura: orçamento de leitura da raiz, regras de ignorar e
+ *  o teto de entradas visitadas. */
+interface ScanState {
   remainingBytes: number
+  ignore: DocsIgnore
+  visited: number
+  walkTruncated: boolean
+}
+
+function newScanState(ignore: DocsIgnore): ScanState {
+  return { remainingBytes: MAX_ROOT_MARKDOWN_TOTAL_BYTES, ignore, visited: 0, walkTruncated: false }
 }
 
 async function readRootMarkdown(
   path: string,
   canonicalRoot: string,
-  budget: RootMarkdownBudget
+  budget: ScanState
 ): Promise<{ content?: string; marker?: string }> {
   const { handle, before } = await openVerifiedRegularFile(path, canonicalRoot)
   try {
-    if (before.size > budget.remainingBytes) {
-      return { marker: `[full content omitted: ${MAX_ROOT_MARKDOWN_TOTAL_BYTES / (1024 * 1024)} MiB root Markdown budget]` }
-    }
+    if (before.size > budget.remainingBytes) return { marker: ROOT_BUDGET_MARKER }
     // Consume the budget before reading so binary/unstable files cannot bypass
     // the aggregate I/O bound by being discarded after allocation.
     budget.remainingBytes -= before.size
@@ -244,7 +244,7 @@ async function walk(
   canonicalRoot: string,
   depth: number,
   entries: OutlineEntry[],
-  budget: RootMarkdownBudget,
+  state: ScanState,
   mode: OutlineMode
 ): Promise<void> {
   let children
@@ -262,15 +262,23 @@ async function walk(
 
   children.sort((a, b) => a.name.localeCompare(b.name, 'en'))
   for (const child of children) {
+    if (state.visited >= MAX_WALK_ENTRIES) {
+      state.walkTruncated = true
+      return
+    }
     const absolutePath = join(absoluteDir, child.name)
     const path = relativePath(cwd, absolutePath)
     try {
       const stat = await lstat(absolutePath)
+      // Dependências, build, sandbox e o que o .gitignore exclui não são
+      // documentação: nem entram no bloco nem são percorridos.
+      if (state.ignore.ignores(path, stat.isDirectory())) continue
+      state.visited++
       if (stat.isSymbolicLink()) {
         entries.push({ path, depth, kind: 'symlink', marker: '[symlink]' })
       } else if (stat.isDirectory()) {
         entries.push({ path, depth, kind: 'directory' })
-        await walk(cwd, absolutePath, canonicalRoot, depth + 1, entries, budget, mode)
+        await walk(cwd, absolutePath, canonicalRoot, depth + 1, entries, state, mode)
       } else {
         const entry: OutlineEntry = { path, depth, kind: 'file', marker: fileMarker(path) }
         if (MARKDOWN_EXTENSIONS.has(extname(path).toLowerCase())) {
@@ -280,11 +288,10 @@ async function walk(
               entry.headings = result.headings
               if (result.truncated) entry.headingsTruncated = true
               if (result.marker) entry.marker = result.marker
-            } else if (depth === 1) {
-              const result = await readRootMarkdown(absolutePath, canonicalRoot, budget)
-              entry.content = result.content
-              if (result.marker) entry.marker = result.marker
             } else {
+              // Tudo dentro de docs/ é ANINHADO em relação à raiz do projeto:
+              // caminho + três primeiras linhas, nunca o arquivo inteiro. (A
+              // regra antiga, `depth === 1`, mandava docs/*.md inteiros.)
               const result = await readMarkdownPreview(absolutePath, canonicalRoot)
               entry.preview = result.preview
               if (result.marker) entry.marker = result.marker
@@ -306,7 +313,8 @@ async function walk(
  *  cópias deixa de recusar um symlink. */
 async function scanDocs(
   cwd: string,
-  mode: OutlineMode
+  mode: OutlineMode,
+  state: ScanState
 ): Promise<{ entries: OutlineEntry[] } | { unavailable: string }> {
   const docsDir = join(cwd, 'docs')
   let canonicalRoot: string
@@ -320,36 +328,66 @@ async function scanDocs(
   }
 
   const entries: OutlineEntry[] = [{ path: 'docs', depth: 0, kind: 'directory' }]
-  await walk(cwd, docsDir, canonicalRoot, 1, entries, { remainingBytes: MAX_ROOT_MARKDOWN_TOTAL_BYTES }, mode)
+  await walk(cwd, docsDir, canonicalRoot, 1, entries, state, mode)
   return { entries }
 }
 
-export async function buildProjectOutline(cwd: string): Promise<string> {
-  const scan = await scanDocs(cwd, 'full')
-  if ('unavailable' in scan) return `[PROJECT_DOCS_CONTEXT]\ndocs/ ${scan.unavailable}\n[/PROJECT_DOCS_CONTEXT]`
-  const entries = scan.entries
-
-  const lines = [
-    '[PROJECT_DOCS_CONTEXT]',
-    'Fresh authoritative project documentation at request time. Root Markdown files are complete; nested Markdown files include their path and first three physical lines only.'
-  ]
-  for (const entry of entries) {
-    const suffix = entry.kind === 'directory' ? '/' : ''
-    const marker = entry.marker ? ` ${entry.marker}` : ''
-    lines.push(`${'  '.repeat(entry.depth)}${entry.path.split('/').at(-1)}${suffix}${marker}`)
-    if (entry.content !== undefined) {
-      lines.push(`--- PROJECT DOC FILE: ${entry.path} ---`)
-      lines.push(entry.content || '(empty markdown file)')
-      lines.push(`--- END PROJECT DOC FILE: ${entry.path} ---`)
-    }
-    if (entry.preview !== undefined) {
-      lines.push(`--- PROJECT DOC PREVIEW (first 3 physical lines): ${entry.path} ---`)
-      lines.push(...entry.preview)
-      lines.push(`--- END PROJECT DOC PREVIEW: ${entry.path} ---`)
+/**
+ * Os Markdown da RAIZ do projeto (não recursivo): os únicos que entram
+ * completos. Mesma leitura verificada do resto do módulo; o que o `.gitignore`
+ * exclui fica de fora, e um arquivo que não cabe no orçamento de 48 KiB vira
+ * marcador + três primeiras linhas.
+ */
+async function scanRootMarkdown(cwd: string, state: ScanState): Promise<OutlineEntry[]> {
+  let canonicalRoot: string
+  let children
+  try {
+    canonicalRoot = await realpath(cwd)
+    children = await readdir(cwd, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const entries: OutlineEntry[] = []
+  children.sort((a, b) => a.name.localeCompare(b.name, 'en'))
+  for (const child of children) {
+    if (!MARKDOWN_EXTENSIONS.has(extname(child.name).toLowerCase())) continue
+    const absolutePath = join(cwd, child.name)
+    const path = relativePath(cwd, absolutePath)
+    try {
+      const info = await lstat(absolutePath)
+      if (info.isDirectory() || state.ignore.ignores(path, false)) continue
+      if (info.isSymbolicLink()) {
+        entries.push({ path, depth: 0, kind: 'symlink', marker: '[symlink]' })
+        continue
+      }
+      const entry: OutlineEntry = { path, depth: 0, kind: 'file' }
+      try {
+        const result = await readRootMarkdown(absolutePath, canonicalRoot, state)
+        entry.content = result.content
+        if (result.marker) entry.marker = result.marker
+        if (result.marker === ROOT_BUDGET_MARKER) {
+          entry.preview = (await readMarkdownPreview(absolutePath, canonicalRoot)).preview
+        }
+      } catch (err) {
+        entry.marker = `[unreadable: ${safeReason(err)}]`
+      }
+      entries.push(entry)
+    } catch (err) {
+      entries.push({ path, depth: 0, kind: 'file', marker: `[unreadable: ${safeReason(err)}]` })
     }
   }
-  lines.push('[/PROJECT_DOCS_CONTEXT]')
-  return lines.join('\n')
+  return entries
+}
+
+export async function buildProjectOutline(cwd: string): Promise<string> {
+  const state = newScanState(await loadDocsIgnore(cwd))
+  const rootEntries = await scanRootMarkdown(cwd, state)
+  const scan = await scanDocs(cwd, 'full', state)
+  const docsEntries: OutlineEntry[] = 'unavailable' in scan
+    ? [{ path: 'docs', depth: 0, kind: 'directory', marker: scan.unavailable }]
+    : scan.entries
+  const notes = state.walkTruncated ? [`... varredura de docs/ interrompida após ${MAX_WALK_ENTRIES} entradas`] : []
+  return renderOutlineBlock([...rootEntries, ...docsEntries], notes)
 }
 
 /**
@@ -371,7 +409,7 @@ const MAX_INDEX_HEADINGS = 600
  * lança: pasta ausente ou ilegível vira um marcador, não uma exceção.
  */
 export async function buildDocsIndex(cwd: string): Promise<string> {
-  const scan = await scanDocs(cwd, 'index')
+  const scan = await scanDocs(cwd, 'index', newScanState(await loadDocsIgnore(cwd)))
   if ('unavailable' in scan) return `[PROJECT_DOCS_INDEX]\ndocs/ ${scan.unavailable}\n[/PROJECT_DOCS_INDEX]`
 
   const lines = [

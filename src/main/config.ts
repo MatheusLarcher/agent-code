@@ -8,6 +8,7 @@ import {
   parseStoredAppConfig
 } from './persistence/configData'
 import { readPersistedKvMany, writePersistedKv } from './persistence/kvFacade'
+import { migratePlanningEffort } from '../shared/autoEffort'
 import { StorageError } from './persistence/types'
 
 type Field = {
@@ -54,6 +55,15 @@ const FIELDS: Field[] = [
  *  `initializeConfigPersistence` — which runs BEFORE the window is created, so the
  *  app boots into an invisible, hung process. */
 export const CONFIG_PERSISTED_KEYS: readonly string[] = FIELDS.map((field) => field.key)
+
+/**
+ * Marcador one-shot da separação dos Automáticos no config do Agent Manager.
+ * Antes dela, `planning.model:'auto'` decidia o esforço também, e o esforço
+ * gravado era ignorado; ausente o marcador, o boot converte esse par para
+ * `effort:'auto'` UMA vez e grava o marcador — senão um "Automático + Alto"
+ * escolhido depois voltaria a `auto` a cada abertura do app.
+ */
+export const PLANNING_EFFORT_SPLIT_KEY = 'config.planning.effortSplit'
 
 let initialized = false
 let snapshot = defaultAppConfig()
@@ -118,7 +128,7 @@ export function initializeConfigPersistence(): Promise<AppConfig> {
       // Uma leitura por escopo, não uma por campo: isto roda no caminho de
       // abertura do app e, com PostgreSQL remoto, cada campo custava uma ida
       // e volta à rede.
-      const stored = await readPersistedKvMany(['config', ...CONFIG_PERSISTED_KEYS])
+      const stored = await readPersistedKvMany(['config', ...CONFIG_PERSISTED_KEYS, PLANNING_EFFORT_SPLIT_KEY])
       let next = parseStoredAppConfig(stored.get('config') ?? null)
       const missing = new Set<string>()
       for (const field of FIELDS) {
@@ -129,7 +139,18 @@ export function initializeConfigPersistence(): Promise<AppConfig> {
         }
         next = mergeAppConfig(next, field.patch(decode(raw, field.sensitive)))
       }
+      const splitPending = (stored.get(PLANNING_EFFORT_SPLIT_KEY) ?? null) === null
+      if (splitPending) {
+        const planning = migratePlanningEffort(next.planning)
+        if (planning !== next.planning) {
+          next = { ...next, planning }
+          missing.add('config.planning.effort')
+        }
+      }
       if (missing.size) await writeFields(next, missing)
+      // Depois do esforço: se o processo cair entre as duas escritas, a
+      // migração roda de novo no próximo boot — e ela é idempotente.
+      if (splitPending) await writePersistedKv(PLANNING_EFFORT_SPLIT_KEY, 'true')
       snapshot = next
       initialized = true
       return cloneConfig(snapshot)

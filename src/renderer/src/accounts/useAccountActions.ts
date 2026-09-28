@@ -33,6 +33,12 @@ export function useAccountActions(deps: {
   const chooseAccount = useCallback(
     async (convId: string, accountId: string, continueTask = false): Promise<void> => {
       const result = await window.api.claudeAccountsUseForConversation(convId, accountId, continueTask).catch(() => null)
+      if (result && !result.ok && result.reason) {
+        // Recusa com motivo (ex.: o turno era de uma tarefa do Forgia que já
+        // terminou em erro — o app não a continua sozinho).
+        notify('aviso', result.reason)
+        return
+      }
       if (!result?.ok) {
         notify('erro', 'Não foi possível usar essa conta. Confira se o login dela está válido.')
         return

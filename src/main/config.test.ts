@@ -81,13 +81,66 @@ describe('race de boot da config persistida', () => {
     const { initializeConfigPersistence, updateConfig } = await import('./config')
 
     const loaded = await initializeConfigPersistence()
-    expect(loaded.planning).toEqual({ model: 'auto', effort: 'xhigh' })
+    // Modelo inválido volta ao padrão (Automático) e, sem o marcador da
+    // separação, o registro é lido no formato antigo: esforço também automático.
+    expect(loaded.planning).toEqual({ model: 'auto', effort: 'auto' })
 
     kvFacade.writePersistedKv.mockClear()
     const next = await updateConfig({ planning: { model: 'claude-sonnet-5', effort: 'xhigh' } })
     expect(next.planning).toEqual({ model: 'claude-sonnet-5', effort: 'xhigh' })
-    // Só o campo que mudou vai para o banco.
-    expect(kvFacade.writePersistedKv.mock.calls).toEqual([['config.planning.model', JSON.stringify('claude-sonnet-5')]])
+    // Só os campos que mudaram vão para o banco.
+    expect(kvFacade.writePersistedKv.mock.calls).toEqual([
+      ['config.planning.model', JSON.stringify('claude-sonnet-5')],
+      ['config.planning.effort', JSON.stringify('xhigh')]
+    ])
+  })
+
+  it('planejamento: {auto, medium} antigo migra UMA vez para {auto, auto}; "Automático + Alto" depois sobrevive a reabrir', async () => {
+    // KV como o banco guarda hoje: cada campo é uma chave com o valor em JSON.
+    const kv = new Map<string, string>([
+      ['config.planning.model', JSON.stringify('auto')],
+      ['config.planning.effort', JSON.stringify('medium')]
+    ])
+    kvFacade.writePersistedKv.mockImplementation(async (...args: unknown[]) => {
+      kv.set(args[0] as string, args[1] as string)
+      return undefined
+    })
+    kvFacade.readPersistedKvMany.mockImplementation(
+      async (keys: string[]) => new Map(keys.map((key) => [key, kv.get(key) ?? null]))
+    )
+
+    const first = await import('./config')
+    expect((await first.initializeConfigPersistence()).planning).toEqual({ model: 'auto', effort: 'auto' })
+    expect(kv.get('config.planning.effort')).toBe(JSON.stringify('auto'))
+    expect(kv.get(first.PLANNING_EFFORT_SPLIT_KEY)).toBe('true')
+
+    // O usuário escolhe de propósito Automático + Alto.
+    await first.updateConfig({ planning: { model: 'auto', effort: 'high' } })
+    expect(kv.get('config.planning.effort')).toBe(JSON.stringify('high'))
+
+    // Reabre: o marcador está lá, a migração não roda de novo.
+    vi.resetModules()
+    const second = await import('./config')
+    expect((await second.initializeConfigPersistence()).planning).toEqual({ model: 'auto', effort: 'high' })
+  })
+
+  it('planejamento: instalação nova sai com {auto, auto} e grava o marcador', async () => {
+    kvFacade.readPersistedKvMany.mockResolvedValue(new Map())
+    const { initializeConfigPersistence, PLANNING_EFFORT_SPLIT_KEY } = await import('./config')
+
+    expect((await initializeConfigPersistence()).planning).toEqual({ model: 'auto', effort: 'auto' })
+    expect(kvFacade.writePersistedKv).toHaveBeenCalledWith(PLANNING_EFFORT_SPLIT_KEY, 'true')
+  })
+
+  it('planejamento: modelo fixo não é tocado pela migração', async () => {
+    kvFacade.readPersistedKvMany.mockResolvedValue(
+      new Map([
+        ['config.planning.model', JSON.stringify('claude-sonnet-5')],
+        ['config.planning.effort', JSON.stringify('low')]
+      ])
+    )
+    const { initializeConfigPersistence } = await import('./config')
+    expect((await initializeConfigPersistence()).planning).toEqual({ model: 'claude-sonnet-5', effort: 'low' })
   })
 
   it('TypeSafe: a lista do Automático sobrevive a salvar e reabrir o app', async () => {

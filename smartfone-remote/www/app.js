@@ -581,7 +581,8 @@ function renderMessages() {
         m.files.forEach(function (f) { fl.appendChild(el('file-chip', '📎 ' + (f.name || 'arquivo') + (f.size ? ' · ' + fmtBytes(f.size) : ''))) })
         u.appendChild(fl)
       }
-      if (m.text) u.appendChild(document.createTextNode(m.text))
+      // Anexo posto no meio do texto no PC chega como {{midia:N}}: mostra legível.
+      if (m.text) u.appendChild(document.createTextNode(readableMedia(m.text)))
       wrap.appendChild(u)
       if (m.queued) wrap.appendChild(el('msg-queued', 'Na fila'))
       // Note when this message was manually canceled.
@@ -1925,6 +1926,12 @@ function fmtBytes(n) {
   if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB'
   if (n >= 1024) return Math.round(n / 1024) + ' KB'
   return n + ' B'
+}
+
+/** "{{midia:N}}" (anexo posto no meio do texto no PC) -> "[mídia N]". As
+ *  miniaturas/arquivos continuam aparecendo acima do texto, na ordem N. */
+function readableMedia(text) {
+  return String(text).replace(/\{\{midia:(\d{1,4})\}\}/g, '[mídia $1]')
 }
 
 /** Qualquer arquivo (planilha, PDF, código…): vai em base64, o PC salva em disco

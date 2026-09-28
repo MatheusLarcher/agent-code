@@ -4,6 +4,7 @@ import {
   type PlanningConfig,
   type StartAgentOptions
 } from '../../shared/ipc'
+import { isEffortLevel } from '../../shared/autoEffort'
 import { assertValidName, PlanningValidationError } from './planningModel'
 import { resolvePlanningExecution, type PlanningExecution } from './planningModelChoice'
 
@@ -46,9 +47,11 @@ export async function planningStartOptions(
   }
   const resolve = deps.resolve ?? resolvePlanningExecution
   const execution = await resolve(deps.config(), opts.autoPrompt ?? { message: '' })
-  // Cinto e suspensório: o resolvedor nunca devolve o sentinel, mas se um dia
-  // devolver, o Automático da conversa pegaria a sessão do Manager.
-  const pair = isAutoModel(execution.model) ? PLANNING_AUTO_FALLBACK : execution
+  // Cinto e suspensório: o resolvedor nunca devolve um sentinel (modelo ou
+  // esforço), mas se um dia devolver, o Automático da conversa pegaria a sessão
+  // do Manager.
+  const pair =
+    isAutoModel(execution.model) || !isEffortLevel(execution.effort) ? PLANNING_AUTO_FALLBACK : execution
   // Loop e modo econômico são toggles da conversa comum: /loop agenda turnos
   // sozinho e o econômico manda pular verificação — nenhum dos dois cabe numa
   // sessão que planeja com o usuário, então a do Manager sobe sem eles.

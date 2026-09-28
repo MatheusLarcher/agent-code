@@ -1,4 +1,5 @@
 import type { AccountUsageReading, UsageWindow } from '../../shared/claudeAccounts'
+import { parseResetFromError } from '../../shared/resetTime'
 
 /**
  * Consumo de uma conta a partir das janelas de limite do plano.
@@ -116,6 +117,67 @@ export function mergeReading(
   at: number
 ): AccountUsageReading {
   return { at, windows: { ...(previous?.windows ?? {}), ...windows } }
+}
+
+/** Janela que o aviso de estouro do CLI nomeia (`You've hit your weekly limit`). */
+const LIMIT_WINDOWS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bsession limit\b/i, 'five_hour'],
+  // "weekly limit" e "you have reached your weekly usage limit".
+  [/\bweekly (?:usage )?limit\b/i, 'seven_day'],
+  // "Opus limit", "Fable 5 limit", "Fable 5.1 requires usage credits".
+  [/\bopus\b/i, 'seven_day_opus'],
+  [/\bsonnet\b/i, 'seven_day_sonnet'],
+  [/\bfable\b/i, 'model:fable']
+]
+
+const HOUR_MS = 3_600_000
+/**
+ * Prazo máximo da marca de esgotada quando o reset não é conhecido — nem da API
+ * nem do texto do aviso. É a duração da própria janela: uma janela de 5h não
+ * fica esgotada por mais de 5h, e a semanal (geral ou por modelo) por mais de 7
+ * dias. O aviso sem janela reconhecível (`exhausted`, vale para todo modelo)
+ * fica com o prazo da janela mais curta do plano (5h): liberar cedo demais custa
+ * uma tentativa que estoura e troca de novo (sem laço, `triedAccounts`); liberar
+ * tarde prenderia a conta por dias.
+ */
+export const EXHAUSTED_MAX_MS: Readonly<Record<string, number>> = {
+  five_hour: 5 * HOUR_MS,
+  seven_day: 7 * 24 * HOUR_MS,
+  seven_day_opus: 7 * 24 * HOUR_MS,
+  seven_day_sonnet: 7 * 24 * HOUR_MS,
+  'model:fable': 7 * 24 * HOUR_MS,
+  exhausted: 5 * HOUR_MS
+}
+
+/**
+ * A leitura de uma conta que acabou de estourar: a janela citada no aviso vai a
+ * 100% até o reset. O reset é, nesta ordem: o `resetsAt` já conhecido da janela
+ * (vem da API, exato ao segundo), o horário escrito no aviso ("resets 11pm
+ * (America/Sao_Paulo)") ou o prazo máximo da janela. Nunca fica sem prazo: a
+ * conta volta a ser elegível mesmo que as consultas de consumo dela falhem.
+ * Aviso sem janela reconhecível marca a conta toda (`exhausted`).
+ */
+/** O aviso traz DATA ("resets Oct 3, 9am (…)"), não só a hora: o CLI só põe a data a mais de 24h. */
+const EXPLICIT_DATE_RE = /resets?\s+[a-z]{3}\s+\d{1,2},/i
+const LONGEST_WINDOW_MS = Math.max(...Object.values(EXHAUSTED_MAX_MS))
+
+export function exhaustedReading(previous: AccountUsageReading | null, text: string, now: number): AccountUsageReading {
+  const key = LIMIT_WINDOWS.find(([pattern]) => pattern.test(text))?.[1] ?? 'exhausted'
+  const knownReset = previous?.windows[key]?.resetsAt ?? null
+  const maxReset = now + EXHAUSTED_MAX_MS[key]
+  // O texto nunca passa do prazo da janela. O CLI trunca o reset para o minuto:
+  // "resets 11pm" lido às 23:00:30 cai em "amanhã" (+24h) — numa janela de 5h
+  // isso prenderia a conta um dia inteiro. No aviso genérico (`exhausted`) a
+  // janela é desconhecida: o prazo de 5h vale só para o reset com hora; com data
+  // explícita (dias à frente), o teto é o da janela mais longa (7 dias).
+  const textCap = key === 'exhausted' && EXPLICIT_DATE_RE.test(text) ? now + LONGEST_WINDOW_MS : maxReset
+  const parsed = parseResetFromError(text, now)
+  const textReset = parsed != null ? Math.min(parsed, textCap) : null
+  const resetsAt =
+    knownReset != null && knownReset > now ? knownReset
+      : textReset != null && textReset > now ? textReset
+        : maxReset
+  return mergeReading(previous, { [key]: { utilization: 100, resetsAt } }, now)
 }
 
 /**

@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AccountUsageReading } from '../../shared/claudeAccounts'
+import { parseResetFromError } from '../../shared/resetTime'
 import { accountForConversation, chooseAccountForNewConversation, type AccountCandidate } from './selection'
 import {
   accountConsumption,
+  EXHAUSTED_MAX_MS,
+  exhaustedReading,
   mergeReading,
   windowFromRateLimitEvent,
   windowsFromUsage
@@ -12,6 +15,7 @@ import { createUsageReader } from './usageReader'
 const NOW = Date.parse('2026-09-24T12:00:00Z')
 const FUTURE = NOW + 3_600_000
 const PAST = NOW - 1_000
+const HOUR = 3_600_000
 
 function reading(windows: Record<string, [number | null, number | null]>): AccountUsageReading {
   return {
@@ -205,5 +209,150 @@ describe('createUsageReader', () => {
     const result = await reader.read('a')
     expect(aborted).toBe(true)
     expect(result).toEqual({ accountId: 'a', reading: null, fresh: false })
+  })
+})
+
+describe('exhaustedReading (conta que estourou de vez)', () => {
+  it('a janela citada no aviso vai a 100%, com o reset já conhecido', () => {
+    const before = reading({ five_hour: [40, FUTURE], seven_day: [80, FUTURE + 1] })
+    const after = exhaustedReading(before, "You've hit your weekly limit · resets 11pm (America/Sao_Paulo)", NOW)
+    expect(after.windows.seven_day).toEqual({ utilization: 100, resetsAt: FUTURE + 1 })
+    expect(after.windows.five_hour).toEqual({ utilization: 40, resetsAt: FUTURE })
+    expect(accountConsumption(after, 'claude-opus-5-5', NOW)).toBe(100)
+    // Depois do reset, a janela volta a contar como zerada.
+    expect(accountConsumption(after, 'claude-opus-5-5', FUTURE + 2)).toBe(0)
+  })
+
+  it('"weekly usage limit" (fim do modo de baixa prioridade) também é a janela semanal, com o prazo de 7 dias', () => {
+    const after = exhaustedReading(null, 'Lower-priority mode ended · you have reached your weekly usage limit', NOW)
+    expect(after.windows.seven_day).toEqual({ utilization: 100, resetsAt: NOW + EXHAUSTED_MAX_MS.seven_day })
+    expect(after.windows.exhausted).toBeUndefined()
+  })
+
+  it('reset vencido e texto sem fuso: prazo máximo da janela (5h na de sessão), nunca sem reset', () => {
+    const after = exhaustedReading(reading({ five_hour: [99, PAST] }), "You've hit your session limit · resets 2:10am", NOW)
+    expect(after.windows.five_hour).toEqual({ utilization: 100, resetsAt: NOW + 5 * HOUR })
+  })
+
+  it('aviso sem janela reconhecível marca a conta toda', () => {
+    const after = exhaustedReading(null, "You've hit your limit · resets 8pm", NOW)
+    expect(accountConsumption(after, 'claude-sonnet-5', NOW)).toBe(100)
+  })
+
+  it('limite de um modelo só vale para aquele modelo', () => {
+    const after = exhaustedReading(null, "You've hit your Opus limit · resets Oct 1", NOW)
+    expect(accountConsumption(after, 'claude-opus-5-5', NOW)).toBe(100)
+    expect(accountConsumption(after, 'claude-sonnet-5', NOW)).toBe(0)
+    const fable = exhaustedReading(null, "You've reached your Fable 5 limit. Run /usage-credits to continue", NOW)
+    expect(accountConsumption(fable, 'claude-fable-5-1', NOW)).toBe(100)
+    expect(accountConsumption(fable, 'claude-opus-5-5', NOW)).toBe(0)
+  })
+})
+
+describe('conta esgotada volta a ser elegível (nunca fica presa)', () => {
+  const HOUR_MS = HOUR
+  // NOW = 24/09 09:00 em São Paulo (UTC-3) → "11pm" = 24/09 23:00 BRT = 25/09 02:00Z.
+  const ELEVEN_PM = Date.parse('2026-09-25T02:00:00Z')
+  const candidates = (usageA: AccountUsageReading | null): AccountCandidate[] => [
+    { id: 'A', status: 'connected', usage: usageA },
+    { id: 'B', status: 'connected', usage: reading({ five_hour: [97, null] }) }
+  ]
+
+  it('o reset vem do próprio texto do aviso ("resets 11pm (America/Sao_Paulo)")', () => {
+    const after = exhaustedReading(null, "You've hit your weekly limit · resets 11pm (America/Sao_Paulo)", NOW)
+    expect(after.windows.seven_day).toEqual({ utilization: 100, resetsAt: ELEVEN_PM })
+    expect(accountConsumption(after, 'claude-opus-5-5', ELEVEN_PM - 1)).toBe(100)
+    expect(accountConsumption(after, 'claude-opus-5-5', ELEVEN_PM)).toBe(0)
+    // Antes do reset, A (100%) perde para B (97%); depois, A é a primeira da ordem de novo.
+    expect(chooseAccountForNewConversation(candidates(after), 'claude-opus-5-5', ELEVEN_PM - 1)).toBe('B')
+    expect(chooseAccountForNewConversation(candidates(after), 'claude-opus-5-5', ELEVEN_PM + 1)).toBe('A')
+  })
+
+  it('texto com data ("resets Sep 30, 9pm (…)") e com minutos ("1:10pm") também dão o reset', () => {
+    // Datas dentro do prazo da janela (semanal 7d, sessão 5h a partir de 24/09 09:00 BRT).
+    const opus = exhaustedReading(null, "You've hit your Opus limit · resets Sep 30, 9pm (America/Sao_Paulo)", NOW)
+    expect(opus.windows.seven_day_opus?.resetsAt).toBe(Date.parse('2026-10-01T00:00:00Z'))
+    const session = exhaustedReading(null, "You've hit your session limit · resets 1:10pm (America/Sao_Paulo)", NOW)
+    expect(session.windows.five_hour?.resetsAt).toBe(Date.parse('2026-09-24T16:10:00Z'))
+    // "2:10am" (17h depois) passaria do prazo da sessão: fica em NOW + 5h.
+    const far = exhaustedReading(null, "You've hit your session limit · resets 2:10am (America/Sao_Paulo)", NOW)
+    expect(far.windows.five_hour?.resetsAt).toBe(NOW + EXHAUSTED_MAX_MS.five_hour)
+  })
+
+  it('o reset exato da API (já conhecido) vale mais que o do texto (arredondado ao minuto)', () => {
+    const after = exhaustedReading(reading({ seven_day: [80, FUTURE] }), "You've hit your weekly limit · resets 11pm (America/Sao_Paulo)", NOW)
+    expect(after.windows.seven_day?.resetsAt).toBe(FUTURE)
+  })
+
+  it('sem reset no texto: semanal expira em 7 dias, sessão em 5h', () => {
+    const weekly = exhaustedReading(null, "You've hit your weekly limit", NOW)
+    expect(EXHAUSTED_MAX_MS.seven_day).toBe(7 * 24 * HOUR_MS)
+    expect(accountConsumption(weekly, 'claude-opus-5-5', NOW + 7 * 24 * HOUR_MS - 1)).toBe(100)
+    expect(accountConsumption(weekly, 'claude-opus-5-5', NOW + 7 * 24 * HOUR_MS)).toBe(0)
+    const session = exhaustedReading(null, "You've hit your session limit", NOW)
+    expect(accountConsumption(session, 'claude-opus-5-5', NOW + 5 * HOUR_MS - 1)).toBe(100)
+    expect(accountConsumption(session, 'claude-opus-5-5', NOW + 5 * HOUR_MS)).toBe(0)
+  })
+
+  it('aviso genérico sem modelo bloqueia todos os modelos, mas só até o prazo (5h)', () => {
+    const after = exhaustedReading(null, "Your seat type doesn't include extra usage", NOW)
+    expect(after.windows.exhausted).toEqual({ utilization: 100, resetsAt: NOW + 5 * HOUR_MS })
+    for (const model of ['claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5-1']) {
+      expect(accountConsumption(after, model, NOW + 5 * HOUR_MS - 1)).toBe(100)
+      expect(accountConsumption(after, model, NOW + 5 * HOUR_MS)).toBe(0)
+    }
+    expect(chooseAccountForNewConversation(candidates(after), 'claude-sonnet-5', NOW + 5 * HOUR_MS)).toBe('A')
+  })
+
+  it('reset só com hora que acabou de passar (minuto truncado pelo CLI) não vai para amanhã: fica no prazo da janela', () => {
+    // O reset real foi às 23:00:40; o CLI escreve "11pm" e o aviso é lido às 23:00:30.
+    const at = Date.parse('2026-09-24T23:00:30Z')
+    const text = "You've hit your session limit · resets 11pm (UTC)"
+    // O parser sozinho joga para amanhã (+~24h) — mais que a janela de 5h inteira.
+    expect(parseResetFromError(text, at)).toBe(Date.parse('2026-09-25T23:00:00Z'))
+    const after = exhaustedReading(null, text, at)
+    expect(after.windows.five_hour).toEqual({ utilization: 100, resetsAt: at + EXHAUSTED_MAX_MS.five_hour })
+    expect(accountConsumption(after, 'claude-opus-5-5', at + 5 * HOUR_MS)).toBe(0)
+    // Até 1 min antes também: 23:00:00 exato já é "passado" para o parser.
+    const edge = exhaustedReading(null, text, Date.parse('2026-09-24T23:00:00Z'))
+    expect(edge.windows.five_hour?.resetsAt).toBe(Date.parse('2026-09-24T23:00:00Z') + 5 * HOUR_MS)
+  })
+
+  it('nenhum reset lido do texto passa do prazo da própria janela (semanal: 7 dias)', () => {
+    // 01/10 21h BRT = 02/10 00:00Z, 7,5 dias depois de NOW: mais longe que uma semana.
+    const opus = exhaustedReading(null, "You've hit your Opus limit · resets Oct 1, 9pm (America/Sao_Paulo)", NOW)
+    expect(opus.windows.seven_day_opus?.resetsAt).toBe(NOW + EXHAUSTED_MAX_MS.seven_day_opus)
+    // Dentro do prazo o texto vale como antes (o teste de "11pm" acima: 25/09 02:00Z).
+    const weekly = exhaustedReading(null, "You've hit your weekly limit · resets 11pm (America/Sao_Paulo)", NOW)
+    expect(weekly.windows.seven_day?.resetsAt).toBe(ELEVEN_PM)
+  })
+
+  it('todas as janelas conhecidas têm prazo', () => {
+    for (const text of ["You've hit your session limit", "You've hit your weekly limit", "You've hit your Opus limit",
+      "You've hit your Sonnet limit", "You've hit your Fable limit", "You've hit your limit"]) {
+      const after = exhaustedReading(null, text, NOW)
+      for (const window of Object.values(after.windows)) expect(window.resetsAt).toBeGreaterThan(NOW)
+    }
+  })
+})
+
+describe('aviso genérico ("You\'ve hit your limit") com data explícita de reset', () => {
+  // NOW = 24/09 09:00 em São Paulo (UTC-3).
+  it('"resets Sep 27, 9am" (3 dias) vale como escrito: o teto de 5h não corta uma data de dias', () => {
+    const after = exhaustedReading(null, "You've hit your limit · resets Sep 27, 9am (America/Sao_Paulo)", NOW)
+    expect(after.windows.exhausted).toEqual({ utilization: 100, resetsAt: Date.parse('2026-09-27T12:00:00Z') })
+    // Continua esgotada depois de 5h (antes, voltava a cada 5h e estourava de novo).
+    expect(accountConsumption(after, 'claude-opus-5-5', NOW + 6 * HOUR)).toBe(100)
+    expect(accountConsumption(after, 'claude-opus-5-5', Date.parse('2026-09-27T12:00:00Z'))).toBe(0)
+  })
+
+  it('"resets Oct 3, 9am" (9 dias) fica no teto da janela mais longa (7 dias)', () => {
+    const after = exhaustedReading(null, "You've hit your limit · resets Oct 3, 9am (America/Sao_Paulo)", NOW)
+    expect(after.windows.exhausted?.resetsAt).toBe(NOW + EXHAUSTED_MAX_MS.seven_day)
+  })
+
+  it('só com a hora ("resets 11pm", 14h depois) o teto continua 5h', () => {
+    const after = exhaustedReading(null, "You've hit your limit · resets 11pm (America/Sao_Paulo)", NOW)
+    expect(after.windows.exhausted?.resetsAt).toBe(NOW + EXHAUSTED_MAX_MS.exhausted)
   })
 })

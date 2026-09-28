@@ -1032,6 +1032,44 @@ describe('AgentSession — vision_fallback_router', () => {
     expect(blocks.some((b) => b.type === 'image')).toBe(true)
   })
 
+  // Anexo posto no meio do texto: o agente recebe o marcador no ponto e cada
+  // imagem com o rótulo `midia:N = nome` logo antes dela, na ordem N.
+  for (const model of ['claude-sonnet-5', 'gpt-6-sol', 'kimi-k3:cloud']) {
+    it(`anexo inline (${model}): marcador no texto e imagem rotulada, na ordem N`, async () => {
+      const { s } = makeSession({ model })
+      await s.send('compare {{midia:1}} com {{midia:2}} e explique', [
+        { mediaType: 'image/png', data: 'AAAA', label: 'midia:1 = antes.png' },
+        { mediaType: 'image/jpeg', data: 'BBBB', label: 'midia:2 = depois.jpg' }
+      ])
+      const [msg] = pushedMessages(s)
+      const blocks = msg.message.content as Array<{ type: string; text?: string; source?: { data: string } }>
+      expect(blocks.map((b) => b.type)).toEqual(['text', 'image', 'text', 'image', 'text'])
+      expect(blocks[0].text).toBe('midia:1 = antes.png')
+      expect(blocks[1].source?.data).toBe('AAAA')
+      expect(blocks[2].text).toBe('midia:2 = depois.jpg')
+      expect(blocks[3].source?.data).toBe('BBBB')
+      expect(blocks[4].text).toContain('compare {{midia:1}} com {{midia:2}} e explique')
+    })
+  }
+
+  it('anexo inline em modelo SEM visão (Ollama): o relay recebe as imagens rotuladas e o texto leva o marcador', async () => {
+    describeImagesMock.mockResolvedValueOnce('midia:1 = tela.png: botão vermelho')
+    const { s } = makeSession({ model: 'muse-glimmer:cloud' })
+    const img = { mediaType: 'image/png', data: 'AAAA', label: 'midia:1 = tela.png' }
+    await s.send('o que é {{midia:1}}?', [img])
+    expect(describeImagesMock.mock.calls[0][0]).toEqual([img])
+    const content = pushedMessages(s)[0].message.content as string
+    expect(content).toContain('o que é {{midia:1}}?')
+    expect(content).toContain('midia:1 = tela.png: botão vermelho')
+  })
+
+  it('imagem SEM rótulo (celular, mensagem antiga) sai como antes: só o bloco de imagem', async () => {
+    const { s } = makeSession({ model: 'claude-sonnet-5' })
+    await s.send('o que é isso?', [{ mediaType: 'image/png', data: 'AAAA' }])
+    const blocks = pushedMessages(s)[0].message.content as Array<{ type: string }>
+    expect(blocks.map((b) => b.type)).toEqual(['image', 'text'])
+  })
+
   it('Kimi K3 (Ollama, único com visão) + imagem: NÃO chama o relay', async () => {
     const { s } = makeSession({ model: 'kimi-k3:cloud' })
 
@@ -1206,6 +1244,31 @@ describe('AgentSession — backend de fora não recebe o login guardado', () => 
     const { s } = makeSession({ model: 'claude-opus-5' })
     await s.start()
     expect(optionsOfLastQuery().env).toBeUndefined()
+  })
+})
+
+describe('AgentSession — o esforço Automático nunca chega ao SDK', () => {
+  const optionsOfLastQuery = (): Record<string, unknown> =>
+    (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
+
+  it("effort 'auto' não vira `effort` nas Options (nem por Claude, nem por GPT/proxy)", async () => {
+    for (const model of ['claude-opus-5', 'gpt-6-sol']) {
+      const { s } = makeSession({ model, effort: 'auto' })
+      await s.start()
+      const options = optionsOfLastQuery()
+      expect(options).not.toHaveProperty('effort')
+      expect(JSON.stringify(options.env ?? {})).not.toContain('auto')
+    }
+  })
+
+  it('degrau válido passa; texto fora da escada não passa', async () => {
+    const valido = makeSession({ model: 'claude-opus-5', effort: 'xhigh' })
+    await valido.s.start()
+    expect(optionsOfLastQuery().effort).toBe('xhigh')
+
+    const lixo = makeSession({ model: 'claude-opus-5', effort: 'turbo' })
+    await lixo.s.start()
+    expect(optionsOfLastQuery()).not.toHaveProperty('effort')
   })
 })
 
@@ -1771,6 +1834,36 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
     expect(projectOutlineMock).toHaveBeenCalledWith('/proj')
   })
 
+  it('não reenvia o contexto vivo a cada lote de ferramentas quando nada mudou', async () => {
+    const igual = '[PROJECT_DOCS_CONTEXT]\ndocs/\n  igual.md\n[/PROJECT_DOCS_CONTEXT]'
+    projectOutlineMock
+      .mockResolvedValueOnce(igual)
+      .mockResolvedValueOnce(igual)
+      .mockResolvedValueOnce(igual)
+      .mockResolvedValueOnce('[PROJECT_DOCS_CONTEXT]\ndocs/\n  editado.md\n[/PROJECT_DOCS_CONTEXT]')
+      .mockResolvedValueOnce(igual)
+    const { s } = makeSession()
+    await s.start()
+    await s.send('primeiro turno')
+
+    const hooks = requestHooks()
+    await expect(hooks.user({ hook_event_name: 'UserPromptSubmit' })).resolves.toMatchObject({
+      hookSpecificOutput: { additionalContext: expect.stringContaining('igual.md') }
+    })
+    // Mesmo bloco: o hook não devolve additionalContext nenhum.
+    await expect(hooks.postToolBatch({ hook_event_name: 'PostToolBatch' })).resolves.toEqual({})
+    await expect(hooks.postToolBatch({ hook_event_name: 'PostToolBatch' })).resolves.toEqual({})
+    // A documentação mudou durante a ferramenta: aí o bloco novo vai.
+    await expect(hooks.postToolBatch({ hook_event_name: 'PostToolBatch' })).resolves.toMatchObject({
+      hookSpecificOutput: { additionalContext: expect.stringContaining('editado.md') }
+    })
+    // Início de turno manda sempre, mesmo que o bloco seja o de antes.
+    await expect(hooks.user({ hook_event_name: 'UserPromptSubmit' })).resolves.toMatchObject({
+      hookSpecificOutput: { additionalContext: expect.stringContaining('igual.md') }
+    })
+    expect(projectOutlineMock).toHaveBeenCalledTimes(5)
+  })
+
   it('falha do outline não bloqueia nem perde a mensagem e marca apenas o contexto vivo', async () => {
     projectOutlineMock.mockRejectedValueOnce(new Error('sem acesso'))
     const { s } = makeSession()
@@ -2156,7 +2249,10 @@ describe('AgentSession — o TypeSafe escolhe as memórias do turno', () => {
     ]
 
     expect(typeSafeState.queries).toHaveLength(1)
-    for (const context of contexts) expect(context).toContain('O banco chama FALCAO.')
+    expect(contexts[0]).toContain('O banco chama FALCAO.')
+    // Nada mudou entre os lotes: o bloco já entregue continua na conversa e
+    // não é reenviado (ver "não reenvia o contexto vivo" abaixo).
+    expect(contexts.slice(1)).toEqual(['', ''])
 
     await s.send('e agora?')
     await liveContext(requestHooks().postToolBatch, 'PostToolBatch')

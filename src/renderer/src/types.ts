@@ -1,4 +1,5 @@
 import type { BackgroundTask, ChatEvent, QueuedAfterInterrupt } from '@shared/ipc'
+import type { BubbleMedia, DraftMedia } from './inlineMedia/inlineAttachments'
 
 /** A user message, rendered on the right side of the chat. */
 export type UserMessage = {
@@ -9,6 +10,9 @@ export type UserMessage = {
   images?: string[]
   /** Non-image file attachments shown as cards in the bubble (display only). */
   files?: { name: string; size: number }[]
+  /** Anexos postos no meio do texto: a posição N-1 diz onde está o `{{midia:N}}`
+   *  de `text` (imagem i de `images` ou arquivo i de `files`). Ausente = bolha antiga. */
+  media?: BubbleMedia[]
   /** Set when this message's turn failed (LLM/session error). The message stays
    *  in the chat showing this error and a "Tentar de novo" button, so a typed
    *  message is never lost even when the model errors. */
@@ -89,8 +93,17 @@ export interface Conversation {
    *  selector shows and what makes the next turn ask again — so the real id
    *  lives here, for the things that need it (the context-usage denominator). */
   autoModel?: string
-  /** Reasoning effort for the model (low / medium / high / xhigh / max). */
+  /** Reasoning effort for the model (low / medium / high / xhigh / max), or the
+   *  AUTO_EFFORT sentinel — independent from AUTO_MODEL. */
   effort?: string
+  /** O esforço concreto que o decisor escolheu no último turno, quando `effort`
+   *  é o AUTO_EFFORT (mesmo papel do `autoModel`): `effort` continua `auto`, e
+   *  este campo só alimenta o "Auto · Alto" do seletor. Na conversa do Agent
+   *  Manager é o esforço com que a sessão dele subiu. */
+  autoEffort?: string
+  /** Marcador one-shot da separação dos Automáticos (EFFORT_SPLIT_FIELD em
+   *  src/shared/autoEffort.ts): ausente = registro gravado antes dela. */
+  effortSplit?: true
   /** Per-conversation "modo econômico" — when on, the LLM skips validation/build
    *  for trivial tasks to save tokens. Scoped to THIS conversation only. */
   economyMode?: boolean
@@ -107,6 +120,8 @@ export interface Conversation {
   /** Unsent composer text for this conversation (draft). Kept across conversation
    *  switches and app restarts so a half-typed message is never lost. */
   draft?: string
+  /** Anexos do rascunho, na ordem dos `{{midia:N}}` de `draft`. */
+  draftMedia?: DraftMedia[]
   /** A failed turn waiting to resume; persisted so app restarts restore its timer. */
   recovery?: TurnRecovery
   /** The agent's current task plan, if it has tracked progress at least once
@@ -130,6 +145,10 @@ export interface Conversation {
   /** Conversa de implementação nascida do handoff do plano <handoffSlug> do projeto `cwd`:
    *  a sessão sobe com StartAgentOptions.handoff. É uma conversa normal (sem `mode`). */
   handoffSlug?: string
+  /** De onde veio a conversa de implementação: o plano (o cabeçalho mostra
+   *  "Plano: <titulo>" e reabre a Tela dele) e os arquivos de _handoff/ que ela
+   *  recebeu, na ordem. Vai no payload da conversa, como os outros campos. */
+  handoffPlan?: { projectCwd: string; slug: string; titulo: string; prompts: string[] }
 }
 
 export const DEFAULT_TITLE = 'Nova conversa'

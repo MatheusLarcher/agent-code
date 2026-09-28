@@ -63,6 +63,13 @@ describe('planningStartOptions', () => {
     expect(out.effort).toBe(PLANNING_AUTO_FALLBACK.effort)
   })
 
+  it('Manager nunca sai com o sentinel do esforço Automático', async () => {
+    const d = deps({ model: 'claude-opus-5-5', effort: 'auto' as never, source: 'typesafe' })
+    const out = await planningStartOptions({ ...base, effort: 'auto', planning: { slug: 'checkout' } }, d)
+    expect(out.effort).toBe(PLANNING_AUTO_FALLBACK.effort)
+    expect(out.model).toBe(PLANNING_AUTO_FALLBACK.model)
+  })
+
   it('usa o resolvedor real quando nada é injetado (config manual, sem TypeSafe)', async () => {
     const out = await planningStartOptions(
       { ...base, planning: { slug: 'checkout' } },

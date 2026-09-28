@@ -5,8 +5,10 @@
  * - **Maximizado**: a borda de cima fica a 20% da altura da JANELA — contada da
  *   janela, não da área, por isso o `top` é medido — e a de baixo a 12px do
  *   fim. Mostra tudo o que o chat mostra.
- * - **Minimizado**: ancorado embaixo, com ~5 linhas de conversa e 3 de
- *   digitação (planningChat.css). O `ChatPanel` entra em modo compacto pelo
+ * - **Minimizado**: ancorado embaixo, com ~5 linhas de conversa (planningChat.css).
+ *   Sem texto digitado, a caixa é uma faixa de 1 linha sem os botões
+ *   (`composer-small`); com texto, cresce de 1 a 3 linhas (rola depois) e os
+ *   botões voltam. Anexo sozinho não é texto. O `ChatPanel` entra em modo compacto pelo
  *   `ChatDisplayContext`: some o consumo. Fica mais translúcido que o
  *   maximizado (volta à translucidez dele no hover/foco) e qualquer clique
  *   nele expande.
@@ -121,15 +123,25 @@ export interface ManagerChatFloatProps {
 
 export function ManagerChatFloat({ children, cards, collapseSignal, planDir }: ManagerChatFloatProps): JSX.Element {
   const [minimized, setMinimized] = useState(loadChatMinimized)
+  // A caixa do Composer tem texto digitado? Vem do `onHasTextChange` dele, só nas
+  // trocas vazio↔não vazio (não a cada tecla). O setter é estável: o contexto não muda por ele.
+  const [composerHasText, setComposerHasText] = useState(false)
   const ref = useRef<HTMLElement>(null)
   const top = useMaximizedTop(ref, !minimized)
   const cardRefs = useRefCards(cards)
   const display = useMemo<ChatDisplay>(() => {
-    const base: ChatDisplay = { compact: minimized, hideWindowsBanner: true, hideLastUsage: true }
+    const base: ChatDisplay = {
+      compact: minimized,
+      hideWindowsBanner: true,
+      hideLastUsage: true,
+      onComposerHasText: setComposerHasText
+    }
     if (cardRefs) base.cardRefs = cardRefs
     if (planDir) base.planDir = planDir
     return base
   }, [minimized, cardRefs, planDir])
+  // Minimizado e sem texto: a caixa vira uma faixa de 1 linha, sem os botões (planningChat.css).
+  const smallBox = minimized && !composerHasText
 
   const toggle = useCallback((e?: { stopPropagation: () => void }) => {
     e?.stopPropagation()
@@ -193,7 +205,7 @@ export function ManagerChatFloat({ children, cards, collapseSignal, planDir }: M
     // nokey: Delete/Backspace digitados no chat não apagam o card selecionado no canvas.
     <section
       ref={ref}
-      className={`pl-chat pl-chat-float nokey${minimized ? ' minimized' : ''}`}
+      className={`pl-chat pl-chat-float nokey${minimized ? ' minimized' : ''}${smallBox ? ' composer-small' : ''}`}
       aria-label="Agent Manager"
       style={top === null ? undefined : { top }}
       onClick={minimized ? expandFromClick : undefined}

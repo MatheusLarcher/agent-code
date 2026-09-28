@@ -103,6 +103,50 @@ describe('ConversationLeaseKeeper', () => {
     expect(renewConversationLease).toHaveBeenCalledTimes(1)
   })
 
+  it('renewNow renova na hora (banco de volta), divide a renovação em voo e volta à cadência normal', async () => {
+    vi.useFakeTimers()
+    let settle: (value: ConversationLease) => void = () => undefined
+    const renewConversationLease = vi.fn(
+      () => new Promise<ConversationLease>((resolve) => { settle = resolve })
+    )
+    const keeper = new ConversationLeaseKeeper(
+      { renewConversationLease, releaseConversationLease: vi.fn(async () => {}) },
+      lease,
+      { onLost: vi.fn() }
+    ).start()
+
+    const first = keeper.renewNow()
+    const second = keeper.renewNow()
+    expect(renewConversationLease).toHaveBeenCalledTimes(1)
+    settle({ ...lease, expiresAt: '2026-01-01T00:01:00.000Z' })
+    await expect(first).resolves.toBe(true)
+    await expect(second).resolves.toBe(true)
+    expect(keeper.lease.expiresAt).toBe('2026-01-01T00:01:00.000Z')
+    // O heartbeat antigo foi trocado pelo novo: nada antes de um intervalo inteiro.
+    await vi.advanceTimersByTimeAsync(LEASE_HEARTBEAT_MS - 1)
+    expect(renewConversationLease).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(renewConversationLease).toHaveBeenCalledTimes(2)
+    keeper.stop()
+  })
+
+  it('renewNow com o lease tomado por outro dispositivo devolve false e encerra (terminal)', async () => {
+    vi.useFakeTimers()
+    const denied = new StorageError('LEASE_HELD_BY_OTHER_DEVICE', 'O lease não pertence mais a esta instalação.')
+    const renewConversationLease = vi.fn().mockRejectedValue(denied)
+    const onLost = vi.fn()
+    const keeper = new ConversationLeaseKeeper(
+      { renewConversationLease, releaseConversationLease: vi.fn(async () => {}) },
+      lease,
+      { onLost }
+    ).start()
+    await expect(keeper.renewNow()).resolves.toBe(false)
+    expect(onLost).toHaveBeenCalledWith(denied)
+    await expect(keeper.renewNow()).resolves.toBe(false)
+    await vi.advanceTimersByTimeAsync(10 * LEASE_HEARTBEAT_MS)
+    expect(renewConversationLease).toHaveBeenCalledTimes(1)
+  })
+
   it('does not let a wedged renewal hold up the release', async () => {
     vi.useFakeTimers()
     const renewConversationLease = vi.fn(() => new Promise<ConversationLease>(() => {}))

@@ -39,6 +39,8 @@ import type {
   PickedElement,
   RemoteBuildProgressMsg,
   RemoteInboundMsg,
+  McpCancelQueuedMsg,
+  McpInboundMsg,
   RemotePermissionResponseMsg,
   RemoteSetModelMsg,
   RemoteSetModeMsg,
@@ -62,7 +64,9 @@ import type {
   PlanningChangedMsg,
   FlowPdfRequest,
   FlowPdfResult,
-  PlanningHandoffDto,
+  PlanningHandoffListDto,
+  PlanningHandoffSentDto,
+  PlanningHandoffSentMark,
   PlanningImportFile,
   PlanningLayoutDto,
   PlanningMediaContentDto,
@@ -143,6 +147,15 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.resolvePastedPath, path),
   downloadPastedUrl: (url: string, convId: string): Promise<ResolvedPastedRef> =>
     ipcRenderer.invoke(Channels.downloadPastedUrl, url, convId),
+  stashDraftAttachment: (
+    convId: string,
+    file: { name: string; mediaType: string; data: string }
+  ): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(Channels.stashDraftAttachment, convId, file),
+  discardDraftAttachments: (convId: string, paths: string[]): Promise<number> =>
+    ipcRenderer.invoke(Channels.discardDraftAttachments, convId, paths),
+  promoteDraftAttachments: (convId: string, paths: string[]): Promise<string[]> =>
+    ipcRenderer.invoke(Channels.promoteDraftAttachments, convId, paths),
   // Synchronous — webUtils runs directly in the preload process, no IPC round
   // trip. Returns '' if the File wasn't constructed from a real path on disk
   // (e.g. a blob built in JS, or a screenshot never saved anywhere).
@@ -187,10 +200,14 @@ const api: AgentCodeApi = {
   ): Promise<PlanningResult<{ roteiro: PlanningRoteiroDto }>> => ipcRenderer.invoke(Channels.planningSaveRoteiro, req),
   planningSaveLayout: (req: PlanningRef & { layout: PlanningLayoutDto }): Promise<PlanningResult> =>
     ipcRenderer.invoke(Channels.planningSaveLayout, req),
-  planningListHandoffs: (req: PlanningRef): Promise<PlanningResult<{ handoffs: PlanningHandoffDto[] }>> =>
+  planningListHandoffs: (req: PlanningRef): Promise<PlanningResult<PlanningHandoffListDto>> =>
     ipcRenderer.invoke(Channels.planningListHandoffs, req),
   planningWriteHandoff: (req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>> =>
     ipcRenderer.invoke(Channels.planningWriteHandoff, req),
+  planningMarkHandoffsSent: (
+    req: PlanningRef & { entries: PlanningHandoffSentMark[] }
+  ): Promise<PlanningResult<{ sent: PlanningHandoffSentDto[] }>> =>
+    ipcRenderer.invoke(Channels.planningMarkHandoffsSent, req),
   planningImportMedia: (
     req: PlanningRef & { files: PlanningImportFile[] }
   ): Promise<PlanningResult<{ media: PlanMediaDto[] }>> => ipcRenderer.invoke(Channels.planningImportMedia, req),
@@ -243,8 +260,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.agentStart, opts),
   outboxList: () => ipcRenderer.invoke(Channels.outboxList),
   outboxReplace: (conversationId, items) => ipcRenderer.invoke(Channels.outboxReplace, { conversationId, items }),
-  injectNow: (convId, text, images, files, fileRefs, messageUuid) =>
-    ipcRenderer.invoke(Channels.agentInjectNow, convId, text, images, files, fileRefs, messageUuid),
+  injectNow: (convId, text, images, files, fileRefs, messageUuid, mcpTaskId) =>
+    ipcRenderer.invoke(Channels.agentInjectNow, convId, text, images, files, fileRefs, messageUuid, mcpTaskId),
   sendMessage: (
     convId: string,
     text: string,
@@ -252,8 +269,10 @@ const api: AgentCodeApi = {
     files?: FileAttachment[],
     fileRefs?: FileRefAttachment[],
     messageUuid?: string,
-    messageKind?: AgentMessageKind
-  ): Promise<void> => ipcRenderer.invoke(Channels.agentSend, convId, text, images, files, fileRefs, messageUuid, messageKind),
+    messageKind?: AgentMessageKind,
+    mcpTaskId?: string
+  ): Promise<void> =>
+    ipcRenderer.invoke(Channels.agentSend, convId, text, images, files, fileRefs, messageUuid, messageKind, mcpTaskId),
   interrupt: (convId: string): Promise<AgentInterruptResult> =>
     ipcRenderer.invoke(Channels.agentInterrupt, convId),
   setBypass: (convId: string, on: boolean): Promise<void> =>
@@ -319,6 +338,11 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.remoteBuildApk),
   onRemoteInbound: (cb: (m: RemoteInboundMsg) => void): (() => void) =>
     on(Channels.remoteInbound, cb),
+  onMcpInbound: (cb: (m: McpInboundMsg) => void): (() => void) => on(Channels.mcpInbound, cb),
+  onMcpCancelQueued: (cb: (m: McpCancelQueuedMsg) => void): (() => void) => on(Channels.mcpCancelQueued, cb),
+  mcpRendererReady: (): Promise<void> => ipcRenderer.invoke(Channels.mcpRendererReady),
+  mcpTaskFailed: (taskId: string, erro: string, cancelada?: boolean): Promise<void> =>
+    ipcRenderer.invoke(Channels.mcpTaskFailed, { taskId, erro, cancelada: cancelada === true }),
   onRemoteSetSkipPerms: (cb: (m: { on: boolean }) => void): (() => void) =>
     on(Channels.remoteSetSkipPerms, cb),
   onRemoteSetModel: (cb: (m: RemoteSetModelMsg) => void): (() => void) =>

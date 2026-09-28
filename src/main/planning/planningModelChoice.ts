@@ -1,6 +1,6 @@
 import {
   clampEffortToModel,
-  EFFORT_LEVELS,
+  isAutoEffort,
   isAutoModel,
   PLANNING_AUTO_FALLBACK,
   PLANNING_MODELS,
@@ -8,19 +8,21 @@ import {
   type EffortLevel,
   type PlanningConfig
 } from '../../shared/ipc'
+import { isEffortLevel } from '../../shared/autoEffort'
 import type { AutoExecution, AutoExecutionOptions } from '../typesafe/execution'
 
 /**
  * O modelo e o esforço do Agent Manager (Tela de Planejamento) para UMA mensagem.
  *
- * Mesmo molde do memorista: fora do Automático é o par da configuração, sem
- * chamada nenhuma; no Automático, o MESMO caminho que escolhe o par da conversa
- * (`chooseAutoExecution`), restrito à lista que o seletor do Manager oferece.
+ * Modelo e esforço são automáticos de forma independente. Os dois fixos: o par
+ * da configuração, sem chamada nenhuma. Com alguma dimensão em Automático, o
+ * MESMO caminho que escolhe o par da conversa (`chooseAutoExecution`), que só
+ * pergunta a dimensão automática, restrito à lista do seletor do Manager.
  *
  * A diferença está no recuo. O Automático da conversa cai no modelo mais caro
  * (AUTO_MODEL_FALLBACK); o do Manager cai em PLANNING_AUTO_FALLBACK (Sonnet 5,
- * médio). E só aceita o par quando o TypeSafe DECIDIU de fato
- * (`source === 'typesafe'`) — o recuo de lá é o par caro, não o daqui.
+ * médio), dimensão a dimensão. E só aceita uma dimensão quando o TypeSafe a
+ * DECIDIU de fato (`source.<dimensão> === 'typesafe'`).
  *
  * A restrição do usuário (`typesafe.allowedAutoModels`, Configurações → TypeSafe)
  * vale aqui também: com a lista preenchida, os candidatos são a interseção dela
@@ -55,10 +57,6 @@ export const PLANNING_AUTO_MODELS: readonly string[] = PLANNING_MODELS.filter(
 
 function planningFallback(): PlanningExecution {
   return { model: PLANNING_AUTO_FALLBACK.model, effort: PLANNING_AUTO_FALLBACK.effort, source: 'fallback' }
-}
-
-function isEffortLevel(value: unknown): value is EffortLevel {
-  return typeof value === 'string' && EFFORT_LEVELS.includes(value as EffortLevel)
 }
 
 /**
@@ -102,36 +100,55 @@ export async function resolvePlanningExecution(
     // Sem modelo utilizável não há o que fixar — o recuo é o único par honesto.
     if (typeof model !== 'string' || !model.trim()) return planningFallback()
 
-    if (!isAutoModel(model)) {
-      const effort = isEffortLevel(cfg.effort) ? cfg.effort : PLANNING_AUTO_FALLBACK.effort
-      return { model, effort: clampEffortToModel(model, effort), source: 'manual' }
+    const autoModel = isAutoModel(model)
+    const autoEffort = isAutoEffort(cfg.effort)
+    const fixedEffort = isEffortLevel(cfg.effort) ? cfg.effort : PLANNING_AUTO_FALLBACK.effort
+    if (!autoModel && !autoEffort) return { model, effort: clampEffortToModel(model, fixedEffort), source: 'manual' }
+
+    // O recuo é POR DIMENSÃO: só a automática cai no PLANNING_AUTO_FALLBACK; a
+    // fixa continua a do usuário (recortada ao modelo que sair).
+    const pair = (chosenModel?: string, chosenEffort?: EffortLevel): PlanningExecution => {
+      const outModel = autoModel ? (chosenModel ?? PLANNING_AUTO_FALLBACK.model) : model
+      const outEffort = autoEffort ? (chosenEffort ?? PLANNING_AUTO_FALLBACK.effort) : fixedEffort
+      const decided = (!autoModel || chosenModel !== undefined) && (!autoEffort || chosenEffort !== undefined)
+      return { model: outModel, effort: clampEffortToModel(outModel, outEffort), source: decided ? 'typesafe' : 'fallback' }
     }
 
     const configured = await (deps.typeSafeConfigured ?? realTypeSafeConfigured)()
-    if (!configured) return planningFallback()
+    if (!configured) return pair()
 
-    const candidates = planningAutoCandidates(await (deps.allowedAutoModels ?? realAllowedAutoModels)())
+    // A lista do usuário só restringe a dimensão MODELO; com o modelo fixo ela
+    // não tem o que restringir.
+    const candidates = autoModel
+      ? planningAutoCandidates(await (deps.allowedAutoModels ?? realAllowedAutoModels)())
+      : [model]
     // O usuário restringiu o Automático a modelos que o Manager não oferece:
     // não há entre o que escolher — o recuo é o par honesto.
-    if (candidates.length === 0) return planningFallback()
+    if (candidates.length === 0) return pair()
+    // Um candidato só não é escolha: é o modelo que a restrição deixou. A
+    // escolha não pergunta nada nesse caso (origem `unprompted`), e sem este
+    // atalho o modelo cairia no PLANNING_AUTO_FALLBACK — fora da restrição.
+    const onlyModel = autoModel && candidates.length === 1 ? candidates[0] : undefined
+    if (onlyModel && !autoEffort) return pair(onlyModel)
 
     const choose = deps.chooseAutoExecution ?? realChooseAutoExecution
-    const execution = await choose(prompt, { models: candidates })
-    // Só um par DECIDIDO passa. `fallback`/`unprompted` de lá seriam o par caro
-    // da conversa; e um par fora dos candidatos furaria o seletor do Manager ou
-    // a restrição do usuário.
-    if (
-      execution?.source !== 'typesafe' ||
-      !candidates.includes(execution.model) ||
-      !isEffortLevel(execution.effort)
-    ) {
-      return planningFallback()
-    }
-    return {
-      model: execution.model,
-      effort: clampEffortToModel(execution.model, execution.effort),
-      source: 'typesafe'
-    }
+    const execution = await choose(prompt, {
+      ...(autoModel ? { models: candidates } : {}),
+      selection: { model, effort: cfg.effort }
+    })
+    // Só a dimensão DECIDIDA passa. `fallback`/`unprompted` de lá seriam o
+    // padrão caro da conversa; e um modelo fora dos candidatos furaria o
+    // seletor do Manager ou a restrição do usuário.
+    const chosenModel =
+      onlyModel ??
+      (autoModel && execution?.source?.model === 'typesafe' && candidates.includes(execution.model)
+        ? execution.model
+        : undefined)
+    const chosenEffort =
+      autoEffort && execution?.source?.effort === 'typesafe' && isEffortLevel(execution.effort)
+        ? execution.effort
+        : undefined
+    return pair(chosenModel, chosenEffort)
   } catch {
     return planningFallback()
   }

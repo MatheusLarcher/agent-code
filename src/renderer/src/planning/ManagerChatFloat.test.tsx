@@ -306,18 +306,21 @@ describe('ManagerChatFloat — o CSS que o posiciona e o encolhe', () => {
     expect(block('.pl-chat-float')).toMatch(/transition: --pl-chat-fill /)
   })
 
-  it('minimizado: a lista tem 5 linhas do texto das mensagens e a caixa de digitação 3', () => {
+  it('minimizado: a lista tem 5 linhas do texto das mensagens e a caixa de digitação no máximo 3', () => {
     expect(block('.pl-chat-float')).toMatch(/--pl-chat-line: 21px;/)
     expect(block('.pl-chat-float.minimized .message-list-wrap')).toMatch(/height: calc\(5 \* var\(--pl-chat-line\)\);/)
-    const input = block('.pl-chat-float.minimized .composer-input')
-    expect(input).toMatch(/min-height: calc\(3 \* var\(--pl-chat-line\) \+ 9px\);/)
-    expect(input).toMatch(/max-height: calc\(3 \* var\(--pl-chat-line\) \+ 9px\);/)
+    // Só o teto (3 linhas + o respiro); o piso de 1 linha é o do styles.css. Sem !important.
+    const input = block(".pl-chat-float.minimized .composer-input-wrap .composer-input[role='textbox']")
+    expect(input).toMatch(/max-height: calc\(3lh \+ 2 \* var\(--composer-pad-y\)\);/)
+    expect(input).not.toMatch(/min-height|!important/)
     // 21px é o line-height real das mensagens e da caixa: 14px × 1.5 no styles.css.
     const app = readFileSync(resolve(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
     expect(app).toMatch(/\nbody \{[^}]*font-size: 14px;/)
     expect(app).toMatch(/\n\.bubble \{[^}]*line-height: 1\.5;/)
     expect(app).toMatch(/\n\.composer-input \{[^}]*font-size: 14px;[^}]*line-height: 1\.5;/)
-    expect(app).toMatch(/\n\.composer-input-wrap \.composer-input \{[^}]*padding: 4\.5px 0;/)
+    // Os 9px são o padding da caixa: 4,5px em cima e embaixo, pela variável do .composer-input-wrap.
+    expect(app).toMatch(/\n\.composer-input-wrap \{[^}]*--composer-pad-y: 4\.5px;/)
+    expect(app).toMatch(/\n\.composer-input-wrap \.composer-input \{[^}]*padding: var\(--composer-pad-y\) 0;/)
   })
 
   it('a lista do "[[" abre acima da caixa e, minimizado, cabe no espaço da conversa; [[Nome]] ganha a pílula da prévia', () => {

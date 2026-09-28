@@ -18,6 +18,7 @@ const PLANNING_CHANNELS = [
   Channels.planningSaveLayout,
   Channels.planningListHandoffs,
   Channels.planningWriteHandoff,
+  Channels.planningMarkHandoffsSent,
   Channels.planningImportMedia,
   Channels.planningReadMedia
 ]
@@ -302,7 +303,7 @@ describe('registerPlanningIpc', () => {
     setup()
     const ref = { projectCwd: cwd, slug: 'p' }
     await call(Channels.planningCreate, { ...ref, titulo: 'P' })
-    expect(await call(Channels.planningListHandoffs, ref)).toEqual({ ok: true, handoffs: [] })
+    expect(await call(Channels.planningListHandoffs, ref)).toEqual({ ok: true, handoffs: [], sent: [] })
 
     const first = await call(Channels.planningWriteHandoff, { ...ref, conteudo: '# Prompt 1\n' })
     const second = await call(Channels.planningWriteHandoff, { ...ref, conteudo: '# Prompt 2\n' })

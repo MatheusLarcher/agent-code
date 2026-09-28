@@ -8,6 +8,7 @@ import {
 } from './keyRegistry'
 
 const EXPECTED_KEYS = [
+  'agentcode.claude-account-credentials.v1',
   'agentcode.claude-accounts.v1',
   'agentcode.conversations.legacy-checked.v1',
   'agentcode.conversations.v1',
@@ -32,6 +33,7 @@ const EXPECTED_KEYS = [
   'config.openai.speed',
   'config.openai.voice',
   'config.planning.effort',
+  'config.planning.effortSplit',
   'config.planning.model',
   'config.preventSleepWhileBusy',
   'config.remoteEnabled',

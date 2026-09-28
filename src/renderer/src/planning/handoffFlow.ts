@@ -3,7 +3,32 @@
  * fixo ao Agent Manager, o filtro dos prompts que ele gravou DEPOIS do pedido
  * e o lançamento da conversa de implementação. Puras e testáveis sem o App.
  */
-import type { PlanningHandoffDto } from '@shared/ipc'
+import type {
+  PlanningFailure,
+  PlanningHandoffDto,
+  PlanningHandoffSentDto,
+  PlanningHandoffSentMark,
+  PlanningResult
+} from '@shared/ipc'
+
+export function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+export function failureText(f: PlanningFailure): string {
+  return 'message' in f ? f.message : 'conflito de versão'
+}
+
+/** IPC que rejeita vira falha 'io', não exceção. */
+export async function safe<T extends object>(call: () => Promise<PlanningResult<T>>): Promise<PlanningResult<T>> {
+  try {
+    const res = await call()
+    if (res && typeof res === 'object' && 'ok' in res) return res
+    return { ok: false, code: 'io', message: 'resposta inválida do processo principal' }
+  } catch (err) {
+    return { ok: false, code: 'io', message: errText(err) }
+  }
+}
 
 /** Folga para a resolução do relógio do sistema de arquivos (FAT: 2 s). */
 export const HANDOFF_CLOCK_SLACK_MS = 2_000
@@ -65,22 +90,43 @@ export function newHandoffsSince(
   return list.filter((h) => !before.has(h.name) && h.createdAt >= requestedAt - HANDOFF_CLOCK_SLACK_MS)
 }
 
-/** Arquivos gravados com até 10 min de distância um do outro são o mesmo "lote"
- *  de prompts (o Manager grava 1 de N, 2 de N… em sequência). */
-export const HANDOFF_BATCH_GAP_MS = 10 * 60_000
+/**
+ * O pedido do botão "Iniciar questionário" (chat do Agent Manager): lançar
+ * como AskUserQuestion as perguntas em aberto do plano, em levas, e registrar
+ * as respostas nos cards. Vai pelo caminho normal de envio (fila, se ocupado).
+ */
+export function managerQuestionnaireRequest(): string {
+  return (
+    'Lance agora o questionário: reúna todas as perguntas em aberto deste planejamento (ambiguidades abertas, ' +
+    'decisões pendentes, lacunas que você apontou) e faça-as com AskUserQuestion, até 4 por vez, com a sua ' +
+    "recomendação como primeira opção e marcada '(Recomendado)'. Depois de cada resposta, registre nos cards " +
+    '(decisão, ambiguidade resolvida) e lance a próxima leva, até acabarem. Sem perguntas em aberto, diga só ' +
+    "'Nenhuma pergunta em aberto.' Não implemente nada."
+  )
+}
 
 /**
- * O último lote de prompts já gravado em _handoff/ — o que o usuário quer
- * rever depois de reiniciar o app, quando o diálogo não lembra mais do pedido.
- * O arquivo em disco é a fonte da verdade: nada novo precisa ser guardado.
- * Na ordem dos nomes (AAAA-MM-DD-NN), que é a ordem de envio.
+ * Os prompts "a enviar": os de _handoff/ sem registro em enviados.json
+ * (enviado, substituído por um editado ou marcado à mão). Sem registro nenhum
+ * (plano antigo, ou enviados.json ilegível), todos. Na ordem da lista do main,
+ * que é a dos nomes (AAAA-MM-DD-NN) — a ordem de envio.
  */
-export function latestHandoffBatch(list: readonly PlanningHandoffDto[]): PlanningHandoffDto[] {
-  if (list.length === 0) return []
-  const byTime = [...list].sort((a, b) => a.createdAt - b.createdAt)
-  let start = byTime.length - 1
-  while (start > 0 && byTime[start].createdAt - byTime[start - 1].createdAt <= HANDOFF_BATCH_GAP_MS) start--
-  return byTime.slice(start).sort((a, b) => a.name.localeCompare(b.name))
+export function pendingHandoffs(
+  list: readonly PlanningHandoffDto[],
+  sent: readonly PlanningHandoffSentDto[]
+): PlanningHandoffDto[] {
+  const done = new Set(sent.map((e) => e.nome))
+  return list.filter((h) => !done.has(h.name))
+}
+
+/** O que gravar em enviados.json depois do envio: só os `delivered` primeiros
+ *  prompts (os que a conversa recebeu), ligados a ela. */
+export function deliveredMarks(names: readonly string[], outcome: HandoffSendOutcome): PlanningHandoffSentMark[] {
+  const conv = outcome.conversation
+  if (!conv || outcome.delivered <= 0) return []
+  return names
+    .slice(0, outcome.delivered)
+    .map((nome) => ({ nome, conversaId: conv.id, conversaTitulo: conv.title }))
 }
 
 /**
@@ -101,9 +147,10 @@ export function loadHandoffSession<D>(projectCwd: string, slug: string): Handoff
   return (sessions.get(sessionKey(projectCwd, slug)) as HandoffSession<D> | undefined) ?? null
 }
 
-/** `review` sem pedido em espera é o estado inicial: não precisa ser guardado. */
+/** `review` sem pedido em espera nem prompts em revisão é o estado inicial: não
+ *  é guardado, e a próxima abertura decide de novo (abre direto nos pendentes). */
 export function saveHandoffSession<D>(projectCwd: string, slug: string, s: HandoffSession<D>): void {
-  if (s.step === 'review' && !s.waiting) sessions.delete(sessionKey(projectCwd, slug))
+  if (s.step === 'review' && !s.waiting && s.drafts.length === 0) sessions.delete(sessionKey(projectCwd, slug))
   else sessions.set(sessionKey(projectCwd, slug), s)
 }
 
@@ -168,12 +215,19 @@ export interface HandoffSendOutcome {
   status: 'sent' | 'created-failed' | 'not-created'
   delivered: number
   total: number
+  /** A conversa criada (ausente em `not-created`): vai para enviados.json. */
+  conversation?: { id: string; title: string }
 }
 
-export function handoffOutcome(res: HandoffLaunchResult<unknown>): HandoffSendOutcome {
+export function handoffOutcome(res: HandoffLaunchResult<{ id: string; title: string }>): HandoffSendOutcome {
   const { delivered, total } = res
   if (!res.conv) return { status: 'not-created', delivered, total }
-  return { status: delivered === total ? 'sent' : 'created-failed', delivered, total }
+  return {
+    status: delivered === total ? 'sent' : 'created-failed',
+    delivered,
+    total,
+    conversation: { id: res.conv.id, title: res.conv.title }
+  }
 }
 
 /** O toast de uma conversa criada cujo envio não terminou. */

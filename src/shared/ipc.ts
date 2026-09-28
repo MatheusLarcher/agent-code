@@ -4,7 +4,9 @@ import type { PlanMediaDto } from './planningMedia'
 
 /** A normalized chat event the renderer renders. Produced in main from SDKMessage. */
 export type ChatEvent =
-  | { kind: 'system'; sessionId: string; model: string; cwd: string; tools: string[] }
+  /** `effort`: o nível com que a sessão subiu (ausente = sem esforço). É o que
+   *  mostra o esforço em uso quando a escolha gravada é o Automático. */
+  | { kind: 'system'; sessionId: string; model: string; cwd: string; tools: string[]; effort?: string }
   | { kind: 'assistant-text'; id: string; text: string; final: boolean; aborted?: true }
   | { kind: 'thinking'; id: string; text: string }
   | { kind: 'provider-switch'; id: string; fromModel: string; model: string; effort?: string; fastMode: boolean; text: string }
@@ -69,6 +71,12 @@ export type ChatEvent =
    *  not content: the renderer must not turn it into a chat bubble.
    *  `since` is the epoch ms of the last sign of life. */
   | { kind: 'stall-status'; stalled: boolean; since: number }
+  /** Reparo do espelho do transcript (mirrorRepair.ts). Estado, não conteúdo:
+   *  `deferred` = a mensagem `messageUuid` NÃO foi enviada porque o banco ainda
+   *  não voltou; o renderer a devolve para a cabeça da fila de espera.
+   *  `restored` = espelho reparado e verificado; a fila parada pode sair. */
+  | { kind: 'mirror-repair'; state: 'deferred'; messageUuid: string }
+  | { kind: 'mirror-repair'; state: 'restored' }
   /** Full snapshot of the agent's task plan, read from the CLI's own task
    *  storage (see sessionTasks.ts). Authoritative: it replaces whatever the
    *  renderer built from the live TaskCreate/TaskUpdate events, which go stale
@@ -322,6 +330,8 @@ export interface ImageAttachment {
   mediaType: string
   /** Base64 payload, without the `data:...;base64,` prefix. */
   data: string
+  /** `midia:N = nome` — anexo posto no ponto N do texto (ver shared/inlineMedia). */
+  label?: string
 }
 
 /**
@@ -338,6 +348,8 @@ export interface FileAttachment {
   data: string
   /** Size in bytes (for the chip label). */
   size: number
+  /** `midia:N = nome` — anexo posto no ponto N do texto (ver shared/inlineMedia). */
+  label?: string
 }
 
 /**
@@ -356,6 +368,8 @@ export interface FileRefAttachment {
   mediaType: string
   /** Size in bytes (for the chip label). */
   size: number
+  /** `midia:N = nome` — anexo posto no ponto N do texto (ver shared/inlineMedia). */
+  label?: string
 }
 
 /** Result of resolving a pasted local path or downloading a pasted URL. */
@@ -703,7 +717,8 @@ export interface StartAgentOptions {
   skipPermissions?: boolean
   /** SDK session id to resume — loads the prior conversation history so an old chat can continue. */
   resume?: string
-  /** Reasoning effort for the model (low / medium / high / xhigh / max). */
+  /** Reasoning effort for the model (low / medium / high / xhigh / max), or
+   *  AUTO_EFFORT — resolved in main before the session exists, never forwarded. */
   effort?: string
   /** Per-conversation "modo econômico": instructs the LLM to skip validation for
    *  trivial tasks. Scoped to THIS conversation only. */
@@ -715,8 +730,8 @@ export interface StartAgentOptions {
    *  output speed for a higher per-token price. Only meaningful for the models in
    *  FAST_MODE_MODELS — see modelSupportsFastMode. */
   fastMode?: boolean
-  /** Only meaningful when `model` is AUTO_MODEL: the turn this session is about
-   *  to run. The SDK fixes a session's model for its whole life, so the decision
+  /** Only meaningful when `model` is AUTO_MODEL and/or `effort` is AUTO_EFFORT:
+   *  the turn this session is about to run. The SDK fixes a session's model for its whole life, so the decision
    *  has to happen HERE, before the session exists — main asks the TypeSafe what
    *  this message deserves and starts on the answer. Absent, there is nothing to
    *  decide on and main uses AUTO_MODEL_FALLBACK. */
@@ -730,6 +745,10 @@ export interface StartAgentOptions {
   /** Conta Claude gravada com a conversa. O main confirma (ainda conectada?) ou
    *  escolhe pela regra de conversa nova, e devolve a efetiva no `startAgent`. */
   claudeAccountId?: string
+  /** Conversa de tarefa do MCP de entrada: servidores MCP stdio trazidos pelo
+   *  chamador, só para a sessão desta conversa. SÓ o main preenche (do registro
+   *  de tarefas); o que vier do renderer é descartado no `agentStart`. */
+  inboundMcp?: { cliente: string; servers: Record<string, { command: string; args: string[]; env: Record<string, string> }> }
 }
 
 /** Reasoning effort levels a model may support. */
@@ -807,6 +826,24 @@ export const AUTO_MODEL_OPTION = { id: AUTO_MODEL, label: 'Automático' }
 export function isAutoModel(model: string | undefined): boolean {
   return model === AUTO_MODEL
 }
+
+/** The value the `effort` field carries while the effort is in "Automático".
+ *
+ *  Independent from AUTO_MODEL: a conversation may fix the model and let the
+ *  TypeSafe choose the effort, or the other way around. Same invariants as the
+ *  model sentinel — it is resolved in main before the session exists and must
+ *  never reach the SDK, the CLI, the proxy or a provider (the last barrier is
+ *  `sdkEffort` in src/shared/autoEffort.ts). */
+export const AUTO_EFFORT = 'auto'
+
+/** Whether this conversation lets the TypeSafe choose the effort of each turn. */
+export function isAutoEffort(effort: string | undefined): effort is typeof AUTO_EFFORT {
+  return effort === AUTO_EFFORT
+}
+
+/** What a conversation (or the Agent Manager config) stores as its effort: a
+ *  concrete level, or the automatic sentinel. */
+export type EffortChoice = EffortLevel | typeof AUTO_EFFORT
 
 /** The pair the automatic mode falls back to when no decision happens — service
  *  off, no key, timeout, error, or no message to decide on.
@@ -1132,14 +1169,15 @@ export const MEMORISTA_AUTO_MODELS: readonly string[] = MEMORISTA_MODELS.filter(
  * Mesmo molde do memorista (modelo fixo ou Automático), com uma diferença: o
  * Manager é quem CONVERSA com o usuário, não um leitor barato — então a lista
  * é a da conversa (CLAUDE_MODELS) e o esforço é configurável no modo manual.
- * No Automático o esforço guardado aqui não vale: quem decide é o TypeSafe,
- * e sem ele o par é PLANNING_AUTO_FALLBACK.
+ * Modelo e esforço são automáticos de forma independente: cada um pode ser
+ * AUTO_MODEL / AUTO_EFFORT ou um valor fixo. Só a dimensão automática é
+ * perguntada ao TypeSafe; sem ele, ela cai em PLANNING_AUTO_FALLBACK.
  */
 export interface PlanningConfig {
   /** Model id do Agent Manager, ou AUTO_MODEL. */
   model: string
-  /** Esforço no modo manual (recortado para o que o modelo suporta). */
-  effort: EffortLevel
+  /** Esforço fixo (recortado para o que o modelo suporta) ou AUTO_EFFORT. */
+  effort: EffortChoice
 }
 
 /** Modelos oferecidos para o Agent Manager: Automático + a lista da conversa. */
@@ -1644,9 +1682,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   // lembrar de pedir é a memória que não é escrita — foi o que aconteceu com o
   // conhecimento que o usuário ensinou e nunca virou arquivo.
   memorista: { enabled: true, model: 'claude-sonnet-5' },
-  // Automático por padrão: sem TypeSafe ele já cai no PLANNING_AUTO_FALLBACK
-  // (Sonnet 5, médio); o esforço só vale quando o usuário fixa um modelo.
-  planning: { model: AUTO_MODEL, effort: 'medium' },
+  // Automático por padrão nas duas dimensões: sem TypeSafe cada uma cai no
+  // PLANNING_AUTO_FALLBACK (Sonnet 5, médio).
+  planning: { model: AUTO_MODEL, effort: AUTO_EFFORT },
   // Também ligados por padrão: sem a trava o quadro fica vazio nas tarefas em
   // que ele mais importa, e sem o PO ninguém fecha o cartão que o agente
   // esqueceu — as duas metades do que torna o quadro confiável.
@@ -1748,6 +1786,8 @@ export const Channels = {
   planningListHandoffs: 'planning:listHandoffs',
   /** Grava um prompt de handoff em _handoff/AAAA-MM-DD-NN.md (o que vai ser enviado). */
   planningWriteHandoff: 'planning:writeHandoff',
+  /** Registra em _handoff/enviados.json prompts enviados, substituídos ou marcados à mão. */
+  planningMarkHandoffsSent: 'planning:markHandoffsSent',
   /** Importa arquivos para <plano>/midia/ (nome saneado); devolve os PlanMediaDto novos. */
   planningImportMedia: 'planning:importMedia',
   /** Uma mídia de <plano>/midia/ em base64, para pré-visualizar. */
@@ -1810,6 +1850,12 @@ export const Channels = {
   resolvePastedPath: 'app:resolve-pasted-path',
   /** Download a pasted http(s) file URL to disk, streaming (no bytes over IPC). */
   downloadPastedUrl: 'app:download-pasted-url',
+  /** Rascunho: grava os bytes de um anexo em disco e devolve o caminho (o rascunho leva só a referência). */
+  stashDraftAttachment: 'app:stash-draft-attachment',
+  /** Rascunho: apaga cópias que eram só do rascunho (o que foi enviado já saiu da pasta rascunho/). */
+  discardDraftAttachments: 'app:discard-draft-attachments',
+  /** Envio: move as cópias do rascunho enviadas de `rascunho/` para a pasta do envio da conversa. */
+  promoteDraftAttachments: 'app:promote-draft-attachments',
   browserLaunch: 'browser:launch',
   browserNavigate: 'browser:navigate',
   browserBack: 'browser:back',
@@ -1902,6 +1948,14 @@ export const Channels = {
   androidProgress: 'browser:android-progress',
   /** main → renderer: a command arrived from a phone, dispatch it into its conversation. */
   remoteInbound: 'remote:inbound',
+  /** MCP de entrada (main → renderer): tarefa para despachar numa conversa. */
+  mcpInbound: 'mcp:inbound',
+  /** MCP de entrada (main → renderer): tirar da fila o item de uma tarefa cancelada. */
+  mcpCancelQueued: 'mcp:cancelQueued',
+  /** MCP de entrada (renderer → main): ouvinte montado e conversas carregadas. */
+  mcpRendererReady: 'mcp:rendererReady',
+  /** MCP de entrada (renderer → main): a tarefa não chegou à conversa. */
+  mcpTaskFailed: 'mcp:taskFailed',
   /** main → renderer: progress while building the remote APK. */
   remoteBuildProgress: 'remote:build-progress',
   /** main → renderer: the number of connected phones changed (RemoteInfo). */
@@ -2041,6 +2095,28 @@ export interface RemoteInboundMsg {
   files?: FileAttachment[]
 }
 
+/** main → renderer: uma tarefa do MCP de entrada para despachar na conversa
+ *  `convId` pela fila normal. Com `create`, a conversa ainda não existe: o
+ *  renderer a cria (sem trocar a conversa ativa) com esse id. */
+export interface McpInboundMsg {
+  taskId: string
+  convId: string
+  /** Com imagens, já leva `{{midia:N}}` no lugar de cada uma (ver mcpImages.ts). */
+  text: string
+  create?: { cwd: string; title: string }
+  /** Modelo desta tarefa (o do chamador ou o padrão das tarefas MCP). Na tela é
+   *  só o que o seletor mostra: a sessão sobe no modelo que o main decide. */
+  model?: string
+  /** Imagens do chamador, já validadas e rotuladas (`midia:N = nome`). */
+  images?: ImageAttachment[]
+}
+
+/** main → renderer: tire da fila da conversa o item da tarefa cancelada. */
+export interface McpCancelQueuedMsg {
+  convId: string
+  taskId: string
+}
+
 /** A per-conversation execution mode toggled from a phone. */
 export interface RemoteSetModeMsg {
   convId: string
@@ -2161,7 +2237,6 @@ export interface PlanningRef {
 /** Payload de Channels.planningChanged. */
 export type PlanningChangedMsg = PlanningRef
 
-/** Um prompt de handoff em _handoff/ da pasta do planejamento (Channels.planningListHandoffs). */
 /** Um item gravado da fila de espera de uma conversa (payload = item do renderer). */
 export interface OutboxEntryDto {
   conversationId: string
@@ -2169,12 +2244,44 @@ export interface OutboxEntryDto {
   payload: unknown
 }
 
+/** Um prompt de handoff em _handoff/ da pasta do planejamento (Channels.planningListHandoffs). */
 export interface PlanningHandoffDto {
   /** Nome do arquivo (AAAA-MM-DD-NN.md). */
   name: string
   /** Quando o arquivo foi criado, em ms desde a época. */
   createdAt: number
   content: string
+}
+
+/**
+ * O que se sabe de um prompt de _handoff/ que NÃO está mais a enviar (uma
+ * entrada de _handoff/enviados.json, por nome). Um de três casos:
+ * - enviado: `conversaId` + `conversaTitulo` da conversa de implementação;
+ * - `substituidoPor`: o prompt foi editado antes do envio e virou esse arquivo;
+ * - `marcadoManualmente`: o usuário disse que já foi enviado (sem conversa).
+ */
+export interface PlanningHandoffSentDto {
+  nome: string
+  /** ISO 8601, carimbado pelo main ao registrar. */
+  enviadoEm: string
+  conversaId?: string
+  conversaTitulo?: string
+  substituidoPor?: string
+  marcadoManualmente?: true
+}
+
+/** Um registro pedido por Channels.planningMarkHandoffsSent (o main carimba a hora). */
+export type PlanningHandoffSentMark =
+  | { nome: string; conversaId: string; conversaTitulo: string }
+  | { nome: string; substituidoPor: string }
+  | { nome: string; marcadoManualmente: true }
+
+/** Resposta de Channels.planningListHandoffs. `sentError`: enviados.json
+ *  ilegível — vale como ausente (tudo pendente), e a tela avisa. */
+export interface PlanningHandoffListDto {
+  handoffs: PlanningHandoffDto[]
+  sent: PlanningHandoffSentDto[]
+  sentError?: string
 }
 
 /** Pedido de Channels.planningExportPdf: página HTML autocontida do flow e o tamanho dela (px CSS). */

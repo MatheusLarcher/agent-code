@@ -8,6 +8,8 @@ import { recordSqliteMigrations, SQLITE_SCHEMA_FULL } from './sqliteSchema'
 import { importSessions, readSessions, type SessionBundle } from './postgresSessionTransfer'
 import { attachProjectIdentityForMigration } from './projectIdentity'
 import { decodePostgresJson, encodePostgresJson, encodePostgresText } from './postgresEncoding'
+import { rollbackOrDiscard } from './postgresTimeouts'
+import { splitDeviceFields } from './conversationScope'
 import type {
   ApplicationSnapshot,
   PersistenceRepository,
@@ -30,13 +32,8 @@ function scopedConversationPayload(payload: Record<string, unknown>): {
   shared: Record<string, unknown>
   device: Record<string, unknown>
 } {
-  const shared = { ...payload }
-  const device: Record<string, unknown> = {}
-  if (typeof shared.cwd === 'string') device.cwd = shared.cwd
-  if (typeof shared.draft === 'string') device.draft = shared.draft
-  delete shared.cwd
-  delete shared.draft
-  return { shared, device }
+  // cwd, draft e draftMedia: estado deste dispositivo (ver conversationScope.ts).
+  return splitDeviceFields(payload)
 }
 
 function messageArray(payload: Record<string, unknown>): unknown[] | null {
@@ -282,6 +279,7 @@ export async function importRepositoryToPostgres(
   ]
   const sourceHash = hashAggregate(sourceItems)
   const client = await pool.connect()
+  let discard: Error | undefined
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE')
     // Acquire all record locks before the first SELECT establishes the MVCC
@@ -331,10 +329,10 @@ export async function importRepositoryToPostgres(
     await client.query('COMMIT')
     return { migrationRunId, sourceHash, targetHash }
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined)
+    discard = await rollbackOrDiscard(client, error)
     throw error
   } finally {
-    client.release()
+    client.release(discard)
   }
 }
 

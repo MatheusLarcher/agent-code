@@ -35,6 +35,10 @@ export interface ChatDisplay {
   planDir?: string | readonly string[]
   /** Cards citáveis com [[Nome]] — os do plano aberto no canvas. */
   cardRefs?: readonly RefCard[]
+  /** Vai para o `onHasTextChange` do Composer: quem hospeda o chat fica sabendo se a
+   *  caixa tem texto digitado (o Agent Manager minimizado encolhe a caixa sem texto).
+   *  Precisa ser estável — trocar a função reenvia o estado ao novo ouvinte. */
+  onComposerHasText?: (hasText: boolean) => void
 }
 
 export const DEFAULT_CHAT_DISPLAY: ChatDisplay = { compact: false }

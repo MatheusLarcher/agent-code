@@ -8,6 +8,10 @@ import type {
   PlanningCardDto,
   PlanningChangedMsg,
   PlanningHandoffDto,
+  PlanningHandoffListDto,
+  PlanningHandoffSentDto,
+  PlanningHandoffSentMark,
+  PlanningResult,
   PlanningRoteiroDto,
   PlanMediaDto
 } from '@shared/ipc'
@@ -52,6 +56,8 @@ export function mockPlanningApi(initial: OpenedPlanningDto = makePlan()) {
   const listeners = new Set<(msg: PlanningChangedMsg) => void>()
   /** O _handoff/ do plano, em ordem de gravação. */
   const handoffs: PlanningHandoffDto[] = []
+  /** O _handoff/enviados.json do plano. */
+  const sent: PlanningHandoffSentDto[] = []
   const addHandoff = (content: string, createdAt = Date.now()): string => {
     const name = `2026-09-22-${String(handoffs.length + 1).padStart(2, '0')}.md`
     handoffs.push({ name, createdAt, content })
@@ -71,9 +77,26 @@ export function mockPlanningApi(initial: OpenedPlanningDto = makePlan()) {
       roteiro: { ...req.roteiro, rev: req.expectedRev + 1 } as PlanningRoteiroDto
     })),
     planningSaveLayout: vi.fn(async () => ({ ok: true as const })),
-    planningListHandoffs: vi.fn(async () => ({ ok: true as const, handoffs: structuredClone(handoffs) })),
+    planningListHandoffs: vi.fn(
+      async (): Promise<PlanningResult<PlanningHandoffListDto>> => ({
+        ok: true as const,
+        handoffs: structuredClone(handoffs),
+        sent: structuredClone(sent)
+      })
+    ),
     /** Como o main: numera e grava; devolve o nome do arquivo novo. */
     planningWriteHandoff: vi.fn(async (req: { conteudo: string }) => ({ ok: true as const, name: addHandoff(req.conteudo) })),
+    /** Como o main: upsert por nome, carimba a hora, devolve todos. */
+    planningMarkHandoffsSent: vi.fn(
+      async (req: { entries: PlanningHandoffSentMark[] }): Promise<PlanningResult<{ sent: PlanningHandoffSentDto[] }>> => {
+        for (const m of req.entries) {
+          const i = sent.findIndex((e) => e.nome === m.nome)
+          if (i >= 0) sent.splice(i, 1)
+          sent.push({ ...m, enviadoEm: '2026-09-25T12:00:00.000Z' })
+        }
+        return { ok: true as const, sent: structuredClone(sent) }
+      }
+    ),
     /** Sem disco: nenhuma mídia nova; os testes da tela trocam a implementação. */
     planningImportMedia: vi.fn(async () => ({ ok: true as const, media: [] as PlanMediaDto[] })),
     planningReadMedia: vi.fn(async () => ({ ok: false as const, code: 'not_found' as const, message: 'mídia não encontrada' })),
@@ -87,6 +110,8 @@ export function mockPlanningApi(initial: OpenedPlanningDto = makePlan()) {
     api,
     /** O que está em _handoff/ agora. */
     handoffs,
+    /** O que está em _handoff/enviados.json agora. */
+    sent,
     /** Um arquivo novo em _handoff/ gravado "por fora" (ex.: o Manager). */
     addHandoff,
     /** Troca o que o próximo planningOpen devolve (o "disco"). */

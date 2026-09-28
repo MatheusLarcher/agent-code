@@ -45,6 +45,9 @@ export interface UseAccountResult {
   ok: boolean
   scheduled: boolean
   nextStart?: boolean
+  /** Recusa com motivo para mostrar (ex.: "Continuar na conta X" no turno de
+   *  uma tarefa MCP que já terminou em erro). */
+  reason?: string
 }
 
 /** Consumo de uma conta para o painel e para a escolha de conta. */

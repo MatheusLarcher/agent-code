@@ -36,6 +36,8 @@ import type {
   PickedElement,
   RemoteBuildProgressMsg,
   RemoteInboundMsg,
+  McpCancelQueuedMsg,
+  McpInboundMsg,
   RemotePermissionResponseMsg,
   RemoteSetModelMsg,
   RemoteSetModeMsg,
@@ -59,7 +61,9 @@ import type {
   PlanningChangedMsg,
   FlowPdfRequest,
   FlowPdfResult,
-  PlanningHandoffDto,
+  PlanningHandoffListDto,
+  PlanningHandoffSentDto,
+  PlanningHandoffSentMark,
   PlanningImportFile,
   PlanningLayoutDto,
   PlanningMediaContentDto,
@@ -146,6 +150,15 @@ export interface AgentCodeApi {
   resolvePastedPath(path: string): Promise<ResolvedPastedRef>
   /** Download a composer-pasted http(s) file URL to disk (streamed, no bytes over IPC). */
   downloadPastedUrl(url: string, convId: string): Promise<ResolvedPastedRef>
+  /** Rascunho: grava os bytes de um anexo em `<userData>/attachments/<convId>/rascunho/` e devolve o caminho. */
+  stashDraftAttachment(
+    convId: string,
+    file: { name: string; mediaType: string; data: string }
+  ): Promise<{ ok: true; path: string } | { ok: false; error: string }>
+  /** Rascunho: apaga as cópias do rascunho em `paths` (só as da pasta `rascunho/` da conversa). Devolve quantas. */
+  discardDraftAttachments(convId: string, paths: string[]): Promise<number>
+  /** Envio: move as cópias do rascunho em `paths` para `<userData>/attachments/<convId>/` (mesmo nome). Devolve os caminhos novos. */
+  promoteDraftAttachments(convId: string, paths: string[]): Promise<string[]>
   /** Absolute path a pasted/dropped `File` points to, or '' if it has no real
    *  file on disk (e.g. a blob built in JS). Synchronous (runs in preload). */
   getPathForFile(file: File): string
@@ -204,10 +217,16 @@ export interface AgentCodeApi {
     req: PlanningRef & { roteiro: Omit<PlanningRoteiroDto, 'rev'>; expectedRev: number }
   ): Promise<PlanningResult<{ roteiro: PlanningRoteiroDto }>>
   planningSaveLayout(req: PlanningRef & { layout: PlanningLayoutDto }): Promise<PlanningResult>
-  /** Os prompts de _handoff/ do planejamento, na ordem em que foram gravados. */
-  planningListHandoffs(req: PlanningRef): Promise<PlanningResult<{ handoffs: PlanningHandoffDto[] }>>
+  /** Os prompts de _handoff/ do planejamento, na ordem em que foram gravados,
+   *  com os registros de _handoff/enviados.json. */
+  planningListHandoffs(req: PlanningRef): Promise<PlanningResult<PlanningHandoffListDto>>
   /** Grava um prompt em _handoff/AAAA-MM-DD-NN.md; devolve o nome do arquivo novo. */
   planningWriteHandoff(req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>>
+  /** Registra prompts como enviados/substituídos/marcados em _handoff/enviados.json;
+   *  devolve todos os registros depois da gravação. */
+  planningMarkHandoffsSent(
+    req: PlanningRef & { entries: PlanningHandoffSentMark[] }
+  ): Promise<PlanningResult<{ sent: PlanningHandoffSentDto[] }>>
   /** Importa arquivos para <plano>/midia/ (nome saneado): arrastado do Explorer vai
    *  por `{ path }` (getPathForFile), colado vai por `{ name, data }` em base64.
    *  Devolve as mídias novas, na ordem de `files`. */
@@ -281,15 +300,18 @@ export interface AgentCodeApi {
   outboxReplace(conversationId: string, items: Array<{ id: string; payload: unknown }>): Promise<{ ok: boolean }>
   /** Botão "agora": põe a mensagem da fila no turno em andamento, sem
    *  interromper. `ok: false` = não havia turno (ou era uma troca de conta): a
-   *  mensagem continua na fila. */
+   *  mensagem continua na fila. `gone: true` = o item é de uma tarefa MCP que
+   *  não está mais viva (regra 1): ele sai da fila, com aviso. */
   injectNow(
     convId: string,
     text: string,
     images?: ImageAttachment[],
     files?: FileAttachment[],
     fileRefs?: FileRefAttachment[],
-    messageUuid?: string
-  ): Promise<{ ok: boolean }>
+    messageUuid?: string,
+    /** Tarefa do MCP de entrada do item clicado; ausente = mensagem do usuário. */
+    mcpTaskId?: string
+  ): Promise<{ ok: boolean; reason?: string; gone?: boolean }>
   sendMessage(
     convId: string,
     text: string,
@@ -299,7 +321,10 @@ export interface AgentCodeApi {
     /** Stable SDK uuid used to correlate an interrupt receipt with this bubble. */
     messageUuid?: string,
     /** Internal recovery prompts must not start a new loop activation. */
-    messageKind?: AgentMessageKind
+    messageKind?: AgentMessageKind,
+    /** Tarefa do MCP de entrada que este envio leva (o item da fila, ou o reenvio
+     *  dela); ausente = mensagem do usuário, que nunca herda nada de tarefa. */
+    mcpTaskId?: string
   ): Promise<void>
   interrupt(convId: string): Promise<AgentInterruptResult>
   /** Toggle "allow all" on a conversation's running session. */
@@ -373,6 +398,15 @@ export interface AgentCodeApi {
   buildRemoteApk(): Promise<{ ok: boolean; apkPath?: string; message: string }>
   /** A command arrived from a phone — dispatch it into its conversation. */
   onRemoteInbound(cb: (m: RemoteInboundMsg) => void): () => void
+  /** MCP de entrada: uma tarefa para despachar (criando a conversa, se preciso). */
+  onMcpInbound(cb: (m: McpInboundMsg) => void): () => void
+  /** MCP de entrada: tirar da fila o item de uma tarefa cancelada. */
+  onMcpCancelQueued(cb: (m: McpCancelQueuedMsg) => void): () => void
+  /** MCP de entrada: o ouvinte está montado e as conversas carregadas. */
+  mcpRendererReady(): Promise<void>
+  /** MCP de entrada: a tarefa não chegou à conversa (erro curto e legível) ou,
+   *  com `cancelada`, saiu da fila sem rodar (Stop da conversa, lixeira do item). */
+  mcpTaskFailed(taskId: string, erro: string, cancelada?: boolean): Promise<void>
   /** A phone toggled the global "Permitir tudo" switch — apply it on the PC. */
   onRemoteSetSkipPerms(cb: (m: { on: boolean }) => void): () => void
   /** A phone asked to change a conversation's model/effort — apply it on the PC. */

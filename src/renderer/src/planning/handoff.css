@@ -211,3 +211,10 @@
 .pl-handoff-saved .btn {
   align-self: flex-start;
 }
+/* Ação por linha (Marcar como já enviado, Incluir, Abrir conversa): à direita. */
+.pl-handoff-files li .pl-handoff-row-act { flex: none; margin-left: auto; }
+.pl-handoff-files li code { flex: none; white-space: nowrap; }
+.pl-handoff-files li .pl-handoff-when,
+.pl-handoff-files li .pl-handoff-gone { flex: none; }
+.pl-handoff-files li .pl-handoff-gone { margin-left: auto; font-style: italic; }
+.pl-handoff-outside { margin-top: 4px; padding-top: 10px; border-top: 1px dashed var(--line); }

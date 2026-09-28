@@ -726,6 +726,8 @@ export async function applyPostgresMigrations(
     // teto existe pelo lock abaixo — sem ele, uma migração já em andamento noutra
     // máquina segura a abertura do app indefinidamente.
     await client.query(`SET LOCAL statement_timeout = ${MIGRATION_STATEMENT_TIMEOUT_MS}`)
+    // Idem para o lock_timeout da sessão do pool, mais curto que este teto.
+    await client.query(`SET LOCAL lock_timeout = ${MIGRATION_STATEMENT_TIMEOUT_MS}`)
     await client.query('SELECT pg_advisory_xact_lock($1)', [7_420_260_829])
     await client.query(MIGRATION_TABLE)
     const existing = await client.query<{ version: number; checksum: string }>(

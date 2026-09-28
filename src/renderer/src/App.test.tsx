@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, cleanup, act, configure, within } f
 import { UiProvider } from './ui/UiProvider'
 import { App, autoPromptFor, expireResetUsage, runningModel } from './App'
 import type { AgentEventMsg, ChatEvent, PoProviderDiagnosticMsg } from '@shared/ipc'
+import { MCP_TASK_GONE_MARK, MCP_TASK_GONE_WARNING, NO_LIVE_SESSION_MARK } from '@shared/mcpInbound'
 import type { TodoItem } from './types'
 import { makePlan } from './planning/planningTestUtils'
 
@@ -318,6 +319,331 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     expect(screen.queryByText(/Na fila/)).toBeNull()
   })
 
+  it('envio da fila que falha (troca de modelo da tarefa MCP): erro na bolha e na tarefa, conversa livre, a fila segue', async () => {
+    let mcpCb: ((m: unknown) => void) | null = null
+    const mcpTaskFailed = vi.fn(async () => undefined)
+    Object.assign(window.api as object, {
+      onMcpInbound: vi.fn((cb: (m: unknown) => void) => {
+        mcpCb = cb
+        return () => {}
+      }),
+      mcpRendererReady: vi.fn(async () => undefined),
+      mcpTaskFailed
+    })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(partial)
+    // A tarefa do Forgia chega com a conversa ocupada: vai para a fila, marcada.
+    await act(async () => {
+      mcpCb?.({ taskId: 't-mcp', convId: 'c1', text: 'tarefa do forgia' })
+    })
+    await send('msg3')
+    expect(api.sendMessage).toHaveBeenCalledTimes(1)
+    api.sendMessage.mockRejectedValueOnce(new Error('Não consegui trocar o modelo da conversa: sessão não subiu'))
+    await emit(result)
+    // A tarefa falhou ao sair da fila; a msg3 sai logo depois (a fila não trava).
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
+    expect(String(api.sendMessage.mock.calls[1][1])).toContain('tarefa do forgia')
+    expect(String(api.sendMessage.mock.calls[2][1])).toContain('msg3')
+    expect(mcpTaskFailed).toHaveBeenCalledWith('t-mcp', expect.stringMatching(/trocar o modelo/))
+    expect(screen.getAllByText(/trocar o modelo/).length).toBeGreaterThan(0)
+    // msg3 está rodando; terminou, a conversa fica livre (não "ocupada para sempre").
+    await emit({ ...result, id: 'r3' })
+    await send('msg4')
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(4))
+    expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
+
+  it('"agora" recusado pelo main (tarefa MCP de outro modelo): o item volta à posição original e a ordem das tarefas se mantém', async () => {
+    let mcpCb: ((m: unknown) => void) | null = null
+    const injectNow = vi.fn(async () => ({ ok: false, reason: 'A tarefa pede o modelo gpt-6-sol: ela continua na fila.' }))
+    Object.assign(window.api as object, {
+      onMcpInbound: vi.fn((cb: (m: unknown) => void) => {
+        mcpCb = cb
+        return () => {}
+      }),
+      mcpRendererReady: vi.fn(async () => undefined),
+      mcpTaskFailed: vi.fn(async () => undefined),
+      injectNow
+    })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(partial)
+    await act(async () => {
+      mcpCb?.({ taskId: 't1', convId: 'c1', text: 'T1 opus', model: 'claude-opus-5-5' })
+      mcpCb?.({ taskId: 't2', convId: 'c1', text: 'T2 gpt', model: 'gpt-6-sol' })
+    })
+    const queued = (): string[] => Array.from(document.querySelectorAll('.queue-text')).map((e) => e.textContent ?? '')
+    expect(queued()).toEqual(['T1 opus', 'T2 gpt'])
+    // "agora" na T2: o main recusa (outro modelo) — ela NÃO passa na frente da T1.
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'agora' })[1])
+    })
+    // O "agora" leva o id da tarefa do item clicado (o main decide pelo modelo DELA).
+    await waitFor(() =>
+      expect(injectNow).toHaveBeenCalledWith('c1', 'T2 gpt', expect.anything(), expect.anything(), expect.anything(), expect.any(String), 't2')
+    )
+    await waitFor(() => expect(queued()).toEqual(['T1 opus', 'T2 gpt']))
+    expect(screen.getAllByText(/gpt-6-sol/).length).toBeGreaterThan(0)
+    // A fila sai na ordem do chamador: T1 e depois T2, cada envio com o id da sua tarefa.
+    await emit(result)
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    expect(String(api.sendMessage.mock.calls[1][1])).toBe('T1 opus')
+    expect(api.sendMessage.mock.calls[1][7]).toBe('t1')
+    await emit({ ...result, id: 'r2' })
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
+    expect(String(api.sendMessage.mock.calls[2][1])).toBe('T2 gpt')
+    expect(api.sendMessage.mock.calls[2][7]).toBe('t2')
+  })
+
+  it('tarefa MCP: o envio leva o id; erro no turno dela NÃO agenda retomada (regra 2); o "Tentar de novo" leva o id e a recusa do main vira aviso (regra 1); o usuário de texto igual vai sem id', async () => {
+    let mcpCb: ((m: unknown) => void) | null = null
+    Object.assign(window.api as object, {
+      onMcpInbound: vi.fn((cb: (m: unknown) => void) => {
+        mcpCb = cb
+        return () => {}
+      }),
+      mcpRendererReady: vi.fn(async () => undefined),
+      mcpTaskFailed: vi.fn(async () => undefined)
+    })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    expect(api.sendMessage.mock.calls[0][7]).toBeUndefined()
+    await emit(result)
+    // Conversa livre: a tarefa sai direto, com o id dela.
+    await act(async () => {
+      mcpCb?.({ taskId: 't-mcp', convId: 'c1', text: 'tarefa do forgia' })
+    })
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    expect(api.sendMessage.mock.calls[1][7]).toBe('t-mcp')
+    // Um único 529: sem cartão de recuperação, sem retomada — a conversa fica parada.
+    await emit({ kind: 'result', id: 'r529', isError: true, text: 'API Error: 529 overloaded', durationMs: 1 })
+    expect(document.querySelector('.recovery-card')).toBeNull()
+    expect(screen.getAllByText(/Tarefa do Forgia terminou em erro/).length).toBeGreaterThan(0)
+    // "Tentar de novo": leva o id; o main recusa (a tarefa já terminou) e a tela avisa.
+    api.sendMessage.mockRejectedValueOnce(
+      new Error(`Error invoking remote method 'agent:send': Error: ${MCP_TASK_GONE_MARK} Esta tarefa já terminou.`)
+    )
+    const retryButtonEl = (await screen.findByText(/Tentar de novo/)).closest('button') as HTMLButtonElement
+    await act(async () => {
+      fireEvent.click(retryButtonEl)
+    })
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
+    expect(String(api.sendMessage.mock.calls[2][1])).toBe('tarefa do forgia')
+    expect(api.sendMessage.mock.calls[2][7]).toBe('t-mcp')
+    await waitFor(() => expect(screen.getAllByText(MCP_TASK_GONE_WARNING).length).toBeGreaterThan(0))
+    // Nenhum envio foi retomada automática, nem saiu sem o id.
+    expect(api.sendMessage.mock.calls.some((c) => c[6] === 'recovery')).toBe(false)
+    expect(api.sendMessage.mock.calls.filter((c) => String(c[1]) === 'tarefa do forgia').every((c) => c[7] === 't-mcp')).toBe(true)
+    // O usuário digita o MESMO texto: é mensagem dele, sem id.
+    await send('tarefa do forgia')
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(4))
+    expect(api.sendMessage.mock.calls[3][7]).toBeUndefined()
+  })
+
+  it('regra 2: limite de uso no turno da tarefa MCP não agenda retomada; na mensagem do usuário, agenda como hoje', async () => {
+    let mcpCb: ((m: unknown) => void) | null = null
+    Object.assign(window.api as object, {
+      onMcpInbound: vi.fn((cb: (m: unknown) => void) => {
+        mcpCb = cb
+        return () => {}
+      }),
+      mcpRendererReady: vi.fn(async () => undefined),
+      mcpTaskFailed: vi.fn(async () => undefined)
+    })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(result)
+    await act(async () => {
+      mcpCb?.({ taskId: 't-gpt', convId: 'c1', text: 'tarefa gpt', model: 'gpt-6-sol' })
+    })
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    await emit({ kind: 'error', id: 'e-limite', text: "Claude AI usage limit reached|1999999999", usageExhausted: true })
+    expect(document.querySelector('.recovery-card')).toBeNull()
+    // Mensagem do usuário com o mesmo erro: a retomada automática de hoje continua.
+    // (O erro da sessão desconectou a conversa: o envio reconecta primeiro.)
+    await send('msg do usuário')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
+    expect(api.sendMessage.mock.calls[2][7]).toBeUndefined()
+    await emit({ kind: 'error', id: 'e-limite-2', text: "Claude AI usage limit reached|1999999999", usageExhausted: true })
+    await waitFor(() => expect(document.querySelector('.recovery-card')).not.toBeNull())
+  })
+
+  it('main sem sessão viva no envio: erro na bolha e o "Tentar de novo" reconecta antes de enviar', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(result)
+    api.sendMessage.mockRejectedValueOnce(new Error(`${NO_LIVE_SESSION_MARK} A conversa não tem sessão ativa.`))
+    await send('msg2')
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    const retry = (await screen.findByText(/Tentar de novo/)).closest('button') as HTMLButtonElement
+    await act(async () => {
+      fireEvent.click(retry)
+    })
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
+    expect(String(api.sendMessage.mock.calls[2][1])).toBe('msg2')
+  })
+
+  it('regra 2 sem travar a fila: turno de tarefa MCP em erro não é retomado, mas a próxima tarefa e a mensagem seguinte saem', async () => {
+    let mcpCb: ((m: unknown) => void) | null = null
+    Object.assign(window.api as object, {
+      onMcpInbound: vi.fn((cb: (m: unknown) => void) => {
+        mcpCb = cb
+        return () => {}
+      }),
+      mcpRendererReady: vi.fn(async () => undefined),
+      mcpTaskFailed: vi.fn(async () => undefined)
+    })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(result)
+    await act(async () => {
+      mcpCb?.({ taskId: 't1', convId: 'c1', text: 'tarefa 1' })
+    })
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    // Chegam, com a tarefa 1 rodando: a tarefa 2 e uma mensagem do usuário (fila).
+    await act(async () => {
+      mcpCb?.({ taskId: 't2', convId: 'c1', text: 'tarefa 2' })
+    })
+    await send('depois das tarefas')
+    expect(api.sendMessage).toHaveBeenCalledTimes(2)
+    // Tarefa 1 termina em 529: sem retomada, e a tarefa 2 sai já, com o id dela.
+    await emit({ kind: 'result', id: 'r529-t1', isError: true, text: 'API Error: 529 overloaded', durationMs: 1 })
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
+    expect(String(api.sendMessage.mock.calls[2][1])).toBe('tarefa 2')
+    expect(api.sendMessage.mock.calls[2][7]).toBe('t2')
+    expect(document.querySelector('.recovery-card')).toBeNull()
+    // Tarefa 2 termina com erro de sessão: a conversa reconecta e a mensagem do usuário sai.
+    await emit({ kind: 'error', id: 'e-t2', text: 'sessão caiu', retryable: false })
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(4))
+    expect(String(api.sendMessage.mock.calls[3][1])).toBe('depois das tarefas')
+    expect(api.sendMessage.mock.calls[3][7]).toBeUndefined()
+    // Nenhum envio foi retomada automática.
+    expect(api.sendMessage.mock.calls.some((c) => c[6] === 'recovery')).toBe(false)
+  })
+
+  it('regra 1: item da fila com tarefa que não está viva (fila restaurada) — sai com aviso, sem "Tentar de novo", e a fila segue', async () => {
+    let mcpCb: ((m: unknown) => void) | null = null
+    const mcpTaskFailed = vi.fn(async () => undefined)
+    Object.assign(window.api as object, {
+      onMcpInbound: vi.fn((cb: (m: unknown) => void) => {
+        mcpCb = cb
+        return () => {}
+      }),
+      mcpRendererReady: vi.fn(async () => undefined),
+      mcpTaskFailed
+    })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(partial)
+    await act(async () => {
+      mcpCb?.({ taskId: 't-morto', convId: 'c1', text: 'tarefa velha' })
+    })
+    await send('msg3')
+    api.sendMessage.mockRejectedValueOnce(new Error(`${MCP_TASK_GONE_MARK} Esta tarefa já terminou.`))
+    await emit(result)
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
+    expect(api.sendMessage.mock.calls[1][7]).toBe('t-morto')
+    expect(String(api.sendMessage.mock.calls[2][1])).toContain('msg3')
+    await waitFor(() => expect(screen.getAllByText(MCP_TASK_GONE_WARNING).length).toBeGreaterThan(0))
+    // A bolha da tarefa saiu (não fica erro com "Tentar de novo") e a tarefa não é reportada de novo.
+    expect(screen.queryByText('tarefa velha')).toBeNull()
+    expect(mcpTaskFailed).not.toHaveBeenCalled()
+  })
+
+  it('regra 1: "agora" com id morto — o item sai da fila (não volta) e a tela avisa', async () => {
+    let mcpCb: ((m: unknown) => void) | null = null
+    const injectNow = vi.fn(async () => ({ ok: false, gone: true, reason: `${MCP_TASK_GONE_MARK} já terminou` }))
+    Object.assign(window.api as object, {
+      onMcpInbound: vi.fn((cb: (m: unknown) => void) => {
+        mcpCb = cb
+        return () => {}
+      }),
+      mcpRendererReady: vi.fn(async () => undefined),
+      mcpTaskFailed: vi.fn(async () => undefined),
+      injectNow
+    })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(partial)
+    await act(async () => {
+      mcpCb?.({ taskId: 't-morto', convId: 'c1', text: 'tarefa velha' })
+    })
+    const queued = (): string[] => Array.from(document.querySelectorAll('.queue-text')).map((e) => e.textContent ?? '')
+    expect(queued()).toEqual(['tarefa velha'])
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'agora' }))
+    })
+    await waitFor(() => expect(injectNow).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.getAllByText(MCP_TASK_GONE_WARNING).length).toBeGreaterThan(0))
+    expect(queued()).toEqual([])
+    // O fim do turno não manda nada: a fila está vazia.
+    await emit(result)
+    expect(api.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
   it('a fila é gravada no banco a cada mudança (entra ao enfileirar, sai ao despachar)', async () => {
     api.outboxList = vi.fn(async () => [])
     api.outboxReplace = vi.fn(async () => ({ ok: true }))
@@ -464,18 +790,20 @@ describe('App — anexo por referência (fileRefs: caminho/link colado)', () => 
     )
     await screen.findByPlaceholderText(/Mensagem para o Claude/i)
     await pasteLine('C:\\pasta\\relatorio.pdf')
-    await waitFor(() => expect(screen.getByText('relatorio.pdf')).toBeTruthy())
+    await waitFor(() => expect(screen.getByAltText(/Arquivo anexado: relatorio\.pdf/)).toBeTruthy())
 
     fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
 
-    const [, , images, files, fileRefs] = api.sendMessage.mock.calls[0]
+    const [, text, images, files, fileRefs] = api.sendMessage.mock.calls[0]
+    // O anexo entra no ponto do texto: o agente recebe o marcador e o rótulo.
+    expect(text).toBe('{{midia:1}}')
     expect(images).toEqual([])
     expect(files).toEqual([]) // o caminho local NÃO passa pelo fluxo de FileAttachment (base64)
     expect(fileRefs).toEqual([
-      { name: 'relatorio.pdf', path: 'C:\\pasta\\relatorio.pdf', mediaType: 'application/pdf', size: 123456 }
+      { name: 'relatorio.pdf', path: 'C:\\pasta\\relatorio.pdf', mediaType: 'application/pdf', size: 123456, label: 'midia:1 = relatorio.pdf' }
     ])
   })
 
@@ -500,7 +828,7 @@ describe('App — anexo por referência (fileRefs: caminho/link colado)', () => 
     await emit(partial) // turno ainda rodando
 
     await pasteLine('C:\\pasta\\notas.txt')
-    await waitFor(() => expect(screen.getByText('notas.txt')).toBeTruthy())
+    await waitFor(() => expect(screen.getByAltText(/Arquivo anexado: notas\.txt/)).toBeTruthy())
     fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
     expect(screen.getByText(/Na fila/)).toBeTruthy()
     expect(api.sendMessage).toHaveBeenCalledTimes(1) // ainda não despachou
@@ -509,7 +837,7 @@ describe('App — anexo por referência (fileRefs: caminho/link colado)', () => 
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
     const [, , , , fileRefs] = api.sendMessage.mock.calls[1]
     expect(fileRefs).toEqual([
-      { name: 'notas.txt', path: 'C:\\pasta\\notas.txt', mediaType: 'text/plain', size: 42 }
+      { name: 'notas.txt', path: 'C:\\pasta\\notas.txt', mediaType: 'text/plain', size: 42, label: 'midia:1 = notas.txt' }
     ])
     expect(screen.queryByText(/Na fila/)).toBeNull()
   })
@@ -530,7 +858,7 @@ describe('App — anexo por referência (fileRefs: caminho/link colado)', () => 
     )
     await screen.findByPlaceholderText(/Mensagem para o Claude/i)
     await pasteLine('C:\\pasta\\dados.csv')
-    await waitFor(() => expect(screen.getByText('dados.csv')).toBeTruthy())
+    await waitFor(() => expect(screen.getByAltText(/Arquivo anexado: dados\.csv/)).toBeTruthy())
     fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
@@ -556,7 +884,7 @@ describe('App — anexo por referência (fileRefs: caminho/link colado)', () => 
 
     const [, , , , fileRefsOnRetry] = api.sendMessage.mock.calls[1]
     expect(fileRefsOnRetry).toEqual([
-      { name: 'dados.csv', path: 'C:\\pasta\\dados.csv', mediaType: 'text/csv', size: 999 }
+      { name: 'dados.csv', path: 'C:\\pasta\\dados.csv', mediaType: 'text/csv', size: 999, label: 'midia:1 = dados.csv' }
     ])
   })
 })
@@ -1982,6 +2310,175 @@ describe('App — abertura em etapas (projetos em segundo plano)', () => {
     await waitFor(() => expect(api.countConversationsByProject).toHaveBeenCalled())
     expect(document.querySelector('.storage-recovery')).toBeNull()
   })
+
+  it('relê as contas Claude quando o banco sobe — a leitura do mount só via a conta padrão', async () => {
+    const handlers = new Set<(status: unknown) => void>()
+    const booting = {
+      backend: 'postgres',
+      state: 'booting',
+      writable: false,
+      installationId: '00000000-0000-4000-8000-000000000001',
+      targetDatabase: 'agent-code',
+      hasPassword: true
+    }
+    api.getStorageStatus.mockImplementation(async () => booting)
+    api.onStorageStatusChanged.mockImplementation((handler: (status: unknown) => void) => {
+      handlers.add(handler)
+      return () => handlers.delete(handler)
+    })
+    api.claudeAccountsList = vi.fn(async () => [])
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+
+    await waitFor(() => expect(api.claudeAccountsList).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      for (const handler of [...handlers]) handler({ ...booting, state: 'postgres-ready', writable: true })
+    })
+    await waitFor(() => expect(api.claudeAccountsList).toHaveBeenCalledTimes(2))
+  })
+
+  it('banco fora na abertura: avisa a reconexão automática e recarrega sozinho quando o main reconecta', async () => {
+    const handlers = new Set<(status: unknown) => void>()
+    const offline = {
+      backend: 'postgres',
+      state: 'postgres-offline',
+      writable: false,
+      installationId: '00000000-0000-4000-8000-000000000001',
+      targetDatabase: 'agent-code',
+      hasPassword: true,
+      error: { code: 'STORAGE_OFFLINE', message: 'PostgreSQL indisponível.', retryable: true }
+    }
+    api.getStorageStatus.mockImplementation(async () => offline)
+    api.onStorageStatusChanged.mockImplementation((handler: (status: unknown) => void) => {
+      handlers.add(handler)
+      return () => handlers.delete(handler)
+    })
+
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+
+    expect(await screen.findByText(/Tentando reconectar automaticamente/)).toBeTruthy()
+    expect(api.appReloadReady).not.toHaveBeenCalled()
+    // Rede de volta: pede a tentativa na hora (sem rascunho = mesma tentativa da automática).
+    api.retryStorage.mockClear()
+    await act(async () => {
+      window.dispatchEvent(new Event('online'))
+    })
+    expect(api.retryStorage).toHaveBeenCalledTimes(1)
+    expect(api.retryStorage).toHaveBeenCalledWith()
+    await act(async () => {
+      for (const handler of [...handlers]) handler({ ...offline, state: 'postgres-ready', writable: true, error: undefined })
+    })
+    // A primeira leitura tinha falhado: sair do erro sem recarregar deixaria um app vazio.
+    await waitFor(() => expect(api.appReloadReady).toHaveBeenCalled())
+  })
+
+  it('"Tentar novamente" que dá certo pede um reload só (o retorno do botão e o status writable chegam os dois)', async () => {
+    const handlers = new Set<(status: unknown) => void>()
+    const offline = {
+      backend: 'postgres',
+      state: 'postgres-offline',
+      writable: false,
+      installationId: '00000000-0000-4000-8000-000000000001',
+      targetDatabase: 'agent-code',
+      hasPassword: true,
+      error: { code: 'STORAGE_OFFLINE', message: 'PostgreSQL indisponível.', retryable: true }
+    }
+    api.getStorageStatus.mockImplementation(async () => offline)
+    api.onStorageStatusChanged.mockImplementation((handler: (status: unknown) => void) => {
+      handlers.add(handler)
+      return () => handlers.delete(handler)
+    })
+    // O main publica o status writable antes de a invocação responder.
+    api.retryStorage.mockImplementation(async () => {
+      for (const handler of [...handlers]) handler({ ...offline, state: 'postgres-ready', writable: true, error: undefined })
+    })
+    const reloads = vi.fn()
+    window.addEventListener('agent-code-request-reload', reloads)
+    try {
+      render(
+        <UiProvider>
+          <App />
+        </UiProvider>
+      )
+      fireEvent.click(await screen.findByRole('button', { name: 'Tentar novamente' }))
+      await waitFor(() => expect(api.appReloadReady).toHaveBeenCalled())
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+      expect(reloads).toHaveBeenCalledTimes(1)
+      expect(api.appReloadReady).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener('agent-code-request-reload', reloads)
+    }
+  })
+})
+
+describe('App — gravação que atravessa uma queda do banco', () => {
+  it('o que falhou na queda é regravado quando o status volta a writable, sem nova edição e sem regravar o que já foi salvo', async () => {
+    const handlers = new Set<(status: unknown) => void>()
+    const publish = (status: unknown): void => {
+      for (const handler of [...handlers]) handler(status)
+    }
+    const ready = {
+      backend: 'postgres',
+      state: 'postgres-ready',
+      writable: true,
+      installationId: '00000000-0000-4000-8000-000000000001',
+      targetDatabase: 'agent-code',
+      hasPassword: true
+    }
+    const offline = {
+      ...ready,
+      state: 'postgres-offline',
+      writable: false,
+      error: { code: 'STORAGE_OFFLINE', message: 'PostgreSQL indisponível.', retryable: true }
+    }
+    api.getStorageStatus.mockImplementation(async () => ready)
+    api.onStorageStatusChanged.mockImplementation((handler: (status: unknown) => void) => {
+      handlers.add(handler)
+      return () => handlers.delete(handler)
+    })
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
+    await act(async () => publish(ready))
+
+    // O banco caiu: a gravação da resposta que chegou é recusada.
+    const store = api.upsertConversation.getMockImplementation()!
+    api.upsertConversation.mockRejectedValue(new Error('[agent-code-storage-error:STORAGE_OFFLINE:retryable] offline'))
+    await send('mensagem durante a queda')
+    const withDraft = (): boolean =>
+      api.upsertConversation.mock.calls.some((call: unknown[]) => JSON.stringify(call[0]).includes('mensagem durante a queda'))
+    // A tentativa com a mensagem foi feita — e recusada.
+    await waitFor(() => expect(withDraft()).toBe(true), { timeout: 3_000 })
+    await act(async () => publish(offline))
+
+    // Volta: regrava sozinho o que ficou pendente.
+    api.upsertConversation.mockReset()
+    api.upsertConversation.mockImplementation(store)
+    await act(async () => publish(ready))
+    await waitFor(() => expect(api.upsertConversation).toHaveBeenCalledTimes(1))
+    expect(withDraft()).toBe(true)
+
+    // Outra queda e volta sem nada pendente: nada é regravado (nem duplicado).
+    await act(async () => publish(offline))
+    await act(async () => publish(ready))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(api.upsertConversation).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('App — diagnóstico seguro do failover do PO', () => {
@@ -2059,24 +2556,52 @@ describe('App — modo Automático', () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
     await waitFor(() => expect(selectModel(container)).toBeTruthy())
 
-    const auto = Array.from(selectModel(container).options).find((o) => o.value === 'auto')
-    expect(auto?.textContent).toBe('Automático')
+    // Com o TypeSafe pronto (resposta assíncrona do boot) o Automático entra na frente.
+    await waitFor(() => expect(selectModel(container).options[0]?.value).toBe('auto'))
+    expect(selectModel(container).options[0].textContent).toBe('Automático')
   })
 
-  it('sem TypeSafe configurado, selecionar Automático não muda o modelo e abre Configurações', async () => {
+  it('sem TypeSafe configurado, as opções Automático (modelo e esforço) não aparecem', async () => {
     api.isTypeSafeConfigured.mockResolvedValue(false)
     const { container } = render(<UiProvider><App /></UiProvider>)
     await waitFor(() => expect(selectModel(container)).toBeTruthy())
-    const before = selectModel(container).value
-    expect(before).not.toBe('auto')
+    await waitFor(() => expect(api.isTypeSafeConfigured).toHaveBeenCalled())
+    await act(async () => {})
 
-    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
+    expect(Array.from(selectModel(container).options).map((o) => o.value)).not.toContain('auto')
+    fireEvent.click(container.querySelector('.effort-trigger') as HTMLElement)
+    const slider = screen.getByRole('slider', { name: 'Esforço' }) as HTMLInputElement
+    expect(slider.min).toBe('0')
+    // Posição 0 é Baixo: não há Automático à esquerda.
+    fireEvent.change(slider, { target: { value: '0' } })
+    await waitFor(() => expect(slider.getAttribute('aria-valuetext')).toBe('Baixo'))
+  })
 
-    expect(
-      await screen.findByText('Ative o TypeSafe e informe a API key nas Configurações para usar o modo Automático.')
-    ).toBeTruthy()
-    expect(selectModel(container).value).toBe(before)
-    expect(await screen.findByRole('dialog')).toBeTruthy()
+  it('sem TypeSafe, conversa com `auto` gravado continua em Automático (nada troca a escolha salva)', async () => {
+    api.isTypeSafeConfigured.mockResolvedValue(false)
+    const conv = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')[0]
+    localStorage.setItem(
+      'agentcode.conversations.v1',
+      JSON.stringify([{ ...conv, model: 'auto', effort: 'auto', effortSplit: true }])
+    )
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(selectModel(container)).toBeTruthy())
+    await waitFor(() => expect(api.isTypeSafeConfigured).toHaveBeenCalled())
+    await act(async () => {})
+
+    expect(selectModel(container).value).toBe('auto')
+    expect(container.querySelector('.effort-trigger')?.textContent).toBe('Esforço Auto')
+  })
+
+  it('modelo sem esforço (Ollama) esconde o controle de esforço', async () => {
+    const conv = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')[0]
+    localStorage.setItem(
+      'agentcode.conversations.v1',
+      JSON.stringify([{ ...conv, model: 'gpt-oss:120b-cloud', effort: 'high', effortSplit: true }])
+    )
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(selectModel(container)?.value).toBe('gpt-oss:120b-cloud'))
+    expect(container.querySelector('.effort-picker')).toBeNull()
   })
 
   it('a mensagem viaja junto do start para o main decidir o par do turno', async () => {
@@ -2306,7 +2831,8 @@ describe('App — conversa de planejamento', () => {
     // O seletor do chat edita o modelo do Agent Manager (a config de planejamento),
     // com o Automático; Econômico e Loop não existem para o Manager.
     const select = container.querySelector('.pl-chat select.model-select') as HTMLSelectElement
-    expect([...select.options].map((o) => o.value)).toContain('auto')
+    // Com o TypeSafe pronto (assíncrono no boot); sem ele o Automático sai da lista.
+    await waitFor(() => expect([...select.options].map((o) => o.value)).toContain('auto'))
     expect(screen.queryByRole('button', { name: /Econômico/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Loop/ })).toBeNull()
     fireEvent.change(select, { target: { value: 'claude-sonnet-5' } })
@@ -2347,6 +2873,27 @@ describe('App — conversa de planejamento', () => {
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
     // Sem revalidação por mensagem: a sessão do Manager é a mesma.
     expect(api.startAgent).toHaveBeenCalledTimes(1)
+  })
+
+  it('esforço do Manager em Automático: o seletor mostra "Auto · Alto" depois que a sessão sobe', async () => {
+    const baseConfig = await (api.getConfig as () => Promise<Record<string, unknown>>)()
+    api.getConfig.mockResolvedValue({ ...baseConfig, planning: { model: 'auto', effort: 'auto' } })
+    seedPlanning()
+    addPlanningApi()
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await screen.findByRole('heading', { name: 'Checkout com Pix' })
+    const effortTrigger = (): string | null | undefined =>
+      container.querySelector('.pl-chat .effort-trigger')?.textContent
+    await waitFor(() => expect(effortTrigger()).toBe('Esforço Auto'))
+
+    await send('quero planejar o checkout')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await emit(
+      { kind: 'system', sessionId: 's1', model: 'claude-fable-5-1', cwd: '/proj', tools: [], effort: 'high' },
+      'p1'
+    )
+    await waitFor(() => expect(effortTrigger()).toBe('Esforço Auto · Alto'))
   })
 
   it('regressão: a conversa normal continua com o ChatPanel + painel da direita e sem `planning`', async () => {
@@ -2421,8 +2968,9 @@ describe('App — enviar para implementação (handoff)', () => {
     JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
 
   /** planning:* com um _handoff/ em memória e o planning:changed controlável. */
-  function addPlanningApi(): { handoffs: Handoff[]; changed: () => Promise<void> } {
+  function addPlanningApi(): { handoffs: Handoff[]; sent: Array<Record<string, unknown>>; changed: () => Promise<void> } {
     const handoffs: Handoff[] = []
+    const sent: Array<Record<string, unknown>> = []
     const listeners = new Set<(m: { projectCwd: string; slug: string }) => void>()
     const plan = makePlan({
       slug: 'checkout',
@@ -2433,7 +2981,11 @@ describe('App — enviar para implementação (handoff)', () => {
       planningOpen: vi.fn(async () => ({ ok: true, plan })),
       planningClose: vi.fn(async () => ({ ok: true })),
       planningList: vi.fn(async () => ({ ok: true, slugs: ['checkout'] })),
-      planningListHandoffs: vi.fn(async () => ({ ok: true, handoffs: structuredClone(handoffs) })),
+      planningListHandoffs: vi.fn(async () => ({ ok: true, handoffs: structuredClone(handoffs), sent: structuredClone(sent) })),
+      planningMarkHandoffsSent: vi.fn(async (req: { entries: Array<Record<string, unknown>> }) => {
+        sent.push(...req.entries.map((e) => ({ ...e, enviadoEm: '2026-09-22T12:00:00.000Z' })))
+        return { ok: true, sent: structuredClone(sent) }
+      }),
       planningWriteHandoff: vi.fn(async (req: { conteudo: string }) => {
         const name = `2026-09-22-${String(handoffs.length + 1).padStart(2, '0')}.md`
         handoffs.push({ name, createdAt: Date.now(), content: req.conteudo })
@@ -2449,7 +3001,7 @@ describe('App — enviar para implementação (handoff)', () => {
         for (const cb of [...listeners]) cb({ projectCwd: '/proj', slug: 'checkout' })
       })
     }
-    return { handoffs, changed }
+    return { handoffs, sent, changed }
   }
 
   function seed(extra: Record<string, unknown>[] = [planConv], activeId = 'p1'): void {
@@ -2476,7 +3028,7 @@ describe('App — enviar para implementação (handoff)', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Enviar para implementação' }))
     const dialog = await screen.findByRole('dialog')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Pedir ao Agent Manager' }))
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Pedir ao Agent Manager' }))
 
     // O pedido vai para a conversa de planejamento (Agent Manager), pelo dispatch.
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
@@ -2522,15 +3074,28 @@ describe('App — enviar para implementação (handoff)', () => {
     await waitFor(() =>
       expect(stored().find((c) => c.id === opts.convId)).toMatchObject({
         title: 'Implementação: Checkout com Pix',
-        handoffSlug: 'checkout'
+        handoffSlug: 'checkout',
+        // A conversa aponta o plano e os arquivos que recebeu (o editado, não o original).
+        handoffPlan: { projectCwd: '/proj', slug: 'checkout', titulo: 'Checkout com Pix', prompts: ['2026-09-22-03.md', '2026-09-22-02.md'] }
       })
     )
+    // enviados.json: o original ficou substituído; os dois entregues, ligados à conversa.
+    await waitFor(() => expect(fs.sent).toHaveLength(3))
+    expect(fs.sent).toEqual([
+      expect.objectContaining({ nome: '2026-09-22-01.md', substituidoPor: '2026-09-22-03.md' }),
+      expect.objectContaining({ nome: '2026-09-22-03.md', conversaId: opts.convId, conversaTitulo: 'Implementação: Checkout com Pix' }),
+      expect.objectContaining({ nome: '2026-09-22-02.md', conversaId: opts.convId })
+    ])
 
     // O 2º prompt só sai quando o 1º turno termina (fila da conversa, na ordem).
     expect(api.sendMessage).toHaveBeenCalledTimes(2)
     await emit(result, opts.convId)
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
     expect(api.sendMessage.mock.calls[2].slice(0, 2)).toEqual([opts.convId, '# Parte 2\ntela'])
+
+    // "Plano: <título>" no cabeçalho da conversa de implementação reabre a Tela do plano.
+    fireEvent.click(screen.getByRole('button', { name: /^Plano: / }))
+    expect(await screen.findByRole('heading', { name: 'Checkout com Pix' })).toBeTruthy()
   })
 
   it('conversa criada mas o envio falhou: o diálogo fecha e não dá para criar uma segunda', async () => {
@@ -2540,7 +3105,7 @@ describe('App — enviar para implementação (handoff)', () => {
     await screen.findByRole('heading', { name: 'Checkout com Pix' })
     fireEvent.click(await screen.findByRole('button', { name: 'Enviar para implementação' }))
     const dialog = await screen.findByRole('dialog')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Usar rascunho automático' }))
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Usar rascunho automático' }))
     await within(dialog).findByLabelText('Prompt 1')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Enviar para implementação' }))
 

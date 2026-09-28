@@ -27,6 +27,7 @@ export {
 export { typeSafePause, TYPESAFE_BLOCKING_TIMEOUT_MS, TYPESAFE_PAUSE_MS } from './pause'
 export {
   autoEffortCandidates,
+  autoEffortLadder,
   autoExecutionFallback,
   autoExecutionNote,
   autoModelCandidates,
@@ -39,15 +40,21 @@ export {
   resolveAutoStart,
   AUTO_EFFORT_DESCRIPTIONS,
   AUTO_EFFORT_INSTRUCTION,
+  AUTO_EFFORT_LABELS,
   AUTO_MODEL_DESCRIPTIONS,
   AUTO_MODEL_INSTRUCTION,
   AUTO_NO_LIVE_MODEL,
+  AUTO_SELECTION_BOTH,
   type AutoExecution,
   type AutoExecutionOptions,
   type AutoExecutionPayload,
   type AutoExecutionSource,
   type AutoExecutionState,
+  type AutoLiveDefaults,
+  type AutoLivePair,
   type AutoPair,
+  type AutoSelection,
+  type AutoSources,
   type AutoStartDecision,
   type AutoStartInput
 } from './execution'

@@ -1,6 +1,12 @@
 export interface RestartActivity {
   busy: boolean
   unsafe?: string
+  /**
+   * Há chamada de ferramenta autônoma ainda sem resultado (PreToolUse sem o
+   * PostToolUse correspondente). Só isso: um comando destacado já concluído
+   * (`restartUncertain`) ou um loop ativo não ligam este sinal.
+   */
+  autonomousCallOpen?: boolean
 }
 export interface ArmedRestart {
   commit(): Promise<void>

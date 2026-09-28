@@ -18,8 +18,35 @@ export const CHANGE_LOG_RETENTION_DAYS = 30
  *  deixá-la crescer por um mês inteiro entre podas. */
 export const CHANGE_LOG_PRUNE_INTERVAL_MS = 24 * 60 * 60_000
 
+/**
+ * Uma poda com backlog grande (555 mil linhas) num DELETE só estouraria o
+ * `statement_timeout` (120s) e seguraria uma vaga do pool o tempo todo. Em
+ * lotes, cada DELETE apaga no máximo PRUNE_BATCH_SIZE linhas pelo índice de
+ * data — milissegundos a poucos segundos — e devolve a vaga entre um lote e
+ * outro. O teto de lotes por rodada impede um laço sem fim; o que sobrar fica
+ * para a rodada seguinte.
+ */
+export const PRUNE_BATCH_SIZE = 5_000
+export const PRUNE_MAX_BATCHES_PER_RUN = 1_000
+
+/** Chama `deleteBatch(limite)` até um lote vir incompleto (acabou) ou o teto
+ *  de lotes. Devolve o total apagado. */
+export async function pruneInBatches(
+  deleteBatch: (limit: number) => Promise<number>,
+  batchSize = PRUNE_BATCH_SIZE,
+  maxBatches = PRUNE_MAX_BATCHES_PER_RUN
+): Promise<number> {
+  let total = 0
+  for (let batch = 0; batch < maxBatches; batch += 1) {
+    const deleted = await deleteBatch(batchSize)
+    total += deleted
+    if (deleted < batchSize) break
+  }
+  return total
+}
+
 export interface ChangeLogPrunable {
-  query(sql: string, params?: unknown[]): Promise<unknown>
+  query(sql: string, params?: unknown[]): Promise<{ rowCount: number | null }>
 }
 
 /**
@@ -62,9 +89,15 @@ export class ChangeLogPruner {
 
   private async run(): Promise<void> {
     try {
-      await this.db.query('DELETE FROM change_log WHERE changed_at < now() - make_interval(days => $1)', [
-        CHANGE_LOG_RETENTION_DAYS
-      ])
+      await pruneInBatches(async (limit) => {
+        const result = await this.db.query(
+          `DELETE FROM change_log WHERE change_id IN (
+             SELECT change_id FROM change_log
+             WHERE changed_at < now() - make_interval(days => $1) LIMIT $2)`,
+          [CHANGE_LOG_RETENTION_DAYS, limit]
+        )
+        return result.rowCount ?? 0
+      })
     } catch (error) {
       this.onError(error)
     } finally {

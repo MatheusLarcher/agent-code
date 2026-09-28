@@ -20,4 +20,11 @@ export interface AccountSwitchDeps {
   changed(id: string): void
   /** Pega o lease da conversa antes de uma troca com o turno fechado. */
   acquire?(): Promise<void>
+  /** A conta estourou de vez (`text` = aviso do CLI): grava a janela como 100%
+   *  para ela não ser escolhida de novo até o reset, mesmo se a consulta falhar. */
+  markExhausted?(id: string, text: string): void
+  /** "Continuar na conta X" pode continuar o turno preservado? Devolve o motivo
+   *  da recusa, ou `null`. O turno de uma tarefa MCP que terminou em erro nunca
+   *  é continuado pelo app (regra 2: quem repete é o chamador). */
+  continueRefused?(): string | null
 }

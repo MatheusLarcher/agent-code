@@ -12,6 +12,7 @@
 import type { AgentCodeApi } from '@shared/api'
 import {
   clampEffortToModel,
+  isAutoEffort,
   isAutoModel,
   PLANNING_AUTO_FALLBACK,
   type PlanningConfig,
@@ -31,10 +32,11 @@ export function isPlanningConversation<T extends Pick<Conversation, 'mode' | 'pl
   return !!conv && conv.mode === 'planning' && typeof conv.planningSlug === 'string' && conv.planningSlug !== ''
 }
 
-/** O Automático da conversa revalida o par a cada mensagem? Nunca na de
- *  planejamento: lá quem decide é o main, na subida da sessão do Manager. */
-export function revalidatesAuto(conv: PlanningShape & Pick<Conversation, 'model'>): boolean {
-  return isAutoModel(conv.model) && !isPlanningConversation(conv)
+/** O Automático da conversa (modelo, esforço ou os dois) revalida o par a cada
+ *  mensagem? Nunca na de planejamento: lá quem decide é o main, na subida da
+ *  sessão do Manager. */
+export function revalidatesAuto(conv: PlanningShape & Pick<Conversation, 'model' | 'effort'>): boolean {
+  return (isAutoModel(conv.model) || isAutoEffort(conv.effort)) && !isPlanningConversation(conv)
 }
 
 /** Os campos do startAgent que dependem do tipo da conversa: o plano que o
@@ -60,15 +62,42 @@ export function sessionStartFields(
 export function handoffConversationFields(
   slug: string,
   titulo: string | undefined,
-  manager: PlanningConfig
-): Pick<Conversation, 'handoffSlug' | 'title' | 'model' | 'effort' | 'fastMode'> {
+  manager: PlanningConfig,
+  origin?: { projectCwd: string; prompts: readonly string[] }
+): Pick<Conversation, 'handoffSlug' | 'handoffPlan' | 'title' | 'model' | 'effort' | 'fastMode'> {
+  const nome = titulo?.trim() || slug
   return {
     handoffSlug: slug,
-    title: `Implementação: ${titulo?.trim() || slug}`,
+    ...(origin ? { handoffPlan: { projectCwd: origin.projectCwd, slug, titulo: nome, prompts: [...origin.prompts] } } : {}),
+    title: `Implementação: ${nome}`,
     model: manager.model,
-    effort: isAutoModel(manager.model) ? manager.effort : clampEffortToModel(manager.model, manager.effort),
+    // Cada dimensão segue a do Manager: Automático segue Automático, e o
+    // esforço fixo é recortado ao modelo fixo.
+    effort:
+      isAutoEffort(manager.effort) || isAutoModel(manager.model)
+        ? manager.effort
+        : clampEffortToModel(manager.model, manager.effort),
     fastMode: false
   }
+}
+
+/**
+ * O plano de onde veio uma conversa de implementação, para o "Plano: <título>"
+ * do cabeçalho. O título preferido é o da conversa de planejamento desse plano
+ * (acompanha o roteiro); sem ela, o gravado no envio. Conversa de handoff
+ * antiga (só `handoffSlug`) usa a pasta dela e o slug. Outra conversa: null.
+ */
+export function handoffPlanOf(
+  conv: Pick<Conversation, 'cwd' | 'mode' | 'planningSlug' | 'handoffSlug' | 'handoffPlan'>,
+  all: readonly Pick<Conversation, 'cwd' | 'mode' | 'planningSlug' | 'title'>[]
+): { projectCwd: string; slug: string; titulo: string } | null {
+  if (isPlanningConversation(conv)) return null
+  const projectCwd = conv.handoffPlan?.projectCwd ?? conv.cwd
+  const slug = conv.handoffPlan?.slug ?? conv.handoffSlug
+  if (!slug || !projectCwd) return null
+  const planning = all.find((c) => c.cwd === projectCwd && isPlanningConversation(c) && c.planningSlug === slug)
+  const titulo = planning?.title.trim() || conv.handoffPlan?.titulo || slug
+  return { projectCwd, slug, titulo }
 }
 
 /** Título com que nasce um planejamento criado sem pedir nome (roteiro e

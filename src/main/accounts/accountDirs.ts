@@ -9,7 +9,8 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  unlinkSync
+  unlinkSync,
+  writeFileSync
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -57,12 +58,43 @@ export function accountDir(localDir: string, id: string): string {
 }
 
 /**
+ * Marcador de "pasta criada do zero pelo app" (ex.: a pasta sumiu e o envFor da
+ * consulta de consumo a recriou). É a HISTÓRIA da pasta que separa os dois casos
+ * de "sem .credentials.json": pasta recriada (a cópia do banco pode voltar) ×
+ * `claude auth logout` numa pasta que continuou (a credencial foi revogada). Os
+ * arquivos não separam: o CLI 2.1.283 deixa os dois iguais. Sai quando uma
+ * credencial é gravada/restaurada na pasta ou um login dá certo nela.
+ */
+export const RECREATED_MARKER = '.agentcode-recreated'
+
+export function isRecreatedDir(dir: string): boolean {
+  return existsSync(join(dir, RECREATED_MARKER))
+}
+
+export function clearRecreatedMark(dir: string): void {
+  try {
+    rmSync(join(dir, RECREATED_MARKER), { force: true })
+  } catch (error) {
+    console.warn('[contas] não consegui tirar o marcador de pasta recriada:', (error as Error).message)
+  }
+}
+
+/**
  * Cria (ou atualiza) a pasta da conta: `0700` no Unix, `CLAUDE.md` e
  * `settings.json` copiados quando mudaram, pastas compartilhadas por link.
+ * Pasta criada agora ganha o marcador de recriada (`RECREATED_MARKER`).
  * Melhor esforço nas cópias e links — o login da conta é o que importa.
  */
 export function prepareAccountDir(dir: string, source = machineConfigDir()): string {
+  const fresh = !existsSync(dir)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
+  if (fresh) {
+    try {
+      writeFileSync(join(dir, RECREATED_MARKER), new Date().toISOString(), 'utf8')
+    } catch (error) {
+      console.warn('[contas] não consegui marcar a pasta recriada:', (error as Error).message)
+    }
+  }
   if (process.platform !== 'win32') {
     try {
       chmodSync(dir, 0o700)

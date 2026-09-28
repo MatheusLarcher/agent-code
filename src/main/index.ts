@@ -15,10 +15,18 @@ import { homedir } from 'node:os'
 import { BrowserController } from './browserController'
 import { AgentSession, type MessageOrigin } from './agentSession'
 import { ProviderFailoverSession } from './providerFailover'
+import { createConversationLock } from './conversationLock'
+import { createStepRunner, RESUME_PREPARE_DEADLINE_MS } from './sessionSteps'
+import { SessionLeases } from './sessionLeases'
 import { AppRestartCoordinator } from './appRestart'
 import { configureAppRestart, appRestart } from './appRestartRuntime'
 import { armAppRelauncher } from './appRelauncher'
 import { RemoteServer } from './remote/remoteServer'
+import { McpInbound, type LiveSessionState, type McpSend } from './mcpInbound/mcpInbound'
+import { MCP_NO_CONTINUE_WARNING, NO_LIVE_SESSION } from '../shared/mcpInbound'
+import type { AccountSwitchDeps } from './accounts/switchDeps'
+import { ollamaSelectable, selectableModelIds } from '../shared/selectableModels'
+import { secondInstanceReveal, wantsMinimized } from './mcpInbound/windowStartup'
 import { RelayClient } from './remote/relayClient'
 import { RemotePairingStore } from './remote/remotePairing'
 import { buildRemoteApk } from './remote/buildApk'
@@ -28,12 +36,12 @@ import {
   CLAUDE_MODELS,
   DEFAULT_CONFIG,
   DEFAULT_LOCAL_SPEECH_MODEL,
+  isAutoEffort,
   isAutoModel,
   LOCAL_SPEECH_MODELS,
   OPENAI_MODELS,
   REMOTE_RELAY_WS,
   type BoardItemStatus,
-  type EffortLevel,
   type SpeechSetupProgress
 } from '../shared/ipc'
 import { ensureConfigLoaded, initializeConfigPersistence, loadConfig, updateConfig } from './config'
@@ -51,7 +59,9 @@ import {
   queryAccountUsage,
   queryAllAccountsUsage,
   recordSessionRateLimit,
-  resolveSessionAccount
+  resolveSessionAccount,
+  startAccountSync,
+  stopAccountSync
 } from './accounts'
 import { registerClaudeAccountsIpc } from './accounts/accountsIpc'
 import { setClaudeObserverEnvResolver } from './observerQuery'
@@ -76,6 +86,10 @@ import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
 import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
 import { hashJson, normalizeJson } from './persistence/hashes'
+import { replayLocalTranscript, verifyMirroredSession } from './persistence/mirrorReplay'
+import { replayDedupStore } from './persistence/replayDedup'
+import { activeReplayStore, activeResumeMarker, activeSessionStore, activeTokenUsage } from './persistence/activeRepository'
+import { createSessionStorageRecovery } from './sessionStorageRecovery'
 import {
   attachProjectIdentity,
   isMissingProjectFolderError,
@@ -83,8 +97,13 @@ import {
 } from './persistence/projectIdentity'
 import { dailyParquetPath, exportConversationsParquet } from './conversationParquet'
 import { relocateLocalLeftovers, type LeftoverRelocation } from './localLeftovers'
-import { storageErrorForIpc, upsertConversationWithLeaseRecovery } from './persistence/conversationWriteRecovery'
-import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote, imagesAsFiles } from './attachments'
+import {
+  deleteConversationWithLeaseRecovery,
+  sessionLeaseRenewal,
+  storageErrorForIpc,
+  upsertConversationWithLeaseRecovery
+} from './persistence/conversationWriteRecovery'
+import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote, imagesAsFiles, stashDraftAttachment, discardDraftAttachments, promoteDraftAttachments } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { taskLedger } from './tasks/taskRuntime'
 import { buildTaskBoard, buildTaskDetail, type TaskBoardQuery } from './tasks/taskBoard'
@@ -96,7 +115,7 @@ import { windowsControl } from './windowsControl/service'
 import { discoverSkills } from './skillDiscovery'
 import { readProjectIcon } from './projectIcon'
 import { syncCacheSkills } from './skillManager'
-import { autoModelCandidates, resolveAutoStart, type AutoStartDecision } from './typesafe'
+import { autoModelCandidates, resolveAutoStart, type AutoLivePair, type AutoStartDecision } from './typesafe'
 import { typeSafePause, TYPESAFE_BLOCKING_TIMEOUT_MS } from './typesafe/pause'
 import { typeSafeConfigured } from './typesafe/client'
 import type {
@@ -170,13 +189,14 @@ const sessions = new Map<string, ProviderFailoverSession>()
 /** Pasta do projeto de cada conversa viva. O quadro é por projeto, e quem
  *  precisa dela (PO) age fora do caminho onde `opts.cwd` está em escopo. */
 const sessionCwds = new Map<string, string>()
-/** O par modelo+esforço em que cada conversa no modo Automático está rodando
- *  AGORA. Existe primeiro por custo de boot: o modelo é fixo pela vida da sessão
- *  do SDK, então mudar de par obriga a recriar a sessão — e recriá-la quando a
- *  escolha do turno repete a anterior seria pagar um boot por nada. O `decided`
- *  diz se esse par saiu de uma decisão do TypeSafe: só ele entra na histerese do
- *  turno seguinte (ver `AutoLivePair` em `typesafe/execution.ts`). */
-const autoSessions = new Map<string, { model: string; effort: EffortLevel; decided: boolean }>()
+/** O par modelo+esforço em que cada conversa com alguma dimensão em Automático
+ *  está rodando AGORA. Existe primeiro por custo de boot: o par é fixo pela vida
+ *  da sessão do SDK, então mudar de par obriga a recriar a sessão — e recriá-la
+ *  quando a escolha do turno repete a anterior seria pagar um boot por nada. O
+ *  `decided` diz, POR DIMENSÃO, se o valor saiu de uma decisão do TypeSafe: só a
+ *  dimensão decidida entra na histerese do turno seguinte (ver `AutoLivePair`
+ *  em `typesafe/execution.ts`). */
+const autoSessions = new Map<string, AutoLivePair>()
 /** Conversas que são sessões do Agent Manager (Tela de Planejamento): não
  *  alimentam vigia, quadro, PO nem memorista (ver planning/planningConversations.ts). */
 const planningConversations = new PlanningConversations()
@@ -184,29 +204,55 @@ const planningConversations = new PlanningConversations()
 // Which files the agent actually offered for download. Fed from the event tee
 // below, consulted by the `fileDownload` handler.
 const downloadAllowlist = new DownloadAllowlist()
-const sessionLeases = new Map<string, ConversationLeaseKeeper>()
+// Prazos por passo das operações que trocam a sessão (sessionSteps.ts): o lock
+// da conversa não tem prazo; cada passo que pode travar dentro dele tem.
+const sessionSteps = createStepRunner()
+// Lease de cada conversa com sessão viva (sessionLeases.ts): aquisição com
+// prazo, lease atrasado solto ao chegar, keeper de uma operação nunca
+// sobrescrito pelo de outra.
+const sessionLeases = new SessionLeases<ConversationLeaseKeeper, PersistenceRepository>({
+  repository: () => storageLifecycle.repository(),
+  steps: sessionSteps,
+  keeper: (convId, lease, isInstalled) => newLeaseKeeper(convId, lease, isInstalled)
+})
 
 async function releaseSessionLease(convId: string): Promise<void> {
-  const keeper = sessionLeases.get(convId)
-  if (!keeper) return
-  sessionLeases.delete(convId)
-  await keeper.release()
+  await sessionLeases.release(convId)
 }
 
 async function acquireSessionLease(convId: string): Promise<{ repository: PersistenceRepository; lease: ConversationLease }> {
-  await releaseSessionLease(convId)
-  const repository = storageLifecycle.repository()
-  const lease = await repository.acquireConversationLease(convId)
+  return sessionLeases.acquire(convId)
+}
+
+function newLeaseKeeper(convId: string, lease: ConversationLease, isInstalled: () => boolean): ConversationLeaseKeeper {
   // Only a lease that provably moved to another installation ends the session.
   // Killing a running turn because one heartbeat could not reach Postgres is
   // what made tasks die mid-run on a connection blip; the keeper retries those.
   // A database that is really gone still lands on the `postgres-offline` path,
   // which waits for the turn to go idle before disposing the session.
-  const keeper = new ConversationLeaseKeeper(repository, lease, {
+  // O heartbeat segue o repositório ATIVO, não o da aquisição: depois de uma
+  // reconexão automática o antigo está fechado (pool encerrado) e renovar nele
+  // falharia até o lease vencer com o turno ainda rodando. Offline, `repository()`
+  // lança STORAGE_OFFLINE — transitório para o keeper, que tenta de novo.
+  // `async` de propósito: o `throw` síncrono de `repository()` vira promessa
+  // rejeitada, que o `.catch` do `release()` do keeper absorve (síncrono, ele
+  // escaparia como rejeição não tratada no descarte das sessões offline).
+  const leaseRepository = {
+    renewConversationLease: async (held: ConversationLease) =>
+      storageLifecycle.repository().renewConversationLease(held),
+    releaseConversationLease: async (held: ConversationLease) =>
+      storageLifecycle.repository().releaseConversationLease(held)
+  }
+  const keeper: ConversationLeaseKeeper = new ConversationLeaseKeeper(leaseRepository, lease, {
     onLost: (error) => {
-      if (sessionLeases.get(convId) !== keeper) return
-      sessionLeases.delete(convId)
-      sessions.get(convId)?.dispose()
+      if (!isInstalled()) return
+      sessionLeases.forget(convId, keeper)
+      // Descartada = fora do mapa na hora: ninguém envia para ela. O turno de
+      // tarefa MCP que estava aberto nela se perdeu (erro, nunca `rodando`).
+      const lost = sessions.get(convId)
+      sessions.delete(convId)
+      lost?.dispose()
+      if (lost) mcpInbound.onSessionInstalled(convId)
       send(Channels.agentEvent, {
         convId,
         event: { kind: 'error', id: randomUUID(), text: `Lease perdido: ${error.message}` }
@@ -216,8 +262,21 @@ async function acquireSessionLease(convId: string): Promise<{ repository: Persis
       console.warn(`[lease] renovação falhou para ${convId}, tentando de novo:`, error)
     }
   }).start()
-  sessionLeases.set(convId, keeper)
-  return { repository, lease }
+  return keeper
+}
+
+/** `prepareSessionResume` com prazo total (RESUME_PREPARE_DEADLINE_MS). Estourou:
+ *  a subida falha com erro claro; a importação atrasada segue rastreada e a
+ *  próxima preparação da mesma conversa espera por ela. */
+function prepareSessionResumeWithin(
+  repository: PersistenceRepository,
+  convId: string,
+  cwd: string,
+  sessionId: string
+): Promise<void> {
+  return sessionSteps.run(`${convId}:resume`, 'A preparação da retomada da conversa', RESUME_PREPARE_DEADLINE_MS, () =>
+    prepareSessionResume(repository, convId, cwd, sessionId)
+  )
 }
 
 async function prepareSessionResume(
@@ -670,6 +729,55 @@ function takeOrigin(convId: string, outgoing: string): MessageOrigin {
   return fresh && outgoing === mark.text ? 'celular' : 'pc'
 }
 
+// MCP de entrada (contrato Forgia → Agent Code): 127.0.0.1:47110–47149. A tarefa
+// dá a mesma volta de uma mensagem do celular — main → renderer (cria/abre a
+// conversa e despacha pela fila) → `agent:send` — e o status sai do tee de
+// eventos da sessão. Sobe no boot, sem depender de janela nem de login.
+// Exportado só para o index.test.ts (registro de tarefas nos testes de agent:send).
+export const mcpInbound = new McpInbound({
+  version: app.getVersion(),
+  conversationExists: async (convId) =>
+    (await storageLifecycle.repository().loadConversations({ ids: [convId] })).some(
+      (c) => c.id === convId && !c.deletedAt
+    ),
+  // Conversa do Agent Manager (Conversation.mode === 'planning'): destino recusado.
+  conversationIsPlanning: async (convId) =>
+    (await storageLifecycle.repository().loadConversations({ ids: [convId] })).some(
+      (c) => c.id === convId && !c.deletedAt && c.payload.mode === 'planning'
+    ),
+  deliverToRenderer: (d) => send(Channels.mcpInbound, d),
+  dropQueuedInRenderer: (convId, taskId) => send(Channels.mcpCancelQueued, { convId, taskId }),
+  interruptInRenderer: (convId) => send(Channels.remoteInterrupt, { convId }),
+  answerInRenderer: (convId, res) => send(Channels.remotePermissionResponse, { convId, res }),
+  // A mesma lista do seletor da conversa (shared/selectableModels).
+  models: {
+    now: () => selectableModelIds({ ollama: ollamaSelectable(loadConfig().ollama), codex: isCodexConnected() }),
+    fresh: async () => {
+      await ensureConfigLoaded()
+      return selectableModelIds({ ollama: ollamaSelectable(loadConfig().ollama), codex: (await codexStatus()).connected })
+    }
+  },
+  log: (line) => console.log(line)
+})
+
+/**
+ * Há conta Claude conectada? O login da máquina, ou (várias contas) qualquer
+ * conta extra conectada — a conversa pode rodar noutra conta, então não se força
+ * o login da conta 1 à toa. A resposta alimenta também o `GET /agent-code` do
+ * MCP de entrada, que lê só a última leitura (o CLI leva segundos).
+ */
+async function refreshClaudeReady(): Promise<boolean> {
+  let ready = await isAuthenticated()
+  if (!ready) {
+    await claudeAccounts.ensureLoaded()
+    ready =
+      claudeAccounts.hasExtraAccounts() &&
+      (await claudeAccounts.candidates()).some((account) => account.status === 'connected')
+  }
+  mcpInbound.setClaudeReady(ready)
+  return ready
+}
+
 // LAN bridge: phones POST commands here; we forward them to the renderer (which
 // dispatches into the right conversation) and tee live agent events back over SSE.
 // Identidade desta instalação perante o broker + o único celular pareado: por
@@ -755,12 +863,14 @@ function activeBrowser(): BrowserController | null {
   return activeConvId ? browsers.get(activeConvId) ?? null : null
 }
 
-function createWindow(): void {
+function createWindow(startMinimized = false): void {
   if (closeRequestTimer) clearInterval(closeRequestTimer)
   closeRequestTimer = null
   closeRequested = false
   closeReady = false
   mainWindow = new BrowserWindow({
+    // `--minimizado`: nasce escondida e aparece minimizada, sem pegar o foco.
+    show: !startMinimized,
     width: 1500,
     height: 950,
     minWidth: 1000,
@@ -787,6 +897,20 @@ function createWindow(): void {
       plugins: true
     }
   })
+
+  if (startMinimized) {
+    const win = mainWindow
+    win.once('ready-to-show', () => {
+      if (win.isDestroyed()) return
+      // Mostra sem ativar e minimiza: fica na barra de tarefas, sem pegar o foco.
+      // (minimize() numa janela escondida só marca o estado — ela não aparece.)
+      win.showInactive()
+      win.minimize()
+    })
+  }
+  // Recarregou (F5) ou trocou de página: até o renderer avisar de novo que está
+  // pronto, as tarefas do MCP de entrada esperam no main em vez de se perder.
+  mainWindow.webContents.on('did-start-loading', () => mcpInbound.markRendererGone())
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
@@ -988,14 +1112,7 @@ export function registerIpc(): void {
     }
   })
   // Claude Code auth: status + the one-click OAuth login (no typed /login).
-  ipcMain.handle(Channels.authStatus, async () => {
-    if (await isAuthenticated()) return { authenticated: true }
-    // Várias contas: o login da máquina pode ter caído e a conversa rodar noutra
-    // conta conectada — não força o login da conta 1 à toa. Uma conta só: igual.
-    await claudeAccounts.ensureLoaded()
-    if (!claudeAccounts.hasExtraAccounts()) return { authenticated: false }
-    return { authenticated: (await claudeAccounts.candidates()).some((account) => account.status === 'connected') }
-  })
+  ipcMain.handle(Channels.authStatus, async () => ({ authenticated: await refreshClaudeReady() }))
   ipcMain.handle(Channels.authLogin, async () => {
     authLog('=== auth:login start ===')
     // The FIRST login opens the user's own SYSTEM browser (product decision) — not
@@ -1234,13 +1351,20 @@ export function registerIpc(): void {
         .find((entry) => entry.id === input.id)?.payload
       payload = preserveProjectIdentityForMissingPersistedWrite(input.payload, persisted)
     }
-    const repository = storageLifecycle.repository()
     try {
-      return await upsertConversationWithLeaseRecovery(repository, {
-        ...input,
-        payload,
-        ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
-      })
+      // Resolvedor, não a instância: a repetição depois da renovação vai para o
+      // repositório ativo de então (uma reconexão pode trocá-lo no meio).
+      return await upsertConversationWithLeaseRecovery(
+        () => storageLifecycle.repository(),
+        {
+          ...input,
+          payload,
+          ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
+        },
+        // Lease vencido na queda e ainda não renovado pelo heartbeat: renova já e
+        // repete, só se continua sendo desta instalação (ver conversationWriteRecovery).
+        held ? sessionLeaseRenewal(held, () => sessionLeases.get(input.id) === held) : undefined
+      )
     } catch (cause) {
       throw storageErrorForIpc(cause)
     }
@@ -1252,10 +1376,11 @@ export function registerIpc(): void {
     assertStorageWritable(true)
     const held = sessionLeases.get(input.id)
     try {
-      return await storageLifecycle.repository().deleteConversation({
-        ...input,
-        ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
-      })
+      return await deleteConversationWithLeaseRecovery(
+        () => storageLifecycle.repository(),
+        { ...input, ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {}) },
+        held ? sessionLeaseRenewal(held, () => sessionLeases.get(input.id) === held) : undefined
+      )
     } catch (cause) {
       throw storageErrorForIpc(cause)
     }
@@ -1426,6 +1551,11 @@ export function registerIpc(): void {
     }
   )
 
+  // Composer: anexo de um rascunho vai para o disco; o rascunho guarda o caminho.
+  ipcMain.handle(Channels.stashDraftAttachment, (_e, convId: unknown, file: unknown) => stashDraftAttachment(convId, file))
+  ipcMain.handle(Channels.discardDraftAttachments, (_e, convId: unknown, paths: unknown) => discardDraftAttachments(convId, paths))
+  ipcMain.handle(Channels.promoteDraftAttachments, (_e, convId: unknown, paths: unknown) => promoteDraftAttachments(convId, paths))
+
   /**
    * O modo Automático, resolvido AQUI e não no renderer.
    *
@@ -1463,7 +1593,13 @@ export function registerIpc(): void {
         hasSession: sessions.has(opts.convId)
       },
       // Teto de 3 s: é o caminho que segura o envio. Passou, sai o par padrão.
-      { ...(models && models.length > 0 ? { models } : {}), timeout: TYPESAFE_BLOCKING_TIMEOUT_MS }
+      // `selection`: só a dimensão em Automático é perguntada; a fixa é a do
+      // usuário (o esforço fixo recortado ao modelo que sair).
+      {
+        ...(models && models.length > 0 ? { models } : {}),
+        selection: { model: opts.model ?? AUTO_MODEL, effort: opts.effort },
+        timeout: TYPESAFE_BLOCKING_TIMEOUT_MS
+      }
     )
     // A escolha é anunciada em TODO turno, inclusive quando repete o par
     // anterior: o que o usuário precisa saber é COM QUE modelo a mensagem dele
@@ -1471,6 +1607,9 @@ export function registerIpc(): void {
     // chat e o cliente do celular já renderizam como nota de sistema.
     //
     // Sem nota não há o que anunciar — um religar sem turno não escolheu nada.
+    // `fromModel: AUTO_MODEL` marca o evento como ANÚNCIO do Automático (e não
+    // troca de provedor): o renderer não sobrescreve com ele o modelo nem o
+    // esforço gravados na conversa, que continuam sendo os sentinels.
     if (decision.note) {
       const event: ChatEvent = {
         kind: 'provider-switch',
@@ -1487,51 +1626,129 @@ export function registerIpc(): void {
     return decision
   }
 
-  ipcMain.handle(Channels.agentStart, async (_e, opts: StartAgentOptions) => {
+  // Função nomeada (e não só o handler do IPC): o `agent:send` a chama também,
+  // para refazer a sessão de uma tarefa MCP que pede outro modelo. Nesse caso
+  // (`keepPrevious`) a sessão antiga só é descartada DEPOIS que a nova subiu: se
+  // a nova falhar, a antiga continua a da conversa, com o lease dela.
+  //
+  // Quem chama SEMPRE está dentro do `sessionLock` da conversa (o handler do
+  // agent:start e a troca do agent:send): duas subidas da mesma conversa nunca
+  // se cruzam, então nunca ficam duas sessões vivas nem uma substituída sem dispose.
+  // O lock NÃO tem prazo e nada nele é abandonado: quem tem prazo é cada passo
+  // que pode travar (sessionSteps.ts — lease, retomada). Um passo que estoura
+  // falha a subida, e ela desfaz o que criou (lease, sessão) antes de sair do lock.
+  const sessionLock = createConversationLock()
+  // "Continuar na conta X" no turno de uma tarefa MCP que terminou em erro: a
+  // mesma recusa da retomada automática (regra 2) — o app não continua tarefa.
+  const withContinueRefusal = (convId: string, deps: AccountSwitchDeps | undefined): AccountSwitchDeps | undefined =>
+    deps && {
+      ...deps,
+      continueRefused: () => (mcpInbound.refusal(convId, { text: '', kind: 'recovery' }) ? MCP_NO_CONTINUE_WARNING : null)
+    }
+  const startAgentSession = async (
+    opts: StartAgentOptions,
+    { keepPrevious = false }: { keepPrevious?: boolean } = {}
+  ) => {
     assertStorageWritable()
     const { convId } = opts
+    // A sessão que a troca (`keepPrevious`) vai substituir, lida ANTES de qualquer
+    // `await`. Com o lock, só o descarte da conversa (agent:dispose) pode tirá-la
+    // do mapa no meio — conferido no fim.
+    const previous = keepPrevious ? sessions.get(convId) : undefined
     const project = await fsStat(opts.cwd).catch(() => null)
     if (!project?.isDirectory()) throw new Error('A pasta local do projeto não foi localizada nesta instalação.')
+    // Conversa de tarefa MCP: servidores do chamador, "Permitir tudo" e o modelo
+    // fixo, do registro do main. O `inboundMcp` do renderer nunca passa daqui.
+    opts = mcpInbound.sessionOptions(opts)
     // Agent Manager: modelo e esforço vêm da configuração do planejamento e saem
     // concretos — o Automático da conversa (logo abaixo) não roda para ele.
     opts = await planningStartOptions(opts, { config: () => loadConfig().planning })
-    planningConversations.track(opts)
-    if (isAutoModel(opts.model)) {
+    // O estado por conversa (Manager, origem do Automático, pasta) é da sessão
+    // que sobe. Numa troca (`previous`), só é gravado depois que a nova subiu e
+    // assumiu: se ela falhar ou perder a vez, a antiga continua com o dela.
+    const planningRef = { convId, planning: opts.planning }
+    let autoLive: AutoStartDecision['live'] | undefined
+    const commitState = (cwd: string): void => {
+      planningConversations.track(planningRef)
+      if (autoLive) autoSessions.set(convId, autoLive)
+      else autoSessions.delete(convId)
+      sessionCwds.set(convId, cwd)
+    }
+    if (isAutoModel(opts.model) || isAutoEffort(opts.effort)) {
       const auto = await autoStart(opts)
-      // Guardado ANTES do atalho de reaproveitamento: mesmo com o par repetindo,
-      // a origem dele pode ter mudado (o fallback do turno anterior virou
-      // decisão agora), e é a origem que manda no turno seguinte.
-      autoSessions.set(convId, auto.live)
-      if (auto.reuse) return { ok: true, claudeAccountId: conversationAccount(convId) }
-      // O sentinel `auto` NUNCA chega ao provedor: daqui para baixo a sessão é
-      // montada no par concreto que a decisão devolveu. O parâmetro é reatribuído
+      autoLive = auto.live
+      // Reaproveitar só quando a sessão viva JÁ é o que este start pede: nunca
+      // numa troca (`previous`: ela existe justamente porque a viva não serve),
+      // e só se a viva está no modelo decidido e com a mesma config MCP (uma
+      // sessão aberta antes da config MCP, ou num modelo trocado por cota, não
+      // serve para a tarefa só porque o par do Automático repetiu).
+      const live = sessions.get(convId)?.liveOptions()
+      const reuse =
+        auto.reuse &&
+        !previous &&
+        !!live &&
+        (!opts.inboundMcp && !live.inboundMcp
+          ? true
+          : !!opts.inboundMcp && !!live.inboundMcp && live.model === auto.execution.model)
+      if (reuse) {
+        // Guardado ANTES de voltar: mesmo com o par repetindo, a origem dele pode
+        // ter mudado (o fallback do turno anterior virou decisão agora), e é a
+        // origem que manda no turno seguinte.
+        commitState(opts.cwd)
+        return { ok: true, claudeAccountId: conversationAccount(convId) }
+      }
+      // Os sentinels `auto` (modelo e esforço) NUNCA chegam ao provedor: daqui
+      // para baixo a sessão é montada no par concreto que a decisão devolveu
+      // (esforço ausente = modelo sem esforço). O parâmetro é reatribuído
       // de propósito — todo o resto do handler já lê deste objeto, e duplicá-lo
       // num segundo nome abriria espaço para um caminho continuar no sentinel.
       opts = { ...opts, model: auto.execution.model, effort: auto.execution.effort }
-    } else {
-      autoSessions.delete(convId)
     }
+    if (!previous) commitState(opts.cwd)
     // Conta Claude da conversa: a gravada (se ainda conectada) ou a regra de
     // conversa nova, pela última leitura guardada — sem consultar, para não
     // atrasar o primeiro envio. Os observadores seguem a mesma conta.
     const claudeAccountId = await resolveSessionAccount(convId, opts.claudeAccountId, opts.model)
     opts = { ...opts, claudeAccountId }
-    sessionCwds.set(convId, opts.cwd)
     // Replace only THIS conversation's session; others keep running.
-    sessions.get(convId)?.dispose()
-    await releaseSessionLease(convId)
-    const { repository } = await acquireSessionLease(convId)
-    const sessionStore = repository.createSessionStore(convId)
-    try {
-      if (opts.resume) await prepareSessionResume(repository, convId, opts.cwd, opts.resume)
-    } catch (error) {
+    const replaced = previous ? undefined : sessions.get(convId)
+    if (!previous) {
+      if (replaced) {
+        // Descartada = fora do mapa NA HORA, antes de qualquer `await`: nenhum
+        // agent:send nem "agora" envia para uma sessão descartada enquanto esta
+        // subida espera o lease ou a retomada. O turno de tarefa MCP que estava
+        // aberto nela se perdeu: termina em erro já, não quando (e se) a nova subir.
+        sessions.delete(convId)
+        replaced.dispose()
+        mcpInbound.onSessionInstalled(convId)
+      }
       await releaseSessionLease(convId)
+    }
+    // Aquisição com prazo próprio (sessionLeases.ts): estourou, nada foi
+    // instalado e o lease que chegar tarde é solto — não há o que desfazer aqui.
+    const repository =
+      previous && sessionLeases.has(convId) ? storageLifecycle.repository() : (await acquireSessionLease(convId)).repository
+    // A sessão sobrevive a uma reconexão automática (o repositório da aquisição é
+    // fechado por setOffline): tudo o que ela usa durante a vida resolve o
+    // repositório ATIVO a cada chamada, como o keeper do lease (activeRepository.ts).
+    const activeRepository = (): PersistenceRepository => storageLifecycle.repository()
+    const sessionStore = activeSessionStore(activeRepository, convId)
+    const resumeMarker = activeResumeMarker(activeRepository)
+    try {
+      // Prazo total (RESUME_PREPARE_DEADLINE_MS): estourou, falha com erro claro
+      // — nunca sobe sem retomar em silêncio — e o lease que esta subida pegou é
+      // solto antes de sair do lock.
+      if (opts.resume) await prepareSessionResumeWithin(repository, convId, opts.cwd, opts.resume)
+    } catch (error) {
+      if (!previous) await releaseSessionLease(convId)
       throw error
     }
     let s!: ProviderFailoverSession
     const emit = (event: ChatEvent): void => {
       send(Channels.agentEvent, { convId, event })
       remote.broadcast(convId, event)
+      // Fim de turno de uma tarefa MCP (resposta, erro) sai daqui.
+      mcpInbound.onEvent(convId, event)
       // O consumo lido pela sessão vira a última leitura da conta dela.
       if (event.kind === 'rate-limit') recordSessionRateLimit(convId, event.limits)
       // Recorded here, not inside the bridge: the desktop download must be
@@ -1574,40 +1791,66 @@ export function registerIpc(): void {
       // route it to the right chat, even across concurrent sessions. Events are
       // also teed to any connected phones over the remote bridge (SSE).
       sessionEmit,
-      (req) => send(Channels.agentPermissionRequest, { convId, req }),
-      (id) => send(Channels.agentPermissionExpired, { convId, id }),
+      (req) => {
+        // Pergunta (AskUserQuestion) numa tarefa MCP também volta ao chamador.
+        mcpInbound.onPermissionRequest(convId, req)
+        send(Channels.agentPermissionRequest, { convId, req })
+      },
+      (id) => {
+        mcpInbound.onPermissionClosed(convId, id)
+        send(Channels.agentPermissionExpired, { convId, id })
+      },
       sessionStore,
       async (sessionId, mirrorFailed) => {
         if (mirrorFailed) {
-          await repository.markSessionResumeReady(convId, sessionId, false)
+          await resumeMarker.markSessionResumeReady(convId, sessionId, false)
           throw new StorageError('SESSION_HANDOFF_INCOMPLETE', 'O SDK informou falha no espelhamento do transcript.')
         }
-        const [info, entries] = await Promise.all([
-          getSessionInfo(sessionId, { dir: opts.cwd, sessionStore }),
-          sessionStore.load({ projectKey: convId, sessionId })
-        ])
-        if (!info || !entries?.length) {
-          throw new StorageError('SESSION_HANDOFF_INCOMPLETE', 'O transcript espelhado não passou na verificação.')
-        }
-        await getSessionMessages(sessionId, { dir: opts.cwd, sessionStore })
-        await repository.markSessionResumeReady(convId, sessionId, true, hashJson(normalizeJson(entries)))
+        await verifyMirroredSession(resumeMarker, sessionStore, convId, sessionId, opts.cwd)
       },
       { appRoot: app.getAppPath() },
       sessionComplete,
-      // Grava cada chamada de LLM em `llm_calls` (árvore de consumo de tokens).
-      // O mesmo `repository` já em escopo para `markSessionResumeReady` acima.
-      // Durable FIFO for messages submitted while the SDK is busy/restarting.
-      repository
+      // Grava cada chamada de LLM em `llm_calls` (árvore de consumo de tokens),
+      // pelo repositório ativo.
+      activeTokenUsage(activeRepository),
+      // Fila durável de entrada: não ligada aqui (comportamento anterior mantido).
+      undefined,
+      // Reparo do espelho depois de um mirror_error: reenvia o transcript local
+      // por um store que não duplica entradas sem uuid e passa pela MESMA
+      // verificação acima — resume_ready só vira true se ela passar.
+      async (sessionId, configDir) => {
+        // O store de replay tem estado por tentativa: criado agora, no repositório
+        // ativo — não no da aquisição, que uma reconexão pode ter fechado.
+        const replayStore = activeReplayStore(activeRepository, convId, () => replayDedupStore(sessionStore))
+        await replayLocalTranscript(sessionId, replayStore, { cwd: opts.cwd, configDir })
+        await verifyMirroredSession(resumeMarker, sessionStore, convId, sessionId, opts.cwd)
+      }
     ), emit, async (provider) =>
       provider === 'gpt' ? isCodexConnected() : claudeAccounts.isConnected(conversationAccount(convId) ?? claudeAccountId),
     async () => {
         if (sessions.get(convId) === s) await releaseSessionLease(convId)
     },
-    // Várias contas Claude: troca de conta no fim do turno e no estouro.
-    accountSwitchDepsFor(convId, async () => {
-      if (!sessionLeases.has(convId)) await acquireSessionLease(convId)
-    }))
-    sessions.set(convId, s)
+    // Várias contas Claude: troca de conta no fim do turno e no estouro. A
+    // aquisição do lease dela entra no MESMO lock (toda aquisição da conversa
+    // passa por ele: nenhuma se cruza com a de um agent:start/agent:send) e, na
+    // vez dela, confere se esta sessão ainda é a da conversa.
+    withContinueRefusal(convId, accountSwitchDepsFor(convId, () =>
+      sessionLock.run(convId, async () => {
+        if (sessions.get(convId) !== s) throw new Error('a sessão desta conversa foi trocada antes da troca de conta')
+        if (!sessionLeases.has(convId)) await acquireSessionLease(convId)
+      })
+    )))
+    if (!previous) {
+      // Defesa: com o lock nada sobe no meio e a descartada já saiu do mapa; se
+      // ainda assim houver outra lá, ela é substituída agora — com dispose.
+      sessions.get(convId)?.dispose()
+      sessions.set(convId, s)
+      // Sessão nova: o turno de tarefa MCP que estava aberto se perdeu (erro).
+      mcpInbound.onSessionInstalled(convId)
+    }
+    // Sem prazo aqui de propósito: `start()` não espera o CLI responder (cria o
+    // `query()` e devolve), só lê disco local e sobe o proxy local do Codex. Um
+    // prazo por fora deixaria o CLI subir DEPOIS do dispose, como processo órfão.
     let ok = false
     try {
       ok = await s.start()
@@ -1617,10 +1860,38 @@ export function registerIpc(): void {
     if (!ok) {
       if (sessions.get(convId) === s) sessions.delete(convId)
       s.dispose()
-      await releaseSessionLease(convId)
+      // A antiga (keepPrevious) segue viva e dona do lease — e com o estado dela
+      // (Manager, Automático, pasta), que a troca não chegou a gravar.
+      if (!previous) await releaseSessionLease(convId)
+    } else if (previous) {
+      if (sessions.get(convId) !== previous) {
+        // A conversa foi descartada durante a subida (agent:dispose não entra no
+        // lock): a nova perde a vez e morre aqui, sem processo órfão.
+        s.dispose()
+        throw new Error('outra sessão assumiu a conversa durante a troca')
+      }
+      // A nova subiu: só agora ela vira a da conversa e a antiga é descartada (o
+      // `complete` da antiga já não solta o lease: ela deixou de ser a da conversa).
+      sessions.set(convId, s)
+      commitState(opts.cwd)
+      previous.dispose()
+      mcpInbound.onSessionInstalled(convId)
     }
     return { ok, claudeAccountId }
-  })
+  }
+  ipcMain.handle(Channels.agentStart, (_e, opts: StartAgentOptions) =>
+    sessionLock.run(opts.convId, () => startAgentSession(opts))
+  )
+
+  /** Id de tarefa MCP vindo da tela (fronteira do IPC): string curta, ou nada. */
+  const validTaskId = (value: unknown): value is string =>
+    typeof value === 'string' && value.length > 0 && value.length <= 200
+
+  /** O estado REAL da sessão viva da conversa: modelo atual e se tem a config MCP. */
+  const liveMcpState = (convId: string): LiveSessionState | null => {
+    const live = sessions.get(convId)?.liveOptions()
+    return live ? { model: live.model, mcp: !!live.inboundMcp } : null
+  }
 
   ipcMain.handle(
     Channels.agentSend,
@@ -1632,10 +1903,80 @@ export function registerIpc(): void {
       files?: FileAttachment[],
       fileRefs?: FileRefAttachment[],
       messageUuid?: string,
-      messageKind?: AgentMessageKind
+      messageKind?: AgentMessageKind,
+      mcpTaskId?: unknown
     ) => {
       assertStorageWritable()
-      if (!sessionLeases.has(convId)) await acquireSessionLease(convId)
+      // O item da fila que é de uma tarefa MCP diz QUAL tarefa (o id); sem id, é
+      // mensagem do usuário — nunca herda modelo, pin nem config de tarefa. O
+      // texto nunca identifica tarefa. `recovery` (retomada automática) é só de
+      // mensagem do usuário: nunca continua tarefa.
+      const mcpSend: McpSend = {
+        text,
+        ...(validTaskId(mcpTaskId) ? { taskId: mcpTaskId } : {}),
+        kind: messageKind === 'recovery' ? 'recovery' : 'normal'
+      }
+      // Regra 1: id de tarefa que não está viva (terminou, cancelada, erro, app
+      // reiniciado) é RECUSADO — nunca rebaixado a mensagem do usuário. Regra 2:
+      // retomada automática depois de turno de tarefa, idem. Conferido aqui, de
+      // novo dentro do lock (a tarefa pode ter acabado enquanto esperava) e logo
+      // antes de enviar (idem, durante a gravação dos anexos).
+      const refuse = (): void => {
+        const refused = mcpInbound.refusal(convId, mcpSend)
+        if (refused) throw new Error(refused)
+      }
+      refuse()
+      // Conversa com tarefa MCP: a sessão viva tem de estar no modelo (e com a
+      // config MCP) que este envio exige — o da tarefa, ou, para a mensagem do
+      // usuário depois dela, o da conversa. Não está: refaz a sessão (mesmas
+      // opções, retomando a conversa) ANTES de gravar anexos e de avisar vigia,
+      // PO e memorista — falhou, nada foi gravado nem anunciado, a tarefa vira
+      // erro e o envio também. Nunca roda calado no modelo errado. A troca entra
+      // no lock da conversa, como todo agent:start: nada sobe no meio dela. O
+      // lock não tem prazo; o lease e a retomada têm (sessionSteps.ts): estourou
+      // um deles, a tarefa vira erro com o motivo e o envio falha.
+      const target = await sessionLock.run(convId, async () => {
+        refuse()
+        // Sem sessão viva não há o que refazer nem para onde enviar: erro claro
+        // antes de pegar lease (um lease sem sessão ficaria renovando à toa).
+        if (!sessions.get(convId)) throw new Error(NO_LIVE_SESSION)
+        const acquiredHere = !sessionLeases.has(convId)
+        if (acquiredHere) await acquireSessionLease(convId)
+        const mcpRestart = mcpInbound.restartForSend(convId, mcpSend, liveMcpState(convId))
+        if (mcpRestart) {
+          const started = await startAgentSession(mcpRestart, { keepPrevious: true }).catch((error: unknown) => ({
+            ok: false,
+            error
+          }))
+          mcpInbound.clearRestart(convId)
+          if (!started.ok) {
+            const why = 'error' in started ? String(started.error) : 'a sessão não subiu'
+            mcpInbound.failStart(convId, mcpSend, `Não consegui trocar o modelo da conversa: ${why}`)
+            throw new Error(`Não consegui trocar o modelo da conversa: ${why}`)
+          }
+        }
+        // Depois dos `await` acima (lease, troca): a sessão em que este envio mexe
+        // é a que está no mapa AGORA — o descarte da conversa e o lease perdido
+        // não entram no lock e tiram a sessão do mapa. Sem sessão viva, erro claro
+        // (e a tarefa vira erro), nunca "enviado" para uma sessão descartada. A
+        // tarefa também pode ter acabado durante a espera: a recusa vale de novo.
+        const session = sessions.get(convId)
+        if (!session) {
+          // A sessão saiu durante a espera: o lease que ESTA operação pegou não
+          // fica instalado sem dona — é solto antes de sair do lock.
+          if (acquiredHere) await releaseSessionLease(convId)
+          throw new Error(NO_LIVE_SESSION)
+        }
+        refuse()
+        // Tarefa que pediu o modelo: a troca por cota deste turno não troca de modelo.
+        session.pinModel(mcpInbound.pinForSend(convId, mcpSend))
+        return session
+      }).catch((error: unknown) => {
+        // A tarefa deste envio vira erro com o motivo (a que já não estava viva
+        // não muda — a recusa não mexe nela).
+        mcpInbound.failStart(convId, mcpSend, error instanceof Error ? error.message : String(error))
+        throw error
+      })
       // Non-image files are saved to disk and referenced by path so the agent can
       // open them with its own tools (Read, scripts, etc.). Pasted-by-reference
       // files (fileRefs) are already on disk — local path or main's own
@@ -1649,6 +1990,18 @@ export function registerIpc(): void {
       const saved: Array<{ name: string; path: string }> =
         toSave.length > 0 ? await saveAttachments(convId, toSave) : []
       const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
+      refuse()
+      // Tarefa MCP só roda na sessão que foi preparada para ela: se outra assumiu
+      // a conversa enquanto os anexos eram gravados, erro claro em vez de rodar
+      // no modelo de outra sessão. Mensagem do usuário segue para a da conversa
+      // — se ainda houver uma viva; sem nenhuma, erro claro.
+      const current = sessions.get(convId)
+      if (current !== target && mcpInbound.isTaskSend(convId, mcpSend)) {
+        const why = 'Não consegui enviar a tarefa: a sessão da conversa foi trocada durante o envio.'
+        mcpInbound.failStart(convId, mcpSend, why)
+        throw new Error(why)
+      }
+      if (!current) throw new Error(NO_LIVE_SESSION)
       // O vigia só julga premissa de um pedido do usuário: é aqui que o turno
       // dele começa (retomada e recuperação de turno não passam por aqui).
       if (observed) vigia.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
@@ -1659,7 +2012,9 @@ export function registerIpc(): void {
       // O memorista precisa do mesmo marco: é a mensagem do usuário que pode
       // ENSINAR algo, e a pasta do projeto entra na memória como contexto.
       if (observed) memorista.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
-      await sessions.get(convId)?.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
+      // Saiu da fila o item de uma tarefa MCP: ela passa a `rodando`.
+      mcpInbound.onAgentSend(convId, mcpSend)
+      await current.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }
   )
 
@@ -1674,11 +2029,24 @@ export function registerIpc(): void {
       images?: ImageAttachment[],
       files?: FileAttachment[],
       fileRefs?: FileRefAttachment[],
-      messageUuid?: unknown
+      messageUuid?: unknown,
+      mcpTaskId?: unknown
     ) => {
       if (typeof convId !== 'string' || typeof text !== 'string') return { ok: false }
+      // O item clicado diz de qual tarefa MCP é (id); sem id, é do usuário.
+      const taskId = validTaskId(mcpTaskId) ? mcpTaskId : undefined
+      // Regra 1: id de tarefa que não está viva é recusado (`gone`): a tela tira
+      // o item da fila e avisa — nunca entra no turno como mensagem do usuário.
+      const gone = mcpInbound.refusal(convId, { text, ...(taskId ? { taskId } : {}) })
+      if (gone) return { ok: false, reason: gone, gone: true }
       const session = sessions.get(convId)
       if (!session) return { ok: false }
+      // Tarefa MCP de outro modelo (ou sem a config MCP na sessão viva) não entra
+      // no turno em andamento: fica na fila e sai no fim dele, com a troca de
+      // sessão do `agent:send`. Recusada antes de gravar qualquer anexo — pelo
+      // modelo da tarefa DO ITEM clicado.
+      const blocked = mcpInbound.injectBlocked(convId, taskId, liveMcpState(convId))
+      if (blocked) return { ok: false, reason: blocked }
       assertStorageWritable()
       const observed = planningConversations.observed(convId)
       const toSave = [
@@ -1687,13 +2055,30 @@ export function registerIpc(): void {
       ]
       const saved = toSave.length > 0 ? await saveAttachments(convId, toSave) : []
       const finalText = buildAttachmentNote(text, [...saved, ...(Array.isArray(fileRefs) ? fileRefs : [])])
+      // Depois do `await` dos anexos: a sessão ainda é a da conversa? Descartada
+      // ou trocada no meio, nada entra (o item continua na fila).
+      if (sessions.get(convId) !== session) return { ok: false }
       const uuid = typeof messageUuid === 'string' ? messageUuid : undefined
-      return { ok: session.injectNow(finalText, Array.isArray(images) ? images : undefined, uuid) }
+      const ok = session.injectNow(finalText, Array.isArray(images) ? images : undefined, uuid)
+      // Tarefa MCP levada para dentro do turno pelo "agora": termina com ele (e,
+      // se pediu o modelo, a troca por cota do turno não troca de modelo).
+      if (ok && mcpInbound.onInjected(convId, taskId)) session.pinModel(true)
+      return { ok }
     }
   )
 
   ipcMain.handle(Channels.agentInterrupt, async (_e, convId: string) => {
+    mcpInbound.onInterrupt(convId)
     return (await sessions.get(convId)?.interrupt()) ?? { stillQueued: [] }
+  })
+
+  // MCP de entrada: o renderer montou o ouvinte (e carregou as conversas), ou
+  // conta que uma tarefa não chegou à conversa / saiu da fila sem rodar.
+  ipcMain.handle(Channels.mcpRendererReady, () => mcpInbound.markRendererReady())
+  ipcMain.handle(Channels.mcpTaskFailed, (_e, input: unknown) => {
+    const v = input as { taskId?: unknown; erro?: unknown; cancelada?: unknown } | null
+    if (!v || typeof v.taskId !== 'string' || typeof v.erro !== 'string') return
+    mcpInbound.onRendererReport(v.taskId, v.erro.slice(0, 1000), v.cancelada === true)
   })
 
   ipcMain.handle(Channels.agentSetBypass, (_e, convId: string, on: boolean) => {
@@ -1701,6 +2086,7 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle(Channels.agentPermissionResponse, (_e, convId: string, res: PermissionResponse) => {
+    mcpInbound.onPermissionClosed(convId, res.id)
     sessions.get(convId)?.resolvePermission(res)
   })
 
@@ -1710,6 +2096,7 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle(Channels.agentDispose, (_e, convId: string) => {
+    mcpInbound.onDispose(convId)
     sessions.get(convId)?.dispose()
     sessions.delete(convId)
     autoSessions.delete(convId)
@@ -1798,8 +2185,16 @@ export function registerIpc(): void {
   })
   // Depois de dormir ou mudar de rede o WebSocket com o broker quase sempre está
   // morto sem o SO avisar — reconecta na hora em vez de esperar o heartbeat.
-  powerMonitor.on('resume', () => relay.kick())
-  powerMonitor.on('unlock-screen', () => relay.kick())
+  // Mesma razão para o PostgreSQL: se ele caiu enquanto o PC dormia, reabre já
+  // em vez de esperar o próximo passo do backoff da reconexão automática.
+  powerMonitor.on('resume', () => {
+    relay.kick()
+    storageLifecycle.resumeReconnect()
+  })
+  powerMonitor.on('unlock-screen', () => {
+    relay.kick()
+    storageLifecycle.resumeReconnect()
+  })
   ipcMain.handle(Channels.remotePublishState, (_e, state: RemoteStatePayload) => {
     remote.setState(state)
   })
@@ -1826,11 +2221,26 @@ export function registerIpc(): void {
 const ownsSingleInstance = app.requestSingleInstanceLock()
 if (!ownsSingleInstance) app.quit()
 
-app.on('second-instance', () => {
+/** Traz a janela para a frente (restaura, mostra e foca). */
+function revealMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
+}
+
+// Com `--minimizado` (o cliente MCP abrindo o app), a janela não salta — a não
+// ser sem conta Claude conectada, quando o usuário precisa entrar nela.
+app.on('second-instance', (_event, argv) => {
+  const decision = secondInstanceReveal(argv, mcpInbound.claudeReadyNow)
+  if (decision === 'reveal') revealMainWindow()
+  else if (decision === 'check') {
+    void refreshClaudeReady()
+      .then((ready) => {
+        if (!ready) revealMainWindow()
+      })
+      .catch(() => undefined)
+  }
 })
 
 // No exe portátil o Chromium do Playwright vai embutido em resources/ms-playwright
@@ -1897,18 +2307,24 @@ app.whenReady().then(async () => {
       send(Channels.agentEvent, { convId: 'codex', event: { kind: 'rate-limit', limits: status } })
     }
   })
+  // Queda: descarta só a sessão que, com o turno terminado, ainda está sem banco.
+  // Volta: renova os leases e dispara o reparo do espelho (sessionStorageRecovery.ts).
+  // Se outro dispositivo assumiu na queda, a renovação volta
+  // LEASE_HELD_BY_OTHER_DEVICE e o `onLost` do keeper encerra a sessão.
+  const sessionStorageRecovery = createSessionStorageRecovery({
+    sessions,
+    currentState: () => storageLifecycle.status().state,
+    forget: (convId) => {
+      autoSessions.delete(convId)
+      void releaseSessionLease(convId)
+    },
+    renewLeases: () => {
+      for (const keeper of sessionLeases.values()) void keeper.renewNow()
+    }
+  })
   storageLifecycle.subscribe((status) => {
     send(Channels.storageStatusChanged, status)
-    if (status.state === 'postgres-offline') {
-      for (const [convId, session] of sessions) {
-        void session.waitForIdle().catch(() => undefined).finally(() => {
-          session.dispose()
-          sessions.delete(convId)
-          autoSessions.delete(convId)
-          void releaseSessionLease(convId)
-        })
-      }
-    }
+    sessionStorageRecovery(status)
   })
   storageLifecycle.subscribeChanges((changes) => {
     void (async () => {
@@ -1923,7 +2339,22 @@ app.whenReady().then(async () => {
       authLog(`change feed apply failed: ${error instanceof Error ? error.message : String(error)}`)
     })
   })
-  createWindow()
+  const startMinimized = wantsMinimized(process.argv)
+  createWindow(startMinimized)
+  // MCP de entrada: no boot, sem esperar janela, banco nem login. Porta ocupada
+  // na faixa inteira só fica no log — o resto do app segue.
+  void mcpInbound.start().catch((error) => {
+    console.error(`[mcp-inbound] não subiu: ${error instanceof Error ? error.message : String(error)}`)
+  })
+  // Leitura do login para o `GET /agent-code` (e para o `--minimizado`: sem
+  // conta, a janela vem para a frente). Renovada de tempos em tempos, porque o
+  // usuário pode entrar/sair da conta com o app aberto.
+  void refreshClaudeReady()
+    .then((ready) => {
+      if (!ready && startMinimized) revealMainWindow()
+    })
+    .catch(() => undefined)
+  setInterval(() => void refreshClaudeReady().catch(() => undefined), 60_000).unref()
   authLog(
     `boot electron: ${Math.round(process.uptime() * 1000) - (Date.now() - bootStarted)}ms; ` +
       `boot store: ${storeReadyAt - bootStarted}ms; boot janela: ${Date.now() - bootStarted}ms`
@@ -1950,6 +2381,9 @@ app.whenReady().then(async () => {
     if (restored === 'restored') console.log('[vault] cofre restaurado do banco')
     if (restored === 'failed') console.error('[vault] falha ao restaurar o cofre do banco')
   }
+  // Contas Claude: conta só na pasta volta à lista; pasta/login que sumiu é
+  // recriado da cópia cifrada no banco. Em segundo plano (accounts/accountSync.ts).
+  startAccountSync()
   // A persistência já está pronta (ou já falhou de forma conhecida): só agora a
   // interface pode ler config e conversas sem tomar STORAGE_OFFLINE.
   send(Channels.storageStatusChanged, storageLifecycle.status())
@@ -2004,11 +2438,14 @@ app.on('window-all-closed', () => {
   planningIpc?.close()
   relay.stop()
   void remote.stop()
+  void mcpInbound.stop()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', (event) => {
   quitRequested = true
+  // Antes de fechar o banco: sem sync nem nova tentativa da lista de contas depois.
+  stopAccountSync()
   if (!quitReady) {
     event.preventDefault()
     if (mainWindow && !mainWindow.isDestroyed()) {

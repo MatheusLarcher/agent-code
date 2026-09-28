@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { PlanningHandoffDto, PlanningHandoffSentDto } from '@shared/ipc'
 import {
+  deliveredMarks,
   HANDOFF_CLOCK_SLACK_MS,
   handoffOutcome,
   handoffPartialMessage,
-  latestHandoffBatch,
   launchHandoff,
   managerHandoffRequest,
-  newHandoffsSince
+  managerQuestionnaireRequest,
+  newHandoffsSince,
+  pendingHandoffs
 } from './handoffFlow'
 
 describe('managerHandoffRequest', () => {
@@ -115,8 +118,14 @@ describe('launchHandoff', () => {
 
 describe('handoffOutcome e handoffPartialMessage', () => {
   it('distingue enviado, conversa criada com falha e nada criado', () => {
-    expect(handoffOutcome({ conv: { id: 'x' }, delivered: 2, total: 2 })).toEqual({ status: 'sent', delivered: 2, total: 2 })
-    expect(handoffOutcome({ conv: { id: 'x' }, delivered: 0, total: 2 })).toEqual({ status: 'created-failed', delivered: 0, total: 2 })
+    const conv = { id: 'x', title: 'Implementação: P' }
+    expect(handoffOutcome({ conv, delivered: 2, total: 2 })).toEqual({ status: 'sent', delivered: 2, total: 2, conversation: conv })
+    expect(handoffOutcome({ conv, delivered: 0, total: 2 })).toEqual({
+      status: 'created-failed',
+      delivered: 0,
+      total: 2,
+      conversation: conv
+    })
     expect(handoffOutcome({ conv: null, delivered: 0, total: 0 })).toEqual({ status: 'not-created', delivered: 0, total: 0 })
   })
 
@@ -134,18 +143,60 @@ describe('handoffOutcome e handoffPartialMessage', () => {
   })
 })
 
-describe('latestHandoffBatch (prompts já gravados, depois de reiniciar)', () => {
-  const h = (name: string, createdAt: number) => ({ name, createdAt, content: `# ${name}` })
-  it('pega só o último lote (arquivos próximos no tempo), na ordem dos nomes', () => {
-    const t = Date.parse('2026-09-25T10:00:00Z')
-    const list = [
-      h('2026-09-24-01.md', t - 86_400_000),
-      h('2026-09-25-02.md', t + 60_000),
-      h('2026-09-25-01.md', t)
-    ]
-    expect(latestHandoffBatch(list).map((x) => x.name)).toEqual(['2026-09-25-01.md', '2026-09-25-02.md'])
+describe('managerQuestionnaireRequest', () => {
+  it('pede o questionário por AskUserQuestion, em levas de 4, registrando nos cards e sem implementar', () => {
+    const text = managerQuestionnaireRequest()
+    expect(text).toMatch(/^Lance agora o questionário/)
+    expect(text).toContain('AskUserQuestion, até 4 por vez')
+    expect(text).toContain("'(Recomendado)'")
+    expect(text).toContain('registre nos cards (decisão, ambiguidade resolvida)')
+    expect(text).toContain("Sem perguntas em aberto, diga só 'Nenhuma pergunta em aberto.'")
+    expect(text).toMatch(/Não implemente nada\.$/)
   })
-  it('lista vazia, lote vazio', () => {
-    expect(latestHandoffBatch([])).toEqual([])
+})
+
+describe('pendingHandoffs (a enviar = fora de enviados.json)', () => {
+  const h = (name: string, createdAt = 0): PlanningHandoffDto => ({ name, createdAt, content: `# ${name}` })
+  const at = '2026-09-25T10:00:00.000Z'
+  const names = (l: PlanningHandoffDto[]): string[] => l.map((x) => x.name)
+  // A ordem é a da lista do main (por nome), não a do relógio: gravados com
+  // horas de distância continuam juntos, sem "lote" adivinhado.
+  const list = [h('2026-09-24-01.md', 0), h('2026-09-25-01.md', 5 * 3_600_000), h('2026-09-25-02.md', 1)]
+
+  it('sem enviados.json (plano antigo), todos estão a enviar, na ordem da lista', () => {
+    expect(names(pendingHandoffs(list, []))).toEqual(['2026-09-24-01.md', '2026-09-25-01.md', '2026-09-25-02.md'])
+    expect(pendingHandoffs([], [])).toEqual([])
+  })
+
+  it('enviado, substituído e marcado à mão saem da lista', () => {
+    const sent: PlanningHandoffSentDto[] = [
+      { nome: '2026-09-24-01.md', enviadoEm: at, conversaId: 'c1', conversaTitulo: 'Implementação: P' },
+      { nome: '2026-09-25-01.md', enviadoEm: at, substituidoPor: '2026-09-25-03.md' }
+    ]
+    expect(names(pendingHandoffs([...list, h('2026-09-25-03.md')], sent))).toEqual(['2026-09-25-02.md', '2026-09-25-03.md'])
+    expect(pendingHandoffs(list, [...sent, { nome: '2026-09-25-02.md', enviadoEm: at, marcadoManualmente: true }])).toEqual([])
+  })
+
+  it('registro de arquivo que já não existe não atrapalha', () => {
+    expect(names(pendingHandoffs(list, [{ nome: 'sumiu.md', enviadoEm: at, marcadoManualmente: true }]))).toHaveLength(3)
+  })
+})
+
+describe('deliveredMarks (o que vai para enviados.json depois do envio)', () => {
+  const conversation = { id: 'c1', title: 'Implementação: P' }
+  const names = ['a.md', 'b.md', 'c.md']
+  it('envio completo: todos, ligados à conversa', () => {
+    expect(deliveredMarks(names, { status: 'sent', delivered: 3, total: 3, conversation })).toEqual(
+      names.map((nome) => ({ nome, conversaId: 'c1', conversaTitulo: 'Implementação: P' }))
+    )
+  })
+  it('envio parcial: só os entregues; o resto continua a enviar', () => {
+    expect(deliveredMarks(names, { status: 'created-failed', delivered: 1, total: 3, conversation })).toEqual([
+      { nome: 'a.md', conversaId: 'c1', conversaTitulo: 'Implementação: P' }
+    ])
+    expect(deliveredMarks(names, { status: 'created-failed', delivered: 0, total: 3, conversation })).toEqual([])
+  })
+  it('nada criado: nada registrado', () => {
+    expect(deliveredMarks(names, { status: 'not-created', delivered: 0, total: 0 })).toEqual([])
   })
 })

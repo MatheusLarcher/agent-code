@@ -1,5 +1,6 @@
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ImageAttachment } from '../shared/ipc'
+import { imageContentBlocks } from '../shared/inlineMedia'
 
 /**
  * Botão "agora" da fila: a mensagem entra no turno EM ANDAMENTO, sem
@@ -18,10 +19,7 @@ export function buildInjectedMessage(text: string, images: readonly ImageAttachm
   const body = `${INJECT_NOW_MARKER}\n\n${text}`
   const content: unknown =
     images && images.length > 0
-      ? [
-          ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })),
-          { type: 'text', text: body }
-        ]
+      ? [...imageContentBlocks(images), { type: 'text', text: body }]
       : body
   return {
     type: 'user',
