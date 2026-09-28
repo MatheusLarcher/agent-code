@@ -85,7 +85,7 @@ import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
 
 /** Poll do contador da aba Quadro com o painel FECHADO. Lento: é um badge. */
 const BOARD_BADGE_POLL_MS = 60_000
-import { IconPower, IconSettings, IconSmartphone } from './components/Icons'
+import { IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { typeSafePauseText } from './ui/typeSafePauseText'
 import { useOutboxPersistence } from './useOutboxPersistence'
@@ -588,7 +588,6 @@ export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Confirmation before stopping a session whose agent is mid-task (so an
   // accidental click never kills a running turn). Holds the conversation id.
-  const [stopConfirm, setStopConfirm] = useState<string | null>(null)
   // When opening Settings to nudge a missing key, focus that section.
   const [settingsFocus, setSettingsFocus] = useState<'openai' | 'typesafe' | 'accounts' | null>(null)
   // Whether an OpenAI key is set — gates the mic and read-aloud buttons.
@@ -1195,7 +1194,7 @@ export function App(): JSX.Element {
             // mensagem fica com o erro e o "Tentar de novo", a tarefa MCP dela
             // vira erro, a conversa sai de ocupada e a fila segue — sem isto a
             // conversa ficava "ocupada" para sempre e a fila parava.
-            const why = `Falha ao enviar: ${String(err)}`
+            const why = `Falha ao enviar: ${ipcErrorMessage(err, String(err))}`
             if (inflightRef.current[cid]?.msgId === nextMsgId) delete inflightRef.current[cid]
             if (isMcpTaskGone(err)) {
               // Regra 1: tarefa MCP que não está mais viva — o main recusou. O item
@@ -2139,15 +2138,6 @@ export function App(): JSX.Element {
     [setConnected, setBusy, notify]
   )
 
-  // "Parar sessão" click: if the agent is mid-task, ask first (don't kill a
-  // running turn by accident); otherwise stop right away.
-  const requestStopSession = useCallback((): void => {
-    const id = activeIdRef.current
-    if (!id) return
-    if (busyRef.current.has(id)) setStopConfirm(id)
-    else void stopSession(id)
-  }, [stopSession])
-
   // Model picker: the SDK fixes the model for the life of a session, so a live
   // session must restart to pick up a change.
   // - Idle + connected: restart right away (silently dispose; no "encerrada"
@@ -2453,8 +2443,8 @@ export function App(): JSX.Element {
         failedRef.current[msgId] = { convId: conv.id, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
         // O main não achou sessão viva: o "Tentar de novo" reconecta antes de enviar.
         if (isNoLiveSession(err)) setConnected(conv.id, false)
-        markMessageError(conv.id, msgId, `Falha ao enviar: ${String(err)}`)
-        notify('erro', `Falha ao enviar: ${String(err)}`)
+        markMessageError(conv.id, msgId, `Falha ao enviar: ${ipcErrorMessage(err, String(err))}`)
+        notify('erro', `Falha ao enviar: ${ipcErrorMessage(err, String(err))}`)
       }
     },
     [connect, patchConv, setBusy, setConnected, notify, ensureProject, markMessageError, autoTitle]
@@ -2667,8 +2657,8 @@ export function App(): JSX.Element {
         // O main não achou sessão viva: o próximo clique reconecta antes de enviar.
         if (isNoLiveSession(err)) setConnected(convId, false)
         const gone = isMcpTaskGone(err)
-        markMessageError(convId, msgId, gone ? MCP_TASK_GONE_WARNING : `Falha ao enviar: ${String(err)}`)
-        notify(gone ? 'aviso' : 'erro', gone ? MCP_TASK_GONE_WARNING : `Falha ao enviar: ${String(err)}`)
+        markMessageError(convId, msgId, gone ? MCP_TASK_GONE_WARNING : `Falha ao enviar: ${ipcErrorMessage(err, String(err))}`)
+        notify(gone ? 'aviso' : 'erro', gone ? MCP_TASK_GONE_WARNING : `Falha ao enviar: ${ipcErrorMessage(err, String(err))}`)
       }
     },
     [connect, ensureProject, patchConv, setBusy, setConnected, notify, clearMessageError, markMessageError]
@@ -3769,22 +3759,9 @@ export function App(): JSX.Element {
             <IconSettings />
           </button>
           {active && activeConnected ? (
-            <>
-              <span className={`session-pill ${skipPerms ? 'danger' : ''}`}>
-                ● {skipPerms ? 'tudo liberado' : 'conectado'}
-              </span>
-              {/* Na Tela de Planejamento o Manager não tem "Parar sessão" no topo. */}
-              {!activePlanning && (
-                <button
-                  className="btn ghost stop-session-btn"
-                  onClick={requestStopSession}
-                  title="Parar a sessão (encerra o agente e libera a troca de modelo)"
-                >
-                  <IconPower />
-                  Parar sessão
-                </button>
-              )}
-            </>
+            <span className={`session-pill ${skipPerms ? 'danger' : ''}`}>
+              ● {skipPerms ? 'tudo liberado' : 'conectado'}
+            </span>
           ) : null}
         </header>
 
@@ -3966,37 +3943,6 @@ export function App(): JSX.Element {
           windowsControlEnabled={windowsControlEnabled}
           onToggleWindowsControl={(on) => void toggleWindowsControl(on)}
         />
-      )}
-      {stopConfirm && (
-        <div className="modal-overlay" onClick={() => setStopConfirm(null)}>
-          <div
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="modal-title">Parar a execução do agente?</h3>
-            <p className="modal-message">
-              O agente está executando uma tarefa agora. Parar a sessão vai interromper essa
-              execução e encerrar o agente. Você poderá reconectar depois (a conversa é mantida).
-            </p>
-            <div className="modal-actions">
-              <button className="btn ghost" onClick={() => setStopConfirm(null)}>
-                Continuar executando
-              </button>
-              <button
-                className="btn danger-btn"
-                onClick={() => {
-                  const id = stopConfirm
-                  setStopConfirm(null)
-                  void stopSession(id)
-                }}
-              >
-                Parar execução
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   )
