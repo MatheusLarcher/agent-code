@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Agent Code — Controle do Chrome",
   "short_name": "Agent Code",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Permite que o Agent Code (app local) controle este Chrome. Fala só com 127.0.0.1.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwVCNEgwXnFxNcFBdDK7Xx4U2vAwUGylOlYI8+GEc9ir9pAkLjglMDePlVCE0jwvRuv0QbMcxXyI5yNdV+APbq6BpFlEGyDQ7coC1ButdB4Zr0uPNa8QaqvpnWGbD84XGZT9zp5eNW7WHPEtn3qZSQm5sBKrXDQZhi6B3i5OvqS2IC7er8oJQ75wtvqWiN5h4oeE/cDqoHzUvR+kCxLMpiGfRiTvYar6/qW8dyhi0z9YfDPBpXveM7z3IG8VYBz4UJ+GOVS6yhwzDapqr/SSY51YcdtxUSSt9O+Scf/rNo7c2zS4QWH3tw7U+L8+jvQ2M5NQW1GbzZvDLTQ4zW27rDwIDAQAB",
   "minimum_chrome_version": "116",
