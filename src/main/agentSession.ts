@@ -12,6 +12,10 @@ import { createBrowserMcpServer } from './browserTools'
 import { createAndroidMcpServer } from './android/androidTools'
 import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsControl/tools'
 import { windowsControl } from './windowsControl/service'
+import { createChromeMcpServer } from './chromeBridge/tools'
+import { chromeBridge, chromeTabMemory } from './chromeBridge/state'
+import { CHROME_CONTROL_HINT } from './chromeBridge/hint'
+import { CHROME_DISABLED_MESSAGE, chromeGateDecision } from './chromeBridge/gate'
 import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { localLeftoversSettled } from './localLeftovers'
@@ -895,6 +899,7 @@ export class AgentSession {
     if (process.platform === 'win32') {
       mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
     }
+    mcpServers.chrome = createChromeMcpServer(chromeBridge, chromeTabMemory(this.opts.convId))
     // Tarefa do MCP de entrada: os servidores do chamador (ex.: o do Forgia), só
     // nesta sessão. Nome reservado já foi recusado na validação; aqui não
     // sobrescreve nada por garantia.
@@ -989,6 +994,7 @@ export class AgentSession {
     // sessão em vez de ser recopiada em todo turno do histórico.
     append += await buildSecretsHint()
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
+    append += `\n\n${CHROME_CONTROL_HINT}`
 
     // Modo econômico: when the user toggled it on for THIS conversation, tell the
     // model to skip validation/build/tests for trivial tasks to save tokens.
@@ -2189,6 +2195,11 @@ ${lines}
       }
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
+    // Chrome do usuário: toggle próprio que "Permitir tudo" não atravessa;
+    // leitura liberada, escrita segue o fluxo normal (null).
+    const chrome = chromeGateDecision(toolName, loadConfig().chromeControlEnabled)
+    if (chrome === 'deny') return Promise.resolve({ behavior: 'deny', message: CHROME_DISABLED_MESSAGE })
+    if (chrome === 'allow') return Promise.resolve({ behavior: 'allow', updatedInput: input })
     // Checked BEFORE bypassAll: whether MEMORY.md matches the database must not
     // depend on the permission toggle. Reading the folder stays allowed.
     const memoryDenial = memoryWriteDenial(getCacheInfo().memoriesDir, toolName, input)

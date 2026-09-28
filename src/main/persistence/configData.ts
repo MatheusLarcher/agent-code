@@ -62,6 +62,8 @@ const partialConfigSchema = z
     ollama: z.object({ enabled: z.boolean().optional(), apiKey: z.string().optional() }).strict().optional(),
     skipPermissions: z.boolean().optional(),
     windowsControlEnabled: z.boolean().optional(),
+    chromeControlEnabled: z.boolean().optional(),
+    chromeBridgeToken: z.string().optional(),
     secretVaultEnabled: z.boolean().optional(),
     remoteToken: z.string().optional(),
     remoteEnabled: z.boolean().optional(),

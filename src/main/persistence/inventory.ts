@@ -50,6 +50,8 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.ollama.apiKey',
       'config.skipPermissions',
       'config.windowsControlEnabled',
+      'config.chromeControlEnabled',
+      'config.chromeBridgeToken',
       'config.secretVaultEnabled',
       'config.remoteToken',
       'config.remoteEnabled',

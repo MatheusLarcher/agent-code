@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 const configState = vi.hoisted(() => ({
   windowsControlEnabled: false as unknown,
+  chromeControlEnabled: false as unknown,
   ollama: { enabled: false, apiKey: '' }
 }))
 const codexState = vi.hoisted(() => ({ connected: true }))
@@ -25,6 +26,7 @@ const ensureCodexProxyMock = vi.hoisted(() =>
 vi.mock('./config', () => ({
   loadConfig: () => ({
     windowsControlEnabled: configState.windowsControlEnabled,
+    chromeControlEnabled: configState.chromeControlEnabled,
     // start() reads these two; the permission-gate tests never call start(), but
     // the fast-mode test below does.
     ollama: configState.ollama
@@ -199,6 +201,7 @@ const handle = (s: AgentSession, message: unknown): void =>
 
 beforeEach(() => {
   configState.windowsControlEnabled = false
+  configState.chromeControlEnabled = false
   configState.ollama = { enabled: false, apiKey: '' }
   codexState.connected = true
   cacheState.dir = 'C:\\test\\agent-code'
@@ -286,6 +289,32 @@ describe('AgentSession — fluxo de permissão', () => {
     await expect(gate(s, 'mcp__windows__windows_click', { windowId: '123' })).resolves.toMatchObject({
       behavior: 'deny'
     })
+  })
+
+  it('chrome: toggle desligado nega mesmo com "permitir tudo"', async () => {
+    const { s, ask } = makeSession()
+    s.setBypass(true)
+    const res = await gate(s, 'mcp__chrome__chrome_snapshot', {})
+    expect(ask).not.toHaveBeenCalled()
+    expect(res).toMatchObject({ behavior: 'deny', message: expect.stringContaining('Permitir controle do Chrome') })
+  })
+
+  it('chrome ligado: leitura libera sem modal; escrita pergunta sem bypass', async () => {
+    configState.chromeControlEnabled = true
+    const { s, ask } = makeSession()
+    await expect(gate(s, 'mcp__chrome__chrome_list_tabs', {})).resolves.toEqual({ behavior: 'allow', updatedInput: {} })
+    expect(ask).not.toHaveBeenCalled()
+    void gate(s, 'mcp__chrome__chrome_click', { ref: 'e1' })
+    expect(ask).toHaveBeenCalledTimes(1)
+    expect(ask.mock.calls[0][0]).toMatchObject({ toolName: 'mcp__chrome__chrome_click' })
+  })
+
+  it('chrome ligado + "permitir tudo": escrita passa', async () => {
+    configState.chromeControlEnabled = true
+    const { s, ask } = makeSession()
+    s.setBypass(true)
+    await expect(gate(s, 'mcp__chrome__chrome_type', { text: 'x' })).resolves.toEqual({ behavior: 'allow', updatedInput: { text: 'x' } })
+    expect(ask).not.toHaveBeenCalled()
   })
 
   it('ligar "permitir tudo" ao vivo resolve a permissão pendente (com updatedInput)', async () => {

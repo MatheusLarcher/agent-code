@@ -81,6 +81,7 @@ import type {
   UseAccountResult
 } from './claudeAccounts'
 import type { TypeSafePauseStatus } from './typesafePause'
+import type { ChromeBridgeStatus } from './chromeBridge'
 
 /** The surface exposed on `window.api` by the preload script. */
 export interface AgentCodeApi {
@@ -121,6 +122,14 @@ export interface AgentCodeApi {
   setWindowsControlEnabled(enabled: boolean): Promise<void>
   /** Keep every renderer surface synchronized with the Windows-control gate. */
   onWindowsControlChanged(cb: (enabled: boolean) => void): () => void
+  /** Liga/desliga a permissão do controle do Chrome do usuário. */
+  setChromeControlEnabled(enabled: boolean): Promise<void>
+  onChromeControlChanged(cb: (enabled: boolean) => void): () => void
+  /** Status da ponte Chrome (extensão conectada, versão, navegador). */
+  getChromeBridgeStatus(): Promise<ChromeBridgeStatus>
+  onChromeBridgeStatusChanged(cb: (status: ChromeBridgeStatus) => void): () => void
+  /** Copia/atualiza a extensão, abre a pasta e chrome://extensions; devolve o caminho da pasta. */
+  installChromeExtension(): Promise<string>
   /** Whether a path exists and is a directory (project-folder guard). */
   pathExists(path: string): Promise<boolean>
   pickDirectory(): Promise<string | null>

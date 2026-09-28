@@ -128,6 +128,17 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     }),
     setWindowsControlEnabled: vi.fn(async () => {}),
     onWindowsControlChanged: vi.fn(() => () => {}),
+    setChromeControlEnabled: vi.fn(async () => {}),
+    onChromeControlChanged: vi.fn(() => () => {}),
+    getChromeBridgeStatus: vi.fn(async () => ({
+      listening: false,
+      port: null,
+      connected: false,
+      extensionVersion: null,
+      userAgent: null
+    })),
+    onChromeBridgeStatusChanged: vi.fn(() => () => {}),
+    installChromeExtension: vi.fn(async () => ''),
     authStatus: vi.fn(async () => ({ authenticated: true })),
     authLogin: vi.fn(async () => ({ ok: true })),
     codexStatus: vi.fn(async () => ({ connected: false })),

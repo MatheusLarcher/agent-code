@@ -112,6 +112,7 @@ import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, 
 import { startRestartGuardFile } from './restartGuardFile'
 import { startSleepGuard } from './sleepGuard'
 import { windowsControl } from './windowsControl/service'
+import { chromeBridgeStatus, openInstall as openChromeInstall, startChromeBridge, stopChromeBridge } from './chromeBridge/runtime'
 import { discoverSkills } from './skillDiscovery'
 import { readProjectIcon } from './projectIcon'
 import { syncCacheSkills } from './skillManager'
@@ -491,6 +492,9 @@ async function updateAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   if ('windowsControlEnabled' in patch && typeof patch.windowsControlEnabled !== 'boolean') {
     throw new TypeError('windowsControlEnabled deve ser booleano.')
   }
+  if ('chromeControlEnabled' in patch && typeof patch.chromeControlEnabled !== 'boolean') {
+    throw new TypeError('chromeControlEnabled deve ser booleano.')
+  }
   const before = loadConfig().typesafe
   const next = await updateConfig(patch)
   // Chave nova salva ou Modo Automático religado: sai da pausa na hora.
@@ -501,6 +505,7 @@ async function updateAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
     windowsControl.setEnabled(next.windowsControlEnabled)
     send(Channels.windowsControlChanged, next.windowsControlEnabled)
   }
+  if (patch.chromeControlEnabled !== undefined) send(Channels.chromeControlChanged, next.chromeControlEnabled)
   return next
 }
 
@@ -1065,6 +1070,13 @@ export function registerIpc(): void {
     assertStorageWritable()
     await updateAppConfig({ windowsControlEnabled: enabled })
   })
+  ipcMain.handle(Channels.chromeControlSetEnabled, async (_e, enabled: boolean) => {
+    if (typeof enabled !== 'boolean') throw new TypeError('enabled deve ser booleano.')
+    assertStorageWritable()
+    await updateAppConfig({ chromeControlEnabled: enabled })
+  })
+  ipcMain.handle(Channels.chromeBridgeStatus, () => chromeBridgeStatus())
+  ipcMain.handle(Channels.chromeExtensionInstall, () => openChromeInstall())
 
   // OpenAI voice (chat): speech-to-text and text-to-speech. The key stays in main
   // (read from config); the renderer only ships audio/text. Errors come back as
@@ -2414,6 +2426,8 @@ app.whenReady().then(async () => {
   // que roda fora do modelo: quem some no meio do trabalho pode ser justamente
   // o supervisor, então não dá para depender de alguém perceber e agir.
   if (storageAvailable) stopTaskReaper = startTaskReaper(undefined, (line) => console.log(line))
+  // Ponte do Chrome do usuário: precisa da config (token) já carregada.
+  if (storageAvailable) void startChromeBridge((status) => send(Channels.chromeBridgeStatusChanged, status))
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
   // a paired phone reconnects on its own (the fixed token is already persisted).
   if (storageAvailable && loadConfig().remoteEnabled) {
@@ -2431,6 +2445,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   windowsControl.stop()
+  stopChromeBridge()
   for (const b of browsers.values()) void b.close()
   browsers.clear()
   for (const s of sessions.values()) s.dispose()

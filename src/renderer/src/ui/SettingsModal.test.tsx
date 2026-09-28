@@ -11,6 +11,15 @@ function stubApi(config: AppConfig): Record<string, ReturnType<typeof vi.fn>> {
     setConfig: vi.fn(async () => {}),
     getCacheInfo: vi.fn(async () => ({ dir: 'C:/dados', dbPath: 'C:/dados/app.db' })),
     getAppVersion: vi.fn(async () => '0.0.0'),
+    getChromeBridgeStatus: vi.fn(async () => ({
+      listening: false,
+      port: null,
+      connected: false,
+      extensionVersion: null,
+      userAgent: null
+    })),
+    onChromeControlChanged: vi.fn(() => () => {}),
+    onChromeBridgeStatusChanged: vi.fn(() => () => {}),
     codexStatus: vi.fn(async () => ({ connected: false }))
   }
   ;(window as unknown as { api: unknown }).api = api

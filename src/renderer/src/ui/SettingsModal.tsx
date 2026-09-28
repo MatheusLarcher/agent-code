@@ -17,6 +17,7 @@ import { PostgresSettingsSection } from './PostgresSettingsSection'
 import { MemoryDataSection } from './MemoryDataSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { TypeSafePauseNote } from './TypeSafePauseNote'
+import { ChromeControlSection } from './ChromeControlSection'
 import {
   IconBoard,
   IconDatabase,
@@ -335,6 +336,8 @@ export function SettingsModal({
                     <span className="switch-visual" aria-hidden="true" />
                   </label>
                 </section>
+
+                <ChromeControlSection />
 
                 <section className={`settings-section settings-switch-section ${cfg.preventSleepWhileBusy ? 'on' : ''}`}>
                   <label className="settings-switch-row">

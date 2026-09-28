@@ -33,6 +33,13 @@ extraResources:
   # Chromium do Playwright embutido (PLAYWRIGHT_BROWSERS_PATH aponta pra cá em produção)
   - from: out/ms-playwright
     to: ms-playwright
+  # Extensão local do Chrome (chromeBridge/runtime.ts → resources/chrome-extension).
+  # config.js é gerado por instalação (token), nunca empacotado.
+  - from: src/chromeExtension
+    to: chrome-extension
+    filter:
+      - '**/*'
+      - '!config.js'
 
 win:
   target:

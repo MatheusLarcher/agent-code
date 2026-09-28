@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Agent Code</title>
+  <style>
+    body { font: 13px system-ui, sans-serif; margin: 0; padding: 12px; width: 220px; color: #222; }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #aaa; }
+    .on .dot { background: #2e9d4a; }
+    .paused .dot { background: #d98a00; }
+    button { margin-top: 10px; width: 100%; padding: 6px; font: inherit; cursor: pointer; }
+    small { display: block; margin-top: 8px; color: #777; }
+  </style>
+</head>
+<body>
+  <h1>Agent Code</h1>
+  <div id="status"><span class="dot"></span><span id="label">Verificando…</span></div>
+  <button id="toggle" disabled>Pausar</button>
+  <small id="version"></small>
+  <script src="popup.js"></script>
+</body>
+</html>

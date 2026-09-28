@@ -3,6 +3,7 @@ import { Channels } from '../shared/ipc'
 import type { AgentCodeApi } from '../shared/api'
 import type { AccountUsageResult, AddClaudeAccountResult, ClaudeAccountView, UseAccountResult } from '../shared/claudeAccounts'
 import type { TypeSafePauseStatus } from '../shared/typesafePause'
+import type { ChromeBridgeStatus } from '../shared/chromeBridge'
 import type {
   ConversationQueryDto,
   ProjectConversationCountDto,
@@ -122,6 +123,13 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.windowsControlSetEnabled, enabled),
   onWindowsControlChanged: (cb: (enabled: boolean) => void): (() => void) =>
     on(Channels.windowsControlChanged, cb),
+  setChromeControlEnabled: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke(Channels.chromeControlSetEnabled, enabled),
+  onChromeControlChanged: (cb: (enabled: boolean) => void): (() => void) => on(Channels.chromeControlChanged, cb),
+  getChromeBridgeStatus: (): Promise<ChromeBridgeStatus> => ipcRenderer.invoke(Channels.chromeBridgeStatus),
+  onChromeBridgeStatusChanged: (cb: (status: ChromeBridgeStatus) => void): (() => void) =>
+    on(Channels.chromeBridgeStatusChanged, cb),
+  installChromeExtension: (): Promise<string> => ipcRenderer.invoke(Channels.chromeExtensionInstall),
 
   // directory picker
   pathExists: (path: string): Promise<boolean> => ipcRenderer.invoke(Channels.pathExists, path),

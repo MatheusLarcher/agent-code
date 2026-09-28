@@ -1431,6 +1431,10 @@ export interface AppConfig {
   skipPermissions: boolean
   /** Independent high-risk gate for controlling arbitrary Windows applications. */
   windowsControlEnabled: boolean
+  /** Gate independente do controle do Chrome do usuário (extensão local). */
+  chromeControlEnabled: boolean
+  /** Token da ponte Chrome (hex de 16 bytes), gerado uma vez no boot. */
+  chromeBridgeToken: string
   /** Live gate for model reads/writes to the device-local encrypted secret vault. */
   secretVaultEnabled: boolean
   /** Fixed pairing token for the LAN remote bridge. Generated once and reused on
@@ -1667,6 +1671,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   ollama: { enabled: false, apiKey: '' },
   skipPermissions: false,
   windowsControlEnabled: false,
+  chromeControlEnabled: false,
+  chromeBridgeToken: '',
   // Desligado por padrão: ligado, as senhas guardadas vão em texto puro no
   // system prompt e chegam ao provedor. Isso só acontece se o usuário marcar.
   secretVaultEnabled: false,
@@ -1743,6 +1749,12 @@ export const Channels = {
   storageChanged: 'storage:changed',
   /** Persist and apply the independent Windows-control permission immediately. */
   windowsControlSetEnabled: 'windows-control:set-enabled',
+  /** Grava e aplica na hora a permissão do controle do Chrome. */
+  chromeControlSetEnabled: 'chrome-control:set-enabled',
+  /** Status atual da ponte Chrome (ChromeBridgeStatus). */
+  chromeBridgeStatus: 'chrome-bridge:status',
+  /** Instala/atualiza a extensão e abre a pasta; devolve o caminho. */
+  chromeExtensionInstall: 'chrome-extension:install',
   /** Get the active cache folder (where the SQLite db, memories and skills live). */
   cacheGetInfo: 'cache:get-info',
   /** Pick a new cache folder (native dialog) and switch to it; returns the new CacheInfo. */
@@ -1941,6 +1953,10 @@ export const Channels = {
   memoristaProviderDiagnostic: 'memorista:provider-diagnostic',
   /** main → renderer: the Windows-control permission changed. */
   windowsControlChanged: 'windows-control:changed',
+  /** main → renderer: a permissão do controle do Chrome mudou. */
+  chromeControlChanged: 'chrome-control:changed',
+  /** main → renderer: o status da ponte Chrome mudou (ChromeBridgeStatus). */
+  chromeBridgeStatusChanged: 'chrome-bridge:status-changed',
   browserFrame: 'browser:frame',
   browserStateChanged: 'browser:state',
   browserPicked: 'browser:picked',
