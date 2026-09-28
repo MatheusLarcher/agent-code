@@ -9,7 +9,7 @@ import type { MemoryGateInput } from '../typesafe'
 /** Só a decisão automática é dublada; o resto da pasta typesafe segue real —
  *  é o caminho SEM `deps.autoModel`, o de produção, que precisa ser visto. */
 const chooseAutoExecution = vi.fn(async () => ({
-  model: 'claude-sonnet-5',
+  model: 'claude-sonnet-5-5',
   effort: 'low' as const,
   source: 'typesafe' as const
 }))
@@ -23,7 +23,7 @@ import { MEMORISTA_COOLDOWN_MS, MEMORISTA_MAX_CALLS, MEMORISTA_MAX_USER_CHARS } 
 
 const config = (over: Partial<MemoristaConfig> = {}): MemoristaConfig => ({
   enabled: true,
-  model: 'claude-sonnet-5',
+  model: 'claude-sonnet-5-5',
   ...over
 })
 
@@ -866,7 +866,7 @@ describe('Memorista — diagnóstico para o painel do elenco', () => {
 describe('Memorista — modo Automático', () => {
   it('em Automático o modelo da análise sai da decisão, nunca o sentinel', async () => {
     const memory = fakeMemory()
-    const autoModel = vi.fn(async () => 'claude-sonnet-5')
+    const autoModel = vi.fn(async () => 'claude-sonnet-5-5')
     const seen: MemoristaObserverRequest[] = []
     const memorista = new Memorista({
       config: () => config({ model: 'auto' }),
@@ -882,7 +882,7 @@ describe('Memorista — modo Automático', () => {
     memorista.observe('conv-1', result)
     await memorista.settled('conv-1')
 
-    expect(seen[0]?.model).toBe('claude-sonnet-5')
+    expect(seen[0]?.model).toBe('claude-sonnet-5-5')
     // A decisão vê a mensagem do usuário — é sobre ela que o turno foi.
     expect(autoModel).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'use pnpm neste projeto' })
@@ -891,7 +891,7 @@ describe('Memorista — modo Automático', () => {
 
   it('fora do Automático não consulta ninguém: o modelo é o da configuração', async () => {
     const memory = fakeMemory()
-    const autoModel = vi.fn(async () => 'claude-sonnet-5')
+    const autoModel = vi.fn(async () => 'claude-sonnet-5-5')
     const seen: MemoristaObserverRequest[] = []
     const memorista = new Memorista({
       config,
@@ -907,13 +907,13 @@ describe('Memorista — modo Automático', () => {
     memorista.observe('conv-1', result)
     await memorista.settled('conv-1')
 
-    expect(seen[0]?.model).toBe('claude-sonnet-5')
+    expect(seen[0]?.model).toBe('claude-sonnet-5-5')
     expect(autoModel).not.toHaveBeenCalled()
   })
 
   it('o gate vem ANTES da escolha: turno recusado não gasta a decisão', async () => {
     const memory = fakeMemory()
-    const autoModel = vi.fn(async () => 'claude-sonnet-5')
+    const autoModel = vi.fn(async () => 'claude-sonnet-5-5')
     const memorista = new Memorista({
       config: () => config({ model: 'auto' }),
       memory: () => memory,
@@ -953,7 +953,7 @@ describe('Memorista — modo Automático', () => {
     )
     // A lista do seletor do memorista, e nada além dela: o Fable 5.1 é mais
     // caro que o topo do que o usuário consegue escolher para ele à mão.
-    expect(MEMORISTA_AUTO_MODELS).toEqual(['claude-sonnet-5', 'claude-fable-5-1', 'claude-opus-5-5'])
-    expect(seen[0]?.model).toBe('claude-sonnet-5')
+    expect(MEMORISTA_AUTO_MODELS).toEqual(['claude-sonnet-5-5', 'claude-fable-5-1', 'claude-opus-5-5'])
+    expect(seen[0]?.model).toBe('claude-sonnet-5-5')
   })
 })

@@ -63,7 +63,7 @@ describe('usePlanningModel — o seletor do chat de planejamento', () => {
     return (
       <div>
         <span data-testid="cfg">{`${config.model}|${config.effort}`}</span>
-        <button type="button" onClick={() => setModel('claude-sonnet-5')}>sonnet</button>
+        <button type="button" onClick={() => setModel('claude-sonnet-5-5')}>sonnet</button>
         <button type="button" onClick={() => setEffort('xhigh')}>xhigh</button>
       </div>
     )
@@ -76,9 +76,9 @@ describe('usePlanningModel — o seletor do chat de planejamento', () => {
     expect(screen.getByTestId('cfg').textContent).toBe('auto|medium')
 
     fireEvent.click(screen.getByText('sonnet'))
-    expect(api.setConfig).toHaveBeenLastCalledWith({ planning: { model: 'claude-sonnet-5', effort: 'medium' } })
+    expect(api.setConfig).toHaveBeenLastCalledWith({ planning: { model: 'claude-sonnet-5-5', effort: 'medium' } })
     fireEvent.click(screen.getByText('xhigh'))
-    expect(api.setConfig).toHaveBeenLastCalledWith({ planning: { model: 'claude-sonnet-5', effort: 'xhigh' } })
-    expect(screen.getByTestId('cfg').textContent).toBe('claude-sonnet-5|xhigh')
+    expect(api.setConfig).toHaveBeenLastCalledWith({ planning: { model: 'claude-sonnet-5-5', effort: 'xhigh' } })
+    expect(screen.getByTestId('cfg').textContent).toBe('claude-sonnet-5-5|xhigh')
   })
 })

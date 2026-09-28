@@ -49,7 +49,7 @@ beforeEach(() => {
   typeSafePause.reset()
   askTypeSafe.mockReset()
   minConfidence.value = 0.2
-  answers('claude-sonnet-5', 1)
+  answers('claude-sonnet-5-5', 1)
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
   ;(MODEL_EFFORT as Record<string, EffortLevel[]>)[MODELO_TETO_HIGH] = ['low', 'medium', 'high']
 })
@@ -63,7 +63,7 @@ describe('candidatos', () => {
   it('oferece os modelos reais do seletor, e cada um com descrição', () => {
     const models = autoModelCandidates()
 
-    expect(models).toEqual(['claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5-1'])
+    expect(models).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'])
     // Sem descrição o Jev escolheria pelo nome do modelo, não pelo trabalho pedido.
     for (const model of models) expect(AUTO_MODEL_DESCRIPTIONS[model]).toBeTruthy()
   })
@@ -234,10 +234,10 @@ describe('falha nunca trava o envio', () => {
   })
 
   it('resposta só de modelo: o esforço cai no padrão, marcado como fallback só nele', async () => {
-    askTypeSafe.mockResolvedValue({ which_model: choiceAnswer('claude-sonnet-5') })
+    askTypeSafe.mockResolvedValue({ which_model: choiceAnswer('claude-sonnet-5-5') })
 
     expect(await chooseAutoExecution({ message: 'oi' })).toEqual({
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       effort: DEFAULT_EFFORT,
       source: { model: 'typesafe', effort: 'fallback' }
     })
@@ -246,8 +246,8 @@ describe('falha nunca trava o envio', () => {
 
 describe('a nota que a UI mostra', () => {
   it('diz o modelo e o esforço do turno quando os dois são automáticos', () => {
-    expect(autoExecutionNote({ model: 'claude-sonnet-5', effort: 'medium', source: BOTH_TYPESAFE })).toBe(
-      'Automático: Sonnet 5, esforço médio.'
+    expect(autoExecutionNote({ model: 'claude-sonnet-5-5', effort: 'medium', source: BOTH_TYPESAFE })).toBe(
+      'Automático: Sonnet 5.5, esforço médio.'
     )
   })
 
@@ -262,8 +262,8 @@ describe('a nota que a UI mostra', () => {
   })
 
   it('só o modelo automático: a nota fala só do modelo', () => {
-    expect(autoExecutionNote({ model: 'claude-sonnet-5', effort: 'high', source: { model: 'typesafe' } })).toBe(
-      'Automático: Sonnet 5.'
+    expect(autoExecutionNote({ model: 'claude-sonnet-5-5', effort: 'high', source: { model: 'typesafe' } })).toBe(
+      'Automático: Sonnet 5.5.'
     )
   })
 
@@ -275,11 +275,11 @@ describe('a nota que a UI mostra', () => {
 
   it('fallback numa dimensão só: a nota diz qual', () => {
     const note = autoExecutionNote({
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       effort: 'high',
       source: { model: 'typesafe', effort: 'fallback' }
     })
-    expect(note).toContain('Automático: Sonnet 5, esforço alto.')
+    expect(note).toContain('Automático: Sonnet 5.5, esforço alto.')
     expect(note).toContain('esforço padrão')
     expect(note).not.toContain('par padrão')
     expect(autoExecutionNote({ model: 'claude-opus-5-5', effort: 'low', source: { model: 'fallback' } })).toContain(
@@ -294,7 +294,7 @@ describe('a nota que a UI mostra', () => {
 })
 
 describe('lista de candidatos restrita (o memorista)', () => {
-  const memorista = ['claude-sonnet-5', 'claude-fable-5-1', 'claude-opus-5-5']
+  const memorista = ['claude-sonnet-5-5', 'claude-fable-5-1', 'claude-opus-5-5']
 
   it('só oferece ao serviço os modelos que a lista permite', () => {
     const payload = buildAutoExecutionPayload({ message: 'oi' }, memorista)
@@ -311,10 +311,10 @@ describe('lista de candidatos restrita (o memorista)', () => {
   })
 
   it('escolha dentro da lista passa normalmente', async () => {
-    answers('claude-sonnet-5', 0)
+    answers('claude-sonnet-5-5', 0)
 
     expect(await chooseAutoExecution({ message: 'oi' }, { models: memorista })).toMatchObject({
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       effort: 'low'
     })
   })
@@ -322,8 +322,8 @@ describe('lista de candidatos restrita (o memorista)', () => {
   it('o par padrão de uma lista sem o modelo padrão fica DENTRO dela', async () => {
     askTypeSafe.mockResolvedValue(null)
 
-    expect(await chooseAutoExecution({ message: 'oi' }, { models: ['claude-sonnet-5'] })).toMatchObject({
-      model: 'claude-sonnet-5',
+    expect(await chooseAutoExecution({ message: 'oi' }, { models: ['claude-sonnet-5-5'] })).toMatchObject({
+      model: 'claude-sonnet-5-5',
       effort: 'high',
       source: BOTH_FALLBACK
     })
@@ -331,7 +331,7 @@ describe('lista de candidatos restrita (o memorista)', () => {
 })
 
 describe('abrir a sessão em Automático', () => {
-  const live = { model: 'claude-sonnet-5', effort: 'low' as const }
+  const live = { model: 'claude-sonnet-5-5', effort: 'low' as const }
   /** O mesmo par como a conversa o guarda: escolhido pelo TypeSafe. */
   const decidedLive = { ...live, decided: DECIDED_BOTH }
 
@@ -359,7 +359,7 @@ describe('abrir a sessão em Automático', () => {
   })
 
   it('com turno pergunta, anuncia e reaproveita a sessão quando o par repete', async () => {
-    answers('claude-sonnet-5', 0)
+    answers('claude-sonnet-5-5', 0)
 
     const decision = await resolveAutoStart({
       autoPrompt: { message: 'traduz isto' },
@@ -370,7 +370,7 @@ describe('abrir a sessão em Automático', () => {
     expect(askTypeSafe).toHaveBeenCalledTimes(1)
     expect(decision.execution).toEqual({ ...live, source: BOTH_TYPESAFE })
     expect(decision.reuse).toBe(true)
-    expect(decision.note).toBe('Automático: Sonnet 5, esforço baixo.')
+    expect(decision.note).toBe('Automático: Sonnet 5.5, esforço baixo.')
   })
 
   it('com turno e par diferente, a sessão viva não serve', async () => {
@@ -387,7 +387,7 @@ describe('abrir a sessão em Automático', () => {
   })
 
   it('par repetido sem sessão viva não é reaproveitamento', async () => {
-    answers('claude-sonnet-5', 0)
+    answers('claude-sonnet-5-5', 0)
 
     expect(
       (await resolveAutoStart({ autoPrompt: { message: 'oi' }, live: decidedLive, hasSession: false })).reuse

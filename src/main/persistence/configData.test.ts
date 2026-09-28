@@ -39,16 +39,16 @@ describe('configuração persistida', () => {
   })
 
   it('TypeSafe: lista do Automático normalizada campo a campo, e o padrão nunca é compartilhado', () => {
-    expect(normalizeAllowedAutoModels(['claude-sonnet-5', 'claude-opus-5-5'])).toEqual(['claude-sonnet-5', 'claude-opus-5-5'])
-    expect(normalizeAllowedAutoModels(['claude-sonnet-5', 'claude-sonnet-5'])).toEqual(['claude-sonnet-5'])
+    expect(normalizeAllowedAutoModels(['claude-sonnet-5-5', 'claude-opus-5-5'])).toEqual(['claude-sonnet-5-5', 'claude-opus-5-5'])
+    expect(normalizeAllowedAutoModels(['claude-sonnet-5-5', 'claude-sonnet-5-5'])).toEqual(['claude-sonnet-5-5'])
     expect(normalizeAllowedAutoModels([])).toEqual([])
-    for (const invalido of [undefined, null, 'claude-sonnet-5', 42, { a: 1 }, [1], ['claude-sonnet-5', 2], ['  ']]) {
+    for (const invalido of [undefined, null, 'claude-sonnet-5-5', 42, { a: 1 }, [1], ['claude-sonnet-5-5', 2], ['  ']]) {
       expect(normalizeAllowedAutoModels(invalido), JSON.stringify(invalido)).toEqual([])
     }
 
     // Merge pelo bloco preserva a lista ao gravar só o interruptor.
-    const comLista = mergeAppConfig(defaultAppConfig(), { typesafe: { allowedAutoModels: ['claude-sonnet-5'] } })
-    expect(mergeAppConfig(comLista, { typesafe: { enabled: true } }).typesafe.allowedAutoModels).toEqual(['claude-sonnet-5'])
+    const comLista = mergeAppConfig(defaultAppConfig(), { typesafe: { allowedAutoModels: ['claude-sonnet-5-5'] } })
+    expect(mergeAppConfig(comLista, { typesafe: { enabled: true } }).typesafe.allowedAutoModels).toEqual(['claude-sonnet-5-5'])
     // Na fronteira (IPC), item que não é texto continua sendo recusado.
     expect(() => mergeAppConfig(defaultAppConfig(), { typesafe: { allowedAutoModels: [1] } })).toThrow()
 
@@ -62,8 +62,8 @@ describe('configuração persistida', () => {
     expect(defaultAppConfig().planning).toEqual({ model: 'auto', effort: 'auto' })
     expect(parseStoredAppConfig('{}').planning).toEqual({ model: 'auto', effort: 'auto' })
     // O sentinel do esforço é valor válido, não corrupção.
-    expect(mergeAppConfig(defaultAppConfig(), { planning: { model: 'claude-sonnet-5', effort: 'auto' } }).planning).toEqual({
-      model: 'claude-sonnet-5',
+    expect(mergeAppConfig(defaultAppConfig(), { planning: { model: 'claude-sonnet-5-5', effort: 'auto' } }).planning).toEqual({
+      model: 'claude-sonnet-5-5',
       effort: 'auto'
     })
 
@@ -78,14 +78,14 @@ describe('configuração persistida', () => {
   })
 
   it('planejamento: modelo fora de PLANNING_MODELS ou esforço fora de EFFORT_LEVELS volta ao padrão', () => {
-    const atual = mergeAppConfig(defaultAppConfig(), { planning: { model: 'claude-sonnet-5', effort: 'high' } })
+    const atual = mergeAppConfig(defaultAppConfig(), { planning: { model: 'claude-sonnet-5-5', effort: 'high' } })
 
     expect(mergeAppConfig(atual, { planning: { model: 'claude-opus-4-1' } }).planning).toEqual({
       model: 'auto',
       effort: 'high'
     })
     expect(mergeAppConfig(atual, { planning: { effort: 'ultra' } }).planning).toEqual({
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       effort: 'auto'
     })
     // Tipo errado também normaliza em vez de lançar: cada campo é aplicado

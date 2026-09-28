@@ -802,7 +802,7 @@ describe('AgentSession — result de subagente NÃO encerra o turno principal', 
       type: 'assistant',
       parent_tool_use_id: null,
       message: {
-        model: 'claude-sonnet-5',
+        model: 'claude-sonnet-5-5',
         usage: {},
         content: [{ type: 'text', text: 'resposta' }]
       }
@@ -811,7 +811,7 @@ describe('AgentSession — result de subagente NÃO encerra o turno principal', 
       ...baseResult,
       usage: { input_tokens: 0, output_tokens: 0 },
       modelUsage: {
-        'claude-sonnet-5': {
+        'claude-sonnet-5-5': {
           inputTokens: 31,
           outputTokens: 17,
           cacheReadInputTokens: 5,
@@ -1050,7 +1050,7 @@ describe('AgentSession — vision_fallback_router', () => {
   })
 
   it('modelo COM visão nativa (Claude) + imagem: NÃO chama o relay, envia a imagem direto', async () => {
-    const { s } = makeSession({ model: 'claude-sonnet-5' })
+    const { s } = makeSession({ model: 'claude-sonnet-5-5' })
 
     await s.send('o que é isso?', [{ mediaType: 'image/png', data: 'AAAA' }])
 
@@ -1063,7 +1063,7 @@ describe('AgentSession — vision_fallback_router', () => {
 
   // Anexo posto no meio do texto: o agente recebe o marcador no ponto e cada
   // imagem com o rótulo `midia:N = nome` logo antes dela, na ordem N.
-  for (const model of ['claude-sonnet-5', 'gpt-6-sol', 'kimi-k3:cloud']) {
+  for (const model of ['claude-sonnet-5-5', 'gpt-6-sol', 'kimi-k3:cloud']) {
     it(`anexo inline (${model}): marcador no texto e imagem rotulada, na ordem N`, async () => {
       const { s } = makeSession({ model })
       await s.send('compare {{midia:1}} com {{midia:2}} e explique', [
@@ -1093,7 +1093,7 @@ describe('AgentSession — vision_fallback_router', () => {
   })
 
   it('imagem SEM rótulo (celular, mensagem antiga) sai como antes: só o bloco de imagem', async () => {
-    const { s } = makeSession({ model: 'claude-sonnet-5' })
+    const { s } = makeSession({ model: 'claude-sonnet-5-5' })
     await s.send('o que é isso?', [{ mediaType: 'image/png', data: 'AAAA' }])
     const blocks = pushedMessages(s)[0].message.content as Array<{ type: string }>
     expect(blocks.map((b) => b.type)).toEqual(['image', 'text'])
@@ -1146,7 +1146,7 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
   // A proteção que importa: mesmo se a flag vazar de uma conversa antiga, um
   // modelo sem suporte não pode receber fastMode — a API rejeitaria a request.
   it('modelo sem suporte + flag ligada: settings.fastMode NÃO vai junto', async () => {
-    const { s } = makeSession({ model: 'claude-sonnet-5', fastMode: true })
+    const { s } = makeSession({ model: 'claude-sonnet-5-5', fastMode: true })
     await s.start()
     expect(optionsOfLastQuery().settings).not.toHaveProperty('fastMode')
   })
@@ -1173,7 +1173,7 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
   // A memória do usuário é a pasta do app; a auto-memória do CLI
   // (~/.claude/projects/<cwd>/memory) poria outra pasta no prompt e o modelo
   // gravaria lá. Desligada em toda sessão, de qualquer provedor.
-  it.each(['claude-opus-5-5', 'claude-sonnet-5', 'gpt-6-sol'])('%s: auto-memória do CLI desligada', async (model) => {
+  it.each(['claude-opus-5-5', 'claude-sonnet-5-5', 'gpt-6-sol'])('%s: auto-memória do CLI desligada', async (model) => {
     const { s } = makeSession({ model, fastMode: false })
     await s.start()
     expect(optionsOfLastQuery().settings).toMatchObject({ autoMemoryEnabled: false })
@@ -1771,7 +1771,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
   })
 
   it('não injeta proxy nem limite GPT numa sessão Anthropic', async () => {
-    const { s } = makeSession({ model: 'claude-sonnet-5' })
+    const { s } = makeSession({ model: 'claude-sonnet-5-5' })
     await expect(s.start()).resolves.toBe(true)
     expect(optionsOfLastQuery().env).toBeUndefined()
     expect(optionsOfLastQuery().maxTurns).toBeUndefined()
@@ -2610,7 +2610,7 @@ describe('AgentSession — árvore de consumo de tokens (llm-call)', () => {
     ...(overrides.subagent_type ? { subagent_type: overrides.subagent_type } : {}),
     ...(overrides.task_description ? { task_description: overrides.task_description } : {}),
     message: {
-      model: overrides.model ?? 'claude-sonnet-5',
+      model: overrides.model ?? 'claude-sonnet-5-5',
       usage: overrides.usage ?? {
         input_tokens: 10,
         output_tokens: 20,
@@ -2638,7 +2638,7 @@ describe('AgentSession — árvore de consumo de tokens (llm-call)', () => {
       node_id: turnId,
       parent_node_id: null,
       seq: 1,
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       tokens: { input: 10, output: 20, cacheRead: 1, cacheWrite: 2 },
       outputPreview: 'oi'
     })
@@ -2656,7 +2656,7 @@ describe('AgentSession — árvore de consumo de tokens (llm-call)', () => {
         nodeId: turnId,
         parentNodeId: null,
         seq: 1,
-        model: 'claude-sonnet-5',
+        model: 'claude-sonnet-5-5',
         inputTokens: 10,
         outputTokens: 20,
         cacheReadTokens: 1,
@@ -2673,7 +2673,7 @@ describe('AgentSession — árvore de consumo de tokens (llm-call)', () => {
     handle(s, assistantMsg({ parent_tool_use_id: null, content: [{ type: 'text', text: 'oi' }] }))
     await Promise.resolve()
     handle(s, { type: 'result', subtype: 'success', is_error: false, duration_ms: 1, modelUsage: {
-      'claude-sonnet-5': { inputTokens: 40, outputTokens: 50, cacheReadInputTokens: 6, cacheCreationInputTokens: 7 }
+      'claude-sonnet-5-5': { inputTokens: 40, outputTokens: 50, cacheReadInputTokens: 6, cacheCreationInputTokens: 7 }
     } })
     await Promise.resolve()
     expect(updateLlmCall).toHaveBeenCalledWith('llm-call-1', {

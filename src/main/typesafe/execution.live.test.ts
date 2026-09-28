@@ -31,7 +31,7 @@ beforeEach(() => {
   typeSafePause.reset()
   askTypeSafe.mockReset()
   minConfidence.value = 0.2
-  respond('claude-sonnet-5', 0.7, 1)
+  respond('claude-sonnet-5-5', 0.7, 1)
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
   ;(MODEL_EFFORT as Record<string, EffortLevel[]>)[MODELO_TETO_HIGH] = ['low', 'medium', 'high']
 })
@@ -65,39 +65,39 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
   })
 
   it('um par no ar fora da lista de candidatos não é anunciado — a resposta seria inválida', async () => {
-    await chooseAutoExecution({ message: 'oi' }, { live, models: ['claude-sonnet-5', 'claude-fable-5-1'] })
+    await chooseAutoExecution({ message: 'oi' }, { live, models: ['claude-sonnet-5-5', 'claude-fable-5-1'] })
 
     expect(askTypeSafe.mock.calls[0][0].state.modelo_atual).toBe(AUTO_NO_LIVE_MODEL)
   })
 
   it('escolha CONFIANTE troca o par normalmente', async () => {
-    respond('claude-sonnet-5', 0.9, 0)
+    respond('claude-sonnet-5-5', 0.9, 0)
 
     expect(await chooseAutoExecution({ message: 'traduz isto' }, { live })).toEqual({
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       effort: 'low',
       source: BOTH_TYPESAFE
     })
   })
 
   it('escolha FRACA mantém o par vivo: 0,15 não troca o modelo de uma conversa', async () => {
-    respond('claude-sonnet-5', 0.15, 0)
+    respond('claude-sonnet-5-5', 0.15, 0)
 
     expect(await chooseAutoExecution({ message: 'e aí?' }, { live })).toEqual({ ...live, source: BOTH_TYPESAFE })
   })
 
   it('o gate é POR DIMENSÃO: modelo confiante troca, esforço fraco fica no vivo', async () => {
-    respond('claude-sonnet-5', 0.9, 0, 0.1)
+    respond('claude-sonnet-5-5', 0.9, 0, 0.1)
 
     expect(await chooseAutoExecution({ message: 'oi' }, { live })).toEqual({
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       effort: 'high',
       source: BOTH_TYPESAFE
     })
   })
 
   it('e o contrário: modelo fraco fica no vivo, esforço confiante troca', async () => {
-    respond('claude-sonnet-5', 0.1, 0, 0.9)
+    respond('claude-sonnet-5-5', 0.1, 0, 0.9)
 
     expect(await chooseAutoExecution({ message: 'oi' }, { live })).toEqual({
       model: 'claude-opus-5-5',
@@ -107,26 +107,26 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
   })
 
   it('o piso é o do usuário: subindo `minConfidence`, uma escolha antes aceita passa a manter o par', async () => {
-    respond('claude-sonnet-5', 0.7, 0)
-    expect(await chooseAutoExecution({ message: 'oi' }, { live })).toMatchObject({ model: 'claude-sonnet-5' })
+    respond('claude-sonnet-5-5', 0.7, 0)
+    expect(await chooseAutoExecution({ message: 'oi' }, { live })).toMatchObject({ model: 'claude-sonnet-5-5' })
 
     minConfidence.value = 0.8
     expect(await chooseAutoExecution({ message: 'oi' }, { live })).toMatchObject({ model: 'claude-opus-5-5' })
   })
 
   it('sem par no ar, confiança baixa continua valendo: não há para onde recuar', async () => {
-    respond('claude-sonnet-5', 0.2, 0)
+    respond('claude-sonnet-5-5', 0.2, 0)
 
-    expect(await chooseAutoExecution({ message: 'oi' })).toMatchObject({ model: 'claude-sonnet-5', effort: 'low' })
+    expect(await chooseAutoExecution({ message: 'oi' })).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low' })
   })
 
   it('resposta sem confiança declarada é aceita — ausência de número não é desconfiança', async () => {
     askTypeSafe.mockResolvedValue({
-      which_model: { type: 'choice', choice: 'claude-sonnet-5', probabilities: {} },
+      which_model: { type: 'choice', choice: 'claude-sonnet-5-5', probabilities: {} },
       which_effort: scoreAnswer(0, 0.9)
     })
 
-    expect(await chooseAutoExecution({ message: 'traduz' }, { live })).toMatchObject({ model: 'claude-sonnet-5' })
+    expect(await chooseAutoExecution({ message: 'traduz' }, { live })).toMatchObject({ model: 'claude-sonnet-5-5' })
   })
 
   it('o par recuado continua sendo recortado para o que o modelo suporta', async () => {
@@ -141,7 +141,7 @@ describe('histerese: o par que já está no ar entra na decisão', () => {
   })
 
   it('`resolveAutoStart` repassa o par da conversa — não é opção só de quem chama direto', async () => {
-    respond('claude-sonnet-5', 0.1, 0)
+    respond('claude-sonnet-5-5', 0.1, 0)
 
     const decision = await resolveAutoStart({ autoPrompt: { message: 'e agora?' }, live: decidedLive, hasSession: true })
 
@@ -200,18 +200,18 @@ describe('o fallback não se defende no turno seguinte', () => {
     askTypeSafe.mockResolvedValue(null)
     const primeiro = await resolveAutoStart({ autoPrompt: { message: 'e agora?' }, hasSession: false })
 
-    respond('claude-sonnet-5', 0.3, 0)
+    respond('claude-sonnet-5-5', 0.3, 0)
     const segundo = await resolveAutoStart({ autoPrompt: { message: 'traduz isto' }, live: primeiro.live, hasSession: true })
 
-    expect(segundo.execution).toEqual({ model: 'claude-sonnet-5', effort: 'low', source: BOTH_TYPESAFE })
+    expect(segundo.execution).toEqual({ model: 'claude-sonnet-5-5', effort: 'low', source: BOTH_TYPESAFE })
     // O Opus do fallback não é anunciado como `modelo_atual`: não é para ser mantido.
     expect(askTypeSafe.mock.calls[1][0].state.modelo_atual).toBe(AUTO_NO_LIVE_MODEL)
-    expect(segundo.live).toEqual({ model: 'claude-sonnet-5', effort: 'low', decided: DECIDED_BOTH })
+    expect(segundo.live).toEqual({ model: 'claude-sonnet-5-5', effort: 'low', decided: DECIDED_BOTH })
   })
 
   it('fallback SÓ no esforço: o modelo decidido se defende, o esforço não', async () => {
     // 1º turno: o modelo veio, o esforço não.
-    askTypeSafe.mockResolvedValue({ which_model: choiceAnswer('claude-sonnet-5', 0.9) })
+    askTypeSafe.mockResolvedValue({ which_model: choiceAnswer('claude-sonnet-5-5', 0.9) })
     const primeiro = await resolveAutoStart({ autoPrompt: { message: 'oi' }, hasSession: false })
     expect(primeiro.live.decided).toEqual({ model: true, effort: false })
 
@@ -221,15 +221,15 @@ describe('o fallback não se defende no turno seguinte', () => {
     askTypeSafe.mockClear()
     const segundo = await resolveAutoStart({ autoPrompt: { message: 'e aí?' }, live: primeiro.live, hasSession: true })
 
-    expect(segundo.execution).toEqual({ model: 'claude-sonnet-5', effort: 'low', source: BOTH_TYPESAFE })
+    expect(segundo.execution).toEqual({ model: 'claude-sonnet-5-5', effort: 'low', source: BOTH_TYPESAFE })
   })
 
   it('`unprompted` preserva o par vivo e a origem de CADA dimensão', async () => {
     const decided = await resolveAutoStart({
-      live: { model: 'claude-sonnet-5', effort: 'low', decided: { model: true, effort: false } },
+      live: { model: 'claude-sonnet-5-5', effort: 'low', decided: { model: true, effort: false } },
       hasSession: true
     })
-    expect(decided.execution).toEqual({ model: 'claude-sonnet-5', effort: 'low', source: BOTH_UNPROMPTED })
+    expect(decided.execution).toEqual({ model: 'claude-sonnet-5-5', effort: 'low', source: BOTH_UNPROMPTED })
     expect(decided.live.decided).toEqual({ model: true, effort: false })
   })
 

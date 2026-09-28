@@ -57,7 +57,7 @@ describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
 
   it('a conversa do Manager não alimenta vigia, quadro, PO nem memorista', async () => {
     for (const fn of observers()) fn.mockClear()
-    await call(Channels.agentStart, { convId: 'plan-2', cwd, model: 'claude-sonnet-5', planning: { slug: 'checkout' } })
+    await call(Channels.agentStart, { convId: 'plan-2', cwd, model: 'claude-sonnet-5-5', planning: { slug: 'checkout' } })
     const session = sessionOf('plan-2')
     session.emit(event)
     await call(Channels.agentSend, 'plan-2', 'separa as etapas')
@@ -68,7 +68,7 @@ describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
 
   it('regressão: conversa comum alimenta os quatro no tee e os três no agent:send', async () => {
     for (const fn of observers()) fn.mockClear()
-    await call(Channels.agentStart, { convId: 'comum', cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: 'comum', cwd, model: 'claude-sonnet-5-5' })
     sessionOf('comum').emit(event)
     await call(Channels.agentSend, 'comum', 'corrige o bug')
     expect(spy.observe.vigia).toHaveBeenCalledWith('comum', event)
@@ -81,14 +81,14 @@ describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
   })
 
   it('agent:dispose limpa a conversa do registro de planejamento', async () => {
-    await call(Channels.agentStart, { convId: 'plan-3', cwd, model: 'claude-sonnet-5', planning: { slug: 'checkout' } })
+    await call(Channels.agentStart, { convId: 'plan-3', cwd, model: 'claude-sonnet-5-5', planning: { slug: 'checkout' } })
     await call(Channels.agentDispose, 'plan-3')
     for (const fn of observers()) fn.mockClear()
     // Sem sessão viva o envio é recusado com erro claro (nunca "enviado" a ninguém).
     await expect(call(Channels.agentSend, 'plan-3', 'oi')).rejects.toThrow(/sem-sessao-viva/)
     expect(spy.note.vigia).not.toHaveBeenCalled()
     // Mesmo id reaproveitado depois do descarte, reconectado: já não é mais do Manager.
-    await call(Channels.agentStart, { convId: 'plan-3', cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: 'plan-3', cwd, model: 'claude-sonnet-5-5' })
     await call(Channels.agentSend, 'plan-3', 'oi')
     expect(spy.note.vigia).toHaveBeenCalledWith('plan-3', cwd, 'oi')
   })
@@ -96,7 +96,7 @@ describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
   it('slug inválido é recusado na fronteira, sem criar sessão', async () => {
     const before = spy.sessions.length
     await expect(
-      call(Channels.agentStart, { convId: 'plan-x', cwd, model: 'claude-sonnet-5', planning: { slug: '../fora' } })
+      call(Channels.agentStart, { convId: 'plan-x', cwd, model: 'claude-sonnet-5-5', planning: { slug: '../fora' } })
     ).rejects.toThrow(/slug do planejamento inválido/)
     expect(spy.sessions.length).toBe(before)
   })

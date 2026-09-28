@@ -762,6 +762,7 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-opus-4-7': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-6': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-5': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-sonnet-5-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5-1': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -808,7 +809,7 @@ export function clampEffortToModel(model: string | undefined, effort: EffortLeve
  *  CONTEXT_LIMITS in sync when adding one. */
 export const CLAUDE_MODELS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'claude-opus-5-5', label: 'Opus 5.5' },
-  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1' }
 ]
 
@@ -1009,7 +1010,8 @@ export const OPENAI_MODELS = [
 export const RETIRED_MODEL_REPLACEMENTS: Readonly<Record<string, string>> = {
   'gpt-5.6-luna': 'gpt-6-luna',
   'gpt-5.6-terra': 'gpt-6-sol',
-  'gpt-5.6-sol': 'gpt-6-sol'
+  'gpt-5.6-sol': 'gpt-6-sol',
+  'claude-sonnet-5': 'claude-sonnet-5-5'
 }
 
 /** O id em uso para `model`: o substituto se ele foi aposentado, senão ele mesmo. */
@@ -1041,6 +1043,7 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'claude-opus-4-7': 1_000_000,
   'claude-opus-4-6': 1_000_000,
   'claude-opus-4-5': 1_000_000,
+  'claude-sonnet-5-5': 1_000_000,
   'claude-sonnet-5': 1_000_000,
   'claude-fable-5-1': 1_000_000,
   'claude-fable-5': 1_000_000,
@@ -1099,7 +1102,7 @@ export interface VigiaConfig {
  *  not the model doing the work — the point is that it costs less than the
  *  conversation it watches. A better model here is a one-line change. */
 export const VIGIA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: 'claude-sonnet-5', label: 'Sonnet 5 (recomendado)' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5 (recomendado)' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1 (mais barato)' },
   { id: 'claude-opus-5-5', label: 'Opus 5.5 (mais caro)' }
 ]
@@ -1191,7 +1194,7 @@ export const PLANNING_MODELS: ReadonlyArray<{ id: string; label: string }> = [
  *  mais caro porque a conversa não pode errar; aqui o Manager roda por muitas
  *  mensagens de planejamento e o Sonnet em esforço médio basta. */
 export const PLANNING_AUTO_FALLBACK: { model: string; effort: EffortLevel } = {
-  model: 'claude-sonnet-5',
+  model: 'claude-sonnet-5-5',
   effort: 'medium'
 }
 
@@ -1683,18 +1686,18 @@ export const DEFAULT_CONFIG: AppConfig = {
   preventSleepWhileBusy: true,
   // Ligado por padrão: o estado inicial já tem que servir, e o custo é uma
   // chamada curta e sem ferramentas por turno, num modelo mais barato.
-  vigia: { enabled: false, model: 'claude-sonnet-5' },
+  vigia: { enabled: false, model: 'claude-sonnet-5-5' },
   // Ligado por padrão, e é o ponto do recurso: a memória que depende de alguém
   // lembrar de pedir é a memória que não é escrita — foi o que aconteceu com o
   // conhecimento que o usuário ensinou e nunca virou arquivo.
-  memorista: { enabled: true, model: 'claude-sonnet-5' },
+  memorista: { enabled: true, model: 'claude-sonnet-5-5' },
   // Automático por padrão nas duas dimensões: sem TypeSafe cada uma cai no
   // PLANNING_AUTO_FALLBACK (Sonnet 5, médio).
   planning: { model: AUTO_MODEL, effort: AUTO_EFFORT },
   // Também ligados por padrão: sem a trava o quadro fica vazio nas tarefas em
   // que ele mais importa, e sem o PO ninguém fecha o cartão que o agente
   // esqueceu — as duas metades do que torna o quadro confiável.
-  board: { requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5' } },
+  board: { requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5-5' } },
   // Desligado por padrão, ao contrário dos observadores acima: depende de um
   // serviço externo e de uma chave que só o usuário tem.
   typesafe: {

@@ -75,7 +75,7 @@ describe('conversation storage normalization', () => {
         id: 'plan-roundtrip',
         title: 'Planejamento: Checkout',
         cwd: 'C:/proj',
-        model: 'claude-sonnet-5',
+        model: 'claude-sonnet-5-5',
         mode: 'planning',
         planningSlug: 'checkout',
         sdkSessionId: null,
@@ -111,7 +111,7 @@ describe('conversation storage normalization', () => {
       mode: 'planning',
       planningSlug: 'checkout',
       title: 'Planejamento: Checkout',
-      model: 'claude-sonnet-5'
+      model: 'claude-sonnet-5-5'
     })
   })
 })

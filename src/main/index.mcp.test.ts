@@ -31,7 +31,7 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
 
   it('fluxo: "agora" recusado; troca que falha não grava nada e mantém a antiga; troca que sobe; volta ao modelo da conversa', async () => {
     const conv = 'mcp-fluxo'
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     const [a] = sessionsOf(conv)
     expect(a.opts.inboundMcp).toBeUndefined()
     // O Forgia manda conversa_id + modelo para a conversa aberta pelo usuário.
@@ -79,7 +79,7 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
     await send(conv, 'e agora?')
     const c = sessionsOf(conv).at(-1)!
     expect(c).not.toBe(b)
-    expect(c.opts.model).toBe('claude-sonnet-5')
+    expect(c.opts.model).toBe('claude-sonnet-5-5')
     expect(b.dispose).toHaveBeenCalled()
     expect(c.pinModel).toHaveBeenLastCalledWith(false)
     expect(c.send).toHaveBeenCalled()
@@ -155,7 +155,7 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
     const conv = 'mcp-manager'
     config(conv)
     const t = mcpInbound.registry.create(conv, 'plano', 'gpt-6-sol')
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5', planning: { slug: 'checkout' } })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5', planning: { slug: 'checkout' } })
     const manager = sessionsOf(conv).at(-1)!
     expect(manager.opts.inboundMcp).toBeUndefined()
     const before = spy.sessions.length
@@ -169,7 +169,7 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
 
   it('corrida (reprodução do crítico): agentStart no meio da troca espera a vez — uma sessão viva só, a substituída com dispose', async () => {
     const conv = 'mcp-corrida'
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     const [a] = sessionsOf(conv)
     config(conv)
     const t = mcpInbound.registry.create(conv, 'T', 'gpt-6-sol')
@@ -181,7 +181,7 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
     // Outro agentStart (a tela reconectando), com o lease dele demorando.
     let openGate!: () => void
     leaseGate.p = new Promise<void>((r) => (openGate = r))
-    const other = call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    const other = call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     await new Promise((r) => setTimeout(r, 20))
     // Ele espera a troca: nada foi descartado nem criado no meio dela.
     expect(a.dispose).not.toHaveBeenCalled()
@@ -212,7 +212,7 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
 
   it('conversa descartada durante a troca: a nova é descartada, nada fica vivo e a tarefa vira erro', async () => {
     const conv = 'mcp-corrida-dispose'
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     const [a] = sessionsOf(conv)
     config(conv)
     const t = mcpInbound.registry.create(conv, 'T', 'gpt-6-sol')
@@ -232,32 +232,32 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
 
   it('troca que falha não mexe no estado da sessão antiga (origem do Automático)', async () => {
     const conv = 'mcp-falha-estado'
-    vi.mocked(resolveAutoStart).mockReset().mockResolvedValue(decide('claude-sonnet-5', false, 'antiga'))
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5', effort: AUTO_EFFORT })
+    vi.mocked(resolveAutoStart).mockReset().mockResolvedValue(decide('claude-sonnet-5-5', false, 'antiga'))
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5', effort: AUTO_EFFORT })
     config(conv)
     const t = mcpInbound.registry.create(conv, 'T', 'gpt-6-sol')
     vi.mocked(resolveAutoStart).mockResolvedValue(decide('gpt-6-sol', false, 'da-troca'))
     spy.startResults.push(false)
     await expect(send(conv, 'T', t.id)).rejects.toThrow(/trocar o modelo/)
     // O próximo start da conversa vê a origem da sessão que ficou, não a da troca que falhou.
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5', effort: AUTO_EFFORT })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5', effort: AUTO_EFFORT })
     expect(vi.mocked(resolveAutoStart).mock.calls.at(-1)?.[0]).toMatchObject({ live: { tag: 'antiga' } })
   })
 
   it('reconexão no meio do turno da tarefa: ela termina em erro (sessão trocada) e o "Tentar de novo" é recusado', async () => {
     const conv = 'mcp-tentar-de-novo'
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     config(conv)
     const t = mcpInbound.registry.create(conv, 'T', 'gpt-6-sol')
     await send(conv, 'T', t.id)
     const task = sessionsOf(conv).at(-1)!
     expect(task.opts.model).toBe('gpt-6-sol')
     // A tela reconecta no meio do turno (sem result): sessão nova, no modelo da CONVERSA.
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     const fresh = sessionsOf(conv).at(-1)!
     expect(fresh).not.toBe(task)
     expect(task.dispose).toHaveBeenCalled()
-    expect(fresh.opts.model).toBe('claude-sonnet-5')
+    expect(fresh.opts.model).toBe('claude-sonnet-5-5')
     expect(mcpInbound.registry.get(t.id)).toMatchObject({ status: 'erro', erro: MCP_SESSION_REPLACED })
     // "Tentar de novo" com o id: recusado com a marca; nada sobe, nada é gravado nem enviado.
     const before = spy.sessions.length
@@ -271,7 +271,7 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
 
   it('529 no turno da tarefa gpt: tarefa em erro, retomada automática recusada, nenhuma sessão em outro modelo', async () => {
     const conv = 'mcp-retry'
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     config(conv)
     const t = mcpInbound.registry.create(conv, 'T', 'gpt-6-sol')
     await send(conv, 'T', t.id)
@@ -287,7 +287,7 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
     // O usuário digita: volta ao modelo da conversa, sem pin; a tarefa segue em erro, com o motivo dela.
     await send(conv, 'outra coisa')
     const user = sessionsOf(conv).at(-1)!
-    expect(user.opts.model).toBe('claude-sonnet-5')
+    expect(user.opts.model).toBe('claude-sonnet-5-5')
     expect(user.pinModel).toHaveBeenLastCalledWith(false)
     user.emit({ kind: 'result', id: 'r2', isError: false, text: 'resposta do usuário', durationMs: 1 })
     expect(mcpInbound.registry.get(t.id)).toMatchObject({ status: 'erro', erro: 'API Error: 529 overloaded' })
@@ -298,7 +298,7 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
   })
 
   it('conversa comum: agent:send não refaz sessão nem fixa modelo por tarefa', async () => {
-    await call(Channels.agentStart, { convId: 'comum-2', cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: 'comum-2', cwd, model: 'claude-sonnet-5-5' })
     const before = spy.sessions.length
     await send('comum-2', 'oi')
     expect(spy.sessions.length).toBe(before)

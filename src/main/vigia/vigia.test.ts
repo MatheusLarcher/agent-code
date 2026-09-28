@@ -21,7 +21,7 @@ function setup(opts?: {
   const alerts: VigiaAlertMsg[] = []
   const ask = vi.fn(async (_prompt: string, _model: string) => opts?.reply ?? 'ALERTA: Qual o diâmetro real do eixo?')
   const vigia = new Vigia({
-    config: () => ({ enabled: opts?.enabled ?? true, model: 'claude-sonnet-5' }),
+    config: () => ({ enabled: opts?.enabled ?? true, model: 'claude-sonnet-5-5' }),
     emit: (a) => alerts.push(a),
     ask,
     now: opts?.now,
@@ -153,7 +153,7 @@ describe('o que o vigia emite', () => {
   it('falha do modelo degrada em silêncio', async () => {
     const alerts: VigiaAlertMsg[] = []
     const vigia = new Vigia({
-      config: () => ({ enabled: true, model: 'claude-sonnet-5' }),
+      config: () => ({ enabled: true, model: 'claude-sonnet-5-5' }),
       emit: (a) => alerts.push(a),
       ask: async () => {
         throw new Error('rede caiu')

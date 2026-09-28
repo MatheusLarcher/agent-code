@@ -8,6 +8,7 @@ import {
   DEFAULT_CONFIG,
   Channels,
   OPENAI_MODELS,
+  CLAUDE_MODELS,
   RETIRED_MODEL_REPLACEMENTS,
   currentModelId,
   isOpenAIModel
@@ -24,7 +25,7 @@ describe('controle do Windows — contrato compartilhado', () => {
 describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
   it('Claude: Opus/Sonnet/Fable = 1M', () => {
     expect(contextLimitFor('claude-opus-4-8')).toBe(1_000_000)
-    expect(contextLimitFor('claude-sonnet-5')).toBe(1_000_000)
+    expect(contextLimitFor('claude-sonnet-5-5')).toBe(1_000_000)
     expect(contextLimitFor('claude-fable-5-1')).toBe(1_000_000)
     expect(contextLimitFor('claude-fable-5')).toBe(1_000_000)
   })
@@ -56,10 +57,15 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
     expect(currentModelId('gpt-5.6-terra')).toBe('gpt-6-sol')
     expect(currentModelId('gpt-5.6-sol')).toBe('gpt-6-sol')
     expect(currentModelId('claude-opus-5-5')).toBe('claude-opus-5-5')
-    for (const old of Object.keys(RETIRED_MODEL_REPLACEMENTS)) {
+    for (const old of Object.keys(RETIRED_MODEL_REPLACEMENTS).filter((id) => id.startsWith('gpt-'))) {
       expect(isOpenAIModel(old)).toBe(false)
       expect(isOpenAIModel(currentModelId(old))).toBe(true)
     }
+  })
+
+  it('Sonnet 5 saiu do seletor; conversa/config salvas com ele viram Sonnet 5.5', () => {
+    expect(currentModelId('claude-sonnet-5')).toBe('claude-sonnet-5-5')
+    expect(CLAUDE_MODELS.some((m) => m.id === 'claude-sonnet-5-5')).toBe(true)
   })
 
   it('modelo desconhecido cai no fallback padrão', () => {
@@ -77,7 +83,7 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
 describe('modelSupportsVision — quais modelos aceitam imagem direto', () => {
   it('Claude sempre suporta (mesmo modelo desconhecido/futuro)', () => {
     expect(modelSupportsVision('claude-opus-4-8')).toBe(true)
-    expect(modelSupportsVision('claude-sonnet-5')).toBe(true)
+    expect(modelSupportsVision('claude-sonnet-5-5')).toBe(true)
     expect(modelSupportsVision(undefined)).toBe(true)
   })
 
@@ -116,7 +122,7 @@ describe('modelSupportsFastMode — quais modelos aceitam o modo rápido', () =>
   })
 
   it('Sonnet/Fable, Ollama e desconhecidos ficam de fora (a API rejeitaria)', () => {
-    expect(modelSupportsFastMode('claude-sonnet-5')).toBe(false)
+    expect(modelSupportsFastMode('claude-sonnet-5-5')).toBe(false)
     expect(modelSupportsFastMode('claude-fable-5-1')).toBe(false)
     expect(modelSupportsFastMode('claude-fable-5')).toBe(false)
     expect(modelSupportsFastMode('nemotron-3-ultra:cloud')).toBe(false)
@@ -129,7 +135,7 @@ describe('modelSupportsFastMode — quais modelos aceitam o modo rápido', () =>
 describe('MODEL_EFFORT — esforço máximo do SDK', () => {
   it('expõe max para Opus/Sonnet/Fable e mantém Haiku limitado a high', () => {
     expect(MODEL_EFFORT['claude-opus-4-8']).toContain('max')
-    expect(MODEL_EFFORT['claude-sonnet-5']).toContain('max')
+    expect(MODEL_EFFORT['claude-sonnet-5-5']).toContain('max')
     expect(MODEL_EFFORT['claude-fable-5-1']).toContain('max')
     expect(MODEL_EFFORT['claude-fable-5']).toContain('max')
   })

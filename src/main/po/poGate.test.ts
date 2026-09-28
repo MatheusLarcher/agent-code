@@ -37,7 +37,7 @@ function card(over: Partial<BoardItem> = {}): BoardItem {
   }
 }
 
-const config = (): BoardConfig => ({ requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5' } })
+const config = (): BoardConfig => ({ requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5-5' } })
 
 function fakeBoard(initial: BoardItem[]) {
   const cards = [...initial]

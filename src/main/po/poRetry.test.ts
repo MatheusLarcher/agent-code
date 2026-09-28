@@ -36,7 +36,7 @@ function card(over: Partial<BoardItem> = {}): BoardItem {
   }
 }
 
-const config = (): BoardConfig => ({ requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5' } })
+const config = (): BoardConfig => ({ requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5-5' } })
 
 /** `down` desliga o quadro (list → null) sem trocar o dublê. */
 function fakeBoard() {

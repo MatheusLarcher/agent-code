@@ -24,7 +24,7 @@ function renderWorkspace(managerModel: string | null) {
 describe('PlanningWorkspace', () => {
   it('monta a PlanningScreen do plano com o chat recebido no painel flutuante do Agent Manager', async () => {
     const { api } = mockPlanningApi()
-    const { container } = renderWorkspace('claude-sonnet-5')
+    const { container } = renderWorkspace('claude-sonnet-5-5')
     expect(await screen.findByRole('heading', { name: 'Plano de teste' })).toBeTruthy()
     expect(api.planningOpen).toHaveBeenCalledWith({ projectCwd: CWD, slug: SLUG })
     // O chat é o elemento recebido, dentro do painel flutuante da tela.
@@ -36,10 +36,10 @@ describe('PlanningWorkspace', () => {
 
   it('mostra o modelo que o main anunciou para o Agent Manager e mantém as ações do cabeçalho', async () => {
     mockPlanningApi()
-    renderWorkspace('claude-sonnet-5')
+    renderWorkspace('claude-sonnet-5-5')
     await screen.findByRole('heading', { name: 'Plano de teste' })
     expect(screen.getByText('Modelo do Agent Manager')).toBeTruthy()
-    expect(screen.getByTestId('pl-manager-model').textContent).toBe('Sonnet 5')
+    expect(screen.getByTestId('pl-manager-model').textContent).toBe('Sonnet 5.5')
     expect(screen.getByRole('button', { name: 'Enviar para implementação' })).toBeTruthy()
   })
 

@@ -41,7 +41,7 @@ export function autoEffortLadder(model: string): EffortLevel[] {
  * custo é também a de capacidade, e é isso que as descrições dizem.
  */
 export const AUTO_MODEL_DESCRIPTIONS: Record<string, string> = {
-  'claude-sonnet-5':
+  'claude-sonnet-5-5':
     'Equilíbrio entre custo e capacidade. O padrão do trabalho de código do dia a dia: implementar uma mudança já descrita, corrigir um bug localizado, escrever um teste.',
   'claude-opus-5-5':
     'Bem mais caro e bem mais capaz. Vale quando o problema é de fato difícil: desenhar arquitetura, bug não óbvio ou intermitente, concorrência, segurança, mudança que atravessa várias partes do código.',

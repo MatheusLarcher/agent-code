@@ -23,7 +23,7 @@ const { typeSafePause } = await import('./pause')
 const AUTO_AUTO = { model: AUTO_MODEL, effort: AUTO_EFFORT }
 const AUTO_FIXO = { model: AUTO_MODEL, effort: 'max' }
 const FIXO_AUTO = { model: MODELO_TETO_HIGH, effort: AUTO_EFFORT }
-const FIXO_FIXO = { model: 'claude-sonnet-5', effort: 'low' }
+const FIXO_FIXO = { model: 'claude-sonnet-5-5', effort: 'low' }
 
 beforeEach(() => {
   typeSafePause.reset()
@@ -39,7 +39,7 @@ afterEach(() => {
   delete (MODEL_EFFORT as Record<string, EffortLevel[]>)[MODELO_TETO_HIGH]
 })
 
-const models = ['claude-opus-5-5', 'claude-sonnet-5', MODELO_TETO_HIGH]
+const models = ['claude-opus-5-5', 'claude-sonnet-5-5', MODELO_TETO_HIGH]
 const questionsOf = (call = 0): string[] => Object.keys(askTypeSafe.mock.calls[call][0].questions).sort()
 
 describe('Automático + Automático', () => {
@@ -126,7 +126,7 @@ describe('fixo + fixo', () => {
     const execution = await chooseAutoExecution({ message: 'projeta a arquitetura' }, { models, selection: FIXO_FIXO })
 
     expect(askTypeSafe).toHaveBeenCalledTimes(0)
-    expect(execution).toEqual({ model: 'claude-sonnet-5', effort: 'low', source: {} })
+    expect(execution).toEqual({ model: 'claude-sonnet-5-5', effort: 'low', source: {} })
     expect(autoExecutionNote(execution)).toBeNull()
   })
 })
@@ -151,7 +151,7 @@ describe('o par vivo por dimensão entre combinações', () => {
   })
 
   it('Automático + fixo: com modelo decidido no ar, escolha fraca mantém o modelo', async () => {
-    askTypeSafe.mockResolvedValue({ which_model: choiceAnswer('claude-sonnet-5', 0.05) })
+    askTypeSafe.mockResolvedValue({ which_model: choiceAnswer('claude-sonnet-5-5', 0.05) })
 
     const decision = await resolveAutoStart(
       {
@@ -168,7 +168,7 @@ describe('o par vivo por dimensão entre combinações', () => {
 
   it('sem turno, as dimensões fixas continuam as do usuário', async () => {
     const decision = await resolveAutoStart(
-      { live: { model: 'claude-sonnet-5', effort: 'low', decided: DECIDED_BOTH }, hasSession: true },
+      { live: { model: 'claude-sonnet-5-5', effort: 'low', decided: DECIDED_BOTH }, hasSession: true },
       { selection: { model: 'claude-opus-5-5', effort: AUTO_EFFORT } }
     )
 

@@ -14,7 +14,7 @@ function persistedCall(over: Partial<LlmCall>): LlmCall {
     subagentType: null,
     taskDescription: null,
     seq: 0,
-    model: 'claude-sonnet-5',
+    model: 'claude-sonnet-5-5',
     inputTokens: 100,
     outputTokens: 50,
     cacheReadTokens: 0,
@@ -33,7 +33,7 @@ function liveCall(over: Record<string, unknown>): UsageMap {
     node_id: 'root-1',
     parent_node_id: null,
     seq: 0,
-    model: 'claude-sonnet-5',
+    model: 'claude-sonnet-5-5',
     tokens: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 },
     inputPreview: 'live-in',
     outputPreview: 'live-out',
@@ -63,7 +63,7 @@ describe('TokenUsagePanel', () => {
         {
           convId: 'c1',
           day: '2026-09-19',
-          model: 'claude-sonnet-5',
+          model: 'claude-sonnet-5-5',
           subagentType: null,
           sumInput: 100,
           sumOutput: 50,
@@ -112,7 +112,7 @@ describe('TokenUsagePanel', () => {
     const nodeButton = await screen.findByText(/principal/)
     fireEvent.click(nodeButton)
     expect(await screen.findByText(/Chamadas — principal/)).toBeTruthy()
-    expect(screen.getByText('claude-sonnet-5')).toBeTruthy()
+    expect(screen.getByText('claude-sonnet-5-5')).toBeTruthy()
   })
 
   it('clicar numa chamada mostra o preview de entrada/saída', async () => {
@@ -120,7 +120,7 @@ describe('TokenUsagePanel', () => {
     render(<TokenUsagePanel convId="c1" liveMap={map} />)
     await waitFor(() => expect(getHistory).toHaveBeenCalled())
     fireEvent.click(await screen.findByText(/principal/))
-    fireEvent.click(await screen.findByText('claude-sonnet-5'))
+    fireEvent.click(await screen.findByText('claude-sonnet-5-5'))
     expect(await screen.findByText('live-in')).toBeTruthy()
     expect(screen.getByText('live-out')).toBeTruthy()
   })

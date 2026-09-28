@@ -89,7 +89,7 @@ describe('accountConsumption', () => {
   it('é a maior janela aplicável ao modelo', () => {
     const r = reading({ five_hour: [20, FUTURE], seven_day: [60, FUTURE], seven_day_opus: [90, FUTURE], seven_day_sonnet: [10, FUTURE] })
     expect(accountConsumption(r, 'claude-opus-5-5', NOW)).toBe(90)
-    expect(accountConsumption(r, 'claude-sonnet-5', NOW)).toBe(60)
+    expect(accountConsumption(r, 'claude-sonnet-5-5', NOW)).toBe(60)
   })
   it('limite por modelo do model_scoped só vale para aquele modelo', () => {
     const r = reading({ five_hour: [10, FUTURE], 'model:fable': [97, FUTURE] })
@@ -236,13 +236,13 @@ describe('exhaustedReading (conta que estourou de vez)', () => {
 
   it('aviso sem janela reconhecível marca a conta toda', () => {
     const after = exhaustedReading(null, "You've hit your limit · resets 8pm", NOW)
-    expect(accountConsumption(after, 'claude-sonnet-5', NOW)).toBe(100)
+    expect(accountConsumption(after, 'claude-sonnet-5-5', NOW)).toBe(100)
   })
 
   it('limite de um modelo só vale para aquele modelo', () => {
     const after = exhaustedReading(null, "You've hit your Opus limit · resets Oct 1", NOW)
     expect(accountConsumption(after, 'claude-opus-5-5', NOW)).toBe(100)
-    expect(accountConsumption(after, 'claude-sonnet-5', NOW)).toBe(0)
+    expect(accountConsumption(after, 'claude-sonnet-5-5', NOW)).toBe(0)
     const fable = exhaustedReading(null, "You've reached your Fable 5 limit. Run /usage-credits to continue", NOW)
     expect(accountConsumption(fable, 'claude-fable-5-1', NOW)).toBe(100)
     expect(accountConsumption(fable, 'claude-opus-5-5', NOW)).toBe(0)
@@ -297,11 +297,11 @@ describe('conta esgotada volta a ser elegível (nunca fica presa)', () => {
   it('aviso genérico sem modelo bloqueia todos os modelos, mas só até o prazo (5h)', () => {
     const after = exhaustedReading(null, "Your seat type doesn't include extra usage", NOW)
     expect(after.windows.exhausted).toEqual({ utilization: 100, resetsAt: NOW + 5 * HOUR_MS })
-    for (const model of ['claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5-1']) {
+    for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1']) {
       expect(accountConsumption(after, model, NOW + 5 * HOUR_MS - 1)).toBe(100)
       expect(accountConsumption(after, model, NOW + 5 * HOUR_MS)).toBe(0)
     }
-    expect(chooseAccountForNewConversation(candidates(after), 'claude-sonnet-5', NOW + 5 * HOUR_MS)).toBe('A')
+    expect(chooseAccountForNewConversation(candidates(after), 'claude-sonnet-5-5', NOW + 5 * HOUR_MS)).toBe('A')
   })
 
   it('reset só com hora que acabou de passar (minuto truncado pelo CLI) não vai para amanhã: fica no prazo da janela', () => {

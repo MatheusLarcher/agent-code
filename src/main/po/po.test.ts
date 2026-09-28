@@ -34,7 +34,7 @@ function card(over: Partial<BoardItem> = {}): BoardItem {
 
 const config = (over: Partial<BoardConfig['po']> = {}): BoardConfig => ({
   requirePlan: true,
-  po: { enabled: true, model: 'claude-sonnet-5', ...over }
+  po: { enabled: true, model: 'claude-sonnet-5-5', ...over }
 })
 
 /**
@@ -956,7 +956,7 @@ describe('Po — failover Claude → Luna', () => {
         conversationId: 'conv-1',
         projectId: 'project-a',
         correlationId: 'correlation-a',
-        model: 'claude-sonnet-5'
+        model: 'claude-sonnet-5-5'
       }))
     }
   })

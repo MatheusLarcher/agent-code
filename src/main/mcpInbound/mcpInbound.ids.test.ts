@@ -18,7 +18,7 @@ const make = (): McpInbound =>
     answerInRenderer: () => {}
   })
 const live = (model: string, mcp = true): LiveSessionState => ({ model, mcp })
-const opts: StartAgentOptions = { convId: 'c1', cwd: 'C:\\p', model: 'claude-sonnet-5' }
+const opts: StartAgentOptions = { convId: 'c1', cwd: 'C:\\p', model: 'claude-sonnet-5-5' }
 const send = (text: string, taskId?: string): McpSend => ({ text, ...(taskId ? { taskId } : {}), kind: 'normal' })
 
 function setup(): McpInbound {
@@ -38,7 +38,7 @@ describe('tarefa MCP casada pelo id (reproduções do crítico)', () => {
     expect(reg.get(t.id)).toMatchObject({ status: 'erro', erro: 'overloaded' })
     // O reenvio com o id: recusado, sem subir sessão nenhuma e sem virar mensagem do usuário.
     expect(inbound.refusal('c1', send('tarefa', t.id))).toBe(MCP_TASK_GONE)
-    expect(inbound.restartForSend('c1', send('tarefa', t.id), live('claude-sonnet-5'))).toBeNull()
+    expect(inbound.restartForSend('c1', send('tarefa', t.id), live('claude-sonnet-5-5'))).toBeNull()
     expect(inbound.isTaskSend('c1', send('tarefa', t.id))).toBe(true)
     expect(reg.get(t.id)).toMatchObject({ status: 'erro', erro: 'overloaded' })
   })
@@ -75,11 +75,11 @@ describe('tarefa MCP casada pelo id (reproduções do crítico)', () => {
     const t1 = reg.create('c1', 'A', 'claude-opus-5-5')
     const t2 = reg.create('c1', 'sim', 'gpt-6-sol')
     // Sessão viva no modelo da conversa: nada a refazer para a mensagem do usuário.
-    expect(inbound.restartForSend('c1', send('sim'), live('claude-sonnet-5', true))).toBeNull()
+    expect(inbound.restartForSend('c1', send('sim'), live('claude-sonnet-5-5', true))).toBeNull()
     expect(inbound.pinForSend('c1', send('sim'))).toBe(false)
     // Sessão viva no gpt de outra tarefa: volta ao modelo da conversa.
     const back = inbound.restartForSend('c1', send('sim'), live('gpt-6-sol'))
-    expect(inbound.sessionOptions(back!).model).toBe('claude-sonnet-5')
+    expect(inbound.sessionOptions(back!).model).toBe('claude-sonnet-5-5')
     inbound.onAgentSend('c1', send('sim'))
     expect([reg.get(t1.id)?.status, reg.get(t2.id)?.status]).toEqual(['na_fila', 'na_fila'])
   })
@@ -110,7 +110,7 @@ describe('tarefa MCP casada pelo id (reproduções do crítico)', () => {
     inbound.onAgentSend('c1', send('primeira'))
     inbound.onEvent('c1', { kind: 'result', text: 'feito', isError: false } as never)
     const t = inbound.registry.create('c1', 'peça', 'gpt-6-sol')
-    const redo = inbound.restartForSend('c1', send('peça', t.id), live('claude-sonnet-5', false))
+    const redo = inbound.restartForSend('c1', send('peça', t.id), live('claude-sonnet-5-5', false))
     expect(redo?.autoPrompt).toEqual({
       message: 'peça',
       history: [

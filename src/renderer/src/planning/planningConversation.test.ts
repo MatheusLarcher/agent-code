@@ -13,7 +13,7 @@ import {
   sessionStartFields
 } from './planningConversation'
 
-const planning = { mode: 'planning' as const, planningSlug: 'checkout', model: 'claude-sonnet-5' }
+const planning = { mode: 'planning' as const, planningSlug: 'checkout', model: 'claude-sonnet-5-5' }
 const normal: { model: string; mode?: 'planning'; planningSlug?: string } = { model: 'claude-opus-5-5' }
 
 describe('isPlanningConversation', () => {
@@ -220,7 +220,7 @@ describe('existingPlanTitle (reabrir um plano existente)', () => {
 
 describe('managerModelLabel', () => {
   it('rótulo da lista; id desconhecido volta como está', () => {
-    expect(managerModelLabel('claude-sonnet-5')).toBe('Sonnet 5')
+    expect(managerModelLabel('claude-sonnet-5-5')).toBe('Sonnet 5.5')
     expect(managerModelLabel('modelo-x')).toBe('modelo-x')
   })
 })

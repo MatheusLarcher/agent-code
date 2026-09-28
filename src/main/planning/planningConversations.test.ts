@@ -73,9 +73,9 @@ describe('planningStartOptions', () => {
   it('usa o resolvedor real quando nada é injetado (config manual, sem TypeSafe)', async () => {
     const out = await planningStartOptions(
       { ...base, planning: { slug: 'checkout' } },
-      { config: () => ({ model: 'claude-sonnet-5', effort: 'low' }) }
+      { config: () => ({ model: 'claude-sonnet-5-5', effort: 'low' }) }
     )
-    expect(out.model).toBe('claude-sonnet-5')
+    expect(out.model).toBe('claude-sonnet-5-5')
     expect(out.effort).toBe('low')
   })
 

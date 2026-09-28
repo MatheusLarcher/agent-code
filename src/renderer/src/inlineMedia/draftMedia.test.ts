@@ -74,7 +74,7 @@ describe('applyDraft + gravação: blur sem mudança não regrava', () => {
       id: 'c1',
       title: 't',
       cwd: 'C:/p',
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       sdkSessionId: null,
       messages: [],
       tokens: { context: 0, output: 0, cost: 0 },

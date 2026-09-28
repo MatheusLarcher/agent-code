@@ -17,7 +17,7 @@ describe('effortLevelsFor', () => {
   })
 
   it('modelo fixo usa a escada dele, rotulada em português', () => {
-    expect(effortLevelsFor('claude-sonnet-5')).toEqual([
+    expect(effortLevelsFor('claude-sonnet-5-5')).toEqual([
       { value: 'low', label: 'Baixo' },
       { value: 'medium', label: 'Médio' },
       { value: 'high', label: 'Alto' },
@@ -36,13 +36,13 @@ describe('withAutoModelOption — seletor de modelo do chat principal', () => {
   const chat = [...CLAUDE_MODELS]
 
   it('com TypeSafe pronto, o Automático entra na frente', () => {
-    const out = withAutoModelOption(chat, true, 'claude-sonnet-5')
+    const out = withAutoModelOption(chat, true, 'claude-sonnet-5-5')
     expect(out[0]).toEqual({ id: AUTO_MODEL, label: 'Automático' })
     expect(ids(out).slice(1)).toEqual(ids(chat))
   })
 
   it('sem TypeSafe, o Automático não aparece', () => {
-    expect(ids(withAutoModelOption(chat, false, 'claude-sonnet-5'))).not.toContain(AUTO_MODEL)
+    expect(ids(withAutoModelOption(chat, false, 'claude-sonnet-5-5'))).not.toContain(AUTO_MODEL)
   })
 
   it('sem TypeSafe mas com Automático gravado, ele continua visível (a escolha salva não troca)', () => {
@@ -58,13 +58,13 @@ describe('withAutoModelOption — seletor de modelo do chat principal', () => {
 describe('withAutoModelOption — seletor de modelo do Agent Manager', () => {
   it('PLANNING_MODELS traz o Automático, e sem TypeSafe ele sai', () => {
     expect(ids([...PLANNING_MODELS])).toContain(AUTO_MODEL)
-    const out = withAutoModelOption(PLANNING_MODELS, false, 'claude-sonnet-5')
+    const out = withAutoModelOption(PLANNING_MODELS, false, 'claude-sonnet-5-5')
     expect(ids(out)).not.toContain(AUTO_MODEL)
     expect(out.length).toBe(PLANNING_MODELS.length - 1)
   })
 
   it('com TypeSafe, ou com o Automático já gravado no Manager, ele fica', () => {
-    expect(ids(withAutoModelOption(PLANNING_MODELS, true, 'claude-sonnet-5'))[0]).toBe(AUTO_MODEL)
+    expect(ids(withAutoModelOption(PLANNING_MODELS, true, 'claude-sonnet-5-5'))[0]).toBe(AUTO_MODEL)
     expect(ids(withAutoModelOption(PLANNING_MODELS, false, AUTO_MODEL))[0]).toBe(AUTO_MODEL)
   })
 })
@@ -82,7 +82,7 @@ describe('remoteEffortCatalog — celular', () => {
   it('com o Automático oferecido, `auto` abre cada escada e ganha rótulo', () => {
     const cat = remoteEffortCatalog(true)
     expect(cat.modelEffort[AUTO_MODEL]).toEqual([AUTO_EFFORT, ...EFFORT_LEVELS])
-    expect(cat.modelEffort['claude-sonnet-5'][0]).toBe(AUTO_EFFORT)
+    expect(cat.modelEffort['claude-sonnet-5-5'][0]).toBe(AUTO_EFFORT)
     expect(cat.effortLabels[AUTO_EFFORT]).toBe(AUTO_EFFORT_LABEL)
     expect(cat.effortLabels.high).toBe(EFFORT_LABELS.high)
   })

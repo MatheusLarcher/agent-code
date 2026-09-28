@@ -134,7 +134,7 @@ describe('tarefa MCP com modelo pedido (pinModel)', () => {
       multiple: () => true, autoEnabled: () => true, turnEndTarget: vi.fn(async () => null),
       exhaustedTarget: vi.fn(async () => target), label: (id: string) => id, changed: vi.fn(), markExhausted: vi.fn()
     }
-    const session = new ProviderFailoverSession({ convId: 'chat', cwd: '/p', model: 'claude-sonnet-5', claudeAccountId: 'a1' },
+    const session = new ProviderFailoverSession({ convId: 'chat', cwd: '/p', model: 'claude-sonnet-5-5', claudeAccountId: 'a1' },
       (options, event) => { const s = stub(); records.push({ options, event, session: s }); return s }, emit, available, vi.fn(), accounts)
     return { session, records, emit, available }
   }
@@ -146,11 +146,11 @@ describe('tarefa MCP com modelo pedido (pinModel)', () => {
     h.records[0].event(quota)
     await settled()
     expect(h.records).toHaveLength(2)
-    expect(h.records[1].options).toMatchObject({ model: 'claude-sonnet-5', claudeAccountId: 'a2' })
+    expect(h.records[1].options).toMatchObject({ model: 'claude-sonnet-5-5', claudeAccountId: 'a2' })
     expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'account-switch', toAccountId: 'a2' }))
   })
 
-  it.each(['claude-sonnet-5', 'gpt-6-astra'])('%s: sem conta com folga, NÃO troca de modelo nem de provedor — erro claro', async (model) => {
+  it.each(['claude-sonnet-5-5', 'gpt-6-astra'])('%s: sem conta com folga, NÃO troca de modelo nem de provedor — erro claro', async (model) => {
     const h = model.startsWith('gpt') ? harness(model) : withAccounts(null)
     h.session.pinModel(true)
     await h.session.send('peça')

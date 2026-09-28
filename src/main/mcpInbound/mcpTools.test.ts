@@ -161,7 +161,7 @@ describe('agent_code_enviar: schema dos campos novos', () => {
 })
 
 describe('agent_code_enviar: modelo', () => {
-  const modelos = ['claude-opus-5-5', 'claude-sonnet-5', 'gpt-6-sol']
+  const modelos = ['claude-opus-5-5', 'claude-sonnet-5-5', 'gpt-6-sol']
 
   it('modelo válido: a tarefa roda com ele (registro e entrega)', async () => {
     const { tools, delivered, registry } = setup({ models: modelos })
@@ -186,12 +186,12 @@ describe('agent_code_enviar: modelo', () => {
 
   it('com conversa_id: o modelo vale para ESTA tarefa, a seguinte sem modelo volta ao padrão', async () => {
     const { tools, registry } = setup({ models: modelos, exists: async (id) => id === 'c-velha' })
-    const a = await enviar(tools, { prompt: 'um', cliente: 'F', projeto: tmp, conversa_id: 'c-velha', modelo: 'claude-sonnet-5' })
+    const a = await enviar(tools, { prompt: 'um', cliente: 'F', projeto: tmp, conversa_id: 'c-velha', modelo: 'claude-sonnet-5-5' })
     const b = await enviar(tools, { prompt: 'dois', cliente: 'F', projeto: tmp, conversa_id: 'c-velha' })
-    expect(registry.get(String(a!.value.tarefa_id))?.model).toBe('claude-sonnet-5')
+    expect(registry.get(String(a!.value.tarefa_id))?.model).toBe('claude-sonnet-5-5')
     expect(registry.get(String(b!.value.tarefa_id))?.model).toBeUndefined()
     // A tarefa é achada pelo id (o que o item da fila leva), com o modelo dela.
-    expect(registry.taskFor('c-velha', String(a!.value.tarefa_id))?.model).toBe('claude-sonnet-5')
+    expect(registry.taskFor('c-velha', String(a!.value.tarefa_id))?.model).toBe('claude-sonnet-5-5')
     expect(registry.taskFor('outra', String(a!.value.tarefa_id))).toBeUndefined()
   })
 })

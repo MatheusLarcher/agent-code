@@ -43,7 +43,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
       windowsControlEnabled: false,
       remoteToken: '',
       remoteEnabled: false,
-      vigia: { enabled: true, model: 'claude-sonnet-5' }
+      vigia: { enabled: true, model: 'claude-sonnet-5-5' }
     })),
     setConfig: vi.fn(async () => {}),
     isTypeSafeConfigured: vi.fn(async () => true),
@@ -1119,8 +1119,8 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
 
     // Trocar durante o processamento não mexe na sessão em andamento — só fica
     // pendente para quando essa mensagem terminar.
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
-    expect(select().value).toBe('claude-sonnet-5')
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
+    expect(select().value).toBe('claude-sonnet-5-5')
     expect(api.disposeAgent).not.toHaveBeenCalled()
     expect(screen.getByText(/próxima mensagem da fila/)).toBeTruthy()
   })
@@ -1145,7 +1145,7 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     expect(screen.getByText(/Na fila/)).toBeTruthy()
 
     // Troca o modelo com a msg1 ainda rodando e a msg2 já na fila.
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
     expect(api.disposeAgent).not.toHaveBeenCalled() // não mexe no turno em andamento
 
     await emit(result) // msg1 termina no modelo antigo → agora despacha a msg2
@@ -1156,7 +1156,7 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     expect(String(api.sendMessage.mock.calls[1][1])).toContain('msg2')
     expect(api.startAgent).toHaveBeenCalledTimes(2)
     const secondStart = api.startAgent.mock.calls[1][0] as { model: string; resume?: string }
-    expect(secondStart.model).toBe('claude-sonnet-5') // a msg2 já sai no modelo novo
+    expect(secondStart.model).toBe('claude-sonnet-5-5') // a msg2 já sai no modelo novo
   })
 
   it('trocar o modelo OCUPADO, sem fila: fica pendente até a próxima mensagem digitada', async () => {
@@ -1173,7 +1173,7 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
 
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
     expect(api.disposeAgent).not.toHaveBeenCalled()
 
     await emit(result) // termina sem nada na fila → aplica a troca agora, ocioso
@@ -1182,7 +1182,7 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     await send('msg2') // mensagem nova digitada → reconecta já no modelo trocado
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
     const secondStart = api.startAgent.mock.calls[1][0] as { model: string }
-    expect(secondStart.model).toBe('claude-sonnet-5')
+    expect(secondStart.model).toBe('claude-sonnet-5-5')
   })
 
   it('trocar o modelo com a sessão ociosa reinicia a sessão em silêncio (sem clicar em "Parar")', async () => {
@@ -1201,18 +1201,18 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     await waitFor(() => expect(select().getAttribute('aria-disabled')).toBe('false'))
 
     // Troca o modelo sem clicar em "Parar sessão".
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
 
     // A sessão antiga é encerrada em silêncio (sem exigir o botão "Parar").
     await waitFor(() => expect(api.disposeAgent).toHaveBeenCalledWith('c1'))
-    expect(select().value).toBe('claude-sonnet-5')
+    expect(select().value).toBe('claude-sonnet-5-5')
     expect(screen.getByText(/Modelo trocado/)).toBeTruthy()
 
     // A próxima mensagem reconecta — já com o modelo novo.
     await send('msg2')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
     const lastCall = api.startAgent.mock.calls[1][0] as { model: string }
-    expect(lastCall.model).toBe('claude-sonnet-5')
+    expect(lastCall.model).toBe('claude-sonnet-5-5')
   })
 
   it('trocar o modelo com a sessão DESCONECTADA não chama disposeAgent (nada pra encerrar)', async () => {
@@ -1320,13 +1320,13 @@ describe('App — modo rápido (fast mode)', () => {
 
     // Sonnet não suporta: o toggle some e a flag cai junto, para a próxima sessão
     // não sair com fastMode ligado (a API rejeitaria a request).
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
     await waitFor(() => expect(fastToggle()).toBeNull())
 
     await send('msg2')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
     expect(api.startAgent.mock.calls[1][0]).toMatchObject({
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       fastMode: false
     })
 
@@ -2787,7 +2787,7 @@ describe('autoPromptFor / runningModel', () => {
   })
 
   it('o modelo em uso é o escolhido, não o sentinel', () => {
-    expect(runningModel({ model: 'auto', autoModel: 'claude-sonnet-5' })).toBe('claude-sonnet-5')
+    expect(runningModel({ model: 'auto', autoModel: 'claude-sonnet-5-5' })).toBe('claude-sonnet-5-5')
     expect(runningModel({ model: 'auto' })).toBe('auto')
     expect(runningModel({ model: 'claude-opus-5', autoModel: 'claude-fable-5-1' })).toBe('claude-opus-5')
   })
@@ -2798,7 +2798,7 @@ describe('App — conversa de planejamento', () => {
     id: 'p1',
     title: 'Planejamento: Checkout',
     cwd: '/proj',
-    model: 'claude-sonnet-5',
+    model: 'claude-sonnet-5-5',
     effort: 'medium',
     mode: 'planning',
     planningSlug: 'checkout',
@@ -2846,8 +2846,8 @@ describe('App — conversa de planejamento', () => {
     await waitFor(() => expect([...select.options].map((o) => o.value)).toContain('auto'))
     expect(screen.queryByRole('button', { name: /Econômico/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Loop/ })).toBeNull()
-    fireEvent.change(select, { target: { value: 'claude-sonnet-5' } })
-    expect(api.setConfig).toHaveBeenCalledWith({ planning: expect.objectContaining({ model: 'claude-sonnet-5' }) })
+    fireEvent.change(select, { target: { value: 'claude-sonnet-5-5' } })
+    expect(api.setConfig).toHaveBeenCalledWith({ planning: expect.objectContaining({ model: 'claude-sonnet-5-5' }) })
     // Nada do workspace normal: nem divisor, nem painel/rail da direita.
     expect(container.querySelector('.splitter')).toBeNull()
     expect(container.querySelector('.right-pane')).toBeNull()
@@ -2964,7 +2964,7 @@ describe('App — enviar para implementação (handoff)', () => {
     id: 'p1',
     title: 'Planejamento: Checkout',
     cwd: '/proj',
-    model: 'claude-sonnet-5',
+    model: 'claude-sonnet-5-5',
     effort: 'medium',
     mode: 'planning',
     planningSlug: 'checkout',
@@ -3026,7 +3026,7 @@ describe('App — enviar para implementação (handoff)', () => {
     const fs = addPlanningApi()
     // O modelo escolhido na Tela de Planejamento é o que a implementação herda.
     const baseConfig = await (api.getConfig as () => Promise<Record<string, unknown>>)()
-    api.getConfig.mockResolvedValue({ ...baseConfig, planning: { model: 'claude-sonnet-5', effort: 'high' } })
+    api.getConfig.mockResolvedValue({ ...baseConfig, planning: { model: 'claude-sonnet-5-5', effort: 'high' } })
     // Registra se a conversa nova já estava gravada quando o main recebeu o
     // startAgent dela: o lease exige a linha da conversa no banco.
     const savedAtStart = new Map<string, boolean>()
@@ -3067,7 +3067,7 @@ describe('App — enviar para implementação (handoff)', () => {
     expect(opts).not.toHaveProperty('planning')
     expect(opts.convId).not.toBe('p1')
     // O do Agent Manager (o último escolhido no planejamento), não o da conversa normal do projeto.
-    expect(opts.model).toBe('claude-sonnet-5')
+    expect(opts.model).toBe('claude-sonnet-5-5')
     expect(opts.effort).toBe('high')
     // Sem corrida com o render: a conversa já estava gravada quando a sessão subiu.
     expect(savedAtStart.get(opts.convId)).toBe(true)
@@ -3338,7 +3338,7 @@ describe('App — título automático (recuo na hora, nome curto do LLM depois)'
         id: 'p1',
         title: 'Planejamento: checkout',
         cwd: '/proj',
-        model: 'claude-sonnet-5',
+        model: 'claude-sonnet-5-5',
         mode: 'planning',
         planningSlug: 'checkout',
         sdkSessionId: null,

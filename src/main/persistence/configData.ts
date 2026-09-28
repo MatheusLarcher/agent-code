@@ -20,7 +20,7 @@ import { StorageError } from './types'
  * aplicado sozinho no boot — rejeitar ali derrubaria a abertura do app.
  */
 export function normalizePlanningConfig(value: { model?: unknown; effort?: unknown } | undefined): PlanningConfig {
-  const model = value?.model
+  const model = typeof value?.model === 'string' ? currentModelId(value.model) : value?.model
   const effort = value?.effort
   return {
     model:

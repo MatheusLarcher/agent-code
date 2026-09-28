@@ -54,7 +54,7 @@ function renderPanel(
           tts={{ speakingId: null, onToggleSpeak: () => {} }}
           models={[
             { id: 'claude-opus-5-5', label: 'Opus 5.5' },
-            { id: 'claude-sonnet-5', label: 'Sonnet 5' }
+            { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' }
           ]}
           model="claude-opus-5-5"
           runningModel="claude-opus-5-5"
@@ -178,8 +178,8 @@ describe('ChatPanel — hideSessionToggles (conversa de planejamento)', () => {
     expect(screen.queryByRole('button', { name: /Loop/ })).toBeNull()
     expect(container.querySelector('.effort-picker')).toBeTruthy()
     const select = container.querySelector('select.model-select') as HTMLSelectElement
-    fireEvent.change(select, { target: { value: 'claude-sonnet-5' } })
-    expect(onModelChange).toHaveBeenCalledWith('claude-sonnet-5')
+    fireEvent.change(select, { target: { value: 'claude-sonnet-5-5' } })
+    expect(onModelChange).toHaveBeenCalledWith('claude-sonnet-5-5')
     expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
   })
 })

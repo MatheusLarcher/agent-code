@@ -28,7 +28,7 @@ const PROMPT: AutoPrompt = { message: 'monta o roteiro da migração do banco' }
 
 const TS: AutoSources = { model: 'typesafe', effort: 'typesafe' }
 const AUTO_AUTO: PlanningConfig = { model: AUTO_MODEL, effort: AUTO_EFFORT }
-const FALLBACK = { model: 'claude-sonnet-5', effort: 'medium', source: 'fallback' }
+const FALLBACK = { model: 'claude-sonnet-5-5', effort: 'medium', source: 'fallback' }
 
 /** Dependências falsas: a checagem do TypeSafe responde `configured`, a escolha
  *  devolve `execution` (ou lança, se for um Error) e a lista do Automático das
@@ -88,7 +88,7 @@ describe('resolvePlanningExecution: as quatro combinações', () => {
     // Modelo fora dos candidatos do Manager: o modelo cai no padrão, o esforço continua o fixo.
     const fora = deps({ model: MODELO_TETO_HIGH, effort: 'high', source: { model: 'typesafe' } })
     expect(await resolvePlanningExecution(cfg, PROMPT, fora)).toEqual({
-      model: 'claude-sonnet-5',
+      model: 'claude-sonnet-5-5',
       effort: 'max',
       source: 'fallback'
     })
@@ -174,7 +174,7 @@ describe('resolvePlanningExecution: recuo por dimensão', () => {
 
   it('modelo "typesafe" fora da lista do Manager é descartado', async () => {
     const d = deps({ model: 'gpt-6-sol', effort: 'high', source: TS })
-    expect(await resolvePlanningExecution(AUTO_AUTO, PROMPT, d)).toEqual({ model: 'claude-sonnet-5', effort: 'high', source: 'fallback' })
+    expect(await resolvePlanningExecution(AUTO_AUTO, PROMPT, d)).toEqual({ model: 'claude-sonnet-5-5', effort: 'high', source: 'fallback' })
   })
 })
 
@@ -188,23 +188,23 @@ describe('resolvePlanningExecution: lista do Automático', () => {
   })
 
   it('lista restrita: só a interseção com os do Manager vai para chooseAutoExecution', async () => {
-    const d = deps({ model: 'claude-sonnet-5', effort: 'high', source: TS }, true, [
+    const d = deps({ model: 'claude-sonnet-5-5', effort: 'high', source: TS }, true, [
       'gpt-6-sol',
-      'claude-sonnet-5',
+      'claude-sonnet-5-5',
       'claude-fable-5-1'
     ])
     const result = await resolvePlanningExecution(AUTO_AUTO, PROMPT, d)
 
-    expect(result).toEqual({ model: 'claude-sonnet-5', effort: 'high', source: 'typesafe' })
+    expect(result).toEqual({ model: 'claude-sonnet-5-5', effort: 'high', source: 'typesafe' })
     expect(d.chooseAutoExecution).toHaveBeenCalledWith(PROMPT, {
-      models: ['claude-sonnet-5', 'claude-fable-5-1'],
+      models: ['claude-sonnet-5-5', 'claude-fable-5-1'],
       selection: AUTO_AUTO
     })
   })
 
   it('lista restrita: modelo "typesafe" fora da restrição é descartado', async () => {
-    const d = deps({ model: STRONG, effort: 'max', source: TS }, true, ['claude-fable-5-1', 'claude-sonnet-5'])
-    expect(await resolvePlanningExecution(AUTO_AUTO, PROMPT, d)).toEqual({ model: 'claude-sonnet-5', effort: 'max', source: 'fallback' })
+    const d = deps({ model: STRONG, effort: 'max', source: TS }, true, ['claude-fable-5-1', 'claude-sonnet-5-5'])
+    expect(await resolvePlanningExecution(AUTO_AUTO, PROMPT, d)).toEqual({ model: 'claude-sonnet-5-5', effort: 'max', source: 'fallback' })
   })
 
   it('lista restrita a UM modelo + esforço fixo: usa o modelo permitido, sem chamar a escolha', async () => {
@@ -267,7 +267,7 @@ describe('resolvePlanningExecution: lista do Automático', () => {
   it('planningAutoCandidates: vazia/malformada = todos; restrita = interseção na ordem do Manager', () => {
     expect(planningAutoCandidates([])).toEqual(PLANNING_AUTO_MODELS)
     expect(planningAutoCandidates(undefined)).toEqual(PLANNING_AUTO_MODELS)
-    expect(planningAutoCandidates('claude-sonnet-5')).toEqual(PLANNING_AUTO_MODELS)
+    expect(planningAutoCandidates('claude-sonnet-5-5')).toEqual(PLANNING_AUTO_MODELS)
     expect(planningAutoCandidates(['claude-fable-5-1', STRONG])).toEqual([STRONG, 'claude-fable-5-1'])
     expect(planningAutoCandidates(['gpt-6-sol'])).toEqual([])
   })

@@ -49,7 +49,7 @@ describe('migração one-shot das conversas', () => {
     title: 'Refatorar o parser',
     cwd: 'C:\\GitHub\\proj',
     model: 'auto',
-    autoModel: 'claude-sonnet-5',
+    autoModel: 'claude-sonnet-5-5',
     effort: 'high',
     economyMode: false,
     loopEnabled: false,
@@ -65,7 +65,7 @@ describe('migração one-shot das conversas', () => {
     const migrado = migrateConversationEffort(legado)
     expect(migrado).toMatchObject({ model: 'auto', effort: 'auto', effortSplit: true })
     // O resto do registro fica como estava, e o modelo salvo não muda.
-    expect(migrado.autoModel).toBe('claude-sonnet-5')
+    expect(migrado.autoModel).toBe('claude-sonnet-5-5')
     expect(migrado.messages).toBe(legado.messages)
   })
 

@@ -22,7 +22,7 @@ const fakeServer = (name: string): McpServerConfig => ({ type: 'sdk', name, inst
 function commonOptions(): Options {
   return {
     cwd,
-    model: 'claude-sonnet-5',
+    model: 'claude-sonnet-5-5',
     permissionMode: 'default',
     systemPrompt: { type: 'preset', preset: 'claude_code', append: 'BROWSER_HINT ANDROID_HINT TASKS_HINT' },
     agents: { executor: { description: 'x', prompt: 'y' } },

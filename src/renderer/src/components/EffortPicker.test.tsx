@@ -9,7 +9,7 @@ import { effortLevelsFor } from '../effortOptions'
 
 afterEach(cleanup)
 
-const LEVELS = effortLevelsFor('claude-sonnet-5')
+const LEVELS = effortLevelsFor('claude-sonnet-5-5')
 
 function renderPicker(over: Partial<ComponentProps<typeof EffortPicker>> = {}) {
   const onChange = vi.fn()

@@ -33,19 +33,19 @@ describe('registerIpc — lock sem prazo, prazos por passo, sessão descartada f
   // certo" e a tarefa ficava `rodando` para sempre.
   it('agent:start preso no lease: a antiga sai do mapa na hora; a subida falha no prazo do lease; o envio seguinte dá erro claro e a tarefa vira erro; o lease atrasado é solto', async () => {
     const conv = 'passos-lease-preso'
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     config(conv)
     const [a] = sessionsOf(conv)
     const lease = gate()
     leaseGate.p = lease.p
-    const stuck = call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' }).catch((e: unknown) => e)
+    const stuck = call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' }).catch((e: unknown) => e)
     await tick()
     leaseGate.p = null
     // Descartada e fora do mapa ANTES do lease: o "agora" não entra nela.
     expect(a.dispose).toHaveBeenCalledTimes(1)
     expect(await call(Channels.agentInjectNow, conv, 'ajuste', [], [], [], undefined)).toEqual({ ok: false })
     expect(a.injectNow).not.toHaveBeenCalled()
-    const t = mcpInbound.registry.create(conv, 'T', 'claude-sonnet-5')
+    const t = mcpInbound.registry.create(conv, 'T', 'claude-sonnet-5-5')
     const sending = send(conv, 'T', t.id).catch((e: unknown) => e)
     // A subida falha pelo prazo do lease (o lock não abandona nada: ela mesma falha).
     expect(String(await stuck)).toMatch(/aquisição do lease da conversa não terminou/)
@@ -64,7 +64,7 @@ describe('registerIpc — lock sem prazo, prazos por passo, sessão descartada f
     expect(leaseReleases).toHaveBeenCalledWith(late)
     expect(keepers.some((k) => k.lease === late)).toBe(false)
     // A conversa não ficou presa: uma subida nova funciona.
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     expect(sessionsOf(conv)).toHaveLength(2)
   })
 
@@ -73,7 +73,7 @@ describe('registerIpc — lock sem prazo, prazos por passo, sessão descartada f
     const resume = gate()
     resumeGate.p = resume.p
     const before = keepers.length
-    const error = await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5', resume: 'sdk-1' }).catch((e: unknown) => e)
+    const error = await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5', resume: 'sdk-1' }).catch((e: unknown) => e)
     resumeGate.p = null
     expect(String(error)).toMatch(/preparação da retomada da conversa não terminou/)
     expect(sessionsOf(conv)).toEqual([])
@@ -81,14 +81,14 @@ describe('registerIpc — lock sem prazo, prazos por passo, sessão descartada f
     expect(mine).toHaveLength(1)
     expect(mine[0].release).toHaveBeenCalledTimes(1)
     resume.open()
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     expect(sessionsOf(conv)).toHaveLength(1)
   })
 
   it('agent:send numa conversa sem sessão viva: erro claro, sem pegar lease, e a tarefa vira erro (nunca `rodando`)', async () => {
     const conv = 'passos-sem-sessao'
     config(conv)
-    const t = mcpInbound.registry.create(conv, 'T', 'claude-sonnet-5')
+    const t = mcpInbound.registry.create(conv, 'T', 'claude-sonnet-5-5')
     const leases = leasesAcquired.length
     await expect(send(conv, 'T', t.id)).rejects.toThrow(NO_LIVE_SESSION_MARK)
     expect(mcpInbound.registry.get(t.id)?.status).toBe('erro')
@@ -98,7 +98,7 @@ describe('registerIpc — lock sem prazo, prazos por passo, sessão descartada f
 
   it('conversa descartada durante a troca de modelo (await no lock): nada é fixado nem enviado em sessão nenhuma; a nova morre e a tarefa vira erro', async () => {
     const conv = 'passos-descartada-na-troca'
-    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5' })
+    await call(Channels.agentStart, { convId: conv, cwd, model: 'claude-sonnet-5-5' })
     config(conv)
     const [a] = sessionsOf(conv)
     const t = mcpInbound.registry.create(conv, 'T', 'gpt-6-sol')

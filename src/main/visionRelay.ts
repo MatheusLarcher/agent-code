@@ -14,7 +14,7 @@ import { imageContentBlocks, sanitizeMediaLabel } from '../shared/inlineMedia'
  *  Fixed to a high-quality Claude model — this is an interpreter, not the
  *  model answering the user, so cost/latency here should stay small (one
  *  short turn, no tools). */
-const VISION_MODEL = 'claude-sonnet-5'
+const VISION_MODEL = 'claude-sonnet-5-5'
 
 const VISION_PROMPT = `Analise a(s) imagem(ns) anexada(s) e devolva uma descrição TÉCNICA e ESTRUTURADA, em português, cobrindo exatamente estas seções (omita uma seção só se genuinamente não se aplicar, mas mantenha o título):
 

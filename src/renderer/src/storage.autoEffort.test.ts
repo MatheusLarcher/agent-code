@@ -14,7 +14,7 @@ function legacyRecord(): Record<string, unknown> {
       titleSource: 'llm',
       cwd: 'C:\\GitHub\\proj',
       model: 'auto',
-      autoModel: 'claude-sonnet-5',
+      autoModel: 'claude-sonnet-5-5',
       effort: 'medium',
       economyMode: false,
       loopEnabled: false,
@@ -66,7 +66,7 @@ describe('migração one-shot do esforço Automático nas conversas', () => {
 
     const [conv] = await loadConversations()
 
-    expect(conv).toMatchObject({ model: 'auto', autoModel: 'claude-sonnet-5', effort: 'auto', effortSplit: true })
+    expect(conv).toMatchObject({ model: 'auto', autoModel: 'claude-sonnet-5-5', effort: 'auto', effortSplit: true })
     // Normalização sozinha não vira escrita.
     await saveConversations([conv])
     expect(db.upsertConversation).not.toHaveBeenCalled()

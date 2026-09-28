@@ -7,7 +7,7 @@ import { SUPERSEDED } from './mcpTasks'
 import { applyInboundMcpOptions } from './mcpSessionOptions'
 import { secondInstanceReveal, wantsMinimized } from './windowStartup'
 
-const base: StartAgentOptions = { convId: 'c1', cwd: 'C:\\p', model: 'claude-sonnet-5', effort: 'medium' }
+const base: StartAgentOptions = { convId: 'c1', cwd: 'C:\\p', model: 'claude-sonnet-5-5', effort: 'medium' }
 /** Envio como o index o monta: texto, id da tarefa do item (se for de tarefa) e tipo. */
 const send = (text: string, taskId?: string, kind?: McpSend['kind']): McpSend => ({
   text,
@@ -144,13 +144,13 @@ describe('McpInbound', () => {
     it('sessão aberta ANTES da config MCP (live vazio): a tarefa refaz a sessão mesmo no mesmo modelo', () => {
       const { inbound } = make()
       // O usuário abriu a conversa (app reiniciado): sessão sem config.
-      const plain = inbound.sessionOptions({ ...opts, model: 'claude-sonnet-5' })
+      const plain = inbound.sessionOptions({ ...opts, model: 'claude-sonnet-5-5' })
       expect(plain.inboundMcp).toBeUndefined()
       // O Forgia manda conversa_id + modelo: config nova, tarefa na fila.
       inbound.registry.setConfig('c1', { cliente: 'Forgia', mcpServers: { forgia: { command: 'f.exe', args: [], env: {} } } })
       const peca = inbound.registry.create('c1', 'peça', 'claude-opus-5-5')
-      const redo = inbound.restartForSend('c1', send('peça', peca.id), live('claude-sonnet-5', false))
-      expect(redo).toMatchObject({ convId: 'c1', model: 'claude-sonnet-5' })
+      const redo = inbound.restartForSend('c1', send('peça', peca.id), live('claude-sonnet-5-5', false))
+      expect(redo).toMatchObject({ convId: 'c1', model: 'claude-sonnet-5-5' })
       const started = inbound.sessionOptions(redo!)
       expect(started).toMatchObject({ model: 'claude-opus-5-5', skipPermissions: true })
       expect(started.inboundMcp?.servers.forgia.command).toBe('f.exe')
@@ -164,24 +164,24 @@ describe('McpInbound', () => {
 
     it('"vale para esta tarefa": a mensagem seguinte do usuário volta ao modelo da conversa', () => {
       const { inbound } = make()
-      inbound.sessionOptions({ ...opts, model: 'claude-sonnet-5' })
+      inbound.sessionOptions({ ...opts, model: 'claude-sonnet-5-5' })
       inbound.registry.setConfig('c1', { cliente: 'Forgia', mcpServers: {} })
       const t = inbound.registry.create('c1', 'tarefa', 'gpt-6-sol')
-      const redo = inbound.restartForSend('c1', send('tarefa', t.id), live('claude-sonnet-5', false))!
+      const redo = inbound.restartForSend('c1', send('tarefa', t.id), live('claude-sonnet-5-5', false))!
       expect(inbound.sessionOptions(redo).model).toBe('gpt-6-sol')
       inbound.onAgentSend('c1', send('tarefa', t.id))
       // Retomada automática (`recovery`) depois de turno de tarefa: recusada (regra 2).
       expect(inbound.refusal('c1', send('[continuação]', undefined, 'recovery'))).toBe(MCP_NO_AUTO_RETRY)
-      expect(inbound.restartForSend('c1', send('[continuação]', undefined, 'recovery'), live('claude-sonnet-5'))).toBeNull()
+      expect(inbound.restartForSend('c1', send('[continuação]', undefined, 'recovery'), live('claude-sonnet-5-5'))).toBeNull()
       inbound.onEvent('c1', { kind: 'result', text: 'ok', isError: false } as never)
       // Tarefa acabou: a mensagem do usuário refaz a sessão no modelo da conversa.
       const back = inbound.restartForSend('c1', send('e agora?'), live('gpt-6-sol'))
-      expect(back).toMatchObject({ model: 'claude-sonnet-5' })
-      expect(inbound.sessionOptions(back!).model).toBe('claude-sonnet-5')
+      expect(back).toMatchObject({ model: 'claude-sonnet-5-5' })
+      expect(inbound.sessionOptions(back!).model).toBe('claude-sonnet-5-5')
       expect(inbound.pinForSend('c1', send('e agora?'))).toBe(false)
-      expect(inbound.restartForSend('c1', send('e agora?'), live('claude-sonnet-5'))).toBeNull()
+      expect(inbound.restartForSend('c1', send('e agora?'), live('claude-sonnet-5-5'))).toBeNull()
       // Troca por cota numa mensagem do usuário: o modelo novo passa a ser o da conversa.
-      inbound.onEvent('c1', { kind: 'provider-switch', id: 'p', fromModel: 'claude-sonnet-5', model: 'gpt-6-astra', fastMode: false, text: '' } as never)
+      inbound.onEvent('c1', { kind: 'provider-switch', id: 'p', fromModel: 'claude-sonnet-5-5', model: 'gpt-6-astra', fastMode: false, text: '' } as never)
       expect(inbound.restartForSend('c1', send('mais'), live('gpt-6-astra'))).toBeNull()
       // Automático e Agent Manager decidem o modelo na subida: nada a exigir.
       inbound.sessionOptions({ ...opts, model: 'auto' })
@@ -227,7 +227,7 @@ describe('McpInbound', () => {
   })
 
   describe('continuação 7b50df69: fila fora de ordem, erro transitório, Agent Manager', () => {
-    const opts: StartAgentOptions = { convId: 'c1', cwd: 'C:\\p', model: 'claude-sonnet-5' }
+    const opts: StartAgentOptions = { convId: 'c1', cwd: 'C:\\p', model: 'claude-sonnet-5-5' }
     const live = (model: string, mcp = true): LiveSessionState => ({ model, mcp })
 
     it('"agora" recusado pôs a T2 antes da T1: cada uma casa pelo id e roda no seu modelo, com pin', () => {
@@ -238,7 +238,7 @@ describe('McpInbound', () => {
       const t1 = reg.create('c1', 'T1', 'claude-opus-5-5')
       const t2 = reg.create('c1', 'T2', 'gpt-6-sol')
       // A T2 sai primeiro: a sessão é refeita no modelo DELA, não no da cabeça (T1).
-      const redo = inbound.restartForSend('c1', send('T2', t2.id), live('claude-sonnet-5'))
+      const redo = inbound.restartForSend('c1', send('T2', t2.id), live('claude-sonnet-5-5'))
       expect(inbound.sessionOptions(redo!).model).toBe('gpt-6-sol')
       expect(inbound.pinForSend('c1', send('T2', t2.id))).toBe(true)
       inbound.onAgentSend('c1', send('T2', t2.id))
@@ -261,9 +261,9 @@ describe('McpInbound', () => {
       inbound.registry.setConfig('c1', { cliente: 'Forgia', mcpServers: {} })
       inbound.registry.create('c1', 'T1', 'claude-opus-5-5')
       inbound.registry.create('c1', 'T2', 'gpt-6-sol')
-      expect(inbound.sessionOptions({ ...opts, autoPrompt: { message: 'T2' } }).model).toBe('claude-sonnet-5')
+      expect(inbound.sessionOptions({ ...opts, autoPrompt: { message: 'T2' } }).model).toBe('claude-sonnet-5-5')
       const user = inbound.sessionOptions(opts)
-      expect(user.model).toBe('claude-sonnet-5')
+      expect(user.model).toBe('claude-sonnet-5-5')
       expect(user.inboundMcp).toBeDefined()
     })
 
@@ -277,7 +277,7 @@ describe('McpInbound', () => {
       inbound.onEvent('c1', { kind: 'error', text: 'overloaded', retryable: true } as never)
       expect(reg.get(t.id)).toMatchObject({ status: 'erro', erro: 'overloaded' })
       // O usuário digita: modelo da conversa, sem pin.
-      expect(inbound.restartForSend('c1', send('outra coisa'), live('gpt-6-sol'))).toMatchObject({ model: 'claude-sonnet-5' })
+      expect(inbound.restartForSend('c1', send('outra coisa'), live('gpt-6-sol'))).toMatchObject({ model: 'claude-sonnet-5-5' })
       expect(inbound.pinForSend('c1', send('outra coisa'))).toBe(false)
       inbound.onAgentSend('c1', send('outra coisa'))
       inbound.onEvent('c1', { kind: 'result', text: 'resposta do usuário', isError: false } as never)
@@ -311,11 +311,11 @@ describe('McpInbound', () => {
       expect(user.skipPermissions).toBeUndefined()
       expect(inbound.registry.get(t.id)?.status).toBe('na_fila')
       // A tarefa (pelo id) exige a troca, e a troca no Manager é recusada.
-      const redo = inbound.restartForSend('c1', send('plano', t.id), live('claude-sonnet-5', false))
+      const redo = inbound.restartForSend('c1', send('plano', t.id), live('claude-sonnet-5-5', false))
       expect(() => inbound.sessionOptions(redo!)).toThrow(MCP_PLANNING_REFUSED)
       expect(inbound.registry.get(t.id)).toMatchObject({ status: 'erro', erro: MCP_PLANNING_REFUSED })
       // Conversa do Manager sem config MCP: nada muda.
-      expect(inbound.sessionOptions({ ...opts, convId: 'c2', planning: { slug: 'x' } }).model).toBe('claude-sonnet-5')
+      expect(inbound.sessionOptions({ ...opts, convId: 'c2', planning: { slug: 'x' } }).model).toBe('claude-sonnet-5-5')
     })
   })
 
