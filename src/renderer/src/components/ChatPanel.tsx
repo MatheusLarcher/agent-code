@@ -87,7 +87,7 @@ function WorkingBanner({ stalledSince }: { stalledSince?: number }): JSX.Element
           <>Sem resposta há {fmtDuration(Math.max(0, now - stalledSince))}</>
         ) : (
           <>
-            Claude está trabalhando<span className="working-dots" />
+            Agent está trabalhando<span className="working-dots" />
           </>
         )}
       </span>

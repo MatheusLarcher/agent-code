@@ -976,7 +976,7 @@ describe('App — indicador "trabalhando" se autocorrige após um result prematu
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
-    expect(workingBanner()).toBeTruthy() // faixa "Claude está trabalhando"
+    expect(workingBanner()).toBeTruthy() // faixa "Agent está trabalhando"
 
     // result PREMATURO (ex.: de um subagente que escapou do filtro do main) —
     // desliga o indicador como se o turno tivesse acabado de verdade.

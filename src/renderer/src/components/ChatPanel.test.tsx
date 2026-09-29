@@ -251,6 +251,13 @@ describe('ChatPanel — botão "agora" na fila', () => {
   })
 })
 
+describe('ChatPanel — faixa de trabalho', () => {
+  it('ocupado, a faixa diz "Agent está trabalhando" — o turno pode ser de outro modelo além do Claude', () => {
+    renderPanel({ busy: true })
+    expect(document.querySelector('.working-banner')?.textContent).toBe('Agent está trabalhando')
+  })
+})
+
 describe('ChatPanel — "Iniciar questionário"', () => {
   it('só aparece com onQuestionnaire (chat do Agent Manager) e chama no clique, mesmo ocupado', () => {
     const { unmount } = renderPanel()
