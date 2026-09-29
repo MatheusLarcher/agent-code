@@ -21,6 +21,10 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="docs/media/comercial.gif" width="900" alt="Comercial do Agent Code: não sabe programar? Não entende de IA? Nem precisa. Você pede em português e ele cria o cardápio do site, abre no navegador e testa o carrinho sozinho. Sites, apps, planilhas e PDFs. Grátis e open source.">
+</p>
+
 ## Nunca programou? Este app é para você.
 
 Imagine ter um assistente no computador que **não só responde, mas faz o trabalho**. Você escreve o que precisa, do jeito que falaria com uma pessoa, e ele coloca a mão na massa:
