@@ -7,7 +7,7 @@ import {
   normalizeAllowedAutoModels,
   parseStoredAppConfig
 } from './persistence/configData'
-import { readPersistedKvMany, writePersistedKv } from './persistence/kvFacade'
+import { hasConfiguredKvRepository, readPersistedKvMany, writePersistedKv } from './persistence/kvFacade'
 import { migratePlanningEffort } from '../shared/autoEffort'
 import { StorageError } from './persistence/types'
 
@@ -124,41 +124,64 @@ async function writeFields(config: AppConfig, only?: Set<string>): Promise<void>
   }
 }
 
+/** Lê o banco e troca o snapshot. Só roda DENTRO da `writeQueue`: assim uma
+ *  leitura antiga nunca sobrescreve o que uma escrita gravou no meio dela. */
+async function readConfig(): Promise<AppConfig> {
+  // Uma leitura por escopo, não uma por campo: isto roda no caminho de
+  // abertura do app e, com PostgreSQL remoto, cada campo custava uma ida
+  // e volta à rede.
+  const stored = await readPersistedKvMany(['config', ...CONFIG_PERSISTED_KEYS, PLANNING_EFFORT_SPLIT_KEY])
+  let next = parseStoredAppConfig(stored.get('config') ?? null)
+  const missing = new Set<string>()
+  for (const field of FIELDS) {
+    const raw = stored.get(field.key) ?? null
+    if (raw === null) {
+      missing.add(field.key)
+      continue
+    }
+    next = mergeAppConfig(next, field.patch(decode(raw, field.sensitive)))
+  }
+  const splitPending = (stored.get(PLANNING_EFFORT_SPLIT_KEY) ?? null) === null
+  if (splitPending) {
+    const planning = migratePlanningEffort(next.planning)
+    if (planning !== next.planning) {
+      next = { ...next, planning }
+      missing.add('config.planning.effort')
+    }
+  }
+  if (missing.size) await writeFields(next, missing)
+  // Depois do esforço: se o processo cair entre as duas escritas, a
+  // migração roda de novo no próximo boot — e ela é idempotente.
+  if (splitPending) await writePersistedKv(PLANNING_EFFORT_SPLIT_KEY, 'true')
+  snapshot = next
+  initialized = true
+  return cloneConfig(snapshot)
+}
+
+/** Dentro da fila: garante o snapshot do banco antes de uma escrita. Não usa
+ *  `ensureConfigLoaded` (que entra na fila) para não travar esperando a si mesma. */
+async function loadInQueue(): Promise<void> {
+  if (!initialized) await readConfig()
+}
+
 export function initializeConfigPersistence(): Promise<AppConfig> {
   if (!initPromise) {
-    initPromise = (async () => {
-      // Uma leitura por escopo, não uma por campo: isto roda no caminho de
-      // abertura do app e, com PostgreSQL remoto, cada campo custava uma ida
-      // e volta à rede.
-      const stored = await readPersistedKvMany(['config', ...CONFIG_PERSISTED_KEYS, PLANNING_EFFORT_SPLIT_KEY])
-      let next = parseStoredAppConfig(stored.get('config') ?? null)
-      const missing = new Set<string>()
-      for (const field of FIELDS) {
-        const raw = stored.get(field.key) ?? null
-        if (raw === null) {
-          missing.add(field.key)
-          continue
-        }
-        next = mergeAppConfig(next, field.patch(decode(raw, field.sensitive)))
-      }
-      const splitPending = (stored.get(PLANNING_EFFORT_SPLIT_KEY) ?? null) === null
-      if (splitPending) {
-        const planning = migratePlanningEffort(next.planning)
-        if (planning !== next.planning) {
-          next = { ...next, planning }
-          missing.add('config.planning.effort')
-        }
-      }
-      if (missing.size) await writeFields(next, missing)
-      // Depois do esforço: se o processo cair entre as duas escritas, a
-      // migração roda de novo no próximo boot — e ela é idempotente.
-      if (splitPending) await writePersistedKv(PLANNING_EFFORT_SPLIT_KEY, 'true')
-      snapshot = next
-      initialized = true
-      return cloneConfig(snapshot)
-    })()
+    const attempt = enqueueConfigWrite(async () => (initialized ? cloneConfig(snapshot) : readConfig()))
+    initPromise = attempt
+    // Falha não fica guardada: com o banco offline no boot, a promise rejeitada
+    // cacheada fazia todo `configGet` falhar até reiniciar o app, mesmo depois
+    // de o banco voltar.
+    attempt.catch(() => {
+      if (initPromise === attempt) initPromise = null
+    })
   }
   return initPromise
+}
+
+/** Relê o banco mesmo com a config já carregada (change feed, troca da pasta
+ *  de dados). Passa pela fila: serializa com as escritas. */
+export function reloadConfigPersistence(): Promise<AppConfig> {
+  return enqueueConfigWrite(readConfig)
 }
 
 /** Espera a config persistida carregar, se ainda não carregou. Quem precisa
@@ -169,12 +192,21 @@ export async function ensureConfigLoaded(): Promise<void> {
   await initializeConfigPersistence()
 }
 
+export function isConfigLoaded(): boolean {
+  return initialized
+}
+
 export function loadConfig(): AppConfig {
-  return cloneConfig(initialized ? snapshot : loadLegacyConfig())
+  if (initialized) return cloneConfig(snapshot)
+  // Com backend gerenciado (PostgreSQL, mesmo offline), o SQLite legado é um
+  // blob antigo: respondia TypeSafe/Windows/Chrome desligados e sem key como
+  // se fosse a config real. O legado só vale quando não há backend nenhum.
+  return hasConfiguredKvRepository() ? defaultAppConfig() : cloneConfig(loadLegacyConfig())
 }
 
 export function saveConfig(config: AppConfig): Promise<void> {
   return enqueueConfigWrite(async () => {
+    await loadInQueue()
     const next = mergeAppConfig(defaultAppConfig(), config)
     await writeFields(next)
     snapshot = next
@@ -183,6 +215,10 @@ export function saveConfig(config: AppConfig): Promise<void> {
 
 export function updateConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   return enqueueConfigWrite(async () => {
+    // Nunca compara com o snapshot padrão: um campo "diferente do padrão"
+    // seria gravado por cima do valor real (ex.: apiKey vazia). Se a carga
+    // falha, a escrita falha junto.
+    await loadInQueue()
     const next = mergeAppConfig(snapshot, patch)
     const touched = new Set<string>()
     for (const field of FIELDS) {

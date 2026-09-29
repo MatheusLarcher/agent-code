@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   CLAUDE_MODELS,
   DEFAULT_CONFIG,
@@ -18,6 +18,7 @@ import { MemoryDataSection } from './MemoryDataSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { TypeSafePauseNote } from './TypeSafePauseNote'
 import { ChromeControlSection } from './ChromeControlSection'
+import { ipcErrorMessage } from '../ipcError'
 import {
   IconBoard,
   IconDatabase,
@@ -48,6 +49,10 @@ interface Props {
 }
 
 type Tab = 'geral' | 'modelos' | 'voz' | 'dados'
+
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends readonly unknown[] ? T[K] : T[K] extends object ? DeepPartial<T[K]> : T[K]
+}
 
 const TABS: { id: Tab; label: string; hint: string; icon: JSX.Element }[] = [
   { id: 'geral', label: 'Geral', hint: 'Permissões do agente', icon: <IconSliders size={16} /> },
@@ -100,6 +105,17 @@ export function SettingsModal({
    *  gravação passa por cifra + banco). */
   const savedTypeSafeKey = useRef('')
   const [loaded, setLoaded] = useState(false)
+  /** Falha ao ler a config: a tela NÃO cai nos padrões editáveis — qualquer
+   *  gravação a partir deles sobrescreveria a config real. */
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const ready = loaded && !loadError
+  /** Grava SÓ o campo alterado; o main faz o merge profundo (`mergeAppConfig`).
+   *  Mandar o grupo inteiro (`{ typesafe: { ...cfg.typesafe, enabled } }`) levava
+   *  junto a `apiKey` do estado da tela — vazia se a leitura falhou — e apagava a
+   *  real no banco. Sem config lida, não grava nada (além do `fieldset disabled`).
+   *  O cast só existe porque o tipo do preload é `Partial` raso. */
+  const patchConfig = (patch: DeepPartial<AppConfig>): Promise<void> =>
+    ready ? window.api.setConfig(patch as Partial<AppConfig>) : Promise.resolve()
   const [cache, setCache] = useState<CacheInfo | null>(null)
   const [appVersion, setAppVersion] = useState('')
   const [codex, setCodex] = useState<CodexStatus>({ connected: false })
@@ -109,18 +125,25 @@ export function SettingsModal({
   const typeSafeSectionRef = useRef<HTMLElement>(null)
   const typeSafeToggleRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    void window.api.getConfig()
+  const fetchConfig = useCallback(async (): Promise<void> => {
+    try {
+      const c = await window.api.getConfig()
       // Cai nos defaults por campo ausente: a tela de Configurações não pode
       // quebrar por causa de uma config antiga/parcial vinda do banco — e um
       // grupo aninhado ausente (ex.: `vigia`) derrubaria a aba inteira.
-      .then((c) => {
-        const merged = { ...DEFAULT_CONFIG, ...c }
-        savedTypeSafeKey.current = merged.typesafe.apiKey
-        setCfg(merged)
-      })
-      .catch(() => undefined)
-      .finally(() => setLoaded(true))
+      const merged = { ...DEFAULT_CONFIG, ...c }
+      savedTypeSafeKey.current = merged.typesafe.apiKey
+      setCfg(merged)
+      setLoadError(null)
+    } catch (error) {
+      setLoadError(ipcErrorMessage(error, 'Não foi possível ler as configurações.'))
+    } finally {
+      setLoaded(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    void fetchConfig()
     void window.api.getCacheInfo().then(setCache)
     void window.api.getAppVersion().then(setAppVersion)
     void window.api.codexStatus().then(setCodex)
@@ -129,7 +152,7 @@ export function SettingsModal({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, fetchConfig])
 
   // When opened to nudge the OpenAI key, focus that field (its tab is already active).
   useEffect(() => {
@@ -149,6 +172,7 @@ export function SettingsModal({
   }, [focus, loaded, tab])
 
   const save = async (): Promise<void> => {
+    if (!ready) return
     const openai = { ...cfg.openai, apiKey: cfg.openai.apiKey.trim() }
     const ollama = { ...cfg.ollama, apiKey: cfg.ollama.apiKey.trim() }
     // Enabling without a key is pointless — warn but still save the preference.
@@ -171,10 +195,7 @@ export function SettingsModal({
     if (!next) return
     setCache(next)
     // Re-read config from the newly selected folder so the screen reflects it.
-    void window.api.getConfig().then((c) => {
-      savedTypeSafeKey.current = c.typesafe.apiKey
-      setCfg(c)
-    })
+    void fetchConfig()
     notify(
       'sucesso',
       `Pasta de dados movida para: ${next.dir}. Apenas memórias e skills foram sincronizadas/movidas; o banco de dados permanece local.`
@@ -185,11 +206,12 @@ export function SettingsModal({
   /** Grava a chave do TypeSafe ao sair do campo. Salvar a cada tecla cifraria e
    *  escreveria no banco caractere por caractere. */
   const commitTypeSafeKey = (): void => {
+    if (!ready) return
     const apiKey = cfg.typesafe.apiKey.trim()
     if (apiKey === savedTypeSafeKey.current) return
     savedTypeSafeKey.current = apiKey
     setCfg((c) => ({ ...c, typesafe: { ...c.typesafe, apiKey } }))
-    void window.api.setConfig({ typesafe: { ...cfg.typesafe, apiKey } })
+    void patchConfig({ typesafe: { apiKey } })
   }
 
   /** Modelos que o Automático pode escolher. Lista completa do seletor manual:
@@ -206,7 +228,7 @@ export function SettingsModal({
       const allowedAutoModels = current.includes(id)
         ? current.filter((m) => m !== id)
         : [...current, id]
-      void window.api.setConfig({ typesafe: { ...c.typesafe, allowedAutoModels } })
+      void patchConfig({ typesafe: { allowedAutoModels } })
       return { ...c, typesafe: { ...c.typesafe, allowedAutoModels } }
     })
   }
@@ -293,8 +315,22 @@ export function SettingsModal({
               <span>{current.hint}</span>
             </header>
 
+            {loadError && (
+              <section className="settings-section settings-load-error" role="alert">
+                <span className="settings-warn">
+                  Não foi possível ler as configurações: {loadError}. Nada pode ser alterado até a leitura dar
+                  certo.
+                </span>
+                <button className="btn ghost" type="button" onClick={() => void fetchConfig()}>
+                  Tentar de novo
+                </button>
+              </section>
+            )}
+
             {tab === 'geral' && (
-              <>
+              // `fieldset disabled` trava todo controle da aba de uma vez enquanto a
+              // config não foi lida: nada é gravado a partir dos padrões.
+              <fieldset className="settings-fieldset" disabled={!ready}>
                 <section className={`settings-section settings-switch-section ${skipPerms ? 'on' : ''}`}>
                   <label className="settings-switch-row">
                     <span className="settings-switch-text">
@@ -359,7 +395,7 @@ export function SettingsModal({
                       onChange={(event) => {
                         const on = event.target.checked
                         setCfg((c) => ({ ...c, preventSleepWhileBusy: on }))
-                        void window.api.setConfig({ preventSleepWhileBusy: on })
+                        void patchConfig({ preventSleepWhileBusy: on })
                       }}
                     />
                     <span className="switch-visual" aria-hidden="true" />
@@ -386,7 +422,7 @@ export function SettingsModal({
                       onChange={(event) => {
                         const on = event.target.checked
                         setCfg((c) => ({ ...c, vigia: { ...c.vigia, enabled: on } }))
-                        void window.api.setConfig({ vigia: { ...cfg.vigia, enabled: on } })
+                        void patchConfig({ vigia: { enabled: on } })
                       }}
                     />
                     <span className="switch-visual" aria-hidden="true" />
@@ -406,7 +442,7 @@ export function SettingsModal({
                         onChange={(event) => {
                           const model = event.target.value
                           setCfg((c) => ({ ...c, vigia: { ...c.vigia, model } }))
-                          void window.api.setConfig({ vigia: { ...cfg.vigia, model } })
+                          void patchConfig({ vigia: { model } })
                         }}
                       >
                         {VIGIA_MODELS.map((m) => (
@@ -437,7 +473,7 @@ export function SettingsModal({
                       onChange={(event) => {
                         const on = event.target.checked
                         setCfg((c) => ({ ...c, memorista: { ...c.memorista, enabled: on } }))
-                        void window.api.setConfig({ memorista: { ...cfg.memorista, enabled: on } })
+                        void patchConfig({ memorista: { enabled: on } })
                       }}
                     />
                     <span className="switch-visual" aria-hidden="true" />
@@ -457,7 +493,7 @@ export function SettingsModal({
                         onChange={(event) => {
                           const model = event.target.value
                           setCfg((c) => ({ ...c, memorista: { ...c.memorista, model } }))
-                          void window.api.setConfig({ memorista: { ...cfg.memorista, model } })
+                          void patchConfig({ memorista: { model } })
                         }}
                       >
                         {MEMORISTA_MODELS.map((m) => (
@@ -489,7 +525,7 @@ export function SettingsModal({
                       onChange={(event) => {
                         const on = event.target.checked
                         setCfg((c) => ({ ...c, board: { ...c.board, requirePlan: on } }))
-                        void window.api.setConfig({ board: { ...cfg.board, requirePlan: on } })
+                        void patchConfig({ board: { requirePlan: on } })
                       }}
                     />
                     <span className="switch-visual" aria-hidden="true" />
@@ -516,7 +552,7 @@ export function SettingsModal({
                       onChange={(event) => {
                         const on = event.target.checked
                         setCfg((c) => ({ ...c, board: { ...c.board, po: { ...c.board.po, enabled: on } } }))
-                        void window.api.setConfig({ board: { ...cfg.board, po: { ...cfg.board.po, enabled: on } } })
+                        void patchConfig({ board: { po: { enabled: on } } })
                       }}
                     />
                     <span className="switch-visual" aria-hidden="true" />
@@ -536,7 +572,7 @@ export function SettingsModal({
                         onChange={(event) => {
                           const model = event.target.value
                           setCfg((c) => ({ ...c, board: { ...c.board, po: { ...c.board.po, model } } }))
-                          void window.api.setConfig({ board: { ...cfg.board, po: { ...cfg.board.po, model } } })
+                          void patchConfig({ board: { po: { model } } })
                         }}
                       >
                         {PO_MODELS.map((m) => (
@@ -580,7 +616,7 @@ export function SettingsModal({
                       onChange={(event) => {
                         const on = event.target.checked
                         setCfg((c) => ({ ...c, typesafe: { ...c.typesafe, enabled: on } }))
-                        void window.api.setConfig({ typesafe: { ...cfg.typesafe, enabled: on } })
+                        void patchConfig({ typesafe: { enabled: on } })
                       }}
                     />
                     <span className="switch-visual" aria-hidden="true" />
@@ -651,7 +687,7 @@ export function SettingsModal({
                     </div>
                   )}
                 </section>
-              </>
+              </fieldset>
             )}
 
             {tab === 'modelos' && (
@@ -710,54 +746,56 @@ export function SettingsModal({
                   </div>
                 </section>
 
-                <section className="settings-section">
-                  <div className="settings-row">
-                    <label className="settings-toggle">
-                      <input
-                        type="checkbox"
-                        checked={cfg.ollama.enabled}
-                        disabled={!loaded}
-                        onChange={(e) => setCfg((c) => ({ ...c, ollama: { ...c.ollama, enabled: e.target.checked } }))}
-                      />
-                      <span>
-                        <strong>Ollama Cloud</strong>
-                        <span className="settings-desc">
-                          Adiciona modelos do Ollama Cloud ao seletor de modelo. Eles rodam pela API compatível
-                          com a Anthropic do Ollama e usam a sua API key — não precisam do login do Claude.
-                          GPT-OSS e Gemma 4 funcionam no plano grátis; Nemotron 3 Ultra/Super, DeepSeek V4 Pro,
-                          GLM 5.3 e Kimi K3 exigem assinatura do Ollama (ollama.com/upgrade).
+                <fieldset className="settings-fieldset" disabled={!ready}>
+                  <section className="settings-section">
+                    <div className="settings-row">
+                      <label className="settings-toggle">
+                        <input
+                          type="checkbox"
+                          checked={cfg.ollama.enabled}
+                          disabled={!loaded}
+                          onChange={(e) => setCfg((c) => ({ ...c, ollama: { ...c.ollama, enabled: e.target.checked } }))}
+                        />
+                        <span>
+                          <strong>Ollama Cloud</strong>
+                          <span className="settings-desc">
+                            Adiciona modelos do Ollama Cloud ao seletor de modelo. Eles rodam pela API compatível
+                            com a Anthropic do Ollama e usam a sua API key — não precisam do login do Claude.
+                            GPT-OSS e Gemma 4 funcionam no plano grátis; Nemotron 3 Ultra/Super, DeepSeek V4 Pro,
+                            GLM 5.3 e Kimi K3 exigem assinatura do Ollama (ollama.com/upgrade).
+                          </span>
                         </span>
+                      </label>
+                    </div>
+  
+                    <label className="settings-field">
+                      <span className="settings-field-label">API key do Ollama</span>
+                      <div className="settings-key-row">
+                        <input
+                          className="settings-input"
+                          type={showOllamaKey ? 'text' : 'password'}
+                          value={cfg.ollama.apiKey}
+                          placeholder="Cole a key de ollama.com → Settings → Keys"
+                          autoComplete="off"
+                          spellCheck={false}
+                          disabled={!loaded}
+                          onChange={(e) => setCfg((c) => ({ ...c, ollama: { ...c.ollama, apiKey: e.target.value } }))}
+                        />
+                        <RevealButton shown={showOllamaKey} onToggle={() => setShowOllamaKey((v) => !v)} />
+                      </div>
+                      <span className="settings-hint">
+                        Gere em ollama.com → ícone de perfil → Settings → Keys. Depois de salvar, escolha um
+                        modelo Ollama no seletor acima do chat (pare a sessão para trocar). A chave fica salva só
+                        no seu computador (no banco da pasta de dados).
                       </span>
                     </label>
-                  </div>
-
-                  <label className="settings-field">
-                    <span className="settings-field-label">API key do Ollama</span>
-                    <div className="settings-key-row">
-                      <input
-                        className="settings-input"
-                        type={showOllamaKey ? 'text' : 'password'}
-                        value={cfg.ollama.apiKey}
-                        placeholder="Cole a key de ollama.com → Settings → Keys"
-                        autoComplete="off"
-                        spellCheck={false}
-                        disabled={!loaded}
-                        onChange={(e) => setCfg((c) => ({ ...c, ollama: { ...c.ollama, apiKey: e.target.value } }))}
-                      />
-                      <RevealButton shown={showOllamaKey} onToggle={() => setShowOllamaKey((v) => !v)} />
-                    </div>
-                    <span className="settings-hint">
-                      Gere em ollama.com → ícone de perfil → Settings → Keys. Depois de salvar, escolha um
-                      modelo Ollama no seletor acima do chat (pare a sessão para trocar). A chave fica salva só
-                      no seu computador (no banco da pasta de dados).
-                    </span>
-                  </label>
-                </section>
+                  </section>
+                </fieldset>
               </>
             )}
 
             {tab === 'voz' && (
-              <>
+              <fieldset className="settings-fieldset" disabled={!ready}>
                 <section className={`settings-section ${focus === 'openai' ? 'settings-highlight' : ''}`}>
                   <label className="settings-field">
                     <span className="settings-field-label">API key da OpenAI</span>
@@ -871,7 +909,7 @@ export function SettingsModal({
                     )}
                   </div>
                 </section>
-              </>
+              </fieldset>
             )}
 
             {tab === 'dados' && (
@@ -917,7 +955,7 @@ export function SettingsModal({
           <button className="btn ghost" onClick={onClose}>
             Cancelar
           </button>
-          <button className="btn primary" onClick={save} disabled={!loaded}>
+          <button className="btn primary" onClick={save} disabled={!ready}>
             Salvar
           </button>
         </div>

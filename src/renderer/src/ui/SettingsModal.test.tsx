@@ -57,6 +57,56 @@ describe('Configurações → Geral: Planejamento', () => {
   })
 })
 
+// Incidente: com o banco offline a leitura falhava, a tela liberava os padrões
+// (keys vazias) e cada interruptor mandava o grupo inteiro — apagando a key real.
+describe('Configurações: leitura que falha e gravação só do campo alterado', () => {
+  const typeSafeToggle = (): HTMLInputElement =>
+    screen.getByText(/TypeSafe — decisões rápidas/).closest('label')!.querySelector('input')!
+
+  it('getConfig rejeita: aviso + Tentar de novo, controles travados, nada é gravado; retry habilita', async () => {
+    const config = { ...DEFAULT_CONFIG, typesafe: { ...DEFAULT_CONFIG.typesafe, apiKey: 'ts-real' } }
+    const api = stubApi(config)
+    // Toda leitura falha (a seção do Chrome também lê a config) até o banco voltar.
+    api.getConfig.mockRejectedValue(new Error('Storage autoritativo offline.'))
+    await view()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Storage autoritativo offline.')
+    expect(typeSafeToggle().matches(':disabled')).toBe(true)
+    expect((screen.getByRole('button', { name: 'Salvar' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(typeSafeToggle())
+    expect(api.setConfig).not.toHaveBeenCalled()
+
+    api.getConfig.mockResolvedValue(config)
+    await act(async () => {
+      fireEvent.click(screen.getByText('Tentar de novo'))
+    })
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(typeSafeToggle().matches(':disabled')).toBe(false)
+    expect((screen.getByRole('button', { name: 'Salvar' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('o interruptor do TypeSafe grava só {typesafe:{enabled}}, sem a apiKey', async () => {
+    const api = stubApi({ ...DEFAULT_CONFIG, typesafe: { ...DEFAULT_CONFIG.typesafe, apiKey: 'ts-real' } })
+    await view()
+    await waitFor(() => expect(typeSafeToggle().matches(':disabled')).toBe(false))
+
+    fireEvent.click(typeSafeToggle())
+    expect(api.setConfig).toHaveBeenLastCalledWith({ typesafe: { enabled: true } })
+  })
+
+  it('a key do TypeSafe grava só {typesafe:{apiKey}} ao sair do campo', async () => {
+    const api = stubApi({ ...DEFAULT_CONFIG, typesafe: { ...DEFAULT_CONFIG.typesafe, enabled: true } })
+    await view()
+    const input = await screen.findByPlaceholderText('Cole a key de typesafe.ai')
+    await waitFor(() => expect(input.matches(':disabled')).toBe(false))
+
+    fireEvent.change(input, { target: { value: ' ts-nova ' } })
+    fireEvent.blur(input)
+    expect(api.setConfig).toHaveBeenLastCalledWith({ typesafe: { apiKey: 'ts-nova' } })
+  })
+})
+
 describe('usePlanningModel — o seletor do chat de planejamento', () => {
   function Probe(): JSX.Element {
     const { config, setModel, setEffort } = usePlanningModel()

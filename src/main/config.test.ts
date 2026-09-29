@@ -2,6 +2,7 @@
 // Main-process code: same reasoning as config.keys.test.ts — needs the node
 // env (config → store → node:sqlite), and mocks electron before importing.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AppConfig } from '../shared/ipc'
 
 vi.mock('electron', () => ({
   app: { getPath: () => '', getAppPath: () => '', getVersion: () => '0.0.0' },
@@ -13,16 +14,96 @@ vi.mock('electron', () => ({
 }))
 
 const kvFacade = vi.hoisted(() => ({
+  hasConfiguredKvRepository: vi.fn(() => true),
   readPersistedKvMany: vi.fn(),
   writePersistedKv: vi.fn(async () => undefined)
 }))
+const store = vi.hoisted(() => ({ kvGet: vi.fn((): string | null => null) }))
 vi.mock('./persistence/kvFacade', () => kvFacade)
-vi.mock('./store', () => ({ kvGet: () => null }))
+vi.mock('./store', () => store)
 
 beforeEach(() => {
   vi.resetModules()
+  kvFacade.hasConfiguredKvRepository.mockReset().mockReturnValue(true)
   kvFacade.readPersistedKvMany.mockReset()
   kvFacade.writePersistedKv.mockReset().mockResolvedValue(undefined)
+  store.kvGet.mockReset().mockReturnValue(null)
+})
+
+/** KV falso em memória, no formato do banco (cada campo uma chave em JSON). */
+function fakeKv(initial: [string, string][] = []): Map<string, string> {
+  const kv = new Map<string, string>(initial)
+  kvFacade.writePersistedKv.mockImplementation(async (...args: unknown[]) => {
+    kv.set(args[0] as string, args[1] as string)
+    return undefined
+  })
+  kvFacade.readPersistedKvMany.mockImplementation(
+    async (keys: string[]) => new Map(keys.map((key) => [key, kv.get(key) ?? null]))
+  )
+  return kv
+}
+
+/** Chave sensível como `encode` grava com o safeStorage do mock (texto puro em base64). */
+const sealed = (value: string): string =>
+  JSON.stringify({ safeStorage: Buffer.from(JSON.stringify(value), 'utf8').toString('base64') })
+
+// Incidente: PostgreSQL offline no boot → a config nunca carregava de novo até
+// reiniciar, e a tela gravava a key vazia por cima da real.
+describe('config com o banco offline e voltando', () => {
+  it('init que falha não fica cacheada: a próxima chamada lê de novo e carrega', async () => {
+    kvFacade.readPersistedKvMany.mockRejectedValueOnce(new Error('Storage autoritativo offline.'))
+    fakeKv([['config.typesafe.enabled', 'true']])
+    const { initializeConfigPersistence, loadConfig } = await import('./config')
+
+    await expect(initializeConfigPersistence()).rejects.toThrow('offline')
+    expect((await initializeConfigPersistence()).typesafe.enabled).toBe(true)
+    expect(loadConfig().typesafe.enabled).toBe(true)
+  })
+
+  it('reload relê o valor alterado no banco mesmo depois de carregada', async () => {
+    const kv = fakeKv([['config.vigia.enabled', 'false']])
+    const { initializeConfigPersistence, reloadConfigPersistence, loadConfig } = await import('./config')
+
+    await initializeConfigPersistence()
+    expect(loadConfig().vigia.enabled).toBe(false)
+    kv.set('config.vigia.enabled', 'true')
+    await initializeConfigPersistence()
+    expect(loadConfig().vigia.enabled).toBe(false)
+    await reloadConfigPersistence()
+    expect(loadConfig().vigia.enabled).toBe(true)
+  })
+
+  it('com backend gerenciado e sem carga, loadConfig devolve o padrão, não o SQLite legado', async () => {
+    store.kvGet.mockReturnValue(JSON.stringify({ skipPermissions: true, windowsControlEnabled: true }))
+    const { loadConfig } = await import('./config')
+    expect(loadConfig().skipPermissions).toBe(false)
+    expect(loadConfig().windowsControlEnabled).toBe(false)
+  })
+
+  it('sem backend gerenciado, loadConfig antes da carga continua lendo o legado (compat)', async () => {
+    kvFacade.hasConfiguredKvRepository.mockReturnValue(false)
+    store.kvGet.mockReturnValue(JSON.stringify({ skipPermissions: true }))
+    const { loadConfig } = await import('./config')
+    expect(loadConfig().skipPermissions).toBe(true)
+  })
+
+  it('updateConfig antes da carga carrega primeiro e não apaga a apiKey do TypeSafe', async () => {
+    const kv = fakeKv([['config.typesafe.apiKey', sealed('ts-real')]])
+    const { updateConfig } = await import('./config')
+
+    const next = await updateConfig({ typesafe: { enabled: true } as AppConfig['typesafe'] })
+    expect(next.typesafe).toMatchObject({ enabled: true, apiKey: 'ts-real' })
+    expect(kv.get('config.typesafe.apiKey')).toBe(sealed('ts-real'))
+    expect(kv.get('config.typesafe.enabled')).toBe('true')
+  })
+
+  it('updateConfig com o banco fora falha em vez de gravar contra o padrão', async () => {
+    kvFacade.readPersistedKvMany.mockRejectedValue(new Error('Storage autoritativo offline.'))
+    const { updateConfig } = await import('./config')
+
+    await expect(updateConfig({ typesafe: { enabled: true } as AppConfig['typesafe'] })).rejects.toThrow('offline')
+    expect(kvFacade.writePersistedKv).not.toHaveBeenCalled()
+  })
 })
 
 afterEach(() => {
