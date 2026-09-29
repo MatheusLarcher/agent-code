@@ -50,3 +50,7 @@ docs/bench/dataset/
 unsloth_compiled_cache/
 /dist-rel
 docs/spec/*/_sandbox/
+
+# Vídeo de divulgação gerado pelo /brag: ~100 MB de mídia e intermediários, e
+# a trilha musical embutida não tem licença de redistribuição documentada.
+docs/brag-output/
