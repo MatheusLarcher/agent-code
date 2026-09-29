@@ -86,6 +86,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM --- Confere que as skills do cache foram embutidas ---
+call node "%~dp0stage-skills.mjs" --verify "dist\win-unpacked\resources\app"
+if errorlevel 1 (
+    echo.
+    echo [ERRO] O instalador saiu sem as skills.
+    echo.
+    pause
+    exit /b 1
+)
+
 for %%F in ("!ARTIFACT!") do (
     echo ============================================
     echo   EXE GERADO COM SUCESSO

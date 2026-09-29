@@ -13,12 +13,21 @@ import {
   writeFileSync
 } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 
 const MANIFEST_NAME = '.agent-code-managed.json'
 const BUNDLED_MANIFEST_NAME = '.agent-code-bundled.json'
-const IMPORTED_MANIFEST_NAME = '.agent-code-imported.json'
+/** Seeds already applied to this cache (shared on purpose: it is a property of the cache). */
+const SEEDED_MANIFEST_NAME = '.agent-code-seeded.json'
+/** Legacy import manifest shared by every machine on the synced cache; read only to migrate. */
+const LEGACY_IMPORTED_MANIFEST_NAME = '.agent-code-imported.json'
+
+/** Per-machine import manifest: the cache is shared via OneDrive but `~/.claude/skills` is
+ * local, so a shared list made one machine delete every skill another had imported. */
+function importedManifestName(machine: string): string {
+  return `.agent-code-imported.${machine.replace(/[^A-Za-z0-9_-]/g, '_') || 'local'}.json`
+}
 const VALID_SKILL_DIRECTORY = /^[\p{L}\p{N}][\p{L}\p{N}._:-]*$/u
 
 interface ManagedManifest {
@@ -217,13 +226,13 @@ function removeGlobalEntry(link: string): void {
  * `isDirectory() === false`, so the SDK's skill scanner skips it and the Skill
  * tool answers `Unknown skill` for a skill the catalog just advertised.
  */
-export function exposeCacheSkills(skillsDir: string, userHome: string = homedir()): SkillSyncResult {
+export function exposeCacheSkills(skillsDir: string, userHome: string = homedir(), machine: string = hostname()): SkillSyncResult {
   const globalRoot = join(userHome, '.claude', 'skills')
   const errors: string[] = []
   mkdirSync(skillsDir, { recursive: true })
   mkdirSync(globalRoot, { recursive: true })
 
-  errors.push(...importUserSkills(skillsDir, userHome))
+  errors.push(...importUserSkills(skillsDir, userHome, machine))
   const available = skillNames(skillsDir)
   const availableSet = new Set(available)
   const previouslyManaged = readManagedLinks(globalRoot)
@@ -304,15 +313,20 @@ export function exposeCacheSkills(skillsDir: string, userHome: string = homedir(
  * Agent Code exposed there, and never overrides a bundled or user-made cache
  * skill of the same name. Imports that vanished from `~/.claude` are removed.
  */
-export function importUserSkills(skillsDir: string, userHome: string = homedir()): string[] {
+export function importUserSkills(skillsDir: string, userHome: string = homedir(), machine: string = hostname()): string[] {
   const errors: string[] = []
   const globalRoot = join(userHome, '.claude', 'skills')
+  const manifestName = importedManifestName(machine)
   const managedByUs = readManagedLinks(globalRoot)
   const bundled = readManaged(skillsDir, BUNDLED_MANIFEST_NAME)
-  const previouslyImported = readManaged(skillsDir, IMPORTED_MANIFEST_NAME)
+  const localSkills = skillNames(globalRoot)
+  // First per-machine run: adopt from the legacy list only skills present in THIS ~/.claude/skills.
+  const previouslyImported = existsSync(join(skillsDir, manifestName))
+    ? readManaged(skillsDir, manifestName)
+    : new Set([...readManaged(skillsDir, LEGACY_IMPORTED_MANIFEST_NAME)].filter((name) => localSkills.includes(name)))
   const imported = new Set<string>()
 
-  for (const name of skillNames(globalRoot)) {
+  for (const name of localSkills) {
     const source = safeSkillPath(globalRoot, name)
     const destination = safeSkillPath(skillsDir, name)
     if (!source || !destination || managedByUs.has(name) || bundled.has(name)) continue
@@ -339,7 +353,7 @@ export function importUserSkills(skillsDir: string, userHome: string = homedir()
     }
   }
   try {
-    if (imported.size > 0 || previouslyImported.size > 0) writeManaged(skillsDir, [...imported], IMPORTED_MANIFEST_NAME)
+    if (imported.size > 0 || previouslyImported.size > 0) writeManaged(skillsDir, [...imported], manifestName)
   } catch (error) {
     errors.push(`Não foi possível salvar o manifesto de skills importadas: ${String(error)}`)
   }
@@ -450,7 +464,35 @@ export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: str
   } catch (error) {
     errors.push(`Não foi possível salvar o manifesto de skills empacotadas: ${String(error)}`)
   }
+  errors.push(...seedCacheSkills(appRoot, skillsDir))
 
   const exposed = exposeCacheSkills(skillsDir, userHome)
   return { ...exposed, errors: [...errors, ...exposed.errors] }
+}
+
+/** Copy the build machine's installed skills (`<appRoot>/.agents/seed-skills`, scripts/stage-skills.mjs)
+ * into a cache once: never overwrites, and a seeded skill the user deletes is not brought back. */
+export function seedCacheSkills(appRoot: string, skillsDir: string): string[] {
+  const seedRoot = join(appRoot, '.agents', 'seed-skills')
+  const seeds = skillNames(seedRoot)
+  if (seeds.length === 0) return []
+  const errors: string[] = []
+  const seeded = readManaged(skillsDir, SEEDED_MANIFEST_NAME)
+  const before = seeded.size
+  for (const name of seeds) {
+    const destination = safeSkillPath(skillsDir, name)
+    if (seeded.has(name) || !destination) continue
+    try {
+      if (!existsSync(destination)) replaceDirectory(join(seedRoot, name), destination)
+      seeded.add(name)
+    } catch (error) {
+      errors.push(`Não foi possível instalar a skill ${name}: ${String(error)}`)
+    }
+  }
+  try {
+    if (seeded.size !== before) writeManaged(skillsDir, [...seeded], SEEDED_MANIFEST_NAME)
+  } catch (error) {
+    errors.push(`Não foi possível salvar o manifesto de skills semeadas: ${String(error)}`)
+  }
+  return errors
 }

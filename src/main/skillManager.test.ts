@@ -190,6 +190,55 @@ describe('syncCacheSkills', () => {
     expect(existsSync(join(skills, 'conflito'))).toBe(true)
   })
 
+  it('skill importada numa máquina sobrevive e aparece na outra que compartilha o cache', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-2pcs-'))
+    const skills = join(root, 'cache', 'skills')
+    const empresa = join(root, 'empresa')
+    const casa = join(root, 'casa')
+    await seedSkill(join(empresa, '.claude', 'skills'), 'brag', 'da empresa')
+
+    expect(exposeCacheSkills(skills, empresa, 'PC-EMPRESA').errors).toEqual([])
+    expect(exposeCacheSkills(skills, casa, 'PC-CASA').errors).toEqual([])
+    expect(await readFile(join(skills, 'brag', 'SKILL.md'), 'utf8')).toContain('da empresa')
+    expect(await readFile(join(casa, '.claude', 'skills', 'brag', 'SKILL.md'), 'utf8')).toContain('da empresa')
+
+    // só a máquina que importou remove quando o usuário desinstala lá
+    await rm(join(empresa, '.claude', 'skills', 'brag'), { recursive: true })
+    expect(exposeCacheSkills(skills, empresa, 'PC-EMPRESA').errors).toEqual([])
+    expect(existsSync(join(skills, 'brag'))).toBe(false)
+  })
+
+  it('manifesto legado compartilhado não apaga skill importada por outra máquina', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-legacy-'))
+    const skills = join(root, 'cache', 'skills')
+    const casa = join(root, 'casa')
+    await seedSkill(skills, 'brag', 'da empresa')
+    await writeFile(join(skills, '.agent-code-imported.json'), JSON.stringify({ version: 1, skills: ['brag'] }), 'utf8')
+
+    expect(exposeCacheSkills(skills, casa, 'PC-CASA').errors).toEqual([])
+    expect(existsSync(join(skills, 'brag', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(casa, '.claude', 'skills', 'brag', 'SKILL.md'))).toBe(true)
+  })
+
+  it('semeia skills do instalador uma vez, sem sobrescrever nem ressuscitar', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-seed-'))
+    const app = join(root, 'app')
+    const cache = join(root, 'cache')
+    const home = join(root, 'home')
+    await seedSkill(join(app, '.agents', 'seed-skills'), 'brag', 'do instalador')
+    await seedSkill(join(app, '.agents', 'seed-skills'), 'minha', 'do instalador')
+    await seedSkill(join(cache, 'skills'), 'minha', 'do usuário')
+
+    expect(syncCacheSkills(app, cache, home).errors).toEqual([])
+    expect(await readFile(join(cache, 'skills', 'brag', 'SKILL.md'), 'utf8')).toContain('do instalador')
+    expect(await readFile(join(cache, 'skills', 'minha', 'SKILL.md'), 'utf8')).toContain('do usuário')
+    expect(existsSync(join(home, '.claude', 'skills', 'brag', 'SKILL.md'))).toBe(true)
+
+    await rm(join(cache, 'skills', 'brag'), { recursive: true })
+    expect(syncCacheSkills(app, cache, home).errors).toEqual([])
+    expect(existsSync(join(cache, 'skills', 'brag'))).toBe(false)
+  })
+
   it('não reimporta o que o Agent Code expôs em ~/.claude', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skill-manager-noreimport-'))
     const skills = join(root, 'cache', 'skills')

@@ -23,6 +23,10 @@ files:
   # Kit de skills empacotado: `app.getAppPath()` no exe é resources/app, e o
   # skillManager sincroniza de <appRoot>/.agents/skills para <cacheDir>/skills.
   - .agents/skills/**
+  # Skills que o usuário instalou no cache da máquina de build
+  # (scripts/stage-skills.mjs). Semeiam o cache de instalações novas.
+  - from: .seed-skills
+    to: .agents/seed-skills
   - '!out/windows-control/**' # vai como extraResources (o helper procura em resources/windows-control)
   - '!out/ms-playwright/**' # idem: vai como extraResources
 

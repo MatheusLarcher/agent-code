@@ -1,6 +1,6 @@
 {
   "name": "agent-code-desktop",
-  "version": "0.1.40",
+  "version": "0.1.41",
   "description": "Desktop UI for Claude Code with an embedded agent-driven browser (Claude Desktop style)",
   "type": "module",
   "main": "./out/main/index.js",
@@ -15,7 +15,7 @@
     "engine:sync": "node scripts/sync-engine.mjs",
     "engine:check": "node scripts/sync-engine.mjs --check",
     "postinstall": "playwright install chromium",
-    "package:win": "npm run build && node scripts/stage-chromium.mjs && electron-builder --win",
+    "package:win": "npm run build && node scripts/stage-chromium.mjs && node scripts/stage-skills.mjs && electron-builder --win",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:pg": "node scripts/run-postgres-tests.mjs",

@@ -1,5 +1,7 @@
 node_modules/
 out/
+# Skills do cache preparadas por scripts/stage-skills.mjs (fora de out/ para não irem duplicadas)
+.seed-skills/
 graphify-out/
 dist/
 .vite/
