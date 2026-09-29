@@ -23,6 +23,8 @@ import type {
   CacheInfo,
   ClaudeAuthStatus,
   CodexStatus,
+  ProvidersStatus,
+  SandboxCreateResult,
   FileAttachment,
   FileBytes,
   FileRefAttachment,
@@ -262,6 +264,10 @@ const api: AgentCodeApi = {
   codexStatus: (): Promise<CodexStatus> => ipcRenderer.invoke(Channels.codexStatus),
   codexLogin: (): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke(Channels.codexLogin),
   codexLogout: (): Promise<void> => ipcRenderer.invoke(Channels.codexLogout),
+  sandboxInfo: (): Promise<{ root: string }> => ipcRenderer.invoke(Channels.sandboxInfo),
+  sandboxCreate: (): Promise<SandboxCreateResult> => ipcRenderer.invoke(Channels.sandboxCreate),
+  providersStatus: (): Promise<ProvidersStatus> => ipcRenderer.invoke(Channels.providersStatus),
+  onProvidersChanged: (cb: (status: ProvidersStatus) => void): (() => void) => on(Channels.providersChanged, cb),
 
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }> =>

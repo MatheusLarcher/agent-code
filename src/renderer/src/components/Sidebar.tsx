@@ -18,7 +18,17 @@ export interface SidebarProject {
   /** True while the database holds more than what is loaded — shows "mostrar mais". */
   hasMore?: boolean
   loadingMore?: boolean
+  /** Projeto fixo "Sandbox" (as subpastas por conversa, juntas; path = raiz). */
+  sandbox?: boolean
 }
+
+/** Ícone do projeto "Sandbox": uma caixa de areia (balde). */
+const IconSandbox = (): JSX.Element => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M5 9h14l-1.5 11h-11z" />
+    <path d="M8 9a4 4 0 0 1 8 0" />
+  </svg>
+)
 
 interface Props {
   collapsed: boolean
@@ -363,7 +373,7 @@ export function Sidebar(props: Props): JSX.Element {
                 if (p.conversations[0]) props.onSelect(p.conversations[0].id)
               }}
             >
-              <ProjectGlyph key={p.icon ?? 'folder'} icon={p.icon} />
+              {p.sandbox ? <IconSandbox /> : <ProjectGlyph key={p.icon ?? 'folder'} icon={p.icon} />}
             </button>
             )
           })}
@@ -466,6 +476,8 @@ export function Sidebar(props: Props): JSX.Element {
                       <span className="project-folder">
                         {busy ? (
                           <IconSpinner className="spinner" size={15} />
+                        ) : p.sandbox ? (
+                          <IconSandbox />
                         ) : (
                           <ProjectGlyph key={p.icon ?? 'folder'} icon={p.icon} />
                         )}
@@ -478,12 +490,12 @@ export function Sidebar(props: Props): JSX.Element {
                     </button>
                     <button
                       className="project-add"
-                      title="Nova conversa neste projeto"
+                      title={p.sandbox ? 'Nova conversa no sandbox (pasta nova)' : 'Nova conversa neste projeto'}
                       onClick={() => props.onNewChatIn(p.path)}
                     >
                       <IconPlus />
                     </button>
-                    {props.onNewPlanningIn && (
+                    {props.onNewPlanningIn && !p.sandbox && (
                       <button
                         className="project-add"
                         title="Novo planejamento neste projeto"

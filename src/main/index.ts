@@ -26,6 +26,8 @@ import { McpInbound, type LiveSessionState, type McpSend } from './mcpInbound/mc
 import { MCP_NO_CONTINUE_WARNING, NO_LIVE_SESSION } from '../shared/mcpInbound'
 import type { AccountSwitchDeps } from './accounts/switchDeps'
 import { ollamaSelectable, selectableModelIds } from '../shared/selectableModels'
+import { registerProviderStatusIpc } from './providerStatus'
+import { sandboxCreateResult, sandboxRoot } from './sandbox'
 import { secondInstanceReveal, wantsMinimized } from './mcpInbound/windowStartup'
 import { RelayClient } from './remote/relayClient'
 import { RemotePairingStore } from './remote/remotePairing'
@@ -1050,9 +1052,24 @@ export function registerIpc(): void {
     await ensureConfigLoaded()
     return loadConfig()
   })
-  ipcMain.handle(Channels.configSet, (_e, patch: Partial<AppConfig>) => {
+  // Modo sandbox e "Conectar conta" (lógica em sandbox.ts / providerStatus.ts).
+  ipcMain.handle(Channels.sandboxInfo, () => ({ root: sandboxRoot() }))
+  ipcMain.handle(Channels.sandboxCreate, () => sandboxCreateResult())
+  const providersChanged = registerProviderStatusIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    send,
+    channels: { status: Channels.providersStatus, changed: Channels.providersChanged },
+    deps: {
+      claude: refreshClaudeReady,
+      gpt: async () => (await codexStatus()).connected,
+      ollama: () => ollamaSelectable(loadConfig().ollama)
+    }
+  })
+  ipcMain.handle(Channels.configSet, async (_e, patch: Partial<AppConfig>) => {
     assertStorageWritable()
-    return updateAppConfig(patch)
+    const result = await updateAppConfig(patch)
+    if (patch && 'ollama' in patch) providersChanged()
+    return result
   })
   ipcMain.handle(Channels.typesafeIsConfigured, () => typeSafeConfigured())
   ipcMain.handle(Channels.typesafePauseStatus, () => typeSafePause.status())
@@ -1148,6 +1165,7 @@ export function registerIpc(): void {
     }
     const ok = await runClaudeLogin(openUrl, authLog)
     authLog(`=== auth:login done: authenticated=${ok} ===`)
+    providersChanged()
     return { ok }
   })
   // Observadores (Vigia, Memorista, PO, título, curador) rodam na conta Claude
@@ -1177,6 +1195,7 @@ export function registerIpc(): void {
     assertStorageWritable()
     const status = await logoutClaude()
     authLog(`=== auth:logout: loggedIn=${status.loggedIn} authMethod=${status.authMethod} ===`)
+    providersChanged()
     return status
   })
 
@@ -1192,12 +1211,14 @@ export function registerIpc(): void {
     }
     const result = await runCodexLogin(openUrl, authLog)
     authLog(`=== codex:login done: ok=${result.ok} message=${result.message ?? ''} ===`)
+    providersChanged()
     return result
   })
   ipcMain.handle(Channels.codexLogout, async () => {
     assertStorageWritable()
     await codexLogout()
     authLog('=== codex:logout ===')
+    providersChanged()
   })
 
   ipcMain.handle(Channels.openaiTts, async (_e, text: string) => {

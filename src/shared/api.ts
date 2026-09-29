@@ -19,6 +19,8 @@ import type {
   CacheInfo,
   ClaudeAuthStatus,
   CodexStatus,
+  ProvidersStatus,
+  SandboxCreateResult,
   FileAttachment,
   FileBytes,
   FileRefAttachment,
@@ -301,6 +303,14 @@ export interface AgentCodeApi {
   codexLogin(): Promise<{ ok: boolean; message?: string }>
   /** Erase the saved Codex login. */
   codexLogout(): Promise<void>
+  /** Raiz do modo sandbox. */
+  sandboxInfo(): Promise<{ root: string }>
+  /** Cria a subpasta de uma conversa de sandbox; erro de disco vem em `error`. */
+  sandboxCreate(): Promise<SandboxCreateResult>
+  /** Claude / GPT / Ollama conectados? (nunca lança: falha = false). */
+  providersStatus(): Promise<ProvidersStatus>
+  /** main → renderer: login, logout ou config de provedor mudou. */
+  onProvidersChanged(cb: (status: ProvidersStatus) => void): () => void
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }>
   /** Fila de espera gravada no banco: tudo, no boot. */

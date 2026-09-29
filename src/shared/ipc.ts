@@ -1392,6 +1392,16 @@ export interface CodexStatus {
   planType?: string
 }
 
+/** Quais provedores de modelo estão conectados (botão "Conectar conta"). */
+export interface ProvidersStatus {
+  claude: boolean
+  gpt: boolean
+  ollama: boolean
+}
+
+/** Resposta de `sandboxCreate`: erro de disco vira `{ error }`, nunca lança. */
+export type SandboxCreateResult = { path: string } | { error: string }
+
 /** Where dictation is transcribed: OpenAI's API, or a model running on this
  *  machine (works offline and sends no audio anywhere, but has to be downloaded
  *  the first time — see `speech.ts`). */
@@ -1980,6 +1990,14 @@ export const Channels = {
   codexLogin: 'codex:login',
   /** Erase the saved Codex login. */
   codexLogout: 'codex:logout',
+  /** Raiz do modo sandbox (`<localDir>\sandbox`). */
+  sandboxInfo: 'sandbox:info',
+  /** Cria uma subpasta nova do sandbox para uma conversa. */
+  sandboxCreate: 'sandbox:create',
+  /** Claude / GPT / Ollama conectados? */
+  providersStatus: 'providers:status',
+  /** main → renderer: um login, logout ou config de provedor mudou. */
+  providersChanged: 'providers:changed',
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',

@@ -144,6 +144,16 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     codexStatus: vi.fn(async () => ({ connected: false })),
     codexLogin: vi.fn(async () => ({ ok: true })),
     codexLogout: vi.fn(async () => undefined),
+    // Modo sandbox e "Conectar conta": o status espelha os mocks de Codex e
+    // da config, para os testes que ligam GPT/Ollama continuarem valendo.
+    sandboxInfo: vi.fn(async () => ({ root: 'C:\\local\\sandbox' })),
+    sandboxCreate: vi.fn(async () => ({ path: 'C:\\local\\sandbox\\2026-09-29_10-00_abcd' })),
+    providersStatus: vi.fn(async () => {
+      const cfg = (await (window as unknown as { api: { getConfig: () => Promise<{ ollama?: { enabled?: boolean; apiKey?: string } }> } }).api.getConfig()) ?? {}
+      const codex = await (window as unknown as { api: { codexStatus: () => Promise<{ connected: boolean }> } }).api.codexStatus()
+      return { claude: true, gpt: !!codex?.connected, ollama: !!cfg.ollama?.enabled && !!cfg.ollama?.apiKey?.trim() }
+    }),
+    onProvidersChanged: vi.fn(() => () => {}),
     pathExists: vi.fn(async () => true),
     projectTree: vi.fn(async () => ({ nodes: [], truncated: false })),
     pickDirectory: vi.fn(async () => null),
@@ -3383,5 +3393,24 @@ describe('App — conversa vazia', () => {
     // Cada conversa aparece duas vezes na barra (Projetos + Chats): c1 + UMA nova.
     expect(titles('.conv-row .conv-title').sort()).toEqual(['Conversa', 'Conversa', 'Nova conversa', 'Nova conversa'])
     expect(titles('.conv-row.active .conv-title')).toEqual(['Nova conversa', 'Nova conversa'])
+  })
+})
+
+describe('App — modo sandbox', () => {
+  it('primeiro uso: abre uma conversa numa subpasta do sandbox, sem seletor, com o projeto "Sandbox" no topo', async () => {
+    localStorage.setItem('agentcode.conversations.v1', '[]')
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    await waitFor(() => expect(api.sandboxCreate).toHaveBeenCalledTimes(1))
+    expect(api.pickDirectory).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(container.querySelector('.project-item .project-name')?.textContent).toBe('Sandbox')
+    )
+    expect(container.querySelectorAll('.conv-row.active').length).toBeGreaterThan(0)
+  })
+
+  it('"Nova conversa" a partir de uma pasta real continua na pasta (sem criar subpasta)', async () => {
+    render(<UiProvider><App /></UiProvider>)
+    fireEvent.click(await screen.findByTitle('Nova conversa neste projeto'))
+    expect(api.sandboxCreate).not.toHaveBeenCalled()
   })
 })

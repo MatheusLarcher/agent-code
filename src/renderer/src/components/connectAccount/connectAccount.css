@@ -1,0 +1,41 @@
+/* Card "Conectar conta": centralizado no estado vazio; compacto acima do campo
+   de mensagem quando a conversa já tem mensagens. */
+.connect-account {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.connect-account.compact {
+  margin: 8px 16px;
+  padding: 12px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 10px;
+}
+.connect-account-text {
+  margin: 0;
+}
+.connect-account-main {
+  font-size: 15px;
+  padding: 10px 28px;
+}
+.connect-account-options,
+.connect-account-waiting,
+.connect-account-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.connect-account-ollama {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(360px, 100%);
+}
+.connect-account-ollama input {
+  width: 100%;
+}

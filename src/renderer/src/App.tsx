@@ -37,6 +37,11 @@ import { fileTouches, turnsOf } from './projectActivity'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { findBlankConversation } from './blankConversation'
+import { groupSidebarProjects, newChatTarget, shouldOpenSandboxOnBoot } from './sandbox/sandboxFlow'
+import { openSandboxConversation, useSandboxRoot } from './sandbox/useSandbox'
+import { ConnectAccountCard } from './components/connectAccount/ConnectAccountCard'
+import { useConnectAccount } from './components/connectAccount/useConnectAccount'
+import { hasAnyProvider, modelForNewConversation } from './components/connectAccount/providerModels'
 import {
   claudeUsageAllowsLlmTitle,
   deriveTitle,
@@ -1846,7 +1851,11 @@ export function App(): JSX.Element {
     const sameFolder = convsRef.current.find((c) => c.cwd === folder && !isPlanningConversation(c))
     const current = getActive()
     const active = isPlanningConversation(current) ? null : current
-    const model = sameFolder?.model || active?.model || MODELS[0].id
+    // Modelo de provedor não conectado vai para o primeiro de um conectado.
+    const model = modelForNewConversation(
+      sameFolder?.model || active?.model || MODELS[0].id,
+      connectAccount.statusRef.current
+    )
     // O esforço vem da MESMA conversa de onde veio o modelo: com os dois
     // Automáticos independentes, misturar as origens mudaria o que o par quer dizer.
     const effortSource = sameFolder?.model ? sameFolder : active
@@ -1890,29 +1899,52 @@ export function App(): JSX.Element {
     return blank
   }
 
+  // Seletor de pasta: "Novo projeto" e a queda do sandbox quando o disco falha.
+  const pickAndOpen = async (): Promise<Conversation | null> => {
+    const folder = (await window.api.pickDirectory()) || ''
+    if (folder) return openBlankOrCreate(folder)
+    notify('aviso', 'Nenhuma pasta selecionada.')
+    return null
+  }
+
+  // Modo sandbox (regras em sandbox/): conversa sem escolher pasta.
+  const sandbox = useSandboxRoot()
+  const openSandboxChat = (): Promise<Conversation | null> =>
+    openSandboxConversation({
+      rootRef: sandbox.rootRef,
+      conversations: convsRef.current,
+      activeId: activeIdRef.current,
+      setActiveId,
+      createConversation: (folder) => createConversation(folder),
+      notify,
+      fallback: pickAndOpen
+    })
+
   const newChat = useCallback(async (): Promise<void> => {
-    let folder = getActive()?.cwd || convsRef.current[0]?.cwd || ''
-    if (!folder) {
-      folder = (await window.api.pickDirectory()) || ''
-      if (!folder) {
-        notify('aviso', 'Nenhuma pasta selecionada.')
-        return
-      }
-    }
-    openBlankOrCreate(folder)
+    const target = newChatTarget(getActive(), sandbox.rootRef.current)
+    if (target === 'sandbox') await openSandboxChat()
+    else openBlankOrCreate(target.folder)
   }, [notify])
 
   const newProject = useCallback(async (): Promise<void> => {
-    const folder = (await window.api.pickDirectory()) || ''
-    if (folder) openBlankOrCreate(folder)
-    else notify('aviso', 'Nenhuma pasta selecionada.')
+    await pickAndOpen()
   }, [notify])
 
   // Start a new conversation inside a specific project (from the per-project "+"
-  // button next to the project name in the sidebar).
+  // button next to the project name in the sidebar). O "+" do "Sandbox" vem com
+  // a raiz e ganha subpasta nova.
   const newChatIn = useCallback((folder: string): void => {
-    openBlankOrCreate(folder)
+    if (folder && folder === sandbox.rootRef.current) void openSandboxChat()
+    else openBlankOrCreate(folder)
   }, [])
+
+  // Primeiro uso (ou tudo apagado): já abre numa conversa de sandbox, sem seletor.
+  const bootSandboxChecked = useRef(false)
+  useEffect(() => {
+    if (!hydrated || bootSandboxChecked.current) return
+    bootSandboxChecked.current = true
+    if (shouldOpenSandboxOnBoot(convsRef.current)) void openSandboxChat()
+  }, [hydrated])
 
   // "Novo planejamento" (barra lateral): o diálogo cria o plano no main ou
   // escolhe um existente; aqui nasce a conversa que É a Tela de Planejamento.
@@ -2113,12 +2145,9 @@ export function App(): JSX.Element {
       }
       return
     }
-    const folder = (await window.api.pickDirectory()) || ''
-    if (!folder) {
-      notify('aviso', 'Nenhuma pasta selecionada.')
-      return
-    }
-    const conv = openBlankOrCreate(folder)
+    // Sem conversa: abre no sandbox, sem seletor de pasta.
+    const conv = await openSandboxChat()
+    if (!conv) return
     try {
       await connect(conv)
       notify('sucesso', `Conectado · ${basename(conv.cwd)}`)
@@ -2190,6 +2219,9 @@ export function App(): JSX.Element {
     },
     [patchConv, restartForSessionConfig]
   )
+
+  // "Conectar conta" no chat (lógica em components/connectAccount/).
+  const connectAccount = useConnectAccount({ getActive, changeModel, setCodexReady, setOllamaReady })
 
   // Effort selector — same deferred-while-busy logic as the model picker.
   const changeEffort = useCallback(
@@ -3360,7 +3392,8 @@ export function App(): JSX.Element {
     const summaryRecency = new Map(projectSummaries.map((p) => [p.cwd, p.updatedAt]))
     const recency = (path: string, cs: Conversation[]): number =>
       Math.max(summaryRecency.get(path) ?? 0, ...cs.map((c) => c.updatedAt), 0)
-    return [...map.entries()]
+    // As subpastas do sandbox viram o projeto fixo "Sandbox", no topo.
+    return groupSidebarProjects([...map.entries()]
       .map(([path, cs]) => {
         const fullyLoaded = fullyLoadedProjects.has(path)
         // The badge is the REAL count (database), even while only a page is loaded.
@@ -3378,8 +3411,9 @@ export function App(): JSX.Element {
       // Projeto que ficou sem nenhuma conversa (todas apagadas) sai da barra —
       // o resumo do banco não some sozinho depois de um delete local.
       .filter((p) => p.conversations.length > 0 || p.total > 0)
-      .sort((a, b) => recency(b.path, b.conversations) - recency(a.path, a.conversations))
+      .sort((a, b) => recency(b.path, b.conversations) - recency(a.path, a.conversations)), sandbox.root)
   }, [
+    sandbox.root,
     conversations,
     projectSummaries,
     pendingProjects,
@@ -3550,6 +3584,11 @@ export function App(): JSX.Element {
       runningSince={runningSince}
       lastDurationMs={lastDurationMs}
       onStart={connectStart}
+      connectAccount={
+        connectAccount.status && !hasAnyProvider(connectAccount.status) ? (
+          <ConnectAccountCard status={connectAccount.status} onConnected={connectAccount.onConnected} compact={messages.length > 0} />
+        ) : undefined
+      }
       voiceReady={voiceReady}
       onNeedVoiceKey={needVoiceKey}
       tts={tts}

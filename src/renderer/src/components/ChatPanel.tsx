@@ -209,6 +209,10 @@ interface Props {
   lastDurationMs: number | null
   /** First-run "Conectar": pick a folder, open the first chat and connect. */
   onStart?: () => void
+  /** Card "Conectar conta" (só vem quando nenhum provedor está conectado):
+   *  substitui o texto e o "Conectar" do estado vazio; com mensagens, fica
+   *  acima do campo de mensagem. */
+  connectAccount?: React.ReactNode
   /** Whether an OpenAI key is set (enables mic + read-aloud). */
   voiceReady: boolean
   /** Open Settings on the OpenAI key when voice is used without a key. */
@@ -383,6 +387,7 @@ export function ChatPanel(props: Props): JSX.Element {
         <div className="empty-state">
           <div className="empty-logo">✦</div>
           <h2>Claude Code</h2>
+          {props.connectAccount ? props.connectAccount : (<>
           <p>
             {hasActive
               ? 'Peça ao Claude para construir, editar ou pesquisar. Ele abre o navegador embutido à direita quando precisar.'
@@ -393,6 +398,7 @@ export function ChatPanel(props: Props): JSX.Element {
               Conectar
             </button>
           )}
+          </>)}
         </div>
       )}
 
@@ -411,6 +417,8 @@ export function ChatPanel(props: Props): JSX.Element {
       {props.recovery && (
         <RecoveryCard recovery={props.recovery} onRetry={props.onRetryRecovery} onCancel={props.onCancelRecovery} />
       )}
+
+      {messages.length > 0 && props.connectAccount}
 
       {props.queued.length > 0 && (
         <div className="queue">
