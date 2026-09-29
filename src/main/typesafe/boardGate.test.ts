@@ -40,7 +40,9 @@ const {
   BOARD_GATE_MAX_CALLS,
   BOARD_GATE_MAX_CARD_CHARS,
   BOARD_GATE_MAX_CARDS,
+  BOARD_GATE_MAX_REPLY_CHARS,
   BOARD_GATE_MAX_STATE_CHARS,
+  BOARD_GATE_REPLY_HEAD_CHARS,
   BOARD_GATE_MAX_TASK_CHARS,
   BOARD_GATE_MAX_TASKS,
   BOARD_GATE_MAX_USER_CHARS,
@@ -133,6 +135,22 @@ describe('Gate do quadro — cada fase faz a SUA pergunta', () => {
     expect(BOARD_GATE_CLOSE_QUESTION).toMatch(/não só quando o turno foi conversa/)
   })
 
+  it('o fechamento conta "entregou o pedido e propôs um passo novo" como sim, olhando a RESPOSTA DO AGENTE', async () => {
+    expect(BOARD_GATE_CLOSE_QUESTION).toContain('RESPOSTA DO AGENTE')
+    expect(BOARD_GATE_CLOSE_QUESTION).toContain(
+      'Conta como sim quando o agente entregou o pedido e terminou perguntando se faz um passo novo'
+    )
+    expect(BOARD_GATE_CLOSE_QUESTION).toContain('há um cartão a concluir e outro a criar')
+    systemOne.mockResolvedValueOnce(answer(0.9))
+    await shouldRunPo(close)
+    const criteria = sent().questions.rodar.criteria as { true: string; false: string }
+    expect(criteria.true).toContain('o agente entregou o pedido e propôs um passo novo que espera autorização')
+  })
+
+  it('a abertura conta a autorização do passo proposto como trabalho', () => {
+    expect(BOARD_GATE_OPEN_QUESTION).toContain('autorizar um passo que a RESPOSTA DO AGENTE anterior propôs')
+  })
+
   it('os critérios também mudam de uma fase para a outra', async () => {
     systemOne.mockResolvedValue(answer(0.9))
     await shouldRunPo(open)
@@ -197,8 +215,34 @@ describe('Gate do quadro — o que o serviço vê', () => {
       acoes_do_turno: ['Edit: src/xml.ts', 'Bash: npx vitest run'],
       acoes_omitidas: 0,
       tarefas_do_registro: ['[done] Exportação de XML'],
-      tarefas_omitidas: 0
+      tarefas_omitidas: 0,
+      resposta_do_agente: ''
     })
+  })
+
+  it('leva a resposta do agente inteira quando cabe, e vazia (nunca um marcador) quando não há', () => {
+    const reply = 'Auditoria feita: nada foi salvo no Cloudflare. Posso atualizar a VPS?'
+    expect(buildBoardGateState({ ...close, agentReply: reply }).resposta_do_agente).toBe(reply)
+    expect(buildBoardGateState({ ...close, agentReply: null }).resposta_do_agente).toBe('')
+    expect(buildBoardGateState({ ...close, agentReply: '   ' }).resposta_do_agente).toBe('')
+  })
+
+  it('resposta longa: guarda o INÍCIO (a entrega) e o FIM (a pergunta), dentro do teto', () => {
+    const reply = `Entreguei a auditoria. ${'relato do passo a passo '.repeat(200)}Posso atualizar a VPS?`
+    const cut = buildBoardGateState({ ...close, agentReply: reply }).resposta_do_agente
+    expect(cut).toHaveLength(BOARD_GATE_MAX_REPLY_CHARS)
+    expect(cut.slice(0, BOARD_GATE_REPLY_HEAD_CHARS)).toBe(reply.slice(0, BOARD_GATE_REPLY_HEAD_CHARS))
+    expect(cut[BOARD_GATE_REPLY_HEAD_CHARS]).toBe('…')
+    expect(cut.startsWith('Entreguei a auditoria.')).toBe(true)
+    expect(cut.endsWith('Posso atualizar a VPS?')).toBe(true)
+  })
+
+  it('o serviço recebe a resposta nas duas fases', async () => {
+    systemOne.mockResolvedValue(answer(0.9))
+    await shouldRunPo({ ...open, agentReply: 'Posso atualizar a VPS?' })
+    await shouldRunPo({ ...close, agentReply: 'Entreguei. Posso atualizar a VPS?' })
+    const states = systemOne.mock.calls.map((call) => call[0].state.resposta_do_agente)
+    expect(states).toEqual(['Posso atualizar a VPS?', 'Entreguei. Posso atualizar a VPS?'])
   })
 
   it('pedido vazio vira um marcador, não um campo em branco', () => {
@@ -233,7 +277,8 @@ describe('Gate do quadro — o que o serviço vê', () => {
       ledgerTasks: Array.from({ length: BOARD_GATE_MAX_TASKS * 2 }, (_, i) => ({
         title: `t${i}`.padEnd(BOARD_GATE_MAX_TASK_CHARS * 2, 'T'),
         status: 'running'
-      }))
+      })),
+      agentReply: 'r'.repeat(BOARD_GATE_MAX_REPLY_CHARS * 3)
     })
 
     expect(built.pedido_do_usuario).toHaveLength(BOARD_GATE_MAX_USER_CHARS)
@@ -244,14 +289,16 @@ describe('Gate do quadro — o que o serviço vê', () => {
     for (const card of built.quadro) expect(card).toHaveLength(BOARD_GATE_MAX_CARD_CHARS)
     for (const call of built.acoes_do_turno) expect(call).toHaveLength(BOARD_GATE_MAX_CALL_CHARS)
     for (const task of built.tarefas_do_registro) expect(task).toHaveLength(BOARD_GATE_MAX_TASK_CHARS)
+    expect(built.resposta_do_agente).toHaveLength(BOARD_GATE_MAX_REPLY_CHARS)
 
     const chars =
       built.pedido_do_usuario.length +
       built.quadro.join('').length +
       built.acoes_do_turno.join('').length +
-      built.tarefas_do_registro.join('').length
+      built.tarefas_do_registro.join('').length +
+      built.resposta_do_agente.length
     expect(chars).toBe(BOARD_GATE_MAX_STATE_CHARS)
-    expect(BOARD_GATE_MAX_STATE_CHARS).toBe(23_200)
+    expect(BOARD_GATE_MAX_STATE_CHARS).toBe(24_400)
     // Mesmo a 1 caractere por token (bem pior que o português real), o JSON
     // inteiro — envelope incluído — fica abaixo dos 32k tokens do Jev.
     expect(JSON.stringify(built).length).toBeLessThan(32_000)

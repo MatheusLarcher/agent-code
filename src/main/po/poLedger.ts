@@ -1,5 +1,5 @@
 import { taskLedger } from '../tasks/taskRuntime'
-import { PO_MAX_LEDGER_TASKS, type PoLedgerTask } from './poPrompt'
+import { pickLedgerTasks, type PoLedgerTask } from './poPrompt'
 
 /**
  * A ponte do PO com o registro de tarefas (mcp__tasks): a evidência extra do
@@ -22,7 +22,9 @@ export interface PoLedgerDeps {
    * que sobrevive ao teto de PO_MAX_CALLS porque não depende do histórico de
    * ações. Sem injeção (produção), consulta o registro ativo; sem registro,
    * ou se a consulta falhar, devolve vazio — o PO nunca quebra por causa
-   * disso, só perde a seção extra do digest.
+   * disso, só perde a seção extra do digest. Em ordem CRONOLÓGICA (a mais
+   * antiga primeiro, como o registro devolve) e sem teto: quem escolhe as que
+   * cabem no digest é `pickLedgerTasks`, que conta com essa ordem.
    */
   listConvTasks?(convId: string): Promise<PoLedgerTask[]>
   /**
@@ -42,19 +44,33 @@ export interface PoLedgerDeps {
   linkTaskToBoardItem?(taskId: string, boardItemId: string): Promise<void>
 }
 
-/** Consulta o registro de tarefas ativo. Nunca lança: sem registro ou com a
- *  consulta falhando, o PO segue só com a evidência de ações — degrada, não
- *  quebra. */
+/**
+ * Consulta o registro de tarefas ativo e devolve as que o digest vai mostrar —
+ * no máximo PO_MAX_LEDGER_TASKS, escolhidas por `pickLedgerTasks` (as `done` e
+ * as abertas mais recentes primeiro). Nunca lança: sem registro ou com a
+ * consulta falhando, o PO segue só com a evidência de ações — degrada, não
+ * quebra.
+ *
+ * O registro é lido INTEIRO para a conversa, sem `limit`, de propósito: ele
+ * ordena por `created_at` crescente, e um `limit` ali devolve as MAIS ANTIGAS —
+ * numa conversa com mais de 15 tarefas, as `done` do trabalho de agora nunca
+ * chegavam ao PO. O volume é o de uma conversa, o mesmo que
+ * `linkableLedgerTasks` já lê.
+ *
+ * A escolha vale para as DUAS origens e sai daqui já feita porque o gate do
+ * TypeSafe recebe esta mesma lista e fica com as primeiras 15 — escolher só no
+ * digest deixaria o gate julgando outras tarefas que não as do PO.
+ */
 export async function listConvTasks(deps: PoLedgerDeps, convId: string): Promise<PoLedgerTask[]> {
   // O catch cobre as DUAS origens (a injetada e o registro real): uma
   // consulta injetada em produção pode falhar tanto quanto o registro em
   // si, e das duas formas o PO segue só sem a seção extra, nunca aborta.
   try {
-    if (deps.listConvTasks) return await deps.listConvTasks(convId)
+    if (deps.listConvTasks) return pickLedgerTasks(await deps.listConvTasks(convId))
     const ledger = taskLedger()
     if (!ledger) return []
-    const tasks = await ledger.listTasks({ conversationId: convId, limit: PO_MAX_LEDGER_TASKS })
-    return tasks.map((task) => ({ title: task.title, status: task.status }))
+    const tasks = await ledger.listTasks({ conversationId: convId })
+    return pickLedgerTasks(tasks.map((task) => ({ title: task.title, status: task.status })))
   } catch {
     return []
   }

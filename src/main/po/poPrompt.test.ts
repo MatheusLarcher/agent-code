@@ -5,9 +5,11 @@ import {
   buildPoDigest,
   buildPoPrompt,
   parsePoVerdict,
+  PO_AWAITING_AUTHORIZATION_REASON,
   PO_MAX_CALLS,
   PO_MAX_OPS,
   PO_MAX_REPLY_CHARS,
+  PO_REPLY_HEAD_CHARS,
   PO_SYSTEM_PROMPT_CLOSE,
   PO_SYSTEM_PROMPT_OPEN,
   rejectUnsafeOps,
@@ -56,18 +58,20 @@ describe('digest — última resposta do agente', () => {
     }
   })
 
-  it('corta pelo INÍCIO, mantendo o fim (conclusão ou pergunta) dentro do teto', () => {
-    const reply = `${'contexto '.repeat(200)}Posso aplicar a correção?`
+  it('resposta longa leva as DUAS pontas — o que foi entregue e a pergunta do fim — dentro do teto', () => {
+    const reply = `Entreguei a correção do login. ${'contexto '.repeat(200)}Posso aplicar a correção?`
     const digest = buildPoDigest({ ...base, agentReply: reply })
     const section = digest.split('ÚLTIMA RESPOSTA DO AGENTE:\n')[1]
     expect(section.length).toBe(PO_MAX_REPLY_CHARS)
-    expect(section.startsWith('…')).toBe(true)
+    expect(section.startsWith('Entreguei a correção do login.')).toBe(true)
     expect(section.endsWith('Posso aplicar a correção?')).toBe(true)
+    // O meio vira um "…" só, entre as pontas.
+    expect(section.charAt(PO_REPLY_HEAD_CHARS)).toBe('…')
   })
 
   it('o fechamento aceita a resposta como evidência e proíbe concluir o que espera o usuário', () => {
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('ÚLTIMA RESPOSTA DO AGENTE entrega o\n  resultado pedido')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toMatch(/termina pedindo uma decisão[\s\S]*NÃO use CONCLUIR/)
+    expect(PO_SYSTEM_PROMPT_CLOSE).toMatch(/pergunta BLOQUEIA o pedido[\s\S]*NÃO use CONCLUIR/)
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Suposição não basta')
   })
 
@@ -77,8 +81,123 @@ describe('digest — última resposta do agente', () => {
   })
 })
 
+/**
+ * Os dois casos reais da conversa "Cadastro no sistema": a regra antiga ("a
+ * resposta termina com pergunta → não conclui") tratava os dois igual, e o
+ * cartão da auditoria foi e voltou entre "em andamento" e "a fazer" 9 vezes.
+ */
+describe('pergunta no fim da resposta — bloqueia o pedido ou propõe um passo novo', () => {
+  const AUDIT_ID = 'bi-po-e13d96f9-e46'
+  const PEDIDO_1 =
+    'olha as conversas, hermes.larchertech.com eu desativei nao é pra registrar nada no meu cloud flare e e nenhuma conta minha sem eu pedi'
+  const RESPOSTA_1 = [
+    '**Cloudflare:** me desculpe por ter mexido sem você pedir. Na última tentativa só abri a janela',
+    '"Adicionar registro" e não salvei nada; o `hermes` continua desativado.',
+    '**O que já fiz, só no seu PC:** - O programa passou a validar a licença em `alcaios.larchertech.com`.',
+    'Os 7 testes do login pelo site passaram. - Gerei o `.exe` novo.',
+    '**Falta, na VPS, e só faço se você autorizar:** 1. Trocar `APP_BASE_URL` e reiniciar o servidor.',
+    '2. Enviar o `.exe` novo para o download do painel.',
+    '- O Mercado Pago ainda deve estar mandando os avisos de pagamento para o `hermes`, e sem isso as',
+    'compras novas não liberam a licença sozinhas. Isso se troca na sua conta do Mercado Pago, e eu não',
+    'vou mexer lá. Posso atualizar a VPS?'
+  ].join(' ')
+  const RESPOSTA_2 =
+    '"Entrar pelo site" fica só como plano B, para quando alguém renomear o arquivo. Isso é só código e build. ' +
+    'Mas, para o cliente conseguir baixar o setup, preciso trocar o arquivo na VPS. Também precisa ajustar o ' +
+    '`APP_BASE_URL`, que ficou pendente do problema do `hermes`. Faço o setup assim? E, quando estiver pronto ' +
+    'e testado, autoriza atualizar a VPS?'
+  const cards = [
+    card({
+      id: AUDIT_ID,
+      origin: 'po',
+      sourceTitle: 'Auditar/remover qualquer registro em Cloudflare ou conta própria feito sem autorização',
+      sourceStatus: 'in_progress'
+    }),
+    card({ id: 'bi-po-fae60b12-250', origin: 'po', sourceTitle: 'Concluir renomeação para ALCAIOS (site, exe, VPS)' })
+  ]
+  const ids = cards.map((c) => c.id)
+
+  it('o fechamento distingue os dois tipos, com os dois exemplos reais, e continua exigindo prova', () => {
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('A pergunta BLOQUEIA o pedido')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('A pergunta PROPÕE UM PASSO NOVO depois de o pedido ter sido entregue')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('o pedido do usuário foi atendido, e as AÇÕES ou a resposta provam isso?')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Sem prova da entrega, é o tipo a). Na dúvida entre os dois, responda OK.')
+    // Exemplo b): entregue + "Posso atualizar a VPS?" → CONCLUIR + NOVA a fazer.
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Posso atualizar a VPS?')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(`NOVA | Atualizar a VPS (APP_BASE_URL e .exe novo) | ${PO_AWAITING_AUTHORIZATION_REASON}`)
+    // Exemplo a): "Faço o setup assim?" antes de fazer → nada de CONCLUIR.
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Faço o setup assim?')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('nada de CONCLUIR no trabalho do setup')
+  })
+
+  it('a NOVA do fechamento aceita o passo proposto pelo agente, nunca uma sugestão do próprio PO', () => {
+    expect(PO_AWAITING_AUTHORIZATION_REASON).toBe('aguardando autorização do usuário')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toMatch(/NOVA é o contrário:[\s\S]*passo novo que o AGENTE propôs[\s\S]*nasce "a fazer"/)
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('nem para sugerir uma tarefa que VOCÊ acha que')
+    // O passo que já tem cartão "a fazer" não ganha outro (probe: o quadro real tinha um).
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Se um cartão "a fazer" do quadro já cobre esse passo, não crie outro')
+  })
+
+  it('a abertura manda a autorização para o cartão "a fazer" do passo, nunca para o concluído', () => {
+    expect(PO_SYSTEM_PROMPT_OPEN).toMatch(/propôs um PASSO NOVO[\s\S]*"pode fazer", "sim", "faça isso"[\s\S]*ANDAMENTO no cartão "a fazer"/)
+    expect(PO_SYSTEM_PROMPT_OPEN).toContain(`"${PO_AWAITING_AUTHORIZATION_REASON}"`)
+    expect(PO_SYSTEM_PROMPT_OPEN).toContain('Nunca use ANDAMENTO no cartão já concluído do pedido')
+  })
+
+  it('o prompt do fechamento do caso 1 leva a pergunta do fim da resposta real', () => {
+    const prompt = buildPoPrompt({
+      phase: 'close',
+      userText: PEDIDO_1,
+      cards: cards.map((c) => ({ id: c.id, title: c.sourceTitle, status: c.sourceStatus })),
+      calls: [{ tool: 'Bash', detail: 'npx vitest run' }, { tool: 'Bash', detail: 'npm run build:win' }],
+      agentReply: RESPOSTA_1
+    })
+    expect(prompt).toContain(`${AUDIT_ID} [em andamento] Auditar/remover`)
+    expect(prompt).toMatch(/ÚLTIMA RESPOSTA DO AGENTE:\n.*e eu não vou mexer lá\. Posso atualizar a VPS\?$/)
+  })
+
+  it('caso 1: CONCLUIR no pedido + NOVA do passo viram [complete, create "a fazer" aguardando autorização]', () => {
+    const verdict = [
+      `CONCLUIR ${AUDIT_ID} | auditoria entregue: nada registrado sem autorização`,
+      `NOVA | Atualizar a VPS (APP_BASE_URL e .exe novo) | ${PO_AWAITING_AUTHORIZATION_REASON}`
+    ].join('\n')
+    expect(rejectUnsafeOps(parsePoVerdict(verdict, ids, 'close'), cards, 'close')).toEqual([
+      { kind: 'complete', id: AUDIT_ID, reason: 'auditoria entregue: nada registrado sem autorização' },
+      {
+        kind: 'create',
+        title: 'Atualizar a VPS (APP_BASE_URL e .exe novo)',
+        reason: 'aguardando autorização do usuário',
+        status: 'pending'
+      }
+    ])
+  })
+
+  it('caso 2: a pergunta bloqueia o pedido (setup não feito) — o prompt leva a pergunta e OK não escreve nada', () => {
+    const prompt = buildPoPrompt({
+      phase: 'close',
+      userText: 'quero q seja setup eu ja tinha falado isso, pq nao fez? verifique o motivo',
+      cards: cards.map((c) => ({ id: c.id, title: c.sourceTitle, status: c.sourceStatus })),
+      calls: [{ tool: 'Read', detail: 'desktop/electron-builder.yml' }],
+      agentReply: RESPOSTA_2
+    })
+    expect(prompt).toContain('Faço o setup assim? E, quando estiver pronto e testado, autoriza atualizar a VPS?')
+    expect(rejectUnsafeOps(parsePoVerdict('OK', ids, 'close'), cards, 'close')).toEqual([])
+  })
+
+  it('na abertura seguinte, ANDAMENTO no concluído é barrado e o do passo "a fazer" passa', () => {
+    const after = [
+      card({ ...cards[0], poStatus: 'completed', poReason: 'auditoria entregue' }),
+      card({ id: 'bi-po-vps', origin: 'po', sourceTitle: 'Atualizar a VPS', poReason: PO_AWAITING_AUTHORIZATION_REASON })
+    ]
+    const verdict = `ANDAMENTO bi-po-vps | o usuário autorizou\nANDAMENTO ${AUDIT_ID} | retomando`
+    expect(rejectUnsafeOps(parsePoVerdict(verdict, after.map((c) => c.id), 'open'), after, 'open')).toEqual([
+      { kind: 'start', id: 'bi-po-vps', reason: 'o usuário autorizou' }
+    ])
+  })
+})
+
 describe('digest', () => {
-  it('leva pedido, quadro e ações — e respeita os tetos', () => {
+  it('leva pedido, quadro e as ÚLTIMAS ações — e respeita os tetos', () => {
     const digest = buildPoDigest({
       userText: 'faz o quadro',
       cards: [{ id: 'bi-1', title: 'uma', status: 'pending' }],
@@ -86,8 +205,10 @@ describe('digest', () => {
     })
     expect(digest).toContain('faz o quadro')
     expect(digest).toContain('bi-1 [a fazer] uma')
-    expect(digest).toContain('arquivo0.ts')
-    expect(digest).not.toContain(`arquivo${PO_MAX_CALLS}.ts`)
+    // As 5 primeiras saem; da 6ª até a última, todas ficam.
+    expect(digest).not.toContain('- Edit: arquivo4.ts\n')
+    expect(digest).toContain('- Edit: arquivo5.ts\n')
+    expect(digest).toContain(`- Edit: arquivo${PO_MAX_CALLS + 4}.ts`)
   })
 
   it('quadro vazio e sem ações não viram string quebrada', () => {

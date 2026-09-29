@@ -4,6 +4,16 @@ import type { BoardItem, BoardItemStatus } from '../../shared/ipc'
 // mesma regra de segurança ("o alvo da ação, nunca o conteúdo"), e duas listas
 // de chaves que ninguém garante iguais é como uma delas passa a vazar.
 export { summarizeCall } from '../vigia/vigiaPrompt'
+// O texto dos dois prompts mora em poPromptText.ts (ver o cabeçalho de lá) e
+// sai reexportado daqui: quem importava de './poPrompt' continua importando.
+// A seta é de mão única — poPromptText não importa nada —, então não há ciclo.
+import { PO_MAX_OPS, PO_SYSTEM_PROMPT_CLOSE, PO_SYSTEM_PROMPT_OPEN } from './poPromptText'
+export {
+  PO_AWAITING_AUTHORIZATION_REASON,
+  PO_MAX_OPS,
+  PO_SYSTEM_PROMPT_CLOSE,
+  PO_SYSTEM_PROMPT_OPEN
+} from './poPromptText'
 
 /**
  * As regras puras do PO — o agente que audita o quadro.
@@ -69,17 +79,82 @@ export const PO_MAX_USER_CHARS = 1200
  * trabalho sem inflar o prompt a cada turno de uma sessão comum.
  */
 export const PO_MAX_CALLS = 60
+/** Teto de UMA linha de ação no digest (`ferramenta: alvo`) — o mesmo do gate
+ *  (`BOARD_GATE_MAX_CALL_CHARS`), para o gate nunca ver menos da ação do que o
+ *  modelo que ele dispensa. Sem ele, um `Grep` ou um caminho enorme furava o
+ *  teto total: `summarizeCall` só corta o Bash e o caso genérico. */
+export const PO_MAX_CALL_CHARS = 200
 export const PO_MAX_CARDS = 30
+/** Teto de UMA linha do quadro (`id [status] título`). O id vem primeiro de
+ *  propósito: num id fora do padrão (os do quadro têm até 23 caracteres, ver
+ *  boardModel.ts), o corte come o fim do título, nunca o id que o modelo cita. */
+export const PO_MAX_CARD_LINE_CHARS = 140
 /** Teto da seção de tarefas do registro (mcp__tasks) no digest — mesmo
- *  espírito de PO_MAX_CARDS: uma lista longa não ajuda o modelo a decidir. */
+ *  espírito de PO_MAX_CARDS: uma lista longa não ajuda o modelo a decidir.
+ *  QUAIS entram, quando a conversa tem mais, é `pickLedgerTasks`. */
 export const PO_MAX_LEDGER_TASKS = 15
-/** Teto de operações por análise. Um PO que reescreve o quadro inteiro de uma
- *  vez é quase certamente um PO que entendeu tudo errado. */
-export const PO_MAX_OPS = 6
+/** Teto de UMA linha de tarefa (`título [status]`): título + " [cancelled]", o
+ *  status mais longo do registro, cabem; só um status estranho seria cortado. */
+export const PO_MAX_TASK_LINE_CHARS = 110
 export const PO_MAX_TITLE_CHARS = 90
-/** Teto da última resposta do agente no digest (~150 tokens). Cortada pelo
- *  INÍCIO: é no fim que ficam a conclusão ou a pergunta ao usuário. */
-export const PO_MAX_REPLY_CHARS = 600
+/**
+ * Teto da última resposta do agente, com o "…" do corte (~250 tokens). A que
+ * cabe vai inteira; a longa leva as DUAS pontas: PO_REPLY_HEAD_CHARS do início,
+ * "…" no meio e o resto do fim — o mesmo fim de antes (599), onde ficam a
+ * conclusão e a pergunta. Só o fim não bastava: no fechamento das 14:54 (UTC)
+ * de "Cadastro no sistema" a prova de que o EXE com o e-mail embutido foi
+ * testado estava no INÍCIO, e o PO concluiu o cartão ERRADO (o do login Google).
+ *
+ * Mesmo corte nas DUAS fases: na abertura pesa a pergunta do fim ("pode fazer"
+ * responde a ela), que fica igual, e o início diz o que já foi entregue — o que
+ * separa o cartão concluído do "a fazer" do passo proposto. O gate (`clampEnds`
+ * em boardGate.ts) leva no mínimo isto de cada ponta.
+ */
+export const PO_MAX_REPLY_CHARS = 1_000
+/** Quanto do INÍCIO da resposta entra quando ela passa do teto. */
+export const PO_REPLY_HEAD_CHARS = 400
+/** O que sobra para o FIM: o teto menos o início e o "…". */
+export const PO_REPLY_TAIL_CHARS = PO_MAX_REPLY_CHARS - PO_REPLY_HEAD_CHARS - 1
+
+/** Os rótulos das seções do digest — contados no teto total. */
+const LABEL_USER = 'PEDIDO DO USUÁRIO:'
+const LABEL_CARDS = 'QUADRO ATUAL:'
+const LABEL_CALLS = 'AÇÕES DESTE TURNO:'
+const LABEL_REPLY = 'ÚLTIMA RESPOSTA DO AGENTE:'
+const LABEL_TASKS = 'TAREFAS DO REGISTRO NESTA CONVERSA:'
+/** O marcador das linhas de ação e de tarefa. */
+const LIST_MARK = '- '
+
+/**
+ * O teto TOTAL do digest: o custo de uma análise não pode crescer com o tamanho
+ * da conversa. A conta do PIOR caso, somando os tetos acima:
+ *
+ * ```
+ *   1.200  pedido                 (PO_MAX_USER_CHARS)
+ *   4.200  quadro                 (30 × 140)
+ *  12.120  ações                  (60 × 202: "- " + 200)
+ *   1.000  resposta               (400 do início + "…" + 599 do fim)
+ *   1.680  tarefas do registro    (15 × 112: "- " + 110)
+ *     110  rótulos das 5 seções
+ *     115  quebras de linha       (116 linhas no pior caso)
+ *  ------
+ *  20.425  caracteres
+ * ```
+ *
+ * Em português, ~5k–7k tokens. Quem mexer em qualquer teto daqui tem que refazer
+ * esta conta — o teste do pior caso (poDigest.test.ts) monta um digest com
+ * TODOS os tetos estourados e exige que ele feche exatamente neste número.
+ */
+export const PO_MAX_DIGEST_CHARS =
+  PO_MAX_USER_CHARS +
+  PO_MAX_CARDS * PO_MAX_CARD_LINE_CHARS +
+  PO_MAX_CALLS * (LIST_MARK.length + PO_MAX_CALL_CHARS) +
+  PO_MAX_REPLY_CHARS +
+  PO_MAX_LEDGER_TASKS * (LIST_MARK.length + PO_MAX_TASK_LINE_CHARS) +
+  [LABEL_USER, LABEL_CARDS, LABEL_CALLS, LABEL_REPLY, LABEL_TASKS].join('').length +
+  // 5 rótulos + pedido + cartões + ações + resposta + tarefas + 4 linhas em
+  // branco entre as seções: 116 linhas, ligadas por 115 quebras.
+  (5 + 1 + PO_MAX_CARDS + PO_MAX_CALLS + 1 + PO_MAX_LEDGER_TASKS + 4) - 1
 
 export interface PoCall {
   tool: string
@@ -96,101 +171,21 @@ export type PoOp =
    *  FEITA (aconteceu neste turno e ninguém registrou). */
   | { kind: 'create'; title: string; reason: string; status: BoardItemStatus }
 
-export const PO_SYSTEM_PROMPT_OPEN = `Você é o PO (product owner) de um quadro de tarefas.
-
-O usuário ACABOU de pedir uma coisa e um agente de programação vai começar agora. Seu
-trabalho aqui é um só: garantir que o pedido apareça no quadro antes do trabalho começar.
-Pedido que não vira cartão some sem deixar rastro — é assim que trabalho combinado se perde.
-
-Responda com uma operação por linha, no formato exato:
-
-ANDAMENTO <id> | <motivo curto>
-NOVA | <título> | <motivo curto>
-
-Se o pedido não for trabalho para o quadro, responda exatamente OK. Na dúvida, responda OK.
-
-Regras inegociáveis:
-- Só vira cartão o que for TRABALHO no projeto: mudar código, corrigir, criar, investigar para
-  depois mudar. PERGUNTA, dúvida, conversa, pedido de explicação ou de status NÃO viram cartão
-  — responder não é trabalho de quadro, e um quadro cheio de conversa não serve para nada.
-- Se algum cartão do quadro JÁ cobre o pedido, use ANDAMENTO nele em vez de criar outro. Dois
-  cartões para o mesmo trabalho é pior do que nenhum: ninguém sabe qual seguir.
-- Um pedido de CONTINUAÇÃO ("continua", "pode", "sim", "beleza", uma instrução extra sobre o
-  mesmo assunto) não é diferente de um pedido novo quando já existe um cartão "a fazer" cobrindo
-  aquele trabalho: use ANDAMENTO nele. Não responda OK só porque a mensagem, isolada, não parece
-  um pedido "novo" — o trabalho está retomando, e o cartão tem que acompanhar.
-- NOVA aqui cria o cartão JÁ EM ANDAMENTO, porque o trabalho está começando agora — não é uma
-  intenção para depois.
-- O <id> tem que ser um dos ids listados no quadro. Não invente id.
-- Um pedido é UM cartão. Não quebre o pedido em passos: quem decompõe é o agente, e o plano
-  dele entra no quadro sozinho.
-- O título diz o que o usuário pediu, em uma linha e em português claro.
-- Se houver uma seção "TAREFAS DO REGISTRO NESTA CONVERSA" com uma tarefa do MESMO assunto,
-  trate como cartão já existente — não crie outro.
-- Se houver uma seção "ÚLTIMA RESPOSTA DO AGENTE", ela é a resposta do turno ANTERIOR — o que o
-  usuário está respondendo agora. Use-a para reconhecer continuação (um "pode fazer" responde ao
-  que o agente perguntou ali) e para dar ao título o assunto real, nunca um título genérico como
-  "Pesquisar direito". Ela não é pedido: só vira cartão o que o USUÁRIO pediu.
-- No máximo ${PO_MAX_OPS} operações. Sem texto fora das linhas de operação.`
-
-export const PO_SYSTEM_PROMPT_CLOSE = `Você é o PO (product owner) de um quadro de tarefas.
-
-Um agente de programação acabou de trabalhar e declarou uma lista de tarefas. Essa lista é a
-fonte da verdade do que existe e de qual é o status — você NÃO a reescreve. Seu trabalho é
-só consertar os buracos que ela não cobre:
-
-1. O agente TERMINOU uma tarefa e esqueceu de marcá-la como concluída.
-2. O título é técnico demais para quem lê o quadro (ex.: "add board table + migration 5/7").
-3. Um trabalho REAL aconteceu neste turno e nenhum cartão registra que ele aconteceu.
-4. Um trabalho REAL ainda falta e nenhum cartão cobre ele.
-
-Responda com uma operação por linha, no formato exato:
-
-CONCLUIR <id> | <motivo curto>
-TITULO <id> | <novo título>
-FEITA | <título> | <motivo curto>
-NOVA | <título> | <motivo curto>
-
-Se não houver nada a corrigir, responda exatamente OK. Na dúvida, responda OK.
-
-Regras inegociáveis:
-- Só use CONCLUIR com EVIDÊNCIA de que o trabalho daquela tarefa terminou de fato: as AÇÕES
-  mostram (o arquivo foi escrito, o teste rodou) ou a ÚLTIMA RESPOSTA DO AGENTE entrega o
-  resultado pedido — em pesquisa, investigação ou diagnóstico, o resultado É a resposta.
-  Suposição não basta: marcar como concluído algo que não terminou é o pior erro que você pode
-  cometer aqui.
-- Se a ÚLTIMA RESPOSTA DO AGENTE termina pedindo uma decisão, uma confirmação ou um dado ao
-  usuário ("posso aplicar?", "qual você prefere?"), NÃO use CONCLUIR no trabalho de que ela
-  fala: ele está esperando o usuário, não terminou.
-- Nunca use CONCLUIR numa tarefa que já está concluída.
-- Uma tarefa que ficou "em andamento" no fim do turno é a candidata MAIS provável ao
-  esquecimento — mas só conclua se a evidência provar que ela terminou. Trabalho que vai
-  continuar na próxima mensagem continua em andamento.
-- O <id> tem que ser um dos ids listados no quadro. Não invente id.
-- TITULO é para deixar legível, não para mudar o significado. Mantenha o assunto.
-- FEITA é para o trabalho que JÁ ACONTECEU neste turno e que nenhum cartão registra: o cartão
-  nasce concluído, com o motivo dizendo o que foi feito. É assim que um pedido atendido sem
-  plano nenhum deixa rastro.
-- NOVA é o contrário: só para trabalho que AINDA FALTA e que nenhum cartão cobre — tipicamente
-  algo que o agente disse que ia fazer depois. Nunca use NOVA para algo que já aconteceu (para
-  isso existe FEITA), nem para sugerir uma tarefa que você acha que seria boa ideia.
-- Ação de apoio não é cartão: ler arquivo, rodar teste, typecheck e build fazem parte do
-  trabalho — não crie um cartão para cada uma delas.
-- Se já existe cartão com o mesmo assunto, não crie outro.
-- Se houver uma seção "TAREFAS DO REGISTRO NESTA CONVERSA", uma tarefa marcada [done] ali é
-  evidência de conclusão tão válida quanto uma ação direta desta lista — use para CONCLUIR ou
-  FEITA mesmo sem ver o arquivo sendo escrito nas AÇÕES DESTE TURNO.
-- No máximo ${PO_MAX_OPS} operações. Sem texto fora das linhas de operação.`
-
 function clamp(text: string, max: number): string {
   const clean = (text ?? '').replace(/\s+/g, ' ').trim()
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean
 }
 
-/** Como `clamp`, mas guardando o FIM do texto. */
-function clampTail(text: string, max: number): string {
+/**
+ * Como `clamp`, mas guardando as DUAS pontas: `head` caracteres do início, um
+ * "…" no lugar do meio e o resto do teto com o fim. O meio de uma resposta
+ * longa é o relato passo a passo; a entrega costuma abrir o texto e a pergunta
+ * ao usuário, fechá-lo. Mesma regra do `clampEnds` do gate.
+ */
+function clampEnds(text: string, max: number, head: number): string {
   const clean = (text ?? '').replace(/\s+/g, ' ').trim()
-  return clean.length > max ? `…${clean.slice(clean.length - (max - 1))}` : clean
+  if (clean.length <= max) return clean
+  return `${clean.slice(0, head)}…${clean.slice(clean.length - (max - head - 1))}`
 }
 
 function statusLabel(status: BoardItemStatus): string {
@@ -224,6 +219,36 @@ export interface PoLedgerTask {
   status: string
 }
 
+/**
+ * QUAIS tarefas do registro entram no digest quando a conversa tem mais do que
+ * PO_MAX_LEDGER_TASKS. A lista chega em ordem CRONOLÓGICA (a mais antiga
+ * primeiro: é a ordem do registro, `ORDER BY created_at, id`).
+ *
+ * O critério, nesta ordem:
+ * 1. `done` e as abertas (pending/running/review/blocked) antes de
+ *    `failed`/`cancelled`. A `done` é a prova de que um trabalho terminou — é
+ *    ela que sustenta um CONCLUIR — e a aberta diz o que ainda falta, que é o
+ *    que segura o CONCLUIR no cartão errado. A que falhou ou foi cancelada só
+ *    entra se sobrar vaga.
+ * 2. Dentro de cada grupo, as mais RECENTES. Numa conversa longa as antigas são
+ *    de pedidos que o quadro já resolveu; o turno que o PO julga agora é o do fim.
+ *
+ * As escolhidas saem na ordem cronológica original, para o modelo ler a
+ * história na sequência em que aconteceu. Dentro do teto, a lista sai igual —
+ * o que torna a função idempotente: `listConvTasks` já a aplica (é o que
+ * alimenta o gate) e o digest aplica de novo sem mudar nada.
+ */
+export function pickLedgerTasks(tasks: readonly PoLedgerTask[]): PoLedgerTask[] {
+  if (tasks.length <= PO_MAX_LEDGER_TASKS) return [...tasks]
+  const rank = (task: PoLedgerTask): number => (task.status === 'failed' || task.status === 'cancelled' ? 1 : 0)
+  return tasks
+    .map((task, index) => ({ task, index }))
+    .sort((a, b) => rank(a.task) - rank(b.task) || b.index - a.index)
+    .slice(0, PO_MAX_LEDGER_TASKS)
+    .sort((a, b) => a.index - b.index)
+    .map(({ task }) => task)
+}
+
 /** A fase é opcional e cai em `close` porque o fechamento é o PO que já existia:
  *  quem chamava antes da abertura existir continua recebendo o mesmo prompt. */
 export function buildPoDigest(input: {
@@ -237,15 +262,21 @@ export function buildPoDigest(input: {
   agentReply?: string | null
 }): string {
   const cards = input.cards.slice(0, PO_MAX_CARDS)
-  const calls = input.calls.slice(0, PO_MAX_CALLS)
+  // As ÚLTIMAS ações, não as primeiras: a evidência do que terminou está no fim
+  // do turno — o mesmo critério de `observe`, `mergeDeferred` e do gate. Com as
+  // primeiras, um turno longo mostrava as leituras do começo e escondia o teste
+  // e o build do fim.
+  const calls = input.calls.slice(-PO_MAX_CALLS)
   const lines = [
-    'PEDIDO DO USUÁRIO:',
+    LABEL_USER,
     clamp(input.userText, PO_MAX_USER_CHARS) || '(sem texto)',
     '',
-    'QUADRO ATUAL:',
+    LABEL_CARDS,
     ...(cards.length === 0
       ? ['(vazio)']
-      : cards.map((card) => `${card.id} [${statusLabel(card.status)}] ${clamp(card.title, PO_MAX_TITLE_CHARS)}`))
+      : cards.map((card) =>
+          clamp(`${card.id} [${statusLabel(card.status)}] ${clamp(card.title, PO_MAX_TITLE_CHARS)}`, PO_MAX_CARD_LINE_CHARS)
+        ))
   ]
   // Na abertura o turno ainda não aconteceu. Uma seção de ações sempre vazia só
   // ensinaria o modelo a procurar evidência que não existe — e evidência
@@ -253,23 +284,27 @@ export function buildPoDigest(input: {
   if ((input.phase ?? 'close') === 'close') {
     lines.push(
       '',
-      'AÇÕES DESTE TURNO:',
-      ...(calls.length === 0 ? ['(nenhuma)'] : calls.map((call) => `- ${call.tool}: ${call.detail}`))
+      LABEL_CALLS,
+      ...(calls.length === 0
+        ? ['(nenhuma)']
+        : calls.map((call) => `${LIST_MARK}${clamp(`${call.tool}: ${call.detail}`, PO_MAX_CALL_CHARS)}`))
     )
   }
   // O alvo das ferramentas não mostra o resultado de uma pesquisa nem a
   // pergunta que deixou o trabalho esperando o usuário — a resposta mostra.
   // Sem texto, sem seção: o digest fica exatamente como era.
-  const reply = clampTail(input.agentReply ?? '', PO_MAX_REPLY_CHARS)
-  if (reply) lines.push('', 'ÚLTIMA RESPOSTA DO AGENTE:', reply)
+  const reply = clampEnds(input.agentReply ?? '', PO_MAX_REPLY_CHARS, PO_REPLY_HEAD_CHARS)
+  if (reply) lines.push('', LABEL_REPLY, reply)
   // Só aparece quando há algo a mostrar: uma seção vazia ensinaria o modelo a
   // esperar por uma fonte de evidência que não existe nesta conversa.
-  const ledgerTasks = (input.ledgerTasks ?? []).slice(0, PO_MAX_LEDGER_TASKS)
+  const ledgerTasks = pickLedgerTasks(input.ledgerTasks ?? [])
   if (ledgerTasks.length > 0) {
     lines.push(
       '',
-      'TAREFAS DO REGISTRO NESTA CONVERSA:',
-      ...ledgerTasks.map((task) => `- ${clamp(task.title, PO_MAX_TITLE_CHARS)} [${task.status}]`)
+      LABEL_TASKS,
+      ...ledgerTasks.map(
+        (task) => `${LIST_MARK}${clamp(`${clamp(task.title, PO_MAX_TITLE_CHARS)} [${task.status}]`, PO_MAX_TASK_LINE_CHARS)}`
+      )
     )
   }
   return lines.join('\n')

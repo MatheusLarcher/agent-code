@@ -43,7 +43,10 @@ import {
 
 const IDENTITY_TTL_MS = 60_000
 
-/** Teto da espera pelo PO. Ver `poSettled`. */
+/** Teto da espera pelo PO — 30 s DE PROPÓSITO, mesmo com o PO às vezes levando
+ *  mais (54 s e 46 s na conversa "Cadastro no sistema"): esperar mais deixaria
+ *  o quadro mostrando "fazendo" o que ninguém faz, e não é preciso, porque o
+ *  veredito que chega depois do teto não se perde. Ver `waitForPo`. */
 const PO_WAIT_MS = 30_000
 
 /** O motivo gravado no cartão reaberto — compartilhado com a tela, que o usa
@@ -63,8 +66,8 @@ export interface BoardServiceDeps {
    *
    * Dependência INJETADA e opcional porque o PO já depende deste serviço:
    * importá-lo aqui fecharia um ciclo. Sem ela o fechamento roda assim mesmo —
-   * o que se perde é só a ordem, e a ordem importa: reabrir ANTES do PO
-   * desfaria o "concluído" que ele ainda ia gravar.
+   * o que se perde é só a ordem: o cartão que o PO ia concluir passa antes por
+   * "a fazer", e o "concluído" dele chega depois e grava por cima.
    */
   poSettled?(convId: string): Promise<void>
   /** Teto da espera pelo PO, em ms. Existe para o teste não esperar 30s. */
@@ -112,6 +115,8 @@ export class BoardService {
   /** Os ids que o ÚLTIMO fechamento de cada conversa rebaixou (vazio quando
    *  não rebaixou nada). Ver `boardItemsToResume`. */
   private readonly lastReopened = new Map<string, ReadonlySet<string>>()
+  /** As reaberturas em andamento, de qualquer conversa. Ver `applyPo`. */
+  private readonly reopening = new Set<Promise<void>>()
 
   constructor(private readonly deps: BoardServiceDeps) {}
 
@@ -196,9 +201,10 @@ export class BoardService {
    *
    * A ordem é a parte delicada. Primeiro a fila de escrita (o último snapshot
    * do turno precisa estar gravado, senão a releitura reabre em cima de um
-   * estado velho), depois o PO (reabrir antes desfaria o "concluído" que ele
-   * ainda ia gravar), e só então a reabertura. O que NÃO acontece aqui: uma
-   * varredura de todo cartão `in_progress` do banco — com PostgreSQL
+   * estado velho), depois o PO até o teto (o cartão que ele está concluindo
+   * não passa por "a fazer"; o veredito que estoura o teto prevalece assim
+   * mesmo — ver `waitForPo`), e só então a reabertura. O que NÃO acontece
+   * aqui: uma varredura de todo cartão `in_progress` do banco — com PostgreSQL
    * compartilhado, isso apagaria o "fazendo" de um agente rodando em outro PC.
    *
    * `closedAt` é capturado AQUI, na hora do evento `result`/`error` — não no
@@ -224,9 +230,21 @@ export class BoardService {
     this.closures.set(convId, next)
   }
 
-  /** A espera pelo PO com teto: análise que trava (modelo pendurado, rede
-   *  parada) não pode segurar o fechamento para sempre — o quadro fica errado,
-   *  que é justamente o que esta correção veio consertar. */
+  /**
+   * A espera pelo PO com teto: análise que trava (modelo pendurado, rede
+   * parada) não pode segurar o fechamento para sempre.
+   *
+   * Passado o teto, a reabertura roda sem o veredito, e o CONCLUIR/TITULO/FEITA
+   * que chega DEPOIS continua valendo — grava por cima do "a fazer" do fim de
+   * turno. Nenhuma barreira o descarta porque o cartão mudou no meio:
+   * `rejectUnsafeOps` só recusa CONCLUIR em cartão JÁ concluído ("a fazer"
+   * passa, na lista de antes da consulta e na fresca de `confirmCreates`), e
+   * `applyBoardPo` grava sem checar revisão nem estado. A corrida com a
+   * própria reabertura é fechada em `applyPo`. E ele nunca rebaixa: no
+   * fechamento o PO só conclui, renomeia (sem tocar o estado) ou cria cartão
+   * novo. Nada depois o desfaz: a promoção (`boardItemsToResume`) só pega
+   * motivo de fim de turno, e a reabertura seguinte só pega "fazendo".
+   */
   private async waitForPo(convId: string): Promise<void> {
     const wait = this.deps.poSettled?.(convId)
     if (!wait) return
@@ -237,7 +255,13 @@ export class BoardService {
     })
   }
 
-  private async reopenStale(convId: string, cwd: string, reason: string, closedAt: number): Promise<void> {
+  private reopenStale(convId: string, cwd: string, reason: string, closedAt: number): Promise<void> {
+    const work = this.demoteStale(convId, cwd, reason, closedAt)
+    this.reopening.add(work)
+    return work.finally(() => this.reopening.delete(work))
+  }
+
+  private async demoteStale(convId: string, cwd: string, reason: string, closedAt: number): Promise<void> {
     // Relê depois de todo mundo ter escrito: o que o PO acabou de corrigir só
     // aparece aqui, e `null` é quadro indisponível — não há o que reabrir.
     const reopened = new Set<string>()
@@ -246,7 +270,8 @@ export class BoardService {
     if (!cards) return
     for (const card of boardItemsToReopenBefore(cards, closedAt)) {
       try {
-        await this.applyPo({ id: card.id, poStatus: 'pending', poReason: reason })
+        // A escrita crua: `applyPo` esperaria por esta mesma reabertura.
+        await this.writePo({ id: card.id, poStatus: 'pending', poReason: reason })
         reopened.add(card.id)
       } catch {
         // Cartão que sumiu entre a leitura e a escrita não derruba os outros.
@@ -347,7 +372,19 @@ export class BoardService {
     }
   }
 
+  /**
+   * A escrita que chega DURANTE uma reabertura espera ela terminar. A
+   * reabertura lê e só depois escreve; o veredito atrasado que caísse entre as
+   * duas (no PostgreSQL são idas e voltas de rede) seria sobrescrito pelo "a
+   * fazer" decidido sobre a leitura de antes. Esperando, grava por último e
+   * prevalece. Espera curta, e global porque aqui só se tem o id do cartão.
+   */
   async applyPo(input: BoardPoWrite): Promise<BoardItem | null> {
+    if (this.reopening.size > 0) await Promise.all([...this.reopening].map((work) => work.catch(() => undefined)))
+    return this.writePo(input)
+  }
+
+  private async writePo(input: BoardPoWrite): Promise<BoardItem | null> {
     const repository = this.deps.repository()
     if (!repository) return null
     const item = await repository.applyBoardPo(input)

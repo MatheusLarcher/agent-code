@@ -1,18 +1,16 @@
 import { askObserver } from '../observerQuery'
 import type { BoardConfig, ChatEvent } from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
-import { linkLedgerTaskToCard, listConvTasks, type PoLedgerDeps } from './poLedger'
+import { applyPoVerdict, type PoApplyProgress } from './poApply'
+import { listConvTasks, type PoLedgerDeps } from './poLedger'
 import {
   buildPoPrompt,
-  parsePoVerdict,
   PO_COOLDOWN_MS,
   PO_MAX_CALLS,
   PO_MAX_RETRIES,
   PO_RETRY_DELAY_MS,
-  rejectUnsafeOps,
   summarizeCall,
   type PoCall,
-  type PoOp,
   type PoPhase
 } from './poPrompt'
 import type { PoLogEntry, PoLogOutcome, PoLogWriter } from './poLog'
@@ -281,33 +279,6 @@ export class Po {
     void work.then(forget, forget)
   }
 
-  /**
-   * Relê o quadro imediatamente antes de escrever, quando há criação.
-   *
-   * Entre o `list` que montou o digest e este ponto passou a consulta ao
-   * modelo — segundos em que a ABERTURA desta mesma conversa pode ter criado o
-   * cartão que o fechamento está prestes a criar de novo. `board.settled` não
-   * cobre isso: ele é a fila de ingestão do snapshot, e o PO escreve direto no
-   * repositório. Criar é a única operação irreversível daqui (cartão duplicado
-   * fica no quadro e ninguém sabe qual seguir), então vale reaplicar as
-   * barreiras contra a lista FRESCA: a janela cai para o tempo de um `list` e
-   * o custo é uma leitura só quando há criação — diferente de esperar a
-   * abertura terminar, que atrasaria toda auditoria e comeria a janela que o
-   * quadro espera pelo PO.
-   *
-   * A fase segue para `rejectUnsafeOps`: é ela quem decide se um `create`
-   * duplicado contra a lista fresca vira `start` (só faz sentido na abertura).
-   */
-  private async confirmCreates(ops: PoOp[], convId: string, cwd: string, phase: PoPhase): Promise<PoOp[]> {
-    if (!ops.some((op) => op.kind === 'create')) return ops
-    const fresh = await this.deps.board.list(cwd, { conversationId: convId })
-    // Sem lista fresca não dá para afirmar que o cartão não existe. Falha
-    // fechada: duplicar é pior do que registrar depois, e o que ficou de fora
-    // volta na próxima auditoria.
-    if (!fresh) return ops.filter((op) => op.kind !== 'create')
-    return rejectUnsafeOps(ops, fresh, phase)
-  }
-
   /** Uma linha no diário por rodada. Nunca lança: o diário é observação da
    *  observação, e não pode ser o que derruba a auditoria. */
   private logRound(entry: Omit<PoLogEntry, 'at' | 'durationMs'>, startedAt: number): void {
@@ -397,7 +368,7 @@ export class Po {
       }))
 
       // O gate do TypeSafe vê o MESMO material que o modelo veria (pedido
-      // mesclado, quadro, ações, registro) e roda antes de qualquer rota. Um
+      // mesclado, quadro, ações, registro, resposta) e roda antes de qualquer rota. Um
       // "não" é uma decisão sobre esta evidência: ela foi julgada, não volta
       // para a fila, e nada é escrito nem anunciado — o elenco não mostra uma
       // auditoria que não aconteceu. `null` (sem chave, desligado, erro) é
@@ -407,7 +378,8 @@ export class Po {
         userText: merged.userText,
         cards: digestCards.map(({ title, status }) => ({ title, status })),
         calls: merged.calls,
-        ledgerTasks
+        ledgerTasks,
+        agentReply: merged.reply ?? null
       })
       if (worthIt === false) {
         audited = true
@@ -448,7 +420,7 @@ export class Po {
       // otherwise the crew panel would show the PO working forever on any of
       // the early returns below. `provider` follows whichever route ran.
       let provider: 'claude' | 'gpt-luna' = 'claude'
-      let applied = 0
+      const progress: PoApplyProgress = { applied: 0, touched }
       try {
         // Claude primeiro; a Luna só numa falha Claude elegível (poProviders.ts).
         // A troca de rota é avisada ANTES da consulta à Luna, para o
@@ -458,51 +430,17 @@ export class Po {
         })
         if (text === null) return
 
-        const verdict = rejectUnsafeOps(
-          parsePoVerdict(text, cards.map((card) => card.id), phase),
-          cards,
-          phase
-        )
-        // A lista que o modelo julgou é de antes da consulta. Antes de criar,
-        // confere contra o quadro de agora — a outra fase deste mesmo turno
-        // pode ter criado o cartão nesse meio-tempo.
-        const ops = await this.confirmCreates(verdict, convId, turn.cwd, phase)
-
-        for (const op of ops) {
-          if (op.kind === 'complete') {
-            await this.deps.board.applyPo({ id: op.id, poStatus: 'completed', poReason: op.reason })
-            touched.push(op.id)
-          } else if (op.kind === 'start') {
-            await this.deps.board.applyPo({ id: op.id, poStatus: 'in_progress', poReason: op.reason })
-            touched.push(op.id)
-            // O cartão acabou de entrar em andamento: tenta achar a tarefa do
-            // registro que é este mesmo trabalho, para o quadro e o registro
-            // apontarem para a mesma coisa sem depender de o agente lembrar.
-            await linkLedgerTaskToCard(this.deps, convId, op.id, now)
-          } else if (op.kind === 'retitle') {
-            await this.deps.board.applyPo({ id: op.id, poTitle: op.title })
-            touched.push(op.id)
-          } else {
-            const created = await this.deps.board.createPoItem({
-              projectId,
-              projectCwd: turn.cwd,
-              conversationId: convId,
-              title: op.title,
-              status: op.status,
-              reason: op.reason
-            })
-            if (created) touched.push(created.id)
-            if (created && op.status === 'in_progress') await linkLedgerTaskToCard(this.deps, convId, created.id, now)
-          }
-          applied++
-        }
+        // A lista que o modelo julgou é de antes da consulta: criar e pôr em
+        // andamento são conferidos de novo contra o quadro de agora (poApply.ts).
+        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now }
+        await applyPoVerdict(this.deps, target, text, cards, progress)
         // Daqui em diante a análise chegou ao fim: o que ela tirou da fila foi
         // julgado e escrito, e não volta.
         audited = true
-        outcome = applied > 0 ? `ops=${applied}` : 'ok'
+        outcome = progress.applied > 0 ? `ops=${progress.applied}` : 'ok'
       } finally {
         route = provider
-        diagnostic(this.deps, request, 'audit-finished', provider, undefined, applied)
+        diagnostic(this.deps, request, 'audit-finished', provider, undefined, progress.applied)
       }
     } catch {
       // The observer cannot take down the observed turn or write a partial board.

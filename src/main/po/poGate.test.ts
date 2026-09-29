@@ -308,6 +308,7 @@ describe('Po — gate "sim"', () => {
     po.noteUserMessage('conv-1', 'C:/p', 'termina a tabela')
     await flush()
     po.observe('conv-1', toolUse('Edit', { file_path: 'src/quadro.ts' }))
+    po.observe('conv-1', { kind: 'assistant-text', id: 'a', text: 'Tabela pronta. Posso publicar?', final: true })
     po.observe('conv-1', result)
     await flush()
 
@@ -318,12 +319,42 @@ describe('Po — gate "sim"', () => {
       userText: 'termina a tabela',
       cards: [{ title: 'Tabela do quadro', status: 'in_progress' }],
       calls: [{ tool: 'Edit', detail: expect.stringContaining('src/quadro.ts') }],
-      ledgerTasks: [{ title: 'Tabela do quadro', status: 'done' }]
+      ledgerTasks: [{ title: 'Tabela do quadro', status: 'done' }],
+      // A resposta do turno: é nela que "entreguei; posso publicar?" aparece.
+      agentReply: 'Tabela pronta. Posso publicar?'
     })
     // Em cada fase: o quadro é lido, o gate decide, e só então a auditoria começa.
     const closeOrder = order.slice(order.indexOf('gate:open') + 1)
     expect(order.indexOf('list')).toBeLessThan(order.indexOf('gate:open'))
     expect(order.indexOf('gate:open')).toBeLessThan(order.indexOf('claude-started:open'))
     expect(closeOrder.indexOf('gate:close')).toBeLessThan(closeOrder.indexOf('claude-started:close'))
+  })
+
+  it('a abertura seguinte leva ao gate a resposta do turno ANTERIOR — a que o "pode fazer" responde', async () => {
+    const board = fakeBoard([card()])
+    const inputs: BoardGateInput[] = []
+    const gate = vi.fn(async (input: BoardGateInput) => {
+      inputs.push(input)
+      return true
+    })
+    let now = 1_000_000
+    const po = new Po({ config, board, runClaude: writingClaude(), gate, now: () => now })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'audita o Cloudflare')
+    await flush()
+    // Abertura sem turno anterior: nada a mostrar.
+    expect(inputs[0]).toMatchObject({ phase: 'open', agentReply: null })
+    po.observe('conv-1', { kind: 'assistant-text', id: 'a', text: 'Auditoria feita. Posso atualizar a VPS?', final: true })
+    po.observe('conv-1', result)
+    await flush()
+    now += 120_000
+    po.noteUserMessage('conv-1', 'C:/p', 'pode fazer')
+    await flush()
+
+    expect(inputs.map((input) => [input.phase, input.agentReply])).toEqual([
+      ['open', null],
+      ['close', 'Auditoria feita. Posso atualizar a VPS?'],
+      ['open', 'Auditoria feita. Posso atualizar a VPS?']
+    ])
   })
 })
