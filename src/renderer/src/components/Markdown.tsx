@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import type { PlanningCardType } from '@shared/ipc'
 import { refHrefTipo, refsToMarkdownLinks, splitRefs, type RefCard } from '../planning/cardRefs'
 import { CARD_TYPE_LABEL, typeColorVar } from '../planning/cardTypes'
+import { quoteBlockComponents, useQuotableBlocks } from './quoteComment/quoteBlocks'
 
 /** Rótulo de [[...]] → card do plano (null = não é um card: fica como texto). */
 export type CardRefResolver = (label: string) => RefCard | null
@@ -39,6 +40,11 @@ const mdComponentsWithRefs = {
   }
 }
 
+// Resposta do agente no chat (QuotableMessage em volta): parágrafo, item, título
+// e código ganham o "Comentar" (ver quoteComment/). Fora dela, os mapas de cima.
+const mdQuotable = { ...mdComponents, ...quoteBlockComponents }
+const mdQuotableWithRefs = { ...mdComponentsWithRefs, ...quoteBlockComponents }
+
 /** Render text as GitHub-flavored Markdown (headings, lists, code, tables, …).
  *  Safe: react-markdown builds React nodes, no raw HTML. Shared by the chat
  *  (assistant answers) and the file preview (.md "Janela de Arquivo").
@@ -46,9 +52,13 @@ const mdComponentsWithRefs = {
  *  com a cor do tipo; sem ele, o texto sai exatamente como sempre. */
 export function Markdown({ text, resolveRef }: { text: string; resolveRef?: CardRefResolver | null }): JSX.Element {
   const source = useMemo(() => (resolveRef ? refsToMarkdownLinks(text, resolveRef) : text), [text, resolveRef])
+  const quotable = useQuotableBlocks()
+  const components = quotable
+    ? resolveRef ? mdQuotableWithRefs : mdQuotable
+    : resolveRef ? mdComponentsWithRefs : mdComponents
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={resolveRef ? mdComponentsWithRefs : mdComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {source}
       </ReactMarkdown>
     </div>

@@ -8,7 +8,8 @@
  * - **Minimizado**: ancorado embaixo, com ~5 linhas de conversa (planningChat.css).
  *   Sem texto digitado, a caixa é uma faixa de 1 linha sem os botões
  *   (`composer-small`); com texto, cresce de 1 a 3 linhas (rola depois) e os
- *   botões voltam. Anexo sozinho não é texto. O `ChatPanel` entra em modo compacto pelo
+ *   botões voltam. Anexo sozinho não é texto; chip de citação ("Comentar") é —
+ *   dá para enviar só com ele. O `ChatPanel` entra em modo compacto pelo
  *   `ChatDisplayContext`: some o consumo. Fica mais translúcido que o
  *   maximizado (volta à translucidez dele no hover/foco) e qualquer clique
  *   nele expande.
@@ -123,7 +124,7 @@ export interface ManagerChatFloatProps {
 
 export function ManagerChatFloat({ children, cards, collapseSignal, planDir }: ManagerChatFloatProps): JSX.Element {
   const [minimized, setMinimized] = useState(loadChatMinimized)
-  // A caixa do Composer tem texto digitado? Vem do `onHasTextChange` dele, só nas
+  // A caixa do Composer tem texto (ou chip de citação)? Vem do `onHasTextChange` dele, só nas
   // trocas vazio↔não vazio (não a cada tecla). O setter é estável: o contexto não muda por ele.
   const [composerHasText, setComposerHasText] = useState(false)
   const ref = useRef<HTMLElement>(null)

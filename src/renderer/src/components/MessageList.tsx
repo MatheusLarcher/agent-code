@@ -21,6 +21,7 @@ import { useKeepEndOnResize } from './MessageListAnchor'
 import { useChatDisplay } from './chatDisplay'
 import { makeRefResolver } from '../planning/cardRefs'
 import { PlanFileLink, createdPlanFile } from '../planning/PlanFileLink'
+import { QuotableMessage, type QuoteListApi } from './quoteComment/quoteBlocks'
 
 /** Read-aloud controls passed down from App (TTS state lives there so audio
  *  survives message re-renders and conversation switches). */
@@ -326,7 +327,8 @@ export function MessageList({
   onRetry,
   onUseAccount,
   scrollToId,
-  scrollSeq
+  scrollSeq,
+  quote
 }: {
   messages: UIMessage[]
   busy: boolean
@@ -339,6 +341,8 @@ export function MessageList({
   scrollToId?: string | null
   /** Bumped on each search-hit navigation so repeats re-trigger the scroll. */
   scrollSeq?: number
+  /** "Comentar" nos blocos das respostas do agente (ver quoteComment/). Sem ele, nada muda. */
+  quote?: QuoteListApi
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -584,7 +588,11 @@ export function MessageList({
                 className={`msg assistant ${m.answer ? '' : 'narration'} ${m.aborted ? 'aborted' : ''}`}
               >
                 <div className="bubble">
-                  {clean && <Markdown text={clean} resolveRef={resolveRef} />}
+                  {clean && (
+                    <QuotableMessage api={quote} messageId={m.id}>
+                      <Markdown text={clean} resolveRef={resolveRef} />
+                    </QuotableMessage>
+                  )}
                   {paths.map((p, k) => (
                     <DownloadChip key={k} path={p} />
                   ))}

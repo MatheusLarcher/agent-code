@@ -6,6 +6,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
   type RefObject
 } from 'react'
 import type {
@@ -33,6 +34,9 @@ import { boxMetrics, composerBoxHeight } from './composerHeight'
 import { useHasTextSignal, type HasTextListener } from './useHasTextSignal'
 
 const NO_CARDS: readonly RefCard[] = []
+/** O que o `useHasTextSignal` avalia quando há chip de citação: um caractere
+ *  que não é anexo, ou seja, "tem texto" (ver o uso no Composer). */
+const QUOTE_AS_TEXT = '↳'
 
 /** A project the user can reference (its folder path), shown in the @ menu. */
 export interface RefProject {
@@ -78,9 +82,16 @@ interface Props {
   projectMissing: boolean
   /** Error shown when the user tries to use the box while the project is missing. */
   projectMissingMsg: string
-  /** Avisado só na troca "sem texto" ↔ "com texto" (anexo sozinho não é texto),
-   *  inclusive pelo rascunho restaurado ao trocar de conversa. Ver useHasTextSignal. */
+  /** Avisado só na troca "sem texto" ↔ "com texto" (anexo sozinho não é texto;
+   *  chip de citação — `pendingQuotes` — é), inclusive pelo rascunho restaurado
+   *  ao trocar de conversa. Ver useHasTextSignal. */
   onHasTextChange?: HasTextListener
+  /** Chips "↳ trecho" do "Comentar" (ver quoteComment/): a fileira, quantos há
+   *  (com algum, dá para enviar sem texto) e o envio do Enter/seta, que junta os
+   *  trechos ao texto. O botão /code-review segue em `onSend`, sem os trechos. */
+  quoteBar?: ReactNode
+  pendingQuotes?: number
+  onSubmit?: Props['onSend']
 }
 
 /** Recording waveform (WhatsApp-style): number of bars in the scrolling strip and
@@ -245,7 +256,9 @@ export function Composer(props: Props): JSX.Element {
   // window-blur flush below both read this instead of depending on `value`).
   const valueRef = useRef(value)
   valueRef.current = value
-  useHasTextSignal(value, props.onHasTextChange)
+  // Chip de citação conta como texto para quem ouve: com ele dá para enviar sem
+  // digitar nada (ver `submit`), e o Agent Manager minimizado não pode esconder o enviar.
+  useHasTextSignal(props.pendingQuotes ? QUOTE_AS_TEXT : value, props.onHasTextChange)
 
   // Local-only edit — just updates the box. Does NOT persist to disk: saving on
   // every keystroke used to force a full app re-render per letter (slow while
@@ -764,8 +777,9 @@ export function Composer(props: Props): JSX.Element {
     // Anexo no texto vira {{midia:N}} no ponto dele; sem anexo, o texto sai igual.
     const msg = media.serialize(value)
     const attached = msg.images.length + msg.files.length + msg.fileRefs.length
-    if (!msg.text.trim() && props.chips.length === 0 && attached === 0) return
-    props.onSend(msg.text, msg.images, msg.files, msg.fileRefs)
+    if (!msg.text.trim() && props.chips.length === 0 && !props.pendingQuotes && attached === 0) return
+    const send = props.onSubmit ?? props.onSend
+    send(msg.text, msg.images, msg.files, msg.fileRefs)
     media.commitSend() // cópias do rascunho: a do arquivo enviado fica; as outras saem do disco
     media.reset()
     updateValue('') // clears the box
@@ -1033,6 +1047,7 @@ export function Composer(props: Props): JSX.Element {
 
   return (
     <div className="composer">
+      {props.quoteBar}
       {props.chips.length > 0 && (
         <div className="chips">
           {props.chips.map((c, i) => (

@@ -22,6 +22,8 @@ import { IconClock, IconClose, IconHelp, IconChevronDown, IconLeaf, IconRepeat, 
 import { TokenUsagePanel } from './TokenUsagePanel'
 import { emptyUsageMap, type UsageMap } from '../tokenUsageTree'
 import { useChatDisplay } from './chatDisplay'
+import { useQuoteComments } from './quoteComment/useQuoteComments'
+import { QuoteChips } from './quoteComment/QuoteChips'
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -326,6 +328,11 @@ export function ChatPanel(props: Props): JSX.Element {
   const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
   // Compacto (chat minimizado do planejamento): sem consumo e sem o aviso do Windows.
   const { compact, hideWindowsBanner, hideLastUsage, onComposerHasText } = useChatDisplay()
+  // "Comentar" num bloco da resposta: chip no campo de mensagem, e o foco vai
+  // para lá (menos com a pasta do projeto sumida — o campo está travado).
+  const quote = useQuoteComments(props.convId, messages, () => {
+    if (!props.projectMissing) props.composerRef.current?.focus()
+  })
   return (
     <section className="chat-panel">
       {!compact && (
@@ -398,6 +405,7 @@ export function ChatPanel(props: Props): JSX.Element {
         tts={props.tts}
         onRetry={props.onRetry}
         onUseAccount={props.onUseAccount}
+        quote={quote.list}
       />
 
       {props.recovery && (
@@ -593,6 +601,9 @@ export function ChatPanel(props: Props): JSX.Element {
         chips={props.chips}
         onRemoveChip={props.onRemoveChip}
         onSend={props.onSend}
+        quoteBar={<QuoteChips chips={quote.chips} onRemove={quote.remove} />}
+        pendingQuotes={quote.chips.length}
+        onSubmit={quote.wrapSend(props.onSend)}
         onInterrupt={props.onInterrupt}
         textareaRef={props.composerRef}
         projects={props.projects}
