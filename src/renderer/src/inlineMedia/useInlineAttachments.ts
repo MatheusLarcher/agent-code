@@ -304,6 +304,12 @@ export function useInlineAttachments({ editorRef, convIdRef, notify, initialDraf
     void Promise.all(jobs.map(({ id, line }) => settle(id, () => readLine(line), line)))
   }
 
+  /** Item pronto (o trecho do "Comentar") no cursor, ou em `at`. */
+  function insertAtt(att: InlineAtt, at?: number | null): void {
+    register(att)
+    editorRef.current?.insertParts([att], at)
+  }
+
   /** Campo de volta de um flush ainda gravando: os mesmos itens (e ids), com o que chegou enquanto isso. */
   function fromSnapshot(s: Snapshot): { value: string; order: string[]; jobs: Array<() => void> } {
     const drop = new Map<string, string>()
@@ -454,6 +460,9 @@ export function useInlineAttachments({ editorRef, convIdRef, notify, initialDraf
     version,
     addFiles,
     pasteText,
+    insertAtt,
+    /** Troca o item `id` (mesmo lugar no texto) — a renumeração do trecho. */
+    replaceAtt: upgrade,
     load,
     reset,
     serialize,

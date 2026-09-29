@@ -2,7 +2,7 @@
  * Os blocos "comentáveis" da resposta do agente: parágrafo, item de lista,
  * título e bloco de código ganham um botão discreto "Comentar" (aparece no
  * hover e no foco — ver quoteComment.css), e ficam destacados quando o trecho
- * está num chip pendente ou já foi comentado no histórico.
+ * está no campo de mensagem ou já foi comentado no histórico.
  *
  * Tudo depende do contexto que o MessageList põe em volta de CADA mensagem do
  * agente (`QuotableMessage`). Sem ele — mensagem do usuário, prévia de arquivo,
@@ -19,7 +19,7 @@ import {
 import type { ExtraProps } from 'react-markdown'
 import './quoteComment.css'
 
-/** 'pending': o trecho está num chip no campo de mensagem; 'commented': já foi enviado. */
+/** 'pending': o trecho está no campo de mensagem ("[trecho N]"); 'commented': já foi enviado. */
 export type QuoteMark = 'pending' | 'commented' | null
 
 /** O que a lista de mensagens oferece (vem do useQuoteComments, no ChatPanel). */
@@ -88,7 +88,9 @@ function CommentButton({ onComment }: { onComment: () => void }): JSX.Element {
       type="button"
       className="qc-btn"
       aria-label="Comentar este trecho"
-      title="Comentar este trecho (vai como citação no campo de mensagem)"
+      title="Comentar este trecho (entra como [trecho N] no ponto do cursor do campo de mensagem)"
+      // O clique não tira o foco do campo de mensagem: o trecho entra no cursor dele.
+      onMouseDown={(e) => e.preventDefault()}
       onClick={onComment}
     >
       ↳ Comentar

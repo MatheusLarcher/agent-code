@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createRef, Fragment, StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { UIMessage } from '../types'
 import { ChatPanel } from '../components/ChatPanel'
 import type { SendFn } from '../components/quoteComment/useQuoteComments'
@@ -10,10 +10,10 @@ import { UiProvider } from '../ui/UiProvider'
 import { ManagerChatFloat } from './ManagerChatFloat'
 
 /**
- * "Comentar" no Agent Manager minimizado: chip de citação sem texto digitado
- * já dá para enviar (o Enter envia), então a caixa NÃO pode virar a faixa
- * pequena sem botões (`composer-small`) — o enviar tem de estar à vista. O
- * Composer conta o chip no `onHasTextChange`. Estilo COMPUTADO com o
+ * "Comentar" no Agent Manager minimizado: trecho citado ("[trecho N]" inline)
+ * sem texto digitado já dá para enviar (o Enter envia), então a caixa NÃO pode
+ * virar a faixa pequena sem botões (`composer-small`) — o enviar tem de estar à
+ * vista. O Composer conta o trecho no `onHasTextChange`. Estilo COMPUTADO com o
  * planningChat.css real, como no ManagerChatFloat.small.test.
  */
 
@@ -110,7 +110,15 @@ function renderChat(opts: { strict?: boolean } = {}) {
     small: (): boolean => panel().classList.contains('composer-small'),
     minimized: (): boolean => panel().classList.contains('minimized'),
     sendBtn: (): Element | null => c.querySelector('.composer-row .btn.send'),
-    chips: (): number => c.querySelectorAll('.composer .qc-chip').length,
+    /** Trechos no campo: os anexos inline "[trecho N]" (o espelho atrás do campo tem cópias invisíveis). */
+    chips: (): number => c.querySelectorAll('.composer [role="textbox"] img.inline-att-quote').length,
+    /** Tira o trecho do texto (o que o Backspace/Delete faz com o <img>). */
+    removeQuote: (): void => {
+      act(() => {
+        c.querySelector('.composer [role="textbox"] img.inline-att-quote')!.remove()
+        screen.getByRole('textbox', { name: 'Mensagem' }).dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    },
     /** "Comentar" no parágrafo `i` da resposta. */
     comment: (i: number): void => {
       const p = c.querySelectorAll<HTMLElement>('.msg.assistant .md > p')[i]
@@ -153,17 +161,18 @@ describe('Agent Manager minimizado com chip de citação e sem texto', () => {
     expect(chat.small()).toBe(false)
     fireEvent.keyDown(chat.box(), { key: 'Enter' })
     expect(chat.onSend).toHaveBeenCalledTimes(1)
-    expect(chat.onSend.mock.calls[0][0]).toBe('> ↳ trecho da mensagem a1\n> Segundo parágrafo.')
+    expect(chat.onSend.mock.calls[0][0]).toBe('> [trecho 1] · mensagem a1\n> Segundo parágrafo.\n\n[trecho 1]')
     expect(chat.chips()).toBe(0)
     expect(chat.minimized()).toBe(true)
     expect(chat.small()).toBe(true)
     expect(shown(chat.sendBtn())).toBe(false)
   })
 
-  it('tirar o chip (×) sem texto devolve a faixa pequena', () => {
+  it('tirar o trecho do texto, sem outro texto, devolve a faixa pequena', () => {
     const chat = renderChat()
     chat.comment(0)
-    fireEvent.click(screen.getByRole('button', { name: /Remover o trecho citado/ }))
+    expect(chat.chips()).toBe(1)
+    chat.removeQuote()
     expect(chat.chips()).toBe(0)
     chat.minimize()
     expect(chat.small()).toBe(true)

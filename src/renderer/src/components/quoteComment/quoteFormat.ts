@@ -3,14 +3,16 @@
  *
  * A citação vai no próprio texto da mensagem do usuário — é o que o agente lê
  * e é também de onde o histórico tira os blocos já comentados (`parseQuotes`).
- * Para cada trecho, na ordem em que entrou no campo de mensagem:
+ * O trecho é um anexo inline no campo (como a imagem); no envio, cada um vira
+ * "[trecho N]" no ponto dele, e os blocos citados vão na frente, na ordem N:
  *
- *   > ↳ trecho da mensagem <id>
+ *   > [trecho 1] · mensagem <id>
  *   > <linha 1 do trecho>
  *   > <linha 2 do trecho>
  *
  * Um bloco por trecho, separados por uma linha em branco; depois outra linha em
- * branco e o comentário digitado (se houver). Tudo aqui é função pura.
+ * branco e o texto digitado (com os "[trecho N]"). O formato antigo
+ * ("> ↳ trecho da mensagem <id>") continua sendo lido. Tudo aqui é função pura.
  */
 import type { UIMessage } from '../../types'
 
@@ -19,10 +21,14 @@ import type { UIMessage } from '../../types'
  *  trechos cortados que já estão no histórico. */
 export const QUOTE_MAX_CHARS = 600
 export const QUOTE_ELLIPSIS = '…'
-/** Cabeçalho de cada bloco citado; o id da mensagem de origem vem logo depois. */
-export const QUOTE_HEADER = '↳ trecho da mensagem'
+/** Cabeçalho antigo (só leitura: mensagens que já estão no histórico). */
+export const LEGACY_QUOTE_HEADER = '↳ trecho da mensagem'
 
-const HEADER_RE = /^> ↳ trecho da mensagem (\S+)[ \t]*$/
+/** Marca do trecho N no texto (e no anexo do campo). */
+export const quoteRef = (n: number): string => `[trecho ${n}]`
+
+// Cabeçalho novo ("> [trecho N] · mensagem <id>") ou o antigo; o id é o último grupo.
+const HEADER_RE = /^> (?:\[trecho \d+\] · mensagem|↳ trecho da mensagem) (\S+)[ \t]*$/
 
 /** Um trecho citado: de que mensagem do agente e o texto (já cortado no teto). */
 export interface Quote {
@@ -53,18 +59,24 @@ export function clipQuote(raw: string, max = QUOTE_MAX_CHARS): string {
   return cut.trimEnd() + QUOTE_ELLIPSIS
 }
 
-/** Um bloco `>` com o cabeçalho e as linhas do trecho. */
-export function formatQuote(q: Quote): string {
+/** O bloco `>` do trecho `n` (1, 2, …): cabeçalho e as linhas do trecho. */
+export function formatQuote(q: Quote, n: number): string {
   const lines = q.text.split('\n').map((l) => (l ? `> ${l}` : '>'))
-  return [`> ${QUOTE_HEADER} ${q.messageId}`, ...lines].join('\n')
+  return [`> ${quoteRef(n)} · mensagem ${q.messageId}`, ...lines].join('\n')
 }
 
-/** A mensagem que sai: os blocos citados e, no fim, o comentário. Sem trecho,
- *  o texto sai exatamente como foi digitado. */
+/** A mensagem que sai: os blocos citados (trecho 1, 2, … na ordem da lista) e,
+ *  no fim, o texto — que já traz os "[trecho N]" no ponto de cada anexo. Sem
+ *  trecho, o texto sai exatamente como foi digitado. */
 export function buildQuotedMessage(quotes: readonly Quote[], comment: string): string {
   if (quotes.length === 0) return comment
-  const blocks = quotes.map(formatQuote).join('\n\n')
+  const blocks = quotes.map((q, i) => formatQuote(q, i + 1)).join('\n\n')
   return comment.trim() ? `${blocks}\n\n${comment}` : blocks
+}
+
+/** Há citação (formato novo ou antigo) nesta mensagem? Filtro barato antes do parse. */
+export function hasQuoteHeader(text: string): boolean {
+  return text.includes(LEGACY_QUOTE_HEADER) || /\[trecho \d+\] · mensagem /.test(text)
 }
 
 /** O caminho inverso: os trechos citados numa mensagem do usuário. */
@@ -104,7 +116,7 @@ export function quoteMatchesBlock(quoteText: string, blockText: string): boolean
 export function indexCommented(messages: readonly UIMessage[]): Map<string, Quote[]> {
   const byMessage = new Map<string, Quote[]>()
   for (const m of messages) {
-    if (m.kind !== 'user' || m.error || m.canceled || !m.text.includes(QUOTE_HEADER)) continue
+    if (m.kind !== 'user' || m.error || m.canceled || !hasQuoteHeader(m.text)) continue
     for (const q of parseQuotes(m.text)) {
       const list = byMessage.get(q.messageId)
       if (list) list.push(q)

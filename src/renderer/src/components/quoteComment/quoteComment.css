@@ -1,4 +1,4 @@
-/* "Comentar" um trecho da resposta do agente (quoteBlocks.tsx / QuoteChips.tsx). */
+/* "Comentar" um trecho da resposta do agente (quoteBlocks.tsx / quoteToken.ts). */
 
 /* O bloco comentável: só a âncora do botão; sem mudar o desenho do Markdown. */
 .qc-block {
@@ -69,17 +69,14 @@
   background: color-mix(in srgb, var(--accent) 4%, transparent);
 }
 
-/* Os chips "↳ trecho" no campo de mensagem (mesmo desenho dos outros chips). */
-.qc-chip {
-  max-width: 100%;
+/* O trecho como anexo inline no campo de mensagem ("[trecho N]"), da altura do chip de arquivo. */
+img.inline-att-quote {
+  height: 20px;
+  vertical-align: -5px;
 }
-.qc-chip-mark {
-  color: var(--accent);
-  font-weight: 600;
-}
-.qc-chip-text {
-  max-width: 280px;
+/* A prévia do trecho no hover: o texto citado, com as quebras de linha. */
+.qc-preview-text {
+  max-height: 180px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
 }

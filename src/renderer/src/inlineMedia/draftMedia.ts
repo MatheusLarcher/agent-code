@@ -1,6 +1,7 @@
 import { MEDIA_MARKER_SOURCE, mediaMarker } from '@shared/inlineMedia'
 import { TOKEN } from './editorModel'
 import { makeFileAtt, makeImageAtt, makePendingAtt, type InlineAtt } from './inlineAttachments'
+import { makeQuoteAtt } from '../components/quoteComment/quoteToken'
 
 /**
  * Rascunho com anexos: texto com `{{midia:N}}` + a lista na ordem N.
@@ -19,6 +20,8 @@ export type DraftRefMedia =
   | { kind: 'file'; name: string; mediaType: string; path: string; size: number }
   | { kind: 'ref'; name: string; path: string; mediaType: string; size: number }
   | { kind: 'pending'; id: string; name: string; line?: string }
+  /** Trecho citado ("Comentar"): só texto, volta pronto. */
+  | { kind: 'quote'; messageId: string; text: string }
 
 /** Formato antigo (bytes dentro do rascunho): continua sendo LIDO; na próxima gravação vira referência. */
 export type LegacyDraftMedia =
@@ -53,6 +56,8 @@ function entryOf(att: InlineAtt): DraftRefMedia | null {
     case 'pending':
       if (att.from) return att.from
       return { kind: 'pending', id: att.id, name: att.name, ...(att.line ? { line: att.line } : {}) }
+    case 'quote':
+      return { kind: 'quote', messageId: att.quote.messageId, text: att.quote.text }
   }
 }
 
@@ -96,6 +101,7 @@ function str(v: unknown, max: number): string | null {
 export function isDraftMedia(v: unknown): v is DraftMedia {
   if (!v || typeof v !== 'object') return false
   const d = v as Record<string, unknown>
+  if (d.kind === 'quote') return !!str(d.messageId, 200) && !!str(d.text, 4000)
   if (d.kind === 'pending') return !!str(d.id, 200) && str(d.name, 400) !== null && (d.line === undefined || !!str(d.line, 4000))
   if (!str(d.name, 400) || !str(d.mediaType, 200)) return false
   const ref = !!str(d.path, 4000) && typeof d.size === 'number'
@@ -125,7 +131,10 @@ export function fromDraft(
     const d = list[Number(n) - 1]
     if (!d) return m
     let att: InlineAtt
-    if (d.kind === 'pending') {
+    if (d.kind === 'quote') {
+      // O número certo vem na renumeração do campo (useComposerQuotes).
+      att = makeQuoteAtt({ messageId: d.messageId, text: d.text }, order.length + 1)
+    } else if (d.kind === 'pending') {
       att = makePendingAtt(d.name, d.line, d.id)
       restore.push({ id: d.id, kind: 'pending', ...(d.line ? { line: d.line } : {}) })
     } else if ('data' in d) {

@@ -3,6 +3,7 @@ import { mediaLabel, mediaMarker, mediaLabelNumber } from '@shared/inlineMedia'
 import { fileMeta, fmtSize } from '../files'
 import { TOKEN } from './editorModel'
 import type { DraftRefMedia } from './draftMedia'
+import { buildQuotedMessage, chipLabel, quoteRef, type Quote } from '../components/quoteComment/quoteFormat'
 
 /**
  * Anexos do composer inline: o registro (id -> anexo), a imagem que o item
@@ -18,6 +19,9 @@ export type InlineAtt =
   /** Ainda resolvendo; não é enviado (o envio espera). `line`: caminho/URL colado, que dá para resolver de novo.
    *  `from`: o item do rascunho que está sendo relido/conferido (um flush no meio grava ele de novo, igual). */
   | { id: string; kind: 'pending'; name: string; src: string; line?: string; from?: DraftRefMedia }
+  /** Trecho de uma resposta do agente ("Comentar"): no envio vira "[trecho N]" + a citação no topo.
+   *  `name` é "trecho N" (N = ordem no texto; ver quoteComment/quoteToken.ts). */
+  | { id: string; kind: 'quote'; name: string; quote: Quote; src: string }
 
 let seq = 0
 export function newAttId(): string {
@@ -108,6 +112,7 @@ export function makePendingAtt(label: string, line?: string, id: string = newAtt
 export function attAlt(att: InlineAtt): string {
   if (att.kind === 'image') return `Imagem anexada: ${att.name}`
   if (att.kind === 'pending') return `Resolvendo anexo: ${att.name}`
+  if (att.kind === 'quote') return `Trecho citado ${att.name.replace(/^trecho /, '')}: ${chipLabel(att.quote.text)}`
   const size = att.kind === 'file' ? att.file.size : att.ref.size
   return `Arquivo anexado: ${att.name}${size ? ` (${fmtSize(size)})` : ''}`
 }
@@ -134,6 +139,8 @@ export interface OutgoingMessage {
 /**
  * Texto do campo -> mensagem. Cada anexo vira `{{midia:N}}` no ponto exato e
  * segue como anexo normal com o rótulo `midia:N = nome` (N = ordem no texto).
+ * Trecho citado ("Comentar") não é mídia: vira "[trecho K]" no ponto dele (K =
+ * ordem entre os trechos) e o bloco citado vai na frente do texto.
  * Sem anexo no texto, o texto sai idêntico. Item removido do texto não vai.
  */
 export function serializeInline(
@@ -145,6 +152,7 @@ export function serializeInline(
   if (!value.includes(TOKEN)) return { ...out, text: value }
   let next = 0
   let n = 0
+  const quotes: Quote[] = []
   for (const ch of value) {
     if (ch !== TOKEN) {
       out.text += ch
@@ -152,6 +160,11 @@ export function serializeInline(
     }
     const att = atts.get(order[next++] ?? '')
     if (!att || att.kind === 'pending') continue
+    if (att.kind === 'quote') {
+      quotes.push(att.quote)
+      out.text += quoteRef(quotes.length)
+      continue
+    }
     n++
     out.text += mediaMarker(n)
     const label = mediaLabel(n, att.name)
@@ -162,6 +175,7 @@ export function serializeInline(
     else if (att.kind === 'file') out.files.push({ ...att.file, label })
     else out.fileRefs.push({ ...att.ref, label })
   }
+  if (quotes.length) out.text = buildQuotedMessage(quotes, out.text)
   return out
 }
 

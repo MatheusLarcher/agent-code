@@ -5,6 +5,7 @@ import {
   buildQuotedMessage,
   chipLabel,
   clipQuote,
+  hasQuoteHeader,
   indexCommented,
   parseQuotes,
   quoteMatchesBlock
@@ -35,32 +36,45 @@ describe('buildQuotedMessage / parseQuotes — o formato fixo', () => {
     { messageId: 'a2', text: 'linha 1\n\nlinha 3' }
   ]
 
-  it('um bloco `>` por trecho (cabeçalho com o id), linha em branco entre eles e o comentário no fim', () => {
-    expect(buildQuotedMessage(quotes, 'Meu comentário')).toBe(
+  it('um bloco `>` por trecho (cabeçalho "[trecho N] · mensagem <id>"), linha em branco entre eles e o texto no fim', () => {
+    expect(buildQuotedMessage(quotes, 'Meu [trecho 1] e [trecho 2]')).toBe(
       [
-        '> ↳ trecho da mensagem a1',
+        '> [trecho 1] · mensagem a1',
         '> Primeiro parágrafo.',
         '',
-        '> ↳ trecho da mensagem a2',
+        '> [trecho 2] · mensagem a2',
         '> linha 1',
         '>',
         '> linha 3',
         '',
-        'Meu comentário'
+        'Meu [trecho 1] e [trecho 2]'
       ].join('\n')
     )
   })
 
   it('sem comentário, só os blocos; sem trecho, o texto sai exatamente como digitado', () => {
-    expect(buildQuotedMessage(quotes.slice(0, 1), '   ')).toBe('> ↳ trecho da mensagem a1\n> Primeiro parágrafo.')
+    expect(buildQuotedMessage(quotes.slice(0, 1), '   ')).toBe('> [trecho 1] · mensagem a1\n> Primeiro parágrafo.')
     expect(buildQuotedMessage([], '  oi\n')).toBe('  oi\n')
   })
 
   it('o caminho inverso devolve os mesmos trechos (e ignora citação comum)', () => {
     const text = `> uma citação qualquer\n\n${buildQuotedMessage(quotes, 'ok')}`
     expect(parseQuotes(text)).toEqual(quotes)
-    expect(parseQuotes('> ↳ trecho da mensagem a9\n\ntexto')).toEqual([]) // cabeçalho sem trecho
+    expect(parseQuotes('> [trecho 1] · mensagem a9\n\ntexto')).toEqual([]) // cabeçalho sem trecho
     expect(parseQuotes('sem citação')).toEqual([])
+  })
+
+  it('o formato antigo ("> ↳ trecho da mensagem <id>") continua sendo lido, até misturado com o novo', () => {
+    const legacy = '> ↳ trecho da mensagem a1\n> Primeiro parágrafo.\n\n> [trecho 2] · mensagem a2\n> linha 1\n\nok'
+    expect(parseQuotes(legacy)).toEqual([
+      { messageId: 'a1', text: 'Primeiro parágrafo.' },
+      { messageId: 'a2', text: 'linha 1' }
+    ])
+    expect(parseQuotes('> ↳ trecho da mensagem a9\n\ntexto')).toEqual([])
+    expect(hasQuoteHeader(legacy)).toBe(true)
+    expect(hasQuoteHeader('[trecho 1] solto no texto')).toBe(false)
+    const msgs: UIMessage[] = [{ kind: 'user', id: 'u1', text: '> ↳ trecho da mensagem a1\n> velho' }]
+    expect(indexCommented(msgs).get('a1')?.map((q) => q.text)).toEqual(['velho'])
   })
 
   it('indexCommented junta por id só o que veio de mensagens do usuário', () => {

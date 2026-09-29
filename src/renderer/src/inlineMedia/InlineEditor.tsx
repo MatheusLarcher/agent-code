@@ -442,7 +442,9 @@ export function InlineEditor({ value, order, atts, editable, editorRef, onEdit, 
     if (!isTokenNode(t)) return
     const id = t.getAttribute('data-att-id') ?? ''
     const att = props.current.atts.get(id)
-    if (att) setHover({ att, n: last.current.order.indexOf(id) + 1, rect: t.getBoundingClientRect() })
+    // midia:N conta só as mídias (o trecho citado tem numeração própria, no nome).
+    const media = last.current.order.filter((x) => props.current.atts.get(x)?.kind !== 'quote')
+    if (att) setHover({ att, n: media.indexOf(id) + 1, rect: t.getBoundingClientRect() })
   }
   const onOut = (e: ReactMouseEvent<HTMLDivElement>): void => {
     rest.onMouseOut?.(e)
@@ -473,6 +475,16 @@ function MediaPreview({ att, n, rect }: { att: InlineAtt; n: number; rect: DOMRe
     bottom: Math.max(8, window.innerHeight - rect.top + 8)
   }
   const size = att.kind === 'file' ? att.file.size : att.kind === 'ref' ? att.ref.size : 0
+  if (att.kind === 'quote') {
+    return (
+      <div className="inline-att-preview" style={style} role="tooltip">
+        <div className="inline-att-preview-cap">
+          <b>{att.name}</b> · mensagem {att.quote.messageId}
+          <div className="inline-att-preview-path qc-preview-text">{att.quote.text}</div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="inline-att-preview" style={style} role="tooltip">
       {att.kind === 'image' ? <img src={att.src} alt="" /> : <img className="chip" src={att.src} alt="" />}

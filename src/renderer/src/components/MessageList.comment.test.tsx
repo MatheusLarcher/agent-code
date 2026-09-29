@@ -6,7 +6,8 @@ import type { UIMessage } from '../types'
 import { UiProvider } from '../ui/UiProvider'
 import { MessageList } from './MessageList'
 import { useQuoteComments } from './quoteComment/useQuoteComments'
-import { buildQuotedMessage } from './quoteComment/quoteFormat'
+import { buildQuotedMessage, type Quote } from './quoteComment/quoteFormat'
+import { useRef } from 'react'
 
 afterEach(cleanup)
 
@@ -24,13 +25,23 @@ const ANSWER: UIMessage = {
   answer: true
 }
 
-/** A lista com o estado de verdade do "Comentar" (o mesmo hook do ChatPanel). */
+/** A lista com o estado de verdade do "Comentar" (o mesmo hook do ChatPanel). No
+ *  lugar do Composer, um campo de mentira que só guarda os trechos (sem repetir). */
 function Harness({ messages }: { messages: UIMessage[] }): JSX.Element {
-  const quote = useQuoteComments('c1', messages)
+  const quote = useQuoteComments(messages)
+  const inField = useRef<Quote[]>([])
+  quote.link.inserterRef.current = {
+    insert: (q) => {
+      if (inField.current.some((x) => x.messageId === q.messageId && x.text === q.text)) return 'dup'
+      inField.current = [...inField.current, q]
+      quote.link.onChange(inField.current)
+      return 'ok'
+    }
+  }
   return (
     <>
       <MessageList messages={messages} busy={false} tts={tts} onRetry={() => {}} quote={quote.list} />
-      <output data-testid="chips">{quote.chips.map((c) => `${c.messageId}:${c.text}`).join('|')}</output>
+      <output data-testid="chips">{quote.pending.map((c) => `${c.messageId}:${c.text}`).join('|')}</output>
     </>
   )
 }
@@ -115,6 +126,17 @@ describe('MessageList — "Comentar" nos blocos da resposta do agente', () => {
     const other = { ...reply, text: reply.text.replace('mensagem a1', 'mensagem a9') }
     const again = renderList([ANSWER, other])
     expect(paragraphs(again.container)[1].classList.contains('qc-commented')).toBe(false)
+  })
+
+  it('mensagem antiga, com o cabeçalho "> ↳ trecho da mensagem <id>", continua destacando o bloco', () => {
+    const legacy: UIMessage = {
+      kind: 'user',
+      id: 'u2',
+      text: '> ↳ trecho da mensagem a1\n> Segundo parágrafo, com negrito.\n\nPor quê?'
+    }
+    const { container } = renderList([ANSWER, legacy])
+    expect(paragraphs(container)[1].classList.contains('qc-commented')).toBe(true)
+    expect(paragraphs(container)[0].classList.contains('qc-commented')).toBe(false)
   })
 
   it('trecho que termina em "…" por conta própria só destaca o bloco igual, não o que começa igual', () => {
