@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
 import { UiProvider } from '../ui/UiProvider'
 import { Sidebar } from './Sidebar'
-import type { Conversation } from '../types'
+import { DEFAULT_TITLE, type Conversation } from '../types'
 
 afterEach(cleanup)
 
@@ -80,6 +80,50 @@ describe('Sidebar — renomear conversa', () => {
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(onRename).not.toHaveBeenCalled()
     expect(screen.queryByRole('textbox')).toBeNull()
+  })
+})
+
+describe('Sidebar — excluir conversa', () => {
+  function renderDelete(conv: Conversation): ReturnType<typeof vi.fn> {
+    const onDelete = vi.fn()
+    render(
+      <UiProvider>
+        <Sidebar
+          collapsed={false}
+          onToggleCollapse={() => {}}
+          projects={[{ path: conv.cwd, name: 'meu-app', conversations: [conv] }]}
+          recents={[conv]}
+          activeId={conv.id}
+          busyIds={new Set()}
+          onSelect={() => {}}
+          onNewChat={() => {}}
+          onNewProject={() => {}}
+          onNewChatIn={() => {}}
+          onRename={() => {}}
+          onDelete={onDelete}
+          onSelectResult={() => {}}
+        />
+      </UiProvider>
+    )
+    return onDelete
+  }
+
+  it('conversa vazia sai sem perguntar', () => {
+    const onDelete = renderDelete({ ...makeConv(), title: DEFAULT_TITLE })
+    fireEvent.click(screen.getAllByTitle('Excluir conversa')[0])
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(onDelete).toHaveBeenCalledWith('c1')
+    expect(screen.getByText('Conversa excluída.')).toBeTruthy()
+  })
+
+  it('conversa com mensagem só sai depois de confirmar no diálogo', async () => {
+    const onDelete = renderDelete({ ...makeConv(), title: DEFAULT_TITLE, messages: [{ id: 'u1', kind: 'user', text: 'oi' }] })
+    fireEvent.click(screen.getAllByTitle('Excluir conversa')[0])
+    const dialog = await screen.findByRole('dialog')
+    expect(onDelete).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Excluir' }))
+    await waitFor(() => expect(onDelete).toHaveBeenCalledWith('c1'))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 

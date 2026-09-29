@@ -150,7 +150,12 @@ describe('managerQuestionnaireRequest', () => {
     expect(text).toContain('AskUserQuestion, até 4 por vez')
     expect(text).toContain("'(Recomendado)'")
     expect(text).toContain('registre nos cards (decisão, ambiguidade resolvida)')
-    expect(text).toContain("Sem perguntas em aberto, diga só 'Nenhuma pergunta em aberto.'")
+    expect(text).toContain('mcp__planning__plan_read e percorra o roteiro etapa por etapa')
+    expect(text).toContain('pesquise na web (WebSearch/WebFetch)')
+    expect(text).toContain('mcp__planning__plan_etapa_marcar')
+    expect(text).toContain(
+      "Só diga 'Nenhuma pergunta em aberto.' se todas as etapas do roteiro estiverem concluídas e não houver ambiguidade aberta."
+    )
     expect(text).toMatch(/Não implemente nada\.$/)
   })
 })

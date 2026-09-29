@@ -4,6 +4,7 @@ import { useUI } from '../ui/UiProvider'
 import { IconSpinner } from './Icons'
 import { IconPlanning } from '../planning/PlanningIcon'
 import { isPlanningConversation } from '../planning/planningConversation'
+import { isBlankConversation } from '../blankConversation'
 
 export interface SidebarProject {
   path: string
@@ -296,14 +297,17 @@ export function Sidebar(props: Props): JSX.Element {
   }
   const cancelEdit = (): void => setEditing(null)
 
+  // Conversa vazia não tem o que perder: sai sem o diálogo.
   const confirmDelete = async (c: Conversation): Promise<void> => {
-    const ok = await ui.confirm({
-      title: 'Excluir conversa',
-      message: `Tem certeza que deseja excluir "${c.title}"? Esta ação não pode ser desfeita.`,
-      confirmLabel: 'Excluir',
-      cancelLabel: 'Cancelar',
-      danger: true
-    })
+    const ok =
+      isBlankConversation(c) ||
+      (await ui.confirm({
+        title: 'Excluir conversa',
+        message: `Tem certeza que deseja excluir "${c.title}"? Esta ação não pode ser desfeita.`,
+        confirmLabel: 'Excluir',
+        cancelLabel: 'Cancelar',
+        danger: true
+      }))
     if (ok) {
       props.onDelete(c.id)
       ui.notify('sucesso', 'Conversa excluída.')

@@ -3371,3 +3371,17 @@ describe('App — título automático (recuo na hora, nome curto do LLM depois)'
     })
   })
 })
+
+describe('App — conversa vazia', () => {
+  it('"Nova conversa neste projeto" 2x no mesmo projeto: nasce UMA só, e ela fica ativa', async () => {
+    const { container } = render(<UiProvider><App /></UiProvider>)
+    fireEvent.click(await screen.findByTitle('Nova conversa neste projeto'))
+    fireEvent.click(screen.getByTitle('Nova conversa neste projeto'))
+
+    const titles = (selector: string): string[] =>
+      [...container.querySelectorAll<HTMLElement>(selector)].map((el) => el.textContent ?? '')
+    // Cada conversa aparece duas vezes na barra (Projetos + Chats): c1 + UMA nova.
+    expect(titles('.conv-row .conv-title').sort()).toEqual(['Conversa', 'Conversa', 'Nova conversa', 'Nova conversa'])
+    expect(titles('.conv-row.active .conv-title')).toEqual(['Nova conversa', 'Nova conversa'])
+  })
+})

@@ -36,6 +36,7 @@ import type { AutoPrompt, AutoPromptTurn, EffortChoice, ProjectTree } from '@sha
 import { fileTouches, turnsOf } from './projectActivity'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
+import { findBlankConversation } from './blankConversation'
 import {
   claudeUsageAllowsLlmTitle,
   deriveTitle,
@@ -1878,6 +1879,17 @@ export function App(): JSX.Element {
     return conv
   }
 
+  // Os botões de "Nova conversa" voltam para a conversa vazia que a pasta já
+  // tem (a ativa, se for ela) em vez de deixar duas vazias lado a lado.
+  // Planejamento, handoff, MCP e celular precisam de uma conversa NOVA e
+  // chamam createConversation direto.
+  const openBlankOrCreate = (folder: string): Conversation => {
+    const blank = findBlankConversation(convsRef.current, folder, activeIdRef.current)
+    if (!blank) return createConversation(folder)
+    setActiveId(blank.id)
+    return blank
+  }
+
   const newChat = useCallback(async (): Promise<void> => {
     let folder = getActive()?.cwd || convsRef.current[0]?.cwd || ''
     if (!folder) {
@@ -1887,19 +1899,19 @@ export function App(): JSX.Element {
         return
       }
     }
-    createConversation(folder)
+    openBlankOrCreate(folder)
   }, [notify])
 
   const newProject = useCallback(async (): Promise<void> => {
     const folder = (await window.api.pickDirectory()) || ''
-    if (folder) createConversation(folder)
+    if (folder) openBlankOrCreate(folder)
     else notify('aviso', 'Nenhuma pasta selecionada.')
   }, [notify])
 
   // Start a new conversation inside a specific project (from the per-project "+"
   // button next to the project name in the sidebar).
   const newChatIn = useCallback((folder: string): void => {
-    createConversation(folder)
+    openBlankOrCreate(folder)
   }, [])
 
   // "Novo planejamento" (barra lateral): o diálogo cria o plano no main ou
@@ -2106,7 +2118,7 @@ export function App(): JSX.Element {
       notify('aviso', 'Nenhuma pasta selecionada.')
       return
     }
-    const conv = createConversation(folder)
+    const conv = openBlankOrCreate(folder)
     try {
       await connect(conv)
       notify('sucesso', `Conectado · ${basename(conv.cwd)}`)
