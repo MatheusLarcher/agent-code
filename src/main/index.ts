@@ -44,7 +44,14 @@ import {
   type BoardItemStatus,
   type SpeechSetupProgress
 } from '../shared/ipc'
-import { ensureConfigLoaded, initializeConfigPersistence, loadConfig, updateConfig } from './config'
+import {
+  ensureConfigLoaded,
+  initializeConfigPersistence,
+  isConfigLoaded,
+  loadConfig,
+  reloadConfigPersistence,
+  updateConfig
+} from './config'
 import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAudioSegment } from './openai'
 import { stopLocalSpeech, transcribeLocal } from './speech'
 import { isAuthenticated, logoutClaude } from './auth'
@@ -81,6 +88,7 @@ import { PlanningConversations, planningStartOptions } from './planning/planning
 import { setPlanningDataRoot } from './planning/planningRoot'
 import { registerConversationTitleIpc } from './titles/conversationTitleIpc'
 import { Po } from './po/po'
+import { createPoLogWriter } from './po/poLog'
 import { Memorista } from './memoria/memorista'
 import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
 import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
@@ -366,6 +374,8 @@ const board = new BoardService({
 const po = new Po({
   config: () => loadConfig().board ?? DEFAULT_CONFIG.board,
   board,
+  // Uma linha por rodada em <userData>/po-decisions.log (ver po/poLog.ts).
+  decisionLog: createPoLogWriter(),
   diagnose: (diagnostic) => send(Channels.poProviderDiagnostic, {
     ...diagnostic,
     id: randomUUID(),
@@ -495,6 +505,9 @@ async function updateAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   if ('chromeControlEnabled' in patch && typeof patch.chromeControlEnabled !== 'boolean') {
     throw new TypeError('chromeControlEnabled deve ser booleano.')
   }
+  // Depois da carga: antes dela `loadConfig()` é o padrão, e comparar a key
+  // real com a vazia faria parecer que ela mudou.
+  await ensureConfigLoaded()
   const before = loadConfig().typesafe
   const next = await updateConfig(patch)
   // Chave nova salva ou Modo Automático religado: sai da pausa na hora.
@@ -1212,7 +1225,8 @@ export function registerIpc(): void {
     const info = setCacheDir(res.filePaths[0])
     if (storageLifecycle.status().backend === 'sqlite') {
       await storageLifecycle.initializeSqlite(info)
-      await initializeConfigPersistence()
+      // Reload, não init: a init já carregada devolvia o snapshot da pasta antiga.
+      await reloadConfigPersistence()
       await initializeCodexAuthPersistence()
     } else {
       storageLifecycle.updateSqliteLocation(info)
@@ -2021,6 +2035,10 @@ export function registerIpc(): void {
       // Aqui também começa a ABERTURA dele: o pedido tem que virar cartão antes
       // de o agente trabalhar, senão o que ele nunca declarar não deixa rastro.
       if (observed) po.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
+      // O que o fim do turno anterior devolveu para "a fazer" volta para "em
+      // andamento" sem depender do PO (gate, cooldown, modelo) — ver
+      // `BoardService.resumeTurn`. Nunca rejeita nem segura o envio.
+      if (observed) void board.resumeTurn(convId, sessionCwds.get(convId) ?? '')
       // O memorista precisa do mesmo marco: é a mensagem do usuário que pode
       // ENSINAR algo, e a pasta do projeto entra na memória como contexto.
       if (observed) memorista.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
@@ -2337,11 +2355,26 @@ app.whenReady().then(async () => {
   storageLifecycle.subscribe((status) => {
     send(Channels.storageStatusChanged, status)
     sessionStorageRecovery(status)
+    // Boot com o banco offline pula a carga da config; quando ele volta, carrega
+    // aqui (idempotente depois do sucesso) e avisa o renderer pelo mesmo evento
+    // de config alterada que ele já trata, para reler os interruptores.
+    const ready = status.state === 'postgres-ready' || status.state === 'sqlite-ready'
+    if (ready && storageLifecycle.canMutate() && !isConfigLoaded()) {
+      void initializeConfigPersistence()
+        .then(() =>
+          send(Channels.storageChanged, [{ changeId: 'config-loaded', entity: 'device-kv', entityId: 'config.loaded' }])
+        )
+        .catch((error) => authLog(`config load on storage ready failed: ${error instanceof Error ? error.message : String(error)}`))
+    }
   })
   storageLifecycle.subscribeChanges((changes) => {
     void (async () => {
       if (changes.some((change) => change.entity.endsWith('-kv') && change.entityId.startsWith('config.'))) {
-        await initializeConfigPersistence()
+        // Falha no reload não pode segurar o lote: as mudanças de conversa que
+        // vieram junto ainda precisam chegar ao renderer.
+        await reloadConfigPersistence().catch((error: unknown) => {
+          authLog(`config reload failed: ${error instanceof Error ? error.message : String(error)}`)
+        })
       }
       if (changes.some((change) => change.entity.endsWith('-kv') && change.entityId === 'codexAuth')) {
         await initializeCodexAuthPersistence()

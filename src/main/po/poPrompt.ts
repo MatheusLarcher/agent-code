@@ -77,6 +77,9 @@ export const PO_MAX_LEDGER_TASKS = 15
  *  vez é quase certamente um PO que entendeu tudo errado. */
 export const PO_MAX_OPS = 6
 export const PO_MAX_TITLE_CHARS = 90
+/** Teto da última resposta do agente no digest (~150 tokens). Cortada pelo
+ *  INÍCIO: é no fim que ficam a conclusão ou a pergunta ao usuário. */
+export const PO_MAX_REPLY_CHARS = 600
 
 export interface PoCall {
   tool: string
@@ -124,6 +127,10 @@ Regras inegociáveis:
 - O título diz o que o usuário pediu, em uma linha e em português claro.
 - Se houver uma seção "TAREFAS DO REGISTRO NESTA CONVERSA" com uma tarefa do MESMO assunto,
   trate como cartão já existente — não crie outro.
+- Se houver uma seção "ÚLTIMA RESPOSTA DO AGENTE", ela é a resposta do turno ANTERIOR — o que o
+  usuário está respondendo agora. Use-a para reconhecer continuação (um "pode fazer" responde ao
+  que o agente perguntou ali) e para dar ao título o assunto real, nunca um título genérico como
+  "Pesquisar direito". Ela não é pedido: só vira cartão o que o USUÁRIO pediu.
 - No máximo ${PO_MAX_OPS} operações. Sem texto fora das linhas de operação.`
 
 export const PO_SYSTEM_PROMPT_CLOSE = `Você é o PO (product owner) de um quadro de tarefas.
@@ -147,12 +154,17 @@ NOVA | <título> | <motivo curto>
 Se não houver nada a corrigir, responda exatamente OK. Na dúvida, responda OK.
 
 Regras inegociáveis:
-- Só use CONCLUIR quando as AÇÕES mostrarem que o trabalho daquela tarefa terminou de fato
-  (o arquivo foi escrito, o teste rodou). Suposição não basta: marcar como concluído algo
-  que não terminou é o pior erro que você pode cometer aqui.
+- Só use CONCLUIR com EVIDÊNCIA de que o trabalho daquela tarefa terminou de fato: as AÇÕES
+  mostram (o arquivo foi escrito, o teste rodou) ou a ÚLTIMA RESPOSTA DO AGENTE entrega o
+  resultado pedido — em pesquisa, investigação ou diagnóstico, o resultado É a resposta.
+  Suposição não basta: marcar como concluído algo que não terminou é o pior erro que você pode
+  cometer aqui.
+- Se a ÚLTIMA RESPOSTA DO AGENTE termina pedindo uma decisão, uma confirmação ou um dado ao
+  usuário ("posso aplicar?", "qual você prefere?"), NÃO use CONCLUIR no trabalho de que ela
+  fala: ele está esperando o usuário, não terminou.
 - Nunca use CONCLUIR numa tarefa que já está concluída.
 - Uma tarefa que ficou "em andamento" no fim do turno é a candidata MAIS provável ao
-  esquecimento — mas só conclua se as ações provarem que ela terminou. Trabalho que vai
+  esquecimento — mas só conclua se a evidência provar que ela terminou. Trabalho que vai
   continuar na próxima mensagem continua em andamento.
 - O <id> tem que ser um dos ids listados no quadro. Não invente id.
 - TITULO é para deixar legível, não para mudar o significado. Mantenha o assunto.
@@ -173,6 +185,12 @@ Regras inegociáveis:
 function clamp(text: string, max: number): string {
   const clean = (text ?? '').replace(/\s+/g, ' ').trim()
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean
+}
+
+/** Como `clamp`, mas guardando o FIM do texto. */
+function clampTail(text: string, max: number): string {
+  const clean = (text ?? '').replace(/\s+/g, ' ').trim()
+  return clean.length > max ? `…${clean.slice(clean.length - (max - 1))}` : clean
 }
 
 function statusLabel(status: BoardItemStatus): string {
@@ -214,6 +232,9 @@ export function buildPoDigest(input: {
   calls: PoCall[]
   phase?: PoPhase
   ledgerTasks?: PoLedgerTask[]
+  /** O último texto final do agente: a do turno no fechamento, a do turno
+   *  anterior na abertura. */
+  agentReply?: string | null
 }): string {
   const cards = input.cards.slice(0, PO_MAX_CARDS)
   const calls = input.calls.slice(0, PO_MAX_CALLS)
@@ -236,6 +257,11 @@ export function buildPoDigest(input: {
       ...(calls.length === 0 ? ['(nenhuma)'] : calls.map((call) => `- ${call.tool}: ${call.detail}`))
     )
   }
+  // O alvo das ferramentas não mostra o resultado de uma pesquisa nem a
+  // pergunta que deixou o trabalho esperando o usuário — a resposta mostra.
+  // Sem texto, sem seção: o digest fica exatamente como era.
+  const reply = clampTail(input.agentReply ?? '', PO_MAX_REPLY_CHARS)
+  if (reply) lines.push('', 'ÚLTIMA RESPOSTA DO AGENTE:', reply)
   // Só aparece quando há algo a mostrar: uma seção vazia ensinaria o modelo a
   // esperar por uma fonte de evidência que não existe nesta conversa.
   const ledgerTasks = (input.ledgerTasks ?? []).slice(0, PO_MAX_LEDGER_TASKS)

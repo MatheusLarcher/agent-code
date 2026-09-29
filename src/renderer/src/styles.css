@@ -4153,6 +4153,23 @@ img.inline-att[data-caret] {
   color: var(--warn, #e0a341);
   font-weight: 600;
 }
+/* Só agrupa para o `disabled`: some do layout, as seções seguem no gap do pai. */
+.settings-fieldset {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.settings-fieldset:disabled .settings-section {
+  opacity: 0.6;
+}
+.settings-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 .settings-key-row {
   display: flex;
   gap: 8px;
@@ -6734,6 +6751,15 @@ img.inline-att[data-caret] {
 .board-tag.auto {
   border-color: rgba(127, 174, 111, 0.5);
   color: var(--ok);
+}
+/* "Aguardando você"/"Interrompido": cartão "a fazer" que o fim de turno rebaixou. */
+.board-tag.awaiting {
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  color: var(--warn);
+}
+.board-tag.awaiting.error {
+  border-color: color-mix(in srgb, var(--err) 55%, transparent);
+  color: var(--err);
 }
 
 /* Lista */

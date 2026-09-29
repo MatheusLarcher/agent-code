@@ -180,6 +180,48 @@ export function boardItemStatus(item: BoardItem): BoardItemStatus {
   return item.poStatus ?? item.sourceStatus
 }
 
+/**
+ * O motivo gravado no cartão que o fim de turno devolveu para "a fazer", por
+ * como o turno acabou. Diz o FATO — o quadro não sabe (nem tem como saber) se o
+ * agente desistiu ou esqueceu. Mora aqui porque o main grava e a tela reconhece
+ * a MESMA frase: em duas cópias, o selo pararia de aparecer em silêncio no dia
+ * em que uma delas mudasse.
+ */
+export const BOARD_TURN_END_REASON = {
+  result: 'o turno terminou sem concluir esta tarefa',
+  error: 'o turno foi interrompido com esta tarefa em andamento'
+} as const
+
+export type BoardTurnEndKind = keyof typeof BOARD_TURN_END_REASON
+
+/** Como o turno acabou para este cartão, quando ele está "a fazer" SÓ porque o
+ *  fim de turno o rebaixou (e nada o tocou depois); `null` em qualquer outro
+ *  caso — inclusive o cartão "a fazer" que nunca começou. */
+export function boardItemTurnEndKind(item: BoardItem): BoardTurnEndKind | null {
+  if (item.dismissedAt !== null || item.poStatus !== 'pending') return null
+  if (item.poReason === BOARD_TURN_END_REASON.result) return 'result'
+  if (item.poReason === BOARD_TURN_END_REASON.error) return 'error'
+  return null
+}
+
+const BOARD_TURN_END_BADGE: Record<BoardTurnEndKind, string> = {
+  result: 'Aguardando você',
+  error: 'Interrompido'
+}
+
+/**
+ * O selo do cartão "a fazer" que o fim de turno rebaixou: tira a ambiguidade
+ * de "a fazer" (nunca começou × começou e parou esperando alguém) sem estágio
+ * novo nem migration. Some sozinho quando qualquer um volta a mexer no estado
+ * (promoção, conclusão, arrasto, o agente mudando o status), porque aí o
+ * `poStatus`/`poReason` deixa de ser o do fim de turno.
+ */
+export function boardItemAwaitingBadge(item: BoardItem): { kind: BoardTurnEndKind; label: string } | null {
+  if (boardItemStatus(item) !== 'pending') return null
+  const kind = boardItemTurnEndKind(item)
+  return kind ? { kind, label: BOARD_TURN_END_BADGE[kind] } : null
+}
+
 /** `true` quando o PO discorda do agente sobre o estado — o que a UI marca
  *  como corrigido e o que dá para auditar depois. */
 export function isBoardItemPoCorrected(item: BoardItem): boolean {

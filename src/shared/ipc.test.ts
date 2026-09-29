@@ -11,8 +11,62 @@ import {
   CLAUDE_MODELS,
   RETIRED_MODEL_REPLACEMENTS,
   currentModelId,
-  isOpenAIModel
+  isOpenAIModel,
+  boardItemAwaitingBadge,
+  BOARD_TURN_END_REASON,
+  type BoardItem
 } from './ipc'
+
+describe('boardItemAwaitingBadge — selo do cartão rebaixado pelo fim de turno', () => {
+  const item = (over: Partial<BoardItem> = {}): BoardItem => ({
+    id: 'bi-1',
+    projectId: 'p',
+    projectCwd: 'C:/p',
+    conversationId: 'c',
+    origin: 'agent',
+    sourceId: '1',
+    sourceTitle: 't',
+    sourceStatus: 'in_progress',
+    activeForm: null,
+    seq: 0,
+    poTitle: null,
+    poNote: null,
+    poStatus: 'pending',
+    poReason: BOARD_TURN_END_REASON.result,
+    poAt: '2026-09-28T10:00:00Z',
+    dismissedAt: null,
+    revision: 1,
+    createdAt: '',
+    updatedAt: '',
+    ...over
+  })
+
+  it('mostra "Aguardando você" (fim normal) e "Interrompido" (erro)', () => {
+    expect(boardItemAwaitingBadge(item())).toEqual({ kind: 'result', label: 'Aguardando você' })
+    expect(boardItemAwaitingBadge(item({ poReason: BOARD_TURN_END_REASON.error }))).toEqual({
+      kind: 'error',
+      label: 'Interrompido'
+    })
+  })
+
+  it('some quando o cartão é promovido', () => {
+    expect(boardItemAwaitingBadge(item({ poStatus: 'in_progress', poReason: 'o usuário retomou a conversa' }))).toBeNull()
+  })
+
+  it('some quando é concluído, movido pelo usuário, dispensado ou o agente muda o status', () => {
+    expect(boardItemAwaitingBadge(item({ poStatus: 'completed', poReason: 'o teste passou' }))).toBeNull()
+    expect(
+      boardItemAwaitingBadge(item({ poReason: 'o usuário moveu o cartão para "a fazer" pelo quadro' }))
+    ).toBeNull()
+    expect(boardItemAwaitingBadge(item({ dismissedAt: '2026-09-28T11:00:00Z' }))).toBeNull()
+    // A ingestão limpa po_status/po_reason quando o agente muda o status.
+    expect(boardItemAwaitingBadge(item({ poStatus: null, poReason: null, sourceStatus: 'pending' }))).toBeNull()
+  })
+
+  it('cartão "a fazer" que nunca começou não mostra selo', () => {
+    expect(boardItemAwaitingBadge(item({ sourceStatus: 'pending', poStatus: null, poReason: null, poAt: null }))).toBeNull()
+  })
+})
 
 describe('controle do Windows — contrato compartilhado', () => {
   it('começa desligado e usa canais IPC independentes de permitir tudo', () => {

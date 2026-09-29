@@ -7,6 +7,9 @@ import {
   parsePoVerdict,
   PO_MAX_CALLS,
   PO_MAX_OPS,
+  PO_MAX_REPLY_CHARS,
+  PO_SYSTEM_PROMPT_CLOSE,
+  PO_SYSTEM_PROMPT_OPEN,
   rejectUnsafeOps,
   summarizeCall
 } from './poPrompt'
@@ -35,6 +38,44 @@ function card(over: Partial<BoardItem> = {}): BoardItem {
     ...over
   }
 }
+
+describe('digest — última resposta do agente', () => {
+  const base = { userText: 'pesquisa direito', cards: [], calls: [] }
+
+  it('sem resposta, o digest é exatamente o de antes', () => {
+    const without = buildPoDigest(base)
+    expect(buildPoDigest({ ...base, agentReply: null })).toBe(without)
+    expect(buildPoDigest({ ...base, agentReply: '   ' })).toBe(without)
+    expect(without).not.toContain('ÚLTIMA RESPOSTA DO AGENTE')
+  })
+
+  it('mostra a resposta nas duas fases', () => {
+    for (const phase of ['open', 'close'] as const) {
+      const digest = buildPoDigest({ ...base, phase, agentReply: 'Encontrei três opções de cadastro.' })
+      expect(digest).toContain('ÚLTIMA RESPOSTA DO AGENTE:\nEncontrei três opções de cadastro.')
+    }
+  })
+
+  it('corta pelo INÍCIO, mantendo o fim (conclusão ou pergunta) dentro do teto', () => {
+    const reply = `${'contexto '.repeat(200)}Posso aplicar a correção?`
+    const digest = buildPoDigest({ ...base, agentReply: reply })
+    const section = digest.split('ÚLTIMA RESPOSTA DO AGENTE:\n')[1]
+    expect(section.length).toBe(PO_MAX_REPLY_CHARS)
+    expect(section.startsWith('…')).toBe(true)
+    expect(section.endsWith('Posso aplicar a correção?')).toBe(true)
+  })
+
+  it('o fechamento aceita a resposta como evidência e proíbe concluir o que espera o usuário', () => {
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('ÚLTIMA RESPOSTA DO AGENTE entrega o\n  resultado pedido')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toMatch(/termina pedindo uma decisão[\s\S]*NÃO use CONCLUIR/)
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Suposição não basta')
+  })
+
+  it('a abertura usa a resposta anterior para continuação e títulos com contexto', () => {
+    expect(PO_SYSTEM_PROMPT_OPEN).toContain('"ÚLTIMA RESPOSTA DO AGENTE"')
+    expect(PO_SYSTEM_PROMPT_OPEN).toContain('só vira cartão o que o USUÁRIO pediu')
+  })
+})
 
 describe('digest', () => {
   it('leva pedido, quadro e ações — e respeita os tetos', () => {

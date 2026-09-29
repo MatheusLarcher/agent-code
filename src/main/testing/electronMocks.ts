@@ -33,7 +33,7 @@ export type CreatedSession = {
 /** Espiões: os quatro observadores, as sessões criadas e o que o `start()` delas devolve. */
 export const spy = {
   observe: { vigia: vi.fn(), board: vi.fn(), po: vi.fn(), memorista: vi.fn() },
-  note: { vigia: vi.fn(), po: vi.fn(), memorista: vi.fn() },
+  note: { vigia: vi.fn(), po: vi.fn(), memorista: vi.fn(), board: vi.fn(async () => undefined) },
   sessions: [] as CreatedSession[],
   planningConfig: { model: 'claude-opus-5-5', effort: 'high' },
   /** Resultado dos próximos `start()` (vazio = sobe; promessa = subida que o teste solta). */
@@ -205,6 +205,7 @@ vi.mock('../vigia/vigia', () => ({
 vi.mock('../board/boardService', () => ({
   BoardService: class {
     observe = spy.observe.board
+    resumeTurn = spy.note.board
     dispose(): void {}
   }
 }))

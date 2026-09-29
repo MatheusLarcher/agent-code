@@ -182,10 +182,51 @@ describe('BoardPanel', () => {
     // acabam iguais, então não é "correção" — mas o cartão tem motivo para ler.
     mockApi({
       available: true,
-      items: [card({ poStatus: 'pending', poReason: 'o turno terminou sem concluir esta tarefa' })]
+      items: [card({ poStatus: 'pending', poReason: 'o PO reviu o cartão' })]
     })
     render(panel())
     expect(await screen.findByText('PO revisou')).toBeTruthy()
+  })
+
+  it('cartão rebaixado pelo fim de turno mostra "Aguardando você" no Quadro e na Lista, no lugar de "PO revisou/corrigiu"', async () => {
+    mockApi({
+      available: true,
+      items: [
+        card({ id: 'a', sourceTitle: 'parado', poStatus: 'pending', poReason: 'o turno terminou sem concluir esta tarefa' }),
+        card({
+          id: 'b',
+          sourceTitle: 'interrompido',
+          sourceStatus: 'in_progress',
+          poStatus: 'pending',
+          poReason: 'o turno foi interrompido com esta tarefa em andamento'
+        }),
+        card({ id: 'c', sourceTitle: 'nunca começou' })
+      ]
+    })
+    render(panel())
+    await screen.findByText('parado')
+    expect(screen.getAllByText('Aguardando você')).toHaveLength(1)
+    expect(screen.getAllByText('Interrompido')).toHaveLength(1)
+    expect(screen.queryByText('PO revisou')).toBeNull()
+    expect(screen.queryByText('PO corrigiu')).toBeNull()
+
+    fireEvent.click(screen.getByText('Lista'))
+    await screen.findByText(/Quadro de tarefas/)
+    expect(screen.getAllByText('Aguardando você')).toHaveLength(1)
+    expect(screen.getAllByText('Interrompido')).toHaveLength(1)
+  })
+
+  it('o selo some quando o cartão é promovido ou concluído', async () => {
+    mockApi({
+      available: true,
+      items: [
+        card({ id: 'a', sourceTitle: 'retomado', poStatus: 'in_progress', poReason: 'o usuário retomou a conversa' }),
+        card({ id: 'b', sourceTitle: 'feito', poStatus: 'completed', poReason: 'o teste passou' })
+      ]
+    })
+    render(panel())
+    await screen.findByText('retomado')
+    expect(screen.queryByText('Aguardando você')).toBeNull()
   })
 
   it('quadro vazio e quadro indisponível dizem coisas DIFERENTES', async () => {

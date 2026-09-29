@@ -78,6 +78,8 @@ describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
     expect(spy.note.vigia).toHaveBeenCalledWith('comum', cwd, 'corrige o bug')
     expect(spy.note.po).toHaveBeenCalledWith('comum', cwd, 'corrige o bug')
     expect(spy.note.memorista).toHaveBeenCalledWith('comum', cwd, 'corrige o bug')
+    // A promoção determinística do quadro nasce no mesmo marco.
+    expect(spy.note.board).toHaveBeenCalledWith('comum', cwd)
   })
 
   it('agent:dispose limpa a conversa do registro de planejamento', async () => {

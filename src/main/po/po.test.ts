@@ -1256,3 +1256,86 @@ describe('Po — vínculo automático tarefa↔cartão quando o cartão entra em
     })
   })
 })
+
+describe('Po — a última resposta do agente como evidência', () => {
+  const text = (value: string, final = true): ChatEvent => ({ kind: 'assistant-text', id: 'a', text: value, final })
+  const replyOf = (prompt: string): string | null => prompt.split('ÚLTIMA RESPOSTA DO AGENTE:\n')[1] ?? null
+
+  it('o fechamento leva a resposta final do turno e conclui a pesquisa entregue', async () => {
+    const board = fakeBoard([card({ sourceStatus: 'in_progress', sourceTitle: 'Pesquisar cadastro no sistema' })])
+    const ask = askPhases({ close: 'CONCLUIR bi-1 | a resposta entregou a pesquisa' })
+    const po = new Po({ config: () => config(), board, ask, gateActive: async () => false })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'pesquisa direito')
+    po.observe('conv-1', toolUse('WebSearch', { query: 'cadastro' }))
+    po.observe('conv-1', text('parcial', false))
+    po.observe('conv-1', text('Resultado: o cadastro exige CNPJ e e-mail.'))
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(replyOf(prompts(ask, 'close')[0])).toBe('Resultado: o cadastro exige CNPJ e e-mail.')
+    expect(board.applyPo).toHaveBeenCalledWith({
+      id: 'bi-1',
+      poStatus: 'completed',
+      poReason: 'a resposta entregou a pesquisa'
+    })
+  })
+
+  it('o texto do result tem preferência sobre o último bloco', async () => {
+    const ask = askPhases()
+    const po = new Po({ config: () => config(), board: fakeBoard([card()]), ask, gateActive: async () => false })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'faz x')
+    po.observe('conv-1', text('bloco'))
+    po.observe('conv-1', { ...result, text: 'Pronto. Posso aplicar em produção?' } as ChatEvent)
+    await flush()
+
+    expect(replyOf(prompts(ask, 'close')[0])).toBe('Pronto. Posso aplicar em produção?')
+  })
+
+  it('a abertura seguinte leva a resposta do turno ANTERIOR, e só ela', async () => {
+    let clock = 1_000_000
+    const ask = askPhases()
+    const po = new Po({ config: () => config(), board: fakeBoard([card()]), ask, gateActive: async () => false, now: () => clock })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'investiga a perda de configurações')
+    po.observe('conv-1', text('Diagnóstico: a carga pula quando o banco está fora. Posso corrigir?'))
+    po.observe('conv-1', result)
+    await flush()
+    clock += 61_000
+    po.noteUserMessage('conv-1', 'C:/p', 'pode fazer')
+    po.observe('conv-1', result)
+    await flush()
+
+    const opens = prompts(ask, 'open')
+    expect(replyOf(opens[0])).toBeNull()
+    expect(replyOf(opens[1])).toBe('Diagnóstico: a carga pula quando o banco está fora. Posso corrigir?')
+    // O turno do "pode fazer" não produziu texto: o fechamento dele não herda o antigo.
+    expect(replyOf(prompts(ask, 'close')[1])).toBeNull()
+  })
+
+  it('turno adiado pelo cooldown leva a resposta para o flush', async () => {
+    const { scheduleFlush, scheduled } = fakeScheduler()
+    const ask = askPhases()
+    const po = new Po({
+      config: () => config(),
+      board: fakeBoard([card()]),
+      ask,
+      gateActive: async () => false,
+      now: () => 1_000_000,
+      scheduleFlush
+    })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'um')
+    po.observe('conv-1', result)
+    await flush()
+    po.noteUserMessage('conv-1', 'C:/p', 'dois')
+    po.observe('conv-1', text('Terminei o dois.'))
+    po.observe('conv-1', result)
+    await flush()
+    for (const entry of scheduled.filter((e) => !e.cancelled)) entry.fn()
+    await flush()
+
+    expect(prompts(ask, 'close').map(replyOf)).toEqual([null, 'Terminei o dois.'])
+  })
+})

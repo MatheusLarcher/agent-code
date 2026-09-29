@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { boardItemStatus } from '../../shared/ipc'
+import { boardItemStatus, boardItemTurnEndKind } from '../../shared/ipc'
 import type {
   BoardItem,
   BoardItemEvent,
@@ -182,6 +182,33 @@ export function boardItemsToReopenBefore(items: BoardItem[], cutoffMs: number): 
     const poAtMs = Date.parse(item.poAt)
     return !Number.isFinite(poAtMs) || poAtMs <= cutoffMs
   })
+}
+
+/** A janela do fallback de `boardItemsToResume`: a reabertura grava os cartões
+ *  de um mesmo fim de turno em sequência, um `applyPo` depois do outro. */
+export const BOARD_RESUME_WINDOW_MS = 15_000
+
+/**
+ * Os cartões que a mensagem do usuário retoma: os que o fim do turno
+ * IMEDIATAMENTE anterior devolveu para "a fazer" e que nada tocou depois
+ * (`boardItemTurnEndKind` — motivo ainda é o do fim de turno, não dispensado).
+ *
+ * `reopened` são os ids que aquele fechamento rebaixou, quando o processo o
+ * viu acontecer — é a resposta exata, sem relógio nenhum (o `poAt` vem do
+ * relógio do banco e o fim do turno do relógio deste PC; comparar os dois
+ * seria apostar na sincronia deles). Sem essa memória (app reiniciado, conversa
+ * continuada noutro PC), o fallback é o último rebaixamento da conversa e os
+ * que caíram na mesma janela curta — os órfãos de turnos mais antigos ficam.
+ */
+export function boardItemsToResume(items: readonly BoardItem[], reopened: ReadonlySet<string> | null): BoardItem[] {
+  const demoted = items.filter((item) => boardItemTurnEndKind(item) !== null)
+  if (reopened) return demoted.filter((item) => reopened.has(item.id))
+  const stamped = demoted
+    .map((item) => ({ item, at: Date.parse(item.poAt ?? '') }))
+    .filter((entry) => Number.isFinite(entry.at))
+  if (stamped.length === 0) return []
+  const latest = Math.max(...stamped.map((entry) => entry.at))
+  return stamped.filter((entry) => entry.at >= latest - BOARD_RESUME_WINDOW_MS).map((entry) => entry.item)
 }
 
 /** Só expira quando o projeto tem MAIS que este tanto de concluídos — com 5 ou

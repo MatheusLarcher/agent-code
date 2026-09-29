@@ -15,6 +15,7 @@ import {
   type PoOp,
   type PoPhase
 } from './poPrompt'
+import type { PoLogEntry, PoLogOutcome, PoLogWriter } from './poLog'
 import { askBoardGate, consultWithFailover, diagnostic, type PoObserverRequest, type PoProviderDeps } from './poProviders'
 import { defer, mergeDeferred, requeueTurn, restoreTaken, type PoDeferred, type PoTurnSnapshot } from './poQueue'
 
@@ -52,6 +53,9 @@ export interface PoDeps extends PoProviderDeps, PoLedgerDeps {
    * verdade, no mesmo espírito de `now`.
    */
   scheduleFlush?(delayMs: number, fn: () => void): () => void
+  /** O diário do PO (uma linha por rodada, ver poLog.ts). Opcional para o
+   *  teste não tocar disco; nunca pode lançar para dentro do PO. */
+  decisionLog?: PoLogWriter
 }
 
 interface ConvState {
@@ -59,6 +63,11 @@ interface ConvState {
   cwd: string
   calls: PoCall[]
   fired: boolean
+  /** O último texto final do agente. Durante o turno é a resposta DELE (vai
+   *  para o fechamento); quando a próxima mensagem chega, é a do turno anterior
+   *  (vai para a abertura) e zera. Mesma regra do memorista: vale o último
+   *  bloco fechado, e o texto do `result` tem preferência quando vem. */
+  reply: string | null
   /** Uma janela de cooldown por FASE: a abertura não pode gastar a do
    *  fechamento, senão o turno que acabou de ser aberto nunca seria auditado. */
   lastRunAt: Record<PoPhase, number>
@@ -102,16 +111,24 @@ export class Po {
 
   noteUserMessage(convId: string, cwd: string, text: string): void {
     const conv = this.conv(convId)
+    // A resposta que o usuário está respondendo agora ("pode fazer" só faz
+    // sentido com ela) — sai com a abertura e dá lugar à deste turno.
+    const previousReply = conv.reply
     conv.userText = text
     conv.cwd = cwd
     conv.calls = []
     conv.fired = false
+    conv.reply = null
     // A ABERTURA: o pedido tem que virar cartão antes de o trabalho começar.
     // Deixar só a auditoria do fim significa que o pedido que o agente nunca
     // declarou não deixa rastro nenhum no quadro — quando o PO olha, já não há
     // o que reconhecer. Em `void`, como todo o resto do observador: ele nunca
     // segura nem derruba o turno do usuário.
-    this.start(convId, 'open', Object.freeze({ userText: text, cwd, calls: Object.freeze([] as PoCall[]) }))
+    this.start(
+      convId,
+      'open',
+      Object.freeze({ userText: text, cwd, calls: Object.freeze([] as PoCall[]), reply: previousReply })
+    )
   }
 
   observe(convId: string, event: ChatEvent): void {
@@ -122,13 +139,19 @@ export class Po {
       if (conv.calls.length > PO_MAX_CALLS) conv.calls.shift()
       return
     }
+    if (event.kind === 'assistant-text') {
+      if (event.final && event.text) conv.reply = event.text
+      return
+    }
     if (event.kind === 'result') {
+      if (event.text) conv.reply = event.text
       // A later user message resets the mutable conversation accumulator while
       // this audit awaits board ingestion. Preserve this turn's evidence now.
       const turn: PoTurnSnapshot = Object.freeze({
         userText: conv.userText,
         cwd: conv.cwd,
-        calls: Object.freeze([...conv.calls])
+        calls: Object.freeze([...conv.calls]),
+        reply: conv.reply
       })
       conv.fired = true
       this.start(convId, 'close', turn)
@@ -226,6 +249,7 @@ export class Po {
         cwd: '',
         calls: [],
         fired: false,
+        reply: null,
         lastRunAt: { open: 0, close: 0 },
         deferred: { open: null, close: null },
         flushCancel: { open: null, close: null },
@@ -284,6 +308,17 @@ export class Po {
     return rejectUnsafeOps(ops, fresh, phase)
   }
 
+  /** Uma linha no diário por rodada. Nunca lança: o diário é observação da
+   *  observação, e não pode ser o que derruba a auditoria. */
+  private logRound(entry: Omit<PoLogEntry, 'at' | 'durationMs'>, startedAt: number): void {
+    try {
+      const now = this.deps.now?.() ?? Date.now()
+      this.deps.decisionLog?.({ at: new Date(now).toISOString(), durationMs: Math.max(0, now - startedAt), ...entry })
+    } catch {
+      // Diário que falha não é motivo para nada além de uma linha a menos.
+    }
+  }
+
   private nextCorrelationId(): string {
     return this.deps.newCorrelationId?.() ?? `po-${Date.now().toString(36)}-${this.correlations++}`
   }
@@ -305,6 +340,7 @@ export class Po {
       // uma fila só, quem rodasse primeiro esvaziaria o que era da outra.
       conv.deferred[phase] = defer(conv.deferred[phase], turn)
       this.armFlush(convId, phase, conv, Math.max(0, PO_COOLDOWN_MS - (now - conv.lastRunAt[phase])))
+      this.logRound({ conversationId: convId, phase, outcome: 'cooldown', route: null, cards: [] }, now)
       return
     }
     conv.lastRunAt[phase] = now
@@ -323,6 +359,12 @@ export class Po {
     let taken: PoDeferred | null = null
     let tookQueue = false
     let audited = false
+    // O que o diário registra desta rodada. `falha` é o padrão porque todo
+    // caminho que não o sobrescreve é uma análise que não chegou ao fim
+    // (consulta sem resposta, exceção).
+    let outcome: PoLogOutcome = 'falha'
+    let route: PoLogEntry['route'] = null
+    const touched: string[] = []
     try {
       await this.deps.board.settled(convId)
       const cards = await this.deps.board.list(turn.cwd, { conversationId: convId })
@@ -330,12 +372,18 @@ export class Po {
       // o que ler nem onde escrever. `[]` é quadro VAZIO, e esse é justamente o
       // caso que a abertura existe para consertar — desistir dele era desistir
       // do pedido que nunca virou tarefa.
-      if (!cards) return
+      if (!cards) {
+        outcome = 'quadro-indisponivel'
+        return
+      }
       // O id do projeto não pode sair de `cards[0]`: no quadro vazio não existe
       // cards[0]. Vem da mesma identidade que o `list` usou, e sem ela não dá
       // para criar cartão nenhum.
       const projectId = await this.deps.board.projectId(turn.cwd)
-      if (!projectId) return
+      if (!projectId) {
+        outcome = 'quadro-indisponivel'
+        return
+      }
 
       taken = conv.deferred[phase]
       conv.deferred[phase] = null
@@ -363,6 +411,7 @@ export class Po {
       })
       if (worthIt === false) {
         audited = true
+        outcome = 'gate-nao'
         return
       }
 
@@ -371,7 +420,8 @@ export class Po {
         cards: digestCards,
         calls: [...merged.calls],
         phase,
-        ledgerTasks
+        ledgerTasks,
+        agentReply: merged.reply
       })
       const request: PoObserverRequest = Object.freeze({
         prompt,
@@ -421,14 +471,17 @@ export class Po {
         for (const op of ops) {
           if (op.kind === 'complete') {
             await this.deps.board.applyPo({ id: op.id, poStatus: 'completed', poReason: op.reason })
+            touched.push(op.id)
           } else if (op.kind === 'start') {
             await this.deps.board.applyPo({ id: op.id, poStatus: 'in_progress', poReason: op.reason })
+            touched.push(op.id)
             // O cartão acabou de entrar em andamento: tenta achar a tarefa do
             // registro que é este mesmo trabalho, para o quadro e o registro
             // apontarem para a mesma coisa sem depender de o agente lembrar.
             await linkLedgerTaskToCard(this.deps, convId, op.id, now)
           } else if (op.kind === 'retitle') {
             await this.deps.board.applyPo({ id: op.id, poTitle: op.title })
+            touched.push(op.id)
           } else {
             const created = await this.deps.board.createPoItem({
               projectId,
@@ -438,6 +491,7 @@ export class Po {
               status: op.status,
               reason: op.reason
             })
+            if (created) touched.push(created.id)
             if (created && op.status === 'in_progress') await linkLedgerTaskToCard(this.deps, convId, created.id, now)
           }
           applied++
@@ -445,12 +499,15 @@ export class Po {
         // Daqui em diante a análise chegou ao fim: o que ela tirou da fila foi
         // julgado e escrito, e não volta.
         audited = true
+        outcome = applied > 0 ? `ops=${applied}` : 'ok'
       } finally {
+        route = provider
         diagnostic(this.deps, request, 'audit-finished', provider, undefined, applied)
       }
     } catch {
       // The observer cannot take down the observed turn or write a partial board.
     } finally {
+      this.logRound({ conversationId: convId, phase, outcome, route, cards: touched }, now)
       if (audited) {
         conv.retries[phase] = 0
       } else {

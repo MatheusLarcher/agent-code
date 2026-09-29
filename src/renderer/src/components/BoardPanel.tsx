@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import {
+  boardItemAwaitingBadge,
   boardItemStatus as effectiveStatus,
   boardItemTitle as effectiveTitle,
   isBoardItemPoCorrected as isPoCorrected,
@@ -403,6 +404,21 @@ function ColumnCrewDots({
   )
 }
 
+/** O selo "Aguardando você"/"Interrompido" — o mesmo no Quadro e na Lista. */
+function AwaitingTag({
+  item,
+  badge
+}: {
+  item: BoardItem
+  badge: NonNullable<ReturnType<typeof boardItemAwaitingBadge>>
+}): JSX.Element {
+  return (
+    <span className={`board-tag awaiting ${badge.kind}`} title={item.poReason ?? undefined}>
+      {badge.label}
+    </span>
+  )
+}
+
 function Card({
   item,
   now,
@@ -436,6 +452,7 @@ function Card({
   onOpenConversation: (convId: string) => void
 }): JSX.Element {
   const status = effectiveStatus(item)
+  const awaiting = boardItemAwaitingBadge(item)
   return (
     <div className="board-card-wrap">
       <button
@@ -465,12 +482,15 @@ function Card({
           />
         )}
         <span className="board-card-tags">
+          {awaiting && <AwaitingTag item={item} badge={awaiting} />}
           {item.origin === 'po' && <span className="board-tag po">PO acrescentou</span>}
-          {isPoCorrected(item) && <span className="board-tag po">PO corrigiu</span>}
+          {/* O rebaixamento de fim de turno não é o PO discordando: com o selo,
+              "PO corrigiu/revisou" só repetiria o mesmo fato com o nome errado. */}
+          {!awaiting && isPoCorrected(item) && <span className="board-tag po">PO corrigiu</span>}
           {item.poTitle && item.origin === 'agent' && !isPoCorrected(item) && (
             <span className="board-tag po">PO reescreveu</span>
           )}
-          {poAgreed(item) && <span className="board-tag po">PO revisou</span>}
+          {!awaiting && poAgreed(item) && <span className="board-tag po">PO revisou</span>}
           {status === 'completed' && <span className="board-tag auto">{fmtAgo(item.updatedAt, now)}</span>}
         </span>
       </button>
@@ -1043,13 +1063,15 @@ export function BoardPanel({
               </div>
               {list.map((item) => {
                 const status = effectiveStatus(item)
+                const awaiting = boardItemAwaitingBadge(item)
                 return (
                   <button type="button" className="board-row" key={item.id} onClick={() => setSelected(item)}>
                     <span className={`board-check ${status}`} aria-hidden="true">
                       {status === 'completed' ? '✓' : ''}
                     </span>
                     <span className={`board-row-title ${status}`}>{effectiveTitle(item)}</span>
-                    {(item.poTitle || item.poStatus) && <span className="board-tag po">PO</span>}
+                    {awaiting && <AwaitingTag item={item} badge={awaiting} />}
+                    {(item.poTitle || (item.poStatus && !awaiting)) && <span className="board-tag po">PO</span>}
                     <span className="board-row-when">{fmtAgo(item.updatedAt, now)}</span>
                   </button>
                 )

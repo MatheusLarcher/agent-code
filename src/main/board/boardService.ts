@@ -1,4 +1,4 @@
-import { boardItemsToExpire, boardItemsToReopenBefore } from './boardModel'
+import { boardItemsToExpire, boardItemsToReopenBefore, boardItemsToResume } from './boardModel'
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
 import type {
   BoardItem,
@@ -8,7 +8,14 @@ import type {
   BoardSourceItem,
   PersistenceRepository
 } from '../persistence/types'
-import { boardItemStatus, boardItemTitle, type BoardItemStatus, type ChatEvent, type TaskItem } from '../../shared/ipc'
+import {
+  BOARD_TURN_END_REASON,
+  boardItemStatus,
+  boardItemTitle,
+  type BoardItemStatus,
+  type ChatEvent,
+  type TaskItem
+} from '../../shared/ipc'
 
 /**
  * O serviço do quadro: liga o esqueleto determinístico do agente à tabela
@@ -39,12 +46,12 @@ const IDENTITY_TTL_MS = 60_000
 /** Teto da espera pelo PO. Ver `poSettled`. */
 const PO_WAIT_MS = 30_000
 
-/** O motivo gravado no cartão reaberto, por como o turno acabou. Diz o FATO —
- *  o quadro não sabe (nem tem como saber) se o agente desistiu ou esqueceu. */
-const REOPEN_REASON = {
-  result: 'o turno terminou sem concluir esta tarefa',
-  error: 'o turno foi interrompido com esta tarefa em andamento'
-} as const
+/** O motivo gravado no cartão reaberto — compartilhado com a tela, que o usa
+ *  para o selo "Aguardando você" (ver `BOARD_TURN_END_REASON`). */
+const REOPEN_REASON = BOARD_TURN_END_REASON
+
+/** O motivo da promoção determinística — ver `resumeTurn`. */
+export const RESUME_REASON = 'o usuário retomou a conversa'
 
 export interface BoardServiceDeps {
   /** `null` enquanto não há repositório autoritativo — o quadro simplesmente não grava. */
@@ -99,6 +106,12 @@ export class BoardService {
    * Na mesma fila, um estaria esperando o outro pelos dois lados.
    */
   private readonly closures = new Map<string, Promise<void>>()
+  /** Quantos fins de turno cada conversa já teve neste processo — é como a
+   *  promoção sabe que o turno que ela ia retomar já acabou. */
+  private readonly turnEnds = new Map<string, number>()
+  /** Os ids que o ÚLTIMO fechamento de cada conversa rebaixou (vazio quando
+   *  não rebaixou nada). Ver `boardItemsToResume`. */
+  private readonly lastReopened = new Map<string, ReadonlySet<string>>()
 
   constructor(private readonly deps: BoardServiceDeps) {}
 
@@ -198,6 +211,7 @@ export class BoardService {
    */
   private closeTurn(convId: string, cwd: string, reason: string): void {
     const closedAt = Date.now()
+    this.turnEnds.set(convId, (this.turnEnds.get(convId) ?? 0) + 1)
     const previous = this.closures.get(convId) ?? Promise.resolve()
     const next = previous
       .catch(() => undefined)
@@ -226,13 +240,63 @@ export class BoardService {
   private async reopenStale(convId: string, cwd: string, reason: string, closedAt: number): Promise<void> {
     // Relê depois de todo mundo ter escrito: o que o PO acabou de corrigir só
     // aparece aqui, e `null` é quadro indisponível — não há o que reabrir.
+    const reopened = new Set<string>()
+    this.lastReopened.set(convId, reopened)
     const cards = await this.list(cwd, { conversationId: convId })
     if (!cards) return
     for (const card of boardItemsToReopenBefore(cards, closedAt)) {
       try {
         await this.applyPo({ id: card.id, poStatus: 'pending', poReason: reason })
+        reopened.add(card.id)
       } catch {
         // Cartão que sumiu entre a leitura e a escrita não derruba os outros.
+      }
+    }
+  }
+
+  /**
+   * A mensagem do usuário chegou: o que o fim do turno ANTERIOR devolveu para
+   * "a fazer" volta para "em andamento", sem modelo nenhum.
+   *
+   * A rodada de abertura do PO deveria fazer isso, mas ela passa por gate,
+   * cooldown e modelo — e falhou em silêncio justamente no "pode fazer" depois
+   * de o agente perguntar. Aqui não há julgamento: o usuário respondeu, o
+   * trabalho retomou. Se o assunto for outro, o próximo fim de turno devolve o
+   * cartão para "a fazer" (vai-e-vem inofensivo), e a abertura do PO continua
+   * livre para criar o cartão do assunto novo.
+   *
+   * Entra na MESMA fila dos fechamentos: o do turno anterior pode ainda estar
+   * esperando o PO (até 30 s), e promover antes dele terminar seria promover
+   * sobre uma lista que ele ainda vai rebaixar. Depois dele, a promoção grava
+   * um `poAt` posterior ao `closedAt` daquele turno — e `reopenStale` já
+   * respeita escrita mais nova. Se, enquanto esperava, o PRÓPRIO turno desta
+   * mensagem já acabou (`turnEnds` mudou), não promove: ninguém está mais
+   * trabalhando, e o fechamento dele não desfaria uma promoção mais nova.
+   *
+   * Nunca rejeita: o quadro não pode derrubar o envio da mensagem.
+   */
+  resumeTurn(convId: string, cwd: string): Promise<void> {
+    const endsAtCall = this.turnEnds.get(convId) ?? 0
+    const previous = this.closures.get(convId) ?? Promise.resolve()
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.promoteReopened(convId, cwd, endsAtCall))
+      .catch(() => undefined)
+    this.closures.set(convId, next)
+    return next
+  }
+
+  private async promoteReopened(convId: string, cwd: string, endsAtCall: number): Promise<void> {
+    const sameTurn = (): boolean => (this.turnEnds.get(convId) ?? 0) === endsAtCall
+    if (!sameTurn()) return
+    const cards = await this.list(cwd, { conversationId: convId })
+    if (!cards) return
+    for (const card of boardItemsToResume(cards, this.lastReopened.get(convId) ?? null)) {
+      if (!sameTurn()) return
+      try {
+        await this.applyPo({ id: card.id, poStatus: 'in_progress', poReason: RESUME_REASON })
+      } catch {
+        // Um cartão que falhou não impede os outros.
       }
     }
   }
@@ -368,6 +432,8 @@ export class BoardService {
   dispose(convId: string): void {
     this.writes.delete(convId)
     this.closures.delete(convId)
+    this.turnEnds.delete(convId)
+    this.lastReopened.delete(convId)
   }
 }
 

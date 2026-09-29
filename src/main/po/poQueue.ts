@@ -11,6 +11,9 @@ import { PO_MAX_CALLS, PO_MAX_USER_CHARS, type PoCall } from './poPrompt'
 export interface PoDeferred {
   texts: string[]
   calls: PoCall[]
+  /** A última resposta do agente entre os turnos da fila — só a mais recente
+   *  importa, então a fila guarda uma só (ver `newestReply`). */
+  reply?: string | null
 }
 
 /** Evidence captured synchronously with a result, before board ingestion yields. */
@@ -18,6 +21,15 @@ export interface PoTurnSnapshot {
   userText: string
   cwd: string
   calls: readonly PoCall[]
+  /** A última resposta do agente: a do turno no fechamento, a do turno
+   *  ANTERIOR na abertura. Ausente/`null` quando não houve texto final. */
+  reply?: string | null
+}
+
+/** Das duas respostas, a do lado MAIS NOVO — caindo para a mais antiga só
+ *  quando a nova não existe (o turno sintético do flush não tem resposta). */
+function newestReply(newer: string | null | undefined, older: string | null | undefined): string | null {
+  return newer || older || null
 }
 
 /** Vários pedidos num digest só, numerados: sem a numeração o modelo lê a
@@ -29,17 +41,21 @@ export function joinRequests(texts: string[]): string {
 
 /** Aplica os tetos do digest a uma fila montada do zero (os arrays recebidos
  *  já são cópias): descarta do mais ANTIGO, que é quem está na frente. */
-function capped(texts: string[], calls: PoCall[]): PoDeferred {
+function capped(texts: string[], calls: PoCall[], reply: string | null = null): PoDeferred {
   while (texts.length > 1 && texts.join(' ').length > PO_MAX_USER_CHARS) texts.shift()
   if (calls.length > PO_MAX_CALLS) calls.splice(0, calls.length - PO_MAX_CALLS)
-  return { texts, calls }
+  return reply ? { texts, calls, reply } : { texts, calls }
 }
 
 /** Guarda o turno que o cooldown pulou, na fila DESSA fase — com os mesmos
  *  tetos do digest, para o acumulado não crescer com o número de turnos
  *  pulados. */
 export function defer(queue: PoDeferred | null, turn: PoTurnSnapshot): PoDeferred {
-  return capped([...(queue?.texts ?? []), turn.userText], [...(queue?.calls ?? []), ...turn.calls])
+  return capped(
+    [...(queue?.texts ?? []), turn.userText],
+    [...(queue?.calls ?? []), ...turn.calls],
+    newestReply(turn.reply, queue?.reply)
+  )
 }
 
 /**
@@ -61,7 +77,8 @@ export function mergeDeferred(deferred: PoDeferred | null, turn: PoTurnSnapshot)
   return Object.freeze({
     userText: joinRequests(kept) || turn.userText,
     cwd: turn.cwd,
-    calls: Object.freeze([...deferred.calls, ...turn.calls].slice(-PO_MAX_CALLS))
+    calls: Object.freeze([...deferred.calls, ...turn.calls].slice(-PO_MAX_CALLS)),
+    reply: newestReply(turn.reply, deferred.reply)
   })
 }
 
@@ -79,14 +96,18 @@ export function restoreDeferred(queue: PoDeferred | null, taken: PoDeferred): Po
   if (taken.texts.length === 0 && taken.calls.length === 0) return queue
   // O que volta é mais ANTIGO do que o que entrou na fila enquanto a análise
   // rodava, então volta na frente — e os mesmos tetos continuam valendo.
-  return capped([...taken.texts, ...(queue?.texts ?? [])], [...taken.calls, ...(queue?.calls ?? [])])
+  return capped(
+    [...taken.texts, ...(queue?.texts ?? [])],
+    [...taken.calls, ...(queue?.calls ?? [])],
+    newestReply(queue?.reply, taken.reply)
+  )
 }
 
 /** O conteúdo do próprio turno como entrada de fila. O texto vazio do turno
  *  sintético (flush do cooldown, retentativa, `dispose`) não é pedido nenhum:
  *  deixá-lo entrar acumularia uma entrada vazia a cada falha seguida. */
 function ownEntry(turn: PoTurnSnapshot): PoDeferred {
-  return { texts: turn.userText.trim() ? [turn.userText] : [], calls: [...turn.calls] }
+  return { texts: turn.userText.trim() ? [turn.userText] : [], calls: [...turn.calls], reply: turn.reply ?? null }
 }
 
 /**
@@ -107,7 +128,8 @@ export function restoreTaken(queue: PoDeferred | null, taken: PoDeferred | null,
   const own = ownEntry(turn)
   return restoreDeferred(queue, {
     texts: [...(taken?.texts ?? []), ...own.texts],
-    calls: [...(taken?.calls ?? []), ...own.calls]
+    calls: [...(taken?.calls ?? []), ...own.calls],
+    reply: newestReply(own.reply, taken?.reply)
   })
 }
 
@@ -124,5 +146,9 @@ export function restoreTaken(queue: PoDeferred | null, taken: PoDeferred | null,
 export function requeueTurn(queue: PoDeferred | null, turn: PoTurnSnapshot): PoDeferred | null {
   const own = ownEntry(turn)
   if (own.texts.length === 0 && own.calls.length === 0) return queue
-  return capped([...(queue?.texts ?? []), ...own.texts], [...(queue?.calls ?? []), ...own.calls])
+  return capped(
+    [...(queue?.texts ?? []), ...own.texts],
+    [...(queue?.calls ?? []), ...own.calls],
+    newestReply(own.reply, queue?.reply)
+  )
 }
