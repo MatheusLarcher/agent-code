@@ -204,12 +204,14 @@ describe('PlanningScreen — canvas', () => {
 })
 
 describe('PlanningScreen — enquadramento e espaço', () => {
-  it('reabrir o plano restaura o viewport salvo em _canvas.json', async () => {
+  it('o pan salvo em _canvas.json não volta (só o zoom, aplicado após medir o canvas)', async () => {
     mockPlanningApi(makePlan({ layout: { positions: {}, viewport: { x: 40, y: -12, zoom: 1.25 } } }))
     const { container } = renderScreen()
     await screen.findByTestId('pl-card-login')
     const viewport = container.querySelector('.react-flow__viewport') as HTMLElement
-    expect(viewport.style.transform.replace(/\s+/g, '')).toBe('translate(40px,-12px)scale(1.25)')
+    // jsdom não mede o canvas: o enquadramento (canvasViewport.test.ts) não roda
+    // aqui, mas o pan salvo nunca pode virar o defaultViewport.
+    expect(viewport.style.transform.replace(/\s+/g, '')).not.toContain('translate(40px,-12px)')
   })
 
   const roteiroW = (container: HTMLElement): string =>

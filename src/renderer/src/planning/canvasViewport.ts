@@ -2,8 +2,11 @@
  * Enquadramento inicial do canvas — puro, sem React nem xyflow.
  *
  * Regra, em ordem:
- * 1. Viewport salvo em _canvas.json → volta exatamente como o usuário deixou.
- * 2. O plano inteiro cabe com o título do card legível → enquadra tudo.
+ * 0. Sempre ancorado no topo: cabeçalhos colados logo abaixo da barra '+ Card',
+ *    nunca centralizado na vertical.
+ * 1. Zoom salvo em _canvas.json → só o zoom volta; o pan salvo é ignorado
+ *    (restaurá-lo perpetuava a faixa vazia de quando o plano era pequeno).
+ * 2. Sem zoom salvo, o plano inteiro cabe com o título legível → enquadra tudo.
  * 3. Não cabe → zoom no piso legível, focado na coluna da etapa em andamento
  *    (ou a 1ª pendente, ou a 1ª); o resto se alcança arrastando.
  *
@@ -86,24 +89,20 @@ export function layoutBounds(layout: PlanLayout): Rect {
   return r
 }
 
-/** Enquadramento para quando não há viewport salvo (canvas já medido). */
-export function initialViewport(layout: PlanLayout, size: CanvasSize): Viewport {
+/**
+ * Enquadramento de abertura (canvas já medido). `savedZoom` (já dentro dos
+ * limites, ver `restoreZoom`) substitui o zoom calculado; o topo é sempre
+ * ancorado e a horizontal segue a mesma regra nos dois casos.
+ */
+export function initialViewport(layout: PlanLayout, size: CanvasSize, savedZoom?: number | null): Viewport {
   const b = layoutBounds(layout)
   const bw = b.maxX - b.minX
   const bh = b.maxY - b.minY
   const availW = Math.max(1, size.width - 2 * PAD_X)
   const availH = Math.max(1, size.height - PAD_TOP - PAD_BOTTOM)
   const fit = Math.min(FIT_MAX_ZOOM, availW / bw, availH / bh)
+  const zoom = savedZoom ?? Math.max(fit, FIT_MIN_ZOOM)
 
-  if (fit >= FIT_MIN_ZOOM) {
-    return {
-      x: (size.width - bw * fit) / 2 - b.minX * fit,
-      y: PAD_TOP + (availH - bh * fit) / 2 - b.minY * fit,
-      zoom: fit
-    }
-  }
-
-  const zoom = FIT_MIN_ZOOM
   const col = layout.columns.find((c) => c.id === focusColumnId(layout))
   const centerX = col ? col.x + CARD_W / 2 : (b.minX + b.maxX) / 2
   // Coluna no meio da tela, mas sem deixar vazio à esquerda da 1ª coluna nem
@@ -116,10 +115,10 @@ export function initialViewport(layout: PlanLayout, size: CanvasSize): Viewport 
   return { x, y: PAD_TOP - b.minY * zoom, zoom }
 }
 
-/** Viewport salvo utilizável (zoom dentro dos limites do canvas), ou null. */
-export function restoreViewport(saved: Partial<Viewport> | null | undefined): Viewport | null {
-  if (!saved || !finite(saved.x) || !finite(saved.y) || !finite(saved.zoom) || saved.zoom <= 0) return null
-  return { x: saved.x, y: saved.y, zoom: clamp(saved.zoom, CANVAS_MIN_ZOOM, CANVAS_MAX_ZOOM) }
+/** Zoom salvo utilizável (dentro dos limites do canvas), ou null. x/y salvos não voltam. */
+export function restoreZoom(saved: Partial<Viewport> | null | undefined): number | null {
+  if (!saved || !finite(saved.zoom) || saved.zoom <= 0) return null
+  return clamp(saved.zoom, CANVAS_MIN_ZOOM, CANVAS_MAX_ZOOM)
 }
 
 /** Mesmo enquadramento, a menos de arredondamento (meio pixel, milésimo de zoom). */

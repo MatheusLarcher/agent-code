@@ -11,7 +11,7 @@ import {
   focusColumnId,
   initialViewport,
   layoutBounds,
-  restoreViewport,
+  restoreZoom,
   sameViewport
 } from './canvasViewport'
 import { CARD_W, NO_STAGE_ID, computeLayout } from './layout'
@@ -76,6 +76,8 @@ describe('canvasViewport — enquadramento inicial', () => {
     const b = layoutBounds(layout)
     const vp = initialViewport(layout, { width: 1200, height: 800 })
     expect(vp.zoom).toBe(1)
+    // Ancorado no topo (logo abaixo da barra), nunca centralizado na vertical.
+    expect(vp.y + b.minY * vp.zoom).toBeCloseTo(64)
     // Centralizado na horizontal.
     expect(vp.x + b.minX * vp.zoom).toBeCloseTo(1200 - (vp.x + b.maxX * vp.zoom))
   })
@@ -104,19 +106,27 @@ describe('canvasViewport — enquadramento inicial', () => {
 })
 
 describe('canvasViewport — viewport salvo', () => {
-  it('volta exatamente como foi salvo', () => {
-    expect(restoreViewport({ x: 40, y: -12, zoom: 1.25 })).toEqual({ x: 40, y: -12, zoom: 1.25 })
+  it('só o zoom volta; x e y salvos são ignorados', () => {
+    expect(restoreZoom({ x: 40, y: -12, zoom: 1.25 })).toBe(1.25)
   })
 
   it('zoom fora dos limites do canvas é trazido para dentro', () => {
-    expect(restoreViewport({ x: 0, y: 0, zoom: 9 })?.zoom).toBe(CANVAS_MAX_ZOOM)
-    expect(restoreViewport({ x: 0, y: 0, zoom: 0.01 })?.zoom).toBe(CANVAS_MIN_ZOOM)
+    expect(restoreZoom({ zoom: 9 })).toBe(CANVAS_MAX_ZOOM)
+    expect(restoreZoom({ zoom: 0.01 })).toBe(CANVAS_MIN_ZOOM)
   })
 
   it('ausente ou inválido não restaura nada', () => {
-    expect(restoreViewport(undefined)).toBeNull()
-    expect(restoreViewport({ x: Number.NaN, y: 0, zoom: 1 })).toBeNull()
-    expect(restoreViewport({ x: 0, y: 0, zoom: 0 })).toBeNull()
+    expect(restoreZoom(undefined)).toBeNull()
+    expect(restoreZoom({ zoom: Number.NaN })).toBeNull()
+    expect(restoreZoom({ zoom: 0 })).toBeNull()
+  })
+
+  it('zoom salvo é usado e o topo continua ancorado', () => {
+    const layout = computeLayout(roteiro('pendente'), [], {})
+    const b = layoutBounds(layout)
+    const vp = initialViewport(layout, { width: 1200, height: 800 }, 0.7)
+    expect(vp.zoom).toBe(0.7)
+    expect(vp.y + b.minY * 0.7).toBeCloseTo(64)
   })
 
   it('sameViewport ignora arredondamento, mas não movimento de verdade', () => {

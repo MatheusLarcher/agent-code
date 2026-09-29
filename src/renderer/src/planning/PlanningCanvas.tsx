@@ -47,7 +47,7 @@ import {
   CANVAS_MAX_ZOOM,
   CANVAS_MIN_ZOOM,
   initialViewport,
-  restoreViewport,
+  restoreZoom,
   sameViewport,
   type Viewport
 } from './canvasViewport'
@@ -167,22 +167,24 @@ function miniMapColor(node: FlowNode): string {
 }
 
 /**
- * Enquadra UMA vez por montagem (= por plano aberto). O viewport salvo entra
- * como defaultViewport (sem piscar); sem ele, espera o canvas ter tamanho e
- * calcula. O onMoveEnd devolvido ignora o eco desse enquadramento programático.
+ * Enquadra UMA vez por montagem (= por plano aberto), ancorado no topo. Do
+ * viewport salvo só o zoom volta. Espera o canvas ter tamanho e calcula; até
+ * lá `ready` é false e o canvas fica invisível, para não piscar o plano fora
+ * do lugar. O onMoveEnd devolvido ignora o eco desse enquadramento.
  */
 function useInitialViewport(
   plan: OpenedPlanningDto,
   layout: PlanLayout,
   onViewportChange: ((viewport: Viewport) => void) | undefined
-): { defaultViewport: Viewport | undefined; onMoveEnd: OnMove } {
+): { ready: boolean; onMoveEnd: OnMove } {
   const flow = useReactFlow()
   const store = useStoreApi()
   const hasSize = useStore((s) => s.width > 0 && s.height > 0)
   // Lido só na montagem: recarregar o plano não reenquadra o canvas.
-  const [restored] = useState(() => restoreViewport(plan.layout.viewport))
-  const applied = useRef<Viewport | null>(restored)
-  const done = useRef(!!restored)
+  const [savedZoom] = useState(() => restoreZoom(plan.layout.viewport))
+  const applied = useRef<Viewport | null>(null)
+  const done = useRef(false)
+  const [ready, setReady] = useState(false)
   const layoutRef = useRef(layout)
   layoutRef.current = layout
 
@@ -190,10 +192,11 @@ function useInitialViewport(
     if (done.current || !hasSize) return
     done.current = true
     const { width, height } = store.getState()
-    const vp = initialViewport(layoutRef.current, { width, height })
+    const vp = initialViewport(layoutRef.current, { width, height }, savedZoom)
     applied.current = vp
     void flow.setViewport(vp)
-  }, [hasSize, store, flow])
+    setReady(true)
+  }, [hasSize, store, flow, savedZoom])
 
   const onMoveEnd: OnMove = useCallback(
     (_event, vp) => {
@@ -204,8 +207,10 @@ function useInitialViewport(
     [onViewportChange]
   )
 
-  return { defaultViewport: restored ?? undefined, onMoveEnd }
+  return { ready, onMoveEnd }
 }
+
+const HIDDEN = { visibility: 'hidden' } as const
 
 export const PlanningCanvas = memo(function PlanningCanvas({
   plan,
@@ -222,7 +227,7 @@ export const PlanningCanvas = memo(function PlanningCanvas({
   exporting,
   onDropFiles
 }: PlanningCanvasProps): JSX.Element {
-  const { defaultViewport, onMoveEnd } = useInitialViewport(plan, layout, onViewportChange)
+  const { ready, onMoveEnd } = useInitialViewport(plan, layout, onViewportChange)
   const fileDrop = useCanvasFileDrop(layout, onDropFiles)
   const [nodes, setNodes] = useState<FlowNode[]>(() => buildNodes(plan, layout))
   const [edges, setEdges] = useState<Edge[]>(() => buildEdges(layout))
@@ -312,7 +317,7 @@ export const PlanningCanvas = memo(function PlanningCanvas({
         isValidConnection={isValidConnection}
         deleteKeyCode={DELETE_KEYS}
         zoomOnDoubleClick={false}
-        defaultViewport={defaultViewport}
+        style={ready ? undefined : HIDDEN}
         onMoveEnd={onMoveEnd}
         minZoom={CANVAS_MIN_ZOOM}
         maxZoom={CANVAS_MAX_ZOOM}
