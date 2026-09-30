@@ -212,10 +212,6 @@ interface Props {
    *  substitui o texto e o "Conectar" do estado vazio; com mensagens, fica
    *  acima do campo de mensagem. */
   connectAccount?: React.ReactNode
-  /** Whether an OpenAI key is set (enables mic + read-aloud). */
-  voiceReady: boolean
-  /** Open Settings on the OpenAI key when voice is used without a key. */
-  onNeedVoiceKey: () => void
   /** Read-aloud state/handler (TTS lives in App). */
   tts: TtsControls
   /** Model picker (mirrored above the composer). Stays open even while the agent
@@ -609,8 +605,6 @@ export function ChatPanel(props: Props): JSX.Element {
         onInterrupt={props.onInterrupt}
         textareaRef={props.composerRef}
         projects={props.projects}
-        voiceReady={props.voiceReady}
-        onNeedVoiceKey={props.onNeedVoiceKey}
         convId={props.convId}
         draft={props.draft}
         draftMedia={props.draftMedia}

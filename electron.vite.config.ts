@@ -6,10 +6,21 @@ export default defineConfig({
   main: {
     // Keep the Agent SDK and Playwright as runtime requires from node_modules
     // (they spawn subprocesses / native browsers and must not be bundled).
-    plugins: [externalizeDepsPlugin()],
+    // The local voice engine (src/main/voice) loads native/WASM packages that
+    // resolve files relative to their own folder (onnxruntime-node's .node and
+    // DLLs, kokoro-js's voices/*.bin, eSpeak's espeak-ng.data): they must stay
+    // runtime imports from node_modules. They are `dependencies`, so the plugin
+    // already externalizes them; `include` pins the transitive ones too.
+    plugins: [externalizeDepsPlugin({ include: ['onnxruntime-node', 'onnxruntime-common', 'sharp'] })],
     build: {
       rollupOptions: {
-        input: { index: resolve('src/main/index.ts') }
+        input: {
+          index: resolve('src/main/index.ts'),
+          // Separate entries: voiceWorker.js is forked as a utilityProcess, and
+          // voice.js resolves it as its sibling (host.ts resolveWorkerPath).
+          voice: resolve('src/main/voice/index.ts'),
+          voiceWorker: resolve('src/main/voice/worker.ts')
+        }
       }
     }
   },

@@ -38,8 +38,6 @@ function renderComposer(cards?: readonly RefCard[]): { onSend: ReturnType<typeof
       textareaRef={createRef<HTMLTextAreaElement>()}
       projects={[]}
       projectRoot={null}
-      voiceReady={false}
-      onNeedVoiceKey={() => {}}
       convId="c1"
       draft=""
       onDraftChange={() => {}}

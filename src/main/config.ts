@@ -19,9 +19,8 @@ type Field = {
 }
 
 const FIELDS: Field[] = [
-  { key: 'config.openai.apiKey', sensitive: true, get: (c) => c.openai.apiKey, patch: (v) => ({ openai: { apiKey: v as string } as AppConfig['openai'] }) },
-  { key: 'config.openai.voice', get: (c) => c.openai.voice, patch: (v) => ({ openai: { voice: v as string } as AppConfig['openai'] }) },
-  { key: 'config.openai.speed', get: (c) => c.openai.speed, patch: (v) => ({ openai: { speed: v as number } as AppConfig['openai'] }) },
+  { key: 'config.voice.voice', get: (c) => c.voice.voice, patch: (v) => ({ voice: { voice: v } as AppConfig['voice'] }) },
+  { key: 'config.voice.speed', get: (c) => c.voice.speed, patch: (v) => ({ voice: { speed: v as number } as AppConfig['voice'] }) },
   { key: 'config.transcribeEngine', get: (c) => c.transcribeEngine, patch: (v) => ({ transcribeEngine: v as AppConfig['transcribeEngine'] }) },
   { key: 'config.localSpeech.model', get: (c) => c.localSpeech.model, patch: (v) => ({ localSpeech: { model: v as string } }) },
   { key: 'config.ollama.enabled', get: (c) => c.ollama.enabled, patch: (v) => ({ ollama: { enabled: v as boolean } as AppConfig['ollama'] }) },
@@ -67,6 +66,13 @@ export const CONFIG_PERSISTED_KEYS: readonly string[] = FIELDS.map((field) => fi
  */
 export const PLANNING_EFFORT_SPLIT_KEY = 'config.planning.effortSplit'
 
+/**
+ * Velocidade de leitura gravada no tempo da voz via OpenAI (removida). Só é
+ * lida para migrar para `config.voice.speed` quando esta ainda não existe. A
+ * chave da OpenAI (`config.openai.apiKey`) e a voz antiga não são mais lidas:
+ * ficam ignoradas no banco, sem erro.
+ */
+export const LEGACY_VOICE_SPEED_KEY = 'config.openai.speed'
 let initialized = false
 let snapshot = defaultAppConfig()
 let writeQueue: Promise<unknown> = Promise.resolve()
@@ -81,7 +87,7 @@ let initPromise: Promise<AppConfig> | null = null
 function cloneConfig(config: AppConfig): AppConfig {
   return {
     ...config,
-    openai: { ...config.openai },
+    voice: { ...config.voice },
     localSpeech: { ...config.localSpeech },
     ollama: { ...config.ollama },
     vigia: { ...config.vigia },
@@ -130,7 +136,12 @@ async function readConfig(): Promise<AppConfig> {
   // Uma leitura por escopo, não uma por campo: isto roda no caminho de
   // abertura do app e, com PostgreSQL remoto, cada campo custava uma ida
   // e volta à rede.
-  const stored = await readPersistedKvMany(['config', ...CONFIG_PERSISTED_KEYS, PLANNING_EFFORT_SPLIT_KEY])
+  const stored = await readPersistedKvMany([
+    'config',
+    ...CONFIG_PERSISTED_KEYS,
+    PLANNING_EFFORT_SPLIT_KEY,
+    LEGACY_VOICE_SPEED_KEY
+  ])
   let next = parseStoredAppConfig(stored.get('config') ?? null)
   const missing = new Set<string>()
   for (const field of FIELDS) {
@@ -141,6 +152,7 @@ async function readConfig(): Promise<AppConfig> {
     }
     next = mergeAppConfig(next, field.patch(decode(raw, field.sensitive)))
   }
+  if (missing.has('config.voice.speed')) next = migrateLegacySpeed(next, stored.get(LEGACY_VOICE_SPEED_KEY) ?? null)
   const splitPending = (stored.get(PLANNING_EFFORT_SPLIT_KEY) ?? null) === null
   if (splitPending) {
     const planning = migratePlanningEffort(next.planning)
@@ -156,6 +168,19 @@ async function readConfig(): Promise<AppConfig> {
   snapshot = next
   initialized = true
   return cloneConfig(snapshot)
+}
+
+/** Leva a velocidade antiga para `voice.speed`. Valor ilegível é ignorado: a
+ *  migração nunca derruba o boot. */
+function migrateLegacySpeed(config: AppConfig, raw: string | null): AppConfig {
+  if (raw === null) return config
+  try {
+    const speed = decode(raw)
+    if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) return config
+    return mergeAppConfig(config, { voice: { speed } })
+  } catch {
+    return config
+  }
 }
 
 /** Dentro da fila: garante o snapshot do banco antes de uma escrita. Não usa

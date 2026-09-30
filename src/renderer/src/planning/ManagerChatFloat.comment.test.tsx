@@ -74,8 +74,6 @@ function renderChat(opts: { strict?: boolean } = {}) {
               onCancelRecovery={() => {}}
               runningSince={null}
               lastDurationMs={null}
-              voiceReady={false}
-              onNeedVoiceKey={() => {}}
               tts={{ speakingId: null, onToggleSpeak }}
               models={[{ id: 'claude-opus-5-5', label: 'Opus 5.5' }]}
               model="claude-opus-5-5"

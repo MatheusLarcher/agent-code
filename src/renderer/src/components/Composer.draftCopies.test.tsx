@@ -59,8 +59,6 @@ function setup(extra: { draft?: string; draftMedia?: unknown[] } = {}) {
     textareaRef: createRef<HTMLElement>(),
     projects: [],
     projectRoot: 'C:\\proj',
-    voiceReady: false,
-    onNeedVoiceKey: () => {},
     onDraftChange,
     projectMissing: false,
     projectMissingMsg: ''

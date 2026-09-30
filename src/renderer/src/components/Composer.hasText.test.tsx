@@ -33,8 +33,6 @@ function setup(first: { convId?: string; draft?: string; listener?: HasTextListe
         textareaRef={createRef<HTMLElement>()}
         projects={[]}
         projectRoot={null}
-        voiceReady={false}
-        onNeedVoiceKey={() => {}}
         onDraftChange={() => {}}
         projectMissing={false}
         projectMissingMsg=""

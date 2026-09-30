@@ -45,8 +45,6 @@ function renderPanel(
       onCancelRecovery={() => {}}
       runningSince={null}
       lastDurationMs={null}
-      voiceReady={false}
-      onNeedVoiceKey={() => {}}
       tts={{ speakingId: null, onToggleSpeak: () => {} }}
       models={[]}
       model="claude-opus-4-8"

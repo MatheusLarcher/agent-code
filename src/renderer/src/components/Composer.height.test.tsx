@@ -128,8 +128,6 @@ function setup(disabled = false) {
         textareaRef={createRef<HTMLElement>()}
         projects={[]}
         projectRoot="C:\proj"
-        voiceReady={false}
-        onNeedVoiceKey={() => {}}
         onDraftChange={vi.fn()}
         projectMissing={false}
         projectMissingMsg=""

@@ -50,12 +50,12 @@ export interface RemoteServerDeps {
   loadToken?: () => string
   /** Persist a freshly generated pairing token so it stays fixed across sessions. */
   saveToken?: (token: string) => void | Promise<void>
-  /** Transcribe phone audio on the PC (OpenAI). Throws Error('no-key') if unset. */
+  /** Transcribe phone audio (WebM/Ogg Opus, WAV…) on the PC with the configured local engine. */
   transcribe?: (audioBase64: string, mimeType: string) => Promise<string>
-  /** Synthesize speech on the PC (OpenAI). Throws Error('no-key') if unset. */
-  tts?: (text: string) => Promise<{ base64: string; mimeType: string }>
-  /** Whether an OpenAI key is configured (gates the phone's voice buttons). */
-  voiceReady?: () => boolean
+  /** Synthesize raw answer text on the PC (local Kokoro, configured voice and speed). */
+  tts?: (text: string, opts?: { treated?: boolean }) => Promise<{ base64: string; mimeType: string }>
+  /** Split a raw answer into treated, playable pieces (the phone plays them in sequence). */
+  ttsParts?: (text: string) => string[]
   /** A phone toggled the global "Permitir tudo" switch — apply it on the PC. */
   onSetSkipPerms?: (on: boolean) => void
   /** A phone asked to change a conversation's model/effort — apply it on the PC. */
@@ -341,6 +341,7 @@ export class RemoteServer {
       if (path === '/api/send' && req.method === 'POST') return this.serveSend(req, res)
       if (path === '/api/transcribe' && req.method === 'POST') return this.serveTranscribe(req, res)
       if (path === '/api/tts' && req.method === 'POST') return this.serveTts(req, res)
+      if (path === '/api/tts-parts' && req.method === 'POST') return this.serveTtsParts(req, res)
       if (path === '/api/file') return this.serveFile(url, res)
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'rota desconhecida' }))
@@ -446,9 +447,9 @@ export class RemoteServer {
 
   private serveState(res: ServerResponse): void {
     const conversations = this.state.conversations.map((c) => summarize(c))
-    // `voiceReady` tells the phone whether to show the mic/listen buttons (the
-    // actual STT/TTS runs on the PC, where the OpenAI key lives).
-    const voiceReady = this.deps.voiceReady ? this.deps.voiceReady() : false
+    // `voiceReady` tells the phone whether to show the mic/listen buttons. Voice
+    // runs on the PC with local engines — no key — so it's on whenever wired.
+    const voiceReady = Boolean(this.deps.transcribe && this.deps.tts)
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
     res.end(
       JSON.stringify({
@@ -653,7 +654,7 @@ export class RemoteServer {
   }
 
   /** Phone → PC speech-to-text: receives recorded audio, returns the transcript.
-   *  The phone records; the PC (with the OpenAI key) transcribes. */
+   *  The phone records; the PC transcribes with the engine chosen in Settings. */
   private async serveTranscribe(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.deps.transcribe) return sendJson(res, 503, { ok: false, error: 'voice-unavailable' })
     const body = await readBody(req)
@@ -672,29 +673,31 @@ export class RemoteServer {
       sendJson(res, 200, { ok: true, text })
     } catch (err) {
       // 200 with an error field so the phone can show a friendly message.
-      const msg = err instanceof Error ? err.message : String(err)
-      sendJson(res, 200, { ok: false, error: msg === 'no-key' ? 'no-key' : msg })
+      sendJson(res, 200, { ok: false, error: err instanceof Error ? err.message : String(err) })
     }
   }
 
-  /** Phone → PC text-to-speech: receives text, returns base64 MP3 to play. */
+  /** Phone → PC text-to-speech: receives raw answer text, returns a base64 WAV
+   *  already at the configured speed (play it at rate 1). */
   private async serveTts(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.deps.tts) return sendJson(res, 503, { ok: false, error: 'voice-unavailable' })
-    const body = await readBody(req)
-    let text = ''
-    try {
-      text = String((JSON.parse(body ?? '') as { text?: string }).text ?? '').trim()
-    } catch {
-      /* fall through */
-    }
+    const { text, treated } = await readTextField(req)
     if (!text) return sendJson(res, 400, { ok: false, error: 'texto vazio' })
     try {
-      const { base64, mimeType } = await this.deps.tts(text)
+      const { base64, mimeType } = await this.deps.tts(text, { treated })
       sendJson(res, 200, { ok: true, audioBase64: base64, mimeType })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      sendJson(res, 200, { ok: false, error: msg === 'no-key' ? 'no-key' : msg })
+      sendJson(res, 200, { ok: false, error: err instanceof Error ? err.message : String(err) })
     }
+  }
+
+  /** Phone → PC: split an answer into treated pieces for /api/tts, so a long
+   *  answer starts playing after the first short piece. */
+  private async serveTtsParts(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.deps.ttsParts) return sendJson(res, 503, { ok: false, error: 'voice-unavailable' })
+    const { text } = await readTextField(req)
+    if (!text) return sendJson(res, 400, { ok: false, error: 'texto vazio' })
+    sendJson(res, 200, { ok: true, parts: this.deps.ttsParts(text) })
   }
 
   /** Only the most recent messages of ONE conversation go to the phone — never
@@ -834,6 +837,18 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 /** Read at most ~24MB of a request body as a string (images travel as base64).
  *  Resolves `null` when the cap is hit — a truncated JSON would otherwise fail
  *  as a confusing 400 instead of a clear 413. */
+/** `{ text, treated }` of a JSON body; text trimmed, '' when absent or malformed.
+ *  `treated` = the text already came from /api/tts-parts (skip the Markdown cleanup). */
+async function readTextField(req: IncomingMessage): Promise<{ text: string; treated: boolean }> {
+  const body = await readBody(req)
+  try {
+    const j = JSON.parse(body ?? '') as { text?: unknown; treated?: unknown }
+    return { text: String(j.text ?? '').trim(), treated: j.treated === true }
+  } catch {
+    return { text: '', treated: false }
+  }
+}
+
 function readBody(req: IncomingMessage): Promise<string | null> {
   return new Promise((resolve) => {
     let data = ''

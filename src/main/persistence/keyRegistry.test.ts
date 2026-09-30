@@ -31,9 +31,7 @@ const EXPECTED_KEYS = [
   'config.memorista.model',
   'config.ollama.apiKey',
   'config.ollama.enabled',
-  'config.openai.apiKey',
   'config.openai.speed',
-  'config.openai.voice',
   'config.planning.effort',
   'config.planning.effortSplit',
   'config.planning.model',
@@ -49,6 +47,8 @@ const EXPECTED_KEYS = [
   'config.typesafe.minConfidence',
   'config.vigia.enabled',
   'config.vigia.model',
+  'config.voice.speed',
+  'config.voice.voice',
   'config.windowsControlEnabled',
   'memory-curator:last-run-at'
 ]

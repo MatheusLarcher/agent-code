@@ -261,15 +261,17 @@ export interface AgentCodeApi {
    *  mensagem. Nunca lança: `ok: false` quando não houver título. */
   suggestConversationTitle(req: { text: string; convId?: string }): Promise<SuggestTitleResult>
 
-  /** Transcribe recorded audio (base64) to text via OpenAI. `error: 'no-key'`
-   *  means the user hasn't set an OpenAI API key yet. */
+  /** Transcribe recorded audio (base64 WAV/WebM) to text with the configured
+   *  on-device engine. Model download progress arrives on onSpeechSetupProgress. */
   transcribeAudio(
     audioBase64: string,
     mimeType: string
   ): Promise<{ ok: boolean; text?: string; error?: string }>
-  /** Synthesize speech (base64 MP3) from already-treated text via OpenAI. */
+  /** Synthesize speech (base64 WAV, local Kokoro) from already-treated text.
+   *  Voice/speed come from the config unless overridden (Settings "Testar voz"). */
   speak(
-    text: string
+    text: string,
+    opts?: { voice?: string; speed?: number }
   ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }>
   /** Whether a Claude Code login already exists. */
   authStatus(): Promise<{ authenticated: boolean }>

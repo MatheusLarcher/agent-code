@@ -595,9 +595,7 @@ export function App(): JSX.Element {
   // Confirmation before stopping a session whose agent is mid-task (so an
   // accidental click never kills a running turn). Holds the conversation id.
   // When opening Settings to nudge a missing key, focus that section.
-  const [settingsFocus, setSettingsFocus] = useState<'openai' | 'typesafe' | 'accounts' | null>(null)
-  // Whether an OpenAI key is set — gates the mic and read-aloud buttons.
-  const [voiceReady, setVoiceReady] = useState(false)
+  const [settingsFocus, setSettingsFocus] = useState<'typesafe' | 'accounts' | null>(null)
   // Whether TypeSafe is enabled with a usable key — gates the "Automático" model option.
   const [typesafeReady, setTypesafeReady] = useState(false)
   // Whether Ollama Cloud is enabled with a key — adds its models to the selector.
@@ -609,8 +607,6 @@ export function App(): JSX.Element {
   // `withAutoModelOption` — only with TypeSafe ready or when it's the saved value.
   // A regra mora em @shared/selectableModels: o MCP de entrada aceita a mesma lista.
   const models = useMemo(() => selectableModels({ ollama: ollamaReady, codex: codexReady }), [ollamaReady, codexReady])
-  // Read-aloud speed (config), applied as the audio playbackRate (deterministic).
-  const voiceSpeedRef = useRef(1)
   // Read-aloud (TTS): id of the message currently playing, and the <audio> in use.
   const [speakingId, setSpeakingId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -1506,10 +1502,8 @@ export function App(): JSX.Element {
           skipPermsRef.current = config.skipPermissions
           setSkipPerms(config.skipPermissions)
           setWindowsControlEnabled(config.windowsControlEnabled === true)
-          setVoiceReady(Boolean(config.openai.apiKey.trim()))
           setOllamaReady(config.ollama.enabled && Boolean(config.ollama.apiKey.trim()))
           void window.api.isTypeSafeConfigured?.().then(setTypesafeReady).catch(() => undefined)
-          voiceSpeedRef.current = config.openai.speed || 1
         }).catch(() => undefined)
       }
       void loadConversationChanges(changes)
@@ -1556,9 +1550,7 @@ export function App(): JSX.Element {
           skipPermsRef.current = c.skipPermissions
           setSkipPerms(c.skipPermissions)
           setWindowsControlEnabled(c.windowsControlEnabled === true)
-          setVoiceReady(!!c.openai?.apiKey?.trim())
           setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
-          voiceSpeedRef.current = c.openai?.speed || 1
         })
         .catch(() => undefined)
       if (cancelled) return
@@ -2938,36 +2930,27 @@ export function App(): JSX.Element {
     )
   }, [])
 
-  // Voice features need an OpenAI key. When missing, open Settings on that field.
-  const needVoiceKey = useCallback((): void => {
-    notify('aviso', 'Adicione sua API key da OpenAI nas Configurações para usar voz.')
-    setSettingsFocus('openai')
-    setSettingsOpen(true)
-  }, [notify])
-
   // "Automático" needs TypeSafe ligado + key. When missing, open Settings on
-  // that section instead of silently switching model — same pattern as voice.
+  // that section instead of silently switching model.
   const needTypesafeKey = useCallback((): void => {
     notify('aviso', 'Ative o TypeSafe e informe a API key nas Configurações para usar o modo Automático.')
     setSettingsFocus('typesafe')
     setSettingsOpen(true)
   }, [notify])
 
-  // Close Settings and re-read whether an OpenAI key now exists.
+  // Close Settings and re-read what it may have changed.
   const closeSettings = useCallback((): void => {
     setSettingsOpen(false)
     setSettingsFocus(null)
     refreshAccounts()
     void window.api.isTypeSafeConfigured?.().then(setTypesafeReady).catch(() => undefined)
     void window.api.getConfig().then((c) => {
-      setVoiceReady(!!c.openai?.apiKey?.trim())
       setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
       setObserversOn({
         po: c.board?.po?.enabled !== false,
         vigia: c.vigia?.enabled !== false,
         memorista: c.memorista?.enabled !== false
       })
-      voiceSpeedRef.current = c.openai?.speed || 1
     })
     void window.api.codexStatus().then((s) => setCodexReady(s.connected))
   }, [])
@@ -3001,11 +2984,8 @@ export function App(): JSX.Element {
   // error, or when the audio is paused by stopSpeak.
   const playClip = (base64: string, mimeType: string): Promise<void> =>
     new Promise<void>((resolve) => {
+      // Played at rate 1: the configured speed is already in the audio (Kokoro's own).
       const audio = new Audio(`data:${mimeType};base64,${base64}`)
-      // Speed is applied here (not at synthesis) so it's exact and instant.
-      // preservesPitch keeps the voice natural instead of chipmunk/slowed.
-      audio.playbackRate = voiceSpeedRef.current || 1
-      audio.preservesPitch = true
       audioRef.current = audio
       let settled = false
       const done = (): void => {
@@ -3027,10 +3007,6 @@ export function App(): JSX.Element {
       const wasThis = speakingId === id
       stopSpeak()
       if (wasThis) return // second click = stop
-      if (!voiceReady) {
-        needVoiceKey()
-        return
-      }
       const chunks = splitForSpeech(toSpeechText(text))
       if (chunks.length === 0) {
         notify('aviso', 'Não há texto para ler nesta resposta.')
@@ -3055,11 +3031,10 @@ export function App(): JSX.Element {
         if (token !== speakTokenRef.current) return // cancelled while synthesizing
         if (!r.ok || !r.audioBase64) {
           stopSpeak()
-          if (r.error === 'no-key') needVoiceKey()
-          else notify('erro', `Falha ao gerar áudio: ${r.error ?? 'erro'}`)
+          notify('erro', `Falha ao gerar áudio: ${r.error ?? 'erro'}`)
           return
         }
-        await playClip(r.audioBase64, r.mimeType ?? 'audio/mpeg')
+        await playClip(r.audioBase64, r.mimeType ?? 'audio/wav')
         if (token !== speakTokenRef.current) return // stopped during playback
       }
       if (token === speakTokenRef.current) {
@@ -3067,7 +3042,7 @@ export function App(): JSX.Element {
         setSpeakingId(null)
       }
     },
-    [speakingId, voiceReady, needVoiceKey, notify, stopSpeak]
+    [speakingId, notify, stopSpeak]
   )
 
   const tts = useMemo(() => ({ speakingId, onToggleSpeak: toggleSpeak }), [speakingId, toggleSpeak])
@@ -3589,8 +3564,6 @@ export function App(): JSX.Element {
           <ConnectAccountCard status={connectAccount.status} onConnected={connectAccount.onConnected} compact={messages.length > 0} />
         ) : undefined
       }
-      voiceReady={voiceReady}
-      onNeedVoiceKey={needVoiceKey}
       tts={tts}
       // Planejamento: o seletor edita o modelo/esforço do Agent Manager
       // (config global, lida pelo main quando a sessão sobe), não os da conversa.

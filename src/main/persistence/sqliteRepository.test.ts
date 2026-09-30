@@ -42,7 +42,8 @@ describe('SqliteRepository', () => {
   it('migra KV e conversas legadas sem alterar as fontes', async () => {
     const { cache, dbPath } = await tempCache()
     seedKvDb(dbPath, {
-      config: JSON.stringify({ skipPermissions: true, openai: { apiKey: 'x' } }),
+      // Blob legado com a voz da OpenAI (removida): a chave some, a velocidade fica.
+      config: JSON.stringify({ skipPermissions: true, openai: { apiKey: 'x', voice: 'alloy', speed: 1.25 }, transcribeEngine: 'cloud' }),
       'chave-desconhecida': 'preservar',
       'agentcode.conversations.v1': JSON.stringify([
         { id: 'c1', cwd: 'C:/um', title: 'Legada', createdAt: 10, updatedAt: 20, messages: [] }
@@ -61,7 +62,9 @@ describe('SqliteRepository', () => {
     const snapshot = await repository.loadSnapshot()
 
     expect(snapshot.config.skipPermissions).toBe(true)
-    expect(snapshot.config.openai.apiKey).toBe('x')
+    expect(snapshot.config).not.toHaveProperty('openai')
+    expect(snapshot.config.voice).toEqual({ voice: 'pf_dora', speed: 1.25 })
+    expect(snapshot.config.transcribeEngine).toBe('whisper')
     expect(snapshot.conversations.map((entry) => entry.id).sort()).toEqual(['c1', 'c2'])
     expect(snapshot.kv.find((entry) => entry.key === 'chave-desconhecida')).toMatchObject({
       scope: 'device',

@@ -46,7 +46,7 @@ var state = {
   wakeLock: null,    // screen wake lock (keeps the app awake/connected)
   online: false,
   openTools: {},     // tool-use ids the user expanded (persist across re-renders)
-  voiceReady: false, // PC has an OpenAI key → show mic/listen buttons
+  voiceReady: false, // PC offers voice (local engines) → show mic/listen buttons
   recording: false,  // mic is capturing right now
   speakingId: null,  // id of the assistant message being read aloud (or null)
   audio: null,       // <Audio> currently playing the TTS
@@ -606,8 +606,8 @@ function renderMessages() {
         dl.addEventListener('click', function () { triggerDownload(path) })
         a.appendChild(dl)
       })
-      // "Ouvir" — only on the final answer, and only when the PC can synthesize
-      // (has an OpenAI key). Reading aloud is processed on the PC.
+      // "Ouvir" — only on the final answer, and only when the PC offers voice.
+      // Reading aloud is processed on the PC (local voice).
       if (m.answer && state.voiceReady && parsed.clean) {
         var speaking = state.speakingId === m.id
         var sp = document.createElement('button')
@@ -1771,7 +1771,7 @@ function toggleMic() {
 }
 
 function startRecording() {
-  if (!state.voiceReady) { alert('Configure a chave da OpenAI no app do PC para usar voz.'); return }
+  if (!state.voiceReady) { alert('A voz não está disponível nesta versão do app do PC.'); return }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
     alert('Microfone indisponível aqui. Use o app instalado (no navegador via http a gravação é bloqueada).')
     return
@@ -1848,8 +1848,6 @@ function transcribeBlob(blob, type) {
         input.value = input.value.trim() ? input.value.trim() + ' ' + t : t
         autoGrow()
         input.focus()
-      } else if (d && d.error === 'no-key') {
-        alert('Configure a chave da OpenAI no app do PC para usar voz.')
       } else {
         alert('Transcrição falhou: ' + ((d && d.error) || 'erro'))
       }
@@ -1863,29 +1861,56 @@ function stopSpeak() {
   scheduleRender()
 }
 
-// Ask the PC to synthesize the answer's text and play the returned MP3. Tapping
-// again (same message) stops it.
+function postJson(path, body) {
+  return fetch(api(path), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function (r) { return r.json() })
+}
+
+// Ask the PC to read the answer aloud (local voice, with the PC's voice and
+// speed — played at rate 1 here). The PC splits the text into short pieces; we
+// play them in order while the next one is synthesized, so the first audio
+// starts fast and long answers work. Tapping again (same message) stops it.
 function toggleSpeak(id, text) {
   if (state.speakingId === id) { stopSpeak(); return }
   stopSpeak()
   state.speakingId = id
   scheduleRender()
-  fetch(api('/api/tts'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: text })
-  }).then(function (r) { return r.json() }).then(function (d) {
-    if (state.speakingId !== id) return // canceled while loading
-    if (d && d.ok && d.audioBase64) {
-      var audio = new Audio('data:' + (d.mimeType || 'audio/mpeg') + ';base64,' + d.audioBase64)
-      state.audio = audio
-      audio.onended = function () { if (state.speakingId === id) stopSpeak() }
-      audio.play().catch(function () { stopSpeak() })
-    } else {
-      stopSpeak()
-      alert(d && d.error === 'no-key' ? 'Configure a chave da OpenAI no app do PC.' : 'Falha ao gerar o áudio.')
+  var fail = function (d) {
+    if (state.speakingId !== id) return
+    stopSpeak()
+    alert('Falha ao gerar o áudio' + (d && d.error ? ': ' + d.error : '.'))
+  }
+  postJson('/api/tts-parts', { text: text }).then(function (d) {
+    // PC antigo sem a rota de partes: pede o texto inteiro de uma vez.
+    var parts = d && d.ok && d.parts ? d.parts : null
+    var treated = !!parts
+    if (!parts) parts = [text]
+    if (!parts.length) { stopSpeak(); return }
+    var pending = {}
+    var fetchPart = function (i) {
+      if (i >= parts.length) return null
+      if (!pending[i]) pending[i] = postJson('/api/tts', { text: parts[i], treated: treated })
+      return pending[i]
     }
-  }).catch(function () { stopSpeak() })
+    var playAt = function (i) {
+      if (state.speakingId !== id) return
+      if (i >= parts.length) { stopSpeak(); return }
+      var p = fetchPart(i)
+      fetchPart(i + 1)
+      p.then(function (r) {
+        if (state.speakingId !== id) return // canceled while loading
+        if (!(r && r.ok && r.audioBase64)) return fail(r)
+        var audio = new Audio('data:' + (r.mimeType || 'audio/wav') + ';base64,' + r.audioBase64)
+        state.audio = audio
+        audio.onended = function () { if (state.speakingId === id) playAt(i + 1) }
+        audio.play().catch(function () { stopSpeak() })
+      }, function () { fail(null) })
+    }
+    playAt(0)
+  }).catch(function () { fail(null) })
 }
 
 // ---- image attachments ----------------------------------------------------

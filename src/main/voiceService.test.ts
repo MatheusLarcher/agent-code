@@ -1,0 +1,96 @@
+// @vitest-environment node
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AppConfig } from '../shared/ipc'
+import { DEFAULT_CONFIG } from '../shared/ipc'
+import { encodeWavPcm16, parseWav } from './voice/pcm'
+
+const cfg = vi.hoisted(() => ({ current: null as unknown as AppConfig }))
+const engine = vi.hoisted(() => ({
+  setVoiceCacheDir: vi.fn(),
+  synthesizeLocal: vi.fn(),
+  transcribeWhisper: vi.fn(async () => 'texto do whisper'),
+  stopVoiceEngine: vi.fn(async () => {})
+}))
+const python = vi.hoisted(() => ({
+  transcribeLocal: vi.fn(async (_wav: Buffer, _model: string, _report: unknown) => 'texto do parakeet')
+}))
+const chromium = vi.hoisted(() => ({
+  canDecodeWithChromium: vi.fn(() => true),
+  decodeWithChromium: vi.fn(async () => new Float32Array(1600))
+}))
+vi.mock('electron', () => ({}))
+vi.mock('./config', () => ({ loadConfig: () => cfg.current }))
+vi.mock('./store', () => ({ getCacheInfo: () => ({ localDir: 'C:/local' }) }))
+vi.mock('./speech', () => python)
+vi.mock('./voice', () => engine)
+vi.mock('./voice/chromiumDecode', () => chromium)
+
+const { resolveSpeakOptions, speak, speechParts, transcribe } = await import('./voiceService')
+
+function wav(samples: number): string {
+  return encodeWavPcm16(new Float32Array(samples).fill(0.1), 24000).toString('base64')
+}
+
+beforeEach(() => {
+  cfg.current = { ...DEFAULT_CONFIG, voice: { voice: 'pm_alex', speed: 1.25 } }
+  for (const fn of Object.values(engine)) fn.mockClear()
+  python.transcribeLocal.mockClear()
+  chromium.decodeWithChromium.mockClear()
+  engine.synthesizeLocal.mockImplementation(async () => ({ base64: wav(240), mimeType: 'audio/wav', durationSec: 0.01, chunks: 1 }))
+})
+
+describe('voiceService — leitura', () => {
+  it('usa a voz e a velocidade da config no Kokoro (speed nativo) e aponta o cache local', async () => {
+    const r = await speak('Olá.')
+    expect(r.mimeType).toBe('audio/wav')
+    expect(engine.synthesizeLocal).toHaveBeenCalledWith('Olá.', { voice: 'pm_alex', speed: 1.25 }, expect.any(Function))
+    expect(engine.setVoiceCacheDir).toHaveBeenCalledWith(expect.stringMatching(/C:[\\/]local[\\/]voice-models$/))
+  })
+
+  it('"Testar voz": override válido vence; inválido cai na config', () => {
+    expect(resolveSpeakOptions({ voice: 'pm_santa', speed: 0.8 })).toEqual({ voice: 'pm_santa', speed: 0.8 })
+    expect(resolveSpeakOptions({ voice: 'alloy', speed: 'x' })).toEqual({ voice: 'pm_alex', speed: 1.25 })
+    expect(resolveSpeakOptions({ speed: 7 })).toEqual({ voice: 'pm_alex', speed: 2 })
+  })
+
+  it('texto do celular é tratado (Markdown → fala) e texto longo sai em fatias num WAV só', async () => {
+    await speak('**Negrito** e `código`', { treat: true })
+    expect(engine.synthesizeLocal.mock.calls[0][0]).not.toContain('**')
+
+    engine.synthesizeLocal.mockClear()
+    const long = Array.from({ length: 800 }, (_, i) => `Frase número ${i} com algum texto.`).join(' ')
+    expect(long.length).toBeGreaterThan(20_000)
+    const r = await speak(long)
+    expect(engine.synthesizeLocal.mock.calls.length).toBeGreaterThan(1)
+    for (const call of engine.synthesizeLocal.mock.calls) expect((call[0] as string).length).toBeLessThanOrEqual(15_000)
+    const pcm = parseWav(Buffer.from(r.base64, 'base64'))
+    expect(pcm.channels[0].length).toBeGreaterThan(240 * engine.synthesizeLocal.mock.calls.length)
+  })
+
+  it('speechParts devolve as partes tratadas', () => {
+    expect(speechParts('# Título\n\nUma frase. Outra frase.').join(' ')).not.toContain('#')
+  })
+})
+
+describe('voiceService — ditado', () => {
+  it("'whisper' (padrão) vai para o Whisper local com o mime original", async () => {
+    cfg.current = { ...cfg.current, transcribeEngine: 'whisper' }
+    expect(await transcribe('GkXfow==', 'audio/webm;codecs=opus')).toBe('texto do whisper')
+    expect(engine.transcribeWhisper).toHaveBeenCalledWith('GkXfow==', 'audio/webm;codecs=opus', expect.any(Function))
+    expect(python.transcribeLocal).not.toHaveBeenCalled()
+  })
+
+  it("'local' usa o Python; WebM do celular vira WAV antes", async () => {
+    cfg.current = { ...cfg.current, transcribeEngine: 'local' }
+    expect(await transcribe(Buffer.from('webm-bytes').toString('base64'), 'audio/webm')).toBe('texto do parakeet')
+    expect(chromium.decodeWithChromium).toHaveBeenCalledTimes(1)
+    const sentWav = python.transcribeLocal.mock.calls[0][0]
+    expect(parseWav(sentWav).sampleRate).toBe(16000)
+
+    // WAV do desktop segue direto, sem decodificar.
+    const desktopWav = encodeWavPcm16(new Float32Array(160), 16000)
+    await transcribe(desktopWav.toString('base64'), 'audio/wav')
+    expect(chromium.decodeWithChromium).toHaveBeenCalledTimes(1)
+    expect(engine.transcribeWhisper).not.toHaveBeenCalled()
+  })
+})

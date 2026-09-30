@@ -116,11 +116,12 @@ vi.mock('../config', () => ({
   loadConfig: () => ({ planning: spy.planningConfig, typesafe: { allowedAutoModels: [] } }),
   updateConfig: vi.fn()
 }))
-vi.mock('../openai', () => ({
-  transcribeAudio: vi.fn(),
-  synthesizeSpeech: vi.fn(),
-  writeTempAudioSegment: vi.fn(),
-  deleteTempAudioSegment: vi.fn()
+vi.mock('../voiceService', () => ({
+  registerVoiceIpc: vi.fn(),
+  speak: vi.fn(),
+  speechParts: vi.fn(() => []),
+  stopVoice: vi.fn(async () => {}),
+  transcribe: vi.fn()
 }))
 vi.mock('../speech', () => ({ stopLocalSpeech: vi.fn(), transcribeLocal: vi.fn() }))
 vi.mock('../auth', () => ({ isAuthenticated: vi.fn(), logoutClaude: vi.fn() }))

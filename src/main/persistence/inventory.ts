@@ -41,8 +41,8 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
     authoritativeInPostgresMode: 'postgres',
     keys: [
       'config',
-      'config.openai.apiKey',
-      'config.openai.voice',
+      'config.voice.voice',
+      'config.voice.speed',
       'config.openai.speed',
       'config.transcribeEngine',
       'config.localSpeech.model',

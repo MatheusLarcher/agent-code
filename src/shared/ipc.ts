@@ -952,21 +952,34 @@ export function modelSupportsFastMode(model: string | undefined): boolean {
 
 // ---- App configuration (persisted in the main process) ------------------
 
-/** Voices offered by gpt-4o-mini-tts (shown in the Settings dropdown). */
-export const OPENAI_VOICES = [
-  'alloy',
-  'ash',
-  'ballad',
-  'coral',
-  'echo',
-  'fable',
-  'nova',
-  'onyx',
-  'sage',
-  'shimmer',
-  'verse'
+/** pt-BR voices of the local Kokoro engine (src/main/voice). Same ids as its
+ *  KOKORO_VOICES — a test holds the two lists together. The first is the default. */
+export const VOICE_OPTIONS = [
+  { id: 'pf_dora', label: 'Dora (feminina)' },
+  { id: 'pm_alex', label: 'Alex (masculina)' },
+  { id: 'pm_santa', label: 'Santa (masculina, grave)' }
 ] as const
-export type OpenAiVoice = (typeof OPENAI_VOICES)[number]
+export type VoiceId = (typeof VOICE_OPTIONS)[number]['id']
+export const DEFAULT_VOICE: VoiceId = 'pf_dora'
+/** Reading speed choices (Kokoro's native `speed`, 0.5–2). */
+export const VOICE_SPEEDS = [
+  { value: 0.8, label: 'Devagar' },
+  { value: 1, label: 'Normal' },
+  { value: 1.25, label: 'Rápida' },
+  { value: 1.5, label: 'Bem rápida' }
+] as const
+export const VOICE_SPEED_MIN = 0.5
+export const VOICE_SPEED_MAX = 2
+
+export function isVoiceId(value: unknown): value is VoiceId {
+  return typeof value === 'string' && VOICE_OPTIONS.some((v) => v.id === value)
+}
+
+/** A stored speed clamped to what Kokoro accepts; garbage becomes 1. */
+export function normalizeVoiceSpeed(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 1
+  return Math.min(VOICE_SPEED_MAX, Math.max(VOICE_SPEED_MIN, value))
+}
 
 // ---- Ollama Cloud integration -------------------------------------------
 // Ollama Cloud exposes an Anthropic-compatible Messages API, so the bundled
@@ -1361,16 +1374,13 @@ export interface MemoristaProviderDiagnosticMsg extends MemoristaProviderDiagnos
   at: number
 }
 
-/** OpenAI integration (optional). When an API key is set, the chat gets voice
- *  input (speech→text, gpt-4o-mini-transcribe) and read-aloud (text→speech,
- *  gpt-4o-mini-tts). The key is stored only in the cache-folder SQLite db. */
-export interface OpenAiConfig {
-  /** API key from platform.openai.com → API keys (sent as a Bearer header by main). */
-  apiKey: string
-  /** Voice used for read-aloud (one of OPENAI_VOICES). */
-  voice: string
-  /** Reading speed: 0.8 = slow, 1 = normal, 1.5 = fast. Applied in the renderer
-   *  as the audio playbackRate (exact/instant) — the model's own pace is unreliable. */
+/** Read-aloud settings. Speech runs on this machine (Kokoro, src/main/voice) —
+ *  no key, no cloud. */
+export interface VoiceConfig {
+  /** Voice used for read-aloud (one of VOICE_OPTIONS). */
+  voice: VoiceId
+  /** Reading speed: 0.8 = slow, 1 = normal, 1.5 = fast. Passed to Kokoro as its
+   *  native `speed` — nothing is sped up again at playback. */
   speed: number
 }
 
@@ -1402,10 +1412,13 @@ export interface ProvidersStatus {
 /** Resposta de `sandboxCreate`: erro de disco vira `{ error }`, nunca lança. */
 export type SandboxCreateResult = { path: string } | { error: string }
 
-/** Where dictation is transcribed: OpenAI's API, or a model running on this
- *  machine (works offline and sends no audio anywhere, but has to be downloaded
- *  the first time — see `speech.ts`). */
-export type TranscribeEngine = 'cloud' | 'local'
+/** Which on-device engine transcribes dictation. Both work offline and send no
+ *  audio anywhere; each downloads its model the first time.
+ *  - 'whisper': Whisper via ONNX in a utility process (src/main/voice), CPU only.
+ *  - 'local': NVIDIA Parakeet/Canary through a Python venv (`speech.ts`), needs
+ *    a CUDA-capable Python already on the machine. */
+export type TranscribeEngine = 'whisper' | 'local'
+export const TRANSCRIBE_ENGINES: readonly TranscribeEngine[] = ['whisper', 'local']
 
 /** main → renderer while the on-device model is being prepared. `done` closes
  *  the notice; `error` explains why it couldn't be installed. The renderer keeps
@@ -1474,11 +1487,11 @@ export const DEFAULT_LOCAL_SPEECH_MODEL = LOCAL_SPEECH_MODELS[0].id
 
 /** Everything the user can configure — persisted across app restarts. */
 export interface AppConfig {
-  /** OpenAI key for chat voice (TTS + speech-to-text). */
-  openai: OpenAiConfig
-  /** Which engine transcribes dictation. Cloud is the default (nothing to install). */
+  /** Read-aloud voice and speed (local Kokoro). */
+  voice: VoiceConfig
+  /** Which engine transcribes dictation. Whisper is the default (no Python needed). */
   transcribeEngine: TranscribeEngine
-  /** Settings for the on-device engine (only used when `transcribeEngine` is 'local'). */
+  /** Settings for the Python engine (only used when `transcribeEngine` is 'local'). */
   localSpeech: LocalSpeechConfig
   /** Ollama Cloud key + toggle (adds Ollama models to the selector). */
   ollama: OllamaConfig
@@ -1720,8 +1733,8 @@ export interface MemoryConflictItem {
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
-  openai: { apiKey: '', voice: 'alloy', speed: 1 },
-  transcribeEngine: 'cloud',
+  voice: { voice: DEFAULT_VOICE, speed: 1 },
+  transcribeEngine: 'whisper',
   localSpeech: { model: DEFAULT_LOCAL_SPEECH_MODEL },
   ollama: { enabled: false, apiKey: '' },
   skipPermissions: false,
@@ -1955,12 +1968,12 @@ export const Channels = {
   remotePublishState: 'remote:publish-state',
   /** Build the Android remote APK (smartfone-remote); progress streams back. */
   remoteBuildApk: 'remote:build-apk',
-  /** Transcribe recorded audio to text (OpenAI or the on-device model). */
-  openaiTranscribe: 'openai:transcribe',
-  /** main → renderer: the on-device speech model is being downloaded/prepared. */
+  /** Transcribe recorded audio to text with the configured on-device engine. */
+  voiceTranscribe: 'voice:transcribe',
+  /** main → renderer: an on-device voice model (Kokoro/Whisper/Parakeet) is being downloaded/prepared. */
   speechSetupProgress: 'speech:setup-progress',
-  /** Synthesize speech from text via OpenAI (gpt-4o-mini-tts). */
-  openaiTts: 'openai:tts',
+  /** Synthesize speech from text with the local Kokoro engine. */
+  voiceTts: 'voice:tts',
   /** Whether a Claude Code login exists on this machine. */
   authStatus: 'auth:status',
   /** Run the Claude OAuth login (opens the browser); resolves when authenticated. */

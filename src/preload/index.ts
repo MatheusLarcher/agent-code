@@ -233,16 +233,17 @@ const api: AgentCodeApi = {
   suggestConversationTitle: (req: { text: string; convId?: string }): Promise<SuggestTitleResult> =>
     ipcRenderer.invoke(Channels.conversationSuggestTitle, req),
 
-  // OpenAI voice (chat)
+  // Voice (chat) — local engines in main
   transcribeAudio: (
     audioBase64: string,
     mimeType: string
   ): Promise<{ ok: boolean; text?: string; error?: string }> =>
-    ipcRenderer.invoke(Channels.openaiTranscribe, audioBase64, mimeType),
+    ipcRenderer.invoke(Channels.voiceTranscribe, audioBase64, mimeType),
   speak: (
-    text: string
+    text: string,
+    opts?: { voice?: string; speed?: number }
   ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }> =>
-    ipcRenderer.invoke(Channels.openaiTts, text),
+    ipcRenderer.invoke(Channels.voiceTts, text, opts),
   authStatus: (): Promise<{ authenticated: boolean }> => ipcRenderer.invoke(Channels.authStatus),
   authLogin: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.authLogin),
   authLogout: (): Promise<ClaudeAuthStatus> => ipcRenderer.invoke(Channels.authLogout),

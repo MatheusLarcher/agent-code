@@ -37,7 +37,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
   resolveStart = []
   const api = {
     getConfig: vi.fn(async () => ({
-      openai: { apiKey: '', voice: 'alloy', speed: 1 },
+      voice: { voice: 'pf_dora', speed: 1 },
       ollama: { enabled: false, apiKey: '' },
       skipPermissions: false,
       windowsControlEnabled: false,

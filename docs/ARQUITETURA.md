@@ -23,7 +23,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Memorista — o observador que grava memória sozinho](#memorista--o-observador-que-grava-memória-sozinho)
 - [Quadro de tarefas do projeto (trava do plano + agente PO)](#quadro-de-tarefas-do-projeto-trava-do-plano--agente-po)
 - [Tela de Planejamento (Agent Manager)](#tela-de-planejamento-agent-manager)
-- [Voz no chat (OpenAI)](#voz-no-chat-openai)
+- [Voz no chat (motor local)](#voz-no-chat-motor-local)
 - [Modelos via Ollama Cloud](#modelos-via-ollama-cloud)
 - [Pasta de dados (cache) e SQLite](#pasta-de-dados-cache-e-sqlite)
 - [Memória persistente](#memória-persistente)
@@ -1160,16 +1160,17 @@ nem monta (`sessionStartFields`: o planejamento prevalece).
 
 ---
 
-## Voz no chat (OpenAI)
+## Voz no chat (motor local)
 
-O chat ganha **voz** opcional via OpenAI: ditado por microfone (fala → texto) e leitura em voz alta das respostas (texto → fala). Tudo é gated por uma **API key da OpenAI** configurada na tela de Configurações. As chamadas à OpenAI rodam **no main** — a key **nunca** chega ao renderer; o renderer só envia áudio/texto por IPC e recebe texto/áudio de volta.
+O chat tem **voz** sempre disponível, rodando **neste computador**: ditado por microfone (fala → texto) e leitura em voz alta das respostas (texto → fala). Não há chave nem serviço na nuvem — os modelos são baixados uma vez para `<localDir>/voice-models` (pasta local, nunca a sincronizada) e depois tudo funciona offline.
 
-**Configuração** — em `src/shared/ipc.ts`, `OpenAiConfig` carrega `apiKey`, `voice` (uma de `OPENAI_VOICES` — as vozes do `gpt-4o-mini-tts`) e `speed`; o `DEFAULT_CONFIG` traz `openai: { apiKey: '', voice: 'alloy', speed: 1 }`. `src/main/config.ts` faz o **merge aninhado** de `openai` (em `loadConfig`/`updateConfig`), para salvar a key sem clobber das outras configs. A `src/renderer/src/ui/SettingsModal.tsx` tem a seção **"🎙️ OpenAI (voz no chat)"** com o campo de key (mostrar/ocultar), o seletor de **voz** e o de **velocidade** (Devagar/Normal/Rápida/Bem rápida → `0.8`/`1`/`1.25`/`1.5`); a prop `focus: 'openai'` rola até a seção, a destaca e foca o input (usado quando o usuário toca o mic/Ouvir sem key). Ao fechar Configurações, o `App` relê `voiceReady` (key presente) e `voiceSpeedRef`.
+**Motor** (`src/main/voice/`, API descrita no topo de `voice/index.ts`) — leitura com **Kokoro-82M** (vozes pt-BR `pf_dora` (padrão), `pm_alex`, `pm_santa`; fonemas do eSpeak NG em WASM) e ditado com **Whisper** (`@huggingface/transformers` + onnxruntime-node), num `utilityProcess` para não travar o main. A **velocidade** é o `speed` nativo do Kokoro: o áudio já sai na velocidade escolhida e é tocado a 1× (não há mais `playbackRate`).
 
-**Chamadas OpenAI no main** (`src/main/openai.ts`, usa o `fetch`/`FormData`/`Blob` embutidos do Node, sem npm):
-- `transcribeAudio(apiKey, audioBase64, mimeType)` — POST em `/audio/transcriptions` com `model: 'gpt-4o-transcribe'` (o completo, não o `-mini` — bem melhor para pt-BR) e **`language: 'pt'`** (força o português); deduz a extensão pelo mime. O renderer já descarta áudio só-silêncio (VAD), então não se paga transcrição de trechos quietos que voltariam como palavras inventadas.
-- `synthesizeSpeech(apiKey, text, voice)` — POST em `/audio/speech` com `model: 'gpt-4o-mini-tts'`, `response_format: 'mp3'` e uma **instrução forçando pt-BR** ("Leia sempre em português do Brasil…"); devolve `{ base64, mimeType: 'audio/mpeg' }`.
-- IPC `openai:transcribe` / `openai:tts` em `src/main/index.ts` leem a key da config; sem key retornam `{ ok: false, error: 'no-key' }` (o renderer abre Configurações), e erros viram `{ ok: false, error }` para um toast.
+**Ligação com o app** (`src/main/voiceService.ts`) — lê voz/velocidade/motor da config, chama `setVoiceCacheDir` antes do primeiro uso e `stopVoiceEngine` no `before-quit`, e converte o progresso do motor em `SpeechSetupProgress` (`voiceProgress.ts`: bytes somados de todos os arquivos numa barra só; nada é mostrado quando os modelos já estão carregados). O mesmo aviso que o `Composer` já exibia para o motor Python aparece no primeiro ditado **e** no primeiro "Ouvir"/"Ler daqui".
+- IPC `voice:transcribe` (`audioBase64`, `mimeType` → `{ ok, text?, error? }`) e `voice:tts` (`text`, `{ voice?, speed? }` → `{ ok, audioBase64?, mimeType: 'audio/wav', error? }`); o override de voz/velocidade existe para o botão **Testar voz** das Configurações, que toca a escolha antes de salvar.
+- **Motor de ditado** (`AppConfig.transcribeEngine`): `'whisper'` (padrão, CPU, nada a instalar) ou `'local'` — o Parakeet/Canary em Python de `speech.ts`, que continua como alternativa. O motor Python só lê WAV; áudio do celular (WebM/Opus) é decodificado pelo Chromium antes.
+
+**Configuração** — `AppConfig.voice = { voice, speed }` (`DEFAULT_CONFIG`: `pf_dora`, `1`), gravada em `config.voice.voice`/`config.voice.speed`. Migração da voz via OpenAI (removida): `transcribeEngine: 'cloud'` vira `'whisper'`, voz fora da lista vira `pf_dora`, `config.openai.speed` (legado) é lida uma vez para `config.voice.speed`, e a chave `config.openai.apiKey` deixa de ser lida (fica ignorada no banco, sem erro). A aba **Voz** das Configurações (`ui/VoiceSettingsSection.tsx`) tem voz, velocidade, **Testar voz** e o motor de ditado (Whisper local | Parakeet/Canary em Python).
 
 **Microfone / ditado** (`src/renderer/src/components/Composer.tsx`) — grava **uma fala por segmento**, cortado nas **pausas naturais** por um **VAD local** (detecção de voz, `src/renderer/src/vad.ts` — sem biblioteca externa, roda em cima do `AnalyserNode` que o medidor já usa) e **transcreve cada segmento somando o texto** no campo. Dois motivos para segmentar (em vez de uma gravação única e crescente): (1) um arquivo `webm` só é decodificável depois de **finalizado** (`stop()`) — enviar o áudio ainda "aberto" fazia a API decodificar como vazio (o bug do "não aparece nada"); (2) o VAD fecha o segmento **só quando você pausa**, nunca no meio da palavra (o timer fixo de ~4 s cortava palavras → texto picotado).
 
@@ -1185,9 +1186,9 @@ O `runMeter` (no `requestAnimationFrame`) lê o waveform **uma vez por frame** (
 - `toSpeechText(markdown)` — remove blocos de código cercados e URLs (mantém o **texto** dos links, descarta imagens), tira marcadores de heading/lista/citação/ênfase e **não lê tabelas**: cada tabela GFM vira a menção "conforme a tabela.".
 - `splitForSpeech(text)` — fatia por frases numa **rampa** de tamanho (`CHUNK_RAMP = [60, 150, 260]`): o 1º pedaço é minúsculo para o primeiro áudio voltar rápido, os seguintes maiores para reduzir o número de chamadas TTS; frases acima de `HARD_MAX` são quebradas em cláusulas/palavras.
 
-A **velocidade** é aplicada no player via `audio.playbackRate` (com `preservesPitch` para a voz não ficar de "esquilo") — determinística e instantânea, porque o `gpt-4o-mini-tts` ignora o parâmetro `speed`. Os ícones novos ficam em `src/renderer/src/components/Icons.tsx` (`IconMic`, `IconSpeaker`, `IconStopSmall`, `IconChevronDown`).
+A **velocidade** vem pronta no áudio (Kokoro `speed`); o player toca a 1×. Os ícones novos ficam em `src/renderer/src/components/Icons.tsx` (`IconMic`, `IconSpeaker`, `IconStopSmall`, `IconChevronDown`).
 
-> A mesma voz roda **no celular** pela ponte LAN: o app grava/toca e o PC transcreve/sintetiza (o `RemoteServer` recebe `transcribe`/`tts`/`voiceReady` por dependência em `index.ts`, lendo a key da config). Há testes do tratamento de fala em `src/shared/speechText.test.ts`.
+> A mesma voz roda **no celular** pela ponte LAN: o app grava/toca e o PC transcreve/sintetiza (o `RemoteServer` recebe `transcribe`/`tts`/`ttsParts` por dependência em `index.ts`, que usam o `voiceService`). `/api/transcribe` usa o motor configurado e aceita WebM/Opus; `/api/tts-parts` devolve o texto tratado em pedaços e o celular toca cada `/api/tts` (`treated: true`) em sequência, pré-buscando o próximo — respostas longas funcionam e o primeiro áudio chega rápido. A voz e a velocidade são as do PC. `/api/state` traz `voiceReady: true` sempre que a voz está ligada (não depende de chave). Há testes do tratamento de fala em `src/shared/speechText.test.ts`.
 
 ---
 
@@ -1195,7 +1196,7 @@ A **velocidade** é aplicada no player via `audio.playbackRate` (com `preservesP
 
 Além do Claude (Opus/Sonnet/Haiku), o app pode rodar **modelos do Ollama Cloud** (DeepSeek, GLM, Qwen, Kimi, GPT-OSS…). Funciona **sem trocar de SDK**: o Ollama Cloud expõe uma **API compatível com a Anthropic Messages API**, então a própria CLI do Claude Code (que o Agent SDK sobe) é apontada para o Ollama por **variáveis de ambiente** — o mesmo truque do comando `ollama launch claude`.
 
-**Configuração** — em `src/shared/ipc.ts`: `OllamaConfig` (`{enabled, apiKey}`; `DEFAULT_CONFIG` traz `ollama: { enabled: false, apiKey: '' }`), a lista curada `OLLAMA_MODELS` (id = **tag exata** do Ollama, ex. `nemotron-3-ultra:cloud`, `glm-5.3:cloud`), `OLLAMA_BASE_URL = 'https://ollama.com'` e `isOllamaModel(id)` (true quando o id termina em `:cloud` — assim modelos futuros funcionam sem mexer no código). `src/main/config.ts` faz o **merge aninhado** de `ollama` (igual ao `openai`).
+**Configuração** — em `src/shared/ipc.ts`: `OllamaConfig` (`{enabled, apiKey}`; `DEFAULT_CONFIG` traz `ollama: { enabled: false, apiKey: '' }`), a lista curada `OLLAMA_MODELS` (id = **tag exata** do Ollama, ex. `nemotron-3-ultra:cloud`, `glm-5.3:cloud`), `OLLAMA_BASE_URL = 'https://ollama.com'` e `isOllamaModel(id)` (true quando o id termina em `:cloud` — assim modelos futuros funcionam sem mexer no código). `src/main/config.ts` faz o **merge aninhado** de `ollama` (igual ao `voice`).
 
 **Roteamento** (`src/main/agentSession.ts`) — quando o modelo escolhido é Ollama, a sessão monta `options.env` com três variáveis e parte daí:
 - `ANTHROPIC_BASE_URL` = `https://ollama.com`
@@ -1224,7 +1225,7 @@ O erro `HTTP 400 / Model not found gpt-5.6-luna` observado na integração tinha
 
 **GPT-6 Astra** também usa esse contrato Responses Lite. Sua integração exige a versão de protocolo **0.156.1** (Codex CLI estável mais recente; antes 0.153.4), agora enviada pelo proxy para todos os GPTs. A versão 0.146.0 mencionada no diagnóstico anterior era rejeitada pelo Astra com HTTP 400. O campo estruturado `detail` dessa recusa também é preservado na mensagem apresentada ao usuário. Astra, Sol, Luna e Terra foram exercitados com autenticação e ferramentas reais; veja `docs/validation/provider-failover-2026-09-05.md`.
 
-**Regra de roteamento OpenAI** — os modelos GPT do Agent Code usam exclusivamente o login OAuth do ChatGPT pelo backend Codex e o proxy local; nunca usam a OpenAI API com chave. A OpenAI API é reservada apenas para voz.
+**Regra de roteamento OpenAI** — os modelos GPT do Agent Code usam exclusivamente o login OAuth do ChatGPT pelo backend Codex e o proxy local; nunca usam a OpenAI API com chave (nem a voz usa: ela roda no motor local).
 
 **Modo rápido nos dois provedores, por canais diferentes** — o toggle **↯ Rápido** é um controle só, mas a capacidade é pedida de formas incompatíveis, e mandar a errada é erro duro, não no-op. `fastModeTransport(model)` (`shared/ipc.ts`) é a fonte única que decide:
 
@@ -1368,7 +1369,7 @@ A persistência **por usuário** vive numa **pasta de cache** que o usuário esc
 ~/.agent-code/location.json      ← ponteiro: SÓ o caminho da pasta de cache
 <escolhida>/agent-code/          ← pasta de cache (nome fixo = nome do projeto)
   ├─ agent-code.db               ← SQLite: tabela kv(key → JSON) — config do sistema
-  │                                (API keys OpenAI/Ollama, "permitir tudo", token Android,
+  │                                (voz, API key Ollama, "permitir tudo", token Android,
   │                                UI state, snapshot de uso); a chave antiga de
   │                                conversas (agentcode.conversations.v1) é APAGADA
   │                                daqui assim que a migração pro storage por
@@ -1390,7 +1391,7 @@ A persistência **por usuário** vive numa **pasta de cache** que o usuário esc
 - **Ponteiro** — o único dado guardado fora da pasta de cache: `~/.agent-code/location.json` com `{ cacheDir }`. Nada mais é criado no home.
 - **`initStore()`** roda no `app.whenReady()` antes de qualquer leitura de config: lê o ponteiro; no **primeiro uso** usa o padrão `Documentos/agent-code` e **migra** o antigo `settings.json` (de `userData`) para a chave `config` do banco global. É idempotente e as funções `kvGet`/`kvSet` chamam o init de forma preguiçosa, então a ordem de chamada não importa.
 - **Trocar de pasta** (`setCacheDir`) — se o usuário escolhe uma pasta chamada `agent-code`, usa-a direto; senão cria uma subpasta `agent-code` dentro do local escolhido. Se já houver `.db`/memórias lá, **só carrega** (abre o banco existente sem apagar); a **pasta `data/` inteira** é movida junto com o resto (`moveAllContents`), então as conversas por projeto seguem a mudança de pasta. O ponteiro é reescrito.
-- **`config.ts`** deixou de usar `settings.json` e passou a ler/gravar a chave `config` do SQLite global (mesma forma de `AppConfig`); o **token fixo do Android** (`remoteToken`) e as API keys da OpenAI/Ollama vivem aqui.
+- **`config.ts`** deixou de usar `settings.json` e passou a ler/gravar a chave `config` do SQLite global (mesma forma de `AppConfig`); o **token fixo do Android** (`remoteToken`) e a API key do Ollama vivem aqui.
 - **Conversas** vivem em `data/`, um banco por projeto — ver a seção seguinte. **Estado da UI e snapshot de uso** continuam no banco global (`storage.ts`, chaves `agentcode.ui.v1`/`agentcode.usage-limits.v1` via `kv:get`/`kv:set`), **migrando** o que houver no `localStorage` antigo na primeira leitura.
 - **IPC:** `cache:get-info` (caminho atual), `cache:choose-dir` (diálogo nativo `openDirectory`+`createDirectory` → troca e recarrega), `kv:get`/`kv:set` (store key→JSON, config/UI/uso) e `conversations:load-all`/`conversations:save-all` (conversas, fanned out por projeto — ver abaixo). A tela `SettingsModal` mostra o caminho e o botão "Trocar…".
 
@@ -1624,7 +1625,7 @@ O `App` grava o `draft` na conversa (persistido no SQLite pelo *debounce* das co
   - `saveConversations` continua fazendo o **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo) e descartando o campo `images` ao persistir.
 - `agentcode.ui.v1` — `{ collapsed, activeId, browserMinimized, browserWidth }` — continua no banco **global** (`kv:get`/`kv:set`), não migrou para os bancos por projeto (não é dado de projeto).
 - **Migração do `localStorage`** (herdada de instalações bem antigas, anteriores até ao SQLite) — na primeira leitura de cada chave, se não houver dado algum (nem no SQLite global, nem em nenhum banco de projeto), o valor antigo do `localStorage` é copiado (e mantido como backup inofensivo, nunca reconsultado depois — evitar isso é o que garante que uma conversa **de verdade** apagada não "ressuscite" de um `localStorage` velho). A hidratação do `App` virou `async` (carrega em paralelo e só então marca `hydrated`, que evita sobrescrever antes de carregar).
-- As **configs do sistema** (API keys OpenAI/Ollama, "permitir tudo", token do Android) ficam na chave `config` do banco global (`config.ts` → `store.ts`), não mais no `settings.json`.
+- As **configs do sistema** (voz, API key do Ollama, "permitir tudo", token do Android) ficam na chave `config` do banco global (`config.ts` → `store.ts`), não mais no `settings.json`.
 
 ---
 
@@ -1820,8 +1821,8 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `fileDownload` | `app:file-download` | copia um arquivo (entregável criado pelo agente) para Downloads e o revela no Explorer | `path` → `{ ok, message, saved? }` |
 | `fileRead` / `fileReadBytes` | `app:file-read` / `app:file-read-bytes` | lê um arquivo como texto / bytes (visualizadores do renderer) | `path` → `string` / `FileBytes` |
 | `configGet` / `configSet` | `config:get` / `config:set` | lê / grava a `AppConfig` persistida (Configurações) | — → `AppConfig` / `Partial<AppConfig>` |
-| `openaiTranscribe` | `openai:transcribe` | transcreve áudio (base64) via OpenAI `gpt-4o-transcribe` (key no main) | `audioBase64`, `mimeType` → `{ ok, text?, error? }` |
-| `openaiTts` | `openai:tts` | sintetiza fala (MP3 base64) de um texto via OpenAI `gpt-4o-mini-tts` | `text` → `{ ok, audioBase64?, mimeType?, error? }` |
+| `voiceTranscribe` | `voice:transcribe` | transcreve áudio (base64 WAV/WebM) com o motor local configurado (Whisper ou Python) | `audioBase64`, `mimeType` → `{ ok, text?, error? }` |
+| `voiceTts` | `voice:tts` | sintetiza fala (WAV base64) com o Kokoro local, na voz/velocidade da config ou do override | `text`, `{ voice?, speed? }` → `{ ok, audioBase64?, mimeType?, error? }` |
 | `authStatus` | `auth:status` | há login do Claude nesta máquina? (`claude auth status --json`) | — → `{ authenticated }` |
 | `authLogin` | `auth:login` | dispara o login OAuth do Claude (abre o navegador do sistema) | — → `{ ok }` |
 | `cacheGetInfo` | `cache:get-info` | caminho atual da pasta de dados (SQLite + memórias) | — → `CacheInfo` |

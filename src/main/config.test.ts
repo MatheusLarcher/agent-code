@@ -290,3 +290,41 @@ describe('race de boot da config persistida', () => {
     expect(kvFacade.readPersistedKvMany).toHaveBeenCalledTimes(1)
   })
 })
+
+// A voz saiu da OpenAI para o motor local: a velocidade gravada antes continua
+// valendo, a chave antiga é ignorada e nenhuma chave `config.openai.*` é gravada.
+describe('migração da voz da OpenAI', () => {
+  it('leva config.openai.speed para config.voice.speed e ignora a chave antiga', async () => {
+    const kv = fakeKv([
+      ['config.openai.apiKey', sealed('sk-antiga')],
+      ['config.openai.voice', JSON.stringify('nova')],
+      ['config.openai.speed', '1.25'],
+      ['config.transcribeEngine', JSON.stringify('cloud')]
+    ])
+    const { initializeConfigPersistence } = await import('./config')
+
+    const cfg = await initializeConfigPersistence()
+    expect(cfg.voice).toEqual({ voice: 'pf_dora', speed: 1.25 })
+    expect(cfg.transcribeEngine).toBe('whisper')
+    expect(JSON.stringify(cfg)).not.toContain('sk-antiga')
+    expect(kv.get('config.voice.speed')).toBe('1.25')
+    expect(kv.get('config.voice.voice')).toBe(JSON.stringify('pf_dora'))
+    const written = kvFacade.writePersistedKv.mock.calls.map((call) => (call as unknown[])[0])
+    expect(written.filter((key) => String(key).startsWith('config.openai.'))).toEqual([])
+  })
+
+  it('config.voice.speed já gravada vence o legado', async () => {
+    fakeKv([
+      ['config.voice.speed', '0.8'],
+      ['config.openai.speed', '1.5']
+    ])
+    const { initializeConfigPersistence } = await import('./config')
+    expect((await initializeConfigPersistence()).voice.speed).toBe(0.8)
+  })
+
+  it('velocidade legada ilegível não derruba o boot', async () => {
+    fakeKv([['config.openai.speed', '{quebrado']])
+    const { initializeConfigPersistence } = await import('./config')
+    expect((await initializeConfigPersistence()).voice.speed).toBe(1)
+  })
+})

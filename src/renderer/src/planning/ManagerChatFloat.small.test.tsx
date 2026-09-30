@@ -36,7 +36,6 @@ interface ChatOpts {
   minimized?: boolean
   draft?: string
   busy?: boolean
-  voiceReady?: boolean
   strict?: boolean
   onInterrupt?: () => void
 }
@@ -76,8 +75,6 @@ function renderChat(opts: ChatOpts = {}) {
             onCancelRecovery={() => {}}
             runningSince={null}
             lastDurationMs={null}
-            voiceReady={opts.voiceReady ?? false}
-            onNeedVoiceKey={() => {}}
             tts={{ speakingId: null, onToggleSpeak: () => {} }}
             models={[{ id: 'claude-opus-5-5', label: 'Opus 5.5' }]}
             model="claude-opus-5-5"
@@ -390,7 +387,7 @@ describe('faixa pequena — o que some e o que fica (CSS real, estilo computado)
     Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia }, configurable: true })
     try {
       // Grava com o chat aberto e a caixa vazia; depois minimiza — cai na faixa pequena.
-      const { container, small } = renderChat({ minimized: false, voiceReady: true })
+      const { container, small } = renderChat({ minimized: false })
       const mic = container.querySelector('.composer-row .mic-btn') as HTMLElement
       fireEvent.click(mic)
       await waitFor(() => expect(mic.classList.contains('recording')).toBe(true))

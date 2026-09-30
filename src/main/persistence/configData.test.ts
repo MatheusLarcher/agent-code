@@ -105,12 +105,12 @@ describe('configuração persistida', () => {
   it('preenche campos ausentes e faz merge profundo dos grupos', () => {
     const parsed = parseStoredAppConfig(
       JSON.stringify({
-        openai: { apiKey: 'key' },
+        voice: { speed: 1.25 },
         localSpeech: { model: 'modelo' },
         ollama: { enabled: true }
       })
     )
-    expect(parsed.openai).toMatchObject({ apiKey: 'key', voice: 'alloy', speed: 1 })
+    expect(parsed.voice).toEqual({ voice: 'pf_dora', speed: 1.25 })
     expect(parsed.localSpeech.model).toBe('modelo')
     expect(parsed.ollama).toEqual({ enabled: true, apiKey: '' })
   })
@@ -124,7 +124,29 @@ describe('configuração persistida', () => {
 
   it('não altera o snapshot anterior quando o patch é inválido', () => {
     const current = defaultAppConfig()
-    expect(() => mergeAppConfig(current, { openai: { speed: -1 } })).toThrow()
+    expect(() => mergeAppConfig(current, { voice: { speed: -1 } })).toThrow()
     expect(current).toEqual(defaultAppConfig())
+  })
+
+  it('migra a voz da OpenAI: chave descartada, voz antiga → pf_dora, cloud → whisper', () => {
+    const parsed = parseStoredAppConfig(
+      JSON.stringify({ openai: { apiKey: 'sk-velha', voice: 'nova', speed: 1.5 }, transcribeEngine: 'cloud' })
+    )
+    expect(parsed).not.toHaveProperty('openai')
+    expect(JSON.stringify(parsed)).not.toContain('sk-velha')
+    expect(parsed.voice).toEqual({ voice: 'pf_dora', speed: 1.5 })
+    expect(parsed.transcribeEngine).toBe('whisper')
+    // Campos gravados um a um (KV) também passam pelo merge.
+    const atual = defaultAppConfig()
+    expect(mergeAppConfig(atual, { transcribeEngine: 'cloud' }).transcribeEngine).toBe('whisper')
+    expect(mergeAppConfig(atual, { voice: { voice: 'alloy' } }).voice.voice).toBe('pf_dora')
+    expect(mergeAppConfig(atual, { voice: { voice: 'pm_santa', speed: 9 } }).voice).toEqual({ voice: 'pm_santa', speed: 2 })
+    expect(mergeAppConfig(atual, { transcribeEngine: 'local' }).transcribeEngine).toBe('local')
+  })
+
+  it('padrão: pf_dora, velocidade 1, ditado com Whisper local', () => {
+    const d = defaultAppConfig()
+    expect(d.voice).toEqual({ voice: 'pf_dora', speed: 1 })
+    expect(d.transcribeEngine).toBe('whisper')
   })
 })

@@ -245,8 +245,6 @@ describe('ManagerChatFloat — o chat de verdade dentro do painel', () => {
               textareaRef={createRef<HTMLTextAreaElement>()}
               projects={[]}
               projectRoot={null}
-              voiceReady={false}
-              onNeedVoiceKey={() => {}}
               convId="c1"
               draft=""
               onDraftChange={() => {}}

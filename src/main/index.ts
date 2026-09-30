@@ -37,14 +37,11 @@ import {
   Channels,
   CLAUDE_MODELS,
   DEFAULT_CONFIG,
-  DEFAULT_LOCAL_SPEECH_MODEL,
   isAutoEffort,
   isAutoModel,
-  LOCAL_SPEECH_MODELS,
   OPENAI_MODELS,
   REMOTE_RELAY_WS,
-  type BoardItemStatus,
-  type SpeechSetupProgress
+  type BoardItemStatus
 } from '../shared/ipc'
 import {
   ensureConfigLoaded,
@@ -54,8 +51,8 @@ import {
   reloadConfigPersistence,
   updateConfig
 } from './config'
-import { transcribeAudio, synthesizeSpeech, writeTempAudioSegment, deleteTempAudioSegment } from './openai'
-import { stopLocalSpeech, transcribeLocal } from './speech'
+import { stopLocalSpeech } from './speech'
+import { registerVoiceIpc, speak, speechParts, stopVoice, transcribe as transcribeVoice } from './voiceService'
 import { isAuthenticated, logoutClaude } from './auth'
 import { runClaudeLogin } from './login'
 import {
@@ -829,19 +826,11 @@ const remote = new RemoteServer({
   saveToken: async (token) => {
     await updateConfig({ remoteToken: token })
   },
-  // Voice runs on the PC (the OpenAI key lives here): the phone records/plays,
-  // we transcribe/synthesize. Throw 'no-key' so the phone shows a clear hint.
-  transcribe: (audioBase64, mimeType) => {
-    const apiKey = loadConfig().openai.apiKey.trim()
-    if (!apiKey) throw new Error('no-key')
-    return transcribeAudio(apiKey, audioBase64, mimeType)
-  },
-  tts: (text) => {
-    const { apiKey, voice } = loadConfig().openai
-    if (!apiKey.trim()) throw new Error('no-key')
-    return synthesizeSpeech(apiKey.trim(), text, voice)
-  },
-  voiceReady: () => !!loadConfig().openai.apiKey.trim()
+  // Voice runs on the PC with the local engines: the phone records/plays, we
+  // transcribe (configured engine) and synthesize (Kokoro, configured voice/speed).
+  transcribe: (audioBase64, mimeType) => transcribeVoice(audioBase64, mimeType),
+  tts: (text, opts) => speak(text, { treat: !opts?.treated }),
+  ttsParts: (text) => speechParts(text)
 })
 
 // Outbound relay to the VPS broker: lets a phone reach this PC from ANY network
@@ -1108,51 +1097,9 @@ export function registerIpc(): void {
   ipcMain.handle(Channels.chromeBridgeStatus, () => chromeBridgeStatus())
   ipcMain.handle(Channels.chromeExtensionInstall, () => openChromeInstall())
 
-  // OpenAI voice (chat): speech-to-text and text-to-speech. The key stays in main
-  // (read from config); the renderer only ships audio/text. Errors come back as
-  // { ok: false } so the UI can show a toast / prompt for the key.
-  ipcMain.handle(Channels.openaiTranscribe, async (e, audioBase64: string, mimeType: string) => {
-    const cfg = loadConfig()
-
-    // On-device engine: nothing is uploaded, but the model may still need to be
-    // downloaded. Progress is streamed so the mic can keep its loading state and
-    // say what's happening instead of just hanging.
-    if (cfg.transcribeEngine === 'local') {
-      // A config salva pode ter um id de um catálogo antigo (ex.: o Whisper que
-      // existia antes do app passar a oferecer só os modelos da NVIDIA) — usá-lo
-      // direto tenta baixar um repo que não tem os pesos no formato esperado e
-      // falha com um erro obscuro. Cair no padrão quando o id não é mais oferecido.
-      const model = LOCAL_SPEECH_MODELS.some((m) => m.id === cfg.localSpeech.model)
-        ? cfg.localSpeech.model
-        : DEFAULT_LOCAL_SPEECH_MODEL
-      const report = (p: SpeechSetupProgress): void => {
-        if (!e.sender.isDestroyed()) e.sender.send(Channels.speechSetupProgress, p)
-      }
-      try {
-        const text = await transcribeLocal(Buffer.from(audioBase64, 'base64'), model, report)
-        return { ok: true, text }
-      } catch (err) {
-        const message = String(err instanceof Error ? err.message : err)
-        report({ stage: 'error', message: 'Não consegui preparar o reconhecimento de voz.' })
-        return { ok: false, error: message }
-      }
-    }
-
-    const apiKey = cfg.openai.apiKey.trim()
-    if (!apiKey) return { ok: false, error: 'no-key' }
-    // Segment is written to a scratch folder only for the duration of the STT
-    // call — the API needs a file, but nothing here should outlive this request.
-    let tempFile: string | null = null
-    try {
-      tempFile = await writeTempAudioSegment(join(getCacheInfo().localDir, 'tmp-audio'), audioBase64, mimeType)
-      const text = await transcribeAudio(apiKey, audioBase64, mimeType)
-      return { ok: true, text }
-    } catch (err) {
-      return { ok: false, error: String(err instanceof Error ? err.message : err) }
-    } finally {
-      if (tempFile) void deleteTempAudioSegment(tempFile)
-    }
-  })
+  // Chat voice (dictation + read-aloud) on this machine — see voiceService.ts.
+  // Model downloads stream as speechSetupProgress to the asking window.
+  registerVoiceIpc(ipcMain)
   // Claude Code auth: status + the one-click OAuth login (no typed /login).
   ipcMain.handle(Channels.authStatus, async () => ({ authenticated: await refreshClaudeReady() }))
   ipcMain.handle(Channels.authLogin, async () => {
@@ -1219,17 +1166,6 @@ export function registerIpc(): void {
     await codexLogout()
     authLog('=== codex:logout ===')
     providersChanged()
-  })
-
-  ipcMain.handle(Channels.openaiTts, async (_e, text: string) => {
-    const { apiKey, voice } = loadConfig().openai
-    if (!apiKey.trim()) return { ok: false, error: 'no-key' }
-    try {
-      const { base64, mimeType } = await synthesizeSpeech(apiKey.trim(), text, voice)
-      return { ok: true, audioBase64: base64, mimeType }
-    } catch (err) {
-      return { ok: false, error: String(err instanceof Error ? err.message : err) }
-    }
   })
 
   // Cache folder: where the SQLite db (config/token/conversations) + .md memories live.
@@ -2533,6 +2469,8 @@ app.on('before-quit', (event) => {
   // O transcritor local é um processo Python com o modelo na GPU: fechar o app
   // sem matá-lo deixaria VRAM presa até o usuário perceber no gerenciador.
   stopLocalSpeech()
+  // Idem para o motor de voz local (Kokoro/Whisper num utilityProcess).
+  void stopVoice()
   stopMemoryCurator?.()
   stopMemoryCurator = null
   stopTaskReaper?.()

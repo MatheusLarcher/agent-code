@@ -69,10 +69,6 @@ interface Props {
   projects: RefProject[]
   /** Active conversation's project root — searched live by the "@" autocomplete. */
   projectRoot: string | null
-  /** Whether an OpenAI key is set (enables the mic dictation). */
-  voiceReady: boolean
-  /** Called when the user taps the mic without a key set (open Settings). */
-  onNeedVoiceKey: () => void
   /** Active conversation id — when it changes, the box loads that chat's draft. */
   convId: string | null
   /** Saved draft text for the active conversation (restored into the box).
@@ -340,7 +336,7 @@ export function Composer(props: Props): JSX.Element {
   const cardRefs = chatDisplay.cardRefs ?? NO_CARDS
   const cardAc = useCardRefAutocomplete({ cards: cardRefs, value, onChange: updateValue, inputRef: editorRef })
 
-  // ---- voice dictation (mic → text, OpenAI gpt-4o-transcribe) ----
+  // ---- voice dictation (mic → text, on-device Whisper or the Python engine) ----
   // Records one utterance per segment, cut at NATURAL PAUSES by a local VAD (voice
   // activity detection, see ../vad — no external library), then appends each
   // transcript. Two reasons it's segmented rather than one growing recording:
@@ -530,9 +526,6 @@ export function Composer(props: Props): JSX.Element {
           const base = baseTextRef.current
           updateValue(base ? `${base} ${transcriptRef.current}` : transcriptRef.current)
         }
-      } else if (!r.ok && r.error === 'no-key') {
-        stopDictation()
-        props.onNeedVoiceKey()
       } else if (!r.ok && !errNotifiedRef.current) {
         errNotifiedRef.current = true
         notify('erro', `Transcrição falhou: ${r.error ?? 'erro'}`)
@@ -582,10 +575,6 @@ export function Composer(props: Props): JSX.Element {
   }
 
   const startDictation = async (): Promise<void> => {
-    if (!props.voiceReady) {
-      props.onNeedVoiceKey()
-      return
-    }
     if (!navigator.mediaDevices?.getUserMedia) {
       notify('erro', 'Captura de áudio indisponível neste contexto (precisa rodar em https/localhost).')
       return

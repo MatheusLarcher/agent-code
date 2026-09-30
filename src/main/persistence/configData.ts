@@ -2,13 +2,18 @@ import { z } from 'zod'
 import {
   currentModelId,
   DEFAULT_CONFIG,
+  DEFAULT_VOICE,
   EFFORT_LEVELS,
   isAutoEffort,
+  isVoiceId,
+  normalizeVoiceSpeed,
   PLANNING_MODELS,
   type AppConfig,
   type EffortChoice,
   type EffortLevel,
-  type PlanningConfig
+  type PlanningConfig,
+  type TranscribeEngine,
+  type VoiceId
 } from '../../shared/ipc'
 import { StorageError } from './types'
 
@@ -49,15 +54,20 @@ export function normalizeAllowedAutoModels(value: unknown): string[] {
 
 const partialConfigSchema = z
   .object({
-    openai: z
+    voice: z
       .object({
-        apiKey: z.string().optional(),
-        voice: z.string().optional(),
-        speed: z.number().finite().positive().optional()
+        // Voz fora da lista (ex.: uma voz antiga da OpenAI) volta ao padrão em
+        // vez de derrubar o boot; velocidade é presa ao intervalo do Kokoro.
+        voice: z.string().transform((v): VoiceId => (isVoiceId(v) ? v : DEFAULT_VOICE)).optional(),
+        speed: z.number().finite().positive().transform(normalizeVoiceSpeed).optional()
       })
       .strict()
       .optional(),
-    transcribeEngine: z.enum(['cloud', 'local']).optional(),
+    // 'cloud' (OpenAI, removido) é aceito só para migrar: vira o Whisper local.
+    transcribeEngine: z
+      .enum(['whisper', 'local', 'cloud'])
+      .transform((v): TranscribeEngine => (v === 'cloud' ? 'whisper' : v))
+      .optional(),
     localSpeech: z.object({ model: z.string().min(1).optional() }).strict().optional(),
     ollama: z.object({ enabled: z.boolean().optional(), apiKey: z.string().optional() }).strict().optional(),
     skipPermissions: z.boolean().optional(),
@@ -97,7 +107,7 @@ const partialConfigSchema = z
 export function defaultAppConfig(): AppConfig {
   return {
     ...DEFAULT_CONFIG,
-    openai: { ...DEFAULT_CONFIG.openai },
+    voice: { ...DEFAULT_CONFIG.voice },
     localSpeech: { ...DEFAULT_CONFIG.localSpeech },
     ollama: { ...DEFAULT_CONFIG.ollama },
     vigia: { ...DEFAULT_CONFIG.vigia },
@@ -119,14 +129,14 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
   return {
     ...current,
     ...parsed.data,
-    openai: { ...current.openai, ...(parsed.data.openai ?? {}) },
+    voice: { ...current.voice, ...(parsed.data.voice ?? {}) },
     localSpeech: { ...current.localSpeech, ...(parsed.data.localSpeech ?? {}) },
     ollama: { ...current.ollama, ...(parsed.data.ollama ?? {}) },
     vigia: { ...current.vigia, ...(parsed.data.vigia ?? {}) },
     memorista: { ...current.memorista, ...(parsed.data.memorista ?? {}) },
     planning: normalizePlanningConfig({ ...current.planning, ...(parsed.data.planning ?? {}) }),
     // `po` é aninhado: o spread raso do `board` apagaria o modelo ao gravar só
-    // o interruptor (mesma armadilha do merge aninhado do `openai`).
+    // o interruptor (mesma armadilha do merge aninhado do `voice`).
     board: {
       ...current.board,
       ...(parsed.data.board ?? {}),
@@ -149,5 +159,19 @@ export function parseStoredAppConfig(raw: string | null): AppConfig {
       cause
     })
   }
-  return mergeAppConfig(defaultAppConfig(), parsed)
+  return mergeAppConfig(defaultAppConfig(), migrateLegacyVoice(parsed))
+}
+
+/**
+ * O blob antigo trazia `openai: { apiKey, voice, speed }` (voz via OpenAI, já
+ * removida). A chave e a voz da OpenAI são descartadas — nenhuma delas existe no
+ * motor local; a velocidade continua valendo. Sem isso o schema estrito
+ * rejeitaria o blob e a config inteira cairia.
+ */
+export function migrateLegacyVoice(parsed: unknown): unknown {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed) || !('openai' in parsed)) return parsed
+  const { openai, ...rest } = parsed as Record<string, unknown>
+  const speed = typeof openai === 'object' && openai !== null ? (openai as { speed?: unknown }).speed : undefined
+  if (rest.voice !== undefined || typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) return rest
+  return { ...rest, voice: { speed } }
 }

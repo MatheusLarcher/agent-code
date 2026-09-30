@@ -2,9 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   CLAUDE_MODELS,
   DEFAULT_CONFIG,
-  LOCAL_SPEECH_MODELS,
   OPENAI_MODELS,
-  OPENAI_VOICES,
   VIGIA_MODELS,
   PO_MODELS,
   MEMORISTA_MODELS,
@@ -18,6 +16,7 @@ import { MemoryDataSection } from './MemoryDataSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { TypeSafePauseNote } from './TypeSafePauseNote'
 import { ChromeControlSection } from './ChromeControlSection'
+import { VoiceSettingsSection } from './VoiceSettingsSection'
 import { ipcErrorMessage } from '../ipcError'
 import {
   IconBoard,
@@ -38,9 +37,9 @@ import {
 
 interface Props {
   onClose: () => void
-  /** When 'openai', open the Voice tab, highlight + focus the OpenAI key. When
-   *  'typesafe', highlight the TypeSafe section (already on the Geral tab). */
-  focus?: 'openai' | 'typesafe' | 'accounts' | null
+  /** When 'typesafe', highlight the TypeSafe section (already on the Geral tab);
+   *  'accounts' opens the Modelos e contas tab. */
+  focus?: 'typesafe' | 'accounts' | null
   /** Global "allow all tools" switch — applies live (not gated by Save). */
   skipPerms: boolean
   onToggleSkipPerms: (on: boolean) => void
@@ -78,7 +77,7 @@ function RevealButton({ shown, onToggle }: { shown: boolean; onToggle: () => voi
 
 /**
  * App settings, organized in tabs: Geral (live permission switches), Modelos e
- * contas (Claude / ChatGPT / Ollama), Voz (OpenAI key, voice, transcription) and
+ * contas (Claude / ChatGPT / Ollama), Voz (local voice, speed, dictation engine) and
  * Dados (cache folder, PostgreSQL). Only the Voz/Ollama fields go through Save;
  * the switches and account buttons apply immediately.
  */
@@ -91,9 +90,8 @@ export function SettingsModal({
   onToggleWindowsControl
 }: Props): JSX.Element {
   const { notify } = useUI()
-  const [tab, setTab] = useState<Tab>(focus === 'openai' ? 'voz' : focus === 'accounts' ? 'modelos' : 'geral')
+  const [tab, setTab] = useState<Tab>(focus === 'accounts' ? 'modelos' : 'geral')
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
-  const [showOpenAiKey, setShowOpenAiKey] = useState(false)
   const [showOllamaKey, setShowOllamaKey] = useState(false)
   const [showTypeSafeKey, setShowTypeSafeKey] = useState(false)
   /** Oculto por padrão — a lista de modelos do Automático só aparece quando o
@@ -121,7 +119,6 @@ export function SettingsModal({
   const [codex, setCodex] = useState<CodexStatus>({ connected: false })
   const [codexBusy, setCodexBusy] = useState(false)
   const [claudeBusy, setClaudeBusy] = useState(false)
-  const openAiRef = useRef<HTMLInputElement>(null)
   const typeSafeSectionRef = useRef<HTMLElement>(null)
   const typeSafeToggleRef = useRef<HTMLInputElement>(null)
 
@@ -154,14 +151,6 @@ export function SettingsModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, fetchConfig])
 
-  // When opened to nudge the OpenAI key, focus that field (its tab is already active).
-  useEffect(() => {
-    if (focus === 'openai' && loaded && tab === 'voz') {
-      openAiRef.current?.scrollIntoView({ block: 'center' })
-      openAiRef.current?.focus()
-    }
-  }, [focus, loaded, tab])
-
   // When opened to nudge TypeSafe (the "Automático" model needs it), scroll to
   // that section — it already lives on the default "Geral" tab.
   useEffect(() => {
@@ -173,7 +162,6 @@ export function SettingsModal({
 
   const save = async (): Promise<void> => {
     if (!ready) return
-    const openai = { ...cfg.openai, apiKey: cfg.openai.apiKey.trim() }
     const ollama = { ...cfg.ollama, apiKey: cfg.ollama.apiKey.trim() }
     // Enabling without a key is pointless — warn but still save the preference.
     if (ollama.enabled && !ollama.apiKey) {
@@ -181,7 +169,7 @@ export function SettingsModal({
     }
     // Save only the keys we edit here so we never clobber other settings (e.g. "Permitir tudo").
     await window.api.setConfig({
-      openai,
+      voice: cfg.voice,
       ollama,
       transcribeEngine: cfg.transcribeEngine,
       localSpeech: cfg.localSpeech
@@ -796,119 +784,7 @@ export function SettingsModal({
 
             {tab === 'voz' && (
               <fieldset className="settings-fieldset" disabled={!ready}>
-                <section className={`settings-section ${focus === 'openai' ? 'settings-highlight' : ''}`}>
-                  <label className="settings-field">
-                    <span className="settings-field-label">API key da OpenAI</span>
-                    {focus === 'openai' && (
-                      <span className="settings-warn">
-                        Adicione sua API key da OpenAI para usar o microfone e a leitura em voz alta.
-                      </span>
-                    )}
-                    <div className="settings-key-row">
-                      <input
-                        ref={openAiRef}
-                        className="settings-input"
-                        type={showOpenAiKey ? 'text' : 'password'}
-                        value={cfg.openai.apiKey}
-                        placeholder="sk-..."
-                        autoComplete="off"
-                        spellCheck={false}
-                        disabled={!loaded}
-                        onChange={(e) => setCfg((c) => ({ ...c, openai: { ...c.openai, apiKey: e.target.value } }))}
-                      />
-                      <RevealButton shown={showOpenAiKey} onToggle={() => setShowOpenAiKey((v) => !v)} />
-                    </div>
-                    <span className="settings-hint">
-                      Gere em platform.openai.com → API keys. Habilita falar para escrever (transcrição,
-                      gpt-4o-transcribe) e ouvir as respostas (gpt-4o-mini-tts). Usada só para voz — os
-                      modelos GPT do chat usam a assinatura do ChatGPT, não esta chave. Fica salva só no seu
-                      computador (no banco da pasta de dados).
-                    </span>
-                  </label>
-                </section>
-
-                <section className="settings-section">
-                  <span className="settings-field-label">Leitura em voz alta</span>
-                  <div className="settings-key-row settings-voice-row">
-                    <label className="settings-field settings-field-inline">
-                      <span className="settings-field-label">Voz</span>
-                      <select
-                        className="settings-input"
-                        value={cfg.openai.voice}
-                        disabled={!loaded}
-                        onChange={(e) => setCfg((c) => ({ ...c, openai: { ...c.openai, voice: e.target.value } }))}
-                      >
-                        {OPENAI_VOICES.map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="settings-field settings-field-inline">
-                      <span className="settings-field-label">Velocidade</span>
-                      <select
-                        className="settings-input"
-                        value={String(cfg.openai.speed)}
-                        disabled={!loaded}
-                        onChange={(e) => setCfg((c) => ({ ...c, openai: { ...c.openai, speed: Number(e.target.value) } }))}
-                      >
-                        <option value="0.8">Devagar</option>
-                        <option value="1">Normal</option>
-                        <option value="1.25">Rápida</option>
-                        <option value="1.5">Bem rápida</option>
-                      </select>
-                    </label>
-                  </div>
-                </section>
-
-                {/* Onde a fala vira texto. O modo local não usa a chave nem manda áudio
-                    para lugar nenhum — em troca, baixa o reconhecimento na 1ª vez. */}
-                <section className="settings-section">
-                  <div className="settings-field">
-                    <span className="settings-field-label">Transcrição do microfone</span>
-                    <div className="settings-engine-row">
-                      <button
-                        type="button"
-                        className={`settings-engine${cfg.transcribeEngine === 'cloud' ? ' on' : ''}`}
-                        disabled={!loaded}
-                        onClick={() => setCfg((c) => ({ ...c, transcribeEngine: 'cloud' }))}
-                      >
-                        <strong>Na nuvem</strong>
-                        <span>usa sua chave da OpenAI, sem instalar nada</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={`settings-engine${cfg.transcribeEngine === 'local' ? ' on' : ''}`}
-                        disabled={!loaded}
-                        onClick={() => setCfg((c) => ({ ...c, transcribeEngine: 'local' }))}
-                      >
-                        <strong>Neste computador</strong>
-                        <span>funciona offline e o áudio não sai daqui</span>
-                      </button>
-                    </div>
-                    {cfg.transcribeEngine === 'local' && (
-                      <>
-                        <select
-                          className="settings-input"
-                          value={cfg.localSpeech.model}
-                          disabled={!loaded}
-                          onChange={(e) => setCfg((c) => ({ ...c, localSpeech: { model: e.target.value } }))}
-                        >
-                          {LOCAL_SPEECH_MODELS.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {`${m.label} — ${m.note} (~${m.sizeMb} MB)`}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="settings-hint">
-                          Na primeira vez que você falar, o app baixa o reconhecimento de voz e mostra o
-                          progresso. Depois disso ele fica salvo e funciona sem internet.
-                        </span>
-                      </>
-                    )}
-                  </div>
-                </section>
+                <VoiceSettingsSection cfg={cfg} setCfg={setCfg} loaded={loaded} />
               </fieldset>
             )}
 

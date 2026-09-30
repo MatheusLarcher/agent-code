@@ -32,8 +32,6 @@ function renderComposer(props: { convId?: string | null; draft?: string } = {}):
     textareaRef: createRef<HTMLTextAreaElement>(),
     projects: [],
     projectRoot: null,
-    voiceReady: false,
-    onNeedVoiceKey: () => {},
     draft: props.draft ?? '',
     onDraftChange,
     projectMissing: false,
