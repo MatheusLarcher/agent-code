@@ -24,8 +24,20 @@ import {
 
 /** Max size for a single non-image attachment read into memory (keeps the IPC payload sane). */
 const MAX_FILE_BYTES = 25 * 1024 * 1024
-/** Same cap `readFileBytes` enforces in main — a bigger image becomes a plain chip. */
-const MAX_IMAGE_PREVIEW_BYTES = 50 * 1024 * 1024
+/**
+ * Maior imagem que vai em bytes para o modelo (a API recusa imagem acima de
+ * 5 MB em base64 = 3,75 MB brutos). Maior que isso vai só pelo caminho.
+ */
+export const MAX_INLINE_IMAGE_BYTES = Math.floor((5 * 1024 * 1024 * 3) / 4)
+
+/** Caminho do arquivo no disco (escolhido/arrastado); '' para print colado. */
+function diskPath(file: File): string {
+  try {
+    return window.api.getPathForFile(file) || ''
+  } catch {
+    return ''
+  }
+}
 /** Resultados guardados de itens fora da tela (troca de conversa). */
 const MAX_PARKED = 64
 
@@ -149,27 +161,23 @@ export function useInlineAttachments({ editorRef, convIdRef, notify, initialDraf
   }
 
   // Arquivo real maior que 25 MB: vai por caminho no disco (sem bytes pelo IPC).
-  async function readLarge(file: File): Promise<InlineAtt | string> {
-    let path: string
-    try {
-      path = window.api.getPathForFile(file)
-    } catch {
-      path = ''
-    }
-    if (!path) return `Arquivo maior que 25 MB precisa ter um caminho no disco: ${file.name}`
+  async function readLarge(path: string, name: string): Promise<InlineAtt | string> {
+    if (!path) return `Arquivo maior que 25 MB precisa ter um caminho no disco: ${name}`
     const resolved = await window.api.resolvePastedPath(path)
     if (!resolved.ok) return `Arquivo não encontrado: ${resolved.error}`
-    if (resolved.isImage && resolved.size <= MAX_IMAGE_PREVIEW_BYTES) {
-      const bytes = await window.api.readFileBytes(resolved.path)
-      if (!bytes.ok) return `Falha ao ler imagem: ${bytes.error}`
-      return makeImageAtt({ mediaType: resolved.mediaType, data: bytes.base64 }, resolved.name)
-    }
     return makeRefAtt({ name: resolved.name, path: resolved.path, mediaType: resolved.mediaType, size: resolved.size })
   }
 
+  // Imagem pequena: bytes para o modelo + caminho original. Grande: só o caminho
+  // (print colado grande, sem caminho, vira arquivo que o main grava em disco).
   async function readFile(file: File): Promise<InlineAtt | string> {
-    if (file.size > MAX_FILE_BYTES) return readLarge(file)
-    if (file.type.startsWith('image/')) return makeImageAtt(await fileToAttachment(file), file.name || 'imagem')
+    const isImage = file.type.startsWith('image/')
+    const path = isImage || file.size > MAX_FILE_BYTES ? diskPath(file) : ''
+    if (file.size > MAX_FILE_BYTES || (isImage && path && file.size > MAX_INLINE_IMAGE_BYTES)) return readLarge(path, file.name)
+    if (isImage && file.size <= MAX_INLINE_IMAGE_BYTES) {
+      const img = await fileToAttachment(file)
+      return makeImageAtt(path ? { ...img, path } : img, file.name || 'imagem')
+    }
     return makeFileAtt(await fileToFileAttachment(file))
   }
 
@@ -180,10 +188,10 @@ export function useInlineAttachments({ editorRef, convIdRef, notify, initialDraf
       ? await window.api.downloadPastedUrl(line, convIdRef.current ?? '')
       : await window.api.resolvePastedPath(line)
     if (!resolved.ok) return `${isUrl ? 'Falha ao baixar' : 'Arquivo não encontrado'}: ${resolved.error}`
-    if (resolved.isImage) {
+    if (resolved.isImage && resolved.size <= MAX_INLINE_IMAGE_BYTES) {
       const bytes = await window.api.readFileBytes(resolved.path)
       if (!bytes.ok) return `Falha ao ler imagem: ${bytes.error}`
-      return makeImageAtt({ mediaType: resolved.mediaType, data: bytes.base64 }, resolved.name)
+      return makeImageAtt({ mediaType: resolved.mediaType, data: bytes.base64, path: resolved.path }, resolved.name)
     }
     return makeRefAtt({ name: resolved.name, path: resolved.path, mediaType: resolved.mediaType, size: resolved.size })
   }

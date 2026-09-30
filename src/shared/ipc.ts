@@ -374,6 +374,8 @@ export interface ImageAttachment {
   data: string
   /** `midia:N = nome` — anexo posto no ponto N do texto (ver shared/inlineMedia). */
   label?: string
+  /** Caminho absoluto do arquivo original, quando conhecido: vai na nota em vez de uma cópia. */
+  path?: string
 }
 
 /**

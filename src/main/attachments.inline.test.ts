@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildAttachmentNote, imagesAsFiles, saveAttachments } from './attachments'
+import { buildAttachmentNote, imagesAsFiles, saveAttachments, splitImagesForNote } from './attachments'
 import { buildInjectedMessage } from './injectNow'
 
 /**
@@ -40,6 +40,19 @@ describe('anexo inline — montagem no main', () => {
     expect(imagesAsFiles([{ mediaType: 'image/png', data: 'AAAA', label: 'midia:3 = print.png' }])[0].label).toBe(
       'midia:3 = print.png'
     )
+  })
+
+  it('imagem com caminho original vai na nota por ele; sem caminho (ou inválido) vira arquivo a gravar', () => {
+    const abs = process.platform === 'win32' ? 'C:\\fotos\\tela.png' : '/fotos/tela.png'
+    const { refs, toSave } = splitImagesForNote([
+      { mediaType: 'image/png', data: 'AAAA', label: 'midia:1 = tela.png', path: abs },
+      { mediaType: 'image/png', data: 'AAAA', label: 'midia:2 = print.png' },
+      { mediaType: 'image/png', data: 'AAAA', path: 'relativo.png' },
+      { mediaType: 'image/png', data: 'AAAA', path: `${abs}\ninjetado` }
+    ])
+    expect(refs).toEqual([{ name: 'tela.png', path: abs, label: 'midia:1 = tela.png' }])
+    expect(toSave.map((f) => f.label)).toEqual(['midia:2 = print.png', undefined, undefined])
+    expect(buildAttachmentNote('{{midia:1}}', refs)).toContain(`- midia:1 = tela.png: ${abs}`)
   })
 
   it('botão "agora": a imagem rotulada entra com o rótulo antes do bloco', () => {

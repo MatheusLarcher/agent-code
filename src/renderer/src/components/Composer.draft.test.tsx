@@ -226,16 +226,19 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     expect(sendBtn.disabled).toBe(false)
   })
 
-  it('imagem >25MB e ≤50MB com caminho vira preview real (não chip)', async () => {
-    stubApi({
+  it('imagem acima do limite inline (5 MB em base64) com caminho vai só pelo caminho, sem ler bytes', async () => {
+    const { readFileBytes } = stubApi({
       path: 'C:\\fotos\\grande.png',
-      resolved: { ok: true, name: 'grande.png', path: 'C:\\fotos\\grande.png', mediaType: 'image/png', size: 40_000_000, isImage: true },
-      bytes: { ok: true, base64: 'ZmFrZS1wbmc=', size: 40_000_000 }
+      resolved: { ok: true, name: 'grande.png', path: 'C:\\fotos\\grande.png', mediaType: 'image/png', size: 8_000_000, isImage: true }
     })
-    renderComposer({ convId: 'c1' })
-    pasteFile(bigFile('grande.png', 40_000_000, 'image/png'))
-    await screen.findByAltText('Imagem anexada: grande.png') // <img> de preview real
-    expect(screen.queryByAltText(/Arquivo anexado: grande\.png/)).toBeNull() // não é um chip
+    const { onSend } = renderComposer({ convId: 'c1' })
+    pasteFile(bigFile('grande.png', 8_000_000, 'image/png'))
+    await screen.findByAltText(/Arquivo anexado: grande\.png/)
+    expect(readFileBytes).not.toHaveBeenCalled()
+    fireEvent.keyDown(textarea(), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('{{midia:1}}', [], [], [
+      { name: 'grande.png', path: 'C:\\fotos\\grande.png', mediaType: 'image/png', size: 8_000_000, label: 'midia:1 = grande.png' }
+    ])
   })
 
   it('imagem >50MB vira chip genérico (não tenta ler bytes)', async () => {

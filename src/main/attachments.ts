@@ -69,6 +69,35 @@ export function imagesAsFiles(images: ImageAttachment[]): FileAttachment[] {
   })
 }
 
+/** Caminho vindo do renderer (fronteira de IPC): absoluto, uma linha, com teto. Só vai para o texto. */
+function validImagePath(p: unknown): p is string {
+  // eslint-disable-next-line no-control-regex
+  return typeof p === 'string' && p.length <= 4000 && isAbsolute(p) && !/[\u0000-\u001f\u007f]/.test(p)
+}
+
+/**
+ * Imagens da mensagem -> nota de caminhos. Com o caminho original conhecido
+ * (arquivo escolhido, arrastado ou colado por caminho), a nota leva ele; sem
+ * (print colado), a imagem vira arquivo e é gravada para ganhar um caminho.
+ */
+export function splitImagesForNote(images: ImageAttachment[] | undefined): {
+  refs: Array<{ name: string; path: string; label?: string }>
+  toSave: FileAttachment[]
+} {
+  const list = Array.isArray(images) ? images : []
+  const refs: Array<{ name: string; path: string; label?: string }> = []
+  const noPath: ImageAttachment[] = []
+  for (const img of list) {
+    if (!validImagePath(img?.path)) {
+      noPath.push(img)
+      continue
+    }
+    const label = sanitizeMediaLabel(img.label)
+    refs.push({ name: safeName(basename(img.path)), path: img.path, ...(label ? { label } : {}) })
+  }
+  return { refs, toSave: imagesAsFiles(noPath) }
+}
+
 /**
  * Persist non-image attachments to disk so the agent can open them by path with
  * its own tools. Files land under `<userData>/attachments/<convId>/` and a

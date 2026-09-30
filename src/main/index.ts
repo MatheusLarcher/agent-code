@@ -110,7 +110,7 @@ import {
   storageErrorForIpc,
   upsertConversationWithLeaseRecovery
 } from './persistence/conversationWriteRecovery'
-import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote, imagesAsFiles, stashDraftAttachment, discardDraftAttachments, promoteDraftAttachments } from './attachments'
+import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote, splitImagesForNote, stashDraftAttachment, discardDraftAttachments, promoteDraftAttachments } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { taskLedger } from './tasks/taskRuntime'
 import { buildTaskBoard, buildTaskDetail, type TaskBoardQuery } from './tasks/taskBoard'
@@ -1966,13 +1966,14 @@ export function registerIpc(): void {
       // download — so they join the same note without another save.
       // Conversa do Agent Manager: nenhum dos três observadores abaixo a acompanha.
       const observed = planningConversations.observed(convId)
-      // No Manager, a imagem colada também vai para o disco (além do bloco
-      // inline): sem caminho, ele não consegue trazê-la ao plano com
-      // plan_midia_importar.
-      const toSave = [...(files ?? []), ...(!observed && images?.length ? imagesAsFiles(images) : [])]
+      // Imagem também leva o caminho na nota (além do bloco inline): o original
+      // quando conhecido, senão uma cópia gravada agora. Sem caminho o agente só
+      // via o nome — e o Manager não a traz ao plano com plan_midia_importar.
+      const imgs = splitImagesForNote(images)
+      const toSave = [...(files ?? []), ...imgs.toSave]
       const saved: Array<{ name: string; path: string }> =
         toSave.length > 0 ? await saveAttachments(convId, toSave) : []
-      const finalText = buildAttachmentNote(text, [...saved, ...(fileRefs ?? [])])
+      const finalText = buildAttachmentNote(text, [...saved, ...imgs.refs, ...(fileRefs ?? [])])
       refuse()
       // Tarefa MCP só roda na sessão que foi preparada para ela: se outra assumiu
       // a conversa enquanto os anexos eram gravados, erro claro em vez de rodar
@@ -2035,13 +2036,10 @@ export function registerIpc(): void {
       const blocked = mcpInbound.injectBlocked(convId, taskId, liveMcpState(convId))
       if (blocked) return { ok: false, reason: blocked }
       assertStorageWritable()
-      const observed = planningConversations.observed(convId)
-      const toSave = [
-        ...(Array.isArray(files) ? files : []),
-        ...(!observed && Array.isArray(images) && images.length ? imagesAsFiles(images) : [])
-      ]
+      const imgs = splitImagesForNote(images)
+      const toSave = [...(Array.isArray(files) ? files : []), ...imgs.toSave]
       const saved = toSave.length > 0 ? await saveAttachments(convId, toSave) : []
-      const finalText = buildAttachmentNote(text, [...saved, ...(Array.isArray(fileRefs) ? fileRefs : [])])
+      const finalText = buildAttachmentNote(text, [...saved, ...imgs.refs, ...(Array.isArray(fileRefs) ? fileRefs : [])])
       // Depois do `await` dos anexos: a sessão ainda é a da conversa? Descartada
       // ou trocada no meio, nada entra (o item continua na fila).
       if (sessions.get(convId) !== session) return { ok: false }
