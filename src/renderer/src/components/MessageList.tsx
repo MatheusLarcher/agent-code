@@ -589,7 +589,7 @@ export function MessageList({
               >
                 <div className="bubble">
                   {clean && (
-                    <QuotableMessage api={quote} messageId={m.id}>
+                    <QuotableMessage api={quote} messageId={m.id} read={m.answer ? tts : null} source={clean}>
                       <Markdown text={clean} resolveRef={resolveRef} />
                     </QuotableMessage>
                   )}

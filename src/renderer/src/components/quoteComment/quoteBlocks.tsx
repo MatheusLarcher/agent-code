@@ -1,7 +1,7 @@
 /**
  * Os blocos "comentáveis" da resposta do agente: parágrafo, item de lista,
- * título e bloco de código ganham um botão discreto "Comentar" (aparece no
- * hover e no foco — ver quoteComment.css), e ficam destacados quando o trecho
+ * título e bloco de código ganham os botões discretos "Comentar" e "Ler daqui"
+ * (aparecem no hover e no foco — ver quoteComment.css), e ficam destacados quando o trecho
  * está no campo de mensagem ou já foi comentado no histórico.
  *
  * Tudo depende do contexto que o MessageList põe em volta de CADA mensagem do
@@ -17,6 +17,8 @@ import {
   type ReactNode
 } from 'react'
 import type { ExtraProps } from 'react-markdown'
+import { IconSpeaker, IconStopSmall } from '../Icons'
+import { readFromText } from './readFrom'
 import './quoteComment.css'
 
 /** 'pending': o trecho está no campo de mensagem ("[trecho N]"); 'commented': já foi enviado. */
@@ -28,11 +30,25 @@ export interface QuoteListApi {
   add: (messageId: string, blockText: string) => void
 }
 
+/** "Ler daqui": o mesmo TTS do botão "Ouvir" da mensagem (TtsControls do MessageList). */
+export interface QuoteReadApi {
+  speakingId: string | null
+  onToggleSpeak: (id: string, text: string) => void
+}
+
 /** A mesma coisa já presa a uma mensagem: é o que cada bloco enxerga. */
 interface QuoteBlockApi {
   markOf: (blockText: string) => QuoteMark
   comment: (blockText: string) => void
+  /** Sem TTS em volta, não há "Ler daqui". */
+  read?: { speaking: (blockText: string) => boolean; toggle: (blockText: string) => void }
 }
+
+/** Id da leitura "daqui": a mensagem + onde o trecho começa (outro bloco = outra leitura).
+ *  Bloco não achado no texto: o próprio trecho distingue (lê só ele). */
+const readPrefix = (messageId: string): string => `${messageId}#ler:`
+const readId = (messageId: string, start: number, text: string): string =>
+  `${readPrefix(messageId)}${start >= 0 ? start : `?${text}`}`
 
 const QuoteBlockContext = createContext<QuoteBlockApi | null>(null)
 
@@ -41,23 +57,44 @@ export function useQuotableBlocks(): boolean {
   return useContext(QuoteBlockContext) !== null
 }
 
-/** Liga os blocos de UMA mensagem do agente. Sem `api`, nada muda. */
+/** Liga os blocos de UMA mensagem do agente. Sem `api`, nada muda; sem `read`, não há "Ler daqui".
+ *  `source` é o texto-fonte (Markdown) da mensagem — de onde sai o trecho "do bloco até o fim". */
 export function QuotableMessage({
   api,
   messageId,
+  read,
+  source = '',
   children
 }: {
   api?: QuoteListApi | null
   messageId: string
+  read?: QuoteReadApi | null
+  source?: string
   children: ReactNode
 }): JSX.Element {
-  const value = useMemo<QuoteBlockApi | null>(
-    () =>
-      api
-        ? { markOf: (text) => api.markOf(messageId, text), comment: (text) => api.add(messageId, text) }
-        : null,
-    [api, messageId]
-  )
+  const value = useMemo<QuoteBlockApi | null>(() => {
+    if (!api) return null
+    const at = (text: string): { id: string; text: string } => {
+      const r = readFromText(source, text)
+      return { id: readId(messageId, r.start, r.text), text: r.text }
+    }
+    return {
+      markOf: (text) => api.markOf(messageId, text),
+      comment: (text) => api.add(messageId, text),
+      read: read
+        ? {
+            // Só procura o bloco no texto se a leitura em curso é "daqui" nesta mensagem.
+            speaking: (text) =>
+              !!read.speakingId?.startsWith(readPrefix(messageId)) &&
+              read.speakingId === at(text).id,
+            toggle: (text) => {
+              const r = at(text)
+              read.onToggleSpeak(r.id, r.text)
+            }
+          }
+        : undefined
+    }
+  }, [api, messageId, read, source])
   return <QuoteBlockContext.Provider value={value}>{children}</QuoteBlockContext.Provider>
 }
 
@@ -98,6 +135,33 @@ function CommentButton({ onComment }: { onComment: () => void }): JSX.Element {
   )
 }
 
+/** "Ler daqui": o TTS da mensagem a partir deste bloco; tocando, vira "Parar". */
+function ReadButton({ speaking, onToggle }: { speaking: boolean; onToggle: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      className={`qc-btn qc-read${speaking ? ' active' : ''}`}
+      aria-label={speaking ? 'Parar leitura' : 'Ler daqui'}
+      title={speaking ? 'Parar leitura' : 'Ler em voz alta a partir deste trecho até o fim da mensagem'}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onToggle}
+    >
+      {speaking ? <IconStopSmall size={11} /> : <IconSpeaker size={12} />}
+      {speaking ? 'Parar' : 'Ler daqui'}
+    </button>
+  )
+}
+
+/** Os botões do bloco, lado a lado no canto: "Ler daqui" (se há TTS) e "Comentar". */
+function BlockActions({ api, text }: { api: QuoteBlockApi; text: string }): JSX.Element {
+  return (
+    <span className="qc-actions">
+      {api.read && <ReadButton speaking={api.read.speaking(text)} onToggle={() => api.read?.toggle(text)} />}
+      <CommentButton onComment={() => api.comment(text)} />
+    </span>
+  )
+}
+
 type BlockProps = ExtraProps & HTMLAttributes<HTMLElement>
 
 const markClass = (mark: QuoteMark): string => (mark ? ` qc-${mark}` : '')
@@ -117,7 +181,7 @@ function inlineBlock(tag: string): (props: BlockProps) => JSX.Element {
       tag,
       { ...rest, className: cls },
       children,
-      <CommentButton key="qc" onComment={() => api.comment(text)} />
+      <BlockActions key="qc" api={api} text={text} />
     )
   }
   QuotableBlock.displayName = `Quotable(${tag})`
@@ -132,7 +196,7 @@ function QuotablePre({ node, children, ...rest }: BlockProps): JSX.Element {
   return (
     <div className={`qc-block qc-pre${markClass(api.markOf(text))}`}>
       <pre {...rest}>{children}</pre>
-      <CommentButton onComment={() => api.comment(text)} />
+      <BlockActions api={api} text={text} />
     </div>
   )
 }

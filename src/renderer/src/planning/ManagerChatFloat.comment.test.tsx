@@ -23,7 +23,9 @@ const MESSAGES: UIMessage[] = [
 ]
 
 let style: HTMLStyleElement
+const onToggleSpeak = vi.fn()
 beforeEach(() => {
+  onToggleSpeak.mockClear()
   localStorage.clear()
   Element.prototype.scrollIntoView = vi.fn()
   ;(window as unknown as { api: unknown }).api = { mentionSearch: vi.fn(async () => []) }
@@ -74,7 +76,7 @@ function renderChat(opts: { strict?: boolean } = {}) {
               lastDurationMs={null}
               voiceReady={false}
               onNeedVoiceKey={() => {}}
-              tts={{ speakingId: null, onToggleSpeak: () => {} }}
+              tts={{ speakingId: null, onToggleSpeak }}
               models={[{ id: 'claude-opus-5-5', label: 'Opus 5.5' }]}
               model="claude-opus-5-5"
               runningModel="claude-opus-5-5"
@@ -176,6 +178,14 @@ describe('Agent Manager minimizado com chip de citação e sem texto', () => {
     expect(chat.chips()).toBe(0)
     chat.minimize()
     expect(chat.small()).toBe(true)
+  })
+
+  it('"Ler daqui" no chat do planejamento lê do bloco até o fim', () => {
+    const { panel } = renderChat()
+    const p = panel().querySelectorAll<HTMLElement>('.msg.assistant .md > p')[1]
+    fireEvent.click(within(p).getByRole('button', { name: 'Ler daqui' }))
+    expect(onToggleSpeak).toHaveBeenCalledTimes(1)
+    expect(onToggleSpeak.mock.calls[0][1]).toBe('Segundo parágrafo.')
   })
 
   it('StrictMode: o chip também tira a faixa pequena', () => {

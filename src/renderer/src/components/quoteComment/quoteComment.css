@@ -13,13 +13,22 @@
   margin: 0;
 }
 
-/* O botão: discreto, no canto de cima à direita, invisível até o hover ou o
-   foco. Continua no DOM (opacity, não display/visibility) para o Tab chegar nele. */
-.qc-btn {
+/* Os botões ("Ler daqui" e "Comentar"), lado a lado no canto de cima à direita. */
+.qc-actions {
   position: absolute;
   top: -10px;
   right: -6px;
   z-index: 2;
+  display: flex;
+  gap: 4px;
+}
+
+/* Cada botão: discreto, invisível até o hover ou o foco do bloco. Continua no
+   DOM (opacity, não display/visibility) para o Tab chegar nele. */
+.qc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 1px 8px;
   font: inherit;
   font-size: 11px;
@@ -45,10 +54,16 @@
   outline-offset: 1px;
 }
 
-/* Só o bloco mais de dentro mostra o botão (item de lista com sublista). */
-.qc-block:hover:not(:has(.qc-block:hover)) > .qc-btn,
-.qc-block:focus-within:not(:has(.qc-block:focus-within)) > .qc-btn {
+/* Só o bloco mais de dentro mostra os botões (item de lista com sublista).
+   "Ler daqui" tocando fica à vista, como o "Parar" da mensagem. */
+.qc-block:hover:not(:has(.qc-block:hover)) > .qc-actions > .qc-btn,
+.qc-block:focus-within:not(:has(.qc-block:focus-within)) > .qc-actions > .qc-btn,
+.qc-btn.qc-read.active {
   opacity: 1;
+}
+.qc-btn.qc-read.active {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* Destaque: chip pendente (mais forte) e já comentado (leve). Borda à esquerda

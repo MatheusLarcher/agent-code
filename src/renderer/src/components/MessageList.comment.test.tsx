@@ -188,8 +188,8 @@ describe('quoteComment.css — o botão é discreto: só no hover e no foco', ()
     const btn = block('.qc-btn')
     expect(btn).toMatch(/opacity: 0;/)
     expect(btn).not.toMatch(/display: none|visibility: hidden/)
-    expect(css).toMatch(/\.qc-block:hover:not\(:has\(\.qc-block:hover\)\) > \.qc-btn,/)
-    expect(css).toMatch(/\.qc-block:focus-within:not\(:has\(\.qc-block:focus-within\)\) > \.qc-btn \{\s*opacity: 1;/)
+    expect(css).toMatch(/\.qc-block:hover:not\(:has\(\.qc-block:hover\)\) > \.qc-actions > \.qc-btn,/)
+    expect(css).toMatch(/\.qc-block:focus-within:not\(:has\(\.qc-block:focus-within\)\) > \.qc-actions > \.qc-btn,/)
   })
 
   it('pendente e comentado têm destaque próprio', () => {
