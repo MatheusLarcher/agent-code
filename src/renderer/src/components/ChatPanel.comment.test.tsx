@@ -6,6 +6,7 @@ import type { UIMessage } from '../types'
 import { UiProvider } from '../ui/UiProvider'
 import { ManagerChatFloat } from '../planning/ManagerChatFloat'
 import { ChatPanel } from './ChatPanel'
+import { CODE_REVIEW_PROMPT } from './Composer'
 import { QUOTE_MAX_CHARS } from './quoteComment/quoteFormat'
 import type { SendFn } from './quoteComment/useQuoteComments'
 import type { EditorElement } from '../inlineMedia/InlineEditor'
@@ -315,7 +316,10 @@ describe('ChatPanel — "Comentar" põe o trecho inline no campo (chat principal
     const { container, onSend } = renderPanel()
     commentOn(firstP(container))
     fireEvent.click(screen.getByTitle(/Revisar código/))
-    expect(onSend).toHaveBeenCalledWith('/code-review', [], [], [])
+    expect(onSend).toHaveBeenCalledWith(CODE_REVIEW_PROMPT, [], [], [])
+    expect(CODE_REVIEW_PROMPT).toMatch(/code-review com --fix/)
+    expect(CODE_REVIEW_PROMPT).toMatch(/commit/)
+    expect(CODE_REVIEW_PROMPT).toMatch(/push/)
     expect(tokens()).toHaveLength(1)
   })
 

@@ -35,6 +35,12 @@ import { boxMetrics, composerBoxHeight } from './composerHeight'
 import { useHasTextSignal, type HasTextListener } from './useHasTextSignal'
 
 const NO_CARDS: readonly RefCard[] = []
+
+/** Shield button: review + apply fixes, then verify and ship (commit + push) the result. */
+export const CODE_REVIEW_PROMPT =
+  'Rode a skill code-review com --fix sobre as mudanças atuais. Depois de aplicar as correções, ' +
+  'rode typecheck e testes; se passarem, faça commit das mudanças e push para o remoto. ' +
+  'Se não houver nada a corrigir nem a commitar, apenas informe.'
 /** O que o `useHasTextSignal` avalia quando há trecho citado: um caractere
  *  que não é anexo, ou seja, "tem texto" (ver o uso no Composer). */
 const QUOTE_AS_TEXT = '↳'
@@ -1294,9 +1300,9 @@ export function Composer(props: Props): JSX.Element {
         )}
         <button
           className="ref-btn"
-          onClick={() => props.onSend('/code-review', [], [], [])}
+          onClick={() => props.onSend(CODE_REVIEW_PROMPT, [], [], [])}
           disabled={props.disabled || blocked}
-          title="Revisar código (chama a skill code-review)"
+          title="Revisar código, corrigir e fazer commit + push (skill code-review --fix)"
         >
           <IconShieldCheck />
         </button>
