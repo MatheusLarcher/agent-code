@@ -152,10 +152,18 @@ function decodeStoredTokens(raw: string | null): CodexTokens | null {
 
 export function initializeCodexAuthPersistence(): Promise<void> {
   if (!initPromise) {
-    initPromise = readPersistedKv(KV_KEY).then((raw) => {
-      cachedTokens = decodeStoredTokens(raw)
-      tokensInitialized = true
-    })
+    // Não memoriza a falha: um codexStatus() antes de o storage subir não pode
+    // envenenar a carga do boot nem os envios seguintes.
+    initPromise = readPersistedKv(KV_KEY).then(
+      (raw) => {
+        cachedTokens = decodeStoredTokens(raw)
+        tokensInitialized = true
+      },
+      (error: unknown) => {
+        initPromise = null
+        throw error
+      }
+    )
   }
   return initPromise
 }

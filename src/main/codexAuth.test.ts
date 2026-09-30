@@ -490,4 +490,20 @@ describe('Codex status durante a carga inicial dos tokens', () => {
 
     kvFacade.configureKvRepository(null)
   })
+
+  it('status antes de o storage subir não envenena a carga do boot', async () => {
+    const { codexAuth, kvFacade } = await freshModules()
+    kvFacade.configureKvRepositoryOffline()
+    await expect(codexAuth.codexStatus()).rejects.toThrow('Storage autoritativo offline.')
+
+    const { repository, resolve } = deferredRepository()
+    kvFacade.configureKvRepository(repository)
+    const boot = codexAuth.initializeCodexAuthPersistence()
+    resolve({ value: encryptedWrapper(validTokens()) })
+
+    await expect(boot).resolves.toBeUndefined()
+    await expect(codexAuth.codexStatus()).resolves.toMatchObject({ connected: true })
+
+    kvFacade.configureKvRepository(null)
+  })
 })
