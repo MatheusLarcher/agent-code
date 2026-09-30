@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { BoardItem } from '../../shared/ipc'
 import type { BoardPoWrite } from '../persistence/types'
 import { applyPoVerdict, confirmCreates, type PoApplyDeps, type PoApplyTarget } from './poApply'
-import type { PoOp } from './poPrompt'
+import type { PoOp } from './poVerdict'
 
 /**
  * O que é contrato PRÓPRIO do módulo extraído. A aplicação de cada operação

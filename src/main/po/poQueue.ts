@@ -24,6 +24,10 @@ export interface PoTurnSnapshot {
   /** A última resposta do agente: a do turno no fechamento, a do turno
    *  ANTERIOR na abertura. Ausente/`null` quando não houve texto final. */
   reply?: string | null
+  /** O que rodava em segundo plano no instante do `result` (só o fechamento
+   *  real o tem). NÃO entra na fila: é estado, não evidência — o turno
+   *  adiado é julgado depois, com o snapshot de quando for julgado. */
+  background?: readonly string[]
 }
 
 /** Das duas respostas, a do lado MAIS NOVO — caindo para a mais antiga só

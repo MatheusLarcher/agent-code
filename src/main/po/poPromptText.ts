@@ -119,6 +119,11 @@ Regras inegociáveis:
 - Uma tarefa que ficou "em andamento" no fim do turno é a candidata MAIS provável ao
   esquecimento — mas só conclua se a evidência provar que ela terminou. Trabalho que vai
   continuar na próxima mensagem continua em andamento.
+- Se houver uma seção "TRABALHO EM SEGUNDO PLANO AINDA RODANDO", o agente DELEGOU trabalho a um
+  subagente (ou comando) que continua rodando depois deste turno. O cartão cujo trabalho está
+  com ele continua EM ANDAMENTO: não use CONCLUIR nele sem prova de término (as AÇÕES ou a
+  resposta mostrando o resultado final, não só que o trabalho foi disparado), e não crie NOVA
+  nem FEITA para esse mesmo trabalho — ele não está faltando nem terminou, está acontecendo.
 - O <id> tem que ser um dos ids listados no quadro. Não invente id.
 - TITULO é para deixar legível, não para mudar o significado. Mantenha o assunto.
 - FEITA é para o trabalho que JÁ ACONTECEU neste turno e que nenhum cartão registra: o cartão

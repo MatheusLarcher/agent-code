@@ -1,7 +1,8 @@
 import type { BoardItem } from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
 import { linkLedgerTaskToCard, type PoLedgerDeps } from './poLedger'
-import { parsePoVerdict, rejectUnsafeOps, type PoOp, type PoPhase } from './poPrompt'
+import type { PoPhase } from './poPrompt'
+import { parsePoVerdict, rejectUnsafeOps, type PoOp } from './poVerdict'
 
 /**
  * A escrita do veredito do PO no quadro: da resposta do modelo às operações

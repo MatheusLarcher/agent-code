@@ -4,7 +4,6 @@ import type { BoardItem } from '../../shared/ipc'
 import {
   buildPoDigest,
   buildPoPrompt,
-  parsePoVerdict,
   PO_AWAITING_AUTHORIZATION_REASON,
   PO_MAX_CALLS,
   PO_MAX_OPS,
@@ -12,9 +11,9 @@ import {
   PO_REPLY_HEAD_CHARS,
   PO_SYSTEM_PROMPT_CLOSE,
   PO_SYSTEM_PROMPT_OPEN,
-  rejectUnsafeOps,
   summarizeCall
 } from './poPrompt'
+import { parsePoVerdict, rejectUnsafeOps } from './poVerdict'
 
 function card(over: Partial<BoardItem> = {}): BoardItem {
   return {

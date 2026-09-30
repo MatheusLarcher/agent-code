@@ -1,13 +1,6 @@
-import { boardItemsToExpire, boardItemsToReopenBefore, boardItemsToResume } from './boardModel'
+import { boardItemsToExpire, boardItemsToReopenBefore, boardItemsToResume, toSourceItems } from './boardModel'
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
-import type {
-  BoardItem,
-  BoardItemEvent,
-  BoardPoCreate,
-  BoardPoWrite,
-  BoardSourceItem,
-  PersistenceRepository
-} from '../persistence/types'
+import type { BoardItem, BoardItemEvent, BoardPoCreate, BoardPoWrite, PersistenceRepository } from '../persistence/types'
 import {
   BOARD_TURN_END_REASON,
   boardItemStatus,
@@ -16,6 +9,9 @@ import {
   type ChatEvent,
   type TaskItem
 } from '../../shared/ipc'
+
+// A regra pura mora em boardModel.ts; sai daqui também para quem já importava.
+export { toSourceItems } from './boardModel'
 
 /**
  * O serviço do quadro: liga o esqueleto determinístico do agente à tabela
@@ -117,6 +113,9 @@ export class BoardService {
   private readonly lastReopened = new Map<string, ReadonlySet<string>>()
   /** As reaberturas em andamento, de qualquer conversa. Ver `applyPo`. */
   private readonly reopening = new Set<Promise<void>>()
+  /** Quantas tarefas cada conversa tem rodando em SEGUNDO PLANO, segundo o
+   *  último snapshot `background-tasks` (ausente = nenhuma). Ver `closeTurn`. */
+  private readonly background = new Map<string, number>()
 
   constructor(private readonly deps: BoardServiceDeps) {}
 
@@ -150,9 +149,18 @@ export class BoardService {
       this.enqueue(convId, cwd, event.items)
       return
     }
+    if (event.kind === 'background-tasks') {
+      if (event.tasks.length > 0) this.background.set(convId, event.tasks.length)
+      else this.background.delete(convId)
+      return
+    }
     // Os dois jeitos de um turno acabar: `result` é o fim normal, `error` é o
-    // que morreu no meio. Nos dois casos ninguém está mais trabalhando.
-    if (event.kind === 'result' || event.kind === 'error') this.closeTurn(convId, cwd, REOPEN_REASON[event.kind])
+    // que morreu no meio. No `error` ninguém está mais trabalhando; no `result`,
+    // um subagente delegado pode estar (ver `closeTurn`).
+    if (event.kind === 'result' || event.kind === 'error') {
+      const delegated = event.kind === 'result' && this.background.has(convId)
+      this.closeTurn(convId, cwd, REOPEN_REASON[event.kind], delegated)
+    }
   }
 
   private enqueue(convId: string, cwd: string, items: TaskItem[]): void {
@@ -214,14 +222,27 @@ export class BoardService {
    * para "em andamento". Sem o carimbo do instante REAL de fim do turno,
    * `reopenStale` releria esse cartão já promovido e o derrubaria de novo —
    * ver `boardItemsToReopenBefore`.
+   *
+   * A exceção é o trabalho DELEGADO (`delegated`): o `result` chegou com
+   * tarefa rodando em segundo plano (snapshot `background-tasks`, lido no
+   * instante do evento). O turno do agente principal acabou, mas o subagente
+   * continua trabalhando no cartão — rebaixá-lo seria dizer que ninguém está.
+   * Nada é reaberto, e o "último rebaixamento" fica vazio para a promoção não
+   * ressuscitar um de turno antigo. Quando a última tarefa termina, o snapshot
+   * zera e o próximo `result` fecha como sempre. O `error` não entra: turno que
+   * morreu pode ter deixado o snapshot velho, e o erro seguro é rebaixar.
    */
-  private closeTurn(convId: string, cwd: string, reason: string): void {
+  private closeTurn(convId: string, cwd: string, reason: string, delegated = false): void {
     const closedAt = Date.now()
     this.turnEnds.set(convId, (this.turnEnds.get(convId) ?? 0) + 1)
     const previous = this.closures.get(convId) ?? Promise.resolve()
     const next = previous
       .catch(() => undefined)
       .then(async () => {
+        if (delegated) {
+          this.lastReopened.set(convId, new Set())
+          return
+        }
         await this.settled(convId)
         await this.waitForPo(convId)
         await this.reopenStale(convId, cwd, reason, closedAt)
@@ -471,16 +492,6 @@ export class BoardService {
     this.closures.delete(convId)
     this.turnEnds.delete(convId)
     this.lastReopened.delete(convId)
+    this.background.delete(convId)
   }
-}
-
-/** `TaskItem` (o que a sessão publica) → a forma que o quadro grava. */
-export function toSourceItems(items: TaskItem[]): BoardSourceItem[] {
-  return items.map((item, index) => ({
-    sourceId: String(item.id ?? index),
-    title: typeof item.content === 'string' ? item.content : '',
-    status: item.status,
-    activeForm: typeof item.activeForm === 'string' && item.activeForm.trim() ? item.activeForm : null,
-    seq: index
-  }))
 }

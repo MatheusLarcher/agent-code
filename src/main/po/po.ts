@@ -88,6 +88,10 @@ interface ConvState {
    *  Zera numa auditoria que chega ao fim — inclusive o "não" do gate — e
    *  quando um turno real dispara a análise: aí a falha anterior é passado. */
   retries: Record<PoPhase, number>
+  /** O que ainda roda em SEGUNDO PLANO (descrições do último snapshot
+   *  `background-tasks`, vazio = nada). Estado vivo, não evidência de turno:
+   *  o fechamento real o congela no `result`; o flush usa o de agora. */
+  background: readonly string[]
 }
 
 /** `PoDeps.scheduleFlush` padrão: `setTimeout`/`clearTimeout` reais, sem
@@ -131,6 +135,12 @@ export class Po {
 
   observe(convId: string, event: ChatEvent): void {
     const conv = this.conv(convId)
+    // O snapshot vale a qualquer momento — inclusive fora de turno (antes do
+    // pedido, depois do `result`): é quando o subagente delegado costuma mudar.
+    if (event.kind === 'background-tasks') {
+      conv.background = Object.freeze(event.tasks.map((task) => task.description.trim() || task.type))
+      return
+    }
     if (conv.userText === null || conv.fired) return
     if (event.kind === 'tool-use') {
       conv.calls.push({ tool: event.name, detail: summarizeCall(event.name, event.input) })
@@ -149,7 +159,8 @@ export class Po {
         userText: conv.userText,
         cwd: conv.cwd,
         calls: Object.freeze([...conv.calls]),
-        reply: conv.reply
+        reply: conv.reply,
+        background: conv.background
       })
       conv.fired = true
       this.start(convId, 'close', turn)
@@ -251,7 +262,8 @@ export class Po {
         lastRunAt: { open: 0, close: 0 },
         deferred: { open: null, close: null },
         flushCancel: { open: null, close: null },
-        retries: { open: 0, close: 0 }
+        retries: { open: 0, close: 0 },
+        background: []
       }
       this.state.set(convId, conv)
     }
@@ -393,7 +405,10 @@ export class Po {
         calls: [...merged.calls],
         phase,
         ledgerTasks,
-        agentReply: merged.reply
+        agentReply: merged.reply,
+        // O turno real traz o snapshot do seu `result`; o sintético (flush,
+        // retentativa, `dispose`) não tem instante próprio e usa o de agora.
+        background: turn.background ?? conv.background
       })
       const request: PoObserverRequest = Object.freeze({
         prompt,

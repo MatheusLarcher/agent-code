@@ -202,10 +202,11 @@ describe('digest — teto total', () => {
       })),
       calls: Array.from({ length: 100 }, () => ({ tool: 'mcp__servidor__ferramenta', detail: 'd'.repeat(500) })),
       agentReply: 'r'.repeat(5_000),
-      ledgerTasks: Array.from({ length: 30 }, () => ({ title: 'x'.repeat(300), status: 's'.repeat(40) }))
+      ledgerTasks: Array.from({ length: 30 }, () => ({ title: 'x'.repeat(300), status: 's'.repeat(40) })),
+      background: Array.from({ length: 12 }, () => 'b'.repeat(400))
     })
     expect(digest.length).toBe(PO_MAX_DIGEST_CHARS)
-    expect(PO_MAX_DIGEST_CHARS).toBe(20_425)
+    expect(PO_MAX_DIGEST_CHARS).toBe(21_032)
     expect(digest).toContain(`bi-${'0'.repeat(40)} [em andamento] ttt`)
   })
 

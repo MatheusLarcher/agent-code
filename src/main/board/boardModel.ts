@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { boardItemStatus, boardItemTurnEndKind } from '../../shared/ipc'
+import type { TaskItem } from '../../shared/ipc'
 import type {
   BoardItem,
   BoardItemEvent,
@@ -382,4 +383,15 @@ export function newBoardItemEvent(input: {
     toStatus: input.toStatus ?? null,
     note: input.note ?? null
   }
+}
+
+/** `TaskItem` (o que a sessão publica) → a forma que o quadro grava. */
+export function toSourceItems(items: TaskItem[]): BoardSourceItem[] {
+  return items.map((item, index) => ({
+    sourceId: String(item.id ?? index),
+    title: typeof item.content === 'string' ? item.content : '',
+    status: item.status,
+    activeForm: typeof item.activeForm === 'string' && item.activeForm.trim() ? item.activeForm : null,
+    seq: index
+  }))
 }
