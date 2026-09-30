@@ -41,6 +41,23 @@ if errorlevel 1 (
 )
 echo.
 
+REM --- Libs do package.json instaladas? O electron-builder so empacota o que ---
+REM --- ja esta em node_modules; lib nova sem npm install sai fora do setup.  ---
+call node "%~dp0check-deps.mjs"
+if errorlevel 1 (
+    echo Instalando as dependencias que faltam...
+    call npm install
+    call node "%~dp0check-deps.mjs"
+    if errorlevel 1 (
+        echo.
+        echo [ERRO] Dependencias ausentes mesmo apos npm install.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+echo.
+
 REM --- Controle de versao automatico: incrementa o patch a cada execucao ---
 set "VERSAO="
 for /f "delims=" %%V in ('node "%~dp0bump-version.mjs"') do set "VERSAO=%%V"
@@ -91,6 +108,16 @@ call node "%~dp0stage-skills.mjs" --verify "dist\win-unpacked\resources\app"
 if errorlevel 1 (
     echo.
     echo [ERRO] O instalador saiu sem as skills.
+    echo.
+    pause
+    exit /b 1
+)
+
+REM --- Confere que toda lib do package.json foi embutida ---
+call node "%~dp0check-deps.mjs" --verify "dist\win-unpacked\resources\app"
+if errorlevel 1 (
+    echo.
+    echo [ERRO] O instalador saiu sem alguma lib do package.json.
     echo.
     pause
     exit /b 1
