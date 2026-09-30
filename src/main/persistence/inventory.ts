@@ -43,6 +43,7 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config',
       'config.voice.voice',
       'config.voice.speed',
+      'config.voice.whisperModel',
       'config.openai.speed',
       'config.transcribeEngine',
       'config.localSpeech.model',

@@ -4,7 +4,7 @@
 //
 //   npx electron-vite build
 //   node scripts/voice/bench-whisper.mjs [--cache <dir>] [--out <dir>] [--runs 3]
-//        [--profiles small-fp32,turbo-q8] [--threads default,4,8,16]
+//        [--profiles small-fp32,turbo-q8] [--threads default,4,8,16] [--devices gpu,cpu]
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { cpus, totalmem } from 'node:os'
 import { join } from 'node:path'
@@ -62,16 +62,23 @@ for (const [name, { voice, text }] of Object.entries(CLIPS)) {
 }
 await eng.stopVoiceEngine()
 
-// ONNX Runtime thread pools to try ("default" = the engine's own choice).
+// ONNX Runtime thread pools to try ("default" = the engine's own choice), and
+// devices: "gpu" = the engine's normal path (GPU encoder, falls back to CPU),
+// "cpu" = AGENT_CODE_VOICE_DEVICE=cpu. Both are read by the worker at spawn.
 const threadSets = arg('threads', 'default').split(',')
+const devices = arg('devices', 'gpu,cpu').split(',')
 const results = []
+for (const device of devices)
 for (const threads of threadSets)
 for (const profile of profiles) {
   if (threads === 'default') delete process.env.AGENT_CODE_VOICE_THREADS
-  else process.env.AGENT_CODE_VOICE_THREADS = threads // read by the worker at spawn
+  else process.env.AGENT_CODE_VOICE_THREADS = threads
+  if (device === 'cpu') process.env.AGENT_CODE_VOICE_DEVICE = 'cpu'
+  else process.env.AGENT_CODE_VOICE_DEVICE = 'gpu' // no speed guard: measure the GPU as is
   eng.setWhisperProfile(profile)
   const spec = eng.WHISPER_PROFILES[profile]
-  log(`== ${profile} (${spec.model}, ${JSON.stringify(spec.dtype)}), threads=${threads}`)
+  if (device === 'gpu' && !spec.gpuEncoder) continue
+  log(`== ${profile} (${spec.model}, cpu ${JSON.stringify(spec.dtype)}, gpu encoder ${spec.gpuEncoder ?? '-'}), ${device}, threads=${threads}`)
   let downloaded = 0
   let t = now()
   await eng.prepareVoiceModels('stt', (p) => {
@@ -86,7 +93,9 @@ for (const profile of profiles) {
   t = now()
   await eng.transcribeWhisper(clips['5s'].b64, 'audio/wav') // first inference (graph warm-up)
   const firstInferSec = now() - t
-  const row = { profile, threads, model: spec.model, dtype: spec.dtype, downloadedMb: downloaded / 1048576, firstPrepareSec, loadSec, firstInferSec, rssMb }
+  const status = eng.getWhisperStatus()
+  log(`dispositivo efetivo: ${status.label}${status.gpuError ? ` (GPU: ${status.gpuError})` : ''}`)
+  const row = { profile, device: status.device, threads, model: spec.model, dtype: spec.dtype, gpuEncoder: spec.gpuEncoder, downloadedMb: downloaded / 1048576, firstPrepareSec, loadSec, firstInferSec, rssMb }
   for (const [name, clip] of Object.entries(clips)) {
     const lat = []
     let text = ''
@@ -114,13 +123,13 @@ const pick = eligible.sort((a, b) => score(a) - score(b) || big(b) - big(a) || f
 const summary = {
   machine: { cpu: cpus()[0]?.model, threads: cpus().length, ramGb: totalmem() / 2 ** 30, node: process.version },
   budget5sSec: LATENCY_BUDGET_5S,
-  choice: pick ? { profile: pick.profile, threads: pick.threads } : null,
+  choice: pick ? { profile: pick.profile, device: pick.device, threads: pick.threads } : null,
   results
 }
 writeFileSync(join(out, 'bench-whisper.json'), JSON.stringify(summary, null, 2))
-console.log(`\nperfil       | threads | carga s | ${Object.keys(clips).map((k) => `${k}: lat s / WER`).join(' | ')} | RSS MB`)
+console.log(`\nperfil       | disp. | threads | carga s | ${Object.keys(clips).map((k) => `${k}: lat s / WER`).join(' | ')} | RSS MB`)
 for (const r of results) {
   const cells = Object.keys(clips).map((k) => `${fmt(r[k].medianSec)} / ${fmt(r[k].wer * 100, 1)}%`)
-  console.log(`${r.profile.padEnd(12)} | ${String(r.threads).padStart(7)} | ${fmt(r.loadSec).padStart(7)} | ${cells.join(' | ')} | ${fmt(r.rssMb, 0)}`)
+  console.log(`${r.profile.padEnd(12)} | ${String(r.device).padEnd(5)} | ${String(r.threads).padStart(7)} | ${fmt(r.loadSec).padStart(7)} | ${cells.join(' | ')} | ${fmt(r.rssMb, 0)}`)
 }
 log(`escolha: ${JSON.stringify(summary.choice)} — relatório em ${join(out, 'bench-whisper.json')}`)

@@ -2,7 +2,8 @@
  * Local voice engine — speech in and out with no cloud service.
  *
  *   TTS: Kokoro-82M (fp32, CPU) with pt-BR phonemes from eSpeak NG (WASM).
- *   STT: Whisper via @huggingface/transformers (onnxruntime-node).
+ *   STT: Whisper via @huggingface/transformers (onnxruntime-node); encoder on
+ *        the GPU (DirectML / CUDA) when it works, else everything on the CPU.
  *
  * All inference runs in a separate process (Electron utilityProcess; a
  * worker_threads Worker when running under plain Node), so the main process's
@@ -30,6 +31,15 @@
  * prepareVoiceModels(what: 'tts' | 'stt', onProgress?) => Promise<void>
  *   Downloads/loads the models ahead of time so the first real call is fast.
  *
+ * setWhisperProfile(profile) / getWhisperStatus()
+ *   Picks the Whisper profile for the next calls (default WHISPER_PROFILE,
+ *   'turbo-q8'; 'small-fp32' is the light one) — the worker swaps models on
+ *   the next call, no restart. The status says where it last ran:
+ *   { profile, device: 'dml' | 'cuda' | 'cpu' | null, label, gpuError? }.
+ *
+ *   Env (read by the worker at spawn): AGENT_CODE_VOICE_DEVICE=cpu|gpu,
+ *   AGENT_CODE_VOICE_THREADS=N.
+ *
  * stopVoiceEngine() => Promise<void>
  *   Kills the worker (frees the models' memory); in-flight calls reject.
  *   The next call starts it again. Call it on app quit.
@@ -41,30 +51,51 @@
 import { canDecodeWithChromium, decodeWithChromium } from './chromiumDecode'
 import { request, setCacheDir, stop, VoiceWorkerError } from './host'
 import {
+  deviceLabel,
   KOKORO_VOICES,
   WHISPER_PROFILES,
   type KokoroVoice,
   type SynthesisResult,
+  type TranscribeResult,
   type VoiceProgress,
-  type WhisperProfile
+  type WhisperDevice,
+  type WhisperProfile,
+  type WhisperState
 } from './protocol'
 
-export { KOKORO_VOICES as LOCAL_VOICES, WHISPER_PROFILES, VoiceWorkerError }
-export type { KokoroVoice as LocalVoice, SynthesisResult, VoiceProgress, WhisperProfile }
+export { deviceLabel, KOKORO_VOICES as LOCAL_VOICES, WHISPER_PROFILES, VoiceWorkerError }
+export type { KokoroVoice as LocalVoice, SynthesisResult, VoiceProgress, WhisperDevice, WhisperProfile, WhisperState }
 
 /**
- * Chosen by scripts/voice/bench-whisper.mjs on the dev machine (i7-14650HX,
- * 8 ORT threads): best quality under ~3 s for 5 s of audio. Median latency
- * 5 s / 13 s / 13 s+noise(5 dB): small-fp32 2.05 / 3.57 / 3.23 s, WER 0 / 0 / 0%;
- * small-q8 1.73 / 3.38 / 3.41 s, WER 0 / 0 / 2.4%; turbo-q8 4.54 / 6.68 / 6.54 s
- * (over budget); turbo-q4 ~20 s. Full precision wins the tie with q8.
+ * large-v3-turbo: the best Whisper for pt-BR that fits the latency budget once
+ * its encoder runs on the GPU. Measured by scripts/voice/bench-whisper.mjs on
+ * the dev machine (i7-14650HX + RTX 5050 Laptop, 8 ORT threads), median for
+ * 5 s / 13 s of speech, WER 0% everywhere (also at 5 dB SNR): turbo-q8 GPU
+ * (DirectML: encoder fp16, decoder q8 on the CPU) 1.64 / 3.40 s, CPU (q8)
+ * 3.47 / 6.35 s — the CPU fallback is slower but correct. small-fp32 stays as
+ * the lighter choice: GPU 1.05 / 2.30 s, CPU 1.87 / 3.18 s.
  */
-export const WHISPER_PROFILE: WhisperProfile = 'small-fp32'
+export const WHISPER_PROFILE: WhisperProfile = 'turbo-q8'
 
 const MAX_TEXT_CHARS = 20_000
 const MAX_AUDIO_BYTES = 50 * 1024 * 1024
 
 let whisperProfile: WhisperProfile = WHISPER_PROFILE
+/** Last device the worker reported for each profile (null = not loaded yet). */
+const lastState = new Map<WhisperProfile, WhisperState>()
+
+function remember(r: TranscribeResult): void {
+  if (r.profile && r.device) {
+    lastState.set(r.profile, { profile: r.profile, device: r.device, ...(r.gpuError ? { gpuError: r.gpuError } : {}) })
+  }
+}
+
+/** Current profile and where it ran the last time (device null = not loaded
+ *  yet in this worker). `label` is for people: 'GPU (DirectML)' / 'CPU'. */
+export function getWhisperStatus(): { profile: WhisperProfile; device: WhisperDevice | null; label: string | null; gpuError?: string } {
+  const s = lastState.get(whisperProfile)
+  return { profile: whisperProfile, device: s?.device ?? null, label: s ? deviceLabel(s.device) : null, ...(s?.gpuError ? { gpuError: s.gpuError } : {}) }
+}
 
 export function setVoiceCacheDir(dir: string): void {
   if (typeof dir !== 'string' || !dir.trim()) throw new TypeError('setVoiceCacheDir: pasta inválida')
@@ -102,21 +133,27 @@ export async function transcribeWhisper(
   if (audio.length === 0) throw new TypeError('transcribeWhisper: áudio vazio')
   if (audio.length > MAX_AUDIO_BYTES) throw new RangeError('transcribeWhisper: áudio acima de 50 MB')
   const mime = typeof mimeType === 'string' ? mimeType : ''
+  const profile = whisperProfile
+  let r: TranscribeResult
   try {
-    return (await request({ op: 'transcribe', profile: whisperProfile, audio, mimeType: mime }, onProgress)) as string
+    r = (await request({ op: 'transcribe', profile, audio, mimeType: mime }, onProgress)) as TranscribeResult
   } catch (err) {
     if (!(err instanceof VoiceWorkerError && err.code === 'UNSUPPORTED_AUDIO' && canDecodeWithChromium())) throw err
     onProgress?.({ phase: 'decode' })
     const pcm = await decodeWithChromium(audio)
-    return (await request({ op: 'transcribe', profile: whisperProfile, pcm }, onProgress)) as string
+    r = (await request({ op: 'transcribe', profile, pcm }, onProgress)) as TranscribeResult
   }
+  remember(r)
+  return r.text
 }
 
 export async function prepareVoiceModels(what: 'tts' | 'stt', onProgress?: (p: VoiceProgress) => void): Promise<void> {
   if (what !== 'tts' && what !== 'stt') throw new RangeError('prepareVoiceModels: use "tts" ou "stt"')
-  await request({ op: 'prepare', what, profile: whisperProfile }, onProgress)
+  const r = await request({ op: 'prepare', what, profile: whisperProfile }, onProgress)
+  if (what === 'stt') remember(r as TranscribeResult)
 }
 
 export function stopVoiceEngine(): Promise<void> {
+  lastState.clear()
   return stop()
 }

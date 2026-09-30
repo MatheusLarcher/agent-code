@@ -12,6 +12,7 @@ import type {
   AgentMessageKind,
   AndroidProgressMsg,
   SpeechSetupProgress,
+  WhisperStatus,
   AppConfig,
   BoardItem,
   BoardItemEvent,
@@ -244,6 +245,7 @@ const api: AgentCodeApi = {
     opts?: { voice?: string; speed?: number }
   ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }> =>
     ipcRenderer.invoke(Channels.voiceTts, text, opts),
+  voiceStatus: (): Promise<WhisperStatus> => ipcRenderer.invoke(Channels.voiceStatus),
   authStatus: (): Promise<{ authenticated: boolean }> => ipcRenderer.invoke(Channels.authStatus),
   authLogin: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.authLogin),
   authLogout: (): Promise<ClaudeAuthStatus> => ipcRenderer.invoke(Channels.authLogout),

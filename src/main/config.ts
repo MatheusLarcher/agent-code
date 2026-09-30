@@ -21,6 +21,8 @@ type Field = {
 const FIELDS: Field[] = [
   { key: 'config.voice.voice', get: (c) => c.voice.voice, patch: (v) => ({ voice: { voice: v } as AppConfig['voice'] }) },
   { key: 'config.voice.speed', get: (c) => c.voice.speed, patch: (v) => ({ voice: { speed: v as number } as AppConfig['voice'] }) },
+  // Ausente (config de antes do seletor) = sem escolha explícita: o boot grava o padrão (turbo-q8).
+  { key: 'config.voice.whisperModel', get: (c) => c.voice.whisperModel, patch: (v) => ({ voice: { whisperModel: v } as AppConfig['voice'] }) },
   { key: 'config.transcribeEngine', get: (c) => c.transcribeEngine, patch: (v) => ({ transcribeEngine: v as AppConfig['transcribeEngine'] }) },
   { key: 'config.localSpeech.model', get: (c) => c.localSpeech.model, patch: (v) => ({ localSpeech: { model: v as string } }) },
   { key: 'config.ollama.enabled', get: (c) => c.ollama.enabled, patch: (v) => ({ ollama: { enabled: v as boolean } as AppConfig['ollama'] }) },

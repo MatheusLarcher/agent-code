@@ -304,7 +304,7 @@ describe('migração da voz da OpenAI', () => {
     const { initializeConfigPersistence } = await import('./config')
 
     const cfg = await initializeConfigPersistence()
-    expect(cfg.voice).toEqual({ voice: 'pf_dora', speed: 1.25 })
+    expect(cfg.voice).toEqual({ voice: 'pf_dora', speed: 1.25, whisperModel: 'turbo-q8' })
     expect(cfg.transcribeEngine).toBe('whisper')
     expect(JSON.stringify(cfg)).not.toContain('sk-antiga')
     expect(kv.get('config.voice.speed')).toBe('1.25')
@@ -326,5 +326,38 @@ describe('migração da voz da OpenAI', () => {
     fakeKv([['config.openai.speed', '{quebrado']])
     const { initializeConfigPersistence } = await import('./config')
     expect((await initializeConfigPersistence()).voice.speed).toBe(1)
+  })
+})
+
+describe('modelo do Whisper (config.voice.whisperModel)', () => {
+  it('config salva sem escolha explícita migra para turbo-q8 e grava a chave', async () => {
+    const kv = fakeKv([
+      ['config.voice.voice', JSON.stringify('pm_alex')],
+      ['config.voice.speed', '1']
+    ])
+    const { initializeConfigPersistence } = await import('./config')
+    expect((await initializeConfigPersistence()).voice).toEqual({ voice: 'pm_alex', speed: 1, whisperModel: 'turbo-q8' })
+    expect(kv.get('config.voice.whisperModel')).toBe(JSON.stringify('turbo-q8'))
+  })
+
+  it('escolha explícita (small) é mantida; valor desconhecido volta ao padrão sem derrubar o boot', async () => {
+    fakeKv([['config.voice.whisperModel', JSON.stringify('small-fp32')]])
+    const first = await import('./config')
+    expect((await first.initializeConfigPersistence()).voice.whisperModel).toBe('small-fp32')
+
+    vi.resetModules()
+    fakeKv([['config.voice.whisperModel', JSON.stringify('large-v9')]])
+    const second = await import('./config')
+    expect((await second.initializeConfigPersistence()).voice.whisperModel).toBe('turbo-q8')
+  })
+
+  it('updateConfig grava só a chave do modelo quando ele muda', async () => {
+    const kv = fakeKv([['config.voice.whisperModel', JSON.stringify('turbo-q8')]])
+    const { initializeConfigPersistence, updateConfig } = await import('./config')
+    const cfg = await initializeConfigPersistence()
+    kvFacade.writePersistedKv.mockClear()
+    await updateConfig({ voice: { ...cfg.voice, whisperModel: 'small-fp32' } })
+    expect(kvFacade.writePersistedKv.mock.calls.map((c) => (c as unknown[])[0])).toEqual(['config.voice.whisperModel'])
+    expect(kv.get('config.voice.whisperModel')).toBe(JSON.stringify('small-fp32'))
   })
 })

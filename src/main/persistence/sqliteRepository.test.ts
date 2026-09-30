@@ -63,7 +63,7 @@ describe('SqliteRepository', () => {
 
     expect(snapshot.config.skipPermissions).toBe(true)
     expect(snapshot.config).not.toHaveProperty('openai')
-    expect(snapshot.config.voice).toEqual({ voice: 'pf_dora', speed: 1.25 })
+    expect(snapshot.config.voice).toEqual({ voice: 'pf_dora', speed: 1.25, whisperModel: 'turbo-q8' })
     expect(snapshot.config.transcribeEngine).toBe('whisper')
     expect(snapshot.conversations.map((entry) => entry.id).sort()).toEqual(['c1', 'c2'])
     expect(snapshot.kv.find((entry) => entry.key === 'chave-desconhecida')).toMatchObject({

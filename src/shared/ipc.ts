@@ -975,6 +975,32 @@ export function isVoiceId(value: unknown): value is VoiceId {
   return typeof value === 'string' && VOICE_OPTIONS.some((v) => v.id === value)
 }
 
+/** Whisper models offered for dictation. Ids are profiles of the local engine
+ *  (WHISPER_PROFILES in src/main/voice/protocol.ts — a test holds them
+ *  together). `sizeMb` is the one-time download: on the GPU the turbo encoder
+ *  is fp16 (bigger), on the CPU q8. */
+export const WHISPER_MODEL_OPTIONS = [
+  { id: 'turbo-q8', label: 'large-v3-turbo', note: 'padrão, mais preciso', sizeMb: { gpu: 1640, cpu: 1040 } },
+  { id: 'small-fp32', label: 'small', note: 'mais leve', sizeMb: { gpu: 925, cpu: 925 } }
+] as const
+export type WhisperModelId = (typeof WHISPER_MODEL_OPTIONS)[number]['id']
+export const DEFAULT_WHISPER_MODEL: WhisperModelId = 'turbo-q8'
+
+export function isWhisperModelId(value: unknown): value is WhisperModelId {
+  return typeof value === 'string' && WHISPER_MODEL_OPTIONS.some((m) => m.id === value)
+}
+
+/** Where the local Whisper ran last (Settings › Voz). `device` null = not
+ *  loaded since the app (or the voice worker) started. */
+export interface WhisperStatus {
+  model: WhisperModelId
+  device: 'dml' | 'cuda' | 'cpu' | null
+  /** 'GPU (DirectML)' / 'GPU (CUDA)' / 'CPU'. */
+  label: string | null
+  /** Why the GPU was set aside, when it was. */
+  gpuError?: string
+}
+
 /** A stored speed clamped to what Kokoro accepts; garbage becomes 1. */
 export function normalizeVoiceSpeed(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 1
@@ -1382,6 +1408,9 @@ export interface VoiceConfig {
   /** Reading speed: 0.8 = slow, 1 = normal, 1.5 = fast. Passed to Kokoro as its
    *  native `speed` — nothing is sped up again at playback. */
   speed: number
+  /** Whisper model for dictation (one of WHISPER_MODEL_OPTIONS). Saved configs
+   *  without one get DEFAULT_WHISPER_MODEL. */
+  whisperModel: WhisperModelId
 }
 
 /** What `claude auth status --json` reports. `authMethod` is `'none'` when the
@@ -1414,7 +1443,8 @@ export type SandboxCreateResult = { path: string } | { error: string }
 
 /** Which on-device engine transcribes dictation. Both work offline and send no
  *  audio anywhere; each downloads its model the first time.
- *  - 'whisper': Whisper via ONNX in a utility process (src/main/voice), CPU only.
+ *  - 'whisper': Whisper via ONNX in a utility process (src/main/voice), GPU
+ *    (DirectML/CUDA) when available, else CPU.
  *  - 'local': NVIDIA Parakeet/Canary through a Python venv (`speech.ts`), needs
  *    a CUDA-capable Python already on the machine. */
 export type TranscribeEngine = 'whisper' | 'local'
@@ -1733,7 +1763,7 @@ export interface MemoryConflictItem {
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
-  voice: { voice: DEFAULT_VOICE, speed: 1 },
+  voice: { voice: DEFAULT_VOICE, speed: 1, whisperModel: DEFAULT_WHISPER_MODEL },
   transcribeEngine: 'whisper',
   localSpeech: { model: DEFAULT_LOCAL_SPEECH_MODEL },
   ollama: { enabled: false, apiKey: '' },
@@ -1974,6 +2004,8 @@ export const Channels = {
   speechSetupProgress: 'speech:setup-progress',
   /** Synthesize speech from text with the local Kokoro engine. */
   voiceTts: 'voice:tts',
+  /** Local Whisper model + where it last ran (GPU/CPU), for Settings › Voz. */
+  voiceStatus: 'voice:status',
   /** Whether a Claude Code login exists on this machine. */
   authStatus: 'auth:status',
   /** Run the Claude OAuth login (opens the browser); resolves when authenticated. */

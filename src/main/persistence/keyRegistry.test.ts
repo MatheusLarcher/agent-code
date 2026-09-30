@@ -49,6 +49,7 @@ const EXPECTED_KEYS = [
   'config.vigia.model',
   'config.voice.speed',
   'config.voice.voice',
+  'config.voice.whisperModel',
   'config.windowsControlEnabled',
   'memory-curator:last-run-at'
 ]

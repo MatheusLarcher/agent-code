@@ -11,16 +11,27 @@ import type { IpcMain, WebContents } from 'electron'
 import {
   Channels,
   DEFAULT_LOCAL_SPEECH_MODEL,
+  DEFAULT_WHISPER_MODEL,
   isVoiceId,
+  isWhisperModelId,
   LOCAL_SPEECH_MODELS,
   normalizeVoiceSpeed,
-  type SpeechSetupProgress
+  type SpeechSetupProgress,
+  type WhisperModelId,
+  type WhisperStatus
 } from '../shared/ipc'
 import { splitForSpeech, toSpeechText } from '../shared/speechText'
 import { loadConfig } from './config'
 import { transcribeLocal } from './speech'
 import { getCacheInfo } from './store'
-import { setVoiceCacheDir, stopVoiceEngine, synthesizeLocal, transcribeWhisper } from './voice'
+import {
+  getWhisperStatus,
+  setVoiceCacheDir,
+  setWhisperProfile,
+  stopVoiceEngine,
+  synthesizeLocal,
+  transcribeWhisper
+} from './voice'
 import { canDecodeWithChromium, decodeWithChromium } from './voice/chromiumDecode'
 import { concatSamples, encodeWavPcm16, isWav, parseWav } from './voice/pcm'
 import { createSetupReporter, type VoiceTask } from './voiceProgress'
@@ -151,7 +162,39 @@ export async function transcribe(audioBase64: string, mimeType: string, send?: S
     }
   }
   ensureVoiceCacheDir()
-  return withReporter('stt', send, (reporter) => transcribeWhisper(audioBase64, mime, (p) => reporter.onProgress(p)))
+  // Read on every call: a model picked in Settings applies to the next dictation.
+  setWhisperProfile(resolveWhisperModel(cfg.voice?.whisperModel))
+  const text = await withReporter('stt', send, (reporter) => transcribeWhisper(audioBase64, mime, (p) => reporter.onProgress(p)))
+  logWhisperDevice()
+  return text
+}
+
+let loggedDevice = ''
+/** One line in the main log whenever the model or its device changes (the
+ *  worker's own lines don't always reach the app's stdout). */
+function logWhisperDevice(): void {
+  const s = getWhisperStatus()
+  if (!s.label) return
+  const line = `Whisper ${s.profile} em ${s.label}${s.gpuError ? ` — GPU descartada: ${s.gpuError}` : ''}`
+  if (line === loggedDevice) return
+  loggedDevice = line
+  console.log(`[voice] ${line}`)
+}
+
+export function resolveWhisperModel(saved: unknown): WhisperModelId {
+  return isWhisperModelId(saved) ? saved : DEFAULT_WHISPER_MODEL
+}
+
+/** Settings › Voz: the chosen model and where it last ran. */
+export function whisperStatus(): WhisperStatus {
+  setWhisperProfile(resolveWhisperModel(loadConfig().voice?.whisperModel))
+  const s = getWhisperStatus()
+  return {
+    model: resolveWhisperModel(s.profile),
+    device: s.device,
+    label: s.label,
+    ...(s.gpuError ? { gpuError: s.gpuError } : {})
+  }
 }
 
 function senderReport(sender: WebContents): Send {
@@ -164,6 +207,7 @@ const errorText = (err: unknown): string => String(err instanceof Error ? err.me
 
 /** Desktop IPC. Errors come back as `{ ok: false, error }` so the UI can toast them. */
 export function registerVoiceIpc(ipcMain: IpcMain): void {
+  ipcMain.handle(Channels.voiceStatus, () => whisperStatus())
   ipcMain.handle(Channels.voiceTranscribe, async (e, audioBase64: unknown, mimeType: unknown) => {
     if (typeof audioBase64 !== 'string' || !audioBase64) return { ok: false, error: 'áudio vazio' }
     try {

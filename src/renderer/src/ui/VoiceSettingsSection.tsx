@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { LOCAL_SPEECH_MODELS, VOICE_OPTIONS, VOICE_SPEEDS, type AppConfig, type VoiceId } from '@shared/ipc'
+import { WhisperModelPicker } from './WhisperModelPicker'
 import { useUI } from './UiProvider'
 
 const SAMPLE = 'Olá! Esta é a voz que vai ler as respostas do agente.'
@@ -112,7 +113,7 @@ export function VoiceSettingsSection({ cfg, setCfg, loaded }: Props): JSX.Elemen
               onClick={() => setCfg((c) => ({ ...c, transcribeEngine: 'whisper' }))}
             >
               <strong>Whisper local</strong>
-              <span>padrão: roda na CPU, sem instalar nada</span>
+              <span>padrão: usa a GPU se houver, senão a CPU; sem instalar nada</span>
             </button>
             <button
               type="button"
@@ -144,10 +145,7 @@ export function VoiceSettingsSection({ cfg, setCfg, loaded }: Props): JSX.Elemen
               </span>
             </>
           ) : (
-            <span className="settings-hint">
-              Na primeira vez que você falar, o app baixa o Whisper (~1 GB) e mostra o progresso. O áudio
-              nunca sai deste computador.
-            </span>
+            <WhisperModelPicker cfg={cfg} setCfg={setCfg} loaded={loaded} />
           )}
         </div>
       </section>

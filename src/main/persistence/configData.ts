@@ -3,9 +3,11 @@ import {
   currentModelId,
   DEFAULT_CONFIG,
   DEFAULT_VOICE,
+  DEFAULT_WHISPER_MODEL,
   EFFORT_LEVELS,
   isAutoEffort,
   isVoiceId,
+  isWhisperModelId,
   normalizeVoiceSpeed,
   PLANNING_MODELS,
   type AppConfig,
@@ -13,7 +15,8 @@ import {
   type EffortLevel,
   type PlanningConfig,
   type TranscribeEngine,
-  type VoiceId
+  type VoiceId,
+  type WhisperModelId
 } from '../../shared/ipc'
 import { StorageError } from './types'
 
@@ -59,7 +62,12 @@ const partialConfigSchema = z
         // Voz fora da lista (ex.: uma voz antiga da OpenAI) volta ao padrão em
         // vez de derrubar o boot; velocidade é presa ao intervalo do Kokoro.
         voice: z.string().transform((v): VoiceId => (isVoiceId(v) ? v : DEFAULT_VOICE)).optional(),
-        speed: z.number().finite().positive().transform(normalizeVoiceSpeed).optional()
+        speed: z.number().finite().positive().transform(normalizeVoiceSpeed).optional(),
+        // Modelo desconhecido (perfil removido, valor corrompido) volta ao padrão.
+        whisperModel: z
+          .unknown()
+          .transform((v): WhisperModelId => (isWhisperModelId(v) ? v : DEFAULT_WHISPER_MODEL))
+          .optional()
       })
       .strict()
       .optional(),

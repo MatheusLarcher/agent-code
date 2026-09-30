@@ -3,18 +3,69 @@
 export const KOKORO_VOICES = ['pf_dora', 'pm_alex', 'pm_santa'] as const
 export type KokoroVoice = (typeof KOKORO_VOICES)[number]
 
-type Dtype = 'fp32' | 'fp16' | 'q8' | 'q4'
+export type Dtype = 'fp32' | 'fp16' | 'q8' | 'q4'
+export interface WhisperSpec {
+  model: string
+  /** Precision of each file on the CPU. */
+  dtype: { encoder_model: Dtype; decoder_model_merged: Dtype }
+  /**
+   * Encoder precision on the GPU; absent = CPU only. Only the ENCODER goes to
+   * the GPU: under DirectML the merged decoder (its `If` node + KV cache) runs
+   * but emits no tokens in any precision (q8/fp16/fp32), and the q8 encoder
+   * (MatMulInteger/DynamicQuantizeLinear) is slower there than fp16.
+   * Reproduce with scripts/voice/probe-gpu.mjs; latency by
+   * scripts/voice/bench-whisper.mjs --devices gpu,cpu.
+   */
+  gpuEncoder?: Dtype
+}
 /**
  * Whisper model + ONNX precision per profile. The default is picked by
  * scripts/voice/bench-whisper.mjs (see WHISPER_PROFILE in index.ts).
  */
 export const WHISPER_PROFILES = {
-  'small-fp32': { model: 'onnx-community/whisper-small', dtype: 'fp32' },
+  'small-fp32': {
+    model: 'onnx-community/whisper-small',
+    dtype: { encoder_model: 'fp32', decoder_model_merged: 'fp32' },
+    gpuEncoder: 'fp32'
+  },
   'small-q8': { model: 'onnx-community/whisper-small', dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' } },
-  'turbo-q8': { model: 'onnx-community/whisper-large-v3-turbo', dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' } },
+  'turbo-q8': {
+    model: 'onnx-community/whisper-large-v3-turbo',
+    dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' },
+    gpuEncoder: 'fp16'
+  },
   'turbo-q4': { model: 'onnx-community/whisper-large-v3-turbo', dtype: { encoder_model: 'q4', decoder_model_merged: 'q4' } }
-} as const satisfies Record<string, { model: string; dtype: Dtype | Record<string, Dtype> }>
+} as const satisfies Record<string, WhisperSpec>
 export type WhisperProfile = keyof typeof WHISPER_PROFILES
+
+/** Where Whisper's encoder actually runs: 'dml' (DirectML, Windows), 'cuda'
+ *  (Linux x64 with the CUDA EP installed) or 'cpu'. */
+export type WhisperDevice = 'dml' | 'cuda' | 'cpu'
+
+/** The GPU execution provider onnxruntime-node can try here, or null. Its
+ *  Windows build ships DirectML; on Linux x64 CUDA needs the CUDA EP installed
+ *  (else the session fails and the CPU takes over). */
+export function gpuDeviceFor(
+  platform: string = process.platform,
+  arch: string = process.arch,
+  pref: string | undefined = process.env.AGENT_CODE_VOICE_DEVICE
+): Exclude<WhisperDevice, 'cpu'> | null {
+  if (pref === 'cpu') return null
+  if (platform === 'win32') return 'dml'
+  if (platform === 'linux' && arch === 'x64') return 'cuda'
+  return null
+}
+
+export function deviceLabel(device: WhisperDevice): string {
+  return device === 'dml' ? 'GPU (DirectML)' : device === 'cuda' ? 'GPU (CUDA)' : 'CPU'
+}
+/** What the worker reports after loading/transcribing. */
+export interface WhisperState {
+  profile: WhisperProfile
+  device: WhisperDevice
+  /** Why a GPU attempt was abandoned, when it was. */
+  gpuError?: string
+}
 
 export interface VoiceProgress {
   /** download/load = model files; synthesize/transcribe = the work itself. */
@@ -32,6 +83,11 @@ export type WorkerRequest =
   | { id: number; op: 'prepare'; what: 'tts' | 'stt'; profile: WhisperProfile }
   | { id: number; op: 'synthesize'; text: string; voice: KokoroVoice; speed: number }
   | { id: number; op: 'transcribe'; profile: WhisperProfile; audio?: Uint8Array; pcm?: Float32Array; mimeType?: string }
+
+/** Result of 'transcribe' (text) and of 'prepare' for 'stt' (text = ''). */
+export interface TranscribeResult extends Partial<WhisperState> {
+  text: string
+}
 
 export interface SynthesisResult {
   base64: string

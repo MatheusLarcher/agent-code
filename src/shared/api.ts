@@ -74,7 +74,8 @@ import type {
   PlanningRoteiroDto,
   PlanMediaDto,
   SuggestTitleResult,
-  OutboxEntryDto
+  OutboxEntryDto,
+  WhisperStatus
 } from './ipc'
 import type {
   AccountUsageResult,
@@ -273,6 +274,8 @@ export interface AgentCodeApi {
     text: string,
     opts?: { voice?: string; speed?: number }
   ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }>
+  /** Local Whisper model and where it last ran ('GPU (DirectML)' / 'CPU'). */
+  voiceStatus(): Promise<WhisperStatus>
   /** Whether a Claude Code login already exists. */
   authStatus(): Promise<{ authenticated: boolean }>
   /** Trigger the Claude OAuth login (opens the system browser); resolves when done. */

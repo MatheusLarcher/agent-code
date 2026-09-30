@@ -27,6 +27,12 @@ files:
   # (scripts/stage-skills.mjs). Semeiam o cache de instalações novas.
   - from: .seed-skills
     to: .agents/seed-skills
+  # Voz local: NENHUM peso de modelo vai no instalador. Kokoro e Whisper
+  # (turbo ~1-1,6 GB, small ~0,9 GB) são baixados no primeiro uso para a pasta
+  # de cache local da máquina (ver ensureVoiceCacheDir em voiceService.ts). Estas
+  # exclusões são a trava caso um .onnx apareça em out/ ou em node_modules.
+  - '!**/*.onnx'
+  - '!**/*.onnx_data'
   - '!out/windows-control/**' # vai como extraResources (o helper procura em resources/windows-control)
   - '!out/ms-playwright/**' # idem: vai como extraResources
 

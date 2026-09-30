@@ -9,7 +9,9 @@ const engine = vi.hoisted(() => ({
   setVoiceCacheDir: vi.fn(),
   synthesizeLocal: vi.fn(),
   transcribeWhisper: vi.fn(async () => 'texto do whisper'),
-  stopVoiceEngine: vi.fn(async () => {})
+  stopVoiceEngine: vi.fn(async () => {}),
+  setWhisperProfile: vi.fn(),
+  getWhisperStatus: vi.fn(() => ({ profile: 'small-fp32', device: 'dml', label: 'GPU (DirectML)' }))
 }))
 const python = vi.hoisted(() => ({
   transcribeLocal: vi.fn(async (_wav: Buffer, _model: string, _report: unknown) => 'texto do parakeet')
@@ -25,14 +27,14 @@ vi.mock('./speech', () => python)
 vi.mock('./voice', () => engine)
 vi.mock('./voice/chromiumDecode', () => chromium)
 
-const { resolveSpeakOptions, speak, speechParts, transcribe } = await import('./voiceService')
+const { resolveSpeakOptions, resolveWhisperModel, speak, speechParts, transcribe, whisperStatus } = await import('./voiceService')
 
 function wav(samples: number): string {
   return encodeWavPcm16(new Float32Array(samples).fill(0.1), 24000).toString('base64')
 }
 
 beforeEach(() => {
-  cfg.current = { ...DEFAULT_CONFIG, voice: { voice: 'pm_alex', speed: 1.25 } }
+  cfg.current = { ...DEFAULT_CONFIG, voice: { voice: 'pm_alex', speed: 1.25, whisperModel: 'turbo-q8' } }
   for (const fn of Object.values(engine)) fn.mockClear()
   python.transcribeLocal.mockClear()
   chromium.decodeWithChromium.mockClear()
@@ -78,6 +80,25 @@ describe('voiceService — ditado', () => {
     expect(await transcribe('GkXfow==', 'audio/webm;codecs=opus')).toBe('texto do whisper')
     expect(engine.transcribeWhisper).toHaveBeenCalledWith('GkXfow==', 'audio/webm;codecs=opus', expect.any(Function))
     expect(python.transcribeLocal).not.toHaveBeenCalled()
+  })
+
+  it('aplica o modelo Whisper da config a cada ditado (troca sem reiniciar); inválido vira turbo-q8', async () => {
+    cfg.current = { ...cfg.current, transcribeEngine: 'whisper' }
+    await transcribe('GkXfow==', 'audio/webm')
+    expect(engine.setWhisperProfile).toHaveBeenLastCalledWith('turbo-q8')
+    cfg.current = { ...cfg.current, voice: { ...cfg.current.voice, whisperModel: 'small-fp32' } }
+    await transcribe('GkXfow==', 'audio/webm')
+    expect(engine.setWhisperProfile).toHaveBeenLastCalledWith('small-fp32')
+    cfg.current = { ...cfg.current, voice: { ...cfg.current.voice, whisperModel: 'huge' as never } }
+    await transcribe('GkXfow==', 'audio/webm')
+    expect(engine.setWhisperProfile).toHaveBeenLastCalledWith('turbo-q8')
+    expect(resolveWhisperModel(undefined)).toBe('turbo-q8')
+  })
+
+  it('status: modelo da config e o dispositivo em que rodou', () => {
+    cfg.current = { ...cfg.current, voice: { ...cfg.current.voice, whisperModel: 'small-fp32' } }
+    expect(whisperStatus()).toEqual({ model: 'small-fp32', device: 'dml', label: 'GPU (DirectML)' })
+    expect(engine.setWhisperProfile).toHaveBeenLastCalledWith('small-fp32')
   })
 
   it("'local' usa o Python; WebM do celular vira WAV antes", async () => {

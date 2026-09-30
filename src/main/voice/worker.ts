@@ -8,10 +8,11 @@
  * in parallel would only fight for the same CPU cores.
  */
 import { decodeForWhisper, UnsupportedAudioError } from './audioDecode'
-import { configureCache, KOKORO_SAMPLE_RATE, loadKokoro, loadWhisper, synthesize, transcribe } from './models'
+import { configureCache, KOKORO_SAMPLE_RATE, loadKokoro, synthesize } from './models'
 import { loadEspeakPtBr } from './phonemize'
 import { encodeWavPcm16 } from './pcm'
-import type { SynthesisResult, VoiceProgress, WorkerRequest, WorkerResponse } from './protocol'
+import type { SynthesisResult, TranscribeResult, VoiceProgress, WorkerRequest, WorkerResponse } from './protocol'
+import { loadWhisper, stateOf, transcribe } from './whisper'
 
 interface Port {
   post(msg: WorkerResponse): void
@@ -45,9 +46,11 @@ async function handle(req: WorkerRequest, progress: (p: VoiceProgress) => void):
   if (!configured) throw new Error('pasta de cache dos modelos não configurada')
   switch (req.op) {
     case 'prepare':
-      if (req.what === 'tts') await Promise.all([loadKokoro(progress), loadEspeakPtBr()])
-      else await loadWhisper(req.profile, progress)
-      return true
+      if (req.what === 'tts') {
+        await Promise.all([loadKokoro(progress), loadEspeakPtBr()])
+        return true
+      }
+      return { text: '', ...stateOf(req.profile, await loadWhisper(req.profile, progress)) } satisfies TranscribeResult
     case 'synthesize': {
       const { samples, chunks } = await synthesize(req.text, req.voice, req.speed, progress)
       const wav = encodeWavPcm16(samples, KOKORO_SAMPLE_RATE)
@@ -65,8 +68,8 @@ async function handle(req: WorkerRequest, progress: (p: VoiceProgress) => void):
         progress({ phase: 'decode' })
         pcm = await decodeForWhisper(req.audio ?? new Uint8Array(0), req.mimeType ?? '')
       }
-      if (pcm.length < 1600) return '' // < 0.1 s: nothing to hear
-      return transcribe(pcm, req.profile, progress)
+      if (pcm.length < 1600) return { text: '' } satisfies TranscribeResult // < 0.1 s: nothing to hear
+      return (await transcribe(pcm, req.profile, progress)) satisfies TranscribeResult
     }
   }
 }

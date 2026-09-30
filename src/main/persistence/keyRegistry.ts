@@ -11,6 +11,8 @@ export const PERSISTED_KEY_REGISTRY = {
   config: { scope: 'device', sensitive: true, legacyOnly: true, source: 'main-kv' },
   'config.voice.voice': { scope: 'device', source: 'main-kv' },
   'config.voice.speed': { scope: 'device', source: 'main-kv' },
+  // Por máquina: GPU e espaço em disco variam entre os PCs do mesmo usuário.
+  'config.voice.whisperModel': { scope: 'device', source: 'main-kv' },
   // Legado da voz via OpenAI: só lido uma vez para migrar a velocidade.
   'config.openai.speed': { scope: 'device', legacyOnly: true, source: 'main-kv' },
   'config.transcribeEngine': { scope: 'device', source: 'main-kv' },

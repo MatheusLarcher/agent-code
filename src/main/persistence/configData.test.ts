@@ -110,7 +110,7 @@ describe('configuração persistida', () => {
         ollama: { enabled: true }
       })
     )
-    expect(parsed.voice).toEqual({ voice: 'pf_dora', speed: 1.25 })
+    expect(parsed.voice).toEqual({ voice: 'pf_dora', speed: 1.25, whisperModel: 'turbo-q8' })
     expect(parsed.localSpeech.model).toBe('modelo')
     expect(parsed.ollama).toEqual({ enabled: true, apiKey: '' })
   })
@@ -134,19 +134,29 @@ describe('configuração persistida', () => {
     )
     expect(parsed).not.toHaveProperty('openai')
     expect(JSON.stringify(parsed)).not.toContain('sk-velha')
-    expect(parsed.voice).toEqual({ voice: 'pf_dora', speed: 1.5 })
+    expect(parsed.voice).toEqual({ voice: 'pf_dora', speed: 1.5, whisperModel: 'turbo-q8' })
     expect(parsed.transcribeEngine).toBe('whisper')
     // Campos gravados um a um (KV) também passam pelo merge.
     const atual = defaultAppConfig()
     expect(mergeAppConfig(atual, { transcribeEngine: 'cloud' }).transcribeEngine).toBe('whisper')
     expect(mergeAppConfig(atual, { voice: { voice: 'alloy' } }).voice.voice).toBe('pf_dora')
-    expect(mergeAppConfig(atual, { voice: { voice: 'pm_santa', speed: 9 } }).voice).toEqual({ voice: 'pm_santa', speed: 2 })
+    expect(mergeAppConfig(atual, { voice: { voice: 'pm_santa', speed: 9 } }).voice).toEqual({ voice: 'pm_santa', speed: 2, whisperModel: 'turbo-q8' })
     expect(mergeAppConfig(atual, { transcribeEngine: 'local' }).transcribeEngine).toBe('local')
   })
 
-  it('padrão: pf_dora, velocidade 1, ditado com Whisper local', () => {
+  it('padrão: pf_dora, velocidade 1, ditado com Whisper local large-v3-turbo', () => {
     const d = defaultAppConfig()
-    expect(d.voice).toEqual({ voice: 'pf_dora', speed: 1 })
+    expect(d.voice).toEqual({ voice: 'pf_dora', speed: 1, whisperModel: 'turbo-q8' })
     expect(d.transcribeEngine).toBe('whisper')
+  })
+
+  it('modelo do Whisper: small é aceito; desconhecido ou de tipo errado volta a turbo-q8', () => {
+    const atual = defaultAppConfig()
+    expect(mergeAppConfig(atual, { voice: { whisperModel: 'small-fp32' } }).voice.whisperModel).toBe('small-fp32')
+    expect(mergeAppConfig(atual, { voice: { whisperModel: 'large-v9' } }).voice.whisperModel).toBe('turbo-q8')
+    expect(mergeAppConfig(atual, { voice: { whisperModel: 42 } }).voice.whisperModel).toBe('turbo-q8')
+    const small = mergeAppConfig(atual, { voice: { whisperModel: 'small-fp32' } })
+    // Gravar só a velocidade não apaga a escolha do modelo (merge aninhado).
+    expect(mergeAppConfig(small, { voice: { speed: 1.25 } }).voice.whisperModel).toBe('small-fp32')
   })
 })

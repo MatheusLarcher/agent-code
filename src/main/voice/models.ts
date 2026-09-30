@@ -1,20 +1,20 @@
 /**
  * Model loading and inference — runs ONLY inside the voice worker.
  *
- * Kokoro-82M (fp32, CPU) for pt-BR speech and Whisper for transcription, both
- * through @huggingface/transformers + onnxruntime-node. Files are downloaded on
+ * Kokoro-82M (fp32, CPU) for pt-BR speech here; Whisper (GPU/CPU) in
+ * whisper.ts. Both go through @huggingface/transformers + onnxruntime-node. Files are downloaded on
  * first use into `env.cacheDir` (the app's cache folder, set by the host),
  * never into node_modules.
  */
 import { existsSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import { join } from 'node:path'
-import { AutoTokenizer, env, pipeline, StyleTextToSpeech2Model, type ProgressInfo } from '@huggingface/transformers'
+import { AutoTokenizer, env, StyleTextToSpeech2Model, type ProgressInfo } from '@huggingface/transformers'
 import { KokoroTTS, type GenerateOptions } from 'kokoro-js'
 import { loadEspeakPtBr, phonemizeWith } from './phonemize'
 import { concatSamples } from './pcm'
 import { planKokoroChunks } from './textChunks'
-import { WHISPER_PROFILES, type KokoroVoice, type VoiceProgress, type WhisperProfile } from './protocol'
+import type { KokoroVoice, VoiceProgress } from './protocol'
 
 export const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX'
 export const KOKORO_SAMPLE_RATE = 24000
@@ -46,7 +46,7 @@ export function sessionOptions(): { intraOpNumThreads?: number; interOpNumThread
 
 /** transformers announces 'download' and streams byte progress for cache
  *  reads too; a file already in the cache folder is reported as 'load'. */
-function relay(onProgress: Progress, model: string): (p: ProgressInfo) => void {
+export function relay(onProgress: Progress, model: string): (p: ProgressInfo) => void {
   const cached = new Map<string, boolean>()
   const isCached = (file: string): boolean => {
     if (!cached.has(file)) cached.set(file, existsSync(join(env.cacheDir ?? '', model, file)))
@@ -105,46 +105,3 @@ export async function synthesize(
   return { samples: concatSamples(parts, SENTENCE_GAP_SAMPLES), chunks: chunks.length }
 }
 
-// ----------------------------------------------------------------- Whisper
-
-type Asr = ((audio: Float32Array, opts: Record<string, unknown>) => Promise<{ text: string } | { text: string }[]>) & {
-  dispose?: () => Promise<unknown>
-}
-let whisper: { profile: WhisperProfile; asr: Promise<Asr> } | null = null
-
-export function loadWhisper(profile: WhisperProfile, onProgress: Progress): Promise<Asr> {
-  if (whisper?.profile !== profile) {
-    const spec = WHISPER_PROFILES[profile]
-    if (!spec) return Promise.reject(new Error(`perfil Whisper desconhecido: ${profile}`))
-    const previous = whisper
-    const asr = (async () => {
-      // One Whisper at a time: release the old sessions before loading another.
-      await (await previous?.asr.catch(() => null))?.dispose?.()
-      return (await pipeline('automatic-speech-recognition', spec.model, {
-        dtype: spec.dtype as never,
-        device: 'cpu',
-        session_options: sessionOptions(),
-        progress_callback: relay(onProgress, spec.model)
-      })) as unknown as Asr
-    })()
-    whisper = { profile, asr }
-    asr.catch(() => {
-      if (whisper?.asr === asr) whisper = null
-    })
-  }
-  return whisper!.asr
-}
-
-export async function transcribe(pcm16k: Float32Array, profile: WhisperProfile, onProgress: Progress): Promise<string> {
-  const asr = await loadWhisper(profile, onProgress)
-  onProgress({ phase: 'transcribe', progress: 0 })
-  const long = pcm16k.length > 30 * 16000
-  const out = await asr(pcm16k, {
-    language: 'portuguese',
-    task: 'transcribe',
-    ...(long ? { chunk_length_s: 30, stride_length_s: 5 } : {})
-  })
-  onProgress({ phase: 'transcribe', progress: 1 })
-  const text = Array.isArray(out) ? out.map((o) => o.text).join(' ') : out.text
-  return text.replace(/\s+/g, ' ').trim()
-}
