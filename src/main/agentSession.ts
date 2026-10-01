@@ -5,6 +5,7 @@ import { appRestart } from './appRestartRuntime'
 import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
 import { isStalled, STALL_POLL_MS } from './stallWatch'
+import { ToolInputStreams, type RawStreamEvent } from './toolInputStream'
 import { MirrorRepair, MIRROR_REPAIR_SEND_TIMEOUT_MS, mirrorRepairText } from './mirrorRepair'
 import { composeRequestContext, composeUserPrompt } from './promptEnvelope'
 import type { BrowserController } from './browserController'
@@ -638,6 +639,9 @@ export class AgentSession {
   private memorySelectionTurn = 0
   private liveId: string | null = null
   private liveText = ''
+  /** Código que o agente principal está escrevendo (Edit/Write…), lido dos
+   *  `input_json_delta` para o monitor do escritório. Efêmero: ver toolInputStream.ts. */
+  private readonly toolInput = new ToolInputStreams((e) => this.emit(e))
   /** Text lookup for UUIDs returned by the SDK interrupt receipt. Bounded so a
    *  long-lived session cannot retain every prompt forever. */
   private submittedMessages = new Map<string, string>()
@@ -2412,7 +2416,7 @@ ${lines}
         break
 
       case 'stream_event':
-        this.handleStreamEvent(message.event as { type: string; message?: { id?: string }; delta?: { type?: string; text?: string } })
+        this.handleStreamEvent(message.event as RawStreamEvent, message.parent_tool_use_id ?? null)
         break
 
       case 'assistant': {
@@ -2596,6 +2600,9 @@ ${lines}
   }
 
   private markTurnIdle(): void {
+    // Fora do turno nenhum bloco de ferramenta segue aberto: um Stop no meio de
+    // um Write nunca manda `content_block_stop`, e o monitor ficaria "escrevendo".
+    this.toolInput.finishAll()
     if (!this.turnActive && this.idleWaiters.size === 0) return
     this.turnActive = false
     // Nada mais deve rodar: fora do turno, silêncio é o normal.
@@ -2605,7 +2612,11 @@ ${lines}
     this.idleWaiters.clear()
   }
 
-  private handleStreamEvent(ev: { type: string; message?: { id?: string }; delta?: { type?: string; text?: string } }): void {
+  private handleStreamEvent(ev: RawStreamEvent, parentToolUseId: string | null): void {
+    // Entrada ao vivo de Edit/Write/MultiEdit/NotebookEdit (toolInputStream.ts).
+    // Só do principal: subagente não manda stream_event hoje, e se passar a
+    // mandar, o `index` dele colidiria com o do principal no mesmo mapa de blocos.
+    if (parentToolUseId === null) this.toolInput.handle(ev)
     if (ev.type === 'message_start') {
       this.liveId = ev.message?.id ?? nextId()
       this.liveText = ''

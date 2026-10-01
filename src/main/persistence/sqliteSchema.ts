@@ -324,6 +324,34 @@ export const SQLITE_BOARD_EVENTS_ACTOR_USER_SCHEMA = `
 `
 
 /**
+ * Migration 12 — kind `'justified'` e actor `'system'` em `board_item_events`
+ * (espelha a migration 14 do PostgreSQL).
+ *
+ * `justified`: o motivo mudou sem mudar o status (o PENDENTE do PO). `system`:
+ * as regras determinísticas do quadro (fim de turno, retomada, dispensar,
+ * expiração), que antes eram gravadas como se fossem do PO. Mesmo recreate da
+ * migration 7, pelo mesmo motivo: SQLite não altera `CHECK` inline.
+ */
+export const SQLITE_BOARD_EVENTS_JUSTIFIED_SCHEMA = `
+  PRAGMA foreign_keys=OFF;
+  CREATE TABLE board_item_events_v3 (
+    id TEXT PRIMARY KEY,
+    board_item_id TEXT NOT NULL REFERENCES board_items(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('created','status_changed','retitled','note_changed','dismissed','restored','justified')),
+    actor TEXT NOT NULL CHECK(actor IN ('agent','po','user','system')),
+    from_status TEXT,
+    to_status TEXT,
+    note TEXT
+  );
+  INSERT INTO board_item_events_v3 SELECT * FROM board_item_events;
+  DROP TABLE board_item_events;
+  ALTER TABLE board_item_events_v3 RENAME TO board_item_events;
+  CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);
+  PRAGMA foreign_keys=ON;
+`
+
+/**
  * Migration 8 — vínculo entre uma tarefa do ledger e um cartão do quadro
  * (`task_board_links`).
  *
@@ -485,7 +513,14 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   migration(8, 'sqlite-v2-task-board-links', SQLITE_TASK_BOARD_LINKS_SCHEMA),
   migration(9, 'sqlite-v2-token-usage', SQLITE_TOKEN_USAGE_SCHEMA),
   migration(10, 'sqlite-v2-agent-input-queue', SQLITE_AGENT_INPUT_QUEUE_SCHEMA),
-  migration(11, 'sqlite-v2-conversation-outbox', SQLITE_CONVERSATION_OUTBOX_SCHEMA)
+  migration(11, 'sqlite-v2-conversation-outbox', SQLITE_CONVERSATION_OUTBOX_SCHEMA),
+  // Recreate de tabela como a 7: o guarda de `write()` só garante o índice.
+  migration(
+    12,
+    'sqlite-v2-board-events-justified-system',
+    SQLITE_BOARD_EVENTS_JUSTIFIED_SCHEMA,
+    'CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);'
+  )
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

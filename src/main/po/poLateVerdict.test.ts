@@ -155,7 +155,7 @@ describe('Po + BoardService — veredito do fechamento que chega depois do teto 
     const w = await world((card) =>
       [
         `CONCLUIR ${card(EXE).id} | a resposta final mostra o EXE gerado`,
-        `TITULO ${card(EXE).id} | Gerar o instalador EXE`,
+        `TITULO ${card(EXE).id} | Gerar o instalador EXE | o título do agente era técnico`,
         'FEITA | Publicar o EXE no release | a resposta diz que foi publicado',
         'NOVA | Assinar o EXE | o agente disse que assina depois'
       ].join('\n')
@@ -182,7 +182,7 @@ describe('Po + BoardService — veredito do fechamento que chega depois do teto 
   it('nenhuma operação do fechamento rebaixa: ANDAMENTO e NOVA duplicada caem; TITULO sozinho só renomeia', async () => {
     const w = await world((card) =>
       [
-        `TITULO ${card(EXE).id} | Gerar o instalador EXE`,
+        `TITULO ${card(EXE).id} | Gerar o instalador EXE | o título do agente era técnico`,
         `ANDAMENTO ${card(LOGIN).id} | o login voltou a ser mexido`,
         `NOVA | ${LOGIN} | recriar a revisão do login`
       ].join('\n')

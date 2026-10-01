@@ -59,7 +59,7 @@ describe('confirmCreates — a lista fresca antes de escrever', () => {
     const d = deps([card('bi-1', 'completed')])
     const ops: PoOp[] = [
       { kind: 'complete', id: 'bi-1', reason: 'o teste passou' },
-      { kind: 'retitle', id: 'bi-1', title: 'Novo nome' }
+      { kind: 'retitle', id: 'bi-1', title: 'Novo nome', reason: 'legível' }
     ]
 
     expect(await confirmCreates(d, ops, target('close'))).toBe(ops)
@@ -82,7 +82,7 @@ describe('confirmCreates — a lista fresca antes de escrever', () => {
   it('sem lista fresca, criar e pôr em andamento caem (falha fechada); CONCLUIR e TITULO seguem', async () => {
     const d = deps(null)
     const complete: PoOp = { kind: 'complete', id: 'bi-1', reason: 'o teste passou' }
-    const retitle: PoOp = { kind: 'retitle', id: 'bi-1', title: 'Novo nome' }
+    const retitle: PoOp = { kind: 'retitle', id: 'bi-1', title: 'Novo nome', reason: 'legível' }
     const ops: PoOp[] = [
       complete,
       { kind: 'start', id: 'bi-2', reason: 'retomando' },

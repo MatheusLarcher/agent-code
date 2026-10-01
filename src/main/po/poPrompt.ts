@@ -8,10 +8,11 @@ export { summarizeCall } from '../vigia/vigiaPrompt'
 // A seta é de mão única — poPromptText não importa nada —, então não há ciclo.
 // A LEITURA do veredito (`parsePoVerdict`, `rejectUnsafeOps`) mora em
 // poVerdict.ts, que importa daqui; por isso ela NÃO sai reexportada.
-import { PO_SYSTEM_PROMPT_CLOSE, PO_SYSTEM_PROMPT_OPEN } from './poPromptText'
+import { PO_RETURNED_SECTION, PO_SYSTEM_PROMPT_CLOSE, PO_SYSTEM_PROMPT_OPEN } from './poPromptText'
 export {
   PO_AWAITING_AUTHORIZATION_REASON,
   PO_MAX_OPS,
+  PO_RETURNED_SECTION,
   PO_SYSTEM_PROMPT_CLOSE,
   PO_SYSTEM_PROMPT_OPEN
 } from './poPromptText'
@@ -108,6 +109,11 @@ export const PO_MAX_TITLE_CHARS = 90
 export const PO_MAX_BACKGROUND_TASKS = 5
 /** Teto de UMA linha de tarefa em segundo plano (a descrição do SDK). */
 export const PO_MAX_BACKGROUND_LINE_CHARS = 110
+/** Tetos da seção dos cartões que o fim do turno devolve para "a fazer" — só
+ *  ids (o título já está no QUADRO ATUAL). Escolhidos para a seção inteira
+ *  caber no espaço da de segundo plano, com quem ela nunca aparece junto. */
+export const PO_MAX_RETURNED_CARDS = 8
+export const PO_MAX_RETURNED_LINE_CHARS = 60
 /**
  * Teto da última resposta do agente, com o "…" do corte (~250 tokens). A que
  * cabe vai inteira; a longa leva as DUAS pontas: PO_REPLY_HEAD_CHARS do início,
@@ -134,6 +140,8 @@ const LABEL_CALLS = 'AÇÕES DESTE TURNO:'
 const LABEL_BACKGROUND = 'TRABALHO EM SEGUNDO PLANO AINDA RODANDO:'
 const LABEL_REPLY = 'ÚLTIMA RESPOSTA DO AGENTE:'
 const LABEL_TASKS = 'TAREFAS DO REGISTRO NESTA CONVERSA:'
+/** Exportado: o prompt de fechamento cita esta seção pelo nome. */
+export const LABEL_RETURNED = PO_RETURNED_SECTION
 /** O marcador das linhas de ação, de tarefa e de segundo plano. */
 const LIST_MARK = '- '
 
@@ -290,6 +298,18 @@ export function buildPoDigest(input: {
       .filter(Boolean)
       .slice(0, PO_MAX_BACKGROUND_TASKS)
     if (background.length > 0) lines.push('', LABEL_BACKGROUND, ...background.map((text) => `${LIST_MARK}${text}`))
+    // O que o fim do turno vai devolver para "a fazer" (tudo o que ficou "em
+    // andamento"), para o PO justificar cada um com PENDENTE ou concluir.
+    // Mutuamente exclusiva com a seção acima: com trabalho em segundo plano o
+    // fechamento é delegado e nada é devolvido — e é por isso que esta seção
+    // (menor que a de segundo plano) não mexe no teto total do digest.
+    const returned =
+      background.length > 0
+        ? []
+        : cards.filter((card) => card.status === 'in_progress').slice(0, PO_MAX_RETURNED_CARDS)
+    if (returned.length > 0) {
+      lines.push('', LABEL_RETURNED, ...returned.map((card) => `${LIST_MARK}${clamp(card.id, PO_MAX_RETURNED_LINE_CHARS)}`))
+    }
   }
   // O alvo das ferramentas não mostra o resultado de uma pesquisa nem a
   // pergunta que deixou o trabalho esperando o usuário — a resposta mostra.

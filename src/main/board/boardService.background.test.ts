@@ -84,7 +84,7 @@ describe('BoardService — fim de turno com trabalho em segundo plano', () => {
     service.observe('conv-1', CWD, result)
     await service.turnClosed('conv-1')
     expect(applied).toEqual([
-      { id: 'bi-andando', poStatus: 'pending', poReason: 'o turno terminou sem concluir esta tarefa' }
+      { id: 'bi-andando', poStatus: 'pending', poReason: 'o turno terminou sem concluir esta tarefa', actor: 'system' }
     ])
   })
 

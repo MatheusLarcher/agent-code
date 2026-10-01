@@ -1,4 +1,4 @@
-import type { BoardItem } from '../../shared/ipc'
+import { boardItemStatus, boardTurnEndReason, parseBoardTurnEndReason, type BoardItem } from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
 import { linkLedgerTaskToCard, type PoLedgerDeps } from './poLedger'
 import type { PoPhase } from './poPrompt'
@@ -35,7 +35,10 @@ export interface PoApplyProgress {
 /** As operações que só podem ser escritas depois de conferidas contra o quadro
  *  de AGORA — ver `confirmCreates`. */
 function needsFreshList(op: PoOp): boolean {
-  return op.kind === 'create' || op.kind === 'start'
+  // PENDENTE também: ele só vale para o cartão que ainda está (ou acabou de
+  // voltar para) "a fazer" pelo fim do turno, e o usuário pode tê-lo concluído
+  // no meio da consulta.
+  return op.kind === 'create' || op.kind === 'start' || op.kind === 'justify'
 }
 
 /**
@@ -98,6 +101,7 @@ export async function applyPoVerdict(
   )
   const ops = await confirmCreates(deps, verdict, target)
   const { convId, cwd, projectId, startedAt } = target
+  const byId = new Map(cards.map((card) => [card.id, card]))
 
   for (const op of ops) {
     if (op.kind === 'complete') {
@@ -111,7 +115,25 @@ export async function applyPoVerdict(
       // apontarem para a mesma coisa sem depender de o agente lembrar.
       await linkLedgerTaskToCard(deps, convId, op.id, startedAt)
     } else if (op.kind === 'retitle') {
-      await deps.board.applyPo({ id: op.id, poTitle: op.title })
+      // O motivo vai para `po_reason` — menos quando apagaria o motivo do fim
+      // de turno, que sustenta o selo "Aguardando você" e a retomada: aí ele
+      // fica só na linha do tempo. O cartão "em andamento" entra na exceção
+      // porque o fim de turno pode rebaixá-lo entre a consulta e esta escrita
+      // (a lista `cards` é a de antes da consulta).
+      const card = byId.get(op.id)
+      const keepReason = !card || boardItemStatus(card) === 'in_progress' || parseBoardTurnEndReason(card.poReason)
+      await deps.board.applyPo(
+        keepReason
+          ? { id: op.id, poTitle: op.title, eventNote: op.reason }
+          : { id: op.id, poTitle: op.title, poReason: op.reason }
+      )
+      progress.touched.push(op.id)
+    } else if (op.kind === 'justify') {
+      // Sem mudar o status: a frase fixa do fim de turno fica na frente (é ela
+      // que o selo e a retomada reconhecem) e o motivo concreto vem depois. O
+      // cartão ainda "em andamento" é o que o `result` vai devolver.
+      const kind = parseBoardTurnEndReason(byId.get(op.id)?.poReason)?.kind ?? 'result'
+      await deps.board.applyPo({ id: op.id, poReason: boardTurnEndReason(kind, op.reason), eventNote: op.reason })
       progress.touched.push(op.id)
     } else {
       const created = await deps.board.createPoItem({

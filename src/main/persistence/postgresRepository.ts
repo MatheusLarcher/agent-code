@@ -29,6 +29,7 @@ import {
   newBoardItemEvent,
   normalizeSourceItems,
   planBoardSourceSync,
+  planPoWriteEvent,
   type BoardItemEventRow,
   type BoardItemRow
 } from '../board/boardModel'
@@ -77,6 +78,7 @@ import {
   type BoardItem,
   type BoardItemEvent,
   type BoardItemStatus,
+  type BoardDismissBy,
   type BoardPoCreate,
   type BoardPoWrite,
   type BoardQuery,
@@ -139,6 +141,11 @@ function nullableText(value: string | null): string | null {
   if (value === null) return null
   const trimmed = value.trim()
   return trimmed ? encodePostgresText(trimmed) : null
+}
+
+/** O inverso de `nullableText` para o que já está gravado. */
+function decodeNullable(value: string | null): string | null {
+  return value === null ? null : decodePostgresText(value)
 }
 
 /** O driver devolve `timestamptz` como `Date`; o modelo do quadro trabalha com
@@ -1080,22 +1087,22 @@ export class PostgresRepository implements PersistenceRepository {
       // precisam enxergar na linha do tempo. `note` aqui é sempre o valor
       // PLANO (não escapado) — `logBoardEvent` faz o próprio encode, e passar
       // o já-escapado dobraria o escape na leitura.
+      // A regra de qual fato registrar é a MESMA do SQLite (`planPoWriteEvent`).
+      // As comparações usam o valor escapado dos dois lados; o que vai para a
+      // nota é o plano.
       const priorEffective = (current.po_status ?? current.source_status) as BoardItemStatus
-      const actor = input.actor ?? 'po'
-      if (input.poStatus !== undefined && nextPoStatus !== priorEffective) {
-        await this.logBoardEvent(client, {
-          boardItemId: input.id,
-          kind: 'status_changed',
-          actor,
-          fromStatus: priorEffective,
-          toStatus: nextPoStatus as BoardItemStatus | null,
-          note: input.poReason ?? null
-        })
-      } else if (input.poTitle !== undefined && nextPoTitle !== current.po_title) {
-        await this.logBoardEvent(client, { boardItemId: input.id, kind: 'retitled', actor, note: input.poTitle })
-      } else if (input.poNote !== undefined && input.poNote !== current.po_note) {
-        await this.logBoardEvent(client, { boardItemId: input.id, kind: 'note_changed', actor, note: input.poNote })
-      }
+      const event = planPoWriteEvent(input, {
+        priorStatus: priorEffective,
+        nextStatus: nextPoStatus as BoardItemStatus | null,
+        effectiveStatus: (nextPoStatus ?? current.source_status) as BoardItemStatus,
+        titleChanged: nextPoTitle !== current.po_title,
+        noteChanged: input.poNote !== undefined && nullableText(input.poNote) !== current.po_note,
+        reasonChanged: nextPoReason !== current.po_reason,
+        nextTitle: input.poTitle === undefined ? decodeNullable(current.po_title) : input.poTitle,
+        nextNote: input.poNote === undefined ? decodeNullable(current.po_note) : input.poNote,
+        nextReason: input.poReason === undefined ? decodeNullable(current.po_reason) : input.poReason
+      })
+      if (event) await this.logBoardEvent(client, { boardItemId: input.id, actor: input.actor ?? 'po', ...event })
       return this.requireBoardItem(client, input.id)
     })
   }
@@ -1126,7 +1133,7 @@ export class PostgresRepository implements PersistenceRepository {
     })
   }
 
-  async dismissBoardItem(id: string, dismissed: boolean): Promise<BoardItem> {
+  async dismissBoardItem(id: string, dismissed: boolean, by?: BoardDismissBy): Promise<BoardItem> {
     this.assertInitialized()
     return transaction(this.pool, async (client) => {
       const updated = await client.query(
@@ -1137,7 +1144,12 @@ export class PostgresRepository implements PersistenceRepository {
         [id]
       )
       if (!updated.rowCount) throw new StorageError('INVALID_PERSISTED_DATA', `Cartão inexistente: ${id}`)
-      await this.logBoardEvent(client, { boardItemId: id, kind: dismissed ? 'dismissed' : 'restored', actor: 'po' })
+      await this.logBoardEvent(client, {
+        boardItemId: id,
+        kind: dismissed ? 'dismissed' : 'restored',
+        actor: by?.actor ?? 'system',
+        note: by?.note ?? null
+      })
       return this.requireBoardItem(client, id)
     })
   }

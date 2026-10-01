@@ -39,6 +39,7 @@ import {
   newBoardItemEvent,
   normalizeSourceItems,
   planBoardSourceSync,
+  planPoWriteEvent,
   type BoardItemEventRow,
   type BoardItemRow
 } from '../board/boardModel'
@@ -69,6 +70,7 @@ import {
   type BoardItem,
   type BoardItemEvent,
   type BoardItemStatus,
+  type BoardDismissBy,
   type BoardPoCreate,
   type BoardPoWrite,
   type BoardQuery,
@@ -1159,26 +1161,21 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
            revision = revision + 1, updated_at = ?
          WHERE id = ?`
       ).run(next.poTitle, next.poNote, next.poStatus, next.poReason, now, now, input.id)
-      // Uma escrita do PO conta UM fato: status ganha prioridade sobre
-      // título/observação porque é o que a reabertura e a auditoria mais
-      // precisam enxergar na linha do tempo.
-      const priorEffective = current.po_status ?? current.source_status
-      const actor = input.actor ?? 'po'
-      if (input.poStatus !== undefined && next.poStatus !== priorEffective) {
-        this.logBoardEvent(db, {
-          boardItemId: input.id,
-          at: now,
-          kind: 'status_changed',
-          actor,
-          fromStatus: priorEffective as BoardItemStatus,
-          toStatus: next.poStatus as BoardItemStatus | null,
-          note: next.poReason
-        })
-      } else if (input.poTitle !== undefined && input.poTitle !== current.po_title) {
-        this.logBoardEvent(db, { boardItemId: input.id, at: now, kind: 'retitled', actor, note: next.poTitle })
-      } else if (input.poNote !== undefined && input.poNote !== current.po_note) {
-        this.logBoardEvent(db, { boardItemId: input.id, at: now, kind: 'note_changed', actor, note: next.poNote })
-      }
+      // Uma escrita do PO conta UM fato — a regra de qual mora em
+      // `planPoWriteEvent`, a mesma do PostgreSQL.
+      const priorEffective = (current.po_status ?? current.source_status) as BoardItemStatus
+      const event = planPoWriteEvent(input, {
+        priorStatus: priorEffective,
+        nextStatus: next.poStatus as BoardItemStatus | null,
+        effectiveStatus: (next.poStatus ?? current.source_status) as BoardItemStatus,
+        titleChanged: next.poTitle !== current.po_title,
+        noteChanged: next.poNote !== current.po_note,
+        reasonChanged: next.poReason !== current.po_reason,
+        nextTitle: next.poTitle,
+        nextNote: next.poNote,
+        nextReason: next.poReason
+      })
+      if (event) this.logBoardEvent(db, { boardItemId: input.id, at: now, actor: input.actor ?? 'po', ...event })
       return boardItemFromRow(
         db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(input.id) as unknown as BoardItemRow
       )
@@ -1225,7 +1222,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     return item
   }
 
-  async dismissBoardItem(id: string, dismissed: boolean): Promise<BoardItem> {
+  async dismissBoardItem(id: string, dismissed: boolean, by?: BoardDismissBy): Promise<BoardItem> {
     const item = this.write((db) => {
       const current = db.prepare('SELECT id FROM board_items WHERE id = ?').get(id)
       if (!current) throw new TypeError(`Cartão inexistente: ${id}`)
@@ -1233,7 +1230,13 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       db.prepare(
         'UPDATE board_items SET dismissed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ?'
       ).run(dismissed ? now : null, now, id)
-      this.logBoardEvent(db, { boardItemId: id, at: now, kind: dismissed ? 'dismissed' : 'restored', actor: 'po' })
+      this.logBoardEvent(db, {
+        boardItemId: id,
+        at: now,
+        kind: dismissed ? 'dismissed' : 'restored',
+        actor: by?.actor ?? 'system',
+        note: by?.note ?? null
+      })
       return boardItemFromRow(
         db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
       )

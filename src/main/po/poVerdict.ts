@@ -1,4 +1,4 @@
-import { boardItemStatus } from '../../shared/ipc'
+import { boardItemStatus, boardItemTurnEndKind } from '../../shared/ipc'
 import type { BoardItem, BoardItemStatus } from '../../shared/ipc'
 import { clamp, PO_MAX_TITLE_CHARS, type PoPhase } from './poPrompt'
 import { PO_MAX_OPS } from './poPromptText'
@@ -18,7 +18,11 @@ export type PoOp =
   | { kind: 'complete'; id: string; reason: string }
   /** ANDAMENTO: o pedido é coberto por um cartão que já existe. */
   | { kind: 'start'; id: string; reason: string }
-  | { kind: 'retitle'; id: string; title: string }
+  /** TITULO: título novo SEMPRE com motivo — toda alteração do PO se justifica. */
+  | { kind: 'retitle'; id: string; title: string; reason: string }
+  /** PENDENTE: o que faltou no cartão que o fim do turno devolve para "a
+   *  fazer". Não muda o status — só troca a frase genérica pelo motivo real. */
+  | { kind: 'justify'; id: string; reason: string }
   /** O status com que o cartão nasce: `in_progress` na abertura (o trabalho está
    *  começando), `pending` no fechamento (ficou faltando) e `completed` no
    *  FEITA (aconteceu neste turno e ninguém registrou). */
@@ -88,13 +92,25 @@ export function parsePoVerdict(raw: string, knownIds: Iterable<string>, phase: P
       continue
     }
 
-    const retitle = /^TITULO\s+(\S+)\s*\|\s*(.+)$/i.exec(text)
+    // `TITULO <id> | <título>` sem motivo não casa com nada abaixo e cai fora:
+    // título trocado sem justificativa é exatamente o que não pode mais passar.
+    const retitle = /^TITULO\s+(\S+)\s*\|\s*([^|]+)\|\s*(.+)$/i.exec(text)
     if (retitle) {
       if (phase !== 'close') continue
-      const [, id, title] = retitle
-      if (!ids.has(id) || seen.has(`t:${id}`) || !title.trim()) continue
+      const [, id, title, reason] = retitle
+      if (!ids.has(id) || seen.has(`t:${id}`) || !title.trim() || !reason.trim()) continue
       seen.add(`t:${id}`)
-      ops.push({ kind: 'retitle', id, title: clamp(title, PO_MAX_TITLE_CHARS) })
+      ops.push({ kind: 'retitle', id, title: clamp(title, PO_MAX_TITLE_CHARS), reason: clamp(reason, 160) })
+      continue
+    }
+
+    const justify = /^PENDENTE\s+(\S+)\s*\|\s*(.+)$/i.exec(text)
+    if (justify) {
+      if (phase !== 'close') continue
+      const [, id, reason] = justify
+      if (!ids.has(id) || seen.has(`p:${id}`) || !reason.trim()) continue
+      seen.add(`p:${id}`)
+      ops.push({ kind: 'justify', id, reason: clamp(reason, 160) })
       continue
     }
 
@@ -164,6 +180,7 @@ export function rejectUnsafeOps(ops: PoOp[], cards: BoardItem[], phase: PoPhase 
   // Sem isso, um segundo `create` duplicado para o mesmo cartão viraria um
   // segundo `start`, e `applyPo` seria chamado duas vezes à toa para o mesmo id.
   const startedIds = new Set(ops.filter((op) => op.kind === 'start').map((op) => op.id))
+  const concluded = new Set(ops.filter((op) => op.kind === 'complete').map((op) => op.id))
 
   const out: PoOp[] = []
   for (const op of ops) {
@@ -195,6 +212,14 @@ export function rejectUnsafeOps(ops: PoOp[], cards: BoardItem[], phase: PoPhase 
     if (!card) continue
     if (op.kind === 'retitle') {
       if (op.title.trim() !== card.sourceTitle.trim()) out.push(op)
+      continue
+    }
+    if (op.kind === 'justify') {
+      // Só se justifica o que o fim do turno devolve (ainda "em andamento") ou
+      // já devolveu (o veredito atrasado) para "a fazer". E CONCLUIR na mesma
+      // resposta vence: o cartão não volta, então não há o que justificar.
+      if (concluded.has(op.id)) continue
+      if (boardItemStatus(card) === 'in_progress' || boardItemTurnEndKind(card) !== null) out.push(op)
       continue
     }
     if (op.kind === 'start') {

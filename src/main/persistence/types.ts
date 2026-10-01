@@ -443,8 +443,18 @@ export interface BoardPoWrite {
   poReason?: string | null
   /** Quem fez a escrita, para o evento do histórico. Padrão `'po'` quando
    *  omitido — preserva quem já chama sem este campo. O drag-and-drop do
-   *  usuário passa `'user'`: é um terceiro tipo de escritor, distinto do PO. */
-  actor?: 'po' | 'user'
+   *  usuário passa `'user'`: é um terceiro tipo de escritor, distinto do PO.
+   *  As regras determinísticas (fim de turno, retomada) passam `'system'`. */
+  actor?: 'po' | 'user' | 'system'
+  /** Nota do evento quando ela não é o `poReason` gravado — o TITULO que não
+   *  pode apagar o motivo do fim de turno leva a própria justificativa aqui. */
+  eventNote?: string | null
+}
+
+/** Quem dispensou/restaurou e por quê — vai para o evento do histórico. */
+export interface BoardDismissBy {
+  actor: 'po' | 'user' | 'system'
+  note: string
 }
 
 /** Cartão que o agente nunca declarou, criado pelo PO. */
@@ -475,7 +485,8 @@ export interface BoardRepository {
   getBoardItem(id: string): Promise<BoardItem | null>
   applyBoardPo(input: BoardPoWrite): Promise<BoardItem>
   createBoardPoItem(input: BoardPoCreate): Promise<BoardItem>
-  dismissBoardItem(id: string, dismissed: boolean): Promise<BoardItem>
+  /** `by` omitido: actor `'system'`, sem nota (compatível com quem já chamava). */
+  dismissBoardItem(id: string, dismissed: boolean, by?: BoardDismissBy): Promise<BoardItem>
   /** A linha do tempo de um cartão, em ordem cronológica. */
   listBoardItemEvents(boardItemId: string): Promise<BoardItemEvent[]>
 }

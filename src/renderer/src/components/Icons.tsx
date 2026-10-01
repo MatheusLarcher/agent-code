@@ -249,6 +249,14 @@ export const IconBoard = (p: IconProps): JSX.Element => (
   </Svg>
 )
 
+/** Escritório: prédio com janelas — a aba do escritório em pixel-art. */
+export const IconOffice = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <rect x="4" y="3" width="16" height="18" rx="1.5" />
+    <path d="M8 7h2M14 7h2M8 11h2M14 11h2M10 21v-4h4v4" />
+  </Svg>
+)
+
 /** A single agent/work unit — used on each track row. */
 export const IconSparkStar = (p: IconProps): JSX.Element => (
   <Svg {...p}>

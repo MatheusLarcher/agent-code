@@ -103,6 +103,24 @@ export type ChatEvent =
       taskDescription?: string
       createdAt: number
     }
+  /** Código que o agente PRINCIPAL está escrevendo agora (Edit/Write/MultiEdit/
+   *  NotebookEdit), lido do `input_json_delta` antes de a ferramenta rodar
+   *  (src/main/toolInputStream.ts). EFÊMERO de propósito: é só para o monitor do
+   *  escritório (office/liveInput.ts). Não é persistido, não entra em
+   *  `conversation.messages`, não vai para o celular nem para observador do main —
+   *  o `tool-use` completo, que chega depois, continua sendo o registro de fato.
+   *  `oldText`/`newText` trazem só as últimas ~40 linhas; `totalLines` é o total
+   *  do `newText` inteiro. `done` = o bloco fechou (ou foi abandonado). */
+  | {
+      kind: 'tool-input-delta'
+      toolUseId: string
+      name: 'Edit' | 'Write' | 'MultiEdit' | 'NotebookEdit'
+      filePath?: string
+      oldText?: string
+      newText: string
+      totalLines: number
+      done: boolean
+    }
 
 /** One task in the agent's plan, as stored by the CLI. */
 export interface TaskItem {
@@ -194,14 +212,46 @@ export const BOARD_TURN_END_REASON = {
 
 export type BoardTurnEndKind = keyof typeof BOARD_TURN_END_REASON
 
+/** O que separa a frase fixa do fim de turno da justificativa concreta do PO
+ *  (operação PENDENTE): "o turno terminou sem concluir esta tarefa — falta
+ *  verificar no app rodando". */
+export const BOARD_TURN_END_JUSTIFICATION_SEP = ' — '
+
+/**
+ * O motivo do fim de turno, com ou sem a justificativa do PO. A frase fixa fica
+ * sempre na frente de propósito: é ela que o selo "Aguardando você" e a
+ * promoção da próxima mensagem reconhecem, e uma justificativa não pode apagar
+ * esse reconhecimento.
+ */
+export function boardTurnEndReason(kind: BoardTurnEndKind, justification?: string | null): string {
+  const extra = (justification ?? '').trim()
+  return extra ? `${BOARD_TURN_END_REASON[kind]}${BOARD_TURN_END_JUSTIFICATION_SEP}${extra}` : BOARD_TURN_END_REASON[kind]
+}
+
+/** Lê um motivo de fim de turno (com ou sem justificativa); `null` quando o
+ *  motivo é outro qualquer. */
+export function parseBoardTurnEndReason(
+  reason: string | null | undefined
+): { kind: BoardTurnEndKind; justification: string | null } | null {
+  if (!reason) return null
+  for (const kind of Object.keys(BOARD_TURN_END_REASON) as BoardTurnEndKind[]) {
+    const phrase = BOARD_TURN_END_REASON[kind]
+    if (reason === phrase) return { kind, justification: null }
+    if (reason.startsWith(`${phrase}${BOARD_TURN_END_JUSTIFICATION_SEP}`)) {
+      const justification = reason.slice(phrase.length + BOARD_TURN_END_JUSTIFICATION_SEP.length).trim()
+      return { kind, justification: justification || null }
+    }
+  }
+  return null
+}
+
 /** Como o turno acabou para este cartão, quando ele está "a fazer" SÓ porque o
  *  fim de turno o rebaixou (e nada o tocou depois); `null` em qualquer outro
- *  caso — inclusive o cartão "a fazer" que nunca começou. */
+ *  caso — inclusive o cartão "a fazer" que nunca começou. A justificativa do PO
+ *  (PENDENTE) não muda a resposta: o cartão continua esperando alguém. */
 export function boardItemTurnEndKind(item: BoardItem): BoardTurnEndKind | null {
   if (item.dismissedAt !== null || item.poStatus !== 'pending') return null
-  if (item.poReason === BOARD_TURN_END_REASON.result) return 'result'
-  if (item.poReason === BOARD_TURN_END_REASON.error) return 'error'
-  return null
+  return parseBoardTurnEndReason(item.poReason)?.kind ?? null
 }
 
 const BOARD_TURN_END_BADGE: Record<BoardTurnEndKind, string> = {
@@ -239,9 +289,14 @@ export interface ProjectBoard {
 /** Quem fez a mudança que o evento registra. `user` é o drag-and-drop no
  *  quadro: nem o agente (snapshot do CLI) nem o PO (auditoria automática) —
  *  um terceiro tipo de escritor, e é para distinguir isso que este campo
- *  existe. */
-export type BoardItemEventActor = 'agent' | 'po' | 'user'
+ *  existe. `system` é a regra determinística do app (fim de turno, retomada,
+ *  dispensar/restaurar, expiração de concluídos): ninguém julgou nada ali, e
+ *  atribuir ao PO seria mentir sobre quem decidiu. */
+export type BoardItemEventActor = 'agent' | 'po' | 'user' | 'system'
 
+/** `justified`: o motivo mudou SEM mudar o status efetivo (ex.: o PENDENTE do
+ *  PO explicando o que faltou) — antes, isso sobrescrevia o motivo sem deixar
+ *  rastro na linha do tempo. */
 export type BoardItemEventKind =
   | 'created'
   | 'status_changed'
@@ -249,6 +304,7 @@ export type BoardItemEventKind =
   | 'note_changed'
   | 'dismissed'
   | 'restored'
+  | 'justified'
 
 /**
  * Um fato append-only sobre um cartão — o que `poReason` sozinho não guarda,

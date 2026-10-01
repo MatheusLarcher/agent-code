@@ -127,6 +127,11 @@ function poAgreed(item: BoardItem): boolean {
   return item.poStatus !== null && !isPoCorrected(item) && item.origin === 'agent' && !item.poTitle
 }
 
+/** O tooltip dos selos do PO: o motivo atual do cartão, quando há. */
+function reasonTip(item: BoardItem): string | undefined {
+  return item.poReason ? `Motivo: ${item.poReason}` : undefined
+}
+
 const TASK_STATUS_LABEL: Record<TaskBoardStatus, string> = {
   pending: 'Na fila',
   running: 'Executando',
@@ -483,14 +488,29 @@ function Card({
         )}
         <span className="board-card-tags">
           {awaiting && <AwaitingTag item={item} badge={awaiting} />}
-          {item.origin === 'po' && <span className="board-tag po">PO acrescentou</span>}
+          {/* Cada selo do PO leva o motivo no tooltip: toda alteração dele se justifica. */}
+          {item.origin === 'po' && (
+            <span className="board-tag po" title={reasonTip(item)}>
+              PO acrescentou
+            </span>
+          )}
           {/* O rebaixamento de fim de turno não é o PO discordando: com o selo,
               "PO corrigiu/revisou" só repetiria o mesmo fato com o nome errado. */}
-          {!awaiting && isPoCorrected(item) && <span className="board-tag po">PO corrigiu</span>}
-          {item.poTitle && item.origin === 'agent' && !isPoCorrected(item) && (
-            <span className="board-tag po">PO reescreveu</span>
+          {!awaiting && isPoCorrected(item) && (
+            <span className="board-tag po" title={reasonTip(item)}>
+              PO corrigiu
+            </span>
           )}
-          {!awaiting && poAgreed(item) && <span className="board-tag po">PO revisou</span>}
+          {item.poTitle && item.origin === 'agent' && !isPoCorrected(item) && (
+            <span className="board-tag po" title={reasonTip(item)}>
+              PO reescreveu
+            </span>
+          )}
+          {!awaiting && poAgreed(item) && (
+            <span className="board-tag po" title={reasonTip(item)}>
+              PO revisou
+            </span>
+          )}
           {status === 'completed' && <span className="board-tag auto">{fmtAgo(item.updatedAt, now)}</span>}
         </span>
       </button>
@@ -526,7 +546,16 @@ const EVENT_LABEL: Record<BoardItemEvent['kind'], string> = {
   retitled: 'reescreveu o título',
   note_changed: 'mudou a observação',
   dismissed: 'dispensou o cartão',
-  restored: 'restaurou o cartão'
+  restored: 'restaurou o cartão',
+  justified: 'justificou'
+}
+
+/** Quem aparece na linha do tempo. `system` é regra automática do app — não o PO. */
+const ACTOR_LABEL: Record<BoardItemEvent['actor'], string> = {
+  po: 'PO',
+  user: 'Você',
+  agent: 'Agente',
+  system: 'Sistema'
 }
 
 function statusLabel(status: BoardItemStatus | null): string {
@@ -541,9 +570,7 @@ function EventLine({ event, now }: { event: BoardItemEvent; now: number }): JSX.
   }
   return (
     <li className="board-timeline-row">
-      <span className={`board-who ${event.actor}`}>
-        {event.actor === 'po' ? 'PO' : event.actor === 'user' ? 'Você' : 'Agente'}
-      </span>
+      <span className={`board-who ${event.actor}`}>{ACTOR_LABEL[event.actor] ?? 'Agente'}</span>
       <span className="board-timeline-text">
         {text}
         {event.note && <span className="board-muted"> — {event.note}</span>}
@@ -633,9 +660,12 @@ function Detail({
       </dl>
       {/* A trilha do PO é o que torna a correção automática auditável: sem o
           motivo na tela, um PO errado vira um quadro errado sem explicação. */}
+      {/* "Motivo atual", não "PO": o motivo também pode ser de uma regra
+          automática (fim de turno, retomada) ou do arrasto do usuário — quem
+          escreveu cada um está na linha do tempo. */}
       {item.poReason && (
-        <div className="board-detail-trail">
-          <span className="board-who po">PO</span>
+        <div className="board-detail-trail" aria-label="Motivo atual">
+          <span className="board-who">Motivo atual</span>
           <span>
             {isPoCorrected(item)
               ? `marcou como ${COLUMNS.find((c) => c.status === item.poStatus)?.label.toLowerCase()}: ${item.poReason}`

@@ -34,6 +34,7 @@ import {
 } from '@shared/ipc'
 import type { AutoPrompt, AutoPromptTurn, EffortChoice, ProjectTree } from '@shared/ipc'
 import { fileTouches, turnsOf } from './projectActivity'
+import { liveInput } from './office/liveInput'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { findBlankConversation } from './blankConversation'
@@ -79,7 +80,9 @@ import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
 import { CrewChip } from './components/CrewChip'
 import { buildCrew, workingMembers } from './crew'
-import { IconBoard, IconGlobe, IconUsers } from './components/Icons'
+import { IconBoard, IconGlobe, IconOffice, IconUsers } from './components/Icons'
+import { OfficePanel } from './components/office/OfficePanel'
+import { officeStore } from './office/officeStore'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
 import { AccountsUsageBadge } from './components/AccountsUsageBadge'
@@ -798,6 +801,14 @@ export function App(): JSX.Element {
   // ---- agent event stream (each event is tagged with its conversation) ----
   const onEvent = useCallback(
     ({ convId: cid, event: e }: AgentEventMsg) => {
+      // Código ao vivo do escritório (até 10/s por bloco): vai direto para a store
+      // dele e para aqui — sem setState, sem reduceTracks/reduceMessages, nunca
+      // vira mensagem nem é salvo. Primeiro teste de propósito: é o evento mais
+      // frequente e não pode custar um render do App.
+      if (e.kind === 'tool-input-delta') {
+        liveInput.push(cid, e)
+        return
+      }
       // Account-wide, not conversation-wide — skip patchConv entirely (no
       // message bubble, no per-conv token/turn bookkeeping applies here).
       if (e.kind === 'rate-limit') {
@@ -3235,6 +3246,13 @@ export function App(): JSX.Element {
   // fixo da topbar abriam o painel de Agentes; agora o destino equivalente é
   // o Quadro, onde o elenco vive.
   const openAgentsPanel = useCallback((): void => selectRightPane('board'), [selectRightPane])
+  // Leva ao pedido da conversa (Quadro e Escritório): nunca aprova nada.
+  const focusRequest = (convId: string, pane: RightPane): void => {
+    setActiveId(convId)
+    setMinimizedQuestions((m) => withoutKey(m, convId))
+    if (minimizedQuestions[convId]) holdQuestion(convId, permissions[convId], false)
+    setRightPane(pane)
+  }
 
   // id → título, para o quadro nomear a conversa de origem de cada cartão sem
   // o main precisar consultar conversas (o renderer já tem todas na mão).
@@ -3344,6 +3362,12 @@ export function App(): JSX.Element {
    * an icon keeps the folder glyph, so a miss costs nothing visually.
    */
   const [projectIcons, setProjectIcons] = useState<Record<string, string | null>>({})
+  // Escritório: só publica o feed numa store fora do React (office/officeStore).
+  useEffect(() => {
+    officeStore.publish({ conversations, activeId, busyIds, busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics,
+      memoristaDiagnostics, observersOn, stalledSince, tracks, projectIcons, usageLimits, speakingId })
+  }, [conversations, activeId, busyIds, busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics,
+    memoristaDiagnostics, observersOn, stalledSince, tracks, projectIcons, usageLimits, speakingId])
   const iconRequested = useRef<Set<string>>(new Set())
 
   const projects = useMemo<SidebarProject[]>(() => {
@@ -3837,13 +3861,8 @@ export function App(): JSX.Element {
                     onProgress={setBoardTabProgress}
                     crew={crew}
                     pendingPermissions={pendingPermissionList}
-                    onFocusPermission={(convId) => {
-                      setActiveId(convId)
-                      setMinimizedQuestions((m) => withoutKey(m, convId))
-                      if (minimizedQuestions[convId]) holdQuestion(convId, permissions[convId], false)
-                      // Sai do painel para o chat: a pergunta é lá que se responde.
-                      setRightPane('browser')
-                    }}
+                    // Sai do painel para o chat: a pergunta é lá que se responde.
+                    onFocusPermission={(convId) => focusRequest(convId, 'browser')}
                     project={{
                       entries: projectTree.nodes,
                       touches: activeTouches,
@@ -3852,6 +3871,18 @@ export function App(): JSX.Element {
                       truncated: projectTree.truncated,
                       steps: active?.todoPlan?.items ?? [],
                       name: projectName
+                    }}
+                  />
+                ) : rightPane === 'office' ? (
+                  // O modal do pedido aparece no centro: o Escritório fica visível.
+                  <OfficePanel
+                    active
+                    onOpenConversation={selectConversation}
+                    onFocusRequest={(cid) => focusRequest(cid, 'office')}
+                    onOpenFile={(abs) => {
+                      // Caminho da tela do monitor → aba de arquivo (FilePreview) no navegador.
+                      selectRightPane('browser')
+                      void window.api.newTab('file', 'file:///' + abs.replace(/\\/g, '/').replace(/^\/+/, ''))
                     }}
                   />
                 ) : (
@@ -3889,6 +3920,10 @@ export function App(): JSX.Element {
                 {boardTabProgress && boardTabProgress.total > 0 && (
                   <span className="rail-badge">{`${boardTabProgress.done}/${boardTabProgress.total}`}</span>
                 )}
+              </button>
+              <button type="button" className="right-rail-btn" onClick={() => selectRightPane('office')} title="Ver o escritório">
+                <IconOffice size={15} />
+                Escritório
               </button>
             </div>
           )}

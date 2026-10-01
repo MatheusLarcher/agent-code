@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { boardItemStatus, boardItemTurnEndKind } from '../../shared/ipc'
+import { boardItemStatus, boardItemTurnEndKind, parseBoardTurnEndReason } from '../../shared/ipc'
 import type { TaskItem } from '../../shared/ipc'
 import type {
   BoardItem,
@@ -8,6 +8,7 @@ import type {
   BoardItemEventKind,
   BoardItemOrigin,
   BoardItemStatus,
+  BoardDismissBy,
   BoardPoCreate,
   BoardPoWrite,
   BoardSourceItem
@@ -179,6 +180,12 @@ export function boardItemsToReopen(items: BoardItem[]): BoardItem[] {
  */
 export function boardItemsToReopenBefore(items: BoardItem[], cutoffMs: number): BoardItem[] {
   return boardItemsToReopen(items).filter((item) => {
+    // O PENDENTE do PO (justificativa do que faltou) é escrito SEMPRE depois do
+    // fim do turno — o PO de fechamento roda no `result`. Pelo carimbo, o
+    // cartão justificado escaparia da reabertura que ele mesmo explica. A
+    // promoção posterior (abertura do PO, retomada, agente) troca o motivo, e aí
+    // o corte por tempo volta a valer normalmente.
+    if (parseBoardTurnEndReason(item.poReason)) return true
     if (!item.poAt) return true
     const poAtMs = Date.parse(item.poAt)
     return !Number.isFinite(poAtMs) || poAtMs <= cutoffMs
@@ -321,6 +328,72 @@ export function assertPoWrite(input: BoardPoWrite): void {
   if (input.poStatus !== undefined && input.poStatus !== null && !input.poReason?.trim()) {
     throw new TypeError('Mudança de status pelo PO exige um motivo.')
   }
+}
+
+/** Dispensar/restaurar pelo clique é ato do USUÁRIO: a linha do tempo diz
+ *  "Você", não "Sistema" nem "PO" — atribuir a outro esconderia quem decidiu.
+ *  A expiração automática, essa sim, é regra do app (`system`). */
+export const DISMISS_BY_USER: Record<'dismiss' | 'restore', BoardDismissBy> = {
+  dismiss: { actor: 'user', note: 'você dispensou o cartão' },
+  restore: { actor: 'user', note: 'você restaurou o cartão' }
+}
+export const EXPIRE_BY: BoardDismissBy = { actor: 'system', note: 'concluído há mais de 5 dias' }
+
+/** O que mudou numa escrita do PO, já resolvido por quem leu o banco (cada
+ *  repositório compara no próprio formato — o PostgreSQL guarda texto escapado). */
+export interface PoWriteChange {
+  priorStatus: BoardItemStatus
+  nextStatus: BoardItemStatus | null
+  /** O status efetivo DEPOIS da escrita. */
+  effectiveStatus: BoardItemStatus
+  titleChanged: boolean
+  noteChanged: boolean
+  reasonChanged: boolean
+  /** Valores planos (não escapados). */
+  nextTitle: string | null
+  nextNote: string | null
+  nextReason: string | null
+}
+
+export interface PoWriteEvent {
+  kind: BoardItemEventKind
+  fromStatus?: BoardItemStatus | null
+  toStatus?: BoardItemStatus | null
+  note: string | null
+}
+
+/**
+ * O evento que uma escrita do PO registra — UM fato por escrita. Status ganha
+ * prioridade (é o que a reabertura e a auditoria mais precisam enxergar), depois
+ * título, observação e, por último, o motivo sozinho: o PENDENTE do PO grava só
+ * o motivo, e antes isso sobrescrevia `po_reason` sem deixar rastro nenhum.
+ * Mora aqui pelo mesmo motivo do resto: SQLite e PostgreSQL decidem igual.
+ */
+export function planPoWriteEvent(input: BoardPoWrite, change: PoWriteChange): PoWriteEvent | null {
+  if (input.poStatus !== undefined && change.nextStatus !== change.priorStatus) {
+    return {
+      kind: 'status_changed',
+      fromStatus: change.priorStatus,
+      toStatus: change.nextStatus,
+      note: input.eventNote ?? change.nextReason
+    }
+  }
+  if (input.poTitle !== undefined && change.titleChanged) {
+    const why = (input.eventNote ?? (input.poReason !== undefined ? input.poReason : null))?.trim()
+    // Sem motivo, a nota continua sendo só o título (o formato de antes).
+    const note = why ? `título → "${change.nextTitle ?? ''}": ${why}` : change.nextTitle
+    return { kind: 'retitled', note }
+  }
+  if (input.poNote !== undefined && change.noteChanged) return { kind: 'note_changed', note: change.nextNote }
+  if (input.poReason !== undefined && change.reasonChanged && change.nextReason) {
+    return {
+      kind: 'justified',
+      fromStatus: change.effectiveStatus,
+      toStatus: change.effectiveStatus,
+      note: input.eventNote ?? change.nextReason
+    }
+  }
+  return null
 }
 
 export function assertPoCreate(input: BoardPoCreate): void {

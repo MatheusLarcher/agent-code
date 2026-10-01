@@ -593,6 +593,19 @@ ALTER TABLE board_item_events ADD CONSTRAINT board_item_events_actor_check CHECK
 `
 
 /**
+ * Migration 14 — kind `'justified'` (motivo sem mudança de status, o PENDENTE do
+ * PO) e actor `'system'` (regras determinísticas do quadro) em
+ * `board_item_events`. Espelha a migration 12 do SQLite.
+ */
+const BOARD_ITEM_EVENTS_JUSTIFIED_SYSTEM = `
+ALTER TABLE board_item_events DROP CONSTRAINT board_item_events_kind_check;
+ALTER TABLE board_item_events ADD CONSTRAINT board_item_events_kind_check
+  CHECK (kind IN ('created', 'status_changed', 'retitled', 'note_changed', 'dismissed', 'restored', 'justified'));
+ALTER TABLE board_item_events DROP CONSTRAINT board_item_events_actor_check;
+ALTER TABLE board_item_events ADD CONSTRAINT board_item_events_actor_check CHECK (actor IN ('agent', 'po', 'user', 'system'));
+`
+
+/**
  * Migration 10 — vínculo entre uma tarefa do ledger e um cartão do quadro
  * (`task_board_links`), espelha a migration 8 do SQLite.
  *
@@ -697,7 +710,8 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(10, 'postgres-task-board-links', TASK_BOARD_LINKS),
   migration(11, 'postgres-token-usage', TOKEN_USAGE),
   migration(12, 'postgres-agent-input-queue', AGENT_INPUT_QUEUE),
-  migration(13, 'postgres-conversation-outbox', CONVERSATION_OUTBOX)
+  migration(13, 'postgres-conversation-outbox', CONVERSATION_OUTBOX),
+  migration(14, 'postgres-board-item-events-justified-system', BOARD_ITEM_EVENTS_JUSTIFIED_SYSTEM)
 ]
 
 const MIGRATION_TABLE = `

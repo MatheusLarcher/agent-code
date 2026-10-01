@@ -1,6 +1,6 @@
-import { IconBoard, IconCollapseRight, IconGlobe } from './Icons'
+import { IconBoard, IconCollapseRight, IconGlobe, IconOffice } from './Icons'
 
-export type RightPane = 'browser' | 'board'
+export type RightPane = 'browser' | 'board' | 'office'
 
 interface Props {
   active: RightPane
@@ -59,6 +59,17 @@ export function RightPaneTabs({
         {boardProgress && boardProgress.total > 0 && (
           <span className="pane-tab-count">{`${boardProgress.done}/${boardProgress.total}`}</span>
         )}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'office'}
+        className={`pane-tab${active === 'office' ? ' on' : ''}`}
+        onClick={() => onSelect('office')}
+        title="Escritório: quem está trabalhando, sala por projeto"
+      >
+        <IconOffice size={14} />
+        Escritório
       </button>
       <button type="button" className="nav-btn pane-collapse" onClick={onCollapse} title="Recolher painel">
         <IconCollapseRight />

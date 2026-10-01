@@ -7108,6 +7108,11 @@ span.board-agent-dot {
   border-color: var(--ok);
   color: var(--ok);
 }
+/* Regra automática do app (fim de turno, retomada, dispensar, expiração). */
+.board-who.system {
+  border-style: dashed;
+  color: var(--muted);
+}
 .board-detail-meta {
   margin-top: 12px;
   border-top: 1px solid var(--line);

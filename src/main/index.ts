@@ -1729,6 +1729,11 @@ export function registerIpc(): void {
     let s!: ProviderFailoverSession
     const emit = (event: ChatEvent): void => {
       send(Channels.agentEvent, { convId, event })
+      // Código ao vivo do monitor do escritório: efêmero e só da tela local. Para
+      // aqui, num ponto só: não vai ao celular, não autoriza download, não fecha
+      // tarefa MCP e nenhum observador (vigia, quadro, PO, memorista) o vê — até
+      // 10 por segundo por bloco seria só custo para todos eles.
+      if (event.kind === 'tool-input-delta') return
       remote.broadcast(convId, event)
       // Fim de turno de uma tarefa MCP (resposta, erro) sai daqui.
       mcpInbound.onEvent(convId, event)

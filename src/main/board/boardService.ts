@@ -1,11 +1,20 @@
-import { boardItemsToExpire, boardItemsToReopenBefore, boardItemsToResume, toSourceItems } from './boardModel'
-import { resolveProjectIdentity } from '../persistence/projectIdentity'
-import type { BoardItem, BoardItemEvent, BoardPoCreate, BoardPoWrite, PersistenceRepository } from '../persistence/types'
 import {
-  BOARD_TURN_END_REASON,
+  boardItemsToExpire,
+  boardItemsToReopenBefore,
+  boardItemsToResume,
+  DISMISS_BY_USER,
+  EXPIRE_BY,
+  toSourceItems
+} from './boardModel'
+import { resolveProjectIdentity } from '../persistence/projectIdentity'
+import type { BoardDismissBy, BoardItem, BoardItemEvent, BoardPoCreate, BoardPoWrite, PersistenceRepository } from '../persistence/types'
+import {
   boardItemStatus,
   boardItemTitle,
+  boardTurnEndReason,
+  parseBoardTurnEndReason,
   type BoardItemStatus,
+  type BoardTurnEndKind,
   type ChatEvent,
   type TaskItem
 } from '../../shared/ipc'
@@ -44,10 +53,6 @@ const IDENTITY_TTL_MS = 60_000
  *  o quadro mostrando "fazendo" o que ninguém faz, e não é preciso, porque o
  *  veredito que chega depois do teto não se perde. Ver `waitForPo`. */
 const PO_WAIT_MS = 30_000
-
-/** O motivo gravado no cartão reaberto — compartilhado com a tela, que o usa
- *  para o selo "Aguardando você" (ver `BOARD_TURN_END_REASON`). */
-const REOPEN_REASON = BOARD_TURN_END_REASON
 
 /** O motivo da promoção determinística — ver `resumeTurn`. */
 export const RESUME_REASON = 'o usuário retomou a conversa'
@@ -159,7 +164,7 @@ export class BoardService {
     // um subagente delegado pode estar (ver `closeTurn`).
     if (event.kind === 'result' || event.kind === 'error') {
       const delegated = event.kind === 'result' && this.background.has(convId)
-      this.closeTurn(convId, cwd, REOPEN_REASON[event.kind], delegated)
+      this.closeTurn(convId, cwd, event.kind, delegated)
     }
   }
 
@@ -223,16 +228,12 @@ export class BoardService {
    * `reopenStale` releria esse cartão já promovido e o derrubaria de novo —
    * ver `boardItemsToReopenBefore`.
    *
-   * A exceção é o trabalho DELEGADO (`delegated`): o `result` chegou com
-   * tarefa rodando em segundo plano (snapshot `background-tasks`, lido no
-   * instante do evento). O turno do agente principal acabou, mas o subagente
-   * continua trabalhando no cartão — rebaixá-lo seria dizer que ninguém está.
-   * Nada é reaberto, e o "último rebaixamento" fica vazio para a promoção não
-   * ressuscitar um de turno antigo. Quando a última tarefa termina, o snapshot
-   * zera e o próximo `result` fecha como sempre. O `error` não entra: turno que
-   * morreu pode ter deixado o snapshot velho, e o erro seguro é rebaixar.
+   * A exceção é o trabalho DELEGADO (`delegated`): o `result` chegou com tarefa
+   * em segundo plano — o subagente continua no cartão, então nada é reaberto e o
+   * "último rebaixamento" fica vazio. O `error` não entra: turno que morreu pode
+   * ter deixado o snapshot velho, e o erro seguro é rebaixar.
    */
-  private closeTurn(convId: string, cwd: string, reason: string, delegated = false): void {
+  private closeTurn(convId: string, cwd: string, reason: BoardTurnEndKind, delegated = false): void {
     const closedAt = Date.now()
     this.turnEnds.set(convId, (this.turnEnds.get(convId) ?? 0) + 1)
     const previous = this.closures.get(convId) ?? Promise.resolve()
@@ -255,16 +256,10 @@ export class BoardService {
    * A espera pelo PO com teto: análise que trava (modelo pendurado, rede
    * parada) não pode segurar o fechamento para sempre.
    *
-   * Passado o teto, a reabertura roda sem o veredito, e o CONCLUIR/TITULO/FEITA
-   * que chega DEPOIS continua valendo — grava por cima do "a fazer" do fim de
-   * turno. Nenhuma barreira o descarta porque o cartão mudou no meio:
-   * `rejectUnsafeOps` só recusa CONCLUIR em cartão JÁ concluído ("a fazer"
-   * passa, na lista de antes da consulta e na fresca de `confirmCreates`), e
-   * `applyBoardPo` grava sem checar revisão nem estado. A corrida com a
-   * própria reabertura é fechada em `applyPo`. E ele nunca rebaixa: no
-   * fechamento o PO só conclui, renomeia (sem tocar o estado) ou cria cartão
-   * novo. Nada depois o desfaz: a promoção (`boardItemsToResume`) só pega
-   * motivo de fim de turno, e a reabertura seguinte só pega "fazendo".
+   * Passado o teto, a reabertura roda sem o veredito, e o que chega DEPOIS
+   * continua valendo por cima do "a fazer" (`rejectUnsafeOps` aceita "a fazer";
+   * a corrida com a reabertura é fechada em `applyPo`). O PO nunca rebaixa: no
+   * fechamento ele conclui, renomeia, justifica (PENDENTE) ou cria.
    */
   private async waitForPo(convId: string): Promise<void> {
     const wait = this.deps.poSettled?.(convId)
@@ -276,13 +271,14 @@ export class BoardService {
     })
   }
 
-  private reopenStale(convId: string, cwd: string, reason: string, closedAt: number): Promise<void> {
-    const work = this.demoteStale(convId, cwd, reason, closedAt)
+  private reopenStale(convId: string, cwd: string, kind: BoardTurnEndKind, closedAt: number): Promise<void> {
+    const work = this.demoteStale(convId, cwd, kind, closedAt)
     this.reopening.add(work)
     return work.finally(() => this.reopening.delete(work))
   }
 
-  private async demoteStale(convId: string, cwd: string, reason: string, closedAt: number): Promise<void> {
+  /** Actor `system` (regra, não julgamento); mantém a justificativa do PENDENTE. */
+  private async demoteStale(convId: string, cwd: string, kind: BoardTurnEndKind, closedAt: number): Promise<void> {
     // Relê depois de todo mundo ter escrito: o que o PO acabou de corrigir só
     // aparece aqui, e `null` é quadro indisponível — não há o que reabrir.
     const reopened = new Set<string>()
@@ -292,7 +288,9 @@ export class BoardService {
     for (const card of boardItemsToReopenBefore(cards, closedAt)) {
       try {
         // A escrita crua: `applyPo` esperaria por esta mesma reabertura.
-        await this.writePo({ id: card.id, poStatus: 'pending', poReason: reason })
+        const justification = parseBoardTurnEndReason(card.poReason)?.justification
+        const poReason = boardTurnEndReason(kind, justification)
+        await this.writePo({ id: card.id, poStatus: 'pending', poReason, actor: 'system' })
         reopened.add(card.id)
       } catch {
         // Cartão que sumiu entre a leitura e a escrita não derruba os outros.
@@ -340,7 +338,7 @@ export class BoardService {
     for (const card of boardItemsToResume(cards, this.lastReopened.get(convId) ?? null)) {
       if (!sameTurn()) return
       try {
-        await this.applyPo({ id: card.id, poStatus: 'in_progress', poReason: RESUME_REASON })
+        await this.applyPo({ id: card.id, poStatus: 'in_progress', poReason: RESUME_REASON, actor: 'system' })
       } catch {
         // Um cartão que falhou não impede os outros.
       }
@@ -383,7 +381,7 @@ export class BoardService {
       const all = await repository.listBoardItems({ projectIds: [projectId] })
       for (const item of boardItemsToExpire(all, Date.now())) {
         try {
-          await this.dismiss(item.id, true)
+          await this.dismiss(item.id, true, EXPIRE_BY)
         } catch {
           // Um cartão que falhou não impede a faxina dos outros.
         }
@@ -421,10 +419,11 @@ export class BoardService {
     return item
   }
 
-  async dismiss(id: string, dismissed: boolean): Promise<BoardItem | null> {
+  /** `by` omitido: é o clique do usuário (o IPC chama com dois argumentos). */
+  async dismiss(id: string, dismissed: boolean, by?: BoardDismissBy): Promise<BoardItem | null> {
     const repository = this.deps.repository()
     if (!repository) return null
-    const item = await repository.dismissBoardItem(id, dismissed)
+    const item = await repository.dismissBoardItem(id, dismissed, by ?? DISMISS_BY_USER[dismissed ? 'dismiss' : 'restore'])
     this.deps.onChanged?.(item.projectId)
     return item
   }

@@ -55,10 +55,19 @@ function stateClass(state: CrewState): string {
   return state
 }
 
-function MemberCard({ member, now }: { member: CrewMember; now: number }): JSX.Element {
+export function MemberCard({
+  member,
+  now,
+  defaultOpen
+}: {
+  member: CrewMember
+  now: number
+  /** Abre os passos de cara (o escritório, no duplo clique num subagente). */
+  defaultOpen?: boolean
+}): JSX.Element {
   // O que está trabalhando nasce aberto — é o cartão que o usuário quer ler.
   // Depois disso quem manda é o clique dele.
-  const [override, setOverride] = useState<boolean | null>(null)
+  const [override, setOverride] = useState<boolean | null>(defaultOpen ?? null)
   const hasSteps = (member.steps?.length ?? 0) > 0
   const open = hasSteps && (override ?? member.state === 'working')
   const justStarted =

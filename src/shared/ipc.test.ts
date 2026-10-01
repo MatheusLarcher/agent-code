@@ -14,6 +14,8 @@ import {
   isOpenAIModel,
   boardItemAwaitingBadge,
   BOARD_TURN_END_REASON,
+  boardTurnEndReason,
+  parseBoardTurnEndReason,
   type BoardItem
 } from './ipc'
 
@@ -47,6 +49,16 @@ describe('boardItemAwaitingBadge — selo do cartão rebaixado pelo fim de turno
       kind: 'error',
       label: 'Interrompido'
     })
+  })
+
+  it('a justificativa do PO (PENDENTE) mantém o selo — a frase fixa continua na frente', () => {
+    const justified = boardTurnEndReason('result', 'falta commitar')
+    expect(justified).toBe(`${BOARD_TURN_END_REASON.result} — falta commitar`)
+    expect(boardItemAwaitingBadge(item({ poReason: justified }))?.label).toBe('Aguardando você')
+    expect(parseBoardTurnEndReason(justified)).toEqual({ kind: 'result', justification: 'falta commitar' })
+    expect(parseBoardTurnEndReason(BOARD_TURN_END_REASON.error)).toEqual({ kind: 'error', justification: null })
+    expect(parseBoardTurnEndReason('o usuário retomou a conversa')).toBeNull()
+    expect(boardTurnEndReason('error', '  ')).toBe(BOARD_TURN_END_REASON.error)
   })
 
   it('some quando o cartão é promovido', () => {

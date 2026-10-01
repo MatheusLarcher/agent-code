@@ -120,7 +120,12 @@ describe('pergunta no fim da resposta — bloqueia o pedido ou propõe um passo 
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('A pergunta BLOQUEIA o pedido')
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('A pergunta PROPÕE UM PASSO NOVO depois de o pedido ter sido entregue')
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('o pedido do usuário foi atendido, e as AÇÕES ou a resposta provam isso?')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Sem prova da entrega, é o tipo a). Na dúvida entre os dois, responda OK.')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Sem prova da entrega, é o tipo a).')
+    // Tipo c): entregue no essencial com pendências → CONCLUIR o pedido + uma NOVA por pendência,
+    // em vez de deixar o cartão inteiro "a fazer" (caso real: fase 1 do escritório).
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('O pedido foi ENTREGUE no essencial')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('uma NOVA para CADA pendência')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(`NOVA | Commitar a fase 1 do escritório | ${PO_AWAITING_AUTHORIZATION_REASON}`)
     // Exemplo b): entregue + "Posso atualizar a VPS?" → CONCLUIR + NOVA a fazer.
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Posso atualizar a VPS?')
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain(`NOVA | Atualizar a VPS (APP_BASE_URL e .exe novo) | ${PO_AWAITING_AUTHORIZATION_REASON}`)
@@ -280,7 +285,7 @@ describe('parsePoVerdict', () => {
     const ops = parsePoVerdict(
       [
         'CONCLUIR bi-1 | o arquivo foi escrito e o teste passou',
-        'TITULO bi-2 | Criar a tabela do quadro',
+        'TITULO bi-2 | Criar a tabela do quadro | o título do agente era técnico demais',
         'NOVA | Documentar o PO | o agente disse que falta',
         'FEITA | Arrumar o login | o arquivo foi escrito neste turno'
       ].join('\n'),
@@ -289,7 +294,7 @@ describe('parsePoVerdict', () => {
     )
     expect(ops).toEqual([
       { kind: 'complete', id: 'bi-1', reason: 'o arquivo foi escrito e o teste passou' },
-      { kind: 'retitle', id: 'bi-2', title: 'Criar a tabela do quadro' },
+      { kind: 'retitle', id: 'bi-2', title: 'Criar a tabela do quadro', reason: 'o título do agente era técnico demais' },
       { kind: 'create', title: 'Documentar o PO', reason: 'o agente disse que falta', status: 'pending' },
       // FEITA nasce CONCLUÍDA: é o trabalho que já aconteceu e não tinha cartão.
       { kind: 'create', title: 'Arrumar o login', reason: 'o arquivo foi escrito neste turno', status: 'completed' }
@@ -385,11 +390,11 @@ describe('rejectUnsafeOps — a última barreira antes do banco', () => {
 
   it('título idêntico ao do agente não vira escrita à toa', () => {
     const cards = [card()]
-    expect(rejectUnsafeOps([{ kind: 'retitle', id: 'bi-1', title: 'add board table' }], cards)).toEqual([])
+    expect(rejectUnsafeOps([{ kind: 'retitle', id: 'bi-1', title: 'add board table', reason: 'legível' }], cards)).toEqual([])
   })
 
   it('cartão inexistente é barrado mesmo se passar pelo parser', () => {
-    expect(rejectUnsafeOps([{ kind: 'retitle', id: 'sumiu', title: 'x' }], [card()])).toEqual([])
+    expect(rejectUnsafeOps([{ kind: 'retitle', id: 'sumiu', title: 'x', reason: 'y' }], [card()])).toEqual([])
   })
 
   it('põe em andamento só o cartão que ainda não começou', () => {
