@@ -15,6 +15,9 @@ internal static class NativeMethods
     internal const int SM_YVIRTUALSCREEN = 77;
     internal const int SM_CXVIRTUALSCREEN = 78;
     internal const int SM_CYVIRTUALSCREEN = 79;
+    internal const uint GW_OWNER = 4;
+    internal const uint BM_CLICK = 0x00F5;
+    internal const uint SMTO_ABORTIFHUNG = 0x0002;
 
     internal const uint INPUT_MOUSE = 0;
     internal const uint INPUT_KEYBOARD = 1;
@@ -50,8 +53,25 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool IsIconic(nint hwnd);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindowEnabled(nint hwnd);
+
+    [DllImport("user32.dll")]
+    internal static extern nint GetLastActivePopup(nint hwnd);
+
+    [DllImport("user32.dll")]
+    internal static extern nint GetWindow(nint hwnd, uint command);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     internal static extern int GetWindowText(nint hwnd, StringBuilder text, int maxCount);
+
+    [DllImport("user32.dll")]
+    internal static extern nint SendMessageTimeout(
+        nint hwnd, uint message, nint wParam, nint lParam, uint flags, uint timeoutMs, out nint result);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int GetClassName(nint hwnd, StringBuilder className, int maxCount);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -32,7 +32,7 @@ function renderComposer(cards?: readonly RefCard[]): { onSend: ReturnType<typeof
       disabled={false}
       busy={false}
       chips={[]}
-      onRemoveChip={() => {}}
+      onChipsConsumed={() => {}}
       onSend={onSend}
       onInterrupt={() => {}}
       textareaRef={createRef<HTMLTextAreaElement>()}
@@ -102,7 +102,7 @@ describe('Composer — "[[" com os cards do plano no contexto', () => {
     expect(box().selectionStart).toBe('ver [[Usar Postgres]]'.length)
     expect(screen.queryByRole('listbox')).toBeNull()
     fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('ver [[Usar Postgres]]', [], [], [])
+    expect(onSend).toHaveBeenCalledWith('ver [[Usar Postgres]]', [], [], [], [])
   })
 
   it('setas andam na lista (dando a volta); Tab e clique também inserem', () => {
@@ -141,7 +141,7 @@ describe('Composer — "[[" com os cards do plano no contexto', () => {
     type('[[nada disso')
     expect(screen.queryByRole('listbox')).toBeNull()
     fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('[[nada disso', [], [], [])
+    expect(onSend).toHaveBeenCalledWith('[[nada disso', [], [], [], [])
   })
 
   it('dentro de um "[[" o menu de skills ("/") não abre', () => {
@@ -166,7 +166,7 @@ describe('Composer — sem cards no contexto fica exatamente como hoje', () => {
     expect(document.querySelector('.pl-refs')).toBeNull()
     expect(box().hasAttribute('aria-autocomplete')).toBe(false)
     fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('ver [[', [], [], [])
+    expect(onSend).toHaveBeenCalledWith('ver [[', [], [], [], [])
   })
 
   it('provider com lista vazia: também nada', () => {
@@ -175,7 +175,7 @@ describe('Composer — sem cards no contexto fica exatamente como hoje', () => {
     expect(screen.queryByRole('listbox')).toBeNull()
     expect(box().hasAttribute('aria-autocomplete')).toBe(false)
     fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('[[', [], [], [])
+    expect(onSend).toHaveBeenCalledWith('[[', [], [], [], [])
   })
 
   it('sem cards, o "/" depois de "[[" continua abrindo o menu de skills', async () => {

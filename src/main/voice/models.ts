@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { AutoTokenizer, env, StyleTextToSpeech2Model, type ProgressInfo } from '@huggingface/transformers'
 import { KokoroTTS, type GenerateOptions } from 'kokoro-js'
 import { loadEspeakPtBr, phonemizeWith } from './phonemize'
-import { concatSamples } from './pcm'
+import { concatSamples, withNoiseFloor } from './pcm'
 import { planKokoroChunks } from './textChunks'
 import type { KokoroVoice, VoiceProgress } from './protocol'
 
@@ -20,6 +20,9 @@ export const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX'
 export const KOKORO_SAMPLE_RATE = 24000
 /** Silence between synthesized sentences (Kokoro already pauses at the period). */
 const SENTENCE_GAP_SAMPLES = Math.round(0.08 * KOKORO_SAMPLE_RATE)
+/** Extra noise-floor lead-in so an idle output device is awake before the
+ *  first syllable (on top of Kokoro's own ~180 ms opening). See pcm.noiseFloor. */
+const LEAD_IN_SAMPLES = Math.round(0.2 * KOKORO_SAMPLE_RATE)
 
 export type Progress = (p: VoiceProgress) => void
 
@@ -102,6 +105,6 @@ export async function synthesize(
     parts.push(audio.audio)
   }
   onProgress({ phase: 'synthesize', progress: 1 })
-  return { samples: concatSamples(parts, SENTENCE_GAP_SAMPLES), chunks: chunks.length }
+  return { samples: withNoiseFloor(concatSamples(parts, SENTENCE_GAP_SAMPLES), LEAD_IN_SAMPLES), chunks: chunks.length }
 }
 

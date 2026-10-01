@@ -475,6 +475,17 @@ function MediaPreview({ att, n, rect }: { att: InlineAtt; n: number; rect: DOMRe
     bottom: Math.max(8, window.innerHeight - rect.top + 8)
   }
   const size = att.kind === 'file' ? att.file.size : att.kind === 'ref' ? att.ref.size : 0
+  if (att.kind === 'element') {
+    return (
+      <div className="inline-att-preview" style={style} role="tooltip">
+        <div className="inline-att-preview-cap">
+          <b>{att.name}</b> · {att.el.tabName || 'web'}
+          <div className="inline-att-preview-path">{att.el.selector}</div>
+          {att.el.text.trim() && <div className="inline-att-preview-path">{att.el.text.slice(0, 200)}</div>}
+        </div>
+      </div>
+    )
+  }
   if (att.kind === 'quote') {
     return (
       <div className="inline-att-preview" style={style} role="tooltip">

@@ -8,12 +8,8 @@ internal sealed class CommandDispatcher
 
     public Task<object?> ExecuteAsync(string method, JsonObject args)
     {
-        var invalidatesSnapshot = method is "click" or "click_element" or "type_text" or "press_key"
-            or "scroll" or "drag" or "set_value" or "secondary_action";
-        try
+        object? result = method switch
         {
-            object? result = method switch
-            {
             "ping" => new { ok = true, platform = "windows" },
             "list_windows" => WindowCatalog.ListWindows(),
             "list_apps" => WindowCatalog.ListApps(),
@@ -33,65 +29,160 @@ internal sealed class CommandDispatcher
                 RequiredWindow(args),
                 RequiredInt(args, "elementIndex", 0, 9999),
                 RawString(args, "value", 100_000)),
+            "fill" => automation.Fill(
+                RequiredWindow(args),
+                RawString(args, "text", 100_000),
+                args["elementIndex"] is null ? null : RequiredInt(args, "elementIndex", 0, 9999),
+                FillMode(args)),
             "secondary_action" => automation.SecondaryAction(
                 RequiredWindow(args),
                 RequiredInt(args, "elementIndex", 0, 9999),
                 RequiredString(args, "action", 80)),
+            "form_fields" => automation.FormFields(
+                RequiredWindow(args),
+                OptionalInt(args, "maxElements", 300, 1, 1000)),
+            "run_steps" => automation.RunSteps(
+                RequiredWindow(args),
+                Steps(args),
+                args["expect"] is null ? null : RequiredString(args, "expect", 500)),
             _ => throw new ArgumentException($"Método não suportado: {method}")
-            };
-            return Task.FromResult<object?>(result);
-        }
-        finally
-        {
-            if (invalidatesSnapshot) automation.Invalidate();
-        }
+        };
+        return Task.FromResult<object?>(result);
     }
 
     private static object Click(JsonObject args)
     {
         var hwnd = RequiredWindow(args);
-        WindowCatalog.Activate(hwnd);
-        InputController.Click(
-            WindowCatalog.ToScreenPoint(hwnd, RequiredDouble(args, "x"), RequiredDouble(args, "y")),
-            OptionalString(args, "button", "left"),
-            OptionalInt(args, "clickCount", 1, 1, 3));
-        return new { ok = true };
+        var x = RequiredDouble(args, "x");
+        var y = RequiredDouble(args, "y");
+        var button = OptionalString(args, "button", "left");
+        var clickCount = OptionalInt(args, "clickCount", 1, 1, 3);
+        System.Drawing.Point[] Points() => [WindowCatalog.ToScreenPoint(hwnd, x, y)];
+        var target = InputTarget.ActivateForPointer(hwnd, Points);
+        InputController.Click(Points()[0], button, clickCount);
+        return Acted(target);
     }
 
     private static object TypeText(JsonObject args)
     {
         var hwnd = RequiredWindow(args);
-        WindowCatalog.Activate(hwnd);
-        InputController.TypeText(RawString(args, "text", 100_000));
-        return new { ok = true };
+        var text = RawString(args, "text", 100_000);
+        var target = InputTarget.ActivateForKeyboard(hwnd);
+        InputController.TypeText(text);
+        return Acted(target);
     }
 
     private static object PressKey(JsonObject args)
     {
         var hwnd = RequiredWindow(args);
-        WindowCatalog.Activate(hwnd);
-        InputController.PressKey(RequiredString(args, "key", 200));
-        return new { ok = true };
+        var key = RequiredString(args, "key", 200);
+        var target = InputTarget.ActivateForKeyboard(hwnd);
+        InputController.PressKey(key);
+        return Acted(target);
     }
 
     private static object Scroll(JsonObject args)
     {
         var hwnd = RequiredWindow(args);
-        WindowCatalog.Activate(hwnd);
-        var point = WindowCatalog.ToScreenPoint(hwnd, RequiredDouble(args, "x"), RequiredDouble(args, "y"));
-        InputController.Scroll(point, RequiredInt(args, "scrollX", -50_000, 50_000), RequiredInt(args, "scrollY", -50_000, 50_000));
-        return new { ok = true };
+        var x = RequiredDouble(args, "x");
+        var y = RequiredDouble(args, "y");
+        var scrollX = RequiredInt(args, "scrollX", -50_000, 50_000);
+        var scrollY = RequiredInt(args, "scrollY", -50_000, 50_000);
+        System.Drawing.Point[] Points() => [WindowCatalog.ToScreenPoint(hwnd, x, y)];
+        var target = InputTarget.ActivateForPointer(hwnd, Points);
+        InputController.Scroll(Points()[0], scrollX, scrollY);
+        return Acted(target);
     }
 
     private static object Drag(JsonObject args)
     {
         var hwnd = RequiredWindow(args);
-        WindowCatalog.Activate(hwnd);
-        InputController.Drag(
-            WindowCatalog.ToScreenPoint(hwnd, RequiredDouble(args, "fromX"), RequiredDouble(args, "fromY")),
-            WindowCatalog.ToScreenPoint(hwnd, RequiredDouble(args, "toX"), RequiredDouble(args, "toY")));
-        return new { ok = true };
+        var fromX = RequiredDouble(args, "fromX");
+        var fromY = RequiredDouble(args, "fromY");
+        var toX = RequiredDouble(args, "toX");
+        var toY = RequiredDouble(args, "toY");
+        System.Drawing.Point[] Points() =>
+            [WindowCatalog.ToScreenPoint(hwnd, fromX, fromY), WindowCatalog.ToScreenPoint(hwnd, toX, toY)];
+        var target = InputTarget.ActivateForPointer(hwnd, Points);
+        var points = Points();
+        InputController.Drag(points[0], points[1]);
+        return Acted(target);
     }
+
+    // true = append, false = replace.
+    private static bool FillMode(JsonObject args) => OptionalString(args, "mode", "replace") switch
+    {
+        "replace" => false,
+        "append" => true,
+        _ => throw new ArgumentException("mode deve ser replace ou append.")
+    };
+
+    private static object Acted(nint target) => new { ok = true, targetWindowId = target.ToInt64().ToString() };
+
+    private static List<AutomationStep> Steps(JsonObject args)
+    {
+        if (args["steps"] is not JsonArray array || array.Count is < 1 or > 500)
+            throw new ArgumentException("steps deve ser uma lista de 1 a 500 passos.");
+        var steps = new List<AutomationStep>(array.Count);
+        for (var i = 0; i < array.Count; i++)
+        {
+            if (array[i] is not JsonObject raw) throw new ArgumentException($"steps[{i}] deve ser um objeto.");
+            try { steps.Add(Step(raw)); }
+            catch (Exception error) when (error is ArgumentException or InvalidOperationException or FormatException)
+            {
+                throw new ArgumentException($"steps[{i}]: {error.Message}");
+            }
+        }
+        return steps;
+    }
+
+    private static readonly string[] TargetedActions = ["fill", "click", "toggle", "select", "expand", "focus"];
+
+    private static AutomationStep Step(JsonObject raw)
+    {
+        var action = RequiredString(raw, "action", 20);
+        if (!AutomationSession.StepActions.Contains(action))
+            throw new ArgumentException($"action inválida: {action}. Use {string.Join(", ", AutomationSession.StepActions)}.");
+        var target = raw["target"] is null ? null : Target(raw["target"]);
+        var value = raw["value"] is null ? null : RawString(raw, "value", 100_000);
+        var timeoutMs = OptionalInt(raw, "timeoutMs", 5000, 100, 30_000);
+
+        if (TargetedActions.Contains(action) || (action == "press" && target is not null))
+        {
+            if (target is null) throw new ArgumentException($"{action} exige target.");
+            if (target.Index is null && target.Name is null && target.AutomationId is null)
+                throw new ArgumentException("target precisa de index, name ou automationId.");
+        }
+        if (action == "wait_for" && target?.Name is null && target?.Gone is null)
+            throw new ArgumentException("wait_for exige target.name ou target.gone.");
+        if (action == "fill" && value is null) throw new ArgumentException("fill exige value.");
+        if (action is "select" or "press" && string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException($"{action} exige value.");
+        if (action == "press" && value!.Length > 200) throw new ArgumentException("value de press excede 200 caracteres.");
+        if (action == "toggle" && value is not null)
+        {
+            value = value.Trim().ToLowerInvariant();
+            if (value is not ("on" or "off")) throw new ArgumentException("value de toggle deve ser on ou off.");
+        }
+        return new AutomationStep(action, target, value, timeoutMs);
+    }
+
+    private static StepTarget Target(JsonNode? node)
+    {
+        if (node is not JsonObject raw) throw new ArgumentException("target deve ser um objeto.");
+        var type = OptionalTargetString(raw, "type", 40);
+        if (type is not null && !AutomationSession.IsKnownControlType(type))
+            throw new ArgumentException($"target.type desconhecido: {type} (use Button, Edit, CheckBox…).");
+        return new StepTarget(
+            raw["index"] is null ? null : RequiredInt(raw, "index", 0, 9999),
+            OptionalTargetString(raw, "name", 500),
+            OptionalTargetString(raw, "automationId", 500),
+            type,
+            OptionalTargetString(raw, "gone", 500));
+    }
+
+    private static string? OptionalTargetString(JsonObject raw, string name, int maxLength)
+        => raw[name] is null ? null : RequiredString(raw, name, maxLength);
 
     private static nint RequiredWindow(JsonObject args)
     {

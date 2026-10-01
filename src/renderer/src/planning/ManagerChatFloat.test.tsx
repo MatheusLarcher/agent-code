@@ -239,7 +239,7 @@ describe('ManagerChatFloat — o chat de verdade dentro do painel', () => {
               disabled={false}
               busy={false}
               chips={[]}
-              onRemoveChip={() => {}}
+              onChipsConsumed={() => {}}
               onSend={() => {}}
               onInterrupt={() => {}}
               textareaRef={createRef<HTMLTextAreaElement>()}

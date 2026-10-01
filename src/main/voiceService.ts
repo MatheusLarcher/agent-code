@@ -33,7 +33,7 @@ import {
   transcribeWhisper
 } from './voice'
 import { canDecodeWithChromium, decodeWithChromium } from './voice/chromiumDecode'
-import { concatSamples, encodeWavPcm16, isWav, parseWav } from './voice/pcm'
+import { concatSamples, encodeWavPcm16, isWav, noiseFloor, parseWav } from './voice/pcm'
 import { createSetupReporter, type VoiceTask } from './voiceProgress'
 
 type Send = (p: SpeechSetupProgress) => void
@@ -125,7 +125,10 @@ export async function speak(
       rate = pcm.sampleRate
       parts.push(pcm.channels[0])
     }
-    return { base64: encodeWavPcm16(concatSamples(parts, Math.round(rate * 0.25)), rate).toString('base64'), mimeType: 'audio/wav' }
+    // The gap is noise floor, not zeros, so the device does not idle between slices.
+    const gap = noiseFloor(Math.round(rate * 0.25))
+    const joined = parts.flatMap((p, i) => (i === 0 ? [p] : [gap, p]))
+    return { base64: encodeWavPcm16(concatSamples(joined), rate).toString('base64'), mimeType: 'audio/wav' }
   })
 }
 

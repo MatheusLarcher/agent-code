@@ -46,7 +46,7 @@ function setup(extra: { draft?: string; draftMedia?: unknown[]; convId?: string 
     disabled: false,
     busy: false,
     chips: [],
-    onRemoveChip: () => {},
+    onChipsConsumed: () => {},
     onSend,
     onInterrupt: () => {},
     textareaRef: createRef<HTMLElement>(),
@@ -85,6 +85,7 @@ describe('Composer — anexo entra no ponto do cursor', () => {
       'analisa a imagem {{midia:1}} e modifique',
       [{ mediaType: 'image/png', data: PNG_B64, label: 'midia:1 = tela.png' }],
       [],
+      [],
       []
     )
   })
@@ -115,7 +116,7 @@ describe('Composer — anexo entra no ponto do cursor', () => {
       box().dispatchEvent(new Event('input', { bubbles: true }))
     })
     fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('oi ', [], [], [])
+    expect(onSend).toHaveBeenCalledWith('oi ', [], [], [], [])
   })
 
   it('hover na miniatura mostra a prévia ampliada (flutuante) e some ao sair', async () => {
@@ -173,7 +174,7 @@ describe('Composer — link/caminho colado', () => {
     const { box, onSend } = setup()
     paste(box(), 'veja https://exemplo.com/pagina agora')
     fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('veja https://exemplo.com/pagina agora', [], [], [])
+    expect(onSend).toHaveBeenCalledWith('veja https://exemplo.com/pagina agora', [], [], [], [])
     const api = (window as unknown as { api: { downloadPastedUrl: ReturnType<typeof vi.fn> } }).api
     expect(api.downloadPastedUrl).not.toHaveBeenCalled()
   })
@@ -194,7 +195,7 @@ describe('Composer — regressões do campo novo', () => {
     fireEvent.keyDown(box(), { key: 'Enter', isComposing: true })
     expect(onSend).not.toHaveBeenCalled()
     fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('ação', [], [], [])
+    expect(onSend).toHaveBeenCalledWith('ação', [], [], [], [])
   })
 
   it('@menção continua funcionando e não apaga o anexo que já está no texto', async () => {

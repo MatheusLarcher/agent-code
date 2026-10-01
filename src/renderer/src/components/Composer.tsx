@@ -30,6 +30,7 @@ import { useInlineAttachments } from '../inlineMedia/useInlineAttachments'
 import { offsetFromPoint, TOKEN } from '../inlineMedia/editorModel'
 import type { DraftMedia, InlineAtt } from '../inlineMedia/inlineAttachments'
 import { useComposerQuotes, type ComposerQuoteLink } from './quoteComment/useComposerQuotes'
+import { useComposerElements } from './elementPick/useComposerElements'
 
 import { boxMetrics, composerBoxHeight } from './composerHeight'
 import { useHasTextSignal, type HasTextListener } from './useHasTextSignal'
@@ -54,13 +55,16 @@ export interface RefProject {
 interface Props {
   disabled: boolean
   busy: boolean
+  /** Elementos recém-marcados no navegador ("Selecionar"): o Composer os põe no
+   *  campo como bloco inline (no cursor) e chama `onChipsConsumed`. */
   chips: PickedElement[]
-  onRemoveChip: (i: number) => void
+  onChipsConsumed: () => void
   onSend: (
     text: string,
     images: ImageAttachment[],
     files: FileAttachment[],
-    fileRefs: FileRefAttachment[]
+    fileRefs: FileRefAttachment[],
+    elements: PickedElement[]
   ) => void
   onInterrupt: () => void
   /** Recebe o campo de texto (o App só usa `focus()`). */
@@ -259,6 +263,7 @@ export function Composer(props: Props): JSX.Element {
   // Trecho citado conta como texto para quem ouve: com ele dá para enviar sem
   // digitar nada, e o Agent Manager minimizado não pode esconder o enviar.
   const quoteCount = useComposerQuotes(media, editorRef, props.quoteLink)
+  useComposerElements(media, editorRef, props.chips, props.onChipsConsumed)
   useHasTextSignal(quoteCount ? QUOTE_AS_TEXT : value, props.onHasTextChange)
 
   // Local-only edit — just updates the box. Does NOT persist to disk: saving on
@@ -771,8 +776,8 @@ export function Composer(props: Props): JSX.Element {
     // Anexo no texto vira {{midia:N}} no ponto dele; sem anexo, o texto sai igual.
     const msg = media.serialize(value)
     const attached = msg.images.length + msg.files.length + msg.fileRefs.length
-    if (!msg.text.trim() && props.chips.length === 0 && attached === 0) return
-    props.onSend(msg.text, msg.images, msg.files, msg.fileRefs)
+    if (!msg.text.trim() && msg.elements.length === 0 && attached === 0) return
+    props.onSend(msg.text, msg.images, msg.files, msg.fileRefs, msg.elements)
     media.commitSend() // cópias do rascunho: a do arquivo enviado fica; as outras saem do disco
     media.reset()
     updateValue('') // clears the box
@@ -1040,20 +1045,6 @@ export function Composer(props: Props): JSX.Element {
 
   return (
     <div className="composer">
-      {props.chips.length > 0 && (
-        <div className="chips">
-          {props.chips.map((c, i) => (
-            <span className="chip" key={i} title={`${c.tabName ? c.tabName + ' · ' : ''}${c.selector}`}>
-              {c.tabName && <span className="chip-tab">{c.tabName}</span>}
-              <span className="chip-tag">{c.tagName}</span>
-              {c.id ? `#${c.id}` : c.text.slice(0, 24) || c.selector.slice(0, 24)}
-              <button className="chip-x" onClick={() => props.onRemoveChip(i)}>
-                <IconClose size={12} />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
       {resolvingCount > 0 && (
         <div className="file-resolving" role="status" aria-live="polite">
           <IconSpinner className="spinner" size={13} />
@@ -1289,7 +1280,7 @@ export function Composer(props: Props): JSX.Element {
         )}
         <button
           className="ref-btn"
-          onClick={() => props.onSend(CODE_REVIEW_PROMPT, [], [], [])}
+          onClick={() => props.onSend(CODE_REVIEW_PROMPT, [], [], [], [])}
           disabled={props.disabled || blocked}
           title="Revisar código, corrigir e fazer commit + push (skill code-review --fix)"
         >

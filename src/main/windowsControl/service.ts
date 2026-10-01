@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadConfig } from '../config'
-import { WindowsControlClient } from './client'
+import { WindowsControlClient, type RequestOptions } from './client'
 
 export interface WindowBounds { x: number; y: number; width: number; height: number }
 export interface WindowEntry {
@@ -33,6 +33,41 @@ export interface WindowStateResult {
   screenshot?: { id: string; data: string; mimeType: 'image/png'; width: number; height: number }
 }
 
+export interface FormFieldsResult {
+  /** Uma linha por controle útil, seções `# janela …` e última linha `ativo: …`. */
+  text: string
+  count: number
+  targetWindowId: string
+}
+
+export type RunStepAction = 'fill' | 'click' | 'toggle' | 'select' | 'expand' | 'focus' | 'press' | 'wait_for'
+export interface RunStepTarget {
+  index?: number
+  name?: string
+  automationId?: string
+  type?: string
+  gone?: string
+}
+export interface RunStep {
+  action: RunStepAction
+  target?: RunStepTarget
+  value?: string
+  timeoutMs?: number
+}
+export interface RunStepsResult {
+  ok: boolean
+  done: number
+  total: number
+  failedStep?: { i: number; action: string; target?: unknown; error: string; candidates?: unknown }
+  expectFound?: boolean
+  targetWindowId: string
+  /** Estado compacto da janela ao final (mesmo formato de FormFieldsResult.text). */
+  state: string
+}
+
+/** Maior que os 120 s que o nativo concede a uma chamada de run_steps. */
+export const RUN_STEPS_TIMEOUT_MS = 135_000
+
 interface ScreenshotRef {
   windowId: string
   imageWidth: number
@@ -42,7 +77,7 @@ interface ScreenshotRef {
 }
 
 export interface WindowsControlBridge {
-  request<T>(method: string, params?: Record<string, unknown>, signal?: AbortSignal): Promise<T>
+  request<T>(method: string, params?: Record<string, unknown>, signal?: AbortSignal, options?: RequestOptions): Promise<T>
   stop(reason?: string): void
 }
 
@@ -204,15 +239,43 @@ export class WindowsControlService {
     return this.nativeAction('set_value', { windowId, elementIndex, value }, signal)
   }
 
+  async fill(
+    windowId: string,
+    text: string,
+    options: { elementIndex?: number; mode?: 'replace' | 'append' } = {},
+    signal?: AbortSignal
+  ): Promise<unknown> {
+    const params: Record<string, unknown> = { windowId, text, mode: options.mode ?? 'replace' }
+    if (options.elementIndex !== undefined) params.elementIndex = options.elementIndex
+    return this.nativeAction('fill', params, signal)
+  }
+
   async secondaryAction(windowId: string, elementIndex: number, action: string, signal?: AbortSignal): Promise<unknown> {
     return this.nativeAction('secondary_action', { windowId, elementIndex, action }, signal)
   }
 
-  private async nativeAction(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  async formFields(windowId: string, maxElements?: number, signal?: AbortSignal): Promise<FormFieldsResult> {
+    const params: Record<string, unknown> = { windowId }
+    if (maxElements !== undefined) params.maxElements = maxElements
+    return this.nativeAction<FormFieldsResult>('form_fields', params, signal)
+  }
+
+  async runSteps(windowId: string, steps: RunStep[], expect?: string, signal?: AbortSignal): Promise<RunStepsResult> {
+    const params: Record<string, unknown> = { windowId, steps }
+    if (expect !== undefined) params.expect = expect
+    return this.nativeAction<RunStepsResult>('run_steps', params, signal, { timeoutMs: RUN_STEPS_TIMEOUT_MS })
+  }
+
+  private async nativeAction<T = unknown>(
+    method: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+    options?: RequestOptions
+  ): Promise<T> {
     this.assertEnabled()
     const windowId = typeof params.windowId === 'string' ? params.windowId : null
     try {
-      return await this.client.request(method, params, signal)
+      return await this.client.request<T>(method, params, signal, options)
     } finally {
       if (windowId) this.forgetScreenshots(windowId)
     }

@@ -41,7 +41,7 @@ function setup(extra: { draft?: string; draftMedia?: unknown[]; convId?: string 
     disabled: false,
     busy: false,
     chips: [],
-    onRemoveChip: () => {},
+    onChipsConsumed: () => {},
     onSend,
     onInterrupt: () => {},
     textareaRef: createRef<HTMLElement>(),

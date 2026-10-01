@@ -122,7 +122,7 @@ function setup(disabled = false) {
         disabled={disabled}
         busy={false}
         chips={[]}
-        onRemoveChip={() => {}}
+        onChipsConsumed={() => {}}
         onSend={vi.fn()}
         onInterrupt={() => {}}
         textareaRef={createRef<HTMLElement>()}

@@ -146,6 +146,37 @@ export function concatSamples(parts: Float32Array[], gapSamples = 0): Float32Arr
   return out
 }
 
+/**
+ * Peak of the noise floor: ±16 PCM16 steps, ≈ -71 dBFS RMS — inaudible, but
+ * never encodes to digital zero. Many Windows outputs (Realtek power saving,
+ * Bluetooth, HDMI) go idle on pure digital silence and swallow the first
+ * 100–300 ms once sound starts; Kokoro opens every clip with ~180 ms of zeros,
+ * so the idle device woke up only at the first syllable and cut it.
+ */
+const NOISE_PEAK = 16 / 32768
+
+/** `length` samples of the noise floor (deterministic xorshift, uniform). */
+export function noiseFloor(length: number): Float32Array {
+  const out = new Float32Array(Math.max(0, length))
+  let s = 0x9e3779b9
+  const next = (): number => {
+    s ^= s << 13
+    s ^= s >>> 17
+    s ^= s << 5
+    return (s >>> 0) / 0x100000000
+  }
+  for (let i = 0; i < out.length; i++) out[i] = (next() * 2 - 1) * NOISE_PEAK
+  return out
+}
+
+/** `leadSamples` of noise floor, then `samples` with the floor mixed in. */
+export function withNoiseFloor(samples: Float32Array, leadSamples = 0): Float32Array {
+  const lead = Math.max(0, leadSamples)
+  const out = noiseFloor(lead + samples.length)
+  for (let i = 0; i < samples.length; i++) out[lead + i] += samples[i]
+  return out
+}
+
 function ascii(bytes: Uint8Array, start: number, len: number): string {
   return String.fromCharCode(...bytes.subarray(start, start + len))
 }

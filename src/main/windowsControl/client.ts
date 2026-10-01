@@ -15,6 +15,13 @@ interface PendingRequest {
   removeAbort?: () => void
 }
 
+export interface RequestOptions {
+  /** Tempo máximo desta requisição; padrão DEFAULT_REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number
+}
+
+export const DEFAULT_REQUEST_TIMEOUT_MS = 45_000
+
 export class WindowsControlClient {
   private child: ChildProcessWithoutNullStreams | null = null
   private lines: ReadLineInterface | null = null
@@ -23,8 +30,14 @@ export class WindowsControlClient {
 
   constructor(private readonly executablePath: () => string) {}
 
-  async request<T>(method: string, params: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
+  async request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    signal?: AbortSignal,
+    options: RequestOptions = {}
+  ): Promise<T> {
     if (signal?.aborted) throw abortError()
+    const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     const child = this.ensureStarted()
     const id = randomUUID()
     return new Promise<T>((resolve, reject) => {
@@ -32,7 +45,7 @@ export class WindowsControlClient {
         this.pending.delete(id)
         reject(new Error(`Controle do Windows excedeu o tempo limite em ${method}.`))
         this.stop('O helper parou após exceder o tempo limite.')
-      }, 45_000)
+      }, timeoutMs)
       timer.unref?.()
 
       const request: PendingRequest = {

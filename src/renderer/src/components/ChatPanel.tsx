@@ -136,12 +136,13 @@ interface Props {
    *  expansível no cabeçalho (ver TokenUsagePanel). */
   usageMap?: UsageMap
   chips: PickedElement[]
-  onRemoveChip: (i: number) => void
+  onChipsConsumed: () => void
   onSend: (
     text: string,
     images: ImageAttachment[],
     files: FileAttachment[],
-    fileRefs: FileRefAttachment[]
+    fileRefs: FileRefAttachment[],
+    elements: PickedElement[]
   ) => void
   onInterrupt: () => void
   /** Resend a user message whose turn failed (its bubble shows a retry button). */
@@ -599,7 +600,7 @@ export function ChatPanel(props: Props): JSX.Element {
         disabled={!hasActive}
         busy={busy}
         chips={props.chips}
-        onRemoveChip={props.onRemoveChip}
+        onChipsConsumed={props.onChipsConsumed}
         onSend={props.onSend}
         quoteLink={quote.link}
         onInterrupt={props.onInterrupt}

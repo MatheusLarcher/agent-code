@@ -27,7 +27,7 @@ function setup(first: { convId?: string; draft?: string; listener?: HasTextListe
         disabled={false}
         busy={false}
         chips={[]}
-        onRemoveChip={() => {}}
+        onChipsConsumed={() => {}}
         onSend={() => {}}
         onInterrupt={() => {}}
         textareaRef={createRef<HTMLElement>()}

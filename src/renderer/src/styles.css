@@ -3737,6 +3737,43 @@ img.inline-att[data-caret] {
   outline: none;
   border-color: var(--accent);
 }
+.question-text-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.question-text-row .question-text {
+  flex: 1;
+}
+.question-text-row .msg-speak {
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.question-other-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+.question-mic {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.question-mic:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.question-mic.recording {
+  border-color: #e5484d;
+  color: #e5484d;
+}
 .modal-title {
   margin: 0 0 8px;
   font-size: 16px;

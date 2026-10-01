@@ -55,7 +55,7 @@ function panel(overrides: Partial<PanelProps>): JSX.Element {
       onDisableWindowsControl={() => {}}
       tokens={{ context: 0, output: 0, cost: 0 }}
       chips={[]}
-      onRemoveChip={() => {}}
+      onChipsConsumed={() => {}}
       onSend={() => {}}
       onInterrupt={() => {}}
       onRetry={() => {}}
@@ -224,7 +224,7 @@ describe('ChatPanel — "Comentar" põe o trecho inline no campo (chat principal
     expect(tokens()).toEqual([])
     expect(firstP(container).classList.contains('qc-pending')).toBe(false)
     send()
-    expect(onSend).toHaveBeenCalledWith('oi ', [], [], [])
+    expect(onSend).toHaveBeenCalledWith('oi ', [], [], [], [])
   })
 
   it('só o trecho, sem texto digitado, também envia', () => {
@@ -314,7 +314,7 @@ describe('ChatPanel — "Comentar" põe o trecho inline no campo (chat principal
     const { container, onSend } = renderPanel()
     commentOn(firstP(container))
     fireEvent.click(screen.getByTitle(/Revisar código/))
-    expect(onSend).toHaveBeenCalledWith(CODE_REVIEW_PROMPT, [], [], [])
+    expect(onSend).toHaveBeenCalledWith(CODE_REVIEW_PROMPT, [], [], [], [])
     expect(CODE_REVIEW_PROMPT).toMatch(/code-review com --fix/)
     expect(CODE_REVIEW_PROMPT).toMatch(/commit/)
     expect(CODE_REVIEW_PROMPT).toMatch(/push/)

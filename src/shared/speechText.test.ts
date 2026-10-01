@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitForSpeech, toSpeechText } from './speechText'
+import { splitForSpeech, toSpeechText, questionSpeechText } from './speechText'
 
 describe('toSpeechText — texto tratado para leitura', () => {
   it('remove blocos de código (não lê exemplo de código)', () => {
@@ -101,5 +101,20 @@ describe('splitForSpeech — fatiar para tocar rápido', () => {
     const txt = 'Primeira frase. Segunda frase um pouco maior. Terceira.'
     const joined = splitForSpeech(txt).join(' ')
     for (const w of ['Primeira', 'Segunda', 'Terceira']) expect(joined).toContain(w)
+  })
+})
+
+describe('setas não vão para o TTS', () => {
+  it('remove setas Unicode e ASCII', () => {
+    const out = toSpeechText('A → B -> C => D ← E ➜ F')
+    expect(out).not.toMatch(/[→←➜]|->|=>/)
+    expect(out).toContain('A, B, C, D, E, F')
+  })
+})
+
+describe('questionSpeechText', () => {
+  it('lê pergunta, opções e fecha com "ou outra coisa"', () => {
+    const t = questionSpeechText({ question: 'Qual caminho?', options: [{ label: 'A', description: 'Rápido' }, { label: 'B' }] })
+    expect(t).toBe('Qual caminho?\nOpção 1: A, Rápido.\nOpção 2: B.\nOu outra coisa, descreva.')
   })
 })

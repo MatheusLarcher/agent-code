@@ -54,7 +54,7 @@ function field(parts: Array<string | InlineAtt>): { value: string; order: string
 describe('serializeInline — texto + anexos para o agente', () => {
   it('0 anexos: o texto sai IDÊNTICO ao digitado (nada muda para quem não anexa)', () => {
     const text = '  corrige o bug\n\nem @src/a.ts  '
-    expect(serializeInline(text, [], new Map())).toEqual({ text, images: [], files: [], fileRefs: [] })
+    expect(serializeInline(text, [], new Map())).toEqual({ text, images: [], files: [], fileRefs: [], elements: [] })
   })
 
   it('1 anexo no meio: {{midia:1}} no ponto exato e a imagem com o rótulo', () => {
@@ -101,7 +101,7 @@ describe('serializeInline — texto + anexos para o agente', () => {
   it('item sem anexo no registro ou ainda resolvendo não vira marcador', () => {
     const p = makePendingAtt('C:\\pasta\\lento.bin')
     const f = field(['a', p, 'b'])
-    expect(serializeInline(f.value, f.order, f.atts)).toEqual({ text: 'ab', images: [], files: [], fileRefs: [] })
+    expect(serializeInline(f.value, f.order, f.atts)).toEqual({ text: 'ab', images: [], files: [], fileRefs: [], elements: [] })
     expect(serializeInline(`a${TOKEN}b`, ['sumiu'], new Map()).text).toBe('ab')
   })
 })

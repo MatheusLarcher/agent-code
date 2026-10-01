@@ -2,6 +2,8 @@ import { MEDIA_MARKER_SOURCE, mediaMarker } from '@shared/inlineMedia'
 import { TOKEN } from './editorModel'
 import { makeFileAtt, makeImageAtt, makePendingAtt, type InlineAtt } from './inlineAttachments'
 import { makeQuoteAtt } from '../components/quoteComment/quoteToken'
+import { makeElementAtt } from '../components/elementPick/elementToken'
+import type { PickedElement } from '@shared/ipc'
 
 /**
  * Rascunho com anexos: texto com `{{midia:N}}` + a lista na ordem N.
@@ -22,6 +24,8 @@ export type DraftRefMedia =
   | { kind: 'pending'; id: string; name: string; line?: string }
   /** Trecho citado ("Comentar"): só texto, volta pronto. */
   | { kind: 'quote'; messageId: string; text: string }
+  /** Elemento da página ("Selecionar"): só texto, volta pronto. */
+  | { kind: 'element'; el: PickedElement }
 
 /** Formato antigo (bytes dentro do rascunho): continua sendo LIDO; na próxima gravação vira referência. */
 export type LegacyDraftMedia =
@@ -58,6 +62,8 @@ function entryOf(att: InlineAtt): DraftRefMedia | null {
       return { kind: 'pending', id: att.id, name: att.name, ...(att.line ? { line: att.line } : {}) }
     case 'quote':
       return { kind: 'quote', messageId: att.quote.messageId, text: att.quote.text }
+    case 'element':
+      return { kind: 'element', el: att.el }
   }
 }
 
@@ -97,11 +103,20 @@ function str(v: unknown, max: number): string | null {
   return typeof v === 'string' && v.length <= max ? v : null
 }
 
+function isPickedElement(v: unknown): v is PickedElement {
+  if (!v || typeof v !== 'object') return false
+  const e = v as Record<string, unknown>
+  return (['selector', 'tagName', 'id', 'classes', 'text', 'html', 'url', 'tabId', 'tabName'] as const).every(
+    (k) => str(e[k], 20_000) !== null
+  )
+}
+
 /** Valida um item de rascunho vindo do banco (novo formato ou o antigo, com bytes). */
 export function isDraftMedia(v: unknown): v is DraftMedia {
   if (!v || typeof v !== 'object') return false
   const d = v as Record<string, unknown>
   if (d.kind === 'quote') return !!str(d.messageId, 200) && !!str(d.text, 4000)
+  if (d.kind === 'element') return isPickedElement(d.el)
   if (d.kind === 'pending') return !!str(d.id, 200) && str(d.name, 400) !== null && (d.line === undefined || !!str(d.line, 4000))
   if (!str(d.name, 400) || !str(d.mediaType, 200)) return false
   const ref = !!str(d.path, 4000) && typeof d.size === 'number'
@@ -131,7 +146,10 @@ export function fromDraft(
     const d = list[Number(n) - 1]
     if (!d) return m
     let att: InlineAtt
-    if (d.kind === 'quote') {
+    if (d.kind === 'element') {
+      // O número certo vem na renumeração do campo (Composer).
+      att = makeElementAtt(d.el, order.length + 1)
+    } else if (d.kind === 'quote') {
       // O número certo vem na renumeração do campo (useComposerQuotes).
       att = makeQuoteAtt({ messageId: d.messageId, text: d.text }, order.length + 1)
     } else if (d.kind === 'pending') {

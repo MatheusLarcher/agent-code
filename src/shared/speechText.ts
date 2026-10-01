@@ -57,6 +57,21 @@ export function toSpeechText(markdown: string): string {
     .trim()
 }
 
+/** Spoken form of one AskUserQuestion question: the question, each suggested
+ *  answer (label + description) and, last, the free-text "other" choice. */
+export function questionSpeechText(q: {
+  question: string
+  options: { label: string; description?: string }[]
+}): string {
+  const end = (s: string): string => (/[.!?…:]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`)
+  const parts = [end(q.question)]
+  q.options.forEach((op, i) => {
+    parts.push(end(`Opção ${i + 1}: ${op.label}${op.description ? `, ${op.description}` : ''}`))
+  })
+  parts.push('Ou outra coisa, descreva.')
+  return parts.join('\n')
+}
+
 /**
  * Split already-treated speech text into chunks the caller synthesizes and plays
  * in sequence, so playback starts after just the FIRST chunk — not the whole
@@ -149,6 +164,10 @@ function cleanInline(line: string): string {
   s = s.replace(/(\*\*|__)(.*?)\1/g, '$2')
   s = s.replace(/(\*|_)(.*?)\1/g, '$2')
   s = s.replace(/~~(.*?)~~/g, '$1')
+
+  // Arrows (Unicode and ASCII "->", "=>", "<-") — the TTS model reads them as noise.
+  s = s.replace(/\s*(?:<-+>?|-+>|=+>|<=+|[←-⇿⟰-⟿⤀-⥿⬀-⯿➜-➿])\s*/g, ', ')
+  s = s.replace(/^,\s*|,\s*$/g, '')
 
   // Leftover stray markdown punctuation.
   s = s.replace(/[*_`>#]/g, '')

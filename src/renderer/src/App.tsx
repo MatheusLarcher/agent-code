@@ -100,6 +100,7 @@ import { userBubbleAttachments } from './inlineMedia/inlineAttachments'
 import { applyDraft, discardDraftCopies, draftCopyPaths, type DraftMedia } from './inlineMedia/draftMedia'
 import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
+import { formatElements } from './components/elementPick/elementToken'
 import { splitForSpeech, toSpeechText } from '@shared/speechText'
 import { NewTabModal } from './ui/NewTabModal'
 import { FilePickerModal } from './ui/FilePickerModal'
@@ -638,8 +639,8 @@ export function App(): JSX.Element {
   busyRef.current = busyIds
   const skipPermsRef = useRef(skipPerms)
   skipPermsRef.current = skipPerms
-  const chipsRef = useRef(chips)
-  chipsRef.current = chips
+  // Elementos marcados entram no campo como bloco inline (o Composer consome a fila).
+  const consumeChips = useCallback(() => setChips([]), [])
   const queueRef = useRef(queue)
   queueRef.current = queue
   // A fila é gravada no banco: reiniciar o app não perde o que esperava a vez.
@@ -2573,25 +2574,18 @@ export function App(): JSX.Element {
       text: string,
       images: ImageAttachment[] = [],
       files: FileAttachment[] = [],
-      fileRefs: FileRefAttachment[] = []
+      fileRefs: FileRefAttachment[] = [],
+      elements: PickedElement[] = []
     ): Promise<void> => {
       const conv = getActive()
       if (!conv) return
       let full = text.trim()
-      if (chipsRef.current.length) {
-        const refs = chipsRef.current
-          .map(
-            (c, i) =>
-              `[#${i + 1} ${c.tagName}${c.id ? '#' + c.id : ''}] aba: ${c.tabName || 'web'}\n` +
-              `selector: ${c.selector}\ntext: ${c.text.slice(0, 400)}\nhtml: ${c.html.slice(0, 600)}`
-          )
-          .join('\n\n')
-        full = `${full}\n\n--- Selected page elements ---\n${refs}`
-      }
+      // Elementos marcados na página: "[elemento N]" já está no texto, no ponto
+      // onde o usuário os pôs; os detalhes vão ao agente no fim (a bolha não os mostra).
+      if (elements.length) full = full ? `${full}\n\n${formatElements(elements)}` : formatElements(elements)
       if (!full && images.length === 0 && files.length === 0 && fileRefs.length === 0) return
 
       const thumbs = images.map((img) => `data:${img.mediaType};base64,${img.data}`)
-      setChips([]) // chips were consumed into `full`
       await dispatch(conv, full, text, images, thumbs, files, fileRefs)
     },
     [dispatch]
@@ -3528,7 +3522,7 @@ export function App(): JSX.Element {
       tokens={tokens}
       usageMap={activeUsageMap}
       chips={chips}
-      onRemoveChip={(i) => setChips((c) => c.filter((_, idx) => idx !== i))}
+      onChipsConsumed={consumeChips}
       onSend={sendMessage}
       onInterrupt={interrupt}
       onRetry={(msgId) => active && void retryMessage(active.id, msgId)}
@@ -3923,6 +3917,8 @@ export function App(): JSX.Element {
                 if (activeId) holdQuestion(activeId, activePermission, true)
               }}
               onActivity={() => activeId && holdQuestion(activeId, activePermission, false)}
+              tts={tts}
+              onError={(msg) => notify('erro', msg)}
             />
           )
         ) : (

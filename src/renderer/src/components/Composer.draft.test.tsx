@@ -26,7 +26,7 @@ function renderComposer(props: { convId?: string | null; draft?: string } = {}):
     disabled: false,
     busy: false,
     chips: [],
-    onRemoveChip: () => {},
+    onChipsConsumed: () => {},
     onSend,
     onInterrupt: () => {},
     textareaRef: createRef<HTMLTextAreaElement>(),
@@ -93,7 +93,7 @@ describe('Composer — rascunho só salva ao perder o foco (não a cada tecla)',
     const { onDraftChange, onSend } = renderComposer({ convId: 'c1' })
     fireEvent.change(textarea(), { target: { value: 'mensagem pronta' } })
     fireEvent.keyDown(textarea(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('mensagem pronta', [], [], [])
+    expect(onSend).toHaveBeenCalledWith('mensagem pronta', [], [], [], [])
     expect(textarea().value).toBe('')
     expect(onDraftChange).toHaveBeenCalledWith('c1', '')
   })
@@ -195,7 +195,7 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     fireEvent.keyDown(textarea(), { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('{{midia:1}}', [], [], [
       { name: 'video.mp4', path: 'C:\\pasta\\video.mp4', mediaType: 'video/mp4', size: 5_000_000_000, label: 'midia:1 = video.mp4' }
-    ])
+    ], [])
   })
 
   it('arquivo >25MB SEM caminho resolvível (blob puro) mostra erro e não vira anexo', async () => {
@@ -238,7 +238,7 @@ describe('Composer — arquivo real grande (>25MB) colado/arrastado/anexado', ()
     fireEvent.keyDown(textarea(), { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('{{midia:1}}', [], [], [
       { name: 'grande.png', path: 'C:\\fotos\\grande.png', mediaType: 'image/png', size: 8_000_000, label: 'midia:1 = grande.png' }
-    ])
+    ], [])
   })
 
   it('imagem >50MB vira chip genérico (não tenta ler bytes)', async () => {

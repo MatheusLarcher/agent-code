@@ -56,7 +56,7 @@ function renderChat(opts: { strict?: boolean } = {}) {
               onDisableWindowsControl={() => {}}
               tokens={{ context: 0, output: 0, cost: 0 }}
               chips={[]}
-              onRemoveChip={() => {}}
+              onChipsConsumed={() => {}}
               onSend={onSend}
               onInterrupt={() => {}}
               onRetry={() => {}}

@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PermissionRequest, QuestionAnswer } from '@shared/ipc'
 import { CountdownBar } from './CountdownBar'
+import { questionSpeechText } from '@shared/speechText'
+import type { TtsControls } from '../components/MessageList'
+import { IconMic, IconSpeaker, IconStopSmall } from '../components/Icons'
+import { useQuickDictation } from './useQuickDictation'
 
 interface Props {
   request: PermissionRequest
@@ -12,6 +16,10 @@ interface Props {
   onMinimize: () => void
   /** Qualquer clique dentro do modal: o usuário está respondendo, o prazo recomeça. */
   onActivity?: () => void
+  /** Leitura em voz alta (mesmo controle do "Ouvir" das respostas). */
+  tts?: TtsControls
+  /** Falha do ditado (microfone/transcrição). */
+  onError?: (msg: string) => void
 }
 
 const OTHER = '__other__'
@@ -22,12 +30,27 @@ const OTHER = '__other__'
  * always offered (the SDK leaves the "Other" choice to the host). The picks are
  * fed back to the model as the tool's answer.
  */
-export function QuestionModal({ request, onAnswer, onCancel, onMinimize, onActivity }: Props): JSX.Element {
+export function QuestionModal({ request, onAnswer, onCancel, onMinimize, onActivity, tts, onError }: Props): JSX.Element {
   const questions = useMemo(() => request.questions ?? [], [request.questions])
   // Per question: the set of selected option labels (single-select keeps one).
   const [picked, setPicked] = useState<string[][]>(() => questions.map(() => []))
   // Per question: free-text typed into the "Outro…" field.
   const [other, setOther] = useState<string[]>(() => questions.map(() => ''))
+
+  // Ditado no campo "Outro…": a pergunta que recebe o texto é a do clique no mic.
+  const dictateFor = useRef(0)
+  const dictation = useQuickDictation(
+    (text) =>
+      setOther((prev) => prev.map((v, i) => (i === dictateFor.current ? (v.trim() ? `${v.trim()} ${text}` : text) : v))),
+    (msg) => onError?.(msg)
+  )
+  const dictate = (qi: number): void => {
+    if (!dictation.recording) {
+      dictateFor.current = qi
+      if (!picked[qi].includes(OTHER)) toggle(qi, OTHER, questions[qi].multiSelect)
+    }
+    dictation.toggle()
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -81,7 +104,20 @@ export function QuestionModal({ request, onAnswer, onCancel, onMinimize, onActiv
           return (
             <div key={qi} className="question-block">
               {q.header && <span className="question-header">{q.header}</span>}
-              <p className="question-text">{q.question}</p>
+              <div className="question-text-row">
+                <p className="question-text">{q.question}</p>
+                {tts && (
+                  <button
+                    type="button"
+                    className={`msg-speak ${tts.speakingId === `${request.id}:q${qi}` ? 'active' : ''}`}
+                    onClick={() => tts.onToggleSpeak(`${request.id}:q${qi}`, questionSpeechText(q))}
+                    title={tts.speakingId === `${request.id}:q${qi}` ? 'Parar leitura' : 'Ler pergunta e opções'}
+                  >
+                    {tts.speakingId === `${request.id}:q${qi}` ? <IconStopSmall size={14} /> : <IconSpeaker size={15} />}
+                    {tts.speakingId === `${request.id}:q${qi}` ? 'Parar' : 'Ouvir'}
+                  </button>
+                )}
+              </div>
               <div className="question-options">
                 {q.options.map((op) => {
                   const on = picked[qi].includes(op.label)
@@ -107,6 +143,7 @@ export function QuestionModal({ request, onAnswer, onCancel, onMinimize, onActiv
                 </button>
               </div>
               {isOther && (
+                <div className="question-other-row">
                 <input
                   className="question-other-input"
                   type="text"
@@ -118,6 +155,16 @@ export function QuestionModal({ request, onAnswer, onCancel, onMinimize, onActiv
                     if (e.key === 'Enter') submit()
                   }}
                 />
+                <button
+                  type="button"
+                  className={`question-mic${dictation.recording && dictateFor.current === qi ? ' recording' : ''}`}
+                  disabled={dictation.busy || (dictation.recording && dictateFor.current !== qi)}
+                  onClick={() => dictate(qi)}
+                  title={dictation.recording ? 'Parar e transcrever' : 'Falar a resposta'}
+                >
+                  {dictation.recording && dictateFor.current === qi ? <IconStopSmall size={14} /> : <IconMic size={15} />}
+                </button>
+                </div>
               )}
             </div>
           )

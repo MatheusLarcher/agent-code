@@ -118,10 +118,15 @@ export function loopLimitFromPrompt(text: string): number {
 }
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
-(browser_navigate, browser_snapshot, browser_screenshot, browser_click, browser_type,
-browser_get_text, browser_evaluate, browser_back, browser_reload). When the user asks you
-to look something up on the web, open a site, or interact with a page, use these tools — the
-page is rendered live inside the app for the user to see.
+(browser_navigate, browser_form_fields, browser_run_steps, browser_snapshot, browser_screenshot,
+browser_click, browser_type, browser_get_text, browser_evaluate, browser_back, browser_reload).
+When the user asks you to look something up on the web, open a site, or interact with a page,
+use these tools — the page is rendered live inside the app for the user to see.
+
+To interact with a page (forms, clicks, choices): first browser_form_fields, then ONE
+browser_run_steps with all the steps, targeting by label/text; come back to the model only if
+it stops (continue from the state it returns). Use browser_snapshot/browser_screenshot as the
+fallback: canvas pages, empty form_fields or an ambiguous result.
 
 The preview is organized into TABS. There is always exactly one ACTIVE tab, and every
 browser action targets it. Each tab has a name like "web - <site>" (only "web" tabs exist

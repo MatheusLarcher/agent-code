@@ -1,4 +1,4 @@
-import type { FileAttachment, FileRefAttachment, ImageAttachment } from '@shared/ipc'
+import type { FileAttachment, FileRefAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
 import { mediaLabel, mediaMarker, mediaLabelNumber } from '@shared/inlineMedia'
 import { fileMeta, fmtSize } from '../files'
 import { TOKEN } from './editorModel'
@@ -22,6 +22,9 @@ export type InlineAtt =
   /** Trecho de uma resposta do agente ("Comentar"): no envio vira "[trecho N]" + a citação no topo.
    *  `name` é "trecho N" (N = ordem no texto; ver quoteComment/quoteToken.ts). */
   | { id: string; kind: 'quote'; name: string; quote: Quote; src: string }
+  /** Elemento da página ("Selecionar" do navegador): no envio vira "[elemento N]" + os detalhes no fim.
+   *  `name` é "elemento N" (ver elementPick/elementToken.ts). */
+  | { id: string; kind: 'element'; name: string; el: PickedElement; src: string }
 
 let seq = 0
 export function newAttId(): string {
@@ -113,6 +116,7 @@ export function attAlt(att: InlineAtt): string {
   if (att.kind === 'image') return `Imagem anexada: ${att.name}`
   if (att.kind === 'pending') return `Resolvendo anexo: ${att.name}`
   if (att.kind === 'quote') return `Trecho citado ${att.name.replace(/^trecho /, '')}: ${chipLabel(att.quote.text)}`
+  if (att.kind === 'element') return `Elemento da página ${att.name.replace(/^elemento /, '')}: ${att.el.tagName}${att.el.id ? '#' + att.el.id : ''}`
   const size = att.kind === 'file' ? att.file.size : att.ref.size
   return `Arquivo anexado: ${att.name}${size ? ` (${fmtSize(size)})` : ''}`
 }
@@ -134,6 +138,8 @@ export interface OutgoingMessage {
   images: ImageAttachment[]
   files: FileAttachment[]
   fileRefs: FileRefAttachment[]
+  /** Elementos da página, na ordem dos "[elemento N]" do texto. */
+  elements: PickedElement[]
 }
 
 /**
@@ -148,7 +154,7 @@ export function serializeInline(
   order: readonly string[],
   atts: ReadonlyMap<string, InlineAtt>
 ): OutgoingMessage {
-  const out: OutgoingMessage = { text: '', images: [], files: [], fileRefs: [] }
+  const out: OutgoingMessage = { text: '', images: [], files: [], fileRefs: [], elements: [] }
   if (!value.includes(TOKEN)) return { ...out, text: value }
   let next = 0
   let n = 0
@@ -163,6 +169,11 @@ export function serializeInline(
     if (att.kind === 'quote') {
       quotes.push(att.quote)
       out.text += quoteRef(quotes.length)
+      continue
+    }
+    if (att.kind === 'element') {
+      out.elements.push(att.el)
+      out.text += `[elemento ${out.elements.length}]`
       continue
     }
     n++

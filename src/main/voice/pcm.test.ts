@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { concatSamples, encodeWavPcm16, isWav, mixToMono, parseWav, resample } from './pcm'
+import { concatSamples, encodeWavPcm16, isWav, mixToMono, noiseFloor, parseWav, resample, withNoiseFloor } from './pcm'
 import { dominantHz, rms, sine } from './testSignals'
 
 describe('WAV', () => {
@@ -91,5 +91,32 @@ describe('concatSamples', () => {
     const out = concatSamples([Float32Array.from([1, 1]), Float32Array.from([2])], 3)
     expect(Array.from(out)).toEqual([1, 1, 0, 0, 0, 2])
     expect(concatSamples([], 5).length).toBe(0)
+  })
+})
+
+describe('noise floor', () => {
+  // A PCM16 sample that encodes to exactly 0 is what makes the device go idle.
+  const zeroAfterEncode = (x: Float32Array): number => {
+    const wav = encodeWavPcm16(x, 24000)
+    let zeros = 0
+    for (let i = 0; i < x.length; i++) if (wav.readInt16LE(44 + i * 2) === 0) zeros++
+    return zeros
+  }
+
+  it('noiseFloor has no digital-zero runs and stays inaudible (< -60 dBFS)', () => {
+    const n = noiseFloor(24000)
+    expect(n.length).toBe(24000)
+    expect(rms(n)).toBeGreaterThan(0)
+    expect(20 * Math.log10(rms(n))).toBeLessThan(-60)
+    expect(zeroAfterEncode(n)).toBeLessThan(n.length * 0.05)
+  })
+
+  it('withNoiseFloor prepends a lead-in and fills silence without changing speech', () => {
+    const speech = new Float32Array(1000)
+    speech.fill(0.5, 500)
+    const out = withNoiseFloor(speech, 300)
+    expect(out.length).toBe(1300)
+    expect(zeroAfterEncode(out.subarray(0, 800))).toBeLessThan(800 * 0.05)
+    for (let i = 800; i < 1300; i += 50) expect(out[i]).toBeCloseTo(0.5, 2)
   })
 })

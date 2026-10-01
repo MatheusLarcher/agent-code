@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import {
+  RUN_STEPS_TIMEOUT_MS,
   WindowsControlService,
   sourceWindowId,
   type WindowEntry,
@@ -17,13 +18,22 @@ const windowEntry: WindowEntry = {
   bounds: { x: 10, y: 20, width: 800, height: 600 }
 }
 
-function fakeBridge(): WindowsControlBridge & { requests: Array<{ method: string; params: Record<string, unknown> }> } {
-  const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+type RecordedRequest = { method: string; params: Record<string, unknown>; options?: { timeoutMs?: number } }
+
+function fakeBridge(): WindowsControlBridge & { requests: RecordedRequest[] } {
+  const requests: RecordedRequest[] = []
   return {
     requests,
     stop: vi.fn(),
-    async request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-      requests.push({ method, params })
+    async request<T>(
+      method: string,
+      params: Record<string, unknown> = {},
+      _signal?: AbortSignal,
+      options?: { timeoutMs?: number }
+    ): Promise<T> {
+      requests.push(options ? { method, params, options } : { method, params })
+      if (method === 'form_fields') return { text: '0 Edit "Nome" = ""', count: 1, targetWindowId: '1234' } as T
+      if (method === 'run_steps') return { ok: true, done: 1, total: 1, targetWindowId: '1234', state: 'ativo: "x"' } as T
       if (method === 'list_windows') return [windowEntry] as T
       if (method === 'get_accessibility') {
         return { tree: '[0] Window', elementCount: 1, focusedElement: '[0] Window' } as T
@@ -83,6 +93,51 @@ describe('WindowsControlService', () => {
     service.setEnabled(false)
     expect(bridge.stop).toHaveBeenCalledTimes(1)
     await expect(service.click('1234', state.screenshot!.id, 1, 1, 'left', 1)).rejects.toThrow('screenshotId expirou')
+  })
+
+  it('fill envia text/mode e só inclui elementIndex quando informado', async () => {
+    const { service, bridge } = makeService()
+    await service.fill('1234', 'teste de velocidade')
+    expect(bridge.requests.at(-1)).toEqual({
+      method: 'fill',
+      params: { windowId: '1234', text: 'teste de velocidade', mode: 'replace' }
+    })
+    await service.fill('1234', ' fim', { elementIndex: 4, mode: 'append' })
+    expect(bridge.requests.at(-1)).toEqual({
+      method: 'fill',
+      params: { windowId: '1234', text: ' fim', mode: 'append', elementIndex: 4 }
+    })
+  })
+
+  it('form_fields envia windowId e só inclui maxElements quando informado, com o timeout padrão', async () => {
+    const { service, bridge } = makeService()
+    await expect(service.formFields('1234')).resolves.toMatchObject({ count: 1, targetWindowId: '1234' })
+    expect(bridge.requests.at(-1)).toEqual({ method: 'form_fields', params: { windowId: '1234' } })
+    await service.formFields('1234', 80)
+    expect(bridge.requests.at(-1)).toEqual({ method: 'form_fields', params: { windowId: '1234', maxElements: 80 } })
+  })
+
+  it('run_steps envia passos/expect com timeout de 135 s e invalida o screenshot da janela', async () => {
+    const { service, bridge } = makeService()
+    const state = await service.getWindowState('1234', { includeScreenshot: true, includeText: false })
+    const steps = [{ action: 'click' as const, target: { name: 'Salvar' } }]
+    await expect(service.runSteps('1234', steps, 'nota.txt')).resolves.toMatchObject({ ok: true, state: 'ativo: "x"' })
+    expect(bridge.requests.at(-1)).toEqual({
+      method: 'run_steps',
+      params: { windowId: '1234', steps, expect: 'nota.txt' },
+      options: { timeoutMs: RUN_STEPS_TIMEOUT_MS }
+    })
+    expect(RUN_STEPS_TIMEOUT_MS).toBe(135_000)
+    await service.runSteps('1234', steps)
+    expect(bridge.requests.at(-1)?.params).toEqual({ windowId: '1234', steps })
+    await expect(service.click('1234', state.screenshot!.id, 1, 1, 'left', 1)).rejects.toThrow('screenshotId expirou')
+  })
+
+  it('form_fields e run_steps respeitam o toggle desligado', async () => {
+    const { service, bridge } = makeService(false)
+    await expect(service.formFields('1234')).rejects.toThrow('Controle do Windows desativado')
+    await expect(service.runSteps('1234', [{ action: 'press', value: 'Tab' }])).rejects.toThrow('Controle do Windows desativado')
+    expect(bridge.requests).toHaveLength(0)
   })
 
   it('cancelamento de escopo aborta uma operação em andamento', async () => {

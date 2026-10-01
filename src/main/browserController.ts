@@ -28,6 +28,9 @@ import {
   syncSelectMode,
   forwardPageInput
 } from './pageActions'
+import { collectFields, formatFields } from './browserFields'
+import { runSteps } from './browserSteps'
+import type { BrowserStep, RunStepsResult } from './browserStepsMatch'
 import { bootAndroidDevice, forwardAndroidInput } from './android/androidTab'
 import { hideChromeWindowFromTaskbar } from './windowsTaskbar'
 import type { AndroidDevice } from './android/androidDevice'
@@ -628,6 +631,14 @@ export class BrowserController {
 
   async evaluate(expression: string): Promise<string> {
     return evaluateExpression(await this.activePage(), expression)
+  }
+
+  async formFields(): Promise<string> {
+    return formatFields(await collectFields(await this.activePage()))
+  }
+
+  async runSteps(steps: BrowserStep[], expect?: string): Promise<RunStepsResult> {
+    return runSteps(await this.activePage(), steps, expect)
   }
 
   async close(): Promise<void> {

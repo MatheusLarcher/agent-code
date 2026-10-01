@@ -1,9 +1,34 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { BrowserController } from './browserController'
+import { MAX_EXPECT, MAX_STEPS, REF_RE, STEP_ACTIONS, resultText, stepProblem } from './browserStepsMatch'
 
 type Text = { content: { type: 'text'; text: string }[] }
 const text = (t: string): Text => ({ content: [{ type: 'text', text: t }] })
+
+const stepTargetSchema = z.object({
+  ref: z.string().regex(REF_RE).optional().describe('Ref (eN) from browser_form_fields.'),
+  label: z.string().min(1).max(500).optional()
+    .describe('Field label or radio option label; case/accent-insensitive, exact match wins over contains.'),
+  text: z.string().min(1).max(500).optional().describe('Visible text of a button or link.')
+})
+
+export const browserStepSchema = z.object({
+  action: z.enum(STEP_ACTIONS),
+  target: stepTargetSchema.optional(),
+  value: z.union([z.string().max(100_000), z.array(z.string().min(1).max(1_000)).min(1).max(100)]).optional()
+    .describe('fill: text; select: option (array only for multi-select/multi combobox); radio group: option label; press: key or chord (Enter, Control+a); navigate: URL; wait_for: text that must appear.'),
+  timeoutMs: z.number().int().min(100).max(30_000).optional().describe('How long to wait for the target (default 5000).')
+}).superRefine((step, ctx) => {
+  const problem = stepProblem(step)
+  if (problem) ctx.addIssue({ code: 'custom', message: problem })
+})
+
+export const browserRunStepsShape = {
+  steps: z.array(browserStepSchema).min(1).max(MAX_STEPS),
+  expect: z.string().min(1).max(MAX_EXPECT).optional()
+    .describe('Text that proves success (e.g. "Thanks for submitting"); ok requires it to appear.')
+}
 
 /**
  * Exposes the embedded Playwright browser to the agent as an in-process MCP
@@ -50,6 +75,18 @@ export function createBrowserMcpServer(
         'Open a URL in the ACTIVE tab (reusing it — does NOT open a new tab). Launches the browser if needed.',
         { url: z.string().describe('The URL to open (https:// is added if missing).') },
         async ({ url }) => text(await browser.navigate(url))
+      ),
+      tool(
+        'browser_form_fields',
+        'FIRST step to interact with a page (forms, clicks, choices). Lists the visible controls of the ACTIVE tab, one line each: `eN type[*=required] "label" [options] = "value"`; radio groups show each option as Label=eN, checkboxes = on/off, passwords are masked; then buttons/links; last line `url: … | title: …`. Refs stay stable across reads. Then do everything in ONE browser_run_steps, targeting by label/text. Reads the main frame only (not iframes or shadow DOM): if it comes back empty or useless, or the page is a canvas, use browser_snapshot/browser_screenshot.',
+        {},
+        async () => text(await browser.formFields())
+      ),
+      tool(
+        'browser_run_steps',
+        'Run ALL the steps of an interaction on the ACTIVE tab in one call (after browser_form_fields). Actions: fill, select, check, uncheck, click, press, wait_for, navigate. Target by label (field or radio option label) or text (button/link text) — case/accent-insensitive, exact beats contains — or by ref from browser_form_fields. Each target is resolved right before its step and polled up to timeoutMs (default 5000), so fields that only appear later (City after State) work. Radio group: select with the group label and value = option, or check the option label. Stops at the first failure or ambiguous target: failedStep {i (0-based), action, target, error, candidates}. After clicks and at the end it waits for the first of: expect text, navigation, invalid fields, timeout. Returns JSON {ok, done, total, failedStep?, outcome, message?, invalid?, url} then the page state (form fields + visible alerts). Call again only if it stopped, starting from that state. Fall back to browser_snapshot/browser_screenshot for canvas pages, empty form_fields or ambiguous results.',
+        browserRunStepsShape,
+        async ({ steps, expect }) => text(resultText(await browser.runSteps(steps, expect)))
       ),
       tool(
         'browser_snapshot',
