@@ -110,8 +110,8 @@ describe('Office3DWorkspace', () => {
     expect(raf.pending()).toBe(1)
     act(() => raf.flush())
     expect(renderers[0].renders).toBe(1)
-    // Motor + bateria da sessão na barra; a camada dos balões dentro do palco.
-    expect(src.subs).toBe(2)
+    // Só o motor assina o feed (a energia da barra vem dele); a camada dos balões dentro do palco.
+    expect(src.subs).toBe(1)
     expect(screen.getByTestId('office3d-stage').querySelectorAll('.qb-layer')).toHaveLength(1)
     const stage = screen.getByTestId('office3d-stage')
     first.unmount()
@@ -260,7 +260,7 @@ describe('Office3DWorkspace', () => {
       const view = render(
         <Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ ...manualRaf().opts, source: source(null), createRenderer: fakeRenderer }} />
       )
-      // A bateria da sessão já tem o intervalo dela; a demo soma exatamente um.
+      // O motor já tem o tique dele (falas e energia); a demo soma exatamente um.
       const base = vi.getTimerCount()
       press()
       expect(officeStore.overridden).toBe(true)

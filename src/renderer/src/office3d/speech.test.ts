@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PerspectiveCamera, Vector3 } from 'three'
 import type { AgentStatus, OfficeSnapshot } from './events'
 import { COMPACT_H, COMPACT_W, FONT_PX, TTL_MS, seededRng } from './quips'
-import { ANCHOR_UP, bubbleScale, MAX_BUBBLES, MID_SCALE, MIN_FONT_PX, SCALE_MID_M, SCALE_NEAR_M, Speech } from './speech'
+import { ANCHOR_UP, BUBBLE_TOP, bubbleScale, MAX_BUBBLES, MID_SCALE, MIN_FONT_PX, SCALE_MID_M, SCALE_NEAR_M, Speech } from './speech'
 
 const W = 1600
 const H = 900
@@ -234,6 +234,45 @@ describe('Speech — balões ligados ao motor', () => {
       speech.place(camera, W, H, false, head)
       expect([liftOf(bubble(down)), liftOf(bubble(up))]).toEqual([0, 1])
     }
+  })
+
+  it('cabeça perto da barra do HUD: nenhum balão fica sob ela — desce no x da cabeça ou, sem espaço, vira para baixo dela', () => {
+    measured(180, 60)
+    speech = new Speech(host, () => {}, seededRng(14))
+    const anchorY = (h: Vector3): number => toPx(h.clone().setY(h.y + ANCHOR_UP)).y
+    // Perto da câmera (escala 1, ~85 px entre a cabeça e a ponta): a ponta sem empilhar a 90 px do topo.
+    const near = new Vector3(0, 1.2, 4)
+    while (anchorY(near) > 90) near.y += 0.02
+    // Longe e à esquerda (escala 0,8, ~15 px): a ponta a 70 px — não cabe entre a barra e a cabeça.
+    const far = new Vector3(-10, 1.2, 0)
+    while (anchorY(far) > 70) far.z -= 0.1
+    heads.set('perto', near)
+    heads.set('longe', far)
+    speech.feed(snap([asking('perto'), failing('longe')]), [], NOW)
+    speech.place(camera, W, H, false, head)
+    expect(shownKeys()).toEqual(['longe', 'perto'])
+    // Perto: preso logo abaixo da barra, a ponta no x da cabeça, entre a ponta sem empilhar e a cabeça.
+    const p = bubble('perto')
+    expect([p.classList.contains('qb-flip'), liftOf(p)]).toEqual([false, 0])
+    expect(rectOf(p, 180, 60)[1]).toBeGreaterThanOrEqual(BUBBLE_TOP - 0.5)
+    expect(Math.abs(xOf(p) - toPx(near).x)).toBeLessThan(1)
+    expect(yOf(p)).toBeGreaterThan(anchorY(near))
+    expect(yOf(p)).toBeLessThan(toPx(near).y)
+    // Longe: virado — o topo do balão é a ponta, logo abaixo da cabeça, e nada fica acima da barra.
+    const f = bubble('longe')
+    expect(f.classList.contains('qb-flip')).toBe(true)
+    expect(f.style.transform).toMatch(/translate\(-50%, 0\)$/)
+    expect(scaleOf(f)).toBe(MID_SCALE)
+    expect(yOf(f)).toBeGreaterThanOrEqual(BUBBLE_TOP)
+    expect(yOf(f)).toBeGreaterThan(toPx(far).y)
+    // Na vertical da ponta sem empilhar (a perspectiva inclina a vertical da cabeça em ~2 px na borda da tela).
+    expect(Math.abs(xOf(f) - toPx(far.clone().setY(far.y + ANCHOR_UP)).x)).toBeLessThan(1)
+    expect(Math.abs(xOf(f) - toPx(far).x)).toBeLessThan(3)
+    // A cabeça desce para o meio da tela: o balão volta para cima dela, sem virar.
+    far.set(-4, 1.2, 0)
+    speech.place(camera, W, H, false, head)
+    expect(f.classList.contains('qb-flip')).toBe(false)
+    expect(yOf(f)).toBeCloseTo(anchorY(far), -1)
   })
 
   it('escala pela distância: ~1 perto, ~0,8 no médio, sem a fonte efetiva ficar abaixo de 11 px', () => {

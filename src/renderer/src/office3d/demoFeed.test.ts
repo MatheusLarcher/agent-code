@@ -5,6 +5,7 @@ import { sessionBattery } from './battery'
 import { DEMO_PER_ROOM, DEMO_ROOMS, demoFeed } from './demoFeed'
 import { DEMO_LOOP_MS, USAGE_BACK_AT, USAGE_OUT_AT } from './demoTimeline'
 import { diffEvents, snapshotOf, type AgentEvent, type AgentEventType, type AgentPhase, type OfficeSnapshot } from './events'
+import { officePower, powerEvents, type OfficePower } from './power'
 
 /** Começo de um ciclo do loop num relógio realista (set/2026: segundos com 10 dígitos). */
 const T0 = 14_916_667 * DEMO_LOOP_MS
@@ -89,9 +90,29 @@ describe('linha do tempo da demonstração', () => {
 
   it('a janela de 5h esgota e volta em algum ponto do loop', () => {
     const at = (t: number): ReturnType<typeof sessionBattery> => sessionBattery(demoFeed(T0 + t).usageLimits, T0 + t)
-    expect(at(0)).toMatchObject({ percent: 63, rejected: false })
+    expect(at(0)).toMatchObject({ percent: 85, rejected: false })
     expect(at(USAGE_OUT_AT + 1_000)).toMatchObject({ percent: 0, rejected: true })
     expect(at(USAGE_BACK_AT + 1_000)).toMatchObject({ rejected: false, level: 'high' })
+  })
+
+  it('a energia do escritório faz o ciclo inteiro no loop: cheia → economia → alerta → apagão (≥ 20 s de festa) → luz voltou', () => {
+    let p: OfficePower | null = null
+    const levels: Array<{ level: string; t: number }> = []
+    const events: Array<{ event: string; t: number }> = []
+    for (let t = 0; t <= DEMO_LOOP_MS; t += 1_000) {
+      const next = officePower(demoFeed(T0 + t), T0 + t, p)
+      const ev = powerEvents(p, next)
+      if (ev) events.push({ event: ev, t })
+      if (!levels.length || levels[levels.length - 1].level !== next!.level) levels.push({ level: next!.level, t })
+      p = next
+    }
+    expect(levels.map((l) => l.level)).toEqual(['cheia', 'economia', 'alerta', 'apagao', 'cheia'])
+    expect(events.map((e) => e.event)).toEqual(['economia', 'alerta', 'apagao', 'luz-voltou'])
+    const out = events.find((e) => e.event === 'apagao')!.t
+    const back = events.find((e) => e.event === 'luz-voltou')!.t
+    expect(back - out).toBeGreaterThanOrEqual(20_000)
+    // O consumo da demo é medido: os pulsos do cabo andam antes do apagão.
+    expect(officePower(demoFeed(T0 + 30_000), T0 + 30_000, officePower(demoFeed(T0 + 20_000), T0 + 20_000))!.drainPerMin).toBeGreaterThan(0)
   })
 
   it('é determinística e se repete a cada DEMO_LOOP_MS', () => {

@@ -232,6 +232,22 @@ describe('createQuipEngine: texto', () => {
     expect(qr?.text).toContain('ENOENT config.json')
   })
 
+  it('erro da API: a fala diz o que houve em português, com o humor de sempre e sem o JSON cru', () => {
+    const raw = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'
+    const clipped = `${raw.slice(0, 79)}…` // o corte do retrato (events.TEXT_MAX)
+    const texts = new Set<string>()
+    for (let seed = 1; seed <= 12; seed++) {
+      const msg = seed % 2 ? raw : clipped
+      const q = one(createQuipEngine(seededRng(seed)), status({ phase: 'error', busySinceMs: null, error: msg }), [ev({ type: 'error', message: msg })], NOW)
+      expect(q?.kind).toBe('error')
+      expect(q?.text).toContain('API sobrecarregada (529)')
+      expect(q?.text).not.toMatch(/\{|"type"/)
+      expect(q?.text.length).toBeLessThanOrEqual(QUIP_MAX)
+      texts.add(q?.text ?? '')
+    }
+    expect(texts.size).toBeGreaterThan(1) // as variações (e a piada) continuam
+  })
+
   it('variação: a mesma situação seguida não repete a frase', () => {
     const e = createQuipEngine(fixed(0))
     const a = one(e, status({ phase: 'done' }), [ev({ type: 'request', text: 'um' })], NOW)

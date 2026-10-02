@@ -251,6 +251,46 @@ describe('createBubbleLayer', () => {
     expect(['qb-compact', 'qb-up1', 'qb-up2'].some(has)).toBe(false)
   })
 
+  it('place virado: o topo do balão (a ponta, para cima) encosta em (x, y); classe e transform só quando mudam', () => {
+    vi.useFakeTimers()
+    layer = createBubbleLayer(host, { onClick: () => {} })
+    layer.set('k', quip('oi'))
+    const [el] = bubbles(host)
+    const stack: BubbleStack = { compact: false, lift: 0, lx: 0, ly: 0, flip: true }
+    layer.place('k', 100, 200, 1, true, stack)
+    expect(el.classList.contains('qb-flip')).toBe(true)
+    expect(el.style.transform).toBe('translate3d(100px, 200px, 0) scale(1) translate(-50%, 0)')
+    // Mesmo lugar e mesma forma: nenhuma escrita.
+    const toggle = vi.spyOn(DOMTokenList.prototype, 'toggle')
+    const writes: string[] = []
+    const real = el.style
+    const counted = new Proxy(real, { set: (t, p, v) => (writes.push(String(p)), Reflect.set(t, p, v)) })
+    Object.defineProperty(el, 'style', { configurable: true, get: () => counted })
+    for (let i = 0; i < 50; i++) layer.place('k', 100.2, 199.8, 1, true, stack)
+    expect(toggle).not.toHaveBeenCalled()
+    expect(writes).toEqual([])
+    // Desvira no mesmo (x, y): a ponta volta para baixo — agora o pé encosta lá.
+    stack.flip = false
+    layer.place('k', 100, 200, 1, true, stack)
+    expect(el.classList.contains('qb-flip')).toBe(false)
+    expect(el.style.transform).toBe('translate3d(100px, 200px, 0) scale(1) translate(-50%, -100%)')
+    // Volta ao pool limpo.
+    stack.flip = true
+    layer.place('k', 100, 200, 1, true, stack)
+    layer.set('k', null)
+    vi.advanceTimersByTime(EXIT_MS)
+    expect(el.classList.contains('qb-flip')).toBe(false)
+  })
+
+  it('virado tem a mesma altura medida: o padding da ponta só troca de lado (balão, nuvem e ícone)', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/renderer/src/office3d/quips/quips.css'), 'utf8')
+    const rule = (selector: string): string => new RegExp(`(?:^|\\n|,\\s*)${selector.replace(/[.*[\]()']/g, '\\$&')}[^{]*\\{([^}]*)\\}`).exec(css)?.[1] ?? ''
+    const px = (body: string, prop: string): number => Number(new RegExp(`(?:^|[;\\s])${prop}:\\s*(\\d+)px`).exec(body)?.[1])
+    expect(px(rule('.qb,'), 'padding-bottom')).toBe(px(rule('.qb.qb-flip'), 'padding-top'))
+    expect(px(rule(".qb[data-kind='idle'],"), 'padding-bottom')).toBe(px(rule(".qb.qb-flip[data-kind='idle'],"), 'padding-top'))
+    expect(px(rule('.qb-layer.qb-compact .qb,'), 'padding-bottom')).toBe(px(rule('.qb-layer.qb-compact .qb.qb-flip,'), 'padding-top'))
+  })
+
   it('FONT_PX é a fonte do .qb-body no quips.css (o motor garante a fonte mínima com ela)', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/renderer/src/office3d/quips/quips.css'), 'utf8')
     const body = /\n\.qb-body \{([^}]*)\}/.exec(css)?.[1] ?? ''

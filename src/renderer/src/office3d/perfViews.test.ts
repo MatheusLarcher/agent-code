@@ -234,4 +234,61 @@ describe('desempenho nas 3 vistas (demo 5 salas × 4 agentes)', () => {
     expect(fog.far).toBeGreaterThan(longe.distance)
     engine.dispose()
   })
+
+  it('apagão com festa: mesmas regras (calls < antes, LONGE ~30 fps sem sombra), festa só PERTO/MÉDIO, nada novo na cena por quadro', () => {
+    // Aos 60 s do loop a janela de 5h está esgotada: apagão desde o 1º retrato.
+    vi.setSystemTime(T0 + 60_000)
+    const renderer = countingRenderer()
+    const { engine, flush, pending } = demoEngine(renderer)
+    expect(engine.officePower?.level).toBe('apagao')
+    flush(30)
+    const scene = engine.scene.scene
+    const room = engine.scene.rooms3d[0]
+    const building = { ...engine.rig.pose }
+    const views = {
+      perto: { tx: room.x + room.width / 2, ty: 0, tz: room.z + room.depth / 2, yaw: 0, pitch: 0.8, distance: 9 },
+      predio: building,
+      longe: { ...building, distance: 60 }
+    }
+    const count = (): number => {
+      let n = 0
+      scene.traverse(() => void n++)
+      return n
+    }
+    const partyVisible = (): number => {
+      let n = 0
+      scene.traverse((o) => {
+        if (o.name === 'paper-planes' && (o as InstancedMesh).count > 0) n++
+        if ((o as Mesh).renderOrder === 3 && chainVisible(o) && o instanceof InstancedMesh) n++
+      })
+      return n
+    }
+    const rows: Record<string, Record<string, number | string>> = {}
+    for (const [name, pose] of Object.entries(views) as Array<[keyof typeof views, typeof building]>) {
+      engine.rig.pose = { ...pose }
+      engine.requestRender()
+      flush(30)
+      const before = count()
+      const r0 = renderer.renders
+      flush(60)
+      const main = passStats(scene, engine.camera)
+      const shadow = shadowStats(scene)
+      rows[name] = { salas: `${engine.stats.rooms}/${engine.stats.roomsTotal}`, lod: engine.stats.lod, calls: main.calls, tris: main.triangles, sombraCalls: shadow.calls, festa: partyVisible(), quadros60: renderer.renders - r0 }
+      expect(main.calls + shadow.calls).toBeLessThan(BEFORE[name].calls)
+      expect(main.triangles + shadow.triangles).toBeLessThan(BEFORE[name].triangles)
+      // Nenhum objeto novo entra na cena quadro a quadro (pools e malhas criadas uma vez).
+      expect(count()).toBe(before)
+    }
+    console.table(rows)
+    expect(Number(rows.perto.festa)).toBeGreaterThan(0)
+    expect(rows.longe).toMatchObject({ lod: 2, sombraCalls: 0, festa: 0 })
+    expect(Number(rows.longe.quadros60)).toBeLessThanOrEqual(31)
+    // Câmera longe do prédio: o laço para (render sob demanda), mesmo no apagão.
+    engine.rig.pose = { ...building, tx: building.tx + 400, tz: building.tz + 400, distance: 10 }
+    engine.requestRender()
+    flush(5)
+    expect(engine.stats.rooms).toBe(0)
+    expect(pending()).toBe(0)
+    engine.dispose()
+  })
 })

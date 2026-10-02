@@ -9,7 +9,9 @@
  *                  DOM puro e barato: um elemento por balão (pool), posição só
  *                  por transform; o tamanho é medido no set, nunca por quadro.
  *                  Estilos em quips.css (importado por ele).
- * Apoio: lines.ts (as falas, por situação) e format.ts (preencher e cortar ≤ 72).
+ * Apoio: lines.ts (as falas, por situação), format.ts (preencher e cortar ≤ 72)
+ * e powerVoice.ts (quem fala da energia do escritório e da festa do apagão;
+ * entra pelo 4º argumento do step: createQuipEngine(rng).step(…, now, power)).
  *
  * Ligação no motor: ../speech.ts (seleção, LOD, escala e posição por quadro;
  * a des-sobreposição em tela é ../bubbleLayout.ts). Esquema:
@@ -57,3 +59,4 @@ export {
   type BubbleStack
 } from './bubbleLayer'
 export { QUIP_MAX } from './format'
+export { PARTY_TALKERS, type PowerQuipInput } from './powerVoice'

@@ -9,21 +9,25 @@
  * (monitor, colega, câmera), piscar a cada 3–6 s, respiração, objeto na mão e
  * efeitos (confete, fumaça, suor, vapor, gotas, "!"). lod 0 = completo; 1 =
  * sem crossfade/piscar/respirar/vapor, sem os detalhes (olhos, dedos, objetos
- * de mão — só a plaquinha "Posso?" fica) e sem sombra; 2 = pose a ~10 Hz, sem
- * efeito, sem objeto de mão, mãos/pescoço/sapatos nem bateria. A cena tira de
- * cena quem está numa sala fora da tela (`setView`): sem update nenhum; ao
- * voltar, o 1º update mostra o estado atual direto (sem crossfade, olhar
- * atrasado nem efeito velho). `castMoved()` diz se a sombra dele mudou.
+ * de mão — só a plaquinha "Posso?" e a lanterna da festa ficam) e sem sombra;
+ * 2 = pose a ~10 Hz, sem efeito, sem objeto de mão nem mãos/pescoço/sapatos.
+ * A cena tira de cena quem está numa sala fora da tela (`setView`): sem update
+ * nenhum; ao voltar, o 1º update mostra o estado atual direto (sem crossfade,
+ * olhar atrasado nem efeito velho). `castMoved()` diz se a sombra dele mudou.
+ * Na festa do apagão os passos seguem a batida do relógio da cena (dance.ts):
+ * todos dançam juntos, com os joelhos no ritmo.
  * Nada aloca no caminho quente: poses em Float32Array e vetores de rascunho.
  *
- * Acima da cabeça (HUD que acompanha a cabeça): bateria do contexto,
- * indicador (permissão/pergunta/erro…), os "z" do cochilo e o "!" do pedido.
+ * Acima da cabeça (HUD que acompanha a cabeça): indicador (permissão/pergunta/
+ * erro…), os "z" do cochilo e o "!" do pedido. A bateria agora é do escritório
+ * (power.ts); o contexto de cada agente é a pilha de papéis na mesa dele
+ * (paperPile.ts).
  */
 import { Group, Mesh, MeshLambertMaterial, Sprite, Vector3 } from 'three'
 import type { OfficeCharacterModel } from '../office/adapter/model'
 import { appearance, HAIR, seedColor, SKIN } from './appearance'
-import { contextBattery, type BatteryLevel } from './battery'
 import { brainBusy, FX, type Brain, type PropKind } from './brain'
+import { beatAt, danceLower, isDance } from './dance'
 import type { Kit } from './kit'
 import type { CharacterLayout } from './layout'
 import { actionPose, reactionPose } from './gestures'
@@ -83,16 +87,16 @@ export class Character3D {
   viewLevel: Lod = 0
   /** Já recebeu um nível (o 1º sai sem histerese). */
   viewPlaced = false
+  /** A sala dele está sem luz (apagão): o monitor apagou, o rosto não brilha. */
+  powerDark = false
   private readonly scale: number
-  /** Nível aplicado ao visual (detalhes, partes pequenas, bateria, sombra). */
+  /** Nível aplicado ao visual (detalhes, partes pequenas, sombra). */
   private shown: Lod = 0
-  private hasBattery = false
   /** Próximo update vira a cabeça direto para o alvo (voltou à vista). */
   private lookSnap = false
   /** O que a sombra dele era na última vez que contou como mudança. */
   private readonly castAt = { vis: false, x: NaN, z: NaN, yaw: NaN, py: NaN, lean: NaN }
   private readonly hud = new Group()
-  private readonly battery: { group: Group; fill: Mesh; level: BatteryLevel | null; charge: number }
   private indicator: Mesh | null = null
   private bubble: OfficeCharacterModel['bubble'] = null
   private readonly zs: Sprite[]
@@ -136,21 +140,6 @@ export class Character3D {
     this.hairMat = new MeshLambertMaterial({ color: HAIR[a.hair] })
     this.rig = buildRig(kit, this.group, { skin: this.skinMat, shirt: this.shirtMat, hair: this.hairMat, pants: kit.mat.pants[a.pants] })
     this.group.add(this.hud)
-
-    // Bateria do contexto: casca, polo e carga.
-    const bg = new Group()
-    bg.position.y = 0.34
-    const shell = new Mesh(kit.geo.box, kit.mat.batteryShell)
-    shell.scale.set(0.26, 0.1, 0.05)
-    const nub = new Mesh(kit.geo.box, kit.mat.batteryNub)
-    nub.scale.set(0.025, 0.05, 0.035)
-    nub.position.x = 0.1425
-    const fill = new Mesh(kit.geo.box, kit.mat.battery.high)
-    fill.scale.set(0.22, 0.07, 0.056)
-    bg.add(shell, nub, fill)
-    bg.visible = false
-    this.hud.add(bg)
-    this.battery = { group: bg, fill, level: null, charge: -1 }
     this.zs = [0.1, 0.13, 0.16].map((s) => {
       const z = new Sprite(kit.mat.z)
       z.scale.setScalar(s)
@@ -169,22 +158,11 @@ export class Character3D {
     this.update(0, 0)
   }
 
-  /** Modelo novo: bateria, indicador e se o monitor dele está aceso. */
+  /** Modelo novo: indicador e se o monitor dele está aceso. */
   applyModel(c: CharacterLayout, screenOn: boolean): void {
     this.model = c.model
-    const b = contextBattery(c.model.context)
-    this.hasBattery = b !== null
-    this.battery.group.visible = this.hasBattery && this.shown < 2
-    if (b && (b.level !== this.battery.level || Math.abs(b.charge - this.battery.charge) > 0.005)) {
-      this.battery.level = b.level
-      this.battery.charge = b.charge
-      this.battery.fill.material = this.kit.mat.battery[b.level]
-      const w = Math.max(0.012, 0.22 * b.charge)
-      this.battery.fill.scale.x = w
-      this.battery.fill.position.x = -0.11 + w / 2
-    }
     this.setBubble(c.model.bubble)
-    if (this.indicator) this.indicator.position.y = b ? 0.55 : 0.38
+    if (this.indicator) this.indicator.position.y = 0.38
     this.screenOn = screenOn && c.model.active
   }
 
@@ -221,14 +199,13 @@ export class Character3D {
     if (this.bang) this.bang.visible = false
   }
 
-  /** Visual do nível: detalhes só PERTO; mãos, pescoço, sapatos e bateria fora do LONGE; sombra só PERTO. */
+  /** Visual do nível: detalhes só PERTO; mãos, pescoço e sapatos fora do LONGE; sombra só PERTO. */
   private applyLod(level: Lod): void {
     this.shown = level
     for (const m of this.rig.details) m.visible = level === 0
     for (const m of this.rig.smalls) m.visible = level < 2
     this.rig.torso.castShadow = level === 0
     this.rig.headMesh.castShadow = level === 0
-    this.battery.group.visible = this.hasBattery && level < 2
   }
 
   /** A sombra dele mudou (andou, sentou, apareceu/sumiu, deixou de projetar) desde a última vez que contou? */
@@ -284,7 +261,7 @@ export class Character3D {
     this.placeHud(dt)
     this.effects(dt, lod)
     const t = this.ctx.t
-    const glow = this.screenOn && b.mode === 'work' && b.sit > 0.9
+    const glow = this.screenOn && !this.powerDark && b.mode === 'work' && b.sit > 0.9
     this.skinMat.emissiveIntensity = glow ? 0.2 + Math.sin(t * 7.3) * 0.03 + Math.sin(t * 2.1) * 0.03 : 0
     if (this.indicator) {
       this.indicator.scale.setScalar(1 + Math.sin(t * 3) * 0.12)
@@ -298,10 +275,12 @@ export class Character3D {
     locomotion(this.lower, this.phase, smooth(b.speed / 0.35), run)
     if (b.sit > 0) {
       this.sitPose.set(this.lower)
-      sitLower(this.sitPose, b.seat ?? 'chair')
+      sitLower(this.sitPose, b.seat ?? 'chair', this.ctx.t)
       lerpPose(this.lower, this.lower, this.sitPose, smooth(b.sit), LOWER)
     }
     this.params.speed = b.workSpeed
+    const beat = beatAt(this.ctx.t)
+    this.params.beat = beat
     if (b.action !== this.lastAction) {
       this.from.set(this.out)
       this.blendT = lod === 0 && this.lastAction !== null ? 0 : BLEND_S
@@ -313,6 +292,8 @@ export class Character3D {
     this.blendT += dt
     this.out.set(this.lower)
     lerpPose(this.out, this.from, this.upper, smooth(this.blendT / BLEND_S), UPPER)
+    // Dançando parado em pé: os joelhos entram no ritmo.
+    if ((isDance(b.action) || b.action === 'conga') && b.sit === 0 && b.speed < 0.05) danceLower(this.out, b.action, beat)
     if (b.reaction) {
       this.react.set(this.out)
       reactionPose(this.react, b.reaction, b.reactionT, this.params, b.sit > 0.5)
@@ -387,7 +368,8 @@ export class Character3D {
     }
     if (!kind) return
     const p = this.props.get(kind)!
-    p.visible = lod === 0 || (lod === 1 && kind === 'sign')
+    // MÉDIO: só o que é informação (a plaquinha) ou efeito da festa (a lanterna).
+    p.visible = lod === 0 || (lod === 1 && (kind === 'sign' || kind === 'flashlight'))
     if (!p.visible) return
     const o = this.out
     const tilt = kind === 'cup' ? 0.9 * o[CH.prop] : kind === 'can' ? -o[CH.prop] : 0
@@ -425,8 +407,8 @@ export class Character3D {
     const pop = k < 0.18 ? (k / 0.18) * 1.25 : k < 0.3 ? 1.25 - ((k - 0.18) / 0.12) * 0.25 : 1
     const fade = k > 0.85 ? Math.max(0, 1 - (k - 0.85) / 0.25) : 1
     this.bang.scale.setScalar(0.3 * pop * fade)
-    // Acima da bateria e do indicador, subindo um pouco.
-    this.bang.position.set(0, 0.62 + 0.2 * Math.min(1, k * 2.5), 0)
+    // Acima do indicador, subindo um pouco.
+    this.bang.position.set(0, 0.55 + 0.2 * Math.min(1, k * 2.5), 0)
   }
 
   private effects(dt: number, lod: Lod): void {

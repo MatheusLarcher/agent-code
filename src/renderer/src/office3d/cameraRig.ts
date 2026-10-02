@@ -204,12 +204,13 @@ export function projectPoint(pose: CameraPose, view: ViewSize, p: { x: number; y
 
 /**
  * Pose que enquadra a caixa inteira (todas as salas) com a arfagem dada: mira
- * no centro da caixa e busca a menor distância em que os 8 cantos cabem em
- * `fill` do palco, na largura e na altura.
+ * no centro da caixa e busca a menor distância em que os 8 cantos — e os pontos
+ * `extra` (o alto da usina, que é mais alta que as salas) — cabem em `fill` do
+ * palco, na largura e na altura.
  */
-export function framePose(box: FrameBox, view: ViewSize, pitch = 0.85, fill = 0.9): CameraPose {
+export function framePose(box: FrameBox, view: ViewSize, pitch = 0.85, fill = 0.9, extra: ReadonlyArray<{ x: number; y: number; z: number }> = []): CameraPose {
   const base = { tx: (box.minX + box.maxX) / 2, ty: 0, tz: (box.minZ + box.maxZ) / 2, yaw: 0, pitch }
-  const corners: Array<{ x: number; y: number; z: number }> = []
+  const corners: Array<{ x: number; y: number; z: number }> = [...extra]
   for (const x of [box.minX, box.maxX]) for (const y of [0, box.height]) for (const z of [box.minZ, box.maxZ]) corners.push({ x, y, z })
   const fits = (distance: number): boolean =>
     corners.every((p) => {

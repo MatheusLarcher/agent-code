@@ -78,6 +78,8 @@ export type Action =
   | 'none' | 'idle' | 'sitIdle' | 'type' | 'typeFast' | 'readScreen' | 'drum' | 'web' | 'assist' | 'wave' | 'brew' | 'sip'
   | 'grabBook' | 'readBook' | 'lookOut' | 'stretchUp' | 'water' | 'readBoard' | 'stick' | 'admire' | 'talk' | 'listen'
   | 'phone' | 'wait' | 'napDesk' | 'napPufe'
+  // Festa do apagão (dance.ts): quatro passos no BPM, trenzinho, lanterna e pizza.
+  | 'robot' | 'disco' | 'sway' | 'hop' | 'conga' | 'flashlight' | 'pizza'
 
 export type Reaction =
   | 'alert' | 'scared' | 'knuckles' | 'celebrate' | 'stretch' | 'facepalm' | 'fistpump' | 'handsHead' | 'yawn' | 'watch'
@@ -96,6 +98,8 @@ export interface ActionParams {
   seed: number
   /** Lado do colega na entrega da pasta: +1 direita, -1 esquerda. */
   side: number
+  /** Batida da música da festa (relógio da cena × BPM): todos dançam juntos. */
+  beat?: number
 }
 
 export const clamp01 = (k: number): number => (k < 0 ? 0 : k > 1 ? 1 : k)
@@ -252,11 +256,18 @@ export function standPose(out: Pose): void {
   out[CH.eyes] = 1
 }
 
-export type SeatKind = 'chair' | 'pufe'
+export type SeatKind = 'chair' | 'pufe' | 'desk'
 
-/** Pernas e quadril sentados (o tronco é da ação). */
-export function sitLower(out: Pose, seat: SeatKind): void {
-  if (seat === 'pufe') {
+/** Pernas e quadril sentados (o tronco é da ação). Na beira da mesa as pernas balançam com o relógio `t`. */
+export function sitLower(out: Pose, seat: SeatKind, t = 0): void {
+  if (seat === 'desk') {
+    // Tampo a 0,78 m: quadril alto, coxas na horizontal e canelas soltas, balançando.
+    out[CH.pelvisY] = 0.3
+    out[CH.pelvisZ] = 0
+    out[CH.legL] = out[CH.legR] = 1.45
+    out[CH.kneeL] = 1.25 + 0.22 * Math.sin(3.1 * t)
+    out[CH.kneeR] = 1.25 + 0.22 * Math.sin(3.1 * t + Math.PI)
+  } else if (seat === 'pufe') {
     out[CH.pelvisY] = -0.27
     out[CH.pelvisZ] = 0.12
     out[CH.legL] = out[CH.legR] = 1.35

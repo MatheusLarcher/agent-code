@@ -5,7 +5,10 @@
  * em 72. "[ … ]" é trecho opcional: some quando falta o dado de dentro.
  * {s} é o plural do número ao lado ("1 teste" / "42 testes") e nunca vai
  * dentro de "[ … ]". Sem slot só onde o próprio fato é o dado (voz ligou,
- * limite voltou, processo em segundo plano…) e no `thought`, o pensamento à toa.
+ * limite voltou, processo em segundo plano…), no `thought`, o pensamento à
+ * toa, e nas frases da festa do apagão (party*), que só citam a hora da volta.
+ * Energia (power-*): economia e alerta sempre com {pct}; o apagão, com {time}
+ * (a hora em que a luz volta); a volta, com {pct}.
  *
  * Quem escolhe a situação, a variação e o tempo no ar é o generator.ts.
  */
@@ -22,6 +25,8 @@ export type Situation =
   | 'context-low' | 'stalled' | 'stalled-cmd' | 'usage-time' | 'usage-notime' | 'usage-back'
   | 'speak-on' | 'speak-off'
   | 'idle' | 'thought'
+  | 'power-eco' | 'power-alert' | 'power-out' | 'power-back'
+  | 'party' | 'party-flashlight' | 'party-pizza' | 'party-conga'
 
 export interface SituationLines {
   readonly icon: string
@@ -341,5 +346,72 @@ export const LINES: Readonly<Record<Situation, SituationLines>> = {
     'Não é bug, é feature surpresa ✨',
     'Quem deixou esse console.log aqui? Ah, eu',
     'Off-by-one: o erro que eu cometo uma vez a cada… duas'
+  ]),
+
+  // ── energia do escritório (tokens da sessão de 5h) ─────────────────────
+  'power-eco': at('🌱', [
+    'Energia em {pct}%. Apaga a luz do corredor aí 💡',
+    'Modo economia: {pct}% de tokens. Meia luz, meio café 🌱',
+    '{pct}% na bateria do escritório. Desliga um abajur aí 🔌',
+    'Economizando: {pct}% até o reset[ das {time}] 🧮',
+    'Só {pct}% de energia. Quem deixou o monitor aceso? 👀'
+  ]),
+  'power-alert': at('⚠️', [
+    'Bateria do escritório em {pct}%![ Reseta às {time}] ⚠️',
+    'Alerta: {pct}% de tokens. Salvem seus arquivos! 💾',
+    '{pct}% e piscando… isso não é efeito especial 😬',
+    'Energia em {pct}%. Vai faltar luz[ até {time}] 🕯️',
+    'Giroflex ligado: {pct}% na usina[, reset às {time}] 🚨'
+  ]),
+  'power-out': at('🕺', [
+    'Acabou a luz! Festa[ até {time}] 🕺',
+    'Sem tokens, sem trabalho. Solta o som, DJ![ Até {time}] 🎶',
+    'Quem pisou no cabo? 🔦[ Volta às {time}]',
+    'Apagão! Os tokens acabaram[, luz de volta às {time}] 🕯️',
+    'Escritório sem energia[ até {time}]. Partiu pista! 💃'
+  ]),
+  'power-back': at('💡', [
+    'Voltou a luz! {pct}% de energia. Todo mundo pra mesa 🏃',
+    'Luz de volta, {pct}% na bateria! Acabou a festa 🛑',
+    'Energia renovada: {pct}%. Desliga o globo! 💡',
+    'O disjuntor voltou! {pct}% de tokens, bora trabalhar 💪',
+    'Reset feito: {pct}% de energia. Cadeira, me espera! 💺'
+  ]),
+
+  // ── festa no apagão (frases rotativas, 1–2 por vez) ─────────────────────
+  party: at('🎉', [
+    'DJ, solta o grave! 🔊',
+    'Esse é o meu passo do robô 🤖',
+    'Sem tokens, sem deploy. Só dança 💃',
+    'Ninguém me julga: está escuro 🕺',
+    'Isso conta como hora extra? 🎉',
+    'Bola de discoteca: melhor compra do ano ✨',
+    'Quando a luz voltar, eu estava trabalhando, ok? 🤫',
+    'Festa no escritório[ até {time}]! 🥳',
+    'Pista lotada! Cuidado com o cabo ⚡',
+    'Mais uma, DJ![ O reset é só às {time}] 🎶',
+    'Sem luz, mas com estilo ✨',
+    'Alguém viu meu teclado? Tava aqui 🎹'
+  ]),
+  'party-flashlight': at('🔦', [
+    'Cadê o disjuntor? 🔦',
+    'Achei! …não, é a cafeteira ☕',
+    'Disjuntor, aparece! Prometo não te desligar 🔦',
+    'Lanterna na mão, esperança no coração 🔦',
+    'Procurando o disjuntor[ até {time}], se precisar 🕵️'
+  ]),
+  'party-pizza': at('🍕', [
+    'Sem tokens, mas com pizza 🍕',
+    'Quem pediu calabresa? 🍕',
+    'Pizza no escuro tem mais sabor 🍕',
+    'Pausa forçada = pizza. Regras são regras 🍕',
+    'Essa fatia é minha[ até {time}] 🍕'
+  ]),
+  'party-conga': at('🚂', [
+    'Olha o trenzinho! Piuí! 🚂',
+    'Conga, conga, conga! 💃',
+    'Segura no ombro e vai! 🚃',
+    'Trenzinho do apagão[, última parada às {time}] 🚂',
+    'Próxima estação: pista de dança 🚉'
   ])
 }

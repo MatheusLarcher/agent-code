@@ -174,19 +174,27 @@ export function playScript(turns: readonly DemoTurn[], t: number, start: number,
   return st
 }
 
-/** A janela de 5h esgota aqui… */
-export const USAGE_OUT_AT = 68_000
-/** …e volta (reset) aqui. */
-export const USAGE_BACK_AT = 84_000
+/** A janela de 5h esgota aqui (apagão: falta luz no escritório)… */
+export const USAGE_OUT_AT = 52_000
+/** …e volta (reset: a luz volta) aqui — 26 s de festa no escuro. */
+export const USAGE_BACK_AT = 78_000
+/** Fração usada no começo do loop; o fim do loop chega nela de novo (emenda sem salto). */
+export const USAGE_START = 0.15
+/** Logo antes de esgotar: 1% restante (alerta), para o apagão chegar com o 'rejected'. */
+const USAGE_LAST = 0.99
 
-/** Janela `five_hour` da conta no instante `t`: enche até esgotar e zera no reset. */
+/**
+ * Janela `five_hour` da conta no instante `t` — a energia do escritório faz um
+ * ciclo completo por loop: 85% (cheia) → economia aos ~22 s → alerta aos ~41 s
+ * → apagão em USAGE_OUT_AT → reset em USAGE_BACK_AT (100%, luz voltou) → 85%.
+ */
 export function demoUsage(t: number, start: number, now: number): RateLimitStatus {
   const base = { rateLimitType: 'five_hour' as const, updatedAt: now }
   if (t < USAGE_OUT_AT) {
-    const utilization = 0.37 + 0.6 * (t / USAGE_OUT_AT)
-    return { ...base, status: utilization < 0.8 ? 'allowed' : 'allowed_warning', utilization, resetsAt: start + (2 * 60 + 13) * 60_000 }
+    const utilization = USAGE_START + (USAGE_LAST - USAGE_START) * (t / USAGE_OUT_AT)
+    return { ...base, status: utilization < 0.8 ? 'allowed' : 'allowed_warning', utilization, resetsAt: start + USAGE_BACK_AT }
   }
   if (t < USAGE_BACK_AT) return { ...base, status: 'rejected', utilization: 1, resetsAt: start + USAGE_BACK_AT }
-  const utilization = 0.02 + 0.1 * ((t - USAGE_BACK_AT) / (DEMO_LOOP_MS - USAGE_BACK_AT))
+  const utilization = USAGE_START * ((t - USAGE_BACK_AT) / (DEMO_LOOP_MS - USAGE_BACK_AT))
   return { ...base, status: 'allowed', utilization, resetsAt: start + USAGE_BACK_AT + 5 * 3_600_000 }
 }

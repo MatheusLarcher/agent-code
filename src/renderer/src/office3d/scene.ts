@@ -8,7 +8,10 @@
  * Luz: hemisférica quente + ambiente fraca + UMA direcional que projeta sombra
  * (shadow map 2048, câmera de sombra ajustada ao prédio a cada sync). O mapa
  * só é refeito quando algo que projeta sombra muda: `shadowDirty`, que o motor
- * lê e zera.
+ * lê e zera. As três são as únicas luzes, em qualquer nível de energia: a
+ * energia do escritório (energy.ts: usina, apagão, festa) só muda intensidade
+ * e cor delas e liga malhas emissivas/aditivas — luz nova recompilaria shaders.
+ * `setPower` recebe cada leitura da energia; sala no escuro tem monitor preto.
  *
  * `sync(layout, feed, life)` é incremental (cria/move/remove por chave) e é o
  * ÚNICO lugar que decide o conteúdo das telas e redesenha o céu — nada por
@@ -23,54 +26,44 @@
  * `dispose()` libera tudo o que foi criado aqui.
  */
 import { AmbientLight, Color, DirectionalLight, Fog, Frustum, HemisphereLight, Matrix4, Mesh, Raycaster, Scene, Sphere, Vector2, Vector3, type Camera, type Object3D } from 'three'
-import { currentTool, screenModel } from '../components/office/screenContent'
-import type { LookupInfo } from '../office/adapter/director'
 import type { OfficeFeed } from '../office/adapter/feed'
-import type { OfficeCharacterModel } from '../office/adapter/model'
 import { SLEEP_AFTER_SEC } from '../office/behavior/leisure'
 import { greet } from './brain'
 import { Character3D, type FrameCtx } from './characters'
 import { Crowd, DEMO_TIME_FACTOR, modelPhase, type LifeInput } from './crowd'
 import { buildRoom, roomSig, type RoomView } from './decor'
+import { doorWant, swingDoors } from './doors'
+import { OfficeEnergy } from './energy'
 import { createKit, type Kit } from './kit'
 import { buildingBounds, type CharacterLayout, type Office3DLayout, type RoomLayout } from './layout'
 import { FOG_FAR, FOG_NEAR, lodLevel, type Lod } from './lod'
-import { screenLines, type ScreenPage } from './monitorTexture'
+import { paperStep } from './paperPile'
 import { Particles } from './particles'
+import type { OfficePower, PowerEvent } from './power'
 import { createPropKit, type PropKit } from './props'
 import { setRoomLevel } from './roomLod'
-import { screenStatus, setScreen, showScreen } from './screens'
+import { screenPageFor, screenStatus, setScreen, showScreen } from './screens'
 import { accentHue } from './sign'
 
 export { seedColor } from './characters'
 export type { LifeInput } from './crowd'
+export { screenPageFor } from './screens'
 
 export const SHADOW_MAP_SIZE = 2048
 
 const BACKGROUND = 0x1d1a22
 const SUN_OFFSET = { x: 7, y: 16, z: 11 }
-/** Porta: quanto abre (rad), a que distância de alguém e a que velocidade. */
-const DOOR_OPEN = 1.35
-const DOOR_NEAR = 1.3
-const DOOR_SPEED = 4
 /** Névoa "desligada": começa além do plano distante da câmera. */
 const FOG_OFF = 1e6
 /** Personagem sem sala (corredor): esfera dele para o frustum. */
 const LONE_RADIUS = 1.2
 
-/** Página da tela para um personagem ativo: a ferramenta atual ou, sem ela, o rótulo. */
-export function screenPageFor(feed: OfficeFeed | null, model: OfficeCharacterModel): ScreenPage {
-  const info: LookupInfo = { key: model.key, convId: model.convId, role: model.role, trackId: model.trackId }
-  const page = screenLines(screenModel(currentTool(feed, info)))
-  if (page.lines.length > 0 || page.title) return page
-  const title = model.activity === 'read' ? 'lendo' : model.activity === 'type' ? 'escrevendo' : 'trabalhando'
-  return { title, subtitle: '', lines: model.label ? [{ kind: 'meta', text: model.label.slice(0, 58) }] : [] }
-}
-
 export class OfficeScene {
   readonly scene = new Scene()
   readonly crowd = new Crowd()
   readonly particles = new Particles()
+  /** Energia do escritório: usina, luz das salas, apagão e festa. */
+  readonly energy: OfficeEnergy
   private readonly kit: Kit
   private readonly propKit: PropKit
   private readonly sun: DirectionalLight
@@ -101,6 +94,7 @@ export class OfficeScene {
   private readonly viewProj = new Matrix4()
   private readonly sphere = new Sphere()
   private readonly camPos = new Vector3()
+  private readonly doorMoved = { v: false }
   /** Chamado quando algo assíncrono (ícone da placa) muda a imagem. */
   onDirty: () => void = () => {}
 
@@ -110,8 +104,9 @@ export class OfficeScene {
     this.frame.particles = this.particles
     this.scene.background = new Color(BACKGROUND)
     this.scene.fog = this.fog
-    this.scene.add(new HemisphereLight(0xfff1dc, 0x3a3040, 1.25))
-    this.scene.add(new AmbientLight(0xffe8d0, 0.2))
+    const hemi = new HemisphereLight(0xfff1dc, 0x3a3040, 1.25)
+    const amb = new AmbientLight(0xffe8d0, 0.2)
+    this.scene.add(hemi, amb)
     const sun = new DirectionalLight(0xffe2b8, 1.7)
     sun.castShadow = true
     sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
@@ -127,6 +122,20 @@ export class OfficeScene {
     ground.position.y = -0.03
     this.scene.add(ground, this.particles.group)
     this.kit.sky.draw(new Date().getHours())
+    this.energy = new OfficeEnergy(this.scene, this.kit, this.particles, this.crowd, { hemi, amb, sun })
+    this.energy.onDark = (id, dark) => this.applyDark(id, dark)
+  }
+
+  /** Leitura da energia (motor: a cada feed e tique). `t` = relógio da cena (s); `now` = epoch ms. */
+  setPower(power: OfficePower | null, event: PowerEvent | null, t: number, now = Date.now()): void {
+    this.energy.setPower(power, event, t, now)
+  }
+
+  /** Sala apagou ou acendeu de vez: monitores (pretos/de volta, se à vista) e o brilho no rosto de quem está nela. */
+  private applyDark(id: string, dark: boolean): void {
+    const view = this.rooms.get(id)
+    if (view && !view.lod.culled) for (const s of view.screens) showScreen(s, this.kit, view.lod.level, true, dark)
+    for (const v of this.charList) if (v.brain.roomId === id) v.powerDark = dark
   }
 
   sync(layout: Office3DLayout, feed: OfficeFeed | null = null, life: LifeInput | null = null): void {
@@ -150,25 +159,29 @@ export class OfficeScene {
     }
     this.roomList = [...this.rooms].map(([id, view]) => ({ id, view }))
     this.crowd.syncRooms(layout.rooms)
+    this.energy.syncRooms(layout.rooms, this.rooms)
 
-    // Monitores primeiro: o brilho no rosto depende da tela acesa. Sala fora da tela só guarda a página.
+    // Monitores primeiro: o brilho no rosto depende da tela acesa. Sala fora da tela só guarda a página;
+    // sala sem energia (apagão) fica com a tela preta. A pilha de papéis segue o contexto do dono.
     const lit = new Set<string>()
     for (const r of layout.rooms) {
       const view = this.rooms.get(r.id)
       if (!view) continue
       const accent = `hsl(${accentHue(r.id)} 70% 60%)`
       const shown = !view.lod.culled && (view.lod.placed || !this.viewOn)
+      const dark = this.energy.isDark(r.id)
       r.desks.forEach((desk, i) => {
         const s = view.screens[i]
         s.mesh.userData.charKey = desk.ownerKey
         const owner = desk.ownerKey ? layout.characters.find((c) => c.key === desk.ownerKey)?.model : undefined
         if (owner?.active) {
-          lit.add(owner.key)
+          if (!dark) lit.add(owner.key)
           setScreen(s, 'on', screenPageFor(feed, owner), accent, screenStatus(owner, life))
         } else {
           setScreen(s, owner ? 'saver' : 'off', null, accent, 'idle')
         }
-        showScreen(s, this.kit, view.lod.level, shown)
+        showScreen(s, this.kit, view.lod.level, shown, dark)
+        view.piles.set(i, paperStep(owner?.context))
       })
     }
 
@@ -203,6 +216,7 @@ export class OfficeScene {
         this.chars.set(c.key, v)
         this.shadowDirty = true
       }
+      v.powerDark = this.energy.isDark(brain.roomId)
       v.applyModel(c, lit.has(c.key))
     }
     for (const [k, v] of this.chars) {
@@ -297,6 +311,7 @@ export class OfficeScene {
     this.viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.viewProj)
     const cam = this.camPos.setFromMatrixPosition(camera.matrixWorld)
+    this.energy.updateView(this.frustum, cam)
     let best: Lod = 2
     this.visibleRooms = 0
     for (let i = 0; i < this.roomList.length; i++) {
@@ -322,10 +337,11 @@ export class OfficeScene {
     return this.visibleRooms > 0 ? best : prev
   }
 
-  /** Telas no nível da sala e, na volta à vista, a porta já aberta/fechada (sem animar o atraso). */
+  /** Telas no nível da sala (pretas se ela está sem energia) e, na volta à vista, a porta já no lugar (sem animar o atraso). */
   private showRoom(id: string, view: RoomView, snapDoor: boolean): void {
-    for (const s of view.screens) showScreen(s, this.kit, view.lod.level, true)
-    if (snapDoor) view.door.rotation.y = this.doorWant(id, view)
+    const dark = this.energy.isDark(id)
+    for (const s of view.screens) showScreen(s, this.kit, view.lod.level, true, dark)
+    if (snapDoor) view.door.rotation.y = doorWant(this.crowd.list, id, view)
   }
 
   /** Personagem segue a sala dele; sem sala (corredor), a esfera dele decide. */
@@ -395,39 +411,16 @@ export class OfficeScene {
         this.charList = [...this.chars.values()]
       }
     }
+    // Energia: transições, piscadas, emergência, festa e a usina pedem o ritmo delas.
+    const power = this.energy.animate(t, dt)
     if (this.particles.update(dt)) full = true
-    const doors = this.swingDoors(dt)
-    if (doors === 2) full = true
-    else if (doors === 1) low = true
+    this.doorMoved.v = false
+    const doors = swingDoors(this.roomList, this.crowd.list, dt, this.doorMoved)
+    if (this.doorMoved.v) this.shadowDirty = true
+    if (doors === 2 || power === 2) full = true
+    else if (doors === 1 || power === 1) low = true
     this.rate = full ? 2 : low ? 1 : 0
     return full || low
-  }
-
-  /** Porta que alguém está perto de atravessar fica aberta. */
-  private doorWant(id: string, view: RoomView): number {
-    const brains = this.crowd.list
-    for (let i = 0; i < brains.length; i++) {
-      const b = brains[i]
-      if (b.visible && b.roomId === id && Math.abs(b.x - view.doorAt.x) < DOOR_NEAR && Math.abs(b.z - view.doorAt.z) < DOOR_NEAR) return DOOR_OPEN
-    }
-    return 0
-  }
-
-  /** Abre a porta de quem chega perto dela e fecha depois (só salas à vista); devolve o ritmo pedido. */
-  private swingDoors(dt: number): 0 | 1 | 2 {
-    let rate: 0 | 1 | 2 = 0
-    for (let r = 0; r < this.roomList.length; r++) {
-      const { id, view } = this.roomList[r]
-      if (view.lod.culled) continue
-      const want = this.doorWant(id, view)
-      const cur = view.door.rotation.y
-      if (cur === want) continue
-      view.door.rotation.y = cur + Math.max(-DOOR_SPEED * dt, Math.min(DOOR_SPEED * dt, want - cur))
-      this.shadowDirty = true
-      if (view.lod.level < 2) rate = 2
-      else if (rate === 0) rate = 1
-    }
-    return rate
   }
 
   /** Centro da cabeça do personagem no mundo (para ancorar balões); false se não está à vista. */
@@ -459,6 +452,7 @@ export class OfficeScene {
   }
 
   dispose(): void {
+    this.energy.dispose()
     for (const v of this.rooms.values()) v.dispose()
     for (const v of this.chars.values()) v.dispose()
     this.rooms.clear()

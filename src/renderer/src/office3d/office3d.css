@@ -45,7 +45,7 @@
   font-size: 13px;
 }
 
-/* Bateria da sessão 5h da conta, na barra. */
+/* Energia do escritório (tokens da sessão 5h da conta), na barra. */
 .o3d-battery {
   display: inline-flex;
   align-items: center;
@@ -78,9 +78,23 @@
 }
 .o3d-battery-fill { display: block; height: 100%; border-radius: 1px; transition: width 300ms ease; }
 .o3d-battery-val { font-weight: 600; font-variant-numeric: tabular-nums; }
-.o3d-battery.low .o3d-battery-val { color: #ff6b6b; }
-.o3d-battery.mid .o3d-battery-val { color: #f2c230; }
+.o3d-battery-level { font-weight: 600; font-size: 11px; color: #3ccf6e; }
 .o3d-battery-reset { color: #aab1bd; font-size: 11px; }
+.o3d-power-economia .o3d-battery-val,
+.o3d-power-economia .o3d-battery-level { color: #f2c230; }
+.o3d-power-alerta .o3d-battery-val,
+.o3d-power-alerta .o3d-battery-level { color: #ff6b6b; }
+.o3d-power-alerta .o3d-battery-level { animation: o3d-power-blink 1.2s steps(1, end) infinite; }
+.o3d-power-apagao { background: rgba(255, 77, 77, 0.14); }
+.o3d-power-apagao .o3d-battery-val,
+.o3d-power-apagao .o3d-battery-level { color: #ff8585; }
+@keyframes o3d-power-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .o3d-power-alerta .o3d-battery-level { animation: none; }
+}
 
 /* HUD de desempenho (só DEV, Ctrl+Alt+Shift+P). */
 .o3d-perf {

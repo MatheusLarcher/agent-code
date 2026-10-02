@@ -13,7 +13,11 @@
  *   permission  levanta ao lado da cadeira, vira para a câmera e acena;
  *   queue       limite de uso: fila na máquina de café até voltar;
  *   leave/away  visitante (especialista/subagente) sai pela porta / fora;
- *   fixed       PO, memorista e vigia: ficam no lugar deles.
+ *   fixed       PO, memorista e vigia: ficam no lugar deles;
+ *   party       apagão (sem tokens): todo mundo com papel na festa — dança,
+ *               trenzinho, lanterna, pizza (brainParty.ts) — por cima de tudo;
+ *   back        a luz voltou: corre para a própria mesa e senta por BACK_S
+ *               (quem tem tarefa já volta direto ao 'work').
  * O movimento (objetivo → levantar, andar, sentar, virar) e os tipos ficam em
  * brainBody.ts, reexportado daqui. Reações "de corpo" seguram o passo
  * enquanto duram.
@@ -39,6 +43,7 @@ import {
   type Leisure,
   type Mode
 } from './brainBody'
+import { enterParty, runParty } from './brainParty'
 import { CONTEXT_LOW_STEPS, STALL_MS, type AgentEventBody, type AgentPhase, type AgentStatus, type ToolKind } from './events'
 import { chairSide, type Poi } from './furniture'
 
@@ -133,6 +138,7 @@ export function greet(b: Brain): void {
 // ── modos ──────────────────────────────────────────────────────────────────
 
 function decide(b: Brain, w: BrainWorld): Mode {
+  if (b.party !== null) return 'party'
   const busy = b.phase === 'working' || b.phase === 'waiting-permission'
   if (b.role === 'fixed') return 'fixed'
   if (b.role === 'visitor') {
@@ -141,6 +147,7 @@ function decide(b: Brain, w: BrainWorld): Mode {
   }
   if (b.usageOut) return 'queue'
   if (busy) return b.phase === 'waiting-permission' ? 'permission' : 'work'
+  if (w.t < b.backUntil && b.desk) return 'back'
   if (b.mode === 'sleep' || (b.idleSince !== null && w.t - b.idleSince >= w.sleepAfter)) return 'sleep'
   return 'free'
 }
@@ -153,13 +160,15 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
   b.faceCamera = false
   const gait: Gait = b.rush ? 'run' : 'walk'
   switch (m) {
+    case 'party':
     case 'work':
     case 'permission':
       if (!b.visible) {
         const d = w.doorOut(b) ?? b.home
         Object.assign(b, { visible: true, x: d.x, z: d.z, yaw: d.yaw, sit: 0, seat: null, atSpot: false })
       }
-      if (m === 'work') goDesk(b, gait)
+      if (m === 'party') enterParty(b, w)
+      else if (m === 'work') goDesk(b, gait)
       else if (b.desk && b.sit > 0) goStand(b, b.standX, b.standZ, Math.PI, gait)
       else if (b.desk) {
         const side = chairSide(b.desk, b.x >= b.desk.x ? 1 : -1)
@@ -178,6 +187,9 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
     case 'queue':
       b.nextWatch = w.t + 4 + w.rng() * 4
       queueUp(b, w)
+      return
+    case 'back':
+      goDesk(b, 'run')
       return
     case 'free':
       b.rest = 2 + w.rng() * 4
@@ -304,6 +316,12 @@ function runMode(b: Brain, dt: number, w: BrainWorld): void {
       return
     case 'fixed':
       return runFixed(b)
+    case 'party':
+      return runParty(b, dt, w)
+    case 'back':
+      setAction(b, b.arrived ? 'sitIdle' : 'none')
+      b.look = 'none'
+      return
     default:
       return
   }
@@ -439,6 +457,7 @@ export function stepBrain(b: Brain, dt: number, w: BrainWorld): void {
   const m = decide(b, w)
   if (m !== b.mode) enterMode(b, m, w)
   runMode(b, dt, w)
-  move(b, dt, w)
+  // No trenzinho andando, quem move o corpo é o crowd (a volta em torno do tapete).
+  if (!b.puppet) move(b, dt, w)
 }
 

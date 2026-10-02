@@ -36,12 +36,17 @@
  *   vermelho é kind 'error' com prioridade de resultado e TTL.
  *   Texto ≤ 72 (format.fill). A variação sai do rng num saquinho por situação,
  *   dividido pelo escritório: todas saem antes de alguma repetir.
+ *   Energia (4º argumento do step, opcional): quem anuncia economia, alerta,
+ *   apagão e a volta da luz e as frases da festa vêm de powerVoice.ts, com
+ *   prioridade power (abaixo de permissão e erro) e party. No apagão o
+ *   escritório para: só permissão, erro, energia e festa ficam no ar.
  */
 import { STALL_MS, toolKind, type AgentEvent, type AgentStatus, type DoneSummary, type ToolKind } from '../events'
 import { bashFlavor, browserAction, clockTime, duration, extLabel, fill, tidyError, toolLabel, whoLabel, type Slots } from './format'
 import { LINES, type Situation } from './lines'
+import { createPowerVoice, type PowerQuipInput } from './powerVoice'
 
-export type QuipKind = 'request' | 'progress' | 'permission' | 'done' | 'error' | 'warn' | 'idle' | 'thought'
+export type QuipKind = 'request' | 'progress' | 'permission' | 'done' | 'error' | 'warn' | 'idle' | 'thought' | 'power' | 'party'
 
 export interface Quip {
   readonly text: string
@@ -56,11 +61,18 @@ export interface Quip {
 export type Rng = () => number
 
 export interface QuipEngine {
-  step(statuses: ReadonlyMap<string, AgentStatus>, events: readonly AgentEvent[], now: number): Map<string, Quip | null>
+  step(statuses: ReadonlyMap<string, AgentStatus>, events: readonly AgentEvent[], now: number, power?: PowerQuipInput | null): Map<string, Quip | null>
 }
 
-export const PRIORITY = { permission: 70, error: 60, request: 50, result: 40, warn: 30, progress: 20, idle: 10 } as const
-export const TTL_MS = { request: 7_000, result: 9_000, warn: 9_000, progress: 6_000, idle: 6_500, fallback: 10_000 } as const
+export const PRIORITY = { permission: 70, error: 60, power: 55, request: 50, result: 40, warn: 30, progress: 20, party: 15, idle: 10 } as const
+export const TTL_MS = { request: 7_000, result: 9_000, warn: 9_000, progress: 6_000, idle: 6_500, fallback: 10_000, power: 6_500, party: 4_000 } as const
+/** O que continua no ar durante a festa do apagão: permissão, erro, energia e festa. */
+const PARTY_KINDS: ReadonlySet<QuipKind> = new Set<QuipKind>(['permission', 'error', 'power', 'party'])
+/** Situação que entra no ar na festa (teste vermelho e subagente com erro têm cara de erro, mas esperam a luz voltar). */
+const partyOK = (sit: Situation): boolean => {
+  const kind = SPEC[sit][0]
+  return PARTY_KINDS.has(kind) && (kind !== 'error' || sit === 'error')
+}
 /** Progress fica pelo menos isto antes de outro progress tomar o lugar. */
 export const MIN_DWELL_MS = 2_500
 /** A mesma ferramenta+alvo não é narrada de novo dentro desta janela. */
@@ -95,6 +107,8 @@ const P = PRIORITY
 const PROGRESS: Spec = ['progress', P.progress, TTL_MS.progress]
 const STICKY_PERM: Spec = ['permission', P.permission, Infinity]
 const STICKY_USAGE: Spec = ['warn', P.warn, Infinity]
+const POWER: Spec = ['power', P.power, TTL_MS.power]
+const PARTY: Spec = ['party', P.party, TTL_MS.party]
 const result = (kind: QuipKind, ttl: number = TTL_MS.result): Spec => [kind, P.result, ttl]
 const warn = (ttl: number = TTL_MS.warn): Spec => ['warn', P.warn, ttl]
 
@@ -113,7 +127,9 @@ const SPEC: Record<Situation, Spec> = {
   'context-low': warn(), stalled: warn(10_000), 'stalled-cmd': warn(10_000),
   'usage-time': STICKY_USAGE, 'usage-notime': STICKY_USAGE, 'usage-back': ['done', P.warn, 7_000],
   'speak-on': ['progress', P.progress, 5_000], 'speak-off': ['idle', P.idle, 3_500],
-  idle: ['idle', P.idle, TTL_MS.idle], thought: ['thought', P.idle, TTL_MS.idle]
+  idle: ['idle', P.idle, TTL_MS.idle], thought: ['thought', P.idle, TTL_MS.idle],
+  'power-eco': POWER, 'power-alert': POWER, 'power-out': POWER, 'power-back': POWER,
+  party: PARTY, 'party-flashlight': PARTY, 'party-pizza': PARTY, 'party-conga': PARTY
 }
 
 type Valid = (s: AgentStatus) => boolean
@@ -402,8 +418,10 @@ export function createQuipEngine(rng: Rng): QuipEngine {
     if (s.phase === 'idle') idleTick(st, s, now)
   }
 
-  function stepAgent(st: AgentState, s: AgentStatus, events: readonly AgentEvent[], statuses: ReadonlyMap<string, AgentStatus>, now: number): Quip | null {
-    if (st.quip && ((st.valid && !st.valid(s)) || now >= st.until)) clear(st)
+  /** `extra`: a fala de energia/festa escolhida para ele neste passo; `party`: apagão (o resto do escritório para). */
+  function stepAgent(st: AgentState, s: AgentStatus, events: readonly AgentEvent[], statuses: ReadonlyMap<string, AgentStatus>, now: number, extra: Cand | null, party: boolean): Quip | null {
+    const stale = st.quip && ((st.valid && !st.valid(s)) || now >= st.until || (party && !PARTY_KINDS.has(st.quip.kind)))
+    if (stale) clear(st)
     if (s.phase !== 'idle') st.nextIdleAt = null
     if (!s.speaking) st.spoke = false
     if (s.usageExhausted) st.usageErr = s.error
@@ -415,14 +433,17 @@ export function createQuipEngine(rng: Rng): QuipEngine {
       const c = eventCand(e, st, s, statuses, now)
       if (c) cands.push({ c, order })
     })
+    if (extra) cands.push({ c: extra, order: events.length })
     cands.sort((a, b) => SPEC[b.c.sit][1] - SPEC[a.c.sit][1] || b.order - a.order)
-    for (const { c } of cands) if (offer(st, s, c, now)) break
-    ambient(st, s, now)
+    for (const { c } of cands) if ((!party || partyOK(c.sit)) && offer(st, s, c, now)) break
+    if (!party) ambient(st, s, now)
     return st.quip
   }
 
+  const voice = createPowerVoice(roll)
+
   return {
-    step(statuses, events, now) {
+    step(statuses, events, now, power = null) {
       const byKey = new Map<string, AgentEvent[]>()
       for (const e of events) {
         if (!statuses.has(e.key)) continue
@@ -431,10 +452,12 @@ export function createQuipEngine(rng: Rng): QuipEngine {
         else byKey.set(e.key, [e])
       }
       const out = new Map<string, Quip | null>()
+      const extra = voice.step(statuses, power, now)
+      const party = power?.level === 'apagao'
       for (const [key, s] of statuses) {
         let st = agents.get(key)
         if (!st) agents.set(key, (st = freshState()))
-        out.set(key, stepAgent(st, s, byKey.get(key) ?? NO_EVENTS, statuses, now))
+        out.set(key, stepAgent(st, s, byKey.get(key) ?? NO_EVENTS, statuses, now, extra.get(key) ?? null, party))
       }
       for (const key of agents.keys()) {
         if (statuses.has(key)) continue

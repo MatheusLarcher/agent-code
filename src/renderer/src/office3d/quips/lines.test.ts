@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  apiError,
   bashFlavor,
   browserAction,
   clipPath,
@@ -30,10 +31,11 @@ const DATA: Partial<Record<Situation, SlotName>> = {
   'perm-cmd': 'cmd', 'perm-file': 'file', 'perm-question': 'q', 'perm-tool': 'tool', error: 'err',
   'done-files': 'n', 'done-file': 'file', 'done-cmds': 'cmd', 'done-chat': 'text', 'test-pass': 'n', 'test-fail': 'n',
   'return-ok': 'who', 'return-fail': 'who', 'context-low': 'pct', stalled: 'dur', 'stalled-cmd': 'dur', 'usage-time': 'time',
-  think: 'text', idle: 'ago', 'perm-done': 'what'
+  think: 'text', idle: 'ago', 'perm-done': 'what',
+  'power-eco': 'pct', 'power-alert': 'pct', 'power-out': 'time', 'power-back': 'pct'
 }
-/** Sem dado variável por natureza: o próprio fato é a informação. */
-const NO_DATA = new Set<Situation>(['bash-peek', 'test-none', 'usage-notime', 'usage-back', 'speak-on', 'speak-off', 'thought'])
+/** Sem dado variável por natureza: o próprio fato é a informação (as frases da festa citam a hora só às vezes). */
+const NO_DATA = new Set<Situation>(['bash-peek', 'test-none', 'usage-notime', 'usage-back', 'speak-on', 'speak-off', 'thought', 'party', 'party-flashlight', 'party-pizza', 'party-conga'])
 
 // Valores enormes, para provar que tudo cabe em 72 sem perder o dado.
 const HUGE: Record<SlotName, string | number> = {
@@ -130,6 +132,73 @@ describe('format: preencher e cortar', () => {
     expect(tidyError("Error: ENOENT: no such file or directory, open 'C:\\proj\\config.json'")).toBe('ENOENT config.json')
     expect(tidyError('TypeError: x is not a function')).toBe('TypeError: x is not a function')
     expect(tidyError('falhou ao ler /home/me/proj/src/app.ts')).toBe('falhou ao ler app.ts')
+  })
+
+  describe('tidyError: erro da API em português, nunca o JSON cru', () => {
+    // Mensagens reais do SDK (Claude Code / Agent SDK).
+    const API_529 = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'
+    const API_429 =
+      'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed the rate limit for your organization (3c5a2b1e-…) of 30,000 input tokens per minute. For details, refer to: https://docs.claude.com/en/api/rate-limits."},"request_id":"req_011CTk2mVxQ8yZ3u"}'
+    const ENOENT = "Error: ENOENT: no such file or directory, open 'C:\\GitHub\\agent-code\\config.json'"
+    const API_500 = 'API Error: 500 {"type":"error","error":{"type":"api_error","message":"Internal server error"},"request_id":null}'
+    const API_401 = 'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}'
+    const API_403 = 'API Error: 403 {"type":"error","error":{"type":"permission_error","message":"OAuth authentication is currently not supported."}}'
+    const API_400 = 'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215000 tokens > 200000 maximum"}}'
+    const API_404 = 'API Error: 404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-sonnet-9-9 \\"latest\\" não existe"}}'
+    const API = [API_529, API_429, API_500, API_401, API_403, API_400, API_404]
+    /** O corte do retrato (events.clip): `max` caracteres, com "…". */
+    const cut = (s: string, max: number): string => `${s.slice(0, max - 1)}…`
+
+    it('as mensagens reais: 529, 429 e ENOENT (que não pode regredir)', () => {
+      expect(tidyError(API_529)).toBe('API sobrecarregada (529)')
+      expect(tidyError(API_429)).toBe('limite de requisições (429)')
+      expect(tidyError(ENOENT)).toBe('ENOENT config.json')
+      expect(apiError(ENOENT)).toBeNull()
+    })
+
+    it('5xx, 401/403 e o resto (error.message); só o status, sem JSON, também', () => {
+      expect(tidyError(API_500)).toBe('erro no servidor (500)')
+      expect(tidyError('API Error: 503 upstream connect error or disconnect/reset before headers')).toBe('erro no servidor (503)')
+      expect(tidyError(API_401)).toBe('acesso negado (401)')
+      expect(tidyError(API_403)).toBe('acesso negado (403)') // o status que veio, não um 401 inventado
+      expect(tidyError(API_400)).toBe('prompt is too long: 215000 tokens > 200000 maximum')
+      expect(tidyError(API_404)).toBe('model: claude-sonnet-9-9 "latest" não existe')
+      expect(tidyError('API Error: 529')).toBe('API sobrecarregada (529)')
+      expect(tidyError('{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}')).toBe('API sobrecarregada (529)')
+      // Só JSON, sem mensagem: nada do corpo aparece.
+      expect([apiError('{"type":"error","error":{"type":"invalid_request_error"}}'), apiError('{"code":-32000}')]).toEqual(['erro na API', 'erro'])
+      // Não é erro da API: sai como antes.
+      for (const plain of ['API Error: Request timed out.', 'Agent stopped: read ECONNRESET', 'Claude AI usage limit reached']) {
+        expect(apiError(plain)).toBeNull()
+        expect(tidyError(plain)).toBe(plain)
+      }
+    })
+
+    it("cortado em qualquer ponto (o retrato corta a linha em 80): nunca sobra '{' nem '\"type\"'", () => {
+      expect(tidyError(cut(API_529, 80))).toBe('API sobrecarregada (529)')
+      expect(tidyError(cut(API_429, 80))).toBe('limite de requisições (429)')
+      expect(tidyError(cut(API_400, 96))).toBe('prompt is too…')
+      expect(tidyError(cut(API_400, 83))).toBe('API Error: 400') // cortado antes do texto da mensagem: o que veio antes do JSON
+      for (const msg of API) {
+        for (let max = 2; max <= msg.length; max++) {
+          const out = tidyError(cut(msg, max))
+          expect(out, `${max}: ${out}`).not.toMatch(/\{|"type"/)
+          expect(out.length, `${max}: vazio`).toBeGreaterThan(0)
+        }
+      }
+    })
+
+    it('na fala: o humor fica, o JSON sai, e cabe em 72', () => {
+      for (const line of LINES.error.lines) {
+        for (const msg of [API_529, cut(API_529, 80), API_429]) {
+          const out = fill(line, { err: tidyError(msg) })
+          expect(out).toMatch(/API sobrecarregada \(529\)|limite de requisições \(429\)/)
+          expect(out).not.toMatch(/\{|"type"/)
+          expect(out.length).toBeLessThanOrEqual(QUIP_MAX)
+        }
+      }
+      expect(fill('Ops… {err}. Culpa do computador, claro', { err: tidyError(API_529) })).toBe('Ops… API sobrecarregada (529). Culpa do computador, claro')
+    })
   })
 
   it('duração, hora do reset, extensão, tipo de comando e nomes', () => {

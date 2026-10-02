@@ -20,6 +20,12 @@
  * (speech.ts); um tique de QUIP_TICK_MS deixa as falas andarem sem feed.
  * `headWorldPosition(key, out)` dá o centro da cabeça de um personagem (âncora
  * dos balões). Clicar num balão foca o agente, como clicar nele.
+ *
+ * Energia do escritório (power.ts): a cada feed e a cada tique o PowerTracker
+ * relê a janela de 5h; a cena recebe a leitura e o evento (usina, luz, apagão,
+ * festa), as falas também, e `onPower` avisa a barra quando o que ela mostra
+ * muda. Só em DEV, `cyclePower()` força o próximo nível (Ctrl+Alt+Shift+B).
+ * O enquadramento inicial inclui a usina (officeFrame).
  */
 import { Matrix4, PCFShadowMap, PerspectiveCamera, Vector3, WebGLRenderer, type Camera, type Scene } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
@@ -28,9 +34,13 @@ import { officeStore } from '../office/officeStore'
 import { cameraPosition, CameraRig, framePose, monitorPose, type CameraPose, type ViewSize } from './cameraRig'
 import { diffEvents, snapshotOf, type OfficeSnapshot } from './events'
 import { clampDt, dragModeFor, isClick, isTypingTarget, MoveKeys, moveDelta, type DragMode } from './input'
-import { buildingBounds, EMPTY_LAYOUT, layoutOffice, monitorPosition, type Office3DLayout } from './layout'
+import { EMPTY_LAYOUT, layoutOffice, monitorPosition, type Office3DLayout } from './layout'
 import { LOW_RATE_MS } from './lod'
+import type { OfficePower, PowerEvent } from './power'
+import { officeFrame } from './powerPlant'
+import { PowerTracker } from './powerTracker'
 import { Quality, type EngineStats } from './quality'
+import type { PowerQuipInput } from './quips'
 import { OfficeScene } from './scene'
 import { ScreenAnchor } from './screenAnchor'
 import { QUIP_TICK_MS, Speech } from './speech'
@@ -78,6 +88,8 @@ export interface EngineCallbacks {
   onFocus(key: string | null): void
   /** Duplo clique no personagem. */
   onOpen(convId: string): void
+  /** A energia do escritório mudou (%, nível ou hora do reset); null sem a janela de 5h. */
+  onPower?(power: OfficePower | null): void
 }
 
 export const MAX_PIXEL_RATIO = 2
@@ -91,6 +103,9 @@ export class Office3DEngine {
   private readonly renderer: RendererLike
   private readonly quality: Quality
   private readonly speech: Speech
+  private readonly power = new PowerTracker()
+  /** O que a barra mostra da energia (só avisa quando muda). */
+  private powerSig = '-'
   private readonly anchor = new ScreenAnchor()
   private readonly keys = new MoveKeys()
   private readonly raf: (cb: FrameRequestCallback) => number
@@ -255,27 +270,69 @@ export class Office3DEngine {
     const snapshot = snapshotOf(feed, model, wallNow)
     const events = diffEvents(this.snapshot, snapshot, wallNow)
     this.snapshot = snapshot
+    // A energia antes do sync: sala no escuro já monta com a tela preta.
+    const powerEvent = this.power.update(feed, wallNow)
+    this.scene.setPower(this.power.power, powerEvent, this.now() / 1000, wallNow)
     this.scene.sync(this.layout, feed, { snapshot, events, wallNow, t: this.now() / 1000 })
-    this.speech.feed(snapshot, events, wallNow)
+    this.speech.feed(snapshot, events, wallNow, this.quipPower(powerEvent))
+    this.emitPower()
     if (this.autoFrame && !this.focusedKey) this.frameBuilding()
     if (this.focusedKey && !this.scene.character(this.focusedKey)) this.leaveFocus(true)
     else if (this.focusedKey) this.focusPose(this.focusedKey) // a mesa pode ter andado: a tela acompanha
     this.requestRender()
   }
 
-  /** Falas andam com o relógio mesmo sem feed (TTL, ociosos): balão novo pede um quadro. */
+  /** Falas e energia andam com o relógio mesmo sem feed (TTL, ociosos, reset que passou): mudança pede um quadro. */
   private readonly tickQuips = (): void => {
-    if (!this.disposed && !document.hidden && this.speech.tick(Date.now())) this.requestRender()
+    if (this.disposed || document.hidden) return
+    const now = Date.now()
+    const before = this.power.power
+    const event = this.feed || this.power.overridden ? this.power.update(this.feed, now) : null
+    const after = this.power.power
+    const changed = event !== null || before?.level !== after?.level || before?.pct !== after?.pct || before?.resetsAt !== after?.resetsAt || before?.drainPerMin !== after?.drainPerMin
+    if (changed) this.scene.setPower(after, event, this.now() / 1000, now)
+    this.emitPower()
+    if (this.speech.tick(now, this.quipPower(event)) || changed) this.requestRender()
+  }
+
+  /** O que as falas precisam da energia (com os papéis da festa). */
+  private quipPower(event: PowerEvent | null): PowerQuipInput | null {
+    const p = this.power.power
+    return p ? { level: p.level, pct: p.pct, resetsAt: p.resetsAt, event, roles: this.scene.crowd.partyRoles } : null
+  }
+
+  /** Avisa a barra só quando muda o que ela mostra. */
+  private emitPower(): void {
+    const p = this.power.power
+    const sig = p ? `${p.pct}|${p.level}|${p.resetsAt}` : ''
+    if (sig === this.powerSig) return
+    this.powerSig = sig
+    this.cb.onPower?.(p)
+  }
+
+  /** A energia em vigor (a barra e os testes leem). */
+  get officePower(): OfficePower | null {
+    return this.power.power
+  }
+
+  /** Só DEV (Ctrl+Alt+Shift+B): força o próximo nível de energia, em ciclo, para testar. */
+  cyclePower(): void {
+    const now = Date.now()
+    const event = this.power.cycle(now)
+    this.scene.setPower(this.power.power, event, this.now() / 1000, now)
+    this.emitPower()
+    this.speech.tick(now, this.quipPower(event))
+    this.requestRender()
   }
 
   private get view(): ViewSize {
     return { fovDeg: this.camera.fov, aspect: this.width / this.height }
   }
 
-  /** Enquadra todas as salas no palco atual. */
+  /** Enquadra todas as salas e a usina de tokens no palco atual. */
   private frameBuilding(): void {
-    const b = buildingBounds(this.layout.rooms)
-    if (b) this.rig.pose = framePose({ ...b, height: BUILDING_HEIGHT }, this.view)
+    const f = officeFrame(this.layout.rooms, BUILDING_HEIGHT)
+    if (f) this.rig.pose = framePose(f.box, this.view, undefined, undefined, f.extra)
   }
 
   /** Pose que enquadra a tela do personagem (o monitor dele ou do pai); a tela HTML mira o mesmo monitor. */

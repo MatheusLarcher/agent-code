@@ -15,7 +15,12 @@
  *
  * LOD (roomLod.ts): detalhes (livros, post-its, xícaras, folhas, LEDs…) levam
  * userData.lod = 'detail' e somem no MÉDIO; decoração pequena (luminárias,
- * vasos, rodapés, teclados, pés de cadeira…) leva 'small' e some no LONGE.
+ * vasos, rodapés, teclados, pés de cadeira, pilhas de papel…) leva 'small' e
+ * some no LONGE.
+ *
+ * Energia (blackout.ts): a sala expõe as luminárias (cúpula e lâmpada, para
+ * apagar trocando o material), o céu das janelas (luar no apagão) e a pilha de
+ * papéis de cada mesa (o contexto usado do dono, paperPile.ts).
  */
 import {
   Color,
@@ -33,6 +38,7 @@ import { DOOR_HEIGHT, MACHINE_OFFSET, PUFE_RADIUS, roomFurniture, type RoomFurni
 import type { Kit, ScreenStatus } from './kit'
 import { DESK_HEIGHT, MONITOR_BACK, MONITOR_Y, type RoomLayout } from './layout'
 import type { MonitorTexture, ScreenPage } from './monitorTexture'
+import { createPaperPiles, type PaperPiles } from './paperPile'
 import { collectRoomLod, roomBox, tagLod, type RoomLod } from './roomLod'
 import { createSignTexture, type SignTexture } from './sign'
 import { rng } from './textures'
@@ -64,6 +70,14 @@ export interface RoomView {
   doorAt: { x: number; z: number }
   /** Caixa da sala, listas do LOD e o estado de culling/nível. */
   lod: RoomLod
+  /** Onde fica cada móvel (o mesmo de furniture.ts): janelas, porta, tapete… */
+  furniture: RoomFurniture
+  /** Luminárias de pé: cúpula e lâmpada (apagar = trocar o material). */
+  lamps: Array<{ shade: Mesh; bulb: Mesh }>
+  /** O céu de cada janela. */
+  skies: Mesh[]
+  /** Pilha de papéis por mesa (contexto usado do dono). */
+  piles: PaperPiles
   /** Esconde a cadeira da mesa `index` (foco no monitor); null mostra todas. */
   hideChair(index: number | null): void
   dispose(): void
@@ -135,7 +149,7 @@ function plant(kit: Kit, g: Group, x: number, z: number, scale: number): void {
   g.add(p)
 }
 
-function floorLamp(kit: Kit, g: Group, x: number, z: number): void {
+function floorLamp(kit: Kit, g: Group, x: number, z: number): { shade: Mesh; bulb: Mesh } {
   const lamp = tagLod(new Group(), 'small')
   g.add(lamp)
   box(kit, lamp, kit.mat.metal, 0.3, 0.03, 0.3, x, 0.015, z)
@@ -150,9 +164,10 @@ function floorLamp(kit: Kit, g: Group, x: number, z: number): void {
   bulb.scale.setScalar(0.08)
   bulb.position.set(x, 1.38, z)
   lamp.add(pole, shade, bulb)
+  return { shade, bulb }
 }
 
-function windowAt(kit: Kit, g: Group, x: number, z: number): void {
+function windowAt(kit: Kit, g: Group, x: number, z: number): Mesh {
   box(kit, g, kit.mat.windowFrame, 1.5, 0.9, 0.05, x, 1.12, z + 0.085)
   const sky = new Mesh(kit.geo.plane, kit.mat.sky)
   sky.scale.set(1.36, 0.76, 1)
@@ -164,6 +179,7 @@ function windowAt(kit: Kit, g: Group, x: number, z: number): void {
   tagLod(box(kit, g, kit.mat.windowFrame, 0.04, 0.76, 0.02, x, 1.12, z + 0.122), 'small')
   tagLod(box(kit, g, kit.mat.windowFrame, 1.36, 0.04, 0.02, x, 1.12, z + 0.122), 'small')
   tagLod(box(kit, g, kit.mat.windowFrame, 1.62, 0.04, 0.16, x, 0.65, z + 0.13), 'small')
+  return sky
 }
 
 function corkboard(kit: Kit, g: Group, x: number, z: number, seed: number): void {
@@ -316,11 +332,11 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
   tagLod(box(kit, g, kit.mat.baseboard, w - 0.12, 0.1, 0.03, cx, 0.05, z + 0.075), 'small')
   const hinge = door(kit, g, f)
 
-  for (const win of f.windows) windowAt(kit, g, win.x, win.z)
+  const skies = f.windows.map((win) => windowAt(kit, g, win.x, win.z))
   corkboard(kit, g, f.board.x, f.board.z, seed)
   bookshelf(kit, g, f.shelf.x, f.shelf.z, seed + 1)
   for (const p of f.plants) plant(kit, g, p.x, p.z, p.scale)
-  for (const l of f.lamps) floorLamp(kit, g, l.x, l.z)
+  const lamps = f.lamps.map((l) => floorLamp(kit, g, l.x, l.z))
   coffeeStation(kit, g, f.coffee.x, f.coffee.z)
   const rug = new Mesh(kit.geo.plane, kit.mat.rug)
   rug.rotation.x = -Math.PI / 2
@@ -395,6 +411,7 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
     tagLod(instanced(g, kit.geo.cyl, kit.mat.chair, bases), 'small')
   ]
   const chairPlaces = [seats, backs, posts, bases]
+  const piles = createPaperPiles(kit, r, g)
   let hidden: number | null = null
 
   const setChair = (index: number, show: boolean): void => {
@@ -421,6 +438,10 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
     door: hinge,
     doorAt: { x: f.door.x, z: f.door.z },
     lod: collectRoomLod(g, roomBox(x, z, w, d)),
+    furniture: f,
+    lamps,
+    skies,
+    piles,
     hideChair(index) {
       if (index === hidden) return
       if (hidden !== null) setChair(hidden, true)

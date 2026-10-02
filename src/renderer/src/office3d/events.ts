@@ -53,6 +53,7 @@ import type { OfficeCharacterModel, OfficeModel } from '../office/adapter/model'
 import { scanTurn, type TurnScan } from '../office/adapter/turn'
 import type { Conversation, UIMessage } from '../types'
 import { contextBattery } from './battery'
+import { apiError } from './quips/format'
 
 export type AgentPhase = 'idle' | 'working' | 'waiting-permission' | 'error' | 'done'
 export type ToolKind = 'edit' | 'write' | 'read' | 'search' | 'bash' | 'web' | 'task' | 'other'
@@ -90,7 +91,7 @@ export interface AgentStatus {
   contextPct: number | null
   /** Permissão ou pergunta pendente. Só principal. */
   permission: { tool: string; detail: string } | null
-  /** Erro do turno (1ª linha, até TEXT_MAX); null sem erro. */
+  /** Erro do turno (1ª linha, até TEXT_MAX; o da API já em português, sem JSON); null sem erro. */
   error: string | null
   /** Limite de uso estourado (resetsAt null = sem horário). Só principal. */
   usageExhausted: { resetsAt: number | null } | null
@@ -278,7 +279,11 @@ export function parseTestSummary(output: string): { passed: number; failed: numb
 type UserMsg = Extract<UIMessage, { kind: 'user' }>
 const PIPE_RESET = /\|(\d{9,})\s*$/ // "…limit reached|1999999999" (s), como em moreTriggers
 
-const errorText = (text: string): string => clip((text.split('\n').find((l) => l.trim()) ?? '').replace(PIPE_RESET, ''), TEXT_MAX) || 'erro'
+/** 1ª linha, até TEXT_MAX; o erro da API vira português ANTES do corte (o error.message vem depois do JSON). */
+const errorText = (text: string): string => {
+  const line = (text.split('\n').find((l) => l.trim()) ?? '').replace(PIPE_RESET, '')
+  return clip(apiError(line) ?? line, TEXT_MAX) || 'erro'
+}
 
 function convFacts(feed: OfficeFeed, conv: Conversation | undefined, keys: ReadonlyMap<string, string>): ConvFacts {
   const tracks = new Map<string, { track: AgentTrack; childKey: string }>()

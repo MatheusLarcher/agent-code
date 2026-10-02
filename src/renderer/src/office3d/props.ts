@@ -1,6 +1,8 @@
 /**
  * Objetos de mão do Escritório 3D — xícara, livro, regador, celular, pasta,
- * plaquinha "Posso?" e post-it — e o "!" que salta da cabeça. Geometria,
+ * plaquinha "Posso?", post-it e, na festa do apagão, a lanterna (com o cone de
+ * luz falso: malha aditiva, sem luz de verdade) e a fatia de pizza — e o "!"
+ * que salta da cabeça. Geometria,
  * material e textura COMPARTILHADOS: criados uma vez por cena e liberados
  * juntos em `dispose()`; cada personagem monta só Groups/Meshes leves por cima,
  * sob demanda (na 1ª vez que precisa).
@@ -11,6 +13,7 @@
  * 'detail'; a plaquinha não — é informação (o agente pede permissão).
  */
 import {
+  AdditiveBlending,
   BoxGeometry,
   CanvasTexture,
   CylinderGeometry,
@@ -75,14 +78,37 @@ function bangTexture(): CanvasTexture {
   return texture(canvas)
 }
 
+/** Facho da lanterna: forte na lente, some no fim do cone (alfa ao longo de v). */
+function beamTexture(): CanvasTexture {
+  const { canvas, ctx } = canvas2d(4, 64)
+  if (ctx) {
+    const g = ctx.createLinearGradient(0, 64, 0, 0)
+    g.addColorStop(0, 'rgba(255,255,255,0)')
+    g.addColorStop(0.75, 'rgba(255,255,255,0.35)')
+    g.addColorStop(1, 'rgba(255,255,255,1)')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, 4, 64)
+  }
+  return texture(canvas)
+}
+
+/** Comprimento do facho da lanterna (m). */
+export const BEAM_LENGTH = 2.3
+
 export function createPropKit() {
-  const tex = { sign: signTexture(), bang: bangTexture() }
+  const tex = { sign: signTexture(), bang: bangTexture(), beam: beamTexture() }
+  const beam = new CylinderGeometry(0.035, 0.62, BEAM_LENGTH, 18, 1, true)
+  // A ponta fina (topo, v = 1) na lente e o facho para a frente (-Z).
+  beam.rotateX(Math.PI / 2)
+  beam.translate(0, 0, -BEAM_LENGTH / 2)
   const geo = {
     box: new BoxGeometry(1, 1, 1),
     cyl: new CylinderGeometry(0.5, 0.5, 1, 10),
     cone: new CylinderGeometry(0.25, 0.5, 1, 10),
     handle: new TorusGeometry(0.5, 0.16, 6, 10, Math.PI),
-    plane: new PlaneGeometry(1, 1)
+    plane: new PlaneGeometry(1, 1),
+    beam,
+    slice: new CylinderGeometry(0.5, 0.5, 1, 3)
   }
   const mat = {
     cup: lambert(0xf4f1ea),
@@ -97,7 +123,14 @@ export function createPropKit() {
     stick: lambert(0x8a6a48),
     sign: new MeshBasicMaterial({ map: tex.sign, side: DoubleSide }),
     note: lambert(0xfff27a),
-    bang: new SpriteMaterial({ map: tex.bang, transparent: true, depthWrite: false })
+    bang: new SpriteMaterial({ map: tex.bang, transparent: true, depthWrite: false }),
+    torch: lambert(0x30343c),
+    lens: new MeshBasicMaterial({ color: 0xfff6c8 }),
+    // Aditivo, sem gravar profundidade, desenhado depois do escurecimento da sala.
+    beam: new MeshBasicMaterial({ color: 0xffe9a8, map: tex.beam, transparent: true, opacity: 0.5, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }),
+    cheese: lambert(0xf2c14e),
+    pepperoni: lambert(0xb8322a),
+    crust: lambert(0xc98a3a)
   }
   return {
     tex,
@@ -121,11 +154,13 @@ export const GRIP: Record<PropKind, [number, number, number]> = {
   phone: [0, -0.08, -0.02],
   folder: [0, -0.1, -0.03],
   sign: [0, -0.05, 0],
-  note: [0, -0.08, -0.03]
+  note: [0, -0.08, -0.03],
+  flashlight: [0, -0.05, -0.02],
+  pizza: [0, -0.06, -0.04]
 }
 
-/** Inclinação fixa do objeto depois de endireitado (o celular fica deitado na mão, a pasta em pé…). */
-export const PROP_PITCH: Record<PropKind, number> = { cup: 0, book: 0, can: 0, phone: 0.6, folder: 0, sign: 0, note: 0 }
+/** Inclinação fixa do objeto depois de endireitado (o celular fica deitado na mão, a lanterna aponta um pouco para o chão…). */
+export const PROP_PITCH: Record<PropKind, number> = { cup: 0, book: 0, can: 0, phone: 0.6, folder: 0, sign: 0, note: 0, flashlight: -0.32, pizza: 0.35 }
 
 /** Monta o objeto `kind` com as peças compartilhadas do kit. */
 export function makeProp(kit: PropKit, kind: PropKind): Group {
@@ -175,7 +210,22 @@ export function makeProp(kit: PropKit, kind: PropKind): Group {
     case 'note':
       add(geo.box, mat.note, [0.07, 0.07, 0.004], [0, 0.02, -0.01])
       break
+    case 'flashlight': {
+      add(geo.cyl, mat.torch, [0.05, 0.16, 0.05], [0, 0, -0.03], [Math.PI / 2, 0, 0])
+      add(geo.cyl, mat.lens, [0.062, 0.012, 0.062], [0, 0, -0.112], [Math.PI / 2, 0, 0])
+      const cone = add(geo.beam, mat.beam, [1, 1, 1], [0, 0, -0.118])
+      cone.renderOrder = 3
+      cone.castShadow = false
+      break
+    }
+    case 'pizza':
+      // Fatia (prisma triangular achatado) com a ponta para a frente, borda e calabresa.
+      add(geo.slice, mat.cheese, [0.17, 0.012, 0.17], [0, 0, -0.03], [0, Math.PI / 3, 0])
+      add(geo.box, mat.crust, [0.15, 0.022, 0.03], [0, 0.004, 0.014])
+      add(geo.cyl, mat.pepperoni, [0.03, 0.006, 0.03], [-0.015, 0.008, -0.025])
+      add(geo.cyl, mat.pepperoni, [0.026, 0.006, 0.026], [0.02, 0.008, -0.005])
+      break
   }
-  if (kind !== 'sign') g.traverse((o) => void (o.userData.lod = 'detail'))
+  if (kind !== 'sign' && kind !== 'flashlight') g.traverse((o) => void (o.userData.lod = 'detail'))
   return g
 }

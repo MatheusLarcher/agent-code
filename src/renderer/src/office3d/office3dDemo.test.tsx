@@ -122,12 +122,45 @@ describe('OfficeScene com o feed de demonstração', () => {
 })
 
 describe('Office3DWorkspace com o feed de demonstração', () => {
-  it('barra mostra a bateria da sessão 5h com o restante e o reset', () => {
+  it('barra: "⚡ Energia do escritório" com a %, o nível e a hora do reset; o título explica que são os tokens da sessão de 5h', () => {
     render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     const b = screen.getByTestId('o3d-session-battery')
-    expect(b.textContent).toContain('63%')
-    expect(b.textContent).toMatch(/reseta em 2h 1[23]min/)
-    expect(b.className).toContain('high')
+    expect(b.textContent).toContain('⚡ Energia do escritório')
+    expect(b.textContent).toContain('85%')
+    expect(b.textContent).toContain('Energia cheia')
+    expect(b.textContent).toMatch(/reseta \d\d:\d\d/)
+    expect(b.dataset.level).toBe('cheia')
+    expect(b.title).toContain('tokens da sessão de 5h')
+    expect(b.title).toMatch(/85% restantes \(15% usados\)/)
+  })
+
+  it('barra no apagão: "Apagão — volta às HH:MM"', () => {
+    const feed = demoFeed()
+    const resetsAt = Date.now() + 40 * 60_000
+    const out = { ...feed, usageLimits: { five_hour: { rateLimitType: 'five_hour' as const, status: 'rejected' as const, utilization: 1, resetsAt } } }
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ source: staticSource(out), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+    const b = screen.getByTestId('o3d-session-battery')
+    const hhmm = new Date(resetsAt).toTimeString().slice(0, 5)
+    expect(b.textContent).toContain('0%')
+    expect(b.textContent).toContain(`Apagão — volta às ${hhmm}`)
+    expect(b.dataset.level).toBe('apagao')
+  })
+
+  it('Ctrl+Alt+Shift+B (DEV) força o próximo nível de energia em ciclo e volta à leitura real', () => {
+    if (!import.meta.env.DEV) return
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+    const level = (): string | undefined => screen.getByTestId('o3d-session-battery').dataset.level
+    const press = (): void => {
+      act(() => void fireEvent.keyDown(window, { key: 'B', ctrlKey: true, altKey: true, shiftKey: true }))
+    }
+    expect(level()).toBe('cheia')
+    const seen: Array<string | undefined> = []
+    for (let i = 0; i < 4; i++) {
+      press()
+      seen.push(level())
+    }
+    expect(seen).toEqual(['economia', 'alerta', 'apagao', 'cheia'])
+    expect(screen.getByTestId('o3d-session-battery').textContent).toContain('85%')
   })
 
   it('sem usageLimits a bateria da sessão não aparece', () => {

@@ -3,7 +3,8 @@
  *   confete  CONFETTI_MAX papeizinhos; cada estouro usa até CONFETTI_BURST e
  *            vive CONFETTI_LIFE s (pool cheio recicla o mais antigo);
  *   puffs    vapor do café (branco, sobe), fumaça do erro (cinza, sobe), gota
- *            de suor e água do regador (azuis, caem).
+ *            de suor e água do regador (azuis, caem) e faísca do cabo da usina
+ *            no apagão (amarela, pula e cai; sem luz, então brilha no escuro).
  * Cada pool é UM InstancedMesh (uma chamada de desenho) com as vivas no começo
  * do buffer: `count` = quantas estão vivas, então nada morto é desenhado; quem
  * morre troca de lugar com a última viva. `update(dt)` devolve se ainda há algo
@@ -17,17 +18,18 @@ export const CONFETTI_BURST = 18
 export const CONFETTI_LIFE = 1.2
 export const PUFF_MAX = 48
 
-export type PuffKind = 'steam' | 'smoke' | 'sweat' | 'drop'
+export type PuffKind = 'steam' | 'smoke' | 'sweat' | 'drop' | 'spark'
 
 const CONFETTI_COLORS = [0xff5d73, 0xffd23f, 0x3ccf6e, 0x4aa3ff, 0xb56bff, 0xff9f43].map((c) => new Color(c))
 const PUFF: Record<PuffKind, { color: Color; life: number; size: number; grow: number; gravity: number; up: number }> = {
   steam: { color: new Color(0xf5f5f5), life: 1.6, size: 0.014, grow: 0.03, gravity: 0, up: 0.22 },
   smoke: { color: new Color(0x6b6f78), life: 1.3, size: 0.05, grow: 0.11, gravity: 0, up: 0.5 },
   sweat: { color: new Color(0x8fd3ff), life: 0.75, size: 0.03, grow: 0, gravity: -4, up: 0.6 },
-  drop: { color: new Color(0x5aa9ff), life: 0.6, size: 0.022, grow: 0, gravity: -6, up: 0 }
+  drop: { color: new Color(0x5aa9ff), life: 0.6, size: 0.022, grow: 0, gravity: -6, up: 0 },
+  spark: { color: new Color(0xffd36b), life: 0.55, size: 0.024, grow: 0, gravity: -5, up: 1.3 }
 }
-const KIND_ID: Record<PuffKind, number> = { steam: 0, smoke: 1, sweat: 2, drop: 3 }
-const KINDS: PuffKind[] = ['steam', 'smoke', 'sweat', 'drop']
+const KIND_ID: Record<PuffKind, number> = { steam: 0, smoke: 1, sweat: 2, drop: 3, spark: 4 }
+const KINDS: PuffKind[] = ['steam', 'smoke', 'sweat', 'drop', 'spark']
 
 const dummy = new Object3D()
 const swapColor = new Color()

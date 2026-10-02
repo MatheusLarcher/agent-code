@@ -2,9 +2,10 @@
  * Balões de fala do Escritório 3D: liga o gerador (quips/generator) à camada
  * DOM (quips/bubbleLayer) e decide, a cada quadro, quais aparecem e onde.
  *
- *   feed(snapshot, events, now)     a cada feed: o retrato e os eventos de
- *                                   events.ts (`now` = o mesmo do snapshotOf);
- *   tick(now)                       ~4×/s sem feed (TTL e ociosos andam com o
+ *   feed(snapshot, events, now, power?)  a cada feed: o retrato e os eventos de
+ *                                   events.ts (`now` = o mesmo do snapshotOf) e
+ *                                   a energia do escritório (anúncios, festa);
+ *   tick(now, power?)               ~4×/s sem feed (TTL e ociosos andam com o
  *                                   relógio). Os dois devolvem true se algum
  *                                   balão mudou — o motor agenda um quadro;
  *   place(camera, w, h, far, head)  a cada quadro, depois do render.
@@ -14,6 +15,9 @@
  * não trocar à toa). Lugar: nessa mesma ordem, bubbleLayout.ts tira as sobreposições em tela
  * — quem cobriria um balão já posto sobe (até 2 andares, com uma linha-guia até
  * a cabeça) ou vira ícone compacto; sem lugar nem para o ícone, não aparece.
+ * Nenhum passa da barra do HUD (BUBBLE_TOP): o da cabeça desce até caber abaixo
+ * dela, com a ponta no x da cabeça; se nem assim cabe sem a ponta entrar na
+ * cabeça, vira para baixo dela, com a ponta para cima.
  * Tamanho: a camada mede o balão quando a fala muda (nunca por quadro); a escala
  * vem da distância da cabeça (bubbleScale: 1 perto, 0,8 no médio, fonte nunca
  * abaixo de MIN_FONT_PX). Zoom LONGE (`far`): só permissão e erro, como ícone
@@ -22,7 +26,7 @@
  * Nada aloca por quadro: uma entrada por agente e as caixas do layout, reaproveitadas.
  */
 import { Vector3, type Camera } from 'three'
-import { BubbleLayout, isCompact, liftOf, newBox, SLOT_FRESH, SLOT_NONE, type BubbleBox } from './bubbleLayout'
+import { BubbleLayout, HEAD_CLEAR, isCompact, isFlipped, liftOf, newBox, SLOT_FRESH, SLOT_NONE, type BubbleBox } from './bubbleLayout'
 import type { AgentEvent, AgentStatus, OfficeSnapshot } from './events'
 import {
   COMPACT_H,
@@ -33,6 +37,7 @@ import {
   seededRng,
   type BubbleLayer,
   type BubbleStack,
+  type PowerQuipInput,
   type Quip,
   type QuipEngine,
   type QuipKind,
@@ -52,10 +57,13 @@ export const SCALE_MID_M = 22
 export const MID_SCALE = 0.8
 /** A escala nunca deixa a fonte do balão abaixo disto (px efetivos). */
 export const MIN_FONT_PX = 11
-/** A linha-guia do balão empilhado acaba logo acima da cabeça: esta fração do caminho cabeça → ponta sem empilhar. */
-const LEAD_END = 0.3
-/** Empilhar não sobe além disto (px do topo do palco): a barra do 3D (office3d.css .o3d-bar, top 8 + ~41 px) fica por cima dos balões. */
-export const STACK_TOP = 56
+/** A linha-guia do balão empilhado acaba logo acima da cabeça: esta fração do caminho cabeça → ponta sem empilhar (onde a ponta presa pela barra para). */
+const LEAD_END = HEAD_CLEAR
+/**
+ * Nenhum balão passa disto (px do topo do palco): a barra do 3D (office3d.css .o3d-bar,
+ * top 8 + ~41 px) fica por cima dos balões. O da cabeça desce até caber; o empilhado não sobe além.
+ */
+export const BUBBLE_TOP = 56
 
 const NO_EVENTS: readonly AgentEvent[] = []
 /** O que ainda aparece com zoom LONGE. */
@@ -105,7 +113,7 @@ export class Speech {
   private readonly head = new Vector3()
   private readonly ndc = new Vector3()
   /** Rascunho entregue à camada a cada balão (ela só copia os valores). */
-  private readonly stack: BubbleStack = { compact: false, lift: 0, lx: 0, ly: 0 }
+  private readonly stack: BubbleStack = { compact: false, lift: 0, lx: 0, ly: 0, flip: false }
   /** Balões à vista no último place. */
   shown = 0
 
@@ -114,13 +122,14 @@ export class Speech {
     this.layer = createBubbleLayer(container, { onClick })
   }
 
-  feed(snapshot: OfficeSnapshot, events: readonly AgentEvent[], now: number): boolean {
+  /** `power`: energia do escritório (anúncios e festa do apagão); null sem a janela de 5h. */
+  feed(snapshot: OfficeSnapshot, events: readonly AgentEvent[], now: number, power: PowerQuipInput | null = null): boolean {
     this.statuses = snapshot.agents
-    return this.apply(this.quips.step(snapshot.agents, events, now))
+    return this.apply(this.quips.step(snapshot.agents, events, now, power))
   }
 
-  tick(now: number): boolean {
-    return this.statuses ? this.apply(this.quips.step(this.statuses, NO_EVENTS, now)) : false
+  tick(now: number, power: PowerQuipInput | null = null): boolean {
+    return this.statuses ? this.apply(this.quips.step(this.statuses, NO_EVENTS, now, power)) : false
   }
 
   /** Balão atual de `key` (o que o gerador decidiu, à vista ou não). */
@@ -212,11 +221,12 @@ export class Speech {
       e.scale = far ? 1 : bubbleScale(e.dist)
       b.ax = e.x
       b.ay = e.y
+      b.hy = e.hy
       b.w = e.w * e.scale
       b.h = e.h * e.scale
       b.prev = e.slot
     }
-    this.layout.run(this.boxes, this.count, width, STACK_TOP, far, COMPACT_W, COMPACT_H)
+    this.layout.run(this.boxes, this.count, width, BUBBLE_TOP, far, COMPACT_W, COMPACT_H)
     this.shown = 0
     const st = this.stack
     for (let i = 0; i < list.length; i++) {
@@ -232,6 +242,7 @@ export class Speech {
       this.shown++
       st.compact = isCompact(b.slot)
       st.lift = liftOf(b.slot)
+      st.flip = isFlipped(b.slot)
       st.lx = e.hx + (e.x - e.hx) * LEAD_END
       st.ly = e.hy + (e.y - e.hy) * LEAD_END
       this.layer.place(e.key, b.x, b.y, st.compact ? 1 : e.scale, true, st)

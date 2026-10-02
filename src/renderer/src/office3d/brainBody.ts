@@ -9,13 +9,15 @@
 import type { AgentPhase, ToolKind } from './events'
 import { chairSide, seatOf, type Poi, type PoiKind, type Spot } from './furniture'
 import { MONITOR_BACK, MONITOR_Y } from './layout'
+import type { PartyRole, RoomParty } from './partyPlan'
 import { REACTION_S, smooth, type Action, type Reaction, type SeatKind } from './poses'
 
 export type Role = 'desk' | 'visitor' | 'fixed'
-export type Mode = 'init' | 'free' | 'work' | 'permission' | 'sleep' | 'queue' | 'leave' | 'away' | 'fixed'
+/** party: festa do apagão (brainParty.ts); back: a luz voltou, corre para a mesa e senta um pouco. */
+export type Mode = 'init' | 'free' | 'work' | 'permission' | 'sleep' | 'queue' | 'leave' | 'away' | 'fixed' | 'party' | 'back'
 export type Leisure = 'coffee' | 'shelf' | 'window' | 'plant' | 'postit' | 'chat' | 'phone'
 export type Gait = 'walk' | 'run' | 'stroll'
-export type PropKind = 'cup' | 'book' | 'can' | 'phone' | 'folder' | 'sign' | 'note'
+export type PropKind = 'cup' | 'book' | 'can' | 'phone' | 'folder' | 'sign' | 'note' | 'flashlight' | 'pizza'
 export type Look = 'none' | 'point' | 'camera'
 /** Estilo do fixo: o que ele faz parado no lugar. */
 export type FixedStyle = 'board' | 'archive' | 'idle'
@@ -119,6 +121,17 @@ export interface Brain {
   nextYawn: number
   nextWatch: number
   workSpeed: number
+  // ── festa do apagão (o crowd distribui os papéis; brainParty.ts executa)
+  party: PartyRole | null
+  partySlot: number
+  /** Parada atual da lanterna. */
+  partyStep: number
+  /** Tempo no lugar da festa (s). */
+  partyT: number
+  /** Posição dada de fora (trenzinho andando): o passo não move o corpo. */
+  puppet: boolean
+  /** A luz voltou: até este instante (relógio t) fica na mesa. */
+  backUntil: number
 }
 
 /** O que o cérebro pede ao mundo (a sala, a reserva e os colegas). */
@@ -146,6 +159,8 @@ export interface BrainWorld {
   partner(b: Brain): Brain | null
   /** Do lado de fora da porta da sala. */
   doorOut(b: Brain): Spot | null
+  /** Plano da festa da sala do agente (apagão); null fora da festa ou sem sala. */
+  party(b: Brain): RoomParty | null
 }
 
 export interface BrainInit {
@@ -177,7 +192,8 @@ export function createBrain(o: BrainInit): Brain {
     mode: 'init', modeT: 0, leisure: null, leisureT: 0, leisureDur: 0, lastLeisure: null, rest: 0, pause: -1, poi: null,
     chatWith: null, chatLead: false, chatT0: -1,
     action: 'idle', actionT: 0, reaction: null, reactionT: 0, pending: [], prop: null, look: 'none', lookX: 0, lookY: 0, lookZ: 0,
-    faceCamera: false, fx: 0, zzz: false, rush: false, knuckles: false, nextYawn: 0, nextWatch: 0, workSpeed: 1
+    faceCamera: false, fx: 0, zzz: false, rush: false, knuckles: false, nextYawn: 0, nextWatch: 0, workSpeed: 1,
+    party: null, partySlot: 0, partyStep: 0, partyT: 0, puppet: false, backUntil: -1
   }
   // Quem tem mesa e está na sala começa sentado nela.
   if (desk && !o.away && o.role !== 'fixed') {

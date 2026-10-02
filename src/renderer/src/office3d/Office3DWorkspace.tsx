@@ -7,12 +7,14 @@
  * monitor dele e abre por cima, alinhado ao monitor, o cartão da ferramenta
  * atual no formato do chat (<ToolScreen>). Os balões de fala dos agentes são
  * do motor (speech.ts), numa camada DOM dentro do palco. A barra mostra a
- * bateria da sessão 5h da conta. Só em DEV, Ctrl+Alt+Shift+D liga/desliga a
- * demonstração animada: um tique de DEMO_TICK_MS republica
- * demoFeed(Date.now()) no officeStore enquanto este componente estiver montado
- * (e o motor encurta o tempo até o cochilo); desligar ou desmontar limpa o
- * intervalo e o override. Também só em DEV, Ctrl+Alt+Shift+P abre/fecha o HUD
- * de desempenho (<PerfHud>) — o mesmo listener de teclado dos dois atalhos.
+ * energia do escritório (os tokens da sessão 5h da conta), lida pelo motor
+ * (`onPower`). Só em DEV, Ctrl+Alt+Shift+D liga/desliga a demonstração
+ * animada: um tique de DEMO_TICK_MS republica demoFeed(Date.now()) no
+ * officeStore enquanto este componente estiver montado (e o motor encurta o
+ * tempo até o cochilo); desligar ou desmontar limpa o intervalo e o override.
+ * Também só em DEV, Ctrl+Alt+Shift+P abre/fecha o HUD de desempenho
+ * (<PerfHud>) e Ctrl+Alt+Shift+B força o próximo nível de energia (cheia →
+ * economia → alerta → apagão → …) — o mesmo listener de teclado dos atalhos.
  */
 import './office3d.css'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -21,6 +23,7 @@ import { officeStore } from '../office/officeStore'
 import { DEMO_TICK_MS, demoFeed } from './demoFeed'
 import { Office3DEngine, type EngineOptions } from './engine'
 import { isPerfShortcut, PerfHud } from './PerfHud'
+import type { OfficePower } from './power'
 import { SessionBattery } from './SessionBattery'
 import { ToolScreen } from './ToolScreen'
 
@@ -39,6 +42,11 @@ export function isDemoShortcut(e: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'sh
   return e.ctrlKey && e.altKey && e.shiftKey && e.key.toLowerCase() === 'd'
 }
 
+/** Atalho de DEV: Ctrl+Alt+Shift+B (força o próximo nível de energia). */
+export function isPowerShortcut(e: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'shiftKey' | 'key'>): boolean {
+  return e.ctrlKey && e.altKey && e.shiftKey && e.key.toLowerCase() === 'b'
+}
+
 export function Office3DWorkspace({ chat, onOpenConversation, onOpenFile, onClose, engineOptions }: Office3DWorkspaceProps): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -46,6 +54,7 @@ export function Office3DWorkspace({ chat, onOpenConversation, onOpenFile, onClos
   const [focusKey, setFocusKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hud, setHud] = useState(false)
+  const [power, setPower] = useState<OfficePower | null>(null)
   const [, setTick] = useState(0)
   const cbs = useRef({ onOpenConversation })
   cbs.current = { onOpenConversation }
@@ -61,7 +70,7 @@ export function Office3DWorkspace({ chat, onOpenConversation, onOpenFile, onClos
       engine = new Office3DEngine(
         stage,
         canvas,
-        { onFocus: setFocusKey, onOpen: (convId) => cbs.current.onOpenConversation(convId) },
+        { onFocus: setFocusKey, onOpen: (convId) => cbs.current.onOpenConversation(convId), onPower: setPower },
         engineOptions
       )
     } catch (e) {
@@ -73,6 +82,7 @@ export function Office3DWorkspace({ chat, onOpenConversation, onOpenFile, onClos
       engine.dispose()
       engineRef.current = null
       setFocusKey(null)
+      setPower(null)
     }
     // engineOptions é fixo por montagem (testes).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -100,6 +110,11 @@ export function Office3DWorkspace({ chat, onOpenConversation, onOpenFile, onClos
       if (isPerfShortcut(e)) {
         e.preventDefault()
         setHud((on) => !on)
+        return
+      }
+      if (isPowerShortcut(e)) {
+        e.preventDefault()
+        engineRef.current?.cyclePower()
         return
       }
       if (!isDemoShortcut(e)) return
@@ -136,7 +151,7 @@ export function Office3DWorkspace({ chat, onOpenConversation, onOpenFile, onClos
         ) : null}
         <div className="o3d-bar">
           <strong>Escritório 3D</strong>
-          <SessionBattery source={source} />
+          <SessionBattery power={power} />
           <span className="o3d-hint">WASD anda · Shift corre · arrastar gira · roda zoom · botão do meio move · clique abre a tela · Esc volta</span>
           <button type="button" className="btn ghost o3d-close" onClick={onClose} title="Voltar ao painel normal">
             Sair do 3D

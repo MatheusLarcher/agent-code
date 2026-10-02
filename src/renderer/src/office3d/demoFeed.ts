@@ -12,7 +12,9 @@
  *                volta), na sala 4 fica mais de 2 min em silêncio.
  *   3 dorminhoco ocioso há mais de 20 min (acima do sono).
  * O azarado de cada sala passa por todas as fases; o loop dispara todos os
- * tipos de evento de events.ts (menos speaking: a demo não tem voz).
+ * tipos de evento de events.ts (menos speaking: a demo não tem voz). A janela
+ * de 5h (demoUsage) é a energia do escritório: um ciclo completo por loop —
+ * cheia → economia → alerta → apagão (26 s de festa) → luz voltou.
  *
  * `demoFeed(now)` é determinístico: o quadro na fase `now mod DEMO_LOOP_MS`.
  * Sem argumento, devolve o QUADRO DE VITRINE (fase 0, relógio Date.now()): o

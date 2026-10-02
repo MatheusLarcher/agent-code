@@ -18,9 +18,11 @@
  *     tamanho base, limitado a [SCALE_MIN, SCALE_MAX]. `stack` (opcional, vem do
  *     layout): compact = só o ícone; lift = andares que subiu para não cobrir
  *     outro (1+ fica atrás dos balões da cabeça e liga a ponta a (lx, ly) com uma
- *     linha-guia). Escreve transform e opacity (mais pointer-events, junto com a
- *     visibilidade: balão invisível não pega clique), classes só quando o
- *     compacto/andar muda e o transform da linha-guia só quando ela muda; nunca
+ *     linha-guia); flip = virado (cabeça colada na barra do HUD: o balão fica
+ *     embaixo dela, pendurado na ponta, que aponta para cima). Escreve transform
+ *     e opacity (mais pointer-events, junto com a visibilidade: balão invisível
+ *     não pega clique), classes só quando o compacto/andar/virado muda e o
+ *     transform da linha-guia só quando ela muda; nunca
  *     lê layout: dá para chamar a cada quadro para todos os personagens. Balão
  *     recém-criado fica invisível até o primeiro place visível.
  *   layer.compact(on)
@@ -54,6 +56,8 @@ export interface BubbleStack {
   /** Fim da linha-guia (px do container), logo acima da cabeça; vale com lift > 0. */
   lx: number
   ly: number
+  /** Virado: embaixo da cabeça, a ponta em cima ((x, y) do place é onde ela encosta). */
+  flip?: boolean
 }
 
 export interface BubbleLayer {
@@ -110,9 +114,10 @@ interface Bubble extends Shell {
   y: number
   s: number
   vis: boolean | null
-  /** Último compacto/andar/linha-guia escritos. */
+  /** Último compacto/andar/virado/linha-guia escritos. */
   compact: boolean
   lift: number
+  flip: boolean
   leadLen: number
   leadAng: number
   /** Alterna o nome da animação de entrada para repetir o "pop" sem forçar reflow. */
@@ -189,7 +194,7 @@ export function createBubbleLayer(container: HTMLElement, opts: BubbleLayerOptio
     el.appendChild(lead)
     const b: Bubble = {
       el, icon, text, lead, key: '', quip: null, leaving: false, timer: null, w: 0, h: 0,
-      x: NaN, y: NaN, s: NaN, vis: null, compact: false, lift: 0, leadLen: NaN, leadAng: NaN, alt: false
+      x: NaN, y: NaN, s: NaN, vis: null, compact: false, lift: 0, flip: false, leadLen: NaN, leadAng: NaN, alt: false
     }
     byEl.set(el, b)
     return b
@@ -248,10 +253,11 @@ export function createBubbleLayer(container: HTMLElement, opts: BubbleLayerOptio
     if (leaving.get(b.key) === b) leaving.delete(b.key)
     stopLeaving(b)
     b.el.hidden = true
-    b.el.classList.remove('qb-alt', 'qb-compact', 'qb-up1', 'qb-up2')
+    b.el.classList.remove('qb-alt', 'qb-compact', 'qb-up1', 'qb-up2', 'qb-flip')
     b.alt = false
     b.compact = false
     b.lift = 0
+    b.flip = false
     b.leadLen = b.leadAng = NaN
     b.quip = null
     free.push(b)
@@ -284,11 +290,17 @@ export function createBubbleLayer(container: HTMLElement, opts: BubbleLayerOptio
       const rx = Math.round(x)
       const ry = Math.round(y)
       const s = Math.round(Math.min(SCALE_MAX, Math.max(SCALE_MIN, Number.isFinite(scale) ? scale : 1)) * 100) / 100
-      if (rx !== b.x || ry !== b.y || s !== b.s) {
+      const flip = stack !== undefined && stack.flip === true
+      if (rx !== b.x || ry !== b.y || s !== b.s || flip !== b.flip) {
         b.x = rx
         b.y = ry
         b.s = s
-        b.el.style.transform = `translate3d(${rx}px, ${ry}px, 0) scale(${s}) translate(-50%, -100%)`
+        // A ponta encosta em (x, y): no pé do balão, ou no topo dele quando virado.
+        b.el.style.transform = `translate3d(${rx}px, ${ry}px, 0) scale(${s}) translate(-50%, ${flip ? '0' : '-100%'})`
+      }
+      if (flip !== b.flip) {
+        b.flip = flip
+        b.el.classList.toggle('qb-flip', flip)
       }
       const compact = stack !== undefined && stack.compact
       const lift = stack ? stack.lift : 0

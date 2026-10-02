@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { demoScripts } from './demoFeed'
-import { DELEGATE_LEAD_MS, DEMO_LOOP_MS, demoUsage, playScript, turnMs, USAGE_BACK_AT, USAGE_OUT_AT, type DemoStep, type DemoTurn } from './demoTimeline'
+import { DELEGATE_LEAD_MS, DEMO_LOOP_MS, demoUsage, playScript, turnMs, USAGE_BACK_AT, USAGE_OUT_AT, USAGE_START, type DemoStep, type DemoTurn } from './demoTimeline'
 
 const START = 1_000_000
 const play = (turns: DemoTurn[], t: number): ReturnType<typeof playScript> => playScript(turns, t, START, 'c', 7)
@@ -101,12 +101,15 @@ describe('roteiros da demo', () => {
 })
 
 describe('demoUsage', () => {
-  it('enche até esgotar em USAGE_OUT_AT e volta zerada em USAGE_BACK_AT', () => {
-    expect(demoUsage(0, START, START)).toMatchObject({ rateLimitType: 'five_hour', status: 'allowed', utilization: 0.37, resetsAt: START + (2 * 60 + 13) * 60_000 })
-    expect(demoUsage(USAGE_OUT_AT - 1, START, START).utilization).toBeGreaterThan(0.9)
+  it('enche até esgotar em USAGE_OUT_AT e volta zerada em USAGE_BACK_AT; o fim do loop emenda no começo', () => {
+    expect(demoUsage(0, START, START)).toMatchObject({ rateLimitType: 'five_hour', status: 'allowed', utilization: USAGE_START, resetsAt: START + USAGE_BACK_AT })
+    expect(demoUsage(USAGE_OUT_AT - 1, START, START).utilization).toBeGreaterThan(0.98)
     expect(demoUsage(USAGE_OUT_AT, START, START)).toMatchObject({ status: 'rejected', utilization: 1, resetsAt: START + USAGE_BACK_AT })
     const back = demoUsage(USAGE_BACK_AT, START, START)
     expect(back).toMatchObject({ status: 'allowed', resetsAt: START + USAGE_BACK_AT + 5 * 3_600_000 })
     expect(back.utilization).toBeLessThan(0.05)
+    expect(demoUsage(DEMO_LOOP_MS - 1, START, START).utilization).toBeCloseTo(USAGE_START, 3)
+    // Festa de pelo menos 20 s.
+    expect(USAGE_BACK_AT - USAGE_OUT_AT).toBeGreaterThanOrEqual(20_000)
   })
 })

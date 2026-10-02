@@ -5,8 +5,10 @@
  * cada REAÇÃO curta (pulinho do "!", susto, estalar os dedos, comemorar,
  * espreguiçar, facepalm, soco no ar, mãos na cabeça, bocejo, relógio, pasta,
  * tchauzinho, joinha, ombros). Escrevem só os canais de cima (UPPER) num `out`
- * reaproveitado; a locomoção e o sentar ficam em poses.ts.
+ * reaproveitado; a locomoção e o sentar ficam em poses.ts e as ações da festa
+ * do apagão (danças, trenzinho, lanterna, pizza), em dance.ts.
  */
+import { partyPose } from './dance'
 import { CH, envelope, mix, pulse, REACTION_S, smooth, type Action, type ActionParams, type Pose, type Reaction } from './poses'
 
 function arms(out: Pose, fL: number, oL: number, eL: number, fR: number, oR: number, eR: number): void {
@@ -153,6 +155,15 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
     case 'napDesk':
     case 'napPufe':
       leisurePose(out, a, t, k)
+      return
+    case 'robot':
+    case 'disco':
+    case 'sway':
+    case 'hop':
+    case 'conga':
+    case 'flashlight':
+    case 'pizza':
+      partyPose(out, a, t, p)
       return
   }
 }

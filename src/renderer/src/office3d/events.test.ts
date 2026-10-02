@@ -129,6 +129,11 @@ describe('snapshotOf / diffEvents', () => {
     expect(diff(a, b).filter((e) => e.type === 'error')).toMatchObject([{ key: 'conv:a', message: 'Agent stopped: read ECONNRESET' }])
     expect(main(b)).toMatchObject({ phase: 'error', error: 'Agent stopped: read ECONNRESET' })
     expect(types(diff(a, world([u('u1', 'oi', { error: 'A resposta falhou.' })])))).toContain('error')
+    // Erro da API: em português ANTES do corte em 80 — o error.message de um 400 começa depois do 80º caractere.
+    const api529 = world([u('u1'), err('e1', 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}')])
+    expect(diff(a, api529).filter((e) => e.type === 'error')).toMatchObject([{ key: 'conv:a', message: 'API sobrecarregada (529)' }])
+    const api400 = 'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215000 tokens > 200000 maximum"}}'
+    expect(main(world([u('u1'), err('e1', api400)])).error).toBe('prompt is too long: 215000 tokens > 200000 maximum')
     // A recuperação retomou o turno: o erro antigo deixa de valer.
     expect(main(world([u('u1'), err('e1', 'boom'), tu('t1', 'Read', { file_path: 'x.ts' })], busy()))).toMatchObject({ phase: 'working', error: null })
   })

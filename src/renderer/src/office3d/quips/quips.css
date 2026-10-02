@@ -8,7 +8,8 @@
  *                              > .qb-lead (linha-guia do balão empilhado)
  *   .qb       posição (translate3d + scale, origem no canto) e visibilidade.
  *             O padding de baixo abriga a ponta: o pé do .qb É a ponta, que
- *             encosta no (x, y) do place.
+ *             encosta no (x, y) do place. Virado (.qb-flip), padding e ponta
+ *             vão para cima: o topo do .qb encosta no (x, y).
  *   .qb-body  o balão e as animações (pop na entrada, fade na saída).
  *   .qb-measure  medidor (mesma caixa, invisível): o tamanho do balão inteiro.
  * A fonte do .qb-body (14px) é o FONT_PX do bubbleLayer.ts.
@@ -130,6 +131,21 @@
   animation: qb-wave 1.4s ease-in-out infinite;
 }
 
+/* Energia do escritório: âmbar elétrico, o ícone dá um "pisca" de mau contato. */
+.qb[data-kind='power'] {
+  z-index: 1;
+  --qb-edge: #ffb020;
+  --qb-bg: color-mix(in srgb, #ffb020 20%, var(--bg-3));
+}
+.qb[data-kind='power'] .qb-icon { display: inline-block; animation: qb-zap 1.3s steps(1, end) infinite; }
+
+/* Festa do apagão: roxo de pista, o ícone balança no ritmo (~118 BPM). */
+.qb[data-kind='party'] {
+  --qb-edge: #c86bff;
+  --qb-bg: color-mix(in srgb, #c86bff 20%, var(--bg-3));
+}
+.qb[data-kind='party'] .qb-icon { display: inline-block; animation: qb-bop 0.51s ease-in-out infinite alternate; }
+
 /* Ocioso e pensamento: nuvem cinza em itálico, com bolinhas no lugar da ponta. */
 .qb[data-kind='idle'],
 .qb[data-kind='thought'],
@@ -216,6 +232,23 @@
 .qb.qb-up2 .qb-lead { display: block; }
 .qb.qb-out .qb-lead { opacity: 0; }
 
+/* ── virado: a cabeça está colada na barra do HUD e o balão não cabe entre as
+ * duas; fica embaixo da cabeça, com a ponta (ou as bolinhas) para cima. Mesma
+ * altura total (o padding só troca de lado): a medida não muda. */
+.qb.qb-flip { padding-bottom: 0; padding-top: 8px; }
+.qb.qb-flip .qb-body { transform-origin: 50% 0; }
+.qb.qb-flip .qb-body::after { bottom: auto; top: -6px; transform: rotate(225deg); }
+.qb.qb-flip[data-kind='idle'],
+.qb.qb-flip[data-kind='thought'] { padding-bottom: 0; padding-top: 19px; }
+.qb.qb-flip[data-kind='idle'] .qb-body::after,
+.qb.qb-flip[data-kind='thought'] .qb-body::after { bottom: auto; top: -12px; transform: none; }
+.qb.qb-flip[data-kind='idle'] .qb-body::before,
+.qb.qb-flip[data-kind='thought'] .qb-body::before { bottom: auto; top: -19px; }
+.qb-layer.qb-compact .qb.qb-flip,
+.qb.qb-flip.qb-compact { padding-bottom: 0; padding-top: 6px; }
+.qb-layer.qb-compact .qb.qb-flip .qb-body::after,
+.qb.qb-flip.qb-compact .qb-body::after { bottom: auto; top: -4px; }
+
 /* ── entrada e saída ──────────────────────────────────────────────────── */
 /* Fala nova no mesmo balão: trocar o nome da animação repete o pop sem reflow. */
 .qb.qb-alt .qb-body { animation-name: qb-pop-b; }
@@ -246,6 +279,16 @@
   70% { transform: rotate(-14deg); }
   80% { transform: rotate(12deg); }
   90% { transform: rotate(-8deg); }
+}
+@keyframes qb-zap {
+  0%, 100% { opacity: 1; }
+  52% { opacity: 0.3; }
+  58% { opacity: 1; }
+  64% { opacity: 0.45; }
+}
+@keyframes qb-bop {
+  from { transform: translateY(0) rotate(-9deg); }
+  to { transform: translateY(-2px) rotate(9deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -8,7 +8,8 @@
  *     encolhível mais comprido até caber — texto e comando cortam na palavra
  *     (caminhos longos viram o nome do arquivo antes), nome de arquivo corta no
  *     meio e guarda a extensão. Números, horas e durações nunca encolhem.
- *   Cortes: clipEnd, clipText, clipPath, shortenPaths, tidyError.
+ *   Cortes: clipEnd, clipText, clipPath, shortenPaths, tidyError (erro da API
+ *   em português por apiError: a fala nunca mostra o JSON cru).
  *   Dados: duration, clockTime, extLabel, bashFlavor, browserAction, toolLabel,
  *   whoLabel.
  *
@@ -77,11 +78,58 @@ export function clipPath(name: string, max: number): string {
   return tail && tail.length < s.length && head >= 4 ? `${clipEnd(s.slice(0, s.length - tail.length), head)}${tail}` : clipEnd(s, max)
 }
 
-/** Erro numa linha útil: sem "Error:"; "ENOENT: …, open 'C:\x\config.json'" → "ENOENT config.json". */
+/** Erro numa linha útil: sem "Error:"; erro da API em português (apiError); "ENOENT: …, open 'C:\x\config.json'" → "ENOENT config.json". */
 export function tidyError(message: string): string {
   const s = oneLine(message).replace(/^(?:uncaught\s+)?(?:error|erro|fatal)\s*:\s*/i, '')
+  const api = apiError(s)
+  if (api !== null) return shortenPaths(api)
   const fs = /^(E[A-Z]{2,})\b[^,]*,\s*\w+\s+'([^']+)'?/.exec(s)
   return fs ? `${fs[1]} ${lastSegment(fs[2])}` : shortenPaths(s)
+}
+
+// ── erros da API ───────────────────────────────────────────────────────────
+/** "API Error: 529 …" ou "API Error (529 …": o status HTTP. */
+const API_STATUS = /\bAPI\s+Error\W{0,3}(\d{3})\b/i
+/** Começo do corpo JSON, inteiro ou cortado: '{"type"…', '{…', '{' no fim. */
+const JSON_START = /\{\s*(?:"|…|$)/
+/** error.type ("overloaded_error"); o do envelope ("type":"error") não casa. */
+const API_TYPE = /"type"\s*:\s*"(\w+_error)"/
+/** error.message, mesmo sem a aspa do fim (JSON cortado). */
+const API_MESSAGE = /"message"\s*:\s*"((?:[^"\\]|\\.)*)/
+const unescapeJson = (s: string): string =>
+  s.replace(/\\(?:u([\da-fA-F]{4})|(.))/g, (_, hex: string | undefined, ch: string) => (hex ? String.fromCharCode(parseInt(hex, 16)) : /[nrt]/.test(ch) ? ' ' : ch))
+/** Sem JSON na fala: corta no primeiro "{" ou "\"type\"" e tira a pontuação que sobrar no fim; sem letra nem número, ''. */
+function withoutJson(s: string): string {
+  const out = oneLine(s.replace(/(?:\{|"type").*$/, '')).replace(/[\s:;,([—–-]+$/, '')
+  return /[\p{L}\p{N}]/u.test(out) ? out : ''
+}
+
+/**
+ * Erro da API em português, sem o JSON cru (nunca sobra "{" nem "\"type\""):
+ *   529 / overloaded_error → "API sobrecarregada (529)"; 429 / rate_limit_error →
+ *   "limite de requisições (429)"; 401, 403 / authentication_error, permission_error →
+ *   "acesso negado (401)"; 5xx / api_error → "erro no servidor (500)". Entre
+ *   parênteses vai o status que veio (403 → "acesso negado (403)"); sem ele, o do
+ *   tipo. O resto vira o error.message do JSON (mesmo cortado) ou, sem ele, o texto
+ *   de antes do JSON ("erro na API" / "erro" se não houver nenhum). null se não for
+ *   erro da API (sem "API Error NNN" nem JSON).
+ */
+export function apiError(text: string): string | null {
+  const s = oneLine(text)
+  const at = s.search(JSON_START)
+  const head = at < 0 ? s : s.slice(0, at)
+  const status = Number(API_STATUS.exec(head)?.[1] ?? 0)
+  if (at < 0 && status === 0) return null
+  const body = at < 0 ? '' : s.slice(at)
+  const type = API_TYPE.exec(body)?.[1] ?? ''
+  if (status === 529 || type === 'overloaded_error') return `API sobrecarregada (${status || 529})`
+  if (status === 429 || type === 'rate_limit_error') return `limite de requisições (${status || 429})`
+  if (status === 401 || status === 403 || type === 'authentication_error' || type === 'permission_error') {
+    return `acesso negado (${status || (type === 'permission_error' ? 403 : 401)})`
+  }
+  if ((status >= 500 && status <= 599) || type === 'api_error') return `erro no servidor (${status || 500})`
+  const message = API_MESSAGE.exec(body)?.[1]
+  return (message !== undefined ? withoutJson(unescapeJson(message)) : '') || withoutJson(head) || (type ? 'erro na API' : 'erro')
 }
 
 // ── preenchimento ─────────────────────────────────────────────────────────

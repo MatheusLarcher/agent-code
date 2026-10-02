@@ -1,14 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import { BubbleLayout, EDGE, GAP, HYST, isCompact, liftOf, newBox, SLOT_COMPACT, SLOT_FRESH, SLOT_NONE, STACK_TRIES, type BubbleBox } from './bubbleLayout'
+import {
+  BubbleLayout,
+  EDGE,
+  GAP,
+  HEAD_CLEAR,
+  HYST,
+  isCompact,
+  isFlipped,
+  liftOf,
+  newBox,
+  SLOT_COMPACT,
+  SLOT_FRESH,
+  SLOT_NONE,
+  STACK_TRIES,
+  type BubbleBox
+} from './bubbleLayout'
 
 const W = 1600
 const CW = 30
 const CH = 28
 const BW = 200
 const BH = 60
+/** Ponta sem empilhar acima do centro da cabeça (px), por padrão. */
+const UP = 40
+/** A barra do HUD (speech.ts BUBBLE_TOP). */
+const BAR = 56
 
-/** Caixa com a ponta sem empilhar em (ax, ay) e o balão inteiro w×h. */
-const box = (ax: number, ay: number, w = BW, h = BH): BubbleBox => Object.assign(newBox(), { ax, ay, w, h })
+/** Caixa com a ponta sem empilhar em (ax, ay), o balão inteiro w×h e o centro da cabeça em hy. */
+const box = (ax: number, ay: number, w = BW, h = BH, hy = ay + UP): BubbleBox => Object.assign(newBox(), { ax, ay, w, h, hy })
 
 function run(boxes: BubbleBox[], layout = new BubbleLayout(8), compactOnly = false, top = EDGE): BubbleBox[] {
   layout.run(boxes, boxes.length, W, top, compactOnly, CW, CH)
@@ -16,16 +35,17 @@ function run(boxes: BubbleBox[], layout = new BubbleLayout(8), compactOnly = fal
 }
 
 /** Um quadro novo com o que o quadro anterior decidiu (o que speech.ts faz). */
-function next(boxes: BubbleBox[], layout: BubbleLayout, compactOnly = false): BubbleBox[] {
+function next(boxes: BubbleBox[], layout: BubbleLayout, compactOnly = false, top = EDGE): BubbleBox[] {
   for (const b of boxes) b.prev = b.slot
-  return run(boxes, layout, compactOnly)
+  return run(boxes, layout, compactOnly, top)
 }
 
 type Rect = readonly [number, number, number, number]
+/** Retângulo em tela: acima da ponta, ou abaixo dela quando virado. */
 function rectOf(b: BubbleBox): Rect {
   const w = isCompact(b.slot) ? CW : b.w
   const h = isCompact(b.slot) ? CH : b.h
-  return [b.x - w / 2, b.y - h, b.x + w / 2, b.y]
+  return isFlipped(b.slot) ? [b.x - w / 2, b.y, b.x + w / 2, b.y + h] : [b.x - w / 2, b.y - h, b.x + w / 2, b.y]
 }
 const overlaps = (a: Rect, b: Rect): boolean => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
 
@@ -146,5 +166,94 @@ describe('bubbleLayout — balões sem sobreposição em tela', () => {
     const again = [box(500, 400), box(900, 400)]
     run(again, layout)
     expect(again.map((b) => b.slot)).toEqual([0, 0])
+  })
+})
+
+describe('bubbleLayout — a barra do HUD vale para TODO balão', () => {
+  it('topo invadindo a barra: o balão da cabeça desce até caber abaixo dela, no x da cabeça, e a ponta não entra na cabeça', () => {
+    // Ponta sem empilhar em 100 e cabeça em 140: o topo ficaria em 40, sob a barra. Desce 16 px.
+    const [a] = run([box(500, 100)], new BubbleLayout(8), false, BAR)
+    expect([a.slot, a.x, a.y]).toEqual([0, 500, BAR + BH])
+    expect(rectOf(a)[1]).toBe(BAR)
+    expect(a.y).toBeLessThanOrEqual(140 - UP * HEAD_CLEAR) // ainda acima da cabeça, apontando para ela
+    // Topo exatamente na barra, ou abaixo dela: nada muda.
+    const [edge, low] = run([box(300, BAR + BH), box(900, 400)], new BubbleLayout(8), false, BAR)
+    expect([edge.slot, edge.y, low.slot, low.y]).toEqual([0, BAR + BH, 0, 400])
+    // Ícone (zoom longe): o mesmo, com a altura dele.
+    const [icon] = run([box(500, 60)], new BubbleLayout(8), true, BAR)
+    expect([icon.slot, icon.x, icon.y]).toEqual([SLOT_COMPACT, 500, BAR + CH])
+  })
+
+  it('cabeça colada na barra: sem espaço entre as duas, o balão vira para baixo da cabeça, com a ponta para cima', () => {
+    // Ponta sem empilhar em 70, cabeça em 110: preso, a ponta iria a 116 — dentro da cabeça. Vira.
+    const [a] = run([box(500, 70)], new BubbleLayout(8), false, BAR)
+    const tip = 110 + UP * HEAD_CLEAR
+    expect([isFlipped(a.slot), isCompact(a.slot), liftOf(a.slot), a.x, a.y]).toEqual([true, false, 0, 500, tip])
+    expect(rectOf(a)).toEqual([400, tip, 600, tip + BH])
+    // Cabeça escondida sob a barra: virado, a ponta encosta na barra (nunca acima dela).
+    const [under] = run([box(700, 0, BW, BH, 30)], new BubbleLayout(8), false, BAR)
+    expect([isFlipped(under.slot), under.x, under.y]).toEqual([true, 700, BAR])
+    // O ícone só vira quando nem ele cabe entre a barra e a cabeça.
+    const [fits, flips] = run([box(300, 70), box(900, 50)], new BubbleLayout(8), true, BAR)
+    expect([fits.slot, fits.y]).toEqual([SLOT_COMPACT, BAR + CH])
+    expect([isFlipped(flips.slot), isCompact(flips.slot), flips.y]).toEqual([true, true, 90 + UP * HEAD_CLEAR])
+  })
+
+  it('histerese do virado: cabeça tremendo na fronteira não faz o balão pular de cima para baixo dela', () => {
+    const layout = new BubbleLayout(8)
+    // Preso, a ponta fica em BAR + BH = 116; a fronteira é a cabeça em 116 + UP·HEAD_CLEAR = 128.
+    const b = box(500, 88)
+    const boxes = [b]
+    run(boxes, layout, false, BAR)
+    expect([isFlipped(b.slot), b.y]).toEqual([false, BAR + BH])
+    const headAt = (hy: number): void => {
+      b.ay = hy - UP
+      b.hy = hy
+    }
+    headAt(127) // 1 px a menos: a ponta entraria na cabeça → vira já
+    next(boxes, layout, false, BAR)
+    expect(isFlipped(b.slot)).toBe(true)
+    for (const hy of [128, 127, 129, 128, 131]) {
+      headAt(hy) // tremendo em volta da fronteira
+      next(boxes, layout, false, BAR)
+      expect(isFlipped(b.slot)).toBe(true)
+    }
+    headAt(128 + HYST + 1) // folga maior que HYST: desvira, preso na barra
+    next(boxes, layout, false, BAR)
+    expect([isFlipped(b.slot), b.slot, b.y]).toEqual([false, 0, BAR + BH])
+  })
+
+  it('preso ou virado, ninguém cobre ninguém: quem colide e não tem para onde subir vira ícone (ou some)', () => {
+    // A e B presos na barra, um em cima do outro; C mais à direita: o ícone dele cabe ao lado de A.
+    const [a, b, c] = run([box(500, 100), box(560, 100), box(640, 100)], new BubbleLayout(8), false, BAR)
+    expect([a.slot, b.slot, c.slot]).toEqual([0, SLOT_NONE, SLOT_COMPACT])
+    expect([c.x, c.y]).toEqual([640, 100])
+    expectNoOverlap([a, b, c])
+    // D e E virados lado a lado: E não cabe virado; o ícone dele, menor, cabe entre a barra e a cabeça.
+    const [d, e] = run([box(500, 70), box(560, 70)], new BubbleLayout(8), false, BAR)
+    expect([isFlipped(d.slot), e.slot, e.y]).toEqual([true, SLOT_COMPACT, BAR + CH])
+    expectNoOverlap([d, e])
+  })
+
+  it('varredura perto da barra: nenhum balão acima dela, nenhum cobre outro, e a ponta na cabeça aponta para ela', () => {
+    let seed = 20_261_002
+    const rnd = (): number => (seed = (seed * 16_807) % 2_147_483_647) / 2_147_483_647
+    for (let round = 0; round < 400; round++) {
+      const boxes = Array.from({ length: 6 }, () => {
+        const hy = 10 + rnd() * 240
+        return box(300 + rnd() * 1_000, hy - 10 - rnd() * 80, 100 + rnd() * 120, 30 + rnd() * 60, hy)
+      })
+      run(boxes, new BubbleLayout(8), round % 3 === 2, BAR)
+      for (const b of boxes) {
+        if (b.slot === SLOT_NONE) continue
+        expect(rectOf(b)[1]).toBeGreaterThanOrEqual(BAR - 1e-9) // (BAR + h) − h em ponto flutuante
+        if (liftOf(b.slot) > 0) continue
+        const clear = (b.hy - b.ay) * HEAD_CLEAR
+        expect(b.x).toBe(b.ax) // longe das bordas: a ponta no x da cabeça
+        if (isFlipped(b.slot)) expect(b.y).toBeGreaterThanOrEqual(b.hy + clear) // embaixo da cabeça, ponta para cima
+        else expect([b.y >= b.ay, b.y <= b.hy - clear]).toEqual([true, true]) // só desceu, e não entrou na cabeça
+      }
+      expectNoOverlap(boxes)
+    }
   })
 })

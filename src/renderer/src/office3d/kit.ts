@@ -19,7 +19,6 @@ import {
   type Material,
   type Texture
 } from 'three'
-import { BATTERY_COLORS, type BatteryLevel } from './battery'
 import { createCorkTexture, createRugTexture, createScreensaverTexture, createSkyTexture, createWoodTexture, createZTexture } from './textures'
 
 export const SCREEN_W = 0.88
@@ -58,6 +57,9 @@ export function createKit(anisotropy: number) {
     z: createZTexture()
   }
   const sky = createSkyTexture()
+  // Céu de noite com lua: as janelas no apagão (luar), seja qual for a hora.
+  const night = createSkyTexture()
+  night.draw(23)
   const geo = {
     box: new BoxGeometry(1, 1, 1),
     cyl: new CylinderGeometry(0.5, 0.5, 1, 12),
@@ -88,6 +90,7 @@ export function createKit(anisotropy: number) {
     screensaver: new MeshBasicMaterial({ map: tex.screensaver }),
     windowFrame: lambert(0xf4efe6),
     sky: new MeshBasicMaterial({ map: sky.texture }),
+    skyNight: new MeshBasicMaterial({ map: night.texture }),
     glass: new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.08, depthWrite: false }),
     cork: lambert(0xffffff, { map: tex.cork }),
     corkFrame: lambert(0x6e4a2c),
@@ -102,6 +105,9 @@ export function createKit(anisotropy: number) {
     steel: lambert(0xb9bec6),
     shade: lambert(0xffe2b0, { emissive: 0xffc878, emissiveIntensity: 0.85, side: DoubleSide }),
     bulb: new MeshBasicMaterial({ color: 0xfff1d0 }),
+    // Luminária apagada (economia, apagão, piscada do alerta): troca de material, não de luz.
+    shadeOff: lambert(0xcbbd9f, { side: DoubleSide }),
+    bulbOff: lambert(0x6f6a62),
     redLed: new MeshBasicMaterial({ color: 0xff3b30 }),
     greenLed: new MeshBasicMaterial({ color: 0x34c759 }),
     coffee: lambert(0x2a2d33),
@@ -113,11 +119,6 @@ export function createKit(anisotropy: number) {
     pants: [0x2f3a52, 0x3b3b40, 0x4a3b2e, 0x26354a].map((c) => lambert(c)),
     shoe: lambert(0x1b1b1f),
     eye: new MeshBasicMaterial({ color: 0x111318 }),
-    batteryShell: lambert(0x1c1f26, { transparent: true, opacity: 0.9 }),
-    batteryNub: lambert(0x8d939c),
-    battery: Object.fromEntries(
-      (Object.keys(BATTERY_COLORS) as BatteryLevel[]).map((k) => [k, lambert(0x000000, { emissive: BATTERY_COLORS[k], emissiveIntensity: 1 })])
-    ) as Record<BatteryLevel, MeshLambertMaterial>,
     bubbles: Object.fromEntries(
       (Object.keys(BUBBLE_COLORS) as BubbleKind[]).map((k) => [k, lambert(BUBBLE_COLORS[k], { emissive: BUBBLE_COLORS[k], emissiveIntensity: 0.6 })])
     ) as Record<BubbleKind, MeshLambertMaterial>,
@@ -135,9 +136,9 @@ export function createKit(anisotropy: number) {
     mat,
     dispose(): void {
       for (const g of Object.values(geo) as BufferGeometry[]) g.dispose()
-      const { pants, battery, bubbles, status, ...rest } = mat
-      for (const m of [...Object.values(rest), ...pants, ...Object.values(battery), ...Object.values(bubbles), ...Object.values(status)] as Material[]) m.dispose()
-      for (const t of [...Object.values(tex), sky.texture] as Texture[]) t.dispose()
+      const { pants, bubbles, status, ...rest } = mat
+      for (const m of [...Object.values(rest), ...pants, ...Object.values(bubbles), ...Object.values(status)] as Material[]) m.dispose()
+      for (const t of [...Object.values(tex), sky.texture, night.texture] as Texture[]) t.dispose()
     }
   }
 }
