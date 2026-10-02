@@ -1066,6 +1066,10 @@ export class PostgresRepository implements PersistenceRepository {
       )
       const current = locked.rows[0]
       if (!current) throw new StorageError('INVALID_PERSISTED_DATA', `Cartão inexistente: ${input.id}`)
+      if (input.onlyIf) {
+        const item = boardItemFromRow(decodeBoardRow(current))
+        if (!input.onlyIf(item)) return item
+      }
       const nextPoTitle = input.poTitle === undefined ? current.po_title : nullableText(input.poTitle)
       const nextPoStatus = input.poStatus === undefined ? current.po_status : input.poStatus
       const nextPoReason = input.poReason === undefined ? current.po_reason : nullableText(input.poReason)

@@ -11,6 +11,7 @@ import type { BoardDismissBy, BoardItem, BoardItemEvent, BoardPoCreate, BoardPoW
 import {
   boardItemStatus,
   boardItemTitle,
+  boardItemTurnEndKind,
   boardTurnEndReason,
   parseBoardTurnEndReason,
   type BoardItemStatus,
@@ -338,7 +339,10 @@ export class BoardService {
     for (const card of boardItemsToResume(cards, this.lastReopened.get(convId) ?? null)) {
       if (!sameTurn()) return
       try {
-        await this.applyPo({ id: card.id, poStatus: 'in_progress', poReason: RESUME_REASON, actor: 'system' })
+        // Condicional: o CONCLUIR atrasado do PO pode ter sido gravado depois
+        // da leitura acima — só promove o que AINDA está como o fim de turno deixou.
+        const onlyIf = (current: BoardItem): boolean => boardItemTurnEndKind(current) !== null
+        await this.applyPo({ id: card.id, poStatus: 'in_progress', poReason: RESUME_REASON, actor: 'system', onlyIf })
       } catch {
         // Um cartão que falhou não impede os outros.
       }

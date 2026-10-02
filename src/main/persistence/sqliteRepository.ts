@@ -1143,11 +1143,16 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
 
   async applyBoardPo(input: BoardPoWrite): Promise<BoardItem> {
     assertPoWrite(input)
+    let skipped = false
     const item = this.write((db) => {
       const current = db
         .prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`)
         .get(input.id) as unknown as BoardItemRow | undefined
       if (!current) throw new TypeError(`Cartão inexistente: ${input.id}`)
+      if (input.onlyIf && !input.onlyIf(boardItemFromRow(current))) {
+        skipped = true
+        return boardItemFromRow(current)
+      }
       const now = new Date().toISOString()
       const next = {
         poTitle: input.poTitle === undefined ? current.po_title : input.poTitle,
@@ -1180,7 +1185,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(input.id) as unknown as BoardItemRow
       )
     })
-    this.emit('board', item.id, item.revision)
+    if (!skipped) this.emit('board', item.id, item.revision)
     return item
   }
 

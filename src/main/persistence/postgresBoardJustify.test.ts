@@ -78,6 +78,28 @@ describe.runIf(integration).sequential('PostgresRepository — justificativas e 
     expect(events[1]).toMatchObject({ actor: 'po', fromStatus: 'in_progress', toStatus: 'in_progress', note: 'falta commitar' })
   })
 
+  it('onlyIf falso não grava nem registra evento; verdadeiro grava', async () => {
+    const target = await repository()
+    opened.push(target)
+    const card = await oneCard(target, 'in_progress')
+    await target.applyBoardPo({ id: card.id, poStatus: 'completed', poReason: 'entregue' })
+    const skipped = await target.applyBoardPo({
+      id: card.id,
+      poStatus: 'in_progress',
+      poReason: 'retomada',
+      actor: 'system',
+      onlyIf: (current) => current.poStatus === 'pending'
+    })
+    expect(skipped).toMatchObject({ poStatus: 'completed', poReason: 'entregue' })
+    const applied = await target.applyBoardPo({
+      id: card.id,
+      poReason: 'entregue e testado',
+      onlyIf: (current) => current.poStatus === 'completed'
+    })
+    expect(applied.poReason).toBe('entregue e testado')
+    expect((await target.listBoardItemEvents(card.id)).map((e) => e.kind)).toEqual(['created', 'status_changed', 'justified'])
+  })
+
   it('TITULO com motivo leva a nota "título → …: motivo"', async () => {
     const target = await repository()
     opened.push(target)

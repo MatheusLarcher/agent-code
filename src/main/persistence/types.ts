@@ -449,6 +449,14 @@ export interface BoardPoWrite {
   /** Nota do evento quando ela não é o `poReason` gravado — o TITULO que não
    *  pode apagar o motivo do fim de turno leva a própria justificativa aqui. */
   eventNote?: string | null
+  /**
+   * Pré-condição conferida contra o cartão lido DENTRO da transação da escrita,
+   * com a linha travada. Falsa: nada é gravado (nem evento) e volta o cartão
+   * como está. Existe para a escrita decidida sobre uma leitura anterior (a
+   * promoção da retomada) não passar por cima de quem gravou no meio — uma
+   * releitura antes de escrever ainda deixaria a janela aberta.
+   */
+  onlyIf?: (current: BoardItem) => boolean
 }
 
 /** Quem dispensou/restaurou e por quê — vai para o evento do histórico. */
