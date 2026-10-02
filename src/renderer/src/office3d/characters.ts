@@ -6,7 +6,8 @@
  * `update(dt, lod)` por quadro: posição/rumo do cérebro, fase da caminhada
  * pela DISTÂNCIA andada (pé não desliza), sentar/levantar pelo peso `sit`,
  * crossfade de BLEND_S entre ações, reação por cima, cabeça olhando o alvo
- * (monitor, colega, câmera), piscar a cada 3–6 s, respiração, objeto na mão e
+ * (monitor, colega, câmera; `glance` passa por cima por GLANCE_S — a tela do
+ * projetor que acendeu), piscar a cada 3–6 s, respiração, objeto na mão e
  * efeitos (confete, fumaça, suor, vapor, gotas, "!"). lod 0 = completo; 1 =
  * sem crossfade/piscar/respirar/vapor, sem os detalhes (olhos, dedos, objetos
  * de mão — só a plaquinha "Posso?" e a lanterna da festa ficam) e sem sombra;
@@ -54,6 +55,8 @@ import { applyPose, buildRig, headLocal, type Rig } from './rig'
 
 const GLOW = 0x6fa2ff
 const LOWER: readonly number[] = [CH.pelvisY, CH.pelvisZ, CH.legL, CH.kneeL, CH.legR, CH.kneeR, CH.footL, CH.footR]
+/** Quanto dura a olhada para a tela do projetor que acendeu (s). */
+export const GLANCE_S = 4
 
 export type { Lod } from './lod'
 export { appearance, seedColor, type Appearance } from './appearance'
@@ -117,6 +120,9 @@ export class Character3D {
   private lookW = 0
   private lookYaw = 0
   private lookPitch = 0
+  /** Olhada por cima do olhar do cérebro (a tela do projetor que acendeu) até `ctx.t` chegar em `glanceUntil`. */
+  private readonly glanceAt = { x: 0, y: 0, z: 0 }
+  private glanceUntil = -1
   private nextBlink: number
   private blinkT = 1
   private steamT = 0
@@ -176,6 +182,14 @@ export class Character3D {
     ind.userData.charKey = this.key
     this.hud.add(ind)
     this.indicator = ind
+  }
+
+  /** Vira a cabeça para (x, y, z) por `seconds` — a tela do projetor que acendeu na sala. */
+  glance(x: number, y: number, z: number, seconds = GLANCE_S): void {
+    this.glanceAt.x = x
+    this.glanceAt.y = y
+    this.glanceAt.z = z
+    this.glanceUntil = this.ctx.t + seconds
   }
 
   /** Culling/LOD vindos da cena. Voltar à vista sincroniza no próximo update, sem animar o atraso. */
@@ -267,7 +281,7 @@ export class Character3D {
       this.indicator.scale.setScalar(1 + Math.sin(t * 3) * 0.12)
       this.indicator.rotation.y = t * 1.2
     }
-    return brainBusy(b) || this.blendT < BLEND_S || this.bangT >= 0 || this.smokeLeft > 0 || this.indicator !== null
+    return brainBusy(b) || this.blendT < BLEND_S || this.bangT >= 0 || this.smokeLeft > 0 || this.indicator !== null || t < this.glanceUntil
   }
 
   private pose(dt: number, lod: Lod, run: number): void {
@@ -309,20 +323,22 @@ export class Character3D {
     const b = this.brain
     const ctx = this.ctx
     const greet = b.reaction === 'greet'
+    const glance = ctx.t < this.glanceUntil && !greet
+    const g = this.glanceAt
     let want = 0
     let yaw = 0
     let pitch = 0
-    if (b.look !== 'none' || greet) {
-      const cam = b.look === 'camera' || greet
-      const dx = (cam ? ctx.camX : b.lookX) - b.x
-      const dz = (cam ? ctx.camZ : b.lookZ) - b.z
+    if (b.look !== 'none' || greet || glance) {
+      const cam = !glance && (b.look === 'camera' || greet)
+      const dx = (glance ? g.x : cam ? ctx.camX : b.lookX) - b.x
+      const dz = (glance ? g.z : cam ? ctx.camZ : b.lookZ) - b.z
       const c = Math.cos(b.yaw)
       const s = Math.sin(b.yaw)
       const lx = dx * c - dz * s
       const lz = dx * s + dz * c
       yaw = Math.atan2(-lx, -lz)
       headLocal(this.out, head)
-      pitch = -Math.atan2((cam ? ctx.camY : b.lookY) - head.y * this.scale, Math.max(0.05, Math.hypot(lx, lz)))
+      pitch = -Math.atan2((glance ? g.y : cam ? ctx.camY : b.lookY) - head.y * this.scale, Math.max(0.05, Math.hypot(lx, lz)))
       if (Math.abs(yaw) < 2.3) want = 1
       yaw = Math.max(-1.2, Math.min(1.2, yaw))
       pitch = Math.max(-0.7, Math.min(0.7, pitch))

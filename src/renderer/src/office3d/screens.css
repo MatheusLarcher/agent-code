@@ -1,0 +1,178 @@
+/*
+ * As telas do agente no Escritório 3D — a tela focada do monitor (ChatScreen) e
+ * a prévia do hover (ChatPreview) — e o telão do projetor (ProjectorOverlay).
+ * Por dentro é o chat de verdade (.message-list, .msg, .tool-card do
+ * styles.css); aqui só a moldura. Camadas no palco: prévia 3, tela 2, telão 6.
+ */
+
+/* Cabeçalho das telas do agente: ponto na cor da camisa, título, quem é e o estado. */
+.o3d-turn-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.o3d-turn-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.o3d-turn-head .tool-badge { margin-left: 0; flex: none; }
+.o3d-turn-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.o3d-turn-close:hover { background: var(--bg-3); color: var(--text); }
+.o3d-turn-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Tela focada: ocupa o monitor projetado (a âncora .o3d-screen-anchor). */
+.o3d-chat-screen {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 28px rgba(111, 162, 255, 0.25);
+}
+.o3d-chat-screen-body.message-list { padding: 14px 16px 10px; overscroll-behavior: contain; }
+
+/* Prévia do hover: o motor move a âncora (transform); o cartão não pega o mouse. */
+.o3d-preview-anchor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  pointer-events: none;
+  will-change: transform;
+}
+.o3d-preview {
+  width: 360px;
+  max-width: 46vw;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  animation: o3d-preview-in 140ms ease-out;
+}
+/* As entradas mais novas embaixo; o que não cabe sai por cima, como no chat. */
+.o3d-preview-body.message-list {
+  flex: none;
+  max-height: 250px;
+  overflow: hidden;
+  justify-content: flex-end;
+  padding: 10px 12px;
+  gap: 8px;
+}
+.o3d-preview .bubble { max-width: 92%; }
+@keyframes o3d-preview-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Telão do projetor: a imagem grande da sala, acima de tudo no palco (até do chat). */
+.o3d-projector {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 64px 28px 28px;
+  background: rgba(8, 9, 14, 0.62);
+  animation: o3d-preview-in 160ms ease-out;
+}
+.o3d-projector-card {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 100%);
+  max-height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-2);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 60px rgba(150, 190, 255, 0.12);
+}
+.o3d-projector-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.o3d-projector-live {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.o3d-projector-live.on { background: rgba(255, 77, 79, 0.16); color: #ff6b6d; }
+.o3d-projector-where {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 12.5px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--text);
+}
+.o3d-projector-open {
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.o3d-projector-open:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.o3d-projector-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.o3d-projector-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+  object-fit: contain;
+  background: #0d0e10;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .o3d-preview,
+  .o3d-projector { animation: none; }
+}

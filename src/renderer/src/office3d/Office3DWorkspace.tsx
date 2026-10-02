@@ -8,12 +8,16 @@
  * O motor (three puro) nasce na montagem e vive enquanto a aba existir: com
  * `active` false (aba Conversa) ele fica PAUSADO — sem RAF, sem simulação, sem
  * textura redesenhada — e volta na hora, com a mesma câmera. Com a aba fechada
- * também não existem a tela do monitor (<ToolScreen>, nem as assinaturas dela
- * no feed e no código ao vivo) nem o HUD de desempenho; ao voltar, a tela
- * renasce já com o feed que o motor retomou. Desmontar libera GPU, listeners e RAF.
+ * também não existem a tela do monitor (<ChatScreen>, nem as assinaturas dela
+ * no feed e no código ao vivo), a prévia, o telão nem o HUD de desempenho; ao
+ * voltar, a tela renasce já com o feed que o motor retomou. Desmontar libera
+ * GPU, listeners (os do navegador também) e RAF.
  *
- * Clique num agente voa até o monitor dele e abre por cima, alinhado ao
- * monitor, o cartão da ferramenta atual no formato do chat (<ToolScreen>);
+ * Mouse parado num agente (PREVIEW_DELAY_MS): a prévia (<ChatPreview>) com as
+ * últimas entradas do turno dele, acima do monitor. Clique num agente voa até o
+ * monitor dele e abre por cima, alinhado ao monitor, o turno da conversa como
+ * o chat mostra (<ChatScreen>); clique na tela acesa de um projetor abre o
+ * telão (<ProjectorOverlay>, com o "Abrir na aba Conversa" de `onShowBrowser`);
  * duplo clique abre a conversa dele no chat flutuante (que expande). Clique no
  * balão de um pedido (permissão, pergunta) leva ao pedido (`onFocusRequest`:
  * o App seleciona a conversa e abre o modal); nos outros balões, foca o agente.
@@ -31,15 +35,17 @@
  */
 import './office3d.css'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { principalKey, type LookupInfo } from '../office/adapter/model'
+import { principalKey } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
+import { ChatPreview, useHoverPreview } from './ChatPreview'
+import { ChatScreen } from './ChatScreen'
 import { DEMO_TICK_MS, demoFeed } from './demoFeed'
 import { Office3DEngine, type EngineCallbacks, type EngineOptions } from './engine'
 import { OfficeChatFloat, type OfficeConversation } from './OfficeChatFloat'
 import { OfficeHud } from './OfficeHud'
 import { isPerfShortcut, PerfHud } from './PerfHud'
 import type { OfficePower } from './power'
-import { ToolScreen } from './ToolScreen'
+import { ProjectorOverlay } from './ProjectorOverlay'
 
 export interface Office3DWorkspaceProps {
   /** A aba está à vista; false pausa o motor (padrão: true). */
@@ -49,9 +55,12 @@ export interface Office3DWorkspaceProps {
   /** A conversa ativa: cabeçalho do chat e o voo da câmera quando ela muda. */
   conversation?: OfficeConversation | null
   onOpenConversation: (convId: string) => void
-  onOpenFile: (path: string) => void
+  /** Sem uso desde que a tela do monitor segue o chat (o ToolCard abre o arquivo pelo Preview); mantido para o App. */
+  onOpenFile?: (path: string) => void
   /** Balão de pedido (permissão, pergunta) clicado: leva ao pedido da conversa. Sem ele, o balão foca o agente. */
   onFocusRequest?: (convId: string) => void
+  /** O telão do projetor: abre a conversa dele com o navegador, na aba Conversa. Sem ele, sem o botão. */
+  onShowBrowser?: (convId: string) => void
   /** Controle do Windows ligado: o HUD mostra o aviso (o chat minimizado o esconde). */
   windowsControlEnabled?: boolean
   /** O "Desativar" do aviso — o mesmo do aviso do chat. */
@@ -75,8 +84,8 @@ export function Office3DWorkspace({
   chat,
   conversation = null,
   onOpenConversation,
-  onOpenFile,
   onFocusRequest,
+  onShowBrowser,
   windowsControlEnabled = false,
   onDisableWindowsControl,
   engineOptions
@@ -92,8 +101,11 @@ export function Office3DWorkspace({
   const [expand, setExpand] = useState(0)
   const [collapse, setCollapse] = useState(0)
   const [, setTick] = useState(0)
-  const cbs = useRef({ onOpenConversation, onFocusRequest })
-  cbs.current = { onOpenConversation, onFocusRequest }
+  // Prévia do hover: o agente sob o mouse há PREVIEW_DELAY_MS. Telão: a sala cujo projetor foi clicado.
+  const [previewKey, onHover] = useHoverPreview(active)
+  const [projectorRoom, setProjectorRoom] = useState<string | null>(null)
+  const cbs = useRef({ onOpenConversation, onFocusRequest, onHover })
+  cbs.current = { onOpenConversation, onFocusRequest, onHover }
   const activeRef = useRef(active)
   activeRef.current = active
   const source = engineOptions?.source ?? officeStore
@@ -110,6 +122,8 @@ export function Office3DWorkspace({
         cbs.current.onOpenConversation(convId)
       },
       onPower: setPower,
+      onHover: (key) => cbs.current.onHover(key),
+      onProjector: setProjectorRoom,
       // Lido na hora do clique: o pedido vai para o callback do render atual (sem ele, o balão foca o agente).
       get onFocusRequest() {
         return cbs.current.onFocusRequest
@@ -130,6 +144,7 @@ export function Office3DWorkspace({
       engineRef.current = null
       setFocusKey(null)
       setPower(null)
+      setProjectorRoom(null)
     }
     // engineOptions é fixo por montagem (testes).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,11 +180,17 @@ export function Office3DWorkspace({
     if (active && convId && had) engineRef.current?.follow(convId)
   }, [convId, active])
 
-  // Com a tela aberta e a aba à vista, o conteúdo acompanha o feed.
+  // Aba fechada: o telão fecha.
   useEffect(() => {
-    if (!focusKey || !active) return
+    if (!active) setProjectorRoom(null)
+  }, [active])
+
+  // Com a tela, a prévia ou o telão aberto e a aba à vista, o conteúdo acompanha o feed.
+  const showing = !!focusKey || !!previewKey || !!projectorRoom
+  useEffect(() => {
+    if (!showing || !active) return
     return source.subscribe(() => setTick((t) => t + 1))
-  }, [focusKey, source, active])
+  }, [showing, source, active])
 
   // Só DEV e com a aba aberta: demonstração animada (linha do tempo do demoFeed,
   // um quadro por tique) e HUD de desempenho. Fechar a aba para a demo e limpa o override.
@@ -211,12 +232,26 @@ export function Office3DWorkspace({
   }, [active])
 
   const engine = engineRef.current
+  const feed = engine?.currentFeed ?? null
   const focused = active && focusKey && engine ? engine.scene.character(focusKey) : undefined
-  const info: LookupInfo | undefined = focused
-    ? { key: focused.key, convId: focused.model.convId, role: focused.model.role, trackId: focused.model.trackId }
-    : undefined
-  // Estável: o motor só ouve quando a tela nasce ou some (não a cada render do App).
+  // A prévia não aparece no agente que já está com a tela aberta.
+  const previewed = active && previewKey && previewKey !== focusKey && engine ? engine.scene.character(previewKey) : undefined
+  // Estáveis: o motor só ouve quando a tela (ou a prévia) nasce ou some, não a cada render do App.
   const screenRef = useCallback((el: HTMLDivElement | null): void => engineRef.current?.setScreenElement(el), [])
+  const previewRef = useCallback((el: HTMLDivElement | null): void => engineRef.current?.setPreviewElement(el), [])
+  const closeScreen = useCallback(() => engineRef.current?.leaveFocus(true), [])
+  const projector = active && projectorRoom && engine ? engine.scene.projectors.info(projectorRoom) : null
+  const mirror = useCallback((el: HTMLCanvasElement | null): void => {
+    if (projectorRoom) engineRef.current?.scene.projectors.mirror(projectorRoom, el)
+  }, [projectorRoom])
+  const closeProjector = useCallback(() => setProjectorRoom(null), [])
+  const showBrowser = useCallback(
+    (id: string) => {
+      setProjectorRoom(null)
+      onShowBrowser?.(id)
+    },
+    [onShowBrowser]
+  )
   // 📍: o agente fica no meio da tela, atrás do chat maximizado — o chat minimiza antes do voo.
   const locate = useCallback((id: string) => {
     setCollapse((n) => n + 1)
@@ -235,8 +270,16 @@ export function Office3DWorkspace({
         <OfficeHud power={power} windowsControlEnabled={windowsControlEnabled} onDisableWindowsControl={onDisableWindowsControl} />
         {focused && (
           <div ref={screenRef} className="o3d-screen-anchor" key={focused.key}>
-            <ToolScreen feed={engine?.currentFeed ?? null} info={info} onOpenFile={onOpenFile} />
+            <ChatScreen feed={feed} model={focused.model} onClose={closeScreen} />
           </div>
+        )}
+        {previewed && (
+          <div ref={previewRef} className="o3d-preview-anchor" data-key={previewed.key} key={previewed.key}>
+            <ChatPreview feed={feed} model={previewed.model} />
+          </div>
+        )}
+        {projector && (
+          <ProjectorOverlay key={projector.roomId} info={projector} mirror={mirror} onClose={closeProjector} onShowBrowser={onShowBrowser ? showBrowser : undefined} />
         )}
         {import.meta.env.DEV && active && hud ? <PerfHud source={readEngine} /> : null}
       </div>

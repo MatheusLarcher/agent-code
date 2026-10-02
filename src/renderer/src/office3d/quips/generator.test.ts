@@ -15,6 +15,7 @@ import {
   type QuipKind,
   type Rng
 } from './generator'
+import { PROJECTOR_IDLE_MS } from '../projectorUse'
 
 /** 14:00 local: a hora do reset sai igual em qualquer fuso. */
 const NOW = new Date(2026, 9, 2, 14, 0).getTime()
@@ -330,5 +331,33 @@ describe('createQuipEngine: todos os eventos falam', () => {
     expect(one(e, { ...stuck, stalledMs: 0 }, [], NOW + TTL_MS.progress + 1)).toBeNull() // voltou a dar sinal: cai
     const voice = one(createQuipEngine(seededRng(1)), status({ phase: 'done', speaking: true }), [], NOW)
     expect(voice?.kind).toBe('progress')
+  })
+})
+
+describe('createQuipEngine: a fala do projetor', () => {
+  it('a 1ª chamada de navegador/Android em PROJECTOR_IDLE_MS vira a fala do projetor (passa na frente da narração); depois, a narração de sempre', () => {
+    const e = createQuipEngine(fixed(0))
+    const read = tool('Read', 'read', 'api.ts')
+    expect(one(e, status({ tool: read }), [toolEv(read)], NOW)?.priority).toBe(PRIORITY.progress)
+    const nav = tool('mcp__browser__browser_navigate', 'web', 'localhost:5173')
+    const screen = one(e, status({ tool: nav }), [toolEv(nav)], NOW + 500)
+    expect(screen).toMatchObject({ kind: 'progress', icon: '🎬', priority: PRIORITY.screen, text: 'Testando no navegador: localhost:5173 — abrindo página 🎬' })
+    // Mesmo "sessão" de testes: o próximo clique é a narração do navegador.
+    const click = tool('mcp__browser__browser_click', 'web', '')
+    const later = one(e, status({ tool: click }), [toolEv(click)], NOW + 10_000)
+    expect(later?.icon).toBe('🧭')
+    expect(later?.text).toContain('clicando')
+    // Passado o intervalo sem projetor, a fala volta.
+    const shot = tool('mcp__browser__browser_screenshot', 'web', '')
+    expect(one(e, status({ tool: shot }), [toolEv(shot)], NOW + 500 + PROJECTOR_IDLE_MS)?.icon).toBe('🎬')
+  })
+
+  it('Android: a fala do celular, com a ação', () => {
+    const tap = tool('mcp__android__android_tap', 'other', '')
+    const q = one(createQuipEngine(fixed(0)), status({ tool: tap }), [toolEv(tap)], NOW)
+    expect(q).toMatchObject({ icon: '📱', text: 'Testando no celular: tocando na tela 📱' })
+    // A toolchain (setup, build) não liga o projetor.
+    const build = tool('mcp__android__android_build_apk', 'other', '')
+    expect(one(createQuipEngine(fixed(0)), status({ tool: build }), [toolEv(build)], NOW)?.icon).toBe('🛠️')
   })
 })

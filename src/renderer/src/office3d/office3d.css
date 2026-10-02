@@ -4,9 +4,9 @@
  * cima (o painel do planningChat.css, com o tema .o3d-chat). Mesmas variáveis
  * do styles.css.
  *
- * Camadas no palco: balões de fala 1 (quips.css), tela do monitor 2, HUD e
- * HUD de desempenho 9 — acima do chat flutuante (8), que nunca sobe na faixa
- * do HUD (OFFICE_CHAT_MIN_TOP).
+ * Camadas no palco: balões de fala 1 (quips.css), tela do monitor 2, prévia
+ * do agente 3 e telão do projetor 6 (screens.css), HUD e HUD de desempenho 9 —
+ * acima do chat flutuante (8), que nunca sobe na faixa do HUD (OFFICE_CHAT_MIN_TOP).
  */
 .office3d-workspace { position: relative; }
 /* Aba fechada: o motor fica montado (e pausado), o palco some. */
@@ -17,6 +17,8 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  /* clip: nem scrollIntoView de dentro das telas (o chat real) rola o palco 3D. */
+  overflow: clip;
   background: #1d1a22;
 }
 .o3d-canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }

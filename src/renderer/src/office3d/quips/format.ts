@@ -219,12 +219,15 @@ const BROWSER_VERBS: Record<string, string> = {
   snapshot: 'lendo a página', evaluate: 'rodando JS', scroll: 'rolando a página', form_fields: 'preenchendo formulário',
   run_steps: 'executando passos', back: 'voltando uma página', reload: 'recarregando', new_tab: 'abrindo aba',
   open_tab: 'abrindo aba', close_tab: 'fechando aba', select_tab: 'trocando de aba', list_tabs: 'contando abas',
-  press_key: 'apertando tecla', select_option: 'escolhendo opção', wait: 'esperando a página', get_text: 'lendo o texto'
+  press_key: 'apertando tecla', select_option: 'escolhendo opção', wait: 'esperando a página', get_text: 'lendo o texto',
+  // Android (mcp__android__android_*).
+  tap: 'tocando na tela', swipe: 'deslizando a tela', key: 'apertando tecla', install_run: 'instalando o app',
+  open_preview: 'ligando o celular', set_device: 'trocando de aparelho'
 }
 
-/** "mcp__browser__browser_click" → "clicando"; verbo desconhecido sai como veio. */
+/** "mcp__browser__browser_click" → "clicando", "mcp__android__android_tap" → "tocando na tela"; verbo desconhecido sai como veio. */
 export function browserAction(name: string): string {
-  const verb = name.replace(/^mcp__\w+?__/, '').replace(/^(?:browser|chrome)_/, '')
+  const verb = name.replace(/^mcp__\w+?__/, '').replace(/^(?:browser|chrome|android)_/, '')
   return BROWSER_VERBS[verb] ?? verb.replace(/_/g, ' ')
 }
 

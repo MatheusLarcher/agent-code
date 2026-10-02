@@ -23,7 +23,8 @@ export const OFFICE_CONTROLS: ReadonlyArray<{ keys: readonly string[]; does: str
   { keys: ['Arrastar'], does: 'gira a câmera' },
   { keys: ['Roda'], does: 'aproxima e afasta' },
   { keys: ['Botão do meio'], does: 'arrasta a câmera' },
-  { keys: ['Clique'], does: 'no agente: abre a tela do monitor dele' },
+  { keys: ['Mouse parado'], does: 'no agente: prévia do que ele está fazendo' },
+  { keys: ['Clique'], does: 'no agente: o turno dele na tela do monitor; no telão do projetor: a página grande' },
   { keys: ['Duplo clique'], does: 'no agente: a conversa dele no chat' },
   { keys: ['Esc'], does: 'fecha a tela e volta' },
   { keys: ['📍'], does: 'no chat: voa até a mesa do agente' }

@@ -5,6 +5,7 @@
  */
 import { PCFShadowMap, WebGLRenderer, type Camera, type Scene } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
+import type { BrowserFeedApi } from './browserFrames'
 import type { OfficePower } from './power'
 
 export interface RendererLike {
@@ -30,6 +31,9 @@ export function createDefaultRenderer(canvas: HTMLCanvasElement): RendererLike {
   return r
 }
 
+/** Chave de pick da tela do projetor de uma sala: `${PROJECTOR_KEY}${roomId}`. */
+export const PROJECTOR_KEY = 'projector:'
+
 export interface FeedSource {
   getSnapshot(): OfficeFeed | null
   subscribe(cb: (feed: OfficeFeed) => void): () => void
@@ -41,6 +45,8 @@ export interface EngineOptions {
   caf?: (id: number) => void
   now?: () => number
   source?: FeedSource
+  /** Quadros e estado do navegador embutido (padrão: o window.api do app; null = sem quadros). */
+  browser?: BrowserFeedApi | null
 }
 
 export interface EngineCallbacks {
@@ -52,6 +58,10 @@ export interface EngineCallbacks {
   onFocusRequest?(convId: string): void
   /** A energia do escritório mudou (%, nível ou hora do reset); null sem a janela de 5h. */
   onPower?(power: OfficePower | null): void
+  /** O que está sob o mouse mudou (personagem, 'projector:<sala>' ou null): a prévia do agente. */
+  onHover?(key: string | null): void
+  /** Clique na tela acesa do projetor de uma sala: o telão grande. */
+  onProjector?(roomId: string): void
 }
 
 /** addEventListener tipado por alvo (janela, elemento, documento). */

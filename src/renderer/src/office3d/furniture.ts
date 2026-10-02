@@ -9,7 +9,8 @@
  *
  * A porta fica na parede da esquerda, perto da frente; o pufe do cochilo, na
  * ponta esquerda do tapete; a máquina de café, na parede da direita, de frente
- * para dentro da sala (a fila cresce para a esquerda dela).
+ * para dentro da sala (a fila cresce para a esquerda dela); a tela retrátil do
+ * projetor, no meio da parede do fundo (desce por cima da placa).
  */
 import { SEAT_FRONT, type DeskLayout, type RoomLayout } from './layout'
 
@@ -51,6 +52,8 @@ export interface RoomFurniture {
   pufe: { x: number; z: number }
   /** Vão da porta na parede da esquerda (x da parede, centro em z, largura). */
   door: { x: number; z: number; width: number }
+  /** Tela retrátil do projetor, no meio da parede do fundo (centro em x, frente em z, largura). */
+  screen: { x: number; z: number; width: number }
   /** Logo depois da porta (dentro) e um pouco antes dela (no corredor). */
   doorIn: Spot
   doorOut: Spot
@@ -69,6 +72,15 @@ export const QUEUE_STEP = 0.65
 export const QUEUE_LEN = 4
 /** A máquina fica deslocada do centro do balcão (em direção ao fundo da sala). */
 export const MACHINE_OFFSET = 0.15
+/**
+ * Tela do projetor: a frente fica SCREEN_Z na frente da parede do fundo. O
+ * projetor fica no teto PROJ_Z adiante (perto da frente da menor sala, 7,7 m):
+ * o facho atravessa a sala por cima do corredor do meio e, visto de cima ou de
+ * meia altura, ele cai abaixo da tela — não a tampa.
+ */
+export const SCREEN_Z = 0.45
+export const SCREEN_W = 3.24
+export const PROJ_Z = 6.1
 
 const FACE_BACK = 0
 const FACE_CAMERA = Math.PI
@@ -108,6 +120,7 @@ export function roomFurniture(r: RoomLayout): RoomFurniture {
   const rug = { x: cx, z: z + d - 1.4, w: 4.2, d: 2.1 }
   const pufe = { x: cx - 1.6, z: z + d - 1.5 }
   const door = { x, z: z + d - 2.6, width: DOOR_WIDTH }
+  const screen = { x: cx, z: z + SCREEN_Z, width: SCREEN_W }
 
   const pois: Poi[] = []
   const poi = (kind: PoiKind, index: number, s: Spot, lx: number, ly: number, lz: number): void => {
@@ -142,6 +155,8 @@ export function roomFurniture(r: RoomLayout): RoomFurniture {
     ...lamps.map((l) => rect(l.x, l.z, 0.16, 0.16)),
     { x0: coffee.x - 0.27, z0: coffee.z - 0.47, x1: x + w, z1: coffee.z + 0.47 },
     rect(pufe.x, pufe.z, PUFE_RADIUS, PUFE_RADIUS),
+    // A tela do projetor desce até perto do chão: ninguém passa entre ela e a parede.
+    { x0: cx - SCREEN_W / 2 - 0.1, z0: z, x1: cx + SCREEN_W / 2 + 0.1, z1: screen.z + 0.08 },
     // Paredes: fundo (com os peitoris), laterais (a esquerda com o vão da porta) e a borda da frente.
     { x0: x, z0: z, x1: x + w, z1: z + 0.2 },
     { x0: x, z0: z, x1: x + 0.08, z1: door.z - DOOR_WIDTH / 2 },
@@ -161,6 +176,7 @@ export function roomFurniture(r: RoomLayout): RoomFurniture {
     rug,
     pufe,
     door,
+    screen,
     doorIn: { x: x + 0.65, z: door.z, yaw: FACE_RIGHT },
     doorOut: { x: x - 1.05, z: door.z, yaw: FACE_RIGHT },
     pois,

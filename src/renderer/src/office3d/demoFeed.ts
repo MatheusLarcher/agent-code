@@ -4,7 +4,9 @@
  * em loop. Todas as salas têm o mesmo elenco, com o conteúdo do projeto delas:
  *   0 dev        pedidos seguidos: Read → Edit com diff → testes (às vezes
  *                falham e ele corrige) → resposta final; nas notas, consulta
- *                a documentação do runner (WebFetch) antes de escrever.
+ *                a documentação do runner (WebFetch) antes de escrever. Na
+ *                sala 2 ele testa a loja no navegador e na sala 4 o app no
+ *                Android (demoDevices.ts): o projetor da sala desce e sobe.
  *   1 construtor escreve um componente, builda, pede permissão (`rm -rf dist`)
  *                e delega a um especialista (trilha que abre e fecha).
  *   2 azarado    pede permissão para publicar, toma erro da API e tenta de novo;
@@ -25,6 +27,7 @@ import { contextLimitFor, type PermissionRequest, type RateLimitStatus } from '@
 import type { TrackMap } from '../agentTracks'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { Conversation } from '../types'
+import { androidTurn, browserTurn } from './demoDevices'
 import { DEMO_LOOP_MS, demoUsage, playScript, USAGE_BACK_AT, USAGE_OUT_AT, type DemoStep, type DemoTurn, type ToolStep } from './demoTimeline'
 
 export const DEMO_ROOMS = 5
@@ -329,6 +332,8 @@ function scriptsFor(k: Kit, r: number): DemoTurn[][] {
 
   const dev: DemoTurn[] = [
     { at: -7_000 - r * 500, user: s[0], steps: [read(k, p, 3_000), edit(p, 8_000, k.edit), test(5_000, true), say(`Pronto: ${base(k.edit[0])} atualizado e os testes passaram.`)] },
+    // O projetor da sala: a loja testada no navegador (sala 2) e o app no Android (sala 4).
+    ...(r === 1 ? [browserTurn(10_000)] : r === 3 ? [androidTurn(9_000, cwd)] : []),
     { at: 24_000 + r * 1_100, user: s[1], steps: [test(5_000, false), read(k, p, 2_500, k.fix[0], k.fix[1]), edit(p, 3_000, k.fix), test(4_500, true), say(`O teste esperava o valor antigo. Ajustei ${base(k.fix[0])} e a suíte voltou a passar.`)] },
     { at: 60_000 + r * 1_100, user: s[2], steps: [read(k, p, 2_500), edit(p, 4_000, k.edit), test(5_000, true), say(`Feito, mudança em ${base(k.edit[0])} coberta por teste.`)] },
     {

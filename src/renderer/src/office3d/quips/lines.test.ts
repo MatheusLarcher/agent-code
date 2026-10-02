@@ -28,6 +28,7 @@ const DATA: Partial<Record<Situation, SlotName>> = {
   request: 'text', edit: 'file', write: 'file', read: 'file', search: 'pattern',
   'bash-test': 'cmd', 'bash-install': 'cmd', 'bash-build': 'cmd', 'bash-check': 'cmd', 'bash-git': 'cmd', 'bash-serve': 'cmd', 'bash-run': 'cmd',
   'web-search': 'q', 'web-fetch': 'host', 'web-browse': 'action', task: 'who', delegate: 'who', other: 'tool',
+  'projector-web': 'action', 'projector-android': 'action',
   'perm-cmd': 'cmd', 'perm-file': 'file', 'perm-question': 'q', 'perm-tool': 'tool', error: 'err',
   'done-files': 'n', 'done-file': 'file', 'done-cmds': 'cmd', 'done-chat': 'text', 'test-pass': 'n', 'test-fail': 'n',
   'return-ok': 'who', 'return-fail': 'who', 'context-low': 'pct', stalled: 'dur', 'stalled-cmd': 'dur', 'usage-time': 'time',
@@ -214,6 +215,7 @@ describe('format: preencher e cortar', () => {
       'abrindo página',
       'zoom in'
     ])
+    expect([browserAction('mcp__android__android_tap'), browserAction('mcp__android__android_install_run')]).toEqual(['tocando na tela', 'instalando o app'])
     expect([toolLabel('mcp__tasks__task_claim'), toolLabel('TodoWrite')]).toEqual(['task_claim', 'TodoWrite'])
     expect([whoLabel('critico'), whoLabel('general-purpose'), whoLabel('Custom'), whoLabel('')]).toEqual(['crítico', 'faz-tudo', 'Custom', 'subagente'])
   })

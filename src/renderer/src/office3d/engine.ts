@@ -2,50 +2,51 @@
  * Motor do escritório 3D: renderer + câmera + entrada + laço sob demanda.
  *
  * O laço RAF só roda enquanto há motivo — tecla de movimento segurada, tween,
- * personagem À VISTA animando (agente acordado vagueia) ou cena suja (feed,
- * arrasto, roda, resize, balão novo); só animação de LOD longe cai para ~30
- * quadros/s. Documento oculto não agenda quadro. `dispose()` desfaz tudo: RAF,
- * tique das falas, ResizeObserver, listeners, balões, cena e renderer.
+ * personagem À VISTA animando, tela do projetor descendo ou cena suja (feed,
+ * arrasto, roda, resize, balão novo, quadro do navegador desenhado); só
+ * animação de LOD longe cai para ~30 quadros/s. Documento oculto não agenda
+ * quadro. `dispose()` desfaz tudo: RAF, tique, ResizeObserver, listeners (os
+ * do ponteiro e os do navegador), balões, cena e renderer.
  *
  * Aba fechada (`pause()`): sem RAF, sem tique, sem feed aplicado (o último
- * fica guardado) e sem resize — nada simula nem redesenha textura; os
- * listeners ficam e ignoram tudo. `resume()` volta na hora com a mesma câmera:
- * remede o palco e reaplica o último feed (guardado ou, sem feed novo, o atual:
- * o reset da energia que passou) SEM os eventos do intervalo, nem o da energia,
- * como a sala que volta à vista (o primeiro quadro tem dt ~0).
+ * fica guardado), sem resize e sem desenhar quadro do navegador — nada simula
+ * nem redesenha textura. `resume()` volta na hora com a mesma câmera: remede o
+ * palco e reaplica o último feed SEM os eventos do intervalo, nem o da energia.
  *
  * Desempenho: câmera nova refaz o culling por sala e o LOD (scene.updateView);
  * quality.ts ajusta pixelRatio, névoa e sombra; o shadow map só é refeito se
  * algo que projeta sombra mudou. Nada aloca por quadro; `stats` vai ao HUD de DEV.
  *
- * A cada feed: retrato de events.ts (snapshotOf) e o diff (diffEvents) vão para
- * a cena (cérebros) e para as falas (speech.ts); um tique de QUIP_TICK_MS deixa
- * as falas e a energia (enginePower.ts; `cyclePower()` só em DEV) andarem sem
- * feed. `headWorldPosition` ancora os balões; o clique no balão de um pedido
- * ("Clica em mim") chama `onFocusRequest(convId)`, nos outros foca o agente.
- * `flyToAgent(key)` voa até um agente (ou a mesa dele) sem abrir a tela;
- * `follow(convId)` faz o mesmo para a conversa escolhida fora do 3D, salvo se
- * o usuário mexeu na câmera há menos de FOLLOW_GRACE_MS (agente que só entra
- * no escritório com o próximo feed: o voo espera por ele). O enquadramento
- * inicial inclui a usina (officeFrame).
+ * A cada feed: retrato de events.ts e o diff vão para a cena e para as falas
+ * (speech.ts); um tique de QUIP_TICK_MS faz andar sem feed as falas, a energia
+ * (`cyclePower()` só em DEV), a tela do projetor que sobe sem uso e o hover
+ * atrasado. Ponteiro em pointerInput.ts: clique foca o agente (ou abre o telão
+ * do projetor: `onProjector`), duplo clique abre a conversa e o hover vai para
+ * `onHover` (a prévia, que `setPreviewElement` põe acima do monitor dele). Os
+ * quadros do navegador da conversa ativa (browserFrames.ts) vão para os
+ * projetores. O balão de um pedido chama `onFocusRequest(convId)`.
+ * `flyToAgent`/`follow` voam até um agente sem abrir a tela (`follow` respeita
+ * FOLLOW_GRACE_MS desde o último gesto do usuário na câmera).
  */
 import { PerspectiveCamera, Vector3 } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { deriveOfficeModel, principalKey } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
+import { appBrowserApi } from './browserFrames'
 import { agentPose, CameraRig, framePose, monitorPose, type CameraPose, type ViewSize } from './cameraRig'
 import { CameraSync } from './cameraSync'
 import { EnginePower } from './enginePower'
-import { createDefaultRenderer, listener, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
+import { createDefaultRenderer, listener, PROJECTOR_KEY, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
 import { diffEvents, snapshotOf, type OfficeSnapshot } from './events'
-import { clampDt, dragModeFor, isClick, isTypingTarget, MoveKeys, moveDelta, type DragMode } from './input'
+import { clampDt, isTypingTarget, MoveKeys, moveDelta } from './input'
 import { EMPTY_LAYOUT, layoutOffice, monitorPosition, type Office3DLayout } from './layout'
 import { LOW_RATE_MS } from './lod'
+import { PointerInput } from './pointerInput'
 import type { OfficePower } from './power'
 import { officeFrame } from './powerPlant'
 import { Quality, type EngineStats } from './quality'
 import { OfficeScene } from './scene'
-import { ScreenAnchor } from './screenAnchor'
+import { PreviewAnchor, ScreenAnchor } from './screenAnchor'
 import { QUIP_TICK_MS, Speech } from './speech'
 
 export type { EngineStats } from './quality'
@@ -67,6 +68,9 @@ export class Office3DEngine {
   private readonly speech: Speech
   private readonly power: EnginePower
   private readonly anchor = new ScreenAnchor()
+  /** A prévia do hover, acima do monitor do agente. */
+  private readonly preview = new PreviewAnchor()
+  private readonly pointer: PointerInput
   private readonly keys = new MoveKeys()
   private readonly raf: (cb: FrameRequestCallback) => number
   private readonly caf: (id: number) => void
@@ -97,7 +101,6 @@ export class Office3DEngine {
   private autoFrame = true
   private width = 1
   private height = 1
-  private drag: { mode: DragMode; button: number; x0: number; y0: number; x: number; y: number } | null = null
   private focusedKey: string | null = null
   private returnPose: CameraPose | null = null
 
@@ -116,6 +119,9 @@ export class Office3DEngine {
     this.scene.onDirty = () => this.requestRender()
     this.power = new EnginePower(this.scene, (p) => this.cb.onPower?.(p))
     this.speech = new Speech(container, (key) => this.bubbleClick(key))
+    // Quadro do navegador: é da conversa ativa; com a aba fechada fica só guardado.
+    this.scene.projectors.connect(opts.browser === undefined ? appBrowserApi() : opts.browser, () => this.feed?.activeId ?? null, () => this.paused)
+    this.pointer = this.bindPointer()
     this.bindInput()
     this.observeSize()
     const source = opts.source ?? officeStore
@@ -126,55 +132,43 @@ export class Office3DEngine {
     this.requestRender()
   }
 
-  private bindInput(): void {
-    const c = this.canvas
-    this.listen(c, 'contextmenu', (e) => e.preventDefault())
-    this.listen(c, 'pointerdown', (e) => {
-      const mode = dragModeFor(e.button)
-      if (!mode) return
-      if (e.button === 1) e.preventDefault()
-      this.drag = { mode, button: e.button, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY }
-    })
-    this.listen(window, 'pointermove', (e) => {
-      const d = this.drag
-      if (!d) return
-      const dx = e.clientX - d.x
-      const dy = e.clientY - d.y
-      d.x = e.clientX
-      d.y = e.clientY
-      if (isClick(e.clientX - d.x0, e.clientY - d.y0)) return
+  /** Ponteiro (pointerInput.ts): girar/arrastar, clique, duplo clique, roda e hover. */
+  private bindPointer(): PointerInput {
+    const camera = (): void => {
       this.leaveFocus(false)
       this.userMoved()
-      if (d.mode === 'orbit') this.rig.orbit(dx, dy)
-      else this.rig.pan(dx, dy)
       this.requestRender()
-    })
-    this.listen(window, 'pointerup', (e) => {
-      const d = this.drag
-      this.drag = null
-      if (!d || d.button !== 0 || !isClick(e.clientX - d.x0, e.clientY - d.y0)) return
-      const key = this.pickAt(e.clientX, e.clientY)
-      this.userCamAt = this.now()
-      if (key) this.focus(key)
-      else this.leaveFocus(true)
-    })
-    this.listen(c, 'dblclick', (e) => {
-      const key = this.pickAt(e.clientX, e.clientY)
-      const conv = key ? this.scene.character(key)?.model.convId : undefined
-      if (conv) this.cb.onOpen(conv)
-    })
-    this.listen(
-      c,
-      'wheel',
-      (e) => {
-        e.preventDefault()
-        this.leaveFocus(false)
-        this.userMoved()
-        this.rig.zoom(e.deltaY)
-        this.requestRender()
+    }
+    return new PointerInput(this.canvas, this.listen, {
+      pick: (x, y) => {
+        this.camSync.sync()
+        return this.scene.pick(x, y, this.camera)
       },
-      { passive: false }
-    )
+      drag: (mode, dx, dy) => {
+        if (mode === 'orbit') this.rig.orbit(dx, dy)
+        else this.rig.pan(dx, dy)
+        camera()
+      },
+      click: (key) => {
+        this.userCamAt = this.now()
+        if (key?.startsWith(PROJECTOR_KEY)) return this.cb.onProjector?.(key.slice(PROJECTOR_KEY.length))
+        if (key) this.focus(key)
+        else this.leaveFocus(true)
+      },
+      open: (key) => {
+        const conv = key ? this.scene.character(key)?.model.convId : undefined
+        if (conv) this.cb.onOpen(conv)
+      },
+      zoom: (dy) => {
+        this.rig.zoom(dy)
+        camera()
+      },
+      hover: (key) => this.cb.onHover?.(key),
+      now: () => this.now()
+    })
+  }
+
+  private bindInput(): void {
     this.listen(window, 'keydown', (e) => {
       // Aba fechada: a tecla é de quem está na tela (nem preventDefault).
       if (this.paused) return
@@ -275,9 +269,11 @@ export class Office3DEngine {
   private readonly tickQuips = (): void => {
     if (this.disposed || this.paused || document.hidden) return
     const now = Date.now()
+    this.pointer.flushHover()
     const { event, changed } = this.power.tick(this.feed, now, this.now() / 1000)
     this.power.emit()
-    if (this.speech.tick(now, this.power.quip(event)) || changed) this.requestRender()
+    const screens = this.scene.projectors.tick(now)
+    if (this.speech.tick(now, this.power.quip(event)) || changed || screens) this.requestRender()
   }
 
   /** A energia em vigor (a barra e os testes leem). */
@@ -322,16 +318,6 @@ export class Office3DEngine {
   /** Números do HUD de desempenho (DEV). */
   get stats(): EngineStats {
     return this.quality.stats
-  }
-
-  private pickAt(clientX: number, clientY: number): string | null {
-    const rect = this.canvas.getBoundingClientRect()
-    const w = rect.width || this.width
-    const h = rect.height || this.height
-    const x = ((clientX - rect.left) / w) * 2 - 1
-    const y = -((clientY - rect.top) / h) * 2 + 1
-    this.camSync.sync()
-    return this.scene.pick(x, y, this.camera)
   }
 
   /** Voa até o monitor do personagem e abre a tela (ele olha para a câmera e acena). */
@@ -389,9 +375,10 @@ export class Office3DEngine {
     return this.scene.headWorldPosition(key, out)
   }
 
-  /** Modo demonstração (Ctrl+Alt+Shift+D): só acelera o relógio do cochilo. */
+  /** Modo demonstração (Ctrl+Alt+Shift+D): acelera o cochilo e o telão mostra a página falsa (sem quadro real). */
   setDemo(on: boolean): void {
     this.scene.setDemo(on)
+    this.scene.projectors.demo = on
     this.requestRender()
   }
 
@@ -401,6 +388,12 @@ export class Office3DEngine {
 
   setScreenElement(el: HTMLElement | null): void {
     this.anchor.setElement(el)
+    this.requestRender()
+  }
+
+  /** O cartão da prévia do hover (data-key = o agente): a cada quadro, acima do monitor dele. */
+  setPreviewElement(el: HTMLElement | null): void {
+    this.preview.setElement(el)
     this.requestRender()
   }
 
@@ -420,7 +413,7 @@ export class Office3DEngine {
     if (this.tick !== null) clearInterval(this.tick)
     this.tick = null
     this.keys.clear()
-    this.drag = null
+    this.pointer.reset()
   }
 
   /** Aba de volta: remede o palco, reaplica o último feed (guardado ou o atual) sem reproduzir o intervalo e retoma o laço. */
@@ -474,6 +467,7 @@ export class Office3DEngine {
     this.renderer.render(this.scene.scene, this.camera)
     this.quality.measure(now)
     if (this.focusedKey) this.anchor.place(this.camera, this.width, this.height)
+    this.preview.place(this.scene, this.camera, this.width, this.height)
     this.speech.place(this.camera, this.width, this.height, this.quality.level === 2, this.headOf)
     const full = this.keys.moving || tweening || this.scene.rate === 2
     this.lowRate = !full
@@ -489,8 +483,9 @@ export class Office3DEngine {
     this.pending = null
     for (const off of this.cleanups.splice(0)) off()
     this.keys.clear()
-    this.drag = null
+    this.pointer.reset()
     this.anchor.setElement(null)
+    this.preview.setElement(null)
     this.speech.dispose()
     this.scene.dispose()
     this.renderer.dispose()

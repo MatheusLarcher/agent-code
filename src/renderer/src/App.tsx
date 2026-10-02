@@ -3941,6 +3941,11 @@ export function App(): JSX.Element {
             }}
             // Balão "Clica em mim" (permissão, pergunta): o mesmo destino do pedido no Quadro.
             onFocusRequest={(convId) => focusRequest(convId, rightPane)}
+            // Telão do projetor: a conversa dele, com o navegador aberto, na aba Conversa.
+            onShowBrowser={(convId) => {
+              selectConversation(convId)
+              selectRightPane('browser')
+            }}
             // O chat minimizado esconde o aviso: o HUD o repete, com o mesmo "Desativar".
             windowsControlEnabled={windowsControlEnabled}
             onDisableWindowsControl={() => void toggleWindowsControl(false)}

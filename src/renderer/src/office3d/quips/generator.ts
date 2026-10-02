@@ -19,7 +19,8 @@
  *   atual, ou igual (o mais novo vence; progress só troca progress depois de
  *   MIN_DWELL_MS). PRIORITY: permission 70 > error 60 > request 50 >
  *   done/test-result/return 40 > warn 30 (context-low, stalled, usage) >
- *   progress 20 > idle/thought 10.
+ *   screen 25 (a 1ª chamada de navegador/Android em PROJECTOR_IDLE_MS: a fala
+ *   do projetor, "Testando no navegador: localhost:5173") > progress 20 > idle/thought 10.
  *   Fixos "enquanto valerem" (ttlMs = Infinity), conferidos no status a cada
  *   step: permissão pendente, erro do turno e limite de uso estourado — o erro
  *   que veio com o limite vira a fala do limite (com a hora do reset) e não
@@ -42,6 +43,7 @@
  *   escritório para: só permissão, erro, energia e festa ficam no ar.
  */
 import { STALL_MS, toolKind, type AgentEvent, type AgentStatus, type DoneSummary, type ToolKind } from '../events'
+import { deviceOf, PROJECTOR_IDLE_MS } from '../projectorUse'
 import { bashFlavor, browserAction, clockTime, duration, extLabel, fill, tidyError, toolLabel, whoLabel, type Slots } from './format'
 import { LINES, type Situation } from './lines'
 import { createPowerVoice, type PowerQuipInput } from './powerVoice'
@@ -64,7 +66,7 @@ export interface QuipEngine {
   step(statuses: ReadonlyMap<string, AgentStatus>, events: readonly AgentEvent[], now: number, power?: PowerQuipInput | null): Map<string, Quip | null>
 }
 
-export const PRIORITY = { permission: 70, error: 60, power: 55, request: 50, result: 40, warn: 30, progress: 20, party: 15, idle: 10 } as const
+export const PRIORITY = { permission: 70, error: 60, power: 55, request: 50, result: 40, warn: 30, screen: 25, progress: 20, party: 15, idle: 10 } as const
 export const TTL_MS = { request: 7_000, result: 9_000, warn: 9_000, progress: 6_000, idle: 6_500, fallback: 10_000, power: 6_500, party: 4_000 } as const
 /** O que continua no ar durante a festa do apagão: permissão, erro, energia e festa. */
 const PARTY_KINDS: ReadonlySet<QuipKind> = new Set<QuipKind>(['permission', 'error', 'power', 'party'])
@@ -118,6 +120,7 @@ const SPEC: Record<Situation, Spec> = {
   'bash-test': PROGRESS, 'bash-install': PROGRESS, 'bash-build': PROGRESS, 'bash-check': PROGRESS,
   'bash-git': PROGRESS, 'bash-serve': PROGRESS, 'bash-run': PROGRESS, 'bash-peek': PROGRESS,
   'web-search': PROGRESS, 'web-fetch': PROGRESS, 'web-browse': PROGRESS, task: PROGRESS, delegate: PROGRESS, other: PROGRESS,
+  'projector-web': ['progress', P.screen, 7_000], 'projector-android': ['progress', P.screen, 7_000],
   'perm-cmd': STICKY_PERM, 'perm-file': STICKY_PERM, 'perm-question': STICKY_PERM, 'perm-tool': STICKY_PERM,
   'perm-done': ['progress', P.progress, 4_000],
   error: ['error', P.error, Infinity],
@@ -146,6 +149,8 @@ interface Cand {
   sig?: string
   /** O que a permissão pedia, para o "valeu" do permission-done. */
   perm?: string
+  /** Fala do projetor (navegador/Android): marca quando foi dita. */
+  screen?: true
 }
 
 interface AgentState {
@@ -163,11 +168,13 @@ interface AgentState {
   lastPerm: string
   /** O erro que chegou junto do limite de uso: quem fala dele é o limite. */
   usageErr: string | null
+  /** Quando disse a fala do projetor pela última vez. */
+  screenAt: number
 }
 
 const freshState = (): AgentState => ({
   quip: null, since: 0, until: 0, valid: null, id: '', seen: new Map(), lastSig: '',
-  nextIdleAt: null, stalledAt: -Infinity, spoke: false, lastPerm: '', usageErr: null
+  nextIdleAt: null, stalledAt: -Infinity, spoke: false, lastPerm: '', usageErr: null, screenAt: -Infinity
 })
 
 const NO_EVENTS: readonly AgentEvent[] = []
@@ -211,6 +218,14 @@ function progressCand(t: ToolLike): Cand {
     default:
       return { sig, sit: 'other', slots: { tool: toolLabel(t.name) } }
   }
+}
+
+/** 1ª chamada de navegador/Android depois de PROJECTOR_IDLE_MS sem ela: a fala do projetor (a tela da sala desce). */
+function toolCand(t: ToolLike, st: AgentState, now: number): Cand {
+  const dev = deviceOf(t.name)
+  if (!dev || now - st.screenAt < PROJECTOR_IDLE_MS) return progressCand(t)
+  const sit = dev === 'android' ? 'projector-android' : 'projector-web'
+  return { sit, slots: { action: browserAction(t.name), host: dev === 'web' ? t.target : '' }, sig: `screen|${t.name}|${t.target}`, screen: true }
 }
 
 function permCand(tool: string, detail: string): Cand {
@@ -279,7 +294,7 @@ function eventCand(e: AgentEvent, st: AgentState, s: AgentStatus, statuses: Read
     case 'tool': {
       // O status tem o detalhe (+N −M) da mesma chamada; o evento, só o alvo.
       const same = s.tool && s.tool.name === e.name && s.tool.target === e.target
-      return progressCand(same && s.tool ? s.tool : { name: e.name, kind: e.kind, target: e.target, detail: '' })
+      return toolCand(same && s.tool ? s.tool : { name: e.name, kind: e.kind, target: e.target, detail: '' }, st, now)
     }
     case 'test-result':
       return testCand(e.passed, e.failed)
@@ -363,6 +378,7 @@ export function createQuipEngine(rng: Rng): QuipEngine {
       st.lastSig = c.sig
     }
     if (c.perm !== undefined) st.lastPerm = c.perm
+    if (c.screen) st.screenAt = now
     if (c.sit === 'request') {
       // Turno novo: o que foi narrado no anterior pode ser narrado de novo.
       st.seen.clear()
@@ -403,7 +419,7 @@ export function createQuipEngine(rng: Rng): QuipEngine {
   function ambient(st: AgentState, s: AgentStatus, now: number): void {
     const cur = st.quip
     if (cur && !(cur.priority === P.progress && now - st.since >= MIN_DWELL_MS)) return
-    if (s.tool && offer(st, s, progressCand(s.tool), now)) return
+    if (s.tool && offer(st, s, toolCand(s.tool, st, now), now)) return
     if (cur) return
     if (s.stalledMs >= STALL_MS && now - st.stalledAt >= STALL_REMIND_MS) {
       offer(st, s, stalledCand(s.stalledMs, s), now)

@@ -164,7 +164,8 @@ describe('OfficeTabHost: o escritório só carrega na 1ª abertura e depois fica
     const view = render(ui(false))
     expect(view.container.innerHTML).toBe('')
     view.rerender(ui(true))
-    const ws = await screen.findByTestId('office3d-workspace')
+    // O chunk do escritório (three + as linhas do chat) pode levar mais de 1 s para carregar com a suíte inteira rodando.
+    const ws = await screen.findByTestId('office3d-workspace', undefined, { timeout: 15_000 })
     expect(ws.hidden).toBe(false)
     expect(renderers).toHaveLength(1)
     for (let i = 0; i < 5; i++) {

@@ -1,7 +1,7 @@
 /**
  * Telas dos monitores por nível de detalhe. A cena diz o QUE cada tela mostra
- * (`setScreen`: apagada, protetor ou acesa com a página e o status do dono) e
- * `showScreen` aplica conforme a sala:
+ * (`setScreen`: apagada, protetor ou acesa com o chat encolhido do dono e o
+ * status dele) e `showScreen` aplica conforme a sala:
  *   fora da tela  nada (nem desenha): a página fica guardada para a volta;
  *   sem energia   preta (apagão na sala): a página fica guardada e volta com a luz;
  *   PERTO         textura na resolução cheia;
@@ -10,15 +10,15 @@
  * `MonitorTexture.draw` só redesenha quando a página muda.
  */
 import { MeshBasicMaterial } from 'three'
-import { currentTool, screenModel } from '../components/office/screenContent'
 import type { OfficeFeed } from '../office/adapter/feed'
-import type { LookupInfo, OfficeCharacterModel } from '../office/adapter/model'
+import type { OfficeCharacterModel } from '../office/adapter/model'
+import { chatPageFor } from './chatPage'
 import { modelPhase, type LifeInput } from './crowd'
 import { disposeScreenOn, type ScreenView } from './decor'
 import type { AgentPhase } from './events'
 import type { Kit, ScreenStatus } from './kit'
 import type { Lod } from './lod'
-import { createMonitorTexture, screenLines, type ScreenPage } from './monitorTexture'
+import { createMonitorTexture, type ScreenPage } from './monitorTexture'
 
 /** Resolução da textura da tela por nível (o LONGE não tem textura). */
 export const SCREEN_SCALE: Readonly<Record<Lod, number>> = { 0: 1, 1: 0.5, 2: 0 }
@@ -31,13 +31,9 @@ const STATUS: Record<AgentPhase, ScreenStatus> = {
   idle: 'idle'
 }
 
-/** Página da tela para um personagem ativo: a ferramenta atual ou, sem ela, o rótulo. */
+/** Página da tela para um personagem ativo: o chat encolhido do turno dele (sem nada, o rótulo). */
 export function screenPageFor(feed: OfficeFeed | null, model: OfficeCharacterModel): ScreenPage {
-  const info: LookupInfo = { key: model.key, convId: model.convId, role: model.role, trackId: model.trackId }
-  const page = screenLines(screenModel(currentTool(feed, info)))
-  if (page.lines.length > 0 || page.title) return page
-  const title = model.activity === 'read' ? 'lendo' : model.activity === 'type' ? 'escrevendo' : 'trabalhando'
-  return { title, subtitle: '', lines: model.label ? [{ kind: 'meta', text: model.label.slice(0, 58) }] : [] }
+  return chatPageFor(feed, model)
 }
 
 /** Cor do monitor do dono vista de LONGE: a fase do retrato de events.ts (ou, sem ele, a do modelo). */

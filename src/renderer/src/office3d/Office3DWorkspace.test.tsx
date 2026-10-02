@@ -6,6 +6,7 @@ import type { OfficeFeed } from '../office/adapter/feed'
 import { deriveOfficeModel } from '../office/adapter/model'
 import { liveInput, type ToolInputDelta } from '../office/liveInput'
 import { officeStore } from '../office/officeStore'
+import { UiProvider } from '../ui/UiProvider'
 import { DEMO_TICK_MS } from './demoFeed'
 import { DEMO_LOOP_MS } from './demoTimeline'
 import { Office3DEngine, type EngineOptions, type FeedSource, type RendererLike } from './engine'
@@ -304,8 +305,11 @@ describe('Office3DWorkspace', () => {
     vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
     const src = source(feed)
     const raf = manualRaf()
+    // O cartão de ferramenta da tela é o ToolCard do chat (usa o UiProvider, como no app).
     const ui = (active: boolean): JSX.Element => (
-      <Office3DWorkspace active={active} chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ ...raf.opts, source: src, createRenderer: fakeRenderer }} />
+      <UiProvider>
+        <Office3DWorkspace active={active} chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ ...raf.opts, source: src, createRenderer: fakeRenderer }} />
+      </UiProvider>
     )
     const view = render(ui(true))
     fireEvent.pointerDown(screen.getByTestId('office3d-canvas'), { button: 0, clientX: 50, clientY: 50 })
@@ -320,7 +324,13 @@ describe('Office3DWorkspace', () => {
     const delta: ToolInputDelta = { kind: 'tool-input-delta', toolUseId: 'w1', name: 'Write', filePath: 'C:\\a.ts', newText: 'x', totalLines: 1, done: false }
     act(() => liveInput.push(convId, delta))
     expect(liveInput.latest(convId, null)).toBeTruthy() // a tela assina o código ao vivo do principal
+    // …e mostra o cartão que ainda vai chegar, como o ToolCard do chat.
+    const liveCard = screen.getByTestId('office-screen').querySelector('.tool-card')
+    expect(liveCard?.querySelector('.tool-name')?.textContent).toBe('Write')
+    expect(liveCard?.querySelector('.tool-detail')?.textContent).toBe('a.ts')
+    expect(liveCard?.querySelector('.tool-badge.run')).toBeTruthy()
     act(() => liveInput.push(convId, { ...delta, done: true }))
+    expect(screen.getByTestId('office-screen').querySelector('.tool-card')).toBeNull()
 
     view.rerender(ui(false))
     expect(screen.queryByTestId('office-screen')).toBeNull()
@@ -338,8 +348,9 @@ describe('Office3DWorkspace', () => {
 
     view.rerender(ui(true))
     const screenEl = screen.getByTestId('office-screen')
-    expect(screenEl.dataset.kind).toBe('bash')
-    expect(screenEl.textContent).toContain('npm run build')
+    expect(screenEl.dataset.kind).toBe('chat')
+    expect(screenEl.querySelector('.tool-card .tool-name')?.textContent).toBe('Bash')
+    expect(screenEl.querySelector('.tool-card .tool-detail')?.textContent).toBe('npm run build')
     expect(src.subs).toBe(2)
   })
 

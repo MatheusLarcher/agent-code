@@ -1,88 +1,13 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { UIMessage } from '../types'
 import { QuestionMap } from './QuestionMap'
-import { AccountSwitchNote } from './AccountSwitchNote'
-import { parseDownloads } from '@shared/ipc'
-import { useUI } from '../ui/UiProvider'
-import { fileMeta, fmtSize } from '../files'
-import { IconSpeaker, IconStopSmall } from './Icons'
-import { ToolCard } from './ToolCard'
-import { CardRefText, Markdown } from './Markdown'
-import { InlineMediaText } from '../inlineMedia/InlineMediaText'
 import { useKeepEndOnResize } from './MessageListAnchor'
 import { useChatDisplay } from './chatDisplay'
 import { makeRefResolver } from '../planning/cardRefs'
-import { PlanFileLink, createdPlanFile } from '../planning/PlanFileLink'
-import { QuotableMessage, type QuoteListApi } from './quoteComment/quoteBlocks'
+import type { QuoteListApi } from './quoteComment/quoteBlocks'
+import { ChatRow, lastAnswerTsId, rowKey, type ChatRowContext, type TtsControls } from './ChatRows'
 
-/** Read-aloud controls passed down from App (TTS state lives there so audio
- *  survives message re-renders and conversation switches). */
-export interface TtsControls {
-  /** Id of the message currently being read (or loading), else null. */
-  speakingId: string | null
-  /** Start/stop reading a message's answer aloud. */
-  onToggleSpeak: (id: string, text: string) => void
-}
-
-/** Last path segment, for the chip label. */
-function fileLabel(p: string): string {
-  return p.split(/[\\/]/).pop() || p
-}
-
-/** A "Baixar" button rendered under an assistant message that flagged a file. */
-function DownloadChip({ path }: { path: string }): JSX.Element {
-  const { notify } = useUI()
-  const download = async (): Promise<void> => {
-    const r = await window.api.downloadFile(path)
-    notify(r.ok ? 'sucesso' : 'erro', r.message)
-  }
-  return (
-    <button className="msg-download" onClick={download} title={path}>
-      ⬇️ Baixar {fileLabel(path)}
-    </button>
-  )
-}
-
-/** "há X" relative label for a time earlier TODAY (else ''). */
-function relativeToday(ts: number, now: number): string {
-  const d = new Date(ts)
-  const n = new Date(now)
-  const sameDay =
-    d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()
-  if (!sameDay) return ''
-  const secs = Math.max(0, Math.floor((now - ts) / 1000))
-  if (secs < 45) return 'agora mesmo'
-  const mins = Math.round(secs / 60)
-  if (mins < 60) return `há ${mins} min`
-  const hrs = Math.floor(mins / 60)
-  const rem = mins % 60
-  return rem ? `há ${hrs} h ${rem} min` : `há ${hrs} h`
-}
-
-/** Date+time stamp shown under the last assistant answer. If the task ran today,
- *  it also shows how long ago (refreshing every 30s). */
-function MessageTime({ ts }: { ts: number }): JSX.Element {
-  const [now, setNow] = useState(() => Date.now())
-  const rel = relativeToday(ts, now)
-  useEffect(() => {
-    if (!rel) return // only a "today" stamp needs to keep ticking
-    const id = setInterval(() => setNow(Date.now()), 30_000)
-    return () => clearInterval(id)
-  }, [rel])
-
-  const d = new Date(ts)
-  const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-  const sameDay = !!relativeToday(ts, Date.now())
-  const absolute = sameDay
-    ? `Hoje às ${time}`
-    : `${d.toLocaleDateString('pt-BR')} às ${time}`
-  return (
-    <div className="msg-time" title={d.toLocaleString('pt-BR')}>
-      {absolute}
-      {rel && <span className="msg-time-rel"> · {rel}</span>}
-    </div>
-  )
-}
+export type { TtsControls } from './ChatRows'
 
 /** How many messages to render at first, and to add each time the user scrolls
  *  to the top. Keeps very long conversations cheap to render (Gemini-style). */
@@ -164,16 +89,8 @@ export function MessageList({
   const shown = messages.slice(startIdx)
   const hasOlder = startIdx > 0
 
-  // Id of the most recent assistant answer that carries a finish time — only that
-  // one shows the date/time (and, if today, the "how long ago") footer.
-  let lastTsId: string | null = null
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.kind === 'assistant-text' && m.ts) {
-      lastTsId = m.id
-      break
-    }
-  }
+  // Only the most recent answer with a finish time shows the date/time footer.
+  const rowCtx: ChatRowContext = { resolveRef, planDir, lastTsId: lastAnswerTsId(messages), busy, onRetry, tts, quote, onUseAccount }
 
   // After older messages are prepended, keep the exact same DOM row at the same
   // screen position. A global scrollHeight delta is incorrect when streaming or
@@ -282,153 +199,9 @@ export function MessageList({
       {hasOlder && (
         <div className="load-more-hint">↑ Role para cima para carregar mais ({startIdx} anteriores)</div>
       )}
-      {shown.map((m, i) => {
-        const idx = startIdx + i
-        switch (m.kind) {
-          case 'user':
-            return (
-              <div key={`user:${m.id}`} className="msg user" data-mid={m.id}>
-                <div className={`bubble ${m.error ? 'has-error' : ''}`}>
-                  {!m.media && m.images && m.images.length > 0 && (
-                    <div className="msg-images">
-                      {m.images.map((src, k) => (
-                        <img key={k} className="msg-image" src={src} alt="anexo" />
-                      ))}
-                    </div>
-                  )}
-                  {!m.media && m.files && m.files.length > 0 && (
-                    <div className="msg-files">
-                      {m.files.map((f, k) => {
-                        const meta = fileMeta(f.name)
-                        return (
-                          <span className="file-card" key={k} title={f.name}>
-                            <span className={`file-badge kind-${meta.kind}`}>{meta.ext}</span>
-                            <span className="file-card-info">
-                              <span className="file-card-name">{f.name}</span>
-                              {f.size > 0 && <span className="file-card-size">{fmtSize(f.size)}</span>}
-                            </span>
-                          </span>
-                        )
-                      })}
-                    </div>
-                  )}
-                  {m.media ? (
-                    // Anexos postos no meio do texto: cada {{midia:N}} vira o item no lugar.
-                    <InlineMediaText
-                      text={m.text}
-                      media={m.media}
-                      images={m.images}
-                      files={m.files}
-                      renderText={(t) => (resolveRef ? <CardRefText text={t} resolveRef={resolveRef} /> : t)}
-                    />
-                  ) : resolveRef ? (
-                    <CardRefText text={m.text} resolveRef={resolveRef} />
-                  ) : (
-                    m.text
-                  )}
-                </div>
-                {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
-                {m.injected && <div className="msg-injected">↳ ajuste enviado durante a tarefa</div>}
-                {m.error && (
-                  <div className="msg-error">
-                    <span className="msg-error-text" title={m.error}>
-                      ⚠ Não foi enviada — {m.error}
-                    </span>
-                    <button
-                      className="msg-retry"
-                      onClick={() => onRetry(m.id)}
-                      disabled={busy}
-                      title={busy ? 'Aguarde a tarefa atual terminar' : 'Reenviar esta mensagem'}
-                    >
-                      ↻ Tentar de novo
-                    </button>
-                  </div>
-                )}
-                {m.ts && <MessageTime ts={m.ts} />}
-              </div>
-            )
-          case 'assistant-text': {
-            const { clean, paths } = parseDownloads(m.text)
-            const speaking = tts.speakingId === m.id
-            return (
-              <div
-                key={`assistant:${m.id}`}
-                className={`msg assistant ${m.answer ? '' : 'narration'} ${m.aborted ? 'aborted' : ''}`}
-              >
-                <div className="bubble">
-                  {clean && (
-                    <QuotableMessage api={quote} messageId={m.id} read={m.answer ? tts : null} source={clean}>
-                      <Markdown text={clean} resolveRef={resolveRef} />
-                    </QuotableMessage>
-                  )}
-                  {paths.map((p, k) => (
-                    <DownloadChip key={k} path={p} />
-                  ))}
-                  {((m.answer && clean) || (m.id === lastTsId && m.ts)) && (
-                    <div className="msg-foot">
-                      {m.answer && clean && (
-                        <button
-                          className={`msg-speak ${speaking ? 'active' : ''}`}
-                          onClick={() => tts.onToggleSpeak(m.id, clean)}
-                          title={speaking ? 'Parar leitura' : 'Ler em voz alta'}
-                        >
-                          {speaking ? <IconStopSmall size={14} /> : <IconSpeaker size={15} />}
-                          {speaking ? 'Parar' : 'Ouvir'}
-                        </button>
-                      )}
-                      {m.id === lastTsId && m.ts && <MessageTime ts={m.ts} />}
-                    </div>
-                  )}
-                  {m.aborted && (
-                    <div className="msg-aborted">Resposta interrompida pelo Stop — pode estar incompleta.</div>
-                  )}
-                </div>
-              </div>
-            )
-          }
-          case 'thinking':
-            return (
-              <div key={`thinking:${m.id}`} className="msg thinking">
-                <div className="bubble">{m.text}</div>
-              </div>
-            )
-          case 'tool-use': {
-            // Planejamento: arquivo que o agente criou no plano ganha link logo abaixo.
-            const created = createdPlanFile(m.name, m.input, m.result, planDir)
-            if (!created) return <ToolCard key={`tool:${m.id}`} m={m} />
-            return (
-              <Fragment key={`tool:${m.id}`}>
-                <ToolCard m={m} />
-                <PlanFileLink path={created} />
-              </Fragment>
-            )
-          }
-          case 'system':
-            return (
-              <div key={`system:${m.sessionId}:${idx}`} className="msg system-note">
-                Session ready · {m.model} · {m.cwd}
-              </div>
-            )
-          case 'provider-switch':
-            return <div key={`provider-switch:${m.id}`} className="msg system-note" role="status">{m.text}</div>
-          case 'account-switch':
-            return <AccountSwitchNote key={`account-switch:${m.id}`} event={m} onUseAccount={onUseAccount} />
-          case 'status':
-            return <div key={`status:${m.id}`} className="msg system-note" role="status">{m.text}</div>
-          case 'result':
-            // Not rendered: the answer is already in the chat and the cost is
-            // shown in the token meter header.
-            return null
-          case 'error':
-            return (
-              <div key={`error:${m.id}`} className="msg result-note err">
-                {m.text}
-              </div>
-            )
-          default:
-            return null
-        }
-      })}
+      {shown.map((m, i) => (
+        <ChatRow key={rowKey(m, startIdx + i)} m={m} ctx={rowCtx} />
+      ))}
       {busy && (
         <div className="msg assistant">
           <div className="bubble typing">

@@ -18,6 +18,7 @@ export type Situation =
   | 'request' | 'think'
   | 'edit' | 'write' | 'read' | 'search' | `bash-${BashFlavor}` | 'bash-peek'
   | 'web-search' | 'web-fetch' | 'web-browse' | 'task' | 'delegate' | 'other'
+  | 'projector-web' | 'projector-android'
   | 'perm-cmd' | 'perm-file' | 'perm-question' | 'perm-tool' | 'perm-done'
   | 'error'
   | 'done-files' | 'done-file' | 'done-cmds' | 'done-chat'
@@ -166,6 +167,20 @@ export const LINES: Readonly<Record<Situation, SituationLines>> = {
     'Acionando {tool}… 🔧',
     'Hora de usar {tool} ⚙️',
     'Puxando {tool} da caixa de ferramentas 🧰'
+  ]),
+
+  // ── projetor: navegador/Android em teste (a tela da sala desce) ─────────
+  'projector-web': at('🎬', [
+    'Testando no navegador[: {host}] — {action} 🎬',
+    'Projetor ligado! {action}[ em {host}] 📽️',
+    'Telão da sala: {action}[ em {host}]. Pipoca? 🍿',
+    'Luz, câmera, ação: {action}[ ({host})] 🎬'
+  ]),
+  'projector-android': at('📱', [
+    'Testando no celular: {action} 📱',
+    'App no telão: {action} 📽️',
+    'Projetor ligado no Android: {action} 🎬',
+    'Celular na tela grande: {action}. Pipoca? 🍿'
   ]),
 
   // ── permissão ───────────────────────────────────────────────────────────

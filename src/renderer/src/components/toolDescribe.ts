@@ -11,7 +11,10 @@
  *   toolBadge(name, result)     a pílula: running… / done / error (respondido /
  *                               sem resposta na pergunta ao usuário)
  *   writtenPath(name, input)    o entregável que um Write criou (chip de download)
- *   baseName, lineCount, TOOL_CODE_MAX, TOOL_RESULT_MAX  também usados pelas telas do 3D (office3d/toolView)
+ *   baseName, lineCount, TOOL_CODE_MAX, TOOL_RESULT_MAX  auxiliares e limites do cartão aberto
+ *
+ * O Escritório 3D usa os mesmos rótulos no monitor (office3d/chatPage) e o
+ * próprio ToolCard na tela focada e na prévia (office3d/ChatTurn).
  */
 import { isDownloadableFile } from '@shared/ipc'
 import { extToLang } from './CodeBlock'

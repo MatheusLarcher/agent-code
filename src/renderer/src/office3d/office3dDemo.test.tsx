@@ -3,10 +3,17 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { InstancedMesh, Matrix4, Mesh, Texture, type Object3D } from 'three'
 import { deriveOfficeModel } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
+import type { OfficeFeed } from '../office/adapter/feed'
+import { UiProvider } from '../ui/UiProvider'
+import { DEMO_APP, DEMO_PAGE_TITLE, DEMO_URL } from './demoDevices'
 import { DEMO_PER_ROOM, DEMO_ROOMS, demoFeed } from './demoFeed'
+import { DEMO_LOOP_MS } from './demoTimeline'
 import type { FeedSource, RendererLike } from './engine'
+import { snapshotOf } from './events'
 import { layoutOffice } from './layout'
+import type { ScreenPage } from './monitorTexture'
 import { Office3DWorkspace } from './Office3DWorkspace'
+import { PROJECTOR_IDLE_MS, scanDeviceUse } from './projectorUse'
 import { OfficeScene, screenPageFor } from './scene'
 
 const renderer = (): RendererLike => ({ setPixelRatio() {}, setSize() {}, render() {}, dispose() {} })
@@ -50,17 +57,49 @@ describe('feed de demonstração', () => {
     expect(fr.some((f) => f > 0.5) && fr.some((f) => f <= 0.5 && f > 0.2) && fr.some((f) => f <= 0.2)).toBe(true)
   })
 
-  it('a tela do agente ativo mostra o código real da ferramenta atual', () => {
+  it('a tela do agente ativo mostra o chat encolhido do turno, com os rótulos do cartão do chat', () => {
     const feed = demoFeed()
     const chars = deriveOfficeModel(feed, Date.now()).characters
-    const edit = screenPageFor(feed, chars.find((c) => c.convId === 'demo-0-0')!)
-    expect(edit.title).toBe('Edit')
-    expect(edit.lines.some((l) => l.kind === 'del')).toBe(true)
-    expect(edit.lines.some((l) => l.kind === 'add' && l.text.includes('discount'))).toBe(true)
-    const bash = screenPageFor(feed, chars.find((c) => c.convId === 'demo-0-2')!)
-    expect(bash.lines[0]).toEqual({ kind: 'cmd', text: '$ npm test -- --run' })
-    const write = screenPageFor(feed, chars.find((c) => c.convId === 'demo-0-1')!)
-    expect(write.subtitle).toBe('Cart.tsx')
+    const page = (id: string): ScreenPage => screenPageFor(feed, chars.find((c) => c.convId === id)!)
+    const lastTool = (id: string): ScreenPage['lines'][number] | undefined => page(id).lines.filter((l) => l.kind === 'tool').at(-1)
+    const dev = page('demo-0-0')
+    expect(dev.title).toBe('Demo 1.1')
+    expect(dev.lines[0]).toEqual({ kind: 'user', text: 'Adiciona desconto percentual no total do carrinho, sem deixar o valor ficar negativo.' })
+    expect(lastTool('demo-0-0')).toMatchObject({ verb: 'Edit', detail: 'total.ts', added: 5, removed: 5, badge: { kind: 'run', text: 'running…' } })
+    expect(lastTool('demo-0-2')).toMatchObject({ verb: 'Bash', detail: 'npm test -- --run', badge: { kind: 'ok', text: 'done' } })
+    expect(lastTool('demo-0-1')).toMatchObject({ verb: 'Write', detail: 'Cart.tsx', badge: { kind: 'run' } })
+  })
+})
+
+describe('demonstração: navegador e Android no projetor', () => {
+  it('o dev da loja testa no navegador e o do portal no Android; o projetor da sala desce e sobe 90 s depois do último uso', () => {
+    const T0 = 14_916_667 * DEMO_LOOP_MS
+    const at = (ms: number): { feed: OfficeFeed; model: ReturnType<typeof deriveOfficeModel> } => {
+      const feed = demoFeed(T0 + ms)
+      return { feed, model: deriveOfficeModel(feed, T0 + ms) }
+    }
+    // Aos 14 s: o navigate já voltou (o título vem dele) e o print está saindo.
+    const a = at(14_000)
+    const uses = scanDeviceUse(a.feed, a.model.characters)
+    expect(uses.find((u) => u.kind === 'web')).toMatchObject({ convId: 'demo-1-0', url: DEMO_URL, title: DEMO_PAGE_TITLE, open: true })
+    expect(uses.find((u) => u.kind === 'android')).toMatchObject({ convId: 'demo-3-0', title: DEMO_APP })
+    const scene = new OfficeScene()
+    scene.projectors.demo = true
+    const layout = layoutOffice(a.model)
+    const sync = (x: ReturnType<typeof at>, ms: number): void =>
+      scene.sync(layoutOffice(x.model, layout), x.feed, { snapshot: snapshotOf(x.feed, x.model, T0 + ms), events: [], wallNow: T0 + ms, t: ms / 1000 })
+    sync(a, 14_000)
+    const shop = layout.rooms.find((r) => r.name === 'loja-virtual')!.id
+    const portal = layout.rooms.find((r) => r.name === 'portal-aluno')!.id
+    expect([scene.projectors.isDown(shop), scene.projectors.isDown(portal)]).toEqual([true, true])
+    expect(layout.rooms.filter((r) => scene.projectors.isDown(r.id))).toHaveLength(2)
+    // O último print sai aos ~20 s; o turno seguinte já não usa o navegador.
+    sync(at(21_000), 21_000)
+    expect(scene.projectors.tick(T0 + 21_000 + PROJECTOR_IDLE_MS - 1_000)).toBe(false)
+    expect(scene.projectors.isDown(shop)).toBe(true)
+    scene.projectors.tick(T0 + 21_000 + PROJECTOR_IDLE_MS + 1_000)
+    expect(scene.projectors.isDown(shop)).toBe(false)
+    scene.dispose()
   })
 })
 
@@ -174,24 +213,37 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     expect(screen.queryByTestId('o3d-session-battery')).toBeNull()
   })
 
-  it('foco abre o cartão da ferramenta como no chat (diff com +/−, código realçado)', () => {
+  it('foco abre o turno da conversa como no chat: o pedido em balão e os cartões recolhidos, que abrem ao clicar', () => {
     const feed = demoFeed()
     const target = layoutOffice(deriveOfficeModel(feed, Date.now())).characters.find((c) => c.model.convId === 'demo-0-0')!
     vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
-    const onOpenFile = vi.fn()
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={onOpenFile} engineOptions={{ source: staticSource(feed), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+    render(
+      <UiProvider>
+        <Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(feed), createRenderer: renderer, raf: () => 1, caf: () => {} }} />
+      </UiProvider>
+    )
     const canvas = screen.getByTestId('office3d-canvas')
     fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
     const card = screen.getByTestId('office-screen')
-    expect(card.dataset.kind).toBe('diff')
-    expect(card.querySelector('.tool-card .tool-head .tool-name')?.textContent).toBe('Edit')
-    expect(card.querySelector('.diff-add')?.textContent).toBe('+5')
-    expect(card.querySelector('.diff-del')?.textContent).toBe('−5')
-    expect(card.querySelector('pre.code-block')).toBeTruthy()
-    expect(card.querySelector('.tool-badge.run')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'total.ts' }))
-    expect(onOpenFile).toHaveBeenCalledWith('C:\\demo\\agent-code\\src\\total.ts')
+    expect(card.dataset.kind).toBe('chat')
+    expect(card.querySelector('.o3d-turn-title')?.textContent).toBe('Demo 1.1')
+    expect(card.querySelector('.msg.user .bubble')?.textContent).toContain('desconto percentual')
+    const cards = [...card.querySelectorAll<HTMLElement>('.tool-card')]
+    expect(cards.map((c) => c.querySelector('.tool-name')?.textContent)).toEqual(['Read', 'Edit'])
+    const edit = cards[1]
+    expect(edit.querySelector('.tool-detail')?.textContent).toBe('total.ts')
+    expect(edit.querySelector('.diff-add')?.textContent).toBe('+5')
+    expect(edit.querySelector('.diff-del')?.textContent).toBe('−5')
+    expect(edit.querySelector('.tool-badge.run')?.textContent).toBe('running…')
+    expect(cards[0].querySelector('.tool-badge.ok')?.textContent).toBe('done')
+    // Recolhido como no chat; o clique abre o diff realçado.
+    expect(edit.querySelector('pre.code-block')).toBeNull()
+    fireEvent.click(edit.querySelector('.tool-head')!)
+    expect(edit.querySelector('pre.code-block')).toBeTruthy()
+    // Trabalhando: o "digitando" do chat no fim. Só leitura: sem "Tentar de novo" nem "Ouvir".
+    expect(card.querySelector('.bubble.typing')).toBeTruthy()
+    expect(card.querySelector('.msg-retry, .msg-speak')).toBeNull()
   })
 
   it('Ctrl+Alt+Shift+D liga e desliga o feed de demonstração (DEV)', () => {

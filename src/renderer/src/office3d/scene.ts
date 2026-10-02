@@ -22,8 +22,9 @@
  * (lod.ts, com histerese). Quem volta à vista sincroniza sem animar o atraso.
  * `animate` dá um passo em todos os cérebros e nos personagens, partículas e
  * portas À VISTA, sem alocar, e diz o ritmo pedido (`rate`). Sem nenhum
- * `updateView`, tudo fica à vista e completo (como antes).
- * `dispose()` libera tudo o que foi criado aqui.
+ * `updateView`, tudo fica à vista e completo (como antes). O projetor de cada
+ * sala (projectors.ts) desce com o uso do navegador/Android e, quando acende,
+ * os agentes da sala olham para a tela. `dispose()` libera tudo o que foi criado aqui.
  */
 import { AmbientLight, Color, DirectionalLight, Fog, Frustum, HemisphereLight, Matrix4, Mesh, Raycaster, Scene, Sphere, Vector2, Vector3, type Camera, type Object3D } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
@@ -40,6 +41,7 @@ import { FOG_FAR, FOG_NEAR, lodLevel, type Lod } from './lod'
 import { paperStep } from './paperPile'
 import { Particles } from './particles'
 import type { OfficePower, PowerEvent } from './power'
+import { Projectors } from './projectors'
 import { createPropKit, type PropKit } from './props'
 import { setRoomLevel } from './roomLod'
 import { screenPageFor, screenStatus, setScreen, showScreen } from './screens'
@@ -64,6 +66,8 @@ export class OfficeScene {
   readonly particles = new Particles()
   /** Energia do escritório: usina, luz das salas, apagão e festa. */
   readonly energy: OfficeEnergy
+  /** O projetor de cada sala (navegador/Android em teste). */
+  readonly projectors: Projectors
   private readonly kit: Kit
   private readonly propKit: PropKit
   private readonly sun: DirectionalLight
@@ -124,6 +128,12 @@ export class OfficeScene {
     this.kit.sky.draw(new Date().getHours())
     this.energy = new OfficeEnergy(this.scene, this.kit, this.particles, this.crowd, { hemi, amb, sun })
     this.energy.onDark = (id, dark) => this.applyDark(id, dark)
+    this.projectors = new Projectors(this.kit, (id) => this.energy.isDark(id))
+    this.projectors.onDirty = () => this.onDirty()
+    // A tela acendeu: quem está na sala (e à vista) olha para ela.
+    this.projectors.onLit = (id, x, y, z) => {
+      for (const v of this.charList) if (v.brain.roomId === id && !v.culled) v.glance(x, y, z)
+    }
   }
 
   /** Leitura da energia (motor: a cada feed e tique). `t` = relógio da cena (s); `now` = epoch ms. */
@@ -160,6 +170,7 @@ export class OfficeScene {
     this.roomList = [...this.rooms].map(([id, view]) => ({ id, view }))
     this.crowd.syncRooms(layout.rooms)
     this.energy.syncRooms(layout.rooms, this.rooms)
+    this.projectors.syncRooms(layout.rooms, this.rooms)
 
     // Monitores primeiro: o brilho no rosto depende da tela acesa. Sala fora da tela só guarda a página;
     // sala sem energia (apagão) fica com a tela preta. A pilha de papéis segue o contexto do dono.
@@ -187,6 +198,7 @@ export class OfficeScene {
 
     this.syncCharacters(layout, lit, life)
     if (life) this.crowd.apply(life)
+    this.projectors.feed(feed, layout.characters.map((c) => c.model), life?.wallNow ?? Date.now())
     this.kit.sky.draw(new Date().getHours())
     this.fitShadow(layout.rooms)
     this.applyFocus()
@@ -411,8 +423,9 @@ export class OfficeScene {
         this.charList = [...this.chars.values()]
       }
     }
-    // Energia: transições, piscadas, emergência, festa e a usina pedem o ritmo delas.
+    // Energia: transições, piscadas, emergência, festa e a usina pedem o ritmo delas; o projetor, o dele.
     const power = this.energy.animate(t, dt)
+    if (this.projectors.animate(dt) === 2) full = true
     if (this.particles.update(dt)) full = true
     this.doorMoved.v = false
     const doors = swingDoors(this.roomList, this.crowd.list, dt, this.doorMoved)
@@ -435,6 +448,7 @@ export class OfficeScene {
     const targets: Object3D[] = []
     for (const v of this.chars.values()) if (v.group.visible) targets.push(v.group)
     for (const r of this.rooms.values()) for (const s of r.screens) if (s.mesh.userData.charKey) targets.push(s.mesh)
+    this.projectors.pickTargets(targets)
     const hit = this.raycaster.intersectObjects(targets, true).find((h) => h.object.userData.charKey)
     return (hit?.object.userData.charKey as string | undefined) ?? null
   }
@@ -453,6 +467,7 @@ export class OfficeScene {
 
   dispose(): void {
     this.energy.dispose()
+    this.projectors.dispose()
     for (const v of this.rooms.values()) v.dispose()
     for (const v of this.chars.values()) v.dispose()
     this.rooms.clear()
