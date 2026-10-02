@@ -1,0 +1,116 @@
+/*
+ * Abas da área principal (MainTabs), na barra superior: um seletor
+ * segmentado na família das pane-tabs (mesma fonte, raio e cores), com a aba
+ * ativa em destaque na cor de acento. Mesmas variáveis do styles.css.
+ */
+.main-tabs {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.main-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.main-tab:hover { background: var(--bg-3); color: var(--text); }
+.main-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.main-tab.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-2));
+  color: var(--text);
+  box-shadow: 0 1px 8px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.main-tab.on .main-tab-icon { color: var(--accent); }
+.main-tab.live:not(.on) .main-tab-icon { color: var(--accent); }
+
+/* Selo vivo: quantos agentes estão trabalhando agora (pulsa enquanto houver alguém). */
+.main-tab-live {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1f1e1d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  animation: main-tab-pulse 1.8s ease-out infinite;
+}
+@keyframes main-tab-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+
+/* Raio na cor do nível da energia do escritório: --main-tab-bolt vem do MainTabs (LEVEL_COLORS, as da pílula do HUD). */
+.main-tab-bolt {
+  position: relative;
+  display: inline-flex;
+  margin-left: -2px;
+  color: var(--main-tab-bolt, var(--muted));
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--main-tab-bolt, transparent) 55%, transparent));
+}
+.main-tab-bolt.lvl-alerta { animation: main-tab-blink 1.2s steps(1, end) infinite; }
+/* Apagão: o raio apagado e riscado (o risco na cor do nível). */
+.main-tab-bolt.lvl-apagao { color: var(--muted); opacity: 0.75; filter: none; }
+.main-tab-bolt.lvl-apagao::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  bottom: -1px;
+  width: 1.6px;
+  border-radius: 1px;
+  background: var(--main-tab-bolt, var(--err));
+  transform: rotate(45deg);
+}
+@keyframes main-tab-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Enquanto o chunk do 3D chega (só na 1ª abertura). */
+.main-office-loading {
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #1d1a22;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* O 3D falhou (OfficeErrorBoundary): o aviso no lugar do escritório. */
+.main-office-error {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  color: var(--text);
+  text-align: center;
+}
+.main-office-error-msg { max-width: 640px; margin: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+
+@media (prefers-reduced-motion: reduce) {
+  .main-tab-live,
+  .main-tab-bolt.lvl-alerta { animation: none; }
+}

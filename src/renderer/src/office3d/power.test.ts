@@ -121,9 +121,9 @@ describe('powerEvents', () => {
 })
 
 describe('texto do painel', () => {
-  it('"⚡ 72% · reseta 23:40"; no apagão, "volta"; sem horário, só a %', () => {
-    expect(powerPanelText({ pct: 72, level: 'cheia', resetsAt: RESET }, NOW)).toBe('⚡ 72% · reseta 23:40')
-    expect(powerPanelText({ pct: 0, level: 'apagao', resetsAt: RESET }, NOW)).toBe('⚡ 0% · volta 23:40')
+  it('"⚡ 72% · recarrega às 23:40" (no apagão também); sem horário, só a %', () => {
+    expect(powerPanelText({ pct: 72, level: 'cheia', resetsAt: RESET }, NOW)).toBe('⚡ 72% · recarrega às 23:40')
+    expect(powerPanelText({ pct: 0, level: 'apagao', resetsAt: RESET }, NOW)).toBe('⚡ 0% · recarrega às 23:40')
     expect(powerPanelText({ pct: 40, level: 'economia', resetsAt: null }, NOW)).toBe('⚡ 40%')
   })
 })

@@ -7,8 +7,8 @@
  * cai na mais recente com result (a tela não fica vazia entre uma chamada e
  * outra, e Read/Bash precisam do result para ter o que mostrar).
  */
-import type { LookupInfo } from '../../office/adapter/director'
 import type { OfficeFeed } from '../../office/adapter/feed'
+import type { LookupInfo } from '../../office/adapter/model'
 
 export interface CurrentTool {
   id: string
@@ -110,24 +110,5 @@ export function screenModel(tool: CurrentTool | null): ScreenModel {
       const text = str(input.description) || str(input.prompt) || str(input.url) || JSON.stringify(input)
       return { kind: 'other', tool: name, text: head(text, READ_LINES) }
     }
-  }
-}
-
-/** O texto que o efeito de digitação revela (o "corpo" de cada formato). */
-export function typedBody(model: ScreenModel): string {
-  switch (model.kind) {
-    case 'diff':
-      return model.hunks.map((h) => h.new).join('\n…\n')
-    case 'write':
-    case 'read':
-      return model.text
-    case 'bash':
-      return model.output
-    case 'grep':
-      return model.lines.join('\n')
-    case 'other':
-      return model.text
-    default:
-      return ''
   }
 }

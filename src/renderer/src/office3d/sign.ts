@@ -8,6 +8,7 @@
  * também URL, caminho de arquivo e emoji/glifo curto; sem ícone, a inicial.
  */
 import { CanvasTexture, SRGBColorSpace } from 'three'
+import { fileUrl } from '../fileUrl'
 import { canvas2d } from './textures'
 
 export type IconSource = { kind: 'image'; src: string } | { kind: 'glyph'; text: string } | { kind: 'initial'; text: string }
@@ -18,12 +19,7 @@ export function initialOf(name: string): string {
   return m ? m[0].toUpperCase() : '?'
 }
 
-/** Caminho local → URL file:///. */
-export function fileUrl(path: string): string {
-  return 'file:///' + path.replace(/\\/g, '/').replace(/^\/+/, '')
-}
-
-/** Interpreta o ícone do projeto. */
+/** Interpreta o ícone do projeto (caminho local vira file:///, pelo fileUrl). */
 export function iconSource(icon: string | null | undefined, name: string): IconSource {
   const s = (icon ?? '').trim()
   if (!s) return { kind: 'initial', text: initialOf(name) }

@@ -249,11 +249,19 @@ export const IconBoard = (p: IconProps): JSX.Element => (
   </Svg>
 )
 
-/** Escritório: prédio com janelas — a aba do escritório em pixel-art. */
+/** Escritório: prédio com janelas — a aba do Escritório 3D na barra superior. */
 export const IconOffice = (p: IconProps): JSX.Element => (
   <Svg {...p}>
     <rect x="4" y="3" width="16" height="18" rx="1.5" />
     <path d="M8 7h2M14 7h2M8 11h2M14 11h2M10 21v-4h4v4" />
+  </Svg>
+)
+
+/** Balão de conversa — a aba Conversa da barra superior. */
+export const IconChat = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z" />
+    <path d="M8 10.5h8M8 14h5" />
   </Svg>
 )
 

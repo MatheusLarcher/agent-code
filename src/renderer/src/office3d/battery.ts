@@ -36,15 +36,15 @@ export function contextBattery(context: { tokens: number; max: number } | undefi
   return batteryLevel(1 - context.tokens / context.max)
 }
 
-/** "reseta em 2h 05min" / "reseta em 12min"; vazio se não houver horário ou já passou. */
+/** "recarrega em 2h 05min" / "recarrega em 12min"; vazio se não houver horário ou já passou. */
 export function formatResetIn(resetsAt: number | undefined, now: number): string {
   if (!resetsAt || !Number.isFinite(resetsAt)) return ''
   const mins = Math.ceil((resetsAt - now) / 60_000)
   if (mins <= 0) return ''
-  if (mins < 60) return `reseta em ${mins}min`
+  if (mins < 60) return `recarrega em ${mins}min`
   const h = Math.floor(mins / 60)
   const m = mins % 60
-  return m ? `reseta em ${h}h ${String(m).padStart(2, '0')}min` : `reseta em ${h}h`
+  return m ? `recarrega em ${h}h ${String(m).padStart(2, '0')}min` : `recarrega em ${h}h`
 }
 
 export interface SessionBattery extends BatteryState {

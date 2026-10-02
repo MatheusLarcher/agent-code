@@ -2,125 +2,83 @@
  * Motor do escritório 3D: renderer + câmera + entrada + laço sob demanda.
  *
  * O laço RAF só roda enquanto há motivo — tecla de movimento segurada, tween,
- * personagem À VISTA animando (agente acordado na sala conta: ele vagueia) ou
- * algo marcou a cena como suja (feed, arrasto, roda, resize, balão novo). Se só
- * sobra animação de baixa prioridade (personagens no LOD longe), o laço cai
- * para ~30 quadros/s. Documento oculto não agenda quadro; voltar a ficar
- * visível agenda. `dispose()` desfaz tudo: RAF, tique das falas,
- * ResizeObserver, listeners, balões, cena e renderer.
+ * personagem À VISTA animando (agente acordado vagueia) ou cena suja (feed,
+ * arrasto, roda, resize, balão novo); só animação de LOD longe cai para ~30
+ * quadros/s. Documento oculto não agenda quadro. `dispose()` desfaz tudo: RAF,
+ * tique das falas, ResizeObserver, listeners, balões, cena e renderer.
  *
- * Desempenho: quando a câmera muda, a cena refaz o culling por sala e o LOD
- * pela distância (scene.updateView); o nível global (quality.ts) ajusta o
- * pixelRatio, a névoa e a sombra do sol, e o shadow map só é refeito quando
- * algo que projeta sombra mudou. Nada aloca por quadro no caminho quente
- * (câmera, voo, culling, balões, tela do foco). `stats` alimenta o HUD de DEV.
+ * Aba fechada (`pause()`): sem RAF, sem tique, sem feed aplicado (o último
+ * fica guardado) e sem resize — nada simula nem redesenha textura; os
+ * listeners ficam e ignoram tudo. `resume()` volta na hora com a mesma câmera:
+ * remede o palco e reaplica o último feed (guardado ou, sem feed novo, o atual:
+ * o reset da energia que passou) SEM os eventos do intervalo, nem o da energia,
+ * como a sala que volta à vista (o primeiro quadro tem dt ~0).
  *
- * A cada feed: retrato de events.ts (snapshotOf) e o que mudou desde o
- * anterior (diffEvents) vão para a cena (cérebros) e para as falas
- * (speech.ts); um tique de QUIP_TICK_MS deixa as falas andarem sem feed.
- * `headWorldPosition(key, out)` dá o centro da cabeça de um personagem (âncora
- * dos balões). Clicar num balão foca o agente, como clicar nele.
+ * Desempenho: câmera nova refaz o culling por sala e o LOD (scene.updateView);
+ * quality.ts ajusta pixelRatio, névoa e sombra; o shadow map só é refeito se
+ * algo que projeta sombra mudou. Nada aloca por quadro; `stats` vai ao HUD de DEV.
  *
- * Energia do escritório (power.ts): a cada feed e a cada tique o PowerTracker
- * relê a janela de 5h; a cena recebe a leitura e o evento (usina, luz, apagão,
- * festa), as falas também, e `onPower` avisa a barra quando o que ela mostra
- * muda. Só em DEV, `cyclePower()` força o próximo nível (Ctrl+Alt+Shift+B).
- * O enquadramento inicial inclui a usina (officeFrame).
+ * A cada feed: retrato de events.ts (snapshotOf) e o diff (diffEvents) vão para
+ * a cena (cérebros) e para as falas (speech.ts); um tique de QUIP_TICK_MS deixa
+ * as falas e a energia (enginePower.ts; `cyclePower()` só em DEV) andarem sem
+ * feed. `headWorldPosition` ancora os balões; o clique no balão de um pedido
+ * ("Clica em mim") chama `onFocusRequest(convId)`, nos outros foca o agente.
+ * `flyToAgent(key)` voa até um agente (ou a mesa dele) sem abrir a tela;
+ * `follow(convId)` faz o mesmo para a conversa escolhida fora do 3D, salvo se
+ * o usuário mexeu na câmera há menos de FOLLOW_GRACE_MS (agente que só entra
+ * no escritório com o próximo feed: o voo espera por ele). O enquadramento
+ * inicial inclui a usina (officeFrame).
  */
-import { Matrix4, PCFShadowMap, PerspectiveCamera, Vector3, WebGLRenderer, type Camera, type Scene } from 'three'
+import { PerspectiveCamera, Vector3 } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
-import { deriveOfficeModel } from '../office/adapter/model'
+import { deriveOfficeModel, principalKey } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
-import { cameraPosition, CameraRig, framePose, monitorPose, type CameraPose, type ViewSize } from './cameraRig'
+import { agentPose, CameraRig, framePose, monitorPose, type CameraPose, type ViewSize } from './cameraRig'
+import { CameraSync } from './cameraSync'
+import { EnginePower } from './enginePower'
+import { createDefaultRenderer, listener, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
 import { diffEvents, snapshotOf, type OfficeSnapshot } from './events'
 import { clampDt, dragModeFor, isClick, isTypingTarget, MoveKeys, moveDelta, type DragMode } from './input'
 import { EMPTY_LAYOUT, layoutOffice, monitorPosition, type Office3DLayout } from './layout'
 import { LOW_RATE_MS } from './lod'
-import type { OfficePower, PowerEvent } from './power'
+import type { OfficePower } from './power'
 import { officeFrame } from './powerPlant'
-import { PowerTracker } from './powerTracker'
 import { Quality, type EngineStats } from './quality'
-import type { PowerQuipInput } from './quips'
 import { OfficeScene } from './scene'
 import { ScreenAnchor } from './screenAnchor'
 import { QUIP_TICK_MS, Speech } from './speech'
 
 export type { EngineStats } from './quality'
-
-export interface RendererLike {
-  setPixelRatio(ratio: number): void
-  setSize(width: number, height: number, updateStyle?: boolean): void
-  render(scene: Scene, camera: Camera): void
-  dispose(): void
-  /** WebGLRenderer real: anisotropia máxima para placas e telas nítidas. */
-  capabilities?: { getMaxAnisotropy(): number }
-  /** WebGLRenderer real: shadow map refeito só quando o motor pede (autoUpdate desligado). */
-  shadowMap?: { autoUpdate: boolean; needsUpdate: boolean }
-  /** WebGLRenderer real: contadores do último quadro (HUD de desempenho). */
-  info?: { render: { calls: number; triangles: number } }
-}
-
-/** Renderer padrão: antialias e sombras suaves (só a luz principal projeta), refeitas sob demanda. */
-export function createDefaultRenderer(canvas: HTMLCanvasElement): RendererLike {
-  const r = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
-  r.shadowMap.enabled = true
-  r.shadowMap.type = PCFShadowMap
-  r.shadowMap.autoUpdate = false
-  r.shadowMap.needsUpdate = true
-  return r
-}
-
-export interface FeedSource {
-  getSnapshot(): OfficeFeed | null
-  subscribe(cb: (feed: OfficeFeed) => void): () => void
-}
-
-export interface EngineOptions {
-  createRenderer?: (canvas: HTMLCanvasElement) => RendererLike
-  raf?: (cb: FrameRequestCallback) => number
-  caf?: (id: number) => void
-  now?: () => number
-  source?: FeedSource
-}
-
-export interface EngineCallbacks {
-  /** Personagem enquadrado (tela aberta) ou null ao voltar. */
-  onFocus(key: string | null): void
-  /** Duplo clique no personagem. */
-  onOpen(convId: string): void
-  /** A energia do escritório mudou (%, nível ou hora do reset); null sem a janela de 5h. */
-  onPower?(power: OfficePower | null): void
-}
+export { createDefaultRenderer, type EngineCallbacks, type EngineOptions, type FeedSource, type RendererLike } from './engineTypes'
 
 export const MAX_PIXEL_RATIO = 2
 /** Altura até onde vai o conteúdo das salas (placas, indicador de permissão). */
 const BUILDING_HEIGHT = 1.8
+/** A conversa escolhida fora do 3D não leva a câmera se o usuário mexeu nela há menos disto (ms). */
+export const FOLLOW_GRACE_MS = 2000
 
 export class Office3DEngine {
   readonly scene: OfficeScene
   readonly camera = new PerspectiveCamera(50, 1, 0.05, 250)
   readonly rig = new CameraRig({ tx: 6, ty: 0, tz: 5, yaw: 0, pitch: 0.9, distance: 16 })
+  private readonly camSync = new CameraSync(this.camera, this.rig)
   private readonly renderer: RendererLike
   private readonly quality: Quality
   private readonly speech: Speech
-  private readonly power = new PowerTracker()
-  /** O que a barra mostra da energia (só avisa quando muda). */
-  private powerSig = '-'
+  private readonly power: EnginePower
   private readonly anchor = new ScreenAnchor()
   private readonly keys = new MoveKeys()
   private readonly raf: (cb: FrameRequestCallback) => number
   private readonly caf: (id: number) => void
   private readonly now: () => number
   private readonly cleanups: Array<() => void> = []
+  private readonly listen = listener(this.cleanups)
   private layout: Office3DLayout = EMPTY_LAYOUT
   private feed: OfficeFeed | null = null
   /** Último retrato de events.ts (base do diff); null antes do 1º feed. */
   private snapshot: OfficeSnapshot | null = null
-  /** Rascunhos reaproveitados a cada quadro (nada aloca no laço). */
-  private readonly camPos = { x: 0, y: 0, z: 0 }
+  /** Rascunho reaproveitado a cada quadro (nada aloca no laço). */
   private readonly wasd = { dx: 0, dz: 0 }
-  private readonly lastView = new Matrix4()
-  private readonly lastProj = new Matrix4()
   private readonly headOf = (key: string, out: Vector3): boolean => this.scene.headWorldPosition(key, out)
   private rafId = 0
   private lastFrame = 0
@@ -128,6 +86,13 @@ export class Office3DEngine {
   private lowRate = false
   private tick: ReturnType<typeof setInterval> | null = null
   private disposed = false
+  /** Aba fechada: nada roda; o feed que chegar fica em `pending` e o resize em `sizeStale`. */
+  private paused = false
+  private pending: OfficeFeed | null = null
+  private sizeStale = false
+  /** Último gesto do usuário na câmera (relógio do motor, ms) e o `follow` que espera o agente chegar. */
+  private userCamAt = -Infinity
+  private followNext: string | null = null
   /** Enquanto o usuário não mexe na câmera, ela segue enquadrando o prédio inteiro. */
   private autoFrame = true
   private width = 1
@@ -149,7 +114,8 @@ export class Office3DEngine {
     this.quality = new Quality(this.renderer, Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO))
     this.scene = new OfficeScene(Math.min(8, this.renderer.capabilities?.getMaxAnisotropy() ?? 1))
     this.scene.onDirty = () => this.requestRender()
-    this.speech = new Speech(container, (key) => this.focus(key))
+    this.power = new EnginePower(this.scene, (p) => this.cb.onPower?.(p))
+    this.speech = new Speech(container, (key) => this.bubbleClick(key))
     this.bindInput()
     this.observeSize()
     const source = opts.source ?? officeStore
@@ -158,15 +124,6 @@ export class Office3DEngine {
     this.cleanups.push(source.subscribe((f) => this.applyFeed(f)))
     this.tick = setInterval(this.tickQuips, QUIP_TICK_MS)
     this.requestRender()
-  }
-
-  private listen<K extends keyof WindowEventMap>(target: Window, type: K, fn: (e: WindowEventMap[K]) => void, opts?: AddEventListenerOptions): void
-  private listen<K extends keyof HTMLElementEventMap>(target: HTMLElement, type: K, fn: (e: HTMLElementEventMap[K]) => void, opts?: AddEventListenerOptions): void
-  private listen<K extends keyof DocumentEventMap>(target: Document, type: K, fn: (e: DocumentEventMap[K]) => void, opts?: AddEventListenerOptions): void
-  private listen(target: EventTarget, type: string, fn: (e: never) => void, opts?: AddEventListenerOptions): void {
-    const h = fn as EventListener
-    target.addEventListener(type, h, opts)
-    this.cleanups.push(() => target.removeEventListener(type, h, opts))
   }
 
   private bindInput(): void {
@@ -187,7 +144,7 @@ export class Office3DEngine {
       d.y = e.clientY
       if (isClick(e.clientX - d.x0, e.clientY - d.y0)) return
       this.leaveFocus(false)
-      this.autoFrame = false
+      this.userMoved()
       if (d.mode === 'orbit') this.rig.orbit(dx, dy)
       else this.rig.pan(dx, dy)
       this.requestRender()
@@ -197,6 +154,7 @@ export class Office3DEngine {
       this.drag = null
       if (!d || d.button !== 0 || !isClick(e.clientX - d.x0, e.clientY - d.y0)) return
       const key = this.pickAt(e.clientX, e.clientY)
+      this.userCamAt = this.now()
       if (key) this.focus(key)
       else this.leaveFocus(true)
     })
@@ -211,15 +169,18 @@ export class Office3DEngine {
       (e) => {
         e.preventDefault()
         this.leaveFocus(false)
-        this.autoFrame = false
+        this.userMoved()
         this.rig.zoom(e.deltaY)
         this.requestRender()
       },
       { passive: false }
     )
     this.listen(window, 'keydown', (e) => {
+      // Aba fechada: a tecla é de quem está na tela (nem preventDefault).
+      if (this.paused) return
       if (e.key === 'Escape' && this.focusedKey && !isTypingTarget(e.target)) {
         e.preventDefault()
+        this.userCamAt = this.now()
         this.leaveFocus(true)
         return
       }
@@ -236,78 +197,87 @@ export class Office3DEngine {
     })
   }
 
+  /** Balão clicado: o de um pedido (permissão, pergunta) leva ao pedido da conversa; os outros focam o agente. */
+  private bubbleClick(key: string): void {
+    const quip = this.speech.quipOf(key)
+    if (quip?.kind === 'permission' && this.cb.onFocusRequest) return this.cb.onFocusRequest(quip.convId)
+    this.userCamAt = this.now()
+    this.focus(key)
+  }
+
+  /** O usuário mexeu na câmera: ela para de enquadrar o prédio e a seleção de fora espera FOLLOW_GRACE_MS. */
+  private userMoved(): void {
+    this.autoFrame = false
+    this.userCamAt = this.now()
+  }
+
   private observeSize(): void {
-    const resize = (): void => {
-      this.width = Math.max(1, this.container.clientWidth)
-      this.height = Math.max(1, this.container.clientHeight)
-      this.renderer.setSize(this.width, this.height, false)
-      this.camera.aspect = this.width / this.height
-      this.camera.updateProjectionMatrix()
-      // Reenquadra com o novo aspect: a tela aberta ou, se ninguém mexeu, o prédio.
-      if (this.focusedKey) {
-        const to = this.focusPose(this.focusedKey)
-        if (to) this.rig.retarget(to)
-      } else if (this.autoFrame) {
-        this.frameBuilding()
-      }
-      this.requestRender()
-    }
-    resize()
+    this.resize()
     if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(resize)
+      const ro = new ResizeObserver(() => this.resize())
       ro.observe(this.container)
       this.cleanups.push(() => ro.disconnect())
     } else {
-      this.listen(window, 'resize', resize)
+      this.listen(window, 'resize', () => this.resize())
     }
   }
 
-  private applyFeed(feed: OfficeFeed): void {
+  private resize(): void {
+    // Pausado o palco está escondido (0×0): só anota; a volta remede.
+    if (this.paused) {
+      this.sizeStale = true
+      return
+    }
+    this.sizeStale = false
+    this.width = Math.max(1, this.container.clientWidth)
+    this.height = Math.max(1, this.container.clientHeight)
+    this.renderer.setSize(this.width, this.height, false)
+    this.camera.aspect = this.width / this.height
+    this.camera.updateProjectionMatrix()
+    // Reenquadra com o novo aspect: a tela aberta ou, se ninguém mexeu, o prédio.
+    if (this.focusedKey) {
+      const to = this.focusPose(this.focusedKey)
+      if (to) this.rig.retarget(to)
+    } else if (this.autoFrame) {
+      this.frameBuilding()
+    }
+    this.requestRender()
+  }
+
+  /** `catchUp`: volta da pausa — o retrato novo vira a base sem os eventos do intervalo. */
+  private applyFeed(feed: OfficeFeed, catchUp = false): void {
+    if (this.paused) {
+      this.pending = feed
+      return
+    }
     this.feed = feed
     const wallNow = Date.now()
     const model = deriveOfficeModel(feed, wallNow)
     this.layout = layoutOffice(model, this.layout)
     const snapshot = snapshotOf(feed, model, wallNow)
-    const events = diffEvents(this.snapshot, snapshot, wallNow)
+    const events = catchUp ? [] : diffEvents(this.snapshot, snapshot, wallNow)
     this.snapshot = snapshot
-    // A energia antes do sync: sala no escuro já monta com a tela preta.
-    const powerEvent = this.power.update(feed, wallNow)
-    this.scene.setPower(this.power.power, powerEvent, this.now() / 1000, wallNow)
+    // A energia antes do sync: sala no escuro já monta com a tela preta (na volta da pausa, sem o evento).
+    const powerEvent = this.power.read(feed, wallNow, this.now() / 1000, catchUp)
     this.scene.sync(this.layout, feed, { snapshot, events, wallNow, t: this.now() / 1000 })
-    this.speech.feed(snapshot, events, wallNow, this.quipPower(powerEvent))
-    this.emitPower()
+    this.speech.feed(snapshot, events, wallNow, this.power.quip(powerEvent))
+    this.power.emit()
     if (this.autoFrame && !this.focusedKey) this.frameBuilding()
     if (this.focusedKey && !this.scene.character(this.focusedKey)) this.leaveFocus(true)
     else if (this.focusedKey) this.focusPose(this.focusedKey) // a mesa pode ter andado: a tela acompanha
+    const next = this.followNext
+    this.followNext = null
+    if (next && this.now() - this.userCamAt >= FOLLOW_GRACE_MS) this.flyToAgent(principalKey(next))
     this.requestRender()
   }
 
   /** Falas e energia andam com o relógio mesmo sem feed (TTL, ociosos, reset que passou): mudança pede um quadro. */
   private readonly tickQuips = (): void => {
-    if (this.disposed || document.hidden) return
+    if (this.disposed || this.paused || document.hidden) return
     const now = Date.now()
-    const before = this.power.power
-    const event = this.feed || this.power.overridden ? this.power.update(this.feed, now) : null
-    const after = this.power.power
-    const changed = event !== null || before?.level !== after?.level || before?.pct !== after?.pct || before?.resetsAt !== after?.resetsAt || before?.drainPerMin !== after?.drainPerMin
-    if (changed) this.scene.setPower(after, event, this.now() / 1000, now)
-    this.emitPower()
-    if (this.speech.tick(now, this.quipPower(event)) || changed) this.requestRender()
-  }
-
-  /** O que as falas precisam da energia (com os papéis da festa). */
-  private quipPower(event: PowerEvent | null): PowerQuipInput | null {
-    const p = this.power.power
-    return p ? { level: p.level, pct: p.pct, resetsAt: p.resetsAt, event, roles: this.scene.crowd.partyRoles } : null
-  }
-
-  /** Avisa a barra só quando muda o que ela mostra. */
-  private emitPower(): void {
-    const p = this.power.power
-    const sig = p ? `${p.pct}|${p.level}|${p.resetsAt}` : ''
-    if (sig === this.powerSig) return
-    this.powerSig = sig
-    this.cb.onPower?.(p)
+    const { event, changed } = this.power.tick(this.feed, now, this.now() / 1000)
+    this.power.emit()
+    if (this.speech.tick(now, this.power.quip(event)) || changed) this.requestRender()
   }
 
   /** A energia em vigor (a barra e os testes leem). */
@@ -318,10 +288,9 @@ export class Office3DEngine {
   /** Só DEV (Ctrl+Alt+Shift+B): força o próximo nível de energia, em ciclo, para testar. */
   cyclePower(): void {
     const now = Date.now()
-    const event = this.power.cycle(now)
-    this.scene.setPower(this.power.power, event, this.now() / 1000, now)
-    this.emitPower()
-    this.speech.tick(now, this.quipPower(event))
+    const event = this.power.cycle(now, this.now() / 1000)
+    this.power.emit()
+    this.speech.tick(now, this.power.quip(event))
     this.requestRender()
   }
 
@@ -361,7 +330,7 @@ export class Office3DEngine {
     const h = rect.height || this.height
     const x = ((clientX - rect.left) / w) * 2 - 1
     const y = -((clientY - rect.top) / h) * 2 + 1
-    this.syncCamera()
+    this.camSync.sync()
     return this.scene.pick(x, y, this.camera)
   }
 
@@ -394,6 +363,27 @@ export class Office3DEngine {
     this.requestRender()
   }
 
+  /** Voa até o agente `key` — a mesa dele (`desk`) ou onde ele está agora — sem abrir a tela; false se ele não está no escritório. */
+  flyToAgent(key: string, at: 'desk' | 'agent' = 'agent'): boolean {
+    const b = this.scene.crowd.brains.get(key)
+    const spot = (at === 'desk' ? b?.desk : null) ?? b ?? this.scene.character(key)
+    if (!spot) return false
+    this.leaveFocus(false)
+    this.autoFrame = false
+    this.rig.flyTo(agentPose(spot), this.now())
+    this.requestRender()
+    return true
+  }
+
+  /** Conversa escolhida fora do 3D: voa até o agente dela (agente que ainda não chegou: no próximo feed). */
+  follow(convId: string): boolean {
+    this.followNext = null
+    if (this.now() - this.userCamAt < FOLLOW_GRACE_MS) return false
+    if (this.flyToAgent(principalKey(convId))) return true
+    this.followNext = convId
+    return false
+  }
+
   /** Centro da cabeça do personagem `key` no mundo, em `out`; false se ele não está à vista. */
   headWorldPosition(key: string, out: Vector3): boolean {
     return this.scene.headWorldPosition(key, out)
@@ -418,9 +408,36 @@ export class Office3DEngine {
     return this.rafId !== 0
   }
 
+  get isPaused(): boolean {
+    return this.paused
+  }
+
+  /** Aba fechada: para o laço e o tique; feed e resize ficam para a volta. Idempotente. */
+  pause(): void {
+    if (this.paused || this.disposed) return
+    this.paused = true
+    this.cancelFrame()
+    if (this.tick !== null) clearInterval(this.tick)
+    this.tick = null
+    this.keys.clear()
+    this.drag = null
+  }
+
+  /** Aba de volta: remede o palco, reaplica o último feed (guardado ou o atual) sem reproduzir o intervalo e retoma o laço. */
+  resume(): void {
+    if (!this.paused || this.disposed) return
+    this.paused = false
+    if (this.sizeStale) this.resize()
+    const feed = this.pending ?? this.feed
+    this.pending = null
+    if (feed) this.applyFeed(feed, true)
+    this.tick = setInterval(this.tickQuips, QUIP_TICK_MS)
+    this.requestRender()
+  }
+
   requestRender(): void {
     this.lowRate = false
-    if (this.disposed || this.rafId || document.hidden) return
+    if (this.disposed || this.paused || this.rafId || document.hidden) return
     this.lastFrame = this.now()
     this.quality.restart(this.lastFrame)
     this.rafId = this.raf(this.frame)
@@ -433,7 +450,7 @@ export class Office3DEngine {
 
   private readonly frame = (): void => {
     this.rafId = 0
-    if (this.disposed || document.hidden) return
+    if (this.disposed || this.paused || document.hidden) return
     const now = this.now()
     // Só animação de baixa prioridade (LOD longe): ~30 quadros/s.
     if (this.lowRate && now - this.lastFrame < LOW_RATE_MS - 2) {
@@ -445,12 +462,12 @@ export class Office3DEngine {
     const { dx, dz } = moveDelta(this.keys, this.rig.pose.yaw, dt, this.wasd)
     if (dx !== 0 || dz !== 0) {
       this.leaveFocus(false)
-      this.autoFrame = false
+      this.userMoved()
       this.rig.move(dx, dz)
     }
     const tweening = this.rig.step(now)
-    this.syncCamera()
-    const moved = this.cameraMoved()
+    this.camSync.sync()
+    const moved = this.camSync.moved()
     if (moved || this.scene.viewDirty) this.quality.apply(this.scene, this.scene.updateView(this.camera, this.quality.level), this.rig.pose.distance)
     const animating = this.scene.animate(now / 1000, dt, this.camera.position)
     this.quality.shadows(this.scene)
@@ -463,28 +480,13 @@ export class Office3DEngine {
     if ((full || animating) && !this.rafId) this.rafId = this.raf(this.frame)
   }
 
-  private syncCamera(): void {
-    const p = cameraPosition(this.rig.pose, this.camPos)
-    this.camera.position.set(p.x, p.y, p.z)
-    this.camera.lookAt(this.rig.pose.tx, this.rig.pose.ty, this.rig.pose.tz)
-    this.camera.updateMatrixWorld()
-  }
-
-  /** A câmera mudou desde o último culling/LOD? (compara as matrizes, sem alocar) */
-  private cameraMoved(): boolean {
-    const c = this.camera
-    if (c.matrixWorld.equals(this.lastView) && c.projectionMatrix.equals(this.lastProj)) return false
-    this.lastView.copy(c.matrixWorld)
-    this.lastProj.copy(c.projectionMatrix)
-    return true
-  }
-
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
     this.cancelFrame()
     if (this.tick !== null) clearInterval(this.tick)
     this.tick = null
+    this.pending = null
     for (const off of this.cleanups.splice(0)) off()
     this.keys.clear()
     this.drag = null

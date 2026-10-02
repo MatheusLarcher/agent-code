@@ -34,7 +34,6 @@ import { useComposerElements } from './elementPick/useComposerElements'
 
 import { boxMetrics, composerBoxHeight } from './composerHeight'
 import { useHasTextSignal, type HasTextListener } from './useHasTextSignal'
-import { composerPresence } from '../composerPresence'
 
 const NO_CARDS: readonly RefCard[] = []
 
@@ -272,11 +271,6 @@ export function Composer(props: Props): JSX.Element {
   // typing). Persistence happens only via `flushDraft`, at blur/switch/send.
   const updateValue = (next: string): void => {
     setValue(next)
-    // Fato para o escritório (composerPresence), fora do React. Fica aqui, e não
-    // num efeito sobre `value`, para contar só edição do usuário (teclado, colar,
-    // ditado, menus): o rascunho restaurado na troca de conversa entra por
-    // setValue direto e não é o usuário começando a falar com o agente.
-    if (convIdRef.current) composerPresence.noteDraft(convIdRef.current, next, Date.now())
   }
 
   // Save `text` as `convId`'s draft. Takes an explicit id (not "whatever's
@@ -634,17 +628,6 @@ export function Composer(props: Props): JSX.Element {
   // Stop recording and free the mic if the composer unmounts mid-dictation.
   useEffect(() => () => stopDictation(), [])
 
-  // Microfone para o escritório (composerPresence). Segue `recording`, que só
-  // liga depois de o getUserMedia dar certo e desliga no fim do stopDictation.
-  // A limpeza desliga o mic da conversa em que ele ligou — ao parar, ao desmontar
-  // e ao trocar de conversa gravando (o ditado passa a cair na caixa da nova).
-  useEffect(() => {
-    const id = props.convId
-    if (!recording || !id) return
-    composerPresence.noteMic(id, true, Date.now())
-    return () => composerPresence.noteMic(id, false, Date.now())
-  }, [recording, props.convId])
-
   // Acompanha a preparação do reconhecimento de voz no computador. A faixa fica
   // na tela enquanto baixa e sai sozinha ao terminar; erro fica um pouco mais
   // para dar tempo de ler.
@@ -795,8 +778,6 @@ export function Composer(props: Props): JSX.Element {
     const attached = msg.images.length + msg.files.length + msg.fileRefs.length
     if (!msg.text.trim() && msg.elements.length === 0 && attached === 0) return
     props.onSend(msg.text, msg.images, msg.files, msg.fileRefs, msg.elements)
-    // Antes de limpar o campo: o esvaziamento por envio não é "apagou sem enviar".
-    if (convIdRef.current) composerPresence.noteSent(convIdRef.current, Date.now())
     media.commitSend() // cópias do rascunho: a do arquivo enviado fica; as outras saem do disco
     media.reset()
     updateValue('') // clears the box

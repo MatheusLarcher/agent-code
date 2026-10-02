@@ -288,18 +288,18 @@ export const LINES: Readonly<Record<Situation, SituationLines>> = {
     'Limite da sessão estourou. Café até {time} ☕',
     'Cota zerada. Volto a partir de {time} 😴',
     'Sem crédito até {time}. Hora do intervalo 🏖️',
-    'Reset do limite: {time}. Até lá, cafezinho'
+    'O limite recarrega às {time}. Até lá, cafezinho'
   ]),
   'usage-notime': at('⛽', [
     'Limite da sessão estourou. Sem hora pra voltar ☕',
-    'Cota zerada! Esperando o reset 😴',
+    'Cota zerada! Esperando recarregar 😴',
     'Bati no limite de uso. Pausa forçada 🛑',
     'Acabou o crédito por ora. Cochilo autorizado 💤'
   ]),
   'usage-back': at('⚡', [
     'Limite liberado! De volta ao batente 💪',
     'Cota renovada. Partiu trabalhar! 🚀',
-    'Voltei! O limite resetou',
+    'Voltei! O limite recarregou',
     'Crédito de volta. Que saudade de trabalhar 😄'
   ]),
 
@@ -353,15 +353,15 @@ export const LINES: Readonly<Record<Situation, SituationLines>> = {
     'Energia em {pct}%. Apaga a luz do corredor aí 💡',
     'Modo economia: {pct}% de tokens. Meia luz, meio café 🌱',
     '{pct}% na bateria do escritório. Desliga um abajur aí 🔌',
-    'Economizando: {pct}% até o reset[ das {time}] 🧮',
+    'Economizando: {pct}% até recarregar[ às {time}] 🧮',
     'Só {pct}% de energia. Quem deixou o monitor aceso? 👀'
   ]),
   'power-alert': at('⚠️', [
-    'Bateria do escritório em {pct}%![ Reseta às {time}] ⚠️',
+    'Bateria do escritório em {pct}%![ Recarrega às {time}] ⚠️',
     'Alerta: {pct}% de tokens. Salvem seus arquivos! 💾',
     '{pct}% e piscando… isso não é efeito especial 😬',
     'Energia em {pct}%. Vai faltar luz[ até {time}] 🕯️',
-    'Giroflex ligado: {pct}% na usina[, reset às {time}] 🚨'
+    'Giroflex ligado: {pct}% na usina[, recarrega às {time}] 🚨'
   ]),
   'power-out': at('🕺', [
     'Acabou a luz! Festa[ até {time}] 🕺',
@@ -375,7 +375,7 @@ export const LINES: Readonly<Record<Situation, SituationLines>> = {
     'Luz de volta, {pct}% na bateria! Acabou a festa 🛑',
     'Energia renovada: {pct}%. Desliga o globo! 💡',
     'O disjuntor voltou! {pct}% de tokens, bora trabalhar 💪',
-    'Reset feito: {pct}% de energia. Cadeira, me espera! 💺'
+    'Recarregou: {pct}% de energia. Cadeira, me espera! 💺'
   ]),
 
   // ── festa no apagão (frases rotativas, 1–2 por vez) ─────────────────────
@@ -389,7 +389,7 @@ export const LINES: Readonly<Record<Situation, SituationLines>> = {
     'Quando a luz voltar, eu estava trabalhando, ok? 🤫',
     'Festa no escritório[ até {time}]! 🥳',
     'Pista lotada! Cuidado com o cabo ⚡',
-    'Mais uma, DJ![ O reset é só às {time}] 🎶',
+    'Mais uma, DJ![ Só recarrega às {time}] 🎶',
     'Sem luz, mas com estilo ✨',
     'Alguém viu meu teclado? Tava aqui 🎹'
   ]),

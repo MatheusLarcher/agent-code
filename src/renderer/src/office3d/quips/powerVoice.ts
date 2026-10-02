@@ -4,7 +4,7 @@
  * (prioridade, TTL) quem decide é o generator.ts.
  *
  *   evento (powerEvents)  economia e alerta: 1 agente anuncia; apagão e luz
- *                         voltou: 2. Sempre com o dado: % e/ou a hora do reset.
+ *                         voltou: 2. Sempre com o dado: % e/ou a hora em que recarrega.
  *   lembrete              no alerta a cada ALERT_REMIND_MS e na economia a cada
  *                         ECO_REMIND_MS, um agente repete a % atual.
  *   festa (apagão)        frases rotativas: no máximo PARTY_TALKERS falando ao

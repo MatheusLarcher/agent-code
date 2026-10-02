@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { accentHue, createSignTexture, fileUrl, iconSource, initialOf } from './sign'
+import { accentHue, createSignTexture, iconSource, initialOf } from './sign'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -28,9 +28,6 @@ describe('iconSource', () => {
 })
 
 describe('sign helpers', () => {
-  it('fileUrl normaliza barras', () => {
-    expect(fileUrl('C:\\a\\b c.png')).toBe('file:///C:/a/b c.png')
-  })
   it('accentHue é estável e em 0..359', () => {
     expect(accentHue('c:/x')).toBe(accentHue('c:/x'))
     const h = accentHue('c:/y')

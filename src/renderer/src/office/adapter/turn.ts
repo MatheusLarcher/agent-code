@@ -16,8 +16,8 @@
  *
  * Custo: O(mensagens do turno atual), nunca o histórico inteiro.
  */
-import type { Activity } from '../engine/types'
 import type { UIMessage } from '../../types'
+import type { Activity } from './kinds'
 
 export interface TurnTool {
   id: string

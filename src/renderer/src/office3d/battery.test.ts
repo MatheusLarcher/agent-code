@@ -36,9 +36,9 @@ describe('contextBattery', () => {
 describe('formatResetIn', () => {
   const now = 1_000_000
   it('minutos, horas e horas com minutos', () => {
-    expect(formatResetIn(now + 12 * 60_000, now)).toBe('reseta em 12min')
-    expect(formatResetIn(now + 120 * 60_000, now)).toBe('reseta em 2h')
-    expect(formatResetIn(now + 133 * 60_000, now)).toBe('reseta em 2h 13min')
+    expect(formatResetIn(now + 12 * 60_000, now)).toBe('recarrega em 12min')
+    expect(formatResetIn(now + 120 * 60_000, now)).toBe('recarrega em 2h')
+    expect(formatResetIn(now + 133 * 60_000, now)).toBe('recarrega em 2h 13min')
   })
   it('sem horário ou já passou: vazio', () => {
     expect(formatResetIn(undefined, now)).toBe('')
@@ -53,7 +53,7 @@ describe('sessionBattery', () => {
     expect(b.percent).toBe(63)
     expect(b.usedPercent).toBe(37)
     expect(b.level).toBe('high')
-    expect(b.resetText).toBe('reseta em 45min')
+    expect(b.resetText).toBe('recarrega em 45min')
   })
 
   it('rejeitada fica vazia e vermelha', () => {

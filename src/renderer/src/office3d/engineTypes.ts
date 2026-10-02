@@ -1,0 +1,70 @@
+/**
+ * Contratos do motor do Escritório 3D (engine.ts): o renderer (o real e o
+ * falso dos testes), a fonte do feed, as opções injetáveis, os callbacks e o
+ * `listener` dos eventos de DOM (cada um já com a remoção guardada para o dispose).
+ */
+import { PCFShadowMap, WebGLRenderer, type Camera, type Scene } from 'three'
+import type { OfficeFeed } from '../office/adapter/feed'
+import type { OfficePower } from './power'
+
+export interface RendererLike {
+  setPixelRatio(ratio: number): void
+  setSize(width: number, height: number, updateStyle?: boolean): void
+  render(scene: Scene, camera: Camera): void
+  dispose(): void
+  /** WebGLRenderer real: anisotropia máxima para placas e telas nítidas. */
+  capabilities?: { getMaxAnisotropy(): number }
+  /** WebGLRenderer real: shadow map refeito só quando o motor pede (autoUpdate desligado). */
+  shadowMap?: { autoUpdate: boolean; needsUpdate: boolean }
+  /** WebGLRenderer real: contadores do último quadro (HUD de desempenho). */
+  info?: { render: { calls: number; triangles: number } }
+}
+
+/** Renderer padrão: antialias e sombras suaves (só a luz principal projeta), refeitas sob demanda. */
+export function createDefaultRenderer(canvas: HTMLCanvasElement): RendererLike {
+  const r = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
+  r.shadowMap.enabled = true
+  r.shadowMap.type = PCFShadowMap
+  r.shadowMap.autoUpdate = false
+  r.shadowMap.needsUpdate = true
+  return r
+}
+
+export interface FeedSource {
+  getSnapshot(): OfficeFeed | null
+  subscribe(cb: (feed: OfficeFeed) => void): () => void
+}
+
+export interface EngineOptions {
+  createRenderer?: (canvas: HTMLCanvasElement) => RendererLike
+  raf?: (cb: FrameRequestCallback) => number
+  caf?: (id: number) => void
+  now?: () => number
+  source?: FeedSource
+}
+
+export interface EngineCallbacks {
+  /** Personagem enquadrado (tela aberta) ou null ao voltar. */
+  onFocus(key: string | null): void
+  /** Duplo clique no personagem. */
+  onOpen(convId: string): void
+  /** Clique no balão de um pedido (permissão, pergunta): leva ao pedido da conversa. Sem ele, o balão foca o agente. */
+  onFocusRequest?(convId: string): void
+  /** A energia do escritório mudou (%, nível ou hora do reset); null sem a janela de 5h. */
+  onPower?(power: OfficePower | null): void
+}
+
+/** addEventListener tipado por alvo (janela, elemento, documento). */
+export interface Listen {
+  <K extends keyof WindowEventMap>(target: Window, type: K, fn: (e: WindowEventMap[K]) => void, opts?: AddEventListenerOptions): void
+  <K extends keyof HTMLElementEventMap>(target: HTMLElement, type: K, fn: (e: HTMLElementEventMap[K]) => void, opts?: AddEventListenerOptions): void
+  <K extends keyof DocumentEventMap>(target: Document, type: K, fn: (e: DocumentEventMap[K]) => void, opts?: AddEventListenerOptions): void
+}
+
+/** Liga ouvintes guardando cada remoção em `cleanups` (o dispose do motor chama todas). */
+export function listener(cleanups: Array<() => void>): Listen {
+  return ((target: EventTarget, type: string, fn: EventListener, opts?: AddEventListenerOptions): void => {
+    target.addEventListener(type, fn, opts)
+    cleanups.push(() => target.removeEventListener(type, fn, opts))
+  }) as Listen
+}

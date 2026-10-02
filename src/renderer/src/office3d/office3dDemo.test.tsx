@@ -122,33 +122,38 @@ describe('OfficeScene com o feed de demonstração', () => {
 })
 
 describe('Office3DWorkspace com o feed de demonstração', () => {
-  it('barra: "⚡ Energia do escritório" com a %, o nível e a hora do reset; o título explica que são os tokens da sessão de 5h', () => {
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+  it('pílula: "⚡ Energia do escritório" com a %, o nível e a hora em que recarrega; o título explica que são os tokens da sessão de 5h', () => {
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     const b = screen.getByTestId('o3d-session-battery')
     expect(b.textContent).toContain('⚡ Energia do escritório')
     expect(b.textContent).toContain('85%')
     expect(b.textContent).toContain('Energia cheia')
-    expect(b.textContent).toMatch(/reseta \d\d:\d\d/)
+    expect(b.textContent).toMatch(/recarrega às \d\d:\d\d/)
+    expect(b.textContent).not.toMatch(/reseta/)
     expect(b.dataset.level).toBe('cheia')
     expect(b.title).toContain('tokens da sessão de 5h')
     expect(b.title).toMatch(/85% restantes \(15% usados\)/)
+    expect(b.title).toMatch(/A janela recarrega às \d\d:\d\d\./)
+    // A pílula de vidro mora no HUD, no canto esquerdo da faixa de cima.
+    expect(b.closest('.o3d-hud')).toBeTruthy()
+    expect(b.classList.contains('o3d-glass')).toBe(true)
   })
 
-  it('barra no apagão: "Apagão — volta às HH:MM"', () => {
+  it('pílula no apagão: "Apagão — recarrega às HH:MM"', () => {
     const feed = demoFeed()
     const resetsAt = Date.now() + 40 * 60_000
     const out = { ...feed, usageLimits: { five_hour: { rateLimitType: 'five_hour' as const, status: 'rejected' as const, utilization: 1, resetsAt } } }
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ source: staticSource(out), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(out), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     const b = screen.getByTestId('o3d-session-battery')
     const hhmm = new Date(resetsAt).toTimeString().slice(0, 5)
     expect(b.textContent).toContain('0%')
-    expect(b.textContent).toContain(`Apagão — volta às ${hhmm}`)
+    expect(b.textContent).toContain(`Apagão — recarrega às ${hhmm}`)
     expect(b.dataset.level).toBe('apagao')
   })
 
   it('Ctrl+Alt+Shift+B (DEV) força o próximo nível de energia em ciclo e volta à leitura real', () => {
     if (!import.meta.env.DEV) return
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     const level = (): string | undefined => screen.getByTestId('o3d-session-battery').dataset.level
     const press = (): void => {
       act(() => void fireEvent.keyDown(window, { key: 'B', ctrlKey: true, altKey: true, shiftKey: true }))
@@ -165,7 +170,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
 
   it('sem usageLimits a bateria da sessão não aparece', () => {
     const feed = { ...demoFeed(), usageLimits: undefined }
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ source: staticSource(feed), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(feed), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     expect(screen.queryByTestId('o3d-session-battery')).toBeNull()
   })
 
@@ -174,7 +179,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     const target = layoutOffice(deriveOfficeModel(feed, Date.now())).characters.find((c) => c.model.convId === 'demo-0-0')!
     vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
     const onOpenFile = vi.fn()
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={onOpenFile} onClose={vi.fn()} engineOptions={{ source: staticSource(feed), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={onOpenFile} engineOptions={{ source: staticSource(feed), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     const canvas = screen.getByTestId('office3d-canvas')
     fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
@@ -190,7 +195,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
   })
 
   it('Ctrl+Alt+Shift+D liga e desliga o feed de demonstração (DEV)', () => {
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     act(() => void fireEvent.keyDown(window, { key: 'D', ctrlKey: true, altKey: true, shiftKey: true }))
     expect(officeStore.overridden).toBe(true)
     expect(officeStore.getSnapshot()?.conversations[0].id).toBe('demo-0-0')

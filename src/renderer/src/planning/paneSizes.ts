@@ -2,8 +2,9 @@
  * Espaço da Tela de Planejamento: largura do roteiro (arrastável), roteiro
  * recolhido e o chat do Manager minimizado. As três escolhas valem entre
  * sessões (localStorage — síncrono, então a tela já abre do jeito que o
- * usuário deixou).
+ * usuário deixou; localPrefs).
  */
+import { loadFlag, readPref, saveFlag, writePref } from '../localPrefs'
 
 export const ROTEIRO_DEFAULT_W = 220
 export const ROTEIRO_MIN_W = 180
@@ -33,45 +34,29 @@ export function clampRoteiroWidth(width: number, containerWidth: number): number
   return Math.min(Math.max(w, ROTEIRO_MIN_W), maxRoteiroWidth(containerWidth))
 }
 
-function read(key: string): string | null {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-function write(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value)
-  } catch {
-    // Sem storage (modo privado, cota): a escolha vale só nesta sessão.
-  }
-}
-
 export function loadRoteiroWidth(): number {
-  const raw = read(ROTEIRO_W_KEY)
+  const raw = readPref(ROTEIRO_W_KEY)
   const n = raw === null ? NaN : Number(raw)
   return Number.isFinite(n) ? clampRoteiroWidth(n, 0) : ROTEIRO_DEFAULT_W
 }
 
 export function saveRoteiroWidth(width: number): void {
-  write(ROTEIRO_W_KEY, String(Math.round(width)))
+  writePref(ROTEIRO_W_KEY, String(Math.round(width)))
 }
 
 export function loadRoteiroCollapsed(): boolean {
-  return read(ROTEIRO_KEY) === '1'
+  return loadFlag(ROTEIRO_KEY)
 }
 
 export function saveRoteiroCollapsed(collapsed: boolean): void {
-  write(ROTEIRO_KEY, collapsed ? '1' : '0')
+  saveFlag(ROTEIRO_KEY, collapsed)
 }
 
 /** Padrão: maximizado. */
 export function loadChatMinimized(): boolean {
-  return read(CHAT_MIN_KEY) === '1'
+  return loadFlag(CHAT_MIN_KEY)
 }
 
 export function saveChatMinimized(minimized: boolean): void {
-  write(CHAT_MIN_KEY, minimized ? '1' : '0')
+  saveFlag(CHAT_MIN_KEY, minimized)
 }

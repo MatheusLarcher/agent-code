@@ -1,6 +1,6 @@
-import { IconBoard, IconCollapseRight, IconGlobe, IconOffice } from './Icons'
+import { IconBoard, IconCollapseRight, IconGlobe } from './Icons'
 
-export type RightPane = 'browser' | 'board' | 'office'
+export type RightPane = 'browser' | 'board'
 
 interface Props {
   active: RightPane
@@ -15,8 +15,6 @@ interface Props {
   browserTabs: number
   /** Progresso do quadro (concluídas/total) — `null` quando não há tarefa. */
   boardProgress: { done: number; total: number } | null
-  /** Troca a área principal para o Escritório 3D (protótipo). Sem ele, o botão some. */
-  onOpenOffice3D?: () => void
 }
 
 /**
@@ -24,17 +22,10 @@ interface Props {
  * aba "Agentes" foi fundida aqui dentro — o elenco de quem trabalha aparece
  * como bolinhas no próprio Quadro (por cartão para o executor, por cabeçalho
  * de coluna para po/vigia/crítico/memória), então um terceiro slot só para o
- * elenco virou redundante.
+ * elenco virou redundante. O Escritório não mora mais aqui: é uma aba da área
+ * principal, na barra superior (MainTabs).
  */
-export function RightPaneTabs({
-  active,
-  onSelect,
-  onCollapse,
-  liveAgents,
-  browserTabs,
-  boardProgress,
-  onOpenOffice3D
-}: Props): JSX.Element {
+export function RightPaneTabs({ active, onSelect, onCollapse, liveAgents, browserTabs, boardProgress }: Props): JSX.Element {
   return (
     <div className="pane-tabs" role="tablist" aria-label="Painel da direita">
       <button
@@ -63,24 +54,6 @@ export function RightPaneTabs({
           <span className="pane-tab-count">{`${boardProgress.done}/${boardProgress.total}`}</span>
         )}
       </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={active === 'office'}
-        className={`pane-tab${active === 'office' ? ' on' : ''}`}
-        onClick={() => onSelect('office')}
-        title="Escritório: quem está trabalhando, sala por projeto"
-      >
-        <IconOffice size={14} />
-        Escritório
-      </button>
-      {onOpenOffice3D && (
-        // Não é aba: troca a área principal inteira (chat + cena 3D).
-        <button type="button" className="pane-tab" onClick={onOpenOffice3D} title="Escritório 3D: a cena ocupa a área principal, com o chat ao lado">
-          <IconOffice size={14} />
-          Escritório 3D
-        </button>
-      )}
       <button type="button" className="nav-btn pane-collapse" onClick={onCollapse} title="Recolher painel">
         <IconCollapseRight />
       </button>

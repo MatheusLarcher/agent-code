@@ -164,6 +164,16 @@ export function monitorPose(m: { x: number; y: number; z: number }, view: ViewSi
   return { tx: m.x, ty: m.y, tz: m.z + MONITOR_SCREEN_FRONT, yaw: 0, pitch: MONITOR_PITCH, distance: Math.max(byWidth, byHeight) }
 }
 
+/** Vista de um agente: a câmera de cima e de frente para a mesa (yaw 0, como o voo até o monitor). */
+export const AGENT_PITCH = 0.8
+export const AGENT_DISTANCE = 5.5
+const AGENT_TARGET_Y = 0.8
+
+/** Pose que mostra o ponto (x, z) do chão — o agente ou a mesa dele — com a vizinhança em volta. */
+export function agentPose(p: { x: number; z: number }): CameraPose {
+  return { tx: p.x, ty: AGENT_TARGET_Y, tz: p.z, yaw: 0, pitch: AGENT_PITCH, distance: AGENT_DISTANCE }
+}
+
 export interface FrameBox {
   minX: number
   maxX: number

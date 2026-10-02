@@ -60,8 +60,9 @@ export const MIN_FONT_PX = 11
 /** A linha-guia do balão empilhado acaba logo acima da cabeça: esta fração do caminho cabeça → ponta sem empilhar (onde a ponta presa pela barra para). */
 const LEAD_END = HEAD_CLEAR
 /**
- * Nenhum balão passa disto (px do topo do palco): a barra do 3D (office3d.css .o3d-bar,
- * top 8 + ~41 px) fica por cima dos balões. O da cabeça desce até caber; o empilhado não sobe além.
+ * Nenhum balão passa disto (px do topo do palco): a faixa do HUD (office3d.css .o3d-hud,
+ * top 12 + 34 px: a pílula de energia e o "?") fica livre. O da cabeça desce até caber;
+ * o empilhado não sobe além. O chat flutuante maximizado também começa abaixo dela.
  */
 export const BUBBLE_TOP = 56
 

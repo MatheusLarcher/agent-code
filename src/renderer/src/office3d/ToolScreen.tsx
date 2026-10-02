@@ -9,8 +9,8 @@
 import { useEffect, useState } from 'react'
 import { CodeBlock } from '../components/CodeBlock'
 import { currentTool } from '../components/office/screenContent'
-import type { LookupInfo } from '../office/adapter/director'
 import type { OfficeFeed } from '../office/adapter/feed'
+import type { LookupInfo } from '../office/adapter/model'
 import { liveInput, type ToolInputDelta } from '../office/liveInput'
 import { liveView, toolView } from './toolView'
 

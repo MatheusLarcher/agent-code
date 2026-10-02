@@ -11,9 +11,8 @@
  */
 import { MeshBasicMaterial } from 'three'
 import { currentTool, screenModel } from '../components/office/screenContent'
-import type { LookupInfo } from '../office/adapter/director'
 import type { OfficeFeed } from '../office/adapter/feed'
-import type { OfficeCharacterModel } from '../office/adapter/model'
+import type { LookupInfo, OfficeCharacterModel } from '../office/adapter/model'
 import { modelPhase, type LifeInput } from './crowd'
 import { disposeScreenOn, type ScreenView } from './decor'
 import type { AgentPhase } from './events'

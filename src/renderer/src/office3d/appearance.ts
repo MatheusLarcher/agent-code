@@ -29,3 +29,13 @@ export function appearance(seed: string): Appearance {
 export function seedColor(seed: string): Color {
   return new Color().setHSL(appearance(seed).shirtHue / 360, 0.55, 0.52)
 }
+
+/**
+ * A mesma cor da camisa em CSS (o ponto do agente no chat do escritório). Sai
+ * da própria Color da camisa: o setHSL dela vale no espaço de trabalho (linear)
+ * do three, e o getStyle a devolve em sRGB — a cor que a tela mostra. Um
+ * `hsl()` com os mesmos números seria outra cor.
+ */
+export function seedCss(seed: string): string {
+  return seedColor(seed).getStyle()
+}

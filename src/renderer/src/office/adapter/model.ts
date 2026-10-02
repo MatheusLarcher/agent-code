@@ -1,6 +1,7 @@
 /**
  * deriveOfficeModel: feed do App → modelo do escritório (salas + personagens).
- * Pura: mesma entrada, mesmo modelo. Quem aplica no OfficeState é o diretor.
+ * Pura: mesma entrada, mesmo modelo. Quem desenha é o Escritório 3D
+ * (office3d/layout.ts e a cena).
  *
  * Custo: O(conversas + trilhas + passos recentes). messages é lido só no turno
  * atual (scanTurn), do fim para o começo.
@@ -9,8 +10,8 @@ import { contextLimitFor, type MemoristaProviderDiagnosticMsg } from '@shared/ip
 import type { AgentTrack } from '../../agentTracks'
 import { buildCrew, callSegments, lineText, roleFromSubagentType, type CrewMember, type CrewRole } from '../../crew'
 import type { Conversation } from '../../types'
-import type { Activity, BubbleKind, DestinationRole, SeatKind } from '../engine/types'
 import type { OfficeFeed } from './feed'
+import type { Activity, BubbleKind, DestinationRole, SeatKind } from './kinds'
 import { activityFor, scanTurn } from './turn'
 
 /** Conversa parada há mais que isto sai do escritório (decisão de 01/10/2026). */
@@ -42,6 +43,9 @@ export interface OfficeCharacterModel {
   context?: { tokens: number; max: number }
 }
 
+/** Quem é um personagem, para achar a ferramenta dele no feed (a tela do monitor). */
+export type LookupInfo = Pick<OfficeCharacterModel, 'key' | 'convId' | 'role' | 'trackId'>
+
 export interface OfficeRoomModel {
   id: string
   /** cwd original (primeiro visto). */
@@ -63,6 +67,11 @@ export function roomIdFor(cwd: string): string {
   if (id.length > 1) id = id.replace(/\/$/, '')
   const windows = /^[a-zA-Z]:/.test(cwd) || cwd.includes('\\')
   return windows ? id.toLowerCase() : id
+}
+
+/** Chave do principal da conversa na cena — também a seed da aparência dele (a camisa). */
+export function principalKey(convId: string): string {
+  return `conv:${convId}`
 }
 
 /** Último segmento do cwd, como basename em App.tsx. */
@@ -112,13 +121,14 @@ function principalOf(c: Conversation, feed: OfficeFeed, roomId: string, crew: Cr
   } else {
     label = lineText(crew.find((m) => m.role === 'principal')?.line ?? [])
   }
+  const key = principalKey(c.id)
   const model: OfficeCharacterModel = {
-    key: `conv:${c.id}`,
+    key,
     convId: c.id,
     roomId,
     role: 'principal',
     placement: { kind: 'seat', seatKind: 'principal' },
-    seed: `conv:${c.id}`,
+    seed: key,
     active: busy,
     activity: activityFor(tool?.name),
     bubble,

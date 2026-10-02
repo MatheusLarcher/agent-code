@@ -2,7 +2,7 @@
  * USINA DE TOKENS: a fonte de energia do escritório, à esquerda do prédio e
  * dentro do enquadramento inicial (officeFrame). Uma torre-bateria com 10
  * células (acesas = energia restante; verde → amarela → vermelha, as mesmas
- * cores da bateria do HUD), o painel "⚡ 72% · reseta 23:40" numa CanvasTexture
+ * cores da bateria do HUD), o painel "⚡ 72% · recarrega às 23:40" numa CanvasTexture
  * redesenhada só quando o texto muda, a placa "Modo economia 🌱" (acende na
  * economia), o giroflex laranja (alerta) e um cabo da usina até cada sala, com
  * pulsos de energia correndo para as salas — offset da textura do cabo, sem

@@ -146,9 +146,8 @@ export function resetClock(resetsAt: number | null, now: number): string {
   return resetsAt === null ? '' : clockTime(resetsAt, now)
 }
 
-/** Linha do painel da usina: "⚡ 72% · reseta 23:40" (no apagão, "volta 23:40"). */
+/** Linha do painel da usina: "⚡ 72% · recarrega às 23:40" (no apagão também: é quando a luz volta). */
 export function powerPanelText(p: Pick<OfficePower, 'pct' | 'level' | 'resetsAt'>, now: number): string {
   const time = resetClock(p.resetsAt, now)
-  if (!time) return `⚡ ${p.pct}%`
-  return `⚡ ${p.pct}% · ${p.level === 'apagao' ? 'volta' : 'reseta'} ${time}`
+  return time ? `⚡ ${p.pct}% · recarrega às ${time}` : `⚡ ${p.pct}%`
 }

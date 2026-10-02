@@ -4,17 +4,21 @@ import { Mesh, MeshLambertMaterial, type Scene } from 'three'
 import { syntheticFeed } from '../components/office/devFeed'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { deriveOfficeModel } from '../office/adapter/model'
+import { liveInput, type ToolInputDelta } from '../office/liveInput'
 import { officeStore } from '../office/officeStore'
 import { DEMO_TICK_MS } from './demoFeed'
 import { DEMO_LOOP_MS } from './demoTimeline'
-import type { EngineOptions, FeedSource, RendererLike } from './engine'
+import { Office3DEngine, type EngineOptions, type FeedSource, type RendererLike } from './engine'
 import { layoutOffice } from './layout'
 import { Office3DWorkspace } from './Office3DWorkspace'
 import { OfficeScene } from './scene'
 
+const observed: number[] = []
 const disconnects: number[] = []
 class RO {
-  observe(): void {}
+  observe(): void {
+    observed.push(1)
+  }
   disconnect(): void {
     disconnects.push(1)
   }
@@ -86,6 +90,7 @@ function manualRaf(): { opts: Pick<EngineOptions, 'raf' | 'caf' | 'now'>; flush(
 beforeEach(() => {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = RO
+  observed.length = 0
   disconnects.length = 0
 })
 
@@ -102,7 +107,7 @@ describe('Office3DWorkspace', () => {
     const add = vi.spyOn(window, 'addEventListener')
     const remove = vi.spyOn(window, 'removeEventListener')
     const opts: EngineOptions = { ...raf.opts, source: src, createRenderer: () => (renderers.push(fakeRenderer()), renderers[renderers.length - 1]) }
-    const props = { chat: <div>chat</div>, onOpenConversation: vi.fn(), onOpenFile: vi.fn(), onClose: vi.fn(), engineOptions: opts }
+    const props = { chat: <div>chat</div>, onOpenConversation: vi.fn(), onOpenFile: vi.fn(), engineOptions: opts }
 
     const first = render(<Office3DWorkspace {...props} />)
     expect(screen.getByText('chat')).toBeTruthy()
@@ -117,7 +122,9 @@ describe('Office3DWorkspace', () => {
     first.unmount()
     expect(renderers[0].disposed).toBe(true)
     expect(src.subs).toBe(0)
-    expect(disconnects).toHaveLength(1)
+    // Os observers (o do palco, no motor, e o do topo do chat flutuante) todos desligados.
+    expect(observed).toHaveLength(2)
+    expect(disconnects).toHaveLength(observed.length)
     expect(stage.querySelector('.qb-layer')).toBeNull()
     expect(document.querySelector('.qb-layer')).toBeNull()
     // Cada listener de window adicionado pelo motor saiu.
@@ -143,7 +150,6 @@ describe('Office3DWorkspace', () => {
         chat={null}
         onOpenConversation={vi.fn()}
         onOpenFile={vi.fn()}
-        onClose={vi.fn()}
         engineOptions={{ ...raf.opts, source: source(syntheticFeed()), createRenderer: () => r }}
       />
     )
@@ -169,7 +175,6 @@ describe('Office3DWorkspace', () => {
         chat={null}
         onOpenConversation={vi.fn()}
         onOpenFile={vi.fn()}
-        onClose={vi.fn()}
         engineOptions={{ ...raf.opts, source: source(null), createRenderer: fakeRenderer }}
       />
     )
@@ -187,7 +192,6 @@ describe('Office3DWorkspace', () => {
         chat={null}
         onOpenConversation={vi.fn()}
         onOpenFile={vi.fn()}
-        onClose={vi.fn()}
         engineOptions={{ ...raf.opts, source: source(null), createRenderer: () => r }}
       />
     )
@@ -219,7 +223,6 @@ describe('Office3DWorkspace', () => {
         chat={null}
         onOpenConversation={onOpen}
         onOpenFile={vi.fn()}
-        onClose={vi.fn()}
         engineOptions={{ ...raf.opts, source: source(feed), createRenderer: fakeRenderer }}
       />
     )
@@ -258,7 +261,7 @@ describe('Office3DWorkspace', () => {
         act(() => void fireEvent.keyDown(window, { key: 'D', ctrlKey: true, altKey: true, shiftKey: true }))
       }
       const view = render(
-        <Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={vi.fn()} engineOptions={{ ...manualRaf().opts, source: source(null), createRenderer: fakeRenderer }} />
+        <Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ ...manualRaf().opts, source: source(null), createRenderer: fakeRenderer }} />
       )
       // O motor já tem o tique dele (falas e energia); a demo soma exatamente um.
       const base = vi.getTimerCount()
@@ -289,11 +292,112 @@ describe('Office3DWorkspace', () => {
     }
   })
 
-  it('botão Sair do 3D chama onClose', () => {
-    const onClose = vi.fn()
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} onClose={onClose} engineOptions={{ ...manualRaf().opts, source: source(null), createRenderer: fakeRenderer }} />)
-    fireEvent.click(screen.getByRole('button', { name: /Sair do 3D/ }))
-    expect(onClose).toHaveBeenCalled()
+  it('tela cheia sem "Sair do 3D" (as abas fazem isso); o chat da conversa flutua por cima', () => {
+    render(<Office3DWorkspace chat={<div>chat</div>} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ ...manualRaf().opts, source: source(null), createRenderer: fakeRenderer }} />)
+    expect(screen.queryByRole('button', { name: /Sair do 3D/ })).toBeNull()
+    expect(screen.getByText('chat').closest('.pl-chat-float')).toBe(screen.getByRole('region', { name: 'Escritório' }))
+  })
+
+  it('aba fechada: a tela do monitor some (sem assinar feed nem código ao vivo); de volta, mostra o conteúdo de agora', () => {
+    const feed = syntheticFeed()
+    const target = layoutOffice(deriveOfficeModel(feed, Date.now())).characters.find((c) => c.deskIndex !== null && c.model.active && !c.model.trackId)!
+    vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
+    const src = source(feed)
+    const raf = manualRaf()
+    const ui = (active: boolean): JSX.Element => (
+      <Office3DWorkspace active={active} chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ ...raf.opts, source: src, createRenderer: fakeRenderer }} />
+    )
+    const view = render(ui(true))
+    fireEvent.pointerDown(screen.getByTestId('office3d-canvas'), { button: 0, clientX: 50, clientY: 50 })
+    fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
+    expect(screen.getByTestId('office-screen').dataset.kind).toBe('empty')
+    expect(src.subs).toBe(2) // o motor + a tela acompanhando o feed
+    // O App re-renderiza (mesmas props): a âncora da tela não é religada no motor.
+    const setScreen = vi.spyOn(Office3DEngine.prototype, 'setScreenElement')
+    view.rerender(ui(true))
+    expect(setScreen).not.toHaveBeenCalled()
+    const convId = target.model.convId
+    const delta: ToolInputDelta = { kind: 'tool-input-delta', toolUseId: 'w1', name: 'Write', filePath: 'C:\\a.ts', newText: 'x', totalLines: 1, done: false }
+    act(() => liveInput.push(convId, delta))
+    expect(liveInput.latest(convId, null)).toBeTruthy() // a tela assina o código ao vivo do principal
+    act(() => liveInput.push(convId, { ...delta, done: true }))
+
+    view.rerender(ui(false))
+    expect(screen.queryByTestId('office-screen')).toBeNull()
+    expect(src.subs).toBe(1) // só o motor (pausado), que guarda o feed para a volta
+    act(() => liveInput.push(convId, delta))
+    expect(liveInput.latest(convId, null)).toBeUndefined() // sem assinante: descartado
+    // Com a aba fechada a conversa passa a rodar outra ferramenta.
+    const later = {
+      ...feed,
+      conversations: feed.conversations.map((c) =>
+        c.id === convId ? { ...c, messages: [{ kind: 'tool-use' as const, id: 'b1', name: 'Bash', input: { command: 'npm run build' }, parentToolUseId: null }] } : c
+      )
+    }
+    act(() => src.emit(later))
+
+    view.rerender(ui(true))
+    const screenEl = screen.getByTestId('office-screen')
+    expect(screenEl.dataset.kind).toBe('bash')
+    expect(screenEl.textContent).toContain('npm run build')
+    expect(src.subs).toBe(2)
+  })
+
+  it('aba fechada para a demo e o HUD de desempenho (DEV): intervalos e override limpos, atalhos mudos', () => {
+    if (!import.meta.env.DEV) return
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'], now: 14_916_667 * DEMO_LOOP_MS })
+    try {
+      const press = (key: string): void => {
+        act(() => void fireEvent.keyDown(window, { key, ctrlKey: true, altKey: true, shiftKey: true }))
+      }
+      const ui = (active: boolean): JSX.Element => (
+        <Office3DWorkspace active={active} chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ ...manualRaf().opts, source: source(null), createRenderer: fakeRenderer }} />
+      )
+      const view = render(ui(true))
+      const base = vi.getTimerCount() // o tique do motor
+      press('D')
+      press('P')
+      expect(officeStore.overridden).toBe(true)
+      expect(screen.getByTestId('o3d-perf')).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(base + 2) // a demo + o HUD de desempenho
+      view.rerender(ui(false))
+      expect(officeStore.overridden).toBe(false)
+      expect(screen.queryByTestId('o3d-perf')).toBeNull()
+      expect(vi.getTimerCount()).toBe(base - 1) // nem o tique do motor (pausado)
+      press('D')
+      expect(officeStore.overridden).toBe(false)
+      expect(vi.getTimerCount()).toBe(base - 1)
+      view.unmount()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+      officeStore.setOverride(null)
+    }
+  })
+
+  it('balão de pedido ("Clica em mim") leva ao pedido da conversa (onFocusRequest); os outros balões focam o agente', () => {
+    const raf = manualRaf()
+    const onFocusRequest = vi.fn()
+    const props = { chat: null, onOpenConversation: vi.fn(), onOpenFile: vi.fn(), engineOptions: { ...raf.opts, source: source(syntheticFeed()), createRenderer: fakeRenderer } }
+    const view = render(<Office3DWorkspace {...props} onFocusRequest={onFocusRequest} />)
+    act(() => raf.flush())
+    const bubble = (key: string): HTMLElement => screen.getByTestId('office3d-stage').querySelector<HTMLElement>(`.qb[data-key="${key}"]`)!
+    expect(bubble('conv:dev-0-3').dataset.kind).toBe('permission')
+    act(() => bubble('conv:dev-0-3').click())
+    expect(onFocusRequest).toHaveBeenCalledWith('dev-0-3')
+    expect(screen.queryByTestId('office-screen')).toBeNull()
+    // Balão comum (progresso): foca o agente, como sempre.
+    expect(bubble('conv:dev-0-0').dataset.kind).toBe('progress')
+    act(() => bubble('conv:dev-0-0').click())
+    expect(onFocusRequest).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('office-screen')).toBeTruthy()
+    view.unmount()
+
+    // Sem quem responda o pedido, o balão de permissão também só foca o agente.
+    render(<Office3DWorkspace {...props} />)
+    act(() => raf.flush())
+    act(() => bubble('conv:dev-0-3').click())
+    expect(screen.getByTestId('office-screen')).toBeTruthy()
   })
 })
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import type {
   AgentEventMsg,
   BrowserState,
@@ -80,8 +80,9 @@ import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
 import { CrewChip } from './components/CrewChip'
 import { buildCrew, workingMembers } from './crew'
-import { IconBoard, IconGlobe, IconOffice, IconUsers } from './components/Icons'
-import { OfficePanel } from './components/office/OfficePanel'
+import { IconBoard, IconGlobe, IconUsers } from './components/Icons'
+import { MainTabs, OfficeErrorBoundary, OfficeTabHost, useMainTab } from './components/MainTabs'
+import { fileUrl } from './fileUrl'
 import { officeStore } from './office/officeStore'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
@@ -130,9 +131,6 @@ import {
 } from './planning/planningConversation'
 
 export type { UserMessage, UIMessage } from './types'
-
-// three.js só carrega quando o modo Escritório 3D é aberto (chunk separado).
-const Office3DWorkspace = lazy(() => import('./office3d/Office3DWorkspace').then((m) => ({ default: m.Office3DWorkspace })))
 
 /** The Claude models in the selector. Defined in the shared contract because
  *  the "Automático" mode picks from this SAME list in the main process — see
@@ -506,8 +504,8 @@ export function App(): JSX.Element {
   // agora: bolinha por cartão para o executor, bolinha por cabeçalho de
   // coluna para po/vigia/crítico/memória.
   const [rightPane, setRightPane] = useState<RightPane>('browser')
-  // Área principal: workspace normal ou o Escritório 3D (protótipo) no lugar dele.
-  const [mainView, setMainView] = useState<'chat' | 'office3d'>('chat')
+  // Área principal: aba Conversa (workspace ou Tela de Planejamento) ou Escritório 3D em tela cheia.
+  const [mainTab, setMainTab] = useMainTab()
   // Flow view (full-screen map of who spawned whom). Opened from the panel.
   const [hydrated, setHydrated] = useState(false)
   const [storageStatus, setStorageStatus] = useState<StorageStatusDto | null>(null)
@@ -1962,12 +1960,14 @@ export function App(): JSX.Element {
   const [planningDialogFor, setPlanningDialogFor] = useState<string | null>(null)
   const openPlanningConversation = useCallback((folder: string, slug: string, titulo?: string): void => {
     setPlanningDialogFor(null)
+    // A Tela de Planejamento vive na aba Conversa: vindo do Escritório, volta para ela.
+    setMainTab('chat')
     const existing = convsRef.current.find(
       (c) => c.cwd === folder && isPlanningConversation(c) && c.planningSlug === slug
     )
     if (existing) setActiveId(existing.id)
     else createConversation(folder, undefined, planningConversationFields(slug, titulo))
-  }, [])
+  }, [setMainTab])
 
   const selectConversation = useCallback((id: string): void => {
     setActiveId(id)
@@ -1976,6 +1976,14 @@ export function App(): JSX.Element {
   // A search hit asks to open a conversation AND land on the matched message.
   // `seq` bumps each time so clicking the same result re-triggers the scroll.
   const [scrollTarget, setScrollTarget] = useState<{ convId: string; msgId: string; seq: number } | null>(null)
+  // Trocar a aba principal remonta o MessageList (o chat muda de lugar): o alvo
+  // de uma busca antiga não pode voltar a centralizar e piscar. Zerado no mesmo
+  // render da troca, venha ela de onde vier (abas, painel da direita, planejamento).
+  const [scrollTab, setScrollTab] = useState(mainTab)
+  if (scrollTab !== mainTab) {
+    setScrollTab(mainTab)
+    setScrollTarget(null)
+  }
   const selectConversationAt = useCallback((id: string, msgId: string | null): void => {
     setActiveId(id)
     if (msgId) setScrollTarget((prev) => ({ convId: id, msgId, seq: (prev?.seq ?? 0) + 1 }))
@@ -3242,11 +3250,12 @@ export function App(): JSX.Element {
     [permissions, conversations]
   )
   // The right-hand pane holds ONE of two tabs (browser / board); `browserMinimized`
-  // collapses the whole pane.
+  // collapses the whole pane. Ele só existe na aba Conversa: pedir um painel volta a ela.
   const selectRightPane = useCallback((pane: RightPane): void => {
     setRightPane(pane)
     setBrowserMinimized(false)
-  }, [])
+    setMainTab('chat')
+  }, [setMainTab])
   // O chip "quem está trabalhando" do composer (`CrewChip`) e o antigo botão
   // fixo da topbar abriam o painel de Agentes; agora o destino equivalente é
   // o Quadro, onde o elenco vive.
@@ -3276,7 +3285,8 @@ export function App(): JSX.Element {
   // fechada — é o contador que avisa que existe trabalho lá dentro —, mas só
   // quando o quadro muda de verdade (evento) ou o projeto troca.
   const [boardTabProgress, setBoardTabProgress] = useState<{ done: number; total: number } | null>(null)
-  const boardPaneOpen = rightPane === 'board' && !browserMinimized
+  // O Quadro só existe na aba Conversa: com o Escritório aberto ele está desmontado.
+  const boardPaneOpen = mainTab === 'chat' && rightPane === 'board' && !browserMinimized
 
   // O Mapa do projeto (ProjectGraph) hoje só abre de DENTRO do Quadro (um botão
   // no BoardPanel) — não é mais uma aba própria. O estado continua aqui: é o
@@ -3756,6 +3766,7 @@ export function App(): JSX.Element {
             </button>
           )}
           </div>
+          <MainTabs active={mainTab} onSelect={setMainTab} />
           {claudeAccountList.length > 1 ? (
             // Várias contas Claude: uma seção por conta. Uma conta só: o painel de sempre.
             <AccountsUsageBadge
@@ -3779,12 +3790,8 @@ export function App(): JSX.Element {
               existiria enquanto houvesse subagente rodando, e não daria pra rever
               nada. */}
           <button
-            className={`btn ghost agents-btn topbar-right${rightPane === 'board' ? ' on' : ''}${
-              runningTrackCount > 0 ? ' live' : ''
-            }`}
-            onClick={() =>
-              rightPane === 'board' && !browserMinimized ? selectRightPane('browser') : openAgentsPanel()
-            }
+            className={`btn ghost agents-btn topbar-right${boardPaneOpen ? ' on' : ''}${runningTrackCount > 0 ? ' live' : ''}`}
+            onClick={() => (boardPaneOpen ? selectRightPane('browser') : openAgentsPanel())}
             title="Quadro: tarefas e quem está trabalhando nesta conversa"
           >
             <IconUsers />
@@ -3812,7 +3819,7 @@ export function App(): JSX.Element {
           ) : null}
         </header>
 
-        {activePlanning ? (
+        {mainTab === 'office' ? null : activePlanning ? (
           <PlanningWorkspace
             projectCwd={activePlanning.cwd}
             slug={activePlanning.planningSlug}
@@ -3834,20 +3841,6 @@ export function App(): JSX.Element {
               />
             }
           />
-        ) : mainView === 'office3d' ? (
-          <Suspense fallback={<div className="workspace">{chatPanel}</div>}>
-            <Office3DWorkspace
-              chat={chatPanel}
-              onOpenConversation={selectConversation}
-              onOpenFile={(abs) => {
-                // Mesmo destino da tela do 2D: aba de arquivo no navegador, no workspace normal.
-                setMainView('chat')
-                selectRightPane('browser')
-                void window.api.newTab('file', 'file:///' + abs.replace(/\\/g, '/').replace(/^\/+/, ''))
-              }}
-              onClose={() => setMainView('chat')}
-            />
-          </Suspense>
         ) : (
         <div className="workspace" ref={workspaceRef}>
           {chatPanel}
@@ -3868,7 +3861,6 @@ export function App(): JSX.Element {
                   liveAgents={runningTrackCount}
                   browserTabs={browserState.tabs.length}
                   boardProgress={boardTabProgress}
-                  onOpenOffice3D={() => setMainView('office3d')}
                 />
                 {rightPane === 'board' ? (
                   <BoardPanel
@@ -3891,18 +3883,6 @@ export function App(): JSX.Element {
                       truncated: projectTree.truncated,
                       steps: active?.todoPlan?.items ?? [],
                       name: projectName
-                    }}
-                  />
-                ) : rightPane === 'office' ? (
-                  // O modal do pedido aparece no centro: o Escritório fica visível.
-                  <OfficePanel
-                    active
-                    onOpenConversation={selectConversation}
-                    onFocusRequest={(cid) => focusRequest(cid, 'office')}
-                    onOpenFile={(abs) => {
-                      // Caminho da tela do monitor → aba de arquivo (FilePreview) no navegador.
-                      selectRightPane('browser')
-                      void window.api.newTab('file', 'file:///' + abs.replace(/\\/g, '/').replace(/^\/+/, ''))
                     }}
                   />
                 ) : (
@@ -3941,14 +3921,31 @@ export function App(): JSX.Element {
                   <span className="rail-badge">{`${boardTabProgress.done}/${boardTabProgress.total}`}</span>
                 )}
               </button>
-              <button type="button" className="right-rail-btn" onClick={() => selectRightPane('office')} title="Ver o escritório">
-                <IconOffice size={15} />
-                Escritório
-              </button>
             </div>
           )}
         </div>
         )}
+        {/* Aba Escritório: tela cheia no lugar do workspace (e da Tela de Planejamento),
+            com o MESMO chatPanel flutuando. Depois da 1ª abertura fica montado e pausado.
+            Uma falha no 3D vira um aviso com volta para a Conversa (não derruba o app). */}
+        <OfficeErrorBoundary active={mainTab === 'office'} onBack={() => setMainTab('chat')}>
+          <OfficeTabHost
+            active={mainTab === 'office'}
+            chat={mainTab === 'office' ? chatPanel : null}
+            conversation={active}
+            onOpenConversation={selectConversation}
+            onOpenFile={(abs) => {
+              // Tela do monitor → aba de arquivo (FilePreview) no navegador, na aba Conversa.
+              selectRightPane('browser')
+              void window.api.newTab('file', fileUrl(abs))
+            }}
+            // Balão "Clica em mim" (permissão, pergunta): o mesmo destino do pedido no Quadro.
+            onFocusRequest={(convId) => focusRequest(convId, rightPane)}
+            // O chat minimizado esconde o aviso: o HUD o repete, com o mesmo "Desativar".
+            windowsControlEnabled={windowsControlEnabled}
+            onDisableWindowsControl={() => void toggleWindowsControl(false)}
+          />
+        </OfficeErrorBoundary>
       </div>
 
       {planningDialogFor && (
@@ -4002,8 +3999,7 @@ export function App(): JSX.Element {
           onPick={(abs) => {
             const replaceId = filePicker.replaceTabId
             setFilePicker(null)
-            const url = 'file:///' + abs.replace(/\\/g, '/').replace(/^\/+/, '')
-            void window.api.newTab('file', url)
+            void window.api.newTab('file', fileUrl(abs))
             if (replaceId) void window.api.closeTab(replaceId)
           }}
         />

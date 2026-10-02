@@ -1,20 +1,12 @@
-import {
-  Fragment,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MouseEvent
-} from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { UIMessage } from '../types'
 import { QuestionMap } from './QuestionMap'
 import { AccountSwitchNote } from './AccountSwitchNote'
-import { isDownloadableFile, isTextPreviewable, parseDownloads } from '@shared/ipc'
+import { parseDownloads } from '@shared/ipc'
 import { useUI } from '../ui/UiProvider'
 import { fileMeta, fmtSize } from '../files'
 import { IconSpeaker, IconStopSmall } from './Icons'
-import { CodeBlock, extToLang } from './CodeBlock'
+import { ToolCard } from './ToolCard'
 import { CardRefText, Markdown } from './Markdown'
 import { InlineMediaText } from '../inlineMedia/InlineMediaText'
 import { useKeepEndOnResize } from './MessageListAnchor'
@@ -49,19 +41,6 @@ function DownloadChip({ path }: { path: string }): JSX.Element {
       ⬇️ Baixar {fileLabel(path)}
     </button>
   )
-}
-
-/**
- * Path of a deliverable a `Write` produced (else ''). Only the `Write` tool
- * (file creation, not edits to existing source) and only deliverable extensions
- * (APK, zip, PDF, image…) qualify — so code/config the agent edits never gets a
- * download chip, just the artifacts the user asked to create.
- */
-function writtenPath(name: string, input: unknown): string {
-  if (name !== 'Write') return ''
-  const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
-  const p = inp.file_path
-  return typeof p === 'string' && isDownloadableFile(p) ? p : ''
 }
 
 /** "há X" relative label for a time earlier TODAY (else ''). */
@@ -108,217 +87,6 @@ function MessageTime({ ts }: { ts: number }): JSX.Element {
 /** How many messages to render at first, and to add each time the user scrolls
  *  to the top. Keeps very long conversations cheap to render (Gemini-style). */
 const PAGE = 40
-
-/** Last path segment of a file path (handles both / and \ separators). */
-function baseName(p: unknown): string {
-  if (typeof p !== 'string' || !p) return ''
-  return p.split(/[\\/]/).pop() || p
-}
-
-/** Number of lines in a string (0 for empty/non-strings). */
-function lineCount(s: unknown): number {
-  return typeof s === 'string' && s.length ? s.split('\n').length : 0
-}
-
-interface ToolInfo {
-  /** Action shown in monospace (e.g. "Skill", "Edit", "Read"). */
-  verb: string
-  /** Secondary detail: skill name or file name. */
-  detail: string
-  /** True for the Skill tool — rendered with the accent highlight. */
-  isSkill: boolean
-  /** Added/removed line counts for file edits, else null. */
-  stats: { added: number; removed: number } | null
-}
-
-/** Derive a compact, Claude-Code-style label (and edit stats) for a tool call. */
-function describeTool(name: string, input: unknown): ToolInfo {
-  const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
-  switch (name) {
-    case 'Skill':
-      return { verb: 'Skill', detail: String(inp.skill ?? 'skill'), isSkill: true, stats: null }
-    case 'Bash': {
-      // Show the first line of the command right in the (collapsed) head, so the
-      // user can read what ran without expanding.
-      const cmd = typeof inp.command === 'string' ? inp.command.trim() : ''
-      const firstLine = cmd.split('\n')[0]
-      const detail = firstLine.length > 64 ? firstLine.slice(0, 64) + '…' : firstLine
-      return { verb: 'Bash', detail, isSkill: false, stats: null }
-    }
-    case 'Write':
-      return { verb: 'Write', detail: baseName(inp.file_path), isSkill: false, stats: { added: lineCount(inp.content), removed: 0 } }
-    case 'Edit':
-      return {
-        verb: 'Edit',
-        detail: baseName(inp.file_path),
-        isSkill: false,
-        stats: { added: lineCount(inp.new_string), removed: lineCount(inp.old_string) }
-      }
-    case 'MultiEdit': {
-      let added = 0
-      let removed = 0
-      if (Array.isArray(inp.edits)) {
-        for (const e of inp.edits as Array<Record<string, unknown>>) {
-          added += lineCount(e?.new_string)
-          removed += lineCount(e?.old_string)
-        }
-      }
-      return { verb: 'Edit', detail: baseName(inp.file_path), isSkill: false, stats: { added, removed } }
-    }
-    case 'NotebookEdit':
-      return { verb: 'Edit', detail: baseName(inp.notebook_path), isSkill: false, stats: { added: lineCount(inp.new_source), removed: 0 } }
-    case 'Read':
-      return { verb: 'Read', detail: baseName(inp.file_path), isSkill: false, stats: null }
-    case 'AskUserQuestion': {
-      const qs = Array.isArray(inp.questions) ? (inp.questions as Array<Record<string, unknown>>) : []
-      const first = qs[0]
-      return { verb: 'Pergunta', detail: typeof first?.header === 'string' ? first.header : '', isSkill: false, stats: null }
-    }
-    default:
-      return { verb: name.replace(/^mcp__[^_]+__/, ''), detail: '', isSkill: false, stats: null }
-  }
-}
-
-/** A human-readable view of a tool's input: a real code block (with newlines
- *  and quotes intact — no escaped \n / \" noise) instead of raw escaped JSON. */
-interface InputView {
-  /** Optional small caption above the block (e.g. a Bash command's description). */
-  caption: string
-  language: string
-  code: string
-}
-
-function toolInputView(name: string, input: unknown): InputView {
-  const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
-  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
-  switch (name) {
-    case 'Bash':
-      return { caption: str(inp.description), language: 'bash', code: str(inp.command) }
-    case 'Write':
-      return { caption: str(inp.file_path), language: extToLang(str(inp.file_path)), code: str(inp.content) }
-    case 'Edit':
-    case 'NotebookEdit': {
-      const oldS = str(inp.old_string || inp.old_source)
-      const newS = str(inp.new_string || inp.new_source)
-      const diffLines = [
-        ...oldS.split('\n').map((l) => '- ' + l),
-        ...newS.split('\n').map((l) => '+ ' + l)
-      ].join('\n')
-      return { caption: str(inp.file_path || inp.notebook_path), language: 'diff', code: diffLines }
-    }
-    case 'MultiEdit': {
-      const edits = Array.isArray(inp.edits) ? (inp.edits as Array<Record<string, unknown>>) : []
-      const code = edits
-        .map((e) =>
-          [
-            ...str(e?.old_string).split('\n').map((l) => '- ' + l),
-            ...str(e?.new_string).split('\n').map((l) => '+ ' + l)
-          ].join('\n')
-        )
-        .join('\n\n')
-      return { caption: str(inp.file_path), language: 'diff', code }
-    }
-    default:
-      // Anything else: pretty JSON, highlighted as JSON (still far more readable
-      // than a one-line escaped blob).
-      return { caption: '', language: 'json', code: JSON.stringify(input, null, 2) }
-  }
-}
-
-function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.Element {
-  const [open, setOpen] = useState(false)
-  const { notify } = useUI()
-  const info = describeTool(m.name, m.input)
-  const hasDiff = info.stats && (info.stats.added > 0 || info.stats.removed > 0)
-  // AskUserQuestion has no allow/deny: its answer is fed back as a `deny` message,
-  // so its tool-result is flagged is_error — but that's NOT a failure. Treat it as
-  // a normal "answered" outcome (don't paint it red).
-  const isQuestion = m.name === 'AskUserQuestion'
-  const noAnswer = isQuestion && !!m.result && /não respondeu|tempo|esgotado/i.test(m.result.text)
-  const errored = !!m.result?.isError && !isQuestion
-  // Offer a download once the write succeeded (the file exists on disk).
-  const filePath = m.result && !m.result.isError ? writtenPath(m.name, m.input) : ''
-  
-  let rawFilePath = ''
-  if (m.name === 'Write' && m.input && typeof m.input === 'object') {
-    const p = (m.input as Record<string, unknown>).file_path
-    if (typeof p === 'string' && p) rawFilePath = p
-  }
-
-  const download = async (e: MouseEvent): Promise<void> => {
-    e.stopPropagation()
-    const r = await window.api.downloadFile(filePath)
-    notify(r.ok ? 'sucesso' : 'erro', r.message)
-  }
-
-  const preview = async (e: MouseEvent): Promise<void> => {
-    e.stopPropagation()
-    if (!rawFilePath) return
-    const fileUrl = 'file:///' + rawFilePath.replace(/\\/g, '/').replace(/^\//, '')
-    try {
-      const res = await window.api.newTab('file', fileUrl)
-      if (res && res !== 'sucesso' && !res.toLowerCase().includes('abrindo') && !res.toLowerCase().includes('aberta')) {
-        notify('erro', res)
-      }
-    } catch (err) {
-      notify('erro', `Falha ao abrir preview: ${String(err)}`)
-    }
-  }
-
-  return (
-    <div className={`tool-card ${info.isSkill ? 'tool-skill' : ''} ${errored ? 'tool-error' : ''}`}>
-      <button className="tool-head" onClick={() => setOpen((o) => !o)}>
-        <span className="tool-caret">{open ? '▾' : '▸'}</span>
-        <span className="tool-name">{info.verb}</span>
-        {info.detail && <span className="tool-detail">{info.detail}</span>}
-        {hasDiff && info.stats && (
-          <span className="tool-diff">
-            {info.stats.added > 0 && <span className="diff-add">+{info.stats.added}</span>}
-            {info.stats.removed > 0 && <span className="diff-del">−{info.stats.removed}</span>}
-          </span>
-        )}
-        {rawFilePath && isTextPreviewable(rawFilePath) && m.result && !m.result.isError && (
-          <span className="tool-download" onClick={preview} title="Abrir em uma Janela de Arquivo">
-            Preview
-          </span>
-        )}
-        {filePath && (
-          <span className="tool-download" onClick={download} title="Baixar arquivo">
-            ⬇️ Baixar
-          </span>
-        )}
-        {m.result ? (
-          isQuestion ? (
-            <span className="tool-badge ok">{noAnswer ? 'sem resposta' : 'respondido'}</span>
-          ) : (
-            <span className={`tool-badge ${m.result.isError ? 'err' : 'ok'}`}>{m.result.isError ? 'error' : 'done'}</span>
-          )
-        ) : (
-          <span className="tool-badge run">running…</span>
-        )}
-      </button>
-      {open && (() => {
-        const view = toolInputView(m.name, m.input)
-        return (
-          <div className="tool-body">
-            {view.caption && <div className="tool-caption">{view.caption}</div>}
-            {view.code ? (
-              <CodeBlock code={view.code.slice(0, 6000)} language={view.language} />
-            ) : (
-              <div className="tool-empty">(sem conteúdo)</div>
-            )}
-            {m.result && (
-              <>
-                <div className="tool-section-label">resultado</div>
-                <pre className="tool-result-pre">{m.result.text.slice(0, 2500)}</pre>
-              </>
-            )}
-          </div>
-        )
-      })()}
-    </div>
-  )
-}
 
 export function MessageList({
   messages,
