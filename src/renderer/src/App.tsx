@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import type {
   AgentEventMsg,
   BrowserState,
@@ -130,6 +130,9 @@ import {
 } from './planning/planningConversation'
 
 export type { UserMessage, UIMessage } from './types'
+
+// three.js só carrega quando o modo Escritório 3D é aberto (chunk separado).
+const Office3DWorkspace = lazy(() => import('./office3d/Office3DWorkspace').then((m) => ({ default: m.Office3DWorkspace })))
 
 /** The Claude models in the selector. Defined in the shared contract because
  *  the "Automático" mode picks from this SAME list in the main process — see
@@ -503,6 +506,8 @@ export function App(): JSX.Element {
   // agora: bolinha por cartão para o executor, bolinha por cabeçalho de
   // coluna para po/vigia/crítico/memória.
   const [rightPane, setRightPane] = useState<RightPane>('browser')
+  // Área principal: workspace normal ou o Escritório 3D (protótipo) no lugar dele.
+  const [mainView, setMainView] = useState<'chat' | 'office3d'>('chat')
   // Flow view (full-screen map of who spawned whom). Opened from the panel.
   const [hydrated, setHydrated] = useState(false)
   const [storageStatus, setStorageStatus] = useState<StorageStatusDto | null>(null)
@@ -3829,6 +3834,20 @@ export function App(): JSX.Element {
               />
             }
           />
+        ) : mainView === 'office3d' ? (
+          <Suspense fallback={<div className="workspace">{chatPanel}</div>}>
+            <Office3DWorkspace
+              chat={chatPanel}
+              onOpenConversation={selectConversation}
+              onOpenFile={(abs) => {
+                // Mesmo destino da tela do 2D: aba de arquivo no navegador, no workspace normal.
+                setMainView('chat')
+                selectRightPane('browser')
+                void window.api.newTab('file', 'file:///' + abs.replace(/\\/g, '/').replace(/^\/+/, ''))
+              }}
+              onClose={() => setMainView('chat')}
+            />
+          </Suspense>
         ) : (
         <div className="workspace" ref={workspaceRef}>
           {chatPanel}
@@ -3849,6 +3868,7 @@ export function App(): JSX.Element {
                   liveAgents={runningTrackCount}
                   browserTabs={browserState.tabs.length}
                   boardProgress={boardTabProgress}
+                  onOpenOffice3D={() => setMainView('office3d')}
                 />
                 {rightPane === 'board' ? (
                   <BoardPanel

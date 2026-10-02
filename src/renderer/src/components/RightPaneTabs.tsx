@@ -15,6 +15,8 @@ interface Props {
   browserTabs: number
   /** Progresso do quadro (concluídas/total) — `null` quando não há tarefa. */
   boardProgress: { done: number; total: number } | null
+  /** Troca a área principal para o Escritório 3D (protótipo). Sem ele, o botão some. */
+  onOpenOffice3D?: () => void
 }
 
 /**
@@ -30,7 +32,8 @@ export function RightPaneTabs({
   onCollapse,
   liveAgents,
   browserTabs,
-  boardProgress
+  boardProgress,
+  onOpenOffice3D
 }: Props): JSX.Element {
   return (
     <div className="pane-tabs" role="tablist" aria-label="Painel da direita">
@@ -71,6 +74,13 @@ export function RightPaneTabs({
         <IconOffice size={14} />
         Escritório
       </button>
+      {onOpenOffice3D && (
+        // Não é aba: troca a área principal inteira (chat + cena 3D).
+        <button type="button" className="pane-tab" onClick={onOpenOffice3D} title="Escritório 3D: a cena ocupa a área principal, com o chat ao lado">
+          <IconOffice size={14} />
+          Escritório 3D
+        </button>
+      )}
       <button type="button" className="nav-btn pane-collapse" onClick={onCollapse} title="Recolher painel">
         <IconCollapseRight />
       </button>

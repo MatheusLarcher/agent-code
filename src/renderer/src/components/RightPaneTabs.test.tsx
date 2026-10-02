@@ -20,4 +20,19 @@ describe('RightPaneTabs', () => {
     expect(screen.getByRole('tab', { name: /Escritório/ }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('tab', { name: /Navegador/ }).getAttribute('aria-selected')).toBe('false')
   })
+
+  it('botão Escritório 3D só aparece com o handler e o chama', () => {
+    const onOpen = vi.fn()
+    const { rerender } = render(
+      <RightPaneTabs active="browser" onSelect={vi.fn()} onCollapse={vi.fn()} liveAgents={0} browserTabs={0} boardProgress={null} />
+    )
+    expect(screen.queryByRole('button', { name: /Escritório 3D/ })).toBeNull()
+    rerender(
+      <RightPaneTabs active="browser" onSelect={vi.fn()} onCollapse={vi.fn()} liveAgents={0} browserTabs={0} boardProgress={null} onOpenOffice3D={onOpen} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Escritório 3D/ }))
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    // A aba 2D continua única.
+    expect(screen.getAllByRole('tab', { name: /Escritório/ })).toHaveLength(1)
+  })
 })

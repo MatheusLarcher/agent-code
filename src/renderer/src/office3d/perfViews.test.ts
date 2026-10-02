@@ -1,0 +1,237 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  DirectionalLight,
+  Fog,
+  Frustum,
+  InstancedMesh,
+  Matrix4,
+  Mesh,
+  Sprite,
+  type BufferGeometry,
+  type Camera,
+  type Material,
+  type Object3D,
+  type Scene
+} from 'three'
+import { demoFeed } from './demoFeed'
+import { DEMO_LOOP_MS } from './demoTimeline'
+import { Office3DEngine, type RendererLike } from './engine'
+import { FAR_PIXEL_SCALE } from './lod'
+
+/**
+ * Desempenho medido no grafo de cena (jsdom não tem WebGL): com a demo de
+ * 5 salas × 4 agentes, em 3 vistas, conta o que o three desenharia — objetos
+ * visíveis dentro do frustum da câmera, chamadas de desenho e triângulos do
+ * passo principal e do passo de sombra. O renderer stub preenche
+ * renderer.info com essa contagem (o que o HUD de DEV mostra) e imita o
+ * shadowMap sob demanda (needsUpdate só zera quando o sol projeta).
+ */
+
+const T0 = 14_916_667 * DEMO_LOOP_MS
+/** Medido ANTES do LOD/culling (mesma demo, mesmas vistas): passo principal + sombra, que rodava todo quadro. */
+const BEFORE = {
+  perto: { calls: 223 + 215, triangles: 7_162 + 16_340 },
+  predio: { calls: 1_032 + 215, triangles: 35_256 + 16_340 },
+  longe: { calls: 1_032 + 215, triangles: 35_256 + 16_340 }
+}
+
+interface PassStats {
+  objects: number
+  calls: number
+  triangles: number
+}
+
+function trianglesOf(geo: BufferGeometry): number {
+  const n = geo.index ? geo.index.count : geo.attributes.position.count
+  return Math.floor(Math.min(n, geo.drawRange.count) / 3)
+}
+
+function chainVisible(o: Object3D): boolean {
+  for (let p: Object3D | null = o; p; p = p.parent) if (!p.visible) return false
+  return true
+}
+
+const materialVisible = (m: Material | Material[]): boolean => (Array.isArray(m) ? m.some((x) => x.visible) : m.visible)
+
+/** O que o three mandaria para a GPU vendo `root` por `camera` (ou, com `casters`, o passo de sombra). */
+function passStats(root: Object3D, camera: Camera, casters = false): PassStats {
+  root.updateMatrixWorld(true)
+  camera.updateMatrixWorld()
+  const frustum = new Frustum().setFromProjectionMatrix(new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
+  const out: PassStats = { objects: 0, calls: 0, triangles: 0 }
+  root.traverse((o) => {
+    if (o instanceof Sprite) {
+      if (casters || !chainVisible(o) || !o.material.visible) return
+      if (o.frustumCulled && !frustum.intersectsSprite(o)) return
+      out.objects++
+      out.calls++
+      out.triangles += 2
+      return
+    }
+    if (!(o instanceof Mesh)) return
+    if (!chainVisible(o) || !materialVisible(o.material)) return
+    if (casters && !o.castShadow) return
+    const count = o instanceof InstancedMesh ? o.count : 1
+    if (count === 0) return
+    if (o.frustumCulled && !frustum.intersectsObject(o)) return
+    out.objects++
+    out.calls++
+    out.triangles += trianglesOf(o.geometry) * count
+  })
+  return out
+}
+
+const sunOf = (scene: Object3D): DirectionalLight | undefined => scene.children.find((o): o is DirectionalLight => o instanceof DirectionalLight)
+
+/** Passo de sombra: só se o sol projeta sombra. */
+function shadowStats(scene: Scene): PassStats {
+  const sun = sunOf(scene)
+  if (!sun?.castShadow) return { objects: 0, calls: 0, triangles: 0 }
+  scene.updateMatrixWorld(true)
+  sun.shadow.updateMatrices(sun)
+  return passStats(scene, sun.shadow.camera, true)
+}
+
+/** Renderer stub que conta como o three: info.render = principal (+ sombra no quadro em que ela é refeita). */
+function countingRenderer() {
+  const r = {
+    ratio: 0,
+    renders: 0,
+    shadowPasses: 0,
+    shadowMap: { autoUpdate: false, needsUpdate: false },
+    info: { render: { calls: 0, triangles: 0 } },
+    setPixelRatio(v: number) {
+      r.ratio = v
+    },
+    setSize() {},
+    render(scene: Scene, camera: Camera) {
+      r.renders++
+      const main = passStats(scene, camera)
+      let { calls, triangles } = main
+      if (r.shadowMap.needsUpdate && sunOf(scene)?.castShadow) {
+        const s = shadowStats(scene)
+        calls += s.calls
+        triangles += s.triangles
+        r.shadowPasses++
+        r.shadowMap.needsUpdate = false
+      }
+      r.info.render.calls = calls
+      r.info.render.triangles = triangles
+    },
+    dispose() {}
+  }
+  return r satisfies RendererLike
+}
+
+function demoEngine(renderer: RendererLike = countingRenderer()) {
+  const container = document.createElement('div')
+  Object.defineProperty(container, 'clientWidth', { get: () => 1600 })
+  Object.defineProperty(container, 'clientHeight', { get: () => 900 })
+  const canvas = document.createElement('canvas')
+  container.appendChild(canvas)
+  const feed = demoFeed(Date.now())
+  let t = 0
+  const queue: FrameRequestCallback[] = []
+  const engine = new Office3DEngine(container, canvas, { onFocus: vi.fn(), onOpen: vi.fn() }, {
+    createRenderer: () => renderer,
+    raf: (cb) => queue.push(cb),
+    caf: () => {},
+    now: () => t,
+    source: { getSnapshot: () => feed, subscribe: () => () => {} }
+  })
+  const flush = (n: number): void => {
+    for (let i = 0; i < n; i++) {
+      t += 16
+      for (const cb of queue.splice(0)) cb(t)
+    }
+  }
+  return { engine, flush, container, pending: () => queue.length }
+}
+
+/** Malhas marcadas `tag` ainda visíveis (a cadeia inteira). */
+function visibleTagged(scene: Scene, tag: 'detail' | 'small'): number {
+  let n = 0
+  scene.traverse((o) => {
+    if (o.userData.lod === tag && chainVisible(o)) n++
+  })
+  return n
+}
+
+beforeEach(() => {
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+  ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+    observe(): void {}
+    disconnect(): void {}
+  }
+  vi.useFakeTimers({ toFake: ['Date'], now: T0 + 20_000 })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
+
+describe('desempenho nas 3 vistas (demo 5 salas × 4 agentes)', () => {
+  it('culling por sala, LOD por distância, sombra sob demanda e ~30 fps no LONGE — números em renderer.info', () => {
+    const renderer = countingRenderer()
+    const { engine, flush } = demoEngine(renderer)
+    flush(30)
+    const building = { ...engine.rig.pose }
+    const room = engine.scene.rooms3d[0]
+    engine.rig.zoom(1e5)
+    const longe = { ...engine.rig.pose }
+    const views = {
+      perto: { tx: room.x + room.width / 2, ty: 0, tz: room.z + room.depth / 2, yaw: 0, pitch: 0.8, distance: 9 },
+      predio: building,
+      longe
+    }
+    const rows: Record<string, Record<string, number | string>> = {}
+    const scene = engine.scene.scene
+    for (const [name, pose] of Object.entries(views) as Array<[keyof typeof views, typeof building]>) {
+      engine.rig.pose = { ...pose }
+      engine.requestRender()
+      flush(1)
+      const r0 = renderer.renders
+      const s0 = renderer.shadowPasses
+      flush(60)
+      const main = passStats(scene, engine.camera)
+      const shadow = shadowStats(scene)
+      const s = engine.stats
+      rows[name] = {
+        salas: `${s.rooms}/${s.roomsTotal}`,
+        lod: s.lod,
+        pixelRatio: s.pixelRatio,
+        objetos: main.objects,
+        calls: main.calls,
+        tris: main.triangles,
+        sombraCalls: shadow.calls,
+        sombraTris: shadow.triangles,
+        sombraPassos60: renderer.shadowPasses - s0,
+        quadros60: renderer.renders - r0
+      }
+      // Pior quadro agora (principal + sombra) contra o quadro de antes (que sempre tinha a sombra).
+      expect(main.calls + shadow.calls).toBeLessThan(BEFORE[name].calls)
+      expect(main.triangles + shadow.triangles).toBeLessThan(BEFORE[name].triangles)
+      // O HUD lê o renderer.info do último quadro.
+      expect(s.calls).toBe(renderer.info.render.calls)
+    }
+    console.log(`[perf] distância da câmera: prédio=${building.distance.toFixed(1)} longe=${longe.distance.toFixed(1)}`)
+    console.table(rows)
+
+    // PERTO de uma sala: as outras saem do frustum; tudo completo; resolução cheia.
+    expect(rows.perto.lod).toBe(0)
+    expect(Number(String(rows.perto.salas).split('/')[0])).toBeLessThan(5)
+    expect(rows.perto.pixelRatio).toBe(1)
+    // Prédio inteiro: MÉDIO, sem detalhe; sombra NÃO é refeita todo quadro.
+    expect(rows.predio).toMatchObject({ salas: '5/5', lod: 1, pixelRatio: 1 })
+    expect(rows.predio.sombraPassos60).toBeLessThan(Number(rows.predio.quadros60))
+    // Zoom máximo: LONGE — sem sombra, resolução menor, névoa, ~30 fps.
+    expect(rows.longe).toMatchObject({ lod: 2, pixelRatio: FAR_PIXEL_SCALE, sombraCalls: 0, sombraPassos60: 0 })
+    expect(Number(rows.longe.quadros60)).toBeLessThanOrEqual(31)
+    expect(visibleTagged(scene, 'detail') + visibleTagged(scene, 'small')).toBe(0)
+    const fog = scene.fog as Fog
+    expect(fog.near).toBeLessThan(longe.distance)
+    expect(fog.far).toBeGreaterThan(longe.distance)
+    engine.dispose()
+  })
+})

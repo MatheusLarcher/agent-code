@@ -1,0 +1,139 @@
+/*
+ * Modo Escritório 3D: chat à esquerda (largura fixa), cena à direita.
+ * Mesmas variáveis do styles.css.
+ */
+.office3d-workspace > .chat-panel { flex: 0 0 min(460px, 40%); min-width: 340px; }
+
+.o3d-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  background: #1b1e24;
+}
+.o3d-canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
+
+.o3d-bar {
+  position: absolute;
+  z-index: 3; /* acima dos balões de fala (quips.css, 1) e da tela do monitor (2) */
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px 5px 12px;
+  border-radius: 8px;
+  background: rgba(20, 24, 32, 0.72);
+  color: #e8ebf0;
+  font-size: 12px;
+  pointer-events: none;
+}
+.o3d-hint { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #aab1bd; }
+.o3d-close { pointer-events: auto; color: #e8ebf0; }
+
+.o3d-error {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  max-width: 80%;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* Bateria da sessão 5h da conta, na barra. */
+.o3d-battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.o3d-battery-cap { color: #aab1bd; font-size: 11px; }
+.o3d-battery-body {
+  position: relative;
+  width: 30px;
+  height: 12px;
+  border: 1.5px solid #cfd5de;
+  border-radius: 3px;
+  padding: 1px;
+  box-sizing: border-box;
+}
+.o3d-battery-body::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  top: 3px;
+  width: 2px;
+  height: 4px;
+  border-radius: 0 1px 1px 0;
+  background: #cfd5de;
+}
+.o3d-battery-fill { display: block; height: 100%; border-radius: 1px; transition: width 300ms ease; }
+.o3d-battery-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.o3d-battery.low .o3d-battery-val { color: #ff6b6b; }
+.o3d-battery.mid .o3d-battery-val { color: #f2c230; }
+.o3d-battery-reset { color: #aab1bd; font-size: 11px; }
+
+/* HUD de desempenho (só DEV, Ctrl+Alt+Shift+P). */
+.o3d-perf {
+  position: absolute;
+  z-index: 3;
+  left: 8px;
+  bottom: 8px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: rgba(10, 12, 16, 0.78);
+  color: #cfe3c8;
+  font: 11px/1.45 Consolas, 'Cascadia Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.o3d-perf b { color: #ffffff; font-weight: 600; }
+
+/* A tela do monitor: posição e tamanho vêm do motor a cada quadro. */
+.o3d-screen-anchor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  min-width: 260px;
+  min-height: 160px;
+  animation: o3d-screen-in 240ms ease-out;
+}
+
+/* Cartão de ferramenta do chat, aberto e ocupando a tela do monitor. */
+.o3d-tool { width: 100%; height: 100%; display: flex; }
+.o3d-tool-card.tool-card {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  max-width: none;
+  border-radius: 6px;
+  background: var(--bg-2);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 28px rgba(111, 162, 255, 0.25);
+}
+.o3d-tool-head.tool-head { cursor: default; flex: 0 0 auto; }
+.o3d-tool-path {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.o3d-tool-path:hover { color: var(--text); }
+.o3d-tool-body.tool-body { flex: 1; min-height: 0; overflow: auto; }
+.o3d-tool-body .code-block.hljs { overflow: visible; }
+@keyframes o3d-screen-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

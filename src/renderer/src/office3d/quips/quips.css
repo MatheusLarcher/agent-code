@@ -1,0 +1,257 @@
+/*
+ * Balões de fala do Escritório 3D (quips/bubbleLayer.ts). Mesmas variáveis do
+ * styles.css. Por quadro só mudam transform e opacity do .qb (inline, pelo
+ * place); cor, texto e kind mudam só quando a fala muda; compacto e andar
+ * (classes) só quando o layout muda de ideia.
+ *
+ *   .qb-layer > .qb[data-kind] > .qb-body > .qb-icon + .qb-text
+ *                              > .qb-lead (linha-guia do balão empilhado)
+ *   .qb       posição (translate3d + scale, origem no canto) e visibilidade.
+ *             O padding de baixo abriga a ponta: o pé do .qb É a ponta, que
+ *             encosta no (x, y) do place.
+ *   .qb-body  o balão e as animações (pop na entrada, fade na saída).
+ *   .qb-measure  medidor (mesma caixa, invisível): o tamanho do balão inteiro.
+ * A fonte do .qb-body (14px) é o FONT_PX do bubbleLayer.ts.
+ */
+.qb-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1; /* acima do canvas, abaixo da tela do monitor (.o3d-screen-anchor, 2) */
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+}
+
+.qb,
+.qb-measure {
+  --qb-bg: var(--bg-3);
+  --qb-edge: var(--line);
+  --qb-fg: var(--text);
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding-bottom: 8px;
+}
+.qb {
+  transform-origin: 0 0;
+  transition: opacity 140ms ease;
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+.qb[hidden] { display: none; }
+/* Fora das regras de compacto (que são só de .qb): mede sempre o balão inteiro. */
+.qb-measure { visibility: hidden; pointer-events: none; }
+.qb-measure .qb-body { animation: none; }
+
+.qb-body {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: max-content;
+  max-width: 220px;
+  padding: 6px 10px 7px;
+  border: 1px solid var(--qb-edge);
+  border-radius: var(--radius);
+  background: var(--qb-bg);
+  color: var(--qb-fg);
+  font: 500 14px/1.35 var(--font);
+  text-align: left;
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  transform-origin: 50% 100%;
+  animation: qb-pop 260ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.qb-body::before,
+.qb-body::after { box-sizing: border-box; pointer-events: none; }
+
+/* A ponta: quadrado girado que cobre a borda de baixo e desenha o "V" até a cabeça. */
+.qb-body::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  background: var(--qb-bg);
+  border-right: 1px solid var(--qb-edge);
+  border-bottom: 1px solid var(--qb-edge);
+  transform: rotate(45deg);
+}
+
+.qb-icon { flex: none; font-style: normal; }
+.qb-icon:empty { display: none; }
+.qb-text { min-width: 0; }
+
+.qb:hover .qb-body { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--qb-edge); }
+.qb:focus-visible .qb-body { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── por kind ─────────────────────────────────────────────────────────── */
+.qb[data-kind='request'] {
+  --qb-edge: var(--accent);
+  --qb-bg: color-mix(in srgb, var(--accent) 16%, var(--bg-3));
+}
+.qb[data-kind='done'] {
+  --qb-edge: var(--ok);
+  --qb-bg: color-mix(in srgb, var(--ok) 18%, var(--bg-3));
+}
+.qb[data-kind='warn'] {
+  --qb-edge: var(--warn);
+  --qb-bg: color-mix(in srgb, var(--warn) 16%, var(--bg-3));
+}
+.qb[data-kind='error'] {
+  z-index: 2;
+  --qb-edge: var(--err);
+  --qb-bg: color-mix(in srgb, var(--err) 20%, var(--bg-3));
+}
+
+/* Permissão: amarelo, com um anel pulsando e a mãozinha acenando (só transform/opacity). */
+.qb[data-kind='permission'] {
+  z-index: 3;
+  --qb-yellow: #f2c230;
+  --qb-edge: var(--qb-yellow);
+  --qb-bg: color-mix(in srgb, var(--qb-yellow) 18%, var(--bg-3));
+}
+.qb[data-kind='permission'] .qb-body::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--qb-yellow);
+  border-radius: calc(var(--radius) + 4px);
+  opacity: 0;
+  animation: qb-pulse 1.4s ease-out infinite;
+}
+.qb[data-kind='permission'] .qb-icon {
+  display: inline-block;
+  transform-origin: 70% 80%;
+  animation: qb-wave 1.4s ease-in-out infinite;
+}
+
+/* Ocioso e pensamento: nuvem cinza em itálico, com bolinhas no lugar da ponta. */
+.qb[data-kind='idle'],
+.qb[data-kind='thought'],
+.qb-measure[data-kind='idle'],
+.qb-measure[data-kind='thought'] {
+  --qb-bg: color-mix(in srgb, var(--muted) 14%, var(--bg-2));
+  --qb-edge: color-mix(in srgb, var(--muted) 35%, transparent);
+  --qb-fg: var(--muted);
+  padding-bottom: 19px;
+}
+.qb[data-kind='idle'] .qb-body,
+.qb[data-kind='thought'] .qb-body,
+.qb-measure[data-kind='idle'] .qb-body,
+.qb-measure[data-kind='thought'] .qb-body {
+  padding: 7px 13px 8px;
+  border-radius: 20px 24px 22px 26px / 18px 22px 20px 24px;
+  font-style: italic;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.qb[data-kind='idle'] .qb-body::after,
+.qb[data-kind='thought'] .qb-body::after {
+  bottom: -12px;
+  width: 10px;
+  height: 10px;
+  margin-left: -12px; /* um pouco à esquerda: as bolinhas descem em diagonal até a cabeça */
+  border: 1px solid var(--qb-edge);
+  border-radius: 50%;
+  transform: none;
+}
+.qb[data-kind='idle'] .qb-body::before,
+.qb[data-kind='thought'] .qb-body::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -19px;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border: 1px solid var(--qb-edge);
+  border-radius: 50%;
+  background: var(--qb-bg);
+}
+
+/* ── só o ícone: zoom longe (classe na camada; o motor deixa só permissão e
+ *    erro) ou sem lugar para o balão inteiro (classe no balão) ─────────── */
+.qb-layer.qb-compact .qb,
+.qb.qb-compact { padding-bottom: 6px; }
+.qb-layer.qb-compact .qb .qb-text,
+.qb.qb-compact .qb-text { display: none; }
+.qb-layer.qb-compact .qb .qb-body,
+.qb.qb-compact .qb-body {
+  padding: 3px 5px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1;
+}
+.qb-layer.qb-compact .qb .qb-body::after,
+.qb.qb-compact .qb-body::after { bottom: -4px; width: 7px; height: 7px; margin-left: -3.5px; }
+.qb-layer.qb-compact .qb .qb-body::before,
+.qb.qb-compact .qb-body::before { border-radius: 999px; }
+/* Nuvem compacta: a bolinha de baixo sairia do ícone (a de cima já é a ponta). */
+.qb.qb-compact[data-kind='idle'] .qb-body::before,
+.qb.qb-compact[data-kind='thought'] .qb-body::before { display: none; }
+
+/* ── empilhado: subiu para não cobrir outro balão ─────────────────────────
+ * Fica atrás dos balões que estão na cabeça (a linha-guia passa por baixo
+ * deles, sem cruzar texto) e liga a ponta até logo acima da cabeça. A linha
+ * nasce na ponta (pé do .qb); o place só escreve rotate + scaleY nela. */
+.qb.qb-up1 { z-index: -1; }
+.qb.qb-up2 { z-index: -2; }
+.qb-lead {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 2px;
+  height: 1px;
+  margin-left: -1px;
+  background: var(--qb-edge);
+  transform-origin: 50% 0;
+  pointer-events: none;
+}
+.qb.qb-up1 .qb-lead,
+.qb.qb-up2 .qb-lead { display: block; }
+.qb.qb-out .qb-lead { opacity: 0; }
+
+/* ── entrada e saída ──────────────────────────────────────────────────── */
+/* Fala nova no mesmo balão: trocar o nome da animação repete o pop sem reflow. */
+.qb.qb-alt .qb-body { animation-name: qb-pop-b; }
+.qb.qb-out { pointer-events: none; }
+.qb.qb-out .qb-body { animation: qb-out 180ms ease-in forwards; }
+.qb.qb-out .qb-body::before { animation: none; opacity: 0; }
+
+@keyframes qb-pop {
+  0% { opacity: 0; transform: translateY(6px) scale(0.6); }
+  70% { opacity: 1; transform: translateY(-1px) scale(1.05); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes qb-pop-b {
+  0% { opacity: 0; transform: translateY(6px) scale(0.6); }
+  70% { opacity: 1; transform: translateY(-1px) scale(1.05); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes qb-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(-4px) scale(0.85); }
+}
+@keyframes qb-pulse {
+  0% { opacity: 0.85; transform: scale(0.97); }
+  100% { opacity: 0; transform: scale(1.12); }
+}
+@keyframes qb-wave {
+  0%, 60%, 100% { transform: rotate(0); }
+  70% { transform: rotate(-14deg); }
+  80% { transform: rotate(12deg); }
+  90% { transform: rotate(-8deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qb { transition: none; }
+  .qb-body,
+  .qb-body::before,
+  .qb-icon { animation: none !important; }
+  .qb.qb-out { opacity: 0 !important; }
+}
