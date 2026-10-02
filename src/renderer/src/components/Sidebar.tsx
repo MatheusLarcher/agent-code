@@ -5,6 +5,7 @@ import { IconSpinner } from './Icons'
 import { IconPlanning } from '../planning/PlanningIcon'
 import { isPlanningConversation } from '../planning/planningConversation'
 import { isBlankConversation } from '../blankConversation'
+import { CentralSidebarItem, type CentralSidebarItemProps } from '../central/CentralSidebarItem'
 
 export interface SidebarProject {
   path: string
@@ -51,6 +52,8 @@ interface Props {
   onDelete: (id: string) => void
   /** Open a search hit, scrolling to the matching message (null → just open). */
   onSelectResult: (convId: string, msgId: string | null) => void
+  /** A Central: item fixo acima dos projetos (fora da busca e dos grupos). */
+  central?: Omit<CentralSidebarItemProps, 'rail'>
 }
 
 /* ---- tiny inline icons (stroke = currentColor) ---- */
@@ -355,6 +358,7 @@ export function Sidebar(props: Props): JSX.Element {
             <IconPanel />
           </button>
         </div>
+        {props.central && <CentralSidebarItem rail {...props.central} />}
         <button className="rail-btn accent" title="Nova conversa" onClick={props.onNewChat}>
           <IconPlus />
         </button>
@@ -439,6 +443,12 @@ export function Sidebar(props: Props): JSX.Element {
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
+
+      {props.central && (
+        <div className="central-pin">
+          <CentralSidebarItem {...props.central} />
+        </div>
+      )}
 
       <div className="sidebar-scroll">
         <section className="side-section">

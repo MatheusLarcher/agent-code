@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import type { ImageAttachment, McpInboundMsg } from '@shared/ipc'
+import { CENTRAL_ID, isCentralConversation } from '@shared/central'
 import { MCP_TASK_MODEL } from '@shared/mcpInbound'
 import { imageSrc } from './inlineMedia/inlineAttachments'
 import type { Conversation } from './types'
@@ -73,6 +74,9 @@ function fail(taskId: string, erro: string): void {
   void window.api.mcpTaskFailed?.(taskId, erro).catch(() => undefined)
 }
 
+/** A Central só encaminha (ver central/): tarefa MCP nunca entra nela. */
+export const CENTRAL_REFUSES_TASKS = 'A Central não recebe tarefas diretamente.'
+
 async function findConversation<Q extends McpQueueItem>(
   d: McpInboundDeps<Q>,
   msg: McpInboundMsg
@@ -98,8 +102,11 @@ async function findConversation<Q extends McpQueueItem>(
 
 /** Entrega uma tarefa: acha/cria a conversa, despacha, marca o item da fila. */
 export async function handleMcpInbound<Q extends McpQueueItem>(d: McpInboundDeps<Q>, msg: McpInboundMsg): Promise<void> {
+  // Antes de procurar: com `create`, o id fixo da Central viraria uma conversa de tarefa.
+  if (msg.convId === CENTRAL_ID) return fail(msg.taskId, CENTRAL_REFUSES_TASKS)
   const conv = await findConversation(d, msg)
   if (!conv) return fail(msg.taskId, 'A conversa não foi encontrada no Agent Code.')
+  if (isCentralConversation(conv)) return fail(msg.taskId, CENTRAL_REFUSES_TASKS)
   // Imagens do chamador: já validadas e rotuladas no main — o texto leva
   // `{{midia:N}}` e a bolha as mostra no lugar, como uma imagem colada.
   const images = msg.images ?? []

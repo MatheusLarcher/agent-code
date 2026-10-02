@@ -1,6 +1,6 @@
 # Referência de arquivos — Agent Code
 
-Inventário completo do projeto: **cada arquivo versionado** e sua responsabilidade. Para o funcionamento interno, veja [ARQUITETURA.md](ARQUITETURA.md).
+Inventário de arquivos do projeto e suas responsabilidades. Para o funcionamento interno, veja [ARQUITETURA.md](ARQUITETURA.md). A Central está **parcial**: [checkpoint versionado de 02/10](CONTINUIDADE-2026-10-02.md) separa o código existente dos contratos pendentes.
 
 ## Sumário
 
@@ -36,6 +36,7 @@ Inventário completo do projeto: **cada arquivo versionado** e sua responsabilid
 | `README.md` | Documentação principal (uso, requisitos, funcionalidades, scripts). |
 | `docs/ARQUITETURA.md` | Arquitetura detalhada. |
 | `docs/REFERENCIA.md` | Este arquivo. |
+| `docs/CONTINUIDADE-2026-10-02.md` | Checkpoint versionado: o que existe na Central/Escritório, validação histórica, pendências, A1, risco multi-PC e pedido futuro do monitor; **não é documentação de feature pronta**. |
 
 ---
 
@@ -324,6 +325,30 @@ Funcionamento em [ARQUITETURA.md](ARQUITETURA.md#tela-de-planejamento-agent-mana
 | `NewPlanningDialog.test.tsx` / `planningSlug.test.ts` | Lista e reabre planos, deriva o slug único, cria e abre com o título, recusa título sem letra nem número, falha vira toast; slug sem acento, hífens colapsados, corte em 64 e sufixo que ainda cabe. |
 | `planningConversation.test.ts` | Só `mode: 'planning'` com slug é planejamento; o Automático revalida só na conversa normal; campos de início por tipo de conversa; conversa de handoff não mexe em modelo nem modos; a de planejamento nasce num modelo concreto. |
 | `handoffReadiness.test.ts` / `handoffFlow.test.ts` / `HandoffDialog.test.tsx` | Bloqueios e avisos; rascunho determinístico em qualquer ordem de cards, com as seções e a instrução final; pedido ao Manager; só arquivos novos depois do pedido; envio na ordem que para na primeira falha. No diálogo: bloqueio só com "enviar mesmo assim", espera relistando só no evento do mesmo plano, rascunho automático, prompt editado gravado como arquivo novo antes do envio, falha de gravação não envia nada. |
+
+### Central — código existente, não fluxo completo
+
+| Local | Estado neste checkpoint |
+|---|---|
+| `src/shared/central.ts` | Id fixo, entradas e contratos; campos da emenda A1 ainda não implementados. |
+| `src/main/central/centralIndex*.ts` | Resumos e cache SWR do índice; primeira carga ainda pode bloquear. |
+| `src/main/central/centralDecider.ts`, `centralPrompts.ts`, `centralIpc.ts` | Decisor TypeSafe e canais `central:route`/`central:correction` já ligados ao main/preload; T3 permanece em revisão, piso 0,6/idioma `en` sem calibração. |
+| `src/renderer/src/central/centralRegistry.ts`, `centralBoot.ts`, `CentralPanel.tsx`, `centralSend.ts` | Registro/boot/painel inicial e entrada em `routing`; `routeCentralRequest` é um stub e o App não injeta `route`. |
+| `src/renderer/src/central/centralColor.ts`, `activitySummary.ts`, `centralMirror.ts` | Funções puras; T5 ainda não usa o espelho para entrega/retorno. |
+
+Detalhes, ledger e aceites restantes em [CONTINUIDADE-2026-10-02.md](CONTINUIDADE-2026-10-02.md).
+
+### src/renderer/src/office3d — Escritório 3D
+
+Inventário parcial do monitor que exibe o chat e do chat flutuante/seleção de mesa. Ainda **não** há editor de código no monitor: o pedido futuro está no [checkpoint de 02/10](CONTINUIDADE-2026-10-02.md#ideia-nova-expressamente-adiada--código-no-monitor-do-pc-3d). Funcionamento em [ARQUITETURA.md](ARQUITETURA.md#escritório-3d-o-chat-flutuante-segue-a-mesa).
+
+| Arquivo | Responsabilidade |
+|---------|------------------|
+| `Office3DWorkspace.tsx` | A aba Escritório em tela cheia: o motor (pausado com a aba fechada), a tela do monitor, a prévia, o telão e o chat flutuante. O chat segue a mesa selecionada: `chat` (a conversa ativa) com um agente focado ou com a conversa escolhida fora do 3D; `central` (o painel da Central) sem mesa. Clique num agente seleciona a conversa dele (`model.convId`); reabrir a aba com um agente focado também. |
+| `OfficeChatFloat.tsx` | O `ChatFloat` do escritório: cabeçalho com o agente da conversa (cor da camisa, título, projeto, 📍) ou, com `central`, o orbe e "Central", sem projeto nem 📍, na cor `--accent`. |
+| `engine.ts` / `engineTypes.ts` | O motor three (câmera, entrada, laço sob demanda) e os contratos dele. `onFocus(key, byUser)` diz se foi o usuário quem abriu/fechou a tela; `follow(convId)` não voa quando o agente focado já é daquela conversa. |
+| `office3d.css` | HUD e chat flutuante — inclusive a Central dentro dele: sem o orbe e o título próprios, translúcida, 5 linhas quando minimizada. |
+| `Office3DWorkspace.test.tsx` / `officeTab.test.tsx` / `engineView.test.ts` / `engineTab.test.ts` | Sem mesa, a Central; clique no agente seleciona a conversa dele e a chegada dela não fecha a tela; Esc, clique no vazio, × e roda voltam à Central (o campo focado perde o foco antes); conversa de fora mostra o chat e o voo do `follow` não volta à Central; troca de aba com e sem foco; sem `central`, sempre o chat; `byUser` de cada gesto e a guarda do `follow`. |
 
 ---
 

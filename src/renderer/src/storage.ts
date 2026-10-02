@@ -1,6 +1,7 @@
 import { currentModelId } from '@shared/ipc'
 import { migrateConversationEffort } from '@shared/autoEffort'
 import { DEFAULT_TITLE, type Conversation, type UIMessage } from './types'
+import { normalizeCentralState } from './central/centralRegistry'
 import type {
   RateLimitStatus,
   RepositoryChange,
@@ -199,7 +200,9 @@ function normalizeConversation(record: VersionedConversationDto): Conversation {
     updatedAt: timestamp(payload.updatedAt, record.updatedAt),
     todoPlan: todoPlan && Array.isArray(todoPlan.items)
       ? payload.todoPlan as Conversation['todoPlan']
-      : undefined
+      : undefined,
+    // A Central (ver central/): entrada torta sai aqui, antes de chegar à tela.
+    ...(payload.central !== undefined ? { central: normalizeCentralState(payload.central) } : {})
   }
 }
 

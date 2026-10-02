@@ -1,4 +1,5 @@
 import type { BackgroundTask, ChatEvent, QueuedAfterInterrupt } from '@shared/ipc'
+import type { CentralState } from '@shared/central'
 import type { BubbleMedia, DraftMedia } from './inlineMedia/inlineAttachments'
 
 /** A user message, rendered on the right side of the chat. */
@@ -137,8 +138,14 @@ export interface Conversation {
   updatedAt: number
   /** 'planning': esta conversa É a Tela de Planejamento — a sessão sobe como o
    *  Agent Manager do plano `planningSlug` (StartAgentOptions.planning) e o
-   *  modelo dela é decidido no main, não pelo seletor. Ausente = conversa normal. */
-  mode?: 'planning'
+   *  modelo dela é decidido no main, não pelo seletor.
+   *  'central': esta conversa É a Central (id fixo CENTRAL_ID, sem pasta) — nunca
+   *  sobe sessão de agente; cada mensagem dela vai para a conversa do assunto.
+   *  Ausente = conversa normal. */
+  mode?: 'planning' | 'central'
+  /** O que a Central mostra (pedidos, respostas espelhadas, perguntas). Só com
+   *  mode 'central'; nunca guarda bytes de anexo (só nomes). */
+  central?: CentralState
   /** Slug do plano do projeto `cwd` (a pasta real, na pasta de dados do app,
    *  o main resolve). Só com mode 'planning'. */
   planningSlug?: string

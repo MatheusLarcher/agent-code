@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MCP_TASK_MODEL } from '@shared/mcpInbound'
 import type { Conversation } from './types'
 import { handleMcpInbound, mcpConversationFields, reportMcpDropped, type McpInboundDeps, type McpQueueItem } from './useMcpInbound'
+import { loadConversationsByIds } from './storage'
 
 vi.mock('./storage', () => ({ loadConversationsByIds: vi.fn(async () => []) }))
 
@@ -84,6 +85,19 @@ describe('handleMcpInbound', () => {
     expect(mcpTaskFailed).toHaveBeenCalledWith('t3', expect.stringMatching(/Não consegui enviar/))
     await handleMcpInbound(d, { taskId: 't4', convId: 'c-sumiu', text: 'x' })
     expect(mcpTaskFailed).toHaveBeenCalledWith('t4', 'A conversa não foi encontrada no Agent Code.')
+  })
+
+  it('tarefa para a Central falha com aviso claro: nem cria, nem lê do banco, nem despacha', async () => {
+    const { d, mcpTaskFailed } = setup({ busy: true })
+    d.convsRef.current = [...d.convsRef.current, conv('central', { cwd: '', mode: 'central' })]
+    await handleMcpInbound(d, { taskId: 't6', convId: 'central', text: 'faça' })
+    // Mesmo pedindo para criar, o id fixo da Central nunca vira conversa de tarefa.
+    await handleMcpInbound(d, { taskId: 't7', convId: 'central', text: 'faça', create: { cwd: 'C:\\f', title: 'x' } })
+    expect(mcpTaskFailed).toHaveBeenCalledWith('t6', 'A Central não recebe tarefas diretamente.')
+    expect(mcpTaskFailed).toHaveBeenCalledWith('t7', 'A Central não recebe tarefas diretamente.')
+    expect(d.createBackground).not.toHaveBeenCalled()
+    expect(loadConversationsByIds).not.toHaveBeenCalled()
+    expect(d.dispatch).not.toHaveBeenCalled()
   })
 
   it('reportMcpDropped avisa só os itens de tarefa MCP, como cancelados', () => {

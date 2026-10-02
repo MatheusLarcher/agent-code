@@ -410,6 +410,42 @@ describe('Office3DWorkspace', () => {
     act(() => bubble('conv:dev-0-3').click())
     expect(screen.getByTestId('office-screen')).toBeTruthy()
   })
+
+  it('chat flutuante na troca de aba: com um agente focado, seleciona a conversa dele; sem mesa, a Central; sem `central`, sempre o chat', () => {
+    const feed = syntheticFeed()
+    const target = layoutOffice(deriveOfficeModel(feed, Date.now())).characters.find((c) => c.model.convId === 'dev-2-1')!
+    vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
+    const onOpen = vi.fn()
+    const opts = { ...manualRaf().opts, source: source(feed), createRenderer: fakeRenderer }
+    const ui = (active: boolean, id = 'dev-1-0', central: JSX.Element | null = <div>central</div>): JSX.Element => (
+      <Office3DWorkspace active={active} chat={active ? <div>chat</div> : null} central={active ? central : null} conversation={{ id, title: id, cwd: 'C:\\p' }} onOpenConversation={onOpen} engineOptions={opts} />
+    )
+    const shows = (): string | null | undefined => screen.getByRole('region', { name: 'Escritório' }).querySelector('.pl-chat-float-body')?.textContent
+    const click = (): void => {
+      fireEvent.pointerDown(screen.getByTestId('office3d-canvas'), { button: 0, clientX: 50, clientY: 50 })
+      fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
+    }
+    const view = render(ui(true, 'dev-0-0'))
+    expect(shows()).toBe('central') // aberta sem mesa selecionada
+    click()
+    onOpen.mockClear()
+    view.rerender(ui(false)) // na aba Conversa, outra conversa é escolhida
+    view.rerender(ui(true))
+    expect(onOpen).toHaveBeenCalledWith('dev-2-1')
+    expect(shows()).toBe('chat')
+    // Sem mesa (a conversa veio de fora): reabrir mostra a Central, sem selecionar nada.
+    fireEvent.keyDown(window, { key: 'Escape' })
+    view.rerender(ui(true, 'dev-3-0'))
+    expect(shows()).toBe('chat')
+    view.rerender(ui(false, 'dev-3-0'))
+    view.rerender(ui(true, 'dev-3-0'))
+    expect(shows()).toBe('central')
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    view.rerender(ui(true, 'dev-3-0', null))
+    click()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(shows()).toBe('chat')
+  })
 })
 
 describe('OfficeScene', () => {

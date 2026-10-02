@@ -1,17 +1,25 @@
 /**
- * A tela HTML do foco (o turno do agente no formato do chat) alinhada aos
- * cantos do monitor projetados no palco. Roda a cada quadro com o foco aberto:
- * não aloca (vetor de rascunho, monitor guardado no foco) e só escreve no
- * estilo quando o retângulo, em px inteiros, muda. Sem monitor (personagem sem
- * mesa), um cartão centrado.
+ * A tela HTML do foco (o turno do agente no formato do chat) encaixada na tela
+ * do monitor desenhado, em repouso e no voo da câmera: os 4 cantos da tela (o
+ * plano SCREEN_W × SCREEN_H da cena, em MONITOR_SCREEN_FRONT) são projetados
+ * com a câmera viva e uma homografia (`matrix3d`, quadTransform.ts) leva o
+ * retângulo do elemento até eles, com o keystone da arfagem. O tamanho de
+ * layout é o da tela projetada na pose FINAL do foco (o `monitorPose` do motor,
+ * mesmo fov e aspect), calculado uma vez por foco ou redimensionamento: no voo
+ * o conteúdo não refaz o layout, só o transform muda (left/top ficam no 0 do
+ * CSS). Roda a cada quadro com o foco aberto (vetor e cantos de rascunho) e só
+ * escreve no estilo o que mudou — com a câmera parada, nada aloca; canto atrás
+ * da câmera ou fora do near/far esconde. Sem monitor (personagem sem mesa), um
+ * cartão centrado, sem transform.
  *
  * `PointAnchor` é o da prévia do hover: um cartão de tamanho próprio que fica
  * acima de um ponto do mundo (o alto do monitor do agente), centrado e sem sair
  * do palco — só o `transform` muda, e só quando o px muda.
  */
-import { Vector3, type Camera } from 'three'
-import { MONITOR_HALF_H, MONITOR_HALF_W, MONITOR_SCREEN_FRONT } from './cameraRig'
+import { Vector3, type Camera, type PerspectiveCamera } from 'three'
+import { MONITOR_HALF_H, MONITOR_HALF_W, MONITOR_SCREEN_FRONT, monitorPose, projectPoint } from './cameraRig'
 import { MONITOR_BACK, MONITOR_Y } from './layout'
+import { quadMatrix3d, type Pt } from './quadTransform'
 import { BUBBLE_TOP } from './speech'
 
 /** Folga do cartão até a ponta e até as bordas do palco (px). */
@@ -94,10 +102,30 @@ export class PreviewAnchor {
   }
 }
 
+/** Cantos da tela na ordem do quadMatrix3d (TL, TR, BR, BL): o sinal de x e de y a partir do centro. */
+const CORNERS: ReadonlyArray<readonly [number, number]> = [
+  [-1, 1],
+  [1, 1],
+  [1, -1],
+  [-1, -1]
+]
+
 export class ScreenAnchor {
   private el: HTMLElement | null = null
   private readonly v = new Vector3()
-  private readonly last = { left: NaN, top: NaN, width: NaN, height: NaN }
+  /** Cantos da tela no palco (px) do último transform; NaN = refazer no próximo quadro. */
+  private readonly quad: [Pt, Pt, Pt, Pt] = [
+    { x: NaN, y: NaN },
+    { x: NaN, y: NaN },
+    { x: NaN, y: NaN },
+    { x: NaN, y: NaN }
+  ]
+  /** Tamanho de layout (px) e de onde ele saiu: o monitor, o palco e o fov. */
+  private readonly size = { w: 0, h: 0, x: NaN, y: NaN, z: NaN, width: NaN, height: NaN, fov: NaN }
+  /** O que está no estilo: NaN = nada escrito; left/top null = limpos (fica o 0 do CSS). */
+  private readonly last: { left: number | null; top: number | null; width: number; height: number } = { left: NaN, top: NaN, width: NaN, height: NaN }
+  private transform: string | null = null
+  private hidden = false
   /** Centro do monitor em foco (mundo); vale com `hasMonitor`. */
   readonly monitor = { x: 0, y: 0, z: 0 }
   hasMonitor = false
@@ -105,6 +133,9 @@ export class ScreenAnchor {
   setElement(el: HTMLElement | null): void {
     this.el = el
     this.last.left = this.last.top = this.last.width = this.last.height = NaN
+    this.transform = null
+    this.hidden = false
+    this.quad[0].x = NaN
   }
 
   /** Monitor do foco (null = sem mesa: cartão centrado). */
@@ -116,29 +147,96 @@ export class ScreenAnchor {
     this.monitor.z = m.z
   }
 
-  place(camera: Camera, width: number, height: number): void {
+  place(camera: PerspectiveCamera, width: number, height: number): void {
     if (!this.el) return
-    if (!this.hasMonitor) {
-      const w = Math.min(420, width * 0.7)
-      const h = Math.min(260, height * 0.5)
-      return this.write((width - w) / 2, (height - h) / 2, w, h)
-    }
+    if (!this.hasMonitor) return this.card(width, height)
+    const size = this.layoutSize(camera.fov, width, height)
     const m = this.monitor
     const z = m.z + MONITOR_SCREEN_FRONT
-    const a = this.v.set(m.x - MONITOR_HALF_W, m.y + MONITOR_HALF_H, z).project(camera)
-    const ax = ((a.x + 1) / 2) * width
-    const ay = ((1 - a.y) / 2) * height
-    const b = this.v.set(m.x + MONITOR_HALF_W, m.y - MONITOR_HALF_H, z).project(camera)
-    const bx = ((b.x + 1) / 2) * width
-    const by = ((1 - b.y) / 2) * height
-    this.write(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay))
+    const q = this.quad
+    let moved = false
+    for (let i = 0; i < 4; i++) {
+      const c = CORNERS[i]
+      const a = this.v.set(m.x + c[0] * MONITOR_HALF_W, m.y + c[1] * MONITOR_HALF_H, z).project(camera)
+      if (a.z < -1 || a.z > 1) return this.hide()
+      const x = ((a.x + 1) / 2) * width
+      const y = ((1 - a.y) / 2) * height
+      if (x === q[i].x && y === q[i].y) continue
+      q[i].x = x
+      q[i].y = y
+      moved = true
+    }
+    if (!moved) return
+    const t = quadMatrix3d(size.w, size.h, q)
+    if (!t) return this.hide()
+    this.setHidden(false)
+    this.box(null, null, size.w, size.h)
+    this.setTransform(t)
   }
 
-  private write(left: number, top: number, width: number, height: number): void {
+  /** Sem monitor: o cartão centrado, sem transform. */
+  private card(width: number, height: number): void {
+    const w = Math.min(420, width * 0.7)
+    const h = Math.min(260, height * 0.5)
+    this.quad[0].x = NaN // de volta ao monitor, o transform é refeito
+    this.setHidden(false)
+    this.setTransform('')
+    this.box((width - w) / 2, (height - h) / 2, w, h)
+  }
+
+  /**
+   * Tamanho de layout (px): a tela projetada na pose final do foco — a média
+   * das bordas opostas do trapézio. Só recalcula quando o monitor, o palco ou o
+   * fov mudam.
+   */
+  private layoutSize(fov: number, width: number, height: number): { w: number; h: number } {
+    const s = this.size
+    const m = this.monitor
+    if (s.fov === fov && s.width === width && s.height === height && s.x === m.x && s.y === m.y && s.z === m.z) return s
+    const view = { fovDeg: fov, aspect: width / height }
+    const pose = monitorPose(m, view)
+    const z = m.z + MONITOR_SCREEN_FRONT
+    const p = CORNERS.map(([sx, sy]) => {
+      const n = projectPoint(pose, view, { x: m.x + sx * MONITOR_HALF_W, y: m.y + sy * MONITOR_HALF_H, z })
+      return { x: ((n.x + 1) / 2) * width, y: ((1 - n.y) / 2) * height }
+    })
+    const len = (i: number, j: number): number => Math.hypot(p[j].x - p[i].x, p[j].y - p[i].y)
+    s.w = Math.max(1, Math.round((len(0, 1) + len(3, 2)) / 2))
+    s.h = Math.max(1, Math.round((len(0, 3) + len(1, 2)) / 2))
+    s.fov = fov
+    s.width = width
+    s.height = height
+    s.x = m.x
+    s.y = m.y
+    s.z = m.z
+    this.quad[0].x = NaN // tamanho novo: o transform é refeito
+    return s
+  }
+
+  /** Canto atrás da câmera (ou fora do near/far) ou quadrilátero degenerado: some até encaixar de novo. */
+  private hide(): void {
+    this.quad[0].x = NaN // a volta refaz o transform
+    this.setHidden(true)
+  }
+
+  private setHidden(hidden: boolean): void {
+    if (hidden === this.hidden) return
+    this.hidden = hidden
+    this.el!.style.visibility = hidden ? 'hidden' : ''
+  }
+
+  private setTransform(t: string): void {
+    if (t === this.transform) return
+    this.transform = t
+    this.el!.style.transform = t
+  }
+
+  /** left/top/width/height em px inteiros, só quando mudam; left/top null = limpos (fica o 0 do CSS). */
+  private box(left: number | null, top: number | null, width: number, height: number): void {
     const el = this.el!
     const l = this.last
-    const L = Math.round(left)
-    const T = Math.round(top)
+    const L = left === null ? null : Math.round(left)
+    const T = top === null ? null : Math.round(top)
     const W = Math.round(width)
     const H = Math.round(height)
     if (L === l.left && T === l.top && W === l.width && H === l.height) return
@@ -146,8 +244,8 @@ export class ScreenAnchor {
     l.top = T
     l.width = W
     l.height = H
-    el.style.left = `${L}px`
-    el.style.top = `${T}px`
+    el.style.left = L === null ? '' : `${L}px`
+    el.style.top = T === null ? '' : `${T}px`
     el.style.width = `${W}px`
     el.style.height = `${H}px`
   }

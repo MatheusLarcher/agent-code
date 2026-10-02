@@ -279,6 +279,20 @@
 }
 .o3d-chat-locate:hover { background: var(--bg-3); transform: translateY(-1px); }
 .o3d-chat-locate:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* A Central no chat flutuante (sem mesa selecionada): o cabeçalho do painel já
+   traz o orbe e o título, então o do CentralPanel fica só com o trilho (e some
+   com o trilho vazio). Translúcida como o ChatPanel; minimizada, 5 linhas de
+   pedidos e a caixa, sem o cabeçalho nem a dica. */
+.o3d-chat .central-panel { background: transparent; }
+.o3d-chat .central-head { background: color-mix(in srgb, var(--bg-2) calc(var(--pl-chat-fill) * 0.6), transparent); }
+.o3d-chat .central-head > .central-orb,
+.o3d-chat .central-head > h1,
+.o3d-chat.minimized .central-head,
+.o3d-chat.minimized .central-hint { display: none; }
+/* Regra à parte: um seletor que o motor não entenda derrubaria a lista inteira. */
+.o3d-chat .central-head:not(:has(.central-head-rail > *)) { display: none; }
+.o3d-chat.minimized .central-feed { flex: none; height: calc(5 * var(--pl-chat-line)); padding: 2px 14px; gap: 6px; }
+.o3d-chat.minimized .central-bubble { padding: 3px 12px; }
 /* Medidor de tokens do cabeçalho do chat: num painel estreito quebra em linhas, não no meio do número. */
 .office3d-workspace .pl-chat-float .chat-header { gap: 8px; }
 .office3d-workspace .pl-chat-float .token-meter { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
@@ -301,14 +315,18 @@
 }
 .o3d-perf b { color: #ffffff; font-weight: 600; }
 
-/* A tela do monitor: posição e tamanho vêm do motor a cada quadro. */
+/*
+ * A tela do monitor: o motor dá o tamanho (o da tela na pose final do foco) e, a
+ * cada quadro, o matrix3d que leva os cantos aos do monitor projetado (a partir
+ * do 0,0 do palco). Sem will-change: o Chromium congelaria a escala do primeiro
+ * raster e o texto ficaria borrado depois do voo.
+ */
 .o3d-screen-anchor {
   position: absolute;
   left: 0;
   top: 0;
   z-index: 2;
-  min-width: 260px;
-  min-height: 160px;
+  transform-origin: 0 0;
   animation: o3d-screen-in 240ms ease-out;
 }
 

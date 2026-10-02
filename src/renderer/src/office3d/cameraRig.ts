@@ -139,11 +139,11 @@ export interface ViewSize {
   aspect: number
 }
 
-/** Meia largura/altura da tela do monitor (mesmas medidas da cena). */
+/** Meia largura/altura da tela do monitor (metade de SCREEN_W/SCREEN_H do kit.ts, a mesma tela da cena). */
 export const MONITOR_HALF_W = 0.44
 export const MONITOR_HALF_H = 0.25
-/** A face da tela fica um pouco à frente do centro do monitor. */
-export const MONITOR_SCREEN_FRONT = 0.03
+/** O plano da tela fica um pouco à frente do centro do monitor (decor.ts põe a tela aqui, na frente da moldura). */
+export const MONITOR_SCREEN_FRONT = 0.026
 export const MONITOR_FILL = 0.85
 const MONITOR_PITCH = 0.06
 /** Limite do enquadramento do prédio (o plano distante da câmera é 250). */

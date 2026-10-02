@@ -48,7 +48,8 @@ function setup(first: OfficeFeed) {
   }
   let t = 0
   const queue: FrameRequestCallback[] = []
-  const engine = new Office3DEngine(container, canvas, { onFocus: vi.fn(), onOpen: vi.fn() }, {
+  const onFocus = vi.fn()
+  const engine = new Office3DEngine(container, canvas, { onFocus, onOpen: vi.fn() }, {
     createRenderer: () => r,
     raf: (cb) => queue.push(cb),
     caf: () => void queue.splice(0),
@@ -58,6 +59,7 @@ function setup(first: OfficeFeed) {
   return {
     engine,
     canvas,
+    onFocus,
     renderer: r,
     sizes,
     pending: (): number => queue.length,
@@ -261,6 +263,35 @@ describe('Office3DEngine — voar até o agente', () => {
     s.wait(FOLLOW_GRACE_MS)
     expect(s.engine.follow('demo-2-0')).toBe(true)
     expect(s.engine.follow('nao-existe')).toBe(false)
+    s.engine.dispose()
+  })
+
+  it('follow da conversa do agente com a tela aberta (o clique nele a selecionou) não voa nem fecha a tela', () => {
+    const s = setup(demoFeed(Date.now()))
+    s.flush(2)
+    const fly = vi.spyOn(s.engine, 'flyToAgent')
+    s.engine.focus('conv:demo-0-2')
+    s.wait(FOLLOW_GRACE_MS) // a folga do gesto já passou: só a guarda segura o voo
+    expect(s.engine.follow('demo-0-2')).toBe(true)
+    expect(fly).not.toHaveBeenCalled()
+    expect(s.engine.focused).toBe('conv:demo-0-2')
+    // Outra conversa: voa e fecha a tela — e quem fechou foi o motor, não o usuário.
+    expect(s.engine.follow('demo-1-0')).toBe(true)
+    expect(fly).toHaveBeenLastCalledWith('conv:demo-1-0')
+    expect(s.engine.focused).toBeNull()
+    expect(s.onFocus).toHaveBeenLastCalledWith(null, false)
+    s.engine.dispose()
+  })
+
+  it('o agente focado que saiu do escritório fecha a tela sem ser o usuário (byUser false)', () => {
+    const first = demoFeed(Date.now())
+    const s = setup(first)
+    s.flush(2)
+    s.engine.focus('conv:demo-0-2')
+    expect(s.onFocus).toHaveBeenLastCalledWith('conv:demo-0-2', true)
+    s.emit({ ...first, conversations: first.conversations.filter((c) => c.id !== 'demo-0-2') })
+    expect(s.engine.focused).toBeNull()
+    expect(s.onFocus).toHaveBeenLastCalledWith(null, false)
     s.engine.dispose()
   })
 

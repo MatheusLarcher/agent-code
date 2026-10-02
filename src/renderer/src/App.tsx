@@ -129,6 +129,11 @@ import {
   revalidatesAuto,
   sessionStartFields
 } from './planning/planningConversation'
+import { CENTRAL_ID, CENTRAL_TITLE, isCentralConversation } from '@shared/central'
+import { centralConversationFields } from './central/centralRegistry'
+import { useCentralBoot } from './central/centralBoot'
+import { CENTRAL_TYPESAFE_MESSAGE, useCentralSend } from './central/centralSend'
+import { CentralPanel } from './central/CentralPanel'
 
 export type { UserMessage, UIMessage } from './types'
 
@@ -755,7 +760,8 @@ export function App(): JSX.Element {
   // Chamado com a conversa de ANTES do recuo (ver withFallbackTitle).
   const autoTitle = useCallback(
     (conv: Conversation, text: string): void => {
-      if (!wantsAutoTitle(conv, text)) return
+      // A Central tem nome fixo: nunca vai ao LLM de título.
+      if (isCentralConversation(conv) || !wantsAutoTitle(conv, text)) return
       pendingTitlesRef.current.add(conv.id)
       void (async () => {
         const llm = claudeUsageAllowsLlmTitle(usageLimitsRef.current) ? await requestLlmTitle(window.api, text, conv.id) : null
@@ -1398,8 +1404,11 @@ export function App(): JSX.Element {
       setBrowserWidth(ui.browserWidth)
       setUsageProviders(ui.usageProviders)
       setUsageAccounts(ui.usageAccounts ?? {})
+      // A Central só abre de cara se era ela a aberta; nunca como "a primeira da lista".
       setActiveId(
-        ui.activeId && loaded.some((c) => c.id === ui.activeId) ? ui.activeId : loaded[0]?.id ?? null
+        ui.activeId && loaded.some((c) => c.id === ui.activeId)
+          ? ui.activeId
+          : loaded.find((c) => !isCentralConversation(c))?.id ?? null
       )
       // Seed the badge from storage: live events win, EXCEPT when the live
       // value is a spurious zero and the stored snapshot is still valid —
@@ -1616,7 +1625,8 @@ export function App(): JSX.Element {
   // have been moved/deleted while the app was in the background).
   useEffect(() => {
     const conv = convsRef.current.find((c) => c.id === activeId)
-    if (!conv) {
+    // A Central não tem pasta: não há o que conferir.
+    if (!conv || isCentralConversation(conv)) {
       setProjectMissing(false)
       return
     }
@@ -1854,10 +1864,13 @@ export function App(): JSX.Element {
     // New conversations in a known project inherit that project's execution
     // modes; otherwise fall back to the active conversation's settings.
     // Conversas de planejamento não servem de molde: o modelo delas é o do
-    // Agent Manager (decidido no main), não uma escolha do usuário.
-    const sameFolder = convsRef.current.find((c) => c.cwd === folder && !isPlanningConversation(c))
+    // Agent Manager (decidido no main), não uma escolha do usuário. A Central
+    // também não: ela não roda agente.
+    const sameFolder = convsRef.current.find(
+      (c) => c.cwd === folder && !isPlanningConversation(c) && !isCentralConversation(c)
+    )
     const current = getActive()
-    const active = isPlanningConversation(current) ? null : current
+    const active = isPlanningConversation(current) || isCentralConversation(current) ? null : current
     // Modelo de provedor não conectado vai para o primeiro de um conectado.
     const model = modelForNewConversation(
       sameFolder?.model || active?.model || MODELS[0].id,
@@ -1890,7 +1903,9 @@ export function App(): JSX.Element {
       ...extra
     }
     setConversations((prev) => [conv, ...prev])
-    setProjectTotals((totals) => ({ ...totals, [folder]: (totals[folder] ?? 0) + 1 }))
+    if (!isCentralConversation(conv)) {
+      setProjectTotals((totals) => ({ ...totals, [folder]: (totals[folder] ?? 0) + 1 }))
+    }
     if (activate) setActiveId(conv.id)
     return conv
   }
@@ -1950,7 +1965,8 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!hydrated || bootSandboxChecked.current) return
     bootSandboxChecked.current = true
-    if (shouldOpenSandboxOnBoot(convsRef.current)) void openSandboxChat()
+    // A Central não conta: só ela carregada ainda é "nenhuma conversa".
+    if (shouldOpenSandboxOnBoot(convsRef.current.filter((c) => !isCentralConversation(c)))) void openSandboxChat()
   }, [hydrated])
 
   // "Novo planejamento" (barra lateral): o diálogo cria o plano no main ou
@@ -1993,7 +2009,8 @@ export function App(): JSX.Element {
   // atrasado é descartado) e, no planejamento, vira o título do roteiro.
   const renameConversation = useCallback(
     (id: string, title: string): void => {
-      if (!title.trim()) return
+      // A Central tem nome fixo (o celular também não a renomeia).
+      if (!title.trim() || id === CENTRAL_ID) return
       pendingTitlesRef.current.delete(id)
       patchConv(id, (c) => withUserTitle(c, title))
       syncPlanningTitle(convsRef.current.find((c) => c.id === id), title.trim())
@@ -2003,6 +2020,8 @@ export function App(): JSX.Element {
 
   const deleteConversation = useCallback(
     (id: string): void => {
+      // Há UMA Central, sempre: nem a barra nem o celular a apagam.
+      if (id === CENTRAL_ID) return
       const next = convsRef.current.filter((c) => c.id !== id)
       pendingTitlesRef.current.delete(id)
       void window.api.disposeAgent(id)
@@ -2027,7 +2046,7 @@ export function App(): JSX.Element {
         }))
       }
       setConversations(next)
-      if (activeIdRef.current === id) setActiveId(next[0]?.id ?? null)
+      if (activeIdRef.current === id) setActiveId(next.find((c) => !isCentralConversation(c))?.id ?? null)
     },
     [setConnected, setBusy]
   )
@@ -2077,6 +2096,8 @@ export function App(): JSX.Element {
 
   const connect = useCallback(
     (conv: Conversation, auto?: AutoPrompt): Promise<void> => {
+      // A Central nunca sobe sessão de agente: quem trabalha é a conversa do assunto.
+      if (isCentralConversation(conv)) return Promise.reject(new Error('A Central não sobe sessão de agente.'))
       // Em Automático a sessão é REVALIDADA a cada mensagem, mesmo já conectada:
       // o modelo do turno só se conhece depois que o main pergunta ao TypeSafe, e
       // o SDK fixa o modelo pela vida da sessão. Quando o par escolhido repete o
@@ -2402,6 +2423,8 @@ export function App(): JSX.Element {
        *  e vai no agent:send, onde o main a reconhece (nunca pelo texto). */
       mcpTaskId?: string
     ): Promise<void> => {
+      // A Central não despacha: o pedido dela vai para o roteador (central/centralSend.ts).
+      if (isCentralConversation(conv)) return
       // Project folder gone → don't process or send to the LLM; just warn.
       if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) return
 
@@ -2518,7 +2541,7 @@ export function App(): JSX.Element {
     async (convId: string, force = false): Promise<void> => {
       const conv = convsRef.current.find((c) => c.id === convId)
       const recovery = conv?.recovery
-      if (!conv || !recovery || (!force && recovery.scheduledAt <= 0)) return
+      if (!conv || isCentralConversation(conv) || !recovery || (!force && recovery.scheduledAt <= 0)) return
       if (!(await ensureProject(conv))) {
         patchConv(convId, (c) => ({ ...c, recovery: undefined }))
         setBusy(convId, false)
@@ -2670,7 +2693,7 @@ export function App(): JSX.Element {
   const retryMessage = useCallback(
     async (convId: string, msgId: string): Promise<void> => {
       const conv = convsRef.current.find((c) => c.id === convId)
-      if (!conv) return
+      if (!conv || isCentralConversation(conv)) return
       if (busyRef.current.has(convId)) return // a turn is already running here
       const msg = conv.messages.find((m) => m.kind === 'user' && m.id === msgId)
       if (!msg || msg.kind !== 'user') return
@@ -2741,21 +2764,43 @@ export function App(): JSX.Element {
     [patchConv]
   )
 
+  // A Central (regras em central/): carregada ou criada depois da hidratação, e
+  // o envio dela, que registra o pedido e chama o roteador — nunca o dispatch.
+  const ensureCentralLoaded = useCentralBoot({
+    hydrated,
+    convsRef,
+    loadByIds: loadConversationsByIds,
+    addLoaded: (conv) => setConversations((prev) => (prev.some((c) => c.id === conv.id) ? prev : [conv, ...prev])),
+    create: () => createConversation('', CENTRAL_ID, centralConversationFields(), false)
+  })
+  const { send: sendToCentral } = useCentralSend({
+    typesafeReady,
+    needTypesafe: () => needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE),
+    ensure: ensureCentralLoaded,
+    patchConv,
+    notifyError: (msg) => notify('erro', msg)
+  })
+
   // Commands arriving from a phone (phone → PC → Claude Code): route into the
   // matching conversation via the same dispatch path the composer uses.
   useEffect(() => {
     const off = window.api.onRemoteInbound(({ convId, text, images, files }) => {
+      const imgs = images ?? []
+      const thumbs = imgs.map((img) => `data:${img.mediaType};base64,${img.data}`)
+      // Para a Central: vira pedido nela (o roteador decide o destino).
+      if (convId === CENTRAL_ID) {
+        void sendToCentral(text, imgs, thumbs, files ?? [], [], 'phone')
+        return
+      }
       const conv = convsRef.current.find((c) => c.id === convId)
       if (!conv) {
         notify('aviso', 'Comando remoto para uma conversa inexistente foi ignorado.')
         return
       }
-      const imgs = images ?? []
-      const thumbs = imgs.map((img) => `data:${img.mediaType};base64,${img.data}`)
       void dispatch(conv, text, text, imgs, thumbs, files ?? [])
     })
     return off
-  }, [dispatch, notify])
+  }, [dispatch, notify, sendToCentral])
 
   // MCP de entrada: a tarefa entra pelo mesmo dispatch; a conversa nova nasce
   // ao fundo (sem trocar a que o usuário está vendo).
@@ -2781,7 +2826,8 @@ export function App(): JSX.Element {
   useEffect(() => {
     const off = window.api.onRemoteSetModel(({ convId, model, effort }) => {
       const conv = convsRef.current.find((c) => c.id === convId)
-      if (!conv || busyRef.current.has(convId)) return
+      // A Central não tem modelo próprio: quem roda é a conversa de destino.
+      if (!conv || isCentralConversation(conv) || busyRef.current.has(convId)) return
       if (model && model !== conv.model) changeModel(convId, model)
       if (effort && effort !== conv.effort) changeEffort(convId, effort)
     })
@@ -2949,12 +2995,21 @@ export function App(): JSX.Element {
   }, [])
 
   // "Automático" needs TypeSafe ligado + key. When missing, open Settings on
-  // that section instead of silently switching model.
-  const needTypesafeKey = useCallback((): void => {
-    notify('aviso', 'Ative o TypeSafe e informe a API key nas Configurações para usar o modo Automático.')
+  // that section instead of silently switching model. A Central usa o mesmo
+  // fluxo, com o aviso dela.
+  const needTypesafeKey = useCallback((message?: string): void => {
+    notify('aviso', message ?? 'Ative o TypeSafe e informe a API key nas Configurações para usar o modo Automático.')
     setSettingsFocus('typesafe')
     setSettingsOpen(true)
   }, [notify])
+
+  // Clique na Central (barra lateral): sempre a abre; sem TypeSafe, também
+  // leva às Configurações dele. Se a leitura do boot falhou, tenta de novo.
+  const selectCentral = useCallback((): void => {
+    setActiveId(CENTRAL_ID)
+    if (!typesafeReady) needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE)
+    if (!convsRef.current.some((c) => c.id === CENTRAL_ID)) void ensureCentralLoaded()
+  }, [typesafeReady, needTypesafeKey, ensureCentralLoaded])
 
   // Close Settings and re-read what it may have changed.
   const closeSettings = useCallback((): void => {
@@ -3144,7 +3199,8 @@ export function App(): JSX.Element {
   useEffect(
     () =>
       window.api.onRemoteSetMode(({ convId, mode, on }) => {
-        if (!convsRef.current.some((c) => c.id === convId)) return
+        // Econômico/loop/rápido são da sessão — e a Central não tem sessão.
+        if (convId === CENTRAL_ID || !convsRef.current.some((c) => c.id === convId)) return
         if (mode === 'economy') changeEconomyMode(convId, on)
         else if (mode === 'loop') changeLoopEnabled(convId, on)
         else changeFastMode(convId, on)
@@ -3154,7 +3210,8 @@ export function App(): JSX.Element {
   useEffect(
     () =>
       window.api.onRemoteConversationAction((action) => {
-        if (action.type === 'create') createConversation(action.cwd, action.convId)
+        // O id fixo da Central nunca vira conversa comum.
+        if (action.type === 'create' && action.convId !== CENTRAL_ID) createConversation(action.cwd, action.convId)
         else if (action.type === 'rename') renameConversation(action.convId, action.title)
         else if (action.type === 'delete') deleteConversation(action.convId)
       }),
@@ -3188,6 +3245,8 @@ export function App(): JSX.Element {
   const active = conversations.find((c) => c.id === activeId) ?? null
   // Conversa de planejamento: a tela troca o workspace pela Tela de Planejamento.
   const activePlanning = isPlanningConversation(active) ? active : null
+  // A Central: o painel dela entra no lugar do chat.
+  const activeCentral = active && isCentralConversation(active) ? active : null
   const activeConnected = activeId !== null && connectedIds.has(activeId)
   const showBusy = activeId !== null && busyIds.has(activeId)
   const activePermission = activeId ? permissions[activeId] : undefined
@@ -3379,8 +3438,10 @@ export function App(): JSX.Element {
   const [projectIcons, setProjectIcons] = useState<Record<string, string | null>>({})
   // Escritório: só publica o feed numa store fora do React (office/officeStore).
   useEffect(() => {
-    officeStore.publish({ conversations, activeId, busyIds, busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics,
-      memoristaDiagnostics, observersOn, stalledSince, tracks, projectIcons, usageLimits, speakingId })
+    // A Central não é agente de projeto: não ganha mesa no Escritório.
+    officeStore.publish({ conversations: conversations.filter((c) => !isCentralConversation(c)), activeId, busyIds,
+      busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics, memoristaDiagnostics, observersOn, stalledSince,
+      tracks, projectIcons, usageLimits, speakingId })
   }, [conversations, activeId, busyIds, busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics,
     memoristaDiagnostics, observersOn, stalledSince, tracks, projectIcons, usageLimits, speakingId])
   const iconRequested = useRef<Set<string>>(new Set())
@@ -3392,6 +3453,8 @@ export function App(): JSX.Element {
     // segundo plano ainda estão chegando (nome e total não custam payload).
     for (const summary of projectSummaries) map.set(summary.cwd, [])
     for (const c of conversations) {
+      // A Central fica fixa no topo da barra, fora dos grupos.
+      if (isCentralConversation(c)) continue
       const arr = map.get(c.cwd)
       if (arr) arr.push(c)
       else map.set(c.cwd, [c])
@@ -3464,7 +3527,11 @@ export function App(): JSX.Element {
   }, [projectPathsKey])
 
   const recents = useMemo<Conversation[]>(
-    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 15),
+    () =>
+      conversations
+        .filter((c) => !isCentralConversation(c))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 15),
     [conversations]
   )
 
@@ -3682,6 +3749,22 @@ export function App(): JSX.Element {
       onOpenAgents={openAgentsPanel}
     />
   )
+  // O painel da Central: no lugar do chat quando ela é a aberta (workspace e
+  // Escritório) e, no Escritório, no chat flutuante sem mesa selecionada.
+  const centralPanel = (central: Conversation): JSX.Element => (
+    <CentralPanel
+      conversation={central}
+      ready={typesafeReady}
+      onNeedTypesafe={() => needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE)}
+      onSend={(text, images, thumbs, files, fileRefs) => void sendToCentral(text, images, thumbs, files, fileRefs)}
+      onDraftChange={onDraftChange}
+      composerRef={composerRef}
+      projects={projects}
+    />
+  )
+  const mainChat = activeCentral ? centralPanel(activeCentral) : chatPanel
+  // A Central carregada (pode faltar antes do boot dela): o Escritório só a recebe com a aba aberta.
+  const centralConv = conversations.find((c) => c.id === CENTRAL_ID)
 
   return (
     <div className="app">
@@ -3715,6 +3798,7 @@ export function App(): JSX.Element {
         onRename={renameConversation}
         onDelete={deleteConversation}
         onSelectResult={selectConversationAt}
+        central={{ active: activeId === CENTRAL_ID, onSelect: selectCentral }}
       />
 
       <div className="main-area">
@@ -3722,9 +3806,12 @@ export function App(): JSX.Element {
           <div className="topbar-left">
           <div className="project readonly" title={active?.cwd || ''}>
             <span className="project-label">Projeto</span>
-            <span className="project-path">{active ? basename(active.cwd) : 'Nenhuma conversa'}</span>
+            <span className="project-path">
+              {activeCentral ? CENTRAL_TITLE : active ? basename(active.cwd) : 'Nenhuma conversa'}
+            </span>
           </div>
-          {active && (
+          {/* A Central não tem pasta: sem editor nem explorador. */}
+          {active && !activeCentral && (
             <button
               className="btn ghost editor-btn"
               title={`Abrir no VS Code · ${basename(active.cwd)}`}
@@ -3741,7 +3828,7 @@ export function App(): JSX.Element {
               </svg>
             </button>
           )}
-          {active && (
+          {active && !activeCentral && (
             <button
               className="btn ghost editor-btn"
               title={`Abrir a pasta no explorador · ${basename(active.cwd)}`}
@@ -3772,7 +3859,7 @@ export function App(): JSX.Element {
             <AccountsUsageBadge
               accounts={claudeAccountList}
               activeAccountId={active ? (active.claudeAccountId ?? 'default') : null}
-              canUseInConversation={!!active && !isOpenAIModel(active.model) && !isOllamaModel(active.model)}
+              canUseInConversation={!!active && !activeCentral && !isOpenAIModel(active.model) && !isOllamaModel(active.model)}
               gptLimits={Object.values(usageLimits).filter((l) => usageProviderOf(l.rateLimitType) === 'gpt')}
               shownInBar={usageAccounts}
               onShownInBarChange={setUsageAccounts}
@@ -3843,7 +3930,7 @@ export function App(): JSX.Element {
           />
         ) : (
         <div className="workspace" ref={workspaceRef}>
-          {chatPanel}
+          {mainChat}
           {/* O divisor vale para o painel da direita inteiro (navegador ou Quadro):
               sem ele, o painel ficava preso na largura padrão. */}
           {!browserMinimized && (
@@ -3926,12 +4013,14 @@ export function App(): JSX.Element {
         </div>
         )}
         {/* Aba Escritório: tela cheia no lugar do workspace (e da Tela de Planejamento),
-            com o MESMO chatPanel flutuando. Depois da 1ª abertura fica montado e pausado.
+            com o MESMO chatPanel flutuando (sem mesa selecionada, a Central). Depois da
+            1ª abertura fica montado e pausado.
             Uma falha no 3D vira um aviso com volta para a Conversa (não derruba o app). */}
         <OfficeErrorBoundary active={mainTab === 'office'} onBack={() => setMainTab('chat')}>
           <OfficeTabHost
             active={mainTab === 'office'}
-            chat={mainTab === 'office' ? chatPanel : null}
+            chat={mainTab === 'office' ? mainChat : null}
+            central={mainTab === 'office' && centralConv ? centralPanel(centralConv) : null}
             conversation={active}
             onOpenConversation={selectConversation}
             onOpenFile={(abs) => {

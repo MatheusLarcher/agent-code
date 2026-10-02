@@ -5,9 +5,11 @@
  * como o de verdade. O window.api é o mesmo dublê do App.test.tsx.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { isValidElement, type ReactElement } from 'react'
 import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { AgentEventMsg, ChatEvent } from '@shared/ipc'
 import { App } from './App'
+import { CentralPanel, type CentralPanelProps } from './central/CentralPanel'
 import type { Office3DWorkspaceProps } from './office3d/Office3DWorkspace'
 import { makePlan } from './planning/planningTestUtils'
 import { UiProvider } from './ui/UiProvider'
@@ -282,6 +284,36 @@ describe('App — aba Escritório', () => {
     act(() => office.props?.onDisableWindowsControl?.())
     await waitFor(() => expect(api.setWindowsControlEnabled).toHaveBeenCalledWith(false))
     await waitFor(() => expect(office.props?.windowsControlEnabled).toBe(false))
+  })
+
+  it('o Escritório recebe o painel da Central (sem mesa selecionada) só com a aba aberta', async () => {
+    seed([conv('c1', 'Conversa')], 'office')
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findByTestId('office-stub')
+    // O boot cria a Central ao fundo: a conversa ativa continua a c1.
+    await waitFor(() => expect(isValidElement(office.props?.central)).toBe(true))
+    const panel = office.props?.central as ReactElement<CentralPanelProps>
+    expect(panel.type).toBe(CentralPanel)
+    expect(panel.props.conversation.id).toBe('central')
+    expect(office.props?.conversation?.id).toBe('c1')
+    fireEvent.click(tab(/Conversa/))
+    await waitFor(() => expect(office.props?.active).toBe(false))
+    expect(office.props?.central).toBeNull()
+  })
+
+  it('a Central ainda não carregada (a leitura dela falhou): o Escritório recebe central null', async () => {
+    const original = api.loadVersionedConversations.getMockImplementation() as (req?: { ids?: string[] }) => Promise<unknown>
+    api.loadVersionedConversations.mockImplementation(async (req?: { ids?: string[] }) => {
+      if (req?.ids) throw new Error('banco fora do ar')
+      return original(req)
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    seed([conv('c1', 'Conversa')], 'office')
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findByTestId('office-stub')
+    await waitFor(() => expect(warn.mock.calls.some(([m]) => String(m).includes('[central]'))).toBe(true))
+    expect(office.props?.active).toBe(true)
+    expect(office.props?.central).toBeNull()
   })
 
   it('uma falha no 3D vira um aviso com "Voltar para a Conversa" (o app continua de pé)', async () => {

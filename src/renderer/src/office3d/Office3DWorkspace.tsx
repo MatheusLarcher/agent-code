@@ -1,9 +1,18 @@
 /**
  * O Escritório 3D em tela cheia: a aba "Escritório" da área principal
  * (components/MainTabs) ocupa tudo abaixo da barra superior, no lugar do
- * workspace e da Tela de Planejamento. O chat da conversa ativa (`chat`, o
- * MESMO ChatPanel do workspace) flutua por cima (OfficeChatFloat) e o HUD
- * (OfficeHud) traz a energia, o aviso do Controle do Windows e a legenda das teclas.
+ * workspace e da Tela de Planejamento. O chat flutua por cima (OfficeChatFloat)
+ * e o HUD (OfficeHud) traz a energia, o aviso do Controle do Windows e a legenda das teclas.
+ *
+ * O chat flutuante segue a mesa selecionada: com um agente focado (ou uma
+ * conversa escolhida fora do 3D) ele mostra a conversa ativa (`chat`, o MESMO
+ * ChatPanel do workspace); sem mesa, o painel da Central (`central`). Clicar
+ * num agente seleciona a conversa exata dele (`model.convId` — a mesma que o
+ * monitor mostra, sem decisor). O usuário desfazer a seleção (Esc, clique no
+ * vazio, × da tela, girar/arrastar/zoom/WASD) volta à Central sem trocar a
+ * conversa ativa; o motor fechar a tela sozinho (📍, follow, o agente saiu)
+ * não. Abrir a aba sem mesa mostra a Central; reabrir com um agente focado
+ * seleciona a conversa dele. Sem `central`, o chat é sempre a conversa ativa.
  *
  * O motor (three puro) nasce na montagem e vive enquanto a aba existir: com
  * `active` false (aba Conversa) ele fica PAUSADO — sem RAF, sem simulação, sem
@@ -22,7 +31,8 @@
  * balão de um pedido (permissão, pergunta) leva ao pedido (`onFocusRequest`:
  * o App seleciona a conversa e abre o modal); nos outros balões, foca o agente.
  * Trocar de conversa fora do 3D (sidebar) com a aba aberta voa até o agente
- * dela, salvo se o usuário mexeu na câmera há pouco (engine.follow); só a 1ª
+ * dela, salvo se o usuário mexeu na câmera há pouco ou se a tela aberta já é
+ * dela (engine.follow), e nunca para a Central (que não tem mesa); só a 1ª
  * conversa desde a montagem (o app acabou de carregar) não leva a câmera. O 📍
  * do chat minimiza o chat e voa até a mesa do agente. Os balões de fala são do
  * motor (speech.ts), numa camada DOM dentro do palco.
@@ -35,6 +45,7 @@
  */
 import './office3d.css'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { isCentralConversation } from '@shared/central'
 import { principalKey } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
 import { ChatPreview, useHoverPreview } from './ChatPreview'
@@ -50,10 +61,13 @@ import { ProjectorOverlay } from './ProjectorOverlay'
 export interface Office3DWorkspaceProps {
   /** A aba está à vista; false pausa o motor (padrão: true). */
   active?: boolean
-  /** O ChatPanel da conversa ativa; sem ele (aba fechada), sem chat flutuante. */
+  /** O ChatPanel da conversa ativa; sem ele e sem `central` (aba fechada), sem chat flutuante. */
   chat: ReactNode
+  /** O painel da Central: o chat flutuante o mostra quando nenhuma mesa está selecionada. Sem ele, sempre `chat`. */
+  central?: ReactNode
   /** A conversa ativa: cabeçalho do chat e o voo da câmera quando ela muda. */
   conversation?: OfficeConversation | null
+  /** Seleciona a conversa (clique ou duplo clique num agente, aba reaberta com um agente focado). */
   onOpenConversation: (convId: string) => void
   /** Sem uso desde que a tela do monitor segue o chat (o ToolCard abre o arquivo pelo Preview); mantido para o App. */
   onOpenFile?: (path: string) => void
@@ -82,6 +96,7 @@ export function isPowerShortcut(e: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 's
 export function Office3DWorkspace({
   active = true,
   chat,
+  central = null,
   conversation = null,
   onOpenConversation,
   onFocusRequest,
@@ -100,6 +115,8 @@ export function Office3DWorkspace({
   // Sobem a cada duplo clique num agente (o chat expande com a conversa dele) e a cada 📍 (minimiza).
   const [expand, setExpand] = useState(0)
   const [collapse, setCollapse] = useState(0)
+  // Nenhuma mesa selecionada (nem conversa escolhida fora do 3D): o chat flutuante mostra a Central.
+  const [showCentral, setShowCentral] = useState(true)
   const [, setTick] = useState(0)
   // Prévia do hover: o agente sob o mouse há PREVIEW_DELAY_MS. Telão: a sala cujo projetor foi clicado.
   const [previewKey, onHover] = useHoverPreview(active)
@@ -116,9 +133,26 @@ export function Office3DWorkspace({
     const canvas = canvasRef.current
     if (!stage || !canvas) return
     const callbacks: EngineCallbacks = {
-      onFocus: setFocusKey,
+      onFocus: (key, byUser) => {
+        setFocusKey(key)
+        // O motor fechou a tela sozinho (voo, follow, o agente saiu): o chat fica onde está.
+        if (!byUser) return
+        // O usuário desfez a seleção: sem mesa, a Central (a conversa ativa não muda).
+        if (!key) {
+          // O painel troca de conteúdo: o campo com foco nele (a roda não tira o foco) grava o rascunho antes, no blur.
+          const el = document.activeElement
+          if (el instanceof HTMLElement && el.closest('.o3d-chat')) el.blur()
+          return setShowCentral(true)
+        }
+        // Clique no agente: o chat vai para a conversa exata dele (a que o monitor mostra).
+        const conv = engineRef.current?.scene.character(key)?.model.convId
+        if (!conv) return
+        setShowCentral(false)
+        cbs.current.onOpenConversation(conv)
+      },
       onOpen: (convId) => {
         setExpand((n) => n + 1)
+        setShowCentral(false)
         cbs.current.onOpenConversation(convId)
       },
       onPower: setPower,
@@ -150,25 +184,36 @@ export function Office3DWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const convId = conversation?.id ?? null
+  const convIsCentral = isCentralConversation(conversation)
+
   // Aba fechada: motor montado e parado; de volta, retoma na hora (feed guardado,
   // palco remedido) e o componente re-renderiza com o que o motor tem agora —
   // a tela do monitor não mostra nada de antes da pausa. Antes da pintura.
+  // De volta, o chat segue a mesa selecionada: a conversa do agente que ficou
+  // focado (selecionada se não for a ativa) ou, sem mesa, a Central.
   useLayoutEffect(() => {
     const engine = engineRef.current
     if (!engine) return
     if (active) {
       engine.resume()
       setTick((t) => t + 1)
+      const key = engine.focused
+      const focusConv = key ? engine.scene.character(key)?.model.convId : undefined
+      setShowCentral(!focusConv)
+      if (focusConv && focusConv !== convId) cbs.current.onOpenConversation(focusConv)
     } else {
       engine.pause()
     }
+    // Só a troca de aba conta; a conversa ativa é a deste render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active])
 
-  // Conversa trocada fora do 3D com a aba aberta: a câmera vai até o agente dela.
-  // Só a 1ª conversa desde a montagem (o app acabou de carregar as conversas)
-  // não leva a câmera; depois, toda troca leva — inclusive id → null → id
-  // (apagar a última conversa e criar outra).
-  const convId = conversation?.id ?? null
+  // Conversa trocada fora do 3D com a aba aberta: o chat flutuante passa a
+  // mostrá-la e a câmera vai até o agente dela (a Central não tem mesa). Só a
+  // 1ª conversa desde a montagem (o app acabou de carregar as conversas) não
+  // conta; depois, toda troca conta — inclusive id → null → id (apagar a
+  // última conversa e criar outra).
   const seenConv = useRef(convId)
   const hadConv = useRef(convId !== null)
   useEffect(() => {
@@ -177,8 +222,10 @@ export function Office3DWorkspace({
     seenConv.current = convId
     const had = hadConv.current
     if (convId) hadConv.current = true
-    if (active && convId && had) engineRef.current?.follow(convId)
-  }, [convId, active])
+    if (!active || !convId || !had) return
+    setShowCentral(false)
+    if (!convIsCentral) engineRef.current?.follow(convId)
+  }, [convId, active, convIsCentral])
 
   // Aba fechada: o telão fecha.
   useEffect(() => {
@@ -239,7 +286,8 @@ export function Office3DWorkspace({
   // Estáveis: o motor só ouve quando a tela (ou a prévia) nasce ou some, não a cada render do App.
   const screenRef = useCallback((el: HTMLDivElement | null): void => engineRef.current?.setScreenElement(el), [])
   const previewRef = useCallback((el: HTMLDivElement | null): void => engineRef.current?.setPreviewElement(el), [])
-  const closeScreen = useCallback(() => engineRef.current?.leaveFocus(true), [])
+  // O × da tela é o usuário desfazendo a seleção (o chat volta à Central).
+  const closeScreen = useCallback(() => engineRef.current?.leaveFocus(true, true), [])
   const projector = active && projectorRoom && engine ? engine.scene.projectors.info(projectorRoom) : null
   const mirror = useCallback((el: HTMLCanvasElement | null): void => {
     if (projectorRoom) engineRef.current?.scene.projectors.mirror(projectorRoom, el)
@@ -257,6 +305,8 @@ export function Office3DWorkspace({
     setCollapse((n) => n + 1)
     engineRef.current?.flyToAgent(principalKey(id), 'desk')
   }, [])
+  // Sem mesa selecionada e com a Central à mão, o chat flutuante mostra a Central.
+  const centralShown = showCentral && !!central
 
   return (
     <div className="workspace office3d-workspace" hidden={!active} data-testid="office3d-workspace">
@@ -283,9 +333,15 @@ export function Office3DWorkspace({
         )}
         {import.meta.env.DEV && active && hud ? <PerfHud source={readEngine} /> : null}
       </div>
-      {active && chat ? (
-        <OfficeChatFloat conversation={conversation} expandSignal={expand} collapseSignal={collapse} onLocate={locate}>
-          {chat}
+      {active && (chat || central) ? (
+        <OfficeChatFloat
+          conversation={conversation}
+          central={centralShown || convIsCentral}
+          expandSignal={expand}
+          collapseSignal={collapse}
+          onLocate={locate}
+        >
+          {centralShown ? central : chat}
         </OfficeChatFloat>
       ) : null}
     </div>

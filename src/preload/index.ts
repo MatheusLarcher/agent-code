@@ -4,6 +4,7 @@ import type { AgentCodeApi } from '../shared/api'
 import type { AccountUsageResult, AddClaudeAccountResult, ClaudeAccountView, UseAccountResult } from '../shared/claudeAccounts'
 import type { TypeSafePauseStatus } from '../shared/typesafePause'
 import type { ChromeBridgeStatus } from '../shared/chromeBridge'
+import type { CentralCorrection, CentralRouteRequest, CentralRouteResult } from '../shared/central'
 import type {
   ConversationQueryDto,
   ProjectConversationCountDto,
@@ -269,6 +270,8 @@ const api: AgentCodeApi = {
   codexLogout: (): Promise<void> => ipcRenderer.invoke(Channels.codexLogout),
   sandboxInfo: (): Promise<{ root: string }> => ipcRenderer.invoke(Channels.sandboxInfo),
   sandboxCreate: (): Promise<SandboxCreateResult> => ipcRenderer.invoke(Channels.sandboxCreate),
+  centralRoute: (req: CentralRouteRequest): Promise<CentralRouteResult> => ipcRenderer.invoke(Channels.centralRoute, req),
+  centralCorrection: (c: CentralCorrection): Promise<void> => ipcRenderer.invoke(Channels.centralCorrection, c),
   providersStatus: (): Promise<ProvidersStatus> => ipcRenderer.invoke(Channels.providersStatus),
   onProvidersChanged: (cb: (status: ProvidersStatus) => void): (() => void) => on(Channels.providersChanged, cb),
 

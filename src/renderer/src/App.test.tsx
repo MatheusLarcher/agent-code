@@ -288,6 +288,13 @@ async function send(text: string): Promise<HTMLElement> {
   return ta
 }
 
+// A Central nasce no boot (ver central/) e a primeira gravação dela entra no
+// salvamento com debounce: quem conta gravações espera essa primeira assentar,
+// para medir só o que o próprio teste mudou.
+async function centralSettled(): Promise<void> {
+  await waitFor(() => expect(api.upsertConversation).toHaveBeenCalledWith(expect.objectContaining({ id: 'central' })))
+}
+
 // Paste a line that looks like a local path/URL — mirrors a real OS paste
 // (clipboardData with only text/plain, no file), driving the Composer's
 // onPaste exactly like Composer.draft.test.tsx-style tests do at this layer.
@@ -2178,18 +2185,21 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
     )
     expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
     await waitFor(() => expect(appCloseCb).toBeTypeOf('function'))
+    await centralSettled()
     api.upsertConversation.mockClear()
     api.kvSet.mockClear()
     api.appCloseReady.mockClear()
-    fireEvent.change(await screen.findByPlaceholderText(/Mensagem para o Claude/i), {
-      target: { value: 'rascunho antes de fechar' }
-    })
+    const box = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    fireEvent.change(box, { target: { value: 'rascunho antes de fechar' } })
+    // O Composer grava o rascunho na conversa ao perder o foco: é a gravação pendente.
+    fireEvent.blur(box)
 
     await act(async () => {
       appCloseCb?.()
     })
     await waitFor(() => expect(api.appCloseReady).toHaveBeenCalledTimes(1))
     expect(api.upsertConversation).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(api.upsertConversation.mock.calls[0][0])).toContain('rascunho antes de fechar')
     expect(api.kvSet).toHaveBeenCalledWith('agentcode.ui.v1', expect.any(String))
     expect(api.upsertConversation.mock.invocationCallOrder[0]).toBeLessThan(
       api.appCloseReady.mock.invocationCallOrder[0]
@@ -2204,19 +2214,22 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
       </UiProvider>
     )
     expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
+    await centralSettled()
     api.upsertConversation.mockClear()
     api.kvSet.mockClear()
     api.appReloadReady.mockClear()
     await waitFor(() => expect(appReloadCb).toBeTypeOf('function'))
-    fireEvent.change(await screen.findByPlaceholderText(/Mensagem para o Claude/i), {
-      target: { value: 'rascunho antes de recarregar' }
-    })
+    const box = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    fireEvent.change(box, { target: { value: 'rascunho antes de recarregar' } })
+    // O Composer grava o rascunho na conversa ao perder o foco: é a gravação pendente.
+    fireEvent.blur(box)
 
     await act(async () => {
       appReloadCb?.()
     })
     await waitFor(() => expect(api.appReloadReady).toHaveBeenCalledTimes(1))
     expect(api.upsertConversation).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(api.upsertConversation.mock.calls[0][0])).toContain('rascunho antes de recarregar')
     expect(api.kvSet).toHaveBeenCalledWith('agentcode.ui.v1', expect.any(String))
     expect(api.upsertConversation.mock.invocationCallOrder[0]).toBeLessThan(
       api.appReloadReady.mock.invocationCallOrder[0]
@@ -2473,6 +2486,7 @@ describe('App — gravação que atravessa uma queda do banco', () => {
       </UiProvider>
     )
     expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
+    await centralSettled()
     await act(async () => publish(ready))
 
     // O banco caiu: a gravação da resposta que chegou é recusada.

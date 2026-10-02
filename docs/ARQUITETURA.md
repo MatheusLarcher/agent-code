@@ -23,6 +23,8 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Memorista — o observador que grava memória sozinho](#memorista--o-observador-que-grava-memória-sozinho)
 - [Quadro de tarefas do projeto (trava do plano + agente PO)](#quadro-de-tarefas-do-projeto-trava-do-plano--agente-po)
 - [Tela de Planejamento (Agent Manager)](#tela-de-planejamento-agent-manager)
+- [Central — estado parcial e retomada](#central--estado-parcial-e-retomada)
+- [Escritório 3D: o chat flutuante segue a mesa](#escritório-3d-o-chat-flutuante-segue-a-mesa)
 - [Voz no chat (motor local)](#voz-no-chat-motor-local)
 - [Modelos via Ollama Cloud](#modelos-via-ollama-cloud)
 - [Pasta de dados (cache) e SQLite](#pasta-de-dados-cache-e-sqlite)
@@ -1157,6 +1159,35 @@ nem monta (`sessionStartFields`: o planejamento prevalece).
   painel estreito o rodapé do chat cresce já na primeira pintura e escondia a última mensagem:
   `useKeepEndOnResize` (`components/MessageListAnchor.tsx`) mantém no fim quem estava no fim quando a
   caixa da lista muda de tamanho, e deixa onde está quem rolou para ler o histórico.
+
+---
+
+## Central — estado parcial e retomada
+
+A Central já é uma conversa fixa (`id: 'central'`, `mode: 'central'`, `cwd: ''`), persistida e sem sessão própria. O índice de resumos e o IPC de roteamento/correção existem, mas **o envio ainda não os usa**: `centralSend.routeCentralRequest` é vazio e o `App` não passa uma implementação de `route`. Assim, o pedido aparece como `routing`, **sem chegar a uma conversa de destino**. O decisor/IPC está em revisão, e o piso 0,6 e idioma `en` ainda não foram calibrados. A linha de ações e o espelho existem somente como funções puras; o fluxo completo, adoção das demais conversas, tela v3 e celular permanecem pendentes. Ver [checkpoint de 02/10: estado, decisões humanas, próximos passos e riscos](CONTINUIDADE-2026-10-02.md); não tratar os contratos futuros desse documento como comportamento atual.
+
+---
+
+## Escritório 3D: o chat flutuante segue a mesa
+
+A aba **Escritório** (`src/renderer/src/office3d/`) mostra os agentes num escritório 3D, com o chat
+flutuando por cima (`OfficeChatFloat`, o mesmo painel do Agent Manager). O que esse chat mostra segue
+a **mesa selecionada**:
+
+- **Clique num agente** abre a tela do monitor dele e seleciona a conversa **exata do personagem**
+  (`OfficeCharacterModel.convId`): o principal é a conversa dele; o especialista da sala, a da trilha
+  que ocupa a cadeira; o PO, a do último diagnóstico; a memória, a da trilha (ou do memorista) mais
+  recente. É a mesma conversa que o monitor mostra — por isso não há decisor (TypeSafe) no meio.
+- **Sem mesa selecionada**, o chat mostra o **painel inicial da Central**, se já carregada (o mesmo
+  `CentralPanel`; o App só o passa com a aba aberta). O painel ainda não entrega pedidos roteados. O usuário desfazer a seleção — Esc, clique no vazio, × da
+  tela, girar/arrastar/zoom/WASD — volta à Central **sem trocar a conversa ativa** do app. Abrir a aba
+  sem mesa mostra a Central; reabri-la com um agente ainda focado seleciona a conversa dele.
+- **Quem fechou a tela importa** (`EngineCallbacks.onFocus(key, byUser)`): quando foi o motor — o voo
+  do 📍 (`flyToAgent`), o `follow`, o agente focado que saiu do escritório — o chat fica onde está.
+- **Conversa escolhida fora do 3D** (barra lateral, Quadro, balão de pedido) com a aba aberta aparece
+  no chat e leva a câmera até o agente dela (`engine.follow`; nunca para a Central, que não tem mesa).
+  O clique num agente também troca a conversa ativa, e o `follow` que isso dispara não pode fechar a
+  tela recém-aberta: com o agente daquela conversa focado, ele não voa.
 
 ---
 

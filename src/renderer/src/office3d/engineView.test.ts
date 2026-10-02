@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent } from '@testing-library/react'
 import { demoFeed } from './demoFeed'
 import { DEMO_LOOP_MS } from './demoTimeline'
 import { Office3DEngine, type RendererLike } from './engine'
 import { FAR_PIXEL_SCALE } from './lod'
+import { OfficeScene } from './scene'
 import { FAR_KINDS, MAX_BUBBLES, QUIP_TICK_MS } from './speech'
 
 const T0 = 14_916_667 * DEMO_LOOP_MS
@@ -83,10 +85,41 @@ describe('Office3DEngine — falas no palco', () => {
     const key = shown[0].dataset.key!
     shown[0].click()
     expect(engine.focused).toBe(key)
-    expect(onFocus).toHaveBeenCalledWith(key)
+    expect(onFocus).toHaveBeenCalledWith(key, true)
     // Em foco, o agente sai de cena (a tela do monitor abre): o balão dele some.
     flush(30)
     expect(visible().some((el) => el.dataset.key === key)).toBe(false)
+    engine.dispose()
+  })
+
+  it('onFocus diz quem fechou a tela: Esc, clique no vazio, roda e WASD são o usuário; flyToAgent é o motor', () => {
+    const { engine, flush, container, onFocus } = setup()
+    flush(3)
+    const canvas = container.querySelector('canvas')!
+    const open = (): void => {
+      engine.focus('conv:demo-0-2')
+      expect(onFocus).toHaveBeenLastCalledWith('conv:demo-0-2', true)
+    }
+    open()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    expect(onFocus).toHaveBeenLastCalledWith(null, true)
+    open()
+    vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(null)
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 5, clientY: 5 })
+    fireEvent.pointerUp(window, { button: 0, clientX: 5, clientY: 5 })
+    expect(onFocus).toHaveBeenLastCalledWith(null, true)
+    open()
+    canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, cancelable: true }))
+    expect(onFocus).toHaveBeenLastCalledWith(null, true)
+    open()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', cancelable: true }))
+    flush(1)
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w' }))
+    expect(onFocus).toHaveBeenLastCalledWith(null, true)
+    open()
+    expect(engine.flyToAgent('conv:demo-1-0')).toBe(true)
+    expect(engine.focused).toBeNull()
+    expect(onFocus).toHaveBeenLastCalledWith(null, false)
     engine.dispose()
   })
 

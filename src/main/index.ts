@@ -27,7 +27,7 @@ import { MCP_NO_CONTINUE_WARNING, NO_LIVE_SESSION } from '../shared/mcpInbound'
 import type { AccountSwitchDeps } from './accounts/switchDeps'
 import { ollamaSelectable, selectableModelIds } from '../shared/selectableModels'
 import { registerProviderStatusIpc } from './providerStatus'
-import { sandboxCreateResult, sandboxRoot } from './sandbox'
+import { isSandboxPath, sandboxCreateResult, sandboxRoot } from './sandbox'
 import { secondInstanceReveal, wantsMinimized } from './mcpInbound/windowStartup'
 import { RelayClient } from './remote/relayClient'
 import { RemotePairingStore } from './remote/remotePairing'
@@ -72,6 +72,7 @@ import {
 import { registerClaudeAccountsIpc } from './accounts/accountsIpc'
 import { setClaudeObserverEnvResolver } from './observerQuery'
 import { registerOutboxIpc } from './outboxIpc'
+import { registerCentralIpc, type CentralIpcHandle } from './central/centralIpc'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin, isCodexConnected } from './codexAuth'
 import { onCodexRateLimit } from './codexProxy'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
@@ -160,6 +161,8 @@ let stopRestartGuardFile: (() => void) | null = null
 let stopSleepGuard: (() => void) | null = null
 /** Handlers planning:* e os vigias de pasta deles (fechados ao sair). */
 let planningIpc: PlanningIpcHandle | null = null
+/** Handlers central:* e o índice de conversas da Central (aquecido depois do armazenamento). */
+let centralIpc: CentralIpcHandle | null = null
 // Os planejamentos moram na pasta de dados do app (<dataDir>/planning/<projeto>/),
 // a mesma das memórias: acompanham o usuário entre PCs. Lida a cada chamada —
 // o usuário pode trocar a pasta de dados com o app aberto.
@@ -1286,6 +1289,15 @@ export function registerIpc(): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener),
     repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null)
   })
+  // Central: decisor de destino (TypeSafe) e log de correções; a lógica mora em central/.
+  centralIpc = registerCentralIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    load: async (query) => storageLifecycle.repository().loadConversations(query),
+    subscribe: (handler) => storageLifecycle.subscribeChanges(handler),
+    sandboxRoot,
+    isSandbox: isSandboxPath,
+    correctionsFile: () => join(getCacheInfo().localDir, 'central', 'corrections.jsonl')
+  })
   ipcMain.handle(Channels.tasksDetail, async (_e, taskId: string) => {
     try {
       return await buildTaskDetail(taskLedger(), taskId)
@@ -2392,6 +2404,9 @@ app.whenReady().then(async () => {
   // A persistência já está pronta (ou já falhou de forma conhecida): só agora a
   // interface pode ler config e conversas sem tomar STORAGE_OFFLINE.
   send(Channels.storageStatusChanged, storageLifecycle.status())
+  // Índice da Central (lê todas as conversas) aquecido em segundo plano, alguns
+  // segundos depois: a 1ª mensagem da Central não espera essa carga.
+  if (storageAvailable) centralIpc?.prewarm()
   // Export DIÁRIO — e o arquivo do dia é o gate. `readExportSnapshot()` baixa
   // TODA conversa (payload inteiro) do backend autoritativo; com PostgreSQL
   // remoto isso são dezenas de MB pela internet, e rodava a cada abertura do
@@ -2483,4 +2498,5 @@ app.on('before-quit', (event) => {
   stopSleepGuard?.()
   stopSleepGuard = null
   planningIpc?.close()
+  centralIpc?.dispose()
 })

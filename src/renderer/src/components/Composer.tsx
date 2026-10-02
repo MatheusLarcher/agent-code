@@ -96,6 +96,14 @@ interface Props {
   /** "Comentar" (ver quoteComment/): o trecho entra como anexo inline no cursor
    *  e, no envio, vira "[trecho N]" + a citação no topo. */
   quoteLink?: ComposerQuoteLink
+  /** Texto do campo vazio no lugar do padrão (os avisos de sem sessão e de
+   *  pasta ausente continuam por cima). */
+  placeholder?: string
+  /** Esconde o escudo (revisão de código + commit + push). */
+  hideCodeReview?: boolean
+  /** Chamado logo antes de cada envio (Enter, botão de enviar, escudo): `false`
+   *  cancela — `onSend` não é chamado e o texto e os anexos ficam no campo. */
+  beforeSend?: () => boolean
 }
 
 /** Recording waveform (WhatsApp-style): number of bars in the scrolling strip and
@@ -770,6 +778,9 @@ export function Composer(props: Props): JSX.Element {
     if (refsOn) cardAc.sync(text, caret)
   }
 
+  // Quem usa o Composer pode recusar o envio (ex.: a Central sem TypeSafe).
+  const allowSend = (): boolean => props.beforeSend?.() ?? true
+
   const submit = (): void => {
     if (props.disabled || blocked) return
     if (resolvingCount > 0) return // still resolving pasted path(s)/URL(s)
@@ -777,6 +788,8 @@ export function Composer(props: Props): JSX.Element {
     const msg = media.serialize(value)
     const attached = msg.images.length + msg.files.length + msg.fileRefs.length
     if (!msg.text.trim() && msg.elements.length === 0 && attached === 0) return
+    // Recusado: nada sai e nada é limpo (texto, anexos e rascunho ficam como estão).
+    if (!allowSend()) return
     props.onSend(msg.text, msg.images, msg.files, msg.fileRefs, msg.elements)
     media.commitSend() // cópias do rascunho: a do arquivo enviado fica; as outras saem do disco
     media.reset()
@@ -1032,7 +1045,7 @@ export function Composer(props: Props): JSX.Element {
     ? 'Inicie uma sessão primeiro…'
     : blocked
       ? 'A pasta do projeto não existe mais — não dá para digitar.'
-      : 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'
+      : props.placeholder ?? 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'
 
   // O k-ésimo anexo do texto, no espelho: invisível, só ocupa o lugar. A miniatura
   // tem tamanho fixo no CSS, então vai sem `src` (não repete a data: URL da foto);
@@ -1278,14 +1291,18 @@ export function Composer(props: Props): JSX.Element {
             <IconStop size={14} />
           </button>
         )}
-        <button
-          className="ref-btn"
-          onClick={() => props.onSend(CODE_REVIEW_PROMPT, [], [], [], [])}
-          disabled={props.disabled || blocked}
-          title="Revisar código, corrigir e fazer commit + push (skill code-review --fix)"
-        >
-          <IconShieldCheck />
-        </button>
+        {!props.hideCodeReview && (
+          <button
+            className="ref-btn"
+            onClick={() => {
+              if (allowSend()) props.onSend(CODE_REVIEW_PROMPT, [], [], [], [])
+            }}
+            disabled={props.disabled || blocked}
+            title="Revisar código, corrigir e fazer commit + push (skill code-review --fix)"
+          >
+            <IconShieldCheck />
+          </button>
+        )}
         <button
           className="btn send"
           onClick={submit}

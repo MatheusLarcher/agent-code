@@ -309,6 +309,110 @@ describe('Escritório em aba: o chat flutuante', () => {
     renderOffice({ active: false, chat: null })
     expect(screen.queryByRole('region', { name: 'Escritório' })).toBeNull()
   })
+
+  it('a Central como conversa ativa: cabeçalho da Central (orbe, sem projeto nem 📍) e a câmera não voa para ela', () => {
+    const fly = vi.spyOn(Office3DEngine.prototype, 'flyToAgent')
+    const { view, all, panel } = renderOffice()
+    view.rerender(<Office3DWorkspace {...all} conversation={{ id: 'central', title: 'Central', cwd: '' }} />)
+    expect(fly).not.toHaveBeenCalled()
+    expect(panel().querySelector('.o3d-chat-head .central-orb')).toBeTruthy()
+    expect(panel().querySelector('.o3d-chat-title')?.textContent).toBe('Central')
+    expect(panel().querySelector('.o3d-chat-project')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Voar até a mesa do agente' })).toBeNull()
+    expect(panel().style.getPropertyValue('--o3d-agent')).toBe('var(--accent)')
+  })
+})
+
+describe('Escritório em aba: o chat segue a mesa selecionada (sem mesa, a Central)', () => {
+  /** Um principal que não é o da conversa ativa: o clique nele tem de trocar a conversa. */
+  const TARGET = 'dev-2-1'
+  function office(props: Partial<Office3DWorkspaceProps> = {}) {
+    const feed = syntheticFeed()
+    const target = layoutOffice(deriveOfficeModel(feed, Date.now())).characters.find((c) => c.model.convId === TARGET)!
+    const pick = vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
+    const raf = manualRaf()
+    const onOpenConversation = vi.fn()
+    const all: Office3DWorkspaceProps = {
+      chat: <div>chat</div>,
+      central: <div>central</div>,
+      conversation: CONV('dev-0-0'),
+      onOpenConversation,
+      engineOptions: { ...raf.opts, source: source(feed), createRenderer: fakeRenderer },
+      ...props
+    }
+    const view = render(<Office3DWorkspace {...all} />)
+    act(() => raf.flush())
+    const canvas = screen.getByTestId('office3d-canvas')
+    const click = (): void => {
+      fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
+      fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
+    }
+    const shows = (): string | null | undefined => screen.getByRole('region', { name: 'Escritório' }).querySelector('.pl-chat-float-body')?.textContent
+    const rerender = (p: Partial<Office3DWorkspaceProps>): void => view.rerender(<Office3DWorkspace {...all} {...p} />)
+    return { raf, pick, onOpenConversation, canvas, click, shows, rerender, screenOpen: () => !!screen.queryByTestId('office-screen') }
+  }
+
+  it('sem mesa, a Central; clique no agente seleciona a conversa exata dele e mostra o chat; a conversa chegando não fecha a tela', () => {
+    const o = office()
+    expect(o.shows()).toBe('central')
+    expect(screen.getByRole('region', { name: 'Escritório' }).querySelector('.o3d-chat-head .central-orb')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Voar até a mesa do agente' })).toBeNull()
+    o.click()
+    expect(o.onOpenConversation).toHaveBeenCalledWith(TARGET)
+    expect(o.shows()).toBe('chat')
+    // O App seleciona a conversa depois da folga do gesto: o follow dela não fecha a tela recém-aberta.
+    act(() => o.raf.flush(130))
+    o.rerender({ conversation: CONV(TARGET) })
+    expect(o.screenOpen()).toBe(true)
+    expect(o.shows()).toBe('chat')
+    expect(screen.getByRole('button', { name: 'Voar até a mesa do agente' })).toBeTruthy()
+  })
+
+  it('Esc, clique no vazio, × da tela e roda do mouse voltam à Central sem trocar a conversa; duplo clique volta ao chat', () => {
+    const o = office()
+    const undo: Array<() => void> = [
+      () => void fireEvent.keyDown(window, { key: 'Escape' }),
+      () => {
+        o.pick.mockReturnValueOnce(null)
+        o.click()
+      },
+      () => void fireEvent.click(screen.getByRole('button', { name: 'Fechar a tela' })),
+      () => void fireEvent.wheel(o.canvas, { deltaY: -120 })
+    ]
+    for (const run of undo) {
+      o.click()
+      expect(o.shows()).toBe('chat')
+      act(run)
+      expect(o.screenOpen()).toBe(false)
+      expect(o.shows()).toBe('central')
+    }
+    expect(o.onOpenConversation.mock.calls).toEqual(undo.map(() => [TARGET]))
+    fireEvent.doubleClick(o.canvas, { clientX: 50, clientY: 50 })
+    expect(o.shows()).toBe('chat')
+  })
+
+  it('roda do mouse com o campo do chat focado: o campo perde o foco (o Composer grava o rascunho) antes de virar a Central', () => {
+    const onBlur = vi.fn()
+    const o = office({ chat: <textarea aria-label="mensagem" onBlur={onBlur} /> })
+    o.click()
+    act(() => (screen.getByLabelText('mensagem') as HTMLTextAreaElement).focus())
+    fireEvent.wheel(o.canvas, { deltaY: -120 })
+    expect(o.shows()).toBe('central')
+    expect(onBlur).toHaveBeenCalledTimes(1)
+  })
+
+  it('conversa escolhida fora do 3D mostra o chat; o voo do follow que fecha a tela não volta à Central', () => {
+    const fly = vi.spyOn(Office3DEngine.prototype, 'flyToAgent')
+    const o = office()
+    o.rerender({ conversation: CONV('dev-1-0') })
+    expect(o.shows()).toBe('chat')
+    o.click()
+    act(() => o.raf.flush(130))
+    o.rerender({ conversation: CONV('dev-3-0') })
+    expect(fly).toHaveBeenLastCalledWith('conv:dev-3-0')
+    expect(o.screenOpen()).toBe(false)
+    expect(o.shows()).toBe('chat')
+  })
 })
 
 describe('Escritório em aba: HUD', () => {

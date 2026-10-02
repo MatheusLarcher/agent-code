@@ -50,8 +50,13 @@ export interface EngineOptions {
 }
 
 export interface EngineCallbacks {
-  /** Personagem enquadrado (tela aberta) ou null ao voltar. */
-  onFocus(key: string | null): void
+  /**
+   * Personagem enquadrado (tela aberta) ou null ao fechar. `byUser`: foi o
+   * usuário — clique no agente ou no balão, clique no vazio, Esc, × da tela,
+   * girar/arrastar/zoom/WASD; false quando o motor fecha sozinho (flyToAgent,
+   * follow, o focado que saiu do escritório).
+   */
+  onFocus(key: string | null, byUser: boolean): void
   /** Duplo clique no personagem. */
   onOpen(convId: string): void
   /** Clique no balão de um pedido (permissão, pergunta): leva ao pedido da conversa. Sem ele, o balão foca o agente. */

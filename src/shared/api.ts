@@ -85,6 +85,7 @@ import type {
 } from './claudeAccounts'
 import type { TypeSafePauseStatus } from './typesafePause'
 import type { ChromeBridgeStatus } from './chromeBridge'
+import type { CentralCorrection, CentralRouteRequest, CentralRouteResult } from './central'
 
 /** The surface exposed on `window.api` by the preload script. */
 export interface AgentCodeApi {
@@ -312,6 +313,10 @@ export interface AgentCodeApi {
   sandboxInfo(): Promise<{ root: string }>
   /** Cria a subpasta de uma conversa de sandbox; erro de disco vem em `error`. */
   sandboxCreate(): Promise<SandboxCreateResult>
+  /** Central: para onde vai a mensagem. Rejeita só com pedido inválido; falha do TypeSafe vira `ask` (`typesafe-failed`). */
+  centralRoute(req: CentralRouteRequest): Promise<CentralRouteResult>
+  /** Central: "não era aqui" — grava a correção no log local (calibração). Erro de disco não rejeita. */
+  centralCorrection(c: CentralCorrection): Promise<void>
   /** Claude / GPT / Ollama conectados? (nunca lança: falha = false). */
   providersStatus(): Promise<ProvidersStatus>
   /** main → renderer: login, logout ou config de provedor mudou. */

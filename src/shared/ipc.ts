@@ -2097,6 +2097,10 @@ export const Channels = {
   sandboxInfo: 'sandbox:info',
   /** Cria uma subpasta nova do sandbox para uma conversa. */
   sandboxCreate: 'sandbox:create',
+  /** Central: para onde vai a mensagem (TypeSafe). Rejeita só pedido inválido; falha do TypeSafe vira "ask". */
+  centralRoute: 'central:route',
+  /** Central: "não era aqui" — uma linha no log local de correções (calibração). */
+  centralCorrection: 'central:correction',
   /** Claude / GPT / Ollama conectados? */
   providersStatus: 'providers:status',
   /** main → renderer: um login, logout ou config de provedor mudou. */

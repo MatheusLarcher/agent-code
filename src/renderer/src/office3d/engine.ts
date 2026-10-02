@@ -24,9 +24,11 @@
  * do projetor: `onProjector`), duplo clique abre a conversa e o hover vai para
  * `onHover` (a prévia, que `setPreviewElement` põe acima do monitor dele). Os
  * quadros do navegador da conversa ativa (browserFrames.ts) vão para os
- * projetores. O balão de um pedido chama `onFocusRequest(convId)`.
+ * projetores. O balão de um pedido chama `onFocusRequest(convId)`. `onFocus`
+ * diz se foi o usuário que abriu/fechou a tela (`byUser`; o motor sozinho não).
  * `flyToAgent`/`follow` voam até um agente sem abrir a tela (`follow` respeita
- * FOLLOW_GRACE_MS desde o último gesto do usuário na câmera).
+ * FOLLOW_GRACE_MS desde o último gesto do usuário na câmera e não sai da tela
+ * aberta do agente daquela conversa).
  */
 import { PerspectiveCamera, Vector3 } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
@@ -135,7 +137,7 @@ export class Office3DEngine {
   /** Ponteiro (pointerInput.ts): girar/arrastar, clique, duplo clique, roda e hover. */
   private bindPointer(): PointerInput {
     const camera = (): void => {
-      this.leaveFocus(false)
+      this.leaveFocus(false, true)
       this.userMoved()
       this.requestRender()
     }
@@ -153,7 +155,7 @@ export class Office3DEngine {
         this.userCamAt = this.now()
         if (key?.startsWith(PROJECTOR_KEY)) return this.cb.onProjector?.(key.slice(PROJECTOR_KEY.length))
         if (key) this.focus(key)
-        else this.leaveFocus(true)
+        else this.leaveFocus(true, true)
       },
       open: (key) => {
         const conv = key ? this.scene.character(key)?.model.convId : undefined
@@ -175,7 +177,7 @@ export class Office3DEngine {
       if (e.key === 'Escape' && this.focusedKey && !isTypingTarget(e.target)) {
         e.preventDefault()
         this.userCamAt = this.now()
-        this.leaveFocus(true)
+        this.leaveFocus(true, true)
         return
       }
       if (this.keys.down(e)) {
@@ -321,7 +323,7 @@ export class Office3DEngine {
   }
 
   /** Voa até o monitor do personagem e abre a tela (ele olha para a câmera e acena). */
-  focus(key: string): void {
+  focus(key: string, byUser = true): void {
     const to = this.focusPose(key)
     if (!to) return
     if (!this.focusedKey) this.returnPose = { ...this.rig.pose }
@@ -330,12 +332,12 @@ export class Office3DEngine {
     this.focusedKey = key
     this.scene.setFocus(key)
     this.scene.greet(key)
-    this.cb.onFocus(key)
+    this.cb.onFocus(key, byUser)
     this.requestRender()
   }
 
-  /** Fecha a tela; com `back`, volta à câmera de antes do foco (e o agente dá tchau). */
-  leaveFocus(back: boolean): void {
+  /** Fecha a tela; com `back`, volta à câmera de antes do foco (e o agente dá tchau). `byUser`: foi o usuário. */
+  leaveFocus(back: boolean, byUser = false): void {
     const key = this.focusedKey
     if (!key) return
     this.focusedKey = null
@@ -345,7 +347,7 @@ export class Office3DEngine {
       this.scene.greet(key)
     }
     this.returnPose = null
-    this.cb.onFocus(null)
+    this.cb.onFocus(null, byUser)
     this.requestRender()
   }
 
@@ -364,6 +366,8 @@ export class Office3DEngine {
   /** Conversa escolhida fora do 3D: voa até o agente dela (agente que ainda não chegou: no próximo feed). */
   follow(convId: string): boolean {
     this.followNext = null
+    // A conversa do agente com a tela aberta (o clique nele a selecionou): a câmera já está lá.
+    if (this.focusedKey && this.scene.character(this.focusedKey)?.model.convId === convId) return true
     if (this.now() - this.userCamAt < FOLLOW_GRACE_MS) return false
     if (this.flyToAgent(principalKey(convId))) return true
     this.followNext = convId
@@ -454,7 +458,7 @@ export class Office3DEngine {
     this.lastFrame = now
     const { dx, dz } = moveDelta(this.keys, this.rig.pose.yaw, dt, this.wasd)
     if (dx !== 0 || dz !== 0) {
-      this.leaveFocus(false)
+      this.leaveFocus(false, true)
       this.userMoved()
       this.rig.move(dx, dz)
     }

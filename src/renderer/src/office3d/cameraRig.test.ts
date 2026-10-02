@@ -15,6 +15,7 @@ import {
   TWEEN_MS,
   type CameraPose
 } from './cameraRig'
+import { SCREEN_H, SCREEN_W } from './kit'
 import { buildingBounds, layoutOffice } from './layout'
 
 const FOV = 50
@@ -41,6 +42,11 @@ function screenFill(aspect: number): { w: number; h: number } {
 }
 
 describe('monitorPose', () => {
+  it('o monitor da câmera tem as medidas da tela desenhada na cena (kit.ts)', () => {
+    expect(MONITOR_HALF_W * 2).toBe(SCREEN_W)
+    expect(MONITOR_HALF_H * 2).toBe(SCREEN_H)
+  })
+
   it('palco largo (16:9): a altura limita e a tela ocupa ~85% dela', () => {
     const f = screenFill(16 / 9)
     expect(f.h).toBeCloseTo(MONITOR_FILL, 1)

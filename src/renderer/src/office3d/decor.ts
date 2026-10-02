@@ -34,6 +34,7 @@ import {
   type BufferGeometry,
   type Material
 } from 'three'
+import { MONITOR_SCREEN_FRONT } from './cameraRig'
 import { DOOR_HEIGHT, MACHINE_OFFSET, PUFE_RADIUS, roomFurniture, type RoomFurniture } from './furniture'
 import type { Kit, ScreenStatus } from './kit'
 import { DESK_HEIGHT, MONITOR_BACK, MONITOR_Y, type RoomLayout } from './layout'
@@ -393,7 +394,7 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
     posts.push(P(desk.x, SEAT_Y / 2, desk.z + 0.85, 0.06, SEAT_Y - 0.04, 0.06))
     bases.push(P(desk.x, 0.03, desk.z + 0.85, 0.5, 0.04, 0.5))
     const screen = new Mesh(kit.geo.screen, kit.mat.screenOff)
-    screen.position.set(desk.x, MONITOR_Y, mz + 0.026)
+    screen.position.set(desk.x, MONITOR_Y, mz + MONITOR_SCREEN_FRONT)
     screen.userData.charKey = null
     g.add(screen)
     screens.push({ mesh: screen, state: 'off', on: null, page: null, accent: '', status: 'idle' })
