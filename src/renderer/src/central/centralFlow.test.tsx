@@ -282,14 +282,28 @@ describe('Central — gate do TypeSafe e painel', () => {
     expect(document.querySelector('.token-meter')).toBeNull()
   })
 
-  it('enviar registra o pedido "routing" e NÃO sobe sessão de agente', async () => {
+  it('enviar registra o pedido (deste PC), vai ao roteador e NÃO sobe sessão de agente', async () => {
     mount()
     fireEvent.click(await centralItem())
     const p = await panel()
     await typeAndEnter(within(p).getByRole('textbox', { name: 'Mensagem' }), 'o botão ficou torto')
     expect(await within(p).findByText('o botão ficou torto')).toBeTruthy()
+    // Este dublê não tem o IPC central:route: a Central pergunta com a heurística (nada se perde).
     await waitFor(() =>
-      expect(storedCentral()).toMatchObject({ central: { entries: [{ kind: 'request', state: 'routing', text: 'o botão ficou torto' }] } })
+      expect(storedCentral()).toMatchObject({
+        central: {
+          entries: [
+            {
+              kind: 'request',
+              state: 'asking',
+              origin: 'central',
+              device: '00000000-0000-4000-8000-000000000001',
+              text: 'o botão ficou torto',
+              ask: { reason: 'typesafe-failed', options: [{ target: { kind: 'new-sandbox' } }] }
+            }
+          ]
+        }
+      })
     )
     expect(api.startAgent).not.toHaveBeenCalled()
     expect(api.sendMessage).not.toHaveBeenCalled()
@@ -330,7 +344,7 @@ describe('Central — gate do TypeSafe e painel', () => {
 })
 
 describe('Central — celular', () => {
-  it('mensagem do celular para a Central vira pedido (só nomes de anexo), sem dispatch', async () => {
+  it('mensagem do celular para a Central vira pedido (só nomes de anexo) e é roteada, sem dispatch', async () => {
     mount()
     await waitFor(() => expect(storedCentral()).toBeTruthy())
     await waitFor(() => expect(inboundCb).not.toBeNull())
@@ -339,7 +353,7 @@ describe('Central — celular', () => {
     })
     await waitFor(() =>
       expect(storedCentral()).toMatchObject({
-        central: { entries: [{ kind: 'request', state: 'routing', text: 'quanto tá o dólar?', attachments: ['imagem'] }] }
+        central: { entries: [{ kind: 'request', state: 'asking', text: 'quanto tá o dólar?', attachments: ['imagem'] }] }
       })
     )
     // Os bytes ficam em memória, nunca no payload da Central.

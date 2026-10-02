@@ -8,7 +8,7 @@
  */
 import { useCallback, useRef, type MutableRefObject } from 'react'
 import type { FileAttachment, FileRefAttachment, ImageAttachment } from '@shared/ipc'
-import { CENTRAL_ID } from '@shared/central'
+import { CENTRAL_ID, type CentralRequestEntry } from '@shared/central'
 import type { Conversation } from '../types'
 import { appendCentralEntry, centralAttachmentNames, newCentralRequest } from './centralRegistry'
 
@@ -25,8 +25,8 @@ export interface CentralPayload {
   fileRefs: FileRefAttachment[]
 }
 
-/** Onde o pedido entra no roteamento. Por ora não faz nada: a Etapa 5 decide o
- *  destino (TypeSafe) e entrega o payload guardado pelo id da entrada. */
+/** Onde o pedido entraria no roteamento sem `deps.route`: nada. Quem roteia é o
+ *  `useCentral` (centralDelivery.ts), que passa o `route` dele. */
 export function routeCentralRequest(_entryId: string, _payload: CentralPayload): void {}
 
 export interface CentralSendDeps {
@@ -40,6 +40,8 @@ export interface CentralSendDeps {
   /** Aviso quando a Central não pôde ser carregada. */
   notifyError: (msg: string) => void
   route?: (entryId: string, payload: CentralPayload) => void
+  /** `installationId` deste PC: o dono do pedido na Central (os dois PCs a dividem). */
+  device?: string
 }
 
 /** De onde veio o pedido: do campo da Central ou do celular. */
@@ -79,7 +81,11 @@ export function useCentralSend(deps: CentralSendDeps): {
       d.notifyError('A Central ainda não carregou. Tente de novo em instantes.')
       return false
     }
-    const entry = newCentralRequest(text, centralAttachmentNames(images, files, fileRefs))
+    const entry: CentralRequestEntry = {
+      ...newCentralRequest(text, centralAttachmentNames(images, files, fileRefs)),
+      origin: 'central',
+      ...(d.device ? { device: d.device } : {})
+    }
     const payload: CentralPayload = { text, images, thumbs, files, fileRefs }
     payloads.current.set(entry.id, payload)
     d.patchConv(CENTRAL_ID, (c) => ({ ...c, central: appendCentralEntry(c.central, entry), updatedAt: entry.ts }))

@@ -132,7 +132,8 @@ import {
 import { CENTRAL_ID, CENTRAL_TITLE, isCentralConversation } from '@shared/central'
 import { centralConversationFields } from './central/centralRegistry'
 import { useCentralBoot } from './central/centralBoot'
-import { CENTRAL_TYPESAFE_MESSAGE, useCentralSend } from './central/centralSend'
+import { CENTRAL_TYPESAFE_MESSAGE } from './central/centralSend'
+import { useCentral, type UseCentralResult } from './central/useCentral'
 import { CentralPanel } from './central/CentralPanel'
 
 export type { UserMessage, UIMessage } from './types'
@@ -176,6 +177,11 @@ const AUTO_HISTORY_TURNS = 6
 /** Corte por fala. Uma resposta de 40 mil caracteres não classifica melhor a
  *  mensagem seguinte do que o começo dela. */
 const AUTO_HISTORY_CHARS = 1000
+
+/** "Não era aqui" com o turno rodando: se o turno parado não emitir o fim dele (o
+ *  Stop pegou a mensagem antes de o turno começar), a fila mantida sai depois
+ *  disto, contado do recibo do Stop. */
+const STOP_SETTLE_MS = 3000
 
 /** O modelo que a conversa está DE FATO rodando. Em Automático o campo `model`
  *  guarda o sentinel, e quem precisa de uma propriedade do modelo real (o teto
@@ -271,6 +277,9 @@ interface QueuedMessage {
   fileRefs: FileRefAttachment[]
   /** Tarefa do MCP de entrada que este item leva (ver useMcpInbound). */
   mcpTaskId?: string
+  /** Id já decidido da bolha (âncora da Central, ou o mesmo turno de volta à fila):
+   *  quando o item sair da fila, a bolha nasce com ESTE id. */
+  msgId?: string
 }
 
 /** Valida um item da fila vindo do banco (o formato do QueuedMessage, sem id/convId). */
@@ -283,7 +292,8 @@ function isQueuedPayload(value: unknown): value is Omit<QueuedMessage, 'id' | 'c
     Array.isArray(v.images) &&
     Array.isArray(v.thumbs) &&
     Array.isArray(v.files) &&
-    Array.isArray(v.fileRefs)
+    Array.isArray(v.fileRefs) &&
+    (v.msgId === undefined || typeof v.msgId === 'string')
   )
 }
 
@@ -720,6 +730,13 @@ export function App(): JSX.Element {
   // consts directly, which would throw (TDZ) on every render.
   const connectRef = useRef<((conv: Conversation, auto?: AutoPrompt) => Promise<void>) | null>(null)
   const stopSessionRef = useRef<((id: string, opts?: { silent?: boolean }) => Promise<void>) | null>(null)
+  // O hook da Central (central/useCentral.ts) nasce depois destes caminhos: os
+  // pontos que criam a bolha do usuário o alcançam por esta ref (adoção, Emenda A1).
+  const centralRef = useRef<UseCentralResult | null>(null)
+  // "Não era aqui" com o turno rodando: o Stop que MANTÉM a fila da conversa. Com a
+  // conversa aqui, a fila sai uma vez quando o Stop assenta (ver releaseKeptQueue).
+  const keepQueueStopRef = useRef<Map<string, ReturnType<typeof setTimeout> | undefined>>(new Map())
+  const releaseKeptQueueRef = useRef<((cid: string) => void) | null>(null)
 
   const getActive = (): Conversation | null =>
     convsRef.current.find((c) => c.id === activeIdRef.current) ?? null
@@ -850,8 +867,10 @@ export function App(): JSX.Element {
           if (!plan) return
           delete inflightRef.current[cid]
           patchConv(cid, (c) => ({ ...c, messages: withoutBubble(c.messages, plan.bubbleId) }))
-          queueRef.current = [plan.item, ...queueRef.current]
-          setQueue((q) => [plan.item, ...q])
+          // A bolha volta com o MESMO id: a âncora da Central continua valendo.
+          const item: QueuedMessage = { ...plan.item, msgId: plan.bubbleId }
+          queueRef.current = [item, ...queueRef.current]
+          setQueue((q) => [item, ...q])
           setBusy(cid, false)
           setBusySince((m) => withoutKey(m, cid))
           return
@@ -862,7 +881,7 @@ export function App(): JSX.Element {
         if (!conv || !head) return
         queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
         setQueue((q) => q.filter((m) => m.id !== head.id))
-        void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId)
+        void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
         return
       }
       // Agents panel: `Task` calls open a track, subagent calls feed it, and the
@@ -1095,7 +1114,7 @@ export function App(): JSX.Element {
               queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
               setQueue((q) => q.filter((m) => m.id !== head.id))
               const idle = { ...conv, recovery: undefined }
-              void dispatchRef.current?.(idle, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId)
+              void dispatchRef.current?.(idle, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
             }
             return
           }
@@ -1143,6 +1162,14 @@ export function App(): JSX.Element {
         // "busy" through the handoff; only when the queue is empty do we go idle.
         delete inflightRef.current[cid]
         patchConv(cid, (c) => ({ ...c, recovery: undefined }))
+        // Fim do turno que o "não era aqui" parou mantendo a fila: a conversa fica
+        // parada e a fila sai pelo despacho normal (turno novo), uma vez só.
+        if (keepQueueStopRef.current.has(cid)) {
+          setBusy(cid, false)
+          setBusySince((m) => withoutKey(m, cid))
+          releaseKeptQueueRef.current?.(cid)
+          return
+        }
         // A session-bound setting (model, effort, Loop or Econômico) changed
         // while busy — apply it now, at the handoff, by restarting the live
         // session (same resume id, so history carries over) before the next
@@ -1152,7 +1179,7 @@ export function App(): JSX.Element {
         const next = queueRef.current.find((m) => m.convId === cid)
         if (next) {
           setQueue((cur) => cur.filter((m) => m.id !== next.id))
-          const nextMsgId = uid('u')
+          const nextMsgId = next.msgId ?? uid('u')
           const beforeTitle = convsRef.current.find((c) => c.id === cid)
           patchConv(cid, (c) => ({
             ...withFallbackTitle(c, readableMediaText(next.text)),
@@ -1168,7 +1195,18 @@ export function App(): JSX.Element {
             ],
             updatedAt: Date.now()
           }))
-          if (beforeTitle) autoTitle(beforeTitle, readableMediaText(next.text))
+          if (beforeTitle) {
+            autoTitle(beforeTitle, readableMediaText(next.text))
+            centralRef.current?.adopt({
+              conv: beforeTitle,
+              msgId: nextMsgId,
+              text: next.text,
+              images: next.images,
+              files: next.files,
+              fileRefs: next.fileRefs,
+              preset: !!next.msgId
+            })
+          }
           const sdkUuid = crypto.randomUUID()
           inflightRef.current[cid] = {
             msgId: nextMsgId,
@@ -1247,7 +1285,7 @@ export function App(): JSX.Element {
             if (after && conv) {
               queueRef.current = queueRef.current.filter((m) => m.id !== after.id && m.id !== next.id)
               setQueue((q) => q.filter((m) => m.id !== after.id))
-              void dispatchRef.current?.(conv, after.full, after.text, after.images, after.thumbs, after.files, after.fileRefs, true, after.mcpTaskId)
+              void dispatchRef.current?.(conv, after.full, after.text, after.images, after.thumbs, after.files, after.fileRefs, true, after.mcpTaskId, after.msgId)
             }
           })
           setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
@@ -1282,7 +1320,9 @@ export function App(): JSX.Element {
       // A background conversation's permission modal isn't visible (only the
       // active one renders) — toast so the user knows that chat is waiting,
       // otherwise its session (and queue) would silently freeze.
-      if (convId !== activeIdRef.current) {
+      // Com a Central aberta, a pergunta de um destino dela já aparece lá: sem toast.
+      const shownInCentral = activeIdRef.current === CENTRAL_ID && centralRef.current?.hasActiveAnchor(convId) === true
+      if (convId !== activeIdRef.current && !shownInCentral) {
         const title = convsRef.current.find((c) => c.id === convId)?.title ?? 'Outra conversa'
         const what = req.questions ? 'uma resposta' : 'uma permissão'
         notify('aviso', `“${title}” está aguardando ${what}.`)
@@ -2421,7 +2461,10 @@ export function App(): JSX.Element {
       fromQueue = false,
       /** Tarefa do MCP de entrada que esta mensagem leva: anda com ela pela fila
        *  e vai no agent:send, onde o main a reconhece (nunca pelo texto). */
-      mcpTaskId?: string
+      mcpTaskId?: string,
+      /** Id já decidido da bolha (a âncora da Central): anda pela fila e a bolha
+       *  — e o `inflightRef` — nascem com ele, saia agora ou depois da fila. */
+      presetMsgId?: string
     ): Promise<void> => {
       // A Central não despacha: o pedido dela vai para o roteador (central/centralSend.ts).
       if (isCentralConversation(conv)) return
@@ -2447,7 +2490,8 @@ export function App(): JSX.Element {
           thumbs,
           files,
           fileRefs,
-          ...(mcpTaskId ? { mcpTaskId } : {})
+          ...(mcpTaskId ? { mcpTaskId } : {}),
+          ...(presetMsgId ? { msgId: presetMsgId } : {})
         }
         queueRef.current = [...queueRef.current, item]
         setQueue((q) => [...q, item])
@@ -2458,7 +2502,7 @@ export function App(): JSX.Element {
           if (head) {
             queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
             setQueue((q) => q.filter((m) => m.id !== head.id))
-            void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId)
+            void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
           }
         }
         return
@@ -2468,7 +2512,7 @@ export function App(): JSX.Element {
       // concurrent send queues instead of starting a duplicate session) and show
       // the user's message immediately. Doing this before `await connect` is what
       // closes the connect-window race.
-      const msgId = uid('u')
+      const msgId = presetMsgId ?? uid('u')
       interruptedRef.current.delete(conv.id) // fresh turn: clear any stale stop flag
       setBusy(conv.id, true)
       setBusySince((m) => ({ ...m, [conv.id]: Date.now() }))
@@ -2488,6 +2532,7 @@ export function App(): JSX.Element {
         updatedAt: Date.now()
       }))
       autoTitle(beforeTitle, readableMediaText(text))
+      centralRef.current?.adopt({ conv: beforeTitle, msgId, text, images, files, fileRefs, preset: !!presetMsgId })
       // Remember this as the in-flight message so a failing turn can mark it.
       const sdkUuid = crypto.randomUUID()
       inflightRef.current[conv.id] = { msgId, sdkUuid, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
@@ -2520,7 +2565,7 @@ export function App(): JSX.Element {
           if (head && fresh) {
             queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
             setQueue((q) => q.filter((m) => m.id !== head.id))
-            void dispatchRef.current?.(fresh, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId)
+            void dispatchRef.current?.(fresh, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
           }
           return
         }
@@ -2764,21 +2809,17 @@ export function App(): JSX.Element {
     [patchConv]
   )
 
-  // A Central (regras em central/): carregada ou criada depois da hidratação, e
-  // o envio dela, que registra o pedido e chama o roteador — nunca o dispatch.
+  // A Central (regras em central/): carregada ou criada depois da hidratação. O
+  // resto (envio, entrega, espelho) é o useCentral, mais abaixo.
+  const addLoadedConversation = useCallback((conv: Conversation): void => {
+    setConversations((prev) => (prev.some((c) => c.id === conv.id) ? prev : [conv, ...prev]))
+  }, [])
   const ensureCentralLoaded = useCentralBoot({
     hydrated,
     convsRef,
     loadByIds: loadConversationsByIds,
-    addLoaded: (conv) => setConversations((prev) => (prev.some((c) => c.id === conv.id) ? prev : [conv, ...prev])),
+    addLoaded: addLoadedConversation,
     create: () => createConversation('', CENTRAL_ID, centralConversationFields(), false)
-  })
-  const { send: sendToCentral } = useCentralSend({
-    typesafeReady,
-    needTypesafe: () => needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE),
-    ensure: ensureCentralLoaded,
-    patchConv,
-    notifyError: (msg) => notify('erro', msg)
   })
 
   // Commands arriving from a phone (phone → PC → Claude Code): route into the
@@ -2787,9 +2828,9 @@ export function App(): JSX.Element {
     const off = window.api.onRemoteInbound(({ convId, text, images, files }) => {
       const imgs = images ?? []
       const thumbs = imgs.map((img) => `data:${img.mediaType};base64,${img.data}`)
-      // Para a Central: vira pedido nela (o roteador decide o destino).
+      // Para a Central: vira pedido nela e é roteado como no PC (central/useCentral.ts).
       if (convId === CENTRAL_ID) {
-        void sendToCentral(text, imgs, thumbs, files ?? [], [], 'phone')
+        void centralRef.current?.sendToCentral(text, imgs, thumbs, files ?? [], [], 'phone')
         return
       }
       const conv = convsRef.current.find((c) => c.id === convId)
@@ -2800,7 +2841,7 @@ export function App(): JSX.Element {
       void dispatch(conv, text, text, imgs, thumbs, files ?? [])
     })
     return off
-  }, [dispatch, notify, sendToCentral])
+  }, [dispatch, notify])
 
   // MCP de entrada: a tarefa entra pelo mesmo dispatch; a conversa nova nasce
   // ao fundo (sem trocar a que o usuário está vendo).
@@ -2847,6 +2888,8 @@ export function App(): JSX.Element {
 
   const deleteQueued = useCallback((id: string): void => {
     reportMcpDropped(queueRef.current.filter((m) => m.id === id), 'Removida da fila no Agent Code.')
+    // A ref também, já: um fim de turno antes do próximo render drenaria o item apagado.
+    queueRef.current = queueRef.current.filter((m) => m.id !== id)
     setQueue((q) => q.filter((m) => m.id !== id))
   }, [])
 
@@ -2867,7 +2910,7 @@ export function App(): JSX.Element {
       // simplesmente mandar — não há turno para entrar.
       const conv = convsRef.current.find((c) => c.id === item.convId)
       if (conv && !busyRef.current.has(conv.id)) {
-        await dispatch(conv, item.full, item.text, item.images, item.thumbs, item.files, item.fileRefs, true, item.mcpTaskId)
+        await dispatch(conv, item.full, item.text, item.images, item.thumbs, item.files, item.fileRefs, true, item.mcpTaskId, item.msgId)
         return
       }
       const res = await window.api
@@ -2891,13 +2934,14 @@ export function App(): JSX.Element {
         notify('aviso', res.reason ?? 'A tarefa está terminando — a mensagem continua na fila e sai em seguida.')
         return
       }
+      const injectedId = item.msgId ?? uid('u')
       patchConv(item.convId, (c) => ({
         ...c,
         messages: [
           ...c.messages,
           {
             kind: 'user',
-            id: uid('u'),
+            id: injectedId,
             text: item.text,
             ...userBubbleAttachments(item.thumbs, item.images, item.files, item.fileRefs),
             injected: true,
@@ -2906,6 +2950,10 @@ export function App(): JSX.Element {
         ],
         updatedAt: Date.now()
       }))
+      if (conv) {
+        const { text, images, files, fileRefs } = item
+        centralRef.current?.adopt({ conv, msgId: injectedId, text, images, files, fileRefs, injected: true, preset: !!item.msgId })
+      }
     },
     [notify, patchConv, dispatch]
   )
@@ -3139,20 +3187,53 @@ export function App(): JSX.Element {
     delete inflightRef.current[cid]
   }, [setBusy])
 
-  const interruptConv = useCallback((cid: string): void => {
+  /**
+   * A fila mantida pelo Stop do "não era aqui" sai UMA vez, pelo despacho normal
+   * (turno novo, id da bolha preservado): no fim do turno parado ou, se ele não
+   * vier (o Stop pegou a mensagem antes de o turno começar), STOP_SETTLE_MS
+   * depois do recibo. Quem chegar primeiro solta; o outro não faz nada.
+   */
+  const releaseKeptQueue = useCallback((cid: string): void => {
+    const held = keepQueueStopRef.current
+    if (!held.has(cid)) return
+    clearTimeout(held.get(cid))
+    held.delete(cid)
+    const head = queueRef.current.find((m) => m.convId === cid)
+    const conv = convsRef.current.find((c) => c.id === cid)
+    if (!head || !conv || busyRef.current.has(cid)) return
+    queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
+    setQueue((q) => q.filter((m) => m.id !== head.id))
+    void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
+  }, [])
+  releaseKeptQueueRef.current = releaseKeptQueue
+
+  const interruptConv = useCallback((cid: string, opts?: { keepQueue?: boolean }): void => {
     // Stop the current task AND drop anything queued for this conversation. The
     // SDK ends an interrupt by emitting a `result` (not `error`); with the queue
     // cleared, the turn-end handler finds nothing to dispatch and just goes idle
     // instead of auto-starting the next queued message.
+    // `keepQueue` (o "não era aqui" da Central): só o turno para; a fila fica.
+    const keepQueue = opts?.keepQueue === true
     interruptedRef.current.add(cid) // intentional stop — don't flag the message as failed
-    reportMcpDropped(
-      queueRef.current.filter((m) => m.convId === cid),
-      'Cancelada: a conversa foi interrompida no Agent Code.'
-    )
-    setQueue((q) => q.filter((m) => m.convId !== cid))
+    if (keepQueue) {
+      keepQueueStopRef.current.set(cid, undefined)
+    } else {
+      reportMcpDropped(
+        queueRef.current.filter((m) => m.convId === cid),
+        'Cancelada: a conversa foi interrompida no Agent Code.'
+      )
+      setQueue((q) => q.filter((m) => m.convId !== cid))
+    }
     // The receipt tells us whether the in-flight SDK message actually survived
     // the Stop. Only paint it as canceled when the SDK confirms it will not run.
     const inflight = inflightRef.current[cid]
+    const goIdle = (): void => {
+      if (!keepQueue) return goIdleAfterStop(cid)
+      // O fim do turno parado já soltou a fila (e o turno seguinte pode estar rodando).
+      if (!keepQueueStopRef.current.has(cid)) return
+      if (inflightRef.current[cid] === inflight) goIdleAfterStop(cid)
+      keepQueueStopRef.current.set(cid, setTimeout(() => releaseKeptQueue(cid), STOP_SETTLE_MS))
+    }
     void window.api
       .interrupt(cid)
       .then((receipt) => {
@@ -3174,10 +3255,10 @@ export function App(): JSX.Element {
           )
           return // o turno continua de verdade; quem encerra é o `result` dele
         }
-        goIdleAfterStop(cid)
+        goIdle()
       })
       .catch(() => {
-        goIdleAfterStop(cid)
+        goIdle()
         if (!inflight) return
         patchConv(cid, (c) => ({
           ...c,
@@ -3186,7 +3267,7 @@ export function App(): JSX.Element {
           )
         }))
       })
-  }, [patchConv, notify, goIdleAfterStop])
+  }, [patchConv, notify, goIdleAfterStop, releaseKeptQueue])
 
   const interrupt = useCallback((): void => {
     const cid = activeIdRef.current
@@ -3436,6 +3517,37 @@ export function App(): JSX.Element {
    * an icon keeps the folder glyph, so a miss costs nothing visually.
    */
   const [projectIcons, setProjectIcons] = useState<Record<string, string | null>>({})
+  // A Central de ponta a ponta (central/useCentral.ts): rota pelo TypeSafe, entrega
+  // pela MESMA dispatch, espelho, perguntas dos destinos, "não era aqui" e a
+  // adoção de todo turno deste PC (Emenda A1).
+  const central = useCentral({
+    hydrated,
+    conversations,
+    convsRef,
+    busyIds,
+    busyRef,
+    queueRef,
+    inflightRef,
+    permissions,
+    device: storageStatus?.installationId ?? undefined,
+    sandboxRoot: sandbox.root,
+    projectIcons,
+    typesafeReady,
+    needTypesafe: () => needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE),
+    ensure: ensureCentralLoaded,
+    patchConv,
+    addLoaded: addLoadedConversation,
+    loadByIds: loadConversationsByIds,
+    createConversation: (cwd) => createConversation(cwd, undefined, {}, false),
+    dispatch: (conv, text, images, thumbs, files, fileRefs, msgId) =>
+      dispatch(conv, text, text, images, thumbs, files, fileRefs, false, undefined, msgId),
+    deleteQueued,
+    stopKeepingQueue: (cid) => interruptConv(cid, { keepQueue: true }),
+    respondToPermission,
+    selectConversationAt,
+    notify
+  })
+  centralRef.current = central
   // Escritório: só publica o feed numa store fora do React (office/officeStore).
   useEffect(() => {
     // A Central não é agente de projeto: não ganha mesa no Escritório.
@@ -3751,12 +3863,13 @@ export function App(): JSX.Element {
   )
   // O painel da Central: no lugar do chat quando ela é a aberta (workspace e
   // Escritório) e, no Escritório, no chat flutuante sem mesa selecionada.
-  const centralPanel = (central: Conversation): JSX.Element => (
+  const centralPanel = (centralConversation: Conversation): JSX.Element => (
     <CentralPanel
-      conversation={central}
+      conversation={centralConversation}
+      controller={central}
       ready={typesafeReady}
       onNeedTypesafe={() => needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE)}
-      onSend={(text, images, thumbs, files, fileRefs) => void sendToCentral(text, images, thumbs, files, fileRefs)}
+      onSend={(text, images, thumbs, files, fileRefs) => void central.send(text, images, thumbs, files, fileRefs)}
       onDraftChange={onDraftChange}
       composerRef={composerRef}
       projects={projects}

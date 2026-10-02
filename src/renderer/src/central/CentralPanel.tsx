@@ -14,11 +14,15 @@ import { splitMediaText } from '@shared/inlineMedia'
 import { Composer, type RefProject } from '../components/Composer'
 import type { DraftMedia } from '../inlineMedia/inlineAttachments'
 import type { Conversation } from '../types'
+import type { CentralController } from './useCentral'
 import './central.css'
 
 export interface CentralPanelProps {
   /** A Central (a conversa de id fixo). */
   conversation: Conversation
+  /** O fluxo da Central (useCentral.ts): rota, espelho, perguntas, "não era aqui".
+   *  A tela completa que o desenha é da Etapa 5 (mockup v3). */
+  controller?: CentralController
   /** TypeSafe configurado. Sem ele, enviar abre as Configurações e o texto fica no campo. */
   ready: boolean
   /** O gate: aviso da Central + Configurações no TypeSafe. */

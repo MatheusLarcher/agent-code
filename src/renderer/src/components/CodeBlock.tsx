@@ -11,6 +11,8 @@ import markdown from 'highlight.js/lib/languages/markdown'
 import yaml from 'highlight.js/lib/languages/yaml'
 import diff from 'highlight.js/lib/languages/diff'
 import powershell from 'highlight.js/lib/languages/powershell'
+import csharp from 'highlight.js/lib/languages/csharp'
+import sql from 'highlight.js/lib/languages/sql'
 // VS Code's "Dark+" palette — so highlighted code reads exactly like the editor.
 import 'highlight.js/styles/vs2015.css'
 
@@ -25,6 +27,8 @@ hljs.registerLanguage('markdown', markdown)
 hljs.registerLanguage('yaml', yaml)
 hljs.registerLanguage('diff', diff)
 hljs.registerLanguage('powershell', powershell)
+hljs.registerLanguage('csharp', csharp)
+hljs.registerLanguage('sql', sql)
 
 const SUPPORTED = new Set(hljs.listLanguages())
 
@@ -41,12 +45,20 @@ export function extToLang(path: string): string {
     md: 'markdown', markdown: 'markdown',
     yml: 'yaml', yaml: 'yaml',
     sh: 'bash', bash: 'bash', zsh: 'bash',
-    ps1: 'powershell', psm1: 'powershell'
+    ps1: 'powershell', psm1: 'powershell',
+    cs: 'csharp',
+    sql: 'sql'
   }
   return map[ext] || ''
 }
 
-function highlight(code: string, language?: string): string | null {
+/**
+ * HTML realçado pelo hljs (o código já sai escapado) na linguagem dada; sem
+ * linguagem registrada, a detecção automática. null se o realce falhar — quem
+ * chama mostra o texto puro. É o realce único do app: o CodeBlock e o editor do
+ * monitor do Escritório 3D (office3d/codeScreen) usam esta lista de linguagens.
+ */
+export function highlightCode(code: string, language?: string): string | null {
   try {
     if (language && SUPPORTED.has(language)) {
       return hljs.highlight(code, { language, ignoreIllegals: true }).value
@@ -60,7 +72,7 @@ function highlight(code: string, language?: string): string | null {
 /** A syntax-highlighted code block (VS Code colors). Falls back to plain text
  *  if the language can't be highlighted. */
 export function CodeBlock({ code, language }: { code: string; language?: string }): JSX.Element {
-  const html = useMemo(() => highlight(code, language), [code, language])
+  const html = useMemo(() => highlightCode(code, language), [code, language])
   return (
     <pre className="code-block hljs">
       {html != null ? <code dangerouslySetInnerHTML={{ __html: html }} /> : <code>{code}</code>}

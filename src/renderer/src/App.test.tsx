@@ -2499,11 +2499,15 @@ describe('App — gravação que atravessa uma queda do banco', () => {
     await waitFor(() => expect(withDraft()).toBe(true), { timeout: 3_000 })
     await act(async () => publish(offline))
 
-    // Volta: regrava sozinho o que ficou pendente.
+    // Volta: regrava sozinho o que ficou pendente — a conversa e a Central, que
+    // adotou o turno (Emenda A1); cada uma uma vez.
     api.upsertConversation.mockReset()
     api.upsertConversation.mockImplementation(store)
     await act(async () => publish(ready))
-    await waitFor(() => expect(api.upsertConversation).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(api.upsertConversation).toHaveBeenCalledTimes(2))
+    const written = (): string[] =>
+      api.upsertConversation.mock.calls.map((call: unknown[]) => (call[0] as { id: string }).id).sort()
+    expect(written()).toEqual(['c1', 'central'])
     expect(withDraft()).toBe(true)
 
     // Outra queda e volta sem nada pendente: nada é regravado (nem duplicado).
@@ -2512,7 +2516,7 @@ describe('App — gravação que atravessa uma queda do banco', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
     })
-    expect(api.upsertConversation).toHaveBeenCalledTimes(1)
+    expect(api.upsertConversation).toHaveBeenCalledTimes(2)
   })
 })
 

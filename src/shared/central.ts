@@ -152,3 +152,29 @@ export interface CentralRecent {
   /** O título da conversa. */
   title?: string
 }
+
+/**
+ * Etapa 4 / Emenda A1 (todas as conversas na Central): de onde veio o pedido e
+ * qual PC criou cada entrada — os dois PCs dividem a MESMA Central, e cada
+ * entrada tem um dono só. Campos opcionais, somados por declaration merging às
+ * entradas lá de cima (entradas antigas continuam válidas).
+ */
+export interface CentralRequestEntry {
+  /** 'central' (ausente = anterior à A1): roteada pela Central. 'conversation': turno
+   *  enviado na própria conversa e adotado pela Central (sem "não era aqui"). */
+  origin?: 'central' | 'conversation'
+  /** `installationId` do PC que criou a entrada. Ausente = legado, tratada como deste PC. */
+  device?: string
+  /** Ajuste injetado num turno em andamento: aparece como bolha, nunca tem resposta própria. */
+  injected?: true
+}
+
+export interface CentralReplyEntry {
+  /** `installationId` do PC que espelhou a resposta (o mesmo do pedido). */
+  device?: string
+}
+
+export interface CentralQuestionEntry {
+  /** `installationId` do PC onde a pergunta foi respondida. */
+  device?: string
+}
