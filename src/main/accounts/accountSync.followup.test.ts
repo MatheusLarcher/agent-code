@@ -212,6 +212,7 @@ describe('sync × add() em andamento', () => {
     let loginDir = ''
     const w = world(new Map(), {
       login: async (dir) => {
+        if (!dir) throw new Error('expected isolated account folder')
         loginDir = dir
         writeLogin(dir, 'novo@x.com', Date.now() + HOUR) // o CLI já gravou o login…
         await gate // …mas o add() ainda não pôs a conta na lista
@@ -283,6 +284,7 @@ describe('sem duplicata de conta', () => {
     const state = { online: false }
     const w = world(new Map(), {
       login: async (dir) => {
+        if (!dir) throw new Error('expected isolated account folder')
         writeLogin(dir, 'dois@x.com', Date.now() + HOUR)
         return true
       },

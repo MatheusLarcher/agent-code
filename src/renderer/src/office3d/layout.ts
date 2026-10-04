@@ -16,6 +16,7 @@
  * monitores olham para +Z; o personagem senta em +Z da mesa.
  */
 import type { OfficeCharacterModel, OfficeModel } from '../office/adapter/model'
+import { PO_SPOT } from './board/boardLayout'
 
 export const DESK_COLS = 4
 export const DESK_PITCH_X = 2.4
@@ -205,8 +206,8 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
         out = { key: c.key, roomId: parent.roomId, x, z: parent.z + 0.2, deskIndex: null, screenDesk: parent.screenDesk, model: c }
       }
     } else if (c.placement.kind === 'destination' && room) {
-      // PO na frente da sala (o "kanban" fica na parede do fundo, à esquerda).
-      out = { key: c.key, roomId: room.id, x: room.x + 0.9, z: room.z + 0.9, deskIndex: null, screenDesk: null, model: c }
+      // PO de pé diante do kanban (parede do fundo, à esquerda; board/boardLayout.ts).
+      out = { key: c.key, roomId: room.id, x: room.x + PO_SPOT.x, z: room.z + PO_SPOT.z, deskIndex: null, screenDesk: null, model: c }
     } else if (c.roomId === null) {
       // Corredor: à esquerda da primeira sala.
       out = { key: c.key, roomId: null, x: -1, z: 1 + corridor * 1.1, deskIndex: null, screenDesk: null, model: c }

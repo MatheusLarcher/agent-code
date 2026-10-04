@@ -85,6 +85,10 @@ describe('a demo (Ctrl+Alt+Shift+D) mostra a vida do escritório', () => {
     expect(seen.ran).toBe(true)
     // Os sete lazeres aparecem no loop.
     expect([...seen.leisures].sort()).toEqual(['chat', 'coffee', 'phone', 'plant', 'postit', 'shelf', 'window'])
+    // No quadro (o Quadro real) ninguém prende papel inventado: nem o gesto, nem o papel na mão.
+    expect(seen.actions.has('stick')).toBe(false)
+    expect(seen.props.has('note')).toBe(false)
+    expect(seen.actions.has('readBoard')).toBe(true)
     // Efeitos: confete no fim, fumaça e suor no erro, vapor no café.
     expect(confetti).toBeGreaterThan(0)
     for (const k of ['smoke', 'sweat', 'steam']) expect(puffKinds.has(k as never), k).toBe(true)

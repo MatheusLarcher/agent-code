@@ -145,7 +145,12 @@ interface RoomAcc {
 
 const SEATED_SPECIALISTS: CrewRole[] = ['executor', 'critico', 'navegador-de-codigo']
 
-export function deriveOfficeModel(feed: OfficeFeed, now: number): OfficeModel {
+/**
+ * `boardRooms`: salas cujo Quadro tem cartões (o Escritório 3D). Com o PO ligado
+ * ele aparece nelas sempre — não só depois de rodar uma vez — para levar os
+ * papéis ao quadro.
+ */
+export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: ReadonlySet<string>): OfficeModel {
   const rooms = new Map<string, RoomAcc>()
   for (const c of feed.conversations) {
     if (!isInOffice(c, feed, now)) continue
@@ -233,9 +238,10 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number): OfficeModel {
       const diag = latestMemorista(feed, convs)
       if (diag) characters.push(memoristaChar(diag, room.id, now))
     }
+    if (feed.observersOn.po && !po && boardRooms?.has(room.id) && convs.length > 0) po = { convId: convs[0].id, at: 0 }
     if (feed.observersOn.po && po) {
       const diag = feed.poDiagnostics[po.convId]
-      const crew = buildCrew({ tracks: {}, busy: false, busySince: null, vigia: null, po: diag, poEnabled: true, vigiaEnabled: false, now })
+      const crew = buildCrew({ tracks: {}, busy: false, busySince: null, vigia: null, po: diag ?? null, poEnabled: true, vigiaEnabled: false, now })
       const member = crew.find((m) => m.role === 'po')
       characters.push({
         key: `po:${room.id}`,

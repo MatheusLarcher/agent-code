@@ -19,7 +19,7 @@
  *   atual, ou igual (o mais novo vence; progress só troca progress depois de
  *   MIN_DWELL_MS). PRIORITY: permission 70 > error 60 > request 50 >
  *   done/test-result/return 40 > warn 30 (context-low, stalled, usage) >
- *   screen 25 (a 1ª chamada de navegador/Android em PROJECTOR_IDLE_MS: a fala
+ *   (board 45: a fala de quem leva o papel ao quadro, board/boardStage.ts) screen 25 (a 1ª chamada de navegador/Android em PROJECTOR_IDLE_MS: a fala
  *   do projetor, "Testando no navegador: localhost:5173") > progress 20 > idle/thought 10.
  *   Fixos "enquanto valerem" (ttlMs = Infinity), conferidos no status a cada
  *   step: permissão pendente, erro do turno e limite de uso estourado — o erro
@@ -48,7 +48,7 @@ import { bashFlavor, browserAction, clockTime, duration, extLabel, fill, tidyErr
 import { LINES, type Situation } from './lines'
 import { createPowerVoice, type PowerQuipInput } from './powerVoice'
 
-export type QuipKind = 'request' | 'progress' | 'permission' | 'done' | 'error' | 'warn' | 'idle' | 'thought' | 'power' | 'party'
+export type QuipKind = 'request' | 'progress' | 'permission' | 'done' | 'error' | 'warn' | 'idle' | 'thought' | 'power' | 'party' | 'board'
 
 export interface Quip {
   readonly text: string
@@ -66,7 +66,7 @@ export interface QuipEngine {
   step(statuses: ReadonlyMap<string, AgentStatus>, events: readonly AgentEvent[], now: number, power?: PowerQuipInput | null): Map<string, Quip | null>
 }
 
-export const PRIORITY = { permission: 70, error: 60, power: 55, request: 50, result: 40, warn: 30, screen: 25, progress: 20, party: 15, idle: 10 } as const
+export const PRIORITY = { permission: 70, error: 60, power: 55, request: 50, board: 45, result: 40, warn: 30, screen: 25, progress: 20, party: 15, idle: 10 } as const
 export const TTL_MS = { request: 7_000, result: 9_000, warn: 9_000, progress: 6_000, idle: 6_500, fallback: 10_000, power: 6_500, party: 4_000 } as const
 /** O que continua no ar durante a festa do apagão: permissão, erro, energia e festa. */
 const PARTY_KINDS: ReadonlySet<QuipKind> = new Set<QuipKind>(['permission', 'error', 'power', 'party'])

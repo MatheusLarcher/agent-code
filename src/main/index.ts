@@ -54,6 +54,8 @@ import {
 } from './config'
 import { stopLocalSpeech } from './speech'
 import { registerVoiceIpc, speak, speechParts, stopVoice, transcribe as transcribeVoice } from './voiceService'
+import { registerVoiceComponentIpc } from './voiceComponents'
+import { registerAndroidToolchainIpc } from './android/androidToolchainIpc'
 import { claudeAuthProbe, isAuthenticated, logoutClaude } from './auth'
 import { claudeAuthExpiry, claudeConnectedForCard } from './authExpiry'
 import { runClaudeLogin } from './login'
@@ -1114,6 +1116,9 @@ export function registerIpc(): void {
   // Chat voice (dictation + read-aloud) on this machine — see voiceService.ts.
   // Model downloads stream as speechSetupProgress to the asking window.
   registerVoiceIpc(ipcMain)
+  // Settings: install each voice model / the Android toolchain ahead of time.
+  registerVoiceComponentIpc(ipcMain)
+  registerAndroidToolchainIpc(ipcMain)
   // Claude Code auth: status + the one-click OAuth login (no typed /login).
   ipcMain.handle(Channels.authStatus, async () => ({ authenticated: await refreshClaudeReady() }))
   ipcMain.handle(Channels.authLogin, async () => {
@@ -1139,7 +1144,8 @@ export function registerIpc(): void {
       authLog(`opening system browser (account): ${url}`)
       void shell.openExternal(url)
     },
-    log: authLog
+    log: authLog,
+    onLogin: providersChanged
   })
   registerClaudeAccountsIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener),

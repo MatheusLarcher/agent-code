@@ -5,7 +5,6 @@ import {
   boardItemTitle as effectiveTitle,
   isBoardItemPoCorrected as isPoCorrected,
   type BoardItem,
-  type BoardItemEvent,
   type BoardItemStatus,
   type PermissionRequest,
   type ProjectNode,
@@ -17,6 +16,7 @@ import { activeColumnCrew, type CrewMember } from '../crew'
 import type { Touch, Turn } from '../projectActivity'
 import type { TodoItem } from '../types'
 import { fmtAgo as fmtCrewAgo, fmtClock } from './AgentCrew'
+import { BoardCardDetail, COLUMNS, fmtAgo } from './BoardCardDetail'
 import { CrewRoleIcon } from './CrewIcons'
 import { IconCollapseRight, IconSpinner, IconTrash } from './Icons'
 import { ProjectGraph } from './ProjectGraph'
@@ -30,12 +30,6 @@ import { ProjectGraph } from './ProjectGraph'
  * mesmo estado só criaria conflito — a mesma razão pela qual o painel do
  * registro de tarefas também não move nada.
  */
-
-const COLUMNS: { status: BoardItemStatus; label: string; key: string }[] = [
-  { status: 'pending', label: 'A fazer', key: 'todo' },
-  { status: 'in_progress', label: 'Fazendo', key: 'doing' },
-  { status: 'completed', label: 'Concluído', key: 'done' }
-]
 
 /** Recarrega rápido enquanto o agente trabalha, devagar quando está parado —
  *  o mesmo critério do `TasksBoard`. O evento `board:changed` cobre o resto. */
@@ -97,19 +91,6 @@ export { effectiveStatus, effectiveTitle, isPoCorrected }
  *  mesma linha (o número e o plural). */
 function groupDone(list: BoardItem[]): number {
   return list.filter((entry) => effectiveStatus(entry) === 'completed').length
-}
-
-function fmtAgo(iso: string | null, now: number): string {
-  if (!iso) return ''
-  const ms = now - Date.parse(iso)
-  if (!Number.isFinite(ms) || ms < 0) return 'agora'
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return 'agora'
-  const m = Math.floor(s / 60)
-  if (m < 60) return `há ${m} min`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `há ${h} h`
-  return `há ${Math.floor(h / 24)} d`
 }
 
 /**
@@ -532,193 +513,6 @@ function Card({
   )
 }
 
-/** Data e hora completas — o par do `fmtAgo` relativo: útil quando "há 3 h"
- *  não basta e a pessoa quer saber exatamente quando. */
-function fmtWhen(iso: string): string {
-  const ms = Date.parse(iso)
-  if (!Number.isFinite(ms)) return iso
-  return new Date(ms).toLocaleString('pt-BR')
-}
-
-const EVENT_LABEL: Record<BoardItemEvent['kind'], string> = {
-  created: 'criou o cartão',
-  status_changed: 'mudou o status',
-  retitled: 'reescreveu o título',
-  note_changed: 'mudou a observação',
-  dismissed: 'dispensou o cartão',
-  restored: 'restaurou o cartão',
-  justified: 'justificou'
-}
-
-/** Quem aparece na linha do tempo. `system` é regra automática do app — não o PO. */
-const ACTOR_LABEL: Record<BoardItemEvent['actor'], string> = {
-  po: 'PO',
-  user: 'Você',
-  agent: 'Agente',
-  system: 'Sistema'
-}
-
-function statusLabel(status: BoardItemStatus | null): string {
-  if (!status) return ''
-  return COLUMNS.find((c) => c.status === status)?.label ?? status
-}
-
-function EventLine({ event, now }: { event: BoardItemEvent; now: number }): JSX.Element {
-  let text = EVENT_LABEL[event.kind]
-  if (event.kind === 'status_changed' && event.toStatus) {
-    text = `mudou para ${statusLabel(event.toStatus).toLowerCase()}`
-  }
-  return (
-    <li className="board-timeline-row">
-      <span className={`board-who ${event.actor}`}>{ACTOR_LABEL[event.actor] ?? 'Agente'}</span>
-      <span className="board-timeline-text">
-        {text}
-        {event.note && <span className="board-muted"> — {event.note}</span>}
-      </span>
-      <span className="board-timeline-when" title={fmtWhen(event.at)}>
-        {fmtAgo(event.at, now)}
-      </span>
-    </li>
-  )
-}
-
-function Detail({
-  item,
-  conversationTitles,
-  now,
-  onClose,
-  onOpenConversation,
-  onDismiss
-}: {
-  item: BoardItem
-  conversationTitles: Record<string, string>
-  now: number
-  onClose: () => void
-  onOpenConversation: (convId: string) => void
-  onDismiss: (item: BoardItem) => void
-}): JSX.Element {
-  const status = effectiveStatus(item)
-  const [events, setEvents] = useState<BoardItemEvent[]>([])
-  const [loadingEvents, setLoadingEvents] = useState(false)
-  // Busca preguiçosa por cartão: só quando o detalhe abre, e de novo se o
-  // usuário clicar noutro cartão — nunca em loop, e nunca para o quadro
-  // inteiro que ninguém abriu.
-  const fetchedFor = useRef<string | null>(null)
-
-  useEffect(() => {
-    if (fetchedFor.current === item.id) return
-    fetchedFor.current = item.id
-    let alive = true
-    setLoadingEvents(true)
-    void window.api
-      .boardItemEvents(item.id)
-      .then((result) => {
-        if (alive) setEvents(result)
-      })
-      .catch(() => {
-        if (alive) setEvents([])
-      })
-      .finally(() => {
-        if (alive) setLoadingEvents(false)
-      })
-    return () => {
-      alive = false
-    }
-  }, [item.id])
-
-  return (
-    <div className="board-detail">
-      <header className="board-detail-head">
-        <h3>{effectiveTitle(item)}</h3>
-        <button type="button" className="nav-btn" onClick={onClose} title="Fechar">
-          ×
-        </button>
-      </header>
-      <dl className="board-detail-kv">
-        <dt>Status</dt>
-        <dd className={`board-status ${status}`}>
-          {COLUMNS.find((c) => c.status === status)?.label ?? status}
-        </dd>
-        <dt>Origem</dt>
-        <dd>
-          <button type="button" className="board-link" onClick={() => onOpenConversation(item.conversationId)}>
-            {conversationTitles[item.conversationId] ?? 'Conversa removida'}
-          </button>
-        </dd>
-        {item.poTitle && (
-          <>
-            <dt>Título do agente</dt>
-            <dd className="board-muted">{item.sourceTitle}</dd>
-          </>
-        )}
-        {item.poNote && (
-          <>
-            <dt>Observação</dt>
-            <dd>{item.poNote}</dd>
-          </>
-        )}
-      </dl>
-      {/* A trilha do PO é o que torna a correção automática auditável: sem o
-          motivo na tela, um PO errado vira um quadro errado sem explicação. */}
-      {/* "Motivo atual", não "PO": o motivo também pode ser de uma regra
-          automática (fim de turno, retomada) ou do arrasto do usuário — quem
-          escreveu cada um está na linha do tempo. */}
-      {item.poReason && (
-        <div className="board-detail-trail" aria-label="Motivo atual">
-          <span className="board-who">Motivo atual</span>
-          <span>
-            {isPoCorrected(item)
-              ? `marcou como ${COLUMNS.find((c) => c.status === item.poStatus)?.label.toLowerCase()}: ${item.poReason}`
-              : item.poReason}
-          </span>
-        </div>
-      )}
-
-      <div className="board-detail-meta">
-        <div className="board-detail-meta-row">
-          <span>Criado</span>
-          <span title={fmtWhen(item.createdAt)}>{fmtWhen(item.createdAt)}</span>
-        </div>
-        <div className="board-detail-meta-row">
-          <span>Atualizado</span>
-          <span title={fmtWhen(item.updatedAt)}>{fmtWhen(item.updatedAt)}</span>
-        </div>
-        <div className="board-detail-meta-row">
-          <span>Quem criou</span>
-          <span>{item.origin === 'po' ? 'PO' : 'Agente'}</span>
-        </div>
-        <div className="board-detail-meta-row">
-          <span>Revisão</span>
-          <span>{item.revision}</span>
-        </div>
-      </div>
-
-      <div className="board-detail-timeline">
-        <div className="board-detail-timeline-title">Linha do tempo</div>
-        {loadingEvents ? (
-          <p className="board-empty">
-            <IconSpinner className="spinner" size={13} /> Carregando o histórico…
-          </p>
-        ) : events.length === 0 ? (
-          <p className="board-muted">Sem histórico registrado ainda.</p>
-        ) : (
-          <ul className="board-timeline">
-            {events.map((event) => (
-              <EventLine key={event.id} event={event} now={now} />
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div className="board-detail-actions">
-        <button type="button" className="board-dismiss" onClick={() => onDismiss(item)}>
-          {item.dismissedAt ? 'Restaurar cartão' : 'Dispensar cartão'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
 export function BoardPanel({
   projectCwd,
   conversationId,
@@ -1112,7 +906,7 @@ export function BoardPanel({
       )}
 
       {selected && (
-        <Detail
+        <BoardCardDetail
           item={selected}
           conversationTitles={conversationTitles}
           now={now}

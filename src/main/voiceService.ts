@@ -50,14 +50,15 @@ let cacheDir = ''
 
 /** Models live in the machine-local cache folder (never the synced one). Re-read
  *  on every call: the user can move the data folder while the app runs. */
-function ensureVoiceCacheDir(): void {
+export function ensureVoiceCacheDir(): string {
   const dir = join(getCacheInfo().localDir, 'voice-models')
-  if (dir === cacheDir) return
+  if (dir === cacheDir) return dir
   setVoiceCacheDir(dir)
   cacheDir = dir
+  return dir
 }
 
-async function withReporter<T>(task: VoiceTask, send: Send | undefined, run: (r: ReturnType<typeof createSetupReporter>) => Promise<T>): Promise<T> {
+export async function withReporter<T>(task: VoiceTask, send: Send | undefined, run: (r: ReturnType<typeof createSetupReporter>) => Promise<T>): Promise<T> {
   const reporter = createSetupReporter(task, send ?? (() => {}))
   try {
     const out = await run(reporter)
@@ -241,13 +242,13 @@ export function installVoice(send?: Send): Promise<void> {
   return run
 }
 
-function senderReport(sender: WebContents): Send {
+export function senderReport(sender: WebContents): Send {
   return (p) => {
     if (!sender.isDestroyed()) sender.send(Channels.speechSetupProgress, p)
   }
 }
 
-const errorText = (err: unknown): string => String(err instanceof Error ? err.message : err)
+export const errorText = (err: unknown): string => String(err instanceof Error ? err.message : err)
 
 /** Desktop IPC. Errors come back as `{ ok: false, error }` so the UI can toast them. */
 export function registerVoiceIpc(ipcMain: IpcMain): void {

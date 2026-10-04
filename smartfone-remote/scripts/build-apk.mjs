@@ -12,6 +12,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -49,6 +50,41 @@ function brandAdaptiveIcon(androidDir) {
   } catch (e) {
     console.log('aviso: não foi possível ajustar o ícone adaptativo:', String(e))
   }
+}
+
+/** userData do app desktop (onde o android_setup instala JDK e SDK): o mesmo lugar que src/main/android/androidEnv.ts usa. */
+function appDataDirs() {
+  const home = homedir()
+  const dirs = []
+  if (process.env.AGENT_CODE_HOME) dirs.push(process.env.AGENT_CODE_HOME)
+  if (WIN && process.env.APPDATA) dirs.push(join(process.env.APPDATA, 'agent-code-desktop'))
+  if (process.platform === 'darwin') dirs.push(join(home, 'Library', 'Application Support', 'agent-code-desktop'))
+  dirs.push(join(home, '.config', 'agent-code-desktop'), join(home, '.agent-code'))
+  return dirs
+}
+
+const java = (h) => existsSync(join(h, 'bin', WIN ? 'java.exe' : 'java'))
+
+/** JAVA_HOME válido, ou o JDK 17 que o app instalou, ou o do Android Studio. */
+function findJavaHome() {
+  if (process.env.JAVA_HOME && java(process.env.JAVA_HOME)) return process.env.JAVA_HOME
+  const bases = appDataDirs().map((d) => join(d, 'jdk-17'))
+  if (WIN) bases.push('C:\\Program Files\\Android\\Android Studio\\jbr')
+  for (const base of bases) {
+    if (java(base)) return base
+    let names = []
+    try { names = readdirSync(base) } catch { continue }
+    for (const n of names) for (const h of [join(base, n), join(base, n, 'Contents', 'Home')]) if (java(h)) return h
+  }
+  return null
+}
+
+/** ANDROID_HOME válido, ou o SDK que o app instalou, ou o do Android Studio. */
+function findSdk() {
+  const cands = [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT, ...appDataDirs().map((d) => join(d, 'android-sdk'))]
+  if (WIN && process.env.LOCALAPPDATA) cands.push(join(process.env.LOCALAPPDATA, 'Android', 'Sdk'))
+  cands.push(join(homedir(), 'Library', 'Android', 'sdk'), join(homedir(), 'Android', 'Sdk'))
+  return cands.find((c) => c && existsSync(join(c, 'platforms'))) ?? null
 }
 
 function findApk(dir) {
@@ -117,6 +153,19 @@ async function main() {
       }
     }
   }
+
+  // Sem JAVA_HOME/ANDROID_HOME no ambiente: usa o toolchain que o app desktop instalou.
+  const javaHome = findJavaHome()
+  const sdk = findSdk()
+  if (!javaHome || !sdk) {
+    console.error(`Falta ${!javaHome ? 'o JDK 17' : 'o Android SDK'}. Instale pelo app (Configurações → Android) ou defina ${!javaHome ? 'JAVA_HOME' : 'ANDROID_HOME'}.`)
+    process.exit(1)
+  }
+  process.env.JAVA_HOME = javaHome
+  process.env.ANDROID_HOME = process.env.ANDROID_SDK_ROOT = sdk
+  process.env.PATH = [join(javaHome, 'bin'), process.env.PATH].join(WIN ? ';' : ':')
+  writeFileSync(join(androidDir, 'local.properties'), `sdk.dir=${sdk.replace(/\\/g, '\\\\').replace(/:/g, '\\:')}\n`)
+  console.log(`→ JDK: ${javaHome}\n→ SDK: ${sdk}`)
 
   console.log('→ gradlew assembleDebug')
   const gradlew = WIN ? join(androidDir, 'gradlew.bat') : join(androidDir, 'gradlew')

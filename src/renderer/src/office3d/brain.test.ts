@@ -53,15 +53,19 @@ const reactions = (b: Brain, out: Reaction[]): (() => void) => {
 }
 
 describe('cérebro: ocioso', () => {
-  it('alterna lazeres (café, estante, janela, planta, post-its, conversa, celular) ficando de 6 a 25 s em cada', () => {
+  it('alterna lazeres (café, estante, janela, planta, ler o quadro, conversa, celular) ficando de 6 a 25 s em cada', () => {
     const { crowd, brains } = office(4)
     for (const b of brains) setStatus(b, status('idle', { idleSince: 0 }), 0)
     const done = new Set<Leisure>()
     const dwell: number[] = []
     const last = brains.map(() => ({ l: null as Leisure | null, t: 0 }))
+    const postit = new Set<string>()
+    let notes = 0
     // Quase 10 min (o cochilo é aos SLEEP_AFTER_SEC).
     run(crowd, SLEEP_AFTER_SEC - 20, () =>
       brains.forEach((b, i) => {
+        if (b.leisure === 'postit') postit.add(b.action)
+        if (b.prop === 'note') notes++
         const prev = last[i]
         if (prev.l && b.leisure !== prev.l) {
           done.add(prev.l)
@@ -74,6 +78,10 @@ describe('cérebro: ocioso', () => {
     )
     expect([...done].sort()).toEqual(['chat', 'coffee', 'phone', 'plant', 'postit', 'shelf', 'window'])
     expect(dwell.length).toBeGreaterThan(20)
+    // No quadro só lê e confere: nenhum papel inventado na mão nem gesto de prender.
+    expect(postit.has('readBoard') && postit.has('admire')).toBe(true)
+    expect(postit.has('stick')).toBe(false)
+    expect(notes).toBe(0)
     for (const d of dwell) {
       expect(d).toBeGreaterThanOrEqual(DWELL_MIN - 0.11)
       expect(d).toBeLessThanOrEqual(DWELL_MAX + 0.11)

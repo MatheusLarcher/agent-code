@@ -347,3 +347,23 @@ describe('Speech — balões ligados ao motor', () => {
     expect(host.querySelector('.qb-layer')).toBeNull()
   })
 })
+
+describe('a fala do quadro por cima do gerador (say)', () => {
+  const board = { text: 'Concluí: Gerar o instalador', kind: 'board' as const, icon: '📌', priority: 45, ttlMs: Infinity, convId: 'a' }
+
+  it('toma o lugar da narração da ferramenta, cede à permissão e sai com null', () => {
+    const s = new Speech(host, () => {}, seededRng(1))
+    s.feed(snap([reading('a', 1)]), [], NOW)
+    expect(s.quipOf('a')?.kind).toBe('progress')
+    s.say('a', board)
+    expect(s.quipOf('a')).toBe(board)
+    s.feed(snap([asking('a')]), [], NOW + 500)
+    expect(s.quipOf('a')?.kind).toBe('permission')
+    s.feed(snap([reading('a', 2)]), [], NOW + 1_000)
+    s.say('a', null)
+    expect(s.quipOf('a')?.kind).not.toBe('board')
+    const visible = [...host.querySelectorAll<HTMLElement>('.qb[data-kind="board"]')].filter((el) => !el.hidden && el.getAttribute('aria-hidden') !== 'true')
+    expect(visible.length).toBeLessThanOrEqual(1) // no máximo saindo (animação de saída)
+    s.dispose()
+  })
+})

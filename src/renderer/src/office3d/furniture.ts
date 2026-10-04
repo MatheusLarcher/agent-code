@@ -10,8 +10,12 @@
  * A porta fica na parede da esquerda, perto da frente; o pufe do cochilo, na
  * ponta esquerda do tapete; a máquina de café, na parede da direita, de frente
  * para dentro da sala (a fila cresce para a esquerda dela); a tela retrátil do
- * projetor, no meio da parede do fundo (desce por cima da placa).
+ * projetor, no meio da parede do fundo (desce por cima da placa); o kanban do
+ * Quadro real, na parede do fundo à esquerda (medidas em board/boardLayout.ts),
+ * com um lugar diante de cada coluna, o bloquinho na canaleta e o cesto no chão.
+ * As janelas ficam simétricas em cx ± WINDOW_DX, coladas ao telão, para o quadro caber.
  */
+import { BIN_SPOT, BOARD_CX, BOARD_CY, BOARD_X0, BOARD_X1, BOARD_Y0, BOARD_Y1, COLUMN_SPOT_Z, columnX, PAD_SPOT } from './board/boardLayout'
 import { SEAT_FRONT, type DeskLayout, type RoomLayout } from './layout'
 
 export interface Rect {
@@ -27,7 +31,7 @@ export interface Spot {
   yaw: number
 }
 
-export type PoiKind = 'coffee' | 'shelf' | 'window' | 'plant' | 'postit' | 'pufe' | 'queue' | 'chat'
+export type PoiKind = 'coffee' | 'shelf' | 'window' | 'plant' | 'postit' | 'pufe' | 'queue' | 'chat' | 'board'
 
 /** Ponto de interesse: onde ficar em pé (e para onde olhar) ao usar algo. */
 export interface Poi extends Spot {
@@ -39,10 +43,23 @@ export interface Poi extends Spot {
   look: { x: number; y: number; z: number }
 }
 
+/** O kanban na parede (mundo): centro, extensão, bloquinho e cesto. */
+export interface BoardPlace {
+  x: number
+  y: number
+  z: number
+  x0: number
+  x1: number
+  y0: number
+  y1: number
+  pad: { x: number; y: number; z: number }
+  bin: { x: number; z: number }
+}
+
 export interface RoomFurniture {
   roomId: string
   windows: Array<{ x: number; z: number }>
-  board: { x: number; z: number }
+  board: BoardPlace
   shelf: { x: number; z: number }
   plants: Array<{ x: number; z: number; scale: number }>
   lamps: Array<{ x: number; z: number }>
@@ -81,6 +98,8 @@ export const MACHINE_OFFSET = 0.15
 export const SCREEN_Z = 0.45
 export const SCREEN_W = 3.24
 export const PROJ_Z = 6.1
+/** Janelas a cx ± isto: a da esquerda (moldura de 1,5 m) termina antes do telão e deixa o quadro crescer. */
+export const WINDOW_DX = 2.55
 
 const FACE_BACK = 0
 const FACE_CAMERA = Math.PI
@@ -103,10 +122,20 @@ export function roomFurniture(r: RoomLayout): RoomFurniture {
   const { x, z, width: w, depth: d, id } = r
   const cx = x + w / 2
   const windows = [
-    { x: cx - 3.6, z },
-    { x: cx + 3.6, z }
+    { x: cx - WINDOW_DX, z },
+    { x: cx + WINDOW_DX, z }
   ]
-  const board = { x: x + 1.25, z }
+  const board: BoardPlace = {
+    x: x + BOARD_CX,
+    y: BOARD_CY,
+    z,
+    x0: x + BOARD_X0,
+    x1: x + BOARD_X1,
+    y0: BOARD_Y0,
+    y1: BOARD_Y1,
+    pad: { x: x + PAD_SPOT.x, y: PAD_SPOT.y, z: z + PAD_SPOT.z },
+    bin: { x: x + BIN_SPOT.x, z: z + BIN_SPOT.z }
+  }
   const shelf = { x: x + w - 1.1, z }
   const plants = [
     { x: x + 0.55, z: z + d - 0.55, scale: 1.1 },
@@ -135,7 +164,10 @@ export function roomFurniture(r: RoomLayout): RoomFurniture {
   windows.forEach((win, i) => poi('window', i, { x: win.x, z: z + 0.8, yaw: FACE_BACK }, win.x, 1.3, z))
   poi('plant', 0, { x: plants[0].x + 0.65, z: plants[0].z, yaw: FACE_LEFT }, plants[0].x, 0.55, plants[0].z)
   poi('plant', 1, { x: plants[1].x, z: plants[1].z + 0.65, yaw: FACE_BACK }, plants[1].x, 0.45, plants[1].z)
-  poi('postit', 0, { x: board.x + 0.35, z: z + 0.8, yaw: FACE_BACK }, board.x + 0.35, 1.15, z)
+  // Ler o quadro inteiro: um passo atrás dos lugares das colunas.
+  poi('postit', 0, { x: board.x, z: z + 1.3, yaw: FACE_BACK }, board.x, board.y, z)
+  // Um lugar diante de cada coluna (mais de um personagem pode ir ao quadro ao mesmo tempo).
+  for (let c = 0; c < 3; c++) poi('board', c, { x: board.x + columnX(c), z: z + COLUMN_SPOT_Z, yaw: FACE_BACK }, board.x + columnX(c), board.y, z)
   poi('pufe', 0, { x: pufe.x, z: z + d - 0.82, yaw: FACE_CAMERA }, pufe.x, 0.3, pufe.z)
   // Pares de conversa: um de frente para o outro (no tapete e no corredor do fundo).
   poi('chat', 0, { x: cx - 0.2, z: z + d - 1.35, yaw: FACE_RIGHT }, cx + 0.8, 1.25, z + d - 1.35)
@@ -155,6 +187,7 @@ export function roomFurniture(r: RoomLayout): RoomFurniture {
     ...lamps.map((l) => rect(l.x, l.z, 0.16, 0.16)),
     { x0: coffee.x - 0.27, z0: coffee.z - 0.47, x1: x + w, z1: coffee.z + 0.47 },
     rect(pufe.x, pufe.z, PUFE_RADIUS, PUFE_RADIUS),
+    rect(board.bin.x, board.bin.z, BIN_SPOT.r + 0.02, BIN_SPOT.r + 0.02),
     // A tela do projetor desce até perto do chão: ninguém passa entre ela e a parede.
     { x0: cx - SCREEN_W / 2 - 0.1, z0: z, x1: cx + SCREEN_W / 2 + 0.1, z1: screen.z + 0.08 },
     // Paredes: fundo (com os peitoris), laterais (a esquerda com o vão da porta) e a borda da frente.

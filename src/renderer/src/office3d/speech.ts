@@ -106,6 +106,9 @@ export class Speech {
   private readonly layout = new BubbleLayout(MAX_BUBBLES)
   private readonly boxes: BubbleBox[] = Array.from({ length: MAX_BUBBLES }, newBox)
   private readonly entries = new Map<string, Entry>()
+  /** O que o gerador decidiu por último e as falas do quadro por cima (say). */
+  private readonly gen = new Map<string, Quip | null>()
+  private readonly extra = new Map<string, Quip>()
   private list: Entry[] = []
   private readonly top: Array<Entry | null> = new Array<Entry | null>(MAX_BUBBLES).fill(null)
   private count = 0
@@ -138,10 +141,29 @@ export class Speech {
     return this.entries.get(key)?.quip ?? null
   }
 
+  /**
+   * A fala do quadro (board/boardStage.ts) de um personagem: entra por cima do
+   * que o gerador decidiu se a prioridade dela (PRIORITY.board) for maior ou
+   * igual; null tira. Permissão e erro continuam na frente.
+   */
+  say(key: string, quip: Quip | null): boolean {
+    if (quip) this.extra.set(key, quip)
+    else if (!this.extra.delete(key)) return false
+    return this.apply(new Map([[key, this.gen.get(key) ?? null]]))
+  }
+
+  private merged(key: string, quip: Quip | null): Quip | null {
+    const x = this.extra.get(key)
+    return x && (!quip || x.priority >= quip.priority) ? x : quip
+  }
+
   private apply(out: Map<string, Quip | null>): boolean {
     let changed = false
     let members = false
-    for (const [key, quip] of out) {
+    for (const [key, raw] of out) {
+      if (raw === null) this.gen.delete(key)
+      else this.gen.set(key, raw)
+      const quip = this.merged(key, raw)
       if (this.layer.set(key, quip)) changed = true
       const e = this.entries.get(key)
       if (!quip) {
@@ -253,6 +275,8 @@ export class Speech {
   dispose(): void {
     this.layer.dispose()
     this.entries.clear()
+    this.gen.clear()
+    this.extra.clear()
     this.list = []
     this.top.fill(null)
     this.count = 0

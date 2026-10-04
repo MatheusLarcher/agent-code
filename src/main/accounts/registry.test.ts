@@ -55,7 +55,7 @@ function setup(emails: Record<string, string> = {}) {
     const email = emails[key] ?? emails[configDir ? 'new' : 'machine']
     return email ? { loggedIn: true, authMethod: 'claude.ai', email, subscriptionType: 'max' } : { loggedIn: false, authMethod: 'none' }
   })
-  const login = vi.fn(async (configDir: string) => {
+  const login = vi.fn(async (configDir = machine) => {
     writeCredential(configDir)
     return true
   })

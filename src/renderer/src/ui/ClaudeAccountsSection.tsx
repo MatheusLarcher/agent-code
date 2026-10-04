@@ -84,10 +84,13 @@ export function ClaudeAccountsSection({ highlight = false }: { highlight?: boole
 
   const relogin = async (account: ClaudeAccountView): Promise<void> => {
     setBusy(account.id)
+    notify('aviso', 'Abrindo o navegador: entre de novo com essa conta Claude.')
     try {
       const { ok } = await window.api.claudeAccountsRelogin(account.id)
       notify(ok ? 'sucesso' : 'erro', ok ? 'Login renovado.' : 'O login não foi concluído.')
       await refresh()
+    } catch {
+      notify('erro', 'Não foi possível iniciar o login. Tente de novo.')
     } finally {
       setBusy(null)
     }
@@ -208,7 +211,7 @@ export function ClaudeAccountsSection({ highlight = false }: { highlight?: boole
             <span className="settings-list-meta">
               {[account.plan, STATUS_LABEL[account.status], lastUsage(account)].filter(Boolean).join(' · ')}
             </span>
-            {account.status !== 'connected' && !account.isDefault && (
+            {account.status !== 'connected' && (
               <button className="btn ghost" type="button" disabled={busy !== null} onClick={() => void relogin(account)}>
                 {busy === account.id ? 'Aguardando…' : 'Entrar de novo'}
               </button>

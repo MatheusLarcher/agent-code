@@ -133,8 +133,8 @@ describe('Office3DWorkspace', () => {
     // Cada listener de window adicionado pelo motor saiu.
     const engineTypes = new Set(['pointermove', 'pointerup', 'keydown', 'keyup', 'blur'])
     const ours = add.mock.calls.filter(([t]) => engineTypes.has(t as string))
-    // + o keydown do atalho de DEV (feed de demonstração), também removido.
-    expect(ours.length).toBe(engineTypes.size + (import.meta.env.DEV ? 1 : 0))
+    // + o keydown do Esc do papel pego (quadro, na captura) e o do atalho de DEV (feed de demonstração), também removidos.
+    expect(ours.length).toBe(engineTypes.size + 1 + (import.meta.env.DEV ? 1 : 0))
     for (const [type, fn] of ours) expect(remove.mock.calls.some(([t, f]) => t === type && f === fn)).toBe(true)
 
     render(<Office3DWorkspace {...props} />)

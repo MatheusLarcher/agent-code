@@ -6,6 +6,7 @@ import {
   type WhisperModelId,
   type WhisperStatus
 } from '@shared/ipc'
+import { VoiceComponentInstall } from './VoiceComponentInstall'
 
 interface Props {
   cfg: AppConfig
@@ -66,8 +67,10 @@ export function WhisperModelPicker({ cfg, setCfg, loaded }: Props): JSX.Element 
           ? `Rodando em: ${running.label}${running.gpuError ? ` (GPU indisponível: ${running.gpuError})` : ''}.`
           : 'Aceleração: tenta a GPU primeiro e cai para a CPU se ela não servir; aparece aqui depois do primeiro ditado.'}
       </span>
+      <VoiceComponentInstall component={{ kind: 'whisper', model }} size={sizes} testable />
       <span className="settings-hint">
-        {`Na primeira vez que você falar, o app baixa este modelo (${sizes}) e mostra o progresso. O áudio nunca sai deste computador.`}
+        Instale aqui ou deixe para a primeira vez que você falar, que baixa o modelo sozinha e mostra o
+        progresso. O áudio nunca sai deste computador.
       </span>
     </>
   )

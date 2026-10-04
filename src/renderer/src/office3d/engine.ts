@@ -28,14 +28,14 @@
  * diz se foi o usuário que abriu/fechou a tela (`byUser`; o motor sozinho não).
  * `flyToAgent`/`follow` voam até um agente sem abrir a tela (`follow` respeita
  * FOLLOW_GRACE_MS desde o último gesto do usuário na câmera e não sai da tela
- * aberta do agente daquela conversa).
- */
+ * aberta do agente daquela conversa). Kanban = o Quadro real (`board`, board/engineBoard.ts); quem muda vai ao quadro. */
 import { PerspectiveCamera, Vector3 } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { deriveOfficeModel, principalKey } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
+import { EngineBoard } from './board/engineBoard'
 import { appBrowserApi } from './browserFrames'
-import { agentPose, CameraRig, framePose, monitorPose, type CameraPose, type ViewSize } from './cameraRig'
+import { agentPose, CameraRig, framePose, monitorPose, type CameraPose } from './cameraRig'
 import { CameraSync } from './cameraSync'
 import { EnginePower } from './enginePower'
 import { createDefaultRenderer, listener, PROJECTOR_KEY, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
@@ -43,7 +43,7 @@ import { diffEvents, snapshotOf, type OfficeSnapshot } from './events'
 import { clampDt, isTypingTarget, MoveKeys, moveDelta } from './input'
 import { EMPTY_LAYOUT, layoutOffice, monitorPosition, type Office3DLayout } from './layout'
 import { LOW_RATE_MS } from './lod'
-import { PointerInput } from './pointerInput'
+import { bindKeys, PointerInput } from './pointerInput'
 import type { OfficePower } from './power'
 import { officeFrame } from './powerPlant'
 import { Quality, type EngineStats } from './quality'
@@ -69,6 +69,8 @@ export class Office3DEngine {
   private readonly quality: Quality
   private readonly speech: Speech
   private readonly power: EnginePower
+  /** O Quadro real nas salas: dados, clique, arrasto, dica e `open(id)` (board/engineBoard.ts). */
+  readonly board: EngineBoard
   private readonly anchor = new ScreenAnchor()
   /** A prévia do hover, acima do monitor do agente. */
   private readonly preview = new PreviewAnchor()
@@ -123,7 +125,9 @@ export class Office3DEngine {
     this.speech = new Speech(container, (key) => this.bubbleClick(key))
     // Quadro do navegador: é da conversa ativa; com a aba fechada fica só guardado.
     this.scene.projectors.connect(opts.browser === undefined ? appBrowserApi() : opts.browser, () => this.feed?.activeId ?? null, () => this.paused)
-    this.pointer = this.bindPointer()
+    this.board = new EngineBoard(this.scene, container, this.camera, this.listen, opts.board, cb, () => this.requestRender())
+    this.board.attach((key, quip) => this.speech.say(key, quip) && this.requestRender(), () => this.feed && !this.paused && this.applyFeed(this.feed))
+    this.pointer = this.board.bind(this.bindPointer())
     this.bindInput()
     this.observeSize()
     const source = opts.source ?? officeStore
@@ -141,7 +145,7 @@ export class Office3DEngine {
       this.userMoved()
       this.requestRender()
     }
-    return new PointerInput(this.canvas, this.listen, {
+    return new PointerInput(this.canvas, this.listen, this.board.wrap({
       pick: (x, y) => {
         this.camSync.sync()
         return this.scene.pick(x, y, this.camera)
@@ -167,35 +171,31 @@ export class Office3DEngine {
       },
       hover: (key) => this.cb.onHover?.(key),
       now: () => this.now()
+    }))
+  }
+
+  /** Teclado (pointerInput.ts): Esc fecha a tela aberta, WASD anda, documento oculto para o laço. */
+  private bindInput(): void {
+    bindKeys(this.listen, this.keys, {
+      paused: () => this.paused,
+      escape: (target) => this.escape(target),
+      moved: () => this.requestRender(),
+      hidden: (hidden) => (hidden ? this.cancelFrame() : this.requestRender())
     })
   }
 
-  private bindInput(): void {
-    this.listen(window, 'keydown', (e) => {
-      // Aba fechada: a tecla é de quem está na tela (nem preventDefault).
-      if (this.paused) return
-      if (e.key === 'Escape' && this.focusedKey && !isTypingTarget(e.target)) {
-        e.preventDefault()
-        this.userCamAt = this.now()
-        this.leaveFocus(true, true)
-        return
-      }
-      if (this.keys.down(e)) {
-        e.preventDefault()
-        this.requestRender()
-      }
-    })
-    this.listen(window, 'keyup', (e) => this.keys.up(e))
-    this.listen(window, 'blur', () => this.keys.clear())
-    this.listen(document, 'visibilitychange', () => {
-      if (document.hidden) this.cancelFrame()
-      else this.requestRender()
-    })
+  /** Esc fecha a tela aberta (fora de campo de texto); true se consumiu. */
+  private escape(target: EventTarget | null): boolean {
+    if (!this.focusedKey || isTypingTarget(target)) return false
+    this.userCamAt = this.now()
+    this.leaveFocus(true, true)
+    return true
   }
 
   /** Balão clicado: o de um pedido (permissão, pergunta) leva ao pedido da conversa; os outros focam o agente. */
   private bubbleClick(key: string): void {
     const quip = this.speech.quipOf(key)
+    if (quip?.kind === 'board' && this.board.openFromBubble(key)) return
     if (quip?.kind === 'permission' && this.cb.onFocusRequest) return this.cb.onFocusRequest(quip.convId)
     this.userCamAt = this.now()
     this.focus(key)
@@ -248,7 +248,7 @@ export class Office3DEngine {
     }
     this.feed = feed
     const wallNow = Date.now()
-    const model = deriveOfficeModel(feed, wallNow)
+    const model = deriveOfficeModel(feed, wallNow, this.board.boardRooms)
     this.layout = layoutOffice(model, this.layout)
     const snapshot = snapshotOf(feed, model, wallNow)
     const events = catchUp ? [] : diffEvents(this.snapshot, snapshot, wallNow)
@@ -256,6 +256,7 @@ export class Office3DEngine {
     // A energia antes do sync: sala no escuro já monta com a tela preta (na volta da pausa, sem o evento).
     const powerEvent = this.power.read(feed, wallNow, this.now() / 1000, catchUp)
     this.scene.sync(this.layout, feed, { snapshot, events, wallNow, t: this.now() / 1000 })
+    this.board.feed(feed, this.layout)
     this.speech.feed(snapshot, events, wallNow, this.power.quip(powerEvent))
     this.power.emit()
     if (this.autoFrame && !this.focusedKey) this.frameBuilding()
@@ -275,7 +276,8 @@ export class Office3DEngine {
     const { event, changed } = this.power.tick(this.feed, now, this.now() / 1000)
     this.power.emit()
     const screens = this.scene.projectors.tick(now)
-    if (this.speech.tick(now, this.power.quip(event)) || changed || screens) this.requestRender()
+    const board = this.board.tick(now)
+    if (this.speech.tick(now, this.power.quip(event)) || changed || screens || board) this.requestRender()
   }
 
   /** A energia em vigor (a barra e os testes leem). */
@@ -285,21 +287,16 @@ export class Office3DEngine {
 
   /** Só DEV (Ctrl+Alt+Shift+B): força o próximo nível de energia, em ciclo, para testar. */
   cyclePower(): void {
-    const now = Date.now()
-    const event = this.power.cycle(now, this.now() / 1000)
+    const event = this.power.cycle(Date.now(), this.now() / 1000)
     this.power.emit()
-    this.speech.tick(now, this.power.quip(event))
+    this.speech.tick(Date.now(), this.power.quip(event))
     this.requestRender()
-  }
-
-  private get view(): ViewSize {
-    return { fovDeg: this.camera.fov, aspect: this.width / this.height }
   }
 
   /** Enquadra todas as salas e a usina de tokens no palco atual. */
   private frameBuilding(): void {
     const f = officeFrame(this.layout.rooms, BUILDING_HEIGHT)
-    if (f) this.rig.pose = framePose(f.box, this.view, undefined, undefined, f.extra)
+    if (f) this.rig.pose = framePose(f.box, { fovDeg: this.camera.fov, aspect: this.width / this.height }, undefined, undefined, f.extra)
   }
 
   /** Pose que enquadra a tela do personagem (o monitor dele ou do pai); a tela HTML mira o mesmo monitor. */
@@ -380,10 +377,10 @@ export class Office3DEngine {
     return this.scene.headWorldPosition(key, out)
   }
 
-  /** Modo demonstração (Ctrl+Alt+Shift+D): acelera o cochilo e o telão mostra a página falsa (sem quadro real). */
+  /** Modo demonstração (Ctrl+Alt+Shift+D): acelera o cochilo, o telão mostra a página falsa e o kanban o Quadro falso. */
   setDemo(on: boolean): void {
     this.scene.setDemo(on)
-    this.scene.projectors.demo = on
+    this.board.setDemo(on)
     this.requestRender()
   }
 
@@ -419,6 +416,7 @@ export class Office3DEngine {
     this.tick = null
     this.keys.clear()
     this.pointer.reset()
+    this.board.pause()
   }
 
   /** Aba de volta: remede o palco, reaplica o último feed (guardado ou o atual) sem reproduzir o intervalo e retoma o laço. */
@@ -429,6 +427,7 @@ export class Office3DEngine {
     const feed = this.pending ?? this.feed
     this.pending = null
     if (feed) this.applyFeed(feed, true)
+    this.board.resume()
     this.tick = setInterval(this.tickQuips, QUIP_TICK_MS)
     this.requestRender()
   }
@@ -474,6 +473,7 @@ export class Office3DEngine {
     if (this.focusedKey) this.anchor.place(this.camera, this.width, this.height)
     this.preview.place(this.scene, this.camera, this.width, this.height)
     this.speech.place(this.camera, this.width, this.height, this.quality.level === 2, this.headOf)
+    this.board.place(this.width, this.height)
     const full = this.keys.moving || tweening || this.scene.rate === 2
     this.lowRate = !full
     if ((full || animating) && !this.rafId) this.rafId = this.raf(this.frame)
@@ -492,6 +492,7 @@ export class Office3DEngine {
     this.anchor.setElement(null)
     this.preview.setElement(null)
     this.speech.dispose()
+    this.board.dispose()
     this.scene.dispose()
     this.renderer.dispose()
   }

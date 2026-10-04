@@ -149,6 +149,11 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
     case 'readBoard':
     case 'stick':
     case 'admire':
+    case 'unpin':
+    case 'scribble':
+    case 'stamp':
+    case 'crumple':
+    case 'point':
     case 'talk':
     case 'phone':
     case 'wait':
@@ -202,6 +207,51 @@ function leisurePose(out: Pose, a: Action, t: number, k: number): void {
       out[CH.headPitch] = -0.05
       return
     }
+    case 'unpin': {
+      // Braço direito ao papel, pinça e puxa o alfinete.
+      const reach = envelope(t, 1, 0.3, 0.25)
+      arms(out, 0.05, 0.07, 0.14, mix(0.05, 1.6, reach), 0.05, mix(0.14, 0.3, reach))
+      out[CH.fingersR] = smooth((t - 0.35) / 0.15)
+      out[CH.lean] = 0.05 * reach - 0.04 * pulse(t, 0.55, 0.25)
+      out[CH.headPitch] = -0.05
+      return
+    }
+    case 'scribble': {
+      // Papel na esquerda, a direita rabisca em zigue-zague.
+      arms(out, 0.95, -0.1, 1.5, 1.05 + 0.06 * Math.sin(14 * t), -0.12 + 0.08 * Math.sin(9 * t + k), 1.45)
+      out[CH.headPitch] = 0.4
+      out[CH.brows] = -0.15
+      out[CH.fingersR] = 0.8
+      return
+    }
+    case 'stamp': {
+      // Ergue e bate o carimbo no papel.
+      const up = envelope(t, 0.9, 0.3, 0.2)
+      const hit = pulse(t, 0.45, 0.18)
+      arms(out, 0.05, 0.07, 0.14, mix(1.2, 1.75, up) - 0.35 * hit, 0.05, mix(0.6, 0.9, up))
+      out[CH.fingersR] = 1
+      out[CH.lean] = 0.08 * hit
+      out[CH.brows] = 0.3
+      return
+    }
+    case 'crumple': {
+      // Amassa com as duas mãos e arremessa no cesto.
+      const ball = smooth(t / 0.6)
+      const toss = pulse(t, 0.75, 0.35)
+      arms(out, mix(0.9, 0.7, ball), 0.25 * (1 - ball), 1.5, mix(0.9, 0.7, ball) + 1.2 * toss, 0.25 * (1 - ball), 1.5 - 1.1 * toss)
+      out[CH.fingersL] = out[CH.fingersR] = 0.6 + 0.4 * Math.abs(Math.sin(12 * t)) * (1 - ball)
+      out[CH.headPitch] = 0.35 - 0.3 * toss
+      out[CH.prop] = ball
+      return
+    }
+    case 'point':
+      // Aponta para o papel e fala.
+      arms(out, 0.05, 0.07, 0.14, 1.45, 0.1, 0.05)
+      out[CH.fingersR] = 0.9
+      out[CH.mouth] = 0.12 + 0.3 * Math.abs(Math.sin(9 * t))
+      out[CH.headYaw] = 0.3
+      out[CH.brows] = 0.25
+      return
     case 'admire':
       arms(out, -0.22, 0.58, 1.7, -0.22, 0.58, 1.7)
       out[CH.headPitch] = -0.05 + 0.05 * Math.sin(3 * t)

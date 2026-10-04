@@ -291,11 +291,35 @@ function cmdlineToolsUrl(): string {
   return process.platform === 'darwin' ? CMDLINE_TOOLS_URL_MAC : CMDLINE_TOOLS_URL_LINUX
 }
 
+const installListeners = new Set<Progress>()
+let installRun: Promise<DetectResult> | null = null
+
+/** An install is running (agent tool, APK build or Settings). */
+export function isInstalling(): boolean {
+  return installRun !== null
+}
+
 /**
  * Install whatever is missing. Idempotent: re-running after a partial install
- * only fetches what's still absent. Returns a fresh detect() at the end.
+ * only fetches what's still absent. Returns a fresh detect() at the end. A call
+ * during an install joins it (and gets its progress lines) instead of starting
+ * a second one over the same folders.
  */
-export async function ensureInstalled(onProgress: Progress): Promise<DetectResult> {
+export function ensureInstalled(onProgress: Progress): Promise<DetectResult> {
+  installListeners.add(onProgress)
+  if (!installRun) {
+    const broadcast: Progress = (line) => {
+      for (const fn of installListeners) fn(line)
+    }
+    installRun = runInstall(broadcast).finally(() => {
+      installRun = null
+      installListeners.clear()
+    })
+  }
+  return installRun
+}
+
+async function runInstall(onProgress: Progress): Promise<DetectResult> {
   let d = await detect()
   if (d.ready) {
     onProgress('Toolchain Android já está instalada.')

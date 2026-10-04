@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { LOCAL_SPEECH_MODELS, VOICE_OPTIONS, VOICE_SPEEDS, type AppConfig, type VoiceId } from '@shared/ipc'
+import { VoiceComponentInstall } from './VoiceComponentInstall'
 import { WhisperModelPicker } from './WhisperModelPicker'
 import { useUI } from './UiProvider'
 
@@ -14,8 +15,8 @@ interface Props {
 /**
  * Aba Voz das Configurações. Tudo roda neste computador — não há chave nem
  * serviço na nuvem: a leitura usa o Kokoro, e o ditado o Whisper local (padrão)
- * ou o Parakeet/Canary em Python. Os modelos são baixados no primeiro uso, com
- * o progresso na faixa acima do campo de mensagem.
+ * ou o Parakeet/Canary em Python. Cada modelo tem "Instalar" aqui; sem isso, é
+ * baixado no primeiro uso, com o progresso na faixa acima do campo de mensagem.
  */
 export function VoiceSettingsSection({ cfg, setCfg, loaded }: Props): JSX.Element {
   const { notify } = useUI()
@@ -23,6 +24,7 @@ export function VoiceSettingsSection({ cfg, setCfg, loaded }: Props): JSX.Elemen
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => () => audioRef.current?.pause(), [])
+  const localModel = LOCAL_SPEECH_MODELS.find((m) => m.id === cfg.localSpeech.model)
 
   // Toca uma frase com a voz e a velocidade ESCOLHIDAS AGORA (antes de salvar).
   const testVoice = async (): Promise<void> => {
@@ -95,9 +97,10 @@ export function VoiceSettingsSection({ cfg, setCfg, loaded }: Props): JSX.Elemen
             {testing ? 'Parar' : 'Testar voz'}
           </button>
         </div>
+        <VoiceComponentInstall component={{ kind: 'tts' }} size="~330 MB" />
         <span className="settings-hint">
-          A voz roda neste computador (Kokoro), sem chave e sem enviar texto para fora. Na primeira leitura
-          o app baixa o modelo de voz (~330 MB) e mostra o progresso; depois funciona sem internet.
+          A voz roda neste computador (Kokoro), sem chave e sem enviar texto para fora. Instale aqui ou deixe
+          para a primeira leitura no chat, que baixa o modelo sozinha; depois funciona sem internet.
         </span>
       </section>
 
@@ -113,7 +116,7 @@ export function VoiceSettingsSection({ cfg, setCfg, loaded }: Props): JSX.Elemen
               onClick={() => setCfg((c) => ({ ...c, transcribeEngine: 'whisper' }))}
             >
               <strong>Whisper local</strong>
-              <span>padrão: usa a GPU se houver, senão a CPU; sem instalar nada</span>
+              <span>padrão: usa a GPU se houver, senão a CPU; não precisa de Python</span>
             </button>
             <button
               type="button"
@@ -139,9 +142,14 @@ export function VoiceSettingsSection({ cfg, setCfg, loaded }: Props): JSX.Elemen
                   </option>
                 ))}
               </select>
+              <VoiceComponentInstall
+                component={{ kind: 'local', model: cfg.localSpeech.model }}
+                size={`~${localModel?.sizeMb ?? '?'} MB`}
+                testable
+              />
               <span className="settings-hint">
-                Na primeira vez que você falar, o app prepara o ambiente e baixa o modelo, mostrando o
-                progresso. Depois disso ele fica salvo e funciona sem internet.
+                Instale aqui ou deixe para a primeira vez que você falar: o app prepara o ambiente Python e
+                baixa o modelo, mostrando o progresso. Depois disso ele fica salvo e funciona sem internet.
               </span>
             </>
           ) : (

@@ -95,6 +95,11 @@
   --qb-edge: var(--accent);
   --qb-bg: color-mix(in srgb, var(--accent) 16%, var(--bg-3));
 }
+.qb[data-kind='board'] {
+  --qb-edge: #e0a458;
+  --qb-bg: color-mix(in srgb, #e0a458 18%, var(--bg-3));
+  cursor: pointer;
+}
 .qb[data-kind='done'] {
   --qb-edge: var(--ok);
   --qb-bg: color-mix(in srgb, var(--ok) 18%, var(--bg-3));

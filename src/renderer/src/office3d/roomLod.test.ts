@@ -32,12 +32,14 @@ function meshes(o: Object3D): Mesh[] {
 const materialsUnder = (roots: readonly Object3D[]): Set<Material> => new Set(roots.flatMap((r) => meshes(r).map((m) => m.material as Material)))
 
 describe('LOD da sala (decor.ts + roomLod.ts)', () => {
-  it('detalhes (livros, post-its, xícaras, folhas…) e decoração pequena (luminárias, vasos, rodapés, teclados…) marcados; paredes e mesas não', () => {
+  it('detalhes (livros, xícaras, folhas…) e decoração pequena (luminárias, vasos, rodapés, teclados…) marcados; paredes e mesas não', () => {
     const v = buildRoom(kit, room(), () => {})
     const detail = materialsUnder(v.lod.detail)
     const small = materialsUnder(v.lod.small)
     const m = kit.mat
-    for (const mat of [m.book, m.note, m.mug, m.leaf, m.leafDark, m.soil, m.glass, m.redLed, m.greenLed, m.bulb]) expect(detail.has(mat)).toBe(true)
+    for (const mat of [m.book, m.mug, m.leaf, m.leafDark, m.soil, m.glass, m.redLed, m.greenLed, m.bulb]) expect(detail.has(mat)).toBe(true)
+    // Nenhum post-it sorteado: o quadro da sala é o kanban real (board/), fora da decoração.
+    expect(detail.has(m.note)).toBe(false)
     for (const mat of [m.pot, m.shade, m.metal, m.baseboard, m.keyboard, m.chair, m.coffee]) expect(small.has(mat)).toBe(true)
     for (const mat of [m.wall, m.deskTop, m.deskLeg, m.chairSeat, m.floor, m.rug, m.pufe, m.signFrame, m.door]) {
       expect(detail.has(mat), 'grande não é detalhe').toBe(false)

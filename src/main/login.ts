@@ -56,7 +56,9 @@ export function runClaudeLogin(
 
 async function doLogin(openUrl: (url: string) => void, log: (line: string) => void, configDir?: string): Promise<boolean> {
   const loggedIn = (): Promise<boolean> => isAuthenticated(configDir)
-  if (await loggedIn()) return true
+  // auth status only describes saved credentials; it can remain loggedIn:true
+  // after OAuth has expired or been revoked. An explicit login must always
+  // start OAuth, and old credentials must never complete the new attempt.
 
   let cli: string
   try {
@@ -91,7 +93,6 @@ async function doLogin(openUrl: (url: string) => void, log: (line: string) => vo
     const finish = (ok: boolean): void => {
       if (done) return
       done = true
-      clearInterval(poll)
       clearTimeout(timer)
       try {
         child.kill()
@@ -101,17 +102,15 @@ async function doLogin(openUrl: (url: string) => void, log: (line: string) => vo
       resolve(ok)
     }
 
-    // Re-check the CLI's auth status without overlapping spawns; finish on success.
+    // Only check after this login reports success, never poll the old login.
     const checkStatus = (): void => {
       if (checking || done) return
       checking = true
       void loggedIn().then((ok) => {
         checking = false
-        if (ok) {
-          log('auth status: logged in')
-          finish(true)
-        }
-      })
+        if (ok) log('auth status: logged in')
+        finish(ok)
+      }).catch(() => finish(false))
     }
 
     const scan = (buf: Buffer): void => {
@@ -143,15 +142,14 @@ async function doLogin(openUrl: (url: string) => void, log: (line: string) => vo
     })
     child.on('exit', (code) => {
       log(`child exit: ${code}`)
-      void loggedIn().then((ok) => finish(ok))
+      if (done) return
+      if (code !== 0) finish(false)
+      else checkStatus()
     })
 
-    // Backstop poll: the authoritative signal is the CLI's status flipping to
-    // logged-in, in case we miss the stdout marker.
-    const poll = setInterval(checkStatus, 2500)
     const timer = setTimeout(() => {
       log('timeout (3 min) — giving up')
-      void loggedIn().then((ok) => finish(ok))
+      finish(false)
     }, LOGIN_TIMEOUT_MS)
   })
 }

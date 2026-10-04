@@ -225,8 +225,8 @@ async function ensureEnv(runtime: 'transformers' | 'nemo', onProgress: ProgressF
     const base = findCudaPython()
     if (!base) {
       throw new Error(
-        'Não encontrei uma placa NVIDIA configurada neste computador. ' +
-          'A transcrição aqui precisa dela — use a opção "Na nuvem".'
+        'Não encontrei um Python com PyTorch e CUDA (placa NVIDIA) neste computador. ' +
+          'O Parakeet/Canary precisa dele — use o Whisper local.'
       )
     }
 
@@ -482,7 +482,39 @@ export function transcribeLocal(wav: Buffer, model: string, onProgress: Progress
   return next
 }
 
-async function runTranscription(wav: Buffer, model: string, onProgress: ProgressFn): Promise<string> {
+/** Is `model` ready to dictate without downloading: environment built and
+ *  weights in the Hugging Face cache (Settings › Voz). */
+export function isLocalSpeechInstalled(model: string): boolean {
+  return isLocalSpeechReady(localSpeechRuntime(model)) && isModelCached(model) && existsSync(loadedMark(model))
+}
+
+/** Written once the worker reported "ready" for `model` — the HF repo folder
+ *  alone also exists after an interrupted download. */
+function loadedMark(model: string): string {
+  return join(speechRoot(), 'models', `${model.replace(/[\\/:]/g, '--')}.ready`)
+}
+
+function markLoaded(model: string): void {
+  try {
+    mkdirSync(join(speechRoot(), 'models'), { recursive: true })
+    writeFileSync(loadedMark(model), new Date().toISOString(), 'utf8')
+  } catch {
+    /* only affects the Settings status; the model itself works */
+  }
+}
+
+/** Settings › Voz "Instalar": builds the environment and downloads/loads the
+ *  model now, through the same queue as the dictations. */
+export function prepareLocalSpeech(model: string, onProgress: ProgressFn): Promise<void> {
+  const next = queue.then(
+    () => ensureWorker(model, onProgress),
+    () => ensureWorker(model, onProgress)
+  )
+  queue = next.catch(() => undefined)
+  return next.then(() => undefined)
+}
+
+async function ensureWorker(model: string, onProgress: ProgressFn): Promise<Worker> {
   const runtime = localSpeechRuntime(model)
   const python = await ensureEnv(runtime, onProgress)
   if (!worker || worker.model !== model) {
@@ -496,7 +528,12 @@ async function runTranscription(wav: Buffer, model: string, onProgress: Progress
   }
   const w = worker
   await w.ready
+  markLoaded(model)
+  return w
+}
 
+async function runTranscription(wav: Buffer, model: string, onProgress: ProgressFn): Promise<string> {
+  const w = await ensureWorker(model, onProgress)
   const file = join(tmpdir(), `agent-code-dictation-${randomUUID()}.wav`)
   writeFileSync(file, wav)
   const id = randomUUID()

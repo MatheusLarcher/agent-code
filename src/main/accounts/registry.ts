@@ -31,13 +31,11 @@ import type { AccountCandidate } from './selection'
 
 /** Id fixo da conta que usa o login que já existia na máquina (~/.claude). */
 export const DEFAULT_ACCOUNT_ID = 'default'
-
 /** Chave KV da lista (escopo do dispositivo: as pastas são locais). */
 export const CLAUDE_ACCOUNTS_KV_KEY = 'agentcode.claude-accounts.v1'
 
 /** Nova tentativa de gravar a lista quando o banco recusou (padrão: 30 s). */
 const PERSIST_RETRY_MS = 30_000
-
 export interface RegistryDeps {
   /** Raiz local do app (`agent-code-local`), nunca a pasta sincronizada. */
   localDir: () => string
@@ -46,8 +44,8 @@ export interface RegistryDeps {
   /** `claude auth status --json` para uma pasta (undefined = a da máquina). */
   authStatus: (configDir?: string) => Promise<ClaudeAuthStatus>
   /** Login OAuth pelo navegador numa pasta. */
-  login: (configDir: string) => Promise<boolean>
-  loginBusy: (configDir: string) => boolean
+  login: (configDir?: string) => Promise<boolean>
+  loginBusy: (configDir?: string) => boolean
   /** Login novo numa pasta de conta: hora de copiar a credencial para o banco. */
   onLogin?: (id: string) => void
   /** Conta removida pelo usuário: a cópia dela no banco também sai. */
@@ -364,14 +362,15 @@ export function createAccountRegistry(deps: RegistryDeps) {
     async relogin(id: string): Promise<boolean> {
       await ensureLoaded()
       const record = find(id)
-      if (!record || id === DEFAULT_ACCOUNT_ID) return false
-      const dir = prepareAccountDir(accountDir(deps.localDir(), id))
+      if (!record) return false
+      const dir = id === DEFAULT_ACCOUNT_ID ? undefined : prepareAccountDir(accountDir(deps.localDir(), id))
       if (deps.loginBusy(dir)) return false
       reserved.add(id)
       let ok = false
       try {
         ok = await deps.login(dir)
-        if (ok) clearRecreatedMark(dir)
+        if (ok && dir) clearRecreatedMark(dir)
+        if (ok && !dir) defaultAuth = null
         if (ok) await refreshIdentity(id)
       } finally {
         reserved.delete(id)

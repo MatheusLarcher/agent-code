@@ -14,6 +14,9 @@ import type {
   AndroidProgressMsg,
   SpeechSetupProgress,
   VoiceInstallStatus,
+  VoiceComponent,
+  VoiceSelfTest,
+  AndroidToolchainStatus,
   WhisperStatus,
   AppConfig,
   BoardItem,
@@ -252,6 +255,15 @@ const api: AgentCodeApi = {
   voiceStatus: (): Promise<WhisperStatus> => ipcRenderer.invoke(Channels.voiceStatus),
   voiceInstall: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke(Channels.voiceInstall),
   voiceInstallStatus: (): Promise<VoiceInstallStatus> => ipcRenderer.invoke(Channels.voiceInstallStatus),
+  voiceComponentStatus: (c: VoiceComponent): Promise<VoiceInstallStatus> =>
+    ipcRenderer.invoke(Channels.voiceComponentStatus, c),
+  voiceComponentInstall: (c: VoiceComponent): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(Channels.voiceComponentInstall, c),
+  voiceTestTranscription: (c: VoiceComponent): Promise<VoiceSelfTest> =>
+    ipcRenderer.invoke(Channels.voiceTestTranscription, c),
+  androidToolchainStatus: (): Promise<AndroidToolchainStatus> => ipcRenderer.invoke(Channels.androidToolchainStatus),
+  androidToolchainInstall: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(Channels.androidToolchainInstall),
   authStatus: (): Promise<{ authenticated: boolean }> => ipcRenderer.invoke(Channels.authStatus),
   authLogin: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.authLogin),
   authLogout: (): Promise<ClaudeAuthStatus> => ipcRenderer.invoke(Channels.authLogout),
@@ -358,6 +370,8 @@ const api: AgentCodeApi = {
     on(Channels.androidProgress, cb),
   onSpeechSetupProgress: (cb: (p: SpeechSetupProgress) => void): (() => void) =>
     on(Channels.speechSetupProgress, cb),
+  onAndroidToolchainProgress: (cb: (line: string) => void): (() => void) =>
+    on(Channels.androidToolchainProgress, cb),
 
   // remote control (smartfone-remote)
   remoteStart: (): Promise<RemoteInfo> => ipcRenderer.invoke(Channels.remoteStart),

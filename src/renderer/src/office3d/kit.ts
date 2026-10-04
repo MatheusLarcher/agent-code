@@ -19,7 +19,7 @@ import {
   type Material,
   type Texture
 } from 'three'
-import { createCorkTexture, createRugTexture, createScreensaverTexture, createSkyTexture, createWoodTexture, createZTexture } from './textures'
+import { createRugTexture, createScreensaverTexture, createSkyTexture, createWoodTexture, createZTexture } from './textures'
 
 export const SCREEN_W = 0.88
 export const SCREEN_H = 0.5
@@ -52,7 +52,6 @@ export function createKit(anisotropy: number) {
   const tex = {
     wood: createWoodTexture(anisotropy),
     rug: createRugTexture(),
-    cork: createCorkTexture(),
     screensaver: createScreensaverTexture(),
     z: createZTexture()
   }
@@ -92,7 +91,6 @@ export function createKit(anisotropy: number) {
     sky: new MeshBasicMaterial({ map: sky.texture }),
     skyNight: new MeshBasicMaterial({ map: night.texture }),
     glass: new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.08, depthWrite: false }),
-    cork: lambert(0xffffff, { map: tex.cork }),
     corkFrame: lambert(0x6e4a2c),
     note: lambert(0xffffff),
     shelf: lambert(0x6b4a2f),

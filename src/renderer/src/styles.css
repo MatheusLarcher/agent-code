@@ -5927,6 +5927,33 @@ img.inline-att[data-caret] {
   margin-right: 6px;
   vertical-align: middle;
 }
+/* "Instalar" de um modelo/ferramenta (Configurações › Voz e › Android). */
+.settings-install {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.settings-install-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-install-status {
+  flex: 1 1 180px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-install-status.ok {
+  color: var(--ok);
+}
+.settings-install-error {
+  color: var(--err);
+}
+.settings-install-pass {
+  color: var(--ok);
+}
 .settings-actions {
   align-items: center;
 }

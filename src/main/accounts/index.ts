@@ -1,6 +1,7 @@
 import { safeStorage } from 'electron'
 import type { AccountUsageResult } from '../../shared/claudeAccounts'
 import { claudeAuthStatus } from '../auth'
+import { claudeAuthExpiry } from '../authExpiry'
 import { claudeLoginBusyFor, runClaudeLogin } from '../login'
 import { readPersistedKv, writePersistedKv } from '../persistence/kvFacade'
 import { getCacheInfo } from '../store'
@@ -16,7 +17,7 @@ import { createUsageReader } from './usageReader'
 export { DEFAULT_ACCOUNT_ID } from './registry'
 
 /** Quem abre a URL de login e onde vai o diagnóstico; ligado no boot (index.ts). */
-let loginIo: { openUrl: (url: string) => void; log: (line: string) => void } = {
+let loginIo: { openUrl: (url: string) => void; log: (line: string) => void; onLogin?: () => void } = {
   openUrl: () => undefined,
   log: () => undefined
 }
@@ -32,7 +33,11 @@ export const claudeAccounts = createAccountRegistry({
   authStatus: claudeAuthStatus,
   login: (configDir) => runClaudeLogin(loginIo.openUrl, loginIo.log, configDir),
   loginBusy: claudeLoginBusyFor,
-  onLogin: () => void syncAccountsWithDatabase(),
+  onLogin: (id) => {
+    if (id === DEFAULT_ACCOUNT_ID) claudeAuthExpiry.clear()
+    loginIo.onLogin?.()
+    void syncAccountsWithDatabase()
+  },
   onRemove: (id) => {
     void forgetAccountBackup(syncDeps, id).catch((error) => {
       console.warn('[contas] não consegui tirar do banco a cópia da conta removida:', (error as Error).message)

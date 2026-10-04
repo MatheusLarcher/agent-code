@@ -1,6 +1,6 @@
 /**
  * Telas dos monitores por nível de detalhe. A cena diz o QUE cada tela mostra
- * (`setScreen`: apagada, protetor ou acesa com o chat encolhido do dono e o
+ * (`setScreen`: apagada, protetor ou acesa com o VS Code do dono e o
  * status dele) e `showScreen` aplica conforme a sala:
  *   fora da tela  nada (nem desenha): a página fica guardada para a volta;
  *   sem energia   preta (apagão na sala): a página fica guardada e volta com a luz;
@@ -13,6 +13,7 @@ import { MeshBasicMaterial } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { OfficeCharacterModel } from '../office/adapter/model'
 import { chatPageFor } from './chatPage'
+import { codePageFor } from './codePage'
 import { modelPhase, type LifeInput } from './crowd'
 import { disposeScreenOn, type ScreenView } from './decor'
 import type { AgentPhase } from './events'
@@ -31,9 +32,9 @@ const STATUS: Record<AgentPhase, ScreenStatus> = {
   idle: 'idle'
 }
 
-/** Página da tela para um personagem ativo: o chat encolhido do turno dele (sem nada, o rótulo). */
+/** Página da tela para um personagem ativo: a janela do VS Code com o que ele escreveu (e o chat encolhido do turno, para a prévia). */
 export function screenPageFor(feed: OfficeFeed | null, model: OfficeCharacterModel): ScreenPage {
-  return chatPageFor(feed, model)
+  return { ...chatPageFor(feed, model), code: codePageFor(feed, model) }
 }
 
 /** Cor do monitor do dono vista de LONGE: a fase do retrato de events.ts (ou, sem ele, a do modelo). */

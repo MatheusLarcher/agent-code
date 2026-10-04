@@ -171,6 +171,7 @@ describe('logout × pasta recriada: decide a história da pasta, não os arquivo
     const later = Date.now() + 3 * HOUR
     const w = world(new Map(), {
       login: async (dir) => {
+        if (!dir) throw new Error('expected isolated account folder')
         writeLogin(dir, 'dois@x.com', later)
         return true
       },
@@ -194,6 +195,7 @@ describe('logout × pasta recriada: decide a história da pasta, não os arquivo
     let seen = ''
     const w = world(new Map(), {
       login: async (dir) => {
+        if (!dir) throw new Error('expected isolated account folder')
         seen = dir
         expect(isRecreatedDir(dir)).toBe(true)
         writeLogin(dir, 'novo@x.com', Date.now() + HOUR)

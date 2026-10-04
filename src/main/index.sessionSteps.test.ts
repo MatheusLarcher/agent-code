@@ -105,7 +105,8 @@ describe('registerIpc — lock sem prazo, prazos por passo, sessão descartada f
     const up = gate()
     spy.startResults.push(up.p.then(() => true))
     const sending = send(conv, 'T', t.id).catch((e: unknown) => e)
-    await tick()
+    // Até a sessão nova subir (um prazo fixo falhava com a suíte inteira rodando em paralelo).
+    for (let i = 0; i < 400 && sessionsOf(conv).length < 2; i++) await tick()
     const b = sessionsOf(conv).at(-1)!
     expect(b).not.toBe(a)
     await call(Channels.agentDispose, conv)

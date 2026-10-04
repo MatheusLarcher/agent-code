@@ -23,13 +23,14 @@
  *   (0.5–2, default 1). Long text is split by sentence and the audio joined,
  *   so nothing is truncated at Kokoro's 510-token context.
  *
- * transcribeWhisper(audioBase64, mimeType, onProgress?) => Promise<string>
+ * transcribeWhisper(audioBase64, mimeType, onProgress?, profile?) => Promise<string>
  *   Portuguese transcription. Accepts WAV (desktop recorder) and WebM/Ogg Opus
  *   (phone MediaRecorder), decoded in the worker with WASM — no ffmpeg. Inside
  *   Electron, other formats (mp4/AAC, mp3) fall back to Chromium's decoder.
  *
- * prepareVoiceModels(what: 'tts' | 'stt', onProgress?) => Promise<void>
+ * prepareVoiceModels(what: 'tts' | 'stt', onProgress?, profile?) => Promise<void>
  *   Downloads/loads the models ahead of time so the first real call is fast.
+ *   `profile` (both functions) defaults to the one set by setWhisperProfile.
  *
  * setWhisperProfile(profile) / getWhisperStatus()
  *   Picks the Whisper profile for the next calls (default WHISPER_PROFILE,
@@ -64,7 +65,7 @@ import {
 } from './protocol'
 
 export { deviceLabel, KOKORO_VOICES as LOCAL_VOICES, WHISPER_PROFILES, VoiceWorkerError }
-export { voiceModelsInstalled } from './installed'
+export { kokoroInstalled, voiceModelsInstalled, whisperInstalled } from './installed'
 export type { KokoroVoice as LocalVoice, SynthesisResult, VoiceProgress, WhisperDevice, WhisperProfile, WhisperState }
 
 /**
@@ -126,15 +127,16 @@ export async function synthesizeLocal(
 export async function transcribeWhisper(
   audioBase64: string,
   mimeType: string,
-  onProgress?: (p: VoiceProgress) => void
+  onProgress?: (p: VoiceProgress) => void,
+  profile: WhisperProfile = whisperProfile
 ): Promise<string> {
   if (typeof audioBase64 !== 'string' || !audioBase64) throw new TypeError('transcribeWhisper: áudio vazio')
   const b64 = audioBase64.replace(/^data:[^,]*,/, '') // tolerate a data: URL
   const audio = new Uint8Array(Buffer.from(b64, 'base64'))
   if (audio.length === 0) throw new TypeError('transcribeWhisper: áudio vazio')
   if (audio.length > MAX_AUDIO_BYTES) throw new RangeError('transcribeWhisper: áudio acima de 50 MB')
+  if (!Object.hasOwn(WHISPER_PROFILES, profile)) throw new RangeError(`perfil Whisper desconhecido "${profile}"`)
   const mime = typeof mimeType === 'string' ? mimeType : ''
-  const profile = whisperProfile
   let r: TranscribeResult
   try {
     r = (await request({ op: 'transcribe', profile, audio, mimeType: mime }, onProgress)) as TranscribeResult
@@ -148,9 +150,14 @@ export async function transcribeWhisper(
   return r.text
 }
 
-export async function prepareVoiceModels(what: 'tts' | 'stt', onProgress?: (p: VoiceProgress) => void): Promise<void> {
+export async function prepareVoiceModels(
+  what: 'tts' | 'stt',
+  onProgress?: (p: VoiceProgress) => void,
+  profile: WhisperProfile = whisperProfile
+): Promise<void> {
   if (what !== 'tts' && what !== 'stt') throw new RangeError('prepareVoiceModels: use "tts" ou "stt"')
-  const r = await request({ op: 'prepare', what, profile: whisperProfile }, onProgress)
+  if (!Object.hasOwn(WHISPER_PROFILES, profile)) throw new RangeError(`perfil Whisper desconhecido "${profile}"`)
+  const r = await request({ op: 'prepare', what, profile }, onProgress)
   if (what === 'stt') remember(r as TranscribeResult)
 }
 

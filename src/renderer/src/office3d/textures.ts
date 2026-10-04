@@ -1,6 +1,6 @@
 /**
  * Texturas procedurais desenhadas em canvas 2D (nada baixado): piso de madeira,
- * tapete, céu das janelas conforme a hora, cortiça, protetor de tela e o "z"
+ * tapete, céu das janelas conforme a hora, protetor de tela e o "z"
  * de quem cochila. Sem contexto 2D (jsdom) a textura fica em branco — nada quebra.
  */
 import { CanvasTexture, RepeatWrapping, SRGBColorSpace } from 'three'
@@ -176,22 +176,6 @@ export function createSkyTexture(): { texture: CanvasTexture; draw(hour: number)
       return true
     }
   }
-}
-
-/** Cortiça do quadro de avisos. */
-export function createCorkTexture(): CanvasTexture {
-  const S = 256
-  const { canvas, ctx } = canvas2d(S, S)
-  if (ctx) {
-    const r = rng(5)
-    ctx.fillStyle = '#b98a57'
-    ctx.fillRect(0, 0, S, S)
-    for (let i = 0; i < 2500; i++) {
-      ctx.fillStyle = `rgba(${r() > 0.5 ? '90,55,25' : '230,190,140'},${0.15 + r() * 0.3})`
-      ctx.fillRect(r() * S, r() * S, 1 + r() * 2, 1 + r() * 2)
-    }
-  }
-  return make(canvas, false)
 }
 
 /** Protetor de tela discreto e estático, um só para todos os monitores ociosos. */

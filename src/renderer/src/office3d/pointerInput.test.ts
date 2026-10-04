@@ -71,7 +71,7 @@ describe('PointerInput', () => {
     expect(s.hooks.click).not.toHaveBeenCalled()
     fireEvent.pointerDown(s.canvas, { button: 0, clientX: 20, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 21, clientY: 50 })
-    expect(s.hooks.click).toHaveBeenCalledWith('conv:a')
+    expect(s.hooks.click).toHaveBeenCalledWith('conv:a', { x: 21, y: 50 })
     fireEvent.doubleClick(s.canvas, { clientX: 150, clientY: 50 })
     expect(s.hooks.open).toHaveBeenCalledWith(null)
     const wheel = new WheelEvent('wheel', { deltaY: 120, cancelable: true })

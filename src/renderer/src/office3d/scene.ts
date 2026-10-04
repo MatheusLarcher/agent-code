@@ -24,11 +24,14 @@
  * portas À VISTA, sem alocar, e diz o ritmo pedido (`rate`). Sem nenhum
  * `updateView`, tudo fica à vista e completo (como antes). O projetor de cada
  * sala (projectors.ts) desce com o uso do navegador/Android e, quando acende,
- * os agentes da sala olham para a tela. `dispose()` libera tudo o que foi criado aqui.
+ * os agentes da sala olham para a tela. O kanban de cada sala (board/boards.ts)
+ * mostra o Quadro real; `pick` também devolve `card:<id>` e `pile:<sala>|<status>`.
+ * `dispose()` libera tudo o que foi criado aqui.
  */
 import { AmbientLight, Color, DirectionalLight, Fog, Frustum, HemisphereLight, Matrix4, Mesh, Raycaster, Scene, Sphere, Vector2, Vector3, type Camera, type Object3D } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { SLEEP_AFTER_SEC } from '../office/behavior/leisure'
+import { Boards } from './board/boards'
 import { greet } from './brain'
 import { Character3D, type FrameCtx } from './characters'
 import { Crowd, DEMO_TIME_FACTOR, modelPhase, type LifeInput } from './crowd'
@@ -36,7 +39,7 @@ import { buildRoom, roomSig, type RoomView } from './decor'
 import { doorWant, swingDoors } from './doors'
 import { OfficeEnergy } from './energy'
 import { createKit, type Kit } from './kit'
-import { buildingBounds, type CharacterLayout, type Office3DLayout, type RoomLayout } from './layout'
+import type { CharacterLayout, Office3DLayout, RoomLayout } from './layout'
 import { FOG_FAR, FOG_NEAR, lodLevel, type Lod } from './lod'
 import { paperStep } from './paperPile'
 import { Particles } from './particles'
@@ -46,6 +49,7 @@ import { createPropKit, type PropKit } from './props'
 import { setRoomLevel } from './roomLod'
 import { screenPageFor, screenStatus, setScreen, showScreen } from './screens'
 import { accentHue } from './sign'
+import { fitSunShadow, SUN_OFFSET } from './sunShadow'
 
 export { seedColor } from './characters'
 export type { LifeInput } from './crowd'
@@ -54,7 +58,6 @@ export { screenPageFor } from './screens'
 export const SHADOW_MAP_SIZE = 2048
 
 const BACKGROUND = 0x1d1a22
-const SUN_OFFSET = { x: 7, y: 16, z: 11 }
 /** Névoa "desligada": começa além do plano distante da câmera. */
 const FOG_OFF = 1e6
 /** Personagem sem sala (corredor): esfera dele para o frustum. */
@@ -68,6 +71,8 @@ export class OfficeScene {
   readonly energy: OfficeEnergy
   /** O projetor de cada sala (navegador/Android em teste). */
   readonly projectors: Projectors
+  /** O kanban do Quadro real de cada sala (board/). */
+  readonly boards: Boards
   private readonly kit: Kit
   private readonly propKit: PropKit
   private readonly sun: DirectionalLight
@@ -134,6 +139,7 @@ export class OfficeScene {
     this.projectors.onLit = (id, x, y, z) => {
       for (const v of this.charList) if (v.brain.roomId === id && !v.culled) v.glance(x, y, z)
     }
+    this.boards = new Boards(this.kit)
   }
 
   /** Leitura da energia (motor: a cada feed e tique). `t` = relógio da cena (s); `now` = epoch ms. */
@@ -171,6 +177,7 @@ export class OfficeScene {
     this.crowd.syncRooms(layout.rooms)
     this.energy.syncRooms(layout.rooms, this.rooms)
     this.projectors.syncRooms(layout.rooms, this.rooms)
+    this.boards.syncRooms(layout.rooms, this.rooms)
 
     // Monitores primeiro: o brilho no rosto depende da tela acesa. Sala fora da tela só guarda a página;
     // sala sem energia (apagão) fica com a tela preta. A pilha de papéis segue o contexto do dono.
@@ -246,28 +253,12 @@ export class OfficeScene {
     this.shadowDirty = true
   }
 
-  /** A câmera de sombra cobre o prédio todo (e só ele). */
+  /** A câmera de sombra cobre o prédio todo (e só ele): refeita só quando a caixa das salas muda. */
   private fitShadow(rooms: RoomLayout[]): void {
-    const b = buildingBounds(rooms)
-    if (!b) return
-    const sig = `${b.minX},${b.maxX},${b.minZ},${b.maxZ}`
+    const sig = fitSunShadow(this.sun, rooms, this.shadowBox)
     if (sig === this.shadowBox) return
     this.shadowBox = sig
     this.shadowDirty = true
-    const cx = (b.minX + b.maxX) / 2
-    const cz = (b.minZ + b.maxZ) / 2
-    const half = Math.max(b.maxX - b.minX, b.maxZ - b.minZ) / 2 + 3
-    this.sun.position.set(cx + SUN_OFFSET.x, SUN_OFFSET.y, cz + SUN_OFFSET.z)
-    this.sun.target.position.set(cx, 0, cz)
-    this.sun.target.updateMatrixWorld()
-    const cam = this.sun.shadow.camera
-    cam.left = -half
-    cam.right = half
-    cam.top = half
-    cam.bottom = -half
-    cam.near = 1
-    cam.far = 60 + half * 2
-    cam.updateProjectionMatrix()
   }
 
   /**
@@ -299,9 +290,10 @@ export class OfficeScene {
     this.focusDesk = deskKey
   }
 
-  /** Modo demonstração: o cochilo chega DEMO_TIME_FACTOR vezes mais cedo. */
+  /** Modo demonstração: o cochilo chega DEMO_TIME_FACTOR vezes mais cedo e o telão mostra a página falsa. */
   setDemo(on: boolean): void {
     this.crowd.sleepAfter = on ? SLEEP_AFTER_SEC / DEMO_TIME_FACTOR : SLEEP_AFTER_SEC
+    this.projectors.demo = on
   }
 
   /** Clique no agente: ele olha para a câmera e dá um tchauzinho. */
@@ -426,6 +418,7 @@ export class OfficeScene {
     // Energia: transições, piscadas, emergência, festa e a usina pedem o ritmo delas; o projetor, o dele.
     const power = this.energy.animate(t, dt)
     if (this.projectors.animate(dt) === 2) full = true
+    if (this.boards.animate(dt) === 2) full = true
     if (this.particles.update(dt)) full = true
     this.doorMoved.v = false
     const doors = swingDoors(this.roomList, this.crowd.list, dt, this.doorMoved)
@@ -442,16 +435,23 @@ export class OfficeScene {
     return !!v && v.group.visible && v.headWorldPosition(out)
   }
 
-  /** Personagem sob o raio (corpo, cabeça, indicador ou monitor dele). */
+  /** O que está sob o raio: personagem (corpo, cabeça, indicador ou monitor dele), telão, papel ou pilha do quadro. */
   pick(ndcX: number, ndcY: number, camera: Camera): string | null {
     this.raycaster.setFromCamera(new Vector2(ndcX, ndcY), camera)
     const targets: Object3D[] = []
     for (const v of this.chars.values()) if (v.group.visible) targets.push(v.group)
     for (const r of this.rooms.values()) for (const s of r.screens) if (s.mesh.userData.charKey) targets.push(s.mesh)
     this.projectors.pickTargets(targets)
-    const hit = this.raycaster.intersectObjects(targets, true).find((h) => h.object.userData.charKey)
-    return (hit?.object.userData.charKey as string | undefined) ?? null
+    this.boards.pickTargets(targets)
+    for (const h of this.raycaster.intersectObjects(targets, true)) {
+      const key = h.object.userData.charKey as string | undefined
+      if (key) return key
+      const board = this.boards.keyAt(h.object, h.faceIndex)
+      if (board) return board
+    }
+    return null
   }
+
 
   character(key: string): CharacterLayout | undefined {
     return this.layout?.characters.find((c) => c.key === key)
@@ -468,6 +468,7 @@ export class OfficeScene {
   dispose(): void {
     this.energy.dispose()
     this.projectors.dispose()
+    this.boards.dispose()
     for (const v of this.rooms.values()) v.dispose()
     for (const v of this.chars.values()) v.dispose()
     this.rooms.clear()

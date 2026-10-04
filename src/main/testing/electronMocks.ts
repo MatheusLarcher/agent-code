@@ -126,6 +126,8 @@ vi.mock('../voiceService', () => ({
   stopVoice: vi.fn(async () => {}),
   transcribe: vi.fn()
 }))
+vi.mock('../voiceComponents', () => ({ registerVoiceComponentIpc: vi.fn() }))
+vi.mock('../android/androidToolchainIpc', () => ({ registerAndroidToolchainIpc: vi.fn() }))
 vi.mock('../speech', () => ({ stopLocalSpeech: vi.fn(), transcribeLocal: vi.fn() }))
 vi.mock('../auth', () => ({ isAuthenticated: vi.fn(), logoutClaude: vi.fn() }))
 vi.mock('../login', () => ({ runClaudeLogin: vi.fn() }))

@@ -34,6 +34,7 @@ import {
   type FixedStyle,
   type Role
 } from './brain'
+import { boardSpotIn, type BoardSpot, type BoardWorld } from './brainBoard'
 import { leaveParty } from './brainParty'
 import type { AgentEvent, AgentPhase, OfficeSnapshot } from './events'
 import { roomFurniture, type Poi, type PoiKind, type RoomFurniture, type Spot } from './furniture'
@@ -89,7 +90,7 @@ function seedOf(key: string): number {
   return ((h >>> 0) % 6283) / 1000
 }
 
-export class Crowd implements BrainWorld {
+export class Crowd implements BrainWorld, BoardWorld {
   t = 0
   camX = 0
   camZ = 0
@@ -470,6 +471,11 @@ export class Crowd implements BrainWorld {
   partner(b: Brain): Brain | null {
     const o = b.chatWith ? this.brains.get(b.chatWith) : undefined
     return o && o.leisure === 'chat' && o.chatWith === b.key && o.mode === 'free' ? o : null
+  }
+
+  /** O lugar de uma parada no quadro (brainBoard.boardSpotIn): coluna reservada, bloquinho ou cesto. */
+  boardSpot(b: Brain, col: number, out: BoardSpot): boolean {
+    return boardSpotIn(this.navOf(b)?.furniture, this.book, b, col, out)
   }
 
   doorOut(b: Brain): Spot | null {

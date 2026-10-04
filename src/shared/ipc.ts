@@ -1539,9 +1539,36 @@ export type SandboxCreateResult = { path: string } | { error: string }
 export type TranscribeEngine = 'whisper' | 'local'
 export const TRANSCRIBE_ENGINES: readonly TranscribeEngine[] = ['whisper', 'local']
 
-/** State of the local voice models (Kokoro read-aloud + Whisper dictation). */
+/** State of the local voice models (Kokoro read-aloud + Whisper dictation),
+ *  or of one VoiceComponent. */
 export interface VoiceInstallStatus {
   installed: boolean
+  installing: boolean
+  /** Why the last install of this component failed (cleared on the next try). */
+  error?: string
+}
+
+/** One installable piece of the on-device voice stack (Settings › Voz):
+ *  Kokoro, one Whisper model, or one Parakeet/Canary model (Python engine). */
+export type VoiceComponent =
+  | { kind: 'tts' }
+  | { kind: 'whisper'; model: WhisperModelId }
+  | { kind: 'local'; model: string }
+
+/** Settings › Voz "Testar transcrição": a known phrase spoken by Kokoro and
+ *  transcribed back by the chosen model. `ok` = the words came back. */
+export interface VoiceSelfTest {
+  ok: boolean
+  expected: string
+  heard?: string
+  error?: string
+}
+
+/** Android toolchain (JDK, SDK, emulator, AVD) — Settings › Android. */
+export interface AndroidToolchainStatus {
+  ready: boolean
+  /** Human names of what is still missing. */
+  missing: string[]
   installing: boolean
 }
 
@@ -2105,6 +2132,18 @@ export const Channels = {
   voiceInstall: 'voice:install',
   /** Whether the local voice models are installed / being installed. */
   voiceInstallStatus: 'voice:install-status',
+  /** Same, for one VoiceComponent (Settings › Voz). */
+  voiceComponentStatus: 'voice:component-status',
+  /** Install one VoiceComponent now; progress on speechSetupProgress. */
+  voiceComponentInstall: 'voice:component-install',
+  /** Round-trip test of a transcription model (Kokoro speaks, the model transcribes). */
+  voiceTestTranscription: 'voice:test-transcription',
+  /** Android toolchain: what is installed / missing. */
+  androidToolchainStatus: 'android:toolchain-status',
+  /** Install the Android toolchain now (same path as the agent's android_setup). */
+  androidToolchainInstall: 'android:toolchain-install',
+  /** main → renderer: one progress line of the Android toolchain install. */
+  androidToolchainProgress: 'android:toolchain-progress',
   /** Whether a Claude Code login exists on this machine. */
   authStatus: 'auth:status',
   /** Run the Claude OAuth login (opens the browser); resolves when authenticated. */

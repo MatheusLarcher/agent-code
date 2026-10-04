@@ -5,7 +5,10 @@ import { DEFAULT_CONFIG, type AppConfig, type WhisperStatus } from '@shared/ipc'
 import { WhisperModelPicker } from './WhisperModelPicker'
 
 function stubStatus(status: WhisperStatus): void {
-  ;(window as unknown as { api: unknown }).api = { voiceStatus: vi.fn(async () => status) }
+  ;(window as unknown as { api: unknown }).api = {
+    voiceStatus: vi.fn(async () => status),
+    voiceComponentStatus: vi.fn(async () => ({ installed: false, installing: false }))
+  }
 }
 
 let latest: AppConfig = DEFAULT_CONFIG

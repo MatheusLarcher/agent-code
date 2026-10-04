@@ -4,7 +4,9 @@
  * `listener` dos eventos de DOM (cada um já com a remoção guardada para o dispose).
  */
 import { PCFShadowMap, WebGLRenderer, type Camera, type Scene } from 'three'
+import type { BoardItemStatus } from '@shared/ipc'
 import type { OfficeFeed } from '../office/adapter/feed'
+import type { BoardApi } from './board/boardSync'
 import type { BrowserFeedApi } from './browserFrames'
 import type { OfficePower } from './power'
 
@@ -47,7 +49,14 @@ export interface EngineOptions {
   source?: FeedSource
   /** Quadros e estado do navegador embutido (padrão: o window.api do app; null = sem quadros). */
   browser?: BrowserFeedApi | null
+  /** O Quadro real (padrão: o window.api do app; null = sem quadro nas salas). */
+  board?: BoardApi | null
 }
+
+/** O que abrir no clique no kanban: o cartão grande ou a lista da coluna (x/y = ponto do clique na janela, se houve). */
+export type BoardOpen =
+  | { kind: 'card'; id: string; x: number | null; y: number | null }
+  | { kind: 'pile'; roomId: string; status: BoardItemStatus; x: number | null; y: number | null }
 
 export interface EngineCallbacks {
   /**
@@ -67,6 +76,10 @@ export interface EngineCallbacks {
   onHover?(key: string | null): void
   /** Clique na tela acesa do projetor de uma sala: o telão grande. */
   onProjector?(roomId: string): void
+  /** Clique num papel ou na pilha do kanban de uma sala (ou `engine.board.open`). */
+  onBoardOpen?(open: BoardOpen): void
+  /** Os dados do Quadro real mudaram (a janela do cartão acompanha). */
+  onBoardChange?(): void
 }
 
 /** addEventListener tipado por alvo (janela, elemento, documento). */

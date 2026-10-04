@@ -128,7 +128,7 @@ describe('grade de navegação', () => {
   it('pontos de interesse: ids únicos, pares de conversa de frente um para o outro, porta fora da sala', () => {
     const ids = furniture.pois.map((p) => p.id)
     expect(new Set(ids).size).toBe(ids.length)
-    for (const k of ['coffee', 'shelf', 'window', 'plant', 'postit', 'pufe', 'queue', 'chat']) {
+    for (const k of ['coffee', 'shelf', 'window', 'plant', 'postit', 'pufe', 'queue', 'chat', 'board']) {
       expect(furniture.pois.some((p) => p.kind === k), k).toBe(true)
     }
     const chats = furniture.pois.filter((p) => p.kind === 'chat')
@@ -140,6 +140,33 @@ describe('grade de navegação', () => {
     }
     expect(furniture.doorOut.x).toBeLessThan(room.x)
     expect(furniture.doorIn.x).toBeGreaterThan(room.x)
+  })
+})
+
+describe('o kanban na parede do fundo', () => {
+  it('um lugar livre diante de cada coluna, olhando para o quadro; o PO de pé ao lado; o cesto bloqueia', () => {
+    const b = furniture.board
+    const spots = furniture.pois.filter((p) => p.kind === 'board')
+    expect(spots.map((p) => p.index)).toEqual([0, 1, 2])
+    for (const p of spots) {
+      expect(grid.isFree(p.x, p.z)).toBe(true)
+      expect(p.x).toBeGreaterThan(b.x0)
+      expect(p.x).toBeLessThan(b.x1)
+      expect(p.yaw).toBe(0)
+      expect(p.look.z).toBe(room.z)
+    }
+    const po = layoutOffice({ rooms: [{ id: 'r1', projectKey: 'r1', name: 'r1', icon: null, principals: 0 }], characters: [{ ...principal('x'), key: 'po:r1', role: 'po', placement: { kind: 'destination', papel: 'kanban' } }] }).characters[0]
+    expect(grid.isFree(po.x, po.z)).toBe(true)
+    expect(po.x).toBeLessThan(b.x1)
+    expect(grid.isFree(b.bin.x, b.bin.z)).toBe(false)
+  })
+
+  it('o quadro cabe entre a parede da esquerda e a janela (que termina antes do telão)', () => {
+    const left = furniture.windows[0]
+    expect(furniture.board.x0).toBeGreaterThan(room.x)
+    expect(furniture.board.x1).toBeLessThan(left.x - 0.75)
+    expect(left.x + 0.81).toBeLessThan(furniture.screen.x - furniture.screen.width / 2)
+    expect(furniture.board.y1).toBeLessThan(1.7)
   })
 })
 

@@ -224,6 +224,7 @@ describe('mesma pessoa, conta pessoal e de equipe no mesmo e-mail', () => {
   function addWorld(org: string, kvList: string) {
     const w = world(new Map(), {
       login: async (dir) => {
+        if (!dir) throw new Error('expected isolated account folder')
         writeLogin(dir, 'eu@x.com', Date.now() + HOUR, org)
         return true
       },

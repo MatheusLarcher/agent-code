@@ -13,6 +13,9 @@ import type {
   AndroidProgressMsg,
   SpeechSetupProgress,
   VoiceInstallStatus,
+  VoiceComponent,
+  VoiceSelfTest,
+  AndroidToolchainStatus,
   AppConfig,
   BrowserFrame,
   BrowserInput,
@@ -284,6 +287,16 @@ export interface AgentCodeApi {
   voiceInstall(): Promise<{ ok: boolean; error?: string }>
   /** Are the local voice models installed / being installed? */
   voiceInstallStatus(): Promise<VoiceInstallStatus>
+  /** Same, for one component (Kokoro, a Whisper model, a Parakeet/Canary model). */
+  voiceComponentStatus(c: VoiceComponent): Promise<VoiceInstallStatus>
+  /** Install one component now (Settings › Voz). Progress on onSpeechSetupProgress. */
+  voiceComponentInstall(c: VoiceComponent): Promise<{ ok: boolean; error?: string }>
+  /** Kokoro speaks a known phrase and the transcription model transcribes it back. */
+  voiceTestTranscription(c: VoiceComponent): Promise<VoiceSelfTest>
+  /** Android toolchain installed / missing / being installed (Settings › Android). */
+  androidToolchainStatus(): Promise<AndroidToolchainStatus>
+  /** Install the Android toolchain now. Lines on onAndroidToolchainProgress. */
+  androidToolchainInstall(): Promise<{ ok: boolean; error?: string }>
   /** Whether a Claude Code login already exists. */
   authStatus(): Promise<{ authenticated: boolean }>
   /** Trigger the Claude OAuth login (opens the system browser); resolves when done. */
@@ -427,6 +440,8 @@ export interface AgentCodeApi {
   /** Progress while the on-device speech model is downloaded/prepared (local
    *  dictation engine). Ends with stage 'done' or 'error'. */
   onSpeechSetupProgress(cb: (p: SpeechSetupProgress) => void): () => void
+  /** One progress line of the Android toolchain install (androidToolchainInstall). */
+  onAndroidToolchainProgress(cb: (line: string) => void): () => void
 
   // ---- remote control (smartfone-remote) ----
   /** Start the LAN bridge so a phone can drive the sessions. */

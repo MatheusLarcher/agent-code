@@ -1,0 +1,221 @@
+/**
+ * O palco da coreografia: consome a fila de passos do quadro (boardSync.steps)
+ * no lugar do deslize automático. Liga o agendador puro (boardChoreo.ts) aos
+ * cérebros (a tarefa `errand` de brainBoard.ts), à parede (o cartão muda no
+ * instante em que o personagem prende o papel), aos balões e aos selos.
+ *
+ *   push(steps)   passos novos (o sync acabou de ler);
+ *   tick(now)     ~4×/s: começa viagens, aplica o que foi preso, fala, encerra;
+ *   flush()       tudo direto (aba escondida, volta da pausa, dispose);
+ *   cardOf(key)   o cartão do balão do quadro de um personagem (o clique abre).
+ *
+ * Os dados ficam na mão do host (EngineBoard): quem pode ir, aplicar no
+ * espelho, falar e pôr o selo. Sem o host vivo (aba escondida), tudo direto.
+ */
+import { SPEED, type Brain } from '../brainBody'
+import { errandBlocked } from '../brainBoard'
+import { stepLine } from './boardLines'
+import { BoardChoreo, LAG_MS, type Slide, type Trip } from './boardChoreo'
+import type { BoardStep } from './boardModel'
+
+/** A fala do quadro fica pelo menos isto (ms). */
+export const SAY_MIN_MS = 4_000
+
+export interface StageHost {
+  brain(key: string): Brain | undefined
+  /** Distância (m) do personagem até o quadro da sala dele; null sem sala. */
+  boardDistance(b: Brain): number | null
+  /** Animar agora? (aba à vista, sem pausa). */
+  live(): boolean
+  /** Sala no escuro ou festa do apagão: ninguém vai ao quadro. */
+  dark(roomId: string): boolean
+  fromColumn(s: BoardStep): number | null
+  /** A parede ainda deve o real deste cartão (false: já está no lugar, nada a animar). */
+  differs(s: BoardStep): boolean
+  /** Aplica o cartão na parede (desliza ao lugar novo). */
+  apply(roomId: string, cardId: string): void
+  /** O balão do quadro do personagem (null tira). */
+  say(key: string, text: string | null, convId: string): void
+  seal(roomId: string, cardId: string, text: string, user: boolean): void
+  /** O usuário arrastou este cartão no 3D há pouco (o passo dele não reanima nem leva selo). */
+  draggedHere(cardId: string): boolean
+}
+
+interface Live {
+  trip: Trip
+  fired: Set<number>
+  said: number
+}
+
+export class BoardStage {
+  readonly choreo: BoardChoreo
+  private readonly live = new Map<string, Live>()
+  /** Personagem → até quando o balão fica, e o cartão dele. */
+  private readonly speaking = new Map<string, { until: number; cardId: string | null; convId: string }>()
+
+  constructor(
+    private readonly host: StageHost,
+    private readonly clock: () => number = () => Date.now()
+  ) {
+    this.choreo = new BoardChoreo(clock)
+  }
+
+  push(steps: readonly BoardStep[]): void {
+    if (!this.host.live()) {
+      for (const s of steps) this.host.apply(s.roomId, s.cardId)
+      return
+    }
+    // Papel já no lugar (arrasto no 3D, atraso já aplicado): nada reanima.
+    const todo = steps.filter((s) => this.host.differs(s))
+    for (const s of steps) if (!todo.includes(s)) this.host.apply(s.roomId, s.cardId)
+    this.slide(this.choreo.push(todo))
+    this.tick()
+  }
+
+  private slide(list: readonly Slide[]): void {
+    for (const sl of list) {
+      const { step } = sl
+      const here = sl.user && this.host.draggedHere(step.cardId)
+      this.host.apply(step.roomId, step.cardId)
+      if (sl.seal && !here) this.host.seal(step.roomId, step.cardId, sl.seal, sl.user)
+    }
+  }
+
+  private readonly ctx = {
+    available: (key: string, roomId: string): boolean => {
+      const b = this.host.brain(key)
+      if (!b || b.roomId !== roomId || this.host.dark(roomId) || errandBlocked(b)) return false
+      return key.startsWith('po:') ? b.role === 'fixed' : b.role === 'desk'
+    },
+    walkS: (key: string): number => {
+      const b = this.host.brain(key)
+      const d = b ? this.host.boardDistance(b) : null
+      // Levantar da cadeira e virar: ~1 s além da caminhada.
+      return d === null ? 0 : d / SPEED.walk + (b && b.sit > 0 ? 1 : 0)
+    },
+    fromColumn: (s: BoardStep): number | null => this.host.fromColumn(s)
+  }
+
+  /** true se algo mudou (a cena pede um quadro). */
+  tick(now = this.clock()): boolean {
+    if (!this.host.live()) return this.flush() > 0
+    let changed = false
+    const { trips, slides } = this.choreo.next(this.ctx)
+    if (slides.length > 0) changed = true
+    this.slide(slides)
+    for (const trip of trips) {
+      const b = this.host.brain(trip.key)
+      if (!b) {
+        this.abort(trip)
+        continue
+      }
+      b.errand = trip.errand
+      this.live.set(trip.key, { trip, fired: new Set(), said: -1 })
+      changed = true
+    }
+    for (const lv of [...this.live.values()]) if (this.follow(lv, now)) changed = true
+    for (const [key, sp] of this.speaking) {
+      if (now < sp.until || this.live.has(key)) continue
+      this.speaking.delete(key)
+      this.host.say(key, null, sp.convId)
+      changed = true
+    }
+    return changed
+  }
+
+  /** Acompanha uma viagem: aplica o que foi preso, fala o passo atual, encerra. */
+  private follow(lv: Live, now: number): boolean {
+    const { trip } = lv
+    const b = this.host.brain(trip.key)
+    const e = trip.errand
+    if (!b || b.errand !== e || e.state === 'aborted' || now - trip.startedAt > LAG_MS) {
+      this.abort(trip, b)
+      return true
+    }
+    let changed = false
+    e.stops.forEach((stop, i) => {
+      if (!stop.fired || lv.fired.has(i)) return
+      lv.fired.add(i)
+      const s = trip.steps[stop.step]
+      this.host.apply(s.roomId, s.cardId)
+      changed = true
+    })
+    const cur = e.stops[e.idx]
+    if (cur && e.state === 'act' && cur.step !== lv.said) {
+      lv.said = cur.step
+      const s = trip.steps[cur.step]
+      const line = trip.lines[cur.step]
+      if (line) this.speak(trip.key, line, s.cardId, s.convId, now)
+      changed = true
+    }
+    if (e.state === 'done') {
+      this.finish(trip, b)
+      // A última fala ainda acompanha a volta um pouco.
+      const sp = this.speaking.get(trip.key)
+      if (sp) sp.until = Math.max(sp.until, now + SAY_MIN_MS / 2)
+      if (trip.summary) this.speak(trip.key, trip.summary, null, trip.steps[0].convId, now)
+      changed = true
+    }
+    return changed
+  }
+
+  private speak(key: string, text: string, cardId: string | null, convId: string, now: number): void {
+    this.speaking.set(key, { until: now + SAY_MIN_MS, cardId, convId })
+    this.host.say(key, text, convId)
+  }
+
+  /** Encerra a viagem: o que não foi preso vai direto (sem replay). */
+  private finish(trip: Trip, b: Brain | undefined): void {
+    const lv = this.live.get(trip.key)
+    this.live.delete(trip.key)
+    this.choreo.end(trip.key)
+    if (b && b.errand === trip.errand) b.errand = null
+    trip.steps.forEach((s, i) => {
+      const fired = trip.errand.stops.some((st, k) => st.step === i && st.fired && (lv?.fired.has(k) ?? false))
+      if (!fired) this.host.apply(s.roomId, s.cardId)
+    })
+  }
+
+  /** Abortada (permissão, apagão, sumiu, passou do prazo): o resto desliza com o selo. */
+  private abort(trip: Trip, b?: Brain): void {
+    const lv = this.live.get(trip.key)
+    if (b && b.errand === trip.errand && trip.errand.state !== 'done') trip.errand.state = 'aborted'
+    const pending = trip.steps.filter((_, i) => !trip.errand.stops.some((st, k) => st.step === i && st.fired && (lv?.fired.has(k) ?? false)))
+    this.finish(trip, b)
+    for (const s of pending) {
+      const line = stepLine(s, false)
+      if (line) this.host.seal(s.roomId, s.cardId, line, false)
+    }
+  }
+
+  /** Tudo direto: a fila, as viagens em curso e os balões. Devolve quantos passos aplicou. */
+  flush(): number {
+    let n = 0
+    for (const lv of this.live.values()) {
+      const b = this.host.brain(lv.trip.key)
+      if (b && b.errand === lv.trip.errand) {
+        lv.trip.errand.state = 'aborted'
+        b.errand = null
+        b.prop = null
+      }
+    }
+    this.live.clear()
+    for (const s of this.choreo.flush()) {
+      this.host.apply(s.roomId, s.cardId)
+      n++
+    }
+    for (const [key, sp] of this.speaking) this.host.say(key, null, sp.convId)
+    this.speaking.clear()
+    return n
+  }
+
+  /** O cartão do balão do quadro do personagem (null se o balão não é do quadro). */
+  cardOf(key: string): string | null {
+    return this.speaking.get(key)?.cardId ?? null
+  }
+
+  /** O personagem está numa ida ao quadro. */
+  busy(key: string): boolean {
+    return this.live.has(key)
+  }
+}

@@ -78,6 +78,8 @@ export type Action =
   | 'none' | 'idle' | 'sitIdle' | 'type' | 'typeFast' | 'readScreen' | 'drum' | 'web' | 'assist' | 'wave' | 'brew' | 'sip'
   | 'grabBook' | 'readBook' | 'lookOut' | 'stretchUp' | 'water' | 'readBoard' | 'stick' | 'admire' | 'talk' | 'listen'
   | 'phone' | 'wait' | 'napDesk' | 'napPufe'
+  // No quadro (brainBoard.ts): soltar o alfinete, rabiscar, carimbar ✓, amassar e jogar, apontar.
+  | 'unpin' | 'scribble' | 'stamp' | 'crumple' | 'point'
   // Festa do apagão (dance.ts): quatro passos no BPM, trenzinho, lanterna e pizza.
   | 'robot' | 'disco' | 'sway' | 'hop' | 'conga' | 'flashlight' | 'pizza'
 

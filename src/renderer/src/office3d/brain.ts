@@ -6,7 +6,7 @@
  * A FASE do AgentStatus (events.ts) manda no modo; os EVENTOS só disparam
  * reações curtas por cima. Modos:
  *   free        sem tarefa: alterna lazeres (café, estante, janela, regar a
- *               planta, post-its, conversar com outro ocioso, celular andando),
+ *               planta, ler o quadro, conversar com outro ocioso, celular andando),
  *               cada um de DWELL_MIN a DWELL_MAX s, com uma pausa entre eles;
  *   sleep       parado há sleepAfter s: cochila no pufe (se livre) ou na mesa;
  *   work        senta na própria mesa; o gesto segue a ferramenta atual;
@@ -43,6 +43,7 @@ import {
   type Leisure,
   type Mode
 } from './brainBody'
+import { runErrand, type BoardWorld } from './brainBoard'
 import { enterParty, runParty } from './brainParty'
 import { CONTEXT_LOW_STEPS, STALL_MS, type AgentEventBody, type AgentPhase, type AgentStatus, type ToolKind } from './events'
 import { chairSide, type Poi } from './furniture'
@@ -404,12 +405,11 @@ function runFree(b: Brain, dt: number, w: BrainWorld): void {
       b.prop = 'can'
       if (Math.floor(t / 0.3) !== Math.floor((t - dt) / 0.3)) b.fx |= FX.drops
       break
-    case 'postit': {
-      const s0 = dur * 0.55
-      setAction(b, t < s0 ? 'readBoard' : t < s0 + 1.1 ? 'stick' : 'admire')
-      b.prop = t >= s0 && t < s0 + 0.7 ? 'note' : null
+    case 'postit':
+      // Só lê e confere o quadro: o kanban é o Quadro real, ninguém prende papel inventado.
+      setAction(b, t < dur * 0.6 ? 'readBoard' : 'admire')
+      b.prop = null
       break
-    }
   }
   if (t >= dur) endLeisure(b, w, 1 + w.rng() * 2.5)
 }
@@ -450,13 +450,16 @@ function runPhone(b: Brain, dt: number, w: BrainWorld): void {
 // ── passo ──────────────────────────────────────────────────────────────────
 
 /** Um passo do cérebro: decide o modo, roda o modo e anda. Sem alocação. */
-export function stepBrain(b: Brain, dt: number, w: BrainWorld): void {
+export function stepBrain(b: Brain, dt: number, w: BrainWorld & Partial<BoardWorld>): void {
   b.modeT += dt
   b.actionT += dt
   tickReaction(b, dt)
   const m = decide(b, w)
   if (m !== b.mode) enterMode(b, m, w)
-  runMode(b, dt, w)
+  // Ida ao quadro: no lugar do modo enquanto dura (quem anima tira a tarefa no fim).
+  const e = b.errand
+  if (e && w.boardSpot && e.state !== 'done' && e.state !== 'aborted') runErrand(b, dt, w as BrainWorld & BoardWorld)
+  else runMode(b, dt, w)
   // No trenzinho andando, quem move o corpo é o crowd (a volta em torno do tapete).
   if (!b.puppet) move(b, dt, w)
 }

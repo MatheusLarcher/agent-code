@@ -38,6 +38,8 @@
  * conversa como o chat mostra — e a barra de tarefas dele troca entre Código,
  * Chat e Contexto); clique na tela acesa de um projetor abre o
  * telão (<ProjectorOverlay>, com o "Abrir na aba Conversa" de `onShowBrowser`);
+ * clique num papel do kanban abre o cartão grande (<BoardOverlay>, o mesmo
+ * detalhe da aba Quadro) e na pilha "+K" a lista da coluna;
  * duplo clique abre a conversa dele no chat flutuante (que expande). Clique no
  * balão de um pedido (permissão, pergunta) leva ao pedido (`onFocusRequest`:
  * o App seleciona a conversa e abre o modal); nos outros balões, foca o agente.
@@ -59,10 +61,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { isCentralConversation } from '@shared/central'
 import { principalKey } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
+import { BoardOverlay } from './board/BoardOverlay'
 import { ChatPreview, useHoverPreview } from './ChatPreview'
 import { CodeMonitor } from './codeScreen/CodeMonitor'
 import { DEMO_TICK_MS, demoFeed } from './demoFeed'
 import { Office3DEngine, type EngineCallbacks, type EngineOptions } from './engine'
+import type { BoardOpen } from './engineTypes'
 import { OfficeChatFloat, type OfficeConversation } from './OfficeChatFloat'
 import { OfficeHud } from './OfficeHud'
 import { isPerfShortcut, PerfHud } from './PerfHud'
@@ -151,6 +155,10 @@ export function Office3DWorkspace({
   // Prévia do hover: o agente sob o mouse há PREVIEW_DELAY_MS. Telão: a sala cujo projetor foi clicado.
   const [previewKey, onHover] = useHoverPreview(active)
   const [projectorRoom, setProjectorRoom] = useState<string | null>(null)
+  // Clique no kanban: o cartão grande (ou a lista da pilha); acompanha os dados do Quadro enquanto aberto.
+  const [boardOpen, setBoardOpen] = useState<BoardOpen | null>(null)
+  const boardOpenRef = useRef(boardOpen)
+  boardOpenRef.current = boardOpen
   const cbs = useRef({ onOpenConversation, onFocusRequest, onHover })
   cbs.current = { onOpenConversation, onFocusRequest, onHover }
   const activeRef = useRef(active)
@@ -187,6 +195,10 @@ export function Office3DWorkspace({
       onPower: setPower,
       onHover: (key) => cbs.current.onHover(key),
       onProjector: setProjectorRoom,
+      onBoardOpen: setBoardOpen,
+      onBoardChange: () => {
+        if (boardOpenRef.current) setTick((t) => t + 1)
+      },
       // Lido na hora do clique: o pedido vai para o callback do render atual (sem ele, o balão foca o agente).
       get onFocusRequest() {
         return cbs.current.onFocusRequest
@@ -208,6 +220,7 @@ export function Office3DWorkspace({
       setFocusKey(null)
       setPower(null)
       setProjectorRoom(null)
+      setBoardOpen(null)
     }
     // engineOptions é fixo por montagem (testes).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -271,9 +284,11 @@ export function Office3DWorkspace({
     if (active) openCentral()
   }, [centralSignal, active, openCentral])
 
-  // Aba fechada: o telão fecha.
+  // Aba fechada: o telão e a janela do kanban fecham.
   useEffect(() => {
-    if (!active) setProjectorRoom(null)
+    if (active) return
+    setProjectorRoom(null)
+    setBoardOpen(null)
   }, [active])
 
   // Com a tela, a prévia ou o telão aberto e a aba à vista, o conteúdo acompanha o feed.
@@ -337,6 +352,12 @@ export function Office3DWorkspace({
     if (projectorRoom) engineRef.current?.scene.projectors.mirror(projectorRoom, el)
   }, [projectorRoom])
   const closeProjector = useCallback(() => setProjectorRoom(null), [])
+  const closeBoard = useCallback(() => setBoardOpen(null), [])
+  // "Abrir a conversa" do cartão: o chat flutuante passa a mostrá-la (como o clique no agente).
+  const openCardConversation = useCallback((id: string) => {
+    setShowCentral(false)
+    cbs.current.onOpenConversation(id)
+  }, [])
   const showBrowser = useCallback(
     (id: string) => {
       setProjectorRoom(null)
@@ -400,6 +421,9 @@ export function Office3DWorkspace({
         {projector && (
           <ProjectorOverlay key={projector.roomId} info={projector} mirror={mirror} onClose={closeProjector} onShowBrowser={onShowBrowser ? showBrowser : undefined} />
         )}
+        {active && boardOpen && engine ? (
+          <BoardOverlay open={boardOpen} board={engine.board} onClose={closeBoard} onOpen={setBoardOpen} onOpenConversation={openCardConversation} />
+        ) : null}
         {import.meta.env.DEV && active && hud ? <PerfHud source={readEngine} /> : null}
       </div>
       {active && (chat || central) && !screenTakesChat ? (

@@ -1,10 +1,11 @@
 /**
  * Uma sala do escritório 3D: piso de tábuas, parede do fundo alta com janelas
- * (céu da hora local), rodapé, placa do projeto, quadro de cortiça com post-its
- * (o "kanban" do PO), estante, plantas, luminárias, máquina de café (de frente
- * para a sala, com espaço para a fila), tapete com o pufe do cochilo e a porta
- * na parede da esquerda (a folha gira quando alguém passa). As posições vêm de
- * furniture.ts — a mesma fonte da grade de navegação.
+ * (céu da hora local), rodapé, placa do projeto, estante, plantas, luminárias,
+ * máquina de café (de frente para a sala, com espaço para a fila), tapete com o
+ * pufe do cochilo e a porta na parede da esquerda (a folha gira quando alguém
+ * passa). As posições vêm de furniture.ts — a mesma fonte da grade de navegação.
+ * O kanban do Quadro real não mora aqui: a cena o prende ao grupo da sala
+ * (board/boards.ts).
  *
  * Móveis que se repetem por mesa (tampo, pés, monitor, teclado, caneca,
  * cadeira) são InstancedMesh POR SALA, com a bounding sphere calculada sobre as
@@ -13,7 +14,7 @@
  * escala da sala), a placa e as telas acesas são recursos próprios —
  * `dispose()` libera exatamente isso.
  *
- * LOD (roomLod.ts): detalhes (livros, post-its, xícaras, folhas, LEDs…) levam
+ * LOD (roomLod.ts): detalhes (livros, xícaras, folhas, LEDs…) levam
  * userData.lod = 'detail' e somem no MÉDIO; decoração pequena (luminárias,
  * vasos, rodapés, teclados, pés de cadeira, pilhas de papel…) leva 'small' e
  * some no LONGE.
@@ -183,33 +184,6 @@ function windowAt(kit: Kit, g: Group, x: number, z: number): Mesh {
   return sky
 }
 
-function corkboard(kit: Kit, g: Group, x: number, z: number, seed: number): void {
-  box(kit, g, kit.mat.corkFrame, 1.6, 0.95, 0.04, x, 1.1, z + 0.08)
-  const cork = new Mesh(kit.geo.plane, kit.mat.cork)
-  cork.scale.set(1.5, 0.85, 1)
-  cork.position.set(x, 1.1, z + 0.102)
-  g.add(cork)
-  const r = rng(seed)
-  const colors = [0xfff27a, 0xffb3c7, 0x9ee6ff, 0xb8f5a0, 0xffc98a].map((c) => new Color(c))
-  const notes: Place[] = []
-  for (let col = 0; col < 3; col++) {
-    const n = 2 + Math.floor(r() * 2)
-    for (let k = 0; k < n; k++) {
-      notes.push({
-        x: x - 0.48 + col * 0.48 + (r() - 0.5) * 0.06,
-        y: 1.36 - k * 0.24 + (r() - 0.5) * 0.03,
-        z: z + 0.11,
-        sx: 0.2,
-        sy: 0.18,
-        sz: 0.006,
-        rz: (r() - 0.5) * 0.25,
-        color: colors[Math.floor(r() * colors.length)]
-      })
-    }
-  }
-  tagLod(instanced(g, kit.geo.box, kit.mat.note, notes, false), 'detail')
-}
-
 function bookshelf(kit: Kit, g: Group, x: number, z: number, seed: number): void {
   const zc = z + 0.3
   box(kit, g, kit.mat.shelf, 0.04, 1.5, 0.36, x - 0.68, 0.75, zc, true)
@@ -334,7 +308,7 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
   const hinge = door(kit, g, f)
 
   const skies = f.windows.map((win) => windowAt(kit, g, win.x, win.z))
-  corkboard(kit, g, f.board.x, f.board.z, seed)
+  // O kanban do Quadro real (board/boardView.ts) entra pela cena, preso a este grupo.
   bookshelf(kit, g, f.shelf.x, f.shelf.z, seed + 1)
   for (const p of f.plants) plant(kit, g, p.x, p.z, p.scale)
   const lamps = f.lamps.map((l) => floorLamp(kit, g, l.x, l.z))

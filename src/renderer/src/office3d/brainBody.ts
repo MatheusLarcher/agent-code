@@ -6,6 +6,7 @@
  * assento e virar para o rumo final. O comportamento (modos, lazer, reações
  * aos eventos) fica em brain.ts, que reexporta tudo daqui.
  */
+import type { Errand } from './brainBoard'
 import type { AgentPhase, ToolKind } from './events'
 import { chairSide, seatOf, type Poi, type PoiKind, type Spot } from './furniture'
 import { MONITOR_BACK, MONITOR_Y } from './layout'
@@ -132,6 +133,8 @@ export interface Brain {
   puppet: boolean
   /** A luz voltou: até este instante (relógio t) fica na mesa. */
   backUntil: number
+  /** Ida ao quadro em curso (brainBoard.ts); null sem ela. */
+  errand: Errand | null
 }
 
 /** O que o cérebro pede ao mundo (a sala, a reserva e os colegas). */
@@ -193,7 +196,7 @@ export function createBrain(o: BrainInit): Brain {
     chatWith: null, chatLead: false, chatT0: -1,
     action: 'idle', actionT: 0, reaction: null, reactionT: 0, pending: [], prop: null, look: 'none', lookX: 0, lookY: 0, lookZ: 0,
     faceCamera: false, fx: 0, zzz: false, rush: false, knuckles: false, nextYawn: 0, nextWatch: 0, workSpeed: 1,
-    party: null, partySlot: 0, partyStep: 0, partyT: 0, puppet: false, backUntil: -1
+    party: null, partySlot: 0, partyStep: 0, partyT: 0, puppet: false, backUntil: -1, errand: null
   }
   // Quem tem mesa e está na sala começa sentado nela.
   if (desk && !o.away && o.role !== 'fixed') {
@@ -411,6 +414,6 @@ export function tickReaction(b: Brain, dt: number): void {
 /** Precisa de quadros? Parado dormindo (ou fora) não; o resto sim. */
 export function brainBusy(b: Brain): boolean {
   if (!b.visible) return false
-  if (b.reaction || b.speed > 0 || (b.sit > 0 && b.sit < 1) || !b.arrived) return true
+  if (b.errand || b.reaction || b.speed > 0 || (b.sit > 0 && b.sit < 1) || !b.arrived) return true
   return b.mode !== 'sleep' && !(b.mode === 'fixed' && b.phase !== 'working')
 }
