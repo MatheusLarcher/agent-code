@@ -1,13 +1,13 @@
 /**
- * Recursos COMPARTILHADOS da energia do escritório (usina, apagão e festa):
+ * Recursos COMPARTILHADOS da energia do escritório (quadro de energia, apagão e festa):
  * texturas desenhadas em canvas, geometrias e materiais criados uma vez por
  * cena e liberados juntos em `dispose()`. Nada aqui é luz de verdade: o brilho
  * vem de materiais básicos (não iluminados) e aditivos — luzes novas fariam o
  * three recompilar todos os shaders.
  *
- * Ordem de desenho (renderOrder) dos transparentes: o escurecimento da sala
- * (1) vem depois do que é da sala (0, escurece junto) e antes do que brilha no
- * escuro: luar, emergência, SAÍDA, facho da lanterna e manchas da bola (2–3).
+ * Ordem de desenho (renderOrder) dos transparentes: o escurecimento da zona
+ * (1) vem depois do que é da zona (0, escurece junto) e antes do que brilha no
+ * escuro: luar, emergência, SAÍDA e o facho da lanterna (2–3).
  */
 import {
   AdditiveBlending,
@@ -15,20 +15,17 @@ import {
   BufferGeometry,
   CanvasTexture,
   DoubleSide,
-  IcosahedronGeometry,
   MeshBasicMaterial,
   MeshLambertMaterial,
   RepeatWrapping,
-  SpriteMaterial,
   SRGBColorSpace,
   type Material,
   type Texture
 } from 'three'
-import { canvas2d, rng } from './textures'
+import { canvas2d } from './textures'
 
 export const ORDER_DIM = 1
 export const ORDER_GLOW = 2
-export const ORDER_SPOTS = 3
 
 function texture(canvas: HTMLCanvasElement, repeat = false): CanvasTexture {
   const t = new CanvasTexture(canvas)
@@ -100,7 +97,7 @@ function exitTexture(): CanvasTexture {
   return texture(canvas)
 }
 
-/** Cabo: borracha escura com um pulso de energia (o material dá a cor); repete ao longo do cabo. */
+/** Eletroduto: borracha escura com um pulso de energia (o material dá a cor); repete ao longo dele. */
 function pulseTexture(): CanvasTexture {
   const { canvas, ctx } = canvas2d(64, 8)
   if (ctx) {
@@ -114,22 +111,6 @@ function pulseTexture(): CanvasTexture {
     ctx.fillRect(0, 1, 22, 6)
   }
   return texture(canvas, true)
-}
-
-/** Espelhinhos da bola de discoteca. */
-function mirrorTexture(): CanvasTexture {
-  const { canvas, ctx } = canvas2d(64, 32)
-  if (ctx) {
-    const r = rng(17)
-    for (let y = 0; y < 32; y += 4) {
-      for (let x = 0; x < 64; x += 4) {
-        const l = r() < 0.12 ? 92 + r() * 8 : 38 + r() * 34
-        ctx.fillStyle = `hsl(${200 + r() * 60} 12% ${l}%)`
-        ctx.fillRect(x, y, 3.4, 3.4)
-      }
-    }
-  }
-  return texture(canvas)
 }
 
 /** Pizza vista de cima, na caixa — já falta uma fatia. */
@@ -174,23 +155,18 @@ function dartGeometry(): BufferGeometry {
 }
 
 export function createEnergyKit() {
-  const tex = { glow: glowTexture(), shaft: shaftTexture(), exit: exitTexture(), pulse: pulseTexture(), mirror: mirrorTexture(), pizza: pizzaTexture() }
+  const tex = { glow: glowTexture(), shaft: shaftTexture(), exit: exitTexture(), pulse: pulseTexture(), pizza: pizzaTexture() }
   const add = (color: number, map: Texture, opacity = 1): MeshBasicMaterial =>
     new MeshBasicMaterial({ color, map, transparent: true, opacity, blending: AdditiveBlending, depthWrite: false, side: DoubleSide })
-  const geo = { ball: new IcosahedronGeometry(0.22, 1), dart: dartGeometry() }
+  const geo = { dart: dartGeometry() }
   const mat = {
-    /** Modelo do escurecimento por sala (cada sala usa um clone: a opacidade é dela). */
+    /** Modelo do escurecimento por zona (cada zona usa um clone: a opacidade é dela). */
     dimmer: new MeshBasicMaterial({ color: 0x03050d, transparent: true, opacity: 0, depthWrite: false }),
     moon: add(0x8aa6ff, tex.shaft, 0.55),
     glow: add(0xffffff, tex.glow, 0.95),
     emergency: new MeshBasicMaterial({ color: 0xffffff }),
     exit: new MeshBasicMaterial({ map: tex.exit, side: DoubleSide }),
     cable: new MeshBasicMaterial({ color: 0x5fe6ff, map: tex.pulse, side: DoubleSide }),
-    junction: new MeshLambertMaterial({ color: 0x3a4152 }),
-    spot: add(0xffffff, tex.glow, 0.85),
-    ballGlow: new SpriteMaterial({ map: tex.glow, color: 0xfff1d6, transparent: true, opacity: 0.55, blending: AdditiveBlending, depthWrite: false }),
-    ball: new MeshBasicMaterial({ map: tex.mirror }),
-    cord: new MeshLambertMaterial({ color: 0x2a2a2e }),
     pizzaBox: new MeshLambertMaterial({ color: 0xc8a06a }),
     pizzaTop: new MeshLambertMaterial({ map: tex.pizza }),
     paper: new MeshLambertMaterial({ color: 0xf6f4ee, side: DoubleSide })

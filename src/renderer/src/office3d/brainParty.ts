@@ -36,7 +36,7 @@ export function enterParty(b: Brain, w: BrainWorld): void {
   if (!p) return stay(b)
   switch (b.party) {
     case 'dance':
-      danceSpot(p.furniture, b.partySlot, spot)
+      danceSpot(p.congaIsland, b.partySlot, spot)
       return goStand(b, spot.x, spot.z, spot.yaw, 'run')
     case 'conga':
       congaPoint(p.loop, p.congaS, b.partySlot, spot)

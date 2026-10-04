@@ -23,6 +23,7 @@
  * retrato estático que a cena e os testes de tela usam. Quem republica a cada
  * DEMO_TICK_MS é o Office3DWorkspace. Não mexe no devFeed do escritório 2D.
  */
+import { CENTRAL_ID } from '@shared/central'
 import { contextLimitFor, type PermissionRequest, type RateLimitStatus } from '@shared/ipc'
 import type { TrackMap } from '../agentTracks'
 import type { OfficeFeed } from '../office/adapter/feed'
@@ -324,6 +325,8 @@ function scriptsFor(k: Kit, r: number): DemoTurn[][] {
       : bash(ms, 'npm install', 'added 12 packages, changed 3 packages in 9s\n\nfound 0 vulnerabilities')
   const ask = (wait: number, ms: number, command: string): DemoStep => ({ do: 'ask', wait, ms, name: 'Bash', input: { command } })
   const x = k.expert
+  // A memória vai à estante de Memórias (salas 1, 3 e 5): consulta as convenções do projeto.
+  const memo: DemoStep = { do: 'delegate', ms: 16_000, type: 'memoria', description: 'consultar as memórias do projeto', steps: [tool(5_000, 'mcp__memory__memory_list', {}, '3 memórias deste projeto')], ok: true, result: 'A convenção de testes está nas memórias.' }
   const expertSteps: ToolStep[] =
     x.type === 'executor'
       ? [read(k, p, 3_000), edit(p, 5_000, k.edit), test(5_000, x.ok)]
@@ -335,7 +338,7 @@ function scriptsFor(k: Kit, r: number): DemoTurn[][] {
     // O projetor da sala: a loja testada no navegador (sala 2) e o app no Android (sala 4).
     ...(r === 1 ? [browserTurn(10_000)] : r === 3 ? [androidTurn(9_000, cwd)] : []),
     { at: 24_000 + r * 1_100, user: s[1], steps: [test(5_000, false), read(k, p, 2_500, k.fix[0], k.fix[1]), edit(p, 3_000, k.fix), test(4_500, true), say(`O teste esperava o valor antigo. Ajustei ${base(k.fix[0])} e a suíte voltou a passar.`)] },
-    { at: 60_000 + r * 1_100, user: s[2], steps: [read(k, p, 2_500), edit(p, 4_000, k.edit), test(5_000, true), say(`Feito, mudança em ${base(k.edit[0])} coberta por teste.`)] },
+    { at: 60_000 + r * 1_100, user: s[2], steps: [...(r % 2 === 0 ? [memo] : []), read(k, p, 2_500), edit(p, 4_000, k.edit), test(5_000, true), say(`Feito, mudança em ${base(k.edit[0])} coberta por teste.`)] },
     {
       at: 92_000 + r * 1_100,
       user: s[3],
@@ -420,6 +423,9 @@ export function demoFeed(now?: number): OfficeFeed {
       if (Object.keys(st.tracks).length > 0) tracks[id] = st.tracks
     })
   })
+  // A Central, no console do centro: a última mensagem que ela despachou.
+  const central = playScript([{ at: -40_000, user: 'Roda os testes da loja e me avisa.', steps: [say('Mandei para loja-virtual, na conversa Demo 2.1.')] }], t, start, CENTRAL_ID, cycle)
+  conversations.push({ id: CENTRAL_ID, title: 'Central', cwd: '', mode: 'central', model, sdkSessionId: null, messages: central.messages, tokens: { context: 0, output: 0, cost: 0 }, createdAt: start - 3_600_000, updatedAt: central.updatedAt })
   const usageLimits: Record<string, RateLimitStatus> = { five_hour: demoUsage(t, start, clock) }
   return {
     conversations,

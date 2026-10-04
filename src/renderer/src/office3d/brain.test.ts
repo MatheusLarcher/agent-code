@@ -5,6 +5,7 @@ import { DWELL_MAX, DWELL_MIN, FX, react, setStatus, turnToward, type Brain, typ
 import { Crowd } from './crowd'
 import { seatOf } from './furniture'
 import { layoutOffice, type RoomLayout } from './layout'
+import { LOUNGE_SEATS } from './officePlan'
 import type { Reaction } from './poses'
 
 function model(id: string, extra: Partial<OfficeCharacterModel> = {}): OfficeCharacterModel {
@@ -99,7 +100,7 @@ describe('cérebro: ocioso', () => {
     run(crowd, 12)
     expect(a.leisure).toBe('chat')
     expect(a.arrived && b.arrived).toBe(true)
-    expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeCloseTo(1, 1)
+    expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeCloseTo(0.9, 1)
     const facing = (p: Brain, q: Brain): number => Math.abs(turnToward(p.yaw, Math.atan2(-(q.x - p.x), -(q.z - p.z)), Math.PI) - p.yaw)
     expect(facing(a, b)).toBeLessThan(0.15)
     expect(facing(b, a)).toBeLessThan(0.15)
@@ -112,18 +113,29 @@ describe('cérebro: ocioso', () => {
     expect(turns.size).toBe(2)
   })
 
-  it('depois de SLEEP_AFTER_SEC cochila: um no pufe e o outro na mesa, com "z"', () => {
-    const { crowd, brains } = office(2)
-    setStatus(brains[0], status('idle', { idleSince: -SLEEP_AFTER_SEC - 5 }), 0)
-    setStatus(brains[1], status('idle', { idleSince: -(SLEEP_AFTER_SEC - 20) }), 0)
+  it('depois de SLEEP_AFTER_SEC cochila no sofá/poltrona do lounge (4 lugares); com o lounge cheio, na própria mesa, com "z"', () => {
+    const { crowd, brains } = office(5)
+    brains.slice(0, 4).forEach((b) => setStatus(b, status('idle', { idleSince: -SLEEP_AFTER_SEC - 5 }), 0))
+    setStatus(brains[4], status('idle', { idleSince: -(SLEEP_AFTER_SEC - 20) }), 0)
     run(crowd, 10)
-    expect(brains[0].mode).toBe('sleep')
-    expect(brains[1].mode).toBe('free')
-    run(crowd, 30)
-    expect(brains[1].mode).toBe('sleep')
-    expect(brains.map((b) => b.action).sort()).toEqual(['napDesk', 'napPufe'])
+    expect(brains.slice(0, 4).every((b) => b.mode === 'sleep')).toBe(true)
+    expect(brains[4].mode).toBe('free')
+    run(crowd, 40)
+    expect(brains[4].mode).toBe('sleep')
+    expect(brains.map((b) => b.action).sort()).toEqual(['napDesk', 'napSofa', 'napSofa', 'napSofa', 'napSofa'])
     expect(brains.every((b) => b.zzz && b.sit === 1)).toBe(true)
-    expect(brains.find((b) => b.action === 'napPufe')!.seat).toBe('pufe')
+    expect(brains.filter((b) => b.action === 'napSofa').every((b) => b.seat === 'sofa')).toBe(true)
+    expect(brains[4].seat).toBe('chair')
+  })
+
+  it('o cochilo não toma o lugar de quem trabalha no lounge (escritório lotado: 16 mesas + 2 no sofá)', () => {
+    const { crowd, brains } = office(18)
+    const seats = brains.filter((b) => b.lounge).map((b) => LOUNGE_SEATS.indexOf(b.lounge!))
+    expect(seats.sort()).toEqual([0, 1])
+    const desk = brains.filter((b) => !b.lounge)
+    const got = desk.slice(0, 3).map((b) => crowd.claim(b, 'sofa')?.index ?? null)
+    expect(got.slice(0, 2).sort()).toEqual([2, 3])
+    expect(got[2]).toBeNull()
   })
 })
 
@@ -161,7 +173,7 @@ describe('cérebro: trabalhando', () => {
     const b = brains[0]
     setStatus(b, status('idle', { idleSince: -SLEEP_AFTER_SEC - 1 }), 0)
     run(crowd, 25)
-    expect([b.mode, b.seat, b.zzz]).toEqual(['sleep', 'pufe', true])
+    expect([b.mode, b.seat, b.zzz]).toEqual(['sleep', 'sofa', true])
     react(b, { type: 'request', text: 'faz o deploy' }, crowd)
     setStatus(b, status('working'), crowd.t)
     expect(b.fx & FX.bang).toBeTruthy()
@@ -260,17 +272,19 @@ describe('cérebro: visitante (especialista delegado)', () => {
     setStatus(v, status('working', { tool: 'read' }), 0)
     run(crowd, 0.1)
     expect(v.visible).toBe(true)
-    expect(v.x).toBeLessThan(room.x)
+    // A porta é na parede da direita: aparece do lado de fora (+X) e atravessa o vão.
+    const wall = room.x + room.width
+    expect(v.x).toBeGreaterThan(wall)
     let crossed = false
     run(crowd, 25, () => {
-      crossed ||= v.x > room.x && v.x < room.x + 1
+      crossed ||= v.x < wall && v.x > wall - 1
     })
     expect(crossed).toBe(true)
     expect([v.mode, v.seat, v.sit]).toEqual(['work', 'chair', 1])
     setStatus(v, status('done'), crowd.t)
     run(crowd, 25)
     expect([v.mode, v.visible]).toEqual(['away', false])
-    expect(v.x).toBeLessThan(room.x)
+    expect(v.x).toBeGreaterThan(wall)
   })
 })
 

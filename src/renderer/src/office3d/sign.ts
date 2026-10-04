@@ -1,11 +1,14 @@
 /**
- * Placa do projeto na parede do fundo de cada sala: fundo na cor de destaque
- * da sala, ícone do projeto e nome. CanvasTexture em alta resolução (1024×256)
- * com mipmaps e anisotropia, nítida de perto e legível de longe.
+ * Placas do projeto (CanvasTexture com mipmaps e anisotropia):
+ * - 'floor': a placa no chão diante da ilha reservada (1024×256, a paleta clara
+ *   do mockup v2): filete na cor de destaque do projeto, medalhão com o ícone e
+ *   o nome em verde apagado;
+ * - 'desk': a plaquinha da mesa ocupada (256×256): fundo na cor do projeto e o
+ *   medalhão com o ícone.
  *
- * O ícone vem de `OfficeRoomModel.icon` (feed.projectIcons[cwd]). No App ele é
- * uma data URL (App.tsx, "Icon found inside each project folder"), mas aceitamos
- * também URL, caminho de arquivo e emoji/glifo curto; sem ícone, a inicial.
+ * O ícone vem de `feed.projectIcons[cwd]`. No App ele é uma data URL (App.tsx,
+ * "Icon found inside each project folder"), mas aceitamos também URL, caminho de
+ * arquivo e emoji/glifo curto; sem ícone, a inicial.
  */
 import { CanvasTexture, SRGBColorSpace } from 'three'
 import { fileUrl } from '../fileUrl'
@@ -30,7 +33,7 @@ export function iconSource(icon: string | null | undefined, name: string): IconS
   return { kind: 'initial', text: initialOf(name) }
 }
 
-/** Matiz estável por id (FNV-1a), para a cor de destaque da sala. */
+/** Matiz estável por id (FNV-1a), para a cor de destaque do projeto. */
 export function accentHue(id: string): number {
   let h = 0x811c9dc5
   for (let i = 0; i < id.length; i++) {
@@ -42,6 +45,9 @@ export function accentHue(id: string): number {
 
 export const SIGN_W = 1024
 export const SIGN_H = 256
+const DESK_SIGN = 256
+
+export type SignStyle = 'floor' | 'desk'
 
 export interface SignTexture {
   texture: CanvasTexture
@@ -59,13 +65,89 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath()
 }
 
+/** Medalhão claro com o ícone (imagem recortada no círculo, glifo ou inicial em `ink`). */
+function medallion(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, source: IconSource, img: HTMLImageElement | null, name: string, ink: string, ring: string | null): void {
+  ctx.fillStyle = '#f6f4ec'
+  ctx.beginPath()
+  ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  ctx.fill()
+  if (ring) {
+    ctx.strokeStyle = ring
+    ctx.lineWidth = r * 0.08
+    ctx.stroke()
+  }
+  if (source.kind === 'image' && img && img.complete && img.naturalWidth > 0) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(cx, cy, r * 0.86, 0, Math.PI * 2)
+    ctx.clip()
+    const s = Math.min((1.64 * r) / img.naturalWidth, (1.64 * r) / img.naturalHeight)
+    const w = img.naturalWidth * s
+    const h = img.naturalHeight * s
+    ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h)
+    ctx.restore()
+    return
+  }
+  const text = source.kind === 'image' ? initialOf(name) : source.text
+  ctx.fillStyle = ink
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = source.kind === 'glyph' ? `${Math.round(r * 1.1)}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif` : `bold ${Math.round(r * 1.2)}px "Segoe UI", sans-serif`
+  ctx.fillText(text, cx, cy + r * 0.07)
+}
+
+/** A placa do chão: fundo claro, filete do projeto, medalhão e o nome (em maiúsculas, encolhendo até caber). */
+function drawFloor(ctx: CanvasRenderingContext2D, hue: number, source: IconSource, img: HTMLImageElement | null, name: string): void {
+  ctx.fillStyle = '#d4d7cc'
+  ctx.fillRect(0, 0, SIGN_W, SIGN_H)
+  ctx.strokeStyle = '#c2c6b8'
+  ctx.lineWidth = 6
+  roundRect(ctx, 12, 12, SIGN_W - 24, SIGN_H - 24, 18)
+  ctx.stroke()
+  ctx.fillStyle = `hsl(${hue} 34% 54%)`
+  roundRect(ctx, 34, 40, 16, SIGN_H - 80, 8)
+  ctx.fill()
+  const cx = 160
+  const cy = SIGN_H / 2
+  medallion(ctx, cx, cy, 78, source, img, name, `hsl(${hue} 30% 36%)`, `hsl(${hue} 30% 62%)`)
+  const left = cx + 78 + 44
+  const maxW = SIGN_W - left - 56
+  const label = name.toUpperCase()
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  let size = 96
+  ctx.font = `600 ${size}px "Segoe UI", sans-serif`
+  while (size > 40 && ctx.measureText(label).width > maxW) {
+    size -= 4
+    ctx.font = `600 ${size}px "Segoe UI", sans-serif`
+  }
+  ctx.fillStyle = '#6f7a66'
+  ctx.fillText(label, left, cy + 4, maxW)
+}
+
+/** A plaquinha da mesa: cor do projeto, filete claro e o medalhão do ícone. */
+function drawDesk(ctx: CanvasRenderingContext2D, hue: number, source: IconSource, img: HTMLImageElement | null, name: string): void {
+  const g = ctx.createLinearGradient(0, 0, 0, DESK_SIGN)
+  g.addColorStop(0, `hsl(${hue} 42% 50%)`)
+  g.addColorStop(1, `hsl(${hue} 46% 38%)`)
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, DESK_SIGN, DESK_SIGN)
+  ctx.strokeStyle = `hsla(${hue} 60% 85% / 0.6)`
+  ctx.lineWidth = 8
+  roundRect(ctx, 14, 14, DESK_SIGN - 28, DESK_SIGN - 28, 22)
+  ctx.stroke()
+  medallion(ctx, DESK_SIGN / 2, DESK_SIGN / 2, 82, source, img, name, `hsl(${hue} 44% 34%)`, null)
+}
+
 /**
  * Desenha a placa. A imagem do ícone carrega de forma assíncrona: quando chega,
  * redesenha e chama `onUpdate` (o motor agenda um quadro). Imagem com erro cai
  * na inicial.
  */
-export function createSignTexture(name: string, icon: string | null, accentId: string, anisotropy: number, onUpdate: () => void): SignTexture {
-  const { canvas, ctx } = canvas2d(SIGN_W, SIGN_H)
+export function createSignTexture(name: string, icon: string | null, accentId: string, anisotropy: number, onUpdate: () => void, style: SignStyle = 'floor'): SignTexture {
+  const w = style === 'floor' ? SIGN_W : DESK_SIGN
+  const h = style === 'floor' ? SIGN_H : DESK_SIGN
+  const { canvas, ctx } = canvas2d(w, h)
   const texture = new CanvasTexture(canvas)
   texture.colorSpace = SRGBColorSpace
   texture.anisotropy = anisotropy
@@ -76,63 +158,8 @@ export function createSignTexture(name: string, icon: string | null, accentId: s
 
   const draw = (): void => {
     if (!ctx) return
-    const g = ctx.createLinearGradient(0, 0, 0, SIGN_H)
-    g.addColorStop(0, `hsl(${hue} 46% 30%)`)
-    g.addColorStop(1, `hsl(${hue} 52% 19%)`)
-    ctx.fillStyle = g
-    ctx.fillRect(0, 0, SIGN_W, SIGN_H)
-    // Filete interno e brilho no topo.
-    ctx.strokeStyle = `hsla(${hue} 70% 75% / 0.55)`
-    ctx.lineWidth = 6
-    roundRect(ctx, 14, 14, SIGN_W - 28, SIGN_H - 28, 22)
-    ctx.stroke()
-    ctx.fillStyle = 'rgba(255,255,255,0.06)'
-    ctx.fillRect(20, 20, SIGN_W - 40, 60)
-    // Medalhão do ícone.
-    const cx = 140
-    const cy = SIGN_H / 2
-    const r = 86
-    ctx.fillStyle = 'rgba(0,0,0,0.28)'
-    ctx.beginPath()
-    ctx.arc(cx + 4, cy + 6, r, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#f6f1e7'
-    ctx.beginPath()
-    ctx.arc(cx, cy, r, 0, Math.PI * 2)
-    ctx.fill()
-    if (source.kind === 'image' && img && img.complete && img.naturalWidth > 0) {
-      ctx.save()
-      ctx.beginPath()
-      ctx.arc(cx, cy, r - 10, 0, Math.PI * 2)
-      ctx.clip()
-      const s = Math.min((2 * (r - 14)) / img.naturalWidth, (2 * (r - 14)) / img.naturalHeight)
-      const w = img.naturalWidth * s
-      const h = img.naturalHeight * s
-      ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h)
-      ctx.restore()
-    } else {
-      const text = source.kind === 'image' ? initialOf(name) : source.text
-      ctx.fillStyle = `hsl(${hue} 50% 30%)`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.font = source.kind === 'glyph' ? '96px "Segoe UI Emoji", "Apple Color Emoji", sans-serif' : 'bold 104px "Segoe UI", sans-serif'
-      ctx.fillText(text, cx, cy + 6)
-    }
-    // Nome do projeto, encolhendo a fonte até caber.
-    const left = cx + r + 44
-    const maxW = SIGN_W - left - 50
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'middle'
-    let size = 104
-    ctx.font = `bold ${size}px "Segoe UI", sans-serif`
-    while (size > 40 && ctx.measureText(name).width > maxW) {
-      size -= 4
-      ctx.font = `bold ${size}px "Segoe UI", sans-serif`
-    }
-    ctx.fillStyle = 'rgba(0,0,0,0.35)'
-    ctx.fillText(name, left + 3, cy + 5, maxW)
-    ctx.fillStyle = '#fbf6ec'
-    ctx.fillText(name, left, cy, maxW)
+    if (style === 'floor') drawFloor(ctx, hue, source, img, name)
+    else drawDesk(ctx, hue, source, img, name)
     texture.needsUpdate = true
   }
 
@@ -156,7 +183,7 @@ export function createSignTexture(name: string, icon: string | null, accentId: s
 
   return {
     texture,
-    aspect: SIGN_W / SIGN_H,
+    aspect: w / h,
     dispose() {
       disposed = true
       if (img) {

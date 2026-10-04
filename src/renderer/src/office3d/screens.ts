@@ -15,11 +15,15 @@ import type { OfficeCharacterModel } from '../office/adapter/model'
 import { chatPageFor } from './chatPage'
 import { codePageFor } from './codePage'
 import { modelPhase, type LifeInput } from './crowd'
-import { disposeScreenOn, type ScreenView } from './decor'
+import { disposeScreenOn, type RoomView, type ScreenView } from './decor'
 import type { AgentPhase } from './events'
 import type { Kit, ScreenStatus } from './kit'
+import type { Office3DLayout, RoomLayout } from './layout'
+import type { ZoneId } from './officePlan'
 import type { Lod } from './lod'
+import { paperStep } from './paperPile'
 import { createMonitorTexture, type ScreenPage } from './monitorTexture'
+import { accentHue } from './sign'
 
 /** Resolução da textura da tela por nível (o LONGE não tem textura). */
 export const SCREEN_SCALE: Readonly<Record<Lod, number>> = { 0: 1, 1: 0.5, 2: 0 }
@@ -40,6 +44,43 @@ export function screenPageFor(feed: OfficeFeed | null, model: OfficeCharacterMod
 /** Cor do monitor do dono vista de LONGE: a fase do retrato de events.ts (ou, sem ele, a do modelo). */
 export function screenStatus(owner: OfficeCharacterModel, life: LifeInput | null): ScreenStatus {
   return STATUS[life?.snapshot.agents.get(owner.key)?.phase ?? modelPhase(owner)]
+}
+
+/**
+ * As telas do escritório no feed: a de cada mesa com o dono dela (acesa, protetor
+ * ou apagada; a cor de destaque é a do projeto), a do console com a Central e a
+ * pilha de papéis de cada mesa (o contexto usado do dono). Zona fora da tela só
+ * guarda a página (`viewOn` e o culling dela); zona sem energia (`darkOf`), tela preta. Quem tem a
+ * tela acesa com luz entra em `lit` (o rosto brilha).
+ */
+export function syncRoomScreens(view: RoomView, r: RoomLayout, layout: Office3DLayout, kit: Kit, feed: OfficeFeed | null, life: LifeInput | null, darkOf: (zone: ZoneId) => boolean, viewOn: boolean, lit: Set<string>): void {
+  const shown = (s: ScreenView): boolean => !s.lod.culled && (s.lod.placed || !viewOn)
+  const byKey = new Map(layout.characters.map((c) => [c.key, c.model]))
+  r.desks.forEach((desk, i) => {
+    const s = view.screens[i]
+    const owner = desk.ownerKey ? byKey.get(desk.ownerKey) : undefined
+    if (fillScreen(s, kit, owner, desk.projectId ?? r.id, feed, life, darkOf(s.zone), shown(s)) && owner) lit.add(owner.key)
+    view.piles.set(i, paperStep(owner?.context))
+  })
+  // O console é o monitor da Central (o personagem dela, se está no escritório).
+  const central = layout.characters.find((c) => c.spot === 'central')?.model
+  if (fillScreen(view.consoleScreen, kit, central, 'central', feed, life, darkOf('plaza'), shown(view.consoleScreen), true) && central) lit.add(central.key)
+}
+
+/**
+ * O que uma tela mostra: acesa com a página do dono ativo, protetor com dono
+ * parado, apagada sem dono — e aplica já se `shown`. `accentId` dá a cor de
+ * destaque (o projeto); `awake`: com dono, sempre acesa (o console da Central
+ * espelha o chat dela mesmo parada). Devolve se o rosto do dono brilha.
+ */
+export function fillScreen(s: ScreenView, kit: Kit, owner: OfficeCharacterModel | undefined, accentId: string, feed: OfficeFeed | null, life: LifeInput | null, dark: boolean, shown: boolean, awake = false): boolean {
+  s.mesh.userData.charKey = owner?.key ?? null
+  const accent = `hsl(${accentHue(accentId)} 70% 60%)`
+  const on = !!owner && (owner.active || awake)
+  if (owner && on) setScreen(s, 'on', screenPageFor(feed, owner), accent, screenStatus(owner, life))
+  else setScreen(s, owner ? 'saver' : 'off', null, accent, 'idle')
+  showScreen(s, kit, s.lod.level, shown, dark)
+  return on && !dark
 }
 
 export function setScreen(s: ScreenView, state: ScreenView['state'], page: ScreenPage | null, accent: string, status: ScreenStatus): void {

@@ -11,6 +11,12 @@
  *
  * Os dados ficam na mão do host (EngineBoard): quem pode ir, aplicar no
  * espelho, falar e pôr o selo. Sem o host vivo (aba escondida), tudo direto.
+ *
+ * Um quadro na parede, um projeto por vez: passo de projeto que NÃO está na
+ * parede espera (estacionado, por projeto, em ordem de chegada). Com o palco
+ * livre, o quadro troca para o próximo projeto (`host.visit`), a coreografia
+ * dele roda, segura VISIT_HOLD_MS e volta (`visit(null)`). Estacionado mais que
+ * LAG_MS (ou visita recusada pelo filtro) vai direto ao espelho.
  */
 import { SPEED, type Brain } from '../brainBody'
 import { errandBlocked } from '../brainBoard'
@@ -20,6 +26,8 @@ import type { BoardStep } from './boardModel'
 
 /** A fala do quadro fica pelo menos isto (ms). */
 export const SAY_MIN_MS = 4_000
+/** Acabada a coreografia de um projeto visitado, o quadro fica nele mais isto (ms) antes de voltar. */
+export const VISIT_HOLD_MS = 4_000
 
 export interface StageHost {
   brain(key: string): Brain | undefined
@@ -39,6 +47,10 @@ export interface StageHost {
   seal(roomId: string, cardId: string, text: string, user: boolean): void
   /** O usuário arrastou este cartão no 3D há pouco (o passo dele não reanima nem leva selo). */
   draggedHere(cardId: string): boolean
+  /** O projeto que está na parede agora. */
+  wall(): string | null
+  /** Põe o projeto na parede para a coreografia dele (null volta ao de antes); false se não pode (o filtro). */
+  visit(projectId: string | null): boolean
 }
 
 interface Live {
@@ -52,6 +64,11 @@ export class BoardStage {
   private readonly live = new Map<string, Live>()
   /** Personagem → até quando o balão fica, e o cartão dele. */
   private readonly speaking = new Map<string, { until: number; cardId: string | null; convId: string }>()
+  /** Passos de projetos fora da parede, esperando a vez (ordem de chegada). */
+  private readonly parked = new Map<string, { steps: BoardStep[]; since: number }>()
+  private visiting: string | null = null
+  /** Até quando o quadro segura o projeto visitado (0: a coreografia dele ainda corre). */
+  private holdUntil = 0
 
   constructor(
     private readonly host: StageHost,
@@ -68,8 +85,60 @@ export class BoardStage {
     // Papel já no lugar (arrasto no 3D, atraso já aplicado): nada reanima.
     const todo = steps.filter((s) => this.host.differs(s))
     for (const s of steps) if (!todo.includes(s)) this.host.apply(s.roomId, s.cardId)
-    this.slide(this.choreo.push(todo))
+    // Projeto fora da parede: espera a vez dele.
+    const wall = this.host.wall()
+    const now = this.clock()
+    for (const s of todo) {
+      if (s.roomId === wall) continue
+      const p = this.parked.get(s.roomId)
+      if (p) p.steps.push(s)
+      else this.parked.set(s.roomId, { steps: [s], since: now })
+    }
+    this.slide(this.choreo.push(todo.filter((s) => s.roomId === wall)))
     this.tick()
+  }
+
+  /**
+   * A vez dos projetos estacionados: com o palco livre, o quadro troca para o
+   * próximo; acabada a coreografia dele, segura VISIT_HOLD_MS e volta.
+   */
+  private visits(now: number): boolean {
+    let changed = false
+    for (const [id, p] of this.parked) {
+      if (now - p.since <= LAG_MS) continue
+      this.parked.delete(id)
+      for (const s of p.steps) this.host.apply(s.roomId, s.cardId)
+      changed = true
+    }
+    if (this.live.size > 0 || this.choreo.active.length > 0 || this.choreo.waiting > 0) {
+      this.holdUntil = 0
+      return changed
+    }
+    if (this.visiting && this.holdUntil === 0) {
+      this.holdUntil = now + VISIT_HOLD_MS
+      return changed
+    }
+    if (this.visiting && now < this.holdUntil) return changed
+    for (const [id, p] of this.parked) {
+      this.parked.delete(id)
+      const todo = p.steps.filter((s) => this.host.differs(s))
+      if (todo.length === 0) continue
+      if (!this.host.visit(id)) {
+        for (const s of todo) this.host.apply(s.roomId, s.cardId)
+        changed = true
+        continue
+      }
+      this.visiting = id
+      this.holdUntil = 0
+      this.slide(this.choreo.push(todo))
+      return true
+    }
+    if (this.visiting) {
+      this.visiting = null
+      this.host.visit(null)
+      changed = true
+    }
+    return changed
   }
 
   private slide(list: readonly Slide[]): void {
@@ -84,7 +153,7 @@ export class BoardStage {
   private readonly ctx = {
     available: (key: string, roomId: string): boolean => {
       const b = this.host.brain(key)
-      if (!b || b.roomId !== roomId || this.host.dark(roomId) || errandBlocked(b)) return false
+      if (!b || b.projectId !== roomId || this.host.dark(roomId) || errandBlocked(b)) return false
       return key.startsWith('po:') ? b.role === 'fixed' : b.role === 'desk'
     },
     walkS: (key: string): number => {
@@ -99,7 +168,8 @@ export class BoardStage {
   /** true se algo mudou (a cena pede um quadro). */
   tick(now = this.clock()): boolean {
     if (!this.host.live()) return this.flush() > 0
-    let changed = false
+    // A vez de um projeto estacionado começa antes: a viagem dele já sai neste tique.
+    let changed = this.visits(now)
     const { trips, slides } = this.choreo.next(this.ctx)
     if (slides.length > 0) changed = true
     this.slide(slides)
@@ -203,6 +273,16 @@ export class BoardStage {
     for (const s of this.choreo.flush()) {
       this.host.apply(s.roomId, s.cardId)
       n++
+    }
+    for (const p of this.parked.values()) {
+      for (const s of p.steps) this.host.apply(s.roomId, s.cardId)
+      n += p.steps.length
+    }
+    this.parked.clear()
+    if (this.visiting) {
+      this.visiting = null
+      this.holdUntil = 0
+      this.host.visit(null)
     }
     for (const [key, sp] of this.speaking) this.host.say(key, null, sp.convId)
     this.speaking.clear()

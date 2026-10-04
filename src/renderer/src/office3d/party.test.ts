@@ -6,9 +6,10 @@ import { BAR_BEATS, beatAt, DANCE_MOVES, danceMove } from './dance'
 import { demoFeed } from './demoFeed'
 import { DEMO_LOOP_MS } from './demoTimeline'
 import { snapshotOf } from './events'
-import { layoutOffice, type RoomLayout } from './layout'
-import type { RoomPartyFx } from './party'
-import { CONGA_GAP } from './partyPlan'
+import { layoutOffice } from './layout'
+import { ZONES, type ZoneId } from './officePlan'
+import type { PartyZone } from './party'
+import { CONGA_GAP, CONGA_MAX } from './partyPlan'
 import type { OfficePower, PowerLevel } from './power'
 import { OfficeScene } from './scene'
 
@@ -46,31 +47,32 @@ function party(now = T0 + 30_000) {
   const model = deriveOfficeModel(feed, now)
   const layout = layoutOffice(model)
   s.sync(layout, feed, { snapshot: snapshotOf(feed, model, now), events: [], wallNow: now, t: 0 })
-  const near = (r: RoomLayout): PerspectiveCamera => camera({ tx: r.x + r.width / 2, ty: 0, tz: r.z + r.depth / 2, yaw: 0, pitch: 0.8, distance: 9 })
-  const fxOf = (id: string): RoomPartyFx => (s.energy as unknown as { rooms: Map<string, { party: RoomPartyFx }> }).rooms.get(id)!.party
+  /** O escritório inteiro de cima (todas as zonas à vista) e de perto de uma ilha (a praça e a ilha). */
+  const whole = camera({ tx: 0, ty: 0, tz: 1.1, yaw: 0, pitch: 1.2, distance: 17 })
+  const near = camera({ tx: -4.25, ty: 0, tz: 6.46, yaw: 0, pitch: 0.9, distance: 6 })
+  const zoneOf = (id: ZoneId): PartyZone => (s.energy as unknown as { byId: Map<ZoneId, { party: PartyZone }> }).byId.get(id)!.party
   let t = 0
   const run = (secs: number): void => {
     for (let k = 0; k < Math.round(secs / 0.05); k++) s.animate((t += 0.05), 0.05)
   }
   s.setPower(power('apagao'), 'apagao', 0)
-  return { s, layout, near, fxOf, run, now: () => t }
+  return { s, layout, whole, near, zoneOf, run, now: () => t }
 }
 
 describe('festa no apagão: todo mundo para e festeja', () => {
-  it('papéis por sala: lanterna em toda sala, trenzinho nas de slot ímpar, pizza nas outras, o resto dança — especialistas inclusos', () => {
-    // Aos 45 s do loop os especialistas delegados estão trabalhando nas salas.
-    const { s, layout, run } = party(T0 + 45_000)
+  it('papéis no escritório: uma lanterna, trenzinho com 3 a CONGA_MAX, uma pizza, o resto dança — especialistas inclusos', () => {
+    // Aos 45 s do loop os especialistas delegados estão trabalhando.
+    const { s, run } = party(T0 + 45_000)
     run(0.1)
     const crowd = s.crowd
     expect(crowd.partyOn).toBe(true)
-    for (const r of layout.rooms) {
-      const members = crowd.list.filter((b) => b.roomId === r.id && (b.role !== 'visitor' || b.visible))
-      const roles = members.map((b) => b.party)
-      expect(roles.every((x) => x !== null), r.name).toBe(true)
-      expect(roles.filter((x) => x === 'flashlight'), r.name).toHaveLength(1)
-      if (r.slot % 2 === 1) expect(roles.filter((x) => x === 'conga').length, r.name).toBeGreaterThanOrEqual(3)
-      else expect(roles.filter((x) => x === 'pizza'), r.name).toHaveLength(1)
-    }
+    const roles = crowd.list.filter((b) => b.role !== 'visitor' || b.visible).map((b) => b.party)
+    expect(roles.every((x) => x !== null)).toBe(true)
+    expect(roles.filter((x) => x === 'flashlight')).toHaveLength(1)
+    const conga = roles.filter((x) => x === 'conga').length
+    expect(conga >= 3 && conga <= CONGA_MAX).toBe(true)
+    expect(roles.filter((x) => x === 'pizza')).toHaveLength(1)
+    expect(roles.filter((x) => x === 'dance').length).toBeGreaterThan(5)
     // O especialista que estava trabalhando na sala também entra na festa.
     const visitors = crowd.list.filter((b) => b.role === 'visitor' && b.visible)
     expect(visitors.length).toBeGreaterThan(0)
@@ -80,9 +82,9 @@ describe('festa no apagão: todo mundo para e festeja', () => {
     s.dispose()
   })
 
-  it('≥ 4 passos de dança na batida, trenzinho andando em volta do tapete, lanterna procurando o disjuntor, pizza na mesa', () => {
-    const { s, layout, near, run } = party()
-    s.updateView(near(layout.rooms[0]))
+  it('≥ 4 passos de dança na batida, trenzinho andando em volta de uma ilha, lanterna procurando o disjuntor, pizza na mesa', () => {
+    const { s, whole, run } = party()
+    s.updateView(whole)
     const crowd = s.crowd
     const actions = new Set<string>()
     const props = new Set<string>()
@@ -103,43 +105,41 @@ describe('festa no apagão: todo mundo para e festeja', () => {
     expect(congaMoved).toBe(true)
     expect(deskSit).toBe(true)
     // Trenzinho em fila: vagões vizinhos a ~CONGA_GAP um do outro.
-    const congaRoom = layout.rooms.find((r) => r.slot % 2 === 1)!
-    const wagons = crowd.list.filter((b) => b.roomId === congaRoom.id && b.party === 'conga').sort((a, b) => a.partySlot - b.partySlot)
+    const wagons = crowd.list.filter((b) => b.party === 'conga').sort((a, b) => a.partySlot - b.partySlot)
+    expect(wagons.length).toBeGreaterThanOrEqual(3)
     for (let i = 1; i < wagons.length; i++) expect(Math.hypot(wagons[i].x - wagons[i - 1].x, wagons[i].z - wagons[i - 1].z)).toBeLessThan(CONGA_GAP * 1.6)
     s.dispose()
   })
 
-  it('bola desce, manchas, aviõezinhos e confete só nas salas à vista PERTO/MÉDIO; LONGE fica no escuro com a emergência', () => {
-    const { s, layout, near, fxOf, run } = party()
+  it('sem bola nem manchas: aviõezinhos e o confete de quem comemora dançando só nas zonas à vista PERTO/MÉDIO; LONGE fica no escuro', () => {
+    const { s, whole, near, zoneOf, run } = party()
     const confetti = vi.spyOn(s.particles, 'confettiBurst')
-    const [r0] = layout.rooms
-    s.updateView(near(r0))
+    expect(Object.keys(s.energy.kit.geo)).not.toContain('ball')
+    expect(Object.keys(s.energy.kit.mat)).not.toContain('spot')
+    s.updateView(whole)
     run(3)
-    const fx = fxOf(r0.id)
-    expect(fx.drop).toBe(1)
-    expect(fx.root.visible).toBe(true)
-    expect(fx['spots'].visible).toBe(true)
-    expect(fx.ball.position.y).toBeLessThan(2.3)
     const pools = s.energy as unknown as { pools: { planes: { count: number } } }
     expect(pools.pools.planes.count).toBeGreaterThan(0)
     run(4)
+    // Quem dança comemora (a reação) e solta o confete pela cabeça.
     expect(confetti).toHaveBeenCalled()
-    // Sala fora da tela: nada da festa roda nela.
-    const off = layout.rooms.filter((r) => s['rooms'].get(r.id)!.lod.culled)
+    // De perto de uma ilha: as zonas fora da tela não têm festa.
+    s.updateView(near)
+    run(0.2)
+    const off = ZONES.filter((z) => s['rooms'].get('office')!.zone(z.id).lod.culled)
     expect(off.length).toBeGreaterThan(0)
-    for (const r of off) expect(fxOf(r.id).eligible).toBe(false)
-    // LONGE: sem bola nem aviões; a sala segue escura com a emergência piscando.
+    for (const z of off) expect(zoneOf(z.id).eligible).toBe(false)
+    // LONGE: sem aviões; o escritório segue escuro com a emergência piscando.
     s.updateView(camera({ tx: 20, ty: 0, tz: 9, yaw: 0, pitch: 0.85, distance: 60 }))
     run(0.5)
-    expect(layout.rooms.every((r) => !fxOf(r.id).root.visible)).toBe(true)
     expect(pools.pools.planes.count).toBe(0)
-    expect(layout.rooms.every((r) => s.energy.isDark(r.id))).toBe(true)
+    expect(ZONES.every((z) => s.energy.zoneDark(z.id))).toBe(true)
     s.dispose()
   })
 
-  it('volta da luz: a música para (susto), a bola sobe, todo mundo corre para a mesa e quem tinha tarefa retoma', () => {
-    const { s, layout, near, fxOf, run, now } = party()
-    s.updateView(near(layout.rooms[0]))
+  it('volta da luz: a música para (susto), os aviões somem, todo mundo corre para a mesa e quem tinha tarefa retoma', () => {
+    const { s, whole, run, now } = party()
+    s.updateView(whole)
     run(6)
     s.setPower(power('cheia'), 'luz-voltou', now())
     const crowd = s.crowd
@@ -152,7 +152,7 @@ describe('festa no apagão: todo mundo para e festeja', () => {
     expect(workers.every((b) => b.mode === 'work' && b.goal.gait === 'run')).toBe(true)
     expect(crowd.list.filter((b) => b.role === 'desk' && b.phase === 'idle').every((b) => b.mode === 'back' || b.mode === 'sleep' || b.mode === 'free')).toBe(true)
     run(3)
-    expect(fxOf(layout.rooms[0].id).root.visible).toBe(false)
+    expect((s.energy as unknown as { pools: { planes: { count: number } } }).pools.planes.count).toBe(0)
     run(8)
     expect(workers.every((b) => b.sit === 1 && b.mode === 'work')).toBe(true)
     s.dispose()

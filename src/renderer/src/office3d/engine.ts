@@ -1,34 +1,22 @@
 /**
  * Motor do escritório 3D: renderer + câmera + entrada + laço sob demanda.
  *
- * O laço RAF só roda enquanto há motivo — tecla de movimento segurada, tween,
- * personagem À VISTA animando, tela do projetor descendo ou cena suja (feed,
- * arrasto, roda, resize, balão novo, quadro do navegador desenhado); só
- * animação de LOD longe cai para ~30 quadros/s. Documento oculto não agenda
- * quadro. `dispose()` desfaz tudo: RAF, tique, ResizeObserver, listeners (os
- * do ponteiro e os do navegador), balões, cena e renderer.
+ * O laço RAF só roda enquanto há motivo — tecla de movimento, tween, personagem À VISTA animando
+ * ou cena suja (feed, arrasto, roda, resize, balão novo, quadro do navegador); animação de LOD
+ * longe cai para ~30 quadros/s; documento oculto não agenda quadro. `dispose()` desfaz tudo.
  *
- * Aba fechada (`pause()`): sem RAF, sem tique, sem feed aplicado (o último
- * fica guardado), sem resize e sem desenhar quadro do navegador — nada simula
- * nem redesenha textura. `resume()` volta na hora com a mesma câmera: remede o
- * palco e reaplica o último feed SEM os eventos do intervalo, nem o da energia.
+ * Aba fechada (`pause()`): sem RAF, tique, feed aplicado (o último fica guardado), resize nem
+ * quadro do navegador. `resume()` remede o palco e reaplica o último feed SEM os eventos do
+ * intervalo, nem o da energia.
  *
- * Desempenho: câmera nova refaz o culling por sala e o LOD (scene.updateView);
- * quality.ts ajusta pixelRatio, névoa e sombra; o shadow map só é refeito se
- * algo que projeta sombra mudou. Nada aloca por quadro; `stats` vai ao HUD de DEV.
+ * Desempenho: culling/LOD por zona (scene.updateView); quality.ts ajusta pixelRatio, névoa e sombra.
  *
- * A cada feed: retrato de events.ts e o diff vão para a cena e para as falas
- * (speech.ts); um tique de QUIP_TICK_MS faz andar sem feed as falas, a energia
- * (`cyclePower()` só em DEV), a tela do projetor que sobe sem uso e o hover
- * atrasado. Ponteiro em pointerInput.ts: clique foca o agente (ou abre o telão
- * do projetor: `onProjector`), duplo clique abre a conversa e o hover vai para
- * `onHover` (a prévia, que `setPreviewElement` põe acima do monitor dele). Os
- * quadros do navegador da conversa ativa (browserFrames.ts) vão para os
- * projetores. O balão de um pedido chama `onFocusRequest(convId)`. `onFocus`
- * diz se foi o usuário que abriu/fechou a tela (`byUser`; o motor sozinho não).
- * `flyToAgent`/`follow` voam até um agente sem abrir a tela (`follow` respeita
- * FOLLOW_GRACE_MS desde o último gesto do usuário na câmera e não sai da tela
- * aberta do agente daquela conversa). Kanban = o Quadro real (`board`, board/engineBoard.ts); quem muda vai ao quadro. */
+ * A cada feed: retrato de events.ts e o diff vão para a cena e as falas (speech.ts); um tique de
+ * QUIP_TICK_MS anda sem feed as falas, a energia, a TV e o hover atrasado. Ponteiro em
+ * pointerInput.ts: clique foca o agente (ou a TV: `onProjector`), duplo clique abre a conversa,
+ * hover vai a `onHover`. `onFocus` diz se foi o usuário (`byUser`). `flyToAgent`/`follow` voam
+ * sem abrir a tela (`follow` respeita FOLLOW_GRACE_MS). Kanban = o Quadro real (`board`).
+ * Filtro de projeto do HUD: `setProjectFilter`, `filter.current`/`filter.onChange` e `onProjects`. */
 import { PerspectiveCamera, Vector3 } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { deriveOfficeModel, principalKey } from '../office/adapter/model'
@@ -37,15 +25,15 @@ import { EngineBoard } from './board/engineBoard'
 import { appBrowserApi } from './browserFrames'
 import { agentPose, CameraRig, framePose, monitorPose, type CameraPose } from './cameraRig'
 import { CameraSync } from './cameraSync'
+import { EngineFilter } from './engineFilter'
 import { EnginePower } from './enginePower'
 import { createDefaultRenderer, listener, PROJECTOR_KEY, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
 import { diffEvents, snapshotOf, type OfficeSnapshot } from './events'
 import { clampDt, isTypingTarget, MoveKeys, moveDelta } from './input'
-import { EMPTY_LAYOUT, layoutOffice, monitorPosition, type Office3DLayout } from './layout'
+import { buildingBounds, EMPTY_LAYOUT, layoutOffice, monitorPosition, type Office3DLayout } from './layout'
 import { LOW_RATE_MS } from './lod'
 import { bindKeys, PointerInput } from './pointerInput'
 import type { OfficePower } from './power'
-import { officeFrame } from './powerPlant'
 import { Quality, type EngineStats } from './quality'
 import { OfficeScene } from './scene'
 import { focusView, PreviewAnchor, ScreenAnchor } from './screenAnchor'
@@ -55,8 +43,8 @@ export type { EngineStats } from './quality'
 export { createDefaultRenderer, type EngineCallbacks, type EngineOptions, type FeedSource, type RendererLike } from './engineTypes'
 
 export const MAX_PIXEL_RATIO = 2
-/** Altura até onde vai o conteúdo das salas (placas, indicador de permissão). */
-const BUILDING_HEIGHT = 1.8
+/** Altura até onde vai o conteúdo do escritório (o alto da parede do fundo). */
+const BUILDING_HEIGHT = 2.8
 /** A conversa escolhida fora do 3D não leva a câmera se o usuário mexeu nela há menos disto (ms). */
 export const FOLLOW_GRACE_MS = 2000
 
@@ -71,6 +59,8 @@ export class Office3DEngine {
   private readonly power: EnginePower
   /** O Quadro real nas salas: dados, clique, arrasto, dica e `open(id)` (board/engineBoard.ts). */
   readonly board: EngineBoard
+  /** Filtro de projeto (engineFilter.ts): a escolha salva, o filtro em vigor e a lista do HUD. */
+  readonly filter: EngineFilter
   private readonly anchor = new ScreenAnchor()
   /** A prévia do hover, acima do monitor do agente. */
   private readonly preview = new PreviewAnchor()
@@ -122,10 +112,12 @@ export class Office3DEngine {
     this.scene = new OfficeScene(Math.min(8, this.renderer.capabilities?.getMaxAnisotropy() ?? 1))
     this.scene.onDirty = () => this.requestRender()
     this.power = new EnginePower(this.scene, (p) => this.cb.onPower?.(p))
+    this.filter = new EngineFilter((id) => this.scene.setProjectFilter(id, this.paused || document.hidden), (list, id) => this.cb.onProjects?.(list, id))
     this.speech = new Speech(container, (key) => this.bubbleClick(key))
     // Quadro do navegador: é da conversa ativa; com a aba fechada fica só guardado.
     this.scene.projectors.connect(opts.browser === undefined ? appBrowserApi() : opts.browser, () => this.feed?.activeId ?? null, () => this.paused)
     this.board = new EngineBoard(this.scene, container, this.camera, this.listen, opts.board, cb, () => this.requestRender())
+    this.filter.onChange((id) => this.board.setFilter(id))
     this.board.attach((key, quip) => this.speech.say(key, quip) && this.requestRender(), () => this.feed && !this.paused && this.applyFeed(this.feed))
     this.pointer = this.board.bind(this.bindPointer())
     this.bindInput()
@@ -250,6 +242,8 @@ export class Office3DEngine {
     const wallNow = Date.now()
     const model = deriveOfficeModel(feed, wallNow, this.board.boardRooms)
     this.layout = layoutOffice(model, this.layout)
+    // O filtro antes do sync: quem chega de projeto filtrado fora já nasce lá fora.
+    this.filter.feed(this.layout.projects)
     const snapshot = snapshotOf(feed, model, wallNow)
     const events = catchUp ? [] : diffEvents(this.snapshot, snapshot, wallNow)
     this.snapshot = snapshot
@@ -285,6 +279,12 @@ export class Office3DEngine {
     return this.power.power
   }
 
+  /** Filtro de projeto do HUD (null = Todos): os outros saem pela porta; pausado ou fora da tela, direto ao fim. */
+  setProjectFilter(id: string | null): void {
+    this.filter.set(id)
+    this.requestRender()
+  }
+
   /** Só DEV (Ctrl+Alt+Shift+B): força o próximo nível de energia, em ciclo, para testar. */
   cyclePower(): void {
     const event = this.power.cycle(Date.now(), this.now() / 1000)
@@ -293,10 +293,10 @@ export class Office3DEngine {
     this.requestRender()
   }
 
-  /** Enquadra todas as salas e a usina de tokens no palco atual. */
+  /** Enquadra o escritório inteiro no palco atual. */
   private frameBuilding(): void {
-    const f = officeFrame(this.layout.rooms, BUILDING_HEIGHT)
-    if (f) this.rig.pose = framePose(f.box, { fovDeg: this.camera.fov, aspect: this.width / this.height }, undefined, undefined, f.extra)
+    const b = buildingBounds(this.layout.rooms)
+    if (b) this.rig.pose = framePose({ ...b, height: BUILDING_HEIGHT }, { fovDeg: this.camera.fov, aspect: this.width / this.height })
   }
 
   /** Pose que enquadra a tela do personagem (o monitor dele ou do pai); a tela HTML mira o mesmo monitor. */

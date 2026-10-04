@@ -483,6 +483,7 @@ describe('Escritório em aba: HUD', () => {
     expect(px(block('.o3d-battery'), 'height')).toBeLessThanOrEqual(px(hud, 'height'))
     expect(px(block('.o3d-winctl'), 'height')).toBeLessThanOrEqual(px(hud, 'height'))
     expect(px(block('.o3d-help-btn'), 'height')).toBeLessThanOrEqual(px(hud, 'height'))
+    expect(px(block('.o3d-pf-btn'), 'height')).toBeLessThanOrEqual(px(hud, 'height'))
     // Acima do chat flutuante (z-index 8 no planningChat.css): nada do HUD fica sob ele.
     expect(Number(/z-index: (\d+);/.exec(hud)?.[1])).toBeGreaterThan(8)
     expect(OFFICE_CHAT_MIN_TOP).toBeGreaterThan(BUBBLE_TOP)

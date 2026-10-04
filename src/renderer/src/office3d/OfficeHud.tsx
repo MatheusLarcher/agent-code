@@ -2,7 +2,8 @@
  * HUD do Escritório 3D em tela cheia: a energia numa pílula de vidro no canto
  * superior esquerdo (SessionBattery), ao lado dela — com o Controle do Windows
  * ligado — o aviso "Controle do Windows ativo · Desativar" (o mesmo "Desativar"
- * do aviso do chat, que some com o chat minimizado) e, no canto direito, o
+ * do aviso do chat, que some com o chat minimizado), o filtro de projeto
+ * (ProjectFilter) e, no canto direito, o
  * botão "?" com a legenda das teclas num popover. Tudo cabe na faixa de cima
  * que os balões não cruzam (speech.ts BUBBLE_TOP) e o chat maximizado não sobe
  * nela (OfficeChatFloat): nada do HUD fica sob o chat. A faixa não pega clique —
@@ -11,9 +12,11 @@
  * Com a legenda aberta, Esc só fecha a legenda: o ouvinte é de captura e para a
  * propagação, então o Esc do motor (fechar a tela do monitor) não o recebe.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { IconWarning } from '../components/Icons'
+import type { ProjectLayout } from './layout'
 import type { OfficePower } from './power'
+import { ProjectFilter, useDismiss } from './ProjectFilter'
 import { SessionBattery } from './SessionBattery'
 
 /** A legenda: teclas (ou gesto) → o que fazem. */
@@ -35,31 +38,17 @@ export interface OfficeHudProps {
   /** Controle do Windows ligado: mostra o aviso com o "Desativar". */
   windowsControlEnabled?: boolean
   onDisableWindowsControl?: () => void
+  /** Filtro de projeto (ProjectFilter): os projetos no escritório, o filtro em vigor e a escolha. */
+  projects?: readonly ProjectLayout[]
+  filter?: string | null
+  onFilter?: (id: string | null) => void
 }
 
-export function OfficeHud({ power, windowsControlEnabled = false, onDisableWindowsControl }: OfficeHudProps): JSX.Element {
+export function OfficeHud({ power, windowsControlEnabled = false, onDisableWindowsControl, projects = [], filter = null, onFilter }: OfficeHudProps): JSX.Element {
   const [help, setHelp] = useState(false)
   const box = useRef<HTMLDivElement>(null)
-
-  // Aberta, a legenda fecha com Esc ou com um clique fora dela.
-  useEffect(() => {
-    if (!help) return
-    const onDown = (e: PointerEvent): void => {
-      if (!(e.target instanceof Node) || !box.current?.contains(e.target)) setHelp(false)
-    }
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      // O Esc é da legenda: não chega ao motor (que fecharia a tela do monitor).
-      e.stopPropagation()
-      setHelp(false)
-    }
-    document.addEventListener('pointerdown', onDown, true)
-    window.addEventListener('keydown', onKey, true)
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('keydown', onKey, true)
-    }
-  }, [help])
+  // Aberta, a legenda fecha com Esc (que não chega ao motor) ou com um clique fora dela.
+  useDismiss(help, () => setHelp(false), box)
 
   return (
     <div className="o3d-hud" data-testid="o3d-hud">
@@ -80,6 +69,7 @@ export function OfficeHud({ power, windowsControlEnabled = false, onDisableWindo
           )}
         </div>
       )}
+      {onFilter && <ProjectFilter projects={projects} filter={filter} onFilter={onFilter} />}
       <div className="o3d-help" ref={box}>
         <button
           type="button"

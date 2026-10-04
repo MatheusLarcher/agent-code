@@ -92,6 +92,9 @@ export class Character3D {
   viewPlaced = false
   /** A sala dele está sem luz (apagão): o monitor apagou, o rosto não brilha. */
   powerDark = false
+  /** A mesa dele (a cadeira que recua quando ele senta/levanta) e quanto ela está recuada agora. */
+  deskIndex: number | null = null
+  chairPull = 0
   private readonly scale: number
   /** Nível aplicado ao visual (detalhes, partes pequenas, sombra). */
   private shown: Lod = 0
@@ -293,6 +296,7 @@ export class Character3D {
       lerpPose(this.lower, this.lower, this.sitPose, smooth(b.sit), LOWER)
     }
     this.params.speed = b.workSpeed
+    this.params.seated = b.sit > 0.5 && b.seat === 'chair'
     const beat = beatAt(this.ctx.t)
     this.params.beat = beat
     if (b.action !== this.lastAction) {
@@ -478,6 +482,9 @@ export class Character3D {
 
   dispose(): void {
     this.group.removeFromParent()
+    // O rosto é instanciado: os buffers das instâncias são deste boneco.
+    this.rig.face.dispose()
+    this.rig.brows.dispose()
     this.skinMat.dispose()
     this.shirtMat.dispose()
     this.hairMat.dispose()

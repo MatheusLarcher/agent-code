@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Mesh, Sprite } from 'three'
+import { InstancedMesh, Mesh, Sprite } from 'three'
 import { deriveOfficeModel } from '../office/adapter/model'
 import type { Character3D } from './characters'
 import type { RoomView } from './decor'
@@ -28,7 +28,7 @@ describe('pilha de papéis na mesa (contexto de cada agente)', () => {
     expect(paperStep({ tokens: 10, max: 0 })).toBe(0)
   })
 
-  it('a cena põe a pilha do dono em cada mesa (uma InstancedMesh por sala, some no LONGE) e a bateria saiu de cima da cabeça', () => {
+  it('a cena põe a pilha do dono em cada mesa (uma InstancedMesh por ilha, some no LONGE) e a bateria saiu de cima da cabeça', () => {
     const now = T0 + 60_000
     const feed = demoFeed(now)
     const layout = layoutOffice(deriveOfficeModel(feed, now))
@@ -46,9 +46,14 @@ describe('pilha de papéis na mesa (contexto de cada agente)', () => {
         sum += v.piles.step(i)
         if (v.piles.step(i) >= 3) tall++
       })
-      expect(v.piles.mesh.count).toBe(sum)
-      expect(v.piles.mesh.userData.lod).toBe('small')
-      expect(v.lod.small).toContain(v.piles.mesh)
+      // Uma pilha (InstancedMesh) por ilha, marcada 'small' e no LOD da zona dela.
+      const piles = v.zones.flatMap((z) => z.group.children.filter((o): o is InstancedMesh => o instanceof InstancedMesh && o.name === 'paper-piles').map((m) => ({ m, z })))
+      expect(piles).toHaveLength(4)
+      expect(piles.reduce((n, p) => n + p.m.count, 0)).toBe(sum)
+      for (const { m, z } of piles) {
+        expect(m.userData.lod).toBe('small')
+        expect(z.lod.small).toContain(m)
+      }
       total += sum
     }
     // A demo tem contexto em todas as faixas: há mesas com pilha alta.

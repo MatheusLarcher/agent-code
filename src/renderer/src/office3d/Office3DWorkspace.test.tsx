@@ -165,7 +165,7 @@ describe('Office3DWorkspace', () => {
     const hud = screen.getByTestId('o3d-perf')
     expect(hud.textContent).toContain('321 draw calls')
     expect(hud.textContent).toContain('45.7k triângulos')
-    expect(hud.textContent).toMatch(/salas \d+\/\d+ · LOD (perto|médio|longe) · pixelRatio \d\.\d\d/)
+    expect(hud.textContent).toMatch(/zonas \d+\/\d+ · LOD (perto|médio|longe) · pixelRatio \d\.\d\d/)
     expect(hud.textContent).toContain('fps')
     press()
     expect(screen.queryByTestId('o3d-perf')).toBeNull()

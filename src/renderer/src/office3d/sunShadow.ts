@@ -1,9 +1,27 @@
 /**
- * O sol do escritório 3D (a única luz que projeta sombra): a câmera de sombra
- * cobre o prédio todo — e só ele —, refeita só quando a caixa das salas muda.
+ * As três luzes do escritório 3D (as únicas, em qualquer nível de energia) e o
+ * sol (a única que projeta sombra): a câmera de sombra cobre o escritório — e
+ * só ele —, refeita só quando a caixa muda.
  */
-import type { DirectionalLight } from 'three'
+import { AmbientLight, DirectionalLight, HemisphereLight, type Scene } from 'three'
 import { buildingBounds, type RoomLayout } from './layout'
+
+export const SHADOW_MAP_SIZE = 2048
+
+/** Hemisférica quente + ambiente fraca + o sol com sombra suave, já na cena. */
+export function createSceneLights(scene: Scene): { hemi: HemisphereLight; amb: AmbientLight; sun: DirectionalLight } {
+  const hemi = new HemisphereLight(0xfff1dc, 0x3a3040, 1.25)
+  const amb = new AmbientLight(0xffe8d0, 0.2)
+  const sun = new DirectionalLight(0xffe2b8, 1.7)
+  sun.castShadow = true
+  sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
+  sun.shadow.bias = -0.0005
+  sun.shadow.normalBias = 0.02
+  sun.shadow.radius = 3
+  sun.position.set(SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z)
+  scene.add(hemi, amb, sun, sun.target)
+  return { hemi, amb, sun }
+}
 
 /** Onde o sol fica em relação ao centro do prédio. */
 export const SUN_OFFSET = { x: 7, y: 16, z: 11 }

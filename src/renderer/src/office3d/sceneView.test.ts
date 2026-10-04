@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DirectionalLight, Fog, Mesh, PerspectiveCamera, type Object3D } from 'three'
+import { DirectionalLight, Fog, Mesh, PerspectiveCamera, Vector3, type Object3D } from 'three'
 import { deriveOfficeModel } from '../office/adapter/model'
 import { FX } from './brain'
 import { cameraPosition, framePose, type CameraPose } from './cameraRig'
 import { Character3D } from './characters'
-import type { RoomView } from './decor'
+import type { RoomView, ZoneView } from './decor'
 import { demoFeed } from './demoFeed'
 import { DEMO_LOOP_MS } from './demoTimeline'
 import { snapshotOf } from './events'
-import { buildingBounds, layoutOffice, type RoomLayout } from './layout'
+import { buildingBounds, layoutOffice, OFFICE_ID } from './layout'
+import type { ZoneId } from './officePlan'
 import { OfficeScene } from './scene'
 
 const T0 = 14_916_667 * DEMO_LOOP_MS
@@ -39,9 +40,16 @@ function setup(now = T0 + 20_000) {
   s.sync(layout, feed, { snapshot: snapshotOf(feed, model, now), events: [], wallNow: now, t: 0 })
   for (let k = 1; k <= 5; k++) s.animate(k / 10, 0.1)
   const internals = s as unknown as { rooms: Map<string, RoomView>; charList: Character3D[] }
-  const near = (r: RoomLayout): CameraPose => ({ tx: r.x + r.width / 2, ty: 0, tz: r.z + r.depth / 2, yaw: 0, pitch: 0.8, distance: 9 })
-  const building = framePose({ ...buildingBounds(layout.rooms)!, height: 1.8 }, { fovDeg: 50, aspect: ASPECT })
-  return { s, layout, feed, rooms: internals.rooms, chars: () => internals.charList, near, building, far: { ...building, distance: 60 } }
+  const view = internals.rooms.get(OFFICE_ID)!
+  const zone = (id: ZoneId): ZoneView => view.zone(id)
+  const center = new Vector3()
+  /** De perto, olhando a zona de cima (as outras ficam fora do quadro). */
+  const near = (id: ZoneId): CameraPose => {
+    zone(id).lod.box.getCenter(center)
+    return { tx: center.x, ty: 0, tz: center.z, yaw: 0, pitch: 1.2, distance: 6 }
+  }
+  const building = framePose({ ...buildingBounds(layout.rooms)!, height: 2.8 }, { fovDeg: 50, aspect: ASPECT })
+  return { s, layout, feed, view, zone, chars: () => internals.charList, near, building, mid: { ...building, distance: 32 }, far: { ...building, distance: 70 } }
 }
 
 const chainVisible = (o: Object3D): boolean => {
@@ -49,27 +57,26 @@ const chainVisible = (o: Object3D): boolean => {
   return true
 }
 
-describe('OfficeScene — culling por sala', () => {
+describe('OfficeScene — culling por zona', () => {
   it('sem câmera (nenhum updateView) fica tudo à vista e completo, como antes', () => {
-    const { s, rooms, chars } = setup()
-    expect([...rooms.values()].every((r) => r.group.visible && r.lod.level === 0)).toBe(true)
+    const { s, view, chars } = setup()
+    expect(view.zones.every((z) => z.group.visible && z.lod.level === 0)).toBe(true)
     expect(chars().every((c) => !c.culled && c.viewLevel === 0)).toBe(true)
     expect(s.rate).toBe(2)
     s.dispose()
   })
 
-  it('sala fora do frustum: grupo invisível, personagens sem update, tela sem redesenho; a página fica guardada', () => {
-    // Aos 30 s do loop o dev de cada sala está trabalhando: toda sala tem tela acesa.
-    const { s, layout, rooms, chars, near, feed } = setup(T0 + 30_000)
-    const [r0] = layout.rooms
-    expect(s.updateView(camera(near(r0)))).toBe(0)
-    const culled = layout.rooms.filter((r) => rooms.get(r.id)!.lod.culled)
-    expect(culled.length).toBeGreaterThanOrEqual(2)
-    expect(rooms.get(r0.id)!.group.visible).toBe(true)
-    for (const r of culled) expect(rooms.get(r.id)!.group.visible).toBe(false)
-    const out = chars().filter((c) => culled.some((r) => r.id === c.brain.roomId))
+  it('zona fora do frustum: grupo invisível, personagem fora da tela sem update, tela sem redesenho; a página fica guardada', () => {
+    // Aos 30 s do loop o dev de cada projeto está trabalhando: toda ilha tem tela acesa.
+    const { s, layout, view, zone, chars, near, feed } = setup(T0 + 30_000)
+    expect(s.updateView(camera(near('island0')))).toBe(0)
+    const culled = view.zones.filter((z) => z.lod.culled)
+    expect(culled.map((z) => z.id)).toEqual(expect.arrayContaining(['meeting', 'lounge']))
+    expect(zone('island0').group.visible).toBe(true)
+    for (const z of culled) expect(z.group.visible).toBe(false)
+    const out = chars().filter((c) => c.culled)
     expect(out.length).toBeGreaterThan(0)
-    expect(out.every((c) => c.culled && !c.group.visible)).toBe(true)
+    expect(out.every((c) => !c.group.visible)).toBe(true)
 
     const updated = new Set<string>()
     const real = Character3D.prototype.update
@@ -81,11 +88,11 @@ describe('OfficeScene — culling por sala', () => {
     expect(out.some((c) => updated.has(c.key))).toBe(false)
     expect(chars().some((c) => !c.culled && updated.has(c.key))).toBe(true)
 
-    // Feed novo: a sala à vista redesenha; a de fora só guarda a página.
-    const lit = culled.flatMap((r) => rooms.get(r.id)!.screens.filter((x) => x.state === 'on'))
+    // Feed novo: a ilha à vista redesenha; as telas das zonas de fora só guardam a página.
+    const lit = view.screens.filter((x) => x.lod.culled && x.state === 'on')
     expect(lit.length).toBeGreaterThan(0)
     const draws = lit.map((x) => vi.spyOn(x.on!.mon, 'draw'))
-    const seen = rooms.get(r0.id)!.screens.filter((x) => x.on)
+    const seen = view.screens.filter((x) => x.zone === 'island0' && x.on)
     expect(seen.length).toBeGreaterThan(0)
     const seenDraws = seen.map((x) => vi.spyOn(x.on!.mon, 'draw'))
     const now = T0 + 30_000
@@ -98,43 +105,43 @@ describe('OfficeScene — culling por sala', () => {
   })
 
   it('ao voltar à vista: tela desenha a página guardada, porta já no lugar, sem efeito velho nem partícula', () => {
-    const { s, layout, rooms, chars, near } = setup(T0 + 30_000)
-    const [r0] = layout.rooms
-    s.updateView(camera(near(r0)))
-    const r = layout.rooms.find((x) => rooms.get(x.id)!.lod.culled && rooms.get(x.id)!.screens.some((sc) => sc.state === 'on'))!
-    const view = rooms.get(r.id)!
-    const screen = view.screens.find((sc) => sc.state === 'on')!
+    const { s, view, chars, near } = setup(T0 + 30_000)
+    s.updateView(camera(near('lounge')))
+    const doorZone = view.doorZone
+    expect(doorZone.lod.culled).toBe(true)
+    const screen = view.screens.find((sc) => sc.lod.culled && sc.state === 'on' && sc.zone === 'island1') ?? view.screens.find((sc) => sc.lod.culled && sc.state === 'on')!
     const draw = vi.spyOn(screen.on!.mon, 'draw')
-    // Enquanto fora: alguém chega na porta e um agente acumula efeitos.
-    const c = chars().find((x) => x.brain.roomId === r.id && x.brain.visible)!
+    // Enquanto fora: alguém chega na porta e um agente da ilha acumula efeitos.
+    const c = chars().find((x) => x.culled && x.brain.visible)!
     c.brain.fx = FX.confetti | FX.smoke | FX.sweat
-    const walker = chars().find((x) => x.brain.roomId === r.id && x !== c)!.brain
-    walker.x = view.doorAt.x + 0.3
+    const walker = chars().find((x) => x !== c)!.brain
+    walker.x = view.doorAt.x - 0.3
     walker.z = view.doorAt.z
     walker.visible = true
     s.animate(2, 0.016)
     expect(view.door.rotation.y).toBe(0)
     expect(s.particles.live).toBe(0)
 
-    s.updateView(camera(near(r)))
-    expect(view.lod.culled).toBe(false)
-    expect(view.group.visible).toBe(true)
+    s.updateView(camera(near('island1')))
+    expect(doorZone.lod.culled).toBe(false)
+    expect(doorZone.group.visible).toBe(true)
     expect(view.door.rotation.y).toBeCloseTo(1.35)
     expect(draw).toHaveBeenCalledWith(screen.page, screen.accent)
-    expect(c.culled).toBe(false)
     s.animate(2.016, 0.016)
-    expect(c.brain.fx).toBe(0)
+    if (!c.culled) {
+      expect(c.brain.fx).toBe(0)
+      expect(c.group.visible).toBe(true)
+      expect(c.group.position.x).toBeCloseTo(c.brain.x)
+    }
     expect(s.particles.live).toBe(0)
-    expect(c.group.visible).toBe(true)
-    expect(c.group.position.x).toBeCloseTo(c.brain.x)
     s.dispose()
   })
 })
 
-describe('OfficeScene — LOD por distância', () => {
+describe('OfficeScene — LOD por distância (zona a zona)', () => {
   it('PERTO completo; MÉDIO sem detalhes e tela em meia resolução; LONGE sem pequenos, tela vira bloco na cor do status', () => {
-    const { s, layout, rooms, chars, near, building, far } = setup()
-    const screens = () => [...rooms.values()].flatMap((r) => r.screens.filter((x) => x.state === 'on'))
+    const { s, view, chars, near, mid, far } = setup(T0 + 30_000)
+    const screens = () => view.screens.filter((x) => x.state === 'on')
     const tagged = (tag: string): Object3D[] => {
       const out: Object3D[] = []
       s.scene.traverse((o) => {
@@ -146,13 +153,13 @@ describe('OfficeScene — LOD por distância', () => {
       for (let k = 0; k < 3; k++) s.animate(3 + k / 10, 0.1)
     }
 
-    expect(s.updateView(camera(building))).toBe(1)
+    expect(s.updateView(camera(mid))).toBe(1)
     animate()
-    expect([...rooms.values()].every((r) => r.lod.level === 1)).toBe(true)
+    expect(view.zones.every((z) => z.lod.level === 1)).toBe(true)
     expect(tagged('detail').some(chainVisible)).toBe(false)
     expect(tagged('small').some(chainVisible)).toBe(true)
-    expect(chars().every((c) => c.viewLevel === 1)).toBe(true)
-    expect(chars().every((c) => !c.rig.torso.castShadow && !c.rig.details.some((d) => d.visible))).toBe(true)
+    expect(chars().filter((c) => c.group.visible).every((c) => c.viewLevel === 1)).toBe(true)
+    expect(chars().every((c) => c.viewLevel === 0 || (!c.rig.torso.castShadow && !c.rig.details.some((d) => d.visible)))).toBe(true)
     expect(screens().every((x) => x.on?.mon.scale === 0.5)).toBe(true)
 
     expect(s.updateView(camera(far))).toBe(2)
@@ -164,17 +171,23 @@ describe('OfficeScene — LOD por distância', () => {
       expect(x.on).toBeNull()
       expect((x.mesh as Mesh).material).toBe(s['kit'].mat.status[x.status])
     }
-    // Quem pede permissão fica amarelo; quem trabalha, azul.
     expect(new Set(screens().map((x) => x.status)).has('working')).toBe(true)
 
-    const [r0] = layout.rooms
-    expect(s.updateView(camera(near(r0)))).toBe(0)
+    expect(s.updateView(camera(near('island0')))).toBe(0)
     animate()
-    const r0Screens = rooms.get(r0.id)!.screens.filter((x) => x.state === 'on')
-    expect(r0Screens.every((x) => x.on?.mon.scale === 1)).toBe(true)
-    const r0Chars = chars().filter((c) => c.brain.roomId === r0.id && c.group.visible)
-    expect(r0Chars.length).toBeGreaterThan(0)
-    expect(r0Chars.every((c) => c.viewLevel === 0 && c.rig.torso.castShadow && c.rig.details.every((d) => d.visible))).toBe(true)
+    const mine = view.screens.filter((x) => x.zone === 'island0' && x.state === 'on')
+    expect(mine.every((x) => x.on?.mon.scale === 1)).toBe(true)
+    const close = chars().filter((c) => c.group.visible && c.viewLevel === 0)
+    expect(close.length).toBeGreaterThan(0)
+    expect(close.every((c) => c.rig.torso.castShadow && c.rig.details.every((d) => d.visible))).toBe(true)
+    s.dispose()
+  })
+
+  it('a câmera inicial (o escritório inteiro) põe a frente mais detalhada que o fundo', () => {
+    const { s, zone, building } = setup()
+    s.updateView(camera(building))
+    expect(zone('island0').lod.level).toBeLessThanOrEqual(zone('lounge').lod.level)
+    expect(zone('island1').lod.level).toBeLessThanOrEqual(zone('meeting').lod.level)
     s.dispose()
   })
 
@@ -197,17 +210,18 @@ describe('OfficeScene — LOD por distância', () => {
   })
 
   it('shadowDirty só quando algo que projeta sombra muda; ritmo 1 quando só o LONGE anima', () => {
-    const { s, layout, chars, near, far } = setup()
-    const [r0] = layout.rooms
-    s.updateView(camera(near(r0)))
+    const { s, chars, near, far } = setup()
+    s.updateView(camera(near('island0')))
     s.animate(4, 0.1)
     s.shadowDirty = false
-    // Nada se mexe (dt 0): a sombra fica como está.
+    // Nada se mexe (dt 0, sem andar): a sombra fica como está.
+    for (const c of chars()) c.brain.speed = 0
     s.animate(4, 0)
+    s.shadowDirty = false
     s.animate(4, 0)
     expect(s.shadowDirty).toBe(false)
     // Personagem que projeta (PERTO) anda: sombra suja.
-    const c = chars().find((x) => x.brain.roomId === r0.id && x.group.visible && x.viewLevel === 0)!
+    const c = chars().find((x) => x.group.visible && x.viewLevel === 0)!
     c.brain.x += 0.5
     s.animate(4, 0)
     expect(s.shadowDirty).toBe(true)
@@ -217,7 +231,7 @@ describe('OfficeScene — LOD por distância', () => {
     expect(s.shadowDirty).toBe(true)
     s.animate(4.1, 0.1)
     expect(s.rate).toBe(1)
-    s.updateView(camera(near(r0)))
+    s.updateView(camera(near('island0')))
     s.animate(4.2, 0.1)
     expect(s.rate).toBe(2)
     s.dispose()

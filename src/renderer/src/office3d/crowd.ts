@@ -15,8 +15,6 @@
  * O trenzinho anda quando todos os vagões chegaram. Quando a luz volta, todo
  * mundo sai do papel e corre para a mesa (brainParty.leaveParty).
  */
-import type { CrewRole } from '../crew'
-import type { OfficeCharacterModel } from '../office/adapter/model'
 import { SLEEP_AFTER_SEC } from '../office/behavior/leisure'
 import {
   beginChat,
@@ -28,33 +26,23 @@ import {
   react,
   relocate,
   setStatus,
+  snapFilter,
   stepBrain,
   type Brain,
   type BrainWorld,
-  type FixedStyle,
-  type Role
+  type FixedStyle
 } from './brain'
 import { boardSpotIn, type BoardSpot, type BoardWorld } from './brainBoard'
 import { leaveParty } from './brainParty'
-import type { AgentEvent, AgentPhase, OfficeSnapshot } from './events'
+import { roleOf, seedOf, type LifeInput } from './crowdRoles'
 import { roomFurniture, type Poi, type PoiKind, type RoomFurniture, type Spot } from './furniture'
-import { DESK_COLS, MONITOR_BACK, MONITOR_Y, type CharacterLayout, type RoomLayout } from './layout'
+import { MONITOR_BACK, MONITOR_Y, type CharacterLayout, type RoomLayout } from './layout'
+import { LOUNGE_SEATS } from './officePlan'
 import { buildNavGrid, PoiBook, type NavGrid } from './nav'
 import { CONGA_SPEED, planRoomParty, type PartyRole, type RoomParty } from './partyPlan'
 import { rng as mulberry } from './textures'
 
-/** No modo demonstração o cochilo chega DEMO_TIME_FACTOR vezes mais cedo. */
-export const DEMO_TIME_FACTOR = 20
-
-/** O que o motor manda a cada feed: o retrato, os eventos e os relógios. */
-export interface LifeInput {
-  snapshot: OfficeSnapshot
-  events: readonly AgentEvent[]
-  /** Epoch ms do retrato (o `now` de snapshotOf/diffEvents). */
-  wallNow: number
-  /** Relógio do motor (s) no mesmo instante. */
-  t: number
-}
+export { DEMO_TIME_FACTOR, modelPhase, type LifeInput } from './crowdRoles'
 
 interface RoomNav {
   sig: string
@@ -66,29 +54,7 @@ interface RoomNav {
   chats: Array<[Poi, Poi]>
 }
 
-const SEATED_VISITORS: ReadonlySet<CrewRole> = new Set<CrewRole>(['executor', 'critico', 'navegador-de-codigo'])
-
 const navSig = (r: RoomLayout): string => `${r.x},${r.z},${r.width},${r.depth},${r.desks.length}`
-
-/** Fase só pelo modelo (sem retrato de events.ts — testes e o 1º quadro). */
-export function modelPhase(m: OfficeCharacterModel): AgentPhase {
-  if (m.bubble === 'permissao' || m.bubble === 'pergunta') return 'waiting-permission'
-  if (m.bubble === 'erro') return 'error'
-  return m.active ? 'working' : 'idle'
-}
-
-function roleOf(c: CharacterLayout): Role {
-  const m = c.model
-  if (c.roomId === null || m.placement.kind === 'destination' || m.role === 'vigia') return 'fixed'
-  if (m.role === 'principal') return 'desk'
-  return SEATED_VISITORS.has(m.role) || m.role === 'subagente' ? 'visitor' : 'fixed'
-}
-
-function seedOf(key: string): number {
-  let h = 0x811c9dc5
-  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193)
-  return ((h >>> 0) % 6283) / 1000
-}
 
 export class Crowd implements BrainWorld, BoardWorld {
   t = 0
@@ -101,6 +67,8 @@ export class Crowd implements BrainWorld, BoardWorld {
   readonly book = new PoiBook()
   /** Apagão: a festa está rolando. */
   partyOn = false
+  /** Filtro de projeto em vigor (null = Todos): quem é de outro projeto fica lá fora. */
+  filter: string | null = null
   /** Papel de cada agente na festa (as falas usam). */
   readonly partyRoles = new Map<string, PartyRole>()
   /** Muda a cada plano novo (a caixa de pizza da sala acompanha). */
@@ -151,7 +119,7 @@ export class Crowd implements BrainWorld, BoardWorld {
         furniture,
         grid: buildNavGrid(r, furniture),
         queue: [...byKind('coffee'), ...byKind('queue')],
-        chats: [[chat[0], chat[1]], [chat[2], chat[3]]]
+        chats: chat.flatMap((p, i): Array<[Poi, Poi]> => (i % 2 === 0 && chat[i + 1] ? [[p, chat[i + 1]]] : []))
       }
       this.rooms.set(r.id, nav)
       if (cur) this.moveIn(r.id, cur, nav)
@@ -195,14 +163,14 @@ export class Crowd implements BrainWorld, BoardWorld {
   /** Quem da sala entra na festa: todos menos fantasmas e visitantes que nem estão aqui. */
   private partyMembers(roomId: string): Brain[] {
     return this.list.filter(
-      (b) => b.roomId === roomId && !this.ghosts.has(b.key) && (b.role !== 'visitor' || b.visible || b.phase === 'working' || b.phase === 'waiting-permission')
+      (b) => b.roomId === roomId && !this.ghosts.has(b.key) && !b.outside && (b.role !== 'visitor' || b.visible || b.phase === 'working' || b.phase === 'waiting-permission')
     )
   }
 
   private planParty(roomId: string): void {
     const nav = this.rooms.get(roomId)
     if (!nav) return
-    const plan = planRoomParty(roomId, nav.room.slot, nav.furniture, this.partyMembers(roomId), seedOf(roomId))
+    const plan = planRoomParty(roomId, nav.furniture, this.partyMembers(roomId), seedOf(roomId))
     this.parties.set(roomId, plan)
     this.partyList = [...this.parties.values()]
     for (const b of this.list) if (b.roomId === roomId && b.party) this.partyRoles.set(b.key, b.party)
@@ -235,21 +203,33 @@ export class Crowd implements BrainWorld, BoardWorld {
   }
 
   /**
-   * A sala foi refeita (andou na grade ou ganhou/perdeu fileira de mesas): quem
-   * está nela vai junto. Quem cochila no pufe acompanha o pufe (que fica perto
-   * da frente) e continua com ele reservado; quem saía pela porta ou esperava
-   * na fila recalcula o destino; o resto só replaneja.
+   * Filtro de projeto (null = Todos): quem é de outro projeto sai pela porta e,
+   * quando o filtro o inclui de novo, entra e volta à mesma mesa (a Central e
+   * quem não tem projeto nunca saem). `snap(b)`: vai direto ao fim, sem andar.
    */
+  setFilter(projectId: string | null, snap: (b: Brain) => boolean): void {
+    this.filter = projectId
+    let changed = false
+    for (const b of this.list) {
+      const out = this.outsideOf(b.projectId)
+      if (out === b.outside || this.ghosts.has(b.key)) continue
+      b.outside = out
+      changed = true
+      if (snap(b)) snapFilter(b, this)
+    }
+    if (changed && this.partyOn) for (const id of this.rooms.keys()) this.pending.add(id)
+  }
+
+  private outsideOf(projectId: string | null): boolean {
+    return this.filter !== null && projectId !== null && projectId !== this.filter
+  }
+
+  /** A sala foi refeita: quem está nela vai junto; quem saía pela porta ou esperava na fila recalcula o destino. */
   private moveIn(roomId: string, old: RoomNav, nu: RoomNav): void {
     this.book.dropRoom(roomId)
-    const pufe = nu.furniture.pois.find((p) => p.kind === 'pufe')
     for (const b of this.brains.values()) {
       if (b.roomId !== roomId) continue
-      const onPufe = b.seat === 'pufe' || b.goal.seat === 'pufe'
-      const from = onPufe ? old.furniture.pufe : old.room
-      const to = onPufe ? nu.furniture.pufe : nu.room
-      relocate(b, to.x - from.x, to.z - from.z)
-      if (onPufe && pufe && this.book.claim(pufe.id, b.key)) b.poi = pufe
+      relocate(b, nu.room.x - old.room.x, nu.room.z - old.room.z)
       if (b.mode === 'leave' || b.mode === 'queue') b.mode = 'init'
     }
   }
@@ -265,23 +245,30 @@ export class Crowd implements BrainWorld, BoardWorld {
     const room = c.roomId ? desks.get(c.roomId) : undefined
     const own = c.deskIndex !== null && room ? room.desks[c.deskIndex] : undefined
     const screen = c.screenDesk ? desks.get(c.screenDesk.roomId)?.desks[c.screenDesk.index] : undefined
-    const home: Spot = { x: c.x, z: c.z, yaw: c.roomId === null ? Math.PI : 0 }
-    const desk = role === 'fixed' || !own ? null : { x: own.x, z: own.z }
-    const monitor = screen ? { x: screen.x, y: MONITOR_Y, z: screen.z - MONITOR_BACK } : null
-    const style: FixedStyle = m.role === 'po' ? 'board' : m.role === 'memoria' ? 'archive' : 'idle'
-    const side = own ? (own.index % DESK_COLS < DESK_COLS - 1 ? 1 : -1) : 1
+    const home: Spot = { x: c.x, z: c.z, yaw: c.yaw }
+    const desk = role === 'fixed' || !own ? null : { x: own.x, z: own.z, dir: own.dir, out: own.out }
+    const lounge = role !== 'fixed' && c.lounge !== null ? LOUNGE_SEATS[c.lounge] : null
+    const monitor = screen ? { x: screen.x, y: MONITOR_Y, z: screen.z - screen.dir * MONITOR_BACK } : null
+    const style: FixedStyle = m.role === 'po' ? 'board' : m.role === 'memoria' ? 'archive' : c.spot === 'central' ? 'console' : 'idle'
+    // A pasta vai para o lado do colega da ilha (o de dentro).
+    const side = own ? -own.out : 1
+    const projectId = c.projectId
     this.ghosts.delete(c.key)
+    const outside = this.outsideOf(projectId)
     let b = this.brains.get(c.key)
     if (!b) {
-      b = createBrain({ key: c.key, role, style, roomId: c.roomId, home, desk, monitor, side, seed: seedOf(c.key), away: role === 'visitor' && away })
+      // Filtrado fora já nasce lá fora.
+      const out = (role === 'visitor' && away) || outside
+      b = createBrain({ key: c.key, role, style, roomId: c.roomId, projectId, home, desk, lounge, monitor, side, seed: seedOf(c.key), away: out })
+      b.outside = outside
       this.brains.set(c.key, b)
       this.list.push(b)
       // Chegou no meio do apagão: vai direto para a pista (se a sala já tem plano; senão o plano o inclui).
       const p = c.roomId ? this.parties.get(c.roomId) : undefined
-      if (this.partyOn && !(role === 'visitor' && away) && (p || c.roomId === null) && !(c.roomId && this.pending.has(c.roomId))) this.join(b, 'dance', p ? p.dancers++ : 0)
+      if (this.partyOn && !out && (p || c.roomId === null) && !(c.roomId && this.pending.has(c.roomId))) this.join(b, 'dance', p ? p.dancers++ : 0)
       return b
     }
-    Object.assign(b, { role, style, roomId: c.roomId, home, desk, monitor, side })
+    Object.assign(b, { role, style, roomId: c.roomId, projectId, home, desk, lounge, monitor, side, outside })
     return b
   }
 
@@ -400,11 +387,22 @@ export class Crowd implements BrainWorld, BoardWorld {
     let pick: Poi | null = null
     let count = 0
     for (const p of nav.furniture.pois) {
-      if (p.kind !== kind || !this.book.isFree(p.id, b.key)) continue
+      if (p.kind !== kind || !this.book.isFree(p.id, b.key) || this.held(b, p)) continue
       count++
       if (this.rnd() * count < 1) pick = p
     }
     return pick && this.book.claim(pick.id, b.key) ? pick : null
+  }
+
+  /** Lugar de quem trabalha ali (fora do sorteio): o assento do lounge (mesmo lá fora pelo filtro) e o lugar da memória na estante. */
+  private held(b: Brain, p: Poi): boolean {
+    if (p.kind !== 'sofa' && p.kind !== 'shelf') return false
+    for (const o of this.list) {
+      if (o === b) continue
+      if (p.kind === 'sofa' && o.lounge === LOUNGE_SEATS[p.index]) return true
+      if (p.kind === 'shelf' && o.style === 'archive' && !o.outside && Math.hypot(o.home.x - p.x, o.home.z - p.z) < 0.05) return true
+    }
+    return false
   }
 
   release(b: Brain): void {
@@ -486,9 +484,9 @@ export class Crowd implements BrainWorld, BoardWorld {
     return this.partyOn && b.roomId ? (this.parties.get(b.roomId) ?? null) : null
   }
 
-  /** Mesa de quem come pizza na sala (a caixa vai na cadeira dela); null sem pizza. */
-  pizzaDesk(roomId: string): { x: number; z: number } | null {
-    for (const b of this.list) if (b.roomId === roomId && b.party === 'pizza' && b.desk) return b.desk
+  /** A mesa de quem come pizza na festa (a caixa vai para a cadeira dela); null sem ninguém. */
+  pizzaDesk(): { x: number; z: number; dir: 1 | -1 } | null {
+    for (const b of this.list) if (b.party === 'pizza' && b.desk) return b.desk
     return null
   }
 }

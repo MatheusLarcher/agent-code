@@ -8,9 +8,10 @@ import { buildRoom, type RoomView } from './decor'
 import { PROJECTOR_KEY } from './engineTypes'
 import { snapshotOf } from './events'
 import { createKit } from './kit'
-import { layoutOffice } from './layout'
+import { layoutOffice, OFFICE_ID } from './layout'
+import { MEETING } from './officePlan'
 import { RoomProjector } from './projector'
-import { IMG_Y, SCREEN_Z } from './projectorKit'
+import { IMG_Y } from './projectorKit'
 import { MIN_PAINT_MS, Projectors } from './projectors'
 import { PROJECTOR_IDLE_MS } from './projectorUse'
 import { OfficeScene } from './scene'
@@ -35,6 +36,9 @@ function setup(f = testing()) {
   let clock = NOW
   const p = new Projectors(kit, () => dark, () => clock)
   p.syncRooms(layout.rooms, views)
+  // A TV é do escritório (sala física); o nome do teste é o do projeto (a cena resolve assim).
+  p.projectOf = (convId) => (model.characters.some((c) => c.convId === convId) ? 'alpha' : null)
+  const physical = model.characters.map((c) => ({ ...c, roomId: OFFICE_ID }))
   const run = (seconds: number): number => {
     let rate = 0
     for (let i = 0; i < seconds * 10; i++) rate = Math.max(rate, p.animate(0.1))
@@ -42,6 +46,7 @@ function setup(f = testing()) {
   }
   return {
     p, kit, room, model, view: views.get(room.id)!,
+    tvLod: views.get(room.id)!.zone('meeting').lod,
     run,
     setDark: (v: boolean) => void (dark = v),
     tick: (ms: number) => {
@@ -51,7 +56,7 @@ function setup(f = testing()) {
     get clock() {
       return clock
     },
-    feed: (next = f) => p.feed(next, model.characters, clock)
+    feed: (next = f) => p.feed(next, physical, clock)
   }
 }
 
@@ -70,25 +75,26 @@ const keysOf = (p: Projectors): unknown[] => {
   return out.map((o) => o.userData.charKey)
 }
 
-describe('Projectors: a tela desce no uso do navegador, acende e sobe sem uso', () => {
-  it('desce e acende com a sala à vista (avisa uma vez, com o centro da tela); clicável embaixo; sobe depois de PROJECTOR_IDLE_MS', () => {
+describe('A TV da sala de reunião: liga no uso do navegador e apaga sem uso', () => {
+  it('liga e acende com a sala de reunião à vista (avisa uma vez, com o centro da TV); clicável acesa; apaga depois de PROJECTOR_IDLE_MS', () => {
     const s = setup()
     const lit = vi.fn()
     s.p.onLit = lit
     s.feed()
     expect(s.p.isDown(s.room.id)).toBe(true)
     expect(keysOf(s.p)).toEqual([])
-    expect(s.run(4)).toBe(2) // desceu animando
+    expect(s.run(4)).toBe(2) // acendeu animando
     const fx = s.p.room(s.room.id)!
     expect([fx.drop, fx.lit]).toEqual([1, 1])
     expect(lit).toHaveBeenCalledTimes(1)
     const [id, x, y, z] = lit.mock.calls[0]
-    expect([id, x, y, z]).toEqual([s.room.id, s.room.x + s.room.width / 2, IMG_Y, s.room.z + SCREEN_Z])
+    expect([id, x, y]).toEqual([OFFICE_ID, MEETING.tv.x, IMG_Y])
+    expect(z).toBeCloseTo(s.view.furniture.tv.z)
     expect(keysOf(s.p)).toContain(`${PROJECTOR_KEY}${s.room.id}`)
     // Parada e acesa: nada anima (render sob demanda).
     expect(s.run(1)).toBe(0)
     expect(s.p.info(s.room.id)).toMatchObject({ convId: 'a', kind: 'web', url: URL, title: 'Carrinho', project: 'alpha' })
-    // Sem chamada nova: a tela sobe.
+    // Sem chamada nova: a TV apaga.
     expect(s.tick(PROJECTOR_IDLE_MS - 1_000)).toBe(false)
     expect(s.tick(2_000)).toBe(true)
     s.run(4)
@@ -97,14 +103,14 @@ describe('Projectors: a tela desce no uso do navegador, acende e sobe sem uso', 
     s.p.dispose()
   })
 
-  it('sala fora da tela vai direto para o fim (sem animar); sala no escuro (apagão) não acende', () => {
+  it('sala de reunião fora da tela vai direto para o fim (sem animar); no escuro (apagão) a TV não acende', () => {
     const s = setup()
-    s.view.lod.culled = true
+    s.tvLod.culled = true
     s.feed()
     expect(s.run(0.1)).toBe(0)
     const fx = s.p.room(s.room.id)!
     expect([fx.drop, fx.lit]).toEqual([1, 1])
-    s.view.lod.culled = false
+    s.tvLod.culled = false
     s.setDark(true)
     s.run(2)
     expect([fx.drop, fx.lit]).toEqual([1, 0])
@@ -114,22 +120,23 @@ describe('Projectors: a tela desce no uso do navegador, acende e sobe sem uso', 
     s.p.dispose()
   })
 
-  it('no LONGE some o projetor e o facho (a tela fica); de volta ao PERTO, voltam', () => {
+  it('sem tela retrátil nem projetor de teto: só a imagem na TV, acesa em qualquer distância', () => {
     const s = setup()
     s.feed()
     s.run(4)
-    const root = s.view.group.getObjectByName('projector')!
-    const visible = (pred: (o: Object3D) => boolean): boolean[] => {
+    const root = s.view.group.getObjectByName('tv-image')!
+    expect(s.view.group.getObjectByName('projector')).toBeUndefined()
+    const visible = (): boolean[] => {
       const out: boolean[] = []
-      root.traverse((o) => pred(o) && out.push(o.visible))
+      root.traverse((o) => o.type === 'Mesh' && out.push(o.visible))
       return out
     }
-    s.view.lod.level = 2
+    s.tvLod.level = 2
     s.run(0.1)
-    expect(visible((o) => o.type === 'Sprite')).toEqual([false])
-    s.view.lod.level = 0
+    expect(visible()).toEqual([true])
+    s.tvLod.level = 0
     s.run(0.1)
-    expect(visible((o) => o.type === 'Sprite')).toEqual([true])
+    expect(visible()).toEqual([true])
     s.p.dispose()
   })
 })
@@ -156,7 +163,7 @@ describe('Projectors: os quadros do navegador', () => {
     expect(api.listeners()).toBe(2)
     s.feed()
     api.frame(jpegFrame(btoa('q1')))
-    expect(made).toHaveLength(0) // ainda enrolada: nada decodifica
+    expect(made).toHaveLength(0) // ainda apagada: nada decodifica
     s.run(4)
     await flush()
     expect(made).toHaveLength(1) // acendeu: o quadro guardado aparece
@@ -192,11 +199,11 @@ describe('Projectors: os quadros do navegador', () => {
     plain.p.dispose()
   })
 
-  it('dispose libera a textura e os materiais de cada sala', () => {
+  it('dispose libera a textura e o material da imagem da TV', () => {
     const s = setup()
     s.feed()
     s.run(4)
-    const root = s.view.group.getObjectByName('projector')!
+    const root = s.view.group.getObjectByName('tv-image')!
     const own = new Set<Material | Texture>()
     root.traverse((o) => {
       const m = (o as { material?: Material & { map?: Texture | null } }).material
@@ -206,21 +213,28 @@ describe('Projectors: os quadros do navegador', () => {
     const freed = new Set<unknown>()
     for (const r of own) r.addEventListener('dispose', () => freed.add(r))
     s.p.dispose()
-    expect(own.size).toBeGreaterThanOrEqual(4)
+    expect(own.size).toBeGreaterThanOrEqual(2)
     expect(freed.size).toBe(own.size)
-    expect(s.view.group.getObjectByName('projector')).toBeUndefined()
+    expect(s.view.group.getObjectByName('tv-image')).toBeUndefined()
   })
 })
 
-describe('OfficeScene com o projetor', () => {
-  it('quando a tela acende, quem está na sala olha para ela', () => {
+describe('OfficeScene com a TV', () => {
+  it('quando a TV acende, só quem está perto dela olha para ela', () => {
     const glance = vi.spyOn(Character3D.prototype, 'glance')
     const f = testing()
     const model = deriveOfficeModel(f, NOW)
     const scene = new OfficeScene()
     scene.sync(layoutOffice(model), f, { snapshot: snapshotOf(f, model, NOW), events: [], wallNow: NOW, t: 0 })
+    // Longe da TV (na mesa da ilha da frente): não olha.
     for (let i = 0; i < 40; i++) scene.animate(i * 0.1, 0.1)
-    expect(glance).toHaveBeenCalled()
+    expect(glance).not.toHaveBeenCalled()
+    // Perto da TV quando ela acende de novo: olha.
+    const b = scene.crowd.list[0]
+    const tv = scene.tvCenter()
+    Object.assign(b, { x: tv.x - 1, z: tv.z + 2.5 })
+    scene.projectors.room(OFFICE_ID)!.onLit()
+    expect(glance).toHaveBeenCalledTimes(1)
     const [, y] = glance.mock.calls[0]
     expect(y).toBeCloseTo(IMG_Y)
     scene.dispose()

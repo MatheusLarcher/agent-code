@@ -8,6 +8,7 @@ import type { BoardItemStatus } from '@shared/ipc'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { BoardApi } from './board/boardSync'
 import type { BrowserFeedApi } from './browserFrames'
+import type { ProjectLayout } from './layout'
 import type { OfficePower } from './power'
 
 export interface RendererLike {
@@ -80,6 +81,8 @@ export interface EngineCallbacks {
   onBoardOpen?(open: BoardOpen): void
   /** Os dados do Quadro real mudaram (a janela do cartão acompanha). */
   onBoardChange?(): void
+  /** Os projetos no escritório (o filtro do HUD) ou o filtro em vigor mudaram (null = Todos). */
+  onProjects?(projects: readonly ProjectLayout[], filter: string | null): void
 }
 
 /** addEventListener tipado por alvo (janela, elemento, documento). */

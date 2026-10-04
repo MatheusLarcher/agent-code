@@ -35,7 +35,7 @@ function ankle(p: Pose, side: 'L' | 'R'): { x: number; y: number } {
 const REST = PELVIS_Y - 0.02 - LEG
 const ACTIONS: Action[] = [
   'none', 'idle', 'sitIdle', 'type', 'typeFast', 'readScreen', 'drum', 'web', 'assist', 'wave', 'brew', 'sip', 'grabBook', 'readBook', 'lookOut',
-  'stretchUp', 'water', 'readBoard', 'stick', 'admire', 'talk', 'listen', 'phone', 'wait', 'napDesk', 'napPufe'
+  'stretchUp', 'water', 'readBoard', 'stick', 'admire', 'talk', 'listen', 'phone', 'wait', 'napDesk', 'napSofa'
 ]
 
 describe('locomoção', () => {
@@ -96,15 +96,16 @@ describe('locomoção', () => {
 })
 
 describe('sentar', () => {
-  it('na cadeira: quadril no assento e pés no chão; no pufe: afunda e estica as pernas', () => {
+  it('na cadeira: quadril no assento e pés no chão; no sofá do lounge: afunda um pouco, pernas para a frente e pés no chão', () => {
     const p = newPose()
     sitLower(p, 'chair')
-    // Quadril no assento (topo em SEAT_Y + 0,04 = 0,40; almofada afunda um pouco).
-    expect(PELVIS_Y + p[CH.pelvisY]).toBeCloseTo(0.44, 2)
+    // Quadril no assento da estação (topo em SEAT_Y + 0,02 = 0,33; a caixa da calça encosta nele).
+    expect(PELVIS_Y + p[CH.pelvisY]).toBeCloseTo(0.42, 2)
     expect(Math.abs(ankle(p, 'L').y - REST)).toBeLessThan(0.01)
-    sitLower(p, 'pufe')
-    expect(PELVIS_Y + p[CH.pelvisY]).toBeLessThan(0.32)
-    expect(ankle(p, 'L').x).toBeGreaterThan(0.3)
+    sitLower(p, 'sofa')
+    expect(PELVIS_Y + p[CH.pelvisY]).toBeLessThan(0.42)
+    expect(ankle(p, 'L').x).toBeGreaterThan(0.15)
+    expect(Math.abs(ankle(p, 'L').y - REST)).toBeLessThan(0.05)
   })
 })
 
@@ -132,13 +133,14 @@ describe('biblioteca de poses', () => {
     const at = (a: Action, t = 0.5): Pose => (standPose(p), actionPose(p, a, t, params), p)
     // Permissão: braço direito erguido (plaquinha acima da cabeça).
     expect(at('wave')[CH.armFwdR]).toBeGreaterThan(2.4)
-    // Lendo a tela: inclina para a frente; web: recosta com a mão no queixo.
-    expect(at('readScreen')[CH.lean]).toBeGreaterThan(0.2)
+    // Lendo a tela: a mão direita vai ao mouse (o tronco quase reto não encosta na mesa); web: recosta com a mão no queixo.
+    expect(at('readScreen')[CH.armOutR]).toBeGreaterThan(0.2)
+    expect(at('readScreen')[CH.lean]).toBeLessThan(0.1)
     expect(at('web')[CH.lean]).toBeLessThan(-0.1)
     expect(at('web')[CH.elbowR]).toBeGreaterThan(2)
     // Cochilo: olhos fechados.
     expect(at('napDesk')[CH.eyes]).toBe(0)
-    expect(at('napPufe')[CH.eyes]).toBe(0)
+    expect(at('napSofa')[CH.eyes]).toBe(0)
     const r = (x: Reaction, t: number): Pose => (standPose(p), reactionPose(p, x, t, params, false), p)
     expect(r('alert', 0.2)[CH.hop]).toBeGreaterThan(0.05)
     expect(r('fistpump', 0.5)[CH.armFwdR]).toBeGreaterThan(2)

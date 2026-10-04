@@ -20,10 +20,11 @@ import type { Kit } from '../kit'
 import type { Lod } from '../lod'
 import { canvas2d } from '../textures'
 import type { BoardKit } from './boardKit'
-import { BOARD_H, BOARD_ROWS, boardColumns, CARD_KEY, clampToFace, COL_W, columnAt, columnX, FACE_H, FACE_Z, LIFT_Z, PAPER_H, PAPER_W, PAPER_Z, pileKey, slotPos, wobble } from './boardLayout'
+import { BOARD_H, BOARD_ROWS, boardColumns, CARD_KEY, clampToFace, COL_W, columnAt, columnX, FACE_H, FACE_Z, LIFT_Z, PAPER_H, PAPER_W, PAPER_Z, pileKey, slotPos, TAB_KEY, tabAt, wobble } from './boardLayout'
 import type { BoardMirror } from './boardMirror'
 import { BOARD_COLUMNS, columnIndex, type BoardCard } from './boardModel'
-import { ATLAS, CARD_CELLS, PAPER_COLORS, paintFace, paintPaper, paintPile, PILE_CELLS, PILE_COLOR, type FaceInfo, type PaperInfo } from './boardPaint'
+import { ATLAS, ATLAS_H, CARD_CELLS, PAPER_COLORS, paintFace, paintPaper, paintPile, PILE_CELLS, PILE_COLOR, type FaceInfo, type PaperInfo } from './boardPaint'
+import { iconsVersion, type BoardTitleInfo } from './boardTitle'
 import { buildBoardProps } from './boardProps'
 import { BoardQuads } from './boardQuads'
 
@@ -75,6 +76,8 @@ export class BoardView {
   private face: FaceInfo = { state: 'loading', counts: [0, 0, 0] }
   private faceSig = ''
   private faceDirty = true
+  private headerSig = ''
+  private icons = iconsVersion()
   private level: Lod = 0
   private prevIds = new Set<string>()
   private mirror: BoardMirror | null = null
@@ -110,7 +113,7 @@ export class BoardView {
     this.bin = fixed.bin
 
     // A textura da sala e a malha (uma para PERTO com textura, outra para MÉDIO/LONGE só com a cor).
-    const { canvas, ctx } = canvas2d(ATLAS, ATLAS)
+    const { canvas, ctx } = canvas2d(ATLAS, ATLAS_H)
     this.ctx = ctx
     this.texture = new CanvasTexture(canvas)
     this.texture.colorSpace = SRGBColorSpace
@@ -151,7 +154,7 @@ export class BoardView {
     const sig = `${state}|${counts.join(',')}`
     if (sig !== this.faceSig) {
       this.faceSig = sig
-      this.face = { state, counts }
+      this.face = { ...this.face, state, counts }
       this.faceDirty = true
     }
     const ids = new Set<string>()
@@ -266,6 +269,11 @@ export class BoardView {
       this.mid.visible = level !== 0
       this.props.visible = level < 2
     }
+    // Ícone de imagem que chegou depois: a faixa do título redesenha.
+    if (this.icons !== iconsVersion()) {
+      this.icons = iconsVersion()
+      if (this.face.title || this.face.tabs?.length) this.faceDirty = true
+    }
     if (level === 0) this.paint()
     let moving = false
     const k = 1 - Math.exp(-dt * SLIDE)
@@ -353,10 +361,23 @@ export class BoardView {
     return this.faceDirty || this.dirty.size > 0
   }
 
-  /** O que está sob o triângulo `faceIndex` da malha: papel, pilha ou nada. */
-  keyAt(faceIndex: number): string | null {
+  /** A faixa do título: o projeto na parede e as abas (redesenha só se mudou). */
+  setHeader(title: BoardTitleInfo | null, tabs: readonly BoardTitleInfo[]): void {
+    const sig = JSON.stringify([title, tabs])
+    if (sig === this.headerSig) return
+    this.headerSig = sig
+    this.face = { ...this.face, title, tabs }
+    this.faceDirty = true
+  }
+
+  /** O que está sob o triângulo `faceIndex` da malha (`at`: o ponto local da face): papel, pilha, aba ou nada. */
+  keyAt(faceIndex: number, at?: { x: number; y: number }): string | null {
     const q = Math.floor(faceIndex / 2)
-    if (q < 1) return null
+    if (q < 1) {
+      const tabs = this.face.tabs ?? []
+      const i = at ? tabAt(at.x, at.y, tabs.length) : null
+      return i === null ? null : `${TAB_KEY}${tabs[i].id}`
+    }
     const cell = q - 1
     if (cell < PILE_CELLS) {
       const pile = this.piles[cell]

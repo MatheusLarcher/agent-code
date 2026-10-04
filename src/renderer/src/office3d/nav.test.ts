@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { OfficeCharacterModel } from '../office/adapter/model'
-import { chairSide, roomFurniture, seatOf } from './furniture'
+import { chairSide, meetingChairs, roomFurniture, seatOf } from './furniture'
 import { layoutOffice, type RoomLayout } from './layout'
 import { AGENT_RADIUS, buildNavGrid, CELL, NavGrid, PoiBook } from './nav'
+import { CENTRAL_SPOT, COFFEE, CONSOLE, LOUNGE, LOUNGE_SEATS, MEETING, MEMORY_SHELF, MEMORY_SPOT_X, MEMORY_SPOTS_Z, MEMORY_WAIT, PO_SPOTS, STATIONS } from './officePlan'
 
 function principal(conv: string): OfficeCharacterModel {
   return {
@@ -11,10 +12,12 @@ function principal(conv: string): OfficeCharacterModel {
   }
 }
 
-/** Sala com 5 mesas (duas fileiras) — o caso em que a sala cresce. */
+/** O escritório (fixo: 16 estações, com ou sem gente). */
 const room: RoomLayout = layoutOffice({ rooms: [{ id: 'r1', projectKey: 'r1', name: 'r1', icon: null, principals: 5 }], characters: ['a', 'b', 'c', 'd', 'e'].map(principal) }).rooms[0]
 const furniture = roomFurniture(room)
 const grid = buildNavGrid(room, furniture)
+/** Os lugares de pé da estante de Memórias e o de espera atrás deles. */
+const MEMORY = [...MEMORY_SPOTS_Z.map((z) => ({ x: MEMORY_SPOT_X, z })), MEMORY_WAIT]
 
 /** O caminho inteiro passa só por células livres (segmento a segmento). */
 function walkable(g: NavGrid, ax: number, az: number, pts: Float32Array, n: number): boolean {
@@ -37,36 +40,70 @@ describe('grade de navegação', () => {
     expect(grid.rows * CELL).toBeGreaterThanOrEqual(room.depth)
   })
 
-  it('mesas, cadeiras e móveis bloqueiam; corredores e pontos de interesse ficam livres', () => {
+  it('mesas, cadeiras e móveis bloqueiam; corredores, lugares fixos e pontos de interesse ficam livres', () => {
+    expect(room.desks).toHaveLength(16)
     for (const d of room.desks) {
       expect(grid.isFree(d.x, d.z)).toBe(false)
       expect(grid.isFree(d.x + 0.7, d.z)).toBe(false)
       const seat = seatOf(d)
       expect(grid.isFree(seat.x, seat.z)).toBe(false)
-      // Ao lado da cadeira (onde se senta e levanta) é chão livre.
-      expect(grid.isFree(chairSide(d, 1).x, chairSide(d, 1).z)).toBe(true)
-      expect(grid.isFree(chairSide(d, -1).x, chairSide(d, -1).z)).toBe(true)
+      // Ao lado da cadeira, do lado de fora da ilha (onde se senta e levanta), é chão livre.
+      const side = chairSide(d)
+      expect(Math.sign(side.x - d.x)).toBe(d.out)
+      expect(grid.isFree(side.x, side.z), `mesa ${d.index}`).toBe(true)
     }
-    const f = furniture
     for (const [x, z] of [
-      [f.shelf.x, f.shelf.z + 0.3],
-      [f.coffee.x, f.coffee.z],
-      [f.pufe.x, f.pufe.z],
-      [f.plants[0].x, f.plants[0].z],
-      [f.lamps[1].x, f.lamps[1].z]
+      [COFFEE.x, COFFEE.z],
+      [MEMORY_SHELF.x, MEMORY_SHELF.z],
+      [CONSOLE.x, CONSOLE.z],
+      [LOUNGE.sofa.x, LOUNGE.sofa.z],
+      [LOUNGE.table.x, LOUNGE.table.z],
+      [MEETING.table.x, MEETING.table.z],
+      ...meetingChairs().map((c) => [c.x, c.z])
     ]) {
       expect(grid.isFree(x, z)).toBe(false)
     }
+    const f = furniture
     for (const p of f.pois) expect(grid.isFree(p.x, p.z), p.id).toBe(true)
+    for (const s of [...PO_SPOTS, CENTRAL_SPOT, ...MEMORY, ...LOUNGE_SEATS.map((l) => ({ x: l.standX, z: l.standZ }))]) expect(grid.isFree(s.x, s.z), `${s.x},${s.z}`).toBe(true)
     expect(grid.isFree(f.doorIn.x, f.doorIn.z)).toBe(true)
-    // Entre duas mesas da mesma fileira passa gente.
-    const [d0, d1] = room.desks
-    expect(grid.isFree((d0.x + d1.x) / 2, d0.z)).toBe(true)
+    // Corredores: o cruzado (porta → Central), a pista central e o do fundo.
+    expect(grid.isFree(6.5, CONSOLE.z)).toBe(true)
+    expect(grid.isFree(0, 7)).toBe(true)
+    expect(grid.isFree(-4.25, -2.6)).toBe(true)
+  })
+
+  it('de dentro da porta chega a todo ponto de interesse, a cada mesa e à mesa de reunião (pela porta de vidro)', () => {
+    const out = new Float32Array(64)
+    const from = furniture.doorIn
+    const goals = [...furniture.pois, ...room.desks.map((d) => chairSide(d)), ...PO_SPOTS, CENTRAL_SPOT, ...MEMORY]
+    for (const g of goals) {
+      const n = grid.findPath(from.x, from.z, g.x, g.z, out)
+      expect(n, `${g.x},${g.z}`).toBeGreaterThan(0)
+      // Nenhum ponto do caminho cai dentro de móvel (a reta entre eles é amostrada: rente à quina pode raspar a folga).
+      for (let i = 0; i < n; i++) expect(grid.isFree(out[i * 2], out[i * 2 + 1]), `${g.x},${g.z}`).toBe(true)
+    }
+    // Dentro da sala de reunião, ao lado da mesa: o caminho passa pelo vão da porta de vidro.
+    const inside = { x: MEETING.table.x - 1.6, z: MEETING.table.z - 1.2 }
+    expect(grid.isFree(inside.x, inside.z)).toBe(true)
+    const n = grid.findPath(from.x, from.z, inside.x, inside.z, out)
+    expect(n).toBeGreaterThan(1)
+    expect(walkable(grid, from.x, from.z, out, n)).toBe(true)
+    let door = false
+    for (let i = 0; i + 1 < n; i++) {
+      const [ax, az, bx, bz] = [out[i * 2], out[i * 2 + 1], out[i * 2 + 2], out[i * 2 + 3]]
+      if ((az - MEETING.z1) * (bz - MEETING.z1) <= 0) {
+        const x = ax + ((bx - ax) * (MEETING.z1 - az)) / (bz - az || 1)
+        door ||= x > MEETING.door.x0 && x < MEETING.door.x1
+      }
+    }
+    expect(door).toBe(true)
+    expect(STATIONS).toHaveLength(16)
   })
 
   it('A* contorna as mesas e termina exatamente no destino', () => {
     const from = furniture.doorIn
-    const to = furniture.pois.find((p) => p.kind === 'shelf')!
+    const to = furniture.pois.find((p) => p.kind === 'window')!
     const out = new Float32Array(64)
     const n = grid.findPath(from.x, from.z, to.x, to.z, out)
     expect(n).toBeGreaterThan(1)
@@ -82,7 +119,7 @@ describe('grade de navegação', () => {
     const b = furniture.pois.find((p) => p.id.endsWith('chat|1'))!
     expect(grid.findPath(a.x, a.z, b.x, b.z, out)).toBe(1)
     // Da porta até a cadeira mais distante: bem menos pontos que células percorridas.
-    const far = chairSide(room.desks[3], 1)
+    const far = chairSide(room.desks[3])
     const n = grid.findPath(furniture.doorIn.x, furniture.doorIn.z, far.x, far.z, out)
     const straight = Math.hypot(far.x - furniture.doorIn.x, far.z - furniture.doorIn.z) / CELL
     expect(n).toBeGreaterThan(0)
@@ -128,7 +165,7 @@ describe('grade de navegação', () => {
   it('pontos de interesse: ids únicos, pares de conversa de frente um para o outro, porta fora da sala', () => {
     const ids = furniture.pois.map((p) => p.id)
     expect(new Set(ids).size).toBe(ids.length)
-    for (const k of ['coffee', 'shelf', 'window', 'plant', 'postit', 'pufe', 'queue', 'chat', 'board']) {
+    for (const k of ['coffee', 'shelf', 'window', 'plant', 'postit', 'sofa', 'queue', 'chat', 'board']) {
       expect(furniture.pois.some((p) => p.kind === k), k).toBe(true)
     }
     const chats = furniture.pois.filter((p) => p.kind === 'chat')
@@ -138,8 +175,12 @@ describe('grade de navegação', () => {
       expect(Math.atan2(-(b.x - a.x), -(b.z - a.z))).toBeCloseTo(a.yaw)
       expect(Math.atan2(-(a.x - b.x), -(a.z - b.z))).toBeCloseTo(b.yaw)
     }
-    expect(furniture.doorOut.x).toBeLessThan(room.x)
-    expect(furniture.doorIn.x).toBeGreaterThan(room.x)
+    // A porta é na parede da direita: do lado de fora fica além do escritório.
+    expect(furniture.doorOut.x).toBeGreaterThan(room.x + room.width)
+    expect(furniture.doorIn.x).toBeLessThan(room.x + room.width)
+    // A fila do café cresce para −X.
+    const queue = furniture.pois.filter((p) => p.kind === 'coffee' || p.kind === 'queue')
+    for (let i = 1; i < queue.length; i++) expect(queue[i].x).toBeLessThan(queue[i - 1].x)
   })
 })
 
@@ -153,7 +194,7 @@ describe('o kanban na parede do fundo', () => {
       expect(p.x).toBeGreaterThan(b.x0)
       expect(p.x).toBeLessThan(b.x1)
       expect(p.yaw).toBe(0)
-      expect(p.look.z).toBe(room.z)
+      expect(p.look.z).toBe(b.z)
     }
     const po = layoutOffice({ rooms: [{ id: 'r1', projectKey: 'r1', name: 'r1', icon: null, principals: 0 }], characters: [{ ...principal('x'), key: 'po:r1', role: 'po', placement: { kind: 'destination', papel: 'kanban' } }] }).characters[0]
     expect(grid.isFree(po.x, po.z)).toBe(true)
@@ -161,12 +202,11 @@ describe('o kanban na parede do fundo', () => {
     expect(grid.isFree(b.bin.x, b.bin.z)).toBe(false)
   })
 
-  it('o quadro cabe entre a parede da esquerda e a janela (que termina antes do telão)', () => {
-    const left = furniture.windows[0]
-    expect(furniture.board.x0).toBeGreaterThan(room.x)
-    expect(furniture.board.x1).toBeLessThan(left.x - 0.75)
-    expect(left.x + 0.81).toBeLessThan(furniture.screen.x - furniture.screen.width / 2)
-    expect(furniture.board.y1).toBeLessThan(1.7)
+  it('o quadro fica no centro da parede do fundo, entre o lounge e a sala de reunião', () => {
+    const b = furniture.board
+    expect(b.x0).toBeGreaterThan(LOUNGE.sideboard.x + LOUNGE.sideboard.w / 2)
+    expect(b.x1).toBeLessThan(MEETING.x0)
+    expect(Math.abs((b.x0 + b.x1) / 2)).toBeLessThan(0.5)
   })
 })
 

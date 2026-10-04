@@ -2,8 +2,11 @@
  * O Quadro real dentro do motor do Escritório 3D: liga os dados (boardSync.ts)
  * à cena (boards.ts), o ponteiro ao papel e a dica/mensagem na tela.
  *
- *   feed(feed, layout)  salas do escritório → projeto (cwd) e se há alguém
- *                       trabalhando nela (o ritmo da leitura); títulos das conversas;
+ *   feed(feed, layout)  projetos do escritório → Quadro (cwd) e se há alguém
+ *                       trabalhando nele (o ritmo da leitura); títulos das conversas;
+ *                       as abas; o projeto da parede (boardChoice.ts: filtro, aba,
+ *                       conversa ativa; a coreografia de outro projeto visita e volta);
+ *   setFilter(id)       o filtro de projeto do HUD (a parede mostra o filtrado);
  *   tick(now)           o tique do motor (só com a aba à vista): leitura vencida,
  *                       invariante de atraso (MAX_LAG_MS) e a mensagem que expira;
  *   pause / resume      aba fechada não lê; de volta, relê e vai direto ao estado atual;
@@ -24,7 +27,7 @@
  * volta com tremidinha e a mensagem do main perto do quadro; mesma coluna ou
  * fora do quadro volta; Esc cancela (na captura: nem a tela nem o chat ouvem).
  */
-import { Raycaster, Vector2, Vector3, type PerspectiveCamera } from 'three'
+import { Raycaster, Vector2, type PerspectiveCamera } from 'three'
 import type { OfficeFeed } from '../../office/adapter/feed'
 import { principalKey, roomIdFor } from '../../office/adapter/model'
 import { seedCss } from '../appearance'
@@ -32,28 +35,22 @@ import type { EngineCallbacks, Listen } from '../engineTypes'
 import type { Office3DLayout } from '../layout'
 import type { PointerHooks, PointerInput } from '../pointerInput'
 import type { OfficeScene } from '../scene'
-import { CARD_KEY, columnAt, parsePileKey } from './boardLayout'
+import { BoardChoice } from './boardChoice'
+import { CARD_KEY, columnAt, parsePileKey, TAB_KEY } from './boardLayout'
 import { BOARD_COLUMNS, columnIndex, columnLabel } from './boardModel'
 import { appBoardApi, BoardSync, type BoardApi, type BoardRoomInput } from './boardSync'
 import type { BoardView } from './boardView'
 import { demoBoardApi } from './demoBoard'
 import { BoardSeals } from './boardSeals'
 import { BoardStage, type StageHost } from './boardStage'
+import { BoardTips } from './boardTips'
+import { onIcon } from './boardTitle'
 import { PRIORITY, type Quip } from '../quips'
+
+export { BOARD_TOAST_MS } from './boardTips'
 
 /** Um arrasto do usuário no 3D vale por isto (ms): o passo dele não reanima nem leva selo. */
 const DRAG_GRACE_MS = 20_000
-
-/** Quanto tempo a mensagem de recusa fica perto do quadro (ms). */
-export const BOARD_TOAST_MS = 6_000
-
-function layer(container: HTMLElement, className: string): HTMLDivElement {
-  const el = document.createElement('div')
-  el.className = className
-  el.hidden = true
-  container.appendChild(el)
-  return el
-}
 
 export class EngineBoard {
   private board: BoardSync
@@ -66,12 +63,9 @@ export class EngineBoard {
   private readonly ray = new Raycaster()
   private readonly ndc = new Vector2()
   private readonly local = { x: 0, y: 0 }
-  private readonly at = new Vector3()
-  private readonly tip: HTMLDivElement
-  private readonly toast: HTMLDivElement
-  private tipKey: string | null = null
-  private toastRoom: string | null = null
-  private toastUntil = 0
+  private readonly tips: BoardTips
+  /** Qual projeto a parede mostra (filtro, aba, conversa ativa, visita da coreografia). */
+  private readonly choice = new BoardChoice()
   private grabbed: { roomId: string; id: string; lifted: boolean } | null = null
   private pointer: PointerInput | null = null
   private paused = false
@@ -99,9 +93,9 @@ export class EngineBoard {
     this.seals = new BoardSeals(container, (id) => this.open(id))
     this.board = this.connect(this.api)
     this.scene.boards.onFresh = (id) => this.show(id, false)
-    this.tip = layer(container, 'o3d-board-tip')
-    this.toast = layer(container, 'o3d-board-toast')
-    this.toast.setAttribute('role', 'alert')
+    this.tips = new BoardTips(container, scene, camera, this.seals, (id) => this.sync.roomOf(id) ?? null)
+    // Ícone de imagem que chegou depois: a faixa do título redesenha no próximo quadro.
+    onIcon(() => this.render())
     // Esc com um papel pego: cancela (na captura, antes da tela do monitor e do chat).
     listen(
       window,
@@ -152,11 +146,11 @@ export class EngineBoard {
     return c
   }
 
-  /** Salas do escritório → projeto e ritmo; títulos das conversas (dica e janela do cartão). */
+  /** Projetos do escritório → Quadro (cwd) e ritmo; títulos das conversas (dica e janela do cartão); abas e o projeto da parede. */
   feed(feed: OfficeFeed, layout: Office3DLayout): void {
     this.titles.clear()
     const rooms = new Map<string, BoardRoomInput>()
-    for (const r of layout.rooms) rooms.set(r.id, { id: r.id, cwd: '', busy: false })
+    for (const p of layout.projects) rooms.set(p.id, { id: p.id, cwd: '', busy: false })
     for (const c of feed.conversations) {
       this.titles.set(c.id, c.title)
       const r = rooms.get(roomIdFor(c.cwd))
@@ -166,6 +160,22 @@ export class EngineBoard {
     }
     this.rooms = [...rooms.values()].filter((r) => r.cwd !== '')
     this.board.setRooms(this.rooms)
+    const info = new Map(layout.projects.map((p) => [p.id, p]))
+    this.scene.boards.setTabs(this.rooms.map((r) => ({ id: r.id, name: info.get(r.id)?.name ?? r.id, icon: info.get(r.id)?.icon ?? null })))
+    const active = feed.conversations.find((c) => c.id === feed.activeId)
+    this.choice.setActive(feed.activeId, active?.cwd ? roomIdFor(active.cwd) : null)
+    this.wall()
+  }
+
+  /** O filtro de projeto do HUD (null = Todos): a parede mostra o filtrado. */
+  setFilter(id: string | null): void {
+    this.choice.filter = id
+    this.wall()
+  }
+
+  /** O projeto da parede (boardChoice.ts). */
+  private wall(): void {
+    this.scene.boards.show(this.choice.pick(this.rooms.map((r) => r.id)))
   }
 
   /** Título da conversa (null se ela não está mais no app). */
@@ -178,17 +188,13 @@ export class EngineBoard {
     this.sync.tick(now)
     let changed = this.stage.tick(now)
     if (this.seals.tick(now)) changed = true
+    if (this.tips.tick(now)) changed = true
     for (const id of this.sync.roomIds) {
       const m = this.sync.mirror(id)
       const late = m ? m.overdue(now) : []
       if (!m || late.length === 0) continue
       for (const card of late) m.applyCard(card)
       this.show(id, true)
-      changed = true
-    }
-    if (this.toastRoom && now >= this.toastUntil) {
-      this.toastRoom = null
-      this.toast.hidden = true
       changed = true
     }
     return changed
@@ -237,7 +243,7 @@ export class EngineBoard {
         return f ? Math.hypot(b.x - f.board.x, b.z - f.board.pad.z) : null
       },
       live: () => !this.paused && !this.disposed && !document.hidden,
-      dark: (roomId) => crowd().partyOn || this.scene.energy.isDark(roomId),
+      dark: () => crowd().partyOn || this.scene.boardDark(),
       fromColumn: (s) => {
         const c = this.sync.mirror(s.roomId)?.card(s.cardId)
         return c ? columnIndex(c.status) : null
@@ -261,6 +267,13 @@ export class EngineBoard {
       draggedHere: (cardId) => {
         const at = this.dragged.get(cardId)
         return at !== undefined && this.clock() - at < DRAG_GRACE_MS
+      },
+      wall: () => this.scene.boards.shown,
+      visit: (id) => {
+        if (id !== null && !this.choice.canVisit(id)) return false
+        this.choice.visit = id
+        this.wall()
+        return true
       }
     }
   }
@@ -269,7 +282,7 @@ export class EngineBoard {
   private show(roomId: string, animate: boolean): void {
     const m = this.sync.mirror(roomId)
     if (!m || this.disposed) return
-    const live = animate && !this.paused && !document.hidden && !this.scene.energy.isDark(roomId)
+    const live = animate && !this.paused && !document.hidden && !this.scene.boardDark()
     this.scene.boards.apply(roomId, m, live, this.pinOf)
     this.render()
   }
@@ -313,6 +326,12 @@ export class EngineBoard {
       this.cb.onBoardOpen?.({ kind: 'card', id: key.slice(CARD_KEY.length), x, y })
       return true
     }
+    // Aba: o projeto fica na parede até a conversa ativa mudar.
+    if (key.startsWith(TAB_KEY)) {
+      this.choice.choose(key.slice(TAB_KEY.length))
+      this.wall()
+      return true
+    }
     const pile = parsePileKey(key)
     if (!pile) return false
     this.cb.onBoardOpen?.({ kind: 'pile', roomId: pile.roomId, status: pile.status, x, y })
@@ -324,15 +343,15 @@ export class EngineBoard {
     const card = key?.startsWith(CARD_KEY) ? key.slice(CARD_KEY.length) : null
     const pile = key ? parsePileKey(key) : null
     this.scene.boards.hover(card)
-    this.tipKey = card || pile ? key : null
+    let text = ''
     if (card) {
       const item = this.sync.item(card)
-      this.tip.textContent = item ? (this.titles.get(item.conversationId) ?? 'Conversa removida') : ''
+      text = item ? (this.titles.get(item.conversationId) ?? 'Conversa removida') : ''
     } else if (pile) {
       const n = this.sync.mirror(pile.roomId)?.shown.filter((c) => c.status === pile.status).length ?? 0
-      this.tip.textContent = `${columnLabel(pile.status)}: ${n} cartões — clique para ver a lista`
+      text = `${columnLabel(pile.status)}: ${n} cartões — clique para ver a lista`
     }
-    this.tip.hidden = this.tipKey === null || !this.tip.textContent
+    this.tips.tip(card || pile ? key : null, text)
     this.render()
   }
 
@@ -405,68 +424,20 @@ export class EngineBoard {
     this.render()
   }
 
-  /** A mensagem (recusa do main) perto do quadro da sala, por BOARD_TOAST_MS. */
+  /** A mensagem (recusa do main) perto do quadro do projeto. */
   private say(roomId: string, text: string): void {
-    this.toast.textContent = text
-    this.toastRoom = roomId
-    this.toastUntil = this.clock() + BOARD_TOAST_MS
-    this.toast.hidden = false
+    this.tips.say(roomId, text, this.clock())
     this.render()
   }
 
   /** A mensagem em voo (testes e HUD). */
   get message(): string | null {
-    return this.toastRoom ? this.toast.textContent : null
+    return this.tips.message
   }
 
-  /** A cada quadro: a dica acima do papel em foco e a mensagem acima do quadro. */
+  /** A cada quadro: a dica, a mensagem e os selos sobre o quadro (boardTips.ts). */
   place(width: number, height: number): void {
-    if (this.tipKey && !this.tip.hidden) {
-      const ok = this.anchorOf(this.tipKey)
-      this.put(this.tip, ok, width, height)
-    }
-    if (this.toastRoom) {
-      const view = this.scene.boards.view(this.toastRoom)
-      if (view) view.topWorld(this.at)
-      this.put(this.toast, !!view && this.scene.boards.visible(this.toastRoom), width, height)
-    }
-    if (this.seals.size > 0) this.seals.place((id, out) => this.sealAnchor(id, out), this.at, (p) => this.project(p, width, height))
-  }
-
-  /** O papel do selo; o que saiu do quadro fica no topo dele. */
-  private sealAnchor(id: string, out: Vector3): boolean {
-    const room = this.scene.boards.roomOfCard(id) ?? this.sync.roomOf(id)
-    const view = room ? this.scene.boards.view(room) : undefined
-    if (!room || !view || !this.scene.boards.visible(room)) return false
-    if (!view.paperWorld(id, out)) view.topWorld(out)
-    return true
-  }
-
-  private project(p: Vector3, width: number, height: number): { x: number; y: number } | null {
-    const v = p.project(this.camera)
-    return v.z > -1 && v.z < 1 ? { x: ((v.x + 1) / 2) * width, y: ((1 - v.y) / 2) * height } : null
-  }
-
-  private anchorOf(key: string): boolean {
-    if (key.startsWith(CARD_KEY)) {
-      const id = key.slice(CARD_KEY.length)
-      const room = this.scene.boards.roomOfCard(id)
-      return !!room && !!this.scene.boards.view(room)?.paperWorld(id, this.at)
-    }
-    const pile = parsePileKey(key)
-    const view = pile ? this.scene.boards.view(pile.roomId) : undefined
-    if (!pile || !view) return false
-    view.pileWorld(columnIndex(pile.status), this.at)
-    return true
-  }
-
-  /** Põe o elemento sobre o ponto `this.at` projetado (escondido se o ponto não está na frente da câmera). */
-  private put(el: HTMLElement, ok: boolean, width: number, height: number): void {
-    const v = ok ? this.at.project(this.camera) : null
-    const on = !!v && v.z > -1 && v.z < 1
-    el.style.visibility = on ? '' : 'hidden'
-    if (!v || !on) return
-    el.style.transform = `translate(${((v.x + 1) / 2) * width}px, ${((1 - v.y) / 2) * height}px) translate(-50%, -100%)`
+    this.tips.place(width, height)
   }
 
   dispose(): void {
@@ -474,8 +445,8 @@ export class EngineBoard {
     this.stage.flush()
     this.seals.dispose()
     this.sync.dispose()
-    this.tip.remove()
-    this.toast.remove()
+    this.tips.dispose()
+    onIcon(() => {})
     this.pointer = null
     this.grabbed = null
   }

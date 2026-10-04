@@ -4,7 +4,6 @@ import { deriveOfficeModel } from '../office/adapter/model'
 import { framePose, monitorPose } from './cameraRig'
 import { Office3DEngine, type EngineOptions, type RendererLike } from './engine'
 import { buildingBounds, layoutOffice, monitorPosition } from './layout'
-import { officeFrame } from './powerPlant'
 import { focusView } from './screenAnchor'
 
 let resizeCb: (() => void) | null = null
@@ -62,16 +61,12 @@ afterEach(() => {
 })
 
 describe('Office3DEngine — enquadramento', () => {
-  it('câmera inicial enquadra o prédio inteiro (com a usina de tokens) e acompanha o resize até o usuário mexer', () => {
+  it('câmera inicial enquadra o escritório inteiro (até o alto da parede do fundo) e acompanha o resize até o usuário mexer', () => {
     const { engine, resize, layout, canvas } = setup(1600, 900)
-    const f = officeFrame(layout.rooms, 1.8)!
-    const rooms = buildingBounds(layout.rooms)!
-    // A caixa do enquadramento cobre as salas e a usina (à esquerda), e o alto da torre entra junto.
-    expect(f.box.minX).toBeLessThan(rooms.minX)
-    expect(f.extra.every((p) => p.y > 1.8)).toBe(true)
-    expect(engine.rig.pose).toEqual(framePose(f.box, { fovDeg: 50, aspect: 1600 / 900 }, undefined, undefined, f.extra))
+    const box = { ...buildingBounds(layout.rooms)!, height: 2.8 }
+    expect(engine.rig.pose).toEqual(framePose(box, { fovDeg: 50, aspect: 1600 / 900 }))
     resize(400, 1000)
-    const narrow = framePose(f.box, { fovDeg: 50, aspect: 0.4 }, undefined, undefined, f.extra)
+    const narrow = framePose(box, { fovDeg: 50, aspect: 0.4 })
     expect(engine.rig.pose).toEqual(narrow)
     // Depois da roda, o resize não mexe mais na câmera.
     canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, cancelable: true }))

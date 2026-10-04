@@ -1,17 +1,18 @@
 /**
- * Plano da festa do apagão — PURO (sem three). Por sala: quem procura o
- * disjuntor com a lanterna, quem come pizza sentado na mesa, quem entra no
- * trenzinho (conga) em volta do tapete e quem vai para a pista; e ONDE cada um
- * fica (vagas da pista no tapete, a volta do trenzinho, a rota da lanterna
- * pelos móveis, o poleiro na beira da mesa). Os papéis saem da seed de cada
- * agente: o mesmo escritório faz sempre a mesma festa.
+ * Plano da festa do apagão — PURO (sem three). No escritório único: quem
+ * procura o disjuntor com a lanterna, quem come pizza sentado na mesa, quem
+ * entra no trenzinho (conga) em volta de uma ilha e quem dança na frente das
+ * outras três; e ONDE cada um fica (vagas da pista, a volta do trenzinho, a rota da
+ * lanterna pelos móveis, o poleiro na beira da mesa). Os papéis saem da seed
+ * de cada agente: o mesmo escritório faz sempre a mesma festa.
  *
- * Papéis (assignRoles): com 3+ na sala, o primeiro pega a lanterna; nas salas
- * de trenzinho (slot ímpar) os outros (3+) viram trenzinho; nas outras, quem
- * tem mesa come pizza (com 3+ sobrando) e o resto dança.
+ * Papéis (assignRoles): com 3+ presentes, o primeiro pega a lanterna; com 3+
+ * sobrando, até CONGA_MAX viram trenzinho; com 3+ ainda sobrando, quem tem mesa
+ * come pizza; o resto dança.
  */
 import type { Brain } from './brainBody'
 import { chairSide, type RoomFurniture, type Spot } from './furniture'
+import { ISLAND_PLAQUE_Z, ISLAND_RUG, ISLANDS } from './officePlan'
 
 export type PartyRole = 'dance' | 'conga' | 'flashlight' | 'pizza'
 
@@ -46,6 +47,8 @@ export interface RoomParty {
   readonly roomId: string
   readonly furniture: RoomFurniture
   readonly loop: CongaLoop
+  /** A ilha do trenzinho (a pista fica na frente das outras três). */
+  readonly congaIsland: number
   readonly route: readonly FlashStop[]
   /** Chaves do trenzinho, do líder para trás. */
   readonly conga: string[]
@@ -62,20 +65,17 @@ export const CONGA_SPEED = 0.55
 export const CONGA_GAP = 0.62
 /** Quanto a lanterna fica em cada parada (s). */
 export const FLASH_DWELL = 2.6
-/** Poleiro de quem come pizza: na beira da mesa, à direita do teclado, de frente para a sala. */
-export const PERCH = { dx: 0.4, dz: 0.3 } as const
+/** Poleiro de quem come pizza: na beira da mesa, do lado de fora da ilha, de costas para o monitor. */
+export const PERCH = { dx: 0.4, dz: 0.42 } as const
 
-/** Trenzinho só em algumas salas: as de slot ímpar. */
-export const isCongaRoom = (slot: number): boolean => slot % 2 === 1
+/** Vagões do trenzinho, no máximo (o resto vai para a pista). */
+export const CONGA_MAX = 6
 
-export function assignRoles(members: readonly PartyMember[], congaRoom: boolean): Map<string, PartySeat> {
+export function assignRoles(members: readonly PartyMember[]): Map<string, PartySeat> {
   const rest = [...members].sort((a, b) => a.seed - b.seed || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
   const out = new Map<string, PartySeat>()
   if (rest.length >= 3) out.set(rest.shift()!.key, { role: 'flashlight', slot: 0 })
-  if (congaRoom && rest.length >= 3) {
-    rest.forEach((m, i) => out.set(m.key, { role: 'conga', slot: i }))
-    return out
-  }
+  if (rest.length >= 3) rest.splice(0, Math.min(CONGA_MAX, rest.length)).forEach((m, i) => out.set(m.key, { role: 'conga', slot: i }))
   if (rest.length >= 3) {
     const i = rest.findIndex((m) => m.hasDesk)
     if (i >= 0) out.set(rest.splice(i, 1)[0].key, { role: 'pizza', slot: 0 })
@@ -84,23 +84,37 @@ export function assignRoles(members: readonly PartyMember[], congaRoom: boolean)
   return out
 }
 
-/** Vagas da pista em volta do centro do tapete (dx, dz), longe do pufe (à esquerda). */
+/** Vagas da pista na frente de uma ilha (dx, dz a partir da placa no chão dela). */
 const DANCE_SLOTS: ReadonlyArray<readonly [number, number]> = [
-  [-0.6, -0.25], [0.6, -0.25], [0, 0.45], [1.45, 0.3], [-1.0, 0.55], [1.2, -0.6], [-0.3, -0.8], [0.5, 0.85]
+  [0, 0], [-0.75, 0], [0.75, 0], [-0.4, -0.6], [0.4, -0.6], [-1.15, -0.6], [1.15, -0.6]
 ]
 
-/** Vaga `slot` da pista, de frente para a câmera. */
-export function danceSpot(f: RoomFurniture, slot: number, out: Spot): Spot {
-  const [dx, dz] = DANCE_SLOTS[slot % DANCE_SLOTS.length]
-  const ring = Math.floor(slot / DANCE_SLOTS.length)
-  out.x = f.rug.x + dx + ring * 0.3
-  out.z = f.rug.z + dz + ring * 0.2
+/**
+ * Vaga `slot` da pista, de frente para a câmera: a festa se espalha pela frente
+ * das três ilhas sem o trenzinho (como a festa de cada sala de antes), não num
+ * bolo só — de perto de uma ilha se vê a turma dela.
+ */
+export function danceSpot(congaIsland: number, slot: number, out: Spot): Spot {
+  const k = slot % 3
+  const isl = ISLANDS[k >= congaIsland ? k + 1 : k]
+  const row = Math.floor(slot / 3)
+  const [dx, dz] = DANCE_SLOTS[row % DANCE_SLOTS.length]
+  const ring = Math.floor(row / DANCE_SLOTS.length)
+  out.x = isl.x + dx + (ring % 2) * 0.37
+  out.z = isl.z + ISLAND_PLAQUE_Z + 0.1 + dz - ring * 0.3
   out.yaw = Math.PI
   return out
 }
 
-export function congaLoop(f: RoomFurniture): CongaLoop {
-  return { cx: f.rug.x, cz: f.rug.z, a: f.rug.w / 2 + 0.45, b: f.rug.d / 2 + 0.2 }
+/** A ilha do trenzinho, pela seed do escritório. */
+export function congaIsland(seed: number): number {
+  return Math.floor(Math.abs(seed) * 7) % ISLANDS.length
+}
+
+/** A volta do trenzinho: em torno da ilha, por fora do tapete dela. */
+export function congaLoop(island: number): CongaLoop {
+  const isl = ISLANDS[island]
+  return { cx: isl.x, cz: isl.z + ISLAND_RUG.dz, a: ISLAND_RUG.rx + 0.45, b: ISLAND_RUG.rz + 0.2 }
 }
 
 /**
@@ -139,20 +153,17 @@ export function flashRoute(f: RoomFurniture, seed: number): FlashStop[] {
 }
 
 /** Onde sentar na mesa para comer pizza (assento) e de onde pular para ela (em pé, ao lado da cadeira). */
-export function pizzaPerch(desk: { x: number; z: number }): { seat: Spot; stand: Spot } {
-  return { seat: { x: desk.x + PERCH.dx, z: desk.z + PERCH.dz, yaw: Math.PI }, stand: chairSide(desk, 1) }
+export function pizzaPerch(desk: { x: number; z: number; dir: 1 | -1; out: 1 | -1 }): { seat: Spot; stand: Spot } {
+  return { seat: { x: desk.x + desk.out * PERCH.dx, z: desk.z + desk.dir * PERCH.dz, yaw: desk.dir === 1 ? Math.PI : 0 }, stand: chairSide(desk) }
 }
 
 /**
- * Monta o plano de uma sala com os membros dela: o papel de cada um (nos
+ * Monta o plano do escritório com os presentes: o papel de cada um (nos
  * cérebros) e o trenzinho em ordem. Quem já estava na festa e mudou de papel
  * volta a 'init' — o próximo passo o leva para o lugar novo.
  */
-export function planRoomParty(roomId: string, slot: number, furniture: RoomFurniture, members: readonly Brain[], seed: number): RoomParty {
-  const roles = assignRoles(
-    members.map((b) => ({ key: b.key, seed: b.seed, hasDesk: b.desk !== null })),
-    isCongaRoom(slot)
-  )
+export function planRoomParty(roomId: string, furniture: RoomFurniture, members: readonly Brain[], seed: number): RoomParty {
+  const roles = assignRoles(members.map((b) => ({ key: b.key, seed: b.seed, hasDesk: b.desk !== null })))
   const conga: string[] = []
   let dancers = 0
   for (const b of members) {
@@ -167,5 +178,6 @@ export function planRoomParty(roomId: string, slot: number, furniture: RoomFurni
     if (seat.role === 'conga') conga[seat.slot] = b.key
     if (seat.role === 'dance') dancers = Math.max(dancers, seat.slot + 1)
   }
-  return { roomId, furniture, loop: congaLoop(furniture), route: flashRoute(furniture, seed), conga, congaS: 0, congaGo: false, dancers }
+  const island = congaIsland(seed)
+  return { roomId, furniture, loop: congaLoop(island), congaIsland: island, route: flashRoute(furniture, seed), conga, congaS: 0, congaGo: false, dancers }
 }

@@ -13,8 +13,10 @@
  */
 import type { BoardItemStatus, BoardTurnEndKind } from '@shared/ipc'
 import { BOARD_COLUMNS } from './boardModel'
-import { FACE_H, FACE_W, HEADER_H, PAPER_H, PAPER_W } from './boardLayout'
+import { FACE_H, FACE_W, HEADER_H, PAPER_H, PAPER_W, TITLE_H } from './boardLayout'
+import { paintTitle, type BoardTitleInfo } from './boardTitle'
 
+/** Largura do canvas (a altura, ATLAS_H, cabe a face e as 7 linhas de células). */
 export const ATLAS = 1024
 /** Face: largura do canvas, altura na proporção da face. */
 export const FACE_PX_W = ATLAS
@@ -30,6 +32,7 @@ const CELL_LEFT = Math.floor((ATLAS - SLOT_W * 3) / 2)
 export const PILE_CELLS = 3
 export const CARD_CELLS = 18
 export const CELLS = PILE_CELLS + CARD_CELLS
+export const ATLAS_H = Math.ceil((CELL_TOP + Math.ceil(CELLS / 3) * SLOT_H) / 16) * 16
 
 /** Retângulo (px) do conteúdo da célula `i`. */
 export function cellRect(i: number): { x: number; y: number; w: number; h: number } {
@@ -55,6 +58,9 @@ export type FaceState = 'loading' | 'unavailable' | 'empty' | 'ok'
 export interface FaceInfo {
   state: FaceState
   counts: readonly number[]
+  /** O projeto na parede (a faixa do título) e as abas dos projetos com quadro. */
+  title?: BoardTitleInfo | null
+  tabs?: readonly BoardTitleInfo[]
 }
 
 export interface PaperInfo {
@@ -122,6 +128,10 @@ export function paintFace(ctx: CanvasRenderingContext2D, face: FaceInfo): void {
   ctx.fillStyle = FACE_COLOR
   ctx.fillRect(0, 0, W, H)
   const colW = W / BOARD_COLUMNS.length
+  const titleH = Math.round((H * TITLE_H) / FACE_H)
+  paintTitle(ctx, W, titleH, face.title ?? null, face.tabs ?? [])
+  ctx.save()
+  ctx.translate(0, titleH)
   const headH = Math.round((H * HEADER_H) / FACE_H)
   BOARD_COLUMNS.forEach((col, i) => {
     const x = i * colW
@@ -133,7 +143,7 @@ export function paintFace(ctx: CanvasRenderingContext2D, face: FaceInfo): void {
     ctx.fillRect(x + 6, headH - 4, colW - 12, 4)
     if (i > 0) {
       ctx.fillStyle = 'rgba(80,60,40,0.18)'
-      ctx.fillRect(x - 1, 10, 2, H - 20)
+      ctx.fillRect(x - 1, 10, 2, H - titleH - 20)
     }
     ctx.fillStyle = INK
     ctx.font = `700 26px ${FONT}`
@@ -150,8 +160,10 @@ export function paintFace(ctx: CanvasRenderingContext2D, face: FaceInfo): void {
     ctx.textAlign = 'center'
     ctx.fillText(n, x + colW - 20 - nw / 2, headH / 2 + 1)
   })
-  if (face.state === 'empty') sticky(ctx, W / 2, H / 2 + headH / 2, 'Nenhuma tarefa ainda')
-  else if (face.state === 'unavailable') plaque(ctx, W / 2, H / 2 + headH / 2)
+  const mid = (H - titleH) / 2 + headH / 2
+  if (face.state === 'empty') sticky(ctx, W / 2, mid, 'Nenhuma tarefa ainda')
+  else if (face.state === 'unavailable') plaque(ctx, W / 2, mid)
+  ctx.restore()
 }
 
 function sticky(ctx: CanvasRenderingContext2D, cx: number, cy: number, text: string): void {

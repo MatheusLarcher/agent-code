@@ -17,7 +17,7 @@
  * do palco — só o `transform` muda, e só quando o px muda.
  */
 import { Vector3, type Camera, type PerspectiveCamera } from 'three'
-import { MONITOR_HALF_H, MONITOR_HALF_W, MONITOR_SCREEN_FRONT, monitorPose, projectPoint, type ViewSize } from './cameraRig'
+import { MONITOR_HALF_H, MONITOR_HALF_W, MONITOR_SCREEN_FRONT, monitorPose, projectPoint, type MonitorAt, type ViewSize } from './cameraRig'
 import { MONITOR_BACK, MONITOR_Y } from './layout'
 import { quadMatrix3d, type Pt } from './quadTransform'
 import { BUBBLE_TOP } from './speech'
@@ -81,7 +81,7 @@ export class PointAnchor {
 /** O que a prévia precisa da cena: a mesa de cada agente e a cabeça dele. */
 export interface PreviewScene {
   character(key: string): { screenDesk: { roomId: string; index: number } | null } | undefined
-  room(id: string): { desks: ReadonlyArray<{ x: number; z: number }> } | undefined
+  room(id: string): { desks: ReadonlyArray<{ x: number; z: number; dir?: 1 | -1 }> } | undefined
   headWorldPosition(key: string, out: Vector3): boolean
 }
 
@@ -104,7 +104,7 @@ export class PreviewAnchor {
     if (!key) return
     const c = scene.character(key)
     const desk = c?.screenDesk ? scene.room(c.screenDesk.roomId)?.desks[c.screenDesk.index] : undefined
-    if (desk) this.at.set(desk.x, MONITOR_TOP, desk.z - MONITOR_BACK)
+    if (desk) this.at.set(desk.x, MONITOR_TOP, desk.z - (desk.dir ?? 1) * MONITOR_BACK)
     else if (scene.headWorldPosition(key, this.at)) this.at.y += 0.35
     else return
     this.anchor.place(this.at, camera, width, height)
@@ -130,13 +130,13 @@ export class ScreenAnchor {
     { x: NaN, y: NaN }
   ]
   /** Tamanho de layout (px) e de onde ele saiu: o monitor, o palco e o fov. */
-  private readonly size = { w: 0, h: 0, x: NaN, y: NaN, z: NaN, width: NaN, height: NaN, fov: NaN }
+  private readonly size = { w: 0, h: 0, x: NaN, y: NaN, z: NaN, dir: 1, width: NaN, height: NaN, fov: NaN }
   /** O que está no estilo: NaN = nada escrito; left/top null = limpos (fica o 0 do CSS). */
   private readonly last: { left: number | null; top: number | null; width: number; height: number } = { left: NaN, top: NaN, width: NaN, height: NaN }
   private transform: string | null = null
   private hidden = false
   /** Centro do monitor em foco (mundo); vale com `hasMonitor`. */
-  readonly monitor = { x: 0, y: 0, z: 0 }
+  readonly monitor: { x: number; y: number; z: number; dir: 1 | -1 } = { x: 0, y: 0, z: 0, dir: 1 }
   hasMonitor = false
 
   setElement(el: HTMLElement | null): void {
@@ -148,12 +148,13 @@ export class ScreenAnchor {
   }
 
   /** Monitor do foco (null = sem mesa: cartão centrado). */
-  aim(m: { x: number; y: number; z: number } | null): void {
+  aim(m: MonitorAt | null): void {
     this.hasMonitor = m !== null
     if (!m) return
     this.monitor.x = m.x
     this.monitor.y = m.y
     this.monitor.z = m.z
+    this.monitor.dir = m.dir ?? 1
   }
 
   place(camera: PerspectiveCamera, width: number, height: number): void {
@@ -161,12 +162,13 @@ export class ScreenAnchor {
     if (!this.hasMonitor) return this.card(width, height)
     const size = this.layoutSize(camera.fov, width, height)
     const m = this.monitor
-    const z = m.z + MONITOR_SCREEN_FRONT
+    const z = m.z + m.dir * MONITOR_SCREEN_FRONT
     const q = this.quad
     let moved = false
     for (let i = 0; i < 4; i++) {
       const c = CORNERS[i]
-      const a = this.v.set(m.x + c[0] * MONITOR_HALF_W, m.y + c[1] * MONITOR_HALF_H, z).project(camera)
+      // Tela olhando para −Z (mesa de fundo): vista de frente, a esquerda dela fica em +X.
+      const a = this.v.set(m.x + c[0] * m.dir * MONITOR_HALF_W, m.y + c[1] * MONITOR_HALF_H, z).project(camera)
       if (a.z < -1 || a.z > 1) return this.hide()
       const x = ((a.x + 1) / 2) * width
       const y = ((1 - a.y) / 2) * height
@@ -201,12 +203,12 @@ export class ScreenAnchor {
   private layoutSize(fov: number, width: number, height: number): { w: number; h: number } {
     const s = this.size
     const m = this.monitor
-    if (s.fov === fov && s.width === width && s.height === height && s.x === m.x && s.y === m.y && s.z === m.z) return s
+    if (s.fov === fov && s.width === width && s.height === height && s.x === m.x && s.y === m.y && s.z === m.z && s.dir === m.dir) return s
     const view = focusView(fov, width, height)
     const pose = monitorPose(m, view)
-    const z = m.z + MONITOR_SCREEN_FRONT
+    const z = m.z + m.dir * MONITOR_SCREEN_FRONT
     const p = CORNERS.map(([sx, sy]) => {
-      const n = projectPoint(pose, view, { x: m.x + sx * MONITOR_HALF_W, y: m.y + sy * MONITOR_HALF_H, z })
+      const n = projectPoint(pose, view, { x: m.x + sx * m.dir * MONITOR_HALF_W, y: m.y + sy * MONITOR_HALF_H, z })
       return { x: ((n.x + 1) / 2) * width, y: ((1 - n.y) / 2) * height }
     })
     const len = (i: number, j: number): number => Math.hypot(p[j].x - p[i].x, p[j].y - p[i].y)
@@ -218,6 +220,7 @@ export class ScreenAnchor {
     s.x = m.x
     s.y = m.y
     s.z = m.z
+    s.dir = m.dir
     this.quad[0].x = NaN // tamanho novo: o transform é refeito
     return s
   }

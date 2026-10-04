@@ -159,8 +159,11 @@ export const MAX_FRAME_DISTANCE = 200
 const tanHalf = (fovDeg: number): number => Math.tan((fovDeg * Math.PI) / 360)
 const safeAspect = (a: number): number => (Number.isFinite(a) && a > 0 ? a : 1)
 
+/** Um monitor: centro da tela e para onde ela olha (+1: +Z, o padrão; −1: −Z, a mesa de fundo). */
+export type MonitorAt = { x: number; y: number; z: number; dir?: 1 | -1 }
+
 /**
- * Pose que enquadra um monitor (tela olhando para +Z) de frente, na distância
+ * Pose que enquadra um monitor (tela olhando para dir·Z) de frente, na distância
  * em que a tela ocupa `fill` da largura OU da altura do palco — o que limitar
  * primeiro.
  *
@@ -170,7 +173,8 @@ const safeAspect = (a: number): number => (Number.isFinite(a) && a > 0 ? a : 1)
  * muda — a tela HTML segue os cantos projetados (screenAnchor), então o encaixe
  * não depende disto.
  */
-export function monitorPose(m: { x: number; y: number; z: number }, view: ViewSize, fill = MONITOR_FILL): CameraPose {
+export function monitorPose(m: MonitorAt, view: ViewSize, fill = MONITOR_FILL): CameraPose {
+  const dir = m.dir ?? 1
   const t = tanHalf(view.fovDeg)
   const H = view.heightPx ?? 0
   const clear = H > 0 ? Math.max(0, view.clearTopPx ?? 0) : 0
@@ -178,10 +182,10 @@ export function monitorPose(m: { x: number; y: number; z: number }, view: ViewSi
   const room = clear > 0 ? Math.max(0.5, (H - clear - MONITOR_BOTTOM_GAP) / H) : 1
   const byWidth = MONITOR_HALF_W / (fill * t * safeAspect(view.aspect))
   const byHeight = MONITOR_HALF_H / (Math.min(fill, room) * t)
-  const pose: CameraPose = { tx: m.x, ty: m.y, tz: m.z + MONITOR_SCREEN_FRONT, yaw: 0, pitch: MONITOR_PITCH, distance: Math.max(byWidth, byHeight) }
+  const pose: CameraPose = { tx: m.x, ty: m.y, tz: m.z + dir * MONITOR_SCREEN_FRONT, yaw: dir === 1 ? 0 : Math.PI, pitch: MONITOR_PITCH, distance: Math.max(byWidth, byHeight) }
   if (clear === 0) return pose
   // Bordas de cima e de baixo da tela (px) nesta pose; desce o que faltar para livrar a faixa, sem passar do fim.
-  const z = m.z + MONITOR_SCREEN_FRONT
+  const z = m.z + dir * MONITOR_SCREEN_FRONT
   const px = (y: number): number => ((1 - projectPoint(pose, view, { x: m.x, y, z }).y) / 2) * H
   const top = px(m.y + MONITOR_HALF_H)
   const bottom = px(m.y - MONITOR_HALF_H)

@@ -30,7 +30,8 @@ const room = () => layoutOffice({ rooms: [{ id: 'r0', projectKey: 'r0', name: 'S
 function setup(items = [item('a'), item('b', { sourceStatus: 'in_progress' })]) {
   const r = room()
   const f = roomFurniture(r)
-  const view = new BoardView(kit, bk, new Group(), r.id, f.board)
+  // O quadro físico mostra o Quadro de um projeto: a chave da pilha é do projeto.
+  const view = new BoardView(kit, bk, new Group(), 'r0', f.board)
   const mirror = new BoardMirror()
   mirror.setTarget(boardSnap({ available: true, items }), 0, true)
   view.apply(mirror, false, () => '#c33')

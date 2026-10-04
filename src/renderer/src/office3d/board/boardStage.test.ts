@@ -3,8 +3,8 @@ import { createBrain, move, type Brain, type BrainWorld } from '../brainBody'
 import { runErrand, newErrand, type BoardSpot, type BoardWorld } from '../brainBoard'
 import { stepBrain } from '../brain'
 import type { BoardStep } from './boardModel'
-import { BoardStage, SAY_MIN_MS, type StageHost } from './boardStage'
-import { stopsFor } from './boardChoreo'
+import { BoardStage, SAY_MIN_MS, VISIT_HOLD_MS, type StageHost } from './boardStage'
+import { LAG_MS, stopsFor } from './boardChoreo'
 
 const step = (o: Partial<BoardStep> = {}): BoardStep => ({
   roomId: 'r',
@@ -50,7 +50,7 @@ function world(taken: Set<number> = new Set()): BrainWorld & BoardWorld {
 }
 
 function agent(): Brain {
-  const b = createBrain({ key: 'conv:k1', role: 'desk', roomId: 'r', home: { x: 0, z: 6, yaw: 0 }, desk: { x: 0, z: 6 } })
+  const b = createBrain({ key: 'conv:k1', role: 'desk', roomId: 'office', projectId: 'r', home: { x: 0, z: 6, yaw: 0 }, desk: { x: 0, z: 6, dir: 1, out: 1 } })
   b.phase = 'working'
   return b
 }
@@ -99,7 +99,7 @@ describe('a ida ao quadro no cérebro (brainBoard)', () => {
 
   it('coluna ocupada: espera ao lado até liberar', () => {
     const taken = new Set([2])
-    const b = createBrain({ key: 'po:r', role: 'fixed', style: 'board', roomId: 'r', home: { x: 1, z: 2, yaw: 0 } })
+    const b = createBrain({ key: 'po:r', role: 'fixed', style: 'board', roomId: 'office', projectId: 'r', home: { x: 1, z: 2, yaw: 0 } })
     const w = world(taken)
     b.errand = newErrand(stopsFor(step({ actor: 'po' }), null, 0), 'walk')
     run(b, w, 6)
@@ -137,6 +137,8 @@ function host(o: Partial<StageHost> & { brains?: Map<string, Brain> } = {}): Sta
     say: (k, t) => said.push([k, t]),
     seal: (_r, id, t, u) => sealed.push([id, t, u]),
     draggedHere: () => false,
+    wall: () => 'r',
+    visit: () => true,
     ...o
   }
 }
@@ -191,6 +193,61 @@ describe('o palco (boardStage): fila → personagens, parede, falas, selos', () 
     new BoardStage(h2, () => 0).push([step({ actor: 'user' })])
     expect(h2.applied).toEqual(['c1'])
     expect(h2.sealed).toEqual([])
+  })
+
+  it('projeto fora da parede: espera, o quadro troca para ele durante a coreografia, segura VISIT_HOLD_MS e volta', () => {
+    let now = 0
+    let wall = 'outro'
+    const visits: Array<string | null> = []
+    const b = agent()
+    const w = world()
+    const h = host({
+      brains: new Map([['conv:k1', b]]),
+      wall: () => wall,
+      visit: (id) => {
+        visits.push(id)
+        wall = id ?? 'outro'
+        return true
+      }
+    })
+    const stage = new BoardStage(h, () => now)
+    stage.push([step()])
+    // Trocou a parede para o projeto do passo e a viagem começou.
+    expect(visits).toEqual(['r'])
+    expect(b.errand).not.toBeNull()
+    for (let i = 0; i < 400 && b.errand; i++) {
+      w.t += 0.05
+      stepBrain(b, 0.05, w)
+      now += 50
+      stage.tick(now)
+    }
+    expect(h.applied).toEqual(['c1'])
+    stage.tick(now)
+    expect(visits).toEqual(['r'])
+    now += VISIT_HOLD_MS + 50
+    stage.tick(now)
+    expect(visits).toEqual(['r', null])
+    expect(wall).toBe('outro')
+  })
+
+  it('visita recusada (o filtro) ou estacionado demais: o passo vai direto ao espelho', () => {
+    let now = 0
+    const h = host({ brains: new Map([['conv:k1', agent()]]), wall: () => 'outro', visit: () => false })
+    const stage = new BoardStage(h, () => now)
+    stage.push([step()])
+    expect(h.applied).toEqual(['c1'])
+    // Palco ocupado com a viagem do projeto da parede: o passo do outro espera; passou de LAG_MS, vai direto.
+    const other = createBrain({ key: 'conv:k2', role: 'desk', roomId: 'office', projectId: 'outro', home: { x: 0, z: 6, yaw: 0 }, desk: { x: 0, z: 6, dir: 1, out: 1 } })
+    other.phase = 'working'
+    const h2 = host({ brains: new Map([['conv:k2', other]]), wall: () => 'outro' })
+    const busy = new BoardStage(h2, () => now)
+    busy.push([step({ roomId: 'outro', convId: 'k2', cardId: 'c0' })])
+    expect(other.errand).not.toBeNull()
+    busy.push([step({ cardId: 'c2' })])
+    expect(h2.applied).toEqual([])
+    now = LAG_MS + 10
+    busy.tick(now)
+    expect(h2.applied).toContain('c2')
   })
 
   it('aba escondida: tudo direto, sem maratona; viagem em curso é abortada', () => {

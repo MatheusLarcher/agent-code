@@ -8,7 +8,7 @@
  *   free        sem tarefa: alterna lazeres (café, estante, janela, regar a
  *               planta, ler o quadro, conversar com outro ocioso, celular andando),
  *               cada um de DWELL_MIN a DWELL_MAX s, com uma pausa entre eles;
- *   sleep       parado há sleepAfter s: cochila no pufe (se livre) ou na mesa;
+ *   sleep       parado há sleepAfter s: cochila no sofá/poltrona do lounge (se livre) ou na mesa;
  *   work        senta na própria mesa; o gesto segue a ferramenta atual;
  *   permission  levanta ao lado da cadeira, vira para a câmera e acena;
  *   queue       limite de uso: fila na máquina de café até voltar;
@@ -33,6 +33,7 @@ import {
   lookAt,
   move,
   pushReaction,
+  seatAtDesk,
   setAction,
   stay,
   tickReaction,
@@ -131,6 +132,22 @@ export function react(b: Brain, e: AgentEventBody, w: Pick<BrainWorld, 't' | 'rn
   }
 }
 
+/**
+ * Filtro de projeto com o agente fora da tela (ou o motor pausado): vai direto
+ * ao fim, sem andar — filtrado fora já está lá fora; de volta, já sentado na
+ * mesa (sem mesa, no lugar dele) e o próximo passo decide o modo.
+ */
+export function snapFilter(b: Brain, w: BrainWorld): void {
+  if (b.outside) {
+    if (b.mode !== 'away') enterMode(b, 'away', w)
+    return
+  }
+  if (b.visible) return
+  endLeisure(b, w, 0)
+  Object.assign(b, { visible: true, mode: 'init', x: b.home.x, z: b.home.z, yaw: b.home.yaw, speed: 0, sit: 0, seat: null, pathLen: 0, atSpot: true, arrived: true })
+  if (b.desk) seatAtDesk(b, b.desk)
+}
+
 /** Clique no agente: olha para a câmera e dá um tchauzinho. */
 export function greet(b: Brain): void {
   pushReaction(b, 'greet')
@@ -139,6 +156,8 @@ export function greet(b: Brain): void {
 // ── modos ──────────────────────────────────────────────────────────────────
 
 function decide(b: Brain, w: BrainWorld): Mode {
+  // Filtrado fora: sai pela porta e espera lá fora (a mesa continua dele).
+  if (b.outside) return b.visible ? 'leave' : 'away'
   if (b.party !== null) return 'party'
   const busy = b.phase === 'working' || b.phase === 'waiting-permission'
   if (b.role === 'fixed') return 'fixed'
@@ -160,27 +179,29 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
   b.zzz = false
   b.faceCamera = false
   const gait: Gait = b.rush ? 'run' : 'walk'
+  // Volta de fora (visitante chamado, filtro de projeto desfeito): entra pela porta.
+  const entering = !b.visible && m !== 'away' && m !== 'leave'
+  if (entering) {
+    const d = w.doorOut(b) ?? b.home
+    Object.assign(b, { visible: true, x: d.x, z: d.z, yaw: d.yaw, sit: 0, seat: null, atSpot: false })
+  }
   switch (m) {
     case 'party':
     case 'work':
     case 'permission':
-      if (!b.visible) {
-        const d = w.doorOut(b) ?? b.home
-        Object.assign(b, { visible: true, x: d.x, z: d.z, yaw: d.yaw, sit: 0, seat: null, atSpot: false })
-      }
       if (m === 'party') enterParty(b, w)
       else if (m === 'work') goDesk(b, gait)
       else if (b.desk && b.sit > 0) goStand(b, b.standX, b.standZ, Math.PI, gait)
       else if (b.desk) {
-        const side = chairSide(b.desk, b.x >= b.desk.x ? 1 : -1)
+        const side = chairSide(b.desk)
         goStand(b, side.x, side.z, Math.PI, gait)
       } else goStand(b, b.home.x, b.home.z, Math.PI, gait)
       return
     case 'sleep': {
-      const p = w.claim(b, 'pufe')
+      const p = w.claim(b, 'sofa')
       if (p) {
         b.poi = p
-        goSeat(b, 'pufe', p.look.x, p.look.z, p.yaw, p.x, p.z, 'walk')
+        goSeat(b, 'sofa', p.look.x, p.look.z, p.yaw, p.x, p.z, 'walk')
       } else if (b.desk) goDesk(b, 'walk')
       else stay(b)
       return
@@ -194,7 +215,9 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
       return
     case 'free':
       b.rest = 2 + w.rng() * 4
-      stay(b)
+      // Quem voltou pela porta vai primeiro para a mesa dele.
+      if (entering) goDesk(b, 'walk')
+      else stay(b)
       return
     case 'leave': {
       const d = w.doorOut(b)
@@ -281,6 +304,7 @@ function runFixed(b: Brain): void {
   const working = b.phase === 'working'
   if (working && b.style === 'board') setAction(b, 'readBoard')
   else if (working && b.style === 'archive') setAction(b, 'readBook')
+  else if (b.style === 'console') setAction(b, b.arrived ? (working ? 'type' : 'readScreen') : 'none')
   else setAction(b, b.arrived ? 'idle' : 'none')
   b.prop = working && b.style === 'archive' ? 'book' : null
 }
@@ -302,7 +326,7 @@ function runMode(b: Brain, dt: number, w: BrainWorld): void {
       return
     case 'sleep':
       if (b.arrived) {
-        setAction(b, b.seat === 'pufe' ? 'napPufe' : b.seat === 'chair' ? 'napDesk' : 'idle')
+        setAction(b, b.seat === 'sofa' ? 'napSofa' : b.seat === 'chair' ? 'napDesk' : 'idle')
         b.zzz = b.seat !== null
         b.look = 'none'
       } else setAction(b, 'none')
@@ -361,9 +385,10 @@ function tryLeisure(b: Brain, l: Leisure, w: BrainWorld): boolean {
 function runFree(b: Brain, dt: number, w: BrainWorld): void {
   if (b.leisure === null) {
     b.prop = null
-    if (b.rest > 0) {
-      b.rest -= dt
-      setAction(b, b.sit > 0.5 ? 'sitIdle' : 'idle')
+    if (b.rest > 0 || !b.arrived) {
+      // O descanso conta depois de chegar (quem entrou pela porta anda até a mesa antes).
+      if (b.arrived) b.rest -= dt
+      setAction(b, !b.arrived ? 'none' : b.sit > 0.5 ? 'sitIdle' : 'idle')
       b.look = 'none'
       return
     }

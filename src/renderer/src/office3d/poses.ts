@@ -8,7 +8,7 @@
  * Três camadas, compostas no animador (characters.ts):
  *   locomoção  parado/caminhada/corrida (fase guiada pela DISTÂNCIA: o pé de
  *              apoio desliza para trás exatamente na velocidade do corpo) e o
- *              sentar (cadeira ou pufe), com o peso `sit` da transição — aqui;
+ *              sentar (cadeira ou sofá do lounge), com o peso `sit` da transição — aqui;
  *   ação       o que o tronco/braços/cabeça fazem (digitar, ler, celular…),
  *              com crossfade de BLEND_S ao trocar — gestures.ts;
  *   reação     gesto curto por cima de tudo (pulinho do "!", facepalm, soco
@@ -77,7 +77,7 @@ export const BLEND_S = 0.2
 export type Action =
   | 'none' | 'idle' | 'sitIdle' | 'type' | 'typeFast' | 'readScreen' | 'drum' | 'web' | 'assist' | 'wave' | 'brew' | 'sip'
   | 'grabBook' | 'readBook' | 'lookOut' | 'stretchUp' | 'water' | 'readBoard' | 'stick' | 'admire' | 'talk' | 'listen'
-  | 'phone' | 'wait' | 'napDesk' | 'napPufe'
+  | 'phone' | 'wait' | 'napDesk' | 'napSofa'
   // No quadro (brainBoard.ts): soltar o alfinete, rabiscar, carimbar ✓, amassar e jogar, apontar.
   | 'unpin' | 'scribble' | 'stamp' | 'crumple' | 'point'
   // Festa do apagão (dance.ts): quatro passos no BPM, trenzinho, lanterna e pizza.
@@ -102,6 +102,8 @@ export interface ActionParams {
   side: number
   /** Batida da música da festa (relógio da cena × BPM): todos dançam juntos. */
   beat?: number
+  /** Sentado na cadeira da estação: os gestos ficam sobre o tampo (nada atravessa a mesa). */
+  seated?: boolean
 }
 
 export const clamp01 = (k: number): number => (k < 0 ? 0 : k > 1 ? 1 : k)
@@ -258,7 +260,7 @@ export function standPose(out: Pose): void {
   out[CH.eyes] = 1
 }
 
-export type SeatKind = 'chair' | 'pufe' | 'desk'
+export type SeatKind = 'chair' | 'sofa' | 'desk'
 
 /** Pernas e quadril sentados (o tronco é da ação). Na beira da mesa as pernas balançam com o relógio `t`. */
 export function sitLower(out: Pose, seat: SeatKind, t = 0): void {
@@ -269,18 +271,20 @@ export function sitLower(out: Pose, seat: SeatKind, t = 0): void {
     out[CH.legL] = out[CH.legR] = 1.45
     out[CH.kneeL] = 1.25 + 0.22 * Math.sin(3.1 * t)
     out[CH.kneeR] = 1.25 + 0.22 * Math.sin(3.1 * t + Math.PI)
-  } else if (seat === 'pufe') {
-    out[CH.pelvisY] = -0.27
-    out[CH.pelvisZ] = 0.12
-    out[CH.legL] = out[CH.legR] = 1.35
-    out[CH.kneeL] = out[CH.kneeR] = 0.4
+  } else if (seat === 'sofa') {
+    // Sofá/poltrona do lounge (assento a ~0,34 m): afunda um pouco, coxas quase na horizontal, pés no chão.
+    out[CH.pelvisY] = -0.17
+    out[CH.pelvisZ] = 0.1
+    out[CH.legL] = out[CH.legR] = 1.25
+    out[CH.kneeL] = out[CH.kneeR] = 1.1
   } else {
-    // Cadeira baixa (SEAT_Y em decor.ts): coxa descendo para o joelho e canela
-    // na vertical — os pés tocam o chão.
-    out[CH.pelvisY] = -0.12
-    out[CH.pelvisZ] = 0.06
-    out[CH.legL] = out[CH.legR] = 1
-    out[CH.kneeL] = out[CH.kneeR] = 1
+    // Cadeira da estação (decorIslands.ts, topo do assento a 0,33 m): quadril
+    // sobre o assento curto, coxa descendo pela borda dele até o joelho (sob o
+    // tampo) e canela na vertical — os pés tocam o chão dentro da base de rodinhas.
+    out[CH.pelvisY] = -0.14
+    out[CH.pelvisZ] = 0
+    out[CH.legL] = out[CH.legR] = 1.07
+    out[CH.kneeL] = out[CH.kneeR] = 1.07
   }
   out[CH.footL] = out[CH.footR] = 0
 }

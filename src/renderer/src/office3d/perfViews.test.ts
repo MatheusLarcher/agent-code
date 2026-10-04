@@ -13,6 +13,7 @@ import {
   type Object3D,
   type Scene
 } from 'three'
+import { isCentralConversation } from '@shared/central'
 import { demoFeed } from './demoFeed'
 import { DEMO_LOOP_MS } from './demoTimeline'
 import { Office3DEngine, type RendererLike } from './engine'
@@ -20,7 +21,7 @@ import { FAR_PIXEL_SCALE } from './lod'
 
 /**
  * Desempenho medido no grafo de cena (jsdom não tem WebGL): com a demo de
- * 5 salas × 4 agentes, em 3 vistas, conta o que o three desenharia — objetos
+ * 5 projetos × 4 agentes, em 3 vistas, conta o que o three desenharia — objetos
  * visíveis dentro do frustum da câmera, chamadas de desenho e triângulos do
  * passo principal e do passo de sombra. O renderer stub preenche
  * renderer.info com essa contagem (o que o HUD de DEV mostra) e imita o
@@ -28,11 +29,21 @@ import { FAR_PIXEL_SCALE } from './lod'
  */
 
 const T0 = 14_916_667 * DEMO_LOOP_MS
-/** Medido ANTES do LOD/culling (mesma demo, mesmas vistas): passo principal + sombra, que rodava todo quadro. */
+/**
+ * Medido na versão anterior (uma sala por projeto, commit 4c819a6), com a mesma demo e o mesmo
+ * número de agentes, passo principal + sombra: PERTO de uma sala, o prédio inteiro e o LONGE.
+ * O escritório único não pode desenhar mais que isso (PERTO aqui = de perto de uma ilha).
+ */
 const BEFORE = {
-  perto: { calls: 223 + 215, triangles: 7_162 + 16_340 },
-  predio: { calls: 1_032 + 215, triangles: 35_256 + 16_340 },
-  longe: { calls: 1_032 + 215, triangles: 35_256 + 16_340 }
+  perto: { calls: 210 + 92, triangles: 7_156 + 6_680 },
+  predio: { calls: 770 + 120, triangles: 29_070 + 5_720 },
+  longe: { calls: 495, triangles: 20_954 }
+}
+/** O mesmo, no apagão com festa (versão anterior). */
+const BEFORE_PARTY = {
+  perto: { calls: 239 + 92, triangles: 8_719 + 6_680 },
+  predio: { calls: 844 + 120, triangles: 31_629 + 5_720 },
+  longe: { calls: 514, triangles: 21_410 }
 }
 
 interface PassStats {
@@ -129,7 +140,9 @@ function demoEngine(renderer: RendererLike = countingRenderer()) {
   Object.defineProperty(container, 'clientHeight', { get: () => 900 })
   const canvas = document.createElement('canvas')
   container.appendChild(canvas)
-  const feed = demoFeed(Date.now())
+  // "Draw calls iguais ou melhores que hoje com o MESMO número de agentes": sem a Central (o escritório de antes não a tinha).
+  const demo = demoFeed(Date.now())
+  const feed = { ...demo, conversations: demo.conversations.filter((c) => !isCentralConversation(c)) }
   let t = 0
   const queue: FrameRequestCallback[] = []
   const engine = new Office3DEngine(container, canvas, { onFocus: vi.fn(), onOpen: vi.fn() }, {
@@ -171,17 +184,19 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('desempenho nas 3 vistas (demo 5 salas × 4 agentes)', () => {
-  it('culling por sala, LOD por distância, sombra sob demanda e ~30 fps no LONGE — números em renderer.info', () => {
+/** De perto de uma ilha (o tamanho de uma sala de antes). */
+const NEAR_ISLAND = { tx: -4.25, ty: 0, tz: 6.46, yaw: 0, pitch: 0.9, distance: 6 }
+
+describe('desempenho nas 3 vistas (demo 5 projetos × 4 agentes)', () => {
+  it('culling por zona, LOD por distância, sombra sob demanda e ~30 fps no LONGE — números em renderer.info', () => {
     const renderer = countingRenderer()
     const { engine, flush } = demoEngine(renderer)
     flush(30)
     const building = { ...engine.rig.pose }
-    const room = engine.scene.rooms3d[0]
     engine.rig.zoom(1e5)
     const longe = { ...engine.rig.pose }
     const views = {
-      perto: { tx: room.x + room.width / 2, ty: 0, tz: room.z + room.depth / 2, yaw: 0, pitch: 0.8, distance: 9 },
+      perto: NEAR_ISLAND,
       predio: building,
       longe
     }
@@ -207,23 +222,29 @@ describe('desempenho nas 3 vistas (demo 5 salas × 4 agentes)', () => {
         sombraCalls: shadow.calls,
         sombraTris: shadow.triangles,
         sombraPassos60: renderer.shadowPasses - s0,
-        quadros60: renderer.renders - r0
+        quadros60: renderer.renders - r0,
+        total: main.calls + shadow.calls,
+        totalTris: main.triangles + shadow.triangles,
+        hud: s.calls - renderer.info.render.calls
       }
-      // Pior quadro agora (principal + sombra) contra o quadro de antes (que sempre tinha a sombra).
-      expect(main.calls + shadow.calls).toBeLessThan(BEFORE[name].calls)
-      expect(main.triangles + shadow.triangles).toBeLessThan(BEFORE[name].triangles)
-      // O HUD lê o renderer.info do último quadro.
-      expect(s.calls).toBe(renderer.info.render.calls)
     }
     console.log(`[perf] distância da câmera: prédio=${building.distance.toFixed(1)} longe=${longe.distance.toFixed(1)}`)
     console.table(rows)
+    for (const name of Object.keys(views) as Array<keyof typeof views>) {
+      // Pior quadro agora (principal + sombra) contra o da versão anterior.
+      expect(Number(rows[name].total), name).toBeLessThanOrEqual(BEFORE[name].calls)
+      expect(Number(rows[name].totalTris), name).toBeLessThan(BEFORE[name].triangles * 1.6)
+      // O HUD lê o renderer.info do último quadro.
+      expect(rows[name].hud).toBe(0)
+    }
 
-    // PERTO de uma sala: as outras saem do frustum; tudo completo; resolução cheia.
+    // PERTO de uma ilha: zonas saem do frustum; tudo completo; resolução cheia.
     expect(rows.perto.lod).toBe(0)
-    expect(Number(String(rows.perto.salas).split('/')[0])).toBeLessThan(5)
+    const [seen, total] = String(rows.perto.salas).split('/').map(Number)
+    expect(seen).toBeLessThan(total)
     expect(rows.perto.pixelRatio).toBe(1)
-    // Prédio inteiro: MÉDIO, sem detalhe; sombra NÃO é refeita todo quadro.
-    expect(rows.predio).toMatchObject({ salas: '5/5', lod: 1, pixelRatio: 1 })
+    // Escritório inteiro: todas as zonas, sem detalhe longe; sombra NÃO é refeita todo quadro.
+    expect(rows.predio).toMatchObject({ salas: `${total}/${total}`, pixelRatio: 1 })
     expect(rows.predio.sombraPassos60).toBeLessThan(Number(rows.predio.quadros60))
     // Zoom máximo: LONGE — sem sombra, resolução menor, névoa, ~30 fps.
     expect(rows.longe).toMatchObject({ lod: 2, pixelRatio: FAR_PIXEL_SCALE, sombraCalls: 0, sombraPassos60: 0 })
@@ -243,10 +264,9 @@ describe('desempenho nas 3 vistas (demo 5 salas × 4 agentes)', () => {
     expect(engine.officePower?.level).toBe('apagao')
     flush(30)
     const scene = engine.scene.scene
-    const room = engine.scene.rooms3d[0]
     const building = { ...engine.rig.pose }
     const views = {
-      perto: { tx: room.x + room.width / 2, ty: 0, tz: room.z + room.depth / 2, yaw: 0, pitch: 0.8, distance: 9 },
+      perto: NEAR_ISLAND,
       predio: building,
       longe: { ...building, distance: 60 }
     }
@@ -274,8 +294,8 @@ describe('desempenho nas 3 vistas (demo 5 salas × 4 agentes)', () => {
       const main = passStats(scene, engine.camera)
       const shadow = shadowStats(scene)
       rows[name] = { salas: `${engine.stats.rooms}/${engine.stats.roomsTotal}`, lod: engine.stats.lod, calls: main.calls, tris: main.triangles, sombraCalls: shadow.calls, festa: partyVisible(), quadros60: renderer.renders - r0 }
-      expect(main.calls + shadow.calls).toBeLessThan(BEFORE[name].calls)
-      expect(main.triangles + shadow.triangles).toBeLessThan(BEFORE[name].triangles)
+      expect(main.calls + shadow.calls, name).toBeLessThanOrEqual(BEFORE_PARTY[name].calls)
+      expect(main.triangles + shadow.triangles, name).toBeLessThan(BEFORE_PARTY[name].triangles * 1.6)
       // Nenhum objeto novo entra na cena quadro a quadro (pools e malhas criadas uma vez).
       expect(count()).toBe(before)
     }

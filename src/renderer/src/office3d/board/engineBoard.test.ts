@@ -5,7 +5,10 @@ import { DEMO_LOOP_MS } from '../demoTimeline'
 import { Office3DEngine, type RendererLike } from '../engine'
 import type { BoardOpen } from '../engineTypes'
 import { OfficeScene } from '../scene'
-import { columnAt, slotPos } from './boardLayout'
+import { roomIdFor } from '../../office/adapter/model'
+import type { Office3DLayout } from '../layout'
+import type { PointerHooks } from '../pointerInput'
+import { columnAt, slotPos, TAB_KEY, tabX, TITLE_Y } from './boardLayout'
 import { at, fakeBoardApi, item, settle } from './boardTestKit'
 import { BoardView } from './boardView'
 
@@ -224,6 +227,37 @@ describe('o Quadro real no motor (engineBoard)', () => {
     fireEvent.pointerUp(window, { button: 0, clientX: 340, clientY: 200 })
     expect(orbit).toHaveBeenCalled()
     expect(s.view().dragging).toBeNull()
+    s.engine.dispose()
+  })
+  it('a parede mostra o projeto da conversa ativa com as abas; a aba troca até a conversa mudar; com filtro, o filtrado', async () => {
+    const s = await setup()
+    const boards = s.engine.scene.boards
+    const feed = s.engine.currentFeed!
+    const layout = (s.engine as unknown as { layout: Office3DLayout }).layout
+    const active = feed.conversations.find((c) => c.id === feed.activeId)!
+    expect(boards.shown).toBe(roomIdFor(active.cwd))
+    // As abas: uma por projeto com quadro, na faixa do título (o clique acha pela posição).
+    const n = s.rooms.length
+    const view = boards.view(boards.shown!)!
+    const tabs = Array.from({ length: n }, (_, i) => view.keyAt(0, { x: tabX(i, n), y: TITLE_Y }))
+    expect(tabs).toEqual(s.rooms.map((id) => `${TAB_KEY}${id}`))
+    expect(view.keyAt(0, { x: 0, y: 0 })).toBeNull()
+    const other = s.rooms.find((id) => id !== boards.shown)!
+    const hooks = s.engine.board.wrap({ click: vi.fn(), hover: vi.fn() } as unknown as PointerHooks)
+    hooks.click(`${TAB_KEY}${other}`)
+    expect(boards.shown).toBe(other)
+    s.engine.board.feed(feed, layout)
+    expect(boards.shown).toBe(other)
+    const next = feed.conversations.find((c) => c.cwd && roomIdFor(c.cwd) !== other && roomIdFor(c.cwd) !== roomIdFor(active.cwd))!
+    s.engine.board.feed({ ...feed, activeId: next.id }, layout)
+    expect(boards.shown).toBe(roomIdFor(next.cwd))
+    // Filtro: o filtrado, e a aba não tira.
+    s.engine.setProjectFilter(other)
+    expect(boards.shown).toBe(other)
+    hooks.click(`${TAB_KEY}${roomIdFor(active.cwd)}`)
+    expect(boards.shown).toBe(other)
+    s.engine.setProjectFilter(null)
+    expect(boards.shown).toBe(roomIdFor(active.cwd))
     s.engine.dispose()
   })
 })

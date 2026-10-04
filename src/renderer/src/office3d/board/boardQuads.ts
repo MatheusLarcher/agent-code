@@ -7,7 +7,7 @@
  */
 import { BufferAttribute, BufferGeometry, Color, Sphere, Vector3 } from 'three'
 import { FACE_H, FACE_W, FACE_Z } from './boardLayout'
-import { ATLAS, cellRect, CELLS, FACE_COLOR, FACE_PX_H, FACE_PX_W } from './boardPaint'
+import { ATLAS, ATLAS_H, cellRect, CELLS, FACE_COLOR, FACE_PX_H, FACE_PX_W } from './boardPaint'
 
 export const QUADS = 1 + CELLS
 
@@ -31,8 +31,8 @@ export class BoardQuads {
       const r = q === 0 ? { x: 0, y: 0, w: FACE_PX_W, h: FACE_PX_H } : cellRect(q - 1)
       const u0 = r.x / ATLAS
       const u1 = (r.x + r.w) / ATLAS
-      const v0 = 1 - (r.y + r.h) / ATLAS
-      const v1 = 1 - r.y / ATLAS
+      const v0 = 1 - (r.y + r.h) / ATLAS_H
+      const v1 = 1 - r.y / ATLAS_H
       const uvs = [u0, v0, u1, v0, u1, v1, u0, v1]
       for (let k = 0; k < 8; k++) uv[q * 8 + k] = uvs[k]
       for (let k = 0; k < 4; k++) normal[(q * 4 + k) * 3 + 2] = 1

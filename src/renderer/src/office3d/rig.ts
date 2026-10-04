@@ -2,7 +2,9 @@
  * Corpo articulado do personagem 3D (three): quadril → tronco → pescoço/cabeça
  * e ombros → cotovelos → mãos (palma, dedos, polegar); quadril → coxas →
  * joelhos → pés. `applyPose` copia os canais de poses.ts para as juntas sem
- * alocar nada. Rosto com olhos (piscam), sobrancelhas e boca.
+ * alocar nada. Rosto com olhos (piscam), sobrancelhas e boca — os olhos e a
+ * boca são UMA InstancedMesh (o mesmo material) e as sobrancelhas outra: duas
+ * chamadas por boneco em vez de cinco.
  *
  * Medidas: quadril a PELVIS_Y do chão em pé (coxa THIGH + canela SHIN + sola);
  * ombros a SHOULDER_Y e o centro da cabeça a HEAD_Y acima do quadril. Malhas de
@@ -10,7 +12,7 @@
  * 'detail' (somem no LOD médio); mãos, pescoço e sapatos levam 'small' (somem
  * no LOD longe).
  */
-import { Group, Mesh, type Material } from 'three'
+import { Group, InstancedMesh, Mesh, Object3D, type Material } from 'three'
 import type { Kit } from './kit'
 import { CH, SHIN, THIGH, type Pose } from './poses'
 
@@ -20,6 +22,13 @@ export const HEAD_Y = 0.66
 export const HEAD_RADIUS = 0.15
 const EYE_H = 0.035
 const BROW_Y = 0.048
+/** Instâncias do rosto: olhos e boca (cor dos olhos) e as sobrancelhas (cor do cabelo). */
+const EYE_L = 0
+const EYE_R = 1
+const MOUTH = 2
+const FACE_Z = -0.142
+const BROW_Z = -0.153
+const faceDummy = new Object3D()
 
 export interface Rig {
   pelvis: Group
@@ -27,11 +36,11 @@ export interface Rig {
   torso: Mesh
   head: Group
   headMesh: Mesh
-  eyeL: Mesh
-  eyeR: Mesh
-  browL: Mesh
-  browR: Mesh
-  mouth: Mesh
+  /** Olhos e boca (instâncias EYE_L, EYE_R, MOUTH) e as duas sobrancelhas. */
+  face: InstancedMesh
+  brows: InstancedMesh
+  /** O último rosto aplicado (abertura dos olhos, boca, altura e giro das sobrancelhas): só sobe o que mudou. */
+  faceState: Float32Array
   shoulderL: Group
   shoulderR: Group
   elbowL: Group
@@ -122,19 +131,17 @@ export function buildRig(kit: Kit, root: Group, m: RigMaterials): Rig {
   hair.position.y = 0.015
   hair.rotation.x = 0.4
   head.add(hair)
-  const face = (mat: Material, w: number, h: number, x: number, y: number, z = -0.142): Mesh => {
-    const f = detail(new Mesh(kit.geo.box, mat))
-    f.scale.set(w, h, 0.012)
-    f.position.set(x, y, z)
-    head.add(f)
-    return f
-  }
-  const eyeL = face(kit.mat.eye, 0.03, EYE_H, -0.055, 0.01)
-  const eyeR = face(kit.mat.eye, 0.03, EYE_H, 0.055, 0.01)
+  const face = detail(new InstancedMesh(kit.geo.box, kit.mat.eye, 3)) as InstancedMesh
   // Sobrancelhas um pouco à frente: erguidas não somem sob o cabelo.
-  const browL = face(m.hair, 0.05, 0.011, -0.055, BROW_Y, -0.153)
-  const browR = face(m.hair, 0.05, 0.011, 0.055, BROW_Y, -0.153)
-  const mouth = face(kit.mat.eye, 0.05, 0.012, 0, -0.06)
+  const brows = detail(new InstancedMesh(kit.geo.box, m.hair, 2)) as InstancedMesh
+  head.add(face, brows)
+  const faceState = new Float32Array([-1, -1, -1, -1])
+  placeFace(face, brows, faceState, 1, 0.012, BROW_Y, 0)
+  // A esfera de culling cobre o rosto inteiro (as instâncias mexem pouco).
+  for (const im of [face, brows]) {
+    im.computeBoundingSphere()
+    im.boundingSphere!.radius += 0.03
+  }
 
   const arm = (side: number): { shoulder: Group; elbow: Group; hand: Group; fingers: Group; thumb: Group } => {
     const shoulder = joint(spine, side * 0.215, SHOULDER_Y, -0.02)
@@ -153,7 +160,7 @@ export function buildRig(kit: Kit, root: Group, m: RigMaterials): Rig {
   const ar = arm(1)
 
   return {
-    pelvis, spine, torso, head, headMesh, eyeL, eyeR, browL, browR, mouth,
+    pelvis, spine, torso, head, headMesh, face, brows, faceState,
     shoulderL: al.shoulder, shoulderR: ar.shoulder, elbowL: al.elbow, elbowR: ar.elbow, handL: al.hand, handR: ar.hand,
     fingersL: al.fingers, fingersR: ar.fingers, thumbR: ar.thumb,
     legL: l.hip, legR: r.hip, kneeL: l.knee, kneeR: r.knee, footL: l.foot, footR: r.foot,
@@ -190,17 +197,38 @@ export function applyPose(r: Rig, p: Pose, blink: number, breath: number): void 
   r.fingersL.rotation.x = 1.4 * p[CH.fingersL]
   r.fingersR.rotation.x = 1.4 * p[CH.fingersR]
   r.thumbR.rotation.x = 1.5 * p[CH.thumbR]
-  r.mouth.scale.y = 0.012 + 0.05 * p[CH.mouth]
   const brow = p[CH.brows]
   const by = BROW_Y + 0.018 * Math.max(0, brow) - 0.006 * Math.max(0, -brow)
-  r.browL.position.y = by
-  r.browR.position.y = by
   const tilt = (brow < 0 ? 0.35 : 0.15) * brow
-  r.browL.rotation.z = tilt
-  r.browR.rotation.z = -tilt
   const open = Math.max(0.08, Math.min(1.3, p[CH.eyes] * blink))
-  r.eyeL.scale.y = EYE_H * open
-  r.eyeR.scale.y = EYE_H * open
+  placeFace(r.face, r.brows, r.faceState, open, 0.012 + 0.05 * p[CH.mouth], by, tilt)
+}
+
+function setPart(im: InstancedMesh, i: number, w: number, h: number, x: number, y: number, z: number, rz: number): void {
+  faceDummy.position.set(x, y, z)
+  faceDummy.rotation.set(0, 0, rz)
+  faceDummy.scale.set(w, h, 0.012)
+  faceDummy.updateMatrix()
+  im.setMatrixAt(i, faceDummy.matrix)
+}
+
+/** Olhos (abertura `open`), boca (altura `mouthH`) e sobrancelhas (altura `by`, giro `tilt`): só o que mudou sobe. */
+function placeFace(face: InstancedMesh, brows: InstancedMesh, st: Float32Array, open: number, mouthH: number, by: number, tilt: number): void {
+  if (st[0] !== open || st[1] !== mouthH) {
+    st[0] = open
+    st[1] = mouthH
+    setPart(face, EYE_L, 0.03, EYE_H * open, -0.055, 0.01, FACE_Z, 0)
+    setPart(face, EYE_R, 0.03, EYE_H * open, 0.055, 0.01, FACE_Z, 0)
+    setPart(face, MOUTH, 0.05, mouthH, 0, -0.06, FACE_Z, 0)
+    face.instanceMatrix.needsUpdate = true
+  }
+  if (st[2] !== by || st[3] !== tilt) {
+    st[2] = by
+    st[3] = tilt
+    setPart(brows, 0, 0.05, 0.011, -0.055, by, BROW_Z, tilt)
+    setPart(brows, 1, 0.05, 0.011, 0.055, by, BROW_Z, -tilt)
+    brows.instanceMatrix.needsUpdate = true
+  }
 }
 
 /** Centro da cabeça no referencial do personagem (sem twist), a partir da pose. */

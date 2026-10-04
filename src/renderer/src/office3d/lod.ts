@@ -13,7 +13,13 @@
 export type Lod = 0 | 1 | 2
 
 /** Fronteiras (m): PERTO|MÉDIO e MÉDIO|LONGE. */
-export const LOD_BOUNDS: readonly [number, number] = [15, 40]
+export const LOD_BOUNDS: readonly [number, number] = [12, 40]
+/**
+ * Fronteiras dos PERSONAGENS: no escritório único todos dividem a mesma sala,
+ * então de perto de uma ilha os das outras ficam à vista — além de ~9 m os
+ * detalhes do rosto e dos dedos já não aparecem e saem antes.
+ */
+export const CHAR_LOD_BOUNDS: readonly [number, number] = [9, 40]
 /** Folga da histerese, em fração da fronteira (afasta até b·(1+f), volta só abaixo de b·(1−f)). */
 export const LOD_SLACK = 0.1
 
@@ -32,13 +38,13 @@ export const FOG_FAR = 2.4
  * histerese). Fica em `prev` enquanto a distância estiver dentro da folga de
  * uma fronteira; fora dela, vai para o nível certo (pode pular dois de uma vez).
  */
-export function lodLevel(distance: number, prev: Lod | null = null): Lod {
+export function lodLevel(distance: number, prev: Lod | null = null, bounds: readonly [number, number] = LOD_BOUNDS): Lod {
   if (Number.isNaN(distance)) return prev ?? 0
   let away = 0
   let back = 0
   let plain = 0
-  for (let i = 0; i < LOD_BOUNDS.length; i++) {
-    const b = LOD_BOUNDS[i]
+  for (let i = 0; i < bounds.length; i++) {
+    const b = bounds[i]
     if (distance > b * (1 + LOD_SLACK)) away++
     if (distance >= b * (1 - LOD_SLACK)) back++
     if (distance >= b) plain++

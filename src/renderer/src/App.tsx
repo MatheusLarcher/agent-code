@@ -3738,8 +3738,8 @@ export function App(): JSX.Element {
   centralRef.current = central
   // Escritório: só publica o feed numa store fora do React (office/officeStore).
   useEffect(() => {
-    // A Central não é agente de projeto: não ganha mesa no Escritório.
-    officeStore.publish({ conversations: conversations.filter((c) => !isCentralConversation(c)), activeId, busyIds,
+    // A Central vai junto: o modelo do escritório a põe no console do centro (sem mesa nem sala de projeto).
+    officeStore.publish({ conversations, activeId, busyIds,
       busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics, memoristaDiagnostics, observersOn, stalledSince,
       tracks, projectIcons, usageLimits, speakingId })
   }, [conversations, activeId, busyIds, busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics,

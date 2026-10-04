@@ -19,5 +19,7 @@ export type DestinationRole =
   | 'copa'
   | 'arquivo-memorias'
   | 'entrada'
+  /** O console da Central, no centro do escritório. */
+  | 'central'
 
 export type SeatKind = 'principal' | 'especialista' | 'reuniao'

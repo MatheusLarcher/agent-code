@@ -44,18 +44,19 @@ function find(root: Object3D, pred: (o: Object3D) => boolean): Object3D[] {
 }
 
 describe('feed de demonstração', () => {
-  it('5 salas, 20 agentes, ícones nos três formatos e a janela de 5h', () => {
+  it('5 salas, 20 agentes + a Central no console, ícones nos três formatos e a janela de 5h', () => {
     const feed = demoFeed(1_000)
     const model = deriveOfficeModel(feed, 1_000)
     expect(model.rooms).toHaveLength(DEMO_ROOMS)
-    expect(model.characters).toHaveLength(DEMO_ROOMS * DEMO_PER_ROOM)
+    expect(model.characters).toHaveLength(DEMO_ROOMS * DEMO_PER_ROOM + 1)
+    expect(model.characters.filter((c) => c.placement.kind === 'destination' && c.placement.papel === 'central')).toHaveLength(1)
     const icons = model.rooms.map((r) => r.icon)
     expect(icons.some((i) => i?.startsWith('data:image/'))).toBe(true)
     expect(icons).toContain(null)
     expect(icons).toContain('🚀')
     expect(feed.usageLimits?.five_hour?.utilization).toBeGreaterThan(0)
     // Contexto variado: há baterias nos três níveis.
-    const fr = model.characters.map((c) => 1 - c.context!.tokens / c.context!.max)
+    const fr = model.characters.flatMap((c) => (c.context ? [1 - c.context.tokens / c.context.max] : []))
     expect(fr.some((f) => f > 0.5) && fr.some((f) => f <= 0.5 && f > 0.2) && fr.some((f) => f <= 0.2)).toBe(true)
   })
 
@@ -73,8 +74,8 @@ describe('feed de demonstração', () => {
   })
 })
 
-describe('demonstração: navegador e Android no projetor', () => {
-  it('o dev da loja testa no navegador e o do portal no Android; o projetor da sala desce e sobe 90 s depois do último uso', () => {
+describe('demonstração: navegador e Android na TV da sala de reunião', () => {
+  it('o dev da loja testa no navegador e o do portal no Android; a TV liga e apaga 90 s depois do último uso', () => {
     const T0 = 14_916_667 * DEMO_LOOP_MS
     const at = (ms: number): { feed: OfficeFeed; model: ReturnType<typeof deriveOfficeModel> } => {
       const feed = demoFeed(T0 + ms)
@@ -91,16 +92,18 @@ describe('demonstração: navegador e Android no projetor', () => {
     const sync = (x: ReturnType<typeof at>, ms: number): void =>
       scene.sync(layoutOffice(x.model, layout), x.feed, { snapshot: snapshotOf(x.feed, x.model, T0 + ms), events: [], wallNow: T0 + ms, t: ms / 1000 })
     sync(a, 14_000)
-    const shop = layout.rooms.find((r) => r.name === 'loja-virtual')!.id
-    const portal = layout.rooms.find((r) => r.name === 'portal-aluno')!.id
-    expect([scene.projectors.isDown(shop), scene.projectors.isDown(portal)]).toEqual([true, true])
-    expect(layout.rooms.filter((r) => scene.projectors.isDown(r.id))).toHaveLength(2)
-    // O último print sai aos ~20 s; o turno seguinte já não usa o navegador.
+    // Um escritório, uma TV: ela mostra o uso mais recente (de qualquer projeto).
+    const tv = layout.rooms[0].id
+    expect(scene.projectors.isDown(tv)).toBe(true)
+    expect(['demo-1-0', 'demo-3-0']).toContain(scene.projectors.info(tv)!.convId)
+    expect(['loja-virtual', 'portal-aluno']).toContain(scene.projectors.info(tv)!.project)
+    // O último uso sai aos ~20 s; o turno seguinte já não usa o navegador nem o Android.
     sync(at(21_000), 21_000)
-    expect(scene.projectors.tick(T0 + 21_000 + PROJECTOR_IDLE_MS - 1_000)).toBe(false)
-    expect(scene.projectors.isDown(shop)).toBe(true)
-    scene.projectors.tick(T0 + 21_000 + PROJECTOR_IDLE_MS + 1_000)
-    expect(scene.projectors.isDown(shop)).toBe(false)
+    const last = T0 + 21_000
+    expect(scene.projectors.tick(last + PROJECTOR_IDLE_MS - 8_000)).toBe(false)
+    expect(scene.projectors.isDown(tv)).toBe(true)
+    scene.projectors.tick(last + PROJECTOR_IDLE_MS + 1_000)
+    expect(scene.projectors.isDown(tv)).toBe(false)
     scene.dispose()
   })
 })
@@ -113,14 +116,17 @@ describe('OfficeScene com o feed de demonstração', () => {
     s.sync(layout, feed)
     const active = layout.characters.filter((c) => c.deskIndex !== null && c.model.active)
     const idle = layout.characters.filter((c) => c.deskIndex !== null && !c.model.active)
-    expect(find(s.scene, (o) => o.userData.screen === 'on')).toHaveLength(active.length)
+    // + o console da Central: espelha o chat dela mesmo parada.
+    expect(find(s.scene, (o) => o.userData.screen === 'on')).toHaveLength(active.length + 1)
     expect(find(s.scene, (o) => o.userData.screen === 'saver')).toHaveLength(idle.length)
 
     const target = active[0]
+    // As cadeiras são InstancedMesh por ilha (4 cadeiras): o índice local é o da mesa dentro da ilha.
+    const zone = find(s.scene, (o) => o.name === `zone:island${Math.floor(target.deskIndex! / 4)}`)[0]
     const zeroAt = (): number =>
-      find(s.scene, (o) => o instanceof InstancedMesh).filter((im) => {
+      find(zone, (o) => o instanceof InstancedMesh && o.name !== 'paper-piles').filter((im) => {
         const m = new Matrix4()
-        ;(im as InstancedMesh).getMatrixAt(target.deskIndex!, m)
+        ;(im as InstancedMesh).getMatrixAt(target.deskIndex! % 4, m)
         return m.determinant() === 0
       }).length
     expect(zeroAt()).toBe(0)
@@ -137,8 +143,8 @@ describe('OfficeScene com o feed de demonstração', () => {
     const charMeshes = body.filter((m) => !(m.userData.screen !== undefined))
     expect(charMeshes.length).toBeGreaterThan(0)
     expect(charMeshes.every((m) => !groupVisible(m))).toBe(true)
-    // Assento, encosto, coluna e base da cadeira daquela mesa.
-    expect(zeroAt()).toBe(4)
+    // O estofado e o metal da cadeira daquela mesa.
+    expect(zeroAt()).toBe(2)
     s.setFocus(null)
     expect(charMeshes.every((m) => groupVisible(m))).toBe(true)
     expect(zeroAt()).toBe(0)
@@ -289,5 +295,52 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     expect(officeStore.getSnapshot()?.conversations[0].id).toBe('demo-0-0')
     act(() => void fireEvent.keyDown(window, { key: 'D', ctrlKey: true, altKey: true, shiftKey: true }))
     expect(officeStore.overridden).toBe(false)
+  })
+})
+
+describe('roteiros do escritório único na demo', () => {
+  const T0 = 14_916_667 * DEMO_LOOP_MS
+
+  it('reserva de ilha: 5 projetos e 20 agentes — 4 ilhas com um projeto cada (placa) e o 5º no lounge (transbordo)', () => {
+    const now = T0 + 20_000
+    const l = layoutOffice(deriveOfficeModel(demoFeed(now), now))
+    const [office] = l.rooms
+    const owners = office.islands.map((i) => i.projectId)
+    expect(new Set(owners).size).toBe(4)
+    expect(owners.every((p) => p !== null)).toBe(true)
+    expect(office.islands.every((i) => i.name)).toBe(true)
+    // Cada ilha só com o projeto dela; quem sobra (o 5º projeto) senta no lounge.
+    for (const d of office.desks) expect(d.projectId).toBe(office.islands[d.island].projectId)
+    const lounge = l.characters.filter((c) => c.spot === 'lounge')
+    expect(lounge).toHaveLength(4)
+    const fifth = l.projects.find((p) => !owners.includes(p.id))!
+    expect(lounge.every((c) => c.projectId === fifth.id)).toBe(true)
+  })
+
+  it('filtro: os de outro projeto saem pela porta, ficam lá fora e voltam à MESMA mesa; a Central não sai', () => {
+    const now = T0 + 20_000
+    const feed = demoFeed(now)
+    const model = deriveOfficeModel(feed, now)
+    const layout = layoutOffice(model)
+    const s = new OfficeScene()
+    s.sync(layout, feed, { snapshot: snapshotOf(feed, model, now), events: [], wallNow: now, t: 0 })
+    const keep = layout.rooms[0].islands[0].projectId!
+    const desks = new Map(s.crowd.list.filter((b) => b.desk).map((b) => [b.key, `${b.desk!.x},${b.desk!.z}`]))
+    let t = 0
+    const run = (secs: number): void => {
+      for (let k = 0; k < Math.round(secs / 0.1); k++) s.animate((t += 0.1), 0.1)
+    }
+    s.setProjectFilter(keep, false)
+    run(45)
+    const others = s.crowd.list.filter((b) => b.projectId !== null && b.projectId !== keep)
+    expect(others.length).toBeGreaterThan(0)
+    expect(others.every((b) => b.outside && !b.visible)).toBe(true)
+    expect(s.crowd.list.filter((b) => b.projectId === keep).every((b) => b.visible)).toBe(true)
+    expect(s.crowd.list.find((b) => b.style === 'console')?.visible).toBe(true)
+    s.setProjectFilter(null, false)
+    run(45)
+    expect(others.every((b) => b.visible && !b.outside)).toBe(true)
+    for (const b of s.crowd.list) if (b.desk) expect(`${b.desk.x},${b.desk.z}`, b.key).toBe(desks.get(b.key))
+    s.dispose()
   })
 })

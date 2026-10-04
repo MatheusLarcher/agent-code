@@ -9,7 +9,7 @@
 import type { Errand } from './brainBoard'
 import type { AgentPhase, ToolKind } from './events'
 import { chairSide, seatOf, type Poi, type PoiKind, type Spot } from './furniture'
-import { MONITOR_BACK, MONITOR_Y } from './layout'
+import { MONITOR_BACK, MONITOR_Y, type SeatPlace } from './officePlan'
 import type { PartyRole, RoomParty } from './partyPlan'
 import { REACTION_S, smooth, type Action, type Reaction, type SeatKind } from './poses'
 
@@ -21,7 +21,7 @@ export type Gait = 'walk' | 'run' | 'stroll'
 export type PropKind = 'cup' | 'book' | 'can' | 'phone' | 'folder' | 'sign' | 'note' | 'flashlight' | 'pizza'
 export type Look = 'none' | 'point' | 'camera'
 /** Estilo do fixo: o que ele faz parado no lugar. */
-export type FixedStyle = 'board' | 'archive' | 'idle'
+export type FixedStyle = 'board' | 'archive' | 'console' | 'idle'
 
 export const LEISURES: readonly Leisure[] = ['coffee', 'shelf', 'window', 'plant', 'postit', 'chat', 'phone']
 export const DWELL_MIN = 6
@@ -51,14 +51,27 @@ export interface Goal {
   exit: boolean
 }
 
+/** A mesa de um cérebro: centro, para onde o monitor olha (dir) e o lado de fora da ilha (out). */
+export interface DeskRef {
+  x: number
+  z: number
+  dir: 1 | -1
+  out: 1 | -1
+}
+
 export interface Brain {
   readonly key: string
   role: Role
   style: FixedStyle
+  /** A sala física (o escritório); null só sem layout. */
   roomId: string | null
+  /** O projeto do personagem; null para a Central. */
+  projectId: string | null
   home: Spot
   /** Mesa própria (senta nela) e o monitor que o representa (olha para ele). */
-  desk: { x: number; z: number } | null
+  desk: DeskRef | null
+  /** Sem mesa: o lugar do lounge onde trabalha sentado. */
+  lounge: SeatPlace | null
   monitor: { x: number; y: number; z: number } | null
   /** Lado do colega para a entrega da pasta (+1 direita, -1 esquerda). */
   side: number
@@ -73,6 +86,8 @@ export interface Brain {
   idleSince: number | null
   // ── corpo
   visible: boolean
+  /** Filtrado fora (o filtro de projeto do HUD): sai pela porta e espera do lado de fora. */
+  outside: boolean
   x: number
   z: number
   yaw: number
@@ -171,8 +186,10 @@ export interface BrainInit {
   role: Role
   style?: FixedStyle
   roomId: string | null
+  projectId?: string | null
   home: Spot
-  desk?: { x: number; z: number } | null
+  desk?: DeskRef | null
+  lounge?: SeatPlace | null
   monitor?: { x: number; y: number; z: number } | null
   side?: number
   seed?: number
@@ -185,11 +202,11 @@ const near = (a: number, b: number): boolean => Math.abs(a - b) < 0.01
 export function createBrain(o: BrainInit): Brain {
   const desk = o.desk ?? null
   const b: Brain = {
-    key: o.key, role: o.role, style: o.style ?? 'idle', roomId: o.roomId, home: { ...o.home }, desk,
-    monitor: o.monitor ?? (desk ? { x: desk.x, y: MONITOR_Y, z: desk.z - MONITOR_BACK } : null),
+    key: o.key, role: o.role, style: o.style ?? 'idle', roomId: o.roomId, projectId: o.projectId ?? null, home: { ...o.home }, desk, lounge: o.lounge ?? null,
+    monitor: o.monitor ?? (desk ? { x: desk.x, y: MONITOR_Y, z: desk.z - desk.dir * MONITOR_BACK } : null),
     side: o.side ?? 1, seed: o.seed ?? 0,
     phase: 'idle', tool: null, toolAt: 0, contextLow: false, usageOut: false, stalled: false, idleSince: null,
-    visible: !o.away, x: o.home.x, z: o.home.z, yaw: o.home.yaw, speed: 0, sit: 0, seat: null, seatX: 0, seatZ: 0, standX: o.home.x, standZ: o.home.z,
+    visible: !o.away, outside: false, x: o.home.x, z: o.home.z, yaw: o.home.yaw, speed: 0, sit: 0, seat: null, seatX: 0, seatZ: 0, standX: o.home.x, standZ: o.home.z,
     path: new Float32Array(64), pathLen: 0, pathIdx: 0, planned: -1, atSpot: true, arrived: true,
     goal: { version: 0, x: o.home.x, z: o.home.z, yaw: o.home.yaw, seat: null, sx: 0, sz: 0, syaw: 0, gait: 'walk', exit: false },
     mode: 'init', modeT: 0, leisure: null, leisureT: 0, leisureDur: 0, lastLeisure: null, rest: 0, pause: -1, poi: null,
@@ -199,13 +216,16 @@ export function createBrain(o: BrainInit): Brain {
     party: null, partySlot: 0, partyStep: 0, partyT: 0, puppet: false, backUntil: -1, errand: null
   }
   // Quem tem mesa e está na sala começa sentado nela.
-  if (desk && !o.away && o.role !== 'fixed') {
-    const s = seatOf(desk)
-    const side = chairSide(desk, 1)
-    Object.assign(b, { x: s.x, z: s.z, yaw: s.yaw, sit: 1, seat: 'chair', seatX: s.x, seatZ: s.z, standX: side.x, standZ: side.z })
-    Object.assign(b.goal, { x: side.x, z: side.z, yaw: s.yaw, seat: 'chair', sx: s.x, sz: s.z, syaw: s.yaw })
-  }
+  if (desk && !o.away && o.role !== 'fixed') seatAtDesk(b, desk)
   return b
+}
+
+/** Põe o agente já sentado na mesa (sem andar): o começo e a volta do filtro com o escritório fora da tela. */
+export function seatAtDesk(b: Brain, desk: DeskRef): void {
+  const s = seatOf(desk)
+  const side = chairSide(desk)
+  Object.assign(b, { x: s.x, z: s.z, yaw: s.yaw, sit: 1, seat: 'chair', seatX: s.x, seatZ: s.z, standX: side.x, standZ: side.z, atSpot: true, arrived: true })
+  Object.assign(b.goal, { x: side.x, z: side.z, yaw: s.yaw, seat: 'chair', sx: s.x, sz: s.z, syaw: s.yaw, exit: false })
 }
 
 // ── reações (fila de até 3; a atual segura ou não o passo, ver HOLDS) ──────
@@ -266,10 +286,15 @@ export function stay(b: Brain): void {
   b.atSpot = true
 }
 
+/** Vai sentar no lugar de trabalho: a mesa (pelo lado de fora da ilha), o lugar do lounge ou, sem nenhum, o lugar dele. */
 export function goDesk(b: Brain, gait: Gait): void {
-  if (!b.desk) return goStand(b, b.home.x, b.home.z, b.home.yaw, gait)
+  if (!b.desk) {
+    const l = b.lounge
+    if (l) return goSeat(b, 'sofa', l.x, l.z, l.yaw, l.standX, l.standZ, gait)
+    return goStand(b, b.home.x, b.home.z, b.home.yaw, gait)
+  }
   const s = seatOf(b.desk)
-  const side = chairSide(b.desk, b.x >= b.desk.x ? 1 : -1)
+  const side = chairSide(b.desk)
   goSeat(b, 'chair', s.x, s.z, s.yaw, side.x, side.z, gait)
 }
 

@@ -57,7 +57,8 @@ function playDemo() {
         if (b.speed > 2.5) seen.ran = true
         if (b.role !== 'visitor' || !b.roomId) continue
         const room = s.room(b.roomId)
-        const where = !b.visible ? 'gone' : room && b.x < room.x ? 'out' : 'in'
+        // A porta é na parede da direita: fora = além dela (+X).
+        const where = !b.visible ? 'gone' : room && b.x > room.x + room.width ? 'out' : 'in'
         const trail = seen.visits.get(b.key) ?? []
         if (trail[trail.length - 1] !== where) trail.push(where)
         seen.visits.set(b.key, trail)
@@ -78,7 +79,7 @@ describe('a demo (Ctrl+Alt+Shift+D) mostra a vida do escritório', () => {
     expect(seen.reactions.has('celebrate') || seen.reactions.has('stretch')).toBe(true)
     // Gestos de trabalho por ferramenta, permissão, cochilo e fila.
     // (Na demo só um agente estoura o limite: ele é o 1º da fila e toma o café — 'brew' e 'sip'.)
-    for (const a of ['typeFast', 'readScreen', 'drum', 'web', 'wave', 'napDesk', 'napPufe', 'brew', 'sip']) expect(seen.actions.has(a), a).toBe(true)
+    for (const a of ['typeFast', 'readScreen', 'drum', 'web', 'wave', 'napDesk', 'napSofa', 'brew', 'sip']) expect(seen.actions.has(a), a).toBe(true)
     for (const m of ['free', 'work', 'permission', 'sleep', 'queue', 'leave', 'away']) expect(seen.modes.has(m), m).toBe(true)
     expect(seen.props.has('sign')).toBe(true)
     expect(seen.props.has('cup')).toBe(true)

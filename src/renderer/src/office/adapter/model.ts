@@ -6,6 +6,7 @@
  * Custo: O(conversas + trilhas + passos recentes). messages é lido só no turno
  * atual (scanTurn), do fim para o começo.
  */
+import { isCentralConversation } from '@shared/central'
 import { contextLimitFor, type MemoristaProviderDiagnosticMsg } from '@shared/ipc'
 import type { AgentTrack } from '../../agentTracks'
 import { buildCrew, callSegments, lineText, roleFromSubagentType, type CrewMember, type CrewRole } from '../../crew'
@@ -29,7 +30,7 @@ export type Placement =
 export interface OfficeCharacterModel {
   key: string
   convId: string
-  /** Sala do personagem; null = corredor (memória). */
+  /** Sala (o projeto) do personagem; null = sem projeto (a Central). */
   roomId: string | null
   role: CrewRole
   trackId?: string
@@ -152,8 +153,16 @@ const SEATED_SPECIALISTS: CrewRole[] = ['executor', 'critico', 'navegador-de-cod
  */
 export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: ReadonlySet<string>): OfficeModel {
   const rooms = new Map<string, RoomAcc>()
+  let central: OfficeCharacterModel | null = null
   for (const c of feed.conversations) {
     if (!isInOffice(c, feed, now)) continue
+    // A Central não é projeto: um personagem só, no console do centro (sem sala nem mesa).
+    if (isCentralConversation(c)) {
+      central = centralOf(c, feed, now)
+      continue
+    }
+    // Conversa sem pasta não vira sala de projeto.
+    if (!c.cwd) continue
     const id = roomIdFor(c.cwd)
     let acc = rooms.get(id)
     if (!acc) {
@@ -231,10 +240,10 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: Re
       // A trilha rodando mais recente manda; sem nenhuma rodando, a mais recente.
       const sorted = [...mem].sort((a, b) => b.track.startedAt - a.track.startedAt)
       const pick = sorted.find((y) => y.track.status === 'running') ?? sorted[0]
-      characters.push(trackChar(pick.track, pick.convId, null, 'memoria', { kind: 'destination', papel: 'arquivo-memorias' }, now, `role:${room.id}:memoria`))
+      characters.push(trackChar(pick.track, pick.convId, room.id, 'memoria', { kind: 'destination', papel: 'arquivo-memorias' }, now, `role:${room.id}:memoria`))
     } else if (feed.observersOn.memorista) {
       // Sem delegação de memória: o memorista (observador do main) acende o
-      // mesmo papel, no arquivo do corredor (animação 5).
+      // mesmo papel, na estante de Memórias.
       const diag = latestMemorista(feed, convs)
       if (diag) characters.push(memoristaChar(diag, room.id, now))
     }
@@ -257,7 +266,13 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: Re
       })
     }
   }
-  return { rooms: [...rooms.values()].map((r) => r.room), characters: [...characters, ...later] }
+  return { rooms: [...rooms.values()].map((r) => r.room), characters: [...(central ? [central] : []), ...characters, ...later] }
+}
+
+/** O personagem da Central: o estado de um principal, sem sala (filtro nenhum o tira) e com destino no console. */
+function centralOf(c: Conversation, feed: OfficeFeed, now: number): OfficeCharacterModel {
+  const crew = buildCrew({ tracks: {}, busy: feed.busyIds.has(c.id), busySince: feed.busySince[c.id] ?? null, vigia: null, po: null, poEnabled: false, vigiaEnabled: false, now })
+  return { ...principalOf(c, feed, '', crew, now), roomId: null, placement: { kind: 'destination', papel: 'central' } }
 }
 
 function latestMemorista(feed: OfficeFeed, convs: Conversation[]): MemoristaProviderDiagnosticMsg | null {
@@ -275,7 +290,7 @@ function memoristaChar(diag: MemoristaProviderDiagnosticMsg, roomId: string, now
   return {
     key: `role:${roomId}:memoria`,
     convId: diag.conversationId,
-    roomId: null,
+    roomId,
     role: 'memoria',
     placement: { kind: 'destination', papel: 'arquivo-memorias' },
     seed: `memorista:${roomId}`,

@@ -67,6 +67,7 @@ import { CodeMonitor } from './codeScreen/CodeMonitor'
 import { DEMO_TICK_MS, demoFeed } from './demoFeed'
 import { Office3DEngine, type EngineCallbacks, type EngineOptions } from './engine'
 import type { BoardOpen } from './engineTypes'
+import type { ProjectLayout } from './layout'
 import { OfficeChatFloat, type OfficeConversation } from './OfficeChatFloat'
 import { OfficeHud } from './OfficeHud'
 import { isPerfShortcut, PerfHud } from './PerfHud'
@@ -146,6 +147,8 @@ export function Office3DWorkspace({
   const [error, setError] = useState<string | null>(null)
   const [hud, setHud] = useState(false)
   const [power, setPower] = useState<OfficePower | null>(null)
+  // Filtro de projeto do HUD: os projetos no escritório e o filtro em vigor (o motor guarda e aplica).
+  const [projects, setProjects] = useState<{ list: readonly ProjectLayout[]; filter: string | null }>({ list: [], filter: null })
   // Sobem a cada duplo clique num agente (o chat expande com a conversa dele) e a cada 📍 (minimiza).
   const [expand, setExpand] = useState(0)
   const [collapse, setCollapse] = useState(0)
@@ -193,6 +196,7 @@ export function Office3DWorkspace({
         cbs.current.onOpenConversation(convId)
       },
       onPower: setPower,
+      onProjects: (list, filter) => setProjects({ list, filter }),
       onHover: (key) => cbs.current.onHover(key),
       onProjector: setProjectorRoom,
       onBoardOpen: setBoardOpen,
@@ -219,6 +223,7 @@ export function Office3DWorkspace({
       engineRef.current = null
       setFocusKey(null)
       setPower(null)
+      setProjects({ list: [], filter: null })
       setProjectorRoom(null)
       setBoardOpen(null)
     }
@@ -234,6 +239,7 @@ export function Office3DWorkspace({
     engineRef.current?.leaveFocus(true, true)
     setShowCentral(true)
   }, [])
+  const onFilter = useCallback((id: string | null): void => engineRef.current?.setProjectFilter(id), [])
 
   // Aba fechada: motor montado e parado; de volta, retoma na hora (feed guardado,
   // palco remedido) e o componente re-renderiza com o que o motor tem agora —
@@ -399,7 +405,14 @@ export function Office3DWorkspace({
             Não foi possível iniciar o 3D (WebGL): {error}
           </div>
         ) : null}
-        <OfficeHud power={power} windowsControlEnabled={windowsControlEnabled} onDisableWindowsControl={onDisableWindowsControl} />
+        <OfficeHud
+          power={power}
+          windowsControlEnabled={windowsControlEnabled}
+          onDisableWindowsControl={onDisableWindowsControl}
+          projects={projects.list}
+          filter={projects.filter}
+          onFilter={onFilter}
+        />
         {focused && (
           <div ref={screenRef} className="o3d-screen-anchor" key={focused.key}>
             <CodeMonitor

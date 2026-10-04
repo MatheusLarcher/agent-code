@@ -44,7 +44,7 @@ export function PerfHud({ source }: { source: () => PerfSource | null }): JSX.El
             <b>{s.calls}</b> draw calls · <b>{thousands(s.triangles)}</b> triângulos
           </div>
           <div>
-            salas {s.rooms}/{s.roomsTotal} · LOD {LOD_NAMES[s.lod]} · pixelRatio {s.pixelRatio.toFixed(2)}
+            zonas {s.rooms}/{s.roomsTotal} · LOD {LOD_NAMES[s.lod]} · pixelRatio {s.pixelRatio.toFixed(2)}
           </div>
           <div>sombra refeita {s.shadowUpdates}×</div>
         </>

@@ -131,7 +131,8 @@ describe('linha do tempo da demonstração', () => {
     expect(shape(showcase)).toEqual(shape(demoFeed(0)))
     expect(showcase.conversations.map((c) => c.messages.map((m) => ('id' in m ? m.id : '')))).toEqual(demoFeed(0).conversations.map((c) => c.messages.map((m) => ('id' in m ? m.id : ''))))
     const model = deriveOfficeModel(showcase, Date.now())
-    expect(model.characters).toHaveLength(DEMO_ROOMS * DEMO_PER_ROOM)
+    // + a Central, no console do centro.
+    expect(model.characters).toHaveLength(DEMO_ROOMS * DEMO_PER_ROOM + 1)
     expect(showcase.permissions['demo-0-2']?.input).toEqual({ command: 'npm publish' })
     expect(showcase.stalledSince['demo-4-2']).toBeLessThan(Date.now())
   })

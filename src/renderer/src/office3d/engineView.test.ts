@@ -184,7 +184,7 @@ describe('Office3DEngine — render sob demanda com culling', () => {
     engine.rig.pose = building
     engine.requestRender()
     flush(3)
-    expect(engine.stats.rooms).toBe(5)
+    expect(engine.stats.rooms).toBe(engine.stats.roomsTotal)
     expect(pending()).toBe(1)
     engine.dispose()
   })

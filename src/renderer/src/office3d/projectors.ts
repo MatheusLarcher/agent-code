@@ -1,5 +1,6 @@
 /**
- * Os projetores do escritório na cena — um por sala (projector.ts), ligados ao
+ * A TV da sala de reunião na cena (projector.ts: a imagem na tela da TV; antes
+ * era o projetor de cada sala), ligada ao
  * uso do navegador/Android (projectorUse.ts) e aos quadros do navegador
  * embutido (browserFrames.ts):
  *
@@ -23,6 +24,7 @@ import type { OfficeFeed } from '../office/adapter/feed'
 import type { OfficeCharacterModel } from '../office/adapter/model'
 import { BrowserFrames, decodeFrame, type BrowserFeedApi, type RawFrame } from './browserFrames'
 import type { RoomView } from './decor'
+import type { RoomLod } from './roomLod'
 import { demoPage } from './demoDevices'
 import type { Kit } from './kit'
 import type { RoomLayout } from './layout'
@@ -50,6 +52,8 @@ export interface ProjectorInfo {
 interface RoomState {
   readonly fx: RoomProjector
   readonly view: RoomView
+  /** A zona da TV (a sala de reunião): culling e nível. */
+  readonly lod: RoomLod
   readonly name: string
   use: DeviceUse | null
   bitmap: ImageBitmap | null
@@ -78,6 +82,8 @@ export class Projectors {
   frames: BrowserFrames | null = null
   /** Modo demonstração: as conversas da demo mostram a página falsa. */
   demo = false
+  /** Nome do projeto da conversa (o escritório é um só: a TV diz de qual projeto é o teste). */
+  projectOf: (convId: string) => string | null = () => null
   /** A imagem de uma sala começou a acender (os agentes dela olham para o centro da tela). */
   onLit: (roomId: string, x: number, y: number, z: number) => void = () => {}
   /** Desenho assíncrono pronto (quadro decodificado): a cena pede um quadro. */
@@ -109,13 +115,14 @@ export class Projectors {
       const cur = this.rooms.get(r.id)
       if (!view || cur?.view === view) continue
       if (cur) this.drop(cur, false)
-      const fx = new RoomProjector(this.sceneKit, this.kit, view.group, r.id, { x: view.furniture.screen.x, z: r.z })
+      const zone = view.zone('meeting')
+      const fx = new RoomProjector(this.sceneKit, this.kit, zone.group, r.id, view.furniture.tv)
       // Sala refeita (mais mesas) com a tela embaixo: a nova já nasce embaixo, sem descer de novo.
       if (cur?.fx.want) {
         fx.setWant(true)
         fx.snap(this.isDark(r.id))
       }
-      const st: RoomState = { fx, view, name: r.name, use: cur?.use ?? null, bitmap: null, bitmapConv: '', bitmapAt: 0, decoding: false, lastDecode: -Infinity, lastPaint: -Infinity, sig: '', eligible: false }
+      const st: RoomState = { fx, view, lod: zone.lod, name: r.name, use: cur?.use ?? null, bitmap: null, bitmapConv: '', bitmapAt: 0, decoding: false, lastDecode: -Infinity, lastPaint: -Infinity, sig: '', eligible: false }
       fx.onLit = () => {
         fx.center(this.center)
         this.onLit(fx.roomId, this.center.x, this.center.y, this.center.z)
@@ -173,7 +180,7 @@ export class Projectors {
   }
 
   private isEligible(st: RoomState): boolean {
-    const lod = st.view.lod
+    const lod = st.lod
     return st.fx.lit > 0 && st.use !== null && ((!lod.culled && lod.level < 2) || st.fx.mirroring)
   }
 
@@ -188,7 +195,7 @@ export class Projectors {
     if (!force && (sig === st.sig || now - st.lastPaint < MIN_PAINT_MS)) return false
     st.sig = sig
     st.lastPaint = now
-    st.fx.paint(view, !st.view.lod.culled && st.view.lod.level < 2)
+    st.fx.paint(view, !st.lod.culled && st.lod.level < 2)
     return true
   }
 
@@ -217,7 +224,7 @@ export class Projectors {
       url: (web && state?.url) || use.url,
       title: (web ? state?.title || use.title : use.title || state?.title) ?? '',
       live: demo || (this.frames?.live(use.convId) ?? false),
-      project: st.name,
+      project: this.projectOf(use.convId) ?? st.name,
       image
     }
   }
@@ -228,7 +235,7 @@ export class Projectors {
     const now = this.clock()
     for (let i = 0; i < this.list.length; i++) {
       const st = this.list[i]
-      const lod = st.view.lod
+      const lod = st.lod
       const dark = this.isDark(st.fx.roomId)
       if (lod.culled) {
         if (st.fx.drop !== (st.fx.want ? 1 : 0) || st.fx.lit !== (st.fx.want && !dark ? 1 : 0)) st.fx.snap(dark)
@@ -247,7 +254,7 @@ export class Projectors {
 
   /** Telas clicáveis (as que estão embaixo, em salas à vista). */
   pickTargets(out: Object3D[]): void {
-    for (const st of this.list) if (!st.view.lod.culled) st.fx.pickTargets(out)
+    for (const st of this.list) if (!st.lod.culled) st.fx.pickTargets(out)
   }
 
   /** O que o telão grande mostra da sala; null se ninguém usou o projetor dela. */
@@ -256,7 +263,7 @@ export class Projectors {
     const use = st?.use
     if (!st || !use) return null
     const view = this.viewOf(st, use, this.clock())
-    return { roomId, convId: use.convId, key: use.key, kind: use.kind, url: view.url, title: view.title, live: view.live, project: st.name }
+    return { roomId, convId: use.convId, key: use.key, kind: use.kind, url: view.url, title: view.title, live: view.live, project: view.project }
   }
 
   /** O telão grande da sala (o overlay) passa a receber cada desenho; null desliga. */

@@ -52,7 +52,7 @@ export class Quality {
     scene.setQuality(level, camDistance)
     this.stats.lod = level
     this.stats.rooms = scene.visibleRooms
-    this.stats.roomsTotal = scene.rooms3d.length
+    this.stats.roomsTotal = scene.zoneCount
   }
 
   /** Antes do render: pede o shadow map só se algo que projeta sombra mudou (e o sol projeta). */

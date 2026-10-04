@@ -45,6 +45,15 @@ describe('quem entra no escritório', () => {
     expect(roomIdFor('/home/x/Proj/')).toBe('/home/x/Proj')
   })
 
+  it('a Central vira UM personagem no console (sem sala, nem para o cwd vazio dela); conversa sem pasta não vira sala', () => {
+    const m = deriveOfficeModel(feed({ conversations: [conv('central', { cwd: '', mode: 'central' } as never), conv('solta', { cwd: '' }), conv('a')], activeId: 'central' }), NOW)
+    const central = m.characters.filter((c) => c.convId === 'central')
+    expect(central).toHaveLength(1)
+    expect(central[0]).toMatchObject({ key: 'conv:central', roomId: null, role: 'principal', placement: { kind: 'destination', papel: 'central' } })
+    expect(m.rooms.map((r) => r.id)).toEqual(['c:/proj/alpha'])
+    expect(m.characters.some((c) => c.convId === 'solta')).toBe(false)
+  })
+
   it('conversa de planejamento entra como as outras', () => {
     const m = deriveOfficeModel(feed({ conversations: [conv('p', { mode: 'planning', planningSlug: 's' })] }), NOW)
     expect(byKey(m.characters, 'conv:p')).toBeDefined()
@@ -142,7 +151,7 @@ describe('elenco por sala', () => {
     expect(byKey(off.characters, 'track:g')).toBeUndefined()
   })
 
-  it('memória no arquivo do corredor, PO perto do kanban, vigia ao lado do principal', () => {
+  it('memória na estante de Memórias (do projeto), PO perto do kanban, vigia ao lado do principal', () => {
     const m = deriveOfficeModel(
       feed({
         conversations: [conv('a')],
@@ -153,7 +162,7 @@ describe('elenco por sala', () => {
       NOW
     )
     const mem = byKey(m.characters, 'role:c:/proj/alpha:memoria')!
-    expect(mem.roomId).toBeNull()
+    expect(mem.roomId).toBe('c:/proj/alpha')
     expect(mem.placement).toMatchObject({ kind: 'destination', papel: 'arquivo-memorias' })
     const po = byKey(m.characters, 'po:c:/proj/alpha')!
     expect(po.placement).toMatchObject({ kind: 'destination', papel: 'kanban' })

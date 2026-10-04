@@ -71,6 +71,68 @@ export function createWoodTexture(anisotropy = 1): CanvasTexture {
   return t
 }
 
+/** Concreto claro salpicado do piso do escritório (repete; ~2 m por repetição). */
+export function createConcreteTexture(anisotropy = 1): CanvasTexture {
+  const S = 512
+  const { canvas, ctx } = canvas2d(S, S)
+  if (ctx) {
+    const r = rng(17)
+    ctx.fillStyle = '#d9d8ce'
+    ctx.fillRect(0, 0, S, S)
+    for (let i = 0; i < 9000; i++) {
+      ctx.fillStyle = `rgba(${r() > 0.5 ? '255,255,255' : '67,60,52'},${r() * 0.05})`
+      ctx.fillRect(r() * S, r() * S, r() * 5 + 1, r() * 5 + 1)
+    }
+    // Juntas discretas das placas.
+    ctx.fillStyle = 'rgba(90,84,72,0.08)'
+    ctx.fillRect(0, 0, S, 2)
+    ctx.fillRect(0, 0, 2, S)
+  }
+  const t = make(canvas, true)
+  t.anisotropy = anisotropy
+  return t
+}
+
+/** Carvalho claro (veios finos) dos tampos, estantes e ripados. */
+export function createOakTexture(anisotropy = 1): CanvasTexture {
+  const S = 256
+  const { canvas, ctx } = canvas2d(S, S)
+  if (ctx) {
+    const r = rng(29)
+    ctx.fillStyle = '#d3bf9a'
+    ctx.fillRect(0, 0, S, S)
+    for (let i = 0; i < 260; i++) {
+      const x = r() * S
+      ctx.strokeStyle = `rgba(${r() > 0.5 ? '91,58,28' : '255,247,224'},${r() * 0.07})`
+      ctx.lineWidth = r() * 1.4 + 0.3
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.bezierCurveTo(x + r() * 4, S / 3, x - r() * 4, S * 0.7, x + 3, S)
+      ctx.stroke()
+    }
+  }
+  const t = make(canvas, true)
+  t.anisotropy = anisotropy
+  return t
+}
+
+/** Feltro/tecido claro das divisórias e dos tapetes (trama fina). */
+export function createFeltTexture(): CanvasTexture {
+  const S = 128
+  const { canvas, ctx } = canvas2d(S, S)
+  if (ctx) {
+    ctx.fillStyle = '#d2d5c8'
+    ctx.fillRect(0, 0, S, S)
+    for (let i = 0; i < S; i += 2) {
+      ctx.fillStyle = i % 4 === 0 ? '#d9dccf' : '#cbd0c0'
+      ctx.fillRect(i, 0, 1, S)
+      ctx.fillStyle = 'rgba(223,226,213,0.6)'
+      ctx.fillRect(0, i, S, 0.5)
+    }
+  }
+  return make(canvas, true)
+}
+
 /** Tapete felpudo com borda. */
 export function createRugTexture(): CanvasTexture {
   const W = 512
