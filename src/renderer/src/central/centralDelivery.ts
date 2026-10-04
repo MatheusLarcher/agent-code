@@ -1,8 +1,9 @@
 /**
  * O caminho de ida da Central: decidir o destino (IPC `central:route`), entregar
- * pela MESMA `dispatch` do composer (fila, ocupado, bolha, sessão), perguntar
- * "Para onde vai?" e o "não era aqui". Mensagem nenhuma se perde: sem decisor,
- * a Central pergunta com opções de heurística; destino sumido, pergunta de novo.
+ * pela MESMA `dispatch` do composer (fila, ocupado, bolha, sessão) e perguntar
+ * "Para onde vai?". Mensagem nenhuma se perde: sem decisor, a Central pergunta
+ * com opções de heurística; destino sumido ou envio que falha, pergunta de novo.
+ * A saída do destino ("não era aqui", descarte) está em centralMove.ts.
  *
  * As funções recebem o que precisam do App (`CentralFlowDeps`) e leem a Central
  * pela `convsRef` — o estado novo só chega a ela no próximo render, então o que
@@ -14,6 +15,7 @@ import { readableMediaText } from '@shared/inlineMedia'
 import {
   CENTRAL_ID,
   isCentralConversation,
+  type CentralAnchor,
   type CentralAskReason,
   type CentralCorrection,
   type CentralOption,
@@ -27,12 +29,16 @@ import {
 import type { Conversation } from '../types'
 import type { CentralPayload } from './centralSend'
 import { centralAttachmentNames } from './centralRegistry'
-import { clip, isRoutedEntry, patchRequest, removeReplyOf } from './centralEntries'
-import { heuristicOptions, recentDestinations, routeText } from './centralRecents'
+import { clip, isOwnEntry, patchRequest } from './centralEntries'
+import { heuristicOptions, recentDestinations, routeText, sameTarget } from './centralRecents'
 
 /** O aviso quando o destino escolhido não existe mais. */
 export const TARGET_MISSING_MESSAGE = 'O destino não existe mais — escolha para onde vai.'
 export const ATTACHMENTS_LOST_MESSAGE = 'Os anexos não foram reenviados.'
+/** Pedido de outro PC: só o dono o encaminha (a mescla devolveria o pedido ao estado dele). */
+export const OTHER_DEVICE_MESSAGE = 'Este pedido é do outro PC: só ele pode encaminhá-lo.'
+/** Mensagem da Central que saiu da fila do destino sem rodar (Stop, lixeira, conversa apagada). */
+export const DISCARDED_MESSAGE = 'Uma mensagem da Central saiu da fila sem rodar — escolha para onde vai.'
 /** O "porquê" de um destino escolhido no "Para onde vai?". */
 export const CHOSEN_WHY = 'escolhido por você'
 /** Pedidos com o conteúdo inteiro (anexos) guardado em memória, para o "não era aqui". */
@@ -58,6 +64,8 @@ export type CentralDispatch = (
 ) => Promise<void>
 
 export interface CentralFlowDeps {
+  /** `installationId` deste PC: só as entradas dele são encaminhadas daqui. */
+  device: string | undefined
   convsRef: MutableRefObject<Conversation[]>
   busyRef: { readonly current: ReadonlySet<string> }
   queueRef: { readonly current: readonly CentralQueueItem[] }
@@ -66,6 +74,9 @@ export interface CentralFlowDeps {
   payloads: Map<string, CentralPayload>
   /** Regra e confiança do destino tirado pelo "não era aqui" (para o log de correção). */
   moved: Map<string, { rule?: CentralRule; confidence?: number }>
+  /** A geração de cada pedido: toda entrega, "não era aqui" ou descarte a avança, e
+   *  um caminho antigo que volta de um `await` nunca mexe numa âncora mais nova. */
+  generations: Map<string, number>
   sandboxRoot: string
   patchConv: (id: string, fn: (c: Conversation) => Conversation) => void
   /** Põe na tela uma conversa lida do banco. */
@@ -74,9 +85,14 @@ export interface CentralFlowDeps {
   /** Uma "Nova conversa" normal na pasta, criada ao fundo (sem virar a ativa). */
   createConversation: (cwd: string) => Conversation
   dispatch: CentralDispatch
+  /** Tira o item da fila SEM avisar a Central (quem tira é ela, no "não era aqui"). */
   deleteQueued: (queueId: string) => void
-  /** Para o turno da conversa SEM descartar o resto da fila dela. */
+  /** Para o turno da conversa (e a recuperação automática pendente dele) SEM
+   *  descartar o resto da fila dela. */
   stopKeepingQueue: (convId: string) => void
+  /** O envio da bolha falhou e a Central vai perguntar de novo: a bolha e o "Tentar
+   *  de novo" dela saem do destino (o reenvio do pedido é só da Central). */
+  discardFailed: (convId: string, msgId: string) => void
   notify: (kind: 'aviso' | 'erro', msg: string) => void
 }
 
@@ -88,26 +104,50 @@ export interface RouteJob {
   exclude?: CentralTarget
   /** Por que a tela forçou a pergunta (sobrepõe o motivo do decisor). */
   reason?: CentralAskReason
+  /** A geração de quem pediu: se ela avançou durante o `await` do decisor, nada muda. */
+  gen?: number
 }
 
 type ChosenRoute = NonNullable<CentralRequestEntry['route']>
 
 const uid = (prefix: string): string => prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
 
-const centralEntries = (d: CentralFlowDeps) => d.convsRef.current.find((c) => c.id === CENTRAL_ID)?.central?.entries ?? []
+export const centralEntries = (d: CentralFlowDeps) =>
+  d.convsRef.current.find((c) => c.id === CENTRAL_ID)?.central?.entries ?? []
 
 const convsById = (d: CentralFlowDeps): Map<string, Conversation> => new Map(d.convsRef.current.map((c) => [c.id, c]))
 
-function findRequest(d: CentralFlowDeps, id: string): CentralRequestEntry | undefined {
+export function findRequest(d: CentralFlowDeps, id: string): CentralRequestEntry | undefined {
   return centralEntries(d).find((e): e is CentralRequestEntry => e.kind === 'request' && e.id === id)
 }
 
-function patchCentral(d: CentralFlowDeps, fn: (s: CentralState | undefined) => CentralState): void {
+/** Avança a geração do pedido e a devolve (a de quem está agindo agora). */
+export function nextGeneration(d: CentralFlowDeps, entryId: string): number {
+  const gen = (d.generations.get(entryId) ?? 0) + 1
+  d.generations.set(entryId, gen)
+  return gen
+}
+
+const isCurrent = (d: CentralFlowDeps, entryId: string, gen: number | undefined): boolean =>
+  gen === undefined || d.generations.get(entryId) === gen
+
+/** Só o PC dono de um pedido age sobre ele (escolher, "não era aqui"): o do outro PC
+ *  despacharia aqui e a mescla o devolveria ao estado de lá. */
+export function ownedHere(d: CentralFlowDeps, entry: CentralRequestEntry): boolean {
+  if (isOwnEntry(entry, d.device)) return true
+  d.notify('aviso', OTHER_DEVICE_MESSAGE)
+  return false
+}
+
+export function patchCentral(d: CentralFlowDeps, fn: (s: CentralState | undefined) => CentralState): void {
   d.patchConv(CENTRAL_ID, (c) => ({ ...c, central: fn(c.central), updatedAt: Date.now() }))
 }
 
 const patchEntry = (d: CentralFlowDeps, id: string, fn: (e: CentralRequestEntry) => CentralRequestEntry): void =>
   patchCentral(d, (s) => patchRequest(s, id, fn))
+
+const sameAnchor = (a: CentralAnchor | undefined, convId: string, msgId: string): boolean =>
+  a?.convId === convId && a.msgId === msgId
 
 function withoutAsk(e: CentralRequestEntry): CentralRequestEntry {
   const { ask: _ask, ...rest } = e
@@ -116,6 +156,15 @@ function withoutAsk(e: CentralRequestEntry): CentralRequestEntry {
 
 const pathExists = (p: string): Promise<boolean> => window.api.pathExists(p).catch(() => false)
 
+/** Um destino com a forma do contrato (a entrega age sobre ele: cria conversa, cria pasta). */
+function isTarget(value: unknown): value is CentralTarget {
+  if (!value || typeof value !== 'object') return false
+  const t = value as Record<string, unknown>
+  if (t.kind === 'new-sandbox') return true
+  if (t.kind === 'new-conversation') return typeof t.cwd === 'string' && t.cwd !== ''
+  return t.kind === 'conversation' && typeof t.convId === 'string' && t.convId !== '' && typeof t.cwd === 'string'
+}
+
 /** O resultado do IPC, conferido por cima (null = indisponível, rejeitado ou torto). */
 async function askRouter(req: CentralRouteRequest): Promise<CentralRouteResult | null> {
   if (typeof window.api?.centralRoute !== 'function') return null
@@ -123,16 +172,20 @@ async function askRouter(req: CentralRouteRequest): Promise<CentralRouteResult |
     const r: unknown = await window.api.centralRoute(req)
     if (!r || typeof r !== 'object') return null
     const res = r as CentralRouteResult
-    if (res.kind === 'direct' && res.target && typeof res.target === 'object') return res
-    if (res.kind === 'ask' && Array.isArray(res.options)) return res
-    return null
+    if (res.kind === 'direct') return isTarget(res.target) ? res : null
+    if (res.kind !== 'ask' || !Array.isArray(res.options) || !res.options.every((o) => isTarget(o?.target))) return null
+    const best = res.best
+    const bestOk = typeof best === 'number' && Number.isInteger(best) && best >= 0 && best < res.options.length
+    if (bestOk || best === undefined) return res
+    const { best: _best, ...rest } = res
+    return rest
   } catch {
     return null
   }
 }
 
 /** Nomes de anexo dentro dos limites do IPC. */
-const attachmentNames = (names: readonly string[]): string[] =>
+export const attachmentNames = (names: readonly string[]): string[] =>
   names.slice(0, MAX_ATTACHMENT_NAMES).map((n) => clip(n, ATTACHMENT_NAME_MAX))
 
 /**
@@ -151,6 +204,7 @@ export async function routeEntry(d: CentralFlowDeps, job: RouteJob): Promise<voi
     ...(job.forceAsk ? { forceAsk: true } : {}),
     ...(job.exclude ? { exclude: job.exclude } : {})
   })
+  if (!isCurrent(d, job.entryId, job.gen)) return
   if (result?.kind === 'direct' && !job.forceAsk) {
     const { target, rule, confidence, why } = result
     await deliverEntry(d, job.entryId, target, { target, rule, confidence, why })
@@ -163,12 +217,15 @@ export async function routeEntry(d: CentralFlowDeps, job: RouteJob): Promise<voi
     options = result.options
     best = result.best
     reason = result.reason
-  } else if (result?.kind === 'direct') {
-    options = [{ target: result.target }]
-    reason = 'moved'
   } else {
     options = heuristicOptions(recent, convs, d.sandboxRoot, job.exclude)
     if (result?.kind === 'ask') reason = result.reason
+    // Direto apesar do `forceAsk`: o destino dele vira a 1ª opção (nunca o excluído).
+    if (result?.kind === 'direct') {
+      const t = result.target
+      if (!job.exclude || !sameTarget(t, job.exclude)) options = [{ target: t }, ...options.filter((o) => !sameTarget(o.target, t))]
+      reason = 'moved'
+    }
   }
   const ask = { options, reason: job.reason ?? reason, ...(best !== undefined ? { best } : {}) }
   patchEntry(d, job.entryId, (e) => ({ ...e, state: 'asking', ask }))
@@ -209,16 +266,31 @@ async function resolveTarget(d: CentralFlowDeps, target: CentralTarget): Promise
   return createdIn(d, made.path)
 }
 
-/** Some os bytes dos pedidos mais antigos: o "não era aqui" deles reenvia só o texto. */
-function prunePayloads(payloads: Map<string, CentralPayload>): void {
-  for (const id of [...payloads.keys()].slice(0, Math.max(0, payloads.size - KEPT_PAYLOADS))) payloads.delete(id)
+/** Some os bytes dos pedidos entregues mais antigos (o "não era aqui" deles reenvia
+ *  só o texto). Pedido ainda esperando destino nunca perde os dele. */
+function prunePayloads(d: CentralFlowDeps): void {
+  let excess = d.payloads.size - KEPT_PAYLOADS
+  if (excess <= 0) return
+  const waiting = new Set(
+    centralEntries(d)
+      .filter((e) => e.kind === 'request' && (e.state === 'routing' || e.state === 'asking'))
+      .map((e) => e.id)
+  )
+  for (const id of [...d.payloads.keys()]) {
+    if (excess <= 0) break
+    if (waiting.has(id)) continue
+    d.payloads.delete(id)
+    excess -= 1
+  }
 }
 
 /**
  * Entrega o pedido no destino. Conversa sumida (ou sem pasta) → aviso e
  * pergunta de novo (`target-missing`); sandbox que não pôde ser criado → aviso
  * de erro e o pedido continua perguntando. Devolve se a mensagem chegou ao
- * destino (rodando ou na fila dele).
+ * destino (rodando ou na fila dele). Uma entrega cuja geração ficou para trás
+ * (um "não era aqui", outra escolha ou um descarte agiu durante os `await`) não
+ * mexe mais no pedido.
  */
 export async function deliverEntry(
   d: CentralFlowDeps,
@@ -226,6 +298,7 @@ export async function deliverEntry(
   target: CentralTarget,
   route: ChosenRoute
 ): Promise<boolean> {
+  const gen = nextGeneration(d, entryId)
   const payload = d.payloads.get(entryId)
   const entry = findRequest(d, entryId)
   // Logo depois do envio a entrada ainda não chegou à ref: os nomes saem do conteúdo.
@@ -233,6 +306,7 @@ export async function deliverEntry(
     entry?.attachments ?? (payload ? centralAttachmentNames(payload.images, payload.files, payload.fileRefs) : [])
   const text = payload?.text ?? entry?.text ?? ''
   const conv = await resolveTarget(d, target)
+  if (!isCurrent(d, entryId, gen)) return false
   if (conv === 'sandbox-error') {
     const convs = convsById(d)
     const options = heuristicOptions(recentDestinations(centralEntries(d), convs), convs, d.sandboxRoot)
@@ -241,42 +315,72 @@ export async function deliverEntry(
   }
   if (!conv) {
     d.notify('aviso', TARGET_MISSING_MESSAGE)
-    await routeEntry(d, { entryId, text, attachments: names, forceAsk: true, exclude: target, reason: 'target-missing' })
+    await routeEntry(d, { entryId, text, attachments: names, forceAsk: true, exclude: target, reason: 'target-missing', gen })
     return false
   }
   const msgId = uid('u')
   patchEntry(d, entryId, (e) => ({ ...withoutAsk(e), state: 'delivered', route, anchor: { convId: conv.id, msgId } }))
   // Sem o conteúdo em memória (reinício): vai o texto, sem os anexos.
   if (!payload && names.length) d.notify('aviso', ATTACHMENTS_LOST_MESSAGE)
-  await d.dispatch(
-    conv,
-    payload ? payload.text : readableMediaText(text),
-    payload?.images ?? [],
-    payload?.thumbs ?? [],
-    payload?.files ?? [],
-    payload?.fileRefs ?? [],
-    msgId
-  )
+  const dispatched = await d
+    .dispatch(
+      conv,
+      payload ? payload.text : readableMediaText(text),
+      payload?.images ?? [],
+      payload?.thumbs ?? [],
+      payload?.files ?? [],
+      payload?.fileRefs ?? [],
+      msgId
+    )
+    .then(
+      () => true,
+      () => false
+    )
+  // Durante o envio (o connect pode demorar), outro caminho assumiu o pedido.
+  if (!isCurrent(d, entryId, gen)) return false
   const sent =
-    d.busyRef.current.has(conv.id) || d.queueRef.current.some((q) => q.convId === conv.id && q.msgId === msgId)
+    dispatched &&
+    (d.busyRef.current.has(conv.id) || d.queueRef.current.some((q) => q.convId === conv.id && q.msgId === msgId))
   if (!sent) {
-    // Nem rodando nem na fila: o envio falhou (a bolha de lá ficou com o erro).
+    // Nem rodando nem na fila: o envio falhou. A Central pergunta de novo e é a
+    // única dona do reenvio — a bolha com "Tentar de novo" sai do destino.
+    nextGeneration(d, entryId)
+    d.discardFailed(conv.id, msgId)
     patchEntry(d, entryId, (e) => {
+      if (!sameAnchor(e.anchor, conv.id, msgId)) return e
       const { anchor: _anchor, ...rest } = e
       return { ...rest, state: 'failed' }
     })
-    await routeEntry(d, { entryId, text, attachments: names, forceAsk: true, reason: 'target-missing' })
+    await routeEntry(d, { entryId, text, attachments: names, forceAsk: true, reason: 'target-missing', gen: d.generations.get(entryId) })
     return false
   }
-  prunePayloads(d.payloads)
+  prunePayloads(d)
   return true
+}
+
+/**
+ * Rede de segurança dos três caminhos (envio, escolha, "não era aqui"): um erro
+ * inesperado no meio (IPC, disco) não deixa o pedido preso em "routing" — ele
+ * volta a perguntar, com as opções que já tinha ou as de heurística (sem o
+ * destino de onde foi tirado). Mensagem nenhuma se perde.
+ */
+export function rescueEntry(d: CentralFlowDeps, entryId: string, err: unknown): void {
+  const convs = convsById(d)
+  const recent = recentDestinations(centralEntries(d), convs)
+  patchEntry(d, entryId, (e) => {
+    if (e.state !== 'routing') return e
+    const reason: CentralAskReason = e.movedFrom ? 'moved' : 'typesafe-failed'
+    return { ...e, state: 'asking', ask: e.ask ?? { options: heuristicOptions(recent, convs, d.sandboxRoot, e.movedFrom), reason } }
+  })
+  d.notify('erro', `A Central não conseguiu encaminhar o pedido: ${err instanceof Error ? err.message : String(err)}`)
 }
 
 /** "Para onde vai?": o usuário escolheu a opção `index`. */
 export async function chooseOption(d: CentralFlowDeps, entryId: string, index: number): Promise<void> {
   const entry = findRequest(d, entryId)
-  const option = entry?.state === 'asking' ? entry.ask?.options[index] : undefined
-  if (!entry || !option) return
+  if (!entry || !ownedHere(d, entry)) return
+  const option = entry.state === 'asking' ? entry.ask?.options[index] : undefined
+  if (!option) return
   patchEntry(d, entryId, (e) => ({ ...e, state: 'routing' }))
   const delivered = await deliverEntry(d, entryId, option.target, { target: option.target, why: CHOSEN_WHY, byUser: true })
   if (delivered && entry.movedFrom) logCorrection(d, entry, entry.movedFrom, option.target)
@@ -298,29 +402,4 @@ function logCorrection(d: CentralFlowDeps, entry: CentralRequestEntry, from: Cen
     to
   }
   void window.api.centralCorrection?.(correction)?.catch(() => undefined)
-}
-
-/**
- * "Não era aqui" (só pedidos roteados e entregues): tira a mensagem do destino
- * — da fila, se ainda espera (só aquele item); parando o turno, se é ele que
- * roda (o resto da fila fica); nada, se já terminou —, apaga a resposta
- * espelhada e pergunta para onde vai (`forceAsk`, sem o destino errado).
- */
-export async function moveEntry(d: CentralFlowDeps, entryId: string): Promise<void> {
-  const entry = findRequest(d, entryId)
-  if (!entry || entry.state !== 'delivered' || !entry.anchor || !entry.route || entry.injected || !isRoutedEntry(entry)) return
-  const { convId, msgId } = entry.anchor
-  const queued = d.queueRef.current.find((q) => q.convId === convId && q.msgId === msgId)
-  if (queued) d.deleteQueued(queued.id)
-  else if (d.busyRef.current.has(convId) && d.inflightRef.current[convId]?.msgId === msgId) d.stopKeepingQueue(convId)
-  const from = entry.route.target
-  d.moved.set(entryId, { rule: entry.route.rule, confidence: entry.route.confidence })
-  patchCentral(d, (s) =>
-    patchRequest(removeReplyOf(s, entryId), entryId, (e) => {
-      const { route: _route, anchor: _anchor, ask: _ask, ...rest } = e
-      return { ...rest, state: 'routing', movedFrom: from }
-    })
-  )
-  const text = d.payloads.get(entryId)?.text ?? entry.text
-  await routeEntry(d, { entryId, text, attachments: entry.attachments ?? [], forceAsk: true, exclude: from, reason: 'moved' })
 }

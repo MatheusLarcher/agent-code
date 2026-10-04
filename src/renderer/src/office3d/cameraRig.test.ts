@@ -6,6 +6,7 @@ import {
   easeInOut,
   framePose,
   lerpPose,
+  MONITOR_BOTTOM_GAP,
   MONITOR_FILL,
   MONITOR_HALF_H,
   MONITOR_HALF_W,
@@ -47,19 +48,44 @@ describe('monitorPose', () => {
     expect(MONITOR_HALF_H * 2).toBe(SCREEN_H)
   })
 
-  it('palco largo (16:9): a altura limita e a tela ocupa ~85% dela', () => {
+  it('palco largo (16:9): a altura limita e a tela ocupa ~94% dela (~10% maior que os 85% de antes)', () => {
     const f = screenFill(16 / 9)
+    expect(MONITOR_FILL / 0.85).toBeGreaterThan(1.1)
     expect(f.h).toBeCloseTo(MONITOR_FILL, 1)
-    expect(f.h).toBeGreaterThan(0.82)
-    expect(f.h).toBeLessThan(0.88)
+    expect(f.h).toBeGreaterThan(0.91)
+    expect(f.h).toBeLessThan(0.97)
     expect(f.w).toBeLessThan(f.h)
   })
 
   it('palco estreito (0.4): a largura limita e a tela cabe com margem', () => {
     const f = screenFill(0.4)
-    expect(f.w).toBeGreaterThan(0.82)
-    expect(f.w).toBeLessThan(0.88)
+    expect(f.w).toBeGreaterThan(0.91)
+    expect(f.w).toBeLessThan(0.97)
     expect(f.h).toBeLessThan(f.w)
+  })
+
+  it('com a faixa do HUD (heightPx + clearTopPx): a tela desce para livrar a faixa, não passa do fim e fica maior que a de antes', () => {
+    const m = { x: 3, y: 1.12, z: 2 }
+    const z = m.z + MONITOR_SCREEN_FRONT
+    for (const [w, h] of [
+      [1600, 900],
+      [1280, 720],
+      [1920, 1200],
+      [600, 900]
+    ]) {
+      const aspect = w / h
+      const pose = monitorPose(m, { fovDeg: FOV, aspect, heightPx: h, clearTopPx: 56 })
+      const px = (y: number): number => ((1 - ndc(pose, aspect, { x: m.x, y, z }).y) / 2) * h
+      const top = px(m.y + MONITOR_HALF_H)
+      const bottom = px(m.y - MONITOR_HALF_H)
+      expect(top).toBeGreaterThanOrEqual(56 - 1)
+      expect(bottom).toBeLessThanOrEqual(h - MONITOR_BOTTOM_GAP + 1)
+      // Maior que a tela de antes (85% do palco, centrada).
+      const before = monitorPose(m, { fovDeg: FOV, aspect }, 0.85)
+      expect(pose.distance).toBeLessThan(before.distance)
+    }
+    // Sem a altura do palco, nada muda: centrada, como antes.
+    expect(monitorPose(m, { fovDeg: FOV, aspect: 16 / 9, clearTopPx: 56 }).ty).toBe(m.y)
   })
 
   it('palco mais estreito afasta a câmera', () => {

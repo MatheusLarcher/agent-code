@@ -24,6 +24,8 @@ export interface TrackStep {
   isError?: boolean
   /** Result text, trimmed — the panel shows a preview, not the whole payload. */
   result?: string
+  /** Model id that made this call (from the response), when the event says. */
+  model?: string
 }
 
 export interface AgentTrack {
@@ -128,7 +130,13 @@ export function reduceTracks(map: TrackMap, e: ChatEvent, now = Date.now()): Tra
       stepCount: 0,
       steps: []
     }
-    const step: TrackStep = { id: e.id, name: e.name, input: e.input, startedAt: now }
+    const step: TrackStep = {
+      id: e.id,
+      name: e.name,
+      input: e.input,
+      startedAt: now,
+      ...(typeof e.model === 'string' && e.model.trim() ? { model: e.model } : {})
+    }
     return {
       ...map,
       [existing.id]: {

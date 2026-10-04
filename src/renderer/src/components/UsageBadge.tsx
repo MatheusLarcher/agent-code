@@ -80,13 +80,19 @@ function labelOf(limit: RateLimitStatus): string {
   return usageProviderOf(limit.rateLimitType) === 'gpt' ? gptLabel(limit) : LABELS[limit.rateLimitType]
 }
 
+type Level = 'ok' | 'warn' | 'crit'
+const pctOf = (limit: RateLimitStatus): number => Math.min(100, (limit.utilization ?? 0) * 100)
+function levelOf(limit: RateLimitStatus): Level {
+  const pct = pctOf(limit)
+  return limit.status === 'rejected' || pct >= 95 ? 'crit' : limit.status === 'allowed_warning' || pct >= 80 ? 'warn' : 'ok'
+}
+
 /** One window's usage pill — same visual language as ChatPanel's ContextBar
- *  (`.ctx-bar*` classes), so the topbar and the chat header feel consistent.
- *  The reset time sits beside it in small, muted text — always visible, not
- *  just on hover (the hover tooltip still explains the concept + repeats it). */
-export function UsagePill({ limit, dense = false }: { limit: RateLimitStatus; dense?: boolean }): JSX.Element {
-  const pct = Math.min(100, (limit.utilization ?? 0) * 100)
-  const level = limit.status === 'rejected' || pct >= 95 ? 'crit' : limit.status === 'allowed_warning' || pct >= 80 ? 'warn' : 'ok'
+ *  (`.ctx-bar*` classes). Used in the expanded panel; the reset time sits
+ *  beside it, and the hover tooltip explains the concept. */
+export function UsagePill({ limit }: { limit: RateLimitStatus }): JSX.Element {
+  const pct = pctOf(limit)
+  const level = levelOf(limit)
   const label = labelOf(limit)
   const resetText = limit.resetsAt ? fmtResetsAt(limit.resetsAt) : ''
   const resetHint = resetText ? ` — ${resetText}` : ''
@@ -102,7 +108,67 @@ export function UsagePill({ limit, dense = false }: { limit: RateLimitStatus; de
         </span>
         <span className="ctx-bar-val">{pct.toFixed(0)}%</span>
       </div>
-      {resetText && !dense && <span className="usage-reset">{resetText}</span>}
+      {resetText && <span className="usage-reset">{resetText}</span>}
+    </div>
+  )
+}
+
+const SESSION_TYPES: RateLimitStatus['rateLimitType'][] = ['five_hour', 'gpt_primary']
+const WEEKLY_TYPES: RateLimitStatus['rateLimitType'][] = [
+  'seven_day',
+  'gpt_secondary',
+  'seven_day_overage_included',
+  'seven_day_opus',
+  'seven_day_sonnet'
+]
+const pick = (limits: RateLimitStatus[], types: RateLimitStatus['rateLimitType'][]): RateLimitStatus | undefined =>
+  types.map((t) => limits.find((l) => l.rateLimitType === t)).find(Boolean)
+
+function Arc({ r, limit }: { r: number; limit?: RateLimitStatus }): JSX.Element {
+  return (
+    <>
+      <circle className="usage-ring-track" cx="14" cy="14" r={r} />
+      {limit && (
+        <circle
+          className={`usage-ring-arc ${levelOf(limit)}`}
+          cx="14"
+          cy="14"
+          r={r}
+          pathLength={100}
+          strokeDasharray={`${pctOf(limit)} 100`}
+        />
+      )}
+    </>
+  )
+}
+
+/** Compact usage for one subscription/account: a double ring — outer = the
+ *  short session window (5h), inner = the weekly one. Hovering shows every
+ *  window's % and reset; the full panel stays behind the chevron. */
+export function UsageRing({ name, initial, limits }: { name: string; initial: string; limits: RateLimitStatus[] }): JSX.Element {
+  const session = pick(limits, SESSION_TYPES)
+  const weekly = pick(limits, WEEKLY_TYPES)
+  const worst = limits.some((l) => levelOf(l) === 'crit') ? 'crit' : limits.some((l) => levelOf(l) === 'warn') ? 'warn' : 'ok'
+  const summary = limits.map((l) => `${labelOf(l)} ${pctOf(l).toFixed(0)}%`).join(', ')
+  return (
+    <div className={`usage-ring ${worst}`} tabIndex={0} role="img" aria-label={`${name}: ${summary}`}>
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+        <Arc r={12} limit={session} />
+        <Arc r={8} limit={weekly} />
+        <text x="14" y="14" className="usage-ring-initial">
+          {initial}
+        </text>
+      </svg>
+      <div className="usage-ring-tip" aria-hidden="true">
+        <strong>{name}</strong>
+        {limits.map((l) => (
+          <div className={`usage-ring-row ${levelOf(l)}`} key={l.rateLimitType}>
+            <span>{labelOf(l)}</span>
+            <b>{pctOf(l).toFixed(0)}%</b>
+            <small>{l.resetsAt ? fmtResetsAt(l.resetsAt) : ''}</small>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -151,19 +217,11 @@ export function UsageBadge({ limits, providers = ALL_PROVIDERS, onProvidersChang
     present.filter((l) => usageProviderOf(l.rateLimitType) === p)
   const shown = PROVIDER_ORDER.filter((p) => providers[p] && byProvider(p).length > 0)
   const toggle = (p: UsageProvider): void => onProvidersChange?.({ ...providers, [p]: !providers[p] })
-  // With both subscriptions on the bar the reset hints stop fitting the topbar;
-  // they stay one hover (tooltip) or one click (popover) away.
-  const dense = shown.reduce((n, p) => n + byProvider(p).length, 0) > 2
 
   return (
     <div className={`usage-badge${open ? ' open' : ''}`} ref={rootRef}>
       {shown.map((p) => (
-        <div className="usage-group" key={p}>
-          <span className="usage-provider">{PROVIDER_LABEL[p]}</span>
-          {byProvider(p).map((l) => (
-            <UsagePill key={l.rateLimitType} limit={l} dense={dense} />
-          ))}
-        </div>
+        <UsageRing key={p} name={PROVIDER_LABEL[p]} initial={PROVIDER_LABEL[p][0]} limits={byProvider(p)} />
       ))}
       {shown.length === 0 && <span className="usage-provider muted">Uso</span>}
       <button

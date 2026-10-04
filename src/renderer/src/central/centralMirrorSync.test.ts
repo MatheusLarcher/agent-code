@@ -115,8 +115,9 @@ describe('planMirror', () => {
     expect(p.upserts).toEqual([])
   })
 
-  it('destino fora da tela: vai para o re-link (só turno não terminado)', () => {
-    const p = plan([req('r1', 'longe', 'u1'), req('r2', 'c1', 'u2')], [conv('c1', [user('u2')])])
+  it('destino fora da tela: re-link só de turno que começou e não terminou (o que nunca rodou não recarrega a cada boot)', () => {
+    const started: CentralReplyEntry = { kind: 'reply', id: 'reply:r1', ts: 9, requestId: 'r1', anchor: { convId: 'longe', msgId: 'u1' }, notes: ['olhando'], activity: { segments: [], text: '', count: 0, errors: 0 }, done: false }
+    const p = plan([req('r1', 'longe', 'u1'), started, req('r2', 'c1', 'u2'), req('r3', 'nunca-rodou', 'u3')], [conv('c1', [user('u2')])])
     expect(p.missing).toEqual(['longe'])
   })
 

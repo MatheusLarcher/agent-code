@@ -1,6 +1,8 @@
 /** Messages between the voice host (main process) and the voice worker. */
 
-export const KOKORO_VOICES = ['pf_dora', 'pm_alex', 'pm_santa'] as const
+/** Hugging Face repo of the Kokoro model (the worker loads it; installed.ts checks its files). */
+export const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX'
+export const KOKORO_VOICES =['pf_dora', 'pm_alex', 'pm_santa'] as const
 export type KokoroVoice = (typeof KOKORO_VOICES)[number]
 
 export type Dtype = 'fp32' | 'fp16' | 'q8' | 'q4'

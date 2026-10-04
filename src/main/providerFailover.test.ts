@@ -33,7 +33,7 @@ function stub() {
 const settled = async (): Promise<void> => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 
 describe('provider failover', () => {
-  it.each([['claude-opus-5-5', 'gpt-6-astra'], ['gpt-6-astra', 'claude-opus-5-5']])('continues %s on %s exactly once with the same transcript', async (from, to) => {
+  it.each([['claude-opus-5-5', 'gpt-6.1-sol'], ['gpt-6-astra', 'claude-opus-5-5']])('continues %s on %s exactly once with the same transcript', async (from, to) => {
     const h = harness(from)
     await h.session.start()
     await h.session.send('Crie um arquivo', [{ data: 'image', mediaType: 'image/png' }], 'user-id')
@@ -171,7 +171,7 @@ describe('tarefa MCP com modelo pedido (pinModel)', () => {
     await h.session.send('peça')
     h.records[0].event(quota)
     await settled()
-    expect(h.records[1].options.model).toBe('gpt-6-astra')
+    expect(h.records[1].options.model).toBe('gpt-6.1-sol')
   })
 
   it.each([
@@ -189,7 +189,7 @@ describe('tarefa MCP com modelo pedido (pinModel)', () => {
     h.records[0].event(quota)
     await settled()
     expect(h.records).toHaveLength(2)
-    expect(h.records[1].options.model).toBe('gpt-6-astra')
+    expect(h.records[1].options.model).toBe('gpt-6.1-sol')
   })
 
   it('turno autônomo (loop, sem agent:send) depois da tarefa não herda o fixado', async () => {
@@ -199,7 +199,7 @@ describe('tarefa MCP com modelo pedido (pinModel)', () => {
     h.records[0].event(done)
     h.records[0].event(quota)
     await settled()
-    expect(h.records[1].options.model).toBe('gpt-6-astra')
+    expect(h.records[1].options.model).toBe('gpt-6.1-sol')
   })
 
   it('depois do erro "A cota do modelo X acabou", o turno seguinte nasce livre', async () => {
@@ -220,7 +220,7 @@ describe('tarefa MCP com modelo pedido (pinModel)', () => {
     expect(h.session.liveOptions().model).toBe('claude-opus-5-5')
     h.records[0].event(quota)
     await settled()
-    expect(h.session.liveOptions().model).toBe('gpt-6-astra')
+    expect(h.session.liveOptions().model).toBe('gpt-6.1-sol')
   })
 })
 

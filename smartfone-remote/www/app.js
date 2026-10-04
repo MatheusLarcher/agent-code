@@ -6,9 +6,12 @@
  *   GET  /api/history?conv=ID  full message history of a conversation
  *   GET  /api/events  (SSE)    live agent events {convId, event}
  *   POST /api/send             send a command into a conversation
+ *   POST /api/central-choose   "Para onde vai?" of a Central request (central.js)
  *
  * It mirrors the desktop chat (history + what's being built), including answering
  * pending permission/AskUserQuestion requests via POST /api/permission-respond.
+ * The Central (the single conversation that routes each request) has its own
+ * view in central.js, loaded after this file.
  */
 'use strict'
 
@@ -547,6 +550,8 @@ function scheduleRender() {
 
 function renderMessages() {
   var box = $('messages')
+  // A Central não tem histórico: desenha o retrato que o PC publica (central.js).
+  if (centralOpen()) { renderCentral(box); return }
   // Abrindo um chat (loadHistory em voo): mostra o loading no lugar da lista —
   // nem tenta desenhar mensagens de um chat que ainda pode nem ser o certo.
   if (state.historyLoading) {
@@ -775,6 +780,8 @@ function fetchState() {
       renderUsage()
       renderQuestionMap()
       renderPermission()
+      // A Central aberta acompanha o retrato novo (redesenha só se mudou).
+      if (centralOpen()) renderCentral($('messages'))
       // If voice availability flipped, refresh so the "Ouvir" buttons appear/hide.
       if (wasReady !== state.voiceReady) scheduleRender()
       return data
@@ -924,6 +931,7 @@ function basename(p) {
 function updateConvTitle() {
   var cur = current()
   $('conv-title-text').textContent = (cur && cur.title) || 'Conversa'
+  syncCentralChrome()
 }
 
 // ---- model + effort selectors (above the input, mirroring the PC pickers) ---
@@ -943,7 +951,8 @@ function renderModelBar() {
   var bar = $('model-bar')
   var cur = current()
   if (!bar) return
-  if (!cur || !state.models.length) { bar.hidden = true; return }
+  // A Central não tem modelo próprio: quem roda é a conversa de destino.
+  if (!cur || !state.models.length || isCentralConv(cur)) { bar.hidden = true; return }
   bar.hidden = false
   var busy = !!cur.busy
   var mSel = $('model-select')
@@ -1010,7 +1019,11 @@ function setModel(patch) {
 function renderHistory() {
   var list = $('history-list')
   list.innerHTML = ''
-  var convs = state.conversations.slice().sort(function (a, b) { return b.updatedAt - a.updatedAt })
+  // A Central fica fixa no topo, fora dos grupos por projeto (central.js).
+  renderCentralRow(list)
+  var convs = state.conversations
+    .filter(function (c) { return !isCentralConv(c) })
+    .sort(function (a, b) { return b.updatedAt - a.updatedAt })
   var groups = {}
   var order = []
   convs.forEach(function (c) {
@@ -1281,7 +1294,8 @@ function onPullEnd() {
   setPullBar('refreshing')
   var done = function () { pull.refreshing = false; setPullBar('hidden') }
   if (!state.convId) { done(); return }
-  loadHistory(state.convId, true).then(done, done)
+  // A Central não tem histórico: atualizar é ler o retrato de novo.
+  ;(centralOpen() ? fetchState() : loadHistory(state.convId, true)).then(done, done)
 }
 
 function setupPullToRefresh() {
@@ -1724,9 +1738,12 @@ function send() {
   if ((!text && !imgs.length && !files.length) || !state.convId) return
   var thumbs = imgs.map(function (im) { return 'data:' + im.mediaType + ';base64,' + im.data })
   // Optimistic echo (the PC adds the user message locally; SSE only carries
-  // agent events, so there's no duplicate).
+  // agent events, so there's no duplicate). Na Central o pedido vira bolha
+  // "enviando…" até o retrato do PC trazê-lo, e não há turno dela para mostrar.
   var cur = current()
-  reduce(state.messages, {
+  var central = isCentralConv(cur)
+  if (central) centralNoteSent(text, imgs.length + files.length)
+  else reduce(state.messages, {
     kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs, ts: Date.now(), queued: !!(cur && cur.busy),
     files: files.map(function (f) { return { name: f.name, size: f.size } })
   })
@@ -1736,11 +1753,16 @@ function send() {
   state.files = []
   renderPreview()
   autoGrow()
-  $('busy').hidden = false
+  if (!central) $('busy').hidden = false
   // Token goes in the query string (like the GET/SSE routes); body is the command.
-  fetchApi('/api/send', { method: 'POST', body: { convId: state.convId, text: text, images: imgs, files: files }, timeout: 60000 })
+  var body = { convId: state.convId, text: text, images: imgs, files: files }
+  // Central em modo resposta: vai direto à conversa da mensagem citada (central.js).
+  var replyTo = central ? takeCentralReply() : null
+  if (replyTo) body.replyTo = replyTo
+  fetchApi('/api/send', { method: 'POST', body: body, timeout: 60000 })
     .catch(function (err) {
       setStatus(false)
+      if (central) centralSendFailed(text)
       if (err && err.status) alert('Não enviei: ' + errorText(err))
     })
 }

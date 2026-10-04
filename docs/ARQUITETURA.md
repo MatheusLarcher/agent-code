@@ -23,7 +23,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Memorista — o observador que grava memória sozinho](#memorista--o-observador-que-grava-memória-sozinho)
 - [Quadro de tarefas do projeto (trava do plano + agente PO)](#quadro-de-tarefas-do-projeto-trava-do-plano--agente-po)
 - [Tela de Planejamento (Agent Manager)](#tela-de-planejamento-agent-manager)
-- [Central — estado parcial e retomada](#central--estado-parcial-e-retomada)
+- [Central — conversa fixa que roteia pedidos](#central--conversa-fixa-que-roteia-pedidos)
 - [Escritório 3D: o chat flutuante segue a mesa](#escritório-3d-o-chat-flutuante-segue-a-mesa)
 - [Voz no chat (motor local)](#voz-no-chat-motor-local)
 - [Modelos via Ollama Cloud](#modelos-via-ollama-cloud)
@@ -1162,9 +1162,56 @@ nem monta (`sessionStartFields`: o planejamento prevalece).
 
 ---
 
-## Central — estado parcial e retomada
+## Central — conversa fixa que roteia pedidos
 
-A Central já é uma conversa fixa (`id: 'central'`, `mode: 'central'`, `cwd: ''`), persistida e sem sessão própria. O índice de resumos e o IPC de roteamento/correção existem, mas **o envio ainda não os usa**: `centralSend.routeCentralRequest` é vazio e o `App` não passa uma implementação de `route`. Assim, o pedido aparece como `routing`, **sem chegar a uma conversa de destino**. O decisor/IPC está em revisão, e o piso 0,6 e idioma `en` ainda não foram calibrados. A linha de ações e o espelho existem somente como funções puras; o fluxo completo, adoção das demais conversas, tela v3 e celular permanecem pendentes. Ver [checkpoint de 02/10: estado, decisões humanas, próximos passos e riscos](CONTINUIDADE-2026-10-02.md); não tratar os contratos futuros desse documento como comportamento atual.
+A Central é uma conversa fixa (`id: 'central'`, `mode: 'central'`, `cwd: ''`), persistida e **sem sessão de agente própria**; nunca é destino. O usuário escreve um pedido e ela o entrega a outra conversa (ou pergunta para onde ir) e espelha o que acontece lá.
+
+> **Estado: tecnicamente validado, NÃO calibrado.** Typecheck, `npm test -- --maxWorkers=2` (424 arquivos / 5024 testes passaram; 10 arquivos / 67 ignorados), `npm run build` (inclui o binário .NET) e `node --check` em `app.js`, `central.js` e `centralTurns.js` passaram. Isso prova que compila, testa e empacota — **não** mede a qualidade do roteamento. O **piso 0,6** e as **instruções em inglês** do decisor são defaults **ainda não calibrados**: a calibração (fase B) aguarda a confirmação do usuário da lista de candidatas da fase A. Não confundir com o piso 0,20 do modo Automático. Histórico e pendências em [CONTINUIDADE-2026-10-02.md](CONTINUIDADE-2026-10-02.md).
+
+### Decisor (`src/main/central/centralDecider.ts`, `centralPrompts.ts`, `centralIpc.ts`)
+
+- **TypeSafe em duas chamadas, sem LLM extra:** primeiro escolhe entre *recentes* e *projeto*; depois, a conversa do projeto ou o sandbox. Reconhece a conversa pelo **assunto**, não pelo último destino cronológico (tarefa → pergunta avulsa → volta à tarefa).
+- Acima do piso, entrega; abaixo, com TypeSafe indisponível ou destino fora da lista oferecida, pergunta **"Para onde vai?"** antes do envio, sem perder texto nem anexos. Opções: conversa existente, nova no projeto, novo sandbox.
+- O payload passa por `centralRedact.ts` (mascaramento heurístico — pode mascarar a mais; **não é garantia** de remoção de segredo). Canais `central:route` e `central:correction`; correções ficam locais.
+- **Índice** (`centralIndex*.ts`): resumos curtos por conversa/projeto (título, primeiro/últimos pedidos, até 8 arquivos, começo da resposta), sem Central, planejamento, apagadas ou pasta inexistente; ~24 mil tokens aproximados de `state`. Cache com feed de mudanças, idade de 10 min e *stale-while-revalidate*; a primeira carga e invalidações explícitas ainda podem bloquear (o IPC espera no máximo 1 s).
+
+### Despacho e âncora (`centralSend.ts`, `centralDelivery.ts`, `centralRecents.ts`)
+
+- O pedido entra com **id de mensagem preset**, que é a **âncora** do turno: preservada na fila do destino, nos drenos e no retry. Destino ocupado → fila da **conversa de destino**; destinos diferentes trabalham em paralelo.
+- Casos: conversa existente, nova no projeto, novo sandbox; destino sumido pergunta de novo.
+- **"Não era aqui"** (só para pedidos roteados): remove o item enfileirado ou para o turno em execução **mantendo a fila**, pede outro destino, reenvia anexos ainda em memória (perdidos após reinício, avisa) e grava a correção local. `stopHold.ts` segura a espera do Stop.
+- `choose`/`notHere` só agem em entradas **próprias** (`isOwnEntry`).
+
+### Espelho resumido (`centralMirror.ts`, `centralMirrorSync.ts`, `activitySummary.ts`)
+
+Por turno, ancorado: pedido, aviso do destino, comentários principais, resposta final e **uma linha-resumo de ações** (sem LLM). Sem thinking, plano, subagentes nem trocas de conta/modelo; **cartões de ferramenta nunca são copiados** — o clique lê a conversa de destino e expande os ToolCards daquele turno. Persistência com throttle leading+trailing (~300 ms) e dedupe. Notas até 600 caracteres (12 últimas), resposta 4000, teto de 400 entradas.
+
+### A1 — todas as conversas aparecem na Central (`centralAdoption.ts`)
+
+Cada turno local é **adotado** no `dispatch()`, exceto Central e planejamento: inclui sandbox, celular direto, MCP, dreno da fila, retry e mensagens injetadas. Campos opcionais: `origin: 'central' | 'conversation'`, `device` (installationId), `injected: true`; resposta com id `reply:<requestId>`, espelhada só pelo PC de origem. Injetada vira bolha sem resposta própria. Sem backfill do histórico e sem dupla adoção do que a própria Central entregou. Aviso `em <projeto> · <conversa>`, sem "não era aqui".
+
+### Dois PCs: ownership e merge (`centralMerge.ts`, `centralMergeStorage.ts`)
+
+Os PCs gravam a mesma linha da Central. Cada entrada tem **dono por device**; o storage **mescla `central.entries` por id** (tombstones e marca d'água do feed) em vez de reaplicar o payload local inteiro. Um PC não age sobre pedidos do outro: a tela os mostra sem botões.
+
+### Perguntas e permissões do destino
+
+`AskUserQuestion` e permissões do destino são respondidas **na Central**, com o `convId` do destino.
+
+### Tela v3 (`src/renderer/src/central/`)
+
+Pedido e aviso, notas/final em blocos, linha de ações expansível, perguntas/permissões, trilho superior de trabalhos ativos, bolinhas e cores estáveis por destino (**laranja é exclusivo da Central**), ícones do projeto e `← Central` ao abrir o turno. O mesmo painel é reusado no chat flutuante do Escritório.
+
+### Celular (`remote/remoteServer.ts`, `centralRemote.ts`, `smartfone-remote/www/central*.js`)
+
+- **Snapshot** compacto `RemoteConversation.central` em `/api/state` (feed recente, trilho, perguntas, `origin`/`injected`, `self` para distinguir entradas deste PC; ícone só se `data:image/` ≤ 12 KB; sem dados de imagem).
+- **`POST /api/central-choose`**: autenticado e validado (401/409/400/200), repassado por main/preload/App até `choose`. Envio com `convId: central`.
+- Cartões de outro PC (**foreign**) aparecem sem ação. A permissão respondida é a do **destino**. Erros usam `alert` (o app do celular não tem toast). APK não foi gerado.
+
+### Limitações conhecidas
+
+- **Sem identidade de turno no main:** em 3 casos de terminal tardio do turno parado, o turno **seguinte** pode ser marcado como falho (nunca é engolido em silêncio).
+- Minors em triagem que afetam o usuário: eco de escrita no outro PC a cada gravação remota; entrada de tipo novo (build mais novo) tratada como apagada; teto de 400 entradas pode cortar um pedido "perguntando" após ~200 turnos com A1; `app.js` do celular depende de `central.js` carregar; envio falho à Central pode apagar o texto no celular com `err.status` 0; sem teste versionado para `central.js`/`centralTurns.js`; `storage.ts`, `remoteServer.ts`, `ipc.ts` e `app.js` já excediam 500 linhas.
 
 ---
 
@@ -1179,7 +1226,7 @@ a **mesa selecionada**:
   que ocupa a cadeira; o PO, a do último diagnóstico; a memória, a da trilha (ou do memorista) mais
   recente. É a mesma conversa que o monitor mostra — por isso não há decisor (TypeSafe) no meio.
 - **Sem mesa selecionada**, o chat mostra o **painel inicial da Central**, se já carregada (o mesmo
-  `CentralPanel`; o App só o passa com a aba aberta). O painel ainda não entrega pedidos roteados. O usuário desfazer a seleção — Esc, clique no vazio, × da
+  `CentralPanel`; o App só o passa com a aba aberta). O painel entrega pedidos roteados (ver Central). Desfazer a seleção — Esc, clique no vazio, × da
   tela, girar/arrastar/zoom/WASD — volta à Central **sem trocar a conversa ativa** do app. Abrir a aba
   sem mesa mostra a Central; reabri-la com um agente ainda focado seleciona a conversa dele.
 - **Quem fechou a tela importa** (`EngineCallbacks.onFocus(key, byUser)`): quando foi o motor — o voo
@@ -1188,6 +1235,15 @@ a **mesa selecionada**:
   no chat e leva a câmera até o agente dela (`engine.follow`; nunca para a Central, que não tem mesa).
   O clique num agente também troca a conversa ativa, e o `follow` que isso dispara não pode fechar a
   tela recém-aberta: com o agente daquela conversa focado, ele não voa.
+
+### Monitor com editor de código (`office3d/codeScreen/`)
+
+A tela do monitor alterna **Código | Chat**. O modo Código é um editor estilo VS Code com **dados reais** do agente: abas por arquivo, explorer com marcas U/M, números de linha, destaque de sintaxe, caret "Agent" e status na cor do agente. O encaixe pela homografia/pose final e o chat flutuante são preservados.
+
+- **Diff honesto:** remoções vermelhas e adições verdes só do que o agente de fato mudou (Write/Edit/MultiEdit), reconstruído de `old_string`/`new_string` e conferido contra o disco; mudança externa não é atribuída ao agente. Trechos que não dá para provar (ex.: `.env`) aparecem como trecho honesto, não como diff inventado.
+- **Stream ao vivo:** o main (`toolInputStream.ts`) emite `filePath` e `oldText` **somente quando a string fechou** (presença ⇒ completo). O renderer não adivinha strings parciais: sem isso nasceriam abas falsas e linhas verdes inventadas. Editor e stream precisam ir juntos.
+- **Leitura de disco restrita no renderer** (`pathGuard.ts`): só caminhos vindos dos tool inputs, com bloqueios de arquivos sensíveis. **Não é fronteira de segurança** — é uma guarda de exibição no renderer.
+- **Limitações:** arquivo de ~6000 linhas trava 116–235 ms na primeira abertura; subagente não tem digitação ao vivo; pastas `secrets/`/`credentials/` não são bloqueadas pelo guard; mudança de aba/rolagem e "seguir" têm Minors em triagem.
 
 ---
 

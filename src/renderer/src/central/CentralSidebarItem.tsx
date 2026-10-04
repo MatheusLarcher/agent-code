@@ -5,6 +5,7 @@
  */
 import { CENTRAL_TITLE } from '@shared/central'
 import './central.css'
+import './centralFeed.css'
 
 export interface CentralSidebarItemProps {
   /** A Central é a conversa aberta. */
@@ -16,7 +17,20 @@ export interface CentralSidebarItemProps {
   rail?: boolean
 }
 
-const TITLE = 'Central — fale com o agent: cada mensagem vai para a conversa do assunto'
+/** Na linha de uma conversa da barra: destino da Central trabalhando agora, na cor dele. */
+export function CentralRowDot({ color }: { color: string }): JSX.Element {
+  return (
+    <i
+      className="conv-central-dot"
+      style={{ background: color }}
+      title="Trabalhando num pedido da Central"
+      aria-hidden="true"
+      data-testid="conv-central-dot"
+    />
+  )
+}
+
+const TITLE ='Central — fale com o agent: cada mensagem vai para a conversa do assunto'
 
 export function CentralSidebarItem({ active, onSelect, dots = [], rail = false }: CentralSidebarItemProps): JSX.Element {
   if (rail) {

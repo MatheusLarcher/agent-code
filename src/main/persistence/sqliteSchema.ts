@@ -465,6 +465,47 @@ export const SQLITE_TOKEN_USAGE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS llm_usage_totals_conv_id ON llm_usage_totals(conv_id);
 `
 
+/**
+ * Migration 13 — histórico do contexto entregue ao agente (espelha a 15 do
+ * PostgreSQL). Cada texto (já mascarado) é gravado UMA vez em `context_blob`,
+ * comprimido e chaveado pelo sha256; `context_turn.blocks_json` guarda só as
+ * referências. Blobs sem referência saem na poda (contextBlobPruner.ts).
+ */
+export const SQLITE_CONTEXT_HISTORY_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS context_blob (
+    hash TEXT PRIMARY KEY,
+    gz BLOB NOT NULL,
+    bytes INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS context_turn (
+    conv_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    pc TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    request TEXT NOT NULL,
+    complete INTEGER NOT NULL DEFAULT 0,
+    usage_json TEXT,
+    blocks_json TEXT NOT NULL DEFAULT '[]',
+    memories_json TEXT NOT NULL DEFAULT '[]',
+    secrets_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(conv_id, turn_id)
+  );
+  CREATE INDEX IF NOT EXISTS context_turn_conv_started ON context_turn(conv_id, started_at DESC);
+`
+
+/**
+ * Migration 14 — os modelos que responderam em cada turno (`models_json`).
+ * Separada da 13 porque o checksum de migração aplicada é conferido na abertura.
+ * `ALTER TABLE ... ADD COLUMN` não é idempotente: o guarda de `write()` não a
+ * repete (writeGuardSql vazio) — ela roda uma vez, no bootstrap ou na migração.
+ */
+export const SQLITE_CONTEXT_TURN_MODELS_SCHEMA = `
+  ALTER TABLE context_turn ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]';
+`
+
 export interface SqliteMigration {
   version: number
   name: string
@@ -520,7 +561,9 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     'sqlite-v2-board-events-justified-system',
     SQLITE_BOARD_EVENTS_JUSTIFIED_SCHEMA,
     'CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);'
-  )
+  ),
+  migration(13, 'sqlite-v2-context-history', SQLITE_CONTEXT_HISTORY_SCHEMA),
+  migration(14, 'sqlite-v2-context-turn-models', SQLITE_CONTEXT_TURN_MODELS_SCHEMA, '')
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

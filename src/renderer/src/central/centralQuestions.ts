@@ -6,17 +6,18 @@
 import type { PermissionRequest, PermissionResponse } from '@shared/ipc'
 import type { CentralEntry, CentralQuestionEntry } from '@shared/central'
 import { describeTool } from '../components/toolDescribe'
-import { clip, hasActiveAnchor } from './centralEntries'
+import { clip, hasActiveAnchor, type CentralLiveAnchor } from './centralEntries'
 
 /** Corte da pergunta e da resposta guardadas no histórico. */
 const QUESTION_MAX_CHARS = 300
 
-/** As conversas cuja pergunta/permissão pendente a Central mostra. */
+/** As conversas cuja pergunta/permissão pendente a Central mostra: as com o turno de um pedido dela vivo. */
 export function pendingConvIds(
   entries: readonly CentralEntry[],
-  permissions: Readonly<Record<string, PermissionRequest>>
+  permissions: Readonly<Record<string, PermissionRequest>>,
+  isLive: CentralLiveAnchor
 ): string[] {
-  return Object.keys(permissions).filter((convId) => hasActiveAnchor(entries, convId))
+  return Object.keys(permissions).filter((convId) => hasActiveAnchor(entries, convId, isLive))
 }
 
 function questionText(req: PermissionRequest): string {

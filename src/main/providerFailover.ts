@@ -40,7 +40,7 @@ function interruptedNote(interrupted: readonly string[] | null): string {
 }
 
 type Session = Pick<AgentSession, 'start' | 'send' | 'dispose' | 'interrupt' | 'setBypass' | 'resolvePermission' | 'holdQuestion' | 'refreshUsage' | 'waitForIdle' | 'resumeAfterQuota' | 'continuationState' | 'restoreContinuation'> &
-  Partial<Pick<AgentSession, 'hasBackgroundWork' | 'injectNow' | 'storageRestored' | 'restartActivity'>>
+  Partial<Pick<AgentSession, 'hasBackgroundWork' | 'isAlive' | 'injectNow' | 'storageRestored' | 'restartActivity'>>
 type Factory = (options: StartAgentOptions, emit: (event: ChatEvent) => void, complete: () => void) => Session
 
 /** Troca de conta com o turno fechado: a de fim de turno e a manual do painel. */
@@ -50,6 +50,10 @@ type QuotaEvent = Extract<ChatEvent, { kind: 'result' | 'error' }>
 
 /** Claude estourou e não há outra conta nem provedor para continuar. */
 class NoDestination extends Error {}
+
+/** Destino GPT da troca automática por cota: o Sol 6.1 entrega perto do Astra
+ *  gastando bem menos da assinatura — o Astra não compensa como reserva. */
+export const FAILOVER_GPT_MODEL = 'gpt-6.1-sol'
 
 export function providerForModel(model?: string): UsageProvider | null {
   if (isOpenAIModel(model)) return 'gpt'
@@ -260,7 +264,7 @@ export class ProviderFailoverSession {
       if (!active()) return
       const fromModel = this.options.model ?? 'claude-opus-5-5'
       this.lastModels[from] = fromModel
-      const model = this.lastModels[to] ?? (to === 'gpt' ? 'gpt-6-astra' : 'claude-opus-5-5')
+      const model = this.lastModels[to] ?? (to === 'gpt' ? FAILOVER_GPT_MODEL : 'claude-opus-5-5')
       const effort = this.options.effort
       const interrupted = this.interruptedBackground(previous)
       const switched = await this.replace(previous, (resume) => ({
@@ -408,6 +412,9 @@ export class ProviderFailoverSession {
   pinModel(on: boolean): void { this.modelPinned = on }
   /** As opções em que a sessão está AGORA (modelo depois de trocas, config MCP). */
   liveOptions(): Readonly<StartAgentOptions> { return this.options }
+
+  /** A query da sessão atual ainda lê mensagens (uma morta não pode ser reaproveitada). */
+  isAlive(): boolean { return !this.disposed && (this.current.isAlive?.() ?? true) }
 
   start(): Promise<boolean> { return this.current.start() }
   async send(...args: Parameters<AgentSession['send']>): Promise<void> {

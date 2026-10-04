@@ -43,12 +43,14 @@ vi.mock('./store', () => ({
   getCacheInfo: () => ({ ...cacheState })
 }))
 const projectsState = vi.hoisted(() => ({
-  list: [] as { cwd: string; total: number; updatedAt: string }[]
+  list: [] as { cwd: string; total: number; updatedAt: string }[],
+  conversations: [] as Array<Record<string, unknown>>
 }))
 vi.mock('./persistence/lifecycle', () => ({
   storageLifecycle: {
     repository: () => ({
-      countConversationsByProject: async () => projectsState.list
+      countConversationsByProject: async () => projectsState.list,
+      loadConversations: async () => projectsState.conversations
     })
   }
 }))
@@ -126,11 +128,13 @@ import {
   loopLimitFromPrompt
 } from './agentSession'
 import type { BrowserController } from './browserController'
+import { presenceRemove, presenceSnapshot, presenceUpdate, resetCrossConversationState } from './crossConversation'
 import type { SkillRuntimePaths } from './agentSession'
 // Os módulos REAIS do registro de memórias usadas e do gate: nada aqui é
 // injetado na sessão, é o mesmo caminho que `index.ts` liga em produção.
 import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
 import { buildMemoryGateState } from './typesafe/memoryGate'
+import { claudeAuthExpiry } from './authExpiry'
 
 const secretsForPrompt = vi.hoisted(() => vi.fn(async () => [] as Array<{ name: string; value: string }>))
 vi.mock('./memory/memoryRuntime', async () => {
@@ -940,11 +944,11 @@ describe('AgentSession — "/compact" (verificado ao vivo: o SDK não intercepta
 })
 
 describe('AgentSession — rate_limit_event (uso de 5h/semana da conta)', () => {
-  it('emite kind:"rate-limit" com os campos do rate_limit_info', () => {
+  it('emite kind:"rate-limit" com os campos do rate_limit_info (resetsAt de segundos para ms)', () => {
     const { s, emit } = makeSession()
     handle(s, {
       type: 'rate_limit_event',
-      rate_limit_info: { status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.62, resetsAt: 1234 },
+      rate_limit_info: { status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.62, resetsAt: 1_790_000_000 },
       uuid: 'u1',
       session_id: 'sess1'
     })
@@ -955,7 +959,7 @@ describe('AgentSession — rate_limit_event (uso de 5h/semana da conta)', () => 
           rateLimitType: 'five_hour',
           status: 'allowed_warning',
           utilization: 0.62,
-          resetsAt: 1234
+          resetsAt: 1_790_000_000_000
         })
       })
     )
@@ -2232,6 +2236,65 @@ describe('AgentSession — projetos conhecidos nesta máquina', () => {
   })
 })
 
+describe('AgentSession — o que os agentes das outras conversas estão fazendo', () => {
+  const other = {}
+  beforeEach(() => {
+    resetCrossConversationState()
+    const now = new Date().toISOString()
+    projectsState.list = [{ cwd: '/proj', total: 2, updatedAt: now }]
+    projectsState.conversations = [{
+      id: 'outra', payload: { id: 'outra', title: 'Central de despacho', cwd: '/proj', updatedAt: Date.now(),
+        messages: [{ kind: 'user', id: 'u1', text: 'termina o despacho da central' }] },
+      revision: 1, contentHash: 'h', createdAt: now, updatedAt: now
+    }]
+  })
+  afterEach(() => {
+    presenceRemove(other, 'outra')
+    projectsState.list = []
+    projectsState.conversations = []
+    resetCrossConversationState()
+  })
+
+  it('cada mensagem diz quantos agentes trabalham agora e o pedido deles; a lista de assuntos só quando muda', async () => {
+    presenceUpdate(other, 'outra', '/proj', { working: true, question: 'termina o despacho da central' })
+    const { s } = makeSession()
+    await s.start()
+
+    await s.send('oi')
+    await s.send('de novo')
+
+    const first = String(pushedMessages(s).at(-2)?.message.content)
+    const second = String(pushedMessages(s).at(-1)?.message.content)
+    for (const text of [first, second]) {
+      expect(text).toContain('[OUTRAS_CONVERSAS]\nSOMENTE INFORMATIVO')
+      expect(text).toContain('Agentes trabalhando agora em outras conversas: 1')
+      expect(text).toContain('"Central de despacho"')
+      expect(text).toContain('Pedido do usuário a esse agente: "termina o despacho da central"')
+      expect(text).toContain('o MESMO projeto desta conversa')
+    }
+    expect(first).toContain('Outros assuntos das últimas 24 h')
+    expect(second).not.toContain('Outros assuntos das últimas 24 h')
+    // A mensagem do usuário continua no fim, depois de todo o contexto.
+    expect(second.endsWith('de novo')).toBe(true)
+  })
+
+  it('a própria sessão aparece para as outras como trabalhando, com o pedido, e some ao fechar', async () => {
+    const { s } = makeSession()
+    await s.start()
+    await s.send('arruma o build')
+    expect(presenceSnapshot().find((p) => p.convId === 'c1')).toMatchObject({ working: true, question: 'arruma o build' })
+    s.dispose()
+    expect(presenceSnapshot().find((p) => p.convId === 'c1')).toBeUndefined()
+  })
+
+  it('mensagem de recuperação (troca de provedor) não leva o bloco', async () => {
+    const { s } = makeSession()
+    await s.start()
+    await s.send('continua', undefined, undefined, 'pc', 'recovery')
+    expect(String(pushedMessages(s).at(-1)?.message.content)).not.toContain('[OUTRAS_CONVERSAS]')
+  })
+})
+
 describe('AgentSession — o TypeSafe escolhe as memórias do turno', () => {
   type ContextHook = (input: Record<string, unknown>) => Promise<{ hookSpecificOutput?: { additionalContext?: string } }>
 
@@ -2772,5 +2835,64 @@ describe('AgentSession — árvore de consumo de tokens (llm-call)', () => {
     const calls = llmCallEvents(emit)
     const subagentCall = calls.find((c) => c.node_id === 'toolu_1')
     expect(subagentCall).toMatchObject({ inputPreview: 'conteúdo do arquivo' })
+  })
+})
+
+describe('AgentSession — sessão Claude expirada (authExpiry)', () => {
+  const authFailure = {
+    type: 'assistant',
+    error: 'authentication_failed',
+    parent_tool_use_id: null,
+    message: { content: [{ type: 'text', text: 'Failed to authenticate: OAuth session expired · Please run /login' }] },
+    uuid: 'a1',
+    session_id: 'sess1'
+  }
+  const result = (isError: boolean): Record<string, unknown> => ({
+    type: 'result', subtype: isError ? 'error_during_execution' : 'success', is_error: isError, duration_ms: 1, session_id: 'sess1'
+  })
+  const onMachineLogin = (s: AgentSession): void => {
+    (s as unknown as { machineClaudeLogin: boolean }).machineClaudeLogin = true
+  }
+  afterEach(() => {
+    claudeAuthExpiry.onChange(null)
+    claudeAuthExpiry.clear()
+  })
+
+  it('authentication_failed na thread principal marca expirado e avisa', () => {
+    const changed = vi.fn()
+    claudeAuthExpiry.onChange(changed)
+    const { s } = makeSession()
+    onMachineLogin(s)
+    handle(s, authFailure)
+    expect(claudeAuthExpiry.isExpired()).toBe(true)
+    expect(changed).toHaveBeenCalledTimes(1)
+    // O fim do mesmo turno não desfaz a marca.
+    handle(s, result(false))
+    expect(claudeAuthExpiry.isExpired()).toBe(true)
+  })
+
+  it('erro de cota/servidor ou de subagente não marca', () => {
+    const { s } = makeSession()
+    onMachineLogin(s)
+    handle(s, { ...authFailure, error: 'rate_limit' })
+    handle(s, { ...authFailure, error: 'server_error' })
+    handle(s, { ...authFailure, parent_tool_use_id: 'toolu_1' })
+    expect(claudeAuthExpiry.isExpired()).toBe(false)
+  })
+
+  it('fora do login da máquina (GPT/Ollama/conta extra) não marca', () => {
+    const { s } = makeSession()
+    handle(s, authFailure)
+    expect(claudeAuthExpiry.isExpired()).toBe(false)
+  })
+
+  it('turno seguinte concluído no login da máquina limpa a marca', () => {
+    const { s } = makeSession()
+    onMachineLogin(s)
+    handle(s, authFailure)
+    handle(s, result(true))
+    expect(claudeAuthExpiry.isExpired()).toBe(true)
+    handle(s, result(false))
+    expect(claudeAuthExpiry.isExpired()).toBe(false)
   })
 })

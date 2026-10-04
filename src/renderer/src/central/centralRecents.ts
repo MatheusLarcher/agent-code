@@ -7,6 +7,7 @@
 import { readableMediaText } from '@shared/inlineMedia'
 import {
   CENTRAL_ID,
+  isCentralConversation,
   type CentralEntry,
   type CentralOption,
   type CentralRecent,
@@ -69,9 +70,10 @@ const oneLine = (text: string): string => readableMediaText(text).replace(/\s+/g
 
 /**
  * Até 5 destinos distintos, do mais recente para o mais antigo (a lista da
- * Central já está na ordem do tempo). `request` = o último texto que foi para
- * lá; `replyStart` = a resposta dele (ou o último comentário); pasta e título
- * quando a conversa está carregada.
+ * Central já está na ordem do tempo), só de conversas CARREGADAS — destino fora
+ * da tela (apagado, ou de projeto ainda não lido) não entra nem ocupa vaga.
+ * `request` = o último texto que foi para lá; `replyStart` = a resposta dele (ou
+ * o último comentário); pasta e título da conversa.
  */
 export function recentDestinations(
   entries: readonly CentralEntry[],
@@ -86,13 +88,15 @@ export function recentDestinations(
     const convId = e.anchor.convId
     if (convId === CENTRAL_ID || seen.has(convId)) continue
     seen.add(convId)
-    const reply = replyOf(entries, e.id)
     const conv = convs.get(convId)
+    if (!conv || isCentralConversation(conv)) continue
+    const reply = replyOf(entries, e.id)
     out.push({
       convId,
       request: clip(oneLine(e.text), RECENT_TEXT_CHARS),
       replyStart: clip(oneLine(reply?.answer ?? reply?.notes.at(-1) ?? ''), RECENT_TEXT_CHARS),
-      ...(conv ? { cwd: conv.cwd, title: conv.title } : {})
+      cwd: conv.cwd,
+      title: conv.title
     })
   }
   return out

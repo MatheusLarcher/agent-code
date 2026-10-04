@@ -6,8 +6,8 @@
  */
 import { useCallback, useRef, useState } from 'react'
 import { act, renderHook } from '@testing-library/react'
-import { vi } from 'vitest'
-import type { PermissionRequest } from '@shared/ipc'
+import { vi, type Mock } from 'vitest'
+import type { FileAttachment, FileRefAttachment, ImageAttachment, PermissionRequest } from '@shared/ipc'
 import { CENTRAL_ID, type CentralEntry, type CentralRequestEntry } from '@shared/central'
 import type { Conversation, UIMessage } from '../types'
 import { useCentral, type CentralDispatch, type CentralQueueItem, type UseCentralDeps } from './useCentral'
@@ -31,41 +31,61 @@ export const conv = (id: string, cwd: string, title: string, extra: Partial<Conv
 export const centralConv = (entries: CentralEntry[] = []): Conversation =>
   conv(CENTRAL_ID, '', 'Central', { mode: 'central', titleSource: 'user', central: { entries } })
 
+/** O que a `dispatch` falsa registra: destino, texto, id da bolha e os anexos. */
+export interface DispatchedAttachments {
+  images: ImageAttachment[]
+  thumbs: string[]
+  files: FileAttachment[]
+  fileRefs: FileRefAttachment[]
+}
+
+type Deps = UseCentralDeps
+
 export interface KitSpies {
   /** Cada `patchConv`, pelo id (o espelho conta as gravações da Central por aqui). */
-  patch: ReturnType<typeof vi.fn>
-  dispatch: ReturnType<typeof vi.fn>
-  createConversation: ReturnType<typeof vi.fn>
-  deleteQueued: ReturnType<typeof vi.fn>
-  stopKeepingQueue: ReturnType<typeof vi.fn>
-  respondToPermission: ReturnType<typeof vi.fn>
-  selectConversationAt: ReturnType<typeof vi.fn>
-  notify: ReturnType<typeof vi.fn>
-  needTypesafe: ReturnType<typeof vi.fn>
-  loadByIds: ReturnType<typeof vi.fn>
+  patch: Mock<(id: string) => void>
+  dispatch: Mock<(convId: string, text: string, msgId: string, attachments: DispatchedAttachments) => void>
+  createConversation: Mock<(cwd: string) => void>
+  deleteQueued: Mock<Deps['deleteQueued']>
+  stopKeepingQueue: Mock<Deps['stopKeepingQueue']>
+  discardFailed: Mock<Deps['discardFailed']>
+  respondToPermission: Mock<Deps['respondToPermission']>
+  selectConversationAt: Mock<Deps['selectConversationAt']>
+  notify: Mock<Deps['notify']>
+  needTypesafe: Mock<Deps['needTypesafe']>
+  loadByIds: Mock<Deps['loadByIds']>
 }
 
 export interface KitOptions {
   /** Conversas cuja dispatch "falha" (não fica ocupada nem enfileira). */
   failDispatch?: Set<string>
+  /**
+   * O que a dispatch espera DEPOIS de marcar ocupada e pôr a bolha (o `connect` do
+   * App). Se o turno for parado nesse meio-tempo (o em voo deixa de ser esta
+   * bolha), a mensagem não sai — como o App faz.
+   */
+  dispatchGate?: (convId: string) => Promise<void> | undefined
   over?: Partial<UseCentralDeps>
 }
 
 export function mountCentral(initial: Conversation[], opts: KitOptions = {}) {
   const spies: KitSpies = {
-    patch: vi.fn(),
-    dispatch: vi.fn(),
-    createConversation: vi.fn(),
-    deleteQueued: vi.fn(),
-    stopKeepingQueue: vi.fn(),
-    respondToPermission: vi.fn(async () => {}),
-    selectConversationAt: vi.fn(),
-    notify: vi.fn(),
-    needTypesafe: vi.fn(),
-    loadByIds: vi.fn(async (): Promise<Conversation[]> => [])
+    patch: vi.fn<(id: string) => void>(),
+    dispatch: vi.fn<(convId: string, text: string, msgId: string, attachments: DispatchedAttachments) => void>(),
+    createConversation: vi.fn<(cwd: string) => void>(),
+    deleteQueued: vi.fn<Deps['deleteQueued']>(),
+    stopKeepingQueue: vi.fn<Deps['stopKeepingQueue']>(),
+    discardFailed: vi.fn<Deps['discardFailed']>(),
+    respondToPermission: vi.fn<Deps['respondToPermission']>(async () => {}),
+    selectConversationAt: vi.fn<Deps['selectConversationAt']>(),
+    notify: vi.fn<Deps['notify']>(),
+    needTypesafe: vi.fn<Deps['needTypesafe']>(),
+    loadByIds: vi.fn<Deps['loadByIds']>(async () => [])
   }
   const queueRef = { current: [] as CentralQueueItem[] }
   const inflightRef = { current: {} as Record<string, { msgId: string } | undefined> }
+  /** O que de fato chegou ao agente: [conversa, id da bolha]. */
+  const sent: Array<[string, string]> = []
   let created = 0
   const hook = renderHook(() => {
     const [conversations, setConversations] = useState(initial)
@@ -100,6 +120,9 @@ export function mountCentral(initial: Conversation[], opts: KitOptions = {}) {
         setBusy(c.id, true)
         inflightRef.current[c.id] = { msgId }
         addMessages(c.id, { kind: 'user', id: msgId, text })
+        await opts.dispatchGate?.(c.id)
+        if (inflightRef.current[c.id]?.msgId !== msgId) return
+        sent.push([c.id, msgId])
       },
       [setBusy, addMessages]
     )
@@ -131,6 +154,7 @@ export function mountCentral(initial: Conversation[], opts: KitOptions = {}) {
       dispatch,
       deleteQueued: spies.deleteQueued,
       stopKeepingQueue: spies.stopKeepingQueue,
+      discardFailed: spies.discardFailed,
       respondToPermission: spies.respondToPermission,
       selectConversationAt: spies.selectConversationAt,
       notify: spies.notify,
@@ -149,5 +173,5 @@ export function mountCentral(initial: Conversation[], opts: KitOptions = {}) {
       await fn()
     })
   }
-  return { hook, world, spies, queueRef, inflightRef, entries, requests, find, run }
+  return { hook, world, spies, queueRef, inflightRef, sent, entries, requests, find, run }
 }

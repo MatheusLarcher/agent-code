@@ -1,0 +1,122 @@
+/*
+ * O editor da tela de código (EditorPane): gutter com número e sinal, linhas
+ * do diff no jeito do GitHub (verde/vermelho), lacunas do stream, o cursor do
+ * Agent com a bandeirinha, a régua de mudanças e o realce no tom do Dark Modern.
+ * Os tokens (`--cm-row`, `--cm-code-size`, cores) vêm do .cm-root em codeScreen.css.
+ */
+.cm-tabpanel,
+.cm-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cm-note {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 14px 6px;
+  padding: 4px 10px;
+  border: 1px solid rgba(56, 139, 253, 0.3);
+  border-radius: 6px;
+  background: rgba(56, 139, 253, 0.1);
+  color: #b6d6ff;
+}
+.cm-note .cm-icon { width: 14px; height: 14px; color: var(--cm-hunk-ink); }
+.cm-scroll-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
+.cm-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font: var(--cm-code-size) / var(--cm-row) var(--cm-font-code);
+  font-variant-ligatures: none;
+  tab-size: 4;
+  color: #d4d4d4;
+}
+/* Régua da direita: onde estão as mudanças (verde, vermelho) e o cursor do Agent, por cima da trilha da rolagem. */
+.cm-ruler { position: absolute; top: 0; right: 0; bottom: 0; width: 10px; pointer-events: none; }
+.cm-mark { position: absolute; right: 2px; width: 5px; border-radius: 1px; }
+.cm-mark-add { background: var(--cm-add-ink); opacity: 0.75; }
+.cm-mark-del { background: var(--cm-del-ink); opacity: 0.75; }
+.cm-mark-mix { background: linear-gradient(var(--cm-del-ink) 0 50%, var(--cm-add-ink) 50% 100%); opacity: 0.75; }
+.cm-mark-caret { right: 0; width: 10px; height: 2px; background: var(--cm-agent); }
+.cm-canvas { position: relative; }
+.cm-rows { position: absolute; left: 0; right: 0; }
+.cm-row { display: flex; height: var(--cm-row); white-space: pre; }
+.cm-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  /* Número (largura do maior, `--cm-num-w` no canvas) + folga + sinal. */
+  width: calc(var(--cm-num-w, 3ch) + 4ch);
+  background: var(--cm-bg);
+}
+.cm-num { width: var(--cm-num-w, 3ch); padding-left: 1.4ch; box-sizing: content-box; text-align: right; color: var(--cm-faint); }
+.cm-sign { width: 2.6ch; text-align: center; }
+.cm-code { position: relative; flex: 1; padding-right: 3ch; }
+.cm-add { background: var(--cm-add-bg); }
+.cm-add .cm-gutter { background: linear-gradient(var(--cm-add-gutter), var(--cm-add-gutter)), var(--cm-bg); }
+.cm-add .cm-sign { color: var(--cm-add-ink); }
+.cm-del { background: var(--cm-del-bg); }
+.cm-del .cm-gutter { background: linear-gradient(var(--cm-del-gutter), var(--cm-del-gutter)), var(--cm-bg); }
+.cm-del .cm-sign { color: var(--cm-del-ink); }
+.cm-del .cm-code > span:first-child { opacity: 0.8; }
+.cm-hunk { background: var(--cm-hunk-bg); }
+.cm-hunk .cm-gutter { background: linear-gradient(var(--cm-hunk-bg), var(--cm-hunk-bg)), var(--cm-bg); }
+.cm-hunk-label { padding-left: 0.5ch; color: var(--cm-hunk-ink); }
+.cm-skeleton {
+  display: inline-block;
+  height: 0.6em;
+  vertical-align: middle;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+}
+.cm-current.cm-ctx,
+.cm-current.cm-gap { background: rgba(255, 255, 255, 0.04); }
+.cm-current .cm-num { color: #c6c6c6; }
+/*
+ * O cursor do Agent, com a etiqueta do nome (como o de quem divide a sessão no
+ * VS Code). A etiqueta vai na própria linha, logo depois do cursor — onde o
+ * Agent ainda não escreveu —, então não cobre o código das linhas vizinhas.
+ */
+.cm-caret {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  z-index: 2;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--cm-agent);
+}
+.cm-flag {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  transform: translateY(-50%);
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--cm-agent);
+  color: var(--cm-on-agent);
+  font: 700 9.5px/14px var(--cm-font-ui);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Realce no tom do Dark Modern (só aqui: o CodeBlock do chat segue o vs2015). */
+.cm-code .hljs-title.function_,
+.cm-code .hljs-title.function_.invoke__ { color: #dcdcaa; }
+.cm-code .hljs-title.class_,
+.cm-code .hljs-type,
+.cm-code .hljs-built_in { color: #4ec9b0; }
+.cm-code .hljs-params,
+.cm-code .hljs-variable,
+.cm-code .hljs-property,
+.cm-code .hljs-attr,
+.cm-code .hljs-attribute { color: #9cdcfe; }
+.cm-code .hljs-string { color: #ce9178; }
+.cm-code .hljs-number { color: #b5cea8; }
+.cm-code .hljs-comment { color: #6a9955; font-style: normal; }
+.cm-code .hljs-regexp { color: #d16969; }
+.cm-code .hljs-tag { color: #808080; }
+.cm-code .hljs-tag .hljs-name { color: #569cd6; }
+.cm-code .hljs-subst { color: #9cdcfe; }

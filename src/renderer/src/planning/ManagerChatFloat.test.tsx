@@ -289,7 +289,7 @@ describe('ManagerChatFloat — o CSS que o posiciona e o encolhe', () => {
   })
 
   it('translúcido maximizado e ainda mais minimizado; as barras internas seguem o painel', () => {
-    const fill = (selector: string): number => Number(/--pl-chat-fill: (\d+)%;/.exec(block(selector))?.[1])
+    const fill = (selector: string): number => Number(/--pl-chat-fill: calc\((\d+)% \* var\(--chat-bg-alpha, 1\)\);/.exec(block(selector))?.[1])
     expect(block('.pl-chat-float')).toMatch(/background: color-mix\(in srgb, var\(--bg\) var\(--pl-chat-fill\), transparent\);/)
     expect(fill('.pl-chat-float')).toBeLessThan(100)
     expect(fill('.pl-chat-float.minimized')).toBeLessThan(fill('.pl-chat-float'))

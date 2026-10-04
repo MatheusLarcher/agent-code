@@ -2,11 +2,25 @@ import { tmpdir } from 'node:os'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 // Os mocks do Electron e das dependências pesadas do index.ts (compartilhados
 // com index.mcp.test.ts): tem de vir antes do `import('./index')` abaixo.
-import { callIpc as call, handlers, listLlmCalls, listLlmUsageTotals, spy, type CreatedSession } from './testing/electronMocks'
+import { callIpc as call, handlers, listLlmCalls, listLlmUsageTotals, listContextTurns, readContextTurn, revealContextSecret, spy, type CreatedSession } from './testing/electronMocks'
 
 const { AUTO_MODEL, Channels } = await import('../shared/ipc')
 const { registerIpc } = await import('./index')
 const { resolveAutoStart } = await import('./typesafe')
+
+describe('registerIpc — contexto PC', () => {
+  it('registra canais no main e chama histórico ativo/cofre atual', async () => {
+    registerIpc()
+    await expect(call(Channels.contextTurnsList, 'c')).resolves.toEqual([])
+    expect(listContextTurns).toHaveBeenCalledWith('c', 10)
+    await expect(call(Channels.contextTurnsRead, 'c', 'u')).resolves.toBeNull()
+    expect(readContextTurn).toHaveBeenCalledWith('c', 'u')
+    await expect(call(Channels.contextTurnsCountExact, 'c')).resolves.toMatchObject({ ok: false, usage: null })
+    revealContextSecret.mockResolvedValueOnce('current')
+    await expect(call(Channels.secretsReveal, 'vault')).resolves.toBe('current')
+    expect(revealContextSecret).toHaveBeenCalledWith('vault')
+  })
+})
 
 describe('registerIpc — agent:token-usage:history', () => {
   it('devolve as chamadas e os totais do repositório ativo para o convId pedido', async () => {

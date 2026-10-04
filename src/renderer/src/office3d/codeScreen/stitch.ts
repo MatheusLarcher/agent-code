@@ -48,6 +48,23 @@ export function stitch(prev: LiveBlock | undefined, d: ToolInputDelta, now: numb
   }
 }
 
+/*
+ * O que do bloco já é certo. O main lê os campos de um JSON ainda incompleto: até
+ * o campo seguinte começar, o caminho (o 1º campo) e o trecho antigo podem estar
+ * cortados no meio. No contrato novo do main eles só vêm quando a string fechou
+ * (newText segue parcial). A regra abaixo vale para os dois; `done` fecha tudo.
+ */
+
+/** O caminho do arquivo, só quando já está inteiro (outro campo começou ou o bloco fechou). */
+export function settledPath(b: LiveBlock): string | undefined {
+  return b.filePath !== undefined && (b.done || b.oldText !== undefined || b.totalLines > 0) ? b.filePath : undefined
+}
+
+/** O trecho antigo (Edit/MultiEdit), só quando já está inteiro (o texto novo começou ou o bloco fechou). */
+export function settledOld(b: LiveBlock): string | undefined {
+  return b.oldText !== undefined && (b.done || b.totalLines > 0) ? b.oldText : undefined
+}
+
 /** O texto costurado (buraco = linha vazia) e onde estão os buracos. */
 export function liveText(b: LiveBlock): { text: string; gaps: boolean[] } {
   return { text: b.lines.map((l) => l ?? '').join('\n'), gaps: b.lines.map((l) => l === null) }

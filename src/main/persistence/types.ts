@@ -10,6 +10,14 @@ export type {
   BoardItemStatus
 } from '../../shared/ipc'
 import type { TransferRecords } from './transferRecords'
+import type {
+  ContextBlock,
+  ContextSecretMask,
+  ContextTurnModel,
+  ContextTurnDetail,
+  ContextTurnSummary,
+  ContextUsageSnapshot
+} from '../../shared/contextSnapshot'
 
 export type StorageBackend = 'sqlite' | 'postgres'
 
@@ -706,6 +714,46 @@ export interface TokenUsageRepository {
   listLlmUsageTotals(convId: string): Promise<LlmUsageTotal[]>
 }
 
+// ---------------------------------------------------------------------------
+// Histórico do contexto entregue ao agente (context_turn / context_blob)
+// ---------------------------------------------------------------------------
+
+/**
+ * Um turno a gravar. `blocks[].text` já vem MASCARADO (senhas nunca chegam
+ * aqui); o repositório comprime cada texto distinto em `context_blob` (chave =
+ * `hash`, gravado uma vez só) e guarda em `context_turn.blocks_json` só as
+ * referências. Gravar de novo o mesmo `(convId, turnId)` substitui o turno
+ * (início → fim do turno).
+ */
+export interface ContextTurnWrite {
+  convId: string
+  turnId: string
+  pc: string
+  startedAt: number
+  model: string
+  /** Modelos que responderam (ver ContextTurnSummary.models). */
+  models: ContextTurnModel[]
+  provider: ContextTurnSummary['provider']
+  request: string
+  memoriesSent: string[]
+  complete: boolean
+  blocks: ContextBlock[]
+  usage: ContextUsageSnapshot | null
+  secrets: ContextSecretMask[]
+}
+
+export interface ContextHistoryRepository {
+  saveContextTurn(write: ContextTurnWrite): Promise<void>
+  /** Os `limit` turnos mais recentes da conversa (mais novo primeiro). */
+  listContextTurns(convId: string, limit: number): Promise<ContextTurnSummary[]>
+  /** O turno com os textos descomprimidos; `null` se não existe. */
+  readContextTurn(convId: string, turnId: string): Promise<ContextTurnDetail | null>
+  /** Apaga os turnos da conversa (os blobs órfãos saem na poda). */
+  deleteContextTurns(convId: string): Promise<number>
+  /** Remove blobs que nenhum turno referencia. Devolve quantos saíram. */
+  pruneOrphanContextBlobs(): Promise<number>
+}
+
 export type AgentInputQueueStatus = 'pending' | 'processing'
 
 export interface AgentInputQueueItem {
@@ -752,6 +800,7 @@ export interface PersistenceRepository
     MemoryRepository,
     BoardRepository,
     TokenUsageRepository,
+    ContextHistoryRepository,
     AgentInputQueueRepository,
     ConversationOutboxRepository {
   readonly backend: StorageBackend

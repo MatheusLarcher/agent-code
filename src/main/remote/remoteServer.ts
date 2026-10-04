@@ -6,6 +6,7 @@ import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
 import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from '../downloadAllowlist'
+import { CENTRAL_ID, parseCentralChoose, parseReplyTo, type RemoteCentralChoose } from '../../shared/central'
 import type {
   ChatEvent,
   FileAttachment,
@@ -30,7 +31,8 @@ import type {
 
 export interface RemoteServerDeps {
   /** A phone sent a command — dispatch it into its conversation (phone → PC → agent). */
-  onInbound: (convId: string, text: string, images?: ImageAttachment[], files?: FileAttachment[]) => void
+  /** `replyTo` (só na Central): id da entrada respondida, já validado aqui. */
+  onInbound: (convId: string, text: string, images?: ImageAttachment[], files?: FileAttachment[], replyTo?: string) => void
   /** A phone asked to stop the running turn of a conversation. */
   onInterrupt?: (convId: string) => void
   /** A phone toggled a per-conversation mode (economy / loop / fast). */
@@ -65,6 +67,8 @@ export interface RemoteServerDeps {
   /** A phone answered a pending permission/AskUserQuestion request — resolve it
    *  the same way the desktop IPC handler does. */
   onPermissionResponse?: (convId: string, res: PermissionResponse) => void
+  /** A phone answered "Para onde vai?" of a Central request (body already validated). */
+  onCentralChoose?: (choice: RemoteCentralChoose) => void
 }
 
 const DEFAULT_PORT = 8765
@@ -334,6 +338,7 @@ export class RemoteServer {
       if (path === '/api/set-model' && req.method === 'POST') return this.serveSetModel(req, res)
       if (path === '/api/recovery' && req.method === 'POST') return this.serveRecovery(req, res)
       if (path === '/api/permission-respond' && req.method === 'POST') return this.servePermissionRespond(req, res)
+      if (path === '/api/central-choose' && req.method === 'POST') return this.serveCentralChoose(req, res)
       if (path === '/api/search') return this.serveSearch(url, res)
       if (path === '/api/history') return this.serveHistory(url, res)
       if (path === '/api/history-window') return this.serveHistoryWindow(url, res)
@@ -638,6 +643,23 @@ export class RemoteServer {
     }
   }
 
+  /** Phone → PC: "Para onde vai?" of a Central request. The body is checked here, at
+   *  the boundary (`{ entryId: 1..100 chars, option: integer 0..20 }`), before it
+   *  reaches the renderer — which looks the request up and ignores a stale pick. */
+  private async serveCentralChoose(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    let data: unknown
+    try {
+      data = JSON.parse(body ?? '')
+    } catch {
+      return sendJson(res, 400, { ok: false, error: 'JSON inválido' })
+    }
+    const choice = parseCentralChoose(data)
+    if (!choice) return sendJson(res, 400, { ok: false, error: 'entryId (1–100) e option (inteiro 0–20) são obrigatórios' })
+    this.deps.onCentralChoose?.({ entryId: choice.entryId, option: choice.option })
+    sendJson(res, 200, { ok: true })
+  }
+
   /** Phone → PC: flip the global "Permitir tudo" (skip permissions) switch. */
   private async serveSetSkipPerms(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readBody(req)
@@ -771,19 +793,36 @@ export class RemoteServer {
     })
   }
 
+  /** A entrada `id` da Central publicada pode ser respondida (tem destino e é deste PC). */
+  private isReplyable(id: string): boolean {
+    const central = this.state.conversations.find((c) => c.id === CENTRAL_ID)?.central
+    const entries = Array.isArray(central?.entries) ? central.entries : []
+    return entries.some(
+      (e) =>
+        !!e &&
+        e.id === id &&
+        (e.kind === 'request' || e.kind === 'reply') &&
+        !!e.anchor?.convId &&
+        !e.foreign &&
+        (e.kind === 'reply' || e.state === 'delivered')
+    )
+  }
+
   private async serveSend(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readBody(req)
     let convId = ''
     let text = ''
     let images: ImageAttachment[] = []
     let files: FileAttachment[] = []
+    let replyTo: string | null | undefined
     if (body === null) return sendJson(res, 413, { error: 'mensagem grande demais (limite de 24 MB)' })
     try {
-      const j = JSON.parse(body ?? '') as { convId?: string; text?: string; images?: ImageAttachment[]; files?: FileAttachment[] }
+      const j = JSON.parse(body ?? '') as { convId?: string; text?: string; images?: ImageAttachment[]; files?: FileAttachment[]; replyTo?: unknown }
       convId = (j.convId ?? '').trim()
       text = (j.text ?? '').trim()
       images = sanitizeImages(j.images)
       files = sanitizeFiles(j.files)
+      replyTo = parseReplyTo(j.replyTo)
     } catch {
       /* fall through to validation */
     }
@@ -792,13 +831,22 @@ export class RemoteServer {
       res.end(JSON.stringify({ error: 'convId e (text, imagem ou arquivo) são obrigatórios' }))
       return
     }
-    this.deps.onInbound(convId, text, images, files)
+    // Resposta a uma mensagem da Central: id 1..100 de uma entrada respondível do
+    // retrato publicado (entregue/resposta, com destino, deste PC). Fora disso → 400.
+    if (replyTo === null) return sendJson(res, 400, { error: 'replyTo inválido (texto de 1 a 100 caracteres)' })
+    if (replyTo !== undefined && (convId !== CENTRAL_ID || !this.isReplyable(replyTo))) {
+      return sendJson(res, 400, { error: 'mensagem respondida não encontrada na Central' })
+    }
+    if (replyTo) this.deps.onInbound(convId, text, images, files, replyTo)
+    else this.deps.onInbound(convId, text, images, files)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: true }))
   }
 }
 
-/** Conversation summary for /api/state (drops the heavy message list). */
+/** Conversation summary for /api/state (drops the heavy message list). The Central's
+ *  `central` snapshot stays: it is compact (last entries, no image data) and the
+ *  phone refreshes it through this same poll. */
 function summarize(c: RemoteConversation): Omit<RemoteConversation, 'messages'> & { messageCount: number } {
   const { messages, ...rest } = c
   return { ...rest, queued: c.queued ?? [], messageCount: messages.length }

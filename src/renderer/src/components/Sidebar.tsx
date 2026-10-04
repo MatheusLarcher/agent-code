@@ -1,11 +1,11 @@
 import { useState, type CSSProperties } from 'react'
 import type { Conversation } from '../types'
 import { useUI } from '../ui/UiProvider'
-import { IconSpinner } from './Icons'
+import { IconSandbox, IconSpinner, ProjectGlyph } from './Icons'
 import { IconPlanning } from '../planning/PlanningIcon'
 import { isPlanningConversation } from '../planning/planningConversation'
 import { isBlankConversation } from '../blankConversation'
-import { CentralSidebarItem, type CentralSidebarItemProps } from '../central/CentralSidebarItem'
+import { CentralRowDot, CentralSidebarItem, type CentralSidebarItemProps } from '../central/CentralSidebarItem'
 
 export interface SidebarProject {
   path: string
@@ -22,14 +22,6 @@ export interface SidebarProject {
   /** Projeto fixo "Sandbox" (as subpastas por conversa, juntas; path = raiz). */
   sandbox?: boolean
 }
-
-/** Ícone do projeto "Sandbox": uma caixa de areia (balde). */
-const IconSandbox = (): JSX.Element => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M5 9h14l-1.5 11h-11z" />
-    <path d="M8 9a4 4 0 0 1 8 0" />
-  </svg>
-)
 
 interface Props {
   collapsed: boolean
@@ -54,6 +46,8 @@ interface Props {
   onSelectResult: (convId: string, msgId: string | null) => void
   /** A Central: item fixo acima dos projetos (fora da busca e dos grupos). */
   central?: Omit<CentralSidebarItemProps, 'rail'>
+  /** Destinos da Central trabalhando agora: convId → cor (a bolinha na linha). */
+  centralColors?: Readonly<Record<string, string>>
 }
 
 /* ---- tiny inline icons (stroke = currentColor) ---- */
@@ -71,21 +65,6 @@ const IconPlus = (): JSX.Element => (
     <line x1="5" y1="12" x2="19" y2="12" />
   </svg>
 )
-const IconFolder = (): JSX.Element => (
-  <svg width="15" height="15" viewBox="0 0 24 24" {...sv}>
-    <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-  </svg>
-)
-/**
- * The project's own icon when the folder has one, otherwise the folder glyph.
- * A file that fails to decode (corrupt/unsupported) falls back to the glyph too —
- * a broken-image box in the sidebar would be worse than no icon at all.
- */
-function ProjectGlyph({ icon }: { icon?: string | null }): JSX.Element {
-  const [broken, setBroken] = useState(false)
-  if (!icon || broken) return <IconFolder />
-  return <img className="project-icon-img" src={icon} alt="" onError={() => setBroken(true)} />
-}
 const IconChat = (): JSX.Element => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...sv}>
     <path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.4 8.4 0 0 1 21 11.5z" />
@@ -191,6 +170,8 @@ interface ConvRowProps {
   editValue: string
   /** Matching excerpt shown under the title while filtering (prompt hits). */
   snippet?: string
+  /** Cor do destino da Central trabalhando agora (bolinha na linha). */
+  centralColor?: string
   onSelect: (id: string) => void
   onStartEdit: () => void
   onEditChange: (v: string) => void
@@ -212,6 +193,7 @@ function ConvRow({
   editing,
   editValue,
   snippet,
+  centralColor,
   onSelect,
   onStartEdit,
   onEditChange,
@@ -262,6 +244,7 @@ function ConvRow({
       ) : (
         <span className="conv-title">{c.title}</span>
       )}
+      {centralColor && <CentralRowDot color={centralColor} />}
       <button
         className="conv-del"
         title="Excluir conversa"
@@ -339,6 +322,7 @@ export function Sidebar(props: Props): JSX.Element {
         editing={editing?.key === rowKey}
         editValue={editValue}
         snippet={m && m.source === 'prompt' ? m.snippet : undefined}
+        centralColor={props.centralColors?.[c.id]}
         onSelect={m ? (id) => props.onSelectResult(id, m.messageId) : props.onSelect}
         onStartEdit={() => startEdit(rowKey, c)}
         onEditChange={setEditValue}

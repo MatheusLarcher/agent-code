@@ -439,11 +439,17 @@ export function toCodexRequest(
   }
 }
 
+/** GPT-6 family (gpt-6-*, gpt-6.1-*): the models whose catalog entry sets
+ * `use_responses_lite`. */
+export function usesResponsesLite(model: string): boolean {
+  return /^gpt-6[-.]/.test(model)
+}
+
 /** Shapes the canonical Responses request for the ChatGPT Responses Lite
  * transport used by the GPT-6 family. Lite carries tools and instructions inside
  * the input prefix instead of their regular top-level fields. */
 export function toCodexWireRequest(req: CodexResponsesRequest, sessionId: string): CodexResponsesRequest {
-  if (!req.model.startsWith('gpt-6-')) return { ...req, stream: true }
+  if (!usesResponsesLite(req.model)) return { ...req, stream: true }
 
   const prefix: CodexInputItem[] = []
   if (req.tools?.length) prefix.push({ type: 'additional_tools', role: 'developer', tools: req.tools })

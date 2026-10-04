@@ -6,6 +6,7 @@ import { UiProvider } from '../ui/UiProvider'
 import type { EditorElement } from '../inlineMedia/InlineEditor'
 import type { Conversation } from '../types'
 import { CentralPanel } from './CentralPanel'
+import { fakeController } from './centralFakeController'
 
 /**
  * O campo da Central: o Composer do chat com o placeholder dela, sem o escudo
@@ -51,6 +52,7 @@ function setup(ready: boolean) {
     <UiProvider>
       <CentralPanel
         conversation={central()}
+        controller={fakeController()}
         ready={ready}
         onNeedTypesafe={onNeedTypesafe}
         onSend={onSend}

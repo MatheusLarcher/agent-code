@@ -1,0 +1,472 @@
+/* ---- Central: trilho, aviso do destino, "Para onde vai?", respostas, perguntas (mockup v3) ----
+   Cada destino na sua cor (--c, centralColor); o laranja (--accent) é só da Central. */
+.central-panel,
+.central-back {
+  --central-faint: #77736d;
+  --central-ok: #7fbf8a;
+  --central-bad: #d98080;
+}
+
+/* O feed rola: nenhum bloco encolhe (os de overflow escondido iriam a altura 0). */
+.central-feed > * {
+  flex-shrink: 0;
+}
+
+/* Ícone do destino: o do projeto, a pasta ou o balde (16 px; no trilho, 18 px redondo). */
+.central-pi {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--bg-3);
+  color: var(--muted);
+}
+.central-pi.round {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+/* Ícone antes do "projeto · conversa" de respostas, perguntas e citações. */
+:is(.central-who, .central-answered-who, .central-quote-who) > .central-pi {
+  width: 14px;
+  height: 14px;
+  margin-right: 5px;
+  vertical-align: -2px;
+}
+.central-pi.img {
+  background: transparent;
+}
+.central-pi .project-icon-img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+/* ---- trilho do cabeçalho ---- */
+.central-head-rail {
+  overflow: hidden;
+}
+.central-run {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px 3px 4px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--c);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.central-run:hover {
+  border-color: #4a4743;
+  border-left-color: var(--c);
+}
+.central-run b {
+  color: var(--text);
+  font-weight: 500;
+}
+.central-run-title {
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.central-run-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+  animation: central-pulse 1.6s infinite;
+}
+
+/* ---- aviso do destino debaixo da bolha ---- */
+.central-route {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--central-faint);
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+.central-route button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+/* Coluna estreita: o porquê encolhe primeiro; o destino e o "não era aqui" ficam numa linha. */
+.central-route > * {
+  flex: none;
+  white-space: nowrap;
+}
+.central-route > .central-why {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.central-to {
+  color: var(--c);
+  border-bottom: 1px dotted transparent !important;
+}
+.central-to:hover,
+.central-to:focus-visible {
+  border-bottom-color: var(--c) !important;
+}
+.central-why,
+.central-move {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.central-move {
+  color: var(--muted);
+}
+.central-move:hover {
+  color: var(--text);
+}
+.central-me:hover .central-why,
+.central-me:hover .central-move,
+.central-me:focus-within .central-why,
+.central-me:focus-within .central-move {
+  opacity: 1;
+}
+.central-wait {
+  font-style: italic;
+}
+.central-bad {
+  color: var(--central-bad);
+}
+.central-faint {
+  color: var(--central-faint);
+}
+
+/* ---- "Para onde vai?" ---- */
+.central-ask {
+  align-self: flex-end;
+  max-width: 70%;
+  background: var(--bg-2);
+  border: 1px dashed #5a564f;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.central-ask p {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.central-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.central-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-3);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+button.central-opt:hover {
+  border-color: #5a564f;
+}
+.central-opt em {
+  font-style: normal;
+  color: var(--central-faint);
+  font-size: 11px;
+}
+.central-opt.best,
+button.central-opt.best:hover {
+  border-color: var(--accent);
+}
+.central-ask.foreign .central-opt {
+  cursor: default;
+  opacity: 0.55;
+}
+.central-foreign {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--central-faint);
+}
+
+/* ---- resposta de um destino ---- */
+.central-agent {
+  max-width: 82%;
+  border-left: 2px solid var(--c);
+  padding-left: 14px;
+}
+.central-who {
+  font-size: 11px;
+  color: var(--c);
+  margin-bottom: 3px;
+  letter-spacing: 0.02em;
+}
+.central-note {
+  display: flex;
+  gap: 4px;
+  margin: 2px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.central-note::before {
+  content: '·';
+  flex: none;
+  color: var(--central-faint);
+}
+.central-note .md p,
+.central-note .md :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  font-size: inherit;
+}
+.central-answer {
+  margin-top: 6px;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.central-agent .md a {
+  color: var(--c);
+}
+.central-agent .md code {
+  background: var(--bg-3);
+  border: 0;
+  padding: 1px 5px;
+  font-size: 12.5px;
+}
+
+/* A linha-resumo: o resumo por padrão; os cartões só ao clicar. */
+.central-act {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.central-act:hover {
+  border-color: #4a4743;
+}
+.central-chev {
+  flex: none;
+  color: var(--central-faint);
+  font-size: 10px;
+}
+.central-sum {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.central-sum b {
+  color: var(--text);
+  font-weight: 500;
+}
+.central-sum .add,
+.central-sum .okc {
+  color: var(--central-ok);
+}
+.central-sum .rem,
+.central-sum .bad {
+  color: var(--central-bad);
+}
+.central-count {
+  flex: none;
+  color: var(--central-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.central-spin {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--c);
+  border-top-color: transparent;
+  animation: central-spin 0.9s linear infinite;
+}
+@keyframes central-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.central-open {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--central-faint);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.central-open:hover,
+.central-open:focus-visible {
+  color: var(--muted);
+}
+
+/* Os cartões do turno (os do chat), compactos como no mockup. */
+.central-tools {
+  margin: 6px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px;
+  border-radius: 8px;
+  background: #1b1a19;
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+.central-tools .tool-card {
+  align-self: stretch;
+  border: 0;
+  background: transparent;
+}
+.central-tools .tool-head {
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 5px;
+}
+.central-tools .tool-head:hover {
+  background: var(--bg-2);
+}
+.central-tools .tool-name {
+  min-width: 42px;
+  font-size: 12px;
+}
+.central-tools .diff-add {
+  color: var(--central-ok);
+}
+.central-tools .diff-del {
+  color: var(--central-bad);
+}
+.central-tools .tool-badge {
+  font-size: 10.5px;
+  padding: 0 6px;
+}
+.central-tools .tool-badge.ok {
+  background: #2a3a2c;
+  color: var(--central-ok);
+}
+/* Laranja só da Central: dentro dela, o que o cartão pinta de laranja vai na cor do destino. */
+.central-tools .tool-badge.run,
+.central-tools .tool-download {
+  background: color-mix(in srgb, var(--c) 16%, transparent);
+  border-color: color-mix(in srgb, var(--c) 32%, transparent);
+  color: var(--c);
+}
+.central-tools .tool-card.tool-skill {
+  background: transparent;
+}
+.central-tools .tool-skill .tool-name,
+.central-tools .tool-skill .tool-detail {
+  color: var(--c);
+  font-size: 12px;
+}
+
+/* ---- pergunta / permissão de um destino ---- */
+.central-q {
+  max-width: 82%;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--c);
+  border-radius: 10px;
+  background: var(--bg-2);
+  padding: 10px 12px;
+}
+.central-q b {
+  font-size: 13px;
+}
+.central-q .central-opts {
+  margin-top: 8px;
+}
+.central-answered {
+  font-size: 11.5px;
+  color: var(--central-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.central-answered-who {
+  color: var(--c);
+}
+
+/* ---- "← Central" no topo de uma conversa aberta pela Central ---- */
+.central-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 10px;
+  padding: 2px 9px 2px 6px;
+  border: 1px solid #5a3b2e;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #3a2a22, #2b2522);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.central-back:hover,
+.central-back:focus-visible {
+  border-color: var(--accent);
+}
+.chat-header .central-back + .chat-title {
+  margin-right: auto;
+}
+.central-back-strip {
+  padding: 6px 12px 0;
+}
+
+/* Linha da barra lateral: destino da Central trabalhando agora. */
+.conv-central-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  animation: central-pulse 1.6s infinite;
+}
+
+/* Coluna estreita (chat flutuante do Escritório, ~420 px): como o celular do mockup. */
+@container chat (max-width: 560px) {
+  .central-feed {
+    padding: 12px 14px 8px;
+    gap: 10px;
+  }
+  .central-me,
+  .central-ask {
+    max-width: 88%;
+  }
+  .central-agent,
+  .central-q {
+    max-width: 100%;
+  }
+  .central-run-title {
+    max-width: 90px;
+  }
+}

@@ -1,0 +1,111 @@
+/* ---- Responder uma mensagem (estilo WhatsApp): botão no hover, menu do botão direito, citação ---- */
+.central-me,
+.central-agent {
+  position: relative;
+}
+.central-reply-btn {
+  position: absolute;
+  top: 2px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg-2);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+/* Pedido (à direita do feed): o botão fica ao lado esquerdo da bolha; resposta: à direita do bloco. */
+.central-me > .central-reply-btn {
+  left: -34px;
+}
+.central-agent > .central-reply-btn {
+  right: -34px;
+}
+.central-me:hover > .central-reply-btn,
+.central-agent:hover > .central-reply-btn,
+.central-reply-btn:focus-visible {
+  opacity: 1;
+}
+.central-reply-btn:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.central-quote {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-left: 3px solid var(--c, var(--muted));
+  border-radius: 6px;
+  background: var(--bg-2);
+  padding: 5px 8px;
+  margin-bottom: 6px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.central-quote.composing {
+  margin: 0 16px 6px;
+}
+.central-quote-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.central-quote-who {
+  color: var(--c, var(--muted));
+  font-weight: 600;
+}
+.central-quote-text {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.central-quote-x {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.central-quote-x:hover {
+  color: var(--text);
+}
+
+.central-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 140px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.central-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.central-menu button:hover {
+  background: var(--bg-3);
+}

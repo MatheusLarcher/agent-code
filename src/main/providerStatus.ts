@@ -4,8 +4,9 @@
  * "Conectar conta" quando os três estão desligados.
  *
  * As consultas vêm injetadas: cada uma já existe em outro módulo e o index
- * decide qual usar. Consulta que falha conta como `false` (na dúvida o card
- * aparece; o login existente resolve) — a função nunca lança.
+ * decide qual usar. Consulta que lança conta como `false` — a função nunca
+ * lança. A do Claude trata a checagem indeterminada como conectada
+ * (authExpiry.ts): o card só aparece com desconexão comprovada.
  */
 import type { ProvidersStatus } from '../shared/ipc'
 

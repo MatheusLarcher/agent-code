@@ -126,6 +126,16 @@ async function bootPc(db: Db, installationId: string) {
       })
       return release
     },
+    /** Logo depois de cada releitura daqui, o outro PC grava (uma por releitura): a tentativa seguinte perde o CAS. */
+    afterRereads(...writes: Array<() => unknown>): void {
+      for (const write of writes) {
+        api.loadVersionedConversations.mockImplementationOnce(async (query?: { ids?: string[] }) => {
+          const rows = await db.load(query)
+          write()
+          return rows
+        })
+      }
+    },
     add(entry: CentralEntry): void {
       pc.screen = { ...pc.screen!, central: { entries: [...(pc.screen!.central?.entries ?? []), entry] } }
     },
@@ -164,29 +174,52 @@ describe('Central com atualizador: conflito de revisão', () => {
     expect(a.ids()).toEqual(['a1', 'b1', 'a2'])
   })
 
-  it('rebase uma vez só: o segundo conflito sobe como hoje, a tela já tem o relido e o próximo salvamento mescla', async () => {
+  it('dois conflitos seguidos: relê e mescla a cada um, e a terceira tentativa grava', async () => {
     const db = sharedDb()
     db.remoteWrite([req('a1', 1, A)])
     const a = await bootPc(db, A)
     await openCentral(a)
     a.storage.registerCentralUpdater(a.updater)
-    db.remoteWrite([req('a1', 1, A), req('b1', 2, B)])
-    // O B grava de novo logo depois da releitura: a nova tentativa também perde o CAS.
-    a.api.loadVersionedConversations.mockImplementationOnce(async (query) => {
-      const rows = await db.load(query)
-      db.remoteWrite([req('a1', 1, A), req('b1', 2, B), req('b2', 4, B)])
-      return rows
-    })
+    db.remoteWrite([req('a1', 1, A), req('b1', 2, B)]) // rev 2
+    a.afterRereads(() => db.remoteWrite([req('a1', 1, A), req('b1', 2, B), req('b2', 4, B)])) // rev 3
+
+    a.add(req('a2', 3, A))
+    await a.storage.saveConversations([a.screen!])
+
+    expect(a.revisions()).toEqual([1, 2, 3])
+    expect(a.upserts.map((u) => entryIds(u.payload))).toEqual([
+      ['a1', 'a2'],
+      ['a1', 'b1', 'a2'],
+      ['a1', 'b1', 'a2', 'b2']
+    ])
+    expect(db.row()).toMatchObject({ revision: 4 })
+    expect(entryIds(db.row()!.payload)).toEqual(['a1', 'b1', 'a2', 'b2'])
+    expect(a.updater).toHaveBeenCalledTimes(1) // uma entrega só: o remoto mais novo relido
+    expect(a.ids()).toEqual(['a1', 'b1', 'a2', 'b2'])
+  })
+
+  it('todos conflitando (1 tentativa + 3 rebases): o erro sobe, a tela já tem o mais novo relido e o próximo salvamento grava', async () => {
+    const db = sharedDb()
+    db.remoteWrite([req('a1', 1, A)])
+    const a = await bootPc(db, A)
+    await openCentral(a)
+    a.storage.registerCentralUpdater(a.updater)
+    const fromB = [req('b1', 2, B), req('b2', 4, B), req('b3', 5, B), req('b4', 6, B)]
+    const bWrites = (n: number) => () => db.remoteWrite([req('a1', 1, A), ...fromB.slice(0, n)])
+    bWrites(1)() // rev 2
+    a.afterRereads(bWrites(2), bWrites(3), bWrites(4)) // revs 3, 4 e 5: toda nova tentativa perde
 
     a.add(req('a2', 3, A))
     await expect(a.storage.saveConversations([a.screen!])).rejects.toThrow(/REVISION_CONFLICT/)
-    expect(a.revisions()).toEqual([1, 2])
-    expect(a.ids()).toEqual(['a1', 'b1', 'a2'])
+    expect(a.revisions()).toEqual([1, 2, 3, 4])
+    expect(entryIds(db.row()!.payload)).toEqual(['a1', 'b1', 'b2', 'b3', 'b4'])
+    expect(a.updater).toHaveBeenCalledTimes(1)
+    expect(a.ids()).toEqual(['a1', 'b1', 'a2', 'b2', 'b3']) // a rev 4, a última relida
 
-    await a.storage.saveConversations([a.screen!])
-    expect(a.revisions()).toEqual([1, 2, 2, 3])
-    expect(entryIds(db.row()!.payload)).toEqual(['a1', 'b1', 'a2', 'b2'])
-    expect(a.ids()).toEqual(['a1', 'b1', 'a2', 'b2'])
+    await a.storage.saveConversations([a.screen!]) // parte da 4 relida → conflito → relê a 5 → grava
+    expect(a.revisions()).toEqual([1, 2, 3, 4, 4, 5])
+    expect(entryIds(db.row()!.payload)).toEqual(['a1', 'b1', 'a2', 'b2', 'b3', 'b4'])
+    expect(a.ids()).toEqual(['a1', 'b1', 'a2', 'b2', 'b3', 'b4'])
   })
 
   it('gravação capturada antes de a tela receber o remoto do conflito não apaga as entradas do outro PC', async () => {
@@ -366,9 +399,10 @@ describe('Central sem atualizador registrado: o comportamento de hoje', () => {
 })
 
 describe('outras conversas não mudam, mesmo com o atualizador da Central registrado', () => {
+  const chat = { id: 'c1', title: 'Chat', cwd: '', messages: [], createdAt: NOW, updatedAt: NOW }
+
   it('conflito regrava a cópia local; feed troca a limpa e pula a suja; o atualizador nunca é chamado', async () => {
     const db = sharedDb()
-    const chat = { id: 'c1', title: 'Chat', cwd: '', messages: [], createdAt: NOW, updatedAt: NOW }
     db.put('c1', chat)
     const a = await bootPc(db, A)
     const [loaded] = await a.storage.loadConversationsByIds(['c1'])
@@ -388,6 +422,20 @@ describe('outras conversas não mudam, mesmo com o atualizador da Central regist
     a.storage.markConversationsDirty(['c1'])
     db.put('c1', { ...chat, title: 'Mais uma no B' }) // rev 5
     expect((await a.storage.loadConversationChanges([change(5, B, 'c1')])).size).toBe(0)
+    expect(a.updater).not.toHaveBeenCalled()
+  })
+
+  it('dois conflitos seguidos: rebase uma vez só (os 3 são só da Central) e o segundo conflito sobe', async () => {
+    const db = sharedDb()
+    db.put('c1', chat)
+    const a = await bootPc(db, A)
+    const [loaded] = await a.storage.loadConversationsByIds(['c1'])
+    a.storage.registerCentralUpdater(a.updater)
+    db.put('c1', { ...chat, title: 'No B' }) // rev 2
+    a.afterRereads(() => db.put('c1', { ...chat, title: 'De novo no B' })) // rev 3
+
+    await expect(a.storage.saveConversations([{ ...loaded, title: 'Editada aqui' }])).rejects.toThrow(/REVISION_CONFLICT/)
+    expect(a.revisions()).toEqual([1, 2])
     expect(a.updater).not.toHaveBeenCalled()
   })
 })

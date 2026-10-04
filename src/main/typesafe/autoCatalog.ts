@@ -55,6 +55,8 @@ export const AUTO_MODEL_DESCRIPTIONS: Record<string, string> = {
     'O mais rápido dos GPT, e o que o app já usa nas tarefas de fundo. Tarefa simples e bem definida: pergunta factual, tradução, resumo, renomear, edição pontual óbvia.',
   'gpt-6-sol':
     'O meio-termo dos GPT: trabalho de código do dia a dia e problemas difíceis de verdade — implementar uma mudança já descrita, bug não óbvio, mudança que atravessa várias partes do código.',
+  'gpt-6.1-sol':
+    'O Sol mais novo: desempenho perto do Astra com consumo bem menor da assinatura. Bom padrão para código do dia a dia e problemas difíceis.',
   'gpt-6-astra':
     'O GPT mais novo e mais capaz da lista, e o de menor contexto entre eles. Reserve para raciocínio realmente exigente e trabalho agêntico longo, de muitas etapas encadeadas.'
 }

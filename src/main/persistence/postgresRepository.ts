@@ -7,6 +7,15 @@ import { hashAggregate, hashJson, hashText, normalizeJson, type JsonValue } from
 import { PostgresChangeFeed } from './postgresChangeFeed'
 import { ChangeLogPruner, pruneInBatches } from './changeLogPruner'
 import { TokenUsagePruner } from './tokenUsagePruner'
+import { ContextBlobPruner } from './contextBlobPruner'
+import {
+  deletePostgresContextTurns,
+  listPostgresContextTurns,
+  prunePostgresOrphanContextBlobs,
+  readPostgresContextTurn,
+  savePostgresContextTurn
+} from './postgresContextHistory'
+import type { ContextTurnDetail, ContextTurnSummary } from '../../shared/contextSnapshot'
 import { createPostgresSessionStore } from './postgresSessionStore'
 import { hotPathTransaction } from './postgresSessionSetup'
 import { rollbackOrDiscard } from './postgresTimeouts'
@@ -87,6 +96,7 @@ import {
   type ConversationLease,
   type ConversationRecord,
   type ConversationWrite,
+  type ContextTurnWrite,
   type ExportSnapshot,
   type KvAddress,
   type KvScope,
@@ -373,6 +383,7 @@ export class PostgresRepository implements PersistenceRepository {
   private readonly feed: PostgresChangeFeed
   private readonly changeLogPruner: ChangeLogPruner
   private readonly tokenUsagePruner: TokenUsagePruner
+  private readonly contextBlobPruner: ContextBlobPruner
   private initialized = false
 
   constructor(
@@ -410,6 +421,9 @@ export class PostgresRepository implements PersistenceRepository {
       },
       (error) => console.error('[postgres] falha ao podar llm_calls:', error)
     )
+    this.contextBlobPruner = new ContextBlobPruner(this, (error) =>
+      console.error('[postgres] falha ao podar context_blob:', error)
+    )
   }
 
   async initialize(): Promise<void> {
@@ -432,6 +446,7 @@ export class PostgresRepository implements PersistenceRepository {
     await this.feed.start()
     this.changeLogPruner.start()
     this.tokenUsagePruner.start()
+    this.contextBlobPruner.start()
     this.initialized = true
   }
 
@@ -440,6 +455,7 @@ export class PostgresRepository implements PersistenceRepository {
     this.handlers.clear()
     this.changeLogPruner.stop()
     this.tokenUsagePruner.stop()
+    this.contextBlobPruner.stop()
     await this.feed.close()
     await this.pool.end()
   }
@@ -709,6 +725,8 @@ export class PostgresRepository implements PersistenceRepository {
          RETURNING conversation_id, payload, revision, content_hash, created_at, updated_at, deleted_at`,
         [input.id, this.installationId]
       )
+      // Na mesma transação: o histórico do contexto não sobrevive à conversa.
+      await deletePostgresContextTurns(client, input.id)
       return conversation(result.rows[0])
     })
   }
@@ -1506,6 +1524,32 @@ export class PostgresRepository implements PersistenceRepository {
       [convId]
     )
     return result.rows.map(llmUsageTotalFromRow)
+  }
+
+  // Histórico do contexto: SQL em postgresContextHistory.ts.
+  async saveContextTurn(write: ContextTurnWrite): Promise<void> {
+    this.assertInitialized()
+    await savePostgresContextTurn(this.pool, write)
+  }
+
+  async listContextTurns(convId: string, limit: number): Promise<ContextTurnSummary[]> {
+    this.assertInitialized()
+    return listPostgresContextTurns(this.pool, convId, limit)
+  }
+
+  async readContextTurn(convId: string, turnId: string): Promise<ContextTurnDetail | null> {
+    this.assertInitialized()
+    return readPostgresContextTurn(this.pool, convId, turnId)
+  }
+
+  async deleteContextTurns(convId: string): Promise<number> {
+    this.assertInitialized()
+    return deletePostgresContextTurns(this.pool, convId)
+  }
+
+  async pruneOrphanContextBlobs(): Promise<number> {
+    this.assertInitialized()
+    return prunePostgresOrphanContextBlobs(this.pool)
   }
 
   async getTask(taskId: string): Promise<Task | null> {

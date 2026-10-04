@@ -73,14 +73,17 @@ import {
   loadUsageLimits,
   saveUsageLimits,
   loadConversationChanges,
-  markConversationsDirty
+  markConversationsDirty,
+  registerCentralUpdater
 } from './storage'
 import { ChatPanel } from './components/ChatPanel'
+import { Composer } from './components/Composer'
+import { ModelPicker, type ModelPickerProps } from './components/ModelPicker'
 import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
 import { CrewChip } from './components/CrewChip'
 import { buildCrew, workingMembers } from './crew'
-import { IconBoard, IconGlobe, IconUsers } from './components/Icons'
+import { IconBoard, IconGlobe } from './components/Icons'
 import { MainTabs, OfficeErrorBoundary, OfficeTabHost, useMainTab } from './components/MainTabs'
 import { fileUrl } from './fileUrl'
 import { officeStore } from './office/officeStore'
@@ -134,7 +137,17 @@ import { centralConversationFields } from './central/centralRegistry'
 import { useCentralBoot } from './central/centralBoot'
 import { CENTRAL_TYPESAFE_MESSAGE } from './central/centralSend'
 import { useCentral, type UseCentralResult } from './central/useCentral'
+import {
+  STOP_GRACE_MS,
+  STOP_SAFETY_MS,
+  STOP_SETTLE_MS,
+  createStopHolds,
+  type StopHolds,
+  type StopPhase
+} from './central/stopHold'
+import { createTurnIdentity, withStaleUsage } from './central/turnIdentity'
 import { CentralPanel } from './central/CentralPanel'
+import { buildRemoteCentral } from './central/centralRemote'
 
 export type { UserMessage, UIMessage } from './types'
 
@@ -178,10 +191,8 @@ const AUTO_HISTORY_TURNS = 6
  *  mensagem seguinte do que o começo dela. */
 const AUTO_HISTORY_CHARS = 1000
 
-/** "Não era aqui" com o turno rodando: se o turno parado não emitir o fim dele (o
- *  Stop pegou a mensagem antes de o turno começar), a fila mantida sai depois
- *  disto, contado do recibo do Stop. */
-const STOP_SETTLE_MS = 3000
+/** O "agora" numa conversa parando (o Stop do "não era aqui" ainda assentando). */
+const STOPPING_MESSAGE = 'A conversa está parando — a fila sai assim que ela parar.'
 
 /** O modelo que a conversa está DE FATO rodando. Em Automático o campo `model`
  *  guarda o sentinel, e quem precisa de uma propriedade do modelo real (o teto
@@ -227,6 +238,17 @@ export function isSpuriousUsageZero(prev: RateLimitStatus | undefined, next: Rat
   const prevPct = prev.utilization ?? 0
   if (prevPct <= 0) return false
   return typeof prev.resetsAt === 'number' && prev.resetsAt > Date.now()
+}
+
+/** The window to keep when `next` arrives over `prev`. An update without a
+ *  number (`rate_limit_event` with status `allowed` omits `utilization`) keeps
+ *  the last known % — missing data is not 0%. A window that already reset was
+ *  zeroed by `expireResetUsage`, so carrying its number over is safe. */
+export function mergeUsageLimit(prev: RateLimitStatus | undefined, next: RateLimitStatus): RateLimitStatus {
+  if (prev && next.utilization === undefined && prev.utilization !== undefined) {
+    return { ...next, utilization: prev.utilization, resetsAt: next.resetsAt ?? prev.resetsAt }
+  }
+  return prev && isSpuriousUsageZero(prev, next) ? prev : next
 }
 
 /** Zero out every usage window whose reset time has already passed, without
@@ -295,6 +317,11 @@ function isQueuedPayload(value: unknown): value is Omit<QueuedMessage, 'id' | 'c
     Array.isArray(v.fileRefs) &&
     (v.msgId === undefined || typeof v.msgId === 'string')
   )
+}
+
+/** Os ids de bolha decididos (âncoras da Central) dos itens da fila de uma conversa. */
+function queuedMsgIds(queue: readonly QueuedMessage[], convId: string): string[] {
+  return queue.flatMap((m) => (m.convId === convId && m.msgId ? [m.msgId] : []))
 }
 
 function basename(p: string): string {
@@ -698,6 +725,14 @@ export function App(): JSX.Element {
         mcpTaskId?: string
         /** The model already produced visible text for this turn. */
         responseReceived?: true
+        /** Um Stop pegou esta mensagem: se o envio dela ainda espera (connect), não sai. */
+        stopped?: true
+        /** O envio ao main já saiu (antes disto, um Stop não tem turno a esperar). */
+        sending?: true
+        /** O turno já começou no CLI (`turn-start`) ou produziu algo: o terminal dele vem. */
+        active?: true
+        /** Outros `turnIds` que este turno mostrou (central/turnIdentity.ts). */
+        turnIds?: string[]
       }
     >
   >({})
@@ -733,10 +768,33 @@ export function App(): JSX.Element {
   // O hook da Central (central/useCentral.ts) nasce depois destes caminhos: os
   // pontos que criam a bolha do usuário o alcançam por esta ref (adoção, Emenda A1).
   const centralRef = useRef<UseCentralResult | null>(null)
-  // "Não era aqui" com o turno rodando: o Stop que MANTÉM a fila da conversa. Com a
-  // conversa aqui, a fila sai uma vez quando o Stop assenta (ver releaseKeptQueue).
-  const keepQueueStopRef = useRef<Map<string, ReturnType<typeof setTimeout> | undefined>>(new Map())
+  // "Não era aqui" com o turno rodando: o Stop que MANTÉM a fila. A conversa fica
+  // "parando" — ocupada para todo despacho — até o terminal do turno parado
+  // (central/stopHold.ts). Quem solta a fila é o releaseKeptQueue.
   const releaseKeptQueueRef = useRef<((cid: string) => void) | null>(null)
+  const stopHoldsRef = useRef<StopHolds | null>(null)
+  if (!stopHoldsRef.current) {
+    stopHoldsRef.current = createStopHolds({
+      settleMs: STOP_SETTLE_MS,
+      graceMs: STOP_GRACE_MS,
+      safetyMs: STOP_SAFETY_MS,
+      onRelease: (cid) => releaseKeptQueueRef.current?.(cid)
+    })
+  }
+  const stopHolds = stopHoldsRef.current
+  // De qual turno é cada evento do main, pelos `turnIds` (central/turnIdentity.ts).
+  const [turnIdentity] = useState(createTurnIdentity)
+  /** A mensagem `msgId` foi parada enquanto o envio dela esperava (connect, sessão
+   *  refeita): um Stop a marcou, ou o turno em voo da conversa já não é ela. */
+  const stoppedWhileSending = (cid: string, msgId: string): boolean => {
+    const inflight = inflightRef.current[cid]
+    return !inflight || inflight.msgId !== msgId || inflight.stopped === true
+  }
+  /** O envio do turno em voo vai sair agora: daqui em diante um Stop tem turno a esperar. */
+  const markSending = (cid: string): void => {
+    const inflight = inflightRef.current[cid]
+    if (inflight) inflight.sending = true
+  }
 
   const getActive = (): Conversation | null =>
     convsRef.current.find((c) => c.id === activeIdRef.current) ?? null
@@ -840,11 +898,11 @@ export function App(): JSX.Element {
       if (e.kind === 'rate-limit') {
         // O main grava a leitura na conta da conversa; o painel relê (≤ 1x/10 s).
         refreshAccountsSoon()
-        setUsageLimits((prev) =>
-          isSpuriousUsageZero(prev[e.limits.rateLimitType], e.limits)
-            ? prev
-            : { ...prev, [e.limits.rateLimitType]: e.limits }
-        )
+        setUsageLimits((prev) => {
+          const old = prev[e.limits.rateLimitType]
+          const next = mergeUsageLimit(old, e.limits)
+          return next === old ? prev : { ...prev, [e.limits.rateLimitType]: next }
+        })
         return
       }
       // Estado da conversa, não conteúdo dela: também não passa pelo reducer,
@@ -876,13 +934,40 @@ export function App(): JSX.Element {
           return
         }
         const conv = convsRef.current.find((c) => c.id === cid)
-        const blocked = busyRef.current.has(cid) || !!(conv?.recovery && conv.recovery.scheduledAt !== 0)
+        const blocked =
+          busyRef.current.has(cid) || stopHolds.isHeld(cid) || !!(conv?.recovery && conv.recovery.scheduledAt !== 0)
         const head = queueHeadToDrain(queueRef.current, cid, blocked)
         if (!conv || !head) return
         queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
         setQueue((q) => q.filter((m) => m.id !== head.id))
         void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
         return
+      }
+      // De qual turno é o evento (central/turnIdentity.ts). `stale`: de um turno
+      // parado, com outro turno em voo — fica fora do estado deste.
+      const owner = 'turnIds' in e ? turnIdentity.owner(cid, e.turnIds, inflightRef.current[cid]) : 'unknown'
+      const terminal = e.kind === 'result' || e.kind === 'error'
+      if (e.kind === 'turn-start') {
+        // O turno começou no CLI: o terminal dele vem (também o do turno parado).
+        const inflight = inflightRef.current[cid]
+        if (inflight && owner !== 'stale' && owner !== 'unknown') inflight.active = true
+        if (owner === 'stopped') stopHolds.activity(cid)
+        return
+      }
+      if (terminal && owner === 'stale') {
+        // O terminal atrasado do turno parado: nem fecha, nem falha o turno em voo;
+        // só o que ele gastou entra na conta da conversa.
+        if (e.kind === 'result') patchConv(cid, (c) => withStaleUsage(c, e))
+        return
+      }
+      // Stop do "não era aqui" (central/stopHold.ts): o main roda um turno por vez,
+      // então o 1º terminal depois do Stop é do turno parado — com id, com certeza.
+      // Saída do modelo marca o turno em voo como "falou" (o terminal dele vem).
+      const stopVerdict = terminal && owner !== 'current' ? stopHolds.terminal(cid, e.kind, owner === 'stopped') : 'normal'
+      if (owner !== 'stale' && (e.kind === 'assistant-text' || e.kind === 'thinking' || e.kind === 'tool-use' || e.kind === 'tool-result')) {
+        const inflight = inflightRef.current[cid]
+        if (inflight) inflight.active = true
+        stopHolds.activity(cid)
       }
       // Agents panel: `Task` calls open a track, subagent calls feed it, and the
       // Task's own result closes it. Kept apart from the message reducer below —
@@ -1023,7 +1108,7 @@ export function App(): JSX.Element {
       // (queue dispatch, permission clearing, error marking) below.
       const isActivity =
         e.kind === 'assistant-text' || e.kind === 'thinking' || e.kind === 'tool-use' || e.kind === 'tool-result' || e.kind === 'status'
-      if (e.kind === 'assistant-text' && e.text.trim()) {
+      if (e.kind === 'assistant-text' && e.text.trim() && owner !== 'stale') {
         const inflight = inflightRef.current[cid]
         if (inflight) inflight.responseReceived = true
       }
@@ -1038,7 +1123,8 @@ export function App(): JSX.Element {
         // é o turno que o usuário parou. É aqui que a marca de "parado" cai
         // quando o turno seguinte não veio do app (uma mensagem que sobreviveu
         // ao Stop, por exemplo); os envios normais limpam no próprio despacho.
-        interruptedRef.current.delete(cid)
+        // Com id do turno parado (o CLI ainda produzindo), a marca fica.
+        if (owner !== 'stopped') interruptedRef.current.delete(cid)
       }
 
       if (e.kind === 'result' || e.kind === 'error') {
@@ -1162,11 +1248,11 @@ export function App(): JSX.Element {
         // "busy" through the handoff; only when the queue is empty do we go idle.
         delete inflightRef.current[cid]
         patchConv(cid, (c) => ({ ...c, recovery: undefined }))
-        // Fim do turno que o "não era aqui" parou mantendo a fila: a conversa fica
-        // parada e a fila sai pelo despacho normal (turno novo), uma vez só.
-        if (keepQueueStopRef.current.has(cid)) {
-          setBusy(cid, false)
-          setBusySince((m) => withoutKey(m, cid))
+        // Fim do turno que o "não era aqui" parou mantendo a fila: a conversa segue
+        // "parando" durante a carência do `error` do fim do stream (`wait`) e então
+        // a fila mantida sai pelo despacho normal (turno novo), uma vez.
+        if (stopVerdict === 'wait') return
+        if (stopVerdict === 'release') {
           releaseKeptQueueRef.current?.(cid)
           return
         }
@@ -1246,6 +1332,9 @@ export function App(): JSX.Element {
             if (auto && revalidatesAuto(auto)) {
               await connectRef.current?.(auto, autoPromptFor(auto, next.text))
             }
+            // Parada enquanto a sessão era refeita ("não era aqui", Stop): não sai.
+            if (stoppedWhileSending(cid, nextMsgId)) return
+            markSending(cid)
             // O id da tarefa MCP do item vai junto: é por ele (nunca pelo texto) que o
             // main sabe qual tarefa sai, com o modelo e o pin dela.
             await window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid, undefined, next.mcpTaskId)
@@ -1451,12 +1540,12 @@ export function App(): JSX.Element {
           : loaded.find((c) => !isCentralConversation(c))?.id ?? null
       )
       // Seed the badge from storage: live events win, EXCEPT when the live
-      // value is a spurious zero and the stored snapshot is still valid —
-      // then the stored one prevails (same rule as the live-event guard).
+      // value is a spurious zero or carries no number and the stored snapshot
+      // is still valid (same rule as the live-event merge).
       setUsageLimits((prev) => {
         const merged = { ...limits, ...prev }
         for (const [type, stored] of Object.entries(limits)) {
-          if (prev[type] && isSpuriousUsageZero(stored, prev[type])) merged[type] = stored
+          if (prev[type]) merged[type] = mergeUsageLimit(stored, prev[type])
         }
         // A stored window may have reset while the app was closed.
         return expireResetUsage(merged, Date.now())
@@ -1848,7 +1937,12 @@ export function App(): JSX.Element {
           todoPlan: c.todoPlan,
           stalledSince: stalledSince[c.id],
           tokens: { context: c.tokens.context, output: c.tokens.output, cost: c.tokens.cost, contextLimit: contextLimitFor(runningModel(c)) },
-          permission: permissions[c.id]
+          permission: permissions[c.id],
+          // Só na Central: o retrato compacto do celular (central/centralRemote.ts);
+          // `self` marca os pedidos do outro PC (o celular não oferece escolha neles).
+          ...(isCentralConversation(c) && centralRef.current
+            ? { central: buildRemoteCentral({ ...centralRef.current, self: storageStatus?.installationId ?? null }) }
+            : {})
         })),
         skipPerms: skipPermsRef.current,
         // Catalog for the phone's selectors — same options the PC picker offers.
@@ -1866,7 +1960,7 @@ export function App(): JSX.Element {
       })
     }, 400)
     return () => clearTimeout(pubTimer.current)
-  }, [conversations, queue, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models, permissions, stalledSince, usageLimits])
+  }, [conversations, queue, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models, permissions, stalledSince, usageLimits, storageStatus?.installationId])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
   // page viewport follows (BrowserPanel reports its new size to main).
@@ -2044,6 +2138,21 @@ export function App(): JSX.Element {
     setActiveId(id)
     if (msgId) setScrollTarget((prev) => ({ convId: id, msgId, seq: (prev?.seq ?? 0) + 1 }))
   }, [])
+  // "← Central": a conversa aberta PELA Central (aviso, resposta, trilho). Abrir
+  // outra conversa por qualquer outro caminho apaga a volta.
+  const [backToCentral, setBackToCentral] = useState<string | null>(null)
+  const openFromCentral = useCallback(
+    (id: string, msgId: string | null): void => {
+      selectConversationAt(id, msgId)
+      setBackToCentral(id)
+    },
+    [selectConversationAt]
+  )
+  useEffect(() => {
+    if (backToCentral && activeId !== backToCentral) setBackToCentral(null)
+  }, [activeId, backToCentral])
+  // Pergunta de um destino com várias perguntas/múltipla escolha/"outro…" aberta da Central.
+  const [centralQuestionConv, setCentralQuestionConv] = useState<string | null>(null)
 
   // Sidebar e celular: nome escolhido pelo usuário trava o título (o LLM
   // atrasado é descartado) e, no planejamento, vira o título do roteiro.
@@ -2064,6 +2173,8 @@ export function App(): JSX.Element {
       if (id === CENTRAL_ID) return
       const next = convsRef.current.filter((c) => c.id !== id)
       pendingTitlesRef.current.delete(id)
+      stopHolds.cancel(id)
+      turnIdentity.forget(id)
       void window.api.disposeAgent(id)
       void window.api.disposeBrowser(id)
       setConnected(id, false)
@@ -2074,6 +2185,9 @@ export function App(): JSX.Element {
       setMinimizedQuestions((m) => withoutKey(m, id))
       setVigiaAlerts((v) => withoutKey(v, id))
       setVigiaAt((v) => withoutKey(v, id))
+      // O que a Central entregou e não rodou (na fila ou em voo) volta para ela perguntar.
+      const inflightMsg = inflightRef.current[id]?.msgId
+      centralRef.current?.dropped(id, [...queuedMsgIds(queueRef.current, id), ...(inflightMsg ? [inflightMsg] : [])])
       reportMcpDropped(queueRef.current.filter((m) => m.convId === id), 'A conversa foi apagada no Agent Code.')
       setQueue((q) => q.filter((m) => m.convId !== id))
       const removed = convsRef.current.find((c) => c.id === id)
@@ -2479,7 +2593,9 @@ export function App(): JSX.Element {
 
       // Agent already busy on THIS conversation → queue instead of sending, so
       // the running task isn't cancelled. It'll be dispatched when the turn ends.
-      const idle = !busyRef.current.has(conv.id) && !(conv.recovery && !stalledRecovery)
+      // Parando (Stop do "não era aqui" ainda assentando) conta como ocupada: nada
+      // começa antes do terminal do turno parado (central/stopHold.ts).
+      const idle = !busyRef.current.has(conv.id) && !stopHolds.isHeld(conv.id) && !(conv.recovery && !stalledRecovery)
       if (!idle || (!fromQueue && queueRef.current.some((m) => m.convId === conv.id))) {
         const item: QueuedMessage = {
           id: uid('q'),
@@ -2547,6 +2663,10 @@ export function App(): JSX.Element {
         const auto = revalidatesAuto(conv) ? autoPromptFor(conv, text) : undefined
         const opening = !auto && isPlanningConversation(conv) ? autoPromptFor(conv, text) : undefined
         if (auto || !connectedRef.current.has(conv.id)) await connect(conv, auto ?? opening)
+        // Parada enquanto conectava ("não era aqui", Stop): a mensagem NÃO sai. Quem
+        // parou já cuidou da bolha (cancelada) e do estado da conversa.
+        if (stoppedWhileSending(conv.id, msgId)) return
+        markSending(conv.id)
         await window.api.sendMessage(conv.id, full, images, files, fileRefs, sdkUuid, undefined, mcpTaskId)
       } catch (err) {
         // Couldn't even reach the agent → keep the message, flag it with the error
@@ -2609,7 +2729,9 @@ export function App(): JSX.Element {
         full: continuation,
         images: [],
         files: [],
-        fileRefs: []
+        fileRefs: [],
+        // Sem a checagem pós-connect daqui, um Stop no meio conta como turno enviado.
+        sending: true
       }
       if (recovery.messageId) clearMessageError(convId, recovery.messageId)
       try {
@@ -2739,7 +2861,7 @@ export function App(): JSX.Element {
     async (convId: string, msgId: string): Promise<void> => {
       const conv = convsRef.current.find((c) => c.id === convId)
       if (!conv || isCentralConversation(conv)) return
-      if (busyRef.current.has(convId)) return // a turn is already running here
+      if (busyRef.current.has(convId) || stopHolds.isHeld(convId)) return // a turn is already running (or stopping) here
       const msg = conv.messages.find((m) => m.kind === 'user' && m.id === msgId)
       if (!msg || msg.kind !== 'user') return
       const payload = failedRef.current[msgId]
@@ -2756,6 +2878,10 @@ export function App(): JSX.Element {
       // Project folder gone → keep the error, just warn (ensureProject toasts).
       if (!(await ensureProject(conv))) return
 
+      // O reenvio de um turno comum também aparece na Central (A1). Pela âncora:
+      // o que já foi adotado (ou entregue por ela) não duplica. O pedido da Central
+      // cujo envio falhou nem chega aqui — a bolha dele sai do destino.
+      centralRef.current?.adopt({ conv, msgId, text: msg.text, images, files, fileRefs })
       clearMessageError(convId, msgId)
       // O reenvio manual assume o lugar da recuperação automática — o cartão sai
       // da tela junto com o erro da bolha.
@@ -2764,7 +2890,8 @@ export function App(): JSX.Element {
       setBusy(convId, true)
       setBusySince((m) => ({ ...m, [convId]: Date.now() }))
       const sdkUuid = crypto.randomUUID()
-      inflightRef.current[convId] = { msgId, sdkUuid, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
+      // Sem a checagem pós-connect daqui, um Stop no meio conta como turno enviado.
+      inflightRef.current[convId] = { msgId, sdkUuid, full, images, files, fileRefs, sending: true, ...(mcpTaskId ? { mcpTaskId } : {}) }
       delete failedRef.current[msgId]
 
       try {
@@ -2821,16 +2948,22 @@ export function App(): JSX.Element {
     addLoaded: addLoadedConversation,
     create: () => createConversation('', CENTRAL_ID, centralConversationFields(), false)
   })
+  // Os dois PCs gravam a MESMA Central: a storage mescla por dono de entrada e põe
+  // o resultado na tela por aqui (central/centralMerge.ts).
+  useEffect(() => {
+    registerCentralUpdater((fn) => setConversations((cur) => cur.map((c) => (c.id === CENTRAL_ID ? fn(c) : c))))
+    return () => registerCentralUpdater(null)
+  }, [])
 
   // Commands arriving from a phone (phone → PC → Claude Code): route into the
   // matching conversation via the same dispatch path the composer uses.
   useEffect(() => {
-    const off = window.api.onRemoteInbound(({ convId, text, images, files }) => {
+    const off = window.api.onRemoteInbound(({ convId, text, images, files, replyTo }) => {
       const imgs = images ?? []
       const thumbs = imgs.map((img) => `data:${img.mediaType};base64,${img.data}`)
       // Para a Central: vira pedido nela e é roteado como no PC (central/useCentral.ts).
       if (convId === CENTRAL_ID) {
-        void centralRef.current?.sendToCentral(text, imgs, thumbs, files ?? [], [], 'phone')
+        void centralRef.current?.sendToCentral(text, imgs, thumbs, files ?? [], [], 'phone', replyTo)
         return
       }
       const conv = convsRef.current.find((c) => c.id === convId)
@@ -2893,6 +3026,18 @@ export function App(): JSX.Element {
     setQueue((q) => q.filter((m) => m.id !== id))
   }, [])
 
+  // A lixeira da fila na conversa. O que a Central entregou volta para ela perguntar
+  // de novo, em vez de ficar "entregue" sem ter rodado (central/centralMove.ts); o
+  // "não era aqui" dela tira pelo deleteQueued, sem este aviso.
+  const trashQueued = useCallback(
+    (id: string): void => {
+      const item = queueRef.current.find((m) => m.id === id)
+      if (item?.msgId) centralRef.current?.dropped(item.convId, [item.msgId])
+      deleteQueued(id)
+    },
+    [deleteQueued]
+  )
+
   // Botão "agora": a mensagem sai da fila e entra na tarefa em andamento, como
   // ajuste (o main a marca e o CLI a lê entre uma ferramenta e outra). Sai da
   // fila ANTES da chamada — senão o fim do turno podia drená-la em paralelo e
@@ -2902,6 +3047,12 @@ export function App(): JSX.Element {
       const at = queueRef.current.findIndex((m) => m.id === id)
       const item = queueRef.current[at]
       if (!item) return
+      // Conversa parando (o Stop do "não era aqui" assentando): nada entra no turno
+      // parado nem começa outro; o item fica onde está e sai com a fila.
+      if (stopHolds.isHeld(item.convId)) {
+        notify('aviso', STOPPING_MESSAGE)
+        return
+      }
       // Quem vinha depois dele: para uma recusa do main devolvê-lo ao MESMO lugar.
       const later = new Set(queueRef.current.slice(at + 1).map((m) => m.id))
       queueRef.current = queueRef.current.filter((m) => m.id !== id)
@@ -3011,9 +3162,19 @@ export function App(): JSX.Element {
   // desktop answer would, so both sides' modals close in sync.
   useEffect(() => {
     return window.api.onRemotePermissionResponse(({ convId, res }) => {
-      void respondToPermission(convId, res)
+      // Destino com turno da Central: responde por ela, que grava a linha "respondida"
+      // (o `answer` já chama `respondToPermission` — uma resposta só).
+      const central = centralRef.current
+      if (central?.hasActiveAnchor(convId)) void central.answer(convId, res)
+      else void respondToPermission(convId, res)
     })
   }, [respondToPermission])
+
+  // "Para onde vai?" respondido no celular: a mesma escolha do clique no PC.
+  useEffect(
+    () => window.api.onRemoteCentralChoose(({ entryId, option }) => void centralRef.current?.choose(entryId, option)),
+    []
+  )
 
   // Toggle whether the active conversation's pending question is minimized
   // (hidden, chip visible in ChatPanel) — used for outside-click/Esc AND the
@@ -3051,10 +3212,14 @@ export function App(): JSX.Element {
     setSettingsOpen(true)
   }, [notify])
 
-  // Clique na Central (barra lateral): sempre a abre; sem TypeSafe, também
-  // leva às Configurações dele. Se a leitura do boot falhou, tenta de novo.
+  // Clique na Central (barra lateral, "← Central"): sempre a abre; sem TypeSafe,
+  // também leva às Configurações dele. Se a leitura do boot falhou, tenta de
+  // novo. `centralSignal` avisa o Escritório (fecha a tela do monitor aberta),
+  // mesmo quando a Central já era a conversa ativa.
+  const [centralSignal, setCentralSignal] = useState(0)
   const selectCentral = useCallback((): void => {
     setActiveId(CENTRAL_ID)
+    setCentralSignal((n) => n + 1)
     if (!typesafeReady) needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE)
     if (!convsRef.current.some((c) => c.id === CENTRAL_ID)) void ensureCentralLoaded()
   }, [typesafeReady, needTypesafeKey, ensureCentralLoaded])
@@ -3188,51 +3353,61 @@ export function App(): JSX.Element {
   }, [setBusy])
 
   /**
-   * A fila mantida pelo Stop do "não era aqui" sai UMA vez, pelo despacho normal
-   * (turno novo, id da bolha preservado): no fim do turno parado ou, se ele não
-   * vier (o Stop pegou a mensagem antes de o turno começar), STOP_SETTLE_MS
-   * depois do recibo. Quem chegar primeiro solta; o outro não faz nada.
+   * O Stop do "não era aqui" assentou (o terminal do turno parado chegou, ou a
+   * reserva venceu sem ele — central/stopHold.ts): a conversa sai de "parando",
+   * fica parada, e a fila mantida sai UMA vez pelo despacho normal (turno novo, id
+   * da bolha preservado).
    */
-  const releaseKeptQueue = useCallback((cid: string): void => {
-    const held = keepQueueStopRef.current
-    if (!held.has(cid)) return
-    clearTimeout(held.get(cid))
-    held.delete(cid)
-    const head = queueRef.current.find((m) => m.convId === cid)
-    const conv = convsRef.current.find((c) => c.id === cid)
-    if (!head || !conv || busyRef.current.has(cid)) return
-    queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
-    setQueue((q) => q.filter((m) => m.id !== head.id))
-    void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
-  }, [])
+  const releaseKeptQueue = useCallback(
+    (cid: string): void => {
+      goIdleAfterStop(cid)
+      const head = queueRef.current.find((m) => m.convId === cid)
+      const conv = convsRef.current.find((c) => c.id === cid)
+      if (!head || !conv) return
+      queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
+      setQueue((q) => q.filter((m) => m.id !== head.id))
+      void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
+    },
+    [goIdleAfterStop]
+  )
   releaseKeptQueueRef.current = releaseKeptQueue
+  useEffect(() => () => stopHolds.dispose(), [stopHolds])
 
   const interruptConv = useCallback((cid: string, opts?: { keepQueue?: boolean }): void => {
     // Stop the current task AND drop anything queued for this conversation. The
     // SDK ends an interrupt by emitting a `result` (not `error`); with the queue
     // cleared, the turn-end handler finds nothing to dispatch and just goes idle
     // instead of auto-starting the next queued message.
-    // `keepQueue` (o "não era aqui" da Central): só o turno para; a fila fica.
+    // `keepQueue` (o "não era aqui" da Central): só o turno para; a fila fica, e a
+    // conversa segue "parando" (ocupada) até o turno parado assentar (stopHold.ts).
     const keepQueue = opts?.keepQueue === true
     interruptedRef.current.add(cid) // intentional stop — don't flag the message as failed
+    // The receipt tells us whether the in-flight SDK message actually survived
+    // the Stop. Only paint it as canceled when the SDK confirms it will not run.
+    const inflight = inflightRef.current[cid]
+    // Se o envio dela ainda espera (connect, sessão refeita), não sai mais.
+    if (inflight) inflight.stopped = true
+    // O que vier com o id dela daqui em diante é do turno parado (turnIdentity.ts).
+    turnIdentity.stop(cid, inflight)
     if (keepQueue) {
-      keepQueueStopRef.current.set(cid, undefined)
+      // Sem envio saído não há turno nem terminal; turno que falou manda o terminal com certeza.
+      const phase: StopPhase = !inflight?.sending ? 'unsent' : inflight.active ? 'started' : 'unknown'
+      stopHolds.begin(cid, phase)
     } else {
+      stopHolds.cancel(cid)
+      // A fila sai sem rodar: o que a Central entregou nela volta para ela perguntar.
+      centralRef.current?.dropped(cid, queuedMsgIds(queueRef.current, cid))
       reportMcpDropped(
         queueRef.current.filter((m) => m.convId === cid),
         'Cancelada: a conversa foi interrompida no Agent Code.'
       )
       setQueue((q) => q.filter((m) => m.convId !== cid))
     }
-    // The receipt tells us whether the in-flight SDK message actually survived
-    // the Stop. Only paint it as canceled when the SDK confirms it will not run.
-    const inflight = inflightRef.current[cid]
-    const goIdle = (): void => {
-      if (!keepQueue) return goIdleAfterStop(cid)
-      // O fim do turno parado já soltou a fila (e o turno seguinte pode estar rodando).
-      if (!keepQueueStopRef.current.has(cid)) return
-      if (inflightRef.current[cid] === inflight) goIdleAfterStop(cid)
-      keepQueueStopRef.current.set(cid, setTimeout(() => releaseKeptQueue(cid), STOP_SETTLE_MS))
+    // Sem sobreviventes: o Stop comum desliga já; o que mantém a fila só arma a
+    // reserva — quem desliga é o terminal do turno parado (ou ela).
+    const settled = (): void => {
+      if (keepQueue) stopHolds.receipt(cid, false)
+      else goIdleAfterStop(cid)
     }
     void window.api
       .interrupt(cid)
@@ -3249,16 +3424,19 @@ export function App(): JSX.Element {
               : c.messages
         }))
         if (receipt.stillQueued.length > 0) {
+          // O turno continua de verdade (quem encerra é o `result` dele, e o fim
+          // normal entrega a fila): a conversa sai de "parando" sem soltar nada.
+          if (keepQueue) stopHolds.receipt(cid, true)
           notify(
             'aviso',
             `${receipt.stillQueued.length} mensagem(ns) sobreviveram ao Stop e ainda serão processadas.`
           )
-          return // o turno continua de verdade; quem encerra é o `result` dele
+          return
         }
-        goIdle()
+        settled()
       })
       .catch(() => {
-        goIdle()
+        settled()
         if (!inflight) return
         patchConv(cid, (c) => ({
           ...c,
@@ -3267,7 +3445,7 @@ export function App(): JSX.Element {
           )
         }))
       })
-  }, [patchConv, notify, goIdleAfterStop, releaseKeptQueue])
+  }, [patchConv, notify, goIdleAfterStop, stopHolds, turnIdentity])
 
   const interrupt = useCallback((): void => {
     const cid = activeIdRef.current
@@ -3542,9 +3720,19 @@ export function App(): JSX.Element {
     dispatch: (conv, text, images, thumbs, files, fileRefs, msgId) =>
       dispatch(conv, text, text, images, thumbs, files, fileRefs, false, undefined, msgId),
     deleteQueued,
-    stopKeepingQueue: (cid) => interruptConv(cid, { keepQueue: true }),
+    stopKeepingQueue: (cid) => {
+      // A recuperação automática pendente retomaria o turno tirado daqui: sai junto.
+      patchConv(cid, (c) => (c.recovery ? { ...c, recovery: undefined } : c))
+      interruptConv(cid, { keepQueue: true })
+    },
+    // O envio de um pedido da Central falhou e ela vai perguntar de novo: a bolha com
+    // o erro e o "Tentar de novo" saem daqui — o reenvio desse pedido é só dela.
+    discardFailed: (cid, msgId) => {
+      delete failedRef.current[msgId]
+      patchConv(cid, (c) => ({ ...c, messages: withoutBubble(c.messages, msgId) }))
+    },
     respondToPermission,
-    selectConversationAt,
+    selectConversationAt: openFromCentral,
     notify
   })
   centralRef.current = central
@@ -3725,6 +3913,57 @@ export function App(): JSX.Element {
     </button>
   ) : null
 
+  // Seletor de modelo/esforço de uma conversa: o do chat (conversa ativa) e o da
+  // tela do monitor no Escritório (a conversa do agente focado) — mesmas regras.
+  // Planejamento: edita o modelo/esforço do Agent Manager (config global, lida
+  // pelo main quando a sessão sobe), não os da conversa. O Automático só aparece
+  // com o TypeSafe pronto ou quando já é o valor gravado (nada troca a escolha
+  // salva sozinho).
+  const modelControls = (conv: Conversation | null): Omit<ModelPickerProps, 'busy'> => {
+    const planning = isPlanningConversation(conv)
+    const model = planning ? planningModel.config.model : (conv?.model ?? MODELS[0].id)
+    const effort = planning ? planningModel.config.effort : (conv?.effort ?? DEFAULT_EFFORT)
+    return {
+      models: planning
+        ? withAutoModelOption(PLANNING_MODELS, typesafeReady, planningModel.config.model)
+        : modelsFor(withAutoModelOption(models, typesafeReady, conv?.model), conv?.model),
+      model,
+      modelLocked: !conv,
+      onModelChange: (m) => {
+        if (!conv) return
+        if (planning) {
+          // Sem TypeSafe a lista do Manager só tem o Automático quando ele já é
+          // o valor gravado (withAutoModelOption), e escolher o mesmo valor não
+          // dispara troca — então aqui não chega um "auto" novo sem TypeSafe.
+          changeManagerModel(conv.id, m)
+          return
+        }
+        // "Automático" sem TypeSafe configurado não troca de modelo — pede a
+        // key nas Configurações e mantém o que já estava selecionado.
+        if (isAutoModel(m) && !typesafeReady) {
+          needTypesafeKey()
+          return
+        }
+        changeModel(conv.id, m)
+      },
+      onModelLockedClick: () => notify('aviso', 'Selecione uma conversa para trocar o modelo.'),
+      effortLevels: effortLevelsFor(planning ? planningModel.config.model : conv?.model),
+      effort,
+      effortLocked: !conv,
+      effortAutoAvailable: typesafeReady,
+      // No Manager a escolha é a config dele; o nível com que a sessão subiu
+      // fica em `autoEffort` da conversa de planejamento (evento `system`).
+      runningEffort: runningEffort(effort, conv?.autoEffort),
+      onEffortChange: (e) => {
+        if (!conv) return
+        if (planning) {
+          if (isEffortLevel(e) || isAutoEffort(e)) changeManagerEffort(conv.id, e)
+        } else changeEffort(conv.id, e)
+      }
+    }
+  }
+  const activeModelControls = modelControls(active)
+
   // O painel de conversa, montado UMA vez: o workspace normal o põe à esquerda
   // do painel da direita; a Tela de Planejamento, como a sua coluna de chat.
   const chatPanel = (
@@ -3763,7 +4002,7 @@ export function App(): JSX.Element {
       projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
       onSelectProjectFolder={() => void selectProjectFolder()}
       queued={activeQueue}
-      onDeleteQueued={deleteQueued}
+      onDeleteQueued={trashQueued}
       onSendQueuedNow={(id) => void sendQueuedNow(id)}
       recovery={active?.recovery}
       onRetryRecovery={retryRecoveryNow}
@@ -3777,57 +4016,13 @@ export function App(): JSX.Element {
         ) : undefined
       }
       tts={tts}
-      // Planejamento: o seletor edita o modelo/esforço do Agent Manager
-      // (config global, lida pelo main quando a sessão sobe), não os da conversa.
-      // O Automático só aparece com o TypeSafe pronto ou quando já é o valor
-      // gravado (nada troca a escolha salva sozinho).
-      models={
-        activePlanning
-          ? withAutoModelOption(PLANNING_MODELS, typesafeReady, planningModel.config.model)
-          : modelsFor(withAutoModelOption(models, typesafeReady, active?.model), active?.model)
-      }
-      model={activePlanning ? planningModel.config.model : (active?.model ?? MODELS[0].id)}
+      {...activeModelControls}
       // O seletor mostra a escolha (o sentinel `auto` incluso); a barra de
       // contexto precisa do modelo concreto do turno — o mesmo que o
       // snapshot do celular já usa logo acima.
       runningModel={active ? runningModel(active) : MODELS[0].id}
       // A sessão do Manager sobe sem Econômico e Loop.
       hideSessionToggles={!!activePlanning}
-      modelLocked={!active}
-      onModelChange={(m) => {
-        if (!active) return
-        if (activePlanning) {
-          // Sem TypeSafe a lista do Manager só tem o Automático quando ele já é
-          // o valor gravado (withAutoModelOption), e escolher o mesmo valor não
-          // dispara troca — então aqui não chega um "auto" novo sem TypeSafe.
-          changeManagerModel(active.id, m)
-          return
-        }
-        // "Automático" sem TypeSafe configurado não troca de modelo — pede a
-        // key nas Configurações e mantém o que já estava selecionado.
-        if (isAutoModel(m) && !typesafeReady) {
-          needTypesafeKey()
-          return
-        }
-        changeModel(active.id, m)
-      }}
-      onModelLockedClick={() => notify('aviso', 'Selecione uma conversa para trocar o modelo.')}
-      effortLevels={effortLevelsFor(activePlanning ? planningModel.config.model : active?.model)}
-      effort={activePlanning ? planningModel.config.effort : (active?.effort ?? DEFAULT_EFFORT)}
-      effortLocked={!active}
-      effortAutoAvailable={typesafeReady}
-      // No Manager a escolha é a config dele; o nível com que a sessão subiu
-      // fica em `autoEffort` da conversa de planejamento (evento `system`).
-      runningEffort={runningEffort(
-        activePlanning ? planningModel.config.effort : active?.effort,
-        active?.autoEffort
-      )}
-      onEffortChange={(e) => {
-        if (!active) return
-        if (activePlanning) {
-          if (isEffortLevel(e) || isAutoEffort(e)) changeManagerEffort(active.id, e)
-        } else changeEffort(active.id, e)
-      }}
       economyMode={active?.economyMode === true}
       onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
       loopEnabled={active?.loopEnabled === true}
@@ -3859,6 +4054,7 @@ export function App(): JSX.Element {
       queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}
       crewWorking={crewWorking}
       onOpenAgents={openAgentsPanel}
+      onBackToCentral={backToCentral && backToCentral === activeId ? selectCentral : undefined}
     />
   )
   // O painel da Central: no lugar do chat quando ela é a aberta (workspace e
@@ -3867,15 +4063,51 @@ export function App(): JSX.Element {
     <CentralPanel
       conversation={centralConversation}
       controller={central}
+      self={storageStatus?.installationId ?? undefined}
+      onOpenQuestion={setCentralQuestionConv}
       ready={typesafeReady}
       onNeedTypesafe={() => needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE)}
-      onSend={(text, images, thumbs, files, fileRefs) => void central.send(text, images, thumbs, files, fileRefs)}
+      onSend={(text, images, thumbs, files, fileRefs, replyTo) => void central.send(text, images, thumbs, files, fileRefs, replyTo)}
       onDraftChange={onDraftChange}
       composerRef={composerRef}
       projects={projects}
     />
   )
   const mainChat = activeCentral ? centralPanel(activeCentral) : chatPanel
+  // O campo de digitar da tela do monitor no Escritório: o MESMO Composer do chat,
+  // para a conversa ativa (o Escritório só o mostra quando ela é a do agente
+  // focado, e aí o chat flutuante sai), com o mesmo envio, fila e rascunho.
+  const monitorComposer = (
+    <Composer
+      disabled={!active}
+      busy={showBusy}
+      chips={chips}
+      onChipsConsumed={consumeChips}
+      onSend={sendMessage}
+      onInterrupt={interrupt}
+      textareaRef={composerRef}
+      projects={projects}
+      projectRoot={active?.cwd ?? null}
+      convId={active?.id ?? null}
+      draft={active?.draft ?? ''}
+      draftMedia={active?.draftMedia}
+      onDraftChange={onDraftChange}
+      projectMissing={projectMissing}
+      projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
+    />
+  )
+  // O seletor de modelo/esforço da tela do monitor: o mesmo do chat, para a
+  // conversa do agente focado (não a ativa). A Central não tem modelo próprio.
+  const monitorModelPicker = (convId: string): JSX.Element | null => {
+    const conv = conversations.find((c) => c.id === convId)
+    if (!conv || isCentralConversation(conv)) return null
+    return <ModelPicker {...modelControls(conv)} busy={busyIds.has(conv.id)} />
+  }
+  // Barra lateral: uma bolinha por destino trabalhando agora, na cor dele.
+  const centralDots = central.rail.map((r) => r.color)
+  const centralColors = Object.fromEntries(central.rail.map((r) => [r.convId, r.color]))
+  // A pergunta do destino aberta da Central (só enquanto ela continua pendente).
+  const centralQuestion = centralQuestionConv ? permissions[centralQuestionConv] : undefined
   // A Central carregada (pode faltar antes do boot dela): o Escritório só a recebe com a aba aberta.
   const centralConv = conversations.find((c) => c.id === CENTRAL_ID)
 
@@ -3911,7 +4143,8 @@ export function App(): JSX.Element {
         onRename={renameConversation}
         onDelete={deleteConversation}
         onSelectResult={selectConversationAt}
-        central={{ active: activeId === CENTRAL_ID, onSelect: selectCentral }}
+        central={{ active: activeId === CENTRAL_ID, onSelect: selectCentral, dots: centralDots }}
+        centralColors={centralColors}
       />
 
       <div className="main-area">
@@ -3986,19 +4219,8 @@ export function App(): JSX.Element {
           ) : (
             <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
           )}
-          {/* Acesso permanente ao Quadro (elenco fundido aqui): sem isso ele só
-              existiria enquanto houvesse subagente rodando, e não daria pra rever
-              nada. */}
           <button
-            className={`btn ghost agents-btn topbar-right${boardPaneOpen ? ' on' : ''}${runningTrackCount > 0 ? ' live' : ''}`}
-            onClick={() => (boardPaneOpen ? selectRightPane('browser') : openAgentsPanel())}
-            title="Quadro: tarefas e quem está trabalhando nesta conversa"
-          >
-            <IconUsers />
-            {runningTrackCount > 0 && <span className="agents-btn-badge">{runningTrackCount}</span>}
-          </button>
-          <button
-            className={`btn ghost remote-btn ${remoteRunning ? 'on' : ''}`}
+            className={`btn ghost remote-btn topbar-right ${remoteRunning ? 'on' : ''}`}
             onClick={() => setRemoteOpen(true)}
             title="Controle remoto pelo celular (Android)"
           >
@@ -4133,6 +4355,9 @@ export function App(): JSX.Element {
           <OfficeTabHost
             active={mainTab === 'office'}
             chat={mainTab === 'office' ? mainChat : null}
+            monitorComposer={mainTab === 'office' ? monitorComposer : null}
+            monitorModelPicker={mainTab === 'office' ? monitorModelPicker : undefined}
+            centralSignal={centralSignal}
             central={mainTab === 'office' && centralConv ? centralPanel(centralConv) : null}
             conversation={active}
             onOpenConversation={selectConversation}
@@ -4147,6 +4372,11 @@ export function App(): JSX.Element {
             onShowBrowser={(convId) => {
               selectConversation(convId)
               selectRightPane('browser')
+            }}
+            // "Abrir no app" do menu do Agent na tela do monitor: a conversa, na aba Conversa.
+            onOpenInApp={(convId) => {
+              selectConversation(convId)
+              setMainTab('chat')
             }}
             // O chat minimizado esconde o aviso: o HUD o repete, com o mesmo "Desativar".
             windowsControlEnabled={windowsControlEnabled}
@@ -4183,6 +4413,23 @@ export function App(): JSX.Element {
         ) : (
           <PermissionModal request={activePermission} onRespond={respond} />
         ))}
+      {centralQuestionConv && centralQuestion?.questions && centralQuestionConv !== activeId && (
+        <QuestionModal
+          key={centralQuestion.id}
+          request={centralQuestion}
+          onAnswer={(answers) => {
+            setCentralQuestionConv(null)
+            void central.answer(centralQuestionConv, { id: centralQuestion.id, behavior: 'allow', answers })
+          }}
+          onCancel={() => {
+            setCentralQuestionConv(null)
+            void central.answer(centralQuestionConv, { id: centralQuestion.id, behavior: 'deny' })
+          }}
+          onMinimize={() => setCentralQuestionConv(null)}
+          tts={tts}
+          onError={(msg) => notify('erro', msg)}
+        />
+      )}
       {newTabOpen && (
         <NewTabModal
           onPick={(kind) => {

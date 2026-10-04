@@ -697,6 +697,46 @@ CREATE TABLE IF NOT EXISTS conversation_outbox (
 CREATE INDEX IF NOT EXISTS conversation_outbox_order ON conversation_outbox(conversation_id, position);
 `
 
+/**
+ * Migration 15 — histórico do contexto entregue ao agente (`context_blob` +
+ * `context_turn`), espelha a 13 do SQLite. Sem gatilho de change feed: o
+ * conteúdo só sai por IPC do PC, lido sob demanda. `blocks_json` é jsonb para a
+ * poda de órfãos achar as referências com `jsonb_array_elements`.
+ */
+const CONTEXT_HISTORY = `
+CREATE TABLE IF NOT EXISTS context_blob (
+  hash text PRIMARY KEY,
+  gz bytea NOT NULL,
+  bytes integer NOT NULL
+);
+CREATE TABLE IF NOT EXISTS context_turn (
+  conv_id text NOT NULL,
+  turn_id text NOT NULL,
+  pc text NOT NULL,
+  started_at bigint NOT NULL,
+  model text NOT NULL,
+  provider text NOT NULL,
+  request text NOT NULL,
+  complete boolean NOT NULL DEFAULT false,
+  usage_json jsonb,
+  blocks_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+  memories_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+  secrets_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY(conv_id, turn_id)
+);
+CREATE INDEX IF NOT EXISTS context_turn_conv_started ON context_turn(conv_id, started_at DESC);
+`
+
+/**
+ * Migration 16 — os modelos que responderam em cada turno (`models_json`),
+ * espelha a 14 do SQLite. Separada da 15 porque o checksum de migração aplicada
+ * é conferido na abertura.
+ */
+const CONTEXT_TURN_MODELS = `
+ALTER TABLE context_turn ADD COLUMN IF NOT EXISTS models_json jsonb NOT NULL DEFAULT '[]'::jsonb;
+`
+
 export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(1, 'postgres-base-schema', BASE_SCHEMA),
   migration(2, 'postgres-change-feed', CHANGE_FEED),
@@ -711,7 +751,9 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(11, 'postgres-token-usage', TOKEN_USAGE),
   migration(12, 'postgres-agent-input-queue', AGENT_INPUT_QUEUE),
   migration(13, 'postgres-conversation-outbox', CONVERSATION_OUTBOX),
-  migration(14, 'postgres-board-item-events-justified-system', BOARD_ITEM_EVENTS_JUSTIFIED_SYSTEM)
+  migration(14, 'postgres-board-item-events-justified-system', BOARD_ITEM_EVENTS_JUSTIFIED_SYSTEM),
+  migration(15, 'postgres-context-history', CONTEXT_HISTORY),
+  migration(16, 'postgres-context-turn-models', CONTEXT_TURN_MODELS)
 ]
 
 const MIGRATION_TABLE = `

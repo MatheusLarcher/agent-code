@@ -64,6 +64,7 @@ import {
 } from './protocol'
 
 export { deviceLabel, KOKORO_VOICES as LOCAL_VOICES, WHISPER_PROFILES, VoiceWorkerError }
+export { voiceModelsInstalled } from './installed'
 export type { KokoroVoice as LocalVoice, SynthesisResult, VoiceProgress, WhisperDevice, WhisperProfile, WhisperState }
 
 /**

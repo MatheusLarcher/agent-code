@@ -1,28 +1,44 @@
 /**
- * O painel da Central (no lugar do ChatPanel quando ela é a conversa aberta):
- * cabeçalho com o orbe, o feed dos pedidos e o MESMO Composer do chat (anexos,
- * rascunho, voz). Sem seletor de modelo/esforço/modos, sem tokens, sem plano e
- * sem cartão de recuperação: a Central não roda agente — ela encaminha.
+ * O painel da Central (no lugar do ChatPanel quando ela é a conversa aberta, e
+ * no chat flutuante do Escritório): cabeçalho com o orbe e o trilho das
+ * conversas trabalhando agora, o feed (pedidos com o aviso do destino, "Para
+ * onde vai?", respostas com a linha-resumo, perguntas dos destinos) e o MESMO
+ * Composer do chat. Tudo vem do controller (useCentral.ts); a tela não decide
+ * nada. Sem seletor de modelo, tokens, plano ou recuperação: a Central encaminha.
  *
- * Por ora o feed mostra só os pedidos; avisos de destino, respostas, perguntas
- * e o "Para onde vai?" chegam na Etapa 6, junto do trilho do cabeçalho.
+ * Cores: cada destino na sua (`--c`); o laranja é só da Central (orbe, enviar,
+ * opção mais provável). Classes que o office3d.css lê: central-head,
+ * central-head-rail, central-hint, central-feed, central-bubble.
  */
-import { useEffect, useRef, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
 import type { FileAttachment, FileRefAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
-import { CENTRAL_ID, CENTRAL_TITLE, type CentralRequestEntry } from '@shared/central'
-import { splitMediaText } from '@shared/inlineMedia'
+import { CENTRAL_ID, CENTRAL_TITLE, type CentralEntry, type CentralReplyQuote } from '@shared/central'
+import { replyQuoteOf } from './centralReplyTo'
+import { ReplyMenu, ReplyQuote } from './CentralReplyUi'
+import './centralReply.css'
 import { Composer, type RefProject } from '../components/Composer'
 import type { DraftMedia } from '../inlineMedia/inlineAttachments'
 import type { Conversation } from '../types'
 import type { CentralController } from './useCentral'
+import { isOwnEntry } from './centralEntries'
+import { injectedIds } from './centralView'
+import { CentralRail } from './CentralRail'
+import { CentralRequest } from './CentralRequest'
+import { CentralReply } from './CentralReply'
+import { CentralAnswered, CentralPending } from './CentralPending'
 import './central.css'
+import './centralFeed.css'
 
 export interface CentralPanelProps {
-  /** A Central (a conversa de id fixo). */
+  /** A Central (a conversa de id fixo): rascunho do campo. */
   conversation: Conversation
-  /** O fluxo da Central (useCentral.ts): rota, espelho, perguntas, "não era aqui".
-   *  A tela completa que o desenha é da Etapa 5 (mockup v3). */
-  controller?: CentralController
+  /** O fluxo da Central (useCentral.ts): entradas, trilho, perguntas e ações. */
+  controller: CentralController
+  /** `installationId` deste PC: pedido de outro PC aparece sem ações. */
+  self?: string
+  /** Abre o QuestionModal da pergunta pendente desse destino (várias perguntas,
+   *  múltipla escolha, "outro…"). Sem ele, abre a conversa (o modal está lá). */
+  onOpenQuestion?: (convId: string) => void
   /** TypeSafe configurado. Sem ele, enviar abre as Configurações e o texto fica no campo. */
   ready: boolean
   /** O gate: aviso da Central + Configurações no TypeSafe. */
@@ -32,7 +48,9 @@ export interface CentralPanelProps {
     images: ImageAttachment[],
     thumbs: string[],
     files: FileAttachment[],
-    fileRefs: FileRefAttachment[]
+    fileRefs: FileRefAttachment[],
+    /** Id da entrada respondida (modo resposta): vai direto à conversa dela. */
+    replyTo?: string
   ) => void
   onDraftChange: (convId: string, text: string, media?: DraftMedia[]) => void
   /** O campo de texto (o App usa para dar foco). */
@@ -44,29 +62,55 @@ export interface CentralPanelProps {
 // Elementos marcados no navegador ficam para o chat normal: a Central não os consome.
 const NO_CHIPS: PickedElement[] = []
 const noop = (): void => {}
+/** Até aqui do fim conta como "no fim": o feed acompanha o que chega. */
+const STICK_PX = 80
 
 export function CentralPanel(props: CentralPanelProps): JSX.Element {
-  const requests = (props.conversation.central?.entries ?? []).filter(
-    (e): e is CentralRequestEntry => e.kind === 'request'
-  )
-  const feedRef = useRef<HTMLDivElement>(null)
-  const lastId = requests.at(-1)?.id
-  // Pedido novo: o feed desce até ele.
-  useEffect(() => {
-    const el = feedRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [lastId])
+  const c = props.controller
+  const { entries, pending } = c
+  const injected = injectedIds(entries)
+  const open = (convId: string, msgId?: string): void => c.openDestination(convId, msgId)
+  const openQuestion = props.onOpenQuestion ?? ((convId: string) => c.openDestination(convId))
 
-  const send = (
-    text: string,
-    images: ImageAttachment[],
-    files: FileAttachment[],
-    fileRefs: FileRefAttachment[]
-  ): void => {
-    const thumbs = images.map((img) => `data:${img.mediaType};base64,${img.data}`)
-    props.onSend(text, images, thumbs, files, fileRefs)
+  const feedRef = useRef<HTMLDivElement>(null)
+  const atBottom = useRef(true)
+  const lastRequest = [...entries].reverse().find((e) => e.kind === 'request')?.id
+  const seenRequest = useRef(lastRequest)
+  // Pedido novo do usuário: desce sempre. O resto (espelho, perguntas): só se já estava no fim.
+  useLayoutEffect(() => {
+    const el = feedRef.current
+    if (!el) return
+    const newRequest = lastRequest !== seenRequest.current
+    seenRequest.current = lastRequest
+    if (newRequest || atBottom.current) el.scrollTop = el.scrollHeight
+  }, [entries, pending, lastRequest])
+
+  // Modo resposta (estilo WhatsApp): a citação fica acima do campo até enviar, × ou Esc.
+  const [replying, setReplying] = useState<CentralReplyQuote | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; quote: CentralReplyQuote } | null>(null)
+  const closeMenu = useCallback(() => setMenu(null), [])
+  const startReply = (quote: CentralReplyQuote): void => {
+    setReplying(quote)
+    props.composerRef.current?.focus()
+  }
+  const replyFor = (entry: CentralEntry): (() => void) | undefined => {
+    const quote = replyQuoteOf(entry, props.self)
+    return quote ? () => startReply(quote) : undefined
+  }
+  const onContextMenu = (e: ReactMouseEvent<HTMLDivElement>): void => {
+    const id = (e.target as HTMLElement).closest?.('[data-entry-id]')?.getAttribute('data-entry-id')
+    const quote = id ? replyQuoteOf(entries.find((x) => x.id === id), props.self) : null
+    if (!quote) return
+    e.preventDefault()
+    setMenu({ x: e.clientX, y: e.clientY, quote })
   }
 
+  const send = (text: string, images: ImageAttachment[], files: FileAttachment[], fileRefs: FileRefAttachment[]): void => {
+    const thumbs = images.map((img) => `data:${img.mediaType};base64,${img.data}`)
+    if (replying) props.onSend(text, images, thumbs, files, fileRefs, replying.id)
+    else props.onSend(text, images, thumbs, files, fileRefs)
+    setReplying(null)
+  }
   // Sem TypeSafe a mensagem não sai: o gate abre as Configurações e o Composer
   // recusa o envio sem limpar o campo — texto e anexos ficam para depois.
   const gate = (): boolean => {
@@ -80,19 +124,58 @@ export function CentralPanel(props: CentralPanelProps): JSX.Element {
       <header className="central-head">
         <span className="central-orb small" aria-hidden="true" />
         <h1>{CENTRAL_TITLE}</h1>
-        {/* Lugar do trilho das conversas trabalhando agora (Etapa 6). */}
-        <div className="central-head-rail" />
+        <CentralRail rail={c.rail} entries={entries} onOpen={open} />
       </header>
 
-      <div className="central-feed" ref={feedRef}>
-        {requests.length === 0 ? (
+      <div
+        className="central-feed"
+        ref={feedRef}
+        onContextMenu={onContextMenu}
+        onScroll={(e) => {
+          const el = e.currentTarget
+          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX
+        }}
+      >
+        {entries.length === 0 && pending.length === 0 && (
           <p className="central-empty">Diga o que precisa: a Central leva para a conversa certa.</p>
-        ) : (
-          requests.map((entry) => <CentralRequestBubble key={entry.id} entry={entry} />)
         )}
+        {entries.map((e) => {
+          if (e.kind === 'request') {
+            return (
+              <CentralRequest
+                key={e.id}
+                entry={e}
+                own={isOwnEntry(e, props.self)}
+                labelFor={c.labelFor}
+                onOpen={open}
+                onNotHere={(id) => void c.notHere(id)}
+                onChoose={(id, i) => void c.choose(id, i)}
+                onReply={replyFor(e)}
+              />
+            )
+          }
+          if (e.kind === 'reply') {
+            // A1: ajuste injetado não tem resposta própria.
+            if (injected.has(e.requestId)) return null
+            return <CentralReply key={e.id} reply={e} labelFor={c.labelFor} turnTools={c.turnTools} onOpen={open} onReply={replyFor(e)} />
+          }
+          return <CentralAnswered key={e.id} entry={e} labelFor={c.labelFor} />
+        })}
+        <CentralPending pending={pending} answer={(convId, res) => void c.answer(convId, res)} onOpenQuestion={openQuestion} />
       </div>
 
-      <div className="central-composer">
+      {menu && <ReplyMenu x={menu.x} y={menu.y} onReply={() => startReply(menu.quote)} onClose={closeMenu} />}
+
+      <div
+        className="central-composer"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape' && replying) {
+            e.stopPropagation()
+            setReplying(null)
+          }
+        }}
+      >
+        {replying && <ReplyQuote quote={replying} labelFor={c.labelFor} onCancel={() => setReplying(null)} />}
         {/* Sem o escudo de revisão: a Central não tem projeto para revisar. */}
         <Composer
           disabled={false}
@@ -117,39 +200,5 @@ export function CentralPanel(props: CentralPanelProps): JSX.Element {
         <div className="central-hint">o destino é escolhido pelo assunto</div>
       </div>
     </section>
-  )
-}
-
-/** Um pedido: bolha à direita, com o nome de cada anexo no ponto do texto. */
-function CentralRequestBubble({ entry }: { entry: CentralRequestEntry }): JSX.Element {
-  const names = entry.attachments ?? []
-  const parts = splitMediaText(entry.text)
-  const inText = new Set<number>()
-  for (const part of parts) if ('media' in part) inText.add(part.media)
-  // Anexo sem marcador no texto (imagem vinda do celular): vai depois do texto.
-  const rest = names.filter((_, i) => !inText.has(i + 1))
-  return (
-    <div className="central-me" data-entry-id={entry.id}>
-      <div className="central-bubble">
-        {parts.map((part, i) =>
-          'media' in part ? (
-            <span key={i} className="central-att">
-              {names[part.media - 1] ?? `mídia ${part.media}`}
-            </span>
-          ) : (
-            <span key={i}>{part.text}</span>
-          )
-        )}
-        {rest.length > 0 && (
-          <span className="central-atts">
-            {rest.map((name, i) => (
-              <span key={i} className="central-att">
-                {name}
-              </span>
-            ))}
-          </span>
-        )}
-      </div>
-    </div>
   )
 }

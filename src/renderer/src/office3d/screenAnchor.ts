@@ -17,10 +17,19 @@
  * do palco — só o `transform` muda, e só quando o px muda.
  */
 import { Vector3, type Camera, type PerspectiveCamera } from 'three'
-import { MONITOR_HALF_H, MONITOR_HALF_W, MONITOR_SCREEN_FRONT, monitorPose, projectPoint } from './cameraRig'
+import { MONITOR_HALF_H, MONITOR_HALF_W, MONITOR_SCREEN_FRONT, monitorPose, projectPoint, type ViewSize } from './cameraRig'
 import { MONITOR_BACK, MONITOR_Y } from './layout'
 import { quadMatrix3d, type Pt } from './quadTransform'
 import { BUBBLE_TOP } from './speech'
+
+/**
+ * A vista do foco no monitor: o palco (fov, aspect, altura) e a faixa do HUD que
+ * a tela não cobre. O motor (a pose do voo) e a âncora (o tamanho de layout)
+ * usam a mesma — a tela HTML nasce do tamanho da tela projetada naquela pose.
+ */
+export function focusView(fovDeg: number, width: number, height: number): ViewSize {
+  return { fovDeg, aspect: width / height, heightPx: height, clearTopPx: BUBBLE_TOP }
+}
 
 /** Folga do cartão até a ponta e até as bordas do palco (px). */
 const POINT_GAP = 10
@@ -193,7 +202,7 @@ export class ScreenAnchor {
     const s = this.size
     const m = this.monitor
     if (s.fov === fov && s.width === width && s.height === height && s.x === m.x && s.y === m.y && s.z === m.z) return s
-    const view = { fovDeg: fov, aspect: width / height }
+    const view = focusView(fov, width, height)
     const pose = monitorPose(m, view)
     const z = m.z + MONITOR_SCREEN_FRONT
     const p = CORNERS.map(([sx, sy]) => {

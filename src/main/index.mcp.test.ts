@@ -8,6 +8,14 @@ const { MCP_TASK_GONE_MARK } = await import('../shared/mcpInbound')
 const { MCP_SESSION_REPLACED } = await import('./mcpInbound/mcpConstants')
 const { registerIpc, mcpInbound } = await import('./index')
 const { saveAttachments } = await import('./attachments')
+const { ProviderFailoverSession } = await import('./providerFailover')
+
+// O mock compartilhado (testing/electronMocks.ts) não conhece `isAlive`: aqui ele
+// vira "viva, salvo as conversas marcadas como mortas".
+const deadConvs = new Set<string>()
+;(ProviderFailoverSession.prototype as unknown as { isAlive(): boolean }).isAlive = function (this: { opts: { convId: string } }) {
+  return !deadConvs.has(this.opts.convId)
+}
 const { resolveAutoStart } = await import('./typesafe')
 
 /** agent:send como a tela o faz: o item de tarefa MCP leva o id dela (8º argumento). */
@@ -149,6 +157,26 @@ describe('registerIpc — tarefa MCP com modelo pedido (troca de sessão, "agora
     const before = spy.sessions.length
     await call(Channels.agentStart, { convId: conv, cwd, model: AUTO_MODEL, effort: 'high', autoPrompt: { message: 'e mais' } })
     expect(spy.sessions.length).toBe(before)
+  })
+
+  it('Automático: query morta nunca é reaproveitada (sessão nova, antiga descartada); query viva continua reusada', async () => {
+    const conv = 'auto-query-morta'
+    vi.mocked(resolveAutoStart).mockReset().mockResolvedValue(decide('claude-opus-5-5', false))
+    await call(Channels.agentStart, { convId: conv, cwd, model: AUTO_MODEL, effort: 'high', autoPrompt: { message: 'a' } })
+    const [a] = sessionsOf(conv)
+    vi.mocked(resolveAutoStart).mockReset().mockResolvedValue(decide('claude-opus-5-5', true))
+    // Viva: reaproveita.
+    await call(Channels.agentStart, { convId: conv, cwd, model: AUTO_MODEL, effort: 'high', autoPrompt: { message: 'b' } })
+    expect(sessionsOf(conv)).toHaveLength(1)
+    // Morta: o par repetiu, mas a sessão não serve — sobe outra e descarta a antiga.
+    deadConvs.add(conv)
+    await send(conv, 'c')
+    await call(Channels.agentStart, { convId: conv, cwd, model: AUTO_MODEL, effort: 'high', autoPrompt: { message: 'c' } })
+    const b = sessionsOf(conv).at(-1)!
+    expect(b).not.toBe(a)
+    expect(a.dispose).toHaveBeenCalled()
+    await send(conv, 'd')
+    expect(b.send).toHaveBeenCalled()
   })
 
   it('Agent Manager: a tarefa (id) recebe erro claro, sem sessão nova; a mensagem do usuário segue normal', async () => {

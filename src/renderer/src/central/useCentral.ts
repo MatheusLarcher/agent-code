@@ -23,7 +23,19 @@ import type {
 } from '@shared/ipc'
 import { CENTRAL_ID, type CentralAnchor, type CentralEntry, type CentralRule } from '@shared/central'
 import type { Conversation, UIMessage } from '../types'
-import { useCentralSend, type CentralPayload, type CentralSend } from './centralSend'
+import { useCentralSend, type CentralPayload, type CentralSendOrigin } from './centralSend'
+import { deliverReply, findReplyQuote } from './centralReplyTo'
+
+/** O envio da Central com o id (não a citação) da entrada respondida. */
+export type CentralSendWithReply = (
+  text: string,
+  images: ImageAttachment[],
+  thumbs: string[],
+  files: FileAttachment[],
+  fileRefs: FileRefAttachment[],
+  origin?: CentralSendOrigin,
+  replyTo?: string
+) => Promise<boolean>
 import { appendCentralEntry, centralAttachmentNames } from './centralRegistry'
 import { hasActiveAnchor } from './centralEntries'
 import { labelFor as buildLabel, type CentralLabel } from './centralRecents'
@@ -32,12 +44,13 @@ import { turnToolUses } from './centralMirror'
 import { answeredQuestionEntry, pendingConvIds } from './centralQuestions'
 import {
   chooseOption,
-  moveEntry,
+  rescueEntry,
   routeEntry,
   type CentralDispatch,
   type CentralFlowDeps,
   type CentralQueueItem
 } from './centralDelivery'
+import { discardEntries, moveEntry } from './centralMove'
 import { adoptTurn, type CentralAdopt } from './centralAdoption'
 
 export type { CentralLabel } from './centralRecents'
@@ -62,7 +75,15 @@ export interface CentralController {
   rail: CentralRailCard[]
   /** Perguntas/permissões vivas dos destinos ancorados. */
   pending: CentralPendingQuestion[]
-  send(text: string, images: ImageAttachment[], thumbs: string[], files: FileAttachment[], fileRefs: FileRefAttachment[]): Promise<void>
+  /** `replyTo`: id da entrada respondida (vai direto à conversa dela). */
+  send(
+    text: string,
+    images: ImageAttachment[],
+    thumbs: string[],
+    files: FileAttachment[],
+    fileRefs: FileRefAttachment[],
+    replyTo?: string
+  ): Promise<void>
   /** "Para onde vai?". */
   choose(entryId: string, optionIndex: number): Promise<void>
   /** "Não era aqui". */
@@ -103,19 +124,24 @@ export interface UseCentralDeps {
   /** "Nova conversa" normal na pasta, ao fundo. */
   createConversation: (cwd: string) => Conversation
   dispatch: CentralDispatch
+  /** Tira o item da fila sem avisar a Central (quem tira é ela). */
   deleteQueued: (queueId: string) => void
   stopKeepingQueue: (convId: string) => void
+  /** Tira do destino a bolha cujo envio falhou (e o "Tentar de novo" dela). */
+  discardFailed: (convId: string, msgId: string) => void
   respondToPermission: (convId: string, res: PermissionResponse) => Promise<void>
   selectConversationAt: (id: string, msgId: string | null) => void
   notify: (kind: 'aviso' | 'erro', msg: string) => void
 }
 
 export interface UseCentralResult extends CentralController {
-  /** O envio com a origem (o celular manda 'phone'). */
-  sendToCentral: CentralSend
+  /** O envio com a origem (o celular manda 'phone') e o id da entrada respondida. */
+  sendToCentral: CentralSendWithReply
   /** A1: o App chama em cada bolha de usuário que nasce. */
   adopt: CentralAdopt
-  /** A conversa tem turno em aberto na Central (as perguntas dela aparecem lá). */
+  /** Itens da fila (ou da conversa apagada) que saíram sem rodar: o App avisa por aqui. */
+  dropped: (convId: string, msgIds: readonly string[]) => void
+  /** A conversa tem turno vivo de um pedido da Central (as perguntas dela aparecem lá). */
   hasActiveAnchor: (convId: string) => boolean
   /** A conversa aberta pela Central (o "← Central" da Etapa 5). */
   openedFromCentral: string | null
@@ -129,16 +155,24 @@ export function useCentral(deps: UseCentralDeps): UseCentralResult {
   const depsRef = useRef(deps)
   depsRef.current = deps
   const moved = useRef(new Map<string, { rule?: CentralRule; confidence?: number }>())
+  const generations = useRef(new Map<string, number>())
   // Pedidos com "escolher"/"não era aqui" em andamento: um clique duplo não entrega duas vezes.
   const working = useRef(new Set<string>())
   const relinkTried = useRef(new Set<string>())
   const [openedFromCentral, setOpenedFromCentral] = useState<string | null>(null)
 
   const route = (entryId: string, payload: CentralPayload): void => {
+    // Resposta a uma mensagem: direto à conversa dela, sem o decisor.
+    if (payload.replyTo) {
+      void deliverReply(flow(), entryId, payload.replyTo).catch((err: unknown) => rescueEntry(flow(), entryId, err))
+      return
+    }
     const attachments = centralAttachmentNames(payload.images, payload.files, payload.fileRefs)
-    void routeEntry(flow(), { entryId, text: payload.text, attachments })
+    void routeEntry(flow(), { entryId, text: payload.text, attachments }).catch((err: unknown) =>
+      rescueEntry(flow(), entryId, err)
+    )
   }
-  const { send: sendToCentral, payloads } = useCentralSend({
+  const { send: rawSend, payloads } = useCentralSend({
     typesafeReady: deps.typesafeReady,
     needTypesafe: deps.needTypesafe,
     ensure: deps.ensure,
@@ -151,12 +185,14 @@ export function useCentral(deps: UseCentralDeps): UseCentralResult {
   const flow = useCallback((): CentralFlowDeps => {
     const d = depsRef.current
     return {
+      device: d.device,
       convsRef: d.convsRef,
       busyRef: d.busyRef,
       queueRef: d.queueRef,
       inflightRef: d.inflightRef,
       payloads: payloads.current,
       moved: moved.current,
+      generations: generations.current,
       sandboxRoot: d.sandboxRoot,
       patchConv: d.patchConv,
       addLoaded: d.addLoaded,
@@ -165,9 +201,18 @@ export function useCentral(deps: UseCentralDeps): UseCentralResult {
       dispatch: d.dispatch,
       deleteQueued: d.deleteQueued,
       stopKeepingQueue: d.stopKeepingQueue,
+      discardFailed: d.discardFailed,
       notify: d.notify
     }
   }, [payloads])
+
+  /** O turno da âncora está vivo agora neste PC: em voo, na fila ou esperando a recuperação automática. */
+  const isLive = useCallback((a: CentralAnchor): boolean => {
+    const d = depsRef.current
+    if (d.inflightRef.current[a.convId]?.msgId === a.msgId) return true
+    if (d.queueRef.current.some((q) => q.convId === a.convId && q.msgId === a.msgId)) return true
+    return d.convsRef.current.find((c) => c.id === a.convId)?.recovery?.messageId === a.msgId
+  }, [])
 
   /** Conversas lidas do banco por id entram na tela (fora dela, o próximo salvamento as apagaria). */
   const addFromStorage = useCallback((list: Conversation[], ids: readonly string[]): Conversation[] => {
@@ -258,26 +303,41 @@ export function useCentral(deps: UseCentralDeps): UseCentralResult {
     return cards
   }, [entries, busyIds, labelFor])
   const pending = useMemo<CentralPendingQuestion[]>(
-    () => pendingConvIds(entries, permissions).map((convId) => ({ convId, label: labelFor(convId), request: permissions[convId] })),
-    [entries, permissions, labelFor]
+    () =>
+      pendingConvIds(entries, permissions, isLive).map((convId) => ({ convId, label: labelFor(convId), request: permissions[convId] })),
+    [entries, permissions, labelFor, isLive]
   )
 
   // ---- ações ----
+  // `replyTo` = id da entrada respondida; não respondível (sem destino, de outro PC,
+  // inexistente) → envio normal, pelo decisor.
+  const sendToCentral = useCallback<CentralSendWithReply>(
+    (text, images, thumbs, files, fileRefs, origin, replyTo) => {
+      const quote = findReplyQuote(entriesRef.current, replyTo, depsRef.current.device) ?? undefined
+      return rawSend(text, images, thumbs, files, fileRefs, origin, quote)
+    },
+    [rawSend]
+  )
   const send = useCallback<CentralController['send']>(
-    async (text, images, thumbs, files, fileRefs) => {
-      await sendToCentral(text, images, thumbs, files, fileRefs)
+    async (text, images, thumbs, files, fileRefs, replyTo) => {
+      await sendToCentral(text, images, thumbs, files, fileRefs, 'composer', replyTo)
     },
     [sendToCentral]
   )
-  const once = useCallback(async (entryId: string, job: () => Promise<void>): Promise<void> => {
-    if (working.current.has(entryId)) return
-    working.current.add(entryId)
-    try {
-      await job()
-    } finally {
-      working.current.delete(entryId)
-    }
-  }, [])
+  const once = useCallback(
+    async (entryId: string, job: () => Promise<void>): Promise<void> => {
+      if (working.current.has(entryId)) return
+      working.current.add(entryId)
+      try {
+        await job()
+      } catch (err) {
+        rescueEntry(flow(), entryId, err)
+      } finally {
+        working.current.delete(entryId)
+      }
+    },
+    [flow]
+  )
   const choose = useCallback(
     (entryId: string, optionIndex: number) => once(entryId, () => chooseOption(flow(), entryId, optionIndex)),
     [once, flow]
@@ -326,7 +386,16 @@ export function useCentral(deps: UseCentralDeps): UseCentralResult {
     const d = depsRef.current
     adoptTurn({ device: d.device, sandboxRoot: d.sandboxRoot, ensure: d.ensure, patchConv: d.patchConv }, turn)
   }, [])
-  const activeAnchor = useCallback((convId: string) => hasActiveAnchor(entriesRef.current, convId), [])
+  const dropped = useCallback(
+    (convId: string, msgIds: readonly string[]): void => {
+      if (!msgIds.length) return
+      void discardEntries(flow(), convId, msgIds).catch((err: unknown) =>
+        depsRef.current.notify('erro', `A Central não conseguiu tratar a mensagem descartada: ${errorText(err)}`)
+      )
+    },
+    [flow]
+  )
+  const activeAnchor = useCallback((convId: string) => hasActiveAnchor(entriesRef.current, convId, isLive), [isLive])
 
   return useMemo(
     () => ({
@@ -342,9 +411,10 @@ export function useCentral(deps: UseCentralDeps): UseCentralResult {
       labelFor,
       sendToCentral,
       adopt,
+      dropped,
       hasActiveAnchor: activeAnchor,
       openedFromCentral
     }),
-    [entries, rail, pending, send, choose, notHere, answer, openDestination, turnTools, labelFor, sendToCentral, adopt, activeAnchor, openedFromCentral]
+    [entries, rail, pending, send, choose, notHere, answer, openDestination, turnTools, labelFor, sendToCentral, adopt, dropped, activeAnchor, openedFromCentral]
   )
 }

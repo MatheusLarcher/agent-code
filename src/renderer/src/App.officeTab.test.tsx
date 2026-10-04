@@ -16,7 +16,7 @@ import { UiProvider } from './ui/UiProvider'
 
 configure({ asyncUtilTimeout: 10_000 })
 
-const office = vi.hoisted(() => ({ props: null as Office3DWorkspaceProps | null, fail: false }))
+const office = vi.hoisted(() => ({ props: null as Office3DWorkspaceProps | null, fail: false, monitor: false, pickerFor: null as string | null }))
 vi.mock('./office3d/Office3DWorkspace', () => ({
   Office3DWorkspace: (p: Office3DWorkspaceProps) => {
     office.props = p
@@ -24,6 +24,10 @@ vi.mock('./office3d/Office3DWorkspace', () => ({
     return (
       <div data-testid="office-stub" hidden={!p.active}>
         {p.active ? p.chat : null}
+        {/* A tela do monitor focado (só quando o teste a abre). */}
+        {p.active && office.monitor ? <div data-testid="office-monitor-stub">{p.monitorComposer}</div> : null}
+        {/* O seletor de modelo da tela, para a conversa do agente focado (só quando o teste o pede). */}
+        {p.active && office.pickerFor ? <div data-testid="office-picker-stub">{p.monitorModelPicker?.(office.pickerFor)}</div> : null}
       </div>
     )
   }
@@ -120,6 +124,11 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     disposeAgent: vi.fn(async () => {}),
     refreshUsage: vi.fn(async () => {}),
     getTokenUsageHistory: vi.fn(async () => ({ calls: [], totals: [] })),
+    listContextTurns: vi.fn(async () => []),
+    readContextTurn: vi.fn(async () => null),
+    countContextExact: vi.fn(async () => ({ ok: false, usage: null })),
+    revealSecret: vi.fn(async () => null),
+    onContextTurnsChanged: vi.fn(() => () => {}),
     onAgentEvent: vi.fn((cb: (m: AgentEventMsg) => void) => {
       agentEventCb = cb
       return () => {}
@@ -147,6 +156,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     onRemoteSetModel: vi.fn(() => () => {}),
     onRemoteRecoveryAction: vi.fn(() => () => {}),
     onRemotePermissionResponse: vi.fn(() => () => {}),
+    onRemoteCentralChoose: vi.fn(() => () => {}),
     onRemoteInterrupt: vi.fn(() => () => {}),
     onRemoteSetMode: vi.fn(() => () => {}),
     onRemoteConversationAction: vi.fn(() => () => {}),
@@ -195,6 +205,8 @@ beforeEach(() => {
   localStorage.clear()
   office.props = null
   office.fail = false
+  office.monitor = false
+  office.pickerFor = null
   seed([conv('c1', 'Conversa')])
   api = installApi()
 })
@@ -220,17 +232,14 @@ describe('App — aba Escritório', () => {
     expect(office.props?.active).toBe(false)
   })
 
-  it('o Quadro só conta como aberto na aba Conversa: sem scan de disco nem botão aceso com o Escritório; o botão leva de volta', async () => {
+  it('o Quadro só conta como aberto na aba Conversa: sem scan de disco com o Escritório; volta aberto na Conversa', async () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
     await screen.findByPlaceholderText(/Mensagem para o Claude/i)
-    const quadro = screen.getByTitle('Quadro: tarefas e quem está trabalhando nesta conversa')
-    fireEvent.click(quadro)
+    fireEvent.click(screen.getByTitle('Quadro: as tarefas do projeto e quem está trabalhando em cada uma'))
     await waitFor(() => expect(api.projectTree).toHaveBeenCalledTimes(1))
-    expect(quadro.classList.contains('on')).toBe(true)
 
     fireEvent.click(tab(/Escritório/))
     await screen.findByTestId('office-stub')
-    expect(quadro.classList.contains('on')).toBe(false)
     expect(container.querySelector('.right-pane')).toBeNull()
     // Atividade na conversa (o que re-escanearia o projeto com o Quadro aberto): nada de scan.
     await emit({ kind: 'assistant-text', id: 'a1', text: 'mexi nos arquivos', final: true })
@@ -239,11 +248,10 @@ describe('App — aba Escritório', () => {
     })
     expect(api.projectTree).toHaveBeenCalledTimes(1)
 
-    // O botão do Quadro, com o Escritório aberto, abre o Quadro (na aba Conversa).
-    fireEvent.click(quadro)
-    expect(selected(/Conversa/)).toBe('true')
-    expect(quadro.classList.contains('on')).toBe(true)
+    // De volta à Conversa, o Quadro continua aberto e volta a escanear.
+    fireEvent.click(tab(/Conversa/))
     await waitFor(() => expect(api.projectTree).toHaveBeenCalledTimes(2))
+    expect(container.querySelector('.pane-tab.on')?.textContent).toContain('Quadro')
   })
 
   it('trocar de aba não reaplica a busca antiga: a mensagem não volta a centralizar nem piscar', async () => {
@@ -284,6 +292,58 @@ describe('App — aba Escritório', () => {
     act(() => office.props?.onDisableWindowsControl?.())
     await waitFor(() => expect(api.setWindowsControlEnabled).toHaveBeenCalledWith(false))
     await waitFor(() => expect(office.props?.windowsControlEnabled).toBe(false))
+  })
+
+  it('o campo da tela do monitor é o Composer do chat: envia para a conversa do agente selecionada no 3D (mesmo envio do chat); só com a aba aberta', async () => {
+    seed([conv('c1', 'Conversa'), conv('c2', 'Agente da mesa')], 'office')
+    office.monitor = true
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findByTestId('office-stub')
+    // Clique no agente no 3D: o Escritório seleciona a conversa dele (model.convId).
+    act(() => office.props?.onOpenConversation('c2'))
+    await waitFor(() => expect(office.props?.conversation?.id).toBe('c2'))
+    const ta = within(await screen.findByTestId('office-monitor-stub')).getByPlaceholderText(/Mensagem para o Claude/i) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.disabled).toBe(false))
+    fireEvent.change(ta, { target: { value: 'oi, agente da mesa' } })
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    expect(api.startAgent).toHaveBeenCalledWith(expect.objectContaining({ convId: 'c2' }))
+    fireEvent.click(tab(/Conversa/))
+    await waitFor(() => expect(office.props?.active).toBe(false))
+    expect(office.props?.monitorComposer).toBeNull()
+  })
+
+  it('o seletor de modelo da tela do monitor troca o modelo da conversa do agente (não o da ativa); só com a aba aberta', async () => {
+    seed([conv('c1', 'Conversa'), conv('c2', 'Agente da mesa')], 'office')
+    office.pickerFor = 'c2'
+    render(<UiProvider><App /></UiProvider>)
+    const stub = await screen.findByTestId('office-picker-stub')
+    const select = (await within(stub).findByRole('combobox', { name: 'Modelo' })) as HTMLSelectElement
+    expect(select.value).toBe('claude-opus-4-8')
+    const other = Array.from(select.options).find((o) => o.value !== 'claude-opus-4-8' && o.value !== 'auto')!
+    fireEvent.change(select, { target: { value: other.value } })
+    await waitFor(() => expect((within(screen.getByTestId('office-picker-stub')).getByRole('combobox', { name: 'Modelo' }) as HTMLSelectElement).value).toBe(other.value))
+    // A conversa ativa (c1) não muda.
+    expect(office.props?.conversation?.id).toBe('c1')
+    const saved = (): Array<{ id: string; model: string }> => JSON.parse(localStorage.getItem('agentcode.conversations.v1') ?? '[]')
+    await waitFor(() => expect(saved().find((c) => c.id === 'c2')?.model).toBe(other.value))
+    expect(saved().find((c) => c.id === 'c1')?.model).toBe('claude-opus-4-8')
+    fireEvent.click(tab(/Conversa/))
+    await waitFor(() => expect(office.props?.active).toBe(false))
+    expect(office.props?.monitorModelPicker).toBeUndefined()
+  })
+
+  it('clicar na Central da barra lateral avisa o Escritório (centralSignal), mesmo com ela já ativa', async () => {
+    seed([conv('c1', 'Conversa')], 'office')
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findByTestId('office-stub')
+    const before = office.props?.centralSignal ?? 0
+    const item = await screen.findByRole('button', { name: /Central.*fale com o agent/ })
+    fireEvent.click(item)
+    await waitFor(() => expect(office.props?.conversation?.id).toBe('central'))
+    expect(office.props?.centralSignal).toBe(before + 1)
+    fireEvent.click(screen.getByRole('button', { name: /Central.*fale com o agent/ }))
+    await waitFor(() => expect(office.props?.centralSignal).toBe(before + 2))
   })
 
   it('o Escritório recebe o painel da Central (sem mesa selecionada) só com a aba aberta', async () => {

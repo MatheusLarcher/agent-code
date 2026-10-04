@@ -189,7 +189,7 @@ describe('troca de conta no estouro', () => {
     h.stored.set('C', reading(100))
     h.records[2].event(quota)
     await settled()
-    expect(h.records[3].options.model).toBe('gpt-6-astra')
+    expect(h.records[3].options.model).toBe('gpt-6.1-sol')
     expect(h.emit.mock.calls.map(([e]) => (e as ChatEvent).kind)).toEqual(['account-switch', 'account-switch', 'provider-switch'])
     expect(switches(h.emit).map((e) => e.text)).toEqual([
       'A conta conta A atingiu o limite. Continuei na conta conta B.',
@@ -265,7 +265,7 @@ describe('troca de conta no estouro', () => {
     await h.session.send('oi')
     h.records[0].event(quota)
     await settled()
-    expect(h.records[1].options.model).toBe('gpt-6-astra')
+    expect(h.records[1].options.model).toBe('gpt-6.1-sol')
   })
 })
 
@@ -447,7 +447,7 @@ describe('estouro com trabalho em background: troca já, avisa o usuário e a co
     h.records[0].event({ kind: 'background-tasks', tasks: [devServer] })
     h.records[0].event(quota)
     await settled()
-    expect(h.records[1].options.model).toBe('gpt-6-astra')
+    expect(h.records[1].options.model).toBe('gpt-6.1-sol')
     const note = h.emit.mock.calls.map(([e]) => e as ChatEvent).find((e) => e.kind === 'provider-switch') as { text: string }
     expect(note.text).toContain('(npm run dev) foi interrompido pela troca')
     expect(h.records[1].session.send.mock.calls[0][0]).toBe(failoverContinuation(['npm run dev']))

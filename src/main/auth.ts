@@ -30,19 +30,33 @@ export function envForConfigDir(configDir?: string): NodeJS.ProcessEnv {
  * `configDir` asks about one account's login folder instead of the machine's.
  */
 export function claudeAuthStatus(configDir?: string): Promise<ClaudeAuthStatus> {
+  return claudeAuthProbe(configDir).then((r) => r ?? { loggedIn: false, authMethod: 'none' })
+}
+
+/**
+ * Como `claudeAuthStatus`, mas sem achatar a dúvida: `null` quando nenhuma
+ * tentativa respondeu um JSON válido (checagem indeterminada, não "deslogado").
+ */
+export function claudeAuthProbe(configDir?: string): Promise<ClaudeAuthStatus | null> {
+  // Uma falha de execução (timeout no 1º uso de um claude.exe recém-instalado,
+  // enquanto o antivírus o examina) não é "deslogado": tenta de novo, com folga.
+  return queryAuthStatus(configDir, 15_000).then((r) => r ?? queryAuthStatus(configDir, 45_000))
+}
+
+/** Uma consulta ao CLI; `null` quando ela não respondeu um JSON válido. */
+function queryAuthStatus(configDir: string | undefined, timeout: number): Promise<ClaudeAuthStatus | null> {
   return new Promise((resolve) => {
-    const loggedOut: ClaudeAuthStatus = { loggedIn: false, authMethod: 'none' }
     let cli: string
     try {
       cli = claudeCliPath()
     } catch {
-      resolve(loggedOut)
+      resolve({ loggedIn: false, authMethod: 'none' })
       return
     }
     execFile(
       cli,
       ['auth', 'status', '--json'],
-      { cwd: homedir(), windowsHide: true, timeout: 15_000, env: envForConfigDir(configDir) },
+      { cwd: homedir(), windowsHide: true, timeout, env: envForConfigDir(configDir) },
       (_err, stdout) => {
         try {
           const data = JSON.parse(String(stdout)) as {
@@ -60,7 +74,7 @@ export function claudeAuthStatus(configDir?: string): Promise<ClaudeAuthStatus> 
               : {})
           })
         } catch {
-          resolve(loggedOut)
+          resolve(null)
         }
       }
     )

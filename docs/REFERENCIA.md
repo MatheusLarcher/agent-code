@@ -1,6 +1,6 @@
 # Referência de arquivos — Agent Code
 
-Inventário de arquivos do projeto e suas responsabilidades. Para o funcionamento interno, veja [ARQUITETURA.md](ARQUITETURA.md). A Central está **parcial**: [checkpoint versionado de 02/10](CONTINUIDADE-2026-10-02.md) separa o código existente dos contratos pendentes.
+Inventário de arquivos do projeto e suas responsabilidades. Para o funcionamento interno, veja [ARQUITETURA.md](ARQUITETURA.md). A Central está tecnicamente validada, mas **não calibrada**: o [checkpoint versionado de 02/10](CONTINUIDADE-2026-10-02.md) separa o histórico, o entregue e o pendente.
 
 ## Sumário
 
@@ -326,27 +326,36 @@ Funcionamento em [ARQUITETURA.md](ARQUITETURA.md#tela-de-planejamento-agent-mana
 | `planningConversation.test.ts` | Só `mode: 'planning'` com slug é planejamento; o Automático revalida só na conversa normal; campos de início por tipo de conversa; conversa de handoff não mexe em modelo nem modos; a de planejamento nasce num modelo concreto. |
 | `handoffReadiness.test.ts` / `handoffFlow.test.ts` / `HandoffDialog.test.tsx` | Bloqueios e avisos; rascunho determinístico em qualquer ordem de cards, com as seções e a instrução final; pedido ao Manager; só arquivos novos depois do pedido; envio na ordem que para na primeira falha. No diálogo: bloqueio só com "enviar mesmo assim", espera relistando só no evento do mesmo plano, rascunho automático, prompt editado gravado como arquivo novo antes do envio, falha de gravação não envia nada. |
 
-### Central — código existente, não fluxo completo
+### Central — conversa fixa que roteia pedidos
 
-| Local | Estado neste checkpoint |
+Funcionamento em [ARQUITETURA.md](ARQUITETURA.md#central--conversa-fixa-que-roteia-pedidos). Validada tecnicamente; **piso 0,6 e instruções `en` do decisor não calibrados** (aguardam confirmação do usuário). Histórico em [CONTINUIDADE-2026-10-02.md](CONTINUIDADE-2026-10-02.md).
+
+| Local | Responsabilidade |
 |---|---|
-| `src/shared/central.ts` | Id fixo, entradas e contratos; campos da emenda A1 ainda não implementados. |
-| `src/main/central/centralIndex*.ts` | Resumos e cache SWR do índice; primeira carga ainda pode bloquear. |
-| `src/main/central/centralDecider.ts`, `centralPrompts.ts`, `centralIpc.ts` | Decisor TypeSafe e canais `central:route`/`central:correction` já ligados ao main/preload; T3 permanece em revisão, piso 0,6/idioma `en` sem calibração. |
-| `src/renderer/src/central/centralRegistry.ts`, `centralBoot.ts`, `CentralPanel.tsx`, `centralSend.ts` | Registro/boot/painel inicial e entrada em `routing`; `routeCentralRequest` é um stub e o App não injeta `route`. |
-| `src/renderer/src/central/centralColor.ts`, `activitySummary.ts`, `centralMirror.ts` | Funções puras; T5 ainda não usa o espelho para entrega/retorno. |
+| `src/shared/central.ts` | Id fixo, entradas e contratos, incluindo `origin`/`device`/`injected` (A1) e o snapshot do celular. |
+| `src/main/central/centralIndex*.ts` | Resumos e cache SWR do índice (10 min); primeira carga ainda pode bloquear. |
+| `src/main/central/centralDecider*.ts`, `centralPrompts.ts`, `centralOptions.ts`, `centralSchemas.ts`, `centralRedact.ts`, `centralIpc.ts` | Decisor TypeSafe em duas chamadas (recentes/projeto → conversa), opções e fallback, mascaramento heurístico, canais `central:route`/`central:correction`. |
+| `src/main/central/calibration/` | Harness fora do Electron para calibrar piso/idioma (fase A feita; fase B aguarda confirmação). Cache e candidatas ficam fora do Git. |
+| `src/renderer/src/central/centralRegistry.ts`, `centralBoot.ts`, `useCentral.ts`, `centralSend.ts`, `centralDelivery.ts`, `centralRecents.ts`, `stopHold.ts` | Registro/boot, controller (`entries`, `rail`, `pending`, `choose`, `notHere`, `answer`, `openDestination`, `turnTools`), despacho com id preset como âncora, "não era aqui". |
+| `centralMirror.ts`, `centralMirrorSync.ts`, `activitySummary.ts`, `centralColor.ts`, `centralAdoption.ts` | Espelho resumido ancorado, linha de ações, cores estáveis sem laranja, adoção A1 de todas as conversas. |
+| `centralMerge.ts`, `centralMergeStorage.ts` | Dono por device e merge de entradas por id entre PCs. |
+| `CentralPanel.tsx`, `CentralRequest.tsx`, `CentralReply.tsx`, `CentralPending.tsx`, `CentralRail.tsx`, `CentralBackButton.tsx`, `central.css`, `centralFeed.css` | Tela v3. |
+| `centralRemote.ts`, `src/main/remote/remoteServer.ts` (`POST /api/central-choose`), `smartfone-remote/www/central.js`/`centralTurns.js`/`central.css` | Celular: snapshot em `/api/state`, escolha de destino, cartões `foreign` sem ação. |
+| `*.test.ts(x)` ao lado de cada módulo, `remoteServer.central.test.ts`, `centralApp.test.tsx`, `centralFlow.test.tsx`, `useCentral.*.test.tsx` | Decisor (payload, exclusões, orçamento, regras, piso, fallback, destino fora da lista), índice/cache, espelho, A1, merge, fluxo direto/perguntar/"não era aqui"/permissões do destino, rota do celular. Sem teste versionado para `central.js`/`centralTurns.js` (só `node --check`). |
 
-Detalhes, ledger e aceites restantes em [CONTINUIDADE-2026-10-02.md](CONTINUIDADE-2026-10-02.md).
+**Limitação conhecida:** sem identidade de turno no main, em 3 casos de terminal tardio o turno seguinte pode ser marcado como falho (nunca engolido).
 
 ### src/renderer/src/office3d — Escritório 3D
 
-Inventário parcial do monitor que exibe o chat e do chat flutuante/seleção de mesa. Ainda **não** há editor de código no monitor: o pedido futuro está no [checkpoint de 02/10](CONTINUIDADE-2026-10-02.md#ideia-nova-expressamente-adiada--código-no-monitor-do-pc-3d). Funcionamento em [ARQUITETURA.md](ARQUITETURA.md#escritório-3d-o-chat-flutuante-segue-a-mesa).
+Inventário parcial do monitor (editor de código + chat) e do chat flutuante/seleção de mesa. Funcionamento em [ARQUITETURA.md](ARQUITETURA.md#escritório-3d-o-chat-flutuante-segue-a-mesa).
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
 | `Office3DWorkspace.tsx` | A aba Escritório em tela cheia: o motor (pausado com a aba fechada), a tela do monitor, a prévia, o telão e o chat flutuante. O chat segue a mesa selecionada: `chat` (a conversa ativa) com um agente focado ou com a conversa escolhida fora do 3D; `central` (o painel da Central) sem mesa. Clique num agente seleciona a conversa dele (`model.convId`); reabrir a aba com um agente focado também. |
 | `OfficeChatFloat.tsx` | O `ChatFloat` do escritório: cabeçalho com o agente da conversa (cor da camisa, título, projeto, 📍) ou, com `central`, o orbe e "Central", sem projeto nem 📍, na cor `--accent`. |
 | `engine.ts` / `engineTypes.ts` | O motor three (câmera, entrada, laço sob demanda) e os contratos dele. `onFocus(key, byUser)` diz se foi o usuário quem abriu/fechou a tela; `follow(convId)` não voa quando o agente focado já é daquela conversa. |
+| `codeScreen/` (`CodeMonitor.tsx`, `CodeView.tsx`, `EditorPane.tsx`, `codeModel.ts`, `fileView.ts`, `stitch.ts`, `pathGuard.ts`, `highlightLines.ts`, `codeScreen.css`, `codeEditor.css`) | Monitor em modo **Código \| Chat**: editor estilo VS Code com abas, explorer U/M, diff verde/vermelho reconstruído de Write/Edit/MultiEdit e conferido no disco, destaque de sintaxe. `stitch.ts` costura o stream (`filePath`/`oldText` só quando completos); `pathGuard.ts` restringe a leitura de disco no renderer — guarda de exibição, **não** fronteira de segurança. Testes ao lado (`CodeMonitor.test.tsx`, `fileView.test.ts`, `codeModel.test.ts`, `pathGuard.test.ts`, `highlightLines.test.ts`). |
+| `src/main/toolInputStream.ts` | Emite `filePath`/`oldText` do tool input em stream somente quando a string fechou (presença ⇒ completo); contrato que o editor assume. |
 | `office3d.css` | HUD e chat flutuante — inclusive a Central dentro dele: sem o orbe e o título próprios, translúcida, 5 linhas quando minimizada. |
 | `Office3DWorkspace.test.tsx` / `officeTab.test.tsx` / `engineView.test.ts` / `engineTab.test.ts` | Sem mesa, a Central; clique no agente seleciona a conversa dele e a chegada dela não fecha a tela; Esc, clique no vazio, × e roda voltam à Central (o campo focado perde o foco antes); conversa de fora mostra o chat e o voo do `follow` não volta à Central; troca de aba com e sem foco; sem `central`, sempre o chat; `byUser` de cada gesto e a guarda do `follow`. |
 

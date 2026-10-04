@@ -17,6 +17,7 @@ import {
   LOCAL_SPEECH_MODELS,
   normalizeVoiceSpeed,
   type SpeechSetupProgress,
+  type VoiceInstallStatus,
   type WhisperModelId,
   type WhisperStatus
 } from '../shared/ipc'
@@ -26,11 +27,13 @@ import { transcribeLocal } from './speech'
 import { getCacheInfo } from './store'
 import {
   getWhisperStatus,
+  prepareVoiceModels,
   setVoiceCacheDir,
   setWhisperProfile,
   stopVoiceEngine,
   synthesizeLocal,
-  transcribeWhisper
+  transcribeWhisper,
+  voiceModelsInstalled
 } from './voice'
 import { canDecodeWithChromium, decodeWithChromium } from './voice/chromiumDecode'
 import { concatSamples, encodeWavPcm16, isWav, noiseFloor, parseWav } from './voice/pcm'
@@ -200,6 +203,44 @@ export function whisperStatus(): WhisperStatus {
   }
 }
 
+let installing: Promise<void> | null = null
+
+/** Local voice models: present in the cache / being downloaded right now. */
+export function voiceInstallStatus(): VoiceInstallStatus {
+  ensureVoiceCacheDir()
+  return { installed: voiceModelsInstalled(cacheDir, resolveWhisperModel(loadConfig().voice?.whisperModel)), installing: installing !== null }
+}
+
+/**
+ * Downloads/prepares Kokoro and Whisper ahead of the first use, through the same
+ * prepare + progress path the on-demand calls use. A call during an install
+ * joins it instead of starting another. One notice covers both models: the
+ * per-model "done"/"error" are held back and replaced by the final outcome.
+ */
+export function installVoice(send?: Send): Promise<void> {
+  if (installing) return installing
+  ensureVoiceCacheDir()
+  const profile = resolveWhisperModel(loadConfig().voice?.whisperModel)
+  setWhisperProfile(profile)
+  const step: Send = (p) => {
+    if (p.stage !== 'done' && p.stage !== 'error') send?.(p)
+  }
+  const run = (async () => {
+    try {
+      await withReporter('tts', step, (r) => prepareVoiceModels('tts', (p) => r.onProgress(p)))
+      await withReporter('stt', step, (r) => prepareVoiceModels('stt', (p) => r.onProgress(p)))
+      send?.({ stage: 'done', message: 'Voz e transcrição instaladas.' })
+    } catch (err) {
+      send?.({ stage: 'error', message: 'Não consegui instalar a voz e a transcrição. Verifique a conexão e tente de novo.' })
+      throw err
+    } finally {
+      installing = null
+    }
+  })()
+  installing = run
+  return run
+}
+
 function senderReport(sender: WebContents): Send {
   return (p) => {
     if (!sender.isDestroyed()) sender.send(Channels.speechSetupProgress, p)
@@ -211,6 +252,15 @@ const errorText = (err: unknown): string => String(err instanceof Error ? err.me
 /** Desktop IPC. Errors come back as `{ ok: false, error }` so the UI can toast them. */
 export function registerVoiceIpc(ipcMain: IpcMain): void {
   ipcMain.handle(Channels.voiceStatus, () => whisperStatus())
+  ipcMain.handle(Channels.voiceInstallStatus, () => voiceInstallStatus())
+  ipcMain.handle(Channels.voiceInstall, async (e) => {
+    try {
+      await installVoice(senderReport(e.sender))
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: errorText(err) }
+    }
+  })
   ipcMain.handle(Channels.voiceTranscribe, async (e, audioBase64: unknown, mimeType: unknown) => {
     if (typeof audioBase64 !== 'string' || !audioBase64) return { ok: false, error: 'áudio vazio' }
     try {

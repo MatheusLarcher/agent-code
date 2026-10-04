@@ -14,9 +14,9 @@ import { KokoroTTS, type GenerateOptions } from 'kokoro-js'
 import { loadEspeakPtBr, phonemizeWith } from './phonemize'
 import { concatSamples, withNoiseFloor } from './pcm'
 import { planKokoroChunks } from './textChunks'
-import type { KokoroVoice, VoiceProgress } from './protocol'
+import { KOKORO_MODEL, type KokoroVoice, type VoiceProgress } from './protocol'
 
-export const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX'
+export { KOKORO_MODEL }
 export const KOKORO_SAMPLE_RATE = 24000
 /** Silence between synthesized sentences (Kokoro already pauses at the period). */
 const SENTENCE_GAP_SAMPLES = Math.round(0.08 * KOKORO_SAMPLE_RATE)

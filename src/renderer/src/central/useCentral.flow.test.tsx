@@ -4,6 +4,7 @@ import type { ImageAttachment, PermissionRequest } from '@shared/ipc'
 import { CENTRAL_ID, type CentralReplyEntry, type CentralRequestEntry, type CentralRouteResult, type CentralTarget } from '@shared/central'
 import type { UIMessage } from '../types'
 import { centralColor } from './centralColor'
+import { DISCARDED_MESSAGE, OTHER_DEVICE_MESSAGE } from './centralDelivery'
 import { MIRROR_THROTTLE_MS } from './useCentral'
 import { SELF, centralConv, conv, mountCentral } from './centralHookKit'
 
@@ -95,11 +96,12 @@ describe('espelho', () => {
     expect(replyOf(k, 'r1')?.notes).toHaveLength(10)
   })
 
-  it('depois de reiniciar: destino de turno em aberto fora da tela é lido por id (uma vez) e espelhado', async () => {
+  it('depois de reiniciar: destino de turno que começou e não terminou, fora da tela, é lido por id (uma vez) e espelhado', async () => {
     installApi(toA1ThenAsk)
     const far = conv('longe', 'C:\\proj\\gama', 'Antiga', { messages: [{ kind: 'user', id: 'u9', text: 'r9' }, text('t9', 'Feito.', true)] })
     const loadByIds = vi.fn(async () => [far])
-    const k = mountCentral([centralConv([delivered('r9', 'longe', 'u9')])], { over: { loadByIds } })
+    const started: CentralReplyEntry = { kind: 'reply', id: 'reply:r9', ts: 2, requestId: 'r9', anchor: { convId: 'longe', msgId: 'u9' }, notes: [], activity: { segments: [], text: '', count: 0, errors: 0 }, done: false }
+    const k = mountCentral([centralConv([delivered('r9', 'longe', 'u9'), started])], { over: { loadByIds } })
     await waitFor(() => expect(replyOf(k, 'r9')).toMatchObject({ answer: 'Feito.', done: true }))
     await k.run(() => k.world().patchConv(CENTRAL_ID, (c) => ({ ...c, updatedAt: 2 })))
     expect(loadByIds).toHaveBeenCalledTimes(1)
@@ -114,6 +116,7 @@ describe('perguntas dos destinos', () => {
   it('só as das conversas com turno em aberto; responder chama respondToPermission(convId) e guarda a pergunta', async () => {
     installApi(toA1ThenAsk)
     const k = mountCentral([centralConv([delivered('r1', 'a1', 'u1')]), conv('a1', 'C:\\proj\\alpha', 'Filtros'), conv('b1', 'C:\\proj\\beta', 'Relatório')])
+    k.inflightRef.current = { a1: { msgId: 'u1' } }
     await k.run(() => k.world().setPermissions({ a1: ask, b1: { id: 'p2', toolName: 'Bash', input: { command: 'ls' } } }))
     expect(k.world().central.pending).toEqual([{ convId: 'a1', label: k.world().central.labelFor('a1'), request: ask }])
     expect(k.world().central.hasActiveAnchor('a1')).toBe(true)
@@ -122,6 +125,20 @@ describe('perguntas dos destinos', () => {
     await k.run(() => k.world().central.answer('a1', res))
     expect(k.spies.respondToPermission).toHaveBeenCalledWith('a1', res)
     expect(k.entries().at(-1)).toMatchObject({ kind: 'question', convId: 'a1', question: 'Qual cor?', answer: 'Azul', device: SELF })
+  })
+
+  it('pedido entregue sem turno vivo (descartado, parado antes do 1º evento) não prende a conversa; fila e recuperação contam', async () => {
+    installApi(toA1ThenAsk)
+    const k = mountCentral([centralConv([delivered('r1', 'a1', 'u1')]), conv('a1', 'C:\\proj\\alpha', 'Filtros')])
+    await k.run(() => k.world().setPermissions({ a1: ask }))
+    expect(k.world().central.pending).toEqual([])
+    expect(k.world().central.hasActiveAnchor('a1')).toBe(false)
+    k.queueRef.current = [{ id: 'q1', convId: 'a1', msgId: 'u1' }]
+    expect(k.world().central.hasActiveAnchor('a1')).toBe(true)
+    k.queueRef.current = []
+    const recovery = { id: 'rec', reason: 'transient' as const, scheduledAt: 1, attempt: 1, maxAttempts: 3, errorText: 'x', messageId: 'u1' }
+    await k.run(() => k.world().patchConv('a1', (c) => ({ ...c, recovery })))
+    expect(k.world().central.hasActiveAnchor('a1')).toBe(true)
   })
 
   it('resposta que falha: aviso de erro e nada guardado', async () => {
@@ -168,6 +185,47 @@ describe('"não era aqui"', () => {
     expect(k.requests()[0].state).toBe('asking')
   })
 
+  it('em recuperação automática (o turno dela falhou e vai ser retomado): para também, mantendo a fila', async () => {
+    installApi(toA1ThenAsk)
+    const k = mountCentral(world())
+    const entry = await sendDirect(k, 'arruma o filtro')
+    k.inflightRef.current = {}
+    const recovery = { id: 'rec', reason: 'transient' as const, scheduledAt: Date.now() + 60_000, attempt: 1, maxAttempts: 3, errorText: 'x', messageId: entry.anchor!.msgId }
+    await k.run(() => k.world().patchConv('a1', (c) => ({ ...c, recovery })))
+    await k.run(() => k.world().central.notHere(entry.id))
+    expect(k.spies.stopKeepingQueue).toHaveBeenCalledWith('a1')
+    expect(k.spies.deleteQueued).not.toHaveBeenCalled()
+    expect(k.requests()[0].state).toBe('asking')
+  })
+
+  it('enquanto o destino conecta: a entrega antiga, quando volta, não mexe na âncora nova nem pergunta de novo', async () => {
+    const api = installApi(toA1ThenAsk)
+    let open!: () => void
+    const gate = new Promise<void>((resolve) => (open = resolve))
+    const k = mountCentral(world(), { dispatchGate: (id) => (id === 'a1' ? gate : undefined) })
+    // Como no App: o Stop sem query viva deixa a conversa parada, e a mensagem não sai.
+    k.spies.stopKeepingQueue.mockImplementation((cid) => {
+      k.inflightRef.current[cid] = undefined
+      k.world().setBusy(cid, false)
+    })
+    await k.run(() => k.world().central.send('arruma o filtro', [], [], [], []))
+    await waitFor(() => expect(k.requests()[0]?.state).toBe('delivered'))
+    const first = k.requests()[0]
+    await k.run(() => k.world().central.notHere(first.id))
+    expect(k.spies.stopKeepingQueue).toHaveBeenCalledWith('a1')
+    await waitFor(() => expect(k.requests()[0].state).toBe('asking'))
+    await k.run(() => k.world().central.choose(first.id, 0))
+    await waitFor(() => expect(k.requests()[0]).toMatchObject({ state: 'delivered', anchor: { convId: 'b1' } }))
+    const anchorB = k.requests()[0].anchor!
+    await k.run(async () => {
+      open()
+      await gate
+    })
+    expect(k.requests()[0]).toMatchObject({ state: 'delivered', anchor: anchorB })
+    expect(api.centralRoute).toHaveBeenCalledTimes(2)
+    expect(k.sent).toEqual([['b1', anchorB.msgId]])
+  })
+
   it('já terminado: nada a parar, mas pergunta de novo; entrada adotada nunca oferece', async () => {
     const api = installApi(toA1ThenAsk)
     const adopted = delivered('ad', 'b1', 'u5', { origin: 'conversation' })
@@ -183,6 +241,46 @@ describe('"não era aqui"', () => {
     await k.run(() => k.world().central.notHere('ad'))
     expect(api.centralRoute.mock.calls.length).toBe(calls)
     expect(k.requests().find((e) => e.id === 'ad')?.state).toBe('delivered')
+  })
+})
+
+describe('descarte sem rodar (Stop comum, lixeira, conversa apagada)', () => {
+  it('pedido da Central descartado volta a perguntar (sem o destino); adotado vira falha; o do outro PC fica', async () => {
+    const api = installApi(toA1ThenAsk)
+    const adopted = delivered('ad', 'a1', 'u5', { origin: 'conversation' })
+    const other = delivered('outro', 'a1', 'u6', { device: 'pc-2' })
+    const k = mountCentral([centralConv([adopted, other]), conv('a1', 'C:\\proj\\alpha', 'Filtros'), conv('b1', 'C:\\proj\\beta', 'Relatório')])
+    await k.run(() => k.world().setBusy('a1', true))
+    const entry = await sendDirect(k, 'arruma o filtro')
+    await k.run(() => k.world().central.dropped('a1', [entry.anchor!.msgId, 'u5', 'u6']))
+    await waitFor(() => expect(k.requests().find((e) => e.id === entry.id)?.state).toBe('asking'))
+    expect(api.centralRoute).toHaveBeenLastCalledWith(expect.objectContaining({ forceAsk: true, exclude: A1 }))
+    const moved = k.requests().find((e) => e.id === entry.id)!
+    expect(moved).toMatchObject({ ask: { reason: 'target-missing', options: [{ target: B1 }] } })
+    expect(moved).not.toHaveProperty('anchor')
+    expect(moved).not.toHaveProperty('movedFrom')
+    expect(k.requests().find((e) => e.id === 'ad')).toMatchObject({ state: 'failed' })
+    expect(k.requests().find((e) => e.id === 'ad')).not.toHaveProperty('anchor')
+    expect(k.requests().find((e) => e.id === 'outro')).toMatchObject({ state: 'delivered', anchor: { msgId: 'u6' } })
+    expect(k.spies.notify).toHaveBeenCalledWith('aviso', DISCARDED_MESSAGE)
+  })
+})
+
+describe('dono da entrada (os dois PCs dividem a Central)', () => {
+  it('escolher ou "não era aqui" num pedido do outro PC não age aqui: nada despachado, nada parado, aviso', async () => {
+    const api = installApi(toA1ThenAsk)
+    const asking: CentralRequestEntry = { kind: 'request', id: 'r-outro', ts: 1, text: 'do outro', state: 'asking', origin: 'central', device: 'pc-2', ask: { options: [{ target: B1 }], reason: 'low-confidence' } }
+    const running = delivered('r-rodando', 'a1', 'u1', { device: 'pc-2' })
+    const k = mountCentral([centralConv([asking, running]), conv('a1', 'C:\\proj\\alpha', 'Filtros', { messages: [{ kind: 'user', id: 'u1', text: 'x' }] }), conv('b1', 'C:\\proj\\beta', 'Relatório')])
+    await k.run(() => k.world().setBusy('a1', true))
+    k.inflightRef.current = { a1: { msgId: 'u1' } }
+    await k.run(() => k.world().central.choose('r-outro', 0))
+    await k.run(() => k.world().central.notHere('r-rodando'))
+    expect(k.spies.dispatch).not.toHaveBeenCalled()
+    expect(k.spies.stopKeepingQueue).not.toHaveBeenCalled()
+    expect(api.centralRoute).not.toHaveBeenCalled()
+    expect(k.requests().map((e) => e.state)).toEqual(['asking', 'delivered'])
+    expect(k.spies.notify).toHaveBeenCalledWith('aviso', OTHER_DEVICE_MESSAGE)
   })
 })
 

@@ -688,6 +688,8 @@ button svg {
      chat (ex.: a coluna estreita do Agent Manager), não à da janela. A largura
      vem do pai (flex), então a contenção não muda o tamanho do painel. */
   container: chat / inline-size;
+  /* Transparência do fundo escolhida pelo usuário (chatOpacity.ts); 1 = como antes. */
+  background: color-mix(in srgb, var(--bg) calc(100% * var(--chat-bg-alpha, 1)), transparent);
 }
 .browser-panel {
   display: flex;
@@ -738,7 +740,7 @@ button svg {
   justify-content: space-between;
   padding: 8px 16px;
   border-bottom: 1px solid var(--line);
-  background: var(--bg-2);
+  background: color-mix(in srgb, var(--bg-2) calc(100% * var(--chat-bg-alpha, 1)), transparent);
   z-index: 2;
 }
 .chat-title {
@@ -889,7 +891,7 @@ button svg {
 .usage-badge {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 .usage-item {
   display: flex;
@@ -5254,35 +5256,6 @@ img.inline-att[data-caret] {
   line-height: 1.35;
 }
 
-/* Botão fixo da topbar que abre/fecha o painel de agentes. */
-.agents-btn {
-  position: relative;
-}
-.agents-btn.on {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-.agents-btn.live {
-  color: var(--accent);
-}
-.agents-btn-badge {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #1f1e1d;
-  font-size: 9.5px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  animation: badge-pop 0.24s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
 /* A linha "N subagentes trabalhando" que ficava acima do composer saiu daqui:
    o chip do elenco (`.crew-chip`, no fim deste arquivo) ocupa o mesmo lugar e
    diz mais — QUEM está trabalhando, não só quantos. */
@@ -5627,16 +5600,92 @@ img.inline-att[data-caret] {
   position: relative;
   -webkit-app-region: no-drag;
 }
-.usage-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-left: 8px;
-  border-left: 1px solid var(--line);
+/* Anel duplo por assinatura: externo = sessão 5h, interno = semana. */
+.usage-ring {
+  position: relative;
+  display: inline-flex;
+  border-radius: 50%;
+  outline: none;
+  cursor: default;
 }
-.usage-group:first-child {
-  padding-left: 0;
-  border-left: none;
+.usage-ring svg {
+  display: block;
+}
+.usage-ring-track,
+.usage-ring-arc {
+  fill: none;
+  stroke-width: 3;
+}
+.usage-ring-track {
+  stroke: var(--line);
+}
+.usage-ring-arc {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 14px 14px;
+  transition: stroke-dasharray 0.3s ease;
+}
+.usage-ring-arc.warn {
+  stroke: #d9a441;
+}
+.usage-ring-arc.crit {
+  stroke: #e5534b;
+}
+.usage-ring-initial {
+  font-size: 8px;
+  font-weight: 700;
+  fill: var(--muted);
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+.usage-ring.crit .usage-ring-initial {
+  fill: #e5534b;
+}
+.usage-ring-tip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 41;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.usage-ring:hover .usage-ring-tip,
+.usage-ring:focus-visible .usage-ring-tip {
+  display: flex;
+}
+.usage-badge.open .usage-ring-tip {
+  display: none;
+}
+.usage-ring-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--muted);
+}
+.usage-ring-row b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.usage-ring-row.warn b {
+  color: #d9a441;
+}
+.usage-ring-row.crit b {
+  color: #e5534b;
+}
+.usage-ring-row small {
+  font-size: 10px;
 }
 .usage-provider {
   font-size: 10px;

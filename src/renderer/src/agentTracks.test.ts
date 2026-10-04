@@ -68,6 +68,19 @@ describe('reduceTracks', () => {
     expect(fold([{ ...taskCall('x1', 'nada'), name: 'Read' } as ChatEvent])).toEqual({})
   })
 
+  it('o passo do subagente guarda o modelo que o fez (só quando o evento diz)', () => {
+    const map = fold([
+      taskCall('task-1', 'procurar X'),
+      subCall('s1', 'task-1', 'Read', { model: 'claude-haiku-4-5' }),
+      subCall('s2', 'task-1', 'Grep', { model: '' }),
+      subCall('s3', 'task-1', 'Glob')
+    ])
+    const [a, b, c] = map['task-1'].steps
+    expect(a.model).toBe('claude-haiku-4-5')
+    expect('model' in b).toBe(false)
+    expect('model' in c).toBe(false)
+  })
+
   it('a chamada Task abre a trilha com rótulo legível', () => {
     const map = fold([taskCall('task-1', 'procurar onde o plano é montado')])
     expect(map['task-1'].label).toContain('procurar onde o plano é montado')

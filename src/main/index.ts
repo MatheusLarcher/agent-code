@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, powerMonitor, powerSaveBlocker, safeStorage, shell } from 'electron'
 import type { MessageBoxOptions } from 'electron'
+import { openUrlExternally } from './openInBrowser'
 import { randomUUID } from 'node:crypto'
 import { getSessionInfo, getSessionMessages, importSessionToStore } from '@anthropic-ai/claude-agent-sdk'
 import { spawn } from 'node:child_process'
@@ -53,7 +54,8 @@ import {
 } from './config'
 import { stopLocalSpeech } from './speech'
 import { registerVoiceIpc, speak, speechParts, stopVoice, transcribe as transcribeVoice } from './voiceService'
-import { isAuthenticated, logoutClaude } from './auth'
+import { claudeAuthProbe, isAuthenticated, logoutClaude } from './auth'
+import { claudeAuthExpiry, claudeConnectedForCard } from './authExpiry'
 import { runClaudeLogin } from './login'
 import {
   claudeAccounts,
@@ -96,7 +98,8 @@ import { StorageError, type ConversationLease, type ConversationRecord, type Per
 import { hashJson, normalizeJson } from './persistence/hashes'
 import { replayLocalTranscript, verifyMirroredSession } from './persistence/mirrorReplay'
 import { replayDedupStore } from './persistence/replayDedup'
-import { activeReplayStore, activeResumeMarker, activeSessionStore, activeTokenUsage } from './persistence/activeRepository'
+import { activeContextHistory, activeReplayStore, activeResumeMarker, activeSessionStore, activeTokenUsage } from './persistence/activeRepository'
+import { registerContextIpc } from './contextSnapshot/ipc'
 import { createSessionStorageRecovery } from './sessionStorageRecovery'
 import {
   attachProjectIdentity,
@@ -116,7 +119,7 @@ import { startMemoryCuratorScheduler } from './memoryCurator'
 import { taskLedger } from './tasks/taskRuntime'
 import { buildTaskBoard, buildTaskDetail, type TaskBoardQuery } from './tasks/taskBoard'
 import { startTaskReaper } from './tasks/taskReaper'
-import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, restoreVault, secretSink } from './memory/memoryRuntime'
+import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, readSecretForReveal, restoreVault, secretSink } from './memory/memoryRuntime'
 import { startRestartGuardFile } from './restartGuardFile'
 import { startSleepGuard } from './sleepGuard'
 import { windowsControl } from './windowsControl/service'
@@ -787,15 +790,17 @@ export const mcpInbound = new McpInbound({
  * MCP de entrada, que lê só a última leitura (o CLI leva segundos).
  */
 async function refreshClaudeReady(): Promise<boolean> {
-  let ready = await isAuthenticated()
-  if (!ready) {
-    await claudeAccounts.ensureLoaded()
-    ready =
-      claudeAccounts.hasExtraAccounts() &&
-      (await claudeAccounts.candidates()).some((account) => account.status === 'connected')
-  }
+  const ready = (await isAuthenticated()) || (await extraClaudeAccountConnected())
   mcpInbound.setClaudeReady(ready)
   return ready
+}
+
+async function extraClaudeAccountConnected(): Promise<boolean> {
+  await claudeAccounts.ensureLoaded()
+  return (
+    claudeAccounts.hasExtraAccounts() &&
+    (await claudeAccounts.candidates()).some((account) => account.status === 'connected')
+  )
 }
 
 // LAN bridge: phones POST commands here; we forward them to the renderer (which
@@ -805,12 +810,12 @@ async function refreshClaudeReady(): Promise<boolean> {
 const remotePairing = new RemotePairingStore(app.getPath('userData'))
 
 const remote = new RemoteServer({
-  onInbound: (convId, text, images, files) => {
+  onInbound: (convId, text, images, files, replyTo) => {
     // A mensagem do celular dá a volta pelo renderer (que a despacha na conversa
     // certa) e só então volta para cá no `agent:send`. Guardamos a marca aqui,
     // que é o único ponto que SABE que a origem é o celular.
     markRemoteInbound(convId, text)
-    send(Channels.remoteInbound, { convId, text, images, files })
+    send(Channels.remoteInbound, { convId, text, images, files, ...(replyTo ? { replyTo } : {}) })
   },
   onInterrupt: (convId) => send(Channels.remoteInterrupt, { convId }),
   onSetMode: (convId, mode, on) => send(Channels.remoteSetMode, { convId, mode, on }),
@@ -821,6 +826,8 @@ const remote = new RemoteServer({
   onSetModel: (convId, model, effort) => send(Channels.remoteSetModel, { convId, model, effort }),
   onRecoveryAction: (convId, action) => send(Channels.remoteRecoveryAction, { convId, action }),
   onPermissionResponse: (convId, res) => send(Channels.remotePermissionResponse, { convId, res }),
+  // "Para onde vai?" respondido no celular: o renderer (App → useCentral.choose) entrega.
+  onCentralChoose: ({ entryId, option }) => send(Channels.remoteCentralChoose, { entryId, option }),
   apkPath: () => join(REMOTE_ROOT, 'dist', 'agent-remote.apk'),
   wwwDir: () => join(REMOTE_ROOT, 'www'),
   onClientsChanged: (info) => send(Channels.remoteClients, info),
@@ -925,7 +932,8 @@ function createWindow(startMinimized = false): void {
   mainWindow.webContents.on('did-start-loading', () => mcpInbound.markRendererGone())
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    // Mockup .html local: navegador padrão, mesmo com .html associado ao VS Code.
+    void openUrlExternally(url)
     return { action: 'deny' }
   })
 
@@ -1052,11 +1060,14 @@ export function registerIpc(): void {
     send,
     channels: { status: Channels.providersStatus, changed: Channels.providersChanged },
     deps: {
-      claude: refreshClaudeReady,
+      // Só desconexão comprovada (ou sessão expirada) desliga o Claude no card.
+      claude: () => claudeConnectedForCard({ probe: () => claudeAuthProbe(), extraConnected: extraClaudeAccountConnected }),
       gpt: async () => (await codexStatus()).connected,
       ollama: () => ollamaSelectable(loadConfig().ollama)
     }
   })
+  // Turno com erro de autenticação (ou o login/turno que o desfaz) reavalia o card.
+  claudeAuthExpiry.onChange(providersChanged)
   ipcMain.handle(Channels.configSet, async (_e, patch: Partial<AppConfig>) => {
     assertStorageWritable()
     const result = await updateAppConfig(patch)
@@ -1115,6 +1126,7 @@ export function registerIpc(): void {
     }
     const ok = await runClaudeLogin(openUrl, authLog)
     authLog(`=== auth:login done: authenticated=${ok} ===`)
+    if (ok) claudeAuthExpiry.clear()
     providersChanged()
     return { ok }
   })
@@ -1304,6 +1316,13 @@ export function registerIpc(): void {
     } catch {
       return null
     }
+  })
+  // Histórico do contexto entregue ao agente e o olho das senhas: só IPC do PC,
+  // nunca a ponte do celular.
+  registerContextIpc({
+    handle: (channel, handler) => ipcMain.handle(channel, handler),
+    repository: () => storageLifecycle.repository(),
+    reveal: readSecretForReveal
   })
   // Chamadas e totais persistidos de uma conversa (`llm_calls`/`llm_usage_totals`),
   // para reconstruir a árvore de consumo de tokens ao reabrir uma conversa antiga.
@@ -1677,11 +1696,16 @@ export function registerIpc(): void {
       // e só se a viva está no modelo decidido e com a mesma config MCP (uma
       // sessão aberta antes da config MCP, ou num modelo trocado por cota, não
       // serve para a tarefa só porque o par do Automático repetiu).
-      const live = sessions.get(convId)?.liveOptions()
+      // Sessão cuja query já morreu nunca serve: cada envio falharia e a recuperação
+      // gastaria as tentativas nela. Cai no caminho abaixo, que descarta `replaced`
+      // (fora do mapa + dispose) e sobe outra.
+      const liveSession = sessions.get(convId)
+      const live = liveSession?.liveOptions()
       const reuse =
         auto.reuse &&
         !previous &&
         !!live &&
+        !!liveSession?.isAlive() &&
         (!opts.inboundMcp && !live.inboundMcp
           ? true
           : !!opts.inboundMcp && !!live.inboundMcp && live.model === auto.execution.model)
@@ -1744,8 +1768,9 @@ export function registerIpc(): void {
       // Código ao vivo do monitor do escritório: efêmero e só da tela local. Para
       // aqui, num ponto só: não vai ao celular, não autoriza download, não fecha
       // tarefa MCP e nenhum observador (vigia, quadro, PO, memorista) o vê — até
-      // 10 por segundo por bloco seria só custo para todos eles.
-      if (event.kind === 'tool-input-delta') return
+      // 10 por segundo por bloco seria só custo para todos eles. O `turn-start`
+      // (identidade de turno) também é só da tela local: estado, não conteúdo.
+      if (event.kind === 'tool-input-delta' || event.kind === 'turn-start') return
       remote.broadcast(convId, event)
       // Fim de turno de uma tarefa MCP (resposta, erro) sai daqui.
       mcpInbound.onEvent(convId, event)
@@ -1824,7 +1849,9 @@ export function registerIpc(): void {
         const replayStore = activeReplayStore(activeRepository, convId, () => replayDedupStore(sessionStore))
         await replayLocalTranscript(sessionId, replayStore, { cwd: opts.cwd, configDir })
         await verifyMirroredSession(resumeMarker, sessionStore, convId, sessionId, opts.cwd)
-      }
+      },
+      activeContextHistory(activeRepository),
+      (event) => send(Channels.contextTurnsChanged, event)
     ), emit, async (provider) =>
       provider === 'gpt' ? isCodexConnected() : claudeAccounts.isConnected(conversationAccount(convId) ?? claudeAccountId),
     async () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { PerspectiveCamera, Vector3 } from 'three'
 import { cameraPosition, lerpPose, MONITOR_HALF_H, MONITOR_HALF_W, MONITOR_SCREEN_FRONT, monitorPose, type CameraPose } from './cameraRig'
 import type { Pt } from './quadTransform'
-import { PointAnchor, PreviewAnchor, ScreenAnchor, type PreviewScene } from './screenAnchor'
+import { focusView, PointAnchor, PreviewAnchor, ScreenAnchor, type PreviewScene } from './screenAnchor'
 import { BUBBLE_TOP } from './speech'
 
 function camera(): PerspectiveCamera {
@@ -77,7 +77,8 @@ describe('ScreenAnchor: a tela HTML encaixada na tela do monitor (homografia)', 
   const W = 1400
   const H = 800
   const M = { x: 3, y: 1.12, z: -2 }
-  const final = monitorPose(M, { fovDeg: 50, aspect: W / H })
+  // A pose do foco do motor: a mesma vista da âncora (a faixa do HUD livre).
+  const final = monitorPose(M, focusView(50, W, H))
 
   /** A câmera do motor numa pose (como o CameraSync). */
   function poseCamera(pose: CameraPose, width = W, height = H): PerspectiveCamera {
@@ -130,6 +131,9 @@ describe('ScreenAnchor: a tela HTML encaixada na tela do monitor (homografia)', 
     expect(el.style.height).toBe(`${Math.round((len(c, 0, 3) + len(c, 1, 2)) / 2)}px`)
     expect([el.style.left, el.style.top, el.style.visibility]).toEqual(['', '', ''])
     expect(maxError(placedCorners(el), c)).toBeLessThanOrEqual(0.5)
+    // A tela fica abaixo da faixa do HUD e dentro do palco.
+    expect(Math.min(c[0].y, c[1].y)).toBeGreaterThanOrEqual(BUBBLE_TOP - 1)
+    expect(Math.max(c[2].y, c[3].y)).toBeLessThanOrEqual(H)
     // O keystone da arfagem: a borda de cima sai mais larga que a de baixo (o retângulo de antes não encaixava).
     expect(len(c, 0, 1) / len(c, 3, 2)).toBeGreaterThan(1.03)
     // Câmera parada: nada é reescrito.
@@ -159,7 +163,7 @@ describe('ScreenAnchor: a tela HTML encaixada na tela do monitor (homografia)', 
     const { el, anchor } = mount()
     anchor.place(poseCamera(final), W, H)
     const wide = el.style.width
-    const narrow = monitorPose(M, { fovDeg: 50, aspect: 600 / H })
+    const narrow = monitorPose(M, focusView(50, 600, H))
     const cam = poseCamera(narrow, 600, H)
     anchor.place(cam, 600, H)
     expect(el.style.width).not.toBe(wide)

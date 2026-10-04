@@ -11,53 +11,54 @@ describe('UsageBadge — uso da conta (5h/semana), separado da conversa', () => 
     expect(container.firstChild).toBeNull()
   })
 
-  it('mostra a sessão de 5h com % e dica de reset', () => {
+  it('barra fechada é só o anel; o hover traz % e reset de cada janela', () => {
     const fiveHour: RateLimitStatus = {
       rateLimitType: 'five_hour',
       status: 'allowed',
       utilization: 0.42,
       resetsAt: Date.now() + 90 * 60_000 // daqui a 90min
     }
-    const { getByText, container } = render(<UsageBadge limits={{ five_hour: fiveHour }} />)
-    expect(getByText('Sessão 5h')).toBeTruthy()
-    expect(getByText('42%')).toBeTruthy()
-    // Horário de reset visível DO LADO da pílula, sem precisar de hover.
+    const { container } = render(<UsageBadge limits={{ five_hour: fiveHour }} />)
+    expect(container.querySelector('.usage-pill')).toBeNull()
+    const ring = container.querySelector('.usage-ring')
+    expect(ring?.getAttribute('aria-label')).toBe('Claude: Sessão 5h 42%')
     // 90min arredonda pra "2h" (Math.round(90/60) = 2) — mesma regra do fmtResetsAt.
-    const resetEl = container.querySelector('.usage-reset')
-    expect(resetEl?.textContent).toBe('reseta em 2h')
-    const pill = container.querySelector('.usage-pill')
-    const title = pill?.getAttribute('title') ?? ''
-    expect(title).toContain('reseta em')
-    // O hover explica o CONCEITO (conta, não conversa; soma todos os apps),
-    // não só o número — era essa a lacuna que o usuário apontou.
-    expect(title).toMatch(/conta anthropic/i)
-    expect(title).toMatch(/claude desktop/i)
+    expect(container.querySelector('.usage-ring-tip')?.textContent).toContain('42%reseta em 2h')
   })
 
-  it('sem resetsAt (ainda não informado): não mostra a dica de horário', () => {
-    const limits: Record<string, RateLimitStatus> = {
-      five_hour: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0.5 }
-    }
-    const { container } = render(<UsageBadge limits={limits} />)
-    expect(container.querySelector('.usage-reset')).toBeNull()
-  })
-
-  it('mostra vários limites juntos, na ordem esperada (5h antes de semana)', () => {
+  it('anel externo = sessão 5h, interno = semana', () => {
     const limits: Record<string, RateLimitStatus> = {
       seven_day: { rateLimitType: 'seven_day', status: 'allowed', utilization: 0.1 },
       five_hour: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0.9 }
     }
     const { container } = render(<UsageBadge limits={limits} />)
-    const caps = Array.from(container.querySelectorAll('.ctx-bar-cap')).map((el) => el.textContent)
-    expect(caps).toEqual(['Sessão 5h', 'Semana'])
+    const arcs = Array.from(container.querySelectorAll('.usage-ring-arc'))
+    expect(arcs.map((a) => [a.getAttribute('r'), a.getAttribute('stroke-dasharray')])).toEqual([
+      ['12', '90 100'],
+      ['8', '10 100']
+    ])
+    const rows = Array.from(container.querySelectorAll('.usage-ring-row span')).map((el) => el.textContent)
+    expect(rows).toEqual(['Sessão 5h', 'Semana'])
   })
 
-  it('utilization alta (≥95%) ou status "rejected" fica no nível crítico (mesma linguagem visual da barra de contexto)', () => {
+  it('utilization alta (≥95%) ou status "rejected" fica no nível crítico', () => {
     const limits: Record<string, RateLimitStatus> = {
       five_hour: { rateLimitType: 'five_hour', status: 'rejected', utilization: 1 }
     }
     const { container } = render(<UsageBadge limits={limits} />)
-    expect(container.querySelector('.usage-pill.crit')).toBeTruthy()
+    expect(container.querySelector('.usage-ring.crit .usage-ring-arc.crit')).toBeTruthy()
+  })
+
+  it('no painel aberto, a pílula explica o conceito e mostra o reset', () => {
+    const limits: Record<string, RateLimitStatus> = {
+      five_hour: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0.5, resetsAt: Date.now() + 90 * 60_000 }
+    }
+    const { container, getByLabelText } = render(<UsageBadge limits={limits} />)
+    fireEvent.click(getByLabelText('Detalhar consumo'))
+    expect(container.querySelector('.usage-popover .usage-reset')?.textContent).toBe('reseta em 2h')
+    const title = container.querySelector('.usage-popover .usage-pill')?.getAttribute('title') ?? ''
+    expect(title).toMatch(/conta anthropic/i)
+    expect(title).toMatch(/claude desktop/i)
   })
 })
 
@@ -70,10 +71,8 @@ describe('UsageBadge — Claude e GPT lado a lado', () => {
     const { container, rerender } = render(
       <UsageBadge limits={{ five_hour: claude, gpt_primary: gpt, gpt_secondary: gptWeek }} />
     )
-    const providers = Array.from(container.querySelectorAll('.usage-provider')).map((el) => el.textContent)
-    expect(providers).toEqual(['Claude', 'GPT'])
-    const caps = Array.from(container.querySelectorAll('.ctx-bar-cap')).map((el) => el.textContent)
-    expect(caps).toEqual(['Sessão 5h', 'Sessão 5h', 'Semana'])
+    const rings = () => Array.from(container.querySelectorAll('.usage-ring')).map((el) => el.getAttribute('aria-label'))
+    expect(rings()).toEqual(['Claude: Sessão 5h 30%', 'GPT: Sessão 5h 60%, Semana 10%'])
 
     rerender(
       <UsageBadge
@@ -81,7 +80,7 @@ describe('UsageBadge — Claude e GPT lado a lado', () => {
         providers={{ claude: false, gpt: true }}
       />
     )
-    expect(Array.from(container.querySelectorAll('.usage-provider')).map((el) => el.textContent)).toEqual(['GPT'])
+    expect(rings()).toEqual(['GPT: Sessão 5h 60%'])
   })
 
   it('o chevron abre o painel com as duas assinaturas e o toggle "mostrar na barra"', () => {

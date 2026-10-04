@@ -110,13 +110,24 @@ export function windowFromRateLimitEvent(info: {
   return { key: info.rateLimitType, window: { utilization, resetsAt } }
 }
 
-/** Junta janelas novas à leitura anterior (evento traz uma janela por vez). */
+/**
+ * Junta janelas novas à leitura anterior (evento traz uma janela por vez).
+ * Janela nova sem número (`utilization` null — o `rate_limit_event` com status
+ * `allowed` não traz) mantém o número anterior enquanto a janela anterior não
+ * venceu: ausência de dado não é 0%.
+ */
 export function mergeReading(
   previous: AccountUsageReading | null,
   windows: Record<string, UsageWindow>,
   at: number
 ): AccountUsageReading {
-  return { at, windows: { ...(previous?.windows ?? {}), ...windows } }
+  const merged = { ...(previous?.windows ?? {}) }
+  for (const [key, window] of Object.entries(windows)) {
+    const old = merged[key]
+    const keepOld = window.utilization == null && old?.utilization != null && (old.resetsAt == null || old.resetsAt > at)
+    merged[key] = keepOld ? { utilization: old.utilization, resetsAt: window.resetsAt ?? old.resetsAt } : window
+  }
+  return { at, windows: merged }
 }
 
 /** Janela que o aviso de estouro do CLI nomeia (`You've hit your weekly limit`). */

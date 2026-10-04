@@ -73,6 +73,8 @@ describe('recentDestinations', () => {
   })
 
   it('inclui os turnos adotados (A1), ignora pedido sem âncora e a Central; para em 5', () => {
+    const loaded = new Map(convs)
+    for (const id of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6']) loaded.set(id, conv(id, `C:\\proj\\${id}`, id.toUpperCase()))
     const entries: CentralEntry[] = [
       sent('c1', 'um'),
       sent('c2', 'dois', { origin: 'conversation' }),
@@ -83,10 +85,16 @@ describe('recentDestinations', () => {
       sent('c5', 'cinco'),
       sent('c6', 'seis')
     ]
-    const ids = recentDestinations(entries, convs).map((r) => r.convId)
+    const ids = recentDestinations(entries, loaded).map((r) => r.convId)
     expect(ids).toEqual(['c6', 'c5', 'c4', 'c3', 'c2'])
-    // Conversa não carregada vai sem pasta/título (o decisor procura no índice).
-    expect(recentDestinations(entries, convs)[0]).toEqual({ convId: 'c6', request: 'seis', replyStart: '' })
+    expect(recentDestinations(entries, loaded)[0]).toEqual({ convId: 'c6', request: 'seis', replyStart: '', cwd: 'C:\\proj\\c6', title: 'C6' })
+  })
+
+  it('só conversas carregadas: a de fora da tela não entra nem ocupa vaga', () => {
+    const entries: CentralEntry[] = [sent('a1', 'um'), sent('fora', 'dois'), sent('b1', 'três'), sent('fora', 'quatro')]
+    expect(recentDestinations(entries, convs).map((r) => r.convId)).toEqual(['b1', 'a1'])
+    expect(recentDestinations(entries, convs, 1).map((r) => r.convId)).toEqual(['b1'])
+    expect(recentDestinations([sent('c9', 'nada')], convs)).toEqual([])
   })
 
   it('texto longo vai cortado em ~200', () => {

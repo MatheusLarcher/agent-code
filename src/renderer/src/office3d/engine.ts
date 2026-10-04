@@ -48,7 +48,7 @@ import type { OfficePower } from './power'
 import { officeFrame } from './powerPlant'
 import { Quality, type EngineStats } from './quality'
 import { OfficeScene } from './scene'
-import { PreviewAnchor, ScreenAnchor } from './screenAnchor'
+import { focusView, PreviewAnchor, ScreenAnchor } from './screenAnchor'
 import { QUIP_TICK_MS, Speech } from './speech'
 
 export type { EngineStats } from './quality'
@@ -309,7 +309,8 @@ export class Office3DEngine {
     const desk = c.screenDesk ? this.scene.room(c.screenDesk.roomId)?.desks[c.screenDesk.index] : undefined
     const m = desk ? monitorPosition(desk) : null
     this.anchor.aim(m)
-    if (m) return monitorPose(m, this.view)
+    // A mesma vista da âncora (a faixa do HUD livre): a tela HTML tem o tamanho da tela projetada nesta pose.
+    if (m) return monitorPose(m, focusView(this.camera.fov, this.width, this.height))
     return { tx: c.x, ty: 1, tz: c.z, yaw: 0, pitch: 0.3, distance: 2.6 }
   }
 

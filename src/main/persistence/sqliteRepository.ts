@@ -9,6 +9,16 @@ import { initializeSqliteV2, SQLITE_SCHEMA } from './sqliteSchema'
 import { createSqliteSessionStore, type SqliteStoreIo } from './sqliteSessionStore'
 import { writeDbAtomically } from '../atomicDb'
 import { TokenUsagePruner } from './tokenUsagePruner'
+import { ContextBlobPruner } from './contextBlobPruner'
+import {
+  countSqliteOrphanContextBlobs,
+  deleteSqliteContextTurns,
+  listSqliteContextTurns,
+  pruneSqliteOrphanContextBlobs,
+  readSqliteContextTurn,
+  saveSqliteContextTurn
+} from './sqliteContextHistory'
+import type { ContextTurnDetail, ContextTurnSummary } from '../../shared/contextSnapshot'
 import {
   assertDeliverableKind,
   assertStepFinalStatus,
@@ -79,6 +89,7 @@ import {
   type ConversationLease,
   type ConversationRecord,
   type ConversationWrite,
+  type ContextTurnWrite,
   type ExportSnapshot,
   type KvAddress,
   type KvScope,
@@ -279,6 +290,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
   private leases = new Map<string, ConversationLease>()
   private leaseEpochs = new Map<string, number>()
   private readonly tokenUsagePruner: TokenUsagePruner
+  private readonly contextBlobPruner: ContextBlobPruner
 
   constructor(
     private readonly cacheDir: string,
@@ -297,11 +309,15 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       },
       (error) => console.error('[sqlite] falha ao podar llm_calls:', error)
     )
+    this.contextBlobPruner = new ContextBlobPruner(this, (error) =>
+      console.error('[sqlite] falha ao podar context_blob:', error)
+    )
   }
 
   async initialize(): Promise<void> {
     initializeSqliteV2(this.cacheDir, this.dbPath)
     this.tokenUsagePruner.start()
+    this.contextBlobPruner.start()
     this.initialized = true
   }
 
@@ -311,6 +327,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     this.leases.clear()
     this.leaseEpochs.clear()
     this.tokenUsagePruner.stop()
+    this.contextBlobPruner.stop()
   }
 
   read<T>(fn: (db: DatabaseSync) => T): T {
@@ -529,6 +546,8 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
          SET revision = ?, updated_at = ?, deleted_at = ?
          WHERE id = ?`
       ).run(revision, deletedAt, deletedAt, input.id)
+      // Na mesma escrita: o histórico do contexto não sobrevive à conversa.
+      deleteSqliteContextTurns(db, input.id)
       return conversationFromRow({ ...current, revision, updated_at: deletedAt, deleted_at: deletedAt })
     })
     this.emit('conversation', input.id, result.revision)
@@ -570,6 +589,8 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         db.prepare(
           `UPDATE conversations_v2 SET revision = ?, updated_at = ?, deleted_at = ? WHERE id = ?`
         ).run(revision, now, now, row.id)
+        // Como no deleteConversation: o histórico do contexto sai na mesma escrita.
+        deleteSqliteContextTurns(db, row.id)
         changed.push({ id: row.id, revision })
       }
       return changed
@@ -1705,6 +1726,29 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         .all(convId) as unknown as LlmUsageTotalRow[]
       return rows.map(llmUsageTotalFromRow)
     })
+  }
+
+  // Histórico do contexto: SQL em sqliteContextHistory.ts.
+  async saveContextTurn(write: ContextTurnWrite): Promise<void> {
+    this.write((db) => saveSqliteContextTurn(db, write))
+  }
+
+  async listContextTurns(convId: string, limit: number): Promise<ContextTurnSummary[]> {
+    return this.read((db) => listSqliteContextTurns(db, convId, limit))
+  }
+
+  async readContextTurn(convId: string, turnId: string): Promise<ContextTurnDetail | null> {
+    return this.read((db) => readSqliteContextTurn(db, convId, turnId))
+  }
+
+  async deleteContextTurns(convId: string): Promise<number> {
+    return this.write((db) => deleteSqliteContextTurns(db, convId))
+  }
+
+  async pruneOrphanContextBlobs(): Promise<number> {
+    // Cada `write()` copia o arquivo inteiro: só escreve se houver órfão.
+    if (this.read(countSqliteOrphanContextBlobs) === 0) return 0
+    return this.write(pruneSqliteOrphanContextBlobs)
   }
 
   async enqueueAgentInput(conversationId: string, message: import('@anthropic-ai/claude-agent-sdk').SDKUserMessage, messageUuid = randomUUID()): Promise<AgentInputQueueItem> {

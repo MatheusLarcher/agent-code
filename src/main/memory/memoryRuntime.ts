@@ -166,6 +166,13 @@ export async function readSecret(name: string): Promise<string | null> {
   return instance.get(name)
 }
 
+/** Ação explícita do usuário no PC (olho). Não depende da autorização para
+ *  enviar senhas ao modelo e nunca usa o valor capturado numa sessão antiga. */
+export async function readSecretForReveal(name: string): Promise<string | null> {
+  if (typeof name !== 'string' || !name.trim()) return null
+  try { return await activeVault()?.get(name) ?? null } catch { return null }
+}
+
 /**
  * Todas as senhas em texto puro, para irem no prompt — SÓ com o interruptor
  * ligado. É o pedido explícito do usuário: o modelo precisa da senha real para

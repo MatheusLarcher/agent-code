@@ -1,0 +1,440 @@
+/*
+ * A tela de código do monitor (CodeMonitor): uma janela no jeito do VS Code
+ * (tema Dark Modern) em que a cor do Agent — a da camisa dele — é o acento:
+ * logo, aba ativa, cursor com a bandeirinha e a barra de status inteira, como
+ * um VS Code "pintado" por agente. O resto fica neutro e quieto.
+ *
+ * Tamanho: a âncora do motor dá o tamanho da tela do monitor (de ~850×480 a
+ * ~1350×760; sem mesa, um cartão de 420×260). As medidas vêm de tokens que as
+ * container queries encolhem; `--cm-row` também é lido pelo editor (lista
+ * virtual). Sem will-change: a âncora é transformada (matrix3d) e o Chromium
+ * congelaria o raster.
+ */
+.cm-root {
+  --cm-font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --cm-font-code: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --cm-bg: #1f1f1f;
+  --cm-chrome: #181818;
+  --cm-line: #2b2b2b;
+  --cm-text: #cccccc;
+  --cm-text-strong: #e8e8e8;
+  --cm-muted: #9d9d9d;
+  --cm-faint: #6e7681;
+  --cm-hover: #2a2d2e;
+  --cm-add-bg: rgba(46, 160, 67, 0.17);
+  --cm-add-gutter: rgba(46, 160, 67, 0.32);
+  --cm-add-ink: #3fb950;
+  --cm-del-bg: rgba(248, 81, 73, 0.15);
+  --cm-del-gutter: rgba(248, 81, 73, 0.3);
+  --cm-del-ink: #f85149;
+  --cm-hunk-bg: rgba(56, 139, 253, 0.1);
+  --cm-hunk-ink: #79c0ff;
+  --cm-U: #73c991;
+  --cm-M: #e2c08d;
+  --cm-ui-size: 12px;
+  --cm-code-size: 13px;
+  --cm-row: 19px;
+  --cm-title-h: 32px;
+  --cm-tabs-h: 34px;
+  --cm-crumbs-h: 24px;
+  --cm-status-h: 24px;
+  --cm-activity-w: 46px;
+  --cm-side-w: 224px;
+
+  container: cm / size;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* clip, não hidden: o foco num botão da barra escondida não rola a tela (taskbar.css). */
+  overflow: clip;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  border-radius: 2px;
+  background: var(--cm-bg);
+  color: var(--cm-text);
+  font: var(--cm-ui-size) / 1.35 var(--cm-font-ui);
+  text-align: left;
+}
+.cm-root button { font-family: var(--cm-font-ui); }
+.cm-root button:focus-visible,
+.cm-scroll:focus-visible { outline: 1px solid var(--cm-agent); outline-offset: -1px; }
+.cm-icon { width: 16px; height: 16px; flex: none; }
+
+/* ── barra de título ─────────────────────────────────────────────── */
+.cm-titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--cm-title-h);
+  padding: 0 4px 0 10px;
+  background: var(--cm-chrome);
+  border-bottom: 1px solid var(--cm-line);
+}
+.cm-logo { display: grid; place-items: center; color: var(--cm-agent); }
+.cm-logo .cm-icon { width: 18px; height: 18px; stroke-width: 2.2; }
+.cm-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+  color: var(--cm-muted);
+}
+.cm-title b { color: var(--cm-text-strong); font-weight: 600; }
+.cm-title-conv { color: #7a7a7a; }
+.cm-logo-svg { display: block; flex: none; }
+.cm-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: calc(var(--cm-title-h) - 6px);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--cm-muted);
+  cursor: pointer;
+}
+.cm-close:hover { background: #c42b1c; color: #ffffff; }
+
+/* ── corpo: atividades, explorador, editor ───────────────────────── */
+.cm-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cm-workbench { flex: 1; min-height: 0; display: flex; }
+.cm-activity {
+  flex: none;
+  width: var(--cm-activity-w);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 2px 0 6px;
+  background: var(--cm-chrome);
+  border-right: 1px solid var(--cm-line);
+}
+.cm-act {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: var(--cm-activity-w);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #7c7c7c;
+}
+.cm-act .cm-icon { width: 22px; height: 22px; }
+button.cm-act { cursor: pointer; }
+button.cm-act:hover { color: var(--cm-text-strong); }
+.cm-act.on { color: var(--cm-text-strong); box-shadow: inset 2px 0 0 var(--cm-agent); }
+.cm-act-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 7px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--cm-agent);
+  color: var(--cm-on-agent);
+  font: 700 9.5px/16px var(--cm-font-ui);
+  text-align: center;
+}
+.cm-act-fill { flex: 1; }
+.cm-act-agent { color: var(--cm-agent); }
+
+.cm-explorer {
+  flex: none;
+  width: var(--cm-side-w);
+  overflow: hidden auto;
+  background: var(--cm-chrome);
+  border-right: 1px solid var(--cm-line);
+  overscroll-behavior: contain;
+}
+.cm-side-title {
+  display: flex;
+  align-items: center;
+  height: var(--cm-tabs-h);
+  padding: 0 18px;
+  color: #bbbbbb;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.cm-section,
+.cm-folder,
+.cm-file {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.cm-section { padding: 0 6px; color: var(--cm-text-strong); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.cm-section span,
+.cm-folder span { overflow: hidden; text-overflow: ellipsis; }
+.cm-open { transform: rotate(90deg); width: 14px; height: 14px; color: #a0a0a0; }
+.cm-folder { padding: 0 8px 0 14px; color: var(--cm-text); }
+.cm-folder .cm-icon:not(.cm-open) { width: 15px; height: 15px; color: #c09553; }
+.cm-explorer ul { margin: 0; padding: 0; list-style: none; }
+.cm-file {
+  width: 100%;
+  padding: 0 10px 0 22px;
+  border: 0;
+  background: transparent;
+  color: var(--cm-text);
+  font-size: var(--cm-ui-size);
+  text-align: left;
+  cursor: pointer;
+}
+.cm-in-folder .cm-file { padding-left: 36px; }
+.cm-file:hover { background: var(--cm-hover); }
+.cm-file.active { background: #37373d; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cm-agent) 55%, transparent); }
+.cm-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cm-file:has(.cm-badge-U) .cm-file-name,
+.cm-tab:has(.cm-badge-U) .cm-tab-name { color: var(--cm-U); }
+.cm-file:has(.cm-badge-M) .cm-file-name,
+.cm-tab:has(.cm-badge-M) .cm-tab-name { color: var(--cm-M); }
+.cm-side-empty { margin: 4px 0 6px; padding: 0 22px; color: var(--cm-muted); }
+.cm-sec-cnt { margin-left: auto; min-width: 18px; padding: 0 6px; border-radius: 8px; background: #2b2b2b; color: #a8a8a8; font: 600 10px/16px var(--cm-font-ui); text-align: center; }
+.cm-section { padding-right: 10px; }
+.cm-file-range { flex: none; color: #7a7a7a; font: 10.5px var(--cm-font-code); }
+/* A aba de prévia do arquivo só lido: o nome em itálico, como no VS Code. */
+.cm-tab-pv .cm-tab-name { font-style: italic; }
+
+/* ── modelo que fez (etiqueta só num turno com mais de um modelo) ─── */
+.cm-mt { flex: none; display: inline-block; padding: 0 5px; border-radius: 4px; font: 600 10px/15px var(--cm-font-ui); white-space: nowrap; background: rgba(160, 160, 160, 0.16); color: #c8c8c8; }
+.cm-mt-claude { background: rgba(217, 119, 87, 0.18); color: #f0a589; }
+.cm-mt-gpt { background: rgba(16, 163, 127, 0.18); color: #5fd4b0; }
+.cm-mt-ollama { background: rgba(122, 162, 247, 0.16); color: #a9c1ff; }
+.cm-mchip { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 5px; color: #8f8f8f; font-size: 12px; white-space: nowrap; }
+.cm-mchip b { color: #ececec; font-weight: 600; }
+.cm-mchip .cm-icon { width: 14px; height: 14px; color: #9a9a9a; }
+
+.cm-glyph {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  font: 700 8.5px/1 var(--cm-font-ui);
+  letter-spacing: -0.02em;
+}
+.cm-glyph-plain { width: 14px; height: 14px; color: #8b8b8b; }
+.cm-badge { flex: none; width: 12px; font-size: 11px; font-weight: 700; text-align: center; }
+.cm-badge-U { color: var(--cm-U); }
+.cm-badge-M { color: var(--cm-M); }
+.cm-typing {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: 0 2px;
+  border-radius: 50%;
+  background: var(--cm-agent);
+  animation: cm-pulse 1.1s ease-out infinite;
+}
+@keyframes cm-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--cm-agent) 75%, transparent); }
+  100% { box-shadow: 0 0 0 6px transparent; }
+}
+
+/* ── abas e trilha ───────────────────────────────────────────────── */
+.cm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--cm-bg); }
+.cm-tabs {
+  flex: none;
+  display: flex;
+  height: var(--cm-tabs-h);
+  overflow: auto hidden;
+  scrollbar-width: none;
+  background: var(--cm-chrome);
+}
+.cm-tabs::after { content: ''; flex: 1; box-shadow: inset 0 -1px 0 var(--cm-line); }
+.cm-tab {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 100%;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-right: 1px solid var(--cm-line);
+  background: var(--cm-chrome);
+  box-shadow: inset 0 -1px 0 var(--cm-line);
+  color: var(--cm-muted);
+  font-size: var(--cm-ui-size);
+  cursor: pointer;
+}
+.cm-tab:hover:not(.active) { background: #1c1c1c; color: var(--cm-text); }
+.cm-tab.active { background: var(--cm-bg); color: var(--cm-text-strong); box-shadow: inset 0 2px 0 var(--cm-agent); }
+.cm-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-crumbs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: var(--cm-crumbs-h);
+  padding: 0 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: #a6a6a6;
+}
+.cm-crumb { display: inline-flex; align-items: center; gap: 1px; }
+.cm-crumb-sep { width: 13px; height: 13px; opacity: 0.55; }
+.cm-crumb-file { gap: 5px; color: var(--cm-text-strong); }
+
+/* ── editor: codeEditor.css ──────────────────────────────────────── */
+.cm-scroll,
+.cm-term,
+.cm-explorer { scrollbar-width: thin; scrollbar-color: rgba(121, 121, 121, 0.4) transparent; }
+
+/* ── terminal ────────────────────────────────────────────────────── */
+.cm-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  height: clamp(88px, 28%, 196px);
+  border-top: 1px solid var(--cm-line);
+  background: var(--cm-bg);
+}
+.cm-panel-head { flex: none; display: flex; align-items: stretch; gap: 14px; height: 30px; padding: 0 14px; }
+.cm-panel-tab {
+  display: flex;
+  align-items: center;
+  color: var(--cm-text-strong);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  box-shadow: inset 0 -1px 0 var(--cm-agent);
+}
+.cm-panel-shell { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--cm-muted); font-size: 11px; }
+.cm-panel-shell .cm-icon { width: 14px; height: 14px; }
+.cm-term {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 2px 14px 8px;
+  font: calc(var(--cm-code-size) - 1px) / calc(var(--cm-row) - 2px) var(--cm-font-code);
+}
+.cm-cmd + .cm-cmd { margin-top: 6px; }
+.cm-prompt { display: flex; align-items: baseline; gap: 1ch; white-space: nowrap; }
+.cm-ps { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; color: var(--cm-muted); }
+.cm-cmdline { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cm-text-strong); }
+.cm-more-lines { color: var(--cm-faint); }
+.cm-run { flex: none; display: inline-flex; align-items: center; gap: 4px; font: 600 10.5px/1 var(--cm-font-ui); }
+.cm-run .cm-icon { width: 13px; height: 13px; stroke-width: 2.2; }
+.cm-run.ok { color: var(--cm-add-ink); }
+.cm-run.err { color: var(--cm-del-ink); }
+.cm-run.run { color: var(--cm-agent); }
+.cm-spin {
+  width: 9px;
+  height: 9px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: cm-spin 0.8s linear infinite;
+}
+@keyframes cm-spin { to { transform: rotate(360deg); } }
+.cm-out { padding-left: 2ch; overflow: hidden; white-space: pre; text-overflow: ellipsis; color: #a9a9a9; }
+.cm-out-more { color: #6b6b6b; }
+
+/* ── barra de status: a cor do Agent ─────────────────────────────── */
+.cm-statusbar {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  height: var(--cm-status-h);
+  overflow: hidden;
+  white-space: nowrap;
+  background: var(--cm-agent);
+  color: var(--cm-on-agent);
+}
+.cm-remote { display: flex; align-items: center; gap: 6px; padding: 0 12px; background: var(--cm-agent-shade); font-weight: 600; }
+.cm-sb { display: flex; align-items: center; gap: 5px; padding: 0 9px; }
+.cm-sb-fill { flex: 1; }
+.cm-statusbar .cm-icon { width: 14px; height: 14px; stroke-width: 2; }
+.cm-statusbar .cm-typing { width: 7px; height: 7px; background: var(--cm-on-agent); animation: none; }
+button.cm-sb { border: 0; background: transparent; color: inherit; font-size: inherit; cursor: pointer; }
+button.cm-sb:hover { background: var(--cm-agent-shade); }
+.cm-follow[aria-pressed='false'] { opacity: 0.8; }
+.cm-sb-stats { gap: 6px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cm-sb-model { font-weight: 600; }
+
+/* ── vazio ───────────────────────────────────────────────────────── */
+.cm-welcome {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  color: var(--cm-muted);
+}
+.cm-welcome-mark { width: 76px; height: 76px; margin-bottom: 4px; color: var(--cm-agent); opacity: 0.5; }
+.cm-welcome h3 { margin: 0; color: var(--cm-text-strong); font-size: 15px; font-weight: 600; }
+.cm-welcome p { max-width: 46ch; margin: 0; font-size: 12.5px; line-height: 1.5; }
+.cm-welcome .cm-welcome-now { color: #b5b5b5; font: 11.5px/1.4 var(--cm-font-code); }
+.cm-welcome-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin-top: 6px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--cm-agent) 50%, #444444);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--cm-agent) 16%, transparent);
+  color: var(--cm-text-strong);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cm-welcome-btn:hover { background: color-mix(in srgb, var(--cm-agent) 28%, transparent); }
+
+/* O modo Chat ocupa o corpo da janela (a moldura é a da tela). */
+.cm-root .o3d-chat-screen { flex: 1; height: auto; min-height: 0; border: 0; border-radius: 0; }
+/* O campo de digitar embaixo do Chat: o Composer do chat, com a letra do app (não a da janela). */
+.cm-composer { flex: none; font-size: 13px; line-height: normal; }
+.cm-composer[hidden] { display: none; }
+.cm-composer .composer { padding: 8px 12px 10px; }
+.cm-composer .composer-bar { padding: 6px 12px 0; }
+
+/* ── tamanhos ────────────────────────────────────────────────────── */
+@container cm (max-width: 1100px) {
+  .cm-root > * {
+    --cm-ui-size: 11px;
+    --cm-code-size: 11.5px;
+    --cm-row: 17px;
+    --cm-title-h: 28px;
+    --cm-tabs-h: 30px;
+    --cm-crumbs-h: 21px;
+    --cm-status-h: 21px;
+    --cm-activity-w: 38px;
+    --cm-side-w: 172px;
+  }
+  .cm-act .cm-icon { width: 19px; height: 19px; }
+  .cm-title-conv { display: none; }
+  .cm-side-title,
+  .cm-panel-head { height: 26px; }
+  .cm-panel-head { align-items: stretch; }
+}
+@container cm (max-width: 640px) {
+  .cm-root > * { --cm-code-size: 11px; --cm-row: 16px; --cm-title-h: 26px; --cm-tabs-h: 26px; --cm-status-h: 20px; }
+  .cm-activity,
+  .cm-explorer,
+  .cm-crumbs,
+  .cm-remote,
+  .cm-sb-pos,
+  .cm-sb-lang { display: none; }
+}
+@container cm (max-height: 560px) {
+  .cm-panel { height: 24%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-typing,
+  .cm-spin { animation: none; }
+}

@@ -61,10 +61,26 @@ describe('turnMessages: o turno atual como o chat mostra', () => {
     expect(turnMessages(f, model({ key: 'track:T', role: 'executor', trackId: 'T' }))).toHaveLength(5)
   })
 
-  it('código ao vivo vira o cartão que ainda vai chegar: Edit com o trecho antigo, Write sem', () => {
-    const base = { kind: 'tool-input-delta' as const, toolUseId: 'w', name: 'Edit' as const, filePath: 'C:\\a.ts', newText: 'n', totalLines: 1, done: false }
-    expect(liveToolMessage({ ...base, oldText: 'o' })).toEqual({ kind: 'tool-use', id: 'w', name: 'Edit', input: { file_path: 'C:\\a.ts', old_string: 'o', new_string: 'n' }, parentToolUseId: null })
-    expect(liveToolMessage(base)).toMatchObject({ name: 'Write', input: { file_path: 'C:\\a.ts', content: 'n' } })
+  it('subagente: o passo leva o modelo que o fez; passo sem modelo continua sem', () => {
+    const t = track('T', {
+      steps: [
+        { id: 's1', name: 'Read', input: { file_path: 'a.ts' }, startedAt: 1, model: 'claude-haiku-4-5' },
+        { id: 's2', name: 'Grep', input: { pattern: 'x' }, startedAt: 2 }
+      ]
+    })
+    const [, first, second] = trackMessages(t)
+    expect(first).toMatchObject({ kind: 'tool-use', model: 'claude-haiku-4-5' })
+    expect('model' in second).toBe(false)
+  })
+
+  it('código ao vivo vira o cartão que ainda vai chegar, com o nome real da ferramenta (d.name)', () => {
+    const base = { kind: 'tool-input-delta' as const, toolUseId: 'w', filePath: 'C:\\a.ts', newText: 'n', totalLines: 1, done: false }
+    expect(liveToolMessage({ ...base, name: 'Edit', oldText: 'o' })).toEqual({ kind: 'tool-use', id: 'w', name: 'Edit', input: { file_path: 'C:\\a.ts', old_string: 'o', new_string: 'n' }, parentToolUseId: null })
+    // Edit cujo trecho antigo ainda não chegou continua Edit (não vira Write) e não inventa o old_string.
+    expect(liveToolMessage({ ...base, name: 'Edit' })).toEqual({ kind: 'tool-use', id: 'w', name: 'Edit', input: { file_path: 'C:\\a.ts', new_string: 'n' }, parentToolUseId: null })
+    expect(liveToolMessage({ ...base, name: 'Write' })).toEqual({ kind: 'tool-use', id: 'w', name: 'Write', input: { file_path: 'C:\\a.ts', content: 'n' }, parentToolUseId: null })
+    expect(liveToolMessage({ ...base, name: 'MultiEdit', oldText: 'o' })).toMatchObject({ name: 'MultiEdit', input: { file_path: 'C:\\a.ts', edits: [{ old_string: 'o', new_string: 'n' }] } })
+    expect(liveToolMessage({ ...base, name: 'NotebookEdit', filePath: 'C:\\nb.ipynb' })).toMatchObject({ name: 'NotebookEdit', input: { notebook_path: 'C:\\nb.ipynb', new_source: 'n' } })
   })
 })
 

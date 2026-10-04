@@ -1,4 +1,4 @@
-import type { ReactNode, SVGProps } from 'react'
+import { useState, type ReactNode, type SVGProps } from 'react'
 
 /**
  * Modern line-icon set (stroke = currentColor), matching the Sidebar/TabIcon style.
@@ -128,6 +128,28 @@ export const IconFile = (p: IconProps): JSX.Element => (
 export const IconFolder = (p: IconProps): JSX.Element => (
   <Svg {...p}>
     <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </Svg>
+)
+/** Ícone do projeto "Sandbox": uma caixa de areia (balde). Barra lateral e Central. */
+export const IconSandbox = ({ size = 15, ...rest }: IconProps): JSX.Element => (
+  <Svg size={size} aria-hidden="true" {...rest}>
+    <path d="M5 9h14l-1.5 11h-11z" />
+    <path d="M8 9a4 4 0 0 1 8 0" />
+  </Svg>
+)
+/**
+ * O ícone do próprio projeto quando a pasta tem um (data URL), senão a pasta.
+ * Imagem que não decodifica também cai na pasta. Barra lateral e Central.
+ */
+export function ProjectGlyph({ icon, size = 15 }: { icon?: string | null; size?: number }): JSX.Element {
+  const [broken, setBroken] = useState(false)
+  if (!icon || broken) return <IconFolder size={size} />
+  return <img className="project-icon-img" src={icon} alt="" onError={() => setBroken(true)} />
+}
+export const IconArrowLeft = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <line x1="19" y1="12" x2="5" y2="12" />
+    <polyline points="11 6 5 12 11 18" />
   </Svg>
 )
 export const IconBox = (p: IconProps): JSX.Element => (

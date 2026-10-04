@@ -39,7 +39,7 @@
      Sem backdrop-filter de propósito: o desfoque é recalculado a cada mudança
      do canvas por trás (card nascendo, rastro animado) e do conteúdo que chega,
      e o painel piscava a cada mensagem do agente. */
-  --pl-chat-fill: 78%;
+  --pl-chat-fill: calc(78% * var(--chat-bg-alpha, 1));
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--bg) var(--pl-chat-fill), transparent);
@@ -53,13 +53,13 @@
    volta à translucidez do maximizado (ler/digitar não compete com o card por
    trás). Clicar nele expande (ManagerChatFloat). */
 .pl-chat-float.minimized {
-  --pl-chat-fill: 40%;
+  --pl-chat-fill: calc(40% * var(--chat-bg-alpha, 1));
   top: auto;
   cursor: pointer;
 }
 .pl-chat-float.minimized:hover,
 .pl-chat-float.minimized:focus-within {
-  --pl-chat-fill: 78%;
+  --pl-chat-fill: calc(78% * var(--chat-bg-alpha, 1));
 }
 /* As barras do ChatPanel (cabeçalho, composer, seletor de modelo) têm fundo
    opaco próprio: aqui seguem a translucidez do painel. A caixa de digitação
@@ -70,8 +70,10 @@
   background: color-mix(in srgb, var(--bg-2) calc(var(--pl-chat-fill) * 0.6), transparent);
 }
 .pl-chat-float .composer-row {
-  background: color-mix(in srgb, var(--bg-3) calc(var(--pl-chat-fill) + 10%), transparent);
+  background: color-mix(in srgb, var(--bg-3) max(calc(var(--pl-chat-fill) + 10%), 50%), transparent);
 }
+/* O fundo é do painel (já com a transparência do usuário): o ChatPanel dentro não soma outro. */
+.pl-chat-float .chat-panel { background: none; }
 
 .pl-chat-float-head {
   flex: none;

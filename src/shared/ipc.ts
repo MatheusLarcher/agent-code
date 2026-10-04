@@ -1,14 +1,38 @@
 // Shared IPC contract between the Electron main process and the renderer.
 // Keep this file type-only so it can be imported from main, preload and renderer.
 import type { PlanMediaDto } from './planningMedia'
+import type { RemoteCentral } from './central'
+
+/**
+ * Identidade de turno: os `messageUuid` (o que o renderer passa ao `agent:send`) de
+ * TODAS as mensagens do usuário que o turno consumiu, como o CLI os devolve
+ * (`user_message_uuid(s)`). Vários quando o CLI juntou mensagens num turno só.
+ *
+ * - Saída (`assistant-text`, `thinking`, `tool-use`, `tool-result`): o turno que o
+ *   CLI está rodando, a partir do 1º frame dele (`turn-start`).
+ * - `result`: o turno que ele fecha — o eco do CLI, nunca "o último envio" (no Stop
+ *   o CLI ainda fecha o turno parado quando o seguinte já foi enviado).
+ * - `error` de fim de stream (a query morreu): as mensagens enviadas que ainda não
+ *   tinham `result` — elas morrem junto; nenhuma, o turno do último `result`. Envio
+ *   depois disso não sai: vira `error` com o id dele.
+ *
+ * AUSENTE = desconhecido (CLI sem eco, turno interno do CLI, erro da sessão): o
+ * renderer decide como antes, sem identidade. Por isso todo consumidor trata o
+ * campo como opcional.
+ */
+type TurnIds = { turnIds?: string[] }
 
 /** A normalized chat event the renderer renders. Produced in main from SDKMessage. */
 export type ChatEvent =
   /** `effort`: o nível com que a sessão subiu (ausente = sem esforço). É o que
    *  mostra o esforço em uso quando a escolha gravada é o Automático. */
   | { kind: 'system'; sessionId: string; model: string; cwd: string; tools: string[]; effort?: string }
-  | { kind: 'assistant-text'; id: string; text: string; final: boolean; aborted?: true }
-  | { kind: 'thinking'; id: string; text: string }
+  /** O CLI começou um turno (1º frame dele com o eco) — ou juntou mais mensagens a
+   *  ele. Estado, não conteúdo: só a tela local (não vai ao celular nem aos
+   *  observadores do main). É o que diz "este turno começou" mesmo sem saída. */
+  | { kind: 'turn-start'; turnIds: string[] }
+  | ({ kind: 'assistant-text'; id: string; text: string; final: boolean; aborted?: true } & TurnIds)
+  | ({ kind: 'thinking'; id: string; text: string } & TurnIds)
   | { kind: 'provider-switch'; id: string; fromModel: string; model: string; effort?: string; fastMode: boolean; text: string }
   /** Troca de conta Claude (várias contas). `turn-end` é a troca silenciosa de
    *  fim de turno, `exhausted` a do estouro (continua a tarefa), `manual` a do
@@ -26,7 +50,7 @@ export type ChatEvent =
    *  main agent, anything else is the `Task` tool-use that spawned the subagent
    *  running it. The chat feed only renders the main track; the rest feeds the
    *  agents panel (see `agentTracks` in the renderer). */
-  | {
+  | ({
       kind: 'tool-use'
       id: string
       name: string
@@ -36,18 +60,22 @@ export type ChatEvent =
       subagentType?: string
       /** The task description the subagent was given, for a readable track label. */
       taskDescription?: string
-    }
-  | {
+      /** Id do modelo que respondeu na mensagem que trouxe este tool_use — lido da
+       *  resposta, não do seletor. Ausente em conversa antiga, no celular e quando
+       *  o modelo não é conhecido. */
+      model?: string
+    } & TurnIds)
+  | ({
       kind: 'tool-result'
       id: string
       toolUseId: string
       isError: boolean
       text: string
       parentToolUseId?: string | null
-    }
+    } & TurnIds)
   /** Full replacement snapshot from `system/background_tasks_changed`. */
   | { kind: 'background-tasks'; tasks: BackgroundTask[] }
-  | {
+  | ({
       kind: 'result'
       id: string
       isError: boolean
@@ -58,9 +86,9 @@ export type ChatEvent =
       /** Real context-window size after this turn (last model request input). */
       contextTokens?: number
       usage?: TokenUsage
-    }
+    } & TurnIds)
   | { kind: 'status'; id: string; text: string }
-  | { kind: 'error'; id: string; text: string; usageExhausted?: boolean; retryable?: boolean }
+  | ({ kind: 'error'; id: string; text: string; usageExhausted?: boolean; retryable?: boolean } & TurnIds)
   /** Anthropic ACCOUNT rate-limit status (5h session / weekly / etc.) — not
    *  tied to this conversation. The renderer routes this straight into a
    *  global (not per-conversation) state; it never becomes a chat bubble. */
@@ -868,6 +896,7 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-6.1-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max']
 }
 
@@ -1139,6 +1168,7 @@ export function modelSupportsVision(model: string | undefined): boolean {
 export const OPENAI_MODELS = [
   { id: 'gpt-6-luna', label: 'GPT-6 Luna (ChatGPT)' },
   { id: 'gpt-6-sol', label: 'GPT-6 Sol (ChatGPT)' },
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol (ChatGPT)' },
   { id: 'gpt-6-astra', label: 'GPT-6 Astra (ChatGPT)' }
 ] as const
 
@@ -1190,6 +1220,7 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   // (models_cache.json: context_window 272000); extended context is opt-in.
   'gpt-6-luna': 272_000,
   'gpt-6-sol': 272_000,
+  'gpt-6.1-sol': 272_000,
   'gpt-6-astra': 272_000,
   // Ollama Cloud — native context windows (verified against each model's own
   // published specs, not a guess): gpt-oss keeps its documented 128K;
@@ -1507,6 +1538,12 @@ export type SandboxCreateResult = { path: string } | { error: string }
  *    a CUDA-capable Python already on the machine. */
 export type TranscribeEngine = 'whisper' | 'local'
 export const TRANSCRIBE_ENGINES: readonly TranscribeEngine[] = ['whisper', 'local']
+
+/** State of the local voice models (Kokoro read-aloud + Whisper dictation). */
+export interface VoiceInstallStatus {
+  installed: boolean
+  installing: boolean
+}
 
 /** main → renderer while the on-device model is being prepared. `done` closes
  *  the notice; `error` explains why it couldn't be installed. The renderer keeps
@@ -2064,6 +2101,10 @@ export const Channels = {
   voiceTts: 'voice:tts',
   /** Local Whisper model + where it last ran (GPU/CPU), for Settings › Voz. */
   voiceStatus: 'voice:status',
+  /** Download/prepare the Kokoro + Whisper models ahead of the first use (mic menu). */
+  voiceInstall: 'voice:install',
+  /** Whether the local voice models are installed / being installed. */
+  voiceInstallStatus: 'voice:install-status',
   /** Whether a Claude Code login exists on this machine. */
   authStatus: 'auth:status',
   /** Run the Claude OAuth login (opens the browser); resolves when authenticated. */
@@ -2113,6 +2154,12 @@ export const Channels = {
   /** Chamadas e totais persistidos de uma conversa, para reconstruir a árvore
    *  de consumo de tokens ao reabrir uma conversa antiga. */
   tokenUsageHistory: 'agent:token-usage:history',
+  /** Histórico de contexto e senha explícita: IPC do PC, nunca ChatEvent/LAN. */
+  contextTurnsList: 'contextTurns:list',
+  contextTurnsRead: 'contextTurns:read',
+  contextTurnsCountExact: 'contextTurns:countExact',
+  contextTurnsChanged: 'contextTurns:changed',
+  secretsReveal: 'secrets:reveal',
   /** main → renderer: the vigia raised a doubt about a premise of the work.
    *  Deliberately NOT a ChatEvent — it is for the user, not for the model. */
   vigiaAlert: 'vigia:alert',
@@ -2154,6 +2201,8 @@ export const Channels = {
   remoteRecoveryAction: 'remote:recovery-action',
   /** Phone answered a pending permission/question. */
   remotePermissionResponse: 'remote:permission-response',
+  /** Phone picked a "Para onde vai?" option of a Central request (RemoteCentralChoose). */
+  remoteCentralChoose: 'remote:central-choose',
   /** Phone asked to stop the running turn of a conversation. */
   remoteInterrupt: 'remote:interrupt',
   /** Phone toggled a per-conversation mode (economy/loop/fast). */
@@ -2251,6 +2300,8 @@ export interface RemoteConversation {
   /** Pending permission/AskUserQuestion request, if any — same shape the desktop
    *  modal uses. The phone answers via `POST /api/permission-respond`. */
   permission?: PermissionRequest
+  /** Only on the Central: its compact snapshot (centralRemote.ts) — kept by `/api/state`. */
+  central?: RemoteCentral
 }
 
 /** Snapshot the renderer publishes to main so the bridge can serve history. */
@@ -2279,6 +2330,8 @@ export interface RemoteInboundMsg {
   images?: ImageAttachment[]
   /** Optional non-image files attached on the phone (saved to disk by main). */
   files?: FileAttachment[]
+  /** Só na Central: id da entrada respondida (validado no main) — vai direto à conversa dela. */
+  replyTo?: string
 }
 
 /** main → renderer: uma tarefa do MCP de entrada para despachar na conversa

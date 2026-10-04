@@ -137,6 +137,10 @@ export class CameraRig {
 export interface ViewSize {
   fovDeg: number
   aspect: number
+  /** Altura do palco (px): com `clearTopPx`, o enquadramento do monitor deixa a faixa de cima livre. */
+  heightPx?: number
+  /** Faixa do topo do palco (px) que a tela do monitor não cobre (o HUD). */
+  clearTopPx?: number
 }
 
 /** Meia largura/altura da tela do monitor (metade de SCREEN_W/SCREEN_H do kit.ts, a mesma tela da cena). */
@@ -144,7 +148,10 @@ export const MONITOR_HALF_W = 0.44
 export const MONITOR_HALF_H = 0.25
 /** O plano da tela fica um pouco à frente do centro do monitor (decor.ts põe a tela aqui, na frente da moldura). */
 export const MONITOR_SCREEN_FRONT = 0.026
-export const MONITOR_FILL = 0.85
+/** A tela do monitor ocupa isto do palco (0,85 até out/2026: a tela ficou ~10% maior). */
+export const MONITOR_FILL = 0.94
+/** Folga mínima (px) entre a tela do monitor e a borda de baixo do palco, quando ela desce para livrar a faixa de cima. */
+export const MONITOR_BOTTOM_GAP = 8
 const MONITOR_PITCH = 0.06
 /** Limite do enquadramento do prédio (o plano distante da câmera é 250). */
 export const MAX_FRAME_DISTANCE = 200
@@ -156,12 +163,32 @@ const safeAspect = (a: number): number => (Number.isFinite(a) && a > 0 ? a : 1)
  * Pose que enquadra um monitor (tela olhando para +Z) de frente, na distância
  * em que a tela ocupa `fill` da largura OU da altura do palco — o que limitar
  * primeiro.
+ *
+ * Com `view.heightPx` e `view.clearTopPx` (o HUD): a altura da tela não passa
+ * do que cabe entre a faixa de cima e MONITOR_BOTTOM_GAP do fim do palco, e a
+ * câmera sobe o necessário para a tela descer e não entrar na faixa. Só a pose
+ * muda — a tela HTML segue os cantos projetados (screenAnchor), então o encaixe
+ * não depende disto.
  */
 export function monitorPose(m: { x: number; y: number; z: number }, view: ViewSize, fill = MONITOR_FILL): CameraPose {
   const t = tanHalf(view.fovDeg)
+  const H = view.heightPx ?? 0
+  const clear = H > 0 ? Math.max(0, view.clearTopPx ?? 0) : 0
+  // A altura que cabe abaixo da faixa (fração do palco); palco baixo demais não encolhe abaixo da metade.
+  const room = clear > 0 ? Math.max(0.5, (H - clear - MONITOR_BOTTOM_GAP) / H) : 1
   const byWidth = MONITOR_HALF_W / (fill * t * safeAspect(view.aspect))
-  const byHeight = MONITOR_HALF_H / (fill * t)
-  return { tx: m.x, ty: m.y, tz: m.z + MONITOR_SCREEN_FRONT, yaw: 0, pitch: MONITOR_PITCH, distance: Math.max(byWidth, byHeight) }
+  const byHeight = MONITOR_HALF_H / (Math.min(fill, room) * t)
+  const pose: CameraPose = { tx: m.x, ty: m.y, tz: m.z + MONITOR_SCREEN_FRONT, yaw: 0, pitch: MONITOR_PITCH, distance: Math.max(byWidth, byHeight) }
+  if (clear === 0) return pose
+  // Bordas de cima e de baixo da tela (px) nesta pose; desce o que faltar para livrar a faixa, sem passar do fim.
+  const z = m.z + MONITOR_SCREEN_FRONT
+  const px = (y: number): number => ((1 - projectPoint(pose, view, { x: m.x, y, z }).y) / 2) * H
+  const top = px(m.y + MONITOR_HALF_H)
+  const bottom = px(m.y - MONITOR_HALF_H)
+  const shift = Math.max(0, Math.min(clear - top, H - MONITOR_BOTTOM_GAP - bottom))
+  // Subir a câmera (e o alvo) Δ desce a tela Δ / (distância · tan) em NDC (a arfagem é pequena).
+  pose.ty += ((2 * shift) / H) * pose.distance * t
+  return pose
 }
 
 /** Vista de um agente: a câmera de cima e de frente para a mesa (yaw 0, como o voo até o monitor). */

@@ -29,7 +29,7 @@ describe('pathGuard', () => {
 
   it('nomes sensíveis nunca são lidos do disco', () => {
     const yes = [
-      'C:\\p\\.env', 'C:\\p\\.env.local', 'C:\\p\\prod.env', 'C:\\p\\.envrc', 'C:\\p\\certs\\server.pem', 'C:\\p\\tls.key',
+      'C:\\p\\.env', 'C:\\p\\.env.local', 'C:\\p\\.env-backup', 'C:\\p\\.env_old', 'C:\\p\\prod.env', 'C:\\p\\.envrc', 'C:\\p\\certs\\server.pem', 'C:\\p\\tls.key',
       'C:\\Users\\m\\.ssh\\config', 'C:\\p\\id_rsa', 'C:\\p\\id_ed25519.pub', 'C:\\p\\config\\credentials.json',
       'C:\\p\\client_secret.json', 'C:\\p\\.npmrc', 'C:\\p\\.aws\\config', 'C:\\p\\loja.pfx', '/srv/app/.git-credentials'
     ]

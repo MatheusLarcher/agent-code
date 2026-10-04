@@ -8,6 +8,7 @@
  * tem um dono só (`device`).
  */
 import type {
+  CentralAnchor,
   CentralEntry,
   CentralReplyEntry,
   CentralRequestEntry,
@@ -140,10 +141,16 @@ export function isRoutedEntry(entry: CentralRequestEntry): boolean {
   return entry.origin === undefined || entry.origin === 'central'
 }
 
-/** A conversa tem turno em aberto na Central: pedido ancorado nela (não injetado)
- *  sem resposta ou com a resposta ainda não terminada. */
-export function hasActiveAnchor(entries: readonly CentralEntry[], convId: string): boolean {
-  return entries.some(
-    (e) => e.kind === 'request' && !e.injected && e.anchor?.convId === convId && !replyOf(entries, e.id)?.done
-  )
+/** A bolha da âncora tem trabalho VIVO neste PC agora: é o turno em voo da conversa,
+ *  espera na fila dela ou é o que a recuperação automática vai retomar. */
+export type CentralLiveAnchor = (anchor: CentralAnchor) => boolean
+
+/**
+ * A conversa tem turno em aberto na Central: um pedido ancorado nela (não injetado)
+ * cujo turno está VIVO. "Sem resposta terminada" não serve: a resposta só nasce com
+ * conteúdo, e o pedido descartado da fila ou parado antes do 1º evento ficaria
+ * ativo para sempre (perguntas e avisos presos à conversa).
+ */
+export function hasActiveAnchor(entries: readonly CentralEntry[], convId: string, isLive: CentralLiveAnchor): boolean {
+  return entries.some((e) => e.kind === 'request' && !e.injected && e.anchor?.convId === convId && isLive(e.anchor))
 }

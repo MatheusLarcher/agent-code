@@ -30,6 +30,29 @@ beforeEach(() => {
   electronMock.removeListener.mockClear()
 })
 
+describe('preload — contexto só PC', () => {
+  it('encaminha list/read/count/reveal e desmonta listener changed', async () => {
+    await api.listContextTurns('c')
+    await api.readContextTurn('c', 'u', 'task')
+    await api.countContextExact('c')
+    await api.revealSecret('vault')
+    expect(electronMock.invoke.mock.calls).toEqual([
+      [Channels.contextTurnsList, 'c'], [Channels.contextTurnsRead, 'c', 'u', 'task'],
+      [Channels.contextTurnsCountExact, 'c'], [Channels.secretsReveal, 'vault']
+    ])
+    const cb = vi.fn()
+    const stop = api.onContextTurnsChanged(cb)
+    const listener = electronMock.on.mock.calls.at(-1)![1]
+    listener(null, { convId: 'c', turnId: 'u' })
+    expect(cb).toHaveBeenCalledWith({ convId: 'c', turnId: 'u' })
+    stop()
+    expect(electronMock.removeListener).toHaveBeenCalledWith(Channels.contextTurnsChanged, listener)
+    const remount = api.onContextTurnsChanged(cb)
+    remount()
+    expect(electronMock.removeListener).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('preload — contrato IPC do Codex e do agente', () => {
   it('expõe login/status Codex e inicia GPT pelo mesmo canal agent:start', async () => {
     electronMock.invoke.mockResolvedValue({ ok: true })

@@ -11,7 +11,9 @@ const engine = vi.hoisted(() => ({
   transcribeWhisper: vi.fn(async () => 'texto do whisper'),
   stopVoiceEngine: vi.fn(async () => {}),
   setWhisperProfile: vi.fn(),
-  getWhisperStatus: vi.fn(() => ({ profile: 'small-fp32', device: 'dml', label: 'GPU (DirectML)' }))
+  getWhisperStatus: vi.fn(() => ({ profile: 'small-fp32', device: 'dml', label: 'GPU (DirectML)' })),
+  prepareVoiceModels: vi.fn(async (_what: string, _onProgress?: (p: unknown) => void) => {}),
+  voiceModelsInstalled: vi.fn(() => false)
 }))
 const python = vi.hoisted(() => ({
   transcribeLocal: vi.fn(async (_wav: Buffer, _model: string, _report: unknown) => 'texto do parakeet')
@@ -27,7 +29,8 @@ vi.mock('./speech', () => python)
 vi.mock('./voice', () => engine)
 vi.mock('./voice/chromiumDecode', () => chromium)
 
-const { resolveSpeakOptions, resolveWhisperModel, speak, speechParts, transcribe, whisperStatus } = await import('./voiceService')
+const { installVoice, resolveSpeakOptions, resolveWhisperModel, speak, speechParts, transcribe, voiceInstallStatus, whisperStatus } =
+  await import('./voiceService')
 
 function wav(samples: number): string {
   return encodeWavPcm16(new Float32Array(samples).fill(0.1), 24000).toString('base64')
@@ -71,6 +74,53 @@ describe('voiceService — leitura', () => {
 
   it('speechParts devolve as partes tratadas', () => {
     expect(speechParts('# Título\n\nUma frase. Outra frase.').join(' ')).not.toContain('#')
+  })
+})
+
+describe('voiceService — instalar voz e transcrição', () => {
+  it('prepara Kokoro e depois Whisper (perfil da config) e fecha com um único "done"', async () => {
+    const sent: Array<{ stage: string; message: string }> = []
+    engine.prepareVoiceModels.mockImplementation(async (what, onProgress) => {
+      onProgress?.({ phase: 'download', file: `${what}.onnx`, loaded: 5, total: 10 })
+      onProgress?.({ phase: 'ready' })
+    })
+    await installVoice((p) => sent.push(p))
+    expect(engine.prepareVoiceModels.mock.calls.map((c) => c[0])).toEqual(['tts', 'stt'])
+    expect(engine.setWhisperProfile).toHaveBeenCalledWith('turbo-q8')
+    expect(sent.some((p) => p.stage === 'downloading')).toBe(true)
+    expect(sent.filter((p) => p.stage === 'done')).toEqual([{ stage: 'done', message: 'Voz e transcrição instaladas.' }])
+  })
+
+  it('segundo disparo durante a instalação reaproveita a primeira (não baixa duas vezes)', async () => {
+    let release!: () => void
+    engine.prepareVoiceModels.mockImplementation(() => new Promise<void>((res) => (release = res)))
+    const a = installVoice()
+    const b = installVoice()
+    expect(b).toBe(a)
+    expect(voiceInstallStatus().installing).toBe(true)
+    await vi.waitFor(() => expect(engine.prepareVoiceModels).toHaveBeenCalledTimes(1))
+    release()
+    await vi.waitFor(() => expect(engine.prepareVoiceModels).toHaveBeenCalledTimes(2))
+    release()
+    await a
+    expect(voiceInstallStatus().installing).toBe(false)
+  })
+
+  it('erro: avisa com mensagem clara, rejeita e libera nova tentativa', async () => {
+    const sent: Array<{ stage: string; message: string }> = []
+    engine.prepareVoiceModels.mockRejectedValueOnce(new Error('sem rede'))
+    await expect(installVoice((p) => sent.push(p))).rejects.toThrow('sem rede')
+    expect(sent.at(-1)).toMatchObject({ stage: 'error', message: expect.stringContaining('Não consegui instalar') })
+    expect(voiceInstallStatus().installing).toBe(false)
+    engine.prepareVoiceModels.mockResolvedValue(undefined)
+    await installVoice()
+  })
+
+  it('status "instalado" vem dos arquivos no cache do perfil escolhido', () => {
+    engine.voiceModelsInstalled.mockReturnValueOnce(true)
+    expect(voiceInstallStatus()).toEqual({ installed: true, installing: false })
+    expect(engine.voiceModelsInstalled).toHaveBeenLastCalledWith(expect.stringMatching(/voice-models$/), 'turbo-q8')
+    expect(voiceInstallStatus().installed).toBe(false)
   })
 })
 

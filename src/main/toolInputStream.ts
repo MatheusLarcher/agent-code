@@ -8,6 +8,14 @@
 // ao vivo para mostrar. Sem dependência nova: o recorte necessário (uma chave
 // string de nível superior e o último item de um array) cabe num scanner curto.
 //
+// Dois modos de leitura, conforme o campo:
+//  - `newText` é a digitação ao vivo: vale o valor PARCIAL, com a string ainda
+//    aberta (`extractPartialString`);
+//  - `filePath` e `oldText` dizem ONDE e O QUÊ está sendo editado, e pela metade
+//    seriam falsos (caminho cortado vira uma aba de arquivo que não existe;
+//    old_string cortado casa com a linha errada). Só saem DEPOIS de a string
+//    fechar (`extractClosedString`): estar no evento é ter o valor completo.
+//
 // O resultado é o `ChatEvent` `tool-input-delta`, efêmero (ver src/shared/ipc.ts).
 import type { ChatEvent } from '../shared/ipc'
 
@@ -147,6 +155,18 @@ export function extractPartialString(partialJson: string, key: string): string |
   return decodeString(partialJson, at + 1)
 }
 
+/**
+ * Como `extractPartialString`, mas só depois que a aspa de fechamento do valor
+ * chegou: com a string aberta devolve `undefined`, nunca o pedaço lido até ali.
+ * Um escape no fim (`\"`, `\\`, `\u00e`) não fecha nada — fecha a aspa que NÃO
+ * está escapada.
+ */
+export function extractClosedString(partialJson: string, key: string): string | undefined {
+  const at = valueStart(partialJson, key)
+  if (at === undefined || partialJson[at] !== '"' || stringEnd(partialJson, at + 1) < 0) return undefined
+  return decodeString(partialJson, at + 1)
+}
+
 /** O texto (parcial) do ÚLTIMO objeto do array `key` de nível superior — é o
  *  item que está sendo escrito agora. Ele mesmo é um JSON parcial de objeto, então
  *  serve direto para `extractPartialString`. */
@@ -173,8 +193,11 @@ function lastArrayObject(s: string, key: string): string | undefined {
 }
 
 export interface ToolInputFields {
+  /** Só com a string fechada (ausente enquanto aberta): o valor, quando existe, é o completo. */
   filePath?: string
+  /** Idem. No MultiEdit é o do item atual: o do anterior nunca vaza para ele. */
   oldText?: string
+  /** PARCIAL de propósito: é a digitação ao vivo. */
   newText?: string
 }
 
@@ -182,23 +205,23 @@ export interface ToolInputFields {
 export function toolInputFields(name: LiveToolName, json: string): ToolInputFields {
   switch (name) {
     case 'Write':
-      return { filePath: extractPartialString(json, 'file_path'), newText: extractPartialString(json, 'content') }
+      return { filePath: extractClosedString(json, 'file_path'), newText: extractPartialString(json, 'content') }
     case 'Edit':
       return {
-        filePath: extractPartialString(json, 'file_path'),
-        oldText: extractPartialString(json, 'old_string'),
+        filePath: extractClosedString(json, 'file_path'),
+        oldText: extractClosedString(json, 'old_string'),
         newText: extractPartialString(json, 'new_string')
       }
     case 'MultiEdit': {
       const item = lastArrayObject(json, 'edits')
       return {
-        filePath: extractPartialString(json, 'file_path'),
-        oldText: item === undefined ? undefined : extractPartialString(item, 'old_string'),
+        filePath: extractClosedString(json, 'file_path'),
+        oldText: item === undefined ? undefined : extractClosedString(item, 'old_string'),
         newText: item === undefined ? undefined : extractPartialString(item, 'new_string')
       }
     }
     case 'NotebookEdit':
-      return { filePath: extractPartialString(json, 'notebook_path'), newText: extractPartialString(json, 'new_source') }
+      return { filePath: extractClosedString(json, 'notebook_path'), newText: extractPartialString(json, 'new_source') }
   }
 }
 

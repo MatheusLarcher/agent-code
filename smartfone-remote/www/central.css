@@ -1,0 +1,174 @@
+/* A Central no celular (central.js + centralTurns.js), no desenho do mockup v3:
+   um fio de cor por destino (--c), o laranja só da própria Central, atividade
+   resumida que abre as ações ao toque. Usa as variáveis de styles.css. */
+
+/* ---- orbe e a linha fixa na lista de conversas ---- */
+.central-orb {
+  width: 26px; height: 26px; border-radius: 50%; flex: 0 0 auto;
+  background: radial-gradient(circle at 35% 35%, #f2a487, var(--accent) 55%, #7d3d27);
+  box-shadow: 0 0 12px rgba(224, 132, 88, 0.4);
+}
+.central-row {
+  gap: 10px; margin: 6px 0 4px;
+  background: linear-gradient(135deg, #3a2a22, #2b2522);
+  border: 1px solid #5a3b2e;
+}
+.central-row.active { box-shadow: inset 3px 0 0 var(--accent); }
+.central-row-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.central-row-sub { font-size: 11.5px; color: var(--muted); }
+.central-dots { display: flex; gap: 3px; flex: 0 0 auto; }
+.central-dot, .c-run-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--c); animation: c-pulse 1.6s ease-in-out infinite;
+}
+@keyframes c-pulse { 50% { opacity: 0.35; } }
+.conv-title.is-central::before {
+  content: ''; width: 18px; height: 18px; border-radius: 50%; flex: 0 0 auto;
+  background: radial-gradient(circle at 35% 35%, #f2a487, var(--accent) 55%, #7d3d27);
+  box-shadow: 0 0 10px rgba(224, 132, 88, 0.35);
+}
+
+/* ---- trilho: conversas trabalhando agora ---- */
+.central-rail {
+  display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--line-soft);
+  scrollbar-width: none;
+}
+.central-rail::-webkit-scrollbar { display: none; }
+.c-run {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; max-width: 70vw;
+  padding: 4px 10px 4px 5px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 12.5px; color: var(--muted); background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--c) 45%, var(--line));
+}
+.c-run-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.c-pi { width: 16px; height: 16px; border-radius: 4px; flex: 0 0 auto; object-fit: cover; }
+.c-run .c-pi { border-radius: 50%; }
+.c-glyph { color: var(--c, var(--muted)); }
+
+/* ---- o feed ---- */
+.central-view { display: flex; flex-direction: column; gap: 12px; }
+.c-empty { padding: 28px 12px; color: var(--faint); font-size: 13.5px; text-align: center; }
+.c-wait { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+.c-spinner { width: 12px; height: 12px; }
+.c-ok { color: var(--ok); }
+.c-bad { color: var(--err); }
+
+/* pedido do usuário + aviso do destino */
+.c-me { align-self: flex-end; max-width: 86%; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.c-bubble {
+  padding: 9px 13px; border-radius: 16px 16px 5px 16px;
+  background: var(--surface-3); color: var(--text);
+  font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+.c-sending .c-bubble { opacity: 0.6; }
+.c-att {
+  display: inline-block; margin: 0 2px; padding: 0 7px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--line-soft); color: var(--muted); font-size: 12.5px;
+}
+.c-atts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.c-route { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; font-size: 12px; color: var(--faint); }
+.c-to { padding: 0; background: none; border: none; font: inherit; color: var(--c); text-align: right; cursor: pointer; }
+.c-why { display: none; }
+.c-me.show-why .c-why { display: inline; }
+
+/* "Para onde vai?" */
+.c-ask {
+  align-self: flex-end; max-width: 92%; padding: 10px 12px; border-radius: 12px;
+  background: var(--surface); border: 1px dashed #5a564f;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.c-ask-head { display: flex; flex-direction: column; gap: 2px; }
+.c-ask-title { font-size: 13.5px; font-weight: 600; }
+.c-ask-hint { font-size: 12px; color: var(--faint); }
+.c-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.c-opt {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 7px 11px; border-radius: 9px; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.c-opt.best { border-color: var(--accent); }
+.c-opt.picked { border-color: var(--c); background: color-mix(in srgb, var(--c) 18%, var(--surface-2)); }
+.c-opt:disabled { opacity: 0.5; }
+/* pedido de outro PC: só aquele PC entrega — opções sem botão, apagadas */
+.c-ask.foreign { border-style: dotted; }
+.c-ask.foreign .c-opt { opacity: 0.55; cursor: default; }
+.c-ask-foreign { font-size: 12px; color: var(--faint); }
+.c-opt-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-opt-sub { color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- bloco de resposta do destino ---- */
+/* Responder (estilo WhatsApp): arrastar para a direita revela a seta; a citação vai na bolha e acima do campo. */
+.c-swipe { position: relative; touch-action: pan-y; }
+.c-swipe.c-dragging { transition: none; }
+.c-swipe.c-settle { transition: transform 0.18s ease-out; }
+.c-swipe-ic { position: absolute; left: -30px; top: 50%; margin-top: -12px; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--panel-2, #2a2a2a); color: var(--muted); opacity: 0; transition: opacity 0.12s; pointer-events: none; }
+.c-swipe-ic.armed { color: var(--accent, #e8833a); }
+.c-quote { display: flex; align-items: flex-start; gap: 8px; border-left: 3px solid var(--c, var(--muted)); border-radius: 6px; background: rgba(255,255,255,0.05); padding: 5px 8px; font-size: 12px; line-height: 1.35; text-align: left; max-width: 100%; box-sizing: border-box; }
+.c-quote-body { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.c-quote-who { color: var(--c, var(--muted)); font-weight: 600; }
+.c-quote-text { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-quote-x { flex: none; border: 0; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; padding: 0 4px; }
+.c-replybar { margin: 0 10px 6px; }
+.c-replybar[hidden] { display: none; }
+.c-agent { align-self: stretch; display: flex; flex-direction: column; gap: 4px; padding-left: 12px; border-left: 2px solid var(--c); }
+.c-who { font-size: 11.5px; letter-spacing: 0.02em; color: var(--c); }
+.c-note { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.c-answer { font-size: 14.5px; line-height: 1.55; margin-top: 2px; }
+.c-note p, .c-answer p { margin: 0 0 6px; }
+.c-note > :last-child, .c-answer > :last-child { margin-bottom: 0; }
+.c-act {
+  display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 4px;
+  padding: 6px 10px; border-radius: 8px; cursor: pointer; text-align: left;
+  font: inherit; font-size: 12.5px; color: var(--muted); background: var(--surface);
+  border: 1px solid var(--line);
+}
+.c-sum { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-sum b { color: var(--text); font-weight: 600; }
+.c-count { flex: 0 0 auto; color: var(--faint); font-size: 11.5px; }
+.c-spin {
+  width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid var(--c); border-top-color: transparent; animation: spin 0.9s linear infinite;
+}
+.c-chev { flex: 0 0 auto; color: var(--faint); transition: transform 0.15s; }
+.c-act.open .c-chev { transform: rotate(90deg); }
+.c-tools { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.c-tools-note { font-size: 12px; color: var(--faint); }
+.c-open {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 0; background: none; border: none; cursor: pointer;
+  font: inherit; font-size: 12px; color: var(--faint);
+}
+.c-dl {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; margin-top: 4px;
+  padding: 7px 12px; border-radius: 10px; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+/* ---- perguntas dos destinos ---- */
+.c-q, .c-qdone {
+  align-self: stretch; display: flex; flex-direction: column; gap: 7px;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--c);
+}
+.c-q-title { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.c-q-code {
+  max-height: 140px; overflow: auto; padding: 7px 9px; border-radius: 8px;
+  font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--line-soft); white-space: pre-wrap; word-break: break-word;
+}
+.c-q-desc { font-size: 12.5px; color: var(--muted); }
+.c-q-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.c-btn {
+  padding: 8px 14px; border-radius: 9px; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--muted); background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.c-btn.primary { color: var(--bg); background: var(--c); border-color: var(--c); }
+.c-btn:disabled { opacity: 0.5; }
+.c-qdone { opacity: 0.85; }
+.c-qdone-q { font-size: 13px; }
+.c-qdone-a { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.c-check { color: var(--ok); flex: 0 0 auto; }

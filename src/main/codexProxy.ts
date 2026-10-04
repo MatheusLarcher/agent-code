@@ -9,6 +9,7 @@ import {
   toAnthropicResponse,
   toCodexRequest,
   toCodexWireRequest,
+  usesResponsesLite,
   type AnthropicMessagesRequest,
   type AnthropicMessagesResponse,
   type AnthropicMessage,
@@ -52,9 +53,9 @@ export type {
 export const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses'
 const CODEX_ORIGINATOR = 'codex_cli_rs'
 // The ChatGPT Codex router uses this protocol version together with the
-// originator when resolving newer model aliases (GPT-6 Astra, Luna, Sol).
+// originator when resolving newer model aliases (GPT-6 Astra, Luna, Sol; GPT-6.1 Sol needs 0.160+).
 // Keep it aligned with a released Codex client that supports those models.
-const CODEX_CLIENT_VERSION = '0.156.1'
+const CODEX_CLIENT_VERSION = '0.160.0'
 const CODEX_USER_AGENT = `${CODEX_ORIGINATOR}/${CODEX_CLIENT_VERSION}`
 /** Suffix `agentSession` appends to the loopback auth token to ask for fast
  *  mode on that one conversation. The proxy is process-wide and shared by every
@@ -127,7 +128,7 @@ async function openCodexResponsesStream(
   fetchImpl: FetchLike,
   signal?: AbortSignal
 ): Promise<Response> {
-  const responsesLite = body.model.startsWith('gpt-6-')
+  const responsesLite = usesResponsesLite(body.model)
   const wireBody = toCodexWireRequest(body, sessionId)
   const response = await fetchImpl(CODEX_RESPONSES_URL, {
     method: 'POST',

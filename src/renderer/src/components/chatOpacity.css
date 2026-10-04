@@ -1,0 +1,71 @@
+/*
+ * Transparência do fundo dos chats. `--chat-bg-alpha` (0.3–1, padrão 1) é posta
+ * no <html> por chatOpacity.ts; os chats multiplicam o fundo que já tinham por ela.
+ * Quem usa: styles.css (.chat-panel, .chat-header), planningChat.css (flutuantes,
+ * via --pl-chat-fill) e screens.css (.o3d-chat-screen, o monitor). Só o fundo:
+ * texto, bolhas e a caixa de digitação não mudam. Aqui, só o controle.
+ */
+
+.chat-opacity {
+  position: relative;
+  margin-left: 6px;
+}
+.chat-opacity-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+.chat-opacity-btn:hover,
+.chat-opacity-btn.open {
+  background: var(--bg-3);
+  color: var(--text);
+}
+.chat-opacity-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.chat-opacity-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 10px;
+  align-items: center;
+  width: 220px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.chat-opacity-pop label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+.chat-opacity-pop input[type='range'] {
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.chat-opacity-pop output {
+  min-width: 3ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.chat-opacity-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}

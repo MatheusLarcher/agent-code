@@ -5,6 +5,7 @@ import { framePose, monitorPose } from './cameraRig'
 import { Office3DEngine, type EngineOptions, type RendererLike } from './engine'
 import { buildingBounds, layoutOffice, monitorPosition } from './layout'
 import { officeFrame } from './powerPlant'
+import { focusView } from './screenAnchor'
 
 let resizeCb: (() => void) | null = null
 class RO {
@@ -86,9 +87,9 @@ describe('Office3DEngine — enquadramento', () => {
     const desk = layout.rooms.find((r) => r.id === target.screenDesk!.roomId)!.desks[target.screenDesk!.index]
     engine.focus(target.key)
     flush(40)
-    expect(engine.rig.pose.distance).toBeCloseTo(monitorPose(monitorPosition(desk), { fovDeg: 50, aspect: 1600 / 900 }).distance)
+    expect(engine.rig.pose.distance).toBeCloseTo(monitorPose(monitorPosition(desk), focusView(50, 1600, 900)).distance)
     resize(280, 700)
-    const narrow = monitorPose(monitorPosition(desk), { fovDeg: 50, aspect: 0.4 })
+    const narrow = monitorPose(monitorPosition(desk), focusView(50, 280, 700))
     expect(engine.rig.pose).toEqual(narrow)
     // No meio do voo, o resize troca o destino sem reiniciar o tween.
     engine.leaveFocus(true)
@@ -96,7 +97,7 @@ describe('Office3DEngine — enquadramento', () => {
     flush(5)
     resize(1600, 900)
     flush(40)
-    expect(engine.rig.pose.distance).toBeCloseTo(monitorPose(monitorPosition(desk), { fovDeg: 50, aspect: 1600 / 900 }).distance)
+    expect(engine.rig.pose.distance).toBeCloseTo(monitorPose(monitorPosition(desk), focusView(50, 1600, 900)).distance)
     engine.dispose()
   })
 })

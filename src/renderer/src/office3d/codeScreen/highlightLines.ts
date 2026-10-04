@@ -109,7 +109,25 @@ export class LineHighlighter {
     let j = k - 1
     while (j >= 0 && !before.safe[j]) j--
     if (j < 0) return null
+    const head = { lines: before.lines.slice(0, j + 1), safe: before.safe.slice(0, j + 1) }
+    // O fim igual (a edição foi no meio): se o realce chega nele sem span aberto dos
+    // dois lados, as linhas de lá são as de antes — só o miolo é realçado de novo.
+    // A última linha de um realce sempre fecha os spans (fim do texto), então o
+    // miolo vai com a 1ª linha do fim junto: ela tem de sair igual à de antes.
+    let s = 0
+    const room = Math.min(prev.length, next.length) - (j + 1)
+    while (s < room && prev[prev.length - 1 - s] === next[next.length - 1 - s]) s++
+    if (s > 0 && before.safe[prev.length - s - 1]) {
+      const mid = next.length - s - (j + 1)
+      const probe = mid > 0 ? highlightSplit(next.slice(j + 1, next.length - s + 1).join('\n'), lang) : null
+      if (!probe || (probe.safe[mid - 1] && probe.lines[mid] === before.lines[prev.length - s])) {
+        return {
+          lines: head.lines.concat(probe ? probe.lines.slice(0, mid) : [], before.lines.slice(prev.length - s)),
+          safe: head.safe.concat(probe ? probe.safe.slice(0, mid) : [], before.safe.slice(prev.length - s))
+        }
+      }
+    }
     const tail = highlightSplit(next.slice(j + 1).join('\n'), lang)
-    return { lines: before.lines.slice(0, j + 1).concat(tail.lines), safe: before.safe.slice(0, j + 1).concat(tail.safe) }
+    return { lines: head.lines.concat(tail.lines), safe: head.safe.concat(tail.safe) }
   }
 }

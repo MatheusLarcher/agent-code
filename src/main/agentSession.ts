@@ -4,10 +4,12 @@ import { createAppMcpServer, APP_RESTART_HINT } from './appTools'
 import { appRestart } from './appRestartRuntime'
 import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
+import { claudeAuthExpiry, isClaudeAuthFailure } from './authExpiry'
 import { isStalled, STALL_POLL_MS } from './stallWatch'
 import { ToolInputStreams, type RawStreamEvent } from './toolInputStream'
 import { MirrorRepair, MIRROR_REPAIR_SEND_TIMEOUT_MS, mirrorRepairText } from './mirrorRepair'
 import { composeRequestContext, composeUserPrompt } from './promptEnvelope'
+import { presenceRemove, presenceSnapshot, presenceUpdate, recentTopics, renderCrossConversation, renderTopics, renderWorkingNow } from './crossConversation'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
 import { createAndroidMcpServer } from './android/androidTools'
@@ -33,7 +35,6 @@ import { planningDataDir } from './planning/planningRoot'
 import {
   memoryService,
   readSecret,
-  readSecretsForPrompt,
   secretSink,
   secretVaultEnabled
 } from './memory/memoryRuntime'
@@ -66,6 +67,7 @@ import { randomUUID } from 'node:crypto'
 import {
   DEFAULT_CONFIG,
   fastModeTransport,
+  isAutoModel,
   isOllamaModel,
   isOpenAIModel,
   modelSupportsVision,
@@ -91,11 +93,15 @@ import type {
   TokenUsage
 } from '../shared/ipc'
 import { claudeAccounts } from './accounts'
+import { toEpochMs } from './accounts/usageMath'
 import { sdkEffort } from '../shared/autoEffort'
 import { buildInjectedMessage } from './injectNow'
 import { imageContentBlocks } from '../shared/inlineMedia'
 import { storageLifecycle } from './persistence/lifecycle'
-import type { AgentInputQueueRepository, ProjectConversationCount, TokenUsageRepository } from './persistence/types'
+import type { AgentInputQueueRepository, ContextHistoryRepository, ProjectConversationCount, TokenUsageRepository } from './persistence/types'
+import { ContextCapture } from './contextSnapshot/capture'
+import { buildSecretsHintWithMask } from './contextSnapshot/secretsHint'
+import type { ContextTurnChanged } from '../shared/contextSnapshot'
 
 export const OPENAI_MAX_TURNS = 64
 export const DEFAULT_LOOP_LIMIT = 100
@@ -251,30 +257,6 @@ explicitamente no texto. Somente uma condição de saída explícita encerra o l
 // but THESE INSTRUCTIONS ship with the project, so every install behaves the same.
 // Built per session because the folder path and the current index are dynamic.
 /**
- * Entrega as senhas guardadas ao modelo, em texto puro, quando o usuário liga a
- * opção em Configurações. Desligado (o padrão), devolve string vazia e nada sai
- * do cofre.
- *
- * O interruptor é lido AQUI, na montagem da sessão. Ligar depois só vale na
- * sessão seguinte — o system prompt já foi enviado, e não há como retirar da
- * janela do modelo o que já entrou nela.
- */
-async function buildSecretsHint(): Promise<string> {
-  // Cofre indisponível degrada o turno; impedir a conversa de abrir seria pior.
-  const secrets = await readSecretsForPrompt().catch(() => [])
-  if (!secrets.length) return ''
-  const lines = secrets.map((secret) => `- ${secret.name}: ${secret.value}`).join('\n')
-  return `\n\n# Senhas do cofre
-
-O usuário autorizou o acesso a estas credenciais em Configurações. Os valores
-abaixo são reais — use-os quando a tarefa precisar e trate-os como segredo:
-não os repita na resposta, em log, em commit, nem em arquivo, a menos que o
-usuário peça explicitamente.
-
-${lines}`
-}
-
-/**
  * Só entra no prompt quando o registro está ligado a um repositório. Diz ao
  * modelo O QUE é a fila e a disciplina mínima (reivindicar → running → evidência
  * → estado final); as regras duras vivem no repositório e voltam como texto
@@ -403,6 +385,71 @@ const PERMISSION_TIMEOUT_MS = 7 * 60_000
 // se o CLI estiver ocupado demais para responder, segurar a resposta do Stop
 // só faz a tela ficar parada em "trabalhando" sem ninguém saber por quê.
 const INTERRUPT_ACK_TIMEOUT_MS = 5_000
+
+/** Os `user_message_uuid(s)` que o CLI carimba no 1º frame do turno e no `result`. */
+function echoedTurnIds(message: unknown): string[] | null {
+  const m = message as { user_message_uuid?: unknown; user_message_uuids?: unknown }
+  const list = Array.isArray(m.user_message_uuids)
+    ? m.user_message_uuids.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : []
+  if (list.length > 0) return list.slice(-64)
+  return typeof m.user_message_uuid === 'string' && m.user_message_uuid ? [m.user_message_uuid] : null
+}
+
+/** Eventos de saída do turno: levam `turnIds` (contrato em shared/ipc.ts). */
+const TURN_OUTPUT_KINDS: ReadonlySet<ChatEvent['kind']> = new Set(['assistant-text', 'thinking', 'tool-use', 'tool-result'])
+
+/**
+ * A identidade de turno (`turnIds`, contrato em shared/ipc.ts): o `messageUuid` com
+ * que o renderer mandou a mensagem, como o CLI o devolve. Só o eco do CLI diz a qual
+ * envio um `result` responde — "o último envio" erraria justo no Stop, em que o CLI
+ * ainda fecha o turno parado quando o seguinte já foi empurrado. Sem eco, nada é
+ * carimbado (o renderer decide como antes).
+ */
+class TurnTracker {
+  /** O turno que o CLI está rodando (pelo 1º frame com eco); `null` fora dele. */
+  private live: string[] | null = null
+  /** Os ids do último `result` com eco. */
+  private last: string[] | null = null
+  /** Empurradas ao SDK e ainda sem `result` com eco, na ordem. */
+  private open: string[] = []
+
+  pushed(uuid: string): void {
+    this.open = [...this.open, uuid].slice(-64)
+  }
+
+  /** Um frame do SDK. Devolve os ids quando o turno começa (ou junta mensagens). */
+  frame(message: unknown): string[] | null {
+    const ids = echoedTurnIds(message)
+    if (!ids || (this.live && ids.every((id) => this.live!.includes(id)))) return null
+    this.live = this.live ? [...this.live, ...ids.filter((id) => !this.live!.includes(id))] : ids
+    return this.live
+  }
+
+  /** O `result` do turno principal: os ids do eco, e o turno acaba. */
+  result(message: unknown): string[] | null {
+    const ids = echoedTurnIds(message)
+    this.live = null
+    if (!ids) return null
+    this.last = ids
+    // O CLI consome em ordem: o que foi empurrado antes destas também acabou (ou o
+    // Stop a descartou antes de o turno começar, sem `result` nenhum).
+    const consumed = Math.max(...ids.map((id) => this.open.indexOf(id)))
+    this.open = consumed >= 0 ? this.open.slice(consumed + 1) : this.open
+    return ids
+  }
+
+  /** A query morreu: o que estava em aberto morre junto; sem nada, é o rabo do último turno. */
+  died(): string[] | null {
+    this.live = null
+    return this.open.length > 0 ? [...this.open] : this.last
+  }
+
+  /** Os ids da saída corrente. */
+  current(): string[] | null {
+    return this.live
+  }
+}
 
 /** Arquivos do diretório de configuração do CLI que precisam sobreviver ao
  *  desvio abaixo: são o que o usuário percebe se sumir. */
@@ -594,6 +641,7 @@ export interface AgentContinuationState {
 export class AgentSession {
   private input = new AsyncQueue<SDKUserMessage>()
   private q: ReturnType<typeof query> | null = null
+  private readonly contextCapture: ContextCapture
   private pendingPermissions = new Map<
     string,
     {
@@ -639,6 +687,10 @@ export class AgentSession {
   private memorySelectionTurn = 0
   private liveId: string | null = null
   private liveText = ''
+  /** De qual envio é cada saída e cada terminal (`turnIds`). */
+  private readonly turns = new TurnTracker()
+  /** O iterador do SDK lançou: nada mais lê `input` (ver `enqueueInput`). */
+  private queryDied = false
   /** Código que o agente principal está escrevendo (Edit/Write…), lido dos
    *  `input_json_delta` para o monitor do escritório. Efêmero: ver toolInputStream.ts. */
   private readonly toolInput = new ToolInputStreams((e) => this.emit(e))
@@ -648,6 +700,9 @@ export class AgentSession {
   /** Context-window size of the most recent model request (last `assistant`
    *  message's input usage) — the true "context used", not the per-turn sum. */
   private lastContextTokens = 0
+  /** O modelo com que a sessão subiu (evento `system` init) — o que vale para
+   *  uma resposta sem `model`. Nunca o sentinela do Automático. */
+  private sessionModel = ''
   /** Root `node_id` of the CURRENT turn — the token-usage tree's root node for
    *  the main agent. Lazily created (see `getTurnId`) and replaced on every
    *  new user turn (`beginTurn`). */
@@ -681,6 +736,8 @@ export class AgentSession {
    *  model. Recomputed before every user dispatch; unchanged since last turn
    *  means nothing is re-sent (same "only when it changes" rule as memory/skills). */
   private projectsCatalogVersion = ''
+  /** A última lista de assuntos das outras conversas entregue ao modelo. */
+  private crossTopicsVersion = ''
   /** The catalog actually announced for `nativeSkillRegistryVersion` — the
    *  discovered snapshot minus whatever the SDK refused to load. */
   private nativeConfirmedSnapshot: SkillCatalogSnapshot | null = null
@@ -714,6 +771,11 @@ export class AgentSession {
   private mirrorRepair: MirrorRepair | null = null
   private mirrorRepairSessionId: string | null = null
   private quotaRejected = false
+  /** Roda no login Claude da máquina (sem GPT/Ollama/conta extra): só aí um
+   *  erro de autenticação marca a sessão expirada (authExpiry.ts). */
+  private machineClaudeLogin = false
+  /** Este turno teve `authentication_failed` na thread principal. */
+  private authFailedTurn = false
   private providerContinuation = false
   private handoffReady: Promise<void> = Promise.resolve()
   private restartInitializing = true
@@ -784,6 +846,7 @@ export class AgentSession {
 
   private beginTurn(): void {
     this.turnActive = true
+    if (!this.disposed) presenceUpdate(this, this.opts.convId, this.opts.cwd, { working: true })
     // A new turn is a new root node for the token-usage tree: fresh turnId,
     // fresh delegation map (a subagent's tool-use id from a past turn will
     // never come back, so nothing is lost by dropping it here).
@@ -866,7 +929,8 @@ export class AgentSession {
   constructor(
     private readonly opts: StartAgentOptions,
     private readonly browser: BrowserController,
-    private readonly emit: (e: ChatEvent) => void,
+    /** Saída de eventos para o main. Use `emit`: ele carimba a identidade do turno. */
+    private readonly sink: (e: ChatEvent) => void,
     private readonly askPermission: (req: PermissionRequest) => void,
     /** Called when a pending permission/question timed out and was auto-resolved,
      *  so the renderer can close the matching modal. */
@@ -886,12 +950,25 @@ export class AgentSession {
     /** Reparo do espelho: reenvia o transcript local ao store e roda a MESMA
      *  verificação do `onTurnDurable`. `configDir` = CLAUDE_CONFIG_DIR do CLI da
      *  sessão (`undefined` = o do app). Sem ele, `mirror_error` bloqueia como antes. */
-    private readonly repairMirror?: (sessionId: string, configDir: string | undefined) => Promise<void>
+    private readonly repairMirror?: (sessionId: string, configDir: string | undefined) => Promise<void>,
+    contextHistoryRepository?: ContextHistoryRepository,
+    onContextChanged?: (event: ContextTurnChanged) => void
   ) {
+    this.contextCapture = new ContextCapture({
+      convId: opts.convId, pc: hostname(), model: opts.model ?? '',
+      provider: isOpenAIModel(opts.model) ? 'gpt' : isOllamaModel(opts.model) ? 'ollama' : 'claude'
+    }, contextHistoryRepository, onContextChanged, () => this.disposed ? null : this.q)
     // Native class fields run before constructor parameter properties are assigned.
     this.restartRegistration = appRestart?.register(opts.convId, () => this.restartActivity())
     // Um handoff retomado (app reiniciado, conversa reaberta) já teve o 1º turno.
     this.handoffFirstTurnDone = Boolean(opts.resume)
+  }
+
+  /** Todo evento sai por aqui. A saída do turno leva os `turnIds` dele (quando o CLI
+   *  os devolveu); terminais trazem os seus de quem os emite. */
+  private emit(e: ChatEvent): void {
+    const ids = TURN_OUTPUT_KINDS.has(e.kind) && !('turnIds' in e && e.turnIds) ? this.turns.current() : null
+    this.sink(ids ? ({ ...e, turnIds: ids } as ChatEvent) : e)
   }
 
   async start(): Promise<boolean> {
@@ -1001,7 +1078,8 @@ export class AgentSession {
     // Senhas em texto puro no prompt, só com o interruptor ligado. Vai no system
     // prompt, e não anexado a cada mensagem, para a senha aparecer UMA vez por
     // sessão em vez de ser recopiada em todo turno do histórico.
-    append += await buildSecretsHint()
+    const secretsHint = await buildSecretsHintWithMask()
+    append += secretsHint.text
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
     append += `\n\n${CHROME_CONTROL_HINT}`
 
@@ -1093,6 +1171,7 @@ export class AgentSession {
     // (CLAUDE_CONFIG_DIR). A conta padrão devolve `undefined` e a sessão herda o
     // ambiente, como sempre. GPT e Ollama já têm o próprio desvio acima.
     if (!ollamaOn && !openaiOn) env = claudeAccounts.envFor(this.opts.claudeAccountId)
+    this.machineClaudeLogin = !ollamaOn && !openaiOn && env === undefined
 
     // Economy mode leans on the `rtk` proxy binary, which is installed per-user
     // and put on the user PATH — but a PATH change only reaches processes
@@ -1167,8 +1246,10 @@ export class AgentSession {
           if (appRestart?.reserved) return { decision: 'block' as const, reason: 'Reinício reservado; novo turno recusado.' }
           this.beginTurn()
           // Início de turno: o contexto vai SEMPRE, mesmo igual ao anterior.
-          const context = await this.buildLiveRequestContext()
+          const parts = await this.buildLiveRequestContext()
+          const context = composeRequestContext(parts)
           this.lastLiveContext = context
+          this.contextCapture.hook(parts, 'hook-start')
           return {
             hookSpecificOutput: {
               hookEventName: 'UserPromptSubmit' as const,
@@ -1183,9 +1264,11 @@ export class AgentSession {
         // and resending an identical copy per tool batch only piles up context
         // (and hook-*-additionalContext.txt files on disk).
         PostToolBatch: [{ hooks: [async () => {
-          const context = await this.buildLiveRequestContext()
+          const parts = await this.buildLiveRequestContext()
+          const context = composeRequestContext(parts)
           if (context === this.lastLiveContext) return {}
           this.lastLiveContext = context
+          this.contextCapture.hook(parts, 'hook-mid')
           return {
             hookSpecificOutput: {
               hookEventName: 'PostToolBatch' as const,
@@ -1274,6 +1357,9 @@ export class AgentSession {
     }
 
     if (this.disposed) return false
+    const sentAppend = typeof options.systemPrompt === 'object' && !Array.isArray(options.systemPrompt) && options.systemPrompt?.type === 'preset'
+      ? options.systemPrompt.append ?? '' : ''
+    this.contextCapture.configure(sentAppend, secretsHint.secrets, options.agents ?? {})
     try {
       this.q = query({ prompt: this.input, options })
     } catch (err) {
@@ -1307,6 +1393,11 @@ export class AgentSession {
         // may claim the next row until this one reaches a terminal result.
         this.currentInputId = item.id
         this.input.push(item.message)
+        const uuid = (item.message as { uuid?: unknown }).uuid
+        if (typeof uuid === 'string') {
+          this.turns.pushed(uuid)
+          this.contextCapture.activate(uuid)
+        }
       } catch (error) {
         if (this.currentInputId === item.id) this.currentInputId = null
         await this.inputQueueRepository!.requeueAgentInput(item.id, String(error)).catch(() => undefined)
@@ -1318,8 +1409,23 @@ export class AgentSession {
   }
 
   private async enqueueInput(message: SDKUserMessage, messageUuid: string): Promise<void> {
+    if (this.queryDied) {
+      // O iterador do SDK lançou (o `error` dele já saiu): ninguém mais lê `input`.
+      // Empurrar aqui sumia com a mensagem em silêncio e o turno dela ficava
+      // "trabalhando" para sempre na tela — agora ele termina em erro, com o id dele.
+      this.emit({
+        kind: 'error',
+        id: nextId(),
+        text: 'Agent stopped: a sessão do agente já tinha encerrado; esta mensagem não foi enviada.',
+        turnIds: [messageUuid]
+      })
+      this.markTurnIdle()
+      return
+    }
     if (!this.inputQueueRepository) {
       this.input.push(message)
+      this.turns.pushed(messageUuid)
+      this.contextCapture.activate(messageUuid)
       return
     }
     await this.inputQueueRepository.enqueueAgentInput(this.opts.convId, message, messageUuid)
@@ -1332,7 +1438,18 @@ export class AgentSession {
         if (!this.disposed) this.handleMessage(message)
       }
     } catch (err) {
-      if (!this.disposed) this.emit({ kind: 'error', id: nextId(), text: `Agent stopped: ${String(err)}`, usageExhausted: isUsageExhausted(err) || this.quotaRejected })
+      this.queryDied = true
+      // O fim do stream encerra o que estava em aberto — ou é o rabo do último turno.
+      const turnIds = this.turns.died()
+      if (!this.disposed) {
+        this.emit({
+          kind: 'error',
+          id: nextId(),
+          text: `Agent stopped: ${String(err)}`,
+          usageExhausted: isUsageExhausted(err) || this.quotaRejected,
+          ...(turnIds ? { turnIds } : {})
+        })
+      }
       // Erro também encerra o turno: o primeiro turno de um handoff acabou.
       this.handoffFirstTurnDone = true
     } finally {
@@ -1373,6 +1490,8 @@ export class AgentSession {
     const memoryCatalogUpdate = await this.refreshMemoriesIfChanged()
     const skillCatalogUpdate = await this.refreshSkillsIfChanged()
     const projectsCatalogUpdate = await this.refreshProjectsIfChanged()
+    if (messageKind === 'normal' && !this.disposed) presenceUpdate(this, this.opts.convId, this.opts.cwd, { question: text })
+    const othersUpdate = messageKind === 'normal' ? await this.crossConversationContext() : ''
     // A real user dispatch starts a fresh loop budget. Dynamic wakeups are
     // injected by the CLI and do not pass through this method. Internal
     // recovery prompts must never start a fresh loop just because the toggle
@@ -1403,12 +1522,14 @@ export class AgentSession {
     // still carries the interrupted request (and any partial reply) in context,
     // so prefix a clear note telling the model to ignore that canceled exchange.
     let taskText = text
+    let cancelNote: string | undefined
     if (this.canceledPending) {
       this.canceledPending = false
       const note =
         '[Observação do sistema: o usuário CANCELOU manualmente a solicitação anterior e a resposta parcial a ela. ' +
         'Desconsidere por completo aquela solicitação cancelada e a resposta interrompida — trate como se nunca ' +
         'tivessem existido — e atenda apenas à mensagem a seguir.]'
+      cancelNote = note
       taskText = text ? `${note}\n\n${text}` : note
     }
     let outText = shouldAutoLoop ? `/loop ${taskText}` : taskText
@@ -1443,9 +1564,10 @@ export class AgentSession {
         return selection
       })
     const economyReminder = this.opts.economyMode ? ECONOMY_TURN_REMINDER : ''
-    const stamped = (body: string): string => composeUserPrompt(body, {
-      stamp, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, projects: projectsCatalogUpdate, reminder: economyReminder
-    })
+    const promptParts = {
+      stamp, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, projects: projectsCatalogUpdate, others: othersUpdate, reminder: economyReminder
+    }
+    const stamped = (body: string): string => composeUserPrompt(body, promptParts)
 
     // vision_fallback_router — the picked model can't see images (most Ollama
     // Cloud models are text-only): intercept BEFORE it ever reaches the SDK.
@@ -1464,6 +1586,7 @@ export class AgentSession {
         merged = `${outText}\n\n[Observação do sistema: não foi possível analisar a(s) imagem(ns) anexada(s) automaticamente (${String(err)}). Responda com base apenas no texto acima.]`
       }
       this.beginTurn()
+      this.contextCapture.sent(uuid, text, merged, promptParts, cancelNote, images.length, true, messageKind)
       await this.enqueueInput({
         type: 'user',
         message: { role: 'user', content: stamped(merged) },
@@ -1491,6 +1614,7 @@ export class AgentSession {
       uuid
     } as SDKUserMessage
     this.beginTurn()
+    this.contextCapture.sent(uuid, text, outText, promptParts, cancelNote, images?.length ?? 0, false, messageKind)
     await this.enqueueInput(msg, uuid)
   }
 
@@ -1622,6 +1746,11 @@ export class AgentSession {
 
   /** Há trabalho que a troca de processo mataria (tarefa em background, loop
    *  agendado, chamada autônoma sem prova de término)? */
+  /** Falso depois que o iterador da query lançou: ninguém mais lê as mensagens. */
+  isAlive(): boolean {
+    return !this.queryDied
+  }
+
   hasBackgroundWork(): boolean {
     return (this.restartBackground ?? 0) > 0 || this.loopActive || this.restartOpaqueCalls.size > 0
   }
@@ -1802,6 +1931,8 @@ export class AgentSession {
     if (!restartState.busy && !restartState.unsafe) this.restartRegistration?.remove()
     else this.restartUncertain = true // Closing SDK is not proof detached work ended.
     this.disposed = true
+    this.contextCapture.dispose()
+    presenceRemove(this, this.opts.convId)
     this.mirrorRepair?.dispose()
     this.clearLoopState()
     // O registro de memórias usadas é do turno corrente desta conversa: some com
@@ -1880,7 +2011,7 @@ export class AgentSession {
    * provide the full current docs block to Claude, the Codex proxy and Ollama
    * through the same Agent SDK request path without bloating history.
    */
-  private async buildLiveRequestContext(): Promise<string> {
+  private async buildLiveRequestContext(): Promise<{ docs: string; memory: string }> {
     let docs: string
     try {
       docs = await buildProjectOutline(this.opts.cwd)
@@ -1904,7 +2035,7 @@ export class AgentSession {
     } catch {
       // Memory recall is optional context; docs and the user request still run.
     }
-    return composeRequestContext({ docs, memory })
+    return { docs, memory }
   }
 
   /**
@@ -2016,6 +2147,22 @@ outro projeto", "olha no <nome>") without giving the path.
 
 ${lines}
 [/PROJECTS_ON_THIS_MACHINE]`
+  }
+
+  /**
+   * [OUTRAS_CONVERSAS] desta mensagem (crossConversation.ts). Os agentes
+   * trabalhando agora vão SEMPRE — é o retrato deste instante. Os assuntos
+   * recentes só quando mudam, pela mesma regra dos catálogos: o que já foi dito
+   * continua no histórico, e repetir a lista a cada mensagem só engorda o contexto.
+   * Falha de leitura degrada para "sem assuntos", nunca segura o envio.
+   */
+  private async crossConversationContext(): Promise<string> {
+    const topics = await recentTopics(() => storageLifecycle.repository()).catch(() => [])
+    const workingNow = renderWorkingNow(this.opts.convId, this.opts.cwd, presenceSnapshot(), topics)
+    let topicsBlock = renderTopics(this.opts.convId, topics)
+    if (topicsBlock === this.crossTopicsVersion) topicsBlock = ''
+    else this.crossTopicsVersion = topicsBlock
+    return renderCrossConversation(workingNow, topicsBlock)
   }
 
   /**
@@ -2342,6 +2489,8 @@ ${lines}
           // O esforço com que a sessão subiu (o mesmo que foi ao SDK): com o
           // esforço gravado em Automático, é o que o seletor mostra em uso.
           const effort = sdkEffort(this.opts.model, this.opts.effort)
+          const initModel = typeof message.model === 'string' ? message.model.trim() : ''
+          if (initModel && !isAutoModel(initModel)) this.sessionModel = initModel
           this.emit({
             kind: 'system',
             sessionId: message.session_id,
@@ -2416,10 +2565,17 @@ ${lines}
         break
 
       case 'stream_event':
+        this.noteTurnFrame(message)
         this.handleStreamEvent(message.event as RawStreamEvent, message.parent_tool_use_id ?? null)
         break
 
       case 'assistant': {
+        // Antes do limite de uso: o frame do erro de cota também abre o turno.
+        this.noteTurnFrame(message)
+        if (this.machineClaudeLogin && isClaudeAuthFailure(message)) {
+          this.authFailedTurn = true
+          claudeAuthExpiry.markExpired()
+        }
         if (!(message as { parent_tool_use_id?: string | null }).parent_tool_use_id && sdkUsageExhausted(message)) {
           this.quotaRejected = true
           break
@@ -2438,8 +2594,11 @@ ${lines}
         }
         const blocks = message.message.content as unknown as AssistantBlock[]
         const track = trackOf(message, parentToolUseId)
-        this.recordLlmCall(message, blocks, track)
-        this.handleAssistant(blocks, (message as { aborted?: boolean }).aborted === true, track)
+        // O modelo que REALMENTE respondeu (no Automático o seletor guarda um
+        // sentinela; na troca por cota o modelo muda no meio da tarefa).
+        const model = this.responseModel(message)
+        this.recordLlmCall(message, blocks, track, model)
+        this.handleAssistant(blocks, (message as { aborted?: boolean }).aborted === true, track, model)
         break
       }
 
@@ -2479,9 +2638,15 @@ ${lines}
         // Mirrors the parent_tool_use_id filter already used for the
         // `assistant` case below (context-token tracking).
         if (r.origin?.kind === 'peer') break
+        // De qual envio é este fim — o eco do CLI, não "o último envio".
+        const turnIds = this.turns.result(message)
+        void this.contextCapture.finish(turnIds)
         // Fim do turno principal (sucesso ou erro): o 1º turno de um handoff acabou.
         this.handoffFirstTurnDone = true
         const usageExhausted = this.quotaRejected || sdkUsageExhausted(message)
+        // Turno concluído no login da máquina comprova a sessão válida.
+        if (this.machineClaudeLogin && !r.is_error && !usageExhausted && !this.authFailedTurn) claudeAuthExpiry.clear()
+        this.authFailedTurn = false
         if (this.currentInputId !== null && this.inputQueueRepository) {
           const inputId = this.currentInputId
           this.currentInputId = null
@@ -2543,7 +2708,8 @@ ${lines}
           // `|| undefined` so the renderer's `?? fallback` kicks in if we never
           // saw a main-thread assistant usage (0 would otherwise stick).
           contextTokens: this.lastContextTokens || undefined,
-          usage: reconciledUsage
+          usage: reconciledUsage,
+          ...(turnIds ? { turnIds } : {})
         })
         // A lease protects one active turn, not an idle conversation. Release it
         // as soon as the SDK is done so another process cannot be blocked by an
@@ -2585,8 +2751,11 @@ ${lines}
             limits: {
               rateLimitType: info.rateLimitType,
               status: info.status,
+              // Só vem com o aviso (allowed_warning); no `allowed` fica ausente
+              // e NÃO quer dizer 0% — quem guarda mantém o último número.
               utilization: info.utilization,
-              resetsAt: info.resetsAt,
+              // O CLI manda segundos (header `…-reset`); o contrato é ms.
+              resetsAt: toEpochMs(info.resetsAt) ?? undefined,
               updatedAt: Date.now()
             }
           })
@@ -2599,12 +2768,21 @@ ${lines}
     }
   }
 
+  /** Frame do turno principal com o eco do CLI: avisa o começo do turno (`turn-start`). */
+  private noteTurnFrame(message: unknown): void {
+    if ((message as { parent_tool_use_id?: string | null }).parent_tool_use_id) return
+    const opened = this.turns.frame(message)
+    if (opened) this.emit({ kind: 'turn-start', turnIds: opened })
+  }
+
   private markTurnIdle(): void {
     // Fora do turno nenhum bloco de ferramenta segue aberto: um Stop no meio de
     // um Write nunca manda `content_block_stop`, e o monitor ficaria "escrevendo".
     this.toolInput.finishAll()
     if (!this.turnActive && this.idleWaiters.size === 0) return
     this.turnActive = false
+    // O dispose fecha o turno DEPOIS de tirar a sessão do registro: não recriar.
+    if (!this.disposed) presenceUpdate(this, this.opts.convId, this.opts.cwd, { working: false })
     // Nada mais deve rodar: fora do turno, silêncio é o normal.
     this.stopStallWatch()
     this.toolsInFlight.clear()
@@ -2627,7 +2805,18 @@ ${lines}
     }
   }
 
-  private handleAssistant(blocks: AssistantBlock[], aborted = false, track: TrackInfo = EMPTY_TRACK): void {
+  /** O id do modelo da resposta; sem ele, o da sessão (init); nunca o sentinela
+   *  do Automático ('' quando nada é conhecido). */
+  private responseModel(message: unknown): string {
+    const raw = (message as { message?: { model?: unknown } }).message?.model
+    const fromResponse = typeof raw === 'string' ? raw.trim() : ''
+    if (fromResponse && !isAutoModel(fromResponse)) return fromResponse
+    if (this.sessionModel) return this.sessionModel
+    const chosen = this.opts.model?.trim() ?? ''
+    return chosen && !isAutoModel(chosen) ? chosen : ''
+  }
+
+  private handleAssistant(blocks: AssistantBlock[], aborted = false, track: TrackInfo = EMPTY_TRACK, model = ''): void {
     let emittedText = false
     for (const block of blocks) {
       if (block.type === 'text' && block.text) {
@@ -2660,7 +2849,8 @@ ${lines}
           // call that spawned the subagent. The renderer routes on this.
           parentToolUseId: track.parentToolUseId,
           ...(track.subagentType ? { subagentType: track.subagentType } : {}),
-          ...(track.taskDescription ? { taskDescription: track.taskDescription } : {})
+          ...(track.taskDescription ? { taskDescription: track.taskDescription } : {}),
+          ...(model ? { model } : {})
         })
       }
     }
@@ -2751,10 +2941,9 @@ ${lines}
     }
   }
 
-  private recordLlmCall(message: unknown, blocks: AssistantBlock[], track: TrackInfo): void {
+  private recordLlmCall(message: unknown, blocks: AssistantBlock[], track: TrackInfo, model: string): void {
     const m = message as {
       message?: {
-        model?: string
         usage?: {
           input_tokens?: number
           output_tokens?: number
@@ -2764,8 +2953,9 @@ ${lines}
       }
     }
     const usage = m.message?.usage
-    const model = m.message?.model ?? this.opts.model ?? ''
     const nodeId = track.parentToolUseId ?? this.getTurnId()
+    // Modelos do turno no histórico do contexto (uma chamada por resposta).
+    this.contextCapture.llmCall(model, track.parentToolUseId)
     const parentNodeId = this.llmNodeParents.get(nodeId) ?? null
 
     // A `Task`/`Agent` tool-use spawns a new node whose parent is THIS node —
@@ -2774,6 +2964,7 @@ ${lines}
     for (const block of blocks) {
       if (block.type === 'tool_use' && block.id && SPAWN_TOOLS.has(block.name ?? '')) {
         this.llmNodeParents.set(block.id, nodeId)
+        this.contextCapture.subagent(block.id, block.input)
       }
     }
 

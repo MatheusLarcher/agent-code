@@ -55,4 +55,21 @@ describe('highlightLines', () => {
     }
     expect(hl.lines(full, 'typescript')).toBe(hl.lines(full, 'typescript'))
   })
+
+  it('LineHighlighter: edição no meio reaproveita o fim igual só quando dá o mesmo realce do completo', () => {
+    const unit = (i: number): string => `export function item${i}(a: number): string {\n  const s = \`v\${a}\`\n  return s // ${i}\n}\n`
+    const base = Array.from({ length: 300 }, (_, i) => unit(i)).join('')
+    const at = base.indexOf('export function item150')
+    const edits = [
+      base.slice(0, at) + 'const novo = "meio"\n' + base.slice(at), // linha nova no meio
+      base.slice(0, at) + '/* comentário aberto\n' + base.slice(at), // abre um comentário: o resto muda de cor
+      base.slice(0, at) + base.slice(at + unit(150).length), // linhas apagadas no meio
+      base.slice(0, at) + 'const t = `aberta\n' + base.slice(at) // template string aberta
+    ]
+    for (const [i, text] of edits.entries()) {
+      const hl = new LineHighlighter()
+      hl.lines(base, 'typescript')
+      expect(hl.lines(text, 'typescript'), `edição ${i}`).toEqual(highlightToLines(text, 'typescript'))
+    }
+  })
 })

@@ -100,6 +100,17 @@ describe('"Para onde vai?"', () => {
     expect(JSON.stringify(k.entries())).not.toContain('QUJDRA==')
   })
 
+  it('pedido esperando destino guarda os anexos mesmo depois de muitas entregas', async () => {
+    const api = installApi(async () => ({ kind: 'ask', options: [{ target: B1 }], reason: 'low-confidence' }))
+    const k = mountCentral(world())
+    const waiting = await sendAndSettle(k, 'veja {{midia:1}}', [IMG])
+    api.centralRoute.mockImplementation(async () => direct(A1))
+    for (let i = 0; i < 32; i++) await sendAndSettle(k, `pedido ${i}`)
+    await k.run(() => k.world().central.choose(waiting.id, 0))
+    expect(k.spies.dispatch).toHaveBeenLastCalledWith('b1', 'veja {{midia:1}}', expect.any(String), expect.objectContaining({ images: [IMG] }))
+    expect(k.spies.notify).not.toHaveBeenCalledWith('aviso', ATTACHMENTS_LOST_MESSAGE)
+  })
+
   it('TypeSafe falhou (o decisor devolve typesafe-failed): pergunta com as opções dele', async () => {
     installApi(async () => ({ kind: 'ask', options: [{ target: { kind: 'new-sandbox' } }], reason: 'typesafe-failed' }))
     const k = mountCentral(world())
@@ -118,6 +129,17 @@ describe('"Para onde vai?"', () => {
     await k.run(() => k.world().central.choose(entry.id, 2))
     await waitFor(() => expect(k.requests()[1].state).toBe('delivered'))
     expect(k.spies.dispatch).toHaveBeenLastCalledWith('new1', 'segundo', k.requests()[1].anchor!.msgId, expect.objectContaining({ images: [IMG] }))
+  })
+
+  it('resposta torta do IPC (destino sem forma) vale como falha; "best" fora das opções é descartado', async () => {
+    const api = installApi(async () => ({ kind: 'direct', target: { kind: 'qualquer' }, rule: 'nova', confidence: 1, why: '' }) as unknown as CentralRouteResult)
+    const k = mountCentral(world())
+    expect(await sendAndSettle(k, 'oi')).toMatchObject({ state: 'asking', ask: { reason: 'typesafe-failed', options: [{ target: { kind: 'new-sandbox' } }] } })
+    expect(api.sandboxCreate).not.toHaveBeenCalled()
+    api.centralRoute.mockResolvedValue({ kind: 'ask', options: [{ target: A1 }], reason: 'low-confidence', best: 3 })
+    const entry = await sendAndSettle(k, 'e agora?')
+    expect(entry).toMatchObject({ state: 'asking', ask: { reason: 'low-confidence', options: [{ target: A1 }] } })
+    expect(entry.ask).not.toHaveProperty('best')
   })
 
   it('sem o IPC no preload: a mesma heurística', async () => {
@@ -160,7 +182,18 @@ describe('destino sumido e envio que falha', () => {
     expect(k.find('longe')).toBeTruthy()
   })
 
-  it('a dispatch não deixou a conversa ocupada nem pôs na fila: failed e pergunta de novo', async () => {
+  it('erro inesperado no caminho (IPC do disco ausente): o pedido volta a perguntar, com aviso — nunca fica preso', async () => {
+    const api = installApi(async () => direct(A1))
+    ;(api as Record<string, unknown>).pathExists = undefined
+    const k = mountCentral(world())
+    const entry = await sendAndSettle(k, 'arruma o filtro')
+    expect(entry).toMatchObject({ state: 'asking', ask: { reason: 'typesafe-failed' } })
+    expect(entry.ask?.options.map((o) => o.target)).toContainEqual({ kind: 'new-sandbox' })
+    expect(k.spies.notify).toHaveBeenCalledWith('erro', expect.stringContaining('A Central não conseguiu encaminhar o pedido'))
+    expect(k.spies.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('a dispatch não deixou a conversa ocupada nem pôs na fila: failed e pergunta de novo; a bolha com erro sai do destino', async () => {
     const api = installApi(async (req) => (req.forceAsk ? { kind: 'ask', options: [{ target: B1 }], reason: 'moved' } : direct(A1)))
     const k = mountCentral(world(), { failDispatch: new Set(['a1']) })
     const entry = await sendAndSettle(k, 'arruma o filtro')
@@ -168,6 +201,8 @@ describe('destino sumido e envio que falha', () => {
     expect(api.centralRoute).toHaveBeenCalledTimes(2)
     expect(entry).toMatchObject({ state: 'asking', ask: { reason: 'target-missing' } })
     expect(entry).not.toHaveProperty('anchor')
+    // A Central é a única dona do reenvio: o "Tentar de novo" daquela bolha sai do destino.
+    expect(k.spies.discardFailed).toHaveBeenCalledWith('a1', k.spies.dispatch.mock.calls[0][2])
   })
 })
 

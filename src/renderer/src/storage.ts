@@ -1,9 +1,8 @@
 import { currentModelId } from '@shared/ipc'
 import { migrateConversationEffort } from '@shared/autoEffort'
 import { DEFAULT_TITLE, type Conversation, type UIMessage } from './types'
-import { CENTRAL_ID } from '@shared/central'
 import { normalizeCentralState } from './central/centralRegistry'
-import { mergeCentralConversation } from './central/centralMerge'
+import { createCentralStorage } from './central/centralMergeStorage'
 import type {
   RateLimitStatus,
   RepositoryChange,
@@ -363,21 +362,15 @@ function enqueueConversation(id: string, write: () => Promise<VersionedConversat
   return next
 }
 
-/** Relê o registro autoritativo de uma conversa (tombstone incluído) e o guarda
- *  como base do próximo compare-and-set. */
+/** Re-read the authoritative record of one conversation (tombstone included) and
+ * keep it as the base of the next compare-and-set. Used to rebase a write that lost
+ * the race, so a single stale revision cannot wedge every later write of it. */
 async function authoritativeRecord(id: string): Promise<VersionedConversationDto | undefined> {
   const records = await window.api.loadVersionedConversations({ ids: [id], includeDeleted: true })
   const record = records.find((entry) => entry.id === id)
   if (record) conversationRecords.set(id, record)
   else conversationRecords.delete(id)
   return record
-}
-
-/** Re-read the authoritative revision of one conversation. Used to rebase a
- * compare-and-set that lost the race, so a single stale revision cannot wedge
- * every later write of that conversation. */
-async function authoritativeRevision(id: string): Promise<number | undefined> {
-  return (await authoritativeRecord(id))?.revision
 }
 
 /**
@@ -395,7 +388,7 @@ async function writeWithRebase(
     return await attempt(conversationRecords.get(id)?.revision)
   } catch (error) {
     if (ipcStorageErrorCode(error) !== 'REVISION_CONFLICT') throw error
-    return attempt(await authoritativeRevision(id))
+    return attempt((await authoritativeRecord(id))?.revision)
   }
 }
 
@@ -407,66 +400,18 @@ function upsertPayload(conversation: Conversation, expectedRevision: number | un
   })
 }
 
-/* ---- a Central: UMA linha que os dois PCs gravam (ver central/centralMerge.ts) ---- */
-
-/** Põe na tela a Central mesclada; quem registra é o App (ver registerCentralUpdater). */
-type CentralUpdater = (fn: (local: Conversation) => Conversation) => void
-
-let centralUpdater: CentralUpdater | null = null
-/** A maior revisão remota da Central já mesclada na tela. Uma leitura mais velha
- *  que chegue depois (respostas fora de ordem) não volta a tela para ela: tiraria
- *  entradas do outro PC que já apareceram aqui. */
-let centralScreenRevision = 0
-
-/**
- * Os dois PCs gravam a MESMA linha da Central. Com um atualizador registrado, a
- * storage para de trocar a Central inteira pelo feed e de regravar a cópia local
- * por cima no conflito: mescla por dono de entrada e entrega o resultado à tela
- * por aqui. `null` desliga (volta ao comportamento das outras conversas).
- */
-export function registerCentralUpdater(update: CentralUpdater | null): void {
-  centralUpdater = update
-}
-
-/** Entrega à tela um registro remoto da Central, mesclado por dono — nunca um mais
- *  velho que o último entregue. */
-function deliverCentral(record: VersionedConversationDto, self: string | null): void {
-  if (!centralUpdater || record.revision <= centralScreenRevision) return
-  centralScreenRevision = record.revision
-  const remote = normalizeConversation(record)
-  centralUpdater((local) => mergeCentralConversation(local, remote, self))
-}
-
-/**
- * Gravação da Central com atualizador. Toda tentativa leva a cópia local MESCLADA
- * com o registro da revisão que ela espera: as entradas do outro PC vão exatamente
- * como estão nessa revisão, e o CAS garante que a linha ainda é ela. Sem isso, uma
- * cópia capturada antes de a tela receber a mescla (debounce, fila) passaria no CAS
- * logo depois de uma nova tentativa bem-sucedida e apagaria o que o outro PC gravou.
- * No conflito: relê, mescla com o remoto e tenta UMA vez (o segundo conflito sobe,
- * como nas outras conversas, e o próximo salvamento tenta de novo) — e a tela ganha
- * as entradas do outro PC, mesmo se essa tentativa falhar.
- */
-async function writeCentral(conversation: Conversation): Promise<VersionedConversationDto> {
-  const self = await installationId()
-  const mergedWith = (base: VersionedConversationDto | undefined): Conversation => {
-    if (!base) return conversation
-    const merged = mergeCentralConversation(conversation, normalizeConversation(base), self)
-    return merged === conversation ? conversation : cleanConversation(merged)
-  }
-  const known = conversationRecords.get(conversation.id)
-  try {
-    return await upsertPayload(mergedWith(known), known?.revision)
-  } catch (error) {
-    if (ipcStorageErrorCode(error) !== 'REVISION_CONFLICT') throw error
-    const remote = await authoritativeRecord(conversation.id)
-    try {
-      return await upsertPayload(mergedWith(remote), remote?.revision)
-    } finally {
-      if (remote) deliverCentral(remote, self)
-    }
-  }
-}
+/* A Central é UMA linha que os dois PCs gravam: com o atualizador registrado, grava
+ * mesclada por dono, com até MAX_CENTRAL_REBASES (ver central/centralMergeStorage.ts). */
+const central = createCentralStorage({
+  known: (id) => conversationRecords.get(id),
+  reread: authoritativeRecord,
+  upsert: upsertPayload,
+  normalize: normalizeConversation,
+  clean: cleanConversation,
+  installationId
+})
+/** O App registra quem põe a Central mesclada na tela; `null` desliga. */
+export const registerCentralUpdater = central.register
 
 export async function saveConversations(list: Conversation[]): Promise<void> {
   const clean = list.map(cleanConversation)
@@ -477,9 +422,8 @@ export async function saveConversations(list: Conversation[]): Promise<void> {
     if (!current?.deletedAt && serialized(current?.payload) === serialized(conversation)) continue
     writes.push(
       enqueueConversation(conversation.id, () =>
-        // A Central com atualizador grava mesclada por dono (ver writeCentral).
-        conversation.id === CENTRAL_ID && centralUpdater
-          ? writeCentral(conversation)
+        central.handles(conversation.id)
+          ? central.write(conversation)
           : writeWithRebase(conversation.id, (expectedRevision) => upsertPayload(conversation, expectedRevision))
       )
     )
@@ -522,21 +466,6 @@ export function markConversationsDirty(ids: Iterable<string>): void {
   for (const id of ids) dirtyConversationIds.add(id)
 }
 
-/**
- * Feed da Central com atualizador: suja ou não, a tela recebe o remoto mesclado por
- * dono — trocar a Central inteira apagaria o que este PC ainda não gravou, e pular a
- * suja esconderia o outro PC até a próxima gravação daqui. A revisão conhecida NÃO
- * avança: uma gravação capturada antes desta mescla (na fila, no debounce) ainda tem
- * de perder o CAS e mesclar com o banco, em vez de regravar por cima uma cópia sem
- * as entradas do outro PC. Sumida do banco: fica na tela (há UMA Central; a próxima
- * gravação a refaz).
- */
-function mergeCentralChange(record: VersionedConversationDto | undefined, self: string | null): void {
-  const known = conversationRecords.get(CENTRAL_ID)
-  if (!record || (known && record.revision <= known.revision)) return
-  deliverCentral(record, self)
-}
-
 /** Reload only the authoritative records signaled by the durable change feed.
  * Dirty local conversations are intentionally omitted so drafts or rejected
  * writes cannot be overwritten by another installation. Changes this
@@ -555,9 +484,8 @@ export async function loadConversationChanges(changes: RepositoryChange[]): Prom
   const fetched = new Map(records.map((record) => [record.id, record]))
   const result = new Map<string, Conversation | null>()
   for (const id of ids) {
-    // A Central com atualizador é mesclada, suja ou não (ver mergeCentralChange).
-    if (id === CENTRAL_ID && centralUpdater) {
-      mergeCentralChange(fetched.get(id), self)
+    if (central.handles(id)) {
+      central.mergeChange(fetched.get(id), self) // suja ou não; a revisão conhecida não anda
       continue
     }
     if (dirtyConversationIds.has(id)) continue
@@ -614,7 +542,13 @@ export async function loadUsageLimits(): Promise<Record<string, RateLimitStatus>
     const raw = await readMigrating(USAGE_LIMITS_KEY)
     if (!raw) return {}
     const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, RateLimitStatus>) : {}
+    if (!parsed || typeof parsed !== 'object') return {}
+    const limits = parsed as Record<string, RateLimitStatus>
+    // Versões antigas gravavam o `resetsAt` do rate_limit_event em segundos.
+    for (const limit of Object.values(limits)) {
+      if (typeof limit?.resetsAt === 'number' && limit.resetsAt > 0 && limit.resetsAt < 1e12) limit.resetsAt *= 1000
+    }
+    return limits
   } catch {
     return {}
   }

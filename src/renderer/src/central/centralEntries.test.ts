@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { CentralEntry, CentralReplyEntry, CentralRequestEntry, CentralState } from '@shared/central'
+import type { CentralAnchor, CentralEntry, CentralReplyEntry, CentralRequestEntry, CentralState } from '@shared/central'
 import { MAX_CENTRAL_ENTRIES } from '@shared/central'
 import {
   ADOPTED_TEXT_MAX_CHARS,
@@ -183,13 +183,16 @@ describe('donos e âncoras ativas', () => {
     expect(isRoutedEntry(request('r1', { origin: 'conversation' }))).toBe(false)
   })
 
-  it('hasActiveAnchor: pedido ancorado na conversa sem resposta ou com resposta não terminada', () => {
+  it('hasActiveAnchor: só com o turno VIVO da âncora (em voo, na fila, na recuperação) — resposta não decide', () => {
     const anchored = request('r1', { anchor: { convId: 'c1', msgId: 'u1' } })
-    expect(hasActiveAnchor([anchored], 'c1')).toBe(true)
-    expect(hasActiveAnchor([anchored, reply('r1')], 'c1')).toBe(true)
-    expect(hasActiveAnchor([anchored, reply('r1', { done: true })], 'c1')).toBe(false)
-    expect(hasActiveAnchor([anchored], 'c2')).toBe(false)
+    const live = (...keys: string[]) => (a: CentralAnchor) => keys.includes(`${a.convId}/${a.msgId}`)
+    expect(hasActiveAnchor([anchored], 'c1', live('c1/u1'))).toBe(true)
+    // Descartado da fila ou parado antes do 1º evento: sem resposta, mas nada vivo.
+    expect(hasActiveAnchor([anchored], 'c1', live())).toBe(false)
+    // O MESMO turno rodando de novo (reenvio) volta a ser ativo, mesmo com resposta terminada.
+    expect(hasActiveAnchor([anchored, reply('r1', { done: true })], 'c1', live('c1/u1'))).toBe(true)
+    expect(hasActiveAnchor([anchored], 'c2', live('c1/u1'))).toBe(false)
     // Injetada não tem resposta própria: não conta como turno em aberto.
-    expect(hasActiveAnchor([request('r2', { anchor: { convId: 'c3', msgId: 'u2' }, injected: true })], 'c3')).toBe(false)
+    expect(hasActiveAnchor([request('r2', { anchor: { convId: 'c3', msgId: 'u2' }, injected: true })], 'c3', live('c3/u2'))).toBe(false)
   })
 })

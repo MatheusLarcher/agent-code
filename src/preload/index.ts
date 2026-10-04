@@ -4,7 +4,7 @@ import type { AgentCodeApi } from '../shared/api'
 import type { AccountUsageResult, AddClaudeAccountResult, ClaudeAccountView, UseAccountResult } from '../shared/claudeAccounts'
 import type { TypeSafePauseStatus } from '../shared/typesafePause'
 import type { ChromeBridgeStatus } from '../shared/chromeBridge'
-import type { CentralCorrection, CentralRouteRequest, CentralRouteResult } from '../shared/central'
+import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from '../shared/central'
 import type {
   ConversationQueryDto,
   ProjectConversationCountDto,
@@ -13,6 +13,7 @@ import type {
   AgentMessageKind,
   AndroidProgressMsg,
   SpeechSetupProgress,
+  VoiceInstallStatus,
   WhisperStatus,
   AppConfig,
   BoardItem,
@@ -81,6 +82,8 @@ import type {
   PlanMediaDto,
   SuggestTitleResult
 } from '../shared/ipc'
+
+import type { ContextTurnSummary, ContextTurnDetail, ContextExactCount, ContextTurnChanged } from '../shared/contextSnapshot'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
@@ -247,6 +250,8 @@ const api: AgentCodeApi = {
   ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }> =>
     ipcRenderer.invoke(Channels.voiceTts, text, opts),
   voiceStatus: (): Promise<WhisperStatus> => ipcRenderer.invoke(Channels.voiceStatus),
+  voiceInstall: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke(Channels.voiceInstall),
+  voiceInstallStatus: (): Promise<VoiceInstallStatus> => ipcRenderer.invoke(Channels.voiceInstallStatus),
   authStatus: (): Promise<{ authenticated: boolean }> => ipcRenderer.invoke(Channels.authStatus),
   authLogin: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.authLogin),
   authLogout: (): Promise<ClaudeAuthStatus> => ipcRenderer.invoke(Channels.authLogout),
@@ -305,6 +310,12 @@ const api: AgentCodeApi = {
   refreshUsage: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentRefreshUsage, convId),
   getTokenUsageHistory: (convId: string): Promise<TokenUsageHistory> =>
     ipcRenderer.invoke(Channels.tokenUsageHistory, convId),
+  listContextTurns: (convId: string): Promise<ContextTurnSummary[]> => ipcRenderer.invoke(Channels.contextTurnsList, convId),
+  readContextTurn: (convId: string, turnId: string, parentToolUseId?: string): Promise<ContextTurnDetail | null> =>
+    ipcRenderer.invoke(Channels.contextTurnsRead, convId, turnId, parentToolUseId),
+  countContextExact: (convId: string): Promise<ContextExactCount> => ipcRenderer.invoke(Channels.contextTurnsCountExact, convId),
+  revealSecret: (name: string): Promise<string | null> => ipcRenderer.invoke(Channels.secretsReveal, name),
+  onContextTurnsChanged: (cb: (event: ContextTurnChanged) => void): (() => void) => on(Channels.contextTurnsChanged, cb),
   onAgentEvent: (cb: (e: AgentEventMsg) => void): (() => void) => on(Channels.agentEvent, cb),
   onPermissionRequest: (cb: (m: PermissionRequestMsg) => void): (() => void) =>
     on(Channels.agentPermissionRequest, cb),
@@ -371,6 +382,7 @@ const api: AgentCodeApi = {
     on(Channels.remoteRecoveryAction, cb),
   onRemotePermissionResponse: (cb: (m: RemotePermissionResponseMsg) => void): (() => void) =>
     on(Channels.remotePermissionResponse, cb),
+  onRemoteCentralChoose: (cb: (m: RemoteCentralChoose) => void): (() => void) => on(Channels.remoteCentralChoose, cb),
   onRemoteInterrupt: (cb: (m: { convId: string }) => void): (() => void) => on(Channels.remoteInterrupt, cb),
   onRemoteSetMode: (cb: (m: RemoteSetModeMsg) => void): (() => void) => on(Channels.remoteSetMode, cb),
   onRemoteConversationAction: (cb: (m: RemoteConversationAction) => void): (() => void) =>

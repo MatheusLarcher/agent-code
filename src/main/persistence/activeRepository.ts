@@ -1,5 +1,10 @@
 import type { SessionStore } from '@anthropic-ai/claude-agent-sdk'
-import { StorageError, type PersistenceRepository, type TokenUsageRepository } from './types'
+import {
+  StorageError,
+  type ContextHistoryRepository,
+  type PersistenceRepository,
+  type TokenUsageRepository
+} from './types'
 
 /**
  * Acesso ao repositório ATIVO na hora de cada chamada.
@@ -109,6 +114,17 @@ export function activeTokenUsage(resolve: RepositoryResolver): TokenUsageReposit
     listLlmCalls: async (conversationId) => onActive(resolve, (repository) => repository.listLlmCalls(conversationId)),
     listLlmUsageTotals: async (conversationId) =>
       onActive(resolve, (repository) => repository.listLlmUsageTotals(conversationId))
+  }
+}
+
+/** Histórico do contexto (`context_turn`/`context_blob`) pelo repositório ativo. */
+export function activeContextHistory(resolve: RepositoryResolver): ContextHistoryRepository {
+  return {
+    saveContextTurn: async (write) => onActive(resolve, (repository) => repository.saveContextTurn(write)),
+    listContextTurns: async (convId, limit) => onActive(resolve, (repository) => repository.listContextTurns(convId, limit)),
+    readContextTurn: async (convId, turnId) => onActive(resolve, (repository) => repository.readContextTurn(convId, turnId)),
+    deleteContextTurns: async (convId) => onActive(resolve, (repository) => repository.deleteContextTurns(convId)),
+    pruneOrphanContextBlobs: async () => onActive(resolve, (repository) => repository.pruneOrphanContextBlobs())
   }
 }
 

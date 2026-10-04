@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { trackMessages } from '../chatPage'
+import { trackMessages, type ToolUseMessage } from '../chatPage'
 import { track } from '../../office/adapter/testFeed'
 import type { UIMessage } from '../../types'
 import { buildTabs, buildTerminal, MAX_TABS, SCAN_MAX } from './codeModel'
@@ -7,7 +7,7 @@ import { buildTabs, buildTerminal, MAX_TABS, SCAN_MAX } from './codeModel'
 const P = 'C:\\proj\\loja\\src\\'
 let seq = 0
 const user = (): UIMessage => ({ kind: 'user', id: `u${seq++}`, text: 'pedido' })
-const tool = (name: string, input: unknown, result?: string | false, isError = false): UIMessage => ({
+const tool = (name: string, input: unknown, result?: string | false, isError = false): ToolUseMessage => ({
   kind: 'tool-use',
   id: `t${seq++}`,
   name,
@@ -15,9 +15,9 @@ const tool = (name: string, input: unknown, result?: string | false, isError = f
   parentToolUseId: null,
   ...(result === false || result === undefined ? {} : { result: { isError, text: result } })
 })
-const write = (file: string, content: string, result: string | false = 'File created successfully at: x'): UIMessage =>
+const write = (file: string, content: string, result: string | false = 'File created successfully at: x'): ToolUseMessage =>
   tool('Write', { file_path: P + file, content }, result)
-const edit = (file: string, old: string, neu: string, result: string | false = 'The file x has been updated.'): UIMessage =>
+const edit = (file: string, old: string, neu: string, result: string | false = 'The file x has been updated.'): ToolUseMessage =>
   tool('Edit', { file_path: P + file, old_string: old, new_string: neu }, result)
 
 describe('buildTabs', () => {
@@ -80,15 +80,12 @@ describe('buildTabs', () => {
   })
 
   it('MultiEdit vira uma edição por item; NotebookEdit guarda o modo; pendente = sem resultado', () => {
-    const msgs = [
-      user(),
-      tool('MultiEdit', { file_path: P + 'm.ts', edits: [{ old_string: 'a', new_string: 'b' }, { old_string: 'c', new_string: 'd', replace_all: true }] }, 'ok'),
-      tool('NotebookEdit', { notebook_path: P + 'n.ipynb', new_source: 'print(1)', edit_mode: 'insert' }, false)
-    ]
+    const multi = tool('MultiEdit', { file_path: P + 'm.ts', edits: [{ old_string: 'a', new_string: 'b' }, { old_string: 'c', new_string: 'd', replace_all: true }] }, 'ok')
+    const msgs = [user(), multi, tool('NotebookEdit', { notebook_path: P + 'n.ipynb', new_source: 'print(1)', edit_mode: 'insert' }, false)]
     const [n, m] = buildTabs(msgs)
     expect(m.edits).toEqual([
-      { kind: 'edit', id: `${msgs[1].id}#0`, tool: msgs[1].id, old: 'a', new: 'b', all: false, pending: false },
-      { kind: 'edit', id: `${msgs[1].id}#1`, tool: msgs[1].id, old: 'c', new: 'd', all: true, pending: false }
+      { kind: 'edit', id: `${multi.id}#0`, tool: multi.id, old: 'a', new: 'b', all: false, pending: false },
+      { kind: 'edit', id: `${multi.id}#1`, tool: multi.id, old: 'c', new: 'd', all: true, pending: false }
     ])
     expect(n.edits[0]).toMatchObject({ kind: 'notebook', source: 'print(1)', mode: 'insert', pending: true })
     expect(n.pending).toBe(true)
@@ -108,10 +105,11 @@ describe('buildTabs', () => {
   })
 
   it('a assinatura muda quando o resultado chega', () => {
-    const pending = [user(), edit('a.ts', 'x', 'y', false)]
-    const done = [pending[0], { ...pending[1], result: { isError: false, text: 'ok' } } as UIMessage]
-    expect(buildTabs(pending)[0].sig).not.toBe(buildTabs(done)[0].sig)
-    expect(buildTabs(done)[0].doneTools).toEqual([pending[1].id])
+    const ask = user()
+    const e = edit('a.ts', 'x', 'y', false)
+    const done: UIMessage[] = [ask, { ...e, result: { isError: false, text: 'ok' } }]
+    expect(buildTabs([ask, e])[0].sig).not.toBe(buildTabs(done)[0].sig)
+    expect(buildTabs(done)[0].doneTools).toEqual([e.id])
   })
 })
 

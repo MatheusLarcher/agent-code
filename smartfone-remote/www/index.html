@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#17110d" />
     <title>Agent Remote</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="central.css" />
   </head>
   <body>
     <!-- Pairing screen -->
@@ -99,6 +100,8 @@
         <button id="turn-recovery-cancel">Cancelar</button>
       </div>
       <div id="pull-refresh" class="reconnect-bar" hidden><span class="spinner"></span><span id="pull-refresh-text">Puxe para atualizar</span></div>
+      <!-- Central: conversas trabalhando agora (central.js); só aparece na Central. -->
+      <nav id="central-rail" class="central-rail" aria-label="Conversas trabalhando agora" hidden></nav>
       <div class="messages-wrap">
         <div id="messages" class="messages"></div>
         <nav id="question-map" class="question-map" aria-label="Mapa das suas perguntas" hidden></nav>
@@ -113,6 +116,8 @@
         <button id="jump-bottom" class="jump-bottom" title="Ir para o final" aria-label="Ir para o final" hidden>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>
         </button>
+        <!-- Central: modo resposta (arrastar a mensagem para a direita; central.js). -->
+        <div id="c-replybar" class="c-quote c-replybar" hidden></div>
         <div id="preview" class="preview-tray" hidden></div>
         <!-- Model + effort of the CURRENT conversation (mirrors the PC pickers). -->
         <div id="model-bar" class="model-bar" hidden>
@@ -213,5 +218,7 @@
 
     <script src="jsqr.js"></script>
     <script src="app.js"></script>
+    <script src="central.js"></script>
+    <script src="centralTurns.js"></script>
   </body>
 </html>

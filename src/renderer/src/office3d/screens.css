@@ -60,7 +60,7 @@
   border: 1px solid rgba(0, 0, 0, 0.6);
   border-radius: 2px;
   overflow: hidden;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) calc(100% * var(--chat-bg-alpha, 1)), transparent);
 }
 .o3d-chat-screen-body.message-list { padding: 14px 16px 10px; overscroll-behavior: contain; }
 
@@ -175,6 +175,22 @@
   object-fit: contain;
   background: #0d0e10;
 }
+
+/* A troca de modelo no meio da tarefa, no ponto em que aconteceu (ChatTurn). */
+.o3d-model-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  padding: 8px 12px;
+  border: 1px dashed #4a4a4e;
+  border-radius: 9px;
+  color: #d6d6d6;
+  font-size: 12.5px;
+}
+.o3d-model-switch > svg { flex: none; color: #e2c08d; }
+.o3d-model-switch b { font-weight: 600; }
+.o3d-model-switch small { display: block; margin-top: 2px; color: #8f8f8f; font-size: 11.5px; }
 
 @media (prefers-reduced-motion: reduce) {
   .o3d-preview,

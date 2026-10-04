@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PermissionRequest } from '@shared/ipc'
-import type { CentralEntry } from '@shared/central'
+import type { CentralAnchor, CentralEntry } from '@shared/central'
 import { answeredQuestionEntry, pendingConvIds } from './centralQuestions'
 
 /**
@@ -20,13 +20,16 @@ const ask: PermissionRequest = {
 const bash: PermissionRequest = { id: 'p2', toolName: 'Bash', input: { command: 'npm test' } }
 
 describe('pendingConvIds', () => {
-  it('só as conversas com pedido ancorado e resposta não terminada', () => {
+  it('só as conversas com o turno de um pedido ancorado VIVO (resposta terminada ou ausente não decide)', () => {
     const entries: CentralEntry[] = [
       { kind: 'request', id: 'r1', ts: 1, text: 'a', state: 'delivered', anchor: { convId: 'c1', msgId: 'u1' } },
       { kind: 'request', id: 'r2', ts: 2, text: 'b', state: 'delivered', anchor: { convId: 'c2', msgId: 'u2' } },
-      { kind: 'reply', id: 'reply:r2', ts: 3, requestId: 'r2', anchor: { convId: 'c2', msgId: 'u2' }, notes: [], activity: { segments: [], text: '', count: 0, errors: 0 }, done: true }
+      { kind: 'reply', id: 'reply:r2', ts: 3, requestId: 'r2', anchor: { convId: 'c2', msgId: 'u2' }, notes: [], activity: { segments: [], text: '', count: 0, errors: 0 }, done: true },
+      // Pedido descartado (nada vivo com a âncora dele): nunca mais conta.
+      { kind: 'request', id: 'r4', ts: 4, text: 'd', state: 'delivered', anchor: { convId: 'c4', msgId: 'u4' } }
     ]
-    expect(pendingConvIds(entries, { c1: ask, c2: bash, c3: bash })).toEqual(['c1'])
+    const live = (a: CentralAnchor): boolean => a.msgId === 'u1'
+    expect(pendingConvIds(entries, { c1: ask, c2: bash, c3: bash, c4: bash }, live)).toEqual(['c1'])
   })
 })
 

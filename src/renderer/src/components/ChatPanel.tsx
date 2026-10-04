@@ -23,6 +23,8 @@ import { TokenUsagePanel } from './TokenUsagePanel'
 import { emptyUsageMap, type UsageMap } from '../tokenUsageTree'
 import { useChatDisplay } from './chatDisplay'
 import { useQuoteComments } from './quoteComment/useQuoteComments'
+import { CentralBackButton } from '../central/CentralBackButton'
+import { ChatOpacityControl } from './ChatOpacityControl'
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -264,6 +266,8 @@ interface Props {
   fastModeAvailable: boolean
   fastMode: boolean
   onFastModeChange: (on: boolean) => void
+  /** Conversa aberta pela Central: mostra "← Central" no topo (o App decide quando). */
+  onBackToCentral?: () => void
 }
 
 const fmt = (n: number): string => {
@@ -334,6 +338,7 @@ export function ChatPanel(props: Props): JSX.Element {
     <section className="chat-panel">
       {!compact && (
         <div className="chat-header">
+          {props.onBackToCentral && <CentralBackButton onBack={props.onBackToCentral} />}
           <span className="chat-title">Chat</span>
           {props.headerExtra}
           <div className="token-meter" title="Consumo geral desta conversa">
@@ -352,6 +357,13 @@ export function ChatPanel(props: Props): JSX.Element {
               <IconChevronDown size={13} />
             </button>
           </div>
+          <ChatOpacityControl />
+        </div>
+      )}
+
+      {compact && props.onBackToCentral && (
+        <div className="central-back-strip">
+          <CentralBackButton onBack={props.onBackToCentral} />
         </div>
       )}
 

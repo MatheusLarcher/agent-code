@@ -8,6 +8,9 @@ export interface PromptContext {
   /** Change-only list of projects known on this machine — same "only when it
    *  changes" rule as memory/skills, so it lands in history once, not every turn. */
   projects: string
+  /** [OUTRAS_CONVERSAS]: o que os agentes das outras conversas fazem agora
+   *  (crossConversation.ts). Só informativo. Opcional: '' ou ausente = nada. */
+  others?: string
   reminder: string
 }
 
@@ -24,7 +27,7 @@ export interface RequestContext {
  * Agent SDK hooks instead (composeRequestContext).
  */
 export function composeUserPrompt(body: string, parts: PromptContext): string {
-  const context = [parts.stamp, parts.memory, parts.skills, parts.projects, parts.reminder]
+  const context = [parts.stamp, parts.memory, parts.skills, parts.projects, parts.others, parts.reminder]
     .filter(Boolean)
     .join('\n\n')
   const loopMatch = body.match(/^\s*\/loop(?:\s+|$)/iu)

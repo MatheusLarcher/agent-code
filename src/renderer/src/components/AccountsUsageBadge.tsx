@@ -3,7 +3,7 @@ import type { RateLimitStatus } from '@shared/ipc'
 import type { AccountUsageReading, ClaudeAccountView } from '@shared/claudeAccounts'
 import { accountDisplayName, readingToLimits, updatedAgo } from '../accounts/accountUsageView'
 import { IconChevronDown } from './Icons'
-import { UsagePill } from './UsageBadge'
+import { UsagePill, UsageRing } from './UsageBadge'
 
 /** Estado de uma seção enquanto o painel está aberto. */
 interface Live {
@@ -92,28 +92,13 @@ export function AccountsUsageBadge(props: Props): JSX.Element {
   const active = activeIndex >= 0 ? accounts[activeIndex] : undefined
   const activeLimits = active && shown(active.id) ? readingToLimits(active.usage) : []
   const gptOnBar = shown('gpt') ? props.gptLimits : []
-  const dense = activeLimits.length + gptOnBar.length > 2
 
   return (
     <div className={`usage-badge${open ? ' open' : ''}`} ref={rootRef}>
       {active && activeLimits.length > 0 && (
-        <div className="usage-group">
-          <span className="usage-provider" title={active.email ?? ''}>
-            Claude · {accountDisplayName(active, activeIndex)}
-          </span>
-          {activeLimits.map((l) => (
-            <UsagePill key={l.rateLimitType} limit={l} dense={dense} />
-          ))}
-        </div>
+        <UsageRing name={`Claude · ${accountDisplayName(active, activeIndex)}`} initial="C" limits={activeLimits} />
       )}
-      {gptOnBar.length > 0 && (
-        <div className="usage-group">
-          <span className="usage-provider">GPT</span>
-          {gptOnBar.map((l) => (
-            <UsagePill key={l.rateLimitType} limit={l} dense={dense} />
-          ))}
-        </div>
-      )}
+      {gptOnBar.length > 0 && <UsageRing name="GPT" initial="G" limits={gptOnBar} />}
       {activeLimits.length === 0 && gptOnBar.length === 0 && <span className="usage-provider muted">Uso</span>}
       <button
         type="button"

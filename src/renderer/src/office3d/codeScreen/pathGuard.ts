@@ -70,9 +70,9 @@ export function isInside(p: string, cwd: string): boolean {
 const SENSITIVE_DIRS = new Set(['.ssh', '.aws', '.gnupg', '.azure', '.kube', '.docker'])
 /** Nomes de arquivo de segredo (comparados em minúsculas). */
 const SENSITIVE_NAMES: RegExp[] = [
-  /^\.env(\..*)?$/,
+  // `.env*`: qualquer nome que comece com .env (.env, .env.local, .env-backup, .envrc…).
+  /^\.env/,
   /\.env$/,
-  /^\.envrc$/,
   /\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg)$/,
   /^id_(rsa|dsa|ecdsa|ed25519)/,
   /credential|secret|password|passwd/,

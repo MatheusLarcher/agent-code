@@ -70,7 +70,9 @@ export function planMirror(input: MirrorInput): MirrorPlan {
       if (lastAnchors.get(dest.id) !== anchor.msgId) continue
     }
     if (!dest) {
-      if (!plan.missing.includes(anchor.convId)) plan.missing.push(anchor.convId)
+      // Re-link só de turno que começou e não terminou (há resposta aberta): o que
+      // nunca rodou não tem o que espelhar e não recarrega o destino a cada boot.
+      if (reply && !plan.missing.includes(anchor.convId)) plan.missing.push(anchor.convId)
       continue
     }
     const turn = mirrorTurn(dest.messages, anchor.msgId, running)

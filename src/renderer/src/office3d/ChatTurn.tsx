@@ -6,6 +6,8 @@
  * do agente, o título da conversa, quem é e o estado.
  */
 import type { CSSProperties, ReactNode } from 'react'
+import { AUTO_MODEL } from '@shared/ipc'
+import { modelDisplayName } from '@shared/modelLabel'
 import { ChatRow, lastAnswerTsId, rowKey, type ChatRowContext } from '../components/ChatRows'
 import { useChatDisplay } from '../components/chatDisplay'
 import { ToolCard } from '../components/ToolCard'
@@ -30,9 +32,13 @@ export function TurnRows({ messages, busy, live = null, limit = 0 }: TurnRowsPro
   return (
     <>
       {start > 0 && <div className="load-more-hint">↑ {start === 1 ? '1 anterior' : `${start} anteriores`} neste turno</div>}
-      {messages.slice(start).map((m, i) => (
-        <ChatRow key={rowKey(m, start + i)} m={m} ctx={ctx} />
-      ))}
+      {messages.slice(start).map((m, i) =>
+        m.kind === 'provider-switch' && m.fromModel !== AUTO_MODEL ? (
+          <ModelSwitchNote key={rowKey(m, start + i)} from={m.fromModel} to={m.model} why={m.text} />
+        ) : (
+          <ChatRow key={rowKey(m, start + i)} m={m} ctx={ctx} />
+        )
+      )}
       {live && <ToolCard m={live} />}
       {busy && !live && (
         <div className="msg assistant">
@@ -45,6 +51,25 @@ export function TurnRows({ messages, busy, live = null, limit = 0 }: TurnRowsPro
       )}
       {messages.length === 0 && !live && !busy && <div className="msg system-note">Nada neste turno ainda.</div>}
     </>
+  )
+}
+
+/**
+ * A troca de modelo no meio da tarefa (troca automática por cota), no ponto em
+ * que aconteceu: "Trocou de modelo: Opus 5.5 → GPT-6.1 Sol" e o motivo. O
+ * anúncio do Automático (fromModel = sentinela) continua a nota de sempre.
+ */
+function ModelSwitchNote({ from, to, why }: { from: string; to: string; why: string }): JSX.Element {
+  return (
+    <div className="msg o3d-model-switch" role="status">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M11 3.5c.7 4.6 2.4 6.3 7 7-4.6.7-6.3 2.4-7 7-.7-4.6-2.4-6.3-7-7 4.6-.7 6.3-2.4 7-7zM19 15.5v5M16.5 18h5" />
+      </svg>
+      <span>
+        Trocou de modelo: <b>{modelDisplayName(from) || from}</b> → <b>{modelDisplayName(to) || to}</b>
+        <small>{why}</small>
+      </span>
+    </div>
   )
 }
 

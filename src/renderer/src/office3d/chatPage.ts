@@ -70,7 +70,11 @@ export function trackMessages(track: AgentTrack): UIMessage[] {
   const out: UIMessage[] = [{ kind: 'user', id: `${track.id}:tarefa`, text: track.label }]
   for (const s of track.steps) {
     const done = s.result !== undefined || s.endedAt !== undefined
-    out.push({ kind: 'tool-use', id: s.id, name: s.name, input: s.input, parentToolUseId: null, ...(done ? { result: { isError: !!s.isError, text: s.result ?? '' } } : {}) })
+    out.push({
+      kind: 'tool-use', id: s.id, name: s.name, input: s.input, parentToolUseId: null,
+      ...(s.model ? { model: s.model } : {}),
+      ...(done ? { result: { isError: !!s.isError, text: s.result ?? '' } } : {})
+    })
   }
   if (track.status !== 'running') out.push({ kind: 'status', id: `${track.id}:fim`, text: track.status === 'error' ? 'Terminou com erro.' : 'Tarefa concluída.' })
   return out
@@ -101,17 +105,19 @@ export function turnMessages(feed: OfficeFeed | null, info: LookupInfo | undefin
   return msgs.slice(start).filter(shown)
 }
 
-/** Código ao vivo do principal como o cartão que ainda vai chegar: Edit (com o trecho antigo) ou Write. */
+/**
+ * Código ao vivo do principal como o cartão que ainda vai chegar, com o nome REAL da ferramenta
+ * (d.name) e o formato de input dela. O trecho antigo só entra quando já chegou no stream.
+ */
 export function liveToolMessage(d: ToolInputDelta): ToolUseMessage {
   const file_path = d.filePath ?? ''
-  const edit = d.oldText !== undefined
-  return {
-    kind: 'tool-use',
-    id: d.toolUseId,
-    name: edit ? 'Edit' : 'Write',
-    input: edit ? { file_path, old_string: d.oldText, new_string: d.newText } : { file_path, content: d.newText },
-    parentToolUseId: null
-  }
+  const pair = { ...(d.oldText !== undefined ? { old_string: d.oldText } : {}), new_string: d.newText }
+  const input =
+    d.name === 'Write' ? { file_path, content: d.newText }
+    : d.name === 'MultiEdit' ? { file_path, edits: [pair] }
+    : d.name === 'NotebookEdit' ? { notebook_path: file_path, new_source: d.newText }
+    : { file_path, ...pair }
+  return { kind: 'tool-use', id: d.toolUseId, name: d.name, input, parentToolUseId: null }
 }
 
 /** Markdown → texto corrido (o monitor não tem como mostrar a formatação). */

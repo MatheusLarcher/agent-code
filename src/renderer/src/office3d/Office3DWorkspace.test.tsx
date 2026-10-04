@@ -89,6 +89,8 @@ function manualRaf(): { opts: Pick<EngineOptions, 'raf' | 'caf' | 'now'>; flush(
 }
 
 beforeEach(() => {
+  // A tela do monitor lembra o último app no localStorage: cada teste começa do zero.
+  localStorage.clear()
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = RO
   observed.length = 0
@@ -314,6 +316,9 @@ describe('Office3DWorkspace', () => {
     const view = render(ui(true))
     fireEvent.pointerDown(screen.getByTestId('office3d-canvas'), { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
+    // Abre no Chat (o turno, vazio aqui); o Código fica a um clique.
+    expect([screen.getByTestId('office-screen').dataset.mode, screen.getByTestId('office-screen').dataset.kind]).toEqual(['chat', 'empty'])
+    fireEvent.click(screen.getByRole('button', { name: 'Código' }))
     expect(screen.getByTestId('office-screen').dataset.kind).toBe('empty')
     expect(src.subs).toBe(2) // o motor + a tela acompanhando o feed
     // O App re-renderiza (mesmas props): a âncora da tela não é religada no motor.
@@ -324,13 +329,12 @@ describe('Office3DWorkspace', () => {
     const delta: ToolInputDelta = { kind: 'tool-input-delta', toolUseId: 'w1', name: 'Write', filePath: 'C:\\a.ts', newText: 'x', totalLines: 1, done: false }
     act(() => liveInput.push(convId, delta))
     expect(liveInput.latest(convId, null)).toBeTruthy() // a tela assina o código ao vivo do principal
-    // …e mostra o cartão que ainda vai chegar, como o ToolCard do chat.
-    const liveCard = screen.getByTestId('office-screen').querySelector('.tool-card')
-    expect(liveCard?.querySelector('.tool-name')?.textContent).toBe('Write')
-    expect(liveCard?.querySelector('.tool-detail')?.textContent).toBe('a.ts')
-    expect(liveCard?.querySelector('.tool-badge.run')).toBeTruthy()
+    // …e abre o arquivo que ele digita (linha atual: o código e a etiqueta do cursor); fechado o bloco, para de digitar.
+    const shown = screen.getByTestId('office-screen')
+    const current = screen.getByRole('tabpanel').querySelector('.cm-current .cm-code')
+    expect([shown.dataset.kind, screen.getByRole('tab', { name: 'a.ts, digitando' }).getAttribute('aria-selected'), current?.textContent, shown.querySelector('.cm-statusbar')?.textContent?.includes('digitando a.ts…')]).toEqual(['code', 'true', 'xAgent', true])
     act(() => liveInput.push(convId, { ...delta, done: true }))
-    expect(screen.getByTestId('office-screen').querySelector('.tool-card')).toBeNull()
+    expect([screen.queryByRole('tab', { name: 'a.ts, digitando' }), !!screen.queryByRole('tab', { name: 'a.ts' }), shown.querySelector('.cm-caret')]).toEqual([null, true, null])
 
     view.rerender(ui(false))
     expect(screen.queryByTestId('office-screen')).toBeNull()
@@ -348,6 +352,11 @@ describe('Office3DWorkspace', () => {
 
     view.rerender(ui(true))
     const screenEl = screen.getByTestId('office-screen')
+    // De volta, a tela renasce no último app usado (o Código): o que ele faz agora, o comando no
+    // terminal (nada do código ao vivo de antes); no Chat, o ToolCard dele.
+    const term = screen.getByRole('region', { name: 'Terminal' })
+    expect([screenEl.dataset.kind, term.querySelector('.cm-cmdline')?.textContent, term.querySelector('.cm-run.run')?.textContent, screen.queryByRole('tab')]).toEqual(['code', 'npm run build', 'executando', null])
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
     expect(screenEl.dataset.kind).toBe('chat')
     expect(screenEl.querySelector('.tool-card .tool-name')?.textContent).toBe('Bash')
     expect(screenEl.querySelector('.tool-card .tool-detail')?.textContent).toBe('npm run build')

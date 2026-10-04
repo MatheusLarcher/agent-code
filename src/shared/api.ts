@@ -12,6 +12,7 @@ import type {
   AgentMessageKind,
   AndroidProgressMsg,
   SpeechSetupProgress,
+  VoiceInstallStatus,
   AppConfig,
   BrowserFrame,
   BrowserInput,
@@ -83,9 +84,10 @@ import type {
   ClaudeAccountView,
   UseAccountResult
 } from './claudeAccounts'
+import type { ContextTurnSummary, ContextTurnDetail, ContextExactCount, ContextTurnChanged } from './contextSnapshot'
 import type { TypeSafePauseStatus } from './typesafePause'
 import type { ChromeBridgeStatus } from './chromeBridge'
-import type { CentralCorrection, CentralRouteRequest, CentralRouteResult } from './central'
+import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from './central'
 
 /** The surface exposed on `window.api` by the preload script. */
 export interface AgentCodeApi {
@@ -277,6 +279,11 @@ export interface AgentCodeApi {
   ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }>
   /** Local Whisper model and where it last ran ('GPU (DirectML)' / 'CPU'). */
   voiceStatus(): Promise<WhisperStatus>
+  /** Install the local voice models now (same path as the first use). Progress
+   *  arrives on onSpeechSetupProgress; a call during an install joins it. */
+  voiceInstall(): Promise<{ ok: boolean; error?: string }>
+  /** Are the local voice models installed / being installed? */
+  voiceInstallStatus(): Promise<VoiceInstallStatus>
   /** Whether a Claude Code login already exists. */
   authStatus(): Promise<{ authenticated: boolean }>
   /** Trigger the Claude OAuth login (opens the system browser); resolves when done. */
@@ -369,6 +376,13 @@ export interface AgentCodeApi {
   /** Persisted LLM calls + aggregated totals of a conversation, to rebuild the
    *  token-usage tree when reopening an old conversation. */
   getTokenUsageHistory(convId: string): Promise<TokenUsageHistory>
+  /** Somente PC: cópias mascaradas do contexto entregue ao agente. */
+  listContextTurns(convId: string): Promise<ContextTurnSummary[]>
+  readContextTurn(convId: string, turnId: string, parentToolUseId?: string): Promise<ContextTurnDetail | null>
+  countContextExact(convId: string): Promise<ContextExactCount>
+  /** Ação explícita do olho: consulta o valor atual do cofre. */
+  revealSecret(name: string): Promise<string | null>
+  onContextTurnsChanged(cb: (event: ContextTurnChanged) => void): () => void
   onAgentEvent(cb: (e: AgentEventMsg) => void): () => void
   onPermissionRequest(cb: (m: PermissionRequestMsg) => void): () => void
   /** Subscribe to permission/question timeouts (auto-resolved) so the renderer
@@ -443,6 +457,8 @@ export interface AgentCodeApi {
   onRemoteRecoveryAction(cb: (m: { convId: string; action: 'retry' | 'cancel' }) => void): () => void
   /** A phone answered a pending permission/question — resolve it locally too. */
   onRemotePermissionResponse(cb: (m: RemotePermissionResponseMsg) => void): () => void
+  /** A phone picked a "Para onde vai?" option of a Central request (the App calls `choose`). */
+  onRemoteCentralChoose(cb: (m: RemoteCentralChoose) => void): () => void
   /** A phone asked to stop the running turn of a conversation. */
   onRemoteInterrupt(cb: (m: { convId: string }) => void): () => void
   /** A phone toggled a per-conversation mode (economy/loop/fast). */

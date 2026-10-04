@@ -1,20 +1,20 @@
 /**
- * Tela focada do monitor (clique no agente): o turno atual da conversa dele
- * como o chat mostra — balão do pedido, narração e resposta em Markdown e cada
- * ferramenta no ToolCard recolhido, que abre ao clicar —, só leitura, com o
- * cabeçalho do agente e rolagem própria. Fica presa ao fim enquanto o usuário
- * não rola para cima; a rolagem é só do corpo (scrollTop direto, nunca
- * scrollIntoView: o palco 3D não se mexe).
+ * O modo Chat da tela focada do monitor (codeScreen/CodeMonitor): o turno atual
+ * da conversa do agente como o chat mostra — balão do pedido, narração e
+ * resposta em Markdown e cada ferramenta no ToolCard recolhido, que abre ao
+ * clicar —, só leitura, com o cabeçalho do agente e rolagem própria. Fica presa
+ * ao fim enquanto o usuário não rola para cima; a rolagem é só do corpo
+ * (scrollTop direto, nunca scrollIntoView: o palco 3D não se mexe).
  *
- * Acompanha o feed (o pai re-renderiza a cada feed) e, no principal, o código
- * ao vivo do liveInput — o cartão que ainda vai chegar, no fim —, assinado só
- * enquanto esta tela existe.
+ * Quem monta (o CodeMonitor) passa as mensagens do turno e o cartão do código
+ * ao vivo (o tool-use que ainda vai chegar), já assinado por ele.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { OfficeCharacterModel } from '../office/adapter/model'
-import { liveInput, type ToolInputDelta } from '../office/liveInput'
-import { liveToolMessage, lookupOf, turnHead, turnMessages } from './chatPage'
+import type { ToolInputDelta } from '../office/liveInput'
+import type { UIMessage } from '../types'
+import { liveToolMessage, lookupOf, turnMessages, type ToolUseMessage, type TurnHead } from './chatPage'
 import { TurnHeader, TurnRows } from './ChatTurn'
 import './screens.css'
 
@@ -23,29 +23,26 @@ export const SCREEN_MESSAGES = 60
 /** Até aqui do fim conta como "no fim" (segue as mensagens novas). */
 const END_SLACK_PX = 48
 
-export interface ChatScreenProps {
-  feed: OfficeFeed | null
-  model: OfficeCharacterModel
-  /** Fecha a tela (o mesmo do Esc). */
-  onClose?: () => void
+export interface ChatContent {
+  messages: UIMessage[]
+  /** O cartão do código ao vivo; some quando o tool-use dele chega no chat. */
+  live: ToolUseMessage | null
 }
 
-export function ChatScreen({ feed, model, onClose }: ChatScreenProps): JSX.Element {
-  const isMain = model.role === 'principal' && !model.trackId
-  const convId = model.convId
-  const [live, setLive] = useState<ToolInputDelta | undefined>(() => (isMain ? liveInput.latest(convId, null) : undefined))
+/** O que o modo Chat mostra do personagem. */
+export function chatContent(feed: OfficeFeed | null, model: OfficeCharacterModel, live: ToolInputDelta | undefined): ChatContent {
+  const messages = turnMessages(feed, lookupOf(model))
+  const shown = live && !messages.some((m) => m.kind === 'tool-use' && m.id === live.toolUseId)
+  return { messages, live: shown ? liveToolMessage(live) : null }
+}
 
-  useEffect(() => {
-    if (!isMain) return
-    setLive(liveInput.latest(convId, null))
-    return liveInput.subscribe(convId, null, (ev) => setLive(ev.done ? undefined : ev))
-  }, [isMain, convId])
+export interface ChatPanelProps {
+  head: TurnHead
+  seed: string
+  content: ChatContent
+}
 
-  const messages = useMemo(() => turnMessages(feed, lookupOf(model)), [feed, model])
-  const head = turnHead(feed, model)
-  // O cartão ao vivo some quando o tool-use dele chega no chat.
-  const liveMsg = live && !messages.some((m) => m.kind === 'tool-use' && m.id === live.toolUseId) ? liveToolMessage(live) : null
-
+export function ChatPanel({ head, seed, content }: ChatPanelProps): JSX.Element {
   const bodyRef = useRef<HTMLDivElement>(null)
   const atEnd = useRef(true)
   useLayoutEffect(() => {
@@ -58,16 +55,10 @@ export function ChatScreen({ feed, model, onClose }: ChatScreenProps): JSX.Eleme
   }
 
   return (
-    <div className="o3d-chat-screen" data-testid="office-screen" data-kind={messages.length > 0 || liveMsg ? 'chat' : 'empty'}>
-      <TurnHeader head={head} seed={model.seed}>
-        {onClose && (
-          <button type="button" className="o3d-turn-close" onClick={onClose} aria-label="Fechar a tela" title="Fechar (Esc)">
-            ×
-          </button>
-        )}
-      </TurnHeader>
+    <div className="o3d-chat-screen">
+      <TurnHeader head={head} seed={seed} />
       <div className="message-list o3d-chat-screen-body" ref={bodyRef} onScroll={onScroll}>
-        <TurnRows messages={messages} busy={head.busy} live={liveMsg} limit={SCREEN_MESSAGES} />
+        <TurnRows messages={content.messages} busy={head.busy} live={content.live} limit={SCREEN_MESSAGES} />
       </div>
     </div>
   )

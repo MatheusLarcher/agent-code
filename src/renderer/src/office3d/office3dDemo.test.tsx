@@ -20,6 +20,8 @@ const renderer = (): RendererLike => ({ setPixelRatio() {}, setSize() {}, render
 const staticSource = (feed = demoFeed()): FeedSource => ({ getSnapshot: () => feed, subscribe: () => () => {} })
 
 beforeEach(() => {
+  // A tela do monitor lembra o último app no localStorage: cada teste começa do zero.
+  localStorage.clear()
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
     observe(): void {}
@@ -213,7 +215,35 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     expect(screen.queryByTestId('o3d-session-battery')).toBeNull()
   })
 
-  it('foco abre o turno da conversa como no chat: o pedido em balão e os cartões recolhidos, que abrem ao clicar', () => {
+  it('foco abre o monitor no Chat; a um clique, o Código: a aba do arquivo que o agente edita e o diff (verde/vermelho) dos trechos', () => {
+    const feed = demoFeed()
+    const target = layoutOffice(deriveOfficeModel(feed, Date.now())).characters.find((c) => c.model.convId === 'demo-0-0')!
+    vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
+    render(
+      <UiProvider>
+        <Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(feed), createRenderer: renderer, raf: () => 1, caf: () => {} }} />
+      </UiProvider>
+    )
+    fireEvent.pointerDown(screen.getByTestId('office3d-canvas'), { button: 0, clientX: 50, clientY: 50 })
+    fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
+    const card = screen.getByTestId('office-screen')
+    expect([card.dataset.mode, card.dataset.kind]).toEqual(['chat', 'chat'])
+    fireEvent.click(screen.getByRole('button', { name: 'Código' }))
+    expect(card.dataset.kind).toBe('code')
+    const tab = screen.getByRole('tab', { name: 'total.ts, modificado' })
+    expect(tab.getAttribute('aria-selected')).toBe('true')
+    // Sem o arquivo do disco (sem window.api), os trechos da própria edição, sem número inventado.
+    const editor = screen.getByRole('tabpanel')
+    expect(editor.querySelector('.cm-hunk')).toBeTruthy()
+    expect(editor.querySelectorAll('.cm-row.cm-add')).toHaveLength(4)
+    expect(editor.querySelectorAll('.cm-row.cm-del')).toHaveLength(4)
+    expect(editor.querySelector('.cm-row.cm-add .cm-code')?.textContent).toContain('discount = 0')
+    expect([...editor.querySelectorAll('.cm-row.cm-add .cm-num')].every((n) => n.textContent === '')).toBe(true)
+    expect(card.querySelector('.cm-statusbar')?.textContent).toContain('1 arquivo alterado')
+    expect(card.querySelector('.cm-statusbar')?.textContent).toContain('TypeScript')
+  })
+
+  it('o Chat da tela mostra o turno da conversa como no chat: o pedido em balão e os cartões recolhidos, que abrem ao clicar', () => {
     const feed = demoFeed()
     const target = layoutOffice(deriveOfficeModel(feed, Date.now())).characters.find((c) => c.model.convId === 'demo-0-0')!
     vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
@@ -225,6 +255,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     const canvas = screen.getByTestId('office3d-canvas')
     fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
+    // Abre no Chat (o padrão do Escritório).
     const card = screen.getByTestId('office-screen')
     expect(card.dataset.kind).toBe('chat')
     expect(card.querySelector('.o3d-turn-title')?.textContent).toBe('Demo 1.1')
@@ -244,6 +275,11 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     // Trabalhando: o "digitando" do chat no fim. Só leitura: sem "Tentar de novo" nem "Ouvir".
     expect(card.querySelector('.bubble.typing')).toBeTruthy()
     expect(card.querySelector('.msg-retry, .msg-speak')).toBeNull()
+    // A alternância volta ao Código.
+    expect(screen.getByRole('button', { name: 'Chat' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Código' }))
+    expect(card.dataset.kind).toBe('code')
+    expect(screen.getByRole('tab', { name: 'total.ts, modificado' })).toBeTruthy()
   })
 
   it('Ctrl+Alt+Shift+D liga e desliga o feed de demonstração (DEV)', () => {

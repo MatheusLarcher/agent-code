@@ -23,6 +23,7 @@ import { useUI } from '../ui/UiProvider'
 import { frameRms, newVadState, shouldRotatePreroll, vadStep, type VadState } from '../vad'
 import { encodeWav } from '../wav'
 import { useChatDisplay } from './chatDisplay'
+import { VoiceInstallItem } from './VoiceInstallItem'
 import { detectRefTrigger, type RefCard } from '../planning/cardRefs'
 import { CardRefSuggestions, useCardRefAutocomplete } from '../planning/CardRefSuggestions'
 import { InlineEditor, type EditorElement } from '../inlineMedia/InlineEditor'
@@ -1230,6 +1231,7 @@ export function Composer(props: Props): JSX.Element {
                   {d.label || `Microfone ${i + 1}`}
                 </button>
               ))}
+              <VoiceInstallItem />
             </div>
           )}
         </div>

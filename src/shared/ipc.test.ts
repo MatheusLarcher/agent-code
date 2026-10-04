@@ -118,7 +118,7 @@ describe('contextLimitFor — janelas de contexto reais dos modelos', () => {
   })
 
   it('GPT-5.6 saiu do seletor; conversa/config salvas com ele viram GPT-6 e seguem no GPT', () => {
-    expect(OPENAI_MODELS.map((m) => m.id)).toEqual(['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra'])
+    expect(OPENAI_MODELS.map((m) => m.id)).toEqual(['gpt-6-luna', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-astra'])
     expect(currentModelId('gpt-5.6-luna')).toBe('gpt-6-luna')
     expect(currentModelId('gpt-5.6-terra')).toBe('gpt-6-sol')
     expect(currentModelId('gpt-5.6-sol')).toBe('gpt-6-sol')

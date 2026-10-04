@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, act, configure, within } from '@testing-library/react'
 import { UiProvider } from './ui/UiProvider'
-import { App, autoPromptFor, expireResetUsage, runningModel } from './App'
+import { App, autoPromptFor, expireResetUsage, mergeUsageLimit, runningModel } from './App'
 import type { AgentEventMsg, ChatEvent, PoProviderDiagnosticMsg } from '@shared/ipc'
 import { MCP_TASK_GONE_MARK, MCP_TASK_GONE_WARNING, NO_LIVE_SESSION_MARK } from '@shared/mcpInbound'
 import type { TodoItem } from './types'
@@ -184,6 +184,11 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     disposeAgent: vi.fn(async () => {}),
     refreshUsage: vi.fn(async () => {}),
     getTokenUsageHistory: vi.fn(async () => ({ calls: [], totals: [] })),
+    listContextTurns: vi.fn(async () => []),
+    readContextTurn: vi.fn(async () => null),
+    countContextExact: vi.fn(async () => ({ ok: false, usage: null })),
+    revealSecret: vi.fn(async () => null),
+    onContextTurnsChanged: vi.fn(() => () => {}),
     onAgentEvent: vi.fn((cb: (m: AgentEventMsg) => void) => {
       agentEventCb = cb
       return () => {}
@@ -228,6 +233,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     onRemoteSetModel: vi.fn(() => () => {}),
     onRemoteRecoveryAction: vi.fn(() => () => {}),
     onRemotePermissionResponse: vi.fn(() => () => {}),
+    onRemoteCentralChoose: vi.fn(() => () => {}),
     onRemoteInterrupt: vi.fn(() => () => {}),
     onRemoteSetMode: vi.fn(() => () => {}),
     onRemoteConversationAction: vi.fn(() => () => {}),
@@ -1484,6 +1490,22 @@ describe('expireResetUsage — janela que já resetou vai a 0 sem esperar o LLM'
       seven_day: { rateLimitType: 'seven_day' as const, status: 'allowed' as const, utilization: 0.2 }
     }
     expect(expireResetUsage(limits, now)).toBe(limits)
+  })
+})
+
+describe('mergeUsageLimit — atualização sem número não zera o badge', () => {
+  const future = Date.now() + 3_600_000
+  const prev = { rateLimitType: 'five_hour' as const, status: 'allowed_warning' as const, utilization: 0.62, resetsAt: future }
+
+  it('evento allowed sem utilization mantém o % anterior e pega o resetsAt novo', () => {
+    const next = { rateLimitType: 'five_hour' as const, status: 'allowed' as const, resetsAt: future + 1_000, updatedAt: 5 }
+    expect(mergeUsageLimit(prev, next)).toEqual({ ...next, utilization: 0.62 })
+  })
+
+  it('zero espúrio com a janela ainda válida mantém o anterior; número real substitui', () => {
+    expect(mergeUsageLimit(prev, { rateLimitType: 'five_hour', status: 'allowed', utilization: 0, resetsAt: future })).toBe(prev)
+    const real = { rateLimitType: 'five_hour' as const, status: 'allowed' as const, utilization: 0.7, resetsAt: future }
+    expect(mergeUsageLimit(prev, real)).toBe(real)
   })
 })
 

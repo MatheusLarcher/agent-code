@@ -83,6 +83,15 @@ describe('windowFromRateLimitEvent', () => {
     expect(Object.keys(merged.windows).sort()).toEqual(['five_hour', 'seven_day'])
     expect(merged.at).toBe(NOW + 5)
   })
+  it('evento sem número (status allowed) não zera a janela ainda válida', () => {
+    const entry = windowFromRateLimitEvent({ rateLimitType: 'five_hour', status: 'allowed', resetsAt: (FUTURE + HOUR) / 1000 })!
+    const merged = mergeReading(reading({ five_hour: [62, FUTURE] }), { [entry.key]: entry.window }, NOW)
+    expect(merged.windows.five_hour).toEqual({ utilization: 62, resetsAt: FUTURE + HOUR })
+  })
+  it('evento sem número sobre janela vencida não ressuscita o número antigo', () => {
+    const merged = mergeReading(reading({ five_hour: [62, PAST] }), { five_hour: { utilization: null, resetsAt: FUTURE } }, NOW)
+    expect(merged.windows.five_hour).toEqual({ utilization: null, resetsAt: FUTURE })
+  })
 })
 
 describe('accountConsumption', () => {

@@ -8,7 +8,7 @@
  */
 import { useCallback, useRef, type MutableRefObject } from 'react'
 import type { FileAttachment, FileRefAttachment, ImageAttachment } from '@shared/ipc'
-import { CENTRAL_ID, type CentralRequestEntry } from '@shared/central'
+import { CENTRAL_ID, type CentralReplyQuote, type CentralRequestEntry } from '@shared/central'
 import type { Conversation } from '../types'
 import { appendCentralEntry, centralAttachmentNames, newCentralRequest } from './centralRegistry'
 
@@ -23,6 +23,8 @@ export interface CentralPayload {
   thumbs: string[]
   files: FileAttachment[]
   fileRefs: FileRefAttachment[]
+  /** Resposta a uma mensagem: vai direto à conversa dela (centralReply.ts). */
+  replyTo?: CentralReplyQuote
 }
 
 /** Onde o pedido entraria no roteamento sem `deps.route`: nada. Quem roteia é o
@@ -53,7 +55,8 @@ export type CentralSend = (
   thumbs: string[],
   files: FileAttachment[],
   fileRefs: FileRefAttachment[],
-  origin?: CentralSendOrigin
+  origin?: CentralSendOrigin,
+  replyTo?: CentralReplyQuote
 ) => Promise<boolean>
 
 /**
@@ -69,7 +72,7 @@ export function useCentralSend(deps: CentralSendDeps): {
   const depsRef = useRef(deps)
   depsRef.current = deps
   const payloads = useRef(new Map<string, CentralPayload>())
-  const send = useCallback<CentralSend>(async (text, images, thumbs, files, fileRefs, origin = 'composer') => {
+  const send = useCallback<CentralSend>(async (text, images, thumbs, files, fileRefs, origin = 'composer', replyTo) => {
     const d = depsRef.current
     if (!text.trim() && images.length === 0 && files.length === 0 && fileRefs.length === 0) return false
     if (!d.typesafeReady) {
@@ -84,9 +87,10 @@ export function useCentralSend(deps: CentralSendDeps): {
     const entry: CentralRequestEntry = {
       ...newCentralRequest(text, centralAttachmentNames(images, files, fileRefs)),
       origin: 'central',
-      ...(d.device ? { device: d.device } : {})
+      ...(d.device ? { device: d.device } : {}),
+      ...(replyTo ? { replyTo } : {})
     }
-    const payload: CentralPayload = { text, images, thumbs, files, fileRefs }
+    const payload: CentralPayload = { text, images, thumbs, files, fileRefs, ...(replyTo ? { replyTo } : {}) }
     payloads.current.set(entry.id, payload)
     d.patchConv(CENTRAL_ID, (c) => ({ ...c, central: appendCentralEntry(c.central, entry), updatedAt: entry.ts }))
     ;(d.route ?? routeCentralRequest)(entry.id, payload)

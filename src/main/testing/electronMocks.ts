@@ -53,6 +53,9 @@ export const keepers: Array<{ lease: { token?: string }; release: ReturnType<typ
 
 export const listLlmCalls = vi.fn()
 export const listLlmUsageTotals = vi.fn()
+export const listContextTurns = vi.fn(async () => [])
+export const readContextTurn = vi.fn(async () => null)
+export const revealContextSecret = vi.fn(async (): Promise<string | null> => null)
 
 export const sessionsOf = (convId: string): CreatedSession[] => spy.sessions.filter((s) => s.opts.convId === convId)
 
@@ -160,6 +163,8 @@ vi.mock('../persistence/lifecycle', () => ({
     repository: () => ({
       listLlmCalls,
       listLlmUsageTotals,
+      listContextTurns,
+      readContextTurn,
       acquireConversationLease: async () => {
         await (leaseGate.p ?? Promise.resolve())
         const lease = { token: `L${leasesAcquired.length + 1}` }
@@ -259,6 +264,7 @@ vi.mock('../memory/memoryRuntime', () => ({
   configureSecretVault: vi.fn(),
   deleteSecret: vi.fn(),
   listSecretMetadata: vi.fn(),
+  readSecretForReveal: revealContextSecret,
   memoryService: {},
   restoreVault: vi.fn(),
   secretSink: vi.fn()
