@@ -36,6 +36,8 @@ export function createDefaultRenderer(canvas: HTMLCanvasElement): RendererLike {
 
 /** Chave de pick da tela do projetor de uma sala: `${PROJECTOR_KEY}${roomId}`. */
 export const PROJECTOR_KEY = 'projector:'
+/** Chave de pick da estante de Memórias: o clique abre o painel de Memórias (o foco nela). */
+export const MEMORY_SHELF_KEY = 'memory-shelf'
 
 export interface FeedSource {
   getSnapshot(): OfficeFeed | null

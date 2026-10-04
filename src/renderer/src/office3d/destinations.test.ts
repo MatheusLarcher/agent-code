@@ -3,8 +3,9 @@ import type { OfficeCharacterModel } from '../office/adapter/model'
 import { CALL_JUMP_S, setStatus, type Brain } from './brain'
 import { Crowd } from './crowd'
 import { layoutOffice, type Office3DLayout } from './layout'
-import { meetingSpots, TV_SIDE } from './meetingRoom'
-import { CENTRAL_SPOT, MEMORY_SPOT_X, MEMORY_SPOTS_Z, MEMORY_WAIT, OFFICE } from './officePlan'
+import { managerSeat, meetingSpots, TV_SIDE } from './meetingRoom'
+import { LINGER_S } from './memoryTrips'
+import { CENTRAL_SPOT, FRONT_SPOTS, LOUNGE_SEATS, MEMORY_SPOT_X, MEMORY_SPOTS_Z, MEMORY_WAIT, OFFICE } from './officePlan'
 
 function model(key: string, roomId: string | null, extra: Partial<OfficeCharacterModel> = {}): OfficeCharacterModel {
   return {
@@ -107,6 +108,105 @@ describe('sala de reunião: quem testa na TV e quem espera a vez', () => {
     crowd.setVenues(meetingSpots([]))
     run(crowd, 30)
     expect([b.mode, b.sit]).toEqual(['work', 1])
+  })
+})
+
+describe('a ida à estante de Memórias (quem consulta a memória)', () => {
+  it('vai à estante e folheia; a sequência é uma ida só; fica LINGER_S depois e volta à mesa; o 4º espera atrás', () => {
+    const ks = ['conv:a', 'conv:b', 'conv:c', 'conv:d']
+    const { crowd, brain } = world(ks.map((k) => model(k, 'a', { active: true })), ['a'])
+    for (const k of ks) setStatus(brain(k), { phase: 'working', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: null }, 0)
+    run(crowd, 3)
+    const trips = new Map(ks.map((k) => [k, 'read' as const]))
+    crowd.setShelfTrips(trips)
+    run(crowd, 25)
+    const at = ks.map(brain)
+    expect(at.every((b) => b.mode === 'archive' && b.arrived)).toBe(true)
+    expect(at.filter((b) => MEMORY_SPOTS_Z.some((z) => Math.hypot(b.x - MEMORY_SPOT_X, b.z - z) < 0.05))).toHaveLength(3)
+    expect(at.filter((b) => Math.hypot(b.x - MEMORY_WAIT.x, b.z - MEMORY_WAIT.z) < 0.05)).toHaveLength(1)
+    const reader = at.find((b) => b.poi)!
+    expect([reader.action, reader.prop]).toEqual(['readBook', 'book'])
+    // A mesma sequência continua (o feed repete): nada de nova ida.
+    const modeT = reader.modeT
+    crowd.setShelfTrips(trips)
+    run(crowd, 1)
+    expect(reader.modeT).toBeGreaterThan(modeT)
+    // Acabou: ainda fica LINGER_S e volta à mesa.
+    crowd.setShelfTrips(new Map())
+    run(crowd, LINGER_S - 1)
+    expect(reader.mode).toBe('archive')
+    run(crowd, 2)
+    expect(reader.mode).toBe('work')
+    expect(reader.shelfTrip).toBeNull()
+  })
+
+  it('gravando (memory_propose) põe a folha no fichário de vez em quando', () => {
+    const { crowd, brain } = world([model('conv:a', 'a', { active: true })], ['a'])
+    const a = brain('conv:a')
+    setStatus(a, { phase: 'working', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: null }, 0)
+    crowd.setShelfTrips(new Map([['conv:a', 'write']]))
+    const acts = new Set<string>()
+    for (let i = 0; i < 300; i++) {
+      run(crowd, 0.1)
+      if (a.arrived && a.mode === 'archive') acts.add(a.action)
+    }
+    expect(acts.has('stick')).toBe(true)
+    expect(acts.has('readBook')).toBe(true)
+  })
+})
+
+describe('o lounge de espera', () => {
+  it('a frente do escritório (quem pede permissão): chão livre e alcançável', () => {
+    const { crowd } = world([model('conv:a', 'a')], ['a'])
+    const grid = crowd.grid('office')!
+    const f = crowd.furniture('office')!
+    const out = new Float32Array(64)
+    for (const s of FRONT_SPOTS) {
+      expect(grid.isFree(s.x, s.z), `${s.x},${s.z}`).toBe(true)
+      expect(grid.findPath(f.doorIn.x, f.doorIn.z, s.x, s.z, out)).toBeGreaterThan(0)
+    }
+  })
+
+  it('quem trabalha tem prioridade: quem cochila no lugar que vira de alguém sem mesa levanta e cochila em outro lugar', () => {
+    const { crowd, brain, layout } = world([model('conv:a', 'a'), model('conv:b', 'a')], ['a'])
+    const a = brain('conv:a')
+    crowd.sleepAfter = 20
+    setStatus(a, { phase: 'idle', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: 0 }, 0)
+    run(crowd, 45)
+    expect([a.mode, a.poi?.kind]).toEqual(['sleep', 'sofa'])
+    const seat = a.poi!.index
+    // b fica sem mesa e o layout lhe dá justamente esse lugar do lounge.
+    const cb = { ...layout.characters.find((c) => c.key === 'conv:b')!, deskIndex: null, lounge: seat, spot: 'lounge' as const, x: LOUNGE_SEATS[seat].x, z: LOUNGE_SEATS[seat].z }
+    crowd.upsert(cb, false, new Map(layout.rooms.map((r) => [r.id, r] as const)))
+    run(crowd, 1)
+    expect(a.poi?.index === seat && a.poi?.kind === 'sofa').toBe(false)
+    run(crowd, 20)
+    expect(a.mode).toBe('sleep')
+    expect(a.poi?.index === seat && a.poi?.kind === 'sofa').toBe(false)
+  })
+})
+
+describe('o Agent Manager (planejamento) à cabeceira da mesa de reunião', () => {
+  it('sem mesa de ilha: senta à cabeceira olhando a TV; trabalhando explica o plano (assist/web); quem espera na sala não toma a cadeira dele', () => {
+    const manager = model('conv:p', 'a', { placement: { kind: 'destination', papel: 'reuniao-cabeceira' } })
+    const { crowd, brain, layout } = world([model('conv:a', 'a', { active: true }), manager], ['a'])
+    const c = layout.characters.find((x) => x.key === 'conv:p')!
+    const seat = managerSeat(0)!
+    expect([c.spot, c.deskIndex, c.x, c.z]).toEqual(['manager', null, seat.x, seat.z])
+    const m = brain('conv:p')
+    setStatus(m, { phase: 'idle', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: 0 }, 0)
+    run(crowd, 30)
+    expect([m.mode, m.seat, m.sit, m.action, m.look]).toEqual(['fixed', 'chair', 1, 'sitIdle', 'point'])
+    setStatus(m, { phase: 'working', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: null }, crowd.t)
+    const acts = new Set<string>()
+    for (let i = 0; i < 100; i++) {
+      run(crowd, 0.1)
+      acts.add(m.action)
+    }
+    expect([...acts].sort()).toEqual(['assist', 'web'])
+    // Na fila da sala, ninguém senta na cadeira do Manager.
+    const spots = meetingSpots(['k0', 'k1', 'k2', 'k3', 'k4'], 1)
+    for (const s of spots.values()) expect(Math.hypot(s.x - seat.x, s.z - seat.z)).toBeGreaterThan(0.1)
   })
 })
 

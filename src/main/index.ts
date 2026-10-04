@@ -104,6 +104,7 @@ import { activeContextHistory, activeReplayStore, activeResumeMarker, activeSess
 import { registerContextIpc } from './contextSnapshot/ipc'
 import { registerMockupScheme, setupOfficeMockup } from './officeMockup/mockupElectron'
 import { OfficeCallCenter, parseCallsState } from './officeCallCenter'
+import { registerMemoryReadIpc } from './memory/memoryReadIpc'
 import { setOfficeCallSink } from './officeCallRuntime'
 import { createSessionStorageRecovery } from './sessionStorageRecovery'
 import {
@@ -1251,6 +1252,8 @@ export function registerIpc(): void {
       updatedAt: item.updatedAt
     }))
   })
+  // O painel de Memórias do Escritório: só leitura (memoryReadIpc.ts).
+  registerMemoryReadIpc({ handle: (channel, handler) => ipcMain.handle(channel, handler), entries: () => memoryService()?.listEntries() ?? null })
   ipcMain.handle(Channels.memoryDiscardProposal, async (_e, id: string) => {
     const service = memoryService()
     if (!service) throw new StorageError('STORAGE_OFFLINE', 'Persistência autoritativa offline.', true)

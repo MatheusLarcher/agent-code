@@ -81,6 +81,44 @@
   color: #3b3f46;
 }
 
+/* O planejamento dentro da TV: a Tela de Planejamento ocupa o resto da tela. */
+.tvf-plan {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  background: var(--bg, #1f1e1d);
+}
+
+.tvf-plan > .workspace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tvf-tabs {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.tvf-tabs button {
+  padding: 3px 10px;
+  border: 1px solid #4a4e58;
+  border-radius: 999px;
+  background: transparent;
+  color: #c9cdd2;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tvf-tabs button.on {
+  background: #d97757;
+  border-color: #d97757;
+  color: #1f1e1d;
+  font-weight: 700;
+}
+
 .tvf-mirror {
   flex: 1;
   min-height: 0;

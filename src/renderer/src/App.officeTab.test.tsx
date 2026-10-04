@@ -230,6 +230,15 @@ describe('App — aba Escritório', () => {
     expect(selected(/Conversa/)).toBe('true')
     expect(localStorage.getItem('agentcode.mainTab')).toBe('chat')
     expect(office.props?.active).toBe(false)
+
+    // Uma Tela de Planejamento só: no Escritório ela vai para a TV (prop `planning`) e sai da aba Conversa.
+    expect(office.props?.planning ?? null).toBeNull()
+    fireEvent.click(tab(/Escritório/))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Checkout com Pix' })).toBeNull())
+    expect(isValidElement(office.props?.planning)).toBe(true)
+    fireEvent.click(tab(/Conversa/))
+    expect(await screen.findByRole('heading', { name: 'Checkout com Pix' })).toBeTruthy()
+    expect(office.props?.planning ?? null).toBeNull()
   })
 
   it('o Quadro só conta como aberto na aba Conversa: sem scan de disco com o Escritório; volta aberto na Conversa', async () => {

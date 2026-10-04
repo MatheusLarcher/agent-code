@@ -16,13 +16,13 @@ import { REACTION_S, smooth, type Action, type Reaction, type SeatKind } from '.
 
 export type Role = 'desk' | 'visitor' | 'fixed'
 /** party: festa do apagão (brainParty.ts); back: a luz voltou, corre para a mesa e senta um pouco. */
-export type Mode = 'init' | 'free' | 'work' | 'permission' | 'sleep' | 'queue' | 'leave' | 'away' | 'fixed' | 'party' | 'back' | 'meeting'
+export type Mode = 'init' | 'free' | 'work' | 'permission' | 'sleep' | 'queue' | 'leave' | 'away' | 'fixed' | 'party' | 'back' | 'meeting' | 'archive'
 export type Leisure = 'coffee' | 'shelf' | 'window' | 'plant' | 'postit' | 'chat' | 'phone'
 export type Gait = 'walk' | 'run' | 'stroll'
 export type PropKind = 'cup' | 'book' | 'can' | 'phone' | 'folder' | 'sign' | 'note' | 'flashlight' | 'pizza'
 export type Look = 'none' | 'point' | 'camera'
 /** Estilo do fixo: o que ele faz parado no lugar. */
-export type FixedStyle = 'board' | 'archive' | 'console' | 'idle'
+export type FixedStyle = 'board' | 'archive' | 'console' | 'idle' | 'manager'
 
 export const LEISURES: readonly Leisure[] = ['coffee', 'shelf', 'window', 'plant', 'postit', 'chat', 'phone']
 export const DWELL_MIN = 6
@@ -153,6 +153,8 @@ export interface Brain {
   errand: Errand | null
   /** O lugar na sala de reunião (testando na TV ou esperando a vez); null fora dela. */
   venue: MeetingSpot | null
+  /** Consultando a memória (memoryTrips.ts): vai à estante; `until` = até quando fica depois da sequência (relógio do cérebro). */
+  shelfTrip: { use: 'read' | 'write'; until: number } | null
 }
 
 /** O que o cérebro pede ao mundo (a sala, a reserva e os colegas). */
@@ -180,6 +182,8 @@ export interface BrainWorld {
   partner(b: Brain): Brain | null
   /** Do lado de fora da porta da sala. */
   doorOut(b: Brain): Spot | null
+  /** O lugar na frente do escritório de quem pede permissão (cada um o seu). */
+  frontSpot(b: Brain): Spot
   /** Plano da festa da sala do agente (apagão); null fora da festa ou sem sala. */
   party(b: Brain): RoomParty | null
 }
@@ -216,7 +220,7 @@ export function createBrain(o: BrainInit): Brain {
     chatWith: null, chatLead: false, chatT0: -1,
     action: 'idle', actionT: 0, reaction: null, reactionT: 0, pending: [], prop: null, look: 'none', lookX: 0, lookY: 0, lookZ: 0,
     faceCamera: false, fx: 0, zzz: false, rush: false, knuckles: false, nextYawn: 0, nextWatch: 0, workSpeed: 1,
-    party: null, partySlot: 0, partyStep: 0, partyT: 0, puppet: false, backUntil: -1, errand: null, venue: null
+    party: null, partySlot: 0, partyStep: 0, partyT: 0, puppet: false, backUntil: -1, errand: null, venue: null, shelfTrip: null
   }
   // Quem tem mesa e está na sala começa sentado nela.
   if (desk && !o.away && o.role !== 'fixed') seatAtDesk(b, desk)

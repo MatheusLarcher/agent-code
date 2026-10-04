@@ -6,6 +6,8 @@ import type { TypeSafePauseStatus } from '../shared/typesafePause'
 import type { ChromeBridgeStatus } from '../shared/chromeBridge'
 import type { MockupCaptureResult, MockupRequest, MockupUrlResult } from '../shared/officeMockup'
 import type { OfficeCallOpen, OfficeCallsState } from '../shared/officeCall'
+import type { PlanningPeekDto } from '../shared/officeApi'
+import type { MemoryListItem, MemoryReadResult } from '../shared/memoryPanel'
 import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from '../shared/central'
 import type {
   ConversationQueryDto,
@@ -220,6 +222,9 @@ const api: AgentCodeApi = {
   ): Promise<PlanningResult<{ roteiro: PlanningRoteiroDto }>> => ipcRenderer.invoke(Channels.planningSaveRoteiro, req),
   planningSaveLayout: (req: PlanningRef & { layout: PlanningLayoutDto }): Promise<PlanningResult> =>
     ipcRenderer.invoke(Channels.planningSaveLayout, req),
+  planningPeek: (req: PlanningRef): Promise<PlanningResult<{ plan: PlanningPeekDto }>> => ipcRenderer.invoke(Channels.planningPeek, req),
+  memoryListEntries: (): Promise<MemoryListItem[]> => ipcRenderer.invoke(Channels.memoryListEntries),
+  memoryReadEntry: (relPath: string): Promise<MemoryReadResult | null> => ipcRenderer.invoke(Channels.memoryReadEntry, relPath),
   planningListHandoffs: (req: PlanningRef): Promise<PlanningResult<PlanningHandoffListDto>> =>
     ipcRenderer.invoke(Channels.planningListHandoffs, req),
   planningWriteHandoff: (req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>> =>

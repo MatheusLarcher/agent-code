@@ -227,6 +227,18 @@ export const PLAZA_SPOTS: ReadonlyArray<{ x: number; z: number }> = [
   { x: 1.0, z: 5.7 }
 ]
 
+/**
+ * A frente do escritório (z alto, aberta para a câmera): quem pede permissão vem para cá com a
+ * plaquinha "Posso?", virado para a câmera, e volta quando o usuário responde. Fora da planta do meio.
+ */
+export const FRONT_SPOTS: ReadonlyArray<{ x: number; z: number }> = [
+  { x: -1.0, z: 8.7 },
+  { x: 1.0, z: 8.7 },
+  { x: -1.6, z: 8.1 },
+  { x: 1.6, z: 8.1 },
+  { x: 0, z: 7.8 }
+]
+
 // ── zonas ──────────────────────────────────────────────────────────────────
 
 export interface ZonePlace {

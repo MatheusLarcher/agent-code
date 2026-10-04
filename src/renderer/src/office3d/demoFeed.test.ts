@@ -4,6 +4,7 @@ import { deriveOfficeModel } from '../office/adapter/model'
 import { sessionBattery } from './battery'
 import { DEMO_PER_ROOM, DEMO_ROOMS, demoFeed } from './demoFeed'
 import { DEMO_LOOP_MS, USAGE_BACK_AT, USAGE_OUT_AT } from './demoTimeline'
+import { scanMemorySequences } from './memoryTrips'
 import { diffEvents, snapshotOf, type AgentEvent, type AgentEventType, type AgentPhase, type OfficeSnapshot } from './events'
 import { officePower, powerEvents, type OfficePower } from './power'
 
@@ -126,13 +127,22 @@ describe('linha do tempo da demonstração', () => {
     expect(firstId(T0 + DEMO_LOOP_MS)).not.toBe(firstId(T0))
   })
 
+  it('aos ~27 s alguém consulta a memória (vai à estante), e não quem testou na TV (a sala de reunião vem antes)', () => {
+    const now = T0 + 27_000
+    const f = demoFeed(now)
+    const trips = scanMemorySequences(f, deriveOfficeModel(f, now).characters, null)
+    expect(trips.size).toBeGreaterThan(0)
+    const testers = new Set(f.conversations.filter((c) => c.messages.some((m) => m.kind === 'tool-use' && /^mcp__(browser|android)__/.test(m.name))).map((c) => `conv:${c.id}`))
+    for (const key of trips.keys()) expect(testers.has(key)).toBe(false)
+  })
+
   it('sem argumento é o quadro de vitrine: a fase 0 com o relógio de agora', () => {
     const showcase = demoFeed()
     expect(shape(showcase)).toEqual(shape(demoFeed(0)))
     expect(showcase.conversations.map((c) => c.messages.map((m) => ('id' in m ? m.id : '')))).toEqual(demoFeed(0).conversations.map((c) => c.messages.map((m) => ('id' in m ? m.id : ''))))
     const model = deriveOfficeModel(showcase, Date.now())
-    // + a Central, no console do centro.
-    expect(model.characters).toHaveLength(DEMO_ROOMS * DEMO_PER_ROOM + 1)
+    // + a Central, no console do centro, e o Manager do plano, à cabeceira.
+    expect(model.characters).toHaveLength(DEMO_ROOMS * DEMO_PER_ROOM + 2)
     expect(showcase.permissions['demo-0-2']?.input).toEqual({ command: 'npm publish' })
     expect(showcase.stalledSince['demo-4-2']).toBeLessThan(Date.now())
   })

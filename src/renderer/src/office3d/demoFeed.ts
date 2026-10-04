@@ -29,7 +29,9 @@ import { contextLimitFor, type PermissionRequest, type RateLimitStatus } from '@
 import type { TrackMap } from '../agentTracks'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { Conversation } from '../types'
+import { demoCentralState } from './demoCentral'
 import { androidTurn, browserTurn, mockupTurn } from './demoDevices'
+import { demoPlanConversation } from './demoPlan'
 import { DEMO_LOOP_MS, demoUsage, playScript, USAGE_BACK_AT, USAGE_OUT_AT, type DemoStep, type DemoTurn, type ToolStep } from './demoTimeline'
 
 export const DEMO_ROOMS = 5
@@ -338,7 +340,9 @@ function scriptsFor(k: Kit, r: number): DemoTurn[][] {
     { at: -7_000 - r * 500, user: s[0], steps: [read(k, p, 3_000), edit(p, 8_000, k.edit), test(5_000, true), say(`Pronto: ${base(k.edit[0])} atualizado e os testes passaram.`)] },
     // A TV da sala de reunião: a loja testada no navegador (sala 2) e o app no Android (sala 4).
     ...(r === 1 ? [browserTurn(10_000)] : r === 3 ? [androidTurn(9_000, cwd)] : []),
-    { at: 24_000 + r * 1_100, user: s[1], steps: [test(5_000, false), read(k, p, 2_500, k.fix[0], k.fix[1]), edit(p, 3_000, k.fix), test(4_500, true), say(`O teste esperava o valor antigo. Ajustei ${base(k.fix[0])} e a suíte voltou a passar.`)] },
+    // Nas salas 1 e 3 ele consulta a memória antes (vai à estante) e grava uma lição (a folha no fichário).
+    // Não nas 2 e 4: quem ainda está testando na TV fica na sala de reunião (ela vem antes da estante).
+    { at: 24_000 + r * 1_100, user: s[1], steps: [...(r === 0 || r === 2 ? [tool(3_000, 'mcp__memory__memory_list', {}, '3 memórias deste projeto'), tool(3_000, 'mcp__memory__memory_propose', { op: 'create', title: 'Testes antes do commit' }, 'Proposta registrada.')] : []), test(5_000, false), read(k, p, 2_500, k.fix[0], k.fix[1]), edit(p, 3_000, k.fix), test(4_500, true), say(`O teste esperava o valor antigo. Ajustei ${base(k.fix[0])} e a suíte voltou a passar.`)] },
     { at: 60_000 + r * 1_100, user: s[2], steps: [...(r % 2 === 0 ? [memo] : []), read(k, p, 2_500), edit(p, 4_000, k.edit), test(5_000, true), say(`Feito, mudança em ${base(k.edit[0])} coberta por teste.`)] },
     {
       at: 92_000 + r * 1_100,
@@ -428,7 +432,13 @@ export function demoFeed(now?: number): OfficeFeed {
   })
   // A Central, no console do centro: a última mensagem que ela despachou.
   const central = playScript([{ at: -40_000, user: 'Roda os testes da loja e me avisa.', steps: [say('Mandei para loja-virtual, na conversa Demo 2.1.')] }], t, start, CENTRAL_ID, cycle)
-  conversations.push({ id: CENTRAL_ID, title: 'Central', cwd: '', mode: 'central', model, sdkSessionId: null, messages: central.messages, tokens: { context: 0, output: 0, cost: 0 }, createdAt: start - 3_600_000, updatedAt: central.updatedAt })
+  // Os despachos dela (demoCentral.ts): o pulso corre do console até o destino.
+  conversations.push({ id: CENTRAL_ID, title: 'Central', cwd: '', mode: 'central', model, sdkSessionId: null, messages: central.messages, tokens: { context: 0, output: 0, cost: 0 }, createdAt: start - 3_600_000, updatedAt: central.updatedAt, central: demoCentralState(t, start, cycle, (r) => `C:\\demo\\${KITS[r].project}`) })
+  // O Manager do plano do checkout: senta à cabeceira; a TV pinta o resumo (demoPlan.ts).
+  const plan = demoPlanConversation(t, start, cycle, `C:\\demo\\${KITS[1].project}`, model)
+  conversations.push(plan.conv)
+  if (plan.busy) busyIds.add(plan.conv.id)
+  if (plan.busySince !== null) busySince[plan.conv.id] = plan.busySince
   const usageLimits: Record<string, RateLimitStatus> = { five_hour: demoUsage(t, start, clock) }
   return {
     conversations,

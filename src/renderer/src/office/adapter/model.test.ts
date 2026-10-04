@@ -54,9 +54,9 @@ describe('quem entra no escritório', () => {
     expect(m.characters.some((c) => c.convId === 'solta')).toBe(false)
   })
 
-  it('conversa de planejamento entra como as outras', () => {
+  it('conversa de planejamento entra sem mesa: o Agent Manager vai à cabeceira da mesa de reunião', () => {
     const m = deriveOfficeModel(feed({ conversations: [conv('p', { mode: 'planning', planningSlug: 's' })] }), NOW)
-    expect(byKey(m.characters, 'conv:p')).toBeDefined()
+    expect(byKey(m.characters, 'conv:p')).toMatchObject({ role: 'principal', placement: { kind: 'destination', papel: 'reuniao-cabeceira' } })
   })
 })
 

@@ -191,6 +191,8 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: Re
         now
       })
       const principal = principalOf(c, feed, room.id, crew, now)
+      // O Agent Manager (planejamento) não ocupa mesa de ilha: senta à cabeceira da mesa da sala de reunião.
+      if (c.mode === 'planning') principal.placement = { kind: 'destination', papel: 'reuniao-cabeceira' }
       characters.push(principal)
       for (const track of Object.values(tracks)) {
         const role = roleFromSubagentType(track.subagentType)

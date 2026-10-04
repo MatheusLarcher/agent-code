@@ -39,6 +39,7 @@ function world(taken: Set<number> = new Set()): BrainWorld & BoardWorld {
     pairUp: () => false,
     partner: () => null,
     doorOut: () => null,
+    frontSpot: () => ({ x: 0, z: 8, yaw: Math.PI }),
     party: () => null,
     boardSpot(_b, col, out: BoardSpot) {
       Object.assign(out, { x: col, z: 1, yaw: 0, lx: col, ly: 1.4, lz: 0 })

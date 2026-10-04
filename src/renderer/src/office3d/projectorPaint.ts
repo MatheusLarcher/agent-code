@@ -10,7 +10,7 @@
  */
 import { chatPalette, ellipsize, roundRect } from './chatPaint'
 import type { DeviceKind } from './projectorUse'
-import { paintBanner, paintScore, paintWaiting, type ScoreData } from './tvPaint'
+import { paintBanner, paintPlan, paintScore, paintWaiting, type PlanPaint, type ScoreData } from './tvPaint'
 
 /** A página dentro da moldura: tamanho natural (a proporção) e quem a desenha. */
 export interface PageImage {
@@ -29,6 +29,8 @@ export interface ProjectorView {
   image: PageImage | null
   /** O placar no lugar da página (a TV ociosa). */
   score?: ScoreData | null
+  /** O resumo do plano no lugar da página (o planejamento na TV). */
+  plan?: PlanPaint | null
   /** A faixa do chamado: quem chama e a mensagem. */
   banner?: { title: string; text: string } | null
   /** O teste ao vivo no quadrinho do canto (com um chamado na tela). */
@@ -215,6 +217,7 @@ export function paintProjector(ctx: Ctx, w: number, h: number, view: ProjectorVi
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
   if (view.score) paintScore(ctx, w, h, view.score, s)
+  else if (view.plan) paintPlan(ctx, w, h, view.plan, s)
   else if (view.kind === 'android') paintPhone(ctx, w, h, view, s)
   else paintBrowser(ctx, w, h, view, s)
   if (view.banner) paintBanner(ctx, w, view.banner, s)
@@ -227,7 +230,7 @@ export function paintProjector(ctx: Ctx, w: number, h: number, view: ProjectorVi
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(x - 2 * s, y - 2 * s, pw + 4 * s, ph + 4 * s)
     ctx.translate(x, y)
-    paintProjector(ctx, pw, ph, { ...view.pip, pip: null, banner: null, waiting: 0, score: null })
+    paintProjector(ctx, pw, ph, { ...view.pip, pip: null, banner: null, waiting: 0, score: null, plan: null })
     ctx.translate(-x, -y)
   }
   if (view.waiting) paintWaiting(ctx, h, view.waiting, s)

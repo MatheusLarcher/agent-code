@@ -147,7 +147,8 @@ describe('festa no apagão: todo mundo para e festeja', () => {
     expect(crowd.list.every((b) => b.party === null && !b.puppet)).toBe(true)
     expect(crowd.list.filter((b) => b.visible).every((b) => b.reaction === 'alert' || b.pending.includes('alert') || b.reaction === 'scared')).toBe(true)
     run(0.2)
-    const workers = crowd.list.filter((b) => b.phase === 'working' && b.role === 'desk')
+    // Quem está consultando a memória vai à estante (memoryTrips.ts), não à mesa.
+    const workers = crowd.list.filter((b) => b.phase === 'working' && b.role === 'desk' && !b.shelfTrip)
     expect(workers.length).toBeGreaterThan(0)
     expect(workers.every((b) => b.mode === 'work' && b.goal.gait === 'run')).toBe(true)
     expect(crowd.list.filter((b) => b.role === 'desk' && b.phase === 'idle').every((b) => b.mode === 'back' || b.mode === 'sleep' || b.mode === 'free')).toBe(true)

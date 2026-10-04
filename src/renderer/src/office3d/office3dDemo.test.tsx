@@ -44,12 +44,13 @@ function find(root: Object3D, pred: (o: Object3D) => boolean): Object3D[] {
 }
 
 describe('feed de demonstração', () => {
-  it('5 salas, 20 agentes + a Central no console, ícones nos três formatos e a janela de 5h', () => {
+  it('5 salas, 20 agentes + a Central no console e o Manager à cabeceira, ícones nos três formatos e a janela de 5h', () => {
     const feed = demoFeed(1_000)
     const model = deriveOfficeModel(feed, 1_000)
     expect(model.rooms).toHaveLength(DEMO_ROOMS)
-    expect(model.characters).toHaveLength(DEMO_ROOMS * DEMO_PER_ROOM + 1)
+    expect(model.characters).toHaveLength(DEMO_ROOMS * DEMO_PER_ROOM + 2)
     expect(model.characters.filter((c) => c.placement.kind === 'destination' && c.placement.papel === 'central')).toHaveLength(1)
+    expect(model.characters.filter((c) => c.placement.kind === 'destination' && c.placement.papel === 'reuniao-cabeceira')).toHaveLength(1)
     const icons = model.rooms.map((r) => r.icon)
     expect(icons.some((i) => i?.startsWith('data:image/'))).toBe(true)
     expect(icons).toContain(null)

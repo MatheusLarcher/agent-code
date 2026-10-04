@@ -19,7 +19,7 @@
  * do palco — só o `transform` muda, e só quando o px muda.
  */
 import { Vector3, type Camera, type PerspectiveCamera } from 'three'
-import { MONITOR_HALF_H, MONITOR_PLANE, projectPoint, screenPose, type MonitorAt, type ScreenPlane, type ViewSize } from './cameraRig'
+import { MONITOR_HALF_H, MONITOR_PLANE, planeEdge, projectPoint, screenPose, type MonitorAt, type ScreenPlane, type ViewSize } from './cameraRig'
 import { MONITOR_BACK, MONITOR_Y } from './layout'
 import { quadMatrix3d, type Pt } from './quadTransform'
 import { BUBBLE_TOP } from './speech'
@@ -183,7 +183,8 @@ export class ScreenAnchor {
     for (let i = 0; i < 4; i++) {
       const c = CORNERS[i]
       // Tela olhando para −Z (mesa de fundo): vista de frente, a esquerda dela fica em +X.
-      const a = this.v.set(m.x + c[0] * m.dir * pl.halfW, m.y + c[1] * pl.halfH, z).project(camera)
+      const e = planeEdge(pl, c[1])
+      const a = this.v.set(m.x + c[0] * m.dir * pl.halfW, m.y + e.dy, z + e.dz).project(camera)
       if (a.z < -1 || a.z > 1) return this.hide()
       const x = ((a.x + 1) / 2) * width
       const y = ((1 - a.y) / 2) * height
@@ -224,7 +225,8 @@ export class ScreenAnchor {
     const pose = screenPose(m, pl, view)
     const z = m.z + m.dir * pl.front
     const p = CORNERS.map(([sx, sy]) => {
-      const n = projectPoint(pose, view, { x: m.x + sx * m.dir * pl.halfW, y: m.y + sy * pl.halfH, z })
+      const e = planeEdge(pl, sy)
+      const n = projectPoint(pose, view, { x: m.x + sx * m.dir * pl.halfW, y: m.y + e.dy, z: z + e.dz })
       return { x: ((n.x + 1) / 2) * width, y: ((1 - n.y) / 2) * height }
     })
     const len = (i: number, j: number): number => Math.hypot(p[j].x - p[i].x, p[j].y - p[i].y)

@@ -301,6 +301,24 @@ describe('A fila da sala: os chamados antes de quem testa', () => {
   })
 })
 
+describe('A TV com o planejamento', () => {
+  it('sem chamado nem teste, a TV pinta o resumo do plano (lido do main, sem vigia); o foco abre o plano com as abas', async () => {
+    const peek = vi.fn(async () => ({ ok: true as const, plan: { titulo: 'Checkout novo', etapas: [{ titulo: 'Cenário', status: 'concluida' as const }, { titulo: 'Pagamento', status: 'em_andamento' as const }], cards: 9, ambiguidadesAbertas: 1 } }))
+    vi.stubGlobal('api', { planningPeek: peek })
+    const paint = vi.spyOn(RoomProjector.prototype, 'paint')
+    const f = feed({ conversations: [conv('p', { mode: 'planning', planningSlug: 'checkout', title: 'Plano do checkout', updatedAt: NOW })], activeId: 'p' })
+    const s = setup(f)
+    s.feed()
+    s.run(1)
+    expect(peek).toHaveBeenCalledWith({ projectCwd: 'C:\\proj\\alpha', slug: 'checkout' })
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+    s.tick(MIN_PAINT_MS + 1)
+    expect(paint.mock.calls.at(-1)![0].plan).toMatchObject({ manager: 'Plano do checkout', titulo: 'Checkout novo', cards: 9, ambiguidades: 1 })
+    expect(s.p.focusInfo()).toMatchObject({ kind: 'plan', convId: 'p', plans: [{ convId: 'p', title: 'Plano do checkout' }] })
+    s.p.dispose()
+  })
+})
+
 describe('A TV com chamado: prioridade, quadrinho, fila e foco', () => {
   const calling = (id: string, callId: string): ReturnType<typeof conv> =>
     conv(id, {
@@ -348,7 +366,7 @@ describe('OfficeScene com a TV', () => {
     expect(glance).not.toHaveBeenCalled()
     // Perto da TV quando ela acende de novo: olha.
     const b = scene.crowd.list[0]
-    const tv = scene.tvCenter()
+    const tv = scene.projectors.screen()!
     Object.assign(b, { x: tv.x - 1, z: tv.z + 2.5 })
     scene.projectors.room(OFFICE_ID)!.onLit()
     expect(glance).toHaveBeenCalledTimes(1)

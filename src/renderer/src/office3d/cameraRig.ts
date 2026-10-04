@@ -168,6 +168,14 @@ export interface ScreenPlane {
   halfH: number
   front: number
   pitch: number
+  /** Inclinação da tela (rotation.x; a de cima vai para trás com negativo). O console da Central: −0,27. */
+  tilt?: number
+}
+
+/** O ponto da tela na altura `sy` (−1 embaixo, +1 em cima), com a inclinação: y e o recuo em z. */
+export function planeEdge(plane: ScreenPlane, sy: number): { dy: number; dz: number } {
+  const t = plane.tilt ?? 0
+  return { dy: sy * plane.halfH * Math.cos(t), dz: sy * plane.halfH * Math.sin(t) }
 }
 
 export const MONITOR_PLANE: ScreenPlane = { halfW: MONITOR_HALF_W, halfH: MONITOR_HALF_H, front: MONITOR_SCREEN_FRONT, pitch: MONITOR_PITCH }
@@ -208,9 +216,12 @@ export function screenPose(m: MonitorAt, plane: ScreenPlane, view: ViewSize, fil
   if (clear === 0) return pose
   // Bordas de cima e de baixo da tela (px) nesta pose; desce o que faltar para livrar a faixa, sem passar do fim.
   const z = m.z + dir * plane.front
-  const px = (y: number): number => ((1 - projectPoint(pose, view, { x: m.x, y, z }).y) / 2) * H
-  const top = px(m.y + plane.halfH)
-  const bottom = px(m.y - plane.halfH)
+  const px = (sy: number): number => {
+    const e = planeEdge(plane, sy)
+    return ((1 - projectPoint(pose, view, { x: m.x, y: m.y + e.dy, z: z + e.dz }).y) / 2) * H
+  }
+  const top = px(1)
+  const bottom = px(-1)
   const shift = Math.max(0, Math.min(clear - top, H - MONITOR_BOTTOM_GAP - bottom))
   // Subir a câmera (e o alvo) Δ desce a tela Δ / (distância · tan) em NDC (a arfagem é pequena).
   pose.ty += ((2 * shift) / H) * pose.distance * t

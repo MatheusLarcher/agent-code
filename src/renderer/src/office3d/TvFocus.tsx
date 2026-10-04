@@ -8,13 +8,15 @@
  *           a conversa do agente ("Aprovado: <arquivo>" / "Ajustes no <arquivo>:
  *           <texto>"); responder fecha o foco. Fechar sem responder não manda nada;
  *   test    o espelho da TV (os quadros com a barra de URL), ao vivo;
+ *   plan    a Tela de Planejamento inteira (o PlanningWorkspace da conversa do
+ *           plano, que o App monta), interativa; abas para trocar de plano;
  *   score   o espelho do placar.
  *
  * "+N esperando" no alto quando a sala tem fila. Desmontar solta o espelho e o
  * iframe (nada fica vivo fora do foco).
  */
 import './tvFocus.css'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { MockupUrlResult } from '@shared/officeMockup'
 import type { Projectors, TvFocusInfo } from './projectors'
 import { PROJ_H, PROJ_W } from './projectorPaint'
@@ -27,6 +29,12 @@ export interface TvFocusProps {
   onSend?: (convId: string, text: string) => void
   /** O endereço do mockup no protocolo (window.api; injetável nos testes). */
   mockupUrl?: (req: { cwd: string; path: string }) => Promise<MockupUrlResult>
+  /** A Tela de Planejamento da conversa ativa (o foco de um plano a mostra quando a ativa é a dele). */
+  planning?: ReactNode
+  /** A conversa ativa (o plano em foco vira a ativa para o chat do Manager ser o dele). */
+  activeConvId?: string | null
+  /** Troca o plano pelas abas. */
+  onPickPlan?: (convId: string) => void
 }
 
 const MIRROR_SCALE = 2
@@ -102,18 +110,36 @@ function Mockup({ info, onSend, mockupUrl }: { info: Extract<TvFocusInfo, { kind
   )
 }
 
-export function TvFocus({ info, projectors, onClose, onSend, mockupUrl = defaultMockupUrl }: TvFocusProps): JSX.Element {
-  const title = info.kind === 'mockup' ? `${info.agent} · ${info.rel}` : info.kind === 'test' ? `${info.agent} · ${info.title || info.url}` : 'Placar do escritório'
+export function TvFocus({ info, projectors, onClose, onSend, mockupUrl = defaultMockupUrl, planning, activeConvId, onPickPlan }: TvFocusProps): JSX.Element {
+  const title =
+    info.kind === 'mockup' ? `${info.agent} · ${info.rel}` : info.kind === 'test' ? `${info.agent} · ${info.title || info.url}` : info.kind === 'plan' ? 'Planejamento' : 'Placar do escritório'
   return (
     <div className="tvf" data-testid="tv-focus" data-kind={info.kind}>
       <div className="tvf-bar">
         <span className="tvf-title">{title}</span>
+        {info.kind === 'plan' && info.plans.length > 1 ? (
+          <span className="tvf-tabs" role="tablist" aria-label="Planos">
+            {info.plans.map((p) => (
+              <button key={p.convId} type="button" role="tab" aria-selected={p.convId === info.convId} className={p.convId === info.convId ? 'on' : ''} onClick={() => onPickPlan?.(p.convId)}>
+                {p.title}
+              </button>
+            ))}
+          </span>
+        ) : null}
         {info.waiting > 0 ? <span className="tvf-waiting">+{info.waiting} esperando</span> : null}
         <button type="button" className="tvf-close" onClick={onClose} aria-label="Fechar a TV" title="Fechar (Esc)">
           ×
         </button>
       </div>
-      {info.kind === 'mockup' ? <Mockup info={info} onSend={onSend} mockupUrl={mockupUrl} /> : <Mirror roomId={info.roomId} projectors={projectors} />}
+      {info.kind === 'mockup' ? (
+        <Mockup info={info} onSend={onSend} mockupUrl={mockupUrl} />
+      ) : info.kind === 'plan' ? (
+        <div className="tvf-plan" data-testid="tv-focus-plan">
+          {planning && activeConvId === info.convId ? planning : <div className="tvf-empty">Abrindo o planejamento…</div>}
+        </div>
+      ) : (
+        <Mirror roomId={info.roomId} projectors={projectors} />
+      )}
     </div>
   )
 }

@@ -1988,6 +1988,9 @@ export const Channels = {
   memoryConflicts: 'memory:conflicts',
   /** Drops a settled (conflict/rejected) proposal from the list. */
   memoryDiscardProposal: 'memory:discard-proposal',
+  /** O painel de Memórias do Escritório: a lista e o texto de uma (só leitura). */
+  memoryListEntries: 'memory:list-entries',
+  memoryReadEntry: 'memory:read-entry',
   /** Task ledger queue for the agents panel (read-only). */
   tasksBoard: 'tasks:board',
   /** Steps, deliverables and events of one task — fetched only when expanded. */
@@ -2016,6 +2019,8 @@ export const Channels = {
   planningSaveLayout: 'planning:saveLayout',
   /** Os prompts gravados em _handoff/ do planejamento, na ordem em que foram gravados. */
   planningListHandoffs: 'planning:listHandoffs',
+  /** O resumo de um plano para a TV do Escritório (só leitura, sem vigia). */
+  planningPeek: 'planning:peek',
   /** Grava um prompt de handoff em _handoff/AAAA-MM-DD-NN.md (o que vai ser enviado). */
   planningWriteHandoff: 'planning:writeHandoff',
   /** Registra em _handoff/enviados.json prompts enviados, substituídos ou marcados à mão. */

@@ -23,34 +23,18 @@
  * agente focado. Ir à Central (`centralSignal` ou a Central virando a conversa
  * ativa) fecha a tela como gesto do usuário: visão geral e Central no flutuante.
  *
- * O motor (three puro) nasce na montagem e vive enquanto a aba existir: com
- * `active` false (aba Conversa) ele fica PAUSADO — sem RAF, sem simulação, sem
- * textura redesenhada — e volta na hora, com a mesma câmera. Com a aba fechada
- * também não existem a tela do monitor (<CodeMonitor>, nem as assinaturas dela
- * no feed e no código ao vivo), a prévia, o telão nem o HUD de desempenho; ao
- * voltar, a tela renasce já com o feed que o motor retomou. Desmontar libera
- * GPU, listeners (os do navegador também) e RAF.
+ * O motor (three puro) nasce na montagem e vive enquanto a aba existir: com `active` false (aba
+ * Conversa) fica PAUSADO e volta na hora, com a mesma câmera; com a aba fechada não existem a tela
+ * do monitor, a prévia, o foco da TV nem o HUD de desempenho. Desmontar libera GPU, listeners e RAF.
  *
- * Mouse parado num agente (PREVIEW_DELAY_MS): a prévia (<ChatPreview>) com as
- * últimas entradas do turno dele, acima do monitor. Clique num agente voa até o
- * monitor dele e abre por cima, alinhado ao monitor, a tela dele
- * (<CodeMonitor>: abre no último app usado — na 1ª vez, o Chat, o turno da
- * conversa como o chat mostra — e a barra de tarefas dele troca entre Código,
- * Chat e Contexto); clique num papel do kanban abre o cartão grande (<BoardOverlay>, o mesmo
- * detalhe da aba Quadro) e na pilha "+K" a lista da coluna;
- * duplo clique abre a conversa dele no chat flutuante (que expande). Clique na
- * TV voa até ela de frente e abre DENTRO dela o que estava na tela (<TvFocus>:
- * o mockup vivo com Aprovar / Pedir ajuste, o teste ao vivo ou o placar); o
- * conteúdo da TV congela enquanto o foco dura, abrir o mockup de quem chama
- * encerra o chamado e o chat flutuante sai até fechar. Clique no
- * balão de um pedido (permissão, pergunta) leva ao pedido (`onFocusRequest`:
- * o App seleciona a conversa e abre o modal); nos outros balões, foca o agente.
- * Trocar de conversa fora do 3D (sidebar) com a aba aberta voa até o agente
- * dela, salvo se o usuário mexeu na câmera há pouco ou se a tela aberta já é
- * dela (engine.follow), e nunca para a Central (que não tem mesa); só a 1ª
- * conversa desde a montagem (o app acabou de carregar) não leva a câmera. O 📍
- * do chat minimiza o chat e voa até a mesa do agente. Os balões de fala são do
- * motor (speech.ts), numa camada DOM dentro do palco.
+ * Mouse parado num agente: a prévia (<ChatPreview>) acima do monitor. Clique num agente voa até o
+ * monitor e abre por cima a tela dele (<CodeMonitor>, com Código, Chat e Contexto); duplo clique
+ * abre a conversa no chat flutuante. Clique na Central (ou na tela do console) voa até o console e
+ * encaixa o chat dela (`central`) na tela inclinada. Clique na TV voa até ela de frente e abre DENTRO
+ * dela o que estava na tela (<TvFocus>, useTvFocus.ts: o mockup com Aprovar / Pedir ajuste, o teste
+ * ao vivo, o planejamento; na TV vazia, o "📋 Planejar"). Papel do kanban: o cartão grande
+ * (<BoardOverlay>). Balão de pedido: o pedido (`onFocusRequest`). Trocar de conversa fora do 3D voa
+ * até o agente dela (engine.follow; nunca para a Central). 📍 minimiza o chat e voa até a mesa.
  *
  * Só em DEV e com a aba aberta: Ctrl+Alt+Shift+D liga/desliga a demonstração
  * animada (um tique de DEMO_TICK_MS republica demoFeed(Date.now()) no
@@ -61,24 +45,24 @@
 import './office3d.css'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { isCentralConversation } from '@shared/central'
-import { principalKey } from '../office/adapter/model'
+import { principalKey, roomIdFor } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
 import { BoardOverlay } from './board/BoardOverlay'
 import { ChatPreview, useHoverPreview } from './ChatPreview'
 import { CodeMonitor } from './codeScreen/CodeMonitor'
 import { DEMO_TICK_MS, demoFeed } from './demoFeed'
 import { Office3DEngine, type EngineCallbacks, type EngineOptions } from './engine'
-import { PROJECTOR_KEY, type BoardOpen } from './engineTypes'
+import { MEMORY_SHELF_KEY, type BoardOpen } from './engineTypes'
 import type { ProjectLayout } from './layout'
 import { OfficeChatFloat, type OfficeConversation } from './OfficeChatFloat'
 import { OfficeHud } from './OfficeHud'
 import { isPerfShortcut, PerfHud } from './PerfHud'
-import { tvLookPose } from './engineTv'
-import { callMarks } from './officeCalls'
 import { setMeetingProbe } from './officeWatch'
 import type { OfficePower } from './power'
-import type { TvFocusInfo } from './projectors'
+import { OfficeMemoryPanel } from './OfficeMemoryPanel'
+import { OfficePlanDialog, type PlanProject } from './OfficePlanDialog'
 import { TvFocus } from './TvFocus'
+import { useTvFocus } from './useTvFocus'
 
 export interface Office3DWorkspaceProps {
   /** A aba está à vista; false pausa o motor (padrão: true). */
@@ -114,6 +98,12 @@ export interface Office3DWorkspaceProps {
   onOpenInApp?: (convId: string) => void
   /** Aprovar / Pedir ajuste do mockup na TV: manda o texto para a conversa do agente (o envio do chat). */
   onSendToConversation?: (convId: string, text: string) => void
+  /** A Tela de Planejamento da conversa ativa (o App monta): o foco da TV num plano a mostra dentro da TV. */
+  planning?: ReactNode
+  /** "📋 Planejar" (HUD ou TV vazia): cria o plano e a conversa; devolve o id dela (null se falhou). Sem ela, sem o botão. */
+  onStartPlanning?: (cwd: string, pedido: string) => Promise<string | null>
+  /** Os projetos do formulário do planejamento. */
+  planProjects?: readonly PlanProject[]
   /** Sobe a cada clique na notificação de um chamado: o filtro vai para o projeto dele e a câmera para a TV. */
   callSignal?: { n: number; projectId: string | null }
   /** Controle do Windows ligado: o HUD mostra o aviso (o chat minimizado o esconde). */
@@ -148,6 +138,9 @@ export function Office3DWorkspace({
   onOpenInApp,
   onSendToConversation,
   callSignal,
+  planning = null,
+  onStartPlanning,
+  planProjects = [],
   windowsControlEnabled = false,
   onDisableWindowsControl,
   engineOptions
@@ -156,8 +149,6 @@ export function Office3DWorkspace({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<Office3DEngine | null>(null)
   const [focusKey, setFocusKey] = useState<string | null>(null)
-  // O foco na TV: o que estava na tela no clique (congelado enquanto dura).
-  const [tvInfo, setTvInfo] = useState<TvFocusInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hud, setHud] = useState(false)
   const [power, setPower] = useState<OfficePower | null>(null)
@@ -176,6 +167,9 @@ export function Office3DWorkspace({
   const boardOpenRef = useRef(boardOpen)
   boardOpenRef.current = boardOpen
   const cbs = useRef({ onOpenConversation, onFocusRequest, onHover })
+  const tvFocus = useRef<ReturnType<typeof useTvFocus>>({ tvInfo: null, onFocus: () => false, pickPlan: () => {}, sendFromTv: undefined, reset: () => {}, focusPlan: () => {} })
+  // "📋 Planejar": o formulário aberto (pelo HUD ou pela TV vazia).
+  const [planDialog, setPlanDialog] = useState(false)
   cbs.current = { onOpenConversation, onFocusRequest, onHover }
   const activeRef = useRef(active)
   activeRef.current = active
@@ -193,18 +187,14 @@ export function Office3DWorkspace({
         const el = document.activeElement
         if (el instanceof HTMLElement && el.closest('.o3d-chat, .o3d-screen-anchor')) el.blur()
         setFocusKey(key)
-        // A TV: o conteúdo congela no foco; abrir o mockup de quem chama encerra o chamado (ele foi visto).
-        const projectors = engineRef.current?.scene.projectors
-        const tv = !!key?.startsWith(PROJECTOR_KEY)
-        projectors?.lock(tv)
-        const info = tv ? (projectors?.focusInfo() ?? null) : null
-        setTvInfo(info)
-        if (info?.kind === 'mockup' && info.callId) callMarks.end(info.callId, 'aberto')
-        if (tv) return
+        // A TV (useTvFocus.ts): o conteúdo congela no foco; o chat não troca.
+        if (tvFocus.current.onFocus(key)) return
         // O motor fechou a tela sozinho (voo, follow, o agente saiu): o chat fica onde está.
         if (!byUser) return
         // O usuário desfez a seleção: sem mesa, a Central (a conversa ativa não muda).
         if (!key) return setShowCentral(true)
+        // A Central no console: o chat dela vai na tela do console, sem trocar a conversa ativa.
+        if (engineRef.current?.scene.character(key)?.spot === 'central') return
         // Clique no agente: o chat vai para a conversa exata dele (a que o monitor mostra).
         const conv = engineRef.current?.scene.character(key)?.model.convId
         if (!conv) return
@@ -245,7 +235,7 @@ export function Office3DWorkspace({
       engine.dispose()
       engineRef.current = null
       setFocusKey(null)
-      setTvInfo(null)
+      tvFocus.current.reset()
       setPower(null)
       setProjects({ list: [], filter: null })
       setBoardOpen(null)
@@ -255,11 +245,18 @@ export function Office3DWorkspace({
   }, [])
 
   const convId = conversation?.id ?? null
+  // O foco dentro da TV (useTvFocus.ts); o motor o lê pelo ref (os callbacks nascem uma vez).
+  const tv = useTvFocus({ engineRef, active, convId, openConversation: (id) => cbs.current.onOpenConversation(id), onSendToConversation, callSignal, onEmptyTv: onStartPlanning ? () => setPlanDialog(true) : undefined })
+  tvFocus.current = tv
+  const tvInfo = tv.tvInfo
   const convIsCentral = isCentralConversation(conversation)
   // Ir à Central é o usuário desfazendo a seleção: a tela aberta fecha (a câmera
   // volta à vista de antes do foco, a geral) e o flutuante volta, na Central.
   const openCentral = useCallback((): void => {
-    engineRef.current?.leaveFocus(true, true)
+    const engine = engineRef.current
+    // A Central já aberta no console: fica lá (a câmera não se mexe sozinha).
+    if (engine?.focused && engine.scene.character(engine.focused)?.spot === 'central') return
+    engine?.leaveFocus(true, true)
     setShowCentral(true)
   }, [])
   const onFilter = useCallback((id: string | null): void => engineRef.current?.setProjectFilter(id), [])
@@ -302,6 +299,8 @@ export function Office3DWorkspace({
     if (!active || !convId || !had) return
     if (convIsCentral) return openCentral()
     setShowCentral(false)
+    // O plano em foco na TV virou a conversa ativa (abrir pela TV, trocar de aba): a câmera fica na TV.
+    if (tvFocus.current.tvInfo?.kind === 'plan' && tvFocus.current.tvInfo.convId === convId) return
     engineRef.current?.follow(convId)
   }, [convId, active, convIsCentral, openCentral])
 
@@ -312,17 +311,6 @@ export function Office3DWorkspace({
     seenCentralSignal.current = centralSignal
     if (active) openCentral()
   }, [centralSignal, active, openCentral])
-
-  // Clique na notificação de um chamado (o App já abriu a aba): o filtro no projeto dele e a câmera na TV.
-  const seenCall = useRef(callSignal?.n ?? 0)
-  useEffect(() => {
-    const engine = engineRef.current
-    if (!callSignal || callSignal.n === seenCall.current || !active || !engine) return
-    seenCall.current = callSignal.n
-    engine.setProjectFilter(callSignal.projectId)
-    const to = tvLookPose(engine.scene, { fovDeg: engine.camera.fov, aspect: engine.camera.aspect })
-    if (to) engine.flyToPose(to)
-  }, [callSignal, active])
 
   // Aba fechada: a janela do kanban fecha.
   useEffect(() => {
@@ -387,14 +375,6 @@ export function Office3DWorkspace({
   // O × da tela é o usuário desfazendo a seleção (o chat volta à Central).
   const closeScreen = useCallback(() => engineRef.current?.leaveFocus(true, true), [])
   const closeBoard = useCallback(() => setBoardOpen(null), [])
-  // Aprovar / Pedir ajuste na TV: o texto vai para a conversa do agente e o foco fecha (ele volta à mesa).
-  const sendFromTv = useCallback(
-    (id: string, text: string): void => {
-      onSendToConversation?.(id, text)
-      engineRef.current?.leaveFocus(true, true)
-    },
-    [onSendToConversation]
-  )
   // "Abrir a conversa" do cartão: o chat flutuante passa a mostrá-la (como o clique no agente).
   const openCardConversation = useCallback((id: string) => {
     setShowCentral(false)
@@ -409,7 +389,9 @@ export function Office3DWorkspace({
   const centralShown = showCentral && !!central
   // Com o campo de digitar na tela do monitor, a tela é o chat: o flutuante sai (e volta ao fechá-la).
   // O campo só entra quando a conversa ativa é a do agente (o envio vai para a conversa ativa).
-  const screenTakesChat = !!focused && !!monitorComposer
+  // A Central no console: a tela do console É o chat dela (o painel `central`).
+  const consoleChat = focused?.spot === 'central' && central ? central : null
+  const screenTakesChat = !!focused && (!!monitorComposer || !!consoleChat)
   const fieldComposer = screenTakesChat && conversation?.id === focused.model.convId ? monitorComposer : null
   // O seletor de modelo/esforço é da conversa do agente focado (não depende da ativa).
   const picker = screenTakesChat && monitorModelPicker ? monitorModelPicker(focused.model.convId) : null
@@ -441,8 +423,25 @@ export function Office3DWorkspace({
           projects={projects.list}
           filter={projects.filter}
           onFilter={onFilter}
+          onPlan={onStartPlanning ? () => setPlanDialog(true) : undefined}
         />
-        {focused && (
+        {active && planDialog && onStartPlanning ? (
+          <OfficePlanDialog
+            projects={planProjects}
+            initialCwd={planProjects.find((p) => roomIdFor(p.cwd) === projects.filter)?.cwd ?? null}
+            onClose={() => setPlanDialog(false)}
+            onStart={(cwd, pedido) => {
+              setPlanDialog(false)
+              void onStartPlanning(cwd, pedido).then((id) => id && tv.focusPlan(id))
+            }}
+          />
+        ) : null}
+        {focused && consoleChat ? (
+          <div ref={screenRef} className="o3d-screen-anchor o3d-console-screen" key={focused.key} data-testid="office-console-screen">
+            {consoleChat}
+          </div>
+        ) : null}
+        {focused && !consoleChat && (
           <div ref={screenRef} className="o3d-screen-anchor" key={focused.key}>
             <CodeMonitor
               feed={feed}
@@ -457,8 +456,20 @@ export function Office3DWorkspace({
         )}
         {active && tvInfo && engine ? (
           <div ref={screenRef} className="o3d-screen-anchor" key="tv">
-            <TvFocus info={tvInfo} projectors={engine.scene.projectors} onClose={closeScreen} onSend={onSendToConversation ? sendFromTv : undefined} />
+            <TvFocus
+              info={tvInfo}
+              projectors={engine.scene.projectors}
+              onClose={closeScreen}
+              onSend={tv.sendFromTv}
+              planning={planning}
+              activeConvId={convId}
+              onPickPlan={tv.pickPlan}
+            />
           </div>
+        ) : null}
+        {/* O clique na estante de Memórias é um foco nela: o painel (só leitura) dura enquanto ele durar. */}
+        {active && engine && focusKey === MEMORY_SHELF_KEY ? (
+          <OfficeMemoryPanel engine={engine} feed={feed} onClose={closeScreen} onOpenConversation={(id) => cbs.current.onOpenConversation(id)} />
         ) : null}
         {previewed && (
           <div ref={previewRef} className="o3d-preview-anchor" data-key={previewed.key} key={previewed.key}>
@@ -470,7 +481,7 @@ export function Office3DWorkspace({
         ) : null}
         {import.meta.env.DEV && active && hud ? <PerfHud source={readEngine} /> : null}
       </div>
-      {active && (chat || central) && !screenTakesChat && !tvInfo ? (
+      {active && (chat || central) && !screenTakesChat && !tvInfo && focusKey !== MEMORY_SHELF_KEY ? (
         <OfficeChatFloat
           conversation={conversation}
           central={centralShown || convIsCentral}

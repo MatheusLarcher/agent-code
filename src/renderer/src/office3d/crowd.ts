@@ -39,6 +39,8 @@ import { roleOf, seedOf, type LifeInput } from './crowdRoles'
 import { roomFurniture, type Poi, type PoiKind, type RoomFurniture, type Spot } from './furniture'
 import { MONITOR_BACK, MONITOR_Y, type CharacterLayout, type RoomLayout } from './layout'
 import { sameSpot, type MeetingSpot } from './meetingRoom'
+import { FRONT_SPOTS } from './officePlan'
+import { LINGER_S } from './memoryTrips'
 import { LOUNGE_SEATS } from './officePlan'
 import { buildNavGrid, PoiBook, type NavGrid } from './nav'
 import { CONGA_SPEED, planRoomParty, type PartyRole, type RoomParty } from './partyPlan'
@@ -235,6 +237,18 @@ export class Crowd implements BrainWorld, BoardWorld {
     }
   }
 
+  /**
+   * Quem consulta a memória agora (memoryTrips.ts): vai à estante de Memórias. Quem saiu do mapa fica
+   * ainda LINGER_S (a consulta rápida não vira vaivém); gravar vale até o fim da ida.
+   */
+  setShelfTrips(trips: ReadonlyMap<string, 'read' | 'write'>): void {
+    for (const b of this.list) {
+      const use = trips.get(b.key)
+      if (use) b.shelfTrip = { use: b.shelfTrip?.use === 'write' ? 'write' : use, until: Infinity }
+      else if (b.shelfTrip && b.shelfTrip.until === Infinity) b.shelfTrip.until = this.t + LINGER_S
+    }
+  }
+
   private outsideOf(projectId: string | null): boolean {
     return this.filter !== null && projectId !== null && projectId !== this.filter
   }
@@ -264,7 +278,7 @@ export class Crowd implements BrainWorld, BoardWorld {
     const desk = role === 'fixed' || !own ? null : { x: own.x, z: own.z, dir: own.dir, out: own.out }
     const lounge = role !== 'fixed' && c.lounge !== null ? LOUNGE_SEATS[c.lounge] : null
     const monitor = screen ? { x: screen.x, y: MONITOR_Y, z: screen.z - screen.dir * MONITOR_BACK } : null
-    const style: FixedStyle = m.role === 'po' ? 'board' : m.role === 'memoria' ? 'archive' : c.spot === 'central' ? 'console' : 'idle'
+    const style: FixedStyle = m.role === 'po' ? 'board' : m.role === 'memoria' ? 'archive' : c.spot === 'central' ? 'console' : c.spot === 'manager' ? 'manager' : 'idle'
     // A pasta vai para o lado do colega da ilha (o de dentro).
     const side = own ? -own.out : 1
     const projectId = c.projectId
@@ -281,9 +295,11 @@ export class Crowd implements BrainWorld, BoardWorld {
       // Chegou no meio do apagão: vai direto para a pista (se a sala já tem plano; senão o plano o inclui).
       const p = c.roomId ? this.parties.get(c.roomId) : undefined
       if (this.partyOn && !out && (p || c.roomId === null) && !(c.roomId && this.pending.has(c.roomId))) this.join(b, 'dance', p ? p.dancers++ : 0)
+      this.yieldLounge(b)
       return b
     }
     Object.assign(b, { role, style, roomId: c.roomId, projectId, home, desk, lounge, monitor, side, outside })
+    this.yieldLounge(b)
     return b
   }
 
@@ -352,6 +368,12 @@ export class Crowd implements BrainWorld, BoardWorld {
 
   private navOf(b: Brain): RoomNav | undefined {
     return b.roomId ? this.rooms.get(b.roomId) : undefined
+  }
+
+  /** O lounge: quem trabalha (sem mesa, com lugar no lounge) tem prioridade — quem cochila ali levanta e cochila em outro lugar (ou na mesa). */
+  private yieldLounge(b: Brain): void {
+    if (!b.lounge) return
+    for (const o of this.list) if (o !== b && o.mode === 'sleep' && o.poi?.kind === 'sofa' && LOUNGE_SEATS[o.poi.index] === b.lounge) o.mode = 'init'
   }
 
   plan(b: Brain): number {
@@ -456,6 +478,12 @@ export class Crowd implements BrainWorld, BoardWorld {
 
   doorOut(b: Brain): Spot | null {
     return this.navOf(b)?.furniture.doorOut ?? null
+  }
+
+  frontSpot(b: Brain): Spot {
+    const queue = this.list.filter((o) => o.mode === 'permission' && o.visible).sort((x, y) => (x.key < y.key ? -1 : 1))
+    const s = FRONT_SPOTS[Math.max(0, queue.indexOf(b)) % FRONT_SPOTS.length]
+    return { x: s.x, z: s.z, yaw: Math.PI }
   }
 
   party(b: Brain): RoomParty | null {

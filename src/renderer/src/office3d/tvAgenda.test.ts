@@ -13,6 +13,11 @@ describe('quem manda na TV (tvAgenda)', () => {
     expect(tvAgenda([call('c1'), call('c2')], [test('t1'), test('t2')], html('h'))).toMatchObject({ main: { kind: 'call', call: { id: 'c1' } }, pip: { convId: 't1' }, waiting: 2 })
     expect(tvAgenda([], [test('t1'), test('t2')], html('h'))).toMatchObject({ main: { kind: 'test', use: { convId: 't1' } }, pip: null, waiting: 1 })
     expect(tvAgenda([], [], html('h'))).toMatchObject({ main: { kind: 'html' }, waiting: 0 })
+    // 3: o planejamento fica abaixo do chamado e do teste e acima do último HTML.
+    const plan = { convId: 'p', cwd: 'C:\\p', slug: 's', title: 'Plano' }
+    expect(tvAgenda([], [], html('h'), undefined, plan)).toMatchObject({ main: { kind: 'plan', plan: { slug: 's' } } })
+    expect(tvAgenda([], [test('t1')], html('h'), undefined, plan).main.kind).toBe('test')
+    expect(tvAgenda([call('c1')], [], null, undefined, plan).main.kind).toBe('call')
     expect(tvAgenda([], [], null)).toMatchObject({ main: { kind: 'score' }, pip: null, waiting: 0 })
   })
 

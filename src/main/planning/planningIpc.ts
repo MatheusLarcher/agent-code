@@ -15,6 +15,7 @@ import {
   type PlanMediaDto
 } from '../../shared/ipc'
 import { isValidMediaName, MAX_ANEXOS_POR_CARD, MAX_MEDIA_BYTES } from '../../shared/planningMedia'
+import type { PlanningPeekDto } from '../../shared/officeApi'
 import * as realSent from './handoffSent'
 import { HandoffSentMarkSchema } from './handoffSent'
 import { notifyPlanningChanged, setPlanningChangeSink } from './planningEvents'
@@ -333,6 +334,13 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
   register(Channels.planningSaveLayout, SaveLayoutReq, async ({ projectCwd, slug, layout }): Promise<PlanningResult> => {
     await store.saveLayout(projectCwd, slug, layout)
     return { ok: true }
+  })
+
+  // A TV do Escritório: o resumo pintado (título, etapas, cards, ambiguidades), sem vigia nem tela aberta.
+  register(Channels.planningPeek, RefReq, async ({ projectCwd, slug }): Promise<PlanningResult<{ plan: PlanningPeekDto }>> => {
+    const p = await store.openPlan(projectCwd, slug)
+    const abertas = p.cards.filter((c) => c.tipo === 'ambiguidade' && c.status !== 'resolvida').length
+    return { ok: true, plan: { titulo: p.roteiro.titulo, etapas: p.roteiro.etapas.map(({ titulo, status }) => ({ titulo, status })), cards: p.cards.length, ambiguidadesAbertas: abertas } }
   })
 
   register(

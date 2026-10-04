@@ -17,6 +17,7 @@ const PLANNING_CHANNELS = [
   Channels.planningSaveRoteiro,
   Channels.planningSaveLayout,
   Channels.planningListHandoffs,
+  Channels.planningPeek,
   Channels.planningWriteHandoff,
   Channels.planningMarkHandoffsSent,
   Channels.planningImportMedia,
@@ -93,6 +94,19 @@ afterEach(async () => {
 })
 
 describe('registerPlanningIpc', () => {
+  it('planning:peek: o resumo para a TV do Escritório (título, etapas, cards, ambiguidades abertas), sem vigia', async () => {
+    setup()
+    const ref = { projectCwd: cwd, slug: 'checkout' }
+    await call(Channels.planningCreate, { ...ref, titulo: 'Checkout' })
+    await call(Channels.planningSaveCard, { ...ref, card: card(), expectedRev: 0 })
+    await call(Channels.planningSaveCard, { ...ref, card: card({ id: 'amb-1', tipo: 'ambiguidade', status: 'aberta' }), expectedRev: 0 })
+    await call(Channels.planningSaveCard, { ...ref, card: card({ id: 'amb-2', tipo: 'ambiguidade', status: 'resolvida' }), expectedRev: 0 })
+    w.calls.length = 0
+    expect(await call(Channels.planningPeek, ref)).toEqual({ ok: true, plan: { titulo: 'Checkout', etapas: [], cards: 3, ambiguidadesAbertas: 1 } })
+    expect(w.calls).toEqual([])
+    expect(await call(Channels.planningPeek, { ...ref, slug: 'nao-existe' })).toMatchObject({ ok: false })
+  })
+
   it('registra os doze canais planning:*', () => {
     setup()
     expect([...handlers.keys()].sort()).toEqual([...PLANNING_CHANNELS].sort())

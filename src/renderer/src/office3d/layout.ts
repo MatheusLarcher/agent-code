@@ -28,6 +28,7 @@
  * câmera (yaw 0); `dir −1`: espelhada (yaw π).
  */
 import type { OfficeCharacterModel, OfficeModel } from '../office/adapter/model'
+import { managerSeat } from './meetingRoom'
 import {
   CENTRAL_SPOT,
   ISLANDS,
@@ -102,7 +103,7 @@ export interface ProjectLayout {
   agents: number
 }
 
-export type CharacterSpot = 'desk' | 'lounge' | 'stand' | 'beside' | 'po' | 'memory' | 'central'
+export type CharacterSpot = 'desk' | 'lounge' | 'stand' | 'beside' | 'po' | 'memory' | 'central' | 'manager'
 
 export interface CharacterLayout {
   key: string
@@ -281,7 +282,7 @@ function placeCharacters(model: OfficeModel, room: RoomLayout, deskOf: Record<st
   const byKey = new Map<string, CharacterLayout>()
   const besideCount = new Map<string, number>()
   const used = new Set<string>()
-  const counters = { po: 0, memory: 0, plaza: 0 }
+  const counters = { po: 0, memory: 0, plaza: 0, manager: 0 }
   // Lounge estável como as mesas: quem já tinha lugar fica com ele (ninguém é empurrado); os novos pegam os livres.
   const loungeOf = new Map<string, number>()
   const taken = new Set<number>()
@@ -365,6 +366,10 @@ function placeCharacters(model: OfficeModel, room: RoomLayout, deskOf: Record<st
         o = i < MEMORY_SPOTS_Z.length ? base(c, MEMORY_SPOT_X, MEMORY_SPOTS_Z[i], -Math.PI / 2, 'memory') : base(c, MEMORY_WAIT.x, MEMORY_WAIT.z, -Math.PI / 2, 'memory')
       } else if (p.papel === 'central') {
         o = base(c, CENTRAL_SPOT.x, CENTRAL_SPOT.z, CENTRAL_SPOT.yaw, 'central')
+      } else if (p.papel === 'reuniao-cabeceira') {
+        // O Agent Manager: à cabeceira da mesa da sala de reunião (sem cadeira livre, na praça).
+        const s = managerSeat(counters.manager++)
+        o = s ? base(c, s.x, s.z, s.yaw, 'manager') : plaza(c)
       } else o = plaza(c)
     } else {
       o = plaza(c)

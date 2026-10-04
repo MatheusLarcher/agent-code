@@ -27,7 +27,7 @@ import { agentPose, CameraRig, framePose, type CameraPose } from './cameraRig'
 import { CameraSync } from './cameraSync'
 import { EngineFilter } from './engineFilter'
 import { EnginePower } from './enginePower'
-import { focusPoseFor, wireTv } from './engineTv'
+import { focusKeyFor, focusPoseFor, wireTv } from './engineTv'
 import { createDefaultRenderer, listener, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
 import { diffEvents, snapshotOf, type OfficeSnapshot } from './events'
 import { clampDt, isTypingTarget, MoveKeys, moveDelta } from './input'
@@ -315,7 +315,8 @@ export class Office3DEngine {
   }
 
   /** Voa até o monitor do personagem e abre a tela (ele olha para a câmera e acena). */
-  focus(key: string, byUser = true): void {
+  focus(target: string, byUser = true): void {
+    const key = focusKeyFor(this.scene, target)
     const to = this.focusPose(key)
     if (!to) return
     if (!this.focusedKey) this.returnPose = { ...this.rig.pose }

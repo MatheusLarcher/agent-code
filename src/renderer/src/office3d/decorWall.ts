@@ -10,7 +10,8 @@
  *                tapete sage e as plantas grandes do chão.
  * Estático vai para a fusão da zona; a folha da porta e a tela do console, não.
  */
-import { CanvasTexture, Group, Mesh, MeshLambertMaterial, SRGBColorSpace } from 'three'
+import { CanvasTexture, Group, Mesh, MeshBasicMaterial, MeshLambertMaterial, SRGBColorSpace } from 'three'
+import { MEMORY_SHELF_KEY } from './engineTypes'
 import { box, cyl, disc, plant } from './decorUtil'
 import { DOOR_HEIGHT, MACHINE_OFFSET } from './furniture'
 import type { Kit } from './kit'
@@ -28,6 +29,8 @@ export interface WallParts {
   door: Group
   /** A tela do console da Central. */
   consoleScreen: Mesh
+  /** O alvo invisível do clique na estante de Memórias (abre o painel). */
+  shelfPick: Mesh
   /** O que é próprio (textura e material da placa), liberado no dispose. */
   dispose(): void
 }
@@ -161,12 +164,21 @@ export function buildWalls(kit: Kit, zones: Zones): WallParts {
   for (const p of FLOOR_PLANTS) plant(kit, zones(zoneAt(p.x, p.z)).statics, p.x, 0, p.z, p.scale)
   const plaza = zones('plaza')
   const consoleScreen = centralConsole(kit, plaza.group, plaza.statics)
+  // O clique na estante de Memórias: uma caixa invisível do tamanho dela (o raio acerta; nada desenha).
+  const pickMat = new MeshBasicMaterial({ visible: false })
+  const shelfPick = new Mesh(kit.geo.box, pickMat)
+  shelfPick.scale.set(MEMORY_SHELF.d + 0.1, MEMORY_SHELF.h + 0.6, MEMORY_SHELF.w)
+  shelfPick.position.set(MEMORY_SHELF.x, (MEMORY_SHELF.h + 0.6) / 2, MEMORY_SHELF.z)
+  shelfPick.userData.charKey = MEMORY_SHELF_KEY
+  zones(zoneAt(MEMORY_SHELF.x, MEMORY_SHELF.z)).group.add(shelfPick)
   return {
     door: hinge,
     consoleScreen,
+    shelfPick,
     dispose() {
       sign.texture.dispose()
       sign.mat.dispose()
+      pickMat.dispose()
     }
   }
 }

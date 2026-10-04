@@ -5,7 +5,9 @@
  * mesa: as cadeiras das pontas, depois as do fundo (as da frente ficam entre a
  * mesa e o vidro, sem passagem para levantar).
  *
- *   meetingSpots(fila)  fila[0] fica ao lado da TV, o resto espera sentado na
+ *   managerSeat(i)      a cadeira do i-ésimo Agent Manager (planejamento): as
+ *                       cabeceiras, depois as do fundo de fora para dentro;
+ *   meetingSpots(fila, managers)  fila[0] fica ao lado da TV, o resto espera sentado na
  *                       ordem da fila; quem não cabe fica de fora. `call` marca
  *                       quem chamou o usuário (acena para a câmera em vez de
  *                       olhar a TV).
@@ -45,6 +47,14 @@ const WAIT_CHAIRS: readonly Spot[] = (() => {
   return [...sides, ...back.sort(byCenter)]
 })()
 
+/** As cadeiras dos Agent Managers: as cabeceiras e, depois, as do fundo de fora para dentro. */
+const MANAGER_CHAIRS: readonly Spot[] = (() => {
+  const all = meetingChairs()
+  const sides = all.filter((c) => Math.abs(c.x - MEETING.table.x) > MEETING.table.w / 2)
+  const back = all.filter((c) => c.z < MEETING.table.z && Math.abs(c.x - MEETING.table.x) < MEETING.table.w / 2)
+  return [...sides, ...back.sort((a, b) => Math.abs(b.x - MEETING.table.x) - Math.abs(a.x - MEETING.table.x))]
+})()
+
 /** Para onde olha quem está ao lado da TV: para a tela (0 = −Z). */
 const LOOK_TV = Math.atan2(-(TV_CENTER.x - TV_SIDE.x), -(TV_CENTER.z - TV_SIDE.z))
 
@@ -53,8 +63,22 @@ function standOf(c: Spot): { x: number; z: number } {
   return { x: c.x + Math.sin(c.yaw) * 0.7, z: c.z + Math.cos(c.yaw) * 0.7 }
 }
 
-export function meetingSpots(order: readonly MeetingEntry[]): Map<string, MeetingSpot> {
+/** O ponto de levantar de uma cadeira da sala (o Agent Manager sentado à cabeceira). */
+export const chairStand = (c: Spot): { x: number; z: number } => standOf(c)
+
+/** A cadeira do i-ésimo Manager e o ponto de levantar dela; null sem cadeira. */
+export function managerSeat(i: number): (Spot & { standX: number; standZ: number }) | null {
+  const c = MANAGER_CHAIRS[i]
+  if (!c) return null
+  const st = standOf(c)
+  return { ...c, standX: st.x, standZ: st.z }
+}
+
+export function meetingSpots(order: readonly MeetingEntry[], managers = 0): Map<string, MeetingSpot> {
   const out = new Map<string, MeetingSpot>()
+  // As cadeiras dos Managers ficam com eles.
+  const held = MANAGER_CHAIRS.slice(0, managers)
+  const chairs = WAIT_CHAIRS.filter((c) => !held.some((h) => Math.abs(h.x - c.x) < 1e-6 && Math.abs(h.z - c.z) < 1e-6))
   let i = 0
   for (const e of order) {
     const key = typeof e === 'string' ? e : e.key
@@ -62,7 +86,7 @@ export function meetingSpots(order: readonly MeetingEntry[]): Map<string, Meetin
     if (out.has(key)) continue
     if (i === 0) out.set(key, { role: 'present', x: TV_SIDE.x, z: TV_SIDE.z, yaw: LOOK_TV, seat: false, standX: TV_SIDE.x, standZ: TV_SIDE.z, call })
     else {
-      const c = WAIT_CHAIRS[i - 1]
+      const c = chairs[i - 1]
       if (!c) break
       const st = standOf(c)
       out.set(key, { role: 'wait', x: c.x, z: c.z, yaw: c.yaw, seat: true, standX: st.x, standZ: st.z, call })

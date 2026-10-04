@@ -11,7 +11,8 @@
  *   agenda(tests, now)       quem manda na TV agora (tvAgenda.ts), com o filtro,
  *                            e pede a captura do HTML que vai para a tela;
  *   pageView(...)            a janela de navegador com o arquivo e a captura
- *                            (ou o esqueleto), a faixa do chamado e o placar.
+ *                            (ou o esqueleto), a faixa do chamado, o placar e
+ *                            o resumo do plano (tvPlans.ts).
  */
 import type { OfficeFeed } from '../office/adapter/feed'
 import { principalKey, type OfficeCharacterModel } from '../office/adapter/model'
@@ -20,8 +21,9 @@ import { appMockupApi, HtmlCaptures } from './htmlCaptures'
 import { callMarks, CallQueue, openCalls, type OfficeCall } from './officeCalls'
 import type { PageImage, ProjectorView } from './projectorPaint'
 import type { DeviceUse } from './projectorUse'
-import { tvAgenda, type TvAgenda } from './tvAgenda'
+import { tvAgenda, type TvAgenda, type TvPlan } from './tvAgenda'
 import type { ScoreData } from './tvPaint'
+import { appPeekApi, TvPlans } from './tvPlans'
 
 export type TvChar = Pick<OfficeCharacterModel, 'key' | 'convId' | 'role' | 'trackId'> & { projectId?: string | null }
 
@@ -39,6 +41,8 @@ export function fileLabel(path: string, cwd: string): { rel: string; name: strin
 export class TvContent {
   private readonly html = new HtmlTracker()
   private readonly captures: HtmlCaptures
+  /** Os planos de quem planeja no escritório (tvPlans.ts). */
+  readonly plans: TvPlans
   private readonly queue = new CallQueue()
   private calls: OfficeCall[] = []
   private lastFeed: OfficeFeed | null = null
@@ -60,6 +64,7 @@ export class TvContent {
     clock: () => number = () => Date.now()
   ) {
     this.captures = new HtmlCaptures(appMockupApi(), onCapture, clock)
+    this.plans = new TvPlans(appPeekApi(), onCapture, clock)
     this.offMarks = callMarks.subscribe(() => {
       this.dirty = true
       this.onMarks()
@@ -74,6 +79,7 @@ export class TvContent {
     this.convs.clear()
     for (const c of feed?.conversations ?? []) this.convs.set(c.id, { cwd: c.cwd, title: c.title, projectId: pid.get(c.id) ?? null })
     this.busy = [...(feed?.busyIds ?? [])].filter((id) => this.present.has(principalKey(id)))
+    this.plans.feed(feed, this.present)
     this.refreshCalls(now)
   }
 
@@ -99,7 +105,7 @@ export class TvContent {
 
   /** Quem manda na TV agora; pede a captura do HTML que vai para a tela (e solta a de antes). */
   agenda(tests: readonly DeviceUse[], now: number): TvAgenda {
-    const a = tvAgenda(this.calls, tests, this.html.current(now), this.keep)
+    const a = tvAgenda(this.calls, tests, this.html.current(now), this.keep, this.plans.current(this.keep))
     const m = a.main
     const w = m.kind === 'call' ? this.callWrite(m.call) : m.kind === 'html' ? m.write : null
     const cwd = w ? this.convs.get(w.convId)?.cwd : undefined
@@ -144,7 +150,17 @@ export class TvContent {
     return { kind: 'web', url: '', title: '', live: false, project, image: null, score: { ...this.scoreboard(this.filter), working } }
   }
 
+  /** O resumo do plano na TV (fora do foco). */
+  planView(plan: TvPlan, project: string): ProjectorView {
+    const p = this.plans.peek(plan)
+    return {
+      kind: 'web', url: '', title: '', live: false, project, image: null,
+      plan: { manager: plan.title, project, titulo: p?.titulo ?? null, etapas: p?.etapas ?? [], cards: p?.cards ?? 0, ambiguidades: p?.ambiguidadesAbertas ?? 0 }
+    }
+  }
+
   dispose(): void {
+    this.plans.dispose()
     this.captures.dispose()
     this.offMarks()
   }

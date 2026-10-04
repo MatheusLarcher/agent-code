@@ -119,3 +119,63 @@ export function paintWaiting(ctx: Ctx, h: number, n: number, s: number): void {
   ctx.fillStyle = '#ffd38a'
   ctx.fillText(label, 21 * s, y + bh / 2 + 0.5)
 }
+
+/** O plano na TV fora do foco: o título, o roteiro com o status das etapas, os cards e as ambiguidades abertas. */
+export interface PlanPaint {
+  /** Quem planeja (o título da conversa do Agent Manager). */
+  manager: string
+  project: string
+  /** null enquanto o resumo não chega. */
+  titulo: string | null
+  etapas: ReadonlyArray<{ titulo: string; status: 'pendente' | 'em_andamento' | 'concluida' }>
+  cards: number
+  ambiguidades: number
+}
+
+const STAGE: Record<PlanPaint['etapas'][number]['status'], { dot: string; label: string }> = {
+  concluida: { dot: '#6fcf8a', label: 'concluída' },
+  em_andamento: { dot: '#e3b341', label: 'em andamento' },
+  pendente: { dot: '#5f7569', label: 'pendente' }
+}
+
+export function paintPlan(ctx: Ctx, w: number, h: number, d: PlanPaint, s: number): void {
+  const p = chatPalette()
+  ctx.fillStyle = '#19272a'
+  ctx.fillRect(0, 0, w, h)
+  ctx.fillStyle = '#95ae9c'
+  ctx.font = `${Math.round(13 * s)}px ${p.font}`
+  ctx.fillText(ellipsize(ctx, `PLANEJAMENTO · ${d.project} · ${d.manager}`.toUpperCase(), w - 40 * s), 24 * s, 26 * s)
+  ctx.fillStyle = '#e6ebdf'
+  ctx.font = `600 ${Math.round(24 * s)}px ${p.font}`
+  ctx.fillText(ellipsize(ctx, d.titulo ?? 'Abrindo o plano…', w - 48 * s), 24 * s, 58 * s)
+  // As contas à direita.
+  ctx.font = `${Math.round(12 * s)}px ${p.font}`
+  ctx.fillStyle = d.ambiguidades > 0 ? '#ffd38a' : '#9fb3a6'
+  const counts = `${d.cards} card${d.cards === 1 ? '' : 's'} · ${d.ambiguidades} ambiguidade${d.ambiguidades === 1 ? '' : 's'} aberta${d.ambiguidades === 1 ? '' : 's'}`
+  ctx.fillText(counts, w - 24 * s - ctx.measureText(counts).width, 84 * s)
+  // O roteiro: uma linha por etapa (cabe até onde der).
+  const rowH = 24 * s
+  const max = Math.max(1, Math.floor((h - 120 * s) / rowH))
+  d.etapas.slice(0, max).forEach((e, i) => {
+    const y = 110 * s + i * rowH
+    const st = STAGE[e.status]
+    ctx.fillStyle = st.dot
+    ctx.beginPath()
+    ctx.arc(32 * s, y, 5 * s, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = e.status === 'concluida' ? '#9fb3a6' : '#e6ebdf'
+    ctx.font = `${Math.round(14 * s)}px ${p.font}`
+    ctx.fillText(ellipsize(ctx, `${i + 1}. ${e.titulo}`, w * 0.68), 46 * s, y)
+    ctx.fillStyle = '#84917d'
+    ctx.font = `${Math.round(11 * s)}px ${p.font}`
+    ctx.fillText(st.label, w * 0.78, y)
+  })
+  if (d.etapas.length > max) {
+    ctx.fillStyle = '#84917d'
+    ctx.font = `${Math.round(11 * s)}px ${p.font}`
+    ctx.fillText(`+ ${d.etapas.length - max} etapas`, 46 * s, 110 * s + max * rowH)
+  }
+  ctx.fillStyle = '#5f7569'
+  ctx.font = `${Math.round(11 * s)}px ${p.font}`
+  ctx.fillText('Clique na TV para abrir o planejamento', 24 * s, h - 18 * s)
+}

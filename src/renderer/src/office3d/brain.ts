@@ -51,7 +51,8 @@ import { runFree } from './brainLeisure'
 import { enterParty, runParty } from './brainParty'
 import { CONTEXT_LOW_STEPS, STALL_MS, type AgentEventBody, type AgentPhase, type AgentStatus, type ToolKind } from './events'
 import { chairSide } from './furniture'
-import { TV_CENTER } from './meetingRoom'
+import { chairStand, TV_CENTER } from './meetingRoom'
+import { MEMORY_WAIT } from './officePlan'
 
 export * from './brainBody'
 export { beginChat } from './brainLeisure'
@@ -158,6 +159,11 @@ export function greet(b: Brain): void {
   pushReaction(b, 'greet')
 }
 
+/** A Central despachou um pedido: o gesto de enviar (a pasta para frente). */
+export function sendOff(b: Brain): void {
+  pushReaction(b, 'handoff')
+}
+
 // ── modos ──────────────────────────────────────────────────────────────────
 
 function decide(b: Brain, w: BrainWorld): Mode {
@@ -169,6 +175,9 @@ function decide(b: Brain, w: BrainWorld): Mode {
   // Na sala de reunião: testando na TV ou esperando a vez (enquanto o uso estiver ativo), ou
   // chamando o usuário (até ele responder, mesmo com o turno já terminado).
   if (b.venue && b.phase !== 'waiting-permission' && !b.usageOut && (b.venue.call || busy || b.role === 'desk')) return 'meeting'
+  // Consultando a memória: vai à estante (uma ida por sequência; fica até ela acabar e mais um pouco).
+  if (b.shelfTrip && w.t >= b.shelfTrip.until) b.shelfTrip = null
+  if (b.shelfTrip && b.phase !== 'waiting-permission' && !b.usageOut) return 'archive'
   if (b.role === 'visitor') {
     if (busy) return b.phase === 'waiting-permission' && b.desk ? 'permission' : 'work'
     return b.visible ? 'leave' : 'away'
@@ -200,11 +209,11 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
     case 'permission':
       if (m === 'party') enterParty(b, w)
       else if (m === 'work') goDesk(b, gait)
-      else if (b.desk && b.sit > 0) goStand(b, b.standX, b.standZ, Math.PI, gait)
-      else if (b.desk) {
-        const side = chairSide(b.desk)
-        goStand(b, side.x, side.z, Math.PI, gait)
-      } else goStand(b, b.home.x, b.home.z, Math.PI, gait)
+      else {
+        // Pede permissão: vem à frente do escritório, virado para a câmera, com a plaquinha.
+        const f = w.frontSpot(b)
+        goStand(b, f.x, f.z, f.yaw, gait)
+      }
       return
     case 'sleep': {
       const p = w.claim(b, 'sofa')
@@ -222,6 +231,15 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
     case 'back':
       goDesk(b, 'run')
       return
+    case 'archive': {
+      // A estante de Memórias: um dos 3 lugares de pé; cheia, espera atrás.
+      const p = w.claim(b, 'shelf')
+      if (p) {
+        b.poi = p
+        goStand(b, p.x, p.z, p.yaw, gait)
+      } else goStand(b, MEMORY_WAIT.x, MEMORY_WAIT.z, -Math.PI / 2, gait)
+      return
+    }
     case 'meeting': {
       const v = b.venue!
       if (v.seat) goSeat(b, 'chair', v.x, v.z, v.yaw, v.standX, v.standZ, gait)
@@ -244,7 +262,11 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
       Object.assign(b, { visible: false, sit: 0, seat: null })
       return
     case 'fixed':
-      goStand(b, b.home.x, b.home.z, b.home.yaw, 'walk')
+      // O Agent Manager senta à cabeceira da mesa de reunião; os outros ficam de pé no lugar deles.
+      if (b.style === 'manager') {
+        const st = chairStand(b.home)
+        goSeat(b, 'chair', b.home.x, b.home.z, b.home.yaw, st.x, st.z, 'walk')
+      } else goStand(b, b.home.x, b.home.z, b.home.yaw, 'walk')
       return
   }
 }
@@ -317,6 +339,12 @@ function runQueue(b: Brain, dt: number, w: BrainWorld): void {
 function runFixed(b: Brain): void {
   b.look = 'none'
   const working = b.phase === 'working'
+  if (b.style === 'manager') {
+    // Explica o plano para a TV enquanto trabalha (mão no queixo e apontando); parado, sentado olhando para ela.
+    setAction(b, !b.arrived ? 'none' : working ? (Math.floor(b.modeT / 4) % 2 ? 'web' : 'assist') : 'sitIdle')
+    if (b.arrived) lookAt(b, TV_CENTER.x, TV_CENTER.y, TV_CENTER.z)
+    return
+  }
   if (working && b.style === 'board') setAction(b, 'readBoard')
   else if (working && b.style === 'archive') setAction(b, 'readBook')
   else if (b.style === 'console') setAction(b, b.arrived ? (working ? 'type' : 'readScreen') : 'none')
@@ -331,6 +359,20 @@ const CALL_CYCLE_S = 6
 /** Na fila do chamado, sentado: acena SEAT_WAVE_S a cada SEAT_WAVE_EVERY_S. */
 const SEAT_WAVE_EVERY_S = 9
 const SEAT_WAVE_S = 2
+
+/** Na estante: puxa o fichário, folheia; gravando, põe a folha no fichário de vez em quando. */
+function runArchive(b: Brain, dt: number): void {
+  if (!b.arrived) {
+    setAction(b, 'none')
+    return
+  }
+  b.leisureT += dt
+  const t = b.leisureT
+  const write = b.shelfTrip?.use === 'write'
+  setAction(b, t < 1 ? 'grabBook' : write && t % 6 > 3.5 ? 'stick' : 'readBook')
+  b.prop = t > 0.5 ? (write && t % 6 > 3.5 ? 'note' : 'book') : null
+  if (b.poi) lookAt(b, b.poi.look.x, b.poi.look.y, b.poi.look.z)
+}
 
 function runMeeting(b: Brain): void {
   const v = b.venue
@@ -398,6 +440,8 @@ function runMode(b: Brain, dt: number, w: BrainWorld): void {
       return
     case 'meeting':
       return runMeeting(b)
+    case 'archive':
+      return runArchive(b, dt)
     default:
       return
   }

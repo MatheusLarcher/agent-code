@@ -15,6 +15,7 @@ import {
 } from 'three'
 import { isCentralConversation } from '@shared/central'
 import { demoFeed } from './demoFeed'
+import { DEMO_PLAN_ID } from './demoPlan'
 import { DEMO_LOOP_MS } from './demoTimeline'
 import { Office3DEngine, type RendererLike } from './engine'
 import { FAR_PIXEL_SCALE } from './lod'
@@ -140,9 +141,9 @@ function demoEngine(renderer: RendererLike = countingRenderer()) {
   Object.defineProperty(container, 'clientHeight', { get: () => 900 })
   const canvas = document.createElement('canvas')
   container.appendChild(canvas)
-  // "Draw calls iguais ou melhores que hoje com o MESMO número de agentes": sem a Central (o escritório de antes não a tinha).
+  // "Draw calls iguais ou melhores que hoje com o MESMO número de agentes": sem a Central nem o Manager (o escritório de antes não os tinha).
   const demo = demoFeed(Date.now())
-  const feed = { ...demo, conversations: demo.conversations.filter((c) => !isCentralConversation(c)) }
+  const feed = { ...demo, conversations: demo.conversations.filter((c) => !isCentralConversation(c) && c.id !== DEMO_PLAN_ID) }
   let t = 0
   const queue: FrameRequestCallback[] = []
   const engine = new Office3DEngine(container, canvas, { onFocus: vi.fn(), onOpen: vi.fn() }, {

@@ -118,6 +118,7 @@ import { ipcErrorMessage } from './ipcError'
 import { PlanningWorkspace } from './planning/PlanningWorkspace'
 import { usePlanningModel } from './planning/usePlanningModel'
 import { NewPlanningDialog } from './planning/NewPlanningDialog'
+import { planProjectsOf, startOfficePlan } from './planning/officePlanStart'
 import { HandoffButton } from './planning/HandoffDialog'
 import { reportMcpDropped, reportMcpFailed, useMcpInbound } from './useMcpInbound'
 import { isMcpTaskGone, isNoLiveSession, MCP_TASK_GONE_WARNING } from '@shared/mcpInbound'
@@ -4123,6 +4124,33 @@ export function App(): JSX.Element {
   const centralQuestion = centralQuestionConv ? permissions[centralQuestionConv] : undefined
   // A Central carregada (pode faltar antes do boot dela): o Escritório só a recebe com a aba aberta.
   const centralConv = conversations.find((c) => c.id === CENTRAL_ID)
+  // Sem hook: daqui para cima há retornos antecipados (a tela de recuperação do banco).
+  const planProjects = planProjectsOf(conversations, sandbox.root)
+  // A Tela de Planejamento da conversa ativa: na aba Conversa no lugar do workspace e, no Escritório, dentro da
+  // TV (o foco da TV de um plano). Uma instância só por vez: a aba Escritório não monta a da Conversa.
+  const planningWorkspace = activePlanning ? (
+    <PlanningWorkspace
+      projectCwd={activePlanning.cwd}
+      slug={activePlanning.planningSlug}
+      chat={chatPanel}
+      // O modelo que o main anunciou (evento `system` da sessão); antes de
+      // a sessão subir o da conversa é só placeholder.
+      managerModel={activePlanning.sdkSessionId ? runningModel(activePlanning) : null}
+      headerActions={
+        <HandoffButton
+          projectCwd={activePlanning.cwd}
+          slug={activePlanning.planningSlug}
+          managerBusy={busyIds.has(activePlanning.id)}
+          onAskManager={(text) => askPlanningManager(activePlanning.id, text)}
+          onSend={(prompts, titulo, names) =>
+            startHandoff(activePlanning.cwd, activePlanning.planningSlug, titulo, prompts, names)
+          }
+          conversationExists={(id) => convsRef.current.some((c) => c.id === id)}
+          onOpenConversation={selectConversation}
+        />
+      }
+    />
+  ) : null
 
   return (
     <div className="app">
@@ -4254,28 +4282,8 @@ export function App(): JSX.Element {
           ) : null}
         </header>
 
-        {mainTab === 'office' ? null : activePlanning ? (
-          <PlanningWorkspace
-            projectCwd={activePlanning.cwd}
-            slug={activePlanning.planningSlug}
-            chat={chatPanel}
-            // O modelo que o main anunciou (evento `system` da sessão); antes de
-            // a sessão subir o da conversa é só placeholder.
-            managerModel={activePlanning.sdkSessionId ? runningModel(activePlanning) : null}
-            headerActions={
-              <HandoffButton
-                projectCwd={activePlanning.cwd}
-                slug={activePlanning.planningSlug}
-                managerBusy={busyIds.has(activePlanning.id)}
-                onAskManager={(text) => askPlanningManager(activePlanning.id, text)}
-                onSend={(prompts, titulo, names) =>
-                  startHandoff(activePlanning.cwd, activePlanning.planningSlug, titulo, prompts, names)
-                }
-                conversationExists={(id) => convsRef.current.some((c) => c.id === id)}
-                onOpenConversation={selectConversation}
-              />
-            }
-          />
+        {mainTab === 'office' ? null : planningWorkspace ? (
+          planningWorkspace
         ) : (
         <div className="workspace" ref={workspaceRef}>
           {mainChat}
@@ -4392,6 +4400,17 @@ export function App(): JSX.Element {
               setMainTab('chat')
             }}
             callSignal={officeCall}
+            planning={mainTab === 'office' ? planningWorkspace : null}
+            // "📋 Planejar" no Escritório: o mesmo caminho do "Novo planejamento", sem sair da aba.
+            planProjects={planProjects}
+            onStartPlanning={(cwd, pedido) =>
+              startOfficePlan(cwd, pedido, {
+                api: window.api,
+                create: (slug, titulo) => createConversation(cwd, undefined, planningConversationFields(slug, titulo)),
+                send: (conv, text) => void dispatch(conv, text, text, [], [], []),
+                notify
+              })
+            }
             // Aprovar / Pedir ajuste do mockup na TV: envio normal para a conversa do agente.
             onSendToConversation={(convId, text) => {
               const conv = convsRef.current.find((c) => c.id === convId)

@@ -41,6 +41,20 @@ describe('o foco dentro da TV (TvFocus)', () => {
     expect(screen.queryByTestId('tv-focus-reply')).toBeNull() // sem onSend, sem faixa
   })
 
+  it('plano: a Tela de Planejamento só quando a conversa ativa é a do plano; as abas trocam de plano', () => {
+    const pick = vi.fn()
+    const info: TvFocusInfo = { kind: 'plan', roomId: 'office', convId: 'p1', plans: [{ convId: 'p1', title: 'Checkout' }, { convId: 'p2', title: 'Login' }], waiting: 0 }
+    const props = { info, projectors: { mirror: vi.fn() }, onClose: vi.fn(), onPickPlan: pick, planning: <div data-testid="planning-ws">tela</div> }
+    const v = render(<TvFocus {...props} activeConvId="outra" />)
+    expect(screen.queryByTestId('planning-ws')).toBeNull()
+    expect(screen.getByText('Abrindo o planejamento…')).toBeTruthy()
+    v.rerender(<TvFocus {...props} activeConvId="p1" />)
+    expect(screen.getByTestId('planning-ws')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: 'Checkout' }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.click(screen.getByRole('tab', { name: 'Login' }))
+    expect(pick).toHaveBeenCalledWith('p2')
+  })
+
   it('teste ao vivo e placar: o espelho da TV (canvas) liga na montagem e solta ao fechar; × fecha', () => {
     const mirror = vi.fn()
     const close = vi.fn()

@@ -19,7 +19,7 @@
  * apagar trocando o material), o céu atrás do vidro (luar no apagão) e a pilha
  * de papéis de cada mesa (o contexto usado do dono, paperPile.ts).
  */
-import { Box3, Group, InstancedMesh, Vector3, type BufferGeometry, type Mesh, type MeshBasicMaterial } from 'three'
+import { Box3, Group, InstancedMesh, Vector3, type BufferGeometry, type Mesh, type MeshBasicMaterial, type Object3D } from 'three'
 import { buildLounge, buildMeeting, type Lamp } from './decorBack'
 import { buildIsland } from './decorIslands'
 import { buildShell } from './decorShell'
@@ -67,6 +67,8 @@ export interface RoomView {
   screens: ScreenView[]
   /** A tela do console da Central (o monitor dela). */
   consoleScreen: ScreenView
+  /** Alvos de clique fixos da sala (a estante de Memórias). */
+  pickables: Object3D[]
   /** Dobradiça da porta: rotation.y 0 = fechada, positivo abre para dentro. */
   door: Group
   /** Onde fica o vão da porta (centro, no chão) e a zona dela. */
@@ -184,6 +186,7 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
     zone,
     screens,
     consoleScreen,
+    pickables: [walls.shelfPick],
     door: walls.door,
     doorAt: { x: furniture.door.x, z: furniture.door.z },
     doorZone,

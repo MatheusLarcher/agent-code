@@ -438,3 +438,22 @@
   .o3d-help-pop,
   .o3d-pf-pop { animation: none; }
 }
+
+/* "📋 Planejar" (OfficePlanDialog): o projeto e o pedido inicial. */
+.o3d-plan-field { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; font-size: 13px; color: var(--text-muted, #a3a09b); }
+.o3d-plan-field select,
+.o3d-plan-field textarea {
+  font: inherit;
+  color: var(--text, #e8e6e3);
+  background: var(--bg-input, #262624);
+  border: 1px solid var(--border, #3a3836);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.o3d-plan-field textarea { resize: vertical; min-height: 84px; }
+.o3d-plan-empty { font-size: 13px; color: var(--text-muted, #a3a09b); }
+.o3d-plan-btn { pointer-events: auto; }
+
+/* A Central no console (foco): o painel da Central encaixado na tela inclinada. */
+.o3d-console-screen { display: flex; background: var(--bg, #1f1e1d); border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 2px; overflow: hidden; }
+.o3d-console-screen > * { flex: 1; min-width: 0; min-height: 0; }

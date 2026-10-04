@@ -85,10 +85,10 @@ describe('Office3DEngine — vida dos agentes', () => {
   it('feed novo vira eventos de events.ts: o pedido faz o agente pular e correr para a mesa', () => {
     const { engine, flush, emit } = setup(demoFeed(Date.now()))
     flush(2)
-    // O 2º pedido do dev da sala 0 chega aos 24 s do loop.
-    vi.setSystemTime(T0 + 24_500)
+    // O 2º pedido do dev da sala 4 chega aos 28,4 s do loop (nas salas 0 e 2 esse pedido começa pela estante de Memórias).
+    vi.setSystemTime(T0 + 28_900)
     emit(demoFeed(Date.now()))
-    const b = engine.scene.crowd.brains.get('conv:demo-0-0')!
+    const b = engine.scene.crowd.brains.get('conv:demo-4-0')!
     expect(['alert', 'scared']).toContain(b.reaction)
     expect(b.rush || b.mode === 'work').toBe(true)
     flush(5)

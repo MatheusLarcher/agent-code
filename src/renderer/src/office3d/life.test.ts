@@ -28,6 +28,7 @@ function playDemo() {
   const seen = {
     reactions: new Set<string>(),
     actions: new Set<string>(),
+    shelf: new Set<string>(),
     modes: new Set<string>(),
     leisures: new Set<string>(),
     props: new Set<string>(),
@@ -50,10 +51,13 @@ function playDemo() {
       s.animate(ms / 1000 + k / 10, 0.1, CAM)
       for (const b of s.crowd.list) {
         if (b.reaction) seen.reactions.add(b.reaction)
-        seen.actions.add(b.action)
+        // Na estante de Memórias, gravar é prender a folha no fichário (contado à parte).
+        const shelf = b.mode === 'archive'
+        if (shelf) seen.shelf.add(`${b.action}:${b.prop ?? ''}`)
+        else seen.actions.add(b.action)
         seen.modes.add(b.mode)
         if (b.leisure) seen.leisures.add(b.leisure)
-        if (b.prop) seen.props.add(b.prop)
+        if (b.prop && !shelf) seen.props.add(b.prop)
         if (b.speed > 2.5) seen.ran = true
         if (b.role !== 'visitor' || !b.roomId) continue
         const room = s.room(b.roomId)
@@ -89,6 +93,10 @@ describe('a demo (Ctrl+Alt+Shift+D) mostra a vida do escritório', () => {
     // No quadro (o Quadro real) ninguém prende papel inventado: nem o gesto, nem o papel na mão.
     expect(seen.actions.has('stick')).toBe(false)
     expect(seen.props.has('note')).toBe(false)
+    // A folha só na estante de Memórias: quem consulta folheia o livro e quem grava prende a folha.
+    expect(seen.modes.has('archive')).toBe(true)
+    expect(seen.shelf.has('readBook:book')).toBe(true)
+    expect(seen.shelf.has('stick:note')).toBe(true)
     expect(seen.actions.has('readBoard')).toBe(true)
     // Efeitos: confete no fim, fumaça e suor no erro, vapor no café.
     expect(confetti).toBeGreaterThan(0)

@@ -1,9 +1,7 @@
 /**
- * Cena three.js do escritório 3D, montada a partir do layout puro. Low-poly e
- * procedural; geometrias/materiais compartilhados no Kit (e no PropKit dos
- * objetos de mão), o escritório (UMA sala física com zonas) em decor.ts,
- * personagens em characters.ts e a vida deles (cérebros, navegação, fila,
- * conversa, porta) em crowd.ts.
+ * Cena three.js do escritório 3D, montada a partir do layout puro. Low-poly e procedural; geometrias/materiais
+ * no Kit (e no PropKit), o escritório (UMA sala física com zonas) em decor.ts, personagens em characters.ts e a
+ * vida deles em crowd.ts.
  *
  * Luz: as três de sunShadow.ts, as únicas em qualquer nível de energia (energy.ts
  * só muda intensidade e cor e liga malhas emissivas). O shadow map só é refeito
@@ -26,6 +24,7 @@ import type { OfficeFeed } from '../office/adapter/feed'
 import { SLEEP_AFTER_SEC } from '../office/behavior/leisure'
 import { Boards } from './board/boards'
 import { greet } from './brain'
+import { OfficeErrands } from './officeErrands'
 import { Character3D, type FrameCtx } from './characters'
 import { Crowd, DEMO_TIME_FACTOR, modelPhase, type LifeInput } from './crowd'
 import { buildRoom, roomSig, type RoomView, type ScreenView, type ZoneView } from './decor'
@@ -69,6 +68,8 @@ export class OfficeScene {
   readonly projectors: Projectors
   /** O kanban do Quadro real (board/). */
   readonly boards: Boards
+  /** O pulso de despacho da Central e a ida à estante de Memórias (officeErrands.ts). */
+  readonly errands: OfficeErrands
   private readonly kit: Kit
   private readonly propKit: PropKit
   private readonly sun: DirectionalLight
@@ -101,7 +102,6 @@ export class OfficeScene {
   private readonly sphere = new Sphere()
   private readonly camPos = new Vector3()
   private readonly doorMoved = { v: false }
-  private readonly tvAt = { x: 0, y: 0, z: 0 }
   /** Chamado quando algo assíncrono (ícone da placa) muda a imagem. */
   onDirty: () => void = () => {}
 
@@ -123,13 +123,15 @@ export class OfficeScene {
     this.energy.onDark = (id, dark) => this.applyDark(id, dark)
     this.projectors = new Projectors(this.kit, () => this.energy.zoneDark('meeting'))
     this.projectors.onDirty = () => this.onDirty()
-    // Quem chamou o usuário e quem testa vão à sala de reunião (o 1º ao lado da TV, os outros esperam sentados).
-    this.projectors.onRoom = (order) => this.crowd.setVenues(meetingSpots(order))
+    // Quem chamou o usuário e quem testa vão à sala de reunião (o 1º ao lado da TV, os outros esperam sentados
+    // nas cadeiras que os Agent Managers não ocupam).
+    this.projectors.onRoom = (order) => this.crowd.setVenues(meetingSpots(order, this.layout?.characters.filter((c) => c.spot === 'manager').length ?? 0))
     // A TV acendeu: quem está perto dela (e à vista) olha para ela.
     this.projectors.onLit = (_id, x, y, z) => {
       for (const v of this.charList) if (!v.culled && Math.hypot(v.brain.x - x, v.brain.z - z) < TV_GLANCE_M) v.glance(x, y, z)
     }
     this.boards = new Boards(this.kit)
+    this.errands = new OfficeErrands(this.scene, this.crowd)
   }
 
   /** Leitura da energia (motor: feed e tique). `t` = relógio da cena (s); `now` = epoch ms. */
@@ -193,6 +195,7 @@ export class OfficeScene {
     const convProject = new Map(layout.characters.map((c) => [c.model.convId, c.projectId ? (projects.get(c.projectId) ?? null) : null]))
     this.projectors.projectOf = (convId) => convProject.get(convId) ?? null
     this.projectors.feed(feed, layout.characters.map((c) => ({ ...c.model, roomId: c.roomId, projectId: c.projectId })), life?.wallNow ?? Date.now())
+    this.errands.feed(feed, layout, this.rooms.get(OFFICE_ID)?.zone('plaza').lod ?? null)
     this.kit.sky.draw(new Date().getHours())
     this.fitShadow(layout.rooms)
     this.applyFocus()
@@ -281,6 +284,7 @@ export class OfficeScene {
   setDemo(on: boolean): void {
     this.crowd.sleepAfter = on ? SLEEP_AFTER_SEC / DEMO_TIME_FACTOR : SLEEP_AFTER_SEC
     this.projectors.demo = on
+    this.projectors.content.plans.demo = on
   }
 
   /** Clique no agente: ele olha para a câmera e dá um tchauzinho. */
@@ -406,6 +410,7 @@ export class OfficeScene {
     const power = this.energy.animate(t, dt)
     if (this.projectors.animate(dt) === 2) full = true
     if (this.boards.animate(dt) === 2) full = true
+    if (this.errands.animate(dt)) full = true
     if (this.particles.update(dt)) full = true
     this.doorMoved.v = false
     const doors = swingDoors(this.doorRooms, this.crowd.list, dt, this.doorMoved)
@@ -439,6 +444,7 @@ export class OfficeScene {
     for (const v of this.chars.values()) if (v.group.visible) targets.push(v.group)
     for (const r of this.rooms.values()) for (const s of this.allScreens(r)) if (s.mesh.userData.charKey && !s.lod.culled) targets.push(s.mesh)
     this.projectors.pickTargets(targets)
+    for (const r of this.rooms.values()) targets.push(...r.pickables)
     this.boards.pickTargets(targets)
     for (const h of this.raycaster.intersectObjects(targets, true)) {
       const key = h.object.userData.charKey as string | undefined
@@ -447,17 +453,6 @@ export class OfficeScene {
       if (board) return board
     }
     return null
-  }
-
-  /** Onde a TV está (para a câmera e os agentes). */
-  tvCenter(): { x: number; y: number; z: number } {
-    const view = this.rooms.get(OFFICE_ID)
-    if (view) {
-      this.tvAt.x = view.furniture.tv.x
-      this.tvAt.y = view.furniture.tv.y
-      this.tvAt.z = view.furniture.tv.z
-    }
-    return this.tvAt
   }
 
   character(key: string): CharacterLayout | undefined {
@@ -480,6 +475,7 @@ export class OfficeScene {
   dispose(): void {
     this.energy.dispose()
     this.projectors.dispose()
+    this.errands.dispose()
     this.boards.dispose()
     for (const v of this.rooms.values()) v.dispose()
     for (const v of this.chars.values()) v.dispose()

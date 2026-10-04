@@ -46,6 +46,7 @@ export const MIN_PAINT_MS = 200
 export type TvFocusInfo =
   | { kind: 'mockup'; roomId: string; convId: string; agent: string; cwd: string; path: string; rel: string; callId: string | null; waiting: number }
   | { kind: 'test'; roomId: string; convId: string; agent: string; url: string; title: string; waiting: number }
+  | { kind: 'plan'; roomId: string; convId: string; plans: Array<{ convId: string; title: string }>; waiting: number }
   | { kind: 'score'; roomId: string; waiting: number }
 
 interface RoomState {
@@ -256,6 +257,9 @@ export class Projectors {
       const pip = a.pip ? this.viewOf(st, a.pip, now) : null
       view = { ...this.content.pageView(m.call.id, m.call.path, m.call.convId, project(m.call.convId), fake(m.call.convId)), banner: this.content.banner(m.call), pip }
       sig = `call|${m.call.id}|${this.content.captureState(m.call.id)}|${pip ? `${pip.url}|${pip.live}|${frameSig()}` : ''}`
+    } else if (m.kind === 'plan') {
+      view = this.content.planView(m.plan, project(m.plan.convId))
+      sig = `plan|${JSON.stringify(view.plan)}`
     } else if (m.kind === 'html') {
       view = this.content.pageView(m.write.id, m.write.path, m.write.convId, project(m.write.convId), fake(m.write.convId))
       sig = `html|${m.write.id}|${this.content.captureState(m.write.id)}`
@@ -339,6 +343,7 @@ export class Projectors {
     const { main: m, waiting } = st.agenda
     const roomId = st.fx.roomId
     if (m.kind === 'score') return { kind: 'score', roomId, waiting }
+    if (m.kind === 'plan') return { kind: 'plan', roomId, convId: m.plan.convId, plans: this.content.plans.all(this.content.keep).map(({ convId, title }) => ({ convId, title })), waiting }
     if (m.kind === 'test') {
       const v = this.viewOf(st, m.use, this.clock())
       return { kind: 'test', roomId, convId: m.use.convId, agent: this.content.titleOf(m.use.convId), url: v.url, title: v.title, waiting }

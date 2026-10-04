@@ -5,7 +5,7 @@ import { DWELL_MAX, DWELL_MIN, FX, react, setStatus, turnToward, type Brain, typ
 import { Crowd } from './crowd'
 import { seatOf } from './furniture'
 import { layoutOffice, type RoomLayout } from './layout'
-import { LOUNGE_SEATS } from './officePlan'
+import { FRONT_SPOTS, LOUNGE_SEATS } from './officePlan'
 import type { Reaction } from './poses'
 
 function model(id: string, extra: Partial<OfficeCharacterModel> = {}): OfficeCharacterModel {
@@ -191,19 +191,20 @@ describe('cérebro: trabalhando', () => {
     expect([b.mode, b.seat, b.sit, b.action]).toEqual(['work', 'chair', 1, 'type'])
   })
 
-  it('permissão: levanta ao lado da cadeira, vira para a câmera e acena com a plaquinha; depois volta a sentar', () => {
+  it('permissão: levanta e vem à frente do escritório, vira para a câmera e acena com a plaquinha; atendido, volta a sentar na mesa', () => {
     const { crowd, brains } = office(1)
     const b = brains[0]
     setStatus(b, status('working'), 0)
     run(crowd, 1)
     setStatus(b, status('waiting-permission'), crowd.t)
-    run(crowd, 4)
+    run(crowd, 14)
     expect(b.sit).toBe(0)
+    expect(FRONT_SPOTS.some((p) => Math.hypot(b.x - p.x, b.z - p.z) < 0.05)).toBe(true)
     expect([b.action, b.prop, b.look]).toEqual(['wave', 'sign', 'camera'])
     const toCam = Math.atan2(-(CAM.x - b.x), -(CAM.z - b.z))
     expect(Math.abs(turnToward(b.yaw, toCam, Math.PI) - b.yaw)).toBeLessThan(0.1)
     setStatus(b, status('working'), crowd.t)
-    run(crowd, 4)
+    run(crowd, 14)
     expect([b.sit, b.prop]).toEqual([1, null])
   })
 

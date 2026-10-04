@@ -42,9 +42,11 @@ export interface OfficeHudProps {
   projects?: readonly ProjectLayout[]
   filter?: string | null
   onFilter?: (id: string | null) => void
+  /** "📋 Planejar": abre o formulário do planejamento (o mesmo do clique na TV vazia). */
+  onPlan?: () => void
 }
 
-export function OfficeHud({ power, windowsControlEnabled = false, onDisableWindowsControl, projects = [], filter = null, onFilter }: OfficeHudProps): JSX.Element {
+export function OfficeHud({ power, windowsControlEnabled = false, onDisableWindowsControl, projects = [], filter = null, onFilter, onPlan }: OfficeHudProps): JSX.Element {
   const [help, setHelp] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   // Aberta, a legenda fecha com Esc (que não chega ao motor) ou com um clique fora dela.
@@ -70,6 +72,11 @@ export function OfficeHud({ power, windowsControlEnabled = false, onDisableWindo
         </div>
       )}
       {onFilter && <ProjectFilter projects={projects} filter={filter} onFilter={onFilter} />}
+      {onPlan && (
+        <button type="button" className="o3d-glass o3d-plan-btn" onClick={onPlan} title="Planejar na TV da sala de reunião">
+          📋 Planejar
+        </button>
+      )}
       <div className="o3d-help" ref={box}>
         <button
           type="button"
