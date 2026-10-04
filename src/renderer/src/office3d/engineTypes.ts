@@ -75,8 +75,6 @@ export interface EngineCallbacks {
   onPower?(power: OfficePower | null): void
   /** O que está sob o mouse mudou (personagem, 'projector:<sala>' ou null): a prévia do agente. */
   onHover?(key: string | null): void
-  /** Clique na tela acesa do projetor de uma sala: o telão grande. */
-  onProjector?(roomId: string): void
   /** Clique num papel ou na pilha do kanban de uma sala (ou `engine.board.open`). */
   onBoardOpen?(open: BoardOpen): void
   /** Os dados do Quadro real mudaram (a janela do cartão acompanha). */

@@ -178,6 +178,7 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
     case 'conga':
     case 'flashlight':
     case 'pizza':
+    case 'jump':
       partyPose(out, a, t, p)
       return
   }

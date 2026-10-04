@@ -82,6 +82,8 @@ export type Action =
   | 'unpin' | 'scribble' | 'stamp' | 'crumple' | 'point'
   // Festa do apagão (dance.ts): quatro passos no BPM, trenzinho, lanterna e pizza.
   | 'robot' | 'disco' | 'sway' | 'hop' | 'conga' | 'flashlight' | 'pizza'
+  // O chamado sem resposta (brain.ts): pula no lugar acenando para a câmera.
+  | 'jump'
 
 export type Reaction =
   | 'alert' | 'scared' | 'knuckles' | 'celebrate' | 'stretch' | 'facepalm' | 'fistpump' | 'handsHead' | 'yawn' | 'watch'

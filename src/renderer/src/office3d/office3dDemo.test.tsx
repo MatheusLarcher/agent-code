@@ -75,7 +75,7 @@ describe('feed de demonstração', () => {
 })
 
 describe('demonstração: navegador e Android na TV da sala de reunião', () => {
-  it('o dev da loja testa no navegador e o do portal no Android; a TV liga e apaga 90 s depois do último uso', () => {
+  it('o dev da loja testa no navegador e o do portal no Android; a TV mostra o teste e o tira 90 s depois do último uso', () => {
     const T0 = 14_916_667 * DEMO_LOOP_MS
     const at = (ms: number): { feed: OfficeFeed; model: ReturnType<typeof deriveOfficeModel> } => {
       const feed = demoFeed(T0 + ms)
@@ -95,12 +95,14 @@ describe('demonstração: navegador e Android na TV da sala de reunião', () => 
     // Um escritório, uma TV: ela mostra o uso mais recente (de qualquer projeto).
     const tv = layout.rooms[0].id
     expect(scene.projectors.isDown(tv)).toBe(true)
-    expect(['demo-1-0', 'demo-3-0']).toContain(scene.projectors.info(tv)!.convId)
-    expect(['loja-virtual', 'portal-aluno']).toContain(scene.projectors.info(tv)!.project)
+    const info = scene.projectors.focusInfo()
+    const conv = info?.kind === 'test' ? info.convId : ''
+    expect(['demo-1-0', 'demo-3-0']).toContain(conv)
+    expect(['loja-virtual', 'portal-aluno']).toContain(scene.projectors.projectOf(conv))
     // O último uso sai aos ~20 s; o turno seguinte já não usa o navegador nem o Android.
     sync(at(21_000), 21_000)
     const last = T0 + 21_000
-    expect(scene.projectors.tick(last + PROJECTOR_IDLE_MS - 8_000)).toBe(false)
+    scene.projectors.tick(last + PROJECTOR_IDLE_MS - 8_000)
     expect(scene.projectors.isDown(tv)).toBe(true)
     scene.projectors.tick(last + PROJECTOR_IDLE_MS + 1_000)
     expect(scene.projectors.isDown(tv)).toBe(false)

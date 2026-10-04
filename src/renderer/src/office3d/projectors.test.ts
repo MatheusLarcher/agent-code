@@ -14,6 +14,8 @@ import { RoomProjector } from './projector'
 import { IMG_Y } from './projectorKit'
 import { MIN_PAINT_MS, Projectors } from './projectors'
 import { PROJECTOR_IDLE_MS } from './projectorUse'
+import { HTML_SHOW_MS } from './agentHtml'
+import { callMarks } from './officeCalls'
 import { OfficeScene } from './scene'
 import { fakeBrowserApi, jpegFrame } from './testBrowserApi'
 
@@ -75,36 +77,36 @@ const keysOf = (p: Projectors): unknown[] => {
   return out.map((o) => o.userData.charKey)
 }
 
-describe('A TV da sala de reunião: liga no uso do navegador e apaga sem uso', () => {
-  it('liga e acende com a sala de reunião à vista (avisa uma vez, com o centro da TV); clicável acesa; apaga depois de PROJECTOR_IDLE_MS', () => {
+describe('A TV da sala de reunião: sempre ligada; o teste ao vivo entra e sai', () => {
+  it('nasce acesa e clicável (o placar), sem animar; o teste ao vivo entra; depois de PROJECTOR_IDLE_MS volta o placar', () => {
+    const paint = vi.spyOn(RoomProjector.prototype, 'paint')
     const s = setup()
-    const lit = vi.fn()
-    s.p.onLit = lit
-    s.feed()
-    expect(s.p.isDown(s.room.id)).toBe(true)
-    expect(keysOf(s.p)).toEqual([])
-    expect(s.run(4)).toBe(2) // acendeu animando
     const fx = s.p.room(s.room.id)!
     expect([fx.drop, fx.lit]).toEqual([1, 1])
-    expect(lit).toHaveBeenCalledTimes(1)
-    const [id, x, y, z] = lit.mock.calls[0]
-    expect([id, x, y]).toEqual([OFFICE_ID, MEETING.tv.x, IMG_Y])
-    expect(z).toBeCloseTo(s.view.furniture.tv.z)
     expect(keysOf(s.p)).toContain(`${PROJECTOR_KEY}${s.room.id}`)
+    expect(s.run(1)).toBe(0)
+    s.feed()
+    expect(s.p.isDown(s.room.id)).toBe(true)
+    s.run(1)
+    expect(paint.mock.calls.at(-1)![0]).toMatchObject({ kind: 'web', url: URL, title: 'Carrinho', project: 'alpha' })
+    expect(s.p.focusInfo()).toMatchObject({ kind: 'test', convId: 'a', url: URL, title: 'Carrinho', waiting: 0 })
     // Parada e acesa: nada anima (render sob demanda).
     expect(s.run(1)).toBe(0)
-    expect(s.p.info(s.room.id)).toMatchObject({ convId: 'a', kind: 'web', url: URL, title: 'Carrinho', project: 'alpha' })
-    // Sem chamada nova: a TV apaga.
+    // Sem chamada nova: o teste sai e volta o placar (a TV continua acesa).
     expect(s.tick(PROJECTOR_IDLE_MS - 1_000)).toBe(false)
     expect(s.tick(2_000)).toBe(true)
-    s.run(4)
-    expect([fx.drop, fx.lit]).toEqual([0, 0])
-    expect(keysOf(s.p)).toEqual([])
+    expect(s.p.isDown(s.room.id)).toBe(false)
+    expect(paint.mock.calls.at(-1)![0].score).toMatchObject({ project: null, todo: 0, doing: 0, done: 0 })
+    expect(paint.mock.calls.at(-1)![0].score!.working).toHaveLength(1) // a conversa ocupada
+    expect(s.p.focusInfo()).toMatchObject({ kind: 'score' })
+    expect([fx.drop, fx.lit]).toEqual([1, 1])
     s.p.dispose()
   })
 
-  it('sala de reunião fora da tela vai direto para o fim (sem animar); no escuro (apagão) a TV não acende', () => {
+  it('sala de reunião fora da tela vai direto para o fim (sem animar); no escuro (apagão) a TV apaga e, na volta, acende avisando o centro da TV', () => {
     const s = setup()
+    const lit = vi.fn()
+    s.p.onLit = lit
     s.tvLod.culled = true
     s.feed()
     expect(s.run(0.1)).toBe(0)
@@ -114,9 +116,14 @@ describe('A TV da sala de reunião: liga no uso do navegador e apaga sem uso', (
     s.setDark(true)
     s.run(2)
     expect([fx.drop, fx.lit]).toEqual([1, 0])
+    expect(keysOf(s.p)).toEqual([])
     s.setDark(false)
     s.run(2)
     expect(fx.lit).toBe(1)
+    expect(lit).toHaveBeenCalledTimes(1)
+    const [id, x, y, z] = lit.mock.calls[0]
+    expect([id, x, y]).toEqual([OFFICE_ID, MEETING.tv.x, IMG_Y])
+    expect(z).toBeCloseTo(s.view.furniture.tv.z)
     s.p.dispose()
   })
 
@@ -157,13 +164,17 @@ describe('Projectors: os quadros do navegador', () => {
 
   it(`decodifica só com a tela acesa e no máximo a cada ${MIN_PAINT_MS} ms; o bitmap velho fecha na hora; dispose fecha o último e tira os ouvintes`, async () => {
     const made = bitmaps()
+    const paint = vi.spyOn(RoomProjector.prototype, 'paint')
     const api = fakeBrowserApi()
     const s = setup()
     s.p.connect(api, () => 'a', () => false)
     expect(api.listeners()).toBe(2)
+    s.setDark(true)
+    s.run(2)
     s.feed()
     api.frame(jpegFrame(btoa('q1')))
-    expect(made).toHaveLength(0) // ainda apagada: nada decodifica
+    expect(made).toHaveLength(0) // apagada (sem energia): nada decodifica
+    s.setDark(false)
     s.run(4)
     await flush()
     expect(made).toHaveLength(1) // acendeu: o quadro guardado aparece
@@ -175,7 +186,7 @@ describe('Projectors: os quadros do navegador', () => {
     expect(made).toHaveLength(2)
     expect(made[0].close).toHaveBeenCalledTimes(1)
     expect(made[1].close).not.toHaveBeenCalled()
-    expect(s.p.info(s.room.id)?.live).toBe(true)
+    expect(paint.mock.calls.at(-1)![0].live).toBe(true)
     s.p.dispose()
     expect(made[1].close).toHaveBeenCalledTimes(1)
     expect(api.listeners()).toBe(0)
@@ -216,6 +227,112 @@ describe('Projectors: os quadros do navegador', () => {
     expect(own.size).toBeGreaterThanOrEqual(2)
     expect(freed.size).toBe(own.size)
     expect(s.view.group.getObjectByName('tv-image')).toBeUndefined()
+  })
+})
+
+describe('A TV mostra o HTML que o agente criou (sem teste ao vivo)', () => {
+  const PATH = 'C:\\proj\\alpha\\mockups\\tela.html'
+  const write = (id: string, path = PATH): UIMessage => ({ kind: 'tool-use', id, name: 'Write', input: { file_path: path, content: '<h1>' }, parentToolUseId: null, result: { isError: false, text: 'ok' } })
+  const withMsgs = (messages: UIMessage[]) => feed({ conversations: [conv('a', { messages, updatedAt: NOW })], busyIds: new Set(['a']), activeId: 'a' })
+  const flush = async (): Promise<void> => {
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+  }
+
+  it('o histórico não entra; HTML novo entra com o esqueleto, pede a captura e desenha o bitmap; o teste ao vivo passa na frente; some depois de HTML_SHOW_MS (volta o placar)', async () => {
+    const bitmap = { width: 1280, height: 640, close: vi.fn() }
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => bitmap as unknown as ImageBitmap))
+    const capture = vi.fn(async () => ({ ok: true as const, url: 'agent-mockup://t/mockups/tela.html', png: new Uint8Array([1]) }))
+    vi.stubGlobal('api', { officeMockupCapture: capture })
+    const paint = vi.spyOn(RoomProjector.prototype, 'paint')
+    const s = setup(withMsgs([write('old')]))
+    s.feed()
+    expect(s.p.agendaOf(OFFICE_ID)!.main.kind).toBe('score') // histórico do 1º feed
+    s.feed(withMsgs([write('old'), write('w1')]))
+    expect(s.p.agendaOf(OFFICE_ID)!.main.kind).toBe('html')
+    expect(capture).toHaveBeenCalledWith({ cwd: 'C:\\proj\\alpha', path: PATH })
+    s.run(4)
+    expect(paint.mock.calls.at(-1)![0]).toMatchObject({ kind: 'web', url: 'mockups/tela.html', title: 'tela.html', live: false })
+    await flush()
+    expect(paint.mock.calls.at(-1)![0].image).not.toBeNull()
+    // O teste ao vivo tem prioridade sobre o HTML; o bitmap do HTML fecha.
+    s.feed(withMsgs([write('old'), write('w1'), ...MSGS]))
+    s.run(1)
+    expect(paint.mock.calls.at(-1)![0]).toMatchObject({ url: URL })
+    expect(bitmap.close).toHaveBeenCalledTimes(1)
+    // Fim do teste: volta o HTML (ainda dentro de HTML_SHOW_MS); depois some e a TV apaga.
+    s.tick(PROJECTOR_IDLE_MS + 1)
+    expect(s.p.agendaOf(OFFICE_ID)!.main.kind).toBe('html')
+    s.tick(HTML_SHOW_MS)
+    expect(s.p.agendaOf(OFFICE_ID)!.main.kind).toBe('score')
+    s.p.dispose()
+  })
+
+  it('captura que falha (ou fora do app) deixa o esqueleto com o nome do arquivo', async () => {
+    vi.stubGlobal('api', { officeMockupCapture: vi.fn(async () => ({ ok: false as const, error: 'tempo esgotado' })) })
+    const paint = vi.spyOn(RoomProjector.prototype, 'paint')
+    const s = setup(withMsgs([]))
+    s.feed()
+    s.feed(withMsgs([write('w1')]))
+    s.run(4)
+    await flush()
+    s.tick(MIN_PAINT_MS + 1)
+    expect(paint.mock.calls.at(-1)![0]).toMatchObject({ url: 'mockups/tela.html', title: 'tela.html', image: null })
+    s.p.dispose()
+  })
+})
+
+describe('A fila da sala: os chamados antes de quem testa', () => {
+  it('quem chamou vem primeiro (marcado como chamado); quem testa depois; a marca de aberto tira o chamado no tique', () => {
+    const called: UIMessage[] = [
+      { kind: 'user', id: 'u1', text: 'faz a tela' },
+      { kind: 'tool-use', id: 'call-q1', name: 'mcp__app__app_chamar_usuario', input: { arquivo: 'tela.html' }, parentToolUseId: null, result: { isError: false, text: 'ok' } }
+    ]
+    const f = feed({ conversations: [conv('a', { messages: called, updatedAt: NOW }), conv('b', { messages: MSGS, updatedAt: NOW })], busyIds: new Set(['b']), activeId: 'b' })
+    const s = setup(f)
+    const rooms: unknown[] = []
+    s.p.onRoom = (order) => rooms.push(order)
+    s.feed()
+    expect(rooms.at(-1)).toEqual([{ key: 'conv:a', call: true }, 'conv:b'])
+    expect(s.p.openCalls().map((c) => c.id)).toEqual(['call-q1'])
+    callMarks.end('call-q1', 'aberto')
+    s.tick(100)
+    expect(rooms.at(-1)).toEqual(['conv:b'])
+    s.p.dispose()
+  })
+})
+
+describe('A TV com chamado: prioridade, quadrinho, fila e foco', () => {
+  const calling = (id: string, callId: string): ReturnType<typeof conv> =>
+    conv(id, {
+      updatedAt: NOW,
+      messages: [
+        { kind: 'user', id: `u-${id}`, text: 'faz' },
+        { kind: 'tool-use', id: callId, name: 'mcp__app__app_chamar_usuario', input: { arquivo: `${id}.html`, mensagem: 'Olha!' }, parentToolUseId: null, result: { isError: false, text: 'ok' } }
+      ]
+    })
+
+  it('o mockup de quem chama manda na TV, com a faixa; o teste vai para o quadrinho; "+1 esperando"; com o foco a TV congela; o filtro tira o que é de outro projeto', () => {
+    const paint = vi.spyOn(RoomProjector.prototype, 'paint')
+    const f = feed({ conversations: [calling('c', 'q-c'), calling('d', 'q-d'), conv('b', { messages: MSGS, updatedAt: NOW })], busyIds: new Set(['b']), activeId: 'b' })
+    const s = setup(f)
+    s.feed()
+    s.run(1)
+    const v = paint.mock.calls.at(-1)![0]
+    expect(v).toMatchObject({ url: 'c.html', title: 'c.html', banner: { text: 'Olha!' }, pip: { url: URL }, waiting: 1 })
+    expect(v.banner!.title).toContain('está te chamando')
+    expect(s.p.focusInfo()).toMatchObject({ kind: 'mockup', convId: 'c', rel: 'c.html', callId: 'q-c', waiting: 1 })
+    // Foco na TV: o chamado de c acaba, mas a tela fica como estava até sair do foco.
+    s.p.lock(true)
+    callMarks.end('q-c', 'aberto')
+    s.tick(100)
+    expect(s.p.agendaOf(OFFICE_ID)!.main).toMatchObject({ kind: 'call', call: { id: 'q-c' } })
+    s.p.lock(false)
+    expect(s.p.agendaOf(OFFICE_ID)!.main).toMatchObject({ kind: 'call', call: { id: 'q-d' } })
+    // Filtro em outro projeto: nada dele na TV (o placar).
+    s.p.content.filter = 'outro'
+    s.tick(200)
+    expect(s.p.agendaOf(OFFICE_ID)!.main.kind).toBe('score')
+    s.p.dispose()
   })
 })
 

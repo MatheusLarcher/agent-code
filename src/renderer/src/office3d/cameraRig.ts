@@ -162,6 +162,18 @@ const safeAspect = (a: number): number => (Number.isFinite(a) && a > 0 ? a : 1)
 /** Um monitor: centro da tela e para onde ela olha (+1: +Z, o padrão; −1: −Z, a mesa de fundo). */
 export type MonitorAt = { x: number; y: number; z: number; dir?: 1 | -1 }
 
+/** Uma tela que a câmera enquadra de frente: meia largura/altura, quanto o plano fica à frente do centro e a arfagem. */
+export interface ScreenPlane {
+  halfW: number
+  halfH: number
+  front: number
+  pitch: number
+}
+
+export const MONITOR_PLANE: ScreenPlane = { halfW: MONITOR_HALF_W, halfH: MONITOR_HALF_H, front: MONITOR_SCREEN_FRONT, pitch: MONITOR_PITCH }
+/** A tela da TV da sala de reunião (2,25 × 1,13 m; cobre a imagem 16:9 inteira): de frente e SEM arfagem — em repouso o encaixe é translação pura. */
+export const TV_PLANE: ScreenPlane = { halfW: 1.115, halfH: 0.56, front: 0.006, pitch: 0 }
+
 /**
  * Pose que enquadra um monitor (tela olhando para dir·Z) de frente, na distância
  * em que a tela ocupa `fill` da largura OU da altura do palco — o que limitar
@@ -174,21 +186,31 @@ export type MonitorAt = { x: number; y: number; z: number; dir?: 1 | -1 }
  * não depende disto.
  */
 export function monitorPose(m: MonitorAt, view: ViewSize, fill = MONITOR_FILL): CameraPose {
+  return screenPose(m, MONITOR_PLANE, view, fill)
+}
+
+/** O foco na TV (dec-clique-tv): a mesma conta do monitor, com a tela da TV e sem arfagem. */
+export function tvPose(tv: MonitorAt, view: ViewSize, fill = MONITOR_FILL): CameraPose {
+  return screenPose(tv, TV_PLANE, view, fill)
+}
+
+/** Pose que enquadra a tela `plane` centrada em `m` (ver monitorPose). */
+export function screenPose(m: MonitorAt, plane: ScreenPlane, view: ViewSize, fill = MONITOR_FILL): CameraPose {
   const dir = m.dir ?? 1
   const t = tanHalf(view.fovDeg)
   const H = view.heightPx ?? 0
   const clear = H > 0 ? Math.max(0, view.clearTopPx ?? 0) : 0
   // A altura que cabe abaixo da faixa (fração do palco); palco baixo demais não encolhe abaixo da metade.
   const room = clear > 0 ? Math.max(0.5, (H - clear - MONITOR_BOTTOM_GAP) / H) : 1
-  const byWidth = MONITOR_HALF_W / (fill * t * safeAspect(view.aspect))
-  const byHeight = MONITOR_HALF_H / (Math.min(fill, room) * t)
-  const pose: CameraPose = { tx: m.x, ty: m.y, tz: m.z + dir * MONITOR_SCREEN_FRONT, yaw: dir === 1 ? 0 : Math.PI, pitch: MONITOR_PITCH, distance: Math.max(byWidth, byHeight) }
+  const byWidth = plane.halfW / (fill * t * safeAspect(view.aspect))
+  const byHeight = plane.halfH / (Math.min(fill, room) * t)
+  const pose: CameraPose = { tx: m.x, ty: m.y, tz: m.z + dir * plane.front, yaw: dir === 1 ? 0 : Math.PI, pitch: plane.pitch, distance: Math.max(byWidth, byHeight) }
   if (clear === 0) return pose
   // Bordas de cima e de baixo da tela (px) nesta pose; desce o que faltar para livrar a faixa, sem passar do fim.
-  const z = m.z + dir * MONITOR_SCREEN_FRONT
+  const z = m.z + dir * plane.front
   const px = (y: number): number => ((1 - projectPoint(pose, view, { x: m.x, y, z }).y) / 2) * H
-  const top = px(m.y + MONITOR_HALF_H)
-  const bottom = px(m.y - MONITOR_HALF_H)
+  const top = px(m.y + plane.halfH)
+  const bottom = px(m.y - plane.halfH)
   const shift = Math.max(0, Math.min(clear - top, H - MONITOR_BOTTOM_GAP - bottom))
   // Subir a câmera (e o alvo) Δ desce a tela Δ / (distância · tan) em NDC (a arfagem é pequena).
   pose.ty += ((2 * shift) / H) * pose.distance * t

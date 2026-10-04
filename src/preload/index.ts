@@ -4,6 +4,8 @@ import type { AgentCodeApi } from '../shared/api'
 import type { AccountUsageResult, AddClaudeAccountResult, ClaudeAccountView, UseAccountResult } from '../shared/claudeAccounts'
 import type { TypeSafePauseStatus } from '../shared/typesafePause'
 import type { ChromeBridgeStatus } from '../shared/chromeBridge'
+import type { MockupCaptureResult, MockupRequest, MockupUrlResult } from '../shared/officeMockup'
+import type { OfficeCallOpen, OfficeCallsState } from '../shared/officeCall'
 import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from '../shared/central'
 import type {
   ConversationQueryDto,
@@ -328,6 +330,10 @@ const api: AgentCodeApi = {
   countContextExact: (convId: string): Promise<ContextExactCount> => ipcRenderer.invoke(Channels.contextTurnsCountExact, convId),
   revealSecret: (name: string): Promise<string | null> => ipcRenderer.invoke(Channels.secretsReveal, name),
   onContextTurnsChanged: (cb: (event: ContextTurnChanged) => void): (() => void) => on(Channels.contextTurnsChanged, cb),
+  officeMockupUrl: (req: MockupRequest): Promise<MockupUrlResult> => ipcRenderer.invoke(Channels.officeMockupUrl, req),
+  officeMockupCapture: (req: MockupRequest): Promise<MockupCaptureResult> => ipcRenderer.invoke(Channels.officeMockupCapture, req),
+  officeCallsState: (state: OfficeCallsState): Promise<void> => ipcRenderer.invoke(Channels.officeCallsState, state),
+  onOfficeCallOpen: (cb: (e: OfficeCallOpen) => void): (() => void) => on(Channels.officeCallOpen, cb),
   onAgentEvent: (cb: (e: AgentEventMsg) => void): (() => void) => on(Channels.agentEvent, cb),
   onPermissionRequest: (cb: (m: PermissionRequestMsg) => void): (() => void) =>
     on(Channels.agentPermissionRequest, cb),

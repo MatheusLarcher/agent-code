@@ -38,19 +38,20 @@ function commonOptions(): Options {
 }
 
 describe('applyPlanningSessionOptions', () => {
-  it('servidores: planning + memory, sem browser/android/app/windows/tasks', () => {
+  it('servidores: planning + memory + app (só o chamado), sem browser/android/windows/tasks', () => {
     const options = commonOptions()
     const createServer = vi.fn(() => fakeServer('planning'))
     applyPlanningSessionOptions(options, { projectCwd: cwd, slug, memoryBlocks: [], createServer })
 
-    expect(Object.keys(options.mcpServers ?? {}).sort()).toEqual(['memory', 'planning'])
+    expect(Object.keys(options.mcpServers ?? {}).sort()).toEqual(['app', 'memory', 'planning'])
     // O planejamento vem do contexto da sessão, nunca de argumento do modelo.
     expect(createServer).toHaveBeenCalledWith({ projectCwd: cwd, slug })
   })
 
-  it('sem memory no conjunto comum, fica só planning', () => {
+  it('sem memory (nem app) no conjunto comum, fica só planning', () => {
     const options = commonOptions()
     delete options.mcpServers!.memory
+    delete options.mcpServers!.app
     applyPlanningSessionOptions(options, { projectCwd: cwd, slug, memoryBlocks: [], createServer: () => fakeServer('planning') })
     expect(Object.keys(options.mcpServers ?? {})).toEqual(['planning'])
   })

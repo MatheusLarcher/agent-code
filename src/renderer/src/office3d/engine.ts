@@ -12,25 +12,26 @@
  * Desempenho: culling/LOD por zona (scene.updateView); quality.ts ajusta pixelRatio, névoa e sombra.
  *
  * A cada feed: retrato de events.ts e o diff vão para a cena e as falas (speech.ts); um tique de
- * QUIP_TICK_MS anda sem feed as falas, a energia, a TV e o hover atrasado. Ponteiro em
- * pointerInput.ts: clique foca o agente (ou a TV: `onProjector`), duplo clique abre a conversa,
- * hover vai a `onHover`. `onFocus` diz se foi o usuário (`byUser`). `flyToAgent`/`follow` voam
- * sem abrir a tela (`follow` respeita FOLLOW_GRACE_MS). Kanban = o Quadro real (`board`).
- * Filtro de projeto do HUD: `setProjectFilter`, `filter.current`/`filter.onChange` e `onProjects`. */
+ * QUIP_TICK_MS anda sem feed as falas, a energia, a TV e o hover atrasado. Ponteiro em pointerInput.ts:
+ * clique foca o agente ou a TV (a chave PROJECTOR_KEY…: a pose frontal `tvPose`, engineTv.ts), duplo
+ * clique abre a conversa, hover vai a `onHover`. `onFocus` diz se foi o usuário (`byUser`). `flyToAgent`/
+ * `follow` voam sem abrir a tela (FOLLOW_GRACE_MS). Kanban = o Quadro real (`board`). Filtro do HUD:
+ * `setProjectFilter`, `filter.current`/`filter.onChange` e `onProjects`. */
 import { PerspectiveCamera, Vector3 } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { deriveOfficeModel, principalKey } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
 import { EngineBoard } from './board/engineBoard'
 import { appBrowserApi } from './browserFrames'
-import { agentPose, CameraRig, framePose, monitorPose, type CameraPose } from './cameraRig'
+import { agentPose, CameraRig, framePose, type CameraPose } from './cameraRig'
 import { CameraSync } from './cameraSync'
 import { EngineFilter } from './engineFilter'
 import { EnginePower } from './enginePower'
-import { createDefaultRenderer, listener, PROJECTOR_KEY, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
+import { focusPoseFor, wireTv } from './engineTv'
+import { createDefaultRenderer, listener, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
 import { diffEvents, snapshotOf, type OfficeSnapshot } from './events'
 import { clampDt, isTypingTarget, MoveKeys, moveDelta } from './input'
-import { buildingBounds, EMPTY_LAYOUT, layoutOffice, monitorPosition, type Office3DLayout } from './layout'
+import { buildingBounds, EMPTY_LAYOUT, layoutOffice, type Office3DLayout } from './layout'
 import { LOW_RATE_MS } from './lod'
 import { bindKeys, PointerInput } from './pointerInput'
 import type { OfficePower } from './power'
@@ -118,6 +119,7 @@ export class Office3DEngine {
     this.scene.projectors.connect(opts.browser === undefined ? appBrowserApi() : opts.browser, () => this.feed?.activeId ?? null, () => this.paused)
     this.board = new EngineBoard(this.scene, container, this.camera, this.listen, opts.board, cb, () => this.requestRender())
     this.filter.onChange((id) => this.board.setFilter(id))
+    wireTv(this.scene, this.board, this.filter, () => this.power.power, () => this.layout.projects)
     this.board.attach((key, quip) => this.speech.say(key, quip) && this.requestRender(), () => this.feed && !this.paused && this.applyFeed(this.feed))
     this.pointer = this.board.bind(this.bindPointer())
     this.bindInput()
@@ -149,7 +151,6 @@ export class Office3DEngine {
       },
       click: (key) => {
         this.userCamAt = this.now()
-        if (key?.startsWith(PROJECTOR_KEY)) return this.cb.onProjector?.(key.slice(PROJECTOR_KEY.length))
         if (key) this.focus(key)
         else this.leaveFocus(true, true)
       },
@@ -254,8 +255,8 @@ export class Office3DEngine {
     this.speech.feed(snapshot, events, wallNow, this.power.quip(powerEvent))
     this.power.emit()
     if (this.autoFrame && !this.focusedKey) this.frameBuilding()
-    if (this.focusedKey && !this.scene.character(this.focusedKey)) this.leaveFocus(true)
-    else if (this.focusedKey) this.focusPose(this.focusedKey) // a mesa pode ter andado: a tela acompanha
+    // O agente saiu: a tela fecha; senão a mesa pode ter andado e a tela acompanha.
+    if (this.focusedKey && !this.focusPose(this.focusedKey)) this.leaveFocus(true)
     const next = this.followNext
     this.followNext = null
     if (next && this.now() - this.userCamAt >= FOLLOW_GRACE_MS) this.flyToAgent(principalKey(next))
@@ -299,16 +300,9 @@ export class Office3DEngine {
     if (b) this.rig.pose = framePose({ ...b, height: BUILDING_HEIGHT }, { fovDeg: this.camera.fov, aspect: this.width / this.height })
   }
 
-  /** Pose que enquadra a tela do personagem (o monitor dele ou do pai); a tela HTML mira o mesmo monitor. */
+  /** Pose da tela em foco, o monitor ou a TV (engineTv.ts); a vista da âncora (HUD livre) dá o tamanho da tela HTML. */
   private focusPose(key: string): CameraPose | null {
-    const c = this.scene.character(key)
-    if (!c) return null
-    const desk = c.screenDesk ? this.scene.room(c.screenDesk.roomId)?.desks[c.screenDesk.index] : undefined
-    const m = desk ? monitorPosition(desk) : null
-    this.anchor.aim(m)
-    // A mesma vista da âncora (a faixa do HUD livre): a tela HTML tem o tamanho da tela projetada nesta pose.
-    if (m) return monitorPose(m, focusView(this.camera.fov, this.width, this.height))
-    return { tx: c.x, ty: 1, tz: c.z, yaw: 0, pitch: 0.3, distance: 2.6 }
+    return focusPoseFor(this.scene, this.anchor, key, focusView(this.camera.fov, this.width, this.height))
   }
 
   get currentFeed(): OfficeFeed | null {
@@ -354,9 +348,14 @@ export class Office3DEngine {
     const b = this.scene.crowd.brains.get(key)
     const spot = (at === 'desk' ? b?.desk : null) ?? b ?? this.scene.character(key)
     if (!spot) return false
+    return this.flyToPose(agentPose(spot))
+  }
+
+  /** Voa até a pose sem abrir tela nenhuma (fecha a aberta): o agente, a TV do chamado. */
+  flyToPose(to: CameraPose): boolean {
     this.leaveFocus(false)
     this.autoFrame = false
-    this.rig.flyTo(agentPose(spot), this.now())
+    this.rig.flyTo(to, this.now())
     this.requestRender()
     return true
   }
@@ -470,7 +469,7 @@ export class Office3DEngine {
     this.quality.shadows(this.scene)
     this.renderer.render(this.scene.scene, this.camera)
     this.quality.measure(now)
-    if (this.focusedKey) this.anchor.place(this.camera, this.width, this.height)
+    if (this.focusedKey) this.anchor.place(this.camera, this.width, this.height, tweening)
     this.preview.place(this.scene, this.camera, this.width, this.height)
     this.speech.place(this.camera, this.width, this.height, this.quality.level === 2, this.headOf)
     this.board.place(this.width, this.height)

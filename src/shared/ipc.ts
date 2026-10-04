@@ -2199,6 +2199,12 @@ export const Channels = {
   contextTurnsCountExact: 'contextTurns:countExact',
   contextTurnsChanged: 'contextTurns:changed',
   secretsReveal: 'secrets:reveal',
+  /** O HTML do agente no Escritório: o endereço no protocolo agent-mockup e a captura para a TV. */
+  officeMockupUrl: 'office:mockup-url',
+  officeMockupCapture: 'office:mockup-capture',
+  /** Os chamados do agente: renderer → main (abertos, encerrados, se o usuário está olhando, títulos) e o clique na notificação (main → renderer). */
+  officeCallsState: 'office:calls-state',
+  officeCallOpen: 'office:call-open',
   /** main → renderer: the vigia raised a doubt about a premise of the work.
    *  Deliberately NOT a ChatEvent — it is for the user, not for the model. */
   vigiaAlert: 'vigia:alert',

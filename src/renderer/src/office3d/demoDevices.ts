@@ -4,7 +4,8 @@
  * app no Android (instala, toca, digita, print) — o projetor da sala desce,
  * acende e sobe sem conversa real — e a página falsa que o telão mostra no
  * lugar do quadro do navegador (que a demo não tem), pintada em canvas e com
- * o cursor andando a cada desenho.
+ * o cursor andando a cada desenho. E o mockup: o agente escreve um .html e
+ * chama o usuário (app_chamar_usuario) — vai à TV acenar até a próxima mensagem.
  */
 import { chatPalette, roundRect } from './chatPaint'
 import type { DemoTurn, ToolStep } from './demoTimeline'
@@ -29,6 +30,19 @@ export function browserTurn(at: number): DemoTurn {
       tool(2_500, 'mcp__browser__browser_click', { selector: 'button.finalizar' }, 'Clicou em button.finalizar.'),
       tool(2_000, 'mcp__browser__browser_screenshot', {}, '[image]'),
       { do: 'answer', text: 'Abri a loja: o carrinho soma o frete certinho e o **Finalizar** leva ao checkout.' }
+    ]
+  }
+}
+
+/** Escreve o mockup e chama o usuário para ver na TV (o chamado acaba na próxima mensagem do usuário). */
+export function mockupTurn(at: number, cwd: string, file: string, mensagem: string): DemoTurn {
+  return {
+    at,
+    user: 'Desenha um mockup da tela nova antes de implementar.',
+    steps: [
+      tool(4_000, 'Write', { file_path: `${cwd}\\mockups\\${file}`, content: '<!doctype html><title>Mockup</title>' }, `File created successfully at: ${cwd}\\mockups\\${file}`),
+      tool(1_000, 'mcp__app__app_chamar_usuario', { arquivo: `mockups/${file}`, mensagem }, 'ok'),
+      { do: 'answer', text: `Deixei o mockup em mockups/${file} e te chamei na TV da sala de reunião.` }
     ]
   }
 }

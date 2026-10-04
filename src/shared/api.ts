@@ -90,6 +90,8 @@ import type {
 import type { ContextTurnSummary, ContextTurnDetail, ContextExactCount, ContextTurnChanged } from './contextSnapshot'
 import type { TypeSafePauseStatus } from './typesafePause'
 import type { ChromeBridgeStatus } from './chromeBridge'
+import type { MockupCaptureResult, MockupRequest, MockupUrlResult } from './officeMockup'
+import type { OfficeCallOpen, OfficeCallsState } from './officeCall'
 import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from './central'
 
 /** The surface exposed on `window.api` by the preload script. */
@@ -396,6 +398,12 @@ export interface AgentCodeApi {
   /** Ação explícita do olho: consulta o valor atual do cofre. */
   revealSecret(name: string): Promise<string | null>
   onContextTurnsChanged(cb: (event: ContextTurnChanged) => void): () => void
+  /** O HTML do agente (Escritório): endereço no protocolo agent-mockup (iframe do foco) e captura para a TV em 3D. */
+  officeMockupUrl(req: MockupRequest): Promise<MockupUrlResult>
+  officeMockupCapture(req: MockupRequest): Promise<MockupCaptureResult>
+  /** Os chamados do agente (shared/officeCall.ts): o estado que só a interface sabe, e o clique na notificação. */
+  officeCallsState(state: OfficeCallsState): Promise<void>
+  onOfficeCallOpen(cb: (e: OfficeCallOpen) => void): () => void
   onAgentEvent(cb: (e: AgentEventMsg) => void): () => void
   onPermissionRequest(cb: (m: PermissionRequestMsg) => void): () => void
   /** Subscribe to permission/question timeouts (auto-resolved) so the renderer

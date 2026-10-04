@@ -36,11 +36,13 @@
  * monitor dele e abre por cima, alinhado ao monitor, a tela dele
  * (<CodeMonitor>: abre no último app usado — na 1ª vez, o Chat, o turno da
  * conversa como o chat mostra — e a barra de tarefas dele troca entre Código,
- * Chat e Contexto); clique na tela acesa de um projetor abre o
- * telão (<ProjectorOverlay>, com o "Abrir na aba Conversa" de `onShowBrowser`);
- * clique num papel do kanban abre o cartão grande (<BoardOverlay>, o mesmo
+ * Chat e Contexto); clique num papel do kanban abre o cartão grande (<BoardOverlay>, o mesmo
  * detalhe da aba Quadro) e na pilha "+K" a lista da coluna;
- * duplo clique abre a conversa dele no chat flutuante (que expande). Clique no
+ * duplo clique abre a conversa dele no chat flutuante (que expande). Clique na
+ * TV voa até ela de frente e abre DENTRO dela o que estava na tela (<TvFocus>:
+ * o mockup vivo com Aprovar / Pedir ajuste, o teste ao vivo ou o placar); o
+ * conteúdo da TV congela enquanto o foco dura, abrir o mockup de quem chama
+ * encerra o chamado e o chat flutuante sai até fechar. Clique no
  * balão de um pedido (permissão, pergunta) leva ao pedido (`onFocusRequest`:
  * o App seleciona a conversa e abre o modal); nos outros balões, foca o agente.
  * Trocar de conversa fora do 3D (sidebar) com a aba aberta voa até o agente
@@ -66,13 +68,17 @@ import { ChatPreview, useHoverPreview } from './ChatPreview'
 import { CodeMonitor } from './codeScreen/CodeMonitor'
 import { DEMO_TICK_MS, demoFeed } from './demoFeed'
 import { Office3DEngine, type EngineCallbacks, type EngineOptions } from './engine'
-import type { BoardOpen } from './engineTypes'
+import { PROJECTOR_KEY, type BoardOpen } from './engineTypes'
 import type { ProjectLayout } from './layout'
 import { OfficeChatFloat, type OfficeConversation } from './OfficeChatFloat'
 import { OfficeHud } from './OfficeHud'
 import { isPerfShortcut, PerfHud } from './PerfHud'
+import { tvLookPose } from './engineTv'
+import { callMarks } from './officeCalls'
+import { setMeetingProbe } from './officeWatch'
 import type { OfficePower } from './power'
-import { ProjectorOverlay } from './ProjectorOverlay'
+import type { TvFocusInfo } from './projectors'
+import { TvFocus } from './TvFocus'
 
 export interface Office3DWorkspaceProps {
   /** A aba está à vista; false pausa o motor (padrão: true). */
@@ -106,6 +112,10 @@ export interface Office3DWorkspaceProps {
   onShowBrowser?: (convId: string) => void
   /** "Abrir no app" do menu do Agent (tela do monitor): a conversa dele na aba Conversa. */
   onOpenInApp?: (convId: string) => void
+  /** Aprovar / Pedir ajuste do mockup na TV: manda o texto para a conversa do agente (o envio do chat). */
+  onSendToConversation?: (convId: string, text: string) => void
+  /** Sobe a cada clique na notificação de um chamado: o filtro vai para o projeto dele e a câmera para a TV. */
+  callSignal?: { n: number; projectId: string | null }
   /** Controle do Windows ligado: o HUD mostra o aviso (o chat minimizado o esconde). */
   windowsControlEnabled?: boolean
   /** O "Desativar" do aviso — o mesmo do aviso do chat. */
@@ -136,6 +146,8 @@ export function Office3DWorkspace({
   onFocusRequest,
   onShowBrowser,
   onOpenInApp,
+  onSendToConversation,
+  callSignal,
   windowsControlEnabled = false,
   onDisableWindowsControl,
   engineOptions
@@ -144,6 +156,8 @@ export function Office3DWorkspace({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<Office3DEngine | null>(null)
   const [focusKey, setFocusKey] = useState<string | null>(null)
+  // O foco na TV: o que estava na tela no clique (congelado enquanto dura).
+  const [tvInfo, setTvInfo] = useState<TvFocusInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hud, setHud] = useState(false)
   const [power, setPower] = useState<OfficePower | null>(null)
@@ -157,7 +171,6 @@ export function Office3DWorkspace({
   const [, setTick] = useState(0)
   // Prévia do hover: o agente sob o mouse há PREVIEW_DELAY_MS. Telão: a sala cujo projetor foi clicado.
   const [previewKey, onHover] = useHoverPreview(active)
-  const [projectorRoom, setProjectorRoom] = useState<string | null>(null)
   // Clique no kanban: o cartão grande (ou a lista da pilha); acompanha os dados do Quadro enquanto aberto.
   const [boardOpen, setBoardOpen] = useState<BoardOpen | null>(null)
   const boardOpenRef = useRef(boardOpen)
@@ -180,6 +193,14 @@ export function Office3DWorkspace({
         const el = document.activeElement
         if (el instanceof HTMLElement && el.closest('.o3d-chat, .o3d-screen-anchor')) el.blur()
         setFocusKey(key)
+        // A TV: o conteúdo congela no foco; abrir o mockup de quem chama encerra o chamado (ele foi visto).
+        const projectors = engineRef.current?.scene.projectors
+        const tv = !!key?.startsWith(PROJECTOR_KEY)
+        projectors?.lock(tv)
+        const info = tv ? (projectors?.focusInfo() ?? null) : null
+        setTvInfo(info)
+        if (info?.kind === 'mockup' && info.callId) callMarks.end(info.callId, 'aberto')
+        if (tv) return
         // O motor fechou a tela sozinho (voo, follow, o agente saiu): o chat fica onde está.
         if (!byUser) return
         // O usuário desfez a seleção: sem mesa, a Central (a conversa ativa não muda).
@@ -198,7 +219,6 @@ export function Office3DWorkspace({
       onPower: setPower,
       onProjects: (list, filter) => setProjects({ list, filter }),
       onHover: (key) => cbs.current.onHover(key),
-      onProjector: setProjectorRoom,
       onBoardOpen: setBoardOpen,
       onBoardChange: () => {
         if (boardOpenRef.current) setTick((t) => t + 1)
@@ -216,15 +236,18 @@ export function Office3DWorkspace({
       return
     }
     engineRef.current = engine
+    // O aviso do chamado não notifica quem já está olhando a sala de reunião.
+    setMeetingProbe(() => !engine.isPaused && engine.scene.projectors.tvInView())
     // Montado com a aba fechada (só testes; o App monta na 1ª abertura): já nasce parado.
     if (!activeRef.current) engine.pause()
     return () => {
+      setMeetingProbe(null)
       engine.dispose()
       engineRef.current = null
       setFocusKey(null)
+      setTvInfo(null)
       setPower(null)
       setProjects({ list: [], filter: null })
-      setProjectorRoom(null)
       setBoardOpen(null)
     }
     // engineOptions é fixo por montagem (testes).
@@ -290,15 +313,25 @@ export function Office3DWorkspace({
     if (active) openCentral()
   }, [centralSignal, active, openCentral])
 
-  // Aba fechada: o telão e a janela do kanban fecham.
+  // Clique na notificação de um chamado (o App já abriu a aba): o filtro no projeto dele e a câmera na TV.
+  const seenCall = useRef(callSignal?.n ?? 0)
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!callSignal || callSignal.n === seenCall.current || !active || !engine) return
+    seenCall.current = callSignal.n
+    engine.setProjectFilter(callSignal.projectId)
+    const to = tvLookPose(engine.scene, { fovDeg: engine.camera.fov, aspect: engine.camera.aspect })
+    if (to) engine.flyToPose(to)
+  }, [callSignal, active])
+
+  // Aba fechada: a janela do kanban fecha.
   useEffect(() => {
     if (active) return
-    setProjectorRoom(null)
     setBoardOpen(null)
   }, [active])
 
-  // Com a tela, a prévia ou o telão aberto e a aba à vista, o conteúdo acompanha o feed.
-  const showing = !!focusKey || !!previewKey || !!projectorRoom
+  // Com a tela ou a prévia aberta e a aba à vista, o conteúdo acompanha o feed.
+  const showing = !!focusKey || !!previewKey
   useEffect(() => {
     if (!showing || !active) return
     return source.subscribe(() => setTick((t) => t + 1))
@@ -353,24 +386,20 @@ export function Office3DWorkspace({
   const previewRef = useCallback((el: HTMLDivElement | null): void => engineRef.current?.setPreviewElement(el), [])
   // O × da tela é o usuário desfazendo a seleção (o chat volta à Central).
   const closeScreen = useCallback(() => engineRef.current?.leaveFocus(true, true), [])
-  const projector = active && projectorRoom && engine ? engine.scene.projectors.info(projectorRoom) : null
-  const mirror = useCallback((el: HTMLCanvasElement | null): void => {
-    if (projectorRoom) engineRef.current?.scene.projectors.mirror(projectorRoom, el)
-  }, [projectorRoom])
-  const closeProjector = useCallback(() => setProjectorRoom(null), [])
   const closeBoard = useCallback(() => setBoardOpen(null), [])
+  // Aprovar / Pedir ajuste na TV: o texto vai para a conversa do agente e o foco fecha (ele volta à mesa).
+  const sendFromTv = useCallback(
+    (id: string, text: string): void => {
+      onSendToConversation?.(id, text)
+      engineRef.current?.leaveFocus(true, true)
+    },
+    [onSendToConversation]
+  )
   // "Abrir a conversa" do cartão: o chat flutuante passa a mostrá-la (como o clique no agente).
   const openCardConversation = useCallback((id: string) => {
     setShowCentral(false)
     cbs.current.onOpenConversation(id)
   }, [])
-  const showBrowser = useCallback(
-    (id: string) => {
-      setProjectorRoom(null)
-      onShowBrowser?.(id)
-    },
-    [onShowBrowser]
-  )
   // 📍: o agente fica no meio da tela, atrás do chat maximizado — o chat minimiza antes do voo.
   const locate = useCallback((id: string) => {
     setCollapse((n) => n + 1)
@@ -426,20 +455,22 @@ export function Office3DWorkspace({
             />
           </div>
         )}
+        {active && tvInfo && engine ? (
+          <div ref={screenRef} className="o3d-screen-anchor" key="tv">
+            <TvFocus info={tvInfo} projectors={engine.scene.projectors} onClose={closeScreen} onSend={onSendToConversation ? sendFromTv : undefined} />
+          </div>
+        ) : null}
         {previewed && (
           <div ref={previewRef} className="o3d-preview-anchor" data-key={previewed.key} key={previewed.key}>
             <ChatPreview feed={feed} model={previewed.model} />
           </div>
-        )}
-        {projector && (
-          <ProjectorOverlay key={projector.roomId} info={projector} mirror={mirror} onClose={closeProjector} onShowBrowser={onShowBrowser ? showBrowser : undefined} />
         )}
         {active && boardOpen && engine ? (
           <BoardOverlay open={boardOpen} board={engine.board} onClose={closeBoard} onOpen={setBoardOpen} onOpenConversation={openCardConversation} />
         ) : null}
         {import.meta.env.DEV && active && hud ? <PerfHud source={readEngine} /> : null}
       </div>
-      {active && (chat || central) && !screenTakesChat ? (
+      {active && (chat || central) && !screenTakesChat && !tvInfo ? (
         <OfficeChatFloat
           conversation={conversation}
           central={centralShown || convIsCentral}

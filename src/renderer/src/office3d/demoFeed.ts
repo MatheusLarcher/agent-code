@@ -6,9 +6,10 @@
  *                falham e ele corrige) → resposta final; nas notas, consulta
  *                a documentação do runner (WebFetch) antes de escrever. Na
  *                sala 2 ele testa a loja no navegador e na sala 4 o app no
- *                Android (demoDevices.ts): o projetor da sala desce e sobe.
+ *                Android (demoDevices.ts): a TV mostra o teste.
  *   1 construtor escreve um componente, builda, pede permissão (`rm -rf dist`)
- *                e delega a um especialista (trilha que abre e fecha).
+ *                e delega a um especialista (trilha que abre e fecha); nas salas
+ *                1 e 3, no fim do loop, desenha um mockup e chama o usuário na TV.
  *   2 azarado    pede permissão para publicar, toma erro da API e tenta de novo;
  *                na sala 3 estoura o limite de uso (a janela de 5h esgota e
  *                volta), na sala 4 fica mais de 2 min em silêncio.
@@ -28,7 +29,7 @@ import { contextLimitFor, type PermissionRequest, type RateLimitStatus } from '@
 import type { TrackMap } from '../agentTracks'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { Conversation } from '../types'
-import { androidTurn, browserTurn } from './demoDevices'
+import { androidTurn, browserTurn, mockupTurn } from './demoDevices'
 import { DEMO_LOOP_MS, demoUsage, playScript, USAGE_BACK_AT, USAGE_OUT_AT, type DemoStep, type DemoTurn, type ToolStep } from './demoTimeline'
 
 export const DEMO_ROOMS = 5
@@ -335,7 +336,7 @@ function scriptsFor(k: Kit, r: number): DemoTurn[][] {
 
   const dev: DemoTurn[] = [
     { at: -7_000 - r * 500, user: s[0], steps: [read(k, p, 3_000), edit(p, 8_000, k.edit), test(5_000, true), say(`Pronto: ${base(k.edit[0])} atualizado e os testes passaram.`)] },
-    // O projetor da sala: a loja testada no navegador (sala 2) e o app no Android (sala 4).
+    // A TV da sala de reunião: a loja testada no navegador (sala 2) e o app no Android (sala 4).
     ...(r === 1 ? [browserTurn(10_000)] : r === 3 ? [androidTurn(9_000, cwd)] : []),
     { at: 24_000 + r * 1_100, user: s[1], steps: [test(5_000, false), read(k, p, 2_500, k.fix[0], k.fix[1]), edit(p, 3_000, k.fix), test(4_500, true), say(`O teste esperava o valor antigo. Ajustei ${base(k.fix[0])} e a suíte voltou a passar.`)] },
     { at: 60_000 + r * 1_100, user: s[2], steps: [...(r % 2 === 0 ? [memo] : []), read(k, p, 2_500), edit(p, 4_000, k.edit), test(5_000, true), say(`Feito, mudança em ${base(k.edit[0])} coberta por teste.`)] },
@@ -357,7 +358,9 @@ function scriptsFor(k: Kit, r: number): DemoTurn[][] {
       user: s[5],
       steps: [read(k, p, 2_000), { do: 'delegate', ms: 18_000, type: x.type, description: x.description, steps: expertSteps, ok: x.ok, result: x.result }, say(x.ok ? `${x.type} terminou: ${x.result}` : `${x.type} não conseguiu: ${x.result}`)]
     },
-    { at: 80_000 + r * 1_000, user: s[6], steps: [tool(2_500, 'Grep', { pattern: firstLine, path: cwd }, `${k.write[0].replace(/\\/g, '/')}:1:${firstLine}`), edit(p, 3_500, [k.write[0], `${firstLine}\n`, '']), check(4_000), say('Limpo, e o build continua passando.')] }
+    { at: 80_000 + r * 1_000, user: s[6], steps: [tool(2_500, 'Grep', { pattern: firstLine, path: cwd }, `${k.write[0].replace(/\\/g, '/')}:1:${firstLine}`), edit(p, 3_500, [k.write[0], `${firstLine}\n`, '']), check(4_000), say('Limpo, e o build continua passando.')] },
+    // O mockup e o chamado (salas 1 e 3), com a luz de volta: dois chamados, o 2º espera sentado ("+1 esperando").
+    ...(r === 0 ? [mockupTurn(93_000, cwd, 'vitrine.html', 'Fiz a vitrine nova — dá uma olhada?')] : r === 2 ? [mockupTurn(95_000, cwd, 'cadastro.html', 'O cadastro ficou assim, aprova?')] : [])
   ]
   // Azarado: permissão → erro da API → nova tentativa. Sala 3 estoura o limite; sala 4 trava.
   const unlucky: DemoTurn[] =

@@ -1,6 +1,8 @@
 import { query, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
 import { AsyncQueue } from './asyncQueue'
-import { createAppMcpServer, APP_RESTART_HINT } from './appTools'
+import { createAppMcpServer, APP_CALL_HINT, APP_RESTART_HINT } from './appTools'
+import { CallIds, emitOfficeCall } from './officeCallRuntime'
+import { OFFICE_CALL_TOOL } from '../shared/officeCall'
 import { appRestart } from './appRestartRuntime'
 import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
@@ -327,7 +329,7 @@ the conversation.`
  */
 const VERIFIED_TOOLS = [
   'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
-  'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'mcp__app__app_restart'
+  'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'mcp__app__app_restart', 'mcp__app__app_chamar_usuario'
 ]
 
 /**
@@ -794,6 +796,8 @@ export class AgentSession {
    */
   private readonly restartOpaqueCalls = new Set<string>()
   private restartRegistration: ReturnType<NonNullable<typeof appRestart>['register']> | undefined
+  /** Ids das chamadas do app_chamar_usuario em voo (o handler do MCP não os recebe). */
+  private readonly callIds = new CallIds()
 
   /**
    * Detecção de travamento. "Ocupado" sozinho é otimista: liga ao enviar e só
@@ -980,7 +984,13 @@ export class AgentSession {
     const mcpServers: Record<string, McpServerConfig> = {
       browser: createBrowserMcpServer(this.browser),
       android: createAndroidMcpServer(this.browser),
-      ...(this.restartRegistration ? { app: createAppMcpServer(this.restartRegistration.request) } : {})
+      // Em TODA sessão (o app_chamar_usuario); o app_restart só com o coordenador e fora do Agent Manager.
+      app: createAppMcpServer({
+        restart: this.opts.planning ? undefined : this.restartRegistration?.request,
+        cwd: this.opts.cwd,
+        callId: (arquivo) => this.callIds.take(arquivo),
+        onCall: (c) => emitOfficeCall({ id: c.id ?? `call-${Date.now()}`, convId: this.opts.convId, cwd: this.opts.cwd, path: c.path, mensagem: c.mensagem, at: Date.now() })
+      })
     }
     if (process.platform === 'win32') {
       mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
@@ -1073,7 +1083,7 @@ export class AgentSession {
     const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     if (memorySnapshot) append += `\n\n${memorySnapshot.catalog}`
-    append += `\n\n${APP_RESTART_HINT}`
+    append += `\n\n${APP_RESTART_HINT}\n\n${APP_CALL_HINT}`
     if (ledger) append += `\n\n${TASKS_HINT}`
     // Senhas em texto puro no prompt, só com o interruptor ligado. Vai no system
     // prompt, e não anexado a cada mensagem, para a senha aparecer UMA vez por
@@ -1279,6 +1289,7 @@ export class AgentSession {
         PreToolUse: [{ hooks: [async (input) => {
           if (input.hook_event_name !== 'PreToolUse') return {}
           const name = input.tool_name
+          if (name === OFFICE_CALL_TOOL) this.callIds.note(input.tool_input, input.tool_use_id)
           if (appRestart?.reserved && name !== 'mcp__app__app_restart') {
             return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
               permissionDecisionReason: 'Reinício preparado. Termine o turno sem iniciar outro trabalho.' } }
@@ -1352,7 +1363,8 @@ export class AgentSession {
       applyPlanningSessionOptions(options, {
         projectCwd: this.opts.cwd,
         slug: this.opts.planning.slug,
-        memoryBlocks: [memory ? buildMemoryHint(memoriesDir) : '', memorySnapshot?.catalog ?? '']
+        // O chamado também vale no Manager (o 'app' dele só tem o app_chamar_usuario).
+        memoryBlocks: [memory ? buildMemoryHint(memoriesDir) : '', memorySnapshot?.catalog ?? '', APP_CALL_HINT]
       })
     }
 
@@ -2235,6 +2247,10 @@ ${lines}
     const planningDenial = planningToolDenial(this.opts, toolName)
     if (planningDenial) return Promise.resolve({ behavior: 'deny', message: planningDenial })
     if (toolName === 'mcp__app__app_restart' && this.restartRegistration && !this.disposed) {
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    }
+    // Chamar o usuário só mostra um HTML do próprio projeto (validado no handler): sem pergunta.
+    if (toolName === OFFICE_CALL_TOOL && !this.disposed && !appRestart?.reserved) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     if (appRestart?.reserved) return Promise.resolve({ behavior: 'deny', message: 'Reinício reservado; finalize o turno.' })

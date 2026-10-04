@@ -6,7 +6,9 @@
  *   estão trabalhando no escritório inteiro e um raio na cor do nível da
  *   energia (as LEVEL_COLORS da pílula do HUD, numa variável CSS; apagado e
  *   riscado no apagão) — lidos do officeStore (mainTabState), sem carregar o
- *   3D, com a mesma histerese da pílula (a leitura anterior fica num ref).
+ *   3D, com a mesma histerese da pílula (a leitura anterior fica num ref). E o
+ *   selo dos chamados: quantos agentes chamam o usuário para ver um HTML
+ *   (useOfficeCalls: também avisa o main — notificação do Windows e celular).
  * - `useMainTab`: a aba escolhida, lembrada entre sessões.
  * - `OfficeTabHost`: o Escritório 3D em tela cheia. O chunk do three só carrega
  *   na 1ª vez que a aba abre; depois o escritório fica montado, PAUSADO com a
@@ -20,6 +22,7 @@ import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, use
 import { officeStore } from '../office/officeStore'
 import type { Office3DWorkspaceProps } from '../office3d/Office3DWorkspace'
 import { LEVEL_COLORS, POWER_LABEL, type OfficePower, type PowerLevel } from '../office3d/power'
+import { useOfficeCalls } from '../office3d/useOfficeCalls'
 import { IconChat, IconOffice, IconSpinner, IconZap } from './Icons'
 import { loadMainTab, officeTabStatus, saveMainTab, type MainTab } from './mainTabState'
 
@@ -61,6 +64,7 @@ export function MainTabs({ active, onSelect }: MainTabsProps): JSX.Element {
     prevPower.current = status.power
   }, [status])
   const { working, level, pct } = status
+  const calls = useOfficeCalls(feed, active === 'office').length
   return (
     <div className="main-tabs" role="tablist" aria-label="Área principal">
       <button
@@ -87,6 +91,11 @@ export function MainTabs({ active, onSelect }: MainTabsProps): JSX.Element {
         {working > 0 && (
           <span className="main-tab-live" data-testid="main-tab-working">
             {working}
+          </span>
+        )}
+        {calls > 0 && (
+          <span className="main-tab-calls" data-testid="main-tab-calls" title={`${calls} agente${calls === 1 ? '' : 's'} te chamando na TV`}>
+            📣 {calls}
           </span>
         )}
         {level && (

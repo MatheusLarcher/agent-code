@@ -68,7 +68,13 @@ vi.mock('electron', () => ({
     quit: vi.fn(),
     whenReady: () => new Promise(() => {}),
     on: vi.fn(),
-    requestSingleInstanceLock: () => true
+    requestSingleInstanceLock: () => true,
+    setAppUserModelId: vi.fn()
+  },
+  Notification: class {
+    static isSupported(): boolean {
+      return false
+    }
   },
   BrowserWindow: class {
     static getAllWindows(): unknown[] {
@@ -81,6 +87,7 @@ vi.mock('electron', () => ({
     }
   },
   dialog: {},
+  protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
   powerMonitor: { on: vi.fn() },
   powerSaveBlocker: {},
   safeStorage: { isEncryptionAvailable: () => false },

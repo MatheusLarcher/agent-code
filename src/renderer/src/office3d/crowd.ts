@@ -34,9 +34,11 @@ import {
 } from './brain'
 import { boardSpotIn, type BoardSpot, type BoardWorld } from './brainBoard'
 import { leaveParty } from './brainParty'
+import { planPath } from './crowdPath'
 import { roleOf, seedOf, type LifeInput } from './crowdRoles'
 import { roomFurniture, type Poi, type PoiKind, type RoomFurniture, type Spot } from './furniture'
 import { MONITOR_BACK, MONITOR_Y, type CharacterLayout, type RoomLayout } from './layout'
+import { sameSpot, type MeetingSpot } from './meetingRoom'
 import { LOUNGE_SEATS } from './officePlan'
 import { buildNavGrid, PoiBook, type NavGrid } from './nav'
 import { CONGA_SPEED, planRoomParty, type PartyRole, type RoomParty } from './partyPlan'
@@ -220,6 +222,19 @@ export class Crowd implements BrainWorld, BoardWorld {
     if (changed && this.partyOn) for (const id of this.rooms.keys()) this.pending.add(id)
   }
 
+  /**
+   * Quem está na sala de reunião (meetingRoom.ts: ao lado da TV ou esperando a
+   * vez) — quem não está no mapa sai dela. Lugar novo refaz o modo (vai para lá).
+   */
+  setVenues(spots: ReadonlyMap<string, MeetingSpot>): void {
+    for (const b of this.list) {
+      const v = spots.get(b.key) ?? null
+      if (sameSpot(v, b.venue)) continue
+      b.venue = v
+      if (b.mode === 'meeting') b.mode = 'init'
+    }
+  }
+
   private outsideOf(projectId: string | null): boolean {
     return this.filter !== null && projectId !== null && projectId !== this.filter
   }
@@ -340,44 +355,7 @@ export class Crowd implements BrainWorld, BoardWorld {
   }
 
   plan(b: Brain): number {
-    const g = b.goal
-    const out = b.path
-    const nav = this.navOf(b)
-    if (!nav) {
-      out[0] = g.x
-      out[1] = g.z
-      return 1
-    }
-    const { room, furniture: f } = nav
-    let n = 0
-    let sx = b.x
-    let sz = b.z
-    // De fora da sala: entra pela porta antes de qualquer coisa.
-    if (b.x < room.x || b.x > room.x + room.width || b.z < room.z || b.z > room.z + room.depth) {
-      out[0] = sx = f.doorIn.x
-      out[1] = sz = f.doorIn.z
-      n = 1
-    }
-    const tx = g.exit ? f.doorIn.x : g.x
-    const tz = g.exit ? f.doorIn.z : g.z
-    const m = nav.grid.findPath(sx, sz, tx, tz, this.scratch)
-    const cap = (out.length >> 1) - 1
-    if (m === 0) {
-      out[n * 2] = tx
-      out[n * 2 + 1] = tz
-      n++
-    } else {
-      for (let i = 0; i < m && n < cap; i++, n++) {
-        out[n * 2] = this.scratch[i * 2]
-        out[n * 2 + 1] = this.scratch[i * 2 + 1]
-      }
-    }
-    if (g.exit) {
-      out[n * 2] = f.doorOut.x
-      out[n * 2 + 1] = f.doorOut.z
-      n++
-    }
-    return n
+    return planPath(b, this.navOf(b), this.scratch)
   }
 
   claim(b: Brain, kind: PoiKind): Poi | null {

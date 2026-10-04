@@ -17,7 +17,10 @@
  *   party       apagão (sem tokens): todo mundo com papel na festa — dança,
  *               trenzinho, lanterna, pizza (brainParty.ts) — por cima de tudo;
  *   back        a luz voltou: corre para a própria mesa e senta por BACK_S
- *               (quem tem tarefa já volta direto ao 'work').
+ *               (quem tem tarefa já volta direto ao 'work');
+ *   meeting     na sala de reunião (`venue`): de pé ao lado da TV testando (ou
+ *               chamando o usuário: acena e, depois de CALL_JUMP_S, pula), ou
+ *               sentado esperando a vez; sai dela, volta para a mesa.
  * O movimento (objetivo → levantar, andar, sentar, virar) e os tipos ficam em
  * brainBody.ts, reexportado daqui. Reações "de corpo" seguram o passo
  * enquanto duram.
@@ -29,7 +32,6 @@ import {
   goDesk,
   goSeat,
   goStand,
-  LEISURES,
   lookAt,
   move,
   pushReaction,
@@ -45,11 +47,14 @@ import {
   type Mode
 } from './brainBody'
 import { runErrand, type BoardWorld } from './brainBoard'
+import { runFree } from './brainLeisure'
 import { enterParty, runParty } from './brainParty'
 import { CONTEXT_LOW_STEPS, STALL_MS, type AgentEventBody, type AgentPhase, type AgentStatus, type ToolKind } from './events'
-import { chairSide, type Poi } from './furniture'
+import { chairSide } from './furniture'
+import { TV_CENTER } from './meetingRoom'
 
 export * from './brainBody'
+export { beginChat } from './brainLeisure'
 
 // ── status e eventos ───────────────────────────────────────────────────────
 
@@ -161,6 +166,9 @@ function decide(b: Brain, w: BrainWorld): Mode {
   if (b.party !== null) return 'party'
   const busy = b.phase === 'working' || b.phase === 'waiting-permission'
   if (b.role === 'fixed') return 'fixed'
+  // Na sala de reunião: testando na TV ou esperando a vez (enquanto o uso estiver ativo), ou
+  // chamando o usuário (até ele responder, mesmo com o turno já terminado).
+  if (b.venue && b.phase !== 'waiting-permission' && !b.usageOut && (b.venue.call || busy || b.role === 'desk')) return 'meeting'
   if (b.role === 'visitor') {
     if (busy) return b.phase === 'waiting-permission' && b.desk ? 'permission' : 'work'
     return b.visible ? 'leave' : 'away'
@@ -173,6 +181,7 @@ function decide(b: Brain, w: BrainWorld): Mode {
 }
 
 function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
+  const from = b.mode
   b.mode = m
   b.modeT = 0
   endLeisure(b, w, 0)
@@ -213,10 +222,16 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
     case 'back':
       goDesk(b, 'run')
       return
+    case 'meeting': {
+      const v = b.venue!
+      if (v.seat) goSeat(b, 'chair', v.x, v.z, v.yaw, v.standX, v.standZ, gait)
+      else goStand(b, v.x, v.z, v.yaw, gait)
+      return
+    }
     case 'free':
       b.rest = 2 + w.rng() * 4
-      // Quem voltou pela porta vai primeiro para a mesa dele.
-      if (entering) goDesk(b, 'walk')
+      // Quem voltou pela porta (ou da sala de reunião) vai primeiro para a mesa dele.
+      if (entering || from === 'meeting') goDesk(b, 'walk')
       else stay(b)
       return
     case 'leave': {
@@ -309,6 +324,40 @@ function runFixed(b: Brain): void {
   b.prop = working && b.style === 'archive' ? 'book' : null
 }
 
+/** Chamando sem resposta por tanto tempo (s), quem está ao lado da TV passa a pular. */
+export const CALL_JUMP_S = 60
+/** Depois disso, o ciclo: metade pulando, metade acenando. */
+const CALL_CYCLE_S = 6
+/** Na fila do chamado, sentado: acena SEAT_WAVE_S a cada SEAT_WAVE_EVERY_S. */
+const SEAT_WAVE_EVERY_S = 9
+const SEAT_WAVE_S = 2
+
+function runMeeting(b: Brain): void {
+  const v = b.venue
+  if (!b.arrived || !v) {
+    setAction(b, 'none')
+    b.look = 'none'
+    return
+  }
+  if (v.call && v.role === 'present') {
+    // Chamou o usuário: de pé ao lado da TV, acenando para a câmera; sem resposta, pula também.
+    const late = b.modeT - CALL_JUMP_S
+    setAction(b, late >= 0 && late % CALL_CYCLE_S < CALL_CYCLE_S / 2 ? 'jump' : 'wave')
+    b.faceCamera = true
+    b.look = 'camera'
+    return
+  }
+  if (v.call) {
+    // Na fila do chamado: sentado, olhando para a câmera e acenando de vez em quando.
+    setAction(b, (b.modeT + b.seed * SEAT_WAVE_EVERY_S) % SEAT_WAVE_EVERY_S < SEAT_WAVE_S ? 'wave' : 'sitIdle')
+    b.look = 'camera'
+    return
+  }
+  // Quem testa olha a TV de pé (lendo quando trabalha); quem espera, sentado, também olha para ela.
+  setAction(b, v.role === 'present' ? (b.phase === 'working' ? 'readBoard' : 'idle') : 'sitIdle')
+  lookAt(b, TV_CENTER.x, TV_CENTER.y, TV_CENTER.z)
+}
+
 function runMode(b: Brain, dt: number, w: BrainWorld): void {
   switch (b.mode) {
     case 'work':
@@ -347,129 +396,11 @@ function runMode(b: Brain, dt: number, w: BrainWorld): void {
       setAction(b, b.arrived ? 'sitIdle' : 'none')
       b.look = 'none'
       return
+    case 'meeting':
+      return runMeeting(b)
     default:
       return
   }
-}
-
-// ── lazer ──────────────────────────────────────────────────────────────────
-
-const spot = { x: 0, z: 0 }
-
-function beginLeisure(b: Brain, l: Leisure, w: BrainWorld): void {
-  Object.assign(b, { leisure: l, leisureT: 0, lastLeisure: l, pause: -1, leisureDur: DWELL_MIN + w.rng() * (DWELL_MAX - DWELL_MIN) })
-}
-
-/** Começa a conversa (chamado pelo mundo nos DOIS do par). */
-export function beginChat(b: Brain, with_: string, lead: boolean, poi: Poi, dur: number): void {
-  Object.assign(b, { leisure: 'chat', leisureT: 0, lastLeisure: 'chat', leisureDur: dur, chatWith: with_, chatLead: lead, chatT0: -1, poi, rest: 0, prop: null })
-  goStand(b, poi.x, poi.z, poi.yaw, 'walk')
-}
-
-function tryLeisure(b: Brain, l: Leisure, w: BrainWorld): boolean {
-  if (l === 'chat') return w.pairUp(b)
-  if (l === 'phone') {
-    if (!w.wander(b, spot)) return false
-    beginLeisure(b, 'phone', w)
-    goStand(b, spot.x, spot.z, b.yaw, 'stroll')
-    return true
-  }
-  const p = w.claim(b, l)
-  if (!p) return false
-  b.poi = p
-  beginLeisure(b, l, w)
-  goStand(b, p.x, p.z, p.yaw, 'walk')
-  return true
-}
-
-function runFree(b: Brain, dt: number, w: BrainWorld): void {
-  if (b.leisure === null) {
-    b.prop = null
-    if (b.rest > 0 || !b.arrived) {
-      // O descanso conta depois de chegar (quem entrou pela porta anda até a mesa antes).
-      if (b.arrived) b.rest -= dt
-      setAction(b, !b.arrived ? 'none' : b.sit > 0.5 ? 'sitIdle' : 'idle')
-      b.look = 'none'
-      return
-    }
-    const start = Math.floor(w.rng() * LEISURES.length)
-    for (let i = 0; i < LEISURES.length; i++) {
-      const l = LEISURES[(start + i) % LEISURES.length]
-      if (l !== b.lastLeisure && tryLeisure(b, l, w)) return
-    }
-    b.rest = 2 + w.rng() * 2
-    return
-  }
-  if (b.leisure === 'chat') return runChat(b, w)
-  if (b.leisure === 'phone') return runPhone(b, dt, w)
-  if (!b.arrived) {
-    setAction(b, 'none')
-    b.look = 'none'
-    return
-  }
-  b.leisureT += dt
-  const t = b.leisureT
-  const dur = b.leisureDur
-  if (b.poi) lookAt(b, b.poi.look.x, b.poi.look.y, b.poi.look.z)
-  switch (b.leisure) {
-    case 'coffee':
-      setAction(b, t < 2.4 ? 'brew' : 'sip')
-      b.prop = t < 2.4 ? null : 'cup'
-      break
-    case 'shelf':
-      setAction(b, t < 0.9 ? 'grabBook' : 'readBook')
-      b.prop = t > 0.5 ? 'book' : null
-      break
-    case 'window': {
-      const s0 = dur * 0.4
-      setAction(b, t >= s0 && t < s0 + 2.4 ? 'stretchUp' : 'lookOut')
-      break
-    }
-    case 'plant':
-      setAction(b, 'water')
-      b.prop = 'can'
-      if (Math.floor(t / 0.3) !== Math.floor((t - dt) / 0.3)) b.fx |= FX.drops
-      break
-    case 'postit':
-      // Só lê e confere o quadro: o kanban é o Quadro real, ninguém prende papel inventado.
-      setAction(b, t < dur * 0.6 ? 'readBoard' : 'admire')
-      b.prop = null
-      break
-  }
-  if (t >= dur) endLeisure(b, w, 1 + w.rng() * 2.5)
-}
-
-function runChat(b: Brain, w: BrainWorld): void {
-  const p = w.partner(b)
-  if (!p) return endLeisure(b, w, 1 + w.rng() * 2)
-  lookAt(b, p.x, 1.25, p.z)
-  if (!b.arrived || !p.arrived) {
-    setAction(b, b.arrived ? 'idle' : 'none')
-    return
-  }
-  if (b.chatT0 < 0) b.chatT0 = p.chatT0 >= 0 ? p.chatT0 : w.t
-  b.leisureT = w.t - b.chatT0
-  b.goal.yaw = Math.atan2(-(p.x - b.x), -(p.z - b.z))
-  // Revezam a fala a cada 3 s; quem puxou o assunto começa.
-  const first = Math.floor(b.leisureT / 3) % 2 === 0
-  setAction(b, first === b.chatLead ? 'talk' : 'listen')
-  if (b.leisureT >= b.leisureDur) endLeisure(b, w, 1 + w.rng() * 2.5)
-}
-
-function runPhone(b: Brain, dt: number, w: BrainWorld): void {
-  b.prop = 'phone'
-  b.look = 'none'
-  setAction(b, 'phone')
-  b.leisureT += dt
-  if (b.arrived) {
-    if (b.pause < 0) b.pause = 1.5 + w.rng() * 1.5
-    b.pause -= dt
-    if (b.pause <= 0 && w.wander(b, spot)) {
-      b.pause = -1
-      goStand(b, spot.x, spot.z, b.yaw, 'stroll')
-    }
-  }
-  if (b.leisureT >= b.leisureDur) endLeisure(b, w, 1 + w.rng() * 2)
 }
 
 // ── passo ──────────────────────────────────────────────────────────────────

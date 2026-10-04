@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { OfficeCharacterModel } from '../office/adapter/model'
-import { setStatus, type Brain } from './brain'
+import { CALL_JUMP_S, setStatus, type Brain } from './brain'
 import { Crowd } from './crowd'
 import { layoutOffice, type Office3DLayout } from './layout'
+import { meetingSpots, TV_SIDE } from './meetingRoom'
 import { CENTRAL_SPOT, MEMORY_SPOT_X, MEMORY_SPOTS_Z, MEMORY_WAIT, OFFICE } from './officePlan'
 
 function model(key: string, roomId: string | null, extra: Partial<OfficeCharacterModel> = {}): OfficeCharacterModel {
@@ -67,5 +68,87 @@ describe('destinos fixos no escritório', () => {
     expect(Math.abs(c.yaw - CENTRAL_SPOT.yaw)).toBeLessThan(0.05)
     expect([c.mode, c.visible, c.desk]).toEqual(['fixed', true, null])
     expect(c.action).toBe('type')
+  })
+})
+
+describe('sala de reunião: quem testa na TV e quem espera a vez', () => {
+  it('os lugares (ao lado da TV e as cadeiras de espera) são chão livre e alcançáveis da porta', () => {
+    const { crowd } = world([model('conv:a', 'a')], ['a'])
+    const grid = crowd.grid('office')!
+    const f = crowd.furniture('office')!
+    const spots = meetingSpots(['k0', 'k1', 'k2', 'k3', 'k4', 'k5'])
+    const out = new Float32Array(64)
+    for (const [key, s] of spots) {
+      expect(grid.isFree(s.standX, s.standZ), key).toBe(true)
+      expect(grid.findPath(f.doorIn.x, f.doorIn.z, s.standX, s.standZ, out), key).toBeGreaterThan(0)
+    }
+    expect(spots.get('k0')).toMatchObject({ role: 'present', seat: false, x: TV_SIDE.x, z: TV_SIDE.z })
+    expect([...spots.values()].slice(1).every((s) => s.role === 'wait' && s.seat)).toBe(true)
+  })
+
+  it('o 1º da fila fica de pé ao lado da TV olhando para ela; o 2º senta à mesa esperando; sem uso, voltam às mesas', () => {
+    const { crowd, brain } = world([model('conv:a', 'a', { active: true }), model('conv:b', 'a', { active: true })], ['a'])
+    for (const k of ['conv:a', 'conv:b']) setStatus(brain(k), { phase: 'working', tool: 'web', contextPct: null, usageOut: false, stalled: false, idleSince: null }, 0)
+    run(crowd, 2)
+    crowd.setVenues(meetingSpots(['conv:a', 'conv:b']))
+    run(crowd, 40)
+    const a = brain('conv:a')
+    const b = brain('conv:b')
+    expect([a.mode, a.arrived, a.sit]).toEqual(['meeting', true, 0])
+    expect(Math.hypot(a.x - TV_SIDE.x, a.z - TV_SIDE.z)).toBeLessThan(0.05)
+    expect(a.look).toBe('point')
+    expect([b.mode, b.seat, b.sit]).toEqual(['meeting', 'chair', 1])
+    // A vez passa: b vai para o lado da TV.
+    crowd.setVenues(meetingSpots(['conv:b']))
+    run(crowd, 30)
+    expect(Math.hypot(b.x - TV_SIDE.x, b.z - TV_SIDE.z)).toBeLessThan(0.05)
+    expect(a.mode).toBe('work')
+    expect(a.seat).toBe('chair')
+    crowd.setVenues(meetingSpots([]))
+    run(crowd, 30)
+    expect([b.mode, b.sit]).toEqual(['work', 1])
+  })
+})
+
+describe('o chamado do agente (app_chamar_usuario)', () => {
+  it('ao lado da TV acenando para a câmera mesmo com o turno terminado; depois de CALL_JUMP_S alterna pulo e aceno; o 2º chamado espera sentado acenando; acabou, volta à mesa', () => {
+    const { crowd, brain } = world([model('conv:a', 'a'), model('conv:b', 'a'), model('conv:c', 'a', { active: true })], ['a'])
+    // c testa no navegador; a e b chamaram (b depois): os chamados vêm antes do teste.
+    setStatus(brain('conv:c'), { phase: 'working', tool: 'web', contextPct: null, usageOut: false, stalled: false, idleSince: null }, 0)
+    run(crowd, 2)
+    crowd.setVenues(meetingSpots([{ key: 'conv:a', call: true }, { key: 'conv:b', call: true }, 'conv:c']))
+    run(crowd, 30)
+    const [a, b, c] = ['conv:a', 'conv:b', 'conv:c'].map(brain)
+    expect([a.mode, a.arrived, a.sit, a.faceCamera, a.look, a.action]).toEqual(['meeting', true, 0, true, 'camera', 'wave'])
+    expect(Math.hypot(a.x - TV_SIDE.x, a.z - TV_SIDE.z)).toBeLessThan(0.05)
+    expect([b.mode, b.seat, b.sit, b.look]).toEqual(['meeting', 'chair', 1, 'camera'])
+    expect([c.mode, c.seat]).toEqual(['meeting', 'chair'])
+    // O sentado acena de vez em quando.
+    const seated = new Set<string>()
+    for (let i = 0; i < 120; i++) {
+      run(crowd, 0.1)
+      seated.add(b.action)
+    }
+    expect([...seated].sort()).toEqual(['sitIdle', 'wave'])
+    // Sem resposta: depois de ~60 s no lugar, pula e acena, alternando.
+    const late = new Set<string>()
+    run(crowd, CALL_JUMP_S - a.modeT)
+    for (let i = 0; i < 80; i++) {
+      run(crowd, 0.1)
+      late.add(a.action)
+    }
+    expect([...late].sort()).toEqual(['jump', 'wave'])
+    expect(Math.hypot(a.x - TV_SIDE.x, a.z - TV_SIDE.z)).toBeLessThan(0.05)
+    // a foi atendido: b assume o lado da TV; c continua esperando.
+    crowd.setVenues(meetingSpots([{ key: 'conv:b', call: true }, 'conv:c']))
+    run(crowd, 30)
+    expect(Math.hypot(b.x - TV_SIDE.x, b.z - TV_SIDE.z)).toBeLessThan(0.05)
+    expect(b.action).toBe('wave')
+    expect([a.mode, a.venue]).toEqual(['free', null])
+    expect(Math.hypot(a.x - TV_SIDE.x, a.z - TV_SIDE.z)).toBeGreaterThan(1)
+    crowd.setVenues(meetingSpots([]))
+    run(crowd, 30)
+    expect([b.mode, b.venue]).toEqual(['free', null])
+    expect(Math.hypot(b.x - TV_SIDE.x, b.z - TV_SIDE.z)).toBeGreaterThan(1)
   })
 })

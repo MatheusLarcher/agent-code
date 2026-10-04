@@ -114,12 +114,16 @@ afterEach(() => {
 })
 
 describe('AgentSession — start() da sessão do Agent Manager', () => {
-  it('servidores MCP: planning + memory; sem browser, android, app, windows e tasks', async () => {
+  it('servidores MCP: planning + memory + app só com o app_chamar_usuario; sem browser, android, windows e tasks', async () => {
     await makeSession({ planning: { slug } }).start()
-    const servers = Object.keys(lastOptions().mcpServers as object)
+    const mcp = lastOptions().mcpServers as Record<string, { instance?: { _registeredTools?: object } }>
+    const servers = Object.keys(mcp)
     expect(servers).toContain('planning')
     expect(servers).toContain('memory')
-    for (const name of ['browser', 'android', 'app', 'windows', 'tasks']) expect(servers).not.toContain(name)
+    expect(Object.keys(mcp.app.instance?._registeredTools ?? {})).toEqual(['app_chamar_usuario'])
+    for (const name of ['browser', 'android', 'windows', 'tasks']) expect(servers).not.toContain(name)
+    const { append } = lastOptions().systemPrompt as { append: string }
+    expect(append).toContain('app_chamar_usuario')
   })
 
   it('prompt do Manager + memória, sem os hints de browser/android/tasks/windows', async () => {
@@ -226,6 +230,15 @@ describe('AgentSession — Bash do Agent Manager pede aprovação, salvo "Permit
     const input = { command: 'git status' }
     expect(await g('Bash', input)).toEqual({ behavior: 'allow', updatedInput: input })
     expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('app_chamar_usuario passa sem perguntar, no Manager e na sessão comum (só mostra um HTML do projeto)', async () => {
+    for (const extra of [{ planning: { slug } }, {}]) {
+      const { ask, g } = withAsk(extra)
+      const input = { arquivo: 'mockups/tela.html' }
+      expect(await g('mcp__app__app_chamar_usuario', input)).toEqual({ behavior: 'allow', updatedInput: input })
+      expect(ask).not.toHaveBeenCalled()
+    }
   })
 
   it('sem "Permitir tudo", Bash `git status` no Manager vai ao pedido de permissão', async () => {

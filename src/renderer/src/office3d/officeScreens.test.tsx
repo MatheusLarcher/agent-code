@@ -131,47 +131,6 @@ describe('Prévia do agente ao passar o mouse', () => {
   })
 })
 
-describe('Telão do projetor', () => {
-  it('clique na tela acesa abre o telão com a URL; "Abrir na aba Conversa" leva à conversa e fecha; o canvas vira espelho do projetor', () => {
-    const mirror = vi.spyOn(Projectors.prototype, 'mirror')
-    const onShowBrowser = vi.fn()
-    const f = testingFeed()
-    const room = layoutOffice(deriveOfficeModel(f, NOW)).rooms[0].id
-    vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(`${PROJECTOR_KEY}${room}`)
-    const s = mount({ onShowBrowser }, f)
-    fireEvent.pointerDown(s.canvas, { button: 0, clientX: 40, clientY: 40 })
-    fireEvent.pointerUp(window, { button: 0, clientX: 40, clientY: 40 })
-    const dlg = screen.getByRole('dialog', { name: 'Telão do projetor' })
-    expect(dlg.textContent).toContain(URL)
-    expect(dlg.textContent).toContain('alpha')
-    expect(screen.queryByTestId('office-screen')).toBeNull() // não é foco de agente
-    const canvas = screen.getByTestId('o3d-projector-canvas')
-    expect(mirror).toHaveBeenCalledWith(room, canvas)
-    fireEvent.click(screen.getByRole('button', { name: 'Abrir na aba Conversa' }))
-    expect(onShowBrowser).toHaveBeenCalledWith('a')
-    expect(screen.queryByRole('dialog', { name: 'Telão do projetor' })).toBeNull()
-    expect(mirror).toHaveBeenLastCalledWith(room, null)
-  })
-
-  it('Esc e clicar fora fecham; sem onShowBrowser, sem o botão', () => {
-    const f = testingFeed()
-    const room = layoutOffice(deriveOfficeModel(f, NOW)).rooms[0].id
-    vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(`${PROJECTOR_KEY}${room}`)
-    const s = mount({}, f)
-    const open = (): void => {
-      fireEvent.pointerDown(s.canvas, { button: 0, clientX: 40, clientY: 40 })
-      fireEvent.pointerUp(window, { button: 0, clientX: 40, clientY: 40 })
-    }
-    open()
-    expect(screen.queryByRole('button', { name: 'Abrir na aba Conversa' })).toBeNull()
-    fireEvent.keyDown(document.body, { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: 'Telão do projetor' })).toBeNull()
-    open()
-    fireEvent.pointerDown(screen.getByRole('dialog', { name: 'Telão do projetor' }))
-    expect(screen.queryByRole('dialog', { name: 'Telão do projetor' })).toBeNull()
-  })
-})
-
 describe('Quadros do navegador no motor', () => {
   it('liga onBrowserFrame/onBrowserState na montagem; aba fechada não desenha quadro; desmontar tira os ouvintes', () => {
     const arrived = vi.spyOn(Projectors.prototype, 'frameArrived')

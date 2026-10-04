@@ -7,6 +7,7 @@
  * aos eventos) fica em brain.ts, que reexporta tudo daqui.
  */
 import type { Errand } from './brainBoard'
+import type { MeetingSpot } from './meetingRoom'
 import type { AgentPhase, ToolKind } from './events'
 import { chairSide, seatOf, type Poi, type PoiKind, type Spot } from './furniture'
 import { MONITOR_BACK, MONITOR_Y, type SeatPlace } from './officePlan'
@@ -15,7 +16,7 @@ import { REACTION_S, smooth, type Action, type Reaction, type SeatKind } from '.
 
 export type Role = 'desk' | 'visitor' | 'fixed'
 /** party: festa do apagão (brainParty.ts); back: a luz voltou, corre para a mesa e senta um pouco. */
-export type Mode = 'init' | 'free' | 'work' | 'permission' | 'sleep' | 'queue' | 'leave' | 'away' | 'fixed' | 'party' | 'back'
+export type Mode = 'init' | 'free' | 'work' | 'permission' | 'sleep' | 'queue' | 'leave' | 'away' | 'fixed' | 'party' | 'back' | 'meeting'
 export type Leisure = 'coffee' | 'shelf' | 'window' | 'plant' | 'postit' | 'chat' | 'phone'
 export type Gait = 'walk' | 'run' | 'stroll'
 export type PropKind = 'cup' | 'book' | 'can' | 'phone' | 'folder' | 'sign' | 'note' | 'flashlight' | 'pizza'
@@ -150,6 +151,8 @@ export interface Brain {
   backUntil: number
   /** Ida ao quadro em curso (brainBoard.ts); null sem ela. */
   errand: Errand | null
+  /** O lugar na sala de reunião (testando na TV ou esperando a vez); null fora dela. */
+  venue: MeetingSpot | null
 }
 
 /** O que o cérebro pede ao mundo (a sala, a reserva e os colegas). */
@@ -213,7 +216,7 @@ export function createBrain(o: BrainInit): Brain {
     chatWith: null, chatLead: false, chatT0: -1,
     action: 'idle', actionT: 0, reaction: null, reactionT: 0, pending: [], prop: null, look: 'none', lookX: 0, lookY: 0, lookZ: 0,
     faceCamera: false, fx: 0, zzz: false, rush: false, knuckles: false, nextYawn: 0, nextWatch: 0, workSpeed: 1,
-    party: null, partySlot: 0, partyStep: 0, partyT: 0, puppet: false, backUntil: -1, errand: null
+    party: null, partySlot: 0, partyStep: 0, partyT: 0, puppet: false, backUntil: -1, errand: null, venue: null
   }
   // Quem tem mesa e está na sala começa sentado nela.
   if (desk && !o.away && o.role !== 'fixed') seatAtDesk(b, desk)

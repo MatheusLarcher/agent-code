@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, powerMonitor, powerSaveBlocker, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Notification, powerMonitor, powerSaveBlocker, safeStorage, shell } from 'electron'
 import type { MessageBoxOptions } from 'electron'
 import { openUrlExternally } from './openInBrowser'
 import { randomUUID } from 'node:crypto'
@@ -102,6 +102,9 @@ import { replayLocalTranscript, verifyMirroredSession } from './persistence/mirr
 import { replayDedupStore } from './persistence/replayDedup'
 import { activeContextHistory, activeReplayStore, activeResumeMarker, activeSessionStore, activeTokenUsage } from './persistence/activeRepository'
 import { registerContextIpc } from './contextSnapshot/ipc'
+import { registerMockupScheme, setupOfficeMockup } from './officeMockup/mockupElectron'
+import { OfficeCallCenter, parseCallsState } from './officeCallCenter'
+import { setOfficeCallSink } from './officeCallRuntime'
 import { createSessionStorageRecovery } from './sessionStorageRecovery'
 import {
   attachProjectIdentity,
@@ -166,6 +169,8 @@ let stopRestartGuardFile: (() => void) | null = null
 let stopSleepGuard: (() => void) | null = null
 /** Handlers planning:* e os vigias de pasta deles (fechados ao sair). */
 let planningIpc: PlanningIpcHandle | null = null
+/** O HTML do agente na TV do Escritório (protocolo agent-mockup + janela de captura). */
+let officeMockup: ReturnType<typeof setupOfficeMockup> | null = null
 /** Handlers central:* e o índice de conversas da Central (aquecido depois do armazenamento). */
 let centralIpc: CentralIpcHandle | null = null
 // Os planejamentos moram na pasta de dados do app (<dataDir>/planning/<projeto>/),
@@ -938,6 +943,9 @@ function createWindow(startMinimized = false): void {
     void openUrlExternally(url)
     return { action: 'deny' }
   })
+  // O app nunca navega para fora de si (F5 é reload, não navegação). Defesa em
+  // profundidade do HTML do agente na TV (o iframe já é sandbox sem top-navigation).
+  mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
     const key = input.key.toLowerCase()
@@ -968,6 +976,8 @@ function createWindow(startMinimized = false): void {
   })
 
   mainWindow.on('closed', () => {
+    // A janela escondida de captura não pode segurar o app aberto.
+    officeMockup?.release()
     if (closeRequestTimer) clearInterval(closeRequestTimer)
     closeRequestTimer = null
     mainWindow = null
@@ -2255,6 +2265,41 @@ export function registerIpc(): void {
 
 const ownsSingleInstance = app.requestSingleInstanceLock()
 if (!ownsSingleInstance) app.quit()
+// Esquemas privilegiados só se registram antes do ready.
+registerMockupScheme()
+// Notificação do Windows: o AppUserModelID tem de ser o do atalho do instalador (appId do electron-builder).
+if (process.platform === 'win32') app.setAppUserModelId('com.larchertech.agentcode')
+
+/** Os chamados do agente: a notificação do Windows e os avisos da ponte (officeCallCenter.ts). */
+function setupOfficeCalls(): void {
+  // Viva até o clique ou o fechar: solta, o coletor levaria o clique junto.
+  const shown = new Set<Notification>()
+  const center = new OfficeCallCenter({
+    bridge: remote.officeCalls,
+    notify: (e, onClick) => {
+      if (!Notification.isSupported()) return
+      const n = new Notification({ title: `${e.agente} está te chamando`, body: `${e.projeto} · ${e.titulo}${e.mensagem ? ` — ${e.mensagem}` : ''}` })
+      const drop = (): void => void shown.delete(n)
+      shown.add(n)
+      n.on('click', () => {
+        drop()
+        onClick()
+      })
+      n.on('close', drop)
+      n.on('failed', drop)
+      n.show()
+    },
+    open: (e) => {
+      revealMainWindow()
+      send(Channels.officeCallOpen, { id: e.id, convId: e.convId })
+    }
+  })
+  setOfficeCallSink((n) => void center.add(n).catch(() => undefined))
+  ipcMain.handle(Channels.officeCallsState, (_e, raw) => {
+    const s = parseCallsState(raw)
+    if (s) center.state(s)
+  })
+}
 
 /** Traz a janela para a frente (restaura, mostra e foca). */
 function revealMainWindow(): void {
@@ -2334,6 +2379,9 @@ app.whenReady().then(async () => {
   // Agora a interface sobe primeiro e acompanha o estado da persistência pelo
   // `storageStatusChanged` — que por isso é assinado antes de `initialize()`.
   registerIpc()
+  // Fora do registerIpc (que os testes chamam sem Electron): protocolo exige o app pronto.
+  officeMockup = setupOfficeMockup({ handle: (channel, handler) => ipcMain.handle(channel, handler) })
+  setupOfficeCalls()
   // ChatGPT plan usage read off the Codex proxy responses. Account-level, so it
   // is not tied to any conversation: the renderer routes `rate-limit` events
   // straight into its global usage state without looking at `convId`.

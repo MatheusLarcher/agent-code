@@ -87,6 +87,7 @@ import { IconBoard, IconGlobe } from './components/Icons'
 import { MainTabs, OfficeErrorBoundary, OfficeTabHost, useMainTab } from './components/MainTabs'
 import { fileUrl } from './fileUrl'
 import { officeStore } from './office/officeStore'
+import { roomIdFor } from './office/adapter/model'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
 import { AccountsUsageBadge } from './components/AccountsUsageBadge'
@@ -2955,6 +2956,18 @@ export function App(): JSX.Element {
     return () => registerCentralUpdater(null)
   }, [])
 
+  // Clique na notificação de um chamado do agente: a aba Escritório, com o filtro no projeto dele e a câmera na TV.
+  const [officeCall, setOfficeCall] = useState<{ n: number; projectId: string | null }>({ n: 0, projectId: null })
+  useEffect(
+    () =>
+      window.api.onOfficeCallOpen?.(({ convId }) => {
+        const cwd = convsRef.current.find((c) => c.id === convId)?.cwd
+        setMainTab('office')
+        setOfficeCall((p) => ({ n: p.n + 1, projectId: cwd ? roomIdFor(cwd) : null }))
+      }),
+    [setMainTab]
+  )
+
   // Commands arriving from a phone (phone → PC → Claude Code): route into the
   // matching conversation via the same dispatch path the composer uses.
   useEffect(() => {
@@ -4377,6 +4390,12 @@ export function App(): JSX.Element {
             onOpenInApp={(convId) => {
               selectConversation(convId)
               setMainTab('chat')
+            }}
+            callSignal={officeCall}
+            // Aprovar / Pedir ajuste do mockup na TV: envio normal para a conversa do agente.
+            onSendToConversation={(convId, text) => {
+              const conv = convsRef.current.find((c) => c.id === convId)
+              if (conv) void dispatch(conv, text, text, [], [], [])
             }}
             // O chat minimizado esconde o aviso: o HUD o repete, com o mesmo "Desativar".
             windowsControlEnabled={windowsControlEnabled}

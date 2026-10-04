@@ -28,7 +28,7 @@ import { Group, Mesh, MeshLambertMaterial, Sprite, Vector3 } from 'three'
 import type { OfficeCharacterModel } from '../office/adapter/model'
 import { appearance, HAIR, seedColor, SKIN } from './appearance'
 import { brainBusy, FX, type Brain, type PropKind } from './brain'
-import { beatAt, danceLower, isDance } from './dance'
+import { beatAt, danceLower, movesLegs } from './dance'
 import type { Kit } from './kit'
 import type { CharacterLayout } from './layout'
 import { actionPose, reactionPose } from './gestures'
@@ -311,7 +311,7 @@ export class Character3D {
     this.out.set(this.lower)
     lerpPose(this.out, this.from, this.upper, smooth(this.blendT / BLEND_S), UPPER)
     // Dançando parado em pé: os joelhos entram no ritmo.
-    if ((isDance(b.action) || b.action === 'conga') && b.sit === 0 && b.speed < 0.05) danceLower(this.out, b.action, beat)
+    if (movesLegs(b.action) && b.sit === 0 && b.speed < 0.05) danceLower(this.out, b.action, beat)
     if (b.reaction) {
       this.react.set(this.out)
       reactionPose(this.react, b.reaction, b.reactionT, this.params, b.sit > 0.5)

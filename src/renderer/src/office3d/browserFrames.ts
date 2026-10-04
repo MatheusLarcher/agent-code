@@ -25,6 +25,8 @@ export interface RawFrame {
   mime: string
   /** Quando chegou (ms). */
   at: number
+  /** Número do quadro (cresce sempre): dois quadros no mesmo milissegundo são quadros diferentes. */
+  seq: number
 }
 
 /** Conversas com quadro guardado. */
@@ -44,6 +46,7 @@ export class BrowserFrames {
   private readonly frames = new Map<string, RawFrame>()
   private readonly states = new Map<string, { url: string; title: string }>()
   private readonly offs: Array<() => void> = []
+  private seq = 0
 
   constructor(
     api: BrowserFeedApi | null,
@@ -62,7 +65,7 @@ export class BrowserFrames {
     const id = this.activeId()
     if (!id || !f || typeof f.data !== 'string' || !f.data) return
     this.frames.delete(id)
-    this.frames.set(id, { data: f.data, width: f.width, height: f.height, mime: f.mime ?? 'image/jpeg', at: this.now() })
+    this.frames.set(id, { data: f.data, width: f.width, height: f.height, mime: f.mime ?? 'image/jpeg', at: this.now(), seq: ++this.seq })
     while (this.frames.size > MAX_CONVS) this.frames.delete(this.frames.keys().next().value as string)
     this.onFrame(id)
   }

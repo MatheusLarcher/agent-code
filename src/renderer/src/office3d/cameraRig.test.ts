@@ -13,6 +13,8 @@ import {
   MONITOR_SCREEN_FRONT,
   monitorPose,
   projectPoint,
+  TV_PLANE,
+  tvPose,
   TWEEN_MS,
   type CameraPose
 } from './cameraRig'
@@ -41,6 +43,22 @@ function screenFill(aspect: number): { w: number; h: number } {
   const b = ndc(pose, aspect, { x: m.x + MONITOR_HALF_W, y: m.y - MONITOR_HALF_H, z })
   return { w: Math.abs(b.x - a.x) / 2, h: Math.abs(a.y - b.y) / 2 }
 }
+
+describe('tvPose (o foco dentro da TV)', () => {
+  it('de frente e SEM arfagem: em repouso a TV é um retângulo (encaixe = translação pura) e ocupa ~94% do palco', () => {
+    const tv = { x: 5.05, y: 1.6, z: -6.5 }
+    const aspect = 16 / 9
+    const pose = tvPose(tv, { fovDeg: FOV, aspect })
+    expect([pose.yaw, pose.pitch]).toEqual([0, 0])
+    const z = tv.z + TV_PLANE.front
+    const tl = ndc(pose, aspect, { x: tv.x - TV_PLANE.halfW, y: tv.y + TV_PLANE.halfH, z })
+    const tr = ndc(pose, aspect, { x: tv.x + TV_PLANE.halfW, y: tv.y + TV_PLANE.halfH, z })
+    const bl = ndc(pose, aspect, { x: tv.x - TV_PLANE.halfW, y: tv.y - TV_PLANE.halfH, z })
+    expect(tl.y).toBeCloseTo(tr.y, 6)
+    expect(tl.x).toBeCloseTo(bl.x, 6)
+    expect(Math.max((tr.x - tl.x) / 2, (tl.y - bl.y) / 2)).toBeCloseTo(MONITOR_FILL, 1)
+  })
+})
 
 describe('monitorPose', () => {
   it('o monitor da câmera tem as medidas da tela desenhada na cena (kit.ts)', () => {

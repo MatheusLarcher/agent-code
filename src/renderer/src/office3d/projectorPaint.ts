@@ -3,11 +3,14 @@
  * com o título e a letra do site, barra com a URL) ou um celular (moldura com
  * a câmera, o nome do app ao lado), com a página dentro — o quadro real do
  * navegador da conversa, a página falsa da demo ou, sem quadro, o esqueleto de
- * uma página — e o selo "● AO VIVO" quando é ao vivo. Puro canvas, sem three:
- * quem chama decide quando (a textura do telão, o telão grande).
+ * uma página — e o selo "● AO VIVO" quando é ao vivo. Na TV, por cima: a
+ * faixa do chamado, o teste ao vivo no quadrinho (PiP) e o "+N esperando"; e,
+ * sem página, o placar (tvPaint.ts). Puro canvas, sem three: quem chama decide
+ * quando (a textura da TV, o espelho do foco).
  */
 import { chatPalette, ellipsize, roundRect } from './chatPaint'
 import type { DeviceKind } from './projectorUse'
+import { paintBanner, paintScore, paintWaiting, type ScoreData } from './tvPaint'
 
 /** A página dentro da moldura: tamanho natural (a proporção) e quem a desenha. */
 export interface PageImage {
@@ -24,6 +27,14 @@ export interface ProjectorView {
   /** Projeto da sala (o canto da aba / embaixo do app). */
   project: string
   image: PageImage | null
+  /** O placar no lugar da página (a TV ociosa). */
+  score?: ScoreData | null
+  /** A faixa do chamado: quem chama e a mensagem. */
+  banner?: { title: string; text: string } | null
+  /** O teste ao vivo no quadrinho do canto (com um chamado na tela). */
+  pip?: ProjectorView | null
+  /** "+N esperando" (0 = sem selo). */
+  waiting?: number
 }
 
 /** Tamanho da textura do telão (16:9, a proporção da tela da sala). */
@@ -203,7 +214,22 @@ export function paintProjector(ctx: Ctx, w: number, h: number, view: ProjectorVi
   ctx.save()
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
-  if (view.kind === 'android') paintPhone(ctx, w, h, view, s)
+  if (view.score) paintScore(ctx, w, h, view.score, s)
+  else if (view.kind === 'android') paintPhone(ctx, w, h, view, s)
   else paintBrowser(ctx, w, h, view, s)
+  if (view.banner) paintBanner(ctx, w, view.banner, s)
+  if (view.pip) {
+    // O quadrinho embaixo à direita, com moldura.
+    const pw = w * 0.32
+    const ph = (pw * PROJ_H) / PROJ_W
+    const x = w - pw - 10 * s
+    const y = h - ph - 10 * s
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(x - 2 * s, y - 2 * s, pw + 4 * s, ph + 4 * s)
+    ctx.translate(x, y)
+    paintProjector(ctx, pw, ph, { ...view.pip, pip: null, banner: null, waiting: 0, score: null })
+    ctx.translate(-x, -y)
+  }
+  if (view.waiting) paintWaiting(ctx, h, view.waiting, s)
   ctx.restore()
 }

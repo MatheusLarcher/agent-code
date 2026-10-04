@@ -56,6 +56,18 @@
   font-variant-numeric: tabular-nums;
   animation: main-tab-pulse 1.8s ease-out infinite;
 }
+/* Selo dos chamados: agentes que chamam o usuário para ver um HTML na TV. */
+.main-tab-calls {
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ffd38a;
+  color: #1f1e1d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
 @keyframes main-tab-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
   70%, 100% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); }

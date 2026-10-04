@@ -16,13 +16,10 @@
  * câmera muda ou `viewDirty`): ZONA fora do frustum fica invisível e parada
  * (sem tela redesenhada); as outras pegam o nível de LOD pela distância
  * (lod.ts, com histerese). Personagem: esfera própria (frustum) e distância.
- * Quem volta à vista sincroniza sem animar o atraso. `animate` dá um passo em
- * todos os cérebros e nos personagens, partículas e porta À VISTA, sem alocar,
- * e diz o ritmo pedido (`rate`). Sem nenhum `updateView`, tudo fica à vista e
- * completo. A TV da sala de reunião (projectors.ts) acende com o uso do
- * navegador/Android e quem está perto olha para ela. O kanban (board/boards.ts)
- * mostra o Quadro real de um projeto; `pick` também devolve `card:<id>` e
- * `pile:<projeto>|<status>`. `dispose()` libera tudo o que foi criado aqui.
+ * Quem volta à vista sincroniza sem animar o atraso; sem `updateView`, tudo à vista e completo.
+ * `animate` passa os cérebros e anima o que está À VISTA sem alocar e diz o ritmo (`rate`). A TV da
+ * sala de reunião (projectors.ts) acende com o navegador/Android e quem testa vai até ela. O kanban
+ * (board/boards.ts) é o Quadro real de um projeto; `pick` devolve também `card:`, `pile:` e `tab:`; `dispose()` libera tudo.
  */
 import { Color, Fog, Frustum, Matrix4, Mesh, Raycaster, Scene, Sphere, Vector2, Vector3, type Camera, type DirectionalLight, type Object3D } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
@@ -41,6 +38,7 @@ import { zoneAt, type ZoneId } from './officePlan'
 import { CHAR_LOD_BOUNDS, FOG_FAR, FOG_NEAR, lodLevel, type Lod } from './lod'
 import { Particles } from './particles'
 import type { OfficePower, PowerEvent } from './power'
+import { meetingSpots } from './meetingRoom'
 import { Projectors } from './projectors'
 import { createPropKit, type PropKit } from './props'
 import { setRoomLevel } from './roomLod'
@@ -125,6 +123,8 @@ export class OfficeScene {
     this.energy.onDark = (id, dark) => this.applyDark(id, dark)
     this.projectors = new Projectors(this.kit, () => this.energy.zoneDark('meeting'))
     this.projectors.onDirty = () => this.onDirty()
+    // Quem chamou o usuário e quem testa vão à sala de reunião (o 1º ao lado da TV, os outros esperam sentados).
+    this.projectors.onRoom = (order) => this.crowd.setVenues(meetingSpots(order))
     // A TV acendeu: quem está perto dela (e à vista) olha para ela.
     this.projectors.onLit = (_id, x, y, z) => {
       for (const v of this.charList) if (!v.culled && Math.hypot(v.brain.x - x, v.brain.z - z) < TV_GLANCE_M) v.glance(x, y, z)
@@ -132,7 +132,7 @@ export class OfficeScene {
     this.boards = new Boards(this.kit)
   }
 
-  /** Leitura da energia (motor: a cada feed e tique). `t` = relógio da cena (s); `now` = epoch ms. */
+  /** Leitura da energia (motor: feed e tique). `t` = relógio da cena (s); `now` = epoch ms. */
   setPower(power: OfficePower | null, event: PowerEvent | null, t: number, now = Date.now()): void {
     this.energy.setPower(power, event, t, now)
   }
@@ -192,7 +192,7 @@ export class OfficeScene {
     const projects = new Map(layout.projects.map((p) => [p.id, p.name]))
     const convProject = new Map(layout.characters.map((c) => [c.model.convId, c.projectId ? (projects.get(c.projectId) ?? null) : null]))
     this.projectors.projectOf = (convId) => convProject.get(convId) ?? null
-    this.projectors.feed(feed, layout.characters.map((c) => ({ ...c.model, roomId: c.roomId })), life?.wallNow ?? Date.now())
+    this.projectors.feed(feed, layout.characters.map((c) => ({ ...c.model, roomId: c.roomId, projectId: c.projectId })), life?.wallNow ?? Date.now())
     this.kit.sky.draw(new Date().getHours())
     this.fitShadow(layout.rooms)
     this.applyFocus()

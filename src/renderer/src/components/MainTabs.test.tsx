@@ -47,6 +47,22 @@ describe('MainTabs: o seletor da área principal', () => {
     expect(screen.getByRole('tab', { name: /Conversa/ }).getAttribute('aria-selected')).toBe('false')
   })
 
+  it('selo dos chamados: quantos agentes chamam o usuário na TV (visível da aba Conversa); some quando o chamado acaba', () => {
+    const id = `call-tab-${Date.now()}`
+    const calling = conv('a', {
+      updatedAt: Date.now(),
+      messages: [
+        { kind: 'user', id: 'u1', text: 'faz' },
+        { kind: 'tool-use', id, name: 'mcp__app__app_chamar_usuario', input: { arquivo: 'tela.html' }, parentToolUseId: null, result: { isError: false, text: 'ok' } }
+      ]
+    })
+    render(<MainTabs active="chat" onSelect={vi.fn()} />)
+    act(() => officeStore.publish(feed({ conversations: [calling] })))
+    expect(screen.getByTestId('main-tab-calls').textContent).toContain('1')
+    act(() => officeStore.publish(feed({ conversations: [{ ...calling, messages: [...calling.messages, { kind: 'user', id: 'u2', text: 'aprovado' }] }] })))
+    expect(screen.queryByTestId('main-tab-calls')).toBeNull()
+  })
+
   it('selo vivo: agentes trabalhando no escritório inteiro (conversas ocupadas + subagentes rodando)', () => {
     render(<MainTabs active="chat" onSelect={vi.fn()} />)
     expect(screen.queryByTestId('main-tab-working')).toBeNull()

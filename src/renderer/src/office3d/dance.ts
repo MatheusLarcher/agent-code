@@ -13,6 +13,9 @@
  *          a esquerda na cintura;
  *   sway   balanço: quadril e ombros de um lado para o outro, estalando os dedos;
  *   hop    pulinho: um pulo por batida com os braços para cima.
+ *
+ * Fora da festa, o mesmo corpo serve ao `jump` do chamado sem resposta (o
+ * agente ao lado da TV): pulos mais lentos, a direita acenando lá no alto.
  */
 import { CH, LEG, mix, pulse, smooth, type Action, type ActionParams, type Pose } from './poses'
 
@@ -26,6 +29,12 @@ export type DanceMove = (typeof DANCE_MOVES)[number]
 export const beatAt = (t: number): number => (t * PARTY_BPM) / 60
 
 export const isDance = (a: Action): a is DanceMove => a === 'robot' || a === 'disco' || a === 'sway' || a === 'hop'
+
+/** Pulos por batida no `jump` do chamado (≈ 1,5 pulo/s). */
+const JUMP_RATE = 0.75
+
+/** Ações em que as pernas seguem o ritmo (danceLower), em pé e parado. */
+export const movesLegs = (a: Action): boolean => isDance(a) || a === 'conga' || a === 'jump'
 
 /** O passo de quem tem a seed `seed` na batida `beat`: troca a cada compasso, todos juntos. */
 export function danceMove(seed: number, beat: number): DanceMove {
@@ -102,6 +111,19 @@ export function partyPose(out: Pose, a: Action, t: number, p: ActionParams): voi
       out[CH.eyes] = 0.9
       return
     }
+    case 'jump': {
+      // O chamado sem resposta: pula no lugar, a esquerda para cima, a direita acenando.
+      const j = beat * JUMP_RATE
+      const ph = j - Math.floor(j)
+      const s = Math.sin(6.5 * t)
+      out[CH.hop] = 0.13 * Math.sin(Math.PI * ph)
+      arms(out, 2.6, 0.45, 0.35, 2.85, 0.25 + 0.25 * s, 0.3 + 0.15 * Math.sin(6.5 * t + 0.5))
+      out[CH.headPitch] = -0.12
+      out[CH.mouth] = 0.55
+      out[CH.brows] = 0.9
+      out[CH.eyes] = 1
+      return
+    }
     case 'conga': {
       // Mãos nos ombros de quem vai na frente, cabeça no ritmo, cantando.
       arms(out, 1.45, -0.12, 0.5, 1.45, -0.12, 0.5)
@@ -167,6 +189,11 @@ export function danceLower(out: Pose, a: Action, beat: number): void {
       return bend(out, 0.34 * (1 - Math.sin(Math.PI * ph)) + 0.12 * Math.sin(Math.PI * ph))
     case 'conga':
       return bend(out, 0.14 * Math.abs(Math.sin(Math.PI * beat)))
+    case 'jump': {
+      const j = beat * JUMP_RATE
+      const ph2 = j - Math.floor(j)
+      return bend(out, 0.36 * (1 - Math.sin(Math.PI * ph2)) + 0.1 * Math.sin(Math.PI * ph2))
+    }
     default:
       return
   }

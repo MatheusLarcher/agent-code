@@ -10,10 +10,12 @@
  * aberta, a última URL navegada (input do *_navigate) e o título (o resultado
  * do navigate: `Navegou para … — "Título" (aba: …)`).
  *
- * `ProjectorTracker` guarda, por sala, quem usou por último e QUANDO (a 1ª vez
- * que o feed mostrou aquela chamada; chamada aberta renova a cada feed): a tela
- * desce no uso e sobe PROJECTOR_IDLE_MS depois do último. No 1º feed (app
- * abrindo) o histórico não desce a tela — só quem está trabalhando agora.
+ * `ProjectorTracker` guarda, por personagem, o último uso e QUANDO (a 1ª vez
+ * que o feed mostrou aquela chamada; chamada aberta renova a cada feed): a TV
+ * acende no uso e apaga PROJECTOR_IDLE_MS depois do último. Com dois testando,
+ * fila: quem começou primeiro fica com a TV até ficar ocioso; o outro espera
+ * a vez (na sala de reunião). No 1º feed (app abrindo) o histórico não acende a
+ * TV — só quem está trabalhando agora.
  */
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { OfficeCharacterModel } from '../office/adapter/model'
@@ -123,39 +125,54 @@ export function scanDeviceUse(feed: OfficeFeed, characters: ReadonlyArray<Pick<O
 export class ProjectorTracker {
   /** lastId → quando foi visto pela 1ª vez (ms; -Infinity = histórico do 1º feed). */
   private readonly seen = new Map<string, number>()
-  private readonly rooms = new Map<string, { use: DeviceUse; at: number }>()
+  /** Por personagem: o uso mais recente, quando (at) e desde quando ele está na vez atual (since). */
+  private readonly users = new Map<string, { use: DeviceUse; at: number; since: number }>()
   private primed = false
 
-  /** Feed novo: o uso mais recente de cada sala. */
+  /** Feed novo: o uso mais recente de cada personagem. */
   update(uses: readonly DeviceUse[], now: number): void {
     const ids = new Set<string>()
+    const keys = new Set<string>()
     for (const u of uses) {
       ids.add(u.lastId)
+      keys.add(u.key)
       let at = this.seen.get(u.lastId)
       if (at === undefined) at = this.primed || u.open || u.busy ? now : -Infinity
       if (u.open) at = now
       this.seen.set(u.lastId, at)
-      // O mais recente manda; no empate (o mesmo uso, ou a mesma hora), o dado mais novo.
-      const cur = this.rooms.get(u.roomId)
-      if (!cur || at >= cur.at) this.rooms.set(u.roomId, { use: u, at })
+      // Continua na mesma vez enquanto não ficou ocioso; voltou depois disso, entra no fim da fila.
+      const cur = this.users.get(u.key)
+      const going = !!cur && now - cur.at < PROJECTOR_IDLE_MS
+      this.users.set(u.key, { use: u, at, since: going ? cur.since : at })
     }
     for (const id of this.seen.keys()) if (!ids.has(id)) this.seen.delete(id)
+    for (const [key, r] of this.users) if (!keys.has(key) && now - r.at >= PROJECTOR_IDLE_MS) this.users.delete(key)
     this.primed = true
   }
 
-  /** A sala quer a tela abaixada agora. */
-  down(roomId: string, now: number): boolean {
-    const r = this.rooms.get(roomId)
-    return !!r && now - r.at < PROJECTOR_IDLE_MS
+  /** Quem usa a TV da sala agora (sem uso há menos de PROJECTOR_IDLE_MS), na ordem da vez: quem começou primeiro. */
+  queue(roomId: string, now: number): DeviceUse[] {
+    const out: Array<{ use: DeviceUse; since: number }> = []
+    for (const r of this.users.values()) if (r.use.roomId === roomId && now - r.at < PROJECTOR_IDLE_MS) out.push(r)
+    return out.sort((a, b) => a.since - b.since || (a.use.key < b.use.key ? -1 : 1)).map((r) => r.use)
   }
 
-  /** Quem a sala mostra (o último que usou); null se ninguém usou. */
-  use(roomId: string): DeviceUse | null {
-    return this.rooms.get(roomId)?.use ?? null
+  /** A sala quer a TV acesa agora. */
+  down(roomId: string, now: number): boolean {
+    return this.queue(roomId, now).length > 0
+  }
+
+  /** Quem a TV mostra: o primeiro da vez; sem ninguém ativo, o último que usou (a imagem que apaga). */
+  use(roomId: string, now: number): DeviceUse | null {
+    const q = this.queue(roomId, now)
+    if (q.length > 0) return q[0]
+    let last: { use: DeviceUse; at: number } | null = null
+    for (const r of this.users.values()) if (r.use.roomId === roomId && (!last || r.at > last.at)) last = r
+    return last?.use ?? null
   }
 
   /** Sala que saiu do escritório. */
   forget(roomId: string): void {
-    this.rooms.delete(roomId)
+    for (const [key, r] of this.users) if (r.use.roomId === roomId) this.users.delete(key)
   }
 }

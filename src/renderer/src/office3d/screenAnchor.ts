@@ -10,14 +10,16 @@
  * CSS). Roda a cada quadro com o foco aberto (vetor e cantos de rascunho) e só
  * escreve no estilo o que mudou — com a câmera parada, nada aloca; canto atrás
  * da câmera ou fora do near/far esconde. Sem monitor (personagem sem mesa), um
- * cartão centrado, sem transform.
+ * cartão centrado, sem transform. A mesma âncora serve à TV (`aim(tv, TV_PLANE)`:
+ * a pose do foco é `tvPose`). No voo da câmera (`flying`) a tela não recebe
+ * clique nem arrasto (pointer-events: none): o encaixe só fica exato parado.
  *
  * `PointAnchor` é o da prévia do hover: um cartão de tamanho próprio que fica
  * acima de um ponto do mundo (o alto do monitor do agente), centrado e sem sair
  * do palco — só o `transform` muda, e só quando o px muda.
  */
 import { Vector3, type Camera, type PerspectiveCamera } from 'three'
-import { MONITOR_HALF_H, MONITOR_HALF_W, MONITOR_SCREEN_FRONT, monitorPose, projectPoint, type MonitorAt, type ViewSize } from './cameraRig'
+import { MONITOR_HALF_H, MONITOR_PLANE, projectPoint, screenPose, type MonitorAt, type ScreenPlane, type ViewSize } from './cameraRig'
 import { MONITOR_BACK, MONITOR_Y } from './layout'
 import { quadMatrix3d, type Pt } from './quadTransform'
 import { BUBBLE_TOP } from './speech'
@@ -135,6 +137,9 @@ export class ScreenAnchor {
   private readonly last: { left: number | null; top: number | null; width: number; height: number } = { left: NaN, top: NaN, width: NaN, height: NaN }
   private transform: string | null = null
   private hidden = false
+  private flying = false
+  /** A tela em foco: o monitor (padrão) ou a TV. */
+  private plane: ScreenPlane = MONITOR_PLANE
   /** Centro do monitor em foco (mundo); vale com `hasMonitor`. */
   readonly monitor: { x: number; y: number; z: number; dir: 1 | -1 } = { x: 0, y: 0, z: 0, dir: 1 }
   hasMonitor = false
@@ -144,12 +149,17 @@ export class ScreenAnchor {
     this.last.left = this.last.top = this.last.width = this.last.height = NaN
     this.transform = null
     this.hidden = false
+    this.flying = false
     this.quad[0].x = NaN
   }
 
-  /** Monitor do foco (null = sem mesa: cartão centrado). */
-  aim(m: MonitorAt | null): void {
+  /** Monitor do foco (null = sem mesa: cartão centrado); `plane` = a tela (TV_PLANE na TV). */
+  aim(m: MonitorAt | null, plane: ScreenPlane = MONITOR_PLANE): void {
     this.hasMonitor = m !== null
+    if (plane !== this.plane) {
+      this.plane = plane
+      this.size.fov = NaN // outra tela: o tamanho de layout é refeito
+    }
     if (!m) return
     this.monitor.x = m.x
     this.monitor.y = m.y
@@ -157,18 +167,23 @@ export class ScreenAnchor {
     this.monitor.dir = m.dir ?? 1
   }
 
-  place(camera: PerspectiveCamera, width: number, height: number): void {
+  place(camera: PerspectiveCamera, width: number, height: number, flying = false): void {
     if (!this.el) return
+    if (flying !== this.flying) {
+      this.flying = flying
+      this.el.style.pointerEvents = flying ? 'none' : ''
+    }
     if (!this.hasMonitor) return this.card(width, height)
     const size = this.layoutSize(camera.fov, width, height)
     const m = this.monitor
-    const z = m.z + m.dir * MONITOR_SCREEN_FRONT
+    const pl = this.plane
+    const z = m.z + m.dir * pl.front
     const q = this.quad
     let moved = false
     for (let i = 0; i < 4; i++) {
       const c = CORNERS[i]
       // Tela olhando para −Z (mesa de fundo): vista de frente, a esquerda dela fica em +X.
-      const a = this.v.set(m.x + c[0] * m.dir * MONITOR_HALF_W, m.y + c[1] * MONITOR_HALF_H, z).project(camera)
+      const a = this.v.set(m.x + c[0] * m.dir * pl.halfW, m.y + c[1] * pl.halfH, z).project(camera)
       if (a.z < -1 || a.z > 1) return this.hide()
       const x = ((a.x + 1) / 2) * width
       const y = ((1 - a.y) / 2) * height
@@ -205,10 +220,11 @@ export class ScreenAnchor {
     const m = this.monitor
     if (s.fov === fov && s.width === width && s.height === height && s.x === m.x && s.y === m.y && s.z === m.z && s.dir === m.dir) return s
     const view = focusView(fov, width, height)
-    const pose = monitorPose(m, view)
-    const z = m.z + m.dir * MONITOR_SCREEN_FRONT
+    const pl = this.plane
+    const pose = screenPose(m, pl, view)
+    const z = m.z + m.dir * pl.front
     const p = CORNERS.map(([sx, sy]) => {
-      const n = projectPoint(pose, view, { x: m.x + sx * m.dir * MONITOR_HALF_W, y: m.y + sy * MONITOR_HALF_H, z })
+      const n = projectPoint(pose, view, { x: m.x + sx * m.dir * pl.halfW, y: m.y + sy * pl.halfH, z })
       return { x: ((n.x + 1) / 2) * width, y: ((1 - n.y) / 2) * height }
     })
     const len = (i: number, j: number): number => Math.hypot(p[j].x - p[i].x, p[j].y - p[i].y)

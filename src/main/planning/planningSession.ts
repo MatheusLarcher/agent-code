@@ -29,8 +29,9 @@ import { createPlanningMcpServer, PLANNING_MCP_SERVER, type PlanningToolContext 
 export type PlanningSessionRole = Pick<StartAgentOptions, 'cwd' | 'planning' | 'handoff'>
 
 /** Servidores da sessão comum que o Manager herda. O resto (browser, android,
- *  app, windows, tasks) é de quem executa, não de quem planeja. */
-const MANAGER_INHERITED_SERVERS: readonly string[] = ['memory']
+ *  windows, tasks) é de quem executa, não de quem planeja. O 'app' do Manager
+ *  só tem o app_chamar_usuario (a sessão o monta sem o app_restart). */
+const MANAGER_INHERITED_SERVERS: readonly string[] = ['memory', 'app']
 
 export interface PlanningSessionSetup {
   projectCwd: string
@@ -55,7 +56,7 @@ export function buildPlanningAppend(projectCwd: string, slug: string, memoryBloc
  * Converte as Options montadas para uma conversa comum nas do Agent Manager.
  * Muta `options` de propósito: a sessão monta um objeto só e o entrega ao SDK.
  *
- * - servidores MCP: `planning` + os herdados (memory), nada mais;
+ * - servidores MCP: `planning` + os herdados (memory, app), nada mais;
  * - system prompt: o do Manager + memória, sem os hints de browser/android/
  *   tasks/windows (que descrevem ferramentas que ele não tem);
  * - `strictMcpConfig`: SÓ esses servidores — sem ele o CLI ainda carregaria os

@@ -6,6 +6,7 @@ import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
 import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from '../downloadAllowlist'
+import { OfficeCallsBridge } from './officeCallsBridge'
 import { CENTRAL_ID, parseCentralChoose, parseReplyTo, type RemoteCentralChoose } from '../../shared/central'
 import type {
   ChatEvent,
@@ -146,6 +147,10 @@ export class RemoteServer {
   private ip = ''
   private state: RemoteStatePayload = { conversations: [] }
   private clients = new Set<ServerResponse>()
+  /** Os chamados do escritório (officeCallsBridge.ts): o aviso a cada celular e a lista dos abertos a quem conecta. */
+  readonly officeCalls = new OfficeCallsBridge((line) => {
+    for (const c of this.clients) c.write(line)
+  })
   private keepAlive: ReturnType<typeof setInterval> | null = null
   /** Whether the PC is connected to the VPS broker (set by the RelayClient). */
   private relayConnected = false
@@ -785,6 +790,8 @@ export class RemoteServer {
       'Access-Control-Allow-Origin': '*'
     })
     res.write('retry: 3000\n\n')
+    const calls = this.officeCalls.hello()
+    if (calls) res.write(calls)
     this.clients.add(res)
     this.notifyClients()
     req.on('close', () => {

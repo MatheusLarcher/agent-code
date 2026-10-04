@@ -101,7 +101,9 @@ export const MANAGER_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   'TaskGet',
   'AskUserQuestion',
   'Skill',
-  'ToolSearch'
+  'ToolSearch',
+  // Chamar o usuário para ver um HTML (só mostra; o 'app' do Manager não tem o app_restart).
+  'mcp__app__app_chamar_usuario'
 ])
 
 /** Servidores MCP cujas ferramentas o Manager pode chamar (ver MANAGER_INHERITED_SERVERS). */
@@ -119,7 +121,8 @@ export function planningToolDenial(role: { planning?: unknown }, toolName: strin
     `A ferramenta "${toolName}" não está disponível na sessão do Agent Manager. ` +
     'Aqui valem: leitura (Read, Glob, Grep, LS), escrita só no _sandbox (Write, Edit, MultiEdit), ' +
     'Bash (o único shell, cada comando com aprovação do usuário), pesquisa na web (WebFetch, WebSearch), ' +
-    'a lista de tarefas (TodoWrite, TaskCreate, TaskUpdate, TaskList, TaskGet), AskUserQuestion, Skill, ToolSearch ' +
+    'a lista de tarefas (TodoWrite, TaskCreate, TaskUpdate, TaskList, TaskGet), AskUserQuestion, Skill, ToolSearch, ' +
+    'mcp__app__app_chamar_usuario ' +
     'e as ferramentas mcp__planning__* e mcp__memory__*.'
   )
 }

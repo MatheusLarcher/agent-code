@@ -72,7 +72,7 @@ describe('ProjectorTracker: a tela desce no uso e sobe sem uso', () => {
     const idle = new ProjectorTracker()
     idle.update([use()], T)
     expect(idle.down(ROOM, T)).toBe(false)
-    expect(idle.use(ROOM)?.convId).toBe('a') // o telão sabe quem foi o último
+    expect(idle.use(ROOM, T)?.convId).toBe('a') // a TV sabe quem foi o último
     const busy = new ProjectorTracker()
     busy.update([use({ busy: true })], T)
     expect(busy.down(ROOM, T)).toBe(true)
@@ -93,14 +93,21 @@ describe('ProjectorTracker: a tela desce no uso e sobe sem uso', () => {
     expect(tr.down(ROOM, T + 280_000 + PROJECTOR_IDLE_MS - 1)).toBe(true)
   })
 
-  it('o mais recente manda na sala; outra sala não interfere', () => {
+  it('dois testando: fila — quem começou primeiro fica com a TV, o outro espera e assume quando o primeiro fica ocioso; outra sala não interfere', () => {
     const tr = new ProjectorTracker()
     tr.update([], T)
     tr.update([use({ lastId: 'a1' })], T + 1_000)
-    tr.update([use({ lastId: 'a1' }), use({ key: 'conv:b', convId: 'b', lastId: 'b1', kind: 'android' })], T + 5_000)
-    expect(tr.use(ROOM)).toMatchObject({ convId: 'b', kind: 'android' })
+    const b = (lastId: string): DeviceUse => use({ key: 'conv:b', convId: 'b', lastId, kind: 'android' })
+    tr.update([use({ lastId: 'a1' }), b('b1')], T + 5_000)
+    expect(tr.queue(ROOM, T + 5_000).map((u) => u.convId)).toEqual(['a', 'b'])
+    expect(tr.use(ROOM, T + 5_000)).toMatchObject({ convId: 'a' })
+    // b continua usando (chamadas novas), a fica parado: passado o tempo de a, a vez é de b.
+    tr.update([use({ lastId: 'a1' }), b('b2')], T + 60_000)
+    expect(tr.use(ROOM, T + 60_000)?.convId).toBe('a')
+    expect(tr.use(ROOM, T + 1_000 + PROJECTOR_IDLE_MS)?.convId).toBe('b')
+    expect(tr.queue(ROOM, T + 1_000 + PROJECTOR_IDLE_MS).map((u) => u.convId)).toEqual(['b'])
     expect(tr.down('outra', T + 5_000)).toBe(false)
     tr.forget(ROOM)
-    expect(tr.use(ROOM)).toBeNull()
+    expect(tr.use(ROOM, T + 60_000)).toBeNull()
   })
 })
