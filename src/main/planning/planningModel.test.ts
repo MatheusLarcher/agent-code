@@ -11,6 +11,34 @@ import {
   type PlanCard
 } from './planningModel'
 
+/**
+ * O parseRoteiro de ANTES da estimativa, copiado como estava: é o que uma
+ * versão antiga do app, em outro PC, roda sobre o _roteiro.md sincronizado.
+ */
+function legacyParseRoteiro(text: string): { titulo: string; rev: number; etapas: { id: string; titulo: string; status: string }[] } {
+  const STAGE_LINE = /^\s*-\s*\[([a-z_]+)\]\s+([a-z0-9-]{1,64}):\s*(.*)$/
+  const REV_LINE = /^\s*<!--\s*rev:\s*(\d{1,15})\s*-->\s*$/
+  let titulo = ''
+  let rev: number | null = null
+  const etapas: { id: string; titulo: string; status: string }[] = []
+  for (const line of text.replace(/^﻿/, '').split(/\r?\n/)) {
+    if (!titulo && line.startsWith('# ')) {
+      titulo = line.slice(2).trim()
+      continue
+    }
+    const r: RegExpExecArray | null = rev === null ? REV_LINE.exec(line) : null
+    if (r) {
+      rev = Number(r[1])
+      continue
+    }
+    const m = STAGE_LINE.exec(line)
+    if (!m) continue
+    if (!['pendente', 'em_andamento', 'concluida'].includes(m[1])) throw new Error(`status de etapa inválido: ${m[1]}`)
+    etapas.push({ id: m[2], titulo: m[3].trim(), status: m[1] })
+  }
+  return { titulo, rev: rev ?? 0, etapas }
+}
+
 const base: PlanCard = {
   id: 'req-login',
   tipo: 'requisito',
@@ -175,6 +203,79 @@ describe('roteiro', () => {
     expect(back.titulo).toBe('Checkout <!-- rev: 0 --> - [concluida] fake: y fim')
     // Espaço nas pontas sai, como no título das etapas; CR solto também vira espaço.
     expect(serializeRoteiro({ titulo: '  \n T\rX \r\n', rev: 0, etapas: [] })).toBe('# T X\n<!-- rev: 0 -->\n\n')
+  })
+
+  it('estimativa: linha <!-- est id: N --> logo abaixo da etapa, sem mudar a linha dela; round-trip exato', () => {
+    const r = {
+      titulo: 'Checkout',
+      rev: 2,
+      etapas: [
+        { id: 'etapa-1', titulo: 'Levantar requisitos', status: 'pendente' as const, estimativa: 45 },
+        { id: 'etapa-2', titulo: 'Integrar', status: 'em_andamento' as const },
+        { id: 'etapa-3', titulo: 'Entregar', status: 'pendente' as const, estimativa: 10_000 }
+      ]
+    }
+    const text = serializeRoteiro(r)
+    expect(text).toBe(
+      '# Checkout\n<!-- rev: 2 -->\n\n' +
+        '- [pendente] etapa-1: Levantar requisitos\n<!-- est etapa-1: 45 -->\n' +
+        '- [em_andamento] etapa-2: Integrar\n' +
+        '- [pendente] etapa-3: Entregar\n<!-- est etapa-3: 10000 -->\n'
+    )
+    expect(parseRoteiro(text)).toEqual(r)
+    expect('estimativa' in parseRoteiro(text).etapas[1]).toBe(false)
+    expect(serializeRoteiro(parseRoteiro(text))).toBe(text)
+  })
+
+  it('roteiro sem nenhuma estimativa serializa byte a byte como antes', () => {
+    const etapas = [
+      { id: 'e1', titulo: 'Um', status: 'concluida' as const },
+      { id: 'e2', titulo: 'Dois', status: 'pendente' as const, estimativa: undefined }
+    ]
+    const text = serializeRoteiro({ titulo: 'T', rev: 4, etapas })
+    expect(text).toBe('# T\n<!-- rev: 4 -->\n\n- [concluida] e1: Um\n- [pendente] e2: Dois\n')
+    expect(parseRoteiro(text).etapas.every((e) => !('estimativa' in e))).toBe(true)
+  })
+
+  it('o parser ANTIGO (STAGE_LINE/REV_LINE, sem estimativa) lê as mesmas etapas do formato novo', () => {
+    const etapas = [
+      { id: 'a', titulo: 'Com estimativa', status: 'pendente' as const, estimativa: 90 },
+      { id: 'b', titulo: 'Sem', status: 'concluida' as const },
+      { id: 'c', titulo: 'Outra', status: 'em_andamento' as const, estimativa: 5 }
+    ]
+    const text = serializeRoteiro({ titulo: 'Plano', rev: 7, etapas })
+    expect(legacyParseRoteiro(text)).toEqual({
+      titulo: 'Plano',
+      rev: 7,
+      etapas: etapas.map(({ id, titulo, status }) => ({ id, titulo, status }))
+    })
+  })
+
+  it('leitura tolerante: estimativa de id desconhecido ou fora da regra é ignorada; a linha pode vir antes da etapa', () => {
+    const text = [
+      '# T',
+      '<!-- rev: 1 -->',
+      '<!--est e2:30-->',
+      '- [pendente] e1: Um',
+      '<!-- est e1: 0 -->',
+      '<!-- est fantasma: 20 -->',
+      '- [pendente] e2: Dois',
+      '- [pendente] e3: Três',
+      '<!-- est e3: 10001 -->',
+      ''
+    ].join('\r\n')
+    expect(parseRoteiro(text).etapas).toEqual([
+      { id: 'e1', titulo: 'Um', status: 'pendente' },
+      { id: 'e2', titulo: 'Dois', status: 'pendente', estimativa: 30 },
+      { id: 'e3', titulo: 'Três', status: 'pendente' }
+    ])
+  })
+
+  it('gravar recusa estimativa fora da regra (inteiro de 1 a 10000)', () => {
+    for (const estimativa of [0, -1, 1.5, 10_001, Number.NaN, null as never, '45' as never]) {
+      const etapas = [{ id: 'e1', titulo: 'x', status: 'pendente' as const, estimativa }]
+      expect(() => serializeRoteiro({ titulo: 't', rev: 0, etapas }), String(estimativa)).toThrow(/estimativa da etapa e1/)
+    }
   })
 
   it('recusa status desconhecido, etapa repetida e rev inválido', () => {

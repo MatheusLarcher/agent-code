@@ -37,4 +37,4 @@ export const MCP_SESSION_REPLACED =
   'A sessão da conversa foi refeita no meio da tarefa (reconexão) e o turno dela se perdeu. O Agent Code não retoma tarefa sozinho: reenvie a tarefa.'
 
 /** Nomes de servidor MCP que a sessão já usa: o chamador não pode sobrescrevê-los. */
-export const RESERVED_MCP_SERVER_NAMES = ['browser', 'android', 'app', 'windows', 'memory', 'tasks', 'planning'] as const
+export const RESERVED_MCP_SERVER_NAMES = ['browser', 'android', 'app', 'windows', 'memory', 'tasks', 'planning', 'entregas'] as const

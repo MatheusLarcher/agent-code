@@ -11,10 +11,17 @@ import {
 
 export type ToastType = 'sucesso' | 'erro' | 'aviso'
 
+/** Extras opcionais de um toast; sem eles, o toast de sempre. */
+export interface NotifyOptions {
+  /** Clique no corpo do toast: executa a ação e fecha (o X só fecha). */
+  onClick?: () => void
+}
+
 interface Toast {
   id: string
   tipo: ToastType
   msg: string
+  onClick?: () => void
 }
 
 export interface ConfirmOptions {
@@ -27,8 +34,9 @@ export interface ConfirmOptions {
 }
 
 interface UiContextValue {
-  /** Show a transient toast (top-right, auto-dismiss ~4.5s). */
-  notify: (tipo: ToastType, msg: string) => void
+  /** Show a transient toast (top-right, auto-dismiss ~4.5s). `opts.onClick`: the
+   *  click on the toast runs it and closes the toast. */
+  notify: (tipo: ToastType, msg: string, opts?: NotifyOptions) => void
   /** Open a styled confirmation modal; resolves true on confirm, false otherwise. */
   confirm: (opts: ConfirmOptions) => Promise<boolean>
 }
@@ -61,8 +69,14 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: (id: string) => 
     return () => clearTimeout(t)
   }, [startClose])
 
+  // A ação roda uma vez só: o clique num toast que já está saindo não a repete.
+  const clickBody = (): void => {
+    if (!closing.current) toast.onClick?.()
+    startClose()
+  }
+
   return (
-    <div className={`toast ${toast.tipo} ${leaving ? 'leaving' : ''}`} role="status" onClick={startClose}>
+    <div className={`toast ${toast.tipo} ${leaving ? 'leaving' : ''}`} role="status" onClick={clickBody}>
       <span className="toast-ico">{ICONS[toast.tipo]}</span>
       <span className="toast-msg">{toast.msg}</span>
       <button
@@ -128,9 +142,10 @@ export function UiProvider({ children }: { children: ReactNode }): JSX.Element {
     setToasts((list) => list.filter((t) => t.id !== id))
   }, [])
 
-  const notify = useCallback((tipo: ToastType, msg: string): void => {
+  const notify = useCallback((tipo: ToastType, msg: string, opts?: NotifyOptions): void => {
     const id = `t${Date.now().toString(36)}-${toastSeq++}`
-    setToasts((list) => [...list, { id, tipo, msg }])
+    const onClick = opts?.onClick
+    setToasts((list) => [...list, onClick ? { id, tipo, msg, onClick } : { id, tipo, msg }])
   }, [])
 
   const confirm = useCallback(

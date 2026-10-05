@@ -137,7 +137,15 @@ import { isMcpTaskGone, isNoLiveSession, MCP_TASK_GONE_WARNING } from '@shared/m
 import { selectableModels } from '@shared/selectableModels'
 import { effortLevelsFor, remoteEffortCatalog, runningEffort, withAutoModelOption } from './effortOptions'
 import { effortForModelChange, isEffortLevel } from '@shared/autoEffort'
-import { handoffOutcome, launchHandoff, managerQuestionnaireRequest, type HandoffSendOutcome } from './planning/handoffFlow'
+import {
+  handoffOutcome,
+  handoffRegistrar,
+  handoffRegisterWarning,
+  launchHandoff,
+  managerQuestionnaireRequest,
+  type HandoffSendOutcome
+} from './planning/handoffFlow'
+import { DeadlineIndicator } from './handoffTracking/DeadlineIndicator'
 import {
   handoffConversationFields,
   handoffPlanOf,
@@ -163,6 +171,9 @@ import { createTurnIdentity, withStaleUsage } from './central/turnIdentity'
 import { createQueueHandoff, QUEUE_HANDOFF_FALLBACK_MS } from './central/queueHandoff'
 import { CentralPanel } from './central/CentralPanel'
 import { buildRemoteCentral } from './central/centralRemote'
+import { DeliveriesScreen } from './deliveries/DeliveriesScreen'
+import { useDeliveriesNav } from './deliveries/deliveriesNav'
+import { useDeliveryCenter } from './deliveries/useDeliveryCenter'
 
 export type { UserMessage, UIMessage } from './types'
 
@@ -2201,11 +2212,18 @@ export function App(): JSX.Element {
     return conv
   }
 
+  // Tela Entregas (deliveries/): no lugar do chat; abrir uma conversa a fecha.
+  // A troca da ativa fecha sozinha; quem pode cair na MESMA conversa (a vazia
+  // reaproveitada, a do plano já aberto, o clique na barra) chama hideDeliveries.
+  const deliveriesNav = useDeliveriesNav(activeId)
+  const hideDeliveries = deliveriesNav.hide
+
   // Os botões de "Nova conversa" voltam para a conversa vazia que a pasta já
   // tem (a ativa, se for ela) em vez de deixar duas vazias lado a lado.
   // Planejamento, handoff, MCP e celular precisam de uma conversa NOVA e
   // chamam createConversation direto.
   const openBlankOrCreate = (folder: string): Conversation => {
+    hideDeliveries()
     const blank = findBlankConversation(convsRef.current, folder, activeIdRef.current)
     if (!blank) return createConversation(folder)
     setActiveId(blank.id)
@@ -2227,7 +2245,11 @@ export function App(): JSX.Element {
       rootRef: sandbox.rootRef,
       conversations: convsRef.current,
       activeId: activeIdRef.current,
-      setActiveId,
+      // A vazia reaproveitada pode ser a própria ativa: a tela Entregas fecha mesmo assim.
+      setActiveId: (id) => {
+        hideDeliveries()
+        setActiveId(id)
+      },
       createConversation: (folder) => createConversation(folder),
       notify,
       fallback: pickAndOpen
@@ -2269,17 +2291,20 @@ export function App(): JSX.Element {
     setPlanningDialogFor(null)
     // A Tela de Planejamento vive na aba Conversa: vindo do Escritório, volta para ela.
     setMainTab('chat')
+    // A conversa do plano pode já ser a ativa: a tela Entregas fecha mesmo assim.
+    hideDeliveries()
     const existing = convsRef.current.find(
       (c) => c.cwd === folder && isPlanningConversation(c) && c.planningSlug === slug
     )
     if (existing) setActiveId(existing.id)
     else createConversation(folder, undefined, planningConversationFields(slug, titulo))
-  }, [setMainTab])
+  }, [setMainTab, hideDeliveries])
 
   const selectConversation = useCallback((id: string): void => {
     markConversationSwitch(activeIdRef.current, id)
     setActiveId(id)
-  }, [])
+    hideDeliveries()
+  }, [hideDeliveries])
 
   // A search hit asks to open a conversation AND land on the matched message.
   // `seq` bumps each time so clicking the same result re-triggers the scroll.
@@ -2295,8 +2320,9 @@ export function App(): JSX.Element {
   const selectConversationAt = useCallback((id: string, msgId: string | null): void => {
     markConversationSwitch(activeIdRef.current, id)
     setActiveId(id)
+    hideDeliveries()
     if (msgId) setScrollTarget((prev) => ({ convId: id, msgId, seq: (prev?.seq ?? 0) + 1 }))
-  }, [])
+  }, [hideDeliveries])
   // "← Central": a conversa aberta PELA Central (aviso, resposta, trilho). Abrir
   // outra conversa por qualquer outro caminho apaga a volta.
   const [backToCentral, setBackToCentral] = useState<string | null>(null)
@@ -3050,7 +3076,8 @@ export function App(): JSX.Element {
         .getConfig()
         .then((c) => c.planning ?? planningConfigRef.current)
         .catch(() => planningConfigRef.current)
-      const launched = await launchHandoff(prompts, {
+      // Texto e arquivo pareados ANTES do filtro de prompt em branco do launchHandoff.
+      const launched = await launchHandoff(prompts.map((text, i) => ({ text, name: names[i] })), {
         create: () => {
           const conv = createConversation(
             folder,
@@ -3063,6 +3090,9 @@ export function App(): JSX.Element {
           if (!convsRef.current.some((c) => c.id === conv.id)) convsRef.current = [conv, ...convsRef.current]
           return conv
         },
+        // Envios (na_fila) e entregas no banco antes do 1º prompt sair; falha só avisa.
+        register: handoffRegistrar(window.api, folder, slug),
+        onRegisterError: (err) => notify('aviso', handoffRegisterWarning(err)),
         // Entregue = a conversa ficou ocupada (enviado agora ou na fila). O
         // `dispatch` não lança: falha fica marcada na bolha, com o toast dele.
         send: async (conv, text) => {
@@ -3072,7 +3102,7 @@ export function App(): JSX.Element {
       })
       return handoffOutcome(launched)
     },
-    [dispatch]
+    [dispatch, notify]
   )
 
   // Resend a message whose turn failed. The bubble already exists, so we don't
@@ -3456,10 +3486,11 @@ export function App(): JSX.Element {
   const [centralSignal, setCentralSignal] = useState(0)
   const selectCentral = useCallback((): void => {
     setActiveId(CENTRAL_ID)
+    hideDeliveries()
     setCentralSignal((n) => n + 1)
     if (!typesafeReady) needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE)
     if (!convsRef.current.some((c) => c.id === CENTRAL_ID)) void ensureCentralLoaded()
-  }, [typesafeReady, needTypesafeKey, ensureCentralLoaded])
+  }, [typesafeReady, needTypesafeKey, ensureCentralLoaded, hideDeliveries])
 
   // Close Settings and re-read what it may have changed.
   const closeSettings = useCallback((): void => {
@@ -3838,6 +3869,7 @@ export function App(): JSX.Element {
   const openAgentsPanel = useCallback((): void => selectRightPane('board'), [selectRightPane])
   // Leva ao pedido da conversa (Quadro e Escritório): nunca aprova nada.
   const focusRequest = (convId: string, pane: RightPane): void => {
+    hideDeliveries()
     setActiveId(convId)
     setMinimizedQuestions((m) => withoutKey(m, convId))
     if (minimizedQuestions[convId]) holdQuestion(convId, permissions[convId], false)
@@ -3994,6 +4026,8 @@ export function App(): JSX.Element {
     notify
   })
   centralRef.current = central
+  // Entregas: todos os envios de todos os projetos — contador da barra, tela e toasts de mudança.
+  const deliveries = useDeliveryCenter({ convsRef, loadByIds: loadConversationsByIds, addLoaded: addLoadedConversation, select: selectConversation, notify })
   // Escritório: só publica o feed numa store fora do React (office/officeStore).
   useEffect(() => {
     // A Central vai junto: o modelo do escritório a põe no console do centro (sem mesa nem sala de projeto).
@@ -4161,17 +4195,21 @@ export function App(): JSX.Element {
     )
   }
 
-  // Conversa de implementação: "Plano: <título>" reabre a Tela do plano de origem.
+  // Conversa de implementação: "Plano: <título>" reabre a Tela do plano de origem;
+  // ao lado, o prazo da etapa atual (lido do banco).
   const handoffOrigin = active ? handoffPlanOf(active, conversations) : null
-  const handoffPlanLink = handoffOrigin ? (
-    <button
-      type="button"
-      className="chat-plan-link"
-      title="Abrir a Tela de Planejamento deste plano"
-      onClick={() => openPlanningConversation(handoffOrigin.projectCwd, handoffOrigin.slug, handoffOrigin.titulo)}
-    >
-      Plano: {handoffOrigin.titulo}
-    </button>
+  const handoffPlanLink = active && handoffOrigin ? (
+    <>
+      <button
+        type="button"
+        className="chat-plan-link"
+        title="Abrir a Tela de Planejamento deste plano"
+        onClick={() => openPlanningConversation(handoffOrigin.projectCwd, handoffOrigin.slug, handoffOrigin.titulo)}
+      >
+        Plano: {handoffOrigin.titulo}
+      </button>
+      <DeadlineIndicator conversationId={active.id} />
+    </>
   ) : null
 
   // Seletor de modelo/esforço de uma conversa: o do chat (conversa ativa) e o da
@@ -4420,7 +4458,7 @@ export function App(): JSX.Element {
         onToggleCollapse={() => setCollapsed((v) => !v)}
         projects={projects}
         recents={recents}
-        activeId={activeId}
+        activeId={deliveriesNav.open ? null : activeId}
         busyIds={busyIds}
         onLoadMore={(path) => void loadMoreProject(path)}
         onSelect={selectConversation}
@@ -4431,8 +4469,9 @@ export function App(): JSX.Element {
         onRename={renameConversation}
         onDelete={deleteConversation}
         onSelectResult={selectConversationAt}
-        central={{ active: activeId === CENTRAL_ID, onSelect: selectCentral, dots: centralDots }}
+        central={{ active: activeId === CENTRAL_ID && !deliveriesNav.open, onSelect: selectCentral, dots: centralDots }}
         centralColors={centralColors}
+        deliveries={{ active: deliveriesNav.open, count: deliveries.count, onSelect: () => { deliveriesNav.show(); setMainTab('chat') } }}
       />
 
       <div className="main-area">
@@ -4529,11 +4568,15 @@ export function App(): JSX.Element {
           ) : null}
         </header>
 
-        {mainTab === 'office' ? null : planningWorkspace ? (
+        {mainTab === 'office' ? null : planningWorkspace && !deliveriesNav.open ? (
           planningWorkspace
         ) : (
         <div className="workspace" ref={workspaceRef}>
-          {mainChat}
+          {deliveriesNav.open ? (
+            <DeliveriesScreen state={deliveries.state} onOpenConversation={deliveries.openConversation} />
+          ) : (
+            mainChat
+          )}
           {/* O divisor vale para o painel da direita inteiro (navegador ou Quadro):
               sem ele, o painel ficava preso na largura padrão. */}
           {!browserMinimized && (
@@ -4559,7 +4602,10 @@ export function App(): JSX.Element {
                     conversationTitles={conversationTitles}
                     busy={!!active && busyIds.has(active.id)}
                     onClose={() => setBrowserMinimized(true)}
-                    onOpenConversation={(convId) => setActiveId(convId)}
+                    onOpenConversation={(convId) => {
+                      hideDeliveries()
+                      setActiveId(convId)
+                    }}
                     onProgress={setBoardTabProgress}
                     crew={crew}
                     pendingPermissions={pendingPermissionList}

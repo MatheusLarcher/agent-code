@@ -204,6 +204,10 @@ describe('registerPlanningIpc', () => {
       [Channels.planningSaveRoteiro, { ...ref, roteiro: { titulo: 'x', etapas: [] }, expectedRev: -1 }],
       [Channels.planningSaveRoteiro, { ...ref, roteiro: { titulo: 'x', etapas: [] }, expectedRev: '1' }],
       [Channels.planningSaveRoteiro, { ...ref, roteiro: { titulo: 'x', rev: 1, etapas: [] }, expectedRev: 1 }],
+      ...[0, -3, 1.5, 10_001, '45', null].map((estimativa): [string, unknown] => [
+        Channels.planningSaveRoteiro,
+        { ...ref, roteiro: { titulo: 'x', etapas: [{ id: 'e', titulo: 'e', status: 'pendente', estimativa }] }, expectedRev: 1 }
+      ]),
       [Channels.planningSaveLayout, { ...ref, layout: { positions: { a: { x: 'um', y: 0 } } } }],
       [Channels.planningSaveLayout, { ...ref, layout: { positions: { a: { x: Number.NaN, y: 0 } } } }]
     ]
@@ -334,6 +338,38 @@ describe('registerPlanningIpc', () => {
     expect(typeof listed.handoffs[0].createdAt).toBe('number')
     // _handoff/ é gravado pela própria tela: nada de planning:changed.
     expect(sent).toEqual([])
+  })
+
+  it('roteiro com estimativa: o IPC aceita (opcional, 1..10000) e o plano reabre com ela', async () => {
+    setup()
+    const ref = { projectCwd: cwd, slug: 'p' }
+    await call(Channels.planningCreate, { ...ref, titulo: 'P' })
+    const etapas = [
+      { id: 'e1', titulo: 'Com', status: 'pendente', estimativa: 45 },
+      { id: 'e2', titulo: 'Sem', status: 'concluida' }
+    ]
+    const roteiro = { titulo: 'P', etapas }
+    expect(await call(Channels.planningSaveRoteiro, { ...ref, roteiro, expectedRev: 1 })).toEqual({ ok: true, roteiro: { ...roteiro, rev: 2 } })
+    expect((await call(Channels.planningOpen, ref)).plan.roteiro).toEqual({ ...roteiro, rev: 2 })
+  })
+
+  it('handoffs: etapas opcionais vão para o .meta.json e voltam no listHandoffs; inválidas são recusadas', async () => {
+    setup()
+    const ref = { projectCwd: cwd, slug: 'p' }
+    await call(Channels.planningCreate, { ...ref, titulo: 'P' })
+    const comEtapas = await call(Channels.planningWriteHandoff, { ...ref, conteudo: '# A\n', etapas: ['b', 'a'] })
+    const semEtapas = await call(Channels.planningWriteHandoff, { ...ref, conteudo: '# B\n' })
+    expect(comEtapas).toMatchObject({ ok: true })
+    const listed = await call(Channels.planningListHandoffs, ref)
+    expect(listed.handoffs.map((h: { name: string; etapas?: string[] }) => [h.name, h.etapas])).toEqual([
+      [comEtapas.name, ['b', 'a']],
+      [semEtapas.name, undefined]
+    ])
+    for (const etapas of [['a', 'a'], ['A'], 'a', Array.from({ length: 101 }, (_, i) => `e${i}`)]) {
+      const res = await call(Channels.planningWriteHandoff, { ...ref, conteudo: 'x', etapas })
+      expect(res, JSON.stringify(etapas)).toMatchObject({ ok: false, code: 'invalid' })
+    }
+    expect((await call(Channels.planningListHandoffs, ref)).handoffs).toHaveLength(2)
   })
 
   it('handoffs: payload inválido, prompt vazio e planejamento inexistente não gravam nada', async () => {

@@ -179,6 +179,9 @@
 }
 .pl-handoff-badge { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
 .pl-handoff-queue { background: var(--bg-3); color: var(--muted); }
+/* Total estimado das etapas do prompt (roteiro atual); "sem etapas declaradas" fica apagado. */
+.pl-handoff-estimate { color: var(--text); font-size: 11.5px; font-variant-numeric: tabular-nums; cursor: help; }
+.pl-handoff-estimate.none { color: var(--muted); font-style: italic; }
 .pl-handoff-prompt textarea {
   box-sizing: border-box;
   width: 100%;

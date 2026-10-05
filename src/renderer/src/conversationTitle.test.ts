@@ -149,6 +149,22 @@ describe('syncRoteiroTitle', () => {
     })
   })
 
+  it('trocar o título preserva a estimativa das etapas (cleanEtapas não a descarta)', async () => {
+    const { api, d } = deps()
+    const etapas: PlanningRoteiroDto['etapas'] = [
+      { id: 'requisitos', titulo: 'Requisitos', status: 'pendente', estimativa: 45 },
+      { id: 'entrega', titulo: 'Entrega', status: 'concluida' }
+    ]
+    api.planningOpen.mockResolvedValueOnce({
+      ok: true as const,
+      plan: { slug: ref.slug, roteiro: roteiro({ etapas }), cards: [], layout: { positions: {} }, invalid: [] }
+    })
+    await expect(syncRoteiroTitle(ref, 'Checkout', d)).resolves.toBe(true)
+    const sent = api.planningSaveRoteiro.mock.calls[0][0].roteiro.etapas
+    expect(sent).toEqual(etapas)
+    expect('estimativa' in sent[1]).toBe(false)
+  })
+
   it('roteiro_conflict: reaplica UMA vez sobre o roteiro atual', async () => {
     const { api, d } = deps()
     const current = roteiro({ rev: 5, etapas: [{ id: 'nova', titulo: 'Nova', status: 'em_andamento' }] })

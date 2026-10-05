@@ -95,8 +95,11 @@ export interface RoteiroTitleSyncDeps {
 /** Gravações de título por plano, em fila: a última pedida é a que fica. */
 const roteiroQueues = new Map<string, Promise<unknown>>()
 
+/** Só os campos que o IPC aceita — com a estimativa, que trocar o título não pode apagar. */
 function cleanEtapas(r: PlanningRoteiroDto): PlanningRoteiroDto['etapas'] {
-  return r.etapas.map(({ id, titulo, status }) => ({ id, titulo, status }))
+  return r.etapas.map(({ id, titulo, status, estimativa }) =>
+    estimativa === undefined ? { id, titulo, status } : { id, titulo, status, estimativa }
+  )
 }
 
 async function writeRoteiroTitle(ref: PlanningRef, titulo: string, deps: RoteiroTitleSyncDeps): Promise<boolean> {

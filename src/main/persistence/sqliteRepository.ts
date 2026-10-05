@@ -18,6 +18,15 @@ import {
   readSqliteContextTurn,
   saveSqliteContextTurn
 } from './sqliteContextHistory'
+import {
+  addSqliteHandoffTime,
+  createSqliteHandoffEnvios,
+  listSqliteHandoffEnvios,
+  updateSqliteHandoffEntrega,
+  updateSqliteHandoffEnvio
+} from './sqliteHandoff'
+import { normalizeHandoffTimeAdd } from '../handoffTracking/handoffModel'
+import type { HandoffEnvio } from '../../shared/handoffTracking'
 import type { ContextTurnDetail, ContextTurnSummary } from '../../shared/contextSnapshot'
 import {
   assertDeliverableKind,
@@ -91,6 +100,11 @@ import {
   type ConversationWrite,
   type ContextTurnWrite,
   type ExportSnapshot,
+  type HandoffEntregaPatch,
+  type HandoffEnvioCreate,
+  type HandoffEnvioPatch,
+  type HandoffEnvioQuery,
+  type HandoffTimeAdd,
   type KvAddress,
   type KvScope,
   type KvWrite,
@@ -1749,6 +1763,29 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     // Cada `write()` copia o arquivo inteiro: só escreve se houver órfão.
     if (this.read(countSqliteOrphanContextBlobs) === 0) return 0
     return this.write(pruneSqliteOrphanContextBlobs)
+  }
+
+  // Registro dos envios de handoff: SQL em sqliteHandoff.ts.
+  async createHandoffEnvios(input: HandoffEnvioCreate[]): Promise<HandoffEnvio[]> {
+    return this.write((db) => createSqliteHandoffEnvios(db, input))
+  }
+
+  async listHandoffEnvios(query: HandoffEnvioQuery): Promise<HandoffEnvio[]> {
+    return this.read((db) => listSqliteHandoffEnvios(db, query))
+  }
+
+  async updateHandoffEnvio(id: string, patch: HandoffEnvioPatch): Promise<HandoffEnvio> {
+    return this.write((db) => updateSqliteHandoffEnvio(db, id, patch))
+  }
+
+  async updateHandoffEntrega(id: string, patch: HandoffEntregaPatch): Promise<HandoffEnvio> {
+    return this.write((db) => updateSqliteHandoffEntrega(db, id, patch))
+  }
+
+  async addHandoffTime(input: HandoffTimeAdd): Promise<void> {
+    // Cada `write()` copia o arquivo inteiro: incremento zerado não escreve.
+    const time = normalizeHandoffTimeAdd(input)
+    if (time) this.write((db) => addSqliteHandoffTime(db, time))
   }
 
   async enqueueAgentInput(conversationId: string, message: import('@anthropic-ai/claude-agent-sdk').SDKUserMessage, messageUuid = randomUUID()): Promise<AgentInputQueueItem> {

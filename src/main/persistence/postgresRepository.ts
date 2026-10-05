@@ -15,6 +15,15 @@ import {
   readPostgresContextTurn,
   savePostgresContextTurn
 } from './postgresContextHistory'
+import {
+  addPostgresHandoffTime,
+  createPostgresHandoffEnvios,
+  listPostgresHandoffEnvios,
+  updatePostgresHandoffEntrega,
+  updatePostgresHandoffEnvio
+} from './postgresHandoff'
+import { normalizeHandoffTimeAdd } from '../handoffTracking/handoffModel'
+import type { HandoffEnvio } from '../../shared/handoffTracking'
 import type { ContextTurnDetail, ContextTurnSummary } from '../../shared/contextSnapshot'
 import { createPostgresSessionStore } from './postgresSessionStore'
 import { hotPathTransaction } from './postgresSessionSetup'
@@ -98,6 +107,11 @@ import {
   type ConversationWrite,
   type ContextTurnWrite,
   type ExportSnapshot,
+  type HandoffEntregaPatch,
+  type HandoffEnvioCreate,
+  type HandoffEnvioPatch,
+  type HandoffEnvioQuery,
+  type HandoffTimeAdd,
   type KvAddress,
   type KvScope,
   type KvWrite,
@@ -1550,6 +1564,33 @@ export class PostgresRepository implements PersistenceRepository {
   async pruneOrphanContextBlobs(): Promise<number> {
     this.assertInitialized()
     return prunePostgresOrphanContextBlobs(this.pool)
+  }
+
+  // Registro dos envios de handoff: SQL em postgresHandoff.ts.
+  async createHandoffEnvios(input: HandoffEnvioCreate[]): Promise<HandoffEnvio[]> {
+    this.assertInitialized()
+    return createPostgresHandoffEnvios(this.pool, input)
+  }
+
+  async listHandoffEnvios(query: HandoffEnvioQuery): Promise<HandoffEnvio[]> {
+    this.assertInitialized()
+    return listPostgresHandoffEnvios(this.pool, query)
+  }
+
+  async updateHandoffEnvio(id: string, patch: HandoffEnvioPatch): Promise<HandoffEnvio> {
+    this.assertInitialized()
+    return updatePostgresHandoffEnvio(this.pool, id, patch)
+  }
+
+  async updateHandoffEntrega(id: string, patch: HandoffEntregaPatch): Promise<HandoffEnvio> {
+    this.assertInitialized()
+    return updatePostgresHandoffEntrega(this.pool, id, patch)
+  }
+
+  async addHandoffTime(input: HandoffTimeAdd): Promise<void> {
+    this.assertInitialized()
+    const time = normalizeHandoffTimeAdd(input)
+    if (time) await addPostgresHandoffTime(this.pool, time)
   }
 
   async getTask(taskId: string): Promise<Task | null> {

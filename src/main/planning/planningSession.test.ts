@@ -2,6 +2,8 @@ import path from 'node:path'
 import type { McpServerConfig, Options } from '@anthropic-ai/claude-agent-sdk'
 import { describe, expect, it, vi } from 'vitest'
 import type { ScopedTask } from '../tasks/writeScopeGuard'
+import { ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL } from '../handoffTracking/entregaTools'
+import { etapaIdFromTitle } from '../handoffTracking/handoffRules'
 import { PLANNING_DISALLOWED_TOOLS, planningSandboxDir, planningScopedTask } from './planningPolicy'
 import { PLANNING_CONTENT_IS_DATA } from './planningPrompt'
 import { setPlanningDataRoot } from './planningRoot'
@@ -159,6 +161,39 @@ describe('handoffAppendBlock', () => {
     expect(block).toMatch(/cards\/\*\.md/)
     expect(block).toMatch(/declare as etapas do roteiro como o seu plano \(TodoWrite ou TaskCreate\)/)
     expect(block).toMatch(/Não replaneje/)
+  })
+
+  it('exige o prefixo [id-da-etapa] em cada item do TodoWrite/TaskCreate (sem prefixo = subitem)', () => {
+    const block = handoffAppendBlock({ cwd, handoff: { slug } }) ?? ''
+    expect(block).toMatch(/Comece CADA item do TodoWrite\/TaskCreate com o id da etapa entre colchetes/)
+    expect(block).toMatch(/exatamente como está no _roteiro\.md/)
+    expect(block).toContain('"[registro-no-banco] Registro no banco"')
+    expect(block).toMatch(/Item sem prefixo[^.]*conta como subitem da etapa em andamento/)
+    // O exemplo do bloco é o formato que o acompanhamento reconhece.
+    expect(etapaIdFromTitle('[registro-no-banco] Registro no banco')).toBe('registro-no-banco')
+    // A instrução de declarar as etapas como plano continua antes da do prefixo.
+    expect(block.indexOf('declare as etapas do roteiro')).toBeLessThan(block.indexOf('Comece CADA item'))
+  })
+
+  it('exige, sem exceção, registrar a estimativa ao começar e declarar o tempo MEDIDO ao concluir cada etapa', () => {
+    const block = handoffAppendBlock({ cwd, handoff: { slug } }) ?? ''
+    expect(block).toMatch(/Estimativa e tempo de CADA etapa, sem exceção/)
+    // Ao começar: a ferramenta (nome completo, o do servidor `entregas`) e a linha exata.
+    expect(ENTREGA_ESTIMAR_TOOL).toBe('mcp__entregas__entrega_estimar')
+    expect(block).toMatch(/Ao começar a etapa[^\n]*registre a SUA estimativa com a ferramenta mcp__entregas__entrega_estimar/)
+    expect(block).toContain('"Etapa N — <título>: estimativa do plano X min (prazo), minha estimativa Z min"')
+    expect(block).toMatch(/O prazo é a estimativa do plano e não muda; a sua fica ao lado dela/)
+    // Ao concluir: o tempo vem da medição do app (entrega_tempo), com dentro/fora do prazo e o motivo se passou.
+    expect(ENTREGA_TEMPO_TOOL).toBe('mcp__entregas__entrega_tempo')
+    expect(block).toMatch(/Ao concluir a etapa, consulte mcp__entregas__entrega_tempo com o id dela/)
+    expect(block).toContain('"levou Y min de trabalho (dentro do prazo)"')
+    expect(block).toContain('"levou Y min de trabalho (fora do prazo)"')
+    expect(block).toMatch(/Y é o tempo ativo que o APP mediu, nunca uma conta de cabeça\. Se passou do prazo, diga o motivo\./)
+    expect(block).toMatch(/não invente o número/)
+    // A ordem: o prefixo [id-da-etapa] continua exigido antes; começar vem antes de concluir.
+    expect(block).toMatch(/Comece CADA item do TodoWrite\/TaskCreate com o id da etapa entre colchetes/)
+    expect(block.indexOf('Comece CADA item')).toBeLessThan(block.indexOf('Estimativa e tempo de CADA etapa'))
+    expect(block.indexOf('Ao começar a etapa')).toBeLessThan(block.indexOf('Ao concluir a etapa'))
   })
 
   it('cita a pasta midia/ (caminho absoluto) e manda abrir imagem e PDF com Read', () => {

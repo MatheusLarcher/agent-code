@@ -2,6 +2,7 @@ import path from 'node:path'
 import type { McpServerConfig, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { StartAgentOptions } from '../../shared/ipc'
 import { MEDIA_DIR } from '../../shared/planningMedia'
+import { ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL } from '../handoffTracking/entregaTools'
 import type { ScopedTask } from '../tasks/writeScopeGuard'
 import {
   handoffSkillDenial,
@@ -111,6 +112,11 @@ Esta conversa nasceu do planejamento "${slug}", feito com o usuário na Tela de 
 
 Como trabalhar:
 - Antes de começar, declare as etapas do roteiro como o seu plano (TodoWrite ou TaskCreate), na mesma ordem, e siga-as.
+- Comece CADA item do TodoWrite/TaskCreate com o id da etapa entre colchetes, exatamente como está no _roteiro.md (o que vem antes dos dois-pontos na linha da etapa) — por exemplo "[registro-no-banco] Registro no banco". É por esse prefixo que o app liga o item à etapa e acompanha o andamento e o tempo dela; sem ele, a etapa aparece como não feita. Item sem prefixo (rodar os testes, revisar) conta como subitem da etapa em andamento. Não invente id nem traduza o id.
+- Estimativa e tempo de CADA etapa, sem exceção:
+  - Ao começar a etapa (depois de ler o código dela, antes de trabalhar nela), registre a SUA estimativa com a ferramenta ${ENTREGA_ESTIMAR_TOOL} (etapa = o id da etapa; minutos = minutos de trabalho seu, inteiro; motivo = o que você viu no código) e escreva no chat: "Etapa N — <título>: estimativa do plano X min (prazo), minha estimativa Z min" (N = a posição da etapa neste prompt; a ferramenta devolve a linha pronta). O prazo é a estimativa do plano e não muda; a sua fica ao lado dela. Mudou de ideia? Chame de novo com o motivo novo.
+  - Ao concluir a etapa, consulte ${ENTREGA_TEMPO_TOOL} com o id dela e escreva: "levou Y min de trabalho (dentro do prazo)" ou "levou Y min de trabalho (fora do prazo)" — Y é o tempo ativo que o APP mediu, nunca uma conta de cabeça. Se passou do prazo, diga o motivo.
+  - Se a ferramenta responder que não há envio registrado, prazo ou acompanhamento, escreva a linha da estimativa mesmo assim e diga que o tempo não foi medido — não invente o número.
 - Não replaneje: o plano, as decisões e as ambiguidades já foram resolvidos com o usuário e estão nos cards. Nada de refazer o plano nem de rodar skills de planejamento para isso.
 - Consulte os cards da etapa em ${path.join(dir, 'cards')} quando precisar de detalhe. Se o código real contradisser o plano, diga ao usuário o que encontrou e pergunte antes de desviar dele.
 - Abra as mídias citadas (no prompt ou nos anexos dos cards) pelo caminho absoluto: imagem e PDF com Read, que mostra o conteúdo de verdade; os demais tipos, com a ferramenta adequada ao formato.

@@ -5,9 +5,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { FONTE_RULE_TEXT } from '../../shared/planningFonte'
 import { setPlanningChangeSink, type PlanningChangeNotice } from './planningEvents'
-import type { Roteiro, StageStatus } from './planningModel'
 import * as realStore from './planningStore'
-import { createPlan, openPlan, type RoteiroDraft } from './planningStore'
+import { createPlan, openPlan } from './planningStore'
 import { buildPlanningTools, createPlanningMcpServer, PLANNING_TOOL_NAMES, type PlanningToolContext } from './planningTools'
 import { isOwnWrite } from './planningWrites'
 
@@ -185,90 +184,69 @@ describe('roteiro', () => {
   })
 })
 
-/**
- * Store real, mas nas `times` primeiras gravações do roteiro pela ferramenta
- * "a tela" grava antes, por fora, `race(roteiro em disco)`: a corrida real.
- */
-function racingStore(race: (r: Roteiro) => RoteiroDraft, times = 1) {
-  let left = times
-  const saveRoteiro = vi.fn(async (c: string, s: string, roteiro: RoteiroDraft, expectedRev: number) => {
-    if (left-- > 0) {
-      const disk = (await openPlan(c, s)).roteiro
-      await realStore.saveRoteiro(c, s, race(disk), disk.rev)
+// A corrida de rev do roteiro com a tela e as etapas do plan_handoff_write
+// estão em planningRoteiroTools.test.ts.
+describe('roteiro — estimativa das etapas', () => {
+  const etapasNoDisco = async () => (await openPlan(cwd, SLUG)).roteiro.etapas
+
+  it('plan_roteiro_set grava a estimativa; omitida mantém a atual, null remove; a resposta traz estimativas e total', async () => {
+    const first = await call('plan_roteiro_set', {
+      etapas: [
+        { id: 'requisitos', titulo: 'Levantar requisitos', estimativa: 45 },
+        { id: 'pagamento', titulo: 'Integrar pagamento', estimativa: 90 },
+        { id: 'entrega', titulo: 'Entrega' }
+      ]
+    })
+    expect(first).toBe(
+      [
+        'Roteiro gravado (3 etapas):',
+        '  1. [pendente] requisitos: Levantar requisitos (est. 45 min)',
+        '  2. [pendente] pagamento: Integrar pagamento (est. 90 min = 1 h 30 min)',
+        '  3. [pendente] entrega: Entrega (sem estimativa)',
+        'Estimativa total do roteiro: 135 min = 2 h 15 min — 1 etapa sem estimativa.'
+      ].join('\n')
+    )
+    const second = await call('plan_roteiro_set', {
+      etapas: [
+        { id: 'requisitos', titulo: 'Levantar requisitos' }, // omitida: mantém 45
+        { id: 'pagamento', titulo: 'Integrar pagamento', estimativa: null }, // null: remove
+        { id: 'entrega', titulo: 'Entrega', estimativa: 20 }
+      ]
+    })
+    expect(second).toMatch(/Estimativa total do roteiro: 65 min = 1 h 5 min — 1 etapa sem estimativa\.$/)
+    expect(await etapasNoDisco()).toEqual([
+      { id: 'requisitos', titulo: 'Levantar requisitos', status: 'pendente', estimativa: 45 },
+      { id: 'pagamento', titulo: 'Integrar pagamento', status: 'pendente' },
+      { id: 'entrega', titulo: 'Entrega', status: 'pendente', estimativa: 20 }
+    ])
+  })
+
+  it('plan_roteiro_set: estimativa fora de 1..10000 ou não inteira é recusada pelo schema', () => {
+    const schema = (tools.find((t) => t.name === 'plan_roteiro_set')?.inputSchema as Record<string, { safeParse(v: unknown): { success: boolean } }>).etapas
+    for (const estimativa of [0, -1, 1.5, 10_001, '45']) {
+      expect(schema.safeParse([{ id: 'a', titulo: 'A', estimativa }]).success, String(estimativa)).toBe(false)
     }
-    return realStore.saveRoteiro(c, s, roteiro, expectedRev)
-  })
-  return { store: { ...realStore, saveRoteiro }, saveRoteiro }
-}
-
-const setStatus = (r: Roteiro, id: string, status: StageStatus): RoteiroDraft => ({
-  ...r,
-  etapas: r.etapas.map((e) => (e.id === id ? { ...e, status } : e))
-})
-const statuses = async (): Promise<string[]> =>
-  (await openPlan(cwd, SLUG)).roteiro.etapas.map((e) => `${e.id}:${e.status}`)
-
-describe('roteiro — rev e corrida com a tela', () => {
-  it('plan_etapa_marcar em conflito relê e reaplica UMA vez, sem perder a mudança da tela', async () => {
-    await withRoteiro() // rev 2
-    const { store, saveRoteiro } = racingStore((r) => setStatus(r, 'requisitos', 'concluida'))
-    const out = await call('plan_etapa_marcar', { id: 'pagamento', status: 'em_andamento' }, build({ store }))
-    expect(out).toBe('Etapa pagamento agora está [em_andamento].')
-    expect(saveRoteiro.mock.calls.map((c) => c[3])).toEqual([2, 3]) // o rev lido, depois o relido
-    expect(await statuses()).toEqual(['requisitos:concluida', 'pagamento:em_andamento'])
-    expect((await openPlan(cwd, SLUG)).roteiro.rev).toBe(4)
-    expect(notify).toHaveBeenCalledTimes(1)
+    for (const estimativa of [1, 10_000, null, undefined]) {
+      expect(schema.safeParse([{ id: 'a', titulo: 'A', estimativa }]).success, String(estimativa)).toBe(true)
+    }
   })
 
-  it('plan_etapa_marcar não insiste depois do segundo conflito: devolve o roteiro atual', async () => {
-    await withRoteiro()
-    const { store, saveRoteiro } = racingStore((r) => ({ ...r, titulo: `${r.titulo} +` }), 2)
-    const out = await call('plan_etapa_marcar', { id: 'pagamento', status: 'concluida' }, build({ store }))
-    expect(saveRoteiro).toHaveBeenCalledTimes(2)
-    expect(out).toMatch(/^plan_etapa_marcar falhou: rev do roteiro desatualizado: esperado 3, atual 4\. Nada foi gravado/)
-    expect(out).toMatch(/Roteiro atual \(rev 4\): Checkout novo \+ \+\n {2}1\. \[pendente\] requisitos: Levantar requisitos/)
-    expect(await statuses()).toEqual(['requisitos:pendente', 'pagamento:pendente'])
-    expect(notify).not.toHaveBeenCalled()
-  })
-
-  it('plan_etapa_marcar: se a etapa sumiu no meio, não grava e explica', async () => {
-    await withRoteiro()
-    const { store, saveRoteiro } = racingStore((r) => ({ ...r, etapas: r.etapas.filter((e) => e.id !== 'pagamento') }))
-    const out = await call('plan_etapa_marcar', { id: 'pagamento', status: 'concluida' }, build({ store }))
-    expect(out).toBe('O roteiro mudou enquanto você marcava. Não existe etapa pagamento no roteiro (etapas: requisitos).')
-    expect(saveRoteiro).toHaveBeenCalledTimes(1)
-    expect(notify).not.toHaveBeenCalled()
-  })
-
-  it('plan_roteiro_set grava com o rev lido; em conflito não grava e devolve o roteiro atual para refazer', async () => {
-    await withRoteiro()
-    const { store, saveRoteiro } = racingStore((r) => setStatus(r, 'requisitos', 'concluida'))
-    const out = await call(
-      'plan_roteiro_set',
-      {
-        etapas: [
-          { id: 'requisitos', titulo: 'Levantar requisitos' },
-          { id: 'pagamento', titulo: 'Integrar pagamento' },
-          { id: 'entrega', titulo: 'Entrega' }
-        ]
-      },
-      build({ store })
+  it('plan_read mostra a estimativa de cada etapa (ou "sem estimativa") e o total', async () => {
+    await call('plan_roteiro_set', {
+      etapas: [
+        { id: 'requisitos', titulo: 'Levantar requisitos', estimativa: 30 },
+        { id: 'pagamento', titulo: 'Integrar pagamento' }
+      ]
+    })
+    const out = await call('plan_read', {})
+    expect(out).toContain(
+      'Roteiro (2 etapas, na ordem):\n' +
+        '  1. [pendente] requisitos: Levantar requisitos (est. 30 min)\n' +
+        '  2. [pendente] pagamento: Integrar pagamento (sem estimativa)\n' +
+        'Estimativa total do roteiro: 30 min — 1 etapa sem estimativa.'
     )
-    expect(saveRoteiro).toHaveBeenCalledTimes(1)
-    expect(saveRoteiro.mock.calls[0][3]).toBe(2)
-    expect(out).toMatch(/^plan_roteiro_set falhou: rev do roteiro desatualizado: esperado 2, atual 3\. Nada foi gravado/)
-    expect(out).toMatch(/mande de novo a lista inteira/)
-    expect(out).toMatch(
-      /Roteiro atual \(rev 3\): Checkout novo\n {2}1\. \[concluida\] requisitos: Levantar requisitos\n {2}2\. \[pendente\] pagamento: Integrar pagamento$/
-    )
-    expect(await statuses()).toEqual(['requisitos:concluida', 'pagamento:pendente'])
-    expect(notify).not.toHaveBeenCalled()
-  })
-
-  it('roteiro gravado antes do rev (sem a linha) aceita as ferramentas e passa a ter rev', async () => {
-    await fs.writeFile(path.join(cwd, 'docs', 'spec', SLUG, '_roteiro.md'), '# Antigo\n\n- [pendente] e1: Etapa um\n')
-    expect(await call('plan_etapa_marcar', { id: 'e1', status: 'concluida' })).toBe('Etapa e1 agora está [concluida].')
-    expect((await openPlan(cwd, SLUG)).roteiro).toMatchObject({ titulo: 'Antigo', rev: 1 })
+    await call('plan_roteiro_set', { etapas: [{ id: 'pagamento', titulo: 'Integrar pagamento', estimativa: 120 }] })
+    expect(await call('plan_read', {})).toMatch(/\(est\. 120 min = 2 h\)\nEstimativa total do roteiro: 120 min = 2 h\.\n/)
   })
 })
 
@@ -431,7 +409,7 @@ describe('cards', () => {
   })
 })
 
-describe('ambiguidades e handoff', () => {
+describe('ambiguidades', () => {
   it('plan_ambiguidade_abrir cria card aberto, ligado aos envolvidos, com a opinião do Manager', async () => {
     await call('plan_card_create', { id: 'r1', tipo: 'requisito', titulo: 'Frete grátis' })
     notify.mockClear()
@@ -469,12 +447,4 @@ describe('ambiguidades e handoff', () => {
     expect(await call('plan_ambiguidade_resolver', { id: 'amb', expected_rev: 2, decisao: 'y' })).toMatch(/já está resolvida/)
   })
 
-  it('plan_handoff_write grava em _handoff/ pelo store e devolve o caminho', async () => {
-    const out = await call('plan_handoff_write', { conteudo: '# Implementar checkout\n' })
-    const expected = path.join(cwd, 'docs', 'spec', SLUG, '_handoff', '2026-09-22-01.md')
-    expect(out).toBe(`Handoff gravado em ${expected}`)
-    expect(await fs.readFile(expected, 'utf8')).toBe('# Implementar checkout\n')
-    expect(notify).toHaveBeenCalledWith({ projectCwd: cwd, slug: SLUG })
-    expect(await call('plan_handoff_write', { conteudo: 'segundo' })).toMatch(/2026-09-22-02\.md$/)
-  })
 })

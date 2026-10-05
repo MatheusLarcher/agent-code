@@ -9,6 +9,14 @@ export type {
   BoardItemOrigin,
   BoardItemStatus
 } from '../../shared/ipc'
+import type { HandoffEntrega, HandoffEnvio, HandoffEnvioStatus } from '../../shared/handoffTracking'
+
+export type {
+  HandoffEntrega,
+  HandoffEntregaStatus,
+  HandoffEnvio,
+  HandoffEnvioStatus
+} from '../../shared/handoffTracking'
 import type { TransferRecords } from './transferRecords'
 import type {
   ContextBlock,
@@ -795,6 +803,86 @@ export interface ConversationOutboxRepository {
   replaceConversationOutbox(conversationId: string, items: ReadonlyArray<{ id: string; payload: unknown }>): Promise<void>
 }
 
+// ---------------------------------------------------------------------------
+// Registro dos envios de handoff (handoff_envios + handoff_entregas). Regra
+// pura em src/main/handoffTracking/handoffModel.ts; SQL em sqliteHandoff.ts e
+// postgresHandoff.ts.
+// ---------------------------------------------------------------------------
+
+/** Um prompt a registrar. Ids, hash do conteúdo, totais, status `na_fila` e
+ *  `criado_em` são gerados pelo repositório. */
+export interface HandoffEnvioCreate {
+  planSlug: string
+  planTitulo: string
+  projectId: string
+  projectCwd: string
+  conversationId: string
+  conversationTitle: string
+  arquivo: string
+  ordem: number
+  loteId: string
+  conteudo: string
+  /** Uma por etapa declarada, na ordem; `estimativaPlano` é COPIADA do roteiro. */
+  entregas: { etapaId: string; etapaTitulo: string; estimativaPlano: number | null }[]
+}
+
+export interface HandoffEnvioQuery {
+  ids?: string[]
+  conversationId?: string
+  projectIds?: string[]
+  statuses?: HandoffEnvioStatus[]
+  /** Padrão 200, teto 1000. */
+  limit?: number
+}
+
+/** `undefined` = não mexe; `null` limpa o campo anulável. */
+export type HandoffEnvioPatch = Partial<
+  Pick<HandoffEnvio, 'status' | 'motivo' | 'enviadoEm' | 'iniciadoEm' | 'concluidoEm' | 'atrasado' | 'conversationTitle'>
+>
+
+export type HandoffEntregaPatch = Partial<
+  Pick<
+    HandoffEntrega,
+    | 'status'
+    | 'motivo'
+    | 'atrasada'
+    | 'boardItemId'
+    | 'auditada'
+    | 'corrigidoPor'
+    | 'corrigidoEm'
+    | 'iniciadaEm'
+    | 'concluidaEm'
+    | 'tempoCorridoMs'
+    | 'estimativaAgente'
+    | 'estimativaAgenteMotivo'
+    | 'estimativaAgenteEm'
+    | 'aviso80Em'
+    | 'aviso100Em'
+  >
+>
+
+/** Incremento de tempo (ms inteiros >= 0) do envio e de entregas dele. */
+export interface HandoffTimeAdd {
+  envioId: string
+  ativoMs?: number
+  retrabalhoMs?: number
+  entregas?: { id: string; ativoMs?: number; retrabalhoMs?: number }[]
+}
+
+export interface HandoffRepository {
+  /** UMA transação: os envios e as entregas de todos entram juntos ou nenhum. */
+  createHandoffEnvios(input: HandoffEnvioCreate[]): Promise<HandoffEnvio[]>
+  /** Com as entregas por ordem; envios por `criado_em` DESC, `ordem` ASC. */
+  listHandoffEnvios(query: HandoffEnvioQuery): Promise<HandoffEnvio[]>
+  /** Lança se o envio não existe. */
+  updateHandoffEnvio(id: string, patch: HandoffEnvioPatch): Promise<HandoffEnvio>
+  /** Devolve o envio-pai com as entregas. Lança se a entrega não existe. */
+  updateHandoffEntrega(id: string, patch: HandoffEntregaPatch): Promise<HandoffEnvio>
+  /** Incremento atômico (`col = col + ?`) numa transação. Lança se o envio, ou
+   *  uma entrega dele, não existe. */
+  addHandoffTime(input: HandoffTimeAdd): Promise<void>
+}
+
 export interface PersistenceRepository
   extends TaskRepository,
     MemoryRepository,
@@ -802,7 +890,8 @@ export interface PersistenceRepository
     TokenUsageRepository,
     ContextHistoryRepository,
     AgentInputQueueRepository,
-    ConversationOutboxRepository {
+    ConversationOutboxRepository,
+    HandoffRepository {
   readonly backend: StorageBackend
 
   initialize(): Promise<void>

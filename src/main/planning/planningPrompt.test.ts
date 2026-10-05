@@ -75,6 +75,18 @@ describe('buildPlanningHint', () => {
     expect(hint).toMatch(/plan_roteiro_set mexe só nas etapas e preserva o título atual/)
   })
 
+  it('(6) estima TODA etapa em minutos de trabalho do agente, reestima quando muda e fala de tempo só quando relevante', () => {
+    const est = hint.slice(hint.indexOf('### Estimativa das etapas'), hint.indexOf('### Conforme o usuário detalha'))
+    expect(est).toMatch(/Estime TODA etapa do roteiro em "estimativa" de mcp__planning__plan_roteiro_set/)
+    expect(est).toMatch(/minutos de trabalho do AGENTE de implementação, não de um desenvolvedor humano/)
+    expect(est).toMatch(/superestimam a própria duração em 4 a 7 vezes/)
+    expect(est).toMatch(/Estime ao montar ou refinar o roteiro e reestime quando a etapa mudar/)
+    expect(est).toMatch(/fale de tempo só quando for relevante: etapa cara, total que mudou muito ou trade-off de prazo/)
+    expect(hint).toMatch(/SEPARE E ORDENE AS ETAPAS do pedido com mcp__planning__plan_roteiro_set, já com a estimativa de cada uma/)
+    // O handoff declara as etapas e leva a tabela de estimativas.
+    expect(hint).toMatch(/Informe em "etapas" os ids das etapas que o prompt cobre, na ordem, e traga no texto a tabela etapa → estimativa e o total do prompt/)
+  })
+
   it('avisa que cada Bash pede aprovação e manda preferir Read/Glob/Grep', () => {
     expect(hint).toMatch(/Cada comando Bash pede aprovação do usuário/)
     expect(hint).toMatch(/a menos que ele tenha ligado "Permitir tudo"/)

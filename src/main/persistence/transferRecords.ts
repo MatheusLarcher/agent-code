@@ -7,7 +7,9 @@ import { decodePostgresJson, decodePostgresText, encodePostgresJson, encodePostg
 /** Portable database records, NOT a cross-device filesystem export. project_cwd
  * and payload_path remain opaque provenance; no files, vault or local projection
  * journal are copied, and these paths must not authorize work on another device. */
-export type TransferRecordTable = 'tasks' | 'task_steps' | 'task_deliverables' | 'task_events' | 'memory_entries' | 'memory_proposals'
+export type TransferRecordTable =
+  | 'tasks' | 'task_steps' | 'task_deliverables' | 'task_events' | 'memory_entries' | 'memory_proposals'
+  | 'handoff_envios' | 'handoff_entregas'
 export type TransferRecord = Record<string, JsonValue>
 export type TransferRecords = Record<TransferRecordTable, TransferRecord[]>
 export interface TransferRecordItem { entity: string; id: string; contentHash: string }
@@ -53,11 +55,30 @@ export const TRANSFER_RECORD_TABLES: readonly RecordTable[] = [
     scope: 'text', project_cwd: 'text', domain: 'text', origin_conversation_id: 'text', origin_message_id: 'text',
     origin_agent: 'text', status: 'text', reason: 'text', proposed_by: 'text', expected_revision: 'integer',
     attempts: 'integer', lease_token: 'text', lease_expires_at: 'time', created_at: 'time', updated_at: 'time'
+  } },
+  // Registro dos envios de handoff. Entregas DEPOIS dos envios: a ordem da lista
+  // é a ordem de INSERT, e `envio_id` é FK (conferida em validateReferences).
+  { name: 'handoff_envios', postgresCodecs: { plan_titulo: 'text', conversation_title: 'text', conteudo: 'text', motivo: 'text' }, columns: {
+    id: 'text', plan_slug: 'text', plan_titulo: 'text', project_id: 'text', project_cwd: 'text', conversation_id: 'text',
+    conversation_title: 'text', arquivo: 'text', ordem: 'integer', lote_id: 'text', conteudo: 'text', conteudo_hash: 'text',
+    status: 'text', motivo: 'text', estimativa_total: 'integer', prazo_total: 'integer', atrasado: 'boolean',
+    tempo_ativo_ms: 'integer', retrabalho_ms: 'integer', criado_em: 'time', enviado_em: 'time', iniciado_em: 'time',
+    concluido_em: 'time', updated_at: 'time'
+  } },
+  { name: 'handoff_entregas', postgresCodecs: { etapa_titulo: 'text', estimativa_agente_motivo: 'text', motivo: 'text' }, columns: {
+    id: 'text', envio_id: 'text', etapa_id: 'text', etapa_titulo: 'text', ordem: 'integer', estimativa_plano: 'integer',
+    estimativa_agente: 'integer', estimativa_agente_motivo: 'text', estimativa_agente_em: 'time', status: 'text',
+    atrasada: 'boolean', motivo: 'text', board_item_id: 'text', auditada: 'boolean', corrigido_por: 'text',
+    corrigido_em: 'time', iniciada_em: 'time', concluida_em: 'time', tempo_ativo_ms: 'integer', tempo_corrido_ms: 'integer',
+    retrabalho_ms: 'integer', aviso_80_em: 'time', aviso_100_em: 'time', updated_at: 'time'
   } }
 ]
 
 export function emptyTransferRecords(): TransferRecords {
-  return { tasks: [], task_steps: [], task_deliverables: [], task_events: [], memory_entries: [], memory_proposals: [] }
+  return {
+    tasks: [], task_steps: [], task_deliverables: [], task_events: [], memory_entries: [], memory_proposals: [],
+    handoff_envios: [], handoff_entregas: []
+  }
 }
 
 function invalid(message: string): never {
@@ -143,6 +164,10 @@ function validateReferences(records: TransferRecords): void {
   for (const row of records.tasks) requireRef(row.parent_task_id, 'tasks')
   for (const row of records.memory_entries) requireRef(row.supersedes_id, 'memory_entries')
   for (const row of records.memory_proposals) requireRef(row.entry_id, 'memory_entries')
+  for (const row of records.handoff_entregas) {
+    if (row.envio_id === null) invalid(`Envio ausente em handoff_entregas:${row.id}.`)
+    requireRef(row.envio_id, 'handoff_envios')
+  }
   const steps = new Map(records.task_steps.map((row) => [row.id, row]))
   for (const table of ['task_steps', 'task_deliverables', 'task_events'] as const) {
     for (const row of records[table]) {

@@ -3,6 +3,7 @@
  * fixo ao Agent Manager, o filtro dos prompts que ele gravou DEPOIS do pedido
  * e o lançamento da conversa de implementação. Puras e testáveis sem o App.
  */
+import type { AgentCodeApi } from '@shared/api'
 import type {
   PlanningFailure,
   PlanningHandoffDto,
@@ -53,9 +54,21 @@ export function managerHandoffRequest(planDir: string, openAmbiguities = 0, medi
     '',
     'Cada prompt precisa trazer: o objetivo; as etapas do roteiro na ordem, com os cards de cada uma; os requisitos; as decisões com o porquê; ' +
       'as sugestões com a fonte; as ambiguidades resolvidas; riscos e critérios de aceite; e a instrução de declarar as etapas como plano ' +
-      `(TodoWrite/TaskCreate) e consultar ${planDir} sem replanejar. A conversa de implementação só verá esse texto e os cards.`,
+      '(TodoWrite/TaskCreate), cada item começando pelo id da etapa entre colchetes, [id-da-etapa] (ex.: "[pagamento] Integrar o checkout"), ' +
+      `e consultar ${planDir} sem replanejar. A conversa de implementação só verá esse texto e os cards.`,
     '',
-    'Não implemente nada e não altere cards nem o roteiro agora: só grave os prompts e, no fim, diga quantos gravou.'
+    'Etapas e estimativas: em cada chamada de mcp__planning__plan_handoff_write, informe em "etapas" os ids das etapas do roteiro que ' +
+      'aquele prompt cobre, na ordem. No texto do prompt, traga a tabela etapa → estimativa (minutos de trabalho do agente, como estão no ' +
+      'roteiro) e o total do prompt.',
+    '',
+    'Cada prompt também exige da implementação, sem exceção: ao começar cada etapa, registrar a própria estimativa com ' +
+      'mcp__entregas__entrega_estimar e escrever "Etapa N — <título>: estimativa do plano X min (prazo), minha estimativa Z min"; ' +
+      'ao concluir, consultar mcp__entregas__entrega_tempo e escrever "levou Y min de trabalho (dentro/fora do prazo)" e, se passou, o motivo. ' +
+      'O prazo é a estimativa do plano; a do agente não o muda, e o tempo que vale é o medido pelo app.',
+    '',
+    'Não implemente nada e não altere cards nem o roteiro agora: só grave os prompts e, no fim, diga quantos gravou. Única exceção: etapa ' +
+      'sem estimativa — estime-a antes com mcp__planning__plan_roteiro_set mandando a lista INTEIRA de etapas (o plan_roteiro_set substitui ' +
+      'o roteiro todo: etapa que ficar de fora é apagada), iguais ao que estão, mudando só a estimativa que faltava, para a tabela bater com o roteiro.'
   ]
   if (mediaCount > 0) {
     const n = mediaCount === 1 ? 'uma mídia' : `${mediaCount} mídias`
@@ -168,6 +181,15 @@ export function clearHandoffSession(projectCwd: string, slug: string): void {
   sessions.delete(sessionKey(projectCwd, slug))
 }
 
+/** Um prompt a enviar: o texto e, quando veio de _handoff/, o nome do arquivo. */
+export interface HandoffPrompt {
+  text: string
+  name?: string
+}
+
+/** Prazo do registro no banco antes do 1º envio: banco travado não segura a conversa. */
+export const HANDOFF_REGISTER_TIMEOUT_MS = 15_000
+
 export interface HandoffLaunchDeps<C extends { id: string }> {
   /** Cria a conversa de implementação, ativa, e JÁ visível para o caminho de
    *  envio (estado e refs) — o envio logo abaixo não pode achar a conversa
@@ -175,6 +197,16 @@ export interface HandoffLaunchDeps<C extends { id: string }> {
   create: () => C
   /** Caminho normal de envio. true = entregue (enviado agora ou na fila). */
   send: (conv: C, text: string) => Promise<boolean>
+  /**
+   * Registra o envio no banco (um envio `na_fila` por prompt, com as entregas):
+   * chamado depois do `create` e ANTES do 1º `send`, com os prompts que vão
+   * sair (já sem os em branco, cada um com o seu arquivo), na ordem. Falha —
+   * exceção ou prazo estourado — não impede o envio: vai para `onRegisterError`.
+   */
+  register?: (conv: C, prompts: readonly HandoffPrompt[]) => Promise<void>
+  onRegisterError?: (err: unknown) => void
+  /** Prazo do `register`, em ms (padrão HANDOFF_REGISTER_TIMEOUT_MS). */
+  registerTimeoutMs?: number
 }
 
 export interface HandoffLaunchResult<C> {
@@ -184,19 +216,59 @@ export interface HandoffLaunchResult<C> {
   total: number
 }
 
+async function withTimeout(work: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`o registro não respondeu em ${Math.round(ms / 1000)} s`)), ms)
+  })
+  try {
+    await Promise.race([work, expired])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function registerSafely<C extends { id: string }>(
+  conv: C,
+  prompts: readonly HandoffPrompt[],
+  deps: HandoffLaunchDeps<C>
+): Promise<void> {
+  const register = deps.register
+  if (!register) return
+  try {
+    // Promise.resolve().then: um register que lança SÍNCRONO também é falha, não exceção.
+    await withTimeout(
+      Promise.resolve().then(() => register(conv, prompts)),
+      deps.registerTimeoutMs ?? HANDOFF_REGISTER_TIMEOUT_MS
+    )
+  } catch (err) {
+    try {
+      deps.onRegisterError?.(err)
+    } catch {
+      // O aviso não pode derrubar o envio.
+    }
+  }
+}
+
 /**
- * Cria a conversa e envia os prompts NA ORDEM: o 1º sai já; os seguintes, com a
- * conversa ocupada, entram na fila dela. Se um envio falha (false ou exceção),
- * os seguintes não são tentados — ficariam fora de ordem (estão gravados em
- * _handoff/). Prompt em branco é descartado; sem nenhum, nada é criado.
+ * Cria a conversa, registra o envio (`register`) e envia os prompts NA ORDEM: o
+ * 1º sai já; os seguintes, com a conversa ocupada, entram na fila dela. Se um
+ * envio falha (false ou exceção), os seguintes não são tentados — ficariam fora
+ * de ordem (estão gravados em _handoff/). Prompt em branco é descartado; sem
+ * nenhum, nada é criado. `prompts`: texto puro ou `{ text, name }` — o par
+ * texto↔arquivo é feito ANTES do filtro, para o nome não escorregar de prompt.
  */
 export async function launchHandoff<C extends { id: string }>(
-  prompts: readonly string[],
+  prompts: readonly (string | HandoffPrompt)[],
   deps: HandoffLaunchDeps<C>
 ): Promise<HandoffLaunchResult<C>> {
-  const texts = prompts.filter((p) => p.trim() !== '')
-  if (texts.length === 0) return { conv: null, delivered: 0, total: 0 }
+  const items = prompts
+    .map((p): HandoffPrompt => (typeof p === 'string' ? { text: p } : p))
+    .filter((p) => p.text.trim() !== '')
+  if (items.length === 0) return { conv: null, delivered: 0, total: 0 }
   const conv = deps.create()
+  await registerSafely(conv, items, deps)
+  const texts = items.map((p) => p.text)
   let delivered = 0
   for (const text of texts) {
     // Depois de criada, a conversa existe: uma exceção no envio não pode
@@ -250,5 +322,42 @@ export function handoffPartialMessage(titulo: string, outcome: HandoffSendOutcom
       ? `; ${rest === 1 ? 'o prompt seguinte está' : `os ${rest} prompts seguintes estão`} em _handoff/, para mandar depois`
       : '') +
     '. Enviar de novo por aqui criaria outra conversa.'
+  )
+}
+
+/** Teto do título da conversa no registro (o IPC aceita até 500). */
+const MAX_REGISTER_TITLE = 500
+
+/**
+ * O `register` do launchHandoff ligado ao IPC handoff:register: cada prompt vai
+ * com o arquivo de _handoff/ dele (o main lê ali as etapas declaradas). Falha
+ * do main vira exceção — o launchHandoff a entrega ao `onRegisterError`.
+ */
+export function handoffRegistrar(
+  api: Pick<AgentCodeApi, 'handoffRegister'>,
+  projectCwd: string,
+  slug: string
+): (conv: { id: string; title: string }, prompts: readonly HandoffPrompt[]) => Promise<void> {
+  return async (conv, prompts) => {
+    const pairs = prompts.flatMap((p) => (p.name ? [{ arquivo: p.name, conteudo: p.text }] : []))
+    if (pairs.length === 0) return
+    const res = await api.handoffRegister({
+      projectCwd,
+      slug,
+      conversationId: conv.id,
+      conversationTitle: conv.title.slice(0, MAX_REGISTER_TITLE).trim() || 'Implementação',
+      prompts: pairs
+    })
+    if (!res || res.ok !== true) {
+      throw new Error(res && 'message' in res ? res.message : 'resposta inválida do processo principal')
+    }
+  }
+}
+
+/** O toast de quando o registro no banco falhou (o envio seguiu mesmo assim). */
+export function handoffRegisterWarning(err: unknown): string {
+  return (
+    'O envio para a implementação seguiu, mas não consegui registrá-lo no banco — ' +
+    `este envio fica sem o acompanhamento de status e prazo: ${errText(err)}`
   )
 }

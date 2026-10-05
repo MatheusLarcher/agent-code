@@ -1,6 +1,15 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { Channels } from '../shared/ipc'
-import type { AgentCodeApi } from '../shared/api'
+import type {
+  AgentCodeApi,
+  HandoffChangedMsg,
+  HandoffCorrectEntregaRequest,
+  HandoffCorrectEntregaResult,
+  HandoffListRequest,
+  HandoffListResult,
+  HandoffRegisterRequest,
+  HandoffRegisterResult
+} from '../shared/api'
 import type { AccountUsageResult, AddClaudeAccountResult, ClaudeAccountView, UseAccountResult } from '../shared/claudeAccounts'
 import type { TypeSafePauseStatus } from '../shared/typesafePause'
 import type { ChromeBridgeStatus } from '../shared/chromeBridge'
@@ -236,8 +245,15 @@ const api: AgentCodeApi = {
   memoryReadEntry: (relPath: string): Promise<MemoryReadResult | null> => ipcRenderer.invoke(Channels.memoryReadEntry, relPath),
   planningListHandoffs: (req: PlanningRef): Promise<PlanningResult<PlanningHandoffListDto>> =>
     ipcRenderer.invoke(Channels.planningListHandoffs, req),
-  planningWriteHandoff: (req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>> =>
-    ipcRenderer.invoke(Channels.planningWriteHandoff, req),
+  planningWriteHandoff: (
+    req: PlanningRef & { conteudo: string; etapas?: string[] }
+  ): Promise<PlanningResult<{ name: string }>> => ipcRenderer.invoke(Channels.planningWriteHandoff, req),
+  handoffRegister: (req: HandoffRegisterRequest): Promise<HandoffRegisterResult> =>
+    ipcRenderer.invoke(Channels.handoffRegister, req),
+  handoffList: (req?: HandoffListRequest): Promise<HandoffListResult> => ipcRenderer.invoke(Channels.handoffList, req ?? {}),
+  handoffCorrectEntrega: (req: HandoffCorrectEntregaRequest): Promise<HandoffCorrectEntregaResult> =>
+    ipcRenderer.invoke(Channels.handoffCorrectEntrega, req),
+  onHandoffChanged: (cb: (m: HandoffChangedMsg) => void): (() => void) => on(Channels.handoffChanged, cb),
   planningMarkHandoffsSent: (
     req: PlanningRef & { entries: PlanningHandoffSentMark[] }
   ): Promise<PlanningResult<{ sent: PlanningHandoffSentDto[] }>> =>

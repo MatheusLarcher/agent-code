@@ -125,8 +125,20 @@ function usePanes(): {
 }
 
 function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: PlanningScreenProps): JSX.Element {
-  const { status, plan, error, born, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa, addMedia } =
-    usePlanning(projectCwd, slug)
+  const {
+    status,
+    plan,
+    error,
+    born,
+    reload,
+    saveCard,
+    deleteCard,
+    saveLayout,
+    saveViewport,
+    toggleEtapa,
+    setEstimativa,
+    addMedia
+  } = usePlanning(projectCwd, slug)
   // As pastas do plano vêm do main (na pasta de dados do app e, o _sandbox, no
   // projeto): o renderer não sabe montá-las.
   const planDir = plan?.dir
@@ -251,6 +263,11 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
   )
 
   const onToggleEtapa = useCallback((id: string) => void toggleEtapa(id), [toggleEtapa])
+  // Fora de 1..MAX ou falha: o próprio setEstimativa avisa por toast.
+  const onEstimateEtapa = useCallback(
+    (id: string, minutos: number | null) => void setEstimativa(id, minutos),
+    [setEstimativa]
+  )
 
   const etapas = roteiro?.etapas ?? []
   const done = etapas.filter((e) => e.status === 'concluida').length
@@ -318,6 +335,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
               etapas={etapas}
               onToggle={onToggleEtapa}
               onFocus={focusEtapa}
+              onEstimate={onEstimateEtapa}
               collapsed={roteiroCollapsed}
               onToggleCollapsed={toggleRoteiro}
             />

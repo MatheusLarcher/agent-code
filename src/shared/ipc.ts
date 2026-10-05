@@ -285,6 +285,11 @@ export function parseBoardTurnEndReason(
   return null
 }
 
+/** Começo do motivo que o arrasto do USUÁRIO no Quadro grava (BoardService.move).
+ *  Quem lê o motivo depois (o acompanhamento do handoff) precisa separar o arrasto
+ *  da contestação do PO pela mesma frase — em duas cópias, divergiria calado. */
+export const BOARD_USER_MOVE_REASON_PREFIX = 'o usuário moveu o cartão'
+
 /** Como o turno acabou para este cartão, quando ele está "a fazer" SÓ porque o
  *  fim de turno o rebaixou (e nada o tocou depois); `null` em qualquer outro
  *  caso — inclusive o cartão "a fazer" que nunca começou. A justificativa do PO
@@ -2073,6 +2078,14 @@ export const Channels = {
   /** Main → renderer: arquivos de um planejamento aberto mudaram por fora do
    *  app (editor, git, agente). Gravações do próprio app não disparam. */
   planningChanged: 'planning:changed',
+  /** Registra no banco os envios (na_fila) e as entregas de um handoff, antes do 1º prompt sair. */
+  handoffRegister: 'handoff:register',
+  /** Lê os envios de handoff (todos os projetos, um projeto ou uma conversa). */
+  handoffList: 'handoff:list',
+  /** Correção manual de uma entrega (concluir/reabrir), registrada como do usuário. */
+  handoffCorrectEntrega: 'handoff:correctEntrega',
+  /** Main → renderer: o acompanhamento gravou algo nos envios daquela conversa. */
+  handoffChanged: 'handoff:changed',
   kvGet: 'kv:get',
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet: 'kv:set',
@@ -2515,7 +2528,9 @@ export interface PlanningRoteiroDto {
   /** Revisão otimista do _roteiro.md, como a dos cards. O main sempre preenche;
    *  ausente vale 0 (roteiro gravado antes do rev existir). */
   rev?: number
-  etapas: { id: string; titulo: string; status: PlanningStageStatus }[]
+  /** `estimativa`: minutos de trabalho do agente (src/shared/planningEstimate.ts);
+   *  ausente = sem estimativa. Quem regrava o roteiro precisa devolvê-la. */
+  etapas: { id: string; titulo: string; status: PlanningStageStatus; estimativa?: number }[]
 }
 
 export interface PlanningLayoutDto {
@@ -2583,6 +2598,9 @@ export interface PlanningHandoffDto {
   /** Quando o arquivo foi criado, em ms desde a época. */
   createdAt: number
   content: string
+  /** Ids das etapas do roteiro que o prompt cobre, na ordem (_handoff/<base>.meta.json).
+   *  Ausente = prompt antigo, que não declarou etapas. */
+  etapas?: string[]
 }
 
 /**

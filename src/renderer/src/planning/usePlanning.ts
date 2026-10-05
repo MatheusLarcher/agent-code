@@ -7,8 +7,8 @@
  * - Toda gravação de card leva o expectedRev; 'rev_conflict' recarrega e avisa
  *   (com quietConflict só recarrega: o editor de card mescla e avisa ele mesmo).
  *   Qualquer outra falha vira toast de erro. Nada aqui lança.
- * - O roteiro também: toggleEtapa manda o rev carregado e, em
- *   'roteiro_conflict', reaplica UMA vez sobre o roteiro atual que veio junto.
+ * - O roteiro também: toggleEtapa e setEstimativa mandam o rev carregado e, em
+ *   'roteiro_conflict', reaplicam UMA vez sobre o roteiro atual que veio junto.
  * - saveLayout é otimista e com debounce: arrastar não grava a cada pixel.
  *   saveViewport (pan/zoom) entra no mesmo debounce e na mesma gravação.
  * - `born`: os cards que a recarga trouxe e a tela não tinha — o Manager os
@@ -25,12 +25,14 @@ import type {
   PlanningStageStatus,
   PlanMediaDto
 } from '@shared/ipc'
+import { MAX_ESTIMATIVA_MIN, isValidEstimativa } from '@shared/planningEstimate'
 import { useUI } from '../ui/UiProvider'
 import type { Point } from './layout'
 
 export const LAYOUT_DEBOUNCE_MS = 400
 export const CONFLICT_MSG = 'O card mudou enquanto você editava — carreguei a versão atual'
 export const ROTEIRO_CONFLICT_MSG = 'O roteiro mudou enquanto você mexia — carreguei a versão atual'
+export const ESTIMATIVA_INVALIDA_MSG = `A estimativa é em minutos inteiros, de 1 a ${MAX_ESTIMATIVA_MIN}`
 
 export type PlanningStatus = 'loading' | 'ready' | 'error'
 export type PlanningViewport = { x: number; y: number; zoom: number }
@@ -71,6 +73,9 @@ export interface PlanningController {
   saveViewport: (viewport: PlanningViewport) => void
   /** Sem `status`, avança pendente → em_andamento → concluida → pendente. */
   toggleEtapa: (id: string, status?: PlanningStageStatus) => Promise<boolean>
+  /** Minutos de trabalho do agente na etapa; null remove. Fora de
+   *  1..MAX_ESTIMATIVA_MIN (ou não inteiro) não grava: toast 'aviso' e false. */
+  setEstimativa: (id: string, minutos: number | null) => Promise<boolean>
   /** Mídias que esta tela acabou de importar (planning:importMedia não dispara
    *  planning:changed): entram em plan.media sem recarregar. */
   addMedia: (media: PlanMediaDto[]) => void
@@ -132,15 +137,39 @@ export function toCardDto(card: PlanningCardDto): PlanningCardDto {
   return out
 }
 
-/** O que planningSaveRoteiro aceita: sem rev (vai em expectedRev) nem chave extra. */
+/** O que planningSaveRoteiro aceita: sem rev (vai em expectedRev) nem chave extra.
+ *  A estimativa vai junto: sem ela, marcar uma etapa apagaria as estimativas. */
 function cleanRoteiro(r: PlanningRoteiroDto): Omit<PlanningRoteiroDto, 'rev'> {
-  return { titulo: r.titulo, etapas: r.etapas.map(({ id, titulo, status }) => ({ id, titulo, status })) }
+  return {
+    titulo: r.titulo,
+    etapas: r.etapas.map(({ id, titulo, status, estimativa }) =>
+      estimativa === undefined ? { id, titulo, status } : { id, titulo, status, estimativa }
+    )
+  }
 }
 
-/** O roteiro com a etapa `id` em `status`; null se a etapa não existe nele. */
-function withStage(r: PlanningRoteiroDto, id: string, status: PlanningStageStatus): PlanningRoteiroDto | null {
+type RoteiroStage = PlanningRoteiroDto['etapas'][number]
+/** O que o usuário muda numa etapa: o status, ou a estimativa (null = tirar). */
+type StagePatch = { status: PlanningStageStatus } | { estimativa: number | null }
+
+function patchStage(e: RoteiroStage, patch: StagePatch): RoteiroStage {
+  if ('status' in patch) return { ...e, status: patch.status }
+  const out = { ...e }
+  if (patch.estimativa === null) delete out.estimativa
+  else out.estimativa = patch.estimativa
+  return out
+}
+
+/** A etapa já está como a mudança quer (nada a gravar)? */
+function stageHas(e: RoteiroStage | undefined, patch: StagePatch): boolean {
+  if (!e) return false
+  return 'status' in patch ? e.status === patch.status : (e.estimativa ?? null) === patch.estimativa
+}
+
+/** O roteiro com a mudança na etapa `id`; null se a etapa não existe nele. */
+function withStage(r: PlanningRoteiroDto, id: string, patch: StagePatch): PlanningRoteiroDto | null {
   if (!r.etapas.some((e) => e.id === id)) return null
-  return { ...r, etapas: r.etapas.map((e) => (e.id === id ? { ...e, status } : e)) }
+  return { ...r, etapas: r.etapas.map((e) => (e.id === id ? patchStage(e, patch) : e)) }
 }
 
 export function usePlanning(projectCwd: string, slug: string): PlanningController {
@@ -326,18 +355,19 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
     [flushLayout]
   )
 
-  const toggleEtapa = useCallback(
-    async (id: string, next?: PlanningStageStatus): Promise<boolean> => {
+  /** Uma mudança numa etapa do roteiro (status ou estimativa): otimista, com o
+   *  rev carregado e, em 'roteiro_conflict', reaplicada UMA vez sobre o atual. */
+  const saveStage = useCallback(
+    async (id: string, patch: StagePatch, what: string): Promise<boolean> => {
       const current = planRef.current
       const etapa = current?.roteiro.etapas.find((e) => e.id === id)
       if (!current || !etapa) return false
-      const target = next ?? nextStageStatus(etapa.status)
-      if (target === etapa.status) return true
+      if (stageHas(etapa, patch)) return true
       const save = (base: PlanningRoteiroDto, changed: PlanningRoteiroDto) =>
         safe(() =>
           window.api.planningSaveRoteiro({ projectCwd, slug, roteiro: cleanRoteiro(changed), expectedRev: base.rev ?? 0 })
         )
-      const optimistic = withStage(current.roteiro, id, target)
+      const optimistic = withStage(current.roteiro, id, patch)
       if (!optimistic) return false
       updatePlan(myKey, (p) => ({ ...p, roteiro: optimistic })) // o clique responde na hora
       let res = await save(current.roteiro, optimistic)
@@ -345,11 +375,11 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
         // Outra gravação (o Manager?) mexeu no roteiro: reaplica UMA vez sobre
         // o atual, que veio junto do conflito — se a etapa ainda existir.
         const fresh = res.current
-        if (fresh.etapas.find((e) => e.id === id)?.status === target) {
+        if (stageHas(fresh.etapas.find((e) => e.id === id), patch)) {
           updatePlan(myKey, (p) => ({ ...p, roteiro: fresh })) // já está como o usuário quis
           return true
         }
-        const retry = withStage(fresh, id, target)
+        const retry = withStage(fresh, id, patch)
         if (retry) {
           updatePlan(myKey, (p) => ({ ...p, roteiro: retry }))
           res = await save(fresh, retry)
@@ -366,10 +396,30 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
       } else {
         void load('reload') // desfaz o otimista
       }
-      fail(res, 'Não consegui mudar o status da etapa') // conflito: toast 'aviso' e recarrega
+      fail(res, what) // conflito: toast 'aviso' e recarrega
       return false
     },
     [projectCwd, slug, myKey, updatePlan, fail, load]
+  )
+
+  const toggleEtapa = useCallback(
+    async (id: string, next?: PlanningStageStatus): Promise<boolean> => {
+      const etapa = planRef.current?.roteiro.etapas.find((e) => e.id === id)
+      if (!etapa) return false
+      return saveStage(id, { status: next ?? nextStageStatus(etapa.status) }, 'Não consegui mudar o status da etapa')
+    },
+    [saveStage]
+  )
+
+  const setEstimativa = useCallback(
+    async (id: string, minutos: number | null): Promise<boolean> => {
+      if (minutos !== null && !isValidEstimativa(minutos)) {
+        notify('aviso', ESTIMATIVA_INVALIDA_MSG)
+        return false
+      }
+      return saveStage(id, { estimativa: minutos }, 'Não consegui salvar a estimativa da etapa')
+    },
+    [saveStage, notify]
   )
 
   const addMedia = useCallback(
@@ -383,5 +433,18 @@ export function usePlanning(projectCwd: string, slug: string): PlanningControlle
     [myKey, updatePlan]
   )
 
-  return { status, plan, error, born, reload, saveCard, deleteCard, saveLayout, saveViewport, toggleEtapa, addMedia }
+  return {
+    status,
+    plan,
+    error,
+    born,
+    reload,
+    saveCard,
+    deleteCard,
+    saveLayout,
+    saveViewport,
+    toggleEtapa,
+    setEstimativa,
+    addMedia
+  }
 }

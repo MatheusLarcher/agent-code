@@ -1,10 +1,11 @@
 /**
- * Os passos 2 (Gerar) e 3 (Revisar prompt(s)) do diálogo "Enviar para
- * implementação" (HandoffDialog). Só apresentação: estado e ações vêm dele.
+ * Os passos 1 (Conferir), 2 (Gerar) e 3 (Revisar prompt(s)) do diálogo "Enviar
+ * para implementação" (HandoffDialog). Só apresentação: estado e ações vêm dele.
  */
-import type { PlanningHandoffDto } from '@shared/ipc'
+import type { PlanningHandoffDto, PlanningHandoffSentDto, PlanningRoteiroDto } from '@shared/ipc'
 import { IconSpinner } from '../components/Icons'
-import { firstLine, HandoffBlockers, OutsideHandoffs } from './HandoffLists'
+import { handoffEstimate, handoffEstimateDetail, handoffEstimateLabel } from './handoffEstimate'
+import { firstLine, HandoffBlockers, OutsideHandoffs, PendingHandoffs, SentHandoffs } from './HandoffLists'
 import type { HandoffIssue } from './handoffReadiness'
 
 export interface Draft {
@@ -15,9 +16,20 @@ export interface Draft {
   /** O último texto gravado em _handoff/: só o que difere dele é gravado de novo. */
   saved: string
   text: string
+  /** As etapas que o prompt declarou (do .meta.json): o editado as herda. Ausente = nenhuma. */
+  etapas?: string[]
 }
 
-export const draftOf = (name: string, content: string): Draft => ({ name, original: content, saved: content, text: content })
+export const draftOf = (name: string, content: string, etapas?: readonly string[]): Draft => ({
+  name,
+  original: content,
+  saved: content,
+  text: content,
+  ...(etapas?.length ? { etapas: [...etapas] } : {})
+})
+
+/** O rascunho de um prompt de _handoff/, com as etapas que ele declarou. */
+export const draftFrom = (h: PlanningHandoffDto): Draft => draftOf(h.name, h.content, h.etapas)
 
 export type HandoffWork = null | 'ask' | 'draft' | 'send' | 'mark'
 
@@ -46,6 +58,88 @@ export function HandoffHeader(props: { titulo: string; step: HandoffStep }): JSX
         ))}
       </ol>
     </header>
+  )
+}
+
+/** Passo 1 (Conferir): bloqueios, avisos, o que está a enviar e o que já foi. */
+export function ReviewStep(props: {
+  managerBusy: boolean
+  blockers: readonly HandoffIssue[]
+  warnings: readonly HandoffIssue[]
+  override: boolean
+  onOverride: (v: boolean) => void
+  pending: readonly PlanningHandoffDto[]
+  sent: readonly PlanningHandoffSentDto[]
+  conversationExists: (id: string) => boolean
+  onOpenConversation: (id: string) => void
+  working: HandoffWork
+  /** Há prompts a enviar ou em revisão: "Revisar" é o botão principal. */
+  hasPending: boolean
+  reviewCount: number
+  onMarkSent: (name: string) => void
+  onClose: () => void
+  onAutoDraft: () => void
+  onAskManager: () => void
+  onReviewPending: () => void
+}): JSX.Element {
+  const { blockers, warnings, working } = props
+  const blocked = blockers.length > 0 && !props.override
+  return (
+    <>
+      <p className="modal-message">
+        O plano vira o prompt de uma conversa <b>nova</b> de implementação neste projeto. Confira antes de gerar.
+      </p>
+      {props.managerBusy && (
+        <div className="pl-handoff-wait" role="status">
+          <IconSpinner className="spinner" size={15} />
+          <div>
+            <strong>O Agent Manager está trabalhando.</strong>
+            <span>O que ele gravar em _handoff/ aparece aqui assim que ficar pronto.</span>
+          </div>
+        </div>
+      )}
+      <HandoffBlockers blockers={blockers} override={props.override} onOverride={props.onOverride} />
+      {warnings.length > 0 && (
+        <section className="pl-handoff-issues warn" aria-label="Avisos">
+          <h4>Avisos</h4>
+          <ul>
+            {warnings.map((i) => (
+              <li key={`${i.kind}:${i.ref ?? ''}`}>{i.text}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {blockers.length === 0 && warnings.length === 0 && (
+        <div className="pl-handoff-ok" role="status">
+          Tudo certo: nenhuma ambiguidade aberta, e todas as etapas estão concluídas e com cards.
+        </div>
+      )}
+      <PendingHandoffs pending={props.pending} disabled={working !== null} onMarkSent={props.onMarkSent} />
+      <SentHandoffs sent={props.sent} conversationExists={props.conversationExists} onOpenConversation={props.onOpenConversation} />
+      <div className="modal-actions">
+        <button type="button" className="btn ghost" onClick={props.onClose}>
+          Cancelar
+        </button>
+        <span className="pl-handoff-spacer" />
+        <button type="button" className="btn" disabled={blocked || working !== null} onClick={props.onAutoDraft}>
+          {working === 'draft' ? 'Gravando…' : 'Usar rascunho automático'}
+        </button>
+        {props.hasPending ? (
+          <>
+            <button type="button" className="btn" disabled={blocked || working !== null} onClick={props.onAskManager}>
+              Gerar de novo com o Agent Manager
+            </button>
+            <button type="button" className="btn primary" disabled={working !== null} onClick={props.onReviewPending}>
+              {props.reviewCount > 1 ? `Revisar ${props.reviewCount} prompts` : 'Revisar prompt'}
+            </button>
+          </>
+        ) : (
+          <button type="button" className="btn primary" disabled={blocked || working !== null} onClick={props.onAskManager}>
+            Pedir ao Agent Manager
+          </button>
+        )}
+      </div>
+    </>
   )
 }
 
@@ -104,6 +198,8 @@ export function WaitingStep(props: {
 
 export function PromptsStep(props: {
   drafts: readonly Draft[]
+  /** As etapas do roteiro ATUAL do plano aberto: a base do total estimado de cada prompt. */
+  roteiro: PlanningRoteiroDto['etapas']
   outside: readonly PlanningHandoffDto[]
   blockers: readonly HandoffIssue[]
   override: boolean
@@ -127,45 +223,55 @@ export function PromptsStep(props: {
       </p>
       <HandoffBlockers blockers={props.blockers} override={props.override} onOverride={props.onOverride} />
       <div className="pl-handoff-prompts">
-        {drafts.map((d, i) => (
-          <section className="pl-handoff-prompt" key={d.name}>
-            <div className="pl-handoff-prompt-head">
-              <span className="pl-handoff-prompt-n">
-                Prompt {i + 1} de {drafts.length}
-              </span>
-              <code>{d.name}</code>
-              {d.text !== d.original && <span className="pl-handoff-badge">editado</span>}
-              {i > 0 && <span className="pl-handoff-queue">entra na fila</span>}
-              <span className="pl-handoff-spacer" />
-              <button
-                type="button"
-                className="btn ghost small"
-                disabled={working !== null}
-                title="Só deste envio: o arquivo continua em _handoff/, a enviar"
-                onClick={() => props.onRemove(d.name)}
-              >
-                Tirar deste envio
-              </button>
-              <button
-                type="button"
-                className="btn ghost small"
-                disabled={working !== null}
-                title="Registra em _handoff/enviados.json que este prompt já foi enviado"
-                onClick={() => props.onMarkSent(d.name)}
-              >
-                Marcar como já enviado
-              </button>
-            </div>
-            <textarea
-              aria-label={`Prompt ${i + 1}`}
-              value={d.text}
-              spellCheck={false}
-              rows={drafts.length > 1 ? 9 : 16}
-              onChange={(e) => props.onText(i, e.target.value)}
-            />
-            {!d.text.trim() && <span className="pl-handoff-empty">Prompt vazio não é enviado — escreva algo ou volte.</span>}
-          </section>
-        ))}
+        {drafts.map((d, i) => {
+          const est = handoffEstimate(d.etapas, props.roteiro)
+          return (
+            <section className="pl-handoff-prompt" key={d.name}>
+              <div className="pl-handoff-prompt-head">
+                <span className="pl-handoff-prompt-n">
+                  Prompt {i + 1} de {drafts.length}
+                </span>
+                <code>{d.name}</code>
+                {d.text !== d.original && <span className="pl-handoff-badge">editado</span>}
+                {i > 0 && <span className="pl-handoff-queue">entra na fila</span>}
+                <span
+                  className={`pl-handoff-estimate${est ? '' : ' none'}`}
+                  data-testid={`estimativa-${i + 1}`}
+                  title={handoffEstimateDetail(est)}
+                >
+                  {handoffEstimateLabel(est)}
+                </span>
+                <span className="pl-handoff-spacer" />
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  disabled={working !== null}
+                  title="Só deste envio: o arquivo continua em _handoff/, a enviar"
+                  onClick={() => props.onRemove(d.name)}
+                >
+                  Tirar deste envio
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  disabled={working !== null}
+                  title="Registra em _handoff/enviados.json que este prompt já foi enviado"
+                  onClick={() => props.onMarkSent(d.name)}
+                >
+                  Marcar como já enviado
+                </button>
+              </div>
+              <textarea
+                aria-label={`Prompt ${i + 1}`}
+                value={d.text}
+                spellCheck={false}
+                rows={drafts.length > 1 ? 9 : 16}
+                onChange={(e) => props.onText(i, e.target.value)}
+              />
+              {!d.text.trim() && <span className="pl-handoff-empty">Prompt vazio não é enviado — escreva algo ou volte.</span>}
+            </section>
+          )
+        })}
         <OutsideHandoffs outside={props.outside} disabled={working !== null} onInclude={props.onInclude} />
       </div>
       <div className="modal-actions">

@@ -506,6 +506,77 @@ export const SQLITE_CONTEXT_TURN_MODELS_SCHEMA = `
   ALTER TABLE context_turn ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]';
 `
 
+/**
+ * Migration 15 — registro dos prompts de handoff (`handoff_envios`) e das
+ * etapas de cada um (`handoff_entregas`), espelha a 17 do PostgreSQL. Datas em
+ * TEXT ISO do relógio JS, booleanos 0/1, tempos em ms inteiros. Tabelas novas
+ * com `IF NOT EXISTS`: atravessam o guarda de `write()` sem custo.
+ *
+ * `board_item_id` sem FK de propósito: o cartão pode expirar e a entrega fica.
+ * O UNIQUE(envio_id, etapa_id) já indexa `envio_id` (coluna líder) — um índice
+ * só dela seria custo de escrita sem ganho.
+ */
+export const SQLITE_HANDOFF_TRACKING_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS handoff_envios (
+    id TEXT PRIMARY KEY,
+    plan_slug TEXT NOT NULL,
+    plan_titulo TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    project_cwd TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    conversation_title TEXT NOT NULL,
+    arquivo TEXT NOT NULL,
+    ordem INTEGER NOT NULL,
+    lote_id TEXT NOT NULL,
+    conteudo TEXT NOT NULL,
+    conteudo_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN (
+      'na_fila', 'enviado', 'em_execucao', 'aguardando_voce', 'parada', 'falhou', 'incompleta', 'concluida'
+    )),
+    motivo TEXT,
+    estimativa_total INTEGER,
+    prazo_total INTEGER,
+    atrasado INTEGER NOT NULL DEFAULT 0 CHECK(atrasado IN (0, 1)),
+    tempo_ativo_ms INTEGER NOT NULL DEFAULT 0,
+    retrabalho_ms INTEGER NOT NULL DEFAULT 0,
+    criado_em TEXT NOT NULL,
+    enviado_em TEXT,
+    iniciado_em TEXT,
+    concluido_em TEXT,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS handoff_envios_conversation ON handoff_envios(conversation_id);
+  CREATE INDEX IF NOT EXISTS handoff_envios_project ON handoff_envios(project_id);
+  CREATE INDEX IF NOT EXISTS handoff_envios_status ON handoff_envios(status);
+  CREATE TABLE IF NOT EXISTS handoff_entregas (
+    id TEXT PRIMARY KEY,
+    envio_id TEXT NOT NULL REFERENCES handoff_envios(id) ON DELETE CASCADE,
+    etapa_id TEXT NOT NULL,
+    etapa_titulo TEXT NOT NULL,
+    ordem INTEGER NOT NULL,
+    estimativa_plano INTEGER,
+    estimativa_agente INTEGER,
+    estimativa_agente_motivo TEXT,
+    estimativa_agente_em TEXT,
+    status TEXT NOT NULL CHECK(status IN ('pendente', 'em_andamento', 'concluida', 'incompleta')),
+    atrasada INTEGER NOT NULL DEFAULT 0 CHECK(atrasada IN (0, 1)),
+    motivo TEXT,
+    board_item_id TEXT,
+    auditada INTEGER CHECK(auditada IS NULL OR auditada IN (0, 1)),
+    corrigido_por TEXT CHECK(corrigido_por IS NULL OR corrigido_por = 'usuario'),
+    corrigido_em TEXT,
+    iniciada_em TEXT,
+    concluida_em TEXT,
+    tempo_ativo_ms INTEGER NOT NULL DEFAULT 0,
+    tempo_corrido_ms INTEGER,
+    retrabalho_ms INTEGER NOT NULL DEFAULT 0,
+    aviso_80_em TEXT,
+    aviso_100_em TEXT,
+    updated_at TEXT NOT NULL,
+    UNIQUE(envio_id, etapa_id)
+  );
+`
+
 export interface SqliteMigration {
   version: number
   name: string
@@ -563,7 +634,8 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     'CREATE INDEX IF NOT EXISTS board_item_events_item_at ON board_item_events(board_item_id, at);'
   ),
   migration(13, 'sqlite-v2-context-history', SQLITE_CONTEXT_HISTORY_SCHEMA),
-  migration(14, 'sqlite-v2-context-turn-models', SQLITE_CONTEXT_TURN_MODELS_SCHEMA, '')
+  migration(14, 'sqlite-v2-context-turn-models', SQLITE_CONTEXT_TURN_MODELS_SCHEMA, ''),
+  migration(15, 'sqlite-v2-handoff-tracking', SQLITE_HANDOFF_TRACKING_SCHEMA)
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

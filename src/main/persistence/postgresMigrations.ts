@@ -737,6 +737,77 @@ const CONTEXT_TURN_MODELS = `
 ALTER TABLE context_turn ADD COLUMN IF NOT EXISTS models_json jsonb NOT NULL DEFAULT '[]'::jsonb;
 `
 
+/**
+ * Migration 17 — registro dos prompts de handoff (`handoff_envios`) e das
+ * etapas de cada um (`handoff_entregas`), espelha a 15 do SQLite. Sem gatilho
+ * de change feed (molde `task_board_links`): o registro é lido sob demanda e o
+ * aviso à tela sai do processo que escreveu. Texto livre passa por
+ * encodePostgresText, como o quadro.
+ *
+ * `board_item_id` sem FK: o cartão pode expirar e a entrega fica. O
+ * UNIQUE(envio_id, etapa_id) já indexa `envio_id` (coluna líder).
+ */
+const HANDOFF_TRACKING = `
+CREATE TABLE IF NOT EXISTS handoff_envios (
+  id text PRIMARY KEY,
+  plan_slug text NOT NULL,
+  plan_titulo text NOT NULL,
+  project_id text NOT NULL,
+  project_cwd text NOT NULL,
+  conversation_id text NOT NULL,
+  conversation_title text NOT NULL,
+  arquivo text NOT NULL,
+  ordem integer NOT NULL,
+  lote_id text NOT NULL,
+  conteudo text NOT NULL,
+  conteudo_hash text NOT NULL,
+  status text NOT NULL CHECK (status IN (
+    'na_fila', 'enviado', 'em_execucao', 'aguardando_voce', 'parada', 'falhou', 'incompleta', 'concluida'
+  )),
+  motivo text,
+  estimativa_total integer,
+  prazo_total integer,
+  atrasado boolean NOT NULL DEFAULT false,
+  tempo_ativo_ms bigint NOT NULL DEFAULT 0,
+  retrabalho_ms bigint NOT NULL DEFAULT 0,
+  criado_em timestamptz NOT NULL DEFAULT clock_timestamp(),
+  enviado_em timestamptz,
+  iniciado_em timestamptz,
+  concluido_em timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS handoff_envios_conversation ON handoff_envios(conversation_id);
+CREATE INDEX IF NOT EXISTS handoff_envios_project ON handoff_envios(project_id);
+CREATE INDEX IF NOT EXISTS handoff_envios_status ON handoff_envios(status);
+CREATE TABLE IF NOT EXISTS handoff_entregas (
+  id text PRIMARY KEY,
+  envio_id text NOT NULL REFERENCES handoff_envios(id) ON DELETE CASCADE,
+  etapa_id text NOT NULL,
+  etapa_titulo text NOT NULL,
+  ordem integer NOT NULL,
+  estimativa_plano integer,
+  estimativa_agente integer,
+  estimativa_agente_motivo text,
+  estimativa_agente_em timestamptz,
+  status text NOT NULL CHECK (status IN ('pendente', 'em_andamento', 'concluida', 'incompleta')),
+  atrasada boolean NOT NULL DEFAULT false,
+  motivo text,
+  board_item_id text,
+  auditada boolean,
+  corrigido_por text CHECK (corrigido_por IS NULL OR corrigido_por = 'usuario'),
+  corrigido_em timestamptz,
+  iniciada_em timestamptz,
+  concluida_em timestamptz,
+  tempo_ativo_ms bigint NOT NULL DEFAULT 0,
+  tempo_corrido_ms bigint,
+  retrabalho_ms bigint NOT NULL DEFAULT 0,
+  aviso_80_em timestamptz,
+  aviso_100_em timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (envio_id, etapa_id)
+);
+`
+
 export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(1, 'postgres-base-schema', BASE_SCHEMA),
   migration(2, 'postgres-change-feed', CHANGE_FEED),
@@ -753,7 +824,8 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(13, 'postgres-conversation-outbox', CONVERSATION_OUTBOX),
   migration(14, 'postgres-board-item-events-justified-system', BOARD_ITEM_EVENTS_JUSTIFIED_SYSTEM),
   migration(15, 'postgres-context-history', CONTEXT_HISTORY),
-  migration(16, 'postgres-context-turn-models', CONTEXT_TURN_MODELS)
+  migration(16, 'postgres-context-turn-models', CONTEXT_TURN_MODELS),
+  migration(17, 'postgres-handoff-tracking', HANDOFF_TRACKING)
 ]
 
 const MIGRATION_TABLE = `

@@ -1,7 +1,14 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { act, cleanup, renderHook, screen, waitFor } from '@testing-library/react'
 import { UiProvider } from '../ui/UiProvider'
-import { CONFLICT_MSG, ROTEIRO_CONFLICT_MSG, isSamePlan, nextStageStatus, usePlanning } from './usePlanning'
+import {
+  CONFLICT_MSG,
+  ESTIMATIVA_INVALIDA_MSG,
+  ROTEIRO_CONFLICT_MSG,
+  isSamePlan,
+  nextStageStatus,
+  usePlanning
+} from './usePlanning'
 import { CWD, SLUG, makeCard, makePlan, mockPlanningApi } from './planningTestUtils'
 
 afterEach(cleanup)
@@ -240,6 +247,24 @@ describe('usePlanning — gravações', () => {
     ])
     expect(result.current.plan!.roteiro.etapas[1].status).toBe('em_andamento')
   })
+
+  it('toggleEtapa regrava o roteiro com a estimativa de cada etapa (cleanRoteiro não a descarta)', async () => {
+    const plan = makePlan()
+    plan.roteiro.etapas = plan.roteiro.etapas.map((e) => (e.id === 'entrega' ? e : { ...e, estimativa: e.id === 'desenho' ? 90 : 30 }))
+    const { api } = mockPlanningApi(plan)
+    const { result } = setup()
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    await act(async () => {
+      await result.current.toggleEtapa('desenho')
+    })
+    const sent = (api.planningSaveRoteiro.mock.calls[0] as unknown as [{ roteiro: { etapas: object[] } }])[0]
+    expect(sent.roteiro.etapas).toEqual([
+      { id: 'requisitos', titulo: 'Levantar requisitos', status: 'concluida', estimativa: 30 },
+      { id: 'desenho', titulo: 'Desenhar a solução', status: 'em_andamento', estimativa: 90 },
+      { id: 'entrega', titulo: 'Entregar', status: 'em_andamento' } // sem estimativa: sem a chave
+    ])
+    expect('estimativa' in sent.roteiro.etapas[2]).toBe(false)
+  })
 })
 
 type SaveRoteiroReq = { roteiro: { rev?: number; etapas: { id: string; status: string }[] }; expectedRev: number }
@@ -360,6 +385,95 @@ describe('usePlanning — rev do roteiro', () => {
     expect(ok).toBe(true)
     expect(mock.api.planningSaveRoteiro).toHaveBeenCalledTimes(1)
     expect(result.current.plan!.roteiro).toEqual(igual)
+  })
+})
+
+describe('usePlanning — estimativa da etapa (setEstimativa)', () => {
+  type Est = { id: string; estimativa?: number }
+  const ests = (r: { etapas: Est[] }): string[] => r.etapas.map((e) => `${e.id}:${e.estimativa ?? '—'}`)
+  const sentEst = (api: ReturnType<typeof mockPlanningApi>['api'], i: number) =>
+    (api.planningSaveRoteiro.mock.calls[i] as unknown as [{ roteiro: { etapas: Est[] }; expectedRev: number }])[0]
+  const withEst = (rev: number, desenho?: number, entrega?: number) => {
+    const r = { ...makePlan().roteiro, rev }
+    r.etapas = r.etapas.map((e) => {
+      const v = e.id === 'desenho' ? desenho : e.id === 'entrega' ? entrega : undefined
+      return v === undefined ? e : { ...e, estimativa: v }
+    })
+    return r
+  }
+  async function ready(roteiro = withEst(3)) {
+    const mock = mockPlanningApi(makePlan({ roteiro }))
+    const hook = setup()
+    await waitFor(() => expect(hook.result.current.status).toBe('ready'))
+    const set = async (id: string, v: number | null): Promise<boolean> => {
+      let ok = false
+      await act(async () => {
+        ok = await hook.result.current.setEstimativa(id, v)
+      })
+      return ok
+    }
+    return { ...mock, result: hook.result, set }
+  }
+
+  it('grava com o expectedRev carregado, guarda o rev novo; null tira a chave', async () => {
+    const { api, result, set } = await ready(withEst(3, 90))
+    expect(await set('entrega', 45)).toBe(true)
+    expect(sentEst(api, 0).expectedRev).toBe(3)
+    expect(ests(sentEst(api, 0).roteiro)).toEqual(['requisitos:—', 'desenho:90', 'entrega:45'])
+    expect(result.current.plan!.roteiro.rev).toBe(4)
+    expect(await set('desenho', null)).toBe(true)
+    expect(sentEst(api, 1).expectedRev).toBe(4)
+    expect('estimativa' in sentEst(api, 1).roteiro.etapas[1]).toBe(false)
+    expect(ests(result.current.plan!.roteiro)).toEqual(['requisitos:—', 'desenho:—', 'entrega:45'])
+    expect(await set('entrega', 45)).toBe(true) // igual ao atual: nada a gravar
+    expect(api.planningSaveRoteiro).toHaveBeenCalledTimes(2)
+  })
+
+  it('fora de 1..10000 ou não inteiro: não grava, toast "aviso"', async () => {
+    const { api, set } = await ready()
+    for (const v of [0, 10_001, 1.5, Number.NaN]) expect(await set('desenho', v)).toBe(false)
+    expect(api.planningSaveRoteiro).not.toHaveBeenCalled()
+    const toasts = await screen.findAllByText(ESTIMATIVA_INVALIDA_MSG)
+    expect(toasts[0].closest('.toast')?.classList.contains('aviso')).toBe(true)
+  })
+
+  it('roteiro_conflict: reaplica UMA vez sobre o atual, sem perder a mudança do outro', async () => {
+    const { api, result, set } = await ready()
+    api.planningSaveRoteiro.mockResolvedValueOnce({ ok: false, code: 'roteiro_conflict', message: 'x', current: withEst(5, undefined, 20) } as never)
+    expect(await set('desenho', 60)).toBe(true)
+    expect(api.planningSaveRoteiro).toHaveBeenCalledTimes(2)
+    expect(sentEst(api, 1).expectedRev).toBe(5)
+    expect(ests(sentEst(api, 1).roteiro)).toEqual(['requisitos:—', 'desenho:60', 'entrega:20'])
+    expect(result.current.plan!.roteiro.rev).toBe(6)
+    expect(screen.queryByText(ROTEIRO_CONFLICT_MSG)).toBeNull()
+  })
+
+  it('conflito também na segunda: desfaz, toast "aviso" e recarrega', async () => {
+    const { api, result, set } = await ready()
+    const conflict = (rev: number) => ({ ok: false, code: 'roteiro_conflict', message: 'x', current: withEst(rev) }) as never
+    api.planningSaveRoteiro.mockResolvedValueOnce(conflict(5)).mockResolvedValueOnce(conflict(6))
+    expect(await set('desenho', 60)).toBe(false)
+    expect(api.planningSaveRoteiro).toHaveBeenCalledTimes(2)
+    expect((await screen.findByText(ROTEIRO_CONFLICT_MSG)).closest('.toast')?.classList.contains('aviso')).toBe(true)
+    await waitFor(() => expect(api.planningOpen).toHaveBeenCalledTimes(2))
+    expect(ests(result.current.plan!.roteiro)).toEqual(['requisitos:—', 'desenho:—', 'entrega:—'])
+  })
+
+  it('o outro já gravou a mesma estimativa: nada a regravar', async () => {
+    const { api, result, set } = await ready()
+    api.planningSaveRoteiro.mockResolvedValueOnce({ ok: false, code: 'roteiro_conflict', message: 'x', current: withEst(5, 60) } as never)
+    expect(await set('desenho', 60)).toBe(true)
+    expect(api.planningSaveRoteiro).toHaveBeenCalledTimes(1)
+    expect(result.current.plan!.roteiro.rev).toBe(5)
+  })
+
+  it('falha de gravação: toast "erro" com o motivo e recarrega (desfaz)', async () => {
+    const { api, result, set } = await ready()
+    api.planningSaveRoteiro.mockResolvedValueOnce({ ok: false, code: 'io', message: 'disco cheio' } as never)
+    expect(await set('desenho', 60)).toBe(false)
+    const toast = await screen.findByText('Não consegui salvar a estimativa da etapa: disco cheio')
+    expect(toast.closest('.toast')?.classList.contains('erro')).toBe(true)
+    await waitFor(() => expect(ests(result.current.plan!.roteiro)).toEqual(['requisitos:—', 'desenho:—', 'entrega:—']))
   })
 })
 

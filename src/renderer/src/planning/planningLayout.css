@@ -1,7 +1,7 @@
 /*
- * Espaço da Tela de Planejamento: a alça entre roteiro e canvas e o roteiro
- * recolhido (trilho). Separado do planning.css, que está no limite de tamanho
- * do repo; mesmas variáveis do styles.css.
+ * Espaço da Tela de Planejamento: a alça entre roteiro e canvas, o roteiro
+ * recolhido (trilho) e a estimativa de cada etapa. Separado do planning.css,
+ * que está no limite de tamanho do repo; mesmas variáveis do styles.css.
  */
 
 /* ---- largura do roteiro: a da alça (--pl-roteiro-w), entre 180px e 40% da área ---- */
@@ -81,6 +81,52 @@
 
 .pl-rail-toggle:focus-visible,
 .pl-rail-step:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ---- estimativa da etapa (StageEstimate): na lista, no trilho e na coluna do canvas ---- */
+.pl-progress-est { margin: 3px 6px 0 4px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pl-est {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pl-est.empty { opacity: 0.7; }
+button.pl-est { cursor: pointer; }
+button.pl-est:hover { background: var(--line); color: var(--text); opacity: 1; }
+button.pl-est:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pl-est-input {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 58px;
+  margin-right: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
+}
+/* Coluna do canvas: status · estimativa · cards. O que não cabe na linha (nó de 248px)
+   desce inteiro para a de baixo — nada é cortado; os 56px do nó comportam as duas. */
+.pl-stage-meta { min-width: 0; flex-wrap: wrap; row-gap: 1px; }
+.pl-stage-meta > * { white-space: nowrap; }
+.pl-stage .pl-est { padding: 0; font-size: inherit; }
+
+/* Trilho: o total logo abaixo do contador e a estimativa embaixo de cada marca. */
+.pl-rail-est-total { margin-top: -7px; font-size: 10px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.planning .pl-rail .pl-rail-step { width: 40px; height: auto; min-height: 26px; padding: 4px 2px; gap: 1px; }
+.pl-rail-est { font-size: 9.5px; line-height: 1.15; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.pl-rail-est.empty { opacity: 0.6; }
 
 @media (prefers-reduced-motion: reduce) {
   .pl-splitter::after { transition: none; }

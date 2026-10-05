@@ -96,12 +96,13 @@ export function moveDelta(keys: MoveKeys, yaw: number, dt: number, out: { dx: nu
   return out
 }
 
-/** Botões do mouse → gesto. Esquerdo arrasta para girar; clique curto seleciona. */
+/** Botões do mouse → gesto. Esquerdo arrasta para girar; direito e do meio
+ *  arrastam para mover a câmera; clique curto seleciona. */
 export type DragMode = 'orbit' | 'pan' | null
 
 export function dragModeFor(button: number): DragMode {
-  if (button === 0 || button === 2) return 'orbit'
-  if (button === 1) return 'pan'
+  if (button === 0) return 'orbit'
+  if (button === 1 || button === 2) return 'pan'
   return null
 }
 

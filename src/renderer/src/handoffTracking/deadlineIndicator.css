@@ -1,0 +1,54 @@
+/* Indicador de prazo da conversa de implementação (DeadlineIndicator.tsx), na
+   linha do título do chat, logo depois do chip "Plano: <título>". */
+.deadline-indicator {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 45%;
+  margin-left: 6px;
+  padding: 2px 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+/* Separador visual entre as partes (fora do texto: não entra no textContent). */
+.deadline-indicator > span + span::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--muted);
+}
+.deadline-etapa {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+}
+.deadline-tempo,
+.deadline-agente {
+  flex: none;
+}
+.deadline-tempo { font-weight: 600; }
+
+/* Sem prazo / sem dado: discreto. */
+.deadline-indicator.is-neutro { opacity: 0.75; }
+.deadline-indicator.is-neutro .deadline-tempo { font-weight: 400; }
+
+.deadline-indicator.is-ok .deadline-tempo { color: var(--ok); }
+
+/* 80% do prazo. */
+.deadline-indicator.is-alerta { border-color: var(--warn); }
+.deadline-indicator.is-alerta .deadline-tempo { color: var(--warn); }
+
+/* Passou do prazo. */
+.deadline-indicator.is-estourado {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+}
+.deadline-indicator.is-estourado .deadline-tempo { color: var(--err); }

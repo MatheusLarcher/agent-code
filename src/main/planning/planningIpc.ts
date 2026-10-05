@@ -14,8 +14,10 @@ import {
   type PlanningRoteiroDto,
   type PlanMediaDto
 } from '../../shared/ipc'
+import { isValidEstimativa, MAX_ESTIMATIVA_MIN } from '../../shared/planningEstimate'
 import { isValidMediaName, MAX_ANEXOS_POR_CARD, MAX_MEDIA_BYTES } from '../../shared/planningMedia'
 import type { PlanningPeekDto } from '../../shared/officeApi'
+import { MAX_HANDOFF_ETAPAS } from './handoffFiles'
 import * as realSent from './handoffSent'
 import { HandoffSentMarkSchema } from './handoffSent'
 import { notifyPlanningChanged, setPlanningChangeSink } from './planningEvents'
@@ -93,6 +95,7 @@ const ProjectCwd = z
   .refine((p) => path.isAbsolute(p), 'projectCwd deve ser caminho absoluto')
 const Rev = z.number().int().min(0)
 const Text = z.string().max(1000)
+const ESTIMATIVA_MSG = `estimativa em minutos inteiros, de 1 a ${MAX_ESTIMATIVA_MIN}`
 
 const refShape = { projectCwd: ProjectCwd, slug: Name }
 
@@ -111,7 +114,16 @@ const CardSchema = z.strictObject({
 
 const RoteiroSchema = z.strictObject({
   titulo: Text,
-  etapas: z.array(z.strictObject({ id: Name, titulo: Text, status: z.enum(STAGE_STATUSES) })).max(500)
+  etapas: z
+    .array(
+      z.strictObject({
+        id: Name,
+        titulo: Text,
+        status: z.enum(STAGE_STATUSES),
+        estimativa: z.number().refine(isValidEstimativa, ESTIMATIVA_MSG).optional()
+      })
+    )
+    .max(500)
 })
 
 const Point = z.strictObject({ x: z.number(), y: z.number() })
@@ -129,7 +141,13 @@ const SaveRoteiroReq = z.strictObject({ ...refShape, roteiro: RoteiroSchema, exp
 const SaveLayoutReq = z.strictObject({ ...refShape, layout: LayoutSchema })
 const WriteHandoffReq = z.strictObject({
   ...refShape,
-  conteudo: z.string().max(1_000_000).refine((s) => s.trim() !== '', 'o prompt de handoff está vazio')
+  conteudo: z.string().max(1_000_000).refine((s) => s.trim() !== '', 'o prompt de handoff está vazio'),
+  /** As etapas que o prompt cobre (a versão editada herda as da original); [] = nenhuma declarada. */
+  etapas: z
+    .array(Name)
+    .max(MAX_HANDOFF_ETAPAS)
+    .refine((ids) => new Set(ids).size === ids.length, 'etapa repetida')
+    .optional()
 })
 const MarkHandoffsSentReq = z.strictObject({ ...refShape, entries: z.array(HandoffSentMarkSchema).min(1).max(200) })
 /** Base64 de até MAX_MEDIA_BYTES (o tamanho decodificado é conferido de novo no importMedia). */
@@ -370,8 +388,8 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
   register(
     Channels.planningWriteHandoff,
     WriteHandoffReq,
-    async ({ projectCwd, slug, conteudo }): Promise<PlanningResult<{ name: string }>> => {
-      const file = await store.writeHandoff(projectCwd, slug, conteudo)
+    async ({ projectCwd, slug, conteudo, etapas }): Promise<PlanningResult<{ name: string }>> => {
+      const file = await store.writeHandoff(projectCwd, slug, conteudo, new Date(), etapas)
       return { ok: true, name: path.basename(file) }
     }
   )

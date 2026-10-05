@@ -77,6 +77,14 @@ describe('computeLayout — colunas por etapa', () => {
     expect(columns.map((c) => c.id)).toEqual([NO_STAGE_ID])
     expect(positions.x).toEqual({ x: 0, y: FIRST_CARD_Y })
   })
+
+  it('a coluna leva a estimativa da etapa; sem ela (e na "Sem etapa") a chave não existe', () => {
+    const comEstimativa = { ...roteiro, etapas: roteiro.etapas.map((e) => (e.id === 'desenho' ? { ...e, estimativa: 45 } : e)) }
+    const { columns } = computeLayout(comEstimativa, [], undefined)
+    expect(columns.map((c) => c.estimativa)).toEqual([undefined, 45, undefined, undefined])
+    expect('estimativa' in columns[0]).toBe(false)
+    expect('estimativa' in columns.at(-1)!).toBe(false)
+  })
 })
 
 describe('computeLayout — posição salva', () => {

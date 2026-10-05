@@ -33,6 +33,9 @@ export {
   planSandboxDirPath,
   setPlanningDataRoot
 } from './planningRoot'
+// Os prompts de handoff (_handoff/*.md e as etapas de cada um) moram em
+// handoffFiles; quem já importava daqui continua importando.
+export { listHandoffs, readHandoffEtapas, writeHandoff, type HandoffFile } from './handoffFiles'
 
 /**
  * Armazenamento em disco da Tela de Planejamento, por projeto:
@@ -112,13 +115,6 @@ export class RoteiroConflictError extends Error {
 
 /** O que quem grava manda: o rev novo é sempre o do disco + 1. */
 export type RoteiroDraft = Pick<Roteiro, 'titulo' | 'etapas'>
-
-/** Um prompt de handoff gravado em _handoff/ (`createdAt` em ms desde a época). */
-export interface HandoffFile {
-  name: string
-  createdAt: number
-  content: string
-}
 
 /**
  * Fila por arquivo: ler-conferir-gravar de um arquivo do planejamento (roteiro,
@@ -409,88 +405,4 @@ export async function saveRoteiro(
 export async function saveLayout(projectCwd: string, slug: string, layout: CanvasLayout): Promise<void> {
   const clean = validateLayout(layout)
   await atomicWrite(await resolvePlanPath(projectCwd, slug, '_canvas.json'), JSON.stringify(clean, null, 2) + '\n')
-}
-
-function today(now: Date): string {
-  const p = (n: number): string => String(n).padStart(2, '0')
-  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
-}
-
-/**
- * Grava o prompt enviado ao agente principal em _handoff/AAAA-MM-DD-NN.md;
- * devolve o caminho. Só num planejamento que existe (PlanNotFoundError): sem
- * isso, gravar criaria uma pasta de planejamento solta.
- */
-export async function writeHandoff(
-  projectCwd: string,
-  slug: string,
-  conteudo: string,
-  now: Date = new Date()
-): Promise<string> {
-  if ((await readIfExists(await resolvePlanPath(projectCwd, slug, '_roteiro.md'))) === null) {
-    throw new PlanNotFoundError(slug)
-  }
-  const dir = await resolvePlanPath(projectCwd, slug, '_handoff')
-  await fs.mkdir(dir, { recursive: true })
-  const day = today(now)
-  const re = new RegExp(`^${day}-(\\d{2,})\\.md$`)
-  for (let attempt = 0; attempt < 5; attempt++) {
-    let max = 0
-    for (const name of await fs.readdir(dir)) {
-      const m = re.exec(name)
-      if (m) max = Math.max(max, Number(m[1]))
-    }
-    const file = await resolvePlanPath(projectCwd, slug, '_handoff', `${day}-${String(max + 1).padStart(2, '0')}.md`)
-    try {
-      await fs.writeFile(file, String(conteudo ?? ''), { encoding: 'utf8', flag: 'wx' })
-      return file
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-    }
-  }
-  throw new Error('não foi possível numerar o handoff')
-}
-
-const HANDOFF_NAME = /^(\d{4}-\d{2}-\d{2})-(\d+)\.md$/
-
-/** Ordem dos handoffs: pelo nome AAAA-MM-DD-NN (NN numérico, pode passar de 99);
- *  nome fora do formato vai pela data de criação e, empatando, pelo nome. */
-function compareHandoffs(a: HandoffFile, b: HandoffFile): number {
-  const ma = HANDOFF_NAME.exec(a.name)
-  const mb = HANDOFF_NAME.exec(b.name)
-  if (ma && mb) {
-    if (ma[1] !== mb[1]) return ma[1] < mb[1] ? -1 : 1
-    return Number(ma[2]) - Number(mb[2])
-  }
-  if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt
-  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
-}
-
-/**
- * Os prompts gravados em _handoff/ (só arquivos .md comuns — symlink e pasta
- * ficam de fora), na ordem em que foram gravados. Sem a pasta, lista vazia.
- */
-export async function listHandoffs(projectCwd: string, slug: string): Promise<HandoffFile[]> {
-  const dir = await resolvePlanPath(projectCwd, slug, '_handoff')
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = await fs.readdir(dir, { withFileTypes: true })
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
-    throw err
-  }
-  const out: HandoffFile[] = []
-  for (const e of entries) {
-    if (!e.isFile() || !e.name.toLowerCase().endsWith('.md')) continue
-    const file = await resolvePlanPath(projectCwd, slug, '_handoff', e.name)
-    try {
-      const [stat, content] = await Promise.all([fs.stat(file), fs.readFile(file, 'utf8')])
-      const born = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs
-      out.push({ name: e.name, createdAt: Math.round(born), content })
-    } catch (err) {
-      // Apagado entre o readdir e a leitura: não entra na lista.
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
-    }
-  }
-  return out.sort(compareHandoffs)
 }

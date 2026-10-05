@@ -44,6 +44,8 @@ export interface LayoutColumn {
   titulo: string
   /** null na coluna "Sem etapa". */
   status: PlanningStageStatus | null
+  /** Minutos de trabalho do agente na etapa; ausente = sem estimativa (e na "Sem etapa"). */
+  estimativa?: number
   index: number
   x: number
   /** Cards da coluna, na ordem em que chegaram. */
@@ -113,7 +115,9 @@ export function computeLayout(
     if (stageIds.has(etapa.id)) continue // roteiro editado à mão com etapa repetida
     stageIds.add(etapa.id)
     const index = columns.length
-    columns.push({ id: etapa.id, titulo: etapa.titulo, status: etapa.status, index, x: columnX(index), cardIds: [] })
+    const column: LayoutColumn = { id: etapa.id, titulo: etapa.titulo, status: etapa.status, index, x: columnX(index), cardIds: [] }
+    if (etapa.estimativa !== undefined) column.estimativa = etapa.estimativa
+    columns.push(column)
   }
   const lastIndex = columns.length
   columns.push({ id: NO_STAGE_ID, titulo: NO_STAGE_LABEL, status: null, index: lastIndex, x: columnX(lastIndex), cardIds: [] })

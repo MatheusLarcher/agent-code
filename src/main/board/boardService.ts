@@ -9,6 +9,7 @@ import {
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
 import type { BoardDismissBy, BoardItem, BoardItemEvent, BoardPoCreate, BoardPoWrite, PersistenceRepository } from '../persistence/types'
 import {
+  BOARD_USER_MOVE_REASON_PREFIX,
   boardItemStatus,
   boardItemTitle,
   boardItemTurnEndKind,
@@ -472,7 +473,7 @@ export class BoardService {
     const item = await this.applyPo({
       id,
       poStatus: toStatus,
-      poReason: `o usuário moveu o cartão para "${MOVE_STATUS_LABEL[toStatus]}" pelo quadro`,
+      poReason: `${BOARD_USER_MOVE_REASON_PREFIX} para "${MOVE_STATUS_LABEL[toStatus]}" pelo quadro`,
       actor: 'user'
     })
     return item ? { ok: true } : { ok: false, message: 'Não foi possível gravar a mudança no quadro.' }

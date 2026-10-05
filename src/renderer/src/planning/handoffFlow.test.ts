@@ -5,6 +5,8 @@ import {
   HANDOFF_CLOCK_SLACK_MS,
   handoffOutcome,
   handoffPartialMessage,
+  handoffRegistrar,
+  handoffRegisterWarning,
   launchHandoff,
   managerHandoffRequest,
   managerQuestionnaireRequest,
@@ -24,6 +26,30 @@ describe('managerHandoffRequest', () => {
     expect(text).toMatch(/TodoWrite\/TaskCreate/)
     expect(text).toMatch(/Não implemente nada/)
     expect(text).not.toMatch(/ambiguidade.*aberta/i)
+  })
+
+  it('exige as etapas de cada prompt, a tabela etapa → estimativa com o total e o prefixo [id-da-etapa] no TodoWrite', () => {
+    const text = managerHandoffRequest('D:\\dados\\checkout')
+    expect(text).toMatch(/em cada chamada de mcp__planning__plan_handoff_write, informe em "etapas" os ids das etapas do roteiro que aquele prompt cobre, na ordem/)
+    expect(text).toMatch(/traga a tabela etapa → estimativa \(minutos de trabalho do agente, como estão no roteiro\) e o total do prompt/)
+    expect(text).toMatch(/\(TodoWrite\/TaskCreate\), cada item começando pelo id da etapa entre colchetes, \[id-da-etapa\]/)
+    // Etapa sem estimativa: a única mudança no roteiro permitida agora, para a tabela bater com ele —
+    // e com a lista INTEIRA, porque o plan_roteiro_set substitui o roteiro (só a etapa estimada apagaria as outras).
+    expect(text).toMatch(
+      /Única exceção: etapa sem estimativa — estime-a antes com mcp__planning__plan_roteiro_set mandando a lista INTEIRA de etapas/
+    )
+    expect(text).toMatch(/etapa que ficar de fora é apagada/)
+    expect(text).toMatch(/mudando só a estimativa que faltava/)
+    expect(text).not.toMatch(/\(só a estimativa\)/)
+  })
+
+  it('exige que cada prompt mande a implementação declarar estimativa e tempo de cada etapa', () => {
+    const text = managerHandoffRequest('D:\\dados\\checkout')
+    expect(text).toContain('mcp__entregas__entrega_estimar')
+    expect(text).toContain('"Etapa N — <título>: estimativa do plano X min (prazo), minha estimativa Z min"')
+    expect(text).toContain('mcp__entregas__entrega_tempo')
+    expect(text).toContain('"levou Y min de trabalho (dentro/fora do prazo)"')
+    expect(text).toMatch(/a do agente não o muda, e o tempo que vale é o medido pelo app/)
   })
 
   it('com ambiguidades abertas (enviar mesmo assim), avisa o Manager', () => {
@@ -113,6 +139,123 @@ describe('launchHandoff', () => {
     expect(create).not.toHaveBeenCalled()
     await launchHandoff<Conv>(['', 'só este'], { create, send })
     expect(send.mock.calls.map((c) => (c as unknown[])[1])).toEqual(['só este'])
+  })
+
+  it('registra depois de criar e ANTES do 1º envio, com nome e texto pareados antes do filtro de branco', async () => {
+    const log: string[] = []
+    const register = vi.fn(async (conv: Conv, prompts: readonly { text: string; name?: string }[]) => {
+      await Promise.resolve()
+      log.push(`register:${conv.id}:${prompts.map((p) => `${p.name}=${p.text}`).join(',')}`)
+    })
+    const res = await launchHandoff<Conv>(
+      [
+        { text: 'um', name: 'a.md' },
+        { text: '   ', name: 'b.md' }, // em branco no meio: os nomes seguintes não escorregam
+        { text: 'tres', name: 'c.md' }
+      ],
+      {
+        create: () => {
+          log.push('create')
+          return { id: 'impl' }
+        },
+        register,
+        send: async (_c, text) => {
+          log.push(`send:${text}`)
+          return true
+        }
+      }
+    )
+    expect(log).toEqual(['create', 'register:impl:a.md=um,c.md=tres', 'send:um', 'send:tres'])
+    expect(res).toEqual({ conv: { id: 'impl' }, delivered: 2, total: 2 })
+  })
+
+  it('falha do register não impede o envio: é reportada pelo onRegisterError', async () => {
+    const boom = new Error('banco fora do ar')
+    const onRegisterError = vi.fn()
+    const send = vi.fn(async () => true)
+    const res = await launchHandoff<Conv>([{ text: 'um', name: 'a.md' }, 'dois'], {
+      create: () => ({ id: 'x' }),
+      register: async () => {
+        throw boom
+      },
+      onRegisterError,
+      send
+    })
+    expect(onRegisterError).toHaveBeenCalledWith(boom)
+    expect(res).toEqual({ conv: { id: 'x' }, delivered: 2, total: 2 })
+    // Lançar SÍNCRONO, ou o próprio aviso lançar, também não derruba nada.
+    const sync = await launchHandoff<Conv>(['um'], {
+      create: () => ({ id: 'y' }),
+      register: () => {
+        throw boom
+      },
+      onRegisterError: () => {
+        throw new Error('toast quebrou')
+      },
+      send
+    })
+    expect(sync.delivered).toBe(1)
+  })
+
+  it('register que não responde: o prazo estoura, o aviso sai e o envio segue', async () => {
+    const onRegisterError = vi.fn()
+    const send = vi.fn(async () => true)
+    const res = await launchHandoff<Conv>(['um'], {
+      create: () => ({ id: 'x' }),
+      register: () => new Promise<void>(() => undefined),
+      registerTimeoutMs: 5,
+      onRegisterError,
+      send
+    })
+    expect(onRegisterError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/não respondeu/) }))
+    expect(res.delivered).toBe(1)
+  })
+
+  it('sem nenhum prompt com texto, nem registra', async () => {
+    const register = vi.fn(async () => undefined)
+    await launchHandoff<Conv>([{ text: ' ', name: 'a.md' }], { create: () => ({ id: 'x' }), send: async () => true, register })
+    expect(register).not.toHaveBeenCalled()
+  })
+})
+
+describe('handoffRegistrar (register ligado ao IPC handoff:register)', () => {
+  const conv = { id: 'conv-1', title: 'Implementação: Checkout' }
+
+  it('manda cada prompt com o seu arquivo, a conversa e o plano', async () => {
+    const handoffRegister = vi.fn(async () => ({ ok: true as const, envios: [] }))
+    await handoffRegistrar({ handoffRegister }, 'C:\\proj', 'checkout')(conv, [
+      { text: '# um', name: 'a.md' },
+      { text: '# dois', name: 'b.md' }
+    ])
+    expect(handoffRegister).toHaveBeenCalledWith({
+      projectCwd: 'C:\\proj',
+      slug: 'checkout',
+      conversationId: 'conv-1',
+      conversationTitle: 'Implementação: Checkout',
+      prompts: [
+        { arquivo: 'a.md', conteudo: '# um' },
+        { arquivo: 'b.md', conteudo: '# dois' }
+      ]
+    })
+  })
+
+  it('falha do main vira exceção com a mensagem dele; prompt sem arquivo não é registrado', async () => {
+    const handoffRegister = vi.fn(async () => ({ ok: false as const, message: 'planejamento não encontrado' }))
+    const register = handoffRegistrar({ handoffRegister }, 'C:\\proj', 'checkout')
+    await expect(register(conv, [{ text: 'x', name: 'a.md' }])).rejects.toThrow('planejamento não encontrado')
+    handoffRegister.mockClear()
+    await register(conv, [{ text: 'sem arquivo' }])
+    expect(handoffRegister).not.toHaveBeenCalled()
+  })
+
+  it('título longo é cortado no teto do IPC', async () => {
+    const handoffRegister = vi.fn(async () => ({ ok: true as const, envios: [] }))
+    await handoffRegistrar({ handoffRegister }, 'C:\\proj', 'p')({ id: 'c', title: 'T'.repeat(800) }, [{ text: 'x', name: 'a.md' }])
+    expect((handoffRegister.mock.calls[0] as unknown as [{ conversationTitle: string }])[0].conversationTitle).toHaveLength(500)
+  })
+
+  it('o aviso diz que o envio seguiu e por que não registrou', () => {
+    expect(handoffRegisterWarning(new Error('EBUSY'))).toMatch(/seguiu, mas não consegui registrá-lo no banco[\s\S]*EBUSY$/)
   })
 })
 

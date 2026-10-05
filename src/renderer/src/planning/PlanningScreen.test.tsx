@@ -101,6 +101,23 @@ describe('PlanningScreen — canvas', () => {
     expect(within(screen.getByTestId('pl-card-duvida')).getByText('aberta')).toBeTruthy()
   })
 
+  it('coluna da etapa mostra a estimativa (ou "—"); editar no roteiro grava e a coluna acompanha', async () => {
+    const plan = makePlan()
+    plan.roteiro.etapas[0] = { ...plan.roteiro.etapas[0], estimativa: 90 }
+    const { api } = mockPlanningApi(plan)
+    const { container } = renderScreen()
+    await screen.findByRole('heading', { name: 'Plano de teste' })
+    const stageEsts = () => [...container.querySelectorAll('.pl-stage .pl-est')].map((el) => el.textContent)
+    expect(stageEsts()).toEqual(['1 h 30 min', '—', '—']) // "Sem etapa" não tem estimativa
+    fireEvent.click(screen.getByRole('button', { name: 'Estimativa de Entregar: nenhuma. Editar' }))
+    const input = screen.getByRole('textbox', { name: 'Estimativa de Entregar, em minutos' })
+    fireEvent.change(input, { target: { value: '25' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(stageEsts()).toEqual(['1 h 30 min', '—', '25 min']))
+    expect(api.planningSaveRoteiro).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('pl-progress-estimate').textContent).toBe('Total: 1 h 55 min · 1 sem estimativa')
+  })
+
   it('sugestão com fonte em arquivo do projeto mostra o arquivo como texto, não como link', async () => {
     mockPlanningApi(
       makePlan({ cards: [makeCard('reuso', { tipo: 'sugestao', titulo: 'Reusar o parser', fonte: 'src/main/parser.ts:42' })] })

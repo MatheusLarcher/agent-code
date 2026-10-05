@@ -29,6 +29,8 @@ import { memoryWriteDenial } from './memory/memoryPaths'
 import { createMemoryMcpServer } from './memory/memoryTools'
 import { createTaskMcpServer } from './tasks/taskTools'
 import { taskLedger } from './tasks/taskRuntime'
+import { entregaMcpServerFor, entregaToolAutoAllowed } from './handoffTracking/entregaTools'
+import { sessionDeadlineNotice } from './handoffTracking/handoffDeadlineHook'
 import { activeScopesFor, writeScopeDenial, type ScopedTask } from './tasks/writeScopeGuard'
 import { newPlanGateState, notePlanTool, notePlanTurn, planGateDenial } from './board/planGate'
 import { buildSpecialistAgents } from './agents/specialists'
@@ -1101,6 +1103,10 @@ export class AgentSession {
         }
       })
     }
+    // Conversa de handoff: estimativa e tempo de cada etapa (entrega_*). Só nela —
+    // a comum não tem envio, e o Agent Manager troca os servidores mais abaixo.
+    const entregas = entregaMcpServerFor(this.opts)
+    if (entregas) mcpServers.entregas = entregas
     // Tell the model where its per-user memory lives (and pre-load the complete catalog), so
     // "lembra disso" saves into the cache folder and recall works across chats.
     const cacheInfo = getCacheInfo()
@@ -1385,6 +1391,10 @@ export class AgentSession {
             this.restartOpaqueCalls.delete(input.tool_use_id)
             this.toolsInFlight.delete(input.tool_use_id)
             this.markActivity()
+            // Handoff: o aviso de prazo da etapa (80% e 100%, uma vez por marco).
+            // Só texto anexado — nunca interrompe; null no resto (handoffDeadlineHook.ts).
+            const notice = await sessionDeadlineNotice(this.opts, input.agent_id)
+            if (notice) return { hookSpecificOutput: { hookEventName: 'PostToolUse' as const, additionalContext: notice } }
           }
           return {}
         }] }],
@@ -2501,8 +2511,9 @@ ${lines}
     // O registro de tarefas é contabilidade interna do time de agentes: só
     // escreve no banco do próprio app, nunca no projeto. Lease, fence e máquina
     // de estados são impostos pelo repositório, não por um clique do usuário —
-    // um modal aqui só ensinaria a clicar sem ler.
-    if (toolName.startsWith('mcp__tasks__')) {
+    // um modal aqui só ensinaria a clicar sem ler. As entrega_* da conversa de
+    // handoff, pelo mesmo motivo: só gravam a estimativa do agente no banco.
+    if (toolName.startsWith('mcp__tasks__') || entregaToolAutoAllowed(this.opts, toolName)) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     // As plan_* do Agent Manager só gravam pelo planningStore (validação, rev,

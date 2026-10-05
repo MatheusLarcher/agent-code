@@ -13,7 +13,9 @@
  *    prompt(s) com plan_handoff_write, e espera arquivos NOVOS em _handoff/
  *    (relista a cada planning:changed). Ou grava o rascunho automático.
  * 3. Revisar prompt(s) — editável; o editado vira arquivo novo em _handoff/
- *    antes do envio (o original fica "substituído por" ele em enviados.json).
+ *    antes do envio (o original fica "substituído por" ele em enviados.json),
+ *    com as MESMAS etapas declaradas da original. Cada prompt mostra o total
+ *    estimado das etapas dele pelo roteiro atual (handoffEstimate).
  *    `onSend` cria a conversa; os prompts ENTREGUES são registrados como
  *    enviados a ela. Criada, o diálogo fecha mesmo se o envio falhar.
  *
@@ -46,9 +48,19 @@ import {
   saveHandoffSession,
   type HandoffSendOutcome
 } from './handoffFlow'
-import { HandoffBlockers, PendingHandoffs, SentHandoffs } from './HandoffLists'
+import { roteiroEtapaIds } from './handoffEstimate'
 import { buildDraftHandoff, handoffReadiness } from './handoffReadiness'
-import { draftOf, HandoffHeader, PromptsStep, WaitingStep, type Draft, type HandoffStep, type HandoffWork } from './HandoffSteps'
+import {
+  draftFrom,
+  draftOf,
+  HandoffHeader,
+  PromptsStep,
+  ReviewStep,
+  WaitingStep,
+  type Draft,
+  type HandoffStep,
+  type HandoffWork
+} from './HandoffSteps'
 import { useOpenedPlan } from './planningPlanContext'
 import { isSamePlan } from './usePlanning'
 
@@ -164,7 +176,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     if (ready || !listing) return
     const todo = pendingHandoffs(listing.handoffs, listing.sent)
     if (todo.length > 0) {
-      setDrafts(todo.map((h) => draftOf(h.name, h.content)))
+      setDrafts(todo.map(draftFrom))
       setStep('prompts')
     }
     setReady(true)
@@ -173,7 +185,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
   // Do "Conferir": retoma os prompts em revisão ou carrega os pendentes.
   const reviewPending = (): void => {
     waitingRef.current = null
-    if (drafts.length === 0) setDrafts(pending.map((h) => draftOf(h.name, h.content)))
+    if (drafts.length === 0) setDrafts(pending.map(draftFrom))
     setStep('prompts')
   }
 
@@ -235,24 +247,28 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     onAskManager(managerHandoffRequest(plan.dir, override ? blockers.length : 0, plan.media?.length ?? 0))
   }
 
+  // O rascunho automático cobre o roteiro inteiro: declara todas as etapas.
   const writeAutoDraft = async (): Promise<void> => {
     const conteudo = buildDraftHandoff(plan)
+    const etapas = roteiroEtapaIds(plan.roteiro.etapas)
     setWorking('draft')
-    const res = await safe(() => window.api.planningWriteHandoff({ projectCwd, slug, conteudo }))
+    const res = await safe(() =>
+      window.api.planningWriteHandoff({ projectCwd, slug, conteudo, ...(etapas.length ? { etapas } : {}) })
+    )
     setWorking(null)
     if (!res.ok) {
       notify('erro', `Não consegui gravar o rascunho automático: ${failureText(res)}`)
       return
     }
     waitingRef.current = null
-    setDrafts([draftOf(res.name, conteudo)])
+    setDrafts([draftOf(res.name, conteudo, etapas)])
     setStep('prompts')
     reloadSaved()
   }
 
   const reviewFound = (): void => {
     waitingRef.current = null
-    setDrafts(found.map((h) => draftOf(h.name, h.content)))
+    setDrafts(found.map(draftFrom))
     setStep('prompts')
   }
 
@@ -292,7 +308,9 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     }
     for (const [i, d] of drafts.entries()) {
       if (d.text === d.saved) continue
-      const res = await safe(() => window.api.planningWriteHandoff({ projectCwd, slug, conteudo: d.text }))
+      // O editado herda as etapas da original (o registro no banco as lê do arquivo novo).
+      const etapas = d.etapas?.length ? { etapas: d.etapas } : {}
+      const res = await safe(() => window.api.planningWriteHandoff({ projectCwd, slug, conteudo: d.text, ...etapas }))
       if (!res.ok) {
         await commit()
         notify('erro', `Não consegui gravar o prompt editado (${d.name}): ${failureText(res)}. Nada foi enviado.`)
@@ -374,65 +392,25 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
         )}
 
         {ready && step === 'review' && (
-          <>
-            <p className="modal-message">
-              O plano vira o prompt de uma conversa <b>nova</b> de implementação neste projeto. Confira antes de gerar.
-            </p>
-            {managerBusy && (
-              <div className="pl-handoff-wait" role="status">
-                <IconSpinner className="spinner" size={15} />
-                <div>
-                  <strong>O Agent Manager está trabalhando.</strong>
-                  <span>O que ele gravar em _handoff/ aparece aqui assim que ficar pronto.</span>
-                </div>
-              </div>
-            )}
-            <HandoffBlockers blockers={blockers} override={override} onOverride={setOverride} />
-            {warnings.length > 0 && (
-              <section className="pl-handoff-issues warn" aria-label="Avisos">
-                <h4>Avisos</h4>
-                <ul>
-                  {warnings.map((i) => (
-                    <li key={`${i.kind}:${i.ref ?? ''}`}>{i.text}</li>
-                  ))}
-                </ul>
-              </section>
-            )}
-            {blockers.length === 0 && warnings.length === 0 && (
-              <div className="pl-handoff-ok" role="status">
-                Tudo certo: nenhuma ambiguidade aberta, e todas as etapas estão concluídas e com cards.
-              </div>
-            )}
-            <PendingHandoffs pending={pending} disabled={working !== null} onMarkSent={(n) => void markManual(n)} />
-            <SentHandoffs
-              sent={listing?.sent ?? []}
-              conversationExists={conversationExists}
-              onOpenConversation={openConversation}
-            />
-            <div className="modal-actions">
-              <button type="button" className="btn ghost" onClick={onClose}>
-                Cancelar
-              </button>
-              <span className="pl-handoff-spacer" />
-              <button type="button" className="btn" disabled={blocked || working !== null} onClick={() => void writeAutoDraft()}>
-                {working === 'draft' ? 'Gravando…' : 'Usar rascunho automático'}
-              </button>
-              {hasPending ? (
-                <>
-                  <button type="button" className="btn" disabled={blocked || working !== null} onClick={() => void askManager()}>
-                    Gerar de novo com o Agent Manager
-                  </button>
-                  <button type="button" className="btn primary" disabled={working !== null} onClick={reviewPending}>
-                    {reviewCount > 1 ? `Revisar ${reviewCount} prompts` : 'Revisar prompt'}
-                  </button>
-                </>
-              ) : (
-                <button type="button" className="btn primary" disabled={blocked || working !== null} onClick={() => void askManager()}>
-                  Pedir ao Agent Manager
-                </button>
-              )}
-            </div>
-          </>
+          <ReviewStep
+            managerBusy={managerBusy}
+            blockers={blockers}
+            warnings={warnings}
+            override={override}
+            onOverride={setOverride}
+            pending={pending}
+            sent={listing?.sent ?? []}
+            conversationExists={conversationExists}
+            onOpenConversation={openConversation}
+            working={working}
+            hasPending={hasPending}
+            reviewCount={reviewCount}
+            onMarkSent={(n) => void markManual(n)}
+            onClose={onClose}
+            onAutoDraft={() => void writeAutoDraft()}
+            onAskManager={() => void askManager()}
+            onReviewPending={reviewPending}
+          />
         )}
 
         {ready && step === 'waiting' && (
@@ -449,6 +427,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
         {ready && step === 'prompts' && (
           <PromptsStep
             drafts={drafts}
+            roteiro={plan.roteiro.etapas}
             outside={outside}
             blockers={blockers}
             override={override}
@@ -457,7 +436,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
             onText={(i, text) => setDrafts((all) => all.map((x, j) => (j === i ? { ...x, text } : x)))}
             onRemove={removeDraft}
             onMarkSent={(n) => void markManual(n)}
-            onInclude={(h) => setDrafts((all) => [...all, draftOf(h.name, h.content)])}
+            onInclude={(h) => setDrafts((all) => [...all, draftFrom(h)])}
             onCheckPlan={() => setStep('review')}
             onAskManager={() => void askManager()}
             onSend={() => void send()}

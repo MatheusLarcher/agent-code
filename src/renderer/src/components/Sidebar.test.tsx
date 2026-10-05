@@ -390,3 +390,68 @@ describe('Sidebar — busca por projeto', () => {
     expect(onSelectResult).toHaveBeenCalledWith('c3', 'c3-msg')
   })
 })
+
+describe('Sidebar — Entregas', () => {
+  function renderDeliveries(collapsed: boolean, deliveries: { active: boolean; count: number; onSelect: () => void }) {
+    return render(
+      <UiProvider>
+        <Sidebar
+          collapsed={collapsed}
+          onToggleCollapse={() => {}}
+          projects={[{ path: 'C:/proj/meu-app', name: 'meu-app', conversations: [makeConv()] }]}
+          recents={[]}
+          activeId={null}
+          busyIds={new Set()}
+          onSelect={() => {}}
+          onNewChat={() => {}}
+          onNewProject={() => {}}
+          onNewChatIn={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onSelectResult={() => {}}
+          central={{ active: false, onSelect: () => {} }}
+          deliveries={deliveries}
+        />
+      </UiProvider>
+    )
+  }
+
+  it('item fixo abaixo da Central e ACIMA dos projetos, com o contador do que precisa de você', () => {
+    const onSelect = vi.fn()
+    const { container } = renderDeliveries(false, { active: false, count: 3, onSelect })
+    const item = screen.getByRole('button', { name: /^Entregas/ })
+    expect(within(item).getByTestId('deliveries-count').textContent).toBe('3')
+    expect(item.getAttribute('title')).toContain('3 envios precisam de você')
+    const central = container.querySelector('.central-item')!
+    const projetos = screen.getByText('Projetos')
+    expect(central.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(item.compareDocumentPosition(projetos) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(item.getAttribute('aria-current')).toBeNull()
+    fireEvent.click(item)
+    expect(onSelect).toHaveBeenCalledTimes(1)
+  })
+
+  it('sem nada pendente, sem contador; aberta, marcada como a página atual', () => {
+    renderDeliveries(false, { active: true, count: 0, onSelect: () => {} })
+    const item = screen.getByRole('button', { name: /^Entregas/ })
+    expect(screen.queryByTestId('deliveries-count')).toBeNull()
+    expect(item.getAttribute('aria-current')).toBe('page')
+    expect(item.className).toContain('active')
+  })
+
+  it('barra recolhida: o ícone no trilho, logo depois da Central, com o contador', () => {
+    const onSelect = vi.fn()
+    const { container } = renderDeliveries(true, { active: false, count: 12, onSelect })
+    const rail = screen.getByRole('button', { name: 'Entregas — 12 envios precisam de você' })
+    expect(rail.classList.contains('rail-btn')).toBe(true)
+    expect(container.querySelector('.central-rail-btn')?.nextElementSibling).toBe(rail)
+    expect(within(rail).getByTestId('deliveries-count').textContent).toBe('12')
+    fireEvent.click(rail)
+    expect(onSelect).toHaveBeenCalledTimes(1)
+  })
+
+  it('sem a prop, nada de Entregas (chamadores antigos)', () => {
+    renderSidebar()
+    expect(screen.queryByRole('button', { name: /^Entregas/ })).toBeNull()
+  })
+})

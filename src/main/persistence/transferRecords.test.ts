@@ -69,6 +69,20 @@ function fixture(): TransferRecords {
     lease_token: index === 0 ? 'expired-proposal-token' : null, lease_expires_at: index === 0 ? at : null,
     created_at: at, updated_at: at
   }))
+  records.handoff_envios = [{
+    id: 'he-envio', plan_slug: 'plano-1', plan_titulo: 'Plano', project_id: 'proj-1', project_cwd: task.project_cwd,
+    conversation_id: 'conv-impl', conversation_title: 'Implementação', arquivo: '01-banco.md', ordem: 1, lote_id: 'lote-1',
+    conteudo: '# Prompt\nUnicode: memória', conteudo_hash: 'hash-do-conteudo', status: 'incompleta', motivo: 'faltou etapa-2',
+    estimativa_total: 45, prazo_total: 45, atrasado: true, tempo_ativo_ms: 61_000, retrabalho_ms: 0, criado_em: at,
+    enviado_em: at, iniciado_em: at, concluido_em: null, updated_at: at
+  }]
+  records.handoff_entregas = [{
+    id: 'hn-entrega', envio_id: 'he-envio', etapa_id: 'etapa-1', etapa_titulo: 'Levantar requisitos', ordem: 1,
+    estimativa_plano: 45, estimativa_agente: 30, estimativa_agente_motivo: 'menor que o plano', estimativa_agente_em: at,
+    status: 'concluida', atrasada: false, motivo: null, board_item_id: 'bi-card', auditada: true, corrigido_por: 'usuario',
+    corrigido_em: at, iniciada_em: at, concluida_em: at, tempo_ativo_ms: 61_000, tempo_corrido_ms: 120_000, retrabalho_ms: 5_000,
+    aviso_80_em: at, aviso_100_em: null, updated_at: at
+  }]
   return records
 }
 
@@ -135,7 +149,9 @@ const expectedCodecs: Record<keyof TransferRecords, Record<string, 'text' | 'jso
   task_deliverables: { summary: 'text' },
   task_events: { data_json: 'json' },
   memory_entries: { title: 'text', hook: 'text', body: 'text' },
-  memory_proposals: { title: 'text', hook: 'text', body: 'text', reason: 'text' }
+  memory_proposals: { title: 'text', hook: 'text', body: 'text', reason: 'text' },
+  handoff_envios: { plan_titulo: 'text', conversation_title: 'text', conteudo: 'text', motivo: 'text' },
+  handoff_entregas: { etapa_titulo: 'text', estimativa_agente_motivo: 'text', motivo: 'text' }
 }
 const literalMarker = 'agent-code-pg-escape:0literal-agent-code-pg-escape:e'
 function codecFixture(text: string): TransferRecords {
@@ -199,6 +215,9 @@ describe('selective PostgreSQL record codecs', () => {
       expect((await runtime.listTaskDeliverables(String(expected.tasks[0].id)))[0].summary).toBe(text)
       expect((await runtime.getMemoryEntryByPath(String(expected.memory_entries[0].rel_path)))?.body).toBe(text)
       expect((await runtime.listMemoryProposals())[0].body).toBe(text)
+      const [envio] = await runtime.listHandoffEnvios({})
+      expect(envio.conteudo).toBe(text)
+      expect(envio.entregas[0].etapaTitulo).toBe(text)
     } finally { await runtime.close() }
 
     const pg = postgresFixture()
@@ -277,6 +296,12 @@ describe('complete task/memory transfer snapshots', () => {
     const absent = fixture()
     absent.memory_proposals[0].entry_id = 'missing'
     expect(() => prepareTransferRecords(absent, Date.now())).toThrow(/Referência ausente/)
+    const orphanEntrega = fixture()
+    orphanEntrega.handoff_entregas[0].envio_id = 'he-missing'
+    expect(() => prepareTransferRecords(orphanEntrega, Date.now())).toThrow(/Referência ausente em handoff_envios/)
+    const noEnvio = fixture()
+    noEnvio.handoff_entregas[0].envio_id = null
+    expect(() => prepareTransferRecords(noEnvio, Date.now())).toThrow(/Envio ausente/)
     const cycle = fixture()
     cycle.tasks[0].parent_task_id = 'a-child'
     expect(() => prepareTransferRecords(cycle, Date.now())).toThrow(/Ciclo/)
@@ -340,19 +365,22 @@ describe('complete task/memory transfer snapshots', () => {
 })
 
 describe('PostgreSQL transfer SQL contract (temporary SQLite adapter, no server)', () => {
-  it('locks six tables before the first SERIALIZABLE snapshot SELECT and retains the helper lock', async () => {
+  it('locks eight tables before the first SERIALIZABLE snapshot SELECT and retains the helper lock', async () => {
     const pg = postgresFixture()
     await importRepositoryToPostgres(pg.pool, await source(), 'installation', 'lock-order')
     const sql = pg.query.mock.calls.map(([query]) => query)
     expect(sql[0]).toBe('BEGIN ISOLATION LEVEL SERIALIZABLE')
-    expect(sql[1]).toBe('LOCK TABLE tasks, task_steps, task_deliverables, task_events, memory_entries, memory_proposals IN SHARE ROW EXCLUSIVE MODE')
+    expect(sql[1]).toBe(
+      'LOCK TABLE tasks, task_steps, task_deliverables, task_events, memory_entries, memory_proposals, ' +
+        'handoff_envios, handoff_entregas IN SHARE ROW EXCLUSIVE MODE'
+    )
     expect(sql[2]).toMatch(/SELECT migration_run_id, source_hash, target_hash FROM migration_runs/)
     expect(sql.findIndex((query) => /^\s*SELECT/.test(query))).toBe(2)
     // The record-only helper still acquires its own lock for standalone callers.
     expect(sql.filter((query) => query === sql[1])).toHaveLength(2)
   })
 
-  it('round trips all six tables, logs their verified hashes, and repeats without duplicate history', async () => {
+  it('round trips all eight tables, logs their verified hashes, and repeats without duplicate history', async () => {
     const repository = await source()
     const pg = postgresFixture()
     const first = await importRepositoryToPostgres(pg.pool, repository, 'installation', 'transition-1')
@@ -360,7 +388,7 @@ describe('PostgreSQL transfer SQL contract (temporary SQLite adapter, no server)
     const snapshot = await pg.repository.loadTransferRecords()
     expect(recordHash(snapshot)).toBe(recordHash(await repository.loadTransferRecords()))
     const items = pg.db.prepare('SELECT entity, count(*) AS count FROM migration_items GROUP BY entity').all()
-    expect(items).toHaveLength(6)
+    expect(items).toHaveLength(8)
     for (const table of TRANSFER_RECORD_TABLES) {
       expect(items.find((item) => item.entity === table.name)?.count).toBe(snapshot[table.name].length)
     }
@@ -383,7 +411,7 @@ describe('PostgreSQL transfer SQL contract (temporary SQLite adapter, no server)
     const exportBegin = sql.indexOf('BEGIN ISOLATION LEVEL REPEATABLE READ')
     expect(sql[exportBegin + 1]).toMatch(/^LOCK TABLE .* IN SHARE ROW EXCLUSIVE MODE$/)
     const clock = sql.indexOf('SELECT clock_timestamp() AS now', exportBegin)
-    expect(sql.slice(exportBegin, clock).filter((query) => /^SELECT .* FROM (tasks|task_steps|task_deliverables|task_events|memory_entries|memory_proposals) ORDER/.test(query))).toHaveLength(6)
+    expect(sql.slice(exportBegin, clock).filter((query) => /^SELECT .* FROM (tasks|task_steps|task_deliverables|task_events|memory_entries|memory_proposals|handoff_envios|handoff_entregas) ORDER/.test(query))).toHaveLength(8)
     expect(sql[clock + 1]).toBe('COMMIT')
   })
 

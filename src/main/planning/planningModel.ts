@@ -6,6 +6,7 @@
  * um subconjunto de YAML feito à mão: cada valor é gravado como JSON (que
  * também é YAML válido), então o round-trip é exato sem dependência nova.
  */
+import { isValidEstimativa, MAX_ESTIMATIVA_MIN } from '../../shared/planningEstimate'
 import { FONTE_RULE_TEXT, isValidFonte } from '../../shared/planningFonte'
 import { isValidMediaName, MAX_ANEXOS_POR_CARD } from '../../shared/planningMedia'
 
@@ -37,6 +38,9 @@ export interface RoteiroStage {
   id: string
   titulo: string
   status: StageStatus
+  /** Minutos de trabalho do AGENTE (isValidEstimativa). Ausente = sem estimativa;
+   *  vai numa linha de metadado à parte, então roteiro sem ela fica byte a byte como antes. */
+  estimativa?: number
 }
 
 export interface Roteiro {
@@ -196,14 +200,18 @@ export function parseCard(text: string): PlanCard {
 const STAGE_LINE = /^\s*-\s*\[([a-z_]+)\]\s+([a-z0-9-]{1,64}):\s*(.*)$/
 /** Metadado de revisão: comentário HTML, invisível no markdown renderizado. */
 const REV_LINE = /^\s*<!--\s*rev:\s*(\d{1,15})\s*-->\s*$/
+/** Estimativa de uma etapa, em comentário HTML à parte: a linha da etapa não
+ *  muda, e um app antigo (o plano sincroniza entre PCs) a ignora. */
+const EST_LINE = /^\s*<!--\s*est\s+([a-z0-9-]{1,64}):\s*(\d{1,6})\s*-->\s*$/
 
 /**
  * _roteiro.md: título em '# ', o rev na linha seguinte e uma etapa por linha,
- * na ordem:
+ * na ordem; a estimativa, quando houver, logo abaixo da etapa:
  *   # Checkout novo
  *   <!-- rev: 3 -->
  *
  *   - [pendente] etapa-1: Levantar requisitos
+ *   <!-- est etapa-1: 45 -->
  */
 export function serializeRoteiro(roteiro: Roteiro): string {
   if (!Number.isSafeInteger(roteiro.rev) || roteiro.rev < 0) {
@@ -222,6 +230,13 @@ export function serializeRoteiro(roteiro: Roteiro): string {
       throw new PlanningValidationError(`status de etapa inválido: ${String(e.status)}`)
     }
     lines.push(`- [${e.status}] ${e.id}: ${oneLine(e.titulo)}`)
+    if (e.estimativa === undefined) continue
+    if (!isValidEstimativa(e.estimativa)) {
+      throw new PlanningValidationError(
+        `estimativa da etapa ${e.id} inválida: use minutos inteiros de 1 a ${MAX_ESTIMATIVA_MIN}`
+      )
+    }
+    lines.push(`<!-- est ${e.id}: ${e.estimativa} -->`)
   }
   return lines.join('\n') + '\n'
 }
@@ -231,11 +246,16 @@ function oneLine(text: unknown): string {
   return String(text ?? '').replace(/\r\n|\r|\n/g, ' ').trim()
 }
 
-/** Sem a linha `<!-- rev: N -->` (roteiro anterior ao rev), o rev é 0. */
+/**
+ * Sem a linha `<!-- rev: N -->` (roteiro anterior ao rev), o rev é 0. As
+ * estimativas valem depois de lidas todas as linhas, para a etapa com aquele
+ * id; id desconhecido ou valor fora da regra é ignorado (editado à mão).
+ */
 export function parseRoteiro(text: string): Roteiro {
   let titulo = ''
   let rev: number | null = null
   const etapas: RoteiroStage[] = []
+  const estimativas = new Map<string, number>()
   for (const line of text.replace(/^﻿/, '').split(/\r?\n/)) {
     if (!titulo && line.startsWith('# ')) {
       titulo = line.slice(2).trim()
@@ -246,12 +266,22 @@ export function parseRoteiro(text: string): Roteiro {
       rev = Number(r[1])
       continue
     }
+    const est = EST_LINE.exec(line)
+    if (est) {
+      const minutos = Number(est[2])
+      if (isValidEstimativa(minutos)) estimativas.set(est[1], minutos)
+      continue
+    }
     const m = STAGE_LINE.exec(line)
     if (!m) continue
     if (!(STAGE_STATUSES as readonly string[]).includes(m[1])) {
       throw new PlanningValidationError(`status de etapa inválido: ${m[1]}`)
     }
     etapas.push({ id: m[2], titulo: m[3].trim(), status: m[1] as StageStatus })
+  }
+  for (const e of etapas) {
+    const minutos = estimativas.get(e.id)
+    if (minutos !== undefined) e.estimativa = minutos
   }
   return { titulo, rev: rev ?? 0, etapas }
 }

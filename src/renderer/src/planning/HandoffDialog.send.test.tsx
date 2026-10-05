@@ -11,15 +11,22 @@ afterEach(() => {
 })
 
 describe('HandoffDialog — rascunho automático e envio', () => {
-  it('grava o rascunho em _handoff/ e mostra para revisar', async () => {
+  it('grava o rascunho em _handoff/ com TODAS as etapas do roteiro e mostra para revisar', async () => {
     const m = mockPlanningApi()
     const plan = makePlan()
     renderDialog(plan)
     await loaded()
     fireEvent.click(button('Usar rascunho automático'))
     expect(((await screen.findByLabelText('Prompt 1')) as HTMLTextAreaElement).value).toBe(buildDraftHandoff(plan))
-    expect(m.api.planningWriteHandoff).toHaveBeenCalledWith({ projectCwd: CWD, slug: SLUG, conteudo: buildDraftHandoff(plan) })
+    expect(m.api.planningWriteHandoff).toHaveBeenCalledWith({
+      projectCwd: CWD,
+      slug: SLUG,
+      conteudo: buildDraftHandoff(plan),
+      etapas: ['requisitos', 'desenho', 'entrega']
+    })
     expect(within(dialog()).getByText('2026-09-22-01.md')).toBeTruthy()
+    // O roteiro de teste não tem estimativas: as 3 etapas aparecem, sem total.
+    expect(screen.getByTestId('estimativa-1').textContent).toBe('3 etapas, nenhuma com estimativa')
   })
 
   it('sem edição: envia sem gravar de novo, registra o envio; sucesso vira toast e fecha', async () => {
@@ -62,10 +69,68 @@ describe('HandoffDialog — rascunho automático e envio', () => {
     await waitFor(() => expect(m.sent).toHaveLength(2))
     expect(onSend).toHaveBeenCalledWith(['do manager, revisado'], 'Plano de teste', ['2026-09-22-02.md'])
     expect(order).toEqual(['write:do manager, revisado', 'send'])
+    // A original não declarou etapas: o editado também não.
+    expect(m.api.planningWriteHandoff).toHaveBeenCalledWith({ projectCwd: CWD, slug: SLUG, conteudo: 'do manager, revisado' })
     expect(m.sent).toEqual([
       { nome: '2026-09-22-01.md', enviadoEm: expect.any(String), substituidoPor: '2026-09-22-02.md' },
       { nome: '2026-09-22-02.md', enviadoEm: expect.any(String), conversaId: 'conv-1', conversaTitulo: CONV.title }
     ])
+  })
+
+  it('cada prompt mostra o total estimado das etapas dele (roteiro atual) ou "sem etapas declaradas"', async () => {
+    const plan = makePlan()
+    plan.roteiro.etapas = [
+      { id: 'requisitos', titulo: 'Levantar requisitos', status: 'concluida', estimativa: 30 },
+      { id: 'desenho', titulo: 'Desenhar a solução', status: 'pendente', estimativa: 60 },
+      { id: 'entrega', titulo: 'Entregar', status: 'em_andamento' }
+    ]
+    const m = mockPlanningApi(plan)
+    m.addHandoff('# um')
+    m.addHandoff('# dois')
+    m.addHandoff('# antigo')
+    m.handoffs[0].etapas = ['requisitos', 'desenho']
+    m.handoffs[1].etapas = ['entrega', 'desenho']
+    renderDialog(plan)
+    await screen.findByLabelText('Prompt 3')
+    expect(screen.getByTestId('estimativa-1').textContent).toBe('Total estimado: 1 h 30 min · 2 etapas')
+    expect(screen.getByTestId('estimativa-1').title).toBe('Levantar requisitos: 30 min\nDesenhar a solução: 1 h')
+    expect(screen.getByTestId('estimativa-2').textContent).toBe('Total estimado: 1 h · 2 etapas, 1 sem estimativa')
+    expect(screen.getByTestId('estimativa-3').textContent).toBe('sem etapas declaradas')
+  })
+
+  it('a versão editada é gravada com as etapas da original e continua mostrando o total', async () => {
+    const plan = makePlan()
+    plan.roteiro.etapas[1] = { ...plan.roteiro.etapas[1], estimativa: 45 }
+    const m = mockPlanningApi(plan)
+    m.addHandoff('# do manager')
+    m.handoffs[0].etapas = ['desenho']
+    const { onSend } = renderDialog(plan)
+    await screen.findByLabelText('Prompt 1')
+    fireEvent.change(area(1), { target: { value: '# do manager, revisado' } })
+    fireEvent.click(button('Enviar para implementação'))
+    await waitFor(() => expect(onSend).toHaveBeenCalled())
+    expect(m.api.planningWriteHandoff).toHaveBeenCalledWith({
+      projectCwd: CWD,
+      slug: SLUG,
+      conteudo: '# do manager, revisado',
+      etapas: ['desenho']
+    })
+    expect(onSend).toHaveBeenCalledWith(['# do manager, revisado'], 'Plano de teste', ['2026-09-22-02.md'])
+  })
+
+  it('o editado que falhou no envio fica na revisão com as etapas herdadas (o total não some)', async () => {
+    const plan = makePlan()
+    plan.roteiro.etapas[0] = { ...plan.roteiro.etapas[0], estimativa: 20 }
+    const m = mockPlanningApi(plan)
+    m.addHandoff('# original')
+    m.handoffs[0].etapas = ['requisitos']
+    renderDialog(plan, { onSend: async () => ({ status: 'not-created', delivered: 0, total: 0 }) })
+    await screen.findByLabelText('Prompt 1')
+    fireEvent.change(area(1), { target: { value: '# editado' } })
+    fireEvent.click(button('Enviar para implementação'))
+    expect(await screen.findByText(/Nada foi enviado para a implementação/)).toBeTruthy()
+    expect(within(dialog()).getByText('2026-09-22-02.md')).toBeTruthy()
+    expect(screen.getByTestId('estimativa-1').textContent).toBe('Total estimado: 20 min · 1 etapa')
   })
 
   it('falha ao gravar o editado: toast e nada é enviado', async () => {

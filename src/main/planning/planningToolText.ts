@@ -1,6 +1,7 @@
 import path from 'node:path'
+import { formatMinutos, isValidEstimativa, sumEstimativas } from '../../shared/planningEstimate'
 import { MEDIA_KIND_LABEL, mediaKindOf, type PlanMediaDto } from '../../shared/planningMedia'
-import type { PlanCard, Roteiro } from './planningModel'
+import type { PlanCard, Roteiro, RoteiroStage } from './planningModel'
 import { PlanNotFoundError, RevConflictError, RoteiroConflictError, type OpenedPlan } from './planningStore'
 
 /**
@@ -85,9 +86,26 @@ function excerpt(corpo: string): string {
   return flat.length > EXCERPT_CHARS ? `${flat.slice(0, EXCERPT_CHARS)}…` : flat
 }
 
-/** Uma linha por etapa, numerada na ordem do roteiro. */
+/** Minutos como o Manager os grava em "estimativa"; acima de uma hora, também em horas. */
+function minutos(n: number): string {
+  return n >= 60 ? `${n} min = ${formatMinutos(n)}` : `${n} min`
+}
+
+/** "est. 45 min" ou "sem estimativa". */
+export function estimativaText(etapa: Pick<RoteiroStage, 'estimativa'>): string {
+  return isValidEstimativa(etapa.estimativa) ? `est. ${minutos(etapa.estimativa)}` : 'sem estimativa'
+}
+
+/** Soma das etapas ("135 min = 2 h 15 min") e, se houver, quantas estão sem estimativa. */
+export function totalEstimativaText(etapas: readonly Pick<RoteiroStage, 'estimativa'>[]): string {
+  const { total, semEstimativa } = sumEstimativas(etapas)
+  if (!semEstimativa) return minutos(total)
+  return `${minutos(total)} — ${semEstimativa} ${semEstimativa === 1 ? 'etapa' : 'etapas'} sem estimativa`
+}
+
+/** Uma linha por etapa, numerada na ordem do roteiro, com a estimativa. */
 export function etapaLines(etapas: Roteiro['etapas']): string[] {
-  return etapas.map((e, i) => `  ${i + 1}. [${e.status}] ${e.id}: ${e.titulo}`)
+  return etapas.map((e, i) => `  ${i + 1}. [${e.status}] ${e.id}: ${e.titulo} (${estimativaText(e)})`)
 }
 
 export function describeRoteiro(roteiro: Roteiro): string {
@@ -128,6 +146,7 @@ export function describePlan(plan: OpenedPlan, index?: MediaIndex): string {
   const etapas = plan.roteiro.etapas
   lines.push(etapas.length ? `Roteiro (${etapas.length} etapas, na ordem):` : 'Roteiro: vazio — separe e ordene as etapas com plan_roteiro_set.')
   lines.push(...etapaLines(etapas))
+  if (etapas.length) lines.push(`Estimativa total do roteiro: ${totalEstimativaText(etapas)}.`)
   lines.push(
     plan.cards.length
       ? `Cards (${plan.cards.length}) — [[Título]] é o nome com que o usuário cita o card; as ferramentas pedem o id:`

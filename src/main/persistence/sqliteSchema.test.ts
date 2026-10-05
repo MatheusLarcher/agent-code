@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -64,6 +65,68 @@ describe('SQLITE_MIGRATIONS — migration 8 (task_board_links)', () => {
     expect(eight!.name).toBe('sqlite-v2-task-board-links')
     expect(SQLITE_SCHEMA).toMatch(/CREATE TABLE IF NOT EXISTS task_board_links/i)
     expect(SQLITE_SCHEMA_FULL).toMatch(/CREATE TABLE IF NOT EXISTS task_board_links/i)
+  })
+})
+
+describe('SQLITE_MIGRATIONS — migration 15 (handoff_envios / handoff_entregas)', () => {
+  it('está registrada em SQLITE_MIGRATIONS, SQLITE_SCHEMA e SQLITE_SCHEMA_FULL, idempotente no guarda', () => {
+    const fifteen = SQLITE_MIGRATIONS.find((entry) => entry.version === 15)
+    expect(fifteen).toBeTruthy()
+    expect(fifteen!.name).toBe('sqlite-v2-handoff-tracking')
+    expect(fifteen!.writeGuardSql).toBe(fifteen!.sql)
+    for (const sql of [SQLITE_SCHEMA, SQLITE_SCHEMA_FULL]) {
+      expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS handoff_envios/i)
+      expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS handoff_entregas/i)
+    }
+    // O guarda roda a cada write(): só DDL que pode repetir para sempre.
+    expect(fifteen!.sql).not.toMatch(/ALTER TABLE|DROP TABLE|CREATE TABLE (?!IF NOT EXISTS)|CREATE INDEX (?!IF NOT EXISTS)/i)
+  })
+
+  it('um banco v2 que parou na migration 14 ganha as tabelas ao reabrir', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agent-code-handoff-upgrade-'))
+    try {
+      const dbPath = join(dir, 'agent-code.db')
+      const repo = new SqliteRepository(dir, dbPath, 'device-a')
+      await repo.initialize()
+      await repo.close()
+      // Simula o banco da versão anterior: sem as tabelas e sem o registro da 15.
+      const db = new DatabaseSync(dbPath)
+      try {
+        db.exec('DROP TABLE handoff_entregas; DROP TABLE handoff_envios; DELETE FROM schema_migrations WHERE version = 15;')
+      } finally {
+        db.close()
+      }
+
+      const reopened = new SqliteRepository(dir, dbPath, 'device-a')
+      await reopened.initialize()
+      const [envio] = await reopened.createHandoffEnvios([
+        {
+          planSlug: 'plano',
+          planTitulo: 'Plano',
+          projectId: 'p1',
+          projectCwd: 'C:/repo',
+          conversationId: 'conv-1',
+          conversationTitle: 'Conversa',
+          arquivo: '01.md',
+          ordem: 1,
+          loteId: 'lote',
+          conteudo: 'texto',
+          entregas: [{ etapaId: 'etapa-1', etapaTitulo: 'Um', estimativaPlano: 10 }]
+        }
+      ])
+      expect(envio.entregas).toHaveLength(1)
+      const check = new DatabaseSync(dbPath, { readOnly: true })
+      try {
+        expect(check.prepare('SELECT name FROM schema_migrations WHERE version = 15').get()).toEqual({
+          name: 'sqlite-v2-handoff-tracking'
+        })
+      } finally {
+        check.close()
+      }
+      await reopened.close()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })
 

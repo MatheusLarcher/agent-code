@@ -97,7 +97,7 @@ function buildNodes(plan: OpenedPlanningDto, layout: PlanLayout): FlowNode[] {
     id: headerNodeId(col.id),
     type: 'stage' as const,
     position: { x: col.x, y: 0 },
-    data: { titulo: col.titulo, status: col.status, ordem: col.index + 1, count: col.cardIds.length },
+    data: { titulo: col.titulo, status: col.status, ordem: col.index + 1, count: col.cardIds.length, estimativa: col.estimativa },
     draggable: false,
     selectable: false,
     deletable: false,

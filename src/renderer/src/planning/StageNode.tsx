@@ -1,12 +1,13 @@
 /**
- * Cabeçalho de coluna no canvas: número e nome da etapa, com o status. A
- * coluna "Sem etapa" usa o mesmo nó, tracejado. Não se arrasta nem se apaga;
- * as alças existem só para a seta de sequência entre etapas.
+ * Cabeçalho de coluna no canvas: número e nome da etapa, com o status e a
+ * estimativa (ou "—"). A coluna "Sem etapa" usa o mesmo nó, tracejado. Não se
+ * arrasta nem se apaga; as alças existem só para a seta de sequência entre etapas.
  */
 import { memo } from 'react'
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { PlanningStageStatus } from '@shared/ipc'
 import { STAGE_STATUS_LABEL, StageStatusIcon } from './cardTypes'
+import { StageEstimate } from './StageEstimate'
 
 export type StageNodeData = {
   titulo: string
@@ -15,11 +16,13 @@ export type StageNodeData = {
   /** Posição da etapa no roteiro (1-based). */
   ordem: number
   count: number
+  /** Minutos de trabalho do agente; ausente = sem estimativa. */
+  estimativa?: number
 }
 export type StageFlowNode = Node<StageNodeData, 'stage'>
 
 function StageNodeView({ data }: NodeProps<StageFlowNode>): JSX.Element {
-  const { titulo, status, ordem, count } = data
+  const { titulo, status, ordem, count, estimativa } = data
   return (
     <div className={`pl-stage${status ? ` ${status}` : ' sem-etapa'}`} title={titulo}>
       <Handle type="target" position={Position.Left} className="pl-handle-hidden" isConnectable={false} />
@@ -33,6 +36,7 @@ function StageNodeView({ data }: NodeProps<StageFlowNode>): JSX.Element {
               {STAGE_STATUS_LABEL[status]}
             </span>
           )}
+          {status && <StageEstimate minutos={estimativa} titulo={titulo} />}
           <span className="pl-stage-count">
             {count} card{count === 1 ? '' : 's'}
           </span>

@@ -350,4 +350,37 @@ describe('planningStore — handoffs', () => {
     await expect(writeHandoff(cwd, 'nada', 'x')).rejects.toBeInstanceOf(PlanNotFoundError)
     await expect(fs.stat(path.join(cwd, 'docs', 'spec', 'nada'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  it('etapas do prompt: <base>.meta.json ao lado do .md (nunca dentro dele); listHandoffs as devolve', async () => {
+    await createPlan(cwd, 'p', 'P')
+    const d = new Date(2026, 8, 22, 10)
+    const a = await writeHandoff(cwd, 'p', '# A\n', d, ['etapa-2', 'etapa-1'])
+    const b = await writeHandoff(cwd, 'p', '# B\n', d) // sem etapas: prompt "antigo"
+    await writeHandoff(cwd, 'p', '# C\n', d, []) // [] = nenhuma declarada: sem arquivo ao lado
+    expect(await fs.readFile(a, 'utf8')).toBe('# A\n')
+    expect((await fs.readdir(handoffDir())).sort()).toEqual(['2026-09-22-01.md', '2026-09-22-01.meta.json', '2026-09-22-02.md', '2026-09-22-03.md'])
+    expect(JSON.parse(await fs.readFile(path.join(handoffDir(), '2026-09-22-01.meta.json'), 'utf8'))).toEqual({ etapas: ['etapa-2', 'etapa-1'] })
+    const list = await listHandoffs(cwd, 'p')
+    expect(list.map((h) => h.name)).toEqual(['2026-09-22-01.md', '2026-09-22-02.md', '2026-09-22-03.md'])
+    expect(list[0].etapas).toEqual(['etapa-2', 'etapa-1'])
+    expect('etapas' in list[1]).toBe(false)
+    expect(path.basename(b)).toBe('2026-09-22-02.md')
+  })
+
+  it('etapas inválidas não gravam nada; .meta.json ilegível ou fora do formato vale como ausente', async () => {
+    await createPlan(cwd, 'p', 'P')
+    for (const etapas of [['A'], ['a', 'a'], ['../x'], Array.from({ length: 101 }, (_, i) => `e${i}`)]) {
+      await expect(writeHandoff(cwd, 'p', 'x', new Date(), etapas), JSON.stringify(etapas)).rejects.toThrow(/etapa/)
+    }
+    await expect(fs.stat(handoffDir())).rejects.toMatchObject({ code: 'ENOENT' })
+    await fs.mkdir(handoffDir())
+    const bad = ['{ quebrado', '{"etapas": []}', '{"etapas": ["a", "a"]}', '{"etapas": ["Maiuscula"]}', '{"outra": 1}']
+    for (const [i, meta] of bad.entries()) {
+      await fs.writeFile(path.join(handoffDir(), `2026-09-22-0${i + 1}.md`), `prompt ${i}`)
+      await fs.writeFile(path.join(handoffDir(), `2026-09-22-0${i + 1}.meta.json`), meta)
+    }
+    const list = await listHandoffs(cwd, 'p')
+    expect(list).toHaveLength(bad.length)
+    expect(list.every((h) => h.etapas === undefined)).toBe(true)
+  })
 })

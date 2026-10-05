@@ -95,6 +95,53 @@ import type { TypeSafePauseStatus } from './typesafePause'
 import type { ChromeBridgeStatus } from './chromeBridge'
 import type { OfficeApi } from './officeApi'
 import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from './central'
+import type { HandoffEnvio } from './handoffTracking'
+
+/** Um prompt do handoff a registrar: o arquivo de _handoff/ e o texto EXATO enviado. */
+export interface HandoffRegisterPrompt {
+  arquivo: string
+  conteudo: string
+}
+
+/** Pedido de Channels.handoffRegister: os prompts na ordem de envio, já pareados com o arquivo. */
+export interface HandoffRegisterRequest {
+  projectCwd: string
+  slug: string
+  conversationId: string
+  conversationTitle: string
+  prompts: HandoffRegisterPrompt[]
+}
+
+/** Resposta de Channels.handoffRegister. Sem banco gravável, `envios` vem vazio. */
+export type HandoffRegisterResult = { ok: true; envios: HandoffEnvio[] } | { ok: false; message: string }
+
+/** Pedido de Channels.handoffList. Sem filtro = todos os projetos; os dois filtros juntos se somam. */
+export interface HandoffListRequest {
+  conversationId?: string
+  /** Caminho absoluto do projeto (vira a identidade estável dele, como no Quadro). */
+  projectCwd?: string
+  /** Padrão 200, teto 1000. */
+  limit?: number
+}
+
+/** Sem banco gravável vem `{ ok: false }` — lista vazia diria "nenhum envio", o que seria mentira. */
+export type HandoffListResult = { ok: true; envios: HandoffEnvio[] } | { ok: false; message: string }
+
+/** Pedido de Channels.handoffCorrectEntrega: a correção é do usuário e o acompanhamento a respeita. */
+export interface HandoffCorrectEntregaRequest {
+  entregaId: string
+  acao: 'concluir' | 'reabrir'
+  /** Até 500 caracteres; vai para o motivo depois de "corrigido por você". */
+  motivo?: string
+}
+
+/** Devolve o envio-pai já reavaliado. */
+export type HandoffCorrectEntregaResult = { ok: true; envio: HandoffEnvio } | { ok: false; message: string }
+
+/** Main → renderer (Channels.handoffChanged): algo mudou nos envios daquela conversa — releia. */
+export interface HandoffChangedMsg {
+  conversationId: string
+}
 
 /** The surface exposed on `window.api` by the preload script. */
 /** A window.api; a parte do Escritório está em officeApi.ts e a do detector de travadas em FreezeLogApi. */
@@ -245,8 +292,18 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   /** Os prompts de _handoff/ do planejamento, na ordem em que foram gravados,
    *  com os registros de _handoff/enviados.json. */
   planningListHandoffs(req: PlanningRef): Promise<PlanningResult<PlanningHandoffListDto>>
-  /** Grava um prompt em _handoff/AAAA-MM-DD-NN.md; devolve o nome do arquivo novo. */
-  planningWriteHandoff(req: PlanningRef & { conteudo: string }): Promise<PlanningResult<{ name: string }>>
+  /** Grava um prompt em _handoff/AAAA-MM-DD-NN.md; devolve o nome do arquivo novo.
+   *  `etapas`: as do roteiro que o prompt cobre (vão para o .meta.json ao lado). */
+  planningWriteHandoff(req: PlanningRef & { conteudo: string; etapas?: string[] }): Promise<PlanningResult<{ name: string }>>
+  /** Grava no banco um envio por prompt (na_fila) e uma entrega por etapa declarada,
+   *  com a estimativa do roteiro copiada. Nada lança: falha vem como `{ ok: false }`. */
+  handoffRegister(req: HandoffRegisterRequest): Promise<HandoffRegisterResult>
+  /** Envios de handoff com as entregas (sem filtro = todos os projetos). Nada lança. */
+  handoffList(req?: HandoffListRequest): Promise<HandoffListResult>
+  /** Correção manual de uma entrega (concluir/reabrir); o envio é reavaliado. Nada lança. */
+  handoffCorrectEntrega(req: HandoffCorrectEntregaRequest): Promise<HandoffCorrectEntregaResult>
+  /** O acompanhamento gravou algo nos envios de uma conversa — releia. */
+  onHandoffChanged(cb: (msg: HandoffChangedMsg) => void): () => void
   /** Registra prompts como enviados/substituídos/marcados em _handoff/enviados.json;
    *  devolve todos os registros depois da gravação. */
   planningMarkHandoffsSent(

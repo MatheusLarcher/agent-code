@@ -90,6 +90,9 @@ import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlis
 import { Vigia } from './vigia/vigia'
 import { BoardService } from './board/boardService'
 import { registerPlanningIpc, type PlanningIpcHandle } from './planning/planningIpc'
+import { registerHandoffIpc } from './handoffTracking/handoffIpc'
+import { HandoffTracker } from './handoffTracking/handoffTracker'
+import { startHandoffSweep } from './handoffTracking/handoffSweep'
 import { exportFlowPdf } from './planning/flowPdfExport'
 import { PlanningConversations, planningStartOptions } from './planning/planningConversations'
 import { setPlanningDataRoot } from './planning/planningRoot'
@@ -172,6 +175,7 @@ import type {
 let mainWindow: BrowserWindow | null = null
 let stopMemoryCurator: (() => void) | null = null
 let stopTaskReaper: (() => void) | null = null
+let stopHandoffSweep: (() => void) | null = null
 let stopRestartGuardFile: (() => void) | null = null
 let stopSleepGuard: (() => void) | null = null
 /** Handlers planning:* e os vigias de pasta deles (fechados ao sair). */
@@ -286,6 +290,9 @@ function newLeaseKeeper(convId: string, lease: ConversationLease, isInstalled: (
       logSession('lease-lost', { convId, reason: 'lease-lost', background: !!lost?.hasBackgroundWork() })
       sessions.delete(convId)
       lost?.dispose()
+      // O dispose não emite fim de turno: sem isto o acompanhamento seguiria
+      // contando tempo ativo de um turno que morreu com o lease.
+      handoffTracker.sessionEnded(convId)
       if (lost) mcpInbound.onSessionInstalled(convId)
       send(Channels.agentEvent, {
         convId,
@@ -365,7 +372,12 @@ const vigia = new Vigia({
 // chat nunca pode quebrar porque o quadro não conseguiu persistir).
 const board = new BoardService({
   repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
-  onChanged: (projectId) => send(Channels.boardChanged, { projectId }),
+  // O acompanhamento dos envios de handoff relê os cartões quando o PO (ou
+  // qualquer escrita) muda o quadro. Referência preguiçosa: declarado abaixo.
+  onChanged: (projectId) => {
+    send(Channels.boardChanged, { projectId })
+    handoffTracker.boardChanged(projectId)
+  },
   // O fechamento de turno espera a auditoria do PO antes de devolver para "a
   // fazer" o que ficou em andamento — reabrir primeiro desfaria o "concluído"
   // que ele ainda ia gravar. A referência é preguiçosa de propósito: `po` é
@@ -406,6 +418,15 @@ const po = new Po({
     id: randomUUID(),
     at: Date.now()
   })
+})
+
+// O acompanhamento dos envios de handoff (handoffTracking/): só conversas com
+// `opts.handoff`; observa turnos, perguntas e o Quadro e grava status e tempo.
+const handoffTracker = new HandoffTracker({
+  repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+  board,
+  poEnabled: () => (loadConfig().board ?? DEFAULT_CONFIG.board).po.enabled,
+  onChanged: (conversationId) => send(Channels.handoffChanged, { conversationId })
 })
 
 // O memorista: o terceiro observador. Lê o fim de cada turno e grava sozinho o
@@ -477,7 +498,10 @@ const storageTransitionHooks = {
   waitForIdleAgents: async (): Promise<void> => {
     // The caller has already obtained explicit user confirmation. Stop live
     // work now instead of allowing a long-running turn to hold the migration.
-    for (const session of sessions.values()) session.dispose()
+    for (const [convId, session] of sessions) {
+      session.dispose()
+      handoffTracker.sessionEnded(convId)
+    }
     sessions.clear()
     await Promise.all([...sessionLeases.keys()].map(releaseSessionLease))
   }
@@ -1327,6 +1351,13 @@ export function registerIpc(): void {
   })
   // Tela de Planejamento: toda a lógica (validação, vigia, erros) mora em planningIpc.
   planningIpc = registerPlanningIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), send })
+  // Envios de handoff no banco: o mesmo getter e a mesma identidade de projeto do Quadro.
+  registerHandoffIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+    projectId: (cwd) => board.projectId(cwd),
+    tracker: handoffTracker
+  })
   ipcMain.handle(Channels.planningExportPdf, (e, req: unknown) => exportFlowPdf(e.sender, req))
   // Título automático da conversa (claude-haiku-4-5): a lógica mora em titles/.
   registerConversationTitleIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener) })
@@ -1816,6 +1847,8 @@ export function registerIpc(): void {
         })
         sessions.delete(convId)
         replaced.dispose()
+        // O dispose não emite `result`/`error`: o turno aberto nela acabou aqui.
+        handoffTracker.sessionEnded(convId)
         mcpInbound.onSessionInstalled(convId)
       }
       await releaseSessionLease(convId)
@@ -1840,6 +1873,8 @@ export function registerIpc(): void {
       throw error
     }
     let s!: ProviderFailoverSession
+    // Conversa de handoff: o acompanhamento dos envios passa a olhá-la.
+    if (opts.handoff) handoffTracker.attach(convId, opts.cwd)
     const emit = (event: ChatEvent): void => {
       send(Channels.agentEvent, { convId, event })
       // Todo terminal de erro da conversa (AgentSession e failover passam por aqui).
@@ -1849,6 +1884,8 @@ export function registerIpc(): void {
           usageExhausted: event.usageExhausted, turnIds: event.turnIds
         })
       }
+      // Antes do `return` abaixo: o acompanhamento precisa do `turn-start`.
+      if (opts.handoff) handoffTracker.observe(convId, opts.cwd, event)
       // Código ao vivo do monitor do escritório: efêmero e só da tela local. Para
       // aqui, num ponto só: não vai ao celular, não autoriza download, não fecha
       // tarefa MCP e nenhum observador (vigia, quadro, PO, memorista) o vê — até
@@ -1904,10 +1941,12 @@ export function registerIpc(): void {
         // Pergunta (AskUserQuestion) numa tarefa MCP também volta ao chamador.
         mcpInbound.onPermissionRequest(convId, req)
         send(Channels.agentPermissionRequest, { convId, req })
+        if (opts.handoff) handoffTracker.notePermission(convId, req.id, true, req.toolName)
       },
       (id) => {
         mcpInbound.onPermissionClosed(convId, id)
         send(Channels.agentPermissionExpired, { convId, id })
+        if (opts.handoff) handoffTracker.notePermission(convId, id, false)
       },
       sessionStore,
       async (sessionId, mirrorFailed) => {
@@ -1962,7 +2001,9 @@ export function registerIpc(): void {
     if (!previous) {
       // Defesa: com o lock nada sobe no meio e a descartada já saiu do mapa; se
       // ainda assim houver outra lá, ela é substituída agora — com dispose.
-      sessions.get(convId)?.dispose()
+      const stale = sessions.get(convId)
+      stale?.dispose()
+      if (stale) handoffTracker.sessionEnded(convId)
       sessions.set(convId, s)
       // Sessão nova: o turno de tarefa MCP que estava aberto se perdeu (erro).
       mcpInbound.onSessionInstalled(convId)
@@ -2001,6 +2042,8 @@ export function registerIpc(): void {
         convId, reason: 'mcp-model', background: previous.hasBackgroundWork(), model: was.model, effort: was.effort
       })
       previous.dispose()
+      // O dispose não emite `result`/`error`: o turno aberto na antiga acabou aqui.
+      handoffTracker.sessionEnded(convId)
       mcpInbound.onSessionInstalled(convId)
     }
     // Escolha provisória (lista de contas não lida do banco) não vai para a conversa.
@@ -2147,6 +2190,9 @@ export function registerIpc(): void {
       if (observed) memorista.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
       // Saiu da fila o item de uma tarefa MCP: ela passa a `rodando`.
       mcpInbound.onAgentSend(convId, mcpSend)
+      // Envio de handoff: o texto CRU casa pelo hash com o prompt registrado
+      // (na_fila → enviado). Conversa que não é de handoff o tracker nem olha.
+      handoffTracker.noteUserSend(convId, text)
       await current.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }
   )
@@ -2240,11 +2286,14 @@ export function registerIpc(): void {
 
   ipcMain.handle(Channels.agentSetBypass, (_e, convId: string, on: boolean) => {
     sessions.get(convId)?.setBypass(on)
+    // "Permitir tudo" aprova em silêncio as permissões abertas (não as perguntas).
+    handoffTracker.noteBypass(convId, on)
   })
 
   ipcMain.handle(Channels.agentPermissionResponse, (_e, convId: string, res: PermissionResponse) => {
     mcpInbound.onPermissionClosed(convId, res.id)
     sessions.get(convId)?.resolvePermission(res)
+    handoffTracker.notePermission(convId, res.id, false)
   })
 
   ipcMain.handle(Channels.agentQuestionHold, (_e, convId: string, id: string, paused: boolean) => {
@@ -2264,6 +2313,8 @@ export function registerIpc(): void {
     memorista.dispose(convId)
     forgetUsedMemories(convId)
     board.dispose(convId)
+    // Descarte não emite `result`/`error`: o turno que estava aberto acabou aqui.
+    handoffTracker.sessionEnded(convId)
     sessionCwds.delete(convId)
     planningConversations.forget(convId)
     void releaseSessionLease(convId)
@@ -2634,6 +2685,9 @@ app.whenReady().then(async () => {
   // que roda fora do modelo: quem some no meio do trabalho pode ser justamente
   // o supervisor, então não dá para depender de alguém perceber e agir.
   if (storageAvailable) stopTaskReaper = startTaskReaper(undefined, (line) => console.log(line))
+  // A sessão de handoff que morre calada não manda evento: a varredura marca o
+  // envio parado e grava o tempo ativo de quem está rodando.
+  if (storageAvailable) stopHandoffSweep = startHandoffSweep(handoffTracker, undefined, (line) => console.log(line))
   // Ponte do Chrome do usuário: precisa da config (token) já carregada.
   if (storageAvailable) void startChromeBridge((status) => send(Channels.chromeBridgeStatusChanged, status))
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
@@ -2691,6 +2745,8 @@ app.on('before-quit', (event) => {
   stopMemoryCurator = null
   stopTaskReaper?.()
   stopTaskReaper = null
+  stopHandoffSweep?.()
+  stopHandoffSweep = null
   stopRestartGuardFile?.()
   stopRestartGuardFile = null
   stopSleepGuard?.()

@@ -1,14 +1,16 @@
-import { createSdkMcpServer, tool, type SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk'
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { notifyPlanningChanged, type PlanningChangeNotice } from './planningEvents'
 import { FONTE_RULE_TEXT, isValidFonte } from '../../shared/planningFonte'
 import * as realMedia from './planningMedia'
 import { anexosCheck, importAndAttach, loadMediaIndex, readCardWithMedia } from './planningMediaTools'
 import type { MediaToolDeps, PlanningToolMedia } from './planningMediaTools'
-import { CARD_TYPES, STAGE_STATUSES, type CardType, type PlanCard, type Roteiro, type StageStatus } from './planningModel'
+import { CARD_TYPES, type CardType, type PlanCard } from './planningModel'
+import { buildRoteiroTools } from './planningRoteiroTools'
 import * as realStore from './planningStore'
-import { RevConflictError, RoteiroConflictError, type OpenedPlan } from './planningStore'
-import { cardHeader, describeError, describePlan, etapaLines, text, type ToolText as Text } from './planningToolText'
+import { RevConflictError, type OpenedPlan } from './planningStore'
+import { Body, erase, guard, Name, Title, type AnyTool } from './planningToolKit'
+import { cardHeader, describePlan, text, type ToolText as Text } from './planningToolText'
 
 /**
  * O servidor MCP `planning`: as ferramentas com que o Agent Manager lê e altera
@@ -29,7 +31,8 @@ import { cardHeader, describeError, describePlan, etapaLines, text, type ToolTex
  * - O título do planejamento é do usuário e do app: plan_roteiro_set não tem
  *   campo de título e regrava sempre o título lido do disco.
  * - Mídia (anexos, blocos de imagem no plan_read, plan_midia_importar) mora
- *   em planningMediaTools.ts.
+ *   em planningMediaTools.ts; roteiro (com a estimativa das etapas) e handoff
+ *   (com as etapas de cada prompt), em planningRoteiroTools.ts.
  */
 
 export const PLANNING_MCP_SERVER = 'planning'
@@ -66,20 +69,8 @@ export interface PlanningToolContext {
   now?: () => Date
 }
 
-const Name = z.string().regex(/^[a-z0-9-]{1,64}$/, 'use [a-z0-9-], de 1 a 64 caracteres')
-const Title = z.string().min(1).max(1000)
-const Body = z.string().max(1_000_000)
 const Rev = z.number().int().min(0)
 const Anexos = z.array(z.string().max(200)).max(100)
-
-/** Mantém a falha dentro da conversa: o modelo corrige o input e tenta de novo. */
-async function guard(label: string, work: () => Promise<Text>): Promise<Text> {
-  try {
-    return await work()
-  } catch (error) {
-    return text(`${label} falhou: ${describeError(error)}`)
-  }
-}
 
 /** As duas formas de fonte aceitas, para a descrição do parâmetro "fonte". */
 const FONTE_FORMAS =
@@ -129,21 +120,6 @@ function coherenceProblem(plan: OpenedPlan, card: PlanCard, selfId?: string): st
   return null
 }
 
-/** O roteiro com a etapa `id` em `status`, ou o motivo (texto) de não haver o que gravar. */
-function markEtapa(roteiro: Roteiro, id: string, status: StageStatus): Roteiro | string {
-  const etapa = roteiro.etapas.find((e) => e.id === id)
-  if (!etapa) {
-    const ids = roteiro.etapas.map((e) => e.id).join(', ') || 'nenhuma'
-    return `Não existe etapa ${id} no roteiro (etapas: ${ids}).`
-  }
-  if (etapa.status === status) return `A etapa ${id} já estava [${status}]; nada gravado.`
-  return { ...roteiro, etapas: roteiro.etapas.map((e) => (e.id === id ? { ...e, status } : e)) }
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- como o próprio SDK tipa a lista de ferramentas.
-type AnyTool = SdkMcpToolDefinition<any>
-const erase = (definition: unknown): AnyTool => definition as AnyTool
-
 export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
   const store = ctx.store ?? realStore
   const { projectCwd, slug } = ctx
@@ -160,6 +136,12 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
     saveCard: (card, expectedRev) => store.saveCard(projectCwd, slug, card, expectedRev),
     changed
   }
+  const roteiroTools = buildRoteiroTools({
+    open,
+    saveRoteiro: (roteiro, expectedRev) => store.saveRoteiro(projectCwd, slug, roteiro, expectedRev),
+    writeHandoff: (conteudo, etapas) => store.writeHandoff(projectCwd, slug, conteudo, now(), etapas),
+    changed
+  })
 
   /** Grava um card novo (rev 0). Sem id explícito, deriva um livre de tipo + título. */
   async function createCard(plan: OpenedPlan, draft: PlanCard, explicitId: boolean): Promise<Text> {
@@ -216,7 +198,7 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
   return [
     erase(tool(
       'plan_read',
-      'Lê o planejamento desta sessão: o roteiro (etapas na ordem, com status), os cards resumidos e os arquivos inválidos. Cada card aparece com o título em destaque, [[Título]] — o nome com que o usuário o cita —, seguido de id, tipo, etapa, status, links, rev e um trecho do corpo; os anexos vêm abaixo dele como [Tipo] nome — caminho absoluto, e o texto termina com "Mídias do plano" (todas as de midia/, inclusive as sem card). Informe card_id para ler um card inteiro — é de onde vem o rev para alterá-lo; as imagens anexadas a ele (png, jpeg, gif, webp; até 4, cada uma até 5 MB) vêm também como imagem.',
+      'Lê o planejamento desta sessão: o roteiro (etapas na ordem, com status e estimativa, e o total estimado), os cards resumidos e os arquivos inválidos. Cada card aparece com o título em destaque, [[Título]] — o nome com que o usuário o cita —, seguido de id, tipo, etapa, status, links, rev e um trecho do corpo; os anexos vêm abaixo dele como [Tipo] nome — caminho absoluto, e o texto termina com "Mídias do plano" (todas as de midia/, inclusive as sem card). Informe card_id para ler um card inteiro — é de onde vem o rev para alterá-lo; as imagens anexadas a ele (png, jpeg, gif, webp; até 4, cada uma até 5 MB) vêm também como imagem.',
       { card_id: Name.optional().describe('Id de um card para ler por inteiro.') },
       async (a) =>
         guard('plan_read', async () => {
@@ -229,68 +211,8 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
         })
     )),
 
-    erase(tool(
-      'plan_roteiro_set',
-      'Substitui a lista ORDENADA de etapas do roteiro. Mande a lista inteira, na ordem em que devem acontecer. Etapa que já existia mantém o status se você não informar outro; etapa nova nasce "pendente". Não mexe no título do planejamento: ele é do usuário e do app, não há campo para ele e o atual é sempre preservado. Se o roteiro mudar no meio (ex.: o usuário marcou uma etapa na tela), nada é gravado e a resposta traz o roteiro atual para você refazer.',
-      {
-        etapas: z
-          .array(
-            z.object({
-              id: Name.describe('Id curto e estável da etapa (ex.: "requisitos", "etapa-2"). Cards apontam para ele.'),
-              titulo: Title.describe('O que esta etapa entrega, em uma frase.'),
-              status: z.enum(STAGE_STATUSES).optional().describe('pendente | em_andamento | concluida.')
-            })
-          )
-          .max(500)
-          .describe('Todas as etapas, na ordem.')
-      },
-      async (a) =>
-        guard('plan_roteiro_set', async () => {
-          const plan = await open()
-          const before = new Map(plan.roteiro.etapas.map((e) => [e.id, e.status]))
-          const etapas = a.etapas.map((e) => ({
-            id: e.id,
-            titulo: e.titulo.trim(),
-            status: e.status ?? before.get(e.id) ?? 'pendente'
-          }))
-          // O título é o que está em disco (o Manager não o altera). Com o rev
-          // lido agora: se a tela mexeu no meio — inclusive no título —, nada é
-          // gravado e o modelo recebe o roteiro atual para refazer (describeError).
-          const saved = await store.saveRoteiro(projectCwd, slug, { titulo: plan.roteiro.titulo, etapas }, plan.roteiro.rev)
-          changed()
-          const ids = new Set(saved.etapas.map((e) => e.id))
-          const orphans = plan.cards.filter((c) => c.etapa && !ids.has(c.etapa)).map((c) => c.id)
-          const lines = [`Roteiro gravado (${saved.etapas.length} etapas):`, ...etapaLines(saved.etapas)]
-          if (orphans.length) {
-            lines.push(`Atenção: estes cards apontam para etapas que saíram do roteiro: ${orphans.join(', ')}. Ajuste com plan_card_update.`)
-          }
-          return text(lines.join('\n'))
-        })
-    )),
-
-    erase(tool(
-      'plan_etapa_marcar',
-      'Muda o status de UMA etapa do roteiro (pendente, em_andamento, concluida).',
-      { id: Name.describe('Id da etapa.'), status: z.enum(STAGE_STATUSES).describe('Novo status.') },
-      async (a) =>
-        guard('plan_etapa_marcar', async () => {
-          const plan = await open()
-          const next = markEtapa(plan.roteiro, a.id, a.status)
-          if (typeof next === 'string') return text(next)
-          try {
-            await store.saveRoteiro(projectCwd, slug, next, plan.roteiro.rev)
-          } catch (error) {
-            if (!(error instanceof RoteiroConflictError)) throw error
-            // Mudou no meio (a tela marcou outra etapa?). É um campo só: reaplica
-            // UMA vez sobre o roteiro atual; outro conflito vira texto (guard).
-            const retry = markEtapa(error.current, a.id, a.status)
-            if (typeof retry === 'string') return text(`O roteiro mudou enquanto você marcava. ${retry}`)
-            await store.saveRoteiro(projectCwd, slug, retry, error.current.rev)
-          }
-          changed()
-          return text(`Etapa ${a.id} agora está [${a.status}].`)
-        })
-    )),
+    roteiroTools.roteiroSet,
+    roteiroTools.etapaMarcar,
 
     erase(tool(
       'plan_card_create',
@@ -467,17 +389,7 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
         })
     )),
 
-    erase(tool(
-      'plan_handoff_write',
-      'Grava o prompt de handoff (o que a conversa de implementação vai receber) em _handoff/AAAA-MM-DD-NN.md do planejamento e devolve o caminho. Não inicia nada: só registra.',
-      { conteudo: Body.min(1).describe('O prompt completo de handoff, em markdown.') },
-      async (a) =>
-        guard('plan_handoff_write', async () => {
-          const file = await store.writeHandoff(projectCwd, slug, a.conteudo, now())
-          changed()
-          return text(`Handoff gravado em ${file}`)
-        })
-    )),
+    roteiroTools.handoffWrite,
 
     erase(tool(
       'plan_midia_importar',

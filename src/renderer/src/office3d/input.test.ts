@@ -72,7 +72,7 @@ describe('moveDelta / clampDt', () => {
 describe('mouse', () => {
   it('mapeia botões e clique curto', () => {
     expect(dragModeFor(0)).toBe('orbit')
-    expect(dragModeFor(2)).toBe('orbit')
+    expect(dragModeFor(2)).toBe('pan')
     expect(dragModeFor(1)).toBe('pan')
     expect(dragModeFor(3)).toBeNull()
     expect(isClick(2, 2)).toBe(true)
