@@ -6,12 +6,12 @@
  * tapete arredondado. Medidas de officePlan.ts; a estação `dir −1` é espelhada.
  *
  * Estático vai para a fusão da zona. Por ilha ficam à parte: as 4 telas (uma
- * Mesh por mesa: textura própria), as cadeiras (InstancedMesh de 4 — escondidas
+ * Mesh por mesa: textura própria), as cadeiras do mockup (chairModel.ts; InstancedMesh de 4 — escondidas
  * no foco do monitor e afastadas na hora de sentar/levantar) e a pilha de papéis.
  */
 import { Group, InstancedMesh, Matrix4, Mesh, Object3D, type BufferGeometry } from 'three'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { MONITOR_SCREEN_FRONT } from './cameraRig'
+import { officeChairGeometries } from './chairModel'
 import { box, cyl, disc, instanced, plant, type Place } from './decorUtil'
 import type { Kit } from './kit'
 import type { DeskLayout } from './layout'
@@ -20,13 +20,8 @@ import { createPaperPiles, type PaperPiles } from './paperPile'
 import { tagLod } from './roomLod'
 import { rng } from './textures'
 
-/** Centro do assento (topo em 0,33): baixo como os personagens — sentados, os pés tocam o chão. */
-export const SEAT_Y = 0.31
 /** Quanto a cadeira recua (m) no meio do sentar/levantar. */
-export const CHAIR_PULL = 0.38
-/** Centro do assento e do encosto atrás do quadril (o encosto encosta nas costas). */
-export const CHAIR_SEAT_Z = 0.15
-export const CHAIR_BACK_Z = 0.25
+export const CHAIR_PULL = 0.45
 
 export interface IslandParts {
   /** As telas das 4 mesas da ilha, na ordem do índice global. */
@@ -40,33 +35,6 @@ export interface IslandParts {
 
 const dummy = new Object3D()
 const ZERO = new Matrix4().makeScale(0, 0, 0)
-
-/**
- * A cadeira em duas geometrias no referencial dela (a origem é o quadril de
- * quem senta, que olha para −Z): o estofado — assento curto que termina no
- * quadril (a coxa desce livre pela borda) e o encosto logo atrás das costas — e
- * o metal (coluna e a base de rodinhas, com os pés dentro dela). Duas
- * InstancedMesh por ilha.
- */
-function chairGeometries(kit: Kit): { top: BufferGeometry; base: BufferGeometry } {
-  const piece = (src: BufferGeometry, sx: number, sy: number, sz: number, x: number, y: number, z: number, rx = 0): BufferGeometry => {
-    dummy.position.set(x, y, z)
-    dummy.rotation.set(rx, 0, 0)
-    dummy.scale.set(sx, sy, sz)
-    dummy.updateMatrix()
-    return (src.index ? src.toNonIndexed() : src.clone()).applyMatrix4(dummy.matrix)
-  }
-  const parts = [
-    [piece(kit.geo.box, 0.46, 0.04, 0.32, 0, SEAT_Y, CHAIR_SEAT_Z), piece(kit.geo.box, 0.44, 0.42, 0.05, 0, SEAT_Y + 0.27, CHAIR_BACK_Z, 0.08)],
-    [piece(kit.geo.cyl, 0.06, SEAT_Y - 0.06, 0.06, 0, SEAT_Y / 2, CHAIR_SEAT_Z * 0.5), piece(kit.geo.cyl, 0.58, 0.04, 0.58, 0, 0.04, 0)]
-  ]
-  const [top, base] = parts.map((geos) => {
-    const g = mergeGeometries(geos, false)!
-    for (const x of geos) x.dispose()
-    return g
-  })
-  return { top, base }
-}
 
 /** Onde fica a cadeira de uma mesa recuada `pull` (o giro de quem senta na mesa de fundo). */
 function chairPlace(d: DeskLayout, pull: number): Place {
@@ -130,7 +98,7 @@ export function buildIsland(kit: Kit, island: number, desks: readonly DeskLayout
   })
 
   // Cadeiras: o estofado e o metal, uma InstancedMesh de 4 cadeiras cada.
-  const geo = chairGeometries(kit)
+  const geo = officeChairGeometries()
   const placed = desks.map((d) => chairPlace(d, 0))
   const chairs: InstancedMesh[] = [instanced(zone, geo.top, m.chairSeat, placed), tagLod(instanced(zone, geo.base, m.chair, placed), 'small')]
   // A esfera de culling já cobre a cadeira recuada (calcula com as recuadas e volta).

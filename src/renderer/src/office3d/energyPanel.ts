@@ -175,7 +175,7 @@ export class EnergyPanel {
     this.group.add(ecoSign)
     // Giroflex em cima do armário: cúpula laranja e dois fachos girando (aditivos).
     this.giroDome = this.own(new MeshBasicMaterial({ color: 0xff8a1f }))
-    const dome = new Mesh(kit.geo.head, this.giroDome)
+    const dome = new Mesh(kit.geo.dome, this.giroDome)
     dome.scale.set(0.5, 0.4, 0.5)
     const beams = new Mesh(kit.geo.plane, this.own(new MeshBasicMaterial({ color: 0xff9a2e, map: ek.tex.glow, transparent: true, opacity: 0.9, blending: AdditiveBlending, depthWrite: false, side: DoubleSide })))
     beams.scale.set(1.3, 0.18, 1)

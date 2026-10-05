@@ -34,7 +34,7 @@ import type { PaperPiles } from './paperPile'
 import { buildPlaques, type Plaques } from './plaques'
 import { collectRoomLod, type RoomLod } from './roomLod'
 
-export { SEAT_Y } from './decorIslands'
+export { SEAT_TOP } from './chairModel'
 
 export interface ScreenView {
   mesh: Mesh

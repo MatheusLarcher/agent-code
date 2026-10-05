@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { appearance } from './characters'
 import { rng, skyPalette } from './textures'
+import { HAIR, SKIN } from './appearance'
+import { HAIR_STYLES } from './bodyGeo'
 
 describe('skyPalette', () => {
   it('noite com estrelas, dia sem, amanhecer e entardecer com sol', () => {
@@ -38,9 +40,12 @@ describe('appearance', () => {
     expect(hues.size).toBeGreaterThan(20)
     for (const s of seeds) {
       const a = appearance(s)
-      expect(a.skin).toBeLessThan(5)
-      expect(a.hair).toBeLessThan(7)
+      expect(a.skin).toBeLessThan(SKIN.length)
+      expect(a.hair).toBeLessThan(HAIR.length)
       expect(a.pants).toBeLessThan(4)
+      expect(HAIR_STYLES).toContain(a.hairStyle)
+      expect(a.build).toBeGreaterThanOrEqual(0.94)
+      expect(a.build).toBeLessThanOrEqual(1.06)
     }
   })
 })

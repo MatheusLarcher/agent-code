@@ -196,18 +196,19 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
   const deskOf: Record<string, number> = {}
   const taken: Array<string | null> = desks.map(() => null)
   const seated = model.characters.filter(wantsDesk)
-  const prevActive = new Map(prev.characters.map((c) => [c.key, c.model.active]))
   for (const c of seated) {
     const d = prev.deskOf[c.key]
     if (d === undefined || taken[d] !== null) continue
     taken[d] = c.key
     deskOf[c.key] = d
   }
-  // Fundo → frente: só quem começa um turno agora, para uma frente livre da mesma ilha.
+  // Fundo → frente: a tela da mesa da frente fica virada para a câmera (o usuário vê o que o agente faz).
+  // Vagou uma frente da ilha dele (ou de outra ilha do mesmo projeto), quem está no fundo muda para ela já.
   for (const c of seated) {
     const d = deskOf[c.key]
-    if (d === undefined || desks[d].front || prevActive.get(c.key) !== false || !c.active) continue
-    const free = desks.find((k) => k.island === desks[d].island && k.front && taken[k.index] === null)
+    if (d === undefined || desks[d].front) continue
+    const mine = new Set([desks[d].island, ...islandsOf(c.roomId as string)])
+    const free = desks.find((k) => k.island === desks[d].island && k.front && taken[k.index] === null) ?? desks.find((k) => mine.has(k.island) && k.front && taken[k.index] === null)
     if (!free) continue
     taken[d] = null
     taken[free.index] = c.key

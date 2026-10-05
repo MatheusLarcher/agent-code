@@ -71,8 +71,8 @@ describe('Office3DEngine — vida dos agentes', () => {
     const v = new Vector3()
     expect(engine.headWorldPosition(c.key, v)).toBe(true)
     // Sentado na cadeira dele: cabeça acima do tampo, sobre o assento.
-    expect(v.y).toBeGreaterThan(0.95)
-    expect(v.y).toBeLessThan(1.35)
+    expect(v.y).toBeGreaterThan(1.2)
+    expect(v.y).toBeLessThan(1.55)
     expect(Math.hypot(v.x - c.x, v.z - c.z)).toBeLessThan(0.5)
     expect(HEAD_RADIUS).toBeGreaterThan(0)
     expect(engine.headWorldPosition('ninguem', v)).toBe(false)

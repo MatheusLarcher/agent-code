@@ -152,22 +152,17 @@ describe('layoutOffice — um escritório para todos os projetos', () => {
     expect(islandOf(desk(two, 'conv:A0'))).toBe(1)
   })
 
-  it('fundo → frente só quando o agente COMEÇA um turno e só na mesma ilha', () => {
+  it('fundo → frente assim que a frente da ilha vaga (mesmo no meio de um turno): a tela fica virada para a câmera', () => {
     const m3 = (active: boolean[]): OfficeModel => ({ rooms: [room('A', 3)], characters: crew('A', 3).map((c, i) => ({ ...c, active: active[i] })) })
-    const one = layoutOffice(m3([false, false, false]))
+    const one = layoutOffice(m3([false, false, true]))
     expect(front(desk(one, 'conv:A2'))).toBe(false)
-    // A0 sai do escritório: a frente dele vaga.
-    const two = layoutOffice({ rooms: [room('A', 2)], characters: m3([false, false, false]).characters.slice(1) }, one)
-    expect(desk(two, 'conv:A2')).toBe(desk(one, 'conv:A2'))
-    // No meio de um turno (já estava ativo com a frente cheia) não troca quando a frente vaga.
-    const act = layoutOffice(m3([false, false, true]), one)
-    expect(desk(act, 'conv:A2')).toBe(desk(one, 'conv:A2'))
-    const busy = layoutOffice({ rooms: [room('A', 2)], characters: m3([false, false, true]).characters.slice(1) }, act)
-    expect(desk(busy, 'conv:A2')).toBe(desk(one, 'conv:A2'))
-    // Começa um turno (false → true): muda para a frente que vagou, na mesma ilha.
-    const start = layoutOffice({ rooms: [room('A', 2)], characters: m3([false, false, true]).characters.slice(1) }, two)
-    expect(front(desk(start, 'conv:A2'))).toBe(true)
-    expect(islandOf(desk(start, 'conv:A2'))).toBe(0)
+    // Com a frente cheia, continua no fundo.
+    expect(desk(layoutOffice(m3([false, false, true]), one), 'conv:A2')).toBe(desk(one, 'conv:A2'))
+    // A0 sai do escritório: a frente dele vaga e A2 (trabalhando) muda para ela, na mesma ilha.
+    const two = layoutOffice({ rooms: [room('A', 2)], characters: m3([false, false, true]).characters.slice(1) }, one)
+    expect(front(desk(two, 'conv:A2'))).toBe(true)
+    expect(islandOf(desk(two, 'conv:A2'))).toBe(0)
+    expect(desk(two, 'conv:A1')).toBe(desk(one, 'conv:A1'))
   })
 
   it('a reserva acaba com o último agente do projeto: a ilha fica livre e a placa apaga', () => {

@@ -47,6 +47,13 @@ const BEFORE_PARTY = {
   longe: { calls: 514, triangles: 21_410 }
 }
 
+/**
+ * Triângulos (principal + sombra), a linha de base dos agentes de ~1,80 m (bodyGeo.ts) e da cadeira
+ * igual à do mockup (chairModel.ts, ~2 mil triângulos cada, 25 cadeiras) com ~15% de folga: o corpo e a cadeira têm mais triângulos, as chamadas
+ * continuam abaixo de BEFORE/BEFORE_PARTY.
+ */
+const TRIS = { perto: 112_000, predio: 150_000, longe: 72_000 }
+
 interface PassStats {
   objects: number
   calls: number
@@ -234,7 +241,7 @@ describe('desempenho nas 3 vistas (demo 5 projetos × 4 agentes)', () => {
     for (const name of Object.keys(views) as Array<keyof typeof views>) {
       // Pior quadro agora (principal + sombra) contra o da versão anterior.
       expect(Number(rows[name].total), name).toBeLessThanOrEqual(BEFORE[name].calls)
-      expect(Number(rows[name].totalTris), name).toBeLessThan(BEFORE[name].triangles * 1.6)
+      expect(Number(rows[name].totalTris), name).toBeLessThan(TRIS[name])
       // O HUD lê o renderer.info do último quadro.
       expect(rows[name].hud).toBe(0)
     }
@@ -296,7 +303,7 @@ describe('desempenho nas 3 vistas (demo 5 projetos × 4 agentes)', () => {
       const shadow = shadowStats(scene)
       rows[name] = { salas: `${engine.stats.rooms}/${engine.stats.roomsTotal}`, lod: engine.stats.lod, calls: main.calls, tris: main.triangles, sombraCalls: shadow.calls, festa: partyVisible(), quadros60: renderer.renders - r0 }
       expect(main.calls + shadow.calls, name).toBeLessThanOrEqual(BEFORE_PARTY[name].calls)
-      expect(main.triangles + shadow.triangles, name).toBeLessThan(BEFORE_PARTY[name].triangles * 1.6)
+      expect(main.triangles + shadow.triangles, name).toBeLessThan(TRIS[name])
       // Nenhum objeto novo entra na cena quadro a quadro (pools e malhas criadas uma vez).
       expect(count()).toBe(before)
     }

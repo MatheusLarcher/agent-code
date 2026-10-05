@@ -20,6 +20,7 @@ import {
   type Material,
   type Texture
 } from 'three'
+import { createBodyGeometries } from './bodyGeo'
 import { createConcreteTexture, createFeltTexture, createOakTexture, createRugTexture, createScreensaverTexture, createSkyTexture, createWoodTexture, createZTexture } from './textures'
 
 export const SCREEN_W = 0.88
@@ -72,9 +73,10 @@ export function createKit(anisotropy: number) {
     disc: new CircleGeometry(1, 48),
     screen: new PlaneGeometry(SCREEN_W, SCREEN_H),
     leaf: new IcosahedronGeometry(0.5, 0),
-    torso: new CylinderGeometry(0.16, 0.2, 0.46, 10),
-    head: new SphereGeometry(0.15, 14, 12),
-    hair: new SphereGeometry(0.162, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
+    /** Cúpula (o giroflex do painel de energia). */
+    dome: new SphereGeometry(0.15, 14, 12),
+    /** O corpo dos agentes (bodyGeo.ts). */
+    ...createBodyGeometries(),
     alert: new OctahedronGeometry(0.07, 0),
     bubble: new SphereGeometry(0.05, 10, 8)
   }

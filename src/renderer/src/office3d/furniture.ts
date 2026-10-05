@@ -104,7 +104,7 @@ export interface RoomFurniture {
 export const DOOR_WIDTH = DOOR.width
 export const DOOR_HEIGHT = DOOR.height
 /** Do centro da cadeira até onde a pessoa fica em pé, ao lado dela. */
-export const CHAIR_SIDE = 0.62
+export const CHAIR_SIDE = 0.76
 /** …e quanto atrás do centro do assento (o tampo vai até 0,25 m da cadeira). */
 export const CHAIR_BACK = 0.15
 /** Passo entre quem espera na fila do café. */
@@ -112,8 +112,8 @@ export const QUEUE_STEP = 0.65
 export const QUEUE_LEN = 4
 /** A máquina fica deslocada do centro do balcão (em direção ao fundo do escritório). */
 export const MACHINE_OFFSET = 0.15
-/** Meia largura da cadeira da estação (obstáculo). */
-const CHAIR_HALF = 0.26
+/** Meia largura da cadeira (obstáculo): os braços e a base de rodízios da cadeira do mockup (chairModel.ts). */
+const CHAIR_HALF = 0.38
 
 const FACE_BACK = 0
 const FACE_CAMERA = Math.PI
@@ -213,7 +213,8 @@ function officeObstacles(board: BoardPlace): Rect[] {
   const o: Rect[] = []
   for (const s of STATIONS) {
     o.push(rect(s.x, s.z, DESK_W / 2, DESK_D / 2))
-    o.push(rect(s.x, s.z + s.dir * (SEAT_FRONT + 0.08), CHAIR_HALF, CHAIR_HALF))
+    // A cadeira: do assento (o centro dela fica à frente do quadril, sob a borda) até os rodízios de trás.
+    o.push(rect(s.x, s.z + s.dir * (SEAT_FRONT - 0.03), CHAIR_HALF, 0.33))
   }
   for (const isl of ISLANDS) o.push(rect(isl.x, isl.z + ISLAND_SHELF_Z, 0.31, 0.15))
   // Praça: o console e o cesto do kanban.
@@ -224,7 +225,7 @@ function officeObstacles(board: BoardPlace): Rect[] {
   o.push(rect(L.sideboard.x, L.sideboard.z, L.sideboard.w / 2, L.sideboard.d / 2))
   o.push(rect(L.sofa.x, L.sofa.z, L.sofa.w / 2, L.sofa.d / 2))
   o.push(rect(L.table.x, L.table.z, L.table.r, L.table.r))
-  o.push(rect(L.armchair.x, L.armchair.z, 0.32, 0.32))
+  o.push(rect(L.armchair.x, L.armchair.z, 0.36, 0.36))
   o.push(rect(L.lamp.x, L.lamp.z, 0.16, 0.16))
   // Sala de reunião: vidro da frente (com o vão da porta), vidro da esquerda, a mesa e as 8 cadeiras.
   const M = MEETING

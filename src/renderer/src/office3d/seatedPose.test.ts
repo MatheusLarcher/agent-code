@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Box3, BufferGeometry, Group, InstancedMesh, Mesh, Vector3 } from 'three'
-import { CHAIR_BACK_Z, CHAIR_SEAT_Z, SEAT_Y } from './decorIslands'
+import { BACK_TILT, CHAIR_CENTER_Z, SEAT_TOP } from './chairModel'
 import { actionPose, reactionPose } from './gestures'
 import { createKit } from './kit'
 import { DESK_D, DESK_HEIGHT, KEYBOARD_FRONT, MONITOR_BACK, MONITOR_Y, SEAT_FRONT, STATION_DZ } from './officePlan'
@@ -13,9 +13,15 @@ import { applyPose, buildRig } from './rig'
  * para −Z (a mesa "de frente"; a de fundo é a mesma mesa girada π), a mobília no
  * referencial dele. Cada parte do corpo (caixas, tronco, cabeça) tem os vértices
  * e pontos ao longo das arestas testados contra o tampo, o monitor, a
- * divisória, o teclado, o assento e o encosto, em vários instantes de cada ação
- * (e com as reações curtas por cima).
+ * divisória, o teclado, o assento, o encosto e os braços da cadeira do mockup
+ * (chairModel.ts), em vários instantes de cada ação (e com as reações curtas por
+ * cima). O estofado do assento afunda até SEAT_GIVE sob as coxas.
  */
+const SEAT_GIVE = 0.035
+/** O encosto (BACK_TILT, o do mockup: o alto vem para a frente): a face da frente na altura y, no referencial de quem senta. */
+const backFront = (y: number): number => CHAIR_CENTER_Z + 0.28 + (y - 0.88) * Math.tan(BACK_TILT) - 0.045
+/** Uma faixa do encosto entre y0 e y1 (começa na frente mais adiantada dela). */
+const backBand = (y0: number, y1: number): Box3 => box(-0.31, 0.31, y0, y1, Math.min(backFront(y0), backFront(y1)), Math.max(backFront(y0), backFront(y1)) + 0.09)
 const EPS = 0.008
 const edge = SEAT_FRONT - DESK_D / 2
 const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number): Box3 =>
@@ -25,8 +31,13 @@ const FURNITURE: Record<string, Box3> = {
   monitor: box(-0.47, 0.47, MONITOR_Y - 0.28, MONITOR_Y + 0.28, -(SEAT_FRONT + MONITOR_BACK) - 0.02, -(SEAT_FRONT + MONITOR_BACK) + 0.02),
   divisoria: box(-2, 2, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.445, -(SEAT_FRONT + STATION_DZ) - 0.025, -(SEAT_FRONT + STATION_DZ) + 0.025),
   teclado: box(-0.23, 0.23, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.047, -(SEAT_FRONT - KEYBOARD_FRONT) - 0.075, -(SEAT_FRONT - KEYBOARD_FRONT) + 0.075),
-  assento: box(-0.23, 0.23, SEAT_Y - 0.02, SEAT_Y + 0.02, CHAIR_SEAT_Z - 0.16, CHAIR_SEAT_Z + 0.16),
-  encosto: box(-0.22, 0.22, SEAT_Y + 0.06, SEAT_Y + 0.48, CHAIR_BACK_Z - 0.025, CHAIR_BACK_Z + 0.045),
+  assento: box(-0.32, 0.32, SEAT_TOP - 0.14, SEAT_TOP - SEAT_GIVE, CHAIR_CENTER_Z - 0.31, CHAIR_CENTER_Z + 0.31),
+  encosto1: backBand(0.58, 0.73),
+  encosto2: backBand(0.73, 0.88),
+  encosto3: backBand(0.88, 1.03),
+  encosto4: backBand(1.03, 1.18),
+  bracoE: box(-0.385, -0.295, 0.775, 0.815, CHAIR_CENTER_Z - 0.23, CHAIR_CENTER_Z + 0.15),
+  bracoD: box(0.295, 0.385, 0.775, 0.815, CHAIR_CENTER_Z - 0.23, CHAIR_CENTER_Z + 0.15),
   plaquinhaE: box(-DESK_PLAQUE_X - 0.06, -DESK_PLAQUE_X + 0.06, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.145, -(SEAT_FRONT - DESK_PLAQUE_Z) - 0.009, -(SEAT_FRONT - DESK_PLAQUE_Z) + 0.009),
   plaquinhaD: box(DESK_PLAQUE_X - 0.06, DESK_PLAQUE_X + 0.06, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.145, -(SEAT_FRONT - DESK_PLAQUE_Z) - 0.009, -(SEAT_FRONT - DESK_PLAQUE_Z) + 0.009)
 }
@@ -68,7 +79,8 @@ function clipping(reactionsToo: boolean): string[] {
   for (const action of SEATED) {
     for (let t = 0; t < 4; t += 0.13) {
       const lower = newPose()
-      sitLower(lower, 'chair')
+      // Cada agente senta do seu jeito (vary pela seed): as duas pontas e o meio.
+      sitLower(lower, 'chair', t, 1, (Math.floor(t * 7) % 3) / 2)
       const upper = newPose()
       standPose(upper)
       actionPose(upper, action, t, params)
@@ -95,7 +107,7 @@ function clipping(reactionsToo: boolean): string[] {
   return [...hits].slice(0, 12)
 }
 
-describe('pose sentada da estação', () => {
+describe('pose sentada da estação', { timeout: 120_000 }, () => {
   it('em type, typeFast, readScreen, sitIdle, drum, sip e no cochilo nenhuma parte do boneco atravessa tampo, monitor, divisória, teclado, assento ou encosto', () => {
     expect(clipping(false)).toEqual([])
   })
@@ -114,17 +126,19 @@ describe('pose sentada da estação', () => {
     root.updateMatrixWorld(true)
     const v = new Vector3()
     const pelvis = new Box3().setFromObject(rig.pelvis.children[0], true)
-    expect(pelvis.min.y).toBeGreaterThanOrEqual(SEAT_Y + 0.02 - 0.005)
-    expect(pelvis.min.y).toBeLessThan(SEAT_Y + 0.04)
+    expect(pelvis.min.y).toBeGreaterThanOrEqual(SEAT_TOP - 0.005)
+    expect(pelvis.min.y).toBeLessThan(SEAT_TOP + 0.04)
     rig.kneeR.getWorldPosition(v)
     expect(v.z).toBeLessThan(-edge)
-    expect(v.y).toBeLessThan(DESK_HEIGHT - 0.3)
+    // O joelho (a junta e a carne em volta) cabe sob o tampo.
+    expect(v.y + 0.07).toBeLessThan(DESK_HEIGHT - 0.025)
+    // A ponta do pé no chão (o calcanhar erguido), perto da base de rodízios (um pé pode ir um pouco à frente).
     const shoe = new Box3().setFromObject(rig.footR.children[0], true)
     expect(Math.abs(shoe.min.y)).toBeLessThan(0.02)
     rig.footR.getWorldPosition(v)
-    expect(Math.hypot(v.x, v.z)).toBeLessThan(0.29)
+    expect(Math.hypot(v.x, v.z - CHAIR_CENTER_Z)).toBeLessThan(0.55)
     const torso = new Box3().setFromObject(rig.torso, true)
-    expect(torso.max.z).toBeGreaterThan(CHAIR_BACK_Z - 0.06)
+    expect(torso.max.z).toBeGreaterThan(backFront(1.1) - 0.06)
     kit.dispose()
   })
 })

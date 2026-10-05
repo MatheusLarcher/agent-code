@@ -11,7 +11,7 @@
  */
 import { Group, InstancedMesh, Mesh, Object3D } from 'three'
 import { pushReaction, type Brain } from './brainBody'
-import { SEAT_Y } from './decor'
+import { CHAIR_CENTER_Z, SEAT_TOP } from './chairModel'
 import type { EnergyKit } from './energyKit'
 import type { Kit } from './kit'
 import { SEAT_FRONT } from './officePlan'
@@ -53,7 +53,7 @@ export class PizzaBox {
     this.root.visible = desk !== null && parent !== null
     if (!desk || !parent) return
     if (this.root.parent !== parent) parent.add(this.root)
-    this.root.position.set(desk.x, SEAT_Y + 0.07, desk.z + desk.dir * SEAT_FRONT)
+    this.root.position.set(desk.x, SEAT_TOP + 0.03, desk.z + desk.dir * (SEAT_FRONT + CHAIR_CENTER_Z))
     this.root.rotation.y = desk.dir === 1 ? 0 : Math.PI
   }
 

@@ -17,7 +17,7 @@ import { meetingChairs } from './furniture'
 import type { Kit } from './kit'
 import { BACK_FACE_Z, DESK_HEIGHT, LOUNGE, MEETING } from './officePlan'
 import { tagLod } from './roomLod'
-import { CHAIR_BACK_Z, CHAIR_SEAT_Z, SEAT_Y } from './decorIslands'
+import { officeChairGeometries } from './chairModel'
 
 export interface Lamp {
   shade: Mesh
@@ -31,17 +31,23 @@ export interface BackParts {
   tv: Mesh
 }
 
-/** Cadeira de escritório solta (sala de reunião, poltrona): o grupo gira `yaw` (0 = quem senta olha para −Z). */
-function looseChair(kit: Kit, parent: Group, x: number, z: number, yaw: number, seat: Material, scale = 1): void {
+/**
+ * Cadeira de escritório solta (sala de reunião, poltrona): a do mockup
+ * (chairModel.ts), com a origem no quadril de quem senta; o grupo gira `yaw`
+ * (0 = quem senta olha para −Z) e escala em (sx, sy, sx).
+ */
+function looseChair(parent: Group, x: number, z: number, yaw: number, seat: Material, metal: Material, sx = 1, sy = 1): void {
   const g = new Group()
   g.position.set(x, 0, z)
   g.rotation.y = yaw
-  g.scale.setScalar(scale)
+  g.scale.set(sx, sy, sx)
   parent.add(g)
-  box(kit, g, seat, 0.46, 0.04, 0.32, 0, SEAT_Y, CHAIR_SEAT_Z, true)
-  box(kit, g, seat, 0.44, 0.42, 0.05, 0, SEAT_Y + 0.27, CHAIR_BACK_Z, true).rotation.x = 0.08
-  tagLod(cyl(kit, g, kit.mat.chair, 0.06, SEAT_Y - 0.06, 0, 0.03, CHAIR_SEAT_Z * 0.5), 'small')
-  tagLod(cyl(kit, g, kit.mat.chair, 0.58, 0.04, 0, 0.02, 0), 'small')
+  const geo = officeChairGeometries()
+  const top = new Mesh(geo.top, seat)
+  top.castShadow = true
+  const base = tagLod(new Mesh(geo.base, metal), 'small')
+  base.castShadow = true
+  g.add(top, base)
 }
 
 function lamp(kit: Kit, zone: Group, shadeGeo: 'cone' | 'cyl', x: number, y: number, z: number, sx: number, sy: number): Lamp {
@@ -73,16 +79,18 @@ export function buildLounge(kit: Kit, zone: Group, statics: Group): Lamp[] {
     art.position.set(x, 1.85, BACK_FACE_Z + 0.06)
   })
   disc(kit, statics, m.rugLounge, L.rug.rx, L.rug.rz, L.rug.x, 0.007, L.rug.z)
-  // Sofá: base, almofadas do assento, encosto, braços, pés e as almofadas soltas.
+  // Sofá nas proporções do mockup: base sobre pés de madeira, três almofadas (topo a seatY), encosto alto,
+  // braços e as almofadas soltas encostadas no encosto. A frente é +Z.
   const s = L.sofa
-  box(kit, statics, m.sofa, s.w, 0.24, s.d, s.x, 0.14, s.z, true)
-  for (const dx of [-0.85, 0, 0.85]) box(kit, statics, m.sofa, 0.82, 0.1, s.d - 0.2, s.x + dx, 0.31, s.z + 0.08, true)
-  box(kit, statics, m.sofa, s.w, 0.5, 0.22, s.x, 0.5, s.z - s.d / 2 + 0.11, true)
-  for (const side of [-1, 1]) box(kit, statics, m.sofa, 0.2, 0.42, s.d, s.x + side * (s.w / 2 - 0.1), 0.39, s.z, true)
-  for (const dx of [-1.15, 1.15]) for (const dz of [-0.3, 0.3]) tagLod(cyl(kit, statics, m.shelf, 0.05, 0.04, s.x + dx, 0, s.z + dz), 'detail')
-  const p1 = box(kit, statics, m.sage, 0.42, 0.36, 0.14, s.x - 0.85, 0.5, s.z - 0.2, true)
+  const back = s.z - s.d / 2
+  box(kit, statics, m.sofa, s.w, 0.3, s.d, s.x, 0.28, s.z, true)
+  for (const dx of [-0.85, 0, 0.85]) box(kit, statics, m.sofa, 0.82, s.seatY - 0.43, s.d - 0.28, s.x + dx, (s.seatY + 0.43) / 2, s.z + 0.1, true)
+  box(kit, statics, m.sofa, s.w, 0.74, 0.24, s.x, 0.8, back + 0.12, true)
+  for (const side of [-1, 1]) box(kit, statics, m.sofa, 0.22, 0.56, s.d, s.x + side * (s.w / 2 - 0.11), 0.71, s.z, true)
+  for (const dx of [-1.12, 1.12]) for (const dz of [-0.32, 0.32]) tagLod(cyl(kit, statics, m.shelf, 0.056, 0.13, s.x + dx, 0, s.z + dz), 'detail')
+  const p1 = box(kit, statics, m.sage, 0.44, 0.4, 0.15, s.x - 0.85, s.seatY + 0.2, back + 0.32, true)
   p1.rotation.z = -0.16
-  const p2 = box(kit, statics, m.shelf, 0.4, 0.34, 0.13, s.x + 0.85, 0.5, s.z - 0.2, true)
+  const p2 = box(kit, statics, m.shelf, 0.42, 0.38, 0.14, s.x + 0.85, s.seatY + 0.19, back + 0.32, true)
   p2.rotation.z = 0.17
   // Mesa de centro com planta.
   const t = L.table
@@ -90,7 +98,7 @@ export function buildLounge(kit: Kit, zone: Group, statics: Group): Lamp[] {
   cyl(kit, statics, m.shelf, 0.16, t.h - 0.05, t.x, 0, t.z, true)
   tagLod(plant(kit, statics, t.x, t.h, t.z, 0.4), 'detail')
   // Poltrona sage (de frente para a mesa).
-  looseChair(kit, statics, L.armchair.x, L.armchair.z, L.armchair.yaw, m.sage, 1.12)
+  looseChair(statics, L.armchair.x, L.armchair.z, L.armchair.yaw, m.sage, m.chair, 1.13, 1.03)
   // Luminária de pé (base, haste de latão) e o pendente quente sobre o tapete.
   tagLod(cyl(kit, statics, m.metal, 0.3, 0.03, L.lamp.x, 0, L.lamp.z), 'small')
   cyl(kit, statics, m.brass, 0.03, 1.45, L.lamp.x, 0, L.lamp.z, true)
@@ -133,7 +141,7 @@ export function buildMeeting(kit: Kit, zone: Group, statics: Group): BackParts {
   const T = M.table
   box(kit, statics, m.deskTop, T.w, 0.06, T.d, T.x, DESK_HEIGHT, T.z, true)
   for (const dx of [-1.0, 1.0]) box(kit, statics, m.metal, 0.1, DESK_HEIGHT - 0.03, T.d * 0.65, T.x + dx, (DESK_HEIGHT - 0.03) / 2, T.z, true)
-  for (const c of meetingChairs()) looseChair(kit, statics, c.x, c.z, c.yaw, m.sofa)
+  for (const c of meetingChairs()) looseChair(statics, c.x, c.z, c.yaw, m.sofa, m.chair)
   tagLod(plant(kit, statics, T.x, DESK_HEIGHT + 0.03, T.z, 0.42), 'detail')
   // Ripado de madeira na parede do fundo da sala e a TV com moldura.
   for (let i = 0; i < 44; i++) box(kit, statics, m.shelf, 0.04, 2.5, 0.06, M.x0 + 0.65 + i * 0.12, 1.25, BACK_FACE_Z + 0.03)

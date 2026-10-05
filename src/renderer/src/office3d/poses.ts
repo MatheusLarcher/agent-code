@@ -67,9 +67,37 @@ export const UPPER: readonly number[] = [
   CH.fingersL, CH.fingersR, CH.thumbR, CH.shrug, CH.mouth, CH.brows, CH.eyes, CH.hop, CH.prop, CH.twistL, CH.twistR
 ]
 
+/**
+ * Medidas do corpo (m, adulto de ~1,80 m em pé): tornozelo, coxa e canela,
+ * as juntas do quadril abaixo do pivô da bacia, ombros (junta e largura),
+ * centro da cabeça (acima da bacia) e a cabeça (meias medidas), braço e
+ * antebraço. O pivô da bacia fica a pelvisY do chão em pé.
+ */
+export const BODY = (() => {
+  const ankleY = 0.085
+  const thigh = 0.45
+  const shin = 0.46
+  const hipDrop = 0.03
+  return {
+    ankleY,
+    thigh,
+    shin,
+    hipDrop,
+    hipX: 0.092,
+    pelvisY: ankleY + thigh + shin + hipDrop,
+    shoulderY: 0.45,
+    shoulderX: 0.19,
+    headY: 0.69,
+    headW: 0.086,
+    headH: 0.116,
+    headD: 0.102,
+    upperArm: 0.29,
+    forearm: 0.26
+  }
+})()
 /** Coxa e canela (m); a perna esticada vai do quadril ao tornozelo em LEG. */
-export const THIGH = 0.27
-export const SHIN = 0.25
+export const THIGH = BODY.thigh
+export const SHIN = BODY.shin
 export const LEG = THIGH + SHIN
 /** Crossfade entre ações. */
 export const BLEND_S = 0.2
@@ -106,6 +134,8 @@ export interface ActionParams {
   beat?: number
   /** Sentado na cadeira da estação: os gestos ficam sobre o tampo (nada atravessa a mesa). */
   seated?: boolean
+  /** Escala do boneco (o subagente é menor): o alcance até o teclado é calculado com ela. */
+  scale?: number
 }
 
 export const clamp01 = (k: number): number => (k < 0 ? 0 : k > 1 ? 1 : k)
@@ -264,29 +294,62 @@ export function standPose(out: Pose): void {
 
 export type SeatKind = 'chair' | 'sofa' | 'desk'
 
-/** Pernas e quadril sentados (o tronco é da ação). Na beira da mesa as pernas balançam com o relógio `t`. */
-export function sitLower(out: Pose, seat: SeatKind, t = 0): void {
+/**
+ * Altura (m) de cada assento: a cadeira do mockup (chairModel.ts, topo do
+ * assento a 0,59), o sofá/poltrona do lounge e o tampo da mesa (0,775).
+ */
+export const SEAT_HEIGHT: Record<SeatKind, number> = { chair: 0.59, sofa: 0.6, desk: 0.775 }
+
+/** Quanto o quadril (a junta) fica acima do assento: a carne que apoia, menos o que o estofado afunda. */
+const SIT_ON: Record<SeatKind, number> = { chair: 0.09, sofa: 0.04, desk: 0.07 }
+
+/** O sapato a partir do tornozelo: quanto desce até a sola e quanto vai até a ponta (bodyGeo.ts). */
+const SOLE_DOWN = 0.085
+const TOE_AHEAD = 0.19
+
+const acosClamp = (v: number): number => Math.acos(v < -1 ? -1 : v > 1 ? 1 : v)
+
+/**
+ * Pernas e quadril sentados (o tronco é da ação), calculados pela altura do
+ * assento e pela escala do boneco (`scale`: o subagente é menor, o assento é o
+ * mesmo). Cadeira: canela na vertical e os calcanhares um pouco erguidos (a
+ * ponta do pé no chão). Sofá: os pés esticados à frente. Beira da mesa: coxas
+ * quase na horizontal e as canelas soltas, balançando com o relógio `t`.
+ */
+export function sitLower(out: Pose, seat: SeatKind, t = 0, scale = 1, vary = 0.5): void {
+  const hip = (SEAT_HEIGHT[seat] + SIT_ON[seat]) / scale
+  out[CH.pelvisY] = hip + BODY.hipDrop - BODY.pelvisY
+  out[CH.pelvisZ] = 0
   if (seat === 'desk') {
-    // Tampo a 0,78 m: quadril alto, coxas na horizontal e canelas soltas, balançando.
-    out[CH.pelvisY] = 0.3
-    out[CH.pelvisZ] = 0
     out[CH.legL] = out[CH.legR] = 1.45
     out[CH.kneeL] = 1.25 + 0.22 * Math.sin(3.1 * t)
     out[CH.kneeR] = 1.25 + 0.22 * Math.sin(3.1 * t + Math.PI)
-  } else if (seat === 'sofa') {
-    // Sofá/poltrona do lounge (assento a ~0,34 m): afunda um pouco, coxas quase na horizontal, pés no chão.
-    out[CH.pelvisY] = -0.17
-    out[CH.pelvisZ] = 0.1
-    out[CH.legL] = out[CH.legR] = 1.25
-    out[CH.kneeL] = out[CH.kneeR] = 1.1
-  } else {
-    // Cadeira da estação (decorIslands.ts, topo do assento a 0,33 m): quadril
-    // sobre o assento curto, coxa descendo pela borda dele até o joelho (sob o
-    // tampo) e canela na vertical — os pés tocam o chão dentro da base de rodinhas.
-    out[CH.pelvisY] = -0.14
-    out[CH.pelvisZ] = 0
-    out[CH.legL] = out[CH.legR] = 1.07
-    out[CH.kneeL] = out[CH.kneeR] = 1.07
+    out[CH.footL] = out[CH.footR] = 0
+    return
   }
-  out[CH.footL] = out[CH.footR] = 0
+  if (seat === 'sofa') {
+    // Afundado no sofá: a canela inclinada para a frente e o pé apoiado inteiro.
+    const shinTilt = 0.38
+    const thigh = acosClamp((hip - (BODY.ankleY + SHIN * Math.cos(shinTilt))) / THIGH)
+    out[CH.legL] = out[CH.legR] = thigh
+    out[CH.kneeL] = out[CH.kneeR] = thigh - shinTilt
+    out[CH.footL] = out[CH.footR] = 0.05
+    return
+  }
+  // Cadeira (alta, a do mockup): a coxa quase na horizontal sobre o assento (o joelho cabe sob o tampo)
+  // e o calcanhar erguido, a ponta do pé no chão. Cada um senta do seu jeito (`vary`, 0..1 pela seed):
+  // um pé mais à frente e o outro recolhido sob o joelho, e de tempos em tempos troca o apoio.
+  const knee = hip - 0.06 / scale
+  const thigh = acosClamp((hip - knee) / THIGH)
+  const shift = 0.05 * Math.sin(0.23 * t + vary * 6.28)
+  const reach = Math.hypot(SOLE_DOWN, TOE_AHEAD)
+  const tilts = [0.06 + 0.26 * vary + shift, 0.04 + 0.2 * (1 - vary) - shift]
+  ;([[CH.legL, CH.kneeL, CH.footL], [CH.legR, CH.kneeR, CH.footR]] as const).forEach(([leg, kn, foot], i) => {
+    const tilt = Math.max(0, tilts[i])
+    out[leg] = thigh
+    out[kn] = thigh - tilt
+    const ankle = knee - SHIN * Math.cos(tilt)
+    const toe = Math.asin(Math.min(1, Math.max(0, ankle / reach))) - Math.atan2(SOLE_DOWN, TOE_AHEAD)
+    out[foot] = -Math.min(1.1, Math.max(0, toe))
+  })
 }

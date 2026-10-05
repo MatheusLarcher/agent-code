@@ -20,19 +20,20 @@ import {
   type Reaction
 } from './poses'
 import { PELVIS_Y } from './rig'
+import { BODY, SEAT_HEIGHT } from './poses'
 
 /** Tornozelo no plano do passo: avanço (m, para a frente) e altura do chão. */
 function ankle(p: Pose, side: 'L' | 'R'): { x: number; y: number } {
   const leg = p[side === 'L' ? CH.legL : CH.legR]
   const knee = p[side === 'L' ? CH.kneeL : CH.kneeR]
-  const hipY = PELVIS_Y + p[CH.pelvisY] + p[CH.hop] - 0.02
+  const hipY = PELVIS_Y + p[CH.pelvisY] + p[CH.hop] - BODY.hipDrop
   return {
     x: THIGH * Math.sin(leg) + SHIN * Math.sin(leg - knee) - p[CH.pelvisZ],
     y: hipY - THIGH * Math.cos(leg) - SHIN * Math.cos(leg - knee)
   }
 }
 
-const REST = PELVIS_Y - 0.02 - LEG
+const REST = PELVIS_Y - BODY.hipDrop - LEG
 const ACTIONS: Action[] = [
   'none', 'idle', 'sitIdle', 'type', 'typeFast', 'readScreen', 'drum', 'web', 'assist', 'wave', 'brew', 'sip', 'grabBook', 'readBook', 'lookOut',
   'stretchUp', 'water', 'readBoard', 'stick', 'admire', 'talk', 'listen', 'phone', 'wait', 'napDesk', 'napSofa'
@@ -99,11 +100,14 @@ describe('sentar', () => {
   it('na cadeira: quadril no assento e pés no chão; no sofá do lounge: afunda um pouco, pernas para a frente e pés no chão', () => {
     const p = newPose()
     sitLower(p, 'chair')
-    // Quadril no assento da estação (topo em SEAT_Y + 0,02 = 0,33; a caixa da calça encosta nele).
-    expect(PELVIS_Y + p[CH.pelvisY]).toBeCloseTo(0.42, 2)
-    expect(Math.abs(ankle(p, 'L').y - REST)).toBeLessThan(0.01)
+    // Quadril sobre o assento da cadeira do mockup (topo a 0,59); cadeira alta: o calcanhar sobe um pouco (a ponta do pé no chão).
+    const chairHip = PELVIS_Y + p[CH.pelvisY]
+    expect(chairHip).toBeCloseTo(SEAT_HEIGHT.chair + 0.12, 2)
+    expect(ankle(p, 'L').y - REST).toBeGreaterThanOrEqual(0)
+    expect(ankle(p, 'L').y - REST).toBeLessThan(0.1)
+    expect(p[CH.footL]).toBeLessThan(0)
     sitLower(p, 'sofa')
-    expect(PELVIS_Y + p[CH.pelvisY]).toBeLessThan(0.42)
+    expect(PELVIS_Y + p[CH.pelvisY]).toBeLessThan(chairHip)
     expect(ankle(p, 'L').x).toBeGreaterThan(0.15)
     expect(Math.abs(ankle(p, 'L').y - REST)).toBeLessThan(0.05)
   })

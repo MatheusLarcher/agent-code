@@ -64,13 +64,13 @@ export const DESK_D = 1.2
 export const MONITOR_Y = 1.12
 export const MONITOR_BACK = 0.3
 /**
- * Onde fica o quadril de quem senta (e o centro da cadeira), a partir do centro
- * da mesa: 0,21 m atrás da borda do tampo — os joelhos ficam sob o tampo e o
- * peito não encosta nele (poses.ts, pose da estação).
+ * Onde fica o quadril de quem senta, a partir do centro da mesa: 0,35 m atrás
+ * da borda do tampo. A cadeira do mockup (chairModel.ts) tem os braços a 0,80 m,
+ * acima do tampo: a frente deles para na borda; os joelhos ficam sob o tampo.
  */
-export const SEAT_FRONT = 0.81
-/** Teclado, a partir do centro da mesa: 0,40 m para dentro da borda (o alcance dos braços estendidos sobre ele). */
-export const KEYBOARD_FRONT = 0.2
+export const SEAT_FRONT = 0.95
+/** Teclado, a partir do centro da mesa: 0,15 m para dentro da borda (ao alcance de quem senta). */
+export const KEYBOARD_FRONT = 0.45
 
 export type ZoneId = 'island0' | 'island1' | 'island2' | 'island3' | 'plaza' | 'lounge' | 'meeting' | 'shell'
 
@@ -136,10 +136,10 @@ export const BOARD_X = -0.17
 export const LOUNGE = {
   sideboard: { x: -5.5, z: BACK_FACE_Z + 0.33, w: 4.4, h: 0.62, d: 0.65 },
   rug: { x: -5.1, z: -5.35, rx: 2.1, rz: 1.5 },
-  sofa: { x: -5.2, z: -6.3, w: 2.6, d: 0.85, seatY: 0.34 },
+  sofa: { x: -5.2, z: -6.3, w: 2.6, d: 0.95, seatY: 0.6 },
   /** Os 3 lugares do sofá (x), virados para +Z (yaw π). */
   sofaSeats: [-6.05, -5.2, -4.35] as readonly number[],
-  table: { x: -5.2, z: -4.85, r: 0.42, h: 0.34 },
+  table: { x: -5.2, z: -4.85, r: 0.42, h: 0.45 },
   armchair: { x: -3.55, z: -5.05, yaw: 1.95 },
   lamp: { x: -7.35, z: -6.0 },
   pendant: { x: -5.1, y: 2.4, z: -5.3 },
@@ -167,7 +167,7 @@ export const MEMORY_SHELF = { x: RIGHT_FACE_X - 0.18, z: 2.0, w: 1.27, h: 1.0, d
 export const MEMORY_SPOT_X = 7.45
 export const MEMORY_SPOTS_Z: readonly number[] = [1.6, 2.0, 2.4]
 export const MEMORY_WAIT = { x: 6.8, z: 2.0 } as const
-export const DOOR = { x: RIGHT_X, z: CONSOLE.z, width: 1, height: 1.9 } as const
+export const DOOR = { x: RIGHT_X, z: CONSOLE.z, width: 1, height: 2.02 } as const
 export const ENERGY_PANEL = { x: RIGHT_FACE_X - 0.125, z: 5.05, w: 0.7, h: 1.5, d: 0.25, y0: 0.45 } as const
 
 // ── parede de vidro e plantas ──────────────────────────────────────────────
@@ -199,8 +199,8 @@ export interface SeatPlace {
 
 /** Os 4 lugares do lounge: os 3 do sofá (virados para +Z) e a poltrona. */
 export const LOUNGE_SEATS: readonly SeatPlace[] = [
-  ...LOUNGE.sofaSeats.map((x): SeatPlace => ({ x, z: LOUNGE.sofa.z + 0.1, yaw: Math.PI, standX: x, standZ: -5.55 })),
-  { x: LOUNGE.armchair.x, z: LOUNGE.armchair.z, yaw: LOUNGE.armchair.yaw, standX: LOUNGE.armchair.x - 0.5, standZ: LOUNGE.armchair.z + 0.2 }
+  ...LOUNGE.sofaSeats.map((x): SeatPlace => ({ x, z: LOUNGE.sofa.z - 0.1, yaw: Math.PI, standX: x, standZ: -5.55 })),
+  { x: LOUNGE.armchair.x, z: LOUNGE.armchair.z, yaw: LOUNGE.armchair.yaw, standX: LOUNGE.armchair.x - 0.8, standZ: LOUNGE.armchair.z + 0.2 }
 ]
 
 /** Lugares do PO à esquerda do kanban, de frente para a parede do fundo. */

@@ -147,7 +147,7 @@ export class Character3D {
     this.skinMat = new MeshLambertMaterial({ color: SKIN[a.skin], emissive: GLOW, emissiveIntensity: 0 })
     this.shirtMat = new MeshLambertMaterial({ color: seedColor(c.model.seed) })
     this.hairMat = new MeshLambertMaterial({ color: HAIR[a.hair] })
-    this.rig = buildRig(kit, this.group, { skin: this.skinMat, shirt: this.shirtMat, hair: this.hairMat, pants: kit.mat.pants[a.pants] })
+    this.rig = buildRig(kit, this.group, { skin: this.skinMat, shirt: this.shirtMat, hair: this.hairMat, pants: kit.mat.pants[a.pants] }, { hair: a.hairStyle, longSleeves: a.longSleeves, build: a.build })
     this.group.add(this.hud)
     this.zs = [0.1, 0.13, 0.16].map((s) => {
       const z = new Sprite(kit.mat.z)
@@ -292,11 +292,12 @@ export class Character3D {
     locomotion(this.lower, this.phase, smooth(b.speed / 0.35), run)
     if (b.sit > 0) {
       this.sitPose.set(this.lower)
-      sitLower(this.sitPose, b.seat ?? 'chair', this.ctx.t)
+      sitLower(this.sitPose, b.seat ?? 'chair', this.ctx.t, this.scale, (((b.seed * 0.618034) % 1) + 1) % 1)
       lerpPose(this.lower, this.lower, this.sitPose, smooth(b.sit), LOWER)
     }
     this.params.speed = b.workSpeed
     this.params.seated = b.sit > 0.5 && b.seat === 'chair'
+    this.params.scale = this.scale
     const beat = beatAt(this.ctx.t)
     this.params.beat = beat
     if (b.action !== this.lastAction) {
