@@ -47,6 +47,7 @@ function setup(props: Partial<Office3DWorkspaceProps> = {}) {
   const convId = target.model.convId
   vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
   const leave = vi.spyOn(Office3DEngine.prototype, 'leaveFocus')
+  const reset = vi.spyOn(Office3DEngine.prototype, 'resetView')
   const onOpenConversation = vi.fn()
   const changeModel = vi.fn()
   // Como o App: o seletor recebe o convId do agente focado e troca o modelo dele.
@@ -92,7 +93,7 @@ function setup(props: Partial<Office3DWorkspaceProps> = {}) {
   }
   const float = (): HTMLElement | null => screen.queryByRole('region', { name: 'Escritório' })
   const agentConv = { id: convId, title: 'agente', cwd: 'C:\\p' }
-  return { convId, agentConv, leave, changeModel, onOpenConversation, rerender, click, float }
+  return { convId, agentConv, leave, reset, changeModel, onOpenConversation, rerender, click, float }
 }
 
 describe('Tela do monitor e a Central', () => {
@@ -103,8 +104,8 @@ describe('Tela do monitor e a Central', () => {
     expect(screen.getByTestId('office-screen')).toBeTruthy()
     expect(s.float()).toBeNull()
     s.rerender(CENTRAL)
-    // leaveFocus(back, byUser): a câmera volta à vista de antes do foco.
-    expect(s.leave).toHaveBeenCalledWith(true, true)
+    // A câmera volta à vista inicial (o escritório inteiro).
+    expect(s.reset).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('office-screen')).toBeNull()
     expect(s.float()?.textContent).toContain('central')
   })
@@ -114,10 +115,10 @@ describe('Tela do monitor e a Central', () => {
     s.rerender(CENTRAL)
     s.click()
     expect(screen.getByTestId('office-screen')).toBeTruthy()
-    s.leave.mockClear()
+    s.reset.mockClear()
     // A conversa ativa não muda (o App ainda não trocou): só o sinal do clique.
     s.rerender(CENTRAL, 1)
-    expect(s.leave).toHaveBeenCalledWith(true, true)
+    expect(s.reset).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('office-screen')).toBeNull()
     expect(s.float()?.textContent).toContain('central')
   })
@@ -127,6 +128,7 @@ describe('Tela do monitor e a Central', () => {
     s.click()
     s.rerender(s.agentConv)
     expect(s.leave).not.toHaveBeenCalledWith(true, true)
+    expect(s.reset).not.toHaveBeenCalled()
     expect(screen.getByTestId('office-screen')).toBeTruthy()
   })
 

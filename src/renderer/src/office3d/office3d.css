@@ -452,7 +452,28 @@
 }
 .o3d-plan-field textarea { resize: vertical; min-height: 84px; }
 .o3d-plan-empty { font-size: 13px; color: var(--text-muted, #a3a09b); }
-.o3d-plan-btn { pointer-events: auto; }
+/* "📋 Planejar" e "↺ Vista inicial": pílulas como a do filtro. */
+.o3d-plan-btn,
+.o3d-reset-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.14s ease;
+}
+.o3d-plan-btn:hover,
+.o3d-reset-btn:hover { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.o3d-plan-btn:focus-visible,
+.o3d-reset-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* A Central no console (foco): o painel da Central encaixado na tela inclinada. */
 .o3d-console-screen { display: flex; background: var(--bg, #1f1e1d); border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 2px; overflow: hidden; }

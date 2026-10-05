@@ -38,6 +38,8 @@ export function createDefaultRenderer(canvas: HTMLCanvasElement): RendererLike {
 export const PROJECTOR_KEY = 'projector:'
 /** Chave de pick da estante de Memórias: o clique abre o painel de Memórias (o foco nela). */
 export const MEMORY_SHELF_KEY = 'memory-shelf'
+/** Chave de pick do kanban da parede (o fundo; papel e pilha têm as chaves deles): o clique foca o quadro. */
+export const BOARD_KEY = 'office-board'
 
 export interface FeedSource {
   getSnapshot(): OfficeFeed | null
@@ -98,4 +100,12 @@ export function listener(cleanups: Array<() => void>): Listen {
     target.addEventListener(type, fn, opts)
     cleanups.push(() => target.removeEventListener(type, fn, opts))
   }) as Listen
+}
+
+/** Chama `cb` quando `el` muda de tamanho (ResizeObserver; sem ele, o resize da janela). */
+export function observeResize(el: HTMLElement, listen: Listen, cleanups: Array<() => void>, cb: () => void): void {
+  if (typeof ResizeObserver === 'undefined') return listen(window, 'resize', cb)
+  const ro = new ResizeObserver(cb)
+  ro.observe(el)
+  cleanups.push(() => ro.disconnect())
 }

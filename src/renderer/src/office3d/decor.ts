@@ -186,7 +186,7 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
     zone,
     screens,
     consoleScreen,
-    pickables: [walls.shelfPick],
+    pickables: [walls.shelfPick, walls.boardPick],
     door: walls.door,
     doorAt: { x: furniture.door.x, z: furniture.door.z },
     doorZone,

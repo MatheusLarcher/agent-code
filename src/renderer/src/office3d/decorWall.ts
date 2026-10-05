@@ -11,9 +11,10 @@
  * Estático vai para a fusão da zona; a folha da porta e a tela do console, não.
  */
 import { CanvasTexture, Group, Mesh, MeshBasicMaterial, MeshLambertMaterial, SRGBColorSpace } from 'three'
-import { MEMORY_SHELF_KEY } from './engineTypes'
+import { BOARD_H, BOARD_W, FACE_Z } from './board/boardLayout'
+import { BOARD_KEY, MEMORY_SHELF_KEY } from './engineTypes'
 import { box, cyl, disc, plant } from './decorUtil'
-import { DOOR_HEIGHT, MACHINE_OFFSET } from './furniture'
+import { boardPlace, DOOR_HEIGHT, MACHINE_OFFSET } from './furniture'
 import type { Kit } from './kit'
 import { COFFEE, CONSOLE, DOOR, FLOOR_PLANTS, GLASS_PLANTER, MEMORY_SHELF, PLAZA_RUG, RIGHT_X, zoneAt, type ZoneId } from './officePlan'
 import { tagLod } from './roomLod'
@@ -31,6 +32,8 @@ export interface WallParts {
   consoleScreen: Mesh
   /** O alvo invisível do clique na estante de Memórias (abre o painel). */
   shelfPick: Mesh
+  /** O alvo invisível do clique no kanban da parede (foca o quadro). */
+  boardPick: Mesh
   /** O que é próprio (textura e material da placa), liberado no dispose. */
   dispose(): void
 }
@@ -171,10 +174,18 @@ export function buildWalls(kit: Kit, zones: Zones): WallParts {
   shelfPick.position.set(MEMORY_SHELF.x, (MEMORY_SHELF.h + 0.6) / 2, MEMORY_SHELF.z)
   shelfPick.userData.charKey = MEMORY_SHELF_KEY
   zones(zoneAt(MEMORY_SHELF.x, MEMORY_SHELF.z)).group.add(shelfPick)
+  // O do kanban: logo atrás da face, para o papel e a pilha (na frente) ganharem o raio.
+  const bp = boardPlace()
+  const boardPick = new Mesh(kit.geo.box, pickMat)
+  boardPick.scale.set(BOARD_W + 0.1, BOARD_H + 0.1, 0.02)
+  boardPick.position.set(bp.x, bp.y, bp.z + FACE_Z - 0.03)
+  boardPick.userData.charKey = BOARD_KEY
+  plaza.group.add(boardPick)
   return {
     door: hinge,
     consoleScreen,
     shelfPick,
+    boardPick,
     dispose() {
       sign.texture.dispose()
       sign.mat.dispose()

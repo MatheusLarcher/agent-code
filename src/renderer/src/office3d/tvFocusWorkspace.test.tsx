@@ -198,14 +198,18 @@ describe('clique na TV: o foco dentro dela', () => {
     expect(open).not.toHaveBeenCalled()
     act(() => raf.flush(40))
     expect(screenEl.style.width).toMatch(/px$/)
-    // Abrir a Central pela barra lateral com ela já no console: nada fecha, a câmera não se mexe.
-    const leave = vi.spyOn(Office3DEngine.prototype, 'leaveFocus')
-    v.rerender(<Office3DWorkspace {...props} centralSignal={1} />)
-    expect(screen.getByTestId('office-console-screen')).toBeTruthy()
-    expect(leave).not.toHaveBeenCalled()
-    leave.mockRestore()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByTestId('office-console-screen')).toBeNull()
+    // Abrir a Central pela barra lateral com ela no console: a câmera volta à vista inicial e o chat dela, ao flutuante.
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
+    fireEvent.pointerUp(window, { button: 0, clientX: 51, clientY: 50 })
+    expect(screen.getByTestId('office-console-screen')).toBeTruthy()
+    const reset = vi.spyOn(Office3DEngine.prototype, 'resetView')
+    v.rerender(<Office3DWorkspace {...props} centralSignal={1} />)
+    expect(reset).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('office-console-screen')).toBeNull()
+    expect(screen.getByTestId('central-panel')).toBeTruthy()
+    reset.mockRestore()
   })
 
   it('clique na estante de Memórias: voo curto e o painel (só leitura) à direita; Esc fecha', async () => {

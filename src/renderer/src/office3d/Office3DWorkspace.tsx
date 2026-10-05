@@ -21,7 +21,8 @@
  * do campo da tela e do chat antes (o blur grava o rascunho). Em cima do campo,
  * `monitorModelPicker` (o seletor de modelo/esforço do chat) para a conversa do
  * agente focado. Ir à Central (`centralSignal` ou a Central virando a conversa
- * ativa) fecha a tela como gesto do usuário: visão geral e Central no flutuante.
+ * ativa) fecha a tela e volta a câmera à vista inicial (`engine.resetView`, o
+ * mesmo do "↺ Vista inicial" do HUD), com a Central no flutuante.
  *
  * O motor (three puro) nasce na montagem e vive enquanto a aba existir: com `active` false (aba
  * Conversa) fica PAUSADO e volta na hora, com a mesma câmera; com a aba fechada não existem a tela
@@ -250,15 +251,13 @@ export function Office3DWorkspace({
   tvFocus.current = tv
   const tvInfo = tv.tvInfo
   const convIsCentral = isCentralConversation(conversation)
-  // Ir à Central é o usuário desfazendo a seleção: a tela aberta fecha (a câmera
-  // volta à vista de antes do foco, a geral) e o flutuante volta, na Central.
+  // Ir à Central é o usuário desfazendo a seleção: a tela aberta fecha, a câmera
+  // volta à vista inicial (o escritório inteiro, como o "↺ Vista inicial") e o flutuante volta, na Central.
   const openCentral = useCallback((): void => {
-    const engine = engineRef.current
-    // A Central já aberta no console: fica lá (a câmera não se mexe sozinha).
-    if (engine?.focused && engine.scene.character(engine.focused)?.spot === 'central') return
-    engine?.leaveFocus(true, true)
+    engineRef.current?.resetView()
     setShowCentral(true)
   }, [])
+  const resetView = useCallback((): void => engineRef.current?.resetView(), [])
   const onFilter = useCallback((id: string | null): void => engineRef.current?.setProjectFilter(id), [])
 
   // Aba fechada: motor montado e parado; de volta, retoma na hora (feed guardado,
@@ -424,6 +423,7 @@ export function Office3DWorkspace({
           filter={projects.filter}
           onFilter={onFilter}
           onPlan={onStartPlanning ? () => setPlanDialog(true) : undefined}
+          onResetView={resetView}
         />
         {active && planDialog && onStartPlanning ? (
           <OfficePlanDialog

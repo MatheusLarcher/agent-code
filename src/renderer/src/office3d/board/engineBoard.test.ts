@@ -3,7 +3,8 @@ import { fireEvent } from '@testing-library/react'
 import { demoFeed } from '../demoFeed'
 import { DEMO_LOOP_MS } from '../demoTimeline'
 import { Office3DEngine, type RendererLike } from '../engine'
-import type { BoardOpen } from '../engineTypes'
+import { BOARD_KEY, type BoardOpen } from '../engineTypes'
+import { BOARD_AT } from '../engineTv'
 import { OfficeScene } from '../scene'
 import { roomIdFor } from '../../office/adapter/model'
 import type { Office3DLayout } from '../layout'
@@ -113,11 +114,27 @@ describe('o Quadro real no motor (engineBoard)', () => {
     s.engine.dispose()
   })
 
-  it('clique curto no papel abre o cartão; na pilha, a lista da coluna; hover mostra o nome da conversa', async () => {
+  it('clique no quadro de longe foca o quadro; com ele em foco, o papel abre o cartão e a pilha a lista; hover mostra o nome', async () => {
     const s = await setup()
     const pick = vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue('card:a')
-    fireEvent.pointerDown(s.canvas, { button: 0, clientX: 300, clientY: 200 })
-    fireEvent.pointerUp(window, { button: 0, clientX: 302, clientY: 200 })
+    const click = (x: number, y: number): void => {
+      fireEvent.pointerDown(s.canvas, { button: 0, clientX: x, clientY: y })
+      fireEvent.pointerUp(window, { button: 0, clientX: x, clientY: y })
+    }
+    // Fora do foco, o 1º clique (no papel ou no fundo) leva a câmera ao quadro e não abre nada.
+    click(302, 200)
+    expect(s.engine.focused).toBe(BOARD_KEY)
+    expect(s.opened).toEqual([])
+    // De frente para o quadro (yaw 0, sem arfagem), no centro dele; a vista inicial fecha o foco.
+    s.flush(40)
+    expect(s.engine.rig.pose).toMatchObject({ tx: BOARD_AT.x, tz: BOARD_AT.z, yaw: 0, pitch: 0 })
+    s.engine.resetView()
+    expect(s.engine.focused).toBeNull()
+    pick.mockReturnValue(BOARD_KEY)
+    click(302, 200)
+    expect(s.engine.focused).toBe(BOARD_KEY)
+    pick.mockReturnValue('card:a')
+    click(302, 200)
     expect(s.opened).toEqual([{ kind: 'card', id: 'a', x: 302, y: 200 }])
     pick.mockReturnValue(`pile:${s.rooms[0]}|completed`)
     fireEvent.pointerDown(s.canvas, { button: 0, clientX: 10, clientY: 10 })
@@ -243,7 +260,7 @@ describe('o Quadro real no motor (engineBoard)', () => {
     expect(tabs).toEqual(s.rooms.map((id) => `${TAB_KEY}${id}`))
     expect(view.keyAt(0, { x: 0, y: 0 })).toBeNull()
     const other = s.rooms.find((id) => id !== boards.shown)!
-    const hooks = s.engine.board.wrap({ click: vi.fn(), hover: vi.fn() } as unknown as PointerHooks)
+    const hooks = s.engine.board.wrap({ click: vi.fn(), hover: vi.fn() } as unknown as PointerHooks, () => BOARD_KEY)
     hooks.click(`${TAB_KEY}${other}`)
     expect(boards.shown).toBe(other)
     s.engine.board.feed(feed, layout)

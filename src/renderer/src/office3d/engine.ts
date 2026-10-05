@@ -28,7 +28,7 @@ import { CameraSync } from './cameraSync'
 import { EngineFilter } from './engineFilter'
 import { EnginePower } from './enginePower'
 import { focusKeyFor, focusPoseFor, wireTv } from './engineTv'
-import { createDefaultRenderer, listener, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
+import { createDefaultRenderer, listener, observeResize, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
 import { diffEvents, snapshotOf, type OfficeSnapshot } from './events'
 import { clampDt, isTypingTarget, MoveKeys, moveDelta } from './input'
 import { buildingBounds, EMPTY_LAYOUT, layoutOffice, type Office3DLayout } from './layout'
@@ -164,25 +164,23 @@ export class Office3DEngine {
       },
       hover: (key) => this.cb.onHover?.(key),
       now: () => this.now()
-    }))
+    }, () => this.focusedKey))
   }
 
   /** Teclado (pointerInput.ts): Esc fecha a tela aberta, WASD anda, documento oculto para o laço. */
   private bindInput(): void {
     bindKeys(this.listen, this.keys, {
       paused: () => this.paused,
-      escape: (target) => this.escape(target),
+      // Esc fecha a tela aberta (fora de campo de texto); true se consumiu.
+      escape: (target) => {
+        if (!this.focusedKey || isTypingTarget(target)) return false
+        this.userCamAt = this.now()
+        this.leaveFocus(true, true)
+        return true
+      },
       moved: () => this.requestRender(),
       hidden: (hidden) => (hidden ? this.cancelFrame() : this.requestRender())
     })
-  }
-
-  /** Esc fecha a tela aberta (fora de campo de texto); true se consumiu. */
-  private escape(target: EventTarget | null): boolean {
-    if (!this.focusedKey || isTypingTarget(target)) return false
-    this.userCamAt = this.now()
-    this.leaveFocus(true, true)
-    return true
   }
 
   /** Balão clicado: o de um pedido (permissão, pergunta) leva ao pedido da conversa; os outros focam o agente. */
@@ -202,13 +200,7 @@ export class Office3DEngine {
 
   private observeSize(): void {
     this.resize()
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(() => this.resize())
-      ro.observe(this.container)
-      this.cleanups.push(() => ro.disconnect())
-    } else {
-      this.listen(window, 'resize', () => this.resize())
-    }
+    observeResize(this.container, this.listen, this.cleanups, () => this.resize())
   }
 
   private resize(): void {
@@ -294,10 +286,18 @@ export class Office3DEngine {
     this.requestRender()
   }
 
-  /** Enquadra o escritório inteiro no palco atual. */
-  private frameBuilding(): void {
+  /** Enquadra o escritório inteiro no palco atual; `fly`: em voo, fechando a tela aberta (a vista inicial). */
+  private frameBuilding(fly = false): void {
     const b = buildingBounds(this.layout.rooms)
-    if (b) this.rig.pose = framePose({ ...b, height: BUILDING_HEIGHT }, { fovDeg: this.camera.fov, aspect: this.width / this.height })
+    const to = b && framePose({ ...b, height: BUILDING_HEIGHT }, { fovDeg: this.camera.fov, aspect: this.width / this.height })
+    if (to && fly) this.flyToPose(to)
+    else if (to) this.rig.retarget(to)
+  }
+
+  /** A vista inicial (o botão do HUD, a Central): o prédio inteiro, enquadrado de novo até o usuário mexer. */
+  resetView(): void {
+    this.frameBuilding(true)
+    this.autoFrame = true
   }
 
   /** Pose da tela em foco, o monitor ou a TV (engineTv.ts); a vista da âncora (HUD livre) dá o tamanho da tela HTML. */

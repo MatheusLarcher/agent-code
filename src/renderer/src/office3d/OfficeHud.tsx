@@ -27,7 +27,7 @@ export const OFFICE_CONTROLS: ReadonlyArray<{ keys: readonly string[]; does: str
   { keys: ['Roda'], does: 'aproxima e afasta' },
   { keys: ['Botão do meio'], does: 'arrasta a câmera' },
   { keys: ['Mouse parado'], does: 'no agente: prévia do que ele está fazendo' },
-  { keys: ['Clique'], does: 'no agente: o turno dele na tela do monitor; no telão do projetor: a página grande' },
+  { keys: ['Clique'], does: 'no agente: o turno dele na tela do monitor; no telão do projetor: a página grande; no quadro: a câmera vai até ele' },
   { keys: ['Duplo clique'], does: 'no agente: a conversa dele no chat' },
   { keys: ['Esc'], does: 'fecha a tela e volta' },
   { keys: ['📍'], does: 'no chat: voa até a mesa do agente' }
@@ -44,9 +44,11 @@ export interface OfficeHudProps {
   onFilter?: (id: string | null) => void
   /** "📋 Planejar": abre o formulário do planejamento (o mesmo do clique na TV vazia). */
   onPlan?: () => void
+  /** "↺ Vista inicial": fecha a tela aberta e volta a câmera ao escritório inteiro. */
+  onResetView?: () => void
 }
 
-export function OfficeHud({ power, windowsControlEnabled = false, onDisableWindowsControl, projects = [], filter = null, onFilter, onPlan }: OfficeHudProps): JSX.Element {
+export function OfficeHud({ power, windowsControlEnabled = false, onDisableWindowsControl, projects = [], filter = null, onFilter, onPlan, onResetView }: OfficeHudProps): JSX.Element {
   const [help, setHelp] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   // Aberta, a legenda fecha com Esc (que não chega ao motor) ou com um clique fora dela.
@@ -75,6 +77,11 @@ export function OfficeHud({ power, windowsControlEnabled = false, onDisableWindo
       {onPlan && (
         <button type="button" className="o3d-glass o3d-plan-btn" onClick={onPlan} title="Planejar na TV da sala de reunião">
           📋 Planejar
+        </button>
+      )}
+      {onResetView && (
+        <button type="button" className="o3d-glass o3d-reset-btn" onClick={onResetView} title="Volta a câmera para a vista inicial (o escritório inteiro)">
+          ↺ Vista inicial
         </button>
       )}
       <div className="o3d-help" ref={box}>

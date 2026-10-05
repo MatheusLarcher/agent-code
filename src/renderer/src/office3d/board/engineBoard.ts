@@ -31,7 +31,7 @@ import { Raycaster, Vector2, type PerspectiveCamera } from 'three'
 import type { OfficeFeed } from '../../office/adapter/feed'
 import { principalKey, roomIdFor } from '../../office/adapter/model'
 import { seedCss } from '../appearance'
-import type { EngineCallbacks, Listen } from '../engineTypes'
+import { BOARD_KEY, type EngineCallbacks, type Listen } from '../engineTypes'
 import type { Office3DLayout } from '../layout'
 import type { PointerHooks, PointerInput } from '../pointerInput'
 import type { OfficeScene } from '../scene'
@@ -294,11 +294,16 @@ export class EngineBoard {
     return true
   }
 
-  /** Os ganchos do ponteiro do motor com o quadro por cima. */
-  wrap(h: PointerHooks): PointerHooks {
+  /** Os ganchos do ponteiro do motor com o quadro por cima; `focused`: a chave em foco no motor. */
+  wrap(h: PointerHooks, focused: () => string | null): PointerHooks {
     return {
       ...h,
       click: (key, at) => {
+        // Fora do foco, o clique no quadro (fundo, papel, pilha) leva a câmera até ele; a aba ainda troca o projeto.
+        if (key && focused() !== BOARD_KEY && (key === BOARD_KEY || key.startsWith(CARD_KEY) || key.startsWith(TAB_KEY) || parsePileKey(key))) {
+          if (key.startsWith(TAB_KEY)) this.click(key, at)
+          return h.click(BOARD_KEY, at)
+        }
         if (!this.click(key, at)) h.click(key, at)
       },
       hover: (key) => {
