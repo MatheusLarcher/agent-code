@@ -20,6 +20,7 @@
 import './mainTabs.css'
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { officeStore } from '../office/officeStore'
+import { markSwitch, setOfficeMounted } from '../perf/freezeWatch'
 import type { Office3DWorkspaceProps } from '../office3d/Office3DWorkspace'
 import { LEVEL_COLORS, POWER_LABEL, type OfficePower, type PowerLevel } from '../office3d/power'
 import { useOfficeCalls } from '../office3d/useOfficeCalls'
@@ -36,7 +37,11 @@ const readOffice = (): ReturnType<typeof officeStore.getSnapshot> => officeStore
 /** A aba escolhida e quem troca (e grava). */
 export function useMainTab(): [MainTab, (tab: MainTab) => void] {
   const [tab, setTab] = useState<MainTab>(loadMainTab)
+  // A aba atual num ref: o detector de travadas só mede troca de verdade.
+  const current = useRef(tab)
+  current.current = tab
   const select = useCallback((next: MainTab) => {
+    if (next !== current.current) markSwitch('aba')
     setTab(next)
     saveMainTab(next)
   }, [])
@@ -124,6 +129,12 @@ export function OfficeTabHost({ active, ...rest }: OfficeTabHostProps): JSX.Elem
   const [opened, setOpened] = useState(active)
   // Estado derivado da prop (padrão do React): a 1ª abertura monta e não desmonta mais.
   if (active && !opened) setOpened(true)
+  // Contexto do detector de travadas: o Escritório está montado.
+  useEffect(() => {
+    if (!opened) return
+    setOfficeMounted(true)
+    return () => setOfficeMounted(false)
+  }, [opened])
   if (!opened) return null
   return (
     <Suspense

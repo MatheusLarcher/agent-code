@@ -10,7 +10,7 @@
  * novo", "Ouvir", "Comentar" e "Continuar nessa conta" — o resto (anexos,
  * Baixar, Preview do ToolCard, hora) sai igual.
  */
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, memo, useEffect, useState } from 'react'
 import { parseDownloads } from '@shared/ipc'
 import { fileMeta, fmtSize } from '../files'
 import { InlineMediaText } from '../inlineMedia/InlineMediaText'
@@ -252,8 +252,11 @@ export function rowKey(m: UIMessage, idx: number): string {
   }
 }
 
-/** Uma mensagem do chat, como o chat mostra; null para o que o chat não desenha (result, eventos internos). */
-export function ChatRow({ m, ctx }: { m: UIMessage; ctx: ChatRowContext }): JSX.Element | null {
+/** Uma mensagem do chat, como o chat mostra; null para o que o chat não desenha (result, eventos internos).
+ *  Em memo: só re-renderiza quando a própria mensagem (`m`) ou o contexto (`ctx`) muda — o
+ *  pedaço novo da resposta em andamento não redesenha o resto da conversa. Quem monta a
+ *  lista mantém `ctx` estável (useMemo) e a mensagem inalterada com a mesma referência. */
+export const ChatRow = memo(function ChatRow({ m, ctx }: { m: UIMessage; ctx: ChatRowContext }): JSX.Element | null {
   switch (m.kind) {
     case 'user':
       return <UserRow m={m} ctx={ctx} />
@@ -297,4 +300,4 @@ export function ChatRow({ m, ctx }: { m: UIMessage; ctx: ChatRowContext }): JSX.
     default:
       return null
   }
-}
+})

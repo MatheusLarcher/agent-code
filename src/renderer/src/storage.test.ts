@@ -254,7 +254,10 @@ describe('revision conflict rebases instead of surfacing an error', () => {
     const [conversation] = await loadConversations()
     await saveConversations([{ ...conversation, title: 'Primeira' }])
     // The cached revision must now be the one the successful write returned.
-    await expect(saveConversations([{ ...conversation, title: 'Segunda' }])).resolves.toBeUndefined()
+    await expect(saveConversations([{ ...conversation, title: 'Segunda' }])).resolves.toEqual({
+      processed: 1,
+      bytes: expect.any(Number)
+    })
     expect(upsertConversation).toHaveBeenCalledTimes(3)
     expect(upsertConversation.mock.calls[2][0].expectedRevision).toBe(12)
   })

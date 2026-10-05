@@ -90,7 +90,13 @@ export function MessageList({
   const hasOlder = startIdx > 0
 
   // Only the most recent answer with a finish time shows the date/time footer.
-  const rowCtx: ChatRowContext = { resolveRef, planDir, lastTsId: lastAnswerTsId(messages), busy, onRetry, tts, quote, onUseAccount }
+  const lastTsId = lastAnswerTsId(messages)
+  // Estável entre renders (ChatRow é memo): um evento que não mexe em nada disto
+  // re-renderiza só a linha cuja mensagem mudou.
+  const rowCtx = useMemo<ChatRowContext>(
+    () => ({ resolveRef, planDir, lastTsId, busy, onRetry, tts, quote, onUseAccount }),
+    [resolveRef, planDir, lastTsId, busy, onRetry, tts, quote, onUseAccount]
+  )
 
   // After older messages are prepended, keep the exact same DOM row at the same
   // screen position. A global scrollHeight delta is incorrect when streaming or

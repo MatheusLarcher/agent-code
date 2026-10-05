@@ -86,6 +86,8 @@ import {
   markConversationsDirty,
   registerCentralUpdater
 } from './storage'
+import { saveChangedConversations } from './autosaveChanged'
+import { freezeClock, freezeSection, markConversationSwitch, markPaneSwitch, startFreezeWatch, timeSave } from './perf/freezeWatch'
 import { ChatPanel } from './components/ChatPanel'
 import { Composer } from './components/Composer'
 import { ModelPicker, type ModelPickerProps } from './components/ModelPicker'
@@ -1920,6 +1922,8 @@ export function App(): JSX.Element {
   // ---- persist (debounced for the rapidly-changing message stream) ----
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const savedSnapshotRef = useRef<Map<string, Conversation>>(new Map())
+  // Ids que mudaram desde o último disparo do debounce (ver autosaveChanged.ts).
+  const pendingSaveIdsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!hydrated) return
     // Mark what changed as dirty IMMEDIATELY (cheap identity compare — React
@@ -1935,9 +1939,10 @@ export function App(): JSX.Element {
     }
     savedSnapshotRef.current = snapshot
     if (changed.length) markConversationsDirty(changed)
+    for (const id of changed) pendingSaveIdsRef.current.add(id)
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      void saveConversations(convsRef.current).catch((error) => {
+      void timeSave(() => saveChangedConversations(pendingSaveIdsRef.current, convsRef.current)).catch((error) => {
         const reason = ipcErrorMessage(error, 'A persistência rejeitou a gravação.')
         console.error('[conversation-storage]', reason)
         notify('erro', `Não foi possível salvar o histórico. Motivo: ${reason} A conversa continua marcada como não salva.`)
@@ -2032,6 +2037,12 @@ export function App(): JSX.Element {
     }
   }, [notify])
 
+  // Detector de travadas (perf/freezeWatch.ts): o contexto de cada registro sai
+  // deste ref, atualizado a cada render — só ids e números, nunca título/texto.
+  const freezeCtxRef = useRef({ tab: mainTab as string, convId: activeId, busy: busyIds.size, remote: remoteRunning })
+  freezeCtxRef.current = { tab: mainTab, convId: activeId, busy: busyIds.size, remote: remoteRunning }
+  useEffect(() => startFreezeWatch(() => freezeCtxRef.current), [])
+
   // ---- remote bridge: track running state + publish snapshots for phones ----
   useEffect(() => {
     void window.api.remoteStatus().then((i) => setRemoteRunning(i.running))
@@ -2045,6 +2056,7 @@ export function App(): JSX.Element {
     if (!hydrated || !remoteRunning) return
     clearTimeout(pubTimer.current)
     pubTimer.current = setTimeout(() => {
+      const publishStartedAt = freezeClock()
       void window.api.publishRemoteState({
         conversations: convsRef.current.map((c) => ({
           id: c.id,
@@ -2102,6 +2114,7 @@ export function App(): JSX.Element {
         usage: usageLimitsRef.current,
         projects: Array.from(new Set(convsRef.current.map((c) => c.cwd).filter(Boolean)))
       })
+      freezeSection('celular', publishStartedAt)
     }, 400)
     return () => clearTimeout(pubTimer.current)
   }, [conversations, queue, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models, permissions, stalledSince, usageLimits, storageStatus?.installationId])
@@ -2264,6 +2277,7 @@ export function App(): JSX.Element {
   }, [setMainTab])
 
   const selectConversation = useCallback((id: string): void => {
+    markConversationSwitch(activeIdRef.current, id)
     setActiveId(id)
   }, [])
 
@@ -2279,6 +2293,7 @@ export function App(): JSX.Element {
     setScrollTarget(null)
   }
   const selectConversationAt = useCallback((id: string, msgId: string | null): void => {
+    markConversationSwitch(activeIdRef.current, id)
     setActiveId(id)
     if (msgId) setScrollTarget((prev) => ({ convId: id, msgId, seq: (prev?.seq ?? 0) + 1 }))
   }, [])
@@ -2426,7 +2441,8 @@ export function App(): JSX.Element {
         }
         // PostgreSQL leases reference an existing conversation row. Flush a
         // newly created/edited conversation before asking main to acquire it.
-        await saveConversations(convsRef.current)
+        // Só ela: comparar todas travava a tela a cada envio no modo Automático.
+        await saveConversations(convsRef.current, { only: new Set([conv.id]) })
         const started = await window.api.startAgent({
           convId: conv.id,
           cwd: conv.cwd,
@@ -3731,6 +3747,22 @@ export function App(): JSX.Element {
   const activeCentral = active && isCentralConversation(active) ? active : null
   const activeConnected = activeId !== null && connectedIds.has(activeId)
   const showBusy = activeId !== null && busyIds.has(activeId)
+  // Estáveis entre renders: as linhas do chat são memo, e um callback novo a cada
+  // evento (de qualquer conversa) redesenharia a conversa inteira. Antes do
+  // retorno antecipado da recuperação do banco (hooks em ordem fixa).
+  const activeConvId = active?.id ?? null
+  const retryActive = useCallback(
+    (msgId: string) => {
+      if (activeConvId) void retryMessage(activeConvId, msgId)
+    },
+    [activeConvId, retryMessage]
+  )
+  const chooseAccountActive = useCallback(
+    (accountId: string, continueTask: boolean) => {
+      if (activeConvId) void chooseAccount(activeConvId, accountId, continueTask)
+    },
+    [activeConvId, chooseAccount]
+  )
   const activePermission = activeId ? permissions[activeId] : undefined
   const questionMinimized = activeId ? !!minimizedQuestions[activeId] : false
   const messages = active?.messages ?? []
@@ -3792,7 +3824,10 @@ export function App(): JSX.Element {
   )
   // The right-hand pane holds ONE of two tabs (browser / board); `browserMinimized`
   // collapses the whole pane. Ele só existe na aba Conversa: pedir um painel volta a ela.
+  const rightPaneRef = useRef({ pane: rightPane, minimized: browserMinimized })
+  rightPaneRef.current = { pane: rightPane, minimized: browserMinimized }
   const selectRightPane = useCallback((pane: RightPane): void => {
+    markPaneSwitch(rightPaneRef.current.pane, rightPaneRef.current.minimized, pane)
     setRightPane(pane)
     setBrowserMinimized(false)
     setMainTab('chat')
@@ -3962,9 +3997,12 @@ export function App(): JSX.Element {
   // Escritório: só publica o feed numa store fora do React (office/officeStore).
   useEffect(() => {
     // A Central vai junto: o modelo do escritório a põe no console do centro (sem mesa nem sala de projeto).
+    // O cronômetro cobre os assinantes (inclusive o motor 3D), que rodam dentro do publish.
+    const publishStartedAt = freezeClock()
     officeStore.publish({ conversations, activeId, busyIds,
       busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics, memoristaDiagnostics, observersOn, stalledSince,
       tracks, projectIcons, usageLimits, speakingId })
+    freezeSection('escritorio', publishStartedAt)
   }, [conversations, activeId, busyIds, busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics,
     memoristaDiagnostics, observersOn, stalledSince, tracks, projectIcons, usageLimits, speakingId])
   const iconRequested = useRef<Set<string>>(new Set())
@@ -4205,8 +4243,8 @@ export function App(): JSX.Element {
       onChipsConsumed={consumeChips}
       onSend={sendMessage}
       onInterrupt={interrupt}
-      onRetry={(msgId) => active && void retryMessage(active.id, msgId)}
-      onUseAccount={(accountId, continueTask) => active && void chooseAccount(active.id, accountId, continueTask)}
+      onRetry={retryActive}
+      onUseAccount={chooseAccountActive}
       composerRef={composerRef}
       projects={projects}
       projectRoot={active?.cwd ?? null}

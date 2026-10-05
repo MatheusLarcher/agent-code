@@ -39,6 +39,7 @@ import type {
   FileAttachment,
   FileBytes,
   FileRefAttachment,
+  FreezeRecord,
   ImageAttachment,
   MentionHit,
   ProjectDirListing,
@@ -102,6 +103,10 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: AgentCodeApi = {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(Channels.appGetVersion),
+  // Detector de travadas: ninguém espera a resposta; quem valida é o main (freezeLog.ts).
+  logFreezes: (batch: FreezeRecord[]): void => {
+    void ipcRenderer.invoke(Channels.perfLogFreezes, batch).catch(() => undefined)
+  },
   // app config (Settings screen)
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke(Channels.configGet),
   setConfig: (patch: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke(Channels.configSet, patch),

@@ -81,7 +81,8 @@ import type {
   PlanMediaDto,
   SuggestTitleResult,
   OutboxEntryDto,
-  WhisperStatus
+  WhisperStatus,
+  FreezeLogApi
 } from './ipc'
 import type {
   AccountUsageResult,
@@ -96,8 +97,8 @@ import type { OfficeApi } from './officeApi'
 import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from './central'
 
 /** The surface exposed on `window.api` by the preload script. */
-/** A window.api; a parte do Escritório está em officeApi.ts. */
-export interface AgentCodeApi extends OfficeApi {
+/** A window.api; a parte do Escritório está em officeApi.ts e a do detector de travadas em FreezeLogApi. */
+export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   /** App version from package.json (matches the installer/build). */
   getAppVersion(): Promise<string>
   /** Read the persisted app configuration. */

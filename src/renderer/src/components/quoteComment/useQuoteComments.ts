@@ -30,13 +30,24 @@ export interface QuoteComments {
   link: ComposerQuoteLink
 }
 
+/** O array anterior enquanto os itens forem os mesmos (por referência, na mesma ordem). */
+function useSameItems<T>(items: readonly T[]): readonly T[] {
+  const ref = useRef(items)
+  const prev = ref.current
+  if (prev.length !== items.length || items.some((x, i) => x !== prev[i])) ref.current = items
+  return ref.current
+}
+
 export function useQuoteComments(messages: readonly UIMessage[]): QuoteComments {
   const { notify } = useUI()
   const [pending, setPending] = useState<Quote[]>([])
   const inserterRef = useRef<QuoteInserter | null>(null)
   const link = useMemo<ComposerQuoteLink>(() => ({ inserterRef, onChange: setPending }), [])
 
-  const commented = useMemo(() => indexCommented(messages), [messages])
+  // Só as mensagens do usuário contam: o pedaço novo da resposta em andamento
+  // (array novo, mesmas bolhas do usuário) não refaz o índice nem troca `list`.
+  const userMessages = useSameItems(messages.filter((m) => m.kind === 'user'))
+  const commented = useMemo(() => indexCommented(userMessages), [userMessages])
 
   const add = useCallback(
     (messageId: string, blockText: string) => {

@@ -38,6 +38,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Skills (kit portátil)](#skills-kit-portátil)
 - [Contrato de IPC](#contrato-de-ipc)
 - [Notificações e modais](#notificações-e-modais)
+- [Detector de travadas](#detector-de-travadas)
 - [Build, tipos e ferramentas](#build-tipos-e-ferramentas)
 - [Fluxo ponta a ponta de uma mensagem](#fluxo-ponta-a-ponta-de-uma-mensagem)
 
@@ -1710,6 +1711,7 @@ O `App` grava o `draft` na conversa (persistido no SQLite pelo *debounce* das co
   - **Salvar** = agrupar a lista completa por projeto, regravar o arquivo de cada projeto presente e **apagar** o arquivo de qualquer projeto que não apareça mais na lista (todas as conversas dele foram excluídas) — evita "fantasmas" ressurgindo num load futuro.
   - **Migração automática, uma única vez:** a primeira vez que `data/` não existe ainda, o antigo blob único (chave `agentcode.conversations.v1`, no SQLite global) é lido, um **backup do banco inteiro** (`agent-code.db.bak`) é feito, as conversas são divididas por projeto e **a chave antiga é apagada** do banco global — o `.bak` é o backup de verdade, não uma chave morta guardada pra sempre dentro do banco que continua em uso (a versão inicial deste recurso fazia isso, e um usuário real acumulou dezenas de MB de lixo morto no `agent-code.db` até ser limpo manualmente).
   - `saveConversations` continua fazendo o **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo) e descartando o campo `images` ao persistir.
+  - **Autosave só das alteradas** (0.1.82): o efeito de persistência do `App` acumula, entre os disparos do debounce, os ids das conversas cujo **objeto** mudou (identidade) e o tique chama `saveConversations(lista, { only })` via `saveChangedConversations` (`autosaveChanged.ts`), que devolve os ids ao conjunto se a gravação falhar. Só essas passam por `cleanConversation` + comparação estável (`serialized`/`stable`, a proteção contra o JSONB reordenar chaves) + escrita; antes, cada tique limpava e comparava **todas** as carregadas (~230–320 ms com 15 MB). A detecção de apagadas continua olhando a lista inteira. **Sem `only`** (fechar/recarregar em `flushDurableState`, reconexão do banco) compara todas, como antes — o que escapar da identidade é salvo no mais tardar ao fechar. O `connect()` grava só a conversa que vai subir a sessão (`only: {conv.id}`). Igual ao confirmado e sem escrita na fila, a marca de "não salvo" sai (senão o feed passava a ignorar o outro PC para aquela conversa); com escrita na fila, grava mesmo assim, para o banco terminar com o que está na tela. `saveConversations` devolve `{ processed, bytes }`, usado pelo [detector de travadas](#detector-de-travadas).
 - `agentcode.ui.v1` — `{ collapsed, activeId, browserMinimized, browserWidth }` — continua no banco **global** (`kv:get`/`kv:set`), não migrou para os bancos por projeto (não é dado de projeto).
 - **Migração do `localStorage`** (herdada de instalações bem antigas, anteriores até ao SQLite) — na primeira leitura de cada chave, se não houver dado algum (nem no SQLite global, nem em nenhum banco de projeto), o valor antigo do `localStorage` é copiado (e mantido como backup inofensivo, nunca reconsultado depois — evitar isso é o que garante que uma conversa **de verdade** apagada não "ressuscite" de um `localStorage` velho). A hidratação do `App` virou `async` (carrega em paralelo e só então marca `hydrated`, que evita sobrescrever antes de carregar).
 - As **configs do sistema** (voz, API key do Ollama, "permitir tudo", token do Android) ficam na chave `config` do banco global (`config.ts` → `store.ts`), não mais no `settings.json`.
@@ -1731,6 +1733,8 @@ O badge de status é `running…`/`done`/`error` (erro em vermelho). O corpo exp
 **Markdown** — as mensagens do assistente são renderizadas com **`react-markdown` + `remark-gfm`** (componente `Markdown` no `MessageList`): títulos, listas, código/blocos, tabelas, citações e links. É seguro (gera nós React, sem HTML cru → compatível com a CSP); links recebem `target="_blank"` para abrir no navegador do sistema (via `setWindowOpenHandler`) em vez de navegar o frame do app. O `.md` reseta o `white-space: pre-wrap` da bolha para os blocos controlarem o próprio espaçamento.
 
 **Renderização em janela** — conversas longas só renderizam as últimas `PAGE` (40) mensagens. Ao rolar perto do topo (`scrollTop < 80`) e havendo mais antigas, `visible` cresce em +`PAGE` e a posição do scroll é **ancorada** num `useLayoutEffect` (ajusta `scrollTop` pela diferença de altura) para a vista não saltar — estilo Gemini. O auto-scroll para o fim só ocorre na primeira pintura e quando o usuário já está perto do fim (`atBottom`). A janela é **resetada por conversa** via `key={convId}` no `MessageList`.
+
+**Linhas memoizadas** (0.1.82) — `ChatRow` e `Markdown` são `memo` (`REMARK_PLUGINS` fixo no módulo) e o contexto das linhas (`rowCtx`) é `useMemo` sobre `resolveRef`, `planDir`, `lastTsId`, `busy`, `onRetry`, `tts`, `quote` e `onUseAccount`; no `App`, `onRetry`/`onUseAccount` do `ChatPanel` são `useCallback` (antes do retorno antecipado da tela de recuperação do banco, pela ordem dos hooks), e `useQuoteComments` só recalcula o índice quando mudam as mensagens do **usuário**. Assim, um pedaço novo da resposta ou um evento de outra conversa redesenha só a linha cuja mensagem mudou (o reducer mantém o mesmo objeto nas demais); antes, as 40 linhas e todo o markdown eram refeitos a cada evento (~15–24 ms por render). Mudar `busy`, `speakingId`, a hora da última resposta ou as citações ainda redesenha a página — uma vez por turno/ação.
 
 **Referências `@`** (`Composer.tsx`) — um botão `@` ao lado do campo abre um menu para referenciar **arquivo** (`app:pick-file`), **pasta** (`app:pick-directory`) ou **outro projeto do histórico** (lista derivada em `App`). A escolha insere `@<caminho>` no cursor; **não há leitura própria de arquivos** — o agente resolve a referência com as ferramentas nativas (`Read`/`Glob`/`LS`, auto-aprovadas).
 
@@ -1988,6 +1992,26 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 O valor do contexto é memoizado (`useMemo`) para os consumidores não re-renderizarem a cada toast. O `App` é envolvido pelo `UiProvider` em `main.tsx`, então qualquer componente (incl. `Sidebar`) usa `useUI()`.
 
 `PermissionModal` reusa o mesmo visual de modal para o pedido de permissão do agente, com 3 ações (Negar / Permitir uma vez / Sempre permitir). `QuestionModal` (ver [Modal de pergunta interativa](#modal-de-pergunta-interativa-askuserquestion)) usa o mesmo padrão para o `AskUserQuestion` — opções clicáveis, multi-select e "Outro…"; o `App` escolhe entre os dois conforme o pedido carrega `questions`. `NewTabModal` usa o mesmo padrão (`.modal-overlay`/`.modal-card`) para escolher o tipo da nova aba de preview (Web / Android / iPhone reservado) — renderizado na raiz do app, então nunca é cortado pela barra de abas.
+
+---
+
+## Detector de travadas
+
+Instrumentação permanente (0.1.82) para provar, no app instalado, de onde vêm as travadas da tela. Só observa: não muda comportamento.
+
+- **Renderer** (`src/renderer/src/perf/freezeWatch.ts`) — três sensores:
+  - `quadro`: `PerformanceObserver` de `long-animation-frame` (só se `PerformanceObserver.supportedEntryTypes` o tiver; no jsdom é no-op). Quadro acima de **100 ms** grava `ms`, `blockingMs` e até 3 scripts (`invoker`, `invokerType`, `sourceFunctionName`, só o **nome do arquivo** do `sourceURL`, `sourceCharPosition`, `ms`).
+  - `trecho`: cronômetro dos suspeitos, acima de **50 ms**, com rótulo legível (o build é minificado): `salvamento` (parte síncrona do tique do autosave, com nº de conversas e MB vindos de `saveConversations`), `celular` (montagem + envio do `publishRemoteState`) e `escritorio` (a chamada `officeStore.publish`, onde os assinantes do motor rodam).
+  - `troca`: do clique até a próxima pintura (`requestAnimationFrame` → `setTimeout 0`), acima de **150 ms**, com o alvo `conversa` (`selectConversation`/`selectConversationAt`), `aba` (troca real da aba principal em `MainTabs`) ou `painel` (`selectRightPane`); janela escondida descarta a medida.
+  - Todo registro leva o contexto do momento, lido por refs do provedor que o `App` registra: aba principal, **id** da conversa ativa (nunca título ou texto), nº de agentes ocupados, Escritório montado, controle remoto ligado.
+  - Envio em lote a cada ~5 s ou com 20 registros, por `window.api.logFreezes?.()` (`Channels.perfLogFreezes = 'perf:log-freezes'`, sem resposta útil).
+- **Main** (`src/main/freezeLog.ts`, no molde de `sessionLog.ts`) — valida na fronteira (só campos conhecidos com o tipo certo, strings ≤ 120, ≤ 3 scripts, ≤ 50 registros por lote, números finitos), grava **JSONL** em fila assíncrona em `<userData>/logs/travadas.log` (`%APPDATA%\agent-code-desktop\logs\`, ao lado do `sessions.log`) e gira para `travadas.1.log` acima de ~2 MB. Nunca lança nem bloqueia o main.
+
+Exemplo de linha:
+
+```json
+{"at":"2026-10-05T12:00:00.000Z","kind":"trecho","label":"salvamento","ms":61,"conversations":3,"mb":1.23,"ctx":{"tab":"chat","convId":"conv-1","busy":2,"office":false,"remote":false}}
+```
 
 ---
 

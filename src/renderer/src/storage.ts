@@ -416,13 +416,44 @@ const central = createCentralStorage({
 /** O App registra quem põe a Central mesclada na tela; `null` desliga. */
 export const registerCentralUpdater = central.register
 
-export async function saveConversations(list: Conversation[]): Promise<void> {
-  const clean = list.map(cleanConversation)
-  const nextIds = new Set(clean.map((conversation) => conversation.id))
+/** O que um salvamento tratou: quantas conversas passaram por limpeza +
+ *  comparação e o tamanho somado do serializado delas (caracteres do JSON). */
+export interface SaveConversationsStats {
+  processed: number
+  bytes: number
+}
+
+/**
+ * Grava o que difere da última revisão confirmada e apaga o que saiu da lista.
+ * Com `only`, a limpeza + comparação (estável) + escrita só trata esses ids — é o
+ * tique do autosave, que já sabe pela identidade quem mudou; a detecção de
+ * apagadas continua olhando a lista inteira. Sem `only` (fechar, reconexão),
+ * compara todas.
+ */
+export async function saveConversations(
+  list: Conversation[],
+  options?: { only?: ReadonlySet<string> }
+): Promise<SaveConversationsStats> {
+  const only = options?.only
+  const nextIds = new Set(list.map((conversation) => conversation.id))
   const writes: Promise<void>[] = []
-  for (const conversation of clean) {
+  const stats: SaveConversationsStats = { processed: 0, bytes: 0 }
+  for (const original of list) {
+    if (only && !only.has(original.id)) continue
+    const conversation = cleanConversation(original)
     const current = conversationRecords.get(conversation.id)
-    if (!current?.deletedAt && serialized(current?.payload) === serialized(conversation)) continue
+    const text = serialized(conversation)
+    stats.processed += 1
+    stats.bytes += text.length
+    // Igual ao confirmado e sem escrita na fila: a marca de "não salvo" (posta
+    // pelo App a cada mudança de identidade) sai, senão o feed passaria a ignorar
+    // para sempre o que o outro PC grava nesta conversa. Com escrita na fila, o
+    // confirmado ainda vai mudar para o conteúdo dela: grava mesmo assim (a fila é
+    // em série), senão voltar ao conteúdo de antes deixaria o banco com o do meio.
+    if (!current?.deletedAt && serialized(current?.payload) === text && !conversationQueues.has(conversation.id)) {
+      dirtyConversationIds.delete(conversation.id)
+      continue
+    }
     writes.push(
       enqueueConversation(conversation.id, () =>
         central.handles(conversation.id)
@@ -445,6 +476,7 @@ export async function saveConversations(list: Conversation[]): Promise<void> {
     )
   }
   await Promise.all(writes)
+  return stats
 }
 
 /** This installation's id, used to ignore the change feed's echo of our OWN

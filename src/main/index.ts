@@ -19,6 +19,7 @@ import { ProviderFailoverSession } from './providerFailover'
 import { createConversationLock } from './conversationLock'
 import { createStepRunner, RESUME_PREPARE_DEADLINE_MS } from './sessionSteps'
 import { initSessionLog, logSession } from './sessionLog'
+import { initFreezeLog, logFreezes } from './freezeLog'
 import { SessionLeases } from './sessionLeases'
 import { AppRestartCoordinator } from './appRestart'
 import { configureAppRestart, appRestart } from './appRestartRuntime'
@@ -1062,6 +1063,8 @@ export function registerIpc(): void {
     else pending.resolve()
   })
   ipcMain.handle(Channels.appGetVersion, () => app.getVersion())
+  // Detector de travadas: lote do renderer, validado e gravado em fila (freezeLog.ts).
+  ipcMain.handle(Channels.perfLogFreezes, (_e, batch: unknown) => logFreezes(batch))
   // App configuration (Settings screen).
   ipcMain.handle(Channels.configGet, async () => {
     storageLifecycle.repository()
@@ -2462,6 +2465,8 @@ app.whenReady().then(async () => {
   // Ciclo de vida das sessões em <userData>/logs/sessions.log (sessionLog.ts):
   // antes do registerIpc, que é de onde as sessões sobem.
   initSessionLog(app.getPath('userData'))
+  // Travadas da tela em <userData>/logs/travadas.log (freezeLog.ts).
+  initFreezeLog(app.getPath('userData'))
   // Mesma pergunta ("algum agente ocupado?"), outro consumidor: enquanto houver
   // turno vivo, o sistema não entra em suspensão por ociosidade — o Windows não
   // conta o trabalho do agente como atividade e dormia no meio da tarefa. Sai

@@ -1,4 +1,4 @@
-import { useMemo, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from 'react'
+import { memo, useMemo, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { PlanningCardType } from '@shared/ipc'
@@ -45,12 +45,22 @@ const mdComponentsWithRefs = {
 const mdQuotable = { ...mdComponents, ...quoteBlockComponents }
 const mdQuotableWithRefs = { ...mdComponentsWithRefs, ...quoteBlockComponents }
 
+// Fora do componente: um array novo a cada render faria o react-markdown reprocessar tudo.
+const REMARK_PLUGINS = [remarkGfm]
+
 /** Render text as GitHub-flavored Markdown (headings, lists, code, tables, …).
  *  Safe: react-markdown builds React nodes, no raw HTML. Shared by the chat
  *  (assistant answers) and the file preview (.md "Janela de Arquivo").
  *  `resolveRef` (só o chat do Agent Manager): [[Nome]] de um card vira a pílula
- *  com a cor do tipo; sem ele, o texto sai exatamente como sempre. */
-export function Markdown({ text, resolveRef }: { text: string; resolveRef?: CardRefResolver | null }): JSX.Element {
+ *  com a cor do tipo; sem ele, o texto sai exatamente como sempre.
+ *  Em memo: no chat, só reprocessa quando o texto (ou o resolvedor) muda. */
+export const Markdown = memo(function Markdown({
+  text,
+  resolveRef
+}: {
+  text: string
+  resolveRef?: CardRefResolver | null
+}): JSX.Element {
   const source = useMemo(() => (resolveRef ? refsToMarkdownLinks(text, resolveRef) : text), [text, resolveRef])
   const quotable = useQuotableBlocks()
   const components = quotable
@@ -58,12 +68,12 @@ export function Markdown({ text, resolveRef }: { text: string; resolveRef?: Card
     : resolveRef ? mdComponentsWithRefs : mdComponents
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
         {source}
       </ReactMarkdown>
     </div>
   )
-}
+})
 
 /** Texto puro (a mensagem do usuário) com [[Nome]] de card destacado como no Markdown. */
 export function CardRefText({ text, resolveRef }: { text: string; resolveRef: CardRefResolver }): JSX.Element {

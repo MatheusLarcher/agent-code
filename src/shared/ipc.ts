@@ -1918,8 +1918,57 @@ export interface CacheInfo {
   skillsDir: string
 }
 
+/** Detector de travadas (renderer/perf/freezeWatch.ts → main/freezeLog.ts).
+ *  `quadro`: long-animation-frame acima do limiar; `trecho`: trecho suspeito
+ *  cronometrado (`label`); `troca`: clique até a próxima pintura (`target`).
+ *  Só números e ids — nunca texto de mensagem, título nem caminho completo. */
+export type FreezeKind = 'quadro' | 'trecho' | 'troca'
+export type FreezeSectionLabel = 'salvamento' | 'celular' | 'escritorio'
+export type FreezeSwitchTarget = 'conversa' | 'aba' | 'painel'
+
+/** Um script do quadro longo; `sourceFile` é só o nome do arquivo, sem pasta. */
+export interface FreezeScript {
+  invoker?: string
+  invokerType?: string
+  sourceFunctionName?: string
+  sourceFile?: string
+  sourceCharPosition?: number
+  ms: number
+}
+
+/** O estado do app no momento do registro. `convId` é o id, nunca o título. */
+export interface FreezeContext {
+  tab?: string
+  convId?: string | null
+  busy?: number
+  office?: boolean
+  remote?: boolean
+}
+
+export interface FreezeRecord {
+  /** Epoch em ms (quando o quadro/trecho/troca começou). */
+  at: number
+  kind: FreezeKind
+  ms: number
+  label?: FreezeSectionLabel
+  target?: FreezeSwitchTarget
+  blockingMs?: number
+  scripts?: FreezeScript[]
+  /** Só no `salvamento`: conversas tratadas e MB serializados. */
+  conversations?: number
+  mb?: number
+  ctx?: FreezeContext
+}
+
+/** O pedaço da window.api do detector (opcional: mocks antigos não o têm). */
+export interface FreezeLogApi {
+  logFreezes?: (batch: FreezeRecord[]) => void
+}
+
 // Channel name constants — single source of truth.
 export const Channels = {
+  /** Lote do detector de travadas (invoke sem resposta útil) → <userData>/logs/travadas.log. */
+  perfLogFreezes: 'perf:log-freezes',
   // renderer -> main (invoke)
   /** Read the app version from package.json (shown in the Settings screen). */
   appGetVersion: 'app:get-version',

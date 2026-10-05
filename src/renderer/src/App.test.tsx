@@ -7,6 +7,15 @@ import { MCP_TASK_GONE_MARK, MCP_TASK_GONE_WARNING, NO_LIVE_SESSION_MARK } from 
 import type { TodoItem } from './types'
 import { makePlan } from './planning/planningTestUtils'
 
+// Espião transparente do salvamento de conversas: o comportamento é o real, mas
+// os testes do autosave conferem COM QUE `only` cada tique foi chamado.
+const saveSpy = vi.hoisted(() => ({ fn: null as unknown as ReturnType<typeof vi.fn> }))
+vi.mock('./storage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./storage')>()
+  saveSpy.fn = vi.fn(actual.saveConversations)
+  return { ...actual, saveConversations: saveSpy.fn }
+})
+
 // This file mounts the full app dozens of times. Under the complete parallel
 // suite, jsdom can spend over 1s transforming/settling sibling files even though
 // the same flow completes in ~250ms in isolation.
@@ -3453,5 +3462,56 @@ describe('App — modo sandbox', () => {
     render(<UiProvider><App /></UiProvider>)
     fireEvent.click(await screen.findByTitle('Nova conversa neste projeto'))
     expect(api.sandboxCreate).not.toHaveBeenCalled()
+  })
+})
+
+describe('App — autosave só das conversas alteradas', () => {
+  const upsertedIds = (): string[] =>
+    api.upsertConversation.mock.calls.map((call: unknown[]) => (call[0] as { id: string }).id)
+  const onlyOf = (call: unknown[]): string[] => [...((call[1] as { only?: Set<string> } | undefined)?.only ?? [])]
+
+  beforeEach(() => {
+    // Já no formato que o app grava (marcador `effortSplit` e os campos que a
+    // hidratação preenche): sem isso a primeira abertura regrava as duas por causa
+    // da normalização, não do autosave.
+    const [seed] = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+    const c1 = { ...seed, effortSplit: true, loopEnabled: false, backgroundTasks: [] }
+    localStorage.setItem('agentcode.conversations.v1', JSON.stringify([c1, { ...c1, id: 'c2', title: 'Outra' }]))
+  })
+
+  it('abrir não grava conversa sem mudança; o tique leva só a alterada; fechar compara todas', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
+    await waitFor(() => expect(appCloseCb).toBeTypeOf('function'))
+    await centralSettled()
+    // Abrir: as carregadas entram uma vez no tique, são comparadas e nada é gravado.
+    expect(upsertedIds()).not.toContain('c1')
+    expect(upsertedIds()).not.toContain('c2')
+    expect(saveSpy.fn.mock.calls.flatMap(onlyOf)).toEqual(expect.arrayContaining(['c1', 'c2']))
+
+    saveSpy.fn.mockClear()
+    api.upsertConversation.mockClear()
+    const box = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    fireEvent.change(box, { target: { value: 'rascunho do tique' } })
+    fireEvent.blur(box)
+    await waitFor(() => expect(upsertedIds()).toContain('c1'))
+    const ticks = saveSpy.fn.mock.calls.filter((call) => call[1] !== undefined)
+    expect(ticks.flatMap(onlyOf)).toContain('c1')
+    expect(ticks.flatMap(onlyOf)).not.toContain('c2')
+    expect(upsertedIds()).not.toContain('c2')
+
+    // Fechar: sem `only`, com a lista inteira.
+    saveSpy.fn.mockClear()
+    await act(async () => {
+      appCloseCb?.()
+    })
+    await waitFor(() => expect(api.appCloseReady).toHaveBeenCalledTimes(1))
+    const close = saveSpy.fn.mock.calls.at(-1)!
+    expect(close).toHaveLength(1)
+    expect((close[0] as Array<{ id: string }>).map((c) => c.id)).toEqual(expect.arrayContaining(['c1', 'c2']))
   })
 })
