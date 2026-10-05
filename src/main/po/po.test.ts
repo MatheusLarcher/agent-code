@@ -418,6 +418,24 @@ describe('Po — fechamento (a auditoria do turno)', () => {
     })
   })
 
+  it('desligado DURANTE a consulta: o veredito que chega não escreve nada no quadro', async () => {
+    const board = fakeBoard([card()])
+    let enabled = true
+    const ask = vi.fn(async (prompt: string) => {
+      enabled = false // o usuário desligou o PO enquanto o modelo respondia
+      return isClose(prompt) ? 'CONCLUIR bi-1 | o arquivo foi escrito' : 'NOVA | Outra | pedido novo'
+    })
+    const po = new Po({ config: () => config({ enabled }), board, ask })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'cria a tabela')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(ask).toHaveBeenCalled()
+    expect(board.applyPo).not.toHaveBeenCalled()
+    expect(board.createPoItem).not.toHaveBeenCalled()
+  })
+
   it('audita no FIM do turno, uma vez só', async () => {
     const board = fakeBoard([card()])
     const ask = askPhases()

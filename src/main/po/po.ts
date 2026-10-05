@@ -444,6 +444,12 @@ export class Po {
           provider = 'gpt-luna'
         })
         if (text === null) return
+        // Desligado DURANTE a consulta: o veredito chega, mas não escreve nada —
+        // com o PO desligado o quadro é só do agente principal.
+        if (!this.deps.config().po.enabled) {
+          outcome = 'desligado'
+          return
+        }
 
         // A lista que o modelo julgou é de antes da consulta: criar e pôr em
         // andamento são conferidos de novo contra o quadro de agora (poApply.ts).

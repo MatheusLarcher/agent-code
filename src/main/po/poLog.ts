@@ -20,7 +20,7 @@ export const PO_LOG_FILE = 'po-decisions.log'
 const MAX_LOG_BYTES = 2 * 1024 * 1024
 
 /** `ops=N`: N operações aplicadas. `ok`: a rodada chegou ao fim sem aplicar nada. */
-export type PoLogOutcome = 'gate-nao' | 'cooldown' | 'falha' | 'ok' | 'quadro-indisponivel' | `ops=${number}`
+export type PoLogOutcome = 'gate-nao' | 'cooldown' | 'desligado' | 'falha' | 'ok' | 'quadro-indisponivel' | `ops=${number}`
 
 export interface PoLogEntry {
   at: string

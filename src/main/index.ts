@@ -386,6 +386,9 @@ const board = new BoardService({
   // explícito porque sem ele o `tsc` tentaria inferir `po` para tipar `board` e
   // `board` para tipar `po` — o mesmo ciclo, agora entre os dois tipos.
   poSettled: (convId: string): Promise<void> => po.settled(convId),
+  // PO desligado: o quadro é só do agente principal (nada de reabrir no fim
+  // do turno nem de promover na retomada).
+  poEnabled: (): boolean => (loadConfig().board ?? DEFAULT_CONFIG.board).po.enabled,
   // O drag-and-drop no Quadro controla o agente de verdade: manda mensagem
   // (reaproveitando o MESMO `AgentSession.send` do Composer, que já enfileira
   // sozinho) ou interrompe o turno (mesmo caminho de `Channels.agentInterrupt`).

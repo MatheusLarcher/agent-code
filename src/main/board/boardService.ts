@@ -9,9 +9,6 @@ import {
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
 import type { BoardDismissBy, BoardItem, BoardItemEvent, BoardPoCreate, BoardPoWrite, PersistenceRepository } from '../persistence/types'
 import {
-  BOARD_USER_MOVE_REASON_PREFIX,
-  boardItemStatus,
-  boardItemTitle,
   boardItemTurnEndKind,
   boardTurnEndReason,
   parseBoardTurnEndReason,
@@ -23,6 +20,7 @@ import {
 
 // A regra pura mora em boardModel.ts; sai daqui também para quem já importava.
 export { toSourceItems } from './boardModel'
+import { moveBoardItem } from './boardMove'
 
 /**
  * O serviço do quadro: liga o esqueleto determinístico do agente à tabela
@@ -75,6 +73,8 @@ export interface BoardServiceDeps {
   poSettled?(convId: string): Promise<void>
   /** Teto da espera pelo PO, em ms. Existe para o teste não esperar 30s. */
   poWaitMs?: number
+  /** PO ligado? Desligado, o quadro é só do agente: sem reabrir no fim do turno nem promover na retomada. */
+  poEnabled?(): boolean
   /**
    * Manda uma mensagem para o agente da conversa (o drag-and-drop para
    * "fazendo"). Enfileira sozinho se o agente já estiver ocupado — é o mesmo
@@ -91,11 +91,6 @@ export interface BoardServiceDeps {
   interruptSession?(convId: string): Promise<boolean>
 }
 
-const MOVE_STATUS_LABEL: Record<BoardItemStatus, string> = {
-  pending: 'a fazer',
-  in_progress: 'fazendo',
-  completed: 'concluído'
-}
 
 interface CachedIdentity {
   projectId: string
@@ -125,6 +120,10 @@ export class BoardService {
   private readonly background = new Map<string, number>()
 
   constructor(private readonly deps: BoardServiceDeps) {}
+
+  private poOn(): boolean {
+    try { return this.deps.poEnabled?.() ?? true } catch { return true }
+  }
 
   /**
    * Identidade estável do projeto, com o MESMO critério do registro de tarefas.
@@ -165,6 +164,10 @@ export class BoardService {
     // que morreu no meio. No `error` ninguém está mais trabalhando; no `result`,
     // um subagente delegado pode estar (ver `closeTurn`).
     if (event.kind === 'result' || event.kind === 'error') {
+      if (!this.poOn()) {
+        this.turnEnds.set(convId, (this.turnEnds.get(convId) ?? 0) + 1)
+        return
+      }
       const delegated = event.kind === 'result' && this.background.has(convId)
       this.closeTurn(convId, cwd, event.kind, delegated)
     }
@@ -322,6 +325,7 @@ export class BoardService {
    * Nunca rejeita: o quadro não pode derrubar o envio da mensagem.
    */
   resumeTurn(convId: string, cwd: string): Promise<void> {
+    if (!this.poOn()) return Promise.resolve()
     const endsAtCall = this.turnEnds.get(convId) ?? 0
     const previous = this.closures.get(convId) ?? Promise.resolve()
     const next = previous
@@ -433,50 +437,9 @@ export class BoardService {
     return item
   }
 
-  /**
-   * O drag-and-drop do usuário: além de gravar o novo status pelo MESMO
-   * caminho do PO (`applyPo`, `actor: 'user'`), faz o quadro controlar o
-   * agente de verdade:
-   *
-   * - destino "fazendo" e o cartão não estava lá: manda uma mensagem para o
-   *   agente da conversa começar. Sem sessão viva (nunca iniciada nesta
-   *   execução do processo), NADA é gravado — a UI mostra a mensagem e desfaz
-   *   a posição do cartão.
-   * - saindo de "fazendo" para qualquer outro destino: interrompe o turno de
-   *   verdade.
-   * - troca direta "a fazer" ↔ "concluído" (nenhum dos dois lados é
-   *   "fazendo"): só grava.
-   */
-  async move(id: string, toStatus: BoardItemStatus): Promise<{ ok: boolean; message?: string }> {
-    const repository = this.deps.repository()
-    if (!repository) return { ok: false, message: 'O quadro está indisponível agora.' }
-    const current = await repository.getBoardItem(id)
-    if (!current) return { ok: false, message: 'Cartão não encontrado.' }
-    const fromStatus = boardItemStatus(current)
-    if (fromStatus === toStatus) return { ok: true }
-    const convId = current.conversationId
-
-    if (toStatus === 'in_progress') {
-      const sent =
-        (await this.deps.sendToSession?.(convId, `Comece a trabalhar nesta tarefa: "${boardItemTitle(current)}"`)) ??
-        false
-      if (!sent) {
-        return {
-          ok: false,
-          message: 'Abra esta conversa e mande uma mensagem para o agente começar antes de mover pelo quadro.'
-        }
-      }
-    } else if (fromStatus === 'in_progress') {
-      await this.deps.interruptSession?.(convId)
-    }
-
-    const item = await this.applyPo({
-      id,
-      poStatus: toStatus,
-      poReason: `${BOARD_USER_MOVE_REASON_PREFIX} para "${MOVE_STATUS_LABEL[toStatus]}" pelo quadro`,
-      actor: 'user'
-    })
-    return item ? { ok: true } : { ok: false, message: 'Não foi possível gravar a mudança no quadro.' }
+  /** O drag-and-drop do usuário — ver `moveBoardItem` (boardMove.ts). */
+  move(id: string, toStatus: BoardItemStatus): Promise<{ ok: boolean; message?: string }> {
+    return moveBoardItem({ ...this.deps, applyPo: (input) => this.applyPo(input) }, id, toStatus)
   }
 
   /** A linha do tempo de um cartão. Sem repositório, ou se a consulta falhar,
