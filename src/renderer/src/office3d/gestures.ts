@@ -351,10 +351,11 @@ function leisurePose(out: Pose, a: Action, t: number, k: number): void {
       return
     }
     case 'napSofa':
-      // Esparramado: afundado, reclinado e com os braços largados no sofá.
-      arms(out, -0.15, 0.42, 0.35, -0.15, 0.42, 0.35)
+      // Esparramado: afundado, reclinado e com as mãos largadas no colo (abertas, entravam no braço do sofá).
+      arms(out, 0.35, 0.12, 0.6, 0.35, 0.12, 0.6)
       out[CH.fingersL] = out[CH.fingersR] = 0.55
-      out[CH.lean] = -0.75 + 0.02 * Math.sin(1.2 * t)
+      // Reclinado até encostar: as costas ficam ~0,34 m atrás do quadril (o lounge deixa esse vão, officePlan.LOUNGE_SEATS).
+      out[CH.lean] = -0.5 + 0.02 * Math.sin(1.2 * t)
       out[CH.headPitch] = 0.08
       out[CH.headRoll] = 0.35
       out[CH.eyes] = 0

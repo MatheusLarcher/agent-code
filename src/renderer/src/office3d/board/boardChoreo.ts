@@ -14,7 +14,9 @@
  * pendentes dele (fecha a 2 e abre a 3: uma ida só), até TRIP_CAP; o excedente
  * é aplicado direto e vira uma fala-resumo. Invariante: o 3D nunca fica mais
  * de LAG_MS diferente do real — se a ida não cabe, o papel desliza sozinho.
- * Com fila (mais de um passo), corre. Mesmo cartão por autores diferentes: o
+ * Com fila (mais de um passo) ou no meio do trabalho, corre; trabalhando, a ida
+ * leva no máximo TRIP_CAP_BUSY passos e só sai de quem está sentado na mesa
+ * (nada de emendar viagens: o que chega na volta desliza). Mesmo cartão por autores diferentes: o
  * segundo espera a viagem do primeiro acabar.
  */
 import { SPEED, type Gait } from '../brainBody'
@@ -25,6 +27,8 @@ import { columnIndex, type BoardStep } from './boardModel'
 
 /** Até tantos passos animados por viagem; o resto vai direto (com a fala-resumo). */
 export const TRIP_CAP = 4
+/** Quem leva no meio do trabalho vai e volta logo: até tantos passos, correndo e com os gestos curtos. */
+export const TRIP_CAP_BUSY = 2
 /** O 3D nunca fica mais que isto diferente do real (ms) — o mesmo MAX_LAG_MS do espelho. */
 export const LAG_MS = 15_000
 /** Quanto um passo leva no quadro (s), contando a andança entre as colunas. */
@@ -96,6 +100,8 @@ export interface ChoreoCtx {
   walkS(key: string): number
   /** A coluna do papel na parede agora (null se não está). */
   fromColumn(s: BoardStep): number | null
+  /** Está no meio do trabalho: a ida é curta (TRIP_CAP_BUSY, correndo, gestos curtos). */
+  hurry?(key: string): boolean
 }
 
 export interface Trip {
@@ -177,13 +183,14 @@ export class BoardChoreo {
       const budget = LAG_MS / 1000 - age
       const fit = (walk: number, run: boolean): number => Math.floor((budget - walk) / (run ? STEP_RUN_S : STEP_S))
       const walk = ctx.walkS(key)
-      let gait: Gait = take.length > 1 ? 'run' : 'walk'
+      const hurry = ctx.hurry?.(key) ?? false
+      let gait: Gait = take.length > 1 || hurry ? 'run' : 'walk'
       let k = fit(gait === 'run' ? (walk * SPEED.walk) / SPEED.run : walk, gait === 'run')
       if (gait === 'walk' && k < 1) {
         gait = 'run'
         k = fit((walk * SPEED.walk) / SPEED.run, true)
       }
-      k = Math.min(k, TRIP_CAP, take.length)
+      k = Math.min(k, hurry ? TRIP_CAP_BUSY : TRIP_CAP, take.length)
       if (k <= 0) {
         for (const x of take) slides.push(slide(x.step, true))
         continue

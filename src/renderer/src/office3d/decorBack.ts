@@ -88,9 +88,10 @@ export function buildLounge(kit: Kit, zone: Group, statics: Group): Lamp[] {
   box(kit, statics, m.sofa, s.w, 0.74, 0.24, s.x, 0.8, back + 0.12, true)
   for (const side of [-1, 1]) box(kit, statics, m.sofa, 0.22, 0.56, s.d, s.x + side * (s.w / 2 - 0.11), 0.71, s.z, true)
   for (const dx of [-1.12, 1.12]) for (const dz of [-0.32, 0.32]) tagLod(cyl(kit, statics, m.shelf, 0.056, 0.13, s.x + dx, 0, s.z + dz), 'detail')
-  const p1 = box(kit, statics, m.sage, 0.44, 0.4, 0.15, s.x - 0.85, s.seatY + 0.2, back + 0.32, true)
+  // Almofadas soltas coladas no encosto (finas): quem senta (LOUNGE_SEATS) encosta nelas sem entrar.
+  const p1 = box(kit, statics, m.sage, 0.44, 0.4, 0.08, s.x - 0.85, s.seatY + 0.2, back + 0.28, true)
   p1.rotation.z = -0.16
-  const p2 = box(kit, statics, m.shelf, 0.42, 0.38, 0.14, s.x + 0.85, s.seatY + 0.19, back + 0.32, true)
+  const p2 = box(kit, statics, m.shelf, 0.42, 0.38, 0.08, s.x + 0.85, s.seatY + 0.19, back + 0.28, true)
   p2.rotation.z = 0.17
   // Mesa de centro com planta.
   const t = L.table

@@ -3,7 +3,7 @@ import { deriveOfficeModel, roomIdFor } from '../../office/adapter/model'
 import { conv, feed, NOW } from '../../office/adapter/testFeed'
 import { BIN, PAD } from '../brainBoard'
 import { stepLine, summaryLine, USER_SEAL } from './boardLines'
-import { BoardChoreo, LAG_MS, motionOf, performerOf, STEP_S, stopsFor, TRIP_CAP, type ChoreoCtx } from './boardChoreo'
+import { BoardChoreo, LAG_MS, motionOf, performerOf, STEP_S, stopsFor, TRIP_CAP, TRIP_CAP_BUSY, type ChoreoCtx } from './boardChoreo'
 import type { BoardStep } from './boardModel'
 
 const step = (o: Partial<BoardStep> = {}): BoardStep => ({
@@ -146,6 +146,21 @@ describe('fila, ritmo e alcance (BoardChoreo)', () => {
     expect(slides).toHaveLength(10 - n)
     expect(slides.every((s) => s.seal === null)).toBe(true)
     expect(trips[0].summary).toBe(`+${10 - n} mudanças: ${7 - n} concluídas, 3 novas`)
+  })
+
+  it('no meio do trabalho: vai correndo, com os gestos curtos, e leva no máximo TRIP_CAP_BUSY (o resto vai direto)', () => {
+    const c = new BoardChoreo(() => 0)
+    c.push([step()])
+    const one = c.next(ctx({ hurry: () => true })).trips[0]
+    expect(one.errand.gait).toBe('run')
+    const calm = stopsFor(step(), 0, 0)
+    const sum = (st: typeof calm): number => st.reduce((n, x) => n + x.beats.reduce((m, b) => m + b.dur, 0), 0)
+    expect(sum(one.errand.stops)).toBeLessThan(sum(calm))
+    const c2 = new BoardChoreo(() => 0)
+    c2.push(Array.from({ length: 5 }, (_, i) => step({ cardId: `c${i}` })))
+    const { trips, slides } = c2.next(ctx({ walkS: () => 1, hurry: () => true }))
+    expect(trips[0].steps).toHaveLength(TRIP_CAP_BUSY)
+    expect(slides).toHaveLength(5 - TRIP_CAP_BUSY)
   })
 
   it('alcance: a ida que passaria de LAG_MS não vai — desliza com o selo', () => {

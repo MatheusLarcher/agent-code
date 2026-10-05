@@ -76,11 +76,14 @@ export function errandBlocked(b: Brain): boolean {
   return b.mode === 'permission' || b.mode === 'queue' || b.mode === 'leave' || b.mode === 'away' || b.mode === 'party'
 }
 
-/** Volta: o principal senta na mesa (o modo `work` retoma o gesto da ferramenta); o PO volta ao lugar. */
+/**
+ * Volta: o principal senta na mesa (o modo `work` retoma o gesto da ferramenta; trabalhando, volta
+ * correndo); o PO volta ao lugar.
+ */
 function goBack(b: Brain): void {
   b.prop = null
   b.look = 'none'
-  if (b.mode === 'work' || b.mode === 'back' || (b.mode === 'sleep' && b.desk)) goDesk(b, 'walk')
+  if (b.mode === 'work' || b.mode === 'back' || (b.mode === 'sleep' && b.desk)) goDesk(b, b.phase === 'working' ? 'run' : 'walk')
   else if (b.mode === 'fixed') goStand(b, b.home.x, b.home.z, b.home.yaw, 'walk')
   else stay(b)
 }
@@ -95,6 +98,8 @@ export function runErrand(b: Brain, dt: number, w: BrainWorld & BoardWorld): voi
     e.state = 'aborted'
     w.release(b)
     b.prop = null
+    // O novo modo (permissão, fila, festa…) já tem o seu objetivo; no `work`, quem refaz é a volta à mesa.
+    if (b.mode === 'work') goBack(b)
     return
   }
   const stop = e.stops[e.idx]
@@ -105,6 +110,13 @@ export function runErrand(b: Brain, dt: number, w: BrainWorld & BoardWorld): voi
     return
   }
   const free = w.boardSpot(b, stop.col, spot)
+  // Quem trabalha não fica esperando a coluna liberar: desiste (o resto desliza com o selo) e volta à mesa.
+  if (!free && b.role !== 'fixed' && b.phase === 'working') {
+    e.state = 'aborted'
+    w.release(b)
+    goBack(b)
+    return
+  }
   if (e.state === 'go' || e.state === 'wait') {
     e.state = free ? 'go' : 'wait'
     goStand(b, spot.x, spot.z, spot.yaw, e.gait)

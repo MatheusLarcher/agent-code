@@ -140,7 +140,8 @@ export const LOUNGE = {
   /** Os 3 lugares do sofá (x), virados para +Z (yaw π). */
   sofaSeats: [-6.05, -5.2, -4.35] as readonly number[],
   table: { x: -5.2, z: -4.85, r: 0.42, h: 0.45 },
-  armchair: { x: -3.55, z: -5.05, yaw: 1.95 },
+  /** Fora do braço do sofá (z) e de frente para a mesa de centro (yaw ~π/2: olha para −X). */
+  armchair: { x: -3.3, z: -4.8, yaw: 1.6 },
   lamp: { x: -7.35, z: -6.0 },
   pendant: { x: -5.1, y: 2.4, z: -5.3 },
   art: [-5.95, -4.55] as readonly number[],
@@ -197,10 +198,22 @@ export interface SeatPlace {
   standZ: number
 }
 
-/** Os 4 lugares do lounge: os 3 do sofá (virados para +Z) e a poltrona. */
+/** Quanto o quadril fica à frente da origem da poltrona: reclinado (napSofa), as costas encostam no encosto sem entrar. */
+const ARMCHAIR_SLOUCH = 0.15
+
+/**
+ * Os 4 lugares do lounge: os 3 do sofá (virados para +Z) e a poltrona. O quadril fica longe o bastante
+ * do encosto (e das almofadas soltas) para quem cochila reclinado não atravessar o estofado.
+ */
 export const LOUNGE_SEATS: readonly SeatPlace[] = [
-  ...LOUNGE.sofaSeats.map((x): SeatPlace => ({ x, z: LOUNGE.sofa.z - 0.1, yaw: Math.PI, standX: x, standZ: -5.55 })),
-  { x: LOUNGE.armchair.x, z: LOUNGE.armchair.z, yaw: LOUNGE.armchair.yaw, standX: LOUNGE.armchair.x - 0.8, standZ: LOUNGE.armchair.z + 0.2 }
+  ...LOUNGE.sofaSeats.map((x): SeatPlace => ({ x, z: LOUNGE.sofa.z + 0.15, yaw: Math.PI, standX: x, standZ: -5.55 })),
+  {
+    x: LOUNGE.armchair.x - Math.sin(LOUNGE.armchair.yaw) * ARMCHAIR_SLOUCH,
+    z: LOUNGE.armchair.z - Math.cos(LOUNGE.armchair.yaw) * ARMCHAIR_SLOUCH,
+    yaw: LOUNGE.armchair.yaw,
+    standX: LOUNGE.armchair.x - 0.8,
+    standZ: LOUNGE.armchair.z
+  }
 ]
 
 /** Lugares do PO à esquerda do kanban, de frente para a parede do fundo. */

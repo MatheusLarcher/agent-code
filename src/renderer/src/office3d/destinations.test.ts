@@ -87,35 +87,36 @@ describe('sala de reunião: quem testa na TV e quem espera a vez', () => {
     expect([...spots.values()].slice(1).every((s) => s.role === 'wait' && s.seat)).toBe(true)
   })
 
-  it('o 1º da fila fica de pé ao lado da TV olhando para ela; o 2º senta à mesa esperando; sem uso, voltam às mesas', () => {
+  it('quem testa no navegador (trabalhando) não sai da mesa: a sala de reunião é só para o chamado', () => {
     const { crowd, brain } = world([model('conv:a', 'a', { active: true }), model('conv:b', 'a', { active: true })], ['a'])
     for (const k of ['conv:a', 'conv:b']) setStatus(brain(k), { phase: 'working', tool: 'web', contextPct: null, usageOut: false, stalled: false, idleSince: null }, 0)
     run(crowd, 2)
     crowd.setVenues(meetingSpots(['conv:a', 'conv:b']))
     run(crowd, 40)
-    const a = brain('conv:a')
-    const b = brain('conv:b')
-    expect([a.mode, a.arrived, a.sit]).toEqual(['meeting', true, 0])
-    expect(Math.hypot(a.x - TV_SIDE.x, a.z - TV_SIDE.z)).toBeLessThan(0.05)
-    expect(a.look).toBe('point')
-    expect([b.mode, b.seat, b.sit]).toEqual(['meeting', 'chair', 1])
-    // A vez passa: b vai para o lado da TV.
-    crowd.setVenues(meetingSpots(['conv:b']))
-    run(crowd, 30)
-    expect(Math.hypot(b.x - TV_SIDE.x, b.z - TV_SIDE.z)).toBeLessThan(0.05)
-    expect(a.mode).toBe('work')
-    expect(a.seat).toBe('chair')
-    crowd.setVenues(meetingSpots([]))
-    run(crowd, 30)
-    expect([b.mode, b.sit]).toEqual(['work', 1])
+    for (const b of [brain('conv:a'), brain('conv:b')]) {
+      expect([b.mode, b.seat, b.sit]).toEqual(['work', 'chair', 1])
+      expect(Math.hypot(b.x - TV_SIDE.x, b.z - TV_SIDE.z)).toBeGreaterThan(1)
+    }
   })
 })
 
 describe('a ida à estante de Memórias (quem consulta a memória)', () => {
-  it('vai à estante e folheia; a sequência é uma ida só; fica LINGER_S depois e volta à mesa; o 4º espera atrás', () => {
-    const ks = ['conv:a', 'conv:b', 'conv:c', 'conv:d']
+  it('trabalhando, não vai à estante: fica sentado na mesa e a ida é descartada', () => {
+    const ks = ['conv:a', 'conv:b']
     const { crowd, brain } = world(ks.map((k) => model(k, 'a', { active: true })), ['a'])
     for (const k of ks) setStatus(brain(k), { phase: 'working', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: null }, 0)
+    run(crowd, 3)
+    crowd.setShelfTrips(new Map([['conv:a', 'read' as const], ['conv:b', 'write' as const]]))
+    run(crowd, 25)
+    for (const b of ks.map(brain)) {
+      expect([b.mode, b.seat, b.sit]).toEqual(['work', 'chair', 1])
+      expect(b.shelfTrip).toBeNull()
+    }
+  })
+
+  it('parado: vai à estante e folheia; a sequência é uma ida só; fica LINGER_S depois e sai da estante', () => {
+    const ks = ['conv:a', 'conv:b', 'conv:c', 'conv:d']
+    const { crowd, brain } = world(ks.map((k) => model(k, 'a')), ['a'])
     run(crowd, 3)
     const trips = new Map(ks.map((k) => [k, 'read' as const]))
     crowd.setShelfTrips(trips)
@@ -131,19 +132,18 @@ describe('a ida à estante de Memórias (quem consulta a memória)', () => {
     crowd.setShelfTrips(trips)
     run(crowd, 1)
     expect(reader.modeT).toBeGreaterThan(modeT)
-    // Acabou: ainda fica LINGER_S e volta à mesa.
+    // Acabou: ainda fica LINGER_S e sai da estante.
     crowd.setShelfTrips(new Map())
     run(crowd, LINGER_S - 1)
     expect(reader.mode).toBe('archive')
     run(crowd, 2)
-    expect(reader.mode).toBe('work')
+    expect(reader.mode).not.toBe('archive')
     expect(reader.shelfTrip).toBeNull()
   })
 
-  it('gravando (memory_propose) põe a folha no fichário de vez em quando', () => {
-    const { crowd, brain } = world([model('conv:a', 'a', { active: true })], ['a'])
+  it('parado, gravando (memory_propose) põe a folha no fichário de vez em quando', () => {
+    const { crowd, brain } = world([model('conv:a', 'a')], ['a'])
     const a = brain('conv:a')
-    setStatus(a, { phase: 'working', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: null }, 0)
     crowd.setShelfTrips(new Map([['conv:a', 'write']]))
     const acts = new Set<string>()
     for (let i = 0; i < 300; i++) {
@@ -213,7 +213,7 @@ describe('o Agent Manager (planejamento) à cabeceira da mesa de reunião', () =
 describe('o chamado do agente (app_chamar_usuario)', () => {
   it('ao lado da TV acenando para a câmera mesmo com o turno terminado; depois de CALL_JUMP_S alterna pulo e aceno; o 2º chamado espera sentado acenando; acabou, volta à mesa', () => {
     const { crowd, brain } = world([model('conv:a', 'a'), model('conv:b', 'a'), model('conv:c', 'a', { active: true })], ['a'])
-    // c testa no navegador; a e b chamaram (b depois): os chamados vêm antes do teste.
+    // c testa no navegador (fica na mesa); a e b chamaram (b depois): os chamados vêm antes do teste.
     setStatus(brain('conv:c'), { phase: 'working', tool: 'web', contextPct: null, usageOut: false, stalled: false, idleSince: null }, 0)
     run(crowd, 2)
     crowd.setVenues(meetingSpots([{ key: 'conv:a', call: true }, { key: 'conv:b', call: true }, 'conv:c']))
@@ -222,7 +222,7 @@ describe('o chamado do agente (app_chamar_usuario)', () => {
     expect([a.mode, a.arrived, a.sit, a.faceCamera, a.look, a.action]).toEqual(['meeting', true, 0, true, 'camera', 'wave'])
     expect(Math.hypot(a.x - TV_SIDE.x, a.z - TV_SIDE.z)).toBeLessThan(0.05)
     expect([b.mode, b.seat, b.sit, b.look]).toEqual(['meeting', 'chair', 1, 'camera'])
-    expect([c.mode, c.seat]).toEqual(['meeting', 'chair'])
+    expect([c.mode, c.seat, c.sit]).toEqual(['work', 'chair', 1])
     // O sentado acena de vez em quando.
     const seated = new Set<string>()
     for (let i = 0; i < 120; i++) {

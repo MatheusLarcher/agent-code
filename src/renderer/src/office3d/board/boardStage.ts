@@ -154,6 +154,8 @@ export class BoardStage {
     available: (key: string, roomId: string): boolean => {
       const b = this.host.brain(key)
       if (!b || b.projectId !== roomId || this.host.dark(roomId) || errandBlocked(b)) return false
+      // Trabalhando e ainda a caminho (voltando de uma ida): o que chega desliza, não emenda outra viagem.
+      if (b.role === 'desk' && b.phase === 'working' && !b.arrived) return false
       return key.startsWith('po:') ? b.role === 'fixed' : b.role === 'desk'
     },
     walkS: (key: string): number => {
@@ -162,7 +164,11 @@ export class BoardStage {
       // Levantar da cadeira e virar: ~1 s além da caminhada.
       return d === null ? 0 : d / SPEED.walk + (b && b.sit > 0 ? 1 : 0)
     },
-    fromColumn: (s: BoardStep): number | null => this.host.fromColumn(s)
+    fromColumn: (s: BoardStep): number | null => this.host.fromColumn(s),
+    hurry: (key: string): boolean => {
+      const b = this.host.brain(key)
+      return !!b && b.role === 'desk' && b.phase === 'working'
+    }
   }
 
   /** true se algo mudou (a cena pede um quadro). */

@@ -98,6 +98,17 @@ describe('a ida ao quadro no cérebro (brainBoard)', () => {
     expect(b.errand.state).toBe('aborted')
   })
 
+  it('trabalhando, com a coluna ocupada: não espera — desiste e volta correndo para a mesa', () => {
+    const b = agent()
+    const w = world(new Set([2]))
+    b.errand = newErrand(stopsFor(step(), null, 0), 'run')
+    run(b, w, 10)
+    expect(b.errand.state).toBe('aborted')
+    expect(b.goal.gait).toBe('run')
+    for (let t = 0; t < 15; t += 0.05) stepBrain(b, 0.05, w)
+    expect([b.mode, b.seat, b.sit]).toEqual(['work', 'chair', 1])
+  })
+
   it('coluna ocupada: espera ao lado até liberar', () => {
     const taken = new Set([2])
     const b = createBrain({ key: 'po:r', role: 'fixed', style: 'board', roomId: 'office', projectId: 'r', home: { x: 1, z: 2, yaw: 0 } })
@@ -249,6 +260,25 @@ describe('o palco (boardStage): fila → personagens, parede, falas, selos', () 
     now = LAG_MS + 10
     busy.tick(now)
     expect(h2.applied).toContain('c2')
+  })
+
+  it('trabalhando: voltando de uma ida, o que chega desliza com o selo (não emenda outra viagem)', () => {
+    const b = agent()
+    const w = world()
+    const h = host({ brains: new Map([['conv:k1', b]]) })
+    const stage = new BoardStage(h, () => 0)
+    stage.push([step()])
+    expect(b.errand).not.toBeNull()
+    for (let i = 0; i < 400 && b.errand; i++) {
+      w.t += 0.05
+      stepBrain(b, 0.05, w)
+      stage.tick(0)
+    }
+    expect(b.errand).toBeNull()
+    expect(b.arrived).toBe(false)
+    stage.push([step({ cardId: 'c2' })])
+    expect(b.errand).toBeNull()
+    expect(h.sealed.map((x) => x[0])).toContain('c2')
   })
 
   it('aba escondida: tudo direto, sem maratona; viagem em curso é abortada', () => {

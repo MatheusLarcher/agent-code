@@ -33,6 +33,8 @@ function playDemo() {
     leisures: new Set<string>(),
     props: new Set<string>(),
     ran: false,
+    /** Quem trabalha numa mesa e saiu dela (só o chamado na TV, a ida curta ao quadro, o apagão e o limite de uso tiram ele de lá). */
+    leftDesk: new Set<string>(),
     /** Por visitante: fora (porta) → dentro → fora → sumiu. */
     visits: new Map<string, string[]>()
   }
@@ -59,6 +61,9 @@ function playDemo() {
         if (b.leisure) seen.leisures.add(b.leisure)
         if (b.prop && !shelf) seen.props.add(b.prop)
         if (b.speed > 2.5) seen.ran = true
+        if (b.role === 'desk' && b.phase === 'working' && !b.outside && !['work', 'meeting', 'party', 'queue'].includes(b.mode)) seen.leftDesk.add(`${b.key}:${b.mode}`)
+        // A ida ao quadro no meio do trabalho é a exceção: curta e correndo.
+        if (b.role === 'desk' && b.phase === 'working' && b.errand && b.errand.gait !== 'run') seen.leftDesk.add(`${b.key}:quadro andando`)
         if (b.role !== 'visitor' || !b.roomId) continue
         const room = s.room(b.roomId)
         // A porta é na parede da direita: fora = além dela (+X).
@@ -93,10 +98,9 @@ describe('a demo (Ctrl+Alt+Shift+D) mostra a vida do escritório', () => {
     // No quadro (o Quadro real) ninguém prende papel inventado: nem o gesto, nem o papel na mão.
     expect(seen.actions.has('stick')).toBe(false)
     expect(seen.props.has('note')).toBe(false)
-    // A folha só na estante de Memórias: quem consulta folheia o livro e quem grava prende a folha.
-    expect(seen.modes.has('archive')).toBe(true)
-    expect(seen.shelf.has('readBook:book')).toBe(true)
-    expect(seen.shelf.has('stick:note')).toBe(true)
+    // Trabalhando, ninguém sai da mesa: as consultas à memória da demo (durante o turno) não levam à estante.
+    expect([...seen.leftDesk]).toEqual([])
+    expect(seen.modes.has('archive')).toBe(false)
     expect(seen.actions.has('readBoard')).toBe(true)
     // Efeitos: confete no fim, fumaça e suor no erro, vapor no café.
     expect(confetti).toBeGreaterThan(0)

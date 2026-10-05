@@ -18,9 +18,11 @@
  *               trenzinho, lanterna, pizza (brainParty.ts) — por cima de tudo;
  *   back        a luz voltou: corre para a própria mesa e senta por BACK_S
  *               (quem tem tarefa já volta direto ao 'work');
- *   meeting     na sala de reunião (`venue`): de pé ao lado da TV testando (ou
- *               chamando o usuário: acena e, depois de CALL_JUMP_S, pula), ou
- *               sentado esperando a vez; sai dela, volta para a mesa.
+ *   meeting     chamando o usuário na sala de reunião (`venue.call`): de pé ao
+ *               lado da TV (acena e, depois de CALL_JUMP_S, pula) ou sentado
+ *               esperando a vez; sai dela, volta para a mesa. Quem trabalha só
+ *               sai da mesa para isso e para a ida curta ao quadro (correndo,
+ *               brainBoard.ts) — nada de estante nem de teste na TV.
  * O movimento (objetivo → levantar, andar, sentar, virar) e os tipos ficam em
  * brainBody.ts, reexportado daqui. Reações "de corpo" seguram o passo
  * enquanto duram.
@@ -172,12 +174,13 @@ function decide(b: Brain, w: BrainWorld): Mode {
   if (b.party !== null) return 'party'
   const busy = b.phase === 'working' || b.phase === 'waiting-permission'
   if (b.role === 'fixed') return 'fixed'
-  // Na sala de reunião: testando na TV ou esperando a vez (enquanto o uso estiver ativo), ou
-  // chamando o usuário (até ele responder, mesmo com o turno já terminado).
-  if (b.venue && b.phase !== 'waiting-permission' && !b.usageOut && (b.venue.call || busy || b.role === 'desk')) return 'meeting'
-  // Consultando a memória: vai à estante (uma ida por sequência; fica até ela acabar e mais um pouco).
-  if (b.shelfTrip && w.t >= b.shelfTrip.until) b.shelfTrip = null
-  if (b.shelfTrip && b.phase !== 'waiting-permission' && !b.usageOut) return 'archive'
+  // Trabalhando, fica sentado na mesa: só levanta para chamar o usuário na TV (quem testa no
+  // navegador continua na mesa; a TV mostra o teste do mesmo jeito). Na sala de reunião: ao lado
+  // da TV ou sentado esperando a vez do chamado, até o usuário responder (mesmo com o turno terminado).
+  if (b.venue?.call && b.phase !== 'waiting-permission' && !b.usageOut) return 'meeting'
+  // Consultando a memória, parado: vai à estante (uma ida por sequência; fica até ela acabar e mais um pouco).
+  if (b.shelfTrip && (busy || w.t >= b.shelfTrip.until)) b.shelfTrip = null
+  if (b.shelfTrip && !busy && !b.usageOut) return 'archive'
   if (b.role === 'visitor') {
     if (busy) return b.phase === 'waiting-permission' && b.desk ? 'permission' : 'work'
     return b.visible ? 'leave' : 'away'
@@ -389,15 +392,9 @@ function runMeeting(b: Brain): void {
     b.look = 'camera'
     return
   }
-  if (v.call) {
-    // Na fila do chamado: sentado, olhando para a câmera e acenando de vez em quando.
-    setAction(b, (b.modeT + b.seed * SEAT_WAVE_EVERY_S) % SEAT_WAVE_EVERY_S < SEAT_WAVE_S ? 'wave' : 'sitIdle')
-    b.look = 'camera'
-    return
-  }
-  // Quem testa olha a TV de pé (lendo quando trabalha); quem espera, sentado, também olha para ela.
-  setAction(b, v.role === 'present' ? (b.phase === 'working' ? 'readBoard' : 'idle') : 'sitIdle')
-  lookAt(b, TV_CENTER.x, TV_CENTER.y, TV_CENTER.z)
+  // Na fila do chamado: sentado, olhando para a câmera e acenando de vez em quando.
+  setAction(b, (b.modeT + b.seed * SEAT_WAVE_EVERY_S) % SEAT_WAVE_EVERY_S < SEAT_WAVE_S ? 'wave' : 'sitIdle')
+  b.look = 'camera'
 }
 
 function runMode(b: Brain, dt: number, w: BrainWorld): void {
