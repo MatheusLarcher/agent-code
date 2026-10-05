@@ -136,11 +136,11 @@ import { readProjectIcon } from './projectIcon'
 import { syncCacheSkills } from './skillManager'
 import { autoModelCandidates, resolveAutoStart, type AutoLivePair, type AutoStartDecision } from './typesafe'
 import { typeSafePause, TYPESAFE_BLOCKING_TIMEOUT_MS } from './typesafe/pause'
-import { listProjectDir, MENTION_IGNORE } from './projectFiles'
 import { typeSafeConfigured } from './typesafe/client'
+import { listProjectDir, MENTION_IGNORE } from './projectFiles'
 import type {
-  TurnEndWait,
   AgentMessageKind,
+  TurnEndWait,
   ChatEvent,
   AppConfig,
   BrowserInput,
@@ -148,8 +148,8 @@ import type {
   FileBytes,
   FileRefAttachment,
   ImageAttachment,
-  ProjectDirListing,
   MentionHit,
+  ProjectDirListing,
   ProjectNode,
   ProjectTree,
   ResolvedPastedRef,
@@ -241,11 +241,11 @@ const sessionLeases = new SessionLeases<ConversationLeaseKeeper, PersistenceRepo
   steps: sessionSteps,
   keeper: (convId, lease, isInstalled) => newLeaseKeeper(convId, lease, isInstalled)
 })
+
 /** Lease sendo solto no fim do turno (onTurnComplete), por conversa. */
 const turnLeaseReleases = new Map<string, Promise<void>>()
 /** Prazo máximo do `agent:wait-turn-end`: depois dele a fila segue mesmo assim. */
 const TURN_END_WAIT_MS = 45_000
-
 
 async function releaseSessionLease(convId: string): Promise<void> {
   await sessionLeases.release(convId)
@@ -1503,8 +1503,8 @@ export function registerIpc(): void {
       return readProjectTree(root, keep)
     }
   )
-  ipcMain.handle(Channels.projectDir, (_e, root: unknown, rel: unknown): Promise<ProjectDirListing> => listProjectDir(root, rel))
 
+  ipcMain.handle(Channels.projectDir, (_e, root: unknown, rel: unknown): Promise<ProjectDirListing> => listProjectDir(root, rel))
 
   // Sidebar: the project's own icon, if the folder happens to have one. Null is
   // the normal answer (the sidebar keeps the folder glyph), never an error.
@@ -2085,6 +2085,7 @@ export function registerIpc(): void {
       await current.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }
   )
+
   // A fila da tela só manda o próximo item quando o turno anterior acabou de fato:
   // o `result`/`error` sai ANTES do handoff (verificação do espelho) e do lease
   // solto (onTurnComplete) — e o `agent:send` não pega lease se o antigo ainda
@@ -2109,7 +2110,6 @@ export function registerIpc(): void {
     if (reason === 'timeout') console.warn(`[queue] turno de ${convId} não terminou em ${TURN_END_WAIT_MS} ms; a fila segue`)
     return { settled: reason !== 'timeout', reason }
   })
-
 
   // Botão "agora" da fila: a mensagem entra no turno em andamento, marcada como
   // ajuste (ver injectNow.ts). Sem turno, `ok: false` e ela segue na fila.

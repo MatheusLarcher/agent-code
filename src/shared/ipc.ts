@@ -2026,8 +2026,6 @@ export const Channels = {
   /** Drag-and-drop no Quadro: move um cartão entre colunas e, quando o
    *  destino/origem é "fazendo", manda ou interrompe o agente de verdade. */
   boardMove: 'board:move',
-  /** Espera o turno da conversa acabar de fato no main (ocioso + handoff), com prazo. */
-  agentWaitTurnEnd: 'agent:wait-turn-end',
   /** A linha do tempo de um cartão — fetch preguiçoso, só ao abrir o detalhe. */
   boardItemEvents: 'board:item-events',
   /** Main → renderer: o quadro daquele projeto mudou, recarregue. */
@@ -2054,8 +2052,6 @@ export const Channels = {
   /** Importa arquivos para <plano>/midia/ (nome saneado); devolve os PlanMediaDto novos. */
   planningImportMedia: 'planning:importMedia',
   /** Uma mídia de <plano>/midia/ em base64, para pré-visualizar. */
-  /** One project folder at a time (office code screen "Todos os arquivos"), validated and capped. */
-  projectDir: 'app:project-dir',
   planningReadMedia: 'planning:readMedia',
   /** Salva o flow do planejamento em PDF (diálogo "Salvar como" + printToPDF). */
   planningExportPdf: 'planning:exportPdf',
@@ -2077,6 +2073,8 @@ export const Channels = {
   conversationSuggestTitle: 'conversation:suggestTitle',
   agentStart: 'agent:start',
   agentSend: 'agent:send',
+  /** Espera o turno da conversa acabar de fato no main (ocioso + handoff), com prazo. */
+  agentWaitTurnEnd: 'agent:wait-turn-end',
   /** Fila de espera das conversas, gravada no banco (sobrevive ao reinício). */
   outboxList: 'outbox:list',
   outboxReplace: 'outbox:replace',
@@ -2103,6 +2101,8 @@ export const Channels = {
   listSkills: 'app:list-skills',
   /** Project map (grafo): every folder/file under the project, capped. */
   projectTree: 'app:project-tree',
+  /** One project folder at a time (office code screen "Todos os arquivos"), validated and capped. */
+  projectDir: 'app:project-dir',
   /** Icon found inside the project folder (data URL), for the sidebar. */
   projectIcon: 'app:project-icon',
   /** Save a copy of an agent-created file to the Downloads folder and reveal it. */
