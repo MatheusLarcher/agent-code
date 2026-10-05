@@ -8,12 +8,13 @@ control, and a LAN bridge so a phone can drive the same sessions.
 
 `src/main/` Electron main — agent sessions, browser/android/windows tools, phone
 bridge (`remote/`) · `src/preload/` IPC bridge · `src/renderer/` React UI ·
-`src/shared/` cross-process types · `smartfone-remote/` Capacitor phone client
-(its `www/` becomes the APK).
+`src/shared/` cross-process types · `src/phone/` phone client (React + TS) built by
+`npm run phone:build` into `smartfone-remote/www/` · `smartfone-remote/` Capacitor 8
+project that packages that `www/` into the APK.
 
 ## Build & test
 
-- `npm run typecheck` — both tsconfigs (node + web).
+- `npm run typecheck` — the three tsconfigs (node + web + phone).
 - `npm test` — vitest. `npm run build` — electron-vite **plus** the .NET native
   Windows-control binary (`src/main/windowsControl/native/`, needs the dotnet SDK).
 - Run typecheck and tests after code changes; verify the build before committing.

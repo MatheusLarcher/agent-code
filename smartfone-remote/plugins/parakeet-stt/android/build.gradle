@@ -9,25 +9,27 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.1'
+        // Same AGP as @capacitor/android 8 (two versions in one build clash).
+        classpath 'com.android.tools.build:gradle:8.13.0'
     }
 }
 
 apply plugin: 'com.android.library'
 
+// Capacitor 8: compile/target 36, min 24, Java 21 (what capacitor-android compiles with).
 android {
-    namespace "com.matheus.parakeetstt"
-    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 34
+    namespace = "com.matheus.parakeetstt"
+    compileSdk = project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 36
     defaultConfig {
-        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 22
-        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 34
+        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 24
+        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 36
     }
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
     }
-    lintOptions {
-        abortOnError false
+    lint {
+        abortOnError = false
     }
 }
 
@@ -71,7 +73,7 @@ if (!sherpaAar.isFile() || sha256Of(sherpaAar) != sherpaSha256) {
 // A library module can't depend on a local .aar (AGP refuses: the classes would
 // not be packaged). Unpack it instead: classes.jar as a jar dependency and the
 // native .so files as this module's jniLibs — both end up in the app.
-def sherpaUnpacked = file("${buildDir}/sherpa-onnx-${sherpaVersion}")
+def sherpaUnpacked = layout.buildDirectory.dir("sherpa-onnx-${sherpaVersion}").get().asFile
 def sherpaJar = file("${sherpaUnpacked}/classes.jar")
 if (!sherpaJar.isFile()) {
     copy {

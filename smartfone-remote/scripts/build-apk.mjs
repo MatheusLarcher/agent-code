@@ -2,15 +2,17 @@
 /*
  * Standalone APK builder for the Agent Remote app (CLI use).
  *
- * Assumes a JDK 17 and the Android SDK are available (ANDROID_HOME / JAVA_HOME),
- * e.g. from Android Studio. The desktop app's "Gerar APK" button does the same
- * steps but can also auto-install the toolchain (see src/main/remote/buildApk.ts).
+ * Capacitor 8 needs a JDK 21 and the Android SDK with android-36 (JAVA_HOME /
+ * ANDROID_HOME, or what the desktop app installed in its userData). The desktop
+ * app's "Gerar APK" button does the same steps but can also auto-install the
+ * toolchain (see src/main/remote/buildApk.ts).
  *
- * Steps: npm install → cap add/sync android → gradlew assembleDebug → copy to
- * dist/agent-remote.apk.
+ * Steps: npm install → npm run phone:build (repo root: src/phone → www/) →
+ * cap add/sync android (recreating an android/ from an older template) →
+ * gradlew assembleDebug → copy to dist/agent-remote.apk.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -63,20 +65,39 @@ function appDataDirs() {
   return dirs
 }
 
+/** O Capacitor 8 compila com Java 21; o Gradle 8.14 não roda em JDK mais novo. */
+const JDK = 21
 const java = (h) => existsSync(join(h, 'bin', WIN ? 'java.exe' : 'java'))
+/** Versão principal pelo arquivo `release` do JDK (JAVA_VERSION="21.0.5"). */
+function javaMajor(h) {
+  try {
+    const m = readFileSync(join(h, 'release'), 'utf8').match(/JAVA_VERSION="(\d+)/)
+    return m ? Number(m[1]) : null
+  } catch { return null }
+}
+const isJdk = (h) => java(h) && javaMajor(h) === JDK
 
-/** JAVA_HOME válido, ou o JDK 17 que o app instalou, ou o do Android Studio. */
+/** JAVA_HOME que seja JDK 21, ou o JDK 21 que o app instalou (jdk-21 no userData), ou o do Android Studio. */
 function findJavaHome() {
-  if (process.env.JAVA_HOME && java(process.env.JAVA_HOME)) return process.env.JAVA_HOME
-  const bases = appDataDirs().map((d) => join(d, 'jdk-17'))
+  if (process.env.JAVA_HOME && isJdk(process.env.JAVA_HOME)) return process.env.JAVA_HOME
+  const bases = appDataDirs().map((d) => join(d, `jdk-${JDK}`))
   if (WIN) bases.push('C:\\Program Files\\Android\\Android Studio\\jbr')
   for (const base of bases) {
-    if (java(base)) return base
+    if (isJdk(base)) return base
     let names = []
     try { names = readdirSync(base) } catch { continue }
-    for (const n of names) for (const h of [join(base, n), join(base, n, 'Contents', 'Home')]) if (java(h)) return h
+    for (const n of names) for (const h of [join(base, n), join(base, n, 'Contents', 'Home')]) if (isJdk(h)) return h
   }
   return null
+}
+
+/** android/ de template anterior ao Capacitor 8 (compileSdk < 36, bridge_layout_main) ou sem variables.gradle. */
+function isStaleAndroidProject(androidDir) {
+  if (existsSync(join(androidDir, 'app/src/main/res/layout/bridge_layout_main.xml'))) return true
+  let vars = ''
+  try { vars = readFileSync(join(androidDir, 'variables.gradle'), 'utf8') } catch { /* sem arquivo */ }
+  const m = vars.match(/compileSdkVersion\s*=\s*(\d+)/)
+  return !m || Number(m[1]) < 36
 }
 
 /** ANDROID_HOME válido, ou o SDK que o app instalou, ou o do Android Studio. */
@@ -119,7 +140,18 @@ async function main() {
     if ((await run('npm', ['install'])) !== 0) process.exit(1)
   }
 
+  // The phone client (src/phone) is built by the repo root into www/.
+  console.log('→ npm run phone:build (raiz do repositório)')
+  if ((await run('npm', ['run', 'phone:build'], { cwd: join(ROOT, '..') })) !== 0) {
+    console.error('Build do app do celular (npm run phone:build) falhou.')
+    process.exit(1)
+  }
+
   const androidDir = join(ROOT, 'android')
+  if (existsSync(androidDir) && isStaleAndroidProject(androidDir)) {
+    console.log('→ android/ de template antigo do Capacitor: recriando')
+    rmSync(androidDir, { recursive: true, force: true, maxRetries: 3 })
+  }
   if (!existsSync(androidDir)) {
     console.log('→ cap add android')
     if ((await run('npx', ['--yes', 'cap', 'add', 'android'])) !== 0) process.exit(1)
@@ -167,7 +199,7 @@ async function main() {
   const javaHome = findJavaHome()
   const sdk = findSdk()
   if (!javaHome || !sdk) {
-    console.error(`Falta ${!javaHome ? 'o JDK 17' : 'o Android SDK'}. Instale pelo app (Configurações → Android) ou defina ${!javaHome ? 'JAVA_HOME' : 'ANDROID_HOME'}.`)
+    console.error(`Falta ${!javaHome ? `o JDK ${JDK}` : 'o Android SDK'}. Gere o APK uma vez pelo app (ele instala o toolchain) ou defina ${!javaHome ? 'JAVA_HOME' : 'ANDROID_HOME'}.`)
     process.exit(1)
   }
   process.env.JAVA_HOME = javaHome

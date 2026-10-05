@@ -340,8 +340,8 @@ Funcionamento em [ARQUITETURA.md](ARQUITETURA.md#central--conversa-fixa-que-rote
 | `centralMirror.ts`, `centralMirrorSync.ts`, `activitySummary.ts`, `centralColor.ts`, `centralAdoption.ts` | Espelho resumido ancorado, linha de ações, cores estáveis sem laranja, adoção A1 de todas as conversas. |
 | `centralMerge.ts`, `centralMergeStorage.ts` | Dono por device e merge de entradas por id entre PCs. |
 | `CentralPanel.tsx`, `CentralRequest.tsx`, `CentralReply.tsx`, `CentralPending.tsx`, `CentralRail.tsx`, `CentralBackButton.tsx`, `central.css`, `centralFeed.css` | Tela v3. |
-| `centralRemote.ts`, `src/main/remote/remoteServer.ts` (`POST /api/central-choose`), `smartfone-remote/www/central.js`/`centralTurns.js`/`central.css` | Celular: snapshot em `/api/state`, escolha de destino, cartões `foreign` sem ação. |
-| `*.test.ts(x)` ao lado de cada módulo, `remoteServer.central.test.ts`, `centralApp.test.tsx`, `centralFlow.test.tsx`, `useCentral.*.test.tsx` | Decisor (payload, exclusões, orçamento, regras, piso, fallback, destino fora da lista), índice/cache, espelho, A1, merge, fluxo direto/perguntar/"não era aqui"/permissões do destino, rota do celular. Sem teste versionado para `central.js`/`centralTurns.js` (só `node --check`). |
+| `centralRemote.ts`, `src/main/remote/remoteServer.ts` (`POST /api/central-choose`), `src/phone/central/` | Celular: snapshot em `/api/state`, escolha de destino, cartões `foreign` sem ação, arrastar para responder. |
+| `*.test.ts(x)` ao lado de cada módulo, `remoteServer.central.test.ts`, `centralApp.test.tsx`, `centralFlow.test.tsx`, `useCentral.*.test.tsx`, `src/phone/central/central.test.ts` | Decisor (payload, exclusões, orçamento, regras, piso, fallback, destino fora da lista), índice/cache, espelho, A1, merge, fluxo direto/perguntar/"não era aqui"/permissões do destino, rota do celular e a Central do app do celular (citação, bolha "enviando…", ações do turno). |
 
 **Limitação conhecida:** sem identidade de turno no main, em 3 casos de terminal tardio o turno seguinte pode ser marcado como falho (nunca engolido).
 
@@ -377,21 +377,42 @@ Projeto **Node separado** (`broker/`, próprio `package.json`, deps: `ws`; Docke
 
 ## smartfone-remote — app do celular
 
-Projeto **Capacitor** separado (próprio `package.json`/`package-lock.json`) que vira o APK do controle remoto. O cliente é `www/` (HTML/JS puro, servido em `/app` pelo PC e empacotado no APK).
+O **código** do app está em `src/phone/` (React 19 + TS, projeto raiz); `smartfone-remote/` é o projeto **Capacitor 8** (próprio `package.json`/`package-lock.json`) que empacota o `www/` gerado no APK. Funcionamento em [ARQUITETURA.md](ARQUITETURA.md) (seção do controle remoto).
+
+### src/phone — fonte do cliente
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `capacitor.config.json` | Config do Capacitor (id/nome do app, pasta `www`). |
-| `package.json` | Deps do Capacitor (+ `@capacitor/assets` para os ícones) e scripts (`icons`, `assets`, `build:apk`). |
-| `resources/` | **Arte do ícone/splash** do app (mesma faísca coral do desktop): `icon-only.png`, `icon-foreground.png`, `icon-background.png` (1024²) e `splash.png`/`splash-dark.png` (2732²). Geradas de `build/icon.svg`; consumidas por `@capacitor/assets generate --android` para criar todas as densidades de mipmap + o ícone adaptativo. |
+| `vite.phone.config.ts` (raiz), `tsconfig.phone.json` (raiz) | Build `npm run phone:build` → `smartfone-remote/www/` (`base: './'`, nomes fixos, aliases `@shared`/`@renderer`); o typecheck do celular entra no `npm run typecheck` sem `window.api`. `npm run phone:dev` serve o cliente com `/api` apontado para a ponte (`PHONE_BRIDGE`). |
+| `index.html`, `main.tsx`, `App.tsx`, `env.d.ts` | Entrada; a tela da vez (parear, reconectando, outro celular, app) e os avisos; tipos da ponte nativa (`window.Capacitor`, `window.AgentDownload`). |
+| `core/client.ts` | `RemoteClient`: pareamento (auto-conexão sem takeover; QR/"Usar este celular" com `POST /api/pair`), `/api/state` + poll de 4 s, SSE com backoff/ressincronização, LAN × relay, wake lock, `historyReq`, envio e as ações (`interrupt`, `set-mode`, `set-model`, `skip-perms`, `recovery`, `permission-respond`, `central-choose`, `conversation`, `search`). |
+| `core/config.ts`, `core/net.ts`, `core/reducer.ts`, `core/format.ts`, `core/download.ts`, `core/store.ts`, `core/types.ts` | Pareamento salvo (mesmas chaves de localStorage do app antigo), `fetch` com prazo e `pickBestBase`, redutor do feed e fila "Na fila", formatação, download por `AgentDownload.enqueue`, store mínimo, tipos da ponte. Testes: `core.test.ts`, `client.test.ts`. |
+| `app/runtime.ts` | Instância do cliente, navegação (aba e conversa guardadas no aparelho) e avisos curtos. |
+| `pairing/` | QR (`Scanner.tsx`: canvas + `<video>` escondido + jsQR do npm) e as telas reconectando / outro celular pareado. |
+| `shell/` | Abas embaixo (`Shell.tsx`), menu da conexão, `useViewport` (viewport visual, teclado), Quadro reservado. |
+| `conversations/ConversationList.tsx` | Conversas por projeto, busca nos prompts, nova conversa, renomear/excluir. |
+| `chat/` | Conversa aberta: mensagens (Markdown do desktop), `ToolCard` (rótulos do `toolDescribe` + `CodeBlock`), faixas (recuperação, trabalhando/Parar, plano), mapa de perguntas, pedido pendente (`PermissionModal`). |
+| `composer/` | Campo, anexos, modelo/esforço/modos (`ModelBar`), ditado (`useDictation`). |
+| `central/` | A Central: retrato, "Para onde vai?", `foreign`, arrastar para responder (`useSwipeReply`), ações do turno, perguntas dos destinos. Teste: `central.test.ts`. |
+| `settings/` | Permitir tudo, uso da conta/contexto, Voz no aparelho (`VoiceCard`), conexão/sair. |
+| `voice/` | `tts.ts` ("Ouvir" pelo PC) e `localStt.ts` (Parakeet no aparelho pela ponte nativa do Capacitor; plano B `/api/transcribe`). |
+| `styles/` | CSS por área com as variáveis do `styles.css` do renderer. |
+
+### smartfone-remote — projeto Capacitor
+
+| Arquivo | Responsabilidade |
+|---------|------------------|
+| `capacitor.config.json` | Id/nome do app, pasta `www`, `androidScheme: http` + `cleartext` (LAN). |
+| `package.json` | Capacitor 8 (`@capacitor/core`/`android`/`cli`), o plugin local `parakeet-stt`, `@capacitor/assets` para os ícones e scripts (`icons`, `assets`, `build:apk`). |
+| `plugins/parakeet-stt/` | Plugin Capacitor local do ditado no aparelho (sherpa-onnx, Parakeet TDT v3; modelo baixado sob demanda). |
+| `resources/` | **Arte do ícone/splash** do app (mesma faísca coral do desktop): `icon-only.png`, `icon-foreground.png`, `icon-background.png` (1024²) e `splash.png`/`splash-dark.png` (2732²). Geradas de `build/icon.svg`; consumidas por `@capacitor/assets generate --android`. |
 | `scripts/make-icons.mjs` | Rasteriza `build/icon.svg` (via Playwright do projeto pai) nos assets de `resources/`. Rode da raiz do repo: `node smartfone-remote/scripts/make-icons.mjs`. |
-| `scripts/build-apk.mjs` | Gera o APK: copia o `www/`, adiciona/atualiza a plataforma Android, **aplica o ícone** (`@capacitor/assets generate`, se houver `resources/`) e roda o Gradle (chamado por `remote:build-apk`). |
-| `www/index.html` | Telas do app: pareamento (QR/manual, ícones SVG), overlay do scanner, e o chat (header com status pill, mensagens, composer com **anexo de imagem**, **barra de modelo/esforço** (`#model-bar` — dois `<select>` nativos acima do composer), bandeja de preview, **drawer de histórico** e **menu de sair**). |
-| `www/app.js` | Lógica do cliente: parear, **auto-conectar** na última sessão, **auto-reconexão** do SSE com backoff + **wake lock**, histórico por projeto (drawer), abrir conversa (`/api/history` + SSE), enviar comando + **imagens** (base64), **markdown** das respostas (`mdToHtml`/`parseDownloads`, seguro por escape), **cards de ferramenta recolhidos/expansíveis** (`renderTool`/`describeTool`, estado em `state.openTools`), **scroll** preservado durante o streaming (`scheduleRender` + rAF), e **botões de download** (chip de `Write` entregável + marcador `[[download:]]` → `/api/file`). **Trocar modelo/esforço** (`renderModelBar`/`setModel`): seletores preenchidos do catálogo do `/api/state` (`models`/`modelEffort`/`effortLabels`), mostram o modelo/esforço atuais da conversa, POST `/api/set-model` na troca (otimista, o poll reconcilia); esforço some para modelo sem suporte (Ollama), ambos desabilitados enquanto a conversa está `busy`, e o rebuild é pulado se o usuário estiver com o dropdown aberto (activeElement). **Loading ao abrir um chat:** `loadHistory(convId, silent)` mostra "Carregando mensagens…" (`state.historyLoading`) quando `silent` é falso (abrir/trocar de chat — `selectConv`); um contador `historyReq` garante que só a resposta da chamada **mais recente** atualiza a tela (trocar de chat rápido não deixa o spinner grudado nem uma resposta antiga sobrescrever a atual). **Silencioso** (`silent: true`, mensagens continuam visíveis, sem o loading cheio): a ressincronização ao **(re)conectar** (`openEvents`/`es.onopen`) e o **pull-to-refresh** — puxar a lista a partir do topo (`onPullStart`/`onPullMove`/`onPullEnd`, touch e mouse) mostra "Puxe…" → "Solte para atualizar" (`PULL_THRESHOLD`) → "Atualizando…" na barra `#pull-refresh` (reaproveita o estilo de `#reconnect`) e recarrega a conversa inteira ao soltar. |
-| `www/styles.css` | Tema escuro moderno (gradientes, status pill, bolhas com gradiente, drawer/popover animados): pareamento, scanner, chat, markdown (`.md`), cards de ferramenta, bandeja de imagens, botões de download. |
-| `www/jsqr.js` | Biblioteca jsQR (decodifica o QR a partir dos frames da câmera). |
-| `android/app/src/main/java/.../MainActivity.java` | `BridgeActivity` do Capacitor que salva na pasta Downloads os arquivos servidos pela ponte (`/api/file`) via **DownloadManager**. O caminho que de fato roda no app é o `@JavascriptInterface` **`AgentDownload.enqueue(url, nome)`**, chamado direto pelo `www/app.js`: o `setDownloadListener` sozinho **nunca era alcançado** — o Capacitor externaliza navegação para outro host, então o `<a download>` abria o Chrome e nada era salvo (medido no emulador). Só enfileira URL `http(s)` terminando em `/api/file`, com o nome sanitizado. Gerenciado/reaplicado pelo `buildApk.ts` (o `android/` é gitignorado/regenerado); `MAIN_ACTIVITY_JAVA` é exportado para que essa fonte única possa ser materializada num projeto Android já gerado. |
+| `scripts/build-apk.mjs` | Gera o APK pela linha de comando com os mesmos passos do `buildApk.ts` (build do celular, plataforma, ícone, Gradle). |
+| `www/` | **Gerado** por `npm run phone:build` (não editar à mão): `index.html` + `assets/`. Servido em `/app` pelo PC e empacotado no APK. |
+| `android/app/src/main/java/.../MainActivity.java` | `BridgeActivity` que salva em Downloads os arquivos da ponte (`/api/file`) via **DownloadManager**. O caminho que roda é o `@JavascriptInterface` **`AgentDownload.enqueue(url, nome)`** (chamado por `src/phone/core/download.ts`): o `<a download>` abria o Chrome e nada era salvo (medido no emulador). Só enfileira URL `http(s)` terminando em `/api/file`, com o nome sanitizado. Reaplicado pelo `buildApk.ts` (o `android/` é gitignorado/regenerado; um `android/` de template antigo do Capacitor é recriado). |
 | `README.md` | Como buildar/instalar o app remoto. |
+
+O build do APK usa o toolchain do app: o Capacitor 8 exige **JDK 21** e **SDK 36** — o `buildApk.ts` garante `jdk-21`, `platforms;android-36` e os build-tools só para o APK, sem tirar o JDK 17/android-34 que o preview Android usa. Para testar o cliente sem o PC de verdade: `node scripts/phone/dev-bridge.mjs` (o `RemoteServer` real com estado simulado).
 
 ---
 

@@ -11,13 +11,12 @@
     "build:apk": "node scripts/build-apk.mjs"
   },
   "dependencies": {
-    "@capacitor/android": "^6.2.0",
-    "@capacitor/core": "^6.2.0",
-    "jsqr": "^1.4.0",
+    "@capacitor/android": "~8.5.2",
+    "@capacitor/core": "~8.5.2",
     "parakeet-stt": "file:plugins/parakeet-stt"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
-    "@capacitor/cli": "^6.2.0"
+    "@capacitor/cli": "~8.5.2"
   }
 }

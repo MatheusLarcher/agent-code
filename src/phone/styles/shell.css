@@ -1,0 +1,78 @@
+/* Abas embaixo e a área de cada aba. */
+.tab-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.tab-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.boot { flex: 1 1 auto; display: grid; place-items: center; }
+.boot .spinner { width: 22px; height: 22px; }
+
+.tabbar {
+  flex: 0 0 auto;
+  display: flex;
+  background: var(--bg-2);
+  border-top: 1px solid var(--line-soft);
+  padding-bottom: var(--sab);
+}
+.tab {
+  flex: 1 1 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-height: 56px; padding: 6px 4px;
+  background: none; border: none; color: var(--muted);
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.01em;
+  transition: color 0.15s;
+}
+.tab:active { background: rgba(255, 255, 255, 0.04); }
+.tab.active { color: var(--accent); }
+.tab-ico { position: relative; display: inline-flex; padding: 2px 14px; border-radius: 999px; transition: background 0.15s; }
+.tab.active .tab-ico { background: var(--accent-soft); }
+.tab-dot {
+  position: absolute; top: 0; right: 9px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--bg-2);
+}
+
+/* aba Conversas: lista por projeto, busca e menu da conversa */
+.hist-search { position: relative; padding: 10px 12px 6px; }
+.hist-search-ico { position: absolute; left: 24px; top: 50%; margin-top: 2px; transform: translateY(-50%); color: var(--faint); }
+.hist-search input {
+  width: 100%; padding: 10px 12px 10px 36px; border-radius: 12px;
+  background: var(--bg-2); border: 1px solid var(--line); font-size: 14.5px;
+}
+.hist-search input::placeholder { color: var(--faint); }
+.hist-search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.history-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 8px 16px; display: flex; flex-direction: column; }
+.hist-group { margin-top: 10px; }
+.hist-project {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--faint); padding: 6px 6px 4px 10px;
+  text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+}
+.hist-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-plus {
+  width: 30px; height: 30px; border-radius: 9px; border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04); color: var(--muted); font-size: 17px; line-height: 1;
+}
+.hist-row {
+  width: 100%; display: flex; align-items: center; gap: 8px; text-align: left;
+  padding: 11px 6px 11px 11px; min-height: 46px; border-radius: 11px;
+  background: none; border: none; color: var(--text); transition: background 0.12s;
+}
+.hist-row:active { background: var(--bg-3); }
+.hist-row.active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.hist-title { flex: 1 1 auto; min-width: 0; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-busy { display: inline-flex; color: var(--accent); }
+.hist-badge {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 700;
+}
+.hist-more { display: inline-flex; padding: 4px 8px; background: none; border: none; color: var(--muted); border-radius: 8px; }
+.hist-menu { display: flex; gap: 8px; padding: 4px 8px 10px 12px; }
+.hist-menu > button, .hist-rename button {
+  flex: 1; padding: 9px; border-radius: 9px; border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04); font-size: 13px;
+}
+.hist-menu button.danger { color: var(--err); border-color: rgba(217, 112, 112, 0.4); }
+.hist-rename { display: flex; gap: 8px; flex: 1; }
+.hist-rename input { flex: 1 1 auto; min-width: 0; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--accent); background: var(--bg); }
+.hist-rename button { flex: 0 0 auto; color: var(--accent); }
+.hist-result { flex-direction: column; align-items: stretch; gap: 3px; }
+.hist-result .hist-title { white-space: normal; }
+.hist-snippet { font-size: 12.5px; color: var(--faint); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-empty { padding: 18px 12px; font-size: 13px; color: var(--faint); text-align: center; }

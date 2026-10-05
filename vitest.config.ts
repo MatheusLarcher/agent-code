@@ -12,7 +12,7 @@ delete process.env.PLAYWRIGHT_BROWSERS_PATH
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { '@shared': resolve(__dirname, 'src/shared') }
+    alias: { '@shared': resolve(__dirname, 'src/shared'), '@renderer': resolve(__dirname, 'src/renderer/src') }
   },
   test: {
     environment: 'jsdom',

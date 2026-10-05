@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { mkdir, readdir, rename, rm, stat, access } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, stat, access } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
@@ -32,6 +32,17 @@ const SDK_PACKAGES = [
 const SYSTEM_IMAGE = 'system-images;android-34;google_apis;x86_64'
 export const DEFAULT_AVD = 'agent_code_avd'
 
+/** What the remote APK build (Capacitor 8) compiles with. Apart from the preview's
+ *  android-34/JDK 17: `detect().ready` never depends on these (see ensureApkToolchain). */
+export const APK_COMPILE_SDK = 36
+export const APK_JDK = 21
+/** sdkmanager package → file that proves it is installed. build-tools 35 is AGP 8.13's
+ *  default buildToolsVersion: without it Gradle downloads it mid-build. */
+const APK_SDK_PACKAGES: Array<[string, string[]]> = [
+  [`platforms;android-${APK_COMPILE_SDK}`, ['platforms', `android-${APK_COMPILE_SDK}`, 'android.jar']],
+  ...['36.0.0', '35.0.0'].map((v): [string, string[]] => [`build-tools;${v}`, ['build-tools', v, `aapt2${EXE}`]])
+]
+
 /** Download URLs (Windows host). cmdline-tools build number is the current stable. */
 const CMDLINE_TOOLS_URL_WIN =
   'https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip'
@@ -39,10 +50,10 @@ const CMDLINE_TOOLS_URL_MAC =
   'https://dl.google.com/android/repository/commandlinetools-mac-11076708_latest.zip'
 const CMDLINE_TOOLS_URL_LINUX =
   'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip'
-const jdkUrl = (): string => {
+const jdkUrl = (major = 17): string => {
   const os = WIN ? 'windows' : process.platform === 'darwin' ? 'mac' : 'linux'
   const arch = process.arch === 'arm64' ? 'aarch64' : 'x64'
-  return `https://api.adoptium.net/v3/binary/latest/17/ga/${os}/${arch}/jdk/hotspot/normal/eclipse`
+  return `https://api.adoptium.net/v3/binary/latest/${major}/ga/${os}/${arch}/jdk/hotspot/normal/eclipse`
 }
 
 export type Progress = (line: string) => void
@@ -331,13 +342,7 @@ async function runInstall(onProgress: Progress): Promise<DetectResult> {
 
   // 1) JDK 17
   if (!d.hasJava) {
-    onProgress('Baixando JDK 17 (Temurin)…')
-    const zip = join(work, 'jdk.zip')
-    await download(jdkUrl(), zip, onProgress, 'JDK 17')
-    onProgress('Extraindo JDK…')
-    await rm(d.jdkBase, { recursive: true, force: true })
-    await unzip(zip, d.jdkBase)
-    await rm(zip, { force: true })
+    await installJdk(17, d.jdkBase, work, onProgress)
     d = await detect()
     if (!d.hasJava) throw new Error('JDK extraído, mas java não foi encontrado.')
   }
@@ -362,18 +367,7 @@ async function runInstall(onProgress: Progress): Promise<DetectResult> {
   }
 
   // 3) SDK packages via sdkmanager (accept licenses first)
-  onProgress('Aceitando licenças do Android SDK…')
-  await spawnTool(d.sdkmanager!, [`--sdk_root=${d.sdkRoot}`, '--licenses'], {
-    env: d.env,
-    input: 'y\n'.repeat(50),
-    onLine: () => undefined
-  })
-  onProgress(`Instalando pacotes do SDK: ${SDK_PACKAGES.join(', ')} (pode demorar)…`)
-  const inst = await spawnTool(
-    d.sdkmanager!,
-    [`--sdk_root=${d.sdkRoot}`, ...SDK_PACKAGES],
-    { env: d.env, input: 'y\n'.repeat(50), onLine: (l) => /(Installing|Unzipping|done|%)/i.test(l) && onProgress(l) }
-  )
+  const inst = await sdkInstall(d, SDK_PACKAGES, onProgress)
   if (inst.code !== 0) throw new Error(`sdkmanager falhou: ${inst.out.slice(-400)}`)
   d = await detect()
 
@@ -392,6 +386,99 @@ async function runInstall(onProgress: Progress): Promise<DetectResult> {
   await rm(work, { recursive: true, force: true }).catch(() => undefined)
   onProgress(d.ready ? 'Toolchain Android pronta.' : `Ainda faltam: ${d.missing.join(', ')}`)
   return d
+}
+
+/** Download a Temurin JDK and extract it into jdkBase; returns its JAVA_HOME. */
+async function installJdk(major: number, jdkBase: string, work: string, onProgress: Progress): Promise<string> {
+  onProgress(`Baixando JDK ${major} (Temurin)…`)
+  const zip = join(work, `jdk-${major}.zip`)
+  await download(jdkUrl(major), zip, onProgress, `JDK ${major}`)
+  onProgress('Extraindo JDK…')
+  await rm(jdkBase, { recursive: true, force: true })
+  await unzip(zip, jdkBase)
+  await rm(zip, { force: true })
+  const home = await findJavaHome(jdkBase)
+  if (!home) throw new Error(`JDK ${major} extraído, mas java não foi encontrado.`)
+  return home
+}
+
+/** Accept the SDK licenses, then install `pkgs` with sdkmanager. */
+async function sdkInstall(d: DetectResult, pkgs: string[], onProgress: Progress): Promise<{ code: number; out: string }> {
+  const yes = 'y\n'.repeat(50)
+  onProgress('Aceitando licenças do Android SDK…')
+  await spawnTool(d.sdkmanager!, [`--sdk_root=${d.sdkRoot}`, '--licenses'], { env: d.env, input: yes, onLine: () => undefined })
+  onProgress(`Instalando pacotes do SDK: ${pkgs.join(', ')} (pode demorar)…`)
+  return spawnTool(d.sdkmanager!, [`--sdk_root=${d.sdkRoot}`, ...pkgs], {
+    env: d.env,
+    input: yes,
+    onLine: (l) => /(Installing|Unzipping|done|%)/i.test(l) && onProgress(l)
+  })
+}
+
+/** Major version from a JDK's `release` file (`JAVA_VERSION="21.0.5"`; "1.8.0" → 8). */
+export function parseJavaMajor(release: string): number | null {
+  const m = release.match(/JAVA_VERSION="(\d+)(?:\.(\d+))?/)
+  if (!m) return null
+  const major = Number(m[1])
+  return major === 1 && m[2] ? Number(m[2]) : major
+}
+
+async function javaMajor(home: string): Promise<number | null> {
+  return parseJavaMajor(await readFile(join(home, 'release'), 'utf8').catch(() => ''))
+}
+
+export interface ApkToolchain {
+  javaHome: string
+  sdkRoot: string
+  /** Env for Gradle: JAVA_HOME = the APK JDK, ANDROID_HOME = the SDK. */
+  env: NodeJS.ProcessEnv
+}
+
+let apkRun: Promise<ApkToolchain> | null = null
+
+/**
+ * Make sure the APK build has what Capacitor 8 needs on top of the base SDK: JDK 21
+ * (<userData>/jdk-21, or a JAVA_HOME that is exactly 21 — Gradle 8.14 doesn't run on
+ * newer JDKs) and android-36 + build-tools 36. A separate step because runInstall
+ * exits early once the preview is ready. Needs sdkmanager (ensureInstalled() first).
+ * Idempotent; concurrent calls share one run.
+ */
+export function ensureApkToolchain(onProgress: Progress): Promise<ApkToolchain> {
+  apkRun ??= runApkToolchain(onProgress).finally(() => {
+    apkRun = null
+  })
+  return apkRun
+}
+
+async function runApkToolchain(onProgress: Progress): Promise<ApkToolchain> {
+  const d = await detect()
+  if (!d.sdkmanager) throw new Error('Android command-line tools ausentes: instale a toolchain Android primeiro.')
+  const base = await dataDir()
+
+  // 1) JDK 21
+  const jdkBase = join(base, `jdk-${APK_JDK}`)
+  const envHome = process.env['JAVA_HOME']
+  const javaHome =
+    (envHome && (await exists(join(envHome, 'bin', `java${EXE}`))) && (await javaMajor(envHome)) === APK_JDK
+      ? envHome
+      : await findJavaHome(jdkBase)) ?? (await installJdk(APK_JDK, jdkBase, join(base, 'android-tmp'), onProgress))
+
+  // 2) android-36 platform + build-tools 36
+  const absent = async (): Promise<string[]> => {
+    const out: string[] = []
+    for (const [pkg, probe] of APK_SDK_PACKAGES) if (!(await exists(join(d.sdkRoot, ...probe)))) out.push(pkg)
+    return out
+  }
+  const missing = await absent()
+  if (missing.length) {
+    const inst = await sdkInstall(d, missing, onProgress)
+    const still = await absent()
+    if (inst.code !== 0 || still.length) {
+      throw new Error(`sdkmanager não instalou ${still.join(', ') || missing.join(', ')}: ${inst.out.slice(-400)}`)
+    }
+  }
+
+  return { javaHome, sdkRoot: d.sdkRoot, env: buildEnv({ ...d, javaHome }) }
 }
 
 /** Quick check used by the UI/tools to give a helpful message before booting. */

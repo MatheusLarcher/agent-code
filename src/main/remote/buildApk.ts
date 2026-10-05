@@ -1,13 +1,22 @@
 import { spawn } from 'node:child_process'
-import { access, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
-import { detect, ensureInstalled, type Progress } from '../android/androidEnv'
+import {
+  APK_COMPILE_SDK,
+  detect,
+  ensureApkToolchain,
+  ensureInstalled,
+  type ApkToolchain,
+  type Progress
+} from '../android/androidEnv'
 
 /**
  * Build the Android remote APK (the `smartfone-remote` Capacitor project),
  * reusing the same JDK/Android SDK manager the in‑app Android preview uses
- * (src/main/android/androidEnv.ts). Steps: ensure toolchain → npm install →
- * `cap add/sync android` → `gradlew assembleDebug` → copy to dist/agent-remote.apk.
+ * (src/main/android/androidEnv.ts). Steps: ensure toolchain (+ JDK 21/android-36
+ * for Capacitor 8) → npm install → `npm run phone:build` (repo root: src/phone →
+ * www/) → `cap add/sync android` (recreating an outdated android/) →
+ * `gradlew assembleDebug` → copy to dist/agent-remote.apk.
  *
  * Idempotent and incremental: only installs/scaffolds what's missing.
  */
@@ -120,42 +129,43 @@ async function findApk(dir: string): Promise<string | null> {
   return best
 }
 
-/** Ensure the generated manifest declares CAMERA so the in‑app QR scanner
- *  (getUserMedia in the WebView) can request the camera. Idempotent. */
-async function ensureCameraPermission(androidDir: string, onLine: Progress): Promise<void> {
-  const manifest = join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml')
-  let xml: string
-  try {
-    xml = await readFile(manifest, 'utf8')
-  } catch {
-    return
-  }
-  if (xml.includes('android.permission.CAMERA')) return
-  const open = xml.match(/<manifest[^>]*>/)
-  if (!open) return
-  const perm = '\n    <uses-permission android:name="android.permission.CAMERA" />'
-  await writeFile(manifest, xml.replace(open[0], open[0] + perm))
-  onLine('Permissão de câmera adicionada ao AndroidManifest.')
-}
+/** Permissions added to the generated manifest: [marker that means "already
+ *  there", lines to insert, log line]. CAMERA: the in‑app QR scanner and
+ *  RECORD_AUDIO: voice dictation (both getUserMedia in the WebView);
+ *  WRITE_EXTERNAL_STORAGE: DownloadManager on API < 29. */
+const MANIFEST_PERMISSIONS: Array<[string, string[], string]> = [
+  [
+    'android.permission.CAMERA',
+    ['<uses-permission android:name="android.permission.CAMERA" />'],
+    'Permissão de câmera adicionada ao AndroidManifest.'
+  ],
+  [
+    'android.permission.RECORD_AUDIO',
+    [
+      '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
+      '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />'
+    ],
+    'Permissão de microfone adicionada ao AndroidManifest.'
+  ],
+  [
+    'WRITE_EXTERNAL_STORAGE',
+    ['<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />'],
+    'Permissão de armazenamento (download) adicionada ao AndroidManifest.'
+  ]
+]
 
-/** Ensure the manifest declares RECORD_AUDIO so the chat's voice dictation
- *  (getUserMedia in the WebView) can request the microphone. Idempotent. */
-async function ensureMicrophonePermission(androidDir: string, onLine: Progress): Promise<void> {
+/** Insert each missing permission right after `<manifest …>`. Idempotent; a
+ *  manifest not generated yet is skipped. */
+async function ensureManifestPermissions(androidDir: string, onLine: Progress): Promise<void> {
   const manifest = join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml')
-  let xml: string
-  try {
-    xml = await readFile(manifest, 'utf8')
-  } catch {
-    return
+  for (const [marker, lines, done] of MANIFEST_PERMISSIONS) {
+    const xml = await readFile(manifest, 'utf8').catch(() => null)
+    if (xml === null) return
+    const open = xml.match(/<manifest[^>]*>/)
+    if (xml.includes(marker) || !open) continue
+    await writeFile(manifest, xml.replace(open[0], open[0] + lines.map((l) => `\n    ${l}`).join('')))
+    onLine(done)
   }
-  if (xml.includes('android.permission.RECORD_AUDIO')) return
-  const open = xml.match(/<manifest[^>]*>/)
-  if (!open) return
-  const perm =
-    '\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />' +
-    '\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />'
-  await writeFile(manifest, xml.replace(open[0], open[0] + perm))
-  onLine('Permissão de microfone adicionada ao AndroidManifest.')
 }
 
 /** Java source installed into the (gitignored, regenerated) Android project so the
@@ -169,7 +179,7 @@ async function ensureMicrophonePermission(androidDir: string, onLine: Progress):
  *     the app and opened Chrome**, and nothing landed in Downloads. It stays
  *     only as a safety net for in-app navigations.
  *   - `AgentDownload.enqueue(url, name)` is a JavaScript interface the web
- *     client calls directly (see `triggerDownload` in www/app.js). No
+ *     client calls directly (the phone client in src/phone). No
  *     navigation, so nothing can be hijacked: the URL goes straight to
  *     DownloadManager. The URL is not taken on trust — it must point at the
  *     bridge the app is currently paired with (`/api/file`), so a page can't
@@ -212,7 +222,7 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
-    /** Called from the web client (www/app.js) instead of navigating. */
+    /** Called from the web client (src/phone) instead of navigating. */
     public class DownloadBridge {
         @JavascriptInterface
         public void enqueue(String url, String fileName) {
@@ -254,28 +264,11 @@ public class MainActivity extends BridgeActivity {
 `
 
 /**
- * Install download support into the generated Android project: declare
- * WRITE_EXTERNAL_STORAGE (only needed pre‑API 29) and overwrite MainActivity with
- * the version that wires a WebView download listener. Idempotent.
+ * Install download support into the generated Android project: overwrite
+ * MainActivity with the version that wires the WebView download bridge (the
+ * storage permission comes from MANIFEST_PERMISSIONS). Idempotent.
  */
 async function ensureDownloadSupport(androidDir: string, onLine: Progress): Promise<void> {
-  // 1) Storage permission for DownloadManager on API < 29.
-  const manifest = join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml')
-  try {
-    const xml = await readFile(manifest, 'utf8')
-    if (!xml.includes('WRITE_EXTERNAL_STORAGE')) {
-      const open = xml.match(/<manifest[^>]*>/)
-      if (open) {
-        const perm =
-          '\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />'
-        await writeFile(manifest, xml.replace(open[0], open[0] + perm))
-        onLine('Permissão de armazenamento (download) adicionada ao AndroidManifest.')
-      }
-    }
-  } catch {
-    /* manifest not generated yet — skip */
-  }
-  // 2) MainActivity with the download listener.
   const activity = join(androidDir, 'app', 'src', 'main', 'java', 'com', 'matheus', 'agentremote', 'MainActivity.java')
   try {
     const cur = await readFile(activity, 'utf8').catch(() => '')
@@ -337,6 +330,25 @@ export async function missingDependencies(rootDir: string): Promise<boolean> {
   return false
 }
 
+/**
+ * True when android/ is not a Capacitor 8 project: scaffolded by an older
+ * template (compileSdk below APK_COMPILE_SDK, or the pre‑8 bridge_layout_main
+ * layout) or broken (no variables.gradle). It's gitignored and regenerated with
+ * `cap add android`; the customizations are re‑applied after every sync.
+ */
+export async function isStaleAndroidProject(androidDir: string): Promise<boolean> {
+  if (await exists(join(androidDir, 'app', 'src', 'main', 'res', 'layout', 'bridge_layout_main.xml'))) return true
+  const vars = await readFile(join(androidDir, 'variables.gradle'), 'utf8').catch(() => '')
+  const m = vars.match(/compileSdkVersion\s*=\s*(\d+)/)
+  return !m || Number(m[1]) < APK_COMPILE_SDK
+}
+
+/** The phone client (src/phone) is built by the repo root — parent of the
+ *  Capacitor project — into smartfone-remote/www, the web assets `cap sync` packs. */
+export function phoneBuildCommand(rootDir: string): { cmd: string; args: string[]; cwd: string } {
+  return { cmd: 'npm', args: ['run', 'phone:build'], cwd: join(rootDir, '..') }
+}
+
 export interface BuildResult {
   ok: boolean
   apkPath?: string
@@ -358,11 +370,19 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
   if (!d.hasJava || !d.hasSdk) {
     return { ok: false, message: `Toolchain incompleta: ${d.missing.join(', ')}.` }
   }
+  // Capacitor 8 compiles with JDK 21 against android-36 (the preview keeps JDK 17/android-34).
+  let apkTools: ApkToolchain
+  try {
+    apkTools = await ensureApkToolchain(onLine)
+  } catch (err) {
+    return { ok: false, message: `Toolchain do APK incompleta: ${err instanceof Error ? err.message : String(err)}` }
+  }
+  onLine(`JDK do build: ${apkTools.javaHome}`)
 
   // Make sure npm/npx/node resolve regardless of how the app was launched: the
   // Electron process doesn't always inherit Node on its PATH (e.g. when not
   // started from start.bat). Prepend the located Node dir to the build env's PATH.
-  const env: NodeJS.ProcessEnv = { ...d.env }
+  const env: NodeJS.ProcessEnv = { ...apkTools.env }
   const nodeBin = await findNodeBin(rootDir)
   if (nodeBin) {
     env['PATH'] = nodeBin + delimiter + (env['PATH'] || '')
@@ -387,8 +407,27 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
     }
   }
 
-  // 3) Capacitor Android platform: add on first run, then sync the web assets.
+  // 3) Phone web client: src/phone → www/ (vite build of the repo root).
+  const phone = phoneBuildCommand(rootDir)
+  onLine('Gerando o app do celular (npm run phone:build)…')
+  if ((await run(phone.cmd, phone.args, { cwd: phone.cwd, env, onLine })) !== 0) {
+    return {
+      ok: false,
+      message: `Build do app do celular falhou (npm run phone:build em ${phone.cwd}). Veja os logs acima.`
+    }
+  }
+
+  // 4) Capacitor Android platform: (re)create when absent or from an older
+  //    template, then sync the web assets.
   const androidDir = join(rootDir, 'android')
+  if ((await exists(androidDir)) && (await isStaleAndroidProject(androidDir))) {
+    onLine('android/ é de um template antigo do Capacitor — recriando com cap add android…')
+    try {
+      await rm(androidDir, { recursive: true, force: true, maxRetries: 3 })
+    } catch (err) {
+      return { ok: false, message: `Não foi possível apagar o android/ antigo (${String(err)}). Feche o Android Studio e tente de novo.` }
+    }
+  }
   if (!(await exists(androidDir))) {
     onLine('Criando plataforma Android (cap add android)…')
     const code = await run('npx', ['--yes', 'cap', 'add', 'android'], { cwd: rootDir, env, onLine })
@@ -396,8 +435,7 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
   }
   onLine('Sincronizando web → Android (cap sync)…')
   await run('npx', ['--yes', 'cap', 'sync', 'android'], { cwd: rootDir, env, onLine })
-  await ensureCameraPermission(androidDir, onLine)
-  await ensureMicrophonePermission(androidDir, onLine)
+  await ensureManifestPermissions(androidDir, onLine)
   await ensureDownloadSupport(androidDir, onLine)
 
   // Brand the launcher/splash with the SAME art as the desktop app
@@ -417,13 +455,13 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
     else await brandAdaptiveIcon(androidDir, onLine)
   }
 
-  // 4) Gradle debug build.
+  // 5) Gradle debug build (JDK 21 from apkTools.env).
   onLine('Compilando APK (gradlew assembleDebug)… isso pode levar alguns minutos.')
   const gradlew = WIN ? join(androidDir, 'gradlew.bat') : join(androidDir, 'gradlew')
   const code = await run(gradlew, ['assembleDebug'], { cwd: androidDir, env, onLine })
   if (code !== 0) return { ok: false, message: `Build Gradle falhou (exit ${code}).` }
 
-  // 5) Locate and publish the APK where the bridge serves it (/download).
+  // 6) Locate and publish the APK where the bridge serves it (/download).
   const apk =
     (await exists(join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')))
       ? join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')

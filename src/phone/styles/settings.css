@@ -1,0 +1,50 @@
+/* Configurações (painel por cima das abas). */
+.settings-panel {
+  position: absolute; inset: 0; z-index: 80;
+  display: flex; flex-direction: column; background: var(--bg);
+  animation: rise 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.settings-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  padding: 16px 14px calc(var(--sab) + 20px);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.cfg-card { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.cfg-card-title { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+.cfg-desc { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.cfg-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cfg-k { font-size: 13px; color: var(--muted); flex: 0 0 auto; }
+.cfg-v { font-size: 13px; text-align: right; word-break: break-all; font-family: var(--mono); }
+.cfg-exit {
+  width: 100%; background: none; border: 1px solid color-mix(in srgb, var(--err) 45%, var(--line));
+  color: var(--err); border-radius: 11px; padding: 12px; font-size: 14px; font-weight: 600;
+}
+.cfg-btn {
+  width: 100%; border-radius: 11px; padding: 12px; font-size: 14px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.cfg-switch-card.on { border-color: color-mix(in srgb, var(--err) 55%, var(--line)); background: color-mix(in srgb, var(--err) 9%, var(--bg-2)); }
+.cfg-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; cursor: pointer; position: relative; }
+.cfg-switch-text { display: flex; flex-direction: column; gap: 4px; }
+.cfg-switch-text strong { font-size: 15px; }
+.cfg-switch-input { position: absolute; opacity: 0; width: 0; height: 0; }
+.cfg-switch-visual {
+  flex: 0 0 auto; width: 52px; height: 30px; border-radius: 999px; position: relative;
+  background: var(--bg-3); border: 1px solid var(--line); transition: background 0.18s, border-color 0.18s;
+}
+.cfg-switch-visual::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--muted); transition: transform 0.18s, background 0.18s;
+}
+.cfg-switch-input:checked + .cfg-switch-visual { background: color-mix(in srgb, var(--err) 70%, transparent); border-color: var(--err); }
+.cfg-switch-input:checked + .cfg-switch-visual::after { transform: translateX(22px); background: #fff; }
+.cfg-voice .cfg-switch-input:checked + .cfg-switch-visual { background: color-mix(in srgb, var(--accent) 70%, transparent); border-color: var(--accent); }
+.voice-progress { height: 6px; border-radius: 999px; background: var(--bg-3); overflow: hidden; }
+.voice-progress span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
+.cfg-usage { display: flex; flex-direction: column; gap: 10px; }
+.usage-row { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.usage-track { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.usage-fill { height: 100%; background: var(--ok); border-radius: 999px; }
+.usage-fill.warn { background: var(--warn); }
+.usage-fill.crit { background: var(--err); }
+.usage-detail { color: var(--muted); }

@@ -1,0 +1,51 @@
+/* Pareamento: QR, reconectando e outro celular pareado. */
+.pair-screen {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: calc(var(--sat) + 24px) 24px calc(var(--sab) + 24px);
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(217, 119, 87, 0.14), transparent 60%),
+    linear-gradient(180deg, var(--bg-2), var(--bg));
+}
+.pair-card {
+  width: 100%; max-width: 420px;
+  background: linear-gradient(180deg, var(--bg-2), var(--bg));
+  border: 1px solid var(--line); border-radius: 22px;
+  padding: 28px 24px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 10px;
+  animation: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.brand-logo {
+  width: 44px; height: 44px; display: grid; place-items: center;
+  border-radius: 13px; background: var(--accent); color: var(--on-accent); font-size: 20px;
+  box-shadow: 0 6px 18px rgba(217, 119, 87, 0.35);
+}
+.brand h1 { margin: 0; font-size: 22px; font-weight: 700; }
+.sub { margin: 0 0 10px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.pair-error { margin: 6px 0 0; color: var(--err); font-size: 13px; line-height: 1.45; }
+.pair-foot { margin: 18px 0 0; color: var(--faint); font-size: 12.5px; text-align: center; }
+.reconnect-card .brand-logo { background: var(--accent-soft); color: var(--accent); box-shadow: none; }
+.reconnect-card .spinner { width: 19px; height: 19px; }
+.reconnect-status { min-height: 20px; margin: -4px 0 10px; color: var(--accent); font-size: 13px; }
+
+/* leitor de QR */
+.scanner {
+  position: fixed; inset: 0; z-index: 50; background: #000;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.scan-view { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.scan-src { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.scan-mask { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.scan-frame {
+  width: 66vw; max-width: 280px; aspect-ratio: 1 / 1;
+  border: 3px solid var(--accent); border-radius: 20px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.5);
+}
+.scan-hint {
+  position: absolute; left: 0; right: 0; z-index: 2;
+  bottom: calc(var(--sab) + 96px);
+  text-align: center; color: #fff; font-size: 15px; padding: 0 24px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+.scan-cancel { position: absolute; z-index: 2; bottom: calc(var(--sab) + 32px); background: rgba(0, 0, 0, 0.6); }

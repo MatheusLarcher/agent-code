@@ -42,15 +42,18 @@ dist/                saída: agent-remote.apk (gitignored, servido em /download)
 
 ## Gerar o APK
 
-**Pela UI (recomendado):** no app de PC, painel 📱 → **Gerar APK**. Reusa o mesmo JDK/Android
-SDK do preview Android (baixa a toolchain na 1ª vez se faltar) e publica em `dist/agent-remote.apk`.
+**Pela UI (recomendado):** no app de PC, painel 📱 → **Gerar APK**. Reusa o Android SDK do
+preview Android e soma o que o Capacitor 8 exige só para o APK (JDK 21 em `<userData>/jdk-21`,
+`platforms;android-36`, `build-tools` 36.0.0 e 35.0.0, o padrão do AGP 8.13), baixando na 1ª vez. Antes do `cap sync` roda
+`npm run phone:build` na raiz (gera `www/` a partir de `src/phone`); um `android/` de template
+antigo (compileSdk < 36) é recriado. Publica em `dist/agent-remote.apk`.
 
-**Pela CLI** (precisa de JDK 17 + Android SDK no PATH, ex.: Android Studio):
+**Pela CLI** (JDK 21 + Android SDK com android-36: os do app ou `JAVA_HOME`/`ANDROID_HOME`):
 
 ```bash
-cd smartfone-remote
-npm install
-npm run build:apk      # cap add/sync android + gradlew assembleDebug + copia p/ dist/
+node scripts/phone/build-apk-runner.mjs   # na raiz: o mesmo código do botão Gerar APK
+# ou (não instala nada; usa o toolchain já presente):
+cd smartfone-remote && npm install && npm run build:apk
 ```
 
 O `.apk` sai em `smartfone-remote/dist/agent-remote.apk` e é servido pelo PC em `/download`.
@@ -59,7 +62,7 @@ O `.apk` sai em `smartfone-remote/dist/agent-remote.apk` e é servido pelo PC em
 
 - `androidScheme: http` + `cleartext: true` permitem o WebView falar HTTP com o PC na LAN
   (sem isso o Android bloqueia tráfego em texto puro / mixed content).
-- O leitor de QR usa a câmera via `getUserMedia` + `jsQR` (`www/jsqr.js`), sem plugin nativo. O
+- O leitor de QR usa a câmera via `getUserMedia` + `jsQR` (npm da raiz, entra no build do celular), sem plugin nativo. O
   script de build injeta a permissão `CAMERA` no `AndroidManifest.xml` gerado.
 - Sem precisar do APK, o cliente web em `http://IP:PORTA/app` já funciona no navegador do celular.
 - Você pode anexar imagens, baixar entregáveis do chat e trocar o modelo/esforço da conversa pelo celular. Os controles ficam desabilitados enquanto o agente está trabalhando.
