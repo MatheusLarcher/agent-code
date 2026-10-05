@@ -21,9 +21,9 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
-async function installed(name: string): Promise<void> {
+async function installed(name: string, version = '1.4.0'): Promise<void> {
   await mkdir(join(dir, 'node_modules', name), { recursive: true })
-  await writeFile(join(dir, 'node_modules', name, 'package.json'), '{}')
+  await writeFile(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ version }))
 }
 
 describe('missingDependencies', () => {
@@ -39,6 +39,18 @@ describe('missingDependencies', () => {
   it('todas as dependências presentes → não reinstala', async () => {
     await installed('jsqr')
     await installed('parakeet-stt')
+    expect(await missingDependencies(dir)).toBe(false)
+  })
+
+  it('major instalada diferente da pedida (Capacitor 6 de antes do 8) → reinstala', async () => {
+    await writeFile(
+      join(dir, 'package.json'),
+      JSON.stringify({ dependencies: { '@capacitor/android': '^8.5.2' }, devDependencies: { '@capacitor/cli': '^8.5.2' } })
+    )
+    await installed('@capacitor/android', '8.5.2')
+    await installed('@capacitor/cli', '6.2.1')
+    expect(await missingDependencies(dir)).toBe(true)
+    await installed('@capacitor/cli', '8.5.2')
     expect(await missingDependencies(dir)).toBe(false)
   })
 })

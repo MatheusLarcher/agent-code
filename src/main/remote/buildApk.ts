@@ -318,14 +318,27 @@ export async function missingDependencies(rootDir: string): Promise<boolean> {
   try {
     const pkg = JSON.parse(await readFile(join(rootDir, 'package.json'), 'utf8')) as {
       dependencies?: Record<string, string>
+      devDependencies?: Record<string, string>
     }
-    deps = pkg.dependencies ?? {}
+    deps = { ...(pkg.devDependencies ?? {}), ...(pkg.dependencies ?? {}) }
   } catch {
     /* unreadable package.json: fall back to the node_modules check */
   }
   if (!(await exists(join(rootDir, 'node_modules')))) return true
-  for (const name of Object.keys(deps)) {
-    if (!(await exists(join(rootDir, 'node_modules', name, 'package.json')))) return true
+  for (const [name, spec] of Object.entries(deps)) {
+    const raw = await readFile(join(rootDir, 'node_modules', name, 'package.json'), 'utf8').catch(() => null)
+    if (raw === null) return true
+    // A machine that built the APK before the Capacitor 6 → 8 bump still has the
+    // old major installed: present, but the wrong one for the generated project.
+    const wanted = /^[\^~]?(\d+)\./.exec(spec)
+    if (!wanted) continue
+    let version = ''
+    try {
+      version = String((JSON.parse(raw) as { version?: unknown }).version ?? '')
+    } catch {
+      return true
+    }
+    if (version.split('.')[0] !== wanted[1]) return true
   }
   return false
 }

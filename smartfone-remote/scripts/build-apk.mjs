@@ -129,8 +129,17 @@ function findApk(dir) {
 function missingDependencies() {
   if (!existsSync(join(ROOT, 'node_modules'))) return true
   let deps = {}
-  try { deps = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).dependencies || {} } catch { return false }
-  return Object.keys(deps).some((n) => !existsSync(join(ROOT, 'node_modules', n, 'package.json')))
+  try {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+    deps = { ...(pkg.devDependencies || {}), ...(pkg.dependencies || {}) }
+  } catch { return false }
+  // Present but from another major (e.g. Capacitor 6 left from before the 8 bump) also reinstalls.
+  return Object.entries(deps).some(([n, spec]) => {
+    let installed
+    try { installed = JSON.parse(readFileSync(join(ROOT, 'node_modules', n, 'package.json'), 'utf8')).version || '' } catch { return true }
+    const wanted = /^[\^~]?(\d+)\./.exec(spec)
+    return !!wanted && String(installed).split('.')[0] !== wanted[1]
+  })
 }
 
 async function main() {
