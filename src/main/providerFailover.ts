@@ -5,6 +5,7 @@ import type { AgentSession } from './agentSession'
 import { appRestart } from './appRestartRuntime'
 import type { AccountSwitchDeps } from './accounts/switchDeps'
 import { DEFAULT_ACCOUNT_ID } from './accounts/registry'
+import { logSession } from './sessionLog'
 
 export const FAILOVER_CONTINUATION = '[PROVIDER_CONTINUATION]\n' +
   'O provedor anterior ficou sem limite de uso. Continue a tarefa pendente do usuário a partir do histórico desta mesma sessão, ' +
@@ -178,6 +179,10 @@ export class ProviderFailoverSession {
     if (!active()) return false
     this.options = { ...this.options, ...patch(resume) }
     const continuation = previous.continuationState()
+    logSession('session-replaced', {
+      convId: this.options.convId, reason: 'failover', background: !!previous.hasBackgroundWork?.(),
+      model: this.options.model, effort: this.options.effort, account: this.options.claudeAccountId
+    })
     previous.dispose()
     this.create()
     const nextGeneration = this.generation
@@ -415,6 +420,8 @@ export class ProviderFailoverSession {
 
   /** A query da sessão atual ainda lê mensagens (uma morta não pode ser reaproveitada). */
   isAlive(): boolean { return !this.disposed && (this.current.isAlive?.() ?? true) }
+  /** O processo atual tem trabalho que trocá-lo mataria (subagente/shell em background, loop). */
+  hasBackgroundWork(): boolean { return !this.disposed && !!this.current.hasBackgroundWork?.() }
 
   start(): Promise<boolean> { return this.current.start() }
   async send(...args: Parameters<AgentSession['send']>): Promise<void> {

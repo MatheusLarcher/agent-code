@@ -18,6 +18,7 @@ import { AgentSession, type MessageOrigin } from './agentSession'
 import { ProviderFailoverSession } from './providerFailover'
 import { createConversationLock } from './conversationLock'
 import { createStepRunner, RESUME_PREPARE_DEADLINE_MS } from './sessionSteps'
+import { initSessionLog, logSession } from './sessionLog'
 import { SessionLeases } from './sessionLeases'
 import { AppRestartCoordinator } from './appRestart'
 import { configureAppRestart, appRestart } from './appRestartRuntime'
@@ -281,6 +282,7 @@ function newLeaseKeeper(convId: string, lease: ConversationLease, isInstalled: (
       // Descartada = fora do mapa na hora: ninguém envia para ela. O turno de
       // tarefa MCP que estava aberto nela se perdeu (erro, nunca `rodando`).
       const lost = sessions.get(convId)
+      logSession('lease-lost', { convId, reason: 'lease-lost', background: !!lost?.hasBackgroundWork() })
       sessions.delete(convId)
       lost?.dispose()
       if (lost) mcpInbound.onSessionInstalled(convId)
@@ -1703,11 +1705,46 @@ export function registerIpc(): void {
     // Agent Manager: modelo e esforço vêm da configuração do planejamento e saem
     // concretos — o Automático da conversa (logo abaixo) não roda para ele.
     opts = await planningStartOptions(opts, { config: () => loadConfig().planning })
+    // Sessão viva com trabalho em background (subagente, shell, loop agendado):
+    // trocá-la mataria esse trabalho em silêncio — o SDK fecha o stdin do processo
+    // antigo e o mata segundos depois, com tudo o que rodava nele. Então ela fica:
+    // a mensagem sai no modelo/esforço dela e o Automático nem é consultado (a
+    // nota dele anunciaria um par que não vai rodar). Mesmo padrão da troca de
+    // conta (providerFailover.ts, `tryPending`). A troca da tarefa MCP
+    // (`previous`) não passa por aqui, nem o descarte explícito (Parar sessão,
+    // agent:dispose). Sessão morta não segura nada: segue o caminho de sempre.
+    const kept = previous ? undefined : sessions.get(convId)
+    if (kept?.isAlive() && kept.hasBackgroundWork()) {
+      const live = kept.liveOptions()
+      // Pasta e config MCP trocadas não podem sumir caladas: ficam registradas e avisadas.
+      const cwdChanged = opts.cwd !== live.cwd
+      const mcpChanged = JSON.stringify(opts.inboundMcp ?? null) !== JSON.stringify(live.inboundMcp ?? null)
+      logSession('session-kept', {
+        convId, reason: 'background', background: true, model: live.model, effort: live.effort, cwdChanged, mcpChanged
+      })
+      const changed =
+        (!isAutoModel(opts.model) && opts.model !== live.model) || (!isAutoEffort(opts.effort) && opts.effort !== live.effort)
+      if (changed || cwdChanged || mcpChanged || opts.autoPrompt?.message.trim()) {
+        const deferred = [cwdChanged ? 'de pasta' : '', mcpChanged ? 'da configuração MCP' : ''].filter(Boolean).join(' e ')
+        const event: ChatEvent = {
+          kind: 'status',
+          id: randomUUID(),
+          text: `Há trabalho em background rodando nesta conversa: mantive a sessão atual (${live.model ?? 'modelo padrão'}${live.effort ? `, esforço ${live.effort}` : ''}) para não interrompê-lo.` +
+            (deferred ? ` A troca ${deferred} fica para quando o background terminar (vale na próxima sessão desta conversa).` : '')
+        }
+        send(Channels.agentEvent, { convId, event })
+        remote.broadcast(convId, event)
+      }
+      return { ok: true, claudeAccountId: storableSessionAccount(convId, conversationAccount(convId)) }
+    }
     // O estado por conversa (Manager, origem do Automático, pasta) é da sessão
     // que sobe. Numa troca (`previous`), só é gravado depois que a nova subiu e
     // assumiu: se ela falhar ou perder a vez, a antiga continua com o dela.
     const planningRef = { convId, planning: opts.planning }
     let autoLive: AutoStartDecision['live'] | undefined
+    // Houve turno no Automático e o par dele não reaproveitou a sessão viva (o
+    // motivo da troca no log de sessões).
+    let autoTurn = false
     const commitState = (cwd: string): void => {
       planningConversations.track(planningRef)
       if (autoLive) autoSessions.set(convId, autoLive)
@@ -1717,6 +1754,7 @@ export function registerIpc(): void {
     if (isAutoModel(opts.model) || isAutoEffort(opts.effort)) {
       const auto = await autoStart(opts)
       autoLive = auto.live
+      autoTurn = !!opts.autoPrompt?.message.trim() && !auto.reuse
       // Reaproveitar só quando a sessão viva JÁ é o que este start pede: nunca
       // numa troca (`previous`: ela existe justamente porque a viva não serve),
       // e só se a viva está no modelo decidido e com a mesma config MCP (uma
@@ -1763,6 +1801,11 @@ export function registerIpc(): void {
         // agent:send nem "agora" envia para uma sessão descartada enquanto esta
         // subida espera o lease ou a retomada. O turno de tarefa MCP que estava
         // aberto nela se perdeu: termina em erro já, não quando (e se) a nova subir.
+        const was = replaced.liveOptions()
+        logSession('session-replaced', {
+          convId, reason: !replaced.isAlive() ? 'dead' : autoTurn ? 'auto-pair' : 'config',
+          background: replaced.hasBackgroundWork(), model: was.model, effort: was.effort
+        })
         sessions.delete(convId)
         replaced.dispose()
         mcpInbound.onSessionInstalled(convId)
@@ -1791,6 +1834,13 @@ export function registerIpc(): void {
     let s!: ProviderFailoverSession
     const emit = (event: ChatEvent): void => {
       send(Channels.agentEvent, { convId, event })
+      // Todo terminal de erro da conversa (AgentSession e failover passam por aqui).
+      if (event.kind === 'error') {
+        logSession('turn-error', {
+          convId, incomplete: event.incomplete === true, retryable: event.retryable,
+          usageExhausted: event.usageExhausted, turnIds: event.turnIds
+        })
+      }
       // Código ao vivo do monitor do escritório: efêmero e só da tela local. Para
       // aqui, num ponto só: não vai ao celular, não autoriza download, não fecha
       // tarefa MCP e nenhum observador (vigia, quadro, PO, memorista) o vê — até
@@ -1915,6 +1965,9 @@ export function registerIpc(): void {
     let ok = false
     try {
       ok = await s.start()
+      if (ok) {
+        logSession('session-start', { convId, model: opts.model, effort: opts.effort, account: claudeAccountId, resume: !!opts.resume })
+      }
     } catch (error) {
       console.error(`Agent failed to start for conversation ${convId}:`, error)
     }
@@ -1935,6 +1988,10 @@ export function registerIpc(): void {
       // `complete` da antiga já não solta o lease: ela deixou de ser a da conversa).
       sessions.set(convId, s)
       commitState(opts.cwd)
+      const was = previous.liveOptions()
+      logSession('session-replaced', {
+        convId, reason: 'mcp-model', background: previous.hasBackgroundWork(), model: was.model, effort: was.effort
+      })
       previous.dispose()
       mcpInbound.onSessionInstalled(convId)
     }
@@ -2159,7 +2216,9 @@ export function registerIpc(): void {
 
   ipcMain.handle(Channels.agentInterrupt, async (_e, convId: string) => {
     mcpInbound.onInterrupt(convId)
-    return (await sessions.get(convId)?.interrupt()) ?? { stillQueued: [] }
+    const session = sessions.get(convId)
+    if (session) logSession('session-stop', { convId, reason: 'stop', background: session.hasBackgroundWork() })
+    return (await session?.interrupt()) ?? { stillQueued: [] }
   })
 
   // MCP de entrada: o renderer montou o ouvinte (e carregou as conversas), ou
@@ -2187,7 +2246,9 @@ export function registerIpc(): void {
 
   ipcMain.handle(Channels.agentDispose, (_e, convId: string) => {
     mcpInbound.onDispose(convId)
-    sessions.get(convId)?.dispose()
+    const disposed = sessions.get(convId)
+    if (disposed) logSession('session-disposed', { convId, reason: 'dispose', background: disposed.hasBackgroundWork() })
+    disposed?.dispose()
     sessions.delete(convId)
     autoSessions.delete(convId)
     vigia.dispose(convId)
@@ -2399,6 +2460,9 @@ app.whenReady().then(async () => {
   // reiniciar resolve. Publicado depois, um app nesse estado nunca escreveria o
   // arquivo e o script recusaria para sempre, sem ninguém entender por quê.
   if (appRestart) stopRestartGuardFile = startRestartGuardFile(appRestart, app.getPath('userData'))
+  // Ciclo de vida das sessões em <userData>/logs/sessions.log (sessionLog.ts):
+  // antes do registerIpc, que é de onde as sessões sobem.
+  initSessionLog(app.getPath('userData'))
   // Mesma pergunta ("algum agente ocupado?"), outro consumidor: enquanto houver
   // turno vivo, o sistema não entra em suspensão por ociosidade — o Windows não
   // conta o trabalho do agente como atividade e dormia no meio da tarefa. Sai

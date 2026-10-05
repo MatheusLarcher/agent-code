@@ -45,6 +45,21 @@ export interface TokenTotals {
   lastCost?: number
 }
 
+/** O turno em voo de uma conversa, gravado com ela (turnInFlight.ts): o app que
+ *  fecha no meio dele o retoma "de onde parou" no próximo boot. */
+export interface TurnInFlight {
+  /** A bolha do usuário que abriu o turno. */
+  msgId: string
+  /** Epoch ms em que o turno começou. */
+  at: number
+  /** Tarefa do MCP de entrada: essa nunca é reenviada pelo app (regra 2). */
+  mcpTaskId?: string
+  /** O envio ao main já saiu. Sem isto o app fechou antes (ex.: na espera da fila). */
+  sent?: true
+  /** `installationId` do PC que rodava o turno: só ele o retoma (o banco é dividido). */
+  device?: string
+}
+
 export interface TurnRecovery {
   id: string
   reason: 'limit' | 'transient'
@@ -125,6 +140,8 @@ export interface Conversation {
   draftMedia?: DraftMedia[]
   /** A failed turn waiting to resume; persisted so app restarts restore its timer. */
   recovery?: TurnRecovery
+  /** Turno em andamento (marcado ao enviar, limpo no terminal) — ver turnInFlight.ts. */
+  turnInFlight?: TurnInFlight
   /** The agent's current task plan, if it has tracked progress at least once
    *  in this conversation. Rendered as a fixed card above the composer. */
   todoPlan?: TodoPlan

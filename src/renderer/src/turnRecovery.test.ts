@@ -1,11 +1,31 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_GENERIC_RETRIES, parseResetFromError, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
+import { isFailedTerminal, MAX_GENERIC_RETRIES, parseResetFromError, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
 
 describe('turnRecovery', () => {
   it('nunca recupera uma interrupção feita pelo usuário, mesmo quando termina com erro', () => {
     expect(shouldRecoverTerminal('error', true, true)).toBe(false)
     expect(shouldRecoverTerminal('result', true, true)).toBe(false)
     expect(shouldRecoverTerminal('error', true, false)).toBe(true)
+  })
+
+  describe('isFailedTerminal', () => {
+    const base = { isError: false, responseReceived: false, wasInterrupted: false }
+    it('erro com `incomplete` é falha mesmo com texto já recebido; sem a marca, texto recebido conclui', () => {
+      expect(isFailedTerminal({ ...base, kind: 'error', incomplete: true, responseReceived: true })).toBe(true)
+      expect(isFailedTerminal({ ...base, kind: 'error', responseReceived: true })).toBe(false)
+      expect(isFailedTerminal({ ...base, kind: 'result', isError: true, responseReceived: true })).toBe(false)
+    })
+    it('Stop nunca é falha, nem com `incomplete`', () => {
+      expect(isFailedTerminal({ ...base, kind: 'error', incomplete: true, wasInterrupted: true })).toBe(false)
+      expect(isFailedTerminal({ ...base, kind: 'result', isError: true, wasInterrupted: true })).toBe(false)
+    })
+    it('mantém o resto: sem resposta é falha, `retryable: false` é falha, sucesso não é', () => {
+      expect(isFailedTerminal({ ...base, kind: 'error' })).toBe(true)
+      expect(isFailedTerminal({ ...base, kind: 'result', isError: true })).toBe(true)
+      expect(isFailedTerminal({ ...base, kind: 'error', retryable: false, responseReceived: true })).toBe(true)
+      expect(isFailedTerminal({ ...base, kind: 'result' })).toBe(false)
+      expect(isFailedTerminal({ ...base, kind: 'result', responseReceived: true })).toBe(false)
+    })
   })
   it('interpreta reset com horário e fuso e adiciona um minuto', () => {
     const now = Date.parse('2026-07-13T02:00:00.000Z') // 23:00 do dia anterior em São Paulo

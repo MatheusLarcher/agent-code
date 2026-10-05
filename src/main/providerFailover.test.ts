@@ -1,8 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import { ProviderFailoverSession, FAILOVER_CONTINUATION } from './providerFailover'
+import { logSession } from './sessionLog'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
 import type { ChatEvent, StartAgentOptions } from '../shared/ipc'
+
+vi.mock('./sessionLog', () => ({ logSession: vi.fn() }))
 
 const quota: ChatEvent = { kind: 'result', id: 'quota', isError: true, usageExhausted: true, text: 'limit', durationMs: 1 }
 const done: ChatEvent = { kind: 'result', id: 'done', isError: false, text: 'done', durationMs: 1 }
@@ -243,5 +246,37 @@ describe('quota classification', () => {
     h.records[0].event(quota)
     expect(h.session.injectNow('ajuste')).toBe(false)
     await settled()
+  })
+})
+
+describe('background e turno incompleto', () => {
+  it('hasBackgroundWork reflete o processo atual; descartada, nunca segura nada', () => {
+    const h = harness()
+    expect(h.session.hasBackgroundWork()).toBe(false)
+    Object.assign(h.records[0].session, { hasBackgroundWork: () => true })
+    expect(h.session.hasBackgroundWork()).toBe(true)
+    h.session.dispose()
+    expect(h.session.hasBackgroundWork()).toBe(false)
+  })
+
+  it('error incomplete passa intacto (incomplete/retryable/turnIds) e fecha o turno: a troca agendada pode acontecer', async () => {
+    const h = harness()
+    await h.session.send('tarefa')
+    const incomplete: ChatEvent = { kind: 'error', id: 'e', text: 'Sessão travada', incomplete: true, retryable: true, turnIds: ['u1'] }
+    h.records[0].event(incomplete)
+    await settled()
+    expect(h.emit).toHaveBeenCalledWith(incomplete)
+    expect(h.records).toHaveLength(1)
+    expect(h.available).not.toHaveBeenCalled()
+  })
+
+  it('a troca por cota registra a substituição (motivo failover, background na hora)', async () => {
+    vi.mocked(logSession).mockClear()
+    const h = harness()
+    Object.assign(h.records[0].session, { hasBackgroundWork: () => true })
+    h.records[0].event(quota)
+    await settled()
+    expect(h.records).toHaveLength(2)
+    expect(logSession).toHaveBeenCalledWith('session-replaced', expect.objectContaining({ convId: 'chat', reason: 'failover', background: true }))
   })
 })

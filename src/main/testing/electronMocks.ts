@@ -37,7 +37,9 @@ export const spy = {
   sessions: [] as CreatedSession[],
   planningConfig: { model: 'claude-opus-5-5', effort: 'high' },
   /** Resultado dos próximos `start()` (vazio = sobe; promessa = subida que o teste solta). */
-  startResults: [] as Array<boolean | Promise<boolean>>
+  startResults: [] as Array<boolean | Promise<boolean>>,
+  /** Conversas cuja sessão tem trabalho em background (`hasBackgroundWork`). */
+  background: new Set<string>()
 }
 
 /** Portão do lease: com `p`, o `acquireConversationLease` espera até o teste soltar. */
@@ -110,6 +112,13 @@ vi.mock('../providerFailover', () => ({
     }
     liveOptions(): CreatedSession['opts'] {
       return this.opts
+    }
+    // No protótipo (não campo): index.mcp.test.ts sobrescreve `isAlive` por ele.
+    isAlive(): boolean {
+      return true
+    }
+    hasBackgroundWork(): boolean {
+      return spy.background.has(this.opts.convId)
     }
   }
 }))

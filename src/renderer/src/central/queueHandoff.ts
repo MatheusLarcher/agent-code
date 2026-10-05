@@ -29,34 +29,36 @@ export interface QueueHandoffDeps {
   clearTimer?: (handle: unknown) => void
 }
 
-export function createQueueHandoff(deps: QueueHandoffDeps): QueueHandoff {
-  const waiting = new Map<string, number>()
+/** Espera o fim real do turno de `cid` no main, com o prazo local. Nunca rejeita:
+ *  sem o sinal (canal ausente, falha, IPC que não volta) segue igual. */
+export async function waitForTurnEnd(deps: QueueHandoffDeps, cid: string): Promise<void> {
   const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
   const clearTimer = deps.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>))
-
-  const turnEnd = async (cid: string): Promise<void> => {
-    let handle: unknown
-    try {
-      const signal = deps.waitTurnEnd(cid)
-      if (!signal) return
-      await Promise.race([
-        signal,
-        new Promise<void>((resolve) => {
-          handle = setTimer(resolve, deps.fallbackMs)
-        })
-      ])
-    } catch {
-      // Sem o sinal a fila não para: o pior caso é o comportamento de antes.
-    } finally {
-      if (handle !== undefined) clearTimer(handle)
-    }
+  let handle: unknown
+  try {
+    const signal = deps.waitTurnEnd(cid)
+    if (!signal) return
+    await Promise.race([
+      signal,
+      new Promise<void>((resolve) => {
+        handle = setTimer(resolve, deps.fallbackMs)
+      })
+    ])
+  } catch {
+    // Sem o sinal a fila não para: o pior caso é o comportamento de antes.
+  } finally {
+    if (handle !== undefined) clearTimer(handle)
   }
+}
+
+export function createQueueHandoff(deps: QueueHandoffDeps): QueueHandoff {
+  const waiting = new Map<string, number>()
 
   return {
     async after(cid, next) {
       waiting.set(cid, (waiting.get(cid) ?? 0) + 1)
       try {
-        await turnEnd(cid)
+        await waitForTurnEnd(deps, cid)
       } finally {
         const left = (waiting.get(cid) ?? 1) - 1
         if (left > 0) waiting.set(cid, left)

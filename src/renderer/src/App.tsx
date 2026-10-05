@@ -53,7 +53,17 @@ import {
   withLlmTitle,
   withUserTitle
 } from './conversationTitle'
-import { MAX_GENERIC_RETRIES, scheduleFailure, shouldRecoverTerminal } from './turnRecovery'
+import { isFailedTerminal, MAX_GENERIC_RETRIES, scheduleFailure } from './turnRecovery'
+import { BACKGROUND_SETTLE_MS, canResumeQueue, createBackgroundHold } from './backgroundHold'
+import {
+  restartNoticeTexts,
+  resumeAfterRestart,
+  turnMark,
+  withoutTurnInFlight,
+  withTurnInFlight,
+  withTurnSent,
+  type RestartNotice
+} from './turnInFlight'
 import { queueHeadToDrain, requeueDeferredSend, withoutBubble } from './mirrorRepairQueue'
 import { closeRunningTracks, isSubagentEvent, reduceTracks, type TrackMap } from './agentTracks'
 import {
@@ -536,6 +546,24 @@ function hydrateStoredConversation(conversation: Conversation): Conversation {
   }
 }
 
+/** Conversas lidas do banco, prontas para a tela — e o turno que o app fechado
+ *  interrompeu já posto para retomar (turnInFlight.ts). `self`: este PC. */
+function hydrateLoaded(list: Conversation[], self: string | null): { list: Conversation[]; notices: RestartNotice[] } {
+  const now = Date.now()
+  const notices: RestartNotice[] = []
+  const out = list.map((stored) => {
+    const resumed = resumeAfterRestart(hydrateStoredConversation(stored), {
+      now,
+      self,
+      newId: () => uid('recovery'),
+      maxAttempts: MAX_GENERIC_RETRIES
+    })
+    if (resumed.notice) notices.push(resumed.notice)
+    return resumed.conv
+  })
+  return { list: out, notices }
+}
+
 export function App(): JSX.Element {
   const { notify } = useUI()
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -694,6 +722,21 @@ export function App(): JSX.Element {
   const consumeChips = useCallback(() => setChips([]), [])
   const queueRef = useRef(queue)
   queueRef.current = queue
+  // Subagentes em segundo plano seguram a fila (backgroundHold.ts). A conferência
+  // (`ready`) e a retomada (`run`) dependem do resto do App: chegam pelas refs,
+  // atribuídas a cada render mais abaixo.
+  const queueResumeReadyRef = useRef<(cid: string) => boolean>(() => false)
+  const resumeQueueRef = useRef<(cid: string) => Promise<void>>(async () => undefined)
+  const [backgroundHold] = useState(() =>
+    createBackgroundHold({
+      settleMs: BACKGROUND_SETTLE_MS,
+      waitTurnEnd: (cid) => window.api.waitTurnEnd?.(cid),
+      fallbackMs: QUEUE_HANDOFF_FALLBACK_MS,
+      ready: (cid) => queueResumeReadyRef.current(cid),
+      run: (cid) => resumeQueueRef.current(cid)
+    })
+  )
+  useEffect(() => () => backgroundHold.dispose(), [backgroundHold])
   // A fila é gravada no banco: reiniciar o app não perde o que esperava a vez.
   useOutboxPersistence({
     hydrated,
@@ -701,12 +744,16 @@ export function App(): JSX.Element {
     setQueue,
     isPayload: isQueuedPayload,
     onRestored: (restored) => {
-      const convs = new Set(restored.map((item) => item.convId)).size
+      const convIds = new Set(restored.map((item) => item.convId))
       notify(
         'aviso',
         `${restored.length === 1 ? '1 mensagem voltou' : `${restored.length} mensagens voltaram`} para a fila` +
-          `${convs > 1 ? ` de ${convs} conversas` : ''}. Elas saem quando você mandar outra mensagem ou clicar em "agora".`
+          `${convIds.size > 1 ? ` de ${convIds.size} conversas` : ''}. ` +
+          `${restored.length === 1 ? 'Ela sai sozinha' : 'Elas saem sozinhas, uma por vez,'} assim que a conversa estiver livre.`
       )
+      // Conversa livre não espera o usuário: a cabeça sai pelo fluxo normal (com
+      // recuperação pendente, quem solta a fila é o sucesso dela).
+      for (const cid of convIds) backgroundHold.schedule(cid)
     }
   })
   const usageLimitsRef = useRef(usageLimits)
@@ -801,7 +848,9 @@ export function App(): JSX.Element {
   /** O envio do turno em voo vai sair agora: daqui em diante um Stop tem turno a esperar. */
   const markSending = (cid: string): void => {
     const inflight = inflightRef.current[cid]
-    if (inflight) inflight.sending = true
+    if (!inflight) return
+    inflight.sending = true
+    patchConv(cid, (c) => withTurnSent(c, inflight.msgId))
   }
 
   const getActive = (): Conversation | null =>
@@ -810,6 +859,14 @@ export function App(): JSX.Element {
   const patchConv = useCallback((id: string, fn: (c: Conversation) => Conversation): void => {
     setConversations((prev) => prev.map((c) => (c.id === id ? fn(c) : c)))
   }, [])
+
+  // O turno em voo vai gravado na conversa (turnInFlight.ts): o app que fecha no
+  // meio dele o retoma no próximo boot. Marcado com o `installationId` deste PC.
+  const deviceRef = useRef<string | null>(null)
+  deviceRef.current = storageStatus?.installationId || null
+  const markTurn = (cid: string, msgId: string, mcpTaskId: string | undefined, sent: boolean): void =>
+    patchConv(cid, (c) => withTurnInFlight(c, turnMark(msgId, { mcpTaskId, sent, device: deviceRef.current })))
+  const clearTurn = (cid: string, msgId?: string): void => patchConv(cid, (c) => withoutTurnInFlight(c, msgId))
 
   // Contas Claude: a lista (painel de consumo) e as ações de troca de conta.
   const { accounts: claudeAccountList, refresh: refreshAccounts, refreshSoon: refreshAccountsSoon } = useClaudeAccounts()
@@ -865,7 +922,12 @@ export function App(): JSX.Element {
   const setConnected = useCallback((id: string, on: boolean): void => {
     connectedRef.current = on ? withId(connectedRef.current, id) : withoutId(connectedRef.current, id)
     setConnectedIds((s) => (on ? withId(s, id) : withoutId(s, id)))
-  }, [])
+    if (on) return
+    // Sessão morta (erro, descarte): os subagentes dela morreram junto. Um snapshot
+    // velho seguraria a fila para sempre — o próximo envio é que reconecta.
+    backgroundHold.clear(id)
+    patchConv(id, (c) => (c.backgroundTasks?.length ? { ...c, backgroundTasks: [] } : c))
+  }, [backgroundHold, patchConv])
 
   // Flag/clear the error banner on a specific user message (so a failed turn is
   // visible right on the message, with a retry button — instead of being lost).
@@ -932,7 +994,7 @@ export function App(): JSX.Element {
           const plan = requeueDeferredSend(cid, e.messageUuid, inflightRef.current[cid], conv?.messages ?? [], uid('q'))
           if (!plan) return
           delete inflightRef.current[cid]
-          patchConv(cid, (c) => ({ ...c, messages: withoutBubble(c.messages, plan.bubbleId) }))
+          patchConv(cid, (c) => withoutTurnInFlight({ ...c, messages: withoutBubble(c.messages, plan.bubbleId) }, plan.bubbleId))
           // A bolha volta com o MESMO id: a âncora da Central continua valendo.
           const item: QueuedMessage = { ...plan.item, msgId: plan.bubbleId }
           queueRef.current = [item, ...queueRef.current]
@@ -943,7 +1005,10 @@ export function App(): JSX.Element {
         }
         const conv = convsRef.current.find((c) => c.id === cid)
         const blocked =
-          busyRef.current.has(cid) || stopHolds.isHeld(cid) || !!(conv?.recovery && conv.recovery.scheduledAt !== 0)
+          busyRef.current.has(cid) ||
+          stopHolds.isHeld(cid) ||
+          !!(conv?.recovery && conv.recovery.scheduledAt !== 0) ||
+          backgroundHold.holds(cid)
         const head = queueHeadToDrain(queueRef.current, cid, blocked)
         if (!conv || !head) return
         queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
@@ -1002,6 +1067,9 @@ export function App(): JSX.Element {
 
       // Troca de conta: toast amarelo (automática) antes de a linha entrar no chat.
       if (e.kind === 'account-switch') announceAccountSwitch(e)
+      // Subagente rodando segura a fila; o fim do último a retoma (backgroundHold.ts).
+      // Já aqui, e não só no estado: o `result` seguinte pode chegar antes do render.
+      if (e.kind === 'background-tasks') backgroundHold.update(cid, e.tasks)
       patchConv(cid, (c) => {
         let next: Conversation
         if (e.kind === 'system') {
@@ -1169,14 +1237,24 @@ export function App(): JSX.Element {
         if (!wasInterrupted) {
           patchConv(cid, (c) => ({ ...c, queuedAfterInterrupt: undefined }))
         }
+        // O turno terminou (bem ou mal): a marca gravada dele sai. Falha que vai ser
+        // retomada passa a viver na `recovery`, que já sobrevive ao reinício.
+        patchConv(cid, (c) => withoutTurnInFlight(c))
         // A failed turn = a fatal session error, or a result the model flagged as
         // an error and that the user did NOT cause by stopping it. The user's
         // message must stay in the chat, marked with the error + a retry button.
         // Some providers can deliver the assistant text and only then mark the
         // terminal frame as an error. The user already received an answer, so
-        // that is a completed turn — never resurrect the retry card afterward.
-        const receivedResponse = inflightRef.current[cid]?.responseReceived === true
-        const failed = (!receivedResponse || (e.kind === 'error' && e.retryable === false)) && shouldRecoverTerminal(e.kind, e.kind === 'result' && e.isError, wasInterrupted)
+        // that is a completed turn — never resurrect the retry card afterward —
+        // unless main says the turn died before finishing (`incomplete`).
+        const failed = isFailedTerminal({
+          kind: e.kind,
+          isError: e.kind === 'result' && e.isError,
+          retryable: e.kind === 'error' ? e.retryable : undefined,
+          incomplete: e.kind === 'error' ? e.incomplete : undefined,
+          responseReceived: inflightRef.current[cid]?.responseReceived === true,
+          wasInterrupted
+        })
 
         if (e.kind === 'result' && !e.isError) setLastDuration((m) => ({ ...m, [cid]: e.durationMs }))
 
@@ -1212,7 +1290,8 @@ export function App(): JSX.Element {
             // encerrar o turno de fato (o erro sai antes do fim do stream, do
             // handoff e do lease); até lá a conversa segue ocupada, e o que
             // chegar entra na fila. O dispatch reconecta se a sessão caiu.
-            if (!queueRef.current.some((m) => m.convId === cid)) {
+            // Subagentes ainda rodando: a fila espera eles (backgroundHold.ts).
+            if (!queueRef.current.some((m) => m.convId === cid) || backgroundHold.holds(cid)) {
               setBusy(cid, false)
               return
             }
@@ -1286,6 +1365,14 @@ export function App(): JSX.Element {
           releaseKeptQueueRef.current?.(cid)
           return
         }
+        // O turno principal acabou, mas a tarefa não: subagentes seguem em segundo
+        // plano. A fila e a troca de sessão pendente esperam o fim deles — quem as
+        // retoma é o backgroundHold, com a conversa já ociosa.
+        if (backgroundHold.holds(cid)) {
+          setBusy(cid, false)
+          setBusySince((m) => withoutKey(m, cid))
+          return
+        }
         // A session-bound setting (model, effort, Loop or Econômico) changed
         // while busy — apply it now, at the handoff, by restarting the live
         // session (same resume id, so history carries over) before the next
@@ -1333,6 +1420,9 @@ export function App(): JSX.Element {
             fileRefs: next.fileRefs,
             ...(next.mcpTaskId ? { mcpTaskId: next.mcpTaskId } : {})
           }
+          // Já fora da fila e ainda não enviado: a marca guarda a bolha (um app
+          // fechado na espera a mostra com "Tentar de novo" no boot).
+          markTurn(cid, nextMsgId, next.mcpTaskId, false)
           const sendQueued = async (): Promise<void> => {
             if (sessionConfigPending) {
               // Dispose the stale-config session and reconnect (same resume id, so
@@ -1386,6 +1476,7 @@ export function App(): JSX.Element {
             // conversa ficava "ocupada" para sempre e a fila parava.
             const why = `Falha ao enviar: ${ipcErrorMessage(err, String(err))}`
             if (inflightRef.current[cid]?.msgId === nextMsgId) delete inflightRef.current[cid]
+            clearTurn(cid, nextMsgId)
             if (isMcpTaskGone(err)) {
               // Regra 1: tarefa MCP que não está mais viva — o main recusou. O item
               // sai (a bolha some) com aviso; nunca vira mensagem do usuário.
@@ -1444,7 +1535,7 @@ export function App(): JSX.Element {
         }
       }
     },
-    [patchConv, notify, setBusy, setConnected, markMessageError, autoTitle, refreshAccountsSoon, announceAccountSwitch]
+    [patchConv, notify, setBusy, setConnected, markMessageError, autoTitle, refreshAccountsSoon, announceAccountSwitch, backgroundHold]
   )
 
   useEffect(() => {
@@ -1572,7 +1663,9 @@ export function App(): JSX.Element {
         }
       if (cancelled) return
       setStorageStatus(initialStorageStatus)
-      setConversations(loaded.map(hydrateStoredConversation))
+      const boot = hydrateLoaded(loaded, initialStorageStatus.installationId || null)
+      setConversations(boot.list)
+      for (const text of restartNoticeTexts(boot.notices)) notify('aviso', text)
       // Os projetos que ficaram de fora da primeira leitura, do mais recente
       // para o mais antigo — o efeito de segundo plano consome esta fila.
       setPendingProjects(summaries.slice(PROJECTS_IN_FIRST_PAGE).map((p) => p.cwd))
@@ -1628,12 +1721,15 @@ export function App(): JSX.Element {
         // listado com o total real e o "mostrar mais" busca sob demanda.
       }
       if (cancelled) return
-      if (more.length) {
+      const unseen = more.filter((c) => !convsRef.current.some((known) => known.id === c.id))
+      if (unseen.length) {
+        const boot = hydrateLoaded(unseen, deviceRef.current)
         setConversations((current) => {
           const known = new Set(current.map((c) => c.id))
-          const fresh = more.filter((c) => !known.has(c.id)).map(hydrateStoredConversation)
+          const fresh = boot.list.filter((c) => !known.has(c.id))
           return fresh.length ? [...current, ...fresh] : current
         })
+        for (const text of restartNoticeTexts(boot.notices)) notify('aviso', text)
       }
       setPendingProjects((rest) => rest.filter((cwd) => !batch.includes(cwd)))
     })()
@@ -2403,6 +2499,9 @@ export function App(): JSX.Element {
   const stopSession = useCallback(
     async (id: string, opts?: { silent?: boolean }): Promise<void> => {
       interruptedRef.current.add(id) // intentional stop — don't flag the message as failed
+      // "Parar sessão": o turno não volta num reinício. O silencioso (troca de
+      // config na passagem da fila) mantém a marca do item que vai sair.
+      if (!opts?.silent) clearTurn(id)
       try {
         await window.api.interrupt(id)
       } catch {
@@ -2429,6 +2528,8 @@ export function App(): JSX.Element {
   //   turn-succeeded handler applies it at the next queue handoff — the
   //   in-flight message finishes on the old model, the next queued one (or the
   //   next one you type) opens on the new one.
+  // - Ociosa com subagentes em segundo plano: derrubar a sessão os mataria. Fica
+  //   pendente e entra quando eles acabarem (backgroundHold.ts).
   // `what` é o começo do aviso ("Modelo trocado"); `value`, o que entra.
   const restartForSessionConfig = useCallback(
     (id: string, what: string, value: string): void => {
@@ -2436,12 +2537,15 @@ export function App(): JSX.Element {
       if (busyRef.current.has(id)) {
         pendingSessionConfigRef.current = withId(pendingSessionConfigRef.current, id)
         notify('sucesso', `${what} — entra a partir da próxima mensagem da fila: ${value}.`)
+      } else if (backgroundHold.holds(id)) {
+        pendingSessionConfigRef.current = withId(pendingSessionConfigRef.current, id)
+        notify('sucesso', `${what} — entra quando os subagentes em segundo plano terminarem: ${value}.`)
       } else {
         void stopSession(id, { silent: true })
         notify('sucesso', `${what} para a próxima mensagem: ${value}.`)
       }
     },
-    [stopSession, notify]
+    [stopSession, notify, backgroundHold]
   )
 
   const changeModel = useCallback(
@@ -2550,7 +2654,8 @@ export function App(): JSX.Element {
       const cancelsLoop = on && current?.loopEnabled === true
       patchConv(id, (c) => ({ ...c, economyMode: on, ...(on ? { loopEnabled: false } : {}) }))
       if (connectedRef.current.has(id)) {
-        if (cancelsLoop || !busyRef.current.has(id)) void stopSession(id, { silent: true })
+        // Cancelar o Loop derruba já (como desligá-lo); o resto espera turno e subagentes.
+        if (cancelsLoop || (!busyRef.current.has(id) && !backgroundHold.holds(id))) void stopSession(id, { silent: true })
         else pendingSessionConfigRef.current.add(id)
       }
       notify(
@@ -2562,7 +2667,7 @@ export function App(): JSX.Element {
           : 'Modo econômico desativado para esta conversa — vale na próxima mensagem.'
       )
     },
-    [patchConv, stopSession, notify]
+    [patchConv, stopSession, notify, backgroundHold]
   )
 
   const changeLoopEnabled = useCallback(
@@ -2572,7 +2677,8 @@ export function App(): JSX.Element {
       patchConv(id, (c) => ({ ...c, loopEnabled: on, ...(on ? { economyMode: false } : {}) }))
       // Disabling must destroy the SDK session even mid-turn: session-scoped
       // ScheduleWakeup jobs die with it, so no stale wakeup can resurrect work.
-      if (connectedRef.current.has(id) && (!on || !busyRef.current.has(id))) {
+      // Enabling waits for the turn AND for background subagents.
+      if (connectedRef.current.has(id) && (!on || (!busyRef.current.has(id) && !backgroundHold.holds(id)))) {
         void stopSession(id, { silent: true })
       } else if (connectedRef.current.has(id)) {
         pendingSessionConfigRef.current.add(id)
@@ -2584,7 +2690,7 @@ export function App(): JSX.Element {
           : 'Loop desativado — continuações pendentes foram interrompidas.'
       )
     },
-    [patchConv, stopSession, notify]
+    [patchConv, stopSession, notify, backgroundHold]
   )
 
   // "Modo rápido" (fast mode) toggle — per-conversation, same restart-on-idle
@@ -2595,7 +2701,9 @@ export function App(): JSX.Element {
     (id: string, on: boolean): void => {
       patchConv(id, (c) => (c.fastMode === on ? c : { ...c, fastMode: on }))
       if (connectedRef.current.has(id) && !busyRef.current.has(id)) {
-        void stopSession(id, { silent: true })
+        // Ociosa com subagentes: derrubar a sessão os mataria — entra quando acabarem.
+        if (backgroundHold.holds(id)) pendingSessionConfigRef.current.add(id)
+        else void stopSession(id, { silent: true })
       }
       notify(
         'sucesso',
@@ -2604,7 +2712,7 @@ export function App(): JSX.Element {
           : 'Modo rápido desativado — volta à velocidade e ao preço normais na próxima mensagem.'
       )
     },
-    [patchConv, stopSession, notify]
+    [patchConv, stopSession, notify, backgroundHold]
   )
 
   // Core send into a SPECIFIC conversation, shared by the PC composer and by
@@ -2626,7 +2734,9 @@ export function App(): JSX.Element {
       mcpTaskId?: string,
       /** Id já decidido da bolha (a âncora da Central): anda pela fila e a bolha
        *  — e o `inflightRef` — nascem com ele, saia agora ou depois da fila. */
-      presetMsgId?: string
+      presetMsgId?: string,
+      /** Botão "agora": o usuário mandou sair já — subagentes em segundo plano não seguram. */
+      now = false
     ): Promise<void> => {
       // A Central não despacha: o pedido dela vai para o roteador (central/centralSend.ts).
       if (isCentralConversation(conv)) return
@@ -2643,7 +2753,15 @@ export function App(): JSX.Element {
       // the running task isn't cancelled. It'll be dispatched when the turn ends.
       // Parando (Stop do "não era aqui" ainda assentando) conta como ocupada: nada
       // começa antes do terminal do turno parado (central/stopHold.ts).
-      const idle = !busyRef.current.has(conv.id) && !stopHolds.isHeld(conv.id) && !(conv.recovery && !stalledRecovery)
+      // Subagentes em segundo plano também: a tarefa não acabou. E, logo depois de
+      // eles acabarem, a retomada agendada é quem despacha (backgroundHold.ts).
+      const heldInBackground =
+        !now && (backgroundHold.holds(conv.id) || (!fromQueue && backgroundHold.pending(conv.id)))
+      const idle =
+        !busyRef.current.has(conv.id) &&
+        !stopHolds.isHeld(conv.id) &&
+        !(conv.recovery && !stalledRecovery) &&
+        !heldInBackground
       if (!idle || (!fromQueue && queueRef.current.some((m) => m.convId === conv.id))) {
         const item: QueuedMessage = {
           id: uid('q'),
@@ -2657,8 +2775,9 @@ export function App(): JSX.Element {
           ...(mcpTaskId ? { mcpTaskId } : {}),
           ...(presetMsgId ? { msgId: presetMsgId } : {})
         }
-        queueRef.current = [...queueRef.current, item]
-        setQueue((q) => [...q, item])
+        // A cabeça que não pôde sair volta para o COMEÇO: a ordem da fila não muda.
+        queueRef.current = fromQueue ? [item, ...queueRef.current] : [...queueRef.current, item]
+        setQueue((q) => (fromQueue ? [item, ...q] : [...q, item]))
         // Conversa parada com fila (ex.: fila restaurada depois de reiniciar o
         // app): ninguém ia drenar. A cabeça sai agora; o resto, no fim do turno.
         if (idle) {
@@ -2700,6 +2819,7 @@ export function App(): JSX.Element {
       // Remember this as the in-flight message so a failing turn can mark it.
       const sdkUuid = crypto.randomUUID()
       inflightRef.current[conv.id] = { msgId, sdkUuid, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
+      markTurn(conv.id, msgId, mcpTaskId, false)
 
       try {
         // Lazily (re)start the agent for this conversation, resuming if possible.
@@ -2722,6 +2842,7 @@ export function App(): JSX.Element {
         setBusy(conv.id, false)
         setBusySince((m) => withoutKey(m, conv.id))
         delete inflightRef.current[conv.id]
+        clearTurn(conv.id, msgId)
         if (isMcpTaskGone(err)) {
           // Regra 1: o item era de uma tarefa MCP que não está mais viva (ex.: fila
           // restaurada depois de reiniciar). Sai com aviso — sem "Tentar de novo",
@@ -2749,6 +2870,40 @@ export function App(): JSX.Element {
   // `dispatch` chama a si mesmo para drenar a cabeça da fila (conversa parada).
   const dispatchRef = useRef<typeof dispatch | null>(null)
   dispatchRef.current = dispatch
+
+  // A retomada da fila sem turno que a solte: fim dos subagentes em segundo plano
+  // ou fila restaurada no boot (backgroundHold.ts). `ready` é conferido depois do
+  // intervalo e do fim real do turno no main — e de novo antes do despacho.
+  queueResumeReadyRef.current = (cid) => {
+    const conv = convsRef.current.find((c) => c.id === cid)
+    return canResumeQueue({
+      exists: !!conv && !isCentralConversation(conv),
+      busy: busyRef.current.has(cid),
+      inflight: !!inflightRef.current[cid],
+      stopping: stopHolds.isHeld(cid),
+      handoffPending: queueHandoff.pending(cid),
+      recovery: !!conv?.recovery,
+      agentBackground: backgroundHold.holds(cid),
+      work: queueRef.current.some((m) => m.convId === cid) || pendingSessionConfigRef.current.has(cid)
+    })
+  }
+  resumeQueueRef.current = async (cid) => {
+    // A troca de sessão que esperou os subagentes entra agora, antes da cabeça.
+    if (pendingSessionConfigRef.current.has(cid)) {
+      pendingSessionConfigRef.current = withoutId(pendingSessionConfigRef.current, cid)
+      if (connectedRef.current.has(cid)) await stopSession(cid, { silent: true })
+    }
+    const conv = convsRef.current.find((c) => c.id === cid)
+    if (!conv || !queueRef.current.some((m) => m.convId === cid)) return
+    // Pasta do projeto sumiu: a fila fica (o aviso sai), em vez de a cabeça se perder.
+    if (!(await ensureProject(conv)) || !queueResumeReadyRef.current(cid)) return
+    const head = queueRef.current.find((m) => m.convId === cid)
+    const fresh = convsRef.current.find((c) => c.id === cid)
+    if (!head || !fresh) return
+    queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
+    setQueue((q) => q.filter((m) => m.id !== head.id))
+    await dispatch(fresh, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
+  }
 
   const runRecovery = useCallback(
     async (convId: string, force = false): Promise<void> => {
@@ -2781,11 +2936,13 @@ export function App(): JSX.Element {
         // Sem a checagem pós-connect daqui, um Stop no meio conta como turno enviado.
         sending: true
       }
+      markTurn(convId, msgId, undefined, true)
       if (recovery.messageId) clearMessageError(convId, recovery.messageId)
       try {
         if (!connectedRef.current.has(convId)) await connect(conv)
         await window.api.sendMessage(convId, continuation, [], [], [], sdkUuid, 'recovery')
       } catch (err) {
+        clearTurn(convId, msgId)
         if (isMcpTaskGone(err)) {
           // Regra 2 (defesa do main): o turno era de tarefa MCP — sem retomada.
           delete inflightRef.current[convId]
@@ -2940,15 +3097,18 @@ export function App(): JSX.Element {
       const sdkUuid = crypto.randomUUID()
       // Sem a checagem pós-connect daqui, um Stop no meio conta como turno enviado.
       inflightRef.current[convId] = { msgId, sdkUuid, full, images, files, fileRefs, sending: true, ...(mcpTaskId ? { mcpTaskId } : {}) }
+      markTurn(convId, msgId, mcpTaskId, false)
       delete failedRef.current[msgId]
 
       try {
         if (!connectedRef.current.has(convId)) await connect(conv)
+        patchConv(convId, (c) => withTurnSent(c, msgId))
         await window.api.sendMessage(convId, full, images, files, fileRefs, sdkUuid, undefined, mcpTaskId)
       } catch (err) {
         setBusy(convId, false)
         setBusySince((m) => withoutKey(m, convId))
         delete inflightRef.current[convId]
+        clearTurn(convId, msgId)
         // O payload guarda o id: um novo clique é recusado de novo, nunca reenviado sem ele.
         failedRef.current[msgId] = { convId, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
         // O main não achou sessão viva: o próximo clique reconecta antes de enviar.
@@ -3118,10 +3278,11 @@ export function App(): JSX.Element {
       queueRef.current = queueRef.current.filter((m) => m.id !== id)
       setQueue((q) => q.filter((m) => m.id !== id))
       // Conversa parada (ex.: fila restaurada depois de reiniciar): "agora" é
-      // simplesmente mandar — não há turno para entrar.
+      // simplesmente mandar — não há turno para entrar. Nem os subagentes em
+      // segundo plano seguram: foi o usuário que pediu.
       const conv = convsRef.current.find((c) => c.id === item.convId)
       if (conv && !busyRef.current.has(conv.id)) {
-        await dispatch(conv, item.full, item.text, item.images, item.thumbs, item.files, item.fileRefs, true, item.mcpTaskId, item.msgId)
+        await dispatch(conv, item.full, item.text, item.images, item.thumbs, item.files, item.fileRefs, true, item.mcpTaskId, item.msgId, true)
         return
       }
       const res = await window.api
@@ -3442,6 +3603,8 @@ export function App(): JSX.Element {
     // conversa segue "parando" (ocupada) até o turno parado assentar (stopHold.ts).
     const keepQueue = opts?.keepQueue === true
     interruptedRef.current.add(cid) // intentional stop — don't flag the message as failed
+    // O turno parado não volta num reinício do app (turnInFlight.ts).
+    clearTurn(cid)
     // The receipt tells us whether the in-flight SDK message actually survived
     // the Stop. Only paint it as canceled when the SDK confirms it will not run.
     const inflight = inflightRef.current[cid]

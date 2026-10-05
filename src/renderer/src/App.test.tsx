@@ -700,7 +700,7 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     await waitFor(() => expect(api.outboxReplace).toHaveBeenLastCalledWith('c1', []))
   })
 
-  it('fila restaurada do banco depois de reiniciar: aparece, avisa, e sai quando o usuário manda outra', async () => {
+  it('fila restaurada do banco depois de reiniciar: aparece, avisa, e sai sozinha antes da mensagem nova', async () => {
     const restored = { full: 'da fila antiga', text: 'da fila antiga', images: [], thumbs: [], files: [], fileRefs: [] }
     api.outboxList = vi.fn(async () => [{ conversationId: 'c1', id: 'q-old', payload: restored }])
     api.outboxReplace = vi.fn(async () => ({ ok: true }))
@@ -712,7 +712,8 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     )
     expect(await screen.findByText(/Na fila/)).toBeTruthy()
     expect(screen.getAllByText(/voltou para a fila/).length).toBeGreaterThan(0)
-    // Conversa parada com fila: a mensagem nova vai para o fim e a antiga sai primeiro.
+    expect(screen.getAllByText(/sai sozinha/).length).toBeGreaterThan(0)
+    // A mensagem nova vai para o fim; a antiga sai primeiro, sem esperar o usuário.
     await send('nova')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()

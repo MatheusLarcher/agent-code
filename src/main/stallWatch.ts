@@ -19,9 +19,36 @@ export const STALL_THRESHOLD_TOOL_MS = 5 * 60_000
  *  costing one comparison per tick. */
 export const STALL_POLL_MS = 5_000
 
+/** Segundo limiar, sem ferramenta em voo: silêncio total por tanto tempo é
+ *  travamento DEFINITIVO — o turno é encerrado (interrupt + `error` incomplete),
+ *  não só avisado. Dez vezes o aviso: latência de token, thinking e as novas
+ *  tentativas do CLI contra a API emitem sinal de vida muito antes disso. */
+export const STALL_ABORT_MS = 10 * 60_000
+
+/** Idem com ferramenta em voo. Acima do teto do Bash do CLI (10 min) com folga
+ *  para build/download legítimos; subagente em primeiro plano emite mensagens
+ *  (que contam como vida), então não chega perto disto trabalhando. */
+export const STALL_ABORT_TOOL_MS = 30 * 60_000
+
 /** Whether a turn that's been quiet since `lastActivityAt` should be flagged as
  *  stalled at time `now`, given whether a tool call is currently in flight. */
 export function isStalled(now: number, lastActivityAt: number, toolInFlight: boolean): boolean {
   const threshold = toolInFlight ? STALL_THRESHOLD_TOOL_MS : STALL_THRESHOLD_MS
   return now - lastActivityAt > threshold
+}
+
+/** `ok` = sinal de vida recente; `warn` = só o aviso (`stall-status`); `abort` =
+ *  travamento definitivo, o turno deve ser encerrado. */
+export type StallVerdict = 'ok' | 'warn' | 'abort'
+
+export function stallVerdict(now: number, lastActivityAt: number, toolInFlight: boolean): StallVerdict {
+  const abortAfter = toolInFlight ? STALL_ABORT_TOOL_MS : STALL_ABORT_MS
+  if (now - lastActivityAt > abortAfter) return 'abort'
+  return isStalled(now, lastActivityAt, toolInFlight) ? 'warn' : 'ok'
+}
+
+/** Texto do terminal do travamento definitivo (minutos inteiros, mínimo 1). */
+export function stallAbortText(idleMs: number): string {
+  const minutes = Math.max(1, Math.round(idleMs / 60_000))
+  return `Sessão travada: sem resposta há ${minutes} min — retomando de onde parou.`
 }

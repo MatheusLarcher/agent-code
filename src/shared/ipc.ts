@@ -96,7 +96,11 @@ export type ChatEvent =
       usage?: TokenUsage
     } & TurnIds)
   | { kind: 'status'; id: string; text: string }
-  | ({ kind: 'error'; id: string; text: string; usageExhausted?: boolean; retryable?: boolean } & TurnIds)
+  /** `incomplete`: o turno morreu ANTES de terminar (stream do CLI acabou no meio,
+   *  travamento sem sinal de vida além do prazo, sessão descartada com o turno
+   *  aberto). Mesmo com texto já recebido, é falha a retomar "de onde parou" —
+   *  nunca um turno concluído que libera a fila. */
+  | ({ kind: 'error'; id: string; text: string; usageExhausted?: boolean; retryable?: boolean; incomplete?: boolean } & TurnIds)
   /** Anthropic ACCOUNT rate-limit status (5h session / weekly / etc.) — not
    *  tied to this conversation. The renderer routes this straight into a
    *  global (not per-conversation) state; it never becomes a chat bubble. */

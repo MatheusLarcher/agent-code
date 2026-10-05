@@ -3,6 +3,7 @@ import { migrateConversationEffort } from '@shared/autoEffort'
 import { DEFAULT_TITLE, type Conversation, type UIMessage } from './types'
 import { normalizeCentralState } from './central/centralRegistry'
 import { createCentralStorage } from './central/centralMergeStorage'
+import { normalizeTurnInFlight } from './turnInFlight'
 import type {
   RateLimitStatus,
   RepositoryChange,
@@ -203,7 +204,9 @@ function normalizeConversation(record: VersionedConversationDto): Conversation {
       ? payload.todoPlan as Conversation['todoPlan']
       : undefined,
     // A Central (ver central/): entrada torta sai aqui, antes de chegar à tela.
-    ...(payload.central !== undefined ? { central: normalizeCentralState(payload.central) } : {})
+    ...(payload.central !== undefined ? { central: normalizeCentralState(payload.central) } : {}),
+    // Turno em voo (turnInFlight.ts): marca torta não vira retomada no boot.
+    ...(payload.turnInFlight !== undefined ? { turnInFlight: normalizeTurnInFlight(payload.turnInFlight) } : {})
   }
 }
 

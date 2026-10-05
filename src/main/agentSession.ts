@@ -7,7 +7,8 @@ import { appRestart } from './appRestartRuntime'
 import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
 import { claudeAuthExpiry, isClaudeAuthFailure } from './authExpiry'
-import { isStalled, STALL_POLL_MS } from './stallWatch'
+import { stallAbortText, stallVerdict, STALL_POLL_MS } from './stallWatch'
+import { logSession } from './sessionLog'
 import { ToolInputStreams, type RawStreamEvent } from './toolInputStream'
 import { MirrorRepair, MIRROR_REPAIR_SEND_TIMEOUT_MS, mirrorRepairText } from './mirrorRepair'
 import { composeRequestContext, composeUserPrompt } from './promptEnvelope'
@@ -451,6 +452,12 @@ class TurnTracker {
   current(): string[] | null {
     return this.live
   }
+
+  /** O turno em andamento sem encerrá-lo: o do eco ou, antes do 1º frame, o que
+   *  foi empurrado e ainda não teve `result`. */
+  inFlight(): string[] | null {
+    return this.live ?? (this.open.length > 0 ? [...this.open] : null)
+  }
 }
 
 /** Arquivos do diretório de configuração do CLI que precisam sobreviver ao
@@ -813,6 +820,8 @@ export class AgentSession {
   private lastActivityAt = Date.now()
   private readonly toolsInFlight = new Set<string>()
   private stalled = false
+  /** Turno encerrado por travamento definitivo: os ids dele (rabo a engolir). */
+  private stallAborted: { turnIds: string[] } | null = null
   private stallTimer: ReturnType<typeof setInterval> | undefined
 
   /**
@@ -894,10 +903,55 @@ export class AgentSession {
   private checkStall(): void {
     // Fora de um turno o silêncio é o estado normal, não uma falha.
     if (!this.turnActive || this.disposed) return
-    if (this.stalled) return
-    if (!isStalled(Date.now(), this.lastActivityAt, this.toolsInFlight.size > 0)) return
+    const toolInFlight = this.toolsInFlight.size > 0
+    const verdict = stallVerdict(Date.now(), this.lastActivityAt, toolInFlight)
+    // Permissão/pergunta esperando o usuário não é o CLI travado: só avisa.
+    if (verdict === 'abort' && this.pendingPermissions.size === 0) {
+      this.abortStalledTurn(toolInFlight)
+      return
+    }
+    if (verdict === 'ok' || this.stalled) return
     this.stalled = true
     this.emit({ kind: 'stall-status', stalled: true, since: this.lastActivityAt })
+    logSession('stall-warn', { convId: this.opts.convId, toolInFlight, idleMs: Date.now() - this.lastActivityAt })
+  }
+
+  /**
+   * Travamento definitivo (segundo limiar de stallWatch.ts): o turno é encerrado
+   * em vez de deixar a tela "trabalhando" para sempre. Pede a interrupção ao CLI
+   * sem as marcas do Stop do usuário (`canceledPending`, loop desligado): a
+   * retomada continua a tarefa, não a descarta. Um único terminal: o `result`
+   * tardio do turno abortado (e o fim do stream depois dele) é engolido. A sessão
+   * passa a morta (`isAlive` falso): um CLI travado de verdade segue vivo, e a
+   * retomada tem de subir num processo novo (resume), nunca voltar para ele.
+   */
+  private abortStalledTurn(toolInFlight: boolean): void {
+    const idleMs = Date.now() - this.lastActivityAt
+    const q = this.q
+    this.windowsControlScope.cancel()
+    if (q) void (async () => q.interrupt())().catch(() => undefined)
+    const turnIds = this.turns.inFlight()
+    this.stallAborted = { turnIds: turnIds ?? [] }
+    this.queryDied = true
+    this.emit({
+      kind: 'error',
+      id: nextId(),
+      text: stallAbortText(idleMs),
+      incomplete: true,
+      retryable: true,
+      ...(turnIds ? { turnIds } : {})
+    })
+    logSession('stall-abort', { convId: this.opts.convId, toolInFlight, idleMs, ...(turnIds ? { turnIds } : {}) })
+    this.markTurnIdle()
+  }
+
+  /** `result` tardio do turno abortado por travamento (eco dentro dos ids dele,
+   *  ou sem eco com nenhum turno aberto)? Esse não é terminal novo. */
+  private isStallAbortTail(message: unknown): boolean {
+    const aborted = this.stallAborted
+    if (!aborted) return false
+    const ids = echoedTurnIds(message)
+    return ids ? ids.every((id) => aborted.turnIds.includes(id)) : !this.turnActive
   }
 
   private startStallWatch(): void {
@@ -1422,7 +1476,8 @@ export class AgentSession {
 
   private async enqueueInput(message: SDKUserMessage, messageUuid: string): Promise<void> {
     if (this.queryDied) {
-      // O iterador do SDK lançou (o `error` dele já saiu): ninguém mais lê `input`.
+      // O iterador do SDK lançou ou acabou no meio do turno (o `error` dele já
+      // saiu): ninguém mais lê `input`.
       // Empurrar aqui sumia com a mensagem em silêncio e o turno dela ficava
       // "trabalhando" para sempre na tela — agora ele termina em erro, com o id dele.
       this.emit({
@@ -1445,28 +1500,62 @@ export class AgentSession {
   }
 
   private async consumeMessages(q: NonNullable<typeof this.q>): Promise<void> {
+    let failure: { error: unknown } | null = null
     try {
       for await (const message of q) {
         if (!this.disposed) this.handleMessage(message)
       }
     } catch (err) {
-      this.queryDied = true
-      // O fim do stream encerra o que estava em aberto — ou é o rabo do último turno.
-      const turnIds = this.turns.died()
-      if (!this.disposed) {
-        this.emit({
-          kind: 'error',
-          id: nextId(),
-          text: `Agent stopped: ${String(err)}`,
-          usageExhausted: isUsageExhausted(err) || this.quotaRejected,
-          ...(turnIds ? { turnIds } : {})
-        })
-      }
-      // Erro também encerra o turno: o primeiro turno de um handoff acabou.
-      this.handoffFirstTurnDone = true
+      failure = { error: err }
     } finally {
+      this.streamEnded(failure)
       this.markTurnIdle()
       if (this.q === q) this.q = null
+    }
+  }
+
+  /**
+   * O stream do SDK acabou, lançando (`failure`) ou não. Com o turno aberto sai
+   * UM terminal `incomplete` — sem ele, o fim sem exceção (CLI que saiu no meio
+   * do turno) deixava a tela "trabalhando" para sempre — e a sessão passa a
+   * morta (`isAlive`): a retomada não pode sumir num `input` sem leitor nem o
+   * Automático reaproveitá-la. Fim limpo fora de turno segue como antes (não é
+   * falha a avisar). Sessão descartada não avisa.
+   */
+  private streamEnded(failure: { error: unknown } | null): void {
+    const turnOpen = this.turnActive
+    if (!failure && !turnOpen) return
+    this.queryDied = true
+    // O processo do turno abortado por travamento morrendo depois: o terminal já saiu.
+    if (this.stallAborted && !turnOpen) return
+    // O fim do stream encerra o que estava em aberto — ou é o rabo do último turno.
+    const turnIds = this.turns.died()
+    // Erro também encerra o turno: o primeiro turno de um handoff acabou.
+    this.handoffFirstTurnDone = true
+    if (this.disposed) return
+    const usageExhausted = failure ? isUsageExhausted(failure.error) || this.quotaRejected : false
+    const ids = turnIds ? { turnIds } : {}
+    if (failure) {
+      this.emit({
+        kind: 'error',
+        id: nextId(),
+        text: `Agent stopped: ${String(failure.error)}`,
+        usageExhausted,
+        ...(turnOpen ? { incomplete: true, ...(usageExhausted ? {} : { retryable: true }) } : {}),
+        ...ids
+      })
+    } else {
+      this.emit({
+        kind: 'error',
+        id: nextId(),
+        text: 'A sessão do agente encerrou no meio do turno, sem resposta final — retomando de onde parou.',
+        incomplete: true,
+        retryable: true,
+        ...ids
+      })
+    }
+    if (turnOpen) {
+      logSession('stream-ended', { convId: this.opts.convId, threw: !!failure, usageExhausted, ...(turnIds ? { turnIds } : {}) })
     }
   }
 
@@ -1758,7 +1847,8 @@ export class AgentSession {
 
   /** Há trabalho que a troca de processo mataria (tarefa em background, loop
    *  agendado, chamada autônoma sem prova de término)? */
-  /** Falso depois que o iterador da query lançou: ninguém mais lê as mensagens. */
+  /** Falso depois que o iterador da query lançou ou acabou no meio de um turno, ou
+   *  depois de um travamento definitivo: ninguém (confiável) lê mais as mensagens. */
   isAlive(): boolean {
     return !this.queryDied
   }
@@ -2654,6 +2744,12 @@ ${lines}
         // Mirrors the parent_tool_use_id filter already used for the
         // `assistant` case below (context-token tracking).
         if (r.origin?.kind === 'peer') break
+        // Rabo do turno abortado por travamento: o terminal dele já saiu (o error
+        // incomplete). Emitir outro, ou soltar o lease no meio da retomada, não.
+        if (this.isStallAbortTail(message)) {
+          this.turns.result(message)
+          break
+        }
         // De qual envio é este fim — o eco do CLI, não "o último envio".
         const turnIds = this.turns.result(message)
         void this.contextCapture.finish(turnIds)
