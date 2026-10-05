@@ -8,6 +8,10 @@
  * - `troca`: do clique até a próxima pintura (rAF → setTimeout 0) — acima de
  *   SWITCH_MS.
  *
+ * Quadro que o LoAF entrega sem scripts (file:// é origem opaca) espera o
+ * próximo envio e ganha a atribuição do JS Self-Profiling (jsProfiler.ts),
+ * quando o ambiente o permite; sem ele, sai como está.
+ *
  * Cada registro leva o contexto do momento, lido do provedor que o App
  * registra (refs, nunca closure velha) — só números e ids. Os registros saem em
  * lote para o main (`window.api.logFreezes`, que grava em travadas.log) a cada
@@ -15,6 +19,9 @@
  * desprezível: nada de serializar estado aqui.
  */
 import type { FreezeContext, FreezeRecord, FreezeScript, FreezeSectionLabel, FreezeSwitchTarget } from '@shared/ipc'
+import { attributeFrame, jsProfilerActive, rotateJsProfiler, scriptFileName, startJsProfiler, stopJsProfiler } from './jsProfiler'
+
+export { scriptFileName }
 
 export const FRAME_MS = 100
 export const SECTION_MS = 50
@@ -40,6 +47,7 @@ interface LoafEntry {
   startTime: number
   duration: number
   blockingDuration?: number
+  styleAndLayoutStart?: number
   scripts?: readonly LoafScript[]
 }
 
@@ -49,17 +57,13 @@ let provider: FreezeContextProvider | null = null
 let officeMounted = false
 let observer: PerformanceObserver | null = null
 let pending: FreezeRecord[] = []
+/** Quadros sem scripts do LoAF, esperando a atribuição do perfil no próximo envio. */
+let awaiting: Array<{ record: FreezeRecord; start: number; end: number }> = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let switching = false
 
 const now = (): number => performance.now()
 const epoch = (perfMs: number): number => Math.round(performance.timeOrigin + perfMs)
-
-/** Só o nome do arquivo de uma URL de script: sem pasta, query nem hash. */
-export function scriptFileName(url: string | undefined): string | undefined {
-  if (!url) return undefined
-  return url.split(/[?#]/)[0].split(/[\\/]/).pop() || undefined
-}
 
 function toScript(script: LoafScript): FreezeScript {
   const out: FreezeScript = { ms: Math.round(script.duration) }
@@ -79,11 +83,15 @@ export function frameEntry(entry: LoafEntry): Entry | null {
     .sort((a, b) => b.duration - a.duration)
     .slice(0, MAX_SCRIPTS)
     .map(toScript)
+  const end = entry.startTime + entry.duration
+  const layoutStart = entry.styleAndLayoutStart
+  const layoutMs = typeof layoutStart === 'number' && layoutStart > 0 && layoutStart <= end ? Math.round(end - layoutStart) : undefined
   return {
     at: epoch(entry.startTime),
     kind: 'quadro',
     ms: Math.round(entry.duration),
     blockingMs: Math.round(entry.blockingDuration ?? 0),
+    ...(layoutMs !== undefined ? { layoutMs } : {}),
     ...(scripts.length ? { scripts } : {})
   }
 }
@@ -96,19 +104,29 @@ function context(): FreezeContext {
   }
 }
 
+function scheduleFlush(): void {
+  if (!flushTimer) flushTimer = setTimeout(() => void flushTick(), BATCH_MS)
+}
+
 function record(entry: Entry): void {
   if (!provider) return
   pending.push({ ...entry, ctx: context() })
-  if (pending.length >= BATCH_MAX) flushFreezes()
-  else if (!flushTimer) flushTimer = setTimeout(flushFreezes, BATCH_MS)
+  if (pending.length >= BATCH_MAX) sendPending()
+  else scheduleFlush()
 }
 
-/** Manda o que estiver juntado. Nunca lança. */
-export function flushFreezes(): void {
-  if (flushTimer) {
-    clearTimeout(flushTimer)
-    flushTimer = null
+/** Quadro longo: sem scripts do LoAF e com o perfil ligado, espera a atribuição. */
+function recordFrame(entry: Entry, loaf: LoafEntry): void {
+  if (!provider) return
+  if (entry.scripts || !jsProfilerActive()) {
+    record(entry)
+    return
   }
+  awaiting.push({ record: { ...entry, ctx: context() }, start: loaf.startTime, end: loaf.startTime + loaf.duration })
+  scheduleFlush()
+}
+
+function sendPending(): void {
   if (!pending.length) return
   const batch = pending
   pending = []
@@ -117,6 +135,38 @@ export function flushFreezes(): void {
   } catch {
     /* o detector nunca derruba a tela */
   }
+}
+
+/** O envio periódico: gira o perfil, atribui os quadros que esperam e manda. */
+async function flushTick(): Promise<void> {
+  flushTimer = null
+  const frames = awaiting
+  awaiting = []
+  if (frames.length) {
+    // Erro em qualquer passo: o quadro sai sem atribuição, nunca se perde.
+    const traces = await rotateJsProfiler().catch(() => [])
+    for (const frame of frames) {
+      let found: ReturnType<typeof attributeFrame> = null
+      try {
+        found = traces.length ? attributeFrame(traces, frame.start, frame.end) : null
+      } catch {
+        found = null
+      }
+      pending.push(found ? { ...frame.record, jsMs: found.jsMs, ...(found.scripts.length ? { scripts: found.scripts } : {}) } : frame.record)
+    }
+  }
+  sendPending()
+}
+
+/** Manda na hora o que estiver juntado (quadros à espera saem sem atribuição). Nunca lança. */
+export function flushFreezes(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+  for (const frame of awaiting) pending.push(frame.record)
+  awaiting = []
+  sendPending()
 }
 
 /** O Escritório 3D está montado (OfficeTabHost). */
@@ -199,8 +249,9 @@ export function startFreezeWatch(getContext: FreezeContextProvider): () => void 
     try {
       observer = new PerformanceObserver((list) => {
         for (const item of list.getEntries()) {
-          const entry = frameEntry(item as unknown as LoafEntry)
-          if (entry) record(entry)
+          const loaf = item as unknown as LoafEntry
+          const entry = frameEntry(loaf)
+          if (entry) recordFrame(entry, loaf)
         }
       })
       observer.observe({ type: 'long-animation-frame', buffered: true })
@@ -208,11 +259,13 @@ export function startFreezeWatch(getContext: FreezeContextProvider): () => void 
       observer = null
     }
   }
+  if (observer) startJsProfiler()
   window.addEventListener('pagehide', flushFreezes)
   return () => {
     window.removeEventListener('pagehide', flushFreezes)
     observer?.disconnect()
     observer = null
+    stopJsProfiler()
     flushFreezes()
     provider = null
     switching = false

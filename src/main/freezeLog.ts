@@ -34,6 +34,8 @@ const fileName = (value: unknown): string | undefined => {
   return text(value.split(/[?#]/)[0].split(/[\\/]/).pop())
 }
 const round1 = (n: number): number => Math.round(n * 10) / 10
+/** Linha/coluna: inteiro finito ≥ 0. */
+const position = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0
 
 function sanitizeScript(raw: unknown): Raw | null {
   if (!isObject(raw) || !finite(raw.ms) || raw.ms < 0) return null
@@ -47,6 +49,10 @@ function sanitizeScript(raw: unknown): Raw | null {
   const file = fileName(raw.sourceFile)
   if (file) out.sourceFile = file
   if (finite(raw.sourceCharPosition)) out.sourceCharPosition = Math.round(raw.sourceCharPosition)
+  if (position(raw.sourceLine)) out.sourceLine = raw.sourceLine
+  if (position(raw.sourceColumn)) out.sourceColumn = raw.sourceColumn
+  const stack = text(raw.stack)
+  if (stack) out.stack = stack
   out.ms = Math.round(raw.ms)
   return out
 }
@@ -81,6 +87,8 @@ export function sanitizeFreezeRecord(raw: unknown): Raw | null {
     out.target = raw.target
   } else {
     if (finite(raw.blockingMs)) out.blockingMs = Math.max(0, round1(raw.blockingMs))
+    if (finite(raw.jsMs) && raw.jsMs >= 0) out.jsMs = Math.round(raw.jsMs)
+    if (finite(raw.layoutMs) && raw.layoutMs >= 0) out.layoutMs = Math.round(raw.layoutMs)
     if (Array.isArray(raw.scripts)) {
       const scripts = raw.scripts.slice(0, MAX_SCRIPTS).map(sanitizeScript).filter((s): s is Raw => s !== null)
       if (scripts.length) out.scripts = scripts

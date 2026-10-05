@@ -1933,6 +1933,11 @@ export interface FreezeScript {
   sourceFunctionName?: string
   sourceFile?: string
   sourceCharPosition?: number
+  /** Vindos do JS Self-Profiling (invoker 'perfil'): posição da função e a
+   *  pilha mais comum, só nomes, da folha para cima (' < ', ≤ 120). */
+  sourceLine?: number
+  sourceColumn?: number
+  stack?: string
   ms: number
 }
 
@@ -1954,6 +1959,10 @@ export interface FreezeRecord {
   target?: FreezeSwitchTarget
   blockingMs?: number
   scripts?: FreezeScript[]
+  /** Só no `quadro`: JS amostrado dentro do quadro e o trecho de layout/pintura
+   *  (fim do quadro − styleAndLayoutStart). */
+  jsMs?: number
+  layoutMs?: number
   /** Só no `salvamento`: conversas tratadas e MB serializados. */
   conversations?: number
   mb?: number

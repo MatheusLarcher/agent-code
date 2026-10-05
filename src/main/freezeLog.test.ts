@@ -69,6 +69,37 @@ describe('freezeLog', () => {
     expect(JSON.stringify(out)).not.toMatch(/hunter2|secreta|Fulano|fulano/)
   })
 
+  it('campos do perfil: linha/coluna inteiros ≥ 0, stack ≤ 120, jsMs/layoutMs finitos ≥ 0', () => {
+    const out = sanitizeFreezeRecord({
+      at: AT,
+      kind: 'quadro',
+      ms: 240,
+      jsMs: 180.4,
+      layoutMs: 52.6,
+      scripts: [
+        { ms: 90, invoker: 'perfil', invokerType: 'amostragem', sourceFunctionName: 'applyFeed', sourceFile: 'file:///C:/Users/Fulano/out/renderer/assets/index-abc.js', sourceLine: 12, sourceColumn: 3400, stack: `applyFeed < ${'x'.repeat(300)}` },
+        { ms: 40, sourceLine: -1, sourceColumn: 1.5, stack: 42 },
+        { ms: 20, sourceLine: Infinity, sourceColumn: '7', stack: '' }
+      ]
+    })
+    expect(out).toEqual({
+      at: new Date(AT).toISOString(),
+      kind: 'quadro',
+      ms: 240,
+      jsMs: 180,
+      layoutMs: 53,
+      scripts: [
+        { ms: 90, invoker: 'perfil', invokerType: 'amostragem', sourceFunctionName: 'applyFeed', sourceFile: 'index-abc.js', sourceLine: 12, sourceColumn: 3400, stack: `applyFeed < ${'x'.repeat(300)}`.slice(0, 120) },
+        { ms: 40 },
+        { ms: 20 }
+      ]
+    })
+    expect(sanitizeFreezeRecord({ at: AT, kind: 'quadro', ms: 150, jsMs: -1, layoutMs: Number.NaN })).not.toHaveProperty('jsMs')
+    expect(sanitizeFreezeRecord({ at: AT, kind: 'quadro', ms: 150, layoutMs: '9' })).not.toHaveProperty('layoutMs')
+    // Só no quadro: em trecho/troca os campos somem.
+    expect(sanitizeFreezeRecord({ at: AT, kind: 'troca', target: 'aba', ms: 200, jsMs: 10 })).not.toHaveProperty('jsMs')
+  })
+
   it('descarta registro inválido: kind/rótulo/alvo desconhecido, ms não finito, não-objeto', () => {
     expect(sanitizeFreezeRecord({ kind: 'outro', ms: 10 })).toBeNull()
     expect(sanitizeFreezeRecord({ kind: 'trecho', label: 'qualquer', ms: 10 })).toBeNull()

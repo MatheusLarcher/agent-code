@@ -20,6 +20,7 @@ import { createConversationLock } from './conversationLock'
 import { createStepRunner, RESUME_PREPARE_DEADLINE_MS } from './sessionSteps'
 import { initSessionLog, logSession } from './sessionLog'
 import { initFreezeLog, logFreezes } from './freezeLog'
+import { installJsProfilingPolicy, rendererIndexMatcher } from './jsProfilingPolicy'
 import { SessionLeases } from './sessionLeases'
 import { AppRestartCoordinator } from './appRestart'
 import { configureAppRestart, appRestart } from './appRestartRuntime'
@@ -975,7 +976,12 @@ function createWindow(startMinimized = false): void {
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) void mainWindow.loadURL(devUrl)
-  else void mainWindow.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+  else {
+    // Atribuição dos quadros longos no detector de travadas (file:// é origem opaca).
+    const rendererIndex = join(import.meta.dirname, '../renderer/index.html')
+    installJsProfilingPolicy(sess, rendererIndexMatcher(rendererIndex))
+    void mainWindow.loadFile(rendererIndex)
+  }
 
   mainWindow.on('close', (event) => {
     if (closeReady) return
