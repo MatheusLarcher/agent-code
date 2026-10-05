@@ -20,6 +20,7 @@ import { createConversationLock } from './conversationLock'
 import { createStepRunner, RESUME_PREPARE_DEADLINE_MS } from './sessionSteps'
 import { initSessionLog, logSession } from './sessionLog'
 import { initFreezeLog, logFreezes } from './freezeLog'
+import { readOfficeAgentFile } from './officeAgents'
 import { installJsProfilingPolicy, rendererIndexMatcher } from './jsProfilingPolicy'
 import { SessionLeases } from './sessionLeases'
 import { AppRestartCoordinator } from './appRestart'
@@ -1098,6 +1099,10 @@ export function registerIpc(): void {
   ipcMain.handle(Channels.appGetVersion, () => app.getVersion())
   // Detector de travadas: lote do renderer, validado e gravado em fila (freezeLog.ts).
   ipcMain.handle(Channels.perfLogFreezes, (_e, batch: unknown) => logFreezes(batch))
+  // Arquivos 3D dos agentes do Escritório (resources/office-agents): bytes por IPC, o file:// não serve ao GLTFLoader.
+  ipcMain.handle(Channels.officeAgentFile, (_e, name: unknown) =>
+    readOfficeAgentFile(name,{ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
+  )
   // App configuration (Settings screen).
   ipcMain.handle(Channels.configGet, async () => {
     storageLifecycle.repository()

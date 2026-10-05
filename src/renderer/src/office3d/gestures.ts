@@ -10,7 +10,7 @@
  */
 import { partyPose } from './dance'
 import { DESK_D, DESK_HEIGHT, KEYBOARD_FRONT, SEAT_FRONT } from './officePlan'
-import { BODY, CH, envelope, mix, pulse, REACTION_S, SEAT_HEIGHT, smooth, type Action, type ActionParams, type Pose, type Reaction } from './poses'
+import { BODY, CH, envelope, mix, pulse, REACTION_S, SEAT_HEIGHT, smooth, type Action, type ActionParams, type BodyMetrics, type Pose, type Reaction } from './poses'
 
 /** Tampo da estação (m) e o pivô da bacia de quem senta na cadeira dela (sem escala). */
 const DESK_TOP = DESK_HEIGHT + 0.025
@@ -26,14 +26,14 @@ const ik = { fwd: 0, elbow: 0 }
  * ombro (canal armFwd, já descontada a inclinação `lean` do tronco) e a dobra
  * do cotovelo que levam o punho à altura `y` (m do chão) e `ahead` m à frente
  * do quadril. `scale` = a escala do boneco (o subagente é menor; o assento e a
- * mesa são os mesmos). Fora de alcance, o braço estica na direção do alvo.
+ * mesa são os mesmos; `b` = as medidas do corpo). Fora de alcance, o braço estica.
  */
-function reach(y: number, ahead: number, lean: number, scale = 1): typeof ik {
-  const pelvis = SEATED_HIP + BODY.hipDrop * scale
-  const fz = ahead / scale - BODY.shoulderY * Math.sin(lean)
-  const fy = BODY.shoulderY * Math.cos(lean) - (y - pelvis) / scale
-  const L1 = BODY.upperArm
-  const L2 = BODY.forearm
+function reach(y: number, ahead: number, lean: number, scale = 1, b: BodyMetrics = BODY): typeof ik {
+  const pelvis = SEATED_HIP + b.hipDrop * scale
+  const fz = ahead / scale - b.shoulderY * Math.sin(lean)
+  const fy = b.shoulderY * Math.cos(lean) - (y - pelvis) / scale
+  const L1 = b.upperArm
+  const L2 = b.forearm
   const d = Math.min(Math.hypot(fz, fy), L1 + L2 - 1e-3)
   const cosE = (d * d - L1 * L1 - L2 * L2) / (2 * L1 * L2)
   const e = Math.acos(cosE < -1 ? -1 : cosE > 1 ? 1 : cosE)
@@ -56,8 +56,8 @@ function arms(out: Pose, fL: number, oL: number, eL: number, fR: number, oR: num
  * quase na horizontal e o punho sobre as teclas (`reach`, pela inclinação do
  * tronco). Os dedos batem e o cotovelo acompanha.
  */
-function typing(out: Pose, t: number, rate: number, amp: number, lean: number, scale = 1): void {
-  const r = reach(DESK_TOP + 0.055, KEYS_AHEAD, lean, scale)
+function typing(out: Pose, t: number, rate: number, amp: number, lean: number, scale = 1, b: BodyMetrics = BODY): void {
+  const r = reach(DESK_TOP + 0.055, KEYS_AHEAD, lean, scale, b)
   arms(out, r.fwd, -0.12, r.elbow, r.fwd, -0.12, r.elbow)
   out[CH.elbowL] += amp * Math.abs(Math.sin(rate * t))
   out[CH.elbowR] += amp * Math.abs(Math.sin(rate * t + 1.7))
@@ -79,7 +79,7 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
       return
     case 'sitIdle': {
       // Antebraços apoiados na borda do tampo, mãos juntas à frente.
-      const r = reach(DESK_TOP + 0.04, EDGE_AHEAD, 0.04, p.scale)
+      const r = reach(DESK_TOP + 0.04, EDGE_AHEAD, 0.04, p.scale, p.body)
       arms(out, r.fwd, -0.3, r.elbow, r.fwd, -0.3, r.elbow)
       out[CH.lean] = 0.04
       out[CH.headYaw] = 0.3 * Math.sin(0.27 * t + k)
@@ -87,17 +87,17 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
       return
     }
     case 'type':
-      typing(out, t, 7.5 * p.speed, 0.07, 0.1, p.scale)
+      typing(out, t, 7.5 * p.speed, 0.07, 0.1, p.scale, p.body)
       out[CH.headYaw] = 0.05 * Math.sin(0.9 * t + k)
       return
     case 'typeFast':
-      typing(out, t, 13 * p.speed, 0.1, 0.16, p.scale)
+      typing(out, t, 13 * p.speed, 0.1, 0.16, p.scale, p.body)
       out[CH.headPitch] = 0.14
       out[CH.brows] = -0.35
       return
     case 'readScreen': {
       // A esquerda no teclado, a direita no mouse (aberta para o lado); olha a tela de perto.
-      const r = reach(DESK_TOP + 0.055, KEYS_AHEAD, 0.08, p.scale)
+      const r = reach(DESK_TOP + 0.055, KEYS_AHEAD, 0.08, p.scale, p.body)
       arms(out, r.fwd, -0.08, r.elbow, r.fwd, 0.22 + 0.03 * Math.sin(0.7 * t), r.elbow)
       out[CH.lean] = 0.08
       out[CH.headYaw] = 0.22 * Math.sin(1.1 * t + k)
@@ -107,7 +107,7 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
       return
     }
     case 'drum': {
-      const r = reach(DESK_TOP + 0.05, EDGE_AHEAD + 0.05, 0.04, p.scale)
+      const r = reach(DESK_TOP + 0.05, EDGE_AHEAD + 0.05, 0.04, p.scale, p.body)
       arms(out, r.fwd, -0.08, r.elbow, r.fwd, -0.1, r.elbow)
       const drumming = t % 1.2 < 0.6
       out[CH.fingersR] = drumming ? 0.2 + 0.5 * Math.abs(Math.sin(12 * t)) : 0.2
@@ -159,7 +159,7 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
       const up = smooth((c - 2.3) / 0.35) * (1 - smooth((c - 3.1) / 0.35))
       // Sentado à mesa: o cotovelo fica apoiado acima do tampo e só o antebraço leva a xícara à boca.
       if (p.seated) {
-        const r = reach(DESK_TOP + 0.07, EDGE_AHEAD - 0.06, 0, p.scale)
+        const r = reach(DESK_TOP + 0.07, EDGE_AHEAD - 0.06, 0, p.scale, p.body)
         arms(out, r.fwd, -0.1, r.elbow, mix(r.fwd, 0.95, up), mix(0.05, -0.2, up), mix(r.elbow, 2.25, up))
       }
       else arms(out, -0.06, 0.1, 0.35, mix(0.75, 0.98, up), -0.1, mix(1.55, 2.25, up))
@@ -369,7 +369,7 @@ function leisurePose(out: Pose, a: Action, t: number, k: number): void {
 /** Escreve os canais de cima da reação `r` no instante `t`. `seated` amortece pulos. */
 export function reactionPose(out: Pose, r: Reaction, t: number, p: ActionParams, seated: boolean): void {
   reactionArms(out, r, t, p, seated)
-  if (p.seated) seatedClamp(out, p.scale)
+  if (p.seated) seatedClamp(out, p.scale, p.body)
 }
 
 /** Vetor girado como o three gira um Object3D com Euler XYZ (primeiro Z, depois Y, depois X). */
@@ -394,23 +394,23 @@ function eulerXYZ(x: number, y: number, z: number, rx: number, ry: number, rz: n
  * braço e a inclinação do tronco): y do chão e quanto à frente do quadril (m).
  */
 const tip = { y: 0, ahead: 0 }
-function handTip(out: Pose, left: boolean, scale: number, hand = 0.14): typeof tip {
+function handTip(out: Pose, left: boolean, scale: number, hand = 0.14, b: BodyMetrics = BODY): typeof tip {
   const fwd = out[left ? CH.armFwdL : CH.armFwdR]
   const tw = left ? -out[CH.twistL] : out[CH.twistR]
   const ab = left ? -out[CH.armOutL] : out[CH.armOutR]
   const e = out[left ? CH.elbowL : CH.elbowR]
   // Antebraço (com a mão) no referencial do braço, girado pelo cotovelo; somado ao braço.
-  const L2 = BODY.forearm + hand
+  const L2 = b.forearm + hand
   const fy = -L2 * Math.cos(e)
   const fz = -L2 * Math.sin(e)
-  eulerXYZ(0, -BODY.upperArm + fy, fz, fwd, tw, ab)
+  eulerXYZ(0, -b.upperArm + fy, fz, fwd, tw, ab)
   // No tronco (o ombro em shoulderY), inclinado por lean (rotação x = −lean).
   const lean = out[CH.lean]
-  const y = BODY.shoulderY + v3.y
+  const y = b.shoulderY + v3.y
   const z = v3.z
   const wy = y * Math.cos(-lean) - z * Math.sin(-lean)
   const wz = y * Math.sin(-lean) + z * Math.cos(-lean)
-  tip.y = SEATED_HIP + (BODY.hipDrop + wy) * scale
+  tip.y = SEATED_HIP + (b.hipDrop + wy) * scale
   tip.ahead = -wz * scale
   return tip
 }
@@ -422,14 +422,14 @@ function handTip(out: Pose, left: boolean, scale: number, hand = 0.14): typeof t
  * a que desceria no assento vai para o colo; braço baixo fica por dentro dos
  * braços da cadeira. As mãos no teclado (a pose da ação) não mudam.
  */
-function seatedClamp(out: Pose, scale = 1): void {
+function seatedClamp(out: Pose, scale = 1, b: BodyMetrics = BODY): void {
   // Debruçado na mesa (o cochilo), a reação o endireita: o susto de quem acorda.
   out[CH.lean] = Math.min(0.3, Math.max(out[CH.lean], -0.05))
   const edge = SEAT_FRONT - DESK_D / 2 - 0.08
   // Na espessura do tampo (embaixo dele ficam as coxas e o colo: lá a mão pode ir).
   const slab = (h: typeof tip): boolean => h.ahead > edge && h.y > DESK_HEIGHT - 0.07 && h.y < DESK_TOP + 0.06
   // O cotovelo, o meio do antebraço, o punho, o meio e a ponta da mão.
-  const inDeskArm = (left: boolean): boolean => slab(handTip(out, left, scale, -BODY.forearm)) || slab(handTip(out, left, scale, -BODY.forearm / 2)) || slab(handTip(out, left, scale, 0)) || slab(handTip(out, left, scale, 0.07)) || slab(handTip(out, left, scale, 0.15))
+  const inDeskArm = (left: boolean): boolean => slab(handTip(out, left, scale, -b.forearm, b)) || slab(handTip(out, left, scale, -b.forearm / 2, b)) || slab(handTip(out, left, scale, 0, b)) || slab(handTip(out, left, scale, 0.07, b)) || slab(handTip(out, left, scale, 0.15, b))
   for (const [fwd, outC, elbow, twist, left] of [[CH.armFwdL, CH.armOutL, CH.elbowL, CH.twistL, true], [CH.armFwdR, CH.armOutR, CH.elbowR, CH.twistR, false]] as const) {
     // O braço não vai para trás do tronco (o encosto); a medida é contra a inclinação dele.
     const lean = Math.max(0, out[CH.lean])
@@ -442,7 +442,7 @@ function seatedClamp(out: Pose, scale = 1): void {
         out[twist] *= 0.5
         out[elbow] = Math.min(2.6, out[elbow] + 0.15)
       }
-    } else if (handTip(out, left, scale).y < SEAT_HEIGHT.chair + 0.12) {
+    } else if (handTip(out, left, scale, 0.14, b).y < SEAT_HEIGHT.chair + 0.12) {
       // No colo: a mão sobre a coxa, antes da borda do tampo.
       out[fwd] = Math.min(out[fwd], lean + 0.2)
       out[twist] = 0

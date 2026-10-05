@@ -17,7 +17,7 @@
  * Fora da festa, o mesmo corpo serve ao `jump` do chamado sem resposta (o
  * agente ao lado da TV): pulos mais lentos, a direita acenando lá no alto.
  */
-import { CH, LEG, mix, pulse, smooth, type Action, type ActionParams, type Pose } from './poses'
+import { BODY, CH, mix, pulse, smooth, type Action, type ActionParams, type BodyMetrics, type Pose } from './poses'
 
 export const PARTY_BPM = 118
 /** Batidas por compasso: o passo da dança troca a cada compasso. */
@@ -167,32 +167,33 @@ export function partyPose(out: Pose, a: Action, t: number, p: ActionParams): voi
 }
 
 /** Joelhos dobrados em `depth` rad sem tirar os pés do chão (o quadril desce junto). */
-function bend(out: Pose, depth: number): void {
+function bend(out: Pose, leg: number, depth: number): void {
   const d = Math.max(0, depth)
   out[CH.legL] = out[CH.legR] = d / 2
   out[CH.kneeL] = out[CH.kneeR] = d
-  out[CH.pelvisY] = Math.min(out[CH.pelvisY], 0) - LEG * (1 - Math.cos(d / 2))
+  out[CH.pelvisY] = Math.min(out[CH.pelvisY], 0) - leg * (1 - Math.cos(d / 2))
 }
 
 /** Pernas no ritmo, para quem dança parado em pé (o tronco é do partyPose). */
-export function danceLower(out: Pose, a: Action, beat: number): void {
+export function danceLower(out: Pose, a: Action, beat: number, b: BodyMetrics = BODY): void {
+  const leg = b.thigh + b.shin
   const ph = beat - Math.floor(beat)
   switch (a) {
     case 'robot':
-      return bend(out, 0.16 * (1 - ((beat * 2) % 1)))
+      return bend(out, leg, 0.16 * (1 - ((beat * 2) % 1)))
     case 'disco':
-      return bend(out, 0.26 * (0.5 + 0.5 * Math.cos(2 * Math.PI * ph)))
+      return bend(out, leg, 0.26 * (0.5 + 0.5 * Math.cos(2 * Math.PI * ph)))
     case 'sway':
-      return bend(out, 0.18 * Math.abs(Math.sin(Math.PI * beat)))
+      return bend(out, leg, 0.18 * Math.abs(Math.sin(Math.PI * beat)))
     case 'hop':
       // Aterrissa com os joelhos dobrados; no alto do pulo, pernas encolhidas.
-      return bend(out, 0.34 * (1 - Math.sin(Math.PI * ph)) + 0.12 * Math.sin(Math.PI * ph))
+      return bend(out, leg, 0.34 * (1 - Math.sin(Math.PI * ph)) + 0.12 * Math.sin(Math.PI * ph))
     case 'conga':
-      return bend(out, 0.14 * Math.abs(Math.sin(Math.PI * beat)))
+      return bend(out, leg, 0.14 * Math.abs(Math.sin(Math.PI * beat)))
     case 'jump': {
       const j = beat * JUMP_RATE
       const ph2 = j - Math.floor(j)
-      return bend(out, 0.36 * (1 - Math.sin(Math.PI * ph2)) + 0.1 * Math.sin(Math.PI * ph2))
+      return bend(out, leg, 0.36 * (1 - Math.sin(Math.PI * ph2)) + 0.1 * Math.sin(Math.PI * ph2))
     }
     default:
       return

@@ -50,6 +50,12 @@ extraResources:
     filter:
       - '**/*'
       - '!config.js'
+  # Modelos 3D dos agentes do Escritório e o ambiente do PBR assado (main/officeAgents.ts → resources/office-agents).
+  - from: resources/office-agents
+    to: office-agents
+    filter:
+      - '*.glb'
+      - '*.bin'
 
 win:
   target:

@@ -26,6 +26,7 @@
  */
 import { Group, Mesh, MeshLambertMaterial, Sprite, Vector3 } from 'three'
 import type { OfficeCharacterModel } from '../office/adapter/model'
+import { CharacterBody } from './agentBody'
 import { appearance, HAIR, seedColor, SKIN } from './appearance'
 import { brainBusy, FX, type Brain, type PropKind } from './brain'
 import { beatAt, danceLower, movesLegs } from './dance'
@@ -33,7 +34,6 @@ import type { Kit } from './kit'
 import type { CharacterLayout } from './layout'
 import { actionPose, reactionPose } from './gestures'
 import { FAR_POSE_S, type Lod } from './lod'
-import type { Particles } from './particles'
 import {
   BLEND_S,
   CH,
@@ -50,7 +50,8 @@ import {
   type Action,
   type ActionParams
 } from './poses'
-import { GRIP, makeProp, PROP_PITCH, type PropKit } from './props'
+import type { FrameCtx } from './frameCtx'
+import { makeProp, PROP_PITCH, type PropKit } from './props'
 import { applyPose, buildRig, headLocal, type Rig } from './rig'
 
 const GLOW = 0x6fa2ff
@@ -61,15 +62,7 @@ export const GLANCE_S = 4
 export type { Lod } from './lod'
 export { appearance, seedColor, type Appearance } from './appearance'
 
-/** Contexto do quadro, um só para todos (a cena preenche antes dos updates). */
-export interface FrameCtx {
-  /** Relógio (s). */
-  t: number
-  camX: number
-  camY: number
-  camZ: number
-  particles: Particles | null
-}
+export type { FrameCtx } from './frameCtx'
 
 const scratch = new Vector3()
 const head = { x: 0, y: 0, z: 0 }
@@ -78,6 +71,8 @@ export class Character3D {
   readonly key: string
   readonly group = new Group()
   readonly rig: Rig
+  /** O corpo à mostra: o boneco ou o avatar GLB (agentBody.ts); as medidas dele valem nas poses. */
+  readonly body: CharacterBody
   model: OfficeCharacterModel
   readonly skinMat: MeshLambertMaterial
   readonly shirtMat: MeshLambertMaterial
@@ -148,6 +143,7 @@ export class Character3D {
     this.shirtMat = new MeshLambertMaterial({ color: seedColor(c.model.seed) })
     this.hairMat = new MeshLambertMaterial({ color: HAIR[a.hair] })
     this.rig = buildRig(kit, this.group, { skin: this.skinMat, shirt: this.shirtMat, hair: this.hairMat, pants: kit.mat.pants[a.pants] }, { hair: a.hairStyle, longSleeves: a.longSleeves, build: a.build })
+    this.body = new CharacterBody(ctx.models ?? null, this.rig, this.group, c.model.role, c.model.seed, c.key)
     this.group.add(this.hud)
     this.zs = [0.1, 0.13, 0.16].map((s) => {
       const z = new Sprite(kit.mat.z)
@@ -221,6 +217,7 @@ export class Character3D {
     this.shown = level
     for (const m of this.rig.details) m.visible = level === 0
     for (const m of this.rig.smalls) m.visible = level < 2
+    this.body.setLod(level)
     this.rig.torso.castShadow = level === 0
     this.rig.headMesh.castShadow = level === 0
   }
@@ -240,7 +237,7 @@ export class Character3D {
       Math.abs(g.rotation.y - a.yaw) < 0.02 &&
       Math.abs(py - a.py) < 0.01 &&
       Math.abs(lean - a.lean) < 0.02
-    if (same) return false
+    if (same && !this.body.takeCast()) return false
     a.vis = vis
     a.x = g.position.x
     a.z = g.position.z
@@ -254,6 +251,7 @@ export class Character3D {
   update(dt: number, lod: Lod): boolean {
     const b = this.brain
     if (lod !== this.shown) this.applyLod(lod)
+    const swapped = this.body.sync(this.props, lod)
     this.group.visible = b.visible && !this.focusHidden && !this.culled
     if (!b.visible) {
       b.fx = 0
@@ -263,16 +261,17 @@ export class Character3D {
     this.group.position.set(b.x, 0, b.z)
     this.group.rotation.y = b.yaw
     const run = clamp01((b.speed - 1.3) / 1.4)
-    this.phase = (this.phase + (b.speed * dt) / (strideLength(run) * this.scale)) % 1
+    this.phase = (this.phase + (b.speed * dt) / (strideLength(run, this.body.metrics) * this.scale)) % 1
     let posed = true
     if (lod === 2) {
       this.lodT -= dt
-      posed = this.lodT <= 0
+      posed = this.lodT <= 0 || swapped
       if (posed) this.lodT = FAR_POSE_S
     }
     if (posed) {
       this.pose(dt, lod, run)
       applyPose(this.rig, this.out, lod === 0 ? this.blink(dt) : 1, lod === 0 ? Math.sin(this.ctx.t * 1.75 + b.seed) : 0)
+      this.body.pose(this.out, !!this.params.seated, this.propKind, dt)
     }
     this.placeProp(dt, lod)
     this.placeHud(dt)
@@ -280,6 +279,7 @@ export class Character3D {
     const t = this.ctx.t
     const glow = this.screenOn && !this.powerDark && b.mode === 'work' && b.sit > 0.9
     this.skinMat.emissiveIntensity = glow ? 0.2 + Math.sin(t * 7.3) * 0.03 + Math.sin(t * 2.1) * 0.03 : 0
+    this.body.setGlow(GLOW, this.skinMat.emissiveIntensity)
     if (this.indicator) {
       this.indicator.scale.setScalar(1 + Math.sin(t * 3) * 0.12)
       this.indicator.rotation.y = t * 1.2
@@ -289,15 +289,16 @@ export class Character3D {
 
   private pose(dt: number, lod: Lod, run: number): void {
     const b = this.brain
-    locomotion(this.lower, this.phase, smooth(b.speed / 0.35), run)
+    locomotion(this.lower, this.phase, smooth(b.speed / 0.35), run, this.body.metrics)
     if (b.sit > 0) {
       this.sitPose.set(this.lower)
-      sitLower(this.sitPose, b.seat ?? 'chair', this.ctx.t, this.scale, (((b.seed * 0.618034) % 1) + 1) % 1)
+      sitLower(this.sitPose, b.seat ?? 'chair', this.ctx.t, this.scale, (((b.seed * 0.618034) % 1) + 1) % 1, this.body.metrics)
       lerpPose(this.lower, this.lower, this.sitPose, smooth(b.sit), LOWER)
     }
     this.params.speed = b.workSpeed
     this.params.seated = b.sit > 0.5 && b.seat === 'chair'
     this.params.scale = this.scale
+    this.params.body = this.body.metrics
     const beat = beatAt(this.ctx.t)
     this.params.beat = beat
     if (b.action !== this.lastAction) {
@@ -312,7 +313,7 @@ export class Character3D {
     this.out.set(this.lower)
     lerpPose(this.out, this.from, this.upper, smooth(this.blendT / BLEND_S), UPPER)
     // Dançando parado em pé: os joelhos entram no ritmo.
-    if (movesLegs(b.action) && b.sit === 0 && b.speed < 0.05) danceLower(this.out, b.action, beat)
+    if (movesLegs(b.action) && b.sit === 0 && b.speed < 0.05) danceLower(this.out, b.action, beat, this.body.metrics)
     if (b.reaction) {
       this.react.set(this.out)
       reactionPose(this.react, b.reaction, b.reactionT, this.params, b.sit > 0.5)
@@ -342,7 +343,7 @@ export class Character3D {
       const lx = dx * c - dz * s
       const lz = dx * s + dz * c
       yaw = Math.atan2(-lx, -lz)
-      headLocal(this.out, head)
+      headLocal(this.out, head, this.body.metrics)
       pitch = -Math.atan2((glance ? g.y : cam ? ctx.camY : b.lookY) - head.y * this.scale, Math.max(0.05, Math.hypot(lx, lz)))
       if (Math.abs(yaw) < 2.3) want = 1
       yaw = Math.max(-1.2, Math.min(1.2, yaw))
@@ -381,8 +382,7 @@ export class Character3D {
       if (this.propKind) this.props.get(this.propKind)!.visible = false
       if (kind && !this.props.has(kind)) {
         const p = makeProp(this.propKit, kind)
-        p.position.set(GRIP[kind][0], GRIP[kind][1], GRIP[kind][2])
-        this.rig.handR.add(p)
+        this.body.hold(kind, p)
         this.props.set(kind, p)
       }
       this.propKind = kind
@@ -406,7 +406,7 @@ export class Character3D {
 
   private placeHud(dt: number): void {
     const b = this.brain
-    headLocal(this.out, head)
+    headLocal(this.out, head, this.body.metrics)
     this.hud.position.set(head.x, head.y, head.z)
     const t = this.ctx.t
     for (let i = 0; i < this.zs.length; i++) {
@@ -450,7 +450,7 @@ export class Character3D {
       this.smokeT = 0
     }
     if (!parts || lod === 2) return
-    if ((fx & (FX.confetti | FX.sweat)) !== 0 || this.smokeLeft > 0) this.rig.headMesh.getWorldPosition(scratch)
+    if ((fx & (FX.confetti | FX.sweat)) !== 0 || this.smokeLeft > 0) this.body.headPoint(scratch)
     const rx = Math.cos(b.yaw)
     const rz = -Math.sin(b.yaw)
     if (fx & FX.confetti) parts.confettiBurst(scratch.x, scratch.y + 0.35, scratch.z)
@@ -477,12 +477,13 @@ export class Character3D {
   /** Centro da cabeça no mundo (para balões de fala); false se não está à vista. */
   headWorldPosition(out: Vector3): boolean {
     if (!this.brain.visible) return false
-    this.rig.headMesh.getWorldPosition(out)
+    this.body.headPoint(out)
     return true
   }
 
   dispose(): void {
     this.group.removeFromParent()
+    this.body.dispose()
     // O rosto é instanciado: os buffers das instâncias são deste boneco.
     this.rig.face.dispose()
     this.rig.brows.dispose()

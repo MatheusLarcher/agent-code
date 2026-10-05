@@ -16,7 +16,7 @@
 import { Group, InstancedMesh, Mesh, Object3D, type BufferGeometry, type Material } from 'three'
 import type { HairStyle } from './bodyGeo'
 import type { Kit } from './kit'
-import { BODY, CH, SHIN, THIGH, type Pose } from './poses'
+import { BODY, CH, SHIN, THIGH, type BodyMetrics, type Pose } from './poses'
 
 export const PELVIS_Y = BODY.pelvisY
 export const SHOULDER_Y = BODY.shoulderY
@@ -237,10 +237,10 @@ function placeFace(face: InstancedMesh, brows: InstancedMesh, st: Float32Array, 
   }
 }
 
-/** Centro da cabeça no referencial do personagem (sem twist), a partir da pose. */
-export function headLocal(p: Pose, out: { x: number; y: number; z: number }): void {
+/** Centro da cabeça no referencial do personagem (sem twist), a partir da pose e das medidas do corpo (`b`). */
+export function headLocal(p: Pose, out: { x: number; y: number; z: number }, b: BodyMetrics = BODY): void {
   const lean = p[CH.lean]
-  out.x = HEAD_Y * Math.sin(p[CH.roll])
-  out.y = PELVIS_Y + p[CH.pelvisY] + p[CH.hop] + HEAD_Y * Math.cos(lean) * Math.cos(p[CH.roll])
-  out.z = p[CH.pelvisZ] - HEAD_Y * Math.sin(lean)
+  out.x = b.headY * Math.sin(p[CH.roll])
+  out.y = b.pelvisY + p[CH.pelvisY] + p[CH.hop] + b.headY * Math.cos(lean) * Math.cos(p[CH.roll])
+  out.z = p[CH.pelvisZ] - b.headY * Math.sin(lean)
 }

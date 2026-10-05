@@ -363,6 +363,7 @@ const api: AgentCodeApi = {
   onContextTurnsChanged: (cb: (event: ContextTurnChanged) => void): (() => void) => on(Channels.contextTurnsChanged, cb),
   officeMockupUrl: (req: MockupRequest): Promise<MockupUrlResult> => ipcRenderer.invoke(Channels.officeMockupUrl, req),
   officeMockupCapture: (req: MockupRequest): Promise<MockupCaptureResult> => ipcRenderer.invoke(Channels.officeMockupCapture, req),
+  officeAgentFile: (name: string): Promise<Uint8Array | null> => ipcRenderer.invoke(Channels.officeAgentFile, name),
   officeCallsState: (state: OfficeCallsState): Promise<void> => ipcRenderer.invoke(Channels.officeCallsState, state),
   onOfficeCallOpen: (cb: (e: OfficeCallOpen) => void): (() => void) => on(Channels.officeCallOpen, cb),
   onAgentEvent: (cb: (e: AgentEventMsg) => void): (() => void) => on(Channels.agentEvent, cb),

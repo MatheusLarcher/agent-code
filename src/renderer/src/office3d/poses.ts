@@ -71,7 +71,8 @@ export const UPPER: readonly number[] = [
  * Medidas do corpo (m, adulto de ~1,80 m em pé): tornozelo, coxa e canela,
  * as juntas do quadril abaixo do pivô da bacia, ombros (junta e largura),
  * centro da cabeça (acima da bacia) e a cabeça (meias medidas), braço e
- * antebraço. O pivô da bacia fica a pelvisY do chão em pé.
+ * antebraço. O pivô da bacia fica a pelvisY do chão em pé. O sapato, a partir
+ * do tornozelo: quanto desce até a sola e quanto vai até a ponta (bodyGeo.ts).
  */
 export const BODY = (() => {
   const ankleY = 0.085
@@ -92,9 +93,17 @@ export const BODY = (() => {
     headH: 0.116,
     headD: 0.102,
     upperArm: 0.29,
-    forearm: 0.26
+    forearm: 0.26,
+    soleDown: 0.085,
+    toeAhead: 0.19
   }
 })()
+/**
+ * Medidas de um corpo: o boneco procedural usa BODY; um modelo GLB passa as
+ * dele, lidas do esqueleto (agentMetrics.ts). Os ângulos das poses são os
+ * mesmos; o que depende do tamanho (altura da bacia, alcance, passada) usa estas.
+ */
+export type BodyMetrics = typeof BODY
 /** Coxa e canela (m); a perna esticada vai do quadril ao tornozelo em LEG. */
 export const THIGH = BODY.thigh
 export const SHIN = BODY.shin
@@ -136,6 +145,8 @@ export interface ActionParams {
   seated?: boolean
   /** Escala do boneco (o subagente é menor): o alcance até o teclado é calculado com ela. */
   scale?: number
+  /** Medidas do corpo (o modelo GLB); sem elas, BODY. */
+  body?: BodyMetrics
 }
 
 export const clamp01 = (k: number): number => (k < 0 ? 0 : k > 1 ? 1 : k)
@@ -172,9 +183,9 @@ const WALK = { amp: 0.48, duty: 0.6, lift: 0.06, lean: 0.06, arm: 0.42, elbow: 0
 const RUN = { amp: 0.72, duty: 0.38, lift: 0.13, lean: 0.28, arm: 0.95, elbow: 1.35 }
 
 /** Distância (m) que o corpo anda num ciclo completo (dois passos). */
-export function strideLength(run: number): number {
+export function strideLength(run: number, b: BodyMetrics = BODY): number {
   const amp = mix(WALK.amp, RUN.amp, run)
-  return (2 * LEG * Math.sin(amp)) / mix(WALK.duty, RUN.duty, run)
+  return (2 * (b.thigh + b.shin) * Math.sin(amp)) / mix(WALK.duty, RUN.duty, run)
 }
 
 interface Foot {
@@ -211,15 +222,16 @@ function footAt(u: number, reach: number, duty: number, lift: number, f: Foot): 
 }
 
 /** IK de dois ossos: coxa e joelho para o tornozelo ficar `x` à frente e `v` abaixo do quadril (joelho para a frente). */
-function reachFoot(f: Foot, v: number): void {
+function reachFoot(f: Foot, v: number, b: BodyMetrics): void {
   const d = Math.hypot(f.x, v)
-  if (d >= LEG - 1e-6) {
+  const { thigh, shin } = b
+  if (d >= thigh + shin - 1e-6) {
     f.leg = Math.atan2(f.x, v)
     f.knee = 0
     return
   }
-  const atKnee = Math.acos(Math.max(-1, Math.min(1, (THIGH * THIGH + SHIN * SHIN - d * d) / (2 * THIGH * SHIN))))
-  const atHip = Math.acos(Math.max(-1, Math.min(1, (THIGH * THIGH + d * d - SHIN * SHIN) / (2 * THIGH * d))))
+  const atKnee = Math.acos(Math.max(-1, Math.min(1, (thigh * thigh + shin * shin - d * d) / (2 * thigh * shin))))
+  const atHip = Math.acos(Math.max(-1, Math.min(1, (thigh * thigh + d * d - shin * shin) / (2 * thigh * d))))
   f.leg = Math.atan2(f.x, v) + atHip
   f.knee = Math.PI - atKnee
 }
@@ -232,12 +244,13 @@ function reachFoot(f: Foot, v: number): void {
  * apoio e quica no voo (corrida) — sempre contínuo; os joelhos se ajustam por
  * IK para os pés apoiados ficarem exatamente no chão.
  */
-export function locomotion(out: Pose, u: number, w: number, run: number): void {
+export function locomotion(out: Pose, u: number, w: number, run: number, b: BodyMetrics = BODY): void {
   standPose(out)
   if (w <= 0) return
+  const leg = b.thigh + b.shin
   const amp = mix(WALK.amp, RUN.amp, run)
   const duty = mix(WALK.duty, RUN.duty, run)
-  const reach = LEG * Math.sin(amp)
+  const reach = leg * Math.sin(amp)
   const lift = mix(WALK.lift, RUN.lift, run)
   const uL = u - Math.floor(u)
   const uR = (uL + 0.5) % 1
@@ -255,11 +268,11 @@ export function locomotion(out: Pose, u: number, w: number, run: number): void {
     // Voo da corrida: os dois pés no ar desde que o último saiu do chão.
     y = c + 0.1 * run * Math.sin(Math.PI * clamp01((Math.min(uL, uR) - duty) / Math.max(0.01, 0.5 - duty)))
   }
-  reachFoot(footL, LEG * y - footL.lift)
-  reachFoot(footR, LEG * y - footR.lift)
+  reachFoot(footL, leg * y - footL.lift, b)
+  reachFoot(footR, leg * y - footR.lift, b)
   const legL = footL
   const legR = footR
-  out[CH.pelvisY] = w * LEG * (y - 1)
+  out[CH.pelvisY] = w * leg * (y - 1)
   out[CH.legL] = w * legL.leg
   out[CH.kneeL] = w * legL.knee
   out[CH.footL] = w * legL.foot
@@ -303,10 +316,6 @@ export const SEAT_HEIGHT: Record<SeatKind, number> = { chair: 0.59, sofa: 0.6, d
 /** Quanto o quadril (a junta) fica acima do assento: a carne que apoia, menos o que o estofado afunda. */
 const SIT_ON: Record<SeatKind, number> = { chair: 0.09, sofa: 0.04, desk: 0.07 }
 
-/** O sapato a partir do tornozelo: quanto desce até a sola e quanto vai até a ponta (bodyGeo.ts). */
-const SOLE_DOWN = 0.085
-const TOE_AHEAD = 0.19
-
 const acosClamp = (v: number): number => Math.acos(v < -1 ? -1 : v > 1 ? 1 : v)
 
 /**
@@ -314,11 +323,13 @@ const acosClamp = (v: number): number => Math.acos(v < -1 ? -1 : v > 1 ? 1 : v)
  * assento e pela escala do boneco (`scale`: o subagente é menor, o assento é o
  * mesmo). Cadeira: canela na vertical e os calcanhares um pouco erguidos (a
  * ponta do pé no chão). Sofá: os pés esticados à frente. Beira da mesa: coxas
- * quase na horizontal e as canelas soltas, balançando com o relógio `t`.
+ * quase na horizontal e as canelas soltas, balançando com o relógio `t`. `b`:
+ * as medidas do corpo (o modelo GLB; BODY no boneco).
  */
-export function sitLower(out: Pose, seat: SeatKind, t = 0, scale = 1, vary = 0.5): void {
+export function sitLower(out: Pose, seat: SeatKind, t = 0, scale = 1, vary = 0.5, b: BodyMetrics = BODY): void {
   const hip = (SEAT_HEIGHT[seat] + SIT_ON[seat]) / scale
-  out[CH.pelvisY] = hip + BODY.hipDrop - BODY.pelvisY
+  const { thigh: THIGH, shin: SHIN, soleDown: SOLE_DOWN, toeAhead: TOE_AHEAD } = b
+  out[CH.pelvisY] = hip + b.hipDrop - b.pelvisY
   out[CH.pelvisZ] = 0
   if (seat === 'desk') {
     out[CH.legL] = out[CH.legR] = 1.45
@@ -330,7 +341,7 @@ export function sitLower(out: Pose, seat: SeatKind, t = 0, scale = 1, vary = 0.5
   if (seat === 'sofa') {
     // Afundado no sofá: a canela inclinada para a frente e o pé apoiado inteiro.
     const shinTilt = 0.38
-    const thigh = acosClamp((hip - (BODY.ankleY + SHIN * Math.cos(shinTilt))) / THIGH)
+    const thigh = acosClamp((hip - (b.ankleY + SHIN * Math.cos(shinTilt))) / THIGH)
     out[CH.legL] = out[CH.legR] = thigh
     out[CH.kneeL] = out[CH.kneeR] = thigh - shinTilt
     out[CH.footL] = out[CH.footR] = 0.05

@@ -6,6 +6,7 @@
  * (nem obriga o laço a renderizar).
  */
 import { useEffect, useState } from 'react'
+import { avatarPreview } from './agentModels'
 import type { EngineStats } from './engine'
 
 export const PERF_HUD_MS = 250
@@ -47,6 +48,10 @@ export function PerfHud({ source }: { source: () => PerfSource | null }): JSX.El
             zonas {s.rooms}/{s.roomsTotal} · LOD {LOD_NAMES[s.lod]} · pixelRatio {s.pixelRatio.toFixed(2)}
           </div>
           <div>sombra refeita {s.shadowUpdates}×</div>
+          <div>
+            quadro {s.frameMs.toFixed(1)} ms (P95 {s.frameP95.toFixed(1)}) · JS {s.workMs.toFixed(1)} ms (P95 {s.workP95.toFixed(1)})
+          </div>
+          <div>agentes: {avatarPreview() ? 'avatar v1 (teste)' : 'boneco'} · Ctrl+Alt+Shift+V</div>
         </>
       ) : (
         <div>sem motor 3D</div>

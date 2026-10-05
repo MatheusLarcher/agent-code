@@ -159,6 +159,25 @@ export const GRIP: Record<PropKind, [number, number, number]> = {
   pizza: [0, -0.06, -0.04]
 }
 
+/**
+ * O mesmo na mão do avatar GLB (agentAvatar.ts: encaixe com os eixos da mão do
+ * boneco, mas a palma olha para dentro, −X na direita): o objeto fica na palma.
+ */
+export const GRIP_AVATAR: Record<PropKind, [number, number, number]> = {
+  cup: [-0.05, -0.12, 0],
+  book: [-0.1, -0.1, -0.04],
+  can: [-0.05, -0.1, 0],
+  phone: [-0.035, -0.1, 0],
+  folder: [-0.035, -0.13, 0],
+  sign: [-0.035, -0.08, 0],
+  note: [-0.03, -0.1, 0],
+  flashlight: [-0.04, -0.08, 0],
+  pizza: [-0.04, -0.09, -0.02]
+}
+
+/** Quanto os dedos do avatar fecham em volta de cada objeto (0 aberta … 1 punho). */
+export const HOLD_CURL: Record<PropKind, number> = { cup: 0.6, book: 0.3, can: 0.7, phone: 0.35, folder: 0.5, sign: 0.75, note: 0.3, flashlight: 0.75, pizza: 0.3 }
+
 /** Inclinação fixa do objeto depois de endireitado (o celular fica deitado na mão, a lanterna aponta um pouco para o chão…). */
 export const PROP_PITCH: Record<PropKind, number> = { cup: 0, book: 0, can: 0, phone: 0.6, folder: 0, sign: 0, note: 0, flashlight: -0.32, pizza: 0.35 }
 

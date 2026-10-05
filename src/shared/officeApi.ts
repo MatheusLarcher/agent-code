@@ -27,4 +27,6 @@ export interface OfficeApi {
   /** O painel de Memórias (só leitura): a lista e o texto de uma (segredos só como marca). */
   memoryListEntries(): Promise<MemoryListItem[]>
   memoryReadEntry(relPath: string): Promise<MemoryReadResult | null>
+  /** Um arquivo 3D dos agentes (resources/office-agents/<nome>.glb ou .bin); null se não existe. */
+  officeAgentFile(name: string): Promise<Uint8Array | null>
 }

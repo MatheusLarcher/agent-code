@@ -22,6 +22,7 @@
 import { Color, Fog, Frustum, Matrix4, Mesh, Raycaster, Scene, Sphere, Vector2, Vector3, type Camera, type DirectionalLight, type Object3D } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { SLEEP_AFTER_SEC } from '../office/behavior/leisure'
+import { AgentModels, type AgentRenderer } from './agentModels'
 import { Boards } from './board/boards'
 import { greet } from './brain'
 import { OfficeErrands } from './officeErrands'
@@ -70,6 +71,7 @@ export class OfficeScene {
   readonly boards: Boards
   /** O pulso de despacho da Central e a ida à estante de Memórias (officeErrands.ts). */
   readonly errands: OfficeErrands
+  readonly agents: AgentModels
   private readonly kit: Kit
   private readonly propKit: PropKit
   private readonly sun: DirectionalLight
@@ -105,10 +107,11 @@ export class OfficeScene {
   /** Chamado quando algo assíncrono (ícone da placa) muda a imagem. */
   onDirty: () => void = () => {}
 
-  constructor(anisotropy = 1) {
+  constructor(anisotropy = 1, renderer: AgentRenderer = null) {
     this.kit = createKit(anisotropy)
     this.propKit = createPropKit()
     this.frame.particles = this.particles
+    this.frame.models = this.agents = new AgentModels(renderer, () => this.onDirty(), this.scene)
     this.scene.background = new Color(BACKGROUND)
     this.scene.fog = this.fog
     const { hemi, amb, sun } = createSceneLights(this.scene)
@@ -486,6 +489,7 @@ export class OfficeScene {
     this.charList = []
     this.particles.dispose()
     this.propKit.dispose()
+    this.agents.dispose()
     this.sun.shadow.map?.dispose()
     this.kit.dispose()
     this.scene.clear()

@@ -2263,6 +2263,8 @@ export const Channels = {
   /** O HTML do agente no Escritório: o endereço no protocolo agent-mockup e a captura para a TV. */
   officeMockupUrl: 'office:mockup-url',
   officeMockupCapture: 'office:mockup-capture',
+  /** Um arquivo 3D dos agentes do Escritório (modelo .glb, ambiente .bin): renderer → main, devolve os bytes (main/officeAgents.ts). */
+  officeAgentFile: 'office:agent-file',
   /** Os chamados do agente: renderer → main (abertos, encerrados, se o usuário está olhando, títulos) e o clique na notificação (main → renderer). */
   officeCallsState: 'office:calls-state',
   officeCallOpen: 'office:call-open',

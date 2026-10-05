@@ -58,6 +58,7 @@ import type { ProjectLayout } from './layout'
 import { OfficeChatFloat, type OfficeConversation } from './OfficeChatFloat'
 import { OfficeHud } from './OfficeHud'
 import { isPerfShortcut, PerfHud } from './PerfHud'
+import { useAvatarPreviewKey } from './agentPreview'
 import { setMeetingProbe } from './officeWatch'
 import type { OfficePower } from './power'
 import { OfficeMemoryPanel } from './OfficeMemoryPanel'
@@ -324,6 +325,7 @@ export function Office3DWorkspace({
     return source.subscribe(() => setTick((t) => t + 1))
   }, [showing, source, active])
 
+  useAvatarPreviewKey(active)
   // Só DEV e com a aba aberta: demonstração animada (linha do tempo do demoFeed,
   // um quadro por tique) e HUD de desempenho. Fechar a aba para a demo e limpa o override.
   useEffect(() => {
