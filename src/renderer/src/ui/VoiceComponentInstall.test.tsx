@@ -23,31 +23,41 @@ describe('VoiceComponentInstall (Configurações › Voz)', () => {
         return () => {}
       }
     })
-    render(<VoiceComponentInstall component={{ kind: 'whisper', model: 'small-fp32' }} size="~925 MB" />)
-    await waitFor(() => expect(screen.getByTestId('voice-install-status').textContent).toBe('Não instalado · ~925 MB'))
+    render(<VoiceComponentInstall component={{ kind: 'stt' }} size="~670 MB" />)
+    await waitFor(() => expect(screen.getByTestId('voice-install-status').textContent).toBe('Não instalado · ~670 MB'))
     fireEvent.click(screen.getByText('Instalar'))
     fireEvent.click(screen.getByText('Instalando…'))
     expect(voiceComponentInstall).toHaveBeenCalledTimes(1)
-    expect(voiceComponentInstall).toHaveBeenCalledWith({ kind: 'whisper', model: 'small-fp32' })
-    act(() => push({ stage: 'downloading', message: 'Baixando o reconhecimento de voz (Whisper)…', percent: 40, totalMb: 925 }))
-    expect(screen.getByRole('status').textContent).toBe('Baixando o reconhecimento de voz (Whisper)… 40% de ~925 MB')
+    expect(voiceComponentInstall).toHaveBeenCalledWith({ kind: 'stt' })
+    act(() => push({ stage: 'downloading', message: 'Baixando o reconhecimento de voz (Parakeet)…', percent: 40, totalMb: 670 }))
+    expect(screen.getByRole('status').textContent).toBe('Baixando o reconhecimento de voz (Parakeet)… 40% de ~670 MB')
     installed = true
     await act(async () => finish({ ok: true }))
     await waitFor(() => expect(screen.getByTestId('voice-install-status').textContent).toBe('Instalado neste computador'))
     expect((screen.getByText('Instalado') as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('trocar o modelo relê o status do modelo novo', async () => {
+  it('trocar o componente relê o status do componente novo', async () => {
     const voiceComponentStatus = vi.fn(async (c: VoiceComponent) => ({
-      installed: c.kind === 'whisper' && c.model === 'turbo-q8',
+      installed: c.kind === 'tts',
       installing: false
     }))
     stubApi({ voiceComponentStatus })
-    const { rerender } = render(<VoiceComponentInstall component={{ kind: 'whisper', model: 'turbo-q8' }} />)
+    const { rerender } = render(<VoiceComponentInstall component={{ kind: 'tts' }} />)
     await waitFor(() => expect(screen.getByTestId('voice-install-status').textContent).toBe('Instalado neste computador'))
-    rerender(<VoiceComponentInstall component={{ kind: 'whisper', model: 'small-fp32' }} />)
+    rerender(<VoiceComponentInstall component={{ kind: 'stt' }} />)
     await waitFor(() => expect(screen.getByTestId('voice-install-status').textContent).toBe('Não instalado'))
-    expect(voiceComponentStatus).toHaveBeenLastCalledWith({ kind: 'whisper', model: 'small-fp32' })
+    expect(voiceComponentStatus).toHaveBeenLastCalledWith({ kind: 'stt' })
+  })
+
+  it('novo objeto do mesmo componente a cada render não relê o status', async () => {
+    const voiceComponentStatus = vi.fn(async () => ({ installed: true, installing: false }))
+    stubApi({ voiceComponentStatus })
+    const { rerender } = render(<VoiceComponentInstall component={{ kind: 'stt' }} />)
+    await waitFor(() => expect(screen.getByTestId('voice-install-status').textContent).toBe('Instalado neste computador'))
+    rerender(<VoiceComponentInstall component={{ kind: 'stt' }} />)
+    await act(async () => {})
+    expect(voiceComponentStatus).toHaveBeenCalledTimes(1)
   })
 
   it('erro na instalação aparece e libera nova tentativa', async () => {
@@ -63,17 +73,19 @@ describe('VoiceComponentInstall (Configurações › Voz)', () => {
   })
 
   it('Testar transcrição mostra o que foi falado e o que foi ouvido', async () => {
+    const voiceTestTranscription = vi.fn(async (_c: VoiceComponent) => ({
+      ok: true,
+      expected: 'Olá, este é um teste.',
+      heard: 'Olá, este é um teste.'
+    }))
     stubApi({
       voiceComponentStatus: vi.fn(async () => ({ installed: true, installing: false })),
-      voiceTestTranscription: vi.fn(async () => ({
-        ok: true,
-        expected: 'Olá, este é um teste.',
-        heard: 'Olá, este é um teste.'
-      }))
+      voiceTestTranscription
     })
-    render(<VoiceComponentInstall component={{ kind: 'local', model: 'nvidia/parakeet-tdt-0.6b-v3' }} testable />)
+    render(<VoiceComponentInstall component={{ kind: 'stt' }} testable />)
     await waitFor(() => expect(screen.getByTestId('voice-install-status').textContent).toBe('Instalado neste computador'))
     fireEvent.click(screen.getByText('Testar transcrição'))
+    expect(voiceTestTranscription).toHaveBeenCalledWith({ kind: 'stt' })
     await waitFor(() =>
       expect(screen.getByTestId('voice-test-result').textContent).toBe(
         'Funcionando — falei “Olá, este é um teste.”, ouvi “Olá, este é um teste.”.'
@@ -81,32 +93,32 @@ describe('VoiceComponentInstall (Configurações › Voz)', () => {
     )
   })
 
-  it('trocar de modelo com teste pendente não aplica o resultado antigo ao modelo novo', async () => {
+  it('trocar de componente com teste pendente não aplica o resultado antigo ao componente novo', async () => {
     let finish!: (r: { ok: boolean; expected: string; heard: string }) => void
     stubApi({
       voiceComponentStatus: vi.fn(async () => ({ installed: true, installing: false })),
       voiceTestTranscription: vi.fn(() => new Promise((res) => (finish = res)))
     })
-    const { rerender } = render(<VoiceComponentInstall component={{ kind: 'whisper', model: 'small-fp32' }} testable />)
+    const { rerender } = render(<VoiceComponentInstall component={{ kind: 'stt' }} testable />)
     await waitFor(() => expect(screen.getByTestId('voice-install-status').textContent).toBe('Instalado neste computador'))
     fireEvent.click(screen.getByText('Testar transcrição'))
     expect(screen.getByText('Testando…')).toBeTruthy()
-    rerender(<VoiceComponentInstall component={{ kind: 'whisper', model: 'turbo-q8' }} testable />)
+    rerender(<VoiceComponentInstall component={{ kind: 'tts' }} testable />)
     await waitFor(() => expect(screen.getByText('Testar transcrição')).toBeTruthy())
     await act(async () => finish({ ok: true, expected: 'a', heard: 'a' }))
     expect(screen.queryByTestId('voice-test-result')).toBeNull()
   })
 
-  it('trocar de modelo com instalação pendente não leva o erro antigo ao modelo novo', async () => {
+  it('trocar de componente com instalação pendente não leva o erro antigo ao componente novo', async () => {
     let finish!: (r: { ok: boolean; error?: string }) => void
     stubApi({
       voiceComponentStatus: vi.fn(async () => ({ installed: false, installing: false })),
       voiceComponentInstall: vi.fn(() => new Promise((res) => (finish = res)))
     })
-    const { rerender } = render(<VoiceComponentInstall component={{ kind: 'whisper', model: 'small-fp32' }} />)
+    const { rerender } = render(<VoiceComponentInstall component={{ kind: 'stt' }} />)
     await waitFor(() => expect(screen.getByText('Instalar')).toBeTruthy())
     fireEvent.click(screen.getByText('Instalar'))
-    rerender(<VoiceComponentInstall component={{ kind: 'whisper', model: 'turbo-q8' }} />)
+    rerender(<VoiceComponentInstall component={{ kind: 'tts' }} />)
     await waitFor(() => expect(screen.getByText('Instalar')).toBeTruthy())
     await act(async () => finish({ ok: false, error: 'sem rede' }))
     expect(screen.queryByRole('alert')).toBeNull()
@@ -114,9 +126,9 @@ describe('VoiceComponentInstall (Configurações › Voz)', () => {
 
   it('reabrir as Configurações depois de uma instalação que falhou mostra o erro guardado', async () => {
     stubApi({
-      voiceComponentStatus: vi.fn(async () => ({ installed: false, installing: false, error: 'sem CUDA' }))
+      voiceComponentStatus: vi.fn(async () => ({ installed: false, installing: false, error: 'sem rede' }))
     })
-    render(<VoiceComponentInstall component={{ kind: 'local', model: 'nvidia/parakeet-tdt-0.6b-v3' }} />)
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('sem CUDA'))
+    render(<VoiceComponentInstall component={{ kind: 'stt' }} />)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('sem rede'))
   })
 })

@@ -1,0 +1,92 @@
+// Local Capacitor plugin: on-device STT (Parakeet TDT 0.6B v3 via sherpa-onnx).
+// Wired into the app by `cap sync` (dependency "parakeet-stt": "file:plugins/parakeet-stt").
+
+import java.security.MessageDigest
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.1'
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace "com.matheus.parakeetstt"
+    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 34
+    defaultConfig {
+        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 22
+        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 34
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lintOptions {
+        abortOnError false
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+// sherpa-onnx engine: the official release AAR (fixed version, >= 1.13.4), fetched
+// from GitHub on the first build and checked against the release's SHA-256 digest.
+// Kept out of git (50 MB); see .gitignore. Built without QNN — CPU only.
+def sherpaVersion = '1.13.8'
+def sherpaSha256 = '633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96'
+def sherpaAar = file("libs/sherpa-onnx-${sherpaVersion}.aar")
+
+def sha256Of = { File f ->
+    def md = MessageDigest.getInstance('SHA-256')
+    f.withInputStream { is ->
+        byte[] buf = new byte[1 << 16]
+        int n
+        while ((n = is.read(buf)) > 0) md.update(buf, 0, n)
+    }
+    md.digest().encodeHex().toString()
+}
+
+if (!sherpaAar.isFile() || sha256Of(sherpaAar) != sherpaSha256) {
+    def url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaVersion}/sherpa-onnx-${sherpaVersion}.aar"
+    logger.lifecycle("parakeet-stt: downloading ${url}")
+    sherpaAar.parentFile.mkdirs()
+    def tmp = new File(sherpaAar.path + '.part')
+    new URL(url).withInputStream { i -> tmp.withOutputStream { o -> o << i } }
+    def got = sha256Of(tmp)
+    if (got != sherpaSha256) {
+        tmp.delete()
+        throw new GradleException("parakeet-stt: SHA-256 mismatch for sherpa-onnx ${sherpaVersion} AAR (got ${got})")
+    }
+    sherpaAar.delete()
+    if (!tmp.renameTo(sherpaAar)) throw new GradleException("parakeet-stt: could not move ${tmp} to ${sherpaAar}")
+}
+
+// A library module can't depend on a local .aar (AGP refuses: the classes would
+// not be packaged). Unpack it instead: classes.jar as a jar dependency and the
+// native .so files as this module's jniLibs — both end up in the app.
+def sherpaUnpacked = file("${buildDir}/sherpa-onnx-${sherpaVersion}")
+def sherpaJar = file("${sherpaUnpacked}/classes.jar")
+if (!sherpaJar.isFile()) {
+    copy {
+        from zipTree(sherpaAar)
+        include 'classes.jar', 'jni/**'
+        into sherpaUnpacked
+    }
+}
+android.sourceSets.main.jniLibs.srcDirs += ["${sherpaUnpacked}/jni"]
+
+dependencies {
+    implementation project(':capacitor-android')
+    implementation files(sherpaJar)
+    // The sherpa-onnx Kotlin API needs the Kotlin stdlib at runtime (a bare AAR declares no dependencies).
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.24'
+    // .tar.bz2 model archive from the sherpa-onnx GitHub releases.
+    implementation 'org.apache.commons:commons-compress:1.27.1'
+}

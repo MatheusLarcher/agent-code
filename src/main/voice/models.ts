@@ -1,10 +1,10 @@
 /**
  * Model loading and inference — runs ONLY inside the voice worker.
  *
- * Kokoro-82M (fp32, CPU) for pt-BR speech here; Whisper (GPU/CPU) in
- * whisper.ts. Both go through @huggingface/transformers + onnxruntime-node. Files are downloaded on
- * first use into `env.cacheDir` (the app's cache folder, set by the host),
- * never into node_modules.
+ * Kokoro-82M (fp32, CPU) for pt-BR speech here, through
+ * @huggingface/transformers + onnxruntime-node; Parakeet (GPU/CPU, plain
+ * onnxruntime-node) in parakeet.ts. Files are downloaded on first use into the
+ * app's cache folder (set by the host), never into node_modules.
  */
 import { existsSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
@@ -36,7 +36,7 @@ export function configureCache(cacheDir: string): void {
 /**
  * ONNX Runtime threads. Its default (one per physical core) spreads work over
  * the E-cores of hybrid Intel CPUs and the stragglers slow every step; a
- * smaller pool measured faster (scripts/voice/bench-whisper.mjs). Override
+ * smaller pool measured faster (measured with the earlier Whisper engine). Override
  * with AGENT_CODE_VOICE_THREADS (0 = leave it to ONNX Runtime).
  */
 export function sessionOptions(): { intraOpNumThreads?: number; interOpNumThreads?: number } {

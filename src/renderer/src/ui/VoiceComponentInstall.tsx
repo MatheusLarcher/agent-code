@@ -9,7 +9,7 @@ interface Props {
   testable?: boolean
 }
 
-const keyOf = (c: VoiceComponent): string => (c.kind === 'tts' ? 'tts' : `${c.kind}:${c.model}`)
+const keyOf = (c: VoiceComponent): string => c.kind
 
 const progressText = (p: SpeechSetupProgress): string =>
   `${p.message}${typeof p.percent === 'number' ? ` ${p.percent}%` : ''}${p.totalMb ? ` de ~${p.totalMb} MB` : ''}`

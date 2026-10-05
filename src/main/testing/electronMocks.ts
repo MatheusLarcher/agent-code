@@ -144,7 +144,6 @@ vi.mock('../voiceService', () => ({
 }))
 vi.mock('../voiceComponents', () => ({ registerVoiceComponentIpc: vi.fn() }))
 vi.mock('../android/androidToolchainIpc', () => ({ registerAndroidToolchainIpc: vi.fn() }))
-vi.mock('../speech', () => ({ stopLocalSpeech: vi.fn(), transcribeLocal: vi.fn() }))
 vi.mock('../auth', () => ({ isAuthenticated: vi.fn(), logoutClaude: vi.fn() }))
 vi.mock('../login', () => ({ runClaudeLogin: vi.fn() }))
 // Contas Claude: uma conta só (a da máquina), como antes das contas existirem.

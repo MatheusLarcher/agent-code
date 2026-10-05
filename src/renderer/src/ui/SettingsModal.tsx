@@ -171,12 +171,7 @@ export function SettingsModal({
       notify('aviso', 'Informe a API key do Ollama para habilitar a integração.')
     }
     // Save only the keys we edit here so we never clobber other settings (e.g. "Permitir tudo").
-    await window.api.setConfig({
-      voice: cfg.voice,
-      ollama,
-      transcribeEngine: cfg.transcribeEngine,
-      localSpeech: cfg.localSpeech
-    })
+    await window.api.setConfig({ voice: cfg.voice, ollama })
     notify('sucesso', 'Configurações salvas. Reconecte a conversa para aplicar.')
     onClose()
   }

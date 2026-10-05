@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
-import { LOCAL_SPEECH_MODELS, VOICE_OPTIONS, VOICE_SPEEDS, type AppConfig, type VoiceId } from '@shared/ipc'
+import { SPEECH_MODEL_SIZE_MB, VOICE_OPTIONS, VOICE_SPEEDS, type AppConfig, type SpeechStatus, type VoiceId } from '@shared/ipc'
 import { VoiceComponentInstall } from './VoiceComponentInstall'
-import { WhisperModelPicker } from './WhisperModelPicker'
 import { useUI } from './UiProvider'
 
 const SAMPLE = 'Olá! Esta é a voz que vai ler as respostas do agente.'
@@ -14,17 +13,28 @@ interface Props {
 
 /**
  * Aba Voz das Configurações. Tudo roda neste computador — não há chave nem
- * serviço na nuvem: a leitura usa o Kokoro, e o ditado o Whisper local (padrão)
- * ou o Parakeet/Canary em Python. Cada modelo tem "Instalar" aqui; sem isso, é
- * baixado no primeiro uso, com o progresso na faixa acima do campo de mensagem.
+ * serviço na nuvem: a leitura usa o Kokoro, e o ditado o Parakeet TDT v3 (ONNX,
+ * GPU ou CPU). Cada modelo tem "Instalar" aqui; sem isso, é baixado no primeiro
+ * uso, com o progresso na faixa acima do campo de mensagem.
  */
 export function VoiceSettingsSection({ cfg, setCfg, loaded }: Props): JSX.Element {
   const { notify } = useUI()
   const [testing, setTesting] = useState(false)
+  const [status, setStatus] = useState<SpeechStatus | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => () => audioRef.current?.pause(), [])
-  const localModel = LOCAL_SPEECH_MODELS.find((m) => m.id === cfg.localSpeech.model)
+  useEffect(() => {
+    let alive = true
+    void window.api
+      ?.voiceStatus?.()
+      .then((s) => alive && setStatus(s))
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [])
+  const running = status?.label ? status : null
 
   // Toca uma frase com a voz e a velocidade ESCOLHIDAS AGORA (antes de salvar).
   const testVoice = async (): Promise<void> => {
@@ -104,57 +114,20 @@ export function VoiceSettingsSection({ cfg, setCfg, loaded }: Props): JSX.Elemen
         </span>
       </section>
 
-      {/* Onde a fala vira texto. Os dois motores rodam aqui; mudam o peso e o que precisam. */}
+      {/* Onde a fala vira texto: um modelo só, o Parakeet, rodando aqui. */}
       <section className="settings-section">
         <div className="settings-field">
           <span className="settings-field-label">Transcrição do microfone</span>
-          <div className="settings-engine-row">
-            <button
-              type="button"
-              className={`settings-engine${cfg.transcribeEngine === 'whisper' ? ' on' : ''}`}
-              disabled={!loaded}
-              onClick={() => setCfg((c) => ({ ...c, transcribeEngine: 'whisper' }))}
-            >
-              <strong>Whisper local</strong>
-              <span>padrão: usa a GPU se houver, senão a CPU; não precisa de Python</span>
-            </button>
-            <button
-              type="button"
-              className={`settings-engine${cfg.transcribeEngine === 'local' ? ' on' : ''}`}
-              disabled={!loaded}
-              onClick={() => setCfg((c) => ({ ...c, transcribeEngine: 'local' }))}
-            >
-              <strong>Parakeet/Canary (Python)</strong>
-              <span>usa a GPU; precisa de um Python com CUDA na máquina</span>
-            </button>
-          </div>
-          {cfg.transcribeEngine === 'local' ? (
-            <>
-              <select
-                className="settings-input"
-                value={cfg.localSpeech.model}
-                disabled={!loaded}
-                onChange={(e) => setCfg((c) => ({ ...c, localSpeech: { model: e.target.value } }))}
-              >
-                {LOCAL_SPEECH_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {`${m.label} — ${m.note} (~${m.sizeMb} MB)`}
-                  </option>
-                ))}
-              </select>
-              <VoiceComponentInstall
-                component={{ kind: 'local', model: cfg.localSpeech.model }}
-                size={`~${localModel?.sizeMb ?? '?'} MB`}
-                testable
-              />
-              <span className="settings-hint">
-                Instale aqui ou deixe para a primeira vez que você falar: o app prepara o ambiente Python e
-                baixa o modelo, mostrando o progresso. Depois disso ele fica salvo e funciona sem internet.
-              </span>
-            </>
-          ) : (
-            <WhisperModelPicker cfg={cfg} setCfg={setCfg} loaded={loaded} />
-          )}
+          <span className="settings-hint" data-testid="speech-device">
+            {running
+              ? `Parakeet TDT v3 rodando em: ${running.label}${running.gpuError ? ` (GPU indisponível: ${running.gpuError})` : ''}.`
+              : 'Parakeet TDT v3 (NVIDIA), 25 idiomas, português detectado sozinho. Tenta a GPU primeiro e cai para a CPU se ela não servir; aparece aqui depois do primeiro ditado.'}
+          </span>
+          <VoiceComponentInstall component={{ kind: 'stt' }} size={`~${SPEECH_MODEL_SIZE_MB} MB`} testable />
+          <span className="settings-hint">
+            Instale aqui ou deixe para a primeira vez que você falar, que baixa o modelo sozinha e mostra o
+            progresso. O áudio nunca sai deste computador.
+          </span>
         </div>
       </section>
     </>

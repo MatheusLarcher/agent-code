@@ -104,7 +104,7 @@ export function mixToMono(channels: Float32Array[]): Float32Array {
 /**
  * Band-limited resampling (windowed-sinc, Blackman window). When
  * downsampling the cutoff drops to the target Nyquist so 48 kHz → 16 kHz
- * does not alias speech sibilants into the band Whisper listens to.
+ * does not alias speech sibilants into the band the speech recognizer listens to.
  */
 export function resample(input: Float32Array, fromRate: number, toRate: number): Float32Array {
   if (fromRate === toRate || input.length === 0) return input

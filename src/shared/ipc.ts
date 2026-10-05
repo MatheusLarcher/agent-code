@@ -1090,31 +1090,36 @@ export function isVoiceId(value: unknown): value is VoiceId {
   return typeof value === 'string' && VOICE_OPTIONS.some((v) => v.id === value)
 }
 
-/** Whisper models offered for dictation. Ids are profiles of the local engine
- *  (WHISPER_PROFILES in src/main/voice/protocol.ts — a test holds them
- *  together). `sizeMb` is the one-time download: on the GPU the turbo encoder
- *  is fp16 (bigger), on the CPU q8. */
-export const WHISPER_MODEL_OPTIONS = [
-  { id: 'turbo-q8', label: 'large-v3-turbo', note: 'padrão, mais preciso', sizeMb: { gpu: 1640, cpu: 1040 } },
-  { id: 'small-fp32', label: 'small', note: 'mais leve', sizeMb: { gpu: 925, cpu: 925 } }
-] as const
-export type WhisperModelId = (typeof WHISPER_MODEL_OPTIONS)[number]['id']
+/**
+ * @deprecated Legacy. Dictation runs on Parakeet TDT v3 (src/main/voice); these
+ * are the Whisper models older versions saved in `voice.whisperModel`. Kept only
+ * so saved configs keep parsing — the value is ignored.
+ */
+const LEGACY_WHISPER_MODELS = ['turbo-q8', 'small-fp32'] as const
+/** @deprecated See LEGACY_WHISPER_MODELS. */
+export type WhisperModelId = (typeof LEGACY_WHISPER_MODELS)[number]
+/** @deprecated See LEGACY_WHISPER_MODELS. */
 export const DEFAULT_WHISPER_MODEL: WhisperModelId = 'turbo-q8'
 
+/** @deprecated See LEGACY_WHISPER_MODELS. */
 export function isWhisperModelId(value: unknown): value is WhisperModelId {
-  return typeof value === 'string' && WHISPER_MODEL_OPTIONS.some((m) => m.id === value)
+  return typeof value === 'string' && (LEGACY_WHISPER_MODELS as readonly string[]).includes(value)
 }
 
-/** Where the local Whisper ran last (Settings › Voz). `device` null = not
- *  loaded since the app (or the voice worker) started. */
-export interface WhisperStatus {
-  model: WhisperModelId
+/** Download size of the dictation model (Parakeet TDT v3 int8), for Settings. */
+export const SPEECH_MODEL_SIZE_MB = 640
+
+/** Where the dictation model (Parakeet) ran last (Settings › Voz). `device`
+ *  null = not loaded since the app (or the voice worker) started. */
+export interface SpeechStatus {
   device: 'dml' | 'cuda' | 'cpu' | null
   /** 'GPU (DirectML)' / 'GPU (CUDA)' / 'CPU'. */
   label: string | null
   /** Why the GPU was set aside, when it was. */
   gpuError?: string
 }
+/** @deprecated Old name of SpeechStatus (the preload/api still import it). */
+export type WhisperStatus = SpeechStatus
 
 /** A stored speed clamped to what Kokoro accepts; garbage becomes 1. */
 export function normalizeVoiceSpeed(value: unknown): number {
@@ -1525,8 +1530,7 @@ export interface VoiceConfig {
   /** Reading speed: 0.8 = slow, 1 = normal, 1.5 = fast. Passed to Kokoro as its
    *  native `speed` — nothing is sped up again at playback. */
   speed: number
-  /** Whisper model for dictation (one of WHISPER_MODEL_OPTIONS). Saved configs
-   *  without one get DEFAULT_WHISPER_MODEL. */
+  /** @deprecated Whisper model of older versions; ignored (dictation is Parakeet). */
   whisperModel: WhisperModelId
 }
 
@@ -1558,16 +1562,12 @@ export interface ProvidersStatus {
 /** Resposta de `sandboxCreate`: erro de disco vira `{ error }`, nunca lança. */
 export type SandboxCreateResult = { path: string } | { error: string }
 
-/** Which on-device engine transcribes dictation. Both work offline and send no
- *  audio anywhere; each downloads its model the first time.
- *  - 'whisper': Whisper via ONNX in a utility process (src/main/voice), GPU
- *    (DirectML/CUDA) when available, else CPU.
- *  - 'local': NVIDIA Parakeet/Canary through a Python venv (`speech.ts`), needs
- *    a CUDA-capable Python already on the machine. */
+/** @deprecated Engine choice of older versions ('whisper' = Whisper ONNX,
+ *  'local' = Parakeet/Canary in Python). Both were replaced by one engine,
+ *  Parakeet TDT v3 on onnxruntime-node; saved values still parse and are ignored. */
 export type TranscribeEngine = 'whisper' | 'local'
-export const TRANSCRIBE_ENGINES: readonly TranscribeEngine[] = ['whisper', 'local']
 
-/** State of the local voice models (Kokoro read-aloud + Whisper dictation),
+/** State of the local voice models (Kokoro read-aloud + Parakeet dictation),
  *  or of one VoiceComponent. */
 export interface VoiceInstallStatus {
   installed: boolean
@@ -1577,11 +1577,8 @@ export interface VoiceInstallStatus {
 }
 
 /** One installable piece of the on-device voice stack (Settings › Voz):
- *  Kokoro, one Whisper model, or one Parakeet/Canary model (Python engine). */
-export type VoiceComponent =
-  | { kind: 'tts' }
-  | { kind: 'whisper'; model: WhisperModelId }
-  | { kind: 'local'; model: string }
+ *  Kokoro (read-aloud) or Parakeet (dictation). */
+export type VoiceComponent = { kind: 'tts' } | { kind: 'stt' }
 
 /** Settings › Voz "Testar transcrição": a known phrase spoken by Kokoro and
  *  transcribed back by the chosen model. `ok` = the words came back. */
@@ -1616,62 +1613,18 @@ export interface SpeechSetupProgress {
   totalMb?: number
 }
 
-/** Local speech-to-text: which model, and where it stands on this machine. */
+/** @deprecated Model of the old Python engine; saved values still parse and are ignored. */
 export interface LocalSpeechConfig {
-  /** Model id (Hugging Face) used when the engine is 'local'. */
   model: string
 }
-
-/**
- * Models offered for on-device dictation. NVIDIA's Parakeet, not Whisper: it was
- * measured faster (1.9s for 15s of audio on a laptop RTX 5050, 1.3 GB VRAM) with
- * equivalent text, covers 25 languages including Portuguese, and is CC-BY-4.0.
- * It runs through `transformers` (>= 5.10) — no NeMo toolkit required.
- *
- * `sizeMb` is the model download, and it's only paid ONCE PER MACHINE: the
- * Hugging Face cache is shared with any other project that already pulled it.
- */
-export const LOCAL_SPEECH_MODELS: {
-  id: string
-  label: string
-  sizeMb: number
-  note: string
-  /** Which stack loads it — they need separate environments (see `speech.ts`). */
-  runtime: 'transformers' | 'nemo'
-}[] = [
-  {
-    id: 'nvidia/parakeet-tdt-0.6b-v3',
-    label: 'Rápido',
-    sizeMb: 2400,
-    note: 'Parakeet TDT — resposta quase imediata, 25 idiomas',
-    runtime: 'transformers'
-  },
-  {
-    // Canary-Qwen 2.5B foi testado antes e REPROVADO para este uso: é só inglês,
-    // e transcreveu "Olá, este é um teste…" como "Hola es tu un test…". O 1B v2
-    // cobre 25 idiomas, português incluído, e é o mais preciso da família.
-    id: 'nvidia/canary-1b-v2',
-    label: 'Máxima precisão',
-    sizeMb: 6400,
-    note: 'Canary 1B v2 — mais preciso, porém mais pesado e lento',
-    runtime: 'nemo'
-  }
-]
-
-/** Runtime that loads a given model (defaults to the lighter one). */
-export function localSpeechRuntime(model: string): 'transformers' | 'nemo' {
-  return LOCAL_SPEECH_MODELS.find((m) => m.id === model)?.runtime ?? 'transformers'
-}
-
-export const DEFAULT_LOCAL_SPEECH_MODEL = LOCAL_SPEECH_MODELS[0].id
 
 /** Everything the user can configure — persisted across app restarts. */
 export interface AppConfig {
   /** Read-aloud voice and speed (local Kokoro). */
   voice: VoiceConfig
-  /** Which engine transcribes dictation. Whisper is the default (no Python needed). */
+  /** @deprecated Ignored: dictation always runs on Parakeet (see TranscribeEngine). */
   transcribeEngine: TranscribeEngine
-  /** Settings for the Python engine (only used when `transcribeEngine` is 'local'). */
+  /** @deprecated Ignored (see LocalSpeechConfig). */
   localSpeech: LocalSpeechConfig
   /** Ollama Cloud key + toggle (adds Ollama models to the selector). */
   ollama: OllamaConfig
@@ -1915,7 +1868,7 @@ export interface MemoryConflictItem {
 export const DEFAULT_CONFIG: AppConfig = {
   voice: { voice: DEFAULT_VOICE, speed: 1, whisperModel: DEFAULT_WHISPER_MODEL },
   transcribeEngine: 'whisper',
-  localSpeech: { model: DEFAULT_LOCAL_SPEECH_MODEL },
+  localSpeech: { model: 'nvidia/parakeet-tdt-0.6b-v3' },
   ollama: { enabled: false, apiKey: '' },
   skipPermissions: false,
   windowsControlEnabled: false,
@@ -2159,13 +2112,13 @@ export const Channels = {
   remoteBuildApk: 'remote:build-apk',
   /** Transcribe recorded audio to text with the configured on-device engine. */
   voiceTranscribe: 'voice:transcribe',
-  /** main → renderer: an on-device voice model (Kokoro/Whisper/Parakeet) is being downloaded/prepared. */
+  /** main → renderer: an on-device voice model (Kokoro/Parakeet) is being downloaded/prepared. */
   speechSetupProgress: 'speech:setup-progress',
   /** Synthesize speech from text with the local Kokoro engine. */
   voiceTts: 'voice:tts',
-  /** Local Whisper model + where it last ran (GPU/CPU), for Settings › Voz. */
+  /** Where the dictation model (Parakeet) last ran (GPU/CPU), for Settings › Voz. */
   voiceStatus: 'voice:status',
-  /** Download/prepare the Kokoro + Whisper models ahead of the first use (mic menu). */
+  /** Download/prepare the Kokoro + Parakeet models ahead of the first use (mic menu). */
   voiceInstall: 'voice:install',
   /** Whether the local voice models are installed / being installed. */
   voiceInstallStatus: 'voice:install-status',

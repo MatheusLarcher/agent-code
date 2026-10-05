@@ -8,28 +8,23 @@ const cfg = vi.hoisted(() => ({ current: null as unknown as AppConfig }))
 const engine = vi.hoisted(() => ({
   setVoiceCacheDir: vi.fn(),
   synthesizeLocal: vi.fn(),
-  transcribeWhisper: vi.fn(async () => 'texto do whisper'),
+  transcribeSpeech: vi.fn(
+    async (_audio: string, _mime: string, onProgress?: (p: unknown) => void): Promise<string> => {
+      onProgress?.({ phase: 'transcribe' })
+      return 'texto do parakeet'
+    }
+  ),
   stopVoiceEngine: vi.fn(async () => {}),
-  setWhisperProfile: vi.fn(),
-  getWhisperStatus: vi.fn(() => ({ profile: 'small-fp32', device: 'dml', label: 'GPU (DirectML)' })),
+  getSttStatus: vi.fn((): { device: string | null; label: string | null; gpuError?: string } => ({ device: 'dml', label: 'GPU (DirectML)' })),
   prepareVoiceModels: vi.fn(async (_what: string, _onProgress?: (p: unknown) => void) => {}),
-  voiceModelsInstalled: vi.fn(() => false)
-}))
-const python = vi.hoisted(() => ({
-  transcribeLocal: vi.fn(async (_wav: Buffer, _model: string, _report: unknown) => 'texto do parakeet')
-}))
-const chromium = vi.hoisted(() => ({
-  canDecodeWithChromium: vi.fn(() => true),
-  decodeWithChromium: vi.fn(async () => new Float32Array(1600))
+  voiceModelsInstalled: vi.fn((_dir: string) => false)
 }))
 vi.mock('electron', () => ({}))
 vi.mock('./config', () => ({ loadConfig: () => cfg.current }))
 vi.mock('./store', () => ({ getCacheInfo: () => ({ localDir: 'C:/local' }) }))
-vi.mock('./speech', () => python)
 vi.mock('./voice', () => engine)
-vi.mock('./voice/chromiumDecode', () => chromium)
 
-const { installVoice, resolveSpeakOptions, resolveWhisperModel, speak, speechParts, transcribe, voiceInstallStatus, whisperStatus } =
+const { installVoice, resolveSpeakOptions, speak, speechParts, speechStatus, transcribe, voiceInstallStatus } =
   await import('./voiceService')
 
 function wav(samples: number): string {
@@ -39,8 +34,6 @@ function wav(samples: number): string {
 beforeEach(() => {
   cfg.current = { ...DEFAULT_CONFIG, voice: { voice: 'pm_alex', speed: 1.25, whisperModel: 'turbo-q8' } }
   for (const fn of Object.values(engine)) fn.mockClear()
-  python.transcribeLocal.mockClear()
-  chromium.decodeWithChromium.mockClear()
   engine.synthesizeLocal.mockImplementation(async () => ({ base64: wav(240), mimeType: 'audio/wav', durationSec: 0.01, chunks: 1 }))
 })
 
@@ -78,7 +71,7 @@ describe('voiceService — leitura', () => {
 })
 
 describe('voiceService — instalar voz e transcrição', () => {
-  it('prepara Kokoro e depois Whisper (perfil da config) e fecha com um único "done"', async () => {
+  it('prepara Kokoro e depois Parakeet e fecha com um único "done"', async () => {
     const sent: Array<{ stage: string; message: string }> = []
     engine.prepareVoiceModels.mockImplementation(async (what, onProgress) => {
       onProgress?.({ phase: 'download', file: `${what}.onnx`, loaded: 5, total: 10 })
@@ -86,8 +79,8 @@ describe('voiceService — instalar voz e transcrição', () => {
     })
     await installVoice((p) => sent.push(p))
     expect(engine.prepareVoiceModels.mock.calls.map((c) => c[0])).toEqual(['tts', 'stt'])
-    expect(engine.setWhisperProfile).toHaveBeenCalledWith('turbo-q8')
     expect(sent.some((p) => p.stage === 'downloading')).toBe(true)
+    expect(sent.some((p) => p.stage === 'error')).toBe(false)
     expect(sent.filter((p) => p.stage === 'done')).toEqual([{ stage: 'done', message: 'Voz e transcrição instaladas.' }])
   })
 
@@ -116,52 +109,64 @@ describe('voiceService — instalar voz e transcrição', () => {
     await installVoice()
   })
 
-  it('status "instalado" vem dos arquivos no cache do perfil escolhido', () => {
+  it('status "instalado" vem dos arquivos no cache local', () => {
     engine.voiceModelsInstalled.mockReturnValueOnce(true)
     expect(voiceInstallStatus()).toEqual({ installed: true, installing: false })
-    expect(engine.voiceModelsInstalled).toHaveBeenLastCalledWith(expect.stringMatching(/voice-models$/), 'turbo-q8')
+    expect(engine.voiceModelsInstalled).toHaveBeenLastCalledWith(expect.stringMatching(/C:[\\/]local[\\/]voice-models$/))
     expect(voiceInstallStatus().installed).toBe(false)
   })
 })
 
 describe('voiceService — ditado', () => {
-  it("'whisper' (padrão) vai para o Whisper local com o mime original", async () => {
-    cfg.current = { ...cfg.current, transcribeEngine: 'whisper' }
-    expect(await transcribe('GkXfow==', 'audio/webm;codecs=opus')).toBe('texto do whisper')
-    expect(engine.transcribeWhisper).toHaveBeenCalledWith('GkXfow==', 'audio/webm;codecs=opus', expect.any(Function))
-    expect(python.transcribeLocal).not.toHaveBeenCalled()
+  it('vai para o Parakeet com o áudio e o mime originais (o motor decodifica WebM/WAV)', async () => {
+    expect(await transcribe('GkXfow==', 'audio/webm;codecs=opus')).toBe('texto do parakeet')
+    expect(engine.transcribeSpeech).toHaveBeenCalledWith('GkXfow==', 'audio/webm;codecs=opus', expect.any(Function))
   })
 
-  it('aplica o modelo Whisper da config a cada ditado (troca sem reiniciar); inválido vira turbo-q8', async () => {
-    cfg.current = { ...cfg.current, transcribeEngine: 'whisper' }
-    await transcribe('GkXfow==', 'audio/webm')
-    expect(engine.setWhisperProfile).toHaveBeenLastCalledWith('turbo-q8')
-    cfg.current = { ...cfg.current, voice: { ...cfg.current.voice, whisperModel: 'small-fp32' } }
-    await transcribe('GkXfow==', 'audio/webm')
-    expect(engine.setWhisperProfile).toHaveBeenLastCalledWith('small-fp32')
-    cfg.current = { ...cfg.current, voice: { ...cfg.current.voice, whisperModel: 'huge' as never } }
-    await transcribe('GkXfow==', 'audio/webm')
-    expect(engine.setWhisperProfile).toHaveBeenLastCalledWith('turbo-q8')
-    expect(resolveWhisperModel(undefined)).toBe('turbo-q8')
+  it('valores antigos da config (Whisper/Python) são ignorados: sempre Parakeet', async () => {
+    cfg.current = { ...cfg.current, transcribeEngine: 'local', voice: { ...cfg.current.voice, whisperModel: 'small-fp32' } }
+    expect(await transcribe('GkXfow==', 'audio/webm')).toBe('texto do parakeet')
+    expect(engine.transcribeSpeech).toHaveBeenCalledTimes(1)
+    expect(engine.transcribeSpeech).toHaveBeenCalledWith('GkXfow==', 'audio/webm', expect.any(Function))
   })
 
-  it('status: modelo da config e o dispositivo em que rodou', () => {
-    cfg.current = { ...cfg.current, voice: { ...cfg.current.voice, whisperModel: 'small-fp32' } }
-    expect(whisperStatus()).toEqual({ model: 'small-fp32', device: 'dml', label: 'GPU (DirectML)' })
-    expect(engine.setWhisperProfile).toHaveBeenLastCalledWith('small-fp32')
+  it('áudio vazio rejeita sem chamar o motor; mime não-string vira vazio', async () => {
+    await expect(transcribe('', 'audio/wav')).rejects.toThrow('áudio vazio')
+    await expect(transcribe(42 as never, 'audio/wav')).rejects.toThrow('áudio vazio')
+    expect(engine.transcribeSpeech).not.toHaveBeenCalled()
+    await transcribe('UklGRg==', undefined as never)
+    expect(engine.transcribeSpeech).toHaveBeenLastCalledWith('UklGRg==', '', expect.any(Function))
   })
 
-  it("'local' usa o Python; WebM do celular vira WAV antes", async () => {
-    cfg.current = { ...cfg.current, transcribeEngine: 'local' }
-    expect(await transcribe(Buffer.from('webm-bytes').toString('base64'), 'audio/webm')).toBe('texto do parakeet')
-    expect(chromium.decodeWithChromium).toHaveBeenCalledTimes(1)
-    const sentWav = python.transcribeLocal.mock.calls[0][0]
-    expect(parseWav(sentWav).sampleRate).toBe(16000)
+  it('primeiro uso: o download do Parakeet vira aviso que fecha ao transcrever; modelo já carregado não avisa', async () => {
+    const sent: Array<{ stage: string; message: string }> = []
+    engine.transcribeSpeech.mockImplementationOnce(async (_a, _m, onProgress) => {
+      onProgress?.({ phase: 'download', file: 'encoder.onnx', loaded: 5, total: 10 })
+      onProgress?.({ phase: 'transcribe' })
+      return 'oi'
+    })
+    expect(await transcribe('GkXfow==', 'audio/webm', (p) => sent.push(p))).toBe('oi')
+    expect(sent.map((p) => p.stage)).toEqual(['downloading', 'done'])
+    expect(sent[0].message).toContain('Parakeet')
 
-    // WAV do desktop segue direto, sem decodificar.
-    const desktopWav = encodeWavPcm16(new Float32Array(160), 16000)
-    await transcribe(desktopWav.toString('base64'), 'audio/wav')
-    expect(chromium.decodeWithChromium).toHaveBeenCalledTimes(1)
-    expect(engine.transcribeWhisper).not.toHaveBeenCalled()
+    const quiet: unknown[] = []
+    await transcribe('GkXfow==', 'audio/webm', (p) => quiet.push(p))
+    expect(quiet).toEqual([])
+  })
+
+  it('erro do motor durante o download rejeita e fecha o aviso com erro', async () => {
+    const sent: Array<{ stage: string; message: string }> = []
+    engine.transcribeSpeech.mockImplementationOnce(async (_a, _m, onProgress) => {
+      onProgress?.({ phase: 'download', file: 'encoder.onnx', loaded: 1, total: 10 })
+      throw new Error('sem rede')
+    })
+    await expect(transcribe('GkXfow==', 'audio/webm', (p) => sent.push(p))).rejects.toThrow('sem rede')
+    expect(sent.map((p) => p.stage)).toEqual(['downloading', 'error'])
+  })
+
+  it('status: o dispositivo em que o Parakeet rodou (e por que a GPU caiu)', () => {
+    expect(speechStatus()).toEqual({ device: 'dml', label: 'GPU (DirectML)' })
+    engine.getSttStatus.mockReturnValueOnce({ device: 'cpu', label: 'CPU', gpuError: 'sem DirectML' })
+    expect(speechStatus()).toEqual({ device: 'cpu', label: 'CPU', gpuError: 'sem DirectML' })
   })
 })

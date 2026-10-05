@@ -314,6 +314,21 @@ html, body {
   transform: translateX(22px); background: #fff;
 }
 
+/* "Voz" card (localStt.js): on-device model install */
+#cfg-voice .cfg-switch-input:checked + .cfg-switch-visual {
+  background: color-mix(in srgb, var(--accent) 70%, transparent); border-color: var(--accent);
+}
+.cfg-btn {
+  width: 100%; border-radius: 11px; padding: 12px; font-size: 14px; font-weight: 600; cursor: pointer;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.cfg-btn:active { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.voice-progress { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.voice-progress span {
+  display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.3s;
+}
+
 /* conversation history drawer (mirrors the desktop sidebar) */
 .drawer {
   position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;

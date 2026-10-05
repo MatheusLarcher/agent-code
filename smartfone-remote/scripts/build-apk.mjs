@@ -104,8 +104,17 @@ function findApk(dir) {
   return best
 }
 
+/** node_modules absent or missing a declared dependency (e.g. the local plugins/parakeet-stt). */
+function missingDependencies() {
+  if (!existsSync(join(ROOT, 'node_modules'))) return true
+  let deps = {}
+  try { deps = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).dependencies || {} } catch { return false }
+  return Object.keys(deps).some((n) => !existsSync(join(ROOT, 'node_modules', n, 'package.json')))
+}
+
 async function main() {
-  if (!existsSync(join(ROOT, 'node_modules'))) {
+  // `cap sync` only wires native plugins that are present in node_modules.
+  if (missingDependencies()) {
     console.log('→ npm install')
     if ((await run('npm', ['install'])) !== 0) process.exit(1)
   }

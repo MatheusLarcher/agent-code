@@ -759,8 +759,7 @@ function fetchState() {
       state.pairedDevice = data.pairedDevice || null
       var wasReady = state.voiceReady
       state.voiceReady = !!data.voiceReady
-      var mic = $('mic')
-      if (mic) mic.hidden = !state.voiceReady
+      syncMicButton()
       // Mirror the PC's "Permitir tudo" state; keep the settings toggle in sync.
       state.skipPerms = !!data.skipPerms
       syncSkipToggle()
@@ -1193,6 +1192,7 @@ function openSettings() {
   $('cfg-token').textContent = state.token || '—'
   syncSkipToggle()
   renderUsage()
+  if (window.LocalStt) { LocalStt.renderCard(); LocalStt.refresh() }
   $('settings').hidden = false
 }
 function closeSettings() {
@@ -1792,8 +1792,17 @@ function toggleMic() {
   else startRecording()
 }
 
+// Mic shows when the PC transcribes or the on-device model (localStt.js) is installed.
+function micAvailable() {
+  return state.voiceReady || !!(window.LocalStt && LocalStt.ready())
+}
+function syncMicButton() {
+  var mic = $('mic')
+  if (mic) mic.hidden = !micAvailable()
+}
+
 function startRecording() {
-  if (!state.voiceReady) { alert('A voz não está disponível nesta versão do app do PC.'); return }
+  if (!micAvailable()) { alert('A voz não está disponível nesta versão do app do PC.'); return }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
     alert('Microfone indisponível aqui. Use o app instalado (no navegador via http a gravação é bloqueada).')
     return
@@ -1852,9 +1861,32 @@ function blobToBase64(blob) {
   })
 }
 
-// Send the recorded audio to the PC, which transcribes it and returns text we
-// drop into the input box (appended to whatever is already typed).
+// Append dictated text to whatever is already typed.
+function insertDictation(text) {
+  var input = $('input')
+  var t = String(text).trim()
+  if (!t) return
+  input.value = input.value.trim() ? input.value.trim() + ' ' + t : t
+  autoGrow()
+  input.focus()
+}
+
+// Transcribe on the phone when the local model is installed (localStt.js),
+// otherwise — or if that fails — on the PC.
 function transcribeBlob(blob, type) {
+  setMicUI(false, true)
+  if (!window.LocalStt) { transcribeOnPc(blob, type); return }
+  LocalStt.handle(blob, {
+    pcReady: state.voiceReady,
+    toPc: function () { transcribeOnPc(blob, type) },
+    insert: insertDictation,
+    done: function () { setMicUI(false) },
+    fail: function (msg) { setMicUI(false); alert(msg) }
+  })
+}
+
+// Send the recorded audio to the PC, which transcribes it and returns the text.
+function transcribeOnPc(blob, type) {
   setMicUI(false, true)
   blobToBase64(blob).then(function (b64) {
     if (!b64) { setMicUI(false); return }
@@ -1865,11 +1897,7 @@ function transcribeBlob(blob, type) {
     }).then(function (r) { return r.json() }).then(function (d) {
       setMicUI(false)
       if (d && d.ok && d.text) {
-        var input = $('input')
-        var t = String(d.text).trim()
-        input.value = input.value.trim() ? input.value.trim() + ' ' + t : t
-        autoGrow()
-        input.focus()
+        insertDictation(d.text)
       } else {
         alert('Transcrição falhou: ' + ((d && d.error) || 'erro'))
       }
@@ -2305,6 +2333,7 @@ function init() {
   $('blocked-takeover').addEventListener('click', function () { beginPairingReconnect(true) })
   $('blocked-cancel').addEventListener('click', cancelPairingReconnect)
   $('mic').addEventListener('click', toggleMic)
+  if (window.LocalStt) LocalStt.onChange(syncMicButton)
   // blur() right after choosing: Android keeps the <select> focused after its
   // native dialog closes, and a focused select blocks renderModelBar's rebuild
   // guard — the selectors would never reconcile with the PC again.

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 /**
  * "Instalar voz e transcrição" item of the mic menu: downloads the local Kokoro
- * and Whisper models now instead of on the first audio. Progress and the final
+ * and Parakeet models now instead of on the first audio. Progress and the final
  * result show on the Composer's speech-setup notice (same channel as the
  * on-demand download); here only the item's own state: installed / installing /
  * error. Mounted when the menu opens, so the status is read fresh each time.
@@ -57,7 +57,7 @@ export function VoiceInstallItem(): React.JSX.Element | null {
         onClick={() => void install()}
         disabled={busy || installed}
         aria-disabled={busy || installed}
-        title="Baixa a voz (Kokoro) e a transcrição (Whisper) agora, em vez de esperar o primeiro áudio"
+        title="Baixa a voz (Kokoro) e a transcrição (Parakeet) agora, em vez de esperar o primeiro áudio"
       >
         <span className="mic-check">{installed ? '✓' : ''}</span>
         {installed ? 'Voz e transcrição instaladas' : busy ? 'Instalando voz e transcrição…' : 'Instalar voz e transcrição'}

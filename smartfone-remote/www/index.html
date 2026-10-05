@@ -178,6 +178,26 @@
             <div class="cfg-card-title">Uso da conta e contexto</div>
             <div id="cfg-usage" class="cfg-usage"></div>
           </section>
+          <!-- Ditado no próprio celular (Parakeet v3, plugin local; localStt.js). Só no app instalado. -->
+          <section id="cfg-voice" class="cfg-card" hidden>
+            <div class="cfg-card-title">Voz</div>
+            <span class="cfg-desc">Transcreve o que você fala no próprio celular (Parakeet v3, offline). Sem o modelo, o áudio vai para o PC.</span>
+            <div class="cfg-row"><span class="cfg-k">Modelo</span><span class="cfg-v" id="voice-status">—</span></div>
+            <div id="voice-progress" class="voice-progress" hidden><span id="voice-progress-fill"></span></div>
+            <div class="cfg-row"><span class="cfg-k">Transcrição em</span><span class="cfg-v" id="voice-device">—</span></div>
+            <div class="cfg-row"><span class="cfg-k">Processador</span><span class="cfg-v" id="voice-soc">—</span></div>
+            <button id="voice-install" class="cfg-btn">Instalar modelo</button>
+            <button id="voice-cancel" class="cfg-btn" hidden>Cancelar</button>
+            <button id="voice-remove" class="cfg-exit" hidden>Remover modelo</button>
+            <label class="cfg-switch-row">
+              <span class="cfg-switch-text">
+                <strong>Transcrever no PC</strong>
+                <span class="cfg-desc">Ignora o modelo do celular e envia o áudio ao PC.</span>
+              </span>
+              <input id="voice-use-pc" class="cfg-switch-input" type="checkbox" />
+              <span class="cfg-switch-visual" aria-hidden="true"></span>
+            </label>
+          </section>
           <section class="cfg-card">
             <div class="cfg-card-title">Conexão</div>
             <div class="cfg-row"><span class="cfg-k">Endereço</span><span class="cfg-v" id="cfg-addr">—</span></div>
@@ -217,6 +237,7 @@
     </section>
 
     <script src="jsqr.js"></script>
+    <script src="localStt.js"></script>
     <script src="app.js"></script>
     <script src="central.js"></script>
     <script src="centralTurns.js"></script>

@@ -5,66 +5,69 @@ export const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX'
 export const KOKORO_VOICES =['pf_dora', 'pm_alex', 'pm_santa'] as const
 export type KokoroVoice = (typeof KOKORO_VOICES)[number]
 
-export type Dtype = 'fp32' | 'fp16' | 'q8' | 'q4'
-export interface WhisperSpec {
-  model: string
-  /** Precision of each file on the CPU. */
-  dtype: { encoder_model: Dtype; decoder_model_merged: Dtype }
-  /**
-   * Encoder precision on the GPU; absent = CPU only. Only the ENCODER goes to
-   * the GPU: under DirectML the merged decoder (its `If` node + KV cache) runs
-   * but emits no tokens in any precision (q8/fp16/fp32), and the q8 encoder
-   * (MatMulInteger/DynamicQuantizeLinear) is slower there than fp16.
-   * Reproduce with scripts/voice/probe-gpu.mjs; latency by
-   * scripts/voice/bench-whisper.mjs --devices gpu,cpu.
-   */
-  gpuEncoder?: Dtype
-}
 /**
- * Whisper model + ONNX precision per profile. The default is picked by
- * scripts/voice/bench-whisper.mjs (see WHISPER_PROFILE in index.ts).
+ * NVIDIA Parakeet TDT 0.6B v3 exported to ONNX by istupakov (the onnx-asr
+ * project), int8. 25 languages; the language (Portuguese included) is detected
+ * from the audio — there is no language prompt. Pinned to one revision and
+ * checked by sha256, so a changed upload can never be loaded silently.
+ *   nemo128.onnx    waveform → 128 log-mel features (NeMo's preprocessor)
+ *   encoder         features → encoder frames (one per 80 ms)
+ *   decoder_joint   prediction net + joint: token logits ++ TDT duration logits
  */
-export const WHISPER_PROFILES = {
-  'small-fp32': {
-    model: 'onnx-community/whisper-small',
-    dtype: { encoder_model: 'fp32', decoder_model_merged: 'fp32' },
-    gpuEncoder: 'fp32'
+export const PARAKEET_MODEL = 'istupakov/parakeet-tdt-0.6b-v3-onnx'
+export const PARAKEET_REVISION = '8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce'
+export interface ModelFile {
+  name: string
+  size: number
+  /** sha256 of the file (Git LFS oid); absent for small text files. */
+  sha256?: string
+}
+export const PARAKEET_FILES = {
+  config: { name: 'config.json', size: 97 },
+  vocab: { name: 'vocab.txt', size: 93939 },
+  preprocessor: {
+    name: 'nemo128.onnx',
+    size: 139764,
+    sha256: 'a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f'
   },
-  'small-q8': { model: 'onnx-community/whisper-small', dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' } },
-  'turbo-q8': {
-    model: 'onnx-community/whisper-large-v3-turbo',
-    dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' },
-    gpuEncoder: 'fp16'
+  encoder: {
+    name: 'encoder-model.int8.onnx',
+    size: 652183999,
+    sha256: '6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09'
   },
-  'turbo-q4': { model: 'onnx-community/whisper-large-v3-turbo', dtype: { encoder_model: 'q4', decoder_model_merged: 'q4' } }
-} as const satisfies Record<string, WhisperSpec>
-export type WhisperProfile = keyof typeof WHISPER_PROFILES
+  decoderJoint: {
+    name: 'decoder_joint-model.int8.onnx',
+    size: 18202004,
+    sha256: 'eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70'
+  }
+} as const satisfies Record<string, ModelFile>
 
-/** Where Whisper's encoder actually runs: 'dml' (DirectML, Windows), 'cuda'
- *  (Linux x64 with the CUDA EP installed) or 'cpu'. */
-export type WhisperDevice = 'dml' | 'cuda' | 'cpu'
+/** Where the transcription model actually runs: 'cuda' (CUDA EP), 'dml'
+ *  (DirectML, Windows — also NVIDIA cards) or 'cpu'. */
+export type SttDevice = 'cuda' | 'dml' | 'cpu'
 
-/** The GPU execution provider onnxruntime-node can try here, or null. Its
- *  Windows build ships DirectML; on Linux x64 CUDA needs the CUDA EP installed
- *  (else the session fails and the CPU takes over). */
+/**
+ * The GPU execution provider to try, or null. Picks from what this
+ * onnxruntime-node build reports (listSupportedBackends): CUDA when present
+ * (Linux x64 with the CUDA EP installed), else DirectML (the Windows build —
+ * which has no CUDA EP as of 1.21), else none.
+ */
 export function gpuDeviceFor(
-  platform: string = process.platform,
-  arch: string = process.arch,
+  supported: readonly string[],
   pref: string | undefined = process.env.AGENT_CODE_VOICE_DEVICE
-): Exclude<WhisperDevice, 'cpu'> | null {
+): Exclude<SttDevice, 'cpu'> | null {
   if (pref === 'cpu') return null
-  if (platform === 'win32') return 'dml'
-  if (platform === 'linux' && arch === 'x64') return 'cuda'
+  if (supported.includes('cuda')) return 'cuda'
+  if (supported.includes('dml')) return 'dml'
   return null
 }
 
-export function deviceLabel(device: WhisperDevice): string {
+export function deviceLabel(device: SttDevice): string {
   return device === 'dml' ? 'GPU (DirectML)' : device === 'cuda' ? 'GPU (CUDA)' : 'CPU'
 }
 /** What the worker reports after loading/transcribing. */
-export interface WhisperState {
-  profile: WhisperProfile
-  device: WhisperDevice
+export interface SttState {
+  device: SttDevice
   /** Why a GPU attempt was abandoned, when it was. */
   gpuError?: string
 }
@@ -82,12 +85,12 @@ export interface VoiceProgress {
 
 export type WorkerRequest =
   | { id: number; op: 'config'; cacheDir: string }
-  | { id: number; op: 'prepare'; what: 'tts' | 'stt'; profile: WhisperProfile }
+  | { id: number; op: 'prepare'; what: 'tts' | 'stt' }
   | { id: number; op: 'synthesize'; text: string; voice: KokoroVoice; speed: number }
-  | { id: number; op: 'transcribe'; profile: WhisperProfile; audio?: Uint8Array; pcm?: Float32Array; mimeType?: string }
+  | { id: number; op: 'transcribe'; audio?: Uint8Array; pcm?: Float32Array; mimeType?: string }
 
 /** Result of 'transcribe' (text) and of 'prepare' for 'stt' (text = ''). */
-export interface TranscribeResult extends Partial<WhisperState> {
+export interface TranscribeResult extends Partial<SttState> {
   text: string
 }
 

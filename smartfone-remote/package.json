@@ -13,7 +13,8 @@
   "dependencies": {
     "@capacitor/android": "^6.2.0",
     "@capacitor/core": "^6.2.0",
-    "jsqr": "^1.4.0"
+    "jsqr": "^1.4.0",
+    "parakeet-stt": "file:plugins/parakeet-stt"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

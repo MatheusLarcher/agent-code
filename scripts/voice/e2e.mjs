@@ -1,16 +1,18 @@
 // End-to-end check of the local voice engine under plain Node (worker_threads):
-// pt-BR text → Kokoro WAV → Whisper → text, plus long-text, speed, voices,
-// WebM/Ogg decoding and the host event loop's responsiveness during synthesis.
+// pt-BR text → Kokoro WAV → Parakeet → text, plus long-text (> 60 s, so the
+// transcription goes in windows), speed, voices, WebM/Ogg decoding and the host
+// event loop's responsiveness during synthesis.
 //
 //   npx electron-vite build
-//   node scripts/voice/e2e.mjs [--cache <dir>] [--out <dir>] [--profile small-fp32|small-q8|turbo-q8|turbo-q4]
+//   node scripts/voice/e2e.mjs [--cache <dir>] [--out <dir>]
+//   (AGENT_CODE_VOICE_DEVICE=cpu forces the CPU)
 //
 // ffmpeg (if on PATH) is used ONLY to make WebM/Ogg fixtures from the WAV the
 // engine produced — the engine itself never calls it.
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { arg, defaultCache, dirArg, fmt, loadEngine, wer, withLoopProbe } from './lib.mjs'
+import { defaultCache, dirArg, fmt, loadEngine, wer, withLoopProbe } from './lib.mjs'
 
 const SHORT = 'Olá! Este é o motor de voz local do Agent Code, falando português do Brasil sem nenhum serviço na nuvem.'
 const LONG = [
@@ -21,7 +23,7 @@ const LONG = [
   'Por isso, neste aplicativo, cada tarefa tem um escopo de escrita, cada passo deixa uma evidência e quem fecha o trabalho é sempre um revisor.',
   'A voz entra nessa história como um atalho: falar é mais rápido do que digitar, e ouvir a resposta enquanto se caminha pela casa libera as mãos e os olhos.',
   'Com o motor local, nada disso depende da internet depois do primeiro download dos modelos.',
-  'O texto é convertido em fonemas pelo eSpeak, a voz é gerada pelo Kokoro e a transcrição fica por conta do Whisper, tudo rodando no processador da própria máquina.',
+  'O texto é convertido em fonemas pelo eSpeak, a voz é gerada pelo Kokoro e a transcrição fica por conta do Parakeet, tudo rodando na própria máquina.',
   'O resultado não é perfeito, mas é privado, gratuito e está sempre disponível, mesmo quando a conexão cai no meio de uma conversa importante.',
   'Para quem trabalha em silêncio, basta desligar a leitura em voz alta; para quem prefere ouvir, dá para escolher entre três vozes e ajustar a velocidade.',
   'No fim das contas, a tecnologia só vale a pena quando some no fundo e deixa a gente pensar no que realmente importa.'
@@ -34,8 +36,6 @@ const log = (...a) => console.log('[e2e]', ...a)
 
 const eng = await loadEngine()
 eng.setVoiceCacheDir(cache)
-if (arg('profile')) eng.setWhisperProfile(arg('profile'))
-const model = arg('profile', eng.WHISPER_PROFILE)
 
 let lastPct = -1
 const progress = (p) => {
@@ -88,15 +88,15 @@ try {
     log(`${voice}: ${fmt(r.durationSec)} s`)
   }
 
-  // 5. Round trip through Whisper.
+  // 5. Round trip through Parakeet.
   ;[, s] = await timed(() => eng.prepareVoiceModels('stt', progress))
-  report.steps.prepareStt = { model, seconds: s }
-  log(`Whisper ${model} carregado em ${fmt(s)} s`)
+  report.steps.prepareStt = { model: eng.PARAKEET_MODEL, seconds: s, ...eng.getSttStatus() }
+  log(`Parakeet carregado em ${fmt(s)} s na ${eng.getSttStatus().label}${eng.getSttStatus().gpuError ? ` (GPU descartada: ${eng.getSttStatus().gpuError})` : ''}`)
   const trips = { 'short_pf_dora.wav': SHORT, 'short_pm_alex.wav': SHORT, 'short_pm_santa.wav': SHORT, 'long_pf_dora.wav': LONG }
   report.steps.roundTrip = {}
   for (const [file, ref] of Object.entries(trips)) {
     const b64 = readFileSync(join(out, file)).toString('base64')
-    const [text, sec] = await timed(() => eng.transcribeWhisper(b64, 'audio/wav'))
+    const [text, sec] = await timed(() => eng.transcribeSpeech(b64, 'audio/wav'))
     const w = wer(ref, text)
     report.steps.roundTrip[file] = { seconds: sec, wer: w, text }
     log(`${file}: WER ${fmt(w * 100, 1)}% em ${fmt(sec)} s → "${text.slice(0, 140)}${text.length > 140 ? '…' : ''}"`)
@@ -119,7 +119,7 @@ try {
     ]) {
       const file = join(out, `short_pf_dora.${ext}`)
       execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', src, '-ac', '1', '-ar', '48000', ...codecArgs, file])
-      const [text, sec] = await timed(() => eng.transcribeWhisper(readFileSync(file).toString('base64'), mime))
+      const [text, sec] = await timed(() => eng.transcribeSpeech(readFileSync(file).toString('base64'), mime))
       const w = wer(SHORT, text)
       report.steps.phone[ext] = { seconds: sec, wer: w, text }
       log(`${ext}: WER ${fmt(w * 100, 1)}% em ${fmt(sec)} s → "${text}"`)

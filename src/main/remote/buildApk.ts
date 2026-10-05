@@ -319,6 +319,24 @@ async function brandAdaptiveIcon(androidDir: string, onLine: Progress): Promise<
   }
 }
 
+/** True when node_modules is absent or lacks any dependency declared in package.json. */
+export async function missingDependencies(rootDir: string): Promise<boolean> {
+  let deps: Record<string, string> = {}
+  try {
+    const pkg = JSON.parse(await readFile(join(rootDir, 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>
+    }
+    deps = pkg.dependencies ?? {}
+  } catch {
+    /* unreadable package.json: fall back to the node_modules check */
+  }
+  if (!(await exists(join(rootDir, 'node_modules')))) return true
+  for (const name of Object.keys(deps)) {
+    if (!(await exists(join(rootDir, 'node_modules', name, 'package.json')))) return true
+  }
+  return false
+}
+
 export interface BuildResult {
   ok: boolean
   apkPath?: string
@@ -353,8 +371,10 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
     onLine('Aviso: Node não localizado; tentando usar o npm do PATH do sistema…')
   }
 
-  // 2) npm dependencies of the Capacitor project.
-  if (!(await exists(join(rootDir, 'node_modules')))) {
+  // 2) npm dependencies of the Capacitor project. Also re-run when a dependency
+  //    is missing (e.g. the local plugins/parakeet-stt added after the first
+  //    install): `cap sync` only wires native plugins present in node_modules.
+  if (await missingDependencies(rootDir)) {
     onLine('Instalando dependências do projeto (npm install)…')
     const code = await run('npm', ['install'], { cwd: rootDir, env, onLine })
     if (code !== 0) {

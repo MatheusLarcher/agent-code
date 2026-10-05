@@ -1,6 +1,6 @@
 {
   "name": "agent-code-desktop",
-  "version": "0.1.79",
+  "version": "0.1.80",
   "description": "Desktop UI for Claude Code with an embedded agent-driven browser (Claude Desktop style)",
   "type": "module",
   "main": "./out/main/index.js",
@@ -30,6 +30,7 @@
     "@xyflow/react": "^12.11.6",
     "highlight.js": "^11.11.1",
     "kokoro-js": "1.2.1",
+    "onnxruntime-node": "1.21.0",
     "opus-decoder": "0.7.12",
     "parquetjs-lite": "^0.8.7",
     "pg": "^8.23.0",

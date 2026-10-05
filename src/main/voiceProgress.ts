@@ -18,7 +18,7 @@ const TEXT: Record<VoiceTask, { downloading: string; loading: string; done: stri
     error: 'Não consegui preparar a voz.'
   },
   stt: {
-    downloading: 'Baixando o reconhecimento de voz (Whisper)…',
+    downloading: 'Baixando o reconhecimento de voz (Parakeet)…',
     loading: 'Carregando o reconhecimento de voz…',
     done: 'Reconhecimento de voz pronto.',
     error: 'Não consegui preparar o reconhecimento de voz.'
@@ -34,7 +34,7 @@ export interface SetupReporter {
 
 /**
  * Turns the engine's per-file progress into the single `SpeechSetupProgress`
- * notice the Composer already shows for the Python engine. Bytes are summed over
+ * notice the Composer shows. Bytes are summed over
  * every file seen so far, so the bar moves once across the whole download
  * instead of restarting per file. Nothing is sent when the models were already
  * loaded (the normal case after the first use) — the notice exists only for the
@@ -80,7 +80,7 @@ export function createSetupReporter(task: VoiceTask, send: (p: SpeechSetupProgre
         return
       }
       // The real work started, so every model is in place: close the notice.
-      // ('ready' is per model — Whisper still has files to fetch after one.)
+      // ('ready' is per model — the sessions still load after it.)
       if (shown && (p.phase === 'synthesize' || p.phase === 'transcribe')) {
         finished = true
         emit({ stage: 'done', message: text.done })

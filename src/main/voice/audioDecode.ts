@@ -1,5 +1,5 @@
 /**
- * Turn whatever the recorder sent into what Whisper wants: 16 kHz mono float.
+ * Turn whatever the recorder sent into what the speech recognizer wants: 16 kHz mono float.
  *
  * - WAV (desktop recorder): parsed here, mixed down, resampled.
  * - WebM/Opus and Ogg/Opus (phone MediaRecorder): demuxed by containers.ts and
@@ -16,16 +16,16 @@ import { OpusDecoder } from 'opus-decoder'
 import { demuxOggOpus, demuxWebm, isOgg, isWebm, parseOpusHead, type DemuxedAudio } from './containers'
 import { isWav, mixToMono, parseWav, resample } from './pcm'
 
-export const WHISPER_SAMPLE_RATE = 16000
+export const ASR_SAMPLE_RATE = 16000
 
 export class UnsupportedAudioError extends Error {
   readonly code = 'UNSUPPORTED_AUDIO'
 }
 
-export async function decodeForWhisper(bytes: Uint8Array, mimeType: string): Promise<Float32Array> {
+export async function decodeTo16k(bytes: Uint8Array, mimeType: string): Promise<Float32Array> {
   if (isWav(bytes)) {
     const { channels, sampleRate } = parseWav(bytes)
-    return resample(mixToMono(channels), sampleRate, WHISPER_SAMPLE_RATE)
+    return resample(mixToMono(channels), sampleRate, ASR_SAMPLE_RATE)
   }
   if (isWebm(bytes)) {
     const demuxed = demuxWebm(bytes)
@@ -42,13 +42,13 @@ async function decodeOpus(d: DemuxedAudio): Promise<Float32Array> {
     throw new UnsupportedAudioError(`Opus com ${head.channels} canais (família ${head.mappingFamily})`)
   }
   if (d.packets.length === 0) return new Float32Array(0)
-  const decoder = new OpusDecoder({ channels: head.channels, sampleRate: WHISPER_SAMPLE_RATE })
+  const decoder = new OpusDecoder({ channels: head.channels, sampleRate: ASR_SAMPLE_RATE })
   await decoder.ready
   try {
     const out = decoder.decodeFrames(d.packets)
     const mono = mixToMono(out.channelData.map((c) => c.subarray(0, out.samplesDecoded)))
     // pre-skip is counted at 48 kHz (RFC 7845); we decode at 16 kHz.
-    const skip = Math.round((head.preSkip * WHISPER_SAMPLE_RATE) / 48000)
+    const skip = Math.round((head.preSkip * ASR_SAMPLE_RATE) / 48000)
     return mono.slice(Math.min(skip, mono.length))
   } finally {
     decoder.free()

@@ -2,8 +2,8 @@
  * Local voice engine — speech in and out with no cloud service.
  *
  *   TTS: Kokoro-82M (fp32, CPU) with pt-BR phonemes from eSpeak NG (WASM).
- *   STT: Whisper via @huggingface/transformers (onnxruntime-node); encoder on
- *        the GPU (DirectML / CUDA) when it works, else everything on the CPU.
+ *   STT: NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX) on onnxruntime-node; encoder
+ *        on the GPU (CUDA / DirectML) when it works, else everything on the CPU.
  *
  * All inference runs in a separate process (Electron utilityProcess; a
  * worker_threads Worker when running under plain Node), so the main process's
@@ -23,23 +23,22 @@
  *   (0.5–2, default 1). Long text is split by sentence and the audio joined,
  *   so nothing is truncated at Kokoro's 510-token context.
  *
- * transcribeWhisper(audioBase64, mimeType, onProgress?, profile?) => Promise<string>
- *   Portuguese transcription. Accepts WAV (desktop recorder) and WebM/Ogg Opus
- *   (phone MediaRecorder), decoded in the worker with WASM — no ffmpeg. Inside
+ * transcribeSpeech(audioBase64, mimeType, onProgress?) => Promise<string>
+ *   Transcription (the language — Portuguese included — is detected from the
+ *   audio). Accepts WAV (desktop recorder) and WebM/Ogg Opus (phone
+ *   MediaRecorder), decoded in the worker with WASM — no ffmpeg. Inside
  *   Electron, other formats (mp4/AAC, mp3) fall back to Chromium's decoder.
+ *   Long audio is transcribed in ~20 s windows cut at pauses (chunking.ts).
  *
- * prepareVoiceModels(what: 'tts' | 'stt', onProgress?, profile?) => Promise<void>
+ * prepareVoiceModels(what: 'tts' | 'stt', onProgress?) => Promise<void>
  *   Downloads/loads the models ahead of time so the first real call is fast.
- *   `profile` (both functions) defaults to the one set by setWhisperProfile.
  *
- * setWhisperProfile(profile) / getWhisperStatus()
- *   Picks the Whisper profile for the next calls (default WHISPER_PROFILE,
- *   'turbo-q8'; 'small-fp32' is the light one) — the worker swaps models on
- *   the next call, no restart. The status says where it last ran:
- *   { profile, device: 'dml' | 'cuda' | 'cpu' | null, label, gpuError? }.
+ * getSttStatus()
+ *   Where the transcription model last ran: { device: 'cuda' | 'dml' | 'cpu' |
+ *   null, label, gpuError? } (null = not loaded in this worker yet).
  *
  *   Env (read by the worker at spawn): AGENT_CODE_VOICE_DEVICE=cpu|gpu,
- *   AGENT_CODE_VOICE_THREADS=N.
+ *   AGENT_CODE_VOICE_THREADS=N, AGENT_CODE_VOICE_GPU_BUDGET_SEC=N.
  *
  * stopVoiceEngine() => Promise<void>
  *   Kills the worker (frees the models' memory); in-flight calls reject.
@@ -54,60 +53,39 @@ import { request, setCacheDir, stop, VoiceWorkerError } from './host'
 import {
   deviceLabel,
   KOKORO_VOICES,
-  WHISPER_PROFILES,
+  PARAKEET_MODEL,
   type KokoroVoice,
+  type SttDevice,
+  type SttState,
   type SynthesisResult,
   type TranscribeResult,
-  type VoiceProgress,
-  type WhisperDevice,
-  type WhisperProfile,
-  type WhisperState
+  type VoiceProgress
 } from './protocol'
 
-export { deviceLabel, KOKORO_VOICES as LOCAL_VOICES, WHISPER_PROFILES, VoiceWorkerError }
-export { kokoroInstalled, voiceModelsInstalled, whisperInstalled } from './installed'
-export type { KokoroVoice as LocalVoice, SynthesisResult, VoiceProgress, WhisperDevice, WhisperProfile, WhisperState }
-
-/**
- * large-v3-turbo: the best Whisper for pt-BR that fits the latency budget once
- * its encoder runs on the GPU. Measured by scripts/voice/bench-whisper.mjs on
- * the dev machine (i7-14650HX + RTX 5050 Laptop, 8 ORT threads), median for
- * 5 s / 13 s of speech, WER 0% everywhere (also at 5 dB SNR): turbo-q8 GPU
- * (DirectML: encoder fp16, decoder q8 on the CPU) 1.64 / 3.40 s, CPU (q8)
- * 3.47 / 6.35 s — the CPU fallback is slower but correct. small-fp32 stays as
- * the lighter choice: GPU 1.05 / 2.30 s, CPU 1.87 / 3.18 s.
- */
-export const WHISPER_PROFILE: WhisperProfile = 'turbo-q8'
+export { deviceLabel, KOKORO_VOICES as LOCAL_VOICES, PARAKEET_MODEL, VoiceWorkerError }
+export { kokoroInstalled, parakeetInstalled, voiceModelsInstalled } from './installed'
+export { PARAKEET_DOWNLOAD_BYTES } from './parakeetFiles'
+export type { KokoroVoice as LocalVoice, SttDevice, SttState, SynthesisResult, VoiceProgress }
 
 const MAX_TEXT_CHARS = 20_000
 const MAX_AUDIO_BYTES = 50 * 1024 * 1024
 
-let whisperProfile: WhisperProfile = WHISPER_PROFILE
-/** Last device the worker reported for each profile (null = not loaded yet). */
-const lastState = new Map<WhisperProfile, WhisperState>()
+/** Where the worker last reported the model running (null = not loaded yet). */
+let lastState: SttState | null = null
 
 function remember(r: TranscribeResult): void {
-  if (r.profile && r.device) {
-    lastState.set(r.profile, { profile: r.profile, device: r.device, ...(r.gpuError ? { gpuError: r.gpuError } : {}) })
-  }
+  if (r.device) lastState = { device: r.device, ...(r.gpuError ? { gpuError: r.gpuError } : {}) }
 }
 
-/** Current profile and where it ran the last time (device null = not loaded
- *  yet in this worker). `label` is for people: 'GPU (DirectML)' / 'CPU'. */
-export function getWhisperStatus(): { profile: WhisperProfile; device: WhisperDevice | null; label: string | null; gpuError?: string } {
-  const s = lastState.get(whisperProfile)
-  return { profile: whisperProfile, device: s?.device ?? null, label: s ? deviceLabel(s.device) : null, ...(s?.gpuError ? { gpuError: s.gpuError } : {}) }
+/** `label` is for people: 'GPU (DirectML)' / 'GPU (CUDA)' / 'CPU'. */
+export function getSttStatus(): { device: SttDevice | null; label: string | null; gpuError?: string } {
+  const s = lastState
+  return { device: s?.device ?? null, label: s ? deviceLabel(s.device) : null, ...(s?.gpuError ? { gpuError: s.gpuError } : {}) }
 }
 
 export function setVoiceCacheDir(dir: string): void {
   if (typeof dir !== 'string' || !dir.trim()) throw new TypeError('setVoiceCacheDir: pasta inválida')
   setCacheDir(dir)
-}
-
-/** Override the Whisper profile (benchmarks, or a lighter model on slow machines). */
-export function setWhisperProfile(profile: WhisperProfile): void {
-  if (!Object.hasOwn(WHISPER_PROFILES, profile)) throw new RangeError(`perfil Whisper desconhecido "${profile}"`)
-  whisperProfile = profile
 }
 
 export async function synthesizeLocal(
@@ -124,44 +102,33 @@ export async function synthesizeLocal(
   return (await request({ op: 'synthesize', text, voice, speed }, onProgress)) as SynthesisResult
 }
 
-export async function transcribeWhisper(
-  audioBase64: string,
-  mimeType: string,
-  onProgress?: (p: VoiceProgress) => void,
-  profile: WhisperProfile = whisperProfile
-): Promise<string> {
-  if (typeof audioBase64 !== 'string' || !audioBase64) throw new TypeError('transcribeWhisper: áudio vazio')
+export async function transcribeSpeech(audioBase64: string, mimeType: string, onProgress?: (p: VoiceProgress) => void): Promise<string> {
+  if (typeof audioBase64 !== 'string' || !audioBase64) throw new TypeError('transcribeSpeech: áudio vazio')
   const b64 = audioBase64.replace(/^data:[^,]*,/, '') // tolerate a data: URL
   const audio = new Uint8Array(Buffer.from(b64, 'base64'))
-  if (audio.length === 0) throw new TypeError('transcribeWhisper: áudio vazio')
-  if (audio.length > MAX_AUDIO_BYTES) throw new RangeError('transcribeWhisper: áudio acima de 50 MB')
-  if (!Object.hasOwn(WHISPER_PROFILES, profile)) throw new RangeError(`perfil Whisper desconhecido "${profile}"`)
+  if (audio.length === 0) throw new TypeError('transcribeSpeech: áudio vazio')
+  if (audio.length > MAX_AUDIO_BYTES) throw new RangeError('transcribeSpeech: áudio acima de 50 MB')
   const mime = typeof mimeType === 'string' ? mimeType : ''
   let r: TranscribeResult
   try {
-    r = (await request({ op: 'transcribe', profile, audio, mimeType: mime }, onProgress)) as TranscribeResult
+    r = (await request({ op: 'transcribe', audio, mimeType: mime }, onProgress)) as TranscribeResult
   } catch (err) {
     if (!(err instanceof VoiceWorkerError && err.code === 'UNSUPPORTED_AUDIO' && canDecodeWithChromium())) throw err
     onProgress?.({ phase: 'decode' })
     const pcm = await decodeWithChromium(audio)
-    r = (await request({ op: 'transcribe', profile, pcm }, onProgress)) as TranscribeResult
+    r = (await request({ op: 'transcribe', pcm }, onProgress)) as TranscribeResult
   }
   remember(r)
   return r.text
 }
 
-export async function prepareVoiceModels(
-  what: 'tts' | 'stt',
-  onProgress?: (p: VoiceProgress) => void,
-  profile: WhisperProfile = whisperProfile
-): Promise<void> {
+export async function prepareVoiceModels(what: 'tts' | 'stt', onProgress?: (p: VoiceProgress) => void): Promise<void> {
   if (what !== 'tts' && what !== 'stt') throw new RangeError('prepareVoiceModels: use "tts" ou "stt"')
-  if (!Object.hasOwn(WHISPER_PROFILES, profile)) throw new RangeError(`perfil Whisper desconhecido "${profile}"`)
-  const r = await request({ op: 'prepare', what, profile }, onProgress)
+  const r = await request({ op: 'prepare', what }, onProgress)
   if (what === 'stt') remember(r as TranscribeResult)
 }
 
 export function stopVoiceEngine(): Promise<void> {
-  lastState.clear()
+  lastState = null
   return stop()
 }

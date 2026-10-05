@@ -125,7 +125,7 @@ const ANSWER = [
   '',
   'Primeiro o app baixa o modelo de voz. Depois disso tudo funciona sem internet.',
   '',
-  '- O ditado usa o Whisper local.',
+  '- O ditado usa o Parakeet local.',
   '- A velocidade vem pronta no áudio.',
   '',
   'Este é o último parágrafo, lido pelo botão Ler daqui.'

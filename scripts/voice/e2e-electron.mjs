@@ -3,14 +3,14 @@
 // fallback. Also probes the main event loop during a synthesis.
 //
 //   npx electron-vite build
-//   npx electron scripts/voice/e2e-electron.mjs [--cache <dir>] [--out <dir>] [--profile <p>]
+//   npx electron scripts/voice/e2e-electron.mjs [--cache <dir>] [--out <dir>]
 //
 // ffmpeg (on PATH) only builds the WebM/M4A fixtures from the engine's own WAV.
 import { app } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { arg, defaultCache, dirArg, fmt, loadEngine, wer, withLoopProbe } from './lib.mjs'
+import { defaultCache, dirArg, fmt, loadEngine, wer, withLoopProbe } from './lib.mjs'
 
 const TEXT = 'A reunião foi remarcada para quinta-feira às três da tarde, na sala de sempre.'
 const log = (...a) => console.log('[electron-e2e]', ...a)
@@ -61,7 +61,6 @@ async function main() {
   const out = dirArg('out', join(defaultCache, '..', 'agent-code-voice-e2e'))
   const eng = await loadEngine()
   eng.setVoiceCacheDir(cache)
-  if (arg('profile')) eng.setWhisperProfile(arg('profile'))
   const report = { electron: process.versions.electron, processType: process.type }
 
   await eng.prepareVoiceModels('tts')
@@ -73,6 +72,8 @@ async function main() {
   log(`síntese em utilityProcess: ${fmt(probe.result.durationSec)} s de áudio; event loop do main: ${probe.ticks} ticks, lag máx ${fmt(probe.maxLagMs, 1)} ms, p99 ${fmt(probe.p99LagMs, 1)} ms`)
 
   await eng.prepareVoiceModels('stt')
+  report.stt = eng.getSttStatus()
+  log(`Parakeet na ${report.stt.label}${report.stt.gpuError ? ` (GPU descartada: ${report.stt.gpuError})` : ''}`)
   report.transcribe = {}
   const cases = [['wav', 'audio/wav', null]]
   try {
@@ -86,7 +87,7 @@ async function main() {
     const file = ext === 'wav' ? wavFile : join(out, `electron_pm_alex.${ext}`)
     if (codec) execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', wavFile, '-ac', '1', ...codec, file])
     const t0 = performance.now()
-    const text = await eng.transcribeWhisper(readFileSync(file).toString('base64'), mime)
+    const text = await eng.transcribeSpeech(readFileSync(file).toString('base64'), mime)
     const sec = (performance.now() - t0) / 1000
     report.transcribe[ext] = { seconds: sec, wer: wer(TEXT, text), text }
     log(`${ext} (${mime}): WER ${fmt(wer(TEXT, text) * 100, 1)}% em ${fmt(sec)} s → "${text}"`)
@@ -95,7 +96,7 @@ async function main() {
   const recB64 = await recordWithMediaRecorder(wav)
   writeFileSync(join(out, 'electron_mediarecorder.webm'), Buffer.from(recB64, 'base64'))
   const t0 = performance.now()
-  const recText = await eng.transcribeWhisper(recB64, 'audio/webm;codecs=opus')
+  const recText = await eng.transcribeSpeech(recB64, 'audio/webm;codecs=opus')
   report.transcribe.mediaRecorderWebm = { seconds: (performance.now() - t0) / 1000, wer: wer(TEXT, recText), text: recText, bytes: Buffer.from(recB64, 'base64').length }
   log(`MediaRecorder webm: WER ${fmt(wer(TEXT, recText) * 100, 1)}% → "${recText}"`)
 

@@ -350,7 +350,7 @@ export function Composer(props: Props): JSX.Element {
   const cardRefs = chatDisplay.cardRefs ?? NO_CARDS
   const cardAc = useCardRefAutocomplete({ cards: cardRefs, value, onChange: updateValue, inputRef: editorRef })
 
-  // ---- voice dictation (mic → text, on-device Whisper or the Python engine) ----
+  // ---- voice dictation (mic → text, on-device Parakeet) ----
   // Records one utterance per segment, cut at NATURAL PAUSES by a local VAD (voice
   // activity detection, see ../vad — no external library), then appends each
   // transcript. Two reasons it's segmented rather than one growing recording:

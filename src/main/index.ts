@@ -53,7 +53,6 @@ import {
   reloadConfigPersistence,
   updateConfig
 } from './config'
-import { stopLocalSpeech } from './speech'
 import { registerVoiceIpc, speak, speechParts, stopVoice, transcribe as transcribeVoice } from './voiceService'
 import { registerVoiceComponentIpc } from './voiceComponents'
 import { registerAndroidToolchainIpc } from './android/androidToolchainIpc'
@@ -852,7 +851,7 @@ const remote = new RemoteServer({
     await updateConfig({ remoteToken: token })
   },
   // Voice runs on the PC with the local engines: the phone records/plays, we
-  // transcribe (configured engine) and synthesize (Kokoro, configured voice/speed).
+  // transcribe (Parakeet) and synthesize (Kokoro, configured voice/speed).
   transcribe: (audioBase64, mimeType) => transcribeVoice(audioBase64, mimeType),
   tts: (text, opts) => speak(text, { treat: !opts?.treated }),
   ttsParts: (text) => speechParts(text)
@@ -2674,10 +2673,8 @@ app.on('before-quit', (event) => {
     return
   }
   windowsControl.stop()
-  // O transcritor local é um processo Python com o modelo na GPU: fechar o app
-  // sem matá-lo deixaria VRAM presa até o usuário perceber no gerenciador.
-  stopLocalSpeech()
-  // Idem para o motor de voz local (Kokoro/Whisper num utilityProcess).
+  // O motor de voz local (Kokoro/Parakeet num utilityProcess) pode ter o modelo
+  // na GPU: fechar o app sem pará-lo deixaria VRAM presa.
   void stopVoice()
   stopMemoryCurator?.()
   stopMemoryCurator = null

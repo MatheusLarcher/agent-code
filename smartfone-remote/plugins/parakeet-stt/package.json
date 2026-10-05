@@ -1,0 +1,19 @@
+{
+  "name": "parakeet-stt",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Capacitor plugin (local): on-device speech-to-text with NVIDIA Parakeet TDT 0.6B v3 via sherpa-onnx. The model is downloaded at runtime, not shipped in the APK.",
+  "license": "MIT",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle"
+  ],
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": "^6.0.0"
+  }
+}

@@ -27,7 +27,7 @@ describe('createSetupReporter', () => {
       ['downloading', 62, 400],
       ['done', undefined, undefined]
     ])
-    expect(sent[0].message).toContain('Whisper')
+    expect(sent[0].message).toContain('Parakeet')
   })
 
   it('não repete o mesmo percentual', () => {

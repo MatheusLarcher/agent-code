@@ -5,7 +5,7 @@
  * so this costs no extra dependency. Only available inside Electron's main
  * process — the WASM path in audioDecode.ts covers WAV/WebM/Ogg everywhere.
  */
-const WHISPER_SAMPLE_RATE = 16000 // same as audioDecode.ts (not imported: keeps opus-decoder out of the main bundle)
+const ASR_SAMPLE_RATE = 16000 // same as audioDecode.ts (not imported: keeps opus-decoder out of the main bundle)
 const DECODE_TIMEOUT_MS = 60_000
 
 export function canDecodeWithChromium(): boolean {
@@ -30,7 +30,7 @@ export async function decodeWithChromium(bytes: Uint8Array): Promise<Float32Arra
       const bin = atob(${JSON.stringify(b64)});
       const u8 = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      const ctx = new OfflineAudioContext(1, 1, ${WHISPER_SAMPLE_RATE});
+      const ctx = new OfflineAudioContext(1, 1, ${ASR_SAMPLE_RATE});
       const buf = await ctx.decodeAudioData(u8.buffer);
       const out = new Float32Array(buf.length);
       for (let c = 0; c < buf.numberOfChannels; c++) {

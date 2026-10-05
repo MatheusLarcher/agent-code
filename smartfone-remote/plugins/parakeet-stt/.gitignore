@@ -1,0 +1,4 @@
+android/build/
+android/.gradle/
+# sherpa-onnx release AAR, downloaded and SHA-256-checked by android/build.gradle
+android/libs/

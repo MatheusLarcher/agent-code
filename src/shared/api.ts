@@ -286,14 +286,14 @@ export interface AgentCodeApi extends OfficeApi {
     text: string,
     opts?: { voice?: string; speed?: number }
   ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }>
-  /** Local Whisper model and where it last ran ('GPU (DirectML)' / 'CPU'). */
+  /** Local Parakeet model and where it last ran ('GPU (DirectML)' / 'CPU'). */
   voiceStatus(): Promise<WhisperStatus>
   /** Install the local voice models now (same path as the first use). Progress
    *  arrives on onSpeechSetupProgress; a call during an install joins it. */
   voiceInstall(): Promise<{ ok: boolean; error?: string }>
   /** Are the local voice models installed / being installed? */
   voiceInstallStatus(): Promise<VoiceInstallStatus>
-  /** Same, for one component (Kokoro, a Whisper model, a Parakeet/Canary model). */
+  /** Same, for one component (Kokoro TTS or Parakeet STT). */
   voiceComponentStatus(c: VoiceComponent): Promise<VoiceInstallStatus>
   /** Install one component now (Settings › Voz). Progress on onSpeechSetupProgress. */
   voiceComponentInstall(c: VoiceComponent): Promise<{ ok: boolean; error?: string }>

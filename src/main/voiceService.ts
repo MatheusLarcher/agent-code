@@ -1,42 +1,28 @@
 /**
- * App-side glue for the local voice engine (src/main/voice): picks the voice,
- * speed and dictation engine from the config, points the engine at its model
- * folder, and turns its download progress into the `speechSetupProgress` notice
- * the chat already shows. Used by the desktop IPC and by the phone bridge, so
+ * App-side glue for the local voice engine (src/main/voice): picks the voice
+ * and speed from the config, points the engine at its model folder, and turns
+ * its download progress into the `speechSetupProgress` notice the chat already
+ * shows. Dictation always runs on Parakeet TDT v3 (the engine's only
+ * transcription model). Used by the desktop IPC and by the phone bridge, so
  * both behave the same. Nothing here talks to the network except the one-time
  * model downloads the engine does itself.
  */
 import { join } from 'node:path'
 import type { IpcMain, WebContents } from 'electron'
-import {
-  Channels,
-  DEFAULT_LOCAL_SPEECH_MODEL,
-  DEFAULT_WHISPER_MODEL,
-  isVoiceId,
-  isWhisperModelId,
-  LOCAL_SPEECH_MODELS,
-  normalizeVoiceSpeed,
-  type SpeechSetupProgress,
-  type VoiceInstallStatus,
-  type WhisperModelId,
-  type WhisperStatus
-} from '../shared/ipc'
+import { Channels, isVoiceId, normalizeVoiceSpeed, type SpeechSetupProgress, type SpeechStatus, type VoiceInstallStatus } from '../shared/ipc'
 import { splitForSpeech, toSpeechText } from '../shared/speechText'
 import { loadConfig } from './config'
-import { transcribeLocal } from './speech'
 import { getCacheInfo } from './store'
 import {
-  getWhisperStatus,
+  getSttStatus,
   prepareVoiceModels,
   setVoiceCacheDir,
-  setWhisperProfile,
   stopVoiceEngine,
   synthesizeLocal,
-  transcribeWhisper,
+  transcribeSpeech,
   voiceModelsInstalled
 } from './voice'
-import { canDecodeWithChromium, decodeWithChromium } from './voice/chromiumDecode'
-import { concatSamples, encodeWavPcm16, isWav, noiseFloor, parseWav } from './voice/pcm'
+import { concatSamples, encodeWavPcm16, noiseFloor, parseWav } from './voice/pcm'
 import { createSetupReporter, type VoiceTask } from './voiceProgress'
 
 type Send = (p: SpeechSetupProgress) => void
@@ -142,66 +128,32 @@ export function speechParts(text: string): string[] {
   return typeof text === 'string' ? splitForSpeech(toSpeechText(text)) : []
 }
 
-/** The Python engine reads WAV only; phone audio (WebM/Ogg/mp4) is decoded by
- *  Chromium to 16 kHz mono first. */
-async function asWav(audio: Buffer): Promise<Buffer> {
-  if (isWav(audio)) return audio
-  if (!canDecodeWithChromium()) throw new Error('formato de áudio não suportado pelo motor Python (envie WAV)')
-  return encodeWavPcm16(await decodeWithChromium(audio), 16000)
-}
-
-/** Transcribe with the engine chosen in Settings ('whisper' by default). */
+/** Transcribe with Parakeet. Old config values for the removed Whisper/Python
+ *  engines (`transcribeEngine`, `localSpeech`, `voice.whisperModel`) are ignored. */
 export async function transcribe(audioBase64: string, mimeType: string, send?: Send): Promise<string> {
   if (typeof audioBase64 !== 'string' || !audioBase64) throw new TypeError('áudio vazio')
   const mime = typeof mimeType === 'string' ? mimeType : ''
-  const cfg = loadConfig()
-  if (cfg.transcribeEngine === 'local') {
-    // Um id de catálogo antigo tentaria baixar um repo sem os pesos esperados.
-    const model = LOCAL_SPEECH_MODELS.some((m) => m.id === cfg.localSpeech.model)
-      ? cfg.localSpeech.model
-      : DEFAULT_LOCAL_SPEECH_MODEL
-    const report = send ?? (() => {})
-    try {
-      return await transcribeLocal(await asWav(Buffer.from(audioBase64, 'base64')), model, report)
-    } catch (err) {
-      report({ stage: 'error', message: 'Não consegui preparar o reconhecimento de voz.' })
-      throw err
-    }
-  }
   ensureVoiceCacheDir()
-  // Read on every call: a model picked in Settings applies to the next dictation.
-  setWhisperProfile(resolveWhisperModel(cfg.voice?.whisperModel))
-  const text = await withReporter('stt', send, (reporter) => transcribeWhisper(audioBase64, mime, (p) => reporter.onProgress(p)))
-  logWhisperDevice()
+  const text = await withReporter('stt', send, (reporter) => transcribeSpeech(audioBase64, mime, (p) => reporter.onProgress(p)))
+  logSttDevice()
   return text
 }
 
 let loggedDevice = ''
-/** One line in the main log whenever the model or its device changes (the
- *  worker's own lines don't always reach the app's stdout). */
-function logWhisperDevice(): void {
-  const s = getWhisperStatus()
+/** One line in the main log whenever the device changes (the worker's own
+ *  lines don't always reach the app's stdout). */
+function logSttDevice(): void {
+  const s = getSttStatus()
   if (!s.label) return
-  const line = `Whisper ${s.profile} em ${s.label}${s.gpuError ? ` — GPU descartada: ${s.gpuError}` : ''}`
+  const line = `Parakeet em ${s.label}${s.gpuError ? ` — GPU descartada: ${s.gpuError}` : ''}`
   if (line === loggedDevice) return
   loggedDevice = line
   console.log(`[voice] ${line}`)
 }
 
-export function resolveWhisperModel(saved: unknown): WhisperModelId {
-  return isWhisperModelId(saved) ? saved : DEFAULT_WHISPER_MODEL
-}
-
-/** Settings › Voz: the chosen model and where it last ran. */
-export function whisperStatus(): WhisperStatus {
-  setWhisperProfile(resolveWhisperModel(loadConfig().voice?.whisperModel))
-  const s = getWhisperStatus()
-  return {
-    model: resolveWhisperModel(s.profile),
-    device: s.device,
-    label: s.label,
-    ...(s.gpuError ? { gpuError: s.gpuError } : {})
-  }
+/** Settings › Voz: where the dictation model last ran. */
+export function speechStatus(): SpeechStatus {
+  return getSttStatus()
 }
 
 let installing: Promise<void> | null = null
@@ -209,20 +161,18 @@ let installing: Promise<void> | null = null
 /** Local voice models: present in the cache / being downloaded right now. */
 export function voiceInstallStatus(): VoiceInstallStatus {
   ensureVoiceCacheDir()
-  return { installed: voiceModelsInstalled(cacheDir, resolveWhisperModel(loadConfig().voice?.whisperModel)), installing: installing !== null }
+  return { installed: voiceModelsInstalled(cacheDir), installing: installing !== null }
 }
 
 /**
- * Downloads/prepares Kokoro and Whisper ahead of the first use, through the same
- * prepare + progress path the on-demand calls use. A call during an install
+ * Downloads/prepares Kokoro and Parakeet ahead of the first use, through the
+ * same prepare + progress path the on-demand calls use. A call during an install
  * joins it instead of starting another. One notice covers both models: the
  * per-model "done"/"error" are held back and replaced by the final outcome.
  */
 export function installVoice(send?: Send): Promise<void> {
   if (installing) return installing
   ensureVoiceCacheDir()
-  const profile = resolveWhisperModel(loadConfig().voice?.whisperModel)
-  setWhisperProfile(profile)
   const step: Send = (p) => {
     if (p.stage !== 'done' && p.stage !== 'error') send?.(p)
   }
@@ -252,7 +202,7 @@ export const errorText = (err: unknown): string => String(err instanceof Error ?
 
 /** Desktop IPC. Errors come back as `{ ok: false, error }` so the UI can toast them. */
 export function registerVoiceIpc(ipcMain: IpcMain): void {
-  ipcMain.handle(Channels.voiceStatus, () => whisperStatus())
+  ipcMain.handle(Channels.voiceStatus, () => speechStatus())
   ipcMain.handle(Channels.voiceInstallStatus, () => voiceInstallStatus())
   ipcMain.handle(Channels.voiceInstall, async (e) => {
     try {
