@@ -9,6 +9,7 @@ import type {
   ProjectBoard,
   AgentEventMsg,
   AgentInterruptResult,
+  TurnEndWait,
   AgentMessageKind,
   AndroidProgressMsg,
   SpeechSetupProgress,
@@ -30,6 +31,7 @@ import type {
   FileRefAttachment,
   ImageAttachment,
   MentionHit,
+  ProjectDirListing,
   ProjectTree,
   ResolvedPastedRef,
   SkillInfo,
@@ -158,6 +160,8 @@ export interface AgentCodeApi extends OfficeApi {
    *  `keep` = paths the caller is showing now, so the reply can report which of
    *  them were deleted (see ProjectTree.missing). */
   projectTree(root: string, keep?: string[]): Promise<ProjectTree>
+  /** One folder of the project (`rel` = '' for the root), folders first; never throws (error in the result). */
+  projectDir(root: string, rel: string): Promise<ProjectDirListing>
   /** Icon found inside the project folder (data URL), or null when it has none. */
   projectIcon(root: string): Promise<string | null>
   /** Save a copy of a file (created by the agent) to Downloads and reveal it. */
@@ -377,6 +381,10 @@ export interface AgentCodeApi extends OfficeApi {
      *  dela); ausente = mensagem do usuário, que nunca herda nada de tarefa. */
     mcpTaskId?: string
   ): Promise<void>
+  /** Resolve quando o turno em andamento da conversa acabou de fato no main
+   *  (ocioso, handoff pronto, lease solto), sem sessão viva, ou no prazo máximo.
+   *  A fila só manda o próximo item depois disto. Nunca rejeita. */
+  waitTurnEnd(convId: string): Promise<TurnEndWait>
   interrupt(convId: string): Promise<AgentInterruptResult>
   /** Toggle "allow all" on a conversation's running session. */
   setBypass(convId: string, on: boolean): Promise<void>

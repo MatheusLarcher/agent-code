@@ -155,6 +155,7 @@ vi.mock('../accounts', () => ({
   queryAllAccountsUsage: vi.fn(async () => []),
   queryAccountUsage: vi.fn(async () => ({ accountId: 'default', reading: null, fresh: false })),
   recordSessionRateLimit: vi.fn(),
+  storableSessionAccount: vi.fn((_convId: string, accountId: string | undefined) => accountId),
   resolveSessionAccount: vi.fn(async () => 'default'),
   startAccountSync: vi.fn()
 }))

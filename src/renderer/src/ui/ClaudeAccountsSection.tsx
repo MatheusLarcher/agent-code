@@ -29,7 +29,7 @@ function lastUsage(account: ClaudeAccountView): string | null {
 /**
  * Configurações → Modelos → Contas Claude. Cada conta tem uma pasta de login
  * própria (o CLI oficial, sem proxy). A ordem daqui é a ordem em que conversas
- * novas escolhem a conta: a primeira abaixo de 95% leva. Nenhum token chega
+ * novas escolhem a conta: a primeira que não está esgotada leva. Nenhum token chega
  * aqui — só apelido, e-mail, plano e status.
  */
 export function ClaudeAccountsSection({ highlight = false }: { highlight?: boolean }): JSX.Element {
@@ -141,8 +141,8 @@ export function ClaudeAccountsSection({ highlight = false }: { highlight?: boole
         <span>
           <strong>Contas Claude</strong>
           <span className="settings-desc">
-            Cada conversa roda numa conta. Conversa nova usa a primeira conta desta lista que está abaixo de
-            95% de uso; arraste para mudar a ordem. Cada conta tem o próprio login, feito pelo navegador.
+            Cada conversa roda numa conta. Conversa nova usa a primeira conta conectada desta lista que não
+            esteja esgotada (se todas estiverem, a primeira); arraste para mudar a ordem. Cada conta tem o próprio login, feito pelo navegador.
           </span>
         </span>
         <button className="btn ghost" type="button" onClick={() => void add()} disabled={busy !== null}>

@@ -124,20 +124,23 @@ describe('chooseAccountForNewConversation', () => {
     usage: pct == null ? null : reading({ five_hour: [pct, FUTURE] })
   })
 
-  it('primeira da ordem abaixo de 95%', () => {
-    expect(chooseAccountForNewConversation([acc('a', 96), acc('b', 50), acc('c', 10)], 'opus', NOW)).toBe('b')
+  it('1ª da ordem acima de 95% (mas não esgotada) continua sendo a escolhida', () => {
+    expect(chooseAccountForNewConversation([acc('a', 97), acc('b', 50), acc('c', 10)], 'opus', NOW)).toBe('a')
+    expect(chooseAccountForNewConversation([acc('a', 99), acc('b', null)], 'opus', NOW)).toBe('a')
   })
   it('reordenar muda a escolha', () => {
     expect(chooseAccountForNewConversation([acc('c', 10), acc('a', 96), acc('b', 50)], 'opus', NOW)).toBe('c')
   })
-  it('conta sem leitura conta como com folga', () => {
-    expect(chooseAccountForNewConversation([acc('a', 99), acc('b', null)], 'opus', NOW)).toBe('b')
+  it('1ª esgotada (100%) pula para a próxima não esgotada, na ordem (não a de menor consumo)', () => {
+    expect(chooseAccountForNewConversation([acc('a', 100), acc('b', 98), acc('c', 96)], 'opus', NOW)).toBe('b')
+    expect(chooseAccountForNewConversation([acc('a', 100), acc('b', null)], 'opus', NOW)).toBe('b')
   })
-  it('todas em 95%+: a de menor consumo que não estourou', () => {
-    expect(chooseAccountForNewConversation([acc('a', 100), acc('b', 98), acc('c', 96)], 'opus', NOW)).toBe('c')
-  })
-  it('todas estouradas: a de menor consumo', () => {
+  it('todas esgotadas: a 1ª da ordem', () => {
     expect(chooseAccountForNewConversation([acc('a', 100), acc('b', 100)], 'opus', NOW)).toBe('a')
+    expect(chooseAccountForNewConversation([acc('b', 100), acc('a', 100)], 'opus', NOW)).toBe('b')
+  })
+  it('desconectada é ignorada, mesmo sendo a 1ª da ordem', () => {
+    expect(chooseAccountForNewConversation([acc('a', 0, 'expired'), acc('b', 100), acc('c', 100)], 'opus', NOW)).toBe('b')
   })
   it('login expirado ou sem login não é candidata', () => {
     expect(chooseAccountForNewConversation([acc('a', 0, 'expired'), acc('b', 80)], 'opus', NOW)).toBe('b')

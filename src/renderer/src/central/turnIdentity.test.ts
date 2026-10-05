@@ -23,6 +23,24 @@ describe('createTurnIdentity — de quem é o evento', () => {
     expect(t.owner('a', ['S'], undefined)).toBe('stopped')
   })
 
+  it('turno que acabou (finish): o 2º terminal atrasado dele é stale — nunca é adotado pelo seguinte', () => {
+    const t = createTurnIdentity()
+    const first: TurnInflight = { sdkUuid: 'A', turnIds: ['A2'] }
+    t.finish('a', first)
+    const next: TurnInflight = { sdkUuid: 'B' }
+    expect(t.owner('a', ['A'], next)).toBe('stale')
+    expect(t.owner('a', ['A2'], next)).toBe('stale')
+    expect(next.turnIds).toBeUndefined()
+    expect(t.owner('a', ['A'], undefined)).toBe('stale')
+    expect(t.finished('a', ['A'])).toBe(true)
+    // Id do turno seguinte junto (o CLI dobrou mensagens): é do seguinte.
+    expect(t.owner('a', ['A', 'B'], next)).toBe('current')
+    // Outra conversa e conversa apagada não herdam.
+    expect(t.finished('b', ['A'])).toBe(false)
+    t.forget('a')
+    expect(t.finished('a', ['A'])).toBe(false)
+  })
+
   it('o turno parado com o seguinte em voo: stale — nunca é do seguinte', () => {
     const t = createTurnIdentity()
     t.stop('a', { sdkUuid: 'S' })

@@ -148,6 +148,7 @@ import {
   type StopPhase
 } from './central/stopHold'
 import { createTurnIdentity, withStaleUsage } from './central/turnIdentity'
+import { createQueueHandoff, QUEUE_HANDOFF_FALLBACK_MS } from './central/queueHandoff'
 import { CentralPanel } from './central/CentralPanel'
 import { buildRemoteCentral } from './central/centralRemote'
 
@@ -786,6 +787,11 @@ export function App(): JSX.Element {
   const stopHolds = stopHoldsRef.current
   // De qual turno é cada evento do main, pelos `turnIds` (central/turnIdentity.ts).
   const [turnIdentity] = useState(createTurnIdentity)
+  // O próximo item da fila só sai quando o main confirma o fim real do turno
+  // anterior (central/queueHandoff.ts). `?.`: um main antigo/teste sem o canal segue na hora.
+  const [queueHandoff] = useState(() =>
+    createQueueHandoff({ waitTurnEnd: (cid) => window.api.waitTurnEnd?.(cid), fallbackMs: QUEUE_HANDOFF_FALLBACK_MS })
+  )
   /** A mensagem `msgId` foi parada enquanto o envio dela esperava (connect, sessão
    *  refeita): um Stop a marcou, ou o turno em voo da conversa já não é ela. */
   const stoppedWhileSending = (cid: string, msgId: string): boolean => {
@@ -956,10 +962,17 @@ export function App(): JSX.Element {
         if (owner === 'stopped') stopHolds.activity(cid)
         return
       }
-      if (terminal && owner === 'stale') {
+      // Terminal sem identidade enquanto a fila espera o fim real do turno que
+      // acabou (central/queueHandoff.ts): o turno seguinte ainda não saiu, então é
+      // o rabo do anterior (fim do stream, verificação do espelho).
+      const handoffTail = terminal && owner === 'unknown' && queueHandoff.pending(cid)
+      if (terminal && (owner === 'stale' || handoffTail)) {
         // O terminal atrasado do turno parado: nem fecha, nem falha o turno em voo;
         // só o que ele gastou entra na conta da conversa.
         if (e.kind === 'result') patchConv(cid, (c) => withStaleUsage(c, e))
+        // Rabo `error` de um turno que JÁ ACABOU (não de um parado): a sessão
+        // morreu — o próximo envio reconecta em vez de bater numa query morta.
+        if (e.kind === 'error' && (handoffTail || turnIdentity.finished(cid, e.turnIds))) setConnected(cid, false)
         return
       }
       // Stop do "não era aqui" (central/stopHold.ts): o main roda um turno por vez,
@@ -1187,23 +1200,35 @@ export function App(): JSX.Element {
             // Regra 2: o app não repete sozinho um turno de tarefa MCP — nem erro
             // transitório, nem 529, nem limite de uso. A tarefa já terminou em erro
             // para o chamador (main), que decide reenviar; a conversa fica parada.
+            // O turno acabou: um 2º terminal dele não derruba a próxima tarefa.
+            if (!wasInterrupted) turnIdentity.finish(cid, inflight)
             patchConv(cid, (c) => (c.recovery ? { ...c, recovery: undefined } : c))
-            setBusy(cid, false)
             setBusySince((m) => withoutKey(m, cid))
             notify('erro', `Tarefa do Forgia terminou em erro (o Forgia pode reenviar): ${e.text || 'erro sem mensagem'}`)
             if (e.kind === 'error') setConnected(cid, false)
             // O turno que falhou não volta, mas a fila da conversa segue: a
-            // próxima tarefa (ou mensagem) já enfileirada sai agora — sem isto
-            // ela ficava `na_fila` até alguém mandar outra coisa. O dispatch
-            // reconecta se a sessão caiu (`setConnected` acima).
-            const head = queueRef.current.find((m) => m.convId === cid)
-            const conv = convsRef.current.find((c) => c.id === cid)
-            if (head && conv) {
+            // próxima tarefa (ou mensagem) já enfileirada sai — sem isto ela
+            // ficava `na_fila` até alguém mandar outra coisa. Só depois de o main
+            // encerrar o turno de fato (o erro sai antes do fim do stream, do
+            // handoff e do lease); até lá a conversa segue ocupada, e o que
+            // chegar entra na fila. O dispatch reconecta se a sessão caiu.
+            if (!queueRef.current.some((m) => m.convId === cid)) {
+              setBusy(cid, false)
+              return
+            }
+            void queueHandoff.after(cid, () => {
+              // Outro caminho já começou um turno na espera (Stop que solta a fila,
+              // reparo do espelho): a fila segue no fim DELE, não aqui.
+              if (inflightRef.current[cid] || stopHolds.isHeld(cid)) return
+              setBusy(cid, false)
+              const head = queueRef.current.find((m) => m.convId === cid)
+              const conv = convsRef.current.find((c) => c.id === cid)
+              if (!head || !conv) return
               queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
               setQueue((q) => q.filter((m) => m.id !== head.id))
               const idle = { ...conv, recovery: undefined }
               void dispatchRef.current?.(idle, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
-            }
+            })
             return
           }
           // Only this conversation's subscription windows can say when its
@@ -1248,7 +1273,10 @@ export function App(): JSX.Element {
         // Turn succeeded → the in-flight message got its answer; dispatch the next
         // queued message for this conversation (if any). The conversation stays
         // "busy" through the handoff; only when the queue is empty do we go idle.
+        const finishedTurn = inflightRef.current[cid]
         delete inflightRef.current[cid]
+        // O turno acabou: um 2º terminal atrasado dele não é do próximo item.
+        if (stopVerdict === 'normal' && !wasInterrupted) turnIdentity.finish(cid, finishedTurn)
         patchConv(cid, (c) => ({ ...c, recovery: undefined }))
         // Fim do turno que o "não era aqui" parou mantendo a fila: a conversa segue
         // "parando" durante a carência do `error` do fim do stream (`wait`) e então
@@ -1333,6 +1361,11 @@ export function App(): JSX.Element {
             const auto = convsRef.current.find((c) => c.id === cid)
             if (auto && revalidatesAuto(auto)) {
               await connectRef.current?.(auto, autoPromptFor(auto, next.text))
+            } else if (auto && !connectedRef.current.has(cid)) {
+              // O rabo `error` do turno anterior (fim do stream) derrubou a sessão
+              // durante a espera: reconecta, como o `dispatch`, em vez de mandar
+              // para uma query morta.
+              await connectRef.current?.(auto, isPlanningConversation(auto) ? autoPromptFor(auto, next.text) : undefined)
             }
             // Parada enquanto a sessão era refeita ("não era aqui", Stop): não sai.
             if (stoppedWhileSending(cid, nextMsgId)) return
@@ -1341,7 +1374,12 @@ export function App(): JSX.Element {
             // main sabe qual tarefa sai, com o modelo e o pin dela.
             await window.api.sendMessage(cid, next.full, next.images, next.files, next.fileRefs, sdkUuid, undefined, next.mcpTaskId)
           }
-          void sendQueued().catch((err: unknown) => {
+          // Sai só quando o main encerrou o turno anterior de fato: o `result` vem
+          // antes do handoff e do lease solto (que, solto depois, deixaria este
+          // turno sem lease — o `agent:send` não pega um novo com o antigo ativo).
+          // A espera não muda nada da tela: a bolha e a ocupação já estão acima,
+          // e um Stop nela cai no `stoppedWhileSending`.
+          void queueHandoff.after(cid, sendQueued).catch((err: unknown) => {
             // O envio da fila falhou (ex.: a troca de modelo de uma tarefa MCP): a
             // mensagem fica com o erro e o "Tentar de novo", a tarefa MCP dela
             // vira erro, a conversa sai de ocupada e a fila segue — sem isto a
@@ -1368,16 +1406,24 @@ export function App(): JSX.Element {
               notify('erro', why)
               reportMcpFailed(next, why)
             }
-            setBusy(cid, false)
             setBusySince((m) => withoutKey(m, cid))
             // `queueRef` ainda pode ter o próprio `next` (a fila acima só saiu do state).
-            const after = queueRef.current.find((m) => m.convId === cid && m.id !== next.id)
-            const conv = convsRef.current.find((c) => c.id === cid)
-            if (after && conv) {
+            if (!queueRef.current.some((m) => m.convId === cid && m.id !== next.id)) {
+              setBusy(cid, false)
+              return
+            }
+            // O próximo também espera o fim real do que estiver em andamento no
+            // main (o envio pode ter falhado no meio do handoff); ocupada até lá.
+            void queueHandoff.after(cid, () => {
+              if (inflightRef.current[cid] || stopHolds.isHeld(cid)) return
+              setBusy(cid, false)
+              const after = queueRef.current.find((m) => m.convId === cid && m.id !== next.id)
+              const conv = convsRef.current.find((c) => c.id === cid)
+              if (!after || !conv) return
               queueRef.current = queueRef.current.filter((m) => m.id !== after.id && m.id !== next.id)
               setQueue((q) => q.filter((m) => m.id !== after.id))
               void dispatchRef.current?.(conv, after.full, after.text, after.images, after.thumbs, after.files, after.fileRefs, true, after.mcpTaskId, after.msgId)
-            }
+            })
           })
           setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
         } else if (sessionConfigPending) {

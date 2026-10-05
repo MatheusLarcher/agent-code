@@ -350,6 +350,7 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
             target={code.target}
             targetKey={code.targetKey}
             onSelect={code.onSelect}
+            onBrowse={code.onBrowse}
             onToggleFollow={code.onToggleFollow}
             onUserScroll={code.onUserScroll}
             onShowChat={() => setApp('chat')}

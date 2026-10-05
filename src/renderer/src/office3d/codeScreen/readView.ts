@@ -58,6 +58,8 @@ export interface ReadViewInput {
   result?: string | null
   /** Nome sensível: nunca abre. */
   sensitive?: boolean
+  /** Aberto pelo usuário na árvore (não lido pelo Agent): o arquivo inteiro, sem faixas de "não lidas". */
+  whole?: boolean
 }
 
 export interface ReadView extends FileView {
@@ -82,11 +84,11 @@ const DISK_NOTE: Record<string, string> = {
   outside: 'Fora da pasta do projeto: o texto lido não chegou inteiro à tela.'
 }
 
-export function readFileView({ disk, offset, limit, result = null, sensitive = false }: ReadViewInput): ReadView {
+export function readFileView({ disk, offset, limit, result = null, sensitive = false, whole = false }: ReadViewInput): ReadView {
   if (sensitive || (disk.kind === 'none' && disk.reason === 'sensitive')) {
     return view([], '', 'Arquivo sensível: não é aberto aqui, nem o que o Agent leu dele.', null)
   }
-  const range = readRange(offset, limit)
+  const range: ReadRange = whole ? { from: 1, count: Infinity, partial: false } : readRange(offset, limit)
   const rows: Row[] = []
   if (disk.kind === 'text') {
     const lines = disk.text === '' ? [] : (disk.text.endsWith('\n') ? disk.text.slice(0, -1) : disk.text).split('\n')

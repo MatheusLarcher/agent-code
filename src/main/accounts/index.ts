@@ -135,7 +135,22 @@ export async function resolveSessionAccount(
     ? DEFAULT_ACCOUNT_ID
     : (accountForConversation(stored, await claudeAccounts.candidates(), model) ?? DEFAULT_ACCOUNT_ID)
   conversationAccounts.set(convId, chosen)
+  // Lista não lida do banco: a escolha é provisória (a sessão roda, mas a conta
+  // não vai para a conversa — senão 'default' ficaria gravada para sempre).
+  if (claudeAccounts.storeReady()) provisionalAccounts.delete(convId)
+  else provisionalAccounts.add(convId)
   return chosen
+}
+
+/** Conversas cuja conta foi escolhida sem a lista de contas lida do banco. */
+const provisionalAccounts = new Set<string>()
+
+/**
+ * A conta a devolver ao renderer para gravar com a conversa: `undefined` quando
+ * a escolha foi provisória (lista de contas ainda não lida do banco).
+ */
+export function storableSessionAccount(convId: string, accountId: string | undefined): string | undefined {
+  return provisionalAccounts.has(convId) ? undefined : accountId
 }
 
 /**
@@ -163,6 +178,7 @@ export function conversationAccount(convId: string): string | undefined {
 
 export function forgetConversationAccount(convId: string): void {
   conversationAccounts.delete(convId)
+  provisionalAccounts.delete(convId)
 }
 
 /**

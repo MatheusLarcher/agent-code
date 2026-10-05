@@ -6,8 +6,9 @@
  *
  * - `current`: do turno em voo (o `sdkUuid` dele, ou um id que ele já mostrou).
  * - `stopped`: de um turno parado, sem outro turno em voo — é o fim dele.
- * - `stale`: de um turno parado COM outro turno em voo: não é deste; fica fora do
- *   estado dele (só tokens e custo entram na conta da conversa).
+ * - `stale`: de um turno parado COM outro turno em voo, ou de um turno que já
+ *   acabou (`finish`): não é deste; fica fora do estado dele (só tokens e custo
+ *   entram na conta da conversa).
  * - `unknown`: sem id (main/CLI antigo, evento da sessão): o caminho de sempre.
  *
  * Id que ninguém conhece, com um turno em voo, é desse turno (a continuação da troca
@@ -26,6 +27,11 @@ export interface TurnInflight {
 export interface TurnIdentity {
   /** Stop do turno em voo (comum ou o que mantém a fila): os ids dele passam a ser de turno parado. */
   stop(cid: string, inflight: TurnInflight | undefined): void
+  /** O turno acabou (o terminal dele foi tratado): um 2º terminal atrasado com
+   *  os ids dele é `stale` — não é do turno que sai depois. */
+  finish(cid: string, inflight: TurnInflight | undefined): void
+  /** Todos estes ids são de turnos que já acabaram (`finish`)? */
+  finished(cid: string, ids: readonly string[] | undefined): boolean
   /** De quem é um evento com estes `turnIds`. */
   owner(cid: string, ids: readonly string[] | undefined, inflight: TurnInflight | undefined): TurnOwner
   /** Conversa apagada. */
@@ -44,11 +50,23 @@ export function createTurnIdentity(): TurnIdentity {
     stopped.set(cid, list.slice(-KEEP))
   }
   const own = (turn: TurnInflight): string[] => [turn.sdkUuid, ...(turn.turnIds ?? [])]
+  const ended = new Map<string, string[]>()
+  const allEnded = (cid: string, ids: readonly string[] | undefined): boolean => {
+    const list = ended.get(cid)
+    return !!ids && ids.length > 0 && !!list && ids.every((id) => list.includes(id))
+  }
 
   return {
     stop(cid, inflight) {
       if (inflight) markStopped(cid, own(inflight))
     },
+    finish(cid, inflight) {
+      if (!inflight) return
+      const list = ended.get(cid) ?? []
+      for (const id of own(inflight)) if (!list.includes(id)) list.push(id)
+      ended.set(cid, list.slice(-KEEP))
+    },
+    finished: allEnded,
     owner(cid, ids, inflight) {
       if (!ids || ids.length === 0) return 'unknown'
       const live = inflight && !isStopped(cid, inflight.sdkUuid) ? inflight : undefined
@@ -56,6 +74,9 @@ export function createTurnIdentity(): TurnIdentity {
       // (o CLI dobra a fila num turno só) é da nova — nunca é descartado.
       if (live && ids.some((id) => own(live).includes(id))) return 'current'
       if (ids.some((id) => isStopped(cid, id))) return live ? 'stale' : 'stopped'
+      // Rabo de um turno que já acabou (o `error` do fim do stream depois do
+      // `result`): nunca é adotado pelo turno seguinte.
+      if (allEnded(cid, ids)) return 'stale'
       if (!inflight) return 'unknown'
       if (live) {
         live.turnIds = [...(live.turnIds ?? []), ...ids.filter((id) => !own(live).includes(id))].slice(-KEEP)
@@ -66,6 +87,7 @@ export function createTurnIdentity(): TurnIdentity {
     },
     forget(cid) {
       stopped.delete(cid)
+      ended.delete(cid)
     }
   }
 }

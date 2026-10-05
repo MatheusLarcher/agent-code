@@ -175,6 +175,36 @@ describe('McpTaskRegistry — transições', () => {
     expect(r.get(b.id)?.status).toBe('erro')
   })
 
+  it('2º terminal atrasado do turno anterior (ids dele) não encerra a tarefa seguinte', () => {
+    const r = registry()
+    const a = r.create('c1', 'A')
+    const b = r.create('c1', 'B')
+    r.noteSend('c1', a.id, 'normal', 'uA')
+    r.observe('c1', { kind: 'result', id: 'r', isError: true, text: '529', durationMs: 1, turnIds: ['uA'] } as ChatEvent)
+    expect(r.get(a.id)?.status).toBe('erro')
+    r.noteSend('c1', b.id, 'normal', 'uB')
+    // O fim do stream do turno de A chega depois que B saiu: não é de B.
+    r.observe('c1', { kind: 'error', id: 'fim', text: 'Agent stopped', turnIds: ['uA'] } as ChatEvent)
+    expect(r.get(b.id)?.status).toBe('rodando')
+    // O terminal de B (com o id dele) a encerra; sem id, o caminho de sempre.
+    r.observe('c1', { kind: 'result', id: 'rb', isError: false, text: 'feito B', durationMs: 1, turnIds: ['uB'] } as ChatEvent)
+    expect(r.get(b.id)).toMatchObject({ status: 'concluida', resposta: 'feito B' })
+  })
+
+  it('turno encerrado sem eco (Stop, terminal sem id): o id do envio conta como encerrado', () => {
+    const r = registry()
+    const a = r.create('c1', 'A')
+    const b = r.create('c1', 'B')
+    r.noteSend('c1', a.id, 'normal', 'uA')
+    r.onInterrupt('c1')
+    r.noteSend('c1', b.id, 'normal', 'uB')
+    r.observe('c1', { kind: 'result', id: 'tarde', isError: true, text: 'aborted', durationMs: 1, turnIds: ['uA'] } as ChatEvent)
+    expect(r.get(b.id)?.status).toBe('rodando')
+    // Terminal sem id: o de sempre (encerra o turno corrente).
+    r.observe('c1', result('feito'))
+    expect(r.get(b.id)?.status).toBe('concluida')
+  })
+
   it('config por conversa e mensagem curta', () => {
     const r = registry()
     r.setConfig('c1', { cliente: 'Forgia', mcpServers: {} })

@@ -59,6 +59,8 @@ const FINAL: ReadonlySet<McpTaskStatus> = new Set(['concluida', 'erro', 'cancela
 export const SUPERSEDED = 'A conversa seguiu com outra mensagem antes de a tarefa terminar.'
 /** Teto de tarefas guardadas: as finais mais velhas saem primeiro. */
 const MAX_TASKS = 500
+/** Ids de turnos encerrados guardados por conversa: só os recentes têm rabo atrasado. */
+const MAX_ENDED_IDS = 64
 
 export class McpTaskRegistry {
   private readonly tasks = new Map<string, McpTask>()
@@ -70,6 +72,11 @@ export class McpTaskRegistry {
   /** Por conversa: o último turno que o `agent:send` abriu era de tarefa MCP? */
   private readonly lastTurnTask = new Map<string, boolean>()
   private readonly configs = new Map<string, McpConversationConfig>()
+  /** Por conversa: o `messageUuid` do envio que abriu o turno em andamento. */
+  private readonly turnUuid = new Map<string, string>()
+  /** Por conversa: os `turnIds` de turnos que já acabaram. O 2º terminal atrasado
+   *  de um deles (fim do stream depois do `result`) não encerra o turno seguinte. */
+  private readonly endedIds = new Map<string, string[]>()
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -126,11 +133,17 @@ export class McpTaskRegistry {
    * continuação dele nem o fecha com a resposta dela. Se o id é o de uma tarefa
    * da fila, ela começou.
    */
-  noteSend(convId: string, taskId: string | undefined, kind: 'normal' | 'recovery' = 'normal'): void {
+  noteSend(convId: string, taskId: string | undefined, kind: 'normal' | 'recovery' = 'normal', messageUuid?: string): void {
     if (kind === 'recovery') return
     const task = this.taskFor(convId, taskId)
-    if (task && task.status !== 'na_fila') return
+    if (task && task.status !== 'na_fila') {
+      // O mesmo item reenviado continua o turno — agora com o id deste envio.
+      if (messageUuid) this.turnUuid.set(convId, messageUuid)
+      return
+    }
     if (this.primary(convId)) this.endTurn(convId, 'erro', { erro: SUPERSEDED })
+    if (messageUuid) this.turnUuid.set(convId, messageUuid)
+    else this.turnUuid.delete(convId)
     this.lastTurnTask.set(convId, !!task)
     if (!task) return
     this.removePending(task)
@@ -161,6 +174,11 @@ export class McpTaskRegistry {
    *  encerra a tarefa do turno — retryable ou não (529, limite de uso). O app
    *  não repete turno de tarefa; o chamador vê o erro e decide reenviar. */
   observe(convId: string, event: ChatEvent): void {
+    if (event.kind !== 'result' && event.kind !== 'error') return
+    // Terminal de um turno que já acabou (todos os ids dele são de turnos
+    // encerrados): não é deste turno — nem o conclui, nem o derruba.
+    if (this.isLateTail(convId, event.turnIds)) return
+    if (event.turnIds?.length) this.markEnded(convId, event.turnIds)
     if (event.kind === 'result') {
       if (event.isError) this.endTurn(convId, 'erro', { erro: shortError(event.text) })
       else this.endTurn(convId, 'concluida', { resposta: event.text ?? '' })
@@ -233,7 +251,25 @@ export class McpTaskRegistry {
     this.finish(task, 'erro', { erro: shortError(erro) })
   }
 
+  private isLateTail(convId: string, turnIds: readonly string[] | undefined): boolean {
+    if (!turnIds?.length) return false
+    const live = this.turnUuid.get(convId)
+    const ended = this.endedIds.get(convId) ?? []
+    return !turnIds.some((id) => id === live) && turnIds.every((id) => ended.includes(id))
+  }
+
+  private markEnded(convId: string, turnIds: readonly string[]): void {
+    const list = this.endedIds.get(convId) ?? []
+    for (const id of turnIds) if (!list.includes(id)) list.push(id)
+    this.endedIds.set(convId, list.slice(-MAX_ENDED_IDS))
+  }
+
   private endTurn(convId: string, status: McpTaskStatus, extra: Partial<McpTask> = {}): void {
+    const uuid = this.turnUuid.get(convId)
+    if (uuid) {
+      this.markEnded(convId, [uuid])
+      this.turnUuid.delete(convId)
+    }
     const ids = this.current.get(convId) ?? []
     this.current.delete(convId)
     for (const id of ids) {

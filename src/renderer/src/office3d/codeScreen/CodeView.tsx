@@ -46,6 +46,8 @@ export interface CodeViewProps {
   target: number
   targetKey: string
   onSelect: (key: string) => void
+  /** Abre um arquivo da árvore de todos os arquivos (caminho absoluto). */
+  onBrowse?: (path: string) => void
   onToggleFollow: () => void
   onUserScroll: () => void
   onShowChat: () => void
@@ -74,6 +76,17 @@ function Crumbs({ path, cwd }: { path: string; cwd: string }): JSX.Element {
 export const CodeView = memo(function CodeView(p: CodeViewProps): JSX.Element {
   const uid = useId()
   const [sidebar, setSidebar] = useState(true)
+  // Explorador: só os usados (padrão a cada montagem) ou todos; as pastas abertas valem enquanto a tela existe.
+  const [onlyUsed, setOnlyUsed] = useState(true)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
+  const onToggleOnlyUsed = useCallback(() => setOnlyUsed((v) => !v), [])
+  const onToggleDir = useCallback((rel: string) => {
+    setExpanded((s) => {
+      const next = new Set(s)
+      if (!next.delete(rel)) next.add(rel)
+      return next
+    })
+  }, [])
   const panelId = `${uid}-editor`
   const keys = p.items.map((t) => t.key)
   const tabId = useCallback((key: string): string => `${uid}-tab-${keys.indexOf(key)}`, [uid, keys.join('\n')])
@@ -103,7 +116,22 @@ export const CodeView = memo(function CodeView(p: CodeViewProps): JSX.Element {
             <Icon name="agent" />
           </span>
         </nav>
-        {sidebar && <Explorer project={p.project} cwd={p.cwd} tabs={p.changedItems} reads={p.reads} mixed={p.mixed} active={p.activeKey} onOpen={p.onSelect} />}
+        {sidebar && (
+          <Explorer
+            project={p.project}
+            cwd={p.cwd}
+            tabs={p.changedItems}
+            reads={p.reads}
+            mixed={p.mixed}
+            active={p.activeKey}
+            onOpen={p.onSelect}
+            onlyUsed={onlyUsed}
+            onToggleOnlyUsed={p.onBrowse ? onToggleOnlyUsed : undefined}
+            expanded={expanded}
+            onToggleDir={onToggleDir}
+            onBrowse={p.onBrowse}
+          />
+        )}
         <div className="cm-main">
           {p.items.length > 0 && p.activeKey && p.activePath ? (
             <>

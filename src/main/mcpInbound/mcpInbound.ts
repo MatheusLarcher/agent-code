@@ -74,6 +74,8 @@ export interface McpSend {
   text: string
   taskId?: string
   kind?: SendKind
+  /** O `messageUuid` do envio (o eco do CLI nos `turnIds`): diz de qual turno é cada terminal. */
+  messageUuid?: string
 }
 
 /** Quantas falas (e quantos caracteres de cada) o `autoPrompt` da troca leva —
@@ -337,7 +339,7 @@ export class McpInbound {
   }
 
   onAgentSend(convId: string, send: McpSend): void {
-    this.registry.noteSend(convId, send.taskId, send.kind ?? 'normal')
+    this.registry.noteSend(convId, send.taskId, send.kind ?? 'normal', send.messageUuid)
     if (send.kind !== 'recovery') this.remember(convId, 'user', send.text)
   }
 

@@ -199,6 +199,32 @@ button.cm-act:hover { color: var(--cm-text-strong); }
 .cm-sec-cnt { margin-left: auto; min-width: 18px; padding: 0 6px; border-radius: 8px; background: #2b2b2b; color: #a8a8a8; font: 600 10px/16px var(--cm-font-ui); text-align: center; }
 .cm-section { padding-right: 10px; }
 .cm-file-range { flex: none; color: #7a7a7a; font: 10.5px var(--cm-font-code); }
+/* "Apenas usados" × todos os arquivos do projeto (a árvore lida do disco). */
+.cm-side-title { gap: 8px; padding-right: 8px; }
+.cm-side-title > span { flex: 1; }
+.cm-side-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--cm-line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--cm-muted);
+  font: 600 10px var(--cm-font-ui);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  cursor: pointer;
+}
+.cm-side-toggle .cm-icon { width: 12px; height: 12px; }
+.cm-side-toggle:hover { background: var(--cm-hover); color: var(--cm-text); }
+.cm-side-toggle.on { border-color: color-mix(in srgb, var(--cm-agent) 55%, transparent); color: var(--cm-text-strong); }
+.cm-closed { width: 14px; height: 14px; color: #a0a0a0; }
+.cm-tree-dir { width: 100%; border: 0; background: transparent; font-size: var(--cm-ui-size); text-align: left; cursor: pointer; }
+.cm-tree-dir:hover { background: var(--cm-hover); }
+.cm-tree-note { margin: 2px 0; padding-right: 10px; }
+
 /* A aba de prévia do arquivo só lido: o nome em itálico, como no VS Code. */
 .cm-tab-pv .cm-tab-name { font-style: italic; }
 

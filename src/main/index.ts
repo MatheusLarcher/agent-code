@@ -71,7 +71,8 @@ import {
   recordSessionRateLimit,
   resolveSessionAccount,
   startAccountSync,
-  stopAccountSync
+  stopAccountSync,
+  storableSessionAccount
 } from './accounts'
 import { registerClaudeAccountsIpc } from './accounts/accountsIpc'
 import { setClaudeObserverEnvResolver } from './observerQuery'
@@ -135,8 +136,10 @@ import { readProjectIcon } from './projectIcon'
 import { syncCacheSkills } from './skillManager'
 import { autoModelCandidates, resolveAutoStart, type AutoLivePair, type AutoStartDecision } from './typesafe'
 import { typeSafePause, TYPESAFE_BLOCKING_TIMEOUT_MS } from './typesafe/pause'
+import { listProjectDir, MENTION_IGNORE } from './projectFiles'
 import { typeSafeConfigured } from './typesafe/client'
 import type {
+  TurnEndWait,
   AgentMessageKind,
   ChatEvent,
   AppConfig,
@@ -145,6 +148,7 @@ import type {
   FileBytes,
   FileRefAttachment,
   ImageAttachment,
+  ProjectDirListing,
   MentionHit,
   ProjectNode,
   ProjectTree,
@@ -237,6 +241,11 @@ const sessionLeases = new SessionLeases<ConversationLeaseKeeper, PersistenceRepo
   steps: sessionSteps,
   keeper: (convId, lease, isInstalled) => newLeaseKeeper(convId, lease, isInstalled)
 })
+/** Lease sendo solto no fim do turno (onTurnComplete), por conversa. */
+const turnLeaseReleases = new Map<string, Promise<void>>()
+/** Prazo máximo do `agent:wait-turn-end`: depois dele a fila segue mesmo assim. */
+const TURN_END_WAIT_MS = 45_000
+
 
 async function releaseSessionLease(convId: string): Promise<void> {
   await sessionLeases.release(convId)
@@ -550,11 +559,7 @@ const REMOTE_ROOT = join(import.meta.dirname, '../../smartfone-remote')
 
 // ---- "@" autocomplete: search project files/folders --------------------------
 
-/** Directories never worth walking for the "@" menu (noise / huge / generated). */
-const MENTION_IGNORE = new Set([
-  'node_modules', '.git', 'dist', 'out', 'build', '.gradle', '.vite',
-  'coverage', '.next', '.turbo', '.cache', '.idea'
-])
+// MENTION_IGNORE (folders never worth walking) lives in ./projectFiles, shared with the file tree.
 
 /** lowercase + strip accents, so "TÉST" matches "teste" (project filter rule). */
 function foldText(s: string): string {
@@ -1498,6 +1503,8 @@ export function registerIpc(): void {
       return readProjectTree(root, keep)
     }
   )
+  ipcMain.handle(Channels.projectDir, (_e, root: unknown, rel: unknown): Promise<ProjectDirListing> => listProjectDir(root, rel))
+
 
   // Sidebar: the project's own icon, if the folder happens to have one. Null is
   // the normal answer (the sidebar keeps the folder glyph), never an error.
@@ -1733,7 +1740,7 @@ export function registerIpc(): void {
         // ter mudado (o fallback do turno anterior virou decisão agora), e é a
         // origem que manda no turno seguinte.
         commitState(opts.cwd)
-        return { ok: true, claudeAccountId: conversationAccount(convId) }
+        return { ok: true, claudeAccountId: storableSessionAccount(convId, conversationAccount(convId)) }
       }
       // Os sentinels `auto` (modelo e esforço) NUNCA chegam ao provedor: daqui
       // para baixo a sessão é montada no par concreto que a decisão devolveu
@@ -1874,7 +1881,15 @@ export function registerIpc(): void {
     ), emit, async (provider) =>
       provider === 'gpt' ? isCodexConnected() : claudeAccounts.isConnected(conversationAccount(convId) ?? claudeAccountId),
     async () => {
-        if (sessions.get(convId) === s) await releaseSessionLease(convId)
+        if (sessions.get(convId) !== s) return
+        // Visível para o `agent:wait-turn-end`: o turno só acabou de fato com o lease solto.
+        const release = releaseSessionLease(convId)
+        turnLeaseReleases.set(convId, release)
+        try {
+          await release
+        } finally {
+          if (turnLeaseReleases.get(convId) === release) turnLeaseReleases.delete(convId)
+        }
     },
     // Várias contas Claude: troca de conta no fim do turno e no estouro. A
     // aquisição do lease dela entra no MESMO lock (toda aquisição da conversa
@@ -1923,7 +1938,8 @@ export function registerIpc(): void {
       previous.dispose()
       mcpInbound.onSessionInstalled(convId)
     }
-    return { ok, claudeAccountId }
+    // Escolha provisória (lista de contas não lida do banco) não vai para a conversa.
+    return { ok, claudeAccountId: storableSessionAccount(convId, claudeAccountId) }
   }
   ipcMain.handle(Channels.agentStart, (_e, opts: StartAgentOptions) =>
     sessionLock.run(opts.convId, () => startAgentSession(opts))
@@ -1960,7 +1976,8 @@ export function registerIpc(): void {
       const mcpSend: McpSend = {
         text,
         ...(validTaskId(mcpTaskId) ? { taskId: mcpTaskId } : {}),
-        kind: messageKind === 'recovery' ? 'recovery' : 'normal'
+        kind: messageKind === 'recovery' ? 'recovery' : 'normal',
+        ...(typeof messageUuid === 'string' && messageUuid ? { messageUuid } : {})
       }
       // Regra 1: id de tarefa que não está viva (terminou, cancelada, erro, app
       // reiniciado) é RECUSADO — nunca rebaixado a mensagem do usuário. Regra 2:
@@ -2068,6 +2085,31 @@ export function registerIpc(): void {
       await current.send(finalText, images, messageUuid, takeOrigin(convId, text), messageKind)
     }
   )
+  // A fila da tela só manda o próximo item quando o turno anterior acabou de fato:
+  // o `result`/`error` sai ANTES do handoff (verificação do espelho) e do lease
+  // solto (onTurnComplete) — e o `agent:send` não pega lease se o antigo ainda
+  // está ativo. Sem sessão: na hora. Nunca rejeita; o prazo destrava a fila.
+  ipcMain.handle(Channels.agentWaitTurnEnd, async (_e, convId: unknown): Promise<TurnEndWait> => {
+    const session = typeof convId === 'string' ? sessions.get(convId) : undefined
+    if (!session || typeof convId !== 'string') return { settled: true, reason: 'no-session' }
+    const ended = (async (): Promise<'idle'> => {
+      await session.waitForIdle().catch(() => undefined)
+      // O onTurnComplete corre no mesmo `handoffReady`: uma volta do loop e o
+      // lease solto dele já está registrado.
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      await turnLeaseReleases.get(convId)?.catch(() => undefined)
+      return 'idle'
+    })()
+    let timer: NodeJS.Timeout | undefined
+    const deadline = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), TURN_END_WAIT_MS)
+    })
+    const reason = await Promise.race([ended, deadline])
+    clearTimeout(timer)
+    if (reason === 'timeout') console.warn(`[queue] turno de ${convId} não terminou em ${TURN_END_WAIT_MS} ms; a fila segue`)
+    return { settled: reason !== 'timeout', reason }
+  })
+
 
   // Botão "agora" da fila: a mensagem entra no turno em andamento, marcada como
   // ajuste (ver injectNow.ts). Sem turno, `ok: false` e ela segue na fila.

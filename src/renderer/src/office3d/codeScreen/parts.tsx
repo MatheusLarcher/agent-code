@@ -1,12 +1,14 @@
 /**
  * As peças da janela "VS Code" do monitor, sem estado próprio além da rolagem:
  * a faixa de abas (tablist), o explorador dos arquivos que o Agent mexeu
- * (Alterados) e leu (Lidos), o painel do terminal, a barra de status e a tela
+ * (Alterados) e leu (Lidos) — ou, desligado o "Apenas usados", a árvore de
+ * todos os arquivos do projeto (AllFilesTree) —, o painel do terminal, a barra de status e a tela
  * de boas-vindas (vazia).
  */
 import { useLayoutEffect, useRef, type KeyboardEvent } from 'react'
 import { modelSequenceLabel } from '@shared/modelLabel'
 import type { TerminalCommand } from './codeModel'
+import { AllFilesTree } from './AllFilesTree'
 import { FileGlyph, Icon } from './icons'
 import { madeBy, ModelTags } from './modelTags'
 import { relativePath, slashed } from './pathGuard'
@@ -27,9 +29,9 @@ export interface TabItem {
 }
 
 const statusWord = (t: TabItem): string => (t.typing ? 'digitando' : t.status === 'U' ? 'novo' : t.status === 'M' ? 'modificado' : t.preview ? 'lido' : '')
-const named = (t: TabItem): string => [t.name, statusWord(t)].filter(Boolean).join(', ')
+export const named = (t: TabItem): string => [t.name, statusWord(t)].filter(Boolean).join(', ')
 
-function Marker({ t }: { t: TabItem }): JSX.Element | null {
+export function Marker({ t }: { t: TabItem }): JSX.Element | null {
   if (t.typing) return <span className="cm-typing" aria-hidden="true" />
   if (!t.status) return null
   return (
@@ -136,7 +138,18 @@ export interface ExplorerProps {
   /** O turno teve mais de um modelo: cada arquivo leva a etiqueta do dele. */
   mixed?: boolean
   onOpen: (key: string) => void
+  /** Só os arquivos usados (Alterados/Lidos, o padrão) ou a árvore de todos os do projeto. */
+  onlyUsed?: boolean
+  onToggleOnlyUsed?: () => void
+  /** Pastas abertas na árvore completa e o abrir/fechar delas. */
+  expanded?: ReadonlySet<string>
+  onToggleDir?: (rel: string) => void
+  /** Abre um arquivo da árvore completa pelo caminho absoluto. */
+  onBrowse?: (path: string) => void
 }
+
+const NO_DIRS: ReadonlySet<string> = new Set()
+const noop = (): void => {}
 
 function FileTree({ files, cwd, active, mixed, onOpen }: { files: readonly TabItem[]; cwd: string; active: string | null; mixed: boolean; onOpen: (key: string) => void }): JSX.Element {
   return (
@@ -176,12 +189,40 @@ function FileTree({ files, cwd, active, mixed, onOpen }: { files: readonly TabIt
   )
 }
 
-export function Explorer({ cwd, tabs, reads = [], active, mixed = false, onOpen }: ExplorerProps): JSX.Element {
+export function Explorer({ cwd, tabs, reads = [], active, mixed = false, onOpen, onlyUsed = true, onToggleOnlyUsed, expanded = NO_DIRS, onToggleDir = noop, onBrowse = noop }: ExplorerProps): JSX.Element {
   return (
-    <nav className="cm-explorer" aria-label="Explorador: arquivos que o Agent alterou e leu">
-      <div className="cm-side-title" aria-hidden="true">
-        Explorador
+    <nav className="cm-explorer" aria-label={onlyUsed ? 'Explorador: arquivos que o Agent alterou e leu' : 'Explorador: todos os arquivos do projeto'}>
+      <div className="cm-side-title">
+        <span aria-hidden="true">Explorador</span>
+        {onToggleOnlyUsed && (
+          <button
+            type="button"
+            className={`cm-side-toggle${onlyUsed ? ' on' : ''}`}
+            aria-pressed={onlyUsed}
+            title={onlyUsed ? 'Mostrando só os arquivos que o Agent alterou e leu. Clique para ver todos os arquivos do projeto.' : 'Mostrando todos os arquivos do projeto. Clique para ver só os que o Agent alterou e leu.'}
+            onClick={onToggleOnlyUsed}
+          >
+            <Icon name={onlyUsed ? 'check' : 'tree'} />
+            Apenas usados
+          </button>
+        )}
       </div>
+      {onlyUsed ? <UsedFiles cwd={cwd} tabs={tabs} reads={reads} active={active} mixed={mixed} onOpen={onOpen} /> : (
+        <>
+          <div className="cm-section" title={cwd ? slashed(cwd) : undefined}>
+            <Icon name="chevron" className="cm-open" />
+            <span>Todos os arquivos</span>
+          </div>
+          <AllFilesTree key={cwd} cwd={cwd} known={[...tabs, ...reads]} active={active} mixed={mixed} expanded={expanded} onToggleDir={onToggleDir} onBrowse={onBrowse} />
+        </>
+      )}
+    </nav>
+  )
+}
+
+function UsedFiles({ cwd, tabs, reads, active, mixed, onOpen }: { cwd: string; tabs: readonly TabItem[]; reads: readonly TabItem[]; active: string | null; mixed: boolean; onOpen: (key: string) => void }): JSX.Element {
+  return (
+    <>
       <div className="cm-section" title="Arquivos que o Agent criou ou mudou">
         <Icon name="chevron" className="cm-open" />
         <span>Alterados</span>
@@ -194,7 +235,7 @@ export function Explorer({ cwd, tabs, reads = [], active, mixed = false, onOpen 
         <span className="cm-sec-cnt">{reads.length}</span>
       </div>
       {reads.length === 0 ? <p className="cm-side-empty">Nenhum arquivo só lido neste turno.</p> : <FileTree files={reads} cwd={cwd} active={active} mixed={mixed} onOpen={onOpen} />}
-    </nav>
+    </>
   )
 }
 

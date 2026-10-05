@@ -3,6 +3,9 @@
  * como sempre), os lidos do turno e a aba de prévia, o terminal, o código ao
  * vivo, o arquivo à vista no editor e o "seguir o Agent".
  *
+ * Todos os arquivos: o arquivo aberto na árvore do projeto (onBrowse) que o
+ * Agent não tocou vira a aba de prévia, inteiro e somente leitura.
+ *
  * Seguir o Agent: a aba é a do arquivo que ele digita agora; parado, a do último
  * arquivo que ele tocou — alterado ou LIDO (o lido abre na aba de prévia, uma
  * só, trocada pela próxima leitura). Digitando, o arquivo digitado vence. Clicar
@@ -113,11 +116,14 @@ export interface CodeAppState {
   onUserScroll: () => void
   /** Abre um arquivo pela chave (do Contexto ou de um aviso): para de seguir. */
   open: (key: string) => void
+  /** Abre um arquivo da árvore do projeto pelo caminho absoluto: para de seguir. */
+  onBrowse: (path: string) => void
 }
 
 export function useCodeApp(messages: readonly UIMessage[], opts: { convId: string | null; cwd: string; busy: boolean; visible: boolean }): CodeAppState {
   const [follow, setFollow] = useState(true)
   const [picked, setPicked] = useState<string | null>(null)
+  const [browsed, setBrowsed] = useState<{ key: string; path: string } | null>(null)
   const live = useLiveBlocks(opts.convId)
 
   const actions = useMemo(() => buildTurnActions(messages), [messages])
@@ -154,14 +160,21 @@ export function useCodeApp(messages: readonly UIMessage[], opts: { convId: strin
   const isChanged = (key: string | null): boolean => !!key && changedItems.some((t) => t.key === key)
   const isRead = (key: string | null): boolean => !!key && reads.some((r) => r.key === key)
   const followKey = liveKey ?? (touch && (isChanged(touch.key) || isRead(touch.key)) ? touch.key : (changedItems[0]?.key ?? null))
-  const pickedOk = picked !== null && (isChanged(picked) || isRead(picked))
+  const isBrowsed = (key: string | null): boolean => !!key && browsed?.key === key
+  const pickedOk = picked !== null && (isChanged(picked) || isRead(picked) || isBrowsed(picked))
   const activeKey = follow ? followKey : pickedOk ? picked : (changedItems[0]?.key ?? reads[reads.length - 1]?.key ?? null)
   // A aba de prévia: o lido à vista (uma só; a próxima leitura a troca).
   const previewKey = activeKey && !isChanged(activeKey) && isRead(activeKey) ? activeKey : null
-  const items = useMemo(() => {
-    const pv = previewKey ? reads.find((r) => r.key === previewKey) : undefined
+  // Ou o arquivo aberto na árvore que o Agent não tocou: inteiro, somente leitura.
+  const browseKey = activeKey && !isChanged(activeKey) && !isRead(activeKey) && isBrowsed(activeKey) ? activeKey : null
+  const items = useMemo((): TabItem[] => {
+    const pv: TabItem | undefined = previewKey
+      ? reads.find((r) => r.key === previewKey)
+      : browseKey && browsed
+        ? { key: browsed.key, path: browsed.path, name: baseName(browsed.path), status: null, typing: false, preview: true }
+        : undefined
     return pv ? [...changedItems, pv] : changedItems
-  }, [changedItems, reads, previewKey])
+  }, [changedItems, reads, previewKey, browseKey, browsed])
   const activeRef = useRef(activeKey)
   activeRef.current = activeKey
 
@@ -176,13 +189,14 @@ export function useCodeApp(messages: readonly UIMessage[], opts: { convId: strin
   const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
   const view = useMemo((): FileView | ReadView | null => {
     if (!activeKey) return null
+    if (browseKey && activePath) return readFileView({ disk, offset: null, limit: null, whole: true, sensitive: isSensitivePath(activePath) })
     if (previewKey && activePath) {
       return readFileView({ disk, offset: num(readInp.offset), limit: num(readInp.limit), result: readMsg?.result?.text ?? null, sensitive: isSensitivePath(activePath) })
     }
     return fileView({ edits: activeTab?.edits ?? [], base: activeTab?.base ?? null, disk, live: activeLive })
     // A assinatura da aba (ou a leitura) diz tudo o que a tela desenha dela.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeKey, activeTab?.sig, disk, activeLive, previewKey, readMsg?.id, readMsg?.result?.text])
+  }, [activeKey, activeTab?.sig, disk, activeLive, previewKey, browseKey, readMsg?.id, readMsg?.result?.text])
   // Para onde a tela vai seguindo o Agent: o cursor dele, a última edição ainda achada ou a 1ª mudança.
   const target = view ? (view.caret ? view.caret.row : view.latest >= 0 ? view.latest : view.first) : -1
   const targetKey = `${activeKey}|${view?.caret ? 'c' : 'f'}${target}|${activeTab?.sig ?? readMsg?.id ?? ''}`
@@ -194,6 +208,12 @@ export function useCodeApp(messages: readonly UIMessage[], opts: { convId: strin
   const onUserScroll = useCallback(() => {
     setPicked(activeRef.current)
     setFollow(false)
+  }, [])
+  const onBrowse = useCallback((path: string) => {
+    const key = normalizePath(path)
+    setBrowsed({ key, path })
+    setFollow(false)
+    setPicked(key)
   }, [])
   const onToggleFollow = useCallback(() => {
     setPicked(activeRef.current)
@@ -210,7 +230,7 @@ export function useCodeApp(messages: readonly UIMessage[], opts: { convId: strin
     activePath,
     activeName: activeItem?.name ?? null,
     view,
-    readOnly: previewKey && view && 'shown' in view ? readSummary(view) : null,
+    readOnly: browseKey ? 'Somente leitura' : previewKey && view && 'shown' in view ? readSummary(view) : null,
     typingName: typing ? baseName(livePath) : null,
     follow,
     target,
@@ -220,6 +240,7 @@ export function useCodeApp(messages: readonly UIMessage[], opts: { convId: strin
     onSelect,
     onToggleFollow,
     onUserScroll,
-    open: onSelect
+    open: onSelect,
+    onBrowse
   }
 }

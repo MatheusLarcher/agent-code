@@ -14,6 +14,7 @@ import type {
   ProjectConversationCountDto,
   AgentEventMsg,
   AgentInterruptResult,
+  TurnEndWait,
   AgentMessageKind,
   AndroidProgressMsg,
   SpeechSetupProgress,
@@ -40,6 +41,7 @@ import type {
   FileRefAttachment,
   ImageAttachment,
   MentionHit,
+  ProjectDirListing,
   ProjectTree,
   ResolvedPastedRef,
   SkillInfo,
@@ -159,6 +161,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.listSkills, root),
   projectTree: (root: string, keep: string[] = []): Promise<ProjectTree> =>
     ipcRenderer.invoke(Channels.projectTree, root, keep),
+  projectDir: (root: string, rel: string): Promise<ProjectDirListing> =>
+    ipcRenderer.invoke(Channels.projectDir, root, rel),
   projectIcon: (root: string): Promise<string | null> =>
     ipcRenderer.invoke(Channels.projectIcon, root),
   downloadFile: (path: string): Promise<{ ok: boolean; message: string; saved?: string }> =>
@@ -317,6 +321,7 @@ const api: AgentCodeApi = {
     mcpTaskId?: string
   ): Promise<void> =>
     ipcRenderer.invoke(Channels.agentSend, convId, text, images, files, fileRefs, messageUuid, messageKind, mcpTaskId),
+  waitTurnEnd: (convId: string): Promise<TurnEndWait> => ipcRenderer.invoke(Channels.agentWaitTurnEnd, convId),
   interrupt: (convId: string): Promise<AgentInterruptResult> =>
     ipcRenderer.invoke(Channels.agentInterrupt, convId),
   setBypass: (convId: string, on: boolean): Promise<void> =>

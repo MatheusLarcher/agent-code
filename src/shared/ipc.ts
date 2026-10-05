@@ -22,6 +22,14 @@ import type { RemoteCentral } from './central'
  */
 type TurnIds = { turnIds?: string[] }
 
+/** Resposta de `agent:wait-turn-end`: o turno anterior acabou de fato no main
+ *  (`idle`: ocioso + handoff + lease solto), não havia sessão (`no-session`) ou o
+ *  prazo venceu (`timeout`, `settled: false`). */
+export interface TurnEndWait {
+  settled: boolean
+  reason: 'idle' | 'no-session' | 'timeout'
+}
+
 /** A normalized chat event the renderer renders. Produced in main from SDKMessage. */
 export type ChatEvent =
   /** `effort`: o nível com que a sessão subiu (ausente = sem esforço). É o que
@@ -504,6 +512,22 @@ export interface FileRefAttachment {
 export type ResolvedPastedRef =
   | { ok: true; name: string; path: string; mediaType: string; size: number; isImage: boolean }
   | { ok: false; error: string }
+
+/** One entry of a single project folder (the "Todos os arquivos" tree of the office code screen). */
+export interface ProjectDirEntry {
+  /** Path relative to the project root, with forward slashes. */
+  path: string
+  name: string
+  isDir: boolean
+}
+
+/** One folder listed on demand: folders first, alphabetical, capped. `error` = could not list (entries empty). */
+export interface ProjectDirListing {
+  entries: ProjectDirEntry[]
+  /** True when the folder has more entries than the cap. */
+  truncated: boolean
+  error: string | null
+}
 
 /**
  * One node of the project map (the "Projeto" view of the agents panel). Same
@@ -2002,6 +2026,8 @@ export const Channels = {
   /** Drag-and-drop no Quadro: move um cartão entre colunas e, quando o
    *  destino/origem é "fazendo", manda ou interrompe o agente de verdade. */
   boardMove: 'board:move',
+  /** Espera o turno da conversa acabar de fato no main (ocioso + handoff), com prazo. */
+  agentWaitTurnEnd: 'agent:wait-turn-end',
   /** A linha do tempo de um cartão — fetch preguiçoso, só ao abrir o detalhe. */
   boardItemEvents: 'board:item-events',
   /** Main → renderer: o quadro daquele projeto mudou, recarregue. */
@@ -2028,6 +2054,8 @@ export const Channels = {
   /** Importa arquivos para <plano>/midia/ (nome saneado); devolve os PlanMediaDto novos. */
   planningImportMedia: 'planning:importMedia',
   /** Uma mídia de <plano>/midia/ em base64, para pré-visualizar. */
+  /** One project folder at a time (office code screen "Todos os arquivos"), validated and capped. */
+  projectDir: 'app:project-dir',
   planningReadMedia: 'planning:readMedia',
   /** Salva o flow do planejamento em PDF (diálogo "Salvar como" + printToPDF). */
   planningExportPdf: 'planning:exportPdf',
