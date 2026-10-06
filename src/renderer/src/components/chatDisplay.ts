@@ -8,10 +8,17 @@
  * aviso "Controle do Windows ativo"; conversa, fila e composer continuam.
  *
  * `hideWindowsBanner`: sem o aviso "Controle do Windows ativo" mesmo maximizado
- * — o chat de planejamento conversa sobre o plano, e o aviso só tomava espaço.
+ * — o chat de planejamento conversa sobre o plano, e o aviso só tomava espaço;
+ * o chat flutuante do Escritório também o esconde (o HUD do palco o mostra, com
+ * o "Desativar").
  *
  * `hideLastUsage`: sem o quadro "Última resposta" mesmo maximizado — pelo
  * mesmo motivo, no chat de planejamento.
+ *
+ * `usageMini`: no lugar do medidor de consumo do cabeçalho (tempo, entrada,
+ * saída, custo) fica só uma barrinha fatiada por tipo de consumo (UsageMiniBar):
+ * o mouse em cima mostra o que é cada fatia, os números e o custo; o clique abre
+ * o painel por agente. É o chat flutuante do Escritório.
  *
  * `cardRefs`: os cards do plano aberto (só na Tela de Planejamento). Com eles,
  * '[[' no Composer sugere os cards e [[Nome]] nas mensagens aparece com a cor
@@ -24,10 +31,12 @@ import type { RefCard } from '../planning/cardRefs'
 
 export interface ChatDisplay {
   compact: boolean
-  /** Esconde o aviso do Controle do Windows (o chat de planejamento). */
+  /** Esconde o aviso do Controle do Windows (o chat de planejamento e o flutuante do Escritório). */
   hideWindowsBanner?: boolean
   /** Esconde o quadro "Última resposta" (o chat de planejamento). */
   hideLastUsage?: boolean
+  /** O medidor do cabeçalho vira a barrinha fatiada com o cartão de detalhes (o flutuante do Escritório). */
+  usageMini?: boolean
   /** Pastas do plano aberto (absolutas, como o main as resolveu): a do plano,
    *  na pasta de dados do app (handoffs), e o _sandbox, no projeto (código de
    *  teste). Cada arquivo que o agente cria dentro delas ganha um link "Abrir"

@@ -1,14 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ChatEvent, LlmCall as PersistedLlmCall, LlmUsageTotal, TokenUsage } from '@shared/ipc'
-import {
-  buildUsageTree,
-  emptyUsageMap,
-  reduceUsage,
-  totalTokens,
-  type LlmCall,
-  type UsageMap,
-  type UsageNode
-} from '../tokenUsageTree'
+import type { LlmCall as PersistedLlmCall, LlmUsageTotal, TokenUsage } from '@shared/ipc'
+import { buildUsageTree, totalTokens, type UsageMap, type UsageNode } from '../tokenUsageTree'
+import { buildHistoryMap, fmtCost, mergeUsageMaps, usageTotals } from '../tokenUsageHistory'
 import { IconChevronDown, IconChevronRight } from './Icons'
 
 interface Props {
@@ -17,86 +10,9 @@ interface Props {
   /** Acumulador ao vivo desta conversa, alimentado pelos eventos `llm-call`
    *  que chegam enquanto o app está aberto (ver App.tsx). */
   liveMap: UsageMap
-}
-
-const emptyTotals: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-
-/** Converte uma chamada persistida (camelCase, ver `LlmCall` em shared/ipc.ts)
- *  no evento `llm-call` que `reduceUsage` sabe processar — mesma forma que o
- *  main já emite ao vivo, só que reidratada do banco. */
-function persistedCallToEvent(call: PersistedLlmCall): ChatEvent {
-  return {
-    kind: 'llm-call',
-    node_id: call.nodeId,
-    parent_node_id: call.parentNodeId,
-    seq: call.seq,
-    model: call.model,
-    tokens: {
-      input: call.inputTokens,
-      output: call.outputTokens,
-      cacheRead: call.cacheReadTokens,
-      cacheWrite: call.cacheWriteTokens
-    },
-    inputPreview: call.inputPreview ?? '',
-    outputPreview: call.outputPreview ?? '',
-    subagentType: call.subagentType ?? undefined,
-    taskDescription: call.taskDescription ?? undefined,
-    createdAt: new Date(call.createdAt).getTime()
-  }
-}
-
-function buildHistoryMap(calls: PersistedLlmCall[]): UsageMap {
-  return calls.reduce((map, call) => reduceUsage(map, persistedCallToEvent(call)), emptyUsageMap)
-}
-
-/** Funde o histórico reidratado do banco com o que chegou ao vivo nesta
- *  sessão, sem duplicar: quando os dois lados conhecem a mesma chamada
- *  (mesmo node + seq), a versão ao vivo vence — é a mais recente. */
-function mergeUsageMaps(history: UsageMap, live: UsageMap): UsageMap {
-  const nodeIds = new Set([...Object.keys(history.nodes), ...Object.keys(live.nodes)])
-  const nodes: Record<string, UsageNode> = {}
-  for (const id of nodeIds) {
-    const a = history.nodes[id]
-    const b = live.nodes[id]
-    if (a && !b) {
-      nodes[id] = a
-      continue
-    }
-    if (b && !a) {
-      nodes[id] = b
-      continue
-    }
-    if (a && b) {
-      const bySeq = new Map<number, LlmCall>()
-      for (const call of a.calls) bySeq.set(call.seq, call)
-      for (const call of b.calls) bySeq.set(call.seq, call)
-      nodes[id] = {
-        nodeId: id,
-        parentNodeId: b.parentNodeId ?? a.parentNodeId,
-        subagentType: a.subagentType ?? b.subagentType,
-        taskDescription: a.taskDescription ?? b.taskDescription,
-        calls: [...bySeq.values()].sort((x, y) => x.seq - y.seq),
-        children: []
-      }
-    }
-  }
-  const rootIds = Object.keys(nodes).filter((id) => {
-    const parentId = nodes[id].parentNodeId
-    return parentId == null || !nodes[parentId]
-  })
-  return { nodes, rootIds }
-}
-
-function sumTotals(totals: LlmUsageTotal[]): TokenUsage {
-  return totals.reduce(
-    (acc, t) => ({
-      input: acc.input + t.sumInput,
-      output: acc.output + t.sumOutput,
-      cacheRead: acc.cacheRead + t.sumCacheRead,
-      cacheWrite: acc.cacheWrite + t.sumCacheWrite
-    }),
-    { ...emptyTotals }
-  )
+  /** O custo da conversa em dólar: aparece no cabeçalho (o chat flutuante do Escritório,
+   *  que não tem mais a pílula de custo). Sem ele, o cabeçalho é o de sempre. */
+  cost?: number
 }
 
 function fmt(n: number): string {
@@ -193,7 +109,7 @@ function allNodeIds(nodes: UsageNode[]): string[] {
   return nodes.flatMap((n) => [n.nodeId, ...allNodeIds(n.children)])
 }
 
-export function TokenUsagePanel({ convId, liveMap }: Props): JSX.Element {
+export function TokenUsagePanel({ convId, liveMap, cost }: Props): JSX.Element {
   const [history, setHistory] = useState<{ calls: PersistedLlmCall[]; totals: LlmUsageTotal[] }>({
     calls: [],
     totals: []
@@ -231,24 +147,8 @@ export function TokenUsagePanel({ convId, liveMap }: Props): JSX.Element {
     })
   }, [tree])
 
-  const grandTotal = useMemo(() => {
-    if (history.totals.length > 0) return sumTotals(history.totals)
-    if (tree.length > 0) {
-      return tree.reduce(
-        (acc, root) => {
-          const t = totalTokens(root)
-          return {
-            input: acc.input + t.input,
-            output: acc.output + t.output,
-            cacheRead: acc.cacheRead + t.cacheRead,
-            cacheWrite: acc.cacheWrite + t.cacheWrite
-          }
-        },
-        { ...emptyTotals }
-      )
-    }
-    return emptyTotals
-  }, [history.totals, tree])
+  // O total da conversa: o do banco (guarda também o que a poda já apagou) e as chamadas ao vivo que ele ainda não conhecia.
+  const grandTotal = useMemo(() => usageTotals(history, liveMap).tokens, [history, liveMap])
 
   const totalCalls = useMemo(() => Object.values(mergedMap.nodes).reduce((n, node) => n + node.calls.length, 0), [
     mergedMap
@@ -280,6 +180,11 @@ export function TokenUsagePanel({ convId, liveMap }: Props): JSX.Element {
       <div className="token-usage-header">
         <div className="token-usage-header-title">Consumo de tokens</div>
         <TokenBadges t={grandTotal} />
+        {cost !== undefined && (
+          <span className="token-usage-cost" title="Custo da conversa, como o Claude informou">
+            {fmtCost(cost)}
+          </span>
+        )}
         <span className="token-usage-call-count">{totalCalls} chamada{totalCalls === 1 ? '' : 's'}</span>
       </div>
 

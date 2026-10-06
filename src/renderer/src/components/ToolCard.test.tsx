@@ -4,6 +4,7 @@ import { UiProvider } from '../ui/UiProvider'
 import { MessageList } from './MessageList'
 import { TOOL_CODE_MAX, TOOL_RESULT_MAX } from './toolDescribe'
 import type { ToolUseMessage } from './ToolCard'
+import { ToolFileOpenContext, type ToolFileOpen } from './toolFileOpen'
 
 afterEach(() => {
   cleanup()
@@ -14,10 +15,17 @@ const tts = { speakingId: null, onToggleSpeak: () => {} }
 const tool = (over: Partial<ToolUseMessage>): ToolUseMessage => ({ kind: 'tool-use', id: 't1', name: 'Bash', input: {}, parentToolUseId: null, ...over }) as ToolUseMessage
 
 function renderChat(...messages: ToolUseMessage[]): HTMLElement[] {
+  return renderWith(null, ...messages)
+}
+
+/** Com `opener`, como o Chat do monitor do Escritório (o editor ao lado); null = a aba Conversa. */
+function renderWith(opener: ToolFileOpen | null, ...messages: ToolUseMessage[]): HTMLElement[] {
   window.HTMLElement.prototype.scrollIntoView = vi.fn()
   render(
     <UiProvider>
-      <MessageList messages={messages} busy={false} tts={tts} onRetry={() => {}} />
+      <ToolFileOpenContext.Provider value={opener}>
+        <MessageList messages={messages} busy={false} tts={tts} onRetry={() => {}} />
+      </ToolFileOpenContext.Provider>
     </UiProvider>
   )
   return [...document.querySelectorAll<HTMLElement>('.tool-card')]
@@ -72,5 +80,53 @@ describe('ToolCard no chat (o cartão compartilhado com o Escritório 3D)', () =
     fireEvent.click(screen.getByTitle('Baixar arquivo'))
     expect(downloadFile).toHaveBeenCalledWith('/p/rel.pdf')
     expect(pdf.querySelector('.tool-download')?.textContent).toBe('⬇️ Baixar')
+  })
+
+  it('sem quem abra arquivos (a aba Conversa): o cabeçalho é um botão só, que expande — também no cartão de arquivo', () => {
+    const [edit] = renderChat(tool({ id: 'e', name: 'Edit', input: { file_path: 'C:/p/a.ts', old_string: 'a', new_string: 'b' }, result: { isError: false, text: 'ok' } }))
+    expect(edit.classList.contains('tool-file')).toBe(false)
+    expect(edit.querySelector('.tool-head-split')).toBeNull()
+    expect(edit.querySelectorAll('button')).toHaveLength(1)
+    expect(edit.querySelector('.tool-head')?.tagName).toBe('BUTTON')
+    expect(edit.querySelector('.tool-head')?.firstElementChild?.className).toBe('tool-caret')
+    fireEvent.click(edit.querySelector('.tool-head')!)
+    expect(edit.querySelector('.tool-body')).toBeTruthy()
+  })
+})
+
+describe('ToolCard com o editor ao lado (o Chat do monitor do Escritório)', () => {
+  const editA = tool({ id: 'e', name: 'Edit', input: { file_path: 'C:/p/a.ts', old_string: 'a', new_string: 'b' }, result: { isError: false, text: 'ok' } })
+  const readB = tool({ id: 'r', name: 'Read', input: { file_path: 'C:/p/b.ts' }, result: { isError: false, text: 'ok' } })
+  const bash = tool({ id: 'b', input: { command: 'npm test' }, result: { isError: false, text: 'ok' } })
+
+  it('cartão de arquivo: o cabeçalho abre no editor (sem expandir); a ▸ só expande (sem abrir)', () => {
+    const open = vi.fn()
+    const [edit, read] = renderWith({ open }, editA, readB)
+    expect(edit.classList.contains('tool-file')).toBe(true)
+    const opener = edit.querySelector<HTMLElement>('.tool-open')!
+    expect(opener.getAttribute('title')).toBe('Abrir no editor')
+    expect(opener.querySelector('.tool-detail')?.textContent).toBe('a.ts')
+    expect(opener.querySelector('.tool-go')).toBeTruthy()
+    fireEvent.click(opener)
+    expect(open).toHaveBeenCalledWith(editA)
+    expect(edit.querySelector('.tool-body')).toBeNull()
+    const caret = screen.getAllByRole('button', { name: 'Mostrar a entrada e o resultado' })[0]
+    expect(caret.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(caret)
+    expect(edit.querySelector('.tool-body')).toBeTruthy()
+    expect(caret.getAttribute('aria-expanded')).toBe('true')
+    expect(open).toHaveBeenCalledTimes(1)
+    fireEvent.click(read.querySelector('.tool-open')!)
+    expect(open).toHaveBeenLastCalledWith(readB)
+  })
+
+  it('cartão que não é de arquivo (Bash): o de sempre — o cabeçalho só expande', () => {
+    const open = vi.fn()
+    const [card] = renderWith({ open }, bash)
+    expect(card.classList.contains('tool-file')).toBe(false)
+    expect(card.querySelector('.tool-open')).toBeNull()
+    fireEvent.click(card.querySelector('.tool-head')!)
+    expect(card.querySelector('.tool-body')).toBeTruthy()
+    expect(open).not.toHaveBeenCalled()
   })
 })

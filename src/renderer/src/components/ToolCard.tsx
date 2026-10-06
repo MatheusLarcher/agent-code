@@ -4,6 +4,11 @@
  * pílula (running… / done / error); clicar abre a entrada legível (CodeBlock) e
  * o resultado. Os rótulos vêm de toolDescribe.ts — a mesma fonte que o
  * Escritório 3D usa nos monitores e nas telas.
+ *
+ * Com quem abra arquivos num editor ao lado (toolFileOpen.ts — só o Chat do
+ * monitor do Escritório), o cartão de arquivo se divide: a ▸ é um botão que só
+ * expande, e o resto do cabeçalho abre o arquivo ("Abrir no editor"). Sem ele,
+ * o cartão é o de sempre.
  */
 import { useState, type MouseEvent } from 'react'
 import { isTextPreviewable } from '@shared/ipc'
@@ -12,12 +17,15 @@ import type { UIMessage } from '../types'
 import { useUI } from '../ui/UiProvider'
 import { CodeBlock } from './CodeBlock'
 import { describeTool, TOOL_CODE_MAX, TOOL_RESULT_MAX, toolBadge, toolErrored, toolInputView, writtenPath } from './toolDescribe'
+import { toolFilePath, useToolFileOpen } from './toolFileOpen'
 
 export type ToolUseMessage = Extract<UIMessage, { kind: 'tool-use' }>
 
 export function ToolCard({ m }: { m: ToolUseMessage }): JSX.Element {
   const [open, setOpen] = useState(false)
   const { notify } = useUI()
+  const opener = useToolFileOpen()
+  const openable = !!opener && toolFilePath(m) !== ''
   const info = describeTool(m.name, m.input)
   const hasDiff = info.stats && (info.stats.added > 0 || info.stats.removed > 0)
   const errored = toolErrored(m.name, m.result)
@@ -50,30 +58,50 @@ export function ToolCard({ m }: { m: ToolUseMessage }): JSX.Element {
     }
   }
 
+  const head = (
+    <>
+      <span className="tool-name">{info.verb}</span>
+      {info.detail && <span className="tool-detail">{info.detail}</span>}
+      {hasDiff && info.stats && (
+        <span className="tool-diff">
+          {info.stats.added > 0 && <span className="diff-add">+{info.stats.added}</span>}
+          {info.stats.removed > 0 && <span className="diff-del">−{info.stats.removed}</span>}
+        </span>
+      )}
+      {rawFilePath && isTextPreviewable(rawFilePath) && m.result && !m.result.isError && (
+        <span className="tool-download" onClick={preview} title="Abrir em uma Janela de Arquivo">
+          Preview
+        </span>
+      )}
+      {filePath && (
+        <span className="tool-download" onClick={download} title="Baixar arquivo">
+          ⬇️ Baixar
+        </span>
+      )}
+      <span className={`tool-badge ${badge.kind}`}>{badge.text}</span>
+    </>
+  )
+
   return (
-    <div className={`tool-card ${info.isSkill ? 'tool-skill' : ''} ${errored ? 'tool-error' : ''}`}>
-      <button className="tool-head" onClick={() => setOpen((o) => !o)}>
-        <span className="tool-caret">{open ? '▾' : '▸'}</span>
-        <span className="tool-name">{info.verb}</span>
-        {info.detail && <span className="tool-detail">{info.detail}</span>}
-        {hasDiff && info.stats && (
-          <span className="tool-diff">
-            {info.stats.added > 0 && <span className="diff-add">+{info.stats.added}</span>}
-            {info.stats.removed > 0 && <span className="diff-del">−{info.stats.removed}</span>}
-          </span>
-        )}
-        {rawFilePath && isTextPreviewable(rawFilePath) && m.result && !m.result.isError && (
-          <span className="tool-download" onClick={preview} title="Abrir em uma Janela de Arquivo">
-            Preview
-          </span>
-        )}
-        {filePath && (
-          <span className="tool-download" onClick={download} title="Baixar arquivo">
-            ⬇️ Baixar
-          </span>
-        )}
-        <span className={`tool-badge ${badge.kind}`}>{badge.text}</span>
-      </button>
+    <div className={`tool-card ${info.isSkill ? 'tool-skill' : ''} ${errored ? 'tool-error' : ''}${openable ? ' tool-file' : ''}`}>
+      {openable && opener ? (
+        <div className="tool-head tool-head-split">
+          <button type="button" className="tool-caret-btn" aria-expanded={open} aria-label="Mostrar a entrada e o resultado" title="Mostrar a entrada e o resultado" onClick={() => setOpen((o) => !o)}>
+            <span className="tool-caret">{open ? '▾' : '▸'}</span>
+          </button>
+          <button type="button" className="tool-open" title="Abrir no editor" onClick={() => opener.open(m)}>
+            {head}
+            <svg className="tool-go" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M7 17 17 7M9 7h8v8" />
+            </svg>
+          </button>
+        </div>
+      ) : (
+        <button className="tool-head" onClick={() => setOpen((o) => !o)}>
+          <span className="tool-caret">{open ? '▾' : '▸'}</span>
+          {head}
+        </button>
+      )}
       {open && (() => {
         const view = toolInputView(m.name, m.input)
         return (

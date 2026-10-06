@@ -20,19 +20,13 @@ import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
 import { VigiaChip, type VigiaDoubt } from './VigiaChip'
 import { IconClock, IconClose, IconHelp, IconChevronDown, IconLeaf, IconRepeat, IconWarning, IconZap } from './Icons'
 import { TokenUsagePanel } from './TokenUsagePanel'
+import { UsageMiniBar } from './UsageMiniBar'
+import { fmtDuration } from './fmtDuration'
 import { emptyUsageMap, type UsageMap } from '../tokenUsageTree'
 import { useChatDisplay } from './chatDisplay'
 import { useQuoteComments } from './quoteComment/useQuoteComments'
 import { CentralBackButton } from '../central/CentralBackButton'
 import { ChatOpacityControl } from './ChatOpacityControl'
-
-function fmtDuration(ms: number): string {
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
-  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
-}
 
 /** Live elapsed time of the running task; when idle, the last task's duration. */
 function RunTimer({ since, lastMs }: { since: number | null; lastMs: number | null }): JSX.Element | null {
@@ -331,7 +325,7 @@ export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
   const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
   // Compacto (chat minimizado do planejamento): sem consumo e sem o aviso do Windows.
-  const { compact, hideWindowsBanner, hideLastUsage, onComposerHasText } = useChatDisplay()
+  const { compact, hideWindowsBanner, hideLastUsage, usageMini, onComposerHasText } = useChatDisplay()
   // "Comentar" num bloco da resposta: "[trecho N]" inline no cursor do campo de mensagem.
   const quote = useQuoteComments(messages)
   return (
@@ -341,22 +335,36 @@ export function ChatPanel(props: Props): JSX.Element {
           {props.onBackToCentral && <CentralBackButton onBack={props.onBackToCentral} />}
           <span className="chat-title">Chat</span>
           {props.headerExtra}
-          <div className="token-meter" title="Consumo geral desta conversa">
-            <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
-            <ContextBar context={tokens.context} model={props.runningModel} />
-            <span className="tok out">↑ {fmt(tokens.output)} saída</span>
-            <span className="tok cost">~${tokens.cost.toFixed(2)}</span>
-            <button
-              type="button"
-              className={`token-meter-expand${tokenPanelOpen ? ' open' : ''}`}
-              onClick={() => setTokenPanelOpen((v) => !v)}
-              title={tokenPanelOpen ? 'Esconder detalhamento de tokens' : 'Ver detalhamento de tokens por agente/subagente'}
-              aria-expanded={tokenPanelOpen}
-              aria-label="Detalhar consumo de tokens"
-            >
-              <IconChevronDown size={13} />
-            </button>
-          </div>
+          {usageMini ? (
+            // O chat flutuante do Escritório: só a barrinha fatiada; o mouse mostra os detalhes e o clique abre o painel.
+            <UsageMiniBar
+              convId={props.convId}
+              tokens={tokens}
+              usageMap={props.usageMap ?? emptyUsageMap}
+              model={props.runningModel}
+              runningSince={props.runningSince}
+              lastDurationMs={props.lastDurationMs}
+              open={tokenPanelOpen}
+              onToggle={() => setTokenPanelOpen((v) => !v)}
+            />
+          ) : (
+            <div className="token-meter" title="Consumo geral desta conversa">
+              <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
+              <ContextBar context={tokens.context} model={props.runningModel} />
+              <span className="tok out">↑ {fmt(tokens.output)} saída</span>
+              <span className="tok cost">~${tokens.cost.toFixed(2)}</span>
+              <button
+                type="button"
+                className={`token-meter-expand${tokenPanelOpen ? ' open' : ''}`}
+                onClick={() => setTokenPanelOpen((v) => !v)}
+                title={tokenPanelOpen ? 'Esconder detalhamento de tokens' : 'Ver detalhamento de tokens por agente/subagente'}
+                aria-expanded={tokenPanelOpen}
+                aria-label="Detalhar consumo de tokens"
+              >
+                <IconChevronDown size={13} />
+              </button>
+            </div>
+          )}
           <ChatOpacityControl />
         </div>
       )}
@@ -369,7 +377,7 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {!compact && tokenPanelOpen && (
         <div className="token-meter-panel">
-          <TokenUsagePanel convId={props.convId} liveMap={props.usageMap ?? emptyUsageMap} />
+          <TokenUsagePanel convId={props.convId} liveMap={props.usageMap ?? emptyUsageMap} cost={usageMini ? tokens.cost : undefined} />
         </div>
       )}
 
