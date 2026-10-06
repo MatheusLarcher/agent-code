@@ -311,7 +311,7 @@ export type SeatKind = 'chair' | 'sofa' | 'desk'
 
 /**
  * Altura (m) de cada assento: a cadeira do mockup (chairModel.ts, topo do
- * assento a 0,59), o sofá/poltrona do lounge e o tampo da mesa (0,775).
+ * assento a 0,59), o sofá do lounge e o tampo da mesa (0,775).
  */
 export const SEAT_HEIGHT: Record<SeatKind, number> = { chair: 0.59, sofa: 0.6, desk: 0.775 }
 

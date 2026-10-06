@@ -8,7 +8,7 @@
  *   free        sem tarefa: alterna lazeres (café, estante, janela, regar a
  *               planta, ler o quadro, conversar com outro ocioso, celular andando),
  *               cada um de DWELL_MIN a DWELL_MAX s, com uma pausa entre eles;
- *   sleep       parado há sleepAfter s: cochila no sofá/poltrona do lounge (se livre) ou na mesa;
+ *   sleep       parado há sleepAfter s: cochila no sofá do lounge (se livre) ou na mesa;
  *   work        senta na própria mesa; o gesto segue a ferramenta atual;
  *   permission  levanta ao lado da cadeira, vira para a câmera e acena;
  *   queue       limite de uso: fila na máquina de café até voltar;

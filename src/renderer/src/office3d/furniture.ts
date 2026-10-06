@@ -11,7 +11,7 @@
  *
  * A porta fica na parede da direita, no corredor cruzado; o café, na mesma
  * parede, de frente para dentro (a fila cresce para −X no corredor do fundo); a
- * estante de Memórias tem 3 lugares de pé; o cochilo é no sofá/poltrona do
+ * estante de Memórias tem 3 lugares de pé; o cochilo é no sofá do
  * lounge; o kanban fica no centro da parede do fundo (medidas em
  * board/boardLayout.ts), com um lugar diante de cada coluna, o bloquinho na
  * canaleta e o cesto no chão; olhar lá fora é pela parede de vidro.
@@ -225,7 +225,6 @@ function officeObstacles(board: BoardPlace): Rect[] {
   o.push(rect(L.sideboard.x, L.sideboard.z, L.sideboard.w / 2, L.sideboard.d / 2))
   o.push(rect(L.sofa.x, L.sofa.z, L.sofa.w / 2, L.sofa.d / 2))
   o.push(rect(L.table.x, L.table.z, L.table.r, L.table.r))
-  o.push(rect(L.armchair.x, L.armchair.z, 0.36, 0.36))
   o.push(rect(L.lamp.x, L.lamp.z, 0.16, 0.16))
   // Sala de reunião: vidro da frente (com o vão da porta), vidro da esquerda, a mesa e as 8 cadeiras.
   const M = MEETING

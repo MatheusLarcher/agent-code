@@ -113,7 +113,7 @@ describe('cérebro: ocioso', () => {
     expect(turns.size).toBe(2)
   })
 
-  it('depois de SLEEP_AFTER_SEC cochila no sofá/poltrona do lounge (4 lugares); com o lounge cheio, na própria mesa, com "z"', () => {
+  it('depois de SLEEP_AFTER_SEC cochila no sofá do lounge (3 lugares); com o sofá cheio, na própria mesa, com "z"', () => {
     const { crowd, brains } = office(5)
     brains.slice(0, 4).forEach((b) => setStatus(b, status('idle', { idleSince: -SLEEP_AFTER_SEC - 5 }), 0))
     setStatus(brains[4], status('idle', { idleSince: -(SLEEP_AFTER_SEC - 20) }), 0)
@@ -122,10 +122,10 @@ describe('cérebro: ocioso', () => {
     expect(brains[4].mode).toBe('free')
     run(crowd, 40)
     expect(brains[4].mode).toBe('sleep')
-    expect(brains.map((b) => b.action).sort()).toEqual(['napDesk', 'napSofa', 'napSofa', 'napSofa', 'napSofa'])
+    expect(brains.map((b) => b.action).sort()).toEqual(['napDesk', 'napDesk', 'napSofa', 'napSofa', 'napSofa'])
     expect(brains.every((b) => b.zzz && b.sit === 1)).toBe(true)
     expect(brains.filter((b) => b.action === 'napSofa').every((b) => b.seat === 'sofa')).toBe(true)
-    expect(brains[4].seat).toBe('chair')
+    expect(brains.filter((b) => b.action === 'napDesk').every((b) => b.seat === 'chair')).toBe(true)
   })
 
   it('o cochilo não toma o lugar de quem trabalha no lounge (escritório lotado: 16 mesas + 2 no sofá)', () => {
@@ -134,8 +134,8 @@ describe('cérebro: ocioso', () => {
     expect(seats.sort()).toEqual([0, 1])
     const desk = brains.filter((b) => !b.lounge)
     const got = desk.slice(0, 3).map((b) => crowd.claim(b, 'sofa')?.index ?? null)
-    expect(got.slice(0, 2).sort()).toEqual([2, 3])
-    expect(got[2]).toBeNull()
+    // Sobra um lugar no sofá: o 1º fica com ele, os outros cochilam na mesa.
+    expect(got).toEqual([2, null, null])
   })
 })
 

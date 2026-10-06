@@ -94,8 +94,10 @@ export class AvatarBody {
     const s = this.slot
     s[SLOT.none].identity()
     s[SLOT.spine].copy(r.spine.quaternion)
-    s[SLOT.spineA].slerpQuaternions(IDENT, r.spine.quaternion, 1 / 3)
-    s[SLOT.spineB].slerpQuaternions(IDENT, r.spine.quaternion, 2 / 3)
+    // O boneco gira o tronco inteiro na bacia: a coluna de baixo já leva quase tudo
+    // (com 1/3 e 2/3 o recostado no sofá ficava ereto e só o peito deitava).
+    s[SLOT.spineA].slerpQuaternions(IDENT, r.spine.quaternion, 0.65)
+    s[SLOT.spineB].slerpQuaternions(IDENT, r.spine.quaternion, 0.88)
     s[SLOT.head].multiplyQuaternions(r.spine.quaternion, r.head.quaternion)
     s[SLOT.neck].multiplyQuaternions(r.spine.quaternion, qa.slerpQuaternions(IDENT, r.head.quaternion, 0.5))
     const k = dt > 0 ? Math.min(1, dt * 6) : 1

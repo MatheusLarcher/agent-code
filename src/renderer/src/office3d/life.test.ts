@@ -88,7 +88,9 @@ describe('a demo (Ctrl+Alt+Shift+D) mostra a vida do escritório', () => {
     expect(seen.reactions.has('celebrate') || seen.reactions.has('stretch')).toBe(true)
     // Gestos de trabalho por ferramenta, permissão, cochilo e fila.
     // (Na demo só um agente estoura o limite: ele é o 1º da fila e toma o café — 'brew' e 'sip'.)
-    for (const a of ['typeFast', 'readScreen', 'drum', 'web', 'wave', 'napDesk', 'napSofa', 'brew', 'sip']) expect(seen.actions.has(a), a).toBe(true)
+    // (O sofá da demo fica com o 5º projeto, que transborda para o lounge: o dorminhoco cochila na mesa — o
+    // cochilo no sofá é coberto em brain.test.ts.)
+    for (const a of ['typeFast', 'readScreen', 'drum', 'web', 'wave', 'napDesk', 'brew', 'sip']) expect(seen.actions.has(a), a).toBe(true)
     for (const m of ['free', 'work', 'permission', 'sleep', 'queue', 'leave', 'away']) expect(seen.modes.has(m), m).toBe(true)
     expect(seen.props.has('sign')).toBe(true)
     expect(seen.props.has('cup')).toBe(true)

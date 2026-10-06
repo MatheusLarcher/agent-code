@@ -2,7 +2,7 @@
  * O fundo do escritório (three), medidas de officePlan.ts:
  *   lounge (fundo-esquerda)   aparador com ripado na parede, dois quadros,
  *                             tapete, sofá de 3 lugares com almofadas, mesa de
- *                             centro com planta, poltrona sage, luminária de pé e o
+ *                             centro com planta, luminária de pé e o
  *                             pendente quente sobre o tapete;
  *   sala de reunião (direita) piso de madeira, vidro na frente (com o vão da porta)
  *                             e à esquerda com montantes charcoal, mesa para 8 com
@@ -32,7 +32,7 @@ export interface BackParts {
 }
 
 /**
- * Cadeira de escritório solta (sala de reunião, poltrona): a do mockup
+ * Cadeira de escritório solta (sala de reunião): a do mockup
  * (chairModel.ts), com a origem no quadril de quem senta; o grupo gira `yaw`
  * (0 = quem senta olha para −Z) e escala em (sx, sy, sx).
  */
@@ -98,8 +98,6 @@ export function buildLounge(kit: Kit, zone: Group, statics: Group): Lamp[] {
   cyl(kit, statics, m.shelf, t.r * 2, 0.05, t.x, t.h - 0.05, t.z, true)
   cyl(kit, statics, m.shelf, 0.16, t.h - 0.05, t.x, 0, t.z, true)
   tagLod(plant(kit, statics, t.x, t.h, t.z, 0.4), 'detail')
-  // Poltrona sage (de frente para a mesa).
-  looseChair(statics, L.armchair.x, L.armchair.z, L.armchair.yaw, m.sage, m.chair, 1.13, 1.03)
   // Luminária de pé (base, haste de latão) e o pendente quente sobre o tapete.
   tagLod(cyl(kit, statics, m.metal, 0.3, 0.03, L.lamp.x, 0, L.lamp.z), 'small')
   cyl(kit, statics, m.brass, 0.03, 1.45, L.lamp.x, 0, L.lamp.z, true)

@@ -315,7 +315,7 @@ describe('roteiros do escritório único na demo', () => {
     // Cada ilha só com o projeto dela; quem sobra (o 5º projeto) senta no lounge.
     for (const d of office.desks) expect(d.projectId).toBe(office.islands[d.island].projectId)
     const lounge = l.characters.filter((c) => c.spot === 'lounge')
-    expect(lounge).toHaveLength(4)
+    expect(lounge).toHaveLength(3)
     const fifth = l.projects.find((p) => !owners.includes(p.id))!
     expect(lounge.every((c) => c.projectId === fifth.id)).toBe(true)
   })

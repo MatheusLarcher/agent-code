@@ -189,12 +189,12 @@ describe('Office3DEngine — render sob demanda com culling', () => {
     engine.dispose()
   })
 
-  it('o tique das falas (~4×/s) só existe enquanto o motor vive', () => {
+  it('o tique das falas (~4×/s) e o do relógio de parede só existem enquanto o motor vive', () => {
     const { engine } = setup()
     const base = vi.getTimerCount()
-    expect(base).toBeGreaterThanOrEqual(1)
+    expect(base).toBeGreaterThanOrEqual(2)
     vi.advanceTimersByTime(QUIP_TICK_MS * 4)
     engine.dispose()
-    expect(vi.getTimerCount()).toBe(base - 1)
+    expect(vi.getTimerCount()).toBe(base - 2)
   })
 })

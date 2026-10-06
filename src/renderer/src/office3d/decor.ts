@@ -25,6 +25,7 @@ import { buildIsland } from './decorIslands'
 import { buildShell } from './decorShell'
 import { mergeStatic } from './decorUtil'
 import { buildWalls } from './decorWall'
+import { buildWallClock } from './wallClock'
 import { roomFurniture, type RoomFurniture } from './furniture'
 import type { Kit, ScreenStatus } from './kit'
 import type { RoomLayout } from './layout'
@@ -133,6 +134,8 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
     return { desks, parts: buildIsland(kit, isl.index, desks, zp(isl.zone).group, zp(isl.zone).statics) }
   })
   const plaques = buildPlaques(kit, zp, onDirty)
+  // O relógio de parede (entre os quadros do lounge e o kanban): hora local, redesenhado a cada minuto.
+  const clock = buildWallClock(kit, zp('lounge').group, zp('lounge').statics, onDirty)
 
   // Funde o estático de cada zona (por material) e monta o LOD dela.
   const geos: BufferGeometry[] = [...shell.geos, ...islands.flatMap((i) => i.parts.geos)]
@@ -214,6 +217,7 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
       for (const geo of geos) geo.dispose()
       walls.dispose()
       plaques.dispose()
+      clock.dispose()
       g.traverse((o) => {
         if (o instanceof InstancedMesh) o.dispose()
       })

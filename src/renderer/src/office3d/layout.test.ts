@@ -113,13 +113,13 @@ describe('layoutOffice — um escritório para todos os projetos', () => {
     expect(l.rooms[0].islands.map((i) => i.projectId)).toEqual(['A', 'B', 'C', 'D'])
   })
 
-  it('o 17º sentado vai para o lounge (4 lugares); com o lounge cheio, fica de pé ao lado da ilha do principal', () => {
+  it('o 17º sentado vai para o lounge (3 lugares, os do sofá); com o lounge cheio, fica de pé ao lado da ilha do principal', () => {
     const chars = [...crew('A', 4), ...crew('B', 4), ...crew('C', 4), ...crew('D', 4), ...crew('E', 5)]
     const exec: OfficeCharacterModel = { ...principal('A0', 'A'), key: 'role:A:executor', role: 'executor', placement: { kind: 'seat', seatKind: 'especialista', slot: 'executor' } }
     const l = layoutOffice({ rooms: ['A', 'B', 'C', 'D', 'E'].map((p) => room(p, 4)), characters: [...chars, exec] })
     expect(l.rooms[0].desks.every((d) => d.ownerKey !== null)).toBe(true)
     const lounge = l.characters.filter((c) => c.spot === 'lounge')
-    expect(lounge.map((c) => c.lounge)).toEqual([0, 1, 2, 3])
+    expect(lounge.map((c) => c.lounge)).toEqual([0, 1, 2])
     lounge.forEach((c, i) => expect([c.x, c.z]).toEqual([LOUNGE_SEATS[i].x, LOUNGE_SEATS[i].z]))
     // O executor da conversa A0 (lounge cheio): de pé ao lado da ilha do principal dele (a 0).
     const ex = l.characters.find((c) => c.key === 'role:A:executor')!
@@ -132,11 +132,11 @@ describe('layoutOffice — um escritório para todos os projetos', () => {
     const crews = [...crew('A', 4), ...crew('B', 4), ...crew('C', 4), ...crew('D', 4)]
     const one = layoutOffice({ rooms, characters: [...crews, ...crew('E', 4)] })
     const seated = (l: Office3DLayout): string[] => l.characters.filter((c) => c.spot === 'lounge').map((c) => c.key)
-    expect(seated(one)).toEqual(['conv:E0', 'conv:E1', 'conv:E2', 'conv:E3'])
+    expect(seated(one)).toEqual(['conv:E0', 'conv:E1', 'conv:E2'])
     // O executor da conversa A0 chega (vem antes dos de E no modelo): o lounge está cheio, ele fica de pé.
     const exec: OfficeCharacterModel = { ...principal('A0', 'A'), key: 'role:A:executor', role: 'executor', placement: { kind: 'seat', seatKind: 'especialista', slot: 'executor' } }
     const two = layoutOffice({ rooms, characters: [...crews, exec, ...crew('E', 4)] }, one)
-    expect(seated(two)).toEqual(['conv:E0', 'conv:E1', 'conv:E2', 'conv:E3'])
+    expect(seated(two)).toEqual(['conv:E0', 'conv:E1', 'conv:E2'])
     expect(two.characters.filter((c) => c.spot === 'lounge').map((c) => c.lounge)).toEqual(one.characters.filter((c) => c.spot === 'lounge').map((c) => c.lounge))
     expect(two.characters.find((c) => c.key === 'role:A:executor')!.spot).toBe('stand')
     // Um de E sai: o lugar vago vai para quem estava de pé.
