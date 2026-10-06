@@ -6,6 +6,9 @@
  */
 import { BODY, type BodyMetrics } from './poses'
 
+/** Joelho à frente do quadril no sofá para passar a borda do estofado (m). */
+export const SEAT_CLEAR = 0.42
+
 export type Vec3 = readonly [number, number, number]
 
 export interface SkeletonPoints {
@@ -60,6 +63,8 @@ export function metricsFromSkeleton(s: SkeletonPoints, soleDown: number): BodyMe
     upperArm: dist(s.armL, s.forearmL),
     forearm: dist(s.forearmL, s.handL),
     soleDown: ankleY,
-    toeAhead: Math.max(0.08, toeRun)
+    toeAhead: Math.max(0.08, toeRun),
+    // O joelho passa a borda do sofá (o quadril senta a ~0,33 m dela) com folga para a coxa grossa do modelo.
+    seatClear: SEAT_CLEAR
   }
 }

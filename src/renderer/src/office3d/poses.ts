@@ -95,7 +95,9 @@ export const BODY = (() => {
     upperArm: 0.29,
     forearm: 0.26,
     soleDown: 0.085,
-    toeAhead: 0.19
+    toeAhead: 0.19,
+    /** No sofá, quanto o joelho tem de ficar à frente do quadril para passar a borda do estofado (0: o boneco não precisa). */
+    seatClear: 0
   }
 })()
 /**
@@ -342,6 +344,16 @@ export function sitLower(out: Pose, seat: SeatKind, t = 0, scale = 1, vary = 0.5
     // Afundado no sofá: a canela inclinada para a frente e o pé apoiado inteiro.
     const shinTilt = 0.38
     const thigh = acosClamp((hip - (b.ankleY + SHIN * Math.cos(shinTilt))) / THIGH)
+    if (THIGH * Math.sin(thigh) < b.seatClear) {
+      // Coxa curta (o modelo cartoon): o joelho cairia dentro do estofado. A coxa deita sobre o assento, o quadril
+      // vem para a frente até o joelho passar a borda e a canela fica solta (o pé pode não alcançar o chão).
+      const flat = acosClamp((hip - (SEAT_HEIGHT.sofa + 0.04) / scale) / THIGH)
+      out[CH.pelvisZ] = -Math.max(0, b.seatClear - THIGH * Math.sin(flat))
+      out[CH.legL] = out[CH.legR] = flat
+      out[CH.kneeL] = out[CH.kneeR] = flat - 0.12
+      out[CH.footL] = out[CH.footR] = -0.3
+      return
+    }
     out[CH.legL] = out[CH.legR] = thigh
     out[CH.kneeL] = out[CH.kneeR] = thigh - shinTilt
     out[CH.footL] = out[CH.footR] = 0.05

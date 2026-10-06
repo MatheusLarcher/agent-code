@@ -26,6 +26,10 @@ const shotsOnly = process.argv.includes('--shots-only')
 const keep = process.argv.includes('--keep')
 /** Sem vsync nem teto de quadros: o intervalo mede o custo real (CPU + GPU), não os 60 Hz da tela. */
 const novsync = process.argv.includes('--novsync')
+/** Só os assentos: espera a demo sentar alguém em cada um (mesa, cochilo, sala de reunião, sofá) e fotografa de frente e de lado. */
+const seats = process.argv.includes('--seats')
+/** Cada assento com o cérebro congelado: um agente sentado em cada um (mesa, cochilo na mesa, reunião, sofá, poltrona reclinada). */
+const posesMode = process.argv.includes('--poses')
 const tmp = mkdtempSync(join(tmpdir(), 'agent-code-avatar-'))
 const home = join(tmp, 'home')
 const shots = join(tmp, 'shots')
@@ -181,11 +185,84 @@ try {
   }
   await page.mouse.move(800, 450)
   await page.mouse.wheel(0, -1)
+  if (posesMode) {
+    // Os lugares vêm dos próprios módulos (servidor do Vite em DEV) e o cérebro para de andar.
+    const placed = await page.evaluate(async () => {
+      const plan = await import('/src/office3d/officePlan.ts')
+      const meet = await import('/src/office3d/meetingRoom.ts')
+      const e = window.__o
+      e.scene.crowd.step = () => {}
+      const list = [...e.scene.chars.values()].filter((c) => c.brain.visible)
+      const desk = list.find((c) => c.deskIndex !== null && c.brain.seat === 'chair' && c.brain.sit > 0.9) ?? list[0]
+      const rest = list.filter((c) => c !== desk)
+      const m = meet.meetingSpots(['tv', 'cadeira'], 0).get('cadeira')
+      const L = plan.LOUNGE_SEATS
+      const set = (c, p) => Object.assign(c.brain, { speed: 0, sit: 1, reaction: null, pending: [], prop: null, look: 'none', zzz: false, visible: true, actionT: 3, ...p })
+      set(desk, { action: 'type' })
+      const napper = rest[0]
+      set(napper, { x: desk.brain.x, z: desk.brain.z, yaw: desk.brain.yaw, seat: 'chair', action: 'napDesk' })
+      // O cochilo na mesa: a mesa do lado (outra baia da mesma ilha).
+      const other = list.find((c) => c !== desk && c !== napper && c.deskIndex !== null && c.brain.seat === 'chair' && c.brain.sit > 0.9)
+      if (other) set(napper, { x: other.brain.x, z: other.brain.z, yaw: other.brain.yaw }), set(other, { x: 0, z: 9.5, visible: false })
+      set(rest[1], { x: m.x, z: m.z, yaw: m.yaw, seat: 'chair', action: 'listen' })
+      set(rest[2], { x: L[1].x, z: L[1].z, yaw: L[1].yaw, seat: 'sofa', action: 'phone', prop: 'phone' })
+      set(rest[3], { x: L[3].x, z: L[3].z, yaw: L[3].yaw, seat: 'sofa', action: 'napSofa' })
+      window.__posed = { mesa: desk.key, cochilo: napper.key, reuniao: rest[1].key, sofa: rest[2].key, poltrona: rest[3].key }
+      e.requestRender()
+      return window.__posed
+    })
+    note('poses', placed)
+    await wait(2500)
+    const shootKey = async (name, key, dist, yaw, pitch, ty) => {
+      await page.evaluate(({ key, dist, yaw, pitch, ty }) => {
+        const e = window.__o
+        const c = e.scene.chars.get(key)
+        e.autoFrame = false
+        e.rig.pose = { tx: c.brain.x, ty, tz: c.brain.z, yaw: c.brain.yaw + Math.PI + yaw, pitch, distance: dist }
+        e.requestRender()
+      }, { key, dist, yaw, pitch, ty })
+      await wait(1200)
+      await shot(name)
+    }
+    for (const [name, key] of Object.entries(placed)) {
+      await shootKey(`p-${name}-frente`, key, 1.9, 0.5, 0.3, 0.75)
+      await shootKey(`p-${name}-lado`, key, 1.7, 1.57, 0.25, 0.7)
+      await shootKey(`p-${name}-lado2`, key, 1.7, -1.57, 0.25, 0.7)
+    }
+  }
+  if (seats) {
+    const SEATS = [
+      ['s1-mesa', "c.deskIndex !== null && b.seat === 'chair' && b.sit > 0.97 && b.action !== 'napDesk'", 1.0],
+      ['s2-cochilo-mesa', "b.action === 'napDesk' && b.sit > 0.97", 1.0],
+      ['s3-reuniao', "c.deskIndex === null && b.seat === 'chair' && b.sit > 0.97", 1.0],
+      ['s4-sofa', "b.seat === 'sofa' && b.sit > 0.97 && b.action !== 'napSofa'", 0.8],
+      ['s5-cochilo-poltrona', "b.action === 'napSofa' && b.sit > 0.97", 0.8]
+    ]
+    const left = new Set(SEATS.map((x) => x[0]))
+    for (let t = 0; t < 240 && left.size; t++) {
+      for (const [name, pick, ty] of SEATS) {
+        if (!left.has(name)) continue
+        const ok = await page.evaluate((pick) => {
+          const test = new Function('c', `const b = c.brain; return (${pick})`)
+          return [...window.__o.scene.chars.values()].some((c) => !c.culled && c.brain.visible && test(c))
+        }, pick)
+        if (!ok) continue
+        await closeUp(`${name}-a`, pick, 2.3, 0.7, 0.25, ty)
+        await closeUp(`${name}-b`, pick, 2.3, 1.57, 0.1, ty)
+        left.delete(name)
+      }
+      await wait(1000)
+    }
+    note('assentos-faltando', { faltam: [...left] })
+    writeFileSync(join(tmp, 'report.json'), JSON.stringify(report, null, 2))
+  }
+  if (!seats && !posesMode) {
   await closeUp('03-sentado-digitando', "b.sit > 0.95 && (b.action === 'type' || b.action === 'typeFast')", 2.2, 0.6, 0.3, 1.0)
   await closeUp('04-sentado-lado', "b.sit > 0.95 && (b.action === 'type' || b.action === 'typeFast' || b.action === 'readScreen')", 2.4, 1.5, 0.15, 0.9)
   await closeUp('05-objeto-na-mao', "b.prop !== null && b.prop !== undefined", 2.2, 0.4, 0.2, 1.1)
   await closeUp('06-andando', 'b.speed > 0.6', 3.2, 0.9, 0.2, 0.9)
   await closeUp('07-perto-rosto', 'b.visible', 1.2, 0.15, 0.08, 1.55)
+  }
   writeFileSync(join(tmp, 'report.json'), JSON.stringify(report, null, 2))
   console.log('capturas:', shots)
 } catch (e) {
