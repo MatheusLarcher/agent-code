@@ -3,15 +3,16 @@ import { Box3, BufferGeometry, Group, InstancedMesh, Mesh, Vector3 } from 'three
 import { BACK_TILT, CHAIR_CENTER_Z, SEAT_TOP } from './chairModel'
 import { actionPose, reactionPose } from './gestures'
 import { createKit } from './kit'
-import { DESK_D, DESK_HEIGHT, KEYBOARD_FRONT, MONITOR_BACK, MONITOR_Y, SEAT_FRONT, STATION_DZ } from './officePlan'
+import { DESK_D, DESK_HEIGHT, DESK_W, KEYBOARD_FRONT, MONITOR_BACK, MONITOR_Y, PARTITION_BACK, SEAT_FRONT } from './officePlan'
 import { DESK_PLAQUE_X, DESK_PLAQUE_Z } from './plaques'
 import { lerpPose, newPose, REACTION_S, sitLower, standPose, UPPER, type Action, type Reaction } from './poses'
 import { applyPose, buildRig } from './rig'
 
 /**
  * A pose sentada da estação não atravessa nada: o boneco na origem olhando
- * para −Z (a mesa "de frente"; a de fundo é a mesma mesa girada π), a mobília no
- * referencial dele. Cada parte do corpo (caixas, tronco, cabeça) tem os vértices
+ * para −Z, a mobília no referencial dele. A estação inteira (mesa, cadeira,
+ * divisórias e quem senta) gira junto pelo yaw da mesa — as mesas inclinadas dos
+ * braços do U (±0,28 e ±0,34) são esta mesma conta. Cada parte do corpo (caixas, tronco, cabeça) tem os vértices
  * e pontos ao longo das arestas testados contra o tampo, o monitor, a
  * divisória, o teclado, o assento, o encosto e os braços da cadeira do mockup
  * (chairModel.ts), em vários instantes de cada ação (e com as reações curtas por
@@ -29,7 +30,10 @@ const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: num
 const FURNITURE: Record<string, Box3> = {
   tampo: box(-0.775, 0.775, DESK_HEIGHT - 0.025, DESK_HEIGHT + 0.025, -(SEAT_FRONT + DESK_D / 2), -edge),
   monitor: box(-0.47, 0.47, MONITOR_Y - 0.28, MONITOR_Y + 0.28, -(SEAT_FRONT + MONITOR_BACK) - 0.02, -(SEAT_FRONT + MONITOR_BACK) + 0.02),
-  divisoria: box(-2, 2, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.445, -(SEAT_FRONT + STATION_DZ) - 0.025, -(SEAT_FRONT + STATION_DZ) + 0.025),
+  divisoria: box(-2, 2, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.445, -(SEAT_FRONT + PARTITION_BACK) - 0.025, -(SEAT_FRONT + PARTITION_BACK) + 0.025),
+  // A divisória da lateral de fora das mesas dos braços do U (de um lado ou do outro, conforme o braço).
+  divisoriaLadoE: box(-DESK_W / 2 - 0.05, -DESK_W / 2, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.445, -(SEAT_FRONT + DESK_D / 2) - 0.05, -edge),
+  divisoriaLadoD: box(DESK_W / 2, DESK_W / 2 + 0.05, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.445, -(SEAT_FRONT + DESK_D / 2) - 0.05, -edge),
   teclado: box(-0.23, 0.23, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.047, -(SEAT_FRONT - KEYBOARD_FRONT) - 0.075, -(SEAT_FRONT - KEYBOARD_FRONT) + 0.075),
   assento: box(-0.32, 0.32, SEAT_TOP - 0.14, SEAT_TOP - SEAT_GIVE, CHAIR_CENTER_Z - 0.31, CHAIR_CENTER_Z + 0.31),
   encosto1: backBand(0.58, 0.73),

@@ -30,6 +30,7 @@ import {
   stepBrain,
   type Brain,
   type BrainWorld,
+  type DeskRef,
   type FixedStyle
 } from './brain'
 import { boardSpotIn, type BoardSpot, type BoardWorld } from './brainBoard'
@@ -37,7 +38,7 @@ import { leaveParty } from './brainParty'
 import { planPath } from './crowdPath'
 import { roleOf, seedOf, type LifeInput } from './crowdRoles'
 import { roomFurniture, type Poi, type PoiKind, type RoomFurniture, type Spot } from './furniture'
-import { MONITOR_BACK, MONITOR_Y, type CharacterLayout, type RoomLayout } from './layout'
+import { monitorPosition, type CharacterLayout, type RoomLayout } from './layout'
 import { sameSpot, type MeetingSpot } from './meetingRoom'
 import { FRONT_SPOTS, LOUNGE_SEATS } from './officePlan'
 import { LINGER_S } from './memoryTrips'
@@ -275,9 +276,9 @@ export class Crowd implements BrainWorld, BoardWorld {
     const own = c.deskIndex !== null && room ? room.desks[c.deskIndex] : undefined
     const screen = c.screenDesk ? desks.get(c.screenDesk.roomId)?.desks[c.screenDesk.index] : undefined
     const home: Spot = { x: c.x, z: c.z, yaw: c.yaw }
-    const desk = role === 'fixed' || !own ? null : { x: own.x, z: own.z, dir: own.dir, out: own.out }
+    const desk = role === 'fixed' || !own ? null : { x: own.x, z: own.z, yaw: own.yaw, out: own.out }
     const lounge = role !== 'fixed' && c.lounge !== null ? LOUNGE_SEATS[c.lounge] : null
-    const monitor = screen ? { x: screen.x, y: MONITOR_Y, z: screen.z - screen.dir * MONITOR_BACK } : null
+    const monitor = screen ? monitorPosition(screen) : null
     const style: FixedStyle = m.role === 'po' ? 'board' : m.role === 'memoria' ? 'archive' : c.spot === 'central' ? 'console' : c.spot === 'manager' ? 'manager' : 'idle'
     // A pasta vai para o lado do colega da ilha (o de dentro).
     const side = own ? -own.out : 1
@@ -492,7 +493,7 @@ export class Crowd implements BrainWorld, BoardWorld {
   }
 
   /** A mesa de quem come pizza na festa (a caixa vai para a cadeira dela); null sem ninguém. */
-  pizzaDesk(): { x: number; z: number; dir: 1 | -1 } | null {
+  pizzaDesk(): DeskRef | null {
     for (const b of this.list) if (b.party === 'pizza' && b.desk) return b.desk
     return null
   }

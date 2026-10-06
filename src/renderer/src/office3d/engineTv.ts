@@ -52,11 +52,11 @@ export function tvLookPose(scene: OfficeScene, view: ViewSize): CameraPose | nul
 
 /** A tela do console da Central: inclinada para trás; a câmera a olha de frente (perpendicular), então o encaixe em repouso é translação. */
 export const CONSOLE_PLANE: ScreenPlane = { halfW: (SCREEN_W * CONSOLE_SCREEN.scale) / 2, halfH: (SCREEN_H * CONSOLE_SCREEN.scale) / 2, front: 0.002, pitch: -CONSOLE_TILT, tilt: CONSOLE_TILT }
-export const CONSOLE_AT: MonitorAt = { x: CONSOLE.x, y: CONSOLE_SCREEN.y + 0.019 * Math.sin(-CONSOLE_TILT), z: CONSOLE.z + CONSOLE_SCREEN.z + 0.019 * Math.cos(CONSOLE_TILT), dir: 1 }
+export const CONSOLE_AT: MonitorAt = { x: CONSOLE.x, y: CONSOLE_SCREEN.y + 0.019 * Math.sin(-CONSOLE_TILT), z: CONSOLE.z + CONSOLE_SCREEN.z + 0.019 * Math.cos(CONSOLE_TILT) }
 
 /** O kanban da parede: o centro da face (boardPlace + FACE_Z) e o tamanho com folga para a moldura. */
 const BOARD_SPOT = boardPlace()
-export const BOARD_AT: MonitorAt = { x: BOARD_SPOT.x, y: BOARD_SPOT.y, z: BOARD_SPOT.z + FACE_Z, dir: 1 }
+export const BOARD_AT: MonitorAt = { x: BOARD_SPOT.x, y: BOARD_SPOT.y, z: BOARD_SPOT.z + FACE_Z }
 export const BOARD_PLANE: ScreenPlane = { halfW: BOARD_W / 2 + 0.25, halfH: BOARD_H / 2 + 0.12, front: 0, pitch: 0 }
 
 /** Pose que enquadra a tela do personagem (o monitor dele ou do pai, o console da Central) ou a TV; a âncora mira a mesma tela. null = o agente saiu. */

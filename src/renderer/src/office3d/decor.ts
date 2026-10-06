@@ -108,7 +108,9 @@ const TOP = 3.0
 function zoneBox(id: ZoneId): Box3 {
   const rect = id === 'shell' ? OFFICE : ZONES.find((z) => z.id === id)!.rect
   const out = id === 'shell' || id === 'island1' ? 1.4 : EDGE
-  return new Box3(new Vector3(rect.x0 - EDGE, 0, rect.z0 - EDGE), new Vector3(rect.x1 + out, TOP, rect.z1 + EDGE))
+  // A porta fica no corte das zonas (o corredor cruzado no z do console): a caixa da island1 a cobre inteira.
+  const back = id === 'island1' ? 0.9 : EDGE
+  return new Box3(new Vector3(rect.x0 - EDGE, 0, rect.z0 - back), new Vector3(rect.x1 + out, TOP, rect.z1 + EDGE))
 }
 
 export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomView {

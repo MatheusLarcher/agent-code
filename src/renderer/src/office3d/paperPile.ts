@@ -10,6 +10,7 @@
 import { Color, InstancedMesh, Object3D, type Group } from 'three'
 import type { Kit } from './kit'
 import { DESK_HEIGHT, type DeskLayout } from './layout'
+import { deskPoint } from './officePlan'
 import { tagLod } from './roomLod'
 
 /** Fração do contexto usada que sobe a pilha um degrau. */
@@ -40,11 +41,10 @@ const TWIST = [0.05, -0.09, 0.12, -0.05]
 const SHIFT = [0, 0.012, -0.01, 0.016]
 
 /**
- * À esquerda do teclado de cada mesa (do lado de quem senta: a mesa de fundo é
- * espelhada), dentro do grupo da zona (antes do LOD da zona ser montado).
+ * À esquerda do teclado de cada mesa (do lado de quem senta, girada com a mesa), dentro do grupo da zona (antes do LOD da zona ser montado).
  * `room.desks` = as mesas desta pilha, na ordem do índice local.
  */
-export function createPaperPiles(kit: Kit, room: { desks: ReadonlyArray<Pick<DeskLayout, 'x' | 'z'> & { dir?: 1 | -1 }> }, parent: Group): PaperPiles {
+export function createPaperPiles(kit: Kit, room: { desks: ReadonlyArray<Pick<DeskLayout, 'x' | 'z'> & { yaw?: number }> }, parent: Group): PaperPiles {
   const desks = room.desks.length
   const steps = new Array<number>(desks).fill(0)
   const mesh = tagLod(new InstancedMesh(kit.geo.box, kit.mat.note, Math.max(1, desks * MAX_REAMS)), 'small')
@@ -58,10 +58,11 @@ export function createPaperPiles(kit: Kit, room: { desks: ReadonlyArray<Pick<Des
     let n = 0
     for (let i = 0; i < desks; i++) {
       const desk = room.desks[i]
-      const dir = desk.dir ?? 1
+      const yaw = desk.yaw ?? 0
       for (let k = 0; k < (full ? MAX_REAMS : steps[i]); k++) {
-        dummy.position.set(desk.x - dir * (0.52 - SHIFT[k]), DESK_HEIGHT + 0.03 + REAM.h / 2 + k * (REAM.h + 0.002), desk.z + dir * (0.08 - SHIFT[k]))
-        dummy.rotation.set(0, TWIST[k], 0)
+        const p = deskPoint({ x: desk.x, z: desk.z, yaw }, -(0.52 - SHIFT[k]), 0.08 - SHIFT[k])
+        dummy.position.set(p.x, DESK_HEIGHT + 0.03 + REAM.h / 2 + k * (REAM.h + 0.002), p.z)
+        dummy.rotation.set(0, yaw + TWIST[k], 0)
         dummy.scale.set(REAM.w, REAM.h, REAM.d)
         dummy.updateMatrix()
         mesh.setMatrixAt(n, dummy.matrix)

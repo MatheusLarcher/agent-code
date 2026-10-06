@@ -4,7 +4,7 @@
  * temporários, sem login do Claude e sem mandar mensagem a agente nenhum. Não
  * toca no app em uso.
  *
- *   node scripts/office-agents/app-harness.mjs [segundos=20] [--shots-only] [--keep] [--novsync]
+ *   node scripts/office-agents/app-harness.mjs [segundos=20] [--shots-only] [--keep] [--novsync] [--seats|--poses|--desks]
  *
  * Liga a demonstração (Ctrl+Alt+Shift+D: 20 agentes em 5 salas, o cenário mais
  * cheio) e o HUD (Ctrl+Alt+Shift+P); mede o tempo de quadro (média/P95 do
@@ -30,6 +30,8 @@ const novsync = process.argv.includes('--novsync')
 const seats = process.argv.includes('--seats')
 /** Cada assento com o cérebro congelado: um agente sentado em cada um (mesa, cochilo na mesa, reunião, sofá, cochilo no sofá). */
 const posesMode = process.argv.includes('--poses')
+/** As 24 mesas do U (ilha por ilha, cérebro congelado): a ilha de frente e as mesas inclinadas de perto, com o boneco e o avatar. */
+const desksMode = process.argv.includes('--desks')
 const tmp = mkdtempSync(join(tmpdir(), 'agent-code-avatar-'))
 const home = join(tmp, 'home')
 const shots = join(tmp, 'shots')
@@ -230,6 +232,61 @@ try {
       await shootKey(`p-${name}-lado2`, key, 1.7, -1.57, 0.25, 0.7)
     }
   }
+  if (desksMode) {
+    // As 24 mesas do U: ilha por ilha, um agente sentado em cada uma das 6 (cérebro congelado, os outros escondidos);
+    // a ilha de frente e cada mesa inclinada (k ≥ 2) de frente e de lado — com o boneco e depois com o avatar.
+    await page.evaluate(() => (window.__o.scene.crowd.step = () => {}))
+    // O chat flutuante cobre a parte de baixo do palco: some só nas capturas.
+    await page.evaluate(() => document.querySelector('.o3d-chat')?.style.setProperty('display', 'none'))
+    const seatIsland = (island) =>
+      page.evaluate(async (island) => {
+        const plan = await import('/src/office3d/officePlan.ts')
+        const furn = await import('/src/office3d/furniture.ts')
+        const e = window.__o
+        const list = [...e.scene.chars.values()]
+        const desks = plan.STATIONS.filter((s) => s.island === island)
+        list.forEach((c, i) => {
+          const d = desks[i]
+          if (!d) return Object.assign(c.brain, { visible: false })
+          const s = furn.seatOf(d)
+          Object.assign(c.brain, { x: s.x, z: s.z, yaw: s.yaw, seat: 'chair', sit: 1, speed: 0, seatX: s.x, seatZ: s.z, reaction: null, pending: [], prop: null, look: 'none', zzz: false, visible: true, action: 'type', actionT: 3 })
+        })
+        e.requestRender()
+        return desks.map((d) => ({ k: d.k, x: d.x, z: d.z, yaw: d.yaw }))
+      }, island)
+    const shootAt = async (name, p) => {
+      await page.evaluate((p) => {
+        const e = window.__o
+        e.autoFrame = false
+        e.rig.pose = p
+        e.requestRender()
+      }, p)
+      await wait(1200)
+      await shot(name)
+    }
+    for (const body of ['boneco', 'avatar']) {
+      // O fluxo de cima já ligou a chave do avatar: alterna até ficar no corpo pedido.
+      const want = body === 'avatar'
+      if ((await avatars()) > 0 !== want) {
+        await key('V')
+        for (let i = 0; i < 100 && (await avatars()) > 0 !== want; i++) await wait(100)
+      }
+      for (const island of [0, 1, 2, 3]) {
+        const desks = await seatIsland(island)
+        await wait(1500)
+        const o = desks[0]
+        await shootAt(`d-${body}-ilha${island}`, { tx: o.x + 0.8, ty: 0.8, tz: o.z + 2.9, yaw: 0, pitch: 0.7, distance: 9.5 })
+        if (island !== 0) continue
+        for (const d of desks.filter((d) => d.k >= 2)) {
+          // Quem senta: SEAT_FRONT no +Z da mesa; a câmera gira com a mesa.
+          const sx = d.x + 0.95 * Math.sin(d.yaw)
+          const sz = d.z + 0.95 * Math.cos(d.yaw)
+          await shootAt(`d-${body}-k${d.k}-frente`, { tx: sx, ty: 0.85, tz: sz, yaw: d.yaw + Math.PI + 0.45, pitch: 0.3, distance: 1.9 })
+          await shootAt(`d-${body}-k${d.k}-lado`, { tx: sx, ty: 0.8, tz: sz, yaw: d.yaw + Math.PI / 2, pitch: 0.2, distance: 1.8 })
+        }
+      }
+    }
+  }
   if (seats) {
     const SEATS = [
       ['s1-mesa', "c.deskIndex !== null && b.seat === 'chair' && b.sit > 0.97 && b.action !== 'napDesk'", 1.0],
@@ -256,7 +313,7 @@ try {
     note('assentos-faltando', { faltam: [...left] })
     writeFileSync(join(tmp, 'report.json'), JSON.stringify(report, null, 2))
   }
-  if (!seats && !posesMode) {
+  if (!seats && !posesMode && !desksMode) {
   await closeUp('03-sentado-digitando', "b.sit > 0.95 && (b.action === 'type' || b.action === 'typeFast')", 2.2, 0.6, 0.3, 1.0)
   await closeUp('04-sentado-lado', "b.sit > 0.95 && (b.action === 'type' || b.action === 'typeFast' || b.action === 'readScreen')", 2.4, 1.5, 0.15, 0.9)
   await closeUp('05-objeto-na-mao', "b.prop !== null && b.prop !== undefined", 2.2, 0.4, 0.2, 1.1)

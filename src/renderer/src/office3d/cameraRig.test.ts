@@ -61,6 +61,34 @@ describe('tvPose (o foco dentro da TV)', () => {
 })
 
 describe('monitorPose', () => {
+  it('monitor girado (os braços do U, ±0,28/±0,34): a câmera para de frente para a tela — no eixo dela, com o yaw dela — e a tela fica um retângulo', () => {
+    const aspect = 16 / 9
+    for (const yaw of [0.28, -0.28, 0.34, -0.34]) {
+      const m = { x: -2.4, y: 1.12, z: 9.4, yaw }
+      const pose = monitorPose(m, { fovDeg: FOV, aspect })
+      expect(pose.yaw).toBeCloseTo(yaw)
+      expect(pose.pitch).toBe(0)
+      // A câmera no prolongamento da normal da tela (sin yaw, cos yaw).
+      const c = cameraPosition(pose)
+      const dx = c.x - m.x
+      const dz = c.z - m.z
+      expect(dx * Math.cos(yaw) - dz * Math.sin(yaw)).toBeCloseTo(0, 6)
+      expect(dx * Math.sin(yaw) + dz * Math.cos(yaw)).toBeGreaterThan(0.5)
+      // Os cantos da tela girada: os de cima na mesma altura, os da esquerda no mesmo x (retângulo alinhado).
+      const corner = (sx: number, sy: number): { x: number; y: number } => {
+        const lx = sx * MONITOR_HALF_W
+        const lz = MONITOR_SCREEN_FRONT
+        return ndc(pose, aspect, { x: m.x + lx * Math.cos(yaw) + lz * Math.sin(yaw), y: m.y + sy * MONITOR_HALF_H, z: m.z - lx * Math.sin(yaw) + lz * Math.cos(yaw) })
+      }
+      const tl = corner(-1, 1)
+      const tr = corner(1, 1)
+      const bl = corner(-1, -1)
+      expect(tl.y).toBeCloseTo(tr.y, 6)
+      expect(tl.x).toBeCloseTo(bl.x, 6)
+      expect(tr.x).toBeGreaterThan(tl.x)
+    }
+  })
+
   it('o monitor da câmera tem as medidas da tela desenhada na cena (kit.ts)', () => {
     expect(MONITOR_HALF_W * 2).toBe(SCREEN_W)
     expect(MONITOR_HALF_H * 2).toBe(SCREEN_H)

@@ -16,7 +16,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { box } from './decorUtil'
 import type { Kit } from './kit'
 import type { DeskLayout, ProjectLayout, RoomLayout } from './layout'
-import { DESK_D, DESK_HEIGHT, ISLAND_PLAQUE_Z, ISLANDS, zoneAt, type ZoneId } from './officePlan'
+import { DESK_D, DESK_HEIGHT, deskPoint, ISLAND_PLAQUE_Z, ISLANDS, zoneAt, type ZoneId } from './officePlan'
 import { tagLod } from './roomLod'
 import { createSignTexture, SIGN_H, SIGN_W, type SignTexture } from './sign'
 
@@ -80,8 +80,9 @@ export function buildPlaques(kit: Kit, zp: (id: ZoneId) => { group: Group; stati
     return { group, sig: '', meshes: [] as Mesh[] }
   })
   const blockGeo = (d: DeskLayout): BufferGeometry => {
-    dummy.position.set(d.x + d.out * DESK_PLAQUE_X, DESK_HEIGHT + 0.025 + DESK_SIZE / 2, d.z + d.dir * DESK_PLAQUE_Z)
-    dummy.rotation.set(0, d.dir === 1 ? 0 : Math.PI, 0)
+    const p = deskPoint(d, d.out * DESK_PLAQUE_X, DESK_PLAQUE_Z)
+    dummy.position.set(p.x, DESK_HEIGHT + 0.025 + DESK_SIZE / 2, p.z)
+    dummy.rotation.set(0, d.yaw, 0)
     dummy.scale.set(DESK_SIZE, DESK_SIZE, DESK_T)
     dummy.updateMatrix()
     return kit.geo.box.clone().applyMatrix4(dummy.matrix)

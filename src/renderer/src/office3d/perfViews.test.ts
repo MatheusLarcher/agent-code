@@ -49,10 +49,12 @@ const BEFORE_PARTY = {
 
 /**
  * Triângulos (principal + sombra), a linha de base dos agentes de ~1,80 m (bodyGeo.ts) e da cadeira
- * igual à do mockup (chairModel.ts, ~2 mil triângulos cada, 25 cadeiras) com ~15% de folga: o corpo e a cadeira têm mais triângulos, as chamadas
- * continuam abaixo de BEFORE/BEFORE_PARTY.
+ * igual à do mockup (chairModel.ts, ~2 mil triângulos cada) com ~15% de folga. As ilhas em U têm 24
+ * mesas (eram 16): +8 cadeiras ≈ +16 mil triângulos no prédio inteiro. O corpo e a cadeira têm mais
+ * triângulos, as chamadas continuam abaixo de BEFORE/BEFORE_PARTY; o piso de verdade é o P95 do
+ * quadro medido no app (scripts/office-agents/app-harness.mjs).
  */
-const TRIS = { perto: 112_000, predio: 150_000, longe: 72_000 }
+const TRIS = { perto: 120_000, predio: 165_000, longe: 78_000 }
 
 interface PassStats {
   objects: number

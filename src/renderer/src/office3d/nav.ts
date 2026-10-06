@@ -9,7 +9,7 @@
  * a cada busca (carimbo de geração em vez de limpar) e só roda quando alguém
  * troca de destino — nunca por quadro.
  */
-import type { Rect, RoomFurniture } from './furniture'
+import type { Obstacle, RoomFurniture, TurnedRect } from './furniture'
 import type { RoomLayout } from './layout'
 
 export const CELL = 0.25
@@ -37,7 +37,7 @@ export class NavGrid {
     readonly z0: number,
     width: number,
     depth: number,
-    obstacles: readonly Rect[],
+    obstacles: readonly Obstacle[],
     inflate = AGENT_RADIUS
   ) {
     this.cols = Math.max(1, Math.ceil(width / CELL - 1e-9))
@@ -51,7 +51,32 @@ export class NavGrid {
     this.closed = new Uint32Array(n)
     this.heap = new Int32Array(n * 8 + 8)
     this.trail = new Int32Array(n)
-    for (const o of obstacles) this.block(o.x0 - inflate, o.z0 - inflate, o.x1 + inflate, o.z1 + inflate)
+    for (const o of obstacles) {
+      if (o.turn) this.blockTurned(o.turn, inflate)
+      else this.block(o.x0 - inflate, o.z0 - inflate, o.x1 + inflate, o.z1 + inflate)
+    }
+  }
+
+  /** Bloqueia as células cujo centro fica a até `inflate` do retângulo girado (a mesa inclinada do U). */
+  private blockTurned(t: TurnedRect, inflate: number): void {
+    const c = Math.cos(t.yaw)
+    const s = Math.sin(t.yaw)
+    const ex = t.hw * Math.abs(c) + t.hd * Math.abs(s) + inflate
+    const ez = t.hw * Math.abs(s) + t.hd * Math.abs(c) + inflate
+    const c0 = Math.max(0, Math.floor((t.x - ex - this.x0) / CELL))
+    const c1 = Math.min(this.cols - 1, Math.floor((t.x + ex - this.x0) / CELL))
+    const r0 = Math.max(0, Math.floor((t.z - ez - this.z0) / CELL))
+    const r1 = Math.min(this.rows - 1, Math.floor((t.z + ez - this.z0) / CELL))
+    for (let r = r0; r <= r1; r++) {
+      const dz = this.z0 + (r + 0.5) * CELL - t.z
+      for (let col = c0; col <= c1; col++) {
+        const dx = this.x0 + (col + 0.5) * CELL - t.x
+        // No referencial do retângulo (o inverso do rotation.y): quanto o ponto passa das bordas.
+        const ox = Math.max(0, Math.abs(dx * c - dz * s) - t.hw)
+        const oz = Math.max(0, Math.abs(dx * s + dz * c) - t.hd)
+        if (ox * ox + oz * oz <= inflate * inflate) this.blocked[r * this.cols + col] = 1
+      }
+    }
   }
 
   /** Bloqueia as células cujo centro cai no retângulo. */

@@ -3,8 +3,8 @@
  * mesmo layout. Não conhece three.
  *
  * UM escritório para todos os projetos (officePlan.ts): `rooms` tem sempre um
- * elemento só, a sala física OFFICE_ID, com as 16 estações fixas (com ou sem
- * dono). O projeto (o `roomId` do modelo) vira atributo do personagem
+ * elemento só, a sala física OFFICE_ID, com as 24 estações fixas (4 ilhas em U
+ * de 6; com ou sem dono). O projeto (o `roomId` do modelo) vira atributo do personagem
  * (`projectId`); todo personagem fica na sala física (`roomId = OFFICE_ID`).
  *
  * Mesas (quem pede: placement 'seat' — principais e especialistas com mesa):
@@ -12,26 +12,24 @@
  * - cada ilha é reservada para um projeto: o primeiro que senta numa ilha vazia
  *   a ganha; a reserva dura enquanto o projeto tiver alguém no modelo (o filtro
  *   de projeto não tira ninguém do modelo) e some com o último;
- * - personagem novo do projeto P: frente livre na ilha de P → fundo livre na
- *   ilha de P → frente livre numa ilha sem reserva (que passa a ser de P, na
- *   ordem fixa 0,1,2,3) → frente livre em qualquer ilha → fundo livre em
- *   qualquer ilha → lounge (4 lugares) → de pé ao lado da ilha do principal da
- *   mesma conversa;
- * - fundo → frente só quando o personagem COMEÇA um turno (`active` passa de
- *   false a true) e só para uma frente livre da mesma ilha;
+ * - personagem novo do projeto P: mesa livre na ilha de P → mesa livre numa
+ *   ilha sem reserva (que passa a ser de P, na ordem fixa 0,1,2,3) → mesa livre
+ *   em qualquer ilha → lounge → de pé na ilha do principal da mesma conversa →
+ *   praça. Dentro da ilha, a ordem do U: o fundo, depois os braços aos pares;
  * - quem estava no lounge ou de pé pega mesa assim que vagar uma.
  * 'beside' fica ao lado do pai; 'destination' num lugar fixo: PO junto do
  * kanban, memória na estante de Memórias, Central no console. Fora de cena (o
  * Manager de plano já enviado, offstage.ts) fica do lado de fora da porta.
  *
- * Eixos: X à direita, Z para a câmera, Y para cima. Estação `dir +1`: o
- * monitor olha para +Z e quem senta fica em z + SEAT_FRONT, de costas para a
- * câmera (yaw 0); `dir −1`: espelhada (yaw π).
+ * Eixos: X à direita, Z para a câmera, Y para cima. Toda tela olha para a
+ * câmera, girada pelo `yaw` da mesa; quem senta fica em SEAT_FRONT no +Z da
+ * mesa (deskPoint), de costas para o monitor com o mesmo yaw.
  */
 import type { OfficeCharacterModel, OfficeModel } from '../office/adapter/model'
 import { managerSeat } from './meetingRoom'
 import {
   CENTRAL_SPOT,
+  deskPoint,
   DOOR,
   ISLANDS,
   islandSideSpots,
@@ -59,12 +57,13 @@ export interface DeskLayout {
   index: number
   x: number
   z: number
-  /** +1: monitor olha para +Z (a "frente"); −1: espelhada. */
-  dir: 1 | -1
-  /** Lado de fora da ilha (−1 esquerda, +1 direita). */
+  /** Giro da mesa (rotation.y; 0 = tela para a câmera, positivo gira a tela para +X). */
+  yaw: number
+  /** Lado (no X da mesa) do gaveteiro e do lugar de pé ao lado da cadeira. */
   out: 1 | -1
   island: number
-  front: boolean
+  /** Posição no U (0..5: fundo, braço de trás, braço da frente; esquerda e direita). */
+  k: number
   ownerKey: string | null
   /** Projeto do dono (a plaquinha da mesa); null livre. */
   projectId: string | null
@@ -148,7 +147,7 @@ function officeRoom(): RoomLayout {
     z: OFFICE.z0,
     width: OFFICE_W,
     depth: OFFICE_D,
-    desks: STATIONS.map((s) => ({ index: s.index, x: s.x, z: s.z, dir: s.dir, out: s.out, island: s.island, front: s.front, ownerKey: null, projectId: null })),
+    desks: STATIONS.map((s) => ({ index: s.index, x: s.x, z: s.z, yaw: s.yaw, out: s.out, island: s.island, k: s.k, ownerKey: null, projectId: null })),
     islands: ISLANDS.map((i) => ({ index: i.index, x: i.x, z: i.z, projectId: null, name: null, icon: null }))
   }
 }
@@ -166,10 +165,11 @@ export function buildingBounds(rooms: readonly RoomLayout[]): { minX: number; ma
   }
 }
 
-/** Centro da tela do monitor da mesa e para onde ela olha (dir·Z). */
-export function monitorPosition(desk: Pick<DeskLayout, 'x' | 'z'> & { dir?: 1 | -1 }): { x: number; y: number; z: number; dir: 1 | -1 } {
-  const dir = desk.dir ?? 1
-  return { x: desk.x, y: MONITOR_Y, z: desk.z - dir * MONITOR_BACK, dir }
+/** Centro da tela do monitor da mesa e o giro dela (a tela olha para o +Z da mesa). */
+export function monitorPosition(desk: Pick<DeskLayout, 'x' | 'z'> & { yaw?: number }): { x: number; y: number; z: number; yaw: number } {
+  const yaw = desk.yaw ?? 0
+  const p = deskPoint({ x: desk.x, z: desk.z, yaw }, 0, -MONITOR_BACK)
+  return { x: p.x, y: MONITOR_Y, z: p.z, yaw }
 }
 
 /** O projeto de um personagem: o roomId do modelo (null para a Central). */
@@ -204,41 +204,27 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
     taken[d] = c.key
     deskOf[c.key] = d
   }
-  // Fundo → frente: a tela da mesa da frente fica virada para a câmera (o usuário vê o que o agente faz).
-  // Vagou uma frente da ilha dele (ou de outra ilha do mesmo projeto), quem está no fundo muda para ela já.
-  for (const c of seated) {
-    const d = deskOf[c.key]
-    if (d === undefined || desks[d].front) continue
-    const mine = new Set([desks[d].island, ...islandsOf(c.roomId as string)])
-    const free = desks.find((k) => k.island === desks[d].island && k.front && taken[k.index] === null) ?? desks.find((k) => mine.has(k.island) && k.front && taken[k.index] === null)
-    if (!free) continue
-    taken[d] = null
-    taken[free.index] = c.key
-    deskOf[c.key] = free.index
-  }
-  // Quem não tem mesa (novo, ou estava no lounge/de pé): a ordem de escolha.
+  // Quem não tem mesa (novo, ou estava no lounge/de pé): a ordem de escolha. Toda tela olha para a
+  // câmera (não há mais mesa de fundo): dentro da ilha, a ordem do U (k = 0..5).
   const pick = (p: string): number | null => {
-    const freeIn = (island: number, front: boolean): number | null => {
-      const k = desks.find((d) => d.island === island && d.front === front && taken[d.index] === null)
+    const freeIn = (island: number): number | null => {
+      const k = desks.find((d) => d.island === island && taken[d.index] === null)
       return k ? k.index : null
     }
-    for (const front of [true, false]) for (const i of islandsOf(p)) {
-      const k = freeIn(i, front)
+    for (const i of islandsOf(p)) {
+      const k = freeIn(i)
       if (k !== null) return k
     }
     for (let i = 0; i < owner.length; i++) {
       if (owner[i] !== null) continue
-      const k = freeIn(i, true)
+      const k = freeIn(i)
       if (k === null) continue
       owner[i] = p
       return k
     }
-    for (const front of [true, false]) for (let i = 0; i < owner.length; i++) {
-      const k = freeIn(i, front)
-      if (k === null) continue
-      // Ilha sem reserva onde o projeto sem ilha senta (pelo fundo): passa a ser dele.
-      if (owner[i] === null && islandsOf(p).length === 0) owner[i] = p
-      return k
+    for (let i = 0; i < owner.length; i++) {
+      const k = freeIn(i)
+      if (k !== null) return k
     }
     return null
   }
@@ -334,8 +320,8 @@ function placeCharacters(model: OfficeModel, room: RoomLayout, deskOf: Record<st
     } else if (p.kind === 'seat' && c.roomId !== null) {
       const d = deskOf[c.key]
       if (d !== undefined) {
-        const desk = room.desks[d]
-        o = base(c, desk.x, desk.z + desk.dir * SEAT_FRONT, desk.dir === 1 ? 0 : Math.PI, 'desk')
+        const seat = deskPoint(room.desks[d], 0, SEAT_FRONT)
+        o = base(c, seat.x, seat.z, room.desks[d].yaw, 'desk')
         o.deskIndex = d
         o.screenDesk = { roomId: OFFICE_ID, index: d }
       } else if (loungeOf.has(c.key)) {
@@ -358,8 +344,10 @@ function placeCharacters(model: OfficeModel, room: RoomLayout, deskOf: Record<st
         const n = (besideCount.get(parent.key) ?? 0) + 1
         besideCount.set(parent.key, n)
         const side = n % 2 === 1 ? 1 : -1
-        const back = parent.deskIndex !== null ? room.desks[parent.deskIndex].dir : 1
-        o = base(c, parent.x + side * BESIDE_STEP * Math.ceil(n / 2), parent.z + back * 0.2, parent.yaw, 'beside')
+        // No eixo X da mesa do pai (ou do mundo, sem mesa), um pouco para trás dele.
+        const yaw = parent.deskIndex !== null ? room.desks[parent.deskIndex].yaw : 0
+        const at = deskPoint({ x: parent.x, z: parent.z, yaw }, side * BESIDE_STEP * Math.ceil(n / 2), 0.2)
+        o = base(c, at.x, at.z, parent.yaw, 'beside')
         o.projectId = parent.projectId ?? o.projectId
         o.screenDesk = parent.screenDesk
       }

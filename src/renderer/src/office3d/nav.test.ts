@@ -12,7 +12,7 @@ function principal(conv: string): OfficeCharacterModel {
   }
 }
 
-/** O escritório (fixo: 16 estações, com ou sem gente). */
+/** O escritório (fixo: 24 estações em 4 ilhas em U, com ou sem gente). */
 const room: RoomLayout = layoutOffice({ rooms: [{ id: 'r1', projectKey: 'r1', name: 'r1', icon: null, principals: 5 }], characters: ['a', 'b', 'c', 'd', 'e'].map(principal) }).rooms[0]
 const furniture = roomFurniture(room)
 const grid = buildNavGrid(room, furniture)
@@ -41,7 +41,7 @@ describe('grade de navegação', () => {
   })
 
   it('mesas, cadeiras e móveis bloqueiam; corredores, lugares fixos e pontos de interesse ficam livres', () => {
-    expect(room.desks).toHaveLength(16)
+    expect(room.desks).toHaveLength(24)
     for (const d of room.desks) {
       expect(grid.isFree(d.x, d.z)).toBe(false)
       expect(grid.isFree(d.x + 0.7, d.z)).toBe(false)
@@ -69,7 +69,7 @@ describe('grade de navegação', () => {
     expect(grid.isFree(f.doorIn.x, f.doorIn.z)).toBe(true)
     // Corredores: o cruzado (porta → Central), a pista central e o do fundo.
     expect(grid.isFree(6.5, CONSOLE.z)).toBe(true)
-    expect(grid.isFree(0, 7)).toBe(true)
+    expect(grid.isFree(0, 10)).toBe(true)
     expect(grid.isFree(-4.25, -2.6)).toBe(true)
   })
 
@@ -98,7 +98,7 @@ describe('grade de navegação', () => {
       }
     }
     expect(door).toBe(true)
-    expect(STATIONS).toHaveLength(16)
+    expect(STATIONS).toHaveLength(24)
   })
 
   it('A* contorna as mesas e termina exatamente no destino', () => {

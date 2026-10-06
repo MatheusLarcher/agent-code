@@ -24,13 +24,15 @@ import {
   CONSOLE,
   DESK_D,
   DESK_W,
+  deskPoint,
   DOOR,
   ENERGY_PANEL,
   FLOOR_PLANTS,
   GLASS_PLANTER,
   GLASS_X,
-  ISLAND_SHELF_Z,
+  ISLAND_SHELF,
   ISLANDS,
+  islandShelf,
   LOUNGE,
   LOUNGE_SEATS,
   MEETING,
@@ -44,6 +46,7 @@ import {
   STATIONS,
   WINDOW_SPOT_X,
   WINDOW_SPOTS_Z,
+  type Placed,
   type Rect
 } from './officePlan'
 
@@ -98,7 +101,7 @@ export interface RoomFurniture {
   doorOut: Spot
   pois: Poi[]
   /** Pisos ocupados (sem a folga do raio do agente). */
-  obstacles: Rect[]
+  obstacles: Obstacle[]
 }
 
 export const DOOR_WIDTH = DOOR.width
@@ -112,8 +115,9 @@ export const QUEUE_STEP = 0.65
 export const QUEUE_LEN = 4
 /** A máquina fica deslocada do centro do balcão (em direção ao fundo do escritório). */
 export const MACHINE_OFFSET = 0.15
-/** Meia largura da cadeira (obstáculo): os braços e a base de rodízios da cadeira do mockup (chairModel.ts). */
-const CHAIR_HALF = 0.38
+/** Meia largura e meia profundidade da cadeira (obstáculo): os braços e a base de rodízios da cadeira do mockup (chairModel.ts). */
+export const CHAIR_HALF = 0.38
+export const CHAIR_HD = 0.33
 
 const FACE_BACK = 0
 const FACE_CAMERA = Math.PI
@@ -122,18 +126,45 @@ const FACE_LEFT = Math.PI / 2
 
 const rect = (cx: number, cz: number, hw: number, hd: number): Rect => ({ x0: cx - hw, z0: cz - hd, x1: cx + hw, z1: cz + hd })
 
-type DeskSpot = { x: number; z: number; dir?: 1 | -1; out?: 1 | -1 }
+/** Uma mesa: centro do tampo, giro (0 = monitor em −Z, tela para a câmera) e o lado do gaveteiro/lugar de pé. */
+export type DeskSpot = { x: number; z: number; yaw?: number; out?: 1 | -1 }
 
-/** Lugar da cadeira da mesa (onde o quadril fica sentado), olhando para o monitor. */
-export function seatOf(desk: DeskSpot): Spot {
-  const dir = desk.dir ?? 1
-  return { x: desk.x, z: desk.z + dir * SEAT_FRONT, yaw: dir === 1 ? FACE_BACK : FACE_CAMERA }
+const placed = (d: DeskSpot): Placed => ({ x: d.x, z: d.z, yaw: d.yaw ?? 0 })
+
+/** Retângulo girado no chão: centro, giro e meias medidas no referencial dele. */
+export interface TurnedRect extends Placed {
+  hw: number
+  hd: number
 }
 
-/** Em pé ao lado da cadeira (um pouco atrás do assento, longe do tampo): no lado de fora da ilha (ou em `side`). */
+/** Obstáculo da navegação: a caixa alinhada e, se girado, o retângulo exato (a grade bloqueia só em volta dele). */
+export interface Obstacle extends Rect {
+  turn?: TurnedRect
+}
+
+/** O retângulo hw × hd (meias medidas) centrado em (lx, lz) da mesa: a caixa alinhada que o contém e, girado, ele mesmo. */
+export function deskBox(desk: DeskSpot, lx: number, lz: number, hw: number, hd: number): Obstacle {
+  const d = placed(desk)
+  const c = deskPoint(d, lx, lz)
+  const cos = Math.abs(Math.cos(d.yaw))
+  const sin = Math.abs(Math.sin(d.yaw))
+  const box: Obstacle = rect(c.x, c.z, hw * cos + hd * sin, hw * sin + hd * cos)
+  if (d.yaw !== 0) box.turn = { x: c.x, z: c.z, yaw: d.yaw, hw, hd }
+  return box
+}
+
+/** Lugar da cadeira da mesa (onde o quadril fica sentado), olhando para o monitor (o yaw da mesa). */
+export function seatOf(desk: DeskSpot): Spot {
+  const d = placed(desk)
+  const p = deskPoint(d, 0, SEAT_FRONT)
+  return { x: p.x, z: p.z, yaw: d.yaw }
+}
+
+/** Em pé ao lado da cadeira (um pouco atrás do assento, longe do tampo): no lado `out` da mesa (ou em `side`), girado com ela. */
 export function chairSide(desk: DeskSpot, side: 1 | -1 = desk.out ?? 1): Spot {
-  const s = seatOf(desk)
-  return { x: desk.x + side * CHAIR_SIDE, z: s.z + (desk.dir ?? 1) * CHAIR_BACK, yaw: s.yaw }
+  const d = placed(desk)
+  const p = deskPoint(d, side * CHAIR_SIDE, SEAT_FRONT + CHAIR_BACK)
+  return { x: p.x, z: p.z, yaw: d.yaw }
 }
 
 /** O kanban na parede do fundo (as medidas são de board/boardLayout.ts, centradas em BOARD_X). */
@@ -198,7 +229,7 @@ export function roomFurniture(r: { id: string }): RoomFurniture {
     windows: WINDOW_SPOTS_Z.map((z) => ({ x: GLASS_X, z })),
     board,
     coffee: { x: COFFEE.x, z: COFFEE.z },
-    rug: { x: 0, z: CONSOLE.z + 2.95, w: 3.0, d: 1.6 },
+    rug: { x: 0, z: CONSOLE.z + 3.0, w: 2.4, d: 1.6 },
     door: { x: DOOR.x, z: DOOR.z, width: DOOR.width },
     tv: { x: MEETING.tv.x, y: MEETING.tv.y, z: tvZ, w: MEETING.tv.w, h: MEETING.tv.h },
     doorIn: { x: RIGHT_FACE_X - 0.65, z: DOOR.z, yaw: FACE_LEFT },
@@ -209,14 +240,15 @@ export function roomFurniture(r: { id: string }): RoomFurniture {
 }
 
 /** Tudo o que ocupa o piso: estações, ilhas, lounge, sala de reunião, parede da direita, plantas e paredes. */
-function officeObstacles(board: BoardPlace): Rect[] {
-  const o: Rect[] = []
+function officeObstacles(board: BoardPlace): Obstacle[] {
+  const o: Obstacle[] = []
+  // Mesa e cadeira giradas: a caixa alinhada de cada retângulo (a grade do nav.ts é alinhada aos eixos).
   for (const s of STATIONS) {
-    o.push(rect(s.x, s.z, DESK_W / 2, DESK_D / 2))
+    o.push(deskBox(s, 0, 0, DESK_W / 2, DESK_D / 2))
     // A cadeira: do assento (o centro dela fica à frente do quadril, sob a borda) até os rodízios de trás.
-    o.push(rect(s.x, s.z + s.dir * (SEAT_FRONT - 0.03), CHAIR_HALF, 0.33))
+    o.push(deskBox(s, 0, SEAT_FRONT - 0.03, CHAIR_HALF, CHAIR_HD))
   }
-  for (const isl of ISLANDS) o.push(rect(isl.x, isl.z + ISLAND_SHELF_Z, 0.31, 0.15))
+  for (const isl of ISLANDS) o.push(deskBox(islandShelf(isl.index), 0, 0, ISLAND_SHELF.w / 2, ISLAND_SHELF.d / 2))
   // Praça: o console e o cesto do kanban.
   o.push(rect(CONSOLE.x, CONSOLE.z, CONSOLE.r, CONSOLE.r))
   o.push(rect(board.bin.x, board.bin.z, BIN_SPOT.r + 0.02, BIN_SPOT.r + 0.02))

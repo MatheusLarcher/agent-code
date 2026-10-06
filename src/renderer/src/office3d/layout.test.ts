@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { OfficeCharacterModel, OfficeModel, OfficeRoomModel } from '../office/adapter/model'
 import { BESIDE_STEP, EMPTY_LAYOUT, layoutOffice, OFFICE_ID, SEAT_FRONT, type Office3DLayout } from './layout'
-import { CENTRAL_SPOT, LOUNGE_SEATS, MEMORY_SPOT_X, PO_SPOTS, STATIONS } from './officePlan'
+import { CENTRAL_SPOT, deskPoint, DOOR, ISLANDS, islandSideSpots, LOUNGE_SEATS, MEMORY_SPOT_X, OFFICE, PO_SPOTS, STATIONS } from './officePlan'
 
 function room(id: string, principals = 0): OfficeRoomModel {
   return { id, projectKey: id, name: id, icon: null, principals }
@@ -35,45 +35,49 @@ function sub(track: string, parent: string, roomId = 'r1'): OfficeCharacterModel
 
 const desk = (l: Office3DLayout, key: string): number | null => l.characters.find((c) => c.key === key)?.deskIndex ?? null
 const islandOf = (i: number | null): number | null => (i === null ? null : STATIONS[i].island)
-const front = (i: number | null): boolean => i !== null && STATIONS[i].front
+/** A posição no U (0..5) da mesa; null sem mesa. */
+const kOf = (i: number | null): number | null => (i === null ? null : STATIONS[i].k)
 
 /** n principais do projeto p (convs p0, p1…). */
 const crew = (p: string, n: number, active = false): OfficeCharacterModel[] => Array.from({ length: n }, (_, i) => principal(`${p}${i}`, p, active))
 
 describe('layoutOffice — um escritório para todos os projetos', () => {
-  it('escritório vazio: sempre 16 estações fixas (8 de frente, 8 de fundo), 4 ilhas livres e nenhum personagem', () => {
+  it('escritório vazio: sempre 24 estações fixas (4 ilhas em U de 6, toda tela para a câmera), 4 ilhas livres e nenhum personagem', () => {
     const l = layoutOffice({ rooms: [], characters: [] })
     expect(l.rooms).toHaveLength(1)
     const [o] = l.rooms
     expect(o.id).toBe(OFFICE_ID)
-    expect(o.desks).toHaveLength(16)
-    expect(o.desks.filter((d) => d.front)).toHaveLength(8)
-    expect(o.desks.filter((d) => d.dir === -1)).toHaveLength(8)
+    expect(o.desks).toHaveLength(24)
+    // O fundo do U reto; os 4 braços de cada ilha inclinados para dentro.
+    expect(o.desks.filter((d) => d.yaw === 0)).toHaveLength(8)
+    expect(o.desks.filter((d) => Math.abs(d.yaw) > 0.27 && Math.abs(d.yaw) < 0.35)).toHaveLength(16)
     expect(o.desks.every((d) => d.ownerKey === null && d.projectId === null)).toBe(true)
     expect(o.islands.every((i) => i.projectId === null)).toBe(true)
     expect(l.characters).toHaveLength(0)
-    expect(EMPTY_LAYOUT.rooms[0].desks).toHaveLength(16)
+    expect(EMPTY_LAYOUT.rooms[0].desks).toHaveLength(24)
   })
 
-  it('senta na mesa: quem fica na frente olha para o monitor de costas para a câmera; no fundo, espelhado', () => {
-    const l = layoutOffice({ rooms: [room('r1', 3)], characters: crew('r1', 3) })
-    const [a, b, c] = l.characters
-    for (const ch of [a, b, c]) {
+  it('senta na mesa: na cadeira girada com ela, olhando para o monitor (o yaw da mesa), inclusive nos braços do U', () => {
+    const l = layoutOffice({ rooms: [room('r1', 6)], characters: crew('r1', 6) })
+    expect(l.characters.map((c) => kOf(c.deskIndex))).toEqual([0, 1, 2, 3, 4, 5])
+    for (const ch of l.characters) {
       const d = STATIONS[ch.deskIndex!]
+      const seat = deskPoint(d, 0, SEAT_FRONT)
       expect(ch.roomId).toBe(OFFICE_ID)
       expect(ch.projectId).toBe('r1')
-      expect(ch.x).toBe(d.x)
-      expect(ch.z).toBeCloseTo(d.z + d.dir * SEAT_FRONT)
-      expect(ch.yaw).toBeCloseTo(d.dir === 1 ? 0 : Math.PI)
+      expect(ch.x).toBeCloseTo(seat.x)
+      expect(ch.z).toBeCloseTo(seat.z)
+      expect(ch.yaw).toBeCloseTo(d.yaw)
+      expect(Math.hypot(ch.x - d.x, ch.z - d.z)).toBeCloseTo(SEAT_FRONT)
       expect(ch.screenDesk).toEqual({ roomId: OFFICE_ID, index: ch.deskIndex })
     }
   })
 
-  it('projeto A com 3 agentes: 2 na frente e 1 no fundo da ilha dele (a 1ª na ordem: frente-esquerda)', () => {
+  it('projeto A com 3 agentes: o fundo do U e o 1º braço da ilha dele (a 1ª na ordem: frente-esquerda)', () => {
     const l = layoutOffice({ rooms: [room('A', 3)], characters: crew('A', 3) })
     const ds = l.characters.map((c) => c.deskIndex)
     expect(ds.map(islandOf)).toEqual([0, 0, 0])
-    expect(ds.map(front)).toEqual([true, true, false])
+    expect(ds.map(kOf)).toEqual([0, 1, 2])
     expect(l.rooms[0].islands[0].projectId).toBe('A')
     expect(l.islandOf).toEqual({ A: [0] })
     expect(l.projects).toEqual([{ id: 'A', name: 'A', icon: null, islands: [0], agents: 3 }])
@@ -86,50 +90,53 @@ describe('layoutOffice — um escritório para todos os projetos', () => {
     expect(l.characters.map((c) => islandOf(c.deskIndex))).toEqual([0, 1, 2, 3])
   })
 
-  it('a ilha do projeto primeiro: com a frente cheia, o 3º vai para o fundo da própria ilha e não para a frente de outra', () => {
-    const m: OfficeModel = { rooms: [room('A', 3), room('B', 1)], characters: [...crew('A', 3), ...crew('B', 1)] }
+  it('a ilha do projeto primeiro: o 6º ainda fica na própria ilha (braço da frente) e não vai para outra', () => {
+    const m: OfficeModel = { rooms: [room('A', 6), room('B', 1)], characters: [...crew('A', 6), ...crew('B', 1)] }
     const l = layoutOffice(m)
-    expect(islandOf(desk(l, 'conv:A2'))).toBe(0)
-    expect(front(desk(l, 'conv:A2'))).toBe(false)
+    expect(islandOf(desk(l, 'conv:A5'))).toBe(0)
+    expect(kOf(desk(l, 'conv:A5'))).toBe(5)
     expect(islandOf(desk(l, 'conv:B0'))).toBe(1)
   })
 
-  it('ilha cheia: o projeto ganha a frente de uma ilha sem reserva (que passa a ser dele)', () => {
-    const l = layoutOffice({ rooms: [room('A', 6)], characters: crew('A', 6) })
-    expect(l.characters.slice(4).map((c) => islandOf(c.deskIndex))).toEqual([1, 1])
-    expect(l.characters.slice(4).every((c) => front(c.deskIndex))).toBe(true)
+  it('ilha cheia: o projeto ganha uma ilha sem reserva (que passa a ser dele), a começar pelo fundo do U', () => {
+    const l = layoutOffice({ rooms: [room('A', 8)], characters: crew('A', 8) })
+    expect(l.characters.slice(6).map((c) => islandOf(c.deskIndex))).toEqual([1, 1])
+    expect(l.characters.slice(6).map((c) => kOf(c.deskIndex))).toEqual([0, 1])
     expect(l.projects[0].islands).toEqual([0, 1])
   })
 
-  it('5º projeto: senta nas mesas livres das outras ilhas (frente antes de fundo), com a plaquinha dele na mesa', () => {
+  it('5º projeto (a demo tem 5): senta nas mesas livres das outras ilhas, com a plaquinha dele na mesa', () => {
     const rooms = ['A', 'B', 'C', 'D', 'E'].map((p) => room(p, 1))
     const chars = [...crew('A', 1), ...crew('B', 1), ...crew('C', 1), ...crew('D', 1), ...crew('E', 3)]
     const l = layoutOffice({ rooms, characters: chars })
     const e = ['conv:E0', 'conv:E1', 'conv:E2'].map((k) => desk(l, k))
-    expect(e.every((d) => d !== null && front(d))).toBe(true)
+    // Na 1ª ilha com mesa livre (a 0, do A), na ordem do U.
+    expect(e.map(islandOf)).toEqual([0, 0, 0])
+    expect(e.map(kOf)).toEqual([1, 2, 3])
     expect(e.map((d) => l.rooms[0].desks[d!].projectId)).toEqual(['E', 'E', 'E'])
     expect(l.projects.find((p) => p.id === 'E')!.islands).toEqual([])
     // As ilhas continuam dos donos.
     expect(l.rooms[0].islands.map((i) => i.projectId)).toEqual(['A', 'B', 'C', 'D'])
   })
 
-  it('o 17º sentado vai para o lounge (3 lugares, os do sofá); com o lounge cheio, fica de pé ao lado da ilha do principal', () => {
-    const chars = [...crew('A', 4), ...crew('B', 4), ...crew('C', 4), ...crew('D', 4), ...crew('E', 5)]
+  it('o 25º sentado vai para o lounge (3 lugares, os do sofá); com o lounge cheio, fica de pé dentro do U da ilha do principal', () => {
+    const chars = [...crew('A', 6), ...crew('B', 6), ...crew('C', 6), ...crew('D', 6), ...crew('E', 5)]
     const exec: OfficeCharacterModel = { ...principal('A0', 'A'), key: 'role:A:executor', role: 'executor', placement: { kind: 'seat', seatKind: 'especialista', slot: 'executor' } }
-    const l = layoutOffice({ rooms: ['A', 'B', 'C', 'D', 'E'].map((p) => room(p, 4)), characters: [...chars, exec] })
+    const l = layoutOffice({ rooms: ['A', 'B', 'C', 'D', 'E'].map((p) => room(p, 6)), characters: [...chars, exec] })
     expect(l.rooms[0].desks.every((d) => d.ownerKey !== null)).toBe(true)
     const lounge = l.characters.filter((c) => c.spot === 'lounge')
     expect(lounge.map((c) => c.lounge)).toEqual([0, 1, 2])
     lounge.forEach((c, i) => expect([c.x, c.z]).toEqual([LOUNGE_SEATS[i].x, LOUNGE_SEATS[i].z]))
-    // O executor da conversa A0 (lounge cheio): de pé ao lado da ilha do principal dele (a 0).
+    // O executor da conversa A0 (lounge cheio): de pé dentro do U da ilha do principal dele (a 0).
     const ex = l.characters.find((c) => c.key === 'role:A:executor')!
     expect(ex.spot).toBe('stand')
-    expect(Math.abs(ex.x - -4.25)).toBeCloseTo(2.15)
+    expect([ex.x, ex.z]).toEqual([islandSideSpots(0)[0].x, islandSideSpots(0)[0].z])
+    expect(Math.abs(ex.x - ISLANDS[0].x)).toBeLessThan(1)
   })
 
   it('ninguém é empurrado do lounge: quem já estava sentado nele fica, mesmo que alguém antes na ordem do modelo chegue depois', () => {
-    const rooms = ['A', 'B', 'C', 'D', 'E'].map((p) => room(p, 4))
-    const crews = [...crew('A', 4), ...crew('B', 4), ...crew('C', 4), ...crew('D', 4)]
+    const rooms = ['A', 'B', 'C', 'D', 'E'].map((p) => room(p, 6))
+    const crews = [...crew('A', 6), ...crew('B', 6), ...crew('C', 6), ...crew('D', 6)]
     const one = layoutOffice({ rooms, characters: [...crews, ...crew('E', 4)] })
     const seated = (l: Office3DLayout): string[] => l.characters.filter((c) => c.spot === 'lounge').map((c) => c.key)
     expect(seated(one)).toEqual(['conv:E0', 'conv:E1', 'conv:E2'])
@@ -152,17 +159,25 @@ describe('layoutOffice — um escritório para todos os projetos', () => {
     expect(islandOf(desk(two, 'conv:A0'))).toBe(1)
   })
 
-  it('fundo → frente assim que a frente da ilha vaga (mesmo no meio de um turno): a tela fica virada para a câmera', () => {
+  it('sem "fundo → frente": toda tela olha para a câmera, então quem tem mesa fica nela quando outra vaga (mesmo trabalhando)', () => {
     const m3 = (active: boolean[]): OfficeModel => ({ rooms: [room('A', 3)], characters: crew('A', 3).map((c, i) => ({ ...c, active: active[i] })) })
     const one = layoutOffice(m3([false, false, true]))
-    expect(front(desk(one, 'conv:A2'))).toBe(false)
-    // Com a frente cheia, continua no fundo.
-    expect(desk(layoutOffice(m3([false, false, true]), one), 'conv:A2')).toBe(desk(one, 'conv:A2'))
-    // A0 sai do escritório: a frente dele vaga e A2 (trabalhando) muda para ela, na mesma ilha.
+    // A0 sai do escritório: a mesa dele (o fundo do U) vaga, e A2 (trabalhando) continua no braço.
     const two = layoutOffice({ rooms: [room('A', 2)], characters: m3([false, false, true]).characters.slice(1) }, one)
-    expect(front(desk(two, 'conv:A2'))).toBe(true)
-    expect(islandOf(desk(two, 'conv:A2'))).toBe(0)
+    expect(desk(two, 'conv:A2')).toBe(desk(one, 'conv:A2'))
     expect(desk(two, 'conv:A1')).toBe(desk(one, 'conv:A1'))
+    // Quem chega depois pega a mesa vaga (a 1ª na ordem do U).
+    const three = layoutOffice({ rooms: [room('A', 3)], characters: [...m3([false, false, true]).characters.slice(1), principal('A9', 'A')] }, two)
+    expect(desk(three, 'conv:A9')).toBe(desk(one, 'conv:A0'))
+  })
+
+  it('fora de cena (o Manager de um plano já enviado): do lado de fora da porta, sem mesa', () => {
+    const gone: OfficeCharacterModel = { ...principal('m', 'A'), offstage: true }
+    const l = layoutOffice({ rooms: [room('A', 2)], characters: [gone, principal('a', 'A')] })
+    const m = l.characters.find((c) => c.key === 'conv:m')!
+    expect(m.spot).toBe('offstage')
+    expect([m.x, m.z]).toEqual([OFFICE.x1 + 1, DOOR.z])
+    expect(m.deskIndex).toBeNull()
   })
 
   it('a reserva acaba com o último agente do projeto: a ilha fica livre e a placa apaga', () => {

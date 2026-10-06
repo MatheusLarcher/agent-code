@@ -10,7 +10,7 @@ import type { Errand } from './brainBoard'
 import type { MeetingSpot } from './meetingRoom'
 import type { AgentPhase, ToolKind } from './events'
 import { chairSide, seatOf, type Poi, type PoiKind, type Spot } from './furniture'
-import { MONITOR_BACK, MONITOR_Y, type SeatPlace } from './officePlan'
+import { deskPoint, MONITOR_BACK, MONITOR_Y, type SeatPlace } from './officePlan'
 import type { PartyRole, RoomParty } from './partyPlan'
 import { REACTION_S, smooth, type Action, type Reaction, type SeatKind } from './poses'
 
@@ -52,11 +52,11 @@ export interface Goal {
   exit: boolean
 }
 
-/** A mesa de um cérebro: centro, para onde o monitor olha (dir) e o lado de fora da ilha (out). */
+/** A mesa de um cérebro: centro, giro (a tela olha para o +Z da mesa) e o lado do lugar de pé (out). */
 export interface DeskRef {
   x: number
   z: number
-  dir: 1 | -1
+  yaw: number
   out: 1 | -1
 }
 
@@ -210,7 +210,7 @@ export function createBrain(o: BrainInit): Brain {
   const desk = o.desk ?? null
   const b: Brain = {
     key: o.key, role: o.role, style: o.style ?? 'idle', roomId: o.roomId, projectId: o.projectId ?? null, home: { ...o.home }, desk, lounge: o.lounge ?? null,
-    monitor: o.monitor ?? (desk ? { x: desk.x, y: MONITOR_Y, z: desk.z - desk.dir * MONITOR_BACK } : null),
+    monitor: o.monitor ?? (desk ? { ...deskPoint(desk, 0, -MONITOR_BACK), y: MONITOR_Y } : null),
     side: o.side ?? 1, seed: o.seed ?? 0,
     phase: 'idle', tool: null, toolAt: 0, contextLow: false, usageOut: false, stalled: false, idleSince: null,
     visible: !o.away, outside: false, x: o.home.x, z: o.home.z, yaw: o.home.yaw, speed: 0, sit: 0, seat: null, seatX: 0, seatZ: 0, standX: o.home.x, standZ: o.home.z,
@@ -293,7 +293,7 @@ export function stay(b: Brain): void {
   b.atSpot = true
 }
 
-/** Vai sentar no lugar de trabalho: a mesa (pelo lado de fora da ilha), o lugar do lounge ou, sem nenhum, o lugar dele. */
+/** Vai sentar no lugar de trabalho: a mesa (pelo lado do lugar de pé), o lugar do lounge ou, sem nenhum, o lugar dele. */
 export function goDesk(b: Brain, gait: Gait): void {
   if (!b.desk) {
     const l = b.lounge

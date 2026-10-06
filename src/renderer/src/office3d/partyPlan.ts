@@ -1,7 +1,7 @@
 /**
  * Plano da festa do apagão — PURO (sem three). No escritório único: quem
  * procura o disjuntor com a lanterna, quem come pizza sentado na mesa, quem
- * entra no trenzinho (conga) em volta de uma ilha e quem dança na frente das
+ * entra no trenzinho (conga) em volta de uma ilha e quem dança na boca do U das
  * outras três; e ONDE cada um fica (vagas da pista, a volta do trenzinho, a rota da
  * lanterna pelos móveis, o poleiro na beira da mesa). Os papéis saem da seed
  * de cada agente: o mesmo escritório faz sempre a mesma festa.
@@ -12,7 +12,7 @@
  */
 import type { Brain } from './brainBody'
 import { chairSide, type RoomFurniture, type Spot } from './furniture'
-import { ISLAND_PLAQUE_Z, ISLAND_RUG, ISLANDS } from './officePlan'
+import { deskPoint, ISLAND_PLAQUE_Z, ISLANDS, U_EXTENT } from './officePlan'
 
 export type PartyRole = 'dance' | 'conga' | 'flashlight' | 'pizza'
 
@@ -111,10 +111,11 @@ export function congaIsland(seed: number): number {
   return Math.floor(Math.abs(seed) * 7) % ISLANDS.length
 }
 
-/** A volta do trenzinho: em torno da ilha, por fora do tapete dela. */
+/** A volta do trenzinho: em torno do U inteiro (mesas, cadeiras recuadas e lugares de pé), por fora dele. */
 export function congaLoop(island: number): CongaLoop {
   const isl = ISLANDS[island]
-  return { cx: isl.x, cz: isl.z + ISLAND_RUG.dz, a: ISLAND_RUG.rx + 0.45, b: ISLAND_RUG.rz + 0.2 }
+  const hz = (U_EXTENT.z1 - U_EXTENT.z0) / 2
+  return { cx: isl.x, cz: isl.z + U_EXTENT.z0 + hz, a: U_EXTENT.x1 + 0.55, b: hz + 0.55 }
 }
 
 /**
@@ -153,8 +154,9 @@ export function flashRoute(f: RoomFurniture, seed: number): FlashStop[] {
 }
 
 /** Onde sentar na mesa para comer pizza (assento) e de onde pular para ela (em pé, ao lado da cadeira). */
-export function pizzaPerch(desk: { x: number; z: number; dir: 1 | -1; out: 1 | -1 }): { seat: Spot; stand: Spot } {
-  return { seat: { x: desk.x + desk.out * PERCH.dx, z: desk.z + desk.dir * PERCH.dz, yaw: desk.dir === 1 ? Math.PI : 0 }, stand: chairSide(desk) }
+export function pizzaPerch(desk: { x: number; z: number; yaw: number; out: 1 | -1 }): { seat: Spot; stand: Spot } {
+  const p = deskPoint(desk, desk.out * PERCH.dx, PERCH.dz)
+  return { seat: { x: p.x, z: p.z, yaw: desk.yaw + Math.PI }, stand: chairSide(desk) }
 }
 
 /**

@@ -128,8 +128,8 @@ describe('cérebro: ocioso', () => {
     expect(brains.filter((b) => b.action === 'napDesk').every((b) => b.seat === 'chair')).toBe(true)
   })
 
-  it('o cochilo não toma o lugar de quem trabalha no lounge (escritório lotado: 16 mesas + 2 no sofá)', () => {
-    const { crowd, brains } = office(18)
+  it('o cochilo não toma o lugar de quem trabalha no lounge (escritório lotado: 24 mesas + 2 no sofá)', () => {
+    const { crowd, brains } = office(26)
     const seats = brains.filter((b) => b.lounge).map((b) => LOUNGE_SEATS.indexOf(b.lounge!))
     expect(seats.sort()).toEqual([0, 1])
     const desk = brains.filter((b) => !b.lounge)
@@ -147,7 +147,8 @@ describe('cérebro: trabalhando', () => {
     run(crowd, 30)
     expect(b.sit).toBe(0)
     setStatus(b, status('working', { tool: 'edit' }), crowd.t)
-    run(crowd, 15)
+    // O prédio do U é maior (~20 × 24 m): da janela ou da frente até a mesa dá mais chão.
+    run(crowd, 25)
     const seat = seatOf(room.desks[0])
     expect([b.sit, b.seat]).toEqual([1, 'chair'])
     expect(Math.hypot(b.x - seat.x, b.z - seat.z)).toBeLessThan(0.02)
@@ -197,14 +198,14 @@ describe('cérebro: trabalhando', () => {
     setStatus(b, status('working'), 0)
     run(crowd, 1)
     setStatus(b, status('waiting-permission'), crowd.t)
-    run(crowd, 14)
+    run(crowd, 20)
     expect(b.sit).toBe(0)
     expect(FRONT_SPOTS.some((p) => Math.hypot(b.x - p.x, b.z - p.z) < 0.05)).toBe(true)
     expect([b.action, b.prop, b.look]).toEqual(['wave', 'sign', 'camera'])
     const toCam = Math.atan2(-(CAM.x - b.x), -(CAM.z - b.z))
     expect(Math.abs(turnToward(b.yaw, toCam, Math.PI) - b.yaw)).toBeLessThan(0.1)
     setStatus(b, status('working'), crowd.t)
-    run(crowd, 14)
+    run(crowd, 20)
     expect([b.sit, b.prop]).toEqual([1, null])
   })
 

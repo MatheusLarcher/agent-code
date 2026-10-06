@@ -51,7 +51,7 @@ function world(taken: Set<number> = new Set()): BrainWorld & BoardWorld {
 }
 
 function agent(): Brain {
-  const b = createBrain({ key: 'conv:k1', role: 'desk', roomId: 'office', projectId: 'r', home: { x: 0, z: 6, yaw: 0 }, desk: { x: 0, z: 6, dir: 1, out: 1 } })
+  const b = createBrain({ key: 'conv:k1', role: 'desk', roomId: 'office', projectId: 'r', home: { x: 0, z: 6, yaw: 0 }, desk: { x: 0, z: 6, yaw: 0, out: 1 } })
   b.phase = 'working'
   return b
 }
@@ -249,7 +249,7 @@ describe('o palco (boardStage): fila → personagens, parede, falas, selos', () 
     stage.push([step()])
     expect(h.applied).toEqual(['c1'])
     // Palco ocupado com a viagem do projeto da parede: o passo do outro espera; passou de LAG_MS, vai direto.
-    const other = createBrain({ key: 'conv:k2', role: 'desk', roomId: 'office', projectId: 'outro', home: { x: 0, z: 6, yaw: 0 }, desk: { x: 0, z: 6, dir: 1, out: 1 } })
+    const other = createBrain({ key: 'conv:k2', role: 'desk', roomId: 'office', projectId: 'outro', home: { x: 0, z: 6, yaw: 0 }, desk: { x: 0, z: 6, yaw: 0, out: 1 } })
     other.phase = 'working'
     const h2 = host({ brains: new Map([['conv:k2', other]]), wall: () => 'outro' })
     const busy = new BoardStage(h2, () => now)

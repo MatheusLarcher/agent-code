@@ -402,7 +402,7 @@ export class Projectors {
   /** O centro da tela da TV (o foco mira nela); null sem TV. */
   screen(): MonitorAt | null {
     const tv = this.list[0]?.view.furniture.tv
-    return tv ? { x: tv.x, y: tv.y, z: tv.z, dir: 1 } : null
+    return tv ? { x: tv.x, y: tv.y, z: tv.z } : null
   }
 
   /** O espelho do foco (um canvas no palco) passa a receber cada desenho; null desliga. */

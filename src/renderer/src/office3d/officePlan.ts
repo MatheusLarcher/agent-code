@@ -8,17 +8,20 @@
  * já na escala dos bonecos (o mockup v2 × 0,85 na planta; tampo a 0,75 m e
  * assento perto de 0,36 m). A frente (z alto) é aberta, como maquete.
  *
- * Arranjo em praça: 4 ilhas retas de 4 estações (ordem fixa de reserva:
+ * Arranjo em praça: 4 ilhas em U de 6 estações (ordem fixa de reserva:
  * frente-esquerda, frente-direita, trás-esquerda, trás-direita), o console da
  * Central no cruzamento, o lounge no fundo à esquerda, o kanban no centro da
  * parede do fundo, a sala de reunião de vidro no fundo à direita e, na parede
  * da direita (de trás para a frente), café, estante de Memórias, porta e quadro
  * de energia. A parede da esquerda é de vidro (o céu da hora atrás dele).
  *
- * Estação `dir +1` (a "frente"): o monitor olha para +Z (tela virada para a
- * câmera) e quem senta fica em z + SEAT_FRONT, de costas para ela. `dir −1` (o
- * "fundo"): espelhada em z. `out` é o lado de fora da ilha (−1 esquerda, +1
- * direita): o gaveteiro e o lugar em pé ao lado da cadeira ficam nele.
+ * Um U: 2 mesas no fundo e 2 em cada braço, os braços girados para dentro;
+ * todas as telas olham para a câmera. Cada estação tem um `yaw` (o mesmo
+ * `rotation.y` do three: positivo gira a tela para +X); no referencial dela o
+ * monitor fica em −Z e quem senta em +Z (SEAT_FRONT), olhando para o monitor
+ * com o mesmo yaw. `deskPoint` leva um ponto da mesa para o mundo. `out` é o
+ * lado (no X da mesa) onde fica o gaveteiro e o lugar em pé ao lado da
+ * cadeira: para fora do U no fundo, para dentro do U nos braços.
  */
 
 export const OFFICE_ID = 'office'
@@ -30,8 +33,8 @@ export interface Rect {
   z1: number
 }
 
-/** O piso inteiro. */
-export const OFFICE: Readonly<Rect> = { x0: -8.5, z0: -7.65, x1: 8.5, z1: 9.85 }
+/** O piso inteiro (19,95 × 23,81 m: 4 ilhas em U, corredores de 2,8 m no meio e 1,8 m no cruzado). */
+export const OFFICE: Readonly<Rect> = { x0: -9.94, z0: -7.65, x1: 10.02, z1: 16.16 }
 export const OFFICE_W = OFFICE.x1 - OFFICE.x0
 export const OFFICE_D = OFFICE.z1 - OFFICE.z0
 
@@ -47,12 +50,12 @@ export const GLASS_SILL_H = 0.45
 export const GLASS_TOP = 2.6
 export const GLASS_H = 2.8
 /** Montantes da parede de vidro (z). */
-export const GLASS_MULLIONS: readonly number[] = [-7.4, -4.68, -1.96, 0.76, 3.48, 6.2, 8.92]
-/** Parede da direita: centro em RIGHT_X, face de dentro em RIGHT_FACE_X, até RIGHT_WALL_Z1. */
+export const GLASS_MULLIONS: readonly number[] = Array.from({ length: 9 }, (_, i) => -7.4 + i * 2.83)
+/** Parede da direita: centro em RIGHT_X, face de dentro em RIGHT_FACE_X, até RIGHT_WALL_Z1 (o fim das ilhas da frente). */
 export const RIGHT_X = OFFICE.x1 - 0.08
 export const RIGHT_FACE_X = RIGHT_X - WALL_T / 2
 export const RIGHT_WALL_H = 2.2
-export const RIGHT_WALL_Z1 = 6.2
+export const RIGHT_WALL_Z1 = 14.16
 
 // ── estações e ilhas ───────────────────────────────────────────────────────
 
@@ -71,6 +74,8 @@ export const MONITOR_BACK = 0.3
 export const SEAT_FRONT = 0.95
 /** Teclado, a partir do centro da mesa: 0,15 m para dentro da borda (ao alcance de quem senta). */
 export const KEYBOARD_FRONT = 0.45
+/** Quanto a cadeira recua (m), ao longo do eixo da mesa, no meio do sentar/levantar. */
+export const CHAIR_PULL = 0.45
 
 export type ZoneId = 'island0' | 'island1' | 'island2' | 'island3' | 'plaza' | 'lounge' | 'meeting' | 'shell'
 
@@ -81,52 +86,84 @@ export interface IslandPlace {
   zone: ZoneId
 }
 
-/** Ordem fixa de reserva: frente-esquerda, frente-direita, trás-esquerda, trás-direita. */
+/**
+ * Ordem fixa de reserva: frente-esquerda, frente-direita, trás-esquerda, trás-direita. A origem
+ * de cada ilha é o centro da fileira do fundo do U (+Z: para a boca do U e a câmera).
+ */
 export const ISLANDS: readonly IslandPlace[] = [
-  { index: 0, x: -4.25, z: 6.46, zone: 'island0' },
-  { index: 1, x: 4.25, z: 6.46, zone: 'island1' },
-  { index: 2, x: -4.25, z: 0.85, zone: 'island2' },
-  { index: 3, x: 4.25, z: 0.85, zone: 'island3' }
+  { index: 0, x: -4.93, z: 7.83, zone: 'island0' },
+  { index: 1, x: 4.93, z: 7.83, zone: 'island1' },
+  { index: 2, x: -4.93, z: -0.9, zone: 'island2' },
+  { index: 3, x: 4.93, z: -0.9, zone: 'island3' }
 ]
 
-/** Estação dentro da ilha: meia distância em x entre as duas colunas e em z entre as duas fileiras. */
-export const STATION_DX = 0.8
-export const STATION_DZ = 0.62
-/** Estante com planta na ponta da ilha (z local), placa no chão e o tapete arredondado. */
-export const ISLAND_SHELF_Z = 1.8
-export const ISLAND_PLAQUE_Z = 2.75
-export const ISLAND_RUG = { rx: 2.3, rz: 2.4, dz: 0.1 } as const
-export const STATIONS_PER_ISLAND = 4
-
-export interface StationPlace {
-  index: number
-  island: number
+/** Um ponto e um rumo no chão: a mesa (centro do tampo) com o giro dela. */
+export interface Placed {
   x: number
   z: number
-  /** +1: monitor olha para +Z (a "frente"); −1: espelhada. */
-  dir: 1 | -1
-  /** Lado de fora da ilha (−1 esquerda, +1 direita). */
+  yaw: number
+}
+
+/** Ponto (lx, lz) no referencial de quem tem o giro `yaw` (rotation.y do three) levado para o mundo. */
+export function deskPoint(d: Placed, lx: number, lz: number): { x: number; z: number } {
+  const c = Math.cos(d.yaw)
+  const s = Math.sin(d.yaw)
+  return { x: d.x + lx * c + lz * s, z: d.z - lx * s + lz * c }
+}
+
+/**
+ * As 6 mesas de um U no referencial da ilha (k = ordem de ocupação): fundo-esq., fundo-dir.,
+ * braço-trás-esq., braço-trás-dir., braço-frente-esq., braço-frente-dir. Os braços giram para
+ * dentro; `out` = o lado de pé ao lado da cadeira (fora do U no fundo, dentro do U nos braços).
+ */
+export const U_DESKS: ReadonlyArray<{ x: number; z: number; yaw: number; out: 1 | -1 }> = [
+  { x: -0.8, z: 0, yaw: 0, out: -1 },
+  { x: 0.8, z: 0, yaw: 0, out: 1 },
+  { x: -2.5, z: 2.0, yaw: 0.28, out: 1 },
+  { x: 2.5, z: 2.0, yaw: -0.28, out: -1 },
+  { x: -2.6, z: 4.6, yaw: 0.34, out: 1 },
+  { x: 2.6, z: 4.6, yaw: -0.34, out: -1 }
+]
+export const STATIONS_PER_ISLAND = U_DESKS.length
+/** Extensão do U (referencial da ilha) com as cadeiras recuadas e os lugares de pé: 7,06 × 6,93 m. */
+export const U_EXTENT = { x0: -3.53, x1: 3.53, z0: -0.6, z1: 6.33 } as const
+/** Divisória de feltro atrás de cada mesa (z da mesa, para trás do monitor). */
+export const PARTITION_BACK = 0.625
+/** Placa do projeto no chão, na boca do U (z da ilha), e o tapete arredondado sob o U inteiro. */
+export const ISLAND_PLAQUE_Z = 5.9
+export const ISLAND_RUG = { rx: 3.55, rz: 3.6, dz: 2.85 } as const
+/** Estante com planta: na ponta de fora do braço da frente do lado da parede (x da ilha × lado, z), girada com o braço. */
+export const ISLAND_SHELF = { x: 3.43, z: 5.69, w: 0.62, d: 0.3 } as const
+
+export interface StationPlace extends Placed {
+  index: number
+  island: number
+  /** Posição no U (0..5, ver U_DESKS). */
+  k: number
+  /** Lado (no X da mesa) do gaveteiro e do lugar de pé ao lado da cadeira. */
   out: 1 | -1
-  front: boolean
   zone: ZoneId
 }
 
-/** As 16 estações; índice = ilha · 4 + k (k: 0 frente-esq., 1 frente-dir., 2 fundo-esq., 3 fundo-dir.). */
+/** As 24 estações; índice = ilha · 6 + k. */
 export const STATIONS: readonly StationPlace[] = ISLANDS.flatMap((isl) =>
-  ([0, 1, 2, 3] as const).map((k): StationPlace => {
-    const out: 1 | -1 = k % 2 === 0 ? -1 : 1
-    const dir: 1 | -1 = k < 2 ? 1 : -1
-    return { index: isl.index * STATIONS_PER_ISLAND + k, island: isl.index, x: isl.x + out * STATION_DX, z: isl.z + dir * STATION_DZ, dir, out, front: dir === 1, zone: isl.zone }
-  })
+  U_DESKS.map((u, k): StationPlace => ({ index: isl.index * STATIONS_PER_ISLAND + k, island: isl.index, k, x: isl.x + u.x, z: isl.z + u.z, yaw: u.yaw, out: u.out, zone: isl.zone }))
 )
+
+/** A estante com planta da ilha: do lado da parede (a ilha da esquerda à esquerda), longe do corredor do meio. */
+export function islandShelf(island: number): Placed {
+  const isl = ISLANDS[island]
+  const side = isl.x < 0 ? -1 : 1
+  return { x: isl.x + side * ISLAND_SHELF.x, z: isl.z + ISLAND_SHELF.z, yaw: side * U_DESKS[5].yaw }
+}
 
 // ── praça e Central ────────────────────────────────────────────────────────
 
 /** Console da Central (o cruzamento da praça) e quem o opera, de pé olhando a tela inclinada (yaw 0). */
-export const CONSOLE = { x: 0, z: 3.66, r: 0.67, top: 0.6 } as const
+export const CONSOLE = { x: 0, z: 6.33, r: 0.67, top: 0.6 } as const
 export const CENTRAL_SPOT = { x: 0, z: CONSOLE.z + 0.95, yaw: 0 } as const
 export const PLAZA_RUG = { x: 0, z: CONSOLE.z, r: 1.4 } as const
-export const FRONT_PLANT = { x: 0, z: 9.15, scale: 1.9 } as const
+export const FRONT_PLANT = { x: 0, z: OFFICE.z1 - 0.7, scale: 1.9 } as const
 
 // ── fundo: kanban, lounge e sala de reunião ────────────────────────────────
 
@@ -153,8 +190,9 @@ export const MEETING = {
   z0: BACK_FACE_Z,
   z1: -3.22,
   door: { x0: 3.1, x1: 4.1 },
-  table: { x: 5.05, z: -5.4, w: 2.93, d: 1.21 },
-  tv: { x: 5.05, y: 1.6, w: 2.25, h: 1.13 }
+  /** Mesa e TV recentradas na sala (que vai até a parede da direita). */
+  table: { x: 6.11, z: -5.4, w: 2.93, d: 1.21 },
+  tv: { x: 6.11, y: 1.6, w: 2.25, h: 1.13 }
 } as const
 
 // ── parede da direita ──────────────────────────────────────────────────────
@@ -163,24 +201,25 @@ export const MEETING = {
 export const COFFEE = { x: RIGHT_FACE_X - 0.27, z: -2.5 } as const
 export const MEMORY_SHELF = { x: RIGHT_FACE_X - 0.18, z: 2.0, w: 1.27, h: 1.0, d: 0.36 } as const
 /** Lugares de pé diante da estante de Memórias (x) e o de espera atrás. */
-export const MEMORY_SPOT_X = 7.45
+export const MEMORY_SPOT_X = RIGHT_FACE_X - 0.9
 export const MEMORY_SPOTS_Z: readonly number[] = [1.6, 2.0, 2.4]
-export const MEMORY_WAIT = { x: 6.8, z: 2.0 } as const
+export const MEMORY_WAIT = { x: MEMORY_SPOT_X - 0.65, z: 2.0 } as const
 export const DOOR = { x: RIGHT_X, z: CONSOLE.z, width: 1, height: 2.02 } as const
-export const ENERGY_PANEL = { x: RIGHT_FACE_X - 0.125, z: 5.05, w: 0.7, h: 1.5, d: 0.25, y0: 0.45 } as const
+/** Ao lado da ilha 1 (frente-direita). A planta foi conferida também com w = 1,30 (o quadro com as contas). */
+export const ENERGY_PANEL = { x: RIGHT_FACE_X - 0.125, z: 9.43, w: 0.7, h: 1.5, d: 0.25, y0: 0.45 } as const
 
 // ── parede de vidro e plantas ──────────────────────────────────────────────
 
 /** Floreira junto do vidro, alinhada com a porta pelo corredor cruzado (comprida em z). */
 export const GLASS_PLANTER = { x: GLASS_X + 0.47, z: CONSOLE.z, len: 2.8, d: 0.78, h: 0.66 } as const
 /** Lugares para olhar pela parede de vidro (z), de frente para −X. */
-export const WINDOW_SPOTS_Z: readonly number[] = [-1.0, 1.75, 6.0]
+export const WINDOW_SPOTS_Z: readonly number[] = [-1.2, 2.3, 8.83, 12.43]
 export const WINDOW_SPOT_X = GLASS_X + 0.85
 /** Plantas grandes no chão (a da frente e as dos cantos). */
 export const FLOOR_PLANTS: ReadonlyArray<{ x: number; z: number; scale: number }> = [
   FRONT_PLANT,
-  { x: -7.6, z: 9.0, scale: 1.5 },
-  { x: 7.6, z: 9.0, scale: 1.6 },
+  { x: OFFICE.x0 + 0.9, z: OFFICE.z1 - 0.85, scale: 1.5 },
+  { x: OFFICE.x1 - 0.9, z: OFFICE.z1 - 0.85, scale: 1.6 },
   LOUNGE.plant
 ]
 
@@ -210,20 +249,23 @@ export const PO_SPOTS: ReadonlyArray<{ x: number; z: number }> = [
   { x: -2.65, z: -5.75 }
 ]
 
-/** De pé ao lado de uma ilha (quem ficou sem mesa e sem lugar no lounge): 2 de cada lado, olhando para a ilha. */
+/**
+ * De pé numa ilha (quem ficou sem mesa e sem lugar no lounge): 4 lugares dentro do U, perto da
+ * boca e no miolo (os lugares de pé das cadeiras dos braços ficam mais para fora), olhando para o fundo do U.
+ */
 export function islandSideSpots(island: number): Array<{ x: number; z: number; yaw: number }> {
   const isl = ISLANDS[island]
   const out: Array<{ x: number; z: number; yaw: number }> = []
-  for (const side of [-1, 1] as const) for (const dz of [-0.45, 0.45]) out.push({ x: isl.x + side * 2.15, z: isl.z + dz, yaw: side * (Math.PI / 2) })
+  for (const dz of [3.4, 4.3]) for (const side of [-1, 1] as const) out.push({ x: isl.x + side * 0.55, z: isl.z + dz, yaw: 0 })
   return out
 }
 
-/** Sobra das sobras: de pé na praça, perto do console. */
+/** Sobra das sobras: de pé na praça (o corredor do meio), atrás e na frente do console. */
 export const PLAZA_SPOTS: ReadonlyArray<{ x: number; z: number }> = [
-  { x: -1.0, z: 1.7 },
-  { x: 1.0, z: 1.7 },
-  { x: -1.0, z: 5.7 },
-  { x: 1.0, z: 5.7 }
+  { x: -0.9, z: CONSOLE.z - 2.8 },
+  { x: 0.9, z: CONSOLE.z - 2.8 },
+  { x: -0.9, z: CONSOLE.z + 2.8 },
+  { x: 0.9, z: CONSOLE.z + 2.8 }
 ]
 
 /**
@@ -231,11 +273,11 @@ export const PLAZA_SPOTS: ReadonlyArray<{ x: number; z: number }> = [
  * plaquinha "Posso?", virado para a câmera, e volta quando o usuário responde. Fora da planta do meio.
  */
 export const FRONT_SPOTS: ReadonlyArray<{ x: number; z: number }> = [
-  { x: -1.0, z: 8.7 },
-  { x: 1.0, z: 8.7 },
-  { x: -1.6, z: 8.1 },
-  { x: 1.6, z: 8.1 },
-  { x: 0, z: 7.8 }
+  { x: -1.0, z: OFFICE.z1 - 1.15 },
+  { x: 1.0, z: OFFICE.z1 - 1.15 },
+  { x: -1.6, z: OFFICE.z1 - 1.75 },
+  { x: 1.6, z: OFFICE.z1 - 1.75 },
+  { x: 0, z: OFFICE.z1 - 2.05 }
 ]
 
 // ── zonas ──────────────────────────────────────────────────────────────────
@@ -246,9 +288,10 @@ export interface ZonePlace {
   rect: Rect
 }
 
-const SPLIT_X = 1.75
+/** Cortes: o corredor do meio (|x| < 1,4), o fundo (z < −2) e o corredor cruzado no z do console. */
+const SPLIT_X = 1.4
 const BACK_Z = -2.0
-const MID_Z = 3.2
+const MID_Z = CONSOLE.z
 
 /** As zonas do piso (sem a 'shell'), na ordem do desenho. */
 export const ZONES: readonly ZonePlace[] = [

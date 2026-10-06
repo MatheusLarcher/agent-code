@@ -133,7 +133,7 @@ describe('ScreenAnchor: a tela HTML encaixada na tela do monitor, da TV e do con
   const W = 1400
   const H = 800
   const M = { x: 3, y: 1.12, z: -2 }
-  const TV: MonitorAt = { x: 5.05, y: 1.6, z: -6.5, dir: 1 }
+  const TV: MonitorAt = { x: 6.11, y: 1.6, z: -6.5 }
   // A vista do foco do motor (a faixa do HUD livre): a mesma da âncora.
   const VIEW = focusView(50, W, H)
   const final = monitorPose(M, VIEW)
@@ -152,11 +152,13 @@ describe('ScreenAnchor: a tela HTML encaixada na tela do monitor, da TV e do con
 
   /** Cantos da tela `plane` centrada em `at` projetados pela câmera (px), TL TR BR BL. */
   function planeCorners(cam: PerspectiveCamera, at: MonitorAt = M, plane: ScreenPlane = MONITOR_PLANE, width = W, height = H): Pt[] {
-    const dir = at.dir ?? 1
-    const z = at.z + dir * plane.front
+    // No referencial da tela (x pela largura, z para a frente) e girado pelo yaw do monitor (rotation.y).
+    const yaw = at.yaw ?? 0
     return [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([sx, sy]) => {
       const e = planeEdge(plane, sy)
-      const v = new Vector3(at.x + sx * dir * plane.halfW, at.y + e.dy, z + e.dz).project(cam)
+      const lx = sx * plane.halfW
+      const lz = plane.front + e.dz
+      const v = new Vector3(at.x + lx * Math.cos(yaw) + lz * Math.sin(yaw), at.y + e.dy, at.z - lx * Math.sin(yaw) + lz * Math.cos(yaw)).project(cam)
       return { x: ((v.x + 1) / 2) * width, y: ((1 - v.y) / 2) * height }
     })
   }
@@ -198,7 +200,8 @@ describe('ScreenAnchor: a tela HTML encaixada na tela do monitor, da TV e do con
 
   const SCREENS: ReadonlyArray<{ name: string; at: MonitorAt; plane: ScreenPlane; pose: (v: ViewSize) => CameraPose }> = [
     { name: 'monitor', at: M, plane: MONITOR_PLANE, pose: (v) => monitorPose(M, v) },
-    { name: 'monitor da mesa de fundo', at: { ...M, dir: -1 }, plane: MONITOR_PLANE, pose: (v) => monitorPose({ ...M, dir: -1 }, v) },
+    { name: 'monitor do braço do U (yaw 0,28)', at: { ...M, yaw: 0.28 }, plane: MONITOR_PLANE, pose: (v) => monitorPose({ ...M, yaw: 0.28 }, v) },
+    { name: 'monitor do braço do U (yaw −0,34)', at: { ...M, yaw: -0.34 }, plane: MONITOR_PLANE, pose: (v) => monitorPose({ ...M, yaw: -0.34 }, v) },
     { name: 'TV', at: TV, plane: TV_PLANE, pose: (v) => tvPose(TV, v) },
     { name: 'console da Central', at: CONSOLE_AT, plane: CONSOLE_PLANE, pose: (v) => screenPose(CONSOLE_AT, CONSOLE_PLANE, v) }
   ]

@@ -14,7 +14,7 @@ import { pushReaction, type Brain } from './brainBody'
 import { CHAIR_CENTER_Z, SEAT_TOP } from './chairModel'
 import type { EnergyKit } from './energyKit'
 import type { Kit } from './kit'
-import { SEAT_FRONT } from './officePlan'
+import { deskPoint, SEAT_FRONT, type Placed } from './officePlan'
 import { rng } from './textures'
 
 export const PLANES = 8
@@ -49,12 +49,13 @@ export class PizzaBox {
   }
 
   /** Na cadeira desta mesa (a tampa para o lado da mesa), presa ao grupo da zona dela; null tira. */
-  set(desk: { x: number; z: number; dir: 1 | -1 } | null, parent: Group | null): void {
+  set(desk: Placed | null, parent: Group | null): void {
     this.root.visible = desk !== null && parent !== null
     if (!desk || !parent) return
     if (this.root.parent !== parent) parent.add(this.root)
-    this.root.position.set(desk.x, SEAT_TOP + 0.03, desk.z + desk.dir * (SEAT_FRONT + CHAIR_CENTER_Z))
-    this.root.rotation.y = desk.dir === 1 ? 0 : Math.PI
+    const p = deskPoint(desk, 0, SEAT_FRONT + CHAIR_CENTER_Z)
+    this.root.position.set(p.x, SEAT_TOP + 0.03, p.z)
+    this.root.rotation.y = desk.yaw
   }
 
   dispose(): void {

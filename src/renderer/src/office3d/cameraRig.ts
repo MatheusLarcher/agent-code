@@ -160,8 +160,8 @@ export const MAX_FRAME_DISTANCE = 200
 const tanHalf = (fovDeg: number): number => Math.tan((fovDeg * Math.PI) / 360)
 const safeAspect = (a: number): number => (Number.isFinite(a) && a > 0 ? a : 1)
 
-/** Um monitor: centro da tela e para onde ela olha (+1: +Z, o padrão; −1: −Z, a mesa de fundo). */
-export type MonitorAt = { x: number; y: number; z: number; dir?: 1 | -1 }
+/** Um monitor: centro da tela e o giro dela (rotation.y; 0 = olha para +Z, positivo gira para +X — a mesa inclinada do U). */
+export type MonitorAt = { x: number; y: number; z: number; yaw?: number }
 
 /** Uma tela que a câmera enquadra de frente: meia largura/altura, quanto o plano fica à frente do centro e a arfagem. */
 export interface ScreenPlane {
@@ -179,12 +179,26 @@ export function planeEdge(plane: ScreenPlane, sy: number): { dy: number; dz: num
   return { dy: sy * plane.halfH * Math.cos(t), dz: sy * plane.halfH * Math.sin(t) }
 }
 
+/**
+ * O ponto (sx, sy) da tela no mundo (sx, sy em −1..1; −1 = esquerda/embaixo de quem olha de frente):
+ * no referencial dela (x pela largura, z para a frente do plano) e girado pelo yaw do monitor.
+ */
+export function screenPoint(m: MonitorAt, plane: ScreenPlane, sx: number, sy: number): { x: number; y: number; z: number } {
+  const e = planeEdge(plane, sy)
+  const yaw = m.yaw ?? 0
+  const lx = sx * plane.halfW
+  const lz = plane.front + e.dz
+  const c = Math.cos(yaw)
+  const s = Math.sin(yaw)
+  return { x: m.x + lx * c + lz * s, y: m.y + e.dy, z: m.z - lx * s + lz * c }
+}
+
 export const MONITOR_PLANE: ScreenPlane = { halfW: MONITOR_HALF_W, halfH: MONITOR_HALF_H, front: MONITOR_SCREEN_FRONT, pitch: MONITOR_PITCH }
 /** A tela da TV da sala de reunião (2,25 × 1,13 m; cobre a imagem 16:9 inteira): de frente e SEM arfagem — em repouso o encaixe é translação pura. */
 export const TV_PLANE: ScreenPlane = { halfW: 1.115, halfH: 0.56, front: 0.006, pitch: 0 }
 
 /**
- * Pose que enquadra um monitor (tela olhando para dir·Z) de frente, na distância
+ * Pose que enquadra um monitor (tela girada pelo yaw dele) de frente, na distância
  * em que a tela ocupa `fill` da largura OU da altura do palco — o que limitar
  * primeiro.
  *
@@ -205,7 +219,7 @@ export function tvPose(tv: MonitorAt, view: ViewSize, fill = MONITOR_FILL): Came
 
 /** Pose que enquadra a tela `plane` centrada em `m` (ver monitorPose). */
 export function screenPose(m: MonitorAt, plane: ScreenPlane, view: ViewSize, fill = MONITOR_FILL): CameraPose {
-  const dir = m.dir ?? 1
+  const yaw = m.yaw ?? 0
   const t = tanHalf(view.fovDeg)
   const H = view.heightPx ?? 0
   const clear = H > 0 ? Math.max(0, view.clearTopPx ?? 0) : 0
@@ -213,14 +227,12 @@ export function screenPose(m: MonitorAt, plane: ScreenPlane, view: ViewSize, fil
   const room = clear > 0 ? Math.max(0.5, (H - clear - MONITOR_BOTTOM_GAP) / H) : 1
   const byWidth = plane.halfW / (fill * t * safeAspect(view.aspect))
   const byHeight = plane.halfH / (Math.min(fill, room) * t)
-  const pose: CameraPose = { tx: m.x, ty: m.y, tz: m.z + dir * plane.front, yaw: dir === 1 ? 0 : Math.PI, pitch: plane.pitch, distance: Math.max(byWidth, byHeight) }
+  // De frente para a tela: o alvo é o centro do plano dela e o giro da câmera é o do monitor.
+  const center = screenPoint(m, { ...plane, tilt: 0 }, 0, 0)
+  const pose: CameraPose = { tx: center.x, ty: m.y, tz: center.z, yaw, pitch: plane.pitch, distance: Math.max(byWidth, byHeight) }
   if (clear === 0) return pose
   // Bordas de cima e de baixo da tela (px) nesta pose; desce o que faltar para livrar a faixa, sem passar do fim.
-  const z = m.z + dir * plane.front
-  const px = (sy: number): number => {
-    const e = planeEdge(plane, sy)
-    return ((1 - projectPoint(pose, view, { x: m.x, y: m.y + e.dy, z: z + e.dz }).y) / 2) * H
-  }
+  const px = (sy: number): number => ((1 - projectPoint(pose, view, screenPoint(m, plane, 0, sy)).y) / 2) * H
   const top = px(1)
   const bottom = px(-1)
   const shift = Math.max(0, Math.min(clear - top, H - MONITOR_BOTTOM_GAP - bottom))
