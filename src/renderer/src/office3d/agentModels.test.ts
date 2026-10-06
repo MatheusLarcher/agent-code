@@ -1,6 +1,6 @@
 import { CubeUVReflectionMapping, HalfFloatType } from 'three'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentModels, avatarPreview, ENV_FILE, parseEnv, setAvatarPreview, SWAPS_PER_FRAME } from './agentModels'
+import { AgentModels, avatarPreview, CENTRAL_MODEL, ENV_FILE, parseEnv, setAvatarPreview, SWAPS_PER_FRAME } from './agentModels'
 import { meanP95 } from './quality'
 
 function envBytes(w: number, h: number, extra = 0): Uint8Array {
@@ -60,6 +60,21 @@ describe('chave de teste e carga dos modelos', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(m.version).toBe(v)
     expect(ENV_FILE).toBe('ambiente.bin')
+    m.dispose()
+    warn.mockRestore()
+  })
+
+  it('a Central tem modelo próprio (o avatar do usuário): pede o central.glb mesmo com a chave desligada', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetch = vi.fn(async () => null)
+    const m = new AgentModels(null, () => {}, null, fetch)
+    expect(avatarPreview()).toBe(false)
+    expect(m.modelFor('principal', CENTRAL_MODEL)).toBeNull()
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled())
+    expect(fetch).toHaveBeenCalledWith('central.glb')
+    // Os outros continuam no boneco.
+    expect(m.modelFor('principal')).toBeNull()
+    expect(fetch).toHaveBeenCalledTimes(1)
     m.dispose()
     warn.mockRestore()
   })

@@ -14,6 +14,7 @@
  *
  * Chave de teste (só DEV, agentPreview.ts): ligada, TODOS os agentes viram o
  * avatar v1 ("principal") com a roupa na cor da seed; desligada, nada muda.
+ * A Central tem modelo próprio, fora da chave: o avatar do usuário ("central").
  * `version` sobe quando a chave vira ou um modelo fica pronto: cada personagem
  * compara com o que aplicou e troca de corpo no próximo update.
  */
@@ -40,6 +41,8 @@ export type AgentRenderer = RendererLike | null
 
 /** O modelo da prova de conceito: o avatar v1. */
 export const PREVIEW_MODEL = 'principal'
+/** O avatar do usuário, sempre no agente da Central (resources/office-agents/central.glb). */
+export const CENTRAL_MODEL = 'central'
 /** Trocas de corpo por quadro (cada uma clona um esqueleto): 30 agentes de uma vez travariam o quadro. */
 export const SWAPS_PER_FRAME = 3
 /** O ambiente do PBR já assado (scripts/office-agents/bake_env.mjs: PMREM do RoomEnvironment). */
@@ -188,8 +191,13 @@ export class AgentModels {
     return setAvatarPreview(on)
   }
 
-  /** O modelo que o agente usa agora (null = o boneco): só com a chave ligada e o GLB pronto. Pede a carga se faltar. */
-  modelFor(_role: string): AvatarTemplate | null {
+  /**
+   * O modelo que o agente usa agora (null = o boneco), pedindo a carga se faltar. Quem tem modelo
+   * próprio (`own`: a Central, o avatar do usuário) usa sempre o dele; os outros, só com a chave de
+   * teste ligada (o avatar v1). Enquanto o GLB carrega (ou se falhar), fica o boneco.
+   */
+  modelFor(_role: string, own: string | null = null): AvatarTemplate | null {
+    if (own) return this.template(own)
     if (!preview) return null
     return this.template(PREVIEW_MODEL)
   }

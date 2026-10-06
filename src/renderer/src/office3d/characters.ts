@@ -27,6 +27,7 @@
 import { Group, Mesh, MeshLambertMaterial, Sprite, Vector3 } from 'three'
 import type { OfficeCharacterModel } from '../office/adapter/model'
 import { CharacterBody } from './agentBody'
+import { CENTRAL_MODEL } from './agentModels'
 import { appearance, HAIR, seedColor, SKIN } from './appearance'
 import { brainBusy, FX, type Brain, type PropKind } from './brain'
 import { beatAt, danceLower, movesLegs } from './dance'
@@ -143,7 +144,9 @@ export class Character3D {
     this.shirtMat = new MeshLambertMaterial({ color: seedColor(c.model.seed) })
     this.hairMat = new MeshLambertMaterial({ color: HAIR[a.hair] })
     this.rig = buildRig(kit, this.group, { skin: this.skinMat, shirt: this.shirtMat, hair: this.hairMat, pants: kit.mat.pants[a.pants] }, { hair: a.hairStyle, longSleeves: a.longSleeves, build: a.build })
-    this.body = new CharacterBody(ctx.models ?? null, this.rig, this.group, c.model.role, c.model.seed, c.key)
+    // A Central é o avatar do usuário (o modelo próprio dela); os outros seguem o papel.
+    const own = c.model.placement.kind === 'destination' && c.model.placement.papel === 'central' ? CENTRAL_MODEL : null
+    this.body = new CharacterBody(ctx.models ?? null, this.rig, this.group, c.model.role, c.model.seed, c.key, own)
     this.group.add(this.hud)
     this.zs = [0.1, 0.13, 0.16].map((s) => {
       const z = new Sprite(kit.mat.z)

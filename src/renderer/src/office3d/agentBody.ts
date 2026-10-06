@@ -29,7 +29,9 @@ export class CharacterBody {
     private readonly group: Group,
     private readonly role: string,
     private readonly seed: string,
-    private readonly key: string
+    private readonly key: string,
+    /** Modelo próprio deste personagem (a Central: o avatar do usuário); null = o do papel. */
+    private readonly own: string | null = null
   ) {}
 
   /** Medidas do corpo à mostra (as poses e o HUD usam). */
@@ -44,7 +46,7 @@ export class CharacterBody {
    */
   sync(props: Map<PropKind, Group>, lod: number): boolean {
     if (!this.models || this.version === this.models.version) return false
-    const t = this.models.modelFor(this.role)
+    const t = this.models.modelFor(this.role, this.own)
     // Poucos por quadro (agentModels.claim): quem não teve vez tenta no próximo.
     if (t && t !== this.template && !this.models.claim()) return false
     this.version = this.models.version
