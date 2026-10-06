@@ -79,10 +79,10 @@ export class AvatarBody {
     for (const m of this.meshes) m.castShadow = level === 0
   }
 
-  /** Brilho do monitor no corpo (o emissive do boneco era só na pele). */
+  /** Brilho do monitor no corpo (o emissive do boneco era só na pele; aqui pega o corpo todo, então fraco). */
   setGlow(color: number, intensity: number): void {
     this.material.emissive.setHex(color)
-    this.material.emissiveIntensity = intensity * 0.6
+    this.material.emissiveIntensity = intensity * 0.3
   }
 
   /**

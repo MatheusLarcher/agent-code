@@ -20,8 +20,11 @@ import type { Color, MeshStandardMaterial, Texture } from 'three'
 /** Rugosidade mínima e metal máximo (o PBR do modelo sem a cara de couro/plástico). */
 export const MIN_ROUGHNESS = 0.6
 export const MAX_METALNESS = 0.08
-/** Força do ambiente (RoomEnvironment) nos agentes. */
-export const ENV_INTENSITY = 0.55
+/**
+ * Força do ambiente (RoomEnvironment) nos agentes: só um respiro nas sombras. As luzes da sala já
+ * iluminam o modelo como iluminam o boneco; com 0,55 o ambiente somava por cima e o agente saía leitoso.
+ */
+export const ENV_INTENSITY = 0.1
 /** Luma média (linear) da roupa quando o modelo não traz `tintMeanLuma` nos extras do material. */
 const DEFAULT_LUMA = 0.12
 

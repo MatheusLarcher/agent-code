@@ -28,7 +28,7 @@ const keep = process.argv.includes('--keep')
 const novsync = process.argv.includes('--novsync')
 /** Só os assentos: espera a demo sentar alguém em cada um (mesa, cochilo, sala de reunião, sofá) e fotografa de frente e de lado. */
 const seats = process.argv.includes('--seats')
-/** Cada assento com o cérebro congelado: um agente sentado em cada um (mesa, cochilo na mesa, reunião, sofá, poltrona reclinada). */
+/** Cada assento com o cérebro congelado: um agente sentado em cada um (mesa, cochilo na mesa, reunião, sofá, cochilo no sofá). */
 const posesMode = process.argv.includes('--poses')
 const tmp = mkdtempSync(join(tmpdir(), 'agent-code-avatar-'))
 const home = join(tmp, 'home')
@@ -206,8 +206,8 @@ try {
       if (other) set(napper, { x: other.brain.x, z: other.brain.z, yaw: other.brain.yaw }), set(other, { x: 0, z: 9.5, visible: false })
       set(rest[1], { x: m.x, z: m.z, yaw: m.yaw, seat: 'chair', action: 'listen' })
       set(rest[2], { x: L[1].x, z: L[1].z, yaw: L[1].yaw, seat: 'sofa', action: 'phone', prop: 'phone' })
-      set(rest[3], { x: L[3].x, z: L[3].z, yaw: L[3].yaw, seat: 'sofa', action: 'napSofa' })
-      window.__posed = { mesa: desk.key, cochilo: napper.key, reuniao: rest[1].key, sofa: rest[2].key, poltrona: rest[3].key }
+      set(rest[3], { x: L[2].x, z: L[2].z, yaw: L[2].yaw, seat: 'sofa', action: 'napSofa' })
+      window.__posed = { mesa: desk.key, cochilo: napper.key, reuniao: rest[1].key, sofa: rest[2].key, cochiloSofa: rest[3].key }
       e.requestRender()
       return window.__posed
     })
@@ -236,7 +236,7 @@ try {
       ['s2-cochilo-mesa', "b.action === 'napDesk' && b.sit > 0.97", 1.0],
       ['s3-reuniao', "c.deskIndex === null && b.seat === 'chair' && b.sit > 0.97", 1.0],
       ['s4-sofa', "b.seat === 'sofa' && b.sit > 0.97 && b.action !== 'napSofa'", 0.8],
-      ['s5-cochilo-poltrona', "b.action === 'napSofa' && b.sit > 0.97", 0.8]
+      ['s5-cochilo-sofa', "b.action === 'napSofa' && b.sit > 0.97", 0.8]
     ]
     const left = new Set(SEATS.map((x) => x[0]))
     for (let t = 0; t < 240 && left.size; t++) {

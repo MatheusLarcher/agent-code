@@ -12,7 +12,7 @@
 import { Box3, Group, Object3D, Quaternion, Vector3, type Bone, type Matrix4, type SkinnedMesh } from 'three'
 import { mapBones, type AvatarJoint, type BoneMap, type Side } from './agentBones'
 import { metricsFromSkeleton, type Vec3 } from './agentMetrics'
-import type { BodyMetrics } from './poses'
+import { BODY, type BodyMetrics } from './poses'
 
 /** De onde vem a rotação de cada osso (agentAvatar.ts monta estas a cada quadro). */
 export const SLOT = {
@@ -96,6 +96,12 @@ export function prepareAvatar(scene: Object3D): AvatarTemplate | string {
   if (map.missing.length) return `faltam ossos: ${map.missing.join(', ')}`
   const b = (j: AvatarJoint): Bone | null => (map.bones[j] ? bones.get(map.bones[j]!)! : null)
   const must = (j: AvatarJoint): Bone => b(j)!
+
+  // Escala pelas pernas: da sola ao quadril igual à do boneco, para o qual cadeiras, sofá e mesas foram
+  // feitos. O modelo de desenho tem cabeça grande e perna curta: na altura total da ficha, o joelho
+  // ficava ~10 cm abaixo do assento e ele parecia pequeno nas cadeiras.
+  scene.scale.multiplyScalar(legScale(bindBox(meshes).min.y, worldPos(must('upLegL')), worldPos(must('legL')), worldPos(must('footL'))))
+  root.updateMatrixWorld(true)
 
   // A sola: o ponto mais baixo da malha na pose de bind, antes de mexer (na pose de bind a malha com pele é a
   // própria geometria: a caixa dela vale, sem calcular a pele de 20 mil vértices na CPU).
@@ -181,6 +187,12 @@ export function prepareAvatar(scene: Object3D): AvatarTemplate | string {
     m.boundingSphere.radius *= 1.6
   }
   return { root, map, metrics, order, parent: Int16Array.from(parent), rest, drive, rootParent, hipsParentInv, hipsRest: worldPos(hips) }
+}
+
+/** Quanto escalar o modelo para a perna (sola → quadril, no bind) ter a do boneco (BODY). Puro. */
+export function legScale(floorY: number, upLeg: Vector3, knee: Vector3, ankle: Vector3): number {
+  const leg = ankle.y - floorY + upLeg.distanceTo(knee) + knee.distanceTo(ankle)
+  return leg > 0.1 ? (BODY.ankleY + BODY.thigh + BODY.shin) / leg : 1
 }
 
 /** Caixa das malhas na pose de bind (a geometria levada ao mundo pela matriz delas). */
