@@ -145,6 +145,21 @@ describe('clique na TV: o foco dentro dela', () => {
     expect(follow).not.toHaveBeenCalled()
   })
 
+  it('conversa de planejamento escolhida fora do 3D: a câmera vai à TV com o plano na tela (não voa até o agente); conversa normal segue o agente', () => {
+    const f = feed({ conversations: [conv('a'), conv('p', { mode: 'planning', planningSlug: 'checkout', title: 'Checkout', updatedAt: NOW })], activeId: 'a' })
+    const follow = vi.spyOn(Office3DEngine.prototype, 'follow')
+    const raf = manualRaf()
+    const props = { chat: null, onOpenConversation: vi.fn(), planning: <div data-testid="planning-ws">plano</div>, engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer, browser: null } }
+    const v = render(<Office3DWorkspace {...props} conversation={{ id: 'a', title: 'a', cwd: 'C:\\proj\\alpha' }} />)
+    act(() => raf.flush(5))
+    v.rerender(<Office3DWorkspace {...props} conversation={{ id: 'p', title: 'Checkout', cwd: 'C:\\proj\\alpha', mode: 'planning' }} />)
+    expect(screen.getByTestId('tv-focus').dataset.kind).toBe('plan')
+    expect(screen.getByTestId('planning-ws')).toBeTruthy()
+    expect(follow).not.toHaveBeenCalled()
+    v.rerender(<Office3DWorkspace {...props} conversation={{ id: 'a', title: 'a', cwd: 'C:\\proj\\alpha' }} />)
+    expect(follow).toHaveBeenCalledWith('a')
+  })
+
   it('"📋 Planejar": a TV vazia e o botão do HUD abrem o formulário (projeto do filtro); o plano criado abre na TV', async () => {
     const empty = feed({ conversations: [conv('a', { updatedAt: NOW })], activeId: 'a' })
     vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(`${PROJECTOR_KEY}${OFFICE_ID}`)

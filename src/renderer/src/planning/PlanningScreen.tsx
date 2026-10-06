@@ -21,6 +21,7 @@ import { useUI } from '../ui/UiProvider'
 import { CardBirthFlow } from './CardBirthFlow'
 import { CardEditor } from './CardEditor'
 import { ManagerChatFloat } from './ManagerChatFloat'
+import { ObraSeal, PlacaDaObra } from './PlacaDaObra'
 import { PlanningCanvas } from './PlanningCanvas'
 import { ProgressList } from './ProgressList'
 import { RoteiroSplitter } from './RoteiroSplitter'
@@ -28,10 +29,12 @@ import { FIT_MIN_ZOOM } from './canvasViewport'
 import { buildFlowPdf } from './flowPdf'
 import { columnFocusPoint, computeLayout } from './layout'
 import { loadRoteiroCollapsed, loadRoteiroWidth, saveRoteiroCollapsed, saveRoteiroWidth } from './paneSizes'
+import { obraView } from './planObra'
 import { PlanningPlanContext } from './planningPlanContext'
 import type { DropTarget, DroppedFile } from './mediaDrop'
 import { PlanningMediaContext } from './mediaView'
 import { usePlanMedia } from './usePlanMedia'
+import { usePlanObra } from './usePlanObra'
 import { usePlanning } from './usePlanning'
 
 export interface PlanningScreenProps {
@@ -44,6 +47,8 @@ export interface PlanningScreenProps {
   /** Ações no canto direito do cabeçalho (ex.: enviar para implementação).
    *  Leem o plano aberto por useOpenedPlan (planningPlanContext). */
   headerActions?: ReactNode
+  /** "Ver a obra" da placa: abre a conversa de implementação do plano. */
+  onOpenConversation?: (conversationId: string) => void
 }
 
 interface Editing {
@@ -124,7 +129,7 @@ function usePanes(): {
   return { roteiroWidth, setRoteiroWidth, commitRoteiroWidth, roteiroCollapsed, toggleRoteiro }
 }
 
-function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: PlanningScreenProps): JSX.Element {
+function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions, onOpenConversation }: PlanningScreenProps): JSX.Element {
   const {
     status,
     plan,
@@ -272,6 +277,9 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
   const etapas = roteiro?.etapas ?? []
   const done = etapas.filter((e) => e.status === 'concluida').length
   const title = roteiro?.titulo || slug
+  // A obra do plano (planObra.ts): na prancheta até o envio, depois o andamento lido do banco.
+  const obraEnvios = usePlanObra(projectCwd, slug).envios
+  const obra = useMemo(() => (obraEnvios && roteiro ? obraView(obraEnvios, roteiro.etapas) : null), [obraEnvios, roteiro])
 
   // PDF do flow inteiro (todos os cards, não só o trecho na tela): o DOM do
   // canvas vira uma página autocontida e o main imprime (flowPdf.ts).
@@ -318,6 +326,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
             {done} de {etapas.length} etapa{etapas.length === 1 ? '' : 's'}
           </span>
         )}
+        {obra && <ObraSeal obra={obra} />}
         <span className="pl-head-spacer" />
         {headerActions && (
           <div className="pl-head-actions">
@@ -326,6 +335,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions }: Plann
         )}
       </header>
 
+      {obra && obra.stage !== 'prancheta' && <PlacaDaObra obra={obra} onOpenConversation={onOpenConversation} />}
       {plan && plan.invalid.length > 0 && <InvalidCards invalid={plan.invalid} />}
 
       <div className="pl-body" ref={bodyRef} style={{ '--pl-roteiro-w': `${roteiroWidth}px` } as CSSProperties}>

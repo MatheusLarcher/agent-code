@@ -21,7 +21,8 @@
  *   false a true) e só para uma frente livre da mesma ilha;
  * - quem estava no lounge ou de pé pega mesa assim que vagar uma.
  * 'beside' fica ao lado do pai; 'destination' num lugar fixo: PO junto do
- * kanban, memória na estante de Memórias, Central no console.
+ * kanban, memória na estante de Memórias, Central no console. Fora de cena (o
+ * Manager de plano já enviado, offstage.ts) fica do lado de fora da porta.
  *
  * Eixos: X à direita, Z para a câmera, Y para cima. Estação `dir +1`: o
  * monitor olha para +Z e quem senta fica em z + SEAT_FRONT, de costas para a
@@ -31,6 +32,7 @@ import type { OfficeCharacterModel, OfficeModel } from '../office/adapter/model'
 import { managerSeat } from './meetingRoom'
 import {
   CENTRAL_SPOT,
+  DOOR,
   ISLANDS,
   islandSideSpots,
   LOUNGE_SEATS,
@@ -103,7 +105,7 @@ export interface ProjectLayout {
   agents: number
 }
 
-export type CharacterSpot = 'desk' | 'lounge' | 'stand' | 'beside' | 'po' | 'memory' | 'central' | 'manager'
+export type CharacterSpot = 'desk' | 'lounge' | 'stand' | 'beside' | 'po' | 'memory' | 'central' | 'manager' | 'offstage'
 
 export interface CharacterLayout {
   key: string
@@ -326,7 +328,10 @@ function placeCharacters(model: OfficeModel, room: RoomLayout, deskOf: Record<st
   for (const c of model.characters) {
     let o: CharacterLayout | null = null
     const p = c.placement
-    if (p.kind === 'seat' && c.roomId !== null) {
+    if (c.offstage) {
+      // Fora de cena (plano enviado: o corpo dele foi para o PC): lá fora, sem ocupar a cabeceira nem mesa.
+      o = base(c, OFFICE.x1 + 1, DOOR.z, 0, 'offstage')
+    } else if (p.kind === 'seat' && c.roomId !== null) {
       const d = deskOf[c.key]
       if (d !== undefined) {
         const desk = room.desks[d]

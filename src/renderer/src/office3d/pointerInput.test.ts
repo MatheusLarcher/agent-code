@@ -66,7 +66,7 @@ describe('PointerInput', () => {
     fireEvent.pointerMove(window, { clientX: 22, clientY: 50 })
     expect(s.hooks.drag).not.toHaveBeenCalled() // ainda é clique
     fireEvent.pointerMove(window, { clientX: 40, clientY: 50 })
-    expect(s.hooks.drag).toHaveBeenCalledWith('orbit', 18, 0)
+    expect(s.hooks.drag).toHaveBeenCalledWith('pan', 18, 0)
     fireEvent.pointerUp(window, { button: 0, clientX: 40, clientY: 50 })
     expect(s.hooks.click).not.toHaveBeenCalled()
     fireEvent.pointerDown(s.canvas, { button: 0, clientX: 20, clientY: 50 })

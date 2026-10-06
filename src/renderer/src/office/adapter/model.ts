@@ -42,6 +42,10 @@ export interface OfficeCharacterModel {
   bubble: BubbleKind | null
   label: string
   context?: { tokens: number; max: number }
+  /** Fora de cena: o Manager de um plano já enviado para implementação (foi para o PC; continua no escritório só para a TV). */
+  offstage?: boolean
+  /** Ao nascer, continua do lugar deste personagem: a 1ª implementação de um plano levanta da cabeceira do Manager. */
+  handoverFrom?: string
 }
 
 /** Quem é um personagem, para achar a ferramenta dele no feed (a tela do monitor). */
@@ -144,6 +148,53 @@ interface RoomAcc {
   convs: Conversation[]
 }
 
+/**
+ * Plano × implementação. O "Enviar para implementação" cria uma conversa nova
+ * com `handoffPlan` (as antigas, só `handoffSlug`) apontando para o plano. A
+ * conversa de planejamento que já existia quando uma implementação nasceu foi
+ * ENVIADA: o planejamento dela não está mais aberto — e a sala de reunião é só
+ * para planejamento aberto. A primeira implementação depois dela é o mesmo
+ * agente (a aparência do Manager vai junto para o PC). Plano reaberto depois
+ * (conversa nova do mesmo plano, sem implementação mais nova) volta a ser aberto.
+ */
+export interface PlanHandoffs {
+  /** Conversas de planejamento cujo plano já foi enviado para implementação. */
+  sent: Set<string>
+  /** Conversa de implementação → a de planejamento cujo Manager ela continua. */
+  managerOf: Map<string, string>
+}
+
+export function planHandoffs(conversations: readonly Conversation[]): PlanHandoffs {
+  const out: PlanHandoffs = { sent: new Set(), managerOf: new Map() }
+  const plans = new Map<string, { planners: Conversation[]; impls: Conversation[] }>()
+  const entry = (cwd: string, slug: string): { planners: Conversation[]; impls: Conversation[] } => {
+    const k = `${roomIdFor(cwd)}\u0000${slug}`
+    let e = plans.get(k)
+    if (!e) plans.set(k, (e = { planners: [], impls: [] }))
+    return e
+  }
+  for (const c of conversations) {
+    if (c.mode === 'planning') {
+      if (c.planningSlug && c.cwd) entry(c.cwd, c.planningSlug).planners.push(c)
+      continue
+    }
+    const slug = c.handoffPlan?.slug ?? c.handoffSlug
+    const cwd = c.handoffPlan?.projectCwd ?? c.cwd
+    if (slug && cwd) entry(cwd, slug).impls.push(c)
+  }
+  for (const { planners, impls } of plans.values()) {
+    impls.sort((a, b) => a.createdAt - b.createdAt)
+    // A mais nova primeiro: duas conversas do plano antes do mesmo envio — a implementação continua a que enviou.
+    for (const p of [...planners].sort((a, b) => b.createdAt - a.createdAt)) {
+      const impl = impls.find((i) => i.createdAt >= p.createdAt)
+      if (!impl) continue
+      out.sent.add(p.id)
+      if (!out.managerOf.has(impl.id)) out.managerOf.set(impl.id, p.id)
+    }
+  }
+  return out
+}
+
 const SEATED_SPECIALISTS: CrewRole[] = ['executor', 'critico', 'navegador-de-codigo']
 
 /**
@@ -175,6 +226,7 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: Re
 
   const characters: OfficeCharacterModel[] = []
   const later: OfficeCharacterModel[] = []
+  const handoffs = planHandoffs(feed.conversations)
   for (const { room, convs } of rooms.values()) {
     const byRole = new Map<CrewRole, Array<{ track: AgentTrack; convId: string }>>()
     let po: { convId: string; at: number } | null = null
@@ -193,6 +245,11 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: Re
       const principal = principalOf(c, feed, room.id, crew, now)
       // O Agent Manager (planejamento) não ocupa mesa de ilha: senta à cabeceira da mesa da sala de reunião.
       if (c.mode === 'planning') principal.placement = { kind: 'destination', papel: 'reuniao-cabeceira' }
+      // Plano enviado: o Manager sai da sala de reunião (o corpo dele foi para o PC da implementação).
+      if (handoffs.sent.has(c.id)) principal.offstage = true
+      // A 1ª implementação do plano é o mesmo agente: a aparência do Manager e, ao nascer, o lugar dele na cabeceira.
+      const manager = handoffs.managerOf.get(c.id)
+      if (manager) Object.assign(principal, { seed: principalKey(manager), handoverFrom: principalKey(manager) })
       characters.push(principal)
       for (const track of Object.values(tracks)) {
         const role = roleFromSubagentType(track.subagentType)

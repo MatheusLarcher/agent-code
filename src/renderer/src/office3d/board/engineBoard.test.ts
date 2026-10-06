@@ -227,10 +227,10 @@ describe('o Quadro real no motor (engineBoard)', () => {
     s.engine.dispose()
   })
 
-  it('fora do papel (ou de longe) o botão esquerdo continua girando a câmera', async () => {
+  it('fora do papel (ou de longe) o botão esquerdo continua movendo a câmera', async () => {
     const s = await setup()
     const pick = vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(null)
-    const orbit = vi.spyOn(s.engine.rig, 'orbit')
+    const orbit = vi.spyOn(s.engine.rig, 'pan')
     fireEvent.pointerDown(s.canvas, { button: 0, clientX: 300, clientY: 200 })
     fireEvent.pointerMove(window, { clientX: 340, clientY: 200 })
     fireEvent.pointerUp(window, { button: 0, clientX: 340, clientY: 200 })

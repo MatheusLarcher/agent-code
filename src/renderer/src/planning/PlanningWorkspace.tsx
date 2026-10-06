@@ -26,6 +26,8 @@ export interface PlanningWorkspaceProps {
   managerModel: string | null
   /** Ações extras no cabeçalho, à direita do modelo (ex.: enviar para implementação). */
   headerActions?: ReactNode
+  /** "Ver a obra" da placa da obra: abre a conversa de implementação do plano. */
+  onOpenConversation?: (conversationId: string) => void
 }
 
 function ManagerModel({ model }: { model: string | null }): JSX.Element {
@@ -52,7 +54,8 @@ export function PlanningWorkspace({
   slug,
   chat,
   managerModel,
-  headerActions
+  headerActions,
+  onOpenConversation
 }: PlanningWorkspaceProps): JSX.Element {
   return (
     <div className="workspace planning-workspace">
@@ -60,6 +63,7 @@ export function PlanningWorkspace({
         projectCwd={projectCwd}
         slug={slug}
         chatSlot={chat}
+        onOpenConversation={onOpenConversation}
         headerActions={
           <>
             <ManagerModel model={managerModel} />

@@ -39,9 +39,9 @@ import { roleOf, seedOf, type LifeInput } from './crowdRoles'
 import { roomFurniture, type Poi, type PoiKind, type RoomFurniture, type Spot } from './furniture'
 import { MONITOR_BACK, MONITOR_Y, type CharacterLayout, type RoomLayout } from './layout'
 import { sameSpot, type MeetingSpot } from './meetingRoom'
-import { FRONT_SPOTS } from './officePlan'
+import { FRONT_SPOTS, LOUNGE_SEATS } from './officePlan'
 import { LINGER_S } from './memoryTrips'
-import { LOUNGE_SEATS } from './officePlan'
+import { isOffstage, onStage } from './offstage'
 import { buildNavGrid, PoiBook, type NavGrid } from './nav'
 import { CONGA_SPEED, planRoomParty, type PartyRole, type RoomParty } from './partyPlan'
 import { rng as mulberry } from './textures'
@@ -215,7 +215,7 @@ export class Crowd implements BrainWorld, BoardWorld {
     this.filter = projectId
     let changed = false
     for (const b of this.list) {
-      const out = this.outsideOf(b.projectId)
+      const out = this.outsideOf(b.projectId) || isOffstage(b)
       if (out === b.outside || this.ghosts.has(b.key)) continue
       b.outside = out
       changed = true
@@ -283,13 +283,13 @@ export class Crowd implements BrainWorld, BoardWorld {
     const side = own ? -own.out : 1
     const projectId = c.projectId
     this.ghosts.delete(c.key)
-    const outside = this.outsideOf(projectId)
+    const outside = this.outsideOf(projectId) || m.offstage === true
     let b = this.brains.get(c.key)
     if (!b) {
-      // Filtrado fora já nasce lá fora.
+      // Lá fora (o filtro ou fora de cena, offstage.ts) já nasce lá fora; a 1ª implementação de um plano nasce no lugar do Manager.
       const out = (role === 'visitor' && away) || outside
       b = createBrain({ key: c.key, role, style, roomId: c.roomId, projectId, home, desk, lounge, monitor, side, seed: seedOf(c.key), away: out })
-      b.outside = outside
+      onStage(b, outside, m.offstage === true, this.t, out || !m.handoverFrom ? undefined : this.brains.get(m.handoverFrom))
       this.brains.set(c.key, b)
       this.list.push(b)
       // Chegou no meio do apagão: vai direto para a pista (se a sala já tem plano; senão o plano o inclui).
@@ -298,7 +298,8 @@ export class Crowd implements BrainWorld, BoardWorld {
       this.yieldLounge(b)
       return b
     }
-    Object.assign(b, { role, style, roomId: c.roomId, projectId, home, desk, lounge, monitor, side, outside })
+    onStage(b, outside, m.offstage === true, this.t)
+    Object.assign(b, { role, style, roomId: c.roomId, projectId, home, desk, lounge, monitor, side })
     this.yieldLounge(b)
     return b
   }

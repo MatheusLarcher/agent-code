@@ -23,9 +23,9 @@ import { SessionBattery } from './SessionBattery'
 export const OFFICE_CONTROLS: ReadonlyArray<{ keys: readonly string[]; does: string }> = [
   { keys: ['W', 'A', 'S', 'D'], does: 'anda pelo escritório' },
   { keys: ['Shift'], does: 'corre (junto com WASD)' },
-  { keys: ['Arrastar'], does: 'gira a câmera' },
+  { keys: ['Arrastar'], does: 'move a câmera' },
+  { keys: ['Botão direito'], does: 'arrastando, gira a câmera' },
   { keys: ['Roda'], does: 'aproxima e afasta' },
-  { keys: ['Botão do meio'], does: 'arrasta a câmera' },
   { keys: ['Mouse parado'], does: 'no agente: prévia do que ele está fazendo' },
   { keys: ['Clique'], does: 'no agente: o turno dele na tela do monitor; no telão do projetor: a página grande; no quadro: a câmera vai até ele' },
   { keys: ['Duplo clique'], does: 'no agente: a conversa dele no chat' },

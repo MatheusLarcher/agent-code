@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { PermissionRequest } from '@shared/ipc'
 import { buildCrew, callSegments, lineText } from '../../crew'
-import { deriveOfficeModel, roomIdFor, type OfficeCharacterModel } from './model'
+import type { Conversation } from '../../types'
+import { deriveOfficeModel, planHandoffs, roomIdFor, type OfficeCharacterModel } from './model'
 import { scanTurn } from './turn'
 import { HOUR, NOW, conv, feed, toolUse, track, user } from './testFeed'
 
@@ -57,6 +58,54 @@ describe('quem entra no escritório', () => {
   it('conversa de planejamento entra sem mesa: o Agent Manager vai à cabeceira da mesa de reunião', () => {
     const m = deriveOfficeModel(feed({ conversations: [conv('p', { mode: 'planning', planningSlug: 's' })] }), NOW)
     expect(byKey(m.characters, 'conv:p')).toMatchObject({ role: 'principal', placement: { kind: 'destination', papel: 'reuniao-cabeceira' } })
+    expect(byKey(m.characters, 'conv:p')?.offstage).toBeUndefined()
+  })
+})
+
+describe('plano enviado para implementação: a sala de reunião é só para planejamento aberto', () => {
+  const plan = (id: string, createdAt: number, over: Partial<Conversation> = {}): Conversation =>
+    conv(id, { mode: 'planning', planningSlug: 'checkout', createdAt, ...over })
+  const impl = (id: string, createdAt: number, over: Partial<Conversation> = {}): Conversation =>
+    conv(id, {
+      title: 'Implementação: Checkout',
+      handoffSlug: 'checkout',
+      handoffPlan: { projectCwd: 'C:\\proj\\alpha', slug: 'checkout', titulo: 'Checkout', prompts: [] },
+      createdAt,
+      ...over
+    })
+
+  it('o Manager sai de cena e a 1ª implementação herda a aparência e o lugar dele; a 2ª é outro agente', () => {
+    const m = deriveOfficeModel(feed({ conversations: [plan('p', NOW - 3 * HOUR), impl('i1', NOW - 2 * HOUR), impl('i2', NOW - HOUR)] }), NOW)
+    expect(byKey(m.characters, 'conv:p')).toMatchObject({ offstage: true, placement: { kind: 'destination', papel: 'reuniao-cabeceira' } })
+    expect(byKey(m.characters, 'conv:i1')).toMatchObject({ seed: 'conv:p', handoverFrom: 'conv:p', placement: { kind: 'seat' } })
+    expect(byKey(m.characters, 'conv:i2')).toMatchObject({ seed: 'conv:i2' })
+    expect(byKey(m.characters, 'conv:i2')?.handoverFrom).toBeUndefined()
+  })
+
+  it('a implementação fora do escritório (velha) ainda conta: o plano foi enviado', () => {
+    const m = deriveOfficeModel(feed({ conversations: [plan('p', NOW - 30 * HOUR), impl('i', NOW - 20 * HOUR, { updatedAt: NOW - 20 * HOUR })], activeId: 'p' }), NOW)
+    expect(m.characters.some((c) => c.convId === 'i')).toBe(false)
+    expect(byKey(m.characters, 'conv:p')?.offstage).toBe(true)
+  })
+
+  it('outro plano ou outro projeto não conta; a pasta do projeto vale sem caixa nem barras; a conversa antiga (só handoffSlug) vale pela pasta dela', () => {
+    const outroPlano = deriveOfficeModel(feed({ conversations: [plan('p', NOW - 3 * HOUR), impl('i', NOW - HOUR, { handoffSlug: 'login', handoffPlan: undefined })] }), NOW)
+    expect(byKey(outroPlano.characters, 'conv:p')?.offstage).toBeUndefined()
+    const outroProjeto = impl('i', NOW - HOUR, { cwd: 'D:\\beta', handoffPlan: { projectCwd: 'D:\\beta', slug: 'checkout', titulo: 'Checkout', prompts: [] } })
+    expect(byKey(deriveOfficeModel(feed({ conversations: [plan('p', NOW - 3 * HOUR), outroProjeto] }), NOW).characters, 'conv:p')?.offstage).toBeUndefined()
+    const caixa = impl('i', NOW - HOUR, { handoffPlan: { projectCwd: 'c:/PROJ/alpha/', slug: 'checkout', titulo: 'Checkout', prompts: [] } })
+    expect(byKey(deriveOfficeModel(feed({ conversations: [plan('p', NOW - 3 * HOUR), caixa] }), NOW).characters, 'conv:p')?.offstage).toBe(true)
+    const antiga = impl('i', NOW - HOUR, { handoffPlan: undefined })
+    expect(byKey(deriveOfficeModel(feed({ conversations: [plan('p', NOW - 3 * HOUR), antiga] }), NOW).characters, 'conv:i')?.handoverFrom).toBe('conv:p')
+  })
+
+  it('plano reaberto depois do envio (conversa nova do mesmo plano) é planejamento aberto de novo; duas antes do mesmo envio: herda a mais nova', () => {
+    const reaberto = planHandoffs([plan('p1', NOW - 5 * HOUR), impl('i', NOW - 4 * HOUR), plan('p2', NOW - HOUR)])
+    expect([...reaberto.sent]).toEqual(['p1'])
+    expect(reaberto.managerOf.get('i')).toBe('p1')
+    const duas = planHandoffs([plan('p1', NOW - 5 * HOUR), plan('p2', NOW - 4 * HOUR), impl('i', NOW - 3 * HOUR)])
+    expect([...duas.sent].sort()).toEqual(['p1', 'p2'])
+    expect(duas.managerOf.get('i')).toBe('p2')
   })
 })
 
