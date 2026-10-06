@@ -4421,6 +4421,7 @@ export function App(): JSX.Element {
       // O modelo que o main anunciou (evento `system` da sessão); antes de
       // a sessão subir o da conversa é só placeholder.
       managerModel={activePlanning.sdkSessionId ? runningModel(activePlanning) : null}
+      onOpenConversation={deliveries.openConversation}
       headerActions={
         <HandoffButton
           projectCwd={activePlanning.cwd}

@@ -1,0 +1,10 @@
+Create ONE full-body adult male human office agent character for the Agent Code virtual office, alone, as a polished premium 3D cartoon character in exactly the same rendering style, finish and proportions as the second reference image (the man in the blue knitted sweater): softly sculpted stylized anatomy, tasteful stylization rather than caricature, premium animated-film quality.
+
+IDENTITY (most important): this character IS the man in the first reference image (the photo). Keep his likeness clearly recognizable in the cartoon face: his face shape, his short dark black hair with the same hairline and side part, his warm light-brown skin tone, his dark brown eyes and eyebrows, his nose and mouth shape, and his thin light mustache and chin stubble. Calm, confident, slightly friendly expression. Give the face high detail and quality: clean expressive eyes, readable features, smooth skin with subtle subsurface scattering.
+
+Role: Central / front-desk attendant who receives requests and routes them to the right agent.
+Outfit: a saturated medium-blue half-zip pullover sweater with fine knitted texture, ribbed collar and cuffs (this is the ONLY blue item); black tapered trousers with subtle fabric weave and realistic cartoon folds; black low-top sneakers with dark soles; a slim black call-center headset over his hair with a small boom microphone near the mouth. No other blue anywhere: no blue eyes, no jeans, no blue accessories. No suit, no tie, no badge, no lanyard.
+
+Pose: standing in a relaxed neutral pose, arms hanging slightly away from the torso (a small clear gap between arms and body), both hands empty, open and relaxed with the fingers slightly spread apart, feet comfortably separated. Three-quarter front view, camera very slightly elevated, entire body visible from hair to soles, centered with modest padding, same scale and framing as the second reference.
+
+Backdrop: transparent background. No floor, no platform, no scenery, no cast shadow, no text, no logo, no watermark, no other characters. Only the finished avatar.

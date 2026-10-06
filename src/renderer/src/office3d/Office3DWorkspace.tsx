@@ -86,8 +86,8 @@ export interface Office3DWorkspaceProps {
   centralSignal?: number
   /** O painel da Central: o chat flutuante o mostra quando nenhuma mesa está selecionada. Sem ele, sempre `chat`. */
   central?: ReactNode
-  /** A conversa ativa: cabeçalho do chat e o voo da câmera quando ela muda. */
-  conversation?: OfficeConversation | null
+  /** A conversa ativa: cabeçalho do chat e o voo da câmera quando ela muda (`mode: 'planning'`: vai à TV). */
+  conversation?: (OfficeConversation & { mode?: string }) | null
   /** Seleciona a conversa (clique ou duplo clique num agente, aba reaberta com um agente focado). */
   onOpenConversation: (convId: string) => void
   /** Sem uso desde que a tela do monitor segue o chat (o ToolCard abre o arquivo pelo Preview); mantido para o App. */
@@ -252,6 +252,7 @@ export function Office3DWorkspace({
   tvFocus.current = tv
   const tvInfo = tv.tvInfo
   const convIsCentral = isCentralConversation(conversation)
+  const convIsPlanning = conversation?.mode === 'planning'
   // Ir à Central é o usuário desfazendo a seleção: a tela aberta fecha, a câmera
   // volta à vista inicial (o escritório inteiro, como o "↺ Vista inicial") e o flutuante volta, na Central.
   const openCentral = useCallback((): void => {
@@ -301,8 +302,10 @@ export function Office3DWorkspace({
     setShowCentral(false)
     // O plano em foco na TV virou a conversa ativa (abrir pela TV, trocar de aba): a câmera fica na TV.
     if (tvFocus.current.tvInfo?.kind === 'plan' && tvFocus.current.tvInfo.convId === convId) return
+    // Conversa de planejamento: a câmera vai à TV com o plano na tela (não se confunde com o chat de um agente).
+    if (convIsPlanning) return tvFocus.current.focusPlan(convId)
     engineRef.current?.follow(convId)
-  }, [convId, active, convIsCentral, openCentral])
+  }, [convId, active, convIsCentral, convIsPlanning, openCentral])
 
   // Clique na Central do app (mesmo já sendo a ativa): idem.
   const seenCentralSignal = useRef(centralSignal)
