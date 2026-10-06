@@ -3,25 +3,30 @@
  * minúsculo e escondido — no WebView, um <video> visível vira superfície nativa e
  * engole os toques (o "Cancelar" deixava de responder). Decodifica a ~8 fps:
  * decodificar a cada quadro satura a thread principal e a tela para de responder.
+ * Um QR legível que não é de uma ponte avisa por `onForeign` UMA vez por abertura e o
+ * leitor continua aberto, procurando o QR certo.
  */
 import { useEffect, useRef } from 'react'
 import type { PairConfig } from '../core/config'
-import { decodePairing } from './decode'
+import { decodeFrame } from './decode'
 
-export function Scanner({ onResult, onCancel, onFail }: {
+export function Scanner({ onResult, onCancel, onFail, onForeign }: {
   onResult: (cfg: PairConfig) => void
   onCancel: () => void
   onFail: (msg: string) => void
+  /** Leu um QR que não é da ponte (chamado uma vez por abertura do leitor). */
+  onForeign?: () => void
 }): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const cb = useRef({ onResult, onFail })
-  cb.current = { onResult, onFail }
+  const cb = useRef({ onResult, onFail, onForeign })
+  cb.current = { onResult, onFail, onForeign }
 
   useEffect(() => {
     let stream: MediaStream | null = null
     let timer = 0
     let stopped = false
+    let foreignWarned = false // o aviso de "QR de outra coisa" sai uma vez; o mesmo QR na frente da câmera não o repete
     const stop = (): void => {
       stopped = true
       if (timer) clearTimeout(timer)
@@ -40,11 +45,15 @@ export function Scanner({ onResult, onCancel, onFail }: {
           if (c.height !== v.videoHeight) c.height = v.videoHeight
           ctx.drawImage(v, 0, 0, c.width, c.height)
           const img = ctx.getImageData(0, 0, c.width, c.height)
-          const cfg = decodePairing(img.data, img.width, img.height)
-          if (cfg) {
+          const found = decodeFrame(img.data, img.width, img.height)
+          if (found && 'cfg' in found) {
             stop()
-            cb.current.onResult(cfg)
+            cb.current.onResult(found.cfg)
             return
+          }
+          if (found && !foreignWarned) {
+            foreignWarned = true
+            cb.current.onForeign?.()
           }
         }
       }

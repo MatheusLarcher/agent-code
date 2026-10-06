@@ -188,9 +188,10 @@
 .cm-pv-l .cm-dim { color: #8f8f8f; }
 
 /* ── avisos ──────────────────────────────────────────────────────── */
-.cm-toasts { position: absolute; right: 12px; bottom: 14px; z-index: 35; display: flex; flex-direction: column; gap: 8px; width: 320px; }
-.cm-root.tb-open .cm-toasts,
-.cm-root.pinned .cm-toasts { bottom: calc(var(--cm-task-h) + 10px); }
+/* O padrão de toasts do app: canto de cima à direita, logo abaixo da barra de título (o × de
+   fechar fica livre; a barra de tarefas, embaixo, não os empurra), o mais novo em cima. Somem
+   sozinhos com a saída (`leaving`, os tempos em useMonitorToasts). */
+.cm-toasts { position: absolute; top: calc(var(--cm-title-h) + 10px); right: 12px; z-index: 35; display: flex; flex-direction: column; gap: 8px; width: 320px; }
 .cm-toast {
   display: grid;
   grid-template-columns: 28px 1fr;
@@ -211,7 +212,10 @@
 .cm-toast.ok .cm-toast-ic { background: rgba(63, 185, 80, 0.16); color: #3fb950; }
 .cm-toast b { display: block; color: #f0f0f0; font-size: 12.5px; }
 .cm-toast span span { color: #b8b8b8; font-size: 12px; }
+/* A saída dura TOAST_EXIT_MS; `forwards` segura o apagado até o aviso sair da lista. */
+.cm-toast.leaving { animation: cm-toast-out 0.25s ease-in forwards; }
 @keyframes cm-toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes cm-toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(16px); } }
 
 /* ── tamanhos ────────────────────────────────────────────────────── */
 @container cm (max-width: 1100px) {
@@ -225,12 +229,14 @@
   .cm-startmenu { width: calc(100% - 16px); }
 }
 
+/* Movimento reduzido: sem animação (a saída dos avisos também; eles saem pelo tempo). */
 @media (prefers-reduced-motion: reduce) {
   .cm-taskbar,
   .cm-tb-app,
   .cm-peek i,
   .cm-busydot,
   .cm-toast,
+  .cm-toast.leaving,
   .cm-startmenu,
   .cm-taskpreview,
   .cm-coach { animation: none; transition: none; }

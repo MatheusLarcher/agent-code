@@ -4,19 +4,21 @@
  * antigo — cada regra abaixo tem um porquê medido no app anterior:
  *
  *  - auto-conexão ao abrir NUNCA toma o lugar de outro celular; só o QR (gesto do
- *    usuário) faz `POST /api/pair` (takeover);
+ *    usuário) faz `POST /api/pair` (takeover; o reload da troca de filial o leva
+ *    num sinal de uso único, em pcs.ts);
  *  - o pareamento salvo nunca é descartado por erro: tenta de novo com backoff até
- *    o usuário cancelar;
+ *    o usuário esquecer a filial;
  *  - o SSE cai sem dizer por quê: antes de religar, reavalia LAN × relay e confere
  *    com uma chamada normal, que devolve um status legível (503/401/409);
  *  - `historyReq`: só a resposta MAIS RECENTE do `/api/history` atualiza a tela.
  */
 import type { ChatEvent, PermissionResponse, RateLimitStatus } from '@shared/ipc'
-import { deviceId, deviceName, loadConfig, configFromLocation, saveConfig, clearConfig, saveLastConv, type PairConfig } from './config'
+import { deviceId, deviceName, configFromLocation, type PairConfig } from './config'
 import { apiUrl, errorText, fetchJson, pickBestBase, statusOf, HttpError, type FetchOpts } from './net'
+import { activePc, loadPcs, namePcIfUnnamed, otherPcs, pcConfig, pcLabel, removePc, saveLastConv, setActivePc, setPendingSwitch, takePendingSwitch, upsertPc, type PendingNotice } from './pcs'
 import { isSubagentEvent, reduce, STATE_ONLY, syncQueued } from './reducer'
 import { createStore, type Store } from './store'
-import type { BridgeEvent, ChatMsg, ConvSummary, FileAttachment, ImageAttachment, ModelOption, SearchResult, StateResponse } from './types'
+import type { BridgeEvent, ChatMsg, ConvSummary, FileAttachment, ImageAttachment, ModelOption, SearchResult, StateResponse, ToastTipo } from './types'
 
 export const CENTRAL_CONV_ID = 'central'
 /** Avisos do escritório na ponte (officeCallsBridge): fase 2, o chat ignora. */
@@ -55,6 +57,10 @@ export interface AppState {
 export interface ClientOptions {
   /** Qual conversa abrir ao conectar (a navegação guarda a última). */
   pickInitialConv: (conversations: ConvSummary[]) => string | null
+  /** Recarrega o app — trocar de filial zera SSE, timers, Central e Escritório. Padrão: window.location.reload(). Injetável nos testes. */
+  reload?: () => void
+  /** Aviso curto com tipo (o toast do app). */
+  notify?: (text: string, tipo?: ToastTipo) => void
 }
 
 export interface SendInput {
@@ -84,6 +90,7 @@ export class RemoteClient {
   private repicking = false
   private historyReq = 0
   private wakeLock: WakeLockSentinel | null = null
+  private announce: PendingNotice[] | null = null // avisos da troca/adição para a 1ª conexão desta carga (null = não veio de uma troca)
 
   constructor(private readonly opts: ClientOptions) {}
 
@@ -91,26 +98,29 @@ export class RemoteClient {
     return this.store.get()
   }
 
-  /** Abre o app: conecta no pareamento salvo (ou no `/app/?token=` do navegador). */
+  /** Abre o app: conecta na filial ativa (a última usada) ou no `/app/?token=` do navegador. */
   start(): void {
     const onResume = (): void => this.onResume()
     document.addEventListener('visibilitychange', onResume)
     window.addEventListener('focus', onResume)
     window.addEventListener('online', onResume)
-    const cfg = loadConfig() ?? configFromLocation(window.location)
+    const pending = takePendingSwitch() // sempre lido: o sinal nunca sobrevive a uma 2ª carga
+    const pc = activePc(loadPcs()) // na 1ª abertura, migra o pareamento do app antigo
+    const cfg = pc ? pcConfig(pc) : configFromLocation(window.location)
     if (cfg && cfg.base && cfg.token) {
       this.cfg = cfg
       this.store.set({ base: cfg.base, token: cfg.token })
-      this.beginPairing(false)
+      const signal = pending && pc && pending.pcId === pc.id ? pending : null // vale só para a filial que ele nomeia
+      this.announce = signal ? signal.notices : null
+      this.beginPairing(signal?.explicit ?? false)
     } else this.showPair()
   }
 
-  /** QR lido agora: pareia ESTE celular no PC (tomando o lugar de outro, se houver). */
-  applyConfig(cfg: PairConfig): void {
-    this.cfg = cfg
-    saveConfig(cfg)
-    this.store.set({ base: cfg.base, token: cfg.token })
-    this.beginPairing(true)
+  /** QR lido (tela do QR ou "Abrir filial"): salva a filial — ou atualiza base/lan, se o token já está salvo —, ativa e recarrega pareando de forma explícita. */
+  addPc(cfg: PairConfig): void {
+    if (!cfg.base || !cfg.token) return
+    const { pc, existed } = upsertPc(cfg)
+    this.activate(pc.id, true, existed ? [{ tipo: 'aviso', text: 'Esta filial já estava salva' }] : [])
   }
 
   /** "Usar este celular": equivale a escanear o QR de novo. */
@@ -118,13 +128,41 @@ export class RemoteClient {
     this.beginPairing(true)
   }
 
-  /** Sair da conexão / cancelar: apaga o pareamento e volta ao QR. */
-  logout(): void {
-    clearConfig()
+  /** Troca para outra filial salva: grava a ativa e recarrega (nada da anterior sobrevive na tela). */
+  switchPc(id: string): void {
+    this.activate(id, false, [])
+  }
+
+  /** Esquece a filial (a tela já pediu confirmação). Era a ativa: vai para a usada mais recentemente; sem nenhuma, tela do QR. `null` = conexão que não é uma filial salva (navegador). */
+  forgetPc(id: string | null): void {
+    if (id === null) return this.disconnect()
+    const before = loadPcs() // o rótulo "PC N" conta a posição na lista de ANTES de remover
+    const { removed, wasActive, next } = removePc(id)
+    if (!removed) return // já esquecida
+    const aviso: PendingNotice = { tipo: 'aviso', text: `Filial ${pcLabel(removed, before)} esquecida` }
+    if (wasActive && next) return this.activate(next.id, false, [aviso]) // o aviso sai depois do reload
+    if (wasActive) this.disconnect()
+    this.opts.notify?.(aviso.text, aviso.tipo)
+  }
+
+  /** "Cancelar" em Outro celular pareado: vai para outra filial salva SEM apagar esta; sem outra, tela do QR (também sem apagar — ao reabrir o app, tenta esta de novo). */
+  leaveBlocked(): void {
+    const other = otherPcs(loadPcs())[0]
+    return other ? this.switchPc(other.id) : this.disconnect()
+  }
+
+  private activate(id: string, explicit: boolean, notices: PendingNotice[]): void {
+    if (!setActivePc(id)) return // toda troca de filial passa por aqui; id desconhecido: nada muda
+    setPendingSwitch({ pcId: id, explicit, notices }) // o sinal de uso único, lido UMA vez pela carga seguinte
+    this.opts.reload ? this.opts.reload() : window.location.reload()
+  }
+
+  private disconnect(): void {
     this.cfg = null
     this.pairingAttempt = 0
+    this.announce = null
     this.store.set({ base: '', token: '' })
-    this.showPair()
+    this.showPair() // só para de conectar e mostra a tela do QR: nada do que está salvo é apagado
   }
 
   current(): ConvSummary | null {
@@ -233,6 +271,7 @@ export class RemoteClient {
     if (!cfg || this.state.screen !== 'pairing') return
     this.fetchState().then(
       (data) => {
+        if (this.cfg !== cfg) return // filial esquecida (ou conexão encerrada) com a resposta em voo: já não vale
         this.pairingAttempt = 0
         this.showConnected(data)
       },
@@ -266,6 +305,14 @@ export class RemoteClient {
     this.openEvents()
     if (this.poll) clearInterval(this.poll)
     this.poll = setInterval(() => void this.fetchState().catch(() => undefined), POLL_MS)
+    if (this.cfg) namePcIfUnnamed(this.cfg.token, data.pcName) // nome padrão: o hostname do PC, só se a filial ainda não tem nome
+    if (this.announce) {
+      const list = loadPcs() // lida depois do nome padrão: a filial nova já sai com o hostname
+      const pc = list.pcs.find((p) => p.token === this.cfg?.token)
+      for (const n of this.announce) this.opts.notify?.(n.text, n.tipo)
+      if (pc) this.opts.notify?.(`Filial ${pcLabel(pc, list)} conectada`, 'sucesso')
+      this.announce = null // uma vez só
+    }
   }
 
   private showPair(): void {
@@ -404,7 +451,7 @@ export class RemoteClient {
   // ---- conversa aberta ----------------------------------------------------------------
 
   selectConv(convId: string): void {
-    if (convId !== CENTRAL_CONV_ID) saveLastConv(convId)
+    if (convId !== CENTRAL_CONV_ID) saveLastConv(this.state.token, convId)
     const same = convId === this.state.convId
     this.store.set({ convId, ...(same ? {} : { messages: [] }) })
     if (convId === CENTRAL_CONV_ID) {

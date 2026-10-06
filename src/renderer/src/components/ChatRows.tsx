@@ -4,11 +4,12 @@
  * Markdown (Baixar, Ouvir, hora), o pensamento, o cartão de ferramenta
  * (ToolCard, com o link do arquivo do plano) e as notas do sistema.
  *
- * O MessageList monta a conversa com `ChatRow`; o Escritório 3D (a tela do
- * monitor e a prévia do agente) monta o turno com as MESMAS linhas em modo só
- * leitura: sem `onRetry`, `tts`, `quote` e `onUseAccount`, somem "Tentar de
- * novo", "Ouvir", "Comentar" e "Continuar nessa conta" — o resto (anexos,
- * Baixar, Preview do ToolCard, hora) sai igual.
+ * O MessageList monta a conversa com `ChatRow`; o Escritório 3D monta o turno
+ * com as MESMAS linhas: a tela do monitor passa `tts` e `quote` ("Ouvir", "Ler
+ * daqui" e "Comentar", como aqui) e a prévia do hover segue só leitura. Sem
+ * `onRetry`, `tts`, `quote` e `onUseAccount`, somem "Tentar de novo", "Ouvir",
+ * "Comentar" e "Continuar nessa conta" — o resto (anexos, Baixar, Preview do
+ * ToolCard, hora) sai igual.
  */
 import { Fragment, memo, useEffect, useState } from 'react'
 import { parseDownloads } from '@shared/ipc'

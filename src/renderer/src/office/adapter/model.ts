@@ -66,8 +66,23 @@ export interface OfficeModel {
   characters: OfficeCharacterModel[]
 }
 
-/** cwd → id da sala: barras unificadas, sem barra final, minúsculo em caminho Windows. */
+/** O projeto virtual que junta as conversas de sandbox (como na barra lateral). */
+export const SANDBOX_ROOM_ID = 'sandbox'
+export const SANDBOX_ROOM_NAME = 'Sandbox'
+
+/** Pasta de uma conversa de sandbox: `<localDir>\sandbox\AAAA-MM-DD_HH-MM_<4 hex>`
+ *  (sandboxDirName em main/sandbox.ts). Pelo caminho, sem a raiz: o celular
+ *  também monta o escritório e não a conhece. */
+const SANDBOX_DIR = /[\\/]sandbox[\\/]\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_[0-9a-f]{4}(?:[\\/]|$)/i
+
+export function isSandboxRoomCwd(cwd: string): boolean {
+  return SANDBOX_DIR.test(cwd)
+}
+
+/** cwd → id da sala: barras unificadas, sem barra final, minúsculo em caminho
+ *  Windows. Toda pasta de sandbox é a mesma sala (SANDBOX_ROOM_ID). */
 export function roomIdFor(cwd: string): string {
+  if (isSandboxRoomCwd(cwd)) return SANDBOX_ROOM_ID
   let id = cwd.replace(/[\\/]+/g, '/')
   if (id.length > 1) id = id.replace(/\/$/, '')
   const windows = /^[a-zA-Z]:/.test(cwd) || cwd.includes('\\')
@@ -79,8 +94,9 @@ export function principalKey(convId: string): string {
   return `conv:${convId}`
 }
 
-/** Último segmento do cwd, como basename em App.tsx. */
+/** Último segmento do cwd, como basename em App.tsx; o sandbox é só "Sandbox". */
 export function roomName(cwd: string): string {
+  if (isSandboxRoomCwd(cwd)) return SANDBOX_ROOM_NAME
   const parts = cwd.split(/[\\/]+/).filter(Boolean)
   return parts[parts.length - 1] || cwd
 }

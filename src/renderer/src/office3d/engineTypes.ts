@@ -36,6 +36,8 @@ export function createDefaultRenderer(canvas: HTMLCanvasElement): RendererLike {
 
 /** Chave de pick da tela do projetor de uma sala: `${PROJECTOR_KEY}${roomId}`. */
 export const PROJECTOR_KEY = 'projector:'
+/** O foco da TV aberto num plano pedido ("📋 Planejar", a conversa do plano, o Agent Manager): `${TV_PLAN_KEY}${convId}`. */
+export const TV_PLAN_KEY = `${PROJECTOR_KEY}plano:`
 /** Chave de pick da estante de Memórias: o clique abre o painel de Memórias (o foco nela). */
 export const MEMORY_SHELF_KEY = 'memory-shelf'
 /** Chave de pick do kanban da parede (o fundo; papel e pilha têm as chaves deles): o clique foca o quadro. */

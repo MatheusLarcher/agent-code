@@ -90,6 +90,7 @@ import { saveChangedConversations } from './autosaveChanged'
 import { freezeClock, freezeSection, markConversationSwitch, markPaneSwitch, startFreezeWatch, timeSave } from './perf/freezeWatch'
 import { ChatPanel } from './components/ChatPanel'
 import { Composer } from './components/Composer'
+import { QueueStrip } from './components/QueueStrip'
 import { ModelPicker, type ModelPickerProps } from './components/ModelPicker'
 import type { VigiaDoubt } from './components/VigiaChip'
 import { BrowserPanel } from './components/BrowserPanel'
@@ -97,6 +98,7 @@ import { CrewChip } from './components/CrewChip'
 import { buildCrew, workingMembers } from './crew'
 import { IconBoard, IconGlobe } from './components/Icons'
 import { MainTabs, OfficeErrorBoundary, OfficeTabHost, useMainTab } from './components/MainTabs'
+import { TtsContext } from './components/ttsContext'
 import { fileUrl } from './fileUrl'
 import { officeStore } from './office/officeStore'
 import { roomIdFor } from './office/adapter/model'
@@ -4380,23 +4382,26 @@ export function App(): JSX.Element {
   // para a conversa ativa (o Escritório só o mostra quando ela é a do agente
   // focado, e aí o chat flutuante sai), com o mesmo envio, fila e rascunho.
   const monitorComposer = (
-    <Composer
-      disabled={!active}
-      busy={showBusy}
-      chips={chips}
-      onChipsConsumed={consumeChips}
-      onSend={sendMessage}
-      onInterrupt={interrupt}
-      textareaRef={composerRef}
-      projects={projects}
-      projectRoot={active?.cwd ?? null}
-      convId={active?.id ?? null}
-      draft={active?.draft ?? ''}
-      draftMedia={active?.draftMedia}
-      onDraftChange={onDraftChange}
-      projectMissing={projectMissing}
-      projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
-    />
+    <>
+      <QueueStrip queued={activeQueue} onDelete={trashQueued} onSendNow={(id) => void sendQueuedNow(id)} />
+      <Composer
+        disabled={!active}
+        busy={showBusy}
+        chips={chips}
+        onChipsConsumed={consumeChips}
+        onSend={sendMessage}
+        onInterrupt={interrupt}
+        textareaRef={composerRef}
+        projects={projects}
+        projectRoot={active?.cwd ?? null}
+        convId={active?.id ?? null}
+        draft={active?.draft ?? ''}
+        draftMedia={active?.draftMedia}
+        onDraftChange={onDraftChange}
+        projectMissing={projectMissing}
+        projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
+      />
+    </>
   )
   // O seletor de modelo/esforço da tela do monitor: o mesmo do chat, para a
   // conversa do agente focado (não a ativa). A Central não tem modelo próprio.
@@ -4670,8 +4675,10 @@ export function App(): JSX.Element {
             1ª abertura fica montado e pausado.
             Uma falha no 3D vira um aviso com volta para a Conversa (não derruba o app). */}
         <OfficeErrorBoundary active={mainTab === 'office'} onBack={() => setMainTab('chat')}>
-          {/* As Entregas (a mesma leitura da barra): a aba Implantação da TV as lê por contexto. */}
+          {/* As Entregas (a mesma leitura da barra): a aba Implantação da TV as lê por contexto.
+              O TTS do chat (o mesmo áudio e o mesmo "Parar"): o "Ouvir" do Chat da tela do monitor o lê por contexto. */}
           <DeliveryCenterProvider center={deliveries}>
+          <TtsContext.Provider value={tts}>
           <OfficeTabHost
             active={mainTab === 'office'}
             chat={mainTab === 'office' ? mainChat : null}
@@ -4719,6 +4726,7 @@ export function App(): JSX.Element {
             windowsControlEnabled={windowsControlEnabled}
             onDisableWindowsControl={() => void toggleWindowsControl(false)}
           />
+          </TtsContext.Provider>
           </DeliveryCenterProvider>
         </OfficeErrorBoundary>
       </div>

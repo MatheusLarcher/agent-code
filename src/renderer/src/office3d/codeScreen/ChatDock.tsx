@@ -9,14 +9,17 @@
  *
  * A largura do Chat é em px (monitorPrefs.chatWidth): padrão 400, de 280 até
  * 60% da tela sem deixar o editor com menos de 320 px. Relida limitada pela
- * tela de agora e gravada só quando o usuário solta a borda (PaneSplitter) —
- * vale para todos os monitores. Tela estreita (`narrow`): o Chat ocupa a
- * janela e o editor some.
+ * tela de agora e gravada só quando o usuário solta a borda (PaneSplitter),
+ * sem aviso — vale para todos os monitores. Tela estreita (`narrow`): o Chat
+ * ocupa a janela e o editor some.
  */
 import './chatDock.css'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { clampPane, PaneSplitter } from '../../components/PaneSplitter'
+import { QuoteLinkContext } from '../../components/quoteComment/useComposerQuotes'
+import { useQuoteComments, type QuoteComments } from '../../components/quoteComment/useQuoteComments'
 import { ToolFileOpenContext, type ToolFileOpen } from '../../components/toolFileOpen'
+import { TtsContext } from '../../components/ttsContext'
 import type { TurnHead } from '../chatPage'
 import { ChatPanel, type ChatContent } from '../ChatScreen'
 import { CHAT_MIN_W, maxChatWidth, monitorPrefs } from './monitorPrefs'
@@ -51,11 +54,9 @@ export interface ChatDockProps {
   chat: ReactNode
   /** A barra de status (só no Código), na janela inteira. */
   status?: ReactNode
-  /** O usuário soltou a borda: a largura ficou guardada. */
-  onWidthSaved: (width: number) => void
 }
 
-export function ChatDock({ chatOn, narrow, children, chat, status, onWidthSaved }: ChatDockProps): JSX.Element {
+export function ChatDock({ chatOn, narrow, children, chat, status }: ChatDockProps): JSX.Element {
   const rowRef = useRef<HTMLDivElement>(null)
   const rowW = useWidth(rowRef)
   const [width, setWidth] = useState(() => monitorPrefs.chatWidth())
@@ -92,7 +93,6 @@ export function ChatDock({ chatOn, narrow, children, chat, status, onWidthSaved 
             onCommit={(w) => {
               setWidth(w)
               monitorPrefs.setChatWidth(w)
-              onWidthSaved(w)
             }}
           />
         )}
@@ -116,7 +116,7 @@ export interface MonitorChatProps {
   /** Quem e o modelo ("Agent principal · Opus 5.5"). */
   who: string
   state: ChatState
-  /** O campo de digitar (o Composer do App) e o seletor de modelo, embaixo. */
+  /** O campo de digitar (o Composer do App) e o seletor de modelo, embaixo. Com ele, os blocos da resposta ganham "Comentar". */
   composer?: ReactNode
   /** O Contexto à vista: só o campo fica montado, escondido (sem perder o rascunho); o turno sai. */
   hidden: boolean
@@ -126,8 +126,27 @@ export interface MonitorChatProps {
   go: { n: number; focus: boolean }
 }
 
-/** O painel Chat: o cabeçalho compacto da maquete, o turno (ChatPanel) e o campo embaixo. */
-export function MonitorChat({ head, seed, content, who, state, composer, hidden, opener, go }: MonitorChatProps): JSX.Element {
+/**
+ * O painel Chat: o cabeçalho compacto da maquete, o turno (ChatPanel) e o campo
+ * embaixo, com o "Ouvir" e o "Comentar" da aba Conversa. "Ouvir" (e o "Ler
+ * daqui" dos blocos) é o TTS do App, lido do TtsContext que o App põe em volta
+ * do Escritório — sem ele, nada. "Comentar" só com o campo na tela: o trecho
+ * entra como "[trecho N]" no Composer do App pelo QuoteLinkContext. O estado dos
+ * trechos (useQuoteComments, que pede o UiProvider) mora num filho montado só
+ * com o campo: quem monta sem campo (e sem o provider) segue como antes.
+ */
+export function MonitorChat(props: MonitorChatProps): JSX.Element {
+  return props.composer ? <QuotedChat {...props} /> : <ChatBody {...props} quote={null} />
+}
+
+/** Com o campo: os trechos do "Comentar" deste turno. */
+function QuotedChat(props: MonitorChatProps): JSX.Element {
+  const quote = useQuoteComments(props.content.messages)
+  return <ChatBody {...props} quote={quote} />
+}
+
+function ChatBody({ head, seed, content, who, state, composer, hidden, opener, go, quote }: MonitorChatProps & { quote: QuoteComments | null }): JSX.Element {
+  const tts = useContext(TtsContext)
   const boxRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (go.n === 0 || !go.focus) return
@@ -141,6 +160,8 @@ export function MonitorChat({ head, seed, content, who, state, composer, hidden,
           seed={seed}
           content={content}
           endSignal={go.n}
+          tts={tts}
+          quote={quote?.list}
           header={
             <div className="cm-chat-head">
               <span className="cm-chat-dot" aria-hidden="true" />
@@ -158,7 +179,7 @@ export function MonitorChat({ head, seed, content, who, state, composer, hidden,
       )}
       {composer ? (
         <div className="cm-composer" data-testid="office-screen-composer" hidden={hidden} ref={boxRef}>
-          {composer}
+          <QuoteLinkContext.Provider value={quote?.link ?? null}>{composer}</QuoteLinkContext.Provider>
         </div>
       ) : null}
     </ToolFileOpenContext.Provider>

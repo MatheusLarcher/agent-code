@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react'
+import type { ContextTurnChanged } from '@shared/contextSnapshot'
 import type { OfficeFeed } from '../../office/adapter/feed'
 import type { OfficeCharacterModel } from '../../office/adapter/model'
 import { conv, feed } from '../../office/adapter/testFeed'
@@ -7,6 +8,7 @@ import type { UIMessage } from '../../types'
 import { UiProvider } from '../../ui/UiProvider'
 import { CodeMonitor } from './CodeMonitor'
 import { HIDE_MS, REVEAL_MS } from './Taskbar'
+import { TOAST_EXIT_MS, TOAST_MS, useMonitorToasts, type MonitorToast } from './useMonitorToasts'
 
 const CWD = 'C:\\proj\\loja'
 const model: OfficeCharacterModel = {
@@ -27,6 +29,22 @@ const ui = (f: OfficeFeed, onClose = vi.fn()): JSX.Element => (
 )
 const root = (): HTMLElement => screen.getByTestId('office-screen')
 const app = (name: string): HTMLElement => screen.getByRole('button', { name })
+/** Os avisos à vista, de cima para baixo: o título e "(saindo)" durante a saída. */
+const toastsNow = (): string[] =>
+  [...root().querySelectorAll<HTMLElement>('.cm-toast')].map((t) => `${t.querySelector('b')?.textContent ?? ''}${t.classList.contains('leaving') ? ' (saindo)' : ''}`)
+const RESENT = 'Contexto reenviado no meio do turno'
+/** O aviso "contexto reenviado" do main: o mesmo turno de novo empurra o mesmo aviso (o mesmo id) de novo. */
+function resentFeed(): (turnId: string) => void {
+  const subs = new Set<(e: ContextTurnChanged) => void>()
+  ;(window as unknown as { api: unknown }).api = {
+    readFile: vi.fn(async () => 'a\n'),
+    onContextTurnsChanged: vi.fn((f: (e: ContextTurnChanged) => void) => {
+      subs.add(f)
+      return () => void subs.delete(f)
+    })
+  }
+  return (turnId) => act(() => [...subs].forEach((f) => f({ convId: 'a', turnId, resent: true })))
+}
 
 beforeEach(() => {
   localStorage.clear()
@@ -165,5 +183,95 @@ describe('CodeMonitor — barra de tarefas', () => {
     await screen.findByText('Opus 5.5 · 15 chamadas')
     expect(menu.textContent).toContain('GPT-6.1 Sol · 4 chamadas')
     expect(menu.textContent).not.toContain('Automático')
+  })
+})
+
+describe('CodeMonitor — avisos no padrão de toasts do app (somem sozinhos, com a saída)', () => {
+  it('à vista por TOAST_MS (4,5 s), depois `leaving` (a saída) e fora da lista em TOAST_EXIT_MS; o mais novo em cima', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const um = edit('um.ts')
+    const dois = edit('dois.ts')
+    const view = render(ui(feedOf([ask])))
+    view.rerender(ui(feedOf([ask, um])))
+    act(() => void vi.advanceTimersByTime(1000))
+    view.rerender(ui(feedOf([ask, um, dois])))
+    expect(toastsNow()).toEqual(['O Agent alterou dois.ts', 'O Agent alterou um.ts'])
+    act(() => void vi.advanceTimersByTime(TOAST_MS - 1001))
+    expect(toastsNow()).toEqual(['O Agent alterou dois.ts', 'O Agent alterou um.ts'])
+    act(() => void vi.advanceTimersByTime(1))
+    expect(toastsNow()).toEqual(['O Agent alterou dois.ts', 'O Agent alterou um.ts (saindo)'])
+    act(() => void vi.advanceTimersByTime(TOAST_EXIT_MS - 1))
+    expect(toastsNow()).toEqual(['O Agent alterou dois.ts', 'O Agent alterou um.ts (saindo)'])
+    act(() => void vi.advanceTimersByTime(1))
+    expect(toastsNow()).toEqual(['O Agent alterou dois.ts'])
+    act(() => void vi.advanceTimersByTime(1000 - TOAST_EXIT_MS))
+    expect(toastsNow()).toEqual(['O Agent alterou dois.ts (saindo)'])
+    act(() => void vi.advanceTimersByTime(TOAST_EXIT_MS))
+    expect(toastsNow()).toEqual([])
+    // O padrão de toasts do usuário: ~4,5 s à vista e uma saída curta (cm-toast-out, taskbar.css).
+    expect([TOAST_MS, TOAST_EXIT_MS]).toEqual([4500, 250])
+  })
+
+  it('o fixo da permissão não sai sozinho (nem ganha a saída); respondida, sai na hora', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const perm = { a: { id: 'p1', toolName: 'Bash', input: { command: 'npm test' } } }
+    const view = render(ui(feedOf([ask], { permissions: perm })))
+    expect(toastsNow()).toEqual(['O Agent precisa de você'])
+    act(() => void vi.advanceTimersByTime(60_000))
+    expect(toastsNow()).toEqual(['O Agent precisa de você'])
+    view.rerender(ui(feedOf([ask])))
+    expect(toastsNow()).toEqual([])
+  })
+
+  it('o mesmo aviso de novo no meio da saída volta inteiro, com tempo novo (o reenvio do mesmo turno)', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const resend = resentFeed()
+    render(ui(feedOf([ask])))
+    resend('T9')
+    act(() => void vi.advanceTimersByTime(TOAST_MS))
+    expect(toastsNow()).toEqual([`${RESENT} (saindo)`])
+    resend('T9')
+    expect(toastsNow()).toEqual([RESENT])
+    // A remoção da saída interrompida não vale mais: o tempo à vista recomeça.
+    act(() => void vi.advanceTimersByTime(TOAST_MS - 1))
+    expect(toastsNow()).toEqual([RESENT])
+    act(() => void vi.advanceTimersByTime(1))
+    expect(toastsNow()).toEqual([`${RESENT} (saindo)`])
+    act(() => void vi.advanceTimersByTime(TOAST_EXIT_MS))
+    expect(toastsNow()).toEqual([])
+  })
+
+  it('o clique abre o app do aviso e fecha na hora, até no meio da saída', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const resend = resentFeed()
+    render(ui(feedOf([ask])))
+    resend('T9')
+    act(() => void vi.advanceTimersByTime(TOAST_MS))
+    expect([root().dataset.mode, toastsNow()]).toEqual(['code', [`${RESENT} (saindo)`]])
+    fireEvent.click(root().querySelector('.cm-toast')!)
+    expect([root().dataset.mode, toastsNow()]).toEqual(['ctx', []])
+    act(() => void vi.advanceTimersByTime(TOAST_MS + TOAST_EXIT_MS))
+    expect(toastsNow()).toEqual([])
+  })
+
+  it('useMonitorToasts: um tempo por aviso (o da saída toma o lugar do à vista); de novo, dispensar e desmontar limpam os tempos', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const input = { convId: 'a', messages: [] as UIMessage[], busy: false, permission: undefined, counts: { files: 0, memories: 0 } }
+    const { result, unmount } = renderHook(() => useMonitorToasts(input))
+    const toast = (id: string): MonitorToast => ({ id, kind: 'info', icon: 'spark', app: 'ctx', title: id, body: '' })
+    const state = (): Array<[string, boolean]> => result.current.toasts.map((t) => [t.id, !!t.leaving])
+    act(() => {
+      result.current.push(toast('a'))
+      result.current.push(toast('b'))
+    })
+    expect([state(), vi.getTimerCount()]).toEqual([[['b', false], ['a', false]], 2])
+    act(() => void vi.advanceTimersByTime(TOAST_MS))
+    expect([state(), vi.getTimerCount()]).toEqual([[['b', true], ['a', true]], 2])
+    act(() => result.current.push(toast('b')))
+    expect([state(), vi.getTimerCount()]).toEqual([[['b', false], ['a', true]], 2])
+    act(() => result.current.dismiss('a'))
+    expect([state(), vi.getTimerCount()]).toEqual([[['b', false]], 1])
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

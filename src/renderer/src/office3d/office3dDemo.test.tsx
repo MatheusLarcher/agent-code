@@ -313,7 +313,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
 describe('roteiros do escritório único na demo', () => {
   const T0 = 14_916_667 * DEMO_LOOP_MS
 
-  it('reserva de ilha: 5 projetos e 20 agentes — 4 ilhas com um projeto cada (placa) e o 5º nas mesas livres das outras ilhas', () => {
+  it('reserva de ilha: 5 projetos e 20 agentes — 4 ilhas com um projeto cada (placa) e o 5º sem mesa (não entra na ilha de outro)', () => {
     const now = T0 + 20_000
     const l = layoutOffice(deriveOfficeModel(demoFeed(now), now))
     const [office] = l.rooms
@@ -321,13 +321,13 @@ describe('roteiros do escritório único na demo', () => {
     expect(new Set(owners).size).toBe(4)
     expect(owners.every((p) => p !== null)).toBe(true)
     expect(office.islands.every((i) => i.name)).toBe(true)
-    // Com 24 mesas, o 5º projeto (sem ilha) senta nas mesas que sobram das outras ilhas, com a plaquinha dele.
+    // Cada ilha é um projeto só: o 5º (sem ilha) não senta nas mesas que sobram das outras — fica no lounge ou de pé.
     const fifth = l.projects.find((p) => !owners.includes(p.id))!
     expect(fifth.islands).toEqual([])
-    for (const d of office.desks) if (d.projectId !== null) expect([office.islands[d.island].projectId, fifth.id]).toContain(d.projectId)
-    const fifthSeated = l.characters.filter((c) => c.projectId === fifth.id && c.spot === 'desk')
-    expect(fifthSeated.length).toBeGreaterThan(0)
-    expect(l.characters.filter((c) => c.spot === 'lounge')).toHaveLength(0)
+    for (const d of office.desks) if (d.projectId !== null) expect(d.projectId).toBe(office.islands[d.island].projectId)
+    const fifthChars = l.characters.filter((c) => c.projectId === fifth.id && c.model.placement.kind === 'seat')
+    expect(fifthChars.length).toBeGreaterThan(0)
+    expect(fifthChars.every((c) => c.spot !== 'desk')).toBe(true)
   })
 
   it('filtro: os de outro projeto saem pela porta, ficam lá fora e voltam à MESMA mesa; a Central não sai', () => {

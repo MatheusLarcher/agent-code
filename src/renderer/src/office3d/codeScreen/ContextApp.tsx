@@ -55,6 +55,8 @@ export function ContextApp(p: ContextAppProps): JSX.Element {
   const [lit, setLit] = useState<string | null>(null)
   const [acts, setActs] = useState<string | null>(null)
   const recvRef = useRef<HTMLDivElement>(null)
+  // Contagem exata: o turno que ainda aceita a resposta (null: desmontou ou nenhum).
+  const exactShown = useRef<string | null>(null)
 
   const newest = ctx.list[0]?.turnId ?? null
   const current = ctx.list.find((t) => t.turnId === ctx.selected) ?? null
@@ -119,17 +121,34 @@ export function ContextApp(p: ContextAppProps): JSX.Element {
     const done = (): void => p.onToast({ id: `copy:${Date.now()}`, kind: 'ok', icon: 'copy', app: 'ctx', title: 'Copiado', body: `${kb(new Blob([text]).size)} na área de transferência.` })
     void navigator.clipboard?.writeText(text).then(done, () => undefined)
   }
-  const countExact = async (): Promise<void> => {
+  // A contagem vale para o turno em que foi pedida: a resposta que chega depois de o turno
+  // mudar (ou de a tela fechar) é descartada. Só o botão (manual) avisa.
+  const countExact = async (turn: string, manual: boolean): Promise<void> => {
     const api = typeof window !== 'undefined' ? window.api : undefined
     if (!p.convId || typeof api?.countContextExact !== 'function') return
     const res = await api.countContextExact(p.convId).catch(() => null)
+    if (exactShown.current !== turn) return
     if (res?.ok && res.usage) {
       setExact(res.usage)
-      p.onToast({ id: 'exact', kind: 'ok', icon: 'check', app: 'ctx', title: 'Contagem exata feita', body: `${res.usage.totalTokens.toLocaleString('pt-BR')} tokens, pela API de contagem.` })
-    } else {
+      if (manual) p.onToast({ id: 'exact', kind: 'ok', icon: 'check', app: 'ctx', title: 'Contagem exata feita', body: `${res.usage.totalTokens.toLocaleString('pt-BR')} tokens, pela API de contagem.` })
+    } else if (manual) {
       p.onToast({ id: 'exact', kind: 'warn', icon: 'alert', app: 'ctx', title: 'Contagem exata indisponível', body: res?.reason ?? 'Mostrando o resumo do SDK.' })
     }
   }
+  // Ao abrir, a contagem exata roda sozinha e calada no turno mais novo (o principal, com o
+  // detalhe à vista): uma vez por turno — a releitura do mesmo turno não conta de novo; um
+  // turno novo, ou voltar de um antigo, sim. Falhou: fica o resumo do SDK, sem aviso e sem
+  // repetir; o botão segue livre para tentar à mão.
+  const exactTurn = isNewest && !p.subagent && ctx.detail ? ctx.detail.turnId : null
+  useEffect(() => {
+    exactShown.current = exactTurn
+    if (exactTurn) void countExact(exactTurn, false)
+    return () => {
+      exactShown.current = null
+    }
+    // Só quando o turno à vista muda (countExact lê o resto na hora).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exactTurn])
   const hits = blocks.reduce((n, b) => n + countHits(b.text, q), 0)
   const onSearch = (value: string): void => {
     setQ(value)
@@ -190,7 +209,9 @@ export function ContextApp(p: ContextAppProps): JSX.Element {
           }} />
           {q.trim() && <span className="cm-cnt">{hits}</span>}
         </label>
-        <button type="button" className="cm-btn" disabled={!isNewest || !!p.subagent || !!exact || !ctx.detail} title="Conta cada parte com a API de contagem de tokens (grátis, limite próprio)" onClick={() => void countExact()}>
+        <button type="button" className="cm-btn" disabled={!exactTurn || !!exact} title="Conta cada parte com a API de contagem de tokens (grátis, limite próprio)" onClick={() => {
+          if (exactTurn) void countExact(exactTurn, true)
+        }}>
           <Icon name="check" />
           {exact && isNewest ? 'Contado' : 'Contar exato'}
         </button>

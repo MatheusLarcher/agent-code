@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { useState } from 'react'
+import { createRef, useState } from 'react'
+import type { TtsControls } from '../../components/ChatRows'
+import { Composer } from '../../components/Composer'
+import { TtsContext } from '../../components/ttsContext'
 import type { OfficeFeed } from '../../office/adapter/feed'
 import type { OfficeCharacterModel } from '../../office/adapter/model'
 import { conv, feed } from '../../office/adapter/testFeed'
@@ -28,11 +31,28 @@ function Field(): JSX.Element {
   const [v, setV] = useState('')
   return <textarea aria-label="Mensagem" value={v} onChange={(e) => setV(e.target.value)} />
 }
+/** O Composer de verdade (o campo do App na tela), com o envio espiado. */
+function RealComposer({ onSend }: { onSend: (text: string) => void }): JSX.Element {
+  return (
+    <Composer disabled={false} busy={false} chips={[]} onChipsConsumed={() => {}} onSend={onSend} onInterrupt={() => {}} textareaRef={createRef<HTMLElement>()}
+      projects={[]} projectRoot={null} convId="a" draft="" onDraftChange={() => {}} projectMissing={false} projectMissingMsg="" />
+  )
+}
 const ui = (f: OfficeFeed, m: OfficeCharacterModel = model, composer?: JSX.Element): JSX.Element => (
   <UiProvider>
     <CodeMonitor feed={f} model={m} composer={composer} />
   </UiProvider>
 )
+/** O mesmo, com o TTS do App em volta (o App põe o TtsContext em volta do Escritório). */
+const withTts = (tts: TtsControls, f: OfficeFeed, composer?: JSX.Element): JSX.Element => (
+  <UiProvider>
+    <TtsContext.Provider value={tts}>
+      <CodeMonitor feed={f} model={model} composer={composer} />
+    </TtsContext.Provider>
+  </UiProvider>
+)
+const ANSWER_TEXT = 'Pronto: o valor de a agora é 1.'
+const answer: UIMessage = { kind: 'assistant-text', id: 'r1', text: ANSWER_TEXT, final: true, answer: true }
 const pane = (): HTMLElement => screen.getByTestId('office-screen-chat')
 const sash = (): HTMLElement => screen.getByRole('separator', { name: 'Largura do chat' })
 
@@ -48,7 +68,7 @@ afterEach(() => {
 })
 
 describe('CodeMonitor — o Chat à direita do editor', () => {
-  it('a borda: 400 px de saída; puxar para a esquerda alarga e só soltar guarda, com o aviso; vale para outro agente e para a próxima abertura', () => {
+  it('a borda: 400 px de saída; puxar para a esquerda alarga e só soltar guarda, sem aviso; vale para outro agente e para a próxima abertura', () => {
     const view = render(ui(feedOf([ask, editA()])))
     expect(pane().style.width).toBe('400px')
     expect(sash().getAttribute('aria-valuenow')).toBe('400')
@@ -58,9 +78,9 @@ describe('CodeMonitor — o Chat à direita do editor', () => {
     expect(localStorage.getItem('agentcode.monitor.chatWidth')).toBeNull()
     fireEvent.pointerUp(sash(), { clientX: 820, pointerId: 1 })
     expect(localStorage.getItem('agentcode.monitor.chatWidth')).toBe('460')
-    const toast = screen.getByTestId('office-screen').querySelector('.cm-toast.ok')!
-    expect(toast.textContent).toContain('Largura do chat guardada')
-    expect(toast.textContent).toContain('460 px · vale para todos os monitores')
+    // Guardar é calado: nenhum aviso na tela (nem o "Largura do chat guardada" de antes).
+    expect(screen.getByTestId('office-screen').querySelector('.cm-toast')).toBeNull()
+    expect(screen.getByTestId('office-screen').textContent).not.toContain('Largura do chat guardada')
     // Outro agente (a tela recomeça do zero): a mesma largura.
     view.rerender(ui(feedOf([ask, editA()]), { ...model, key: 'conv:b', convId: 'b', seed: 'conv:b' }))
     expect(pane().style.width).toBe('460px')
@@ -153,5 +173,47 @@ describe('CodeMonitor — o Chat à direita do editor', () => {
     expect(within(card).queryByTitle('Abrir no editor')).toBeNull()
     fireEvent.click(card.querySelector('.tool-head')!)
     expect(card.querySelector('.tool-body')).toBeTruthy()
+  })
+})
+
+describe('CodeMonitor — "Ouvir" e "Comentar" no Chat, os mesmos da aba Conversa', () => {
+  it('Ouvir: com o TTS do App em volta, a resposta final tem "Ouvir" e o clique chama o mesmo onToggleSpeak (id, texto); lendo, vira "Parar"; com o campo, o bloco tem "Ler daqui"; sem o TTS, nada', () => {
+    const onToggleSpeak = vi.fn()
+    const f = feedOf([ask, editA(), answer])
+    const view = render(withTts({ speakingId: null, onToggleSpeak }, f))
+    fireEvent.click(within(pane()).getByRole('button', { name: 'Ouvir' }))
+    expect(onToggleSpeak).toHaveBeenLastCalledWith('r1', ANSWER_TEXT)
+    view.rerender(withTts({ speakingId: 'r1', onToggleSpeak }, f))
+    expect(within(pane()).getByRole('button', { name: 'Parar' })).toBeTruthy()
+    // Com o campo na tela os blocos são comentáveis, e o "Ler daqui" lê do bloco até o fim com o mesmo TTS.
+    view.rerender(withTts({ speakingId: null, onToggleSpeak }, f, <Field />))
+    fireEvent.click(within(pane()).getByRole('button', { name: 'Ler daqui' }))
+    expect(onToggleSpeak.mock.lastCall?.[0]).toMatch(/^r1#ler:/)
+    expect(onToggleSpeak.mock.lastCall?.[1]).toBe(ANSWER_TEXT)
+    // Sem o TtsContext em volta (quem monta sem o App): sem "Ouvir" nem "Ler daqui".
+    cleanup()
+    render(ui(f, model, <Field />))
+    expect(within(pane()).queryByRole('button', { name: 'Ouvir' })).toBeNull()
+    expect(within(pane()).queryByRole('button', { name: 'Ler daqui' })).toBeNull()
+  })
+
+  it('Comentar: com o campo na tela (o Composer de verdade), o bloco da resposta tem "Comentar" e o clique põe "[trecho 1]" no campo, que sai citado no envio; sem o campo, sem "Comentar"', () => {
+    const onSend = vi.fn()
+    const f = feedOf([ask, editA(), answer])
+    render(ui(f, model, <RealComposer onSend={onSend} />))
+    const block = pane().querySelector<HTMLElement>('.msg.assistant .md > p')!
+    fireEvent.click(within(block).getByRole('button', { name: 'Comentar este trecho' }))
+    const box = screen.getByRole('textbox', { name: 'Mensagem' })
+    const token = box.querySelector('img.inline-att-quote')!
+    expect(token.getAttribute('alt')).toBe(`Trecho citado 1: ${ANSWER_TEXT}`)
+    expect(decodeURIComponent(token.getAttribute('src')!)).toContain('[trecho 1]')
+    expect(block.classList.contains('qc-pending')).toBe(true)
+    fireEvent.keyDown(box, { key: 'Enter' })
+    expect(onSend.mock.calls[0][0]).toBe(`> [trecho 1] · mensagem r1\n> ${ANSWER_TEXT}\n\n[trecho 1]`)
+    // Sem o campo (quem não dá o composer): os blocos ficam como sempre, sem "Comentar".
+    cleanup()
+    render(ui(f))
+    expect(pane().querySelector('.msg.assistant .md > p')?.textContent).toBe(ANSWER_TEXT)
+    expect(within(pane()).queryByRole('button', { name: 'Comentar este trecho' })).toBeNull()
   })
 })

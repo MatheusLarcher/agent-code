@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll, beforeAll } from 'vitest'
 import { get, request, type IncomingMessage } from 'node:http'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { tmpdir, hostname } from 'node:os'
 import { RemoteServer } from './remoteServer'
 import type { PermissionResponse, RemoteConversation } from '../../shared/ipc'
 
@@ -144,6 +144,14 @@ describe('RemoteServer — ponte LAN', () => {
     expect(convs[0].messages).toBeUndefined()
     expect(convs[0].queued).toEqual([])
     expect(convs[0].questions?.[0].id).toBe('u1')
+  })
+
+  it('/api/state devolve pcName igual ao hostname do Windows', async () => {
+    const r = await getJson(`/api/state?token=${token}`)
+    expect(r.status).toBe(200)
+    const state = r.json as { pcName?: string }
+    expect(state.pcName).toBe(hostname())
+    expect(state.pcName).toBeTruthy()
   })
 
   it('/api/history devolve as mensagens da conversa (conversa curta: todas)', async () => {

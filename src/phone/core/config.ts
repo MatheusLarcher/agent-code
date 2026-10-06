@@ -88,11 +88,3 @@ export function deviceName(ua = navigator.userAgent || ''): string {
   if (/iPhone/.test(ua)) return 'iPhone'
   return 'celular'
 }
-
-export function loadLastConv(): string | null {
-  return localStorage.getItem(LAST_CONV_KEY)
-}
-
-export function saveLastConv(convId: string): void {
-  localStorage.setItem(LAST_CONV_KEY, convId)
-}

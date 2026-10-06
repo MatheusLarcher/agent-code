@@ -19,10 +19,30 @@
   width: 100%; background: none; border: 1px solid color-mix(in srgb, var(--err) 45%, var(--line));
   color: var(--err); border-radius: 11px; padding: 12px; font-size: 14px; font-weight: 600;
 }
+.cfg-exit-sm { width: auto; align-self: flex-start; min-height: 44px; padding: 10px 18px; } /* "Esquecer" de cada filial */
 .cfg-btn {
   width: 100%; border-radius: 11px; padding: 12px; font-size: 14px; font-weight: 600;
   background: var(--accent-soft); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
 }
+/* card "Filiais": um bloco por filial, com o nome editável */
+.cfg-filial { display: flex; flex-direction: column; gap: 10px; }
+.cfg-filial + .cfg-filial { padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.cfg-badge {
+  align-self: flex-start; padding: 2px 9px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+}
+.cfg-name-form { display: flex; gap: 8px; }
+.cfg-input {
+  flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 10px 12px; border-radius: 11px;
+  background: var(--bg); border: 1px solid var(--line); font-size: 15px;
+}
+.cfg-input::placeholder { color: var(--faint); }
+.cfg-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cfg-save {
+  flex: 0 0 auto; min-height: 44px; padding: 0 16px; border-radius: 11px; font-size: 14px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.cfg-save:disabled { opacity: 0.4; cursor: default; }
 .cfg-switch-card.on { border-color: color-mix(in srgb, var(--err) 55%, var(--line)); background: color-mix(in srgb, var(--err) 9%, var(--bg-2)); }
 .cfg-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; cursor: pointer; position: relative; }
 .cfg-switch-text { display: flex; flex-direction: column; gap: 4px; }

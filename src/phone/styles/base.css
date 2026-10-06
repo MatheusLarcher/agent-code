@@ -117,19 +117,23 @@ svg { flex: 0 0 auto; }
 .topbar-title span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-sub { font-size: 11.5px; color: var(--muted); font-weight: 500; }
 
-/* pílula de conexão (abre o menu da conexão) */
+/* pílula de conexão (abre o menu da conexão): ● nome da filial ▾ — verde online, cinza offline */
 .status {
-  flex: 0 0 auto;
+  position: relative; flex: 0 0 auto;
   display: flex; align-items: center; gap: 6px;
   background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line);
   font-size: 12px; font-weight: 600; color: var(--muted);
-  padding: 6px 11px; border-radius: 20px;
+  padding: 6px 8px 6px 11px; border-radius: 20px;
 }
-.status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+/* a pílula é baixa: a área de toque ganha uma margem invisível (≥ 40 px de altura) */
+.status::after { content: ''; position: absolute; inset: -7px -4px; }
+.status .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.status-name { min-width: 0; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-caret { opacity: 0.55; transform: rotate(90deg); }
 .status.on { color: var(--ok); }
 .status.on .dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(127, 174, 111, 0.18); }
-.status.off { color: var(--err); }
-.status.off .dot { background: var(--err); }
+.status.off { color: var(--muted); }
+.status.off .dot { background: var(--faint); }
 
 /* faixas finas sob o cabeçalho */
 .bar {
@@ -140,34 +144,57 @@ svg { flex: 0 0 auto; }
 }
 .bar.reconnect { color: var(--accent); background: var(--accent-soft); border: none; }
 
-/* avisos curtos */
+/* avisos curtos: sem tipo = o neutro de sempre; sucesso / erro / aviso ganham a cor do tipo (fundo tingido + barra lateral) */
 .toasts {
   position: fixed; left: 12px; right: 12px; z-index: 90;
   bottom: calc(var(--sab) + 76px);
   display: flex; flex-direction: column; gap: 8px; pointer-events: none;
 }
+/* com o leitor de QR aberto, acima da dica e do "Cancelar" dele */
+.toasts.over-scanner { bottom: calc(var(--sab) + 150px); }
 .toast {
   align-self: center; max-width: 100%;
   background: var(--bg-4); color: var(--text); border: 1px solid var(--line);
   border-radius: 12px; padding: 10px 14px; font-size: 13.5px; line-height: 1.4;
-  box-shadow: var(--shadow); animation: rise 0.2s ease; pointer-events: auto;
+  box-shadow: var(--shadow); animation: rise 0.2s ease; pointer-events: auto; cursor: pointer;
 }
+.toast.sucesso { --toast: var(--ok); }
+.toast.erro { --toast: var(--err); }
+.toast.aviso { --toast: var(--warn); }
+.toast.sucesso, .toast.erro, .toast.aviso {
+  background: color-mix(in srgb, var(--toast) 14%, var(--bg-4));
+  border-color: color-mix(in srgb, var(--toast) 55%, var(--line));
+  box-shadow: inset 3px 0 0 var(--toast), var(--shadow);
+}
+/* fechando (toque ou tempo): fade-out; a duração é a de TOAST_LEAVE_MS em app/runtime.ts.
+   Segue recebendo toques: o 2º toque de um duplo toque cai no aviso que está saindo, não no que está por baixo dele. */
+.toast.leaving { animation: toast-out 0.22s ease forwards; }
+@keyframes toast-out { to { opacity: 0; transform: translateY(6px); } }
 
 /* menu da conexão, sob a pílula */
 .scrim { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.5); animation: fade 0.2s ease; }
 .popover {
   position: fixed; z-index: 60;
-  top: calc(var(--sat) + 56px); right: 8px; min-width: 230px;
+  top: calc(var(--sat) + 56px); right: 8px; min-width: 230px; max-width: min(320px, calc(100vw - 16px));
   background: var(--bg-3); border: 1px solid var(--line); border-radius: 14px;
   padding: 6px; box-shadow: var(--shadow); animation: rise 0.18s ease;
 }
 .popover-info { font-size: 12px; color: var(--muted); padding: 8px 10px; word-break: break-all; }
+.popover-title { padding: 8px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+.popover-sep { height: 1px; margin: 6px 4px; background: var(--line); }
 .popover-item {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   background: none; border: none; padding: 12px 10px; border-radius: 10px; font-size: 14px;
 }
 .popover-item:active { background: var(--bg-4); }
 .popover-item.danger { color: var(--err); }
+/* lista "Suas filiais": ● ativa (verde online / cinza offline), ○ as outras, ✓ na ativa */
+.filial-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--faint); }
+.filial-dot.on { background: var(--ok); border-color: var(--ok); }
+.filial-dot.off { background: var(--faint); }
+.filial-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filial-row[aria-current='true'] .filial-name { font-weight: 650; }
+.filial-check { flex: 0 0 auto; color: var(--accent); }
 
 .empty-state {
   flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center;

@@ -5,8 +5,10 @@
  * - `inserterRef`: o Composer põe ali o `insert` (chamado no clique em "Comentar");
  * - `onChange`: o Composer avisa os trechos que estão no campo, na ordem do texto
  *   (é o destaque "pendente" dos blocos da resposta).
+ * O link chega pela prop `quoteLink` (o ChatPanel) ou, sem ela, pelo
+ * `QuoteLinkContext` em volta do campo (o Chat da tela do monitor no Escritório).
  */
-import { useEffect, useLayoutEffect, useRef, type MutableRefObject, type RefObject } from 'react'
+import { createContext, useEffect, useLayoutEffect, useRef, type MutableRefObject, type RefObject } from 'react'
 import type { EditorElement } from '../../inlineMedia/InlineEditor'
 import type { InlineAtt } from '../../inlineMedia/inlineAttachments'
 import type { Quote } from './quoteFormat'
@@ -24,6 +26,9 @@ export interface ComposerQuoteLink {
   onChange: (quotes: Quote[]) => void
 }
 
+/** O link de quem monta o campo sem a prop (o MonitorChat põe o campo do App aqui dentro). Sem provider, null. */
+export const QuoteLinkContext = createContext<ComposerQuoteLink | null>(null)
+
 /** O pedaço do useInlineAttachments que interessa aqui. */
 interface MediaApi {
   atts: ReadonlyMap<string, InlineAtt>
@@ -36,11 +41,11 @@ interface MediaApi {
 
 const keyOf = (quotes: readonly Quote[]): string => JSON.stringify(quotes.map((q) => [q.messageId, q.text]))
 
-/** Liga o campo ao "Comentar". Devolve quantos trechos há no campo agora. */
+/** Liga o campo ao "Comentar" (sem link, nada liga). Devolve quantos trechos há no campo agora. */
 export function useComposerQuotes(
   media: MediaApi,
   editorRef: RefObject<EditorElement | null>,
-  link: ComposerQuoteLink | undefined
+  link: ComposerQuoteLink | null | undefined
 ): number {
   const mediaRef = useRef(media)
   mediaRef.current = media

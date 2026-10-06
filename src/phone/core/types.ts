@@ -25,6 +25,8 @@ export interface StateResponse {
   projects?: string[]
   pairedDevice?: RemotePairedDevice | null
   relayState?: string
+  /** Nome do PC (hostname do Windows): o nome padrão da filial no celular. PCs antigos não mandam. */
+  pcName?: string
 }
 
 /** A mensagem do usuário como o PC guarda (UserMessage do renderer) mais o eco local do celular. */
@@ -78,3 +80,6 @@ export interface SearchResult {
   messageId: string | null
   updatedAt: number
 }
+
+/** Tipo de um aviso curto (toast): cada um com a sua cor — sucesso verde, erro vermelho, aviso amarelo. */
+export type ToastTipo = 'sucesso' | 'erro' | 'aviso'

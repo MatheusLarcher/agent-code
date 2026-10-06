@@ -34,8 +34,8 @@
  * encaixa o chat dela (`central`) na tela inclinada. Clique na TV voa até ela de frente e abre DENTRO
  * dela o que estava na tela (<TvFocus>, useTvFocus.ts: o mockup com Aprovar / Pedir ajuste, o teste
  * ao vivo, o planejamento; na TV vazia, o "📋 Planejar"). Papel do kanban: o cartão grande
- * (<BoardOverlay>). Balão de pedido: o pedido (`onFocusRequest`). Trocar de conversa fora do 3D voa
- * até o agente dela (engine.follow; nunca para a Central). 📍 minimiza o chat e voa até a mesa.
+ * (<BoardOverlay>). Balão de pedido: o pedido (`onFocusRequest`). Trocar de conversa fora do 3D fecha a
+ * TV aberta e voa até o agente dela (engine.follow; nunca para a Central). 📍 minimiza o chat e voa até a mesa.
  *
  * Só em DEV e com a aba aberta: Ctrl+Alt+Shift+D liga/desliga a demonstração
  * animada (um tique de DEMO_TICK_MS republica demoFeed(Date.now()) no
@@ -169,7 +169,7 @@ export function Office3DWorkspace({
   const boardOpenRef = useRef(boardOpen)
   boardOpenRef.current = boardOpen
   const cbs = useRef({ onOpenConversation, onFocusRequest, onHover })
-  const tvFocus = useRef<ReturnType<typeof useTvFocus>>({ tvInfo: null, onFocus: () => false, pickPlan: () => {}, sendFromTv: undefined, reset: () => {}, focusPlan: () => {}, goToAgent: () => false })
+  const tvFocus = useRef<ReturnType<typeof useTvFocus>>({ tvInfo: null, onFocus: () => false, pickPlan: () => {}, sendFromTv: undefined, reset: () => {}, focusPlan: () => {}, showConversation: () => false, goToAgent: () => false })
   // "📋 Planejar": o formulário aberto (pelo HUD ou pela TV vazia).
   const [planDialog, setPlanDialog] = useState(false)
   cbs.current = { onOpenConversation, onFocusRequest, onHover }
@@ -300,10 +300,8 @@ export function Office3DWorkspace({
     if (!active || !convId || !had) return
     if (convIsCentral) return openCentral()
     setShowCentral(false)
-    // O plano em foco na TV virou a conversa ativa (abrir pela TV, trocar de aba): a câmera fica na TV.
-    if (tvFocus.current.tvInfo?.kind === 'plan' && tvFocus.current.tvInfo.convId === convId) return
-    // Conversa de planejamento: a câmera vai à TV com o plano na tela (não se confunde com o chat de um agente).
-    if (convIsPlanning) return tvFocus.current.focusPlan(convId)
+    // A TV primeiro (useTvFocus.ts: o plano da conversa fica ou abre nela; outra conversa a fecha); senão a câmera segue o agente.
+    if (tvFocus.current.showConversation(convId, convIsPlanning)) return
     engineRef.current?.follow(convId)
   }, [convId, active, convIsCentral, convIsPlanning, openCentral])
 

@@ -2,7 +2,9 @@
  * Os avisos do monitor, no jeito das notificações do Windows: arquivo alterado,
  * pedido de permissão, contexto reenviado no meio do turno, troca de modelo e fim
  * do turno. Cada um diz para que app o clique leva (`app`, e o arquivo ou o
- * bloco). Somem sozinhos em TOAST_MS; o de permissão fica até a resposta.
+ * bloco). O padrão de toasts do app: TOAST_MS à vista, depois a saída (`leaving`:
+ * a animação cm-toast-out de taskbar.css) e fora da lista em TOAST_EXIT_MS; o de
+ * permissão fica até a resposta. O clique (dismiss) tira na hora.
  *
  * Só o que ACONTECE com a tela aberta vira aviso: ao montar, o que já está no
  * feed é marcado como visto. No máximo TOAST_MAX à vista (o mais novo em cima).
@@ -16,7 +18,9 @@ import type { IconName } from './icons'
 import type { MonitorApp } from './monitorPrefs'
 import { normalizePath } from './pathGuard'
 
-export const TOAST_MS = 5200
+export const TOAST_MS = 4500
+/** A saída: o mesmo tempo da animação cm-toast-out (taskbar.css). */
+export const TOAST_EXIT_MS = 250
 export const TOAST_MAX = 3
 
 export interface MonitorToast {
@@ -31,6 +35,8 @@ export interface MonitorToast {
   /** Contexto: rolar até o último reenvio. */
   resent?: boolean
   sticky?: boolean
+  /** Saindo (só o hook marca, ao vencer TOAST_MS): a classe `leaving` da animação de saída. */
+  leaving?: boolean
 }
 
 const WRITERS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
@@ -54,23 +60,34 @@ export function useMonitorToasts(input: ToastInput): { toasts: MonitorToast[]; d
   const [toasts, setToasts] = useState<MonitorToast[]>([])
   const seen = useRef<Set<string> | null>(null)
   const wasBusy = useRef(input.busy)
+  // Um tempo por aviso: o à vista (TOAST_MS) e, vencido ele, o da saída (TOAST_EXIT_MS) no mesmo lugar.
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
-
-  const dismiss = useCallback((id: string) => {
+  const stop = useCallback((id: string) => {
     const t = timers.current.get(id)
     if (t) clearTimeout(t)
     timers.current.delete(id)
-    setToasts((list) => list.filter((x) => x.id !== id))
   }, [])
+
+  const dismiss = useCallback(
+    (id: string) => {
+      stop(id)
+      setToasts((list) => list.filter((x) => x.id !== id))
+    },
+    [stop]
+  )
   const push = useCallback(
     (t: MonitorToast) => {
-      setToasts((list) => [t, ...list.filter((x) => x.id !== t.id)].slice(0, TOAST_MAX))
+      stop(t.id)
+      // De novo (até no meio da saída): volta inteiro, em cima e com tempo novo.
+      setToasts((list) => [{ ...t, leaving: false }, ...list.filter((x) => x.id !== t.id)].slice(0, TOAST_MAX))
       if (t.sticky) return
-      const old = timers.current.get(t.id)
-      if (old) clearTimeout(old)
-      timers.current.set(t.id, setTimeout(() => dismiss(t.id), TOAST_MS))
+      const leave = (): void => {
+        setToasts((list) => list.map((x) => (x.id === t.id ? { ...x, leaving: true } : x)))
+        timers.current.set(t.id, setTimeout(() => dismiss(t.id), TOAST_EXIT_MS))
+      }
+      timers.current.set(t.id, setTimeout(leave, TOAST_MS))
     },
-    [dismiss]
+    [stop, dismiss]
   )
   useEffect(() => {
     const all = timers.current

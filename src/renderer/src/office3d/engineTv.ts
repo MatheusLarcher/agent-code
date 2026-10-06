@@ -11,10 +11,10 @@ import { CONSOLE_SCREEN, CONSOLE_TILT } from './decorWall'
 import { SCREEN_H, SCREEN_W } from './kit'
 import { CONSOLE, MEMORY_SHELF } from './officePlan'
 import type { EngineFilter } from './engineFilter'
-import { BOARD_KEY, MEMORY_SHELF_KEY, PROJECTOR_KEY } from './engineTypes'
+import { BOARD_KEY, MEMORY_SHELF_KEY, PROJECTOR_KEY, TV_PLAN_KEY } from './engineTypes'
 import { BOARD_H, BOARD_W, FACE_Z } from './board/boardLayout'
 import { boardPlace } from './furniture'
-import { monitorPosition, OFFICE_ID, type ProjectLayout } from './layout'
+import { monitorPosition, type ProjectLayout } from './layout'
 import type { OfficePower, PowerLevel } from './power'
 import type { OfficeScene } from './scene'
 import type { ScreenAnchor } from './screenAnchor'
@@ -35,13 +35,16 @@ export function boardCounts(board: Pick<EngineBoard, 'sync'>, projectId: string 
   return out
 }
 
-/** Clique no Agent Manager (à cabeceira): o foco vai para a TV, no plano dele. As outras chaves ficam como estão. */
+/**
+ * Clique no Agent Manager (à cabeceira): o foco vai para a TV, no plano dele (TV_PLAN_KEY: abre no plano
+ * mesmo com agente chamando ou testando). As outras chaves ficam como estão.
+ */
 export function focusKeyFor(scene: OfficeScene, key: string): string {
   const c = scene.character(key)
   if (c?.spot !== 'manager') return key
   scene.projectors.content.plans.prefer = c.model.convId
   scene.projectors.tick(Date.now())
-  return `${PROJECTOR_KEY}${OFFICE_ID}`
+  return `${TV_PLAN_KEY}${c.model.convId}`
 }
 
 /** A câmera de frente para a TV, com a sala em volta (o clique na notificação do chamado); null sem TV. */

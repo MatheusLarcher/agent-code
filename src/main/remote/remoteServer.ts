@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
 import { stat, readFile } from 'node:fs/promises'
-import { networkInterfaces } from 'node:os'
+import { hostname, networkInterfaces } from 'node:os'
 import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
@@ -487,7 +487,9 @@ export class RemoteServer {
         usage: this.state.usage ?? {},
         projects: this.state.projects ?? [],
         pairedDevice: this.pairedDevice ?? null,
-        relayState: this.relayState
+        relayState: this.relayState,
+        // The phone's default name for this PC ("filial").
+        pcName: hostname()
       })
     )
   }

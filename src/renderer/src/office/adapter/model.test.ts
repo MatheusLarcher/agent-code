@@ -46,6 +46,21 @@ describe('quem entra no escritório', () => {
     expect(roomIdFor('/home/x/Proj/')).toBe('/home/x/Proj')
   })
 
+  it('as conversas de sandbox (uma subpasta cada) são UM projeto só, chamado "Sandbox"', () => {
+    const root = 'C:\\Users\\M\\AppData\\Roaming\\agent-code-desktop\\agent-code-local\\sandbox'
+    const m = deriveOfficeModel(
+      feed({ conversations: [conv('s1', { cwd: `${root}\\2026-10-06_09-03_f38b` }), conv('s2', { cwd: `${root}\\2026-10-05_17-26_E400` }), conv('a')] }),
+      NOW
+    )
+    expect(m.rooms.map((r) => [r.id, r.name, r.principals])).toEqual([
+      ['sandbox', 'Sandbox', 2],
+      ['c:/proj/alpha', 'alpha', 1]
+    ])
+    expect(m.characters.filter((c) => c.convId === 's1' || c.convId === 's2').map((c) => c.roomId)).toEqual(['sandbox', 'sandbox'])
+    // Pasta chamada "sandbox" num projeto comum não é o sandbox.
+    expect(roomIdFor('C:\\proj\\sandbox\\api')).toBe('c:/proj/sandbox/api')
+  })
+
   it('a Central vira UM personagem no console (sem sala, nem para o cwd vazio dela); conversa sem pasta não vira sala', () => {
     const m = deriveOfficeModel(feed({ conversations: [conv('central', { cwd: '', mode: 'central' } as never), conv('solta', { cwd: '' }), conv('a')], activeId: 'central' }), NOW)
     const central = m.characters.filter((c) => c.convId === 'central')

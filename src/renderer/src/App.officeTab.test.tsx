@@ -10,16 +10,21 @@ import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } f
 import type { AgentEventMsg, ChatEvent } from '@shared/ipc'
 import { App } from './App'
 import { CentralPanel, type CentralPanelProps } from './central/CentralPanel'
+import type { TtsControls } from './components/ChatRows'
 import type { Office3DWorkspaceProps } from './office3d/Office3DWorkspace'
 import { makePlan } from './planning/planningTestUtils'
 import { UiProvider } from './ui/UiProvider'
 
 configure({ asyncUtilTimeout: 10_000 })
 
-const office = vi.hoisted(() => ({ props: null as Office3DWorkspaceProps | null, fail: false, monitor: false, pickerFor: null as string | null }))
-vi.mock('./office3d/Office3DWorkspace', () => ({
-  Office3DWorkspace: (p: Office3DWorkspaceProps) => {
+const office = vi.hoisted(() => ({ props: null as Office3DWorkspaceProps | null, fail: false, monitor: false, pickerFor: null as string | null, tts: null as TtsControls | null }))
+vi.mock('./office3d/Office3DWorkspace', async () => {
+  const { useContext } = await import('react')
+  const { TtsContext } = await import('./components/ttsContext')
+  return { Office3DWorkspace: (p: Office3DWorkspaceProps) => {
     office.props = p
+    // O TTS que o App põe em volta do Escritório (o "Ouvir" do Chat da tela do monitor o lê daqui).
+    office.tts = useContext(TtsContext)
     if (office.fail) throw new Error('WebGL sumiu')
     return (
       <div data-testid="office-stub" hidden={!p.active}>
@@ -30,8 +35,8 @@ vi.mock('./office3d/Office3DWorkspace', () => ({
         {p.active && office.pickerFor ? <div data-testid="office-picker-stub">{p.monitorModelPicker?.(office.pickerFor)}</div> : null}
       </div>
     )
-  }
-}))
+  } }
+})
 
 window.HTMLElement.prototype.scrollIntoView = vi.fn()
 // O jsdom não tem CSS.escape (o MessageList acha a mensagem do resultado de busca por ele).
@@ -127,6 +132,8 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     listContextTurns: vi.fn(async () => []),
     readContextTurn: vi.fn(async () => null),
     countContextExact: vi.fn(async () => ({ ok: false, usage: null })),
+    // O TTS (Kokoro) no teste: não sintetiza nada.
+    speak: vi.fn(async () => ({ ok: false, error: 'sem voz no teste' })),
     revealSecret: vi.fn(async () => null),
     onContextTurnsChanged: vi.fn(() => () => {}),
     onAgentEvent: vi.fn((cb: (m: AgentEventMsg) => void) => {
@@ -207,6 +214,7 @@ beforeEach(() => {
   office.fail = false
   office.monitor = false
   office.pickerFor = null
+  office.tts = null
   seed([conv('c1', 'Conversa')])
   api = installApi()
 })
@@ -320,6 +328,17 @@ describe('App — aba Escritório', () => {
     fireEvent.click(tab(/Conversa/))
     await waitFor(() => expect(office.props?.active).toBe(false))
     expect(office.props?.monitorComposer).toBeNull()
+  })
+
+  it('o "Ouvir" do Chat da tela do monitor é o TTS do chat: o App põe o mesmo em volta do Escritório (o mesmo áudio)', async () => {
+    seed([conv('c1', 'Conversa')], 'office')
+    render(<UiProvider><App /></UiProvider>)
+    await screen.findByTestId('office-stub')
+    expect(office.tts).toMatchObject({ speakingId: null })
+    await act(async () => {
+      void office.tts!.onToggleSpeak('m1', 'Olá, mundo.')
+    })
+    expect(api.speak).toHaveBeenCalledWith(expect.stringContaining('Olá, mundo'))
   })
 
   it('o seletor de modelo da tela do monitor troca o modelo da conversa do agente (não o da ativa); só com a aba aberta', async () => {

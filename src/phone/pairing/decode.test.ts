@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import QRCode from 'qrcode'
-import { decodePairing } from './decode'
+import { decodeFrame, decodePairing } from './decode'
 
 /** O QR como o PC desenha (RemoteModal: URL pública + ?token + ?lan), rasterizado em RGBA como um quadro da câmera. */
 function qrFrame(text: string, scale = 4, quiet = 4): { data: Uint8ClampedArray; size: number } {
@@ -40,5 +40,31 @@ describe('leitura do QR do PC', () => {
   it('quadro sem QR não pareia', () => {
     const blank = new Uint8ClampedArray(64 * 64 * 4).fill(200)
     expect(decodePairing(blank, 64, 64)).toBeNull()
+  })
+})
+
+describe('decodeFrame: distingue "QR de outra coisa" de "sem QR"', () => {
+  it('QR da ponte → { cfg }', () => {
+    const f = qrFrame('https://agent-code.larchertech.com/?token=0123456789abcdef0123456789abcdef&lan=192.168.0.179%3A8765')
+    expect(decodeFrame(f.data, f.size, f.size)).toEqual({
+      cfg: { base: 'https://agent-code.larchertech.com', token: '0123456789abcdef0123456789abcdef', lan: '192.168.0.179:8765' }
+    })
+  })
+
+  it('QR legível que não é da ponte (sem token, ou nem é endereço) → { foreign: true }', () => {
+    const site = qrFrame('https://example.com/qualquer')
+    expect(decodeFrame(site.data, site.size, site.size)).toEqual({ foreign: true })
+    const texto = qrFrame('WIFI:S:minha-rede;T:WPA;P:senha;;')
+    expect(decodeFrame(texto.data, texto.size, texto.size)).toEqual({ foreign: true })
+  })
+
+  it('quadro sem QR → null (não é "estrangeiro": ainda não há o que avisar)', () => {
+    const blank = new Uint8ClampedArray(64 * 64 * 4).fill(200)
+    expect(decodeFrame(blank, 64, 64)).toBeNull()
+  })
+
+  it('decodePairing segue devolvendo só o pareamento (QR estrangeiro vira null)', () => {
+    const site = qrFrame('https://example.com/qualquer')
+    expect(decodePairing(site.data, site.size, site.size)).toBeNull()
   })
 })

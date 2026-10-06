@@ -1,7 +1,8 @@
 /* Pareamento: QR, reconectando e outro celular pareado. */
 .pair-screen {
-  position: absolute; inset: 0;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  position: absolute; inset: 0; overflow-y: auto; /* com várias filiais a lista de trocas pode passar da tela */
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; justify-content: safe center; /* "safe": se não couber, começa do topo em vez de cortá-lo */
   padding: calc(var(--sat) + 24px) 24px calc(var(--sab) + 24px);
   background:
     radial-gradient(120% 80% at 50% -10%, rgba(217, 119, 87, 0.14), transparent 60%),
@@ -23,11 +24,18 @@
 }
 .brand h1 { margin: 0; font-size: 22px; font-weight: 700; }
 .sub { margin: 0 0 10px; color: var(--muted); font-size: 14px; line-height: 1.55; }
-.pair-error { margin: 6px 0 0; color: var(--err); font-size: 13px; line-height: 1.45; }
 .pair-foot { margin: 18px 0 0; color: var(--faint); font-size: 12.5px; text-align: center; }
 .reconnect-card .brand-logo { background: var(--accent-soft); color: var(--accent); box-shadow: none; }
 .reconnect-card .spinner { width: 19px; height: 19px; }
+.reconnect-filial { margin: -6px 0 0; font-size: 15px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reconnect-status { min-height: 20px; margin: -4px 0 10px; color: var(--accent); font-size: 13px; }
+/* "Esquecer esta filial": ação secundária, bem mais fraca que as de troca (sem fundo nem borda) */
+.reconnect-forget {
+  margin-top: 2px; min-height: 44px; padding: 10px 14px; border-radius: 12px;
+  background: none; border: none; color: var(--err); opacity: 0.85;
+  font-size: 13.5px; font-weight: 600;
+}
+.reconnect-forget:active { background: rgba(255, 255, 255, 0.05); }
 
 /* leitor de QR */
 .scanner {

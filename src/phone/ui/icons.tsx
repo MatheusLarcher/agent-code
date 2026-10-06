@@ -9,6 +9,7 @@ const PATHS: Record<string, ReactNode> = {
   stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   sandbox: (<><path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z" /><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" /></>),
   plus: (<><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></>),
+  x: (<><line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" /></>),
   open: (<><path d="M14 5h5v5" /><line x1="19" y1="5" x2="11" y2="13" /><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" /></>),
   chevron: <polyline points="9 6 15 12 9 18" />,
   check: <polyline points="5 12.5 10 17 19 7" />,

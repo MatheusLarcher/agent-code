@@ -1,10 +1,11 @@
-/** Configurações: Permitir tudo, uso da conta e contexto, Voz no aparelho e a conexão (sair). */
+/** Configurações: Permitir tudo, uso da conta e contexto, Voz no aparelho e as filiais (no navegador, a conexão). */
 import { useEffect } from 'react'
+import { isApk } from '../app/platform'
 import { client, nav } from '../app/runtime'
 import { fmtReset, fmtTokens, USAGE_LABELS } from '../core/format'
 import { useStore } from '../core/store'
-import { confirmExit } from '../shell/StatusMenu'
 import { Icon } from '../ui/icons'
+import { ConexaoCard, FiliaisCard } from './FiliaisCard'
 import { VoiceCard } from './VoiceCard'
 
 function UsageRow({ label, pct, detail }: { label: string; pct: number; detail: string }): JSX.Element {
@@ -49,8 +50,6 @@ function UsageCard(): JSX.Element {
 export function Settings(): JSX.Element | null {
   const open = useStore(nav, (s) => s.settingsOpen)
   const skip = useStore(client.store, (s) => s.skipPerms)
-  const base = useStore(client.store, (s) => s.base)
-  const token = useStore(client.store, (s) => s.token)
   const close = (): void => nav.set({ settingsOpen: false })
 
   // Voltar do Android fecha as Configurações em vez de sair do app.
@@ -85,12 +84,7 @@ export function Settings(): JSX.Element | null {
         </section>
         <UsageCard />
         <VoiceCard />
-        <section className="cfg-card">
-          <div className="cfg-card-title">Conexão</div>
-          <div className="cfg-row"><span className="cfg-k">Endereço</span><span className="cfg-v">{base ? base.replace(/^https?:\/\//, '') : '—'}</span></div>
-          <div className="cfg-row"><span className="cfg-k">Token</span><span className="cfg-v">{token || '—'}</span></div>
-          <button type="button" className="cfg-exit" onClick={confirmExit}>Sair desta conexão</button>
-        </section>
+        {isApk() ? <FiliaisCard /> : <ConexaoCard />}
       </div>
     </aside>
   )

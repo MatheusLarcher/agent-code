@@ -20,7 +20,7 @@
  * (o motor). A barra some até o mouse chegar à borda de baixo; o alfinete a
  * fixa e o campo do Chat fica acima.
  *
- * O Chat usa o ToolCard do chat, que pede o UiProvider do app.
+ * O Chat usa o ToolCard e o "Comentar" do chat, que pedem o UiProvider do app.
  */
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { modelDisplayName } from '@shared/modelLabel'
@@ -374,7 +374,6 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
           chatOn={app === 'code'}
           narrow={narrow}
           status={app === 'code' ? <CodeStatus code={code} who={isMain ? '' : head.who} models={footerModels} effort={effort} page={page} /> : null}
-          onWidthSaved={(w) => push({ id: 'chat-width', kind: 'ok', icon: 'check', app: 'code', title: 'Largura do chat guardada', body: `${w} px · vale para todos os monitores` })}
           chat={
             <MonitorChat
               head={head}

@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -30,7 +31,7 @@ import { InlineEditor, type EditorElement } from '../inlineMedia/InlineEditor'
 import { useInlineAttachments } from '../inlineMedia/useInlineAttachments'
 import { offsetFromPoint, TOKEN } from '../inlineMedia/editorModel'
 import type { DraftMedia, InlineAtt } from '../inlineMedia/inlineAttachments'
-import { useComposerQuotes, type ComposerQuoteLink } from './quoteComment/useComposerQuotes'
+import { QuoteLinkContext, useComposerQuotes, type ComposerQuoteLink } from './quoteComment/useComposerQuotes'
 import { useComposerElements } from './elementPick/useComposerElements'
 
 import { boxMetrics, composerBoxHeight } from './composerHeight'
@@ -95,7 +96,8 @@ interface Props {
    *  ao trocar de conversa. Ver useHasTextSignal. */
   onHasTextChange?: HasTextListener
   /** "Comentar" (ver quoteComment/): o trecho entra como anexo inline no cursor
-   *  e, no envio, vira "[trecho N]" + a citação no topo. */
+   *  e, no envio, vira "[trecho N]" + a citação no topo. Sem a prop, vale o
+   *  QuoteLinkContext em volta (o Chat da tela do monitor no Escritório). */
   quoteLink?: ComposerQuoteLink
   /** Texto do campo vazio no lugar do padrão (os avisos de sem sessão e de
    *  pasta ausente continuam por cima). */
@@ -271,7 +273,9 @@ export function Composer(props: Props): JSX.Element {
   valueRef.current = value
   // Trecho citado conta como texto para quem ouve: com ele dá para enviar sem
   // digitar nada, e o Agent Manager minimizado não pode esconder o enviar.
-  const quoteCount = useComposerQuotes(media, editorRef, props.quoteLink)
+  // O link do "Comentar": a prop (o ChatPanel) vence; sem ela, o do contexto em volta.
+  const ctxQuoteLink = useContext(QuoteLinkContext)
+  const quoteCount = useComposerQuotes(media, editorRef, props.quoteLink ?? ctxQuoteLink)
   useComposerElements(media, editorRef, props.chips, props.onChipsConsumed)
   useHasTextSignal(quoteCount ? QUOTE_AS_TEXT : value, props.onHasTextChange)
 

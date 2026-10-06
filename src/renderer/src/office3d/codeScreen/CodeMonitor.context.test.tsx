@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { secretPlaceholder, type ContextBlock, type ContextTurnDetail, type ContextTurnSummary } from '@shared/contextSnapshot'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { secretPlaceholder, type ContextBlock, type ContextTurnChanged, type ContextTurnDetail, type ContextTurnSummary, type ContextUsageSnapshot } from '@shared/contextSnapshot'
 import type { OfficeFeed } from '../../office/adapter/feed'
 import type { OfficeCharacterModel } from '../../office/adapter/model'
 import { conv, feed } from '../../office/adapter/testFeed'
@@ -54,7 +54,8 @@ beforeEach(() => {
     readFile: vi.fn(async () => 'x\n'),
     getCacheInfo: vi.fn(async () => ({ memoriesDir: 'D:\\mem' })),
     listContextTurns: vi.fn(async () => [T2, T1]),
-    readContextTurn: vi.fn(async (_c: string, turnId: string) => DETAILS[turnId] ?? null),
+    // Como o IPC: um objeto novo a cada leitura (a releitura do mesmo turno não é o mesmo objeto).
+    readContextTurn: vi.fn(async (_c: string, turnId: string) => (DETAILS[turnId] ? { ...DETAILS[turnId] } : null)),
     countContextExact: vi.fn(async () => ({ ok: true, usage: { detail: 'full', at: 1, totalTokens: 64360, maxTokens: 200000, percentage: 32, categories: [] } })),
     revealSecret: vi.fn(async () => SECRET),
     onContextTurnsChanged: vi.fn(() => () => undefined)
@@ -72,6 +73,39 @@ const ui = (f: OfficeFeed = feedOf(), m: OfficeCharacterModel = model()): JSX.El
     <CodeMonitor feed={f} model={m} />
   </UiProvider>
 )
+
+// A contagem exata (countContextExact): o resultado do SDK e o turno novo que chega com a tela aberta.
+const usage = (totalTokens: number): ContextUsageSnapshot => ({ detail: 'full', at: 1, totalTokens, maxTokens: 200000, percentage: 32, categories: [] })
+const T3 = summary('T3', new Date(2026, 9, 3, 17, 5).getTime(), [{ model: OPUS, calls: 2, node: null }])
+const withT3 = (): void => {
+  api.listContextTurns.mockResolvedValue([T3, T2, T1])
+  api.readContextTurn.mockImplementation(async (_c: string, turnId: string) =>
+    turnId === 'T3' ? detailOf(T3, [block('user-request', 'outro pedido')]) : DETAILS[turnId] ? { ...DETAILS[turnId] } : null
+  )
+}
+/** Deixa as promessas em voo (o IPC fingido) terminarem. */
+const settle = (): Promise<void> => act(async () => {
+  await new Promise((r) => setTimeout(r, 0))
+})
+const sum = (): string => document.querySelector('.cm-ctx-sum')?.textContent ?? ''
+const toastTitles = (): string[] => [...document.querySelectorAll('.cm-toast b')].map((b) => b.textContent ?? '')
+/** O botão da contagem: "Contar exato" ou, contado, "Contado". */
+const exactBtn = (): HTMLButtonElement => screen.getByRole('button', { name: /^(Contar exato|Contado)$/ }) as HTMLButtonElement
+/** O aviso "mudou" do main: a tela relê a lista e o turno à vista (espera a releitura acontecer). */
+function turnsChanged(): (turnId: string) => Promise<void> {
+  const subs = new Set<(e: ContextTurnChanged) => void>()
+  api.onContextTurnsChanged.mockImplementation((f: (e: ContextTurnChanged) => void) => {
+    subs.add(f)
+    return () => void subs.delete(f)
+  })
+  return async (turnId) => {
+    const reads = api.listContextTurns.mock.calls.length
+    act(() => [...subs].forEach((f) => f({ convId: 'a', turnId })))
+    await waitFor(() => expect(api.listContextTurns.mock.calls.length).toBeGreaterThan(reads), { timeout: 2000 })
+    await settle()
+    await settle()
+  }
+}
 
 describe('CodeMonitor — app Contexto', () => {
   it('Recebeu: o texto exato, com a senha mascarada do tamanho real; o olho mostra o valor de agora e esconde em 30 s', async () => {
@@ -121,18 +155,85 @@ describe('CodeMonitor — app Contexto', () => {
     expect(document.querySelectorAll('.cm-did .cm-mt')).toHaveLength(0)
   })
 
-  it('Contar exato: o total contado; na rota GPT, o motivo, sem erro', async () => {
-    const view = render(ui())
-    await screen.findByText('arruma o login')
-    fireEvent.click(screen.getByRole('button', { name: /Contar exato/ }))
-    expect(await screen.findByText('Contagem exata feita')).toBeTruthy()
-    expect(document.querySelector('.cm-ctx-sum')!.textContent).toContain('64.360 tokens')
-    view.unmount()
-    api.countContextExact.mockResolvedValueOnce({ ok: false, usage: null, reason: 'Contagem exata indisponível na rota gpt.' })
+  it('abrir o Contexto conta exato sozinho, uma vez e calado: o total contado no topo e "Contado", sem aviso', async () => {
     render(ui())
     await screen.findByText('arruma o login')
-    fireEvent.click(screen.getByRole('button', { name: /Contar exato/ }))
+    await waitFor(() => expect(sum()).toContain('64.360 tokens'))
+    await settle()
+    expect(api.countContextExact.mock.calls).toEqual([['a']])
+    expect([exactBtn().textContent, exactBtn().disabled, toastTitles()]).toEqual(['Contado', true, []])
+  })
+
+  it('a contagem sozinha que falha fica calada: o resumo do SDK, "Contar exato" livre e sem repetir; à mão, os avisos de hoje', async () => {
+    const changed = turnsChanged()
+    api.countContextExact.mockResolvedValueOnce({ ok: false, usage: null, reason: 'Não há sessão viva nesta conversa.' })
+    const view = render(ui())
+    await screen.findByText('arruma o login')
+    await waitFor(() => expect(api.countContextExact).toHaveBeenCalledTimes(1))
+    await settle()
+    expect([toastTitles(), exactBtn().textContent, exactBtn().disabled, sum().includes('64.360')]).toEqual([[], 'Contar exato', false, false])
+    // A releitura do mesmo turno não tenta de novo (nada de laço).
+    await changed('T2')
+    expect(api.countContextExact).toHaveBeenCalledTimes(1)
+    // À mão (a sessão voltou): o total e o aviso de sempre.
+    fireEvent.click(exactBtn())
+    expect(await screen.findByText('Contagem exata feita')).toBeTruthy()
+    expect([sum().includes('64.360 tokens'), exactBtn().textContent]).toEqual([true, 'Contado'])
+    view.unmount()
+    // Na rota GPT nunca dá: calado ao abrir; o botão diz o motivo.
+    api.countContextExact.mockResolvedValue({ ok: false, usage: null, reason: 'Contagem exata indisponível na rota gpt.' })
+    render(ui())
+    await screen.findByText('arruma o login')
+    await waitFor(() => expect(api.countContextExact).toHaveBeenCalledTimes(3))
+    await settle()
+    expect(toastTitles()).toEqual([])
+    fireEvent.click(exactBtn())
     expect(await screen.findByText('Contagem exata indisponível na rota gpt.')).toBeTruthy()
+    expect(toastTitles()).toEqual(['Contagem exata indisponível'])
+  })
+
+  it('turno antigo não conta sozinho (o botão fica desligado); voltar ao mais novo conta de novo', async () => {
+    render(ui())
+    await screen.findByRole('button', { name: 'Contado' })
+    fireEvent.click(screen.getByRole('button', { name: /Turno das 16:42 · atual/ }))
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Turnos desta conversa' })).getAllByRole('menuitem')[1])
+    expect(await screen.findByText('pedido antigo')).toBeTruthy()
+    await settle()
+    expect([api.countContextExact.mock.calls.length, exactBtn().textContent, exactBtn().disabled]).toEqual([1, 'Contar exato', true])
+    fireEvent.click(screen.getByRole('button', { name: /Turno das 16:12/ }))
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Turnos desta conversa' })).getAllByRole('menuitem')[0])
+    await screen.findByRole('button', { name: 'Contado' })
+    expect(api.countContextExact).toHaveBeenCalledTimes(2)
+  })
+
+  it('a releitura do mesmo turno não conta de novo; um turno novo com a tela aberta, sim', async () => {
+    const changed = turnsChanged()
+    render(ui())
+    await screen.findByRole('button', { name: 'Contado' })
+    await changed('T2')
+    expect([api.countContextExact.mock.calls.length, exactBtn().textContent]).toEqual([1, 'Contado'])
+    withT3()
+    api.countContextExact.mockResolvedValueOnce({ ok: true, usage: usage(70000) })
+    await changed('T3')
+    expect(await screen.findByText('outro pedido')).toBeTruthy()
+    await waitFor(() => expect(sum()).toContain('70.000 tokens'))
+    expect([api.countContextExact.mock.calls.length, exactBtn().textContent, toastTitles()]).toEqual([2, 'Contado', []])
+  })
+
+  it('a contagem que chega depois de o turno mudar não vale para o turno novo', async () => {
+    const changed = turnsChanged()
+    let late: (v: unknown) => void = () => undefined
+    api.countContextExact.mockImplementationOnce(() => new Promise((r) => (late = r)))
+    api.countContextExact.mockResolvedValueOnce({ ok: true, usage: usage(70000) })
+    render(ui())
+    await screen.findByText('arruma o login')
+    await waitFor(() => expect(api.countContextExact).toHaveBeenCalledTimes(1))
+    withT3()
+    await changed('T3')
+    await waitFor(() => expect(sum()).toContain('70.000 tokens'))
+    late({ ok: true, usage: usage(64360) })
+    await settle()
+    expect([sum().includes('70.000 tokens'), sum().includes('64.360')]).toEqual([true, false])
   })
 
   it('subagente: as instruções do especialista e o pedido do principal, com o modelo dele', async () => {
@@ -149,6 +250,9 @@ describe('CodeMonitor — app Contexto', () => {
     expect(document.querySelector('.cm-recv')!.textContent).toContain('Instruções do especialista')
     expect(document.querySelector('.cm-recv')!.textContent).toContain('O que o motor carrega para o subagente')
     expect(document.querySelector('.cm-did .cm-mchip')?.textContent).toBe('feito por claude-haiku-4-5')
+    // A contagem exata é a da sessão do principal: o subagente não conta sozinho.
+    await settle()
+    expect(api.countContextExact).not.toHaveBeenCalled()
   })
 
   it('sem IPC (ou sem turno gravado): diz o que falta, sem erro e sem modelo inventado', async () => {
@@ -156,5 +260,7 @@ describe('CodeMonitor — app Contexto', () => {
     render(ui(feedOf([{ kind: 'user', id: 'u', text: 'oi' }])))
     expect(await screen.findByText(/Nenhum turno gravado nesta conversa ainda/)).toBeTruthy()
     expect(document.querySelector('.cm-did .cm-mchip')).toBeNull()
+    await settle()
+    expect(api.countContextExact).not.toHaveBeenCalled()
   })
 })

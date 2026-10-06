@@ -14,8 +14,8 @@
  *   frameArrived(convId)       quadro novo do navegador da conversa;
  *   lock(on) / focusInfo()     o foco na TV: o conteúdo congela enquanto o usuário
  *                              está nela, e o foco abre o que estava na tela;
- *   planFocus(convId?)         o foco que o usuário pede (clique na TV, "📋 Planejar"):
- *                              o plano primeiro, com a fila de quem chama/testa à parte.
+ *   planFocus(convId?)         o foco que o usuário pede ("📋 Planejar", a conversa do plano,
+ *                              o Agent Manager): o plano primeiro, com a fila de quem chama/testa à parte.
  *
  * A imagem só é redesenhada (no máximo uma vez a cada MIN_PAINT_MS, ~5 por
  * segundo) na sala com a tela acesa, à vista e PERTO/MÉDIO — ou com o espelho
@@ -360,10 +360,11 @@ export class Projectors {
   }
 
   /**
-   * O foco que o usuário pede (clique na TV, "📋 Planejar"): o plano `convId`
-   * (o recém-criado, mesmo fora do filtro) ou o da TV (TvPlans.current, no
-   * filtro), por cima de quem chama ou testa — esses vão para `agents`, na ordem
-   * da TV (chamados, depois testes). null sem plano: vale o que está na tela.
+   * O foco que o usuário pede ("📋 Planejar", a conversa do plano, o Agent
+   * Manager): o plano `convId` (o pedido, mesmo fora do filtro) ou o da TV
+   * (TvPlans.current, no filtro), por cima de quem chama ou testa — esses vão
+   * para `agents`, na ordem da TV (chamados, depois testes). null sem plano:
+   * vale o que está na tela.
    */
   planFocus(convId: string | null = null): Extract<TvFocusInfo, { kind: 'plan' }> | null {
     const st = this.list[0]

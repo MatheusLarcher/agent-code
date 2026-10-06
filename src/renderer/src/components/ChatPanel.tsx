@@ -13,12 +13,12 @@ import type { CrewMember } from '../crew'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
 import type { DraftMedia } from '../inlineMedia/inlineAttachments'
-import { readableMediaText } from '@shared/inlineMedia'
 import { CrewChip } from './CrewChip'
+import { QueueStrip } from './QueueStrip'
 import { EffortPicker } from './EffortPicker'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
 import { VigiaChip, type VigiaDoubt } from './VigiaChip'
-import { IconClock, IconClose, IconHelp, IconChevronDown, IconLeaf, IconRepeat, IconWarning, IconZap } from './Icons'
+import { IconClock, IconHelp, IconChevronDown, IconLeaf, IconRepeat, IconWarning, IconZap } from './Icons'
 import { TokenUsagePanel } from './TokenUsagePanel'
 import { UsageMiniBar } from './UsageMiniBar'
 import { fmtDuration } from './fmtDuration'
@@ -433,36 +433,7 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {messages.length > 0 && props.connectAccount}
 
-      {props.queued.length > 0 && (
-        <div className="queue">
-          <div className="queue-label"><IconClock size={13} /> Na fila ({props.queued.length}) — enviadas quando a tarefa atual terminar, ou já com "agora"</div>
-          {props.queued.map((q) => (
-            <div className="queue-item" key={q.id}>
-              {q.thumbs.length > 0 && (
-                <span className="queue-thumbs">
-                  {q.thumbs.map((t, i) => (
-                    <img key={i} src={t} alt="anexo" />
-                  ))}
-                </span>
-              )}
-              <span className="queue-text">{readableMediaText(q.text).trim() || '(imagem)'}</span>
-              {props.onSendQueuedNow && (
-                <button
-                  type="button"
-                  className="queue-now"
-                  onClick={() => props.onSendQueuedNow?.(q.id)}
-                  title="Mandar agora: entra na tarefa em andamento como ajuste, sem interromper nem cancelar o pedido anterior"
-                >
-                  agora
-                </button>
-              )}
-              <button className="queue-x" onClick={() => props.onDeleteQueued(q.id)} title="Remover da fila">
-                <IconClose size={13} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <QueueStrip queued={props.queued} onDelete={props.onDeleteQueued} onSendNow={props.onSendQueuedNow} />
 
       {props.vigiaAlert && (
         <VigiaChip

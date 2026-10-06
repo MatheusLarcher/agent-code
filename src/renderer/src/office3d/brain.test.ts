@@ -17,10 +17,11 @@ function model(id: string, extra: Partial<OfficeCharacterModel> = {}): OfficeCha
 
 const CAM = { x: 6, z: 30 }
 
-/** Escritório de uma sala com `n` principais (+ extras), cérebros num Crowd de sorteio fixo. */
+/** Escritório com `n` principais (+ extras), 6 por projeto (uma ilha cada: r1, r2…), cérebros num Crowd de sorteio fixo. */
 function office(n: number, extra: OfficeCharacterModel[] = [], away = false) {
-  const chars = [...Array.from({ length: n }, (_, i) => model(`p${i}`)), ...extra]
-  const layout = layoutOffice({ rooms: [{ id: 'r1', projectKey: 'r1', name: 'r1', icon: null, principals: n }], characters: chars })
+  const chars = [...Array.from({ length: n }, (_, i) => model(`p${i}`, { roomId: `r${Math.floor(i / 6) + 1}` })), ...extra]
+  const ids = [...new Set(chars.map((c) => c.roomId as string))]
+  const layout = layoutOffice({ rooms: ids.map((id) => ({ id, projectKey: id, name: id, icon: null, principals: chars.filter((c) => c.roomId === id).length })), characters: chars })
   const crowd = new Crowd(42)
   crowd.syncRooms(layout.rooms)
   const rooms = new Map(layout.rooms.map((r) => [r.id, r] as const))

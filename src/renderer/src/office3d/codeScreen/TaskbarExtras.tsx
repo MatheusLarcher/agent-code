@@ -126,7 +126,7 @@ export function Toasts({ toasts, onOpen }: { toasts: readonly MonitorToast[]; on
   return (
     <div className="cm-toasts" aria-live="polite">
       {toasts.map((t) => (
-        <button key={t.id} type="button" className={`cm-toast ${t.kind}`} onClick={() => onOpen(t)}>
+        <button key={t.id} type="button" className={`cm-toast ${t.kind}${t.leaving ? ' leaving' : ''}`} onClick={() => onOpen(t)}>
           <span className="cm-toast-ic">
             <Icon name={t.icon} />
           </span>

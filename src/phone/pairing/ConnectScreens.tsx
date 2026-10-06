@@ -1,13 +1,14 @@
-/** As telas antes do app: parear por QR, reconectando ao pareamento salvo e "outro celular pareado". */
-import { useState } from 'react'
-import { client } from '../app/runtime'
+/** As telas antes do app: parear por QR, reconectando à filial salva (com troca de filial) e "outro celular pareado". */
+import { confirmForget, forgetLabel } from '../app/filiais'
+import { client, openScanner } from '../app/runtime'
+import { isApk } from '../app/platform'
+import { usePcs } from '../app/usePcs'
+import { activePc, otherPcs, pcLabel } from '../core/pcs'
 import { useStore } from '../core/store'
 import { Icon } from '../ui/icons'
-import { Scanner } from './Scanner'
 
+/** A tela do QR: o leitor é o único do app (FilialScanner, montado na raiz); a falha da câmera vira toast de erro. */
 export function PairScreen(): JSX.Element {
-  const [scanning, setScanning] = useState(false)
-  const [error, setError] = useState('')
   return (
     <section className="pair-screen">
       <div className="pair-card">
@@ -18,39 +19,25 @@ export function PairScreen(): JSX.Element {
         <p className="sub">
           No app do PC, abra <b>Controle remoto → Ligar ponte</b> e escaneie o QR.
         </p>
-        <button
-          type="button"
-          className="btn primary big"
-          onClick={() => {
-            setError('')
-            setScanning(true)
-          }}
-        >
+        <button type="button" className="btn primary big" onClick={() => openScanner()}>
           <Icon name="camera" size={20} /> Escanear QR
         </button>
-        {error && <p className="pair-error">{error}</p>}
       </div>
       <p className="pair-foot">Mantém o app conectado à última sessão automaticamente.</p>
-      {scanning && (
-        <Scanner
-          onResult={(cfg) => {
-            setScanning(false)
-            client.applyConfig(cfg)
-          }}
-          onCancel={() => setScanning(false)}
-          onFail={(msg) => {
-            setScanning(false)
-            setError(msg)
-          }}
-        />
-      )}
     </section>
   )
 }
 
+/**
+ * Reconectando: a filial ativa está desligada e o app tenta de novo (espera de até 15 s). No APK dá para trocar
+ * para outra filial salva ou abrir uma nova; esquecer a filial é a ação mais discreta e pede confirmação.
+ */
 export function PairingScreen(): JSX.Element {
   const detail = useStore(client.store, (s) => s.pairingDetail)
   const status = useStore(client.store, (s) => s.pairingStatus)
+  const list = usePcs()
+  const active = activePc(list)
+  const apk = isApk()
   return (
     <section className="pair-screen">
       <div className="pair-card reconnect-card">
@@ -58,10 +45,22 @@ export function PairingScreen(): JSX.Element {
           <div className="brand-logo"><span className="spinner" /></div>
           <h1>Reconectando</h1>
         </div>
+        {active && <p className="reconnect-filial">{`Filial ${pcLabel(active, list)}`}</p>}
         <p className="sub">{detail || 'Procurando a ponte do seu PC…'}</p>
         <p className="reconnect-status">{status}</p>
-        <button type="button" className="btn ghost big" onClick={() => client.logout()}>
-          Cancelar e escanear QR
+        {apk &&
+          otherPcs(list).map((pc) => (
+            <button key={pc.id} type="button" className="btn primary big" onClick={() => client.switchPc(pc.id)}>
+              {`Trocar para a filial ${pcLabel(pc, list)}`}
+            </button>
+          ))}
+        {apk && (
+          <button type="button" className="btn big" onClick={() => openScanner()}>
+            <Icon name="plus" size={18} /> Abrir filial
+          </button>
+        )}
+        <button type="button" className="reconnect-forget" onClick={() => confirmForget()}>
+          {forgetLabel(list)}
         </button>
       </div>
       <p className="pair-foot">Seu pareamento fica salvo neste celular.</p>
@@ -84,7 +83,7 @@ export function BlockedScreen(): JSX.Element {
         <button type="button" className="btn primary big" onClick={() => client.takeover()}>
           Usar este celular
         </button>
-        <button type="button" className="btn ghost big" onClick={() => client.logout()}>
+        <button type="button" className="btn ghost big" onClick={() => client.leaveBlocked()}>
           Cancelar
         </button>
       </div>

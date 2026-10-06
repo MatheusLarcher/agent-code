@@ -3,9 +3,9 @@
  * guardada no aparelho para voltar à última tela ao abrir) e os avisos curtos.
  */
 import { CENTRAL_CONV_ID, RemoteClient } from '../core/client'
-import { loadLastConv } from '../core/config'
+import { loadLastConv } from '../core/pcs'
 import { createStore } from '../core/store'
-import type { ConvSummary } from '../core/types'
+import type { ConvSummary, ToastTipo } from '../core/types'
 
 export type Tab = 'central' | 'conversas' | 'escritorio' | 'quadro'
 
@@ -15,6 +15,8 @@ export interface NavState {
   chatOpen: boolean
   settingsOpen: boolean
   statusMenuOpen: boolean
+  /** O leitor de QR para abrir uma filial está por cima da tela (não é guardado no aparelho). */
+  scanOpen: boolean
 }
 
 const UI_KEY = 'agent-remote-ui'
@@ -31,7 +33,8 @@ function loadNav(): NavState {
     tab: TABS.includes(saved.tab as Tab) ? (saved.tab as Tab) : 'conversas',
     chatOpen: saved.chatOpen !== false,
     settingsOpen: false,
-    statusMenuOpen: false
+    statusMenuOpen: false,
+    scanOpen: false
   }
 }
 
@@ -46,7 +49,7 @@ const isCentral = (c: ConvSummary): boolean => c.id === CENTRAL_CONV_ID
 
 /** A conversa (não-Central) para reabrir: a última aberta, senão a primeira do PC. */
 export function lastConversation(conversations: ConvSummary[]): string | null {
-  const last = loadLastConv()
+  const last = loadLastConv(client.state.token)
   if (last && conversations.some((c) => c.id === last && !isCentral(c))) return last
   return conversations.find((c) => !isCentral(c))?.id ?? null
 }
@@ -64,7 +67,7 @@ function pickInitialConv(conversations: ConvSummary[]): string | null {
   return id
 }
 
-export const client = new RemoteClient({ pickInitialConv })
+export const client = new RemoteClient({ pickInitialConv, notify: (text, tipo) => toast(text, tipo) })
 
 export function openTab(tab: Tab): void {
   nav.set({ tab, statusMenuOpen: false })
@@ -91,18 +94,38 @@ export function backToList(): void {
   nav.set({ chatOpen: false })
 }
 
+/** Abre o leitor de QR para uma nova filial, por cima de qualquer tela (e fecha o menu que o chamou). */
+export function openScanner(): void {
+  nav.set({ statusMenuOpen: false, scanOpen: true })
+}
+
 // ---- avisos curtos (no lugar dos alert() do app antigo) ----------------------------
 
 export interface Toast {
   id: number
   text: string
+  /** Sem tipo = o aviso neutro de sempre; as cores por tipo são da tela. */
+  tipo?: ToastTipo
+  /** Fechando: a tela faz o fade-out e o aviso sai da lista logo depois. */
+  leaving?: boolean
 }
 
 export const toasts = createStore<{ list: Toast[] }>({ list: [] })
 let toastSeq = 0
 
-export function toast(text: string, ms = 4500): void {
+/** Duração do fade-out (o mesmo valor da animação `toast-out` em base.css). */
+const TOAST_LEAVE_MS = 220
+
+/** Fecha um aviso: marca `leaving` (fade-out) e o tira da lista ~220 ms depois. Id que não existe ou já saindo: nada muda. */
+export function dismissToast(id: number): void {
+  const found = toasts.get().list.find((t) => t.id === id)
+  if (!found || found.leaving) return
+  toasts.set((s) => ({ list: s.list.map((t) => (t.id === id ? { ...t, leaving: true } : t)) }))
+  setTimeout(() => toasts.set((s) => ({ list: s.list.filter((t) => t.id !== id) })), TOAST_LEAVE_MS)
+}
+
+export function toast(text: string, tipo?: ToastTipo, ms = 4500): void {
   const id = ++toastSeq
-  toasts.set((s) => ({ list: [...s.list, { id, text }].slice(-3) }))
-  setTimeout(() => toasts.set((s) => ({ list: s.list.filter((t) => t.id !== id) })), ms)
+  toasts.set((s) => ({ list: [...s.list, { id, text, tipo }].slice(-3) }))
+  setTimeout(() => dismissToast(id), ms)
 }

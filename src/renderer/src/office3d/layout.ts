@@ -8,15 +8,18 @@
  * (`projectId`); todo personagem fica na sala física (`roomId = OFFICE_ID`).
  *
  * Mesas (quem pede: placement 'seat' — principais e especialistas com mesa):
- * - quem já tinha mesa fica com ela; ninguém é empurrado;
- * - cada ilha é reservada para um projeto: o primeiro que senta numa ilha vazia
- *   a ganha; a reserva dura enquanto o projeto tiver alguém no modelo (o filtro
- *   de projeto não tira ninguém do modelo) e some com o último;
- * - personagem novo do projeto P: mesa livre na ilha de P → mesa livre numa
- *   ilha sem reserva (que passa a ser de P, na ordem fixa 0,1,2,3) → mesa livre
- *   em qualquer ilha → lounge → de pé na ilha do principal da mesma conversa →
- *   praça. Dentro da ilha, a ordem do U: o fundo, depois os braços aos pares;
- * - quem estava no lounge ou de pé pega mesa assim que vagar uma.
+ * - cada ilha é UM projeto e cada projeto tem no máximo UMA ilha (nada de
+ *   projeto repetido em duas ilhas nem misturado na ilha de outro): o primeiro
+ *   que senta numa ilha vazia a ganha; a reserva dura enquanto o projeto tiver
+ *   alguém no modelo (o filtro de projeto não tira ninguém do modelo) e some
+ *   com o último;
+ * - quem já tinha mesa (na ilha do próprio projeto) fica com ela; ninguém é empurrado;
+ * - personagem novo do projeto P: mesa livre na ilha de P (sem ilha, a 1ª ilha
+ *   sem reserva, na ordem fixa 0,1,2,3, passa a ser de P) → lounge → de pé na
+ *   ilha do principal da mesma conversa (ou na do projeto) → praça. Ilha cheia
+ *   ou as 4 ilhas tomadas: o lounge, não a ilha de outro projeto. Dentro da
+ *   ilha, a ordem do U: o fundo, depois os braços aos pares;
+ * - quem estava no lounge ou de pé pega mesa assim que vagar uma na ilha dele.
  * 'beside' fica ao lado do pai; 'destination' num lugar fixo: PO junto do
  * kanban, memória na estante de Memórias, Central no console. Fora de cena (o
  * Manager de plano já enviado, offstage.ts) fica do lado de fora da porta.
@@ -190,47 +193,44 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
     if (p) present.add(p)
   }
 
-  // Ilhas: a reserva continua enquanto o projeto tiver alguém no escritório.
+  // Ilhas: uma por projeto; a reserva continua enquanto o projeto tiver alguém no escritório.
   const owner: Array<string | null> = ISLANDS.map(() => null)
   for (const [project, islands] of Object.entries(prev.islandOf)) {
-    if (!present.has(project)) continue
-    for (const i of islands) if (owner[i] === null) owner[i] = project
+    if (!present.has(project) || owner.includes(project)) continue
+    const i = islands.find((k) => owner[k] === null)
+    if (i !== undefined) owner[i] = project
   }
   const islandsOf = (p: string): number[] => owner.flatMap((o, i) => (o === p ? [i] : []))
+  /** A ilha do projeto; sem ilha, a 1ª sem reserva passa a ser dele; null com as 4 tomadas. */
+  const claim = (p: string): number | null => {
+    const mine = owner.indexOf(p)
+    if (mine >= 0) return mine
+    const free = owner.indexOf(null)
+    if (free < 0) return null
+    owner[free] = p
+    return free
+  }
 
-  // Mesas: quem já tinha fica (ninguém é empurrado).
+  // Mesas: quem já tinha fica (ninguém é empurrado), desde que a ilha seja do projeto dele.
   const deskOf: Record<string, number> = {}
   const taken: Array<string | null> = desks.map(() => null)
   const seated = model.characters.filter(wantsDesk)
   for (const c of seated) {
     const d = prev.deskOf[c.key]
     if (d === undefined || taken[d] !== null) continue
+    const p = c.roomId as string
+    const island = desks[d].island
+    if (owner[island] !== p && (owner[island] !== null || owner.includes(p))) continue
+    owner[island] = p
     taken[d] = c.key
     deskOf[c.key] = d
   }
-  // Quem não tem mesa (novo, ou estava no lounge/de pé): a ordem de escolha. Toda tela olha para a
+  // Quem não tem mesa (novo, ou estava no lounge/de pé): só na ilha do projeto. Toda tela olha para a
   // câmera (não há mais mesa de fundo): dentro da ilha, a ordem do U (k = 0..5).
   const pick = (p: string): number | null => {
-    const freeIn = (island: number): number | null => {
-      const k = desks.find((d) => d.island === island && taken[d.index] === null)
-      return k ? k.index : null
-    }
-    for (const i of islandsOf(p)) {
-      const k = freeIn(i)
-      if (k !== null) return k
-    }
-    for (let i = 0; i < owner.length; i++) {
-      if (owner[i] !== null) continue
-      const k = freeIn(i)
-      if (k === null) continue
-      owner[i] = p
-      return k
-    }
-    for (let i = 0; i < owner.length; i++) {
-      const k = freeIn(i)
-      if (k !== null) return k
-    }
-    return null
+    const island = claim(p)
+    if (island === null) return null
+    return desks.find((d) => d.island === island && taken[d.index] === null)?.index ?? null
   }
   for (const c of seated) {
     if (deskOf[c.key] !== undefined) continue
