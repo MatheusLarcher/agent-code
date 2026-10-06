@@ -202,24 +202,37 @@ try {
   await page.mouse.move(800, 450)
   await page.mouse.wheel(0, -1)
   if (posesMode) {
+    // --boneco: as mesmas poses com o boneco (a chave de DEV), em vez do elenco de avatares.
+    if (process.argv.includes('--boneco')) {
+      await key('V')
+      for (let i = 0; i < 100 && (await avatars()) > 0; i++) await wait(100)
+      await wait(1000)
+    }
     // Os lugares vêm dos próprios módulos (servidor do Vite em DEV) e o cérebro para de andar.
     const placed = await page.evaluate(async () => {
       const plan = await import('/src/office3d/officePlan.ts')
       const meet = await import('/src/office3d/meetingRoom.ts')
+      const furn = await import('/src/office3d/furniture.ts')
       const e = window.__o
+      // Cérebro e eventos congelados: a reação que a demo mandasse (susto, mãos na cabeça…) ficaria presa na foto.
       e.scene.crowd.step = () => {}
+      e.scene.crowd.apply = () => {}
       const list = [...e.scene.chars.values()].filter((c) => c.brain.visible)
       const desk = list.find((c) => c.deskIndex !== null && c.brain.seat === 'chair' && c.brain.sit > 0.9) ?? list[0]
       const rest = list.filter((c) => c !== desk)
-      const m = meet.meetingSpots(['tv', 'cadeira'], 0).get('cadeira')
+      // Uma cadeira de espera livre: sem Manager e sem quem já espera sentado nela.
+      const busy = list.filter((c) => c.brain.seat === 'chair' && c.brain.sit > 0.5).map((c) => ({ x: c.brain.seatX, z: c.brain.seatZ }))
+      const m = meet.meetingSpots(['tv', 'cadeira'], busy).get('cadeira')
       const L = plan.LOUNGE_SEATS
       const set = (c, p) => Object.assign(c.brain, { speed: 0, sit: 1, reaction: null, pending: [], prop: null, look: 'none', zzz: false, visible: true, actionT: 3, ...p })
       set(desk, { action: 'type' })
       const napper = rest[0]
       set(napper, { x: desk.brain.x, z: desk.brain.z, yaw: desk.brain.yaw, seat: 'chair', action: 'napDesk' })
-      // O cochilo na mesa: a mesa do lado (outra baia da mesma ilha).
-      const other = list.find((c) => c !== desk && c !== napper && c.deskIndex !== null && c.brain.seat === 'chair' && c.brain.sit > 0.9)
-      if (other) set(napper, { x: other.brain.x, z: other.brain.z, yaw: other.brain.yaw }), set(other, { x: 0, z: 9.5, visible: false })
+      // O cochilo na mesa: a mesa do mesmo lugar do U em outra ilha (o mesmo entorno para a câmera; quem estiver nela sai de cena).
+      const home = plan.STATIONS[desk.deskIndex ?? 0]
+      const st = furn.seatOf(plan.STATIONS.find((s) => s.k === home.k && s.island !== home.island))
+      for (const c of list) if (c !== desk && c !== napper && Math.hypot(c.brain.x - st.x, c.brain.z - st.z) < 0.6) set(c, { x: 0, z: 9.5, visible: false })
+      set(napper, { x: st.x, z: st.z, yaw: st.yaw, seatX: st.x, seatZ: st.z })
       set(rest[1], { x: m.x, z: m.z, yaw: m.yaw, seat: 'chair', action: 'listen' })
       set(rest[2], { x: L[1].x, z: L[1].z, yaw: L[1].yaw, seat: 'sofa', action: 'phone', prop: 'phone' })
       set(rest[3], { x: L[2].x, z: L[2].z, yaw: L[2].yaw, seat: 'sofa', action: 'napSofa' })
@@ -245,11 +258,19 @@ try {
       await shootKey(`p-${name}-lado`, key, 1.7, 1.57, 0.25, 0.7)
       await shootKey(`p-${name}-lado2`, key, 1.7, -1.57, 0.25, 0.7)
     }
+    // As ações sentadas da mesa que tocam um clipe do Mixamo (motionPick.SEATED, só o tronco e os braços): os braços não
+    // podem atravessar a borda do tampo — não há teste de colisão para os clipes.
+    for (const action of ['sitIdle', 'readScreen', 'drum', 'sip', 'talk', 'wait', 'napDesk']) {
+      await page.evaluate(({ key, action }) => Object.assign(window.__o.scene.chars.get(key).brain, { action, actionT: 3 }), { key: placed.mesa, action })
+      await shootKey(`p-mesa-${action}`, placed.mesa, 1.7, 1.57, 0.25, 0.7)
+    }
+    // O cochilo do mesmo agente de frente (o enquadramento da mesa é o que sempre dá certo).
+    await shootKey('p-mesa-napDesk-frente', placed.mesa, 1.9, 0.5, 0.3, 0.75)
   }
   if (desksMode) {
     // As 24 mesas do U: ilha por ilha, um agente sentado em cada uma das 6 (cérebro congelado, os outros escondidos);
     // a ilha de frente e cada mesa inclinada (k ≥ 2) de frente e de lado — com o boneco e depois com o avatar.
-    await page.evaluate(() => (window.__o.scene.crowd.step = () => {}))
+    await page.evaluate(() => Object.assign(window.__o.scene.crowd, { step: () => {}, apply: () => {} }))
     // O chat flutuante cobre a parte de baixo do palco: some só nas capturas.
     await page.evaluate(() => document.querySelector('.o3d-chat')?.style.setProperty('display', 'none'))
     const seatIsland = (island) =>
