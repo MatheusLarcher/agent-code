@@ -310,10 +310,11 @@ export function standPose(out: Pose): void {
 export type SeatKind = 'chair' | 'sofa' | 'desk'
 
 /**
- * Altura (m) de cada assento: a cadeira do mockup (chairModel.ts, topo do
- * assento a 0,59), o sofá do lounge e o tampo da mesa (0,775).
+ * Altura (m) de cada assento: a cadeira de escritório (chairModel.ts) no padrão
+ * (NBR 13962: 0,42–0,52; o tampo a 0,775 fica na altura do cotovelo de quem
+ * senta), o sofá do lounge e o tampo da mesa (0,775).
  */
-export const SEAT_HEIGHT: Record<SeatKind, number> = { chair: 0.59, sofa: 0.6, desk: 0.775 }
+export const SEAT_HEIGHT: Record<SeatKind, number> = { chair: 0.46, sofa: 0.6, desk: 0.775 }
 
 /** Quanto o quadril (a junta) fica acima do assento: a carne que apoia, menos o que o estofado afunda. */
 const SIT_ON: Record<SeatKind, number> = { chair: 0.09, sofa: 0.04, desk: 0.07 }
@@ -323,10 +324,10 @@ const acosClamp = (v: number): number => Math.acos(v < -1 ? -1 : v > 1 ? 1 : v)
 /**
  * Pernas e quadril sentados (o tronco é da ação), calculados pela altura do
  * assento e pela escala do boneco (`scale`: o subagente é menor, o assento é o
- * mesmo). Cadeira: canela na vertical e os calcanhares um pouco erguidos (a
- * ponta do pé no chão). Sofá: os pés esticados à frente. Beira da mesa: coxas
- * quase na horizontal e as canelas soltas, balançando com o relógio `t`. `b`:
- * as medidas do corpo (o modelo GLB; BODY no boneco).
+ * mesmo). Cadeira: coxa quase na horizontal, canela perto da vertical e o pé
+ * apoiado no chão (perna curta demais: a ponta do pé). Sofá: os pés esticados à
+ * frente. Beira da mesa: coxas quase na horizontal e as canelas soltas,
+ * balançando com o relógio `t`. `b`: as medidas do corpo (o modelo GLB; BODY no boneco).
  */
 export function sitLower(out: Pose, seat: SeatKind, t = 0, scale = 1, vary = 0.5, b: BodyMetrics = BODY): void {
   const hip = (SEAT_HEIGHT[seat] + SIT_ON[seat]) / scale
@@ -359,20 +360,27 @@ export function sitLower(out: Pose, seat: SeatKind, t = 0, scale = 1, vary = 0.5
     out[CH.footL] = out[CH.footR] = 0.05
     return
   }
-  // Cadeira (alta, a do mockup): a coxa quase na horizontal sobre o assento (o joelho cabe sob o tampo)
-  // e o calcanhar erguido, a ponta do pé no chão. Cada um senta do seu jeito (`vary`, 0..1 pela seed):
-  // um pé mais à frente e o outro recolhido sob o joelho, e de tempos em tempos troca o apoio.
-  const knee = hip - 0.06 / scale
-  const thigh = acosClamp((hip - knee) / THIGH)
+  // Cadeira (assento no padrão): a coxa quase na horizontal sobre o assento (o joelho cabe sob o tampo), a canela
+  // perto da vertical e o pé apoiado no chão — o joelho fica na altura da canela. A coxa desce no máximo 10 cm até o
+  // joelho (o joelho de 46 cm do chão ainda apoia o pé); perna curta põe a canela na vertical antes de erguer o
+  // calcanhar e, curta demais, fica na ponta do pé; canela longa sobe o joelho até 4 cm acima do quadril e o resto vai
+  // para a frente. Cada um senta do seu jeito (`vary`, 0..1 pela seed): um pé mais à frente e o outro mais recolhido,
+  // e de tempos em tempos troca o apoio.
   const shift = 0.05 * Math.sin(0.23 * t + vary * 6.28)
   const reach = Math.hypot(SOLE_DOWN, TOE_AHEAD)
   const tilts = [0.06 + 0.26 * vary + shift, 0.04 + 0.2 * (1 - vary) - shift]
+  const lowest = hip - 0.1 / scale
+  const highest = hip + 0.04 / scale
   ;([[CH.legL, CH.kneeL, CH.footL], [CH.legR, CH.kneeR, CH.footR]] as const).forEach(([leg, kn, foot], i) => {
-    const tilt = Math.max(0, tilts[i])
+    let tilt = Math.max(0, tilts[i])
+    if (b.ankleY + SHIN * Math.cos(tilt) > highest) tilt = acosClamp((highest - b.ankleY) / SHIN)
+    else if (b.ankleY + SHIN * Math.cos(tilt) < lowest) tilt = acosClamp((lowest - b.ankleY) / SHIN)
+    const knee = Math.max(lowest, b.ankleY + SHIN * Math.cos(tilt))
+    const thigh = acosClamp((hip - knee) / THIGH)
     out[leg] = thigh
     out[kn] = thigh - tilt
     const ankle = knee - SHIN * Math.cos(tilt)
-    const toe = Math.asin(Math.min(1, Math.max(0, ankle / reach))) - Math.atan2(SOLE_DOWN, TOE_AHEAD)
+    const toe = ankle > b.ankleY + 1e-4 ? Math.asin(Math.min(1, ankle / reach)) - Math.atan2(SOLE_DOWN, TOE_AHEAD) : 0
     out[foot] = -Math.min(1.1, Math.max(0, toe))
   })
 }

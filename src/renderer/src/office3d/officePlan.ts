@@ -6,7 +6,7 @@
  *
  * Eixos como no resto do 3D: X à direita, Z para a câmera, Y para cima; metros
  * já na escala dos bonecos (o mockup v2 × 0,85 na planta; tampo a 0,75 m e
- * assento perto de 0,36 m). A frente (z alto) é aberta, como maquete.
+ * assento da cadeira a 0,46 m, no padrão). A frente (z alto) é aberta, como maquete.
  *
  * Arranjo em praça: 4 ilhas em U de 6 estações (ordem fixa de reserva:
  * frente-esquerda, frente-direita, trás-esquerda, trás-direita), o console da
@@ -68,8 +68,8 @@ export const MONITOR_Y = 1.12
 export const MONITOR_BACK = 0.3
 /**
  * Onde fica o quadril de quem senta, a partir do centro da mesa: 0,35 m atrás
- * da borda do tampo. A cadeira do mockup (chairModel.ts) tem os braços a 0,80 m,
- * acima do tampo: a frente deles para na borda; os joelhos ficam sob o tampo.
+ * da borda do tampo. Os braços da cadeira (chairModel.ts) ficam abaixo do tampo
+ * e a frente deles para perto da borda; os joelhos ficam sob o tampo.
  */
 export const SEAT_FRONT = 0.95
 /** Teclado, a partir do centro da mesa: 0,15 m para dentro da borda (ao alcance de quem senta). */

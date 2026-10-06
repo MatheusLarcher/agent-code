@@ -100,14 +100,14 @@ describe('sentar', () => {
   it('na cadeira: quadril no assento e pés no chão; no sofá do lounge: afunda um pouco, pernas para a frente e pés no chão', () => {
     const p = newPose()
     sitLower(p, 'chair')
-    // Quadril sobre o assento da cadeira do mockup (topo a 0,59); cadeira alta: o calcanhar sobe um pouco (a ponta do pé no chão).
+    // Quadril sobre o assento da cadeira (topo no padrão, 0,46); o pé apoiado inteiro no chão: tornozelo na altura de em pé, sola reta.
     const chairHip = PELVIS_Y + p[CH.pelvisY]
     expect(chairHip).toBeCloseTo(SEAT_HEIGHT.chair + 0.12, 2)
-    expect(ankle(p, 'L').y - REST).toBeGreaterThanOrEqual(0)
-    expect(ankle(p, 'L').y - REST).toBeLessThan(0.1)
-    expect(p[CH.footL]).toBeLessThan(0)
+    expect(Math.abs(ankle(p, 'L').y - REST)).toBeLessThan(0.005)
+    expect(Math.abs(p[CH.footL])).toBeLessThan(0.01)
     sitLower(p, 'sofa')
-    expect(PELVIS_Y + p[CH.pelvisY]).toBeLessThan(chairHip)
+    // Afunda no estofado: o quadril fica mais perto do assento do sofá do que fica do da cadeira.
+    expect(PELVIS_Y + p[CH.pelvisY] - SEAT_HEIGHT.sofa).toBeLessThan(chairHip - SEAT_HEIGHT.chair)
     expect(ankle(p, 'L').x).toBeGreaterThan(0.15)
     expect(Math.abs(ankle(p, 'L').y - REST)).toBeLessThan(0.05)
   })

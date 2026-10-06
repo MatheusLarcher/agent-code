@@ -43,16 +43,16 @@ describe('poses com as medidas do modelo (BodyMetrics)', () => {
     expect(Math.max(...xs) - Math.min(...xs)).toBeLessThan(1e-3)
   })
 
-  it('na cadeira, a bacia fica na altura do assento (não flutua nem afunda); a ponta do pé fica a poucos cm do chão', () => {
+  it('na cadeira, a bacia fica na altura do assento (não flutua nem afunda) e o pé fica apoiado no chão, mesmo com as pernas curtas do v1', () => {
     const p = newPose()
     sitLower(p, 'chair', 0, 1, 0.5, V1)
     const hipJoint = V1.pelvisY + p[CH.pelvisY] - V1.hipDrop
     expect(hipJoint).toBeCloseTo(SEAT_HEIGHT.chair + 0.09, 3)
-    // A ponta do pé (sola + avanço): as pernas do v1 são curtas para a cadeira de 0,59 m — o pé esticado fica ~3 cm acima do chão.
+    // A ponta do pé (sola + avanço) e o calcanhar (o tornozelo na altura da sola) no chão: a sola inteira apoiada.
     const a = ankle(p, V1)
     const toeY = a.y - Math.hypot(V1.soleDown, V1.toeAhead) * Math.sin(-p[CH.footL] + Math.atan2(V1.soleDown, V1.toeAhead))
-    expect(toeY).toBeGreaterThanOrEqual(0)
-    expect(toeY).toBeLessThan(0.04)
+    expect(Math.abs(toeY)).toBeLessThan(0.005)
+    expect(Math.abs(a.y - V1.ankleY)).toBeLessThan(0.005)
   })
 
   it('a cabeça do HUD sai das medidas do modelo', () => {

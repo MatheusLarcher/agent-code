@@ -1,8 +1,10 @@
 /**
- * A cadeira de escritório do mockup (escritorio-studio, scene.js `chair`), nas
- * MESMAS medidas: assento 0,64 × 0,62 (topo a 0,59 m), encosto 0,62 × 0,64
- * inclinado com o topo a ~1,2 m, braços a 0,80 m em ±0,34, coluna a gás, cubo
- * e base de 5 pés com rodízios no raio de 0,37.
+ * A cadeira de escritório do mockup (escritorio-studio, scene.js `chair`) com o
+ * assento na altura padrão (SEAT_TOP, NBR 13962): assento 0,64 × 0,62, encosto
+ * 0,62 × 0,64 inclinado com o topo ~0,6 m acima do assento, braços ~0,2 m acima
+ * dele em ±0,34 (abaixo do tampo da mesa), coluna a gás do cubo até o estofado e
+ * base de 5 pés com rodízios no raio de 0,37. Tudo o que fica acima da base sai
+ * de SEAT_TOP: mudar o assento leva o encosto, os braços e a coluna juntos.
  *
  * Duas geometrias fundidas no referencial de QUEM SENTA (origem = o quadril,
  * olhando para −Z): o estofado (assento e encosto) e o metal (coluna, base,
@@ -14,8 +16,12 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { SEAT_HEIGHT } from './poses'
 
-/** Topo do assento (m): o almofadado do mockup, centro a 0,52 e 0,14 de altura. */
+/** Topo do assento (m): o almofadado do mockup, 0,14 de altura. */
 export const SEAT_TOP = SEAT_HEIGHT.chair
+/** Centro do encosto e do apoio dos braços (m); o topo do apoio fica abaixo da face de baixo do tampo. */
+export const BACK_CENTER_Y = SEAT_TOP + 0.29
+export const ARM_Y = SEAT_TOP + 0.205
+export const ARM_TOP = ARM_Y + 0.0225
 /** Centro da cadeira em relação ao quadril de quem senta (para a frente, −Z). */
 export const CHAIR_CENTER_Z = -0.055
 /** A inclinação do encosto do mockup (rotation.x = −0,12: o alto dele vem um pouco para a frente). */
@@ -59,12 +65,14 @@ function fuse(parts: BufferGeometry[]): BufferGeometry {
 export function officeChairGeometries(): { top: BufferGeometry; base: BufferGeometry } {
   const top = fuse([
     rbox(0.64, 0.14, 0.62, 0.065, 0, SEAT_TOP - 0.07, 0),
-    rbox(0.62, 0.64, 0.09, 0.065, 0, 0.88, 0.28, BACK_TILT)
+    rbox(0.62, 0.64, 0.09, 0.065, 0, BACK_CENTER_Y, 0.28, BACK_TILT)
   ])
+  // A coluna a gás: de dentro do cubo até a base do estofado.
+  const column = SEAT_TOP - 0.14 - 0.065
   const base: BufferGeometry[] = [
-    cyl(0.038, 0.046, 0.41, 0, 0.27, 0),
+    cyl(0.038, 0.046, column, 0, 0.065 + column / 2, 0),
     cyl(0.065, 0.065, 0.08, 0, 0.12, 0),
-    rbox(0.12, 0.38, 0.045, 0.01, 0, 0.66, 0.34)
+    rbox(0.12, 0.38, 0.045, 0.01, 0, SEAT_TOP + 0.07, 0.34)
   ]
   for (let i = 0; i < 5; i++) {
     const a = (i * Math.PI * 2) / 5
@@ -72,8 +80,8 @@ export function officeChairGeometries(): { top: BufferGeometry; base: BufferGeom
     base.push(cyl(0.055, 0.055, 0.045, Math.sin(a) * 0.37, 0.065, Math.cos(a) * 0.37, 10, Math.PI / 2))
   }
   for (const side of [-1, 1]) {
-    base.push(rbox(0.035, 0.25, 0.035, 0.01, side * 0.34, 0.68, 0.04))
-    base.push(rbox(0.09, 0.045, 0.38, 0.02, side * 0.34, 0.795, -0.04))
+    base.push(rbox(0.035, 0.25, 0.035, 0.01, side * 0.34, SEAT_TOP + 0.09, 0.04))
+    base.push(rbox(0.09, 0.045, 0.38, 0.02, side * 0.34, ARM_Y, -0.04))
   }
   return { top, base: fuse(base) }
 }

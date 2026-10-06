@@ -10,8 +10,8 @@
  */
 
 import { partyPose } from './dance'
-import { arms, DESK_TOP, EDGE_AHEAD, KEYS_AHEAD, reach, typing } from './reach'
-import { CH, envelope, mix, pulse, smooth, type Action, type ActionParams, type Pose } from './poses'
+import { arms, DESK_TOP, EDGE_AHEAD, KEYS_AHEAD, KEYS_Y, reach, seatedLean, typing } from './reach'
+import { BODY, CH, envelope, mix, pulse, smooth, type Action, type ActionParams, type Pose } from './poses'
 
 // As reações (pulinho, susto, comemorar…) ficam em reactions.ts; o alcance e o digitar, em reach.ts.
 export { reactionPose } from './reactions'
@@ -46,9 +46,10 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
       return
     case 'readScreen': {
       // A esquerda no teclado, a direita no mouse (aberta para o lado); olha a tela de perto.
-      const r = reach(DESK_TOP + 0.055, KEYS_AHEAD, 0.08, p.scale, p.body)
+      const lean = seatedLean(KEYS_Y, KEYS_AHEAD, 0.08, p.scale, p.body)
+      const r = reach(KEYS_Y, KEYS_AHEAD, lean, p.scale, p.body)
       arms(out, r.fwd, -0.08, r.elbow, r.fwd, 0.22 + 0.03 * Math.sin(0.7 * t), r.elbow)
-      out[CH.lean] = 0.08
+      out[CH.lean] = lean
       out[CH.headYaw] = 0.22 * Math.sin(1.1 * t + k)
       out[CH.headPitch] = -0.02 + 0.07 * ((t * 0.25) % 1)
       out[CH.fingersR] = 0.2 + 0.5 * pulse(t % 2.3, 1.9, 0.2)
@@ -153,9 +154,11 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
     case 'talk':
     case 'phone':
     case 'wait':
-    case 'napDesk':
     case 'napSofa':
       leisurePose(out, a, t, k)
+      return
+    case 'napDesk':
+      napDesk(out, t, p)
       return
     case 'robot':
     case 'disco':
@@ -168,6 +171,36 @@ export function actionPose(out: Pose, a: Action, t: number, p: ActionParams): vo
       partyPose(out, a, t, p)
       return
   }
+}
+
+/** A altura (m acima da bacia) a que o avatar debruçado leva os ombros no cochilo: corpo de tronco alto debruça mais. */
+const NAP_SHOULDER = 0.15
+
+/**
+ * Cochilo na estação: debruçado sobre a mesa, os cotovelos apoiados no tampo (fora do teclado) e os antebraços
+ * subindo até os punhos se juntarem sob o queixo, onde a cabeça descansa. Com o assento no padrão o boneco não
+ * passa de ~0,7 de inclinação (o peito entra na borda do tampo). O avatar GLB dobra o tronco na lombar
+ * (agentAvatar: Spine02..Spine), não na bacia como o boneco: o ombro fica mais atrás e mais alto, então ele
+ * debruça mais (até os ombros descerem a NAP_SHOULDER da bacia) e leva os braços mais à frente. Ângulos buscados
+ * no rig (sem atravessar nada, com as reações por cima) e no retarget dos 9 modelos do elenco.
+ */
+function napDesk(out: Pose, t: number, p: ActionParams): void {
+  const breathe = 0.015 * Math.sin(1.25 * t)
+  if (p.body && p.body !== BODY) {
+    const shoulder = p.body.shoulderY * (p.scale ?? 1)
+    out[CH.lean] = Math.acos(Math.min(1, NAP_SHOULDER / shoulder)) + breathe
+    arms(out, 1.69, 0.8, 1.8, 1.69, 0.8, 1.8)
+    out[CH.twistL] = out[CH.twistR] = 1.54
+    out[CH.headPitch] = 0.1
+  } else {
+    out[CH.lean] = 0.7 + breathe
+    arms(out, 1.27, 0.7, 2.34, 1.27, 0.7, 2.34)
+    out[CH.twistL] = out[CH.twistR] = 1.08
+    out[CH.headPitch] = 0.2
+  }
+  out[CH.headRoll] = 0.25
+  out[CH.eyes] = 0
+  out[CH.mouth] = 0.1
 }
 
 function leisurePose(out: Pose, a: Action, t: number, k: number): void {
@@ -286,19 +319,6 @@ function leisurePose(out: Pose, a: Action, t: number, k: number): void {
       out[CH.headYaw] = 0.2 * Math.sin(0.4 * t + k)
       out[CH.lean] = -0.02
       return
-    case 'napDesk': {
-      // Cochilo na estação: debruçado sobre a mesa, a cabeça deitada nos braços cruzados sobre o tampo.
-      // Cotovelos abertos apoiados no tampo e as mãos juntas sob a cabeça (ângulos buscados no rig).
-      const lean = 1.03 + 0.015 * Math.sin(1.25 * t)
-      arms(out, 0.95, 1.35, 1.9, 0.95, 1.35, 1.9)
-      out[CH.twistL] = out[CH.twistR] = 1.25
-      out[CH.lean] = lean
-      out[CH.headPitch] = 0.2
-      out[CH.headRoll] = 0.45
-      out[CH.eyes] = 0
-      out[CH.mouth] = 0.1
-      return
-    }
     case 'napSofa':
       // Esparramado: afundado, recostado no encosto e com as mãos largadas no colo, meio abertas.
       arms(out, 0.2, 0.12, 0.35, 0.2, 0.12, 0.35)
