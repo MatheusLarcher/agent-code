@@ -51,7 +51,17 @@ export interface AvatarTemplate {
   rootParent: Quaternion
   hipsParentInv: Matrix4
   hipsRest: Vector3
+  /**
+   * A escala do PERSONAGEM com este modelo. O modelo foi escalado pela perna (×k) para as poses e
+   * os assentos, feitos para o boneco, servirem; o personagem inteiro volta ×1/k e o modelo fica na
+   * altura com que foi gerado (a da ficha: 1,62–1,88 m) — como o boneco menor (0,85) já faz.
+   */
+  fit: number
 }
+
+/** Limites da escala do personagem com modelo (fora disso o modelo é que veio torto). */
+const FIT_MIN = 0.75
+const FIT_MAX = 1.15
 
 const UP = new Vector3(0, 1, 0)
 const DOWN = new Vector3(0, -1, 0)
@@ -99,10 +109,11 @@ export function prepareAvatar(scene: Object3D): AvatarTemplate | string {
   const b = (j: AvatarJoint): Bone | null => (map.bones[j] ? bones.get(map.bones[j]!)! : null)
   const must = (j: AvatarJoint): Bone => b(j)!
 
-  // Escala pelas pernas: da sola ao quadril igual à do boneco, para o qual cadeiras, sofá e mesas foram
-  // feitos. O modelo de desenho tem cabeça grande e perna curta: na altura total da ficha, o joelho
-  // ficava ~10 cm abaixo do assento e ele parecia pequeno nas cadeiras.
-  scene.scale.multiplyScalar(legScale(bindBox(meshes).min.y, worldPos(must('upLegL')), worldPos(must('legL')), worldPos(must('footL'))))
+  // Escala pelas pernas: da sola ao quadril igual à do boneco, para o qual as poses, cadeiras, sofá e
+  // mesas foram feitos. O personagem inteiro volta ×1/k (`fit`, agentBody.ts) e fica na altura da ficha
+  // — o mesmo caminho do boneco menor (0,85), que já senta e anda certo nos móveis.
+  const k = legScale(bindBox(meshes).min.y, worldPos(must('upLegL')), worldPos(must('legL')), worldPos(must('footL')))
+  scene.scale.multiplyScalar(k)
   root.updateMatrixWorld(true)
 
   // A sola: o ponto mais baixo da malha na pose de bind, antes de mexer (na pose de bind a malha com pele é a
@@ -188,7 +199,8 @@ export function prepareAvatar(scene: Object3D): AvatarTemplate | string {
     m.boundingSphere = g.boundingSphere!.clone()
     m.boundingSphere.radius *= 1.6
   }
-  return { root, map, metrics, order, parent: Int16Array.from(parent), rest, drive, rootParent, hipsParentInv, hipsRest: worldPos(hips) }
+  const fit = Math.min(FIT_MAX, Math.max(FIT_MIN, 1 / k))
+  return { root, map, metrics, order, parent: Int16Array.from(parent), rest, drive, rootParent, hipsParentInv, hipsRest: worldPos(hips), fit }
 }
 
 /** Quanto escalar o modelo para a perna (sola → quadril, no bind) ter a do boneco (BODY). Puro. */

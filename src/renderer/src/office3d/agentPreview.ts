@@ -1,10 +1,10 @@
 /**
- * Chave de teste do visual novo dos agentes — só DEV (Ctrl+Alt+Shift+V):
- * liga/desliga o avatar GLB v1 em TODOS os agentes (agentModels.ts), com a
- * roupa na cor de cada um. Desligada, o escritório fica como sempre foi.
+ * Chave de comparação do visual dos agentes — só DEV (Ctrl+Alt+Shift+V):
+ * põe TODOS os agentes de boneco (agentModels.ts) e volta ao elenco de
+ * avatares (o padrão), para comparar e medir o desempenho dos dois.
  */
 import { useEffect } from 'react'
-import { avatarPreview, setAvatarPreview } from './agentModels'
+import { avatarsOff, setAvatarsOff } from './agentModels'
 
 export function isAvatarShortcut(e: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'shiftKey' | 'key'>): boolean {
   return e.ctrlKey && e.altKey && e.shiftKey && e.key.toLowerCase() === 'v'
@@ -17,8 +17,8 @@ export function useAvatarPreviewKey(active: boolean): void {
     const onKey = (e: KeyboardEvent): void => {
       if (!isAvatarShortcut(e)) return
       e.preventDefault()
-      const on = setAvatarPreview(!avatarPreview())
-      console.info(`[escritório] visual dos agentes: ${on ? 'avatar v1 (teste)' : 'boneco'}`)
+      const off = setAvatarsOff(!avatarsOff())
+      console.info(`[escritório] visual dos agentes: ${off ? 'boneco (comparação)' : 'elenco de avatares'}`)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

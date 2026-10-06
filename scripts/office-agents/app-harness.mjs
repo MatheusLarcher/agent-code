@@ -8,9 +8,10 @@
  *
  * Liga a demonstração (Ctrl+Alt+Shift+D: 20 agentes em 5 salas, o cenário mais
  * cheio) e o HUD (Ctrl+Alt+Shift+P); mede o tempo de quadro (média/P95 do
- * intervalo entre quadros e do trabalho em JS) com o boneco e com a chave de
- * teste ligada (Ctrl+Alt+Shift+V: todos viram o avatar v1 tingido), conta os
- * quadros longos do detector de travadas (logs/travadas.log) e grava capturas:
+ * intervalo entre quadros e do trabalho em JS) com o elenco de avatares (o
+ * padrão: cada papel o seu GLB) e com a chave de DEV ligada (Ctrl+Alt+Shift+V:
+ * todos de boneco), conta os quadros longos do detector de travadas
+ * (logs/travadas.log) e grava capturas:
  * visão geral, alguém sentado digitando, andando e com objeto na mão.
  */
 import { spawn } from 'node:child_process'
@@ -145,20 +146,33 @@ try {
   }
 
   const avatars = () => page.evaluate(() => [...window.__o.scene.chars.values()].filter((c) => !!c.body.avatar).length)
+  // O padrão é o elenco de avatares: espera os modelos carregarem (cada papel o seu GLB).
+  const t0 = Date.now()
+  let n = -1
+  for (let i = 0; i < 150; i++) {
+    const now = await avatars()
+    if (now > 0 && now === n) break
+    n = now
+    await wait(200)
+  }
+  note('elenco', { avatares: await avatars(), de: await chars(), cargaMs: Date.now() - t0, passos: await page.evaluate(() => window.__o.scene.agents.timings) })
   await page.evaluate(() => window.__o.resetView())
   await wait(2500)
-  await shot('01-boneco-geral')
-  const base = shotsOnly ? null : await measure('boneco')
+  await shot('01-avatar-geral')
+  const av = shotsOnly ? null : await measure('avatar')
 
-  const t0 = Date.now()
+  // A chave de DEV põe todos de boneco (a comparação).
   await key('V')
-  for (let i = 0; i < 100 && (await avatars()) === 0; i++) await wait(100)
-  note('chave-ligada', { avatares: await avatars(), de: await chars(), cargaMs: Date.now() - t0, passos: await page.evaluate(() => window.__o.scene.agents.timings) })
+  for (let i = 0; i < 100 && (await avatars()) > 0; i++) await wait(100)
   await wait(1500)
   await page.evaluate(() => window.__o.resetView())
   await wait(2500)
-  await shot('02-avatar-geral')
-  const av = shotsOnly ? null : await measure('avatar')
+  await shot('02-boneco-geral')
+  const base = shotsOnly ? null : await measure('boneco')
+  // De volta ao elenco para as capturas de perto.
+  await key('V')
+  for (let i = 0; i < 100 && (await avatars()) === 0; i++) await wait(100)
+  await wait(1500)
   if (base && av) {
     const pct = (a, z) => +(((a - z) / z) * 100).toFixed(1)
     note('comparacao', { frameMs: pct(av.frameMs, base.frameMs), frameP95: pct(av.frameP95, base.frameP95), workMs: pct(av.workMs, base.workMs), workP95: pct(av.workP95, base.workP95) })
@@ -265,7 +279,7 @@ try {
       await shot(name)
     }
     for (const body of ['boneco', 'avatar']) {
-      // O fluxo de cima já ligou a chave do avatar: alterna até ficar no corpo pedido.
+      // O fluxo de cima deixou o elenco de avatares: a chave alterna até ficar no corpo pedido.
       const want = body === 'avatar'
       if ((await avatars()) > 0 !== want) {
         await key('V')

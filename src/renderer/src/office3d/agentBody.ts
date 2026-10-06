@@ -40,6 +40,14 @@ export class CharacterBody {
   }
 
   /**
+   * Escala do personagem: com o avatar, a que deixa o modelo na altura da ficha (agentRest.ts `fit`);
+   * com o boneco, a do papel (o principal inteiro, os demais 0,85). O grupo acompanha a cada troca.
+   */
+  get scale(): number {
+    return this.template?.fit ?? (this.role === 'principal' ? 1 : 0.85)
+  }
+
+  /**
    * Troca de corpo se o modelo do papel mudou (chave de teste, GLB pronto); true
    * se trocou (o quadro tem de posar já: nada aparece na pose de repouso). Os
    * objetos vão para a mão nova e o avatar entra no nível `lod`.
@@ -59,6 +67,7 @@ export class CharacterBody {
       this.group.add(this.avatar.root)
     }
     this.rig.pelvis.visible = !this.avatar
+    this.group.scale.setScalar(this.scale)
     for (const [kind, p] of props) this.hold(kind, p)
     this.avatar?.setLod(lod)
     this.castDirty = true

@@ -6,7 +6,8 @@
  *   porta        batentes, verga e a folha na dobradiça (abre para dentro, −X);
  *   floreira     aparador baixo de carvalho com plantas junto do vidro;
  *   praça        console redondo da Central (base cream, tampo de madeira, tela
- *                inclinada — a tela é o monitor da Central — e o hub sage),
+ *                inclinada — a tela é o monitor da Central —, o hub sage e o
+ *                teclado num suporte na altura de digitar em pé),
  *                tapete sage e as plantas grandes do chão.
  * Estático vai para a fusão da zona; a folha da porta e a tela do console, não.
  */
@@ -16,7 +17,7 @@ import { BOARD_KEY, MEMORY_SHELF_KEY } from './engineTypes'
 import { box, cyl, disc, plant } from './decorUtil'
 import { boardPlace, DOOR_HEIGHT, MACHINE_OFFSET } from './furniture'
 import type { Kit } from './kit'
-import { COFFEE, CONSOLE, DOOR, FLOOR_PLANTS, GLASS_PLANTER, MEMORY_SHELF, PLAZA_RUG, RIGHT_X, zoneAt, type ZoneId } from './officePlan'
+import { COFFEE, CONSOLE, CONSOLE_KEYS, DOOR, FLOOR_PLANTS, GLASS_PLANTER, MEMORY_SHELF, PLAZA_RUG, RIGHT_X, zoneAt, type ZoneId } from './officePlan'
 import { tagLod } from './roomLod'
 import { canvas2d } from './textures'
 
@@ -148,6 +149,16 @@ function centralConsole(kit: Kit, zone: Group, statics: Group): Mesh {
   screen.rotation.x = CONSOLE_TILT
   screen.userData.charKey = null
   zone.add(screen)
+  // O teclado de quem opera: num suporte sobre a borda do tampo, na altura de digitar em pé (reach.ts).
+  const K = CONSOLE_KEYS
+  const trayY = K.y - 0.032
+  tagLod(box(kit, statics, m.metal, 0.04, trayY - 0.01 - top, 0.04, K.x, (trayY - 0.01 + top) / 2, K.z - 0.03), 'small')
+  const tray = new Group()
+  tray.position.set(K.x, trayY, K.z)
+  tray.rotation.x = K.tilt
+  statics.add(tray)
+  box(kit, tray, m.charcoal, 0.52, 0.02, K.d + 0.06, 0, 0, 0, true)
+  tagLod(box(kit, tray, m.keyboard, 0.44, 0.022, K.d, 0, 0.021, 0), 'small')
   return screen
 }
 

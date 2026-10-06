@@ -1,0 +1,11 @@
+Create ONE full-body adult male human office agent character for the Agent Code virtual office, alone, as a polished premium 3D cartoon character in exactly the same rendering style, finish and quality as the reference image (the man in the blue knitted sweater): softly sculpted stylized anatomy, tasteful stylization rather than caricature, premium animated-film quality, fine fabric textures, soft studio lighting. Only the rendering style of the reference matters: this is a different person with his own face, body and outfit.
+
+PROPORTIONS (important): natural adult proportions, about 7 heads tall, legs about half of the total body height, normal-sized head, hands and feet. No chibi, no big head, no short legs, no doll proportions.
+
+Role: Watcher, the operations guard who keeps an eye on every running system.
+Identity: a tall man of about 35 with a broad, strong build and wide shoulders, deep dark-brown (Black) skin, dark brown eyes, cleanly shaved head, short trimmed black beard, calm and alert expression, clean expressive face with high detail.
+Outfit: a saturated medium-blue waist-length operations jacket (utility field jacket) with a front zipper, chest pockets, sturdy ripstop texture and visible stitching, worn half-zipped (this jacket is the ONLY blue item); a plain medium-gray crew-neck t-shirt underneath; medium-gray cargo trousers with side pockets, fine twill weave and realistic cartoon folds; black leather work boots. No other blue anywhere: no blue eyes, no jeans or denim, no blue shoes, no blue accessories. No long coat, no helmet, no cap, no radio, no gloves, no belt gear, no bag, no badge, no lanyard, no hands in pockets.
+
+Pose: standing in a relaxed neutral pose, arms hanging slightly away from the torso (a small clear gap between arms and body), both hands empty, open and relaxed with the fingers slightly spread apart, feet comfortably separated. Three-quarter front view, camera very slightly elevated, entire body visible from head to soles, centered with modest padding, same scale and framing as the reference.
+
+Backdrop: transparent background. No floor, no platform, no scenery, no cast shadow, no text, no logo, no watermark, no other characters. Only the finished avatar.

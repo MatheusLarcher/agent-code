@@ -4,6 +4,7 @@ Uso: python inspect_glb.py arquivo.glb [saida.png]
 Gera uma silhueta frontal e lateral (pontos dos vértices + ossos) para ver a pose.
 """
 import json
+import re
 import struct
 import sys
 
@@ -98,6 +99,17 @@ def main():
         n = nodes[r]
         print(f"raiz: '{n.get('name')}' T={n.get('translation')} R={n.get('rotation')} S={n.get('scale')}")
 
+    def mesh_world(ni, n):
+        """Matriz que leva a malha ao mundo no bind. Com pele, o glTF ignora o nó da malha: vale
+        junta × matriz inversa de bind (a mesma em todas as juntas no bind; usa a 1ª)."""
+        if "skin" not in n:
+            return wm(ni)
+        sk = g["skins"][n["skin"]]
+        if "inverseBindMatrices" not in sk:
+            return wm(ni)
+        ibm = accessor(g, binb, sk["inverseBindMatrices"])[0].reshape(4, 4).T
+        return wm(sk["joints"][0]) @ ibm
+
     tris = verts = 0
     pts_all = []
     for ni, n in enumerate(nodes):
@@ -110,7 +122,7 @@ def main():
             t = (g["accessors"][p["indices"]]["count"] // 3) if "indices" in p else len(pos) // 3
             tris += t
             print(f"malha '{mesh.get('name')}' (nó '{n.get('name')}', skin={n.get('skin')}): {len(pos)} vértices, {t} triângulos, atributos {sorted(p['attributes'])}, material {p.get('material')}")
-            m = wm(ni)
+            m = mesh_world(ni, n)
             pts_all.append((np.c_[pos, np.ones(len(pos))] @ m.T)[:, :3])
     print(f"TOTAL: {verts} vértices, {tris} triângulos")
     pts = np.vstack(pts_all)
@@ -141,7 +153,8 @@ def main():
     if joints_xy:
         def find(*keys):
             for name, (p, _) in joints_xy.items():
-                low = (name or "").lower().replace("mixamorig:", "").replace("mixamorig_", "")
+                # Sem o prefixo do Mixamo, com ou sem número e ":"/"_" (o GLTFExporter tira o ":").
+                low = re.sub(r"^mixamorig\d*[:_]?", "", (name or "").lower())
                 if low in keys:
                     return name, p
             return None, None
@@ -160,6 +173,27 @@ def main():
             n, p = find(key)
             if p is not None:
                 print(f"  {key:12s} '{n}': y={p[1] - foot_y:.3f} (do chão) x={p[0]:.3f} z={p[2]:.3f}")
+
+        # Medidas do esqueleto no bind (m): segmentos dos dois lados, ombros, bacia e dedos.
+        def seg(a, b):
+            pa, pb = find(a)[1], find(b)[1]
+            return float(np.linalg.norm(pb - pa)) if pa is not None and pb is not None else None
+
+        med = {"altura_bind": round(float(mx[1] - mn[1]), 3)}
+        for side, k in (("left", "E"), ("right", "D")):
+            for label, a, b in (("coxa", "upleg", "leg"), ("canela", "leg", "foot"), ("braco", "arm", "forearm"), ("antebraco", "forearm", "hand")):
+                v = seg(side + a, side + b)
+                if v is not None:
+                    med[f"{label}_{k}"] = round(v, 3)
+        ombros = seg("leftarm", "rightarm")
+        if ombros is not None:
+            med["ombro_a_ombro"] = round(ombros, 3)
+        hp = find("hips")[1]
+        if hp is not None:
+            med["bacia_do_chao"] = round(float(hp[1] - foot_y), 3)
+        dedos = [nm for nm in joints_xy if re.search(r"hand(thumb|index|middle|ring|pinky)\d", (nm or "").lower())]
+        med["ossos_de_dedo"] = len(dedos)
+        print("medidas:", json.dumps(med, ensure_ascii=False))
 
     if out_png:
         W, H, pad = 1000, 900, 40

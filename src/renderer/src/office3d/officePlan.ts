@@ -162,6 +162,12 @@ export function islandShelf(island: number): Placed {
 /** Console da Central (o cruzamento da praça) e quem o opera, de pé olhando a tela inclinada (yaw 0). */
 export const CONSOLE = { x: 0, z: 6.33, r: 0.67, top: 0.6 } as const
 export const CENTRAL_SPOT = { x: 0, z: CONSOLE.z + 0.95, yaw: 0 } as const
+/**
+ * O teclado da Central: num suporte na borda do console, do lado de quem opera, na altura de
+ * digitar em pé (o tampo do console, a 0,6 m, fica fora do alcance de quem está de pé).
+ * `y` = topo das teclas; `d` = profundidade; `tilt` = inclinação da bandeja para quem digita.
+ */
+export const CONSOLE_KEYS = { x: 0, z: CONSOLE.z + CONSOLE.r - 0.12, y: 1.04, d: 0.15, tilt: 0.16 } as const
 export const PLAZA_RUG = { x: 0, z: CONSOLE.z, r: 1.4 } as const
 export const FRONT_PLANT = { x: 0, z: OFFICE.z1 - 0.7, scale: 1.9 } as const
 

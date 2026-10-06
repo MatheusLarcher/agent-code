@@ -63,7 +63,6 @@ export const GLANCE_S = 4
 
 export type { Lod } from './lod'
 export { appearance, seedColor, type Appearance } from './appearance'
-
 export type { FrameCtx } from './frameCtx'
 
 const scratch = new Vector3()
@@ -93,7 +92,9 @@ export class Character3D {
   /** A mesa dele (a cadeira que recua quando ele senta/levanta) e quanto ela está recuada agora. */
   deskIndex: number | null = null
   chairPull = 0
-  private readonly scale: number
+  private get scale(): number {
+    return this.body.scale
+  }
   /** Nível aplicado ao visual (detalhes, partes pequenas, sombra). */
   private shown: Lod = 0
   /** Próximo update vira a cabeça direto para o alvo (voltou à vista). */
@@ -159,7 +160,6 @@ export class Character3D {
       return z
     })
 
-    this.scale = c.model.role === 'principal' ? 1 : 0.85
     this.group.scale.setScalar(this.scale)
     this.params = { speed: 1, seed: brain.seed, side: brain.side }
     this.nextBlink = 1 + (brain.seed % 3)
@@ -279,7 +279,7 @@ export class Character3D {
       this.motion.before(dt, b, this.ctx.t, this.phase, this.out, this.body.metrics, !!this.propKind, this.rig)
       applyPose(this.rig, this.out, lod === 0 ? this.blink(dt) : 1, lod === 0 ? Math.sin(this.ctx.t * 1.75 + b.seed) : 0)
       this.motion.joints(this.rig)
-      this.body.pose(this.out, !!this.params.seated && this.motion.weight < 0.5, this.propKind, dt)
+      this.body.pose(this.out, (!!this.params.seated || b.action === 'type' || b.action === 'typeFast') && this.motion.weight < 0.5, this.propKind, dt)
     }
     this.placeProp(dt, lod)
     this.placeHud(dt)

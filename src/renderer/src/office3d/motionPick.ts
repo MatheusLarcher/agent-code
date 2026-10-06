@@ -7,8 +7,10 @@
  *
  * Sentado na cadeira, o clipe move só o tronco, a cabeça e os braços (as pernas
  * e a bacia ficam as do assento, feitas para a mesa). Andando com objeto na mão,
- * só as pernas. Digitar, cochilar, as idas ao quadro, o trenzinho, a lanterna e
- * a pizza seguem procedurais (feitos sob medida para a mesa, o quadro e a festa).
+ * só as pernas. Digitar (na mesa e no console da Central) é o 'typing' do Mixamo
+ * em camada ADITIVA: a pose procedural põe as mãos no teclado e o clipe soma o
+ * movimento. Cochilar, as idas ao quadro, o trenzinho, a lanterna e a pizza
+ * seguem procedurais (feitos sob medida para a mesa, o quadro e a festa).
  * A variação sai da seed: cada agente tem o seu jeito, e muda de tempos em tempos.
  */
 import type { Action, Reaction } from './poses'
@@ -22,6 +24,14 @@ export interface MotionPick {
   loop: boolean
   /** Sincronizado com o passo (0..1 do ciclo da passada): o tempo vem da fase, não do relógio. */
   phase: boolean
+  /**
+   * Camada ADITIVA: em vez de levar o corpo à pose do clipe, soma à pose procedural o quanto o
+   * clipe sai da pose média dele (digitar: a pose procedural põe as mãos no teclado — a altura
+   * certa — e o clipe põe o movimento). Ausente = o clipe manda (pelo peso e pela máscara).
+   */
+  additive?: boolean
+  /** Velocidade (1 = a do clipe). */
+  rate?: number
 }
 
 export interface MotionState {
@@ -101,6 +111,8 @@ const SEATED_REACT: Partial<Record<Reaction, readonly string[]>> = {
 
 /** Quanto dura (s) cada variação de quem está à toa em laço antes de trocar. */
 export const VARIANT_S = 14
+/** O clipe de digitar (Mixamo "Typing"): camada aditiva sobre a pose do teclado (reach.ts). */
+export const TYPING = 'typing'
 
 /** Escolhe uma das opções que existem na biblioteca, pela seed e pela "época" (estável dentro dela). */
 function choose(list: readonly string[] | undefined, seed: number, epoch: number, has: (k: string) => boolean): string | null {
@@ -121,6 +133,10 @@ export function pickMotion(s: MotionState, has: (key: string) => boolean): Motio
   if (s.reaction) {
     const key = choose(chair ? SEATED_REACT[s.reaction] : STAND_REACT[s.reaction], s.seed, Math.floor(s.t / 3), has)
     if (key) return { key, mask: chair || s.speed > 0.15 ? 'upper' : 'full', loop: false, phase: false }
+  }
+  // Digitando (na cadeira da mesa ou parado em pé no console da Central): o 'typing' do Mixamo por cima do teclado.
+  if ((s.action === 'type' || s.action === 'typeFast') && (chair || (s.sit === 0 && s.speed < 0.05)) && has(TYPING)) {
+    return { key: TYPING, mask: 'upper', loop: true, phase: false, additive: true, rate: s.action === 'typeFast' ? 1.6 : 1 }
   }
   if (chair) {
     const key = choose(SEATED[s.action], s.seed, epoch, has)

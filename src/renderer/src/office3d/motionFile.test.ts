@@ -3,7 +3,8 @@ import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { MOTION_FILE, MotionLibrary, newSample } from './motionLibrary'
-import { pickMotion } from './motionPick'
+import { consoleAction } from './brain'
+import { pickMotion, TYPING } from './motionPick'
 import type { Action, Reaction } from './poses'
 
 /** O arquivo de verdade (resources/office-agents/movimentos.bin, gerado do Mixamo). */
@@ -46,5 +47,22 @@ describe.runIf(existsSync(PATH))('movimentos.bin (os clipes do Mixamo)', () => {
     for (const reaction of reactions) expect(pickMotion({ action: 'idle', reaction, sit: 0, seat: null, speed: 0, prop: null, seed: 0.2, t: 3 }, has), reaction).not.toBeNull()
     expect(pickMotion({ action: 'none', reaction: null, sit: 0, seat: null, speed: 1.1, prop: null, seed: 0.2, t: 3 }, has)?.key).toMatch(/walk/i)
     expect(pickMotion({ action: 'sitIdle', reaction: null, sit: 1, seat: 'chair', speed: 0, prop: null, seed: 0.2, t: 3 }, has)?.key).toMatch(/^sit/)
+  })
+
+  it('a Central no console nunca fica sem clipe (trabalhando e à toa), com pelo menos 3 movimentos por minuto', () => {
+    const lib = load()
+    const has = (k: string): boolean => lib.clip(k) !== null
+    for (const working of [true, false]) {
+      const seen = new Set<string>()
+      for (let t = 0; t < 60; t += 0.5) {
+        const action = consoleAction(t, working)
+        const pick = pickMotion({ action, reaction: null, sit: 0, seat: null, speed: 0, prop: null, seed: 0.3, t }, has)
+        expect(pick, `${action} em ${t} s`).not.toBeNull()
+        seen.add(pick!.key)
+      }
+      expect(seen.size).toBeGreaterThanOrEqual(3)
+    }
+    // Digitando no console: o 'typing' em camada aditiva.
+    expect(pickMotion({ action: consoleAction(0.5, true), reaction: null, sit: 0, seat: null, speed: 0, prop: null, seed: 0.3, t: 0.5 }, has)).toMatchObject({ key: TYPING, additive: true })
   })
 })

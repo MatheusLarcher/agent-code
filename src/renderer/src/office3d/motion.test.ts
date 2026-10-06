@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { createBrain } from './brainBody'
 import { createKit } from './kit'
 import { MOTION_SLOTS, MotionLibrary, MS, newSample } from './motionLibrary'
-import { pickMotion, VARIANT_S, type MotionState } from './motionPick'
+import { pickMotion, TYPING, VARIANT_S, type MotionState } from './motionPick'
 import { MotionPlayer, MOTION_FADE_S } from './motionPlayer'
 import { BODY, CH, newPose } from './poses'
 import { applyPose, buildRig } from './rig'
@@ -61,6 +61,15 @@ describe('motionLibrary', () => {
     expect(s.hipsY).toBeCloseTo(0.1, 3)
   })
 
+  it('a pose média do clipe: por segmento, a média dos quadros (a referência da camada aditiva), uma vez por clipe', () => {
+    const lib = MotionLibrary.parse(file([{ key: 'a', loop: true, frames: [{ q: { foreL: turn([1, 0, 0], 0) }, curl: 0.2 }, { q: { foreL: turn([1, 0, 0], 0.4) }, curl: 0.6 }] }]))!
+    const m = lib.mean(lib.clip('a')!)
+    expect(m.q[MS.foreL].angleTo(turn([1, 0, 0], 0.2))).toBeLessThan(1e-3)
+    expect(m.q[MS.armL].angleTo(new Quaternion())).toBeLessThan(1e-6)
+    expect(m.curlL).toBeCloseTo(0.4, 3)
+    expect(lib.mean(lib.clip('a')!)).toBe(m)
+  })
+
   it('formato errado não vira biblioteca', () => {
     expect(MotionLibrary.parse(new Uint8Array([1, 2, 3, 4, 0, 0, 0, 0]))).toBeNull()
   })
@@ -83,14 +92,25 @@ describe('motionPick — qual movimento agora', () => {
     expect(pickMotion({ ...base, action: 'none', speed: 3 }, all)!.key).toMatch(/sprint|jog/)
   })
 
-  it('sentado na cadeira: só o tronco e os braços; digitar e cochilar seguem procedurais; no sofá, nada', () => {
+  it('sentado na cadeira: só o tronco e os braços; cochilar segue procedural; no sofá, nada', () => {
     const chair = { ...base, sit: 1, seat: 'chair' }
     expect(pickMotion({ ...chair, action: 'sitIdle' }, all)).toMatchObject({ mask: 'upper', loop: true })
-    expect(pickMotion({ ...chair, action: 'type' }, all)).toBeNull()
     expect(pickMotion({ ...chair, action: 'napDesk' }, all)).toBeNull()
     expect(pickMotion({ ...base, sit: 1, seat: 'sofa', action: 'napSofa' }, all)).toBeNull()
     // Sentando ou levantando: o procedural.
     expect(pickMotion({ ...chair, sit: 0.5, action: 'sitIdle' }, all)).toBeNull()
+  })
+
+  it('digitando (na cadeira ou parado em pé no console): o "typing" do Mixamo em camada aditiva; sem o clipe, o procedural', () => {
+    const chair = { ...base, sit: 1, seat: 'chair' }
+    expect(pickMotion({ ...chair, action: 'type' }, all)).toEqual({ key: TYPING, mask: 'upper', loop: true, phase: false, additive: true, rate: 1 })
+    expect(pickMotion({ ...chair, action: 'typeFast' }, all)).toMatchObject({ key: TYPING, additive: true, rate: 1.6 })
+    // Em pé no console da Central.
+    expect(pickMotion({ ...base, action: 'type' }, all)).toMatchObject({ key: TYPING, mask: 'upper', additive: true })
+    // Andando não digita; sem o clipe na biblioteca, fica a pose procedural.
+    expect(pickMotion({ ...base, action: 'type', speed: 1 }, all)?.key).not.toBe(TYPING)
+    expect(pickMotion({ ...chair, action: 'type' }, (k) => k !== TYPING)).toBeNull()
+    expect(pickMotion({ ...base, action: 'type' }, (k) => k !== TYPING)).toBeNull()
   })
 
   it('reação passa na frente da ação (uma vez); sentado usa a versão sentada', () => {
@@ -169,6 +189,41 @@ describe('motionPlayer — o clipe nas juntas do boneco', () => {
     frame(0.016)
     expect(rig.elbowR.rotation.y).toBe(0)
     expect(rig.pelvis.quaternion.angleTo(new Quaternion())).toBe(0)
+    kit.dispose()
+  })
+
+  it('digitando: camada aditiva — na pose média do clipe as juntas ficam as procedurais; fora dela, o delta entra no local', () => {
+    const kit = createKit(1)
+    const rig = buildRig(kit, new Group(), { skin: kit.mat.eye, shirt: kit.mat.eye, hair: kit.mat.eye, pants: kit.mat.eye })
+    const typingLib = (frames: Array<{ q?: Partial<Record<string, Quaternion>> }>): MotionLibrary => MotionLibrary.parse(file([{ key: TYPING, loop: true, frames }]))!
+    const b = createBrain({ key: 'k', role: 'visitor', roomId: 'office', home: { x: 0, z: 0, yaw: 0 } })
+    Object.assign(b, { sit: 1, seat: 'chair', action: 'type' })
+    const p = newPose()
+    const run = (lib: MotionLibrary): { player: MotionPlayer; procElbow: Quaternion } => {
+      const player = new MotionPlayer(() => lib)
+      const procElbow = new Quaternion()
+      for (let i = 0; i < 6; i++) {
+        p.fill(0)
+        p[CH.elbowL] = 0.9
+        player.before(MOTION_FADE_S / 2, b, 1, 0, p, BODY, false, rig)
+        applyPose(rig, p, 1, 0)
+        procElbow.copy(rig.elbowL.quaternion)
+        player.joints(rig)
+      }
+      return { player, procElbow }
+    }
+    // Clipe parado (todo quadro igual à média): a pose procedural (as mãos no teclado) fica como está.
+    const flat = run(typingLib([{ q: { foreL: turn([1, 0, 0], 0.3) } }, { q: { foreL: turn([1, 0, 0], 0.3) } }]))
+    expect([flat.player.weight, flat.player.additive, flat.player.key]).toEqual([0, 1, TYPING])
+    expect(rig.elbowL.quaternion.angleTo(flat.procElbow)).toBeLessThan(1e-4)
+    // Clipe que mexe o antebraço: o local do cotovelo = procedural · (média⁻¹ · clipe).
+    const lib = typingLib([{ q: { foreL: turn([1, 0, 0], 0) } }, { q: { foreL: turn([1, 0, 0], 0.4) } }])
+    const moving = run(lib)
+    const time = (moving.player as unknown as { layers: Array<{ time: number }> }).layers[0].time
+    const s = lib.sample(lib.clip(TYPING)!, time, true, newSample())
+    const delta = lib.mean(lib.clip(TYPING)!).q[MS.foreL].clone().invert().multiply(s.q[MS.foreL])
+    expect(delta.angleTo(new Quaternion())).toBeGreaterThan(0.01)
+    expect(rig.elbowL.quaternion.angleTo(moving.procElbow.clone().multiply(delta))).toBeLessThan(1e-3)
     kit.dispose()
   })
 })

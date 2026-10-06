@@ -43,6 +43,8 @@ const Q = 1 / 32767
 
 export class MotionLibrary {
   private readonly clips = new Map<string, MotionClip>()
+  /** A pose média de cada clipe (a referência da camada aditiva), calculada na 1ª vez que é pedida. */
+  private readonly means = new Map<MotionClip, MotionSample>()
 
   constructor(
     readonly fps: number,
@@ -88,6 +90,52 @@ export class MotionLibrary {
 
   keys(): string[] {
     return [...this.clips.keys()]
+  }
+
+  /**
+   * A pose média do clipe: por segmento, a média dos quaternions de todos os quadros (com o sinal
+   * alinhado ao 1º quadro, normalizada), e a média da bacia e dos dedos. É a referência da camada
+   * aditiva (motionPlayer.ts): o que o clipe faz é o quanto ele sai dela. Calculada uma vez por clipe.
+   */
+  mean(c: MotionClip): MotionSample {
+    const hit = this.means.get(c)
+    if (hit) return hit
+    const out = newSample()
+    const d = c.data
+    const e = MOTION_SLOTS.length * 4
+    for (let s = 0; s < MOTION_SLOTS.length; s++) {
+      const o = s * 4
+      let x = 0
+      let y = 0
+      let z = 0
+      let w = 0
+      for (let f = 0; f < c.frames; f++) {
+        const a = f * PER_FRAME + o
+        const sign = d[a] * d[o] + d[a + 1] * d[o + 1] + d[a + 2] * d[o + 2] + d[a + 3] * d[o + 3] < 0 ? -1 : 1
+        x += sign * d[a]
+        y += sign * d[a + 1]
+        z += sign * d[a + 2]
+        w += sign * d[a + 3]
+      }
+      out.q[s].set(x, y, z, w).normalize()
+    }
+    let hy = 0
+    let hz = 0
+    let cl = 0
+    let cr = 0
+    for (let f = 0; f < c.frames; f++) {
+      const a = f * PER_FRAME + e
+      hy += d[a]
+      hz += d[a + 1]
+      cl += d[a + 3]
+      cr += d[a + 4]
+    }
+    out.hipsY = (hy / c.frames) * 1e-4
+    out.hipsZ = (hz / c.frames) * 1e-4
+    out.curlL = (cl / c.frames) * Q
+    out.curlR = (cr / c.frames) * Q
+    this.means.set(c, out)
+    return out
   }
 
   /** A amostra do clipe em `t` s (em laço se `loop`, senão parada no último quadro), interpolada. */

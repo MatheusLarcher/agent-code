@@ -1,7 +1,10 @@
 """Gera o modelo 3D com esqueleto de um personagem do Escritório no Meshy: imagem → 3D (pose T,
 triângulos, com textura) e o auto-rig do Meshy (esqueleto humanoide, sem dedos).
 
-Uso: python meshy_3d.py <imagem.png> <saida-prefixo> [polígonos=30000] [altura_m=1.75]
+Uso: python meshy_3d.py <imagem.png> <saida-prefixo> [polígonos=30000] [altura_m=1.75] [--pbr] [--pose a-pose|t-pose]
+  --pbr   texturas PBR (metal/rugosidade e normal) além da cor: o tint_mask.py grava a máscara da
+          roupa no canal R da textura de metal/rugosidade, então o elenco tingível precisa dela.
+  --pose  pose do modelo gerado (padrão t-pose; o v1 e o elenco usam a-pose).
 Saída: <prefixo>-modelo.glb (sem esqueleto), <prefixo>-rig.glb (com esqueleto) e
 <prefixo>-run.json com os ids das tarefas: rodar de novo retoma as mesmas tarefas em vez de
 pagar outras. A chave vem de MESHY_API_KEY ou de %USERPROFILE%\\.meshy\\api-key.txt (nunca é
@@ -51,12 +54,31 @@ def download(url, path):
     print(f"  salvo: {path} ({os.path.getsize(path) / 1e6:.1f} MB)")
 
 
-def main():
-    if len(sys.argv) < 3:
+def parse_args(argv):
+    """Posicionais (imagem, prefixo, [polígonos], [altura]) e as opções --pbr e --pose."""
+    pos, pbr, pose = [], False, "t-pose"
+    it = iter(argv)
+    for a in it:
+        if a == "--pbr":
+            pbr = True
+        elif a == "--pose":
+            pose = next(it, "")
+        elif a.startswith("--pose="):
+            pose = a.split("=", 1)[1]
+        else:
+            pos.append(a)
+    if pose not in ("a-pose", "t-pose"):
+        sys.exit("--pose: a-pose ou t-pose")
+    if len(pos) < 2:
         sys.exit(__doc__)
-    image, prefix = sys.argv[1], sys.argv[2]
-    poly = int(sys.argv[3]) if len(sys.argv) > 3 else 30000
-    height = float(sys.argv[4]) if len(sys.argv) > 4 else 1.75
+    return pos, pbr, pose
+
+
+def main():
+    pos, pbr, pose = parse_args(sys.argv[1:])
+    image, prefix = pos[0], pos[1]
+    poly = int(pos[2]) if len(pos) > 2 else 30000
+    height = float(pos[3]) if len(pos) > 3 else 1.75
     run_path = f"{prefix}-run.json"
     run = json.load(open(run_path)) if os.path.exists(run_path) else {}
 
@@ -69,11 +91,12 @@ def main():
             "target_polycount": poly,
             "should_remesh": True,
             "should_texture": True,
-            "enable_pbr": False,
+            "enable_pbr": pbr,
             "symmetry_mode": "auto",
-            "pose_mode": "t-pose",
+            "pose_mode": pose,
         }
         run["model_task"] = call("POST", "image-to-3d", body)["result"]
+        run["options"] = {"polycount": poly, "pbr": pbr, "pose": pose, "height_m": height}
         json.dump(run, open(run_path, "w"), indent=1)
     print("imagem → 3D:", run["model_task"])
     model = wait("image-to-3d", run["model_task"])

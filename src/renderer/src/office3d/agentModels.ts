@@ -12,11 +12,13 @@
  * desenho, ~380 ms de travada); é um só por cena, compartilhado pelos
  * materiais dos agentes e liberado aqui.
  *
- * Chave de teste (só DEV, agentPreview.ts): ligada, TODOS os agentes viram o
- * avatar v1 ("principal") com a roupa na cor da seed; desligada, nada muda.
- * A Central tem modelo próprio, fora da chave: o avatar do usuário ("central").
- * `version` sobe quando a chave vira ou um modelo fica pronto: cada personagem
- * compara com o que aplicou e troca de corpo no próximo update.
+ * O elenco: cada papel tem o seu modelo (ROLE_MODELS — principal = o avatar v1,
+ * executor, crítico, navegador-de-código, memória, PO, vigia e subagente), com a
+ * roupa principal na cor da seed; a Central tem o dela, o avatar do usuário
+ * ("central"). Papel sem arquivo (ou que falhou) usa o v1. A chave de DEV
+ * (agentPreview.ts) põe TODOS de boneco, para comparar e medir. `version` sobe
+ * quando a chave vira ou um modelo fica pronto: cada personagem compara com o
+ * que aplicou e troca de corpo no próximo update.
  */
 import {
   Color,
@@ -40,8 +42,19 @@ import type { RendererLike } from './engineTypes'
 /** O renderer da cena (subir texturas e compilar o shader antes pedem um WebGLRenderer de verdade). */
 export type AgentRenderer = RendererLike | null
 
-/** O modelo da prova de conceito: o avatar v1. */
-export const PREVIEW_MODEL = 'principal'
+/** O avatar v1: o modelo do principal e o reserva de quem não tem modelo. */
+export const PRINCIPAL_MODEL = 'principal'
+/** O modelo de cada papel do elenco (resources/office-agents/<nome>.glb). */
+export const ROLE_MODELS: Readonly<Record<string, string>> = {
+  principal: PRINCIPAL_MODEL,
+  executor: 'executor',
+  critico: 'critico',
+  'navegador-de-codigo': 'navegador-de-codigo',
+  memoria: 'memoria',
+  po: 'po',
+  vigia: 'vigia',
+  subagente: 'subagente'
+}
 /** O avatar do usuário, sempre no agente da Central (resources/office-agents/central.glb). */
 export const CENTRAL_MODEL = 'central'
 /** Trocas de corpo por quadro (cada uma clona um esqueleto): 30 agentes de uma vez travariam o quadro. */
@@ -52,21 +65,21 @@ export const ENV_FILE = 'ambiente.bin'
 /** Devolve a vez ao navegador: cada passo pesado da carga fica na sua tarefa, nenhuma vira quadro longo. */
 const yieldTask = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
-let preview = false
+let bonecos = false
 const listeners = new Set<() => void>()
 
-/** A chave de teste está ligada? */
-export function avatarPreview(): boolean {
-  return preview
+/** A chave de DEV está pondo todos de boneco? */
+export function avatarsOff(): boolean {
+  return bonecos
 }
 
-/** Liga/desliga a chave de teste; devolve o estado novo. */
-export function setAvatarPreview(on: boolean): boolean {
-  if (on !== preview) {
-    preview = on
+/** Liga/desliga o boneco em todos (a chave de DEV); devolve o estado novo. */
+export function setAvatarsOff(on: boolean): boolean {
+  if (on !== bonecos) {
+    bonecos = on
     for (const f of listeners) f()
   }
-  return preview
+  return bonecos
 }
 
 type Fetch = (name: string) => Promise<Uint8Array | null>
@@ -189,20 +202,21 @@ export class AgentModels {
     return false
   }
 
-  /** A chave de teste pelo motor (o harness do app empacotado, sem o atalho de DEV). */
+  /** Avatares ligados (true, o padrão) ou todos de boneco, pelo motor (o harness do app empacotado, sem o atalho de DEV). */
   setPreview(on: boolean): boolean {
-    return setAvatarPreview(on)
+    return !setAvatarsOff(!on)
   }
 
   /**
-   * O modelo que o agente usa agora (null = o boneco), pedindo a carga se faltar. Quem tem modelo
-   * próprio (`own`: a Central, o avatar do usuário) usa sempre o dele; os outros, só com a chave de
-   * teste ligada (o avatar v1). Enquanto o GLB carrega (ou se falhar), fica o boneco.
+   * O modelo que o agente usa agora (null = o boneco), pedindo a carga se faltar: o próprio (`own`:
+   * a Central, o avatar do usuário) ou o do papel; papel sem modelo — ou cujo arquivo falhou — usa o
+   * v1, tingido na cor dele. Enquanto o GLB carrega, se o próprio falhar ou com a chave do boneco, o boneco.
    */
-  modelFor(_role: string, own: string | null = null): AvatarTemplate | null {
+  modelFor(role: string, own: string | null = null): AvatarTemplate | null {
+    if (bonecos) return null
     if (own) return this.template(own)
-    if (!preview) return null
-    return this.template(PREVIEW_MODEL)
+    const name = ROLE_MODELS[role] ?? PRINCIPAL_MODEL
+    return this.template(this.failed.has(name) ? PRINCIPAL_MODEL : name)
   }
 
   /** O modelo `name`, se já está pronto; senão começa a carregar (uma vez) e devolve null. */
@@ -241,7 +255,9 @@ export class AgentModels {
       this.bump()
     } catch (e) {
       this.failed.add(name)
-      console.warn(`[escritório] modelo do agente "${name}" não carregou; fica o boneco:`, e instanceof Error ? e.message : e)
+      console.warn(`[escritório] modelo do agente "${name}" não carregou; fica ${name === PRINCIPAL_MODEL ? 'o boneco' : 'o v1 (ou o boneco)'}:`, e instanceof Error ? e.message : e)
+      // Quem esperava este modelo troca já: o papel cai no v1 (modelFor).
+      if (!this.disposed) this.bump()
     } finally {
       this.loading.delete(name)
     }

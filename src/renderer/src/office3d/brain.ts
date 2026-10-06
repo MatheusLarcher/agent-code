@@ -55,6 +55,7 @@ import { CONTEXT_LOW_STEPS, STALL_MS, type AgentEventBody, type AgentPhase, type
 import { chairSide } from './furniture'
 import { chairStand, TV_CENTER } from './meetingRoom'
 import { MEMORY_WAIT } from './officePlan'
+import type { Action } from './poses'
 
 export * from './brainBody'
 export { beginChat } from './brainLeisure'
@@ -350,9 +351,30 @@ function runFixed(b: Brain): void {
   }
   if (working && b.style === 'board') setAction(b, 'readBoard')
   else if (working && b.style === 'archive') setAction(b, 'readBook')
-  else if (b.style === 'console') setAction(b, b.arrived ? (working ? 'type' : 'readScreen') : 'none')
+  else if (b.style === 'console') setAction(b, b.arrived ? consoleAction(b.modeT + b.seed * 37, working) : 'none')
   else setAction(b, b.arrived ? 'idle' : 'none')
   b.prop = working && b.style === 'archive' ? 'book' : null
+}
+
+/**
+ * A Central no console nunca fica parada (cada ação tem movimento do Mixamo): trabalhando, digita
+ * no teclado do console e fala no fone encaminhando os pedidos, aponta e escuta; sem trabalho, os
+ * ociosos em pé, olhando a praça, conversando no fone e se alongando. [ação, segundos], em ciclo.
+ */
+const CONSOLE_WORK: ReadonlyArray<readonly [Action, number]> = [['type', 7], ['talk', 5], ['type', 6], ['point', 2.5], ['listen', 3.5]]
+const CONSOLE_IDLE: ReadonlyArray<readonly [Action, number]> = [['idle', 12], ['talk', 5], ['idle', 9], ['lookOut', 4], ['idle', 8], ['stretchUp', 3]]
+
+/** A ação do console no instante `t` (s, já com a fase da seed). */
+export function consoleAction(t: number, working: boolean): Action {
+  const list = working ? CONSOLE_WORK : CONSOLE_IDLE
+  let total = 0
+  for (const [, d] of list) total += d
+  let u = ((t % total) + total) % total
+  for (const [a, d] of list) {
+    if (u < d) return a
+    u -= d
+  }
+  return list[0][0]
 }
 
 /** Chamando sem resposta por tanto tempo (s), quem está ao lado da TV passa a pular. */
