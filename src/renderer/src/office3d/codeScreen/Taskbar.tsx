@@ -1,7 +1,9 @@
 /**
  * A barra de tarefas do monitor, no jeito da do Windows: o botão Iniciar (o
- * avatar do Agent, abre o menu dele), um botão por app — Código, Chat,
- * Contexto — com o nome ao lado e o selo, a bandeja e o alfinete.
+ * avatar do Agent, abre o menu dele), um botão por app — Código (com o Chat
+ * dentro, à direita do editor) e Contexto — com o nome ao lado e o selo, a
+ * bandeja e o alfinete. O Código leva o "trabalhando" e, esperando permissão,
+ * pisca em âmbar com "!" (é no Chat dele que se responde).
  *
  * Escondida por padrão, deixa uma linha fina na borda de baixo com um traço por
  * app, no lugar em que o botão vai aparecer. Abre quando o mouse chega à faixa
@@ -15,8 +17,8 @@
  * escondida (abaixo da borda) rolaria a tela inteira para cima.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { AgentCodeLogo, Icon, VsCodeLogo } from './icons'
-import type { MonitorApp } from './monitorPrefs'
+import { Icon, VsCodeLogo } from './icons'
+import { MONITOR_APPS, type MonitorApp } from './monitorPrefs'
 
 export const REVEAL_MS = 250
 export const HIDE_MS = 650
@@ -25,12 +27,11 @@ const KEEP_PX = 24
 /** Parar o mouse num app por isto abre a prévia dele. */
 export const PREVIEW_MS = 450
 
-export const APP_LABEL: Record<MonitorApp, string> = { code: 'Código', chat: 'Chat', ctx: 'Contexto' }
-const APP_KEY: Record<MonitorApp, number> = { code: 1, chat: 2, ctx: 3 }
+export const APP_LABEL: Record<MonitorApp, string> = { code: 'Código', ctx: 'Contexto' }
+const APP_KEY: Record<MonitorApp, number> = { code: 1, ctx: 2 }
 
 export function AppIcon({ app, size = 20 }: { app: MonitorApp; size?: number }): JSX.Element {
   if (app === 'code') return <VsCodeLogo size={size} />
-  if (app === 'chat') return <AgentCodeLogo size={size} />
   return (
     <span className="cm-appico-ctx" aria-hidden="true">
       <Icon name="layers" />
@@ -132,7 +133,7 @@ export interface TaskbarProps {
   barRef: RefObject<HTMLElement | null>
   badges: { code: number; ctx: number }
   busy: boolean
-  /** O Agent espera uma permissão sua: o Chat pisca em âmbar com "!". */
+  /** O Agent espera uma permissão sua: o Código (onde fica o Chat) pisca em âmbar com "!". */
   needsYou: boolean
   startOpen: boolean
   tray: ReactNode
@@ -185,12 +186,11 @@ export function Taskbar(p: TaskbarProps): JSX.Element {
     if (hoverT.current) clearTimeout(hoverT.current)
   }, [])
 
-  const apps: MonitorApp[] = ['code', 'chat', 'ctx']
   return (
     <>
       <div className="cm-peek" aria-hidden="true">
         {ticks.map((t) => (
-          <i key={t.app} className={p.needsYou && t.app === 'chat' ? 'att' : t.app === p.app ? 'on' : undefined} style={{ left: `${t.x}px` }} />
+          <i key={t.app} className={p.needsYou && t.app === 'code' ? 'att' : t.app === p.app ? 'on' : undefined} style={{ left: `${t.x}px` }} />
         ))}
       </div>
       <div className="cm-tbzone" aria-hidden="true" {...p.reveal.zone} />
@@ -209,8 +209,8 @@ export function Taskbar(p: TaskbarProps): JSX.Element {
         </button>
         <span className="cm-tb-sep" aria-hidden="true" />
         <div className="cm-tb-apps" ref={appsRef} onMouseLeave={leaveApps}>
-          {apps.map((app) => {
-            const att = app === 'chat' && p.needsYou
+          {MONITOR_APPS.map((app) => {
+            const att = app === 'code' && p.needsYou
             return (
               <button
                 key={app}
@@ -228,12 +228,12 @@ export function Taskbar(p: TaskbarProps): JSX.Element {
                 </span>
                 <span aria-hidden="true">{APP_LABEL[app]}</span>
                 {app === 'code' && p.badges.code > 0 && <span className="cm-tb-badge" aria-hidden="true">{p.badges.code}</span>}
-                {app === 'chat' && att && (
+                {att && (
                   <span className="cm-tb-badge warn" aria-hidden="true">
                     !
                   </span>
                 )}
-                {app === 'chat' && !att && p.busy && <span className="cm-busydot" title="trabalhando" aria-hidden="true" />}
+                {app === 'code' && !att && p.busy && <span className="cm-busydot" title="trabalhando" aria-hidden="true" />}
                 {app === 'ctx' && p.badges.ctx > 0 && <span className="cm-tb-badge" aria-hidden="true">{p.badges.ctx}</span>}
               </button>
             )

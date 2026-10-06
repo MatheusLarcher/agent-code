@@ -14,6 +14,9 @@
  * certo — a TV o mostra por HTML_SHOW_MS (prioridade 4, amb-tv-prioridade).
  * A mesma escrita não volta a ser "nova"; editar o arquivo de novo é escrita
  * nova (recaptura).
+ *
+ * `freshHtmlWrite` diz o HTML que um personagem acabou de criar: o clique nele
+ * abre o monitor no Código com a Prévia desse arquivo.
  */
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { OfficeCharacterModel } from '../office/adapter/model'
@@ -84,6 +87,39 @@ export function scanHtmlWrites(feed: OfficeFeed, characters: ReadonlyArray<Pick<
     }
   }
   return out
+}
+
+/**
+ * O HTML que o personagem ACABOU de criar (o clique nele abre o monitor na
+ * Prévia): a última escrita dele que deu certo, se é do turno em andamento ou
+ * terminou há menos de HTML_SHOW_MS, pelo relógio que o feed tem — o fim do
+ * passo (subagente) ou o `ts` da resposta que fechou o turno (principal). Sem
+ * relógio, vale o turno atual.
+ */
+export function freshHtmlWrite(feed: OfficeFeed, ch: Pick<OfficeCharacterModel, 'key' | 'convId' | 'role' | 'trackId'>, now: number): HtmlWrite | null {
+  const w = scanHtmlWrites(feed, [ch]).find((x) => x.ok)
+  if (!w) return null
+  if (ch.trackId) {
+    const t = feed.tracks[ch.convId]?.[ch.trackId]
+    if (t?.status === 'running') return w
+    const end = t?.steps.find((s) => s.id === w.id)?.endedAt
+    return end !== undefined && now - end < HTML_SHOW_MS ? w : null
+  }
+  const msgs = feed.conversations.find((c) => c.id === ch.convId)?.messages ?? []
+  let current = true
+  let ts: number | null = null
+  for (let i = msgs.findIndex((m) => m.kind === 'tool-use' && m.id === w.id) + 1; i > 0 && i < msgs.length; i++) {
+    const m = msgs[i]
+    // O ajuste do botão "agora" (injected) entra no turno em andamento: não abre outro.
+    if (m.kind === 'user' && !m.injected) {
+      current = false
+      break
+    }
+    if (typeof m.ts === 'number') ts = m.ts
+  }
+  if (current && feed.busyIds.has(ch.convId)) return w
+  if (ts !== null) return now - ts < HTML_SHOW_MS ? w : null
+  return current ? w : null
 }
 
 export class HtmlTracker {

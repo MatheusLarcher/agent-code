@@ -1,13 +1,19 @@
 /**
- * O foco DENTRO da TV no Office3DWorkspace (dec-clique-tv): o que estava na tela
- * no clique (congelado enquanto o foco dura), o chamado que acaba ao abrir o
- * mockup, o plano em foco virando a conversa ativa (o chat do Manager dentro
- * da TV é o dele) e as abas de plano, o envio do Aprovar / Pedir ajuste e o
- * clique na notificação de um chamado (filtro no projeto, câmera na TV). A TV
- * vazia (o placar) não abre foco: abre o "📋 Planejar" (`onEmptyTv`); o plano
- * criado entra na TV assim que chega ao escritório (`focusPlan`).
+ * O foco DENTRO da TV no Office3DWorkspace (dec-clique-tv): congelado enquanto o
+ * foco dura. Com plano no escritório (no filtro), o foco que o usuário pede —
+ * clique na TV, o Agent Manager, "📋 Planejar" — abre no PLANO, mesmo com agente
+ * chamando ou testando (eles vão para a aba "Agente chamando (N)" do TvFocus,
+ * que encerra o chamado só quando a aba dele abre); sem plano, o que estava na
+ * tela (o chamado acaba ao abrir o mockup). O plano em foco vira a conversa
+ * ativa (o chat do Manager dentro da TV é o dele); abas de plano, o envio do
+ * Aprovar / Pedir ajuste e o clique na notificação de um chamado (filtro no
+ * projeto, câmera na TV). A TV vazia (o placar) não abre foco: abre o "📋
+ * Planejar" (`onEmptyTv`); o plano criado entra na TV assim que chega ao
+ * escritório (`focusPlan`), mesmo fora do filtro. "Ir até o agente" da aba
+ * Implantação (`goToAgent`): fecha o foco e voa até a mesa dele.
  */
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { principalKey } from '../office/adapter/model'
 import type { Office3DEngine } from './engine'
 import { tvLookPose } from './engineTv'
 import { PROJECTOR_KEY } from './engineTypes'
@@ -36,6 +42,8 @@ export interface TvFocusState {
   reset: () => void
   /** O plano recém-criado: quando ele aparece no escritório, a TV abre nele. */
   focusPlan: (convId: string) => void
+  /** Fecha o foco e voa até a mesa do agente da conversa; false se ele não está no escritório agora. */
+  goToAgent: (convId: string) => boolean
 }
 
 export function useTvFocus({ engineRef, active, convId, openConversation, onSendToConversation, callSignal, onEmptyTv }: Options): TvFocusState {
@@ -44,13 +52,16 @@ export function useTvFocus({ engineRef, active, convId, openConversation, onSend
   const [tvInfo, setTvInfo] = useState<TvFocusInfo | null>(null)
   const open = useRef(openConversation)
   open.current = openConversation
+  // O plano do "📋 Planejar": o foco que o focusPlan pede abre nele.
+  const forced = useRef<string | null>(null)
 
   const onFocus = useCallback(
     (key: string | null): boolean => {
       const projectors = engineRef.current?.scene.projectors
       const tv = !!key?.startsWith(PROJECTOR_KEY)
       projectors?.lock(tv)
-      const info = tv ? (projectors?.focusInfo() ?? null) : null
+      // O plano primeiro; sem plano no escritório, o que está na tela.
+      const info = tv ? (projectors?.planFocus(forced.current) ?? projectors?.focusInfo() ?? null) : null
       if (info?.kind === 'score' && empty.current) {
         // A TV vazia: o formulário do planejamento, sem foco (a câmera fica de frente para a TV).
         const open = empty.current
@@ -61,7 +72,7 @@ export function useTvFocus({ engineRef, active, convId, openConversation, onSend
         return true
       }
       setTvInfo(info)
-      // Abrir o mockup de quem chama encerra o chamado (ele foi visto).
+      // Abrir o mockup de quem chama encerra o chamado (ele foi visto); no plano, só a aba dele (TvFocus) encerra.
       if (info?.kind === 'mockup' && info.callId) callMarks.end(info.callId, 'aberto')
       return tv
     },
@@ -105,7 +116,7 @@ export function useTvFocus({ engineRef, active, convId, openConversation, onSend
 
   const reset = useCallback(() => setTvInfo(null), [])
 
-  // O plano criado pelo "📋 Planejar": espera ele chegar ao escritório (o feed) e abre a TV nele.
+  // O plano criado pelo "📋 Planejar": espera ele chegar ao escritório (o feed) e abre a TV nele — mesmo com agente chamando.
   const focusPlan = useCallback(
     (id: string): void => {
       let tries = 0
@@ -115,12 +126,21 @@ export function useTvFocus({ engineRef, active, convId, openConversation, onSend
         if (engine && plans?.all(() => true).some((p) => p.convId === id)) {
           plans.prefer = id
           engine.scene.projectors.tick(Date.now())
-          engine.focus(`${PROJECTOR_KEY}${OFFICE_ID}`)
+          // O motor chama o onFocus na hora: o foco abre neste plano (e nenhum foco depois herda a escolha).
+          forced.current = id
+          try {
+            engine.focus(`${PROJECTOR_KEY}${OFFICE_ID}`)
+          } finally {
+            forced.current = null
+          }
         } else if (++tries < 25) setTimeout(attempt, 200)
       }
       attempt()
     },
     [engineRef]
   )
-  return { tvInfo, onFocus, pickPlan, sendFromTv: onSendToConversation ? send : undefined, reset, focusPlan }
+
+  // O motor fecha o foco (leaveFocus) antes do voo; o agente fora do escritório (filtro, conversa fechada) dá false.
+  const goToAgent = useCallback((id: string): boolean => engineRef.current?.flyToAgent(principalKey(id), 'desk') ?? false, [engineRef])
+  return { tvInfo, onFocus, pickPlan, sendFromTv: onSendToConversation ? send : undefined, reset, focusPlan, goToAgent }
 }

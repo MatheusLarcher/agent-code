@@ -1,11 +1,12 @@
 /**
  * As peças da janela "VS Code" do monitor, sem estado próprio além da rolagem:
- * a faixa de abas (tablist), o explorador dos arquivos que o Agent mexeu
- * (Alterados) e leu (Lidos) — ou, desligado o "Apenas usados", a árvore de
- * todos os arquivos do projeto (AllFilesTree) —, o painel do terminal, a barra de status e a tela
- * de boas-vindas (vazia).
+ * a faixa de abas (tablist; no canto, o olho da Prévia do HTML), o
+ * explorador dos arquivos que o Agent mexeu (Alterados) e leu (Lidos) — ou,
+ * desligado o "Apenas usados", a árvore de todos os arquivos do projeto
+ * (AllFilesTree) —, o painel do terminal, a barra de status e a tela de
+ * boas-vindas (vazia).
  */
-import { useLayoutEffect, useRef, type KeyboardEvent } from 'react'
+import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { modelSequenceLabel } from '@shared/modelLabel'
 import type { TerminalCommand } from './codeModel'
 import { AllFilesTree } from './AllFilesTree'
@@ -26,10 +27,19 @@ export interface TabItem {
   range?: string | null
   /** Os modelos que fizeram (as edições ou a leitura). */
   models?: readonly string[]
+  /** A Prévia do HTML (a página, não o código): "Prévia: nome", com o globo (htmlPreview.ts). */
+  page?: boolean
 }
 
 const statusWord = (t: TabItem): string => (t.typing ? 'digitando' : t.status === 'U' ? 'novo' : t.status === 'M' ? 'modificado' : t.preview ? 'lido' : '')
-export const named = (t: TabItem): string => [t.name, statusWord(t)].filter(Boolean).join(', ')
+const tabName = (t: TabItem): string => (t.page ? `Prévia: ${t.name}` : t.name)
+export const named = (t: TabItem): string => [tabName(t), statusWord(t)].filter(Boolean).join(', ')
+const tabTitle = (t: TabItem): string =>
+  t.page
+    ? `${slashed(t.path)} · a página ao vivo: recarrega sozinha quando o Agent edita o arquivo`
+    : t.preview
+      ? `${slashed(t.path)} · aba de prévia: a próxima leitura do Agent troca este arquivo`
+      : slashed(t.path)
 
 export function Marker({ t }: { t: TabItem }): JSX.Element | null {
   if (t.typing) return <span className="cm-typing" aria-hidden="true" />
@@ -47,9 +57,11 @@ export interface TabStripProps {
   panelId: string
   tabId: (key: string) => string
   onSelect: (key: string) => void
+  /** O botão do canto direito da faixa (o olho "Abrir prévia"), fora da lista de abas. */
+  action?: ReactNode
 }
 
-export function TabStrip({ tabs, active, panelId, tabId, onSelect }: TabStripProps): JSX.Element {
+export function TabStrip({ tabs, active, panelId, tabId, onSelect, action }: TabStripProps): JSX.Element {
   const listRef = useRef<HTMLDivElement>(null)
   // A aba ativa sempre à vista (scrollLeft da faixa; nunca scrollIntoView).
   useLayoutEffect(() => {
@@ -73,29 +85,32 @@ export function TabStrip({ tabs, active, panelId, tabId, onSelect }: TabStripPro
   }
 
   return (
-    <div className="cm-tabs" role="tablist" aria-label="Arquivos abertos" ref={listRef} onKeyDown={onKeyDown}>
-      {tabs.map((t) => {
-        const on = t.key === active
-        return (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            id={tabId(t.key)}
-            aria-selected={on}
-            aria-controls={panelId}
-            aria-label={named(t)}
-            tabIndex={on ? 0 : -1}
-            className={`cm-tab${on ? ' active' : ''}${t.typing ? ' typing' : ''}${t.preview ? ' cm-tab-pv' : ''}`}
-            title={t.preview ? `${slashed(t.path)} · aba de prévia: a próxima leitura do Agent troca este arquivo` : slashed(t.path)}
-            onClick={() => onSelect(t.key)}
-          >
-            <FileGlyph path={t.path} />
-            <span className="cm-tab-name">{t.name}</span>
-            <Marker t={t} />
-          </button>
-        )
-      })}
+    <div className="cm-tabbar">
+      <div className="cm-tabs" role="tablist" aria-label="Arquivos abertos" ref={listRef} onKeyDown={onKeyDown}>
+        {tabs.map((t) => {
+          const on = t.key === active
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              id={tabId(t.key)}
+              aria-selected={on}
+              aria-controls={panelId}
+              aria-label={named(t)}
+              tabIndex={on ? 0 : -1}
+              className={`cm-tab${on ? ' active' : ''}${t.typing ? ' typing' : ''}${t.preview ? ' cm-tab-pv' : ''}${t.page ? ' cm-tab-page' : ''}`}
+              title={tabTitle(t)}
+              onClick={() => onSelect(t.key)}
+            >
+              {t.page ? <Icon name="globe" className="cm-glyph-page" /> : <FileGlyph path={t.path} />}
+              <span className="cm-tab-name">{tabName(t)}</span>
+              <Marker t={t} />
+            </button>
+          )
+        })}
+      </div>
+      {action}
     </div>
   )
 }
@@ -321,9 +336,11 @@ export interface StatusBarProps {
   position: { ln: number; col: number } | null
   stats: { added: number; removed: number } | null
   lang: string | null
+  /** A Prévia do HTML à vista: "Prévia ao vivo" no lugar de Ln/Col (sem o resumo do código). */
+  live?: boolean
 }
 
-export function StatusBar({ who, typingName, changed, read = 0, models = [], effort = '', readOnly = null, follow, onToggleFollow, position, stats, lang }: StatusBarProps): JSX.Element {
+export function StatusBar({ who, typingName, changed, read = 0, models = [], effort = '', readOnly = null, follow, onToggleFollow, position, stats, lang, live = false }: StatusBarProps): JSX.Element {
   const sequence = modelSequenceLabel(models)
   return (
     <footer className="cm-statusbar">
@@ -356,22 +373,26 @@ export function StatusBar({ who, typingName, changed, read = 0, models = [], eff
         )}
       </span>
       <span className="cm-sb-fill" />
-      <button type="button" className="cm-sb cm-follow" aria-pressed={follow} onClick={onToggleFollow} title={follow ? 'Parar de seguir o Agent' : 'Seguir o Agent de novo'}>
+      <button type="button" className="cm-sb cm-follow" aria-pressed={follow} onClick={onToggleFollow} title={follow ? 'Parar de seguir o Agent' : 'Voltar a mostrar o arquivo que o Agent está mexendo'}>
         <Icon name="follow" />
-        {follow ? 'Seguindo o Agent' : 'Seguir o Agent'}
+        {follow ? 'Seguindo o Agent' : 'Você escolheu um arquivo · Seguir o Agent'}
       </button>
-      {position && (
-        <span className="cm-sb cm-sb-pos">
-          Ln {position.ln}, Col {position.col}
-        </span>
+      {live ? (
+        <span className="cm-sb cm-sb-pos">Prévia ao vivo</span>
+      ) : (
+        position && (
+          <span className="cm-sb cm-sb-pos">
+            Ln {position.ln}, Col {position.col}
+          </span>
+        )
       )}
-      {readOnly && (
+      {!live && readOnly && (
         <span className="cm-sb cm-sb-ro">
           <Icon name="eye" />
           {readOnly}
         </span>
       )}
-      {!readOnly && stats && (stats.added > 0 || stats.removed > 0) && (
+      {!live && !readOnly && stats && (stats.added > 0 || stats.removed > 0) && (
         <span className="cm-sb cm-sb-stats" aria-label={`${stats.added} linhas adicionadas, ${stats.removed} removidas`}>
           <span className="cm-sb-add">+{stats.added}</span>
           <span className="cm-sb-del">−{stats.removed}</span>
@@ -397,7 +418,7 @@ export function Welcome({ busy, activity, onShowChat }: WelcomeProps): JSX.Eleme
       {busy && activity && <p className="cm-welcome-now">Agora: {activity}</p>}
       <button type="button" className="cm-welcome-btn" onClick={onShowChat}>
         <Icon name="chat" />
-        Ver o chat
+        Escrever no chat
       </button>
     </div>
   )

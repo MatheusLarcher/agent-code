@@ -152,7 +152,8 @@ export const MONITOR_SCREEN_FRONT = 0.026
 export const MONITOR_FILL = 0.94
 /** Folga mínima (px) entre a tela do monitor e a borda de baixo do palco, quando ela desce para livrar a faixa de cima. */
 export const MONITOR_BOTTOM_GAP = 8
-const MONITOR_PITCH = 0.06
+/** De frente para a tela (era 0,06): parada, ela vira um retângulo e o encaixe fica nítido (screenAnchor, modo plano). */
+const MONITOR_PITCH = 0
 /** Limite do enquadramento do prédio (o plano distante da câmera é 250). */
 export const MAX_FRAME_DISTANCE = 200
 

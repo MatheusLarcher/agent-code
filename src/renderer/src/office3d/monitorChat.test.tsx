@@ -1,8 +1,9 @@
 /**
- * A tela do monitor como chat: foco no agente abre a tela no Chat com o campo de
- * digitar (`monitorComposer`, o Composer do App) embaixo, o chat flutuante sai
- * enquanto ela está aberta e volta ao fechar; o rascunho sobrevive à troca
- * Chat/Código (o campo fica montado) e ao fechar (o blur grava antes).
+ * O chat da tela do monitor: foco no agente abre a tela no Código com o Chat à
+ * direita e o campo de digitar (`monitorComposer`, o Composer do App) embaixo
+ * dele; o chat flutuante sai enquanto ela está aberta e volta ao fechar; o
+ * rascunho sobrevive à troca Código/Contexto (o campo fica montado) e ao fechar
+ * (o blur grava antes).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -92,8 +93,8 @@ function setup(props: Partial<Office3DWorkspaceProps> = {}) {
   return { convId, pick, onDraft, onSend, onOpenConversation, rerender, click, float }
 }
 
-describe('Tela do monitor como chat', () => {
-  it('clique no agente: a tela abre no Chat com o campo de digitar; Enter envia pela conversa do agente; o flutuante sai e volta ao fechar', () => {
+describe('Tela do monitor: o Chat à direita do Código', () => {
+  it('clique no agente: a tela abre no Código com o Chat ao lado e o campo embaixo dele; Enter envia pela conversa do agente; o flutuante sai e volta ao fechar', () => {
     const s = setup()
     expect(s.float()?.textContent).toContain('central')
     s.click()
@@ -101,9 +102,11 @@ describe('Tela do monitor como chat', () => {
     expect(s.onOpenConversation).toHaveBeenCalledWith(s.convId)
     s.rerender(s.convId)
     const tela = screen.getByTestId('office-screen')
-    expect([tela.dataset.mode, screen.getByRole('button', { name: 'Chat' }).getAttribute('aria-pressed')]).toEqual(['chat', 'true'])
+    expect([tela.dataset.mode, screen.getByRole('button', { name: 'Código' }).getAttribute('aria-pressed')]).toEqual(['code', 'true'])
+    expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull()
     const box = screen.getByTestId('office-screen-composer')
     expect(box.hidden).toBe(false)
+    expect(screen.getByTestId('office-screen-chat').contains(box)).toBe(true)
     const ta = screen.getByRole('textbox', { name: 'Mensagem' })
     expect(tela.contains(ta)).toBe(true)
     // Com a tela aberta, o chat flutuante não existe (nem o campo dele).
@@ -127,17 +130,17 @@ describe('Tela do monitor como chat', () => {
     expect(s.float()).toBeNull()
   })
 
-  it('rascunho: trocar para Código e voltar mantém o texto; fechar a tela grava o rascunho (blur) antes de desmontar', () => {
+  it('rascunho: trocar para o Contexto e voltar mantém o texto; fechar a tela grava o rascunho (blur) antes de desmontar', () => {
     const s = setup()
     s.click()
     s.rerender(s.convId)
     const ta = screen.getByRole('textbox', { name: 'Mensagem' }) as HTMLTextAreaElement
     ta.focus()
     fireEvent.change(ta, { target: { value: 'meio escrito' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Código' }))
-    // No Código o campo fica montado e escondido: o texto não se perde.
+    fireEvent.click(screen.getByRole('button', { name: 'Contexto' }))
+    // No Contexto o campo fica montado e escondido: o texto não se perde.
     expect(screen.getByTestId('office-screen-composer').hidden).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Código' }))
     expect(screen.getByTestId('office-screen-composer').hidden).toBe(false)
     expect((screen.getByRole('textbox', { name: 'Mensagem' }) as HTMLTextAreaElement).value).toBe('meio escrito')
     // Fechar com o campo em foco (o motor fecha a tela): o blur grava antes de a tela sumir.
@@ -149,11 +152,12 @@ describe('Tela do monitor como chat', () => {
     expect(screen.queryByTestId('office-screen')).toBeNull()
   })
 
-  it('sem monitorComposer (quem não dá o campo): a tela abre no Chat só de leitura e o flutuante continua', () => {
+  it('sem monitorComposer (quem não dá o campo): a tela abre no Código com o Chat só de leitura e o flutuante continua', () => {
     const s = setup({ monitorComposer: undefined })
     s.click()
     s.rerender(s.convId)
-    expect(screen.getByTestId('office-screen').dataset.mode).toBe('chat')
+    expect(screen.getByTestId('office-screen').dataset.mode).toBe('code')
+    expect(screen.getByTestId('office-screen-chat').hidden).toBe(false)
     expect(screen.queryByTestId('office-screen-composer')).toBeNull()
     expect(s.float()).toBeTruthy()
   })

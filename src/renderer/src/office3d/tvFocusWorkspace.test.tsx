@@ -1,13 +1,20 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DeliveryCenterContext, type DeliveryCenterValue } from '../deliveries/deliveryCenterContext'
+import { envio } from '../handoffTracking/handoffFixtures'
+import { principalKey, roomIdFor } from '../office/adapter/model'
 import { conv, feed } from '../office/adapter/testFeed'
+import { UiProvider } from '../ui/UiProvider'
 import type { UIMessage } from '../types'
+import { MONITOR_FILL } from './cameraRig'
 import { Office3DEngine, type FeedSource, type RendererLike } from './engine'
+import { FILTER_KEY } from './engineFilter'
 import { MEMORY_SHELF_KEY, PROJECTOR_KEY } from './engineTypes'
 import { OFFICE_ID } from './layout'
 import { callMarks } from './officeCalls'
 import { Office3DWorkspace } from './Office3DWorkspace'
 import { OfficeScene } from './scene'
+import { BUBBLE_TOP } from './speech'
 
 const NOW = Date.now()
 const CALL_ID = `call-tv-${NOW}`
@@ -15,6 +22,9 @@ const MSGS: UIMessage[] = [
   { kind: 'user', id: 'u1', text: 'faz a tela de login' },
   { kind: 'tool-use', id: CALL_ID, name: 'mcp__app__app_chamar_usuario', input: { arquivo: 'tela.html', mensagem: 'Pronta!' }, parentToolUseId: null, result: { isError: false, text: 'ok' } }
 ]
+
+/** Um agente chamando (app_chamar_usuario com tela.html), com o id do chamado. */
+const callMsgs = (id: string): UIMessage[] => [MSGS[0], { ...MSGS[1], id } as UIMessage]
 
 const renderer = (): RendererLike => ({ setPixelRatio() {}, setSize() {}, render() {}, dispose() {} })
 const source = (f: ReturnType<typeof feed>): FeedSource => ({ getSnapshot: () => f, subscribe: () => () => {} })
@@ -48,6 +58,8 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  // O filtro do HUD (o callSignal o põe num projeto) fica no localStorage: o próximo teste começa sem ele.
+  localStorage.removeItem(FILTER_KEY)
 })
 
 describe('clique na TV: o foco dentro dela', () => {
@@ -88,6 +100,120 @@ describe('clique na TV: o foco dentro dela', () => {
     expect(screen.getByTestId('chat-float')).toBeTruthy()
   })
 
+  it('agente chamando + plano no escritório: o clique na TV abre o PLANO (o chamado não conta como visto), com a aba "Agente chamando (1)"; ela abre o mockup (agora visto) e Aprovar manda para o agente', async () => {
+    const callId = `call-tv-plano-${NOW}`
+    const f = feed({ conversations: [conv('a', { messages: callMsgs(callId), updatedAt: NOW }), conv('p', { mode: 'planning', planningSlug: 'checkout', title: 'Plano', updatedAt: NOW })], activeId: 'p' })
+    vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(`${PROJECTOR_KEY}${OFFICE_ID}`)
+    const raf = manualRaf()
+    const send = vi.fn()
+    render(
+      <Office3DWorkspace
+        chat={null}
+        onOpenConversation={vi.fn()}
+        onSendToConversation={send}
+        conversation={{ id: 'p', title: 'Plano', cwd: 'C:\\proj\\alpha' } as never}
+        planning={<div data-testid="planning-ws">plano</div>}
+        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }}
+      />
+    )
+    const canvas = screen.getByTestId('office3d-canvas')
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
+    fireEvent.pointerUp(window, { button: 0, clientX: 51, clientY: 50 })
+    expect(screen.getByTestId('tv-focus').dataset.kind).toBe('plan')
+    expect(screen.getByTestId('planning-ws')).toBeTruthy()
+    expect(callMarks.ended(callId)).toBe(false)
+    act(() => raf.flush(40))
+    fireEvent.click(screen.getByRole('tab', { name: 'Agente chamando (1)' }))
+    expect(screen.getByTestId('tv-focus').dataset.kind).toBe('mockup')
+    expect(callMarks.ended(callId)).toBe(true)
+    await act(async () => {
+      for (let i = 0; i < 4; i++) await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Aprovar' }))
+    expect(send).toHaveBeenCalledWith('a', 'Aprovado: tela.html')
+    expect(screen.queryByTestId('tv-focus')).toBeNull()
+  })
+
+  it('agente chamando + "📋 Planejar": a TV abre no plano novo, não no mockup de quem chama', async () => {
+    const callId = `call-tv-planejar-${NOW}`
+    const f = feed({ conversations: [conv('a', { messages: callMsgs(callId), updatedAt: NOW }), conv('p', { mode: 'planning', planningSlug: 's', updatedAt: NOW - 5000 })], activeId: 'a' })
+    const raf = manualRaf()
+    const start = vi.fn(async () => 'p')
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onStartPlanning={start} planProjects={[{ cwd: 'C:\\proj\\alpha', name: 'alpha' }]} engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }} />)
+    fireEvent.click(screen.getByRole('button', { name: /Planejar/ }))
+    fireEvent.change(screen.getByLabelText('Pedido inicial'), { target: { value: 'checkout com Pix' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Planejar na TV' }))
+    await act(async () => {
+      for (let i = 0; i < 4; i++) await Promise.resolve()
+    })
+    expect(start).toHaveBeenCalledWith('C:\\proj\\alpha', 'checkout com Pix')
+    const tv = screen.getByTestId('tv-focus')
+    expect(tv.dataset.kind).toBe('plan')
+    expect(screen.getByRole('tab', { name: 'Agente chamando (1)' })).toBeTruthy()
+    expect(callMarks.ended(callId)).toBe(false)
+  })
+
+  it('"📋 Planejar" com o filtro do HUD em outro projeto: a TV abre no plano criado, mesmo fora do filtro (ele entra nas abas)', async () => {
+    const alpha = 'C:\\proj\\alpha'
+    const beta = 'C:\\proj\\beta'
+    const callId = `call-tv-filtro-${NOW}`
+    const f = feed({ conversations: [conv('a', { messages: callMsgs(callId), updatedAt: NOW }), conv('p', { mode: 'planning', planningSlug: 's', title: 'Plano beta', cwd: beta, updatedAt: NOW - 5000 })], activeId: 'a' })
+    const raf = manualRaf()
+    const start = vi.fn(async () => 'p')
+    const props = { chat: null, onOpenConversation: vi.fn(), onStartPlanning: start, planProjects: [{ cwd: alpha, name: 'alpha' }, { cwd: beta, name: 'beta' }], engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer, browser: null } }
+    const v = render(<Office3DWorkspace {...props} callSignal={{ n: 0, projectId: null }} />)
+    // O filtro do HUD no alpha (o clique na notificação do chamado o põe lá).
+    v.rerender(<Office3DWorkspace {...props} callSignal={{ n: 1, projectId: roomIdFor(alpha) }} />)
+    fireEvent.click(screen.getByRole('button', { name: /Planejar/ }))
+    fireEvent.change(screen.getByLabelText('Projeto'), { target: { value: beta } })
+    fireEvent.change(screen.getByLabelText('Pedido inicial'), { target: { value: 'login novo' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Planejar na TV' }))
+    await act(async () => {
+      for (let i = 0; i < 4; i++) await Promise.resolve()
+    })
+    expect(start).toHaveBeenCalledWith(beta, 'login novo')
+    expect(screen.getByTestId('tv-focus').dataset.kind).toBe('plan')
+    expect(screen.getByRole('tab', { name: 'Plano beta' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('tab', { name: 'Agente chamando (1)' })).toBeTruthy()
+  })
+
+  it('aba Implantação do plano: "Ir até o agente" voa até a mesa do agente da implementação (flyToAgent com a chave dele); fora do escritório, avisa, fecha a TV e abre a conversa', async () => {
+    const f = feed({ conversations: [conv('p', { mode: 'planning', planningSlug: 'checkout', title: 'Plano', updatedAt: NOW })], activeId: 'p' })
+    vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(`${PROJECTOR_KEY}${OFFICE_ID}`)
+    const fly = vi.spyOn(Office3DEngine.prototype, 'flyToAgent')
+    const raf = manualRaf()
+    const center: DeliveryCenterValue = {
+      envios: [envio({ planSlug: 'checkout', projectCwd: 'C:\\proj\\alpha', conversationId: 'impl', conversationTitle: 'Implementação: checkout' })],
+      error: null,
+      correct: vi.fn(),
+      openConversation: vi.fn()
+    }
+    render(
+      <UiProvider>
+        <DeliveryCenterContext.Provider value={center}>
+          <Office3DWorkspace
+            chat={null}
+            onOpenConversation={vi.fn()}
+            conversation={{ id: 'p', title: 'Plano', cwd: 'C:\\proj\\alpha' } as never}
+            planning={<div data-testid="planning-ws">plano</div>}
+            engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }}
+          />
+        </DeliveryCenterContext.Provider>
+      </UiProvider>
+    )
+    const canvas = screen.getByTestId('office3d-canvas')
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
+    fireEvent.pointerUp(window, { button: 0, clientX: 51, clientY: 50 })
+    expect(screen.getByTestId('tv-focus').dataset.kind).toBe('plan')
+    fireEvent.click(screen.getByRole('tab', { name: 'Implantação · 0/1 · em execução' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ir até o agente' }))
+    expect(fly).toHaveBeenCalledWith(principalKey('impl'), 'desk')
+    expect(fly).toHaveLastReturnedWith(false)
+    expect(center.openConversation).toHaveBeenCalledWith('impl')
+    expect(screen.queryByTestId('tv-focus')).toBeNull()
+    expect(await screen.findByText(/não está no escritório agora/)).toBeTruthy()
+  })
+
   it('clique na notificação (callSignal): o filtro vai para o projeto do chamado e a câmera voa de frente para a TV, sem abrir o foco', () => {
     const f = feed({ conversations: [conv('a', { messages: MSGS, updatedAt: NOW })], activeId: 'a' })
     const filter = vi.spyOn(Office3DEngine.prototype, 'setProjectFilter')
@@ -120,6 +246,37 @@ describe('clique na TV: o foco dentro dela', () => {
     expect(screen.getByTestId('planning-ws')).toBeTruthy()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByTestId('tv-focus')).toBeNull()
+  })
+
+  it('a TV com o plano, parada: a tela fica plana (sem transform), do tamanho da TV projetada — quase toda a largura do palco, abaixo da faixa do HUD — com a Tela de Planejamento dentro', () => {
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(1400)
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(800)
+    const f = feed({ conversations: [conv('p', { mode: 'planning', planningSlug: 'checkout', title: 'Plano', updatedAt: NOW })], activeId: 'p' })
+    vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(`${PROJECTOR_KEY}${OFFICE_ID}`)
+    const raf = manualRaf()
+    render(
+      <Office3DWorkspace
+        chat={null}
+        onOpenConversation={vi.fn()}
+        conversation={{ id: 'p', title: 'Plano', cwd: 'C:\\proj\\alpha' } as never}
+        planning={<div data-testid="planning-ws">plano</div>}
+        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }}
+      />
+    )
+    const canvas = screen.getByTestId('office3d-canvas')
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
+    fireEvent.pointerUp(window, { button: 0, clientX: 51, clientY: 50 })
+    expect(screen.getByTestId('tv-focus').dataset.kind).toBe('plan')
+    const anchor = screen.getByTestId('tv-focus').parentElement as HTMLElement
+    expect(anchor.querySelector('.tvf-plan [data-testid="planning-ws"]')).toBeTruthy()
+    act(() => raf.flush(40))
+    expect([anchor.style.transform, anchor.style.pointerEvents]).toEqual(['', ''])
+    const [left, top, width, height] = (['left', 'top', 'width', 'height'] as const).map((k) => parseFloat(anchor.style[k]))
+    // A TV (2,23 × 1,12 m) é mais larga que o palco: a largura limita — MONITOR_FILL dele, centrada.
+    expect(width).toBe(Math.round(MONITOR_FILL * 1400))
+    expect(Math.abs(left - (1400 - width) / 2)).toBeLessThanOrEqual(1)
+    expect(top).toBeGreaterThanOrEqual(BUBBLE_TOP - 1)
+    expect(top + height).toBeLessThanOrEqual(800)
   })
 
   it('trocar de plano pelas abas, bem depois do clique: a conversa ativa vira a do outro plano e a câmera fica na TV', () => {

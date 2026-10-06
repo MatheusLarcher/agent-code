@@ -224,7 +224,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     expect(screen.queryByTestId('o3d-session-battery')).toBeNull()
   })
 
-  it('foco abre o monitor no Chat; a um clique, o Código: a aba do arquivo que o agente edita e o diff (verde/vermelho) dos trechos', () => {
+  it('foco abre o monitor no Código (com o Chat ao lado): a aba do arquivo que o agente edita e o diff (verde/vermelho) dos trechos', () => {
     const feed = demoFeed()
     const target = layoutOffice(deriveOfficeModel(feed, Date.now())).characters.find((c) => c.model.convId === 'demo-0-0')!
     vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
@@ -236,9 +236,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     fireEvent.pointerDown(screen.getByTestId('office3d-canvas'), { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
     const card = screen.getByTestId('office-screen')
-    expect([card.dataset.mode, card.dataset.kind]).toEqual(['chat', 'chat'])
-    fireEvent.click(screen.getByRole('button', { name: 'Código' }))
-    expect(card.dataset.kind).toBe('code')
+    expect([card.dataset.mode, card.dataset.kind]).toEqual(['code', 'code'])
     const tab = screen.getByRole('tab', { name: 'total.ts, modificado' })
     expect(tab.getAttribute('aria-selected')).toBe('true')
     // Sem o arquivo do disco (sem window.api), os trechos da própria edição, sem número inventado.
@@ -252,7 +250,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     expect(card.querySelector('.cm-statusbar')?.textContent).toContain('TypeScript')
   })
 
-  it('o Chat da tela mostra o turno da conversa como no chat: o pedido em balão e os cartões recolhidos, que abrem ao clicar', () => {
+  it('o Chat da tela (à direita do Código) mostra o turno da conversa como no chat: o pedido em balão e os cartões recolhidos, que a ▸ abre', () => {
     const feed = demoFeed()
     const target = layoutOffice(deriveOfficeModel(feed, Date.now())).characters.find((c) => c.model.convId === 'demo-0-0')!
     vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(target.key)
@@ -264,12 +262,14 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     const canvas = screen.getByTestId('office3d-canvas')
     fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
-    // Abre no Chat (o padrão do Escritório).
+    // Abre no Código (o padrão do Escritório), com o Chat à direita; o título da conversa vai na barra da janela.
     const card = screen.getByTestId('office-screen')
-    expect(card.dataset.kind).toBe('chat')
-    expect(card.querySelector('.o3d-turn-title')?.textContent).toBe('Demo 1.1')
-    expect(card.querySelector('.msg.user .bubble')?.textContent).toContain('desconto percentual')
-    const cards = [...card.querySelectorAll<HTMLElement>('.tool-card')]
+    const chat = screen.getByTestId('office-screen-chat')
+    expect(card.dataset.kind).toBe('code')
+    expect(card.querySelector('.cm-title-conv')?.textContent).toContain('Demo 1.1')
+    expect(chat.querySelector('.cm-chat-head')?.textContent).toContain('Chat')
+    expect(chat.querySelector('.msg.user .bubble')?.textContent).toContain('desconto percentual')
+    const cards = [...chat.querySelectorAll<HTMLElement>('.tool-card')]
     expect(cards.map((c) => c.querySelector('.tool-name')?.textContent)).toEqual(['Read', 'Edit'])
     const edit = cards[1]
     expect(edit.querySelector('.tool-detail')?.textContent).toBe('total.ts')
@@ -277,17 +277,14 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     expect(edit.querySelector('.diff-del')?.textContent).toBe('−5')
     expect(edit.querySelector('.tool-badge.run')?.textContent).toBe('running…')
     expect(cards[0].querySelector('.tool-badge.ok')?.textContent).toBe('done')
-    // Recolhido como no chat; o clique abre o diff realçado.
+    // Recolhido como no chat; a ▸ abre o diff realçado (o resto do cabeçalho abre o arquivo no editor).
     expect(edit.querySelector('pre.code-block')).toBeNull()
-    fireEvent.click(edit.querySelector('.tool-head')!)
+    fireEvent.click(edit.querySelector('.tool-caret-btn')!)
     expect(edit.querySelector('pre.code-block')).toBeTruthy()
     // Trabalhando: o "digitando" do chat no fim. Só leitura: sem "Tentar de novo" nem "Ouvir".
-    expect(card.querySelector('.bubble.typing')).toBeTruthy()
-    expect(card.querySelector('.msg-retry, .msg-speak')).toBeNull()
-    // A alternância volta ao Código.
-    expect(screen.getByRole('button', { name: 'Chat' }).getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(screen.getByRole('button', { name: 'Código' }))
-    expect(card.dataset.kind).toBe('code')
+    expect(chat.querySelector('.bubble.typing')).toBeTruthy()
+    expect(chat.querySelector('.msg-retry, .msg-speak')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull()
     expect(screen.getByRole('tab', { name: 'total.ts, modificado' })).toBeTruthy()
   })
 

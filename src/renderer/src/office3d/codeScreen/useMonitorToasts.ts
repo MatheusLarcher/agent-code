@@ -120,7 +120,7 @@ export function useMonitorToasts(input: ToastInput): { toasts: MonitorToast[]; d
       return
     }
     push({
-      id: 'perm', kind: 'warn', icon: 'alert', app: 'chat', sticky: true,
+      id: 'perm', kind: 'warn', icon: 'alert', app: 'code', sticky: true,
       title: 'O Agent precisa de você',
       body: `${permissionTool === 'AskUserQuestion' ? 'Ele fez uma pergunta' : `Ele quer usar ${permissionTool}`}. Responda no Chat.`
     })

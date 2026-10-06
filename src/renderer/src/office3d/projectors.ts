@@ -13,7 +13,9 @@
  *   animate(dt)                só as salas À VISTA; fora da tela vai direto ao fim;
  *   frameArrived(convId)       quadro novo do navegador da conversa;
  *   lock(on) / focusInfo()     o foco na TV: o conteúdo congela enquanto o usuário
- *                              está nela, e o foco abre o que estava na tela.
+ *                              está nela, e o foco abre o que estava na tela;
+ *   planFocus(convId?)         o foco que o usuário pede (clique na TV, "📋 Planejar"):
+ *                              o plano primeiro, com a fila de quem chama/testa à parte.
  *
  * A imagem só é redesenhada (no máximo uma vez a cada MIN_PAINT_MS, ~5 por
  * segundo) na sala com a tela acesa, à vista e PERTO/MÉDIO — ou com o espelho
@@ -36,17 +38,26 @@ import { createProjectorKit, type ProjectorKit } from './projectorKit'
 import type { PageImage, ProjectorView } from './projectorPaint'
 import { ProjectorTracker, scanDeviceUse, type DeviceUse } from './projectorUse'
 import type { RoomLod } from './roomLod'
-import { agendaSig, SCORE, type TvAgenda } from './tvAgenda'
+import { agendaSig, SCORE, type TvAgenda, type TvPlan } from './tvAgenda'
 import { fileLabel, TvContent, type TvChar } from './tvContent'
 
 /** Intervalo mínimo entre dois desenhos da imagem de uma sala (≤ 5 por segundo). */
 export const MIN_PAINT_MS = 200
 
-/** O que o foco na TV abre (o que estava na tela no clique). */
-export type TvFocusInfo =
+/** A tela de um agente no foco: o mockup de quem chama (ou o último HTML) ou o espelho de quem testa. */
+export type TvAgentFocus =
   | { kind: 'mockup'; roomId: string; convId: string; agent: string; cwd: string; path: string; rel: string; callId: string | null; waiting: number }
   | { kind: 'test'; roomId: string; convId: string; agent: string; url: string; title: string; waiting: number }
-  | { kind: 'plan'; roomId: string; convId: string; plans: Array<{ convId: string; title: string }>; waiting: number }
+
+/**
+ * O que o foco na TV abre (o que estava na tela no clique, ou o plano que o
+ * usuário pediu). No plano, `agents` é a fila de quem chama e de quem testa —
+ * a aba "Agente chamando (N)" abre a 1ª — e cada plano traz a pasta e o slug
+ * (a aba Implantação acha por eles os envios para implementação).
+ */
+export type TvFocusInfo =
+  | TvAgentFocus
+  | { kind: 'plan'; roomId: string; convId: string; plans: TvPlan[]; waiting: number; agents?: TvAgentFocus[] }
   | { kind: 'score'; roomId: string; waiting: number }
 
 interface RoomState {
@@ -343,12 +354,41 @@ export class Projectors {
     const { main: m, waiting } = st.agenda
     const roomId = st.fx.roomId
     if (m.kind === 'score') return { kind: 'score', roomId, waiting }
-    if (m.kind === 'plan') return { kind: 'plan', roomId, convId: m.plan.convId, plans: this.content.plans.all(this.content.keep).map(({ convId, title }) => ({ convId, title })), waiting }
-    if (m.kind === 'test') {
-      const v = this.viewOf(st, m.use, this.clock())
-      return { kind: 'test', roomId, convId: m.use.convId, agent: this.content.titleOf(m.use.convId), url: v.url, title: v.title, waiting }
-    }
-    const [convId, path, callId] = m.kind === 'call' ? [m.call.convId, m.call.path, m.call.id] : [m.write.convId, m.write.path, null]
+    if (m.kind === 'plan') return { kind: 'plan', roomId, convId: m.plan.convId, plans: this.content.plans.all(this.content.keep).map(({ convId, title, cwd, slug }) => ({ convId, title, cwd, slug })), waiting }
+    if (m.kind === 'test') return this.testFocus(st, m.use, waiting)
+    return m.kind === 'call' ? this.mockupFocus(roomId, m.call.convId, m.call.path, m.call.id, waiting) : this.mockupFocus(roomId, m.write.convId, m.write.path, null, waiting)
+  }
+
+  /**
+   * O foco que o usuário pede (clique na TV, "📋 Planejar"): o plano `convId`
+   * (o recém-criado, mesmo fora do filtro) ou o da TV (TvPlans.current, no
+   * filtro), por cima de quem chama ou testa — esses vão para `agents`, na ordem
+   * da TV (chamados, depois testes). null sem plano: vale o que está na tela.
+   */
+  planFocus(convId: string | null = null): Extract<TvFocusInfo, { kind: 'plan' }> | null {
+    const st = this.list[0]
+    if (!st) return null
+    const { plans, keep } = this.content
+    const shown = plans.all(keep)
+    const forced = convId ? plans.all(() => true).find((p) => p.convId === convId) : undefined
+    const plan = forced ?? plans.current(keep)
+    if (!plan) return null
+    const tabs = forced && !shown.includes(forced) ? [forced, ...shown] : shown
+    const roomId = st.fx.roomId
+    const open = this.content.openCalls.filter((c) => keep(c.convId))
+    // Um por agente, como a fila da sala (emitRoom): quem chama não conta de novo pelo teste.
+    const callers = new Set(open.map((c) => c.key))
+    const calls = open.map((c) => this.mockupFocus(roomId, c.convId, c.path, c.id, 0))
+    const tests = this.tracker.queue(roomId, this.lastNow).filter((u) => keep(u.convId) && !callers.has(u.key)).map((u) => this.testFocus(st, u, 0))
+    return { kind: 'plan', roomId, convId: plan.convId, plans: tabs.map(({ convId: id, title, cwd, slug }) => ({ convId: id, title, cwd, slug })), waiting: 0, agents: [...calls, ...tests] }
+  }
+
+  private testFocus(st: RoomState, use: DeviceUse, waiting: number): Extract<TvAgentFocus, { kind: 'test' }> {
+    const v = this.viewOf(st, use, this.clock())
+    return { kind: 'test', roomId: st.fx.roomId, convId: use.convId, agent: this.content.titleOf(use.convId), url: v.url, title: v.title, waiting }
+  }
+
+  private mockupFocus(roomId: string, convId: string, path: string, callId: string | null, waiting: number): Extract<TvAgentFocus, { kind: 'mockup' }> {
     const cwd = this.content.cwdOf(convId)
     return { kind: 'mockup', roomId, convId, agent: this.content.titleOf(convId), cwd, path, rel: fileLabel(path, cwd).rel, callId, waiting }
   }

@@ -10,7 +10,7 @@ import { join } from 'node:path'
  * calha e o editor ficou com as linhas vazias.
  */
 const ROW_CLASSES = ['cm-ctx', 'cm-add', 'cm-del', 'cm-gap', 'cm-hunk', 'cm-current']
-const SHEETS = ['taskbar.css', 'contextApp.css']
+const SHEETS = ['taskbar.css', 'contextApp.css', 'chatDock.css']
 
 describe('CSS da tela do monitor', () => {
   it.each(SHEETS)('%s não usa as classes das linhas do editor', (file) => {

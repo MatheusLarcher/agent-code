@@ -173,6 +173,7 @@ import { CentralPanel } from './central/CentralPanel'
 import { buildRemoteCentral } from './central/centralRemote'
 import { DeliveriesScreen } from './deliveries/DeliveriesScreen'
 import { useDeliveriesNav } from './deliveries/deliveriesNav'
+import { DeliveryCenterProvider } from './deliveries/deliveryCenterContext'
 import { useDeliveryCenter } from './deliveries/useDeliveryCenter'
 
 export type { UserMessage, UIMessage } from './types'
@@ -4667,6 +4668,8 @@ export function App(): JSX.Element {
             1ª abertura fica montado e pausado.
             Uma falha no 3D vira um aviso com volta para a Conversa (não derruba o app). */}
         <OfficeErrorBoundary active={mainTab === 'office'} onBack={() => setMainTab('chat')}>
+          {/* As Entregas (a mesma leitura da barra): a aba Implantação da TV as lê por contexto. */}
+          <DeliveryCenterProvider center={deliveries}>
           <OfficeTabHost
             active={mainTab === 'office'}
             chat={mainTab === 'office' ? mainChat : null}
@@ -4714,6 +4717,7 @@ export function App(): JSX.Element {
             windowsControlEnabled={windowsControlEnabled}
             onDisableWindowsControl={() => void toggleWindowsControl(false)}
           />
+          </DeliveryCenterProvider>
         </OfficeErrorBoundary>
       </div>
 

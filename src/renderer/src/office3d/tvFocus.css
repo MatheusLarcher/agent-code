@@ -1,4 +1,8 @@
-/* O foco dentro da TV (TvFocus.tsx): a tela da TV projetada (a âncora .o3d-screen-anchor). */
+/*
+ * O foco dentro da TV (TvFocus.tsx): a tela da TV projetada (a âncora .o3d-screen-anchor).
+ * Sem font-size aqui: a Tela de Planejamento herda o tamanho do app (14px do
+ * body), como na aba Conversa; os 13px são só das peças da TV (barra, página, resposta).
+ */
 .tvf {
   width: 100%;
   height: 100%;
@@ -10,16 +14,18 @@
   border-radius: 2px;
   overflow: hidden;
   color: #e8eaed;
-  font-size: 13px;
 }
 
+/* Enxuta: a altura é da tela que está embaixo (o planejamento tem o próprio cabeçalho). */
 .tvf-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 10px;
+  min-height: 30px;
+  padding: 3px 6px 3px 10px;
   background: #202226;
   flex: none;
+  font-size: 13px;
 }
 
 .tvf-title {
@@ -42,13 +48,14 @@
 
 .tvf-close {
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: inherit;
   font-size: 18px;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -61,6 +68,7 @@
   min-height: 0;
   background: #ffffff;
   position: relative;
+  font-size: 13px;
 }
 
 .tvf-frame {
@@ -81,7 +89,7 @@
   color: #3b3f46;
 }
 
-/* O planejamento dentro da TV: a Tela de Planejamento ocupa o resto da tela. */
+/* O planejamento dentro da TV: a Tela de Planejamento (a mesma da aba Conversa) ocupa o resto da tela. */
 .tvf-plan {
   flex: 1;
   min-height: 0;
@@ -90,10 +98,20 @@
   background: var(--bg, #1f1e1d);
 }
 
+/* A aba "Agente chamando" aberta: o plano fica montado, só escondido. */
+.tvf-plan[hidden] {
+  display: none;
+}
+
 .tvf-plan > .workspace {
   flex: 1;
   min-width: 0;
   min-height: 0;
+}
+
+/* "Abrindo o planejamento…": o fundo aqui é escuro (o cinza da página branca sumiria). */
+.tvf-plan > .tvf-empty {
+  color: var(--muted, #a3a09b);
 }
 
 .tvf-tabs {
@@ -119,6 +137,63 @@
   font-weight: 700;
 }
 
+/* "Agente chamando (N)": na cor do "+N esperando". */
+.tvf-tabs button.tvf-agent-tab {
+  border-color: rgba(255, 211, 138, 0.45);
+  color: #ffd38a;
+}
+
+.tvf-tabs button.tvf-agent-tab.on {
+  background: #ffd38a;
+  border-color: #ffd38a;
+  color: #1f1e1d;
+}
+
+/* "Implantação · 3/5 · aguardando você": na cor do status do envio (as da tela Entregas); aberta, o fundo na mesma cor. */
+.tvf-tabs button.tvf-deploy-tab {
+  color: #c9cdd2;
+}
+
+.tvf-tabs button.tvf-deploy-tab.s-aguardando_voce,
+.tvf-tabs button.tvf-deploy-tab.s-incompleta,
+.tvf-tabs button.tvf-deploy-tab.s-parada,
+.tvf-tabs button.tvf-deploy-tab.s-falhou,
+.tvf-tabs button.tvf-deploy-tab.s-erro {
+  border-color: color-mix(in srgb, var(--warn, #e3a64a) 55%, transparent);
+  color: var(--warn, #e3a64a);
+}
+
+.tvf-tabs button.tvf-deploy-tab.s-em_execucao {
+  border-color: color-mix(in srgb, var(--accent, #d97757) 55%, transparent);
+  color: var(--accent, #d97757);
+}
+
+.tvf-tabs button.tvf-deploy-tab.s-concluida {
+  border-color: color-mix(in srgb, var(--ok, #5fb67c) 55%, transparent);
+  color: var(--ok, #5fb67c);
+}
+
+.tvf-tabs button.tvf-deploy-tab.on {
+  background: color-mix(in srgb, currentColor 22%, transparent);
+  border-color: currentColor;
+  font-weight: 700;
+}
+
+/* A aba Implantação aberta (TvDeploy.tsx): a lista da tela Entregas (deliveries.css) no lugar do plano. */
+.tvf-deploy {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px 16px;
+  background: var(--bg, #1f1e1d);
+  color: var(--text, #e8eaed);
+  font-size: 13px;
+}
+
+.tvf-deploy > .dlv-error {
+  margin: 0 0 10px;
+}
+
 .tvf-mirror {
   flex: 1;
   min-height: 0;
@@ -134,6 +209,7 @@
   gap: 8px;
   padding: 8px 10px;
   background: #202226;
+  font-size: 13px;
 }
 
 .tvf-file {

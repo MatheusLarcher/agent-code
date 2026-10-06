@@ -354,6 +354,72 @@ describe('A TV com chamado: prioridade, quadrinho, fila e foco', () => {
   })
 })
 
+describe('O foco que o usuário pede: o plano primeiro (planFocus)', () => {
+  const calling = (id: string, callId: string): ReturnType<typeof conv> =>
+    conv(id, {
+      updatedAt: NOW,
+      messages: [
+        { kind: 'user', id: `u-${id}`, text: 'faz' },
+        { kind: 'tool-use', id: callId, name: 'mcp__app__app_chamar_usuario', input: { arquivo: `${id}.html`, mensagem: 'Olha!' }, parentToolUseId: null, result: { isError: false, text: 'ok' } }
+      ]
+    })
+  const planConv = (id: string, at = NOW): ReturnType<typeof conv> => conv(id, { mode: 'planning', planningSlug: `plano-${id}`, title: `Plano ${id}`, updatedAt: at })
+
+  it('com agente chamando e outro testando: o plano, com a fila em `agents` (o chamado, depois o teste); a TV fora do foco segue no chamado e nada conta como visto', () => {
+    const f = feed({ conversations: [calling('c', 'q-pc'), conv('b', { messages: MSGS, updatedAt: NOW }), planConv('p')], busyIds: new Set(['b']), activeId: 'b' })
+    const s = setup(f)
+    s.feed()
+    expect(s.p.focusInfo()).toMatchObject({ kind: 'mockup', convId: 'c', callId: 'q-pc' })
+    const info = s.p.planFocus()!
+    expect(info).toMatchObject({ kind: 'plan', convId: 'p', plans: [{ convId: 'p', title: 'Plano p' }], waiting: 0 })
+    expect(info.agents).toEqual([
+      expect.objectContaining({ kind: 'mockup', convId: 'c', callId: 'q-pc', rel: 'c.html', waiting: 0 }),
+      expect.objectContaining({ kind: 'test', convId: 'b', url: URL, waiting: 0 })
+    ])
+    expect(s.p.agendaOf(OFFICE_ID)!.main).toMatchObject({ kind: 'call', call: { id: 'q-pc' } })
+    expect(callMarks.ended('q-pc')).toBe(false)
+    s.p.dispose()
+  })
+
+  it('o plano recém-criado (convId) vence o da TV e entra nas abas mesmo fora do filtro; o filtro tira da fila e das abas o que é de outro projeto', () => {
+    const f = feed({ conversations: [calling('c', 'q-pf'), planConv('p'), planConv('q', NOW - 1000)], activeId: 'c' })
+    const s = setup(f)
+    const chars = deriveOfficeModel(f, NOW).characters.map((ch) => ({ ...ch, roomId: OFFICE_ID, projectId: ch.convId === 'q' ? 'beta' : 'alpha' }))
+    s.p.feed(f, chars, s.clock)
+    s.p.content.filter = 'alpha'
+    expect(s.p.planFocus()).toMatchObject({ convId: 'p', plans: [{ convId: 'p' }], agents: [{ kind: 'mockup', callId: 'q-pf' }] })
+    // O "📋 Planejar" acabou de criar o q (no beta): o foco abre nele, que entra nas abas.
+    expect(s.p.planFocus('q')).toMatchObject({ convId: 'q', plans: [{ convId: 'q' }, { convId: 'p' }] })
+    // Filtro no beta: o plano dele, sem o chamado do alpha.
+    s.p.content.filter = 'beta'
+    expect(s.p.planFocus()).toMatchObject({ convId: 'q', plans: [{ convId: 'q' }], agents: [] })
+    s.p.dispose()
+  })
+
+  it('quem chama e também testa conta uma vez, como a fila da sala: a aba leva ao chamado dele', () => {
+    const both = conv('c', { updatedAt: NOW, messages: [...MSGS, { kind: 'tool-use', id: 'q-pt', name: 'mcp__app__app_chamar_usuario', input: { arquivo: 'c.html', mensagem: 'Olha!' }, parentToolUseId: null, result: { isError: false, text: 'ok' } }] })
+    const f = feed({ conversations: [both, planConv('p')], busyIds: new Set(['c']), activeId: 'c' })
+    const s = setup(f)
+    const rooms: unknown[] = []
+    s.p.onRoom = (order) => rooms.push(order)
+    s.feed()
+    expect(s.p.isDown(s.room.id)).toBe(true)
+    expect(rooms.at(-1)).toEqual([{ key: 'conv:c', call: true }])
+    expect(s.p.planFocus()!.agents).toEqual([expect.objectContaining({ kind: 'mockup', convId: 'c', callId: 'q-pt' })])
+    s.p.dispose()
+  })
+
+  it('sem plano no escritório (ou com o id de um que não está nele): null — o foco abre o que está na tela, como antes', () => {
+    const f = feed({ conversations: [calling('c', 'q-pn')], activeId: 'c' })
+    const s = setup(f)
+    s.feed()
+    expect(s.p.planFocus()).toBeNull()
+    expect(s.p.planFocus('nao-existe')).toBeNull()
+    expect(s.p.focusInfo()).toMatchObject({ kind: 'mockup', callId: 'q-pn' })
+    s.p.dispose()
+  })
+})
+
 describe('OfficeScene com a TV', () => {
   it('quando a TV acende, só quem está perto dela olha para ela', () => {
     const glance = vi.spyOn(Character3D.prototype, 'glance')

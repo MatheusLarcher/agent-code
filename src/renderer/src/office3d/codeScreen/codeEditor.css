@@ -74,6 +74,25 @@
 .cm-current.cm-gap { background: rgba(255, 255, 255, 0.04); }
 .cm-current .cm-num { color: #c6c6c6; }
 /*
+ * Aberto pelo Chat: as linhas mudadas piscam na cor do Agent (FLASH_MS do
+ * EditorPane) — o tom na linha e a barra na calha, que tem fundo próprio. Dois
+ * nomes de animação: um clique novo recomeça a piscada.
+ */
+.cm-row.cm-flash-0 { animation: cm-flash-a 1.6s ease-out; }
+.cm-row.cm-flash-1 { animation: cm-flash-b 1.6s ease-out; }
+.cm-row.cm-flash-0 .cm-gutter { animation: cm-flash-bar-a 1.6s ease-out; }
+.cm-row.cm-flash-1 .cm-gutter { animation: cm-flash-bar-b 1.6s ease-out; }
+@keyframes cm-flash-a { 0%, 35% { box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--cm-agent) 24%, transparent); } 100% { box-shadow: inset 0 0 0 999px transparent; } }
+@keyframes cm-flash-b { 0%, 35% { box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--cm-agent) 24%, transparent); } 100% { box-shadow: inset 0 0 0 999px transparent; } }
+@keyframes cm-flash-bar-a { 0%, 35% { box-shadow: inset 3px 0 0 var(--cm-agent); } 100% { box-shadow: inset 3px 0 0 transparent; } }
+@keyframes cm-flash-bar-b { 0%, 35% { box-shadow: inset 3px 0 0 var(--cm-agent); } 100% { box-shadow: inset 3px 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) {
+  .cm-row.cm-flash-0,
+  .cm-row.cm-flash-1,
+  .cm-row.cm-flash-0 .cm-gutter,
+  .cm-row.cm-flash-1 .cm-gutter { animation: none; }
+}
+/*
  * O cursor do Agent, com a etiqueta do nome (como o de quem divide a sessão no
  * VS Code). A etiqueta vai na própria linha, logo depois do cursor — onde o
  * Agent ainda não escreveu —, então não cobre o código das linhas vizinhas.

@@ -1,0 +1,65 @@
+/*
+ * O Chat à direita do editor no app Código (ChatDock.tsx) — a maquete aprovada
+ * (f3182b-mockup-chat-no-vscode): [editor] | borda | [Chat] e a barra de status
+ * embaixo dos dois. O painel: cabeçalho compacto de 35 px (ponto na cor do
+ * Agent, CHAT, quem e o modelo, o estado à direita), o turno e o campo de
+ * digitar embaixo (margem 0 10px 10px, raio 10 px). Tela estreita: o Chat ocupa
+ * a janela e o editor some.
+ */
+.cm-dock { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cm-dock-row { flex: 1; min-height: 0; display: flex; }
+.cm-dock-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.cm-dock-main > .cm-workbench { flex: 1; min-height: 0; }
+.cm-dock.narrow .cm-dock-main { display: none; }
+
+/* A borda: a linha da janela, acesa na cor do Agent (PaneSplitter). */
+.cm-sash.pane-splitter { --pane-splitter-accent: var(--cm-agent); --pane-splitter-line: var(--cm-line); }
+.cm-sash .pane-splitter-tip { font-family: var(--cm-font-ui); }
+
+.cm-chatpane { flex: none; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--cm-chrome); }
+.cm-chatpane[hidden] { display: none; }
+.cm-dock.narrow .cm-chatpane { flex: 1; }
+.cm-chatpane .o3d-chat-screen { background: var(--cm-chrome); }
+
+.cm-chat-head { flex: none; display: flex; align-items: center; gap: 8px; height: 35px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--cm-line); }
+.cm-chat-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cm-agent); }
+.cm-chat-ttl { flex: none; color: var(--cm-text-strong); font: 600 10.5px var(--cm-font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
+.cm-chat-who { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #8a8a8a; font-size: 12px; }
+.cm-chat-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0 9px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cm-agent) 18%, transparent);
+  color: color-mix(in srgb, var(--cm-agent) 70%, #ffffff);
+  font: 600 11px var(--cm-font-ui);
+}
+.cm-chat-state.idle { background: #2a2a2a; color: #a9a9a9; }
+.cm-chat-state.you { background: rgba(255, 170, 40, 0.18); color: #ffaa28; }
+.cm-chat-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--cm-agent); animation: cm-chat-pulse 1s ease-in-out infinite; }
+@keyframes cm-chat-pulse { 50% { opacity: 0.35; } }
+
+/* O campo de digitar embaixo do Chat (o Composer do App) e o seletor de modelo em cima dele. */
+.cm-chatpane .cm-composer .composer { padding: 0 10px 10px; border-top: 0; background: transparent; }
+.cm-chatpane .cm-composer .composer-row { border-radius: 10px; }
+.cm-chatpane .cm-composer .composer-bar { padding: 6px 12px; background: transparent; }
+
+/* Cartão de arquivo (toolFileOpen): a ▸ só expande; o resto do cabeçalho abre no editor ao lado. Os cartões ocupam a largura (alvo grande). */
+.cm-chatpane .tool-card { align-self: stretch; }
+.cm-chatpane .tool-head-split { padding: 0; gap: 0; cursor: default; }
+.cm-chatpane .tool-caret-btn { flex: none; align-self: stretch; display: grid; place-items: center; width: 26px; padding: 0; border: 0; background: transparent; color: var(--cm-muted); cursor: pointer; }
+.cm-chatpane .tool-caret-btn:hover { background: #2a2a2a; color: #ffffff; }
+.cm-chatpane .tool-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; padding: 6px 11px 6px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.cm-chatpane .tool-open:hover { background: #262626; }
+.cm-chatpane .tool-open:hover .tool-detail { color: #ffffff; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--cm-agent) 75%, #ffffff); text-underline-offset: 2px; }
+.cm-chatpane .tool-go { flex: none; opacity: 0; color: color-mix(in srgb, var(--cm-agent) 70%, #ffffff); transition: opacity 0.12s; }
+.cm-chatpane .tool-open:hover .tool-go,
+.cm-chatpane .tool-open:focus-visible .tool-go { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-chat-pulse { animation: none; }
+}

@@ -8,7 +8,7 @@ import type { ReactNode } from 'react'
 type IconName =
   | 'files' | 'search' | 'branch' | 'blocks' | 'agent' | 'code' | 'chevron' | 'folder' | 'close' | 'info' | 'follow' | 'check' | 'cross' | 'chat' | 'terminal'
   | 'bot' | 'layers' | 'pin' | 'pin-off' | 'copy' | 'eye' | 'eye-off' | 'lock' | 'history' | 'spark' | 'save' | 'chip' | 'alert' | 'globe'
-  | 'users' | 'tree' | 'wand' | 'stamp' | 'user' | 'book' | 'sliders' | 'engine' | 'recv' | 'pencil' | 'file' | 'msg' | 'chevron-down'
+  | 'users' | 'tree' | 'wand' | 'stamp' | 'user' | 'book' | 'sliders' | 'engine' | 'recv' | 'pencil' | 'file' | 'msg' | 'chevron-down' | 'reload'
 
 const PATHS: Record<IconName, ReactNode> = {
   files: (
@@ -157,7 +157,9 @@ const PATHS: Record<IconName, ReactNode> = {
   pencil: <path d="M4 20h4.2L19 9.2 14.8 5 4 15.8zM13 6.8l4.2 4.2" />,
   file: <path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8zM14 3v5h5" />,
   msg: <path d="M20.5 12a8.5 8.5 0 0 1-12.3 7.6L3.5 20.5l1-4.4A8.5 8.5 0 1 1 20.5 12z" />,
-  'chevron-down': <path d="m6 9 6 6 6-6" />
+  'chevron-down': <path d="m6 9 6 6 6-6" />,
+  // Recarregar a Prévia do HTML (o da maquete).
+  reload: <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4v5h5" />
 }
 
 /** O logo do VS Code (o do título do app Código e da barra de tarefas). */
@@ -168,32 +170,6 @@ export function VsCodeLogo({ size = 16 }: { size?: number }): JSX.Element {
         fill="#007ACC"
         d="M23.15 2.587 18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"
       />
-    </svg>
-  )
-}
-
-/** O ícone do Agent Code (build/icon.svg), o do app Chat. Ids próprios para não colidir no documento. */
-export function AgentCodeLogo({ size = 18 }: { size?: number }): JSX.Element {
-  return (
-    <svg className="cm-logo-svg" viewBox="0 0 512 512" width={size} height={size} aria-hidden="true" focusable="false">
-      <defs>
-        <linearGradient id="cm-ac-bg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#2c2a27" />
-          <stop offset="1" stopColor="#1a1918" />
-        </linearGradient>
-        <radialGradient id="cm-ac-glow" cx="0.5" cy="0.44" r="0.55">
-          <stop offset="0" stopColor="#d97757" stopOpacity="0.4" />
-          <stop offset="1" stopColor="#d97757" stopOpacity="0" />
-        </radialGradient>
-        <linearGradient id="cm-ac-spark" x1="0.15" y1="0.1" x2="0.85" y2="0.95">
-          <stop offset="0" stopColor="#ef9272" />
-          <stop offset="1" stopColor="#c65e3c" />
-        </linearGradient>
-      </defs>
-      <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#cm-ac-bg)" />
-      <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#cm-ac-glow)" />
-      <path d="M256 86 C 270 196, 316 242, 426 256 C 316 270, 270 316, 256 426 C 242 316, 196 270, 86 256 C 196 242, 242 196, 256 86 Z" fill="url(#cm-ac-spark)" />
-      <path d="M390 120 C 395 144, 400 149, 424 154 C 400 159, 395 164, 390 188 C 385 164, 380 159, 356 154 C 380 149, 385 144, 390 120 Z" fill="#f0a484" fillOpacity="0.85" />
     </svg>
   )
 }

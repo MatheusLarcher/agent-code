@@ -1,15 +1,17 @@
 /**
- * O modo Chat da tela focada do monitor (codeScreen/CodeMonitor): o turno atual
- * da conversa do agente como o chat mostra — balão do pedido, narração e
- * resposta em Markdown e cada ferramenta no ToolCard recolhido, que abre ao
- * clicar —, só leitura, com o cabeçalho do agente e rolagem própria. Fica presa
- * ao fim enquanto o usuário não rola para cima; a rolagem é só do corpo
- * (scrollTop direto, nunca scrollIntoView: o palco 3D não se mexe).
+ * O Chat da tela focada do monitor (codeScreen/CodeMonitor, à direita do
+ * editor): o turno atual da conversa do agente como o chat mostra — balão do
+ * pedido, narração e resposta em Markdown e cada ferramenta no ToolCard
+ * recolhido, que abre ao clicar —, só leitura, com o cabeçalho do agente (ou o
+ * `header` de quem monta) e rolagem própria. Fica presa ao fim enquanto o
+ * usuário não rola para cima, e volta ao fim quando `endSignal` muda; a
+ * rolagem é só do corpo (scrollTop direto, nunca scrollIntoView: o palco 3D não
+ * se mexe).
  *
  * Quem monta (o CodeMonitor) passa as mensagens do turno e o cartão do código
  * ao vivo (o tool-use que ainda vai chegar), já assinado por ele.
  */
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { OfficeCharacterModel } from '../office/adapter/model'
 import type { ToolInputDelta } from '../office/liveInput'
@@ -40,15 +42,25 @@ export interface ChatPanelProps {
   head: TurnHead
   seed: string
   content: ChatContent
+  /** Cabeçalho próprio no lugar do TurnHeader (o do Chat no Código). */
+  header?: ReactNode
+  /** Muda para ir ao fim (o "Abrir o chat" do Contexto). */
+  endSignal?: number
 }
 
-export function ChatPanel({ head, seed, content }: ChatPanelProps): JSX.Element {
+export function ChatPanel({ head, seed, content, header, endSignal = 0 }: ChatPanelProps): JSX.Element {
   const bodyRef = useRef<HTMLDivElement>(null)
   const atEnd = useRef(true)
   useLayoutEffect(() => {
     const el = bodyRef.current
     if (el && atEnd.current) el.scrollTop = el.scrollHeight
   })
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (!el || endSignal === 0) return
+    atEnd.current = true
+    el.scrollTop = el.scrollHeight
+  }, [endSignal])
   const onScroll = (): void => {
     const el = bodyRef.current
     if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight <= END_SLACK_PX
@@ -56,7 +68,7 @@ export function ChatPanel({ head, seed, content }: ChatPanelProps): JSX.Element 
 
   return (
     <div className="o3d-chat-screen">
-      <TurnHeader head={head} seed={seed} />
+      {header === undefined ? <TurnHeader head={head} seed={seed} /> : header}
       <div className="message-list o3d-chat-screen-body" ref={bodyRef} onScroll={onScroll}>
         <TurnRows messages={content.messages} busy={head.busy} live={content.live} limit={SCREEN_MESSAGES} />
       </div>

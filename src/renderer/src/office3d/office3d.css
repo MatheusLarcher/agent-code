@@ -368,10 +368,8 @@
 .o3d-chat .central-head:not(:has(.central-head-rail > *)) { display: none; }
 .o3d-chat.minimized .central-feed { flex: none; height: calc(5 * var(--pl-chat-line)); padding: 2px 14px; gap: 6px; }
 .o3d-chat.minimized .central-bubble { padding: 3px 12px; }
-/* Medidor de tokens do cabeçalho do chat: num painel estreito quebra em linhas, não no meio do número. */
+/* Cabeçalho do chat flutuante: o espaço entre o título, a barrinha de consumo (UsageMiniBar) e a transparência. */
 .office3d-workspace .pl-chat-float .chat-header { gap: 8px; }
-.office3d-workspace .pl-chat-float .token-meter { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
-.office3d-workspace .pl-chat-float .token-meter > * { white-space: nowrap; }
 
 /* HUD de desempenho (só DEV, Ctrl+Alt+Shift+P): acima do chat, como o resto do HUD. */
 .o3d-perf {
@@ -391,18 +389,37 @@
 .o3d-perf b { color: #ffffff; font-weight: 600; }
 
 /*
- * A tela do monitor: o motor dá o tamanho (o da tela na pose final do foco) e, a
- * cada quadro, o matrix3d que leva os cantos aos do monitor projetado (a partir
- * do 0,0 do palco). Sem will-change: o Chromium congelaria a escala do primeiro
- * raster e o texto ficaria borrado depois do voo.
+ * A tela do monitor (e do console e da TV): o motor dá o tamanho (o da tela na
+ * pose final do foco) e o encaixe (screenAnchor.ts) — parada de frente, só
+ * left/top em px de dispositivo, sem transform (nítida); no voo, o matrix3d que
+ * leva os cantos aos da tela projetada (a partir do 0,0 do palco). contain:
+ * layout segura os position: fixed de dentro na tela, como o transform fazia.
+ * Nada de will-change, filter, backdrop-filter nem mix-blend-mode aqui ou no
+ * vidro: o Chromium rasterizaria a camada fora da escala 1 e o texto borraria.
  */
 .o3d-screen-anchor {
   position: absolute;
   left: 0;
   top: 0;
   z-index: 2;
+  contain: layout;
   transform-origin: 0 0;
   animation: o3d-screen-in 240ms ease-out;
+}
+
+/* O vidro: reflexo fraco no canto de cima, vinheta e a sombra da moldura, por cima de tudo da tela (até dos modais) sem pegar o mouse. */
+.o3d-screen-anchor::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2100;
+  pointer-events: none;
+  border-radius: 2px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 16%, rgba(255, 255, 255, 0) 32%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.5),
+    inset 0 2px 6px rgba(0, 0, 0, 0.35),
+    inset 0 0 26px rgba(0, 0, 0, 0.2);
 }
 
 /* Cartão de ferramenta do chat, aberto e ocupando a tela do monitor. */

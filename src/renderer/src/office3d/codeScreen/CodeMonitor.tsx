@@ -1,37 +1,47 @@
 /**
  * A tela focada do monitor do agente (clique nele no Escritório 3D), alinhada
- * ao monitor pela âncora do motor. Três apps, cada um com a própria barra de
+ * ao monitor pela âncora do motor. Dois apps, cada um com a própria barra de
  * título, abertos pela barra de tarefas embaixo (estilo Windows, Taskbar):
  *
  *   Código    a janela no jeito do VS Code com os arquivos que o Agent alterou e
- *             leu (CodeView, useCodeApp)
- *   Chat      o turno da conversa como o chat mostra (ChatPanel), com o
- *             `composer` embaixo quando quem monta o dá
+ *             leu (CodeView, useCodeApp) e, à direita, o Chat (ChatDock): o
+ *             turno como o chat mostra, com o `composer` embaixo quando quem
+ *             monta o dá. O cartão de arquivo do Chat abre o arquivo no editor
+ *             (chatOpen.ts); a borda entre os dois ajusta a largura do Chat. O
+ *             .html do Agent tem a aba "Prévia" (htmlPreview.ts): o agente que
+ *             acabou de criar um abre a tela já nela (freshHtmlWrite)
  *   Contexto  o que o Agent recebeu e o que fez, com o modelo de cada coisa
  *             (ContextApp — lê o histórico do contexto só enquanto aberto)
  *
- * Abre no último app usado (localStorage); na 1ª vez, em `initialMode`. A raiz é
- * a `data-testid="office-screen"`, com `data-kind` = code | chat | context |
- * empty e `data-mode` = o app. Alt+1/2/3 trocam de app com a tela aberta; Esc
- * fecha o menu do Agent, se aberto, e senão a tela (o motor). A barra some até o
- * mouse chegar à borda de baixo; o alfinete a fixa e o campo do Chat fica acima.
+ * Abre no último app usado (localStorage; o 'chat' de antes vale Código); na 1ª
+ * vez, em `initialMode`. A raiz é a `data-testid="office-screen"`, com
+ * `data-kind` = code | context | empty e `data-mode` = o app. Alt+1/2 trocam de
+ * app com a tela aberta; Esc fecha o menu do Agent, se aberto, e senão a tela
+ * (o motor). A barra some até o mouse chegar à borda de baixo; o alfinete a
+ * fixa e o campo do Chat fica acima.
  *
- * Sem useUI no Código nem no Contexto (a tela monta sem UiProvider nos testes do
- * escritório); só o Chat usa o ToolCard do chat.
+ * O Chat usa o ToolCard do chat, que pede o UiProvider do app.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { modelDisplayName } from '@shared/modelLabel'
 import type { OfficeFeed } from '../../office/adapter/feed'
 import { roomName, type OfficeCharacterModel } from '../../office/adapter/model'
 import type { UIMessage } from '../../types'
+import { freshHtmlWrite, scanHtmlWrites } from '../agentHtml'
 import { seedCss } from '../appearance'
-import { chatPageFor, lookupOf, trackMessages, trackOf, turnHead } from '../chatPage'
-import { ChatPanel, chatContent } from '../ChatScreen'
+import { lookupOf, trackMessages, trackOf, turnHead } from '../chatPage'
+import { chatContent, type ChatContent } from '../ChatScreen'
+import { ChatDock, MonitorChat, NARROW_W, useWidth } from './ChatDock'
+import { openInEditor, useChatFileOpen, type ChatFileOpenInput } from './chatOpen'
 import { ContextApp } from './ContextApp'
 import { allContextText, contextBlocks } from './contextView'
-import { CodeView } from './CodeView'
-import { AgentCodeLogo, Icon, VsCodeLogo } from './icons'
+import { CodeStatus, CodeView } from './CodeView'
+import { FLASH_MS } from './EditorPane'
+import { lastWriteOf, useHtmlPreview } from './htmlPreview'
+import { Icon, VsCodeLogo } from './icons'
 import { distinctModels } from './modelTags'
 import { MONITOR_APPS, monitorPrefs, type MonitorApp } from './monitorPrefs'
+import { diskReadVerdict } from './pathGuard'
 import { contextUse, lastResult, sessionEffort, sessionModel, turnElapsed } from './monitorStatus'
 import { Taskbar, useTaskbarReveal, APP_LABEL } from './Taskbar'
 import { AppPreview, callsByModel, Coach, StartMenu, Toasts, Tray } from './TaskbarExtras'
@@ -47,11 +57,11 @@ export interface CodeMonitorProps {
   model: OfficeCharacterModel
   /** Fecha a tela (o mesmo do Esc). */
   onClose?: () => void
-  /** O app na 1ª abertura (sem nenhum lembrado). O Escritório abre no Chat. */
+  /** O app na 1ª abertura (sem nenhum lembrado). O Escritório abre no Código (com o Chat ao lado). */
   initialMode?: MonitorApp
   /**
    * O campo de digitar da conversa (o Composer do App), embaixo do Chat. Fica
-   * montado também nos outros apps (escondido): trocar de app não perde o rascunho.
+   * montado também no Contexto (escondido): trocar de app não perde o rascunho.
    */
   composer?: ReactNode
   /** Bateria do escritório (energia do plano, %), para a bandeja; null sem leitura. */
@@ -61,6 +71,8 @@ export interface CodeMonitorProps {
 }
 
 const NO_MESSAGES: readonly UIMessage[] = []
+/** No Contexto o turno do Chat não é montado: nada a montar a cada pedaço do feed. */
+const NO_CHAT: ChatContent = { messages: [], live: null }
 
 /** A cor do texto sobre a cor do Agent (a que contrasta mais) e o tom do bloco da esquerda. */
 function agentInk(css: string): { ink: string; shade: string } {
@@ -102,7 +114,12 @@ export function CodeMonitor(props: CodeMonitorProps): JSX.Element {
 function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery = null, onOpenInApp }: CodeMonitorProps): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLElement>(null)
-  const [app, setAppState] = useState<MonitorApp>(() => monitorPrefs.app() ?? initialMode)
+  // O agente acabou de criar um .html que a Prévia abre (de dentro da pasta da conversa): a tela abre no Código com a Prévia dele (sem mudar o app lembrado).
+  const [fresh] = useState(() => {
+    const w = feed ? freshHtmlWrite(feed, model, Date.now()) : null
+    return w && diskReadVerdict(w.path, feed?.conversations.find((c) => c.id === model.convId)?.cwd ?? '') === 'ok' ? w : null
+  })
+  const [app, setAppState] = useState<MonitorApp>(() => (fresh ? 'code' : (monitorPrefs.app() ?? initialMode)))
   const [pinned, setPinned] = useState(() => monitorPrefs.pinned())
   const [coachSeen, setCoachSeen] = useState(() => monitorPrefs.coachSeen())
   const [startOpen, setStartOpen] = useState(false)
@@ -110,11 +127,27 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
   const [resentSignal, setResentSignal] = useState(0)
   const [turnModels, setTurnModels] = useState<Array<{ model: string; calls: number | null }> | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  // O arquivo que o Chat abriu (o trecho dele pisca) e o "ir ao fim do chat" (com o campo em foco).
+  const [flash, setFlash] = useState<{ key: string; n: number } | null>(null)
+  const [go, setGo] = useState({ n: 0, focus: false })
   const reveal = useTaskbarReveal(rootRef, barRef, pinned, startOpen)
   const setApp = useCallback((a: MonitorApp) => {
     setAppState(a)
     monitorPrefs.setApp(a)
   }, [])
+  const goChat = useCallback((focus: boolean) => setGo((g) => ({ n: g.n + 1, focus })), [])
+  const showChat = useCallback(() => goChat(true), [goChat])
+  // O explorador abriu ou fechou (estado do CodeView): o teto do Chat é medido de novo (ChatDock).
+  const [, relayout] = useReducer((n: number) => n + 1, 0)
+  // O pisca vale para o clique: passado FLASH_MS, voltar ao arquivo (outra aba, o Contexto, a Prévia) não pisca de novo.
+  useEffect(() => {
+    if (!flash) return
+    const t = setTimeout(() => setFlash(null), FLASH_MS)
+    return () => clearTimeout(t)
+  }, [flash])
+  // Tela estreita (o cartão sem mesa, ~420 px): o editor não cabe; o Chat ocupa a janela.
+  const screenW = useWidth(rootRef)
+  const narrow = screenW > 0 && screenW < NARROW_W
 
   const isMain = model.role === 'principal' && !model.trackId
   const track = trackOf(feed, lookupOf(model))
@@ -128,7 +161,7 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
   const needsYou = !!permission
   const memoriesDir = useMemoriesDir()
 
-  const code = useCodeApp(messages, { convId: isMain ? model.convId : null, cwd, busy: head.busy, visible: app === 'code' })
+  const code = useCodeApp(messages, { convId: isMain ? model.convId : null, cwd, busy: head.busy, visible: app === 'code' && !narrow })
   const turnActionModels = code.actions.models
   const effort = sessionEffort(conv)
   // O modelo do rodapé: o das ações do turno; trabalhando e sem ação ainda, o da sessão.
@@ -137,6 +170,18 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
 
   const memoriesCount = code.actions.memory.read.length + code.actions.memory.saved.length
   const { toasts, dismiss, push } = useMonitorToasts({ convId: model.convId, messages, busy: head.busy, permission, counts: { files: code.changed, memories: memoriesCount } })
+  const pages = useHtmlPreview(code)
+  // A Prévia à vista (a tela estreita não tem editor) recarrega a cada escrita nova do arquivo (o id da última que deu certo).
+  const page = narrow ? null : pages.active
+  const pageWrite = page && feed ? lastWriteOf(scanHtmlWrites(feed, [model]), page.key) : null
+  // O cartão do Chat abre pelo mesmo caminho das abas: escolher um arquivo sai da Prévia (o .html escrito volta a ela).
+  const openInput: ChatFileOpenInput = { code: { changedItems: code.changedItems, reads: code.reads, open: pages.onSelect, onBrowse: pages.onBrowse }, cwd, flash: (key) => setFlash((f) => ({ key, n: (f?.n ?? 0) + 1 })), toast: push, page: pages.open }
+  const opener = useChatFileOpen(openInput)
+  useEffect(() => {
+    if (fresh) openInEditor(openInput, fresh.path, true)
+    // Só ao abrir a tela (o clique no agente).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // A barra abriu pela 1ª vez: a dica some para sempre.
   useEffect(() => {
@@ -151,13 +196,14 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
     return () => clearInterval(t)
   }, [head.busy])
 
-  // Alt+1/2/3 trocam de app; Esc fecha o menu antes de fechar a tela (captura: antes do motor).
+  // Alt+1/2 trocam de app; Esc fecha o menu antes de fechar a tela (captura: antes do motor).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.altKey && !e.ctrlKey && !e.metaKey && ['1', '2', '3'].includes(e.key)) {
+      const at = Number(e.key) - 1
+      if (e.altKey && !e.ctrlKey && !e.metaKey && /^\d$/.test(e.key) && at >= 0 && at < MONITOR_APPS.length) {
         e.preventDefault()
         e.stopPropagation()
-        setApp(MONITOR_APPS[Number(e.key) - 1])
+        setApp(MONITOR_APPS[at])
         return
       }
       if (e.key === 'Escape' && startOpen) {
@@ -231,23 +277,26 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
   const openToast = (t: MonitorToast): void => {
     dismiss(t.id)
     setApp(t.app)
-    if (t.file) code.open(t.file)
+    if (t.file) pages.onSelect(t.file)
     if (t.resent) setResentSignal((n) => n + 1)
+    // A permissão: o fim do Chat, onde o Agent parou esperando.
+    if (t.id === 'perm') goChat(false)
   }
   const openFile = useCallback(
     (key: string) => {
       setApp('code')
-      code.open(key)
+      pages.onSelect(key)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [setApp, code.open]
+    [setApp, pages.onSelect]
   )
 
   const agent = useMemo(() => seedCss(model.seed), [model.seed])
   const { ink, shade } = agentInk(agent)
-  const chat = app === 'chat' ? chatContent(feed, model, code.live.latest) : null
-  const kind =
-    app === 'ctx' ? 'context' : chat ? (chat.messages.length > 0 || chat.live ? 'chat' : 'empty') : code.items.length > 0 || code.terminal.length > 0 ? 'code' : 'empty'
+  const chat = app === 'code' ? chatContent(feed, model, code.live.latest) : NO_CHAT
+  const kind = app === 'ctx' ? 'context' : code.items.length > 0 || code.terminal.length > 0 ? 'code' : 'empty'
+  const agentName = isMain ? 'Agent principal' : `Agent · ${head.who}`
+  const agentModel = isMain ? sessionModel(conv) : (turnActionModels[turnActionModels.length - 1] ?? '')
   const result = lastResult(messages)
   const elapsed = turnElapsed(head.busy, feed?.busySince[model.convId], result, now)
   const ctxUse = contextUse(conv)
@@ -272,13 +321,9 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
           ))}
           {code.changedItems.length === 0 && <div>Nenhum arquivo alterado ainda.</div>}
           {code.reads.length > 0 && <div className="cm-dim">{code.reads.length === 1 ? '1 arquivo só lido' : `${code.reads.length} arquivos só lidos`}</div>}
+          {needsYou && <div>Esperando a sua permissão no Chat.</div>}
         </>
       )
-    }
-    if (a === 'chat') {
-      const page = chatPageFor(feed, model, 3)
-      const last = [...page.lines].reverse().find((l) => l.kind !== 'tool')
-      return <div>{needsYou ? 'Esperando a sua permissão.' : last && 'text' in last ? last.text : head.busy ? 'Trabalhando…' : 'Parado.'}</div>
     }
     const others = code.actions.other.reduce((n, g) => n + g.items.length, 0) + code.reads.length
     return (
@@ -306,10 +351,10 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
       <section className="cm-win" data-app={app} aria-label={APP_LABEL[app]}>
         <header className="cm-titlebar">
           <span className="cm-logo" aria-hidden="true">
-            {app === 'code' ? <VsCodeLogo size={16} /> : app === 'chat' ? <AgentCodeLogo size={18} /> : <span className="cm-appico-ctx"><Icon name="layers" /></span>}
+            {app === 'code' ? <VsCodeLogo size={16} /> : <span className="cm-appico-ctx"><Icon name="layers" /></span>}
           </span>
           <span className="cm-title" title={head.title}>
-            {app === 'code' ? <b>{code.activeName ?? 'Agent'}</b> : <b>{APP_LABEL[app]}</b>}
+            {app === 'code' ? <b>{page ? `Prévia: ${page.name}` : (code.activeName ?? 'Agent')}</b> : <b>{APP_LABEL[app]}</b>}
             {app === 'ctx' ? (
               <span className="cm-title-project"> — o que o Agent recebeu e o que fez neste turno</span>
             ) : (
@@ -325,54 +370,71 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
             </button>
           )}
         </header>
-        {app === 'chat' && chat && <ChatPanel head={head} seed={model.seed} content={chat} />}
-        {app === 'code' && (
-          <CodeView
-            items={code.items}
-            changedItems={code.changedItems}
-            reads={code.reads}
-            models={footerModels}
-            effort={effort}
-            mixed={mixed}
-            readOnly={code.readOnly}
-            activeKey={code.activeKey}
-            activePath={code.activePath}
-            view={code.view}
-            terminal={code.terminal}
-            cwd={cwd}
-            project={project}
-            who={isMain ? '' : head.who}
-            busy={head.busy}
-            activity={model.label}
-            typingName={code.typingName}
-            changed={code.changed}
-            follow={code.follow}
-            target={code.target}
-            targetKey={code.targetKey}
-            onSelect={code.onSelect}
-            onBrowse={code.onBrowse}
-            onToggleFollow={code.onToggleFollow}
-            onUserScroll={code.onUserScroll}
-            onShowChat={() => setApp('chat')}
-          />
-        )}
-        {app === 'ctx' && (
-          <ContextApp
-            convId={model.convId}
-            messages={messages}
-            subagent={subagentTurn}
-            memoriesDir={memoriesDir}
-            focusResent={resentSignal}
-            onOpenFile={openFile}
-            onOpenChat={() => setApp('chat')}
-            onToast={push}
-          />
-        )}
-        {composer ? (
-          <div className="cm-composer" data-testid="office-screen-composer" hidden={app !== 'chat'}>
-            {composer}
-          </div>
-        ) : null}
+        <ChatDock
+          chatOn={app === 'code'}
+          narrow={narrow}
+          status={app === 'code' ? <CodeStatus code={code} who={isMain ? '' : head.who} models={footerModels} effort={effort} page={page} /> : null}
+          onWidthSaved={(w) => push({ id: 'chat-width', kind: 'ok', icon: 'check', app: 'code', title: 'Largura do chat guardada', body: `${w} px · vale para todos os monitores` })}
+          chat={
+            <MonitorChat
+              head={head}
+              seed={model.seed}
+              content={chat}
+              who={[agentName, modelDisplayName(agentModel)].filter(Boolean).join(' · ')}
+              state={needsYou ? 'you' : head.busy ? 'busy' : 'idle'}
+              composer={composer}
+              hidden={app !== 'code'}
+              opener={narrow ? null : opener}
+              go={go}
+            />
+          }
+        >
+          {app === 'ctx' ? (
+            <ContextApp
+              convId={model.convId}
+              messages={messages}
+              subagent={subagentTurn}
+              memoriesDir={memoriesDir}
+              focusResent={resentSignal}
+              onOpenFile={openFile}
+              onOpenChat={() => {
+                setApp('code')
+                goChat(true)
+              }}
+              onToast={push}
+            />
+          ) : narrow ? null : (
+            <CodeView
+              items={code.items}
+              changedItems={code.changedItems}
+              reads={code.reads}
+              mixed={mixed}
+              activeKey={code.activeKey}
+              activePath={code.activePath}
+              view={code.view}
+              terminal={code.terminal}
+              cwd={cwd}
+              project={project}
+              busy={head.busy}
+              activity={model.label}
+              changed={code.changed}
+              follow={code.follow}
+              target={code.target}
+              targetKey={code.targetKey}
+              flash={flash}
+              pages={pages.pages}
+              page={page}
+              pageWrite={pageWrite}
+              onSelect={pages.onSelect}
+              onSelectPage={pages.onSelectPage}
+              onOpenPage={pages.onOpenPage}
+              onBrowse={pages.onBrowse}
+              onUserScroll={code.onUserScroll}
+              onShowChat={showChat}
+              onLayout={relayout}
+            />
+          )}
+        </ChatDock>
       </section>
       {!coachSeen && !pinned && !open && <Coach onClose={() => { setCoachSeen(true); monitorPrefs.setCoachSeen() }} />}
       <Taskbar
@@ -403,8 +465,8 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
       />
       {startOpen && (
         <StartMenu
-          name={isMain ? 'Agent principal' : `Agent · ${head.who}`}
-          model={isMain ? sessionModel(conv) : (turnActionModels[turnActionModels.length - 1] ?? '')}
+          name={agentName}
+          model={agentModel}
           effort={effort}
           turnModels={turnModels}
           conversation={conv?.title ?? head.title}

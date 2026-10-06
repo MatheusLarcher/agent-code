@@ -4,9 +4,11 @@
  * conversa ativa dentro, em modo compacto quando minimizado. Aqui "fora" é só a
  * área do escritório (`collapseScope` 'area'): clicar no palco (canvas, HUD)
  * minimiza; a barra lateral e a barra de cima não mexem no chat. O minimizado
- * fica lembrado à parte do Planejamento (mainTabState). Diferente do Agent
- * Manager, o aviso "Controle do Windows ativo" continua no maximizado (e o HUD
- * o repete, para o minimizado): aqui o agente é um agente comum.
+ * fica lembrado à parte do Planejamento (mainTabState). Maximizado, o cabeçalho
+ * do chat não tem o medidor de consumo nem o aviso "Controle do Windows ativo":
+ * só uma barrinha fatiada por tipo de consumo (UsageMiniBar, `usageMini`), que
+ * mostra os detalhes e o custo ao passar o mouse e abre o painel por agente ao
+ * clicar. O aviso do Windows fica no HUD do palco, com o "Desativar".
  *
  * Cabeçalho: um ponto na cor da camisa do agente da conversa (a mesma seed da
  * cena), o título da conversa, o projeto e o 📍, que minimiza o chat e voa a
@@ -42,7 +44,7 @@ export function officeChatTop(g: FloatGeometry): number {
 }
 
 const PERSIST: ChatFloatPersist = { load: loadOfficeChatMinimized, save: saveOfficeChatMinimized }
-const DISPLAY: ChatFloatDisplay = { hideLastUsage: true }
+const DISPLAY: ChatFloatDisplay = { hideLastUsage: true, hideWindowsBanner: true, usageMini: true }
 
 export interface OfficeChatFloatProps {
   children: ReactNode

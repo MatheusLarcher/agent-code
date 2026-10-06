@@ -2,17 +2,25 @@
  * A tela HTML do foco (o turno do agente no formato do chat) encaixada na tela
  * do monitor desenhado, em repouso e no voo da câmera: os 4 cantos da tela (o
  * plano SCREEN_W × SCREEN_H da cena, em MONITOR_SCREEN_FRONT) são projetados
- * com a câmera viva e uma homografia (`matrix3d`, quadTransform.ts) leva o
- * retângulo do elemento até eles, com o keystone da arfagem. O tamanho de
- * layout é o da tela projetada na pose FINAL do foco (o `monitorPose` do motor,
- * mesmo fov e aspect), calculado uma vez por foco ou redimensionamento: no voo
- * o conteúdo não refaz o layout, só o transform muda (left/top ficam no 0 do
- * CSS). Roda a cada quadro com o foco aberto (vetor e cantos de rascunho) e só
+ * com a câmera viva. O tamanho de layout é o da tela projetada na pose FINAL do
+ * foco (o `monitorPose` do motor, mesmo fov e aspect), calculado uma vez por
+ * foco ou redimensionamento: o conteúdo não refaz o layout, só a posição muda.
+ *
+ *   modo plano  os cantos formam um retângulo alinhado aos eixos e do tamanho de
+ *               layout (isAxisRect, ±0,5 px): a câmera parada de frente para a
+ *               tela. Sem transform — left/top em px de dispositivo inteiros —,
+ *               o texto é rasterizado 1:1, nítido como na aba Conversa;
+ *   matrix3d    qualquer outra pose (o voo, a tela inclinada): uma homografia
+ *               (quadTransform.ts) leva o retângulo do elemento aos cantos, com
+ *               a perspectiva (left/top ficam no 0 do CSS). O Chromium reamostra
+ *               a camada 3D, mas em movimento ninguém lê.
+ *
+ * Roda a cada quadro com o foco aberto (vetor e cantos de rascunho) e só
  * escreve no estilo o que mudou — com a câmera parada, nada aloca; canto atrás
  * da câmera ou fora do near/far esconde. Sem monitor (personagem sem mesa), um
  * cartão centrado, sem transform. A mesma âncora serve à TV (`aim(tv, TV_PLANE)`:
- * a pose do foco é `tvPose`). No voo da câmera (`flying`) a tela não recebe
- * clique nem arrasto (pointer-events: none): o encaixe só fica exato parado.
+ * a pose do foco é `tvPose`) e ao console da Central. No voo da câmera (`flying`)
+ * a tela não recebe clique nem arrasto (pointer-events: none).
  *
  * `PointAnchor` é o da prévia do hover: um cartão de tamanho próprio que fica
  * acima de um ponto do mundo (o alto do monitor do agente), centrado e sem sair
@@ -121,10 +129,33 @@ const CORNERS: ReadonlyArray<readonly [number, number]> = [
   [-1, -1]
 ]
 
+/** Folga (px) de cada canto até o retângulo do modo plano. */
+const FLAT_TOL = 0.5
+
+const gap = (p: Pt, x: number, y: number): number => Math.hypot(p.x - x, p.y - y)
+
+/**
+ * Os cantos projetados (TL, TR, BR, BL) são um retângulo alinhado aos eixos E do
+ * tamanho de layout w × h: cada um a no máximo `tol` px do canto do retângulo
+ * w × h centrado neles. Conferir o tamanho é o que barra o dolly reto (também é
+ * um retângulo, mas de outra escala — a tela daria um pulo). NaN: false.
+ */
+export function isAxisRect(q: readonly [Pt, Pt, Pt, Pt], w: number, h: number, tol = FLAT_TOL): boolean {
+  const left = (q[0].x + q[1].x + q[2].x + q[3].x) / 4 - w / 2
+  const top = (q[0].y + q[1].y + q[2].y + q[3].y) / 4 - h / 2
+  return gap(q[0], left, top) <= tol && gap(q[1], left + w, top) <= tol && gap(q[2], left + w, top + h) <= tol && gap(q[3], left, top + h) <= tol
+}
+
+/** A escala da tela (Windows a 125% = 1,25): o modo plano cai em px de dispositivo inteiros. */
+function deviceRatio(): number {
+  const r = (globalThis as { devicePixelRatio?: number }).devicePixelRatio
+  return typeof r === 'number' && Number.isFinite(r) && r > 0 ? r : 1
+}
+
 export class ScreenAnchor {
   private el: HTMLElement | null = null
   private readonly v = new Vector3()
-  /** Cantos da tela no palco (px) do último transform; NaN = refazer no próximo quadro. */
+  /** Cantos da tela no palco (px) do último encaixe; NaN = refazer no próximo quadro. */
   private readonly quad: [Pt, Pt, Pt, Pt] = [
     { x: NaN, y: NaN },
     { x: NaN, y: NaN },
@@ -138,6 +169,8 @@ export class ScreenAnchor {
   private transform: string | null = null
   private hidden = false
   private flying = false
+  /** A escala da tela no último quadro (devicePixelRatio). */
+  private dpr = NaN
   /** A tela em foco: o monitor (padrão) ou a TV. */
   private plane: ScreenPlane = MONITOR_PLANE
   /** Centro do monitor em foco (mundo); vale com `hasMonitor`. */
@@ -173,6 +206,11 @@ export class ScreenAnchor {
       this.flying = flying
       this.el.style.pointerEvents = flying ? 'none' : ''
     }
+    const dpr = deviceRatio()
+    if (dpr !== this.dpr) {
+      this.dpr = dpr
+      this.quad[0].x = NaN // a janela foi para uma tela de outra escala: o encaixe é refeito
+    }
     if (!this.hasMonitor) return this.card(width, height)
     const size = this.layoutSize(camera.fov, width, height)
     const m = this.monitor
@@ -194,11 +232,19 @@ export class ScreenAnchor {
       moved = true
     }
     if (!moved) return
+    if (isAxisRect(q, size.w, size.h)) return this.flat(q, size)
     const t = quadMatrix3d(size.w, size.h, q)
     if (!t) return this.hide()
     this.setHidden(false)
     this.box(null, null, size.w, size.h)
     this.setTransform(t)
+  }
+
+  /** Modo plano: sem transform, a tela do tamanho de layout centrada nos cantos (o box a põe em px de dispositivo). */
+  private flat(q: readonly [Pt, Pt, Pt, Pt], size: { w: number; h: number }): void {
+    this.setHidden(false)
+    this.setTransform('')
+    this.box((q[0].x + q[1].x + q[2].x + q[3].x) / 4 - size.w / 2, (q[0].y + q[1].y + q[2].y + q[3].y) / 4 - size.h / 2, size.w, size.h)
   }
 
   /** Sem monitor: o cartão centrado, sem transform. */
@@ -261,22 +307,33 @@ export class ScreenAnchor {
     this.el!.style.transform = t
   }
 
-  /** left/top/width/height em px inteiros, só quando mudam; left/top null = limpos (fica o 0 do CSS). */
+  /**
+   * left/top em px de dispositivo inteiros (múltiplos de 1/dpr) e width/height em
+   * px inteiros; só escreve o que muda. left/top null = limpos (fica o 0 do CSS).
+   */
   private box(left: number | null, top: number | null, width: number, height: number): void {
-    const el = this.el!
+    const s = this.el!.style
     const l = this.last
-    const L = left === null ? null : Math.round(left)
-    const T = top === null ? null : Math.round(top)
+    const d = this.dpr
+    const L = left === null ? null : Math.round(left * d) / d
+    const T = top === null ? null : Math.round(top * d) / d
     const W = Math.round(width)
     const H = Math.round(height)
-    if (L === l.left && T === l.top && W === l.width && H === l.height) return
-    l.left = L
-    l.top = T
-    l.width = W
-    l.height = H
-    el.style.left = L === null ? '' : `${L}px`
-    el.style.top = T === null ? '' : `${T}px`
-    el.style.width = `${W}px`
-    el.style.height = `${H}px`
+    if (L !== l.left) {
+      l.left = L
+      s.left = L === null ? '' : `${L}px`
+    }
+    if (T !== l.top) {
+      l.top = T
+      s.top = T === null ? '' : `${T}px`
+    }
+    if (W !== l.width) {
+      l.width = W
+      s.width = `${W}px`
+    }
+    if (H !== l.height) {
+      l.height = H
+      s.height = `${H}px`
+    }
   }
 }

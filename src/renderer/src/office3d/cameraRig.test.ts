@@ -66,6 +66,20 @@ describe('monitorPose', () => {
     expect(MONITOR_HALF_H * 2).toBe(SCREEN_H)
   })
 
+  it('de frente e SEM arfagem (como a TV): parada, a tela do monitor é um retângulo — o encaixe plano e nítido — mesmo descendo para livrar o HUD', () => {
+    const m = { x: 3, y: 1.12, z: 2 }
+    const aspect = 16 / 9
+    const pose = monitorPose(m, { fovDeg: FOV, aspect, heightPx: 900, clearTopPx: 56 })
+    expect(pose.pitch).toBe(0)
+    const z = m.z + MONITOR_SCREEN_FRONT
+    const at = (sx: number, sy: number) => ndc(pose, aspect, { x: m.x + sx * MONITOR_HALF_W, y: m.y + sy * MONITOR_HALF_H, z })
+    const [tl, tr, br, bl] = [at(-1, 1), at(1, 1), at(1, -1), at(-1, -1)]
+    expect(tl.y).toBeCloseTo(tr.y, 9)
+    expect(bl.y).toBeCloseTo(br.y, 9)
+    expect(tl.x).toBeCloseTo(bl.x, 9)
+    expect(tr.x).toBeCloseTo(br.x, 9)
+  })
+
   it('palco largo (16:9): a altura limita e a tela ocupa ~94% dela (~10% maior que os 85% de antes)', () => {
     const f = screenFill(16 / 9)
     expect(MONITOR_FILL / 0.85).toBeGreaterThan(1.1)

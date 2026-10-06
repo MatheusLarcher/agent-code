@@ -108,8 +108,8 @@ describe('CodeMonitor — arquivos lidos', () => {
   })
 })
 
-describe('CodeMonitor — Chat', () => {
-  it('a troca de modelo aparece no ponto da troca com "A → B" e o motivo; o anúncio do Automático continua nota', () => {
+describe('CodeMonitor — Chat (à direita do editor)', () => {
+  it('a troca de modelo aparece no ponto da troca com "A → B" e o motivo; o anúncio do Automático continua nota; o app "chat" lembrado de antes abre no Código', () => {
     localStorage.setItem('agentcode.monitor.app', 'chat')
     const msgs: UIMessage[] = [
       ask,
@@ -119,7 +119,8 @@ describe('CodeMonitor — Chat', () => {
       tool('Bash', { command: 'npx vitest run' })
     ]
     render(ui(msgs))
-    const note = screen.getByTestId('office-screen').querySelector('.o3d-model-switch')!
+    expect(screen.getByTestId('office-screen').dataset.mode).toBe('code')
+    const note = screen.getByTestId('office-screen-chat').querySelector('.o3d-model-switch')!
     expect(note.textContent).toContain('Trocou de modelo: Opus 5.5 → GPT-6.1 Sol')
     expect(note.textContent).toContain('O limite de uso de claude-opus-5-5 foi atingido.')
     expect(screen.getByTestId('office-screen').querySelectorAll('.o3d-model-switch')).toHaveLength(1)

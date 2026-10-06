@@ -7,8 +7,8 @@
  * Tamanho: a âncora do motor dá o tamanho da tela do monitor (de ~850×480 a
  * ~1350×760; sem mesa, um cartão de 420×260). As medidas vêm de tokens que as
  * container queries encolhem; `--cm-row` também é lido pelo editor (lista
- * virtual). Sem will-change: a âncora é transformada (matrix3d) e o Chromium
- * congelaria o raster.
+ * virtual). Sem will-change: no voo a âncora é transformada (matrix3d) e o
+ * Chromium congelaria o raster. O Chat à direita do editor: chatDock.css.
  */
 .cm-root {
   --cm-font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
@@ -99,8 +99,7 @@
 }
 .cm-close:hover { background: #c42b1c; color: #ffffff; }
 
-/* ── corpo: atividades, explorador, editor ───────────────────────── */
-.cm-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* ── corpo: atividades, explorador, editor (o Chat à direita: chatDock.css) ── */
 .cm-workbench { flex: 1; min-height: 0; display: flex; }
 .cm-activity {
   flex: none;
@@ -293,6 +292,12 @@ button.cm-act:hover { color: var(--cm-text-strong); }
 .cm-tab:hover:not(.active) { background: #1c1c1c; color: var(--cm-text); }
 .cm-tab.active { background: var(--cm-bg); color: var(--cm-text-strong); box-shadow: inset 0 2px 0 var(--cm-agent); }
 .cm-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A faixa com a ação do canto (o olho "Abrir prévia" do .html) e a aba da Prévia, com o globo. */
+.cm-tabbar { flex: none; display: flex; height: var(--cm-tabs-h); background: var(--cm-chrome); }
+.cm-tabbar > .cm-tabs { flex: 1 1 auto; min-width: 0; }
+.cm-tab-act { flex: none; display: grid; place-items: center; width: 34px; height: 100%; padding: 0; border: 0; background: var(--cm-chrome); box-shadow: inset 0 -1px 0 var(--cm-line); color: #a9a9a9; cursor: pointer; }
+.cm-tab-act:hover { background: var(--cm-hover); color: #ffffff; }
+.cm-glyph-page { width: 15px; height: 15px; color: #8fd3ff; }
 .cm-crumbs {
   flex: none;
   display: flex;
@@ -420,7 +425,7 @@ button.cm-sb:hover { background: var(--cm-agent-shade); }
 }
 .cm-welcome-btn:hover { background: color-mix(in srgb, var(--cm-agent) 28%, transparent); }
 
-/* O modo Chat ocupa o corpo da janela (a moldura é a da tela). */
+/* O Chat ocupa o painel dele, à direita do editor (a moldura é a da tela). */
 .cm-root .o3d-chat-screen { flex: 1; height: auto; min-height: 0; border: 0; border-radius: 0; }
 /* O campo de digitar embaixo do Chat: o Composer do chat, com a letra do app (não a da janela). */
 .cm-composer { flex: none; font-size: 13px; line-height: normal; }

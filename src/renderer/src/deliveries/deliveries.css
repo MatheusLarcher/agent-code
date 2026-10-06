@@ -248,6 +248,14 @@
 .dlv-envio.open .dlv-expand svg {
   transform: rotate(90deg);
 }
+/* Os botões do canto (o slot `actions`: a aba Implantação da TV). */
+.dlv-envio-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
 .dlv-envio-main {
   min-width: 0;
   flex: 1;

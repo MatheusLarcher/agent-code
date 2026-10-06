@@ -13,8 +13,11 @@
  *
  * O realce é o do CodeBlock (highlightLines): o texto inteiro de cada lado,
  * guardado entre um pedaço e outro do código ao vivo.
+ *
+ * Aberto pelo Chat (`flash` muda): a tela vai até o 1º trecho mudado e as
+ * linhas mudadas piscam na cor do Agent por FLASH_MS.
  */
-import { memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { extToLang } from '../../components/CodeBlock'
 import type { FileView, Row, RowKind } from './fileView'
 import { highlightToLines, LineHighlighter } from './highlightLines'
@@ -26,6 +29,8 @@ const VIEW_FALLBACK = 640
 /** Linhas a mais renderizadas acima e abaixo da área à vista. */
 const OVERSCAN = 10
 const TAB_SIZE = 4
+/** Quanto as linhas mudadas piscam quando o Chat abre o arquivo (a animação do CSS). */
+export const FLASH_MS = 1600
 
 export interface EditorPaneProps {
   path: string
@@ -35,6 +40,8 @@ export interface EditorPaneProps {
   /** Muda quando a tela deve ir de novo até `target`. */
   targetKey: string
   follow: boolean
+  /** Muda (≠ 0) quando o Chat abre este arquivo: rola até o 1º trecho mudado e as linhas mudadas piscam. */
+  flash?: number
   onUserScroll: () => void
 }
 
@@ -100,11 +107,13 @@ interface RowProps {
   /** Coluna do cursor do Agent nesta linha (null = sem cursor). */
   caret: number | null
   gapWidth: number
+  /** Piscando (≠ 0): a paridade troca o nome da animação, que recomeça a cada clique. */
+  flash: number
 }
 
-const CodeRow = memo(function CodeRow({ kind, num, html, label, caret, gapWidth }: RowProps): JSX.Element {
+const CodeRow = memo(function CodeRow({ kind, num, html, label, caret, gapWidth, flash }: RowProps): JSX.Element {
   return (
-    <div className={`cm-row cm-${kind}${caret !== null ? ' cm-current' : ''}`}>
+    <div className={`cm-row cm-${kind}${caret !== null ? ' cm-current' : ''}${flash ? ` cm-flash-${flash % 2}` : ''}`}>
       <span className="cm-gutter">
         <span className="cm-num">{num ?? ''}</span>
         <span className="cm-sign">{SIGN[kind]}</span>
@@ -125,7 +134,7 @@ const CodeRow = memo(function CodeRow({ kind, num, html, label, caret, gapWidth 
   )
 })
 
-export function EditorPane({ path, view, target, targetKey, follow, onUserScroll }: EditorPaneProps): JSX.Element {
+export function EditorPane({ path, view, target, targetKey, follow, flash = 0, onUserScroll }: EditorPaneProps): JSX.Element {
   const ext = extOf(path)
   const lang = ext === 'ipynb' ? 'python' : extToLang(path)
   const hl0 = useRef<LineHighlighter | null>(null)
@@ -177,6 +186,27 @@ export function EditorPane({ path, view, target, targetKey, follow, onUserScroll
     // Só a mudança de alvo (ou voltar a seguir) rola; o resto do render não.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetKey, follow, box.rowH])
+
+  // Aberto pelo Chat: o 1º trecho mudado no meio da tela e as linhas mudadas piscando. Depois do
+  // efeito de seguir (que também roda com a altura da linha medida na montagem): a rolagem é a do pisca.
+  const [flashing, setFlashing] = useState(0)
+  useLayoutEffect(() => {
+    if (!flash) return
+    const el = scrollRef.current
+    if (el && view.first >= 0) {
+      const h = el.clientHeight || VIEW_FALLBACK
+      el.scrollTop = Math.max(0, Math.round((view.first * box.rowH - h * 0.4) / box.rowH) * box.rowH)
+      setBox((b) => ({ ...b, top: el.scrollTop }))
+    }
+    setFlashing(flash)
+    // Só um clique novo no Chat pisca de novo; a altura da linha medida só refaz a rolagem.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flash, box.rowH])
+  useEffect(() => {
+    if (!flashing) return
+    const t = setTimeout(() => setFlashing(0), FLASH_MS)
+    return () => clearTimeout(t)
+  }, [flashing])
 
   const onScroll = (): void => {
     const el = scrollRef.current
@@ -250,6 +280,7 @@ export function EditorPane({ path, view, target, targetKey, follow, onUserScroll
                     label={r.label}
                     caret={idx === caretRow ? caretCol : null}
                     gapWidth={8 + (((r.num ?? idx) * 13) % 40)}
+                    flash={flashing && (r.kind === 'add' || r.kind === 'del') ? flashing : 0}
                   />
                 )
               })}

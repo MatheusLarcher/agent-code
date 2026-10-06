@@ -317,10 +317,9 @@ describe('Office3DWorkspace', () => {
     const view = render(ui(true))
     fireEvent.pointerDown(screen.getByTestId('office3d-canvas'), { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 50, clientY: 50 })
-    // Abre no Chat (o turno, vazio aqui); o Código fica a um clique.
-    expect([screen.getByTestId('office-screen').dataset.mode, screen.getByTestId('office-screen').dataset.kind]).toEqual(['chat', 'empty'])
-    fireEvent.click(screen.getByRole('button', { name: 'Código' }))
-    expect(screen.getByTestId('office-screen').dataset.kind).toBe('empty')
+    // Abre no Código (vazio aqui), com o Chat (o turno) à direita.
+    expect([screen.getByTestId('office-screen').dataset.mode, screen.getByTestId('office-screen').dataset.kind]).toEqual(['code', 'empty'])
+    expect(screen.getByTestId('office-screen-chat').hidden).toBe(false)
     expect(src.subs).toBe(2) // o motor + a tela acompanhando o feed
     // O App re-renderiza (mesmas props): a âncora da tela não é religada no motor.
     const setScreen = vi.spyOn(Office3DEngine.prototype, 'setScreenElement')
@@ -353,14 +352,13 @@ describe('Office3DWorkspace', () => {
 
     view.rerender(ui(true))
     const screenEl = screen.getByTestId('office-screen')
-    // De volta, a tela renasce no último app usado (o Código): o que ele faz agora, o comando no
-    // terminal (nada do código ao vivo de antes); no Chat, o ToolCard dele.
+    // De volta, a tela renasce no Código: o que ele faz agora, o comando no terminal (nada do
+    // código ao vivo de antes) e, no Chat ao lado, o ToolCard dele.
     const term = screen.getByRole('region', { name: 'Terminal' })
     expect([screenEl.dataset.kind, term.querySelector('.cm-cmdline')?.textContent, term.querySelector('.cm-run.run')?.textContent, screen.queryByRole('tab')]).toEqual(['code', 'npm run build', 'executando', null])
-    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
-    expect(screenEl.dataset.kind).toBe('chat')
-    expect(screenEl.querySelector('.tool-card .tool-name')?.textContent).toBe('Bash')
-    expect(screenEl.querySelector('.tool-card .tool-detail')?.textContent).toBe('npm run build')
+    const chatPane = screen.getByTestId('office-screen-chat')
+    expect(chatPane.querySelector('.tool-card .tool-name')?.textContent).toBe('Bash')
+    expect(chatPane.querySelector('.tool-card .tool-detail')?.textContent).toBe('npm run build')
     expect(src.subs).toBe(2)
   })
 

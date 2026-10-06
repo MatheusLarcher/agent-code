@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   currentEntrega,
   tempoAtivoMinutos,
@@ -95,9 +95,11 @@ export interface DeliveryEnvioRowProps {
   onToggle: () => void
   onOpenConversation: (conversationId: string) => void
   correct: Correct
+  /** Botões a mais no canto da linha (a aba Implantação da TV); a tela Entregas não passa nada. */
+  actions?: ReactNode
 }
 
-export function DeliveryEnvioRow({ envio, expanded, onToggle, onOpenConversation, correct }: DeliveryEnvioRowProps): JSX.Element {
+export function DeliveryEnvioRow({ envio, expanded, onToggle, onOpenConversation, correct, actions }: DeliveryEnvioRowProps): JSX.Element {
   const { done, total } = progress(envio)
   const atual = currentEntrega(envio)
   const plano = envio.planTitulo || envio.planSlug
@@ -151,6 +153,7 @@ export function DeliveryEnvioRow({ envio, expanded, onToggle, onOpenConversation
           </div>
           {envio.motivo && <div className="dlv-motivo">{envio.motivo}</div>}
         </div>
+        {actions && <div className="dlv-envio-actions">{actions}</div>}
       </div>
       {expanded && (
         <ul className="dlv-entregas" aria-label={`Entregas de ${plano}`}>

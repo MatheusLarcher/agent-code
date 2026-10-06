@@ -39,22 +39,23 @@ afterEach(() => {
 })
 
 describe('CodeMonitor — barra de tarefas', () => {
-  it('os botões Código/Chat saíram do título; a barra abre os três apps e marca o ativo', () => {
+  it('a barra tem só Código (com o Chat dentro) e Contexto, com Alt+1/Alt+2 no título, e marca o ativo', () => {
     render(ui(feedOf([ask, edit('total.ts')])))
     expect(root().querySelector('.cm-titlebar .cm-modes')).toBeNull()
-    expect(root().querySelector('.cm-titlebar')!.textContent).not.toContain('Chat')
-    expect(['Código', 'Chat', 'Contexto'].map((n) => app(n).getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false'])
+    expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull()
+    expect(['Código', 'Contexto'].map((n) => app(n).getAttribute('aria-pressed'))).toEqual(['true', 'false'])
+    expect([app('Código').getAttribute('title'), app('Contexto').getAttribute('title')]).toEqual(['Código (Alt+1)', 'Contexto (Alt+2)'])
     fireEvent.click(app('Contexto'))
     expect([root().dataset.mode, root().dataset.kind, app('Contexto').getAttribute('aria-pressed')]).toEqual(['ctx', 'context', 'true'])
-    fireEvent.click(app('Chat'))
-    expect(root().dataset.mode).toBe('chat')
+    fireEvent.click(app('Código'))
+    expect(root().dataset.mode).toBe('code')
   })
 
   it('escondida por padrão, com a linha fina; a borda abre depois do atraso e afastar o mouse fecha', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     render(ui(feedOf([ask])))
     expect(root().classList.contains('tb-open')).toBe(false)
-    expect(root().querySelectorAll('.cm-peek i')).toHaveLength(3)
+    expect(root().querySelectorAll('.cm-peek i')).toHaveLength(2)
     const zone = root().querySelector('.cm-tbzone')!
     fireEvent.mouseEnter(zone)
     act(() => void vi.advanceTimersByTime(REVEAL_MS - 1))
@@ -74,7 +75,7 @@ describe('CodeMonitor — barra de tarefas', () => {
   it('abre por foco de teclado (Tab) na hora; a dica some para sempre depois de abrir', () => {
     render(ui(feedOf([ask])))
     expect(root().textContent).toContain('Leve o mouse até a borda de baixo')
-    act(() => app('Chat').focus())
+    act(() => app('Contexto').focus())
     expect(root().classList.contains('tb-open')).toBe(true)
     expect(root().textContent).not.toContain('Leve o mouse até a borda de baixo')
     expect(localStorage.getItem('agentcode.monitor.coachSeen')).toBe('1')
@@ -95,15 +96,13 @@ describe('CodeMonitor — barra de tarefas', () => {
     expect(root().classList.contains('pinned')).toBe(false)
   })
 
-  it('Alt+1/2/3 trocam de app; Esc fecha o menu do Agent sem chegar ao motor', () => {
+  it('Alt+1/2 trocam de app (Alt+3 já não é do monitor); Esc fecha o menu do Agent sem chegar ao motor', () => {
     const toEngine = vi.fn()
     window.addEventListener('keydown', toEngine)
     try {
       render(ui(feedOf([ask])))
-      fireEvent.keyDown(window, { key: '3', altKey: true })
-      expect(root().dataset.mode).toBe('ctx')
       fireEvent.keyDown(window, { key: '2', altKey: true })
-      expect(root().dataset.mode).toBe('chat')
+      expect(root().dataset.mode).toBe('ctx')
       fireEvent.keyDown(window, { key: '1', altKey: true })
       expect(root().dataset.mode).toBe('code')
       expect(toEngine).not.toHaveBeenCalled()
@@ -112,32 +111,37 @@ describe('CodeMonitor — barra de tarefas', () => {
       fireEvent.keyDown(window, { key: 'Escape' })
       expect(screen.queryByRole('dialog', { name: 'Menu do Agent' })).toBeNull()
       expect(toEngine).not.toHaveBeenCalled()
+      fireEvent.keyDown(window, { key: '3', altKey: true })
+      expect(root().dataset.mode).toBe('code')
     } finally {
       window.removeEventListener('keydown', toEngine)
     }
   })
 
-  it('selos: Código = alterados; Chat = trabalhando, e âmbar com "!" quando espera permissão; o aviso fica até a resposta', () => {
+  it('selos: Código = alterados e "trabalhando"; esperando permissão, o Código pisca em âmbar com "!", o Chat diz "aguardando você" e o aviso (que leva ao Código) fica até a resposta', () => {
     const view = render(ui(feedOf([ask, edit('a.ts'), edit('b.ts')])))
     expect(app('Código').querySelector('.cm-tb-badge')?.textContent).toBe('2')
-    expect(app('Chat').querySelector('.cm-busydot')).toBeTruthy()
+    expect(app('Código').querySelector('.cm-busydot')).toBeTruthy()
     const perm = { a: { id: 'p1', toolName: 'Bash', input: { command: 'npm test' } } }
     view.rerender(ui(feedOf([ask, edit('a.ts'), edit('b.ts')], { permissions: perm })))
-    expect(app('Chat').classList.contains('att')).toBe(true)
-    expect(app('Chat').querySelector('.cm-tb-badge.warn')?.textContent).toBe('!')
+    expect(app('Código').classList.contains('att')).toBe(true)
+    expect(app('Código').querySelector('.cm-tb-badge.warn')?.textContent).toBe('!')
+    expect(app('Código').querySelector('.cm-busydot')).toBeNull()
     expect(root().querySelector('.cm-peek i.att')).toBeTruthy()
+    expect(screen.getByTestId('office-screen-chat').querySelector('.cm-chat-state')?.textContent).toBe('aguardando você')
     expect(root().querySelector('.cm-toast.warn')?.textContent).toContain('O Agent precisa de você')
+    fireEvent.click(app('Contexto'))
     fireEvent.click(root().querySelector('.cm-toast.warn')!)
-    expect(root().dataset.mode).toBe('chat')
+    expect(root().dataset.mode).toBe('code')
     view.rerender(ui(feedOf([ask, edit('a.ts'), edit('b.ts')])))
     expect(root().querySelector('.cm-toast.warn')).toBeNull()
-    expect(app('Chat').classList.contains('att')).toBe(false)
+    expect(app('Código').classList.contains('att')).toBe(false)
   })
 
   it('avisos: arquivo alterado com a tela aberta (clique abre no Código) e fim do turno; o que já estava não avisa', () => {
     const view = render(ui(feedOf([ask, edit('velho.ts')])))
     expect(root().querySelectorAll('.cm-toast')).toHaveLength(0)
-    fireEvent.click(app('Chat'))
+    fireEvent.click(app('Contexto'))
     view.rerender(ui(feedOf([ask, edit('velho.ts'), edit('novo.ts')])))
     const toast = [...root().querySelectorAll<HTMLElement>('.cm-toast')].find((t) => t.textContent?.includes('O Agent alterou novo.ts'))!
     expect(toast).toBeTruthy()

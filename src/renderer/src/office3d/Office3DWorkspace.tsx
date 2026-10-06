@@ -14,8 +14,8 @@
  * não. Abrir a aba sem mesa mostra a Central; reabrir com um agente focado
  * seleciona a conversa dele. Sem `central`, o chat é sempre a conversa ativa.
  *
- * Com `monitorComposer`, a tela do monitor focado É o chat: abre no modo Chat
- * com o campo de digitar embaixo (o Composer do App, que envia para a conversa
+ * Com `monitorComposer`, a tela do monitor focado tem o chat: abre no Código, o
+ * Chat à direita com o campo embaixo (o Composer do App, que envia para a conversa
  * ativa — a do agente) e o chat flutuante sai enquanto ela está aberta; fechar
  * a tela o traz de volta (sem mesa, a Central). Toda troca de foco tira o foco
  * do campo da tela e do chat antes (o blur grava o rascunho). Em cima do campo,
@@ -29,7 +29,7 @@
  * do monitor, a prévia, o foco da TV nem o HUD de desempenho. Desmontar libera GPU, listeners e RAF.
  *
  * Mouse parado num agente: a prévia (<ChatPreview>) acima do monitor. Clique num agente voa até o
- * monitor e abre por cima a tela dele (<CodeMonitor>, com Código, Chat e Contexto); duplo clique
+ * monitor e abre por cima a tela dele (<CodeMonitor>: o Código, com o Chat, e o Contexto); duplo clique
  * abre a conversa no chat flutuante. Clique na Central (ou na tela do console) voa até o console e
  * encaixa o chat dela (`central`) na tela inclinada. Clique na TV voa até ela de frente e abre DENTRO
  * dela o que estava na tela (<TvFocus>, useTvFocus.ts: o mockup com Aprovar / Pedir ajuste, o teste
@@ -169,7 +169,7 @@ export function Office3DWorkspace({
   const boardOpenRef = useRef(boardOpen)
   boardOpenRef.current = boardOpen
   const cbs = useRef({ onOpenConversation, onFocusRequest, onHover })
-  const tvFocus = useRef<ReturnType<typeof useTvFocus>>({ tvInfo: null, onFocus: () => false, pickPlan: () => {}, sendFromTv: undefined, reset: () => {}, focusPlan: () => {} })
+  const tvFocus = useRef<ReturnType<typeof useTvFocus>>({ tvInfo: null, onFocus: () => false, pickPlan: () => {}, sendFromTv: undefined, reset: () => {}, focusPlan: () => {}, goToAgent: () => false })
   // "📋 Planejar": o formulário aberto (pelo HUD ou pela TV vazia).
   const [planDialog, setPlanDialog] = useState(false)
   cbs.current = { onOpenConversation, onFocusRequest, onHover }
@@ -452,7 +452,7 @@ export function Office3DWorkspace({
               feed={feed}
               model={focused.model}
               onClose={closeScreen}
-              initialMode="chat"
+              initialMode="code"
               composer={screenComposer}
               battery={power ? power.pct : null}
               onOpenInApp={onOpenInApp}
@@ -468,7 +468,7 @@ export function Office3DWorkspace({
               onSend={tv.sendFromTv}
               planning={planning}
               activeConvId={convId}
-              onPickPlan={tv.pickPlan}
+              onPickPlan={tv.pickPlan} onGoToAgent={tv.goToAgent}
             />
           </div>
         ) : null}
