@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { OfficeCharacterModel } from '../office/adapter/model'
 import { CALL_JUMP_S, setStatus, type Brain } from './brain'
 import { Crowd } from './crowd'
-import { layoutOffice, type Office3DLayout } from './layout'
-import { managerSeat, meetingSpots, TV_SIDE } from './meetingRoom'
+import { EMPTY_LAYOUT, layoutOffice, type Office3DLayout } from './layout'
+import { managerSeat, meetingSpots, MeetingVenues, TV_SIDE } from './meetingRoom'
 import { LINGER_S } from './memoryTrips'
 import { CENTRAL_SPOT, FRONT_SPOTS, LOUNGE_SEATS, MEMORY_SPOT_X, MEMORY_SPOTS_Z, MEMORY_WAIT, OFFICE } from './officePlan'
 
@@ -205,8 +205,147 @@ describe('o Agent Manager (planejamento) à cabeceira da mesa de reunião', () =
     }
     expect([...acts].sort()).toEqual(['assist', 'web'])
     // Na fila da sala, ninguém senta na cadeira do Manager.
-    const spots = meetingSpots(['k0', 'k1', 'k2', 'k3', 'k4'], 1)
+    const spots = meetingSpots(['k0', 'k1', 'k2', 'k3', 'k4'], [seat])
     for (const s of spots.values()) expect(Math.hypot(s.x - seat.x, s.z - seat.z)).toBeGreaterThan(0.1)
+  })
+})
+
+describe('sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV)', () => {
+  const manager = (k: string, extra: Partial<OfficeCharacterModel> = {}): OfficeCharacterModel =>
+    model(k, 'a', { placement: { kind: 'destination', papel: 'reuniao-cabeceira' }, ...extra })
+
+  /** O que a cena faz (scene.ts): a cada sync, upsert de todos, quem saiu do modelo some e as cadeiras dos Managers vão
+   *  para a sala (setChairs); a fila da TV chega pelo onRoom (setQueue). */
+  function office(): { crowd: Crowd; venues: MeetingVenues; sync: (chars: OfficeCharacterModel[]) => void; brain: (k: string) => Brain } {
+    const crowd = new Crowd(3)
+    const venues = new MeetingVenues((spots) => crowd.setVenues(spots))
+    let layout = EMPTY_LAYOUT
+    const sync = (chars: OfficeCharacterModel[]): void => {
+      layout = layoutOffice({ rooms: [{ id: 'a', projectKey: 'a', name: 'a', icon: null, principals: 1 }], characters: chars }, layout)
+      crowd.syncRooms(layout.rooms)
+      const rooms = new Map(layout.rooms.map((r) => [r.id, r] as const))
+      const seen = new Set<string>()
+      for (const c of layout.characters) {
+        seen.add(c.key)
+        const fresh = !crowd.brains.has(c.key)
+        const b = crowd.upsert(c, false, rooms)
+        if (fresh) setStatus(b, { phase: 'idle', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: 0 }, crowd.t)
+      }
+      for (const k of [...crowd.brains.keys()]) if (!seen.has(k)) crowd.forget(k)
+      venues.setChairs(layout.characters)
+    }
+    return { crowd, venues, sync, brain: (k) => crowd.brains.get(k)! }
+  }
+
+  /** Anda `seconds` e devolve toda cadeira que, em algum instante, teve dois agentes sentados. */
+  function runNoDoubles(crowd: Crowd, seconds: number): string[] {
+    const found = new Set<string>()
+    for (let i = 0; i < Math.round(seconds / 0.1); i++) {
+      run(crowd, 0.1)
+      const at = new Map<string, string[]>()
+      for (const b of crowd.list) {
+        if (!b.visible || b.seat !== 'chair' || b.sit <= 0.9) continue
+        const k = `${b.seatX.toFixed(2)},${b.seatZ.toFixed(2)}`
+        at.set(k, [...(at.get(k) ?? []), b.key])
+      }
+      for (const [k, ks] of at) if (ks.length > 1) found.add(`${ks.join(' + ')} @ ${k}`)
+    }
+    return [...found]
+  }
+
+  const seatedAt = (b: Brain, s: { x: number; z: number }): boolean => b.seat === 'chair' && b.sit === 1 && Math.hypot(b.seatX - s.x, b.seatZ - s.z) < 0.01
+
+  it('A: quem espera a TV sentado na cabeceira levanta e vai para outra cadeira quando um Agent Manager chega nela', () => {
+    const { crowd, venues, sync, brain } = office()
+    const chars = [model('conv:a', 'a'), model('conv:b', 'a'), model('conv:c', 'a')]
+    sync(chars)
+    run(crowd, 2)
+    venues.setQueue([{ key: 'conv:a', call: true }, { key: 'conv:b', call: true }])
+    expect(runNoDoubles(crowd, 30)).toEqual([])
+    expect(seatedAt(brain('conv:b'), managerSeat(0)!)).toBe(true)
+    // Abre um planejamento: o Manager ganha a cabeceira; a fila da TV não mudou, mas a sala é refeita com o layout.
+    sync([...chars, manager('conv:p')])
+    expect(runNoDoubles(crowd, 30)).toEqual([])
+    expect(seatedAt(brain('conv:p'), managerSeat(0)!)).toBe(true)
+    const b = brain('conv:b')
+    expect([b.mode, b.seat, b.sit]).toEqual(['meeting', 'chair', 1])
+  })
+
+  it('B: o plano de um Manager é enviado e chega outro: quem ficou não troca de cadeira e o novo pega a livre', () => {
+    const { crowd, sync, brain } = office()
+    const base = [model('conv:a', 'a')]
+    sync([...base, manager('conv:p1'), manager('conv:p2')])
+    expect(runNoDoubles(crowd, 30)).toEqual([])
+    expect(seatedAt(brain('conv:p1'), managerSeat(0)!) && seatedAt(brain('conv:p2'), managerSeat(1)!)).toBe(true)
+    sync([...base, manager('conv:p1', { offstage: true }), manager('conv:p2')])
+    expect(runNoDoubles(crowd, 30)).toEqual([])
+    sync([...base, manager('conv:p1', { offstage: true }), manager('conv:p2'), manager('conv:p3')])
+    expect(runNoDoubles(crowd, 30)).toEqual([])
+    expect(seatedAt(brain('conv:p2'), managerSeat(1)!)).toBe(true)
+    expect(seatedAt(brain('conv:p3'), managerSeat(0)!)).toBe(true)
+  })
+
+  it('um Manager sai do modelo e outro chega: ninguém dobra; dois chamados esperando com dois Managers; atendido, a fila anda', () => {
+    const { crowd, venues, sync, brain } = office()
+    const base = [model('conv:a', 'a'), model('conv:b', 'a'), model('conv:c', 'a')]
+    sync([...base, manager('conv:p1'), manager('conv:p2')])
+    run(crowd, 2)
+    venues.setQueue([{ key: 'conv:a', call: true }, { key: 'conv:b', call: true }, { key: 'conv:c', call: true }])
+    expect(runNoDoubles(crowd, 30)).toEqual([])
+    for (const k of ['conv:b', 'conv:c']) expect([k, brain(k).mode, brain(k).seat, brain(k).sit]).toEqual([k, 'meeting', 'chair', 1])
+    sync([...base, manager('conv:p2')])
+    expect(runNoDoubles(crowd, 30)).toEqual([])
+    sync([...base, manager('conv:p2'), manager('conv:p3')])
+    expect(runNoDoubles(crowd, 30)).toEqual([])
+    for (const k of ['conv:p2', 'conv:p3', 'conv:b', 'conv:c']) expect([k, brain(k).seat, brain(k).sit]).toEqual([k, 'chair', 1])
+    // a foi atendido: b vai para o lado da TV e c continua sentado esperando, sem dobrar com ninguém.
+    venues.setQueue([{ key: 'conv:b', call: true }, { key: 'conv:c', call: true }])
+    expect(runNoDoubles(crowd, 30)).toEqual([])
+    expect(Math.hypot(brain('conv:b').x - TV_SIDE.x, brain('conv:b').z - TV_SIDE.z)).toBeLessThan(0.05)
+    expect([brain('conv:c').seat, brain('conv:c').sit]).toEqual(['chair', 1])
+  })
+
+  it('quem espera a TV não levanta nem troca de cadeira quando um plano é enviado e outro planejamento é aberto', () => {
+    const { crowd, venues, sync, brain } = office()
+    const base = [model('conv:a', 'a'), model('conv:b', 'a'), model('conv:c', 'a')]
+    sync([...base, manager('conv:p1')])
+    run(crowd, 2)
+    venues.setQueue([{ key: 'conv:a', call: true }, { key: 'conv:b', call: true }, { key: 'conv:c', call: true }])
+    run(crowd, 30)
+    const waiting = ['conv:b', 'conv:c'].map(brain)
+    const seats = (): string[] => waiting.map((b) => `${b.seatX.toFixed(2)},${b.seatZ.toFixed(2)}`)
+    const before = seats()
+    for (const b of waiting) expect([b.seat, b.sit]).toEqual(['chair', 1])
+    // Sentado o tempo todo: o menor `sit` de quem espera durante os passos.
+    const stayed = (seconds: number): number => {
+      let low = 1
+      for (let i = 0; i < Math.round(seconds / 0.1); i++) {
+        run(crowd, 0.1)
+        for (const b of waiting) low = Math.min(low, b.sit)
+      }
+      return low
+    }
+    // O plano de p1 é enviado (p1 sai de cena) e depois outro planejamento é aberto (p3).
+    sync([...base, manager('conv:p1', { offstage: true })])
+    expect(stayed(30)).toBe(1)
+    sync([...base, manager('conv:p1', { offstage: true }), manager('conv:p3')])
+    expect(stayed(30)).toBe(1)
+    expect(seats()).toEqual(before)
+    expect(seatedAt(brain('conv:p3'), managerSeat(0)!)).toBe(true)
+  })
+
+  it('lugar fixo que muda (home novo) levanta o agente e o leva ao lugar novo', () => {
+    const { crowd, sync, brain } = office()
+    sync([model('conv:a', 'a'), manager('conv:p1')])
+    run(crowd, 30)
+    const p = brain('conv:p1')
+    expect(seatedAt(p, managerSeat(0)!)).toBe(true)
+    const s = managerSeat(1)!
+    const layout = layoutOffice({ rooms: [{ id: 'a', projectKey: 'a', name: 'a', icon: null, principals: 1 }], characters: [model('conv:a', 'a'), manager('conv:p1')] })
+    const c = layout.characters.find((x) => x.key === 'conv:p1')!
+    crowd.upsert({ ...c, x: s.x, z: s.z, yaw: s.yaw }, false, new Map(layout.rooms.map((r) => [r.id, r] as const)))
+    run(crowd, 30)
+    expect([p.mode, seatedAt(p, s)]).toEqual(['fixed', true])
   })
 })
 

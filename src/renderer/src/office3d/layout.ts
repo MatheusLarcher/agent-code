@@ -26,7 +26,7 @@
  * mesa (deskPoint), de costas para o monitor com o mesmo yaw.
  */
 import type { OfficeCharacterModel, OfficeModel } from '../office/adapter/model'
-import { managerSeat } from './meetingRoom'
+import { managerChairs, managerSeat } from './meetingRoom'
 import {
   CENTRAL_SPOT,
   deskPoint,
@@ -134,6 +134,8 @@ export interface Office3DLayout {
   /** Estado para a próxima chamada: mesa por personagem e ilhas por projeto. */
   deskOf: Record<string, number>
   islandOf: Record<string, number[]>
+  /** A cadeira da sala de reunião de cada Agent Manager (o `i` de managerSeat): quem já tinha fica com ela. */
+  managerOf: Record<string, number>
 }
 
 /** O escritório com as mesas e ilhas no estado dado (sem dono por padrão). */
@@ -152,7 +154,7 @@ function officeRoom(): RoomLayout {
   }
 }
 
-export const EMPTY_LAYOUT: Office3DLayout = { rooms: [officeRoom()], projects: [], characters: [], deskOf: {}, islandOf: {} }
+export const EMPTY_LAYOUT: Office3DLayout = { rooms: [officeRoom()], projects: [], characters: [], deskOf: {}, islandOf: {}, managerOf: {} }
 
 /** Caixa (no chão) que envolve as salas; null sem salas. */
 export function buildingBounds(rooms: readonly RoomLayout[]): { minX: number; maxX: number; minZ: number; maxZ: number } | null {
@@ -176,6 +178,8 @@ export function monitorPosition(desk: Pick<DeskLayout, 'x' | 'z'> & { yaw?: numb
 export const projectOf = (c: Pick<OfficeCharacterModel, 'roomId'>): string | null => c.roomId
 
 const wantsDesk = (c: OfficeCharacterModel): boolean => c.placement.kind === 'seat' && c.roomId !== null
+/** O Agent Manager em cena: senta numa cadeira da mesa de reunião. */
+const wantsChair = (c: OfficeCharacterModel): boolean => !c.offstage && c.placement.kind === 'destination' && c.placement.papel === 'reuniao-cabeceira'
 
 export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LAYOUT): Office3DLayout {
   const room = officeRoom()
@@ -253,7 +257,9 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
   }
 
   const prevLounge = new Map(prev.characters.flatMap((c): Array<[string, number]> => (c.lounge !== null ? [[c.key, c.lounge]] : [])))
-  const characters = placeCharacters(model, room, deskOf, prevLounge)
+  // As cadeiras da sala de reunião: como as mesas, o Manager que já tinha cadeira fica com ela.
+  const managerOf = managerChairs(model.characters.filter(wantsChair).map((c) => c.key), prev.managerOf)
+  const characters = placeCharacters(model, room, deskOf, prevLounge, managerOf)
   const agents = new Map<string, number>()
   for (const c of model.characters) {
     const p = projectOf(c)
@@ -262,16 +268,22 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
   const projects: ProjectLayout[] = model.rooms.map((r) => ({ id: r.id, name: r.name, icon: r.icon ?? null, islands: islandsOf(r.id), agents: agents.get(r.id) ?? 0 }))
   const islandOf: Record<string, number[]> = {}
   for (const p of projects) if (p.islands.length > 0) islandOf[p.id] = p.islands
-  return { rooms: [room], projects, characters, deskOf, islandOf }
+  return { rooms: [room], projects, characters, deskOf, islandOf, managerOf }
 }
 
 /** Onde cada personagem fica parado (a mesa, o lounge, o lugar fixo ou ao lado do pai). */
-function placeCharacters(model: OfficeModel, room: RoomLayout, deskOf: Record<string, number>, prevLounge: ReadonlyMap<string, number>): CharacterLayout[] {
+function placeCharacters(
+  model: OfficeModel,
+  room: RoomLayout,
+  deskOf: Record<string, number>,
+  prevLounge: ReadonlyMap<string, number>,
+  managerOf: Readonly<Record<string, number>>
+): CharacterLayout[] {
   const out: CharacterLayout[] = []
   const byKey = new Map<string, CharacterLayout>()
   const besideCount = new Map<string, number>()
   const used = new Set<string>()
-  const counters = { po: 0, memory: 0, plaza: 0, manager: 0 }
+  const counters = { po: 0, memory: 0, plaza: 0 }
   // Lounge estável como as mesas: quem já tinha lugar fica com ele (ninguém é empurrado); os novos pegam os livres.
   const loungeOf = new Map<string, number>()
   const taken = new Set<number>()
@@ -361,8 +373,9 @@ function placeCharacters(model: OfficeModel, room: RoomLayout, deskOf: Record<st
       } else if (p.papel === 'central') {
         o = base(c, CENTRAL_SPOT.x, CENTRAL_SPOT.z, CENTRAL_SPOT.yaw, 'central')
       } else if (p.papel === 'reuniao-cabeceira') {
-        // O Agent Manager: à cabeceira da mesa da sala de reunião (sem cadeira livre, na praça).
-        const s = managerSeat(counters.manager++)
+        // O Agent Manager: na cadeira dele da mesa da sala de reunião (managerOf; sem cadeira livre, na praça).
+        const i = managerOf[c.key]
+        const s = i === undefined ? null : managerSeat(i)
         o = s ? base(c, s.x, s.z, s.yaw, 'manager') : plaza(c)
       } else o = plaza(c)
     } else {

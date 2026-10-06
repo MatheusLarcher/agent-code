@@ -38,7 +38,7 @@ import { zoneAt, type ZoneId } from './officePlan'
 import { CHAR_LOD_BOUNDS, FOG_FAR, FOG_NEAR, lodLevel, type Lod } from './lod'
 import { Particles } from './particles'
 import type { OfficePower, PowerEvent } from './power'
-import { meetingSpots } from './meetingRoom'
+import { MeetingVenues } from './meetingRoom'
 import { Projectors } from './projectors'
 import { createPropKit, type PropKit } from './props'
 import { setRoomLevel } from './roomLod'
@@ -67,6 +67,7 @@ export class OfficeScene {
   readonly energy: OfficeEnergy
   /** A TV da sala de reunião (navegador/Android em teste). */
   readonly projectors: Projectors
+  private readonly meeting = new MeetingVenues((spots) => this.crowd.setVenues(spots))
   /** O kanban do Quadro real (board/). */
   readonly boards: Boards
   /** O pulso de despacho da Central e a ida à estante de Memórias (officeErrands.ts). */
@@ -126,9 +127,7 @@ export class OfficeScene {
     this.energy.onDark = (id, dark) => this.applyDark(id, dark)
     this.projectors = new Projectors(this.kit, () => this.energy.zoneDark('meeting'))
     this.projectors.onDirty = () => this.onDirty()
-    // Quem chamou o usuário e quem testa vão à sala de reunião (o 1º ao lado da TV, os outros esperam sentados
-    // nas cadeiras que os Agent Managers não ocupam).
-    this.projectors.onRoom = (order) => this.crowd.setVenues(meetingSpots(order, this.layout?.characters.filter((c) => c.spot === 'manager').length ?? 0))
+    this.projectors.onRoom = (order) => this.meeting.setQueue(order)
     // A TV acendeu: quem está perto dela (e à vista) olha para ela.
     this.projectors.onLit = (_id, x, y, z) => {
       for (const v of this.charList) if (!v.culled && Math.hypot(v.brain.x - x, v.brain.z - z) < TV_GLANCE_M) v.glance(x, y, z)
@@ -193,6 +192,7 @@ export class OfficeScene {
     }
 
     this.syncCharacters(layout, lit, life)
+    this.meeting.setChairs(layout.characters)
     if (life) this.crowd.apply(life)
     const projects = new Map(layout.projects.map((p) => [p.id, p.name]))
     const convProject = new Map(layout.characters.map((c) => [c.model.convId, c.projectId ? (projects.get(c.projectId) ?? null) : null]))

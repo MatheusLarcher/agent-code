@@ -5,12 +5,17 @@
  * mesa: as cadeiras das pontas, depois as do fundo (as da frente ficam entre a
  * mesa e o vidro, sem passagem para levantar).
  *
- *   managerSeat(i)      a cadeira do i-ésimo Agent Manager (planejamento): as
+ *   managerSeat(i)      a cadeira i dos Agent Managers (planejamento): as
  *                       cabeceiras, depois as do fundo de fora para dentro;
- *   meetingSpots(fila, managers)  fila[0] fica ao lado da TV, o resto espera sentado na
- *                       ordem da fila; quem não cabe fica de fora. `call` marca
- *                       quem chamou o usuário (acena para a câmera em vez de
- *                       olhar a TV).
+ *   managerChairs(ks, prev)  a cadeira de cada Manager: quem já tinha fica com
+ *                       ela; quem chega pega a 1ª livre (um sair não troca os outros);
+ *   meetingSpots(fila, ocupadas, antes)  fila[0] fica ao lado da TV, o resto espera sentado
+ *                       fora das cadeiras ocupadas pelos Managers (quem já estava numa
+ *                       cadeira livre fica nela; os outros, na ordem da fila); quem não
+ *                       cabe fica de fora. `call` marca quem chamou o usuário (acena
+ *                       para a câmera em vez de olhar a TV);
+ *   MeetingVenues       a fila e as cadeiras dos Managers juntas: a sala é refeita
+ *                       quando qualquer uma muda (uma cadeira, um agente).
  */
 import { meetingChairs, type Spot } from './furniture'
 import { BACK_FACE_Z, MEETING } from './officePlan'
@@ -66,7 +71,7 @@ function standOf(c: Spot): { x: number; z: number } {
 /** O ponto de levantar de uma cadeira da sala (o Agent Manager sentado à cabeceira). */
 export const chairStand = (c: Spot): { x: number; z: number } => standOf(c)
 
-/** A cadeira do i-ésimo Manager e o ponto de levantar dela; null sem cadeira. */
+/** A cadeira i dos Managers e o ponto de levantar dela; null sem cadeira. */
 export function managerSeat(i: number): (Spot & { standX: number; standZ: number }) | null {
   const c = MANAGER_CHAIRS[i]
   if (!c) return null
@@ -74,26 +79,94 @@ export function managerSeat(i: number): (Spot & { standX: number; standZ: number
   return { ...c, standX: st.x, standZ: st.z }
 }
 
-export function meetingSpots(order: readonly MeetingEntry[], managers = 0): Map<string, MeetingSpot> {
+/** A cadeira (o `i` de managerSeat) de cada Manager em cena: quem já tinha (`prev`) fica com ela; quem chega pega a 1ª livre; sem livre, fica sem. */
+export function managerChairs(keys: readonly string[], prev: Readonly<Record<string, number>>): Record<string, number> {
+  const out: Record<string, number> = {}
+  const taken = new Set<number>()
+  for (const k of keys) {
+    const i = prev[k]
+    if (i === undefined || taken.has(i)) continue
+    out[k] = i
+    taken.add(i)
+  }
+  for (const k of keys) {
+    if (out[k] !== undefined) continue
+    const i = MANAGER_CHAIRS.findIndex((_, j) => !taken.has(j))
+    if (i < 0) break
+    out[k] = i
+    taken.add(i)
+  }
+  return out
+}
+
+const near = (a: { x: number; z: number }, b: { x: number; z: number }): boolean => Math.abs(a.x - b.x) < 1e-3 && Math.abs(a.z - b.z) < 1e-3
+
+/**
+ * A sala para a fila `order`: fila[0] ao lado da TV e quem espera nas cadeiras sem Manager (`held`). Com `prev` (a sala
+ * de antes), quem já esperava sentado numa cadeira que continua livre fica nela — Manager que chega ou sai não faz a
+ * fila inteira levantar; os outros pegam as livres na ordem.
+ */
+export function meetingSpots(order: readonly MeetingEntry[], held: ReadonlyArray<{ x: number; z: number }> = [], prev?: ReadonlyMap<string, MeetingSpot>): Map<string, MeetingSpot> {
   const out = new Map<string, MeetingSpot>()
-  // As cadeiras dos Managers ficam com eles.
-  const held = MANAGER_CHAIRS.slice(0, managers)
-  const chairs = WAIT_CHAIRS.filter((c) => !held.some((h) => Math.abs(h.x - c.x) < 1e-6 && Math.abs(h.z - c.z) < 1e-6))
-  let i = 0
+  // As cadeiras ocupadas pelos Managers ficam com eles.
+  const chairs = WAIT_CHAIRS.filter((c) => !held.some((h) => near(h, c)))
+  const waiting: Array<{ key: string; call: boolean }> = []
   for (const e of order) {
     const key = typeof e === 'string' ? e : e.key
     const call = typeof e !== 'string' && e.call
-    if (out.has(key)) continue
-    if (i === 0) out.set(key, { role: 'present', x: TV_SIDE.x, z: TV_SIDE.z, yaw: LOOK_TV, seat: false, standX: TV_SIDE.x, standZ: TV_SIDE.z, call })
-    else {
-      const c = chairs[i - 1]
-      if (!c) break
-      const st = standOf(c)
-      out.set(key, { role: 'wait', x: c.x, z: c.z, yaw: c.yaw, seat: true, standX: st.x, standZ: st.z, call })
-    }
-    i++
+    if (out.has(key) || waiting.some((w) => w.key === key)) continue
+    if (out.size === 0) out.set(key, { role: 'present', x: TV_SIDE.x, z: TV_SIDE.z, yaw: LOOK_TV, seat: false, standX: TV_SIDE.x, standZ: TV_SIDE.z, call })
+    else waiting.push({ key, call })
+  }
+  const taken = new Set<Spot>()
+  const sit = (w: { key: string; call: boolean }, c: Spot): void => {
+    taken.add(c)
+    const st = standOf(c)
+    out.set(w.key, { role: 'wait', x: c.x, z: c.z, yaw: c.yaw, seat: true, standX: st.x, standZ: st.z, call: w.call })
+  }
+  const rest = waiting.filter((w) => {
+    const p = prev?.get(w.key)
+    const c = p?.seat ? chairs.find((f) => !taken.has(f) && near(f, p)) : undefined
+    if (c) sit(w, c)
+    return !c
+  })
+  for (const w of rest) {
+    const c = chairs.find((f) => !taken.has(f))
+    if (!c) break
+    sit(w, c)
   }
   return out
+}
+
+/**
+ * A fila da TV e as cadeiras dos Agent Managers juntas: quem espera a vez só senta
+ * numa cadeira sem Manager. A cena avisa quando a fila muda (`setQueue`, o onRoom
+ * da TV) e a cada layout (`setChairs`): Manager que chega numa cadeira onde alguém
+ * esperava manda quem espera para a próxima livre. `apply` = crowd.setVenues (quem
+ * continua no mesmo lugar não se mexe).
+ */
+export class MeetingVenues {
+  private order: readonly MeetingEntry[] = []
+  private held: ReadonlyArray<{ x: number; z: number }> = []
+  /** A sala da última vez: quem espera continua na cadeira dele enquanto ela estiver livre. */
+  private last = new Map<string, MeetingSpot>()
+  constructor(private readonly apply: (spots: Map<string, MeetingSpot>) => void) {}
+
+  setQueue(order: readonly MeetingEntry[]): void {
+    this.order = order
+    this.refresh()
+  }
+
+  /** Os personagens do layout: as cadeiras dos Managers são os lugares deles (spot 'manager'). */
+  setChairs(chars: ReadonlyArray<{ spot: string; x: number; z: number }>): void {
+    this.held = chars.filter((c) => c.spot === 'manager')
+    this.refresh()
+  }
+
+  private refresh(): void {
+    this.last = meetingSpots(this.order, this.held, this.last)
+    this.apply(this.last)
+  }
 }
 
 /** O mesmo lugar (a sala refez a fila, mas esta pessoa continua onde estava). */

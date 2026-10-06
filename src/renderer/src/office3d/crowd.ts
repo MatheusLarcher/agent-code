@@ -265,9 +265,8 @@ export class Crowd implements BrainWorld, BoardWorld {
   }
 
   /**
-   * Cria ou atualiza o cérebro de um personagem do layout. `away` só vale na
-   * criação: visitante que acabou de ser delegado (ou que não está trabalhando)
-   * nasce do lado de fora da porta.
+   * Cria ou atualiza o cérebro de um personagem do layout. `away` só vale na criação: visitante que acabou de ser delegado
+   * (ou que não está trabalhando) nasce lá fora. Lugar fixo que mudou mais de 5 cm (outra cadeira): levanta e vai ao novo.
    */
   upsert(c: CharacterLayout, away: boolean, desks: ReadonlyMap<string, RoomLayout>): Brain {
     const m = c.model
@@ -300,6 +299,7 @@ export class Crowd implements BrainWorld, BoardWorld {
       return b
     }
     onStage(b, outside, m.offstage === true, this.t)
+    if (b.mode === 'fixed' && Math.hypot(home.x - b.home.x, home.z - b.home.z) > 0.05) b.mode = 'init'
     Object.assign(b, { role, style, roomId: c.roomId, projectId, home, desk, lounge, monitor, side })
     this.yieldLounge(b)
     return b
