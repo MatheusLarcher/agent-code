@@ -18,9 +18,11 @@ import { BODY, type BodyMetrics } from './poses'
 export const SLOT = {
   none: 0, spineA: 1, spineB: 2, spine: 3, neck: 4, head: 5,
   clavL: 6, armL: 7, foreL: 8, handL: 9, clavR: 10, armR: 11, foreR: 12, handR: 13,
-  legL: 14, kneeL: 15, footL: 16, legR: 17, kneeR: 18, footR: 19
+  legL: 14, kneeL: 15, footL: 16, legR: 17, kneeR: 18, footR: 19,
+  /** A bacia (o giro dela vem dos movimentos do Mixamo; o boneco procedural não gira a bacia). */
+  hips: 20
 } as const
-export const SLOTS = 20
+export const SLOTS = 21
 
 /** O valor que fecha um dedo: os quatro dedos de cada mão e os polegares. */
 export const CURL = { none: 0, fingersL: 1, fingersR: 2, thumbL: 3, thumbR: 4 } as const
@@ -211,7 +213,7 @@ function driveOf(name: string, map: BoneMap, bones: Map<string, Bone>): BoneDriv
   const none: BoneDrive = { slot: -1, curl: CURL.none, curlK: 0, axis: new Vector3() }
   if (!joint) return none
   const fixed: Partial<Record<AvatarJoint, number>> = {
-    hips: SLOT.none, spine0: map.bones.spine1 ? SLOT.spineA : SLOT.spineB, spine1: SLOT.spineB, spine2: SLOT.spine, neck: SLOT.neck, head: SLOT.head,
+    hips: SLOT.hips, spine0: map.bones.spine1 ? SLOT.spineA : SLOT.spineB, spine1: SLOT.spineB, spine2: SLOT.spine, neck: SLOT.neck, head: SLOT.head,
     shoulderL: SLOT.clavL, armL: SLOT.armL, forearmL: SLOT.foreL, handL: SLOT.handL,
     shoulderR: SLOT.clavR, armR: SLOT.armR, forearmR: SLOT.foreR, handR: SLOT.handR,
     upLegL: SLOT.legL, legL: SLOT.kneeL, footL: SLOT.footL, upLegR: SLOT.legR, legR: SLOT.kneeR, footR: SLOT.footR

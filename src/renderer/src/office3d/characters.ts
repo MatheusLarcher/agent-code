@@ -28,6 +28,7 @@ import { Group, Mesh, MeshLambertMaterial, Sprite, Vector3 } from 'three'
 import type { OfficeCharacterModel } from '../office/adapter/model'
 import { CharacterBody } from './agentBody'
 import { CENTRAL_MODEL } from './agentModels'
+import { MotionPlayer } from './motionPlayer'
 import { appearance, HAIR, seedColor, SKIN } from './appearance'
 import { brainBusy, FX, type Brain, type PropKind } from './brain'
 import { beatAt, danceLower, movesLegs } from './dance'
@@ -74,6 +75,7 @@ export class Character3D {
   readonly rig: Rig
   /** O corpo à mostra: o boneco ou o avatar GLB (agentBody.ts); as medidas dele valem nas poses. */
   readonly body: CharacterBody
+  readonly motion: MotionPlayer // os movimentos do Mixamo por cima da pose procedural (motionPlayer.ts)
   model: OfficeCharacterModel
   readonly skinMat: MeshLambertMaterial
   readonly shirtMat: MeshLambertMaterial
@@ -147,6 +149,7 @@ export class Character3D {
     // A Central é o avatar do usuário (o modelo próprio dela); os outros seguem o papel.
     const own = c.model.placement.kind === 'destination' && c.model.placement.papel === 'central' ? CENTRAL_MODEL : null
     this.body = new CharacterBody(ctx.models ?? null, this.rig, this.group, c.model.role, c.model.seed, c.key, own)
+    this.motion = new MotionPlayer(() => ctx.models?.motions() ?? null)
     this.group.add(this.hud)
     this.zs = [0.1, 0.13, 0.16].map((s) => {
       const z = new Sprite(kit.mat.z)
@@ -273,8 +276,10 @@ export class Character3D {
     }
     if (posed) {
       this.pose(dt, lod, run)
+      this.motion.before(dt, b, this.ctx.t, this.phase, this.out, this.body.metrics, !!this.propKind, this.rig)
       applyPose(this.rig, this.out, lod === 0 ? this.blink(dt) : 1, lod === 0 ? Math.sin(this.ctx.t * 1.75 + b.seed) : 0)
-      this.body.pose(this.out, !!this.params.seated, this.propKind, dt)
+      this.motion.joints(this.rig)
+      this.body.pose(this.out, !!this.params.seated && this.motion.weight < 0.5, this.propKind, dt)
     }
     this.placeProp(dt, lod)
     this.placeHud(dt)
@@ -283,10 +288,8 @@ export class Character3D {
     const glow = this.screenOn && !this.powerDark && b.mode === 'work' && b.sit > 0.9
     this.skinMat.emissiveIntensity = glow ? 0.2 + Math.sin(t * 7.3) * 0.03 + Math.sin(t * 2.1) * 0.03 : 0
     this.body.setGlow(GLOW, this.skinMat.emissiveIntensity)
-    if (this.indicator) {
-      this.indicator.scale.setScalar(1 + Math.sin(t * 3) * 0.12)
-      this.indicator.rotation.y = t * 1.2
-    }
+    this.indicator?.scale.setScalar(1 + Math.sin(t * 3) * 0.12)
+    this.indicator?.rotation.set(0, t * 1.2, 0)
     return brainBusy(b) || this.blendT < BLEND_S || this.bangT >= 0 || this.smokeLeft > 0 || this.indicator !== null || t < this.glanceUntil
   }
 

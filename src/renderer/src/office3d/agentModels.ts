@@ -33,6 +33,7 @@ import {
 } from 'three'
 import { GLTFLoader, type GLTFLoaderPlugin, type GLTFParser } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { AvatarBody } from './agentAvatar'
+import { MOTION_FILE, MotionLibrary } from './motionLibrary'
 import { prepareAvatar, type AvatarTemplate } from './agentRest'
 import type { RendererLike } from './engineTypes'
 
@@ -139,6 +140,8 @@ export class AgentModels {
   private readonly loading = new Set<string>()
   private readonly failed = new Set<string>()
   private env: DataTexture | null = null
+  /** Os movimentos do Mixamo (movimentos.bin): undefined = ainda não pedidos; null = sem arquivo ou inválido. */
+  private motionLib: MotionLibrary | null | undefined = undefined
   /** Um avatar fora da cena que segura o programa do shader já compilado (sem ele o three o liberaria). */
   private readonly warm: AvatarBody[] = []
   private disposed = false
@@ -275,6 +278,25 @@ export class AgentModels {
     lap('compileSync')
     await done
     lap('compileWait')
+  }
+
+  /** Os movimentos do Mixamo (null até carregar, sem o arquivo ou nos testes); pede a carga uma vez. */
+  motions(): MotionLibrary | null {
+    if (this.motionLib !== undefined || this.disposed) return this.motionLib ?? null
+    this.motionLib = null
+    void (async () => {
+      try {
+        const gz = await this.fetch(MOTION_FILE)
+        const lib = gz ? MotionLibrary.parse(await gunzip(gz)) : null
+        if (!lib) throw new Error(gz ? 'formato inválido' : 'arquivo não encontrado')
+        if (this.disposed) return
+        this.motionLib = lib
+        this.bump()
+      } catch (e) {
+        console.warn(`[escritório] movimentos dos agentes (${MOTION_FILE}) não carregaram; ficam as poses procedurais:`, e instanceof Error ? e.message : e)
+      }
+    })()
+    return null
   }
 
   /** O ambiente do PBR dos agentes (um por cena; null antes de carregar, sem o arquivo ou nos testes). */

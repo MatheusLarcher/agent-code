@@ -93,22 +93,24 @@ export class AvatarBody {
   apply(r: Rig, p: Pose, pronate: number, hold: number, dt: number): void {
     const s = this.slot
     s[SLOT.none].identity()
-    s[SLOT.spine].copy(r.spine.quaternion)
+    // A bacia: parada no boneco procedural; girada pelos movimentos do Mixamo (motionPlayer.ts).
+    const hips = s[SLOT.hips].copy(r.pelvis.quaternion)
+    const spine = s[SLOT.spine].multiplyQuaternions(hips, r.spine.quaternion)
     // O boneco gira o tronco inteiro na bacia: a coluna de baixo já leva quase tudo
     // (com 1/3 e 2/3 o recostado no sofá ficava ereto e só o peito deitava).
-    s[SLOT.spineA].slerpQuaternions(IDENT, r.spine.quaternion, 0.65)
-    s[SLOT.spineB].slerpQuaternions(IDENT, r.spine.quaternion, 0.88)
-    s[SLOT.head].multiplyQuaternions(r.spine.quaternion, r.head.quaternion)
-    s[SLOT.neck].multiplyQuaternions(r.spine.quaternion, qa.slerpQuaternions(IDENT, r.head.quaternion, 0.5))
+    s[SLOT.spineA].slerpQuaternions(hips, spine, 0.65)
+    s[SLOT.spineB].slerpQuaternions(hips, spine, 0.88)
+    s[SLOT.head].multiplyQuaternions(spine, r.head.quaternion)
+    s[SLOT.neck].multiplyQuaternions(spine, qa.slerpQuaternions(IDENT, r.head.quaternion, 0.5))
     const k = dt > 0 ? Math.min(1, dt * 6) : 1
     this.pron += (pronate - this.pron) * k
-    this.arm(s, r.spine.quaternion, r.shoulderL.quaternion, r.elbowL.quaternion, p[CH.shrug], -1)
-    this.arm(s, r.spine.quaternion, r.shoulderR.quaternion, r.elbowR.quaternion, p[CH.shrug], 1)
-    s[SLOT.legL].copy(r.legL.quaternion)
-    s[SLOT.kneeL].multiplyQuaternions(r.legL.quaternion, r.kneeL.quaternion)
+    this.arm(s, spine, r.shoulderL.quaternion, r.elbowL.quaternion, r.handL.quaternion, p[CH.shrug], -1)
+    this.arm(s, spine, r.shoulderR.quaternion, r.elbowR.quaternion, r.handR.quaternion, p[CH.shrug], 1)
+    s[SLOT.legL].multiplyQuaternions(hips, r.legL.quaternion)
+    s[SLOT.kneeL].multiplyQuaternions(s[SLOT.legL], r.kneeL.quaternion)
     s[SLOT.footL].multiplyQuaternions(s[SLOT.kneeL], r.footL.quaternion)
-    s[SLOT.legR].copy(r.legR.quaternion)
-    s[SLOT.kneeR].multiplyQuaternions(r.legR.quaternion, r.kneeR.quaternion)
+    s[SLOT.legR].multiplyQuaternions(hips, r.legR.quaternion)
+    s[SLOT.kneeR].multiplyQuaternions(s[SLOT.legR], r.kneeR.quaternion)
     s[SLOT.footR].multiplyQuaternions(s[SLOT.kneeR], r.footR.quaternion)
     const c = this.curl
     c[CURL.fingersL] = p[CH.fingersL]
@@ -119,7 +121,7 @@ export class AvatarBody {
   }
 
   /** Clavícula (ombros erguidos), braço, antebraço e mão de um lado (`side` −1 esquerdo, +1 direito). */
-  private arm(s: Quaternion[], spine: Quaternion, shoulder: Quaternion, elbow: Quaternion, shrug: number, side: -1 | 1): void {
+  private arm(s: Quaternion[], spine: Quaternion, shoulder: Quaternion, elbow: Quaternion, hand: Quaternion, shrug: number, side: -1 | 1): void {
     const L = side < 0
     s[L ? SLOT.clavL : SLOT.clavR].multiplyQuaternions(spine, qa.setFromAxisAngle(Z, side * 0.3 * shrug))
     const arm = s[L ? SLOT.armL : SLOT.armR].multiplyQuaternions(spine, shoulder)
@@ -128,7 +130,7 @@ export class AvatarBody {
     dir.copy(DOWN).applyQuaternion(fore)
     const turn = this.pron * smoothstep(0.25, 0.7, -dir.z) * (L ? -Math.PI / 2 : Math.PI / 2)
     s[L ? SLOT.foreL : SLOT.foreR].multiplyQuaternions(fore, qc.setFromAxisAngle(Y, turn * 0.5))
-    s[L ? SLOT.handL : SLOT.handR].multiplyQuaternions(fore, qc.setFromAxisAngle(Y, turn))
+    s[L ? SLOT.handL : SLOT.handR].multiplyQuaternions(fore, hand).multiply(qc.setFromAxisAngle(Y, turn))
   }
 
   /** Ossos de pai para filho: mundo(osso) = slot · repouso (ou o pai · repouso local, quem não tem slot). */
