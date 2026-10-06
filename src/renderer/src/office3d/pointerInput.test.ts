@@ -82,4 +82,28 @@ describe('PointerInput', () => {
     expect(s.input.dragging).toBe(false)
     s.dispose()
   })
+
+  it('toque: dois dedos dão zoom pela proporção da pinça e giram juntos; o dedo que sobra não clica', () => {
+    const s = setup()
+    const touch = (type: 'pointerDown' | 'pointerMove' | 'pointerUp', id: number, x: number, y: number): void => {
+      fireEvent[type](type === 'pointerDown' ? s.canvas : window, { pointerId: id, pointerType: 'touch', button: 0, clientX: x, clientY: y })
+    }
+    touch('pointerDown', 1, 50, 50)
+    touch('pointerDown', 2, 150, 50)
+    // Afastar os dedos (100 → 200 px): aproxima a câmera na mesma proporção (deltaY < 0).
+    touch('pointerMove', 2, 250, 50)
+    expect(s.hooks.zoom).toHaveBeenCalledTimes(1)
+    expect(s.hooks.zoom.mock.calls[0][0]).toBeCloseTo(1000 * Math.log(100 / 200), 3)
+    // O ponto médio andou (100 → 150): gira.
+    expect(s.hooks.drag).toHaveBeenLastCalledWith('orbit', 50, 0)
+    touch('pointerUp', 2, 250, 50)
+    touch('pointerUp', 1, 50, 50)
+    expect(s.hooks.click).not.toHaveBeenCalled()
+    // Toque curto com o dedo tremendo um pouco (≤ 12 px) ainda é clique.
+    touch('pointerDown', 3, 20, 50)
+    touch('pointerMove', 3, 28, 50)
+    touch('pointerUp', 3, 28, 50)
+    expect(s.hooks.click).toHaveBeenCalledWith('conv:a', { x: 28, y: 50 })
+    s.dispose()
+  })
 })

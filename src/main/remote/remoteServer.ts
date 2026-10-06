@@ -70,6 +70,8 @@ export interface RemoteServerDeps {
   onPermissionResponse?: (convId: string, res: PermissionResponse) => void
   /** A phone answered "Para onde vai?" of a Central request (body already validated). */
   onCentralChoose?: (choice: RemoteCentralChoose) => void
+  /** Os arquivos 3D do Escritório (resources/office-agents: <nome>.glb / .bin), para o escritório do celular. */
+  officeAgentFile?: (name: string) => Promise<Uint8Array | null>
 }
 
 const DEFAULT_PORT = 8765
@@ -353,6 +355,7 @@ export class RemoteServer {
       if (path === '/api/tts' && req.method === 'POST') return this.serveTts(req, res)
       if (path === '/api/tts-parts' && req.method === 'POST') return this.serveTtsParts(req, res)
       if (path === '/api/file') return this.serveFile(url, res)
+      if (path === '/api/office-agent') return this.serveOfficeAgent(url, res)
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'rota desconhecida' }))
       return
@@ -412,6 +415,18 @@ export class RemoteServer {
    * actually appear as a written file in the current conversation snapshot are
    * allowed — this is the path‑traversal guard (no arbitrary disk reads).
    */
+  /** Um modelo/animação do Escritório (quem lê valida o nome: só <nome>.glb|.bin da pasta). */
+  private async serveOfficeAgent(url: URL, res: ServerResponse): Promise<void> {
+    const data = await (this.deps.officeAgentFile?.(url.searchParams.get('name') ?? '') ?? Promise.resolve(null)).catch(() => null)
+    if (!data) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('arquivo do escritório não encontrado')
+      return
+    }
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(data.byteLength), 'Cache-Control': 'private, max-age=86400' })
+    res.end(Buffer.from(data.buffer, data.byteOffset, data.byteLength))
+  }
+
   private async serveFile(url: URL, res: ServerResponse): Promise<void> {
     const requested = url.searchParams.get('path') ?? ''
     if (!requested || !this.downloadablePaths().has(canonicalPath(requested))) {

@@ -353,7 +353,17 @@ export class RemoteClient {
     }, delay)
   }
 
+  /** Quem quer ver TODO evento da ponte, de qualquer conversa (o escritório 3D: o que cada agente está fazendo). */
+  readonly eventTaps = new Set<(msg: BridgeEvent) => void>()
+
   private onEvent(msg: BridgeEvent): void {
+    for (const tap of this.eventTaps) {
+      try {
+        tap(msg)
+      } catch {
+        /* um assinante com defeito não derruba o chat */
+      }
+    }
     const ev = msg.event as ChatEvent
     if (ev.kind === 'rate-limit') {
       const l = ev.limits

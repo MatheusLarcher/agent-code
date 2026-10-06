@@ -19,6 +19,7 @@ import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { RemoteServer } from '../../src/main/remote/remoteServer'
+import { readOfficeAgentFile } from '../../src/main/officeAgents'
 import type { ChatEvent, RemoteConversation, RemoteStatePayload } from '../../src/shared/ipc'
 
 const TOKEN = process.env.PHONE_DEV_TOKEN || 'devtoken'
@@ -147,6 +148,8 @@ const server = new RemoteServer({
   apkPath: () => resolve(process.cwd(), 'smartfone-remote', 'dist', 'agent-remote.apk'),
   wwwDir: () => WWW,
   loadToken: () => TOKEN,
+  // O escritório 3D do celular: os modelos/animações de verdade da pasta resources/office-agents.
+  officeAgentFile: (name) => readOfficeAgentFile(name, { packaged: false, resourcesPath: '', appPath: process.cwd() }),
   onInbound: (cid, text, images, files, replyTo) => {
     note('send', { cid, text, images: images?.length ?? 0, files: files?.map((f) => f.name), replyTo })
     const c = conv(cid)

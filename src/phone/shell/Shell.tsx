@@ -3,6 +3,7 @@
  * Quadro), ao alcance do polegar. A barra respeita a área segura inferior e some
  * com o teclado aberto. O Escritório entra na fase 2.
  */
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { client, nav, openTab, type Tab } from '../app/runtime'
 import { CENTRAL_CONV_ID } from '../core/client'
 import { useStore } from '../core/store'
@@ -15,9 +16,13 @@ import { QuadroPlaceholder } from './QuadroPlaceholder'
 import { StatusMenu } from './StatusMenu'
 import { viewport } from './useViewport'
 
+// O escritório (three.js + o motor do PC) só baixa na 1ª visita à aba.
+const OfficeTab = lazy(() => import('../office/OfficeTab').then((m) => ({ default: m.OfficeTab })))
+
 const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
   { id: 'central', label: 'Central', icon: 'spark' },
   { id: 'conversas', label: 'Conversas', icon: 'chat' },
+  { id: 'escritorio', label: 'Escritório', icon: 'office' },
   { id: 'quadro', label: 'Quadro', icon: 'board' }
 ]
 
@@ -51,10 +56,20 @@ export function Shell(): JSX.Element {
   const chatOpen = useStore(nav, (s) => s.chatOpen)
   const convId = useStore(client.store, (s) => s.convId)
   const showChat = tab === 'conversas' && chatOpen && !!convId && convId !== CENTRAL_CONV_ID
+  const [officeSeen, setOfficeSeen] = useState(tab === 'escritorio')
+  useEffect(() => {
+    if (tab === 'escritorio') setOfficeSeen(true)
+  }, [tab])
   return (
     <>
       <div className="tab-host">
-        {tab === 'central' ? <CentralView /> : tab === 'quadro' ? <QuadroPlaceholder /> : showChat ? <ChatView /> : <ConversationList />}
+        {tab === 'escritorio' ? null : tab === 'central' ? <CentralView /> : tab === 'quadro' ? <QuadroPlaceholder /> : showChat ? <ChatView /> : <ConversationList />}
+        {/* O 3D fica montado depois da 1ª visita (pausado fora da aba): voltar não recarrega a cena. */}
+        {officeSeen ? (
+          <Suspense fallback={null}>
+            <OfficeTab active={tab === 'escritorio'} />
+          </Suspense>
+        ) : null}
       </div>
       <TabBar />
       <StatusMenu />

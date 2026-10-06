@@ -74,13 +74,16 @@ type Mode = Exclude<DragMode, null> | 'grab'
 
 export class PointerInput {
   /** `key`: o que estava sob o botão esquerdo ao descer (o clique curto usa o mesmo, sem um segundo pick). */
-  private drag: { mode: Mode; button: number; x0: number; y0: number; x: number; y: number; lifted: boolean; key: string | null } | null = null
+  private drag: { mode: Mode; button: number; x0: number; y0: number; x: number; y: number; lifted: boolean; key: string | null; touch: boolean } | null = null
   private hovered: string | null = null
   private lastPick = -Infinity
   /** Movimento sobre o canvas ainda não conferido (caiu no intervalo do hover): reaproveitado, sem alocar. */
   private readonly pending = { x: 0, y: 0, on: false }
   /** Ponto normalizado reaproveitado. */
   private readonly ndc = { x: 0, y: 0 }
+  /** Dedos na tela (toque): com dois, a pinça (zoom + giro) no lugar do arrasto. */
+  private readonly touches = new Map<number, { x: number; y: number }>()
+  private pinch: { dist: number; x: number; y: number } | null = null
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -90,17 +93,45 @@ export class PointerInput {
     const c = canvas
     listen(c, 'contextmenu', (e) => e.preventDefault())
     listen(c, 'pointerdown', (e) => {
+      if (e.pointerType === 'touch') {
+        this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
+        // O 2º dedo: o arrasto (ou o objeto pego) do 1º desiste e vira pinça.
+        if (this.touches.size >= 2) {
+          if (this.drag?.mode === 'grab') this.cancelGrab()
+          this.drag = null
+          this.pinch = this.twoFinger()
+          return
+        }
+      }
       const button = dragModeFor(e.button)
       if (!button) return
       if (e.button === 1) e.preventDefault()
       let mode: Mode = button
       const key = e.button === 0 ? this.pickAt(e.clientX, e.clientY) : null
       if (key && this.hooks.grab?.(key)) mode = 'grab'
-      this.drag = { mode, button: e.button, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, lifted: false, key }
+      this.drag = { mode, button: e.button, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, lifted: false, key, touch: e.pointerType === 'touch' }
       this.setHover(null)
     })
-    listen(window, 'pointermove', (e) => this.move(e))
+    listen(window, 'pointermove', (e) => {
+      if (this.touches.has(e.pointerId)) {
+        this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
+        if (this.pinch) return this.pinchMove()
+      }
+      this.move(e)
+    })
+    const lift = (e: PointerEvent): void => {
+      if (!this.touches.delete(e.pointerId)) return
+      // Fim da pinça: o dedo que sobrou não vira arrasto nem clique.
+      if (this.touches.size < 2) this.pinch = null
+    }
+    listen(window, 'pointercancel', (e) => {
+      lift(e)
+      this.drag = null
+    })
     listen(window, 'pointerup', (e) => {
+      const pinching = this.pinch !== null || this.touches.size >= 2
+      lift(e)
+      if (pinching) return
       const d = this.drag
       this.drag = null
       if (d?.mode === 'grab') {
@@ -111,7 +142,7 @@ export class PointerInput {
         }
         this.hooks.grabCancel?.()
       }
-      if (!d || d.button !== 0 || !isClick(e.clientX - d.x0, e.clientY - d.y0)) return
+      if (!d || d.button !== 0 || !isClick(e.clientX - d.x0, e.clientY - d.y0, d.touch)) return
       this.hooks.click(d.key, { x: e.clientX, y: e.clientY })
     })
     listen(c, 'dblclick', (e) => this.hooks.open(this.pickAt(e.clientX, e.clientY)))
@@ -128,6 +159,26 @@ export class PointerInput {
       this.pending.on = false
       this.setHover(null)
     })
+  }
+
+  /** Distância e ponto médio dos dois primeiros dedos. */
+  private twoFinger(): { dist: number; x: number; y: number } {
+    const [a, b] = [...this.touches.values()]
+    return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+  }
+
+  /** Dois dedos: afastar/aproximar é o zoom (na mesma escala da roda) e mover os dois juntos gira a câmera. */
+  private pinchMove(): void {
+    const prev = this.pinch
+    if (!prev) return
+    const next = this.twoFinger()
+    this.pinch = next
+    // rig.zoom multiplica a distância por exp(deltaY·0.001): a câmera acompanha a proporção da pinça.
+    const deltaY = 1000 * Math.log(prev.dist / next.dist)
+    if (Math.abs(deltaY) > 0.01) this.hooks.zoom(deltaY)
+    const dx = next.x - prev.x
+    const dy = next.y - prev.y
+    if (dx || dy) this.hooks.drag('orbit', dx, dy)
   }
 
   /** Ponto da janela → coordenadas normalizadas do canvas (objeto reaproveitado). */
@@ -167,7 +218,7 @@ export class PointerInput {
       const dy = e.clientY - d.y
       d.x = e.clientX
       d.y = e.clientY
-      if (isClick(e.clientX - d.x0, e.clientY - d.y0)) return
+      if (isClick(e.clientX - d.x0, e.clientY - d.y0, d.touch)) return
       if (d.mode !== 'grab') return this.hooks.drag(d.mode, dx, dy)
       if (!d.lifted) {
         d.lifted = true
@@ -224,6 +275,8 @@ export class PointerInput {
   reset(): void {
     this.cancelGrab()
     this.drag = null
+    this.touches.clear()
+    this.pinch = null
     this.pending.on = false
     this.setHover(null)
   }

@@ -15,7 +15,8 @@ const server = new RemoteServer({
   onInbound: (convId, text) => inbound.push({ convId, text }),
   apkPath: () => 'C:/nonexistent/agent-remote.apk',
   wwwDir: () => 'C:/nonexistent/www',
-  onPermissionResponse: (convId, res) => permissionResponses.push({ convId, res })
+  onPermissionResponse: (convId, res) => permissionResponses.push({ convId, res }),
+  officeAgentFile: async (name) => (name === 'central.glb' ? new Uint8Array([1, 2, 3]) : null)
 })
 
 let base = ''
@@ -245,6 +246,20 @@ describe('RemoteServer — ponte LAN', () => {
     const r = await postJson(`/api/permission-respond?token=${token}`, { convId: 'c1' })
     expect(r.status).toBe(400)
     expect(permissionResponses.length).toBe(before) // não chama o dep com dado incompleto
+  })
+
+  it('/api/office-agent entrega os bytes do modelo 3D (com token) e 404 no que não existe', async () => {
+    const fetchBytes = (q: string): Promise<{ status: number; bytes: number[] }> =>
+      new Promise((resolve, reject) => {
+        get(`${base}/api/office-agent?${q}`, (res) => {
+          const chunks: Buffer[] = []
+          res.on('data', (d: Buffer) => chunks.push(d))
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, bytes: [...Buffer.concat(chunks)] }))
+        }).on('error', reject)
+      })
+    expect(await fetchBytes(`token=${token}&name=central.glb`)).toEqual({ status: 200, bytes: [1, 2, 3] })
+    expect((await fetchBytes(`token=${token}&name=outro.glb`)).status).toBe(404)
+    expect((await fetchBytes('name=central.glb')).status).toBe(401)
   })
 
   it('/api/file baixa um arquivo criado pelo agente', async () => {

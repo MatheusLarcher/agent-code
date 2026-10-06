@@ -872,6 +872,8 @@ const remote = new RemoteServer({
   onPermissionResponse: (convId, res) => send(Channels.remotePermissionResponse, { convId, res }),
   // "Para onde vai?" respondido no celular: o renderer (App → useCentral.choose) entrega.
   onCentralChoose: ({ entryId, option }) => send(Channels.remoteCentralChoose, { entryId, option }),
+  // O escritório 3D do celular baixa os mesmos modelos/animações que o renderer lê por IPC.
+  officeAgentFile: (name) => readOfficeAgentFile(name, { packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
   apkPath: () => join(REMOTE_ROOT, 'dist', 'agent-remote.apk'),
   wwwDir: () => join(REMOTE_ROOT, 'www'),
   onClientsChanged: (info) => send(Channels.remoteClients, info),

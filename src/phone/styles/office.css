@@ -1,0 +1,26 @@
+/* Aba Escritório: o palco 3D do PC ocupa o espaço entre a barra de cima e as abas. */
+.office-tab[hidden] { display: none; }
+.office-host { flex: 1 1 auto; min-height: 0; position: relative; display: flex; overflow: hidden; }
+.office-host .office3d-workspace { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
+.office-host .o3d-stage { flex: 1 1 auto; height: 100%; }
+/* Os gestos são do motor (arrastar, pinça): o navegador não rola nem dá zoom na página. */
+.office-host .o3d-canvas { touch-action: none; display: block; width: 100%; height: 100%; }
+/* HUD (bateria, filtro de projeto, vista inicial, ajuda): na tela estreita quebra em linhas em vez de sobrepor. */
+.office-host .o3d-hud { height: auto; flex-wrap: wrap; justify-content: flex-start; gap: 8px; left: 8px; right: 8px; top: 8px; }
+.office-host .o3d-hud > * { flex: 0 0 auto; max-width: 100%; }
+/* Monitor e TV abertos: no máximo a largura da tela. */
+.office-host .o3d-screen-anchor { max-width: calc(100vw - 16px); }
+
+.office-pick {
+  position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 20;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface, #1d1f24); border: 1px solid var(--border, #2c2f36);
+  border-radius: 14px; padding: 6px; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+}
+.office-pick-open {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px;
+  background: transparent; border: 0; color: var(--text, #eee); font-size: 15px; padding: 8px 6px; text-align: left;
+}
+.office-pick-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-pick-busy { font-size: 12px; color: var(--accent, #7aa2ff); }
+.office-pick-close { background: transparent; border: 0; color: var(--muted, #999); font-size: 22px; width: 40px; height: 40px; }

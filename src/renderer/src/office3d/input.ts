@@ -109,6 +109,9 @@ export function dragModeFor(button: number): DragMode {
 /** Clique "curto": pouco movimento entre down e up. */
 export const CLICK_SLOP_PX = 4
 
-export function isClick(dx: number, dy: number): boolean {
-  return Math.hypot(dx, dy) <= CLICK_SLOP_PX
+/** O dedo treme mais que o mouse: o toque curto tolera mais movimento. */
+export const TAP_SLOP_PX = 12
+
+export function isClick(dx: number, dy: number, touch = false): boolean {
+  return Math.hypot(dx, dy) <= (touch ? TAP_SLOP_PX : CLICK_SLOP_PX)
 }
