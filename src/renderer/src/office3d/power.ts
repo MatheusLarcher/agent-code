@@ -22,6 +22,7 @@
  * cada SAMPLE_MIN_MS no máximo; uma subida brusca (reset) recomeça a conta.
  */
 import type { RateLimitStatus } from '@shared/ipc'
+import { accountBank, accountLimits, connectedAccounts, featuredAccount, type AccountFeed, type BankAccount } from './accountBank'
 import { BATTERY_COLORS, sessionBattery } from './battery'
 import { clockTime } from './quips/format'
 
@@ -62,6 +63,12 @@ export interface PowerSample {
 export interface OfficePower {
   /** Energia restante, 0..100 inteiro (a mesma % da bateria da sessão 5h). */
   pct: number
+  /** A conta em destaque (accountBank.ts) de onde vem a energia; null sem lista de contas (o usageLimits global). */
+  accountId: string | null
+  /** As contas conectadas (a doca da pílula e do quadro); vazio sem lista de contas. */
+  bank: readonly BankAccount[]
+  /** A conta em destaque ainda sem leitura: luz cheia, a pílula mostra "—". */
+  unread?: boolean
   level: PowerLevel
   /** Epoch ms do reset da janela; null sem horário (ou janela nova sem leitura). */
   resetsAt: number | null
@@ -113,11 +120,26 @@ export function nextSamples(prev: readonly PowerSample[], at: number, pct: numbe
 
 type Limits = Readonly<Record<string, RateLimitStatus>> | undefined
 
-/** Energia do escritório agora; null sem a janela de 5h. */
-export function officePower(feed: { usageLimits?: Limits } | null | undefined, now: number, prev: OfficePower | null = null): OfficePower | null {
-  const limits = feed?.usageLimits
+/** O que a energia lê do feed: a lista de contas (e as conversas, para a conta em destaque) ou, sem ela, usageLimits. */
+export type PowerFeed = AccountFeed & { usageLimits?: Limits }
+
+/**
+ * Energia do escritório agora; null sem a janela de 5h. Com contas conectadas, a janela é a da conta
+ * em destaque (accountBank.ts) — trocou a conta, é outra bateria: as amostras e a histerese recomeçam.
+ */
+export function officePower(feed: PowerFeed | null | undefined, now: number, prev: OfficePower | null = null): OfficePower | null {
+  const accountId = featuredAccount(feed)
+  const bank = accountId === null ? [] : accountBank(feed, now)
+  const account = accountId === null ? undefined : connectedAccounts(feed).find((a) => a.id === accountId)
+  const limits: Limits = account ? accountLimits(account, now) : feed?.usageLimits
+  if (prev && prev.accountId !== accountId) prev = null
   const battery = sessionBattery(limits, now)
   const l = limits?.five_hour
+  if (accountId !== null && (!battery || !l)) {
+    // A conta em destaque sem leitura (ou janela de 5 h ainda sem uso): luz cheia.
+    const unread = !account?.usage
+    return { pct: 100, accountId, bank, unread, level: 'cheia', resetsAt: null, drainPerMin: 0, rejected: false, samples: [] }
+  }
   if (!battery || !l) return null
   let pct = battery.percent
   let rejected = battery.rejected
@@ -130,7 +152,7 @@ export function officePower(feed: { usageLimits?: Limits } | null | undefined, n
   }
   const at = typeof l.updatedAt === 'number' && Number.isFinite(l.updatedAt) ? Math.min(l.updatedAt, now) : now
   const samples = nextSamples(prev?.samples ?? [], at, pct, now)
-  return { pct, level: powerLevel(pct, rejected, prev?.level ?? null), resetsAt, drainPerMin: drainOf(samples), rejected, samples }
+  return { pct, accountId, bank, level: powerLevel(pct, rejected, prev?.level ?? null), resetsAt, drainPerMin: drainOf(samples), rejected, samples }
 }
 
 /** O que mudou de `prev` para `next`: piorou → o nível novo; saiu do apagão → 'luz-voltou'; o resto, null. */

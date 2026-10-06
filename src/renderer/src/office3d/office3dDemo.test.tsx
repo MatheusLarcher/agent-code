@@ -172,18 +172,22 @@ describe('OfficeScene com o feed de demonstração', () => {
 })
 
 describe('Office3DWorkspace com o feed de demonstração', () => {
-  it('pílula: "⚡ Energia do escritório" com a %, o nível e a hora em que recarrega; o título explica que são os tokens da sessão de 5h', () => {
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+  it('sem lista de contas (instalação antiga): "Energia do escritório" com a % e a hora em que recarrega; o título explica que são os tokens da sessão de 5h', () => {
+    const feed = { ...demoFeed(), claudeAccounts: undefined }
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(feed), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     const b = screen.getByTestId('o3d-session-battery')
-    expect(b.textContent).toContain('⚡ Energia do escritório')
+    expect(b.textContent).toContain('Energia do escritório')
     expect(b.textContent).toContain('85%')
-    expect(b.textContent).toContain('Energia cheia')
+    // Cheia: o nível não aparece (a cor já diz); sem contas, sem doca nem quadro.
+    expect(b.textContent).not.toContain('Energia cheia')
+    expect(screen.queryAllByTestId('o3d-bank-spare')).toHaveLength(0)
     expect(b.textContent).toMatch(/recarrega às \d\d:\d\d/)
     expect(b.textContent).not.toMatch(/reseta/)
     expect(b.dataset.level).toBe('cheia')
-    expect(b.title).toContain('tokens da sessão de 5h')
-    expect(b.title).toMatch(/85% restantes \(15% usados\)/)
-    expect(b.title).toMatch(/A janela recarrega às \d\d:\d\d\./)
+    const title = b.querySelector('button')!.title
+    expect(title).toContain('tokens da sessão de 5h')
+    expect(title).toMatch(/85% restantes \(15% usados\)/)
+    expect(title).toMatch(/A janela recarrega às \d\d:\d\d\./)
     // A pílula de vidro mora no HUD, no canto esquerdo da faixa de cima.
     expect(b.closest('.o3d-hud')).toBeTruthy()
     expect(b.classList.contains('o3d-glass')).toBe(true)
@@ -192,7 +196,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
   it('pílula no apagão: "Apagão — recarrega às HH:MM"', () => {
     const feed = demoFeed()
     const resetsAt = Date.now() + 40 * 60_000
-    const out = { ...feed, usageLimits: { five_hour: { rateLimitType: 'five_hour' as const, status: 'rejected' as const, utilization: 1, resetsAt } } }
+    const out = { ...feed, claudeAccounts: undefined, usageLimits: { five_hour: { rateLimitType: 'five_hour' as const, status: 'rejected' as const, utilization: 1, resetsAt } } }
     render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(out), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     const b = screen.getByTestId('o3d-session-battery')
     const hhmm = new Date(resetsAt).toTimeString().slice(0, 5)
@@ -218,8 +222,16 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     expect(screen.getByTestId('o3d-session-battery').textContent).toContain('85%')
   })
 
+  it('com as 3 contas da demo: a Pessoal na tomada e Empresa e Reserva na doca', () => {
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
+    const b = screen.getByTestId('o3d-session-battery')
+    expect(b.dataset.account).toBe('default')
+    expect(b.textContent).toContain('Pessoal')
+    expect(screen.getAllByTestId('o3d-bank-spare').map((s) => s.textContent)).toEqual(['18%Empresa', '100%Reserva'])
+  })
+
   it('sem usageLimits a bateria da sessão não aparece', () => {
-    const feed = { ...demoFeed(), usageLimits: undefined }
+    const feed = { ...demoFeed(), usageLimits: undefined, claudeAccounts: undefined }
     render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={{ source: staticSource(feed), createRenderer: renderer, raf: () => 1, caf: () => {} }} />)
     expect(screen.queryByTestId('o3d-session-battery')).toBeNull()
   })

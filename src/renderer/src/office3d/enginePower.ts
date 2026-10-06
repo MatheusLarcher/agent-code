@@ -6,6 +6,7 @@
  * quando o que ela mostra muda.
  */
 import type { OfficeFeed } from '../office/adapter/feed'
+import { bankSig } from './accountBank'
 import type { OfficePower, PowerEvent } from './power'
 import { PowerTracker } from './powerTracker'
 import type { PowerQuipInput } from './quips'
@@ -46,7 +47,8 @@ export class EnginePower {
     const before = this.tracker.power
     const event = feed || this.tracker.overridden ? this.tracker.update(feed, now) : null
     const after = this.tracker.power
-    const changed = event !== null || before?.level !== after?.level || before?.pct !== after?.pct || before?.resetsAt !== after?.resetsAt || before?.drainPerMin !== after?.drainPerMin
+    const changed =
+      event !== null || before?.level !== after?.level || before?.pct !== after?.pct || before?.resetsAt !== after?.resetsAt || before?.drainPerMin !== after?.drainPerMin || before?.accountId !== after?.accountId || bankSig(before?.bank ?? []) !== bankSig(after?.bank ?? [])
     if (changed) this.scene.setPower(after, event, t, now)
     this.out.event = event
     this.out.changed = changed
@@ -69,7 +71,7 @@ export class EnginePower {
   /** Avisa a barra só quando muda o que ela mostra. */
   emit(): void {
     const p = this.tracker.power
-    const sig = p ? `${p.pct}|${p.level}|${p.resetsAt}` : ''
+    const sig = p ? `${p.pct}|${p.level}|${p.resetsAt}|${p.drainPerMin}|${p.accountId}|${p.unread ? 1 : 0}|${bankSig(p.bank)}` : ''
     if (sig === this.sig) return
     this.sig = sig
     this.onPower(p)

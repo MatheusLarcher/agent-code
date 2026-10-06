@@ -18,6 +18,7 @@
  *   projectIcons         ← useState projectIcons (~3346)
  *   usageLimits          ← useState usageLimits (~555): janelas de limite, globais (F4·4-5)
  *   speakingId           ← useState speakingId (~615): mensagem sendo lida em voz (F4·4-5)
+ *   claudeAccounts       ← useClaudeAccounts (claudeAccountList): contas, status e última leitura
  *
  * A troca de conta (account-switch) NÃO tem estado próprio no App: o reducer
  * (onEvent, ~902) grava `claudeAccountId` na conversa e o evento entra em
@@ -25,6 +26,7 @@
  * ~461). O escritório lê de lá. O mesmo vale para o limite da conversa: o
  * 'error' com usageExhausted fica em messages.
  */
+import type { ClaudeAccountView } from '@shared/claudeAccounts'
 import type { MemoristaProviderDiagnosticMsg, PermissionRequest, PoProviderDiagnosticMsg, RateLimitStatus } from '@shared/ipc'
 import type { TrackMap } from '../../agentTracks'
 import type { VigiaDoubt } from '../../components/VigiaChip'
@@ -46,5 +48,7 @@ export interface OfficeFeed {
   projectIcons: Readonly<Record<string, string | null>>
   /** Opcional: feeds antigos (testes, devFeed) não trazem. */
   usageLimits?: Readonly<Record<string, RateLimitStatus>>
+  /** Opcional: as contas Claude (useClaudeAccounts, ordem do usuário); a energia do escritório lê a conta em destaque. */
+  claudeAccounts?: readonly ClaudeAccountView[]
   speakingId?: string | null
 }

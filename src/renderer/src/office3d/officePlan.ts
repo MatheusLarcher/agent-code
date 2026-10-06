@@ -205,8 +205,8 @@ export const MEMORY_SPOT_X = RIGHT_FACE_X - 0.9
 export const MEMORY_SPOTS_Z: readonly number[] = [1.6, 2.0, 2.4]
 export const MEMORY_WAIT = { x: MEMORY_SPOT_X - 0.65, z: 2.0 } as const
 export const DOOR = { x: RIGHT_X, z: CONSOLE.z, width: 1, height: 2.02 } as const
-/** Ao lado da ilha 1 (frente-direita). A planta foi conferida também com w = 1,30 (o quadro com as contas). */
-export const ENERGY_PANEL = { x: RIGHT_FACE_X - 0.125, z: 9.43, w: 0.7, h: 1.5, d: 0.25, y0: 0.45 } as const
+/** Ao lado da ilha 1 (frente-direita): o armário cinza claro com a tomada e a doca das contas (largura fixa). */
+export const ENERGY_PANEL = { x: RIGHT_FACE_X - 0.125, z: 9.43, w: 1.3, h: 1.5, d: 0.25, y0: 0.45 } as const
 
 // ── parede de vidro e plantas ──────────────────────────────────────────────
 

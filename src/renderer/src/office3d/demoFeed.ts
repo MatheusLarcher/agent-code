@@ -32,6 +32,7 @@ import type { Conversation } from '../types'
 import { demoCentralState } from './demoCentral'
 import { androidTurn, browserTurn, mockupTurn } from './demoDevices'
 import { demoPlanConversation } from './demoPlan'
+import { demoAccountOf, demoAccounts } from './demoAccounts'
 import { DEMO_LOOP_MS, demoUsage, playScript, USAGE_BACK_AT, USAGE_OUT_AT, type DemoStep, type DemoTurn, type ToolStep } from './demoTimeline'
 
 export const DEMO_ROOMS = 5
@@ -416,6 +417,7 @@ export function demoFeed(now?: number): OfficeFeed {
         title: `Demo ${r + 1}.${i + 1}`,
         cwd,
         model,
+        claudeAccountId: demoAccountOf(r, t),
         sdkSessionId: null,
         messages: st.messages,
         tokens: { context: Math.round(limit * (u0 + ((u1 - u0) * t) / DEMO_LOOP_MS)), output: 0, cost: 0 },
@@ -433,13 +435,15 @@ export function demoFeed(now?: number): OfficeFeed {
   // A Central, no console do centro: a última mensagem que ela despachou.
   const central = playScript([{ at: -40_000, user: 'Roda os testes da loja e me avisa.', steps: [say('Mandei para loja-virtual, na conversa Demo 2.1.')] }], t, start, CENTRAL_ID, cycle)
   // Os despachos dela (demoCentral.ts): o pulso corre do console até o destino.
-  conversations.push({ id: CENTRAL_ID, title: 'Central', cwd: '', mode: 'central', model, sdkSessionId: null, messages: central.messages, tokens: { context: 0, output: 0, cost: 0 }, createdAt: start - 3_600_000, updatedAt: central.updatedAt, central: demoCentralState(t, start, cycle, (r) => `C:\\demo\\${KITS[r].project}`) })
+  conversations.push({ id: CENTRAL_ID, title: 'Central', cwd: '', mode: 'central', model, claudeAccountId: demoAccountOf(-1, t), sdkSessionId: null, messages: central.messages, tokens: { context: 0, output: 0, cost: 0 }, createdAt: start - 3_600_000, updatedAt: central.updatedAt, central: demoCentralState(t, start, cycle, (r) => `C:\\demo\\${KITS[r].project}`) })
   // O Manager do plano do checkout: senta à cabeceira; a TV pinta o resumo (demoPlan.ts).
   const plan = demoPlanConversation(t, start, cycle, `C:\\demo\\${KITS[1].project}`, model)
   conversations.push(plan.conv)
   if (plan.busy) busyIds.add(plan.conv.id)
   if (plan.busySince !== null) busySince[plan.conv.id] = plan.busySince
   const usageLimits: Record<string, RateLimitStatus> = { five_hour: demoUsage(t, start, clock) }
+  // As 3 contas conectadas (demoAccounts.ts): a energia do escritório lê a em destaque.
+  const claudeAccounts = demoAccounts(usageLimits.five_hour, clock)
   return {
     conversations,
     activeId: conversations[0].id,
@@ -454,6 +458,7 @@ export function demoFeed(now?: number): OfficeFeed {
     stalledSince,
     tracks,
     projectIcons,
-    usageLimits
+    usageLimits,
+    claudeAccounts
   }
 }

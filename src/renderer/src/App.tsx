@@ -104,6 +104,7 @@ import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
 import { AccountsUsageBadge } from './components/AccountsUsageBadge'
 import { useClaudeAccounts } from './accounts/useClaudeAccounts'
+import { useOfficeAccountsRefresh } from './accounts/useOfficeAccountsRefresh'
 import { useAccountActions } from './accounts/useAccountActions'
 import { RightPaneTabs, type RightPane } from './components/RightPaneTabs'
 import { BoardPanel, boardProgress } from './components/BoardPanel'
@@ -4036,10 +4037,11 @@ export function App(): JSX.Element {
     const publishStartedAt = freezeClock()
     officeStore.publish({ conversations, activeId, busyIds,
       busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics, memoristaDiagnostics, observersOn, stalledSince,
-      tracks, projectIcons, usageLimits, speakingId })
+      tracks, projectIcons, usageLimits, speakingId, claudeAccounts: claudeAccountList })
     freezeSection('escritorio', publishStartedAt)
   }, [conversations, activeId, busyIds, busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics,
-    memoristaDiagnostics, observersOn, stalledSince, tracks, projectIcons, usageLimits, speakingId])
+    memoristaDiagnostics, observersOn, stalledSince, tracks, projectIcons, usageLimits, speakingId, claudeAccountList])
+  useOfficeAccountsRefresh(mainTab === 'office', refreshAccounts)
   const iconRequested = useRef<Set<string>>(new Set())
 
   const projects = useMemo<SidebarProject[]>(() => {

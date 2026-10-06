@@ -6,8 +6,7 @@
  * leitura volta a mandar. Devolve o evento de cada mudança (powerEvents) para
  * a cena (transições, festa) e as falas.
  */
-import type { OfficeFeed } from '../office/adapter/feed'
-import { officePower, POWER_LEVELS, powerEvents, type OfficePower, type PowerEvent, type PowerLevel } from './power'
+import { officePower, POWER_LEVELS, powerEvents, type OfficePower, type PowerEvent, type PowerFeed, type PowerLevel } from './power'
 
 /** Carga mostrada para cada nível forçado (sem leitura real que caiba nele). */
 export const FORCED_PCT: Readonly<Record<PowerLevel, number>> = { cheia: 82, economia: 42, alerta: 12, apagao: 0 }
@@ -29,7 +28,7 @@ export class PowerTracker {
   }
 
   /** Leitura nova do feed (ou só o relógio andando); devolve o evento, se mudou de nível. */
-  update(feed: Pick<OfficeFeed, 'usageLimits'> | null, now: number): PowerEvent | null {
+  update(feed: PowerFeed | null, now: number): PowerEvent | null {
     this.real = officePower(feed, now, this.real)
     return this.show(now)
   }
@@ -48,6 +47,8 @@ export class PowerTracker {
     const next: OfficePower | null = f
       ? {
           pct: FORCED_PCT[f],
+          accountId: base?.accountId ?? null,
+          bank: base?.bank ?? [],
           level: f,
           resetsAt: base?.resetsAt ?? now + FORCED_RESET_MS,
           drainPerMin: base?.drainPerMin || 1.5,

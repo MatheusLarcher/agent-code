@@ -166,11 +166,11 @@ describe('Office3DEngine — aba fechada (pause/resume)', () => {
     const limits = (extra: Partial<RateLimitStatus>): OfficeFeed['usageLimits'] => ({
       five_hour: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0.3, resetsAt: Date.now() + 3_600_000, ...extra } as RateLimitStatus
     })
-    const s = setup({ ...demoFeed(Date.now()), usageLimits: limits({}) })
+    const s = setup({ ...demoFeed(Date.now()), claudeAccounts: undefined, usageLimits: limits({}) })
     s.flush(2)
     expect(s.engine.officePower?.level).toBe('cheia')
     s.engine.pause()
-    s.emit({ ...demoFeed(Date.now() + 5_000), usageLimits: limits({ status: 'rejected', utilization: 1 }) })
+    s.emit({ ...demoFeed(Date.now() + 5_000), claudeAccounts: undefined, usageLimits: limits({ status: 'rejected', utilization: 1 }) })
     const setPower = vi.spyOn(OfficeScene.prototype, 'setPower')
     const feed = vi.spyOn(Speech.prototype, 'feed')
     const tick = vi.spyOn(Speech.prototype, 'tick')
@@ -190,7 +190,7 @@ describe('Office3DEngine — aba fechada (pause/resume)', () => {
   it('volta da pausa SEM feed novo, depois do reset da janela: reaplica o último feed e a luz volta sem o evento', () => {
     const resetsAt = Date.now() + 60_000
     const five = { rateLimitType: 'five_hour', status: 'rejected', utilization: 1, resetsAt } as RateLimitStatus
-    const s = setup({ ...demoFeed(Date.now()), usageLimits: { five_hour: five } })
+    const s = setup({ ...demoFeed(Date.now()), claudeAccounts: undefined, usageLimits: { five_hour: five } })
     s.flush(2)
     expect(s.engine.officePower?.level).toBe('apagao')
     s.engine.pause()

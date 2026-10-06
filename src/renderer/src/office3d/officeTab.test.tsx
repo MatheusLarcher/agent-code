@@ -480,7 +480,11 @@ describe('Escritório em aba: HUD', () => {
     const px = (b: string, prop: string): number => Number(new RegExp(`\\n\\s*${prop}: (\\d+)px;`).exec(b)?.[1])
     const hud = block('.o3d-hud')
     expect(px(hud, 'top') + px(hud, 'height')).toBeLessThanOrEqual(BUBBLE_TOP)
-    expect(px(block('.o3d-battery'), 'height')).toBeLessThanOrEqual(px(hud, 'height'))
+    // O banco de baterias mora no battery.css (o CSS próprio dele).
+    const bank = readFileSync(resolve(process.cwd(), 'src/renderer/src/office3d/battery.css'), 'utf8')
+    const at = bank.indexOf('\n.o3d-bank {')
+    const bankBlock = bank.slice(at, bank.indexOf('}', at))
+    expect(px(bankBlock, 'height')).toBeLessThanOrEqual(px(hud, 'height'))
     expect(px(block('.o3d-winctl'), 'height')).toBeLessThanOrEqual(px(hud, 'height'))
     expect(px(block('.o3d-help-btn'), 'height')).toBeLessThanOrEqual(px(hud, 'height'))
     expect(px(block('.o3d-pf-btn'), 'height')).toBeLessThanOrEqual(px(hud, 'height'))

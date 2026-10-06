@@ -20,7 +20,9 @@ const power = (level: PowerLevel, drainPerMin = 0): OfficePower => ({
   resetsAt: T0 + 60 * 60_000,
   drainPerMin,
   rejected: level === 'apagao',
-  samples: []
+  samples: [],
+  accountId: null,
+  bank: []
 })
 
 beforeEach(() => {
