@@ -2,14 +2,14 @@
 // headless (Playwright) com o three do projeto — sem servidor: as rotas
 // http://sandbox.local/* são servidas do disco por page.route.
 //
-// Uso: node fbx_to_glb.mjs <mixamo.fbx> <fonte-texturas.glb> <saida.glb>
+// Uso: node fbx_to_glb.mjs <mixamo.fbx> <fonte-texturas.glb> <saida.glb> [altura-m]
 //
-// - Escala: o Mixamo exporta em cm; o modelo é escalado para ter a altura do
-//   GLB de texturas (o do Meshy, em metros).
+// - Escala: o Mixamo exporta em cm; o modelo fica com `altura-m` (a do personagem
+//   na ficha; o v1 tem 1,83) ou, sem ela, a altura do GLB de texturas.
 // - Material: UM MeshStandardMaterial com as texturas PBR do GLB de texturas
 //   (cor, normal, metal/rugosidade — as UVs são as mesmas: o OBJ enviado ao
 //   Mixamo saiu dele, glb_to_obj_zip.py); os grupos de material da malha somem.
-// - Sem clipe de animação (o app anima pelas próprias poses).
+// - Malha indexada (mergeVertices) e sem clipe de animação (o app anima pelas próprias poses).
 // Depois: tint_mask.py (máscara da roupa) → compress_glb.py → inspect_glb.py → render_glb.mjs.
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -20,7 +20,7 @@ const repo = resolve(import.meta.dirname, '../..')
 const { chromium } = require(join(repo, 'node_modules/playwright'))
 const THREE_DIR = join(repo, 'node_modules/three')
 
-const [fbxArg, texArg, outArg] = process.argv.slice(2)
+const [fbxArg, texArg, outArg, heightArg] = process.argv.slice(2)
 if (!fbxArg || !texArg || !outArg) throw new Error('uso: node fbx_to_glb.mjs <mixamo.fbx> <fonte-texturas.glb> <saida.glb>')
 
 const PAGE = `<!doctype html><html><body>
@@ -30,16 +30,17 @@ import * as THREE from 'three'
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 
 const buf = async (p) => (await fetch(p)).arrayBuffer()
 const height = (o) => { o.updateMatrixWorld(true); return new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3()).y }
 
-window.convert = async () => {
+window.convert = async (target) => {
   const fbx = new FBXLoader().parse(await buf('/fbx'), '')
   const tex = await new GLTFLoader().parseAsync(await buf('/tex'), '')
   let src = null
   tex.scene.traverse((o) => { if (o.isMesh && !src) src = o.material })
-  const scale = height(tex.scene) / height(fbx)
+  const scale = (target || height(tex.scene)) / height(fbx)
   fbx.scale.multiplyScalar(scale)
   const mat = new THREE.MeshStandardMaterial({
     name: 'agent', map: src.map, normalMap: src.normalMap, roughnessMap: src.roughnessMap, metalnessMap: src.metalnessMap,
@@ -56,6 +57,12 @@ window.convert = async () => {
     info.groups += o.geometry.groups.length
     info.mats.push(Array.isArray(o.material) ? o.material.map((m) => m.name) : o.material.name)
     o.geometry.clearGroups()
+    // O FBXLoader entrega a malha sem índice (vértice repetido por triângulo): junta os iguais (pele inclusa).
+    o.geometry = mergeVertices(o.geometry)
+    // UV do FBX/OBJ tem a origem embaixo; a do glTF (e a das texturas religadas), em cima.
+    const uv = o.geometry.attributes.uv
+    for (let i = 0; i < uv.count; i++) uv.setY(i, 1 - uv.getY(i))
+    info.vertices = o.geometry.attributes.position.count
     o.material = mat
   })
   for (const o of drop) o.removeFromParent()
@@ -88,7 +95,7 @@ await page.route('http://sandbox.local/**', async (route) => {
 })
 await page.goto('http://sandbox.local/')
 await page.waitForFunction(() => window.ready === true, null, { timeout: 120000 })
-const { info, b64 } = await page.evaluate(() => window.convert())
+const { info, b64 } = await page.evaluate((h) => window.convert(h), heightArg ? Number(heightArg) : 0)
 writeFileSync(resolve(outArg), Buffer.from(b64, 'base64'))
 console.log('ok:', resolve(outArg), JSON.stringify(info))
 await browser.close()

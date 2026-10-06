@@ -1,6 +1,9 @@
 """Exporta a malha texturizada de um GLB (saída do imagem→3D do Meshy) como ZIP para o Mixamo.
 
-Uso: python glb_to_obj_zip.py entrada.glb saida.zip
+Uso: python glb_to_obj_zip.py entrada.glb saida.zip [escala=100]
+A escala padrão 100 leva a malha do Meshy (≈1,9 de altura) a centímetros: o Mixamo
+lê OBJ em cm, e um personagem de 1,9 cm falha no rig ("Unknown error while
+generating motion"). Os marcadores do mixamo_rig.mjs usam a mesma escala.
 O Mixamo aceita FBX, OBJ ou ZIP (OBJ + MTL + texturas); GLB não. O ZIP leva a malha com
 UVs e normais e a textura de cor, para o personagem aparecer colorido na hora de marcar
 queixo, pulsos, cotovelos, joelhos e virilha.
@@ -16,11 +19,12 @@ from inspect_glb import accessor, load  # noqa: E402
 
 def main():
     src, dst = sys.argv[1], sys.argv[2]
+    scale = float(sys.argv[3]) if len(sys.argv) > 3 else 100.0
     g, binb, _ = load(src)
     if len(g.get("meshes", [])) != 1 or len(g["meshes"][0]["primitives"]) != 1:
         sys.exit("esperava uma malha com uma primitiva (saída do imagem→3D)")
     prim = g["meshes"][0]["primitives"][0]
-    pos = accessor(g, binb, prim["attributes"]["POSITION"])
+    pos = accessor(g, binb, prim["attributes"]["POSITION"]) * scale
     nor = accessor(g, binb, prim["attributes"]["NORMAL"])
     uv = accessor(g, binb, prim["attributes"]["TEXCOORD_0"])
     idx = accessor(g, binb, prim["indices"]).reshape(-1, 3) + 1

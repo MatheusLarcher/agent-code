@@ -99,7 +99,8 @@ export function prepareAvatar(scene: Object3D): AvatarTemplate | string {
 
   // A sola: o ponto mais baixo da malha na pose de bind, antes de mexer (na pose de bind a malha com pele é a
   // própria geometria: a caixa dela vale, sem calcular a pele de 20 mil vértices na CPU).
-  const floor = bindBox(meshes).min.y
+  const bind = bindBox(meshes)
+  const floor = bind.min.y
   const soleDown = Math.max(0.02, worldPos(must('footL')).y - floor)
   const toeBind = { L: b('toeL') ? worldPos(b('toeL')!).sub(worldPos(must('footL'))) : null, R: b('toeR') ? worldPos(b('toeR')!).sub(worldPos(must('footR'))) : null }
 
@@ -133,7 +134,9 @@ export function prepareAvatar(scene: Object3D): AvatarTemplate | string {
   const metrics = metricsFromSkeleton(
     {
       hips: P('hips'), upLegL: P('upLegL'), upLegR: P('upLegR'), legL: P('legL'), footL: P('footL'), armL: P('armL'), armR: P('armR'),
-      forearmL: P('forearmL'), handL: P('handL'), head: P('head'), headTop: top ? vec(worldPos(top)) : null,
+      forearmL: P('forearmL'), handL: P('handL'), head: P('head'),
+      // Sem o HeadTop_End (o FBXLoader descarta os ossos de ponta): o alto da malha no bind.
+      headTop: top ? vec(worldPos(top)) : [P('head')[0], bind.max.y, P('head')[2]],
       toe: toe ? vec(worldPos(toe)) : null, toeIsBase: !toeEnd
     },
     soleDown

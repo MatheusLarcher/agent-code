@@ -120,7 +120,7 @@ def main():
     rgb = image(color_img).convert("RGB")
     prim = next(p for mesh in gltf["meshes"] for p in mesh["primitives"] if p.get("material", 0) == 0)
     uv = accessor(gltf, binb, prim["attributes"]["TEXCOORD_0"])
-    tris = accessor(gltf, binb, prim["indices"]).reshape(-1, 3).astype(np.int64)
+    tris = (accessor(gltf, binb, prim["indices"]) if "indices" in prim else np.arange(len(uv))).reshape(-1, 3).astype(np.int64)
     raw, m = mask_from_color(rgb, lo, hi, uv, tris)
     mr = image(mr_img).convert("RGB")
     mask_img = Image.fromarray(m.astype(np.uint8) * 255).resize(mr.size, Image.BILINEAR)

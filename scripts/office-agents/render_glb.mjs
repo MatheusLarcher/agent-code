@@ -125,7 +125,7 @@ for (const pose of posesArg.split(',')) {
     await page.waitForFunction(() => window.ready === true, null, { timeout: 120000 })
   }
   const r = await page.evaluate(([p, v]) => window.renderPose(p, v), [pose, view])
-  const out = join(HERE, `${outPrefix}-${pose}.png`)
+  const out = resolve(HERE, `${outPrefix}-${pose}.png`)
   await page.screenshot({ path: out })
   console.log(pose, JSON.stringify({ missing: r.missing, height: r.height }), '->', out)
   if (pose === posesArg.split(',')[0]) console.log('info', JSON.stringify(r.info))
