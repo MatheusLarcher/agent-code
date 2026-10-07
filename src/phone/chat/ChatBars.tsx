@@ -1,16 +1,15 @@
 /**
  * As faixas da conversa aberta: recuperação de turno (com contagem local de 1 s —
- * o retrato do PC só chega a cada 4 s), "trabalhando…" + Parar (vira "sem resposta
- * há Xs" quando o turno emudece) e o plano de tarefas do agente (TodoWrite/TaskCreate).
+ * o retrato do PC só chega a cada 4 s) e o plano de tarefas do agente
+ * (TodoWrite/TaskCreate). O "trabalhando…" + parar vive na linha ao vivo do turno
+ * (ChatTurns), não numa faixa aqui.
  */
 import { useEffect, useState } from 'react'
-import { client, toast } from '../app/runtime'
-import { fmtElapsed } from '../core/format'
-import { errorText } from '../core/net'
+import { client } from '../app/runtime'
 import { useStore } from '../core/store'
 import type { ConvSummary } from '../core/types'
 
-function useTick(active: boolean): number {
+export function useTick(active: boolean): number {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     if (!active) return
@@ -41,27 +40,6 @@ export function TurnRecovery({ conv }: { conv: ConvSummary }): JSX.Element | nul
       </div>
       <button type="button" onClick={() => client.recoveryAction('retry')}>Tentar agora</button>
       <button type="button" onClick={() => client.recoveryAction('cancel')}>Cancelar</button>
-    </div>
-  )
-}
-
-export function BusyBar({ conv }: { conv: ConvSummary }): JSX.Element | null {
-  const since = conv.stalledSince
-  const now = useTick(!!conv.busy && !!since)
-  if (!conv.busy) return null
-  return (
-    <div className={`busy-bar${since ? ' stalled' : ''}`}>
-      <span className="spinner" />
-      <span className="busy-text">{since ? `Sem resposta há ${fmtElapsed(since, now)}` : 'trabalhando…'}</span>
-      <button
-        type="button"
-        className="stop-btn"
-        title="Parar o turno"
-        aria-label="Parar"
-        onClick={() => client.interrupt().catch((err) => toast('Não consegui parar: ' + errorText(err)))}
-      >
-        ■ Parar
-      </button>
     </div>
   )
 }

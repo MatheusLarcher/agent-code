@@ -284,19 +284,21 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     expect(chat.querySelector('.msg.user .bubble')?.textContent).toContain('desconto percentual')
     openSteps(chat) // os cartões ficam atrás da linha-resumo da resposta (chat resumido)
     const cards = [...chat.querySelectorAll<HTMLElement>('.tool-card')]
-    expect(cards.map((c) => c.querySelector('.tool-name')?.textContent)).toEqual(['Read', 'Edit'])
+    expect(cards.map((c) => c.querySelector('.tool-name')?.textContent)).toEqual(['leu', 'editou'])
     const edit = cards[1]
-    expect(edit.querySelector('.tool-detail')?.textContent).toBe('total.ts')
+    expect(edit.querySelector('.tool-detail')?.textContent).toMatch(/(^|\/)total\.ts$/)
     expect(edit.querySelector('.diff-add')?.textContent).toBe('+5')
     expect(edit.querySelector('.diff-del')?.textContent).toBe('−5')
-    expect(edit.querySelector('.tool-badge.run')?.textContent).toBe('running…')
-    expect(cards[0].querySelector('.tool-badge.ok')?.textContent).toBe('done')
+    expect(edit.querySelector('.tool-check.run')?.textContent).toBe('…')
+    // Pronto, dentro do grupo de passos: "✓ N" colado ao texto no lugar da pílula "done".
+    expect(cards[0].querySelector('.tool-badge.ok')).toBeNull()
+    expect(cards[0].querySelector('.tool-check')?.textContent).toMatch(/^✓/)
     // Recolhido como no chat; a ▸ abre o diff realçado (o resto do cabeçalho abre o arquivo no editor).
     expect(edit.querySelector('pre.code-block')).toBeNull()
     fireEvent.click(edit.querySelector('.tool-caret-btn')!)
     expect(edit.querySelector('pre.code-block')).toBeTruthy()
-    // Trabalhando: o "digitando" do chat no fim. Só leitura: sem "Tentar de novo" nem "Ouvir".
-    expect(chat.querySelector('.bubble.typing')).toBeTruthy()
+    // Trabalhando: a linha "ao vivo" do chat no fim. Só leitura: sem "Tentar de novo" nem "Ouvir".
+    expect(chat.querySelector('.chat-live .chat-live-time')).toBeTruthy()
     expect(chat.querySelector('.msg-retry, .msg-speak')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull()
     expect(screen.getByRole('tab', { name: 'total.ts, modificado' })).toBeTruthy()

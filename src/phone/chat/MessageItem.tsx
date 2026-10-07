@@ -9,12 +9,14 @@ import { triggerDownload } from '../core/download'
 import { basename, fmtBytes, fmtMsgTime, parseDownloads, readableMedia } from '../core/format'
 import type { ChatMsg, UserMsg } from '../core/types'
 import { Icon } from '../ui/icons'
+import { BlurText, isPlainText } from './motion'
 import { ToolCard } from './ToolCard'
 
-function UserBubble({ m, flash, resolveRef }: { m: UserMsg; flash: boolean; resolveRef?: CardRefResolver | null }): JSX.Element {
+/** A sua mensagem: cartão escuro com borda e degradê quente (não mais o bloco laranja chapado). */
+function UserBubble({ m, flash, resolveRef, fresh }: { m: UserMsg; flash: boolean; resolveRef?: CardRefResolver | null; fresh: boolean }): JSX.Element {
   const text = m.text ? readableMedia(m.text) : ''
   return (
-    <div className="msg-row user">
+    <div className={`msg-row user${fresh ? ' pop' : ''}`}>
       <div className={`msg user${flash ? ' msg-highlight' : ''}`} data-mid={m.id}>
         {!!m.images?.length && (
           <div className="msg-imgs">
@@ -39,7 +41,8 @@ function UserBubble({ m, flash, resolveRef }: { m: UserMsg; flash: boolean; reso
   )
 }
 
-function AssistantBubble({ id, text, answer, voiceReady, speaking, onSpeak, resolveRef }: {
+/** Texto do agente sem balão (o trilho do turno já diz de quem é). Novo e sem Markdown: entra palavra a palavra. */
+function AssistantBubble({ id, text, answer, voiceReady, speaking, onSpeak, resolveRef, fresh }: {
   id: string
   text: string
   answer: boolean
@@ -47,11 +50,13 @@ function AssistantBubble({ id, text, answer, voiceReady, speaking, onSpeak, reso
   speaking: boolean
   onSpeak: (id: string, text: string) => void
   resolveRef?: CardRefResolver | null
+  fresh: boolean
 }): JSX.Element {
   const parsed = parseDownloads(text)
+  const blur = fresh && !resolveRef && isPlainText(parsed.clean)
   return (
-    <div className={`msg assistant${answer ? ' answer' : ' narration'}`}>
-      {parsed.clean && <Markdown text={parsed.clean} resolveRef={resolveRef} />}
+    <div className={`msg assistant${answer ? ' answer' : ' narration'}${fresh && !blur ? ' pop' : ''}`}>
+      {parsed.clean && (blur ? <div className="md"><BlurText text={parsed.clean} /></div> : <Markdown text={parsed.clean} resolveRef={resolveRef} />)}
       {parsed.paths.map((path) => (
         <button key={path} type="button" className="msg-dl" onClick={() => triggerDownload(client.fileUrl(path), path)}>
           <Icon name="download" size={15} /> Baixar {basename(path)}
@@ -80,17 +85,19 @@ function Thinking({ text }: { text: string }): JSX.Element {
   )
 }
 
-export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, speakingId, onSpeak, resolveRef }: {
+export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, speakingId, onSpeak, resolveRef, fresh = false }: {
   m: ChatMsg
   flash: boolean
   voiceReady: boolean
   speakingId: string | null
   onSpeak: (id: string, text: string) => void
   resolveRef?: CardRefResolver | null
+  /** Chegou agora (não é histórico): anima a entrada. */
+  fresh?: boolean
 }): JSX.Element | null {
   switch (m.kind) {
     case 'user':
-      return <UserBubble m={m} flash={flash} resolveRef={resolveRef} />
+      return <UserBubble m={m} flash={flash} resolveRef={resolveRef} fresh={fresh} />
     case 'assistant-text':
       return (
         <AssistantBubble
@@ -101,12 +108,18 @@ export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, spe
           speaking={speakingId === m.id}
           onSpeak={onSpeak}
           resolveRef={resolveRef}
+          fresh={fresh}
         />
       )
     case 'thinking':
       return <Thinking text={m.text} />
     case 'system':
-      return <div className="msg system">sessão pronta{m.model ? ` · ${m.model}` : ''}</div>
+      return (
+        <div className="msg system session-chips">
+          <span className="s-chip"><span className="s-dot" />sessão pronta</span>
+          {m.model && <span className="s-chip"><b>{m.model}</b></span>}
+        </div>
+      )
     case 'error':
       return <div className="msg error">{m.text}</div>
     case 'status':

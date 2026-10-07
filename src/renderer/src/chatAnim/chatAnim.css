@@ -1,0 +1,59 @@
+/* Animações do chat (BlurText, CountUp e a entrada dos passos) — só no que chegou
+   ao vivo (animGate.tsx). Ao fim, nenhuma propriedade fica presa (fill `both` com
+   o estado final neutro): as palavras não viram milhares de camadas. */
+.ca-w {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  animation: ca-w-in 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 45ms + var(--d, 0ms));
+}
+@keyframes ca-w-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
+.ca-pop {
+  animation: ca-pop-in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes ca-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ca-num {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+}
+.ca-tick {
+  animation: ca-tick 0.35s ease-out;
+}
+@keyframes ca-tick {
+  from {
+    transform: translateY(-4px);
+    color: #fff;
+  }
+  to {
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ca-w,
+  .ca-pop,
+  .ca-tick {
+    animation: none !important;
+  }
+}

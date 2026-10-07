@@ -34,21 +34,32 @@ function renderWith(opener: ToolFileOpen | null, ...messages: ToolUseMessage[]):
 }
 
 describe('ToolCard no chat (o cartão compartilhado com o Escritório 3D)', () => {
-  it('cabeçalho: verbo, detalhe, +N −M e a pílula (running… / done / error); erro pinta o cartão', () => {
-    const [bash, edit, read] = renderChat(
+  it('cabeçalho: verbo, detalhe, +N −M e a pílula (running… / error); pronto no grupo do chat é "✓ N" colado ao texto; erro pinta o cartão', () => {
+    const [bash, edit, read, grep] = renderChat(
       tool({ id: 'a', input: { command: 'npm test\n--watch' } }),
       tool({ id: 'b', name: 'Edit', input: { file_path: 'C:/p/a.ts', old_string: 'a\nb', new_string: 'c' }, result: { isError: true, text: 'falhou' } }),
-      tool({ id: 'c', name: 'Read', input: { file_path: '/p/c.ts' }, result: { isError: false, text: 'ok' } })
+      tool({ id: 'c', name: 'Read', input: { file_path: '/p/c.ts' }, result: { isError: false, text: '     1\tconst a = 1\n     2\tconst b = 2' } }),
+      tool({ id: 'd', name: 'Grep', input: { pattern: 'x' }, result: { isError: false, text: 'Found 3 files\na.ts\nb.ts\nc.ts' } })
     )
-    expect(bash.querySelector('.tool-name')?.textContent).toBe('Bash')
+    // No grupo do chat: rótulo pt + alvo em mono, sem pílula ("…" rodando, "✗" erro, "✓ N" pronto).
+    expect(bash.classList.contains('tool-line')).toBe(true)
+    expect(bash.querySelector('.tool-name')?.textContent).toBe('bash')
     expect(bash.querySelector('.tool-detail')?.textContent).toBe('npm test')
-    expect(bash.querySelector('.tool-badge')?.className).toBe('tool-badge run')
-    expect(bash.querySelector('.tool-badge')?.textContent).toBe('running…')
+    expect(bash.querySelector('.tool-badge')).toBeNull()
+    expect(bash.querySelector('.tool-check.run')?.textContent).toBe('…')
     expect(edit.classList.contains('tool-error')).toBe(true)
+    expect(edit.querySelector('.tool-name')?.textContent).toBe('editou')
+    expect(edit.querySelector('.tool-detail')?.textContent).toBe('p/a.ts')
     expect(edit.querySelector('.tool-diff')?.textContent).toBe('+1−2')
-    expect(edit.querySelector('.tool-badge')?.textContent).toBe('error')
+    expect(edit.querySelector('.tool-check.err')?.textContent).toBe('✗')
     expect(read.classList.contains('tool-error')).toBe(false)
-    expect(read.querySelector('.tool-badge')?.className).toBe('tool-badge ok')
+    expect(read.querySelector('.tool-name')?.textContent).toBe('leu')
+    expect(read.querySelector('.tool-detail')?.textContent).toBe('p/c.ts')
+    expect(read.querySelector('.tool-badge')).toBeNull()
+    expect(read.querySelector('.tool-check')?.textContent).toBe('✓ 2 l')
+    expect(grep.querySelector('.tool-name')?.textContent).toBe('busca')
+    expect(grep.querySelector('.tool-detail')?.textContent).toBe('x')
+    expect(grep.querySelector('.tool-check')?.textContent).toBe('✓ 3')
   })
 
   it('pergunta ao usuário: nunca vermelha — "respondido" ou "sem resposta"', () => {
@@ -107,7 +118,7 @@ describe('ToolCard com o editor ao lado (o Chat do monitor do Escritório)', () 
     expect(edit.classList.contains('tool-file')).toBe(true)
     const opener = edit.querySelector<HTMLElement>('.tool-open')!
     expect(opener.getAttribute('title')).toBe('Abrir no editor')
-    expect(opener.querySelector('.tool-detail')?.textContent).toBe('a.ts')
+    expect(opener.querySelector('.tool-detail')?.textContent).toBe('p/a.ts') // caminho curto da linha do grupo
     expect(opener.querySelector('.tool-go')).toBeTruthy()
     fireEvent.click(opener)
     expect(open).toHaveBeenCalledWith(editA)

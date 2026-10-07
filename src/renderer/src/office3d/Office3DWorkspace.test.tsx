@@ -359,7 +359,7 @@ describe('Office3DWorkspace', () => {
     expect([screenEl.dataset.kind, term.querySelector('.cm-cmdline')?.textContent, term.querySelector('.cm-run.run')?.textContent, screen.queryByRole('tab')]).toEqual(['code', 'npm run build', 'executando', null])
     const chatPane = screen.getByTestId('office-screen-chat')
     openSteps(chatPane) // o cartão fica atrás da linha-resumo da resposta (chat resumido)
-    expect(chatPane.querySelector('.tool-card .tool-name')?.textContent).toBe('Bash')
+    expect(chatPane.querySelector('.tool-card .tool-name')?.textContent).toBe('bash')
     expect(chatPane.querySelector('.tool-card .tool-detail')?.textContent).toBe('npm run build')
     expect(src.subs).toBe(2)
   })

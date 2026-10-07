@@ -1,7 +1,7 @@
 /**
  * O chat resumido na conversa do PC (MessageList → ChatStepRow): linha-resumo
- * recolhida por resposta, o clique abre só os cartões dela, "agora: …" girando
- * no turno em andamento, resposta final inteira com "Ouvir" e a paginação
+ * recolhida por resposta, o clique abre só os cartões dela, o "agora" só na
+ * linha ao vivo no turno em andamento, resposta final inteira com "Ouvir" e a paginação
  * contando LINHAS (a resposta inteira conta uma).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -56,25 +56,33 @@ describe('MessageList — resumo por resposta', () => {
     const [first, second, final] = steps
     expect(first.querySelector('.msg.assistant.narration')?.textContent).toContain('Vou procurar o campo.')
     expect(first.querySelector('.central-sum')?.textContent).toBe('Procurou "send-btn" · leu Composer.tsx')
-    expect(first.querySelector('.central-count')?.textContent).toBe('2 ações')
+    // Pílulas com os contadores no lugar do "N ações"; o chevron vem na frente da linha.
+    expect([...first.querySelectorAll('.chat-pill')].map((p) => p.textContent)).toEqual(['1 busca', '1 lido'])
+    expect(first.querySelector('.chat-act')?.firstElementChild?.className).toBe('central-chev')
+    expect(first.querySelector('.central-count')).toBeNull()
     expect(second.querySelector('.central-sum')?.textContent).toBe('Editou Composer.tsx +2 −1')
     // Resposta final inteira, sem linha-resumo.
     expect(final.querySelector('.central-act')).toBeNull()
     expect(final.textContent).toContain('Pronto: o Enviar funciona.')
 
     fireEvent.click(second.querySelector('.central-act')!)
-    expect([...container.querySelectorAll('.tool-card .tool-name')].map((n) => n.textContent)).toEqual(['Edit'])
+    // Aberto: cada ação numa linha mono — rótulo pt + caminho curto + "✓", sem caixa.
+    expect([...container.querySelectorAll('.tool-card .tool-name')].map((n) => n.textContent)).toEqual(['editou'])
+    expect(container.querySelector('.tool-card.tool-line .tool-detail')?.textContent).toBe('p/Composer.tsx')
+    expect(container.querySelector('.tool-card.tool-line .tool-check')?.textContent).toBe('✓')
     expect(second.querySelector('.central-act')?.getAttribute('aria-expanded')).toBe('true')
     fireEvent.click(second.querySelector('.central-act')!)
     expect(container.querySelector('.tool-card')).toBeNull()
   })
 
-  it('em andamento: a última resposta gira com "agora: …"; o aberto continua aberto quando chegam mensagens', () => {
+  it('em andamento: o "agora" fica só na linha ao vivo (sem spinner nem "agora: …" no passo); o aberto continua aberto quando chegam mensagens', () => {
     const running = [...turn.slice(0, 5), tool('e', 'Edit', { file_path: '/p/Composer.tsx', old_string: 'a', new_string: 'b' }, false)]
     const { container, rerender } = renderList(running, true)
     const last = [...container.querySelectorAll<HTMLElement>('.chat-step')].at(-1)!
-    expect(last.querySelector('.central-act.running .central-spin')).toBeTruthy()
-    expect(last.querySelector('.central-sum')?.textContent).toBe('agora: editando Composer.tsx…')
+    expect(last.querySelector('.central-act.running')).toBeTruthy()
+    expect(container.querySelector('.central-spin')).toBeNull()
+    expect(last.querySelector('.central-sum')?.textContent).not.toContain('agora')
+    expect(container.querySelector('.chat-live-text')?.textContent).toBe('Editando Composer.tsx…')
     fireEvent.click(container.querySelector('.chat-step .central-act')!)
     expect(container.querySelectorAll('.tool-card')).toHaveLength(2)
     rerender([...running.slice(0, 5), tool('e', 'Edit', { file_path: '/p/Composer.tsx', old_string: 'a', new_string: 'b' }), say('a3', 'Pronto.', true)], false)
@@ -93,6 +101,6 @@ describe('MessageList — resumo por resposta', () => {
     // 61 linhas (pedido + 60 respostas) − 40 = 21 anteriores; a 1ª linha à vista é uma resposta inteira.
     expect(container.querySelector('.load-more-hint')?.textContent).toBe('↑ Role para cima para carregar mais (21 anteriores)')
     expect(container.querySelector('.message-list > .chat-step')?.textContent).toContain('passo 20')
-    expect(container.querySelector('.message-list > .chat-step .central-count')?.textContent).toBe('3 ações')
+    expect(container.querySelector('.message-list > .chat-step .chat-pills')?.textContent).toBe('2 lidos1 comando')
   })
 })

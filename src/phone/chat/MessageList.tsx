@@ -13,6 +13,7 @@ import { isHiddenMessage } from '../core/reducer'
 import { useStore } from '../core/store'
 import { Icon } from '../ui/icons'
 import { toggleSpeak, tts } from '../voice/tts'
+import { groupTurns, liveText, Turn, turnStart, type Row } from './ChatTurns'
 import { MessageItem } from './MessageItem'
 import { QuestionMap } from './QuestionMap'
 import { StepItem } from './StepItem'
@@ -32,8 +33,34 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
   const voiceReady = useStore(client.store, (s) => s.voiceReady)
   const speakingId = useStore(tts, (s) => s.speakingId)
   const busy = useStore(client.store, (s) => !!s.conversations.find((c) => c.id === s.convId)?.busy)
+  const stalledSince = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.stalledSince)
   // O chat resumido (o mesmo agrupamento do PC): cada resposta com a sua linha-resumo.
   const rows = useMemo(() => buildChatRows(messages.filter((m) => !isHiddenMessage(m)), { busy }), [messages, busy])
+  const blocks = useMemo(() => groupTurns(rows, busy && !loading), [rows, busy, loading])
+  const lastBlock = blocks[blocks.length - 1]
+  const model = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.model)
+  // Conteúdo novo x histórico: as linhas que já estavam quando a conversa carregou
+  // aparecem prontas; só as que chegam depois animam (BlurText, CountUp, entrada).
+  const seen = useRef<{ conv: string | null; keys: Set<string> | null }>({ conv: null, keys: null })
+  if (seen.current.conv !== convId || loading) seen.current = { conv: convId, keys: null }
+  if (!loading && !seen.current.keys) seen.current.keys = new Set(rows.map((r) => r.key))
+  const baseline = seen.current.keys
+  const isFresh = useCallback((key: string) => !!baseline && !baseline.has(key), [baseline])
+  const renderRow = (r: Row, fresh: boolean): JSX.Element =>
+    r.type === 'step' ? (
+      <StepItem key={r.key} step={r} flash={flash} voiceReady={voiceReady} speakingId={speakingId} onSpeak={toggleSpeak} resolveRef={resolveRef} fresh={fresh} />
+    ) : (
+      <MessageItem
+        key={r.key}
+        m={r.msg}
+        flash={flash !== null && r.msg.id === flash}
+        voiceReady={voiceReady}
+        speakingId={speakingId}
+        onSpeak={toggleSpeak}
+        resolveRef={resolveRef}
+        fresh={fresh}
+      />
+    )
   const boxRef = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
   const [far, setFar] = useState(false)
@@ -150,19 +177,18 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
         ) : rows.length === 0 ? (
           <div className="messages-empty">Nenhuma mensagem ainda. Envie um comando para começar.</div>
         ) : (
-          rows.map((r) =>
-            r.type === 'step' ? (
-              <StepItem key={r.key} step={r} flash={flash} voiceReady={voiceReady} speakingId={speakingId} onSpeak={toggleSpeak} resolveRef={resolveRef} />
-            ) : (
-              <MessageItem
-                key={r.key}
-                m={r.msg}
-                flash={flash !== null && r.msg.id === flash}
-                voiceReady={voiceReady}
-                speakingId={speakingId}
-                onSpeak={toggleSpeak}
-                resolveRef={resolveRef}
+          blocks.map((b) =>
+            b.kind === 'turn' ? (
+              <Turn
+                key={b.key}
+                rows={b.rows}
+                model={model}
+                live={busy && b === lastBlock ? { text: liveText(rows), since: turnStart(rows), stalledSince } : null}
+                isFresh={isFresh}
+                renderRow={renderRow}
               />
+            ) : (
+              renderRow(b.row, isFresh(b.key))
             )
           )
         )}

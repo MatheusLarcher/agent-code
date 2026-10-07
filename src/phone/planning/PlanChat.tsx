@@ -8,7 +8,7 @@ import { useEffect, useMemo } from 'react'
 import { makeRefResolver } from '@renderer/planning/cardRefs'
 import { client } from '../app/runtime'
 import { useStore } from '../core/store'
-import { BusyBar, TodoPlan, TurnRecovery } from '../chat/ChatBars'
+import { TodoPlan, TurnRecovery } from '../chat/ChatBars'
 import { MessageList } from '../chat/MessageList'
 import { PermissionModal } from '../chat/PermissionModal'
 import { Composer } from '../composer/Composer'
@@ -47,7 +47,6 @@ export function PlanChat(): JSX.Element {
     <div className="pl-chat chat-view">
       <TurnRecovery conv={conv} />
       {ready ? <MessageList onRefresh={refresh} resolveRef={resolveRef} /> : <div className="messages-loading"><span className="spinner" /> Abrindo a conversa…</div>}
-      <BusyBar conv={conv} />
       <TodoPlan conv={conv} />
       {ready && <Composer draft={draft} />}
       {ready && <PermissionModal />}

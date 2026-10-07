@@ -1,0 +1,99 @@
+/*
+ * O turno do agente (ChatTurns.tsx) no visual aprovado em docs/spec/chat-visual-20261007:
+ * avatar ✦ + trilho vertical com um ponto por item, passos sem quadro (chevron na
+ * frente, ✓ N colado ao texto), a linha "ao vivo" e as animações de conteúdo novo.
+ * Tudo escopado ao chat (.turn / .chat-step): a Central usa o mesmo .c-act com o desenho dela.
+ */
+.turn { flex: 0 0 auto; display: flex; flex-direction: column; min-width: 0; }
+.turn-head { display: flex; align-items: center; gap: 8px; height: 26px; font-size: 12.5px; color: var(--muted); }
+.turn-head b { color: var(--text); font-weight: 600; }
+.turn-avatar {
+  width: 24px; height: 24px; flex: none; border-radius: 8px; display: grid; place-items: center;
+  background: radial-gradient(circle at 30% 25%, #f0a284, var(--accent) 55%, var(--accent-dim));
+  color: #2a160d; font-size: 13px; font-weight: 700; box-shadow: 0 4px 14px -6px var(--accent);
+}
+.turn-model { font-family: var(--mono); font-size: 11px; color: var(--faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-rail { position: relative; display: flex; flex-direction: column; gap: 4px; padding-top: 4px; min-width: 0; }
+.turn-rail::before {
+  content: ''; position: absolute; left: 11px; top: 2px; bottom: 8px; width: 2px; border-radius: 2px;
+  background: linear-gradient(var(--line), var(--line) 80%, transparent);
+}
+.turn-item { position: relative; padding: 4px 0 4px 30px; min-width: 0; }
+.turn-item::before {
+  content: ''; position: absolute; left: 7px; top: 12px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--line);
+}
+.turn-item > .msg, .turn-item > .tool-card { max-width: 100%; }
+.turn-item .chat-step > .msg { max-width: 100%; }
+.turn-item > .msg.error { align-self: auto; text-align: left; font-size: 13px; }
+
+/* Passos sem quadro: chevron na frente, o resumo e o ✓ N logo depois do texto. */
+.chat-step .c-act {
+  width: auto; max-width: 100%; margin: 0 0 0 -2px; padding: 4px 6px 4px 2px; gap: 7px;
+  background: transparent; border: 0; border-radius: 8px; font-size: 13px;
+}
+.chat-step .c-act:active { background: #2c2b29; }
+.chat-step .c-sum { flex: 0 1 auto; font-family: var(--mono); font-size: 12px; }
+.chat-step .c-sum b { font-family: var(--font); font-size: 13px; }
+.chat-step .c-count { color: var(--ok); opacity: 0.85; font-size: 12px; font-variant-numeric: tabular-nums; }
+.chat-step .c-act:not(.running) .c-count::before { content: '✓ '; }
+.chat-step .c-act.running .c-count { color: var(--faint); }
+.chat-step .c-tools { padding-left: 4px; }
+
+/* Cada ação do passo aberto: UMA linha mono — tipo colorido, alvo e ✓ N colado, sem caixa. */
+.tool-line { min-width: 0; }
+.tl-row {
+  width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 3px 0 3px 21px;
+  background: none; border: 0; border-radius: 6px; text-align: left;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+}
+.tl-row:active { background: #2c2b29; }
+.tl-k { flex: none; min-width: 54px; color: var(--info, #7aa7d9); }
+.tl-t { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-ok { flex: none; color: var(--ok); opacity: 0.85; }
+.tl-err { flex: none; color: var(--err); }
+.tl-run { flex: none; color: var(--faint); }
+.tl-dl { flex: none; color: var(--accent); display: inline-flex; align-self: center; }
+.tool-line .tool-body { margin: 2px 0 6px 21px; padding: 6px 0 6px 10px; border-top: 0; border-left: 2px solid var(--line); }
+
+/* A sessão: chips centralizados (antes, uma linha solta "sessão pronta · …"). */
+.msg.system.session-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.s-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px;
+  background: var(--bg-2); border: 1px solid var(--line); color: var(--muted); font-size: 12px;
+}
+.s-chip b { color: var(--text); font-weight: 500; font-family: var(--mono); font-size: 11.5px; }
+.s-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(127, 174, 111, 0.14); }
+
+/* Ao vivo: ponto pulsando no trilho, o "agora" com brilho correndo e o tempo do turno. */
+.turn-item.live::before { top: 8px; border-color: var(--accent); background: var(--accent); animation: live-pulse 1.4s ease-in-out infinite; }
+.live-row { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13px; color: var(--muted); }
+.shimmer {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: linear-gradient(90deg, var(--muted) 0%, #fff 40%, var(--muted) 80%); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: shim 2.2s linear infinite;
+}
+.live-t { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+.live-stalled { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--warn); }
+.turn-item.live.stalled::before { border-color: var(--warn); background: var(--warn); animation: none; }
+.live-stop {
+  flex: none; margin-left: auto; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: none; color: var(--muted); font-size: 11.5px;
+}
+.live-stop:active { color: var(--err); border-color: rgba(217, 112, 112, 0.5); }
+@keyframes live-pulse { 50% { box-shadow: 0 0 0 5px rgba(217, 119, 87, 0.2); } }
+@keyframes shim { to { background-position: -200% 0; } }
+
+/* Conteúdo novo (nunca o histórico): entrada, palavra a palavra (BlurText) e números que contam (CountUp). */
+.blur-text { margin: 0; white-space: pre-wrap; }
+.w { display: inline-block; white-space: pre; opacity: 0; filter: blur(8px); transform: translateY(6px); animation: w-in 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) forwards; }
+@keyframes w-in { to { opacity: 1; filter: blur(0); transform: none; } }
+.pop { animation: pop-in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+.num { display: inline-block; font-variant-numeric: tabular-nums; }
+.num.tick { animation: num-tick 0.35s ease-out; }
+@keyframes num-tick { 0% { transform: translateY(-4px); color: #fff; } 100% { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .w, .pop, .num.tick, .shimmer, .turn-item.live::before { animation: none; opacity: 1; filter: none; transform: none; }
+  .shimmer { color: var(--muted); background: none; }
+}

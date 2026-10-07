@@ -4,7 +4,7 @@ import { useStore } from '../core/store'
 import { Composer } from '../composer/Composer'
 import { StatusPill } from '../shell/StatusMenu'
 import { Icon } from '../ui/icons'
-import { BusyBar, ReconnectBar, TodoPlan, TurnRecovery } from './ChatBars'
+import { ReconnectBar, TodoPlan, TurnRecovery } from './ChatBars'
 import { MessageList } from './MessageList'
 import { PermissionModal } from './PermissionModal'
 
@@ -26,7 +26,6 @@ export function ChatView(): JSX.Element {
       <ReconnectBar />
       {conv && <TurnRecovery conv={conv} />}
       <MessageList onRefresh={refresh} />
-      {conv && <BusyBar conv={conv} />}
       {conv && <TodoPlan conv={conv} />}
       <Composer />
       <PermissionModal />

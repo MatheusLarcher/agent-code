@@ -18,7 +18,6 @@ export function ToolCard({ m }: { m: ToolUseMsg }): JSX.Element {
   const hasDiff = !!info.stats && (info.stats.added > 0 || info.stats.removed > 0)
   const badge = toolBadge(m.name, m.result)
   const filePath = m.result && !m.result.isError ? writtenPath(m.name, m.input) : ''
-  const view = open ? toolInputView(m.name, m.input) : null
   return (
     <div className={`tool-card${info.isSkill ? ' tool-skill' : ''}${toolErrored(m.name, m.result) ? ' tool-error' : ''}`}>
       <button type="button" className="tool-head" onClick={() => setOpen((o) => !o)}>
@@ -45,17 +44,23 @@ export function ToolCard({ m }: { m: ToolUseMsg }): JSX.Element {
         )}
         <span className={`tool-badge ${badge.kind}`}>{badge.text}</span>
       </button>
-      {view && (
-        <div className="tool-body">
-          {view.caption && <div className="tool-caption">{view.caption}</div>}
-          {view.code ? <CodeBlock code={view.code.slice(0, TOOL_CODE_MAX)} language={view.language} /> : <div className="tool-empty">(sem conteúdo)</div>}
-          {m.result && (
-            <>
-              <div className="tool-section-label">resultado</div>
-              <pre className={`tool-result-pre${m.result.isError ? ' err' : ''}`}>{m.result.text.slice(0, TOOL_RESULT_MAX)}</pre>
-            </>
-          )}
-        </div>
+      {open && <ToolBody m={m} />}
+    </div>
+  )
+}
+
+/** A entrada legível e o resultado (o cartão aberto; também a linha do chat aberta). */
+export function ToolBody({ m }: { m: ToolUseMsg }): JSX.Element {
+  const view = toolInputView(m.name, m.input)
+  return (
+    <div className="tool-body">
+      {view.caption && <div className="tool-caption">{view.caption}</div>}
+      {view.code ? <CodeBlock code={view.code.slice(0, TOOL_CODE_MAX)} language={view.language} /> : <div className="tool-empty">(sem conteúdo)</div>}
+      {m.result && (
+        <>
+          <div className="tool-section-label">resultado</div>
+          <pre className={`tool-result-pre${m.result.isError ? ' err' : ''}`}>{m.result.text.slice(0, TOOL_RESULT_MAX)}</pre>
+        </>
       )}
     </div>
   )

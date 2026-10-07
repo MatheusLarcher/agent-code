@@ -116,6 +116,13 @@
 .pl-chat-float.minimized .message-list-wrap { flex: none; height: calc(5 * var(--pl-chat-line)); }
 .pl-chat-float.minimized .message-list { padding: 2px 14px; gap: 6px; }
 .pl-chat-float.minimized .bubble { padding: 3px 12px; }
+/* Minimizado não tem espaço para o trilho do turno (chatLook.css): as linhas encostam na borda. */
+.pl-chat-float.minimized .chat-step,
+.pl-chat-float.minimized .chat-live { padding-left: 0; }
+.pl-chat-float.minimized .chat-step::before,
+.pl-chat-float.minimized .chat-step::after,
+.pl-chat-float.minimized .chat-live::before { display: none; }
+.pl-chat-float.minimized .chat-live::after { position: static; flex: none; content: ''; width: 8px; height: 8px; border: 0; background: var(--accent); }
 .pl-chat-float.minimized .empty-state { display: none; }
 .pl-chat-float.minimized .composer { padding: 8px 10px 10px; }
 /* Teto de 3 linhas (+ o respiro de cima e de baixo); o piso de 1 linha é o do

@@ -12,6 +12,8 @@ import { useMemo, type CSSProperties, type ReactNode } from 'react'
 import { AUTO_MODEL } from '@shared/ipc'
 import { modelDisplayName } from '@shared/modelLabel'
 import { ChatRow, lastAnswerTsId, type ChatRowContext, type TtsControls } from '../components/ChatRows'
+import { AnimGateProvider, useAnimGate } from '../chatAnim'
+import { ChatLive } from '../components/ChatLive'
 import { ChatStepRow } from '../components/ChatStep'
 import { buildChatRows } from '../components/chatSteps'
 import { useChatDisplay } from '../components/chatDisplay'
@@ -41,9 +43,13 @@ export function TurnRows({ messages, busy, live = null, limit = 0, tts = null, q
   const rows = useMemo(() => buildChatRows(messages, { busy }), [messages, busy])
   const start = limit > 0 ? Math.max(0, rows.length - limit) : 0
   const lastTsId = lastAnswerTsId(messages)
-  const ctx = useMemo<ChatRowContext>(() => ({ resolveRef: null, planDir, lastTsId, tts, quote }), [planDir, lastTsId, tts, quote])
+  // A linha ao vivo só aparece sem o código ao vivo (abaixo); com ela, o passo em andamento não repete o status.
+  const liveLine = busy && !live
+  const ctx = useMemo<ChatRowContext>(() => ({ resolveRef: null, planDir, lastTsId, tts, quote, liveLine }), [planDir, lastTsId, tts, quote, liveLine])
+  // Só o que chega ao vivo anima (chatAnim); abrir a tela com o turno pronto não anima nada.
+  const animGate = useAnimGate(messages)
   return (
-    <>
+    <AnimGateProvider gate={animGate}>
       {start > 0 && <div className="load-more-hint">↑ {start === 1 ? '1 anterior' : `${start} anteriores`} neste turno</div>}
       {rows.slice(start).map((r) => {
         if (r.type === 'step') return <ChatStepRow key={r.key} step={r} ctx={ctx} />
@@ -55,17 +61,10 @@ export function TurnRows({ messages, busy, live = null, limit = 0, tts = null, q
         )
       })}
       {live && <ToolCard m={live} />}
-      {busy && !live && (
-        <div className="msg assistant">
-          <div className="bubble typing">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-        </div>
-      )}
+      {/* A mesma linha "ao vivo" do chat (ponto pulsando, o que faz agora e o tempo). */}
+      {liveLine && <ChatLive messages={messages} />}
       {messages.length === 0 && !live && !busy && <div className="msg system-note">Nada neste turno ainda.</div>}
-    </>
+    </AnimGateProvider>
   )
 }
 

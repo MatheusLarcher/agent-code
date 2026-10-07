@@ -2,8 +2,9 @@
 .messages-wrap { flex: 1 1 auto; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .messages {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
-  padding: 14px 12px 18px;
-  display: flex; flex-direction: column; gap: 10px;
+  /* 26px à esquerda: a coluna do mapa de perguntas (.question-map), para o traço não cair sobre o texto. */
+  padding: 14px 12px 18px 26px;
+  display: flex; flex-direction: column; gap: 14px;
   /* Sem rolagem suave: durante o streaming o scrollTop muda a cada quadro. */
 }
 .messages-loading, .messages-empty {
@@ -15,10 +16,12 @@
 .msg { flex: 0 0 auto; max-width: 88%; font-size: 15px; line-height: 1.55; word-break: break-word; }
 .msg-row { display: flex; flex-direction: column; align-self: flex-end; align-items: flex-end; max-width: 88%; gap: 4px; flex: 0 0 auto; }
 .msg-row .msg { max-width: 100%; }
+/* A sua mensagem: cartão escuro com borda e degradê quente (antes, o bloco laranja chapado). */
 .msg.user {
-  white-space: pre-wrap; padding: 10px 14px;
-  background: var(--accent); color: var(--on-accent);
-  border-radius: 16px 16px 4px 16px;
+  white-space: pre-wrap; padding: 11px 15px;
+  background: linear-gradient(180deg, #33261f, #2b231e); color: #f1e9e4;
+  border: 1px solid #5a3a2c; border-radius: 16px 16px 4px 16px;
+  box-shadow: 0 6px 18px -10px #000;
 }
 .msg.msg-highlight { animation: msgflash 2.2s ease-out; }
 @keyframes msgflash { 0%, 25% { box-shadow: 0 0 0 3px var(--text); } 100% { box-shadow: 0 0 0 0 transparent; } }
@@ -36,12 +39,10 @@
   font-size: 12px; padding: 4px 8px; border-radius: 8px; background: rgba(0, 0, 0, 0.12);
   border: 1px solid rgba(255, 255, 255, 0.1); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.msg.assistant {
-  align-self: flex-start; padding: 10px 14px;
-  background: var(--bg-3); border-radius: 16px 16px 16px 4px;
-}
-/* Narração intermediária ("Vou conferir…") — discreta como no PC; a resposta final fica cheia. */
-.msg.assistant.narration { background: transparent; padding: 2px 4px; font-size: 13px; color: var(--muted); }
+/* Texto do agente sem balão: o trilho do turno (turn.css) já diz de quem é. */
+.msg.assistant { align-self: flex-start; padding: 2px 0; background: transparent; }
+/* Narração intermediária ("Vou conferir…") — um tom abaixo; a resposta final fica cheia. */
+.msg.assistant.narration { font-size: 14px; color: #d6d3ce; }
 .msg.thinking { align-self: flex-start; color: var(--muted); font-size: 13px; border-left: 2px solid var(--line); padding-left: 10px; }
 .thinking-head { background: none; border: none; color: var(--muted); font-style: italic; padding: 2px 0; font-size: 12.5px; }
 .thinking-body { margin-top: 6px; white-space: pre-wrap; font-style: italic; }
@@ -127,7 +128,7 @@
 }
 .tool-result-pre.err { color: var(--err); }
 
-/* faixas: recuperação, trabalhando/Parar, plano de tarefas */
+/* faixas: recuperação, plano de tarefas (o parar fica na linha ao vivo do turno: turn.css) */
 .turn-recovery {
   flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 9px 12px;
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
@@ -139,17 +140,6 @@
 .turn-recovery-copy span { color: var(--muted); font-size: 11px; }
 .turn-recovery button { border: 0; border-radius: 8px; padding: 8px 9px; color: var(--accent); background: var(--accent-soft); font-size: 11.5px; }
 .turn-recovery button:last-child { color: var(--muted); background: transparent; }
-.busy-bar {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px; font-size: 13px; color: var(--muted);
-  background: var(--bg-2); border-top: 1px solid var(--line-soft);
-}
-.busy-bar.stalled { color: var(--warn); background: rgba(224, 164, 88, 0.12); }
-.busy-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stop-btn {
-  border: 1px solid rgba(217, 112, 112, 0.5); background: rgba(217, 112, 112, 0.12);
-  color: var(--err); border-radius: 9px; padding: 7px 12px; font-size: 12.5px; font-weight: 600;
-}
 .todo-plan {
   flex: 0 0 auto; margin: 6px 12px 0; border: 1px solid var(--line); border-radius: 12px;
   background: var(--bg-2); font-size: 13px; overflow: hidden;

@@ -7,6 +7,8 @@ import { makeRefResolver } from '../planning/cardRefs'
 import type { QuoteListApi } from './quoteComment/quoteBlocks'
 import { ChatRow, lastAnswerTsId, type ChatRowContext, type TtsControls } from './ChatRows'
 import { ChatStepRow } from './ChatStep'
+import { ChatLive } from './ChatLive'
+import { AnimGateProvider, useAnimGate } from '../chatAnim'
 import { buildChatRows, rowIndexOfUser } from './chatSteps'
 import { loadMoreText, useScrollWindow, WINDOW_PAGE } from './useScrollWindow'
 
@@ -67,6 +69,8 @@ export function MessageList({
 
   // A conversa em linhas (chatSteps): usuário, cada resposta (texto + linha-resumo), notas.
   const rows = useMemo(() => buildChatRows(messages, { busy }), [messages, busy])
+  // Só o que chega ao vivo anima (chatAnim); o histórico ao abrir a conversa entra pronto.
+  const animGate = useAnimGate(messages)
   // Only the last rows are rendered; near the top, one more page with the same
   // row kept in place (useScrollWindow). While reading history, rows arriving at
   // the end don't move the window start.
@@ -95,7 +99,7 @@ export function MessageList({
   // Estável entre renders (ChatRow e ChatStepRow são memo): um evento que não mexe
   // em nada disto re-renderiza só a linha cuja mensagem mudou.
   const rowCtx = useMemo<ChatRowContext>(
-    () => ({ resolveRef, planDir, lastTsId, busy, onRetry, tts, quote, onUseAccount }),
+    () => ({ resolveRef, planDir, lastTsId, busy, liveLine: busy, onRetry, tts, quote, onUseAccount }),
     [resolveRef, planDir, lastTsId, busy, onRetry, tts, quote, onUseAccount]
   )
 
@@ -182,18 +186,12 @@ export function MessageList({
     <QuestionMap messages={messages} scrollRatio={scrollRatio} activeId={activeMid} onSelect={(id) => setMapScroll({ id, seq: Date.now() })} />
     <div className="message-list" ref={scrollRef} onScroll={onScroll}>
       {hasOlder && <div className="load-more-hint">{loadMoreText(startIdx)}</div>}
-      {shown.map((r) =>
-        r.type === 'step' ? <ChatStepRow key={r.key} step={r} ctx={rowCtx} /> : <ChatRow key={r.key} m={r.msg} ctx={rowCtx} />
-      )}
-      {busy && (
-        <div className="msg assistant">
-          <div className="bubble typing">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-        </div>
-      )}
+      <AnimGateProvider gate={animGate}>
+        {shown.map((r) =>
+          r.type === 'step' ? <ChatStepRow key={r.key} step={r} ctx={rowCtx} /> : <ChatRow key={r.key} m={r.msg} ctx={rowCtx} />
+        )}
+      </AnimGateProvider>
+      {busy && <ChatLive messages={messages} />}
       <div ref={endRef} />
     </div>
       {showJump && (

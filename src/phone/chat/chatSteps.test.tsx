@@ -40,20 +40,29 @@ afterEach(() => {
 })
 
 describe('conversa no celular — resumo por resposta', () => {
-  it('linha recolhida por resposta; o toque abre só os cartões dela; a última gira com "agora: …"', () => {
+  it('linha recolhida por resposta; o toque abre uma linha por ação; o "agora" fica só na linha ao vivo', () => {
     const conv = { id: 'c1', title: 'Loja', cwd: '/p', busy: true, updatedAt: 1 } as ConvSummary
     client.store.set({ conversations: [conv], convId: 'c1', messages: MSGS, historyLoading: false, loaded: true })
     const { container } = render(<MessageList onRefresh={async () => undefined} />)
     const steps = [...container.querySelectorAll<HTMLElement>('.chat-step')]
     expect(steps).toHaveLength(2)
-    expect(container.querySelector('.tool-card')).toBeNull()
+    expect(container.querySelector('.tool-line')).toBeNull()
     expect(steps[0].querySelector('.c-sum')?.textContent).toBe('Procurou "send-btn" · leu Composer.tsx')
-    expect(steps[1].querySelector('.c-spin')).toBeTruthy()
-    expect(steps[1].querySelector('.c-sum')?.textContent).toBe('agora: editando Composer.tsx…')
+    // O passo em andamento não repete o status: sem spinner nem "agora: …" (isso é da linha ao vivo).
+    expect(steps[1].querySelector('.c-spin')).toBeNull()
+    expect(steps[1].textContent).not.toMatch(/agora:/)
+    expect(container.querySelector('.live-row .shimmer')?.textContent).toBe('Editando Composer.tsx…')
     fireEvent.click(steps[0].querySelector('.c-act')!)
-    expect([...container.querySelectorAll('.tool-card .tool-name')].map((n) => n.textContent)).toEqual(['Grep', 'Read'])
+    // Uma linha mono por ação, sem cartão nem pílula "done".
+    expect(container.querySelector('.tool-card, .tool-badge')).toBeNull()
+    const lines = [...container.querySelectorAll('.tool-line')]
+    expect(lines.map((l) => l.querySelector('.tl-k')?.textContent)).toEqual(['busca', 'leu'])
+    expect(lines.map((l) => l.querySelector('.tl-t')?.textContent)).toEqual(['send-btn', 'Composer.tsx'])
+    expect(lines.map((l) => l.querySelector('.tl-ok')?.textContent)).toEqual(['✓ 1', '✓ 1 l'])
+    fireEvent.click(lines[0].querySelector('.tl-row')!)
+    expect(lines[0].querySelector('.tool-body')).toBeTruthy()
     fireEvent.click(steps[0].querySelector('.c-act')!)
-    expect(container.querySelector('.tool-card')).toBeNull()
+    expect(container.querySelector('.tool-line')).toBeNull()
   })
 })
 

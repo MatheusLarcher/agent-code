@@ -13,6 +13,8 @@
  */
 import { Fragment, memo, useEffect, useState } from 'react'
 import { parseDownloads } from '@shared/ipc'
+import { modelDisplayName } from '@shared/modelLabel'
+import { useFreshOnce } from '../chatAnim'
 import { fileMeta, fmtSize } from '../files'
 import { InlineMediaText } from '../inlineMedia/InlineMediaText'
 import { createdPlanFile, PlanFileLink } from '../planning/PlanFileLink'
@@ -23,6 +25,7 @@ import { IconSpeaker, IconStopSmall } from './Icons'
 import { CardRefText, Markdown, type CardRefResolver } from './Markdown'
 import { QuotableMessage, type QuoteListApi } from './quoteComment/quoteBlocks'
 import { ToolCard } from './ToolCard'
+import './chatLook.css'
 
 /** Read-aloud controls passed down from App (TTS state lives there so audio
  *  survives message re-renders and conversation switches). */
@@ -50,6 +53,10 @@ export interface ChatRowContext {
   quote?: QuoteListApi
   /** "Continuar nessa conta" na sugestão de troca de conta. */
   onUseAccount?: (accountId: string, continueTask: boolean) => void
+  /** Dentro de um grupo de passos aberto (ChatStep): o cartão pronto mostra "✓ N" colado ao texto. */
+  inStep?: boolean
+  /** A linha ao vivo (ChatLive) está no fim da lista: o passo em andamento não repete spinner nem "agora: …". */
+  liveLine?: boolean
 }
 
 /** Last path segment, for the chip label. */
@@ -187,12 +194,14 @@ function AssistantRow({ m, ctx }: { m: AssistantMsg; ctx: ChatRowContext }): JSX
   const { clean, paths } = parseDownloads(m.text)
   const speaking = !!tts && tts.speakingId === m.id
   const listen = !!tts && !!m.answer && !!clean
+  // Texto que chegou ao vivo: palavra a palavra (BlurText). O histórico entra pronto.
+  const blur = useFreshOnce(m.id, 'text')
   return (
     <div className={`msg assistant ${m.answer ? '' : 'narration'} ${m.aborted ? 'aborted' : ''}`}>
       <div className="bubble">
         {clean && (
           <QuotableMessage api={quote} messageId={m.id} read={m.answer ? tts : null} source={clean}>
-            <Markdown text={clean} resolveRef={resolveRef} />
+            <Markdown text={clean} resolveRef={resolveRef} blur={blur} />
           </QuotableMessage>
         )}
         {paths.map((p, k) => (
@@ -272,26 +281,36 @@ export const ChatRow = memo(function ChatRow({ m, ctx }: { m: UIMessage; ctx: Ch
     case 'tool-use': {
       // Planejamento: arquivo que o agente criou no plano ganha link logo abaixo.
       const created = createdPlanFile(m.name, m.input, m.result, ctx.planDir)
-      if (!created) return <ToolCard m={m} />
+      if (!created) return <ToolCard m={m} check={ctx.inStep} />
       return (
         <Fragment>
-          <ToolCard m={m} />
+          <ToolCard m={m} check={ctx.inStep} />
           <PlanFileLink path={created} />
         </Fragment>
       )
     }
     case 'system':
+      // Sessão pronta: chips centralizados (modelo com o ponto verde, pasta em mono).
       return (
-        <div className="msg system-note">
-          Session ready · {m.model} · {m.cwd}
+        <div className="msg system-note chat-chips" title={`Session ready · ${m.model} · ${m.cwd}`}>
+          <span className="chat-chip">
+            <span className="chat-chip-dot" aria-hidden="true" />
+            <b>{modelDisplayName(m.model) || m.model}</b>
+          </span>
+          {m.cwd && <span className="chat-chip path">{m.cwd}</span>}
         </div>
       )
     case 'provider-switch':
-      return <div className="msg system-note" role="status">{m.text}</div>
+    case 'status':
+      return (
+        <div className="msg system-note chat-chips">
+          <span className="chat-chip" role="status">
+            {m.text}
+          </span>
+        </div>
+      )
     case 'account-switch':
       return <AccountSwitchNote event={m} onUseAccount={ctx.onUseAccount} />
-    case 'status':
-      return <div className="msg system-note" role="status">{m.text}</div>
     case 'result':
       // Not rendered: the answer is already in the chat and the cost is
       // shown in the token meter header.

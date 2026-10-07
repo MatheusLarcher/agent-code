@@ -1,6 +1,6 @@
 /**
- * Modelo, esforço e modos (Econ. / Loop / Rápido) da conversa aberta — os mesmos
- * seletores do composer do PC. Travados com a conversa ocupada.
+ * Modelo, esforço e o modo Rápido da conversa aberta — os mesmos seletores do
+ * composer do PC. Travados com a conversa ocupada.
  *
  * Com o dropdown nativo aberto, o retrato de 4 s não pode mexer no <select> (no
  * app antigo o rebuild fechava a escolha no meio): enquanto ele tem foco, a barra
@@ -8,7 +8,7 @@
  * <select> focado quando o diálogo nativo fecha, e a barra nunca mais acompanharia o PC.
  */
 import { useRef, useState } from 'react'
-import { client, toast } from '../app/runtime'
+import { client } from '../app/runtime'
 import { useStore } from '../core/store'
 import type { ConvSummary, ModelOption } from '../core/types'
 
@@ -40,12 +40,6 @@ export function ModelBar(): JSX.Element | null {
     setFocused(false)
   }
 
-  const toggle = (mode: 'economy' | 'loop' | 'fast'): void => {
-    const key = mode === 'economy' ? 'economyMode' : mode === 'loop' ? 'loopEnabled' : 'fastMode'
-    const on = !conv[key]
-    if (mode === 'loop' && on && conv.economyMode) return toast('Desative o modo econômico para ligar o loop.')
-    client.setMode(mode, on)
-  }
 
   return (
     <div className="model-bar">
@@ -84,14 +78,8 @@ export function ModelBar(): JSX.Element | null {
           ))}
         </select>
       )}
-      <button type="button" className={`mode-chip${conv.economyMode ? ' on' : ''}`} title="Modo econômico (menos tokens)" onClick={() => toggle('economy')}>
-        💰 Econ.
-      </button>
-      <button type="button" className={`mode-chip${conv.loopEnabled ? ' on' : ''}`} title="Permitir /loop nesta conversa" onClick={() => toggle('loop')}>
-        🔁 Loop
-      </button>
       {conv.fastModeAvailable && (
-        <button type="button" className={`mode-chip${conv.fastMode ? ' on' : ''}`} title="Modo rápido" onClick={() => toggle('fast')}>
+        <button type="button" className={`mode-chip${conv.fastMode ? ' on' : ''}`} title="Modo rápido" onClick={() => client.setMode('fast', !conv.fastMode)}>
           ↯ Rápido
         </button>
       )}

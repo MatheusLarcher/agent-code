@@ -92,12 +92,16 @@ describe('Prévia do agente ao passar o mouse', () => {
     const card = screen.getByTestId('office-preview')
     expect(card.querySelector('.o3d-turn-title')?.textContent).toBe('Carrinho no navegador')
     // No formato do chat resumido: o pedido e a resposta (sem texto) com a linha-resumo
-    // recolhida, girando com o "agora: …" — os cartões só abrem ao clique (aqui, só leitura).
+    // recolhida (o "agora" fica só na linha ao vivo, sem duplicar) — os cartões só abrem ao clique (aqui, só leitura).
     expect(card.querySelector('.msg.user')?.textContent).toContain('confere o carrinho')
     const line = card.querySelector<HTMLElement>('.chat-step .central-act')
     expect(line?.classList.contains('running')).toBe(true)
-    expect(line?.querySelector('.central-sum')?.textContent).toBe('Leu 8 arquivos · testou no navegador · agora: testando no navegador…')
-    expect(line?.querySelector('.central-count')?.textContent).toBe('10 ações')
+    expect(line?.querySelector('.central-sum')?.textContent).toBe('Leu 8 arquivos · testou no navegador')
+    expect(line?.querySelector('.central-spin')).toBeNull()
+    expect(card.querySelector('.chat-live-text')?.textContent).toBe('Testando no navegador…')
+    // As pílulas contam as 10 ações por tipo (o "N ações" saiu da linha do chat).
+    const pills = [...(line?.querySelectorAll('.chat-pill b') ?? [])].map((b) => Number(b.textContent))
+    expect(pills.reduce((a, b) => a + b, 0)).toBe(10)
     expect(card.querySelector('.tool-card')).toBeNull()
     // Até PREVIEW_MESSAGES linhas: este turno cabe inteiro (sem o aviso das de cima).
     expect(card.querySelectorAll('.message-list > *').length).toBeLessThanOrEqual(PREVIEW_MESSAGES + 1)

@@ -252,7 +252,7 @@ describe('CodeMonitor', () => {
     expect(chat.querySelector('.cm-chat-head')?.textContent).toContain('Agent principal')
     expect(chat.querySelector('.cm-chat-state')?.textContent).toBe('trabalhando')
     openSteps(chat) // o cartão fica atrás da linha-resumo da resposta (chat resumido)
-    expect(chat.querySelector('.tool-card .tool-name')?.textContent).toBe('Edit')
+    expect(chat.querySelector('.tool-card .tool-name')?.textContent).toBe('editou')
     // Um cabeçalho só: o compacto do painel, sem o do turno.
     expect(chat.querySelector('.o3d-turn-head')).toBeNull()
     expect(screen.getByRole('tablist', { name: 'Arquivos abertos' })).toBeTruthy()

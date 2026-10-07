@@ -15,18 +15,43 @@ import { isTextPreviewable } from '@shared/ipc'
 import { fileUrl } from '../fileUrl'
 import type { UIMessage } from '../types'
 import { useUI } from '../ui/UiProvider'
+import { CountUp, useFreshOnce } from '../chatAnim'
 import { CodeBlock } from './CodeBlock'
+import { resultCount } from './stepPills'
 import { describeTool, TOOL_CODE_MAX, TOOL_RESULT_MAX, toolBadge, toolErrored, toolInputView, writtenPath } from './toolDescribe'
 import { toolFilePath, useToolFileOpen } from './toolFileOpen'
+import { toolKind, toolTarget } from './toolLine'
 
 export type ToolUseMessage = Extract<UIMessage, { kind: 'tool-use' }>
 
-export function ToolCard({ m }: { m: ToolUseMessage }): JSX.Element {
+/** "✓ N" colado ao texto (grupo de passos do chat): o número sobe só no cartão que chegou ao vivo. */
+function ToolCheck({ m }: { m: ToolUseMessage }): JSX.Element {
+  const count = resultCount(m.name, m.result)
+  const animate = useFreshOnce(m.id, 'check')
+  return (
+    <span className="tool-check" title="pronto">
+      ✓
+      {count && (
+        <>
+          {' '}
+          <CountUp value={count.n} animate={animate} />
+          {count.unit}
+        </>
+      )}
+    </span>
+  )
+}
+
+export function ToolCard({ m, check = false }: { m: ToolUseMessage; check?: boolean }): JSX.Element {
   const [open, setOpen] = useState(false)
   const { notify } = useUI()
   const opener = useToolFileOpen()
   const openable = !!opener && toolFilePath(m) !== ''
+  // No grupo aberto do chat: UMA linha mono — rótulo pt + alvo + "✓ N", sem caixa (a pergunta segue cartão).
+  const line = check && m.name !== 'AskUserQuestion'
   const info = describeTool(m.name, m.input)
+  const name = line ? toolKind(m.name) : info.verb
+  const detail = line ? toolTarget(m.name, m.input) : info.detail
   const hasDiff = info.stats && (info.stats.added > 0 || info.stats.removed > 0)
   const errored = toolErrored(m.name, m.result)
   const badge = toolBadge(m.name, m.result)
@@ -60,8 +85,12 @@ export function ToolCard({ m }: { m: ToolUseMessage }): JSX.Element {
 
   const head = (
     <>
-      <span className="tool-name">{info.verb}</span>
-      {info.detail && <span className="tool-detail">{info.detail}</span>}
+      <span className="tool-name">{name}</span>
+      {detail && (
+        <span className="tool-detail" title={line ? detail : undefined}>
+          {detail}
+        </span>
+      )}
       {hasDiff && info.stats && (
         <span className="tool-diff">
           {info.stats.added > 0 && <span className="diff-add">+{info.stats.added}</span>}
@@ -78,12 +107,20 @@ export function ToolCard({ m }: { m: ToolUseMessage }): JSX.Element {
           ⬇️ Baixar
         </span>
       )}
-      <span className={`tool-badge ${badge.kind}`}>{badge.text}</span>
+      {line && badge.kind === 'ok' ? (
+        <ToolCheck m={m} />
+      ) : line ? (
+        <span className={`tool-check ${badge.kind}`} title={badge.text}>
+          {badge.kind === 'run' ? '…' : '✗'}
+        </span>
+      ) : (
+        <span className={`tool-badge ${badge.kind}`}>{badge.text}</span>
+      )}
     </>
   )
 
   return (
-    <div className={`tool-card ${info.isSkill ? 'tool-skill' : ''} ${errored ? 'tool-error' : ''}${openable ? ' tool-file' : ''}`}>
+    <div className={`tool-card ${info.isSkill ? 'tool-skill' : ''} ${errored ? 'tool-error' : ''}${openable ? ' tool-file' : ''}${line ? ' tool-line' : ''}`}>
       {openable && opener ? (
         <div className="tool-head tool-head-split">
           <button type="button" className="tool-caret-btn" aria-expanded={open} aria-label="Mostrar a entrada e o resultado" title="Mostrar a entrada e o resultado" onClick={() => setOpen((o) => !o)}>
