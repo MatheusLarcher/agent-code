@@ -18,6 +18,7 @@ export type {
   HandoffEnvioStatus
 } from '../../shared/handoffTracking'
 import type { TransferRecords } from './transferRecords'
+import type { BoardPrintRepository } from './boardPrintTypes'
 import type {
   ContextBlock,
   ContextSecretMask,
@@ -489,6 +490,9 @@ export interface BoardPoCreate {
   title: string
   status: BoardItemStatus
   reason: string
+  /** A pendência aponta para o cartão de origem (ver `BoardItem.parentId`).
+   *  Banco sem a coluna ignora o campo em vez de falhar. */
+  parentId?: string | null
 }
 
 export interface BoardQuery {
@@ -837,7 +841,20 @@ export interface HandoffEnvioQuery {
 
 /** `undefined` = não mexe; `null` limpa o campo anulável. */
 export type HandoffEnvioPatch = Partial<
-  Pick<HandoffEnvio, 'status' | 'motivo' | 'enviadoEm' | 'iniciadoEm' | 'concluidoEm' | 'atrasado' | 'conversationTitle'>
+  Pick<
+    HandoffEnvio,
+    | 'status'
+    | 'motivo'
+    | 'enviadoEm'
+    | 'iniciadoEm'
+    | 'concluidoEm'
+    | 'atrasado'
+    | 'conversationTitle'
+    // A faixa "Próximos prompts" (só envio que ainda não saiu): reordenar e editar.
+    | 'ordem'
+    | 'conteudo'
+    | 'conteudoHash'
+  >
 >
 
 export type HandoffEntregaPatch = Partial<
@@ -891,7 +908,8 @@ export interface PersistenceRepository
     ContextHistoryRepository,
     AgentInputQueueRepository,
     ConversationOutboxRepository,
-    HandoffRepository {
+    HandoffRepository,
+    BoardPrintRepository {
   readonly backend: StorageBackend
 
   initialize(): Promise<void>

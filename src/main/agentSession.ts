@@ -1,7 +1,8 @@
 import { query, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
 import { AsyncQueue } from './asyncQueue'
-import { createAppMcpServer, APP_CALL_HINT, APP_RESTART_HINT } from './appTools'
+import { createAppMcpServer, APP_CALL_HINT, APP_PRINT_HINT, APP_RESTART_HINT } from './appTools'
 import { CallIds, emitOfficeCall } from './officeCallRuntime'
+import { attachPrintFromAgent } from './board/printRuntime'
 import { OFFICE_CALL_TOOL } from '../shared/officeCall'
 import { appRestart } from './appRestartRuntime'
 import type { RestartActivity } from './appRestart'
@@ -10,6 +11,7 @@ import { claudeAuthExpiry, isClaudeAuthFailure } from './authExpiry'
 import { stallAbortText, stallVerdict, STALL_POLL_MS } from './stallWatch'
 import { logSession } from './sessionLog'
 import { ToolInputStreams, type RawStreamEvent } from './toolInputStream'
+import { AgentTaskTranslator } from './agentTasks'
 import { MirrorRepair, MIRROR_REPAIR_SEND_TIMEOUT_MS, mirrorRepairText } from './mirrorRepair'
 import { composeRequestContext, composeUserPrompt } from './promptEnvelope'
 import { presenceRemove, presenceSnapshot, presenceUpdate, recentTopics, renderCrossConversation, renderTopics, renderWorkingNow } from './crossConversation'
@@ -778,6 +780,8 @@ export class AgentSession {
   private turnActive = false
   private idleWaiters = new Set<() => void>()
   private mirrorFailed = false
+  /** `system/task_*` → evento `agent-task` (subagente em segundo plano; ver agentTasks.ts). */
+  private readonly agentTasks = new AgentTaskTranslator()
   /** Reparo automático do espelho após `mirror_error` (ver mirrorRepair.ts). */
   private mirrorRepair: MirrorRepair | null = null
   private mirrorRepairSessionId: string | null = null
@@ -1045,7 +1049,9 @@ export class AgentSession {
         restart: this.opts.planning ? undefined : this.restartRegistration?.request,
         cwd: this.opts.cwd,
         callId: (arquivo) => this.callIds.take(arquivo),
-        onCall: (c) => emitOfficeCall({ id: c.id ?? `call-${Date.now()}`, convId: this.opts.convId, cwd: this.opts.cwd, path: c.path, mensagem: c.mensagem, at: Date.now() })
+        onCall: (c) => emitOfficeCall({ id: c.id ?? `call-${Date.now()}`, convId: this.opts.convId, cwd: this.opts.cwd, path: c.path, mensagem: c.mensagem, at: Date.now() }),
+        // O print da tarefa visual no cartão (board/printAttach.ts); o Agent Manager não tem cartão.
+        attachPrint: this.opts.planning ? undefined : (p) => attachPrintFromAgent({ ...p, conversationId: this.opts.convId, cwd: this.opts.cwd })
       })
     }
     if (process.platform === 'win32') {
@@ -1143,7 +1149,7 @@ export class AgentSession {
     const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     if (memorySnapshot) append += `\n\n${memorySnapshot.catalog}`
-    append += `\n\n${APP_RESTART_HINT}\n\n${APP_CALL_HINT}`
+    append += `\n\n${APP_RESTART_HINT}\n\n${APP_CALL_HINT}\n\n${APP_PRINT_HINT}`
     if (ledger) append += `\n\n${TASKS_HINT}`
     // Senhas em texto puro no prompt, só com o interruptor ligado. Vai no system
     // prompt, e não anexado a cada mensagem, para a senha aparecer UMA vez por
@@ -1350,6 +1356,8 @@ export class AgentSession {
           if (input.hook_event_name !== 'PreToolUse') return {}
           const name = input.tool_name
           if (name === OFFICE_CALL_TOOL) this.callIds.note(input.tool_input, input.tool_use_id)
+          // Dentro de subagente: liga o agent_id à trilha (fim pelo SubagentStop).
+          if (input.agent_id) this.agentTasks.noteHookTool(input.agent_id, input.tool_use_id)
           if (appRestart?.reserved && name !== 'mcp__app__app_restart') {
             return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
               permissionDecisionReason: 'Reinício preparado. Termine o turno sem iniciar outro trabalho.' } }
@@ -1404,6 +1412,12 @@ export class AgentSession {
             this.toolsInFlight.delete(input.tool_use_id)
             this.markActivity()
           }
+          return {}
+        }] }],
+        // Fim do subagente pelo hook: rede de segurança do task_notification,
+        // com dedupe no tradutor (agentTasks.ts). Nunca altera o subagente.
+        SubagentStop: [{ hooks: [async (input) => {
+          this.emitSubagentStop(input)
           return {}
         }] }]
       },
@@ -2678,6 +2692,10 @@ ${lines}
               description: task.description
             }))
           })
+        } else {
+          // task_started/progress/updated/notification: o ciclo da tarefa (agentTasks.ts).
+          const task = this.agentTasks.translate(message)
+          if (task) this.emit(task)
         }
         break
 
@@ -2711,6 +2729,8 @@ ${lines}
         }
         const blocks = message.message.content as unknown as AssistantBlock[]
         const track = trackOf(message, parentToolUseId)
+        // Passo de subagente: o SubagentStop acha a trilha por ele (agentTasks.ts).
+        if (parentToolUseId) this.agentTasks.noteSteps(blocks, parentToolUseId)
         // O modelo que REALMENTE respondeu (no Automático o seletor guarda um
         // sentinela; na troca por cota o modelo muda no meio da tarefa).
         const model = this.responseModel(message)
@@ -2911,6 +2931,12 @@ ${lines}
     this.toolsInFlight.clear()
     for (const resolve of this.idleWaiters) resolve()
     this.idleWaiters.clear()
+  }
+
+  /** Hook `SubagentStop` → `agent-task` de fim, se o SDK ainda não fechou a tarefa. */
+  private emitSubagentStop(input: unknown): void {
+    const ended = this.agentTasks.fromSubagentStop(input)
+    if (ended) this.emit(ended)
   }
 
   private handleStreamEvent(ev: RawStreamEvent, parentToolUseId: string | null): void {

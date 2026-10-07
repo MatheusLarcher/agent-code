@@ -11,7 +11,18 @@ import type { CodePage } from './codePage'
 
 type Ctx = CanvasRenderingContext2D
 
-const C = {
+/**
+ * Outra coisa no lugar do editor — a última ação do agente (actionPaint.ts):
+ * a aba ativa dela (`tab`; sem, as abas dos arquivos), o texto à direita da
+ * barra de status e o desenho da área do editor.
+ */
+export interface EditorView {
+  tab?: { label: string; color: string; italic?: boolean }
+  status: string
+  paint(ctx: Ctx, x: number, y: number, w: number, h: number): void
+}
+
+export const C = {
   title: '#1f1f1f',
   activity: '#2c2c2c',
   side: '#252526',
@@ -63,7 +74,7 @@ export function tokenize(line: string): Array<[string, string]> {
 }
 
 /** Cor do glifo do arquivo pela extensão (a "etiqueta" do explorador). */
-function fileColor(name: string): string {
+export function fileColor(name: string): string {
   const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
   if (ext === 'ts' || ext === 'tsx') return '#3178c6'
   if (ext === 'js' || ext === 'jsx' || ext === 'mjs') return '#f1e05a'
@@ -75,11 +86,48 @@ function fileColor(name: string): string {
   return '#8b8b8b'
 }
 
-/** Desenha a janela inteira em `w`×`h` (unidades do canvas; quem chama põe a escala). `accent` = cor da sala. */
-export function paintCode(ctx: Ctx, page: CodePage, title: string, busy: boolean, accent: string, w: number, h: number): void {
+/**
+ * Linhas de código com números (o editor): começam em `firstLine`; `caret`, o
+ * cursor no fim da última. Corta no retângulo `x,y,w,h`.
+ */
+export function paintLines(ctx: Ctx, code: readonly string[], firstLine: number, caret: boolean, x: number, y: number, w: number, h: number): void {
+  const mono = (size: number): string => `${size}px ${chatPalette().mono}`
+  const gw = 30
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x, y, w, h)
+  ctx.clip()
+  const rows = Math.min(code.length, Math.floor((h - 6) / LINE_H))
+  for (let i = 0; i < rows; i++) {
+    const ly = y + 5 + i * LINE_H + LINE_H / 2
+    ctx.font = mono(9.5)
+    ctx.textAlign = 'right'
+    ctx.fillStyle = i === rows - 1 && caret ? '#c6c6c6' : C.gutter
+    ctx.fillText(String(firstLine + i), x + gw - 6, ly)
+    ctx.textAlign = 'left'
+    ctx.font = mono(10)
+    let lx = x + gw + 4
+    for (const [t, color] of tokenize(code[i])) {
+      if (lx > x + w) break
+      ctx.fillStyle = color
+      ctx.fillText(t, lx, ly)
+      lx += ctx.measureText(t).width
+    }
+    if (i === rows - 1 && caret) {
+      ctx.fillStyle = '#aeafad'
+      ctx.fillRect(Math.min(lx + 1, x + w - 3), ly - 6, 1.5, 12)
+    }
+  }
+  ctx.restore()
+}
+
+/**
+ * Desenha a janela inteira em `w`×`h` (unidades do canvas; quem chama põe a escala). `accent` = cor da sala.
+ * `view`: a última ação no lugar do editor (aba, status e área do editor); sem, o código.
+ */
+export function paintCode(ctx: Ctx, page: CodePage, title: string, busy: boolean, accent: string, w: number, h: number, view?: EditorView): void {
   const p = chatPalette()
   const ui = (size: number, weight = ''): string => `${weight} ${size}px ${p.font}`.trim()
-  const mono = (size: number): string => `${size}px ${p.mono}`
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
 
@@ -88,7 +136,8 @@ export function paintCode(ctx: Ctx, page: CodePage, title: string, busy: boolean
   ctx.fillRect(0, 0, w, TITLE_H)
   ctx.font = ui(10)
   ctx.fillStyle = C.dim
-  const head = ellipsize(ctx, `${page.files[0]?.name ? `${page.files[0].name} — ` : ''}${title || 'Agente'} — Visual Studio Code`, w - 120)
+  const active = view?.tab?.label ?? page.files[0]?.name
+  const head = ellipsize(ctx, `${active ? `${active} — ` : ''}${title || 'Agente'} — Visual Studio Code`, w - 120)
   ctx.fillText(head, (w - ctx.measureText(head).width) / 2, TITLE_H / 2)
   ctx.fillStyle = '#3c8dde'
   ctx.fillRect(7, 5, 8, 8)
@@ -137,9 +186,13 @@ export function paintCode(ctx: Ctx, page: CodePage, title: string, busy: boolean
   ctx.fillStyle = C.side
   ctx.fillRect(ex, top, ew, TAB_H)
   let tx = ex
-  ctx.font = ui(10)
-  for (const [i, f] of page.files.slice(0, 3).entries()) {
-    const label = ellipsize(ctx, f.name, 92)
+  const tabs = [
+    ...(view?.tab ? [view.tab] : []),
+    ...page.files.map((f) => ({ label: f.name, color: fileColor(f.name), italic: false }))
+  ].slice(0, 3)
+  for (const [i, t] of tabs.entries()) {
+    ctx.font = t.italic ? `italic ${ui(10)}` : ui(10)
+    const label = ellipsize(ctx, t.label, 92)
     const tw = ctx.measureText(label).width + 30
     if (tx + tw > w) break
     ctx.fillStyle = i === 0 ? C.editor : C.tabOff
@@ -148,7 +201,7 @@ export function paintCode(ctx: Ctx, page: CodePage, title: string, busy: boolean
       ctx.fillStyle = accent
       ctx.fillRect(tx, top, tw, 1.5)
     }
-    ctx.fillStyle = fileColor(f.name)
+    ctx.fillStyle = t.color
     ctx.fillRect(tx + 8, top + TAB_H / 2 - 3, 6, 6)
     ctx.fillStyle = i === 0 ? '#ffffff' : C.dim
     ctx.fillText(label, tx + 19, top + TAB_H / 2)
@@ -161,7 +214,9 @@ export function paintCode(ctx: Ctx, page: CodePage, title: string, busy: boolean
   const ey = top + TAB_H
   ctx.fillStyle = C.editor
   ctx.fillRect(ex, ey, ew, bottom - ey)
-  if (page.code.length === 0) {
+  if (view) {
+    view.paint(ctx, ex, ey, ew, bottom - ey)
+  } else if (page.code.length === 0) {
     ctx.font = ui(30, '700')
     ctx.fillStyle = '#2a2a2a'
     const mark = '{ }'
@@ -171,33 +226,7 @@ export function paintCode(ctx: Ctx, page: CodePage, title: string, busy: boolean
     const hint = busy ? 'Pensando…' : 'Aguardando a próxima edição'
     ctx.fillText(hint, ex + (ew - ctx.measureText(hint).width) / 2, (ey + bottom) / 2 + 20)
   } else {
-    const gw = 30
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(ex, ey, ew, bottom - ey)
-    ctx.clip()
-    const rows = Math.min(page.code.length, Math.floor((bottom - ey - 6) / LINE_H))
-    for (let i = 0; i < rows; i++) {
-      const y = ey + 5 + i * LINE_H + LINE_H / 2
-      ctx.font = mono(9.5)
-      ctx.textAlign = 'right'
-      ctx.fillStyle = i === rows - 1 && page.pending ? '#c6c6c6' : C.gutter
-      ctx.fillText(String(page.firstLine + i), ex + gw - 6, y)
-      ctx.textAlign = 'left'
-      ctx.font = mono(10)
-      let x = ex + gw + 4
-      for (const [t, color] of tokenize(page.code[i])) {
-        if (x > w) break
-        ctx.fillStyle = color
-        ctx.fillText(t, x, y)
-        x += ctx.measureText(t).width
-      }
-      if (i === rows - 1 && page.pending) {
-        ctx.fillStyle = '#aeafad'
-        ctx.fillRect(Math.min(x + 1, w - 3), y - 6, 1.5, 12)
-      }
-    }
-    ctx.restore()
+    paintLines(ctx, page.code, page.firstLine, page.pending, ex, ey, ew, bottom - ey)
   }
 
   // Barra de status.
@@ -208,6 +237,6 @@ export function paintCode(ctx: Ctx, page: CodePage, title: string, busy: boolean
   ctx.font = ui(9)
   ctx.fillStyle = '#ffffff'
   ctx.fillText('⎇ main', ACT_W + 7, bottom + STATUS_H / 2)
-  const right = busy ? '● trabalhando' : `${page.files.length} arquivo${page.files.length === 1 ? '' : 's'}`
+  const right = ellipsize(ctx, view?.status ?? (busy ? '● trabalhando' : `${page.files.length} arquivo${page.files.length === 1 ? '' : 's'}`), w - ACT_W - 80)
   ctx.fillText(right, w - 8 - ctx.measureText(right).width, bottom + STATUS_H / 2)
 }

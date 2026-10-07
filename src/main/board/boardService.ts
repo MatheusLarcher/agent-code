@@ -89,6 +89,10 @@ export interface BoardServiceDeps {
    * Devolve `false` quando não há sessão viva (nada a interromper).
    */
   interruptSession?(convId: string): Promise<boolean>
+  /** Esta pasta (deste PC) tem quadro e pode ter pendência: o vigia do git
+   *  (po/poCommitWatch.ts) passa a olhá-la. Chamado ao ler o quadro e ao nascer
+   *  uma pendência. */
+  onProject?(cwd: string): void
 }
 
 
@@ -162,14 +166,17 @@ export class BoardService {
     }
     // Os dois jeitos de um turno acabar: `result` é o fim normal, `error` é o
     // que morreu no meio. No `error` ninguém está mais trabalhando; no `result`,
-    // um subagente delegado pode estar (ver `closeTurn`).
+    // um subagente delegado pode estar (ver `closeTurn`). O Stop do usuário (e a
+    // cota que acaba no meio) chega como `result` com `isError`: é turno
+    // INTERROMPIDO, como o `error` — o cartão volta com o selo "Interrompido", e
+    // o PO nem fecha esse turno (ver `Po.observe`).
     if (event.kind === 'result' || event.kind === 'error') {
       if (!this.poOn()) {
         this.turnEnds.set(convId, (this.turnEnds.get(convId) ?? 0) + 1)
         return
       }
-      const delegated = event.kind === 'result' && this.background.has(convId)
-      this.closeTurn(convId, cwd, event.kind, delegated)
+      const kind: BoardTurnEndKind = event.kind === 'error' || event.isError ? 'error' : 'result'
+      this.closeTurn(convId, cwd, kind, kind === 'result' && this.background.has(convId))
     }
   }
 
@@ -207,6 +214,13 @@ export class BoardService {
    *  outra fila — e, como ela, existe para o teste não depender de relógio. */
   async turnClosed(convId: string): Promise<void> {
     await this.closures.get(convId)?.catch(() => undefined)
+  }
+
+  /** Os ids que o ÚLTIMO fim de turno da conversa rebaixou, quando este
+   *  processo o viu (`null`: não viu). O fechamento do PO que roda DEPOIS dele
+   *  (fila do cooldown) julga esses cartões como os "em andamento". */
+  reopenedAtLastTurnEnd(convId: string): ReadonlySet<string> | null {
+    return this.lastReopened.get(convId) ?? null
   }
 
   /**
@@ -375,7 +389,9 @@ export class BoardService {
     // respostas diferentes conforme quem perguntou. Pulada quando o pedido já
     // é por dispensados: não faz sentido expirar o que se está tentando ver.
     if (!options.includeDismissed) await this.expireOldCompleted(repository, projectId)
-    return repository.listBoardItems({ projectIds: [projectId], ...options })
+    const items = await repository.listBoardItems({ projectIds: [projectId], ...options })
+    this.deps.onProject?.(cwd)
+    return items
   }
 
   /**
@@ -425,6 +441,9 @@ export class BoardService {
     if (!repository) return null
     const item = await repository.createBoardPoItem(input)
     this.deps.onChanged?.(item.projectId)
+    // Pendência nova: a pasta entra na vigia do git mesmo que uma checagem
+    // anterior a tenha tirado por falta de pendência.
+    if (input.parentId) this.deps.onProject?.(input.projectCwd)
     return item
   }
 

@@ -95,7 +95,12 @@ import type { TypeSafePauseStatus } from './typesafePause'
 import type { ChromeBridgeStatus } from './chromeBridge'
 import type { OfficeApi } from './officeApi'
 import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from './central'
-import type { HandoffEnvio } from './handoffTracking'
+import type { HandoffEnvio, HandoffQueueDecision, HandoffQueueItem } from './handoffTracking'
+import type { HandoffProjectAction, HandoffProjectSnapshot } from './handoffProject'
+import type { PoAuthorizationMap } from './poAuthorization'
+import type { BoardPrintImageResult, BoardPrintsResult } from './boardPrints'
+import type { PoChatMessage } from './poChat'
+import type { ProjectColorMap } from './projectColor'
 
 /** Um prompt do handoff a registrar: o arquivo de _handoff/ e o texto EXATO enviado. */
 export interface HandoffRegisterPrompt {
@@ -138,10 +143,70 @@ export interface HandoffCorrectEntregaRequest {
 /** Devolve o envio-pai já reavaliado. */
 export type HandoffCorrectEntregaResult = { ok: true; envio: HandoffEnvio } | { ok: false; message: string }
 
+/** Channels.handoffQueueGate. `force`: o "Enviar mesmo assim" (solta mesmo com o anterior não concluído). */
+export interface HandoffQueueGateRequest {
+  conversationId: string
+  force?: boolean
+}
+export type HandoffQueueGateResult = { ok: true; decision: HandoffQueueDecision } | { ok: false; message: string }
+
+/** Channels.handoffQueueDispatched: `dispatched: false` = já tinha saído (não mande de novo). */
+export interface HandoffQueueDispatchedRequest {
+  conversationId: string
+  envioId: string
+}
+export type HandoffQueueDispatchedResult = { ok: true; dispatched: boolean } | { ok: false; message: string }
+
+/** Channels.handoffQueueList: sem `projectCwd`, todas as pastas. */
+export interface HandoffQueueListRequest {
+  projectCwd?: string
+}
+export type HandoffQueueListResult = { ok: true; items: HandoffQueueItem[] } | { ok: false; message: string }
+
 /** Main → renderer (Channels.handoffChanged): algo mudou nos envios daquela conversa — releia. */
 export interface HandoffChangedMsg {
   conversationId: string
 }
+
+/** Channels.handoffProjectStatus: a foto da fila do projeto (todas as pastas deste PC). */
+export type HandoffProjectStatusResult = { ok: true; snapshot: HandoffProjectSnapshot } | { ok: false; message: string }
+
+/** Channels.handoffProjectAction: a ação do usuário, na conversa do plano. */
+export interface HandoffProjectActionRequest {
+  conversationId: string
+  acao: HandoffProjectAction
+}
+export type HandoffProjectActionResult = { ok: true } | { ok: false; message: string }
+
+/** Channels.handoffProjectReply: `stored: false` = a conversa está livre e a mensagem pode sair. */
+export interface HandoffProjectReplyRequest {
+  conversationId: string
+  texto: string
+}
+export type HandoffProjectReplyResult = { ok: true; stored: boolean } | { ok: false; message: string }
+
+/** Channels.handoffQueueEdit: só prompt que ainda não saiu. */
+export type HandoffQueueEditRequest = { envioId: string; acao: 'tirar' } | { envioId: string; acao: 'editar'; conteudo: string }
+/** Resultado das ações da faixa (editar, reordenar). */
+export type HandoffQueueEditResult = { ok: true } | { ok: false; message: string }
+
+/** Channels.handoffQueueReorder: os prompts de UM plano, na ordem nova. */
+export interface HandoffQueueReorderRequest {
+  conversationId: string
+  envioIds: string[]
+}
+
+/** Channels.handoffProjectReorder: os planos da pasta, na ordem nova. */
+export interface HandoffProjectReorderRequest {
+  projectCwd: string
+  loteIds: string[]
+}
+
+/** Channels.handoffProjectDirty: `files: null` = sem git (não deu para conferir). */
+export type HandoffProjectDirtyResult = { ok: true; files: string[] | null } | { ok: false; message: string }
+
+/** Channels.poAuthorizationList. */
+export type PoAuthorizationListResult = { ok: true; authorizations: PoAuthorizationMap } | { ok: false; message: string }
 
 /** The surface exposed on `window.api` by the preload script. */
 /** A window.api; a parte do Escritório está em officeApi.ts e a do detector de travadas em FreezeLogApi. */
@@ -200,6 +265,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   openInEditor(dir: string): Promise<{ ok: boolean; message: string }>
   /** Open a project folder in the OS file explorer. Returns a status. */
   openInFolder(dir: string): Promise<{ ok: boolean; message: string }>
+  /** A memória ou o arquivo do projeto da conversa: o Explorador com ele selecionado ('folder') ou o programa padrão ('open'). Só no PC. */
+  revealFile(req: import('./ipc').RevealFileRequest): Promise<import('./ipc').RevealFileResult>
   /** Live "@" autocomplete: files/folders under `root` matching `query` (≤ limit hits). */
   mentionSearch(root: string, query: string): Promise<MentionHit[]>
   /** "/" autocomplete: skills available to the agent (project + active cache + user-level). */
@@ -212,6 +279,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   projectDir(root: string, rel: string): Promise<ProjectDirListing>
   /** Icon found inside the project folder (data URL), or null when it has none. */
   projectIcon(root: string): Promise<string | null>
+  /** Fixed project color per cwd (absolute paths, max 200); detected and pinned in main. */
+  projectColors(cwds: string[]): Promise<ProjectColorMap>
   /** Save a copy of a file (created by the agent) to Downloads and reveal it. */
   downloadFile(path: string): Promise<{ ok: boolean; message: string; saved?: string }>
   /** Read the content of a local file (e.g. for previewing in the UI). */
@@ -267,6 +336,27 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   boardMove(id: string, toStatus: BoardItemStatus): Promise<{ ok: boolean; message?: string }>
   /** A linha do tempo de um cartão — só buscada quando o detalhe abre. */
   boardItemEvents(boardItemId: string): Promise<BoardItemEvent[]>
+  /** Prints dos cartões (miniaturas): do projeto inteiro (`projectCwd`) ou de um cartão (`boardItemId`). Nada lança. */
+  boardPrints(query: { projectCwd?: string; boardItemId?: string }): Promise<BoardPrintsResult>
+  /** O print grande (no clique da miniatura). */
+  boardPrintImage(id: string): Promise<BoardPrintImageResult>
+  /** "Fala, PO": a conversa guardada do projeto. */
+  poChatHistory(req: { projectCwd: string }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }>
+  /** "Fala, PO": pergunta e devolve a conversa inteira (com a resposta). Nada lança. */
+  poChatAsk(req: { projectCwd: string; question: string }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }>
+  /** "Verificar de verdade" a resposta `messageId` (minutos; resolve no fim). */
+  poChatVerify(req: { projectCwd: string; messageId: string }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }>
+  poChatCancel(req: { projectCwd: string }): Promise<{ ok: boolean }>
+  /** Aplica a correção `index` da resposta verificada (só no clique). */
+  poChatApply(req: { projectCwd: string; messageId: string; index: number }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }>
+  /** "Mandar fazer" aprovado: vai para a conversa dona, ou para a nova (`conversationId`). */
+  poChatSend(req: {
+    projectCwd: string
+    messageId: string
+    index: number
+    conversationId?: string
+    conversationTitle?: string
+  }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }>
   /** O quadro daquele projeto mudou (o agente avançou, ou o PO corrigiu). */
   onBoardChanged(cb: (msg: { projectId: string }) => void): () => void
   /** Tela de Planejamento (pasta de dados do app: <dataDir>/planning/<projeto>/<slug>/;
@@ -302,6 +392,34 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   handoffList(req?: HandoffListRequest): Promise<HandoffListResult>
   /** Correção manual de uma entrega (concluir/reabrir); o envio é reavaliado. Nada lança. */
   handoffCorrectEntrega(req: HandoffCorrectEntregaRequest): Promise<HandoffCorrectEntregaResult>
+  /** Fila do quadro: espera o quadro e o acompanhamento assentarem e diz se o próximo prompt sai. Nada lança. */
+  handoffQueueGate(req: HandoffQueueGateRequest): Promise<HandoffQueueGateResult>
+  /** Fila do quadro: marca pelo id o envio que o despachante vai mandar. Nada lança. */
+  handoffQueueDispatched(req: HandoffQueueDispatchedRequest): Promise<HandoffQueueDispatchedResult>
+  /** Fila do quadro: os prompts que esperam, com estado e motivo (faixa "Próximos prompts"). Nada lança. */
+  handoffQueueList(req?: HandoffQueueListRequest): Promise<HandoffQueueListResult>
+  /** Fila do projeto: a foto de todas as pastas deste PC. Nada lança. */
+  handoffProjectStatus(): Promise<HandoffProjectStatusResult>
+  /** Fila do projeto: a ação do usuário (o usuário vence sempre). Nada lança. */
+  handoffProjectAction(req: HandoffProjectActionRequest): Promise<HandoffProjectActionResult>
+  /** Fila do projeto: guarda a resposta do usuário no A com outro plano na vez; o PO decide. Nada lança. */
+  handoffProjectReply(req: HandoffProjectReplyRequest): Promise<HandoffProjectReplyResult>
+  /** A foto nova da fila do projeto. */
+  onHandoffProjectChanged(cb: (snapshot: HandoffProjectSnapshot) => void): () => void
+  /** Faixa "Próximos prompts": tirar da fila ou editar o texto. Nada lança. */
+  handoffQueueEdit(req: HandoffQueueEditRequest): Promise<HandoffQueueEditResult>
+  /** Faixa: reordena os prompts de um plano. Nada lança. */
+  handoffQueueReorder(req: HandoffQueueReorderRequest): Promise<HandoffQueueEditResult>
+  /** Faixa: reordena os planos de uma pasta. Nada lança. */
+  handoffProjectReorder(req: HandoffProjectReorderRequest): Promise<HandoffQueueEditResult>
+  /** Faixa: o que a pasta do plano tem sem commit. Nada lança. */
+  handoffProjectDirty(req: { conversationId: string }): Promise<HandoffProjectDirtyResult>
+  /** As autorizações do PO (commit/push), por conversa. Nada lança. */
+  poAuthorizationList(): Promise<PoAuthorizationListResult>
+  /** O "Revogar" do chip. Nada lança. */
+  poAuthorizationRevoke(req: { conversationId: string }): Promise<{ ok: true } | { ok: false; message: string }>
+  /** A foto nova das autorizações. */
+  onPoAuthorizationsChanged(cb: (map: PoAuthorizationMap) => void): () => void
   /** O acompanhamento gravou algo nos envios de uma conversa — releia. */
   onHandoffChanged(cb: (msg: HandoffChangedMsg) => void): () => void
   /** Registra prompts como enviados/substituídos/marcados em _handoff/enviados.json;
@@ -309,6 +427,9 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   planningMarkHandoffsSent(
     req: PlanningRef & { entries: PlanningHandoffSentMark[] }
   ): Promise<PlanningResult<{ sent: PlanningHandoffSentDto[] }>>
+  /** Move os prompts ANTIGOS não enviados para _handoff/_descartados/ (todos, ou só
+   *  `names`); devolve os movidos. Prompt enviado nunca sai. Só depois de perguntar. */
+  planningDiscardHandoffs(req: PlanningRef & { names?: string[] }): Promise<PlanningResult<{ discarded: string[] }>>
   /** Importa arquivos para <plano>/midia/ (nome saneado): arrastado do Explorer vai
    *  por `{ path }` (getPathForFile), colado vai por `{ name, data }` em base64.
    *  Devolve as mídias novas, na ordem de `files`. */
@@ -443,7 +564,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
    *  (ocioso, handoff pronto, lease solto), sem sessão viva, ou no prazo máximo.
    *  A fila só manda o próximo item depois disto. Nunca rejeita. */
   waitTurnEnd(convId: string): Promise<TurnEndWait>
-  interrupt(convId: string): Promise<AgentInterruptResult>
+  /** `restart`: a troca silenciosa de sessão (config nova entre turnos) — não é o Stop do usuário. */
+  interrupt(convId: string, opts?: { restart?: boolean }): Promise<AgentInterruptResult>
   /** Toggle "allow all" on a conversation's running session. */
   setBypass(convId: string, on: boolean): Promise<void>
   respondPermission(convId: string, res: PermissionResponse): Promise<void>

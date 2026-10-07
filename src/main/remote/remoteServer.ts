@@ -19,6 +19,7 @@ import type {
   RemotePairedDevice,
   RemoteStatePayload
 } from '../../shared/ipc'
+import type { ProjectColorMap } from '../../shared/projectColor'
 
 /**
  * LAN bridge that lets a phone drive the same Claude Code sessions running on
@@ -72,6 +73,8 @@ export interface RemoteServerDeps {
   onCentralChoose?: (choice: RemoteCentralChoose) => void
   /** Os arquivos 3D do Escritório (resources/office-agents: <nome>.glb / .bin), para o escritório do celular. */
   officeAgentFile?: (name: string) => Promise<Uint8Array | null>
+  /** Cor fixa dos projetos já resolvida (síncrono; o que falta é detectado em segundo plano). */
+  projectColors?: (cwds: string[]) => ProjectColorMap
 }
 
 const DEFAULT_PORT = 8765
@@ -470,6 +473,18 @@ export class RemoteServer {
     return out
   }
 
+  /** Cor fixa de cada projeto das conversas e da lista de projetos (só as já resolvidas). */
+  private projectColors(): ProjectColorMap {
+    if (!this.deps.projectColors) return {}
+    const cwds = new Set<string>(this.state.projects ?? [])
+    for (const c of this.state.conversations) if (c.cwd) cwds.add(c.cwd)
+    try {
+      return this.deps.projectColors([...cwds])
+    } catch {
+      return {}
+    }
+  }
+
   private serveState(res: ServerResponse): void {
     const conversations = this.state.conversations.map((c) => summarize(c))
     // `voiceReady` tells the phone whether to show the mic/listen buttons. Voice
@@ -486,6 +501,7 @@ export class RemoteServer {
         effortLabels: this.state.effortLabels ?? {},
         usage: this.state.usage ?? {},
         projects: this.state.projects ?? [],
+        projectColors: this.projectColors(),
         pairedDevice: this.pairedDevice ?? null,
         relayState: this.relayState,
         // The phone's default name for this PC ("filial").

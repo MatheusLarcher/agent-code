@@ -235,9 +235,14 @@ export class BoardStage {
     return changed
   }
 
-  private speak(key: string, text: string, cardId: string | null, convId: string, now: number): void {
-    this.speaking.set(key, { until: now + SAY_MIN_MS, cardId, convId })
+  private speak(key: string, text: string, cardId: string | null, convId: string, now: number, ms = SAY_MIN_MS): void {
+    this.speaking.set(key, { until: now + ms, cardId, convId })
     this.host.say(key, text, convId)
+  }
+
+  /** Fala de fora da coreografia (o resumo "desde que você saiu"): o mesmo balão, por `ms`. */
+  announce(key: string, text: string, convId: string, ms: number): void {
+    this.speak(key, text, null, convId, this.clock(), ms)
   }
 
   /** Encerra a viagem: o que não foi preso vai direto (sem replay). */

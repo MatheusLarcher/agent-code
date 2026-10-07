@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { InstancedMesh, Matrix4, Vector3 } from 'three'
 import { CONFETTI_BURST, CONFETTI_LIFE, CONFETTI_MAX, Particles } from './particles'
 
-function pools(p: Particles): { confetti: InstancedMesh; puffs: InstancedMesh } {
-  const [confetti, puffs] = p.group.children as InstancedMesh[]
-  return { confetti, puffs }
+function pools(p: Particles): { confetti: InstancedMesh; puffs: InstancedMesh; steam: InstancedMesh } {
+  const [confetti, puffs, steam] = p.group.children as InstancedMesh[]
+  return { confetti, puffs, steam }
 }
 
 describe('partículas', () => {
@@ -31,7 +31,7 @@ describe('partículas', () => {
 
   it('confete sobe, abre e cai; vapor sobe; gota cai', () => {
     const p = new Particles()
-    const { confetti, puffs } = pools(p)
+    const { confetti, puffs, steam } = pools(p)
     const pos = (im: InstancedMesh, i: number): Vector3 => {
       const m = new Matrix4()
       im.getMatrixAt(i, m)
@@ -45,7 +45,7 @@ describe('partículas', () => {
     p.puff('steam', 0, 1, 0)
     p.puff('drop', 0, 1, 0)
     p.update(0.3)
-    const ys = [pos(puffs, 0).y, pos(puffs, 1).y]
+    const ys = [pos(steam, 0).y, pos(puffs, 0).y]
     expect(ys[0]).toBeGreaterThan(1)
     expect(ys[1]).toBeLessThan(1)
     p.dispose()
@@ -53,13 +53,13 @@ describe('partículas', () => {
 
   it('quem morre sai do desenho (count) sem buraco: as vivas ficam no começo', () => {
     const p = new Particles()
-    const { puffs } = pools(p)
+    const { puffs, steam } = pools(p)
     p.puff('drop', 0, 1, 0) // vive ~0,5–0,7 s
-    p.puff('steam', 0, 1, 0) // vive ~1,4–1,8 s
+    p.puff('steam', 0, 1, 0) // vive ~1,2–1,6 s (no pool translúcido próprio)
     p.puff('steam', 0, 1, 0)
-    expect(puffs.count).toBe(3)
+    expect([puffs.count, steam.count]).toEqual([1, 2])
     for (let i = 0; i < 50; i++) p.update(1 / 60)
-    expect(puffs.count).toBe(2)
+    expect([puffs.count, steam.count]).toEqual([0, 2])
     expect(p.live).toBe(2)
     p.dispose()
   })

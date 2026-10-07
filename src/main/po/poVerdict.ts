@@ -25,8 +25,9 @@ export type PoOp =
   | { kind: 'justify'; id: string; reason: string }
   /** O status com que o cartão nasce: `in_progress` na abertura (o trabalho está
    *  começando), `pending` no fechamento (ficou faltando) e `completed` no
-   *  FEITA (aconteceu neste turno e ninguém registrou). */
-  | { kind: 'create'; title: string; reason: string; status: BoardItemStatus }
+   *  FEITA (aconteceu neste turno e ninguém registrou). `parentId`: a NOVA do
+   *  fechamento que cita o cartão de onde a pendência sobrou. */
+  | { kind: 'create'; title: string; reason: string; status: BoardItemStatus; parentId?: string }
 
 /**
  * Normalização de título para comparar dois cartões: NFD sem diacríticos,
@@ -114,9 +115,12 @@ export function parsePoVerdict(raw: string, knownIds: Iterable<string>, phase: P
       continue
     }
 
-    const create = /^(NOVA|FEITA)\s*\|\s*([^|]+)\|\s*(.+)$/i.exec(text)
+    // `NOVA <id> | ...`: o id (opcional) é o cartão de ORIGEM da pendência. Só
+    // vale na NOVA do fechamento e com um id do quadro; fora disso é ignorado,
+    // e a linha continua valendo como NOVA comum.
+    const create = /^(NOVA|FEITA)(?:\s+([^\s|]+))?\s*\|\s*([^|]+)\|\s*(.+)$/i.exec(text)
     if (create) {
-      const [, verb, title, reason] = create
+      const [, verb, origin, title, reason] = create
       // FEITA é retroativo ("aconteceu neste turno"): só o fechamento tem turno
       // para olhar. Na abertura, o cartão nasce EM ANDAMENTO — o trabalho está
       // começando agora, não é uma intenção para depois nem coisa já feita.
@@ -127,11 +131,13 @@ export function parsePoVerdict(raw: string, knownIds: Iterable<string>, phase: P
       const key = `n:${normalizeTitle(clean)}`
       if (seen.has(key)) continue
       seen.add(key)
+      const parentId = !done && phase === 'close' && origin && ids.has(origin) ? origin : undefined
       ops.push({
         kind: 'create',
         title: clean,
         reason: clamp(reason, 160),
-        status: done ? 'completed' : phase === 'open' ? 'in_progress' : 'pending'
+        status: done ? 'completed' : phase === 'open' ? 'in_progress' : 'pending',
+        ...(parentId ? { parentId } : {})
       })
     }
   }

@@ -8,10 +8,12 @@ export { summarizeCall } from '../vigia/vigiaPrompt'
 // A seta é de mão única — poPromptText não importa nada —, então não há ciclo.
 // A LEITURA do veredito (`parsePoVerdict`, `rejectUnsafeOps`) mora em
 // poVerdict.ts, que importa daqui; por isso ela NÃO sai reexportada.
-import { PO_RETURNED_SECTION, PO_SYSTEM_PROMPT_CLOSE, PO_SYSTEM_PROMPT_OPEN } from './poPromptText'
+import { PO_RESUMED_MARK, PO_RETURNED_SECTION, PO_SYSTEM_PROMPT_CLOSE, PO_SYSTEM_PROMPT_OPEN } from './poPromptText'
+import { formatPoGitEvidence, type PoGitEvidence } from './poGit'
 export {
   PO_AWAITING_AUTHORIZATION_REASON,
   PO_MAX_OPS,
+  PO_RESUMED_MARK,
   PO_RETURNED_SECTION,
   PO_SYSTEM_PROMPT_CLOSE,
   PO_SYSTEM_PROMPT_OPEN
@@ -261,6 +263,12 @@ export function buildPoDigest(input: {
   /** As descrições do que ainda roda em segundo plano (snapshot
    *  `background-tasks`). Só o fechamento as mostra. */
   background?: readonly string[]
+  /** Os ids da seção de devolvidos, já escolhidos pela rodada
+   *  (`poReturnedCards`). Ausente: os "em andamento" do quadro, como sempre. */
+  returned?: readonly string[]
+  /** Dos devolvidos, os que só a mensagem do usuário retomou: saem com a marca
+   *  `PO_RESUMED_MARK` (o prompt diz o que fazer com eles). */
+  resumed?: readonly string[]
 }): string {
   const cards = input.cards.slice(0, PO_MAX_CARDS)
   // As ÚLTIMAS ações, não as primeiras: a evidência do que terminou está no fim
@@ -298,17 +306,22 @@ export function buildPoDigest(input: {
       .filter(Boolean)
       .slice(0, PO_MAX_BACKGROUND_TASKS)
     if (background.length > 0) lines.push('', LABEL_BACKGROUND, ...background.map((text) => `${LIST_MARK}${text}`))
-    // O que o fim do turno vai devolver para "a fazer" (tudo o que ficou "em
-    // andamento"), para o PO justificar cada um com PENDENTE ou concluir.
-    // Mutuamente exclusiva com a seção acima: com trabalho em segundo plano o
-    // fechamento é delegado e nada é devolvido — e é por isso que esta seção
-    // (menor que a de segundo plano) não mexe no teto total do digest.
+    // O que o fim do turno julga (o que ficou "em andamento"): sem PENDENTE,
+    // vira concluído pelo padrão (poCloseDefault.ts). Mutuamente exclusiva com
+    // a seção acima: com trabalho em segundo plano o fechamento é delegado e
+    // nada é julgado — e é por isso que esta seção (menor que a de segundo
+    // plano) não mexe no teto total do digest.
     const returned =
       background.length > 0
         ? []
-        : cards.filter((card) => card.status === 'in_progress').slice(0, PO_MAX_RETURNED_CARDS)
+        : (input.returned ?? cards.filter((card) => card.status === 'in_progress').map((card) => card.id)).slice(
+            0,
+            PO_MAX_RETURNED_CARDS
+          )
     if (returned.length > 0) {
-      lines.push('', LABEL_RETURNED, ...returned.map((card) => `${LIST_MARK}${clamp(card.id, PO_MAX_RETURNED_LINE_CHARS)}`))
+      const resumed = new Set(input.resumed ?? [])
+      const line = (id: string): string => (resumed.has(id) ? `${id} ${PO_RESUMED_MARK}` : id)
+      lines.push('', LABEL_RETURNED, ...returned.map((id) => `${LIST_MARK}${clamp(line(id), PO_MAX_RETURNED_LINE_CHARS)}`))
     }
   }
   // O alvo das ferramentas não mostra o resultado de uma pesquisa nem a
@@ -331,7 +344,14 @@ export function buildPoDigest(input: {
   return lines.join('\n')
 }
 
-export function buildPoPrompt(input: Parameters<typeof buildPoDigest>[0]): string {
+export function buildPoPrompt(
+  input: Parameters<typeof buildPoDigest>[0] & {
+    /** O git da pasta (poGit.ts). Fica DEPOIS do digest e com teto próprio
+     *  (`PO_GIT_SECTION_MAX_CHARS`): o teto do digest continua o documentado. */
+    git?: PoGitEvidence | null
+  }
+): string {
   const rules = input.phase === 'open' ? PO_SYSTEM_PROMPT_OPEN : PO_SYSTEM_PROMPT_CLOSE
-  return `${rules}\n\n---\n\n${buildPoDigest(input)}`
+  const git = input.git ? `\n\n${formatPoGitEvidence(input.git)}` : ''
+  return `${rules}\n\n---\n\n${buildPoDigest(input)}${git}`
 }

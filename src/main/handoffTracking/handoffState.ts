@@ -41,6 +41,9 @@ export interface ConvState {
   noticeCarry: string | null
   /** Há um aviso na fila: as ferramentas seguintes não esperam outra vez o teto. */
   noticeBusy: boolean
+  /** O usuário parou este turno (Stop): o fim dele deixa o envio PARADO — a fila
+   *  não anda sozinha. Vale até o próximo turno começar. */
+  stoppedByUser: boolean
 }
 
 /** Textos lembrados por conversa (o registro atrasado leva segundos, não horas). */
@@ -63,7 +66,8 @@ export function newConvState(cwd: string, now: number): ConvState {
     dormantAt: null,
     noticeAt: 0,
     noticeCarry: null,
-    noticeBusy: false
+    noticeBusy: false,
+    stoppedByUser: false
   }
 }
 

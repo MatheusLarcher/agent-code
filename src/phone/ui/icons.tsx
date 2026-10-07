@@ -13,6 +13,7 @@ const PATHS: Record<string, ReactNode> = {
   open: (<><path d="M14 5h5v5" /><line x1="19" y1="5" x2="11" y2="13" /><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" /></>),
   chevron: <polyline points="9 6 15 12 9 18" />,
   check: <polyline points="5 12.5 10 17 19 7" />,
+  trash: (<><line x1="4" y1="7" x2="20" y2="7" /><path d="M9.5 7V4.5h5V7" /><path d="M6.5 7l1 13h9l1-13" /><line x1="10.5" y1="11" x2="10.5" y2="16" /><line x1="13.5" y1="11" x2="13.5" y2="16" /></>),
   reply: (<><polyline points="9 14 4 9 9 4" /><path d="M20 20v-7a4 4 0 0 0-4-4H4" /></>),
   back: (<><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></>),
   camera: (<><rect x="3" y="7" width="18" height="12" rx="2" /><path d="M8 7l1.5-2h5L16 7" /><circle cx="12" cy="13" r="3" /></>),

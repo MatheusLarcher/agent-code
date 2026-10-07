@@ -6,6 +6,7 @@
 import type { PlanningHandoffDto, PlanningHandoffSentDto } from '@shared/ipc'
 import { IconWarning } from '../components/Icons'
 import type { HandoffIssue } from './handoffReadiness'
+import { StaleBadge } from './HandoffStale'
 
 export function firstLine(text: string): string {
   return text.split(/\r?\n/).find((l) => l.trim())?.replace(/^#+\s*/, '').trim() ?? ''
@@ -48,6 +49,8 @@ export function PendingHandoffs(props: {
   pending: readonly PlanningHandoffDto[]
   disabled: boolean
   onMarkSent: (name: string) => void
+  /** Os antigos (gravados antes da última mudança do plano): ganham o selo. */
+  stale?: ReadonlySet<string>
 }): JSX.Element | null {
   const { pending } = props
   if (pending.length === 0) return null
@@ -58,6 +61,7 @@ export function PendingHandoffs(props: {
         {pending.map((h) => (
           <li key={h.name}>
             <code>_handoff/{h.name}</code>
+            {props.stale?.has(h.name) && <StaleBadge />}
             <span>{firstLine(h.content)}</span>
             <button
               type="button"
@@ -74,11 +78,12 @@ export function PendingHandoffs(props: {
   )
 }
 
-/** Pendentes que não estão nesta revisão (tirados, ou gravados depois). */
+/** Pendentes que não estão nesta revisão (tirados, gravados depois, ou antigos). */
 export function OutsideHandoffs(props: {
   outside: readonly PlanningHandoffDto[]
   disabled: boolean
   onInclude: (h: PlanningHandoffDto) => void
+  stale?: ReadonlySet<string>
 }): JSX.Element | null {
   const { outside } = props
   if (outside.length === 0) return null
@@ -89,6 +94,7 @@ export function OutsideHandoffs(props: {
         {outside.map((h) => (
           <li key={h.name}>
             <code>_handoff/{h.name}</code>
+            {props.stale?.has(h.name) && <StaleBadge />}
             <span>{firstLine(h.content)}</span>
             <button
               type="button"

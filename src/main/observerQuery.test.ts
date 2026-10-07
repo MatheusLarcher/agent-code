@@ -1,6 +1,40 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest'
-import { classifyClaudeObserverFailure } from './observerQuery'
+import { describe, expect, it, vi } from 'vitest'
+
+const sdk = vi.hoisted(() => ({ frames: [] as unknown[] }))
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: () =>
+    (async function* () {
+      for (const frame of sdk.frames) yield frame
+    })()
+}))
+
+import { classifyClaudeObserverFailure, runObserverAttempt } from './observerQuery'
+
+const answer = (text: string, error?: string) => ({ type: 'assistant', ...(error ? { error } : {}), message: { content: [{ type: 'text', text }] } })
+const attempt = (frames: unknown[]) => {
+  sdk.frames = frames
+  return runObserverAttempt({ prompt: 'p', model: 'm', provider: 'claude' })
+}
+
+describe('runObserverAttempt', () => {
+  it('a resposta do modelo vira o texto', async () => {
+    expect(await attempt([answer('tudo certo')])).toEqual({ provider: 'claude', state: 'completed', text: 'tudo certo' })
+  })
+
+  it('o frame de erro do SDK (sem login) não vira resposta: falha com o motivo', async () => {
+    const frames = [answer('Not logged in · Please run /login', 'authentication_failed'), { type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }]
+    expect(await attempt(frames)).toEqual({ provider: 'claude', state: 'failed', reason: 'claude_auth' })
+  })
+
+  it('erro sem motivo de failover (sobrecarga) também não vira resposta', async () => {
+    expect(await attempt([answer('API Error: 529 overloaded', 'overloaded')])).toEqual({ provider: 'claude', state: 'failed' })
+  })
+
+  it('a resposta cortada em max_output_tokens continua sendo resposta', async () => {
+    expect(await attempt([answer('resposta cortada', 'max_output_tokens')])).toEqual({ provider: 'claude', state: 'completed', text: 'resposta cortada' })
+  })
+})
 
 describe('classifyClaudeObserverFailure', () => {
   it.each([

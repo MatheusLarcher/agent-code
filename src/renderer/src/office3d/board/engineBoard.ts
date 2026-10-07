@@ -27,7 +27,7 @@
  * volta com tremidinha e a mensagem do main perto do quadro; mesma coluna ou
  * fora do quadro volta; Esc cancela (na captura: nem a tela nem o chat ouvem).
  */
-import { Raycaster, Vector2, type PerspectiveCamera } from 'three'
+import { Raycaster, Vector2, Vector3, type PerspectiveCamera } from 'three'
 import type { OfficeFeed } from '../../office/adapter/feed'
 import { principalKey, roomIdFor } from '../../office/adapter/model'
 import { seedCss } from '../appearance'
@@ -46,6 +46,12 @@ import { BoardStage, type StageHost } from './boardStage'
 import { BoardTips } from './boardTips'
 import { onIcon } from './boardTitle'
 import { PRIORITY, type Quip } from '../quips'
+import { LOD_BOUNDS } from '../lod'
+import { awayAnnounce } from './awayAnnounce'
+import { clip } from './boardLines'
+
+/** O resumo "desde que você saiu" fica no balão do PO por isto (ms). */
+export const AWAY_SAY_MS = 9_000
 
 export { BOARD_TOAST_MS } from './boardTips'
 
@@ -62,6 +68,7 @@ export class EngineBoard {
   private readonly pins = new Map<string, string>()
   private readonly ray = new Raycaster()
   private readonly ndc = new Vector2()
+  private readonly head = new Vector3()
   private readonly local = { x: 0, y: 0 }
   private readonly tips: BoardTips
   /** Qual projeto a parede mostra (filtro, aba, conversa ativa, visita da coreografia). */
@@ -187,6 +194,7 @@ export class EngineBoard {
   tick(now = this.clock()): boolean {
     this.sync.tick(now)
     let changed = this.stage.tick(now)
+    if (this.announceAway()) changed = true
     if (this.seals.tick(now)) changed = true
     if (this.tips.tick(now)) changed = true
     for (const id of this.sync.roomIds) {
@@ -198,6 +206,33 @@ export class EngineBoard {
       changed = true
     }
     return changed
+  }
+
+  /**
+   * O resumo "desde que você saiu" (awayAnnounce.ts): o PO do projeto diz a
+   * versão curta quando a cabeça dele está na tela, sem zoom LONGE e com a
+   * janela em foco — a câmera chegou na sala ou no quadro. Sem PO, espera.
+   */
+  private announceAway(): boolean {
+    const list = awayAnnounce.pending()
+    if (list.length === 0 || this.paused || this.disposed || document.hidden || !document.hasFocus()) return false
+    let changed = false
+    for (const a of list) {
+      const key = `po:${roomIdFor(a.cwd)}`
+      if (!this.inView(key)) continue
+      this.stage.announce(key, clip(a.text), this.scene.character(key)?.model.convId ?? '', AWAY_SAY_MS)
+      awayAnnounce.markSaid(a)
+      changed = true
+    }
+    return changed
+  }
+
+  /** A cabeça do personagem projeta dentro da tela (a mesma regra do balão, speech.ts) e não está LONGE. */
+  private inView(key: string): boolean {
+    if (!this.scene.headWorldPosition(key, this.head)) return false
+    if (this.head.distanceTo(this.camera.position) >= LOD_BOUNDS[1]) return false
+    const p = this.head.project(this.camera)
+    return p.z <= 1 && p.z >= -1 && Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1
   }
 
   pause(): void {

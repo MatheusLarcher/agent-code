@@ -6,7 +6,7 @@
  * - Tingimento: o canal R da textura de metal/rugosidade (o glTF não usa;
  *   G = rugosidade, B = metal) é a máscara da roupa principal, gravada pelo
  *   pipeline (scripts/office-agents). Nos texels marcados a cor vira a do
- *   agente (`seedColor`, a mesma do chat) vezes o brilho relativo do texel
+ *   agente (a do projeto, agentBody.setShirtColor; a Central, `seedColor`) vezes o brilho relativo do texel
  *   (luma ÷ luma média da roupa): o tricô, as dobras e as sombras pintadas
  *   continuam. https://rohinknight.com/posts/Color-Swapping-ThreeJS/
  * - Brilho limitado: rugosidade mínima e quase nada de metal (a calça não vira

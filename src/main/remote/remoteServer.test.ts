@@ -16,7 +16,8 @@ const server = new RemoteServer({
   apkPath: () => 'C:/nonexistent/agent-remote.apk',
   wwwDir: () => 'C:/nonexistent/www',
   onPermissionResponse: (convId, res) => permissionResponses.push({ convId, res }),
-  officeAgentFile: async (name) => (name === 'central.glb' ? new Uint8Array([1, 2, 3]) : null)
+  officeAgentFile: async (name) => (name === 'central.glb' ? new Uint8Array([1, 2, 3]) : null),
+  projectColors: (cwds) => Object.fromEntries(cwds.map((cwd) => [cwd, { hex: '#0fa3e0', source: 'marca' as const }]))
 })
 
 let base = ''
@@ -152,6 +153,11 @@ describe('RemoteServer — ponte LAN', () => {
     const state = r.json as { pcName?: string }
     expect(state.pcName).toBe(hostname())
     expect(state.pcName).toBeTruthy()
+  })
+
+  it('/api/state devolve projectColors pelos cwds das conversas', async () => {
+    const r = await getJson(`/api/state?token=${token}`)
+    expect((r.json as { projectColors?: unknown }).projectColors).toEqual({ '/proj': { hex: '#0fa3e0', source: 'marca' } })
   })
 
   it('/api/history devolve as mensagens da conversa (conversa curta: todas)', async () => {

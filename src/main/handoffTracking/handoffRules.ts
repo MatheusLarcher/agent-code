@@ -1,4 +1,5 @@
 import {
+  CARD_ETAPA_PREFIX,
   currentEnvio,
   isEnvioSent,
   type HandoffEntrega,
@@ -97,9 +98,16 @@ export function etapaIdFromTitle(title: string | null | undefined): string | nul
   return match ? match[1].toLowerCase() : null
 }
 
+/** O "Mandar fazer" do "Fala, PO" liga a entrega direto ao cartão citado: `card:<id>`. */
+export { CARD_ETAPA_PREFIX }
+
 /** O cartão da etapa: não dispensado, título (do agente ou do PO) com o prefixo
  *  `[id]`. Vários → o atualizado por último. Item sem prefixo é subitem. */
 export function cardForEtapa(cards: readonly BoardItem[], etapaId: string): BoardItem | null {
+  if (etapaId.startsWith(CARD_ETAPA_PREFIX)) {
+    const cardId = etapaId.slice(CARD_ETAPA_PREFIX.length)
+    return cards.find((card) => card.id === cardId && card.dismissedAt === null) ?? null
+  }
   const id = etapaId.toLowerCase()
   let best: BoardItem | null = null
   for (const card of cards) {
@@ -320,6 +328,20 @@ export function isRecoverableError(event: { incomplete?: boolean; retryable?: bo
 }
 
 /** Erro de verdade: o envio corrente falhou, com o texto do erro. */
+/** O motivo do envio que o usuário parou: a fila espera ele (Stop não é erro e não tenta de novo). */
+export const STOP_MOTIVO = 'você parou este prompt (Stop) — a fila espera você'
+
+/**
+ * O Stop do usuário: o envio corrente que não concluiu fica PARADO até o próximo
+ * turno (o veredito atrasado do PO não o conclui por trás). O que já concluiu
+ * fica concluído — a hora da conclusão é dado de entrega; a fila o segura pela
+ * marca do tracker (HandoffTracker.stoppedByUser).
+ */
+export function stopPatch(envio: HandoffEnvio): HandoffEnvioPatch | null {
+  if (!isEnvioSent(envio) || envio.status === 'concluida') return null
+  return envio.status === 'parada' && envio.motivo === STOP_MOTIVO ? null : { status: 'parada', motivo: STOP_MOTIVO }
+}
+
 export function errorPatch(envio: HandoffEnvio, text: string): HandoffEnvioPatch | null {
   if (envio.status === 'concluida' || !isEnvioSent(envio)) return null
   const motivo = truncate(text, HANDOFF_ERROR_MOTIVO_MAX) || 'o turno terminou com erro'

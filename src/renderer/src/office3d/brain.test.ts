@@ -3,7 +3,7 @@ import type { OfficeCharacterModel } from '../office/adapter/model'
 import { SLEEP_AFTER_SEC } from '../office/behavior/leisure'
 import { DWELL_MAX, DWELL_MIN, FX, react, setStatus, turnToward, type Brain, type BrainStatus, type Leisure } from './brain'
 import { Crowd } from './crowd'
-import { seatOf } from './furniture'
+import { chairSide, seatOf } from './furniture'
 import { layoutOffice, type RoomLayout } from './layout'
 import { FRONT_SPOTS, LOUNGE_SEATS } from './officePlan'
 import type { Reaction } from './poses'
@@ -170,6 +170,18 @@ describe('cérebro: trabalhando', () => {
     expect(b.reaction).toBe('handoff')
   })
 
+  it('quem dorme larga a plaquinha da permissão (não cochila com ela atravessando o braço)', () => {
+    const { crowd, brains } = office(1)
+    const b = brains[0]
+    setStatus(b, status('waiting-permission'), 0)
+    run(crowd, 20)
+    expect(b.prop).toBe('sign')
+    setStatus(b, status('idle', { idleSince: crowd.t - SLEEP_AFTER_SEC - 1 }), crowd.t)
+    run(crowd, 25)
+    expect(b.mode).toBe('sleep')
+    expect(b.prop).toBeNull()
+  })
+
   it('pedido: "!" com pulinho, corre até a mesa, senta e estala os dedos; quem dormia acorda assustado', () => {
     const { crowd, brains } = office(1)
     const b = brains[0]
@@ -193,15 +205,21 @@ describe('cérebro: trabalhando', () => {
     expect([b.mode, b.seat, b.sit, b.action]).toEqual(['work', 'chair', 1, 'type'])
   })
 
-  it('permissão: levanta e vem à frente do escritório, vira para a câmera e acena com a plaquinha; atendido, volta a sentar na mesa', () => {
-    const { crowd, brains } = office(1)
+  it('permissão: fica NA MESA — levanta ao lado da cadeira, vira para a câmera e acena com a plaquinha; atendido, volta a sentar', () => {
+    const { crowd, brains, room } = office(1)
     const b = brains[0]
     setStatus(b, status('working'), 0)
     run(crowd, 1)
     setStatus(b, status('waiting-permission'), crowd.t)
-    run(crowd, 20)
+    let maxAway = 0
+    const side = chairSide(room.desks[0])
+    run(crowd, 20, () => (maxAway = Math.max(maxAway, Math.hypot(b.x - side.x, b.z - side.z))))
+    expect(b.mode).toBe('permission')
     expect(b.sit).toBe(0)
-    expect(FRONT_SPOTS.some((p) => Math.hypot(b.x - p.x, b.z - p.z) < 0.05)).toBe(true)
+    expect(Math.hypot(b.x - side.x, b.z - side.z)).toBeLessThan(0.05)
+    // Não anda até a frente do escritório.
+    expect(maxAway).toBeLessThan(1)
+    expect(FRONT_SPOTS.some((p) => Math.hypot(b.x - p.x, b.z - p.z) < 0.5)).toBe(false)
     expect([b.action, b.prop, b.look]).toEqual(['wave', 'sign', 'camera'])
     const toCam = Math.atan2(-(CAM.x - b.x), -(CAM.z - b.z))
     expect(Math.abs(turnToward(b.yaw, toCam, Math.PI) - b.yaw)).toBeLessThan(0.1)

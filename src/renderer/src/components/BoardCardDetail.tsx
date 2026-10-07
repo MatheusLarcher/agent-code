@@ -8,6 +8,7 @@ import {
   type BoardItemStatus
 } from '@shared/ipc'
 import { IconSpinner } from './Icons'
+import { CardPrints } from './BoardPrints'
 
 /**
  * O detalhe de um cartão do Quadro — o MESMO no painel (BoardPanel) e na janela
@@ -96,12 +97,27 @@ export interface BoardCardDetailProps {
   onDismiss: (item: BoardItem) => void
   /** De onde vem a linha do tempo (padrão: o Quadro do app). O 3D passa a fonte do quadro da sala. */
   loadEvents?: (boardItemId: string) => Promise<BoardItemEvent[]>
+  /** Acha outro cartão do quadro pelo id — o pai da pendência ("Pendência de"). */
+  findItem?: (id: string) => BoardItem | undefined
+  /** Abre outro cartão no lugar deste (o clique no pai da pendência). */
+  onOpenItem?: (item: BoardItem) => void
 }
 
 const appEvents = (id: string): Promise<BoardItemEvent[]> => window.api.boardItemEvents(id)
 
-export function BoardCardDetail({ item, conversationTitles, now, onClose, onOpenConversation, onDismiss, loadEvents = appEvents }: BoardCardDetailProps): JSX.Element {
+export function BoardCardDetail({
+  item,
+  conversationTitles,
+  now,
+  onClose,
+  onOpenConversation,
+  onDismiss,
+  loadEvents = appEvents,
+  findItem,
+  onOpenItem
+}: BoardCardDetailProps): JSX.Element {
   const status = effectiveStatus(item)
+  const parent = item.parentId ? findItem?.(item.parentId) : undefined
   const [events, setEvents] = useState<BoardItemEvent[]>([])
   const [loadingEvents, setLoadingEvents] = useState(false)
   // Busca preguiçosa por cartão: só quando o detalhe abre, de novo se o usuário
@@ -156,6 +172,27 @@ export function BoardCardDetail({ item, conversationTitles, now, onClose, onOpen
             {conversationTitles[item.conversationId] ?? 'Conversa removida'}
           </button>
         </dd>
+        {/* A pendência (commitar, verificar, deploy) diz de qual pedido sobrou. */}
+        {item.parentId && (
+          <>
+            <dt>Pendência de</dt>
+            <dd>
+              {parent ? (
+                <button
+                  type="button"
+                  className="board-link"
+                  onClick={() => onOpenItem?.(parent)}
+                  disabled={!onOpenItem}
+                  title="Abrir o cartão de origem"
+                >
+                  {effectiveTitle(parent)}
+                </button>
+              ) : (
+                <span className="board-muted">um cartão que não está mais no quadro</span>
+              )}
+            </dd>
+          </>
+        )}
         {item.poTitle && (
           <>
             <dt>Título do agente</dt>
@@ -182,6 +219,9 @@ export function BoardCardDetail({ item, conversationTitles, now, onClose, onOpen
           </span>
         </div>
       )}
+
+      {/* O print da tarefa visual que o agente testou (app_anexar_print). */}
+      <CardPrints boardItemId={item.id} />
 
       <div className="board-detail-meta">
         <div className="board-detail-meta-row">

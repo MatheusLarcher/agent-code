@@ -114,7 +114,7 @@ describe('sobreposição das camadas na tela', () => {
 
   it('boardProgress conta pelo status efetivo', () => {
     const items = [card({ id: 'a', sourceStatus: 'completed' }), card({ id: 'b', poStatus: 'completed', poReason: 'x' }), card({ id: 'c' })]
-    expect(boardProgress(items)).toEqual({ done: 2, total: 3 })
+    expect(boardProgress(items)).toEqual({ done: 2, total: 3, awaiting: 0 })
   })
 })
 
@@ -134,6 +134,20 @@ describe('BoardPanel', () => {
     expect(screen.getByText('já feito')).toBeTruthy()
     expect(screen.getByText('A fazer')).toBeTruthy()
     expect(screen.getByText('Concluído')).toBeTruthy()
+  })
+
+  it('coluna Concluído: só os 4 mais recentes aparecem; o contador mostra o total', async () => {
+    const at = (min: number): string => new Date(Date.UTC(2026, 9, 6, 12, min)).toISOString()
+    mockApi({
+      available: true,
+      items: Array.from({ length: 6 }, (_, i) => card({ id: `c${i}`, sourceTitle: `feito ${i}`, sourceStatus: 'completed', updatedAt: at(i) }))
+    })
+    const { container } = render(panel())
+    expect(await screen.findByText('feito 5')).toBeTruthy()
+    const done = [...container.querySelectorAll('.board-column')].find((col) => col.textContent?.includes('Concluído'))!
+    expect([...done.querySelectorAll('.board-card-title')].map((t) => t.textContent)).toEqual(['feito 5', 'feito 4', 'feito 3', 'feito 2'])
+    expect(done.querySelector('.board-column-count')?.textContent).toBe('6')
+    expect(screen.queryByText('feito 1')).toBeNull()
   })
 
   it('marca visualmente o que o PO corrigiu', async () => {

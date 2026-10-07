@@ -4,6 +4,7 @@
  * pedido de permissão. Determinístico.
  */
 import { contextLimitFor, type BackgroundTask, type PermissionRequest } from '@shared/ipc'
+import { PROJECT_RESERVE_PALETTE, type ProjectColorMap } from '@shared/projectColor'
 import type { OfficeFeed } from '../../office/adapter/feed'
 import type { Conversation } from '../../types'
 
@@ -15,7 +16,10 @@ export function syntheticFeed(now: number = Date.now()): OfficeFeed {
   const busyIds = new Set<string>()
   const busySince: Record<string, number> = {}
   const permissions: Record<string, PermissionRequest> = {}
+  // Uma cor por sala, espalhada pela paleta (como se o PC já tivesse detectado).
+  const projectColors: ProjectColorMap = {}
   for (let r = 0; r < DEV_ROOMS; r++) {
+    projectColors[`C:\\dev\\projeto-${r + 1}`] = { hex: PROJECT_RESERVE_PALETTE[(r * 5) % PROJECT_RESERVE_PALETTE.length], source: 'reserva' }
     for (let i = 0; i < DEV_PER_ROOM; i++) {
       const id = `dev-${r}-${i}`
       conversations.push({
@@ -27,7 +31,7 @@ export function syntheticFeed(now: number = Date.now()): OfficeFeed {
         messages: [],
         // F4·4-5: a 2ª de cada sala liga a impressora e a pilha de papéis (90%).
         tokens: { context: i === 1 ? Math.round(contextLimitFor('claude-opus-4-5') * 0.92) : 0, output: 0, cost: 0 },
-        ...(i === 1 ? { backgroundTasks: [{ taskId: `bg-${id}`, taskType: 'local_bash', description: 'npm run dev' } as unknown as BackgroundTask] } : {}),
+        ...(i === 1 ? { backgroundTasks: [{ id: `bg-${id}`, type: 'local_bash', description: 'npm run dev' } satisfies BackgroundTask] } : {}),
         createdAt: now - 60_000,
         updatedAt: now - 1_000
       })
@@ -53,6 +57,7 @@ export function syntheticFeed(now: number = Date.now()): OfficeFeed {
     observersOn: { po: false, vigia: false, memorista: false },
     stalledSince: {},
     tracks: {},
-    projectIcons: {}
+    projectIcons: {},
+    projectColors
   }
 }

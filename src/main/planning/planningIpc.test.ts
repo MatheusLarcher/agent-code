@@ -20,6 +20,7 @@ const PLANNING_CHANNELS = [
   Channels.planningPeek,
   Channels.planningWriteHandoff,
   Channels.planningMarkHandoffsSent,
+  Channels.planningDiscardHandoffs,
   Channels.planningImportMedia,
   Channels.planningReadMedia
 ]
@@ -321,7 +322,13 @@ describe('registerPlanningIpc', () => {
     setup()
     const ref = { projectCwd: cwd, slug: 'p' }
     await call(Channels.planningCreate, { ...ref, titulo: 'P' })
-    expect(await call(Channels.planningListHandoffs, ref)).toEqual({ ok: true, handoffs: [], sent: [] })
+    expect(await call(Channels.planningListHandoffs, ref)).toEqual({
+      ok: true,
+      handoffs: [],
+      sent: [],
+      stale: [],
+      planChangedAt: expect.any(Number)
+    })
 
     const first = await call(Channels.planningWriteHandoff, { ...ref, conteudo: '# Prompt 1\n' })
     const second = await call(Channels.planningWriteHandoff, { ...ref, conteudo: '# Prompt 2\n' })
@@ -338,6 +345,23 @@ describe('registerPlanningIpc', () => {
     expect(typeof listed.handoffs[0].createdAt).toBe('number')
     // _handoff/ é gravado pela própria tela: nada de planning:changed.
     expect(sent).toEqual([])
+  })
+
+  it('handoffs antigos: a listagem aponta os gravados antes da última mudança do plano, e o descarte os move', async () => {
+    setup()
+    const ref = { projectCwd: cwd, slug: 'p' }
+    await call(Channels.planningCreate, { ...ref, titulo: 'P' })
+    const old = await call(Channels.planningWriteHandoff, { ...ref, conteudo: '# Antigo\n' })
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    const roteiro = path.join(cwd, 'docs', 'spec', 'p', '_roteiro.md')
+    await fs.utimes(roteiro, new Date(), new Date())
+
+    const listed = await call(Channels.planningListHandoffs, ref)
+    expect(listed).toMatchObject({ ok: true, stale: [old.name] })
+    expect(await call(Channels.planningDiscardHandoffs, { ...ref, names: ['../fora.md'] })).toMatchObject({ ok: false })
+    expect(await call(Channels.planningDiscardHandoffs, ref)).toEqual({ ok: true, discarded: [old.name] })
+    expect(await call(Channels.planningListHandoffs, ref)).toMatchObject({ ok: true, handoffs: [], stale: [] })
+    expect(await fs.readdir(path.join(cwd, 'docs', 'spec', 'p', '_handoff', '_descartados'))).toEqual([old.name])
   })
 
   it('roteiro com estimativa: o IPC aceita (opcional, 1..10000) e o plano reabre com ela', async () => {

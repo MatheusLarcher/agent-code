@@ -346,6 +346,12 @@ type PatchKind =
   | 'corrigidoPor'
   | 'minutes'
   | 'ms'
+  | 'ordem'
+  | 'content'
+  | 'hash'
+
+/** O mesmo teto do conteúdo de um prompt registrado (handoffIpc). */
+const MAX_CONTEUDO_CHARS = 1_000_000
 
 const ENVIO_PATCH: Record<keyof HandoffEnvioPatch, [string, PatchKind]> = {
   status: ['status', 'envioStatus'],
@@ -354,7 +360,11 @@ const ENVIO_PATCH: Record<keyof HandoffEnvioPatch, [string, PatchKind]> = {
   iniciadoEm: ['iniciado_em', 'time'],
   concluidoEm: ['concluido_em', 'time'],
   atrasado: ['atrasado', 'boolean'],
-  conversationTitle: ['conversation_title', 'title']
+  conversationTitle: ['conversation_title', 'title'],
+  // A faixa "Próximos prompts": reordenar e editar o prompt que ainda não saiu.
+  ordem: ['ordem', 'ordem'],
+  conteudo: ['conteudo', 'content'],
+  conteudoHash: ['conteudo_hash', 'hash']
 }
 
 const ENTREGA_PATCH: Record<keyof HandoffEntregaPatch, [string, PatchKind]> = {
@@ -412,6 +422,17 @@ function patchValue(key: string, kind: PatchKind, value: unknown): HandoffColumn
       return minutos(value, key)
     case 'ms':
       return value === null ? null : milissegundos(value, key)
+    case 'ordem':
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) throw new TypeError(`${key} precisa ser inteiro >= 1.`)
+      return value
+    case 'content': {
+      const text = requireString(value, key)
+      if (!text.trim() || text.length > MAX_CONTEUDO_CHARS) throw new TypeError(`${key} vazio ou grande demais.`)
+      return text
+    }
+    case 'hash':
+      if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) throw new TypeError(`${key} precisa ser um sha256 hex.`)
+      return value
   }
 }
 
@@ -425,7 +446,7 @@ function patchWrites(patch: object, columns: Record<string, [string, PatchKind]>
     // addHandoffTime) — ignorar em silêncio esconderia o bug.
     if (!entry) throw new TypeError(`Campo não editável: ${key}`)
     const [column, kind] = entry
-    writes.push({ column, value: patchValue(key, kind, value), text: kind === 'title' || kind === 'note' })
+    writes.push({ column, value: patchValue(key, kind, value), text: kind === 'title' || kind === 'note' || kind === 'content' })
   }
   return writes
 }

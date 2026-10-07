@@ -13,7 +13,7 @@
  * Cabeçalho: um ponto na cor da camisa do agente da conversa (a mesma seed da
  * cena), o título da conversa, o projeto e o 📍, que minimiza o chat e voa a
  * câmera até a mesa dele (`collapseSignal`, que quem hospeda sobe). A borda do
- * painel pega um toque dessa cor. Com a Central no painel (`central`: nenhuma
+ * painel é neutra (office3d.css). Com a Central no painel (`central`: nenhuma
  * mesa selecionada, ou a Central é a conversa ativa), o cabeçalho é o dela —
  * orbe e "Central", sem projeto nem 📍 (ela não tem mesa) — e a cor é o
  * --accent. O maximizado nunca sobe na faixa do HUD (a de cima, que os balões

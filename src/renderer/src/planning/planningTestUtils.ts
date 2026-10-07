@@ -58,11 +58,16 @@ export function mockPlanningApi(initial: OpenedPlanningDto = makePlan()) {
   const handoffs: PlanningHandoffDto[] = []
   /** O _handoff/enviados.json do plano. */
   const sent: PlanningHandoffSentDto[] = []
+  /** Os prompts ANTIGOS (gravados antes da última mudança do plano), por nome. */
+  const stale = new Set<string>()
+  /** O que o "Descartar os antigos" moveu para _handoff/_descartados/. */
+  const discarded: string[] = []
   const addHandoff = (content: string, createdAt = Date.now()): string => {
-    const name = `2026-09-22-${String(handoffs.length + 1).padStart(2, '0')}.md`
+    const name = `2026-09-22-${String(handoffs.length + discarded.length + 1).padStart(2, '0')}.md`
     handoffs.push({ name, createdAt, content })
     return name
   }
+  const sentNames = (): Set<string> => new Set(sent.map((e) => e.nome))
   const api = {
     planningOpen: vi.fn(async () => ({ ok: true as const, plan: structuredClone(plan) })),
     planningClose: vi.fn(async () => ({ ok: true as const })),
@@ -81,9 +86,23 @@ export function mockPlanningApi(initial: OpenedPlanningDto = makePlan()) {
       async (): Promise<PlanningResult<PlanningHandoffListDto>> => ({
         ok: true as const,
         handoffs: structuredClone(handoffs),
-        sent: structuredClone(sent)
+        sent: structuredClone(sent),
+        // Como o main: só os antigos ainda NÃO enviados.
+        ...(stale.size > 0 ? { stale: handoffs.map((h) => h.name).filter((n) => stale.has(n) && !sentNames().has(n)) } : {})
       })
     ),
+    /** Como o main: move os antigos não enviados (todos, ou só `names`). */
+    planningDiscardHandoffs: vi.fn(async (req: { names?: string[] }) => {
+      const moved = handoffs
+        .map((h) => h.name)
+        .filter((n) => stale.has(n) && !sentNames().has(n) && (!req.names || req.names.includes(n)))
+      for (const name of moved) {
+        handoffs.splice(handoffs.findIndex((h) => h.name === name), 1)
+        stale.delete(name)
+        discarded.push(name)
+      }
+      return { ok: true as const, discarded: moved }
+    }),
     /** Como o main: numera e grava; devolve o nome do arquivo novo. */
     planningWriteHandoff: vi.fn(async (req: { conteudo: string }) => ({ ok: true as const, name: addHandoff(req.conteudo) })),
     /** Como o main: upsert por nome, carimba a hora, devolve todos. */
@@ -112,6 +131,10 @@ export function mockPlanningApi(initial: OpenedPlanningDto = makePlan()) {
     handoffs,
     /** O que está em _handoff/enviados.json agora. */
     sent,
+    /** Os nomes marcados como antigos (o main os acha pela data). */
+    stale,
+    /** O que foi para _handoff/_descartados/. */
+    discarded,
     /** Um arquivo novo em _handoff/ gravado "por fora" (ex.: o Manager). */
     addHandoff,
     /** Troca o que o próximo planningOpen devolve (o "disco"). */

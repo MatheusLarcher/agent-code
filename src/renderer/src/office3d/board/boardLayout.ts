@@ -9,6 +9,7 @@
  * BOARD_ROWS papéis, na ordem do Quadro — passou disso, os BOARD_ROWS − 1
  * primeiros e uma pilha "+K" no último lugar.
  */
+import { recentCompleted } from '@shared/boardView'
 import type { BoardItemStatus } from '@shared/ipc'
 import { BOARD_COLUMNS, columnIndex, type BoardCard } from './boardModel'
 
@@ -122,7 +123,11 @@ export interface BoardColumnLayout {
   pile: number
 }
 
-/** Distribui a parede nas colunas: até `rows` papéis; passou, `rows − 1` papéis e a pilha "+K". */
+/**
+ * Distribui a parede nas colunas: até `rows` papéis; passou, `rows − 1` papéis e
+ * a pilha "+K". Na coluna Concluído, só os 4 mais recentes e sem pilha (o
+ * contador segue com o total) — ver shared/boardView.ts.
+ */
 export function boardColumns(shown: readonly BoardCard[], rows = BOARD_ROWS): BoardColumnLayout[] {
   const cols: BoardColumnLayout[] = BOARD_COLUMNS.map((c) => ({ status: c.status, count: 0, cards: [], hidden: [], pile: 0 }))
   for (const card of shown) {
@@ -131,6 +136,10 @@ export function boardColumns(shown: readonly BoardCard[], rows = BOARD_ROWS): Bo
     col.cards.push(card)
   }
   for (const col of cols) {
+    if (col.status === 'completed') {
+      col.cards = recentCompleted(col.cards)
+      continue
+    }
     if (col.count <= rows) continue
     col.hidden = col.cards.slice(rows - 1)
     col.cards = col.cards.slice(0, rows - 1)

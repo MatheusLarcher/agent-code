@@ -31,18 +31,23 @@ export interface TerminalVerdictInput {
   responseReceived: boolean
   /** O usuário parou este turno (Stop): o fim dele é intencional. */
   wasInterrupted: boolean
+  /** Conversa de implantação (handoffSlug), fora de tarefa MCP: erro é erro mesmo
+   *  depois de texto — o próximo prompt nunca sai por cima dele. */
+  implementation?: boolean
 }
 
 /**
  * O turno falhou e fica suspenso para a recuperação (a fila não anda)? Texto já
  * recebido conta como turno concluído — alguns provedores marcam o fim como erro
  * depois de entregar a resposta —, EXCETO quando o main diz que o turno não
- * terminou (`incomplete`) ou que não vale repetir (`retryable: false`). Stop nunca
- * é falha.
+ * terminou (`incomplete`) ou que não vale repetir (`retryable: false`), e na
+ * IMPLANTAÇÃO: lá o erro entra na retomada ("continue de onde parou") em vez de
+ * contar como concluído. Stop nunca é falha.
  */
 export function isFailedTerminal(t: TerminalVerdictInput): boolean {
   if (!shouldRecoverTerminal(t.kind, t.kind === 'result' && t.isError, t.wasInterrupted)) return false
   if (t.kind === 'error' && (t.incomplete === true || t.retryable === false)) return true
+  if (t.implementation) return true
   return !t.responseReceived
 }
 

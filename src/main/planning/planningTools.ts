@@ -7,6 +7,7 @@ import { anexosCheck, importAndAttach, loadMediaIndex, readCardWithMedia } from 
 import type { MediaToolDeps, PlanningToolMedia } from './planningMediaTools'
 import { CARD_TYPES, type CardType, type PlanCard } from './planningModel'
 import { buildRoteiroTools } from './planningRoteiroTools'
+import { discardStaleHandoffs, findStaleHandoffs } from './handoffStale'
 import * as realStore from './planningStore'
 import { RevConflictError, type OpenedPlan } from './planningStore'
 import { Body, erase, guard, Name, Title, type AnyTool } from './planningToolKit'
@@ -48,6 +49,7 @@ export const PLANNING_TOOL_NAMES = [
   'plan_ambiguidade_abrir',
   'plan_ambiguidade_resolver',
   'plan_handoff_write',
+  'plan_handoff_limpar',
   'plan_midia_importar'
 ] as const
 
@@ -140,6 +142,8 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
     open,
     saveRoteiro: (roteiro, expectedRev) => store.saveRoteiro(projectCwd, slug, roteiro, expectedRev),
     writeHandoff: (conteudo, etapas) => store.writeHandoff(projectCwd, slug, conteudo, now(), etapas),
+    staleHandoffs: async () => (await findStaleHandoffs(projectCwd, slug)).stale.map((h) => h.name),
+    discardStaleHandoffs: () => discardStaleHandoffs(projectCwd, slug),
     changed
   })
 
@@ -390,6 +394,7 @@ export function buildPlanningTools(ctx: PlanningToolContext): AnyTool[] {
     )),
 
     roteiroTools.handoffWrite,
+    roteiroTools.handoffLimpar,
 
     erase(tool(
       'plan_midia_importar',

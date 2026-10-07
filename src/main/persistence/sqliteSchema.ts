@@ -9,6 +9,7 @@ import {
 } from './keyRegistry'
 import { StorageError, type ConversationRecord, type KvScope } from './types'
 import { writeDbAtomically } from '../atomicDb'
+import { SQLITE_BOARD_PRINTS_SCHEMA } from './sqliteBoardPrints'
 
 const LEGACY_CONVERSATIONS_KEY = 'agentcode.conversations.v1'
 const DATA_DIRNAME = 'data'
@@ -577,6 +578,17 @@ export const SQLITE_HANDOFF_TRACKING_SCHEMA = `
   );
 `
 
+/**
+ * Migration 16 — o vínculo da pendência com o cartão de origem
+ * (`board_items.parent_id`). Coluna que aceita nulo: a linha antiga continua
+ * válida, só sem pai. Como a 14, `ALTER TABLE ... ADD COLUMN` não se repete: o
+ * guarda de `write()` não a roda (writeGuardSql vazio). No PostgreSQL a mesma
+ * coluna NÃO é migração numerada — ver `ensurePostgresBoardParent`.
+ */
+export const SQLITE_BOARD_PARENT_SCHEMA = `
+  ALTER TABLE board_items ADD COLUMN parent_id TEXT;
+`
+
 export interface SqliteMigration {
   version: number
   name: string
@@ -635,7 +647,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   ),
   migration(13, 'sqlite-v2-context-history', SQLITE_CONTEXT_HISTORY_SCHEMA),
   migration(14, 'sqlite-v2-context-turn-models', SQLITE_CONTEXT_TURN_MODELS_SCHEMA, ''),
-  migration(15, 'sqlite-v2-handoff-tracking', SQLITE_HANDOFF_TRACKING_SCHEMA)
+  migration(15, 'sqlite-v2-handoff-tracking', SQLITE_HANDOFF_TRACKING_SCHEMA),
+  migration(16, 'sqlite-v2-board-parent', SQLITE_BOARD_PARENT_SCHEMA, ''),
+  // Tabela nova com `IF NOT EXISTS` (sqliteBoardPrints.ts): o mesmo SQL no guarda.
+  migration(17, 'sqlite-v2-board-prints', SQLITE_BOARD_PRINTS_SCHEMA)
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

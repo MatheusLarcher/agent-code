@@ -28,6 +28,16 @@ import type { ContextTurnDetail, ContextTurnSummary } from '../../shared/context
 import { createPostgresSessionStore } from './postgresSessionStore'
 import { hotPathTransaction } from './postgresSessionSetup'
 import { rollbackOrDiscard } from './postgresTimeouts'
+import { ensurePostgresBoardParent } from './postgresBoardParent'
+import { BoardPrintPruner } from './boardPrintPruner'
+import type { BoardItemPrintQuery, BoardItemPrintRecord, BoardItemPrintWrite } from './boardPrintTypes'
+import {
+  addPostgresBoardItemPrint,
+  ensurePostgresBoardPrints,
+  getPostgresBoardItemPrint,
+  listPostgresBoardItemPrints,
+  prunePostgresBoardItemPrints
+} from './postgresBoardPrints'
 import { mergeDeviceState, splitDeviceFields } from './conversationScope'
 import {
   decodePostgresJson,
@@ -40,6 +50,7 @@ import {
   assertPoWrite,
   BOARD_COLUMNS,
   BOARD_EVENT_COLUMNS,
+  BOARD_SELECT_WITH_PARENT,
   boardItemEventFromRow,
   boardItemFromRow,
   boardItemId,
@@ -398,7 +409,12 @@ export class PostgresRepository implements PersistenceRepository {
   private readonly changeLogPruner: ChangeLogPruner
   private readonly tokenUsagePruner: TokenUsagePruner
   private readonly contextBlobPruner: ContextBlobPruner
+  private readonly boardPrintPruner: BoardPrintPruner
   private initialized = false
+  /** A coluna `board_items.parent_id` existe neste banco (ver postgresBoardParent.ts). */
+  private boardParent = false
+  /** A tabela `board_item_prints` existe neste banco (ver postgresBoardPrints.ts). */
+  private boardPrints = false
 
   constructor(
     private readonly pool: Pool,
@@ -438,6 +454,9 @@ export class PostgresRepository implements PersistenceRepository {
     this.contextBlobPruner = new ContextBlobPruner(this, (error) =>
       console.error('[postgres] falha ao podar context_blob:', error)
     )
+    this.boardPrintPruner = new BoardPrintPruner(this, (error) =>
+      console.error('[postgres] falha ao podar board_item_prints:', error)
+    )
   }
 
   async initialize(): Promise<void> {
@@ -457,11 +476,19 @@ export class PostgresRepository implements PersistenceRepository {
         [this.installationId]
       )
     })
+    this.boardParent = await ensurePostgresBoardParent(this.pool)
+    this.boardPrints = await ensurePostgresBoardPrints(this.pool)
     await this.feed.start()
     this.changeLogPruner.start()
     this.tokenUsagePruner.start()
     this.contextBlobPruner.start()
+    if (this.boardPrints) this.boardPrintPruner.start()
     this.initialized = true
+  }
+
+  /** As colunas lidas do quadro: com o vínculo da pendência só quando ele existe. */
+  private boardColumns(): string {
+    return this.boardParent ? BOARD_SELECT_WITH_PARENT : BOARD_COLUMNS
   }
 
   async close(): Promise<void> {
@@ -470,6 +497,7 @@ export class PostgresRepository implements PersistenceRepository {
     this.changeLogPruner.stop()
     this.tokenUsagePruner.stop()
     this.contextBlobPruner.stop()
+    this.boardPrintPruner.stop()
     await this.feed.close()
     await this.pool.end()
   }
@@ -990,7 +1018,7 @@ export class PostgresRepository implements PersistenceRepository {
         // O custo é uma consulta a mais por cartão, dentro da transação que já
         // existia — o snapshot de um plano tem dezenas de linhas, não milhões.
         const locked = await client.query<BoardItemRow>(
-          `SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = $1 FOR UPDATE`,
+          `SELECT ${this.boardColumns()} FROM board_items WHERE id = $1 FOR UPDATE`,
           [id]
         )
         const current = locked.rows[0]
@@ -1075,7 +1103,7 @@ export class PostgresRepository implements PersistenceRepository {
     }
     if (!query.includeDismissed) clauses.push('dismissed_at IS NULL')
     const result = await this.pool.query<BoardItemRow>(
-      `SELECT ${BOARD_COLUMNS} FROM board_items WHERE ${clauses.join(' AND ')}`,
+      `SELECT ${this.boardColumns()} FROM board_items WHERE ${clauses.join(' AND ')}`,
       params
     )
     return result.rows.map((row) => boardItemFromRow(decodeBoardRow(row))).sort(compareBoardItems)
@@ -1083,7 +1111,7 @@ export class PostgresRepository implements PersistenceRepository {
 
   async getBoardItem(id: string): Promise<BoardItem | null> {
     this.assertInitialized()
-    const result = await this.pool.query<BoardItemRow>(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = $1`, [id])
+    const result = await this.pool.query<BoardItemRow>(`SELECT ${this.boardColumns()} FROM board_items WHERE id = $1`, [id])
     const row = result.rows[0]
     return row ? boardItemFromRow(decodeBoardRow(row)) : null
   }
@@ -1093,7 +1121,7 @@ export class PostgresRepository implements PersistenceRepository {
     assertPoWrite(input)
     return transaction(this.pool, async (client) => {
       const locked = await client.query<BoardItemRow>(
-        `SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = $1 FOR UPDATE`,
+        `SELECT ${this.boardColumns()} FROM board_items WHERE id = $1 FOR UPDATE`,
         [input.id]
       )
       const current = locked.rows[0]
@@ -1164,6 +1192,11 @@ export class PostgresRepository implements PersistenceRepository {
           encodePostgresText(input.reason)
         ]
       )
+      // O vínculo só grava com a coluna presente; sem ela, a pendência nasce sem pai.
+      const parentId = input.parentId?.trim()
+      if (parentId && this.boardParent) {
+        await client.query('UPDATE board_items SET parent_id = $2 WHERE id = $1', [id, parentId])
+      }
       await this.logBoardEvent(client, { boardItemId: id, kind: 'created', actor: 'po', toStatus: input.status, note: input.reason })
       return this.requireBoardItem(client, id)
     })
@@ -1235,7 +1268,7 @@ export class PostgresRepository implements PersistenceRepository {
   }
 
   private async requireBoardItem(client: PoolClient, id: string): Promise<BoardItem> {
-    const result = await client.query<BoardItemRow>(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = $1`, [id])
+    const result = await client.query<BoardItemRow>(`SELECT ${this.boardColumns()} FROM board_items WHERE id = $1`, [id])
     const row = result.rows[0]
     if (!row) throw new StorageError('INVALID_PERSISTED_DATA', `Cartão inexistente: ${id}`)
     return boardItemFromRow(decodeBoardRow(row))
@@ -1564,6 +1597,28 @@ export class PostgresRepository implements PersistenceRepository {
   async pruneOrphanContextBlobs(): Promise<number> {
     this.assertInitialized()
     return prunePostgresOrphanContextBlobs(this.pool)
+  }
+
+  // Prints dos cartões: SQL em postgresBoardPrints.ts (tabela garantida na abertura).
+  async addBoardItemPrint(print: BoardItemPrintWrite, keep: number): Promise<void> {
+    this.assertInitialized()
+    if (!this.boardPrints) throw new StorageError('STORAGE_OFFLINE', 'Os prints dos cartões não estão disponíveis neste PostgreSQL.', false)
+    await addPostgresBoardItemPrint(this.pool, print, keep)
+  }
+
+  async listBoardItemPrints(query: BoardItemPrintQuery): Promise<BoardItemPrintRecord[]> {
+    this.assertInitialized()
+    return this.boardPrints ? listPostgresBoardItemPrints(this.pool, query) : []
+  }
+
+  async getBoardItemPrint(id: string): Promise<(BoardItemPrintRecord & { data: Uint8Array }) | null> {
+    this.assertInitialized()
+    return this.boardPrints ? getPostgresBoardItemPrint(this.pool, id) : null
+  }
+
+  async pruneBoardItemPrints(cutoffIso: string): Promise<number> {
+    this.assertInitialized()
+    return this.boardPrints ? prunePostgresBoardItemPrints(this.pool, cutoffIso) : 0
   }
 
   // Registro dos envios de handoff: SQL em postgresHandoff.ts.

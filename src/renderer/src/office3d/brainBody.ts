@@ -85,6 +85,8 @@ export interface Brain {
   usageOut: boolean
   stalled: boolean
   idleSince: number | null
+  /** Tarefa ativa (AgentStatus.task): fica na mesa mesmo sem o turno rodando (recuperação, fila, limite). */
+  task: boolean
   // ── corpo
   visible: boolean
   /** Filtrado fora (o filtro de projeto do HUD): sai pela porta e espera do lado de fora. */
@@ -212,7 +214,7 @@ export function createBrain(o: BrainInit): Brain {
     key: o.key, role: o.role, style: o.style ?? 'idle', roomId: o.roomId, projectId: o.projectId ?? null, home: { ...o.home }, desk, lounge: o.lounge ?? null,
     monitor: o.monitor ?? (desk ? { ...deskPoint(desk, 0, -MONITOR_BACK), y: MONITOR_Y } : null),
     side: o.side ?? 1, seed: o.seed ?? 0,
-    phase: 'idle', tool: null, toolAt: 0, contextLow: false, usageOut: false, stalled: false, idleSince: null,
+    phase: 'idle', tool: null, toolAt: 0, contextLow: false, usageOut: false, stalled: false, idleSince: null, task: false,
     visible: !o.away, outside: false, x: o.home.x, z: o.home.z, yaw: o.home.yaw, speed: 0, sit: 0, seat: null, seatX: 0, seatZ: 0, standX: o.home.x, standZ: o.home.z,
     path: new Float32Array(64), pathLen: 0, pathIdx: 0, planned: -1, atSpot: true, arrived: true,
     goal: { version: 0, x: o.home.x, z: o.home.z, yaw: o.home.yaw, seat: null, sx: 0, sz: 0, syaw: 0, gait: 'walk', exit: false },

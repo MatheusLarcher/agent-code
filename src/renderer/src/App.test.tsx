@@ -3197,6 +3197,60 @@ describe('App — enviar para implementação (handoff)', () => {
     expect(opts).toMatchObject({ convId: 'h1', handoff: { slug: 'checkout' } })
     expect(opts).not.toHaveProperty('planning')
   })
+
+  it('implantação: erro depois de resposta entra na retomada ("continue de onde parou"); o próximo prompt só sai depois que ela termina bem', async () => {
+    seed([{ ...planConv, id: 'h1', title: 'Implementação: Checkout', mode: undefined, planningSlug: undefined, handoffSlug: 'checkout' }], 'h1')
+    addPlanningApi()
+    const gate = vi.fn(async () => ({
+      ok: true,
+      decision: { kind: 'next', envio: { id: 'env-2', conversationId: 'h1', loteId: 'l1', ordem: 2, arquivo: '02.md', conteudo: 'Prompt 2' } }
+    }))
+    Object.assign(api, {
+      handoffQueueGate: gate,
+      handoffQueueDispatched: vi.fn(async () => ({ ok: true, dispatched: true })),
+      handoffQueueList: vi.fn(async () => ({ ok: true, items: [] }))
+    })
+    render(<UiProvider><App /></UiProvider>)
+    await send('Prompt 1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit({ kind: 'assistant-text', id: 'a1', text: 'Fiz metade do trabalho.', final: false }, 'h1')
+    // O provedor marca o fim como erro DEPOIS do texto: na implantação isso não é concluído.
+    await emit({ kind: 'result', id: 'r-err', isError: true, text: 'API Error: 500 Internal server error', durationMs: 1 }, 'h1')
+    await waitFor(() => expect(document.querySelector('.recovery-card')).not.toBeNull())
+    expect(gate).not.toHaveBeenCalled()
+
+    // A retomada de sempre — sem reenviar o prompt inteiro.
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar agora' }))
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    expect(api.sendMessage.mock.calls[1][6]).toBe('recovery')
+    expect(String(api.sendMessage.mock.calls[1][1])).toMatch(/^Continue exatamente de onde parou/)
+    expect(gate).not.toHaveBeenCalled()
+
+    // A retomada terminou bem: passa pela regra do despachante, e o 2º prompt sai.
+    await emit(result, 'h1')
+    await waitFor(() => expect(gate).toHaveBeenCalledWith({ conversationId: 'h1' }))
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
+    expect(api.sendMessage.mock.calls[2].slice(0, 2)).toEqual(['h1', 'Prompt 2'])
+  })
+
+  it('implantação: o Stop do usuário não é erro — nada de retomada, e o main é avisado (a fila espera)', async () => {
+    seed([{ ...planConv, id: 'h1', title: 'Implementação: Checkout', mode: undefined, planningSlug: undefined, handoffSlug: 'checkout' }], 'h1')
+    addPlanningApi()
+    render(<UiProvider><App /></UiProvider>)
+    await send('Prompt 1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit({ kind: 'assistant-text', id: 'a1', text: 'trabalhando', final: false }, 'h1')
+    fireEvent.click(screen.getByTitle('Parar tarefa atual'))
+    // O Stop do usuário vai sem `restart` (o main marca a fila como parada por ele).
+    expect(api.interrupt).toHaveBeenCalledWith('h1')
+    await emit({ kind: 'result', id: 'r-stop', isError: true, text: 'interrompido', durationMs: 1 }, 'h1')
+    expect(document.querySelector('.recovery-card')).toBeNull()
+    expect(api.sendMessage.mock.calls.some((c) => c[6] === 'recovery')).toBe(false)
+  })
 })
 
 describe('App — título automático (recuo na hora, nome curto do LLM depois)', () => {

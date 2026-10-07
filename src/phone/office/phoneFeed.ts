@@ -4,7 +4,7 @@
  * PC (src/renderer/src/office3d) desenha igual — só a origem dos dados muda.
  *
  * O que a ponte não manda fica vazio: trilhas de subagente, Vigia/PO/Memorista,
- * contas Claude e ícones de projeto. O "o que o agente está fazendo" (a última
+ * contas Claude e ícones de projeto (a cor do projeto vem: `projectColors`). O "o que o agente está fazendo" (a última
  * ferramenta do turno) vem de um pequeno histórico por conversa, alimentado por
  * TODO evento do SSE (`client.eventTaps`) — não só o da conversa aberta.
  */
@@ -12,6 +12,7 @@ import type { Conversation, UIMessage } from '@renderer/types'
 import type { OfficeFeed } from '@renderer/office/adapter/feed'
 import type { FeedSource } from '@renderer/office3d/engineTypes'
 import type { PermissionRequest } from '@shared/ipc'
+import type { ProjectColorMap } from '@shared/projectColor'
 import { reduce } from '../core/reducer'
 import type { AppState, RemoteClient } from '../core/client'
 import type { BridgeEvent, ChatMsg, ConvSummary } from '../core/types'
@@ -20,6 +21,8 @@ import type { BridgeEvent, ChatMsg, ConvSummary } from '../core/types'
 const KEEP = 40
 
 const ZERO_TOKENS = { context: 0, output: 0, cost: 0 }
+/** PC antigo (sem `projectColors`): sempre o mesmo objeto, para o escritório não repintar a cada evento. */
+const NO_COLORS: ProjectColorMap = Object.freeze({}) as ProjectColorMap
 
 /** O resumo da ponte no formato de Conversation que o modelo do escritório lê (id, cwd, título, modelo, mensagens). */
 export function toConversation(c: ConvSummary, messages: readonly ChatMsg[]): Conversation {
@@ -95,6 +98,8 @@ export class PhoneOfficeFeed implements FeedSource {
       stalledSince,
       tracks: {},
       projectIcons: {},
+      // A cor fixa de cada projeto, do `/api/state` (as que faltam chegam num pedido seguinte; até lá, a reserva).
+      projectColors: s.projectColors ?? NO_COLORS,
       usageLimits: s.usage,
       speakingId: null
     }

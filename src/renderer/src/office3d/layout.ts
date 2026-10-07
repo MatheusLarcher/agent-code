@@ -13,13 +13,20 @@
  *   que senta numa ilha vazia a ganha; a reserva dura enquanto o projeto tiver
  *   alguém no modelo (o filtro de projeto não tira ninguém do modelo) e some
  *   com o último;
- * - quem já tinha mesa (na ilha do próprio projeto) fica com ela; ninguém é empurrado;
- * - personagem novo do projeto P: mesa livre na ilha de P (sem ilha, a 1ª ilha
+ * - quem já tinha mesa (na ilha do próprio projeto) fica com ela — salvo quando
+ *   alguém do projeto com TAREFA ATIVA (model.hasActiveTask) está sem mesa e a
+ *   ilha está cheia: aí o parado com a atividade mais antiga cede a dele (vai
+ *   para o lounge). Só o 7º trabalhando ao mesmo tempo no projeto fica sem mesa;
+ * - personagem novo do projeto P (quem tem tarefa primeiro): mesa livre na ilha de P (sem ilha, a 1ª ilha
  *   sem reserva, na ordem fixa 0,1,2,3, passa a ser de P) → lounge → de pé na
  *   ilha do principal da mesma conversa (ou na do projeto) → praça. Ilha cheia
  *   ou as 4 ilhas tomadas: o lounge, não a ilha de outro projeto. Dentro da
  *   ilha, a ordem do U: o fundo, depois os braços aos pares;
  * - quem estava no lounge ou de pé pega mesa assim que vagar uma na ilha dele.
+ * Subagente 'beside' RODANDO (com trackId) também pede mesa própria na ilha do
+ * projeto — depois dos principais com tarefa, antes dos parados; o PC dela
+ * mostra a trilha dele. Sem mesa (ilha cheia de quem tem tarefa), fica ao lado
+ * do pai; o principal com tarefa sem mesa tira a dele.
  * 'beside' fica ao lado do pai; 'destination' num lugar fixo: PO junto do
  * kanban, memória na estante de Memórias, Central no console. Fora de cena (o
  * Manager de plano já enviado, offstage.ts) fica do lado de fora da porta.
@@ -180,7 +187,16 @@ export function monitorPosition(desk: Pick<DeskLayout, 'x' | 'z'> & { yaw?: numb
 /** O projeto de um personagem: o roomId do modelo (null para a Central). */
 export const projectOf = (c: Pick<OfficeCharacterModel, 'roomId'>): string | null => c.roomId
 
-const wantsDesk = (c: OfficeCharacterModel): boolean => c.placement.kind === 'seat' && c.roomId !== null
+/** Tarefa ativa (model.hasActiveTask): tem prioridade na mesa e no lounge. */
+const hasTask = (c: OfficeCharacterModel): boolean => c.task ?? c.active
+/** Subagente rodando que nasce ao lado do pai: pede mesa própria (com PC) na ilha; sem mesa, fica ao lado do pai. */
+const isGuest = (c: OfficeCharacterModel): boolean => c.placement.kind === 'beside' && !!c.trackId && hasTask(c)
+const wantsDesk = (c: OfficeCharacterModel): boolean => c.roomId !== null && (c.placement.kind === 'seat' || isGuest(c))
+const activityOf = (c: OfficeCharacterModel): number => c.activityAt ?? 0
+/** Ordem de escolha: principal com tarefa, depois subagente/especialista com tarefa, depois os parados. */
+const rank = (c: OfficeCharacterModel): number => (!hasTask(c) ? 2 : c.role === 'principal' ? 0 : 1)
+/** Para `sort` (estável): pela prioridade, o resto na ordem do modelo. */
+const taskFirst = (a: OfficeCharacterModel, b: OfficeCharacterModel): number => rank(a) - rank(b)
 /** O Agent Manager em cena: senta numa cadeira da mesa de reunião. */
 const wantsChair = (c: OfficeCharacterModel): boolean => !c.offstage && c.placement.kind === 'destination' && c.placement.papel === 'reuniao-cabeceira'
 
@@ -214,7 +230,9 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
   // Mesas: quem já tinha fica (ninguém é empurrado), desde que a ilha seja do projeto dele.
   const deskOf: Record<string, number> = {}
   const taken: Array<string | null> = desks.map(() => null)
-  const seated = model.characters.filter(wantsDesk)
+  const byKey = new Map(model.characters.map((c) => [c.key, c]))
+  // O subagente só aparece com o pai no modelo (placeCharacters): sem ele, nada de mesa.
+  const seated = model.characters.filter((c) => wantsDesk(c) && (c.placement.kind !== 'beside' || byKey.has(c.placement.parentKey)))
   for (const c of seated) {
     const d = prev.deskOf[c.key]
     if (d === undefined || taken[d] !== null) continue
@@ -232,16 +250,36 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
     if (island === null) return null
     return desks.find((d) => d.island === island && taken[d.index] === null)?.index ?? null
   }
-  for (const c of seated) {
-    if (deskOf[c.key] !== undefined) continue
-    const k = pick(c.roomId as string)
+  /**
+   * Ilha do projeto cheia: o parado (sem tarefa) com a atividade mais antiga cede a mesa; para o
+   * principal com tarefa, sem parado, cede um subagente (volta para o lado do pai). null sem ninguém.
+   */
+  const yieldDesk = (p: string, principal: boolean): number | null => {
+    let best: number | null = null
+    let guest: number | null = null
+    for (const d of desks) {
+      const key = taken[d.index]
+      const c = key ? byKey.get(key) : undefined
+      if (!c || owner[d.island] !== p) continue
+      if (isGuest(c)) guest ??= d.index
+      if (hasTask(c)) continue
+      if (best === null || activityOf(c) < activityOf(byKey.get(taken[best]!)!)) best = d.index
+    }
+    const k = best ?? (principal ? guest : null)
+    if (k !== null) delete deskOf[taken[k]!]
+    return k
+  }
+  // Quem tem tarefa ativa escolhe primeiro e, com a ilha cheia, tira a mesa de um parado (que vai para o
+  // lounge). Só por quem tem tarefa: ninguém troca de lugar à toa.
+  for (const c of seated.filter((x) => deskOf[x.key] === undefined).sort(taskFirst)) {
+    const p = c.roomId as string
+    const k = pick(p) ?? (hasTask(c) ? yieldDesk(p, rank(c) === 0) : null)
     if (k === null) continue
     taken[k] = c.key
     deskOf[c.key] = k
   }
 
   // Dono e projeto de cada mesa e de cada ilha.
-  const byKey = new Map(model.characters.map((c) => [c.key, c]))
   for (const d of desks) {
     const key = taken[d.index]
     d.ownerKey = key
@@ -284,7 +322,8 @@ function placeCharacters(
   const besideCount = new Map<string, number>()
   const used = new Set<string>()
   const counters = { po: 0, memory: 0, plaza: 0 }
-  // Lounge estável como as mesas: quem já tinha lugar fica com ele (ninguém é empurrado); os novos pegam os livres.
+  // Lounge estável como as mesas: quem já tinha lugar fica com ele; os novos pegam os livres (quem tem
+  // tarefa primeiro). Lounge cheio: quem tem tarefa toma o lugar do parado mais antigo (que fica de pé).
   const loungeOf = new Map<string, number>()
   const taken = new Set<number>()
   const wantsLounge = model.characters.filter((c) => c.placement.kind === 'seat' && c.roomId !== null && deskOf[c.key] === undefined)
@@ -294,10 +333,18 @@ function placeCharacters(
     loungeOf.set(c.key, i)
     taken.add(i)
   }
-  for (const c of wantsLounge) {
-    if (loungeOf.has(c.key)) continue
-    const i = LOUNGE_SEATS.findIndex((_, k) => !taken.has(k))
-    if (i < 0) break
+  const yieldSeat = (): number => {
+    const idle = wantsLounge.filter((o) => loungeOf.has(o.key) && !hasTask(o))
+    if (idle.length === 0) return -1
+    const o = idle.reduce((a, b) => (activityOf(b) < activityOf(a) ? b : a))
+    const i = loungeOf.get(o.key)!
+    loungeOf.delete(o.key)
+    return i
+  }
+  for (const c of wantsLounge.filter((o) => !loungeOf.has(o.key)).sort(taskFirst)) {
+    let i = LOUNGE_SEATS.findIndex((_, k) => !taken.has(k))
+    if (i < 0 && hasTask(c)) i = yieldSeat()
+    if (i < 0) continue
     loungeOf.set(c.key, i)
     taken.add(i)
   }
@@ -329,14 +376,15 @@ function placeCharacters(
     if (c.offstage) {
       // Fora de cena (plano enviado: o corpo dele foi para o PC): lá fora, sem ocupar a cabeceira nem mesa.
       o = base(c, OFFICE.x1 + 1, DOOR.z, 0, 'offstage')
-    } else if (p.kind === 'seat' && c.roomId !== null) {
+    } else if (deskOf[c.key] !== undefined) {
+      // Na mesa (o principal, o especialista ou o subagente rodando com mesa própria): o PC dela é o dele.
       const d = deskOf[c.key]
-      if (d !== undefined) {
-        const seat = deskPoint(room.desks[d], 0, SEAT_FRONT)
-        o = base(c, seat.x, seat.z, room.desks[d].yaw, 'desk')
-        o.deskIndex = d
-        o.screenDesk = { roomId: OFFICE_ID, index: d }
-      } else if (loungeOf.has(c.key)) {
+      const seat = deskPoint(room.desks[d], 0, SEAT_FRONT)
+      o = base(c, seat.x, seat.z, room.desks[d].yaw, 'desk')
+      o.deskIndex = d
+      o.screenDesk = { roomId: OFFICE_ID, index: d }
+    } else if (p.kind === 'seat' && c.roomId !== null) {
+      if (loungeOf.has(c.key)) {
         const i = loungeOf.get(c.key)!
         const s = LOUNGE_SEATS[i]
         o = base(c, s.x, s.z, s.yaw, 'lounge')

@@ -22,7 +22,9 @@
  *   principal  'waiting-permission' (permissão/pergunta pendente) → 'error'
  *              (o turno terminou em erro, inclusive esperando a recuperação
  *              agendada) → 'working' (busyIds) → 'done' (resposta final há
- *              menos de DONE_MS) → 'idle'.
+ *              menos de DONE_MS) → 'idle'. A fase NÃO diz se há tarefa: `task`
+ *              (model.hasActiveTask) diz — 'error' com recuperação agendada é
+ *              tarefa ativa (o agente espera na mesa, brain.ts).
  *   trilha     running → 'working'; error → 'error'; done → 'done' por DONE_MS
  *              depois de endedAt, depois 'idle'.
  *   observador (PO, vigia, memorista) → 'working' se ativo, senão 'idle'.
@@ -49,11 +51,14 @@ import type { AgentTrack } from '../agentTracks'
 import { currentTool, toolPath } from '../components/office/screenContent'
 import { callSegments, lineText, type CrewRole } from '../crew'
 import type { OfficeFeed } from '../office/adapter/feed'
-import type { OfficeCharacterModel, OfficeModel } from '../office/adapter/model'
+import { hasActiveTask, type OfficeCharacterModel, type OfficeModel } from '../office/adapter/model'
 import { scanTurn, type TurnScan } from '../office/adapter/turn'
 import type { Conversation, UIMessage } from '../types'
 import { contextBattery } from './battery'
 import { apiError } from './quips/format'
+import { parseTestSummary } from './testSummary'
+
+export { parseTestSummary }
 
 export type AgentPhase = 'idle' | 'working' | 'waiting-permission' | 'error' | 'done'
 export type ToolKind = 'edit' | 'write' | 'read' | 'search' | 'bash' | 'web' | 'task' | 'other'
@@ -79,6 +84,12 @@ export interface AgentStatus {
   /** Trilha do subagente; ausente no principal e nos observadores. */
   trackId?: string
   phase: AgentPhase
+  /**
+   * Tarefa ativa (model.hasActiveTask): o turno roda, permissão pendente, recuperação agendada ou
+   * mensagem na fila. Vale também com phase 'error'/'idle' (esperando a retomada): o agente fica na mesa.
+   * Na trilha = rodando; no observador = ativo.
+   */
+  task: boolean
   /** Só com phase 'working' ou 'waiting-permission'. */
   tool: AgentTool | null
   /** Último pedido do usuário na conversa (mídia como "[mídia N]"), até TEXT_MAX; ''. */
@@ -242,39 +253,6 @@ export function describeTool(id: string, name: string, input: unknown): AgentToo
   }
 }
 
-// ── resumo de testes ───────────────────────────────────────────────────────
-// eslint-disable-next-line no-control-regex
-const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g
-/** vitest: "      Tests  1 failed | 38 passed (39)". */
-const VITEST = /^[ \t]*Tests[ \t]{2,}(.+?)[ \t]*\(\d+\)[ \t]*$/gm
-/** jest: "Tests:       1 failed, 23 passed, 24 total". */
-const JEST = /^[ \t]*Tests:[ \t]+(.+)$/gm
-/** pytest: "==== 1 failed, 17 passed, 2 warnings in 0.91s ====" (ou sem os "=", no -q). */
-const PYTEST = /^[= \t]*((?:\d+ [a-z]+, )*\d+ [a-z]+) in [\d.]+s\b/gm
-/** go test -v: "--- PASS: TestX"; sem -v, as linhas de pacote "ok"/"FAIL". */
-const GO_CASE = /^[ \t]*--- (PASS|FAIL):/gm
-const GO_OK = /^ok[ \t]+\S+[ \t]+(?:\(cached\)|[\d.]+s)/gm
-const GO_FAIL = /^FAIL[ \t]+\S+[ \t]+(?:[\d.]+s|\[build failed\]|\[setup failed\])/gm
-
-const lastMatch = (re: RegExp, text: string): string | null => [...text.matchAll(re)].pop()?.[1] ?? null
-const num = (re: RegExp, s: string): number => Number(re.exec(s)?.[1] ?? 0)
-const counts = (line: string | null): { passed: number; failed: number } | null =>
-  line !== null && /\d+ (passed|failed)/.test(line) ? { passed: num(/(\d+) passed/, line), failed: num(/(\d+) failed/, line) } : null
-
-/** Resumo de vitest, jest, pytest ou go test no fim de uma saída; null sem resumo. */
-export function parseTestSummary(output: string): { passed: number; failed: number } | null {
-  const text = output.slice(-20_000).replace(ANSI, '')
-  const hit = counts(lastMatch(VITEST, text)) ?? counts(lastMatch(JEST, text))
-  if (hit) return hit
-  const py = lastMatch(PYTEST, text)
-  // pytest: erro de coleta/fixture conta como falha.
-  if (py && /\d+ (passed|failed|errors?)\b/.test(py)) return { passed: num(/(\d+) passed/, py), failed: num(/(\d+) failed/, py) + num(/(\d+) errors?\b/, py) }
-  const cases = [...text.matchAll(GO_CASE)].map((m) => m[1])
-  if (cases.length > 0) return { passed: cases.filter((c) => c === 'PASS').length, failed: cases.filter((c) => c === 'FAIL').length }
-  const [ok, fail] = [GO_OK, GO_FAIL].map((re) => [...text.matchAll(re)].length)
-  return ok + fail > 0 ? { passed: ok, failed: fail } : null
-}
-
 // ── retrato ────────────────────────────────────────────────────────────────
 type UserMsg = Extract<UIMessage, { kind: 'user' }>
 const PIPE_RESET = /\|(\d{9,})\s*$/ // "…limit reached|1999999999" (s), como em moreTriggers
@@ -346,6 +324,9 @@ function principalStatus(feed: OfficeFeed, ch: OfficeCharacterModel, now: number
   const perm = feed.permissions[c.id]
   const okAt = f.scan.okAt
   s.phase = perm ? 'waiting-permission' : f.error ? 'error' : f.busy ? 'working' : okAt !== null && now - okAt < DONE_MS ? 'done' : 'idle'
+  // A fase 'error' (inclusive esperando a recuperação, com a conversa ainda ocupada) não tira a tarefa: o cérebro
+  // decide pela `task` e fica na mesa esperando.
+  s.task = hasActiveTask(c, feed)
   const tool = f.scan.tool
   if (tool && (s.phase === 'working' || s.phase === 'waiting-permission')) s.tool = describeTool(tool.id, tool.name, tool.input)
   s.busySinceMs = f.busy ? (feed.busySince[c.id] ?? null) : null
@@ -364,6 +345,7 @@ function principalStatus(feed: OfficeFeed, ch: OfficeCharacterModel, now: number
 function trackStatus(feed: OfficeFeed, ch: OfficeCharacterModel, now: number, f: ConvFacts, track: AgentTrack, s: AgentStatus): AgentStatus {
   const ended = track.endedAt ?? track.startedAt
   s.phase = track.status === 'running' ? 'working' : track.status === 'error' ? 'error' : now - ended < DONE_MS ? 'done' : 'idle'
+  s.task = track.status === 'running'
   if (track.status === 'running') {
     const t = currentTool(feed, { key: ch.key, convId: ch.convId, role: ch.role, trackId: track.id })
     if (t?.open) s.tool = describeTool(t.id, t.name, t.input)
@@ -375,7 +357,7 @@ function trackStatus(feed: OfficeFeed, ch: OfficeCharacterModel, now: number, f:
 
 function statusWith(feed: OfficeFeed, ch: OfficeCharacterModel, now: number, f: ConvFacts): AgentStatus {
   const s: AgentStatus = {
-    key: ch.key, convId: ch.convId, role: ch.role, phase: ch.active ? 'working' : 'idle', tool: null, lastUserText: f.user?.text ?? '',
+    key: ch.key, convId: ch.convId, role: ch.role, phase: ch.active ? 'working' : 'idle', task: ch.task ?? ch.active, tool: null, lastUserText: f.user?.text ?? '',
     busySinceMs: null, idleSinceMs: null, contextPct: null, permission: null, error: null, usageExhausted: null, speaking: false, stalledMs: 0
   }
   if (ch.trackId) s.trackId = ch.trackId

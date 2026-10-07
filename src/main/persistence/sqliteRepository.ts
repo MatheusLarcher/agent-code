@@ -10,6 +10,15 @@ import { createSqliteSessionStore, type SqliteStoreIo } from './sqliteSessionSto
 import { writeDbAtomically } from '../atomicDb'
 import { TokenUsagePruner } from './tokenUsagePruner'
 import { ContextBlobPruner } from './contextBlobPruner'
+import { BoardPrintPruner } from './boardPrintPruner'
+import type { BoardItemPrintQuery, BoardItemPrintRecord, BoardItemPrintWrite } from './boardPrintTypes'
+import {
+  addSqliteBoardItemPrint,
+  countSqliteExpiredBoardItemPrints,
+  getSqliteBoardItemPrint,
+  listSqliteBoardItemPrints,
+  pruneSqliteBoardItemPrints
+} from './sqliteBoardPrints'
 import {
   countSqliteOrphanContextBlobs,
   deleteSqliteContextTurns,
@@ -51,6 +60,7 @@ import {
   assertPoWrite,
   BOARD_COLUMNS,
   BOARD_EVENT_COLUMNS,
+  BOARD_SELECT_WITH_PARENT,
   boardItemEventFromRow,
   boardItemFromRow,
   boardItemId,
@@ -305,6 +315,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
   private leaseEpochs = new Map<string, number>()
   private readonly tokenUsagePruner: TokenUsagePruner
   private readonly contextBlobPruner: ContextBlobPruner
+  private readonly boardPrintPruner: BoardPrintPruner
 
   constructor(
     private readonly cacheDir: string,
@@ -326,12 +337,16 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     this.contextBlobPruner = new ContextBlobPruner(this, (error) =>
       console.error('[sqlite] falha ao podar context_blob:', error)
     )
+    this.boardPrintPruner = new BoardPrintPruner(this, (error) =>
+      console.error('[sqlite] falha ao podar board_item_prints:', error)
+    )
   }
 
   async initialize(): Promise<void> {
     initializeSqliteV2(this.cacheDir, this.dbPath)
     this.tokenUsagePruner.start()
     this.contextBlobPruner.start()
+    this.boardPrintPruner.start()
     this.initialized = true
   }
 
@@ -342,6 +357,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     this.leaseEpochs.clear()
     this.tokenUsagePruner.stop()
     this.contextBlobPruner.stop()
+    this.boardPrintPruner.stop()
   }
 
   read<T>(fn: (db: DatabaseSync) => T): T {
@@ -1023,7 +1039,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       // Statements preparados UMA vez fora do laço: o snapshot é reemitido a
       // cada avanço do plano, e recompilá-los por item multiplicava o trabalho
       // pelo tamanho do plano dentro de uma transação que segura o write lock.
-      const selectOne = db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`)
+      const selectOne = db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`)
       const insertEvent = db.prepare(
         `INSERT INTO board_item_events(${BOARD_EVENT_COLUMNS}) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
       )
@@ -1161,7 +1177,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       }
       if (!query.includeDismissed) clauses.push('dismissed_at IS NULL')
       const rows = db
-        .prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE ${clauses.join(' AND ')}`)
+        .prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE ${clauses.join(' AND ')}`)
         .all(...params) as unknown as BoardItemRow[]
       return rows.map(boardItemFromRow).sort(compareBoardItems)
     })
@@ -1169,7 +1185,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
 
   async getBoardItem(id: string): Promise<BoardItem | null> {
     return this.read((db) => {
-      const row = db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(id) as unknown as
+      const row = db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`).get(id) as unknown as
         | BoardItemRow
         | undefined
       return row ? boardItemFromRow(row) : null
@@ -1181,7 +1197,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     let skipped = false
     const item = this.write((db) => {
       const current = db
-        .prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`)
+        .prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`)
         .get(input.id) as unknown as BoardItemRow | undefined
       if (!current) throw new TypeError(`Cartão inexistente: ${input.id}`)
       if (input.onlyIf && !input.onlyIf(boardItemFromRow(current))) {
@@ -1217,7 +1233,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       })
       if (event) this.logBoardEvent(db, { boardItemId: input.id, at: now, actor: input.actor ?? 'po', ...event })
       return boardItemFromRow(
-        db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(input.id) as unknown as BoardItemRow
+        db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`).get(input.id) as unknown as BoardItemRow
       )
     })
     if (!skipped) this.emit('board', item.id, item.revision)
@@ -1238,8 +1254,8 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
           )?.next ?? 0
         ) || 0
       db.prepare(
-        `INSERT INTO board_items(${BOARD_COLUMNS})
-         VALUES(?, ?, ?, ?, 'po', NULL, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, NULL, 1, ?, ?)`
+        `INSERT INTO board_items(${BOARD_COLUMNS.trimEnd()}, parent_id)
+         VALUES(?, ?, ?, ?, 'po', NULL, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, NULL, 1, ?, ?, ?)`
       ).run(
         id,
         input.projectId,
@@ -1251,11 +1267,12 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         input.reason,
         now,
         now,
-        now
+        now,
+        input.parentId?.trim() || null
       )
       this.logBoardEvent(db, { boardItemId: id, at: now, kind: 'created', actor: 'po', toStatus: input.status, note: input.reason })
       return boardItemFromRow(
-        db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
+        db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
       )
     })
     this.emit('board', item.id, item.revision)
@@ -1278,7 +1295,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         note: by?.note ?? null
       })
       return boardItemFromRow(
-        db.prepare(`SELECT ${BOARD_COLUMNS} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
+        db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
       )
     })
     this.emit('board', item.id, item.revision)
@@ -1763,6 +1780,25 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     // Cada `write()` copia o arquivo inteiro: só escreve se houver órfão.
     if (this.read(countSqliteOrphanContextBlobs) === 0) return 0
     return this.write(pruneSqliteOrphanContextBlobs)
+  }
+
+  // Prints dos cartões: SQL em sqliteBoardPrints.ts.
+  async addBoardItemPrint(print: BoardItemPrintWrite, keep: number): Promise<void> {
+    this.write((db) => addSqliteBoardItemPrint(db, print, keep))
+  }
+
+  async listBoardItemPrints(query: BoardItemPrintQuery): Promise<BoardItemPrintRecord[]> {
+    return this.read((db) => listSqliteBoardItemPrints(db, query))
+  }
+
+  async getBoardItemPrint(id: string): Promise<(BoardItemPrintRecord & { data: Uint8Array }) | null> {
+    return this.read((db) => getSqliteBoardItemPrint(db, id))
+  }
+
+  async pruneBoardItemPrints(cutoffIso: string): Promise<number> {
+    // Cada `write()` copia o arquivo inteiro: só escreve se houver print vencido.
+    if (this.read((db) => countSqliteExpiredBoardItemPrints(db, cutoffIso)) === 0) return 0
+    return this.write((db) => pruneSqliteBoardItemPrints(db, cutoffIso))
   }
 
   // Registro dos envios de handoff: SQL em sqliteHandoff.ts.

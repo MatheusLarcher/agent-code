@@ -14,6 +14,7 @@ function status(key: string, over: Partial<AgentStatus> = {}): AgentStatus {
     convId: key,
     role: 'principal',
     phase: 'working',
+    task: true,
     tool: null,
     lastUserText: 'oi',
     busySinceMs: NOW - 1_000,

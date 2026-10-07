@@ -5,7 +5,13 @@
  *
  * `override` existe para o feed sintético de medição (só DEV): enquanto ligado,
  * o snapshot é ele, e o feed real continua guardado para quando desligar.
+ *
+ * A cor de cada projeto chega à parte (`setProjectColors`, de useProjectColors):
+ * o snapshot real é o feed publicado com `projectColors` junto — a MESMA
+ * referência enquanto nem o feed nem as cores mudam (useSyncExternalStore).
+ * Feed que já traz `projectColors` (demo, testes) fica com as dele.
  */
+import type { ProjectColorMap } from '@shared/projectColor'
 import type { OfficeFeed } from './adapter/feed'
 
 export type OfficeFeedListener = (feed: OfficeFeed) => void
@@ -13,10 +19,19 @@ export type OfficeFeedListener = (feed: OfficeFeed) => void
 export class OfficeStore {
   private real: OfficeFeed | null = null
   private override: OfficeFeed | null = null
+  private colors: Readonly<ProjectColorMap> | null = null
+  private merged: { from: OfficeFeed; colors: Readonly<ProjectColorMap>; feed: OfficeFeed } | null = null
   private readonly subs = new Set<OfficeFeedListener>()
 
   publish(feed: OfficeFeed): void {
     this.real = feed
+    if (!this.override) this.emit()
+  }
+
+  /** As cores dos projetos (por cwd) que o PC já resolveu. */
+  setProjectColors(colors: Readonly<ProjectColorMap>): void {
+    if (colors === this.colors) return
+    this.colors = colors
     if (!this.override) this.emit()
   }
 
@@ -31,12 +46,19 @@ export class OfficeStore {
   }
 
   getSnapshot(): OfficeFeed | null {
-    return this.override ?? this.real
+    return this.override ?? this.withColors(this.real)
   }
 
   subscribe(cb: OfficeFeedListener): () => void {
     this.subs.add(cb)
     return () => void this.subs.delete(cb)
+  }
+
+  private withColors(feed: OfficeFeed | null): OfficeFeed | null {
+    const colors = this.colors
+    if (!feed || !colors || feed.projectColors) return feed
+    if (this.merged?.from !== feed || this.merged.colors !== colors) this.merged = { from: feed, colors, feed: { ...feed, projectColors: colors } }
+    return this.merged.feed
   }
 
   private emit(): void {

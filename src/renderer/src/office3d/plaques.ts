@@ -4,7 +4,7 @@
  *   reserva); a face com o nome e o ícone do projeto que reservou a ilha aparece
  *   na reserva e some (textura liberada) quando o último agente dele sai;
  * - a plaquinha de cada mesa ocupada: um bloquinho em pé no canto de fora da
- *   frente da mesa, com o ícone e a cor do projeto do dono (textura por projeto,
+ *   frente da mesa, com o ícone do projeto do dono (fundo neutro, sign.ts) (textura por projeto,
  *   compartilhada pelas mesas dele e liberada quando ele não ocupa mais mesa). As
  *   de um projeto numa ilha são UMA malha (refeita só quando a ocupação muda).
  *

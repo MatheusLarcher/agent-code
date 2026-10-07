@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { isReadableDb, quarantineDb, writeDbAtomically } from './atomicDb'
+import { devDataDir } from './devDataDir'
 import { migrateLegacyStorage, moveSyncData } from './storageMigration'
 
 /**
@@ -31,6 +32,13 @@ import { migrateLegacyStorage, moveSyncData } from './storageMigration'
 const APP_DIRNAME = 'agent-code'
 const POINTER_DIR = join(homedir(), '.agent-code')
 const POINTER_FILE = join(POINTER_DIR, 'location.json')
+
+/** O ponteiro da pasta de dados; numa instância isolada de desenvolvimento
+ *  (`devDataDir`), dentro dela — nunca o `~/.agent-code` real. */
+function pointerPaths(): { dir: string; file: string } {
+  const dev = devDataDir()
+  return dev ? { dir: join(dev, '.agent-code'), file: join(dev, '.agent-code', 'location.json') } : { dir: POINTER_DIR, file: POINTER_FILE }
+}
 /** Name of the (legacy, still-global) db: config/token/usage-limits — and, until
  *  migrated, the old single-blob conversations key. Exported so `projectStore.ts`
  *  can locate it for the one-time migration without duplicating the literal. */
@@ -55,6 +63,8 @@ export interface CacheInfo {
 
 /** Default cache folder before the user picks one: Documents/agent-code. */
 function defaultCacheDir(): string {
+  const dev = devDataDir()
+  if (dev) return join(dev, APP_DIRNAME)
   let docs = ''
   try {
     docs = app.getPath('documents')
@@ -66,7 +76,7 @@ function defaultCacheDir(): string {
 
 function readPointer(): string {
   try {
-    const raw = readFileSync(POINTER_FILE, 'utf8')
+    const raw = readFileSync(pointerPaths().file, 'utf8')
     const parsed = JSON.parse(raw) as { cacheDir?: string }
     return typeof parsed.cacheDir === 'string' ? parsed.cacheDir : ''
   } catch {
@@ -76,8 +86,9 @@ function readPointer(): string {
 
 function writePointer(dir: string): void {
   try {
-    mkdirSync(POINTER_DIR, { recursive: true })
-    writeFileSync(POINTER_FILE, JSON.stringify({ cacheDir: dir }, null, 2), 'utf8')
+    const pointer = pointerPaths()
+    mkdirSync(pointer.dir, { recursive: true })
+    writeFileSync(pointer.file, JSON.stringify({ cacheDir: dir }, null, 2), 'utf8')
   } catch {
     /* best-effort — if we can't persist the pointer, we still run this session */
   }

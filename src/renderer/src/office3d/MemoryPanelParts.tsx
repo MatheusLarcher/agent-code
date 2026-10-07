@@ -1,7 +1,9 @@
 /**
  * As peças do painel de Memórias (MemoryPanel.tsx): a linha do uso, a linha da
- * memória com a barrinha dos 7 dias e o texto de uma memória (só leitura).
+ * memória com a barrinha dos 7 dias e o texto de uma memória (só leitura), com
+ * o "Mostrar na pasta" no PC.
  */
+import { useState } from 'react'
 import { principalKey } from '../office/adapter/model'
 import { Markdown } from '../components/Markdown'
 import { seedCss } from './appearance'
@@ -31,7 +33,9 @@ export function when(at: number, now: number): string {
   return d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'short' })
 }
 
-export function UsageLine({ e, title, now, onAgent }: { e: UsageEvent; title: string; now: number; onAgent: (convId: string) => void }): JSX.Element {
+/** A linha do uso. Com `onOpen` (a memória existe na lista), o nome dela abre o texto. */
+export function UsageLine({ e, title, now, onAgent, onOpen }: { e: UsageEvent; title: string; now: number; onAgent: (convId: string) => void; onOpen?: (relPath: string) => void }): JSX.Element {
+  const rel = e.relPath
   return (
     <li className="mp-use" data-testid="mp-use">
       <button type="button" className="mp-agent" onClick={() => onAgent(e.convId)} title="Levar a câmera até o agente">
@@ -39,7 +43,14 @@ export function UsageLine({ e, title, now, onAgent }: { e: UsageEvent; title: st
         {e.agent}
       </button>
       <span className="mp-use-what">
-        <b>{title}</b> · {HOW_LABEL[e.how]}
+        {rel && onOpen ? (
+          <button type="button" className="mp-link mp-use-name" onClick={() => onOpen(rel)} title="Ler a memória">
+            {title}
+          </button>
+        ) : (
+          <b>{title}</b>
+        )}{' '}
+        · {HOW_LABEL[e.how]}
       </span>
       <span className="mp-use-meta">
         {projectName(e.project)} · {when(e.at, now)}
@@ -69,12 +80,41 @@ export function MemoryLine({ r, now, onOpen }: { r: MemoryRow; now: number; onOp
   )
 }
 
-export function MemoryDetail({ r, body, uses, now, onBack, onOpenConversation }: { r: MemoryRow; body: string | null; uses: readonly UsageEvent[]; now: number; onBack: () => void; onOpenConversation: (convId: string) => void }): JSX.Element {
+export interface MemoryDetailProps {
+  r: MemoryRow
+  body: string | null
+  uses: readonly UsageEvent[]
+  now: number
+  onBack: () => void
+  onOpenConversation: (convId: string) => void
+  /** "Mostrar na pasta": o Explorador com o .md selecionado. Ausente (celular): sem o botão. */
+  onReveal?: () => Promise<{ ok: boolean; message: string }>
+}
+
+export function MemoryDetail({ r, body, uses, now, onBack, onOpenConversation, onReveal }: MemoryDetailProps): JSX.Element {
+  const [note, setNote] = useState<string | null>(null)
+  const reveal = async (): Promise<void> => {
+    setNote(null)
+    const res = await onReveal?.().catch(() => ({ ok: false, message: 'Não deu para abrir a pasta.' }))
+    if (res && !res.ok) setNote(res.message)
+  }
   return (
     <div className="mp-detail" data-testid="mp-detail">
-      <button type="button" className="mp-back" onClick={onBack}>
-        ← Todas as memórias
-      </button>
+      <div className="mp-detail-bar">
+        <button type="button" className="mp-back" onClick={onBack}>
+          ← Todas as memórias
+        </button>
+        {onReveal && (
+          <button type="button" className="mp-reveal" onClick={() => void reveal()} title="Abrir o Explorador na pasta da memória, com o arquivo selecionado">
+            Mostrar na pasta
+          </button>
+        )}
+      </div>
+      {note && (
+        <p className="mp-note" role="alert">
+          {note}
+        </p>
+      )}
       <h3>{r.title}</h3>
       <p className="mp-mem-meta">
         {r.relPath} · {SCOPE_LABEL[r.scope]} · revisão {r.revision} · só leitura

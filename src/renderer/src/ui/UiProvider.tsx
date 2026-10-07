@@ -110,7 +110,10 @@ function ConfirmDialog({
   }, [onResolve])
 
   return (
-    <div className="modal-overlay" onClick={() => onResolve(false)}>
+    // Acima de qualquer outro modal (`.ui-confirm-overlay`): a confirmação pedida
+    // de DENTRO de um diálogo em portal (ex.: "Descartar os antigos" no envio
+    // para implementação) ficava atrás dele, com o mesmo z-index e antes no DOM.
+    <div className="modal-overlay ui-confirm-overlay" onClick={() => onResolve(false)}>
       <div className="modal-card" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         {opts.title && <h3 className="modal-title">{opts.title}</h3>}
         <p className="modal-message">{opts.message}</p>

@@ -7,7 +7,7 @@ import type { ChatMsg, ConvSummary, UserMsg } from './types'
 
 /** Eventos que são ESTADO, não conteúdo: uso da conta, "o turno emudeceu", plano e
  *  tarefas de fundo. No feed só engordariam a lista (a renderização é whitelist). */
-export const STATE_ONLY = new Set(['rate-limit', 'stall-status', 'task-list', 'background-tasks', 'llm-call', 'tool-input-delta', 'turn-start', 'mirror-repair'])
+export const STATE_ONLY = new Set(['rate-limit', 'stall-status', 'task-list', 'background-tasks', 'llm-call', 'tool-input-delta', 'turn-start', 'mirror-repair', 'agent-task'])
 
 /** Chamadas que o PC desvia do feed: o plano de tarefas vira o card fixo. */
 export const PLAN_TOOLS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate'])

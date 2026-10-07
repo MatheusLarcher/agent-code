@@ -31,4 +31,25 @@ describe('OfficeStore', () => {
     expect(cb).toHaveBeenCalledTimes(1)
     expect(s.getSnapshot()?.activeId).toBe('r2')
   })
+
+  it('as cores dos projetos entram no feed (mesma referência enquanto nada muda); feed com cores próprias fica com as dele', () => {
+    const s = new OfficeStore()
+    const cb = vi.fn()
+    s.subscribe(cb)
+    const real = feed({ activeId: 'a' })
+    s.publish(real)
+    expect(s.getSnapshot()).toBe(real)
+    const colors = { 'C:\\proj\\alpha': { hex: '#3c9add', source: 'logo' as const } }
+    s.setProjectColors(colors)
+    expect(cb).toHaveBeenCalledTimes(2)
+    const snap = s.getSnapshot()!
+    expect(snap.projectColors).toBe(colors)
+    expect(snap.activeId).toBe('a')
+    expect(s.getSnapshot()).toBe(snap)
+    s.setProjectColors(colors)
+    expect(cb).toHaveBeenCalledTimes(2)
+    const own = feed({ projectColors: {} })
+    s.publish(own)
+    expect(s.getSnapshot()).toBe(own)
+  })
 })

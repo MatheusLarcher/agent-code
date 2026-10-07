@@ -137,6 +137,14 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
     keys: ['memory-curator:last-run-at']
   },
   {
+    id: 'po-authorizations',
+    owner: 'src/main/po/poAuthorizationBoot.ts',
+    surface: 'main-kv',
+    postgresScope: 'global',
+    authoritativeInPostgresMode: 'postgres',
+    keys: ['agentcode.po-authorizations.v1']
+  },
+  {
     id: 'renderer-ui-state',
     owner: 'src/renderer/src/storage.ts',
     surface: 'main-kv',

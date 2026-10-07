@@ -250,3 +250,45 @@
   color: #3d4a3f;
   overflow-wrap: anywhere;
 }
+
+/* O nome da memória na linha do uso (abre o texto) e o "Mostrar na pasta" do detalhe. */
+.mp-use-what .mp-use-name {
+  display: inline;
+  text-decoration: underline;
+  text-decoration-color: #c9d3bf;
+  text-underline-offset: 2px;
+}
+
+.mp-use-what .mp-use-name:hover {
+  text-decoration-color: currentColor;
+}
+
+.mp-detail-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.mp-reveal {
+  border: 1px solid #d5dfca;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #3d4a3f;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.mp-reveal:hover {
+  background: #eef2e8;
+}
+
+.mp-note {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #fbefe4;
+  color: #8a4b1f;
+}

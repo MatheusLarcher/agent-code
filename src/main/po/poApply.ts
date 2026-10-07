@@ -1,6 +1,11 @@
 import { boardItemStatus, boardTurnEndReason, parseBoardTurnEndReason, type BoardItem } from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
+import { defaultCompletions, PO_DEFAULT_COMPLETE_REASON, untouchedSinceTurnEnd } from './poCloseDefault'
+import { parsePoHold, type PoNextPrompt } from './poHold'
+import type { PoAuthorization } from '../../shared/poAuthorization'
+import { parsePoAuthorization, PO_ROUTINE_REASON, routineFor, type PoAuthorizationOp } from './poAuthorization'
 import { linkLedgerTaskToCard, type PoLedgerDeps } from './poLedger'
+import { shapePendencies } from './poPendency'
 import type { PoPhase } from './poPrompt'
 import { parsePoVerdict, rejectUnsafeOps, type PoOp } from './poVerdict'
 
@@ -12,6 +17,20 @@ import { parsePoVerdict, rejectUnsafeOps, type PoOp } from './poVerdict'
  */
 export interface PoApplyDeps extends PoLedgerDeps {
   board: Pick<BoardService, 'list' | 'applyPo' | 'createPoItem'>
+  /** SEGURAR: o próximo prompt da fila espera, com o motivo (handoffQueueEdit.holdQueued). */
+  holdNext?(envioId: string, motivo: string): Promise<void>
+  /** AUTORIZAR/REVOGAR da abertura (a barreira "fila só com fila" mora em quem grava). */
+  authorize?(convId: string, op: PoAuthorizationOp): Promise<void>
+  /** A pendência de commit autorizada vira rotina na fila, com o texto fixo. */
+  queueRoutine?(convId: string, routine: PoRoutineRequest): Promise<void>
+}
+
+/** A rotina pedida pelo fechamento: o título do cartão de origem e onde ela roda. */
+export interface PoRoutineRequest {
+  title: string
+  push: boolean
+  cwd: string
+  projectId: string
 }
 
 /** De quem é a análise que está escrevendo. */
@@ -23,6 +42,13 @@ export interface PoApplyTarget {
   /** O início da análise — a referência de tempo do vínculo tarefa↔cartão
    *  (ver `linkLedgerTaskToCard`). */
   startedAt: number
+  /** Só no fechamento: os cartões da seção de devolvidos do digest. Os que o
+   *  veredito não citou são concluídos pelo padrão (poCloseDefault.ts). */
+  returned?: readonly BoardItem[]
+  /** Só no fechamento: o próximo prompt que o digest mostrou — o único que o SEGURAR alcança. */
+  next?: PoNextPrompt | null
+  /** Só no fechamento: a autorização de commit/push da conversa (a pendência vira rotina). */
+  authorization?: PoAuthorization | null
 }
 
 /** O que já foi escrito. Mutável de propósito: se uma escrita lança no meio,
@@ -94,14 +120,29 @@ export async function applyPoVerdict(
   cards: BoardItem[],
   progress: PoApplyProgress
 ): Promise<void> {
-  const verdict = rejectUnsafeOps(
-    parsePoVerdict(text, cards.map((card) => card.id), target.phase),
-    cards,
-    target.phase
-  )
+  const defaults = target.phase === 'close' ? defaultCompletions(text, target.returned ?? []) : []
+  const parsed = parsePoVerdict(text, cards.map((card) => card.id), target.phase)
+  const verdict = rejectUnsafeOps(shapePendencies(parsed, defaults, cards), cards, target.phase)
   const ops = await confirmCreates(deps, verdict, target)
   const { convId, cwd, projectId, startedAt } = target
   const byId = new Map(cards.map((card) => [card.id, card]))
+
+  // O padrão ANTES das operações do veredito: um TITULO no mesmo cartão mudaria
+  // a revisão que a guarda compara, e o cartão entregue voltaria para "a fazer".
+  if (defaults.length > 0) {
+    for (const card of defaults) {
+      const written = await deps.board.applyPo({
+        id: card.id,
+        poStatus: 'completed',
+        poReason: PO_DEFAULT_COMPLETE_REASON,
+        onlyIf: untouchedSinceTurnEnd(card)
+      })
+      if (written && boardItemStatus(written) === 'completed' && written.poReason === PO_DEFAULT_COMPLETE_REASON) {
+        progress.touched.push(card.id)
+        progress.applied++
+      }
+    }
+  }
 
   for (const op of ops) {
     if (op.kind === 'complete') {
@@ -136,17 +177,41 @@ export async function applyPoVerdict(
       await deps.board.applyPo({ id: op.id, poReason: boardTurnEndReason(kind, op.reason), eventNote: op.reason })
       progress.touched.push(op.id)
     } else {
+      // Pendência de commit com autorização: não espera o usuário — vira rotina,
+      // com o texto montado pelo código a partir do título do cartão de origem.
+      const auth = target.phase === 'close' ? target.authorization : null
+      const parent = op.parentId ? byId.get(op.parentId) : undefined
+      const routine = !!auth && op.status === 'pending' && !!parent && routineFor(op.title, auth)
       const created = await deps.board.createPoItem({
         projectId,
         projectCwd: cwd,
         conversationId: convId,
         title: op.title,
         status: op.status,
-        reason: op.reason
+        reason: routine ? PO_ROUTINE_REASON : op.reason,
+        ...(op.parentId ? { parentId: op.parentId } : {})
       })
       if (created) progress.touched.push(created.id)
       if (created && op.status === 'in_progress') await linkLedgerTaskToCard(deps, convId, created.id, startedAt)
+      if (created && routine && auth && parent) {
+        await deps.queueRoutine?.(convId, { title: parent.sourceTitle, push: auth.push, cwd, projectId })
+      }
     }
+    progress.applied++
+  }
+
+  // AUTORIZAR/REVOGAR: só a abertura lê a frase do usuário.
+  const authOp = target.phase === 'open' ? parsePoAuthorization(text) : null
+  if (authOp && deps.authorize) {
+    await deps.authorize(convId, authOp)
+    progress.applied++
+  }
+
+  // SEGURAR: só o próximo prompt que o digest mostrou, só no fechamento. O
+  // envio que já saiu (o veredito atrasou e a fila andou) não é tocado.
+  const hold = target.phase === 'close' && target.next ? parsePoHold(text) : null
+  if (hold && target.next && deps.holdNext) {
+    await deps.holdNext(target.next.envioId, hold)
     progress.applied++
   }
 }

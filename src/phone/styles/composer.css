@@ -49,3 +49,22 @@
   background: rgba(0, 0, 0, 0.65); color: #fff; border: none; font-size: 12px; line-height: 1;
   display: grid; place-items: center;
 }
+
+/* Barra de gravação (estilo WhatsApp): ocupa a linha do composer enquanto o ditado grava. */
+.rec-bar {
+  display: flex; align-items: center; gap: 8px; min-height: 46px;
+  padding: 1px 1px 1px 2px; border-radius: 23px;
+  background: var(--bg); border: 1px solid var(--line);
+}
+.rec-cancel { width: 44px; height: 44px; border-radius: 50%; color: var(--muted); flex: 0 0 auto; }
+.rec-cancel:not(:disabled):active { color: var(--err); }
+.rec-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--err); animation: pulse 1.1s ease-in-out infinite; }
+.rec-time { flex: 0 0 auto; min-width: 36px; font-size: 15px; font-variant-numeric: tabular-nums; color: var(--text); }
+.rec-wave { flex: 1 1 auto; min-width: 0; height: 28px; display: flex; align-items: center; justify-content: flex-end; gap: 2px; overflow: hidden; }
+.rec-wave > span {
+  flex: 0 0 3px; height: 100%; border-radius: 2px; background: var(--muted);
+  transform: scaleY(0.12); transform-origin: center; transition: transform 0.07s linear;
+}
+.rec-status { flex: 1 1 auto; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.rec-stop:disabled { opacity: 0.45; }
+.rec-bar.transcribing .rec-cancel { visibility: hidden; }

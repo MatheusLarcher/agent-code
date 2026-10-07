@@ -161,6 +161,33 @@ export type ChatEvent =
       totalLines: number
       done: boolean
     }
+  /** Ciclo de vida de uma tarefa do SDK (`system/task_started|task_progress|
+   *  task_updated|task_notification`), normalizado em src/main/agentTasks.ts.
+   *  Estado, não conteúdo: só alimenta as trilhas (agentTracks.ts) — nunca vira
+   *  bolha. É o que mantém o subagente em SEGUNDO PLANO "rodando" depois que o
+   *  `tool_result` de lançamento ("Async agent launched…") chega na hora. */
+  | ({ kind: 'agent-task'; phase: AgentTaskPhase } & AgentTaskInfo)
+
+export type AgentTaskPhase = 'started' | 'progress' | 'updated' | 'notification'
+/** `stopped` = morta (pelo usuário, pelo agente ou pelo reinício do CLI). */
+export type AgentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped'
+
+/** Uma tarefa do SDK (subagente `local_agent`, shell `local_bash`…). */
+export interface AgentTaskInfo {
+  taskId: string
+  /** Id do tool_use que lançou a tarefa (o `Agent`/`Task` = id da trilha). */
+  toolUseId?: string
+  status: AgentTaskStatus
+  /** Em segundo plano (o tool_use de lançamento já voltou). */
+  backgrounded?: boolean
+  taskType?: string
+  subagentType?: string
+  description?: string
+  lastToolName?: string
+  summary?: string
+  /** Ferramentas chamadas pela tarefa até agora. */
+  toolUses?: number
+}
 
 /** One task in the agent's plan, as stored by the CLI. */
 export interface TaskItem {
@@ -221,6 +248,10 @@ export interface BoardItem {
   revision: number
   createdAt: string
   updatedAt: string
+  /** A PENDÊNCIA aponta para o cartão de onde ela sobrou (o pedido que o PO
+   *  concluiu com algo faltando: commitar, verificar, deploy). Opcional: banco
+   *  sem a coluna (PostgreSQL ainda não atualizado) e cartão comum não têm. */
+  parentId?: string | null
 }
 
 /**
@@ -314,8 +345,17 @@ const BOARD_TURN_END_BADGE: Record<BoardTurnEndKind, string> = {
 export function boardItemAwaitingBadge(item: BoardItem): { kind: BoardTurnEndKind; label: string } | null {
   if (boardItemStatus(item) !== 'pending') return null
   const kind = boardItemTurnEndKind(item)
-  return kind ? { kind, label: BOARD_TURN_END_BADGE[kind] } : null
+  if (kind) return { kind, label: BOARD_TURN_END_BADGE[kind] }
+  // A pendência que o PO criou esperando a autorização do usuário (commit,
+  // deploy, verificar no app): também espera você — o mesmo selo.
+  if (item.dismissedAt === null && (item.poReason ?? '').startsWith(BOARD_PO_AWAITING_REASON)) {
+    return { kind: 'result', label: BOARD_TURN_END_BADGE.result }
+  }
+  return null
 }
+
+/** O motivo da pendência do PO que espera o usuário autorizar (a mesma frase do prompt do PO). */
+export const BOARD_PO_AWAITING_REASON = 'aguardando autorização do usuário'
 
 /** `true` quando o PO discorda do agente sobre o estado — o que a UI marca
  *  como corrigido e o que dá para auditar depois. */
@@ -2048,6 +2088,18 @@ export const Channels = {
   boardMove: 'board:move',
   /** A linha do tempo de um cartão — fetch preguiçoso, só ao abrir o detalhe. */
   boardItemEvents: 'board:item-events',
+  /** Os prints dos cartões (miniaturas) de um projeto ou de um cartão; o grande só no clique. */
+  boardPrints: 'board:prints',
+  boardPrintImage: 'board:print-image',
+  /** O "Fala, PO": o histórico guardado do projeto e a pergunta (uma chamada ao modelo). */
+  poChatHistory: 'po-chat:history',
+  poChatAsk: 'po-chat:ask',
+  /** "Verificar de verdade" (o PO com ferramentas), o "Cancelar" dela e a correção do quadro no clique. */
+  poChatVerify: 'po-chat:verify',
+  poChatCancel: 'po-chat:cancel',
+  poChatApply: 'po-chat:apply',
+  /** "Mandar fazer": a proposta aprovada vira um plano "Pedido do PO" na fila do projeto. */
+  poChatSend: 'po-chat:send',
   /** Main → renderer: o quadro daquele projeto mudou, recarregue. */
   boardChanged: 'board:changed',
   /** Tela de Planejamento (<dataDir>/planning/<projeto>/<slug>/). Toda resposta é PlanningResult. */
@@ -2069,6 +2121,8 @@ export const Channels = {
   planningWriteHandoff: 'planning:writeHandoff',
   /** Registra em _handoff/enviados.json prompts enviados, substituídos ou marcados à mão. */
   planningMarkHandoffsSent: 'planning:markHandoffsSent',
+  /** Move os prompts ANTIGOS não enviados para _handoff/_descartados/ (o usuário confirmou). */
+  planningDiscardHandoffs: 'planning:discardHandoffs',
   /** Importa arquivos para <plano>/midia/ (nome saneado); devolve os PlanMediaDto novos. */
   planningImportMedia: 'planning:importMedia',
   /** Uma mídia de <plano>/midia/ em base64, para pré-visualizar. */
@@ -2086,6 +2140,34 @@ export const Channels = {
   handoffCorrectEntrega: 'handoff:correctEntrega',
   /** Main → renderer: o acompanhamento gravou algo nos envios daquela conversa. */
   handoffChanged: 'handoff:changed',
+  /** Fila do quadro: o próximo prompt da conversa sai, para (com motivo) ou não há nada. */
+  handoffQueueGate: 'handoff:queueGate',
+  /** Fila do quadro: o despachante vai mandar ESTE envio (marcado pelo id). */
+  handoffQueueDispatched: 'handoff:queueDispatched',
+  /** Fila do quadro: os prompts que ainda não saíram, por pasta de projeto (faixa "Próximos prompts"). */
+  handoffQueueList: 'handoff:queueList',
+  /** Fila do projeto: a foto (planos por pasta, avaliação do PO, resposta guardada). */
+  handoffProjectStatus: 'handoff:projectStatus',
+  /** Fila do projeto: "Começar mesmo assim", "Passar a vez", os botões da pergunta do PO, "Enviar agora mesmo assim". */
+  handoffProjectAction: 'handoff:projectAction',
+  /** Fila do projeto: o usuário escreveu no plano A com outro plano na vez — guarda e o PO decide. */
+  handoffProjectReply: 'handoff:projectReply',
+  /** Main → renderer: a foto nova da fila do projeto. */
+  handoffProjectChanged: 'handoff:projectChanged',
+  /** Faixa "Próximos prompts": tirar da fila ou editar o texto de um prompt que não saiu. */
+  handoffQueueEdit: 'handoff:queueEdit',
+  /** Faixa: a ordem nova dos prompts que esperam num plano. */
+  handoffQueueReorder: 'handoff:queueReorder',
+  /** Faixa: a ordem nova dos planos de uma pasta. */
+  handoffProjectReorder: 'handoff:projectReorder',
+  /** Faixa: o que a pasta do plano tem sem commit (o "Passar a vez" mostra antes). */
+  handoffProjectDirty: 'handoff:projectDirty',
+  /** Autorização do PO para commit/push: a foto (conversa → autorização). */
+  poAuthorizationList: 'po:authorizationList',
+  /** O "Revogar" do chip. */
+  poAuthorizationRevoke: 'po:authorizationRevoke',
+  /** Main → renderer: a foto nova das autorizações. */
+  poAuthorizationsChanged: 'po:authorizationsChanged',
   kvGet: 'kv:get',
   /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
   kvSet: 'kv:set',
@@ -2123,6 +2205,8 @@ export const Channels = {
   openInEditor: 'app:open-in-editor',
   /** Open a project folder in the OS file explorer (Explorer/Finder/xdg-open). */
   openInFolder: 'app:open-in-folder',
+  /** A memória (relPath na pasta de memórias) ou o arquivo do projeto da conversa: o Explorador com ele selecionado, ou o programa padrão (src/main/revealFile.ts valida). */
+  revealFile: 'app:reveal-file',
   /** Live "@" autocomplete: search files/folders under the project for a query. */
   mentionSearch: 'app:mention-search',
   /** "/" autocomplete: list the skills available to the agent (project + user). */
@@ -2133,6 +2217,8 @@ export const Channels = {
   projectDir: 'app:project-dir',
   /** Icon found inside the project folder (data URL), for the sidebar. */
   projectIcon: 'app:project-icon',
+  /** Fixed project color per cwd (src/main/projectColorStore.ts), for the office. */
+  projectColors: 'app:project-colors',
   /** Save a copy of an agent-created file to the Downloads folder and reveal it. */
   fileDownload: 'app:file-download',
   /** Read the content of a local file. */
@@ -2634,6 +2720,11 @@ export interface PlanningHandoffListDto {
   handoffs: PlanningHandoffDto[]
   sent: PlanningHandoffSentDto[]
   sentError?: string
+  /** Os prompts ANTIGOS não enviados: gravados antes da última mudança do plano
+   *  (`_roteiro.md` ou `cards/*.md`). Ausente = nenhum (ou main mais antigo). */
+  stale?: string[]
+  /** A última mudança do plano, em ms (o corte de `stale`). */
+  planChangedAt?: number
 }
 
 /** Pedido de Channels.planningExportPdf: página HTML autocontida do flow e o tamanho dela (px CSS). */
@@ -2651,3 +2742,14 @@ export type FlowPdfResult = { ok: true; path: string } | { ok: false; canceled?:
 /** Resposta de Channels.conversationSuggestTitle. `ok: false` = sem título
  *  (entrada inválida, LLM falhou, estourou o tempo): quem chamou fica com o recuo. */
 export type SuggestTitleResult = { ok: true; title: string } | { ok: false }
+
+/** Channels.revealFile: 'folder' = o Explorador com o arquivo selecionado; 'open' = o programa padrão do sistema. */
+export type RevealFileMode = 'folder' | 'open'
+/** Uma memória (o relPath dela) ou um arquivo (caminho absoluto) dentro do projeto da conversa (`cwd`). */
+export type RevealFileRequest = { mode: RevealFileMode; memory: string } | { mode: RevealFileMode; path: string; cwd: string }
+/** `missing`: o arquivo não existe (apagado/movido) — nada abriu. */
+export interface RevealFileResult {
+  ok: boolean
+  message: string
+  missing?: boolean
+}

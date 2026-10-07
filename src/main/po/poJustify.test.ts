@@ -184,12 +184,12 @@ describe('digest e prompt de fechamento', () => {
     expect(digest.length).toBeLessThanOrEqual(PO_MAX_DIGEST_CHARS)
   })
 
-  it('o prompt exige motivo em TITULO e PENDENTE (ou CONCLUIR) para todo cartão devolvido', () => {
+  it('o prompt exige motivo em TITULO e PENDENTE concreto; sem PENDENTE o cartão devolvido conclui', () => {
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('TITULO <id> | <novo título> | <motivo curto>')
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('PENDENTE <id> | <o que faltou>')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(`Se houver a seção "${PO_RETURNED_SECTION}"`)
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(`Cada cartão da seção\n  "${PO_RETURNED_SECTION}" vira CONCLUÍDO sozinho`)
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('PENDENTE NÃO muda o status')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('falta verificar no app rodando e commitar')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Motivo genérico ("não terminou", "em andamento") não serve.')
     // A regra c) de entregue com pendências continua valendo.
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('O pedido foi ENTREGUE no essencial')
   })

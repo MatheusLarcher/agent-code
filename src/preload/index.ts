@@ -1,15 +1,37 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { Channels } from '../shared/ipc'
+import type { ProjectColorMap } from '../shared/projectColor'
 import type {
   AgentCodeApi,
   HandoffChangedMsg,
   HandoffCorrectEntregaRequest,
   HandoffCorrectEntregaResult,
+  HandoffQueueDispatchedRequest,
+  HandoffQueueDispatchedResult,
+  HandoffQueueGateRequest,
+  HandoffQueueGateResult,
+  HandoffQueueListRequest,
+  HandoffQueueListResult,
   HandoffListRequest,
   HandoffListResult,
+  HandoffProjectActionRequest,
+  HandoffProjectActionResult,
+  HandoffProjectDirtyResult,
+  HandoffProjectReorderRequest,
+  PoAuthorizationListResult,
+  HandoffQueueEditRequest,
+  HandoffQueueEditResult,
+  HandoffQueueReorderRequest,
+  HandoffProjectReplyRequest,
+  HandoffProjectReplyResult,
+  HandoffProjectStatusResult,
   HandoffRegisterRequest,
   HandoffRegisterResult
 } from '../shared/api'
+import type { HandoffProjectSnapshot } from '../shared/handoffProject'
+import type { PoAuthorizationMap } from '../shared/poAuthorization'
+import type { BoardPrintImageResult, BoardPrintsResult } from '../shared/boardPrints'
+import type { PoChatMessage } from '../shared/poChat'
 import type { AccountUsageResult, AddClaudeAccountResult, ClaudeAccountView, UseAccountResult } from '../shared/claudeAccounts'
 import type { TypeSafePauseStatus } from '../shared/typesafePause'
 import type { ChromeBridgeStatus } from '../shared/chromeBridge'
@@ -169,6 +191,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.openInEditor, dir),
   openInFolder: (dir: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(Channels.openInFolder, dir),
+  revealFile: (req: Parameters<AgentCodeApi['revealFile']>[0]): ReturnType<AgentCodeApi['revealFile']> =>
+    ipcRenderer.invoke(Channels.revealFile, req),
   mentionSearch: (root: string, query: string): Promise<MentionHit[]> =>
     ipcRenderer.invoke(Channels.mentionSearch, root, query),
   listSkills: (root: string): Promise<SkillInfo[]> =>
@@ -179,6 +203,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.projectDir, root, rel),
   projectIcon: (root: string): Promise<string | null> =>
     ipcRenderer.invoke(Channels.projectIcon, root),
+  projectColors: (cwds: string[]): Promise<ProjectColorMap> =>
+    ipcRenderer.invoke(Channels.projectColors, cwds),
   downloadFile: (path: string): Promise<{ ok: boolean; message: string; saved?: string }> =>
     ipcRenderer.invoke(Channels.fileDownload, path),
   readFile: (path: string): Promise<string> => ipcRenderer.invoke(Channels.fileRead, path),
@@ -222,6 +248,25 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.boardMove, id, toStatus),
   boardItemEvents: (boardItemId: string): Promise<BoardItemEvent[]> =>
     ipcRenderer.invoke(Channels.boardItemEvents, boardItemId),
+  boardPrints: (query: { projectCwd?: string; boardItemId?: string }): Promise<BoardPrintsResult> =>
+    ipcRenderer.invoke(Channels.boardPrints, query),
+  boardPrintImage: (id: string): Promise<BoardPrintImageResult> => ipcRenderer.invoke(Channels.boardPrintImage, id),
+  poChatHistory: (req: { projectCwd: string }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }> =>
+    ipcRenderer.invoke(Channels.poChatHistory, req),
+  poChatAsk: (req: { projectCwd: string; question: string }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }> =>
+    ipcRenderer.invoke(Channels.poChatAsk, req),
+  poChatVerify: (req: { projectCwd: string; messageId: string }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }> =>
+    ipcRenderer.invoke(Channels.poChatVerify, req),
+  poChatCancel: (req: { projectCwd: string }): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.poChatCancel, req),
+  poChatApply: (req: { projectCwd: string; messageId: string; index: number }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }> =>
+    ipcRenderer.invoke(Channels.poChatApply, req),
+  poChatSend: (req: {
+    projectCwd: string
+    messageId: string
+    index: number
+    conversationId?: string
+    conversationTitle?: string
+  }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }> => ipcRenderer.invoke(Channels.poChatSend, req),
   onBoardChanged: (cb: (m: { projectId: string }) => void): (() => void) => on(Channels.boardChanged, cb),
   planningList: (req: { projectCwd: string }): Promise<PlanningResult<{ slugs: string[] }>> =>
     ipcRenderer.invoke(Channels.planningList, req),
@@ -253,11 +298,35 @@ const api: AgentCodeApi = {
   handoffList: (req?: HandoffListRequest): Promise<HandoffListResult> => ipcRenderer.invoke(Channels.handoffList, req ?? {}),
   handoffCorrectEntrega: (req: HandoffCorrectEntregaRequest): Promise<HandoffCorrectEntregaResult> =>
     ipcRenderer.invoke(Channels.handoffCorrectEntrega, req),
+  handoffQueueGate: (req: HandoffQueueGateRequest): Promise<HandoffQueueGateResult> => ipcRenderer.invoke(Channels.handoffQueueGate, req),
+  handoffQueueDispatched: (req: HandoffQueueDispatchedRequest): Promise<HandoffQueueDispatchedResult> =>
+    ipcRenderer.invoke(Channels.handoffQueueDispatched, req),
+  handoffQueueList: (req?: HandoffQueueListRequest): Promise<HandoffQueueListResult> =>
+    ipcRenderer.invoke(Channels.handoffQueueList, req ?? {}),
+  handoffProjectStatus: (): Promise<HandoffProjectStatusResult> => ipcRenderer.invoke(Channels.handoffProjectStatus, {}),
+  handoffProjectAction: (req: HandoffProjectActionRequest): Promise<HandoffProjectActionResult> =>
+    ipcRenderer.invoke(Channels.handoffProjectAction, req),
+  handoffProjectReply: (req: HandoffProjectReplyRequest): Promise<HandoffProjectReplyResult> =>
+    ipcRenderer.invoke(Channels.handoffProjectReply, req),
+  onHandoffProjectChanged: (cb: (snapshot: HandoffProjectSnapshot) => void): (() => void) => on(Channels.handoffProjectChanged, cb),
+  handoffQueueEdit: (req: HandoffQueueEditRequest): Promise<HandoffQueueEditResult> => ipcRenderer.invoke(Channels.handoffQueueEdit, req),
+  handoffQueueReorder: (req: HandoffQueueReorderRequest): Promise<HandoffQueueEditResult> =>
+    ipcRenderer.invoke(Channels.handoffQueueReorder, req),
+  handoffProjectReorder: (req: HandoffProjectReorderRequest): Promise<HandoffQueueEditResult> =>
+    ipcRenderer.invoke(Channels.handoffProjectReorder, req),
+  handoffProjectDirty: (req: { conversationId: string }): Promise<HandoffProjectDirtyResult> =>
+    ipcRenderer.invoke(Channels.handoffProjectDirty, req),
+  poAuthorizationList: (): Promise<PoAuthorizationListResult> => ipcRenderer.invoke(Channels.poAuthorizationList),
+  poAuthorizationRevoke: (req: { conversationId: string }): Promise<{ ok: true } | { ok: false; message: string }> =>
+    ipcRenderer.invoke(Channels.poAuthorizationRevoke, req),
+  onPoAuthorizationsChanged: (cb: (map: PoAuthorizationMap) => void): (() => void) => on(Channels.poAuthorizationsChanged, cb),
   onHandoffChanged: (cb: (m: HandoffChangedMsg) => void): (() => void) => on(Channels.handoffChanged, cb),
   planningMarkHandoffsSent: (
     req: PlanningRef & { entries: PlanningHandoffSentMark[] }
   ): Promise<PlanningResult<{ sent: PlanningHandoffSentDto[] }>> =>
     ipcRenderer.invoke(Channels.planningMarkHandoffsSent, req),
+  planningDiscardHandoffs: (req: PlanningRef & { names?: string[] }): Promise<PlanningResult<{ discarded: string[] }>> =>
+    ipcRenderer.invoke(Channels.planningDiscardHandoffs, req),
   planningImportMedia: (
     req: PlanningRef & { files: PlanningImportFile[] }
   ): Promise<PlanningResult<{ media: PlanMediaDto[] }>> => ipcRenderer.invoke(Channels.planningImportMedia, req),
@@ -343,8 +412,8 @@ const api: AgentCodeApi = {
   ): Promise<void> =>
     ipcRenderer.invoke(Channels.agentSend, convId, text, images, files, fileRefs, messageUuid, messageKind, mcpTaskId),
   waitTurnEnd: (convId: string): Promise<TurnEndWait> => ipcRenderer.invoke(Channels.agentWaitTurnEnd, convId),
-  interrupt: (convId: string): Promise<AgentInterruptResult> =>
-    ipcRenderer.invoke(Channels.agentInterrupt, convId),
+  interrupt: (convId: string, opts?: { restart?: boolean }): Promise<AgentInterruptResult> =>
+    opts ? ipcRenderer.invoke(Channels.agentInterrupt, convId, opts) : ipcRenderer.invoke(Channels.agentInterrupt, convId),
   setBypass: (convId: string, on: boolean): Promise<void> =>
     ipcRenderer.invoke(Channels.agentSetBypass, convId, on),
   respondPermission: (convId: string, res: PermissionResponse): Promise<void> =>

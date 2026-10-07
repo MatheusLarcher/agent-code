@@ -1,0 +1,41 @@
+/* O menu do botão direito num arquivo da tela do VS Code do agente (FileContextMenu.tsx). Fica no <body>: sem as variáveis do .cm-root. */
+.cm-filemenu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid #454545;
+  border-radius: 6px;
+  background: #1f1f1f;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font: 12.5px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  color: #cccccc;
+}
+
+.cm-filemenu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cm-filemenu button:hover,
+.cm-filemenu button:focus-visible {
+  background: #04395e;
+  color: #ffffff;
+  outline: none;
+}
+
+.cm-filemenu .cm-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}

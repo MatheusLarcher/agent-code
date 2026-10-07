@@ -1,10 +1,14 @@
 import { askObserver } from '../observerQuery'
 import type { BoardConfig, ChatEvent } from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
-import { applyPoVerdict, type PoApplyProgress } from './poApply'
+import { applyPoVerdict, type PoApplyProgress, type PoRoutineRequest } from './poApply'
+import { poReturnedCards } from './poCloseDefault'
+import { poGitSince, type PoGitEvidence } from './poGit'
+import type { PoNextPrompt } from './poHold'
+import type { PoAuthorization } from '../../shared/poAuthorization'
+import type { PoAuthorizationOp } from './poAuthorization'
 import { listConvTasks, type PoLedgerDeps } from './poLedger'
 import {
-  buildPoPrompt,
   PO_COOLDOWN_MS,
   PO_MAX_CALLS,
   PO_MAX_RETRIES,
@@ -14,8 +18,9 @@ import {
   type PoPhase
 } from './poPrompt'
 import type { PoLogEntry, PoLogOutcome, PoLogWriter } from './poLog'
-import { askBoardGate, consultWithFailover, diagnostic, type PoObserverRequest, type PoProviderDeps } from './poProviders'
+import { askBoardGate, consultWithFailover, diagnostic, type PoProviderDeps } from './poProviders'
 import { defer, mergeDeferred, requeueTurn, restoreTaken, type PoDeferred, type PoTurnSnapshot } from './poQueue'
+import { buildPoRequest, poDigestCards } from './poRequest'
 
 // A API pública do PO continua saindo daqui, mesmo com as partes em módulos
 // próprios: quem importa de './po' não precisa saber como ele foi dividido.
@@ -54,6 +59,16 @@ export interface PoDeps extends PoProviderDeps, PoLedgerDeps {
   /** O diário do PO (uma linha por rodada, ver poLog.ts). Opcional para o
    *  teste não tocar disco; nunca pode lançar para dentro do PO. */
   decisionLog?: PoLogWriter
+  /** O git da pasta como evidência (poGit.ts). Produção injeta o coletor real;
+   *  sem ele, o prompt sai sem a seção — o teste não roda git de verdade. */
+  gitEvidence?(cwd: string, sinceMs: number | null): Promise<PoGitEvidence | null>
+  /** O próximo prompt da fila da conversa (poHold.ts): o fechamento pode SEGURÁ-lo. */
+  nextPrompt?(convId: string): Promise<PoNextPrompt | null>
+  holdNext?(envioId: string, motivo: string): Promise<void>
+  /** A autorização de commit/push da conversa e se ela tem fila (poAuthorization.ts). */
+  authorization?(convId: string): Promise<{ current: PoAuthorization | null; hasQueue: boolean } | null>
+  authorize?(convId: string, op: PoAuthorizationOp): Promise<void>
+  queueRoutine?(convId: string, routine: PoRoutineRequest): Promise<void>
 }
 
 interface ConvState {
@@ -151,7 +166,10 @@ export class Po {
       if (event.final && event.text) conv.reply = event.text
       return
     }
-    if (event.kind === 'result') {
+    // Turno interrompido (o Stop do usuário e a cota que acaba no meio chegam
+    // como `result` com erro) não tem fechamento: o quadro devolve o cartão para
+    // "a fazer", e o padrão "entregue = concluído" não vale para ele.
+    if (event.kind === 'result' && !event.isError) {
       if (event.text) conv.reply = event.text
       // A later user message resets the mutable conversation accumulator while
       // this audit awaits board ingestion. Preserve this turn's evidence now.
@@ -166,7 +184,7 @@ export class Po {
       this.start(convId, 'close', turn)
       return
     }
-    if (event.kind === 'error') conv.userText = null
+    if (event.kind === 'error' || event.kind === 'result') conv.userText = null
   }
 
   /**
@@ -373,11 +391,7 @@ export class Po {
       tookQueue = true
       const merged = mergeDeferred(taken, turn)
       const ledgerTasks = await listConvTasks(this.deps, convId)
-      const digestCards = cards.map((card) => ({
-        id: card.id,
-        title: card.poTitle ?? card.sourceTitle,
-        status: card.poStatus ?? card.sourceStatus
-      }))
+      const digestCards = poDigestCards(cards)
 
       // O gate do TypeSafe vê o MESMO material que o modelo veria (pedido
       // mesclado, quadro, ações, registro, resposta) e roda antes de qualquer rota. Um
@@ -399,35 +413,23 @@ export class Po {
         return
       }
 
-      const prompt = buildPoPrompt({
-        userText: merged.userText,
-        cards: digestCards,
-        calls: [...merged.calls],
-        phase,
-        ledgerTasks,
-        agentReply: merged.reply,
-        // O turno real traz o snapshot do seu `result`; o sintético (flush,
-        // retentativa, `dispose`) não tem instante próprio e usa o de agora.
-        background: turn.background ?? conv.background
+      // O turno real traz o snapshot do seu `result`; o sintético (flush,
+      // retentativa, `dispose`) não tem instante próprio e usa o de agora.
+      const background = turn.background ?? conv.background
+      // O que este fechamento julga — sem PENDENTE, conclui pelo padrão. Na
+      // rodada da fila com um turno novo rodando, o "em andamento" é dele.
+      const returned = phase !== 'close' ? [] : poReturnedCards({
+        cards,
+        background: background.length > 0,
+        demotedAtTurnEnd: this.deps.board.reopenedAtLastTurnEnd?.(convId),
+        turnRunning: force && conv.userText !== null && !conv.fired
       })
-      const request: PoObserverRequest = Object.freeze({
-        prompt,
-        model: cfg.po.model,
-        conversationId: convId,
-        cwd: turn.cwd,
-        projectId,
-        phase,
-        cards: Object.freeze(cards.map((card) => Object.freeze({
-          id: card.id,
-          projectId: card.projectId,
-          projectCwd: card.projectCwd,
-          conversationId: card.conversationId,
-          sourceTitle: card.sourceTitle,
-          sourceStatus: card.sourceStatus,
-          poTitle: card.poTitle,
-          poStatus: card.poStatus
-        }))),
-        correlationId: this.nextCorrelationId()
+      const git = await this.deps.gitEvidence?.(turn.cwd, poGitSince(cards, returned)).catch(() => null)
+      const next = phase === 'close' ? await this.deps.nextPrompt?.(convId).catch(() => null) : null
+      const authorization = await this.deps.authorization?.(convId).catch(() => null)
+      const request = buildPoRequest({
+        config: cfg, convId, cwd: turn.cwd, projectId, phase, cards, userText: merged.userText, calls: merged.calls,
+        reply: merged.reply, ledgerTasks, background, returned, git, next, authorization, correlationId: this.nextCorrelationId()
       })
 
       diagnostic(this.deps, request, 'claude-started', 'claude')
@@ -453,7 +455,7 @@ export class Po {
 
         // A lista que o modelo julgou é de antes da consulta: criar e pôr em
         // andamento são conferidos de novo contra o quadro de agora (poApply.ts).
-        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now }
+        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now, returned, next, authorization: authorization?.current }
         await applyPoVerdict(this.deps, target, text, cards, progress)
         // Daqui em diante a análise chegou ao fim: o que ela tirou da fila foi
         // julgado e escrito, e não volta.

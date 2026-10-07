@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MemoryListItem } from '@shared/memoryPanel'
 import { MemoryPanel } from './MemoryPanel'
 import type { UsageEvent } from './memoryUsage'
@@ -66,5 +66,39 @@ describe('o painel de Memórias (só leitura)', () => {
     expect(open).toHaveBeenCalledWith('a')
     fireEvent.click(screen.getByRole('button', { name: 'Fechar as Memórias' }))
     expect(close).toHaveBeenCalled()
+  })
+
+  it('em "Usadas pelos agentes" o nome da memória abre o mesmo texto', () => {
+    const d = data()
+    render(<MemoryPanel data={d} atShelf={[]} onClose={vi.fn()} onFlyToAgent={vi.fn()} onOpenConversation={vi.fn()} now={NOW} />)
+    fireEvent.click(within(screen.getByTestId('mp-uses')).getByRole('button', { name: 'Título 2D/vps.md' }))
+    expect(d.read).toHaveBeenCalledWith('2D/vps.md')
+    expect(within(screen.getByTestId('mp-detail')).getByRole('heading', { level: 3 }).textContent).toBe('Título 2D/vps.md')
+  })
+})
+
+describe('o "Mostrar na pasta" do texto da memória', () => {
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api
+  })
+  const openVps = (): void => {
+    render(<MemoryPanel data={data()} atShelf={[]} onClose={vi.fn()} onFlyToAgent={vi.fn()} onOpenConversation={vi.fn()} now={NOW} />)
+    fireEvent.click(screen.getAllByTestId('mp-mem').find((b) => b.textContent?.includes('2D/vps.md'))!)
+  }
+
+  it('no PC: pede ao main o Explorador com a memória selecionada; a falha aparece no painel', async () => {
+    const revealFile = vi.fn(async () => ({ ok: false, missing: true, message: 'vps.md não existe mais (apagado ou movido).' }))
+    ;(window as unknown as { api: unknown }).api = { revealFile }
+    openVps()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Mostrar na pasta' })))
+    expect(revealFile).toHaveBeenCalledWith({ mode: 'folder', memory: '2D/vps.md' })
+    expect(screen.getByRole('alert').textContent).toContain('não existe mais')
+  })
+
+  it('no celular (sem o revealFile da ponte): sem o botão', () => {
+    ;(window as unknown as { api: unknown }).api = { officeAgentFile: vi.fn() }
+    openVps()
+    expect(screen.getByTestId('mp-detail')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Mostrar na pasta' })).toBeNull()
   })
 })

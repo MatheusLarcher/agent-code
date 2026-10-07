@@ -241,7 +241,22 @@
 }
 
 /* ---- o chat flutuante do escritório (o painel do Agent Manager, com o agente no cabeçalho) ---- */
-.o3d-chat.pl-chat-float { border-color: color-mix(in srgb, var(--o3d-agent, var(--line)) 40%, var(--line)); }
+/* Borda neutra: a cor do agente fica só no ponto do cabeçalho (nada em volta muda de cor). */
+.o3d-chat.pl-chat-float { border-color: var(--line); }
+/* Quase opaco no máximo do controle (100% → 96%), maximizado e minimizado: no
+   Escritório a cena 3D por trás atrapalhava a leitura. O controle (30–100) continua
+   escalando; o Planejamento fica com os 78/40% do planningChat.css. As barras
+   internas (0,6× por cima do fundo do painel) já somam mais que o corpo. */
+.o3d-chat.pl-chat-float,
+.o3d-chat.pl-chat-float.minimized,
+.o3d-chat.pl-chat-float.minimized:hover,
+.o3d-chat.pl-chat-float.minimized:focus-within {
+  --pl-chat-fill: calc(96% * var(--chat-bg-alpha, 1));
+}
+/* +10% passaria de 100% (color-mix inválido → caixa transparente): limitado. */
+.o3d-chat.pl-chat-float .composer-row {
+  background: color-mix(in srgb, var(--bg-3) min(100%, max(calc(var(--pl-chat-fill) + 10%), 50%)), transparent);
+}
 .o3d-chat-head { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
 .o3d-chat-dot {
   flex: none;

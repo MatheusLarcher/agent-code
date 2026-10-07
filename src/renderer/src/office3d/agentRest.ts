@@ -10,6 +10,7 @@
  * centro da cabeça e o encaixe dos objetos na mão direita.
  */
 import { Box3, Group, Object3D, Quaternion, Vector3, type Bone, type Matrix4, type SkinnedMesh } from 'three'
+import { buildEyelids } from './eyelids'
 import { mapBones, type AvatarJoint, type BoneMap, type Side } from './agentBones'
 import { metricsFromSkeleton, type Vec3 } from './agentMetrics'
 import { BODY, type BodyMetrics } from './poses'
@@ -173,7 +174,17 @@ export function prepareAvatar(scene: Object3D): AvatarTemplate | string {
   socket.name = 'avatar:socketR'
   hand.add(socket)
   socket.quaternion.copy(hand.getWorldQuaternion(new Quaternion()).invert())
+  // E na escala do boneco: o osso herda a do GLB (o Mixamo vem em centímetros, ×0,01) e a das pernas (×k);
+  // sem desfazer, a xícara de 9 cm virava 1 mm dentro da mão.
+  socket.scale.setScalar(1 / hand.getWorldScale(new Vector3()).x)
   root.updateMatrixWorld(true)
+
+  // As pálpebras do cochilo (eyelids.ts), na pose de repouso alinhada: a cabeça e os ossos dela. Sem achar os olhos, fica sem.
+  const headBones = new Set<Bone>()
+  head.traverse((o) => {
+    if ((o as Bone).isBone) headBones.add(o as Bone)
+  })
+  for (const m of meshes) if (buildEyelids(m, headBones)) break
 
   const order: string[] = []
   const parent: number[] = []

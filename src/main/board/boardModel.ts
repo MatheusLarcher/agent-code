@@ -35,6 +35,14 @@ export const BOARD_COLUMNS = `
   revision, created_at, updated_at
 `
 
+/**
+ * As colunas lidas, com o vínculo da pendência (`parent_id`). Fora de
+ * `BOARD_COLUMNS` de propósito: as escritas que listam aquelas colunas ficam
+ * como estavam, e o PostgreSQL compartilhado só lê esta lista quando a coluna
+ * existe — uma versão mais velha do app no outro PC nunca a conhece.
+ */
+export const BOARD_SELECT_WITH_PARENT = `${BOARD_COLUMNS.trimEnd()}, parent_id`
+
 export interface BoardItemRow {
   id: string
   project_id: string
@@ -55,6 +63,8 @@ export interface BoardItemRow {
   revision: number
   created_at: string
   updated_at: string
+  /** Só quando a leitura usou `BOARD_SELECT_WITH_PARENT`. */
+  parent_id?: string | null
 }
 
 export function isBoardStatus(value: unknown): value is BoardItemStatus {
@@ -95,7 +105,10 @@ export function boardItemFromRow(row: BoardItemRow): BoardItem {
     dismissedAt: text(row.dismissed_at),
     revision: Number(row.revision) || 1,
     createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at)
+    updatedAt: String(row.updated_at),
+    // Só a pendência carrega o campo: o cartão comum continua com a forma de
+    // sempre (sem `parentId`), como o lido de um banco sem a coluna.
+    ...(text(row.parent_id ?? null) ? { parentId: text(row.parent_id ?? null) } : {})
   }
 }
 
@@ -219,22 +232,22 @@ export function boardItemsToResume(items: readonly BoardItem[], reopened: Readon
   return stamped.filter((entry) => entry.at >= latest - BOARD_RESUME_WINDOW_MS).map((entry) => entry.item)
 }
 
-/** Só expira quando o projeto tem MAIS que este tanto de concluídos — com 5 ou
- *  menos, todos ficam, não importa a idade. */
-export const COMPLETED_EXPIRY_MIN_COUNT = 5
+/** Sem mínimo: todo concluído velho expira, por poucos que sejam (o "só os 4
+ *  últimos" da coluna é VISUAL, na tela — quem apaga é só o prazo). */
+export const COMPLETED_EXPIRY_MIN_COUNT = 0
 /** Idade (desde `updatedAt`, o mesmo carimbo do badge "há X" na tela) a partir
- *  da qual um concluído passa a ser candidato à expiração. */
-export const COMPLETED_EXPIRY_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000
+ *  da qual um concluído some: 2 dias. */
+export const COMPLETED_EXPIRY_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000
 
 /**
  * Os cartões concluídos que devem sumir do quadro (via dismiss, reversível).
  *
- * A regra tem duas partes independentes: o LIMIAR (`> 5 concluídos no total`)
- * liga ou desliga a expiração inteira — com poucos concluídos, nada é velho
- * demais. Ligado o limiar, cada concluído é julgado pela PRÓPRIA idade, sem
- * piso: não existe "manter os 5 mais recentes" aqui, só "sumir com quem passou
- * de 5 dias". `dismissedAt` já dispensado nunca é candidato de novo — expirar
- * um cartão que o usuário já escondeu não faz sentido nenhum.
+ * Cada concluído é julgado pela PRÓPRIA idade: passou de 2 dias, sai. O limiar
+ * (`minCount`) continua aceito, mas o padrão é 0 — o limite de 4 por coluna é
+ * só da tela, porque o dedupe do PO e o casamento cartão↔etapa do acompanhamento
+ * leem só os não dispensados (card "Limite de 4 é visual, quem apaga é o prazo").
+ * `dismissedAt` já dispensado nunca é candidato de novo — expirar um cartão que
+ * o usuário já escondeu não faz sentido nenhum.
  *
  * Usa o status EFETIVO (`boardItemStatus`), pelo mesmo motivo de sempre: um
  * concluído pelo PO sobre um `source_status` desatualizado ainda é concluído.

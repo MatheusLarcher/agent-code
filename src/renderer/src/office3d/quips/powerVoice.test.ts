@@ -14,7 +14,7 @@ const KEYS = ['conv:a', 'conv:b', 'conv:c', 'conv:d', 'conv:e', 'conv:f']
 
 function status(key: string, over: Partial<AgentStatus> = {}): AgentStatus {
   return {
-    key, convId: key.slice(5), role: 'principal', phase: 'idle', tool: null, lastUserText: '', busySinceMs: null, idleSinceMs: NOW - 60_000,
+    key, convId: key.slice(5), role: 'principal', phase: 'idle', task: false, tool: null, lastUserText: '', busySinceMs: null, idleSinceMs: NOW - 60_000,
     contextPct: 80, permission: null, error: null, usageExhausted: null, speaking: false, stalledMs: 0, ...over
   }
 }

@@ -1,13 +1,16 @@
 /**
  * Tela do monitor vista à distância, numa CanvasTexture: com `code`, a janela
- * do VS Code com os arquivos que o dono escreveu (codePaint.ts); sem, o CHAT
- * ENCOLHIDO do turno (chatPaint.ts).
+ * do VS Code com os arquivos que o dono escreveu (codePaint.ts) e, no editor,
+ * a última ação dele (`code.action`: leitura, terminal, busca, navegador ou
+ * delegação — actionPaint.ts); sem, o CHAT ENCOLHIDO do turno (chatPaint.ts).
  *
- * O conteúdo vem de screenPageFor (screens.ts). `draw` só redesenha quando a
+ * O conteúdo vem de screenPageFor (screens.ts), trocado no máximo a cada 5 s
+ * (monitorThrottle.ts). `draw` só redesenha quando a
  * página (ou a cor da sala) muda: não há custo por quadro. `scale` < 1 é a
  * mesma tela num canvas menor (LOD médio).
  */
 import { CanvasTexture, SRGBColorSpace } from 'three'
+import { actionView } from './actionPaint'
 import type { ChatPage } from './chatPage'
 import { paintChat } from './chatPaint'
 import type { CodePage } from './codePage'
@@ -49,7 +52,7 @@ export function createMonitorTexture(anisotropy = 1, scale = 1): MonitorTexture 
       last = sig
       if (!ctx) return true
       ctx.setTransform(scale, 0, 0, scale, 0, 0)
-      if (page.code) paintCode(ctx, page.code, page.title, page.busy, accent, MON_W, MON_H)
+      if (page.code) paintCode(ctx, page.code, page.title, page.busy, accent, MON_W, MON_H, page.code.action ? actionView(page.code.action, page.code) : undefined)
       else paintChat(ctx, page, accent, MON_W, MON_H)
       texture.needsUpdate = true
       return true

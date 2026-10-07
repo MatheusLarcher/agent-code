@@ -7,7 +7,8 @@
  *   PERTO         textura na resolução cheia;
  *   MÉDIO         textura em meia resolução (trocar de nível troca a textura);
  *   LONGE         sem textura: um bloco emissivo na cor do status do dono.
- * `MonitorTexture.draw` só redesenha quando a página muda.
+ * `MonitorTexture.draw` só redesenha quando a página muda, e a página acesa
+ * troca no máximo a cada 5 s com a última sempre aparecendo (monitorThrottle.ts).
  */
 import { MeshBasicMaterial } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
@@ -23,10 +24,16 @@ import type { ZoneId } from './officePlan'
 import type { Lod } from './lod'
 import { paperStep } from './paperPile'
 import { createMonitorTexture, type ScreenPage } from './monitorTexture'
+import { createSwapThrottle, type SwapThrottle } from './monitorThrottle'
 import { accentHue } from './sign'
+
+/** O destaque das telas das mesas: um tom neutro fixo, igual para todo projeto (nada em volta do agente pega a cor do projeto). */
+export const SCREEN_ACCENT = 'hsl(210 12% 64%)'
 
 /** Resolução da textura da tela por nível (o LONGE não tem textura). */
 export const SCREEN_SCALE: Readonly<Record<Lod, number>> = { 0: 1, 1: 0.5, 2: 0 }
+
+const noop = (): void => {}
 
 const STATUS: Record<AgentPhase, ScreenStatus> = {
   working: 'working',
@@ -48,39 +55,68 @@ export function screenStatus(owner: OfficeCharacterModel, life: LifeInput | null
 
 /**
  * As telas do escritório no feed: a de cada mesa com o dono dela (acesa, protetor
- * ou apagada; a cor de destaque é a do projeto), a do console com a Central e a
+ * ou apagada; a cor de destaque é neutra, SCREEN_ACCENT), a do console com a Central e a
  * pilha de papéis de cada mesa (o contexto usado do dono). Zona fora da tela só
  * guarda a página (`viewOn` e o culling dela); zona sem energia (`darkOf`), tela preta. Quem tem a
- * tela acesa com luz entra em `lit` (o rosto brilha).
+ * tela acesa com luz entra em `lit` (o rosto brilha). `onDirty` pede um quadro
+ * quando a troca atrasada pela cadência de 5 s redesenha uma tela.
  */
-export function syncRoomScreens(view: RoomView, r: RoomLayout, layout: Office3DLayout, kit: Kit, feed: OfficeFeed | null, life: LifeInput | null, darkOf: (zone: ZoneId) => boolean, viewOn: boolean, lit: Set<string>): void {
+export function syncRoomScreens(view: RoomView, r: RoomLayout, layout: Office3DLayout, kit: Kit, feed: OfficeFeed | null, life: LifeInput | null, darkOf: (zone: ZoneId) => boolean, viewOn: boolean, lit: Set<string>, onDirty: () => void = noop): void {
   const shown = (s: ScreenView): boolean => !s.lod.culled && (s.lod.placed || !viewOn)
   const byKey = new Map(layout.characters.map((c) => [c.key, c.model]))
   r.desks.forEach((desk, i) => {
     const s = view.screens[i]
     const owner = desk.ownerKey ? byKey.get(desk.ownerKey) : undefined
-    if (fillScreen(s, kit, owner, desk.projectId ?? r.id, feed, life, darkOf(s.zone), shown(s)) && owner) lit.add(owner.key)
+    if (fillScreen(s, kit, owner, desk.projectId ?? r.id, feed, life, darkOf(s.zone), shown(s), false, onDirty) && owner) lit.add(owner.key)
     view.piles.set(i, paperStep(owner?.context))
   })
   // O console é o monitor da Central (o personagem dela, se está no escritório).
   const central = layout.characters.find((c) => c.spot === 'central')?.model
-  if (fillScreen(view.consoleScreen, kit, central, 'central', feed, life, darkOf('plaza'), shown(view.consoleScreen), true) && central) lit.add(central.key)
+  if (fillScreen(view.consoleScreen, kit, central, 'central', feed, life, darkOf('plaza'), shown(view.consoleScreen), true, onDirty) && central) lit.add(central.key)
 }
 
 /**
  * O que uma tela mostra: acesa com a página do dono ativo, protetor com dono
- * parado, apagada sem dono — e aplica já se `shown`. `accentId` dá a cor de
- * destaque (o projeto); `awake`: com dono, sempre acesa (o console da Central
+ * parado, apagada sem dono — e aplica já se `shown`. `accentId`: o projeto
+ * ('central' = o console, com o destaque de sempre; as mesas, o neutro); `awake`: com dono, sempre acesa (o console da Central
  * espelha o chat dela mesmo parada). Devolve se o rosto do dono brilha.
  */
-export function fillScreen(s: ScreenView, kit: Kit, owner: OfficeCharacterModel | undefined, accentId: string, feed: OfficeFeed | null, life: LifeInput | null, dark: boolean, shown: boolean, awake = false): boolean {
+export function fillScreen(s: ScreenView, kit: Kit, owner: OfficeCharacterModel | undefined, accentId: string, feed: OfficeFeed | null, life: LifeInput | null, dark: boolean, shown: boolean, awake = false, onDirty: () => void = noop): boolean {
   s.mesh.userData.charKey = owner?.key ?? null
-  const accent = `hsl(${accentHue(accentId)} 70% 60%)`
+  // Tom neutro fixo nas mesas (a cor do projeto fica só na camisa do agente); o console da Central fica como está.
+  const accent = accentId === 'central' ? `hsl(${accentHue(accentId)} 70% 60%)` : SCREEN_ACCENT
   const on = !!owner && (owner.active || awake)
-  if (owner && on) setScreen(s, 'on', screenPageFor(feed, owner), accent, screenStatus(owner, life))
-  else setScreen(s, owner ? 'saver' : 'off', null, accent, 'idle')
+  if (owner && on) setScreen(s, 'on', pacedPage(s, owner.key, screenPageFor(feed, owner), onDirty), accent, screenStatus(owner, life))
+  else {
+    paced.get(s)?.throttle.reset()
+    setScreen(s, owner ? 'saver' : 'off', null, accent, 'idle')
+  }
   showScreen(s, kit, s.lod.level, shown, dark)
   return on && !dark
+}
+
+/** A cadência de cada tela (por dono): trocar de dono recomeça. */
+const paced = new WeakMap<ScreenView, { owner: string; throttle: SwapThrottle<ScreenPage> }>()
+
+/**
+ * A página que a tela mostra agora: a nova no máximo a cada MONITOR_SWAP_MS; a
+ * que chegou no meio do intervalo entra quando ele vence — redesenhada aí se a
+ * tela está à vista e acesa (e pede um quadro com `onDirty`); senão fica em
+ * `s.page` para o próximo showScreen.
+ */
+function pacedPage(s: ScreenView, owner: string, page: ScreenPage, onDirty: () => void): ScreenPage {
+  let cur = paced.get(s)
+  if (!cur || cur.owner !== owner) {
+    cur?.throttle.reset()
+    const throttle = createSwapThrottle<ScreenPage>((late) => {
+      if (s.state !== 'on' || s.mesh.userData.charKey !== owner) return
+      s.page = late
+      if (s.on && !s.lod.culled && s.mesh.material === s.on.mat && s.on.mon.draw(late, s.accent)) onDirty()
+    })
+    cur = { owner, throttle }
+    paced.set(s, cur)
+  }
+  return cur.throttle.offer(page, JSON.stringify(page))
 }
 
 export function setScreen(s: ScreenView, state: ScreenView['state'], page: ScreenPage | null, accent: string, status: ScreenStatus): void {

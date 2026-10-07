@@ -15,6 +15,7 @@ import {
 import { createHash } from 'node:crypto'
 import { homedir, hostname } from 'node:os'
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
+import { devUserHome } from './devDataDir'
 
 const MANIFEST_NAME = '.agent-code-managed.json'
 const BUNDLED_MANIFEST_NAME = '.agent-code-bundled.json'
@@ -226,7 +227,7 @@ function removeGlobalEntry(link: string): void {
  * `isDirectory() === false`, so the SDK's skill scanner skips it and the Skill
  * tool answers `Unknown skill` for a skill the catalog just advertised.
  */
-export function exposeCacheSkills(skillsDir: string, userHome: string = homedir(), machine: string = hostname()): SkillSyncResult {
+export function exposeCacheSkills(skillsDir: string, userHome: string = devUserHome() ?? homedir(), machine: string = hostname()): SkillSyncResult {
   const globalRoot = join(userHome, '.claude', 'skills')
   const errors: string[] = []
   mkdirSync(skillsDir, { recursive: true })
@@ -313,7 +314,7 @@ export function exposeCacheSkills(skillsDir: string, userHome: string = homedir(
  * Agent Code exposed there, and never overrides a bundled or user-made cache
  * skill of the same name. Imports that vanished from `~/.claude` are removed.
  */
-export function importUserSkills(skillsDir: string, userHome: string = homedir(), machine: string = hostname()): string[] {
+export function importUserSkills(skillsDir: string, userHome: string = devUserHome() ?? homedir(), machine: string = hostname()): string[] {
   const errors: string[] = []
   const globalRoot = join(userHome, '.claude', 'skills')
   const manifestName = importedManifestName(machine)
@@ -427,7 +428,7 @@ export function ensureNativeSkillRoot(cacheDir: string, skillsDir: string = join
  * native Claude Code user-level skill directory. External cache skills are
  * retained; real user directories in the global skill root are never replaced.
  */
-export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: string = homedir()): SkillSyncResult {
+export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: string = devUserHome() ?? homedir()): SkillSyncResult {
   const bundledRoot = join(appRoot, '.agents', 'skills')
   const skillsDir = join(cacheDir, 'skills')
   const errors: string[] = []

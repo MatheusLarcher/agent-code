@@ -7,6 +7,7 @@ import { IconSpinner } from '../components/Icons'
 import { handoffEstimate, handoffEstimateDetail, handoffEstimateLabel } from './handoffEstimate'
 import { firstLine, HandoffBlockers, OutsideHandoffs, PendingHandoffs, SentHandoffs } from './HandoffLists'
 import type { HandoffIssue } from './handoffReadiness'
+import { StaleBadge } from './HandoffStale'
 
 export interface Draft {
   /** O arquivo em _handoff/ com o texto `saved`. */
@@ -81,6 +82,8 @@ export function ReviewStep(props: {
   onAutoDraft: () => void
   onAskManager: () => void
   onReviewPending: () => void
+  /** Os prompts antigos (selo "desatualizado"). */
+  stale?: ReadonlySet<string>
 }): JSX.Element {
   const { blockers, warnings, working } = props
   const blocked = blockers.length > 0 && !props.override
@@ -114,7 +117,7 @@ export function ReviewStep(props: {
           Tudo certo: nenhuma ambiguidade aberta, e todas as etapas estão concluídas e com cards.
         </div>
       )}
-      <PendingHandoffs pending={props.pending} disabled={working !== null} onMarkSent={props.onMarkSent} />
+      <PendingHandoffs pending={props.pending} disabled={working !== null} onMarkSent={props.onMarkSent} stale={props.stale} />
       <SentHandoffs sent={props.sent} conversationExists={props.conversationExists} onOpenConversation={props.onOpenConversation} />
       <div className="modal-actions">
         <button type="button" className="btn ghost" onClick={props.onClose}>
@@ -212,6 +215,8 @@ export function PromptsStep(props: {
   onCheckPlan: () => void
   onAskManager: () => void
   onSend: () => void
+  /** Os prompts antigos: incluídos de propósito, continuam com o selo. */
+  stale?: ReadonlySet<string>
 }): JSX.Element {
   const { drafts, working } = props
   const blocked = props.blockers.length > 0 && !props.override
@@ -232,6 +237,7 @@ export function PromptsStep(props: {
                   Prompt {i + 1} de {drafts.length}
                 </span>
                 <code>{d.name}</code>
+                {props.stale?.has(d.name) && <StaleBadge />}
                 {d.text !== d.original && <span className="pl-handoff-badge">editado</span>}
                 {i > 0 && <span className="pl-handoff-queue">entra na fila</span>}
                 <span
@@ -272,7 +278,7 @@ export function PromptsStep(props: {
             </section>
           )
         })}
-        <OutsideHandoffs outside={props.outside} disabled={working !== null} onInclude={props.onInclude} />
+        <OutsideHandoffs outside={props.outside} disabled={working !== null} onInclude={props.onInclude} stale={props.stale} />
       </div>
       <div className="modal-actions">
         <button type="button" className="btn ghost" disabled={working === 'send'} onClick={props.onCheckPlan}>

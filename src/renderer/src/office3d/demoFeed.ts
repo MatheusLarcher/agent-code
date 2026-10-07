@@ -27,6 +27,7 @@
 import { CENTRAL_ID } from '@shared/central'
 import { contextLimitFor, type PermissionRequest, type RateLimitStatus } from '@shared/ipc'
 import type { TrackMap } from '../agentTracks'
+import { PROJECT_RESERVE_PALETTE, wearableColor, type ProjectColor, type ProjectColorMap } from '@shared/projectColor'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { Conversation } from '../types'
 import { demoCentralState } from './demoCentral'
@@ -104,6 +105,20 @@ interface Kit {
   /** dev ×4, construtor ×3, azarado ×2, dorminhoco. */
   says: string[]
 }
+
+/**
+ * A cor de cada sala da demo, na ordem de KITS, como a detecção do PC daria
+ * (main/projectColor*.ts): a marca do agent-code, o azul e o verde dos logos,
+ * um tema e uma reserva.
+ */
+const DEMO_COLORS: ProjectColor[] = [
+  { hex: '#d97757', source: 'marca', file: 'src/renderer/src/styles.css' },
+  { hex: wearableColor('#1f6feb'), source: 'logo', file: 'public/logo.svg' },
+  // Reserva (uma cor da paleta; a do hash caía num roxo vizinho do portal-aluno).
+  { hex: PROJECT_RESERVE_PALETTE[0], source: 'reserva' },
+  { hex: wearableColor('#7c3aed'), source: 'tema', file: 'tailwind.config.ts' },
+  { hex: wearableColor('#0f9d58'), source: 'logo', file: 'assets/icon.svg' }
+]
 
 const KITS: Kit[] = [
   {
@@ -403,11 +418,13 @@ export function demoFeed(now?: number): OfficeFeed {
   const stalledSince: Record<string, number> = {}
   const tracks: Record<string, TrackMap> = {}
   const projectIcons: Record<string, string | null> = {}
+  const projectColors: ProjectColorMap = {}
   const model = 'claude-opus-4-5'
   const limit = contextLimitFor(model)
   demoScripts().forEach((room, r) => {
     const cwd = `C:\\demo\\${KITS[r].project}`
     projectIcons[cwd] = KITS[r].icon
+    projectColors[cwd] = DEMO_COLORS[r]
     room.forEach((turns, i) => {
       const id = `demo-${r}-${i}`
       const st = playScript(turns, t, start, id, cycle)
@@ -458,6 +475,7 @@ export function demoFeed(now?: number): OfficeFeed {
     stalledSince,
     tracks,
     projectIcons,
+    projectColors,
     usageLimits,
     claudeAccounts
   }

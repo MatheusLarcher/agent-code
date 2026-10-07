@@ -891,6 +891,48 @@ describe('AgentSession — novos sinais de interrupção e background', () => {
     handle(s, { type: 'system', subtype: 'init', session_id: 's1', model: 'opus', cwd: '/proj', tools: [] })
     expect(emit).toHaveBeenLastCalledWith({ kind: 'background-tasks', tasks: [] })
   })
+
+  it('subagente em segundo plano: task_* vira agent-task e os passos seguem pela trilha, uma vez só', () => {
+    const { s, emit } = makeSession()
+    handle(s, { type: 'system', subtype: 'task_started', task_id: 'a1', tool_use_id: 'toolu_agent', description: 'ping', subagent_type: 'pinger', is_backgrounded: true, task_type: 'local_agent' })
+    expect(emit).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'agent-task', phase: 'started', taskId: 'a1', toolUseId: 'toolu_agent', backgrounded: true }))
+    // O passo do subagente chega como mensagem com parent_tool_use_id (também depois do result do turno).
+    handle(s, { type: 'assistant', parent_tool_use_id: 'toolu_agent', message: { content: [{ type: 'tool_use', id: 'toolu_step', name: 'Bash', input: { command: 'echo' } }] } })
+    handle(s, { type: 'system', subtype: 'task_updated', task_id: 'a1', patch: { status: 'killed' } })
+    expect(emit).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'agent-task', phase: 'updated', status: 'stopped', toolUseId: 'toolu_agent' }))
+    const steps = emit.mock.calls.map((c) => c[0]).filter((e: { kind?: string; id?: string }) => e?.kind === 'tool-use' && e.id === 'toolu_step')
+    expect(steps).toEqual([expect.objectContaining({ parentToolUseId: 'toolu_agent', name: 'Bash' })])
+  })
+
+  it('SubagentStop fecha a trilha quando o task_notification não chega, e não duplica o fim', () => {
+    const { s, emit } = makeSession()
+    const stop = (agentId: string): void =>
+      (s as unknown as { emitSubagentStop(i: unknown): void }).emitSubagentStop({ hook_event_name: 'SubagentStop', agent_id: agentId, last_assistant_message: 'pronto' })
+    const ends = (): unknown[] => emit.mock.calls.map((c) => c[0]).filter((e: { kind?: string; status?: string }) => e?.kind === 'agent-task' && e.status !== 'running')
+
+    // Sem task_started: a trilha sai da correlação passo (parent_tool_use_id) ↔ PreToolUse (agent_id).
+    handle(s, { type: 'assistant', parent_tool_use_id: 'toolu_bg', message: { content: [{ type: 'tool_use', id: 'toolu_s1', name: 'Read', input: {} }] } })
+    const tasks = (s as unknown as { agentTasks: { noteHookTool(a: unknown, t: unknown): void } }).agentTasks
+    tasks.noteHookTool('agent-x', 'toolu_s1')
+    stop('agent-x')
+    expect(ends()).toEqual([expect.objectContaining({ phase: 'notification', taskId: 'agent-x', toolUseId: 'toolu_bg', status: 'completed', summary: 'pronto' })])
+    // O task_notification concluído que chegar depois é duplicata; um hook repetido também.
+    handle(s, { type: 'system', subtype: 'task_notification', task_id: 'agent-x', tool_use_id: 'toolu_bg', status: 'completed' })
+    stop('agent-x')
+    expect(ends()).toHaveLength(1)
+    // Já o SDK dizendo que falhou corrige o status.
+    handle(s, { type: 'system', subtype: 'task_notification', task_id: 'agent-x', tool_use_id: 'toolu_bg', status: 'failed' })
+    expect(ends()).toHaveLength(2)
+
+    // SDK primeiro: o hook depois não emite nada.
+    handle(s, { type: 'system', subtype: 'task_started', task_id: 'agent-y', tool_use_id: 'toolu_y', is_backgrounded: true })
+    handle(s, { type: 'system', subtype: 'task_notification', task_id: 'agent-y', tool_use_id: 'toolu_y', status: 'completed' })
+    stop('agent-y')
+    expect(ends()).toHaveLength(3)
+    // Subagente sem trilha conhecida: o hook não inventa uma.
+    stop('agent-z')
+    expect(ends()).toHaveLength(3)
+  })
 })
 
 describe('AgentSession — "/compact" (verificado ao vivo: o SDK não intercepta o comando)', () => {

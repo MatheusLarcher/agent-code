@@ -4,6 +4,7 @@
  * aqui só o recorte que o celular lê.
  */
 import type { ChatEvent, RateLimitStatus, RemoteConversation, RemotePairedDevice } from '@shared/ipc'
+import type { ProjectColorMap } from '@shared/projectColor'
 
 /** Uma conversa no `/api/state` (sem a lista de mensagens). */
 export type ConvSummary = Omit<RemoteConversation, 'messages'> & { messageCount?: number }
@@ -27,6 +28,8 @@ export interface StateResponse {
   relayState?: string
   /** Nome do PC (hostname do Windows): o nome padrão da filial no celular. PCs antigos não mandam. */
   pcName?: string
+  /** Cor fixa de cada projeto por cwd (só as já detectadas no PC). PCs antigos não mandam. */
+  projectColors?: ProjectColorMap
 }
 
 /** A mensagem do usuário como o PC guarda (UserMessage do renderer) mais o eco local do celular. */

@@ -101,6 +101,7 @@ export function TabStrip({ tabs, active, panelId, tabId, onSelect, action }: Tab
               tabIndex={on ? 0 : -1}
               className={`cm-tab${on ? ' active' : ''}${t.typing ? ' typing' : ''}${t.preview ? ' cm-tab-pv' : ''}${t.page ? ' cm-tab-page' : ''}`}
               title={tabTitle(t)}
+              data-path={t.path}
               onClick={() => onSelect(t.key)}
             >
               {t.page ? <Icon name="globe" className="cm-glyph-page" /> : <FileGlyph path={t.path} />}
@@ -187,6 +188,7 @@ function FileTree({ files, cwd, active, mixed, onOpen }: { files: readonly TabIt
                   aria-current={t.key === active ? 'true' : undefined}
                   aria-label={named(t)}
                   title={`${slashed(t.path)}${t.range ? ` · linhas ${t.range}` : ''}${madeBy(t.models)}`}
+                  data-path={t.path}
                   onClick={() => onOpen(t.key)}
                 >
                   <FileGlyph path={t.path} />

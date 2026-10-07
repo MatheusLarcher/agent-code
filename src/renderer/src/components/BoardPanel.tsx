@@ -20,6 +20,12 @@ import { BoardCardDetail, COLUMNS, fmtAgo } from './BoardCardDetail'
 import { CrewRoleIcon } from './CrewIcons'
 import { IconCollapseRight, IconSpinner, IconTrash } from './Icons'
 import { ProjectGraph } from './ProjectGraph'
+import { NextPromptsStrip } from '../planning/NextPromptsStrip'
+import { DeadlineTag, useCardDeadlines, type CardDeadline } from './BoardDeadline'
+import { useBoardOpenRequest, type BoardOpenRequest } from './boardOpenCard'
+import { PrintBadge, useProjectPrints } from './BoardPrints'
+// A coluna Concluído mostra só os 4 mais recentes (o contador segue com o total).
+import { recentCompleted } from '@shared/boardView'
 
 /**
  * O quadro de tarefas do projeto: o que o agente declarou que ia fazer, e o que
@@ -49,7 +55,7 @@ interface Props {
   onOpenConversation: (convId: string) => void
   /** Reporta o progresso para o rótulo da aba — assim o App não precisa fazer
    *  a MESMA consulta em paralelo enquanto o painel está aberto. */
-  onProgress?: (progress: { done: number; total: number } | null) => void
+  onProgress?: (progress: BoardProgress | null) => void
   /**
    * Elenco da conversa ativa (`conversationId`), já montado pelo App via
    * `buildCrew`. Alimenta as bolinhas do CABEÇALHO de cada coluna
@@ -81,6 +87,21 @@ interface Props {
     name: string
   }
   width?: number
+  /** "Enviar mesmo assim" da faixa Próximos prompts (o despachante do App). */
+  onSendAnyway?: (convId: string) => void
+  /** Muda quando o aviso do chat pede para mostrar a faixa. */
+  queueFocus?: number
+  /** O chip da autorização do PO, no cabeçalho da faixa. */
+  queueHeaderExtra?: React.ReactNode
+  /** A faixa "Desde que você saiu", no topo (planning/AwaySummaryStrip.tsx). */
+  topStrip?: React.ReactNode
+  /** Abrir um cartão pelo id, pedido de fora (o clique num item do resumo). */
+  openCard?: BoardOpenRequest | null
+  onOpenCardDone?: (seq: number) => void
+  /** O botão "Fala, PO" (o chat com o PO abre no lugar do chat principal). */
+  onOpenPoChat?: () => void
+  /** O cartão aberto no detalhe (o chip "Como está '<card>'?" do "Fala, PO"). */
+  onSelectedChange?: (item: BoardItem | null) => void
 }
 
 /** Reexportados para quem já importava daqui; a regra mora em `@shared/ipc`,
@@ -417,7 +438,9 @@ function Card({
   execTasks,
   openBalloon,
   onToggleBalloon,
-  onOpenConversation
+  onOpenConversation,
+  deadline,
+  prints = 0
 }: {
   item: BoardItem
   now: number
@@ -436,6 +459,10 @@ function Card({
   openBalloon: string | null
   onToggleBalloon: (key: string) => void
   onOpenConversation: (convId: string) => void
+  /** O prazo da etapa (cartão `[etapa]` ligado a uma entrega). */
+  deadline?: CardDeadline
+  /** Quantos prints da tarefa testada o cartão tem (o 📷). */
+  prints?: number
 }): JSX.Element {
   const status = effectiveStatus(item)
   const awaiting = boardItemAwaitingBadge(item)
@@ -469,6 +496,8 @@ function Card({
         )}
         <span className="board-card-tags">
           {awaiting && <AwaitingTag item={item} badge={awaiting} />}
+          {deadline && <DeadlineTag deadline={deadline} />}
+          <PrintBadge count={prints} />
           {/* Cada selo do PO leva o motivo no tooltip: toda alteração dele se justifica. */}
           {item.origin === 'po' && (
             <span className="board-tag po" title={reasonTip(item)}>
@@ -525,7 +554,15 @@ export function BoardPanel({
   pendingPermissions,
   onFocusPermission,
   project,
-  width
+  width,
+  onSendAnyway,
+  queueFocus,
+  queueHeaderExtra,
+  topStrip,
+  openCard,
+  onOpenCardDone,
+  onOpenPoChat,
+  onSelectedChange
 }: Props): JSX.Element {
   const [mapOpen, setMapOpen] = useState(false)
   const [items, setItems] = useState<BoardItem[]>([])
@@ -659,6 +696,8 @@ export function BoardPanel({
     if (!fresh) setSelected(null)
     else if (fresh.revision !== selected.revision) setSelected(fresh)
   }, [items, selected])
+  useBoardOpenRequest({ request: openCard, items, conversationId, wholeProject, setWholeProject, open: setSelected, done: onOpenCardDone })
+  useEffect(() => onSelectedChange?.(selected), [onSelectedChange, selected])
 
   const byStatus = useMemo(() => {
     const map: Record<BoardItemStatus, BoardItem[]> = { pending: [], in_progress: [], completed: [] }
@@ -667,11 +706,16 @@ export function BoardPanel({
   }, [items])
 
   const done = byStatus.completed.length
+  const awaitingCount = useMemo(() => items.filter((item) => boardItemAwaitingBadge(item) !== null).length, [items])
+  // O prazo das etapas (a entrega ligada a cada cartão `[etapa]`).
+  const deadlines = useCardDeadlines(projectCwd, window.api)
+  // Os prints da tarefa visual (o 📷 de cada cartão).
+  const prints = useProjectPrints(projectCwd || null)
   // Enquanto o painel está montado, ele é a fonte do contador da aba — assim o
   // App não repete a MESMA consulta em paralelo a cada mudança do quadro.
   useEffect(() => {
-    onProgress?.(available ? { done, total: items.length } : null)
-  }, [onProgress, available, done, items.length])
+    onProgress?.(available ? { done, total: items.length, awaiting: awaitingCount } : null)
+  }, [onProgress, available, done, items.length, awaitingCount])
   const poAt = useMemo(
     () => items.reduce<string | null>((latest, item) => (item.poAt && (!latest || item.poAt > latest) ? item.poAt : latest), null),
     [items]
@@ -770,6 +814,12 @@ export function BoardPanel({
             Mapa
           </button>
         )}
+        {/* O chat com o PO sobre as tarefas (poChat/), no lugar do chat principal. */}
+        {onOpenPoChat && projectCwd && (
+          <button type="button" className="board-chip po-chat-open" onClick={onOpenPoChat} title="Conversar com o PO sobre as tarefas do projeto">
+            Fala, PO
+          </button>
+        )}
         <span className="board-bar-spacer" />
         <span className="board-count">
           {done}/{items.length}
@@ -800,6 +850,19 @@ export function BoardPanel({
           ))}
         </div>
       )}
+
+      {topStrip}
+      {/* Os prompts de implantação que esperam a vez (planning/NextPromptsStrip.tsx). */}
+      <NextPromptsStrip
+        projectCwd={projectCwd}
+        conversationId={conversationId}
+        wholeProject={wholeProject}
+        conversationTitles={conversationTitles}
+        onSendAnyway={onSendAnyway}
+        onOpenConversation={onOpenConversation}
+        focus={queueFocus}
+        headerExtra={queueHeaderExtra}
+      />
 
       {!available ? (
         <p className="board-empty">
@@ -853,7 +916,7 @@ export function BoardPanel({
                 />
                 <span className="board-column-count">{byStatus[column.status].length}</span>
               </div>
-              {byStatus[column.status].map((item) => (
+              {(column.status === 'completed' ? recentCompleted(byStatus.completed) : byStatus[column.status]).map((item) => (
                 <Card
                   key={item.id}
                   item={item}
@@ -868,6 +931,8 @@ export function BoardPanel({
                   openBalloon={openBalloon}
                   onToggleBalloon={toggleBalloon}
                   onOpenConversation={onOpenConversation}
+                  deadline={deadlines.get(item.id)}
+                  prints={prints.get(item.id)?.length ?? 0}
                 />
               ))}
             </div>
@@ -895,6 +960,8 @@ export function BoardPanel({
                     </span>
                     <span className={`board-row-title ${status}`}>{effectiveTitle(item)}</span>
                     {awaiting && <AwaitingTag item={item} badge={awaiting} />}
+                    {deadlines.get(item.id) && <DeadlineTag deadline={deadlines.get(item.id)!} />}
+                    <PrintBadge count={prints.get(item.id)?.length ?? 0} />
                     {(item.poTitle || (item.poStatus && !awaiting)) && <span className="board-tag po">PO</span>}
                     <span className="board-row-when">{fmtAgo(item.updatedAt, now)}</span>
                   </button>
@@ -913,6 +980,8 @@ export function BoardPanel({
           onClose={() => setSelected(null)}
           onOpenConversation={onOpenConversation}
           onDismiss={dismiss}
+          findItem={(id) => items.find((entry) => entry.id === id)}
+          onOpenItem={setSelected}
         />
       )}
 
@@ -951,7 +1020,17 @@ export function BoardPanel({
   )
 }
 
-/** Contador do rótulo da aba (concluídas / total). */
-export function boardProgress(items: BoardItem[]): { done: number; total: number } {
-  return { done: items.filter((item) => effectiveStatus(item) === 'completed').length, total: items.length }
+/** O rótulo da aba: concluídas / total e quantos cartões esperam você. */
+export interface BoardProgress {
+  done: number
+  total: number
+  awaiting: number
+}
+
+export function boardProgress(items: BoardItem[]): BoardProgress {
+  return {
+    done: items.filter((item) => effectiveStatus(item) === 'completed').length,
+    total: items.length,
+    awaiting: items.filter((item) => boardItemAwaitingBadge(item) !== null).length
+  }
 }

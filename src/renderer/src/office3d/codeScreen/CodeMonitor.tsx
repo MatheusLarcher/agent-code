@@ -18,7 +18,7 @@
  * `data-kind` = code | context | empty e `data-mode` = o app. Alt+1/2 trocam de
  * app com a tela aberta; Esc fecha o menu do Agent, se aberto, e senão a tela
  * (o motor). A barra some até o mouse chegar à borda de baixo; o alfinete a
- * fixa e o campo do Chat fica acima.
+ * fixa e o campo do Chat fica acima. Botão direito num arquivo: FileContextMenu.
  *
  * O Chat usa o ToolCard e o "Comentar" do chat, que pedem o UiProvider do app.
  */
@@ -37,6 +37,7 @@ import { ContextApp } from './ContextApp'
 import { allContextText, contextBlocks } from './contextView'
 import { CodeStatus, CodeView } from './CodeView'
 import { FLASH_MS } from './EditorPane'
+import { useFileContextMenu } from './FileContextMenu'
 import { lastWriteOf, useHtmlPreview } from './htmlPreview'
 import { Icon, VsCodeLogo } from './icons'
 import { distinctModels } from './modelTags'
@@ -170,6 +171,7 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
 
   const memoriesCount = code.actions.memory.read.length + code.actions.memory.saved.length
   const { toasts, dismiss, push } = useMonitorToasts({ convId: model.convId, messages, busy: head.busy, permission, counts: { files: code.changed, memories: memoriesCount } })
+  const fileMenu = useFileContextMenu(cwd, push)
   const pages = useHtmlPreview(code)
   // A Prévia à vista (a tela estreita não tem editor) recarrega a cada escrita nova do arquivo (o id da última que deu certo).
   const page = narrow ? null : pages.active
@@ -347,6 +349,7 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
       data-kind={kind}
       data-mode={app}
       style={{ '--cm-agent': agent, '--cm-on-agent': ink, '--cm-agent-shade': shade } as CSSProperties}
+      onContextMenu={fileMenu.onContextMenu}
     >
       <section className="cm-win" data-app={app} aria-label={APP_LABEL[app]}>
         <header className="cm-titlebar">
@@ -487,6 +490,7 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
         </AppPreview>
       )}
       <Toasts toasts={toasts} onOpen={openToast} />
+      {fileMenu.menu}
     </div>
   )
 }

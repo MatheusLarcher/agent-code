@@ -1,0 +1,63 @@
+/* O aviso da fila do projeto, acima do campo de mensagem (ProjectQueueNotice.tsx). */
+.project-queue-notice {
+  flex-shrink: 0;
+  margin: 0 16px 8px;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-2));
+  color: var(--text);
+  font-size: 12.5px;
+}
+.project-queue-notice.warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-2));
+}
+.project-queue-notice-body {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.project-queue-notice-text {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.project-queue-notice-detail {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.project-queue-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.project-queue-notice-btn {
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.project-queue-notice-btn:hover {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.project-queue-notice-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}

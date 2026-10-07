@@ -19,7 +19,8 @@ import { isValidMediaName, MAX_ANEXOS_POR_CARD, MAX_MEDIA_BYTES } from '../../sh
 import type { PlanningPeekDto } from '../../shared/officeApi'
 import { MAX_HANDOFF_ETAPAS } from './handoffFiles'
 import * as realSent from './handoffSent'
-import { HandoffSentMarkSchema } from './handoffSent'
+import { HandoffFileName, HandoffSentMarkSchema } from './handoffSent'
+import { discardStaleHandoffs, findStaleHandoffs } from './handoffStale'
 import { notifyPlanningChanged, setPlanningChangeSink } from './planningEvents'
 import * as realMedia from './planningMedia'
 import { CARD_TYPES, isValidName, PlanningValidationError, STAGE_STATUSES } from './planningModel'
@@ -150,6 +151,7 @@ const WriteHandoffReq = z.strictObject({
     .optional()
 })
 const MarkHandoffsSentReq = z.strictObject({ ...refShape, entries: z.array(HandoffSentMarkSchema).min(1).max(200) })
+const DiscardHandoffsReq = z.strictObject({ ...refShape, names: z.array(HandoffFileName).min(1).max(500).optional() })
 /** Base64 de até MAX_MEDIA_BYTES (o tamanho decodificado é conferido de novo no importMedia). */
 const Base64 = z
   .string()
@@ -369,8 +371,27 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
         store.listHandoffs(projectCwd, slug),
         sentStore.readHandoffsSent(projectCwd, slug)
       ])
-      return { ok: true, handoffs, sent: sent.entries, ...(sent.error ? { sentError: sent.error } : {}) }
+      // Os ANTIGOS não enviados (handoffStale.ts). Falhar aqui não derruba a lista.
+      const old = await findStaleHandoffs(projectCwd, slug, { handoffs, sentNames: sent.entries.map((e) => e.nome) }).catch(() => null)
+      return {
+        ok: true,
+        handoffs,
+        sent: sent.entries,
+        ...(sent.error ? { sentError: sent.error } : {}),
+        ...(old ? { stale: old.stale.map((h) => h.name), planChangedAt: old.planChangedAt } : {})
+      }
     }
+  )
+
+  // Só com a confirmação do usuário (a tela pergunta): os antigos NÃO enviados
+  // vão para _handoff/_descartados/; nada é apagado e o enviado nunca sai.
+  register(
+    Channels.planningDiscardHandoffs,
+    DiscardHandoffsReq,
+    async ({ projectCwd, slug, names }): Promise<PlanningResult<{ discarded: string[] }>> => ({
+      ok: true,
+      discarded: await discardStaleHandoffs(projectCwd, slug, names)
+    })
   )
 
   // Mesma regra do writeHandoff: quem grava é a própria tela, sem planning:changed.

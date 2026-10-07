@@ -4,7 +4,7 @@
  * temporários, sem login do Claude e sem mandar mensagem a agente nenhum. Não
  * toca no app em uso.
  *
- *   node scripts/office-agents/app-harness.mjs [segundos=20] [--shots-only] [--keep] [--novsync] [--seats|--poses|--desks]
+ *   node scripts/office-agents/app-harness.mjs [segundos=20] [--shots-only] [--keep] [--novsync] [--seats|--poses|--desks|--cup]
  *
  * Liga a demonstração (Ctrl+Alt+Shift+D: 20 agentes em 5 salas, o cenário mais
  * cheio) e o HUD (Ctrl+Alt+Shift+P); mede o tempo de quadro (média/P95 do
@@ -33,6 +33,10 @@ const seats = process.argv.includes('--seats')
 const posesMode = process.argv.includes('--poses')
 /** As 24 mesas do U (ilha por ilha, cérebro congelado): a ilha de frente e as mesas inclinadas de perto, com o boneco e o avatar. */
 const desksMode = process.argv.includes('--desks')
+/** A xícara na mão (cérebro congelado): em pé e sentado, perto e na distância média, avatar e boneco (fotos x-*). */
+const cupMode = process.argv.includes('--cup')
+/** Agente com tarefa na mesa (a demo viva, cérebro andando): trabalhando, pedindo permissão ao lado da cadeira e esperando o limite de uso sentado (fotos t-*). */
+const taskMode = process.argv.includes('--task')
 const tmp = mkdtempSync(join(tmpdir(), 'agent-code-avatar-'))
 const home = join(tmp, 'home')
 const shots = join(tmp, 'shots')
@@ -322,6 +326,80 @@ try {
       }
     }
   }
+  if (cupMode) {
+    // A xícara na mão (cérebro congelado): um em pé (no meio da praça) e um sentado à mesa, os dois tomando café;
+    // PERTO (lod 0) e na distância MÉDIA (lod 1), com o avatar e com o boneco. O relatório traz o lod e a xícara no mundo.
+    await page.evaluate(() => Object.assign(window.__o.scene.crowd, { step: () => {}, apply: () => {} }))
+    await page.evaluate(() => document.querySelector('.o3d-chat')?.style.setProperty('display', 'none'))
+    const placed = await page.evaluate(async () => {
+      const plan = await import('/src/office3d/officePlan.ts')
+      const furn = await import('/src/office3d/furniture.ts')
+      const e = window.__o
+      // Sem a Central (a fila de entregas dela troca a xícara pela pasta).
+      const list = [...e.scene.chars.values()].sort((a, b) => (a.key === 'conv:central') - (b.key === 'conv:central'))
+      const [stand, seat] = list
+      for (const c of list.slice(2)) Object.assign(c.brain, { visible: false })
+      const base = { speed: 0, reaction: null, pending: [], look: 'none', zzz: false, visible: true, action: 'sip', actionT: 3, prop: 'cup' }
+      Object.assign(stand.brain, base, { x: 0, z: -2.4, yaw: 0, sit: 0, seat: null })
+      const s = furn.seatOf(plan.STATIONS[0])
+      Object.assign(seat.brain, base, { x: s.x, z: s.z, yaw: s.yaw, seat: 'chair', sit: 1, seatX: s.x, seatZ: s.z })
+      e.requestRender()
+      return { empe: stand.key, sentado: seat.key }
+    })
+    note('xicara', placed)
+    const probe = (key) =>
+      page.evaluate(async (key) => {
+        // As classes do three pela instância que o app já carregou (o especificador 'three' não resolve aqui).
+        const { roomBox } = await import('/src/office3d/roomLod.ts')
+        const Box3 = roomBox(0, 0, 1, 1).constructor
+        const c = window.__o.scene.chars.get(key)
+        const Vector3 = c.group.position.constructor
+        const p = c.props.get('cup')
+        if (!p) return { semXicara: true, lod: c.shown }
+        let vis = true
+        for (let o = p; o; o = o.parent) vis &&= o.visible
+        const box = new Box3().setFromObject(p)
+        const size = box.getSize(new Vector3())
+        const hand = (c.body.avatar?.socketR ?? c.rig.handR).parent.getWorldPosition(new Vector3())
+        return {
+          avatar: !!c.body.avatar, lod: c.shown, visivel: vis, escalaMundo: +p.getWorldScale(new Vector3()).x.toFixed(4),
+          tamanho: size.toArray().map((v) => +v.toFixed(3)), centro: box.getCenter(new Vector3()).toArray().map((v) => +v.toFixed(2)),
+          mao: hand.toArray().map((v) => +v.toFixed(2))
+        }
+      }, key)
+    const shootCup = async (name, key, dist, yaw, pitch, ty, crop) => {
+      await page.evaluate(({ key, dist, yaw, pitch, ty }) => {
+        const e = window.__o
+        const c = e.scene.chars.get(key)
+        Object.assign(c.brain, { reaction: null, action: 'sip', prop: 'cup' })
+        e.autoFrame = false
+        e.rig.pose = { tx: c.brain.x, ty, tz: c.brain.z, yaw: c.brain.yaw + Math.PI + yaw, pitch, distance: dist }
+        e.requestRender()
+      }, { key, dist, yaw, pitch, ty })
+      await wait(1500)
+      // De longe, só o meio do palco (o personagem no alvo): recorte para dar para ver a mão.
+      const r = await page.evaluate(() => {
+        const b = document.querySelector('[data-testid="office3d-canvas"]').getBoundingClientRect()
+        return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+      })
+      await page.screenshot({ path: join(shots, `${name}.png`), ...(crop ? { clip: { x: r.x - 150, y: r.y - 120, width: 300, height: 240 } } : {}) })
+      note(name, await probe(key))
+    }
+    for (const body of ['avatar', 'boneco']) {
+      const want = body === 'avatar'
+      if ((await avatars()) > 0 !== want) {
+        await key('V')
+        for (let i = 0; i < 100 && (await avatars()) > 0 !== want; i++) await wait(100)
+        await wait(1000)
+      }
+      for (const [where, k, ty] of [['empe', placed.empe, 1.1], ['sentado', placed.sentado, 0.85]]) {
+        await shootCup(`x-${body}-${where}-perto`, k, 1.6, 0.6, 0.2, ty, false)
+        await shootCup(`x-${body}-${where}-perto-lado`, k, 1.5, 1.4, 0.15, ty, false)
+        await shootCup(`x-${body}-${where}-perto-oposto`, k, 1.6, Math.PI + 0.6, 0.2, ty, false)
+        await shootCup(`x-${body}-${where}-medio`, k, 12.5, 0.6, 0.35, ty, true)
+      }
+    }
+  }
   if (seats) {
     const SEATS = [
       ['s1-mesa', "c.deskIndex !== null && b.seat === 'chair' && b.sit > 0.97 && b.action !== 'napDesk'", 1.0],
@@ -348,7 +426,35 @@ try {
     note('assentos-faltando', { faltam: [...left] })
     writeFileSync(join(tmp, 'report.json'), JSON.stringify(report, null, 2))
   }
-  if (!seats && !posesMode && !desksMode) {
+  if (taskMode) {
+    // A demo viva (2 min): espera cada situação acontecer de verdade e fotografa — nada é posado.
+    await page.evaluate(() => document.querySelector('.o3d-chat')?.style.setProperty('display', 'none'))
+    const TASK = [
+      ['t1-trabalhando-mesa', "c.deskIndex !== null && b.mode === 'work' && b.phase === 'working' && b.sit > 0.97 && b.action !== 'none'", 0.9],
+      ['t2-permissao-na-mesa', "c.deskIndex !== null && b.mode === 'permission' && b.arrived && b.prop === 'sign'", 1.1],
+      ['t3-limite-esperando-na-mesa', "c.deskIndex !== null && b.task && b.usageOut && b.mode === 'work' && b.sit > 0.97", 0.9],
+      ['t4-subagente-no-pc', "c.deskIndex !== null && c.key.startsWith('track:') && b.mode === 'work' && b.sit > 0.97", 0.9]
+    ]
+    const left = new Set(TASK.map((x) => x[0]))
+    for (let t = 0; t < 170 && left.size; t++) {
+      for (const [name, pick, ty] of TASK) {
+        if (!left.has(name)) continue
+        const info = await page.evaluate((pick) => {
+          const test = new Function('c', `const b = c.brain; return (${pick})`)
+          const c = [...window.__o.scene.chars.values()].find((c) => c.brain.visible && test(c))
+          return c ? { key: c.key, mode: c.brain.mode, phase: c.brain.phase, task: c.brain.task, action: c.brain.action, desk: c.deskIndex } : null
+        }, pick)
+        if (!info) continue
+        note(name, info)
+        await closeUp(`${name}-a`, pick, 2.6, 0.5, 0.3, ty)
+        await closeUp(`${name}-b`, pick, 5.5, 0.3, 0.45, ty)
+        left.delete(name)
+      }
+      await wait(1000)
+    }
+    note('tarefa-faltando', { faltam: [...left] })
+  }
+  if (!seats && !posesMode && !desksMode && !cupMode && !taskMode) {
   await closeUp('03-sentado-digitando', "b.sit > 0.95 && (b.action === 'type' || b.action === 'typeFast')", 2.2, 0.6, 0.3, 1.0)
   await closeUp('04-sentado-lado', "b.sit > 0.95 && (b.action === 'type' || b.action === 'typeFast' || b.action === 'readScreen')", 2.4, 1.5, 0.15, 0.9)
   await closeUp('05-objeto-na-mao', "b.prop !== null && b.prop !== undefined", 2.2, 0.4, 0.2, 1.1)

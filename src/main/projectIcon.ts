@@ -16,7 +16,7 @@ import { join } from 'node:path'
  */
 
 /** Sub-app folders worth descending into (they usually hold the asset folder). */
-const APP_DIRS = new Set([
+export const APP_DIRS = new Set([
   'frontend',
   'front',
   'front-end',
@@ -39,7 +39,7 @@ const APP_DIRS = new Set([
 ])
 
 /** Folders that actually hold images. Descended into, and scanned for files. */
-const ASSET_DIRS = new Set([
+export const ASSET_DIRS = new Set([
   'public',
   'assets',
   'asset',
@@ -60,7 +60,7 @@ const ASSET_DIRS = new Set([
 ])
 
 /** Never descend into these, however the walk got there. */
-const SKIP_DIRS = new Set([
+export const SKIP_DIRS = new Set([
   'node_modules',
   '.git',
   '.svn',
@@ -205,6 +205,15 @@ function worthDescending(name: string, depth: number): boolean {
  * missing/unreadable folder is simply "no icon".
  */
 export async function readProjectIcon(root: string): Promise<string | null> {
+  const icon = await findProjectIconFile(root)
+  return icon ? `data:${icon.mime};base64,${icon.bytes.toString('base64')}` : null
+}
+
+/** The icon file the sidebar shows (path, mime and bytes), or null. Never throws.
+ *  Shared with the project-color detector (projectColorScan.ts): same logo. */
+export async function findProjectIconFile(
+  root: string
+): Promise<{ file: string; mime: string; bytes: Buffer } | null> {
   if (!root) return null
   const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }]
   const found: Array<{ file: string; rank: Rank }> = []
@@ -241,7 +250,7 @@ export async function readProjectIcon(root: string): Promise<string | null> {
       const info = await stat(candidate.file)
       if (!info.isFile() || info.size === 0 || info.size > MAX_BYTES) continue
       const bytes = await readFile(candidate.file)
-      return `data:${candidate.rank.mime};base64,${bytes.toString('base64')}`
+      return { file: candidate.file, mime: candidate.rank.mime, bytes }
     } catch {
       continue
     }

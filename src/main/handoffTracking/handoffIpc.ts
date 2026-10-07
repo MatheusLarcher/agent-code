@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { z } from 'zod'
 import type { HandoffCorrectEntregaResult, HandoffListResult, HandoffRegisterResult } from '../../shared/api'
+import type { HandoffEnvio } from '../../shared/handoffTracking'
 import { Channels } from '../../shared/ipc'
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
 import { HandoffFileName } from '../planning/handoffSent'
@@ -28,6 +29,8 @@ export interface HandoffIpcDeps extends HandoffRegisterDeps {
   register?: typeof registerHandoffEnvios
   /** O acompanhamento: sabe dos envios registrados e faz a correção manual. */
   tracker?: Pick<HandoffTracker, 'onRegistered' | 'correctEntrega'>
+  /** A fila do projeto: o plano registrado entra no fim da fila da pasta (neste PC). */
+  project?: { addPlan(envios: readonly HandoffEnvio[]): Promise<void> }
 }
 
 /** Teto de prompts por envio (um handoff raramente passa de 3 ou 4). */
@@ -128,6 +131,8 @@ export function registerHandoffIpc(deps: HandoffIpcDeps): void {
       // O 1º prompt pode ter saído antes de o registro terminar: o tracker casa
       // agora o texto que já viu no agent:send.
       if (envios.length > 0) deps.tracker?.onRegistered(envios)
+      // Antes de responder: o despachante pergunta pela vez logo em seguida.
+      if (envios.length > 0) await deps.project?.addPlan(envios).catch((err) => console.warn('[handoff] fila do projeto:', errText(err)))
       return { ok: true, envios }
     }
   )

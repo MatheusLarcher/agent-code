@@ -31,6 +31,12 @@ if (new URLSearchParams(location.search).has('mesmos-agentes')) {
     )
 }
 
+// `?po`: a demo com o PO no quadro (o demoFeed desliga os observadores) — conferir o lugar dele, a visita, a bandeja e o clique nele.
+if (new URLSearchParams(location.search).has('po')) {
+  const set = officeStore.setOverride.bind(officeStore)
+  officeStore.setOverride = (feed) => set(feed && { ...feed, observersOn: { ...feed.observersOn, po: true } })
+}
+
 const log = (what: string, id: string): void => console.log(`[harness] ${what}`, id)
 
 // A tela do monitor (CodeMonitor) usa o UiProvider do app.

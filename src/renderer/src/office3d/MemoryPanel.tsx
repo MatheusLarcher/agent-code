@@ -5,10 +5,11 @@
  *
  *   Em cima "Usadas pelos agentes": a linha do tempo do uso (a mais recente
  *   primeiro), com quem está na estante agora fixado no topo (ponto pulsando);
- *   o agente leva a câmera até ele.
+ *   o agente leva a câmera até ele; o nome da memória abre o texto dela.
  *   Embaixo "Todas as memórias": agrupadas pela pasta, com o gancho, o tipo
  *   (o alcance), a data e a barrinha dos 7 dias; o clique abre o texto e onde
- *   foi usada. Valor do cofre nunca aparece (o corpo só tem a marca).
+ *   foi usada. Valor do cofre nunca aparece (o corpo só tem a marca). No PC, o
+ *   texto tem o "Mostrar na pasta" (o Explorador com o .md selecionado).
  *   Filtros (valem para as duas partes): período, projeto, pasta, agente, como
  *   foi usada, tipo, busca, ordem e os chips "Esquecidas" e "Em conflito".
  */
@@ -44,6 +45,12 @@ export function MemoryPanel({ data, atShelf, onClose, onFlyToAgent, onOpenConver
   const folders = useMemo(() => [...new Set(data.items.map((i) => i.folder))].sort(), [data.items])
   const week = data.events.filter((e) => now - e.at < 7 * 86_400_000).length
   const detail = open ? rows.find((r) => r.relPath === open) ?? memoryRows(data.items, data.events, NO_FILTERS, now, data.conflicts).find((r) => r.relPath === open) : undefined
+  const openMemory = (rel: string): void => {
+    setOpen(rel)
+    void data.read(rel)
+  }
+  // "Mostrar na pasta" só no PC: no celular a ponte não tem o revealFile (nem há Explorador).
+  const revealApi = typeof window !== 'undefined' && typeof window.api?.revealFile === 'function' ? window.api.revealFile : null
 
   const chip = (on: boolean, label: string, click: () => void, key?: string): JSX.Element => (
     <button key={key ?? label} type="button" className={`mp-chip${on ? ' on' : ''}`} aria-pressed={on} onClick={click}>
@@ -68,12 +75,14 @@ export function MemoryPanel({ data, atShelf, onClose, onFlyToAgent, onOpenConver
 
       {detail ? (
         <MemoryDetail
+          key={detail.relPath}
           r={detail}
           body={data.bodies.get(detail.relPath) ?? null}
           uses={data.events.filter((e) => e.relPath === detail.relPath).sort((a, b) => b.at - a.at)}
           now={now}
           onBack={() => setOpen(null)}
           onOpenConversation={onOpenConversation}
+          onReveal={revealApi ? () => revealApi({ mode: 'folder', memory: detail.relPath }) : undefined}
         />
       ) : (
         <>
@@ -138,7 +147,7 @@ export function MemoryPanel({ data, atShelf, onClose, onFlyToAgent, onOpenConver
               </li>
             ))}
             {uses.slice(0, 60).map((e, i) => (
-              <UsageLine key={i} e={e} title={e.relPath ? (titles.get(e.relPath) ?? e.relPath) : 'a lista de memórias'} now={now} onAgent={onFlyToAgent} />
+              <UsageLine key={i} e={e} title={e.relPath ? (titles.get(e.relPath) ?? e.relPath) : 'a lista de memórias'} now={now} onAgent={onFlyToAgent} onOpen={e.relPath && titles.has(e.relPath) ? openMemory : undefined} />
             ))}
             {!uses.length && !atShelf.length ? <li className="mp-empty">{data.loading ? 'Carregando…' : 'Nenhum uso com esses filtros.'}</li> : null}
           </ul>
@@ -153,10 +162,7 @@ export function MemoryPanel({ data, atShelf, onClose, onFlyToAgent, onOpenConver
                     key={r.relPath}
                     r={r}
                     now={now}
-                    onOpen={(rel) => {
-                      setOpen(rel)
-                      void data.read(rel)
-                    }}
+                    onOpen={openMemory}
                   />
                 ))}
               </ul>

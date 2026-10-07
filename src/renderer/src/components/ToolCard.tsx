@@ -89,7 +89,7 @@ export function ToolCard({ m }: { m: ToolUseMessage }): JSX.Element {
           <button type="button" className="tool-caret-btn" aria-expanded={open} aria-label="Mostrar a entrada e o resultado" title="Mostrar a entrada e o resultado" onClick={() => setOpen((o) => !o)}>
             <span className="tool-caret">{open ? '▾' : '▸'}</span>
           </button>
-          <button type="button" className="tool-open" title="Abrir no editor" onClick={() => opener.open(m)}>
+          <button type="button" className="tool-open" title="Abrir no editor" data-path={toolFilePath(m)} onClick={() => opener.open(m)}>
             {head}
             <svg className="tool-go" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M7 17 17 7M9 7h8v8" />

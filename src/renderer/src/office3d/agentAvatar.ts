@@ -16,6 +16,8 @@ import { Quaternion, Vector3, type Bone, type Color, type Group, type MeshStanda
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { CURL, SLOT, SLOTS, type AvatarTemplate } from './agentRest'
 import { agentMaterial } from './agentTint'
+import { lidsClosed } from './eyeFind'
+import { LIDS_NAME } from './eyelids'
 import { CH, type BodyMetrics, type Pose } from './poses'
 import type { Rig } from './rig'
 
@@ -43,6 +45,8 @@ export class AvatarBody {
   readonly socketR: Object3D
   readonly material: MeshStandardMaterial
   private readonly meshes: SkinnedMesh[] = []
+  /** As pálpebras do cochilo (eyelids.ts; null se o modelo não tem): aparecem com o olho fechado da pose. */
+  private lids: SkinnedMesh | null = null
   private readonly bones: Bone[]
   private readonly cur: Quaternion[]
   private readonly slot = Array.from({ length: SLOTS }, () => new Quaternion())
@@ -58,7 +62,8 @@ export class AvatarBody {
     const byName = new Map<string, Object3D>()
     this.root.traverse((o) => {
       byName.set(o.name, o)
-      if ((o as SkinnedMesh).isSkinnedMesh) {
+      if (o.name === LIDS_NAME) this.lids = o as SkinnedMesh
+      else if ((o as SkinnedMesh).isSkinnedMesh) {
         const m = o as SkinnedMesh
         m.material = this.material
         m.userData.charKey = charKey
@@ -118,6 +123,7 @@ export class AvatarBody {
     c[CURL.thumbL] = 0.6 * p[CH.fingersL]
     c[CURL.thumbR] = p[CH.thumbR] + 0.4 * c[CURL.fingersR]
     this.pose(p)
+    if (this.lids) this.lids.visible = lidsClosed(p[CH.eyes])
   }
 
   /** Clavícula (ombros erguidos), braço, antebraço e mão de um lado (`side` −1 esquerdo, +1 direito). */
@@ -158,6 +164,7 @@ export class AvatarBody {
   dispose(): void {
     this.root.removeFromParent()
     for (const m of this.meshes) m.skeleton.dispose()
+    this.lids?.skeleton.dispose()
     this.material.dispose()
   }
 }
@@ -165,7 +172,7 @@ export class AvatarBody {
 function firstMaterial(root: Object3D): MeshStandardMaterial {
   let found: MeshStandardMaterial | null = null
   root.traverse((o) => {
-    if (!found && (o as SkinnedMesh).isSkinnedMesh) found = (o as SkinnedMesh).material as MeshStandardMaterial
+    if (!found && (o as SkinnedMesh).isSkinnedMesh && o.name !== LIDS_NAME) found = (o as SkinnedMesh).material as MeshStandardMaterial
   })
   return found!
 }

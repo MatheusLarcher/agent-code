@@ -95,6 +95,8 @@ export function BoardOverlay({ open, board, onClose, onOpen, onOpenConversation 
               void board.sync.dismiss(it.id, !it.dismissedAt).finally(onClose)
             }}
             loadEvents={(id) => board.sync.events(id)}
+            findItem={(id) => board.sync.item(id)}
+            onOpenItem={(parent) => onOpen({ kind: 'card', id: parent.id, x: null, y: null })}
           />
         </div>
       ) : open.kind === 'pile' ? (

@@ -3,11 +3,14 @@
  * sem DOM). As abas vêm do mesmo buildTabs do app Código (codeModel.ts): os
  * arquivos que o agente escreveu, do mais recente ao mais antigo. O editor
  * mostra o texto da última edição da aba ativa (o trecho novo do Edit, o
- * conteúdo do Write), só as primeiras CODE_LINES linhas.
+ * conteúdo do Write), só as primeiras CODE_LINES linhas. Quando a última ação
+ * do agente não é uma escrita, `action` traz ela (actionPage.ts) e o editor a
+ * mostra no lugar do código.
  */
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { OfficeCharacterModel } from '../office/adapter/model'
 import type { UIMessage } from '../types'
+import { lastActionPage, type ActionPage } from './actionPage'
 import { lookupOf, trackMessages, trackOf } from './chatPage'
 import { buildTabs, type CodeTab } from './codeScreen/codeModel'
 
@@ -32,6 +35,8 @@ export interface CodePage {
   firstLine: number
   /** A edição ainda sem resultado: o cursor pisca no fim. */
   pending: boolean
+  /** A última ação não é escrita (leitura, comando, busca, navegador, delegação): o editor mostra ela (actionPage.ts). */
+  action?: ActionPage
 }
 
 function editText(tab: CodeTab): string {
@@ -70,7 +75,10 @@ export function codePageFrom(msgs: readonly UIMessage[]): CodePage {
   }
 }
 
-/** A janela VS Code do personagem (subagente: a trilha dele; observador: vazia). */
+/** A janela VS Code do personagem (subagente: a trilha dele; observador: vazia), com a última ação dele. */
 export function codePageFor(feed: OfficeFeed | null, model: OfficeCharacterModel): CodePage {
-  return codePageFrom(sourceOf(feed, model))
+  const msgs = sourceOf(feed, model)
+  const page = codePageFrom(msgs)
+  const action = lastActionPage(msgs)
+  return action ? { ...page, action } : page
 }

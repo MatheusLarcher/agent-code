@@ -16,6 +16,7 @@
  *   stalledSince         ← useState stalledSince (~556)
  *   tracks               ← useState tracks (~578)
  *   projectIcons         ← useState projectIcons (~3346)
+ *   projectColors        ← useProjectColors (office/useProjectColors.ts), juntado pela officeStore
  *   usageLimits          ← useState usageLimits (~555): janelas de limite, globais (F4·4-5)
  *   speakingId           ← useState speakingId (~615): mensagem sendo lida em voz (F4·4-5)
  *   claudeAccounts       ← useClaudeAccounts (claudeAccountList): contas, status e última leitura
@@ -28,6 +29,7 @@
  */
 import type { ClaudeAccountView } from '@shared/claudeAccounts'
 import type { MemoristaProviderDiagnosticMsg, PermissionRequest, PoProviderDiagnosticMsg, RateLimitStatus } from '@shared/ipc'
+import type { ProjectColorMap } from '@shared/projectColor'
 import type { TrackMap } from '../../agentTracks'
 import type { VigiaDoubt } from '../../components/VigiaChip'
 import type { Conversation } from '../../types'
@@ -46,9 +48,17 @@ export interface OfficeFeed {
   stalledSince: Readonly<Record<string, number>>
   tracks: Readonly<Record<string, TrackMap>>
   projectIcons: Readonly<Record<string, string | null>>
+  /** Opcional: a cor fixa de cada projeto por cwd (office/useProjectColors no PC, `/api/state` no celular); sem ela, a reserva (office3d/projectColor.ts). */
+  projectColors?: Readonly<ProjectColorMap>
   /** Opcional: feeds antigos (testes, devFeed) não trazem. */
   usageLimits?: Readonly<Record<string, RateLimitStatus>>
   /** Opcional: as contas Claude (useClaudeAccounts, ordem do usuário); a energia do escritório lê a conta em destaque. */
   claudeAccounts?: readonly ClaudeAccountView[]
   speakingId?: string | null
+  /**
+   * Opcional: conversas com mensagem esperando a vez de sair (a fila do chat do
+   * App — `queue` — e os prompts da fila do quadro/projeto esperando o turno).
+   * Conta como tarefa ativa (hasActiveTask em model.ts): o agente espera na mesa.
+   */
+  queuedIds?: ReadonlySet<string>
 }

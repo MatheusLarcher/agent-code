@@ -26,6 +26,15 @@ describe('turnRecovery', () => {
       expect(isFailedTerminal({ ...base, kind: 'result' })).toBe(false)
       expect(isFailedTerminal({ ...base, kind: 'result', responseReceived: true })).toBe(false)
     })
+    it('implantação: erro depois de texto entra na retomada; Stop continua não sendo falha; sucesso continua sucesso', () => {
+      const impl = { ...base, implementation: true, responseReceived: true }
+      expect(isFailedTerminal({ ...impl, kind: 'result', isError: true })).toBe(true)
+      expect(isFailedTerminal({ ...impl, kind: 'error' })).toBe(true)
+      expect(isFailedTerminal({ ...impl, kind: 'result', isError: true, wasInterrupted: true })).toBe(false)
+      expect(isFailedTerminal({ ...impl, kind: 'result' })).toBe(false)
+      // Fora da implantação (ou tarefa MCP, que o App passa como `false`): como antes.
+      expect(isFailedTerminal({ ...impl, implementation: false, kind: 'result', isError: true })).toBe(false)
+    })
   })
   it('interpreta reset com horário e fuso e adiciona um minuto', () => {
     const now = Date.parse('2026-07-13T02:00:00.000Z') // 23:00 do dia anterior em São Paulo

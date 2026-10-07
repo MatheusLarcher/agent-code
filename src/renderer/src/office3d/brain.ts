@@ -3,15 +3,17 @@
  * próprio e com o sorteio injetado (BrainWorld.rng), então o mesmo mundo e os
  * mesmos passos dão o mesmo comportamento.
  *
- * A FASE do AgentStatus (events.ts) manda no modo; os EVENTOS só disparam
- * reações curtas por cima. Modos:
+ * A FASE e a TAREFA ATIVA do AgentStatus (events.ts) mandam no modo; os
+ * EVENTOS só disparam reações curtas por cima. Com tarefa ativa (turno,
+ * permissão, recuperação agendada, fila) nunca free/sleep/archive/queue. Modos:
  *   free        sem tarefa: alterna lazeres (café, estante, janela, regar a
  *               planta, ler o quadro, conversar com outro ocioso, celular andando),
  *               cada um de DWELL_MIN a DWELL_MAX s, com uma pausa entre eles;
- *   sleep       parado há sleepAfter s: cochila no sofá do lounge (se livre) ou na mesa;
- *   work        senta na própria mesa; o gesto segue a ferramenta atual;
- *   permission  levanta ao lado da cadeira, vira para a câmera e acena;
- *   queue       limite de uso: fila na máquina de café até voltar;
+ *   sleep       sem tarefa, parado há sleepAfter s: cochila no sofá do lounge (se livre) ou na mesa;
+ *   work        senta na própria mesa; o gesto segue a ferramenta atual; com a
+ *               tarefa esperando (recuperação, limite, fila) tamborila e olha o relógio;
+ *   permission  na própria mesa: levanta ao lado da cadeira, vira para a câmera e acena;
+ *   queue       limite de uso SEM tarefa: fila na máquina de café até voltar;
  *   leave/away  visitante (especialista/subagente) sai pela porta / fora;
  *   fixed       PO, memorista e vigia: ficam no lugar deles;
  *   party       apagão (sem tokens): todo mundo com papel na festa — dança,
@@ -51,14 +53,15 @@ import {
 import { runErrand, type BoardWorld } from './brainBoard'
 import { runFree } from './brainLeisure'
 import { enterParty, runParty } from './brainParty'
+import { runArchive, runFixed, runMeeting } from './brainVenue'
 import { CONTEXT_LOW_STEPS, STALL_MS, type AgentEventBody, type AgentPhase, type AgentStatus, type ToolKind } from './events'
-import { chairSide } from './furniture'
-import { chairStand, TV_CENTER } from './meetingRoom'
+import { chairSide, type Spot } from './furniture'
+import { chairStand } from './meetingRoom'
 import { MEMORY_WAIT } from './officePlan'
-import type { Action } from './poses'
 
 export * from './brainBody'
 export { beginChat } from './brainLeisure'
+export { CALL_JUMP_S, consoleAction } from './brainVenue'
 
 // ── status e eventos ───────────────────────────────────────────────────────
 
@@ -70,12 +73,15 @@ export interface BrainStatus {
   stalled: boolean
   /** Desde quando está parado, no relógio do cérebro (s); null ocupado/sem dado. */
   idleSince: number | null
+  /** Tarefa ativa (AgentStatus.task); ausente = a fase diz ('working'/'waiting-permission'). */
+  task?: boolean
 }
 
 /** AgentStatus → BrainStatus, convertendo o epoch (wallNow) para o relógio `t`. */
 export function brainStatus(s: AgentStatus, t: number, wallNow: number): BrainStatus {
   return {
     phase: s.phase,
+    task: s.task,
     tool: s.tool?.kind ?? null,
     contextPct: s.contextPct,
     usageOut: s.usageExhausted !== null,
@@ -86,6 +92,7 @@ export function brainStatus(s: AgentStatus, t: number, wallNow: number): BrainSt
 
 export function setStatus(b: Brain, s: BrainStatus, t: number): void {
   b.phase = s.phase
+  b.task = s.task ?? (s.phase === 'working' || s.phase === 'waiting-permission')
   if (s.tool !== b.tool) {
     b.tool = s.tool
     b.toolAt = t
@@ -174,20 +181,23 @@ function decide(b: Brain, w: BrainWorld): Mode {
   if (b.outside) return b.visible ? 'leave' : 'away'
   if (b.party !== null) return 'party'
   const busy = b.phase === 'working' || b.phase === 'waiting-permission'
+  // Tarefa ativa (turno, permissão, recuperação agendada, fila): nunca free/sleep/archive/queue.
+  const task = busy || b.task
   if (b.role === 'fixed') return 'fixed'
   // Trabalhando, fica sentado na mesa: só levanta para chamar o usuário na TV (quem testa no
   // navegador continua na mesa; a TV mostra o teste do mesmo jeito). Na sala de reunião: ao lado
   // da TV ou sentado esperando a vez do chamado, até o usuário responder (mesmo com o turno terminado).
   if (b.venue?.call && b.phase !== 'waiting-permission' && !b.usageOut) return 'meeting'
   // Consultando a memória, parado: vai à estante (uma ida por sequência; fica até ela acabar e mais um pouco).
-  if (b.shelfTrip && (busy || w.t >= b.shelfTrip.until)) b.shelfTrip = null
-  if (b.shelfTrip && !busy && !b.usageOut) return 'archive'
+  if (b.shelfTrip && (task || w.t >= b.shelfTrip.until)) b.shelfTrip = null
+  if (b.shelfTrip && !task && !b.usageOut) return 'archive'
   if (b.role === 'visitor') {
     if (busy) return b.phase === 'waiting-permission' && b.desk ? 'permission' : 'work'
     return b.visible ? 'leave' : 'away'
   }
+  // Limite de uso com tarefa: fica na mesa esperando (runWork); a fila do café é só de quem não tem tarefa.
+  if (task) return b.phase === 'waiting-permission' ? 'permission' : 'work'
   if (b.usageOut) return 'queue'
-  if (busy) return b.phase === 'waiting-permission' ? 'permission' : 'work'
   if (w.t < b.backUntil && b.desk) return 'back'
   if (b.mode === 'sleep' || (b.idleSince !== null && w.t - b.idleSince >= w.sleepAfter)) return 'sleep'
   return 'free'
@@ -214,8 +224,8 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
       if (m === 'party') enterParty(b, w)
       else if (m === 'work') goDesk(b, gait)
       else {
-        // Pede permissão: vem à frente do escritório, virado para a câmera, com a plaquinha.
-        const f = w.frontSpot(b)
+        // Pede permissão: na própria mesa, de pé ao lado da cadeira, virado para a câmera, com a plaquinha.
+        const f = permissionSpot(b, w)
         goStand(b, f.x, f.z, f.yaw, gait)
       }
       return
@@ -275,6 +285,13 @@ function enterMode(b: Brain, m: Mode, w: BrainWorld): void {
   }
 }
 
+/** Onde pedir permissão: ao lado da cadeira da mesa; sem mesa, ao lado do lugar do lounge; sem nenhum, na frente do escritório. */
+function permissionSpot(b: Brain, w: BrainWorld): Spot {
+  if (b.desk) return chairSide(b.desk)
+  const l = b.lounge
+  return l ? { x: l.standX, z: l.standZ, yaw: l.yaw } : w.frontSpot(b)
+}
+
 function queueUp(b: Brain, w: BrainWorld): void {
   const spot = w.queueSpot(b)
   if (!spot) return stay(b)
@@ -299,8 +316,11 @@ function runWork(b: Brain, w: BrainWorld): void {
   }
   if (b.monitor) lookAt(b, b.monitor.x, b.monitor.y, b.monitor.z)
   b.workSpeed = b.contextLow ? 0.55 : 1
+  // Tarefa sem turno rodando (recuperação agendada, limite de uso, fila): sentado esperando, tamborilando e
+  // olhando o relógio — o balão (erro/ampulheta) e as baterias dizem o porquê.
+  const waiting = b.usageOut || b.phase !== 'working'
   if (!b.desk) setAction(b, 'assist')
-  else if (b.stalled) setAction(b, 'drum')
+  else if (b.stalled || waiting) setAction(b, 'drum')
   else if (b.tool === 'edit' || b.tool === 'write') setAction(b, 'typeFast')
   else if (b.tool === 'read' || b.tool === 'search') setAction(b, 'readScreen')
   else if (b.tool === 'bash') setAction(b, w.t - b.toolAt < 1.4 ? 'type' : 'drum')
@@ -310,7 +330,7 @@ function runWork(b: Brain, w: BrainWorld): void {
     pushReaction(b, 'yawn')
     b.nextYawn = w.t + 9 + w.rng() * 9
   }
-  if (b.stalled && w.t >= b.nextWatch) {
+  if ((b.stalled || waiting) && w.t >= b.nextWatch) {
     pushReaction(b, 'watch')
     b.nextWatch = w.t + 5 + w.rng() * 4
   }
@@ -340,85 +360,6 @@ function runQueue(b: Brain, dt: number, w: BrainWorld): void {
   }
 }
 
-function runFixed(b: Brain): void {
-  b.look = 'none'
-  const working = b.phase === 'working'
-  if (b.style === 'manager') {
-    // Explica o plano para a TV enquanto trabalha (mão no queixo e apontando); parado, sentado olhando para ela.
-    setAction(b, !b.arrived ? 'none' : working ? (Math.floor(b.modeT / 4) % 2 ? 'web' : 'assist') : 'sitIdle')
-    if (b.arrived) lookAt(b, TV_CENTER.x, TV_CENTER.y, TV_CENTER.z)
-    return
-  }
-  if (working && b.style === 'board') setAction(b, 'readBoard')
-  else if (working && b.style === 'archive') setAction(b, 'readBook')
-  else if (b.style === 'console') setAction(b, b.arrived ? consoleAction(b.modeT + b.seed * 37, working) : 'none')
-  else setAction(b, b.arrived ? 'idle' : 'none')
-  b.prop = working && b.style === 'archive' ? 'book' : null
-}
-
-/**
- * A Central no console nunca fica parada (cada ação tem movimento do Mixamo): trabalhando, digita
- * no teclado do console e fala no fone encaminhando os pedidos, aponta e escuta; sem trabalho, os
- * ociosos em pé, olhando a praça, conversando no fone e se alongando. [ação, segundos], em ciclo.
- */
-const CONSOLE_WORK: ReadonlyArray<readonly [Action, number]> = [['type', 7], ['talk', 5], ['type', 6], ['point', 2.5], ['listen', 3.5]]
-const CONSOLE_IDLE: ReadonlyArray<readonly [Action, number]> = [['idle', 12], ['talk', 5], ['idle', 9], ['lookOut', 4], ['idle', 8], ['stretchUp', 3]]
-
-/** A ação do console no instante `t` (s, já com a fase da seed). */
-export function consoleAction(t: number, working: boolean): Action {
-  const list = working ? CONSOLE_WORK : CONSOLE_IDLE
-  let total = 0
-  for (const [, d] of list) total += d
-  let u = ((t % total) + total) % total
-  for (const [a, d] of list) {
-    if (u < d) return a
-    u -= d
-  }
-  return list[0][0]
-}
-
-/** Chamando sem resposta por tanto tempo (s), quem está ao lado da TV passa a pular. */
-export const CALL_JUMP_S = 60
-/** Depois disso, o ciclo: metade pulando, metade acenando. */
-const CALL_CYCLE_S = 6
-/** Na fila do chamado, sentado: acena SEAT_WAVE_S a cada SEAT_WAVE_EVERY_S. */
-const SEAT_WAVE_EVERY_S = 9
-const SEAT_WAVE_S = 2
-
-/** Na estante: puxa o fichário, folheia; gravando, põe a folha no fichário de vez em quando. */
-function runArchive(b: Brain, dt: number): void {
-  if (!b.arrived) {
-    setAction(b, 'none')
-    return
-  }
-  b.leisureT += dt
-  const t = b.leisureT
-  const write = b.shelfTrip?.use === 'write'
-  setAction(b, t < 1 ? 'grabBook' : write && t % 6 > 3.5 ? 'stick' : 'readBook')
-  b.prop = t > 0.5 ? (write && t % 6 > 3.5 ? 'note' : 'book') : null
-  if (b.poi) lookAt(b, b.poi.look.x, b.poi.look.y, b.poi.look.z)
-}
-
-function runMeeting(b: Brain): void {
-  const v = b.venue
-  if (!b.arrived || !v) {
-    setAction(b, 'none')
-    b.look = 'none'
-    return
-  }
-  if (v.call && v.role === 'present') {
-    // Chamou o usuário: de pé ao lado da TV, acenando para a câmera; sem resposta, pula também.
-    const late = b.modeT - CALL_JUMP_S
-    setAction(b, late >= 0 && late % CALL_CYCLE_S < CALL_CYCLE_S / 2 ? 'jump' : 'wave')
-    b.faceCamera = true
-    b.look = 'camera'
-    return
-  }
-  // Na fila do chamado: sentado, olhando para a câmera e acenando de vez em quando.
-  setAction(b, (b.modeT + b.seed * SEAT_WAVE_EVERY_S) % SEAT_WAVE_EVERY_S < SEAT_WAVE_S ? 'wave' : 'sitIdle')
-  b.look = 'camera'
-}
-
 function runMode(b: Brain, dt: number, w: BrainWorld): void {
   switch (b.mode) {
     case 'work':
@@ -435,6 +376,8 @@ function runMode(b: Brain, dt: number, w: BrainWorld): void {
       }
       return
     case 'sleep':
+      // Quem dorme larga o que tinha na mão (a plaquinha da permissão atravessava o braço no cochilo).
+      b.prop = null
       if (b.arrived) {
         setAction(b, b.seat === 'sofa' ? 'napSofa' : b.seat === 'chair' ? 'napDesk' : 'idle')
         b.zzz = b.seat !== null

@@ -96,6 +96,8 @@ export class HandoffTracker {
       s.lastActivity = at
       if (event.kind === 'task-list') return this.queueCards(convId)
       if (event.kind === 'turn-start') {
+        // Um turno novo (o usuário retomou): o Stop do anterior deixa de valer.
+        s.stoppedByUser = false
         const ms = closeSlice(s, at, () => {
           if (!s.turnRunning) s.turnStartedAt = at
           s.turnRunning = true
@@ -111,17 +113,19 @@ export class HandoffTracker {
         s.turnRunning = false
         s.pending.clear()
       })
+      const stopped = s.stoppedByUser
       if (event.kind === 'result') {
-        const turnError = event.isError ? event.text.trim() || 'erro sem texto' : null
+        // Turno parado pelo usuário: o fim dele não é erro (nem conclui o que faltou).
+        const turnError = event.isError && !stopped ? event.text.trim() || 'erro sem texto' : null
         return this.enqueue(convId, async () => {
           await this.jobs.addTime(convId, ms)
-          await this.jobs.result(convId, at, turnError)
+          await this.jobs.result(convId, at, turnError, stopped)
         })
       }
       const recoverable = rules.isRecoverableError(event)
       this.enqueue(convId, async () => {
         await this.jobs.addTime(convId, ms)
-        await this.jobs.error(convId, event.text, recoverable)
+        await this.jobs.error(convId, event.text, recoverable, stopped)
       })
     })
   }
@@ -152,6 +156,20 @@ export class HandoffTracker {
     this.updatePending(convId, (map) => {
       for (const [id, tool] of map) if (tool !== 'AskUserQuestion') map.delete(id)
     })
+  }
+
+  /** Stop do usuário (não é erro): o envio fica PARADO e a fila espera até um turno novo ou o "mesmo assim". */
+  noteStop(convId: string): void {
+    const s = this.states.get(convId)
+    if (!s) return
+    s.stoppedByUser = true
+    // O Stop que pega o prompt antes de o turno começar não rende `result`: o job cobre.
+    this.guard('noteStop', () => this.enqueue(convId, () => this.jobs.stopped(convId)))
+  }
+
+  /** O último turno da conversa foi parado pelo usuário (a fila do quadro espera ele). */
+  stoppedByUser(convId: string): boolean {
+    return this.states.get(convId)?.stoppedByUser === true
   }
 
   /** Sessão descartada: não sai `result` nem `error`, mas o turno acabou. */
@@ -185,6 +203,15 @@ export class HandoffTracker {
         this.enqueue(convId, () => this.jobs.matchSent(convId, null))
       }
     })
+  }
+
+  /** O despachante da fila do quadro vai mandar `envioId` (marcado pelo id, ver
+   *  HandoffJobs.dispatched). `false`: já tinha saído, ou sem banco. */
+  dispatched(convId: string, envioId: string): Promise<boolean> {
+    const at = this.now()
+    const s = this.states.get(convId)
+    if (s) s.lastActivity = at
+    return this.exclusive(convId, () => this.jobs.dispatched(convId, envioId, at)).catch(() => false)
   }
 
   /** O Quadro do projeto mudou (sync, PO, arrasto): relê as conversas dele. */

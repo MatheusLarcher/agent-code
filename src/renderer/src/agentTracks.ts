@@ -1,4 +1,4 @@
-import type { ChatEvent } from '@shared/ipc'
+import type { AgentTaskStatus, ChatEvent } from '@shared/ipc'
 
 /**
  * Live view of WHO is working inside a conversation — the agents panel's data.
@@ -41,6 +41,20 @@ export interface AgentTrack {
   /** Total calls made by this subagent (steps may be trimmed; this is not). */
   stepCount: number
   steps: TrackStep[]
+  /** Em segundo plano: o tool_result de lançamento já voltou e a trilha segue
+   *  rodando até o `task_notification` (evento `agent-task`). */
+  background?: boolean
+  /** A tarefa do SDK por trás da trilha, quando o ciclo dela chegou. */
+  task?: TrackTask
+}
+
+/** O que o ciclo da tarefa do SDK (`agent-task`) disse por último. */
+export interface TrackTask {
+  id: string
+  status: AgentTaskStatus
+  lastToolName?: string
+  summary?: string
+  toolUses?: number
 }
 
 /** Tracks of one conversation, most recently started first. */
@@ -152,10 +166,15 @@ export function reduceTracks(map: TrackMap, e: ChatEvent, now = Date.now()): Tra
   }
 
   if (e.kind === 'tool-result') {
-    // The Task call coming back closes the track it opened.
+    // The Task call coming back closes the track it opened — except the launch of
+    // a BACKGROUND subagent: that result is only "launched", the work goes on
+    // until the task's notification (`agent-task`) closes the track.
     if (e.parentToolUseId == null) {
       const track = map[e.toolUseId]
       if (!track) return map
+      if (!e.isError && track.status === 'running' && (track.background || isBackgroundLaunch(e.text))) {
+        return track.background ? map : { ...map, [track.id]: { ...track, background: true } }
+      }
       return trimTracks({
         ...map,
         [track.id]: { ...track, status: e.isError ? 'error' : 'done', endedAt: now }
@@ -175,7 +194,81 @@ export function reduceTracks(map: TrackMap, e: ChatEvent, now = Date.now()): Tra
     return { ...map, [track.id]: { ...track, steps } }
   }
 
+  if (e.kind === 'agent-task') return applyAgentTask(map, e, now)
+  if (e.kind === 'background-tasks') return settleBackground(map, new Set(e.tasks.map((t) => t.id)), now)
+
   return map
+}
+
+/** O texto do tool_result de um Agent lançado em segundo plano (o CLI o devolve na hora). */
+const BACKGROUND_LAUNCH = /^\s*Async agent launched successfully|running in the background/i
+
+export function isBackgroundLaunch(text: string): boolean {
+  return BACKGROUND_LAUNCH.test(text)
+}
+
+const TASK_DONE: Record<Exclude<AgentTaskStatus, 'running'>, AgentTrack['status']> = {
+  completed: 'done',
+  failed: 'error',
+  stopped: 'done'
+}
+
+/**
+ * O ciclo da tarefa do SDK sobre a trilha do Agent que a lançou (`toolUseId`):
+ * `started`/`progress` marcam o segundo plano e a última ferramenta; o fim
+ * (`completed`/`failed`/`stopped`) fecha a trilha. Tarefa sem trilha (shell em
+ * segundo plano, Agent nunca visto) não abre nada.
+ */
+function applyAgentTask(map: TrackMap, e: Extract<ChatEvent, { kind: 'agent-task' }>, now: number): TrackMap {
+  const track = e.toolUseId ? map[e.toolUseId] : undefined
+  if (!track) return map
+  const prev = track.task
+  const lastToolName = e.lastToolName ?? prev?.lastToolName
+  const summary = e.summary ?? prev?.summary
+  const toolUses = e.toolUses ?? prev?.toolUses
+  const task: TrackTask = {
+    id: e.taskId,
+    status: e.status,
+    ...(lastToolName ? { lastToolName } : {}),
+    ...(summary ? { summary } : {}),
+    ...(toolUses !== undefined ? { toolUses } : {})
+  }
+  const background = e.backgrounded ?? track.background
+  const next: AgentTrack = {
+    ...track,
+    task,
+    ...(background ? { background: true } : {}),
+    ...(!track.subagentType && e.subagentType ? { subagentType: e.subagentType } : {})
+  }
+  if (e.status !== 'running') {
+    // Fim repetido (o hook fechou, o SDK corrige o status): a hora do fim é a primeira.
+    const endedAt = prev && prev.status !== 'running' && track.endedAt !== undefined ? track.endedAt : now
+    return trimTracks({ ...map, [track.id]: { ...next, status: TASK_DONE[e.status], endedAt } })
+  }
+  // Ainda rodando: uma trilha fechada antes da hora (o fim do turno, um erro) e
+  // cuja tarefa não terminou volta a rodar.
+  const settled = prev !== undefined && prev.status !== 'running'
+  if (track.status !== 'running' && !settled) {
+    const reopened: AgentTrack = { ...next, status: 'running' }
+    delete reopened.endedAt
+    return { ...map, [track.id]: reopened }
+  }
+  return { ...map, [track.id]: next }
+}
+
+/**
+ * O snapshot `background-tasks` é o nível autoritativo do SDK: trilha em segundo
+ * plano rodando cuja tarefa saiu dele acabou (o `task_notification` que vier
+ * depois só corrige o status). Cobre o fim que se perdeu.
+ */
+function settleBackground(map: TrackMap, live: ReadonlySet<string>, now: number): TrackMap {
+  let next: TrackMap | null = null
+  for (const [id, track] of Object.entries(map)) {
+    if (track.status !== 'running' || !track.background || !track.task || live.has(track.task.id)) continue
+    next ??= { ...map }
+    next[id] = { ...track, status: 'done', endedAt: now }
+  }
+  return next ? trimTracks(next) : map
 }
 
 /** Panel ordering: running first, then most recent. */
@@ -187,12 +280,14 @@ export function sortTracks(map: TrackMap): AgentTrack[] {
   })
 }
 
-/** Close every still-running track — the turn ended, nothing is working now. */
-export function closeRunningTracks(map: TrackMap, now = Date.now()): TrackMap {
+/** Close every still-running track — the turn ended, nothing is working now.
+ *  `keepBackground`: the main turn's `result` does not end a subagent running in
+ *  the background; its own notification (or the snapshot) does. */
+export function closeRunningTracks(map: TrackMap, now = Date.now(), keepBackground = false): TrackMap {
   let changed = false
   const next: TrackMap = {}
   for (const [id, track] of Object.entries(map)) {
-    if (track.status === 'running') {
+    if (track.status === 'running' && !(keepBackground && track.background)) {
       changed = true
       next[id] = { ...track, status: 'done', endedAt: now }
     } else {

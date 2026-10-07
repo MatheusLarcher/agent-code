@@ -2,7 +2,8 @@
  * Partículas do Escritório 3D em POOLS fixos — zero alocação por quadro:
  *   confete  CONFETTI_MAX papeizinhos; cada estouro usa até CONFETTI_BURST e
  *            vive CONFETTI_LIFE s (pool cheio recicla o mais antigo);
- *   puffs    vapor do café (branco, sobe), fumaça do erro (cinza, sobe), gota
+ *   vapor    STEAM_MAX fiapos do café (brancos e translúcidos, sobem pouco);
+ *   puffs    fumaça do erro (cinza, sobe), gota
  *            de suor e água do regador (azuis, caem) e faísca do cabo da usina
  *            no apagão (amarela, pula e cai; sem luz, então brilha no escuro).
  * Cada pool é UM InstancedMesh (uma chamada de desenho) com as vivas no começo
@@ -17,12 +18,14 @@ export const CONFETTI_MAX = 30
 export const CONFETTI_BURST = 18
 export const CONFETTI_LIFE = 1.2
 export const PUFF_MAX = 48
+export const STEAM_MAX = 24
 
 export type PuffKind = 'steam' | 'smoke' | 'sweat' | 'drop' | 'spark'
 
 const CONFETTI_COLORS = [0xff5d73, 0xffd23f, 0x3ccf6e, 0x4aa3ff, 0xb56bff, 0xff9f43].map((c) => new Color(c))
 const PUFF: Record<PuffKind, { color: Color; life: number; size: number; grow: number; gravity: number; up: number }> = {
-  steam: { color: new Color(0xf5f5f5), life: 1.6, size: 0.014, grow: 0.03, gravity: 0, up: 0.22 },
+  // Fiapos pequenos (no pool translúcido próprio): saem da boca da xícara e sobem pouco.
+  steam: { color: new Color(0xffffff), life: 1.4, size: 0.006, grow: 0.012, gravity: 0, up: 0.1 },
   smoke: { color: new Color(0x6b6f78), life: 1.3, size: 0.05, grow: 0.11, gravity: 0, up: 0.5 },
   sweat: { color: new Color(0x8fd3ff), life: 0.75, size: 0.03, grow: 0, gravity: -4, up: 0.6 },
   drop: { color: new Color(0x5aa9ff), life: 0.6, size: 0.022, grow: 0, gravity: -6, up: 0 },
@@ -98,6 +101,7 @@ export class Particles {
   readonly group = new Group()
   private readonly confetti: Pool
   private readonly puffs: Pool
+  private readonly steam: Pool
   private readonly geos: BufferGeometry[]
   private readonly mats: Material[]
   private readonly rnd: () => number
@@ -108,13 +112,16 @@ export class Particles {
     const ball = new IcosahedronGeometry(1, 1)
     const confettiMat = new MeshBasicMaterial({ side: DoubleSide })
     const puffMat = new MeshBasicMaterial({ transparent: true, opacity: 0.78, depthWrite: false })
+    const steamMat = new MeshBasicMaterial({ transparent: true, opacity: 0.32, depthWrite: false })
     this.geos = [paper, ball]
-    this.mats = [confettiMat, puffMat]
+    this.mats = [confettiMat, puffMat, steamMat]
     this.confetti = new Pool(paper, confettiMat, CONFETTI_MAX)
     this.puffs = new Pool(ball, puffMat, PUFF_MAX)
+    this.steam = new Pool(ball, steamMat, STEAM_MAX)
     this.confetti.mesh.name = 'confetti'
     this.puffs.mesh.name = 'puffs'
-    this.group.add(this.confetti.mesh, this.puffs.mesh)
+    this.steam.mesh.name = 'steam'
+    this.group.add(this.confetti.mesh, this.puffs.mesh, this.steam.mesh)
   }
 
   /** Estouro de confete em (x, y, z): até CONFETTI_BURST papeizinhos para cima e para os lados. */
@@ -139,18 +146,20 @@ export class Particles {
     if (p.mesh.instanceColor) p.mesh.instanceColor.needsUpdate = true
   }
 
-  /** Uma bolinha: vapor/fumaça sobem; suor/gota caem (com o empurrão dx, dz). */
+  /** Uma bolinha: vapor/fumaça sobem; suor/gota caem (com o empurrão dx, dz). O vapor sai do ponto, quase sem espalhar. */
   puff(kind: PuffKind, x: number, y: number, z: number, dx = 0, dz = 0): void {
-    const p = this.puffs
+    const steam = kind === 'steam'
+    const p = steam ? this.steam : this.puffs
     const spec = PUFF[kind]
     const r = this.rnd
     const i = p.take()
-    p.px[i] = x + (r() - 0.5) * 0.04
+    const spread = steam ? 0.25 : 1
+    p.px[i] = x + (r() - 0.5) * 0.04 * spread
     p.py[i] = y
-    p.pz[i] = z + (r() - 0.5) * 0.04
-    p.vx[i] = dx + (r() - 0.5) * 0.08
+    p.pz[i] = z + (r() - 0.5) * 0.04 * spread
+    p.vx[i] = dx + (r() - 0.5) * 0.08 * spread
     p.vy[i] = spec.up * (0.8 + 0.4 * r())
-    p.vz[i] = dz + (r() - 0.5) * 0.08
+    p.vz[i] = dz + (r() - 0.5) * 0.08 * spread
     p.age[i] = 0
     p.life[i] = spec.life * (0.85 + 0.3 * r())
     p.kind[i] = KIND_ID[kind]
@@ -159,13 +168,14 @@ export class Particles {
   }
 
   get live(): number {
-    return this.confetti.alive + this.puffs.alive
+    return this.confetti.alive + this.puffs.alive + this.steam.alive
   }
 
   /** Avança tudo; true se ainda há partícula viva. */
   update(dt: number): boolean {
     if (this.confetti.alive > 0) this.stepConfetti(dt)
-    if (this.puffs.alive > 0) this.stepPuffs(dt)
+    if (this.puffs.alive > 0) this.stepPuffs(this.puffs, dt)
+    if (this.steam.alive > 0) this.stepPuffs(this.steam, dt)
     return this.live > 0
   }
 
@@ -196,8 +206,7 @@ export class Particles {
     p.mesh.instanceMatrix.needsUpdate = true
   }
 
-  private stepPuffs(dt: number): void {
-    const p = this.puffs
+  private stepPuffs(p: Pool, dt: number): void {
     for (let i = 0; i < p.alive; ) {
       p.age[i] += dt
       if (p.age[i] >= p.life[i]) {
@@ -226,6 +235,7 @@ export class Particles {
     this.group.removeFromParent()
     this.confetti.mesh.dispose()
     this.puffs.mesh.dispose()
+    this.steam.mesh.dispose()
     for (const g of this.geos) g.dispose()
     for (const m of this.mats) m.dispose()
   }

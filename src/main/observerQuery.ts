@@ -78,6 +78,16 @@ export function classifyClaudeObserverFailure(value: unknown): SafeProviderReaso
   }
 }
 
+/**
+ * Frame de erro do SDK (sem login, plano, sobrecarga…): o texto dele é a
+ * mensagem de erro ("Not logged in · Please run /login"), não a resposta do
+ * modelo. O cortado em `max_output_tokens` é resposta de verdade.
+ */
+function isSdkErrorFrame(message: unknown): boolean {
+  const error = (message as { error?: unknown }).error
+  return typeof error === 'string' && error !== 'max_output_tokens'
+}
+
 async function* singlePrompt(prompt: string): AsyncIterable<SDKUserMessage> {
   yield {
     type: 'user',
@@ -114,7 +124,7 @@ export async function runObserverAttempt(request: ObserverRequest): Promise<Obse
   try {
     const q = query({ prompt: singlePrompt(request.prompt), options })
     for await (const message of q) {
-      if (message.type === 'assistant') {
+      if (message.type === 'assistant' && !isSdkErrorFrame(message)) {
         const content = (message.message as { content?: Array<{ type: string; text?: string }> }).content ?? []
         for (const block of content) {
           if (block.type === 'text' && typeof block.text === 'string') text += block.text

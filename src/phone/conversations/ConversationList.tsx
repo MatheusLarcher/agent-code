@@ -1,18 +1,20 @@
 /**
  * A aba Conversas (o antigo drawer): as conversas por projeto, como a barra
  * lateral do PC, com busca nos seus prompts (no PC, em todas as conversas), "+"
- * para criar conversa num projeto que o PC conhece, e renomear/excluir.
+ * para criar conversa num projeto que o PC conhece, e renomear/excluir. Cada
+ * projeto começa recolhido; tocar no cabeçalho abre/fecha.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { client, nav, openConversation, openTab, toast } from '../app/runtime'
 import { CENTRAL_CONV_ID } from '../core/client'
 import { basename } from '../core/format'
 import { errorText } from '../core/net'
-import { useStore } from '../core/store'
+import { createStore, useStore } from '../core/store'
 import type { ConvSummary, SearchResult } from '../core/types'
 import { ReconnectBar } from '../chat/ChatBars'
 import { centralSnapshot, tint } from '../central/centralActions'
 import { StatusPill } from '../shell/StatusMenu'
+import { CollapsibleGroup } from '../ui/Collapsible'
 import { Icon } from '../ui/icons'
 
 interface Group {
@@ -33,6 +35,16 @@ function groupByProject(conversations: ConvSummary[], projects: string[]): Group
   return [...groups.entries()].map(([cwd, convs]) => ({ cwd, convs }))
 }
 
+/**
+ * Projetos abertos na lista. Tudo começa recolhido ao abrir o app; durante o uso o
+ * que foi aberto continua aberto (a lista desmonta ao entrar numa conversa), só em memória.
+ */
+export const openProjects = createStore<{ open: Record<string, boolean> }>({ open: {} })
+
+function toggleProject(cwd: string): void {
+  openProjects.set((s) => ({ open: { ...s.open, [cwd]: !s.open[cwd] } }))
+}
+
 export function ConversationList(): JSX.Element {
   const conversations = useStore(client.store, (s) => s.conversations)
   const projects = useStore(client.store, (s) => s.projects)
@@ -42,6 +54,7 @@ export function ConversationList(): JSX.Element {
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null)
+  const open = useStore(openProjects, (s) => s.open)
   const groups = useMemo(() => groupByProject(conversations, projects), [conversations, projects])
   const latestQuery = useRef('')
 
@@ -136,14 +149,21 @@ export function ConversationList(): JSX.Element {
               </button>
             )}
             {groups.map((g) => (
-              <div className="hist-group" key={g.cwd}>
-                <div className="hist-project">
-                  <Icon name="folder" size={14} />
-                  <span className="hist-project-name">{basename(g.cwd)}</span>
+              <CollapsibleGroup
+                key={g.cwd}
+                title={basename(g.cwd)}
+                count={g.convs.length}
+                open={!!open[g.cwd]}
+                onToggle={() => toggleProject(g.cwd)}
+                busy={g.convs.some((c) => c.busy)}
+                waiting={g.convs.some((c) => !!c.permission)}
+                icon="folder"
+                actions={
                   <button type="button" className="hist-plus" title="Nova conversa neste projeto" aria-label="Nova conversa neste projeto" onClick={() => create(g.cwd)}>
                     +
                   </button>
-                </div>
+                }
+              >
                 {g.convs.map((c) => (
                   <div key={c.id}>
                     <div className={`hist-row${c.id === convId ? ' active' : ''}`} role="button" onClick={() => openConversation(c.id)}>
@@ -186,7 +206,7 @@ export function ConversationList(): JSX.Element {
                     )}
                   </div>
                 ))}
-              </div>
+              </CollapsibleGroup>
             ))}
           </>
         )}

@@ -1,4 +1,4 @@
-import type { HandoffEnvio } from '../../shared/handoffTracking'
+import { isEnvioSent, type HandoffEnvio } from '../../shared/handoffTracking'
 import type { BoardItem } from '../../shared/ipc'
 import type { HandoffEntregaPatch, HandoffEnvioPatch, HandoffRepository } from '../persistence/types'
 import * as deadline from './handoffDeadline'
@@ -59,7 +59,8 @@ export class HandoffJobs {
     await this.writeEnvio(repo, convId, current, rules.turnStartPatch(current, iso(at), pending))
   }
 
-  async result(convId: string, at: number, turnError: string | null): Promise<void> {
+  /** `stopped`: o usuário parou este turno — o envio que não concluiu fica parado. */
+  async result(convId: string, at: number, turnError: string | null, stopped = false): Promise<void> {
     // O fechamento de turno do Quadro (que já espera o PO) vem antes: é depois
     // dele que o cartão diz o que ficou feito.
     await this.ctx.board.turnClosed(convId)
@@ -73,18 +74,30 @@ export class HandoffJobs {
     if (!current || current.status === 'concluida') return
     const outcome = rules.turnEndOutcome(current, cards, { now: iso(at), turnError })
     for (const { id, patch } of outcome.entregas) await repo.updateHandoffEntrega(id, patch)
-    await this.writeEnvio(repo, convId, current, outcome.envio)
+    const envio: HandoffEnvioPatch =
+      stopped && outcome.envio.status !== 'concluida' ? { ...outcome.envio, status: 'parada', motivo: rules.STOP_MOTIVO } : outcome.envio
+    await this.writeEnvio(repo, convId, current, envio)
   }
 
-  async error(convId: string, text: string, recoverable: boolean): Promise<void> {
+  async error(convId: string, text: string, recoverable: boolean, stopped = false): Promise<void> {
     const repo = this.ctx.repo()
     if (!repo) return
     const current = rules.currentEnvio(await this.load(repo, convId))
     if (!current) return
     // O que o app retoma sozinho não é falha: o status fica (só sai de
-    // "aguardando você", porque as pendências morreram com o turno).
-    const patch = recoverable ? rules.permissionPatch(current, false) : rules.errorPatch(current, text)
+    // "aguardando você", porque as pendências morreram com o turno). O rabo
+    // `error` de um turno parado pelo usuário também não: Stop não é erro.
+    const patch = stopped ? rules.stopPatch(current) : recoverable ? rules.permissionPatch(current, false) : rules.errorPatch(current, text)
     await this.writeEnvio(repo, convId, current, patch)
+  }
+
+  /** O Stop pegou o prompt antes de o turno começar (não vem `result`): o envio fica parado. */
+  async stopped(convId: string): Promise<void> {
+    const repo = this.ctx.repo()
+    if (!repo || this.ctx.state(convId)?.turnRunning) return
+    const current = rules.currentEnvio(await this.load(repo, convId))
+    if (!current || current.status !== 'enviado') return
+    await this.writeEnvio(repo, convId, current, rules.stopPatch(current))
   }
 
   /** Pergunta aberta ↔ rodando, pelo estado de AGORA (o job pode ter esperado). */
@@ -129,6 +142,21 @@ export class HandoffJobs {
     if (!wrote) return
     this.ctx.changed(convId)
     if (s.carryMs > 0) await this.addTime(convId, 0, envios)
+  }
+
+  /**
+   * O despachante da fila do quadro vai mandar ESTE envio: sai da fila pelo id,
+   * não pelo texto (o prompt pode ter sido editado na fila). `false` quando ele
+   * já tinha saído — outra checagem chegou antes, e quem chegou depois não manda.
+   */
+  async dispatched(convId: string, envioId: string, at: number): Promise<boolean> {
+    const repo = this.ctx.repo()
+    if (!repo) return false
+    const envio = (await this.load(repo, convId)).find((e) => e.id === envioId)
+    if (!envio || isEnvioSent(envio)) return false
+    await repo.updateHandoffEnvio(envio.id, { status: 'enviado', enviadoEm: iso(at), motivo: null })
+    this.ctx.changed(convId)
+    return true
   }
 
   /** Releitura dos cartões da conversa (task-list, mudança no Quadro). */

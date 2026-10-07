@@ -1,0 +1,94 @@
+/* O resumo "desde que você saiu" (AwaySummaryStrip.tsx), no topo do quadro e da conversa. */
+.away-strip {
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+  font-size: 12.5px;
+}
+.away-strip.in-chat {
+  margin: 6px 16px 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 8px;
+}
+.away-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.away-strip-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.away-strip-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.away-strip-chevron {
+  color: var(--muted);
+}
+.away-strip-list {
+  list-style: none;
+  margin: 4px 0 2px;
+  padding: 0;
+}
+.away-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-top: 1px dashed var(--line);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.away-entry:hover {
+  background: var(--bg-3);
+}
+.away-entry-kind {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--muted);
+  font-size: 11px;
+}
+.away-entry.concluida .away-entry-kind {
+  color: var(--ok);
+}
+.away-entry.espera .away-entry-kind {
+  color: var(--warn);
+}
+.away-entry.falhou .away-entry-kind {
+  color: var(--err);
+}
+.away-entry-title {
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.away-entry-detail {
+  flex: 1 1 100%;
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}

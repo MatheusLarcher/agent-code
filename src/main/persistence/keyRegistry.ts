@@ -56,6 +56,9 @@ export const PERSISTED_KEY_REGISTRY = {
   // migrar só o banco tem de reabrir tudo. Ver vaultMirror.ts.
   'agentcode.secret-vault-mirror.v1': { scope: 'device', sensitive: true, source: 'main-kv' },
   'memory-curator:last-run-at': { scope: 'device', source: 'main-kv' },
+  // Autorização do PO para commit/push, por conversa (po/poAuthorization.ts).
+  // Global: viaja com a conversa, como ela, no banco dividido entre PCs.
+  'agentcode.po-authorizations.v1': { scope: 'global', source: 'main-kv' },
   'agentcode.ui.v1': { scope: 'device', source: 'main-kv' },
   'agentcode.usage-limits.v1': { scope: 'device', source: 'main-kv' },
   'agentcode.pgraph.hidden-types.v1': { scope: 'device', source: 'main-kv' },

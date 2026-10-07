@@ -33,6 +33,8 @@ function playDemo() {
     leisures: new Set<string>(),
     props: new Set<string>(),
     ran: false,
+    /** Quem estourou o limite de uso no meio da tarefa ficou sentado na mesa esperando. */
+    limitAtDesk: false,
     /** Quem trabalha numa mesa e saiu dela (só o chamado na TV, a ida curta ao quadro, o apagão e o limite de uso tiram ele de lá). */
     leftDesk: new Set<string>(),
     /** Por visitante: fora (porta) → dentro → fora → sumiu. */
@@ -61,7 +63,9 @@ function playDemo() {
         if (b.leisure) seen.leisures.add(b.leisure)
         if (b.prop && !shelf) seen.props.add(b.prop)
         if (b.speed > 2.5) seen.ran = true
-        if (b.role === 'desk' && b.phase === 'working' && !b.outside && !['work', 'meeting', 'party', 'queue'].includes(b.mode)) seen.leftDesk.add(`${b.key}:${b.mode}`)
+        // Com tarefa ativa (inclusive esperando a recuperação do limite de uso) ninguém sai da mesa.
+        if (b.role === 'desk' && (b.phase === 'working' || b.task) && !b.outside && !['work', 'meeting', 'party', 'permission'].includes(b.mode)) seen.leftDesk.add(`${b.key}:${b.mode}`)
+        if (b.usageOut && b.task && b.mode === 'work' && b.sit === 1) seen.limitAtDesk = true
         // A ida ao quadro no meio do trabalho é a exceção: curta e correndo.
         if (b.role === 'desk' && b.phase === 'working' && b.errand && b.errand.gait !== 'run') seen.leftDesk.add(`${b.key}:quadro andando`)
         if (b.role !== 'visitor' || !b.roomId) continue
@@ -79,19 +83,22 @@ function playDemo() {
 }
 
 describe('a demo (Ctrl+Alt+Shift+D) mostra a vida do escritório', () => {
-  it('ao longo do loop aparecem todas as reações, os lazeres, o cochilo, a fila do café e o especialista pela porta', () => {
+  it('ao longo do loop aparecem todas as reações, os lazeres, o cochilo e o especialista pela porta; quem estoura o limite espera na mesa', () => {
     const { s, seen, confetti, puffKinds } = playDemo()
     // Reações aos eventos de events.ts.
     for (const r of ['alert', 'scared', 'knuckles', 'facepalm', 'fistpump', 'handsHead', 'yawn', 'watch', 'handoff', 'shrug']) {
       expect(seen.reactions.has(r), r).toBe(true)
     }
     expect(seen.reactions.has('celebrate') || seen.reactions.has('stretch')).toBe(true)
-    // Gestos de trabalho por ferramenta, permissão, cochilo e fila.
-    // (Na demo só um agente estoura o limite: ele é o 1º da fila e toma o café — 'brew' e 'sip'.)
+    // Gestos de trabalho por ferramenta, permissão e cochilo ('brew' e 'sip': o café dos ociosos).
+    // (Na demo só um agente estoura o limite, com a recuperação agendada: tem tarefa, então espera na mesa — a
+    // fila do café, só de quem não tem tarefa, é coberta em brain.test.ts.)
+    expect(seen.limitAtDesk).toBe(true)
+    expect(seen.modes.has('queue')).toBe(false)
     // (O sofá da demo fica com o 5º projeto, que transborda para o lounge: o dorminhoco cochila na mesa — o
     // cochilo no sofá é coberto em brain.test.ts.)
     for (const a of ['typeFast', 'readScreen', 'drum', 'web', 'wave', 'napDesk', 'brew', 'sip']) expect(seen.actions.has(a), a).toBe(true)
-    for (const m of ['free', 'work', 'permission', 'sleep', 'queue', 'leave', 'away']) expect(seen.modes.has(m), m).toBe(true)
+    for (const m of ['free', 'work', 'permission', 'sleep', 'leave', 'away']) expect(seen.modes.has(m), m).toBe(true)
     expect(seen.props.has('sign')).toBe(true)
     expect(seen.props.has('cup')).toBe(true)
     expect(seen.ran).toBe(true)

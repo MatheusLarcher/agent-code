@@ -187,11 +187,11 @@ export class OfficeScene {
     for (const r of layout.rooms) {
       const view = this.rooms.get(r.id)
       if (!view) continue
-      syncRoomScreens(view, r, layout, this.kit, feed, life, (z) => this.energy.zoneDark(z), this.viewOn, lit)
+      syncRoomScreens(view, r, layout, this.kit, feed, life, (z) => this.energy.zoneDark(z), this.viewOn, lit, () => this.onDirty())
       view.plaques.sync(r, layout.projects)
     }
 
-    this.syncCharacters(layout, lit, life)
+    this.syncCharacters(layout, lit, life, feed)
     this.meeting.setChairs(layout.characters)
     if (life) this.crowd.apply(life)
     const projects = new Map(layout.projects.map((p) => [p.id, p.name]))
@@ -206,7 +206,7 @@ export class OfficeScene {
   }
 
   /** Cria/atualiza personagens; quem saiu some (ou, subagente que voltou, sai pela porta). */
-  private syncCharacters(layout: Office3DLayout, lit: Set<string>, life: LifeInput | null): void {
+  private syncCharacters(layout: Office3DLayout, lit: Set<string>, life: LifeInput | null, feed: OfficeFeed | null): void {
     const rooms = new Map(layout.rooms.map((r) => [r.id, r] as const))
     const delegated = new Set<string>()
     const returned = new Set<string>()
@@ -231,6 +231,7 @@ export class OfficeScene {
       v.powerDark = this.energy.zoneDark(zoneAt(brain.x, brain.z))
       v.deskIndex = c.deskIndex
       v.applyModel(c, lit.has(c.key))
+      v.body.paintShirt(feed, c.projectId) // a camisa na cor do projeto, trocada em cena (a Central fica com a dela)
     }
     for (const [k, v] of this.chars) {
       if (seen.has(k) || this.crowd.isGhost(k)) continue

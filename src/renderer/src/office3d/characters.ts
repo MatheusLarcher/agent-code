@@ -9,9 +9,9 @@
  * (monitor, colega, câmera; `glance` passa por cima por GLANCE_S — a tela do
  * projetor que acendeu), piscar a cada 3–6 s, respiração, objeto na mão e
  * efeitos (confete, fumaça, suor, vapor, gotas, "!"). lod 0 = completo; 1 =
- * sem crossfade/piscar/respirar/vapor, sem os detalhes (olhos, dedos, objetos
- * de mão — só a plaquinha "Posso?" e a lanterna da festa ficam) e sem sombra;
- * 2 = pose a ~10 Hz, sem efeito, sem objeto de mão nem mãos/pescoço/sapatos.
+ * sem crossfade/piscar/respirar, sem os detalhes (olhos, dedos, objetos de
+ * mão — só a plaquinha "Posso?", a lanterna da festa e a xícara com o vapor
+ * ficam) e sem sombra; 2 = pose a ~10 Hz, sem efeito, sem objeto de mão nem mãos/pescoço/sapatos.
  * A cena tira de cena quem está numa sala fora da tela (`setView`): sem update
  * nenhum; ao voltar, o 1º update mostra o estado atual direto (sem crossfade,
  * olhar atrasado nem efeito velho). `castMoved()` diz se a sombra dele mudou.
@@ -53,7 +53,7 @@ import {
   type ActionParams
 } from './poses'
 import type { FrameCtx } from './frameCtx'
-import { makeProp, PROP_PITCH, type PropKit } from './props'
+import { holdCup, makeProp, PROP_PITCH, propShown, type PropKit } from './props'
 import { applyPose, buildRig, headLocal, type Rig } from './rig'
 
 const GLOW = 0x6fa2ff
@@ -149,7 +149,7 @@ export class Character3D {
     this.rig = buildRig(kit, this.group, { skin: this.skinMat, shirt: this.shirtMat, hair: this.hairMat, pants: kit.mat.pants[a.pants] }, { hair: a.hairStyle, longSleeves: a.longSleeves, build: a.build })
     // A Central é o avatar do usuário (o modelo próprio dela); os outros seguem o papel.
     const own = c.model.placement.kind === 'destination' && c.model.placement.papel === 'central' ? CENTRAL_MODEL : null
-    this.body = new CharacterBody(ctx.models ?? null, this.rig, this.group, c.model.role, c.model.seed, c.key, own)
+    this.body = new CharacterBody(ctx.models ?? null, this.rig, this.group, c.model.role, c.model.seed, c.key, own, this.shirtMat) // camisa na cor do projeto: body.setShirtColor (scene.ts)
     this.motion = new MotionPlayer(() => ctx.models?.motions() ?? null)
     this.group.add(this.hud)
     this.zs = [0.1, 0.13, 0.16].map((s) => {
@@ -380,7 +380,7 @@ export class Character3D {
     return 1 - Math.sin((Math.PI * Math.min(this.blinkT, 0.16)) / 0.16)
   }
 
-  /** Objeto na mão direita, endireitado contra a inclinação do braço. MÉDIO: só a plaquinha; LONGE: nenhum. */
+  /** Objeto na mão direita, endireitado contra a inclinação do braço; o nível decide quem aparece (propShown). A xícara solta vapor. */
   private placeProp(dt: number, lod: Lod): void {
     const b = this.brain
     const kind: PropKind | null = b.reaction === 'handoff' ? 'folder' : b.prop
@@ -395,19 +395,19 @@ export class Character3D {
     }
     if (!kind) return
     const p = this.props.get(kind)!
-    // MÉDIO: só o que é informação (a plaquinha) ou efeito da festa (a lanterna).
-    p.visible = lod === 0 || (lod === 1 && (kind === 'sign' || kind === 'flashlight'))
+    p.visible = propShown(kind, lod)
     if (!p.visible) return
     const o = this.out
-    const tilt = kind === 'cup' ? 0.9 * o[CH.prop] : kind === 'can' ? -o[CH.prop] : 0
-    p.rotation.x = o[CH.lean] - o[CH.armFwdR] - o[CH.elbowR] + PROP_PITCH[kind] + tilt
+    if (kind === 'cup') holdCup(p, this.group, 0.9 * o[CH.prop])
+    else p.rotation.x = o[CH.lean] - o[CH.armFwdR] - o[CH.elbowR] + PROP_PITCH[kind] + (kind === 'can' ? -o[CH.prop] : 0)
     const parts = this.ctx.particles
-    if (kind !== 'cup' || lod !== 0 || !parts) return
+    if (kind !== 'cup' || !parts) return
     this.steamT -= dt
     if (this.steamT > 0) return
-    this.steamT = 0.32
-    p.getWorldPosition(scratch)
-    parts.puff('steam', scratch.x, scratch.y + 0.11 * this.scale, scratch.z)
+    this.steamT = 0.22
+    p.updateWorldMatrix(false, false) // da boca da xícara, na pose deste quadro (holdCup já atualizou a mão)
+    p.localToWorld(scratch.set(0, 0.095, 0))
+    parts.puff('steam', scratch.x, scratch.y, scratch.z)
   }
 
   private placeHud(dt: number): void {

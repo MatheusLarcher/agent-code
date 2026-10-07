@@ -207,13 +207,26 @@ export interface HandoffLaunchDeps<C extends { id: string }> {
   onRegisterError?: (err: unknown) => void
   /** Prazo do `register`, em ms (padrão HANDOFF_REGISTER_TIMEOUT_MS). */
   registerTimeoutMs?: number
+  /**
+   * FILA DO QUADRO E DO PROJETO: com o registro no banco feito, nenhum prompt
+   * sai pelo `send` — todos esperam como envios `na_fila`, e o despachante
+   * (main) solta o 1º quando chegar a vez do plano na pasta (e a pasta estiver
+   * limpa) e cada seguinte quando o anterior concluir. `kick` pede a primeira
+   * conferência. Registro que falhou: todos pelo `send`, como antes (a fila do
+   * chat), para nada se perder sem o banco.
+   */
+  queueInBoard?: boolean
+  /** Com a fila do quadro: confere a fila da conversa nova (o 1º prompt sai daí). */
+  kick?: (conv: C) => void
 }
 
 export interface HandoffLaunchResult<C> {
   conv: C | null
-  /** Quantos prompts foram entregues, na ordem. */
+  /** Quantos prompts foram entregues, na ordem (os da fila do quadro contam). */
   delivered: number
   total: number
+  /** Quantos ficaram na fila do quadro (0 sem ela). */
+  queued?: number
 }
 
 async function withTimeout(work: Promise<void>, ms: number): Promise<void> {
@@ -232,29 +245,33 @@ async function registerSafely<C extends { id: string }>(
   conv: C,
   prompts: readonly HandoffPrompt[],
   deps: HandoffLaunchDeps<C>
-): Promise<void> {
+): Promise<boolean> {
   const register = deps.register
-  if (!register) return
+  if (!register) return false
   try {
     // Promise.resolve().then: um register que lança SÍNCRONO também é falha, não exceção.
     await withTimeout(
       Promise.resolve().then(() => register(conv, prompts)),
       deps.registerTimeoutMs ?? HANDOFF_REGISTER_TIMEOUT_MS
     )
+    return true
   } catch (err) {
     try {
       deps.onRegisterError?.(err)
     } catch {
       // O aviso não pode derrubar o envio.
     }
+    return false
   }
 }
 
 /**
- * Cria a conversa, registra o envio (`register`) e envia os prompts NA ORDEM: o
- * 1º sai já; os seguintes, com a conversa ocupada, entram na fila dela. Se um
- * envio falha (false ou exceção), os seguintes não são tentados — ficariam fora
- * de ordem (estão gravados em _handoff/). Prompt em branco é descartado; sem
+ * Cria a conversa, registra o envio (`register`) e entrega os prompts NA ORDEM:
+ * com a fila do quadro (`queueInBoard`, registro feito), todos esperam no banco
+ * e o despachante solta um por vez (`kick` pede a 1ª conferência); sem ela, vão
+ * pelo `send` (com a conversa ocupada, entram na fila do chat). Se um envio
+ * falha (false ou exceção), os seguintes não são tentados — ficariam fora de
+ * ordem (estão gravados em _handoff/). Prompt em branco é descartado; sem
  * nenhum, nada é criado. `prompts`: texto puro ou `{ text, name }` — o par
  * texto↔arquivo é feito ANTES do filtro, para o nome não escorregar de prompt.
  */
@@ -267,8 +284,17 @@ export async function launchHandoff<C extends { id: string }>(
     .filter((p) => p.text.trim() !== '')
   if (items.length === 0) return { conv: null, delivered: 0, total: 0 }
   const conv = deps.create()
-  await registerSafely(conv, items, deps)
+  const registered = await registerSafely(conv, items, deps)
   const texts = items.map((p) => p.text)
+  // Fila do quadro e do projeto: o despachante solta até o 1º (a vez do plano na pasta).
+  if (deps.queueInBoard && registered) {
+    try {
+      deps.kick?.(conv)
+    } catch {
+      // A conferência volta no próximo aviso do main (handoff:changed) ou na abertura.
+    }
+    return { conv, delivered: texts.length, total: texts.length, queued: texts.length }
+  }
   let delivered = 0
   for (const text of texts) {
     // Depois de criada, a conversa existe: uma exceção no envio não pode
@@ -299,6 +325,8 @@ export interface HandoffSendOutcome {
   total: number
   /** A conversa criada (ausente em `not-created`): vai para enviados.json. */
   conversation?: { id: string; title: string }
+  /** Quantos esperam na fila do quadro (saem um a um, com o anterior concluído). */
+  queued?: number
 }
 
 export function handoffOutcome(res: HandoffLaunchResult<{ id: string; title: string }>): HandoffSendOutcome {
@@ -308,7 +336,8 @@ export function handoffOutcome(res: HandoffLaunchResult<{ id: string; title: str
     status: delivered === total ? 'sent' : 'created-failed',
     delivered,
     total,
-    conversation: { id: res.conv.id, title: res.conv.title }
+    conversation: { id: res.conv.id, title: res.conv.title },
+    ...(res.queued ? { queued: res.queued } : {})
   }
 }
 

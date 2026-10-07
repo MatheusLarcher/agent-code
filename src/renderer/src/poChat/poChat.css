@@ -1,0 +1,134 @@
+/* O "Fala, PO" (PoChatPanel.tsx): o resto do visual vem da Central (central.css, centralFeed.css). */
+.po-chat-panel .central-head {
+  gap: 8px;
+}
+/* No chat flutuante do Escritório o cabeçalho da Central some sem trilho; o do
+   PO fica (é onde está o "Voltar"). Mais específico que a regra do office3d.css. */
+.o3d-chat .po-chat-panel .central-head.po-chat-head,
+.o3d-chat .po-chat-panel .central-head.po-chat-head > h1 {
+  display: flex;
+}
+.po-chat-project {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.po-chat-who {
+  font-weight: 600;
+}
+.po-chat-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.po-chat-based {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.po-chat-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.po-chat-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.po-chat-source:hover {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.po-chat-source.card img {
+  width: 36px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+.po-chat-unconfirmed {
+  margin-top: 6px;
+  color: var(--warn);
+  font-size: 12.5px;
+}
+.po-chat-error {
+  margin-top: 6px;
+  color: var(--err);
+  font-size: 12.5px;
+}
+.po-chat-evidence {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.po-chat-evidence li {
+  overflow-wrap: anywhere;
+}
+.po-chat-verifying {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.po-chat-preview {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 8px;
+  background: var(--bg-2);
+}
+.po-chat-preview-to {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.po-chat-preview-text {
+  max-height: 260px;
+  overflow: auto;
+  margin: 6px 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.po-chat-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+.po-chat-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.po-chat-chip:hover:not(:disabled) {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.po-chat-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

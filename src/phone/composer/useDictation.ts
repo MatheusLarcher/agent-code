@@ -2,7 +2,9 @@
  * Microfone do composer: grava com o MediaRecorder e transcreve NO APARELHO
  * (Parakeet, voice/localStt.ts) quando o modelo está instalado — só o texto vai ao
  * PC. Sem o modelo (ou se a transcrição local falhar), o áudio vai ao
- * `/api/transcribe` do PC, como plano B.
+ * `/api/transcribe` do PC, como plano B. Gravando, expõe o início (cronômetro) e
+ * um AnalyserNode do mesmo stream (medidor da barra de gravação); cancelar descarta
+ * sem transcrever e solta o microfone.
  */
 import { useEffect, useRef, useState } from 'react'
 import { client, toast } from '../app/runtime'
@@ -31,43 +33,98 @@ function blobToBase64(blob: Blob): Promise<string> {
   })
 }
 
-export function useDictation(insert: (text: string) => void): {
+/** Fecha o AudioContext do medidor sem estourar (já fechado, WebView antigo). */
+function closeAudio(ctx: AudioContext | null): void {
+  if (!ctx) return
+  try {
+    void Promise.resolve(ctx.close()).catch(() => undefined)
+  } catch {
+    /* já fechado */
+  }
+}
+
+/** Medidor de nível: um AnalyserNode no MESMO stream do gravador (não vai para a saída de som). */
+function meterFor(ctx: AudioContext | null, stream: MediaStream): AnalyserNode | null {
+  if (!ctx) return null
+  try {
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 512
+    ctx.createMediaStreamSource(stream).connect(analyser)
+    void Promise.resolve(ctx.resume?.()).catch(() => undefined)
+    return analyser
+  } catch {
+    return null
+  }
+}
+
+export interface Dictation {
   available: boolean
   state: MicState
+  /** Toque para começar; toque de novo para parar e transcrever. */
   toggle: () => void
-} {
+  /** Descarta a gravação sem transcrever e solta o microfone. */
+  cancel: () => void
+  /** Quando a gravação atual começou (Date.now), para o cronômetro; 0 fora dela. */
+  startedAt: number
+  /** Nível ao vivo do microfone (null sem Web Audio). */
+  analyser: AnalyserNode | null
+}
+
+interface Rec {
+  recorder: MediaRecorder | null
+  stream: MediaStream | null
+  chunks: Blob[]
+  audio: AudioContext | null
+}
+
+const NO_METER = { startedAt: 0, analyser: null }
+
+export function useDictation(insert: (text: string) => void): Dictation {
   const voiceReady = useStore(client.store, (s) => s.voiceReady)
   useStore(stt, (s) => `${s.installed}${s.usePc}${s.available}`)
   const [state, setState] = useState<MicState>('idle')
-  const rec = useRef<{ recorder: MediaRecorder | null; stream: MediaStream | null; chunks: Blob[] }>({ recorder: null, stream: null, chunks: [] })
+  const [meter, setMeter] = useState<{ startedAt: number; analyser: AnalyserNode | null }>(NO_METER)
+  const rec = useRef<Rec>({ recorder: null, stream: null, chunks: [], audio: null })
+  const alive = useRef(true)
   const insertRef = useRef(insert)
   insertRef.current = insert
 
+  /** Solta o microfone e o medidor. */
+  const release = (): void => {
+    const r = rec.current
+    r.stream?.getTracks().forEach((t) => t.stop())
+    r.stream = null
+    r.recorder = null
+    closeAudio(r.audio)
+    r.audio = null
+  }
+
+  /** Para o gravador SEM transcrever (cancelar ou sair da tela) e solta tudo. */
+  const discard = (): void => {
+    const r = rec.current.recorder
+    if (r && r.state !== 'inactive') {
+      r.onstop = null
+      try {
+        r.stop()
+      } catch {
+        /* já parando */
+      }
+    }
+    release()
+  }
+
   useEffect(() => {
+    alive.current = true
     void refreshStt()
     return () => {
       // Saiu da tela gravando: solta o microfone sem transcrever.
-      const r = rec.current
-      if (r.recorder && r.recorder.state !== 'inactive') {
-        r.recorder.onstop = null
-        try {
-          r.recorder.stop()
-        } catch {
-          /* já parando */
-        }
-      }
-      r.stream?.getTracks().forEach((t) => t.stop())
+      alive.current = false
+      discard()
     }
   }, [])
 
   // O mic aparece quando o PC transcreve ou o modelo do aparelho está instalado.
   const available = voiceReady || sttReady()
-
-  const stopStream = (): void => {
-    rec.current.stream?.getTracks().forEach((t) => t.stop())
-    rec.current.stream = null
-    rec.current.recorder = null
-  }
 
   const transcribeOnPc = async (blob: Blob, type: string): Promise<void> => {
     setState('transcribing')
@@ -105,8 +162,23 @@ export function useDictation(insert: (text: string) => void): {
       return toast('Microfone indisponível aqui. Use o app instalado (no navegador via http a gravação é bloqueada).')
     }
     const mime = pickAudioMime()
+    // O AudioContext do medidor nasce aqui, ainda dentro do toque (fora dele o WebView o deixa suspenso).
+    const AC = window.AudioContext || window.webkitAudioContext
+    let audio: AudioContext | null = null
+    try {
+      audio = AC ? new AC() : null
+    } catch {
+      audio = null
+    }
+    rec.current.audio = audio
     navigator.mediaDevices.getUserMedia({ audio: true }).then(
       (stream) => {
+        if (!alive.current) {
+          // A tela fechou enquanto o Android pedia o microfone: solta já.
+          stream.getTracks().forEach((t) => t.stop())
+          closeAudio(audio)
+          return
+        }
         const r = rec.current
         r.stream = stream
         r.chunks = []
@@ -118,15 +190,17 @@ export function useDictation(insert: (text: string) => void): {
         recorder.onstop = () => {
           const type = r.chunks[0]?.type || mime || 'audio/webm'
           const blob = new Blob(r.chunks, { type })
-          stopStream()
+          release()
+          setMeter(NO_METER)
           if (blob.size) transcribe(blob, type)
           else setState('idle')
         }
         recorder.start() // um arquivo inteiro, finalizado no stop
+        setMeter({ startedAt: Date.now(), analyser: meterFor(audio, stream) })
         setState('recording')
       },
       (e: { name?: string }) => {
-        stopStream()
+        release()
         setState('idle')
         toast(
           e?.name === 'NotAllowedError'
@@ -149,9 +223,19 @@ export function useDictation(insert: (text: string) => void): {
     }
   }
 
+  const cancel = (): void => {
+    if (state !== 'recording') return
+    discard()
+    setMeter(NO_METER)
+    setState('idle')
+  }
+
   return {
     available,
     state,
-    toggle: () => (state === 'recording' ? stop() : state === 'idle' ? start() : undefined)
+    toggle: () => (state === 'recording' ? stop() : state === 'idle' ? start() : undefined),
+    cancel,
+    startedAt: meter.startedAt,
+    analyser: meter.analyser
   }
 }

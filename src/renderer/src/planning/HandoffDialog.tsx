@@ -50,6 +50,7 @@ import {
 } from './handoffFlow'
 import { roteiroEtapaIds } from './handoffEstimate'
 import { buildDraftHandoff, handoffReadiness } from './handoffReadiness'
+import { StaleNotice, useStaleHandoffs } from './HandoffStale'
 import {
   draftFrom,
   draftOf,
@@ -90,6 +91,8 @@ type Step = HandoffStep
 interface Listing {
   handoffs: PlanningHandoffDto[]
   sent: PlanningHandoffSentDto[]
+  /** Os antigos não enviados (gravados antes da última mudança do plano). */
+  stale: string[]
 }
 
 const everyConversation = (): boolean => true
@@ -157,7 +160,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
         warnedRef.current = res.sentError
         notify('aviso', `Ignorei _handoff/${res.sentError}: todos os prompts contam como a enviar.`)
       }
-      setListing({ handoffs: res.handoffs, sent: res.sent ?? [] })
+      setListing({ handoffs: res.handoffs, sent: res.sent ?? [], stale: res.stale ?? [] })
     })
   }, [projectCwd, slug, notify])
 
@@ -171,10 +174,15 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     [projectCwd, slug, reloadSaved]
   )
 
-  // Abertura direta: sem sessão guardada e com prompts a enviar, vai para a revisão.
+  // Os antigos (HandoffStale.tsx): não entram no envio sem o usuário incluí-los de propósito.
+  const old = useStaleHandoffs({ projectCwd, slug, stale: listing?.stale, pending, outside, setDrafts, reload: reloadSaved })
+
+  // Abertura direta: sem sessão guardada e com prompts a enviar, vai para a revisão
+  // — só com os que não são antigos.
   useEffect(() => {
     if (ready || !listing) return
-    const todo = pendingHandoffs(listing.handoffs, listing.sent)
+    const stale = new Set(listing.stale)
+    const todo = pendingHandoffs(listing.handoffs, listing.sent).filter((h) => !stale.has(h.name))
     if (todo.length > 0) {
       setDrafts(todo.map(draftFrom))
       setStep('prompts')
@@ -182,10 +190,10 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     setReady(true)
   }, [ready, listing])
 
-  // Do "Conferir": retoma os prompts em revisão ou carrega os pendentes.
+  // Do "Conferir": retoma os prompts em revisão ou carrega os pendentes (sem os antigos).
   const reviewPending = (): void => {
     waitingRef.current = null
-    if (drafts.length === 0) setDrafts(pending.map(draftFrom))
+    if (drafts.length === 0) setDrafts(old.fresh(pending).map(draftFrom))
     setStep('prompts')
   }
 
@@ -210,10 +218,11 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
   // lista ATUAL — o que foi digitado enquanto a marcação gravava não se perde.
   const removeDraft = (name: string): void => setDrafts((all) => all.filter((d) => d.name !== name))
 
-  // Revisão sem nenhum prompt (todos tirados ou marcados) volta ao "Conferir".
+  // Revisão sem nenhum prompt (todos tirados ou marcados) volta ao "Conferir" —
+  // menos com antigos à disposição, para incluir de propósito.
   useEffect(() => {
-    if (ready && step === 'prompts' && drafts.length === 0) setStep('review')
-  }, [ready, step, drafts.length])
+    if (ready && step === 'prompts' && drafts.length === 0 && !old.staleOutside) setStep('review')
+  }, [ready, step, drafts.length, old.staleOutside])
 
   const refresh = useCallback(async (): Promise<void> => {
     const waiting = waitingRef.current
@@ -247,8 +256,10 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     onAskManager(managerHandoffRequest(plan.dir, override ? blockers.length : 0, plan.media?.length ?? 0))
   }
 
-  // O rascunho automático cobre o roteiro inteiro: declara todas as etapas.
+  // O rascunho automático cobre o roteiro inteiro: declara todas as etapas. Com
+  // prompts antigos, passa pela mesma conferência do plan_handoff_write.
   const writeAutoDraft = async (): Promise<void> => {
+    await old.beforeDraft()
     const conteudo = buildDraftHandoff(plan)
     const etapas = roteiroEtapaIds(plan.roteiro.etapas)
     setWorking('draft')
@@ -346,9 +357,11 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     if (outcome.status === 'sent') {
       notify(
         'sucesso',
-        prompts.length === 1
-          ? `Plano enviado para implementação na conversa "Implementação: ${titulo}".`
-          : `Plano enviado para implementação: 1º prompt enviado e ${prompts.length - 1} na fila da conversa nova.`
+        outcome.queued
+          ? `Plano enviado na conversa "Implementação: ${titulo}": ${outcome.queued === 1 ? 'o prompt sai' : `os ${outcome.queued} prompts saem`} pela fila do projeto, um por vez. A conversa mostra se ele espera a vez de outro plano ou a pasta limpa.`
+          : prompts.length === 1
+            ? `Plano enviado para implementação na conversa "Implementação: ${titulo}".`
+            : `Plano enviado para implementação: 1º prompt enviado e ${prompts.length - 1} na fila da conversa nova.`
       )
       onClose()
     } else if (outcome.status === 'created-failed') {
@@ -391,6 +404,10 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
           </div>
         )}
 
+        {ready && step !== 'waiting' && (
+          <StaleNotice count={old.count} disabled={working !== null} onDiscard={() => void old.discard()} />
+        )}
+
         {ready && step === 'review' && (
           <ReviewStep
             managerBusy={managerBusy}
@@ -399,6 +416,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
             override={override}
             onOverride={setOverride}
             pending={pending}
+            stale={old.set}
             sent={listing?.sent ?? []}
             conversationExists={conversationExists}
             onOpenConversation={openConversation}
@@ -429,6 +447,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
             drafts={drafts}
             roteiro={plan.roteiro.etapas}
             outside={outside}
+            stale={old.set}
             blockers={blockers}
             override={override}
             onOverride={setOverride}

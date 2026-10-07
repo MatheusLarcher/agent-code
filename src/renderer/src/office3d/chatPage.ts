@@ -76,8 +76,14 @@ export function trackMessages(track: AgentTrack): UIMessage[] {
       ...(done ? { result: { isError: !!s.isError, text: s.result ?? '' } } : {})
     })
   }
-  if (track.status !== 'running') out.push({ kind: 'status', id: `${track.id}:fim`, text: track.status === 'error' ? 'Terminou com erro.' : 'Tarefa concluída.' })
+  // Rodando (inclusive em segundo plano, depois do "lançado"): sem linha de fim.
+  if (track.status !== 'running') out.push({ kind: 'status', id: `${track.id}:fim`, text: endText(track) })
   return out
+}
+
+function endText(track: AgentTrack): string {
+  if (track.status === 'error') return 'Terminou com erro.'
+  return track.task?.status === 'stopped' ? 'Tarefa interrompida.' : 'Tarefa concluída.'
 }
 
 const shown = (m: UIMessage): boolean => SHOWN.has(m.kind) && !(m.kind === 'tool-use' && m.parentToolUseId != null)

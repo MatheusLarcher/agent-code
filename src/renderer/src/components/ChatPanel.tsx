@@ -209,6 +209,10 @@ interface Props {
    *  substitui o texto e o "Conectar" do estado vazio; com mensagens, fica
    *  acima do campo de mensagem. */
   connectAccount?: React.ReactNode
+  /** O aviso da fila do projeto (plano na fila, resposta guardada, implantação na pasta). */
+  projectNotice?: React.ReactNode
+  /** No topo da conversa, abaixo do cabeçalho: o resumo "Desde que você saiu". */
+  topNotice?: React.ReactNode
   /** Read-aloud state/handler (TTS lives in App). */
   tts: TtsControls
   /** Model picker (mirrored above the composer). Stays open even while the agent
@@ -394,6 +398,8 @@ export function ChatPanel(props: Props): JSX.Element {
         </div>
       )}
 
+      {props.topNotice}
+
       {busy && <WorkingBanner stalledSince={props.stalledSince} />}
 
       {messages.length === 0 && (
@@ -434,6 +440,8 @@ export function ChatPanel(props: Props): JSX.Element {
       {messages.length > 0 && props.connectAccount}
 
       <QueueStrip queued={props.queued} onDelete={props.onDeleteQueued} onSendNow={props.onSendQueuedNow} />
+
+      {props.projectNotice}
 
       {props.vigiaAlert && (
         <VigiaChip

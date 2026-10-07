@@ -9,6 +9,8 @@ import {
   PO_MAX_OPS,
   PO_MAX_REPLY_CHARS,
   PO_REPLY_HEAD_CHARS,
+  PO_RESUMED_MARK,
+  PO_RETURNED_SECTION,
   PO_SYSTEM_PROMPT_CLOSE,
   PO_SYSTEM_PROMPT_OPEN,
   summarizeCall
@@ -69,9 +71,24 @@ describe('digest — última resposta do agente', () => {
   })
 
   it('o fechamento aceita a resposta como evidência e proíbe concluir o que espera o usuário', () => {
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('ÚLTIMA RESPOSTA DO AGENTE entrega o\n  resultado pedido')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toMatch(/pergunta BLOQUEIA o pedido[\s\S]*NÃO use CONCLUIR/)
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Suposição não basta')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('ÚLTIMA RESPOSTA DO AGENTE entrega\n  o resultado pedido')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toMatch(/pergunta BLOQUEIA o pedido[\s\S]*NÃO use CONCLUIR[\s\S]*use PENDENTE/)
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Suposição não basta para um cartão que o turno nem tocou')
+  })
+
+  it('o fechamento conclui por padrão: só o PENDENTE (o agente disse que não terminou) segura o cartão', () => {
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(`Cada cartão da seção\n  "${PO_RETURNED_SECTION}" vira CONCLUÍDO sozinho`)
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('PENDENTE é o ÚNICO jeito de um cartão continuar "a fazer" num turno normal')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Na dúvida entre concluído e não terminado, é CONCLUÍDO')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Pergunta no fim da resposta NÃO é sinal de trabalho incompleto.')
+    // O padrão antigo ("na dúvida, OK", "sem prova é o tipo a") saiu do fechamento.
+    expect(PO_SYSTEM_PROMPT_CLOSE).not.toContain('Na dúvida, responda OK')
+    expect(PO_SYSTEM_PROMPT_CLOSE).not.toContain('Sem prova da entrega')
+    expect(PO_SYSTEM_PROMPT_CLOSE).not.toContain('é o pior erro')
+    // O retomado pela mensagem do usuário que o turno não tocou não conclui.
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(`Um cartão marcado ${PO_RESUMED_MARK} só entrou em andamento`)
+    // A abertura continua com o "na dúvida, OK": ali OK não conclui nada.
+    expect(PO_SYSTEM_PROMPT_OPEN).toContain('Na dúvida, responda OK.')
   })
 
   it('a abertura usa a resposta anterior para continuação e títulos com contexto', () => {
@@ -116,22 +133,30 @@ describe('pergunta no fim da resposta — bloqueia o pedido ou propõe um passo 
   ]
   const ids = cards.map((c) => c.id)
 
-  it('o fechamento distingue os dois tipos, com os dois exemplos reais, e continua exigindo prova', () => {
+  it('o fechamento distingue os tipos pela declaração de não-término, com os exemplos reais', () => {
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('A pergunta BLOQUEIA o pedido')
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('A pergunta PROPÕE UM PASSO NOVO depois de o pedido ter sido entregue')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('o pedido do usuário foi atendido, e as AÇÕES ou a resposta provam isso?')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Sem prova da entrega, é o tipo a).')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('a resposta diz que o pedido do usuário NÃO foi entregue?')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Na dúvida entre a) e b), é b): o pedido foi entregue.')
     // Tipo c): entregue no essencial com pendências → CONCLUIR o pedido + uma NOVA por pendência,
     // em vez de deixar o cartão inteiro "a fazer" (caso real: fase 1 do escritório).
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('O pedido foi ENTREGUE no essencial')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('uma NOVA para CADA pendência')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(`NOVA | Commitar a fase 1 do escritório | ${PO_AWAITING_AUTHORIZATION_REASON}`)
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('uma NOVA <id do cartão do\n     pedido> para CADA pendência')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(
+      `NOVA <id do cartão da fase 1> | Commitar a fase 1 do escritório | ${PO_AWAITING_AUTHORIZATION_REASON}`
+    )
     // Exemplo b): entregue + "Posso atualizar a VPS?" → CONCLUIR + NOVA a fazer.
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Posso atualizar a VPS?')
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(`NOVA | Atualizar a VPS (APP_BASE_URL e .exe novo) | ${PO_AWAITING_AUTHORIZATION_REASON}`)
-    // Exemplo a): "Faço o setup assim?" antes de fazer → nada de CONCLUIR.
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(
+      `NOVA <id do cartão da auditoria> | Atualizar a VPS (APP_BASE_URL e .exe novo) | ${PO_AWAITING_AUTHORIZATION_REASON}`
+    )
+    // A pendência cita o cartão de origem e diz QUAL tarefa.
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('NOVA <id do cartão de origem> | <título> | <motivo curto>')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('"Commitar a fase 1 do\nescritório", nunca só "Commitar"')
+    // Exemplo a): "Faço o setup assim?" antes de fazer → nada de CONCLUIR, e sim PENDENTE.
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Faço o setup assim?')
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('nada de CONCLUIR no trabalho do setup')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('PENDENTE <id do cartão do setup> | esperando o usuário aprovar')
   })
 
   it('a NOVA do fechamento aceita o passo proposto pelo agente, nunca uma sugestão do próprio PO', () => {
@@ -139,7 +164,7 @@ describe('pergunta no fim da resposta — bloqueia o pedido ou propõe um passo 
     expect(PO_SYSTEM_PROMPT_CLOSE).toMatch(/NOVA é o contrário:[\s\S]*passo novo que o AGENTE propôs[\s\S]*nasce "a fazer"/)
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('nem para sugerir uma tarefa que VOCÊ acha que')
     // O passo que já tem cartão "a fazer" não ganha outro (probe: o quadro real tinha um).
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Se um cartão "a fazer" do quadro já cobre esse passo, não crie outro')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Se um cartão "a fazer" do quadro já cobre esse passo,\n     não crie outro')
   })
 
   it('a abertura manda a autorização para o cartão "a fazer" do passo, nunca para o concluído', () => {

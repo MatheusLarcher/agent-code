@@ -2,6 +2,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { MAX_ESTIMATIVA_MIN } from '../../shared/planningEstimate'
 import { STAGE_STATUSES, type Roteiro, type RoteiroStage, type StageStatus } from './planningModel'
+import { HANDOFF_DISCARD_DIR } from './handoffStale'
 import { RoteiroConflictError, type OpenedPlan, type RoteiroDraft } from './planningStore'
 import { Body, erase, guard, Name, Title, type AnyTool } from './planningToolKit'
 import { estimativaText, etapaLines, text, totalEstimativaText } from './planningToolText'
@@ -13,7 +14,9 @@ import { estimativaText, etapaLines, text, totalEstimativaText } from './plannin
  *   em minutos de trabalho do agente. Status e estimativa omitidos ficam como
  *   estão; estimativa null remove.
  * - plan_etapa_marcar: o status de uma etapa (a estimativa vai junto, intacta).
- * - plan_handoff_write: o prompt e as etapas do roteiro que ele cobre.
+ * - plan_handoff_write: o prompt e as etapas do roteiro que ele cobre (recusa
+ *   enquanto houver prompt antigo não enviado, salvo `manter: true`).
+ * - plan_handoff_limpar: tira os prompts antigos não enviados (_descartados/).
  */
 
 export interface RoteiroToolDeps {
@@ -21,6 +24,10 @@ export interface RoteiroToolDeps {
   saveRoteiro: (roteiro: RoteiroDraft, expectedRev: number) => Promise<Roteiro>
   /** Grava o prompt em _handoff/ com as etapas que ele cobre; devolve o caminho do .md. */
   writeHandoff: (conteudo: string, etapas: readonly string[]) => Promise<string>
+  /** Os prompts VELHOS não enviados (gravados antes da última mudança do plano) — handoffStale.ts. */
+  staleHandoffs: () => Promise<string[]>
+  /** Move os prompts velhos não enviados para _handoff/_descartados/; devolve os movidos. */
+  discardStaleHandoffs: () => Promise<string[]>
   changed: () => void
 }
 
@@ -28,6 +35,7 @@ export interface RoteiroTools {
   roteiroSet: AnyTool
   etapaMarcar: AnyTool
   handoffWrite: AnyTool
+  handoffLimpar: AnyTool
 }
 
 const EtapaInput = z.object({
@@ -133,20 +141,28 @@ export function buildRoteiroTools(deps: RoteiroToolDeps): RoteiroTools {
 
     handoffWrite: erase(tool(
       'plan_handoff_write',
-      'Grava o prompt de handoff (o que a conversa de implementação vai receber) em _handoff/AAAA-MM-DD-NN.md do planejamento e devolve o caminho. Em "etapas", informe os ids das etapas do roteiro que ESTE prompt cobre, na ordem: elas ficam num arquivo ao lado (não no texto) e é por elas que o app acompanha a entrega e o prazo de cada etapa. Não inicia nada: só registra.',
+      'Grava o prompt de handoff (o que a conversa de implementação vai receber) em _handoff/AAAA-MM-DD-NN.md do planejamento e devolve o caminho. Em "etapas", informe os ids das etapas do roteiro que ESTE prompt cobre, na ordem: elas ficam num arquivo ao lado (não no texto) e é por elas que o app acompanha a entrega e o prazo de cada etapa. Não inicia nada: só registra. Se houver prompts ANTIGOS não enviados (gravados antes da última mudança do plano), nada é gravado e a resposta lista os arquivos: pergunte ao usuário se eles saem (plan_handoff_limpar) ou ficam (grave de novo com manter: true).',
       {
         conteudo: Body.min(1).describe('O prompt completo de handoff, em markdown.'),
         etapas: z
           .array(Name)
           .min(1)
           .max(100)
-          .describe('Ids das etapas do roteiro que este prompt cobre, na ordem, sem repetir. Obrigatório.')
+          .describe('Ids das etapas do roteiro que este prompt cobre, na ordem, sem repetir. Obrigatório.'),
+        manter: z
+          .boolean()
+          .optional()
+          .describe('true só quando o USUÁRIO disse para manter os prompts antigos não enviados junto dos novos.')
       },
       async (a) =>
         guard('plan_handoff_write', async () => {
           const plan = await open()
           const problem = handoffEtapasProblem(plan.roteiro, a.etapas)
           if (problem) return text(`Handoff não gravado: ${problem}`)
+          if (!a.manter) {
+            const stale = await deps.staleHandoffs()
+            if (stale.length > 0) return text(staleRefusal(stale))
+          }
           const file = await deps.writeHandoff(a.conteudo, a.etapas)
           changed()
           const byId = new Map(plan.roteiro.etapas.map((e) => [e.id, e]))
@@ -157,6 +173,33 @@ export function buildRoteiroTools(deps: RoteiroToolDeps): RoteiroTools {
               `Etapas deste prompt (${etapas.length}): ${lista}. Estimativa total do prompt: ${totalEstimativaText(etapas)}.`
           )
         })
+    )),
+
+    handoffLimpar: erase(tool(
+      'plan_handoff_limpar',
+      'Tira de _handoff/ os prompts ANTIGOS ainda não enviados (gravados antes da última mudança do plano): o .md e o .meta.json de cada um vão para _handoff/_descartados/, que não aparece no envio nem para você; os arquivos continuam no disco. Prompt já enviado nunca sai. Use SÓ depois de o usuário confirmar que os antigos podem sair.',
+      {},
+      async () =>
+        guard('plan_handoff_limpar', async () => {
+          const moved = await deps.discardStaleHandoffs()
+          if (moved.length === 0) return text('Nenhum prompt antigo não enviado em _handoff/: nada foi movido.')
+          changed()
+          return text(
+            `Movidos para _handoff/${HANDOFF_DISCARD_DIR}/ (${moved.length}): ${moved.join(', ')}. ` +
+              'Agora grave os prompts novos com plan_handoff_write.'
+          )
+        })
     ))
   }
+}
+
+/** A recusa do plan_handoff_write com prompts antigos: lista os arquivos e manda perguntar. */
+function staleRefusal(stale: readonly string[]): string {
+  return [
+    `Handoff não gravado: há ${stale.length === 1 ? '1 prompt antigo' : `${stale.length} prompts antigos`} não enviado(s) em _handoff/, ` +
+      'gravado(s) antes da última mudança do plano:',
+    ...stale.map((name) => `- _handoff/${name}`),
+    'Pergunte ao usuário antes de seguir: se os antigos podem sair, chame plan_handoff_limpar (eles vão para ' +
+      `_handoff/${HANDOFF_DISCARD_DIR}/, sem apagar) e grave de novo; se ele quiser mantê-los, grave de novo com manter: true.`
+  ].join('\n')
 }

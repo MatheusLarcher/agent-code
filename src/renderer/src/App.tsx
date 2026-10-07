@@ -101,6 +101,7 @@ import { MainTabs, OfficeErrorBoundary, OfficeTabHost, useMainTab } from './comp
 import { TtsContext } from './components/ttsContext'
 import { fileUrl } from './fileUrl'
 import { officeStore } from './office/officeStore'
+import { useProjectColors } from './office/useProjectColors'
 import { roomIdFor } from './office/adapter/model'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
@@ -109,7 +110,7 @@ import { useClaudeAccounts } from './accounts/useClaudeAccounts'
 import { useOfficeAccountsRefresh } from './accounts/useOfficeAccountsRefresh'
 import { useAccountActions } from './accounts/useAccountActions'
 import { RightPaneTabs, type RightPane } from './components/RightPaneTabs'
-import { BoardPanel, boardProgress } from './components/BoardPanel'
+import { BoardPanel, boardProgress, type BoardProgress } from './components/BoardPanel'
 import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
 
 /** Poll do contador da aba Quadro com o painel FECHADO. Lento: é um badge. */
@@ -171,11 +172,20 @@ import {
   type StopPhase
 } from './central/stopHold'
 import { createTurnIdentity, withStaleUsage } from './central/turnIdentity'
-import { createQueueHandoff, QUEUE_HANDOFF_FALLBACK_MS } from './central/queueHandoff'
+import { createQueueHandoff, QUEUE_HANDOFF_FALLBACK_MS, waitForTurnEnd } from './central/queueHandoff'
+import { useHandoffQueue, type HandoffQueueDispatcher } from './planning/handoffQueue'
+import { useProjectQueue, type ProjectQueueHandle } from './planning/useProjectQueue'
+import { projectNotice } from './planning/projectQueue'
+import { ProjectQueueNotice } from './planning/ProjectQueueNotice'
+import { ChatQueueNotice } from './planning/ChatQueueNotice'
+import { PoAuthChip, usePoAuthorizations } from './planning/PoAuthChip'
+import { useAwayStrip } from './planning/useAwayStrip'
+import { usePoChatPanel } from './poChat/usePoChatPanel'
+import { awayProjectKey } from './planning/awayVisits'
+import { useBoardCardOpener } from './components/boardOpenCard'
+import type { PoAuthorizationMap } from '@shared/poAuthorization'
 import { CentralPanel } from './central/CentralPanel'
 import { buildRemoteCentral } from './central/centralRemote'
-import { DeliveriesScreen } from './deliveries/DeliveriesScreen'
-import { useDeliveriesNav } from './deliveries/deliveriesNav'
 import { DeliveryCenterProvider } from './deliveries/deliveryCenterContext'
 import { useDeliveryCenter } from './deliveries/useDeliveryCenter'
 
@@ -932,9 +942,18 @@ export function App(): JSX.Element {
 
   // Set/clear busy for a conversation, keeping the ref in sync for the async
   // send path (which reads busyRef right after awaiting connect()).
+  const handoffQueueRef = useRef<HandoffQueueDispatcher | null>(null)
+  // A fila do projeto (planning/useProjectQueue.ts): o `dispatch` guarda a
+  // mensagem do usuário no plano A enquanto outro plano tem a vez na pasta.
+  const projectQueueRef = useRef<ProjectQueueHandle | null>(null)
+  // Conversa com autorização do PO: a rotina (commit/push) sai pela fila do quadro.
+  const poAuthorizationsRef = useRef<PoAuthorizationMap>({})
   const setBusy = useCallback((id: string, on: boolean): void => {
     busyRef.current = on ? withId(busyRef.current, id) : withoutId(busyRef.current, id)
     setBusyIds((s) => (on ? withId(s, id) : withoutId(s, id)))
+    // Ficou ociosa (fim de turno, erro esgotado, Stop, subagentes, fila mantida):
+    // a fila do quadro da implantação confere se o próximo prompt sai (handoffQueue.ts).
+    if (!on) setTimeout(() => void handoffQueueRef.current?.check(id), 0)
   }, [])
   const setConnected = useCallback((id: string, on: boolean): void => {
     connectedRef.current = on ? withId(connectedRef.current, id) : withoutId(connectedRef.current, id)
@@ -1001,6 +1020,15 @@ export function App(): JSX.Element {
           const next = { ...prev }
           delete next[cid]
           return next
+        })
+        return
+      }
+      // Ciclo da tarefa do SDK (subagente em segundo plano): só as trilhas, nunca bolha.
+      if (e.kind === 'agent-task') {
+        setTracks((prev) => {
+          const map = prev[cid] ?? {}
+          const next = reduceTracks(map, e)
+          return next === map ? prev : { ...prev, [cid]: next }
         })
         return
       }
@@ -1237,7 +1265,8 @@ export function App(): JSX.Element {
         setTracks((prev) => {
           const map = prev[cid]
           if (!map) return prev
-          const next = closeRunningTracks(map)
+          // `result`: subagente em segundo plano segue rodando (o fim dele é o agent-task).
+          const next = closeRunningTracks(map, Date.now(), e.kind === 'result')
           return next === map ? prev : { ...prev, [cid]: next }
         })
 
@@ -1270,7 +1299,10 @@ export function App(): JSX.Element {
           retryable: e.kind === 'error' ? e.retryable : undefined,
           incomplete: e.kind === 'error' ? e.incomplete : undefined,
           responseReceived: inflightRef.current[cid]?.responseReceived === true,
-          wasInterrupted
+          wasInterrupted,
+          // Implantação: erro depois de texto também entra na retomada (a fila do
+          // quadro nunca solta o próximo por cima). Tarefa do Forgia/MCP: como sempre.
+          implementation: !!convsRef.current.find((c) => c.id === cid)?.handoffSlug && !inflightRef.current[cid]?.mcpTaskId
         })
 
         if (e.kind === 'result' && !e.isError) setLastDuration((m) => ({ ...m, [cid]: e.durationMs }))
@@ -1396,7 +1428,9 @@ export function App(): JSX.Element {
         // message goes out.
         const sessionConfigPending = pendingSessionConfigRef.current.has(cid)
         if (sessionConfigPending) pendingSessionConfigRef.current = withoutId(pendingSessionConfigRef.current, cid)
-        const next = queueRef.current.find((m) => m.convId === cid)
+        // Fila do projeto: outro plano tem a vez na pasta — a fila desta conversa
+        // fica guardada e sai quando ela for solta (useProjectQueue → onRelease).
+        const next = projectQueueRef.current?.holds(cid) ? undefined : queueRef.current.find((m) => m.convId === cid)
         if (next) {
           setQueue((cur) => cur.filter((m) => m.id !== next.id))
           const nextMsgId = next.msgId ?? uid('u')
@@ -2216,18 +2250,11 @@ export function App(): JSX.Element {
     return conv
   }
 
-  // Tela Entregas (deliveries/): no lugar do chat; abrir uma conversa a fecha.
-  // A troca da ativa fecha sozinha; quem pode cair na MESMA conversa (a vazia
-  // reaproveitada, a do plano já aberto, o clique na barra) chama hideDeliveries.
-  const deliveriesNav = useDeliveriesNav(activeId)
-  const hideDeliveries = deliveriesNav.hide
-
   // Os botões de "Nova conversa" voltam para a conversa vazia que a pasta já
   // tem (a ativa, se for ela) em vez de deixar duas vazias lado a lado.
   // Planejamento, handoff, MCP e celular precisam de uma conversa NOVA e
   // chamam createConversation direto.
   const openBlankOrCreate = (folder: string): Conversation => {
-    hideDeliveries()
     const blank = findBlankConversation(convsRef.current, folder, activeIdRef.current)
     if (!blank) return createConversation(folder)
     setActiveId(blank.id)
@@ -2249,11 +2276,7 @@ export function App(): JSX.Element {
       rootRef: sandbox.rootRef,
       conversations: convsRef.current,
       activeId: activeIdRef.current,
-      // A vazia reaproveitada pode ser a própria ativa: a tela Entregas fecha mesmo assim.
-      setActiveId: (id) => {
-        hideDeliveries()
-        setActiveId(id)
-      },
+      setActiveId: (id) => setActiveId(id),
       createConversation: (folder) => createConversation(folder),
       notify,
       fallback: pickAndOpen
@@ -2295,20 +2318,17 @@ export function App(): JSX.Element {
     setPlanningDialogFor(null)
     // A Tela de Planejamento vive na aba Conversa: vindo do Escritório, volta para ela.
     setMainTab('chat')
-    // A conversa do plano pode já ser a ativa: a tela Entregas fecha mesmo assim.
-    hideDeliveries()
     const existing = convsRef.current.find(
       (c) => c.cwd === folder && isPlanningConversation(c) && c.planningSlug === slug
     )
     if (existing) setActiveId(existing.id)
     else createConversation(folder, undefined, planningConversationFields(slug, titulo))
-  }, [setMainTab, hideDeliveries])
+  }, [setMainTab])
 
   const selectConversation = useCallback((id: string): void => {
     markConversationSwitch(activeIdRef.current, id)
     setActiveId(id)
-    hideDeliveries()
-  }, [hideDeliveries])
+  }, [])
 
   // A search hit asks to open a conversation AND land on the matched message.
   // `seq` bumps each time so clicking the same result re-triggers the scroll.
@@ -2324,9 +2344,8 @@ export function App(): JSX.Element {
   const selectConversationAt = useCallback((id: string, msgId: string | null): void => {
     markConversationSwitch(activeIdRef.current, id)
     setActiveId(id)
-    hideDeliveries()
     if (msgId) setScrollTarget((prev) => ({ convId: id, msgId, seq: (prev?.seq ?? 0) + 1 }))
-  }, [hideDeliveries])
+  }, [])
   // "← Central": a conversa aberta PELA Central (aviso, resposta, trilho). Abrir
   // outra conversa por qualquer outro caminho apaga a volta.
   const [backToCentral, setBackToCentral] = useState<string | null>(null)
@@ -2549,7 +2568,9 @@ export function App(): JSX.Element {
       // config na passagem da fila) mantém a marca do item que vai sair.
       if (!opts?.silent) clearTurn(id)
       try {
-        await window.api.interrupt(id)
+        // O silencioso é a troca de config na passagem da fila: não é o Stop do usuário.
+        if (opts?.silent) await window.api.interrupt(id, { restart: true })
+        else await window.api.interrupt(id)
       } catch {
         /* not mid-turn */
       }
@@ -2803,11 +2824,32 @@ export function App(): JSX.Element {
       // eles acabarem, a retomada agendada é quem despacha (backgroundHold.ts).
       const heldInBackground =
         !now && (backgroundHold.holds(conv.id) || (!fromQueue && backgroundHold.pending(conv.id)))
+      // Fila do projeto: outro plano tem a vez nesta pasta (ou ainda roda o prompt
+      // dele). A mensagem fica guardada na fila desta conversa; o PO decide a vez,
+      // e ela sai quando a conversa for solta (useProjectQueue → onRelease).
+      const projectHeld = projectQueueRef.current?.held(conv.id) ?? false
       const idle =
         !busyRef.current.has(conv.id) &&
         !stopHolds.isHeld(conv.id) &&
         !(conv.recovery && !stalledRecovery) &&
-        !heldInBackground
+        !heldInBackground &&
+        !projectHeld
+      if (projectHeld) {
+        if (now) {
+          // O "agora" da fila é a ação explícita do usuário: vale como "Enviar agora mesmo assim".
+          void window.api.handoffProjectAction?.({ conversationId: conv.id, acao: 'enviar_agora' })
+        } else if (!fromQueue) {
+          void Promise.resolve(window.api.handoffProjectReply?.({ conversationId: conv.id, texto: full }))
+            .then(async (res) => {
+              // O main viu a conversa livre (a foto daqui estava velha): relê e solta a fila.
+              if (res?.ok && !res.stored) {
+                await projectQueueRef.current?.refresh()
+                await resumeQueueRef.current(conv.id)
+              }
+            })
+            .catch(() => undefined)
+        }
+      }
       if (!idle || (!fromQueue && queueRef.current.some((m) => m.convId === conv.id))) {
         const item: QueuedMessage = {
           id: uid('q'),
@@ -2917,6 +2959,48 @@ export function App(): JSX.Element {
   const dispatchRef = useRef<typeof dispatch | null>(null)
   dispatchRef.current = dispatch
 
+  // A fila do quadro (planning/handoffQueue.ts): os prompts 2..N da implantação
+  // saem pela regra do main, só com a conversa ociosa e a fila do chat VAZIA — o
+  // que o usuário digitou sai antes. Mesmas condições da retomada da fila.
+  handoffQueueRef.current = useHandoffQueue(hydrated, {
+    api: window.api,
+    conversation: (id) => convsRef.current.find((c) => c.id === id),
+    idle: (id) => {
+      const conv = convsRef.current.find((c) => c.id === id)
+      return (
+        !queueRef.current.some((m) => m.convId === id) &&
+        !pendingSessionConfigRef.current.has(id) &&
+        canResumeQueue({
+          exists: !!conv && !isCentralConversation(conv),
+          work: true,
+          busy: busyRef.current.has(id),
+          inflight: !!inflightRef.current[id],
+          stopping: stopHolds.isHeld(id),
+          handoffPending: queueHandoff.pending(id),
+          recovery: !!conv?.recovery,
+          agentBackground: backgroundHold.holds(id) || backgroundHold.pending(id)
+        })
+      )
+    },
+    waitTurnEnd: (id) => waitForTurnEnd({ waitTurnEnd: (cid) => window.api.waitTurnEnd?.(cid), fallbackMs: QUEUE_HANDOFF_FALLBACK_MS }, id),
+    dispatch: (conv, text) => {
+      // O gate do main acabou de dar a vez a esta conversa: a foto daqui pode estar um passo atrás.
+      projectQueueRef.current?.allowOnce(conv.id)
+      return dispatch(conv, text, text, [], [], [])
+    },
+    // Conversa sem plano, mas com o PO autorizado "sempre": a rotina também sai pela fila.
+    queueCapable: (id) => !!poAuthorizationsRef.current[id]
+  })
+  // A fila do projeto: a foto do main e a soltura da resposta guardada.
+  const projectQueue = useProjectQueue(hydrated, {
+    api: window.api,
+    onRelease: (id) => void resumeQueueRef.current(id)
+  })
+  projectQueueRef.current = projectQueue
+  // A autorização do PO para commit/push (o chip e a rotina na fila).
+  const poAuthorizations = usePoAuthorizations()
+  poAuthorizationsRef.current = poAuthorizations
+
   // A retomada da fila sem turno que a solte: fim dos subagentes em segundo plano
   // ou fila restaurada no boot (backgroundHold.ts). `ready` é conferido depois do
   // intervalo e do fim real do turno no main — e de novo antes do despacho.
@@ -2959,6 +3043,14 @@ export function App(): JSX.Element {
       if (!(await ensureProject(conv))) {
         patchConv(convId, (c) => ({ ...c, recovery: undefined }))
         setBusy(convId, false)
+        return
+      }
+      // Fila do projeto: outro plano ganhou a vez nesta pasta (o PO o começou) —
+      // a retomada automática espera a vez voltar; o "Tentar agora" (force) vence.
+      if (!force && projectQueueRef.current?.holds(convId)) {
+        patchConv(convId, (c) =>
+          c.recovery?.id === recovery.id ? { ...c, recovery: { ...c.recovery, scheduledAt: Date.now() + 60_000 } } : c
+        )
         return
       }
       // Invalidate this timer before awaiting so reloads/state updates cannot
@@ -3068,8 +3160,8 @@ export function App(): JSX.Element {
   )
 
   // Cria a conversa de implementação (nova, ativa, modelo/modos de conversa
-  // normal, marcada com handoffSlug) e envia os prompts pelo `dispatch`: o 1º
-  // sai já, os demais entram na fila dela, na ordem.
+  // normal, marcada com handoffSlug) e registra os prompts: o despachante solta
+  // um por vez pelo `dispatch` (sem o registro, todos vão pela fila dela).
   // O resultado distingue "conversa criada, envio falhou" de "nada criado": no
   // primeiro, o diálogo fecha em vez de deixar criar uma segunda conversa.
   const startHandoff = useCallback(
@@ -3097,6 +3189,11 @@ export function App(): JSX.Element {
         // Envios (na_fila) e entregas no banco antes do 1º prompt sair; falha só avisa.
         register: handoffRegistrar(window.api, folder, slug),
         onRegisterError: (err) => notify('aviso', handoffRegisterWarning(err)),
+        // Fila do quadro e do projeto: com o registro feito, todos esperam no banco;
+        // o despachante solta o 1º na vez do plano (pasta livre e limpa) e cada
+        // seguinte com o anterior concluído.
+        queueInBoard: true,
+        kick: (conv) => void handoffQueueRef.current?.check(conv.id),
         // Entregue = a conversa ficou ocupada (enviado agora ou na fila). O
         // `dispatch` não lança: falha fica marcada na bolha, com o toast dele.
         send: async (conv, text) => {
@@ -3490,11 +3587,10 @@ export function App(): JSX.Element {
   const [centralSignal, setCentralSignal] = useState(0)
   const selectCentral = useCallback((): void => {
     setActiveId(CENTRAL_ID)
-    hideDeliveries()
     setCentralSignal((n) => n + 1)
     if (!typesafeReady) needTypesafeKey(CENTRAL_TYPESAFE_MESSAGE)
     if (!convsRef.current.some((c) => c.id === CENTRAL_ID)) void ensureCentralLoaded()
-  }, [typesafeReady, needTypesafeKey, ensureCentralLoaded, hideDeliveries])
+  }, [typesafeReady, needTypesafeKey, ensureCentralLoaded])
 
   // Close Settings and re-read what it may have changed.
   const closeSettings = useCallback((): void => {
@@ -3873,7 +3969,6 @@ export function App(): JSX.Element {
   const openAgentsPanel = useCallback((): void => selectRightPane('board'), [selectRightPane])
   // Leva ao pedido da conversa (Quadro e Escritório): nunca aprova nada.
   const focusRequest = (convId: string, pane: RightPane): void => {
-    hideDeliveries()
     setActiveId(convId)
     setMinimizedQuestions((m) => withoutKey(m, convId))
     if (minimizedQuestions[convId]) holdQuestion(convId, permissions[convId], false)
@@ -3892,11 +3987,39 @@ export function App(): JSX.Element {
   // and doing it for every conversation switch in the background would be work
   // nobody asked for.
   const activeCwd = active?.cwd ?? ''
+  // Abrir um cartão no painel do Quadro, pedido de fora (o resumo e o "Fala, PO").
+  const cardOpener = useBoardCardOpener(() => selectRightPane('board'))
+  // "Desde que você saiu" (planning/useAwayStrip.tsx): faixa no topo do quadro e da conversa, e o PO no escritório.
+  const away = useAwayStrip({
+    projectCwd: activeCwd || null,
+    openCard: cardOpener.open,
+    openConversation: setActiveId,
+    speak: (id, text) => void toggleSpeak(id, text)
+  })
+  // "Fala, PO" (poChat/): no lugar do chat principal, como a Central, com o quadro ao lado.
+  const poChat = usePoChatPanel({
+    projectCwd: activeCwd || null,
+    activeId: active?.id ?? null,
+    openCard: cardOpener.open,
+    openConversation: setActiveId,
+    // "Mandar fazer": a conversa dona só vale se está neste PC, nesta pasta; senão, uma nova ao fundo.
+    isLocalConversation: (id, cwd) => convsRef.current.some((c) => c.id === id && awayProjectKey(c.cwd) === awayProjectKey(cwd)),
+    createConversation: (cwd, title) => {
+      const conv = createConversation(cwd, undefined, { title }, false)
+      return { id: conv.id, title: conv.title }
+    },
+    showQueue: () => {
+      selectRightPane('board')
+      setQueueFocus((n) => n + 1)
+    }
+  })
 
   // Progresso do quadro para o rótulo da aba. Consultado mesmo com a aba
   // fechada — é o contador que avisa que existe trabalho lá dentro —, mas só
   // quando o quadro muda de verdade (evento) ou o projeto troca.
-  const [boardTabProgress, setBoardTabProgress] = useState<{ done: number; total: number } | null>(null)
+  const [boardTabProgress, setBoardTabProgress] = useState<BoardProgress | null>(null)
+  // "ver" do aviso do chat: abre o Quadro na faixa Próximos prompts.
+  const [queueFocus, setQueueFocus] = useState(0)
   // O Quadro só existe na aba Conversa: com o Escritório aberto ele está desmontado.
   const boardPaneOpen = mainTab === 'chat' && rightPane === 'board' && !browserMinimized
 
@@ -4044,6 +4167,7 @@ export function App(): JSX.Element {
   }, [conversations, activeId, busyIds, busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics,
     memoristaDiagnostics, observersOn, stalledSince, tracks, projectIcons, usageLimits, speakingId, claudeAccountList])
   useOfficeAccountsRefresh(mainTab === 'office', refreshAccounts)
+  useProjectColors(conversations) // a cor fixa de cada projeto entra no feed do escritório (office/useProjectColors.ts)
   const iconRequested = useRef<Set<string>>(new Set())
 
   const projects = useMemo<SidebarProject[]>(() => {
@@ -4203,6 +4327,14 @@ export function App(): JSX.Element {
   // Conversa de implementação: "Plano: <título>" reabre a Tela do plano de origem;
   // ao lado, o prazo da etapa atual (lido do banco).
   const handoffOrigin = active ? handoffPlanOf(active, conversations) : null
+  // O chip da autorização do PO (commit/push), sempre visível enquanto vale.
+  const poAuthChip = active ? (
+    <PoAuthChip
+      conversationId={active.id}
+      authorization={poAuthorizations[active.id]}
+      onError={(message) => notify('erro', `Não consegui revogar: ${message}`)}
+    />
+  ) : null
   const handoffPlanLink = active && handoffOrigin ? (
     <>
       <button
@@ -4214,8 +4346,11 @@ export function App(): JSX.Element {
         Plano: {handoffOrigin.titulo}
       </button>
       <DeadlineIndicator conversationId={active.id} />
+      {poAuthChip}
     </>
-  ) : null
+  ) : (
+    poAuthChip
+  )
 
   // Seletor de modelo/esforço de uma conversa: o do chat (conversa ativa) e o da
   // tela do monitor no Escritório (a conversa do agente focado) — mesmas regras.
@@ -4319,6 +4454,35 @@ export function App(): JSX.Element {
           <ConnectAccountCard status={connectAccount.status} onConnected={connectAccount.onConnected} compact={messages.length > 0} />
         ) : undefined
       }
+      topNotice={away.strip(true)}
+      projectNotice={
+        <>
+          <ProjectQueueNotice
+            // O Agent Manager não mexe nos arquivos do projeto: sem o aviso de conversa avulsa.
+            notice={activePlanning ? null : projectNotice(projectQueue.snapshot, active)}
+            onAction={(acao) => {
+              if (!active) return
+              void Promise.resolve(window.api.handoffProjectAction({ conversationId: active.id, acao }))
+                .then((res) => {
+                  if (!res?.ok) notify('erro', `Fila do projeto: ${res?.message ?? 'a ação falhou'}`)
+                })
+                .catch((err) => notify('erro', `Fila do projeto: ${ipcErrorMessage(err, String(err))}`))
+            }}
+            onOpenRecord={(path) => void window.api.openInFolder(path)}
+          />
+          {/* Implantação: os prompts que esperam no quadro (eles não aparecem na fila do chat). */}
+          {active?.handoffSlug && (
+            <ChatQueueNotice
+              projectCwd={active.cwd}
+              conversationId={active.id}
+              onOpen={() => {
+                selectRightPane('board')
+                setQueueFocus((n) => n + 1)
+              }}
+            />
+          )}
+        </>
+      }
       tts={tts}
       {...activeModelControls}
       // O seletor mostra a escolha (o sentinel `auto` incluso); a barra de
@@ -4377,7 +4541,8 @@ export function App(): JSX.Element {
       projects={projects}
     />
   )
-  const mainChat = activeCentral ? centralPanel(activeCentral) : chatPanel
+  // "Fala, PO" aberto: ele no lugar do chat principal (a Central e a conversa voltam no "Voltar").
+  const mainChat = poChat.panel ?? (activeCentral ? centralPanel(activeCentral) : chatPanel)
   // O campo de digitar da tela do monitor no Escritório: o MESMO Composer do chat,
   // para a conversa ativa (o Escritório só o mostra quando ela é a do agente
   // focado, e aí o chat flutuante sai), com o mesmo envio, fila e rascunho.
@@ -4467,7 +4632,7 @@ export function App(): JSX.Element {
         onToggleCollapse={() => setCollapsed((v) => !v)}
         projects={projects}
         recents={recents}
-        activeId={deliveriesNav.open ? null : activeId}
+        activeId={activeId}
         busyIds={busyIds}
         onLoadMore={(path) => void loadMoreProject(path)}
         onSelect={selectConversation}
@@ -4478,9 +4643,8 @@ export function App(): JSX.Element {
         onRename={renameConversation}
         onDelete={deleteConversation}
         onSelectResult={selectConversationAt}
-        central={{ active: activeId === CENTRAL_ID && !deliveriesNav.open, onSelect: selectCentral, dots: centralDots }}
+        central={{ active: activeId === CENTRAL_ID, onSelect: selectCentral, dots: centralDots }}
         centralColors={centralColors}
-        deliveries={{ active: deliveriesNav.open, count: deliveries.count, onSelect: () => { deliveriesNav.show(); setMainTab('chat') } }}
       />
 
       <div className="main-area">
@@ -4577,15 +4741,11 @@ export function App(): JSX.Element {
           ) : null}
         </header>
 
-        {mainTab === 'office' ? null : planningWorkspace && !deliveriesNav.open ? (
+        {mainTab === 'office' ? null : planningWorkspace ? (
           planningWorkspace
         ) : (
         <div className="workspace" ref={workspaceRef}>
-          {deliveriesNav.open ? (
-            <DeliveriesScreen state={deliveries.state} onOpenConversation={deliveries.openConversation} />
-          ) : (
-            mainChat
-          )}
+          {mainChat}
           {/* O divisor vale para o painel da direita inteiro (navegador ou Quadro):
               sem ele, o painel ficava preso na largura padrão. */}
           {!browserMinimized && (
@@ -4611,11 +4771,16 @@ export function App(): JSX.Element {
                     conversationTitles={conversationTitles}
                     busy={!!active && busyIds.has(active.id)}
                     onClose={() => setBrowserMinimized(true)}
-                    onOpenConversation={(convId) => {
-                      hideDeliveries()
-                      setActiveId(convId)
-                    }}
+                    onOpenConversation={(convId) => setActiveId(convId)}
                     onProgress={setBoardTabProgress}
+                    onSendAnyway={(convId) => void handoffQueueRef.current?.sendAnyway(convId)}
+                    queueFocus={queueFocus}
+                    queueHeaderExtra={poAuthChip}
+                    topStrip={away.strip(false)}
+                    openCard={cardOpener.request}
+                    onOpenCardDone={cardOpener.done}
+                    onOpenPoChat={poChat.open}
+                    onSelectedChange={poChat.onBoardSelect}
                     crew={crew}
                     pendingPermissions={pendingPermissionList}
                     // Sai do painel para o chat: a pergunta é lá que se responde.

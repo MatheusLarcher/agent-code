@@ -9,7 +9,7 @@
  * e a bacia ficam as do assento, feitas para a mesa). Andando com objeto na mão,
  * só as pernas. Digitar (na mesa e no console da Central) é o 'typing' do Mixamo
  * em camada ADITIVA: a pose procedural põe as mãos no teclado e o clipe soma o
- * movimento. Cochilar, as idas ao quadro, o trenzinho, a lanterna e a pizza
+ * movimento. Cochilar, o gole com a xícara na mão, as idas ao quadro, o trenzinho, a lanterna e a pizza
  * seguem procedurais (feitos sob medida para a mesa, o quadro e a festa).
  * A variação sai da seed: cada agente tem o seu jeito, e muda de tempos em tempos.
  */
@@ -138,6 +138,8 @@ export function pickMotion(s: MotionState, has: (key: string) => boolean): Motio
   if ((s.action === 'type' || s.action === 'typeFast') && (chair || (s.sit === 0 && s.speed < 0.05)) && has(TYPING)) {
     return { key: TYPING, mask: 'upper', loop: true, phase: false, additive: true, rate: s.action === 'typeFast' ? 1.6 : 1 }
   }
+  // Gole com a xícara na direita: o procedural (gestures.ts) — os clipes 'drink'/'sitDrink' bebem com a esquerda.
+  if (s.action === 'sip' && s.prop) return null
   if (chair) {
     const key = choose(SEATED[s.action], s.seed, epoch, has)
     return key ? { key, mask: 'upper', loop: true, phase: false } : null

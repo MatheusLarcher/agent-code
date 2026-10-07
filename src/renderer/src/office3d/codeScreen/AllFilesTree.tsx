@@ -109,6 +109,7 @@ export function AllFilesTree({ cwd, known, active, mixed, expanded, onToggleDir,
                 aria-current={key === active ? 'true' : undefined}
                 aria-label={named(t)}
                 title={`${slashed(path)}${t.range ? ` · linhas ${t.range}` : ''}${madeBy(t.models)}`}
+                data-path={path}
                 onClick={() => onBrowse(path)}
               >
                 <FileGlyph path={path} />

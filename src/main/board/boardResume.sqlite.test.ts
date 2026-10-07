@@ -3,9 +3,17 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { boardItemAwaitingBadge, type BoardConfig, type BoardItem, type ChatEvent } from '../../shared/ipc'
+import {
+  BOARD_TURN_END_REASON,
+  boardItemAwaitingBadge,
+  boardItemStatus,
+  type BoardConfig,
+  type BoardItem,
+  type ChatEvent
+} from '../../shared/ipc'
 import { SqliteRepository } from '../persistence/sqliteRepository'
 import { Po } from '../po/po'
+import { PO_DEFAULT_COMPLETE_REASON } from '../po/poCloseDefault'
 import type { PoLogEntry } from '../po/poLog'
 import { BoardService } from './boardService'
 
@@ -74,13 +82,22 @@ const taskList = (status: 'pending' | 'in_progress' | 'completed', title = 'Inve
 const reply = (text: string): ChatEvent => ({ kind: 'assistant-text', id: 'a', text, final: true })
 const result: ChatEvent = { kind: 'result', id: 'r', isError: false, text: '', durationMs: 1 }
 
+/** O fechamento roteirizado: PENDENTE no primeiro cartão do quadro — o agente
+ *  disse que parou antes de entregar. A abertura responde OK. */
+function pendingAsk(cards: () => Promise<BoardItem[]>, why: string) {
+  return async (prompt: string): Promise<string> =>
+    prompt.includes('AÇÕES DESTE TURNO') ? `PENDENTE ${(await cards())[0].id} | ${why}` : 'OK'
+}
+
 describe('replay no SQLite real — quadro + PO', () => {
   for (const poEnabled of [true, false]) {
-    it(`caso 1 (PO ${poEnabled ? 'ligado' : 'desligado'}): "pode fazer" promove na hora; selo aparece e some`, async () => {
-      const w = await world({ poEnabled })
+    it(`caso 1 (PO ${poEnabled ? 'ligado, PENDENTE' : 'desligado'}): "pode fazer" promove na hora; selo aparece e some`, async () => {
+      let cards: () => Promise<BoardItem[]> = async () => []
+      const w = await world({ poEnabled, ask: pendingAsk(() => cards(), 'parou no diagnóstico; a correção espera o usuário') })
+      cards = w.cards
       await w.userSays('investiga a perda de configurações')
       w.emit(taskList('in_progress'))
-      w.emit(reply('Diagnóstico: a carga pula quando o banco está fora. Posso corrigir?'))
+      w.emit(reply('Diagnóstico: a carga pula quando o banco está fora. Ainda não corrigi — posso corrigir?'))
       w.emit(result)
       await w.idle()
 
@@ -117,15 +134,17 @@ describe('replay no SQLite real — quadro + PO', () => {
       ask: async (prompt) => {
         if (!prompt.includes('AÇÕES DESTE TURNO')) return 'OK'
         turn++
-        // O fechamento só conclui quando a resposta entrega o resultado (turno 2).
+        const id = (await w.cards())[0].id
+        // Turno 1: o agente diz que parou antes da correção (PENDENTE). Turno 2:
+        // a resposta entrega o resultado.
         return turn === 2 && prompt.includes('Corrigido: a config agora recarrega')
-          ? `CONCLUIR ${(await w.cards())[0].id} | a resposta final entregou a correção`
-          : 'OK'
+          ? `CONCLUIR ${id} | a resposta final entregou a correção`
+          : `PENDENTE ${id} | parou no diagnóstico; falta a correção pedida`
       }
     })
-    await w.userSays('investiga')
+    await w.userSays('investiga e corrige')
     w.emit(taskList('in_progress'))
-    w.emit(reply('Diagnóstico pronto. Posso corrigir?'))
+    w.emit(reply('Diagnóstico pronto; ainda não corrigi. Posso corrigir?'))
     w.emit(result)
     await w.idle()
     expect((await w.cards())[0].poStatus).toBe('pending')
@@ -141,35 +160,64 @@ describe('replay no SQLite real — quadro + PO', () => {
     expect(boardItemAwaitingBadge(card)).toBeNull()
   })
 
-  it('caso 2: resposta terminando com pergunta não conclui; próxima mensagem promove em vez de duplicar', async () => {
-    const w = await world({
-      // A abertura cria o cartão da pesquisa; o fechamento não conclui porque a
-      // resposta termina pedindo decisão ao usuário.
-      ask: async (prompt) =>
-        prompt.includes('AÇÕES DESTE TURNO') ? 'OK' : prompt.includes('QUADRO ATUAL:\n(vazio)') ? 'NOVA | Pesquisar opções de cadastro no sistema | pedido do usuário' : 'OK'
-    })
+  /** A abertura cria o cartão da pesquisa; o fechamento responde `close`. */
+  const researchAsk = (close: (cards: BoardItem[]) => string, cards: () => Promise<BoardItem[]>) =>
+    async (prompt: string): Promise<string> =>
+      prompt.includes('AÇÕES DESTE TURNO')
+        ? close(await cards())
+        : prompt.includes('QUADRO ATUAL:\n(vazio)')
+          ? 'NOVA | Pesquisar opções de cadastro no sistema | pedido do usuário'
+          : 'OK'
+
+  it('caso 2: resposta entregue que termina com pergunta CONCLUI pelo padrão (o PO respondeu OK)', async () => {
+    let cards: () => Promise<BoardItem[]> = async () => []
+    const w = await world({ ask: researchAsk(() => 'OK', () => cards()) })
+    cards = w.cards
     await w.userSays('pesquisa direito')
     await w.idle()
-    w.emit(reply('Achei três caminhos de cadastro. Qual você prefere que eu detalhe?'))
+    w.emit(reply('Achei três caminhos de cadastro: pelo site, pelo app e pelo convite. Qual você prefere que eu detalhe?'))
+    w.emit(result)
+    await w.idle()
+
+    const list = await w.cards()
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ poStatus: 'completed', poReason: PO_DEFAULT_COMPLETE_REASON })
+    expect(boardItemAwaitingBadge(list[0])).toBeNull()
+  })
+
+  it('caso 2b: "parei no meio" vira PENDENTE — a fazer com o motivo; a próxima mensagem promove em vez de duplicar', async () => {
+    let cards: () => Promise<BoardItem[]> = async () => []
+    const why = 'parou no meio: falta pesquisar o cadastro pelo convite'
+    const w = await world({ ask: researchAsk((list) => `PENDENTE ${list[0].id} | ${why}`, () => cards()) })
+    cards = w.cards
+    await w.userSays('pesquisa direito')
+    await w.idle()
+    w.emit(reply('Pesquisei o site e o app; parei antes do convite. Continuo?'))
     w.emit(result)
     await w.idle()
 
     let list = await w.cards()
     expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ poStatus: 'pending', poReason: `${BOARD_TURN_END_REASON.result} — ${why}` })
     expect(boardItemAwaitingBadge(list[0])?.label).toBe('Aguardando você')
 
-    await w.userSays('o segundo')
+    await w.userSays('continua')
     list = await w.cards()
     expect(list).toHaveLength(1)
     expect(list[0].poStatus).toBe('in_progress')
   })
 
-  it('assunto novo: o PO cria a NOVA e o cartão antigo volta a "a fazer" no fim do turno (vai-e-vem)', async () => {
+  it('assunto novo: o PO cria a NOVA, que conclui; o cartão retomado volta a "a fazer" (vai-e-vem), não conclui', async () => {
     const w = await world({
-      ask: async (prompt) =>
-        !prompt.includes('AÇÕES DESTE TURNO') && prompt.includes('exportação')
-          ? 'NOVA | Corrigir a exportação de XML | pedido novo do usuário'
+      ask: async (prompt) => {
+        const close = prompt.includes('AÇÕES DESTE TURNO')
+        if (!close) return prompt.includes('exportação') ? 'NOVA | Corrigir a exportação de XML | pedido novo do usuário' : 'OK'
+        // Turno 1: a Tarefa A parou no meio. Turno 2 (outro assunto): OK.
+        const a = (await w.cards()).find((c) => c.sourceTitle === 'Tarefa A')
+        return a && boardItemStatus(a) === 'in_progress' && !prompt.includes('exportação')
+          ? `PENDENTE ${a.id} | parou no meio da Tarefa A`
           : 'OK'
+      }
     })
     await w.userSays('faz A')
     w.emit(taskList('in_progress', 'Tarefa A'))
@@ -188,5 +236,7 @@ describe('replay no SQLite real — quadro + PO', () => {
     const a = list.find((c) => c.sourceTitle === 'Tarefa A')
     expect(a?.poStatus).toBe('pending')
     expect(boardItemAwaitingBadge(a as BoardItem)?.label).toBe('Aguardando você')
+    const exportCard = list.find((c) => c.sourceTitle === 'Corrigir a exportação de XML') as BoardItem
+    expect(boardItemStatus(exportCard)).toBe('completed')
   })
 })

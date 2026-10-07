@@ -13,8 +13,8 @@ interface Props {
   liveAgents: number
   /** Open preview tabs — shown as a small count on the Navegador tab. */
   browserTabs: number
-  /** Progresso do quadro (concluídas/total) — `null` quando não há tarefa. */
-  boardProgress: { done: number; total: number } | null
+  /** Progresso do quadro (concluídas/total) e quantos cartões esperam você — `null` quando não há tarefa. */
+  boardProgress: { done: number; total: number; awaiting?: number } | null
 }
 
 /**
@@ -52,6 +52,15 @@ export function RightPaneTabs({ active, onSelect, onCollapse, liveAgents, browse
         Quadro
         {boardProgress && boardProgress.total > 0 && (
           <span className="pane-tab-count">{`${boardProgress.done}/${boardProgress.total}`}</span>
+        )}
+        {/* O que precisa de você (o que o contador da tela Entregas fazia). */}
+        {!!boardProgress?.awaiting && (
+          <span
+            className="pane-tab-count awaiting"
+            title={boardProgress.awaiting === 1 ? '1 cartão espera você' : `${boardProgress.awaiting} cartões esperam você`}
+          >
+            {boardProgress.awaiting}
+          </span>
         )}
       </button>
       <button type="button" className="nav-btn pane-collapse" onClick={onCollapse} title="Recolher painel">

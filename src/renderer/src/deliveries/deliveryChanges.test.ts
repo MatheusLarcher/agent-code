@@ -93,3 +93,27 @@ describe('deliveryNotices — o que vira toast entre duas leituras', () => {
     ])
   })
 })
+
+describe('deliveryNotices — a fila do quadro', () => {
+  const queued = (over: Partial<HandoffEnvio> = {}): HandoffEnvio =>
+    base({ id: 'env-2', ordem: 2, status: 'na_fila', enviadoEm: null, entregas: [], ...over })
+
+  it('o envio corrente parou com prompts esperando: um aviso "a fila parou" no lugar do incompleto', () => {
+    const prev = [base({ status: 'em_execucao' }), queued()]
+    const next = [base({ status: 'incompleta', motivo: 'faltou [b]' }), queued()]
+    expect(deliveryNotices(prev, next).map((n) => [n.kind, n.msg])).toEqual([
+      ['fila', 'A fila parou: Checkout com Pix · loja — 1 prompt espera no quadro']
+    ])
+    // Sem nada esperando, o aviso de sempre.
+    expect(deliveryNotices([prev[0]], [next[0]]).map((n) => n.kind)).toEqual(['incompleta'])
+  })
+
+  it('o PO segurou o próximo prompt: avisa com o motivo; tirar da fila (ação sua) não avisa', () => {
+    const held = queued({ motivo: 'o PO segurou: a etapa 1 já fez isso' })
+    expect(deliveryNotices([base(), queued()], [base(), held]).map((n) => n.msg)).toEqual([
+      'O PO segurou o próximo prompt: a etapa 1 já fez isso — Checkout com Pix · loja'
+    ])
+    const removed = queued({ status: 'parada', motivo: 'tirado da fila por você' })
+    expect(deliveryNotices([base(), queued()], [base(), removed])).toEqual([])
+  })
+})

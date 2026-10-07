@@ -3,7 +3,7 @@
  * enviar, e — fora da Central — modelo/esforço e modos da conversa. Na Central, a
  * citação do modo resposta fica acima do campo e o envio leva o `replyTo`.
  */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { client, toast } from '../app/runtime'
 import { CENTRAL_CONV_ID } from '../core/client'
 import { fmtBytes } from '../core/format'
@@ -11,10 +11,12 @@ import { errorText, statusOf } from '../core/net'
 import { useStore } from '../core/store'
 import type { FileAttachment, ImageAttachment } from '../core/types'
 import { Icon } from '../ui/icons'
+import { noFocusSteal } from '../ui/noFocusSteal'
 import { centralNoteSent, centralSendFailed } from '../central/centralActions'
 import { centralUi, setCentralReply, takeCentralReply } from '../central/centralStore'
 import { fileToAttachment, imageToAttachment, isImage, MAX_ATTACHMENTS } from './attachments'
 import { ModelBar } from './ModelBar'
+import { RecordingBar } from './RecordingBar'
 import { useDictation } from './useDictation'
 
 const MAX_INPUT_H = 140
@@ -46,6 +48,11 @@ export function Composer(): JSX.Element {
       inputRef.current?.focus()
     })
   })
+  // Gravando, a barra ocupa a linha (o campo sai); ao voltar, o campo retoma a altura do texto.
+  const recordingBar = mic.state !== 'idle'
+  useEffect(() => {
+    if (!recordingBar) grow()
+  }, [recordingBar])
 
   const addFiles = (list: File[]): void => {
     const imgs = list.filter(isImage)
@@ -94,7 +101,7 @@ export function Composer(): JSX.Element {
             {replyTo.who && <span className="c-quote-who">{replyTo.who}</span>}
             <span className="c-quote-text">{replyTo.text}</span>
           </div>
-          <button type="button" className="c-quote-x" aria-label="Cancelar resposta" onClick={() => setCentralReply(null)}>
+          <button type="button" className="c-quote-x" aria-label="Cancelar resposta" {...noFocusSteal} onClick={() => setCentralReply(null)}>
             ×
           </button>
         </div>
@@ -104,57 +111,55 @@ export function Composer(): JSX.Element {
           {images.map((im, i) => (
             <div className="preview-item" key={`i${i}`}>
               <img src={`data:${im.mediaType};base64,${im.data}`} alt="" />
-              <button type="button" className="rm" aria-label="Remover" onClick={() => setImages((cur) => cur.filter((_, j) => j !== i))}>✕</button>
+              <button type="button" className="rm" aria-label="Remover" {...noFocusSteal} onClick={() => setImages((cur) => cur.filter((_, j) => j !== i))}>✕</button>
             </div>
           ))}
           {files.map((f, i) => (
             <div className="preview-item preview-file" key={`f${i}`}>
               <span className="file-chip">📎 {f.name} · {fmtBytes(f.size)}</span>
-              <button type="button" className="rm" aria-label="Remover" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}>✕</button>
+              <button type="button" className="rm" aria-label="Remover" {...noFocusSteal} onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}>✕</button>
             </div>
           ))}
         </div>
       )}
       {!central && <ModelBar />}
-      <div className="composer-row">
-        <button type="button" className="icon-btn attach-btn" title="Anexar" aria-label="Anexar" onClick={() => fileRef.current?.click()}>
-          <Icon name="image" size={22} />
-        </button>
-        <textarea
-          ref={inputRef}
-          rows={1}
-          value={text}
-          placeholder={central ? 'Fale com o agent…' : 'Enviar comando...'}
-          onChange={(e) => {
-            setText(e.currentTarget.value)
-            grow()
-          }}
-          onPaste={(e) => {
-            const pasted = Array.from(e.clipboardData?.items ?? [])
-              .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
-              .map((it) => it.getAsFile())
-              .filter((f): f is File => !!f)
-            if (pasted.length) {
-              e.preventDefault()
-              addFiles(pasted)
-            }
-          }}
-        />
-        {mic.available && (
-          <button
-            type="button"
-            className={`icon-btn mic-btn ${mic.state}`}
-            title={mic.state === 'recording' ? 'Parar e transcrever' : mic.state === 'transcribing' ? 'Transcrevendo…' : 'Falar'}
-            aria-label="Falar"
-            onClick={mic.toggle}
-          >
-            {mic.state === 'transcribing' ? <span className="spinner" /> : <Icon name="mic" size={22} />}
+      {mic.state !== 'idle' ? (
+        <RecordingBar state={mic.state} startedAt={mic.startedAt} analyser={mic.analyser} onCancel={mic.cancel} onStop={mic.toggle} />
+      ) : (
+        <div className="composer-row">
+          <button type="button" className="icon-btn attach-btn" title="Anexar" aria-label="Anexar" {...noFocusSteal} onClick={() => fileRef.current?.click()}>
+            <Icon name="image" size={22} />
           </button>
-        )}
-        <button type="button" className="send-btn" title="Enviar" aria-label="Enviar" onClick={send}>
-          <Icon name="send" size={22} strokeWidth={2} />
-        </button>
-      </div>
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={text}
+            placeholder={central ? 'Fale com o agent…' : 'Enviar comando...'}
+            onChange={(e) => {
+              setText(e.currentTarget.value)
+              grow()
+            }}
+            onPaste={(e) => {
+              const pasted = Array.from(e.clipboardData?.items ?? [])
+                .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+                .map((it) => it.getAsFile())
+                .filter((f): f is File => !!f)
+              if (pasted.length) {
+                e.preventDefault()
+                addFiles(pasted)
+              }
+            }}
+          />
+          {mic.available && (
+            <button type="button" className="icon-btn mic-btn" title="Falar" aria-label="Falar" {...noFocusSteal} onClick={mic.toggle}>
+              <Icon name="mic" size={22} />
+            </button>
+          )}
+          <button type="button" className="send-btn" title="Enviar" aria-label="Enviar" {...noFocusSteal} onClick={send}>
+            <Icon name="send" size={22} strokeWidth={2} />
+          </button>
+        </div>
+      )}
       <input
         ref={fileRef}
         type="file"

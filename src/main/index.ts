@@ -1,3 +1,6 @@
+// PRIMEIRO import, de propósito: na instância isolada de desenvolvimento, o
+// userData muda antes de qualquer outro módulo lê-lo (ver devDataDirBoot.ts).
+import './devDataDirBoot'
 import { app, BrowserWindow, ipcMain, dialog, Notification, powerMonitor, powerSaveBlocker, safeStorage, shell } from 'electron'
 import type { MessageBoxOptions } from 'electron'
 import { openUrlExternally } from './openInBrowser'
@@ -90,8 +93,14 @@ import { ConversationLeaseKeeper } from './persistence/leaseKeeper'
 import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlist'
 import { Vigia } from './vigia/vigia'
 import { BoardService } from './board/boardService'
+import { startBoardPrints } from './board/printBoot'
+import { startPoChat } from './poChat/poChatBoot'
 import { registerPlanningIpc, type PlanningIpcHandle } from './planning/planningIpc'
 import { registerHandoffIpc } from './handoffTracking/handoffIpc'
+import { registerHandoffQueueIpc } from './handoffTracking/handoffQueueIpc'
+import { createProjectQueue } from './handoffTracking/projectQueueBoot'
+import { holdQueued, nextQueuedPrompt } from './handoffTracking/handoffQueueEdit'
+import { createPoAuthorizations } from './po/poAuthorizationBoot'
 import { HandoffTracker } from './handoffTracking/handoffTracker'
 import { startHandoffSweep } from './handoffTracking/handoffSweep'
 import { exportFlowPdf } from './planning/flowPdfExport'
@@ -99,7 +108,11 @@ import { PlanningConversations, planningStartOptions } from './planning/planning
 import { setPlanningDataRoot } from './planning/planningRoot'
 import { registerConversationTitleIpc } from './titles/conversationTitleIpc'
 import { Po } from './po/po'
+import { runPoCommitRound } from './po/poCommitRound'
+import { PoCommitWatch } from './po/poCommitWatch'
+import { collectPoGitEvidence } from './po/poGit'
 import { createPoLogWriter } from './po/poLog'
+import { consultWithFailover } from './po/poProviders'
 import { Memorista } from './memoria/memorista'
 import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
 import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
@@ -139,11 +152,17 @@ import { windowsControl } from './windowsControl/service'
 import { chromeBridgeStatus, openInstall as openChromeInstall, startChromeBridge, stopChromeBridge } from './chromeBridge/runtime'
 import { discoverSkills } from './skillDiscovery'
 import { readProjectIcon } from './projectIcon'
+import { createProjectColorService, parseProjectColorCwds } from './projectColorStore'
+import { detectProjectColor } from './projectColorScan'
+import { decodeWithNativeImage } from './projectColorImage'
+import { resolveProjectIdentity } from './persistence/projectIdentity'
+import { isSandboxProjectPath } from '../shared/projectColor'
 import { syncCacheSkills } from './skillManager'
 import { autoModelCandidates, resolveAutoStart, type AutoLivePair, type AutoStartDecision } from './typesafe'
 import { typeSafePause, TYPESAFE_BLOCKING_TIMEOUT_MS } from './typesafe/pause'
 import { typeSafeConfigured } from './typesafe/client'
 import { listProjectDir, MENTION_IGNORE } from './projectFiles'
+import { revealFile } from './revealFile'
 import type {
   AgentMessageKind,
   TurnEndWait,
@@ -406,7 +425,21 @@ const board = new BoardService({
     if (!s) return false
     await s.interrupt()
     return true
-  }
+  },
+  // A pasta com quadro (e talvez pendência) entra na vigia do git. Referência
+  // preguiçosa, como `poSettled`: o vigia é declarado abaixo.
+  onProject: (cwd: string): void => poCommitWatch.arm(cwd)
+})
+
+// A autorização do PO para commit/push, por conversa (po/poAuthorization*.ts):
+// nasce do AUTORIZAR da abertura, vira rotina na fila no fechamento, some com
+// REVOGAR, com o chip ou quando a fila "desta fila" esvazia.
+const poAuthorizations = createPoAuthorizations({
+  repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+  read: (key) => readPersistedKv(key),
+  write: (key, value) => writePersistedKv(key, value),
+  publish: (map) => send(Channels.poAuthorizationsChanged, map),
+  changed: (conversationId) => notifyHandoffChanged(conversationId)
 })
 
 // O PO: audita o quadro na abertura do turno (o pedido vira cartão antes de o
@@ -417,11 +450,49 @@ const po = new Po({
   board,
   // Uma linha por rodada em <userData>/po-decisions.log (ver po/poLog.ts).
   decisionLog: createPoLogWriter(),
+  // O git da pasta entra no prompt como evidência (status, diff --stat, commits).
+  gitEvidence: (cwd, sinceMs) => collectPoGitEvidence(cwd, sinceMs),
+  // O fechamento vê o próximo prompt da fila e pode SEGURÁ-lo (po/poHold.ts).
+  nextPrompt: (convId) => nextQueuedPrompt(storageLifecycle.canMutate() ? storageLifecycle.repository() : null, convId),
+  holdNext: async (envioId, motivo) => {
+    await holdQueued(
+      { repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null), changed: notifyHandoffChanged },
+      envioId,
+      motivo
+    )
+  },
+  // Commit/push autorizado: a frase do usuário (abertura) e a rotina na fila (fechamento).
+  authorization: (convId) => poAuthorizations.authorization(convId),
+  authorize: (convId, op) => poAuthorizations.authorize(convId, op),
+  queueRoutine: (convId, routine) => poAuthorizations.queueRoutine(convId, routine),
   diagnose: (diagnostic) => send(Channels.poProviderDiagnostic, {
     ...diagnostic,
     id: randomUUID(),
     at: Date.now()
   })
+})
+
+// O vigia do git: commit feito FORA do chat (terminal, IDE) conclui a pendência
+// "a fazer" do quadro, numa rodada do PO que só pode CONCLUIR (po/poCommitWatch.ts).
+const poCommitWatch = new PoCommitWatch({
+  enabled: () => (loadConfig().board ?? DEFAULT_CONFIG.board).po.enabled,
+  board,
+  evidence: (cwd, sinceMs) => collectPoGitEvidence(cwd, sinceMs),
+  judge: (input) =>
+    runPoCommitRound(
+      {
+        board,
+        model: () => (loadConfig().board ?? DEFAULT_CONFIG.board).po.model,
+        consult: (request) =>
+          consultWithFailover(
+            { diagnose: (diagnostic) => send(Channels.poProviderDiagnostic, { ...diagnostic, id: randomUUID(), at: Date.now() }) },
+            request,
+            () => undefined
+          )
+      },
+      input
+    ),
+  bootFolders: async () => (await storageLifecycle.repository().countConversationsByProject()).map((entry) => entry.cwd)
 })
 
 // O acompanhamento dos envios de handoff (handoffTracking/): só conversas com
@@ -430,8 +501,33 @@ const handoffTracker = new HandoffTracker({
   repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
   board,
   poEnabled: () => (loadConfig().board ?? DEFAULT_CONFIG.board).po.enabled,
-  onChanged: (conversationId) => send(Channels.handoffChanged, { conversationId })
+  onChanged: (conversationId) => {
+    send(Channels.handoffChanged, { conversationId })
+    // A fila do projeto revê a pasta (um plano terminou → a vez é do próximo).
+    projectQueue.changed(conversationId)
+    // A autorização "desta fila" acaba quando a fila da implantação esvazia.
+    void poAuthorizations.expire(conversationId).catch(() => undefined)
+  }
 })
+
+// A fila do projeto: um plano por vez em cada pasta deste PC; parado 30 min,
+// o PO (com ferramentas e travas) decide a vez (handoffTracking/projectQueue*.ts).
+const projectQueue = createProjectQueue({
+  userData: app.getPath('userData'),
+  repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+  conversation: async (id) =>
+    (await storageLifecycle.repository().loadConversations({ ids: [id], includeDeleted: true }).catch(() => []))[0]?.payload ?? null,
+  poModel: () => (loadConfig().board ?? DEFAULT_CONFIG.board).po.model,
+  notify: (conversationId) => send(Channels.handoffChanged, { conversationId }),
+  publish: (snapshot) => send(Channels.handoffProjectChanged, snapshot)
+})
+
+/** Uma escrita fora do acompanhamento (faixa, SEGURAR do PO): a tela relê e a fila do projeto revê a pasta. */
+function notifyHandoffChanged(conversationId: string): void {
+  send(Channels.handoffChanged, { conversationId })
+  projectQueue.changed(conversationId)
+  void poAuthorizations.expire(conversationId).catch(() => undefined)
+}
 
 // O memorista: o terceiro observador. Lê o fim de cada turno e grava sozinho o
 // que vale lembrar amanhã. A memória e o cofre são funções, não valores: os dois
@@ -853,6 +949,14 @@ async function extraClaudeAccountConnected(): Promise<boolean> {
 // PC (userData), nunca na pasta de dados sincronizável.
 const remotePairing = new RemotePairingStore(app.getPath('userData'))
 
+// Cor FIXA de cada projeto (detectada uma vez, gravada no KV global pela identidade).
+const projectColors = createProjectColorService({
+  repository: () => storageLifecycle.repository(),
+  projectId: async (cwd) => (await resolveProjectIdentity(cwd)).projectId,
+  detect: (cwd) => detectProjectColor(cwd, decodeWithNativeImage),
+  isSandbox: (cwd) => isSandboxPath(cwd) || isSandboxProjectPath(cwd)
+})
+
 const remote = new RemoteServer({
   onInbound: (convId, text, images, files, replyTo) => {
     // A mensagem do celular dá a volta pelo renderer (que a despacha na conversa
@@ -874,6 +978,8 @@ const remote = new RemoteServer({
   onCentralChoose: ({ entryId, option }) => send(Channels.remoteCentralChoose, { entryId, option }),
   // O escritório 3D do celular baixa os mesmos modelos/animações que o renderer lê por IPC.
   officeAgentFile: (name) => readOfficeAgentFile(name, { packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
+  // `projectColors` no /api/state: só as cores já resolvidas; o resto é detectado em segundo plano.
+  projectColors: (cwds) => projectColors.peek(cwds),
   apkPath: () => join(REMOTE_ROOT, 'dist', 'agent-remote.apk'),
   wwwDir: () => join(REMOTE_ROOT, 'www'),
   onClientsChanged: (info) => send(Channels.remoteClients, info),
@@ -1018,6 +1124,9 @@ function createWindow(startMinimized = false): void {
     event.preventDefault()
     requestRendererCloseFlush()
   })
+
+  // Voltou ao app (talvez depois de commitar no terminal): o vigia do git olha já.
+  mainWindow.on('focus', () => void poCommitWatch.check())
 
   mainWindow.on('closed', () => {
     // A janela escondida de captura não pode segurar o app aberto.
@@ -1359,6 +1468,26 @@ export function registerIpc(): void {
       return []
     }
   })
+  // Os prints da tarefa visual (app_anexar_print → cartão) e as miniaturas da tela.
+  startBoardPrints({
+    repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+    board,
+    changed: (projectId) => send(Channels.boardChanged, { projectId })
+  })
+  // O "Fala, PO" (poChat/): o chat com o PO a partir do quadro — só lê o quadro.
+  startPoChat({
+    repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+    board,
+    project: projectQueue,
+    tasks: async (cwd) => (await buildTaskBoard(taskLedger(), { projectCwd: cwd, includeFinished: false })).items.map((t) => ({ title: t.title, status: t.status })),
+    model: () => (loadConfig().board ?? DEFAULT_CONFIG.board).po.model,
+    // O "Pedido do PO" aprovado entra como um plano: o mesmo caminho do "Enviar para implementação".
+    registered: async (envios) => {
+      handoffTracker.onRegistered(envios)
+      await projectQueue.addPlan(envios).catch((err) => console.warn('[fala-po] fila do projeto:', (err as Error)?.message ?? err))
+      for (const id of new Set(envios.map((e) => e.conversationId))) notifyHandoffChanged(id)
+    }
+  })
   // Tela de Planejamento: toda a lógica (validação, vigia, erros) mora em planningIpc.
   planningIpc = registerPlanningIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), send })
   // Envios de handoff no banco: o mesmo getter e a mesma identidade de projeto do Quadro.
@@ -1366,8 +1495,20 @@ export function registerIpc(): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener),
     repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
     projectId: (cwd) => board.projectId(cwd),
-    tracker: handoffTracker
+    tracker: handoffTracker,
+    project: projectQueue
   })
+  // A fila do quadro (um prompt por vez no plano) e a do projeto (um plano por vez na pasta).
+  registerHandoffQueueIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+    tracker: handoffTracker,
+    project: projectQueue,
+    // Ação da faixa (tirar, editar, reordenar): a tela relê e o despachante confere.
+    changed: notifyHandoffChanged
+  })
+  // O chip da autorização do PO: a foto e o "Revogar".
+  poAuthorizations.registerIpc((channel, listener) => ipcMain.handle(channel, listener))
   ipcMain.handle(Channels.planningExportPdf, (e, req: unknown) => exportFlowPdf(e.sender, req))
   // Título automático da conversa (claude-haiku-4-5): a lógica mora em titles/.
   registerConversationTitleIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener) })
@@ -1535,6 +1676,16 @@ export function registerIpc(): void {
       : { ok: true, message: 'Abrindo a pasta no explorador…' }
   })
 
+  // "Mostrar na pasta" das Memórias e o botão direito do VS Code do agente (revealFile.ts valida o caminho).
+  ipcMain.handle(Channels.revealFile, (_e, req: unknown) =>
+    revealFile(req, {
+      memoriesDir: () => getCacheInfo().memoriesDir,
+      knownProjects: async () => (await storageLifecycle.repository().countConversationsByProject()).map((p) => p.cwd),
+      showItemInFolder: (path) => shell.showItemInFolder(path),
+      openPath: (path) => shell.openPath(path)
+    })
+  )
+
   ipcMain.handle(
     Channels.mentionSearch,
     async (_e, root: string, query: string): Promise<MentionHit[]> => {
@@ -1559,6 +1710,9 @@ export function registerIpc(): void {
 
   // Sidebar: the project's own icon, if the folder happens to have one. Null is
   // the normal answer (the sidebar keeps the folder glyph), never an error.
+  // Cor fixa dos projetos (projectColorStore.ts). Entrada validada aqui: array de caminhos absolutos.
+  ipcMain.handle(Channels.projectColors, (_e, cwds: unknown) => projectColors.colorsFor(parseProjectColorCwds(cwds)))
+
   ipcMain.handle(Channels.projectIcon, async (_e, root: string): Promise<string | null> => {
     try {
       return await readProjectIcon(root)
@@ -2278,8 +2432,11 @@ export function registerIpc(): void {
     }
   )
 
-  ipcMain.handle(Channels.agentInterrupt, async (_e, convId: string) => {
+  ipcMain.handle(Channels.agentInterrupt, async (_e, convId: string, opts?: unknown) => {
     mcpInbound.onInterrupt(convId)
+    // Implantação: o Stop do usuário deixa o prompt parado e a fila espera ele (não
+    // é erro). A troca silenciosa de sessão entre turnos (`restart`) não conta.
+    if ((opts as { restart?: unknown } | undefined)?.restart !== true) handoffTracker.noteStop(convId)
     const session = sessions.get(convId)
     if (session) logSession('session-stop', { convId, reason: 'stop', background: session.hasBackgroundWork() })
     return (await session?.interrupt()) ?? { stillQueued: [] }
@@ -2438,6 +2595,9 @@ export function registerIpc(): void {
   })
 }
 
+// Só em desenvolvimento (app não empacotado): AGENT_CODE_DEV_DATA_DIR roda uma
+// instância isolada, com o userData já trocado por devDataDirBoot.ts (o
+// primeiro import deste arquivo) e, por isso, com o próprio lock de instância única.
 const ownsSingleInstance = app.requestSingleInstanceLock()
 if (!ownsSingleInstance) app.quit()
 // Esquemas privilegiados só se registram antes do ready.
@@ -2559,6 +2719,10 @@ app.whenReady().then(async () => {
   // Agora a interface sobe primeiro e acompanha o estado da persistência pelo
   // `storageStatusChanged` — que por isso é assinado antes de `initialize()`.
   registerIpc()
+  // O vigia do git começa a checar (a cada 15 s, só pastas com pendência aberta).
+  poCommitWatch.start()
+  // O vigia dos 30 min da fila do projeto (plano parado com outro esperando).
+  projectQueue.start()
   // Fora do registerIpc (que os testes chamam sem Electron): protocolo exige o app pronto.
   officeMockup = setupOfficeMockup({ handle: (channel, handler) => ipcMain.handle(channel, handler) })
   setupOfficeCalls()

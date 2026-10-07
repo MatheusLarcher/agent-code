@@ -10,7 +10,8 @@
  * Cada objeto é modelado "em pé" no próprio referencial (Y para cima, frente
  * em -Z); o animador gira o objeto contra a inclinação da mão para ele ficar
  * de pé no mundo (a xícara não derrama). Os pequenos levam userData.lod =
- * 'detail'; a plaquinha não — é informação (o agente pede permissão).
+ * 'detail'; a xícara, 'small' (aparece no MÉDIO); a plaquinha e a lanterna,
+ * nada (propShown).
  */
 import {
   AdditiveBlending,
@@ -23,13 +24,17 @@ import {
   MeshBasicMaterial,
   MeshLambertMaterial,
   PlaneGeometry,
+  Quaternion,
   SpriteMaterial,
   SRGBColorSpace,
   TorusGeometry,
+  Vector3,
   type BufferGeometry,
-  type Material
+  type Material,
+  type Object3D
 } from 'three'
 import type { PropKind } from './brain'
+import type { Lod } from './lod'
 import { canvas2d } from './textures'
 
 const lambert = (color: number): MeshLambertMaterial => new MeshLambertMaterial({ color })
@@ -146,9 +151,12 @@ export function createPropKit() {
 
 export type PropKit = ReturnType<typeof createPropKit>
 
-/** Onde o objeto fica na mão (referencial da mão: dedos em -Y, frente em -Z). */
+/**
+ * Onde o objeto fica na mão (referencial da mão: dedos em -Y, frente em -Z). A xícara é a exceção: é o
+ * ponto dos dedos onde fica a alça (holdCup pendura a xícara por ele, de pé no mundo).
+ */
 export const GRIP: Record<PropKind, [number, number, number]> = {
-  cup: [0, -0.05, -0.05],
+  cup: [0, -0.07, -0.01],
   book: [-0.12, -0.08, -0.05],
   can: [0, -0.08, -0.02],
   phone: [0, -0.08, -0.02],
@@ -164,7 +172,7 @@ export const GRIP: Record<PropKind, [number, number, number]> = {
  * boneco, mas a palma olha para dentro, −X na direita): o objeto fica na palma.
  */
 export const GRIP_AVATAR: Record<PropKind, [number, number, number]> = {
-  cup: [-0.05, -0.12, 0],
+  cup: [-0.03, -0.1, 0],
   book: [-0.1, -0.1, -0.04],
   can: [-0.05, -0.1, 0],
   phone: [-0.035, -0.1, 0],
@@ -245,6 +253,41 @@ export function makeProp(kit: PropKit, kind: PropKind): Group {
       add(geo.cyl, mat.pepperoni, [0.026, 0.006, 0.026], [0.02, 0.008, -0.005])
       break
   }
-  if (kind !== 'sign' && kind !== 'flashlight') g.traverse((o) => void (o.userData.lod = 'detail'))
+  // A marca segue propShown: some no MÉDIO ('detail') ou só no LONGE ('small').
+  const tag = kind === 'sign' || kind === 'flashlight' ? null : kind === 'cup' ? 'small' : 'detail'
+  if (tag) g.traverse((o) => void (o.userData.lod = tag))
   return g
+}
+
+/**
+ * O objeto na mão aparece no nível `lod`? PERTO todos; MÉDIO só a plaquinha (informação), a lanterna
+ * (efeito da festa) e a xícara (o café é a pausa que mais se vê na distância de uso — sem ela a mão
+ * "segura nada"); LONGE nenhum.
+ */
+export function propShown(kind: PropKind, lod: Lod): boolean {
+  return lod === 0 || (lod === 1 && (kind === 'sign' || kind === 'flashlight' || kind === 'cup'))
+}
+
+/** Onde os dedos pegam a xícara: a alça (no referencial da xícara, a alça em +X). */
+export const CUP_HANDLE = new Vector3(0.062, 0.045, 0)
+const AXIS_X = new Vector3(1, 0, 0)
+/** A alça para trás (+Z do personagem): a xícara fica À FRENTE dos dedos, à vista, e não dentro do punho. */
+const CUP_YAW = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), -Math.PI / 2)
+const qHand = new Quaternion()
+const qTilt = new Quaternion()
+const off = new Vector3()
+
+/**
+ * A xícara `p` (filha da mão, com o encaixe `p.userData.grip` de agentBody.hold) de pé no MUNDO, com o
+ * rumo de `body` (o grupo do personagem) e pendurada pela alça no encaixe; só `tilt` a inclina em torno
+ * do X dele (o gole leva a boca ao rosto). Pela mão de verdade (osso do avatar ou junta do boneco), não
+ * pelos canais da pose: com um clipe do Mixamo no braço, a conta pelos canais deitava a xícara.
+ */
+export function holdCup(p: Object3D, body: Object3D, tilt: number): void {
+  const hand = p.parent!
+  hand.updateWorldMatrix(true, false)
+  hand.getWorldQuaternion(qHand).invert()
+  body.getWorldQuaternion(p.quaternion).multiply(qTilt.setFromAxisAngle(AXIS_X, tilt)).multiply(CUP_YAW).premultiply(qHand)
+  const g = p.userData.grip as [number, number, number] | undefined
+  if (g) p.position.set(g[0], g[1], g[2]).sub(off.copy(CUP_HANDLE).applyQuaternion(p.quaternion))
 }

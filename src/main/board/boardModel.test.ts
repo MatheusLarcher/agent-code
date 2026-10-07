@@ -179,27 +179,27 @@ describe('boardItemsToReopenBefore — a race entre a reabertura e a abertura se
   })
 })
 
-describe('boardItemsToExpire — concluídos somem depois de 5 dias, só com mais de 5 no total', () => {
+describe('boardItemsToExpire — concluídos somem depois de 2 dias, sem mínimo', () => {
   const now = Date.parse('2026-09-17T12:00:00.000Z')
-  const OLD = '2026-09-01T12:00:00.000Z' // bem mais que 5 dias antes de `now`
-  const RECENT = '2026-09-16T12:00:00.000Z' // menos de 5 dias antes de `now`
+  const OLD = '2026-09-15T11:59:00.000Z' // um minuto além de 2 dias antes de `now`
+  const RECENT = '2026-09-15T12:01:00.000Z' // um minuto antes de completar 2 dias
 
   function completedItems(count: number, updatedAt: string): BoardItem[] {
     return Array.from({ length: count }, (_, i) => item({ id: `c${i}`, sourceStatus: 'completed', updatedAt }))
   }
 
-  it('com 5 ou menos concluídos, nada expira mesmo muito velho', () => {
-    expect(boardItemsToExpire(completedItems(5, OLD), now)).toEqual([])
+  it('sem o mínimo de antes: até 1 concluído só, passou de 2 dias, expira', () => {
+    expect(boardItemsToExpire(completedItems(1, OLD), now).map((entry) => entry.id)).toEqual(['c0'])
   })
 
-  it('com mais de 5 concluídos, só os que passaram de 5 dias expiram', () => {
-    const items = [...completedItems(4, OLD), ...completedItems(3, RECENT)]
+  it('só os que passaram de 2 dias expiram; os recentes ficam (o limite de 4 é da tela)', () => {
+    const items = [...completedItems(4, OLD), ...completedItems(3, RECENT).map((entry) => ({ ...entry, id: `r-${entry.id}` }))]
     const expired = boardItemsToExpire(items, now)
     expect(expired).toHaveLength(4)
     expect(expired.every((entry) => entry.updatedAt === OLD)).toBe(true)
   })
 
-  it('mais de 5 concluídos, mas todos recentes: nenhum expira ainda', () => {
+  it('muitos concluídos, todos recentes: nenhum expira ainda', () => {
     expect(boardItemsToExpire(completedItems(6, RECENT), now)).toEqual([])
   })
 
@@ -212,9 +212,13 @@ describe('boardItemsToExpire — concluídos somem depois de 5 dias, só com mai
     expect(expired.map((entry) => entry.id)).not.toContain('already-dismissed')
   })
 
-  it('pendente/em andamento nunca conta pro limiar nem expira', () => {
-    const items = [...completedItems(2, OLD), item({ id: 'p', sourceStatus: 'pending', updatedAt: OLD })]
-    expect(boardItemsToExpire(items, now)).toEqual([])
+  it('pendente/em andamento nunca expira, por velho que seja', () => {
+    const items = [
+      ...completedItems(2, OLD),
+      item({ id: 'p', sourceStatus: 'pending', updatedAt: OLD }),
+      item({ id: 'i', sourceStatus: 'in_progress', updatedAt: OLD })
+    ]
+    expect(boardItemsToExpire(items, now).map((entry) => entry.id)).toEqual(['c0', 'c1'])
   })
 })
 

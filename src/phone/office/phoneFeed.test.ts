@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { deriveOfficeModel } from '@renderer/office/adapter/model'
 import { createStore } from '../core/store'
-import type { AppState, RemoteClient } from '../core/client'
+import { mergeProjectColors, type AppState, type RemoteClient } from '../core/client'
 import type { BridgeEvent, ConvSummary } from '../core/types'
 import { PhoneOfficeFeed, track } from './phoneFeed'
 
@@ -40,6 +40,25 @@ describe('feed do escritório no celular', () => {
     c.emit({ convId: 'a', event: { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'npm test' }, parentToolUseId: null } })
     const msgs = feed.getSnapshot()!.conversations[0].messages
     expect(msgs.at(-1)).toMatchObject({ kind: 'tool-use', name: 'Bash' })
+    feed.dispose()
+  })
+
+  it('a cor de cada projeto vem do /api/state (acumulada) e vai ao feed; PC antigo não muda a referência', () => {
+    const c = fakeClient([conv('a', false)])
+    const feed = new PhoneOfficeFeed(c)
+    const empty = feed.getSnapshot()!.projectColors
+    expect(empty).toEqual({})
+    c.emit({ convId: 'a', event: { kind: 'turn-start' } })
+    expect(feed.getSnapshot()!.projectColors).toBe(empty)
+    const first = mergeProjectColors(undefined, { 'C:/proj/app': { hex: '#3c9add', source: 'logo' }, 'C:/x': { hex: 'nope' } })
+    expect(first).toEqual({ 'C:/proj/app': { hex: '#3c9add', source: 'logo' } })
+    // A que faltava chega num pedido seguinte; a já recebida fica; nada novo = mesma referência.
+    const second = mergeProjectColors(first, { 'C:/proj/b': { hex: '#dd5fa9', source: 'reserva' } })
+    expect(Object.keys(second)).toEqual(['C:/proj/app', 'C:/proj/b'])
+    expect(mergeProjectColors(second, { 'C:/proj/b': { hex: '#dd5fa9', source: 'reserva' } })).toBe(second)
+    expect(mergeProjectColors(second, undefined)).toBe(second)
+    c.store.set({ projectColors: second } as Partial<AppState>)
+    expect(feed.getSnapshot()!.projectColors).toBe(second)
     feed.dispose()
   })
 

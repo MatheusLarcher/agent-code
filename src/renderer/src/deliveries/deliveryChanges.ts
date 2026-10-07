@@ -1,4 +1,10 @@
-import type { HandoffEntrega, HandoffEnvio } from '@shared/handoffTracking'
+import {
+  HANDOFF_PO_HOLD_PREFIX,
+  isEnvioHeldByPo,
+  isEnvioRemoved,
+  type HandoffEntrega,
+  type HandoffEnvio
+} from '@shared/handoffTracking'
 import type { ToastType } from '../ui/UiProvider'
 import { projectName } from './deliveryModel'
 
@@ -14,9 +20,10 @@ import { projectName } from './deliveryModel'
  *   envio incompleto/atrasado da mesma leitura não repete.
  */
 
-export type DeliveryChangeKind = 'concluida' | 'incompleta' | 'parada' | 'atrasada'
-/** A entrega não tem "parada": isso é do envio (a fila encalhou). */
-type EntregaKind = Exclude<DeliveryChangeKind, 'parada'>
+export type DeliveryChangeKind = 'concluida' | 'incompleta' | 'parada' | 'atrasada' | 'fila'
+/** A entrega não tem "parada" nem "fila": isso é do envio (a fila encalhou). */
+type EntregaKind = Exclude<DeliveryChangeKind, 'parada' | 'fila'>
+type EnvioKind = Exclude<DeliveryChangeKind, 'fila'>
 
 export interface DeliveryNotice {
   kind: DeliveryChangeKind
@@ -25,14 +32,14 @@ export interface DeliveryNotice {
   conversationId: string
 }
 
-const TIPO: Record<DeliveryChangeKind, ToastType> = {
+const TIPO: Record<EnvioKind, ToastType> = {
   concluida: 'sucesso',
   incompleta: 'aviso',
   parada: 'aviso',
   atrasada: 'aviso'
 }
 
-const ENVIO_TEXT: Record<DeliveryChangeKind, string> = {
+const ENVIO_TEXT: Record<EnvioKind, string> = {
   concluida: 'Envio concluído',
   incompleta: 'Envio incompleto',
   parada: 'Envio parado',
@@ -54,8 +61,8 @@ function became<T>(before: T, after: T, value: T): boolean {
   return before !== value && after === value
 }
 
-function envioKinds(prev: HandoffEnvio, next: HandoffEnvio): DeliveryChangeKind[] {
-  const out: DeliveryChangeKind[] = []
+function envioKinds(prev: HandoffEnvio, next: HandoffEnvio): EnvioKind[] {
+  const out: EnvioKind[] = []
   if (became(prev.status, next.status, 'concluida')) out.push('concluida')
   if (became(prev.status, next.status, 'incompleta')) out.push('incompleta')
   if (became(prev.status, next.status, 'parada')) out.push('parada')
@@ -81,7 +88,7 @@ export function envioNotices(prev: HandoffEnvio, next: HandoffEnvio): DeliveryNo
   const corrected = next.entregas.some((e) => e.corrigidoEm !== null && e.corrigidoEm !== prevEntregas.get(e.id)?.corrigidoEm)
   const ofEnvio = envioKinds(prev, next).filter((k) => !corrected || k === 'atrasada')
   const out: DeliveryNotice[] = []
-  const notice = (kind: DeliveryChangeKind, msg: string): void => {
+  const notice = (kind: EnvioKind, msg: string): void => {
     out.push({ kind, tipo: TIPO[kind], msg, conversationId: next.conversationId })
   }
   const byKind = new Map<EntregaKind, HandoffEntrega[]>()
@@ -105,13 +112,38 @@ export function envioNotices(prev: HandoffEnvio, next: HandoffEnvio): DeliveryNo
   return out
 }
 
-/** Todos os avisos entre duas leituras completas (todos os projetos). */
+/** Os prompts que ainda esperam a vez na fila do quadro da conversa. */
+function waitingIn(envios: readonly HandoffEnvio[], conversationId: string): HandoffEnvio[] {
+  return envios.filter((e) => e.conversationId === conversationId && e.status === 'na_fila' && !isEnvioRemoved(e))
+}
+
+const STOPPED: ReadonlySet<HandoffEnvio['status']> = new Set(['incompleta', 'parada', 'falhou'])
+
+/**
+ * Todos os avisos entre duas leituras completas (todos os projetos). A FILA
+ * PARADA ganha o aviso dela: o envio corrente terminou sem concluir (ou o PO
+ * segurou o próximo) com prompts esperando — no lugar do "envio incompleto/
+ * parado", para não avisar duas vezes. Tirar da fila é ação sua: não avisa.
+ */
 export function deliveryNotices(prev: readonly HandoffEnvio[], next: readonly HandoffEnvio[]): DeliveryNotice[] {
   const before = new Map(prev.map((e) => [e.id, e]))
   const out: DeliveryNotice[] = []
   for (const envio of next) {
     const old = before.get(envio.id)
-    if (old) out.push(...envioNotices(old, envio))
+    if (!old || (isEnvioRemoved(envio) && !isEnvioRemoved(old))) continue
+    const own = envioNotices(old, envio)
+    const waiting = waitingIn(next, envio.conversationId)
+    if (waiting.length > 0 && old.status !== envio.status && STOPPED.has(envio.status)) {
+      out.push(...own.filter((n) => n.kind !== 'incompleta' && n.kind !== 'parada'))
+      const n = waiting.length === 1 ? '1 prompt espera' : `${waiting.length} prompts esperam`
+      out.push({ kind: 'fila', tipo: 'aviso', msg: `A fila parou: ${where(envio)} — ${n} no quadro`, conversationId: envio.conversationId })
+      continue
+    }
+    out.push(...own)
+    if (!isEnvioHeldByPo(old) && isEnvioHeldByPo(envio)) {
+      const motivo = (envio.motivo ?? '').slice(HANDOFF_PO_HOLD_PREFIX.length)
+      out.push({ kind: 'fila', tipo: 'aviso', msg: `O PO segurou o próximo prompt: ${motivo} — ${where(envio)}`, conversationId: envio.conversationId })
+    }
   }
   return out
 }

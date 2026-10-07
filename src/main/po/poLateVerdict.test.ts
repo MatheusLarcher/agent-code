@@ -11,9 +11,10 @@ import {
   type BoardItem,
   type ChatEvent
 } from '../../shared/ipc'
-import { BoardService } from '../board/boardService'
+import { BoardService, RESUME_REASON } from '../board/boardService'
 import { SqliteRepository } from '../persistence/sqliteRepository'
 import { Po } from './po'
+import { PO_DEFAULT_COMPLETE_REASON } from './poCloseDefault'
 
 /**
  * O veredito atrasado de ponta a ponta: Po real + BoardService real + SQLite
@@ -85,8 +86,10 @@ async function world(verdict: (byTitle: (title: string) => BoardItem) => string)
   const po: Po = new Po({
     config,
     board,
-    ask: async () => {
-      if (!closing) return 'OK'
+    ask: async (prompt) => {
+      // Só o FECHAMENTO demora: a abertura (inclusive a da mensagem que chega
+      // no meio da consulta) responde OK na hora.
+      if (!closing || !prompt.includes('AÇÕES DESTE TURNO')) return 'OK'
       const answer = verdict(byTitleIn(await snapshot()))
       return new Promise<string>((resolve) => setTimeout(() => resolve(answer), PO_ANSWER_MS))
     },
@@ -131,7 +134,11 @@ async function world(verdict: (byTitle: (title: string) => BoardItem) => string)
     return { at30, startedAt }
   }
 
-  return { board, emit, userSays, snapshot, byTitleIn, reads, workTurn, closeTurnWithLatePo }
+  const settledPo = (): Promise<void> => po.settled(CONV)
+  const lateClose = (): void => {
+    closing = true
+  }
+  return { board, emit, userSays, snapshot, byTitleIn, reads, workTurn, closeTurnWithLatePo, settledPo, lateClose }
 }
 
 describe('Po + BoardService — veredito do fechamento que chega depois do teto de 30 s', () => {
@@ -179,7 +186,7 @@ describe('Po + BoardService — veredito do fechamento que chega depois do teto 
     expect(boardItemAwaitingBadge(byTitle('Assinar o EXE'))).toBeNull()
   })
 
-  it('nenhuma operação do fechamento rebaixa: ANDAMENTO e NOVA duplicada caem; TITULO sozinho só renomeia', async () => {
+  it('nenhuma operação do fechamento rebaixa: ANDAMENTO e NOVA duplicada caem; TITULO renomeia e o padrão conclui', async () => {
     const w = await world((card) =>
       [
         `TITULO ${card(EXE).id} | Gerar o instalador EXE | o título do agente era técnico`,
@@ -200,13 +207,55 @@ describe('Po + BoardService — veredito do fechamento que chega depois do teto 
     // O concluído do agente continua concluído: fechamento não tem ANDAMENTO,
     // e o título repetido não vira cartão novo.
     expect(boardItemStatus(byTitle(LOGIN))).toBe('completed')
-    // O TITULO atrasado grava o nome e não mexe no estado: o cartão continua o
-    // "a fazer" do fim de turno, esperando o usuário.
+    // O TITULO atrasado grava o nome; sem PENDENTE, o cartão rebaixado aos 30 s
+    // vira concluído pelo padrão (o veredito foi lido, e não disse que faltou).
     expect(byTitle(EXE)).toMatchObject({
       poTitle: 'Gerar o instalador EXE',
-      poStatus: 'pending',
-      poReason: BOARD_TURN_END_REASON.result
+      poStatus: 'completed',
+      poReason: PO_DEFAULT_COMPLETE_REASON
     })
-    expect(boardItemAwaitingBadge(byTitle(EXE))?.label).toBe('Aguardando você')
+    expect(boardItemAwaitingBadge(byTitle(EXE))).toBeNull()
+  })
+
+  it('PO com timeout: aos 30 s volta para "a fazer"; o OK dos 50 s conclui pelo padrão', async () => {
+    const w = await world(() => 'OK')
+    await w.workTurn([[EXE, 'in_progress']])
+
+    const { at30 } = await w.closeTurnWithLatePo()
+    expect(w.byTitleIn(at30)(EXE)).toMatchObject({ poStatus: 'pending', poReason: BOARD_TURN_END_REASON.result })
+    expect(w.byTitleIn(await w.snapshot())(EXE)).toMatchObject({ poStatus: 'completed', poReason: PO_DEFAULT_COMPLETE_REASON })
+  })
+
+  it('PO com timeout e PENDENTE aos 50 s: o cartão fica "a fazer" com o motivo, sem conclusão pelo padrão', async () => {
+    const w = await world((card) => `PENDENTE ${card(EXE).id} | parou no meio: falta assinar e publicar o EXE`)
+    await w.workTurn([[EXE, 'in_progress']])
+
+    await w.closeTurnWithLatePo()
+    const exe = w.byTitleIn(await w.snapshot())(EXE)
+    expect(exe).toMatchObject({
+      poStatus: 'pending',
+      poReason: `${BOARD_TURN_END_REASON.result} — parou no meio: falta assinar e publicar o EXE`
+    })
+    expect(boardItemAwaitingBadge(exe)?.label).toBe('Aguardando você')
+  })
+
+  it('o OK atrasado não conclui o cartão que a mensagem seguinte já retomou (a guarda da escrita)', async () => {
+    const w = await world(() => 'OK')
+    await w.workTurn([[EXE, 'in_progress']])
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    w.lateClose()
+    w.emit(reply('EXE gerado em dist/instalador.exe.'))
+    w.emit(result)
+    await vi.advanceTimersByTimeAsync(PO_WAIT_MS)
+    await w.board.turnClosed(CONV)
+    // Aos 40 s o usuário responde: a retomada promove o cartão rebaixado.
+    await vi.advanceTimersByTimeAsync(10_000)
+    await w.userSays('agora assina o EXE')
+    expect(w.byTitleIn(await w.snapshot())(EXE)).toMatchObject({ poStatus: 'in_progress', poReason: RESUME_REASON })
+
+    await vi.advanceTimersByTimeAsync(PO_ANSWER_MS - PO_WAIT_MS - 10_000)
+    await w.settledPo()
+    expect(w.byTitleIn(await w.snapshot())(EXE)).toMatchObject({ poStatus: 'in_progress', poReason: RESUME_REASON })
   })
 })

@@ -13,6 +13,7 @@
  *  - `historyReq`: só a resposta MAIS RECENTE do `/api/history` atualiza a tela.
  */
 import type { ChatEvent, PermissionResponse, RateLimitStatus } from '@shared/ipc'
+import { isProjectColor, type ProjectColorMap } from '@shared/projectColor'
 import { deviceId, deviceName, configFromLocation, type PairConfig } from './config'
 import { apiUrl, errorText, fetchJson, pickBestBase, statusOf, HttpError, type FetchOpts } from './net'
 import { activePc, loadPcs, namePcIfUnnamed, otherPcs, pcConfig, pcLabel, removePc, saveLastConv, setActivePc, setPendingSwitch, takePendingSwitch, upsertPc, type PendingNotice } from './pcs'
@@ -42,6 +43,8 @@ export interface AppState {
   conversations: ConvSummary[]
   projects: string[]
   usage: Record<string, RateLimitStatus>
+  /** Cor fixa de cada projeto por cwd (`/api/state`): acumula, a ponte só manda as já resolvidas. */
+  projectColors?: ProjectColorMap
   voiceReady: boolean
   skipPerms: boolean
   models: ModelOption[]
@@ -68,6 +71,19 @@ export interface SendInput {
   images: ImageAttachment[]
   files: FileAttachment[]
   replyTo?: string | null
+}
+
+/** Junta as cores novas (válidas) às já recebidas; a mesma referência se nada mudou (o escritório não refaz à toa). */
+export function mergeProjectColors(prev: ProjectColorMap | undefined, next: unknown): ProjectColorMap {
+  const base = prev ?? {}
+  if (!next || typeof next !== 'object') return base
+  let out: ProjectColorMap | null = null
+  for (const [cwd, c] of Object.entries(next as Record<string, unknown>)) {
+    if (!isProjectColor(c) || (base[cwd]?.hex === c.hex && base[cwd]?.source === c.source)) continue
+    out ??= { ...base }
+    out[cwd] = { hex: c.hex, source: c.source, ...(c.file ? { file: c.file } : {}) }
+  }
+  return out ?? base
 }
 
 const INITIAL: AppState = {
@@ -215,6 +231,7 @@ export class RemoteClient {
         conversations,
         projects: data.projects ?? [],
         usage: data.usage ?? {},
+        projectColors: mergeProjectColors(s.projectColors, data.projectColors),
         voiceReady: !!data.voiceReady,
         skipPerms: !!data.skipPerms,
         models: data.models ?? [],

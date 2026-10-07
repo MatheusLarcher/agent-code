@@ -13,6 +13,7 @@ import {
 import type { PersistenceRepository } from '../persistence/types'
 import { SqliteRepository } from '../persistence/sqliteRepository'
 import { Po } from '../po/po'
+import { PO_DEFAULT_COMPLETE_REASON } from '../po/poCloseDefault'
 import { PO_RETURNED_SECTION } from '../po/poPrompt'
 import { DISMISS_BY_USER, EXPIRE_BY } from './boardModel'
 import { BoardService } from './boardService'
@@ -121,7 +122,7 @@ describe('PENDENTE + fim de turno no SQLite real', () => {
     expect(resumed).toMatchObject({ actor: 'system', toStatus: 'in_progress', note: 'o usuário retomou a conversa' })
   })
 
-  it('sem PENDENTE fica a frase fixa de sempre (sem regressão)', async () => {
+  it('sem PENDENTE (o PO respondeu OK) o cartão devolvido vira concluído pelo padrão, e nada é rebaixado', async () => {
     const w = await world(async () => 'OK')
     await w.userSays('implementa a fase 1')
     w.emit(taskList)
@@ -130,7 +131,41 @@ describe('PENDENTE + fim de turno no SQLite real', () => {
     await w.idle()
 
     const [card] = await w.cards()
-    expect(card.poReason).toBe(BOARD_TURN_END_REASON.result)
+    expect(card).toMatchObject({ poStatus: 'completed', poReason: PO_DEFAULT_COMPLETE_REASON })
+    expect(boardItemAwaitingBadge(card)).toBeNull()
+    const changes = (await w.repository.listBoardItemEvents(card.id)).filter((e) => e.kind === 'status_changed')
+    expect(changes).toEqual([expect.objectContaining({ actor: 'po', fromStatus: 'in_progress', toStatus: 'completed' })])
+  })
+
+  it('sem veredito (modelo do PO fora do ar) fica a frase fixa de sempre: nada conclui sem alguém ler', async () => {
+    const w = await world(async () => {
+      throw new Error('modelo indisponível')
+    })
+    await w.userSays('implementa a fase 1')
+    w.emit(taskList)
+    w.emit(reply)
+    w.emit(result)
+    await w.idle()
+
+    const [card] = await w.cards()
+    expect(card).toMatchObject({ poStatus: 'pending', poReason: BOARD_TURN_END_REASON.result })
+  })
+
+  it('Stop do usuário (result com erro): o PO não fecha o turno e o cartão volta "Interrompido"', async () => {
+    const ask = vi.fn(async (_prompt: string) => 'OK')
+    const w = await world(ask)
+    await w.userSays('implementa a fase 1')
+    await w.idle()
+    const opens = ask.mock.calls.length
+    w.emit(taskList)
+    w.emit(reply)
+    w.emit({ kind: 'result', id: 'r', isError: true, text: 'error_during_execution', durationMs: 1 })
+    await w.idle()
+
+    expect(ask.mock.calls.length).toBe(opens)
+    const [card] = await w.cards()
+    expect(card).toMatchObject({ poStatus: 'pending', poReason: BOARD_TURN_END_REASON.error })
+    expect(boardItemAwaitingBadge(card)?.label).toBe('Interrompido')
   })
 })
 

@@ -6,10 +6,12 @@
  * corpo: medidas (BODY ou as do modelo), a mão que segura o objeto (com o
  * encaixe de cada um), o centro da cabeça, a sombra do LOD e o brilho do monitor.
  */
-import type { Group, Object3D, Vector3 } from 'three'
+import type { Color, Group, MeshLambertMaterial, Object3D, Vector3 } from 'three'
 import { AvatarBody } from './agentAvatar'
 import type { AgentModels } from './agentModels'
 import type { AvatarTemplate } from './agentRest'
+import type { TintUniforms } from './agentTint'
+import { shirtHex, type ProjectColorFeed } from './projectColor'
 import { seedColor } from './appearance'
 import type { PropKind } from './brain'
 import { BODY, type BodyMetrics, type Pose } from './poses'
@@ -31,8 +33,37 @@ export class CharacterBody {
     private readonly seed: string,
     private readonly key: string,
     /** Modelo próprio deste personagem (a Central: o avatar do usuário); null = o do papel. */
-    private readonly own: string | null = null
-  ) {}
+    private readonly own: string | null = null,
+    /** A camisa do boneco (characters.ts `shirtMat`): troca de cor junto com o avatar. */
+    private readonly shirt: MeshLambertMaterial | null = null
+  ) {
+    this.tint = seedColor(seed)
+  }
+
+  /** A cor da roupa (linear): a do projeto (setShirtColor) ou, sem projeto, a da seed. */
+  private readonly tint: Color
+  private tintHex: string | null = null
+
+  /**
+   * A camisa na cor do projeto (`#rrggbb`; null = sem projeto, a cor da seed — a
+   * Central). Troca em cena, sem recriar o corpo: a cor do boneco e o uniform
+   * `tintColor` do avatar (agentTint.ts); o avatar que nascer depois já sai nela.
+   * true se mudou.
+   */
+  setShirtColor(hex: string | null): boolean {
+    if (hex === this.tintHex) return false
+    this.tintHex = hex
+    if (hex) this.tint.set(hex)
+    else this.tint.copy(seedColor(this.seed))
+    this.shirt?.color.copy(this.tint)
+    ;(this.avatar?.material.userData.tint as TintUniforms | undefined)?.tintColor.value.copy(this.tint)
+    return true
+  }
+
+  /** A camisa pelo projeto do personagem (office3d/projectColor.ts: a do feed, senão a reserva); sem projeto, a da seed. */
+  paintShirt(feed: ProjectColorFeed, projectId: string | null): boolean {
+    return this.setShirtColor(shirtHex(feed, projectId))
+  }
 
   /** Medidas do corpo à mostra (as poses e o HUD usam). */
   get metrics(): BodyMetrics {
@@ -63,7 +94,7 @@ export class CharacterBody {
     this.avatar = null
     this.template = t
     if (t) {
-      this.avatar = new AvatarBody(t, seedColor(this.seed), this.models.envMap(), this.key)
+      this.avatar = new AvatarBody(t, this.tint, this.models.envMap(), this.key)
       this.group.add(this.avatar.root)
     }
     this.rig.pelvis.visible = !this.avatar
@@ -74,11 +105,12 @@ export class CharacterBody {
     return true
   }
 
-  /** Põe o objeto na mão direita do corpo atual, no encaixe dele. */
+  /** Põe o objeto na mão direita do corpo atual, no encaixe dele (guardado em userData.grip: a xícara se pendura por ele, props.holdCup). */
   hold(kind: PropKind, p: Group): void {
     const g = this.avatar ? GRIP_AVATAR[kind] : GRIP[kind]
     ;(this.avatar?.socketR ?? this.rig.handR).add(p)
     p.position.set(g[0], g[1], g[2])
+    p.userData.grip = g
   }
 
   /** Depois do applyPose: o avatar copia a pose (sentado à mesa, sem objeto, as palmas descem). */

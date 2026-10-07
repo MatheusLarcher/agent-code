@@ -9,6 +9,7 @@
 import { isCentralConversation } from '@shared/central'
 import { contextLimitFor, type MemoristaProviderDiagnosticMsg } from '@shared/ipc'
 import type { AgentTrack } from '../../agentTracks'
+import { hasAgentBackground } from '../../backgroundHold'
 import { buildCrew, callSegments, lineText, roleFromSubagentType, type CrewMember, type CrewRole } from '../../crew'
 import type { Conversation } from '../../types'
 import type { OfficeFeed } from './feed'
@@ -38,6 +39,10 @@ export interface OfficeCharacterModel {
   /** Seed da aparência: estável por conversa ou trilha. */
   seed: string
   active: boolean
+  /** Tarefa ativa (hasActiveTask; na trilha = rodando): tem prioridade na mesa da ilha. Ausente = `active`. */
+  task?: boolean
+  /** Epoch ms da última atividade: entre os parados, o mais antigo cede a mesa a quem tem tarefa. */
+  activityAt?: number
   activity: Activity
   bubble: BubbleKind | null
   label: string
@@ -101,15 +106,30 @@ export function roomName(cwd: string): string {
   return parts[parts.length - 1] || cwd
 }
 
-/** Quem entra no escritório: ativa, ocupada, com pendência ou mexida nas últimas 12 h. */
+/** Quem entra no escritório: ativa, com tarefa ativa, com pendência ou mexida nas últimas 12 h. */
 export function isInOffice(c: Conversation, feed: OfficeFeed, now: number): boolean {
   return (
     c.id === feed.activeId ||
-    feed.busyIds.has(c.id) ||
-    feed.permissions[c.id] !== undefined ||
+    hasActiveTask(c, feed) ||
     feed.vigiaAlerts[c.id] !== undefined ||
     now - c.updatedAt <= RECENT_MS
   )
+}
+
+/**
+ * Tarefa ativa: o turno roda, há permissão/pergunta pendente, uma recuperação
+ * agendada (erro transitório ou limite esperando a volta; `scheduledAt` 0 =
+ * tentativas encerradas, nada mais agendado), subagente rodando ou mensagem na fila esperando o
+ * turno. Com ela o principal fica na mesa (office3d/brain.ts).
+ */
+export function hasActiveTask(c: Conversation, feed: OfficeFeed): boolean {
+  if (feed.busyIds.has(c.id) || feed.permissions[c.id] !== undefined) return true
+  if (c.recovery && c.recovery.scheduledAt !== 0) return true
+  // Subagente rodando (inclusive em segundo plano, com o turno já parado): o principal espera na mesa.
+  if (Object.values(feed.tracks[c.id] ?? {}).some((t) => t.status === 'running')) return true
+  // Snapshot do SDK com subagente vivo (a trilha pode faltar: app recarregado no meio).
+  if (hasAgentBackground(c.backgroundTasks)) return true
+  return feed.queuedIds?.has(c.id) ?? false
 }
 
 /** Rótulo de uma trilha isolada: o mesmo CrewMember que o cartão da Equipe mostraria. */
@@ -129,11 +149,15 @@ function principalOf(c: Conversation, feed: OfficeFeed, roomId: string, crew: Cr
   const turn = scanTurn(c.messages)
   const tool = busy ? turn.tool : null
   const perm = feed.permissions[c.id]
+  const task = hasActiveTask(c, feed)
+  // Recuperação agendada: o App mantém a conversa ocupada (sem busySince) até a retomada sair.
+  const retrying = (c.recovery?.scheduledAt ?? 0) > 0
   let bubble: BubbleKind | null = null
   if (perm && !perm.questions) bubble = 'permissao'
   else if (perm?.questions || feed.vigiaAlerts[c.id]) bubble = 'pergunta'
-  else if (turn.error && !busy) bubble = 'erro'
-  else if (feed.stalledSince[c.id] !== undefined) bubble = 'ampulheta'
+  else if (turn.error && (!busy || retrying)) bubble = 'erro'
+  // Na mesa esperando o turno (recuperação agendada, fila) ou travado: a ampulheta.
+  else if (feed.stalledSince[c.id] !== undefined || retrying || (task && !busy)) bubble = 'ampulheta'
   else if (!busy && turn.okAt !== null && now - turn.okAt < OK_BUBBLE_MS) bubble = 'ok'
   let label: string
   if (tool) {
@@ -151,6 +175,8 @@ function principalOf(c: Conversation, feed: OfficeFeed, roomId: string, crew: Cr
     placement: { kind: 'seat', seatKind: 'principal' },
     seed: key,
     active: busy,
+    task,
+    activityAt: c.updatedAt,
     activity: activityFor(tool?.name),
     bubble,
     label
@@ -394,6 +420,8 @@ function trackChar(
     placement,
     seed: `track:${track.id}`,
     active: track.status === 'running',
+    task: track.status === 'running',
+    activityAt: track.endedAt ?? track.startedAt,
     activity: trackActivity(track),
     bubble: track.status === 'error' ? 'erro' : null,
     label: trackLabel(track, now)

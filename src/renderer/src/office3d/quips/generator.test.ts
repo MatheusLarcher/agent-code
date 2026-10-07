@@ -23,7 +23,7 @@ const KEY = 'conv:a'
 
 function status(over: Partial<AgentStatus> = {}): AgentStatus {
   return {
-    key: KEY, convId: 'a', role: 'principal', phase: 'working', tool: null, lastUserText: 'arruma o login', busySinceMs: NOW - 1_000,
+    key: KEY, convId: 'a', role: 'principal', phase: 'working', task: true, tool: null, lastUserText: 'arruma o login', busySinceMs: NOW - 1_000,
     idleSinceMs: null, contextPct: 80, permission: null, error: null, usageExhausted: null, speaking: false, stalledMs: 0, ...over
   }
 }

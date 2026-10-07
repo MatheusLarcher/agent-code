@@ -6,7 +6,6 @@ import { IconPlanning } from '../planning/PlanningIcon'
 import { isPlanningConversation } from '../planning/planningConversation'
 import { isBlankConversation } from '../blankConversation'
 import { CentralRowDot, CentralSidebarItem, type CentralSidebarItemProps } from '../central/CentralSidebarItem'
-import { DeliveriesSidebarItem, type DeliveriesSidebarItemProps } from '../deliveries/DeliveriesSidebarItem'
 
 export interface SidebarProject {
   path: string
@@ -49,8 +48,6 @@ interface Props {
   central?: Omit<CentralSidebarItemProps, 'rail'>
   /** Destinos da Central trabalhando agora: convId → cor (a bolinha na linha). */
   centralColors?: Readonly<Record<string, string>>
-  /** "Entregas": item fixo abaixo da Central, com o contador do que precisa de você. */
-  deliveries?: Omit<DeliveriesSidebarItemProps, 'rail'>
 }
 
 /* ---- tiny inline icons (stroke = currentColor) ---- */
@@ -346,7 +343,6 @@ export function Sidebar(props: Props): JSX.Element {
           </button>
         </div>
         {props.central && <CentralSidebarItem rail {...props.central} />}
-        {props.deliveries && <DeliveriesSidebarItem rail {...props.deliveries} />}
         <button className="rail-btn accent" title="Nova conversa" onClick={props.onNewChat}>
           <IconPlus />
         </button>
@@ -435,11 +431,6 @@ export function Sidebar(props: Props): JSX.Element {
       {props.central && (
         <div className="central-pin">
           <CentralSidebarItem {...props.central} />
-        </div>
-      )}
-      {props.deliveries && (
-        <div className="deliveries-pin">
-          <DeliveriesSidebarItem {...props.deliveries} />
         </div>
       )}
 

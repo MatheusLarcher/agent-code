@@ -1,34 +1,12 @@
-import { useCallback, useState } from 'react'
 import type { Conversation } from '../types'
 import type { NotifyOptions, ToastType } from '../ui/UiProvider'
 import { ipcErrorMessage } from '../ipcError'
 
 /**
- * A tela Entregas aberta ou não. Ela ocupa o lugar do chat (como o painel da
- * Central). Só a TROCA da conversa ativa a fecha sozinha; todo caminho que pode
- * cair na conversa que já é a ativa precisa chamar `hide` — o clique na mesma
- * conversa pela barra, e "Nova conversa", o "+" do projeto/Sandbox e "Novo
- * planejamento" quando reaproveitam a vazia ou a do plano (ver App.tsx).
+ * Abrir a conversa de um envio (o clique no toast e na TV Implantação). A tela
+ * Entregas saiu da tela principal; os envios agora se veem no quadro (a faixa
+ * Próximos prompts) e na TV do escritório.
  */
-export interface DeliveriesNav {
-  open: boolean
-  show: () => void
-  hide: () => void
-}
-
-export function useDeliveriesNav(activeId: string | null): DeliveriesNav {
-  const [open, setOpen] = useState(false)
-  // Ajuste durante o render (sem efeito): a conversa ativa mudou → a tela fecha.
-  const [seenActive, setSeenActive] = useState(activeId)
-  if (seenActive !== activeId) {
-    setSeenActive(activeId)
-    if (open) setOpen(false)
-  }
-  const show = useCallback((): void => setOpen(true), [])
-  const hide = useCallback((): void => setOpen(false), [])
-  return { open, show, hide }
-}
-
 export interface OpenConversationDeps {
   /** As conversas na tela (a ref do App: o estado só chega a ela no próximo render). */
   convsRef: { current: Conversation[] }
