@@ -10,25 +10,37 @@
  *   download?conv=c1       resposta com [[download:…]] (arquivo real em %TEMP%)
  *   central-ask | central-foreign | central-question | central-permission
  *   empty                  sem conversas;  reset   estado inicial
+ *   plan-card?slug=cardapio-site   o Manager cria um card (e avisa planning-changed)
+ *   plan-touch?slug=…      só o aviso planning-changed;  plan-delete?slug=…   apaga o plano
+ *   plan-seed              recria a pasta de projeto com os planos de exemplo
  *   stop | start           desliga/religa a ponte (PC desligado)
  *   other-phone            outro celular toma o lugar (POST /api/pair)
  *   log                    o que o celular mandou (send/transcribe/respostas)
  */
 import { createServer } from 'node:http'
-import { writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { RemoteServer } from '../../src/main/remote/remoteServer'
 import { readOfficeAgentFile } from '../../src/main/officeAgents'
+import { createPlan, planDirPath, saveCard, saveRoteiro } from '../../src/main/planning/planningStore'
 import type { ChatEvent, RemoteConversation, RemoteStatePayload } from '../../src/shared/ipc'
+import { PLANNING_BRIDGE_CONV, type PlanningChangedEvent } from '../../src/shared/planningRemote'
 
 const TOKEN = process.env.PHONE_DEV_TOKEN || 'devtoken'
 const CTL_PORT = Number(process.env.PHONE_DEV_CTL || 8799)
-const WWW = resolve(process.cwd(), 'smartfone-remote', 'www')
+// PHONE_DEV_WWW: servir um build do celular feito fora do www/ versionado (vite build --outDir …).
+const WWW = process.env.PHONE_DEV_WWW ? resolve(process.env.PHONE_DEV_WWW) : resolve(process.cwd(), 'smartfone-remote', 'www')
 const PROJ_A = 'C:\\Projetos\\loja-bolos'
 const PROJ_B = 'C:\\Projetos\\app-financas'
 const DL_FILE = join(tmpdir(), 'relatorio-teste.pdf')
 writeFileSync(DL_FILE, '%PDF-1.4\n% arquivo de teste da ponte do celular\n')
+// Aba Planos: um projeto de verdade numa pasta temporária, com os planos na raiz
+// legada (<proj>/docs/spec — o store sem pasta de dados configurada). O plano real
+// do agent-code entra copiado se existir (PHONE_DEV_PLAN_SRC troca a origem).
+const PROJ_PLAN = join(tmpdir(), 'phone-dev-planos', 'agent-code')
+const PLAN_SRC = process.env.PHONE_DEV_PLAN_SRC || 'D:\\OneDrive\\Documentos\\agent-code\\planning\\agent-code\\plano-20261006-2215'
+const PLAN_DEMO = 'cardapio-site'
 
 type Msg = Record<string, unknown> & { kind: string; id?: string }
 const log: unknown[] = []
@@ -48,6 +60,7 @@ function initialState(): RemoteStatePayload {
     { kind: 'assistant-text', id: 'a-c1-1', text: 'Vou ler a estrutura do projeto primeiro.', final: true },
     { kind: 'tool-use', id: 't-c1-1', name: 'Read', input: { file_path: `${PROJ_A}\\index.html` }, parentToolUseId: null, result: { isError: false, text: '<html>…</html>' } },
     { kind: 'tool-use', id: 't-c1-2', name: 'Edit', input: { file_path: `${PROJ_A}\\index.html`, old_string: '<main>', new_string: '<main>\n  <section id="cardapio">\n  </section>' }, parentToolUseId: null, result: { isError: false, text: 'ok' } },
+    { kind: 'assistant-text', id: 'a-c1-1b', text: 'Agora gero o site para conferir.', final: true },
     { kind: 'tool-use', id: 't-c1-3', name: 'Bash', input: { command: 'npm run build', description: 'Gera o site' }, parentToolUseId: null, result: { isError: true, text: 'Error: falta o arquivo cardapio.json' } },
     { kind: 'assistant-text', id: 'a-c1-2', answer: true, final: true, text: '## Pronto\n\nCriei a **seção de cardápio** com:\n\n- lista de bolos\n- botão de `WhatsApp`\n\n```js\nconst zap = "https://wa.me/55..."\n```\n\n| Bolo | Preço |\n|---|---|\n| Cenoura | R$ 40 |' }
   ]
@@ -64,7 +77,15 @@ function initialState(): RemoteStatePayload {
         tokens: { context: 84_000, output: 12_400, cost: 1.37, contextLimit: 200_000 }
       }),
       conv({ id: 'c2', title: 'Ajustar carrinho', updatedAt: now - 7200_000, messages: [{ kind: 'user', id: 'u-c2-1', text: 'Testa o carrinho', ts: now - 7200_000 }] }),
-      conv({ id: 'c3', title: 'Relatório mensal', cwd: PROJ_B, updatedAt: now - 86400_000, model: 'claude-sonnet-5-5' })
+      conv({ id: 'c3', title: 'Relatório mensal', cwd: PROJ_B, updatedAt: now - 86400_000, model: 'claude-sonnet-5-5' }),
+      // Conversas do Agent Manager (mode 'planning'): o Chat de cada plano.
+      conv({ id: 'pm1', title: 'Planejamento: Cardápio do site', cwd: PROJ_PLAN, mode: 'planning', planningSlug: PLAN_DEMO, updatedAt: now - 600_000, messages: [
+        { kind: 'user', id: 'u-pm1-1', text: 'Quero um cardápio no site com botão de WhatsApp. [[Botão de WhatsApp]] tem que ser verde?', ts: now - 900_000 },
+        { kind: 'assistant-text', id: 'a-pm1-1', answer: true, final: true, text: 'Criei as etapas e os cards. A dúvida da cor está em [[Cor do botão]]; o requisito principal é [[Lista de bolos com preço]] e a decisão [[Dados do cardápio em JSON]].' }
+      ] }),
+      conv({ id: 'pm2', title: 'Planejamento: Melhorias múltiplas', cwd: PROJ_PLAN, mode: 'planning', planningSlug: basename(PLAN_SRC), updatedAt: now - 1_200_000, messages: [
+        { kind: 'assistant-text', id: 'a-pm2-1', answer: true, final: true, text: 'O alcance do celular ficou em [[Alcance do Planejamento no celular]] (opção A) e o pedido em [[Planejamento no celular]].' }
+      ] })
     ],
     skipPerms: false,
     models: [
@@ -78,7 +99,7 @@ function initialState(): RemoteStatePayload {
       five_hour: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0.42, resetsAt: now + 2 * 3600_000 },
       seven_day: { rateLimitType: 'seven_day', status: 'allowed_warning', utilization: 0.86, resetsAt: now + 3 * 86400_000 }
     },
-    projects: [PROJ_A, PROJ_B, 'C:\\Projetos\\sem-conversa']
+    projects: [PROJ_A, PROJ_B, 'C:\\Projetos\\sem-conversa', PROJ_PLAN]
   }
 }
 
@@ -86,7 +107,14 @@ function centralSnapshot(): NonNullable<RemoteConversation['central']> {
   return {
     entries: [
       { kind: 'request', id: 'r1', ts: now - 3600_000, text: 'Cria a seção de cardápio do site', state: 'delivered', notice: { to: 'loja-bolos · Cardápio do site', why: 'fala de site e cardápio', color: '#6f9bd1' }, anchor: { convId: 'c1', msgId: 'u-c1-1' } },
-      { kind: 'reply', id: 'rp1', ts: now - 3500_000, requestId: 'r1', anchor: { convId: 'c1', msgId: 'u-c1-1' }, who: 'loja-bolos · Cardápio do site', color: '#6f9bd1', notes: ['Vou ler a estrutura do projeto primeiro.'], answer: 'Criei a **seção de cardápio**.', activity: { segments: [{ text: 'Read', tone: 'strong' }, { text: ' index.html · ' }, { text: '+3', tone: 'add' }], text: 'Read index.html · Edit +3', count: 3, errors: 1, done: true } }
+      { kind: 'reply', id: 'rp1', ts: now - 3500_000, requestId: 'r1', anchor: { convId: 'c1', msgId: 'u-c1-1' }, who: 'loja-bolos · Cardápio do site', color: '#6f9bd1', notes: ['Vou ler a estrutura do projeto primeiro.'], answer: 'Criei a **seção de cardápio**.', activity: { segments: [{ text: 'Read', tone: 'strong' }, { text: ' index.html · ' }, { text: '+3', tone: 'add' }], text: 'Read index.html · Edit +3', count: 3, errors: 1, done: true } },
+      // PC novo: o mesmo turno com os passos (cada comentário com a sua linha); o de cima é o PC antigo.
+      { kind: 'request', id: 'r2', ts: now - 3400_000, text: 'Confere o cardápio de novo', state: 'delivered', notice: { to: 'loja-bolos · Cardápio do site', why: 'continua', color: '#6f9bd1' }, anchor: { convId: 'c1', msgId: 'u-c1-1' } },
+      { kind: 'reply', id: 'rp2', ts: now - 3300_000, requestId: 'r2', anchor: { convId: 'c1', msgId: 'u-c1-1' }, who: 'loja-bolos · Cardápio do site', color: '#6f9bd1', notes: ['Vou ler a estrutura do projeto primeiro.', 'Agora gero o site para conferir.'], answer: 'Criei a **seção de cardápio**.', activity: { segments: [{ text: 'Leu ' }, { text: 'index.html', tone: 'strong' }], text: 'Leu index.html · editou index.html +3 · rodou o build ✗', count: 3, errors: 1, done: true },
+        steps: [
+          { note: 'Vou ler a estrutura do projeto primeiro.', activity: { segments: [{ text: 'Leu ' }, { text: 'index.html', tone: 'strong' }, { text: ' · editou ' }, { text: 'index.html', tone: 'strong' }, { text: ' ' }, { text: '+3', tone: 'add' }], text: 'Leu index.html · editou index.html +3', count: 2, errors: 0 }, toolIds: ['t-c1-1', 't-c1-2'] },
+          { note: 'Agora gero o site para conferir.', activity: { segments: [{ text: 'Rodou o build' }, { text: ' ' }, { text: '✗', tone: 'bad' }, { text: ' ' }, { text: '· 1 erro', tone: 'bad' }], text: 'Rodou o build ✗ · 1 erro', count: 1, errors: 1 }, toolIds: ['t-c1-3'] }
+        ] }
     ],
     rail: [{ convId: 'c1', project: 'loja-bolos', title: 'Cardápio do site', color: '#6f9bd1', icon: null, sandbox: false }],
     questions: []
@@ -119,6 +147,56 @@ function emit(cid: string, e: ChatEvent): void {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+// ---- Aba Planos ----------------------------------------------------------------------
+
+type Card = Parameters<typeof saveCard>[2]
+const card = (o: Partial<Card> & Pick<Card, 'id' | 'tipo' | 'titulo'>): Card => ({ links: [], rev: 0, corpo: '', ...o })
+
+/** O aviso que o PC manda quando o Manager (ou o vigia) muda um plano. */
+function planChanged(slug: string): void {
+  const event: PlanningChangedEvent = { kind: 'planning-changed', projectCwd: PROJ_PLAN, slug }
+  server.broadcast(PLANNING_BRIDGE_CONV, event as unknown as ChatEvent)
+}
+
+/** Recria a pasta do projeto: o plano real copiado (sem _handoff) e o "Cardápio do site" pelo store. */
+async function seedPlans(): Promise<void> {
+  rmSync(PROJ_PLAN, { recursive: true, force: true })
+  mkdirSync(PROJ_PLAN, { recursive: true })
+  if (existsSync(join(PLAN_SRC, '_roteiro.md'))) {
+    cpSync(PLAN_SRC, join(PROJ_PLAN, 'docs', 'spec', basename(PLAN_SRC)), { recursive: true, filter: (p) => !/[\\/]_handoff([\\/]|$)/.test(p) })
+  }
+  await createPlan(PROJ_PLAN, PLAN_DEMO, 'Cardápio do site')
+  await saveRoteiro(PROJ_PLAN, PLAN_DEMO, { titulo: 'Cardápio do site', etapas: [
+    { id: 'estrutura', titulo: 'Estrutura da página', status: 'concluida', estimativa: 30 },
+    { id: 'cardapio', titulo: 'Lista de bolos e preços', status: 'em_andamento', estimativa: 90 },
+    { id: 'whatsapp', titulo: 'Pedido pelo WhatsApp', status: 'pendente', estimativa: 45 }
+  ] }, 1)
+  const midia = join(planDirPath(PROJ_PLAN, PLAN_DEMO), 'midia')
+  mkdirSync(midia, { recursive: true })
+  copyFileSync(resolve(process.cwd(), 'build', 'icon.png'), join(midia, 'logo.png'))
+  writeFileSync(join(midia, 'briefing.pdf'), '%PDF-1.4\n% briefing de teste\n')
+  const cards: Card[] = [
+    card({ id: 'secao-cardapio', tipo: 'etapa', titulo: 'Seção de cardápio', etapa: 'estrutura', corpo: 'A seção `#cardapio` entra logo depois do topo.' }),
+    card({ id: 'lista-bolos', tipo: 'requisito', titulo: 'Lista de bolos com preço', etapa: 'cardapio', links: ['dados-json'], fonte: 'src/index.html:12', corpo: '## O que o cliente vê\n\n- nome do bolo\n- **preço** em reais\n- foto pequena\n\nOs dados vêm de [[Dados do cardápio em JSON]].' }),
+    card({ id: 'dados-json', tipo: 'decisao', titulo: 'Dados do cardápio em JSON', etapa: 'cardapio', fonte: 'https://developer.mozilla.org/pt-BR/docs/Web/API/Fetch_API', corpo: 'Um `cardapio.json` lido no carregamento: a dona edita sem mexer no HTML.' }),
+    card({ id: 'botao-zap', tipo: 'requisito', titulo: 'Botão de WhatsApp', etapa: 'whatsapp', links: ['cor-botao'], anexos: ['logo.png', 'briefing.pdf'], corpo: 'Botão fixo no canto, abre `wa.me` com o pedido montado. A cor depende de [[Cor do botão]].' }),
+    card({ id: 'cor-botao', tipo: 'ambiguidade', titulo: 'Cor do botão', etapa: 'whatsapp', status: 'aberta', links: ['botao-zap'], corpo: '## O que está ambíguo\n\nVerde (cor do WhatsApp) ou coral (cor da marca)?' }),
+    card({ id: 'fonte-maior', tipo: 'sugestao', titulo: 'Fonte maior no celular', fonte: 'https://web.dev/articles/font-size', corpo: 'Texto do cardápio a 16 px no celular.' }),
+    card({ id: 'nota-fotos', tipo: 'nota', titulo: 'Fotos dos bolos', corpo: 'A dona manda as fotos na sexta.' })
+  ]
+  for (const c of cards) await saveCard(PROJ_PLAN, PLAN_DEMO, c, 0)
+}
+
+let planSeq = 0
+/** O Manager grava um card novo no plano (como ele faria pela conversa) e o PC avisa. */
+async function managerAddsCard(slug: string): Promise<string> {
+  const n = ++planSeq
+  const c = card({ id: `ao-vivo-${n}`, tipo: 'nota', titulo: `Card ao vivo ${n}`, etapa: slug === PLAN_DEMO ? 'cardapio' : undefined, corpo: `Criado pelo Agent Manager às ${new Date().toLocaleTimeString('pt-BR')}.` })
+  await saveCard(PROJ_PLAN, slug, c, 0)
+  planChanged(slug)
+  return c.id
+}
 
 async function agentReply(cid: string, prompt: string, withDownload = false): Promise<void> {
   const c = conv(cid)
@@ -212,6 +290,21 @@ const server = new RemoteServer({
     if (a.type === 'create') state.conversations.push({ id: a.convId, title: 'Nova conversa', cwd: a.cwd, busy: false, connected: false, updatedAt: Date.now(), messages: [], queued: [], model: 'claude-opus-5-5' })
     if (a.type === 'rename') Object.assign(conv(a.convId) ?? {}, { title: a.title })
     if (a.type === 'delete') state.conversations = state.conversations.filter((c) => c.id !== a.convId)
+    if (a.type === 'plan') {
+      // O que o renderer faz com o startOfficePlan: plano novo + conversa do Manager com o pedido.
+      const slug = `plano-celular-${++planSeq}`
+      const title = a.pedido.slice(0, 40) || 'Novo planejamento'
+      const ready = a.cwd === PROJ_PLAN ? createPlan(PROJ_PLAN, slug, title).then(() => undefined) : Promise.resolve()
+      void ready.then(() => {
+        state.conversations.push({ id: a.convId, title: `Planejamento: ${title}`, cwd: a.cwd, busy: false, connected: true, updatedAt: Date.now(), messages: [], queued: [], model: 'claude-opus-5-5', mode: 'planning', planningSlug: slug })
+        publish()
+        if (a.pedido) {
+          ;(conv(a.convId)!.messages as Msg[]).push({ kind: 'user', id: id('u'), text: a.pedido, ts: Date.now() })
+          void agentReply(a.convId, a.pedido)
+        }
+      })
+      return
+    }
     publish()
   },
   transcribe: async (b64, mime) => {
@@ -263,6 +356,15 @@ async function control(action: string, q: URLSearchParams): Promise<unknown> {
     case 'central-foreign': conv('central')?.central?.entries.push({ kind: 'request', id: id('r'), ts: Date.now(), text: 'Pedido feito no outro PC', state: 'asking', foreign: true, ask: { reason: 'low-confidence', options: [{ label: 'outro-projeto · Conversa', icon: null, glyph: 'project', best: true }] } }); break
     case 'central-question': conv('central')?.central?.questions.push({ convId: 'c1', who: 'loja-bolos · Cardápio do site', color: '#6f9bd1', request: { id: id('cq'), toolName: 'AskUserQuestion', input: {}, deadline, questions: [{ header: 'Preço', question: 'Mostrar preços no cardápio?', multiSelect: false, options: [{ label: 'Sim', description: '' }, { label: 'Não', description: '' }] }] } }); break
     case 'central-permission': conv('central')?.central?.questions.push({ convId: 'c1', who: 'loja-bolos · Cardápio do site', color: '#6f9bd1', request: { id: id('cp'), toolName: 'Bash', input: { command: 'npm publish', description: 'Publica o pacote' }, deadline } }); break
+    case 'plan-card': return managerAddsCard(q.get('slug') || PLAN_DEMO)
+    case 'plan-touch': planChanged(q.get('slug') || PLAN_DEMO); return 'ok'
+    case 'plan-delete': {
+      const slug = q.get('slug') || PLAN_DEMO
+      rmSync(planDirPath(PROJ_PLAN, slug), { recursive: true, force: true })
+      planChanged(slug)
+      return `apagado ${slug}`
+    }
+    case 'plan-seed': await seedPlans(); return PROJ_PLAN
     case 'empty': state.conversations = []; state.projects = []; break
     case 'reset': state = initialState(); break
     case 'stop': await server.stop(); return 'ponte desligada'
@@ -280,6 +382,7 @@ async function control(action: string, q: URLSearchParams): Promise<unknown> {
   return 'ok'
 }
 
+await seedPlans()
 await server.start()
 publish()
 const info = server.info()
@@ -295,3 +398,4 @@ console.log(`Ponte de teste: http://${info.ip}:${info.port}  (token ${TOKEN})`)
 console.log(`  cliente:  http://127.0.0.1:${info.port}/app/?token=${TOKEN}`)
 console.log(`  QR (LAN): http://${info.ip}:${info.port}/?token=${TOKEN}`)
 console.log(`  controle: http://127.0.0.1:${CTL_PORT}/ctl/<ação>`)
+console.log(`  planos:   ${PROJ_PLAN}`)

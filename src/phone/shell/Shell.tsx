@@ -1,17 +1,19 @@
 /**
  * O app conectado: a aba ativa e a barra de abas embaixo (Central · Conversas ·
- * Quadro), ao alcance do polegar. A barra respeita a área segura inferior e some
+ * Planos · Escritório · Quadro), ao alcance do polegar. A barra respeita a área segura inferior e some
  * com o teclado aberto. O Escritório entra na fase 2.
  */
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { client, nav, openTab, type Tab } from '../app/runtime'
+import { backToList, client, nav, openTab, type Tab } from '../app/runtime'
 import { CENTRAL_CONV_ID } from '../core/client'
 import { useStore } from '../core/store'
 import { CentralView } from '../central/CentralView'
 import { ChatView } from '../chat/ChatView'
 import { ConversationList } from '../conversations/ConversationList'
+import { PlanningTab } from '../planning/PlanningTab'
 import { Settings } from '../settings/Settings'
 import { Icon, type IconName } from '../ui/icons'
+import { BACK, useBackHandler } from './backButton'
 import { QuadroPlaceholder } from './QuadroPlaceholder'
 import { StatusMenu } from './StatusMenu'
 import { viewport } from './useViewport'
@@ -22,6 +24,7 @@ const OfficeTab = lazy(() => import('../office/OfficeTab').then((m) => ({ defaul
 const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
   { id: 'central', label: 'Central', icon: 'spark' },
   { id: 'conversas', label: 'Conversas', icon: 'chat' },
+  { id: 'planos', label: 'Planos', icon: 'plans' },
   { id: 'escritorio', label: 'Escritório', icon: 'office' },
   { id: 'quadro', label: 'Quadro', icon: 'board' }
 ]
@@ -56,6 +59,8 @@ export function Shell(): JSX.Element {
   const chatOpen = useStore(nav, (s) => s.chatOpen)
   const convId = useStore(client.store, (s) => s.convId)
   const showChat = tab === 'conversas' && chatOpen && !!convId && convId !== CENTRAL_CONV_ID
+  // Voltar no chat: a lista de conversas (o pedido pendente fica esperando na conversa).
+  useBackHandler(BACK.screen, backToList, showChat)
   const [officeSeen, setOfficeSeen] = useState(tab === 'escritorio')
   useEffect(() => {
     if (tab === 'escritorio') setOfficeSeen(true)
@@ -63,7 +68,7 @@ export function Shell(): JSX.Element {
   return (
     <>
       <div className="tab-host">
-        {tab === 'escritorio' ? null : tab === 'central' ? <CentralView /> : tab === 'quadro' ? <QuadroPlaceholder /> : showChat ? <ChatView /> : <ConversationList />}
+        {tab === 'escritorio' ? null : tab === 'central' ? <CentralView /> : tab === 'quadro' ? <QuadroPlaceholder /> : tab === 'planos' ? <PlanningTab /> : showChat ? <ChatView /> : <ConversationList />}
         {/* O 3D fica montado depois da 1ª visita (pausado fora da aba): voltar não recarrega a cena. */}
         {officeSeen ? (
           <Suspense fallback={null}>

@@ -5,6 +5,7 @@ import { deriveOfficeModel } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { UiProvider } from '../ui/UiProvider'
+import { openSteps } from '../components/chatStepsTestkit'
 import { DEMO_APP, DEMO_PAGE_TITLE, DEMO_URL } from './demoDevices'
 import { DEMO_PER_ROOM, DEMO_ROOMS, demoFeed } from './demoFeed'
 import { DEMO_LOOP_MS } from './demoTimeline'
@@ -281,6 +282,7 @@ describe('Office3DWorkspace com o feed de demonstração', () => {
     expect(card.querySelector('.cm-title-conv')?.textContent).toContain('Demo 1.1')
     expect(chat.querySelector('.cm-chat-head')?.textContent).toContain('Chat')
     expect(chat.querySelector('.msg.user .bubble')?.textContent).toContain('desconto percentual')
+    openSteps(chat) // os cartões ficam atrás da linha-resumo da resposta (chat resumido)
     const cards = [...chat.querySelectorAll<HTMLElement>('.tool-card')]
     expect(cards.map((c) => c.querySelector('.tool-name')?.textContent)).toEqual(['Read', 'Edit'])
     const edit = cards[1]

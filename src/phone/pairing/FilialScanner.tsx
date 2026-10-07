@@ -6,12 +6,15 @@
  */
 import { client, nav, toast } from '../app/runtime'
 import { useStore } from '../core/store'
+import { BACK, useBackHandler } from '../shell/backButton'
 import { Scanner } from './Scanner'
 
 export function FilialScanner(): JSX.Element | null {
   const open = useStore(nav, (s) => s.scanOpen)
-  if (!open) return null
   const close = (): void => nav.set({ scanOpen: false })
+  // Voltar fecha o leitor (a câmera para ao desmontar), como o "Cancelar".
+  useBackHandler(BACK.modal, close, open)
+  if (!open) return null
   return (
     <Scanner
       onResult={(cfg) => {

@@ -7,6 +7,7 @@ import { conv, feed } from '../../office/adapter/testFeed'
 import { liveInput, type ToolInputDelta } from '../../office/liveInput'
 import type { UIMessage } from '../../types'
 import { UiProvider } from '../../ui/UiProvider'
+import { openSteps } from '../../components/chatStepsTestkit'
 import { CodeMonitor } from './CodeMonitor'
 
 const CWD = 'C:\\proj\\loja'
@@ -250,6 +251,7 @@ describe('CodeMonitor', () => {
     expect(chat.querySelector('.cm-chat-head')?.textContent).toContain('Chat')
     expect(chat.querySelector('.cm-chat-head')?.textContent).toContain('Agent principal')
     expect(chat.querySelector('.cm-chat-state')?.textContent).toBe('trabalhando')
+    openSteps(chat) // o cartão fica atrás da linha-resumo da resposta (chat resumido)
     expect(chat.querySelector('.tool-card .tool-name')?.textContent).toBe('Edit')
     // Um cabeçalho só: o compacto do painel, sem o do turno.
     expect(chat.querySelector('.o3d-turn-head')).toBeNull()

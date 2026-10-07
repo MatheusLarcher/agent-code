@@ -33,7 +33,7 @@ export interface ConfirmOptions {
   danger?: boolean
 }
 
-interface UiContextValue {
+export interface UiContextValue {
   /** Show a transient toast (top-right, auto-dismiss ~4.5s). `opts.onClick`: the
    *  click on the toast runs it and closes the toast. */
   notify: (tipo: ToastType, msg: string, opts?: NotifyOptions) => void
@@ -41,7 +41,8 @@ interface UiContextValue {
   confirm: (opts: ConfirmOptions) => Promise<boolean>
 }
 
-const UiContext = createContext<UiContextValue | null>(null)
+/** Exportado para outro "app" (o celular) fornecer o seu notify/confirm aos componentes do PC. */
+export const UiContext = createContext<UiContextValue | null>(null)
 
 export function useUI(): UiContextValue {
   const ctx = useContext(UiContext)

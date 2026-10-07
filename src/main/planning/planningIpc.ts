@@ -21,7 +21,7 @@ import { MAX_HANDOFF_ETAPAS } from './handoffFiles'
 import * as realSent from './handoffSent'
 import { HandoffFileName, HandoffSentMarkSchema } from './handoffSent'
 import { discardStaleHandoffs, findStaleHandoffs } from './handoffStale'
-import { notifyPlanningChanged, setPlanningChangeSink } from './planningEvents'
+import { emitPlanningChanged, notifyPlanningChanged, setPlanningChangeSink } from './planningEvents'
 import * as realMedia from './planningMedia'
 import { CARD_TYPES, isValidName, PlanningValidationError, STAGE_STATUSES } from './planningModel'
 import * as realStore from './planningStore'
@@ -224,6 +224,7 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
   const onChange = (change: PlanningChange): void => {
     const msg: PlanningChangedMsg = { projectCwd: change.projectCwd, slug: change.slug }
     deps.send(Channels.planningChanged, msg)
+    emitPlanningChanged(msg) // a ponte do celular (planningBridge.ts)
   }
   const watcher = deps.createWatcher ? deps.createWatcher(onChange) : new PlanningWatcher({ onChange })
   // Mudanças feitas pelo agente (plan_*) são gravações próprias, que o vigia

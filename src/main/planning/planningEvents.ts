@@ -33,6 +33,30 @@ export function setPlanningChangeSink(fn: PlanningChangeSink | null): () => void
   }
 }
 
+const listeners = new Set<PlanningChangeSink>()
+
+/**
+ * Ouvinte extra de TODA mudança que chega à tela — do agente e do vigia (a
+ * ponte do celular: planning-changed no SSE). Devolve a função que o remove.
+ */
+export function onPlanningChanged(fn: PlanningChangeSink): () => void {
+  listeners.add(fn)
+  return () => {
+    listeners.delete(fn)
+  }
+}
+
+/** Repassa uma mudança aos ouvintes de onPlanningChanged (o planningIpc chama); nunca lança. */
+export function emitPlanningChanged(change: PlanningChangeNotice): void {
+  for (const fn of listeners) {
+    try {
+      fn({ projectCwd: change.projectCwd, slug: change.slug })
+    } catch (err) {
+      console.warn('[planning] falha num ouvinte de mudança:', err)
+    }
+  }
+}
+
 /** Avisa a tela; nunca lança (a gravação já aconteceu e não pode "falhar" por isso). */
 export function notifyPlanningChanged(change: PlanningChangeNotice): void {
   const current = sink

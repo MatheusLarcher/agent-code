@@ -19,7 +19,9 @@ import type { PermissionRequest } from '@shared/ipc'
 import {
   CENTRAL_CHOOSE_OPTION_MAX,
   CENTRAL_REPLY_QUOTE_MAX,
+  type CentralActivity,
   type CentralActivitySegment,
+  type CentralReplyStep,
   type CentralAnchor,
   type CentralEntry,
   type CentralOption,
@@ -155,8 +157,8 @@ function requestOf(e: CentralRequestEntry, labelOf: LabelOf, self: string | null
 const isSegment = (s: unknown): s is CentralActivitySegment => !!s && typeof (s as CentralActivitySegment).text === 'string'
 
 /** A linha-resumo como a tela a guardou (já pronta), mais se o turno acabou. */
-function activityOf(e: CentralReplyEntry): RemoteCentralActivity {
-  const a = (e.activity ?? {}) as Partial<CentralReplyEntry['activity']>
+function activityFields(value: unknown): CentralActivity {
+  const a = (value && typeof value === 'object' ? value : {}) as Partial<CentralActivity>
   const segments = (Array.isArray(a.segments) ? a.segments.filter(isSegment) : []).map((s) =>
     s.tone ? { text: s.text, tone: s.tone } : { text: s.text }
   )
@@ -166,15 +168,31 @@ function activityOf(e: CentralReplyEntry): RemoteCentralActivity {
     text: typeof a.text === 'string' ? a.text : segments.map((s) => s.text).join(''),
     count: count(a.count),
     errors: count(a.errors),
-    ...(now ? { now } : {}),
-    done: e.done === true
+    ...(now ? { now } : {})
   }
+}
+
+function activityOf(e: CentralReplyEntry): RemoteCentralActivity {
+  return { ...activityFields(e.activity), done: e.done === true }
+}
+
+/** Os passos prontos (resumo e ids); ausente quando a entrada não tem (dado antigo) — o celular cai no desenho de antes. */
+function stepsOf(e: CentralReplyEntry): CentralReplyStep[] | undefined {
+  if (!Array.isArray(e.steps)) return undefined
+  return e.steps
+    .filter((s): s is CentralReplyStep => !!s && typeof s === 'object')
+    .map((s) => ({
+      ...(typeof s.note === 'string' && s.note ? { note: s.note } : {}),
+      activity: activityFields(s.activity),
+      toolIds: Array.isArray(s.toolIds) ? s.toolIds.filter((id): id is string => typeof id === 'string') : []
+    }))
 }
 
 function replyOf(e: CentralReplyEntry, labelOf: LabelOf, self: string | null | undefined): RemoteCentralEntry | undefined {
   const anchor = anchorOf(e.anchor)
   if (!anchor) return undefined
   const dest = labelOf(anchor.convId)
+  const steps = stepsOf(e)
   return {
     kind: 'reply',
     id: e.id,
@@ -186,6 +204,7 @@ function replyOf(e: CentralReplyEntry, labelOf: LabelOf, self: string | null | u
     notes: Array.isArray(e.notes) ? e.notes.filter((n): n is string => typeof n === 'string') : [],
     ...(typeof e.answer === 'string' ? { answer: e.answer } : {}),
     activity: activityOf(e),
+    ...(steps ? { steps } : {}),
     ...(isForeign(e, self) ? { foreign: true as const } : {})
   }
 }

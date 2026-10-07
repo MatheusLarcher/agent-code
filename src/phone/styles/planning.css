@@ -1,0 +1,117 @@
+/* Aba Planos: lista por projeto, plano em colunas de deslizar (Etapas | Chat), folha do card. Alvos ≥ 44 px. */
+
+/* ---- lista ---- */
+.pl-new {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 46px; margin: 6px 4px 8px; padding: 10px 14px; border-radius: 12px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--accent-soft); color: var(--accent); font-size: 14.5px; font-weight: 650;
+}
+.pl-new:disabled { opacity: 0.5; }
+.pl-new:active { transform: scale(0.98); }
+.pl-row {
+  width: 100%; display: flex; flex-direction: column; align-items: stretch; gap: 5px; text-align: left;
+  min-height: 56px; padding: 10px 10px 10px 12px; border-radius: 11px;
+  background: none; border: none; color: var(--text);
+}
+.pl-row:active { background: var(--bg-3); }
+.pl-row-title { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.pl-row-err { color: var(--err); font-size: 12.5px; }
+.pl-progress { flex: 0 0 auto; width: 44px; height: 5px; border-radius: 999px; background: var(--bg-4); overflow: hidden; }
+.pl-progress > span { display: block; height: 100%; background: var(--ok); border-radius: 999px; }
+.pl-badge {
+  display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; color: var(--muted); background: var(--bg-3); border: 1px solid var(--line);
+}
+.pl-badge.amb { color: var(--err); background: rgba(217, 112, 112, 0.12); border-color: rgba(217, 112, 112, 0.4); }
+.pl-oldpc .btn { margin-top: 6px; }
+
+/* ---- plano aberto ---- */
+.pl-switch {
+  flex: 0 0 auto; display: flex; gap: 4px; margin: 8px 12px 4px; padding: 3px;
+  border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line);
+}
+.pl-switch button {
+  flex: 1 1 0; min-height: 40px; border: none; border-radius: 9px; background: none;
+  color: var(--muted); font-size: 14px; font-weight: 600;
+}
+.pl-switch button.active { background: var(--bg-4); color: var(--text); }
+
+.pl-stages { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.pl-dots { flex: 0 0 auto; display: flex; justify-content: center; flex-wrap: wrap; padding: 0 8px; }
+.pl-dot { min-width: 26px; height: 44px; padding: 0; display: grid; place-items: center; background: none; border: none; }
+.pl-dot > span { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--faint); transition: transform 0.15s; }
+.pl-dot.concluida > span { background: var(--ok); border-color: var(--ok); }
+.pl-dot.em_andamento > span { background: var(--accent); border-color: var(--accent); }
+.pl-dot.loose > span { border-style: dashed; }
+.pl-dot.active > span { transform: scale(1.45); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.pl-cols {
+  flex: 1 1 auto; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none;
+}
+.pl-cols::-webkit-scrollbar { display: none; }
+.pl-col { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; scroll-snap-stop: always; overflow-y: auto; padding: 2px 12px 18px; }
+.pl-col-head { padding: 4px 4px 10px; }
+.pl-col-head.concluida { color: var(--ok); }
+.pl-col-head.em_andamento { color: var(--accent); }
+.pl-col-head.pendente, .pl-col-head.loose { color: var(--faint); }
+.pl-col-title { display: flex; align-items: center; gap: 8px; }
+.pl-col-title h2 { margin: 0; font-size: 16.5px; line-height: 1.3; color: var(--text); }
+.pl-col-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.pl-col-cards { display: flex; flex-direction: column; gap: 8px; }
+
+.pl-card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px; text-align: left; width: 100%;
+  min-height: 56px; padding: 10px 12px; border-radius: 12px;
+  background: var(--bg-2); border: 1px solid var(--line); box-shadow: inset 3px 0 0 var(--c, var(--faint));
+  color: var(--text);
+}
+.pl-card:active { background: var(--bg-3); }
+.pl-card-type { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--c, var(--muted)); }
+.pl-card-title { font-size: 14.5px; font-weight: 600; line-height: 1.35; }
+.pl-card-snippet { font-size: 12.5px; color: var(--muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pl-card-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+
+/* ---- folha do card / novo planejamento (sobre .modal-overlay/.modal-card do chat) ---- */
+.pl-sheet { display: flex; flex-direction: column; max-height: 88%; overflow: hidden; box-shadow: inset 0 3px 0 var(--c, transparent), var(--shadow); }
+.pl-sheet-head { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 10px 8px 4px 16px; }
+.pl-sheet-x { margin-left: auto; min-width: 44px; height: 44px; }
+.pl-sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 16px 12px; }
+.pl-sheet-title { margin: 0 0 6px; font-size: 18px; line-height: 1.3; }
+.pl-sheet-meta { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--muted); margin-bottom: 12px; }
+.pl-fonte { word-break: break-all; }
+.pl-fonte a { color: var(--accent); }
+.pl-fonte code { font-family: var(--mono); font-size: 12px; }
+.pl-sheet-md { font-size: 14.5px; line-height: 1.55; word-break: break-word; }
+.pl-sheet-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.pl-sheet-imgs img { display: block; max-width: 100%; max-height: 280px; border-radius: 10px; border: 1px solid var(--line); }
+.pl-sheet-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.pl-sheet-links { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.pl-sheet-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+.pl-link {
+  display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; text-align: left;
+  border-radius: 10px; border: 1px solid var(--line); background: var(--bg-3); color: var(--c, var(--text)); font-size: 14px;
+}
+.pl-link span { color: var(--text); }
+.pl-sheet-actions { flex: 0 0 auto; padding: 10px 16px calc(var(--sab) + 14px); border-top: 1px solid var(--line-soft); }
+.pl-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 13px; color: var(--muted); }
+.pl-field select, .pl-field textarea {
+  width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 15px;
+}
+.pl-field textarea { resize: vertical; line-height: 1.45; }
+.pl-field select:focus, .pl-field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pl-hint { margin: 0 0 6px; font-size: 12.5px; color: var(--faint); }
+
+/* [[Nome]] de card (Markdown/CardRefText com resolveRef): a pílula na cor do tipo (--pl-ref inline). */
+.pl-card-ref {
+  padding: 0 4px; border-radius: 4px; font-weight: 600;
+  background: color-mix(in srgb, var(--pl-ref) 16%, transparent); color: var(--pl-ref);
+}
+.msg.user .pl-card-ref { background: color-mix(in srgb, var(--pl-ref) 18%, var(--bg-2)); }
+.pl-sheet-md .pl-card-ref { cursor: pointer; padding: 2px 5px; }
+
+/* ---- chat do plano ---- */
+.pl-chat { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }

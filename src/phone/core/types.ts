@@ -84,5 +84,18 @@ export interface SearchResult {
   updatedAt: number
 }
 
+/** Aba Planos: contrato das rotas /api/planning/* e do aviso `planning-changed` (convId PLANNING_BRIDGE_CONV de @shared/planningRemote). */
+export type {
+  PlanningChangedEvent,
+  RemotePlan,
+  RemotePlanCreateRequest,
+  RemotePlanCreateResponse,
+  RemotePlanListResponse,
+  RemotePlanMedia,
+  RemotePlanResponse,
+  RemotePlanSummary,
+  RemotePlanningFailure
+} from '@shared/planningRemote'
+
 /** Tipo de um aviso curto (toast): cada um com a sua cor — sucesso verde, erro vermelho, aviso amarelo. */
 export type ToastTipo = 'sucesso' | 'erro' | 'aviso'

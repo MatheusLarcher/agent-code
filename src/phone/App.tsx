@@ -4,6 +4,7 @@ import { client } from './app/runtime'
 import { useStore } from './core/store'
 import { BlockedScreen, PairingScreen, PairScreen } from './pairing/ConnectScreens'
 import { FilialScanner } from './pairing/FilialScanner'
+import { installBackButton } from './shell/backButton'
 import { Shell } from './shell/Shell'
 import { Toasts } from './shell/Toasts'
 import { useViewport } from './shell/useViewport'
@@ -18,6 +19,7 @@ export function App(): JSX.Element {
     if (started) return
     started = true
     client.start()
+    installBackButton() // só no APK: o voltar do Android navega em vez de fechar
   }, [])
   return (
     <div className="app">

@@ -91,13 +91,17 @@ describe('Prévia do agente ao passar o mouse', () => {
     act(() => void vi.advanceTimersByTime(10))
     const card = screen.getByTestId('office-preview')
     expect(card.querySelector('.o3d-turn-title')?.textContent).toBe('Carrinho no navegador')
-    // As últimas entradas, com os cartões do chat recolhidos (sem corpo) e o aviso das de cima.
-    const tools = [...card.querySelectorAll('.tool-card')]
-    expect(tools).toHaveLength(PREVIEW_MESSAGES)
-    expect(tools.at(-1)?.querySelector('.tool-name')?.textContent).toBe('browser_screenshot')
-    expect(tools.at(-1)?.querySelector('.tool-badge.run')?.textContent).toBe('running…')
-    expect(card.querySelector('.tool-body')).toBeNull()
-    expect(card.querySelector('.load-more-hint')?.textContent).toContain('6 anteriores')
+    // No formato do chat resumido: o pedido e a resposta (sem texto) com a linha-resumo
+    // recolhida, girando com o "agora: …" — os cartões só abrem ao clique (aqui, só leitura).
+    expect(card.querySelector('.msg.user')?.textContent).toContain('confere o carrinho')
+    const line = card.querySelector<HTMLElement>('.chat-step .central-act')
+    expect(line?.classList.contains('running')).toBe(true)
+    expect(line?.querySelector('.central-sum')?.textContent).toBe('Leu 8 arquivos · testou no navegador · agora: testando no navegador…')
+    expect(line?.querySelector('.central-count')?.textContent).toBe('10 ações')
+    expect(card.querySelector('.tool-card')).toBeNull()
+    // Até PREVIEW_MESSAGES linhas: este turno cabe inteiro (sem o aviso das de cima).
+    expect(card.querySelectorAll('.message-list > *').length).toBeLessThanOrEqual(PREVIEW_MESSAGES + 1)
+    expect(card.querySelector('.load-more-hint')).toBeNull()
     // Só leitura e sem pegar o mouse; posição pelo motor (transform), no próximo quadro.
     expect(card.getAttribute('aria-hidden')).toBe('true')
     const anchor = card.parentElement as HTMLElement

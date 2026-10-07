@@ -26,6 +26,11 @@ export interface AllFilesTreeProps {
   onBrowse: (path: string) => void
 }
 
+/** Há como listar as pastas do projeto (o app do PC); no celular não: "Todos os arquivos" some. */
+export function canListProject(): boolean {
+  return typeof window !== 'undefined' && typeof window.api?.projectDir === 'function'
+}
+
 /** O caminho absoluto de um relativo do projeto, na barra do próprio cwd. */
 export function absoluteOf(cwd: string, rel: string): string {
   const sep = cwd.includes('\\') ? '\\' : '/'

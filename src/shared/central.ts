@@ -313,6 +313,30 @@ export interface RemoteCentralQuestion {
   request: PermissionRequest
 }
 
+/* ---- Resumo por resposta (chat-resumo-por-resposta): só campos opcionais ---- */
+
+/**
+ * Uma resposta do agente dentro do turno (o agrupamento do chat, chatSteps.ts):
+ * o comentário dele (ausente = ferramentas antes do 1º texto, ou texto ainda
+ * em streaming), a linha-resumo SÓ das ferramentas daquela resposta e os ids
+ * delas (o clique abre só esses cartões). A resposta final não é passo: fica em `answer`.
+ */
+export interface CentralReplyStep {
+  note?: string
+  activity: CentralActivity
+  toolIds: string[]
+}
+
+export interface CentralReplyEntry {
+  /** Os passos do turno. Ausente em entrada antiga (ou de PC antigo): a tela desenha `notes` + `activity`. */
+  steps?: CentralReplyStep[]
+}
+
+export interface RemoteCentralReply {
+  /** Os passos prontos (resumo e ids). Ausente = PC antigo: o celular desenha `notes` + `activity`. */
+  steps?: CentralReplyStep[]
+}
+
 /** `POST /api/central-choose`: a opção `option` do "Para onde vai?" do pedido `entryId`. */
 export interface RemoteCentralChoose {
   entryId: string

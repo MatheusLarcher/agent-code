@@ -11,6 +11,7 @@ import type {
   CentralAnchor,
   CentralEntry,
   CentralReplyEntry,
+  CentralReplyStep,
   CentralRequestEntry,
   CentralState,
   CentralTarget
@@ -38,6 +39,20 @@ export function clip(text: string, max: number): string {
 /** As 12 últimas notas, cada uma com no máximo 600 caracteres. */
 export function capNotes(notes: readonly string[]): string[] {
   return notes.slice(-MAX_REPLY_NOTES).map((n) => clip(n, NOTE_MAX_CHARS))
+}
+
+/** Quantos passos (os últimos) uma resposta guarda — o mesmo teto dos comentários. */
+export const MAX_REPLY_STEPS = MAX_REPLY_NOTES
+/** Ids de ferramenta guardados por passo, no máximo (a Central é UMA linha do banco). */
+export const MAX_STEP_TOOL_IDS = 60
+
+/** Os 12 últimos passos: comentário cortado como as notas, ids até 60. */
+export function capSteps(steps: readonly CentralReplyStep[]): CentralReplyStep[] {
+  return steps.slice(-MAX_REPLY_STEPS).map((s) => ({
+    ...(s.note !== undefined ? { note: clip(s.note, NOTE_MAX_CHARS) } : {}),
+    activity: s.activity,
+    toolIds: s.toolIds.slice(0, MAX_STEP_TOOL_IDS)
+  }))
 }
 
 export function capAnswer(answer: string | undefined): string | undefined {

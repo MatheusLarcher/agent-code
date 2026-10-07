@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@capacitor/android": "~8.5.2",
+    "@capacitor/app": "~8.1.2",
     "@capacitor/core": "~8.5.2",
     "parakeet-stt": "file:plugins/parakeet-stt"
   },

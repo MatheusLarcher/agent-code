@@ -9,6 +9,7 @@ import { usePcs } from '../app/usePcs'
 import { activePc, pcLabel } from '../core/pcs'
 import { useStore } from '../core/store'
 import { Icon } from '../ui/icons'
+import { BACK, useBackHandler } from './backButton'
 import { FilialList } from './FilialList'
 
 export function StatusPill(): JSX.Element {
@@ -36,8 +37,9 @@ export function StatusMenu(): JSX.Element | null {
   const open = useStore(nav, (s) => s.statusMenuOpen)
   const base = useStore(client.store, (s) => s.base)
   const list = usePcs()
-  if (!open) return null
   const close = (): void => nav.set({ statusMenuOpen: false })
+  useBackHandler(BACK.modal, close, open)
+  if (!open) return null
   return (
     <>
       <div className="scrim" onClick={close} />

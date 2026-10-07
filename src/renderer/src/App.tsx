@@ -2143,6 +2143,8 @@ export function App(): JSX.Element {
           stalledSince: stalledSince[c.id],
           tokens: { context: c.tokens.context, output: c.tokens.output, cost: c.tokens.cost, contextLimit: contextLimitFor(runningModel(c)) },
           permission: permissions[c.id],
+          // Aba Planos do celular: liga a conversa do Agent Manager ao plano (projeto = cwd).
+          ...(isPlanningConversation(c) ? { mode: 'planning' as const, planningSlug: c.planningSlug } : {}),
           // Só na Central: o retrato compacto do celular (central/centralRemote.ts);
           // `self` marca os pedidos do outro PC (o celular não oferece escolha neles).
           ...(isCentralConversation(c) && centralRef.current
@@ -3843,6 +3845,15 @@ export function App(): JSX.Element {
         if (action.type === 'create' && action.convId !== CENTRAL_ID) createConversation(action.cwd, action.convId)
         else if (action.type === 'rename') renameConversation(action.convId, action.title)
         else if (action.type === 'delete') deleteConversation(action.convId)
+        // "+ Novo planejamento" do celular (/api/planning/create): o mesmo startOfficePlan do
+        // Escritório, com a conversa do Manager no id que a ponte devolveu, criada ao fundo.
+        else if (action.type === 'plan')
+          void startOfficePlan(action.cwd, action.pedido, {
+            api: window.api,
+            create: (slug, titulo) => createConversation(action.cwd, action.convId, planningConversationFields(slug, titulo), false),
+            send: (conv, text) => void dispatchRef.current?.(conv, text, text, [], [], []),
+            notify
+          })
       }),
     [renameConversation, deleteConversation]
   )

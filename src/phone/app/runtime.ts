@@ -7,7 +7,7 @@ import { loadLastConv } from '../core/pcs'
 import { createStore } from '../core/store'
 import type { ConvSummary, ToastTipo } from '../core/types'
 
-export type Tab = 'central' | 'conversas' | 'escritorio' | 'quadro'
+export type Tab = 'central' | 'conversas' | 'planos' | 'escritorio' | 'quadro'
 
 export interface NavState {
   tab: Tab
@@ -20,7 +20,7 @@ export interface NavState {
 }
 
 const UI_KEY = 'agent-remote-ui'
-const TABS: Tab[] = ['central', 'conversas', 'escritorio', 'quadro']
+const TABS: Tab[] = ['central', 'conversas', 'planos', 'escritorio', 'quadro']
 
 function loadNav(): NavState {
   let saved: Partial<NavState> = {}

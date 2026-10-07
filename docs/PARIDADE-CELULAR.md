@@ -4,8 +4,9 @@ Meta: o app do celular (`src/phone`, empacotado em `smartfone-remote/`) deve faz
 o app do PC faz. Este documento é o inventário do que já existe e do que falta. Ele **não** é
 um plano fechado: cada item vira tarefa quando for atacado.
 
-Levantamento de 06/10/2026. As rotas da ponte estão em `src/main/remote/remoteServer.ts:339-358`
-e o retrato de conversa enviado ao celular em `src/shared/ipc.ts:2374-2413`.
+Levantamento de 06/10/2026, atualizado em 07/10/2026. As rotas da ponte estão em
+`src/main/remote/remoteServer.ts:343-363` (as de planejamento em `src/main/remote/planningBridge.ts`)
+e o retrato de conversa enviado ao celular em `src/shared/ipc.ts:2460-2503`.
 
 ## Atenção: o 3D do celular é o mesmo código do PC
 
@@ -43,11 +44,11 @@ Legenda: **sim** = já existe · **parcial** = existe em parte · **não** = fal
 | Voz: ouvir (TTS) | parcial (só "Ouvir" na resposta final) | "Ler daqui" |
 | Voz: ditado (STT) | sim (Parakeet no aparelho, PC como reserva) | — |
 | Escritório 3D: cena e agentes | parcial (só visualização) | Ver abaixo |
-| Escritório: monitor de código e chat na tela | parcial (`chat={null}`) | Feed completo de ferramentas, não só a última |
+| Escritório: monitor de código e chat na tela | parcial (`chat={null}`; o monitor abre sem tela preta — `PhoneUiProvider`/`OfficeBoundary`) | Feed completo de ferramentas, não só a última; "Todos os arquivos" e o botão direito (Abrir arquivo/pasta) — a ponte não lê pastas nem tem `revealFile` |
 | Escritório: TVs (Aprovar / Pedir ajuste), plano | não | `onSendToConversation`, `onStartPlanning` e rota de envio pela TV |
 | Escritório: sala de reunião, chamados, quadro, memória | não | O celular ignora `office-call*` (`src/phone/core/client.ts:24`); `board: null`; subagentes, Vigia/PO/Memorista e contas vazios em `phoneFeed.ts` |
 | Quadro, tarefas, subagentes | não (aba "em breve") | Rotas de leitura e de mover cartões |
-| Planejamento (canvas, Handoff, Agent Manager) | não | Rotas novas |
+| Planejamento (canvas, Handoff, Agent Manager) | parcial (aba Planos: lista por projeto, etapas e cards em colunas, folha do card com imagens, chat do Agent Manager, "Comentar no chat", novo planejamento; ao vivo por `planning-changed`) | Só no PC: editar/apagar card, marcar etapa, enviar para implementação (Handoff), canvas com zoom/arrasto, ligar cards, anexar mídia, PDF do fluxo. No celular, mudança de card é pedida ao Manager pela conversa; a ponte não tem rota de escrita |
 | Entregas | parcial (só "Baixar" nos entregáveis) | Tela de Entregas |
 | Memória (lista, propostas) | não | Rotas de leitura/proposta |
 | Configurações (dados, PostgreSQL, Android SDK, contas, provedores) | não (só Permitir tudo, Uso, Voz, Filiais) | Rotas por seção. O cofre **não** deve passar pela ponte |
@@ -62,7 +63,8 @@ Legenda: **sim** = já existe · **parcial** = existe em parte · **não** = fal
 1. **Ganhos rápidos** (a ponte já manda os dados): ações da fila, chamados do escritório e
    notificação no Android.
 2. **Composer**: `@`/`/`, rascunho, citar e "Ler daqui".
-3. **Quadro e Planejamento** (handoff 2 em `CONTINUIDADE-2026-10-05-celular.md`).
+3. **Quadro e o resto do Planejamento** — edição de card, etapa e Handoff (handoff 2 em
+   `CONTINUIDADE-2026-10-05-celular.md`).
 4. **Escritório completo**: TVs, sala de reunião, quadro e memória no 3D (handoff 4).
 5. **Telas remotas**: navegador e preview do Android por captura/stream.
 6. **Configurações** restantes, sem o cofre.

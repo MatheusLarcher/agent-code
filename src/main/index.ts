@@ -30,6 +30,7 @@ import { AppRestartCoordinator } from './appRestart'
 import { configureAppRestart, appRestart } from './appRestartRuntime'
 import { armAppRelauncher } from './appRelauncher'
 import { RemoteServer } from './remote/remoteServer'
+import { attachPlanningEvents } from './remote/planningBridge'
 import { McpInbound, type LiveSessionState, type McpSend } from './mcpInbound/mcpInbound'
 import { MCP_NO_CONTINUE_WARNING, NO_LIVE_SESSION } from '../shared/mcpInbound'
 import type { AccountSwitchDeps } from './accounts/switchDeps'
@@ -994,6 +995,8 @@ const remote = new RemoteServer({
   tts: (text, opts) => speak(text, { treat: !opts?.treated }),
   ttsParts: (text) => speechParts(text)
 })
+// Planos no celular: toda mudança de planejamento (agente e vigia) vira `planning-changed` no SSE.
+attachPlanningEvents(remote)
 
 // Outbound relay to the VPS broker: lets a phone reach this PC from ANY network
 // (not just the LAN) without opening a port or sharing a VPS password — routing is

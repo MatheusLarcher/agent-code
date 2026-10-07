@@ -10,7 +10,7 @@
 import type { CentralAnchor, CentralEntry, CentralReplyEntry, CentralState } from '@shared/central'
 import type { Conversation, UIMessage } from '../types'
 import { mirrorTurn } from './centralMirror'
-import { capAnswer, capNotes, isOwnEntry, removeReplyOf, replyIdFor, upsertReply } from './centralEntries'
+import { capAnswer, capNotes, capSteps, isOwnEntry, removeReplyOf, replyIdFor, upsertReply } from './centralEntries'
 
 export interface MirrorInput {
   entries: readonly CentralEntry[]
@@ -45,7 +45,7 @@ function lastTurnAnchor(messages: readonly UIMessage[]): string | undefined {
 
 /** O que a tela mostra de uma resposta (para não regravar a Central à toa). */
 const shown = (r: CentralReplyEntry): string =>
-  JSON.stringify([r.anchor, r.notes, r.answer ?? null, r.activity, r.done, r.device ?? null])
+  JSON.stringify([r.anchor, r.notes, r.answer ?? null, r.activity, r.done, r.device ?? null, r.steps ?? null])
 
 export function planMirror(input: MirrorInput): MirrorPlan {
   const { entries, convs, busy, self, now } = input
@@ -88,6 +88,7 @@ export function planMirror(input: MirrorInput): MirrorPlan {
       notes: capNotes(turn.notes),
       ...(answer !== undefined ? { answer } : {}),
       activity: turn.activity,
+      steps: capSteps(turn.steps),
       done: turn.done,
       ...(device ? { device } : {})
     }

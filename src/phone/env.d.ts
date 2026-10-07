@@ -5,7 +5,7 @@ import type * as React from 'react'
  *  injetada pelo Android, sem @capacitor/core no bundle) e o download do MainActivity. */
 export interface CapacitorBridge {
   nativePromise?: (plugin: string, method: string, options?: unknown) => Promise<unknown>
-  addListener?: (plugin: string, event: string, cb: (data: unknown) => void) => unknown
+  addListener?: (plugin: string, event: string, cb: (data: unknown, err?: unknown) => void) => unknown
   PluginHeaders?: Array<{ name?: string }>
   isNativePlatform?: () => boolean
   getPlatform?: () => string

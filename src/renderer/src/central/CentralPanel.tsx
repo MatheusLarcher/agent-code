@@ -5,18 +5,21 @@
  * onde vai?", respostas com a linha-resumo, perguntas dos destinos) e o MESMO
  * Composer do chat. Tudo vem do controller (useCentral.ts); a tela não decide
  * nada. Sem seletor de modelo, tokens, plano ou recuperação: a Central encaminha.
+ * O feed pagina como o chat (useScrollWindow): as últimas entradas, mais ao chegar
+ * perto do topo, sem pular; pendentes sempre no fim.
  *
  * Cores: cada destino na sua (`--c`); o laranja é só da Central (orbe, enviar,
  * opção mais provável). Classes que o office3d.css lê: central-head,
  * central-head-rail, central-hint, central-feed, central-bubble.
  */
-import { useCallback, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
 import type { FileAttachment, FileRefAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
 import { CENTRAL_ID, CENTRAL_TITLE, type CentralEntry, type CentralReplyQuote } from '@shared/central'
 import { replyQuoteOf } from './centralReplyTo'
 import { ReplyMenu, ReplyQuote } from './CentralReplyUi'
 import './centralReply.css'
 import { Composer, type RefProject } from '../components/Composer'
+import { loadMoreText, useScrollWindow } from '../components/useScrollWindow'
 import type { DraftMedia } from '../inlineMedia/inlineAttachments'
 import type { Conversation } from '../types'
 import type { CentralController } from './useCentral'
@@ -68,12 +71,19 @@ const STICK_PX = 80
 export function CentralPanel(props: CentralPanelProps): JSX.Element {
   const c = props.controller
   const { entries, pending } = c
-  const injected = injectedIds(entries)
+  const injected = useMemo(() => injectedIds(entries), [entries])
   const open = (convId: string, msgId?: string): void => c.openDestination(convId, msgId)
   const openQuestion = props.onOpenQuestion ?? ((convId: string) => c.openDestination(convId))
 
   const feedRef = useRef<HTMLDivElement>(null)
   const atBottom = useRef(true)
+  // Como o chat: só as últimas entradas (a mesma página), +1 página perto do topo sem
+  // pular a leitura. Pendentes ficam fora da janela — sempre à vista no fim.
+  const shownEntries = useMemo(() => entries.filter((e) => !(e.kind === 'reply' && injected.has(e.requestId))), [entries, injected])
+  const win = useScrollWindow(feedRef, shownEntries.length, {
+    isAtEnd: () => atBottom.current,
+    anchorSelector: '[data-entry-id], .central-ask, .central-answered'
+  })
   const lastRequest = [...entries].reverse().find((e) => e.kind === 'request')?.id
   const seenRequest = useRef(lastRequest)
   // Pedido novo do usuário: desce sempre. O resto (espelho, perguntas): só se já estava no fim.
@@ -134,12 +144,14 @@ export function CentralPanel(props: CentralPanelProps): JSX.Element {
         onScroll={(e) => {
           const el = e.currentTarget
           atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX
+          win.onScrollTop()
         }}
       >
         {entries.length === 0 && pending.length === 0 && (
           <p className="central-empty">Diga o que precisa: a Central leva para a conversa certa.</p>
         )}
-        {entries.map((e) => {
+        {win.hasOlder && <div className="load-more-hint">{loadMoreText(win.start)}</div>}
+        {shownEntries.slice(win.start).map((e) => {
           if (e.kind === 'request') {
             return (
               <CentralRequest
@@ -155,8 +167,7 @@ export function CentralPanel(props: CentralPanelProps): JSX.Element {
             )
           }
           if (e.kind === 'reply') {
-            // A1: ajuste injetado não tem resposta própria.
-            if (injected.has(e.requestId)) return null
+            // A1: ajuste injetado não tem resposta própria (já fora de `shownEntries`).
             return <CentralReply key={e.id} reply={e} labelFor={c.labelFor} turnTools={c.turnTools} onOpen={open} onReply={replyFor(e)} />
           }
           return <CentralAnswered key={e.id} entry={e} labelFor={c.labelFor} />

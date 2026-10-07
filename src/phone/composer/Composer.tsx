@@ -21,7 +21,13 @@ import { useDictation } from './useDictation'
 
 const MAX_INPUT_H = 140
 
-export function Composer(): JSX.Element {
+/** Texto posto no campo por quem monta o Composer (ex.: "Comentar no chat" dos Planos): entra a cada `nonce` novo. */
+export interface ComposerDraft {
+  text: string
+  nonce: number
+}
+
+export function Composer({ draft }: { draft?: ComposerDraft | null } = {}): JSX.Element {
   const convId = useStore(client.store, (s) => s.convId)
   const central = convId === CENTRAL_CONV_ID
   const replyTo = useStore(centralUi, (s) => s.replyTo)
@@ -53,6 +59,22 @@ export function Composer(): JSX.Element {
   useEffect(() => {
     if (!recordingBar) grow()
   }, [recordingBar])
+
+  // Texto injetado: vai depois do que já foi digitado, com o foco no campo e o cursor no fim.
+  const draftNonce = draft?.nonce
+  useEffect(() => {
+    if (!draft?.text) return
+    const add = draft.text
+    setText((cur) => (cur.trim() ? `${cur.replace(/\s+$/, '')} ${add}` : add))
+    requestAnimationFrame(() => {
+      grow()
+      const t = inputRef.current
+      if (!t) return
+      t.focus()
+      t.setSelectionRange(t.value.length, t.value.length)
+    })
+    // Só o nonce decide (o mesmo texto pedido de novo entra de novo).
+  }, [draftNonce])
 
   const addFiles = (list: File[]): void => {
     const imgs = list.filter(isImage)

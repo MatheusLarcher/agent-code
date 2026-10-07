@@ -4,6 +4,7 @@ import { isApk } from '../app/platform'
 import { client, nav } from '../app/runtime'
 import { fmtReset, fmtTokens, USAGE_LABELS } from '../core/format'
 import { useStore } from '../core/store'
+import { BACK, useBackHandler } from '../shell/backButton'
 import { Icon } from '../ui/icons'
 import { ConexaoCard, FiliaisCard } from './FiliaisCard'
 import { VoiceCard } from './VoiceCard'
@@ -52,7 +53,8 @@ export function Settings(): JSX.Element | null {
   const skip = useStore(client.store, (s) => s.skipPerms)
   const close = (): void => nav.set({ settingsOpen: false })
 
-  // Voltar do Android fecha as Configurações em vez de sair do app.
+  // Voltar do Android (e Esc, no navegador) fecha as Configurações em vez de sair do app.
+  useBackHandler(BACK.modal, close, open)
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent): void => {

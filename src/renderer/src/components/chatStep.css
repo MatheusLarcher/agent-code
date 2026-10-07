@@ -1,0 +1,17 @@
+/* Uma resposta do chat resumido (ChatStep.tsx): o texto e a linha-resumo logo embaixo.
+   O visual da linha e dos cartões abertos é o da Central (.central-act, .central-tools,
+   centralFeed.css); aqui só a moldura. O spinner gira na cor do app (--accent). */
+.chat-step {
+  --c: var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.chat-step > .central-act {
+  margin-top: 0;
+}
+.chat-step > .central-tools {
+  margin: 0;
+}

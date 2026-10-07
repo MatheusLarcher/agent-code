@@ -5,13 +5,18 @@ import { useKeepEndOnResize } from './MessageListAnchor'
 import { useChatDisplay } from './chatDisplay'
 import { makeRefResolver } from '../planning/cardRefs'
 import type { QuoteListApi } from './quoteComment/quoteBlocks'
-import { ChatRow, lastAnswerTsId, rowKey, type ChatRowContext, type TtsControls } from './ChatRows'
+import { ChatRow, lastAnswerTsId, type ChatRowContext, type TtsControls } from './ChatRows'
+import { ChatStepRow } from './ChatStep'
+import { buildChatRows, rowIndexOfUser } from './chatSteps'
+import { loadMoreText, useScrollWindow, WINDOW_PAGE } from './useScrollWindow'
 
 export type { TtsControls } from './ChatRows'
 
-/** How many messages to render at first, and to add each time the user scrolls
- *  to the top. Keeps very long conversations cheap to render (Gemini-style). */
-const PAGE = 40
+/** How many ROWS to render at first, and to add each time the user scrolls to
+ *  the top (chatSteps: a resposta inteira — texto + linha-resumo — conta uma,
+ *  então nunca é cortada ao meio no topo). Keeps very long conversations cheap
+ *  to render (Gemini-style). */
+const PAGE = WINDOW_PAGE
 
 export function MessageList({
   messages,
@@ -39,8 +44,6 @@ export function MessageList({
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(PAGE)
-  const [knownTotal, setKnownTotal] = useState(messages.length)
   // Whether the "jump to bottom" button is shown (user scrolled up from the end).
   const [showJump, setShowJump] = useState(false)
   const [scrollRatio, setScrollRatio] = useState(1)
@@ -59,11 +62,24 @@ export function MessageList({
   const { cardRefs, planDir } = useChatDisplay()
   const resolveRef = useMemo(() => (cardRefs?.length ? makeRefResolver(cardRefs) : null), [cardRefs])
 
-  // Refs coordinating the two scroll behaviors below.
   const atBottom = useRef(true) // was the user pinned to the bottom?
-  const loadingOlder = useRef(false) // are we prepending older messages right now?
-  const loadAnchor = useRef<{ node: HTMLElement; top: number } | null>(null)
   const first = useRef(true)
+
+  // A conversa em linhas (chatSteps): usuário, cada resposta (texto + linha-resumo), notas.
+  const rows = useMemo(() => buildChatRows(messages, { busy }), [messages, busy])
+  // Only the last rows are rendered; near the top, one more page with the same
+  // row kept in place (useScrollWindow). While reading history, rows arriving at
+  // the end don't move the window start.
+  const total = rows.length
+  const win = useScrollWindow(scrollRef, total, {
+    isAtEnd: () => atBottom.current,
+    anchorSelector: '.msg, .tool-card, .chat-step',
+    page: PAGE
+  })
+  const { loadingOlder, showAtLeast } = win
+  const startIdx = win.start
+  const shown = rows.slice(startIdx)
+  const hasOlder = win.hasOlder
 
   // The footer (composer, "Última resposta"…) grew or shrank → the list box
   // changed size: stay pinned to the end if the user was there ("there" = the
@@ -74,43 +90,14 @@ export function MessageList({
     () => atBottom.current && !loadingOlder.current && !(effectiveTarget != null && effectiveSeq !== lastSeq.current)
   )
 
-  // Only the last `visible` messages are actually rendered.
-  const total = messages.length
-  // While the user is reading history, keep the current window start fixed when
-  // live events append at the end. Adjusting state during render makes React
-  // restart this render before committing, so the first visible row is never
-  // briefly removed from the DOM.
-  if (total !== knownTotal) {
-    const added = total - knownTotal
-    setKnownTotal(total)
-    if (added > 0 && !atBottom.current) setVisible((v) => v + added)
-  }
-  const startIdx = Math.max(0, total - visible)
-  const shown = messages.slice(startIdx)
-  const hasOlder = startIdx > 0
-
   // Only the most recent answer with a finish time shows the date/time footer.
   const lastTsId = lastAnswerTsId(messages)
-  // Estável entre renders (ChatRow é memo): um evento que não mexe em nada disto
-  // re-renderiza só a linha cuja mensagem mudou.
+  // Estável entre renders (ChatRow e ChatStepRow são memo): um evento que não mexe
+  // em nada disto re-renderiza só a linha cuja mensagem mudou.
   const rowCtx = useMemo<ChatRowContext>(
     () => ({ resolveRef, planDir, lastTsId, busy, onRetry, tts, quote, onUseAccount }),
     [resolveRef, planDir, lastTsId, busy, onRetry, tts, quote, onUseAccount]
   )
-
-  // After older messages are prepended, keep the exact same DOM row at the same
-  // screen position. A global scrollHeight delta is incorrect when streaming or
-  // the typing/banner state changes below/around the viewport in the same commit.
-  useLayoutEffect(() => {
-    if (!loadingOlder.current) return
-    const el = scrollRef.current
-    const anchor = loadAnchor.current
-    if (el && anchor?.node.isConnected) {
-      el.scrollTop += anchor.node.getBoundingClientRect().top - anchor.top
-    }
-    loadAnchor.current = null
-    loadingOlder.current = false
-  }, [visible])
 
   // New/updated messages: jump to bottom on first paint, then only when the
   // user is already near the bottom (so reading history isn't interrupted).
@@ -130,11 +117,10 @@ export function MessageList({
   // then scroll it to the center and flash it once.
   useEffect(() => {
     if (!pendingScroll || !effectiveTarget) return
-    const idx = messages.findIndex((m) => m.kind === 'user' && m.id === effectiveTarget)
+    const idx = rowIndexOfUser(rows, effectiveTarget)
     if (idx < 0) return
-    const needed = total - idx + 4 // a few messages of context below it
-    setVisible((v) => (v < needed ? needed : v))
-  }, [pendingScroll, effectiveTarget, effectiveSeq, messages, total])
+    showAtLeast(total - idx + 4) // a few rows of context below it
+  }, [pendingScroll, effectiveTarget, effectiveSeq, rows, total, showAtLeast])
 
   useLayoutEffect(() => {
     if (!pendingScroll || !effectiveTarget) return
@@ -146,7 +132,7 @@ export function MessageList({
     window.setTimeout(() => el.classList.remove('msg-flash'), 2200)
     lastSeq.current = effectiveSeq ?? -1
     if (mapScroll?.id === effectiveTarget) setMapScroll(null)
-  }, [pendingScroll, effectiveTarget, effectiveSeq, visible, messages, mapScroll])
+  }, [pendingScroll, effectiveTarget, effectiveSeq, startIdx, messages, mapScroll])
 
   const onScroll = (): void => {
     const el = scrollRef.current
@@ -182,14 +168,7 @@ export function MessageList({
     }
     setActiveMid((v) => (v === bestId ? v : bestId))
     // Near the top with more to show → load another page, keeping position.
-    if (el.scrollTop < 80 && hasOlder && !loadingOlder.current) {
-      const anchor = Array.from(el.children).find(
-        (node): node is HTMLElement => node instanceof HTMLElement && node.matches('.msg, .tool-card')
-      )
-      loadAnchor.current = anchor ? { node: anchor, top: anchor.getBoundingClientRect().top } : null
-      loadingOlder.current = true
-      setVisible((v) => v + PAGE)
-    }
+    win.onScrollTop()
   }
 
   const jumpToBottom = (): void => {
@@ -202,12 +181,10 @@ export function MessageList({
     <div className="message-list-wrap">
     <QuestionMap messages={messages} scrollRatio={scrollRatio} activeId={activeMid} onSelect={(id) => setMapScroll({ id, seq: Date.now() })} />
     <div className="message-list" ref={scrollRef} onScroll={onScroll}>
-      {hasOlder && (
-        <div className="load-more-hint">↑ Role para cima para carregar mais ({startIdx} anteriores)</div>
+      {hasOlder && <div className="load-more-hint">{loadMoreText(startIdx)}</div>}
+      {shown.map((r) =>
+        r.type === 'step' ? <ChatStepRow key={r.key} step={r} ctx={rowCtx} /> : <ChatRow key={r.key} m={r.msg} ctx={rowCtx} />
       )}
-      {shown.map((m, i) => (
-        <ChatRow key={rowKey(m, startIdx + i)} m={m} ctx={rowCtx} />
-      ))}
       {busy && (
         <div className="msg assistant">
           <div className="bubble typing">

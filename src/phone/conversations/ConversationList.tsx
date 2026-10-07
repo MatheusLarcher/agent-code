@@ -13,6 +13,7 @@ import { createStore, useStore } from '../core/store'
 import type { ConvSummary, SearchResult } from '../core/types'
 import { ReconnectBar } from '../chat/ChatBars'
 import { centralSnapshot, tint } from '../central/centralActions'
+import { BACK, useBackHandler } from '../shell/backButton'
 import { StatusPill } from '../shell/StatusMenu'
 import { CollapsibleGroup } from '../ui/Collapsible'
 import { Icon } from '../ui/icons'
@@ -57,6 +58,15 @@ export function ConversationList(): JSX.Element {
   const open = useStore(openProjects, (s) => s.open)
   const groups = useMemo(() => groupByProject(conversations, projects), [conversations, projects])
   const latestQuery = useRef('')
+  // Voltar fecha o menu da conversa (e o renomear dentro dele), sem salvar.
+  useBackHandler(
+    BACK.modal,
+    () => {
+      setMenu(null)
+      setRenaming(null)
+    },
+    menu !== null
+  )
 
   useEffect(() => {
     const q = query.trim()

@@ -6,6 +6,10 @@
  *
  * Toque: arrastar move, dois dedos dão zoom e giram, toque no agente abre o
  * monitor dele; a faixa de baixo leva ao chat da conversa escolhida.
+ *
+ * Os componentes do PC montados aqui pedem o `UiContext` (PhoneUiProvider) e o
+ * `window.api` (bridgeApi.ts); qualquer falha vira aviso com "Voltar"
+ * (OfficeBoundary), nunca a tela preta.
  */
 import { useEffect, useMemo, useState } from 'react'
 import { Office3DWorkspace } from '@renderer/office3d/Office3DWorkspace'
@@ -13,33 +17,38 @@ import { client, openConversation } from '../app/runtime'
 import { CENTRAL_CONV_ID } from '../core/client'
 import { useStore } from '../core/store'
 import { ReconnectBar } from '../chat/ChatBars'
+import { BACK, useBackHandler } from '../shell/backButton'
 import { StatusPill } from '../shell/StatusMenu'
 import { Icon } from '../ui/icons'
+import { installBridgeApi } from './bridgeApi'
+import { OfficeBoundary } from './OfficeBoundary'
 import { PhoneOfficeFeed } from './phoneFeed'
+import { PhoneUiProvider } from './PhoneUiProvider'
 import '../styles/office.css'
 
-type AgentFileApi = { officeAgentFile?: (name: string) => Promise<Uint8Array | null> }
-
-/** O carregador dos modelos do motor (agentModels.ts) lê `window.api.officeAgentFile`: no celular, vem da ponte. */
-function installAgentFiles(): void {
-  const w = window as unknown as { api?: AgentFileApi }
-  if (w.api?.officeAgentFile) return
-  w.api = {
-    ...(w.api ?? {}),
-    officeAgentFile: async (name) => {
-      try {
-        const res = await fetch(client.url(`/api/office-agent?name=${encodeURIComponent(name)}`))
-        return res.ok ? new Uint8Array(await res.arrayBuffer()) : null
-      } catch {
-        return null
-      }
-    }
+/**
+ * Um Esc sintético, como a tecla no PC (alvo no body: as capturas da janela — menu,
+ * cartão — vêm antes do motor). Consumido = alguém deu preventDefault ou parou a
+ * propagação antes de chegar ao fim (o nosso ouvinte, o último da janela).
+ */
+export function escapeOffice(): boolean {
+  let reached = false
+  const mark = (): void => {
+    reached = true
   }
+  window.addEventListener('keydown', mark)
+  const ev = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  try {
+    document.body.dispatchEvent(ev)
+  } finally {
+    window.removeEventListener('keydown', mark)
+  }
+  return ev.defaultPrevented || !reached
 }
 
 export function OfficeTab({ active }: { active: boolean }): JSX.Element {
   const feed = useMemo(() => {
-    installAgentFiles()
+    installBridgeApi(client)
     return new PhoneOfficeFeed(client)
   }, [])
   useEffect(() => () => feed.dispose(), [feed])
@@ -47,6 +56,17 @@ export function OfficeTab({ active }: { active: boolean }): JSX.Element {
   // A conversa escolhida no 3D (toque no agente): a faixa de baixo abre o chat dela.
   const [picked, setPicked] = useState<string | null>(null)
   const conv = useStore(client.store, (s) => s.conversations.find((c) => c.id === picked) ?? null)
+  // Voltar: primeiro o que está aberto no 3D (o mesmo Esc do PC — menu do monitor, cartão do
+  // kanban e, por fim, a tela focada com engine.leaveFocus, como o ×); depois a faixa do agente.
+  useBackHandler(
+    BACK.focus,
+    () => {
+      if (escapeOffice()) return
+      if (!picked) return false
+      setPicked(null)
+    },
+    active
+  )
 
   return (
     <div className="tab-view office-tab" hidden={!active}>
@@ -56,13 +76,17 @@ export function OfficeTab({ active }: { active: boolean }): JSX.Element {
       </header>
       <ReconnectBar />
       <div className="office-host">
-        <Office3DWorkspace
-          active={active}
-          chat={null}
-          onOpenConversation={(id) => setPicked(id === CENTRAL_CONV_ID ? null : id)}
-          onFocusRequest={(id) => openConversation(id)}
-          engineOptions={engineOptions}
-        />
+        <PhoneUiProvider>
+          <OfficeBoundary>
+            <Office3DWorkspace
+              active={active}
+              chat={null}
+              onOpenConversation={(id) => setPicked(id === CENTRAL_CONV_ID ? null : id)}
+              onFocusRequest={(id) => openConversation(id)}
+              engineOptions={engineOptions}
+            />
+          </OfficeBoundary>
+        </PhoneUiProvider>
         {conv ? (
           <div className="office-pick">
             <button type="button" className="office-pick-open" onClick={() => openConversation(conv.id)}>

@@ -12,6 +12,7 @@ import type { OfficeCharacterModel } from '../../office/adapter/model'
 import { conv, feed } from '../../office/adapter/testFeed'
 import type { UIMessage } from '../../types'
 import { UiProvider } from '../../ui/UiProvider'
+import { openSteps } from '../../components/chatStepsTestkit'
 import { CodeMonitor } from './CodeMonitor'
 import { PreviewPane, RELOAD_MS } from './PreviewPane'
 
@@ -113,6 +114,7 @@ describe('CodeMonitor — a Prévia do HTML do Agent', () => {
     fireEvent.click(codeTab())
     fireEvent.click(eye()!)
     expect(await screen.findByTestId('monitor-preview-iframe')).toBeTruthy()
+    openSteps(screen.getByTestId('office-screen-chat')) // os cartões ficam atrás da linha-resumo (chat resumido)
     const cards = [...screen.getByTestId('office-screen-chat').querySelectorAll<HTMLElement>('.tool-card')]
     fireEvent.click(within(cards.find((c) => c.textContent?.includes('a.ts'))!).getByTitle('Abrir no editor'))
     expect(screen.getByRole('tab', { name: /^a\.ts, / }).getAttribute('aria-selected')).toBe('true')
@@ -150,6 +152,7 @@ describe('CodeMonitor — a Prévia do HTML do Agent', () => {
 
   it('o cartão do Write de um .html no Chat abre o código e a prévia, com a prévia à vista', async () => {
     render(ui(feedOf([ask, writeHtml(), editTs(), closed()])))
+    openSteps(screen.getByTestId('office-screen-chat')) // os cartões ficam atrás da linha-resumo (chat resumido)
     const card = [...screen.getByTestId('office-screen-chat').querySelectorAll<HTMLElement>('.tool-card')].find((c) => c.textContent?.includes('pagina.html'))!
     fireEvent.click(within(card).getByTitle('Abrir no editor'))
     expect(pageTab().getAttribute('aria-selected')).toBe('true')

@@ -9,6 +9,7 @@ import type { OfficeCharacterModel } from '../../office/adapter/model'
 import { conv, feed } from '../../office/adapter/testFeed'
 import type { UIMessage } from '../../types'
 import { UiProvider } from '../../ui/UiProvider'
+import { openSteps } from '../../components/chatStepsTestkit'
 import { CodeMonitor } from './CodeMonitor'
 import { FLASH_MS } from './EditorPane'
 
@@ -123,6 +124,7 @@ describe('CodeMonitor — o Chat à direita do editor', () => {
 
   it('cartão de arquivo: o Read abre a aba de prévia, o Edit abre o diff (deixa de seguir o Agent) e as linhas mudadas piscam; a ▸ e o Bash só expandem', async () => {
     render(ui(feedOf([ask, readB(), editA(), bash()])))
+    openSteps(pane()) // os cartões ficam atrás da linha-resumo da resposta (chat resumido)
     const [read, edit, sh] = [...pane().querySelectorAll<HTMLElement>('.tool-card')]
     fireEvent.click(within(read).getByTitle('Abrir no editor'))
     const readTab = screen.getByRole('tab', { name: 'b.ts, lido' })
@@ -148,6 +150,7 @@ describe('CodeMonitor — o Chat à direita do editor', () => {
     vi.useFakeTimers()
     render(ui(feedOf([ask, readB(), editA(), bash()])))
     const lit = (): number => screen.getByRole('tabpanel').querySelectorAll('.cm-row.cm-flash-0, .cm-row.cm-flash-1').length
+    openSteps(pane()) // os cartões ficam atrás da linha-resumo da resposta (chat resumido)
     const edit = [...pane().querySelectorAll<HTMLElement>('.tool-card')][1]
     fireEvent.click(within(edit).getByTitle('Abrir no editor'))
     await act(async () => {})
@@ -169,6 +172,7 @@ describe('CodeMonitor — o Chat à direita do editor', () => {
     expect(pane().closest('.cm-dock')?.classList.contains('narrow')).toBe(true)
     expect(screen.queryByRole('separator', { name: 'Largura do chat' })).toBeNull()
     expect(screen.queryByRole('tablist', { name: 'Arquivos abertos' })).toBeNull()
+    openSteps(pane()) // os cartões ficam atrás da linha-resumo da resposta (chat resumido)
     const card = pane().querySelector<HTMLElement>('.tool-card')!
     expect(within(card).queryByTitle('Abrir no editor')).toBeNull()
     fireEvent.click(card.querySelector('.tool-head')!)

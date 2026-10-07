@@ -3,6 +3,7 @@
  * conversa), o feed do retrato que o PC publica e o campo "Fale com o agent…".
  */
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { loadMoreText, useScrollWindow } from '@renderer/components/useScrollWindow'
 import { client } from '../app/runtime'
 import { CENTRAL_CONV_ID } from '../core/client'
 import { useStore } from '../core/store'
@@ -24,6 +25,12 @@ export function CentralView(): JSX.Element {
   const snap = useMemo(() => centralSnapshot(conversations), [conversations])
   const boxRef = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
+  // Como o chat: só as últimas entradas do retrato (até 60), +1 página perto do topo sem pular.
+  const entries = useMemo(() => snap.entries.filter(Boolean), [snap])
+  const win = useScrollWindow(boxRef, entries.length, {
+    isAtEnd: () => nearBottom.current,
+    anchorSelector: '.c-me, .c-agent, .c-qdone, .c-ask'
+  })
 
   useEffect(() => pruneCentral(snap), [snap])
   // Entrou na Central: lê o retrato logo, sem esperar o ciclo de 4 s.
@@ -36,7 +43,9 @@ export function CentralView(): JSX.Element {
 
   const onScroll = (): void => {
     const box = boxRef.current
-    if (box) nearBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < NEAR_BOTTOM
+    if (!box) return
+    nearBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < NEAR_BOTTOM
+    win.onScrollTop()
   }
 
   if (loaded && !conv) {
@@ -90,7 +99,8 @@ export function CentralView(): JSX.Element {
             <div className="c-empty">Diga o que precisa: a Central leva para a conversa certa.</div>
           ) : (
             <>
-              {snap.entries.map((e) =>
+              {win.hasOlder && <div className="load-more-hint">{loadMoreText(win.start)}</div>}
+              {entries.slice(win.start).map((e) =>
                 !e ? null : e.kind === 'request' ? (
                   <CentralRequest key={e.id} e={e} />
                 ) : e.kind === 'reply' ? (

@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
 import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from '../downloadAllowlist'
 import { OfficeCallsBridge } from './officeCallsBridge'
+import { servePlanningRoute } from './planningBridge'
 import { CENTRAL_ID, parseCentralChoose, parseReplyTo, type RemoteCentralChoose } from '../../shared/central'
 import type {
   ChatEvent,
@@ -359,6 +360,7 @@ export class RemoteServer {
       if (path === '/api/tts-parts' && req.method === 'POST') return this.serveTtsParts(req, res)
       if (path === '/api/file') return this.serveFile(url, res)
       if (path === '/api/office-agent') return this.serveOfficeAgent(url, res)
+      if (path.startsWith('/api/planning/')) return servePlanningRoute(path, req, url, res, { state: this.state, onConversationAction: this.deps.onConversationAction })
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'rota desconhecida' }))
       return

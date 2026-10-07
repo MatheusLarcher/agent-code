@@ -1,16 +1,19 @@
 /**
  * O turno de um agente com os componentes REAIS do chat (ChatRow: balão do
- * usuário, Markdown do assistente, ToolCard que expande ao clicar) — a base da
+ * usuário, Markdown do assistente; ChatStepRow: cada resposta com a sua
+ * linha-resumo, que abre os ToolCard dela ao clicar) — a base da
  * tela focada (ChatScreen) e da prévia do hover (ChatPreview). Sem `tts` e
  * `quote` é só leitura (a prévia); a tela do monitor passa os dois: "Ouvir",
  * "Ler daqui" e "Comentar", como na aba Conversa. `TurnHeader` é o cabeçalho
  * das duas: o ponto na cor da camisa do agente, o título da conversa, quem é e
  * o estado.
  */
-import type { CSSProperties, ReactNode } from 'react'
+import { useMemo, type CSSProperties, type ReactNode } from 'react'
 import { AUTO_MODEL } from '@shared/ipc'
 import { modelDisplayName } from '@shared/modelLabel'
-import { ChatRow, lastAnswerTsId, rowKey, type ChatRowContext, type TtsControls } from '../components/ChatRows'
+import { ChatRow, lastAnswerTsId, type ChatRowContext, type TtsControls } from '../components/ChatRows'
+import { ChatStepRow } from '../components/ChatStep'
+import { buildChatRows } from '../components/chatSteps'
 import { useChatDisplay } from '../components/chatDisplay'
 import type { QuoteListApi } from '../components/quoteComment/quoteBlocks'
 import { ToolCard } from '../components/ToolCard'
@@ -34,18 +37,23 @@ export interface TurnRowsProps {
 
 export function TurnRows({ messages, busy, live = null, limit = 0, tts = null, quote }: TurnRowsProps): JSX.Element {
   const { planDir } = useChatDisplay()
-  const start = limit > 0 ? Math.max(0, messages.length - limit) : 0
-  const ctx: ChatRowContext = { resolveRef: null, planDir, lastTsId: lastAnswerTsId(messages), tts, quote }
+  // O mesmo chat resumido da conversa (chatSteps): cada resposta com a sua linha-resumo; o limite conta linhas.
+  const rows = useMemo(() => buildChatRows(messages, { busy }), [messages, busy])
+  const start = limit > 0 ? Math.max(0, rows.length - limit) : 0
+  const lastTsId = lastAnswerTsId(messages)
+  const ctx = useMemo<ChatRowContext>(() => ({ resolveRef: null, planDir, lastTsId, tts, quote }), [planDir, lastTsId, tts, quote])
   return (
     <>
       {start > 0 && <div className="load-more-hint">↑ {start === 1 ? '1 anterior' : `${start} anteriores`} neste turno</div>}
-      {messages.slice(start).map((m, i) =>
-        m.kind === 'provider-switch' && m.fromModel !== AUTO_MODEL ? (
-          <ModelSwitchNote key={rowKey(m, start + i)} from={m.fromModel} to={m.model} why={m.text} />
+      {rows.slice(start).map((r) => {
+        if (r.type === 'step') return <ChatStepRow key={r.key} step={r} ctx={ctx} />
+        const m = r.msg
+        return m.kind === 'provider-switch' && m.fromModel !== AUTO_MODEL ? (
+          <ModelSwitchNote key={r.key} from={m.fromModel} to={m.model} why={m.text} />
         ) : (
-          <ChatRow key={rowKey(m, start + i)} m={m} ctx={ctx} />
+          <ChatRow key={r.key} m={m} ctx={ctx} />
         )
-      )}
+      })}
       {live && <ToolCard m={live} />}
       {busy && !live && (
         <div className="msg assistant">

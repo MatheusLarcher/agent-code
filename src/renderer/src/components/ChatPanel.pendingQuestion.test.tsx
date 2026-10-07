@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { ChatPanel } from './ChatPanel'
 import { UiProvider } from '../ui/UiProvider'
+import { openSteps } from './chatStepsTestkit'
 
 afterEach(() => {
   cleanup()
@@ -123,6 +124,8 @@ describe('ChatPanel - identidade estavel dos filhos do feed', () => {
       ]
     })
 
+    // Pensamento e cartão ficam atrás da linha-resumo da resposta (chat resumido): abrir para contar.
+    openSteps()
     const duplicateKeyWarnings = consoleError.mock.calls.filter((args) =>
       args.some((arg) => typeof arg === 'string' && arg.includes('same key'))
     )

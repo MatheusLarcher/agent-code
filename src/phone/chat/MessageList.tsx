@@ -1,10 +1,13 @@
 /**
- * A lista de mensagens da conversa aberta: segue o fim enquanto o agente escreve
+ * A lista de mensagens da conversa aberta, no chat resumido por resposta
+ * (chatSteps, o mesmo do PC; StepItem): segue o fim enquanto o agente escreve
  * (só se você já estava no fim — lendo mais acima, a tela fica onde está), centra
  * a mensagem vinda da busca/mapa, "ir para o final" e puxar-para-atualizar no topo
  * (recarrega pelo `/api/history`, em silêncio, sem apagar a tela).
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type TouchEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type TouchEvent } from 'react'
+import { buildChatRows } from '@renderer/components/chatSteps'
+import type { CardRefResolver } from '@renderer/components/Markdown'
 import { client } from '../app/runtime'
 import { isHiddenMessage } from '../core/reducer'
 import { useStore } from '../core/store'
@@ -12,6 +15,7 @@ import { Icon } from '../ui/icons'
 import { toggleSpeak, tts } from '../voice/tts'
 import { MessageItem } from './MessageItem'
 import { QuestionMap } from './QuestionMap'
+import { StepItem } from './StepItem'
 
 const PULL_THRESHOLD = 64
 const NEAR_BOTTOM = 80
@@ -19,13 +23,17 @@ const JUMP_AFTER = 220
 
 type PullMode = 'hidden' | 'pulling' | 'ready' | 'refreshing'
 
-export function MessageList({ onRefresh }: { onRefresh: () => Promise<unknown> }): JSX.Element {
+/** `resolveRef`: só o chat do Agent Manager (aba Planos) — [[Nome]] de card na cor do tipo. */
+export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promise<unknown>; resolveRef?: CardRefResolver | null }): JSX.Element {
   const messages = useStore(client.store, (s) => s.messages)
   const loading = useStore(client.store, (s) => s.historyLoading)
   const convId = useStore(client.store, (s) => s.convId)
   const scrollTo = useStore(client.store, (s) => s.scrollToMsg)
   const voiceReady = useStore(client.store, (s) => s.voiceReady)
   const speakingId = useStore(tts, (s) => s.speakingId)
+  const busy = useStore(client.store, (s) => !!s.conversations.find((c) => c.id === s.convId)?.busy)
+  // O chat resumido (o mesmo agrupamento do PC): cada resposta com a sua linha-resumo.
+  const rows = useMemo(() => buildChatRows(messages.filter((m) => !isHiddenMessage(m)), { busy }), [messages, busy])
   const boxRef = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
   const [far, setFar] = useState(false)
@@ -120,7 +128,6 @@ export function MessageList({ onRefresh }: { onRefresh: () => Promise<unknown> }
     return () => box.removeEventListener('touchmove', block)
   }, [])
 
-  const visible = messages.filter((m) => !isHiddenMessage(m))
   return (
     <div className="messages-wrap">
       {pull !== 'hidden' && (
@@ -140,19 +147,24 @@ export function MessageList({ onRefresh }: { onRefresh: () => Promise<unknown> }
       >
         {loading ? (
           <div className="messages-loading"><span className="spinner" /> Carregando mensagens…</div>
-        ) : visible.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div className="messages-empty">Nenhuma mensagem ainda. Envie um comando para começar.</div>
         ) : (
-          visible.map((m, i) => (
-            <MessageItem
-              key={m.id ?? `i${i}`}
-              m={m}
-              flash={flash !== null && m.id === flash}
-              voiceReady={voiceReady}
-              speakingId={speakingId}
-              onSpeak={toggleSpeak}
-            />
-          ))
+          rows.map((r) =>
+            r.type === 'step' ? (
+              <StepItem key={r.key} step={r} flash={flash} voiceReady={voiceReady} speakingId={speakingId} onSpeak={toggleSpeak} resolveRef={resolveRef} />
+            ) : (
+              <MessageItem
+                key={r.key}
+                m={r.msg}
+                flash={flash !== null && r.msg.id === flash}
+                voiceReady={voiceReady}
+                speakingId={speakingId}
+                onSpeak={toggleSpeak}
+                resolveRef={resolveRef}
+              />
+            )
+          )
         )}
       </div>
       <QuestionMap />

@@ -3483,6 +3483,22 @@ describe('App — título automático (recuo na hora, nome curto do LLM depois)'
       // A tela desse plano NÃO está aberta (c1 é a ativa): a vigia aberta para ler o roteiro é fechada.
       await waitFor(() => expect(api.planningClose).toHaveBeenCalledWith({ projectCwd: '/proj', slug: 'checkout' }))
     })
+
+    it('"+ Novo planejamento" do celular (ação plan): plano + conversa do Manager no id da ponte, ao fundo, com o pedido', async () => {
+      const remote = captureRemoteAction() as unknown as () => ((a: unknown) => void) | null
+      addPlanningApi()
+      const { container } = render(<UiProvider><App /></UiProvider>)
+      await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+      await waitFor(() => expect(remote()).toBeTruthy())
+
+      await act(async () => remote()?.({ type: 'plan', cwd: '/proj', convId: 'c-remoto', pedido: 'planejar o pix' }))
+      await waitFor(() => expect(api.planningCreate).toHaveBeenCalledTimes(1))
+      const { slug } = api.planningCreate.mock.calls[0][0] as { slug: string }
+      await waitFor(() => expect(storedConv('c-remoto')).toMatchObject({ cwd: '/proj', mode: 'planning', planningSlug: slug }))
+      await waitFor(() => expect(JSON.stringify(storedConv('c-remoto'))).toContain('planejar o pix'))
+      // Ao fundo: a conversa aberta no PC continua a mesma.
+      expect([...container.querySelectorAll('.conv-row.active .conv-title')].map((el) => el.textContent)).not.toContain('Sem nome')
+    })
   })
 })
 

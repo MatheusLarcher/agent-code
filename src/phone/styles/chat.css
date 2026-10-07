@@ -47,6 +47,11 @@
 .thinking-body { margin-top: 6px; white-space: pre-wrap; font-style: italic; }
 .msg.system, .msg.error { align-self: center; max-width: 92%; font-size: 12px; color: var(--faint); text-align: center; }
 .msg.error { color: var(--err); }
+/* Uma resposta no chat resumido (StepItem): o texto e a linha-resumo da Central (.c-act) logo embaixo. */
+.chat-step { --c: var(--accent); flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.chat-step > .msg { max-width: 88%; }
+.chat-step > .c-act { margin-top: 0; }
+.chat-step > .c-tools { align-self: stretch; }
 .msg-dl, .msg-speak {
   display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; margin-right: 6px;
   border-radius: 10px; padding: 8px 14px; font-size: 13.5px; font-weight: 600;

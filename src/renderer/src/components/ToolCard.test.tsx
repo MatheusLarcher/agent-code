@@ -5,6 +5,7 @@ import { MessageList } from './MessageList'
 import { TOOL_CODE_MAX, TOOL_RESULT_MAX } from './toolDescribe'
 import type { ToolUseMessage } from './ToolCard'
 import { ToolFileOpenContext, type ToolFileOpen } from './toolFileOpen'
+import { openSteps } from './chatStepsTestkit'
 
 afterEach(() => {
   cleanup()
@@ -28,6 +29,7 @@ function renderWith(opener: ToolFileOpen | null, ...messages: ToolUseMessage[]):
       </ToolFileOpenContext.Provider>
     </UiProvider>
   )
+  openSteps()
   return [...document.querySelectorAll<HTMLElement>('.tool-card')]
 }
 

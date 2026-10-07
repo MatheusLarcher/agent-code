@@ -2496,6 +2496,10 @@ export interface RemoteConversation {
   permission?: PermissionRequest
   /** Only on the Central: its compact snapshot (centralRemote.ts) — kept by `/api/state`. */
   central?: RemoteCentral
+  /** Conversa do Agent Manager de um planejamento (liga plano ↔ conversa no celular). */
+  mode?: 'planning'
+  /** Slug do planejamento desta conversa (só com `mode: 'planning'`; o projeto é `cwd`). */
+  planningSlug?: string
 }
 
 /** Snapshot the renderer publishes to main so the bridge can serve history. */
@@ -2562,6 +2566,9 @@ export type RemoteConversationAction =
   | { type: 'create'; cwd: string; convId: string }
   | { type: 'rename'; convId: string; title: string }
   | { type: 'delete'; convId: string }
+  /** "+ Novo planejamento" do celular (POST /api/planning/create): o renderer roda o
+   *  startOfficePlan com a conversa do Manager no `convId` já escolhido pela ponte. */
+  | { type: 'plan'; cwd: string; convId: string; pedido: string }
 
 /** A model/effort change requested from a phone, forwarded to the renderer
  *  (which applies it with the same rules as the PC's own pickers). */

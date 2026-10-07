@@ -13,6 +13,7 @@
  */
 import { memo, useCallback, useId, useMemo, useState } from 'react'
 import { isAgentHtml } from '../agentHtml'
+import { canListProject } from './AllFilesTree'
 import type { TerminalCommand } from './codeModel'
 import { EditorPane } from './EditorPane'
 import type { FileView } from './fileView'
@@ -157,7 +158,7 @@ export const CodeView = memo(function CodeView(p: CodeViewProps): JSX.Element {
           active={page?.key ?? p.activeKey}
           onOpen={p.onSelect}
           onlyUsed={onlyUsed}
-          onToggleOnlyUsed={p.onBrowse ? onToggleOnlyUsed : undefined}
+          onToggleOnlyUsed={p.onBrowse && canListProject() ? onToggleOnlyUsed : undefined}
           expanded={expanded}
           onToggleDir={onToggleDir}
           onBrowse={p.onBrowse}

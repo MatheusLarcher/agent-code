@@ -79,6 +79,25 @@ describe('Composer', () => {
     vi.restoreAllMocks()
   })
 
+  it('draft: o texto entra no campo (depois do já digitado), com foco, só quando o nonce muda', async () => {
+    const view = render(<Composer />)
+    const input = textarea()
+    expect(input.value).toBe('') // sem draft: igual a sempre (Central e conversas)
+    fireEvent.change(input, { target: { value: 'oi ' } })
+    view.rerender(<Composer draft={{ text: '[[Login]] ', nonce: 1 }} />)
+    await flush(20)
+    expect(input.value).toBe('oi [[Login]] ')
+    expect(document.activeElement).toBe(input)
+    expect(input.selectionStart).toBe(input.value.length)
+    view.rerender(<Composer draft={{ text: '[[Login]] ', nonce: 1 }} />) // mesmo nonce: nada
+    view.rerender(<Composer draft={null} />)
+    await flush(20)
+    expect(input.value).toBe('oi [[Login]] ')
+    view.rerender(<Composer draft={{ text: '[[Login]] ', nonce: 2 }} />) // nonce novo: entra de novo
+    await flush(20)
+    expect(input.value).toBe('oi [[Login]] [[Login]] ')
+  })
+
   it('pointerdown/mousedown no Enviar, no microfone e no anexar não tiram o foco do campo', () => {
     render(<Composer />)
     const input = textarea()

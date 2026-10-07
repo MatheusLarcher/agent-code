@@ -1,7 +1,8 @@
 /* ---- Central: trilho, aviso do destino, "Para onde vai?", respostas, perguntas (mockup v3) ----
    Cada destino na sua cor (--c, centralColor); o laranja (--accent) é só da Central. */
 .central-panel,
-.central-back {
+.central-back,
+.chat-step {
   --central-faint: #77736d;
   --central-ok: #7fbf8a;
   --central-bad: #d98080;

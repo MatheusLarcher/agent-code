@@ -6,13 +6,16 @@
  * entrega — as opções aparecem sem botão e nada é enviado daqui.
  */
 import { useEffect, type CSSProperties, type ReactNode } from 'react'
-import type { RemoteCentralAnswered, RemoteCentralOption, RemoteCentralReply, RemoteCentralRequest } from '@shared/central'
+import type { CentralReplyStep, RemoteCentralAnswered, RemoteCentralOption, RemoteCentralReply, RemoteCentralRequest } from '@shared/central'
 import { Markdown } from '@renderer/components/Markdown'
+import { stepFallback } from '@renderer/components/chatSteps'
+import { useStepOpen } from '@renderer/components/useStepOpen'
 import { client, openConversation, toast } from '../app/runtime'
 import { triggerDownload } from '../core/download'
 import { basename, parseDownloads } from '../core/format'
 import { useStore } from '../core/store'
 import type { ToolUseMsg } from '../core/types'
+import { ActLine } from '../chat/StepItem'
 import { ToolCard } from '../chat/ToolCard'
 import { Icon } from '../ui/icons'
 import { centralChoose, centralQuoteOf, loadTurnTools, tint, toggleTurnTools } from './centralActions'
@@ -198,7 +201,8 @@ function Segments({ r }: { r: RemoteCentralReply }): JSX.Element {
   return <span className="c-sum">{nodes.length ? nodes : running ? 'trabalhando…' : `${count} ${count === 1 ? 'ação' : 'ações'}`}</span>
 }
 
-function TurnTools({ r }: { r: RemoteCentralReply }): JSX.Element {
+/** As ações do turno lidas do destino; com `only`, só as daquele passo. */
+function TurnTools({ r, only }: { r: RemoteCentralReply; only?: readonly string[] }): JSX.Element {
   const t = useStore(centralUi, (s) => s.tools[r.id])
   const count = r.activity?.count || 0
   // Turno rodando com ação nova desde a leitura: lê de novo (a lista anterior fica na tela).
@@ -211,15 +215,50 @@ function TurnTools({ r }: { r: RemoteCentralReply }): JSX.Element {
   else if (t.error) body = <div className="c-tools-note c-bad">Não foi possível carregar as ações: {t.error}</div>
   else if (!t.found) body = <div className="c-tools-note">As ações deste turno não estão mais nas mensagens recentes — abra a conversa.</div>
   else {
+    const list = (t.list ?? []).filter((m) => !only || only.includes(m.id ?? ''))
     body = (
       <>
-        {!t.list?.length && <div className="c-tools-note">Nenhuma ação neste trecho.</div>}
-        {(t.list ?? []).map((m, i) => <ToolCard key={m.id ?? i} m={m as ToolUseMsg} />)}
+        {!list.length && <div className="c-tools-note">Nenhuma ação neste trecho.</div>}
+        {list.map((m, i) => <ToolCard key={m.id ?? i} m={m as ToolUseMsg} />)}
         {t.partial && !t.closed && <div className="c-tools-note">Mostrando o trecho disponível — abra a conversa para ver o resto.</div>}
       </>
     )
   }
   return <div className="c-tools">{body}</div>
+}
+
+/** Um passo (PC novo): o comentário e a linha SÓ das ferramentas dele; o toque carrega o turno e mostra só as do passo. */
+function ReplyStep({ r, step, index, running }: { r: RemoteCentralReply; step: CentralReplyStep; index: number; running: boolean }): JSX.Element {
+  const ids = Array.isArray(step?.toolIds) ? step.toolIds : []
+  const [open, toggle] = useStepOpen(`${r.id}:${ids[0] ?? `n${index}`}`)
+  const activity = step?.activity
+  const segments = Array.isArray(activity?.segments) ? activity.segments : []
+  const hasLine = ids.length > 0 || running
+  const fallback = running ? '' : stepFallback({ segments, now: activity?.now }, ids.length, 0)
+  const onToggle = (): void => {
+    if (!open) loadTurnTools(r)
+    toggle()
+  }
+  return (
+    <>
+      {typeof step?.note === 'string' && step.note && <div className="c-note"><Markdown text={step.note} /></div>}
+      {hasLine && <ActLine activity={activity} running={running} open={open} onToggle={onToggle} fallback={fallback} />}
+      {hasLine && open && <TurnTools r={r} only={ids} />}
+    </>
+  )
+}
+
+function ReplySteps({ r, steps }: { r: RemoteCentralReply; steps: CentralReplyStep[] }): JSX.Element {
+  const running = !r.activity?.done
+  const last = steps.length - 1
+  if (steps.length === 0 && running) return <ReplyStep r={r} step={{ activity: r.activity, toolIds: [] }} index={0} running />
+  return (
+    <>
+      {steps.map((s, i) => (
+        <ReplyStep key={`${s?.toolIds?.[0] ?? 'n'}:${i}`} r={r} step={s} index={i} running={running && i === last} />
+      ))}
+    </>
+  )
 }
 
 export function CentralReply({ r }: { r: RemoteCentralReply }): JSX.Element | null {
@@ -229,26 +268,32 @@ export function CentralReply({ r }: { r: RemoteCentralReply }): JSX.Element | nu
   const count = a?.count || 0
   const running = !a?.done
   const parsed = r.answer ? parseDownloads(r.answer) : null
+  // PC novo manda os passos; sem eles (PC antigo), o desenho de antes: notas + UMA linha do turno.
+  const steps = Array.isArray(r.steps) ? r.steps : null
   return (
     <Swipeable quote={centralQuoteOf(r)} className="c-agent" style={colorVar(r.color)}>
       <div className="c-who">{r.who}</div>
-      {(Array.isArray(r.notes) ? r.notes : []).map((n, i) => (
-        <div key={i} className="c-note"><Markdown text={n} /></div>
-      ))}
+      {steps ? (
+        <ReplySteps r={r} steps={steps} />
+      ) : (
+        (Array.isArray(r.notes) ? r.notes : []).map((n, i) => (
+          <div key={i} className="c-note"><Markdown text={n} /></div>
+        ))
+      )}
       {parsed?.clean && <div className="c-answer"><Markdown text={parsed.clean} /></div>}
       {parsed?.paths.map((path) => (
         <button key={path} type="button" className="c-dl" onClick={() => triggerDownload(client.fileUrl(path), path)}>
           <Icon name="download" size={15} /> <span>Baixar {basename(path)}</span>
         </button>
       ))}
-      {(count > 0 || running) && (
+      {!steps && (count > 0 || running) && (
         <button type="button" className={`c-act${open ? ' open' : ''}`} title={a?.text} onClick={() => count && toggleTurnTools(r)}>
           {running ? <span className="c-spin" /> : <Icon name="chevron" size={12} className="c-chev" />}
           <Segments r={r} />
           <span className="c-count">{count}</span>
         </button>
       )}
-      {open && <TurnTools r={r} />}
+      {!steps && open && <TurnTools r={r} />}
       <button type="button" className="c-open" onClick={() => openDestination(r.anchor)}>
         <span>abrir</span> <Icon name="open" size={13} />
       </button>

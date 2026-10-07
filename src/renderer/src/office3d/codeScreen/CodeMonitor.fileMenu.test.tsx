@@ -5,6 +5,7 @@ import type { OfficeCharacterModel } from '../../office/adapter/model'
 import { conv, feed } from '../../office/adapter/testFeed'
 import type { UIMessage } from '../../types'
 import { UiProvider } from '../../ui/UiProvider'
+import { openSteps } from '../../components/chatStepsTestkit'
 import { CodeMonitor } from './CodeMonitor'
 
 const CWD = 'C:\\proj\\loja'
@@ -52,6 +53,7 @@ describe('CodeMonitor — botão direito num arquivo', () => {
 
   it('o cartão de arquivo do Chat também; o clique normal continua abrindo no editor', () => {
     render(ui())
+    openSteps(screen.getByTestId('office-screen-chat')) // o cartão fica atrás da linha-resumo (chat resumido)
     const card = screen.getByTestId('office-screen-chat').querySelector<HTMLElement>('.tool-card')!
     fireEvent.contextMenu(within(card).getByTitle('Abrir no editor'))
     expect(menu()).not.toBeNull()

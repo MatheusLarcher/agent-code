@@ -1,6 +1,9 @@
-/** Uma mensagem do chat no celular: do usuário, resposta (Markdown do desktop), pensamento, avisos e ferramentas. */
+/**
+ * Uma mensagem do chat no celular: do usuário, resposta (Markdown do desktop), pensamento, avisos e ferramentas.
+ * `resolveRef` (só o chat do Agent Manager, na aba Planos): os [[Nome]] de card saem na cor do tipo.
+ */
 import { memo, useState } from 'react'
-import { Markdown } from '@renderer/components/Markdown'
+import { CardRefText, Markdown, type CardRefResolver } from '@renderer/components/Markdown'
 import { client } from '../app/runtime'
 import { triggerDownload } from '../core/download'
 import { basename, fmtBytes, fmtMsgTime, parseDownloads, readableMedia } from '../core/format'
@@ -8,7 +11,8 @@ import type { ChatMsg, UserMsg } from '../core/types'
 import { Icon } from '../ui/icons'
 import { ToolCard } from './ToolCard'
 
-function UserBubble({ m, flash }: { m: UserMsg; flash: boolean }): JSX.Element {
+function UserBubble({ m, flash, resolveRef }: { m: UserMsg; flash: boolean; resolveRef?: CardRefResolver | null }): JSX.Element {
+  const text = m.text ? readableMedia(m.text) : ''
   return (
     <div className="msg-row user">
       <div className={`msg user${flash ? ' msg-highlight' : ''}`} data-mid={m.id}>
@@ -26,7 +30,7 @@ function UserBubble({ m, flash }: { m: UserMsg; flash: boolean }): JSX.Element {
             ))}
           </div>
         )}
-        {m.text && readableMedia(m.text)}
+        {text && (resolveRef ? <CardRefText text={text} resolveRef={resolveRef} /> : text)}
       </div>
       {m.queued && <div className="msg-queued">Na fila</div>}
       {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
@@ -35,18 +39,19 @@ function UserBubble({ m, flash }: { m: UserMsg; flash: boolean }): JSX.Element {
   )
 }
 
-function AssistantBubble({ id, text, answer, voiceReady, speaking, onSpeak }: {
+function AssistantBubble({ id, text, answer, voiceReady, speaking, onSpeak, resolveRef }: {
   id: string
   text: string
   answer: boolean
   voiceReady: boolean
   speaking: boolean
   onSpeak: (id: string, text: string) => void
+  resolveRef?: CardRefResolver | null
 }): JSX.Element {
   const parsed = parseDownloads(text)
   return (
     <div className={`msg assistant${answer ? ' answer' : ' narration'}`}>
-      {parsed.clean && <Markdown text={parsed.clean} />}
+      {parsed.clean && <Markdown text={parsed.clean} resolveRef={resolveRef} />}
       {parsed.paths.map((path) => (
         <button key={path} type="button" className="msg-dl" onClick={() => triggerDownload(client.fileUrl(path), path)}>
           <Icon name="download" size={15} /> Baixar {basename(path)}
@@ -75,16 +80,17 @@ function Thinking({ text }: { text: string }): JSX.Element {
   )
 }
 
-export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, speakingId, onSpeak }: {
+export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, speakingId, onSpeak, resolveRef }: {
   m: ChatMsg
   flash: boolean
   voiceReady: boolean
   speakingId: string | null
   onSpeak: (id: string, text: string) => void
+  resolveRef?: CardRefResolver | null
 }): JSX.Element | null {
   switch (m.kind) {
     case 'user':
-      return <UserBubble m={m} flash={flash} />
+      return <UserBubble m={m} flash={flash} resolveRef={resolveRef} />
     case 'assistant-text':
       return (
         <AssistantBubble
@@ -94,6 +100,7 @@ export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, spe
           voiceReady={voiceReady}
           speaking={speakingId === m.id}
           onSpeak={onSpeak}
+          resolveRef={resolveRef}
         />
       )
     case 'thinking':
