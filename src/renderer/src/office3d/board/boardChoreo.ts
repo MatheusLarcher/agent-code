@@ -18,9 +18,13 @@
  * leva no máximo TRIP_CAP_BUSY passos e só sai de quem está sentado na mesa
  * (nada de emendar viagens: o que chega na volta desliza). Mesmo cartão por autores diferentes: o
  * segundo espera a viagem do primeiro acabar.
+ *
+ * A visita do PO: antes do quadro, ele passa na mesa do agente principal da conversa do primeiro
+ * passo (uma visita só por viagem) e conversa VISIT_S. Só se o agente está na mesa e se a visita
+ * cabe no prazo sem tirar nenhum passo da viagem; senão, vai direto ao quadro.
  */
 import { SPEED, type Gait } from '../brainBody'
-import { BIN, newErrand, PAD, type Errand, type ErrandBeat, type ErrandStop } from '../brainBoard'
+import { BIN, DESK, newErrand, PAD, type BoardSpot, type Errand, type ErrandBeat, type ErrandStop } from '../brainBoard'
 import { principalKey } from '../../office/adapter/model'
 import { stepLine, summaryLine, USER_SEAL } from './boardLines'
 import { columnIndex, type BoardStep } from './boardModel'
@@ -35,6 +39,10 @@ export const LAG_MS = 15_000
 export const STEP_S = 5
 /** Com fila (correndo, gestos curtos): cabe o TRIP_CAP inteiro no prazo. */
 export const STEP_RUN_S = 3.4
+/** Correndo, os gestos duram isto do normal. */
+const QUICK = 0.6
+/** A conversa do PO na mesa do agente (s, no ritmo normal). */
+export const VISIT_S = 1.2
 
 export type Motion = 'write' | 'move' | 'complete' | 'rename' | 'point' | 'trash' | 'restore'
 
@@ -67,7 +75,7 @@ const beatOf = (action: ErrandBeat['action'], dur: number, prop: ErrandBeat['pro
 /** As paradas de um passo. `from` = coluna em que o papel está hoje na parede (null se não está). */
 export function stopsFor(s: BoardStep, from: number | null, step: number, quick = false): ErrandStop[] {
   // Com fila, os gestos encurtam (~3,4 s por passo) para caber TRIP_CAP no prazo.
-  const q = quick ? 0.6 : 1
+  const q = quick ? QUICK : 1
   const beat = (a: ErrandBeat['action'], d: number, p: ErrandBeat['prop'] = null, f = false): ErrandBeat => beatOf(a, d * q, p, f)
   const to = s.toStatus ? columnIndex(s.toStatus) : (from ?? 0)
   const stop = (col: number, beats: ErrandBeat[]): ErrandStop => ({ col, beats, step, fired: false })
@@ -93,6 +101,18 @@ export function stopsFor(s: BoardStep, from: number | null, step: number, quick 
   }
 }
 
+/** A visita possível: quem visitar, onde ficar e quanto custa andando (s), de onde o PO está até a mesa e dela até o quadro. */
+export interface VisitPlan {
+  target: string
+  at: BoardSpot
+  walkS: number
+}
+
+/** A parada da visita à mesa do agente (sem fala e sem mudar papel). */
+export function visitStop(v: VisitPlan, quick = false): ErrandStop {
+  return { col: DESK, beats: [beatOf('talk', VISIT_S * (quick ? QUICK : 1))], step: -1, fired: false, visit: v.target, at: { ...v.at } }
+}
+
 export interface ChoreoCtx {
   /** O personagem está no escritório, na sala do passo, e pode ir ao quadro agora. */
   available(key: string, roomId: string): boolean
@@ -102,11 +122,15 @@ export interface ChoreoCtx {
   fromColumn(s: BoardStep): number | null
   /** Está no meio do trabalho: a ida é curta (TRIP_CAP_BUSY, correndo, gestos curtos). */
   hurry?(key: string): boolean
+  /** A visita de `key` (o PO) ao agente `target` antes do quadro; null se o agente não está na mesa. */
+  visit?(key: string, target: string): VisitPlan | null
 }
 
 export interface Trip {
   key: string
   roomId: string
+  /** O agente visitado antes do quadro (null: direto ao quadro). */
+  visit: string | null
   steps: BoardStep[]
   /** A fala de cada passo (primeira pessoa). */
   lines: Array<string | null>
@@ -184,13 +208,23 @@ export class BoardChoreo {
       const fit = (walk: number, run: boolean): number => Math.floor((budget - walk) / (run ? STEP_RUN_S : STEP_S))
       const walk = ctx.walkS(key)
       const hurry = ctx.hurry?.(key) ?? false
-      let gait: Gait = take.length > 1 || hurry ? 'run' : 'walk'
-      let k = fit(gait === 'run' ? (walk * SPEED.walk) / SPEED.run : walk, gait === 'run')
-      if (gait === 'walk' && k < 1) {
-        gait = 'run'
-        k = fit((walk * SPEED.walk) / SPEED.run, true)
+      // `lead` = andando até a 1ª parada do quadro (s); `extra` = gestos antes dela (a conversa da visita).
+      const plan = (lead: number, extra = 0): { gait: Gait; k: number } => {
+        const cost = (run: boolean): number => (run ? (lead * SPEED.walk) / SPEED.run + extra * QUICK : lead + extra)
+        let gait: Gait = take.length > 1 || hurry ? 'run' : 'walk'
+        let k = fit(cost(gait === 'run'), gait === 'run')
+        if (gait === 'walk' && k < 1) {
+          gait = 'run'
+          k = fit(cost(true), true)
+        }
+        return { gait, k: Math.min(k, hurry ? TRIP_CAP_BUSY : TRIP_CAP, take.length) }
       }
-      k = Math.min(k, hurry ? TRIP_CAP_BUSY : TRIP_CAP, take.length)
+      const direct = plan(walk)
+      // A visita do PO só entra se couber sem tirar nenhum passo da viagem.
+      const v = key.startsWith('po:') && direct.k > 0 ? (ctx.visit?.(key, principalKey(take[0].step.convId)) ?? null) : null
+      const viaDesk = v ? plan(v.walkS, VISIT_S) : null
+      const visit = v && viaDesk && viaDesk.k === direct.k ? v : null
+      const { gait, k } = visit && viaDesk ? viaDesk : direct
       if (k <= 0) {
         for (const x of take) slides.push(slide(x.step, true))
         continue
@@ -199,9 +233,11 @@ export class BoardChoreo {
       const rest = take.slice(k).map((x) => x.step)
       for (const s of rest) slides.push(slide(s, false))
       const stops = ride.flatMap((s, i) => stopsFor(s, ctx.fromColumn(s), i, gait === 'run'))
+      if (visit) stops.unshift(visitStop(visit, gait === 'run'))
       const trip: Trip = {
         key,
         roomId: ride[0].roomId,
+        visit: visit?.target ?? null,
         steps: ride,
         lines: ride.map((s) => stepLine(s, true)),
         errand: newErrand(stops, gait),

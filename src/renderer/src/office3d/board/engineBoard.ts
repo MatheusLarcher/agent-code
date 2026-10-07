@@ -27,7 +27,7 @@
  * volta com tremidinha e a mensagem do main perto do quadro; mesma coluna ou
  * fora do quadro volta; Esc cancela (na captura: nem a tela nem o chat ouvem).
  */
-import { Raycaster, Vector2, Vector3, type PerspectiveCamera } from 'three'
+import { Raycaster, Vector2, type PerspectiveCamera } from 'three'
 import type { OfficeFeed } from '../../office/adapter/feed'
 import { principalKey, roomIdFor } from '../../office/adapter/model'
 import { seedCss } from '../appearance'
@@ -46,13 +46,12 @@ import { BoardStage, type StageHost } from './boardStage'
 import { BoardTips } from './boardTips'
 import { onIcon } from './boardTitle'
 import { PRIORITY, type Quip } from '../quips'
-import { LOD_BOUNDS } from '../lod'
-import { awayAnnounce } from './awayAnnounce'
-import { clip } from './boardLines'
+import { sayAway } from './awaySay'
+import { BoardTray } from './boardTray'
+import { appTrayApi, TRAY_KEY } from './queueTray'
+import { visitPathLength } from './visitPath'
 
-/** O resumo "desde que você saiu" fica no balão do PO por isto (ms). */
-export const AWAY_SAY_MS = 9_000
-
+export { AWAY_SAY_MS } from './awaySay'
 export { BOARD_TOAST_MS } from './boardTips'
 
 /** Um arrasto do usuário no 3D vale por isto (ms): o passo dele não reanima nem leva selo. */
@@ -68,8 +67,9 @@ export class EngineBoard {
   private readonly pins = new Map<string, string>()
   private readonly ray = new Raycaster()
   private readonly ndc = new Vector2()
-  private readonly head = new Vector3()
   private readonly local = { x: 0, y: 0 }
+  /** A bandeja da fila ao lado do quadro e a entrega da folha pelo PO (boardTray.ts). */
+  readonly tray: BoardTray
   private readonly tips: BoardTips
   /** Qual projeto a parede mostra (filtro, aba, conversa ativa, visita da coreografia). */
   private readonly choice = new BoardChoice()
@@ -97,6 +97,8 @@ export class EngineBoard {
   ) {
     this.api = api === undefined ? appBoardApi() : api
     this.stage = new BoardStage(this.host(), clock)
+    const live = (): boolean => !this.paused && !this.disposed && !document.hidden && !scene.crowd.partyOn && !scene.boardDark()
+    this.tray = new BoardTray({ brain: (k) => scene.crowd.brains.get(k), shown: () => scene.boards.shown, view: () => scene.boards.tray, live }, api === undefined ? appTrayApi() : null, clock)
     this.seals = new BoardSeals(container, (id) => this.open(id))
     this.board = this.connect(this.api)
     this.scene.boards.onFresh = (id) => this.show(id, false)
@@ -144,6 +146,7 @@ export class EngineBoard {
     this.board.dispose()
     this.board = this.connect(on ? demoBoardApi(this.clock) : this.api)
     this.board.setRooms(this.rooms)
+    this.tray.setDemo(on)
   }
 
   /** Cor (CSS) da camisa do agente da conversa: o alfinete do papel. */
@@ -194,7 +197,8 @@ export class EngineBoard {
   tick(now = this.clock()): boolean {
     this.sync.tick(now)
     let changed = this.stage.tick(now)
-    if (this.announceAway()) changed = true
+    if (sayAway(this.stage, this.scene, this.camera, !this.paused && !this.disposed && !document.hidden && document.hasFocus())) changed = true
+    if (this.tray.tick(now)) changed = true
     if (this.seals.tick(now)) changed = true
     if (this.tips.tick(now)) changed = true
     for (const id of this.sync.roomIds) {
@@ -206,33 +210,6 @@ export class EngineBoard {
       changed = true
     }
     return changed
-  }
-
-  /**
-   * O resumo "desde que você saiu" (awayAnnounce.ts): o PO do projeto diz a
-   * versão curta quando a cabeça dele está na tela, sem zoom LONGE e com a
-   * janela em foco — a câmera chegou na sala ou no quadro. Sem PO, espera.
-   */
-  private announceAway(): boolean {
-    const list = awayAnnounce.pending()
-    if (list.length === 0 || this.paused || this.disposed || document.hidden || !document.hasFocus()) return false
-    let changed = false
-    for (const a of list) {
-      const key = `po:${roomIdFor(a.cwd)}`
-      if (!this.inView(key)) continue
-      this.stage.announce(key, clip(a.text), this.scene.character(key)?.model.convId ?? '', AWAY_SAY_MS)
-      awayAnnounce.markSaid(a)
-      changed = true
-    }
-    return changed
-  }
-
-  /** A cabeça do personagem projeta dentro da tela (a mesma regra do balão, speech.ts) e não está LONGE. */
-  private inView(key: string): boolean {
-    if (!this.scene.headWorldPosition(key, this.head)) return false
-    if (this.head.distanceTo(this.camera.position) >= LOD_BOUNDS[1]) return false
-    const p = this.head.project(this.camera)
-    return p.z <= 1 && p.z >= -1 && Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1
   }
 
   pause(): void {
@@ -277,6 +254,7 @@ export class EngineBoard {
         const f = b.roomId ? crowd().furniture(b.roomId) : undefined
         return f ? Math.hypot(b.x - f.board.x, b.z - f.board.pad.z) : null
       },
+      visitPath: (po, x, z) => visitPathLength(crowd(), po, x, z),
       live: () => !this.paused && !this.disposed && !document.hidden,
       dark: () => crowd().partyOn || this.scene.boardDark(),
       fromColumn: (s) => {
@@ -378,7 +356,7 @@ export class EngineBoard {
     return true
   }
 
-  /** Papel sob o mouse: sobe e brilha; a dica mostra o nome da conversa (na pilha, quantos e de que coluna). */
+  /** Papel sob o mouse: sobe e brilha; a dica mostra o nome da conversa (na pilha, quantos e de que coluna; na bandeja, a fila). */
   private hover(key: string | null): void {
     const card = key?.startsWith(CARD_KEY) ? key.slice(CARD_KEY.length) : null
     const pile = key ? parsePileKey(key) : null
@@ -390,8 +368,8 @@ export class EngineBoard {
     } else if (pile) {
       const n = this.sync.mirror(pile.roomId)?.shown.filter((c) => c.status === pile.status).length ?? 0
       text = `${columnLabel(pile.status)}: ${n} cartões — clique para ver a lista`
-    }
-    this.tips.tip(card || pile ? key : null, text)
+    } else if (key === TRAY_KEY) text = this.tray.tip()
+    this.tips.tip(card || pile || key === TRAY_KEY ? key : null, text)
     this.render()
   }
 
@@ -483,6 +461,7 @@ export class EngineBoard {
   dispose(): void {
     this.disposed = true
     this.stage.flush()
+    this.tray.dispose()
     this.seals.dispose()
     this.sync.dispose()
     this.tips.dispose()

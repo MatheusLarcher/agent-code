@@ -34,7 +34,7 @@ interface Setup {
   notified: string[]
   last(): HandoffProjectSnapshot
   plan(lote: string, conv: string, titulo: string, etapas: string[], cwd?: string): Promise<HandoffEnvio[]>
-  next(conv: string): Promise<HandoffQueueDecision>
+  next(conv: string, force?: boolean): Promise<HandoffQueueDecision>
   turn(conv: string, tasks: Array<[string, TaskItem['status']]>, opts?: { end?: boolean }): Promise<void>
   refresh(cwd?: string): Promise<void>
 }
@@ -105,9 +105,9 @@ async function setup(): Promise<Setup> {
       return envios
     },
     // O que o despachante do renderer faz: pergunta ao gate e, com "next", marca pelo id e manda.
-    async next(conv) {
+    async next(conv, force = false) {
       await settleConv(conv)
-      const decision = await service.gate(conv, await h.repo.listHandoffEnvios({ conversationId: conv }))
+      const decision = await service.gate(conv, await h.repo.listHandoffEnvios({ conversationId: conv }), force)
       if (decision.kind === 'next') {
         await h.tracker.dispatched(conv, decision.envio.id)
         h.tracker.noteUserSend(conv, decision.envio.conteudo)
@@ -173,6 +173,14 @@ describe('a fila do projeto — um plano por vez na pasta', () => {
     expect(await s.service.action('conv-a', 'comecar')).toEqual({ ok: true })
     expect(await s.next('conv-a')).toMatchObject({ kind: 'next' })
     expect(s.last().folders[0].plans[0]).toMatchObject({ comecarMesmoAssim: 'usuario', sujo: null })
+  })
+
+  it('a pasta suja: o "Enviar mesmo assim" do prompt (force) também solta — o usuário escolheu de propósito', async () => {
+    const s = await setup()
+    s.git.dirty = ['src/x.ts']
+    await s.plan('la', 'conv-a', 'Plano A', ['a1'])
+    expect(motivo(await s.next('conv-a'))).toBe('1 arquivo sem commit nesta pasta')
+    expect(await s.next('conv-a', true)).toMatchObject({ kind: 'next', envio: { conteudo: 'Prompt 1 de Plano A' } })
   })
 
   it('a faixa reordena planos inteiros (quem fica na frente tem a vez) e mostra o que o plano parado deixou sem commit', async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createBrain, move, type Brain, type BrainWorld } from '../brainBody'
-import { runErrand, newErrand, type BoardSpot, type BoardWorld } from '../brainBoard'
+import { DESK, runErrand, newErrand, visitSpotOf, type BoardSpot, type BoardWorld } from '../brainBoard'
+import { chairSide } from '../furniture'
 import { stepBrain } from '../brain'
 import type { BoardStep } from './boardModel'
 import { BoardStage, SAY_MIN_MS, VISIT_HOLD_MS, type StageHost } from './boardStage'
@@ -279,6 +280,74 @@ describe('o palco (boardStage): fila → personagens, parede, falas, selos', () 
     stage.push([step({ cardId: 'c2' })])
     expect(b.errand).toBeNull()
     expect(h.sealed.map((x) => x[0])).toContain('c2')
+  })
+
+  it('o PO passa na mesa do agente da conversa, conversa ao lado da cadeira e só então leva o papel ao quadro', () => {
+    let now = 0
+    const po = createBrain({ key: 'po:r', role: 'fixed', style: 'board', roomId: 'office', projectId: 'r', home: { x: 1, z: 2, yaw: 0 } })
+    const ag = agent()
+    const w = world()
+    const h = host({ brains: new Map([['po:r', po], ['conv:k1', ag]]) })
+    const stage = new BoardStage(h, () => now)
+    stage.push([step({ actor: 'po', text: 'conferi a entrega' })])
+    expect(po.errand?.stops[0]).toMatchObject({ col: DESK, visit: 'conv:k1' })
+    const at = po.errand!.stops[0].at!
+    expect([at.x, at.z]).toEqual([chairSide(ag.desk!).x, chairSide(ag.desk!).z])
+    let talkedAt = -1
+    let pinnedAt = -1
+    for (let i = 0; i < 600 && po.errand; i++) {
+      w.t += 0.05
+      stepBrain(ag, 0.05, w)
+      stepBrain(po, 0.05, w)
+      now += 50
+      stage.tick(now)
+      if (talkedAt < 0 && po.action === 'talk' && Math.hypot(po.x - at.x, po.z - at.z) < 0.3) talkedAt = i
+      if (pinnedAt < 0 && h.applied.length > 0) pinnedAt = i
+    }
+    expect(talkedAt).toBeGreaterThan(-1)
+    expect(pinnedAt).toBeGreaterThan(talkedAt)
+    expect(h.applied).toEqual(['c1'])
+    expect(h.said[0]).toEqual(['po:r', 'conferi a entrega'])
+    expect(h.sealed).toEqual([])
+  })
+
+  it('o agente saiu da mesa enquanto o PO ia: a visita é pulada e o papel vai ao quadro do mesmo jeito', () => {
+    let now = 0
+    const po = createBrain({ key: 'po:r', role: 'fixed', style: 'board', roomId: 'office', projectId: 'r', home: { x: 1, z: 2, yaw: 0 } })
+    const ag = agent()
+    const w = world()
+    const h = host({ brains: new Map([['po:r', po], ['conv:k1', ag]]) })
+    const stage = new BoardStage(h, () => now)
+    stage.push([step({ actor: 'po', text: 'conferi a entrega' })])
+    expect(po.errand?.stops[0].col).toBe(DESK)
+    ag.x = 9
+    ag.z = -3
+    let talked = false
+    for (let i = 0; i < 600 && po.errand; i++) {
+      w.t += 0.05
+      stepBrain(po, 0.05, w)
+      now += 50
+      stage.tick(now)
+      if (po.action === 'talk') talked = true
+    }
+    expect(talked).toBe(false)
+    expect(h.applied).toEqual(['c1'])
+    expect(h.sealed).toEqual([])
+  })
+
+  it('quem pode receber a visita: na mesa, no escritório e sem permissão pendente', () => {
+    const out: BoardSpot = { x: 0, z: 0, yaw: 0, lx: 0, ly: 0, lz: 0 }
+    const ag = agent()
+    expect(visitSpotOf(ag, out)).toBe(true)
+    // De pé ao lado da cadeira, virado para o assento (yaw olhando para o quadril de quem senta).
+    expect(Math.hypot(out.x - out.lx, out.z - out.lz)).toBeGreaterThan(0.5)
+    expect(Math.sin(out.yaw) * (out.lx - out.x) + Math.cos(out.yaw) * (out.lz - out.z)).toBeLessThan(0)
+    expect(visitSpotOf(undefined, out)).toBe(false)
+    expect(visitSpotOf(Object.assign(agent(), { outside: true }), out)).toBe(false)
+    expect(visitSpotOf(Object.assign(agent(), { visible: false }), out)).toBe(false)
+    expect(visitSpotOf(Object.assign(agent(), { phase: 'waiting-permission' }), out)).toBe(false)
+    expect(visitSpotOf(Object.assign(agent(), { x: 5, z: -2 }), out)).toBe(false)
+    expect(visitSpotOf(createBrain({ key: 'conv:sem-mesa', role: 'desk', roomId: 'office', home: { x: 0, z: 0, yaw: 0 } }), out)).toBe(false)
   })
 
   it('aba escondida: tudo direto, sem maratona; viagem em curso é abortada', () => {

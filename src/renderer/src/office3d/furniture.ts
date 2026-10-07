@@ -40,6 +40,7 @@ import {
   MEMORY_SPOT_X,
   MEMORY_SPOTS_Z,
   OFFICE,
+  QUEUE_TRAY,
   RIGHT_FACE_X,
   RIGHT_WALL_Z1,
   SEAT_FRONT,
@@ -249,9 +250,10 @@ function officeObstacles(board: BoardPlace): Obstacle[] {
     o.push(deskBox(s, 0, SEAT_FRONT - 0.03, CHAIR_HALF, CHAIR_HD))
   }
   for (const isl of ISLANDS) o.push(deskBox(islandShelf(isl.index), 0, 0, ISLAND_SHELF.w / 2, ISLAND_SHELF.d / 2))
-  // Praça: o console e o cesto do kanban.
+  // Praça: o console e o cesto do kanban; à esquerda do quadro, a mesinha da bandeja da fila.
   o.push(rect(CONSOLE.x, CONSOLE.z, CONSOLE.r, CONSOLE.r))
   o.push(rect(board.bin.x, board.bin.z, BIN_SPOT.r + 0.02, BIN_SPOT.r + 0.02))
+  o.push(rect(QUEUE_TRAY.x, QUEUE_TRAY.z, QUEUE_TRAY.w / 2 + 0.02, QUEUE_TRAY.d / 2 + 0.02))
   // Lounge.
   const L = LOUNGE
   o.push(rect(L.sideboard.x, L.sideboard.z, L.sideboard.w / 2, L.sideboard.d / 2))

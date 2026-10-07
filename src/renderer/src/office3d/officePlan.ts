@@ -186,7 +186,8 @@ export const LOUNGE = {
   lamp: { x: -7.35, z: -6.0 },
   pendant: { x: -5.1, y: 2.4, z: -5.3 },
   art: [-5.95, -4.55] as readonly number[],
-  plant: { x: -2.25, z: -7.15, scale: 1 }
+  /** No canto do lounge, depois da bandeja da fila (QUEUE_TRAY), que fica entre ela e o kanban. */
+  plant: { x: -2.95, z: -7.15, scale: 1 }
 } as const
 
 /** Sala de reunião de vidro: o retângulo, o vão da porta de vidro (x na frente), a mesa e a TV. */
@@ -247,13 +248,26 @@ export interface SeatPlace {
  */
 export const LOUNGE_SEATS: readonly SeatPlace[] = LOUNGE.sofaSeats.map((x): SeatPlace => ({ x, z: LOUNGE.sofa.z + 0.15, yaw: Math.PI, standX: x, standZ: -5.55 }))
 
-/** Lugares do PO à esquerda do kanban, de frente para a parede do fundo. */
-export const PO_SPOTS: ReadonlyArray<{ x: number; z: number }> = [
-  { x: -2.05, z: -6.4 },
-  { x: -2.65, z: -6.4 },
-  { x: -2.05, z: -5.75 },
-  { x: -2.65, z: -5.75 }
-]
+/** De (x, z), o giro que olha para o centro do kanban (rotation.y: 0 olha para −Z). */
+const facingBoard = (x: number, z: number): number => Math.atan2(-(BOARD_X - x), -(BACK_FACE_Z - z))
+
+/**
+ * Lugares do PO à esquerda do kanban, ao lado da bandeja da fila (QUEUE_TRAY) — nunca na frente dela — e
+ * virados para o quadro: fora do enquadramento do clique no quadro, em qualquer palco (layout.test.ts).
+ */
+export const PO_SPOTS: ReadonlyArray<{ x: number; z: number; yaw: number }> = [
+  { x: -2.8, z: -6.6 },
+  { x: -2.8, z: -6.0 },
+  { x: -3.35, z: -6.6 },
+  { x: -3.35, z: -6.0 }
+].map((s) => ({ ...s, yaw: facingBoard(s.x, s.z) }))
+
+/**
+ * A bandeja da fila (uma folha por prompt esperando): numa mesinha alta encostada na parede do fundo, entre
+ * o kanban e a planta do lounge, diante do lugar do PO. Centro, tampo (w × d) e altura; `standZ` = onde o PO
+ * fica para pegar a folha de cima.
+ */
+export const QUEUE_TRAY = { x: -2.2, z: BACK_FACE_Z + 0.29, w: 0.6, d: 0.4, h: 0.9, standZ: -6.72 } as const
 
 /**
  * De pé numa ilha (quem ficou sem mesa e sem lugar no lounge): 4 lugares dentro do U, perto da

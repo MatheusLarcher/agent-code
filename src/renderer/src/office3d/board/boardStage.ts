@@ -19,20 +19,26 @@
  * LAG_MS (ou visita recusada pelo filtro) vai direto ao espelho.
  */
 import { SPEED, type Brain } from '../brainBody'
-import { errandBlocked } from '../brainBoard'
+import { errandBlocked, visitSpotOf, type BoardSpot } from '../brainBoard'
 import { stepLine } from './boardLines'
-import { BoardChoreo, LAG_MS, type Slide, type Trip } from './boardChoreo'
+import { BoardChoreo, LAG_MS, type Slide, type Trip, type VisitPlan } from './boardChoreo'
 import type { BoardStep } from './boardModel'
 
 /** A fala do quadro fica pelo menos isto (ms). */
 export const SAY_MIN_MS = 4_000
 /** Acabada a coreografia de um projeto visitado, o quadro fica nele mais isto (ms) antes de voltar. */
 export const VISIT_HOLD_MS = 4_000
+/** A visita do PO: o caminho planejado mais 10% (curvas, arrancadas)… */
+const PATH_SLACK = 1.1
+/** …ou, sem a grade de navegação, a reta vezes isto (o caminho desvia das ilhas). */
+const STRAIGHT_SLACK = 1.3
 
 export interface StageHost {
   brain(key: string): Brain | undefined
   /** Distância (m) do personagem até o quadro da sala dele; null sem sala. */
   boardDistance(b: Brain): number | null
+  /** O caminho de verdade (m) do PO até (x, z) e de lá até o quadro (visitPath.ts); sem isto, a reta com folga. */
+  visitPath?(po: Brain, x: number, z: number): number | null
   /** Animar agora? (aba à vista, sem pausa). */
   live(): boolean
   /** Sala no escuro ou festa do apagão: ninguém vai ao quadro. */
@@ -168,8 +174,27 @@ export class BoardStage {
     hurry: (key: string): boolean => {
       const b = this.host.brain(key)
       return !!b && b.role === 'desk' && b.phase === 'working'
+    },
+    // A visita do PO: da posição dele até o lado da cadeira do agente, e da mesa até o quadro.
+    visit: (key: string, target: string): VisitPlan | null => {
+      const po = this.host.brain(key)
+      const t = this.host.brain(target)
+      if (!po || !t || !visitSpotOf(t, this.desk)) return null
+      const { x, z } = this.desk
+      let m: number | null
+      if (this.host.visitPath) {
+        const path = this.host.visitPath(po, x, z)
+        m = path === null ? null : path * PATH_SLACK
+      } else {
+        const back = this.host.boardDistance(t)
+        m = back === null ? null : (Math.hypot(x - po.x, z - po.z) + back) * STRAIGHT_SLACK
+      }
+      return m === null ? null : { target, at: { ...this.desk }, walkS: m / SPEED.walk }
     }
   }
+
+  /** O lugar da visita (rascunho da conta, sem alocar). */
+  private readonly desk: BoardSpot = { x: 0, z: 0, yaw: 0, lx: 0, ly: 0, lz: 0 }
 
   /** true se algo mudou (a cena pede um quadro). */
   tick(now = this.clock()): boolean {
@@ -217,6 +242,8 @@ export class BoardStage {
       changed = true
     })
     const cur = e.stops[e.idx]
+    // A visita: o agente saiu da mesa enquanto o PO ia — ele segue direto ao quadro.
+    if (cur?.visit && !visitSpotOf(this.host.brain(cur.visit), this.desk)) cur.visit = undefined
     if (cur && e.state === 'act' && cur.step !== lv.said) {
       lv.said = cur.step
       const s = trip.steps[cur.step]

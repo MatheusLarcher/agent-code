@@ -10,7 +10,8 @@
  *   apply(projeto, mirror, …) a parede do espelho daquele projeto, se for o mostrado;
  *   animate(dt)               só com a praça À VISTA anda; fora da tela vai direto;
  *   setTabs(abas)             os projetos com quadro: a faixa do título mostra o da parede e as abas;
- *   pickTargets / keyAt       papel → `card:<id>`, pilha → `pile:<projeto>|<status>`, aba → `tab:<projeto>`.
+ *   pickTargets / keyAt       papel → `card:<id>`, pilha → `pile:<projeto>|<status>`, aba → `tab:<projeto>`;
+ *                             a bandeja da fila (trayView.ts, à esquerda) → TRAY_KEY.
  *
  * Papel só é clicável PERTO ou MÉDIO; arrastar, só PERTO (com o texto à vista).
  */
@@ -20,11 +21,13 @@ import type { BoardPlace } from '../furniture'
 import type { Kit } from '../kit'
 import type { RoomLayout } from '../layout'
 import type { Lod } from '../lod'
+import { QUEUE_TRAY, zoneAt } from '../officePlan'
 import type { RoomLod } from '../roomLod'
 import { createBoardKit, type BoardKit } from './boardKit'
 import type { BoardMirror } from './boardMirror'
 import type { BoardTitleInfo } from './boardTitle'
 import { BoardView, type PinOf } from './boardView'
+import { TrayView } from './trayView'
 
 interface Wall {
   readonly room: RoomView
@@ -43,6 +46,9 @@ export class Boards {
   private tabs: readonly BoardTitleInfo[] = []
   /** Projeto novo na parede (ou o escritório refeito): quem tem o espelho reaplica (sem animar). */
   onFresh: (projectId: string) => void = () => {}
+  /** A bandeja da fila ao lado do quadro (null sem escritório) e o LOD da zona dela (o lounge). */
+  tray: TrayView | null = null
+  private trayLod: RoomLod | null = null
 
   constructor(private readonly sceneKit: Kit) {
     this.kit = createBoardKit()
@@ -53,12 +59,17 @@ export class Boards {
     if (room && this.wall?.room === room) return
     this.current?.dispose()
     this.current = null
+    this.tray?.dispose()
+    this.tray = null
     if (!room) {
       this.wall = null
       return
     }
     const plaza = room.zone('plaza')
     this.wall = { room, group: plaza.group, lod: plaza.lod, place: room.furniture.board }
+    const trayZone = room.zone(zoneAt(QUEUE_TRAY.x, QUEUE_TRAY.z))
+    this.tray = new TrayView(this.sceneKit, trayZone.group)
+    this.trayLod = trayZone.lod
     const shown = this.shown
     this.shown = null
     if (shown) this.show(shown)
@@ -118,8 +129,9 @@ export class Boards {
     return v.frame(dt, w.lod.level) ? 2 : 0
   }
 
-  /** Malhas clicáveis: PERTO a com textura, MÉDIO a só com cor; LONGE nada. */
+  /** Malhas clicáveis: PERTO a com textura, MÉDIO a só com cor; LONGE nada. A bandeja, PERTO ou MÉDIO. */
   pickTargets(out: Object3D[]): void {
+    if (this.tray && this.trayLod && !this.trayLod.culled && this.trayLod.level < 2) out.push(this.tray.pick)
     const v = this.current
     const w = this.wall
     if (!v || !w || w.lod.culled) return
@@ -148,6 +160,8 @@ export class Boards {
   dispose(): void {
     this.current?.dispose()
     this.current = null
+    this.tray?.dispose()
+    this.tray = null
     this.wall = null
     this.shown = null
     this.kit.dispose()

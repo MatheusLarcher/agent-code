@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { boardItemTitle, type BoardItem } from '@shared/ipc'
 import { PoChatPanel } from './PoChatPanel'
+import { poChatOpen, projectNameOf, usePoChatOpen } from './poChatOpen'
 import { usePoChat } from './usePoChat'
 
 /**
  * O "Fala, PO" ligado ao App: abre pelo botão do quadro (no lugar do chat
- * principal, como a Central, com o quadro ao lado), fecha no "Voltar" ou
- * quando outra conversa vira a ativa (o chat principal volta a ser ela), e
- * acompanha o cartão selecionado no quadro (o chip "Como está '<card>'?").
+ * principal, como a Central, com o quadro ao lado) ou pelo clique no PO do
+ * escritório (o projeto dele, no chat flutuante), fecha no "Voltar" ou quando
+ * outra conversa vira a ativa (o chat principal volta a ser ela), e acompanha
+ * o cartão selecionado no quadro (o chip "Como está '<card>'?"). Aberto ou
+ * fechado mora em poChatOpen.ts (o escritório lê e escreve o mesmo).
  */
 export function usePoChatPanel(opts: {
   projectCwd: string | null
@@ -27,7 +30,7 @@ export function usePoChatPanel(opts: {
   panel: JSX.Element | null
   onBoardSelect(item: BoardItem | null): void
 } {
-  const [openFor, setOpenFor] = useState<string | null>(null)
+  const openFor = usePoChatOpen()
   const [selected, setSelected] = useState<{ id: string; title: string } | null>(null)
   const state = usePoChat(openFor)
   const { projectCwd, openCard, openConversation } = opts
@@ -36,13 +39,13 @@ export function usePoChatPanel(opts: {
   useEffect(() => {
     if (lastActive.current === opts.activeId) return
     lastActive.current = opts.activeId
-    setOpenFor(null)
+    poChatOpen.set(null)
   }, [opts.activeId])
 
   const open = useCallback((): void => {
-    if (projectCwd) setOpenFor(projectCwd)
+    if (projectCwd) poChatOpen.set(projectCwd)
   }, [projectCwd])
-  const close = useCallback((): void => setOpenFor(null), [])
+  const close = useCallback((): void => poChatOpen.set(null), [])
   const onBoardSelect = useCallback((item: BoardItem | null): void => {
     setSelected(item ? { id: item.id, title: boardItemTitle(item) } : null)
   }, [])
@@ -50,12 +53,12 @@ export function usePoChatPanel(opts: {
   const panel = openFor ? (
     <PoChatPanel
       projectCwd={openFor}
-      projectName={openFor.split(/[\\/]/).filter(Boolean).pop() ?? openFor}
+      projectName={projectNameOf(openFor)}
       state={state}
       selectedCard={selected}
       onBack={close}
       onOpenConversation={(convId) => {
-        setOpenFor(null)
+        poChatOpen.set(null)
         openConversation(convId)
       }}
       onOpenCard={openCard}

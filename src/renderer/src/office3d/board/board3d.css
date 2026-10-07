@@ -82,6 +82,12 @@
   color: #f2efe8;
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
+/* A bandeja da fila: o motivo da fila parada aparece inteiro, em mais de uma linha. */
+.o3d-board-tip.o3d-board-tip-wrap {
+  white-space: normal;
+  width: max-content;
+  max-width: 300px;
+}
 .o3d-board-toast {
   white-space: normal;
   background: color-mix(in srgb, var(--err, #d97070) 22%, #1d1a22);

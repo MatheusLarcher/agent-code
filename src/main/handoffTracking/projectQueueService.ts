@@ -190,7 +190,8 @@ export class ProjectQueueService {
     if (!views) return { kind: 'none' }
     const step = projectStep(views, located.loteId, { force })
     if (step.kind === 'decided') return step.decision
-    const dirty = step.view.plan.startAnyway ? null : await this.deps.git.dirty(located.record.cwd)
+    // "Começar mesmo assim" (o plano) ou "Enviar mesmo assim" (o prompt, `force`): o usuário já decidiu, a pasta suja não segura.
+    const dirty = step.view.plan.startAnyway || force ? null : await this.deps.git.dirty(located.record.cwd)
     const decision = startDecision(step.view, step.first, dirty)
     const before = this.dirtyCount.get(located.loteId)
     if (decision.kind === 'hold' && dirty) this.dirtyCount.set(located.loteId, dirty.length)

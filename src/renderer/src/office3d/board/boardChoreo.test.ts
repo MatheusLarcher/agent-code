@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { deriveOfficeModel, roomIdFor } from '../../office/adapter/model'
 import { conv, feed, NOW } from '../../office/adapter/testFeed'
-import { BIN, PAD } from '../brainBoard'
+import { BIN, DESK, PAD } from '../brainBoard'
 import { stepLine, summaryLine, USER_SEAL } from './boardLines'
-import { BoardChoreo, LAG_MS, motionOf, performerOf, STEP_S, stopsFor, TRIP_CAP, TRIP_CAP_BUSY, type ChoreoCtx } from './boardChoreo'
+import { BoardChoreo, LAG_MS, motionOf, performerOf, STEP_S, stopsFor, TRIP_CAP, TRIP_CAP_BUSY, VISIT_S, type ChoreoCtx, type VisitPlan } from './boardChoreo'
 import type { BoardStep } from './boardModel'
 
 const step = (o: Partial<BoardStep> = {}): BoardStep => ({
@@ -180,6 +180,80 @@ describe('fila, ritmo e alcance (BoardChoreo)', () => {
     expect(trips).toEqual([])
     expect(slides.map((s) => s.seal)).toEqual(['O agente concluiu: Gerar o instalador', 'Sistema — fim do turno: o turno terminou sem concluir esta tarefa'])
     expect(c.waiting).toBe(0)
+  })
+})
+
+describe('a visita do PO à mesa do agente antes do quadro', () => {
+  const at = { x: 3, z: 4, yaw: 0.5, lx: 3, ly: 1.15, lz: 3.2 }
+  const po = (o: Partial<BoardStep> = {}): BoardStep => step({ actor: 'po', text: 'conferi a entrega', ...o })
+  /** A visita a `target` custando `walkS` de caminhada (ida até a mesa + volta ao quadro); registra quem foi perguntado. */
+  const visiting = (walkS: number, asked: string[] = []): ChoreoCtx['visit'] => (_key, target): VisitPlan => {
+    asked.push(target)
+    return { target, at, walkS }
+  }
+
+  it('cabe no prazo: primeiro a mesa do agente da conversa (conversa, sem fala), depois o quadro como antes', () => {
+    const c = new BoardChoreo(() => 0)
+    c.push([po()])
+    const asked: string[] = []
+    const { trips } = c.next(ctx({ walkS: () => 1, visit: visiting(4, asked) }))
+    expect(asked).toEqual(['conv:k1'])
+    expect(trips[0].visit).toBe('conv:k1')
+    const [first, ...board] = trips[0].errand.stops
+    expect(first).toMatchObject({ col: DESK, step: -1, visit: 'conv:k1', at, fired: false })
+    expect(first.beats).toEqual([expect.objectContaining({ action: 'talk', dur: VISIT_S, fire: false })])
+    expect(board.map((s) => s.col)).toEqual(stopsFor(po(), 0, 0).map((s) => s.col))
+    expect(trips[0].lines).toEqual(['conferi a entrega'])
+  })
+
+  it('não cabe (a mesa é longe demais para o prazo de LAG_MS): vai direto ao quadro', () => {
+    const c = new BoardChoreo(() => 0)
+    c.push([po()])
+    const { trips, slides } = c.next(ctx({ walkS: () => 1, visit: visiting(60) }))
+    expect(slides).toEqual([])
+    expect(trips[0].visit).toBeNull()
+    expect(trips[0].errand.stops.map((s) => s.col)).toEqual(stopsFor(po(), 0, 0).map((s) => s.col))
+  })
+
+  it('a visita não tira passo da viagem: se com ela cabem menos papéis animados, não vai', () => {
+    const three = [po({ cardId: 'a' }), po({ cardId: 'b' }), po({ cardId: 'c' })]
+    // Correndo (3 passos): direto cabem os 3; com 15 s de caminhada até a mesa e de volta, só 2.
+    const far = new BoardChoreo(() => 0)
+    far.push(three)
+    const a = far.next(ctx({ walkS: () => 1, visit: visiting(15) })).trips[0]
+    expect([a.visit, a.steps.length]).toEqual([null, 3])
+    // Com 8 s, os 3 cabem com a visita.
+    const near = new BoardChoreo(() => 0)
+    near.push(three)
+    const b = near.next(ctx({ walkS: () => 1, visit: visiting(8) })).trips[0]
+    expect([b.visit, b.steps.length, b.errand.gait]).toEqual(['conv:k1', 3, 'run'])
+  })
+
+  it('uma visita só por viagem, mesmo levando vários cartões da mesma conversa', () => {
+    const c = new BoardChoreo(() => 0)
+    c.push([po({ cardId: 'a' }), po({ cardId: 'b', toStatus: 'in_progress' })])
+    const asked: string[] = []
+    const { trips } = c.next(ctx({ walkS: () => 1, visit: visiting(3, asked) }))
+    expect(trips[0].steps).toHaveLength(2)
+    expect(trips[0].errand.stops.filter((s) => s.col === DESK)).toHaveLength(1)
+    expect(asked).toEqual(['conv:k1'])
+  })
+
+  it('agente fora do escritório ou fora da mesa (visit → null): sem visita', () => {
+    const c = new BoardChoreo(() => 0)
+    c.push([po()])
+    const { trips } = c.next(ctx({ walkS: () => 1, visit: () => null }))
+    expect(trips[0].visit).toBeNull()
+    expect(trips[0].errand.stops.some((s) => s.col === DESK)).toBe(false)
+  })
+
+  it('só o PO visita: a viagem do próprio agente nem pergunta', () => {
+    const c = new BoardChoreo(() => 0)
+    c.push([step()])
+    const asked: string[] = []
+    const { trips } = c.next(ctx({ walkS: () => 1, visit: visiting(2, asked) }))
+    expect(asked).toEqual([])
+    expect(trips[0]).toMatchObject({ key: 'conv:k1', visit: null })
   })
 })
 

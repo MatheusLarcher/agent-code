@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { OfficeCharacterModel, OfficeModel, OfficeRoomModel } from '../office/adapter/model'
+import { projectPoint, screenPose } from './cameraRig'
+import { BOARD_AT, BOARD_PLANE } from './engineTv'
+import { boardPlace } from './furniture'
 import { BESIDE_STEP, EMPTY_LAYOUT, layoutOffice, OFFICE_ID, SEAT_FRONT, type Office3DLayout } from './layout'
-import { CENTRAL_SPOT, deskPoint, DOOR, ISLANDS, islandSideSpots, LOUNGE_SEATS, MEMORY_SPOT_X, OFFICE, PO_SPOTS, STATIONS } from './officePlan'
+import { CENTRAL_SPOT, deskPoint, DOOR, ISLANDS, islandSideSpots, LOUNGE_SEATS, MEMORY_SPOT_X, OFFICE, PO_SPOTS, QUEUE_TRAY, STATIONS } from './officePlan'
+import { focusView } from './screenAnchor'
 
 function room(id: string, principals = 0): OfficeRoomModel {
   return { id, projectKey: id, name: id, icon: null, principals }
@@ -244,5 +248,55 @@ describe('layoutOffice — um escritório para todos os projetos', () => {
     const three = layoutOffice({ rooms: [room('r1', 2)], characters: [principal('b'), principal('c')] }, two)
     expect(desk(three, 'conv:b')).toBe(desk(one, 'conv:b'))
     expect(desk(three, 'conv:c')).toBe(desk(one, 'conv:a'))
+  })
+})
+
+describe('o PO parado à esquerda do quadro', () => {
+  const board = boardPlace()
+  /** Palcos de 4:3 a 21:9 (a vista do clique no quadro é a do motor: focusView + screenPose do BOARD_PLANE). */
+  const STAGES: ReadonlyArray<readonly [number, number]> = [[1024, 768], [1280, 1024], [1440, 900], [1600, 900], [1920, 1080], [2560, 1080], [3440, 1440]]
+  /** O corpo de quem fica de pé no lugar: 0,6 × 0,6 m de chão e 1,9 m de altura. */
+  const body = (s: { x: number; z: number }): Array<{ x: number; y: number; z: number }> =>
+    [-0.3, 0.3].flatMap((dx) => [0, 1.9].flatMap((y) => [-0.3, 0.3].map((dz) => ({ x: s.x + dx, y, z: s.z + dz }))))
+
+  it('todos os lugares ficam à esquerda do quadro, a menos de 1,7 m da borda dele, virados para ele', () => {
+    for (const s of PO_SPOTS) {
+      expect(s.x + 0.3, `${s.x},${s.z}`).toBeLessThan(board.x0)
+      expect(board.x0 - s.x, `${s.x},${s.z}`).toBeLessThan(1.7)
+      // Olhando para o quadro: a frente (−sen, −cos do giro) aponta para o centro dele.
+      const fx = -Math.sin(s.yaw)
+      const fz = -Math.cos(s.yaw)
+      const len = Math.hypot(board.x - s.x, BOARD_AT.z - s.z)
+      expect((fx * (board.x - s.x) + fz * (BOARD_AT.z - s.z)) / len, `${s.x},${s.z}`).toBeGreaterThan(0.99)
+    }
+  })
+
+  it('de frente, o PO não tapa a bandeja da fila: fica todo à esquerda dela', () => {
+    for (const s of PO_SPOTS) expect(s.x + 0.25, `${s.x},${s.z}`).toBeLessThan(QUEUE_TRAY.x - QUEUE_TRAY.w / 2)
+  })
+
+  it('no clique no quadro, nenhum lugar entra no enquadramento (nenhuma coluna tapada)', () => {
+    for (const [w, h] of STAGES) {
+      const view = focusView(50, w, h)
+      const pose = screenPose(BOARD_AT, BOARD_PLANE, view)
+      for (const s of PO_SPOTS) {
+        for (const p of body(s)) {
+          const q = projectPoint(pose, view, p)
+          expect(q.depth > 0 && Math.abs(q.x) <= 1 && Math.abs(q.y) <= 1, `${w}x${h}: (${p.x}, ${p.y}, ${p.z}) do lugar ${s.x},${s.z}`).toBe(false)
+        }
+      }
+    }
+  })
+
+  it('a bandeja da fila (entre o PO e o quadro) também não cobre o quadro: fica toda à esquerda da borda dele', () => {
+    const T = QUEUE_TRAY
+    const box = [-1, 1].flatMap((sx) => [0, T.h + 0.1].flatMap((y) => [-1, 1].map((sz) => ({ x: T.x + (sx * T.w) / 2, y, z: T.z + (sz * T.d) / 2 }))))
+    expect(T.x + T.w / 2).toBeLessThan(board.x0)
+    for (const [w, h] of STAGES) {
+      const view = focusView(50, w, h)
+      const pose = screenPose(BOARD_AT, BOARD_PLANE, view)
+      const edge = projectPoint(pose, view, { x: board.x0, y: board.y, z: BOARD_AT.z }).x
+      for (const p of box) expect(projectPoint(pose, view, p).x, `${w}x${h}: (${p.x}, ${p.y}, ${p.z})`).toBeLessThan(edge)
+    }
   })
 })

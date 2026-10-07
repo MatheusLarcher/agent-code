@@ -16,8 +16,10 @@
  * painel é neutra (office3d.css). Com a Central no painel (`central`: nenhuma
  * mesa selecionada, ou a Central é a conversa ativa), o cabeçalho é o dela —
  * orbe e "Central", sem projeto nem 📍 (ela não tem mesa) — e a cor é o
- * --accent. O maximizado nunca sobe na faixa do HUD (a de cima, que os balões
- * também respeitam — BUBBLE_TOP).
+ * --accent. Com o "Fala, PO" aberto (poChatOpen: o botão do quadro ou o clique
+ * no PO), o cabeçalho é o dele: orbe, "Fala, PO" e o projeto. O maximizado
+ * nunca sobe na faixa do HUD (a de cima, que os balões também respeitam —
+ * BUBBLE_TOP).
  */
 import '../central/central.css'
 import type { CSSProperties, ReactNode } from 'react'
@@ -25,6 +27,8 @@ import { CENTRAL_TITLE } from '@shared/central'
 import { ChatFloat, floatTop, type ChatFloatDisplay, type ChatFloatPersist, type FloatGeometry } from '../components/ChatFloat'
 import { loadOfficeChatMinimized, saveOfficeChatMinimized } from '../components/mainTabState'
 import { principalKey, roomName } from '../office/adapter/model'
+import { PO_CHAT_TITLE } from '../poChat/PoChatPanel'
+import { projectNameOf, usePoChatOpen } from '../poChat/poChatOpen'
 import { seedCss } from './appearance'
 import { BUBBLE_TOP } from './speech'
 
@@ -60,12 +64,21 @@ export interface OfficeChatFloatProps {
 }
 
 export function OfficeChatFloat({ children, conversation, central = false, expandSignal, collapseSignal, onLocate }: OfficeChatFloatProps): JSX.Element {
-  const color = central ? 'var(--accent)' : conversation ? seedCss(principalKey(conversation.id)) : null
+  const po = usePoChatOpen()
+  const color = central || po ? 'var(--accent)' : conversation ? seedCss(principalKey(conversation.id)) : null
   const style = color ? ({ '--o3d-agent': color } as CSSProperties) : undefined
   const header = central ? (
     <div className="o3d-chat-head">
       <span className="central-orb small" aria-hidden="true" />
       <span className="o3d-chat-title">{CENTRAL_TITLE}</span>
+    </div>
+  ) : po ? (
+    <div className="o3d-chat-head" data-testid="o3d-chat-po">
+      <span className="central-orb small" aria-hidden="true" />
+      <span className="o3d-chat-title">{PO_CHAT_TITLE}</span>
+      <span className="o3d-chat-project" title={po}>
+        {projectNameOf(po)}
+      </span>
     </div>
   ) : (
     <div className="o3d-chat-head">

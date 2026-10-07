@@ -1,6 +1,7 @@
 /**
  * O que o kanban põe na tela por cima do 3D (DOM): a dica do papel/pilha sob o
- * mouse (o nome da conversa, ou quantos cartões a pilha tem), a mensagem de
+ * mouse (o nome da conversa, ou quantos cartões a pilha tem) e da bandeja da
+ * fila (o próximo prompt, ou o motivo da fila parada), a mensagem de
  * recusa do main perto do topo do quadro (BOARD_TOAST_MS) e a âncora dos selos
  * da coreografia (boardSeals.ts). `place` a cada quadro projeta tudo na tela.
  */
@@ -9,6 +10,7 @@ import type { OfficeScene } from '../scene'
 import { CARD_KEY, parsePileKey } from './boardLayout'
 import { columnIndex } from './boardModel'
 import type { BoardSeals } from './boardSeals'
+import { TRAY_KEY } from './queueTray'
 
 /** Quanto tempo a mensagem de recusa fica perto do quadro (ms). */
 export const BOARD_TOAST_MS = 6_000
@@ -42,11 +44,12 @@ export class BoardTips {
     this.toast.setAttribute('role', 'alert')
   }
 
-  /** A dica do papel/pilha `key` (null esconde). */
+  /** A dica do papel/pilha/bandeja `key` (null esconde). A da bandeja quebra a linha: o motivo da fila parada vai inteiro. */
   tip(key: string | null, text: string): void {
     this.tipKey = key
     this.tipEl.textContent = text
     this.tipEl.hidden = key === null || !text
+    this.tipEl.classList.toggle('o3d-board-tip-wrap', key === TRAY_KEY)
   }
 
   /** A mensagem (recusa do main) perto do quadro do projeto, por BOARD_TOAST_MS. */
@@ -97,6 +100,7 @@ export class BoardTips {
   }
 
   private anchorOf(key: string): boolean {
+    if (key === TRAY_KEY) return !!this.scene.boards.tray?.anchor(this.at)
     if (key.startsWith(CARD_KEY)) {
       const id = key.slice(CARD_KEY.length)
       const room = this.scene.boards.roomOfCard(id)

@@ -414,7 +414,7 @@ function placeCharacters(
     } else if (p.kind === 'destination') {
       if (p.papel === 'kanban') {
         const s = PO_SPOTS[counters.po++ % PO_SPOTS.length]
-        o = base(c, s.x, s.z, 0, 'po')
+        o = base(c, s.x, s.z, s.yaw, 'po')
       } else if (p.papel === 'arquivo-memorias') {
         const i = counters.memory++
         o = i < MEMORY_SPOTS_Z.length ? base(c, MEMORY_SPOT_X, MEMORY_SPOTS_Z[i], -Math.PI / 2, 'memory') : base(c, MEMORY_WAIT.x, MEMORY_WAIT.z, -Math.PI / 2, 'memory')

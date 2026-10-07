@@ -56,6 +56,7 @@ import { Office3DEngine, type EngineCallbacks, type EngineOptions } from './engi
 import { MEMORY_SHELF_KEY, type BoardOpen } from './engineTypes'
 import type { ProjectLayout } from './layout'
 import { OfficeChatFloat, type OfficeConversation } from './OfficeChatFloat'
+import { openPoChat, screenComposerOf } from './officePoChat'
 import { OfficeHud } from './OfficeHud'
 import { isPerfShortcut, PerfHud } from './PerfHud'
 import { useAvatarPreviewKey } from './agentPreview'
@@ -197,6 +198,11 @@ export function Office3DWorkspace({
         if (!key) return setShowCentral(true)
         // A Central no console: o chat dela vai na tela do console, sem trocar a conversa ativa.
         if (engineRef.current?.scene.character(key)?.spot === 'central') return
+        // O PO (ao lado do quadro): o "Fala, PO" do projeto dele no chat flutuante, sem tela de monitor.
+        if (openPoChat(engineRef.current, key)) {
+          setShowCentral(false)
+          return setExpand((n) => n + 1)
+        }
         // Clique no agente: o chat vai para a conversa exata dele (a que o monitor mostra).
         const conv = engineRef.current?.scene.character(key)?.model.convId
         if (!conv) return
@@ -397,17 +403,7 @@ export function Office3DWorkspace({
   const fieldComposer = screenTakesChat && conversation?.id === focused.model.convId ? monitorComposer : null
   // O seletor de modelo/esforço é da conversa do agente focado (não depende da ativa).
   const picker = screenTakesChat && monitorModelPicker ? monitorModelPicker(focused.model.convId) : null
-  const screenComposer =
-    picker || fieldComposer ? (
-      <>
-        {picker ? (
-          <div className="composer-bar cm-model-bar" data-testid="office-screen-model">
-            {picker}
-          </div>
-        ) : null}
-        {fieldComposer}
-      </>
-    ) : null
+  const screenComposer = screenComposerOf(picker, fieldComposer)
 
   return (
     <div className="workspace office3d-workspace" hidden={!active} data-testid="office3d-workspace">
