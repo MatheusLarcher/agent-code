@@ -84,12 +84,6 @@ export class AvatarBody {
     for (const m of this.meshes) m.castShadow = level === 0
   }
 
-  /** Brilho do monitor no corpo (o emissive do boneco era só na pele; aqui pega o corpo todo, então fraco). */
-  setGlow(color: number, intensity: number): void {
-    this.material.emissive.setHex(color)
-    this.material.emissiveIntensity = intensity * 0.3
-  }
-
   /**
    * Copia a pose do boneco `r` (já com applyPose) para o esqueleto. `pronate`
    * 0..1: sentado à mesa sem objeto na mão (as palmas descem para o teclado);

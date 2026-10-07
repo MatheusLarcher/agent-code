@@ -287,7 +287,6 @@ export class Character3D {
     const t = this.ctx.t
     const glow = this.screenOn && !this.powerDark && b.mode === 'work' && b.sit > 0.9
     this.skinMat.emissiveIntensity = glow ? 0.2 + Math.sin(t * 7.3) * 0.03 + Math.sin(t * 2.1) * 0.03 : 0
-    this.body.setGlow(GLOW, this.skinMat.emissiveIntensity)
     this.indicator?.scale.setScalar(1 + Math.sin(t * 3) * 0.12)
     this.indicator?.rotation.set(0, t * 1.2, 0)
     return brainBusy(b) || this.blendT < BLEND_S || this.bangT >= 0 || this.smokeLeft > 0 || this.indicator !== null || t < this.glanceUntil

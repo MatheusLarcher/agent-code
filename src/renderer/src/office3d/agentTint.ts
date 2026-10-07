@@ -17,8 +17,11 @@
  */
 import type { Color, MeshStandardMaterial, Texture } from 'three'
 
-/** Rugosidade mínima e metal máximo (o PBR do modelo sem a cara de couro/plástico). */
-export const MIN_ROUGHNESS = 0.6
+/**
+ * Rugosidade mínima e metal máximo (o PBR do modelo sem a cara de couro/plástico). Com 0,6 o
+ * especular rasante deixava uma borda clara em volta do agente (parecia brilhar, meio branco).
+ */
+export const MIN_ROUGHNESS = 0.9
 export const MAX_METALNESS = 0.08
 /**
  * Força do ambiente (RoomEnvironment) nos agentes: só um respiro nas sombras. As luzes da sala já
@@ -27,6 +30,8 @@ export const MAX_METALNESS = 0.08
 export const ENV_INTENSITY = 0.1
 /** Luma média (linear) da roupa quando o modelo não traz `tintMeanLuma` nos extras do material. */
 const DEFAULT_LUMA = 0.12
+/** Quanto o texel mais claro da roupa pode passar da cor do projeto (com 2,5 a camisa clara estourava em branco). */
+const MAX_TINT_GAIN = 1.4
 
 export interface TintUniforms {
   tintColor: { value: Color }
@@ -39,7 +44,7 @@ const TINT = `#include <map_fragment>
 #ifdef USE_ROUGHNESSMAP
   float tintMask = smoothstep( 0.35, 0.65, texture2D( roughnessMap, vRoughnessMapUv ).r );
   float tintL = dot( diffuseColor.rgb, vec3( 0.2126, 0.7152, 0.0722 ) );
-  vec3 tinted = tintColor * clamp( tintL / max( tintLuma, 1e-3 ), 0.0, 2.5 );
+  vec3 tinted = tintColor * clamp( tintL / max( tintLuma, 1e-3 ), 0.0, ${MAX_TINT_GAIN.toFixed(3)} );
   diffuseColor.rgb = mix( diffuseColor.rgb, tinted, tintMask );
 #endif`
 

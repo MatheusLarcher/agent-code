@@ -4,7 +4,7 @@
  * posado (a pose, o clique e a sombra saem dele); com o avatar ele só fica
  * escondido e o avatar copia a pose. Aqui ficam as trocas e o que muda com o
  * corpo: medidas (BODY ou as do modelo), a mão que segura o objeto (com o
- * encaixe de cada um), o centro da cabeça, a sombra do LOD e o brilho do monitor.
+ * encaixe de cada um), o centro da cabeça e a sombra do LOD.
  */
 import type { Color, Group, MeshLambertMaterial, Object3D, Vector3 } from 'three'
 import { AvatarBody } from './agentAvatar'
@@ -132,10 +132,6 @@ export class CharacterBody {
 
   setLod(level: number): void {
     this.avatar?.setLod(level)
-  }
-
-  setGlow(color: number, intensity: number): void {
-    this.avatar?.setGlow(color, intensity)
   }
 
   dispose(): void {
