@@ -393,6 +393,13 @@ const PERMISSION_TIMEOUT_MS = 7 * 60_000
 // só faz a tela ficar parada em "trabalhando" sem ninguém saber por quê.
 const INTERRUPT_ACK_TIMEOUT_MS = 5_000
 
+// Prazo do `sessionStore.load()` na retomada (o SDK baixa a sessão inteira numa
+// consulta antes de subir o CLI). Sessão com screenshots em base64 passa de
+// 100 MB e, num PostgreSQL remoto, levou de 35 s a 90 s só de rede: os 30 s
+// anteriores derrubavam toda retomada dela. O teto é o da própria consulta no
+// pool: vaga 8 s + SET da sessão 10 s + query_timeout 130 s (postgresTimeouts.ts).
+const SESSION_STORE_LOAD_TIMEOUT_MS = 150_000
+
 /** Os `user_message_uuid(s)` que o CLI carimba no 1º frame do turno e no `result`. */
 function echoedTurnIds(message: unknown): string[] | null {
   const m = message as { user_message_uuid?: unknown; user_message_uuids?: unknown }
@@ -1300,7 +1307,7 @@ export class AgentSession {
       // Resume a previous SDK session (loads its history) when continuing an old chat.
       ...(this.opts.resume ? { resume: this.opts.resume } : {}),
       ...(this.sessionStore
-        ? { sessionStore: this.sessionStore, sessionStoreFlush: 'eager' as const, loadTimeoutMs: 30_000 }
+        ? { sessionStore: this.sessionStore, sessionStoreFlush: 'eager' as const, loadTimeoutMs: SESSION_STORE_LOAD_TIMEOUT_MS }
         : {}),
       // Run the bundled Claude Code CLI under system Node rather than the
       // Electron binary, which would otherwise be picked up as the runtime.

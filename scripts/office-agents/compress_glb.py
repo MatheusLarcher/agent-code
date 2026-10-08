@@ -39,8 +39,10 @@ def main():
     views = gltf["bufferViews"]
     blobs = [binb[v.get("byteOffset", 0): v.get("byteOffset", 0) + v["byteLength"]] for v in views]
 
-    # A textura de metal/rugosidade leva a máscara de tingimento no canal R (tint_mask.py):
-    # JPEG sem subamostragem de cor (4:4:4), senão a borda da máscara borra e vaza.
+    # Tudo em 4:4:4: a subamostragem de cor (4:2:0) guarda a cor a cada 2x2 texels, e no atlas
+    # picotado do Meshy o fiapo de calça encostado na ilha do cabelo herdava o laranja dele
+    # (riscos na calça). A de metal/rugosidade leva a máscara de tingimento no canal R (tint_mask.py).
+    # Redução por média de área (BOX): o LANCZOS fazia halo claro/escuro na borda das ilhas.
     tex = gltf.get("textures", [])
     mr_images = {
         tex[m["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"]]["source"]
@@ -51,12 +53,10 @@ def main():
         i = img["bufferView"]
         im = Image.open(io.BytesIO(blobs[i]))
         is_normal = (img.get("name") or "").lower().startswith("normal")
-        im = im.convert("RGB").resize((side, side), Image.LANCZOS)
+        im = im.convert("RGB").resize((side, side), Image.BOX)
         out = io.BytesIO()
-        if n in mr_images:
-            im.save(out, "JPEG", quality=92, subsampling=0, optimize=True)
-        else:
-            im.save(out, "JPEG", quality=92 if is_normal else 85, optimize=True)
+        quality = 92 if n in mr_images or is_normal else 88
+        im.save(out, "JPEG", quality=quality, subsampling=0, optimize=True)
         blobs[i] = out.getvalue()
         img["mimeType"] = "image/jpeg"
 

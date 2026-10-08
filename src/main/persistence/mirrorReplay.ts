@@ -11,6 +11,7 @@ import {
   type SessionStoreEntry
 } from '@anthropic-ai/claude-agent-sdk'
 import { hashJson, normalizeJson } from './hashes'
+import { sessionKeyId } from './replayDedup'
 import { StorageError, type PersistenceRepository } from './types'
 
 /** Mesmo lote padrão do `importSessionToStore` do SDK. */
@@ -116,6 +117,29 @@ async function appendJsonl(file: string, key: SessionKey, store: SessionStore): 
   if (batch.length) await store.append(key, batch)
 }
 
+/**
+ * O store com `load` memorizado por sessão + subpath (o `projectKey` os stores
+ * do app já ignoram: a conversa vem do próprio store). A verificação lê a MESMA
+ * sessão em três chamadas — getSessionInfo, a conferência e getSessionMessages —
+ * e uma sessão com screenshots em base64 passa de 100 MB: eram três downloads
+ * dela inteira. Só para as leituras de uma verificação, depois dos appends.
+ */
+export function loadOnce(store: SessionStore): SessionStore {
+  const loads = new Map<string, Promise<SessionStoreEntry[] | null>>()
+  return {
+    ...store,
+    load(key) {
+      const id = sessionKeyId(key)
+      let pending = loads.get(id)
+      if (!pending) {
+        pending = store.load(key)
+        loads.set(id, pending)
+      }
+      return pending
+    }
+  }
+}
+
 type VerifyRepository = Pick<PersistenceRepository, 'markSessionResumeReady'>
 
 /**
@@ -131,13 +155,16 @@ export async function verifyMirroredSession(
   sessionId: string,
   cwd: string
 ): Promise<void> {
+  const reader = loadOnce(store)
   const [info, entries] = await Promise.all([
-    getSessionInfo(sessionId, { dir: cwd, sessionStore: store }),
-    store.load({ projectKey: conversationId, sessionId })
+    getSessionInfo(sessionId, { dir: cwd, sessionStore: reader }),
+    reader.load({ projectKey: conversationId, sessionId })
   ])
   if (!info || !entries?.length) {
     throw new StorageError('SESSION_HANDOFF_INCOMPLETE', 'O transcript espelhado não passou na verificação.')
   }
-  await getSessionMessages(sessionId, { dir: cwd, sessionStore: store })
-  await repository.markSessionResumeReady(conversationId, sessionId, true, hashJson(normalizeJson(entries)))
+  // Antes de getSessionMessages, que recebe as mesmas entradas: o hash é do que o banco devolveu.
+  const verifiedHash = hashJson(normalizeJson(entries))
+  await getSessionMessages(sessionId, { dir: cwd, sessionStore: reader })
+  await repository.markSessionResumeReady(conversationId, sessionId, true, verifiedHash)
 }

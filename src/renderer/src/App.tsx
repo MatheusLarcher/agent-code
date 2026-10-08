@@ -126,6 +126,7 @@ import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
 import { formatElements } from './components/elementPick/elementToken'
 import { splitForSpeech, toSpeechText } from '@shared/speechText'
+import { createClipPlayer, type ClipPlayer } from './ui/clipPlayer'
 import { NewTabModal } from './ui/NewTabModal'
 import { FilePickerModal } from './ui/FilePickerModal'
 import { RemoteModal } from './ui/RemoteModal'
@@ -714,9 +715,11 @@ export function App(): JSX.Element {
   // `withAutoModelOption` — only with TypeSafe ready or when it's the saved value.
   // A regra mora em @shared/selectableModels: o MCP de entrada aceita a mesma lista.
   const models = useMemo(() => selectableModels({ ollama: ollamaReady, codex: codexReady }), [ollamaReady, codexReady])
-  // Read-aloud (TTS): id of the message currently playing, and the <audio> in use.
+  // Read-aloud (TTS): id of the message currently playing, and the player (one
+  // audio output kept open across the parts — see ui/clipPlayer.ts).
   const [speakingId, setSpeakingId] = useState<string | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const clipPlayerRef = useRef<ClipPlayer | null>(null)
+  const clipPlayer = (): ClipPlayer => (clipPlayerRef.current ??= createClipPlayer())
   // Bumped to cancel an in-flight read-aloud sequence (stop / switch message).
   const speakTokenRef = useRef(0)
   // Messages typed while the agent is busy wait here (per conversation) instead
@@ -3629,31 +3632,9 @@ export function App(): JSX.Element {
   // Stop any read-aloud in progress and invalidate its pending synthesis.
   const stopSpeak = useCallback((): void => {
     speakTokenRef.current++
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current = null
-    }
+    clipPlayerRef.current?.stop()
     setSpeakingId(null)
   }, [])
-
-  // Play one base64 chunk to completion (or until cancelled). Resolves on end,
-  // error, or when the audio is paused by stopSpeak.
-  const playClip = (base64: string, mimeType: string): Promise<void> =>
-    new Promise<void>((resolve) => {
-      // Played at rate 1: the configured speed is already in the audio (Kokoro's own).
-      const audio = new Audio(`data:${mimeType};base64,${base64}`)
-      audioRef.current = audio
-      let settled = false
-      const done = (): void => {
-        if (settled) return
-        settled = true
-        resolve()
-      }
-      audio.onended = done
-      audio.onerror = done
-      audio.onpause = done // stopSpeak pauses → unblock the sequence
-      audio.play().catch(done)
-    })
 
   // Read an assistant answer aloud (TTS). Clicking again (or another message)
   // stops playback. The text is treated for speech, then synthesized and played
@@ -3670,6 +3651,8 @@ export function App(): JSX.Element {
       }
       const token = ++speakTokenRef.current
       setSpeakingId(id)
+      // Abre a saída já no clique: ela acorda enquanto a 1ª parte é sintetizada.
+      clipPlayer().prime()
 
       // Prefetch synthesis so chunk i+1 is ready while chunk i plays.
       const pending = new Map<number, ReturnType<typeof window.api.speak>>()
@@ -3690,13 +3673,11 @@ export function App(): JSX.Element {
           notify('erro', `Falha ao gerar áudio: ${r.error ?? 'erro'}`)
           return
         }
-        await playClip(r.audioBase64, r.mimeType ?? 'audio/wav')
+        // Played at rate 1: the configured speed is already in the audio (Kokoro's own).
+        await clipPlayer().play(r.audioBase64)
         if (token !== speakTokenRef.current) return // stopped during playback
       }
-      if (token === speakTokenRef.current) {
-        audioRef.current = null
-        setSpeakingId(null)
-      }
+      if (token === speakTokenRef.current) setSpeakingId(null)
     },
     [speakingId, notify, stopSpeak]
   )

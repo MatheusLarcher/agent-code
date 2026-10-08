@@ -1,39 +1,18 @@
 import type { JsonValue } from './hashes'
 
 const MARKER = '\u{E000}agent-code-pg-escape:'
+// Um replace só, nunca concatenação caractere a caractere: no V8 cada `+=` vira
+// um nó de corda (~32 bytes por caractere) e uma sessão com screenshots em
+// base64 (~100 MB) passava de 3 GB e derrubava o processo principal.
+const ENCODE_RE = new RegExp(`${MARKER}|\\u0000`, 'g')
+const DECODE_RE = new RegExp(`${MARKER}([0e])`, 'g')
 
 export function encodePostgresText(value: string): string {
-  let encoded = ''
-  for (let index = 0; index < value.length;) {
-    if (value.startsWith(MARKER, index)) {
-      encoded += `${MARKER}e`
-      index += MARKER.length
-    } else if (value[index] === '\0') {
-      encoded += `${MARKER}0`
-      index += 1
-    } else {
-      encoded += value[index]
-      index += 1
-    }
-  }
-  return encoded
+  return value.replace(ENCODE_RE, (match) => (match === '\0' ? `${MARKER}0` : `${MARKER}e`))
 }
 
 export function decodePostgresText(value: string): string {
-  let decoded = ''
-  for (let index = 0; index < value.length;) {
-    if (value.startsWith(`${MARKER}0`, index)) {
-      decoded += '\0'
-      index += MARKER.length + 1
-    } else if (value.startsWith(`${MARKER}e`, index)) {
-      decoded += MARKER
-      index += MARKER.length + 1
-    } else {
-      decoded += value[index]
-      index += 1
-    }
-  }
-  return decoded
+  return value.replace(DECODE_RE, (_match, code: string) => (code === '0' ? '\0' : MARKER))
 }
 
 export function encodePostgresJson(value: JsonValue): JsonValue {

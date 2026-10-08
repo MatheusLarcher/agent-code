@@ -4,6 +4,7 @@
  * ordem enquanto a próxima é sintetizada, então o 1º áudio começa rápido e
  * respostas longas funcionam. Tocar de novo na mesma mensagem para.
  */
+import { createClipPlayer } from '@renderer/ui/clipPlayer'
 import { client, toast } from '../app/runtime'
 import { HttpError } from '../core/net'
 import { createStore } from '../core/store'
@@ -11,7 +12,9 @@ import { createStore } from '../core/store'
 type TtsReply = { ok?: boolean; audioBase64?: string; mimeType?: string; error?: string; parts?: string[] }
 
 export const tts = createStore<{ speakingId: string | null }>({ speakingId: null })
-let audio: HTMLAudioElement | null = null
+// Uma saída de áudio aberta durante a leitura toda (ui/clipPlayer.ts): um <audio>
+// por parte cortava o começo de cada parte.
+const player = createClipPlayer()
 
 /** Resposta JSON mesmo quando a ponte devolve erro HTTP com corpo (503 voice-unavailable). */
 async function postReply(path: string, body: unknown): Promise<TtsReply | null> {
@@ -23,21 +26,16 @@ async function postReply(path: string, body: unknown): Promise<TtsReply | null> 
 }
 
 export function stopSpeak(): void {
-  if (audio) {
-    try {
-      audio.pause()
-    } catch {
-      /* já parado */
-    }
-  }
-  audio = null
   tts.set({ speakingId: null })
+  player.stop()
 }
 
 export function toggleSpeak(id: string, text: string): void {
   if (tts.get().speakingId === id) return stopSpeak()
   stopSpeak()
   tts.set({ speakingId: id })
+  // Ainda dentro do toque: a WebView só libera o áudio a partir de um gesto.
+  player.prime()
   const alive = (): boolean => tts.get().speakingId === id
   const fail = (d: TtsReply | null): void => {
     if (!alive()) return
@@ -64,12 +62,9 @@ export function toggleSpeak(id: string, text: string): void {
       void p.then((r) => {
         if (!alive()) return // cancelado enquanto carregava
         if (!(r?.ok && r.audioBase64)) return fail(r)
-        const a = new Audio(`data:${r.mimeType || 'audio/wav'};base64,${r.audioBase64}`)
-        audio = a
-        a.onended = () => {
+        void player.play(r.audioBase64).then(() => {
           if (alive()) playAt(i + 1)
-        }
-        a.play().catch(() => stopSpeak())
+        })
       })
     }
     playAt(0)

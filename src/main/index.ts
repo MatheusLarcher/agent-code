@@ -119,7 +119,7 @@ import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
 import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
 import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
 import { hashJson, normalizeJson } from './persistence/hashes'
-import { replayLocalTranscript, verifyMirroredSession } from './persistence/mirrorReplay'
+import { loadOnce, replayLocalTranscript, verifyMirroredSession } from './persistence/mirrorReplay'
 import { replayDedupStore } from './persistence/replayDedup'
 import { activeContextHistory, activeReplayStore, activeResumeMarker, activeSessionStore, activeTokenUsage } from './persistence/activeRepository'
 import { registerContextIpc } from './contextSnapshot/ipc'
@@ -350,15 +350,18 @@ async function prepareSessionResume(
   if (await repository.sessionResumeReady(convId, sessionId)) return
   const store = repository.createSessionStore(convId)
   await importSessionToStore(sessionId, store, { dir: cwd, includeSubagents: true }).catch(() => undefined)
+  // Depois da importação: as três leituras abaixo dividem UM download da sessão (loadOnce).
+  const reader = loadOnce(store)
   const [info, entries] = await Promise.all([
-    getSessionInfo(sessionId, { dir: cwd, sessionStore: store }),
-    store.load({ projectKey: convId, sessionId })
+    getSessionInfo(sessionId, { dir: cwd, sessionStore: reader }),
+    reader.load({ projectKey: convId, sessionId })
   ])
   if (!info || !entries?.length) {
     throw new StorageError('SESSION_HANDOFF_INCOMPLETE', 'A sessão não possui transcript íntegro para retomada.')
   }
-  await getSessionMessages(sessionId, { dir: cwd, sessionStore: store })
-  await repository.markSessionResumeReady(convId, sessionId, true, hashJson(normalizeJson(entries)))
+  const verifiedHash = hashJson(normalizeJson(entries))
+  await getSessionMessages(sessionId, { dir: cwd, sessionStore: reader })
+  await repository.markSessionResumeReady(convId, sessionId, true, verifiedHash)
 }
 
 // One independent browser per conversation. Only the conversation currently
