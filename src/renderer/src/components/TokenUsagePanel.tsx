@@ -3,6 +3,7 @@ import type { LlmCall as PersistedLlmCall, LlmUsageTotal, TokenUsage } from '@sh
 import { buildUsageTree, totalTokens, type UsageMap, type UsageNode } from '../tokenUsageTree'
 import { buildHistoryMap, fmtCost, mergeUsageMaps, usageTotals } from '../tokenUsageHistory'
 import { IconChevronDown, IconChevronRight } from './Icons'
+import { ReadRetry } from './ReadRetry'
 
 interface Props {
   /** Conversa aberta no momento, ou `null` sem conversa selecionada. */
@@ -117,22 +118,32 @@ export function TokenUsagePanel({ convId, liveMap, cost }: Props): JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null)
+  // Histórico do banco que falhou ou passou do prazo: o painel fica com o consumo
+  // ao vivo e oferece "tentar de novo".
+  const [historyError, setHistoryError] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     setSelectedNodeId(null)
     setSelectedSeq(null)
+    setHistoryError(null)
     if (!convId) {
       setHistory({ calls: [], totals: [] })
       return
     }
     let cancelled = false
-    void window.api.getTokenUsageHistory(convId).then((h) => {
-      if (!cancelled) setHistory(h)
-    })
+    window.api
+      .getTokenUsageHistory(convId)
+      .then((h) => {
+        if (!cancelled) setHistory(h)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setHistoryError(error)
+      })
     return () => {
       cancelled = true
     }
-  }, [convId])
+  }, [convId, attempt])
 
   const historyMap = useMemo(() => buildHistoryMap(history.calls), [history.calls])
   const mergedMap = useMemo(() => mergeUsageMaps(historyMap, liveMap), [historyMap, liveMap])
@@ -187,6 +198,10 @@ export function TokenUsagePanel({ convId, liveMap, cost }: Props): JSX.Element {
         )}
         <span className="token-usage-call-count">{totalCalls} chamada{totalCalls === 1 ? '' : 's'}</span>
       </div>
+
+      {historyError ? (
+        <ReadRetry error={historyError} what="o histórico de consumo" onRetry={() => setAttempt((n) => n + 1)} />
+      ) : null}
 
       {tree.length === 0 ? (
         <div className="token-usage-empty">Nenhuma chamada ao modelo ainda.</div>

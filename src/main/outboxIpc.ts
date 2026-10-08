@@ -1,22 +1,25 @@
 import { z } from 'zod'
 import { Channels, type OutboxEntryDto } from '../shared/ipc'
 import type { ConversationOutboxRepository } from './persistence/types'
+import type { OutboxWriteQueue } from './persistence/writeQueue/outboxQueue'
 
 /**
  * A fila de espera das conversas (mensagens enviadas com o agente ocupado, do
  * usuário e do Agent Manager), gravada no banco para sobreviver a um reinício.
- * O renderer lê tudo no boot e regrava a fila de uma conversa a cada mudança.
+ * O renderer lê tudo no boot e entrega a fila de uma conversa a cada mudança — a
+ * gravação é da fila do main (writeQueue/outboxQueue.ts): nova tentativa quando
+ * o banco cai e diário local no fechamento, sem a tela esperar.
  *
- * Fronteira: zod em tudo, nenhuma exceção atravessa o IPC. Banco indisponível
- * (somente leitura, migrando) = lista vazia / `ok: false`.
+ * Fronteira: zod em tudo, nenhuma exceção atravessa o IPC.
  */
 
 export type OutboxIpcListener = (event: unknown, ...args: unknown[]) => unknown
 
 export interface OutboxIpcDeps {
   handle: (channel: string, listener: OutboxIpcListener) => void
-  /** `null` quando o banco não aceita escrita agora. */
+  /** `null` quando o banco não aceita leitura/escrita agora. */
   repository: () => ConversationOutboxRepository | null
+  queue: Pick<OutboxWriteQueue, 'replace' | 'overlay'>
 }
 
 /** Teto por fila: evita que um payload doente (anexos enormes) trave o banco. */
@@ -32,27 +35,22 @@ const ReplaceReq = z.strictObject({
 
 export function registerOutboxIpc(deps: OutboxIpcDeps): void {
   deps.handle(Channels.outboxList, async (): Promise<OutboxEntryDto[]> => {
+    let stored: OutboxEntryDto[] = []
     try {
       const repo = deps.repository()
-      return repo ? await repo.listConversationOutbox() : []
+      stored = repo ? await repo.listConversationOutbox() : []
     } catch (error) {
       console.warn('[fila] não consegui ler a fila gravada:', (error as Error).message)
-      return []
     }
+    // O que está na fila do main (ou voltou do diário) vale por cima do banco.
+    return deps.queue.overlay(stored)
   })
 
   deps.handle(Channels.outboxReplace, async (_event, payload): Promise<{ ok: boolean }> => {
     const parsed = ReplaceReq.safeParse(payload)
     if (!parsed.success) return { ok: false }
     if (JSON.stringify(parsed.data.items).length > MAX_PAYLOAD_CHARS) return { ok: false }
-    try {
-      const repo = deps.repository()
-      if (!repo) return { ok: false }
-      await repo.replaceConversationOutbox(parsed.data.conversationId, parsed.data.items)
-      return { ok: true }
-    } catch (error) {
-      console.warn('[fila] não consegui gravar a fila:', (error as Error).message)
-      return { ok: false }
-    }
+    deps.queue.replace(parsed.data.conversationId, parsed.data.items)
+    return { ok: true }
   })
 }

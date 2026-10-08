@@ -28,6 +28,8 @@ import type { ContextTurnDetail, ContextTurnSummary } from '../../shared/context
 import { createPostgresSessionStore } from './postgresSessionStore'
 import { hotPathTransaction } from './postgresSessionSetup'
 import { rollbackOrDiscard } from './postgresTimeouts'
+import { writePostgresTelemetryBatch } from './postgresTelemetryBatch'
+import type { TelemetryBatch } from './telemetryBatch'
 import { ensurePostgresBoardParent } from './postgresBoardParent'
 import { BoardPrintPruner } from './boardPrintPruner'
 import type { BoardItemPrintQuery, BoardItemPrintRecord, BoardItemPrintWrite } from './boardPrintTypes'
@@ -116,6 +118,8 @@ import {
   type ConversationLease,
   type ConversationRecord,
   type ConversationWrite,
+  type ConversationWriteResult,
+  type PreparedConversationWrite,
   type ContextTurnWrite,
   type ExportSnapshot,
   type HandoffEntregaPatch,
@@ -346,8 +350,21 @@ interface ConversationRow {
   device_state?: ConversationRecord | null
   project_path?: string | null
 }
+type ConversationMetaRow = Omit<ConversationRow, 'payload' | 'device_state' | 'project_path'>
+const CONVERSATION_META_COLUMNS = 'conversation_id, revision, content_hash, created_at, updated_at, deleted_at'
+
 function iso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString()
+}
+function conversationWriteResult(row: ConversationMetaRow): ConversationWriteResult {
+  return {
+    id: row.conversation_id,
+    revision: Number(row.revision),
+    contentHash: row.content_hash,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+    ...(row.deleted_at ? { deletedAt: iso(row.deleted_at) } : {})
+  }
 }
 function kv(row: KvRow, scope: KvAddress['scope']): VersionedKv {
   return {
@@ -729,7 +746,15 @@ export class PostgresRepository implements PersistenceRepository {
         throw new StorageError('INVALID_PERSISTED_DATA', 'Payload de conversa inválido.')
       }
       const { shared, device } = splitConversationPayload(payload as ConversationRecord)
-      const projectId = await this.writeProjectMapping(client, shared, device)
+      const projectId = await this.writeProjectMapping(
+        client,
+        {
+          projectId: typeof shared.projectId === 'string' ? shared.projectId : '',
+          signature: typeof shared.projectSignature === 'string' ? shared.projectSignature : '',
+          remoteGit: typeof shared.projectRemoteGit === 'string' ? shared.projectRemoteGit : null
+        },
+        typeof device.cwd === 'string' ? device.cwd : ''
+      )
       const normalizedShared = normalizeJson(shared)
       const contentHash = hashJson(normalizedShared)
       const existing = current.rows[0]
@@ -750,6 +775,40 @@ export class PostgresRepository implements PersistenceRepository {
       )
       await this.writeDeviceConversationState(client, write.id, device)
       return conversation({ ...result.rows[0], device_state: device })
+    })
+  }
+
+  readonly conversationHashScope = 'shared' as const
+
+  async writeConversation(write: PreparedConversationWrite): Promise<ConversationWriteResult> {
+    this.assertInitialized()
+    const { prepared } = write
+    return transaction(this.pool, async (client) => {
+      await this.assertFence(client, write.id, write.lease)
+      // Só os metadados: o payload atual (megabytes) não precisa vir do banco.
+      const current = await client.query<ConversationMetaRow>(
+        `SELECT ${CONVERSATION_META_COLUMNS} FROM conversations WHERE conversation_id = $1 FOR UPDATE`,
+        [write.id]
+      )
+      const existing = current.rows[0]
+      this.assertRevision(write.expectedRevision, existing?.revision, `Conversa ${write.id}`)
+      const projectId = await this.writeProjectMapping(client, prepared.project, prepared.cwd)
+      let row = existing
+      if (!existing || existing.content_hash !== prepared.contentHash || existing.deleted_at) {
+        const result = await client.query<ConversationMetaRow>(
+          `INSERT INTO conversations(conversation_id, project_id, payload, revision, content_hash, updated_by)
+           VALUES($1, $2, $3, $4, $5, $6)
+           ON CONFLICT(conversation_id) DO UPDATE SET payload = EXCLUDED.payload, revision = EXCLUDED.revision,
+             project_id = EXCLUDED.project_id,
+             content_hash = EXCLUDED.content_hash, updated_at = clock_timestamp(), deleted_at = NULL,
+             updated_by = EXCLUDED.updated_by
+           RETURNING ${CONVERSATION_META_COLUMNS}`,
+          [write.id, projectId, prepared.sharedParam, Number(existing?.revision ?? 0) + 1, prepared.contentHash, this.installationId]
+        )
+        row = result.rows[0]
+      }
+      await this.writeDeviceStateParam(client, write.id, prepared.deviceParam)
+      return conversationWriteResult(row)
     })
   }
 
@@ -1575,6 +1634,12 @@ export class PostgresRepository implements PersistenceRepository {
     return result.rows.map(llmUsageTotalFromRow)
   }
 
+  /** O lote da fila de telemetria: uma transação (postgresTelemetryBatch.ts). */
+  async writeTelemetryBatch(batch: TelemetryBatch): Promise<void> {
+    this.assertInitialized()
+    await writePostgresTelemetryBatch(this.pool, batch)
+  }
+
   async insertTurnTime(input: TurnTimeInsert): Promise<void> {
     this.assertInitialized()
     await this.pool.query(
@@ -2085,38 +2150,50 @@ export class PostgresRepository implements PersistenceRepository {
     conversationId: string,
     device: ConversationRecord
   ): Promise<void> {
+    await this.writeDeviceStateParam(client, conversationId, encodePostgresJsonParam(normalizeJson(device)))
+  }
+
+  private async writeDeviceStateParam(client: PoolClient, conversationId: string, state: string): Promise<void> {
     await client.query(
       `INSERT INTO conversation_device_state(conversation_id, installation_id, state, revision)
        VALUES($1, $2, $3, 1)
        ON CONFLICT(conversation_id, installation_id) DO UPDATE SET state = EXCLUDED.state,
          revision = conversation_device_state.revision + 1, updated_at = clock_timestamp()`,
-      [conversationId, this.installationId, encodePostgresJsonParam(normalizeJson(device))]
+      [conversationId, this.installationId, state]
     )
   }
 
   private async writeProjectMapping(
     client: PoolClient,
-    shared: ConversationRecord,
-    device: ConversationRecord
+    project: { projectId: string; signature: string; remoteGit: string | null },
+    cwd: string
   ): Promise<string | null> {
-    const projectId = typeof shared.projectId === 'string' ? shared.projectId : ''
-    const signature = typeof shared.projectSignature === 'string' ? shared.projectSignature : ''
+    const { projectId, signature, remoteGit } = project
     if (!projectId || !signature) return null
-    const remoteGit = typeof shared.projectRemoteGit === 'string' ? shared.projectRemoteGit : null
+    // DO NOTHING sem alvo cobre o id E a assinatura (as duas são únicas): duas
+    // gravações simultâneas do mesmo projeto novo — a fila grava conversas em
+    // paralelo — não estouram `projects_signature_key`. E sem DO UPDATE a cada
+    // gravação de conversa: a linha do projeto (e a linha de change log que o
+    // gatilho dela gera) só muda quando ganha o remote git.
     await client.query(
-      `INSERT INTO projects(project_id, remote_git, signature)
-       VALUES($1, $2, $3)
-       ON CONFLICT(project_id) DO UPDATE SET remote_git = COALESCE(projects.remote_git, EXCLUDED.remote_git),
-         updated_at = clock_timestamp()`,
+      `INSERT INTO projects(project_id, remote_git, signature) VALUES($1, $2, $3) ON CONFLICT DO NOTHING`,
       [projectId, remoteGit, signature]
     )
-    if (typeof device.cwd === 'string' && device.cwd) {
+    if (remoteGit) {
+      await client.query(
+        `UPDATE projects SET remote_git = $2, updated_at = clock_timestamp() WHERE project_id = $1 AND remote_git IS NULL`,
+        [projectId, remoteGit]
+      )
+    }
+    if (cwd) {
       await client.query(
         `INSERT INTO project_devices(project_id, installation_id, local_path, signature)
          VALUES($1, $2, $3, $4)
          ON CONFLICT(project_id, installation_id) DO UPDATE SET local_path = EXCLUDED.local_path,
-           signature = EXCLUDED.signature, updated_at = clock_timestamp()`,
-        [projectId, this.installationId, device.cwd, signature]
+           signature = EXCLUDED.signature, updated_at = clock_timestamp()
+         WHERE project_devices.local_path IS DISTINCT FROM EXCLUDED.local_path
+            OR project_devices.signature IS DISTINCT FROM EXCLUDED.signature`,
+        [projectId, this.installationId, cwd, signature]
       )
     }
     return projectId

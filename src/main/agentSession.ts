@@ -2,6 +2,7 @@ import { query, type FastModeDisabledReason, type FastModeState, type McpServerC
 import { fastModeNotice } from './fastModeNotice'
 import { AsyncQueue } from './asyncQueue'
 import { createAppMcpServer, APP_CALL_HINT, APP_PRINT_HINT, APP_RESTART_HINT } from './appTools'
+import { cloudToolDeps, runCloudTool } from './cloudTool'
 import { CallIds, emitOfficeCall } from './officeCallRuntime'
 import { attachPrintFromAgent } from './board/printRuntime'
 import { OFFICE_CALL_TOOL } from '../shared/officeCall'
@@ -731,6 +732,8 @@ export class AgentSession {
   private authFailedTurn = false
   private providerContinuation = false
   private handoffReady: Promise<void> = Promise.resolve()
+  /** Fins de turno vistos: só o mais recente libera o `restartPersisting`. */
+  private turnEnds = 0
   private restartInitializing = true
   private restartPersisting = false
   private restartBackground: number | null = null
@@ -989,7 +992,13 @@ export class AgentSession {
         callId: (arquivo) => this.callIds.take(arquivo),
         onCall: (c) => emitOfficeCall({ id: c.id ?? `call-${Date.now()}`, convId: this.opts.convId, cwd: this.opts.cwd, path: c.path, mensagem: c.mensagem, at: Date.now() }),
         // O print da tarefa visual no cartão (board/printAttach.ts); o Agent Manager não tem cartão.
-        attachPrint: this.opts.planning ? undefined : (p) => attachPrintFromAgent({ ...p, conversationId: this.opts.convId, cwd: this.opts.cwd })
+        attachPrint: this.opts.planning ? undefined : (p) => attachPrintFromAgent({ ...p, conversationId: this.opts.convId, cwd: this.opts.cwd }),
+        // A nuvem opcional por comando (cloudTool.ts): a guarda vale para as OUTRAS conversas;
+        // a desta está no meio do turno, e a troca só roda depois que ele terminar.
+        postgresCloud: this.opts.planning ? undefined : (input) => {
+          const deps = cloudToolDeps(() => this.restartRegistration?.request('troca de banco de dados', true) ?? { ok: true, message: '' })
+          return deps ? runCloudTool(input, deps) : Promise.resolve({ ok: false, text: 'A troca de banco não está disponível nesta execução.' })
+        }
       })
     }
     if (process.platform === 'win32') {
@@ -1531,9 +1540,12 @@ export class AgentSession {
       return
     }
     this.beginTurn()
-    await this.handoffReady
+    // Nem a verificação do espelho do turno anterior (`handoffReady`, lê o banco)
+    // nem o reparo dele seguram o envio: o SDK segue pelo transcript local — o
+    // `mirror_error` não afeta o subprocesso — e o reparo roda em segundo plano
+    // (mirrorRepair.ts). Quem precisa do espelho verificado (troca de provedor,
+    // retomada pelo banco) espera por ele lá.
     this.quotaRejected = false
-    if (this.mirrorFailed && !(await this.awaitMirrorRepair(messageKind === 'normal' ? messageUuid : undefined))) return
     const memoryCatalogUpdate = await this.refreshMemoriesIfChanged()
     const skillCatalogUpdate = await this.refreshSkillsIfChanged()
     const projectsCatalogUpdate = await this.refreshProjectsIfChanged()
@@ -1660,47 +1672,6 @@ export class AgentSession {
   async waitForIdle(): Promise<void> {
     if (this.turnActive) await new Promise<void>((resolve) => this.idleWaiters.add(resolve))
     await this.handoffReady
-  }
-
-  /**
-   * Envio com o espelho quebrado. Com reparo pendente, tenta já: se o banco
-   * voltou, o envio segue. Senão, a mensagem do usuário (`deferUuid`) NÃO é
-   * enviada: volta para a fila de espera da conversa no renderer (a mesma do
-   * agente ocupado, gravada em conversation_outbox) e sai quando o reparo
-   * concluir (evento `mirror-repair`). Envio interno sem essa fila (recuperação,
-   * Quadro) espera o reparo aqui mesmo. Sem reparo possível, recusa como antes.
-   * `false` = não enviar.
-   */
-  private async awaitMirrorRepair(deferUuid?: string): Promise<boolean> {
-    const repair = this.mirrorRepair
-    if (repair?.pending) {
-      const outcome = await repair.tryNow(MIRROR_REPAIR_SEND_TIMEOUT_MS)
-      if (outcome === 'restored') return !this.disposed
-      if (outcome === 'pending' && deferUuid && !this.disposed) {
-        this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.queued })
-        this.emit({ kind: 'mirror-repair', state: 'deferred', messageUuid: deferUuid })
-        this.markTurnIdle()
-        return false
-      }
-      if (outcome === 'pending') {
-        this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.waiting })
-        // Esperar o banco não é o turno travado: o watchdog volta no beginTurn.
-        this.stopStallWatch()
-        if ((await repair.whenSettled()) && !this.disposed) {
-          this.beginTurn()
-          return true
-        }
-      }
-      if (!this.disposed) this.emit({ kind: 'error', id: nextId(), text: mirrorRepairText.notSent })
-      this.markTurnIdle()
-      return false
-    }
-    this.emit({
-      kind: 'error',
-      id: nextId(),
-      text: 'A sessão não está pronta para retomada: o espelhamento do transcript falhou. Reconecte após corrigir a persistência.'
-    })
-    return false
   }
 
   /** Liga o reparo do espelho. 'started' só na transição (um aviso por queda,
@@ -2462,17 +2433,12 @@ ${lines}
               `: ${mirrorError.error ?? '(sem detalhe)'}`
           )
           // Recuperável: o lote descartado está no transcript local. Aviso como
-          // `status` — um `error` no meio do turno o encerraria na tela.
+          // `status` — um `error` no meio do turno o encerraria na tela. A sessão
+          // segue: só a retomada pelo banco espera o espelho verificado.
           const repair = this.startMirrorRepair(mirrorError.key?.sessionId ?? this.watchedSessionId)
           if (repair === 'started') this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.started(mirrorError.error) })
           if (repair !== false) break
-          this.emit({
-            kind: 'error',
-            id: nextId(),
-            text: `Falha ao espelhar o transcript no backend autoritativo. Novos envios foram bloqueados.${
-              mirrorError.error ? ` Detalhe: ${mirrorError.error}` : ''
-            }`
-          })
+          this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.unrepairable(mirrorError.error) })
         } else if ((message as { subtype?: string }).subtype === 'compact_boundary') {
           // A compactação resume o que já foi entregue: o próximo lote de
           // ferramentas volta a mandar o contexto vivo inteiro.
@@ -2641,11 +2607,9 @@ ${lines}
               this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.started(error instanceof Error ? error.message : String(error)) })
             }
             if (repair !== false) return
-            this.emit({
-              kind: 'error',
-              id: nextId(),
-              text: `A verificação da sessão falhou: ${error instanceof Error ? error.message : String(error)}`
-            })
+            // Sem reparo: a conversa segue pelo transcript local; só a retomada
+            // pelo banco fica sem o `resume_ready`.
+            this.emit({ kind: 'status', id: nextId(), text: mirrorRepairText.unrepairable(error instanceof Error ? error.message : String(error)) })
           })
         }
         this.restartPersisting = true
@@ -2686,8 +2650,12 @@ ${lines}
         // A lease protects one active turn, not an idle conversation. Release it
         // as soon as the SDK is done so another process cannot be blocked by an
         // abandoned writer; the next send reacquires it in the main process.
+        // O envio seguinte não espera a verificação do espelho: se ele já abriu
+        // outro turno, o lease é dele — quem solta é o fim desse turno.
+        const turnEnd = ++this.turnEnds
         void this.handoffReady.then(async () => {
-          await this.onTurnComplete?.()
+          if (!this.turnActive) await this.onTurnComplete?.()
+          if (turnEnd !== this.turnEnds) return
           this.restartPersisting = false
           appRestart?.changed()
         })

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { loadConversations, saveConversations } from '../storage'
+import { resetConversationSync, syncConversations } from '../conversationSync'
 import type { Conversation } from '../types'
 import { TOKEN } from './editorModel'
 import { applyDraft, fromDraft, isDraftMedia, replaceTokens, toDraft, type DraftMedia } from './draftMedia'
@@ -93,29 +93,21 @@ describe('applyDraft + gravação: blur sem mudança não regrava', () => {
     expect(applyDraft(c, 'oi {{midia:1}}')).not.toBe(c) // anexo saiu: muda
   })
 
-  it('conta os upserts: 1 na mudança, 0 nos blurs seguintes; payload sem o arquivo', async () => {
+  it('conta as entregas à fila: 1 na mudança, 0 nos blurs seguintes; payload sem o arquivo', () => {
     const payloads: string[] = []
-    const upsertConversation = vi.fn(async (input: { id: string; payload: Record<string, unknown> }) => {
-      payloads.push(JSON.stringify(input.payload))
-      return { id: input.id, payload: input.payload, revision: payloads.length, contentHash: 'h', createdAt: '', updatedAt: '' }
+    const sync = vi.fn((changes: unknown[]) => {
+      payloads.push(JSON.stringify(changes))
     })
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: {
-        loadVersionedConversations: vi.fn(async () => []),
-        upsertConversation,
-        getStorageStatus: vi.fn(async () => ({ installationId: 'this-pc' }))
-      }
-    })
-    await loadConversations()
+    Object.defineProperty(window, 'api', { configurable: true, value: { syncConversations: sync } })
+    resetConversationSync()
     const img = stored('grande.png', 3 * 1024 * 1024)
     const f = field(['analisa ', img])
     const d = toDraft(f.value, f.order, f.atts)
 
     let list = [conv()]
     list = list.map((c) => applyDraft(c, d.text, d.media))
-    await saveConversations(list)
-    expect(upsertConversation).toHaveBeenCalledTimes(1)
+    syncConversations(list)
+    expect(sync).toHaveBeenCalledTimes(1)
     expect(payloads[0].length).toBeLessThan(1000) // 3 MB de imagem, payload de centenas de bytes
 
     // blur, blur, blur sem editar: o App nem troca o objeto, e nada é gravado
@@ -123,8 +115,8 @@ describe('applyDraft + gravação: blur sem mudança não regrava', () => {
       const again = toDraft(f.value, f.order, f.atts)
       const next = list.map((c) => applyDraft(c, again.text, again.media))
       expect(next[0]).toBe(list[0])
-      await saveConversations(next)
+      syncConversations(next)
     }
-    expect(upsertConversation).toHaveBeenCalledTimes(1)
+    expect(sync).toHaveBeenCalledTimes(1)
   })
 })

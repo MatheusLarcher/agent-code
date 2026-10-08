@@ -30,6 +30,8 @@ import type { ContextTurnWrite } from './types'
  * DELETE seguinte já enxerga os turnos commitados.
  */
 const CONTEXT_BLOB_LOCK_KEY = 7_420_261_003
+/** Blobs por INSERT (3 parâmetros cada). */
+const BLOBS_PER_INSERT = 500
 
 interface ContextTurnRow {
   conv_id: string
@@ -105,10 +107,16 @@ export async function savePostgresContextTurn(pool: Pool, write: ContextTurnWrit
     )
     if (conversation.rows[0]?.deleted_at) return
     await client.query('SELECT pg_advisory_xact_lock_shared($1)', [CONTEXT_BLOB_LOCK_KEY])
-    for (const blob of prepared.blobs) {
+    // Os blobs num INSERT de várias linhas (em lotes), não um comando por bloco —
+    // e ordenados por hash: duas gravações com os mesmos blocos em ordem inversa
+    // pegam os locks na mesma ordem (sem deadlock entre sessões).
+    const blobs = [...prepared.blobs].sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0))
+    for (let start = 0; start < blobs.length; start += BLOBS_PER_INSERT) {
+      const rows = blobs.slice(start, start + BLOBS_PER_INSERT)
       await client.query(
-        'INSERT INTO context_blob(hash, gz, bytes) VALUES($1, $2, $3) ON CONFLICT(hash) DO NOTHING',
-        [blob.hash, blob.gz, blob.bytes]
+        `INSERT INTO context_blob(hash, gz, bytes) VALUES ${rows.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(', ')}
+         ON CONFLICT(hash) DO NOTHING`,
+        rows.flatMap((blob) => [blob.hash, blob.gz, blob.bytes])
       )
     }
     await client.query(

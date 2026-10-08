@@ -5,17 +5,17 @@ import { StorageReconnector } from './persistence/storageReconnect'
  * Reparo do espelho do transcript depois de um `mirror_error`.
  *
  * O SDK descarta o lote que não conseguiu espelhar, mas o transcript LOCAL
- * continua íntegro (ele só espelha depois de gravar em disco). Antes, a sessão
- * ficava bloqueada para sempre: uma queda de rede de 3 minutos travava a
- * conversa até o app ser reaberto. Agora o reparo (reenvio do transcript local +
- * a mesma verificação do fim de turno, injetados por quem cria a sessão) é
- * tentado com backoff até o banco voltar.
+ * continua íntegro (ele só espelha depois de gravar em disco) e o subprocesso
+ * segue sem ser afetado. A conversa continua: o envio não espera o reparo. Só a
+ * retomada pelo banco depende do espelho — o `resume_ready` fica falso até o
+ * reparo (reenvio do transcript local + a mesma verificação do fim de turno,
+ * injetados por quem cria a sessão), tentado com backoff até o banco voltar.
  *
- * Uma tentativa por vez: o timer e o envio do usuário compartilham a mesma.
+ * Uma tentativa por vez: o timer e quem pede já (troca de provedor) compartilham a mesma.
  */
 export type MirrorRepairOutcome = 'restored' | 'pending' | 'failed'
 
-/** Quanto um envio espera por uma tentativa de reparo antes de avisar. */
+/** Quanto a troca de provedor espera por uma tentativa de reparo antes de recusar. */
 export const MIRROR_REPAIR_SEND_TIMEOUT_MS = 10_000
 
 function detailOf(error: unknown): string {
@@ -25,20 +25,15 @@ function detailOf(error: unknown): string {
 /** Textos da sessão, aqui para não inchar agentSession.ts. */
 export const mirrorRepairText = {
   started: (cause: string | undefined): string =>
-    `Falha ao espelhar o transcript no banco${cause ? ` (${cause})` : ''}. O transcript local está íntegro: ` +
-    'vou reenviá-lo sozinho assim que o banco responder. Novos envios esperam o reparo.',
-  restored: 'Espelhamento restaurado: o transcript local foi reenviado ao banco e verificado. Envios liberados.',
-  waiting:
-    'O banco ainda não respondeu, então o espelhamento do transcript não foi reparado. Sua mensagem está guardada ' +
-    'e segue sozinha assim que o reparo terminar — continuo tentando automaticamente.',
-  queued:
-    'O banco ainda não respondeu, então o espelhamento do transcript não foi reparado e a mensagem não foi enviada. ' +
-    'Ela voltou para a fila de espera desta conversa e sai sozinha quando o reparo terminar — continuo tentando automaticamente.',
+    `Falha ao espelhar o transcript no banco${cause ? ` (${cause})` : ''}. O transcript local está íntegro e a conversa ` +
+    'continua normalmente; vou reenviá-lo ao banco sozinho, em segundo plano, assim que ele responder.',
+  restored: 'Espelhamento restaurado: o transcript local foi reenviado ao banco e verificado.',
+  unrepairable: (cause: string | undefined): string =>
+    `Falha ao espelhar o transcript no banco${cause ? ` (${cause})` : ''}. A conversa continua pelo transcript local; ` +
+    'retomá-la pelo banco (outro PC, celular) só volta a valer depois de reabri-la com o banco funcionando.',
   gaveUp: (error: unknown): string =>
-    `Não consegui reparar o espelhamento do transcript: ${detailOf(error)}. Novos envios continuam bloqueados; ` +
-    'reabra a conversa depois de corrigir a persistência.',
-  notSent:
-    'Mensagem não enviada: o espelhamento do transcript não pôde ser reparado. Reabra a conversa depois de corrigir a persistência.'
+    `Não consegui reparar o espelhamento do transcript: ${detailOf(error)}. A conversa continua pelo transcript ` +
+    'local; retomá-la pelo banco só volta a valer depois de reabri-la com a persistência corrigida.'
 }
 
 export interface MirrorRepairOptions {
@@ -83,7 +78,7 @@ export class MirrorRepair {
     })
   }
 
-  /** Há um reparo em andamento (envios devem esperar por ele). */
+  /** Há um reparo em andamento (a retomada pelo banco espera por ele). */
   get pending(): boolean {
     return this.active
   }

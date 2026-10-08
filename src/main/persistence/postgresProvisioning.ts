@@ -4,6 +4,8 @@ import type { PostgresConnectionDraft } from '../../shared/ipc'
 import { POSTGRES_DATABASE } from './bootstrapStore'
 import { applyPostgresMigrations } from './postgresMigrations'
 import { instrumentPool, pgStatActivitySnapshot } from './postgresPoolDiagnostics'
+import { applyDevQueryDelay } from './devQueryDelay'
+import { INTERACTIVE_POOL_MAX, reserveInteractiveLane } from './priorityPool'
 import { applySessionTimeouts } from './postgresSessionSetup'
 import { POSTGRES_CONNECT_TIMEOUT_MS, POSTGRES_QUERY_TIMEOUT_MS } from './postgresTimeouts'
 import { StorageError } from './types'
@@ -165,6 +167,35 @@ export interface ProvisionedPostgres {
   createdDatabase: boolean
 }
 
+/** Um pool de dados: instrumentado, com o gancho de teste e à prova de queda de conexão. */
+function dataPool(config: ClientConfig, max: number): Pool {
+  // onConnect: o pg-pool só entrega o cliente novo depois dos SETs; se falharem,
+  // descarta a conexão e o erro vai para quem pediu.
+  const pool = new Pool({ ...config, max, onConnect: applySessionTimeouts })
+  instrumentPool(pool, { snapshot: () => pgStatActivitySnapshot(config) })
+  // Gancho de teste do banco lento (devQueryDelay.ts): no-op no app empacotado.
+  applyDevQueryDelay(pool)
+  // Sem este listener, um cliente ocioso do pool derrubado pelo servidor (rede
+  // caiu, servidor reiniciou a conexão) vira uma exceção não tratada e derruba
+  // o processo main do Electron inteiro. O pool já descarta sozinho o cliente
+  // morto e cria outro na próxima consulta — aqui só evitamos o crash.
+  pool.on('error', (error) => {
+    console.error('[postgres] erro em conexão ociosa do pool:', error)
+  })
+  // O listener acima só vale enquanto o cliente está OCIOSO: o pg-pool o remove
+  // no checkout. Se a conexão cai no meio de uma transação, o Client emite
+  // 'error' sem ouvinte e o EventEmitter lança — "Connection terminated
+  // unexpectedly" como Uncaught Exception no main. A consulta em curso já
+  // rejeita para quem a chamou e o pool descarta o cliente no release; este
+  // ouvinte permanente só impede o crash.
+  pool.on('connect', (client) => {
+    client.on('error', (error) => {
+      console.warn('[postgres] conexão em uso caiu:', error.message)
+    })
+  })
+  return pool
+}
+
 export async function provisionPostgres(
   raw: PostgresConnectionDraft,
   installationId: string,
@@ -227,28 +258,10 @@ export async function provisionPostgres(
   }
 
   const dataConfig = postgresClientConfig(draft, POSTGRES_DATABASE)
-  // onConnect: o pg-pool só entrega o cliente novo depois dos SETs; se falharem,
-  // descarta a conexão e o erro vai para quem pediu.
-  const pool = new Pool({ ...dataConfig, max: 10, onConnect: applySessionTimeouts })
-  instrumentPool(pool, { snapshot: () => pgStatActivitySnapshot(dataConfig) })
-  // Sem este listener, um cliente ocioso do pool derrubado pelo servidor (rede
-  // caiu, servidor reiniciou a conexão) vira uma exceção não tratada e derruba
-  // o processo main do Electron inteiro. O pool já descarta sozinho o cliente
-  // morto e cria outro na próxima consulta — aqui só evitamos o crash.
-  pool.on('error', (error) => {
-    console.error('[postgres] erro em conexão ociosa do pool:', error)
-  })
-  // O listener acima só vale enquanto o cliente está OCIOSO: o pg-pool o remove
-  // no checkout. Se a conexão cai no meio de uma transação, o Client emite
-  // 'error' sem ouvinte e o EventEmitter lança — "Connection terminated
-  // unexpectedly" como Uncaught Exception no main. A consulta em curso já
-  // rejeita para quem a chamou e o pool descarta o cliente no release; este
-  // ouvinte permanente só impede o crash.
-  pool.on('connect', (client) => {
-    client.on('error', (error) => {
-      console.warn('[postgres] conexão em uso caiu:', error.message)
-    })
-  })
+  // Dois pools no mesmo banco: o de fundo (fila de gravação, telemetria, espelho)
+  // e um pequeno reservado às leituras que a tela espera (priorityPool.ts).
+  const pool = dataPool(dataConfig, 10)
+  reserveInteractiveLane(pool, dataPool(dataConfig, INTERACTIVE_POOL_MAX))
   const client = await pool.connect().catch((error) => {
     throw typedPostgresError(error, 'connect')
   })

@@ -25,6 +25,7 @@ import { NextPromptsStrip } from '../planning/NextPromptsStrip'
 import { DeadlineTag, useCardDeadlines, type CardDeadline } from './BoardDeadline'
 import { useBoardOpenRequest, type BoardOpenRequest } from './boardOpenCard'
 import { PrintBadge, useProjectPrints } from './BoardPrints'
+import { ReadRetry } from './ReadRetry'
 // A coluna Concluído mostra só os 4 mais recentes (o contador segue com o total).
 import { recentCompleted } from '@shared/boardView'
 
@@ -183,16 +184,23 @@ function ExecutorBalloon({
   // Busca preguiçosa: só quando o balão abre — igual ao detalhe do cartão do
   // agente logo abaixo, nunca para a fila inteira que ninguém clicou.
   const fetchedFor = useRef<string | null>(null)
+  const [detailError, setDetailError] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
-    if (fetchedFor.current === item.id) return
-    fetchedFor.current = item.id
+    const key = `${item.id}#${attempt}`
+    if (fetchedFor.current === key) return
+    fetchedFor.current = key
     let alive = true
     setLoading(true)
+    setDetailError(null)
     void window.api
       .tasksDetail(item.id)
       .then((result) => {
         if (alive) setDetail(result)
+      })
+      .catch((error: unknown) => {
+        if (alive) setDetailError(error)
       })
       .finally(() => {
         if (alive) setLoading(false)
@@ -200,7 +208,7 @@ function ExecutorBalloon({
     return () => {
       alive = false
     }
-  }, [item.id])
+  }, [item.id, attempt])
 
   const lease = describeLease(item, now)
 
@@ -234,6 +242,9 @@ function ExecutorBalloon({
           <IconSpinner className="spinner" size={12} /> carregando…
         </p>
       )}
+      {!loading && detailError ? (
+        <ReadRetry error={detailError} what="os passos" onRetry={() => setAttempt((n) => n + 1)} />
+      ) : null}
 
       {detail && detail.steps.length > 0 && (
         <div className="board-balloon-block">
@@ -568,19 +579,28 @@ export function BoardPanel({
   // cartão precisa, sem aproximar por conversa.
   const [execByItem, setExecByItem] = useState<Record<string, TaskBoardItem[]>>({})
 
+  // Leitura que falhou ou passou do prazo: o quadro fica com o que já tinha e
+  // mostra "tentar de novo" (ReadRetry) — nunca o spinner preso.
+  const [loadError, setLoadError] = useState<unknown>(null)
   const load = useCallback(async () => {
     if (!projectCwd) {
       setItems([])
       setLoading(false)
       return
     }
-    const board = await window.api.boardList({
-      projectCwd,
-      conversationId: wholeProject ? undefined : conversationId
-    })
-    setAvailable(board.available)
-    setItems(board.items)
-    setLoading(false)
+    try {
+      const board = await window.api.boardList({
+        projectCwd,
+        conversationId: wholeProject ? undefined : conversationId
+      })
+      setAvailable(board.available)
+      setItems(board.items)
+      setLoadError(null)
+    } catch (error) {
+      setLoadError(error)
+    } finally {
+      setLoading(false)
+    }
   }, [projectCwd, conversationId, wholeProject])
 
   const loadExec = useCallback(async () => {
@@ -588,11 +608,15 @@ export function BoardPanel({
       setExecByItem({})
       return
     }
-    const taskBoard = await window.api.tasksBoard({
-      projectCwd,
-      conversationId: wholeProject ? undefined : conversationId,
-      includeFinished: true
-    })
+    // As bolinhas do executor são de fundo: falhou, ficam as de antes até o próximo poll.
+    const taskBoard = await window.api
+      .tasksBoard({
+        projectCwd,
+        conversationId: wholeProject ? undefined : conversationId,
+        includeFinished: true
+      })
+      .catch(() => null)
+    if (!taskBoard) return
     if (!taskBoard.available) {
       setExecByItem({})
       return
@@ -845,6 +869,7 @@ export function BoardPanel({
         headerExtra={queueHeaderExtra}
       />
 
+      {loadError ? <ReadRetry error={loadError} what="o quadro" onRetry={() => void load()} /> : null}
       {!available ? (
         <p className="board-empty">
           O quadro precisa do banco de dados do app, que está indisponível agora. Assim que a
@@ -855,7 +880,7 @@ export function BoardPanel({
           <IconSpinner className="spinner" size={14} /> Carregando o quadro…
         </p>
       ) : items.length === 0 ? (
-        <p className="board-empty">
+        loadError ? null : <p className="board-empty">
           Nenhuma tarefa ainda. Quando o agente declarar o plano de trabalho, cada passo aparece
           aqui e se marca sozinho conforme ele conclui.
         </p>

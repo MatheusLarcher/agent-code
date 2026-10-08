@@ -23,6 +23,8 @@ export interface ContextTurnsState {
   loading: boolean
   /** O IPC não existe (testes, celular): a tela diz que não há dados. */
   unavailable: boolean
+  /** A leitura falhou ou passou do prazo: a tela mostra o que já tinha e "tentar de novo". */
+  error?: unknown
 }
 
 const EMPTY: ContextTurnsState = { list: [], selected: null, detail: null, newer: null, loading: false, unavailable: false }
@@ -31,7 +33,7 @@ export function useContextTurns(
   convId: string | null,
   enabled: boolean,
   opts: { parentToolUseId?: string; turnId?: string | null } = {}
-): ContextTurnsState & { select: (turnId: string | null) => void } {
+): ContextTurnsState & { select: (turnId: string | null) => void; reload: () => void } {
   const [state, setState] = useState<ContextTurnsState>(EMPTY)
   const [selected, setSelected] = useState<string | null>(null)
   const pinnedTurn = opts.turnId ?? null
@@ -57,8 +59,8 @@ export function useContextTurns(
       ])
       if (mine !== seq.current) return
       setState({ list, selected: want, detail, newer, loading: false, unavailable: false })
-    } catch {
-      if (mine === seq.current) setState((s) => ({ ...s, loading: false }))
+    } catch (error) {
+      if (mine === seq.current) setState((s) => ({ ...s, loading: false, error }))
     }
   }, [convId, parent, pinnedTurn, selected])
 
@@ -88,5 +90,5 @@ export function useContextTurns(
   }, [enabled, convId, load])
 
   const select = useCallback((turnId: string | null) => setSelected(turnId), [])
-  return { ...state, select }
+  return { ...state, select, reload: () => void load() }
 }

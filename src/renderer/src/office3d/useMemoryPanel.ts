@@ -29,6 +29,12 @@ export interface MemoryPanelData {
   bodies: ReadonlyMap<string, string>
   read: (relPath: string) => Promise<string | null>
   loading: boolean
+  /** A lista que falhou ou passou do prazo (o painel oferece "tentar de novo"). */
+  listError?: unknown
+  /** O corpo de cada memória que não abriu, por caminho. */
+  readErrors?: ReadonlyMap<string, unknown>
+  /** Lê de novo a lista. */
+  reload?: () => void
 }
 
 export function useMemoryPanel(open: boolean, conversations: readonly Conversation[]): MemoryPanelData {
@@ -38,27 +44,40 @@ export function useMemoryPanel(open: boolean, conversations: readonly Conversati
   const [turnEvents, setTurnEvents] = useState<UsageEvent[]>([])
   const [bodies, setBodies] = useState<ReadonlyMap<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
+  // Leituras do banco que falharam ou passaram do prazo: "tentar de novo", nunca
+  // uma lista vazia que parece verdade nem um "Abrindo…" eterno.
+  const [listError, setListError] = useState<unknown>(null)
+  const [readErrors, setReadErrors] = useState<ReadonlyMap<string, unknown>>(new Map())
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     if (!open) return
     let live = true
     const a = api()
     setLoading(true)
+    let failure: unknown = null
+    const fail = <T,>(fallback: T) => (error: unknown): T => {
+      failure ??= error
+      return fallback
+    }
     void Promise.all([
-      a.memoryListEntries?.().catch(() => []) ?? [],
-      a.listMemoryConflicts?.().catch(() => []) ?? [],
+      a.memoryListEntries?.().catch(fail([])) ?? [],
+      a.listMemoryConflicts?.().catch(fail([])) ?? [],
       a.getCacheInfo?.().catch(() => ({})) ?? {}
     ]).then(([list, conf, info]) => {
       if (!live) return
-      setItems(list as MemoryListItem[])
-      setConflicts(new Set((conf as Array<{ relPath: string }>).map((c) => c.relPath)))
+      if (!failure) {
+        setItems(list as MemoryListItem[])
+        setConflicts(new Set((conf as Array<{ relPath: string }>).map((c) => c.relPath)))
+      }
+      setListError(failure)
       setMemDir((info as { memoriesDir?: string }).memoriesDir ?? null)
       setLoading(false)
     })
     return () => {
       live = false
     }
-  }, [open])
+  }, [open, attempt])
 
   // Os turnos de contexto das conversas mais recentes (as memórias escolhidas pelo app).
   const recent = useMemo(() => [...conversations].filter((c) => c.cwd).sort((x, y) => y.updatedAt - x.updatedAt).slice(0, TURN_CONVS), [conversations])
@@ -80,11 +99,21 @@ export function useMemoryPanel(open: boolean, conversations: readonly Conversati
   const msgEvents = useMemo(() => (open ? conversations.flatMap((c) => usageFromMessages(c, memDir)) : []), [open, conversations, memDir])
 
   const read = useCallback(async (relPath: string): Promise<string | null> => {
-    const r = await api().memoryReadEntry?.(relPath).catch(() => null)
+    setReadErrors((m) => {
+      if (!m.has(relPath)) return m
+      const next = new Map(m)
+      next.delete(relPath)
+      return next
+    })
+    const r = await (api().memoryReadEntry?.(relPath) ?? Promise.resolve(null)).catch((error: unknown) => {
+      setReadErrors((m) => new Map(m).set(relPath, error))
+      return null
+    })
     if (r) setBodies((m) => new Map(m).set(relPath, r.body))
     return r?.body ?? null
   }, [])
 
+  const reload = useCallback(() => setAttempt((n) => n + 1), [])
   const events = useMemo(() => [...msgEvents, ...turnEvents], [msgEvents, turnEvents])
-  return { items, events, conflicts, bodies, read, loading }
+  return { items, events, conflicts, bodies, read, loading, listError, readErrors, reload }
 }

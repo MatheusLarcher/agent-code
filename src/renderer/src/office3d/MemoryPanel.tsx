@@ -17,6 +17,7 @@ import './memoryPanel.css'
 import { useMemo, useState } from 'react'
 import { byFolder, filterUsage, memoryRows, NO_FILTERS, type HowFilter, type PanelFilters, type Period, type SortBy, type UsageEvent } from './memoryUsage'
 import { MemoryDetail, MemoryLine, UsageLine } from './MemoryPanelParts'
+import { ReadRetry } from '../components/ReadRetry'
 import type { MemoryPanelData } from './useMemoryPanel'
 
 export interface MemoryPanelProps {
@@ -80,6 +81,8 @@ export function MemoryPanel({ data, atShelf, onClose, onFlyToAgent, onOpenConver
           key={detail.relPath}
           r={detail}
           body={data.bodies.get(detail.relPath) ?? null}
+          bodyError={data.readErrors?.get(detail.relPath)}
+          onRetryBody={() => void data.read(detail.relPath)}
           uses={data.events.filter((e) => e.relPath === detail.relPath).sort((a, b) => b.at - a.at)}
           now={now}
           onBack={() => setOpen(null)}
@@ -88,6 +91,9 @@ export function MemoryPanel({ data, atShelf, onClose, onFlyToAgent, onOpenConver
         />
       ) : (
         <>
+          {data.listError ? (
+            <ReadRetry error={data.listError} what="as memórias" onRetry={() => data.reload?.()} />
+          ) : null}
           <div className="mp-filters" data-testid="mp-filters">
             <div className="mp-row">{PERIODS.map(([p, l]) => chip(f.period === p, l, () => set({ period: p }), p))}</div>
             <div className="mp-row">

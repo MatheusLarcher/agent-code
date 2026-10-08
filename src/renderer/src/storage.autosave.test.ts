@@ -1,30 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { RepositoryChange, VersionedConversationDto } from '@shared/ipc'
+import type { ConversationChangeDto, RepositoryChange, VersionedConversationDto } from '@shared/ipc'
+import { applyChanges } from './conversationSyncFake'
 import type { Conversation } from './types'
 
 /**
- * O tique do autosave só trata (limpa + compara + grava) as conversas em `only`;
- * fechar e reconexão (sem `only`) continuam comparando todas. Cada PC é um módulo
- * novo de storage sobre o MESMO banco falso — e o banco devolve o payload com as
- * chaves na ordem do JSONB, para provar que a comparação estável continua valendo.
+ * O tique do autosave entrega à fila do main só as conversas em `only`; fechar (sem
+ * `only`) entrega todas. Cada PC é um módulo novo de storage + entrega sobre o
+ * MESMO banco falso, que aqui grava na hora o que a tela entrega (a fila de
+ * verdade — ritmo, conflito, diário — tem os testes dela no main).
  */
 
 type Storage = typeof import('./storage')
-type Upsert = { id: string; payload: Record<string, unknown>; expectedRevision?: number }
+type Sync = typeof import('./conversationSync')
 
 const NOW = Date.now()
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
-
-/** A ordem que o PostgreSQL devolve num `jsonb`: comprimento da chave, depois bytes. */
-function jsonbOrder(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(jsonbOrder)
-  if (value === null || typeof value !== 'object') return value
-  const source = value as Record<string, unknown>
-  const out: Record<string, unknown> = {}
-  const keys = Object.keys(source).sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0))
-  for (const key of keys) out[key] = jsonbOrder(source[key])
-  return out
-}
 
 function chat(id: string, title = 'Chat'): Conversation {
   return {
@@ -42,23 +32,31 @@ function chat(id: string, title = 'Chat'): Conversation {
 
 function sharedDb() {
   const rows = new Map<string, VersionedConversationDto>()
-  function put(id: string, payload: Record<string, unknown>, deleted = false): VersionedConversationDto {
+  function put(id: string, payload: Record<string, unknown>, deleted = false): void {
     const revision = (rows.get(id)?.revision ?? 0) + 1
-    const row: VersionedConversationDto = {
+    rows.set(id, {
       id,
-      payload: jsonbOrder(clone(payload)) as Record<string, unknown>,
+      payload: clone(payload),
       revision,
       contentHash: `h${revision}`,
       createdAt: '2026-10-05T12:00:00.000Z',
       updatedAt: '2026-10-05T12:00:00.000Z',
       ...(deleted ? { deletedAt: '2026-10-05T12:00:00.000Z' } : {})
-    }
-    rows.set(id, row)
-    return clone(row)
+    })
   }
   return {
     put,
     row: (id: string) => rows.get(id),
+    /** O que a fila do main faria com a entrega (gravando na hora). */
+    apply(changes: ConversationChangeDto[]): void {
+      const docs = [...rows.values()].filter((row) => !row.deletedAt).map((row) => ({ ...row.payload, id: row.id }))
+      const next = applyChanges(docs, changes)
+      for (const change of changes) {
+        const doc = next.find((entry) => entry.id === change.id)
+        if (doc) put(change.id, doc)
+        else if (rows.get(change.id) && !rows.get(change.id)?.deletedAt) put(change.id, rows.get(change.id)!.payload, true)
+      }
+    },
     async load(query?: { ids?: string[] }): Promise<VersionedConversationDto[]> {
       return [...rows.values()]
         .filter((row) => (query?.ids ? query.ids.includes(row.id) : !row.deletedAt))
@@ -71,24 +69,20 @@ type Db = ReturnType<typeof sharedDb>
 async function bootPc(db: Db, installationId: string) {
   vi.resetModules()
   const storage: Storage = await import('./storage')
-  const upserts: Upsert[] = []
-  const deletes: string[] = []
+  const sync: Sync = await import('./conversationSync')
+  const delivered: ConversationChangeDto[] = []
   const api = {
     getStorageStatus: vi.fn(async () => ({ installationId })),
     loadVersionedConversations: vi.fn((query?: { ids?: string[] }) => db.load(query)),
-    upsertConversation: vi.fn(async (input: Upsert) => {
-      upserts.push(clone(input))
-      return db.put(input.id, input.payload)
-    }),
-    deleteConversation: vi.fn(async (input: { id: string }) => {
-      deletes.push(input.id)
-      return db.put(input.id, db.row(input.id)!.payload, true)
+    syncConversations: vi.fn((changes: ConversationChangeDto[]) => {
+      delivered.push(...clone(changes))
+      db.apply(changes)
     })
   }
   const pc = {
     storage,
-    upserts,
-    deletes,
+    sync,
+    delivered,
     use(): void {
       Object.defineProperty(window, 'api', { configurable: true, value: api })
     }
@@ -105,146 +99,102 @@ const change = (revision: number, installationId: string, entityId: string): Rep
   installationId
 })
 
-describe('saveConversations com only (tique do autosave)', () => {
-  it('trata só os ids em only: a não alterada não é processada nem gravada, mesmo diferente do banco', async () => {
+describe('entrega com only (tique do autosave)', () => {
+  it('trata só os ids em only: a não alterada não é entregue, mesmo diferente do banco', async () => {
     const db = sharedDb()
     db.put('c1', chat('c1') as unknown as Record<string, unknown>)
     db.put('c2', chat('c2') as unknown as Record<string, unknown>)
     const a = await bootPc(db, 'pc-a')
     const [c1, c2] = await a.storage.loadConversations()
 
-    // c2 também difere do banco, mas não está em only: este tique não encosta nela.
     const list = [{ ...c1, title: 'Editada' }, { ...c2, title: 'Fora do tique' }]
-    const stats = await a.storage.saveConversations(list, { only: new Set(['c1']) })
+    expect(a.sync.syncConversations(list, { only: new Set(['c1']) })).toEqual({ processed: 1, sent: 1 })
+    expect(a.delivered.map((d) => [d.id, d.top?.title])).toEqual([['c1', 'Editada']])
 
-    expect(a.upserts.map((u) => [u.id, u.payload.title])).toEqual([['c1', 'Editada']])
-    expect(stats.processed).toBe(1)
-    expect(stats.bytes).toBeGreaterThan(0)
-
-    // Fechar/reconexão (sem only) continua comparando todas e grava a que ficou.
-    const all = await a.storage.saveConversations(list)
-    expect(all.processed).toBe(2)
-    expect(all.bytes).toBeGreaterThan(stats.bytes)
-    expect(a.upserts.map((u) => [u.id, u.payload.title])).toEqual([
+    // Fechar (sem only) compara todas e entrega a que ficou.
+    expect(a.sync.syncConversations(list)).toEqual({ processed: 2, sent: 1 })
+    expect(a.delivered.map((d) => [d.id, d.top?.title])).toEqual([
       ['c1', 'Editada'],
       ['c2', 'Fora do tique']
     ])
+    expect(db.row('c2')?.payload.title).toBe('Fora do tique')
   })
 
-  it('a comparação estável continua: conversa em only igual ao banco (chaves na ordem do JSONB) não é regravada', async () => {
-    const db = sharedDb()
-    db.put('c1', chat('c1') as unknown as Record<string, unknown>)
-    const a = await bootPc(db, 'pc-a')
-    const loaded = await a.storage.loadConversations()
-
-    // Abrir o app: a hidratação cria objetos novos, todos entram uma vez no tique.
-    const stats = await a.storage.saveConversations(loaded, { only: new Set(loaded.map((c) => c.id)) })
-    expect(stats.processed).toBe(1)
-    expect(a.upserts).toHaveLength(0)
-
-    const editada = { ...loaded[0], title: 'Editada' }
-    await a.storage.saveConversations([editada], { only: new Set(['c1']) })
-    await a.storage.saveConversations([editada], { only: new Set(['c1']) })
-    expect(a.upserts).toHaveLength(1)
-  })
-
-  it('only vazio ainda apaga a conversa que saiu da lista (detecção de apagadas inalterada)', async () => {
+  it('abrir o app: tudo que veio do banco passa pelo primeiro tique sem nada entregue', async () => {
     const db = sharedDb()
     db.put('c1', chat('c1') as unknown as Record<string, unknown>)
     db.put('c2', chat('c2') as unknown as Record<string, unknown>)
     const a = await bootPc(db, 'pc-a')
-    const [c1] = await a.storage.loadConversations()
+    const loaded = await a.storage.loadConversations()
+    expect(a.sync.syncConversations(loaded, { only: new Set(loaded.map((c) => c.id)) })).toEqual({ processed: 2, sent: 0 })
+    expect(db.row('c1')?.revision).toBe(1)
+  })
 
-    const stats = await a.storage.saveConversations([c1], { only: new Set() })
-    expect(stats).toEqual({ processed: 0, bytes: 0 })
-    expect(a.deletes).toEqual(['c2'])
-    expect(a.upserts).toHaveLength(0)
+  it('only vazio ainda apaga a conversa que saiu da lista', async () => {
+    const db = sharedDb()
+    db.put('c1', chat('c1') as unknown as Record<string, unknown>)
+    db.put('c2', chat('c2') as unknown as Record<string, unknown>)
+    const a = await bootPc(db, 'pc-a')
+    const loaded = await a.storage.loadConversations()
+    a.sync.syncConversations(loaded, { only: new Set() })
+
+    expect(a.sync.syncConversations([loaded[0]], { only: new Set() })).toEqual({ processed: 0, sent: 1 })
+    expect(a.delivered).toEqual([{ id: 'c2', deleted: true }])
+    expect(db.row('c2')?.deletedAt).toBeDefined()
   })
 })
 
 describe('mudança recebida pelo feed (duas instalações)', () => {
-  it('o A não regrava o que veio do B, e continua recebendo as gravações seguintes do B', async () => {
+  it('o A não devolve à fila o que veio do B, e continua recebendo as gravações seguintes do B', async () => {
     const db = sharedDb()
     db.put('c1', chat('c1') as unknown as Record<string, unknown>)
     const a = await bootPc(db, 'pc-a')
     let screen = await a.storage.loadConversations()
     const b = await bootPc(db, 'pc-b')
-    const [bLoaded] = await b.storage.loadConversations()
+    const bScreen = await b.storage.loadConversations()
 
-    // Abrir o A: o App marca tudo como não salvo e o primeiro tique compara.
+    // Abrir o A: o App marca tudo como suja e o primeiro tique compara.
     a.use()
     a.storage.markConversationsDirty(screen.map((c) => c.id))
-    await a.storage.saveConversations(screen, { only: new Set(screen.map((c) => c.id)) })
+    a.sync.syncConversations(screen, { only: new Set(screen.map((c) => c.id)) })
 
-    // O B renomeia e grava (rev 2).
+    // O B renomeia (rev 2).
     b.use()
-    await b.storage.saveConversations([{ ...bLoaded, title: 'Renomeada no B' }])
+    b.sync.syncConversations([{ ...bScreen[0], title: 'Renomeada no B' }])
 
-    // O feed traz a rev 2 para o A; o objeto novo entra no estado → o App o marca
-    // e ele vai no próximo tique, onde é igual ao confirmado: nada é gravado.
+    // O feed traz a rev 2 para o A; o objeto novo entra na tela → o App o marca e
+    // ele passa pelo próximo tique, onde nada é entregue.
     a.use()
     let updates = await a.storage.loadConversationChanges([change(2, 'pc-b', 'c1')])
     expect(updates.get('c1')).toMatchObject({ title: 'Renomeada no B' })
     screen = [updates.get('c1')!]
     a.storage.markConversationsDirty(['c1'])
-    const stats = await a.storage.saveConversations(screen, { only: new Set(['c1']) })
-    expect(stats.processed).toBe(1)
-    expect(a.upserts).toHaveLength(0)
+    a.sync.syncConversations(screen, { only: new Set(['c1']) })
+    expect(a.delivered).toHaveLength(0)
 
     // A próxima gravação do B ainda chega ao A (a marca não ficou presa).
     b.use()
-    await b.storage.saveConversations([{ ...bLoaded, title: 'De novo no B' }])
+    b.sync.syncConversations([{ ...bScreen[0], title: 'De novo no B' }])
     a.use()
     updates = await a.storage.loadConversationChanges([change(3, 'pc-b', 'c1')])
     expect(updates.get('c1')).toMatchObject({ title: 'De novo no B' })
-    expect(a.upserts).toHaveLength(0)
+    expect(a.delivered).toHaveLength(0)
   })
 
-  it('com escrita na fila, voltar ao conteúdo confirmado grava de novo: o banco termina com o que está na tela', async () => {
-    const db = sharedDb()
-    db.put('c1', chat('c1') as unknown as Record<string, unknown>)
-    const a = await bootPc(db, 'pc-a')
-    const [loaded] = await a.storage.loadConversations()
-
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => (release = resolve))
-    const api = (window as unknown as { api: { upsertConversation: ReturnType<typeof vi.fn> } }).api
-    const store = api.upsertConversation.getMockImplementation() as (input: Upsert) => Promise<VersionedConversationDto>
-    api.upsertConversation.mockImplementationOnce(async (input: Upsert) => {
-      await gate
-      return store(input)
-    })
-    const first = a.storage.saveConversations([{ ...loaded, title: 'Rascunho' }], { only: new Set(['c1']) })
-    const second = a.storage.saveConversations([loaded], { only: new Set(['c1']) })
-    release()
-    await Promise.all([first, second])
-
-    expect(a.upserts.map((u) => u.payload.title)).toEqual(['Rascunho', 'Chat'])
-    expect(db.row('c1')?.payload.title).toBe('Chat')
-  })
-
-  it('com escrita na fila, a conversa igual continua marcada (o feed não a troca no meio da gravação)', async () => {
+  it('mudança na tela ainda não entregue: o feed não troca a conversa; entregue, volta a receber', async () => {
     const db = sharedDb()
     db.put('c1', chat('c1') as unknown as Record<string, unknown>)
     const a = await bootPc(db, 'pc-a')
     const [loaded] = await a.storage.loadConversations()
     const editada = { ...loaded, title: 'Editada' }
+    a.storage.markConversationsDirty(['c1'])
 
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => (release = resolve))
-    const api = (window as unknown as { api: { upsertConversation: ReturnType<typeof vi.fn> } }).api
-    const store = api.upsertConversation.getMockImplementation() as (input: Upsert) => Promise<VersionedConversationDto>
-    api.upsertConversation.mockImplementationOnce(async (input: Upsert) => {
-      await gate
-      return store(input)
-    })
-    const first = a.storage.saveConversations([editada], { only: new Set(['c1']) })
-    // Volta ao conteúdo confirmado com a escrita ainda na fila: NÃO limpa a marca.
-    const second = a.storage.saveConversations([loaded], { only: new Set(['c1']) })
-    db.put('c1', { ...(chat('c1') as unknown as Record<string, unknown>), title: 'Do B' })
-    const updates = await a.storage.loadConversationChanges([change(9, 'pc-b', 'c1')])
-    expect(updates.size).toBe(0)
-    release()
-    await Promise.all([first, second])
+    db.put('c1', { ...(chat('c1') as unknown as Record<string, unknown>), title: 'Do B' }) // rev 2
+    expect((await a.storage.loadConversationChanges([change(2, 'pc-b', 'c1')])).size).toBe(0)
+
+    a.sync.syncConversations([editada], { only: new Set(['c1']) }) // rev 3, daqui
+    db.put('c1', { ...(chat('c1') as unknown as Record<string, unknown>), title: 'Do B de novo' }) // rev 4
+    const updates = await a.storage.loadConversationChanges([change(4, 'pc-b', 'c1')])
+    expect(updates.get('c1')).toMatchObject({ title: 'Do B de novo' })
   })
 })

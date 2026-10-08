@@ -19,6 +19,8 @@ export type {
 } from '../../shared/handoffTracking'
 import type { TransferRecords } from './transferRecords'
 import type { BoardPrintRepository } from './boardPrintTypes'
+import type { TelemetryBatchRepository } from './telemetryBatch'
+import type { ConversationHashScope, PreparedConversation } from './writeQueue/conversationPrepare'
 import type {
   ContextBlock,
   ContextSecretMask,
@@ -38,6 +40,8 @@ export type StorageLifecycleState =
   | 'postgres-ready'
   | 'postgres-offline'
   | 'deactivating-postgres'
+  | 'switching-postgres'
+  | 'restoring-postgres'
   | 'fatal'
 
 export type StorageErrorCode =
@@ -62,6 +66,9 @@ export type StorageErrorCode =
   | 'SECURE_STORAGE_UNAVAILABLE'
   | 'TASK_INVALID_TRANSITION'
   | 'TASK_FENCE_STALE'
+  | 'LOCAL_POSTGRES_UNAVAILABLE'
+  /** pg_dump/pg_restore falhou (backup, restauração ou cópia da troca). */
+  | 'BACKUP_FAILED'
 
 export class StorageError extends Error {
   constructor(
@@ -132,6 +139,24 @@ export interface ConversationDelete {
   id: string
   expectedRevision: number
   lease?: LeaseFence
+}
+
+/** Gravação da fila de gravação: o documento já foi preparado num worker. */
+export interface PreparedConversationWrite {
+  id: string
+  prepared: PreparedConversation
+  expectedRevision?: number
+  lease?: LeaseFence
+}
+
+/** O que a fila precisa de volta de uma gravação: revisão e hash, nunca o payload. */
+export interface ConversationWriteResult {
+  id: string
+  revision: number
+  contentHash: string
+  createdAt: string
+  updatedAt: string
+  deletedAt?: string
 }
 
 export interface LeaseFence {
@@ -915,6 +940,7 @@ export interface PersistenceRepository
     MemoryRepository,
     BoardRepository,
     TokenUsageRepository,
+    TelemetryBatchRepository,
     ContextHistoryRepository,
     AgentInputQueueRepository,
     ConversationOutboxRepository,
@@ -948,6 +974,11 @@ export interface PersistenceRepository
    *  badge stays truthful while only the first page of each project is loaded. */
   countConversationsByProject(): Promise<ProjectConversationCount[]>
   upsertConversation(write: ConversationWrite): Promise<VersionedConversation>
+  /** Como este backend calcula o `content_hash` da conversa (a fila compara com ele). */
+  readonly conversationHashScope: ConversationHashScope
+  /** Caminho da fila de gravação: sem normalizar nem calcular hash aqui (veio pronto
+   *  do worker) e sem baixar o payload de volta. */
+  writeConversation(write: PreparedConversationWrite): Promise<ConversationWriteResult>
   deleteConversation(input: ConversationDelete): Promise<VersionedConversation>
   /** Compatibility bridge for the current renderer; removed after per-record IPC lands. */
   replaceAllConversations(records: ConversationRecord[]): Promise<void>

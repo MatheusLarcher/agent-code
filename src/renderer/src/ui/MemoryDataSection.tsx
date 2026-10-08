@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { MemoryConflictItem, SecretVaultItem } from '@shared/ipc'
 import { useUI } from './UiProvider'
 import { IconKey, IconWarning } from '../components/Icons'
+import { ReadRetry } from '../components/ReadRetry'
 
 /** Short, local date for a stored timestamp; falls back to the raw string. */
 function when(iso: string): string {
@@ -26,17 +27,24 @@ export function MemoryDataSection(): JSX.Element {
   const [vaultEnabled, setVaultEnabled] = useState(true)
   const [secrets, setSecrets] = useState<SecretVaultItem[]>([])
   const [conflicts, setConflicts] = useState<MemoryConflictItem[]>([])
+  // Leitura do banco que falhou ou passou do prazo não vira "nenhum conflito".
+  const [conflictsError, setConflictsError] = useState<unknown>(null)
   const [loaded, setLoaded] = useState(false)
 
   const refresh = useCallback(async (): Promise<void> => {
+    let failure: unknown = null
     const [config, list, failed] = await Promise.all([
       window.api.getConfig(),
       window.api.listSecrets().catch(() => [] as SecretVaultItem[]),
-      window.api.listMemoryConflicts().catch(() => [] as MemoryConflictItem[])
+      window.api.listMemoryConflicts().catch((error: unknown) => {
+        failure = error
+        return null
+      })
     ])
     setVaultEnabled(config.secretVaultEnabled)
     setSecrets(list)
-    setConflicts(failed)
+    if (failed) setConflicts(failed)
+    setConflictsError(failure)
     setLoaded(true)
   }, [])
 
@@ -128,6 +136,10 @@ export function MemoryDataSection(): JSX.Element {
           ))}
         </div>
       </section>
+
+      {loaded && conflictsError ? (
+        <ReadRetry error={conflictsError} what="as memórias que não foram salvas" onRetry={() => void refresh()} />
+      ) : null}
 
       {loaded && conflicts.length > 0 && (
         <section className="settings-section">

@@ -671,6 +671,35 @@ button svg {
 .editor-btn:hover {
   color: var(--text);
 }
+/* estado da fila de gravação (SaveStatusChip): discreto, nunca um botão */
+.save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: default;
+}
+.save-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.save-status.ok .save-status-dot {
+  background: var(--ok);
+}
+.save-status.warn .save-status-dot {
+  background: var(--warn);
+}
+.save-status.err {
+  color: var(--err);
+}
+.save-status.err .save-status-dot {
+  background: var(--err);
+}
 
 /* ---- workspace split ---- */
 .workspace {
@@ -6616,6 +6645,83 @@ img.inline-att[data-caret] {
   gap: 8px;
   justify-content: center;
   text-align: center;
+}
+/* leitura que falhou ou passou do prazo (ReadRetry): discreta, com "tentar de novo" */
+.read-retry {
+  margin: 8px 12px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+.read-retry button {
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Configurações → Dados: backups do banco e a troca local ↔ nuvem */
+.backups-folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-list-row.chosen {
+  border-color: var(--accent);
+}
+.backups-restore,
+.cloud-switch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-weight: 500;
+  color: var(--text);
+}
+.backups-targets,
+.cloud-switch-sides {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.cloud-switch-side {
+  flex: 1 1 200px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+.cloud-switch-side strong {
+  display: block;
+  margin-bottom: 2px;
+}
+.cloud-switch-option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.cloud-switch-option input {
+  margin-top: 3px;
+}
+.cloud-switch-option small {
+  display: block;
+  color: var(--muted);
+}
+.cloud-switch-warn {
+  color: var(--warn, #e0a341);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .board-columns {

@@ -1,3 +1,5 @@
+import { isReadDeadlineMessage } from '@shared/readDeadline'
+
 /** The storage error code carried across IPC, or `null` for any other failure.
  * Lets a caller react to a specific class of failure (e.g. rebase on
  * `REVISION_CONFLICT`) instead of matching on the human-facing message. */
@@ -12,6 +14,8 @@ export function ipcStorageErrorCode(error: unknown): string | null {
 export function ipcErrorMessage(error: unknown, fallback: string): string {
   const raw = error instanceof Error ? error.message.trim() : ''
   if (!raw) return fallback
+  // Leitura que passou do prazo (shared/readDeadline.ts): sem a marca técnica.
+  if (isReadDeadlineMessage(raw)) return 'o banco está demorando para responder — tente de novo'
   const storageMarker = raw.lastIndexOf('StorageError:')
   if (storageMarker >= 0) {
     return raw

@@ -14,6 +14,7 @@ import type { TtsControls } from './components/ChatRows'
 import type { Office3DWorkspaceProps } from './office3d/Office3DWorkspace'
 import { makePlan } from './planning/planningTestUtils'
 import { UiProvider } from './ui/UiProvider'
+import { syncIntoLocalStorage } from './conversationSyncFake'
 
 configure({ asyncUtilTimeout: 10_000 })
 
@@ -93,15 +94,12 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     onStorageChanged: vi.fn(() => () => {}),
     countConversationsByProject: vi.fn(async () => []),
     loadVersionedConversations: vi.fn(async () => stored().map(versioned)),
-    upsertConversation: vi.fn(async (input: { id: string; payload: { id: string }; expectedRevision?: number }) => {
-      localStorage.setItem('agentcode.conversations.v1', JSON.stringify([...stored().filter((c) => c.id !== input.id), input.payload]))
-      return { ...versioned(input.payload), revision: (input.expectedRevision ?? 0) + 1 }
-    }),
-    deleteConversation: vi.fn(async (input: { id: string; expectedRevision: number }) => {
-      const payload = stored().find((c) => c.id === input.id) ?? { id: input.id }
-      localStorage.setItem('agentcode.conversations.v1', JSON.stringify(stored().filter((c) => c.id !== input.id)))
-      return { ...versioned(payload), revision: input.expectedRevision + 1, deletedAt: new Date().toISOString() }
-    }),
+    syncConversations: vi.fn(syncIntoLocalStorage('agentcode.conversations.v1')),
+    flushConversations: vi.fn(async () => true),
+    getConversationSaveStatus: vi.fn(async () => ({ state: 'saved', pending: 0, oldestMs: 0 })),
+    onConversationSaveStatus: vi.fn(() => () => {}),
+    onConversationResync: vi.fn(() => () => {}),
+    onCentralRemote: vi.fn(() => () => {}),
     setWindowsControlEnabled: vi.fn(async () => {}),
     onWindowsControlChanged: vi.fn(() => () => {}),
     setChromeControlEnabled: vi.fn(async () => {}),

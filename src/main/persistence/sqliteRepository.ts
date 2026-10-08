@@ -20,6 +20,8 @@ import {
   pruneSqliteBoardItemPrints
 } from './sqliteBoardPrints'
 import { insertSqliteTurnTime, sqliteTurnTimeTotals } from './sqliteTurnTime'
+import { writeSqliteTelemetryBatch } from './sqliteTelemetryBatch'
+import type { TelemetryBatch } from './telemetryBatch'
 import type { TurnTimeTotals } from '../../shared/ipc'
 import {
   countSqliteOrphanContextBlobs,
@@ -110,6 +112,8 @@ import {
   type ConversationLease,
   type ConversationRecord,
   type ConversationWrite,
+  type ConversationWriteResult,
+  type PreparedConversationWrite,
   type ContextTurnWrite,
   type ExportSnapshot,
   type HandoffEntregaPatch,
@@ -564,6 +568,26 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     const result = this.write((db) => this.upsertConversationInDb(db, write))
     this.emit('conversation', write.id, result.revision)
     return result
+  }
+
+  readonly conversationHashScope = 'full' as const
+
+  /** Fila de gravação: o SQLite grava o documento inteiro, então usa o JSON preparado. */
+  async writeConversation(write: PreparedConversationWrite): Promise<ConversationWriteResult> {
+    const stored = await this.upsertConversation({
+      id: write.id,
+      payload: JSON.parse(write.prepared.payloadJson) as ConversationRecord,
+      ...(write.expectedRevision === undefined ? {} : { expectedRevision: write.expectedRevision }),
+      ...(write.lease ? { lease: write.lease } : {})
+    })
+    return {
+      id: stored.id,
+      revision: stored.revision,
+      contentHash: stored.contentHash,
+      createdAt: stored.createdAt,
+      updatedAt: stored.updatedAt,
+      ...(stored.deletedAt ? { deletedAt: stored.deletedAt } : {})
+    }
   }
 
   async deleteConversation(input: ConversationDelete): Promise<VersionedConversation> {
@@ -1760,6 +1784,11 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         .all(convId) as unknown as LlmUsageTotalRow[]
       return rows.map(llmUsageTotalFromRow)
     })
+  }
+
+  /** O lote da fila de telemetria: um `write()` só (sqliteTelemetryBatch.ts). */
+  async writeTelemetryBatch(batch: TelemetryBatch): Promise<void> {
+    this.write((db) => writeSqliteTelemetryBatch(db, batch))
   }
 
   async insertTurnTime(input: TurnTimeInsert): Promise<void> {

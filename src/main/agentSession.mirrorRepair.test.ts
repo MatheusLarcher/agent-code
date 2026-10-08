@@ -1,9 +1,9 @@
 // @vitest-environment node
 // Reparo do espelho do transcript pela sessão: o `mirror_error` do SDK não
-// bloqueia mais para sempre. O reparo roda com backoff até o banco voltar, a
+// bloqueia a conversa. O reparo roda com backoff até o banco voltar, a
 // nota "Espelhamento restaurado" só sai depois da tentativa completa (replay +
-// verificação, injetada por index.ts) e um envio no meio do reparo ou segue (banco
-// de volta) ou volta para a fila de espera da conversa (banco ainda fora).
+// verificação, injetada por index.ts) e um envio no meio do reparo segue na hora
+// (o SDK continua pelo transcript local; só a retomada pelo banco espera).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentSession } from './agentSession'
 import type { BrowserController } from './browserController'
@@ -76,7 +76,7 @@ describe('AgentSession: mirror_error → reparo → desbloqueio', () => {
     await expect(session.send('oi', undefined, 'u-1')).rejects.toThrow(GATE_PASSED)
   })
 
-  it('verificação reprovada (erro não transitório) não restaura: sem nota, envio segue bloqueado', async () => {
+  it('verificação reprovada (erro não transitório) não restaura nem bloqueia: o envio segue pelo transcript local', async () => {
     const repairMirror = vi.fn(async () => {
       throw new Error('O transcript espelhado não passou na verificação.')
     })
@@ -87,29 +87,15 @@ describe('AgentSession: mirror_error → reparo → desbloqueio', () => {
     expect(events().some((event) => event.text === mirrorRepairText.restored)).toBe(false)
     expect(events().some((event) => event.kind === 'error' && event.text?.includes('Não consegui reparar'))).toBe(true)
 
-    await expect(session.send('oi', undefined, 'u-1')).resolves.toBeUndefined()
-    expect(internals.refreshMemoriesIfChanged).not.toHaveBeenCalled()
+    await expect(session.send('oi', undefined, 'u-1')).rejects.toThrow(GATE_PASSED)
   })
 })
 
-describe('AgentSession: envio durante o reparo pendente', () => {
+describe('AgentSession: envio durante o reparo pendente (o envio não espera o espelho)', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('banco já voltou: o envio tenta o reparo na hora e segue normalmente', async () => {
-    const repairMirror = vi.fn(async () => undefined)
-    const { session, internals, events, mirrorError } = makeSession(repairMirror)
-    mirrorError()
-
-    // Antes do primeiro degrau do backoff: quem repara é o próprio envio.
-    await expect(session.send('oi', undefined, 'u-1')).rejects.toThrow(GATE_PASSED)
-    expect(repairMirror).toHaveBeenCalledTimes(1)
-    expect(internals.mirrorFailed).toBe(false)
-    expect(events().some((event) => event.text === mirrorRepairText.restored)).toBe(true)
-    expect(events().some((event) => event.kind === 'mirror-repair' && event.state === 'deferred')).toBe(false)
-  })
-
-  it('banco ainda fora: mensagem clara, NÃO envia e devolve a mensagem para a fila de espera; sai quando o reparo concluir', async () => {
+  it('banco ainda fora: a mensagem segue na hora, nada volta para a fila; o reparo continua em segundo plano', async () => {
     let online = false
     const repairMirror = vi.fn(async () => {
       if (!online) throw offline()
@@ -117,35 +103,30 @@ describe('AgentSession: envio durante o reparo pendente', () => {
     const { session, internals, events, mirrorError } = makeSession(repairMirror)
     mirrorError()
 
-    await expect(session.send('oi', undefined, 'u-1')).resolves.toBeUndefined()
-    expect(internals.refreshMemoriesIfChanged).not.toHaveBeenCalled()
-    expect(internals.turnActive).toBe(false)
-    expect(events().map((event) => event.text)).toContain(mirrorRepairText.queued)
-    expect(events()).toContainEqual({ kind: 'mirror-repair', state: 'deferred', messageUuid: 'u-1' })
+    await expect(session.send('oi', undefined, 'u-1')).rejects.toThrow(GATE_PASSED)
+    expect(repairMirror).not.toHaveBeenCalled() // o envio não tenta o reparo nem espera por ele
+    expect(events().some((event) => event.kind === 'mirror-repair' && event.state === 'deferred')).toBe(false)
+    expect(internals.mirrorFailed).toBe(true)
 
-    // O reparo automático continua; ao concluir, o renderer drena a fila.
+    // O reparo automático segue o backoff dele e restaura quando o banco volta.
     online = true
-    await vi.advanceTimersByTimeAsync(reconnectDelayMs(1))
+    await vi.advanceTimersByTimeAsync(reconnectDelayMs(0))
     expect(internals.mirrorFailed).toBe(false)
     expect(events()).toContainEqual({ kind: 'mirror-repair', state: 'restored' })
-    await expect(session.send('oi', undefined, 'u-1')).rejects.toThrow(GATE_PASSED)
   })
 
-  it('envio interno sem fila (recuperação) espera o reparo em vez de ser devolvido', async () => {
-    let online = false
+  it('envio interno (recuperação) também segue na hora', async () => {
     const repairMirror = vi.fn(async () => {
-      if (!online) throw offline()
+      throw offline()
     })
-    const { session, events, mirrorError } = makeSession(repairMirror)
+    const { session, mirrorError } = makeSession(repairMirror)
     mirrorError()
+    await expect(session.send('continue', undefined, 'r-1', 'pc', 'recovery')).rejects.toThrow(GATE_PASSED)
+  })
 
-    const sent = session.send('continue', undefined, 'r-1', 'pc', 'recovery').catch((error: Error) => error.message)
-    await vi.advanceTimersByTimeAsync(0)
-    expect(events().map((event) => event.text)).toContain(mirrorRepairText.waiting)
-    expect(events().some((event) => event.kind === 'mirror-repair' && event.state === 'deferred')).toBe(false)
-
-    online = true
-    await vi.advanceTimersByTimeAsync(reconnectDelayMs(1))
-    expect(await sent).toBe(GATE_PASSED)
+  it('a verificação do turno anterior (handoff) não segura o envio seguinte', async () => {
+    const { session, internals } = makeSession(vi.fn(async () => undefined))
+    ;(internals as unknown as { handoffReady: Promise<void> }).handoffReady = new Promise<void>(() => undefined)
+    await expect(session.send('oi', undefined, 'u-2')).rejects.toThrow(GATE_PASSED)
   })
 })

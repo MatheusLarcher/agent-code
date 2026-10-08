@@ -1,4 +1,5 @@
 import type { SessionStore } from '@anthropic-ai/claude-agent-sdk'
+import type { TelemetryBatchRepository } from './telemetryBatch'
 import {
   StorageError,
   type ContextHistoryRepository,
@@ -116,6 +117,14 @@ export function activeTokenUsage(resolve: RepositoryResolver): TokenUsageReposit
       onActive(resolve, (repository) => repository.listLlmUsageTotals(conversationId)),
     insertTurnTime: async (input) => onActive(resolve, (repository) => repository.insertTurnTime(input)),
     turnTimeTotals: async (conversationId) => onActive(resolve, (repository) => repository.turnTimeTotals(conversationId))
+  }
+}
+
+/** O mesmo, com o lote da fila de telemetria (writeQueue/telemetryQueue.ts). */
+export function activeTelemetry(resolve: RepositoryResolver): TokenUsageRepository & TelemetryBatchRepository {
+  return {
+    ...activeTokenUsage(resolve),
+    writeTelemetryBatch: async (batch) => onActive(resolve, (repository) => repository.writeTelemetryBatch(batch))
   }
 }
 

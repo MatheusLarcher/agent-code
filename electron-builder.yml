@@ -11,7 +11,12 @@ directories:
 asar: false
 
 files:
-  - out/**
+  # Só o que o app carrega de out/. NÃO `out/**` com exclusões: o electron-builder
+  # põe as negações antes do `out/**`, que as reinclui — o Chromium, o controle do
+  # Windows e o Postgres iam duplicados (resources/ e resources/app/out/).
+  - out/main/**
+  - out/preload/**
+  - out/renderer/**
   - package.json
   # O main é externalizado pelo electron-vite; mantenha o SDK usado em
   # produção dentro do instalador mesmo quando `files` está customizado.
@@ -33,8 +38,6 @@ files:
   # exclusões são a trava caso um .onnx apareça em out/ ou em node_modules.
   - '!**/*.onnx'
   - '!**/*.onnx_data'
-  - '!out/windows-control/**' # vai como extraResources (o helper procura em resources/windows-control)
-  - '!out/ms-playwright/**' # idem: vai como extraResources
 
 extraResources:
   # Helper nativo do controle do Windows (resolveHelperPath → resources/windows-control)
@@ -43,6 +46,9 @@ extraResources:
   # Chromium do Playwright embutido (PLAYWRIGHT_BROWSERS_PATH aponta pra cá em produção)
   - from: out/ms-playwright
     to: ms-playwright
+  # PostgreSQL 18.6 embutido, gerenciado pelo app (persistence/localPostgres.ts → resources/postgres)
+  - from: out/postgres
+    to: postgres
   # Extensão local do Chrome (chromeBridge/runtime.ts → resources/chrome-extension).
   # config.js é gerado por instalação (token), nunca empacotado.
   - from: src/chromeExtension

@@ -52,53 +52,9 @@ export function newCentralRequest(text: string, attachments: string[], now: numb
   }
 }
 
-/* ---- validação do payload (o banco pode ter escrita de outra versão) ---- */
+/* ---- validação do payload: a mesma da fila de gravação (@shared/centralMerge) ---- */
 
-const REQUEST_STATES: ReadonlySet<string> = new Set(['routing', 'asking', 'delivered', 'failed'])
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
-
-function isStringList(v: unknown): v is string[] {
-  return Array.isArray(v) && v.every((x) => typeof x === 'string')
-}
-
-/** Só o que a tela lê de cada tipo; campos opcionais novos passam como vierem. */
-function isCentralEntry(v: unknown): v is CentralEntry {
-  if (!isRecord(v) || typeof v.id !== 'string' || !v.id || typeof v.ts !== 'number' || !Number.isFinite(v.ts)) {
-    return false
-  }
-  switch (v.kind) {
-    case 'request':
-      return (
-        typeof v.text === 'string' &&
-        typeof v.state === 'string' &&
-        REQUEST_STATES.has(v.state) &&
-        (v.attachments === undefined || isStringList(v.attachments))
-      )
-    case 'reply':
-      return (
-        typeof v.requestId === 'string' &&
-        isRecord(v.anchor) &&
-        typeof v.anchor.convId === 'string' &&
-        typeof v.anchor.msgId === 'string' &&
-        isStringList(v.notes) &&
-        isRecord(v.activity) &&
-        typeof v.done === 'boolean'
-      )
-    case 'question':
-      return typeof v.convId === 'string' && typeof v.question === 'string' && typeof v.answer === 'string'
-    default:
-      return false
-  }
-}
-
-/** Estado da Central vindo do banco: entrada torta sai (uma não derruba a tela), e vale o teto. */
-export function normalizeCentralState(value: unknown): CentralState {
-  if (!isRecord(value) || !Array.isArray(value.entries)) return { entries: [] }
-  return { entries: value.entries.filter(isCentralEntry).slice(-MAX_CENTRAL_ENTRIES) }
-}
+export { normalizeCentralState } from '@shared/centralMerge'
 
 /* ---- anexos ---- */
 

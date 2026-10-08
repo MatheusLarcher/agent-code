@@ -62,6 +62,20 @@ describe('servidor MCP app: app_chamar_usuario', () => {
   })
 })
 
+describe('servidor MCP app: app_postgres_nuvem', () => {
+  it('só existe com o handler (fora do Agent Manager); a resposta de recusa vira isError', async () => {
+    expect(Object.keys(toolsOf(createAppMcpServer({ cwd })))).not.toContain('app_postgres_nuvem')
+    const handler = vi.fn(async () => ({ ok: false, text: "'manter' é obrigatório" }))
+    const t = toolsOf(createAppMcpServer({ cwd, postgresCloud: handler })).app_postgres_nuvem
+    expect(t.inputSchema!.safeParse({ acao: 'ligar', manter: 'nuvem' }).success).toBe(true)
+    expect(t.inputSchema!.safeParse({ acao: 'apagar' }).success).toBe(false)
+    expect(t.inputSchema!.safeParse({ acao: 'ligar', manter: 'os-dois' }).success).toBe(false)
+    const reply = await run(t, { acao: 'ligar' })
+    expect(handler).toHaveBeenCalledWith({ acao: 'ligar' })
+    expect(reply).toMatchObject({ isError: true, content: [{ text: "'manter' é obrigatório" }] })
+  })
+})
+
 describe('CallIds', () => {
   it('ids por arquivo, na ordem; anotação velha expira', () => {
     let now = 0

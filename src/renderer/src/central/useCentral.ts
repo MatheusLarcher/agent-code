@@ -53,6 +53,7 @@ import {
 } from './centralDelivery'
 import { discardEntries, moveEntry } from './centralMove'
 import { adoptTurn, type CentralAdopt } from './centralAdoption'
+import { ipcErrorMessage } from '../ipcError'
 
 export type { CentralLabel } from './centralRecents'
 export type { CentralAdopt, CentralTurnStart } from './centralAdoption'
@@ -150,7 +151,7 @@ export interface UseCentralResult extends CentralController {
 
 const NO_ENTRIES: CentralEntry[] = []
 
-const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+const errorText = (err: unknown): string => ipcErrorMessage(err, err instanceof Error ? err.message : String(err))
 
 export function useCentral(deps: UseCentralDeps): UseCentralResult {
   const depsRef = useRef(deps)

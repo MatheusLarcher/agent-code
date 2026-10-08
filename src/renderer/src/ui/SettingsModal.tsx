@@ -12,6 +12,7 @@ import {
 } from '@shared/ipc'
 import { useUI } from './UiProvider'
 import { PostgresSettingsSection } from './PostgresSettingsSection'
+import { BackupsSection } from './BackupsSection'
 import { MemoryDataSection } from './MemoryDataSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { TypeSafePauseNote } from './TypeSafePauseNote'
@@ -60,7 +61,7 @@ const TABS: { id: Tab; label: string; hint: string; icon: JSX.Element }[] = [
   { id: 'modelos', label: 'Modelos e contas', hint: 'Claude, ChatGPT, Ollama', icon: <IconKey size={16} /> },
   { id: 'voz', label: 'Voz', hint: 'Ditado e leitura', icon: <IconMic size={16} /> },
   { id: 'android', label: 'Android', hint: 'SDK e emulador', icon: <IconSmartphone size={16} /> },
-  { id: 'dados', label: 'Dados', hint: 'Pasta, cofre e PostgreSQL', icon: <IconDatabase size={16} /> }
+  { id: 'dados', label: 'Dados', hint: 'Pasta, cofre, banco e backups', icon: <IconDatabase size={16} /> }
 ]
 
 /** Eye toggle for secret fields — replaces the old emoji buttons. */
@@ -807,8 +808,8 @@ export function SettingsModal({
                       </button>
                     </div>
                     <span className="settings-hint">
-                      Somente as memórias (.md) e as skills são sincronizadas neste local. As configurações, o token do Android
-                      e as conversas ficam armazenados localmente neste computador, fora da pasta sincronizada.
+                      Somente as memórias (.md), as skills e os backups do banco ficam neste local. As configurações, o token
+                      do Android e as conversas ficam armazenados localmente neste computador, fora da pasta sincronizada.
                       Uma pasta <code>agent-code</code> é criada dentro do local selecionado. Se a pasta nova estiver
                       vazia, as memórias e skills atuais são movidas para lá; se já tiver dados do Agent Code, eles
                       são carregados.
@@ -819,6 +820,8 @@ export function SettingsModal({
                 <MemoryDataSection />
 
                 <PostgresSettingsSection />
+
+                <BackupsSection />
               </>
             )}
           </div>

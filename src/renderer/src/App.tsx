@@ -78,16 +78,18 @@ import {
   PROJECTS_PER_BACKGROUND_BATCH,
   type ProjectSummary,
   loadUi,
-  saveConversations,
   saveUi,
   loadUsageLimits,
   saveUsageLimits,
   loadConversationChanges,
   markConversationsDirty,
+  mergeCentralRemote,
   registerCentralUpdater
 } from './storage'
-import { saveChangedConversations } from './autosaveChanged'
-import { freezeClock, freezeSection, markConversationSwitch, markPaneSwitch, startFreezeWatch, timeSave } from './perf/freezeWatch'
+import { syncChangedConversations } from './autosaveChanged'
+import { forgetDelivered, markConversationsLoaded, markConversationsUrgent, syncConversations } from './conversationSync'
+import { SaveStatusChip } from './components/SaveStatusChip'
+import { freezeClock, freezeSection, markConversationSwitch, markPaneSwitch, startFreezeWatch } from './perf/freezeWatch'
 import { ChatPanel } from './components/ChatPanel'
 import { Composer } from './components/Composer'
 import { QueueStrip } from './components/QueueStrip'
@@ -115,6 +117,9 @@ import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
 
 /** Poll do contador da aba Quadro com o painel FECHADO. Lento: é um badge. */
 const BOARD_BADGE_POLL_MS = 60_000
+/** Fechar/recarregar espera o estado da UI (SQLite local) no máximo isto. */
+const CLOSE_UI_SAVE_MS = 1_000
+import { settleWithin } from './deadline'
 import { IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { typeSafePauseText } from './ui/typeSafePauseText'
@@ -577,13 +582,17 @@ function hydrateLoaded(list: Conversation[], self: string | null): { list: Conve
   const now = Date.now()
   const notices: RestartNotice[] = []
   const out = list.map((stored) => {
-    const resumed = resumeAfterRestart(hydrateStoredConversation(stored), {
+    const hydrated = hydrateStoredConversation(stored)
+    const resumed = resumeAfterRestart(hydrated, {
       now,
       self,
       newId: () => uid('recovery'),
       maxAttempts: MAX_GENERIC_RETRIES
     })
     if (resumed.notice) notices.push(resumed.notice)
+    // Só a limpeza do estado vivo (spinner, tarefas em segundo plano) não é edição:
+    // não volta para a fila de gravação. A retomada de turno é — essa vai.
+    if (resumed.conv === hydrated) markConversationsLoaded([hydrated])
     return resumed.conv
   })
   return { list: out, notices }
@@ -1256,6 +1265,8 @@ export function App(): JSX.Element {
       }
 
       if (e.kind === 'result' || e.kind === 'error') {
+        // Fim de turno: a próxima entrega desta conversa grava já (sem o ~1/s).
+        markConversationsUrgent([cid])
         // A finished turn has no outstanding permission request — clear any so a
         // stale modal can't reappear when this conversation becomes active again.
         setPermissions((p) => withoutKey(p, cid))
@@ -1682,6 +1693,12 @@ export function App(): JSX.Element {
         const initialStorageStatus = await waitForStorageReady()
         if (cancelled) return
         setStorageStatus(initialStorageStatus)
+        // Antes de qualquer leitura: sem isto, a tela de recuperação mostrava o
+        // erro genérico da 1ª leitura, e não o motivo (com o caminho do log do
+        // PostgreSQL local, quando é ele que não subiu).
+        if (!initialStorageStatus.writable) {
+          throw new Error(initialStorageStatus.error?.message ?? 'Persistência autoritativa indisponível.')
+        }
         // Abertura em etapas. Primeiro só o que é barato: a lista de projetos é
         // uma agregação (pasta + total + recência, zero payload) e o estado da
         // UI são duas chaves. Com isso a barra lateral já aparece inteira.
@@ -1708,9 +1725,6 @@ export function App(): JSX.Element {
           for (const conversation of active) {
             if (!loaded.some((c) => c.id === conversation.id)) loaded.push(conversation)
           }
-        }
-        if (!initialStorageStatus.writable) {
-          throw new Error(initialStorageStatus.error?.message ?? 'Persistência autoritativa indisponível.')
         }
       if (cancelled) return
       setStorageStatus(initialStorageStatus)
@@ -1802,8 +1816,6 @@ export function App(): JSX.Element {
     return () => window.removeEventListener('online', onOnline)
   }, [storageReconnectable])
 
-  // Último "dá para gravar?" já resolvido (fora de `booting`); `null` = nenhum ainda.
-  const storageWritableRef = useRef<boolean | null>(null)
   // Um reload por recuperação: o "Tentar novamente" (ao resolver) e o aviso de
   // status writable chegam os dois e cada um pedia o seu. Rearma na próxima queda.
   const storageReloadRequestedRef = useRef(false)
@@ -1829,20 +1841,10 @@ export function App(): JSX.Element {
       // sem recarregar, a tela sairia do erro para um app vazio.
       if (status.writable && hydrationFailedRef.current) {
         hydrationFailedRef.current = false
-        storageWritableRef.current = true
         requestStorageReload()
-        return
       }
-      // Banco de volta depois de uma queda: regrava já o que ficou marcado como
-      // não salvo. `saveConversations` só escreve o que difere da última revisão
-      // confirmada, então o que já estava salvo não é regravado.
-      const recovered = status.writable && storageWritableRef.current === false
-      if (status.state !== 'booting') storageWritableRef.current = status.writable
-      if (recovered && hydratedRef.current) {
-        void saveConversations(convsRef.current).catch((error) => {
-          console.error('[conversation-storage]', ipcErrorMessage(error, 'A persistência rejeitou a gravação.'))
-        })
-      }
+      // Banco de volta depois de uma queda: nada a fazer aqui — o que ficou
+      // pendente está na fila de gravação do main, que tenta de novo sozinha.
     })
     const offChanges = window.api.onStorageChanged((changes: RepositoryChange[]) => {
       if (changes.some((change) => change.entity.endsWith('-kv') && change.entityId.startsWith('config.'))) {
@@ -1968,18 +1970,18 @@ export function App(): JSX.Element {
     }
   }, [activeId, hydrated])
 
-  // ---- persist (debounced for the rapidly-changing message stream) ----
+  // ---- persist: hand what changed to main's write queue (never waits the DB) ----
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const savedSnapshotRef = useRef<Map<string, Conversation>>(new Map())
-  // Ids que mudaram desde o último disparo do debounce (ver autosaveChanged.ts).
+  // Ids que mudaram desde o último disparo (ver autosaveChanged.ts).
   const pendingSaveIdsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!hydrated) return
     // Mark what changed as dirty IMMEDIATELY (cheap identity compare — React
     // replaces the object of every patched conversation). Waiting for the
-    // debounced write to do it leaves a window where a change-feed notification
-    // would restore the last persisted revision and the new message would
-    // disappear from the screen right after showing up.
+    // delivery to do it leaves a window where a change-feed notification would
+    // restore the last persisted revision and the new message would disappear
+    // from the screen right after showing up.
     const changed: string[] = []
     const snapshot = new Map<string, Conversation>()
     for (const conversation of conversations) {
@@ -1989,16 +1991,31 @@ export function App(): JSX.Element {
     savedSnapshotRef.current = snapshot
     if (changed.length) markConversationsDirty(changed)
     for (const id of changed) pendingSaveIdsRef.current.add(id)
-    clearTimeout(saveTimer.current)
+    // Teto, não debounce: no streaming a tela muda o tempo todo, e um debounce
+    // reiniciado a cada mudança adiava a entrega até o turno parar. A entrega é
+    // barata (só a cauda que mudou); o ritmo de gravação (~1/s) é da fila do main.
+    if (saveTimer.current !== undefined) return
     saveTimer.current = setTimeout(() => {
-      void timeSave(() => saveChangedConversations(pendingSaveIdsRef.current, convsRef.current)).catch((error) => {
-        const reason = ipcErrorMessage(error, 'A persistência rejeitou a gravação.')
-        console.error('[conversation-storage]', reason)
-        notify('erro', `Não foi possível salvar o histórico. Motivo: ${reason} A conversa continua marcada como não salva.`)
-      })
+      saveTimer.current = undefined
+      const startedAt = freezeClock()
+      const stats = syncChangedConversations(pendingSaveIdsRef.current, convsRef.current)
+      freezeSection('salvamento', startedAt, { conversations: stats.processed })
     }, 400)
-    return () => clearTimeout(saveTimer.current)
-  }, [conversations, hydrated, notify])
+  }, [conversations, hydrated])
+  useEffect(() => () => clearTimeout(saveTimer.current), [])
+  // A fila do main pediu a conversa inteira (perdeu a base do delta) ou releu a
+  // Central num conflito: entrega de novo / mescla o que veio do outro PC.
+  useEffect(() => {
+    const offResync = window.api.onConversationResync((id) => {
+      forgetDelivered(id)
+      syncConversations(convsRef.current, { only: new Set([id]) })
+    })
+    const offCentral = window.api.onCentralRemote((record) => void mergeCentralRemote(record))
+    return () => {
+      offResync()
+      offCentral()
+    }
+  }, [])
   useEffect(() => {
     if (hydrated) {
       void saveUi({ collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts }).catch(() =>
@@ -2007,19 +2024,25 @@ export function App(): JSX.Element {
     }
   }, [collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts, hydrated, notify])
 
-  // Close/reload is a durability boundary: pause the unload, flush the latest
-  // conversation + UI state, then explicitly release the pending navigation.
+  // Close/reload is a durability boundary: pause the unload, hand the latest
+  // conversation state to main's write queue (a send, never a wait on the
+  // database — main drains it with a deadline and journals the rest), save the UI
+  // state (local SQLite), then release the pending navigation. The database being
+  // slow or down never keeps the window open.
   const hydratedRef = useRef(hydrated)
   hydratedRef.current = hydrated
-  const closeUiRef = useRef({ collapsed, activeId, browserMinimized, browserWidth, usageProviders })
-  closeUiRef.current = { collapsed, activeId, browserMinimized, browserWidth, usageProviders }
+  const closeUiRef = useRef({ collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts })
+  closeUiRef.current = { collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts }
   const allowUnloadRef = useRef(false)
   const unloadFlushRef = useRef<Promise<void> | null>(null)
   useEffect(() => {
-    const flushDurableState = async (): Promise<void> => {
+    const flushDurableState = (): Promise<void> => {
       clearTimeout(saveTimer.current)
-      if (!hydratedRef.current) return
-      await Promise.all([saveConversations(convsRef.current), saveUi(closeUiRef.current)])
+      saveTimer.current = undefined
+      if (!hydratedRef.current) return Promise.resolve()
+      pendingSaveIdsRef.current.clear()
+      syncConversations(convsRef.current, { urgent: true })
+      return settleWithin(saveUi(closeUiRef.current), CLOSE_UI_SAVE_MS)
     }
 
     const requestReload = (): void => {
@@ -2034,9 +2057,6 @@ export function App(): JSX.Element {
         .then(async () => {
           allowUnloadRef.current = true
           await window.api.appReloadReady()
-        })
-        .catch(() => {
-          notify('erro', 'Não foi possível salvar antes de recarregar. A janela permaneceu aberta.')
         })
         .finally(() => {
           unloadFlushRef.current = null
@@ -2056,9 +2076,6 @@ export function App(): JSX.Element {
         .then(async () => {
           allowUnloadRef.current = true
           await window.api.appCloseReady()
-        })
-        .catch(() => {
-          notify('erro', 'Não foi possível salvar antes de fechar. A janela permaneceu aberta.')
         })
         .finally(() => {
           unloadFlushRef.current = null
@@ -2084,7 +2101,7 @@ export function App(): JSX.Element {
       offStorageFlush()
       window.removeEventListener('beforeunload', onBeforeUnload)
     }
-  }, [notify])
+  }, [])
 
   // Detector de travadas (perf/freezeWatch.ts): o contexto de cada registro sai
   // deste ref, atualizado a cada render — só ids e números, nunca título/texto.
@@ -2321,6 +2338,7 @@ export function App(): JSX.Element {
 
   const selectConversation = useCallback((id: string): void => {
     markConversationSwitch(activeIdRef.current, id)
+    markConversationsUrgent([activeIdRef.current])
     setActiveId(id)
   }, [])
 
@@ -2337,6 +2355,7 @@ export function App(): JSX.Element {
   }
   const selectConversationAt = useCallback((id: string, msgId: string | null): void => {
     markConversationSwitch(activeIdRef.current, id)
+    markConversationsUrgent([activeIdRef.current])
     setActiveId(id)
     if (msgId) setScrollTarget((prev) => ({ convId: id, msgId, seq: (prev?.seq ?? 0) + 1 }))
   }, [])
@@ -2482,10 +2501,10 @@ export function App(): JSX.Element {
           }
           notify('sucesso', 'Login concluído!')
         }
-        // PostgreSQL leases reference an existing conversation row. Flush a
-        // newly created/edited conversation before asking main to acquire it.
-        // Só ela: comparar todas travava a tela a cada envio no modo Automático.
-        await saveConversations(convsRef.current, { only: new Set([conv.id]) })
+        // O lease da sessão referencia a linha da conversa: entrega já à fila do
+        // main o que ela tem (urgente, só ela) — o main grava a linha antes de
+        // pegar o lease e subir o agente. A tela não espera o banco aqui.
+        syncConversations(convsRef.current, { only: new Set([conv.id]), urgent: true })
         const started = await window.api.startAgent({
           convId: conv.id,
           cwd: conv.cwd,
@@ -4205,7 +4224,9 @@ export function App(): JSX.Element {
     setProjectMissing(false)
   }
 
-  if (storageLoadError && (!hydrated || storageStatus?.writable === false)) {
+  // Só sem nada carregado: depois de aberto, banco fora do ar não tira a tela do
+  // usuário — o que mudar fica na fila de gravação do main (indicador no topo).
+  if (storageLoadError && !hydrated) {
     return (
       <div className="storage-recovery" role="alert">
         <div className="storage-recovery-card">
@@ -4620,6 +4641,7 @@ export function App(): JSX.Element {
               </svg>
             </button>
           )}
+          <SaveStatusChip storageOffline={storageStatus?.writable === false && storageStatus.state !== 'booting'} />
           </div>
           <MainTabs active={mainTab} onSelect={setMainTab} />
           {claudeAccountList.length > 1 ? (

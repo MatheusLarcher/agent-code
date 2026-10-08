@@ -1,10 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { CENTRAL_ID, type CentralEntry } from '@shared/central'
 import type { VersionedConversationDto } from '@shared/ipc'
 import type { Conversation } from '../types'
-import { createCentralStorage, type CentralStorageDeps } from './centralMergeStorage'
+import { createCentralStorage } from './centralMergeStorage'
 
-// O laço de rebases com dependências falsas; o fluxo com a storage de verdade está em storage.central.test.ts.
+// As entregas à tela com dependências falsas; o fluxo com a storage de verdade está em storage.central.test.ts.
 
 const req = (id: string, ts: number, device: string): CentralEntry =>
   ({ kind: 'request', id, ts, text: id, state: 'delivered', device }) as CentralEntry
@@ -22,37 +22,49 @@ const conv = (entries: CentralEntry[]): Conversation => ({
   central: { entries }
 })
 
-const record = (revision: number, entries: CentralEntry[]): VersionedConversationDto => ({
+const record = (revision: number, entries: CentralEntry[], extra: Partial<VersionedConversationDto> = {}): VersionedConversationDto => ({
   id: CENTRAL_ID,
   payload: conv(entries) as unknown as Record<string, unknown>,
   revision,
   contentHash: `h${revision}`,
   createdAt: '2026-10-02T12:00:00.000Z',
-  updatedAt: '2026-10-02T12:00:00.000Z'
+  updatedAt: '2026-10-02T12:00:00.000Z',
+  ...extra
 })
 
-const storageError = (code: string): Error => new Error(`[agent-code-storage-error:${code}:fatal] falhou`)
+function setup(knownRevision?: number) {
+  const central = createCentralStorage({
+    knownRevision: () => knownRevision,
+    normalize: (r) => r.payload as unknown as Conversation
+  })
+  const view = { screen: conv([req('a1', 1, 'pc-a'), req('a2', 3, 'pc-a')]) }
+  central.register((fn) => (view.screen = fn(view.screen)))
+  return { central, view, ids: () => view.screen.central?.entries.map((e) => e.id) }
+}
 
-describe('createCentralStorage: gravação', () => {
-  it('erro que não é conflito numa nova tentativa sobe na hora (sem outro rebase) e a tela ganha o relido', async () => {
-    const deps = {
-      known: vi.fn(() => record(1, [req('a1', 1, 'pc-a')])),
-      reread: vi.fn(async () => record(2, [req('a1', 1, 'pc-a'), req('b1', 2, 'pc-b')])),
-      upsert: vi.fn<CentralStorageDeps['upsert']>()
-        .mockRejectedValueOnce(storageError('REVISION_CONFLICT'))
-        .mockRejectedValueOnce(storageError('STORAGE_OFFLINE')),
-      normalize: (r: VersionedConversationDto) => r.payload as unknown as Conversation,
-      clean: (c: Conversation) => c,
-      installationId: async () => 'pc-a'
-    }
-    const central = createCentralStorage(deps)
-    let screen = conv([req('a1', 1, 'pc-a'), req('a2', 3, 'pc-a')])
-    central.register((fn) => (screen = fn(screen)))
+describe('createCentralStorage: entregas à tela', () => {
+  it('feed: o que a leitura já trouxe não é reentregue; o mais novo é mesclado por dono', () => {
+    const { central, ids } = setup(2)
+    central.mergeChange(record(2, [req('b0', 0, 'pc-b')]), 'pc-a')
+    expect(ids()).toEqual(['a1', 'a2'])
+    central.mergeChange(record(3, [req('a1', 1, 'pc-a'), req('b1', 2, 'pc-b')]), 'pc-a')
+    expect(ids()).toEqual(['a1', 'b1', 'a2'])
+  })
 
-    await expect(central.write(screen)).rejects.toThrow(/STORAGE_OFFLINE/)
-    expect(deps.upsert).toHaveBeenCalledTimes(2)
-    expect(deps.upsert.mock.calls.map(([, expected]) => expected)).toEqual([1, 2])
-    expect(deps.reread).toHaveBeenCalledTimes(1)
-    expect(screen.central?.entries.map((e) => e.id)).toEqual(['a1', 'b1', 'a2'])
+  it('remoto relido pela fila: entra mesclado; tombstone e outra conversa não', () => {
+    const { central, ids } = setup()
+    central.mergeRemote(record(4, [req('b1', 2, 'pc-b')], { deletedAt: '2026-10-02T12:00:00.000Z' }), 'pc-a')
+    central.mergeRemote({ ...record(5, [req('b1', 2, 'pc-b')]), id: 'outra' }, 'pc-a')
+    expect(ids()).toEqual(['a1', 'a2'])
+    central.mergeRemote(record(6, [req('b1', 2, 'pc-b')]), 'pc-a')
+    expect(ids()).toEqual(['a1', 'b1', 'a2'])
+  })
+
+  it('sem atualizador registrado, não desvia nada', () => {
+    const central = createCentralStorage({ knownRevision: () => undefined, normalize: (r) => r.payload as unknown as Conversation })
+    expect(central.handles(CENTRAL_ID)).toBe(false)
+    central.register(() => undefined)
+    expect(central.handles(CENTRAL_ID)).toBe(true)
+    expect(central.handles('c1')).toBe(false)
   })
 })

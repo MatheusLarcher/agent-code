@@ -333,12 +333,24 @@ describe('BoardPanel', () => {
     expect(screen.getByText('Criado')).toBeTruthy()
   })
 
-  it('o detalhe não quebra se a linha do tempo falhar ao carregar', async () => {
+  it('o detalhe não quebra se a linha do tempo falhar ao carregar: diz que não deu e oferece tentar de novo', async () => {
     const api = mockApi({ available: true, items: [card()] })
-    api.boardItemEvents.mockRejectedValue(new Error('banco fora do ar'))
+    api.boardItemEvents.mockRejectedValueOnce(new Error('banco fora do ar'))
     render(panel())
     fireEvent.click(await screen.findByText('add board table'))
+    expect(await screen.findByText(/Não deu para carregar o histórico/)).toBeTruthy()
+    api.boardItemEvents.mockResolvedValue([])
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
     expect(await screen.findByText(/Sem histórico registrado/)).toBeTruthy()
+  })
+
+  it('o quadro que não carregou (banco lento) mostra "tentar de novo" em vez do spinner preso', async () => {
+    const api = mockApi({ available: true, items: [card()] })
+    api.boardList.mockRejectedValueOnce(new Error('[agent-code-read-deadline] O banco não respondeu em 2 s.'))
+    render(panel())
+    expect(await screen.findByText(/O banco está demorando para responder/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
+    expect(await screen.findByText('add board table')).toBeTruthy()
   })
 
   it('arrastar um cartão para "Fazendo" dispara boardMove com o status certo', async () => {

@@ -1,33 +1,23 @@
 /**
- * A Central na storage: UMA linha que os dois PCs gravam (ver centralMerge.ts). Com
- * um atualizador registrado (o App), a storage desvia a Central para cá: a gravação
- * vai mesclada por dono com a base do CAS (rebaseando até MAX_CENTRAL_REBASES vezes)
- * e o feed entrega o remoto mesclado à tela, em vez de trocar a Central inteira. As
- * dependências da storage vêm injetadas (storage.ts instancia): sem import circular.
+ * A Central na storage: UMA linha que os dois PCs gravam (ver centralMerge.ts). A
+ * gravação — mesclada por dono com a base do compare-and-set, rebaseando no
+ * conflito — é da fila de gravação do main. Aqui, com um atualizador registrado (o
+ * App), a tela recebe o remoto mesclado por dono, em vez de trocar a Central
+ * inteira: pelo feed e quando a fila relê a Central num conflito. As dependências
+ * da storage vêm injetadas (storage.ts instancia): sem import circular.
  */
 import { CENTRAL_ID } from '@shared/central'
 import type { VersionedConversationDto } from '@shared/ipc'
 import type { Conversation } from '../types'
-import { ipcStorageErrorCode } from '../ipcError'
 import { mergeCentralConversation } from './centralMerge'
 
 /** Põe na tela a Central mesclada; quem registra é o App. */
 export type CentralUpdater = (fn: (local: Conversation) => Conversation) => void
 
-/** REVISION_CONFLICT seguidos que a gravação da Central absorve: 1 tentativa + 3
- *  rebases = até 4 upserts. As outras conversas rebaseiam uma vez só. */
-export const MAX_CENTRAL_REBASES = 3
-
 export interface CentralStorageDeps {
-  /** O registro conhecido (a base do próximo compare-and-set). */
-  known(id: string): VersionedConversationDto | undefined
-  /** Relê o registro autoritativo (tombstone incluído) e o guarda como base. */
-  reread(id: string): Promise<VersionedConversationDto | undefined>
-  /** Upsert com compare-and-set na revisão esperada. */
-  upsert(conversation: Conversation, expectedRevision: number | undefined): Promise<VersionedConversationDto>
+  /** A maior revisão que as leituras já trouxeram desta conversa. */
+  knownRevision(id: string): number | undefined
   normalize(record: VersionedConversationDto): Conversation
-  clean(conversation: Conversation): Conversation
-  installationId(): Promise<string | null>
 }
 
 export function createCentralStorage(deps: CentralStorageDeps) {
@@ -58,49 +48,21 @@ export function createCentralStorage(deps: CentralStorageDeps) {
     },
 
     /**
-     * Toda tentativa leva a cópia local MESCLADA com o registro da revisão que ela
-     * espera: as entradas do outro PC vão exatamente como estão nessa revisão, e o CAS
-     * garante que a linha ainda é ela. Sem isso, uma cópia capturada antes de a tela
-     * receber a mescla (debounce, fila) passaria no CAS e apagaria o que o outro PC
-     * gravou. Em REVISION_CONFLICT seguidos: relê, mescla e regrava, até
-     * MAX_CENTRAL_REBASES vezes; depois o conflito sobe e o próximo salvamento tenta de
-     * novo. A tela ganha o último remoto relido, com sucesso ou não.
-     */
-    async write(conversation: Conversation): Promise<VersionedConversationDto> {
-      const self = await deps.installationId()
-      const mergedWith = (base: VersionedConversationDto | undefined): Conversation => {
-        if (!base) return conversation
-        const merged = mergeCentralConversation(conversation, deps.normalize(base), self)
-        return merged === conversation ? conversation : deps.clean(merged)
-      }
-      let base = deps.known(conversation.id)
-      let remote: VersionedConversationDto | undefined
-      try {
-        for (let rebases = 0; ; rebases += 1) {
-          try {
-            return await deps.upsert(mergedWith(base), base?.revision)
-          } catch (error) {
-            if (rebases >= MAX_CENTRAL_REBASES || ipcStorageErrorCode(error) !== 'REVISION_CONFLICT') throw error
-            base = remote = await deps.reread(conversation.id)
-          }
-        }
-      } finally {
-        if (remote) deliver(remote, self)
-      }
-    },
-
-    /**
      * Feed: suja ou não, a tela recebe o remoto mesclado por dono — trocar a Central
      * inteira apagaria o que este PC ainda não gravou, e pular a suja esconderia o
-     * outro PC até a próxima gravação daqui. A revisão conhecida NÃO avança: uma
-     * gravação capturada antes desta mescla (na fila, no debounce) ainda tem de perder
-     * o CAS e mesclar com o banco. Sumida do banco: fica na tela (há UMA Central; a
-     * próxima gravação a refaz).
+     * outro PC até a próxima gravação daqui. A próxima gravação da fila mescla de
+     * novo com o banco (o CAS garante a base). Sumida do banco: fica na tela (há UMA
+     * Central; a próxima gravação a refaz).
      */
     mergeChange(record: VersionedConversationDto | undefined, self: string | null): void {
-      const known = deps.known(CENTRAL_ID)
-      if (!record || (known && record.revision <= known.revision)) return
+      const known = deps.knownRevision(CENTRAL_ID)
+      if (!record || (known !== undefined && record.revision <= known)) return
       deliver(record, self)
+    },
+
+    /** A fila do main releu a Central num conflito: o que veio do outro PC aparece. */
+    mergeRemote(record: VersionedConversationDto, self: string | null): void {
+      if (record.id === CENTRAL_ID && !record.deletedAt) deliver(record, self)
     }
   }
 }

@@ -22,7 +22,11 @@ export default defineConfig({
           // Separate entries: voiceWorker.js is forked as a utilityProcess, and
           // voice.js resolves it as its sibling (host.ts resolveWorkerPath).
           voice: resolve('src/main/voice/index.ts'),
-          voiceWorker: resolve('src/main/voice/worker.ts')
+          voiceWorker: resolve('src/main/voice/worker.ts'),
+          // worker_threads da fila de gravação (persistence/writeQueue/preparer.ts)
+          // e do export diário em parquet (parquetExport.ts): irmãos do index.js.
+          conversationPrepareWorker: resolve('src/main/persistence/writeQueue/prepareWorker.ts'),
+          parquetExportWorker: resolve('src/main/parquetExportWorker.ts')
         }
       }
     }

@@ -2,6 +2,14 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { Channels } from '../shared/ipc'
 import type { ProjectColorMap } from '../shared/projectColor'
 import type {
+  CloudInspectionDto,
+  CloudSwitchAction,
+  CloudSwitchRequestDto,
+  DatabaseBackupListDto,
+  DatabaseRestoreRequestDto,
+  StorageTransitionResultDto
+} from '../shared/databaseBackup'
+import type {
   AgentCodeApi,
   HandoffChangedMsg,
   HandoffCorrectEntregaRequest,
@@ -100,8 +108,8 @@ import type {
   PostgresPublicSettings,
   StorageStatusDto,
   VersionedConversationDto,
-  ConversationUpsertDto,
-  ConversationDeleteDto,
+  ConversationChangeDto,
+  ConversationSaveStatusDto,
   RepositoryChange,
   TaskBoard,
   TaskBoardDetail,
@@ -126,12 +134,28 @@ import type {
 } from '../shared/ipc'
 
 import type { ContextTurnSummary, ContextTurnDetail, ContextExactCount, ContextTurnChanged } from '../shared/contextSnapshot'
+import { BULK_READ_DEADLINE_MS, NETWORK_READ_DEADLINE_MS, READ_DEADLINE_MS, readDeadlineMessage } from '../shared/readDeadline'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
   ipcRenderer.on(channel, listener)
   return () => ipcRenderer.removeListener(channel, listener)
 }
+
+/**
+ * Leitura de banco que a tela espera: com prazo (shared/readDeadline.ts). Estourou,
+ * rejeita com a marca que a tela reconhece e ela mostra "tentar de novo"; a
+ * consulta no main segue, só a espera acaba.
+ */
+function invokeRead<T>(deadlineMs: number, channel: string, ...args: unknown[]): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(readDeadlineMessage(deadlineMs))), deadlineMs)
+  })
+  return Promise.race([ipcRenderer.invoke(channel, ...args) as Promise<T>, expired]).finally(() => clearTimeout(timer))
+}
+
+const read = <T>(channel: string, ...args: unknown[]): Promise<T> => invokeRead<T>(READ_DEADLINE_MS, channel, ...args)
 
 const api: AgentCodeApi = {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(Channels.appGetVersion),
@@ -157,6 +181,17 @@ const api: AgentCodeApi = {
   deactivatePostgres: (): Promise<boolean> => ipcRenderer.invoke(Channels.storagePostgresDeactivate),
   retryStorage: (draft?: PostgresConnectionDraft): Promise<void> => ipcRenderer.invoke(Channels.storageRetry, draft),
   clearPostgresPassword: (): Promise<void> => ipcRenderer.invoke(Channels.storagePostgresPasswordClear),
+  listDatabaseBackups: (): Promise<DatabaseBackupListDto> => read(Channels.storageBackupsList),
+  deleteDatabaseBackup: (file: string): Promise<void> => ipcRenderer.invoke(Channels.storageBackupDelete, file),
+  restoreDatabaseBackup: (request: DatabaseRestoreRequestDto): Promise<{ relaunch: boolean; message: string }> =>
+    ipcRenderer.invoke(Channels.storageBackupRestore, request),
+  onDatabaseBackupsChanged: (cb: () => void): (() => void) => on(Channels.storageBackupsChanged, () => cb()),
+  inspectCloudDatabase: (action: CloudSwitchAction, draft?: PostgresConnectionDraft): Promise<CloudInspectionDto> =>
+    ipcRenderer.invoke(Channels.storageCloudInspect, action, draft),
+  switchCloudDatabase: (request: CloudSwitchRequestDto): Promise<{ message: string }> =>
+    ipcRenderer.invoke(Channels.storageCloudSwitch, request),
+  onStorageTransitionResult: (cb: (result: StorageTransitionResultDto) => void): (() => void) =>
+    on(Channels.storageTransitionResult, cb),
   onStorageStatusChanged: (cb: (status: StorageStatusDto) => void): (() => void) =>
     on(Channels.storageStatusChanged, cb),
   onStorageFlushRequested: (cb: (requestId: string) => void): (() => void) =>
@@ -164,14 +199,20 @@ const api: AgentCodeApi = {
   storageFlushReady: (requestId: string, error?: string): Promise<void> =>
     ipcRenderer.invoke(Channels.storageFlushReady, requestId, error),
   onStorageChanged: (cb: (changes: RepositoryChange[]) => void): (() => void) => on(Channels.storageChanged, cb),
-  loadVersionedConversations: (query?: ConversationQueryDto): Promise<VersionedConversationDto[]> =>
-    ipcRenderer.invoke(Channels.conversationsLoadVersioned, query),
+  loadVersionedConversations: (query?: ConversationQueryDto, options?: { deadlineMs?: number }): Promise<VersionedConversationDto[]> =>
+    invokeRead(options?.deadlineMs ?? READ_DEADLINE_MS, Channels.conversationsLoadVersioned, query),
   countConversationsByProject: (): Promise<ProjectConversationCountDto[]> =>
-    ipcRenderer.invoke(Channels.conversationsCountByProject),
-  upsertConversation: (input: ConversationUpsertDto): Promise<VersionedConversationDto> =>
-    ipcRenderer.invoke(Channels.conversationsUpsert, input),
-  deleteConversation: (input: ConversationDeleteDto): Promise<VersionedConversationDto> =>
-    ipcRenderer.invoke(Channels.conversationsDelete, input),
+    invokeRead(BULK_READ_DEADLINE_MS, Channels.conversationsCountByProject),
+  // Fila de gravação: `send`, sem resposta — a tela nunca espera o banco.
+  syncConversations: (changes: ConversationChangeDto[]): void => ipcRenderer.send(Channels.conversationsSync, changes),
+  flushConversations: (ids?: string[], deadlineMs?: number): Promise<boolean> =>
+    ipcRenderer.invoke(Channels.conversationsFlush, ids, deadlineMs),
+  getConversationSaveStatus: (): Promise<ConversationSaveStatusDto> => ipcRenderer.invoke(Channels.conversationsSaveStatus),
+  onConversationSaveStatus: (cb: (status: ConversationSaveStatusDto) => void): (() => void) =>
+    on(Channels.conversationsSaveStatus, cb),
+  onConversationResync: (cb: (id: string) => void): (() => void) => on(Channels.conversationsResync, cb),
+  onCentralRemote: (cb: (record: VersionedConversationDto) => void): (() => void) =>
+    on(Channels.conversationsCentralRemote, cb),
   setWindowsControlEnabled: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke(Channels.windowsControlSetEnabled, enabled),
   onWindowsControlChanged: (cb: (enabled: boolean) => void): (() => void) =>
@@ -205,7 +246,7 @@ const api: AgentCodeApi = {
   projectIcon: (root: string): Promise<string | null> =>
     ipcRenderer.invoke(Channels.projectIcon, root),
   projectColors: (cwds: string[]): Promise<ProjectColorMap> =>
-    ipcRenderer.invoke(Channels.projectColors, cwds),
+    read(Channels.projectColors, cwds),
   downloadFile: (path: string): Promise<{ ok: boolean; message: string; saved?: string }> =>
     ipcRenderer.invoke(Channels.fileDownload, path),
   readFile: (path: string): Promise<string> => ipcRenderer.invoke(Channels.fileRead, path),
@@ -231,27 +272,27 @@ const api: AgentCodeApi = {
   chooseCacheDir: (): Promise<CacheInfo | null> => ipcRenderer.invoke(Channels.cacheChooseDir),
   listSecrets: () => ipcRenderer.invoke(Channels.secretVaultList),
   deleteSecret: (name: string) => ipcRenderer.invoke(Channels.secretVaultDelete, name),
-  listMemoryConflicts: () => ipcRenderer.invoke(Channels.memoryConflicts),
+  listMemoryConflicts: () => read(Channels.memoryConflicts),
   discardMemoryProposal: (id: string) => ipcRenderer.invoke(Channels.memoryDiscardProposal, id),
   tasksBoard: (
     query?: { projectCwd?: string; conversationId?: string; includeFinished?: boolean }
-  ): Promise<TaskBoard> => ipcRenderer.invoke(Channels.tasksBoard, query),
+  ): Promise<TaskBoard> => read(Channels.tasksBoard, query),
   tasksDetail: (taskId: string): Promise<TaskBoardDetail | null> =>
-    ipcRenderer.invoke(Channels.tasksDetail, taskId),
+    read(Channels.tasksDetail, taskId),
   boardList: (query: {
     projectCwd: string
     conversationId?: string
     includeDismissed?: boolean
-  }): Promise<ProjectBoard> => ipcRenderer.invoke(Channels.boardList, query),
+  }): Promise<ProjectBoard> => read(Channels.boardList, query),
   boardDismiss: (id: string, dismissed: boolean): Promise<BoardItem | null> =>
     ipcRenderer.invoke(Channels.boardDismiss, id, dismissed),
   boardMove: (id: string, toStatus: BoardItemStatus): Promise<{ ok: boolean; message?: string }> =>
     ipcRenderer.invoke(Channels.boardMove, id, toStatus),
   boardItemEvents: (boardItemId: string): Promise<BoardItemEvent[]> =>
-    ipcRenderer.invoke(Channels.boardItemEvents, boardItemId),
+    read(Channels.boardItemEvents, boardItemId),
   boardPrints: (query: { projectCwd?: string; boardItemId?: string }): Promise<BoardPrintsResult> =>
-    ipcRenderer.invoke(Channels.boardPrints, query),
-  boardPrintImage: (id: string): Promise<BoardPrintImageResult> => ipcRenderer.invoke(Channels.boardPrintImage, id),
+    read(Channels.boardPrints, query),
+  boardPrintImage: (id: string): Promise<BoardPrintImageResult> => read(Channels.boardPrintImage, id),
   poChatHistory: (req: { projectCwd: string }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }> =>
     ipcRenderer.invoke(Channels.poChatHistory, req),
   poChatAsk: (req: { projectCwd: string; question: string }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }> =>
@@ -287,8 +328,8 @@ const api: AgentCodeApi = {
   planningSaveLayout: (req: PlanningRef & { layout: PlanningLayoutDto }): Promise<PlanningResult> =>
     ipcRenderer.invoke(Channels.planningSaveLayout, req),
   planningPeek: (req: PlanningRef): Promise<PlanningResult<{ plan: PlanningPeekDto }>> => ipcRenderer.invoke(Channels.planningPeek, req),
-  memoryListEntries: (): Promise<MemoryListItem[]> => ipcRenderer.invoke(Channels.memoryListEntries),
-  memoryReadEntry: (relPath: string): Promise<MemoryReadResult | null> => ipcRenderer.invoke(Channels.memoryReadEntry, relPath),
+  memoryListEntries: (): Promise<MemoryListItem[]> => read(Channels.memoryListEntries),
+  memoryReadEntry: (relPath: string): Promise<MemoryReadResult | null> => read(Channels.memoryReadEntry, relPath),
   planningListHandoffs: (req: PlanningRef): Promise<PlanningResult<PlanningHandoffListDto>> =>
     ipcRenderer.invoke(Channels.planningListHandoffs, req),
   planningWriteHandoff: (
@@ -296,15 +337,15 @@ const api: AgentCodeApi = {
   ): Promise<PlanningResult<{ name: string }>> => ipcRenderer.invoke(Channels.planningWriteHandoff, req),
   handoffRegister: (req: HandoffRegisterRequest): Promise<HandoffRegisterResult> =>
     ipcRenderer.invoke(Channels.handoffRegister, req),
-  handoffList: (req?: HandoffListRequest): Promise<HandoffListResult> => ipcRenderer.invoke(Channels.handoffList, req ?? {}),
+  handoffList: (req?: HandoffListRequest): Promise<HandoffListResult> => read(Channels.handoffList, req ?? {}),
   handoffCorrectEntrega: (req: HandoffCorrectEntregaRequest): Promise<HandoffCorrectEntregaResult> =>
     ipcRenderer.invoke(Channels.handoffCorrectEntrega, req),
   handoffQueueGate: (req: HandoffQueueGateRequest): Promise<HandoffQueueGateResult> => ipcRenderer.invoke(Channels.handoffQueueGate, req),
   handoffQueueDispatched: (req: HandoffQueueDispatchedRequest): Promise<HandoffQueueDispatchedResult> =>
     ipcRenderer.invoke(Channels.handoffQueueDispatched, req),
   handoffQueueList: (req?: HandoffQueueListRequest): Promise<HandoffQueueListResult> =>
-    ipcRenderer.invoke(Channels.handoffQueueList, req ?? {}),
-  handoffProjectStatus: (): Promise<HandoffProjectStatusResult> => ipcRenderer.invoke(Channels.handoffProjectStatus, {}),
+    read(Channels.handoffQueueList, req ?? {}),
+  handoffProjectStatus: (): Promise<HandoffProjectStatusResult> => read(Channels.handoffProjectStatus, {}),
   handoffProjectAction: (req: HandoffProjectActionRequest): Promise<HandoffProjectActionResult> =>
     ipcRenderer.invoke(Channels.handoffProjectAction, req),
   handoffProjectReply: (req: HandoffProjectReplyRequest): Promise<HandoffProjectReplyResult> =>
@@ -317,7 +358,7 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.handoffProjectReorder, req),
   handoffProjectDirty: (req: { conversationId: string }): Promise<HandoffProjectDirtyResult> =>
     ipcRenderer.invoke(Channels.handoffProjectDirty, req),
-  poAuthorizationList: (): Promise<PoAuthorizationListResult> => ipcRenderer.invoke(Channels.poAuthorizationList),
+  poAuthorizationList: (): Promise<PoAuthorizationListResult> => read(Channels.poAuthorizationList),
   poAuthorizationRevoke: (req: { conversationId: string }): Promise<{ ok: true } | { ok: false; message: string }> =>
     ipcRenderer.invoke(Channels.poAuthorizationRevoke, req),
   onPoAuthorizationsChanged: (cb: (map: PoAuthorizationMap) => void): (() => void) => on(Channels.poAuthorizationsChanged, cb),
@@ -338,8 +379,6 @@ const api: AgentCodeApi = {
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
   kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),
   loadAllConversations: (): Promise<unknown[]> => ipcRenderer.invoke(Channels.conversationsLoadAll),
-  saveAllConversations: (list: unknown[]): Promise<void> =>
-    ipcRenderer.invoke(Channels.conversationsSaveAll, list),
   suggestConversationTitle: (req: { text: string; convId?: string }): Promise<SuggestTitleResult> =>
     ipcRenderer.invoke(Channels.conversationSuggestTitle, req),
 
@@ -397,7 +436,7 @@ const api: AgentCodeApi = {
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }> =>
     ipcRenderer.invoke(Channels.agentStart, opts),
-  outboxList: () => ipcRenderer.invoke(Channels.outboxList),
+  outboxList: () => read(Channels.outboxList),
   outboxReplace: (conversationId, items) => ipcRenderer.invoke(Channels.outboxReplace, { conversationId, items }),
   injectNow: (convId, text, images, files, fileRefs, messageUuid, mcpTaskId) =>
     ipcRenderer.invoke(Channels.agentInjectNow, convId, text, images, files, fileRefs, messageUuid, mcpTaskId),
@@ -424,12 +463,12 @@ const api: AgentCodeApi = {
   disposeAgent: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentDispose, convId),
   refreshUsage: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentRefreshUsage, convId),
   getTokenUsageHistory: (convId: string): Promise<TokenUsageHistory> =>
-    ipcRenderer.invoke(Channels.tokenUsageHistory, convId),
-  getTurnTimeTotals: (convId: string): Promise<TurnTimeTotals> => ipcRenderer.invoke(Channels.turnTimeTotals, convId),
-  listContextTurns: (convId: string): Promise<ContextTurnSummary[]> => ipcRenderer.invoke(Channels.contextTurnsList, convId),
+    read(Channels.tokenUsageHistory, convId),
+  getTurnTimeTotals: (convId: string): Promise<TurnTimeTotals> => read(Channels.turnTimeTotals, convId),
+  listContextTurns: (convId: string): Promise<ContextTurnSummary[]> => read(Channels.contextTurnsList, convId),
   readContextTurn: (convId: string, turnId: string, parentToolUseId?: string): Promise<ContextTurnDetail | null> =>
-    ipcRenderer.invoke(Channels.contextTurnsRead, convId, turnId, parentToolUseId),
-  countContextExact: (convId: string): Promise<ContextExactCount> => ipcRenderer.invoke(Channels.contextTurnsCountExact, convId),
+    read(Channels.contextTurnsRead, convId, turnId, parentToolUseId),
+  countContextExact: (convId: string): Promise<ContextExactCount> => invokeRead(NETWORK_READ_DEADLINE_MS, Channels.contextTurnsCountExact, convId),
   revealSecret: (name: string): Promise<string | null> => ipcRenderer.invoke(Channels.secretsReveal, name),
   onContextTurnsChanged: (cb: (event: ContextTurnChanged) => void): (() => void) => on(Channels.contextTurnsChanged, cb),
   officeMockupUrl: (req: MockupRequest): Promise<MockupUrlResult> => ipcRenderer.invoke(Channels.officeMockupUrl, req),

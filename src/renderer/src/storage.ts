@@ -1,5 +1,6 @@
 import { currentModelId } from '@shared/ipc'
 import { migrateConversationEffort } from '@shared/autoEffort'
+import { compactConversation } from '@shared/conversationCompaction'
 import { DEFAULT_TITLE, type Conversation, type UIMessage } from './types'
 import { normalizeCentralState } from './central/centralRegistry'
 import { createCentralStorage } from './central/centralMergeStorage'
@@ -10,19 +11,23 @@ import type {
   StorageStatusDto,
   VersionedConversationDto
 } from '@shared/ipc'
-import { ipcStorageErrorCode } from './ipcError'
+import { forgetConversation, isConversationDirty, markConversationsLoaded } from './conversationSync'
+import { BULK_READ_DEADLINE_MS } from '@shared/readDeadline'
 
-// Persistence for the conversation history + UI state. Conversations are backed
-// by one SQLite db PER PROJECT (main process, via window.api.loadAllConversations/
-// saveAllConversations — see src/main/projectStore.ts), not a single shared blob
-// and not localStorage. UI state and usage-limits stay in the shared cache-folder
-// kv store (window.api.kvGet/kvSet). The agent's own transcript is also stored by
-// the SDK under ~/.claude/projects (used for `resume`); this keeps the rendered
-// history + sidebar metadata across restarts.
+/** As cargas de volume (abertura, lotes de projetos, "mostrar mais") têm prazo maior que o das leituras comuns. */
+const BULK = { deadlineMs: BULK_READ_DEADLINE_MS }
+
+export { markConversationsDirty } from './conversationSync'
+
+// Persistence for the conversation history + UI state. Conversations are READ
+// here (window.api.loadVersionedConversations) and WRITTEN by the main process's
+// write queue: the screen hands it only what changed and never waits for the
+// database (conversationSync.ts → src/main/persistence/writeQueue/). UI state and
+// usage-limits stay in the kv store (window.api.kvGet/kvSet). The agent's own
+// transcript is also stored by the SDK under ~/.claude/projects (used for
+// `resume`); this keeps the rendered history + sidebar metadata across restarts.
 //
-// Migration: the one-time split of the old single-blob conversations list into
-// per-project dbs happens transparently in the main process (projectStore.ts).
-// For UI/usage-limits keys, the first time a key is missing from SQLite, any
+// For UI/usage-limits keys, the first time a key is missing from the store, any
 // value still in the old localStorage is copied over (kept as a harmless backup).
 
 const UI_KEY = 'agentcode.ui.v1'
@@ -43,23 +48,11 @@ export interface UiState {
 }
 
 const DEFAULT_BROWSER_WIDTH = 720
-const COMPACTION_AGE_MS = 15 * 24 * 60 * 60 * 1000
 
 /** Keep only the useful narrative of conversations older than 15 days. This
  * touches Agent Code's rendered history, never the Claude SDK session files. */
 export function compactOldConversations(list: Conversation[], now = Date.now()): Conversation[] {
-  return list.map((conversation) => {
-    const messages = Array.isArray(conversation.messages) ? conversation.messages : []
-    if (Number.isFinite(conversation.createdAt) && now - conversation.createdAt < COMPACTION_AGE_MS) {
-      return messages === conversation.messages ? conversation : { ...conversation, messages }
-    }
-    const compacted = messages.filter(
-      (message: UIMessage) => message.kind === 'user' || (message.kind === 'assistant-text' && message.answer)
-    )
-    return compacted.length === messages.length && messages === conversation.messages
-      ? conversation
-      : { ...conversation, messages: compacted }
-  })
+  return list.map((conversation) => compactConversation(conversation, now))
 }
 
 /** Read a key from SQLite, falling back to (and migrating from) old localStorage. */
@@ -115,45 +108,10 @@ function readLegacyLocalStorageConversations(): Conversation[] | null {
   }
 }
 
-const conversationRecords = new Map<string, VersionedConversationDto>()
-const conversationQueues = new Map<string, Promise<void>>()
-const dirtyConversationIds = new Set<string>()
-const conversationGenerations = new Map<string, number>()
-
-function cleanConversation(conversation: Conversation): Conversation {
-  // Toda escrita carimba o marcador da separação dos Automáticos (autoEffort.ts).
-  return JSON.parse(
-    JSON.stringify({ ...compactOldConversations([conversation])[0], effortSplit: true }, (key, value) =>
-      key === 'images' ? undefined : value
-    )
-  ) as Conversation
-}
-
-/**
- * Serialização ESTÁVEL: chaves de objeto em ordem alfabética, recursivamente.
- *
- * Existe por causa do PostgreSQL. O payload é uma coluna `jsonb`, e JSONB não
- * guarda a ordem das chaves — ele devolve na ordem interna dele (comprimento,
- * depois bytes), inclusive nos objetos aninhados. Com `JSON.stringify` cru, a
- * comparação "isso mudou?" do autosave NUNCA dava igual contra o que voltou do
- * banco, e cada tick reescrevia todas as conversas carregadas: no servidor
- * deste usuário isso virou 200 mil updates numa tabela de 52 linhas. Sob
- * SQLite o texto voltava na ordem original e o problema não aparecia.
- *
- * Arrays mantêm a ordem — nelas a ordem é dado, não formatação.
- */
-function serialized(value: unknown): string {
-  return JSON.stringify(stable(value))
-}
-
-function stable(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stable)
-  if (value === null || typeof value !== 'object') return value
-  const source = value as Record<string, unknown>
-  const out: Record<string, unknown> = {}
-  for (const key of Object.keys(source).sort()) out[key] = stable(source[key])
-  return out
-}
+/** A maior revisão vista de cada conversa (leituras e feed): um aviso do feed que
+ *  não passa dela traz o que a tela já tem. Gravar é com a fila do main, que guarda
+ *  a sua própria base do compare-and-set. */
+const knownRevisions = new Map<string, number>()
 
 function finiteNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -232,27 +190,30 @@ export interface ProjectSummary {
   updatedAt: number
 }
 
-/** Normalize authoritative records into renderer conversations, remembering each
- *  record's revision so later CAS writes and change-feed merges have a baseline.
- *  Tombstones are remembered but never returned. */
+function rememberRevision(record: VersionedConversationDto): void {
+  knownRevisions.set(record.id, Math.max(knownRevisions.get(record.id) ?? 0, record.revision))
+}
+
+/** Normalize authoritative records into renderer conversations (compacted),
+ *  remembering each record's revision for the change feed and marking each object
+ *  as "came from the database", so it is never handed back to the write queue
+ *  unless the screen changes it. Tombstones are remembered but never returned. */
 function absorbRecords(records: VersionedConversationDto[]): Conversation[] {
   const list: Conversation[] = []
   for (const record of records) {
-    const normalized = normalizeConversation(record)
-    conversationRecords.set(record.id, {
-      ...record,
-      payload: normalized as unknown as Record<string, unknown>
-    })
-    if (!record.deletedAt) list.push(normalized)
+    rememberRevision(record)
+    if (!record.deletedAt) list.push(normalizeConversation(record))
   }
-  return list
+  const compacted = compactOldConversations(list)
+  markConversationsLoaded(compacted)
+  return compacted
 }
 
 /** Initial load. With `perProject`, only the N most recent conversations of each
  *  project come down; with `cwds`, only those projects. The rest stays in the
  *  database until `loadProjectsPage`/`loadProjectConversations` asks for it.
- *  Saving is per-record (upsert/delete by id), so a partially loaded list is
- *  safe: records that were never loaded are never touched. */
+ *  Writing is per-record, by what changed on screen, so a partially loaded list
+ *  is safe: records that were never loaded are never touched. */
 export async function loadConversations(options?: {
   perProject?: number
   cwds?: string[]
@@ -261,13 +222,15 @@ export async function loadConversations(options?: {
   if (options?.perProject) query.perProject = options.perProject
   if (options?.cwds) query.cwds = options.cwds
   const records = await window.api.loadVersionedConversations(
-    Object.keys(query).length ? query : undefined
+    Object.keys(query).length ? query : undefined,
+    BULK
   )
-  conversationRecords.clear()
+  knownRevisions.clear()
   const list = absorbRecords(records)
-  if (list.length) return compactOldConversations(list)
+  if (list.length) return list
   // Only a genuinely successful empty authoritative read may consult the one-time
-  // browser-local migration source. Storage errors deliberately propagate.
+  // browser-local migration source. Storage errors deliberately propagate. These
+  // are NOT marked as loaded: the first autosave tick hands them to the queue.
   const legacy = readLegacyLocalStorageConversations()
   return legacy ? compactOldConversations(legacy) : []
 }
@@ -276,24 +239,21 @@ export async function loadConversations(options?: {
  *  é o que o carregamento em segundo plano usa, lote a lote. */
 export async function loadProjectsPage(cwds: string[], perProject: number): Promise<Conversation[]> {
   if (!cwds.length) return []
-  const records = await window.api.loadVersionedConversations({ cwds, perProject })
-  return compactOldConversations(absorbRecords(records))
+  return absorbRecords(await window.api.loadVersionedConversations({ cwds, perProject }, BULK))
 }
 
 /** Conversas específicas por id (a conversa ativa da sessão anterior, por
  *  exemplo), sem zerar o que já está carregado. */
 export async function loadConversationsByIds(ids: string[]): Promise<Conversation[]> {
   if (!ids.length) return []
-  const records = await window.api.loadVersionedConversations({ ids })
-  return compactOldConversations(absorbRecords(records))
+  return absorbRecords(await window.api.loadVersionedConversations({ ids }))
 }
 
-/** Every live conversation of one project ("mostrar mais"). Records already held
- *  locally are refreshed only in the revision map; the caller decides which
- *  conversation object wins on screen (the local one may carry unsaved state). */
+/** Every live conversation of one project ("mostrar mais"). The caller decides
+ *  which conversation object wins on screen (the local one may carry state the
+ *  write queue has not stored yet). */
 export async function loadProjectConversations(cwd: string): Promise<Conversation[]> {
-  const records = await window.api.loadVersionedConversations({ cwd })
-  return compactOldConversations(absorbRecords(records))
+  return absorbRecords(await window.api.loadVersionedConversations({ cwd }, BULK))
 }
 
 /**
@@ -348,135 +308,21 @@ export async function loadProjectSummaries(): Promise<ProjectSummary[]> {
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
-function enqueueConversation(id: string, write: () => Promise<VersionedConversationDto>): Promise<void> {
-  const generation = (conversationGenerations.get(id) ?? 0) + 1
-  conversationGenerations.set(id, generation)
-  dirtyConversationIds.add(id)
-  const previous = conversationQueues.get(id) ?? Promise.resolve()
-  const next = previous.catch(() => undefined).then(async () => {
-    const stored = await write()
-    conversationRecords.set(id, stored)
-    if (conversationGenerations.get(id) === generation) dirtyConversationIds.delete(id)
-  })
-  conversationQueues.set(id, next)
-  void next.finally(() => {
-    if (conversationQueues.get(id) === next) conversationQueues.delete(id)
-  }).catch(() => undefined)
-  return next
-}
-
-/** Re-read the authoritative record of one conversation (tombstone included) and
- * keep it as the base of the next compare-and-set. Used to rebase a write that lost
- * the race, so a single stale revision cannot wedge every later write of it. */
-async function authoritativeRecord(id: string): Promise<VersionedConversationDto | undefined> {
-  const records = await window.api.loadVersionedConversations({ ids: [id], includeDeleted: true })
-  const record = records.find((entry) => entry.id === id)
-  if (record) conversationRecords.set(id, record)
-  else conversationRecords.delete(id)
-  return record
-}
-
-/**
- * Run a compare-and-set write, rebasing ONCE if the stored revision moved.
- * The local state is what the user is looking at, so a lost race means our
- * cached revision is stale — not that the edit should be dropped. Without this
- * the mismatch is permanent: `conversationRecords` never catches up and every
- * following write of that conversation fails with the same conflict.
- */
-async function writeWithRebase(
-  id: string,
-  attempt: (expectedRevision: number | undefined) => Promise<VersionedConversationDto>
-): Promise<VersionedConversationDto> {
-  try {
-    return await attempt(conversationRecords.get(id)?.revision)
-  } catch (error) {
-    if (ipcStorageErrorCode(error) !== 'REVISION_CONFLICT') throw error
-    return attempt((await authoritativeRecord(id))?.revision)
-  }
-}
-
-function upsertPayload(conversation: Conversation, expectedRevision: number | undefined): Promise<VersionedConversationDto> {
-  return window.api.upsertConversation({
-    id: conversation.id,
-    payload: conversation as unknown as Record<string, unknown>,
-    ...(expectedRevision === undefined ? {} : { expectedRevision })
-  })
-}
-
-/* A Central é UMA linha que os dois PCs gravam: com o atualizador registrado, grava
- * mesclada por dono, com até MAX_CENTRAL_REBASES (ver central/centralMergeStorage.ts). */
+/* A Central é UMA linha que os dois PCs gravam. A gravação (mesclada por dono, com
+ * rebase no conflito) é da fila do main; aqui a tela recebe o remoto mesclado —
+ * pelo feed e quando a fila relê a Central num conflito (ver
+ * central/centralMergeStorage.ts). */
 const central = createCentralStorage({
-  known: (id) => conversationRecords.get(id),
-  reread: authoritativeRecord,
-  upsert: upsertPayload,
-  normalize: normalizeConversation,
-  clean: cleanConversation,
-  installationId
+  knownRevision: (id) => knownRevisions.get(id),
+  normalize: normalizeConversation
 })
 /** O App registra quem põe a Central mesclada na tela; `null` desliga. */
 export const registerCentralUpdater = central.register
 
-/** O que um salvamento tratou: quantas conversas passaram por limpeza +
- *  comparação e o tamanho somado do serializado delas (caracteres do JSON). */
-export interface SaveConversationsStats {
-  processed: number
-  bytes: number
-}
-
-/**
- * Grava o que difere da última revisão confirmada e apaga o que saiu da lista.
- * Com `only`, a limpeza + comparação (estável) + escrita só trata esses ids — é o
- * tique do autosave, que já sabe pela identidade quem mudou; a detecção de
- * apagadas continua olhando a lista inteira. Sem `only` (fechar, reconexão),
- * compara todas.
- */
-export async function saveConversations(
-  list: Conversation[],
-  options?: { only?: ReadonlySet<string> }
-): Promise<SaveConversationsStats> {
-  const only = options?.only
-  const nextIds = new Set(list.map((conversation) => conversation.id))
-  const writes: Promise<void>[] = []
-  const stats: SaveConversationsStats = { processed: 0, bytes: 0 }
-  for (const original of list) {
-    if (only && !only.has(original.id)) continue
-    const conversation = cleanConversation(original)
-    const current = conversationRecords.get(conversation.id)
-    const text = serialized(conversation)
-    stats.processed += 1
-    stats.bytes += text.length
-    // Igual ao confirmado e sem escrita na fila: a marca de "não salvo" (posta
-    // pelo App a cada mudança de identidade) sai, senão o feed passaria a ignorar
-    // para sempre o que o outro PC grava nesta conversa. Com escrita na fila, o
-    // confirmado ainda vai mudar para o conteúdo dela: grava mesmo assim (a fila é
-    // em série), senão voltar ao conteúdo de antes deixaria o banco com o do meio.
-    if (!current?.deletedAt && serialized(current?.payload) === text && !conversationQueues.has(conversation.id)) {
-      dirtyConversationIds.delete(conversation.id)
-      continue
-    }
-    writes.push(
-      enqueueConversation(conversation.id, () =>
-        central.handles(conversation.id)
-          ? central.write(conversation)
-          : writeWithRebase(conversation.id, (expectedRevision) => upsertPayload(conversation, expectedRevision))
-      )
-    )
-  }
-  for (const current of conversationRecords.values()) {
-    if (current.deletedAt || nextIds.has(current.id)) continue
-    writes.push(
-      enqueueConversation(current.id, () =>
-        writeWithRebase(current.id, (expectedRevision) =>
-          // A conversation that already vanished upstream needs no tombstone.
-          expectedRevision === undefined
-            ? Promise.resolve(conversationRecords.get(current.id) ?? current)
-            : window.api.deleteConversation({ id: current.id, expectedRevision })
-        )
-      )
-    )
-  }
-  await Promise.all(writes)
-  return stats
+/** A fila do main releu a Central num conflito de revisão: a tela mescla por dono
+ *  o que veio do outro PC (o main já gravou a mescla). */
+export async function mergeCentralRemote(record: VersionedConversationDto): Promise<void> {
+  central.mergeRemote(record, await installationId())
 }
 
 /** This installation's id, used to ignore the change feed's echo of our OWN
@@ -492,20 +338,13 @@ async function installationId(): Promise<string | null> {
   return localInstallationId
 }
 
-/** Mark conversations as locally-modified BEFORE the debounced write runs.
- * Without this there is a window (the debounce) in which the local state already
- * has new messages but nothing is dirty yet, so a change-feed notification would
- * replace the conversation with the last persisted revision and the message
- * would vanish from the screen a moment after being typed. */
-export function markConversationsDirty(ids: Iterable<string>): void {
-  for (const id of ids) dirtyConversationIds.add(id)
-}
-
 /** Reload only the authoritative records signaled by the durable change feed.
- * Dirty local conversations are intentionally omitted so drafts or rejected
- * writes cannot be overwritten by another installation. Changes this
- * installation produced are skipped entirely: they can only carry data we just
- * wrote, never anything newer than what is already on screen. */
+ * Conversations changed on screen and not yet handed to the write queue are
+ * intentionally omitted (the main process already holds back the feed of the
+ * ones waiting in its queue, and its reads show them on top of the database), so
+ * another installation never overwrites them. Changes this installation produced
+ * are skipped entirely: they can only carry data we just wrote, never anything
+ * newer than what is already on screen. */
 export async function loadConversationChanges(changes: RepositoryChange[]): Promise<Map<string, Conversation | null>> {
   const self = await installationId()
   const ids = new Set(
@@ -520,24 +359,25 @@ export async function loadConversationChanges(changes: RepositoryChange[]): Prom
   const result = new Map<string, Conversation | null>()
   for (const id of ids) {
     if (central.handles(id)) {
-      central.mergeChange(fetched.get(id), self) // suja ou não; a revisão conhecida não anda
+      central.mergeChange(fetched.get(id), self) // suja ou não: mescla por dono
       continue
     }
-    if (dirtyConversationIds.has(id)) continue
+    if (isConversationDirty(id)) continue
     const record = fetched.get(id)
     // A revision we already hold carries the same payload — applying it would
     // only risk clobbering newer local state with identical stored state.
-    const known = conversationRecords.get(id)
-    if (record && known && record.revision <= known.revision) continue
-    const normalized = record ? normalizeConversation(record) : null
-    if (record && normalized) {
-      conversationRecords.set(id, {
-        ...record,
-        payload: normalized as unknown as Record<string, unknown>
-      })
+    const known = knownRevisions.get(id)
+    if (record && known !== undefined && record.revision <= known) continue
+    if (record) rememberRevision(record)
+    if (!record || record.deletedAt) {
+      // Apagada noutro PC: sai da tela sem virar uma exclusão daqui.
+      forgetConversation(id)
+      result.set(id, null)
+      continue
     }
-    if (!record || record.deletedAt) result.set(id, null)
-    else result.set(id, normalized)
+    const conversation = normalizeConversation(record)
+    markConversationsLoaded([conversation])
+    result.set(id, conversation)
   }
   return result
 }

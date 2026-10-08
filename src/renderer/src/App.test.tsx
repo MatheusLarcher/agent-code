@@ -6,14 +6,15 @@ import type { AgentEventMsg, ChatEvent, PoProviderDiagnosticMsg } from '@shared/
 import { MCP_TASK_GONE_MARK, MCP_TASK_GONE_WARNING, NO_LIVE_SESSION_MARK } from '@shared/mcpInbound'
 import type { TodoItem } from './types'
 import { makePlan } from './planning/planningTestUtils'
+import { deliveredIds, syncIntoLocalStorage } from './conversationSyncFake'
 
-// Espião transparente do salvamento de conversas: o comportamento é o real, mas
-// os testes do autosave conferem COM QUE `only` cada tique foi chamado.
+// Espião transparente da entrega à fila de gravação: o comportamento é o real,
+// mas os testes do autosave conferem COM QUE `only` cada tique foi chamado.
 const saveSpy = vi.hoisted(() => ({ fn: null as unknown as ReturnType<typeof vi.fn> }))
-vi.mock('./storage', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./storage')>()
-  saveSpy.fn = vi.fn(actual.saveConversations)
-  return { ...actual, saveConversations: saveSpy.fn }
+vi.mock('./conversationSync', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./conversationSync')>()
+  saveSpy.fn = vi.fn(actual.syncConversations)
+  return { ...actual, syncConversations: saveSpy.fn }
 })
 
 // This file mounts the full app dozens of times. Under the complete parallel
@@ -108,33 +109,13 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
         })
       )
     ),
-    upsertConversation: vi.fn(async (input: { id: string; payload: Record<string, unknown>; expectedRevision?: number }) => {
-      const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as Array<{ id: string }>
-      const next = [...list.filter((entry) => entry.id !== input.id), input.payload]
-      localStorage.setItem('agentcode.conversations.v1', JSON.stringify(next))
-      return {
-        id: input.id,
-        payload: input.payload,
-        revision: (input.expectedRevision ?? 0) + 1,
-        contentHash: JSON.stringify(input.payload),
-        createdAt: new Date(0).toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-    }),
-    deleteConversation: vi.fn(async (input: { id: string; expectedRevision: number }) => {
-      const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]') as Array<{ id: string }>
-      const payload = list.find((entry) => entry.id === input.id) ?? { id: input.id }
-      localStorage.setItem('agentcode.conversations.v1', JSON.stringify(list.filter((entry) => entry.id !== input.id)))
-      return {
-        id: input.id,
-        payload,
-        revision: input.expectedRevision + 1,
-        contentHash: JSON.stringify(payload),
-        createdAt: new Date(0).toISOString(),
-        updatedAt: new Date().toISOString(),
-        deletedAt: new Date().toISOString()
-      }
-    }),
+    // A fila de gravação do main: aqui grava na hora no "banco" do localStorage.
+    syncConversations: vi.fn(syncIntoLocalStorage('agentcode.conversations.v1')),
+    flushConversations: vi.fn(async () => true),
+    getConversationSaveStatus: vi.fn(async () => ({ state: 'saved', pending: 0, oldestMs: 0 })),
+    onConversationSaveStatus: vi.fn(() => () => {}),
+    onConversationResync: vi.fn(() => () => {}),
+    onCentralRemote: vi.fn(() => () => {}),
     setWindowsControlEnabled: vi.fn(async () => {}),
     onWindowsControlChanged: vi.fn(() => () => {}),
     setChromeControlEnabled: vi.fn(async () => {}),
@@ -175,9 +156,6 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     // Conversations: in real code this fans out to one db per project, but the
     // component doesn't care — same localStorage key the tests already seed/assert on.
     loadAllConversations: vi.fn(async () => JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')),
-    saveAllConversations: vi.fn(async (list: unknown[]) => {
-      localStorage.setItem('agentcode.conversations.v1', JSON.stringify(list))
-    }),
     getCacheInfo: vi.fn(async () => ({ dir: '', dbPath: '', memoriesDir: '', skillsDir: '' })),
     chooseCacheDir: vi.fn(async () => null),
     getAppVersion: vi.fn(async () => 'test'),
@@ -303,11 +281,11 @@ async function send(text: string): Promise<HTMLElement> {
   return ta
 }
 
-// A Central nasce no boot (ver central/) e a primeira gravação dela entra no
-// salvamento com debounce: quem conta gravações espera essa primeira assentar,
-// para medir só o que o próprio teste mudou.
+// A Central nasce no boot (ver central/) e a primeira entrega dela à fila vem no
+// tique do autosave: quem conta gravações espera essa primeira assentar, para
+// medir só o que o próprio teste mudou.
 async function centralSettled(): Promise<void> {
-  await waitFor(() => expect(api.upsertConversation).toHaveBeenCalledWith(expect.objectContaining({ id: 'central' })))
+  await waitFor(() => expect(deliveredIds(api.syncConversations.mock.calls)).toContain('central'))
 }
 
 // Paste a line that looks like a local path/URL — mirrors a real OS paste
@@ -1466,9 +1444,9 @@ describe('App — uso da conta (5h/semana) na topbar, global (não é por conver
 
 })
 
-// Reads what the app persisted for the seeded conversation ('c1') — the same
-// mechanism App.tsx itself uses (saveConversations -> window.api.saveAllConversations),
-// so these assert on real persisted state, not an internal implementation detail.
+// Reads what the app persisted for the seeded conversation ('c1') — what App.tsx
+// handed to the write queue (window.api.syncConversations, applied to the fake
+// store), so these assert on persisted state, not an internal detail.
 function savedConv(): {
   todoPlan?: { items: TodoItem[]; active: boolean }
 } | undefined {
@@ -2180,8 +2158,7 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
     await act(async () => {
       window.dispatchEvent(new Event('beforeunload'))
     })
-    expect(api.upsertConversation).not.toHaveBeenCalled()
-    expect(api.deleteConversation).not.toHaveBeenCalled()
+    expect(api.syncConversations).not.toHaveBeenCalled()
 
     // O load conclui → só a partir daí o app pode gravar, e grava o que carregou.
     await act(async () => {
@@ -2195,8 +2172,8 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
       })))
     })
     expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
-    expect(api.upsertConversation).not.toHaveBeenCalled()
-    expect(api.deleteConversation).not.toHaveBeenCalled()
+    // O que carregou não volta para a fila (só a Central, criada no boot, vai).
+    expect(deliveredIds(api.syncConversations.mock.calls).filter((id) => id !== 'central')).toEqual([])
   })
 
   it('confirma o fechamento somente depois de gravar conversa e UI', async () => {
@@ -2208,7 +2185,7 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
     expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
     await waitFor(() => expect(appCloseCb).toBeTypeOf('function'))
     await centralSettled()
-    api.upsertConversation.mockClear()
+    api.syncConversations.mockClear()
     api.kvSet.mockClear()
     api.appCloseReady.mockClear()
     const box = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
@@ -2220,10 +2197,12 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
       appCloseCb?.()
     })
     await waitFor(() => expect(api.appCloseReady).toHaveBeenCalledTimes(1))
-    expect(api.upsertConversation).toHaveBeenCalledTimes(1)
-    expect(JSON.stringify(api.upsertConversation.mock.calls[0][0])).toContain('rascunho antes de fechar')
+    // Entregue à fila do main (urgente) antes de liberar o fechamento — sem esperar o banco.
+    expect(deliveredIds(api.syncConversations.mock.calls)).toEqual(['c1'])
+    expect(JSON.stringify(api.syncConversations.mock.calls[0][0])).toContain('rascunho antes de fechar')
+    expect(api.syncConversations.mock.calls[0][0][0]).toMatchObject({ urgent: true })
     expect(api.kvSet).toHaveBeenCalledWith('agentcode.ui.v1', expect.any(String))
-    expect(api.upsertConversation.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(api.syncConversations.mock.invocationCallOrder[0]).toBeLessThan(
       api.appCloseReady.mock.invocationCallOrder[0]
     )
     expect(api.kvSet.mock.invocationCallOrder[0]).toBeLessThan(api.appCloseReady.mock.invocationCallOrder[0])
@@ -2237,7 +2216,7 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
     )
     expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
     await centralSettled()
-    api.upsertConversation.mockClear()
+    api.syncConversations.mockClear()
     api.kvSet.mockClear()
     api.appReloadReady.mockClear()
     await waitFor(() => expect(appReloadCb).toBeTypeOf('function'))
@@ -2250,10 +2229,10 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
       appReloadCb?.()
     })
     await waitFor(() => expect(api.appReloadReady).toHaveBeenCalledTimes(1))
-    expect(api.upsertConversation).toHaveBeenCalledTimes(1)
-    expect(JSON.stringify(api.upsertConversation.mock.calls[0][0])).toContain('rascunho antes de recarregar')
+    expect(deliveredIds(api.syncConversations.mock.calls)).toEqual(['c1'])
+    expect(JSON.stringify(api.syncConversations.mock.calls[0][0])).toContain('rascunho antes de recarregar')
     expect(api.kvSet).toHaveBeenCalledWith('agentcode.ui.v1', expect.any(String))
-    expect(api.upsertConversation.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(api.syncConversations.mock.invocationCallOrder[0]).toBeLessThan(
       api.appReloadReady.mock.invocationCallOrder[0]
     )
     expect(api.kvSet.mock.invocationCallOrder[0]).toBeLessThan(api.appReloadReady.mock.invocationCallOrder[0])
@@ -2478,7 +2457,7 @@ describe('App — abertura em etapas (projetos em segundo plano)', () => {
 })
 
 describe('App — gravação que atravessa uma queda do banco', () => {
-  it('o que falhou na queda é regravado quando o status volta a writable, sem nova edição e sem regravar o que já foi salvo', async () => {
+  it('banco cai com o app aberto: a tela continua, a mensagem vai para a fila na hora e o topo mostra "sem banco"', async () => {
     const handlers = new Set<(status: unknown) => void>()
     const publish = (status: unknown): void => {
       for (const handler of [...handlers]) handler(status)
@@ -2511,34 +2490,26 @@ describe('App — gravação que atravessa uma queda do banco', () => {
     await centralSettled()
     await act(async () => publish(ready))
 
-    // O banco caiu: a gravação da resposta que chegou é recusada.
-    const store = api.upsertConversation.getMockImplementation()!
-    api.upsertConversation.mockRejectedValue(new Error('[agent-code-storage-error:STORAGE_OFFLINE:retryable] offline'))
+    // O banco caiu: a tela NÃO vira a tela de erro — o usuário continua usando.
+    await act(async () => publish(offline))
+    expect(screen.queryByText('Persistência indisponível')).toBeNull()
+    expect(await screen.findByText('sem banco')).toBeTruthy()
+
+    // A mensagem aparece e vai para a fila do main na hora (quem espera o banco é a fila).
     await send('mensagem durante a queda')
     const withDraft = (): boolean =>
-      api.upsertConversation.mock.calls.some((call: unknown[]) => JSON.stringify(call[0]).includes('mensagem durante a queda'))
-    // A tentativa com a mensagem foi feita — e recusada.
+      api.syncConversations.mock.calls.some((call: unknown[]) => JSON.stringify(call[0]).includes('mensagem durante a queda'))
     await waitFor(() => expect(withDraft()).toBe(true), { timeout: 3_000 })
-    await act(async () => publish(offline))
+    expect(screen.getAllByText('mensagem durante a queda').length).toBeGreaterThan(0)
 
-    // Volta: regrava sozinho o que ficou pendente — a conversa e a Central, que
-    // adotou o turno (Emenda A1); cada uma uma vez.
-    api.upsertConversation.mockReset()
-    api.upsertConversation.mockImplementation(store)
+    // Volta: a tela não reentrega nada (a fila regrava sozinha) e o aviso sai.
+    api.syncConversations.mockClear()
     await act(async () => publish(ready))
-    await waitFor(() => expect(api.upsertConversation).toHaveBeenCalledTimes(2))
-    const written = (): string[] =>
-      api.upsertConversation.mock.calls.map((call: unknown[]) => (call[0] as { id: string }).id).sort()
-    expect(written()).toEqual(['c1', 'central'])
-    expect(withDraft()).toBe(true)
-
-    // Outra queda e volta sem nada pendente: nada é regravado (nem duplicado).
-    await act(async () => publish(offline))
-    await act(async () => publish(ready))
+    await waitFor(() => expect(screen.queryByText('sem banco')).toBeNull())
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
     })
-    expect(api.upsertConversation).toHaveBeenCalledTimes(2)
+    expect(deliveredIds(api.syncConversations.mock.calls).filter((id) => id !== 'c1' && id !== 'central')).toEqual([])
   })
 })
 
@@ -3528,8 +3499,7 @@ describe('App — modo sandbox', () => {
 })
 
 describe('App — autosave só das conversas alteradas', () => {
-  const upsertedIds = (): string[] =>
-    api.upsertConversation.mock.calls.map((call: unknown[]) => (call[0] as { id: string }).id)
+  const upsertedIds = (): string[] => deliveredIds(api.syncConversations.mock.calls)
   const onlyOf = (call: unknown[]): string[] => [...((call[1] as { only?: Set<string> } | undefined)?.only ?? [])]
 
   beforeEach(() => {
@@ -3541,7 +3511,7 @@ describe('App — autosave só das conversas alteradas', () => {
     localStorage.setItem('agentcode.conversations.v1', JSON.stringify([c1, { ...c1, id: 'c2', title: 'Outra' }]))
   })
 
-  it('abrir não grava conversa sem mudança; o tique leva só a alterada; fechar compara todas', async () => {
+  it('abrir não entrega conversa sem mudança; o tique leva só a alterada; fechar compara todas', async () => {
     render(
       <UiProvider>
         <App />
@@ -3550,13 +3520,13 @@ describe('App — autosave só das conversas alteradas', () => {
     expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
     await waitFor(() => expect(appCloseCb).toBeTypeOf('function'))
     await centralSettled()
-    // Abrir: as carregadas entram uma vez no tique, são comparadas e nada é gravado.
+    // Abrir: as carregadas entram uma vez no tique, são comparadas e nada é entregue.
     expect(upsertedIds()).not.toContain('c1')
     expect(upsertedIds()).not.toContain('c2')
     expect(saveSpy.fn.mock.calls.flatMap(onlyOf)).toEqual(expect.arrayContaining(['c1', 'c2']))
 
     saveSpy.fn.mockClear()
-    api.upsertConversation.mockClear()
+    api.syncConversations.mockClear()
     const box = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
     fireEvent.change(box, { target: { value: 'rascunho do tique' } })
     fireEvent.blur(box)
@@ -3566,14 +3536,14 @@ describe('App — autosave só das conversas alteradas', () => {
     expect(ticks.flatMap(onlyOf)).not.toContain('c2')
     expect(upsertedIds()).not.toContain('c2')
 
-    // Fechar: sem `only`, com a lista inteira.
+    // Fechar: sem `only`, com a lista inteira, urgente.
     saveSpy.fn.mockClear()
     await act(async () => {
       appCloseCb?.()
     })
     await waitFor(() => expect(api.appCloseReady).toHaveBeenCalledTimes(1))
     const close = saveSpy.fn.mock.calls.at(-1)!
-    expect(close).toHaveLength(1)
+    expect(close[1]).toEqual({ urgent: true })
     expect((close[0] as Array<{ id: string }>).map((c) => c.id)).toEqual(expect.arrayContaining(['c1', 'c2']))
   })
 })

@@ -86,6 +86,10 @@ vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, fn: (event: unknown, ...args: unknown[]) => unknown) => {
       handlers.set(channel, fn)
+    },
+    // `send` da tela sem resposta (a entrega à fila de gravação): mesmo mapa.
+    on: (channel: string, fn: (event: unknown, ...args: unknown[]) => unknown) => {
+      handlers.set(channel, fn)
     }
   },
   dialog: {},
@@ -250,10 +254,30 @@ vi.mock('../memoria/memorista', () => ({
 vi.mock('../memoria/memoriasUsadas', () => ({ forgetUsedMemories: vi.fn(), usedMemories: new Set() }))
 vi.mock('../persistence/kvFacade', () => ({
   configureKvRepositoryOffline: vi.fn(),
+  configureLocalKvStore: vi.fn(),
+  holdLocalKvUntilSeeded: vi.fn(),
+  releaseLocalKv: vi.fn(),
+  localKvSeeded: vi.fn(() => true),
+  seedLocalKvFromRepository: vi.fn(async () => false),
   readPersistedKv: vi.fn(),
   writePersistedKv: vi.fn()
 }))
 vi.mock('../persistence/hashes', () => ({ hashJson: vi.fn(), normalizeJson: vi.fn() }))
+// Backups do banco (pg_dump): nada de processo nem de pasta nos testes do index.
+vi.mock('../persistence/backup/databaseBackups', () => ({
+  DatabaseBackups: class {
+    startDaily = vi.fn()
+    dispose = vi.fn()
+    cancelDaily = vi.fn(async () => undefined)
+    list = vi.fn(async () => ({ dir: '', totalBytes: 0, items: [], running: null, activeSide: 'local', cloudEnabled: false }))
+    remove = vi.fn(async () => undefined)
+  }
+}))
+vi.mock('../persistence/backup/switchSupport', () => ({ sideOf: (target: string) => (target === 'local' ? 'local' : 'nuvem') }))
+vi.mock('../databaseBackupIpc', () => ({ registerDatabaseBackupIpc: vi.fn() }))
+vi.mock('../storageSwitchWiring', () => ({
+  createStorageSwitchWiring: () => ({ switchDeps: {}, cloudToolWithoutCaller: vi.fn() })
+}))
 vi.mock('../persistence/projectIdentity', () => ({
   attachProjectIdentity: vi.fn(),
   isMissingProjectFolderError: vi.fn(),
@@ -285,7 +309,8 @@ vi.mock('../memory/memoryRuntime', () => ({
   readSecretForReveal: revealContextSecret,
   memoryService: {},
   restoreVault: vi.fn(),
-  secretSink: vi.fn()
+  secretSink: vi.fn(),
+  secretVaultEnabled: vi.fn(() => false)
 }))
 vi.mock('../restartGuardFile', () => ({ startRestartGuardFile: vi.fn() }))
 vi.mock('../sleepGuard', () => ({ startSleepGuard: vi.fn() }))

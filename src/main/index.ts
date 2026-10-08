@@ -91,6 +91,16 @@ import { onCodexRateLimit } from './codexProxy'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir } from './store'
 import { storageLifecycle } from './persistence/lifecycle'
+import { LocalPostgres, localPostgresPaths } from './persistence/localPostgres'
+import { machineLocalDir } from './machineLocalDir'
+import { DatabaseBackups } from './persistence/backup/databaseBackups'
+import { sideOf } from './persistence/backup/switchSupport'
+import { registerDatabaseBackupIpc } from './databaseBackupIpc'
+import { createStorageSwitchWiring } from './storageSwitchWiring'
+import { devDataDir } from './devDataDir'
+import { installDevHooks } from './devHooks'
+import { createConversationWriteQueue, registerConversationQueueIpc } from './persistence/writeQueue/conversationQueueSetup'
+import { CENTRAL_ID } from '../shared/central'
 import { ConversationLeaseKeeper } from './persistence/leaseKeeper'
 import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlist'
 import { Vigia } from './vigia/vigia'
@@ -117,37 +127,44 @@ import { createPoLogWriter } from './po/poLog'
 import { consultWithFailover } from './po/poProviders'
 import { Memorista } from './memoria/memorista'
 import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
-import { configureKvRepositoryOffline, readPersistedKv, writePersistedKv } from './persistence/kvFacade'
-import { StorageError, type ConversationLease, type ConversationRecord, type PersistenceRepository } from './persistence/types'
+import {
+  configureKvRepositoryOffline,
+  configureLocalKvStore,
+  holdLocalKvUntilSeeded,
+  localKvSeeded,
+  readPersistedKv,
+  releaseLocalKv,
+  seedLocalKvFromRepository,
+  writePersistedKv
+} from './persistence/kvFacade'
+import { isLocalPersistedKey } from './persistence/keyRegistry'
+import { LocalKvStore } from './persistence/localKvStore'
+import { StorageError, type ConversationLease, type PersistenceRepository } from './persistence/types'
 import { hashJson, normalizeJson } from './persistence/hashes'
 import { loadOnce, replayLocalTranscript, verifyMirroredSession } from './persistence/mirrorReplay'
 import { replayDedupStore } from './persistence/replayDedup'
-import { activeContextHistory, activeReplayStore, activeResumeMarker, activeSessionStore, activeTokenUsage } from './persistence/activeRepository'
+import { activeContextHistory, activeReplayStore, activeResumeMarker, activeSessionStore, activeTelemetry } from './persistence/activeRepository'
+import { TelemetryQueue } from './persistence/writeQueue/telemetryQueue'
+import { ContextHistoryQueue } from './persistence/writeQueue/contextHistoryQueue'
+import { OutboxWriteQueue } from './persistence/writeQueue/outboxQueue'
+import { ConversationJournal } from './persistence/writeQueue/conversationJournal'
 import { registerContextIpc } from './contextSnapshot/ipc'
 import { registerMockupScheme, setupOfficeMockup } from './officeMockup/mockupElectron'
 import { OfficeCallCenter, parseCallsState } from './officeCallCenter'
 import { registerMemoryReadIpc } from './memory/memoryReadIpc'
 import { setOfficeCallSink } from './officeCallRuntime'
 import { createSessionStorageRecovery } from './sessionStorageRecovery'
-import {
-  attachProjectIdentity,
-  isMissingProjectFolderError,
-  preserveProjectIdentityForMissingPersistedWrite
-} from './persistence/projectIdentity'
-import { dailyParquetPath, exportConversationsParquet } from './conversationParquet'
+import { dailyParquetPath } from './conversationParquet'
+import { startDailyParquetExport, type ParquetExportHandle } from './parquetExport'
+import { configureDevQueryDelay } from './persistence/devQueryDelay'
 import { relocateLocalLeftovers, type LeftoverRelocation } from './localLeftovers'
-import {
-  deleteConversationWithLeaseRecovery,
-  sessionLeaseRenewal,
-  storageErrorForIpc,
-  upsertConversationWithLeaseRecovery
-} from './persistence/conversationWriteRecovery'
+import { sessionLeaseRenewal } from './persistence/conversationWriteRecovery'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote, splitImagesForNote, stashDraftAttachment, discardDraftAttachments, promoteDraftAttachments } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { taskLedger } from './tasks/taskRuntime'
 import { buildTaskBoard, buildTaskDetail, type TaskBoardQuery } from './tasks/taskBoard'
 import { startTaskReaper } from './tasks/taskReaper'
-import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, readSecretForReveal, restoreVault, secretSink } from './memory/memoryRuntime'
+import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, readSecretForReveal, restoreVault, secretSink, secretVaultEnabled } from './memory/memoryRuntime'
 import { startRestartGuardFile } from './restartGuardFile'
 import { startSleepGuard } from './sleepGuard'
 import { windowsControl } from './windowsControl/service'
@@ -186,14 +203,17 @@ import type {
   StartAgentOptions,
   TabKind,
   PostgresConnectionDraft,
-  ConversationUpsertDto,
-  ConversationDeleteDto,
   ConversationQueryDto,
   SecretVaultItem,
   MemoryConflictItem,
   TokenUsageHistory,
   TurnTimeTotals
 } from '../shared/ipc'
+import { routeInteractiveReads } from './interactiveReadIpc'
+
+// Antes de qualquer `ipcMain.handle`: as leituras que a tela espera vão às
+// conexões reservadas do PostgreSQL (interactiveReadIpc.ts).
+routeInteractiveReads(ipcMain)
 
 let mainWindow: BrowserWindow | null = null
 let stopMemoryCurator: (() => void) | null = null
@@ -218,7 +238,7 @@ let closeRequestTimer: ReturnType<typeof setInterval> | null = null
 let quitRequested = false
 let quitReady = false
 let storageClosePromise: Promise<void> | null = null
-let parquetExportPromise: Promise<unknown> | null = null
+let parquetExport: ParquetExportHandle | null = null
 let restartAfterStorageTransition = false
 const pendingStorageFlushes = new Map<
   string,
@@ -577,11 +597,119 @@ function requestRendererCloseFlush(): void {
   }
 }
 
+// O PostgreSQL embutido: binários em resources/postgres (instalado) ou
+// out/postgres (desenvolvimento); dados em %LOCALAPPDATA%\agent-code.
+const postgresPaths = (): ReturnType<typeof localPostgresPaths> =>
+  localPostgresPaths([process.resourcesPath, join(app.getAppPath(), 'out'), join(process.cwd(), 'out')], machineLocalDir())
+const localPostgres = new LocalPostgres(postgresPaths)
+
+// Backups do banco (pg_dump do PostgreSQL embutido) em <pasta de dados>\backups:
+// o diário em segundo plano, o de antes de uma troca/restauração e a lista das
+// Configurações (persistence/backup).
+const databaseBackups = new DatabaseBackups({
+  binDir: () => postgresPaths().binDir,
+  backupsDir: () => join(getCacheInfo().dir, 'backups'),
+  tempDir: () => join(machineLocalDir(), 'backups-tmp'),
+  appVersion: app.getVersion(),
+  activeSource: async () => {
+    const active = await storageLifecycle.activeSide()
+    return active ? { side: sideOf(active.target), draft: active.draft } : null
+  },
+  sides: async () => {
+    const activeSide =
+      storageLifecycle.status().backend === 'postgres' ? sideOf((await storageLifecycle.postgresSettings()).postgresTarget) : null
+    return { activeSide, cloudEnabled: activeSide === 'nuvem' }
+  },
+  log: (line) => authLog(line),
+  changed: () => send(Channels.storageBackupsChanged, null)
+})
+
+// A fila de gravação (persistence/writeQueue): dona de toda escrita de conversa.
+// A tela entrega a mudança e segue; o banco é atualizado em segundo plano, e o
+// que não drena vai para o diário em %LOCALAPPDATA%\agent-code\fila.
+const conversationQueue = createConversationWriteQueue({
+  send: (channel, payload) => send(channel, payload),
+  repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+  installationId: () => storageLifecycle.status().installationId,
+  lease: (convId) => {
+    const held = sessionLeases.get(convId)
+    if (!held) return undefined
+    return {
+      fence: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch },
+      renew: sessionLeaseRenewal(held, () => sessionLeases.get(convId) === held)
+    }
+  },
+  journalDir: join(machineLocalDir(), 'fila'),
+  logFile: join(app.getPath('userData'), 'logs', 'fila-gravacao.log')
+})
+
+// Telemetria das sessões (llm_calls, totais, tempo de turno) e histórico do
+// contexto pela mesma ideia: quem grava segue na hora; o banco recebe lotes.
+const activeDataRepository = (): PersistenceRepository => storageLifecycle.repository()
+const telemetryQueue = new TelemetryQueue({
+  repository: () => (storageLifecycle.canMutate() ? activeTelemetry(activeDataRepository) : null),
+  reader: () => activeTelemetry(activeDataRepository),
+  log: (line) => console.warn(line)
+})
+const contextHistoryQueue = new ContextHistoryQueue({
+  repository: () => (storageLifecycle.canMutate() ? activeContextHistory(activeDataRepository) : null),
+  reader: () => activeContextHistory(activeDataRepository),
+  log: (line) => console.warn(line)
+})
+// A fila de espera das conversas (mensagens enviadas com o agente ocupado): a mesma
+// garantia das conversas — nova tentativa e diário em `fila/outbox`.
+const outboxQueue = new OutboxWriteQueue({
+  repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+  journal: new ConversationJournal(join(machineLocalDir(), 'fila', 'outbox')),
+  log: (line) => console.warn(line)
+})
+
+/** Prazo do fechamento para o banco receber o que está na fila; o resto vai ao diário. */
+const CLOSE_DRAIN_MS = 2_000
+/** Prazo dos leases e do pool no fechamento: vencem/caem sozinhos se o banco não responder. */
+const CLOSE_RELEASE_MS = 500
+/** Prazo para a linha da conversa existir antes do lease, no início da sessão. */
+const START_FLUSH_MS = 15_000
+
+/** Espera `work` no máximo `ms`; estourou, segue (o que estava em curso continua). */
+async function within(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([work.catch(() => undefined), new Promise<void>((resolve) => (timer = setTimeout(resolve, ms)))])
+  if (timer) clearTimeout(timer)
+}
+
 async function closeStorageForQuit(): Promise<void> {
   storageClosePromise ??= (async () => {
-    await Promise.all([...sessionLeases.keys()].map(releaseSessionLease))
-    await parquetExportPromise?.catch(() => undefined)
-    await storageLifecycle.close()
+    // Fechar nunca espera o banco: drena com prazo e o resto vai ao diário,
+    // reaplicado na próxima abertura. Leases soltos com prazo (vencem sozinhos);
+    // o export do parquet é cancelado, não esperado.
+    const started = Date.now()
+    parquetExport?.cancel()
+    // Backup diário (ou cópia de uma troca) em curso: o processo morre, o arquivo
+    // pela metade não entra na lista, e o diário é refeito na próxima abertura.
+    databaseBackups.dispose()
+    const [drained] = await Promise.all([
+      conversationQueue.flush(null, CLOSE_DRAIN_MS),
+      telemetryQueue.flush(CLOSE_DRAIN_MS),
+      contextHistoryQueue.flush(CLOSE_DRAIN_MS),
+      outboxQueue.flush(CLOSE_DRAIN_MS)
+    ])
+    const journaled = await conversationQueue.journalPending()
+    const outboxJournaled = await outboxQueue.journalPending()
+    const telemetryLeft = telemetryQueue.pendingCounts()
+    const contextLeft = contextHistoryQueue.pendingCount()
+    await within(Promise.all([...sessionLeases.keys()].map(releaseSessionLease)), CLOSE_RELEASE_MS)
+    await within(storageLifecycle.close(), CLOSE_RELEASE_MS)
+    // Depois do pool fechado: fechar o app derruba o servidor que ele subiu.
+    await localPostgres.stop().catch((error) => console.error('[postgres-local] falha ao parar:', error))
+    authLog(
+      `fechamento: persistência fechada em ${Date.now() - started} ms ` +
+        `(fila ${drained ? 'drenada' : 'não drenou no prazo'}, ${journaled} conversa(s) e ${outboxJournaled} fila(s) de espera no diário` +
+        (telemetryLeft.calls || telemetryLeft.totals || telemetryLeft.turnTimes || contextLeft
+          ? `; perdidos sem banco: ${telemetryLeft.calls} chamada(s) de LLM, ${telemetryLeft.totals} total(is), ` +
+            `${telemetryLeft.turnTimes} tempo(s) de turno, ${contextLeft} turno(s) de contexto)`
+          : ')')
+    )
   })()
   await storageClosePromise
 }
@@ -601,7 +729,14 @@ function requestStorageFlush(): Promise<void> {
 }
 
 const storageTransitionHooks = {
-  flushRenderer: requestStorageFlush,
+  // A tela entrega o que tem e a fila grava TUDO antes da cópia entre bancos:
+  // uma mudança que ficasse para trás iria para o banco errado.
+  flushRenderer: async (): Promise<void> => {
+    await requestStorageFlush()
+    if (!(await conversationQueue.flush(null, 60_000))) {
+      throw new Error('A fila de gravação não terminou de gravar as conversas; a troca de banco foi cancelada.')
+    }
+  },
   waitForIdleAgents: async (): Promise<void> => {
     // The caller has already obtained explicit user confirmation. Stop live
     // work now instead of allowing a long-running turn to hold the migration.
@@ -613,6 +748,37 @@ const storageTransitionHooks = {
     await Promise.all([...sessionLeases.keys()].map(releaseSessionLease))
   }
 }
+
+// Restauração e troca local ↔ nuvem: a guarda do app_restart, a drenagem da tela e
+// das filas antes da cópia e a ferramenta app_postgres_nuvem (storageSwitchWiring.ts).
+const storageSwitch = createStorageSwitchWiring({
+  lifecycle: storageLifecycle,
+  backups: databaseBackups,
+  appVersion: app.getVersion(),
+  guard: () => appRestart?.status() ?? null,
+  flushRenderer: () => requestStorageFlush(),
+  flushQueues: async () => {
+    const [conversations, outbox] = await Promise.all([
+      conversationQueue.flush(null, 60_000),
+      outboxQueue.flush(60_000),
+      telemetryQueue.flush(15_000),
+      contextHistoryQueue.flush(15_000)
+    ])
+    return { conversations, outbox }
+  },
+  onlyRefusedLeft: () => conversationQueue.onlyRefusedLeft(),
+  stopSessions: () => storageTransitionHooks.waitForIdleAgents(),
+  // O {{secret:nome}} da ferramenta é resolvido no main e só vai para a conexão.
+  readSecret: async (name) => {
+    if (!secretVaultEnabled()) {
+      throw new Error('o cofre de chaves está desligado (Configurações → Dados): ligue-o ou informe a senha de outro jeito.')
+    }
+    return readSecretForReveal(name)
+  },
+  send: (channel, payload) => send(channel, payload),
+  relaunch: () => relaunchAfterStorageTransition(),
+  log: (line) => authLog(line)
+})
 
 async function confirmStorageTransitionStopsAgents(direction: 'postgres' | 'sqlite'): Promise<boolean> {
   const count = sessions.size
@@ -638,17 +804,29 @@ function relaunchAfterStorageTransition(): void {
   if (restartAfterStorageTransition) return
   restartAfterStorageTransition = true
   setTimeout(() => {
-    app.relaunch()
+    // Instância isolada de teste (só sem empacotar): fecha sem relançar, e quem a
+    // dirige abre de novo — um processo relançado sairia do controle do teste.
+    if (!(devDataDir() && process.env['AGENT_CODE_DEV_NO_RELAUNCH'] === '1')) app.relaunch()
     app.quit()
   }, 300).unref?.()
 }
 
 function assertStorageWritable(allowTransitionFlush = false): void {
+  const state = storageLifecycle.status().state
+  // Agente novo/mensagem nova recusados na hora; a gravação da própria tela (a
+  // drenagem antes da cópia) passa enquanto o banco em uso ainda aceita.
+  if (!allowTransitionFlush && (state === 'switching-postgres' || state === 'restoring-postgres')) {
+    throw new StorageError(
+      'TRANSITION_IN_PROGRESS',
+      state === 'switching-postgres'
+        ? 'Troca de banco em andamento: tente de novo quando ela terminar (o app reinicia no fim).'
+        : 'Restauração de backup em andamento: tente de novo quando ela terminar.'
+    )
+  }
   if (!storageLifecycle.canMutate()) {
     const status = storageLifecycle.status()
     throw new Error(status.error?.message ?? 'Persistência indisponível para gravação.')
   }
-  const state = storageLifecycle.status().state
   if (!allowTransitionFlush && (state === 'activating-postgres' || state === 'deactivating-postgres')) {
     throw new StorageError('TRANSITION_IN_PROGRESS', 'A persistência está em transição.')
   }
@@ -1215,6 +1393,12 @@ export function registerIpc(): void {
     storageLifecycle.retryPostgres(draft)
   )
   ipcMain.handle(Channels.storagePostgresPasswordClear, () => storageLifecycle.clearPostgresPassword())
+  registerDatabaseBackupIpc({
+    ipcMain,
+    backups: databaseBackups,
+    switchDeps: storageSwitch.switchDeps,
+    relaunch: () => relaunchAfterStorageTransition()
+  })
   ipcMain.handle(Channels.storageFlushReady, (_event, requestId: string, error?: string) => {
     const pending = pendingStorageFlushes.get(requestId)
     if (!pending) return
@@ -1232,10 +1416,10 @@ export function registerIpc(): void {
   )
   // App configuration (Settings screen).
   ipcMain.handle(Channels.configGet, async () => {
-    storageLifecycle.repository()
     // Sem isto, uma chamada logo após o boot (a UI monta assim que o storage
     // fica pronto, mas a config em si só termina de carregar depois) via o
-    // fallback local e devolvia interruptores "desligados" mesmo já ativados.
+    // fallback e devolvia interruptores "desligados" mesmo já ativados. Não
+    // depende do banco: a config mora no SQLite local (localKvStore.ts).
     await ensureConfigLoaded()
     return loadConfig()
   })
@@ -1255,8 +1439,8 @@ export function registerIpc(): void {
   })
   // Turno com erro de autenticação (ou o login/turno que o desfaz) reavalia o card.
   claudeAuthExpiry.onChange(providersChanged)
+  // Config, Windows e Chrome: só o SQLite local — salvam com o banco fora do ar.
   ipcMain.handle(Channels.configSet, async (_e, patch: Partial<AppConfig>) => {
-    assertStorageWritable()
     const result = await updateAppConfig(patch)
     if (patch && 'ollama' in patch) providersChanged()
     return result
@@ -1269,7 +1453,12 @@ export function registerIpc(): void {
     if (!closeRequested || !mainWindow) return
     if (closeRequestTimer) clearInterval(closeRequestTimer)
     closeRequestTimer = null
-    if (quitRequested) await closeStorageForQuit()
+    if (quitRequested) {
+      // A tela já entregou tudo à fila: some na hora, e o fechamento da
+      // persistência (prazo de ~2 s, o resto no diário) corre por trás.
+      if (!mainWindow.isDestroyed()) mainWindow.hide()
+      await closeStorageForQuit()
+    }
     closeReady = true
     const windowToClose = mainWindow
     setImmediate(() => {
@@ -1287,12 +1476,10 @@ export function registerIpc(): void {
   })
   ipcMain.handle(Channels.windowsControlSetEnabled, async (_e, enabled: boolean) => {
     if (typeof enabled !== 'boolean') throw new TypeError('enabled deve ser booleano.')
-    assertStorageWritable()
     await updateAppConfig({ windowsControlEnabled: enabled })
   })
   ipcMain.handle(Channels.chromeControlSetEnabled, async (_e, enabled: boolean) => {
     if (typeof enabled !== 'boolean') throw new TypeError('enabled deve ser booleano.')
-    assertStorageWritable()
     await updateAppConfig({ chromeControlEnabled: enabled })
   })
   ipcMain.handle(Channels.chromeBridgeStatus, () => chromeBridgeStatus())
@@ -1531,7 +1718,8 @@ export function registerIpc(): void {
   // Fila de espera das conversas, gravada no banco para sobreviver ao reinício.
   registerOutboxIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener),
-    repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null)
+    repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+    queue: outboxQueue
   })
   // Central: decisor de destino (TypeSafe) e log de correções; a lógica mora em central/.
   centralIpc = registerCentralIpc({
@@ -1553,26 +1741,28 @@ export function registerIpc(): void {
   // nunca a ponte do celular.
   registerContextIpc({
     handle: (channel, handler) => ipcMain.handle(channel, handler),
-    repository: () => storageLifecycle.repository(),
+    // Pela fila: apagar o histórico leva junto o que ainda nem foi gravado.
+    repository: () => contextHistoryQueue,
     reveal: readSecretForReveal
   })
   // Chamadas e totais persistidos de uma conversa (`llm_calls`/`llm_usage_totals`),
-  // para reconstruir a árvore de consumo de tokens ao reabrir uma conversa antiga.
+  // para reconstruir a árvore de consumo de tokens ao reabrir uma conversa antiga —
+  // com o que ainda está na fila de telemetria somado.
   ipcMain.handle(Channels.tokenUsageHistory, async (_e, convId: string): Promise<TokenUsageHistory> => {
-    const repository = storageLifecycle.repository()
     const [calls, totals] = await Promise.all([
-      repository.listLlmCalls(convId),
-      repository.listLlmUsageTotals(convId)
+      telemetryQueue.listLlmCalls(convId),
+      telemetryQueue.listLlmUsageTotals(convId)
     ])
     return { calls, totals }
   })
   // Tempo somado dos turnos de uma conversa (`conversation_turn_time`): leve, sem as chamadas.
   ipcMain.handle(Channels.turnTimeTotals, async (_e, convId: string): Promise<TurnTimeTotals> => {
-    return storageLifecycle.repository().turnTimeTotals(convId)
+    return telemetryQueue.turnTimeTotals(convId)
   })
   ipcMain.handle(Channels.kvGet, (_e, key: string) => readPersistedKv(key))
   ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => {
-    assertStorageWritable(true)
+    // Estado da tela e afins vão para o SQLite local: gravam sem o banco.
+    if (!isLocalPersistedKey(key)) assertStorageWritable(true)
     return writePersistedKv(key, value)
   })
   ipcMain.handle(Channels.conversationsLoadAll, async () =>
@@ -1580,69 +1770,19 @@ export function registerIpc(): void {
   )
   // No query = the legacy "everything, tombstones included" read. A query narrows it
   // (first page per project, one project, or specific ids for the change feed).
-  ipcMain.handle(Channels.conversationsLoadVersioned, (_e, query?: ConversationQueryDto) =>
-    storageLifecycle.repository().loadConversations(query ? { includeDeleted: true, ...query } : { includeDeleted: true })
-  )
+  ipcMain.handle(Channels.conversationsLoadVersioned, async (_e, query?: ConversationQueryDto) => {
+    const records = await storageLifecycle.repository().loadConversations(
+      query ? { includeDeleted: true, ...query } : { includeDeleted: true }
+    )
+    // A revisão vista vira base do próximo compare-and-set da fila, e o que está
+    // na fila aparece por cima do banco (recarregar não volta para a versão velha).
+    conversationQueue.remember(records)
+    return conversationQueue.overlay(records, query)
+  })
+  registerConversationQueueIpc(ipcMain, conversationQueue)
   ipcMain.handle(Channels.conversationsCountByProject, () =>
     storageLifecycle.repository().countConversationsByProject()
   )
-  ipcMain.handle(Channels.conversationsUpsert, async (_e, input: ConversationUpsertDto) => {
-    if (!input || typeof input.id !== 'string' || !input.id || !input.payload || typeof input.payload !== 'object') {
-      throw new TypeError('Conversa inválida.')
-    }
-    assertStorageWritable(true)
-    const held = sessionLeases.get(input.id)
-    let payload: ConversationRecord
-    try {
-      payload = await attachProjectIdentity(input.payload)
-    } catch (cause) {
-      if (!isMissingProjectFolderError(cause)) throw cause
-      const persisted = (await storageLifecycle.repository().loadConversations({ includeDeleted: true }))
-        .find((entry) => entry.id === input.id)?.payload
-      payload = preserveProjectIdentityForMissingPersistedWrite(input.payload, persisted)
-    }
-    try {
-      // Resolvedor, não a instância: a repetição depois da renovação vai para o
-      // repositório ativo de então (uma reconexão pode trocá-lo no meio).
-      return await upsertConversationWithLeaseRecovery(
-        () => storageLifecycle.repository(),
-        {
-          ...input,
-          payload,
-          ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {})
-        },
-        // Lease vencido na queda e ainda não renovado pelo heartbeat: renova já e
-        // repete, só se continua sendo desta instalação (ver conversationWriteRecovery).
-        held ? sessionLeaseRenewal(held, () => sessionLeases.get(input.id) === held) : undefined
-      )
-    } catch (cause) {
-      throw storageErrorForIpc(cause)
-    }
-  })
-  ipcMain.handle(Channels.conversationsDelete, async (_e, input: ConversationDeleteDto) => {
-    if (!input || typeof input.id !== 'string' || !Number.isInteger(input.expectedRevision)) {
-      throw new TypeError('Exclusão de conversa inválida.')
-    }
-    assertStorageWritable(true)
-    const held = sessionLeases.get(input.id)
-    try {
-      return await deleteConversationWithLeaseRecovery(
-        () => storageLifecycle.repository(),
-        { ...input, ...(held ? { lease: { token: held.lease.token, fencingEpoch: held.lease.fencingEpoch } } : {}) },
-        held ? sessionLeaseRenewal(held, () => sessionLeases.get(input.id) === held) : undefined
-      )
-    } catch (cause) {
-      throw storageErrorForIpc(cause)
-    }
-  })
-  ipcMain.handle(Channels.conversationsSaveAll, async (_e, list: unknown) => {
-    // A malformed (non-array) payload must never be treated as "zero conversations" —
-    // that would delete every conversation, not just skip the save.
-    if (!Array.isArray(list)) return
-    assertStorageWritable()
-    await storageLifecycle.repository().replaceAllConversations(list as ConversationRecord[])
-  })
-
   ipcMain.handle(Channels.pickDirectory, async () => {
     const res = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] })
     return res.canceled ? null : res.filePaths[0]
@@ -2037,6 +2177,10 @@ export function registerIpc(): void {
       }
       await releaseSessionLease(convId)
     }
+    // O lease referencia a linha da conversa: a fila grava antes (a tela já
+    // entregou a mudança — o IPC chega em ordem). Sem banco ou estourado o prazo,
+    // segue: o lease abaixo diz o motivo, e a mensagem continua na tela.
+    if (!previous) await conversationQueue.flush([convId], START_FLUSH_MS)
     // Aquisição com prazo próprio (sessionLeases.ts): estourou, nada foi
     // instalado e o lease que chegar tarde é solto — não há o que desfazer aqui.
     const repository =
@@ -2144,7 +2288,8 @@ export function registerIpc(): void {
       sessionComplete,
       // Grava cada chamada de LLM em `llm_calls` (árvore de consumo de tokens),
       // pelo repositório ativo.
-      activeTokenUsage(activeRepository),
+      // Pela fila de telemetria: lotes a cada ~3 s, totais somados em memória.
+      telemetryQueue,
       // Fila durável de entrada: não ligada aqui (comportamento anterior mantido).
       undefined,
       // Reparo do espelho depois de um mirror_error: reenvia o transcript local
@@ -2157,7 +2302,8 @@ export function registerIpc(): void {
         await replayLocalTranscript(sessionId, replayStore, { cwd: opts.cwd, configDir })
         await verifyMirroredSession(resumeMarker, sessionStore, convId, sessionId, opts.cwd)
       },
-      activeContextHistory(activeRepository),
+      // Pela fila do histórico: as gravações do mesmo turno viram uma.
+      contextHistoryQueue,
       (event) => send(Channels.contextTurnsChanged, event)
     ), emit, async (provider) =>
       provider === 'gpt' ? isCodexConnected() : claudeAccounts.isConnected(conversationAccount(convId) ?? claudeAccountId),
@@ -2620,6 +2766,12 @@ export function registerIpc(): void {
 // primeiro import deste arquivo) e, por isso, com o próprio lock de instância única.
 const ownsSingleInstance = app.requestSingleInstanceLock()
 if (!ownsSingleInstance) app.quit()
+// Só em desenvolvimento: AGENT_CODE_DEV_PG_DELAY_MS atrasa toda consulta ao
+// PostgreSQL (devQueryDelay.ts), para ver a tela com o banco lento.
+if (!app.isPackaged && process.env.AGENT_CODE_DEV_PG_DELAY_MS) {
+  const ms = configureDevQueryDelay(process.env.AGENT_CODE_DEV_PG_DELAY_MS)
+  if (ms) console.warn(`[postgres] AGENT_CODE_DEV_PG_DELAY_MS: ${ms} ms de atraso em toda consulta (só desenvolvimento)`)
+}
 // Esquemas privilegiados só se registram antes do ready.
 registerMockupScheme()
 // Notificação do Windows: o AppUserModelID tem de ser o do atalho do instalador (appId do electron-builder).
@@ -2734,6 +2886,23 @@ app.whenReady().then(async () => {
   // fica em "não configurado" e cai no SQLite LEGADO em silêncio — com a janela
   // abrindo antes do banco, seria config velha lida como se fosse a boa.
   configureKvRepositoryOffline()
+  // Config, contas Claude e estado da tela moram no SQLite pequeno desta máquina
+  // (persistence/localKvStore.ts): lidos com o banco de pé ou não. Na 1ª abertura
+  // depois da atualização, essas chaves esperam a cópia única que vem do banco.
+  configureLocalKvStore(new LocalKvStore(join(machineLocalDir(), 'config.db')))
+  holdLocalKvUntilSeeded()
+  // O diário da fila de gravação (fechamento anterior com banco fora do ar) volta
+  // como pendente ANTES de a tela ler conversas: a leitura já vem com ele por cima.
+  const journaled = await conversationQueue.restoreJournal().catch((error: unknown) => {
+    console.error('[fila] diário ilegível:', error)
+    return 0
+  })
+  if (journaled) authLog(`fila de gravação: ${journaled} conversa(s) do diário para reaplicar`)
+  const outboxJournaled = await outboxQueue.restoreJournal().catch((error: unknown) => {
+    console.error('[fila de espera] diário ilegível:', error)
+    return 0
+  })
+  if (outboxJournaled) authLog(`fila de espera: ${outboxJournaled} conversa(s) do diário para reaplicar`)
   // A JANELA VEM ANTES DO BANCO, de propósito. O backend autoritativo pode ser um
   // PostgreSQL remoto: conectar, migrar e ler leva segundos numa rede boa — e numa
   // ruim pode simplesmente não voltar. Com a ordem antiga, qualquer tropeço aqui
@@ -2742,6 +2911,12 @@ app.whenReady().then(async () => {
   // Agora a interface sobe primeiro e acompanha o estado da persistência pelo
   // `storageStatusChanged` — que por isso é assinado antes de `initialize()`.
   registerIpc()
+  // Só na instância isolada de teste com AGENT_CODE_DEV_HOOKS=1 (devHooks.ts): a
+  // ferramenta da nuvem sem conversa chamando (a guarda vale para todas).
+  installDevHooks({
+    cloudTool: (input) => storageSwitch.cloudToolWithoutCaller(input),
+    putSecret: async (name, value) => secretSink()?.put(name, value)
+  })
   // O vigia do git começa a checar (a cada 15 s, só pastas com pendência aberta).
   poCommitWatch.start()
   // O vigia dos 30 min da fila do projeto (plano parado com outro esperando).
@@ -2779,6 +2954,24 @@ app.whenReady().then(async () => {
     // aqui (idempotente depois do sucesso) e avisa o renderer pelo mesmo evento
     // de config alterada que ele já trata, para reler os interruptores.
     const ready = status.state === 'postgres-ready' || status.state === 'sqlite-ready'
+    // Banco de volta (ou trocado): o que esperava na fila de gravação sai já.
+    if (ready) {
+      conversationQueue.kick()
+      telemetryQueue.kick()
+      contextHistoryQueue.kick()
+      outboxQueue.kick()
+    }
+    // Abriu sem banco na 1ª vez depois da atualização: a cópia única para o
+    // SQLite local acontece agora, e a config é relida dela.
+    if (ready && storageLifecycle.canMutate() && !localKvSeeded()) {
+      void seedLocalKvFromRepository()
+        .then(async (seeded) => {
+          if (!seeded) return
+          await reloadConfigPersistence()
+          send(Channels.storageChanged, [{ changeId: 'config-loaded', entity: 'device-kv', entityId: 'config.loaded' }])
+        })
+        .catch((error) => authLog(`local kv seed failed: ${error instanceof Error ? error.message : String(error)}`))
+    }
     if (ready && storageLifecycle.canMutate() && !isConfigLoaded()) {
       void initializeConfigPersistence()
         .then(() =>
@@ -2799,7 +2992,12 @@ app.whenReady().then(async () => {
       if (changes.some((change) => change.entity.endsWith('-kv') && change.entityId === 'codexAuth')) {
         await initializeCodexAuthPersistence()
       }
-      send(Channels.storageChanged, changes)
+      // Conversa com gravação na fila não é sobrescrita pelo feed (a tela vence,
+      // como sempre); a Central é mesclada por dono na própria tela.
+      const forwarded = changes.filter(
+        (change) => change.entity !== 'conversation' || change.entityId === CENTRAL_ID || !conversationQueue.isPending(change.entityId)
+      )
+      if (forwarded.length) send(Channels.storageChanged, forwarded)
     })().catch((error) => {
       authLog(`change feed apply failed: ${error instanceof Error ? error.message : String(error)}`)
     })
@@ -2828,17 +3026,25 @@ app.whenReady().then(async () => {
   // fora do caminho da janela, onde só atrasava a primeira pintura.
   const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir)
   for (const error of skillSync.errors) console.error(`[skills] ${error}`)
-  await bootStage('storage', () =>
-    storageLifecycle.initialize({
-      location: cacheInfo,
-      userDataDir: app.getPath('userData'),
-      secureStorage: safeStorage,
-      appVersion: app.getVersion()
-    })
-  )
+  try {
+    await bootStage('storage', () =>
+      storageLifecycle.initialize({
+        location: cacheInfo,
+        userDataDir: app.getPath('userData'),
+        secureStorage: safeStorage,
+        appVersion: app.getVersion(),
+        localPostgres
+      })
+    )
+    if (storageLifecycle.canMutate() && !localKvSeeded()) await bootStage('local-kv', () => seedLocalKvFromRepository())
+  } finally {
+    // Sem banco agora, a cópia fica para quando ele voltar (assinatura acima).
+    releaseLocalKv()
+  }
   const storageAvailable = storageLifecycle.canMutate()
+  // Do SQLite local: carrega com o banco fora do ar também.
+  await bootStage('config', () => initializeConfigPersistence())
   if (storageAvailable) {
-    await bootStage('config', () => initializeConfigPersistence())
     await bootStage('codex-auth', () => initializeCodexAuthPersistence())
     // Migrou levando só o banco? O cofre é reconstruído do espelho. Precisa do
     // banco pronto, por isso não fica junto do configureSecretVault.
@@ -2863,18 +3069,20 @@ app.whenReady().then(async () => {
   // Na raiz local: é um snapshot inteiro (dezenas de MB) por dia, não algo para
   // a pasta sincronizada.
   if (storageAvailable && !existsSync(dailyParquetPath(cacheInfo.localDir))) {
-    parquetExportPromise = (async () => {
-      const exportSnapshot = await storageLifecycle.repository().readExportSnapshot()
-      return exportConversationsParquet(
-        cacheInfo.localDir,
-        exportSnapshot.conversations,
-        cacheInfo.memoriesDir,
-        { backend: exportSnapshot.backend, watermark: exportSnapshot.watermark }
-      )
-    })().catch((error) => {
-      authLog(`daily conversation parquet export failed: ${error instanceof Error ? error.message : String(error)}`)
+    // Leitura no main (E/S), codificação num worker_thread, e o fechamento do app
+    // cancela em vez de esperar (parquetExport.ts).
+    parquetExport = startDailyParquetExport({
+      cacheDir: cacheInfo.localDir,
+      memoryDir: cacheInfo.memoriesDir,
+      readSnapshot: () => storageLifecycle.repository().readExportSnapshot(),
+      log: (line) => authLog(line)
     })
   }
+  // Backup diário do banco em uso (pg_dump num processo à parte), um pouco depois
+  // de a janela assentar e só se o último diário tiver mais de 24 h; com o app
+  // aberto por dias (ou um banco que só voltou depois), a conferência se repete
+  // de hora em hora.
+  databaseBackups.startDaily()
   // Runs outside every chat session. The cheap transcript mtime gate happens
   // before any agent is started, and the persisted timestamp keeps it daily.
   if (storageAvailable) stopMemoryCurator = await startMemoryCuratorScheduler()

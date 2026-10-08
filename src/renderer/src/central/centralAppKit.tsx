@@ -12,6 +12,7 @@ import { expect, vi } from 'vitest'
 import type { AgentEventMsg, ChatEvent, PermissionRequest, PermissionResponse } from '@shared/ipc'
 import type { CentralRequestEntry, CentralRouteRequest, CentralRouteResult } from '@shared/central'
 import type { CentralController } from './useCentral'
+import { syncIntoLocalStorage } from '../conversationSyncFake'
 
 type Send = (t: string, i: [], th: [], f: [], r: []) => void
 
@@ -79,14 +80,10 @@ export function installApi(route: (req: CentralRouteRequest) => CentralRouteResu
     }),
     loadVersionedConversations: vi.fn(async (q?: { ids?: string[]; cwds?: string[] }) =>
       stored().filter((c) => (!q?.ids || q.ids.includes(c.id)) && (!q?.cwds || q.cwds.includes(c.cwd ?? ''))).map(versioned)),
-    upsertConversation: vi.fn(async (input: { id: string; payload: Stored; expectedRevision?: number }) => {
-      localStorage.setItem(KEY, JSON.stringify([...stored().filter((c) => c.id !== input.id), input.payload]))
-      return { ...versioned(input.payload), revision: (input.expectedRevision ?? 0) + 1 }
-    }),
-    deleteConversation: vi.fn(async (input: { id: string; expectedRevision: number }) => {
-      localStorage.setItem(KEY, JSON.stringify(stored().filter((c) => c.id !== input.id)))
-      return { ...versioned({ id: input.id }), deletedAt: new Date().toISOString() }
-    }),
+    syncConversations: vi.fn(syncIntoLocalStorage(KEY)),
+    flushConversations: fn(true),
+    getConversationSaveStatus: fn({ state: 'saved', pending: 0, oldestMs: 0 }),
+    onConversationSaveStatus: off(), onConversationResync: off(), onCentralRemote: off(),
     onWindowsControlChanged: off(), setWindowsControlEnabled: fn(undefined), setChromeControlEnabled: fn(undefined), onChromeControlChanged: off(),
     getChromeBridgeStatus: fn({ listening: false, port: null, connected: false, extensionVersion: null, userAgent: null }), onChromeBridgeStatusChanged: off(),
     authStatus: fn({ authenticated: true }), codexStatus: fn({ connected: false }),

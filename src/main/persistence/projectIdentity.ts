@@ -91,9 +91,14 @@ export function preserveProjectIdentityForMissingPersistedWrite(
   return result
 }
 
-export async function attachProjectIdentity(payload: ConversationRecord): Promise<ConversationRecord> {
+/** `resolve` injetável: a fila de gravação guarda a identidade por pasta em vez de
+ *  rodar dois `git` a cada gravação. */
+export async function attachProjectIdentity(
+  payload: ConversationRecord,
+  resolve: (cwd: string) => Promise<ProjectIdentity> = resolveProjectIdentity
+): Promise<ConversationRecord> {
   if (typeof payload.cwd !== 'string' || !payload.cwd.trim()) return payload
-  const identity = await resolveProjectIdentity(payload.cwd)
+  const identity = await resolve(payload.cwd)
   if (typeof payload.projectSignature === 'string' && payload.projectSignature !== identity.signature) {
     throw new StorageError('INVALID_PERSISTED_DATA', 'A pasta selecionada não corresponde ao projeto desta conversa.')
   }

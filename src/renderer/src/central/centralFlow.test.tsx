@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { App } from '../App'
 import { UiProvider } from '../ui/UiProvider'
+import { syncIntoLocalStorage } from '../conversationSyncFake'
 
 configure({ asyncUtilTimeout: 10_000 })
 
@@ -60,15 +61,12 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     loadVersionedConversations: vi.fn(async (q?: { ids?: string[]; cwds?: string[] }) =>
       stored().filter((c) => (!q?.ids || q.ids.includes(c.id)) && (!q?.cwds || q.cwds.includes(c.cwd ?? ''))).map(versioned)
     ),
-    upsertConversation: vi.fn(async (input: { id: string; payload: Stored; expectedRevision?: number }) => {
-      localStorage.setItem(KEY, JSON.stringify([...stored().filter((c) => c.id !== input.id), input.payload]))
-      return { ...versioned(input.payload), revision: (input.expectedRevision ?? 0) + 1 }
-    }),
-    deleteConversation: vi.fn(async (input: { id: string; expectedRevision: number }) => {
-      const payload = stored().find((c) => c.id === input.id) ?? { id: input.id }
-      localStorage.setItem(KEY, JSON.stringify(stored().filter((c) => c.id !== input.id)))
-      return { ...versioned(payload), revision: input.expectedRevision + 1, deletedAt: new Date().toISOString() }
-    }),
+    syncConversations: vi.fn(syncIntoLocalStorage(KEY)),
+    flushConversations: vi.fn(async () => true),
+    getConversationSaveStatus: vi.fn(async () => ({ state: 'saved', pending: 0, oldestMs: 0 })),
+    onConversationSaveStatus: vi.fn(() => () => {}),
+    onConversationResync: vi.fn(() => () => {}),
+    onCentralRemote: vi.fn(() => () => {}),
     onWindowsControlChanged: vi.fn(() => () => {}),
     // O que as Configurações leem ao abrir (o gate do TypeSafe as abre).
     getPostgresSettings: vi.fn(async () => ({ host: 'localhost', port: 5432, user: 'postgres', maintenanceDatabase: 'postgres', tlsMode: 'disable', ca: '' })),

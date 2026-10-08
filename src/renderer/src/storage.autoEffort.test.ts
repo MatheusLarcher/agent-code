@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { loadConversations, saveConversations } from './storage'
+import type { ConversationChangeDto } from '@shared/ipc'
+import { loadConversations } from './storage'
+import { resetConversationSync, syncConversations } from './conversationSync'
+import { applyChanges } from './conversationSyncFake'
 import type { Conversation } from './types'
 
 /** Um registro como o banco devolve hoje (VersionedConversationDto com o
@@ -30,33 +33,36 @@ function legacyRecord(): Record<string, unknown> {
   }
 }
 
-/** Banco falso: o que o renderer grava é o que a próxima abertura lê. */
+/** Banco falso: o que a tela entrega à fila do main é o que a próxima abertura lê
+ *  (o carimbo do marcador em conversa nova é do main: conversationPrepare.test.ts). */
 function fakeDb(initial: Record<string, unknown>[]) {
-  const rows = new Map(initial.map((row) => [row.id as string, row]))
-  const upsertConversation = vi.fn(async (input: { id: string; payload: Record<string, unknown> }) => {
-    const prev = rows.get(input.id) as { revision?: number } | undefined
-    const row = {
-      id: input.id,
-      payload: JSON.parse(JSON.stringify(input.payload)),
-      revision: (prev?.revision ?? 0) + 1,
-      contentHash: 'hash',
-      createdAt: '2026-09-25T12:00:00.000Z',
-      updatedAt: '2026-09-26T12:00:00.000Z'
+  const rows = new Map(initial.map((row) => [row.id as string, row as Record<string, unknown> & { payload: Record<string, unknown> }]))
+  const syncConversations = vi.fn((changes: ConversationChangeDto[]) => {
+    const docs = [...rows.values()].map((row) => ({ ...row.payload, id: row.id as string }))
+    for (const doc of applyChanges(docs, changes)) {
+      const prev = rows.get(doc.id) as { revision?: number } | undefined
+      rows.set(doc.id, {
+        id: doc.id,
+        payload: doc,
+        revision: (prev?.revision ?? 0) + 1,
+        contentHash: 'hash',
+        createdAt: '2026-09-25T12:00:00.000Z',
+        updatedAt: '2026-09-26T12:00:00.000Z'
+      })
     }
-    rows.set(input.id, row)
-    return row
   })
   const loadVersionedConversations = vi.fn(async () => [...rows.values()].map((r) => JSON.parse(JSON.stringify(r))))
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { loadVersionedConversations, upsertConversation }
+    value: { loadVersionedConversations, syncConversations }
   })
-  return { rows, upsertConversation }
+  return { rows, syncConversations }
 }
 
 describe('migração one-shot do esforço Automático nas conversas', () => {
   beforeEach(() => {
     localStorage.clear()
+    resetConversationSync()
   })
 
   it("registro antigo com model:'auto' abre com effort:'auto', sem trocar o modelo salvo", async () => {
@@ -66,8 +72,8 @@ describe('migração one-shot do esforço Automático nas conversas', () => {
 
     expect(conv).toMatchObject({ model: 'auto', autoModel: 'claude-sonnet-5-5', effort: 'auto', effortSplit: true })
     // Normalização sozinha não vira escrita.
-    await saveConversations([conv])
-    expect(db.upsertConversation).not.toHaveBeenCalled()
+    syncConversations([conv])
+    expect(db.syncConversations).not.toHaveBeenCalled()
     // Reabrir sem ter mexido: continua migrado (o registro ainda é o antigo).
     expect((await loadConversations())[0]).toMatchObject({ effort: 'auto' })
   })
@@ -77,9 +83,9 @@ describe('migração one-shot do esforço Automático nas conversas', () => {
     const [conv] = await loadConversations()
 
     const escolhido: Conversation = { ...conv, effort: 'high' }
-    await saveConversations([escolhido])
+    syncConversations([escolhido])
 
-    expect(db.upsertConversation).toHaveBeenCalledTimes(1)
+    expect(db.syncConversations).toHaveBeenCalledTimes(1)
     expect(db.rows.get('c-legado')).toMatchObject({ payload: { model: 'auto', effort: 'high', effortSplit: true } })
 
     // Reabre (e de novo): a migração não reaplica.
@@ -87,10 +93,8 @@ describe('migração one-shot do esforço Automático nas conversas', () => {
     expect((await loadConversations())[0]).toMatchObject({ model: 'auto', effort: 'high' })
   })
 
-  it('conversa nova gravada por este build já sai com o marcador', async () => {
+  it('conversa nova vai inteira para a fila; com o marcador, reabre sem reaplicar a migração', async () => {
     const db = fakeDb([])
-    // Zera o estado do módulo (registros dos testes anteriores).
-    await loadConversations()
     const nova = {
       id: 'c-nova',
       title: 'Nova conversa',
@@ -104,9 +108,11 @@ describe('migração one-shot do esforço Automático nas conversas', () => {
       updatedAt: Date.now()
     } as Conversation
 
-    await saveConversations([nova])
+    syncConversations([nova])
 
-    expect(db.rows.get('c-nova')).toMatchObject({ payload: { effort: 'low', effortSplit: true } })
+    expect(db.rows.get('c-nova')).toMatchObject({ payload: { model: 'auto', effort: 'low' } })
+    // O main carimba o marcador ao preparar o documento (conversationPrepare.ts).
+    db.rows.get('c-nova')!.payload.effortSplit = true
     expect((await loadConversations())[0]).toMatchObject({ model: 'auto', effort: 'low' })
   })
 })

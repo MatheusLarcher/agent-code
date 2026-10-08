@@ -5,6 +5,7 @@ import type { RestartReply } from './appRestart'
 import { OFFICE_CALL_MESSAGE_MAX } from '../shared/officeCall'
 import { checkMockupFile } from './officeMockup/mockupFiles'
 import { PRINT_CAPTION_MAX } from './board/boardPrints'
+import { CLOUD_TOOL_DESCRIPTION, CLOUD_TOOL_NAME, cloudToolSchema, type CloudToolReply } from './cloudTool'
 
 export const APP_RESTART_HINT = 'When Agent Code itself genuinely needs a restart, use app_restart (checkOnly for a read-only guard query). You may request it without asking again, but only this protected tool authorizes restart. A refusal NEVER authorizes kill, Bash, or direct relaunch scripts to bypass the guard. Finish your turn after preparation. History is preserved; automatic continuation of unfinished reasoning is not promised.'
 
@@ -36,6 +37,8 @@ export interface AppMcpOptions {
   onCall?: (call: AppCall) => void
   /** O print da tarefa visual no cartão (fora do Agent Manager). */
   attachPrint?: (input: { arquivo: string; tarefa?: string; legenda?: string }) => Promise<AppPrintReply>
+  /** A nuvem opcional por comando direto (cloudTool.ts), fora do Agent Manager. */
+  postgresCloud?: (input: unknown) => Promise<CloudToolReply>
 }
 
 const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] })
@@ -43,8 +46,13 @@ const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text
 export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof createSdkMcpServer> {
   const restart = opts.restart
   const attach = opts.attachPrint
+  const cloud = opts.postgresCloud
   return createSdkMcpServer({
     name: 'app', version: '1.0.0', tools: [
+      ...(cloud ? [tool(CLOUD_TOOL_NAME, CLOUD_TOOL_DESCRIPTION, cloudToolSchema, async (input) => {
+        const reply = await cloud(input).catch((err: unknown): CloudToolReply => ({ ok: false, text: `Falhou: ${String(err)}` }))
+        return text(reply.text, !reply.ok)
+      })] : []),
       ...(attach ? [tool(
         'app_anexar_print',
         'Attach a screenshot of what you just tested to its board card, so the user sees the result. Only for a task with a VISIBLE result (screen, page, component, 3D scene) that you tested: 1-2 prints of the window or page under test. NEVER the whole computer screen (refused), and never a print showing a password, token or other sensitive data. PNG, JPEG or WebP up to 10 MB; the app compresses it and keeps the 4 newest per card.',

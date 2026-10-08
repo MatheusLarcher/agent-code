@@ -19,6 +19,7 @@ import { Icon, type IconName } from './icons'
 import { distinctModels, madeBy, ModelChip, ModelTags } from './modelTags'
 import type { MonitorToast } from './useMonitorToasts'
 import { useContextTurns } from './useContextTurns'
+import { ReadRetry } from '../../components/ReadRetry'
 
 const hm = (at: number): string => {
   const d = new Date(at)
@@ -195,6 +196,8 @@ export function ContextApp(p: ContextAppProps): JSX.Element {
             </>
           ) : ctx.loading ? (
             'Lendo…'
+          ) : ctx.error ? (
+            <ReadRetry error={ctx.error} what="o contexto" onRetry={ctx.reload} />
           ) : (
             'Esperando o próximo pedido.'
           )}

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { BULK_READ_DEADLINE_MS } from '@shared/readDeadline'
 import {
   loadConversationChanges,
   loadConversations,
@@ -8,6 +9,9 @@ import {
   loadProjectsPage,
   waitForStorageReady
 } from './storage'
+
+/** As cargas de volume levam o prazo maior (shared/readDeadline.ts). */
+const BULK = { deadlineMs: BULK_READ_DEADLINE_MS }
 
 function record(id: string, cwd: string, revision = 1) {
   return {
@@ -29,21 +33,21 @@ describe('carga paginada por projeto', () => {
     const loadVersionedConversations = vi.fn(async () => [record('a1', 'C:/a')])
     installApi({ loadVersionedConversations })
     await loadConversations({ perProject: 6 })
-    expect(loadVersionedConversations).toHaveBeenCalledWith({ perProject: 6 })
+    expect(loadVersionedConversations).toHaveBeenCalledWith({ perProject: 6 }, BULK)
   })
 
   it('sem opção, a chamada continua sem query (contrato antigo)', async () => {
     const loadVersionedConversations = vi.fn(async () => [record('a1', 'C:/a')])
     installApi({ loadVersionedConversations })
     await loadConversations()
-    expect(loadVersionedConversations).toHaveBeenCalledWith(undefined)
+    expect(loadVersionedConversations).toHaveBeenCalledWith(undefined, BULK)
   })
 
   it('loadProjectConversations pede o projeto inteiro', async () => {
     const loadVersionedConversations = vi.fn(async () => [record('a1', 'C:/a'), record('a2', 'C:/a')])
     installApi({ loadVersionedConversations })
     const all = await loadProjectConversations('C:/a')
-    expect(loadVersionedConversations).toHaveBeenCalledWith({ cwd: 'C:/a' })
+    expect(loadVersionedConversations).toHaveBeenCalledWith({ cwd: 'C:/a' }, BULK)
     expect(all.map((c) => c.id)).toEqual(['a1', 'a2'])
   })
 
@@ -51,10 +55,10 @@ describe('carga paginada por projeto', () => {
     const loadVersionedConversations = vi.fn(async () => [record('a1', 'C:/a')])
     installApi({ loadVersionedConversations })
     await loadConversations({ perProject: 6, cwds: ['C:/a', 'C:/b'] })
-    expect(loadVersionedConversations).toHaveBeenCalledWith({ perProject: 6, cwds: ['C:/a', 'C:/b'] })
+    expect(loadVersionedConversations).toHaveBeenCalledWith({ perProject: 6, cwds: ['C:/a', 'C:/b'] }, BULK)
 
     await loadProjectsPage(['C:/c'], 6)
-    expect(loadVersionedConversations).toHaveBeenLastCalledWith({ cwds: ['C:/c'], perProject: 6 })
+    expect(loadVersionedConversations).toHaveBeenLastCalledWith({ cwds: ['C:/c'], perProject: 6 }, BULK)
 
     // Lote vazio não vira consulta nenhuma.
     loadVersionedConversations.mockClear()

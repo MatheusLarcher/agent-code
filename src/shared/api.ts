@@ -60,8 +60,8 @@ import type {
   VersionedConversationDto,
   ConversationQueryDto,
   ProjectConversationCountDto,
-  ConversationUpsertDto,
-  ConversationDeleteDto,
+  ConversationChangeDto,
+  ConversationSaveStatusDto,
   RepositoryChange,
   TokenUsageHistory,
   TurnTimeTotals,
@@ -102,6 +102,14 @@ import type { PoAuthorizationMap } from './poAuthorization'
 import type { BoardPrintImageResult, BoardPrintsResult } from './boardPrints'
 import type { PoChatMessage } from './poChat'
 import type { ProjectColorMap } from './projectColor'
+import type {
+  CloudInspectionDto,
+  CloudSwitchAction,
+  CloudSwitchRequestDto,
+  DatabaseBackupListDto,
+  DatabaseRestoreRequestDto,
+  StorageTransitionResultDto
+} from './databaseBackup'
 
 /** Um prompt do handoff a registrar: o arquivo de _handoff/ e o texto EXATO enviado. */
 export interface HandoffRegisterPrompt {
@@ -235,16 +243,38 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   deactivatePostgres(): Promise<boolean>
   retryStorage(draft?: PostgresConnectionDraft): Promise<void>
   clearPostgresPassword(): Promise<void>
+  /** Backups do banco (pg_dump) na pasta de dados; com prazo de leitura. */
+  listDatabaseBackups(): Promise<DatabaseBackupListDto>
+  deleteDatabaseBackup(file: string): Promise<void>
+  /** Restaura o backup no destino escolhido (backup do destino antes); no banco em uso, o app reinicia. */
+  restoreDatabaseBackup(request: DatabaseRestoreRequestDto): Promise<{ relaunch: boolean; message: string }>
+  onDatabaseBackupsChanged(cb: () => void): () => void
+  /** O que cada lado tem (local × nuvem) para o diálogo de ligar/desligar a nuvem. */
+  inspectCloudDatabase(action: CloudSwitchAction, draft?: PostgresConnectionDraft): Promise<CloudInspectionDto>
+  /** Liga/desliga a nuvem mantendo o lado escolhido; o app reinicia no fim. */
+  switchCloudDatabase(request: CloudSwitchRequestDto): Promise<{ message: string }>
+  /** Fim de uma troca/restauração em segundo plano (a da ferramenta do agente). */
+  onStorageTransitionResult(cb: (result: StorageTransitionResultDto) => void): () => void
   onStorageStatusChanged(cb: (status: StorageStatusDto) => void): () => void
   onStorageFlushRequested(cb: (requestId: string) => void): () => void
   storageFlushReady(requestId: string, error?: string): Promise<void>
   onStorageChanged(cb: (changes: RepositoryChange[]) => void): () => void
-  loadVersionedConversations(query?: ConversationQueryDto): Promise<VersionedConversationDto[]>
+  /** Com prazo (shared/readDeadline.ts): 2 s por padrão; as cargas de volume passam o delas. */
+  loadVersionedConversations(query?: ConversationQueryDto, options?: { deadlineMs?: number }): Promise<VersionedConversationDto[]>
   /** Live conversation count per project, for the sidebar badge when only the
    *  first page of each project is loaded. */
   countConversationsByProject(): Promise<ProjectConversationCountDto[]>
-  upsertConversation(input: ConversationUpsertDto): Promise<VersionedConversationDto>
-  deleteConversation(input: ConversationDeleteDto): Promise<VersionedConversationDto>
+  /** Entrega mudanças de conversa à fila de gravação do main — sem esperar o banco. */
+  syncConversations(changes: ConversationChangeDto[]): void
+  /** Grava já o que está na fila (todas, ou `ids`), esperando no máximo `deadlineMs`;
+   *  `true` = está no banco. Só para quem PRECISA disso (troca de banco). */
+  flushConversations(ids?: string[], deadlineMs?: number): Promise<boolean>
+  getConversationSaveStatus(): Promise<ConversationSaveStatusDto>
+  onConversationSaveStatus(cb: (status: ConversationSaveStatusDto) => void): () => void
+  /** O main perdeu a base de uma conversa: a tela entrega o documento inteiro. */
+  onConversationResync(cb: (id: string) => void): () => void
+  /** A Central relida numa gravação mesclada: a tela mescla por dono e mostra. */
+  onCentralRemote(cb: (record: VersionedConversationDto) => void): () => void
   /** Toggle the independent high-risk permission for controlling Windows apps. */
   setWindowsControlEnabled(enabled: boolean): Promise<void>
   /** Keep every renderer surface synchronized with the Windows-control gate. */
@@ -448,8 +478,6 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   kvSet(key: string, value: string): Promise<void>
   /** Load every conversation from every per-project db under `data/` (merged). */
   loadAllConversations(): Promise<unknown[]>
-  /** Persist the full conversation list, split one db per project (`cwd`). */
-  saveAllConversations(list: unknown[]): Promise<void>
   /** Nome curto (claude-haiku-5-5, one-shot) para a conversa a partir da 1ª
    *  mensagem. Nunca lança: `ok: false` quando não houver título. */
   suggestConversationTitle(req: { text: string; convId?: string }): Promise<SuggestTitleResult>

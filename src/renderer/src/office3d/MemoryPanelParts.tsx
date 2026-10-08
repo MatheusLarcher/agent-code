@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { principalKey } from '../office/adapter/model'
 import { Markdown } from '../components/Markdown'
+import { ReadRetry } from '../components/ReadRetry'
 import { seedCss } from './appearance'
 import type { MemoryRow, UsageEvent, UsageHow } from './memoryUsage'
 
@@ -83,6 +84,9 @@ export function MemoryLine({ r, now, onOpen }: { r: MemoryRow; now: number; onOp
 export interface MemoryDetailProps {
   r: MemoryRow
   body: string | null
+  /** O corpo não abriu (falha ou prazo): "tentar de novo" em vez de "Abrindo…". */
+  bodyError?: unknown
+  onRetryBody?: () => void
   uses: readonly UsageEvent[]
   now: number
   onBack: () => void
@@ -91,7 +95,7 @@ export interface MemoryDetailProps {
   onReveal?: () => Promise<{ ok: boolean; message: string }>
 }
 
-export function MemoryDetail({ r, body, uses, now, onBack, onOpenConversation, onReveal }: MemoryDetailProps): JSX.Element {
+export function MemoryDetail({ r, body, bodyError, onRetryBody, uses, now, onBack, onOpenConversation, onReveal }: MemoryDetailProps): JSX.Element {
   const [note, setNote] = useState<string | null>(null)
   const reveal = async (): Promise<void> => {
     setNote(null)
@@ -119,7 +123,15 @@ export function MemoryDetail({ r, body, uses, now, onBack, onOpenConversation, o
       <p className="mp-mem-meta">
         {r.relPath} · {SCOPE_LABEL[r.scope]} · revisão {r.revision} · só leitura
       </p>
-      <div className="mp-body">{body === null ? <p>Abrindo…</p> : <Markdown text={body} />}</div>
+      <div className="mp-body">
+        {body !== null ? (
+          <Markdown text={body} />
+        ) : bodyError ? (
+          <ReadRetry error={bodyError} what="a memória" onRetry={() => onRetryBody?.()} />
+        ) : (
+          <p>Abrindo…</p>
+        )}
+      </div>
       <h4 className="mp-h">Onde foi usada</h4>
       {uses.length === 0 ? <p className="mp-empty">Nenhum uso registrado.</p> : null}
       <ul className="mp-list">

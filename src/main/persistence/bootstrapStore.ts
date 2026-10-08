@@ -6,6 +6,10 @@ import type { PostgresConnectionDraft, PostgresPublicSettings, StorageBackend } 
 import { StorageError } from './types'
 
 export const POSTGRES_DATABASE = 'agent-code' as const
+/** Porta preferida do PostgreSQL embutido: fora da 5432 (pode ser de outro
+ *  Postgres do usuário) e abaixo da faixa dinâmica do Windows (49152+), onde o
+ *  WinNAT/Hyper-V reserva blocos inteiros. Ocupada, o app escolhe outra e grava. */
+export const LOCAL_POSTGRES_PORT = 45432
 
 const connectionSchema = z.object({
   host: z.string().trim().min(1).max(255),
@@ -18,7 +22,7 @@ const connectionSchema = z.object({
   targetDatabase: z.literal(POSTGRES_DATABASE)
 })
 
-const bootstrapSchema = z.object({
+const legacyBootstrapSchema = z.object({
   version: z.literal(1),
   installationId: z.string().uuid(),
   backend: z.enum(['sqlite', 'postgres']),
@@ -28,7 +32,40 @@ const bootstrapSchema = z.object({
   postgres: connectionSchema
 })
 
+const bootstrapSchema = legacyBootstrapSchema.extend({
+  version: z.literal(2),
+  /** Qual PostgreSQL vale quando `backend` é postgres: o embutido desta máquina
+   *  ou o da nuvem (a conexão em `postgres`, que o usuário configurou). */
+  postgresTarget: z.enum(['local', 'cloud']),
+  /** O SQLite de dados ainda vai ser importado para o PostgreSQL local (instalação
+   *  nova ou atualização de quem estava no SQLite). Some quando um backend é confirmado. */
+  pendingLocalImport: z.boolean(),
+  /** O servidor embutido: porta e senha do usuário `agentcode` (cifrada). */
+  local: z.object({
+    port: z.number().int().min(1).max(65_535),
+    encryptedPassword: z.string()
+  })
+})
+
 export type BootstrapData = z.infer<typeof bootstrapSchema>
+export type PostgresTarget = BootstrapData['postgresTarget']
+
+/**
+ * v1 → v2, sem ninguém mudar de banco sem pedir: quem estava no PostgreSQL (o da
+ * nuvem — era o único) continua nele, com a nuvem ligada; quem estava no SQLite
+ * importa para o PostgreSQL local na abertura. Uma ativação da nuvem interrompida
+ * no meio continua apontando para a nuvem, para a recuperação conferir lá.
+ */
+function upgradeLegacy(legacy: z.infer<typeof legacyBootstrapSchema>): BootstrapData {
+  const cloud = legacy.backend === 'postgres' || legacy.transitionState === 'activating-postgres'
+  return {
+    ...legacy,
+    version: 2,
+    postgresTarget: cloud ? 'cloud' : 'local',
+    pendingLocalImport: legacy.backend === 'sqlite',
+    local: { port: LOCAL_POSTGRES_PORT, encryptedPassword: '' }
+  }
+}
 
 export interface SecureStorageAdapter {
   isEncryptionAvailable(): boolean
@@ -36,11 +73,17 @@ export interface SecureStorageAdapter {
   decryptString(value: Buffer): string
 }
 
+/** Instalação nova: começa no PostgreSQL local. Passa pela importação do SQLite
+ *  porque uma instalação antiga demais para ter este arquivo também cai aqui —
+ *  para quem é nova de verdade, a importação é vazia. */
 function defaults(): BootstrapData {
   return {
-    version: 1,
+    version: 2,
     installationId: randomUUID(),
     backend: 'sqlite',
+    postgresTarget: 'local',
+    pendingLocalImport: true,
+    local: { port: LOCAL_POSTGRES_PORT, encryptedPassword: '' },
     transitionState: 'idle',
     transitionId: null,
     lastConfirmedTransitionId: null,
@@ -84,6 +127,12 @@ export class BootstrapStore {
       await this.write(initial)
       return structuredClone(initial)
     }
+    const legacy = legacyBootstrapSchema.safeParse(parsed)
+    if (legacy.success) {
+      const upgraded = upgradeLegacy(legacy.data)
+      await this.write(upgraded)
+      return structuredClone(upgraded)
+    }
     const checked = bootstrapSchema.safeParse(parsed)
     if (!checked.success) {
       throw new StorageError('INVALID_PERSISTED_DATA', 'Bootstrap de persistência inválido.', false, {
@@ -92,6 +141,21 @@ export class BootstrapStore {
     }
     this.data = checked.data
     return structuredClone(checked.data)
+  }
+
+  /** Senha do usuário `agentcode` do PostgreSQL embutido; '' antes do initdb. */
+  async localPassword(): Promise<string> {
+    return this.decryptPassword((await this.load()).local.encryptedPassword)
+  }
+
+  async saveLocalPassword(password: string): Promise<void> {
+    const current = await this.load()
+    await this.write({ ...current, local: { ...current.local, encryptedPassword: this.encryptPassword(password) } })
+  }
+
+  async saveLocalPort(port: number): Promise<void> {
+    const current = await this.load()
+    await this.write({ ...current, local: { ...current.local, port } })
   }
 
   async publicSettings(): Promise<PostgresPublicSettings> {
@@ -104,8 +168,19 @@ export class BootstrapStore {
       tlsMode: value.postgres.tlsMode,
       ca: value.postgres.ca,
       targetDatabase: POSTGRES_DATABASE,
-      hasPassword: Boolean(value.postgres.encryptedPassword)
+      hasPassword: Boolean(value.postgres.encryptedPassword),
+      postgresTarget: value.backend === 'postgres' ? value.postgresTarget : 'local'
     }
+  }
+
+  /** A troca local ↔ nuvem confirmada (backup/storageSwitch.ts), numa gravação só:
+   *  antes dela vale o lado antigo, intacto; depois, o novo, com a cópia conferida. */
+  async selectPostgresTarget(target: PostgresTarget): Promise<void> {
+    const current = await this.load()
+    if (current.transitionState !== 'idle') {
+      throw new StorageError('TRANSITION_IN_PROGRESS', 'Já existe uma transição de storage em andamento.')
+    }
+    await this.write({ ...current, backend: 'postgres', postgresTarget: target, pendingLocalImport: false })
   }
 
   async connection(draft?: PostgresConnectionDraft): Promise<PostgresConnectionDraft> {
@@ -147,13 +222,23 @@ export class BootstrapStore {
     await this.write({ ...current, postgres: { ...current.postgres, encryptedPassword: '' } })
   }
 
-  async beginTransition(state: 'activating-postgres' | 'deactivating-postgres'): Promise<string> {
+  /** A ativação grava antes para onde vai (`target`): uma queda no meio é
+   *  recuperada conferindo esse mesmo PostgreSQL. */
+  async beginTransition(
+    state: 'activating-postgres' | 'deactivating-postgres',
+    target: PostgresTarget = 'cloud'
+  ): Promise<string> {
     const current = await this.load()
     if (current.transitionState !== 'idle') {
       throw new StorageError('TRANSITION_IN_PROGRESS', 'Já existe uma transição de storage em andamento.')
     }
     const transitionId = randomUUID()
-    await this.write({ ...current, transitionState: state, transitionId })
+    await this.write({
+      ...current,
+      transitionState: state,
+      transitionId,
+      ...(state === 'activating-postgres' ? { postgresTarget: target } : {})
+    })
     return transitionId
   }
 
@@ -165,6 +250,8 @@ export class BootstrapStore {
     await this.write({
       ...current,
       backend,
+      // Backend confirmado é escolha feita: não sobra importação automática.
+      pendingLocalImport: false,
       transitionState: 'idle',
       transitionId: null,
       lastConfirmedTransitionId: transitionId

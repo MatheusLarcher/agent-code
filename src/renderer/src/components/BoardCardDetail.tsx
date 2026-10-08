@@ -9,6 +9,7 @@ import {
 } from '@shared/ipc'
 import { IconSpinner } from './Icons'
 import { CardPrints } from './BoardPrints'
+import { ReadRetry } from './ReadRetry'
 
 /**
  * O detalhe de um cartão do Quadro — o MESMO no painel (BoardPanel) e na janela
@@ -120,6 +121,9 @@ export function BoardCardDetail({
   const parent = item.parentId ? findItem?.(item.parentId) : undefined
   const [events, setEvents] = useState<BoardItemEvent[]>([])
   const [loadingEvents, setLoadingEvents] = useState(false)
+  // Falha ou prazo estourado não vira "sem histórico": vira "tentar de novo".
+  const [eventsError, setEventsError] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
   // Busca preguiçosa por cartão: só quando o detalhe abre, de novo se o usuário
   // clicar noutro cartão e quando a revisão sobe (o cartão mudou com ele
   // aberto) — nunca em loop, e nunca para o quadro inteiro que ninguém abriu.
@@ -127,7 +131,7 @@ export function BoardCardDetail({
   const shownFor = useRef<string | null>(null)
 
   useEffect(() => {
-    const key = `${item.id}@${item.revision}`
+    const key = `${item.id}@${item.revision}#${attempt}`
     if (fetchedFor.current === key) return
     fetchedFor.current = key
     let alive = true
@@ -138,12 +142,13 @@ export function BoardCardDetail({
       setEvents([])
       setLoadingEvents(true)
     }
+    setEventsError(null)
     void loadEvents(item.id)
       .then((result) => {
         if (alive) setEvents(result)
       })
-      .catch(() => {
-        if (alive && fresh) setEvents([])
+      .catch((error: unknown) => {
+        if (alive) setEventsError(error)
       })
       .finally(() => {
         if (alive) setLoadingEvents(false)
@@ -151,9 +156,9 @@ export function BoardCardDetail({
     return () => {
       alive = false
     }
-    // A fonte é fixa por janela; só o cartão e a revisão pedem nova leitura.
+    // A fonte é fixa por janela; só o cartão, a revisão e o "tentar de novo" pedem nova leitura.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, item.revision])
+  }, [item.id, item.revision, attempt])
 
   return (
     <div className="board-detail">
@@ -248,6 +253,8 @@ export function BoardCardDetail({
           <p className="board-empty">
             <IconSpinner className="spinner" size={13} /> Carregando o histórico…
           </p>
+        ) : eventsError && events.length === 0 ? (
+          <ReadRetry error={eventsError} what="o histórico" onRetry={() => setAttempt((n) => n + 1)} />
         ) : events.length === 0 ? (
           <p className="board-muted">Sem histórico registrado ainda.</p>
         ) : (

@@ -1,15 +1,22 @@
 import type { PostgresConnectionDraft, PostgresPublicSettings } from '../../shared/ipc'
-import { BootstrapStore, POSTGRES_DATABASE, type SecureStorageAdapter } from './bootstrapStore'
+import { BootstrapStore, POSTGRES_DATABASE, type PostgresTarget, type SecureStorageAdapter } from './bootstrapStore'
 import { configureKvRepository, configureKvRepositoryOffline } from './kvFacade'
 import { configureMemoryRuntime } from '../memory/memoryRuntime'
 import { configureTaskRuntime } from '../tasks/taskRuntime'
+import type { LocalPostgres } from './localPostgres'
 import { postgresClientConfig, provisionPostgres, testPostgresConnection } from './postgresProvisioning'
 import { PostgresRepository } from './postgresRepository'
-import { hasCommittedActivation, importRepositoryToPostgres, writeRepositoryToSqlite } from './postgresTransfer'
+import { hasCommittedActivation } from './postgresTransfer'
 import { SqliteRepository } from './sqliteRepository'
-import { backupSqliteForTransition } from './sqliteTransitionBackup'
 import { StorageReconnector } from './storageReconnect'
 import { logTransitionFailure } from './storageTransitionLog'
+import {
+  activatePostgres,
+  deactivatePostgres,
+  importSqliteToLocal,
+  toStorageError,
+  type TransitionHost
+} from './storageTransitions'
 import {
   StorageError,
   type PersistenceRepository,
@@ -27,6 +34,8 @@ export interface StorageInitialization {
   userDataDir: string
   secureStorage: SecureStorageAdapter
   appVersion: string
+  /** O PostgreSQL embutido (localPostgres.ts); sem ele, o alvo local fica indisponível. */
+  localPostgres?: Pick<LocalPostgres, 'ensure'>
 }
 
 export interface StorageTransitionHooks {
@@ -40,6 +49,7 @@ export class StorageLifecycleService {
   private active: PersistenceRepository | null = null
   private bootstrap: BootstrapStore | null = null
   private location: SqliteStorageLocation | null = null
+  private local: StorageInitialization['localPostgres'] | null = null
   private appVersion = 'unknown'
   private installationId = '00000000-0000-4000-8000-000000000000'
   private handlers = new Set<StatusHandler>()
@@ -89,6 +99,7 @@ export class StorageLifecycleService {
     this.closed = false
     this.location = options.location
     this.appVersion = options.appVersion
+    this.local = options.localPostgres ?? null
     this.bootstrap = new BootstrapStore(options.userDataDir, options.secureStorage)
     const data = await this.bootstrap.load()
     this.installationId = data.installationId
@@ -115,7 +126,28 @@ export class StorageLifecycleService {
       await this.openSelectedPostgres().catch((error) => this.setOffline(error))
       return
     }
+    if (refreshed.pendingLocalImport && (await this.importToLocal(options.location))) return
     await this.initializeSqlite(options.location)
+  }
+
+  /** Instalação nova ou que vinha do SQLite: tudo para o PostgreSQL local, com a
+   *  tela ainda em "Abrindo…". Falhou? Abre o SQLite de sempre, intacto, e a
+   *  importação é tentada de novo na próxima abertura. */
+  private async importToLocal(location: SqliteStorageLocation): Promise<boolean> {
+    let imported: PostgresRepository
+    try {
+      imported = await importSqliteToLocal(this.transitionHost(), location)
+    } catch (cause) {
+      logTransitionFailure('import-sqlite-to-local-postgres', cause)
+      return false
+    }
+    if (this.closed) {
+      await imported.close().catch(() => undefined)
+      throw this.closedError()
+    }
+    await this.swapRepository(imported)
+    this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, true))
+    return true
   }
 
   async initializeSqlite(location: SqliteStorageLocation): Promise<void> {
@@ -160,11 +192,28 @@ export class StorageLifecycleService {
   }
 
   async activatePostgres(raw: PostgresConnectionDraft, hooks: StorageTransitionHooks): Promise<void> {
-    await this.runTransition(() => this.activate(raw, hooks))
+    await this.runTransition(() => activatePostgres(this.transitionHost(), raw, hooks))
   }
 
   async deactivatePostgres(hooks: StorageTransitionHooks): Promise<void> {
-    await this.runTransition(() => this.deactivate(hooks))
+    await this.runTransition(() => deactivatePostgres(this.transitionHost(), hooks))
+  }
+
+  /** Restauração e troca local ↔ nuvem (backup/storageSwitch.ts), com a trava das
+   *  transições: uma de cada vez e nenhuma reconexão automática no meio. */
+  async exclusive<T>(work: (host: TransitionHost) => Promise<T>): Promise<T> {
+    let result: T | undefined
+    await this.runTransition(async () => {
+      result = await work(this.transitionHost())
+    })
+    return result as T
+  }
+
+  /** O lado em uso e a conexão dele (backup diário); null fora do PostgreSQL pronto. */
+  async activeSide(): Promise<{ target: PostgresTarget; draft: PostgresConnectionDraft } | null> {
+    if (this.transition || this.currentStatus.backend !== 'postgres' || this.currentStatus.state !== 'postgres-ready') return null
+    const target = (await this.requireBootstrap().load()).postgresTarget
+    return { target, draft: await this.selectedDraft() }
   }
 
   /** Queda durante a transição não agenda (`shouldRun`): a reconexão começa aqui. */
@@ -237,110 +286,55 @@ export class StorageLifecycleService {
     await current?.close()
   }
 
-  private async activate(raw: PostgresConnectionDraft, hooks: StorageTransitionHooks): Promise<void> {
-    if (this.currentStatus.backend !== 'sqlite' || !this.active) {
-      throw new StorageError('TRANSITION_IN_PROGRESS', 'A ativação exige SQLite pronto.')
-    }
-    const bootstrap = this.requireBootstrap()
-    const source = this.active
-    const draft = await this.resolveDraft(raw)
-    await testPostgresConnection(draft)
-    await bootstrap.saveConnection(raw)
-    const transitionId = await bootstrap.beginTransition('activating-postgres')
-    // The current repository remains writable only for the renderer's explicit
-    // durability flush. Main-process guards still block new agents/config/cache.
-    this.setStatus(this.makeStatus('sqlite', 'activating-postgres', true, true))
-    let target: PostgresRepository | null = null
-    let provisioned: Awaited<ReturnType<typeof provisionPostgres>> | null = null
-    let confirmed = false
-    try {
-      this.setTransitionStep('Aguardando os turnos ativos chegarem a um ponto seguro')
-      await hooks.waitForIdleAgents()
-      this.setTransitionStep('Sincronizando gravações pendentes da interface')
-      await hooks.flushRenderer()
-      this.setTransitionStep('Criando backup e manifest das fontes SQLite')
-      if (!this.location) throw new StorageError('STORAGE_OFFLINE', 'A origem SQLite não está disponível.')
-      await backupSqliteForTransition(this.location.dir, this.location.dbPath, transitionId)
-      this.setTransitionStep('Criando o banco agent-code e aplicando migrations')
-      provisioned = await provisionPostgres(draft, this.installationId, this.appVersion)
-      this.setTransitionStep('Importando e verificando o snapshot SQLite')
-      await importRepositoryToPostgres(provisioned.pool, source, this.installationId, transitionId)
-      target = this.createPostgresRepository(provisioned.pool, draft)
-      await target.initialize()
-      this.setTransitionStep('Validando a releitura pelo PostgreSQL')
-      await target.loadSnapshot()
-      this.setTransitionStep('Confirmando o PostgreSQL como backend autoritativo')
-      await bootstrap.confirmBackend('postgres', transitionId)
-      confirmed = true
-      this.bindRepository(target)
-      this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, true))
-      await source.close().catch((error) => logTransitionFailure('close-sqlite-after-activation', error))
-    } catch (cause) {
-      logTransitionFailure('activate-postgres', cause)
-      if (confirmed && target) {
-        this.bindRepository(target)
-        this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, true))
-        await source.close().catch(() => undefined)
-        return
-      }
-      await target?.close().catch(() => undefined)
-      if (!target) await provisioned?.pool.end().catch(() => undefined)
-      await bootstrap.abortTransition(transitionId).catch(() => undefined)
-      this.bindRepository(source)
-      const saved = await bootstrap.load()
-      this.setStatus(this.makeStatus('sqlite', 'sqlite-ready', true, Boolean(saved.postgres.encryptedPassword)))
-      throw this.storageError(cause, 'Não foi possível ativar o PostgreSQL.')
+  /** As transições entre backends (storageTransitions.ts) operam por aqui. */
+  private transitionHost(): TransitionHost {
+    return {
+      installationId: this.installationId,
+      appVersion: this.appVersion,
+      status: () => this.status(),
+      active: () => this.active,
+      location: () => this.location,
+      bootstrap: () => this.requireBootstrap(),
+      publish: (backend, state, writable, hasPassword) => this.setStatus(this.makeStatus(backend, state, writable, hasPassword)),
+      step: (transitionStep) => this.setTransitionStep(transitionStep),
+      bind: (next) => this.bindRepository(next),
+      createPostgresRepository: (pool, draft) => this.createPostgresRepository(pool, draft),
+      resolveDraft: (raw) => this.resolveDraft(raw),
+      localDraft: () => this.localDraft(),
+      detach: () => this.detach(),
+      reopen: () =>
+        this.openSelectedPostgres().catch((error: unknown) => {
+          if (!this.closed) this.setOffline(error)
+          throw error
+        })
     }
   }
 
-  private async deactivate(hooks: StorageTransitionHooks): Promise<void> {
-    if (this.currentStatus.backend !== 'postgres' || !this.active || !this.location) {
-      throw new StorageError('STORAGE_OFFLINE', 'A desativação exige PostgreSQL online.')
-    }
+  private async detach(): Promise<void> {
+    configureKvRepositoryOffline()
+    configureMemoryRuntime(null)
+    configureTaskRuntime(null)
+    this.repositoryUnsubscribe?.()
+    this.repositoryUnsubscribe = null
+    const current = this.active
+    this.active = null
+    await current?.close().catch((error) => logTransitionFailure('close-detached-repository', error))
+  }
+
+  /** A conexão do PostgreSQL escolhido no bootstrap: o embutido (sobe o servidor
+   *  se preciso) ou o da nuvem. */
+  private async selectedDraft(): Promise<PostgresConnectionDraft> {
     const bootstrap = this.requireBootstrap()
-    const source = this.active
-    const transitionId = await bootstrap.beginTransition('deactivating-postgres')
-    this.setStatus(this.makeStatus('postgres', 'deactivating-postgres', true, true))
-    let target: SqliteRepository | null = null
-    let confirmed = false
-    try {
-      this.setTransitionStep('Aguardando os turnos ativos chegarem a um ponto seguro')
-      await hooks.waitForIdleAgents()
-      this.setTransitionStep('Sincronizando gravações pendentes da interface')
-      await hooks.flushRenderer()
-      this.setTransitionStep('Exportando e verificando o snapshot PostgreSQL')
-      await writeRepositoryToSqlite(source, this.location.dbPath)
-      this.setTransitionStep('Validando a releitura pelo SQLite')
-      target = new SqliteRepository(this.location.dir, this.location.dbPath, this.installationId)
-      await target.initialize()
-      await target.loadSnapshot()
-      this.setTransitionStep('Confirmando o SQLite como backend autoritativo')
-      await bootstrap.confirmBackend('sqlite', transitionId)
-      confirmed = true
-      this.bindRepository(target)
-      this.setStatus(this.makeStatus('sqlite', 'sqlite-ready', true, true))
-      await source.close().catch((error) => logTransitionFailure('close-postgres-after-deactivation', error))
-    } catch (cause) {
-      logTransitionFailure('deactivate-postgres', cause)
-      if (confirmed && target) {
-        this.bindRepository(target)
-        this.setStatus(this.makeStatus('sqlite', 'sqlite-ready', true, true))
-        await source.close().catch(() => undefined)
-        return
-      }
-      await target?.close().catch(() => undefined)
-      await bootstrap.abortTransition(transitionId).catch(() => undefined)
-      // Queda no meio: setOffline já fechou `source` — fica offline (runTransition reconecta).
-      if (this.active === source) {
-        this.bindRepository(source)
-        this.setStatus(this.makeStatus('postgres', 'postgres-ready', true, true))
-      }
-      throw this.storageError(cause, 'Não foi possível migrar de volta para SQLite.')
-    }
+    return (await bootstrap.load()).postgresTarget === 'local' ? this.localDraft() : bootstrap.connection()
+  }
+
+  private async localDraft(): Promise<PostgresConnectionDraft> {
+    if (!this.local) throw new StorageError('LOCAL_POSTGRES_UNAVAILABLE', 'O PostgreSQL local não está disponível nesta execução.')
+    return this.local.ensure(this.requireBootstrap())
   }
 
   private async openSelectedPostgres(): Promise<void> {
-    const draft = await this.requireBootstrap().connection()
+    const draft = await this.selectedDraft()
     const provisioned = await provisionPostgres(draft, this.installationId, this.appVersion)
     const next = this.createPostgresRepository(provisioned.pool, draft)
     try {
@@ -362,7 +356,8 @@ export class StorageLifecycleService {
 
   private async recoverActivation(transitionId: string): Promise<boolean> {
     const bootstrap = this.requireBootstrap()
-    const draft = await bootstrap.connection()
+    // Confere no PostgreSQL para onde a ativação ia (o alvo é gravado ao começar).
+    const draft = await this.selectedDraft()
     const provisioned = await provisionPostgres(draft, this.installationId, this.appVersion)
     // Cada tentativa automática passa aqui: pool que não vira repositório é encerrado.
     let next: PostgresRepository | null = null
@@ -452,7 +447,7 @@ export class StorageLifecycleService {
   }
 
   private storageError(cause: unknown, fallback: string, retryable = false): StorageError {
-    return cause instanceof StorageError ? cause : new StorageError('STORAGE_OFFLINE', fallback, retryable, { cause })
+    return toStorageError(cause, fallback, retryable)
   }
 
   /** O app fechou no meio de uma tentativa: nada é reinstalado nem publicado. */

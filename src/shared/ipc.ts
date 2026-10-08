@@ -1734,6 +1734,10 @@ export type StorageLifecycleState =
   | 'postgres-ready'
   | 'postgres-offline'
   | 'deactivating-postgres'
+  /** Troca local ↔ nuvem (cópia com backup antes); o app reinicia ao terminar. */
+  | 'switching-postgres'
+  /** Restauração de um backup escolhido pelo usuário. */
+  | 'restoring-postgres'
   | 'fatal'
 
 export interface StorageStatusDto {
@@ -1757,6 +1761,8 @@ export interface PostgresPublicSettings {
   ca: string
   targetDatabase: 'agent-code'
   hasPassword: boolean
+  /** Qual PostgreSQL vale: o embutido desta máquina (padrão) ou o da nuvem. */
+  postgresTarget: 'local' | 'cloud'
 }
 
 /** Per-record conversation contract used by both SQLite and PostgreSQL. */
@@ -1794,15 +1800,36 @@ export interface VersionedConversationDto {
   deletedAt?: string
 }
 
-export interface ConversationUpsertDto {
+/**
+ * Uma mudança de conversa para a fila de gravação do main (sem resposta: a tela
+ * entrega e segue). Só o que mudou: os campos de topo inteiros e as mensagens a
+ * partir da primeira que mudou — no streaming, só a cauda. A 1ª mudança de cada
+ * conversa (ou depois de um `conversations:resync`) leva o documento inteiro.
+ */
+export interface ConversationChangeDto {
   id: string
-  payload: Record<string, unknown>
-  expectedRevision?: number
+  /** Campos de topo completos (tudo menos `messages`); ausente = não mudaram. */
+  top?: Record<string, unknown>
+  /** Daqui em diante, `messages` substitui as do main; ausente = mensagens não mudaram. */
+  messagesFrom?: number
+  messages?: unknown[]
+  /** Quantas mensagens a conversa tem depois da mudança (conferência). */
+  messageCount?: number
+  /** A conversa saiu da lista: vira tombstone. */
+  deleted?: boolean
+  /** Grava já, sem o ritmo de ~1/s (fim de turno, troca de conversa, envio, fechar). */
+  urgent?: boolean
 }
 
-export interface ConversationDeleteDto {
-  id: string
-  expectedRevision: number
+/** Como está a fila de gravação de conversas, para um indicador discreto. */
+export interface ConversationSaveStatusDto {
+  state: 'saved' | 'pending' | 'offline' | 'error'
+  /** Conversas com mudança ainda não gravada. */
+  pending: number
+  /** Há quanto tempo (ms) a mudança mais antiga espera; 0 sem pendência. */
+  oldestMs: number
+  /** Última recusa definitiva do banco (o dado continua na tela e na fila). */
+  error?: string
 }
 
 export interface RepositoryChange {
@@ -2058,6 +2085,16 @@ export const Channels = {
   storageFlushRequested: 'storage:flush-requested',
   storageFlushReady: 'storage:flush-ready',
   storageChanged: 'storage:changed',
+  /** Backups do banco (pg_dump) na pasta de dados: lista, apagar e restaurar. */
+  storageBackupsList: 'storage:backups-list',
+  storageBackupDelete: 'storage:backup-delete',
+  storageBackupRestore: 'storage:backup-restore',
+  storageBackupsChanged: 'storage:backups-changed',
+  /** Nuvem opcional: o que cada lado tem, e a troca com a escolha do lado. */
+  storageCloudInspect: 'storage:cloud-inspect',
+  storageCloudSwitch: 'storage:cloud-switch',
+  /** Fim de uma troca/restauração que rodou em segundo plano (a da ferramenta do agente). */
+  storageTransitionResult: 'storage:transition-result',
   /** Persist and apply the independent Windows-control permission immediately. */
   windowsControlSetEnabled: 'windows-control:set-enabled',
   /** Grava e aplica na hora a permissão do controle do Chrome. */
@@ -2180,12 +2217,18 @@ export const Channels = {
   kvSet: 'kv:set',
   /** Load every conversation from every per-project db under `data/` (merged). */
   conversationsLoadAll: 'conversations:load-all',
-  /** Persist the full conversation list, split one db per project (`cwd`). */
-  conversationsSaveAll: 'conversations:save-all',
   conversationsLoadVersioned: 'conversations:load-versioned',
   conversationsCountByProject: 'conversations:count-by-project',
-  conversationsUpsert: 'conversations:upsert',
-  conversationsDelete: 'conversations:delete',
+  /** Mudanças de conversa para a fila de gravação (send, sem resposta). */
+  conversationsSync: 'conversations:sync',
+  /** Grava já o que está na fila (todas ou algumas), com prazo. */
+  conversationsFlush: 'conversations:flush',
+  /** Estado da fila de gravação (salvo / pendente / sem banco / erro). */
+  conversationsSaveStatus: 'conversations:save-status',
+  /** O main perdeu a base de uma conversa: a tela manda o documento inteiro. */
+  conversationsResync: 'conversations:resync',
+  /** A Central relida no banco numa gravação mesclada: a tela mescla e mostra. */
+  conversationsCentralRemote: 'conversations:central-remote',
   /** Nome curto para a conversa a partir da 1ª mensagem (LLM barato, one-shot). */
   conversationSuggestTitle: 'conversation:suggestTitle',
   agentStart: 'agent:start',
