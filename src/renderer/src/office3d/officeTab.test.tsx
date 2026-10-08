@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MainTabs } from '../components/MainTabs'
 import { syntheticFeed } from '../components/office/devFeed'
 import type { OfficeFeed } from '../office/adapter/feed'
-import { deriveOfficeModel } from '../office/adapter/model'
+import { deriveOfficeModel, projectColorHex } from '../office/adapter/model'
 import { seedColor, seedCss } from './appearance'
 import { Office3DEngine, type EngineOptions, type FeedSource, type RendererLike } from './engine'
 import { layoutOffice } from './layout'
@@ -177,11 +177,11 @@ describe('Escritório em aba: o chat flutuante', () => {
     return { view, raf, onOpenConversation, all, panel: (): HTMLElement => screen.getByRole('region', { name: 'Escritório' }) }
   }
 
-  it('cabeçalho: ponto na cor da camisa do agente, título, projeto e 📍 que voa até a mesa dele', () => {
+  it('cabeçalho: ponto na cor da camisa do agente (a do projeto), título, projeto e 📍 que voa até a mesa dele', () => {
     const fly = vi.spyOn(Office3DEngine.prototype, 'flyToAgent')
     const { panel } = renderOffice()
-    expect(panel().style.getPropertyValue('--o3d-agent')).toBe(seedCss('conv:dev-0-0'))
-    // A cor que a tela mostra na camisa (a Color do three em sRGB), não um hsl() com os mesmos números.
+    expect(panel().style.getPropertyValue('--o3d-agent')).toBe(projectColorHex(null, CONV('dev-0-0').cwd))
+    // Sem projeto (a Central), a seed: a cor que a tela mostra na camisa (a Color do three em sRGB).
     expect(seedCss('conv:dev-0-0')).toBe(seedColor('conv:dev-0-0').getStyle())
     expect(seedCss('conv:dev-0-0')).toMatch(/^rgb\(\d+,\d+,\d+\)$/)
     expect(screen.getByTestId('o3d-chat-dot')).toBeTruthy()

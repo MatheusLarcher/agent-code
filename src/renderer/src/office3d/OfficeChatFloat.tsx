@@ -10,8 +10,8 @@
  * mostra os detalhes e o custo ao passar o mouse e abre o painel por agente ao
  * clicar. O aviso do Windows fica no HUD do palco, com o "Desativar".
  *
- * Cabeçalho: um ponto na cor da camisa do agente da conversa (a mesma seed da
- * cena), o título da conversa, o projeto e o 📍, que minimiza o chat e voa a
+ * Cabeçalho: um ponto na cor da camisa do agente da conversa (a cor do
+ * projeto, `agentColor`), o título da conversa, o projeto e o 📍, que minimiza o chat e voa a
  * câmera até a mesa dele (`collapseSignal`, que quem hospeda sobe). A borda do
  * painel é neutra (office3d.css). Com a Central no painel (`central`: nenhuma
  * mesa selecionada, ou a Central é a conversa ativa), o cabeçalho é o dela —
@@ -61,11 +61,13 @@ export interface OfficeChatFloatProps {
   collapseSignal?: number
   /** 📍: voa até a mesa do agente da conversa. */
   onLocate: (convId: string) => void
+  /** A cor do agente da conversa: a do projeto (projectColor.ts `agentCss`); sem ela, a seed. */
+  agentColor?: string
 }
 
-export function OfficeChatFloat({ children, conversation, central = false, expandSignal, collapseSignal, onLocate }: OfficeChatFloatProps): JSX.Element {
+export function OfficeChatFloat({ children, conversation, central = false, expandSignal, collapseSignal, onLocate, agentColor }: OfficeChatFloatProps): JSX.Element {
   const po = usePoChatOpen()
-  const color = central || po ? 'var(--accent)' : conversation ? seedCss(principalKey(conversation.id)) : null
+  const color = central || po ? 'var(--accent)' : conversation ? (agentColor ?? seedCss(principalKey(conversation.id))) : null
   const style = color ? ({ '--o3d-agent': color } as CSSProperties) : undefined
   const header = central ? (
     <div className="o3d-chat-head">

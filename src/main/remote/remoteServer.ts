@@ -38,8 +38,8 @@ export interface RemoteServerDeps {
   onInbound: (convId: string, text: string, images?: ImageAttachment[], files?: FileAttachment[], replyTo?: string) => void
   /** A phone asked to stop the running turn of a conversation. */
   onInterrupt?: (convId: string) => void
-  /** A phone toggled a per-conversation mode (economy / loop / fast). */
-  onSetMode?: (convId: string, mode: 'economy' | 'loop' | 'fast', on: boolean) => void
+  /** A phone toggled a per-conversation mode (fast). */
+  onSetMode?: (convId: string, mode: 'fast', on: boolean) => void
   /** A phone managed conversations: create in a project, rename, delete. */
   onConversationAction?: (action: RemoteConversationAction) => void
   /** Read / persist the single paired phone (per installation, never synced). */
@@ -556,23 +556,22 @@ export class RemoteServer {
   private async serveSetMode(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readBody(req)
     let convId = ''
-    let mode: 'economy' | 'loop' | 'fast' | null = null
+    let mode: 'fast' | null = null
     let on = false
     try {
       const j = JSON.parse(body ?? '') as { convId?: string; mode?: string; on?: boolean }
       convId = String(j.convId ?? '').trim()
-      mode = j.mode === 'economy' || j.mode === 'loop' || j.mode === 'fast' ? j.mode : null
+      mode = j.mode === 'fast' ? j.mode : null
       on = !!j.on
     } catch {
       /* fall through */
     }
-    if (!convId || !mode) return sendJson(res, 400, { ok: false, error: 'convId e mode (economy|loop|fast) são obrigatórios' })
+    if (!convId || !mode) return sendJson(res, 400, { ok: false, error: 'convId e mode (fast) são obrigatórios' })
     this.deps.onSetMode?.(convId, mode, on)
     // Optimistic echo (same idea as set-model); the renderer's publish confirms.
-    const key = mode === 'economy' ? 'economyMode' : mode === 'loop' ? 'loopEnabled' : 'fastMode'
     this.state = {
       ...this.state,
-      conversations: this.state.conversations.map((c) => (c.id === convId ? { ...c, [key]: on } : c))
+      conversations: this.state.conversations.map((c) => (c.id === convId ? { ...c, fastMode: on } : c))
     }
     sendJson(res, 200, { ok: true })
   }

@@ -1,7 +1,7 @@
 /**
  * A linha de passos de uma resposta NO CHAT (mockup chat-visual-20261007): sem
  * fundo nem borda, o chevron na frente (gira ao abrir), o ícone do grupo, as
- * pílulas com os contadores ("3 buscas", "2 lidos") e o resumo da Central em
+ * pílulas com ícone + contador (o "3 buscas" vai no tooltip, HoverTip.tsx) e o resumo da Central em
  * cinza. Rodando, o spinner vem logo depois do chevron e o resumo diz "agora: …" —
  * exceto com a linha ao vivo (ChatLive) presente, que já mostra isso.
  *
@@ -12,9 +12,9 @@
 import type { CentralActivity } from '@shared/central'
 import { CountUp } from '../chatAnim'
 import { Segments } from '../central/ActivityLine'
+import { StepKindIcon } from './StepKindIcon'
+import { StepPillRow } from './StepPillRow'
 import type { StepPill } from './stepPills'
-
-const ICON: Record<'find' | 'code' | 'tool', string> = { find: '⌕', code: '❯', tool: '•' }
 
 export interface ChatStepLineProps {
   activity: CentralActivity
@@ -48,20 +48,9 @@ export function ChatStepLine({ activity: a, pills, icon, running, live = false, 
       </span>
       {status && <span className="central-spin" aria-hidden="true" />}
       <span className={`chat-act-ico ${icon}`} aria-hidden="true">
-        {ICON[icon]}
+        <StepKindIcon kind={icon} size={13} />
       </span>
-      {pills.length > 0 && (
-        <span className="chat-pills">
-          {pills.map((p) => (
-            <span key={p.kind} className="chat-pill">
-              <b>
-                <CountUp value={p.n} animate={animate} />
-              </b>{' '}
-              {p.label}
-            </span>
-          ))}
-        </span>
-      )}
+      <StepPillRow pills={pills} count={(n) => <CountUp value={n} animate={animate} />} />
       <span className="central-sum">
         {idle && !fallback ? (
           'trabalhando…'

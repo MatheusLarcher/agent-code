@@ -56,8 +56,12 @@ describe('MessageList — resumo por resposta', () => {
     const [first, second, final] = steps
     expect(first.querySelector('.msg.assistant.narration')?.textContent).toContain('Vou procurar o campo.')
     expect(first.querySelector('.central-sum')?.textContent).toBe('Procurou "send-btn" · leu Composer.tsx')
-    // Pílulas com os contadores no lugar do "N ações"; o chevron vem na frente da linha.
-    expect([...first.querySelectorAll('.chat-pill')].map((p) => p.textContent)).toEqual(['1 busca', '1 lido'])
+    // Pílulas (ícone + número; o texto no tooltip) no lugar do "N ações"; o chevron vem na frente da linha.
+    expect([...first.querySelectorAll('.chat-pill')].map((p) => [p.textContent, p.getAttribute('data-tip')])).toEqual([
+      ['1', '1 busca'],
+      ['1', '1 lido']
+    ])
+    expect(first.querySelectorAll('.chat-pill svg')).toHaveLength(2)
     expect(first.querySelector('.chat-act')?.firstElementChild?.className).toBe('central-chev')
     expect(first.querySelector('.central-count')).toBeNull()
     expect(second.querySelector('.central-sum')?.textContent).toBe('Editou Composer.tsx +2 −1')
@@ -101,6 +105,6 @@ describe('MessageList — resumo por resposta', () => {
     // 61 linhas (pedido + 60 respostas) − 40 = 21 anteriores; a 1ª linha à vista é uma resposta inteira.
     expect(container.querySelector('.load-more-hint')?.textContent).toBe('↑ Role para cima para carregar mais (21 anteriores)')
     expect(container.querySelector('.message-list > .chat-step')?.textContent).toContain('passo 20')
-    expect(container.querySelector('.message-list > .chat-step .chat-pills')?.textContent).toBe('2 lidos1 comando')
+    expect([...(container.querySelector('.message-list > .chat-step .chat-pills')?.children ?? [])].map((p) => p.getAttribute('data-tip'))).toEqual(['2 lidos', '1 comando'])
   })
 })

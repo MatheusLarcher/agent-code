@@ -6,7 +6,7 @@
  * as que chegam juntas saem num só aviso. Sandbox não é pedido (é uma cor só,
  * office3d/projectColor.ts) nem a Central (não é projeto). Não re-renderiza o App.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { isCentralConversation } from '@shared/central'
 import { isProjectColor, isSandboxProjectPath, type ProjectColor, type ProjectColorMap } from '@shared/projectColor'
 import { officeStore, type OfficeStore } from './officeStore'
@@ -34,6 +34,11 @@ export function colorCwdsToRequest(conversations: readonly ColorConv[], requeste
 const appApi: ColorsApi = (cwds) => {
   const api = (window as { api?: { projectColors?: ColorsApi } }).api
   return typeof api?.projectColors === 'function' ? api.projectColors(cwds) : Promise.reject(new Error('sem window.api.projectColors'))
+}
+
+/** O mapa de cores já resolvidas (por cwd), fora do escritório: a Central e a lateral pintam com ele (model.ts `projectColorHex`). */
+export function useProjectColorMap(store: Pick<OfficeStore, 'getProjectColors' | 'subscribeProjectColors'> = officeStore): Readonly<ProjectColorMap> {
+  return useSyncExternalStore(store.subscribeProjectColors, store.getProjectColors)
 }
 
 export function useProjectColors(conversations: readonly ColorConv[], store: Pick<OfficeStore, 'setProjectColors'> = officeStore, api: ColorsApi | null = appApi): void {

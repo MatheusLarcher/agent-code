@@ -1,7 +1,8 @@
 /**
  * As placas do projeto no escritório (three):
  * - a placa no chão diante de cada ilha: a laje clara é estática (vazia sem
- *   reserva); a face com o nome e o ícone do projeto que reservou a ilha aparece
+ *   reserva); a face com o nome, o ícone e a cor do projeto que reservou a ilha aparece
+ *   (repintada quando a cor detectada chega)
  *   na reserva e some (textura liberada) quando o último agente dele sai;
  * - a plaquinha de cada mesa ocupada: um bloquinho em pé no canto de fora da
  *   frente da mesa, com o ícone do projeto do dono (fundo neutro, sign.ts) (textura por projeto,
@@ -44,8 +45,8 @@ interface Painted {
   mat: MeshLambertMaterial
 }
 
-function paint(kit: Kit, key: string, name: string, icon: string | null, accentId: string, style: 'floor' | 'desk', onDirty: () => void): Painted {
-  const sign = createSignTexture(name, icon, accentId, kit.anisotropy, onDirty, style)
+function paint(kit: Kit, key: string, name: string, icon: string | null, accent: string | null, style: 'floor' | 'desk', onDirty: () => void): Painted {
+  const sign = createSignTexture(name, icon, accent, kit.anisotropy, onDirty, style)
   return { key, sign, mat: new MeshLambertMaterial({ map: sign.texture }) }
 }
 
@@ -103,10 +104,10 @@ export function buildPlaques(kit: Kit, zp: (id: ZoneId) => { group: Group; stati
       for (const isl of r.islands) {
         const face = faces[isl.index]
         const cur = floor[isl.index]
-        const key = isl.projectId ? `${isl.projectId}|${isl.name ?? ''}|${isl.icon ?? ''}` : ''
+        const key = isl.projectId ? `${isl.projectId}|${isl.name ?? ''}|${isl.icon ?? ''}|${isl.color ?? ''}` : ''
         if ((cur?.key ?? '') === key) continue
         if (cur) release(cur)
-        floor[isl.index] = isl.projectId ? paint(kit, key, isl.name ?? isl.projectId, isl.icon, isl.projectId, 'floor', onDirty) : null
+        floor[isl.index] = isl.projectId ? paint(kit, key, isl.name ?? isl.projectId, isl.icon, isl.color, 'floor', onDirty) : null
         face.material = floor[isl.index]?.mat ?? kit.mat.plaque
         face.visible = !!floor[isl.index]
       }
@@ -120,7 +121,7 @@ export function buildPlaques(kit: Kit, zp: (id: ZoneId) => { group: Group; stati
           release(cur)
           cur = undefined
         }
-        if (!cur) byProject.set(id, (cur = paint(kit, key, p?.name ?? id, p?.icon ?? null, id, 'desk', onDirty)))
+        if (!cur) byProject.set(id, (cur = paint(kit, key, p?.name ?? id, p?.icon ?? null, null, 'desk', onDirty)))
         used.add(id)
         return cur
       }

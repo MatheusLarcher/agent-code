@@ -28,26 +28,17 @@ describe('planningStartOptions', () => {
     const opts = { ...base, planning: { slug: 'checkout' }, autoPrompt: { message: 'separa as etapas' } }
     const out = await planningStartOptions(opts, d)
     expect(d.resolve).toHaveBeenCalledWith(cfg, { message: 'separa as etapas' })
-    expect(out).toEqual({ ...opts, model: 'claude-opus-5-5', effort: 'high', loopEnabled: false, economyMode: false })
+    expect(out).toEqual({ ...opts, model: 'claude-opus-5-5', effort: 'high' })
     // Não muta a entrada.
     expect(opts.model).toBe(AUTO_MODEL)
   })
 
-  it('Manager sobe sem Loop e sem modo econômico, mesmo que a conversa os tenha ligados', async () => {
+  it('conversa comum e handoff mantêm as opções como vieram', async () => {
     const d = deps(fallbackExecution())
-    const opts = { ...base, planning: { slug: 'checkout' }, loopEnabled: true, economyMode: true }
-    const out = await planningStartOptions(opts, d)
-    expect(out.loopEnabled).toBe(false)
-    expect(out.economyMode).toBe(false)
-    expect(opts.loopEnabled).toBe(true) // não muta a entrada
-  })
-
-  it('conversa comum e handoff mantêm os toggles como vieram', async () => {
-    const d = deps(fallbackExecution())
-    const comum = { ...base, loopEnabled: true, economyMode: true }
+    const comum = { ...base, fastMode: true }
     expect(await planningStartOptions(comum, d)).toBe(comum)
-    const handoff = { ...base, handoff: { slug: 'checkout' }, loopEnabled: true }
-    expect((await planningStartOptions(handoff, d)).loopEnabled).toBe(true)
+    const handoff = { ...base, handoff: { slug: 'checkout' }, fastMode: true }
+    expect((await planningStartOptions(handoff, d)).fastMode).toBe(true)
   })
 
   it('Manager sem autoPrompt: resolve com mensagem vazia', async () => {

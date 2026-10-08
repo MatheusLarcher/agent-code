@@ -16,12 +16,23 @@ import type { OfficeFeed } from './adapter/feed'
 
 export type OfficeFeedListener = (feed: OfficeFeed) => void
 
+const NO_COLORS: Readonly<ProjectColorMap> = Object.freeze({})
+
 export class OfficeStore {
   private real: OfficeFeed | null = null
   private override: OfficeFeed | null = null
   private colors: Readonly<ProjectColorMap> | null = null
   private merged: { from: OfficeFeed; colors: Readonly<ProjectColorMap>; feed: OfficeFeed } | null = null
   private readonly subs = new Set<OfficeFeedListener>()
+  private readonly colorSubs = new Set<() => void>()
+
+  /** As cores dos projetos (por cwd), sem depender do feed: a Central e a lateral (useProjectColorMap). */
+  readonly getProjectColors = (): Readonly<ProjectColorMap> => this.colors ?? NO_COLORS
+
+  readonly subscribeProjectColors = (cb: () => void): (() => void) => {
+    this.colorSubs.add(cb)
+    return () => void this.colorSubs.delete(cb)
+  }
 
   publish(feed: OfficeFeed): void {
     this.real = feed
@@ -32,6 +43,7 @@ export class OfficeStore {
   setProjectColors(colors: Readonly<ProjectColorMap>): void {
     if (colors === this.colors) return
     this.colors = colors
+    for (const cb of [...this.colorSubs]) cb()
     if (!this.override) this.emit()
   }
 

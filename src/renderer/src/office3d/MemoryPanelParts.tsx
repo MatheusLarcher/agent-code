@@ -33,13 +33,13 @@ export function when(at: number, now: number): string {
   return d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'short' })
 }
 
-/** A linha do uso. Com `onOpen` (a memória existe na lista), o nome dela abre o texto. */
-export function UsageLine({ e, title, now, onAgent, onOpen }: { e: UsageEvent; title: string; now: number; onAgent: (convId: string) => void; onOpen?: (relPath: string) => void }): JSX.Element {
+/** A linha do uso. Com `onOpen` (a memória existe na lista), o nome dela abre o texto. `dot`: a cor do agente (a do projeto); sem ela, a seed. */
+export function UsageLine({ e, title, now, dot, onAgent, onOpen }: { e: UsageEvent; title: string; now: number; dot?: string; onAgent: (convId: string) => void; onOpen?: (relPath: string) => void }): JSX.Element {
   const rel = e.relPath
   return (
     <li className="mp-use" data-testid="mp-use">
       <button type="button" className="mp-agent" onClick={() => onAgent(e.convId)} title="Levar a câmera até o agente">
-        <span className="mp-dot" style={{ background: seedCss(principalKey(e.convId)) }} />
+        <span className="mp-dot" style={{ background: dot ?? seedCss(principalKey(e.convId)) }} />
         {e.agent}
       </button>
       <span className="mp-use-what">

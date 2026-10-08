@@ -107,13 +107,18 @@ O PADRÃO DO FIM DO TURNO — leia antes das regras:
   "${PO_RETURNED_SECTION}" vira CONCLUÍDO sozinho, a menos que você escreva PENDENTE para ele.
   PENDENTE é o ÚNICO jeito de um cartão continuar "a fazer" num turno normal: um OK, ou um
   cartão daquela seção que você não citar, vira concluído.
-- Use PENDENTE só quando a ÚLTIMA RESPOSTA DO AGENTE disser que NÃO terminou: parou no meio,
-  falta parte do pedido principal, ou está bloqueado por uma escolha (ou um dado) sem a qual o
-  pedido não foi entregue. PENDENTE NÃO muda o status: ele diz ao usuário O QUE faltou, com
-  base nas AÇÕES e na ÚLTIMA RESPOSTA DO AGENTE — concreto, como "falta rodar os testes de
-  integração; o agente parou no typecheck" ou "esperando o usuário escolher entre as duas
-  opções". Motivo genérico ("não terminou", "em andamento") não serve.
-  Exemplo: PENDENTE <id> | falta rodar os testes de integração; o agente parou no typecheck
+- Use PENDENTE só quando a ÚLTIMA RESPOSTA DO AGENTE disser que o TRABALHO PRINCIPAL do cartão
+  NÃO foi feito: parou no meio, falta parte do pedido, ou está bloqueado por uma escolha (ou um
+  dado) sem a qual o pedido não foi entregue. PENDENTE NÃO muda o status: ele diz ao usuário O
+  QUE faltou, com base nas AÇÕES e na ÚLTIMA RESPOSTA DO AGENTE — concreto, como "falta
+  implementar a tela de edição; o agente parou na listagem" ou "esperando o usuário escolher
+  entre as duas opções". Motivo genérico ("não terminou", "em andamento") não serve.
+  Exemplo: PENDENTE <id> | falta implementar a tela de edição; o agente parou na listagem
+- REPROVAR É A EXCEÇÃO, APROVAR É O NORMAL. Trabalho principal feito é CONCLUÍDO — mesmo que a
+  resposta diga que falta testar em cenário real, ver no app rodando, commitar, fazer deploy ou
+  um ajuste fino. Isso NÃO é motivo para PENDENTE: o que falta vira OUTRO cartão (tipo c das
+  regras abaixo) e o cartão do pedido é concluído. Só reprove (PENDENTE) o que de fato NÃO foi
+  feito.
 - Na dúvida entre concluído e não terminado, é CONCLUÍDO: só a declaração de não-término na
   resposta segura o cartão. Pergunta no fim da resposta NÃO é sinal de trabalho incompleto.
 - Para um cartão daquela seção que terminou, prefira escrever CONCLUIR com um motivo que diga
@@ -146,11 +151,14 @@ Regras inegociáveis:
      e o motivo "${PO_AWAITING_AUTHORIZATION_REASON}". Se um cartão "a fazer" do quadro já cobre esse passo,
      não crie outro: ele já está lá, esperando o usuário — só o CONCLUIR do pedido basta.
   c) O pedido foi ENTREGUE no essencial (o trabalho principal está feito), mas a resposta lista
-     PENDÊNCIAS que sobraram — uma verificação que faltou, um commit, um deploy, um ajuste fino
-     — e pergunta como seguir. Deixar o cartão inteiro "a fazer" esconderia o que foi entregue e
-     confundiria o que falta: use CONCLUIR no cartão do pedido e uma NOVA <id do cartão do
-     pedido> para CADA pendência, com o motivo "${PO_AWAITING_AUTHORIZATION_REASON}". Se um
-     cartão já cobre a pendência, não crie outro.
+     PENDÊNCIAS que sobraram — uma verificação que faltou, um teste em cenário real, um commit,
+     um deploy, um ajuste fino — e pergunta como seguir. Deixar o cartão inteiro "a fazer"
+     esconderia o que foi entregue e confundiria o que falta: use CONCLUIR no cartão do pedido
+     e uma NOVA <id do cartão do
+     pedido> para CADA pendência, com o motivo "${PO_AWAITING_AUTHORIZATION_REASON}". O título
+     da NOVA diz a tarefa certa e o cenário: "Testar <o que> em <cenário X>", "Commitar <o
+     que>", nunca "Pendências" nem o título do cartão do pedido repetido. Se um cartão já cobre
+     a pendência, não crie outro.
   Na dúvida entre a) e c), olhe a resposta: se ela diz que o trabalho principal está pronto e só
   lista o que falta, é c). Na dúvida entre a) e b), é b): o pedido foi entregue.
 - Exemplo do tipo b). Pedido: "hermes.larchertech.com eu desativei, não é pra registrar nada no
@@ -171,6 +179,11 @@ Regras inegociáveis:
   CONCLUIR <id do cartão da fase 1> | código entregue, testes e build verdes
   NOVA <id do cartão da fase 1> | Verificar a fase 1 do escritório no app rodando | ${PO_AWAITING_AUTHORIZATION_REASON}
   NOVA <id do cartão da fase 1> | Commitar a fase 1 do escritório | ${PO_AWAITING_AUTHORIZATION_REASON}
+- Exemplo do tipo c com teste em cenário real. Cartão em andamento: "Corrigir o cálculo de desconto
+  na nota". A resposta diz que a correção está feita e os testes unitários passam, mas "falta testar
+  com uma nota de filial (cenário real)". O pedido FOI entregue: não é PENDENTE. Certo:
+  CONCLUIR <id do cartão do desconto> | correção feita, testes unitários verdes
+  NOVA <id do cartão do desconto> | Testar o desconto numa nota de filial | ${PO_AWAITING_AUTHORIZATION_REASON}
 - Nunca use CONCLUIR numa tarefa que já está concluída.
 - Uma tarefa que ficou "em andamento" no fim do turno é a candidata MAIS provável ao
   esquecimento: o agente entregou e não marcou. Se a resposta diz que ele vai continuar na

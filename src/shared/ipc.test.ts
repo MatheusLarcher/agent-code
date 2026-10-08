@@ -199,11 +199,12 @@ describe('modelSupportsFastMode — quais modelos aceitam o modo rápido', () =>
 })
 
 describe('MODEL_EFFORT — esforço máximo do SDK', () => {
-  it('expõe max para Opus/Sonnet/Fable e mantém Haiku limitado a high', () => {
+  it('expõe max para Opus/Sonnet/Fable/Haiku 5.5', () => {
     expect(MODEL_EFFORT['claude-opus-4-8']).toContain('max')
     expect(MODEL_EFFORT['claude-sonnet-5-5']).toContain('max')
     expect(MODEL_EFFORT['claude-fable-5-1']).toContain('max')
     expect(MODEL_EFFORT['claude-fable-5']).toContain('max')
+    expect(MODEL_EFFORT['claude-haiku-5-5']).toContain('max')
   })
 
   it('oferece low até max para toda a família GPT-6', () => {

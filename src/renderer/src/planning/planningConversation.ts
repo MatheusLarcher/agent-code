@@ -58,7 +58,7 @@ export function sessionStartFields(
  *  Modelo e esforço são os do Agent Manager NA HORA do envio (o último que o
  *  usuário escolheu na Tela de Planejamento). Automático segue Automático: a
  *  conversa leva o sentinel e o Automático dela revalida a cada mensagem, como
- *  em qualquer conversa. Loop e econômico ficam os de uma conversa normal. */
+ *  em qualquer conversa. */
 export function handoffConversationFields(
   slug: string,
   titulo: string | undefined,
@@ -138,7 +138,7 @@ export function planningConversationFields(
   titulo?: string
 ): Pick<
   Conversation,
-  'mode' | 'planningSlug' | 'title' | 'model' | 'effort' | 'economyMode' | 'loopEnabled' | 'fastMode'
+  'mode' | 'planningSlug' | 'title' | 'model' | 'effort' | 'fastMode'
 > {
   return {
     mode: 'planning',
@@ -146,8 +146,6 @@ export function planningConversationFields(
     title: titulo?.trim() || `Planejamento: ${slug}`,
     model: PLANNING_AUTO_FALLBACK.model,
     effort: PLANNING_AUTO_FALLBACK.effort,
-    economyMode: false,
-    loopEnabled: false,
     fastMode: false
   }
 }

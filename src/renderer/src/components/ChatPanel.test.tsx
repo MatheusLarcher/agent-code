@@ -66,11 +66,6 @@ function renderPanel(
           effort="high"
           effortLocked={false}
           onEffortChange={() => {}}
-          economyMode={false}
-          onEconomyModeChange={() => {}}
-          loopEnabled={false}
-          loopLocked={false}
-          onLoopEnabledChange={() => {}}
           fastModeAvailable={false}
           fastMode={false}
           onFastModeChange={() => {}}
@@ -160,20 +155,18 @@ describe('ChatPanel — modo compacto (ChatDisplayContext)', () => {
   })
 })
 
-describe('ChatPanel — hideSessionToggles (conversa de planejamento)', () => {
-  it('sem a prop (conversa normal), modelo, esforço, Econômico e Loop continuam na barra', () => {
+describe('ChatPanel — barra de controles da sessão', () => {
+  it('modelo e esforço estão na barra; Econômico e Loop não existem mais', () => {
     const { container } = renderPanel()
     expect(container.querySelector('select.model-select')).toBeTruthy()
     expect(container.querySelector('.effort-picker')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Econômico/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Loop/ })).toBeTruthy()
-  })
-
-  it('com a prop, somem Econômico e Loop — modelo e esforço ficam para trocar o do Agent Manager', () => {
-    const onModelChange = vi.fn()
-    const { container } = renderPanel({ hideSessionToggles: true, onModelChange })
     expect(screen.queryByRole('button', { name: /Econômico/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Loop/ })).toBeNull()
+  })
+
+  it('trocar o modelo na barra chama onModelChange', () => {
+    const onModelChange = vi.fn()
+    const { container } = renderPanel({ onModelChange })
     expect(container.querySelector('.effort-picker')).toBeTruthy()
     const select = container.querySelector('select.model-select') as HTMLSelectElement
     fireEvent.change(select, { target: { value: 'claude-sonnet-5-5' } })

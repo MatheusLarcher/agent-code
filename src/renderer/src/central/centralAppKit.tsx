@@ -97,6 +97,7 @@ export function installApi(route: (req: CentralRouteRequest) => CentralRouteResu
     getCacheInfo: fn({ dir: '', dbPath: '', memoriesDir: '', skillsDir: '' }), getAppVersion: fn('test'),
     startAgent: fn<unknown>({ ok: true }), sendMessage: fn<unknown>(undefined), interrupt: fn<unknown>({ stillQueued: [] }), injectNow: fn({ ok: true }),
     disposeAgent: fn(undefined), refreshUsage: fn(undefined), getTokenUsageHistory: fn({ calls: [], totals: [] }),
+    getTurnTimeTotals: fn({ totalMs: 0, turns: 0, lastMs: null }),
     listContextTurns: fn([]), readContextTurn: fn(null), countContextExact: fn({ ok: false, usage: null }),
     revealSecret: fn(null), onContextTurnsChanged: off(),
     onAgentEvent: vi.fn((cb: (m: AgentEventMsg) => void) => ((cbs.agent = cb), () => {})),

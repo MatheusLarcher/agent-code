@@ -24,7 +24,7 @@ describe('context PC IPC', () => {
     repository.saveContextTurn = async (w) => { writes.push(w) }
     const c = new ContextCapture({ convId: 'ipc-mask', pc: 'PC', model: 'model', provider: 'claude' }, repository, undefined, () => null)
     c.configure(`append ${value}`, [{ name: 'vault', value }], { executor: { prompt: `regra ${value}` } })
-    c.sent('u', `pedido ${value}`, `pedido ${value}`, { stamp: 'stamp', memory: '', skills: '', projects: '', reminder: '' }); c.activate('u')
+    c.sent('u', `pedido ${value}`, `pedido ${value}`, { stamp: 'stamp', memory: '', skills: '', projects: '' }); c.activate('u')
     c.hook({ docs: `docs ${value}`, memory: `memória ${value}` }, 'hook-start')
     c.subagent('task-id', { subagent_type: 'executor', prompt: `sub ${value}` })
     expect(JSON.stringify(await call(Channels.contextTurnsRead, 'ipc-mask', 'u'))).not.toContain(value)

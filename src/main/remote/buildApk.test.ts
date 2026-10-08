@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isStaleAndroidProject, missingDependencies, phoneBuildCommand } from './buildApk'
+import { buildRemoteApk, isStaleAndroidProject, missingDependencies, phoneBuildCommand, resolveRemoteRoot } from './buildApk'
 
 // O build do APK precisa rodar `npm install` de novo quando um plugin local
 // (plugins/parakeet-stt) foi acrescentado depois da 1ª instalação: sem ele em
@@ -88,5 +88,30 @@ describe('phoneBuildCommand', () => {
   it('roda npm run phone:build na raiz do repositório (pai de smartfone-remote)', () => {
     const root = join(dir, 'smartfone-remote')
     expect(phoneBuildCommand(root)).toEqual({ cmd: 'npm', args: ['run', 'phone:build'], cwd: join(root, '..') })
+  })
+})
+
+// O app instalado (resources/app) não leva o smartfone-remote: sem cair no
+// repositório, o npm install rodava numa pasta inexistente e o Windows dizia
+// "spawn C:\WINDOWS\system32\cmd.exe ENOENT".
+describe('resolveRemoteRoot', () => {
+  it('pula o candidato sem package.json e usa o repositório', () => {
+    expect(resolveRemoteRoot([join(dir, 'nao-existe'), undefined, dir])).toBe(dir)
+  })
+
+  it('nenhum existe → o primeiro, para o erro mostrar o caminho esperado', () => {
+    const first = join(dir, 'a')
+    expect(resolveRemoteRoot([first, join(dir, 'b')])).toBe(first)
+  })
+})
+
+describe('buildRemoteApk sem o projeto', () => {
+  it('para antes de qualquer spawn, com mensagem clara', async () => {
+    const lines: string[] = []
+    const missing = join(dir, 'nao-existe')
+    const r = await buildRemoteApk(missing, (l) => lines.push(l))
+    expect(r.ok).toBe(false)
+    expect(r.message).toContain(missing)
+    expect(lines).toEqual([])
   })
 })

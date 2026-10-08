@@ -5,8 +5,8 @@ import { composeFromPromptBlocks, maskText, promptBlocks } from './blocks'
 import { secretPlaceholder } from '../../shared/contextSnapshot'
 
 describe('context blocks', () => {
-  const parts = { stamp: 'stamp', memory: 'memory', skills: 'skills', projects: 'projects', others: 'others', reminder: 'reminder' }
-  it.each(['', 'pedido', '/loop pedido', '  /loop  pedido', '/loop', 'nota\n\npedido', '/loop nota\n\npedido'])('reconstitui composeUserPrompt: %s', (body) => {
+  const parts = { stamp: 'stamp', memory: 'memory', skills: 'skills', projects: 'projects', others: 'others' }
+  it.each(['', 'pedido', '/loop pedido', 'nota\n\npedido'])('reconstitui composeUserPrompt: %s', (body) => {
     expect(composeFromPromptBlocks(promptBlocks(body, parts, 'nota'))).toBe(composeUserPrompt(body, parts))
   })
   it('varre segredos sobrepostos uma vez, preservando marcadores', () => {

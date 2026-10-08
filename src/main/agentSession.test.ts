@@ -120,12 +120,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => {
 })
 import {
   AgentSession,
-  DEFAULT_LOOP_LIMIT,
-  ECONOMY_TURN_REMINDER,
-  MAX_LOOP_LIMIT,
   OPENAI_MAX_TURNS,
-  buildContextStamp,
-  loopLimitFromPrompt
+  buildContextStamp
 } from './agentSession'
 import type { BrowserController } from './browserController'
 import { presenceRemove, presenceSnapshot, presenceUpdate, resetCrossConversationState } from './crossConversation'
@@ -162,8 +158,6 @@ function makeSession(opts: {
   fastMode?: boolean
   effort?: string
   cwd?: string
-  economyMode?: boolean
-  loopEnabled?: boolean
   skillRuntime?: SkillRuntimePaths
   tokenUsageRepository?: { insertLlmCall: ReturnType<typeof vi.fn>; updateLlmCall?: ReturnType<typeof vi.fn> }
 } = {}): {
@@ -411,196 +405,29 @@ describe('AgentSession — escopo de escrita da tarefa reivindicada (imposto for
   })
 })
 
-describe('AgentSession — controle seguro do /loop', () => {
-  const wakeup = {
-    delaySeconds: 60,
-    reason: 'Verificar novamente a condição pedida.',
-    prompt: '/loop verificar até concluir'
-  }
-
-  it('usa 100 por padrão e só aceita número ligado explicitamente ao loop', () => {
-    expect(loopLimitFromPrompt('verifique a porta 3000 até funcionar')).toBe(DEFAULT_LOOP_LIMIT)
-    expect(loopLimitFromPrompt('tente até 250 vezes')).toBe(250)
-    expect(loopLimitFromPrompt('limite do loop: 450')).toBe(450)
-    expect(loopLimitFromPrompt('loop limit 999999')).toBe(MAX_LOOP_LIMIT)
-    expect(loopLimitFromPrompt('tente até 20 vezes')).toBe(DEFAULT_LOOP_LIMIT)
-  })
-
-  it.each(['claude-opus-4-8', 'gpt-6-luna'])(
-    'transforma mensagem normal em /loop só no payload do SDK (%s)',
-    async (model) => {
-      const { s } = makeSession({ loopEnabled: true, model })
-      await s.send('verifique o deploy')
-      const content = String(pushedMessages(s)[0]?.message.content)
-      expect(content).toMatch(/^\/loop /)
-      expect(content).toContain('verifique o deploy')
-      await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toEqual({
-        behavior: 'allow',
-        updatedInput: wakeup
-      })
-    }
-  )
-
-  it('mantém envio normal com Loop desligado', async () => {
-    const { s } = makeSession()
-    await s.send('verifique o deploy')
-    const content = String(pushedMessages(s)[0]?.message.content)
-    expect(content).toContain('verifique o deploy')
-    expect(content).not.toContain('/loop verifique o deploy')
-  })
-
-  it('não duplica /loop explícito e mantém o comando no início do payload', async () => {
-    const { s } = makeSession({ loopEnabled: true })
-    await s.send('/loop verifique o deploy')
-    const content = String(pushedMessages(s)[0]?.message.content)
-    expect(content).toMatch(/^\/loop /)
-    expect(content.match(/\/loop/giu)).toHaveLength(1)
-    expect(content).toContain('verifique o deploy')
-  })
-
-  it.each(['/help', '  /review 123'])('não envolve outro comando slash: %s', async (text) => {
-    const { s } = makeSession({ loopEnabled: true })
-    await s.send(text)
-    const content = String(pushedMessages(s)[0]?.message.content)
-    expect(content).toContain(text)
-    expect(content).not.toContain('/loop')
-  })
-
-  it('não inicia um loop novo para continuação interna de recuperação', async () => {
-    const { s } = makeSession({ loopEnabled: true })
-    await s.send('Retome a solicitação anterior.', undefined, undefined, 'pc', 'recovery')
-    const content = String(pushedMessages(s)[0]?.message.content)
-    expect(content).not.toContain('/loop Retome a solicitação anterior.')
-    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({ behavior: 'deny' })
-  })
-
-  it('bloqueia a skill loop quando o toggle está desligado', async () => {
-    const { s } = makeSession()
+describe('AgentSession — Loop foi removido', () => {
+  it('nega a skill loop, mesmo com Permitir tudo', async () => {
+    const { s, ask } = makeSession({ skipPermissions: true })
     await expect(gate(s, 'Skill', { skill: 'loop' })).resolves.toMatchObject({
       behavior: 'deny',
-      message: expect.stringMatching(/toggle.*Loop/i)
+      message: expect.stringMatching(/Loop foi removido/)
     })
+    expect(ask).not.toHaveBeenCalled()
   })
 
-  it('bloqueia ScheduleWakeup fora de uma skill loop ativa mesmo com toggle ligado', async () => {
-    const { s } = makeSession({ loopEnabled: true })
-    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({
-      behavior: 'deny',
-      message: expect.stringMatching(/skill \/loop/i)
-    })
+  it('nega ScheduleWakeup, mesmo com Permitir tudo', async () => {
+    const { s } = makeSession({ skipPermissions: true })
+    await expect(
+      gate(s, 'ScheduleWakeup', { delaySeconds: 60, reason: 'x', prompt: 'y' })
+    ).resolves.toMatchObject({ behavior: 'deny', message: expect.stringMatching(/Loop foi removido/) })
   })
 
-  it.each(['claude-opus-4-8', 'gpt-6-luna'])(
-    'autoriza wakeup válido no mesmo gate compartilhado (%s)',
-    async (model) => {
-    const { s, ask } = makeSession({ loopEnabled: true, model })
-    void gate(s, 'Skill', { skill: 'loop' })
-    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toEqual({
-      behavior: 'allow',
-      updatedInput: wakeup
-    })
-    expect(ask).not.toHaveBeenCalled() // o toggle Loop já é a autorização explícita
-    }
-  )
-
-  it('rejeita campos inventados pelo GPT', async () => {
-    const { s } = makeSession({ loopEnabled: true, skipPermissions: true })
-    s.setBypass(true)
-    await gate(s, 'Skill', { skill: 'loop' })
-    await expect(gate(s, 'ScheduleWakeup', { ...wakeup, noop: true })).resolves.toMatchObject({
-      behavior: 'deny',
-      message: expect.stringMatching(/noop/)
-    })
-  })
-
-  it('interromper limpa a autorização antes que um wakeup atrasado chegue', async () => {
-    const { s } = makeSession({ loopEnabled: true })
-    await s.send('continue verificando')
-    await s.interrupt()
-    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({ behavior: 'deny' })
-  })
-
-  it('dispose limpa a autorização e nega wakeups atrasados', async () => {
-    const { s } = makeSession({ loopEnabled: true })
-    await s.send('continue verificando')
-    s.dispose()
-    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({ behavior: 'deny' })
-  })
-
-  it('stop:true encerra o loop e bloqueia wakeups posteriores', async () => {
-    const { s } = makeSession({ loopEnabled: true, skipPermissions: true })
-    s.setBypass(true)
-    await gate(s, 'Skill', { skill: 'loop' })
-    await expect(gate(s, 'ScheduleWakeup', { stop: true })).resolves.toEqual({
-      behavior: 'allow',
-      updatedInput: { stop: true }
-    })
-    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({ behavior: 'deny' })
-  })
-
-  it('interrompe no limite configurado antes de criar outro wakeup', async () => {
-    const { s } = makeSession({ loopEnabled: true })
-    Object.assign(s as unknown as Record<string, unknown>, {
-      loopActive: true,
-      loopCycles: DEFAULT_LOOP_LIMIT,
-      loopLimit: DEFAULT_LOOP_LIMIT
-    })
-    await expect(gate(s, 'ScheduleWakeup', wakeup)).resolves.toMatchObject({
-      behavior: 'deny',
-      message: expect.stringMatching(/100 ciclos/)
-    })
-  })
-
-  it('modo econômico vence mesmo se um estado corrompido trouxer loop ligado', async () => {
-    const { s } = makeSession({ loopEnabled: true, economyMode: true, skipPermissions: true })
-    await expect(gate(s, 'Skill', { skill: 'loop' })).resolves.toMatchObject({ behavior: 'deny' })
-  })
-})
-
-describe('AgentSession — skills do modo econômico (caveman + rtk)', () => {
-  for (const skill of ['caveman', 'rtk']) {
-    it(`libera "${skill}" sem modal quando o toggle Econômico está ligado`, async () => {
-      const { s, ask } = makeSession({ economyMode: true })
-      await expect(gate(s, 'Skill', { skill })).resolves.toMatchObject({
-        behavior: 'allow',
-        updatedInput: { skill }
-      })
-      // O toggle é o consentimento: nada pode ir parar no modal de permissão.
-      expect(ask).not.toHaveBeenCalled()
-    })
-
-    it(`nega "${skill}" com o toggle desligado`, async () => {
-      const { s } = makeSession({})
-      await expect(gate(s, 'Skill', { skill })).resolves.toMatchObject({ behavior: 'deny' })
-    })
-  }
-
-  it('modo econômico anexa o lembrete por envio; desligado, não', async () => {
-    const on = makeSession({ economyMode: true })
-    await on.s.start()
-    await on.s.send('rode os testes')
-    const sentOn = String(pushedMessages(on.s).at(-1)?.message.content)
-    expect(sentOn).toContain(ECONOMY_TURN_REMINDER)
-    // O lembrete fica colado ao texto do usuário, depois de todo o contexto.
-    expect(sentOn.indexOf(ECONOMY_TURN_REMINDER)).toBeLessThan(sentOn.indexOf('rode os testes'))
-    expect(sentOn.indexOf(ECONOMY_TURN_REMINDER)).toBeGreaterThan(sentOn.indexOf('[PROJECT_DOCS_CONTEXT]'))
-
-    const off = makeSession({})
-    await off.s.start()
-    await off.s.send('rode os testes')
-    expect(String(pushedMessages(off.s).at(-1)?.message.content)).not.toContain('MODO ECONÔMICO')
-  })
-
-  it('nega mesmo com prefixo de plugin (plugin:rtk)', async () => {
+  it('mensagem que começa com /loop segue como texto normal, sem reescrita', async () => {
     const { s } = makeSession({})
-    await expect(gate(s, 'Skill', { skill: 'plugin:rtk' })).resolves.toMatchObject({ behavior: 'deny' })
-  })
-
-  it('não confunde uma skill de nome parecido', async () => {
-    const { s, ask } = makeSession({ economyMode: true })
-    // "rtk-extra" não é a skill liberada: precisa cair no fluxo normal (modal).
-    void gate(s, 'Skill', { skill: 'rtk-extra' })
-    expect(ask).toHaveBeenCalled()
+    await s.start()
+    await s.send('/loop verifique o deploy')
+    const content = String(pushedMessages(s).at(-1)?.message.content)
+    expect(content.match(/\/loop/giu)).toHaveLength(1)
   })
 })
 
@@ -1216,6 +1043,37 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
     expect((options.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).not.toMatch(/\+fast$/)
   })
 
+  // O CLI sobe com fast "on" e, sem "uso extra" na conta, serve em velocidade
+  // padrão e só diz o motivo no result. O usuário precisa ver isso no chat.
+  describe('aviso quando o modo rápido foi pedido e não valeu', () => {
+    const result = { type: 'result', subtype: 'success', is_error: false, result: 'ok', duration_ms: 1 }
+    const statuses = (emit: ReturnType<typeof vi.fn>): string[] =>
+      emit.mock.calls.map((c) => c[0] as { kind: string; text?: string }).filter((e) => e.kind === 'status').map((e) => e.text ?? '')
+
+    it('conta sem uso extra: um aviso com o motivo, uma vez só', () => {
+      const { s, emit } = makeSession({ model: 'claude-opus-5-5', fastMode: true })
+      handle(s, { ...result, fast_mode_state: 'off', fast_mode_disabled_reason: 'extra_usage_disabled' })
+      handle(s, { ...result, fast_mode_state: 'off', fast_mode_disabled_reason: 'extra_usage_disabled' })
+      expect(statuses(emit)).toHaveLength(1)
+      expect(statuses(emit)[0]).toMatch(/Modo rápido NÃO ativo.*uso extra/)
+    })
+
+    it('modo rápido servido (on): sem aviso', () => {
+      const { s, emit } = makeSession({ model: 'claude-opus-5-5', fastMode: true })
+      handle(s, { ...result, fast_mode_state: 'on' })
+      expect(statuses(emit)).toEqual([])
+    })
+
+    it('flag desligada ou modelo GPT: sem aviso', () => {
+      const off = makeSession({ model: 'claude-opus-5-5', fastMode: false })
+      handle(off.s, { ...result, fast_mode_state: 'off', fast_mode_disabled_reason: 'sdk_opt_in_required' })
+      expect(statuses(off.emit)).toEqual([])
+      const gpt = makeSession({ model: 'gpt-6-sol', fastMode: true })
+      handle(gpt.s, { ...result, fast_mode_state: 'off', fast_mode_disabled_reason: 'extra_usage_disabled' })
+      expect(statuses(gpt.emit)).toEqual([])
+    })
+  })
+
   // A memória do usuário é a pasta do app; a auto-memória do CLI
   // (~/.claude/projects/<cwd>/memory) poria outra pasta no prompt e o modelo
   // gravaria lá. Desligada em toda sessão, de qualquer provedor.
@@ -1318,7 +1176,8 @@ describe('AgentSession — backend de fora não recebe o login guardado', () => 
   it('Claude: NÃO desvia nada (o login guardado é o certo ali)', async () => {
     const { s } = makeSession({ model: 'claude-opus-5' })
     await s.start()
-    expect(optionsOfLastQuery().env).toBeUndefined()
+    // O ambiente do processo, intacto — só com TodoWrite/TaskCreate ligados (todoToolsEnv.ts).
+    expect(optionsOfLastQuery().env).toEqual({ ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: 'true' })
   })
 })
 
@@ -1819,7 +1678,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
   it('não injeta proxy nem limite GPT numa sessão Anthropic', async () => {
     const { s } = makeSession({ model: 'claude-sonnet-5-5' })
     await expect(s.start()).resolves.toBe(true)
-    expect(optionsOfLastQuery().env).toBeUndefined()
+    expect(optionsOfLastQuery().env).toEqual({ ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: 'true' })
     expect(optionsOfLastQuery().maxTurns).toBeUndefined()
     expect(ensureCodexProxyMock).not.toHaveBeenCalled()
   })

@@ -19,7 +19,7 @@ import type { Rig } from './rig'
 import type { RoomLod } from './roomLod'
 import { OfficeScene } from './scene'
 import { fillScreen, SCREEN_ACCENT } from './screens'
-import { createSignTexture, NEUTRAL } from './sign'
+import { createSignTexture, floorInk, NEUTRAL } from './sign'
 
 const ALPHA = 'C:\\proj\\Alpha'
 const colors = (hex: string): { projectColors: OfficeFeed['projectColors'] } => ({ projectColors: { [ALPHA]: { hex, source: 'logo' } } })
@@ -114,7 +114,7 @@ describe('a camisa troca em cena, sem recriar o corpo', () => {
   })
 })
 
-describe('nada em volta do agente pega a cor do projeto', () => {
+describe('nada colado no agente pega a cor do projeto; a placa do chão pega', () => {
   let kit: ReturnType<typeof createKit>
   const owner = { key: 'a', convId: 'c1', role: 'principal', active: false, label: 'a' } as unknown as OfficeCharacterModel
   const screen = (): ScreenView => ({ mesh: new Mesh(), state: 'off', on: null, page: null, accent: '', status: 'idle', lod: { level: 0, culled: false, placed: true } as unknown as RoomLod, zone: 'island0' })
@@ -133,8 +133,8 @@ describe('nada em volta do agente pega a cor do projeto', () => {
     expect(b.accent).toBe(SCREEN_ACCENT)
   })
 
-  it('as placas (chão e mesa) pintam o tom neutro fixo, igual para todo projeto', () => {
-    const drawn = (accentId: string, style: 'floor' | 'desk'): string[] => {
+  it('a plaquinha da mesa fica no tom neutro; a placa do chão leva a cor do projeto (nome escuro do mesmo matiz)', () => {
+    const drawn = (accent: string | null, style: 'floor' | 'desk'): string[] => {
       const out: string[] = []
       const ctx = new Proxy({} as Record<string | symbol, unknown>, {
         get: (t, k) => (k in t ? t[k] : k === 'measureText' ? () => ({ width: 10 }) : k === 'createLinearGradient' ? () => ({ addColorStop: (_: number, c: string) => out.push(c) }) : () => {}),
@@ -145,12 +145,27 @@ describe('nada em volta do agente pega a cor do projeto', () => {
         }
       })
       vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
-      createSignTexture('proj', null, accentId, 1, () => {}, style).dispose()
+      createSignTexture('proj', null, accent, 1, () => {}, style).dispose()
       return out.filter((c) => typeof c === 'string' && !c.startsWith('[object'))
     }
-    expect(drawn('c:/proj/alpha', 'desk')).toEqual(drawn('c:/proj/beta', 'desk'))
-    expect(drawn('c:/proj/alpha', 'desk')).toContain(NEUTRAL.top)
-    expect(drawn('c:/proj/alpha', 'floor')).toEqual(drawn('c:/proj/beta', 'floor'))
-    expect(drawn('c:/proj/alpha', 'floor')).toContain(NEUTRAL.bar)
+    expect(drawn('#3c9add', 'desk')).toEqual(drawn('#dd5fa9', 'desk'))
+    expect(drawn('#3c9add', 'desk')).toContain(NEUTRAL.top)
+    const floor = drawn('#3c9add', 'floor')
+    expect(floor).toContain('#3c9add')
+    expect(floor).toContain(floorInk('#3c9add'))
+    expect(floor).not.toContain(NEUTRAL.bar)
+    expect(drawn('#dd5fa9', 'floor')).toContain('#dd5fa9')
+    // Sem cor: o neutro de antes.
+    expect(drawn(null, 'floor')).toContain(NEUTRAL.bar)
+  })
+
+  it('a tinta do nome mantém o matiz e escurece (lê sobre a placa clara)', () => {
+    const ink = new Color(floorInk('#ddc52c'))
+    const hsl = { h: 0, s: 0, l: 0 }
+    ink.getHSL(hsl)
+    const base = { h: 0, s: 0, l: 0 }
+    new Color('#ddc52c').getHSL(base)
+    expect(Math.abs(hsl.h - base.h)).toBeLessThan(0.02)
+    expect(hsl.l).toBeLessThanOrEqual(0.31)
   })
 })

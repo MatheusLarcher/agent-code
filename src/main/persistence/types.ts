@@ -1,5 +1,5 @@
 import type { SessionStore, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AppConfig, BoardItem, BoardItemEvent, BoardItemStatus } from '../../shared/ipc'
+import type { AppConfig, BoardItem, BoardItemEvent, BoardItemStatus, TurnTimeTotals } from '../../shared/ipc'
 
 export type {
   BoardItem,
@@ -724,6 +724,16 @@ export interface TokenUsageRepository {
   listLlmCalls(convId: string): Promise<LlmCall[]>
   /** Os totais agregados de uma conversa (sobrevivem à poda de `llm_calls`). */
   listLlmUsageTotals(convId: string): Promise<LlmUsageTotal[]>
+  /** Grava a duração de um turno concluído (um registro por `result`). */
+  insertTurnTime(input: TurnTimeInsert): Promise<void>
+  /** Soma e contagem dos turnos gravados de uma conversa. */
+  turnTimeTotals(convId: string): Promise<TurnTimeTotals>
+}
+
+export interface TurnTimeInsert {
+  convId: string
+  turnId: string | null
+  durationMs: number
 }
 
 // ---------------------------------------------------------------------------

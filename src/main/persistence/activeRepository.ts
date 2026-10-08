@@ -113,7 +113,9 @@ export function activeTokenUsage(resolve: RepositoryResolver): TokenUsageReposit
     updateLlmCall: async (id, usage) => onActive(resolve, (repository) => repository.updateLlmCall(id, usage)),
     listLlmCalls: async (conversationId) => onActive(resolve, (repository) => repository.listLlmCalls(conversationId)),
     listLlmUsageTotals: async (conversationId) =>
-      onActive(resolve, (repository) => repository.listLlmUsageTotals(conversationId))
+      onActive(resolve, (repository) => repository.listLlmUsageTotals(conversationId)),
+    insertTurnTime: async (input) => onActive(resolve, (repository) => repository.insertTurnTime(input)),
+    turnTimeTotals: async (conversationId) => onActive(resolve, (repository) => repository.turnTimeTotals(conversationId))
   }
 }
 

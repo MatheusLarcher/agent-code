@@ -10,6 +10,7 @@ import {
 import { StorageError, type ConversationRecord, type KvScope } from './types'
 import { writeDbAtomically } from '../atomicDb'
 import { SQLITE_BOARD_PRINTS_SCHEMA } from './sqliteBoardPrints'
+import { SQLITE_TURN_TIME_SCHEMA } from './sqliteTurnTime'
 
 const LEGACY_CONVERSATIONS_KEY = 'agentcode.conversations.v1'
 const DATA_DIRNAME = 'data'
@@ -650,7 +651,9 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   migration(15, 'sqlite-v2-handoff-tracking', SQLITE_HANDOFF_TRACKING_SCHEMA),
   migration(16, 'sqlite-v2-board-parent', SQLITE_BOARD_PARENT_SCHEMA, ''),
   // Tabela nova com `IF NOT EXISTS` (sqliteBoardPrints.ts): o mesmo SQL no guarda.
-  migration(17, 'sqlite-v2-board-prints', SQLITE_BOARD_PRINTS_SCHEMA)
+  migration(17, 'sqlite-v2-board-prints', SQLITE_BOARD_PRINTS_SCHEMA),
+  // Tabela nova com `IF NOT EXISTS` (sqliteTurnTime.ts): o mesmo SQL no guarda.
+  migration(18, 'sqlite-v2-turn-time', SQLITE_TURN_TIME_SCHEMA)
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

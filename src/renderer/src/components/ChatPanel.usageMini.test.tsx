@@ -69,11 +69,6 @@ function panel(over: Partial<ComponentProps<typeof ChatPanel>> = {}): JSX.Elemen
       effort="high"
       effortLocked={false}
       onEffortChange={() => {}}
-      economyMode={false}
-      onEconomyModeChange={() => {}}
-      loopEnabled={false}
-      loopLocked={false}
-      onLoopEnabledChange={() => {}}
       fastModeAvailable={false}
       fastMode={false}
       onFastModeChange={() => {}}

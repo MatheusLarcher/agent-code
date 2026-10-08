@@ -1,7 +1,7 @@
 /**
- * A cor de cada destino da Central: um "fio" por conversa, igual em toda parte
- * (o aviso de para onde foi, o nome acima da resposta, a bolinha na lateral e o
- * cartão do topo). Módulo puro, sem React.
+ * A cor de reserva de um destino da Central SEM projeto conhecido (a cor normal
+ * é a do projeto — centralRecents.ts `labelFor`): um "fio" por conversa. Módulo
+ * puro, sem React.
  *
  * O laranja do app (`--accent`, #d97757, matiz ≈15°) é EXCLUSIVO da Central:
  * nenhuma cor daqui chega a 30° dele, senão o destino pareceria a própria Central.

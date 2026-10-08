@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CentralEntry, CentralReplyEntry, CentralRequestEntry } from '@shared/central'
+import { SANDBOX_PROJECT_COLOR } from '@shared/projectColor'
+import { projectColorHex } from '../office/adapter/model'
 import type { Conversation } from '../types'
 import { centralColor } from './centralColor'
 import {
@@ -152,10 +154,16 @@ describe('sameTarget / routeText', () => {
 describe('labelFor', () => {
   it('projeto, título, cor e ícone (sandbox sem ícone); fora da tela, o último destino gravado', () => {
     const icons = { 'C:\\proj\\alpha': 'data:image/png;base64,AAA' }
-    expect(labelFor('a1', convs, [], icons, ROOT)).toEqual({ project: 'alpha', title: 'Filtros', color: centralColor('a1'), icon: icons['C:\\proj\\alpha'], sandbox: false })
-    expect(labelFor('s1', convs, [], icons, ROOT)).toMatchObject({ project: 'sandbox', icon: null, sandbox: true })
+    expect(labelFor('a1', convs, [], icons, ROOT)).toEqual({ project: 'alpha', title: 'Filtros', color: projectColorHex(null, 'C:\\proj\\alpha'), icon: icons['C:\\proj\\alpha'], sandbox: false })
+    expect(labelFor('s1', convs, [], icons, ROOT)).toMatchObject({ project: 'sandbox', icon: null, sandbox: true, color: SANDBOX_PROJECT_COLOR.hex })
     const gone = sent('zz', 'oi', { route: { target: { kind: 'conversation', convId: 'zz', cwd: 'C:\\proj\\gama', project: 'gama', title: 'Antiga', sandbox: false }, why: '' } })
-    expect(labelFor('zz', convs, [gone], icons, ROOT)).toEqual({ project: 'gama', title: 'Antiga', color: centralColor('zz'), icon: null, sandbox: false })
-    expect(labelFor('nada', convs, [], icons, ROOT)).toMatchObject({ project: '', title: 'conversa', sandbox: false })
+    expect(labelFor('zz', convs, [gone], icons, ROOT)).toEqual({ project: 'gama', title: 'Antiga', color: projectColorHex(null, 'C:\\proj\\gama'), icon: null, sandbox: false })
+    expect(labelFor('nada', convs, [], icons, ROOT)).toMatchObject({ project: '', title: 'conversa', sandbox: false, color: centralColor('nada') })
+  })
+
+  it('a cor é a do PROJETO: a fixa quando já resolvida; duas conversas do mesmo projeto, a mesma cor', () => {
+    const colors = { 'C:\\proj\\alpha': { hex: '#3c9add', source: 'logo' as const } }
+    expect(labelFor('a1', convs, [], {}, ROOT, colors).color).toBe('#3c9add')
+    expect(labelFor('a2', convs, [], {}, ROOT, colors).color).toBe(labelFor('a1', convs, [], {}, ROOT, colors).color)
   })
 })

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { access, copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 import {
@@ -74,6 +75,18 @@ async function findNodeBin(rootDir: string): Promise<string | null> {
     if (c && (await hasNpm(c))) return c
   }
   return null
+}
+
+/**
+ * Where the smartfone-remote project lives. In dev it is the sibling of out/;
+ * the installed app (resources/app) does not carry it — the APK build needs the
+ * whole repo (npm, src/phone, Gradle) — so the next candidate is the repo the
+ * installer was built from. First candidate with a package.json wins; none →
+ * the first, so the build error names the expected path.
+ */
+export function resolveRemoteRoot(candidates: ReadonlyArray<string | undefined>): string {
+  const list = candidates.filter((c): c is string => Boolean(c))
+  return list.find((c) => existsSync(join(c, 'package.json'))) ?? list[0]
 }
 
 /** Spawn a command, streaming trimmed output lines. `shell` resolves npm/npx
@@ -373,6 +386,15 @@ export interface BuildResult {
  * @param onLine  progress sink (each toolchain/npm/gradle line).
  */
 export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise<BuildResult> {
+  // Without the project every spawn below fails with a misleading
+  // "spawn cmd.exe ENOENT" (that is what Windows reports for a missing cwd).
+  if (!(await exists(join(rootDir, 'package.json')))) {
+    return {
+      ok: false,
+      message: `Projeto do app do celular não encontrado em ${rootDir}. O APK é gerado a partir do código-fonte do Agent Code — rode o build nesta máquina a partir do repositório.`
+    }
+  }
+
   // 1) Toolchain (JDK + Android SDK). Reuses the cached install if present.
   onLine('Verificando toolchain Android…')
   let d = await detect()

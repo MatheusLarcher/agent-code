@@ -153,8 +153,10 @@ import {
   type TaskStepFinish,
   type TaskTransition,
   type TaskBoardLinkWrite,
+  type TurnTimeInsert,
   type VersionedKv
 } from './types'
+import type { TurnTimeTotals } from '../../shared/ipc'
 
 const TASK_COLUMNS = `id, conversation_id, project_cwd, title, goal, acceptance_json, status, owner_agent,
   write_scope_json, parent_task_id, attempts, max_attempts, lease_token, lease_expires_at, fencing_epoch,
@@ -1571,6 +1573,31 @@ export class PostgresRepository implements PersistenceRepository {
       [convId]
     )
     return result.rows.map(llmUsageTotalFromRow)
+  }
+
+  async insertTurnTime(input: TurnTimeInsert): Promise<void> {
+    this.assertInitialized()
+    await this.pool.query(
+      `INSERT INTO conversation_turn_time(id, conv_id, turn_id, duration_ms, created_at) VALUES($1, $2, $3, $4, $5)`,
+      [randomUUID(), input.convId, input.turnId, Math.max(0, Math.round(input.durationMs)), new Date().toISOString()]
+    )
+  }
+
+  async turnTimeTotals(convId: string): Promise<TurnTimeTotals> {
+    this.assertInitialized()
+    const sum = await this.pool.query<{ total: string | number; turns: string | number }>(
+      `SELECT COALESCE(SUM(duration_ms), 0) AS total, COUNT(*) AS turns FROM conversation_turn_time WHERE conv_id = $1`,
+      [convId]
+    )
+    const last = await this.pool.query<{ duration_ms: string | number }>(
+      `SELECT duration_ms FROM conversation_turn_time WHERE conv_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [convId]
+    )
+    return {
+      totalMs: Number(sum.rows[0]?.total ?? 0),
+      turns: Number(sum.rows[0]?.turns ?? 0),
+      lastMs: last.rows[0] ? Number(last.rows[0].duration_ms) : null
+    }
   }
 
   // Histórico do contexto: SQL em postgresContextHistory.ts.

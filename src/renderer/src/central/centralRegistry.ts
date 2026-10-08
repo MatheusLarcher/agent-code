@@ -25,8 +25,6 @@ export function centralConversationFields(): Partial<Conversation> {
     titleSource: 'user',
     mode: 'central',
     central: { entries: [] },
-    economyMode: false,
-    loopEnabled: false,
     fastMode: false
   }
 }

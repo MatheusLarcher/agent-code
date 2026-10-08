@@ -43,7 +43,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('fillScreen: a tela troca no máximo a cada 5 s, sem redesenho à toa', () => {
+describe('fillScreen: a tela troca no máximo a cada 2 s, sem redesenho à toa', () => {
   const kit = createKit(1)
   const bash = [user(), tool('Bash', { command: 'npm test' }, 'ok')]
   const read = [...bash, tool('Read', { file_path: 'C:\\p\\a.ts' }, '1→x')]
@@ -62,17 +62,17 @@ describe('fillScreen: a tela troca no máximo a cada 5 s, sem redesenho à toa',
     fillScreen(s, kit, me, 'p', feedOf(bash), null, false, true, false, dirty)
     expect(repainted()).toBe(0)
 
-    // Ações novas dentro dos 5 s: a tela segura a anterior.
-    vi.advanceTimersByTime(1000)
+    // Ações novas dentro dos 2 s: a tela segura a anterior.
+    vi.advanceTimersByTime(500)
     fillScreen(s, kit, me, 'p', feedOf(read), null, false, true, false, dirty)
-    vi.advanceTimersByTime(1000)
+    vi.advanceTimersByTime(500)
     fillScreen(s, kit, me, 'p', feedOf(grep), null, false, true, false, dirty)
     expect(s.page?.code?.action?.kind).toBe('terminal')
     expect(repainted()).toBe(0)
     expect(dirty).not.toHaveBeenCalled()
 
     // Venceu o intervalo: só a última (a busca) aparece, num redesenho só.
-    vi.advanceTimersByTime(MONITOR_SWAP_MS - 2000)
+    vi.advanceTimersByTime(MONITOR_SWAP_MS - 1000)
     expect(s.page?.code?.action?.kind).toBe('search')
     expect(repainted()).toBe(1)
     expect(draw).toHaveBeenLastCalledWith(s.page, s.accent)

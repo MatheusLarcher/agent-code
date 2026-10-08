@@ -57,8 +57,8 @@ describe('ensurePostgresBoardParent', () => {
     warn.mockRestore()
   })
 
-  it('não é migração numerada: o número de versão do schema não muda', () => {
-    expect(POSTGRES_MIGRATIONS.at(-1)?.version).toBe(17)
+  it('não é migração numerada: nenhuma migração numerada é de parent_id', () => {
+    expect(POSTGRES_MIGRATIONS.at(-1)?.version).toBe(18)
     expect(POSTGRES_MIGRATIONS.some((entry) => /parent_id/.test(entry.sql))).toBe(false)
   })
 })

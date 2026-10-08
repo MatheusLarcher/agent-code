@@ -29,7 +29,8 @@
  */
 import { Raycaster, Vector2, type PerspectiveCamera } from 'three'
 import type { OfficeFeed } from '../../office/adapter/feed'
-import { principalKey, roomIdFor } from '../../office/adapter/model'
+import { isCentralConversation } from '@shared/central'
+import { principalKey, projectColorHex, roomIdFor } from '../../office/adapter/model'
 import { seedCss } from '../appearance'
 import { BOARD_KEY, type EngineCallbacks, type Listen } from '../engineTypes'
 import type { Office3DLayout } from '../layout'
@@ -149,7 +150,7 @@ export class EngineBoard {
     this.tray.setDemo(on)
   }
 
-  /** Cor (CSS) da camisa do agente da conversa: o alfinete do papel. */
+  /** Cor (CSS) da camisa do agente da conversa — a cor do projeto dela: o alfinete do papel. Fora do feed, a seed. */
   private readonly pinOf = (convId: string): string => {
     let c = this.pins.get(convId)
     if (!c) this.pins.set(convId, (c = seedCss(principalKey(convId))))
@@ -159,10 +160,12 @@ export class EngineBoard {
   /** Projetos do escritório → Quadro (cwd) e ritmo; títulos das conversas (dica e janela do cartão); abas e o projeto da parede. */
   feed(feed: OfficeFeed, layout: Office3DLayout): void {
     this.titles.clear()
+    this.pins.clear()
     const rooms = new Map<string, BoardRoomInput>()
     for (const p of layout.projects) rooms.set(p.id, { id: p.id, cwd: '', busy: false })
     for (const c of feed.conversations) {
       this.titles.set(c.id, c.title)
+      if (c.cwd && !isCentralConversation(c)) this.pins.set(c.id, projectColorHex(feed, c.cwd))
       const r = rooms.get(roomIdFor(c.cwd))
       if (!r) continue
       if (!r.cwd) r.cwd = c.cwd
@@ -171,7 +174,7 @@ export class EngineBoard {
     this.rooms = [...rooms.values()].filter((r) => r.cwd !== '')
     this.board.setRooms(this.rooms)
     const info = new Map(layout.projects.map((p) => [p.id, p]))
-    this.scene.boards.setTabs(this.rooms.map((r) => ({ id: r.id, name: info.get(r.id)?.name ?? r.id, icon: info.get(r.id)?.icon ?? null })))
+    this.scene.boards.setTabs(this.rooms.map((r) => ({ id: r.id, name: info.get(r.id)?.name ?? r.id, icon: info.get(r.id)?.icon ?? null, color: info.get(r.id)?.color ?? projectColorHex(feed, r.id) })))
     const active = feed.conversations.find((c) => c.id === feed.activeId)
     this.choice.setActive(feed.activeId, active?.cwd ? roomIdFor(active.cwd) : null)
     this.wall()

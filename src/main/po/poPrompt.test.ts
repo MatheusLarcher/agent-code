@@ -141,6 +141,14 @@ describe('pergunta no fim da resposta — bloqueia o pedido ou propõe um passo 
     // Tipo c): entregue no essencial com pendências → CONCLUIR o pedido + uma NOVA por pendência,
     // em vez de deixar o cartão inteiro "a fazer" (caso real: fase 1 do escritório).
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('O pedido foi ENTREGUE no essencial')
+    // Aprovar é o normal: "falta testar em cenário real" não reprova o pedido feito —
+    // conclui e abre um cartão "Testar <o que> em <cenário X>".
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('REPROVAR É A EXCEÇÃO, APROVAR É O NORMAL')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toMatch(/falta testar em cenário real[\s\S]*NÃO é motivo para PENDENTE/)
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('"Testar <o que> em <cenário X>"')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain(
+      `NOVA <id do cartão do desconto> | Testar o desconto numa nota de filial | ${PO_AWAITING_AUTHORIZATION_REASON}`
+    )
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('uma NOVA <id do cartão do\n     pedido> para CADA pendência')
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain(
       `NOVA <id do cartão da fase 1> | Commitar a fase 1 do escritório | ${PO_AWAITING_AUTHORIZATION_REASON}`

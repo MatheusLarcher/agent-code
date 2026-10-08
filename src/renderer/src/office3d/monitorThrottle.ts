@@ -14,7 +14,7 @@
  */
 
 /** No máximo uma troca de conteúdo do monitor a cada isto. */
-export const MONITOR_SWAP_MS = 5000
+export const MONITOR_SWAP_MS = 2000
 
 export interface SwapThrottle<T> {
   offer(value: T, sig: string): T

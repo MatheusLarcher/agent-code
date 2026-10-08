@@ -28,7 +28,7 @@ import type { OfficeFeed } from '../../office/adapter/feed'
 import { roomName, type OfficeCharacterModel } from '../../office/adapter/model'
 import type { UIMessage } from '../../types'
 import { freshHtmlWrite, scanHtmlWrites } from '../agentHtml'
-import { seedCss } from '../appearance'
+import { agentCss } from '../projectColor'
 import { lookupOf, trackMessages, trackOf, turnHead } from '../chatPage'
 import { chatContent, type ChatContent } from '../ChatScreen'
 import { ChatDock, MonitorChat, NARROW_W, useWidth } from './ChatDock'
@@ -293,7 +293,9 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
     [setApp, pages.onSelect]
   )
 
-  const agent = useMemo(() => seedCss(model.seed), [model.seed])
+  // A cor do agente (a da camisa): a do projeto dele; sem projeto (a Central), a da seed.
+  const agentColors = feed?.projectColors
+  const agent = useMemo(() => agentCss({ projectColors: agentColors }, model.roomId, model.seed), [agentColors, model.roomId, model.seed])
   const { ink, shade } = agentInk(agent)
   const chat = app === 'code' ? chatContent(feed, model, code.live.latest) : NO_CHAT
   const kind = app === 'ctx' ? 'context' : code.items.length > 0 || code.terminal.length > 0 ? 'code' : 'empty'
@@ -380,7 +382,7 @@ function Monitor({ feed, model, onClose, initialMode = 'code', composer, battery
           chat={
             <MonitorChat
               head={head}
-              seed={model.seed}
+              color={agent}
               content={chat}
               who={[agentName, modelDisplayName(agentModel)].filter(Boolean).join(' · ')}
               state={needsYou ? 'you' : head.busy ? 'busy' : 'idle'}

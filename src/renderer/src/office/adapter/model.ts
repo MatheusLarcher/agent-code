@@ -8,6 +8,7 @@
  */
 import { isCentralConversation } from '@shared/central'
 import { contextLimitFor, type MemoristaProviderDiagnosticMsg } from '@shared/ipc'
+import { isProjectColor, reserveProjectColor, SANDBOX_PROJECT_COLOR, type ProjectColorMap } from '@shared/projectColor'
 import type { AgentTrack } from '../../agentTracks'
 import { hasAgentBackground } from '../../backgroundHold'
 import { buildCrew, callSegments, lineText, roleFromSubagentType, type CrewMember, type CrewRole } from '../../crew'
@@ -62,6 +63,8 @@ export interface OfficeRoomModel {
   projectKey: string
   name: string
   icon: string | null
+  /** A cor fixa do projeto (projectColorHex); ausente = a reserva. */
+  color?: string
   principals: number
 }
 
@@ -92,6 +95,33 @@ export function roomIdFor(cwd: string): string {
   if (id.length > 1) id = id.replace(/\/$/, '')
   const windows = /^[a-zA-Z]:/.test(cwd) || cwd.includes('\\')
   return windows ? id.toLowerCase() : id
+}
+
+/** O que a cor do projeto lê do feed (o OfficeFeed inteiro serve; null = sem feed ainda). */
+export type ProjectColorFeed = { readonly projectColors?: Readonly<ProjectColorMap> } | null | undefined
+
+/** Por mapa do feed: id da sala → hex (só as cores válidas). */
+const byRoom = new WeakMap<object, Map<string, string>>()
+
+function roomColors(colors: Readonly<ProjectColorMap>): Map<string, string> {
+  let m = byRoom.get(colors)
+  if (m) return m
+  m = new Map()
+  for (const [cwd, c] of Object.entries(colors)) if (cwd && isProjectColor(c)) m.set(roomIdFor(cwd), c.hex)
+  byRoom.set(colors, m)
+  return m
+}
+
+/**
+ * A cor do projeto (`#rrggbb`) pelo id da sala ou pelo cwd (os dois servem: o
+ * id é o cwd normalizado): a detectada e fixa no PC (`feed.projectColors`),
+ * senão a reserva do projeto. O Sandbox é uma cor só.
+ */
+export function projectColorHex(feed: ProjectColorFeed, project: string): string {
+  const id = roomIdFor(project)
+  if (id === SANDBOX_ROOM_ID) return SANDBOX_PROJECT_COLOR.hex
+  const colors = feed?.projectColors
+  return (colors && roomColors(colors).get(id)) || reserveProjectColor(id)
 }
 
 /** Chave do principal da conversa na cena — também a seed da aparência dele (a camisa). */
@@ -259,7 +289,7 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: Re
     const id = roomIdFor(c.cwd)
     let acc = rooms.get(id)
     if (!acc) {
-      acc = { room: { id, projectKey: c.cwd, name: roomName(c.cwd), icon: feed.projectIcons[c.cwd] ?? null, principals: 0 }, convs: [] }
+      acc = { room: { id, projectKey: c.cwd, name: roomName(c.cwd), icon: feed.projectIcons[c.cwd] ?? null, color: projectColorHex(feed, c.cwd), principals: 0 }, convs: [] }
       rooms.set(id, acc)
     }
     acc.room.principals++

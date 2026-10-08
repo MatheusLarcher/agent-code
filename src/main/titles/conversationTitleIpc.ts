@@ -17,7 +17,7 @@ export type TitleIpcListener = (event: unknown, ...args: unknown[]) => unknown
 export interface ConversationTitleIpcDeps {
   /** Mesmo formato de ipcMain.handle. */
   handle: (channel: string, listener: TitleIpcListener) => void
-  /** Para o teste; padrão: suggestConversationTitle (claude-haiku-4-5). */
+  /** Para o teste; padrão: suggestConversationTitle (claude-haiku-5-5). */
   suggest?: (text: string, convId?: string) => Promise<string | null>
 }
 

@@ -29,6 +29,7 @@ function setup(over: Partial<UsageMiniBarProps> = {}, history: TokenUsageHistory
     model: MODEL,
     runningSince: null,
     lastDurationMs: 62_000,
+    timeTotals: null,
     open: false,
     onToggle,
     ...over
@@ -86,7 +87,7 @@ describe('UsageMiniBar — a barra fatiada', () => {
     expect(slices(root).map((s) => [s.className.replace('um-slice ', ''), s.style.flexGrow])).toEqual([['um-input', '100'], ['um-output', '50']])
     cleanup()
     delete (window as unknown as { api?: unknown }).api
-    render(<UsageMiniBar {...({ convId: 'c1', tokens: { context: 0, output: 0, cost: 0 }, usageMap, model: MODEL, runningSince: null, lastDurationMs: null, open: false, onToggle: () => {} } as UsageMiniBarProps)} />)
+    render(<UsageMiniBar {...({ convId: 'c1', tokens: { context: 0, output: 0, cost: 0 }, usageMap, model: MODEL, runningSince: null, lastDurationMs: null, timeTotals: null, open: false, onToggle: () => {} } as UsageMiniBarProps)} />)
     expect([...document.querySelectorAll('.um-slice')]).toHaveLength(2)
   })
 
@@ -147,7 +148,7 @@ describe('UsageMiniBar — o cartão ao passar o mouse', () => {
     // Um ouvinte acima, como o do palco: o Esc do cartão não pode chegar nele.
     render(
       <div onKeyDown={outer}>
-        <UsageMiniBar convId="c1" tokens={{ context: 1, output: 1, cost: 0 }} usageMap={emptyUsageMap} model={MODEL} runningSince={null} lastDurationMs={null} open={false} onToggle={() => {}} />
+        <UsageMiniBar convId="c1" tokens={{ context: 1, output: 1, cost: 0 }} usageMap={emptyUsageMap} model={MODEL} runningSince={null} lastDurationMs={null} timeTotals={null} open={false} onToggle={() => {}} />
       </div>
     )
     const btn = screen.getByRole('button')

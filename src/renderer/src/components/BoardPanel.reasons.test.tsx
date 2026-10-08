@@ -90,10 +90,13 @@ describe('BoardPanel — motivos do PO', () => {
     })
     render(panel())
 
-    expect((await screen.findByText('PO corrigiu')).getAttribute('title')).toBe('Motivo: o teste passou')
-    expect(screen.getByText('PO reescreveu').getAttribute('title')).toBe('Motivo: título técnico demais')
-    expect(screen.getByText('PO revisou').getAttribute('title')).toBe('Motivo: confirmado')
-    expect(screen.getByText('PO acrescentou').getAttribute('title')).toBe('Motivo: o agente disse que falta')
+    // Selo em ícone: o fato e o motivo no tooltip (data-tip, HoverTip) e no aria-label.
+    const tip = (label: string): string | null => screen.getByLabelText(new RegExp(`^${label}`)).getAttribute('data-tip')
+    await screen.findByLabelText(/^PO corrigiu/)
+    expect(tip('PO corrigiu')).toBe('PO corrigiu\nMotivo: o teste passou')
+    expect(tip('PO reescreveu')).toBe('PO reescreveu\nMotivo: título técnico demais')
+    expect(tip('PO revisou')).toBe('PO revisou\nMotivo: confirmado')
+    expect(tip('PO acrescentou')).toBe('PO acrescentou\nMotivo: o agente disse que falta')
   })
 
   it('o detalhe mostra o motivo atual e a linha do tempo mostra "Sistema" e cada justificativa', async () => {

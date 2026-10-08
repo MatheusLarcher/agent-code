@@ -54,7 +54,7 @@ export interface McpInboundDeps<Q extends McpQueueItem> {
  *  das tarefas MCP quando o chamador não escolheu). Quem manda na sessão é o
  *  main; aqui é só o que o seletor mostra. */
 export function mcpConversationFields(title: string, model: string = MCP_TASK_MODEL): Partial<Conversation> {
-  return { title, titleSource: 'user', model, economyMode: false, loopEnabled: false, fastMode: false }
+  return { title, titleSource: 'user', model, fastMode: false }
 }
 
 /** Avisa o main de cada tarefa MCP entre `items` que saiu da fila sem rodar. */

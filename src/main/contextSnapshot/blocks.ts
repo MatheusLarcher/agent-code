@@ -33,13 +33,11 @@ const PROMPT_LABELS: Partial<Record<ContextBlockKind, string>> = {
   'skills-catalog': 'Catálogo de skills',
   projects: 'Projetos desta máquina',
   others: 'Outras conversas',
-  reminder: 'Lembrete do modo econômico',
+  reminder: 'Lembrete (modo removido)',
   'cancel-note': 'Nota de cancelamento',
-  loop: 'Modo loop',
+  loop: 'Modo loop (removido)',
   'user-request': 'Pedido do usuário'
 }
-
-const LOOP_PREFIX = /^\s*\/loop(?:\s+|$)/iu
 
 /**
  * Decompõe `composeUserPrompt(body, parts)` em blocos, na mesma ordem e pelas
@@ -47,19 +45,13 @@ const LOOP_PREFIX = /^\s*\/loop(?:\s+|$)/iu
  */
 export function promptBlocks(body: string, parts: PromptContext, cancelNote?: string): RawBlock[] {
   const blocks: RawBlock[] = []
-  const loop = body.match(LOOP_PREFIX)
-  let task = body
-  if (loop) {
-    blocks.push({ kind: 'loop', label: PROMPT_LABELS.loop!, text: '/loop' })
-    task = body.slice(loop[0].length)
-  }
+  const task = body
   const context: Array<[ContextBlockKind, string | undefined]> = [
     ['stamp', parts.stamp],
     ['memory-catalog', parts.memory],
     ['skills-catalog', parts.skills],
     ['projects', parts.projects],
-    ['others', parts.others],
-    ['reminder', parts.reminder]
+    ['others', parts.others]
   ]
   for (const [kind, text] of context) {
     if (text) blocks.push({ kind, label: PROMPT_LABELS[kind]!, text })
@@ -82,9 +74,7 @@ const PROMPT_KINDS = new Set<ContextBlockKind>([
 /** O texto da mensagem a partir dos blocos (inverso de `promptBlocks`). */
 export function composeFromPromptBlocks(blocks: ReadonlyArray<Pick<RawBlock, 'kind' | 'text'>>): string {
   const own = blocks.filter((block) => PROMPT_KINDS.has(block.kind))
-  const loop = own[0]?.kind === 'loop' ? own[0] : null
-  const joined = (loop ? own.slice(1) : own).map((block) => block.text).join('\n\n')
-  return loop ? `${loop.text} ${joined}` : joined
+  return own.map((block) => block.text).join('\n\n')
 }
 
 export function imagesBlock(count: number, visionFallback: boolean): RawBlock | null {

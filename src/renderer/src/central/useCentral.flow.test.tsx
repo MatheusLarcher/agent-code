@@ -3,7 +3,7 @@ import { act, cleanup, waitFor } from '@testing-library/react'
 import type { ImageAttachment, PermissionRequest } from '@shared/ipc'
 import { CENTRAL_ID, type CentralReplyEntry, type CentralRequestEntry, type CentralRouteResult, type CentralTarget } from '@shared/central'
 import type { UIMessage } from '../types'
-import { centralColor } from './centralColor'
+import { projectColorHex } from '../office/adapter/model'
 import { DISCARDED_MESSAGE, OTHER_DEVICE_MESSAGE } from './centralDelivery'
 import { MIRROR_THROTTLE_MS } from './useCentral'
 import { SELF, centralConv, conv, mountCentral } from './centralHookKit'
@@ -334,7 +334,7 @@ describe('abrir, trilho e cartões do turno', () => {
     const k = mountCentral([centralConv([delivered('r1', 'a1', 'u1')]), conv('a1', 'C:\\proj\\alpha', 'Filtros', { messages: msgs }), conv('b1', 'C:\\proj\\beta', 'Relatório')])
     await k.run(() => k.world().setBusy('a1', true))
     await k.run(() => k.world().setBusy('b1', true))
-    expect(k.world().central.rail).toEqual([{ convId: 'a1', project: 'alpha', title: 'Filtros', color: centralColor('a1'), icon: null, sandbox: false }])
+    expect(k.world().central.rail).toEqual([{ convId: 'a1', project: 'alpha', title: 'Filtros', color: projectColorHex(null, 'C:\\proj\\alpha'), icon: null, sandbox: false }])
     expect(k.world().central.turnTools({ convId: 'a1', msgId: 'u1' }).map((m) => ('id' in m ? m.id : ''))).toEqual(['k1'])
     expect(k.world().central.turnTools({ convId: 'fora', msgId: 'u1' })).toEqual([])
   })

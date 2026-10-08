@@ -14,6 +14,8 @@ import {
   type CentralRequestEntry,
   type CentralTarget
 } from '@shared/central'
+import { SANDBOX_PROJECT_COLOR, type ProjectColorMap } from '@shared/projectColor'
+import { projectColorHex } from '../office/adapter/model'
 import type { Conversation } from '../types'
 import { isSandboxCwd } from '../sandbox/sandboxFlow'
 import { centralColor } from './centralColor'
@@ -140,18 +142,23 @@ function storedTarget(entries: readonly CentralEntry[], convId: string): Convers
   return undefined
 }
 
-/** Projeto · conversa · cor · ícone (o mesmo da barra lateral; sandbox sem ícone). */
+/**
+ * Projeto · conversa · cor · ícone (o mesmo da barra lateral; sandbox sem ícone).
+ * A cor é a do PROJETO (a fixa, `projectColors` por cwd, senão a reserva dele —
+ * a mesma da camisa no escritório); sem projeto conhecido, a da conversa.
+ */
 export function labelFor(
   convId: string,
   convs: ReadonlyMap<string, Conversation>,
   entries: readonly CentralEntry[],
   projectIcons: Readonly<Record<string, string | null>>,
-  sandboxRoot: string
+  sandboxRoot: string,
+  projectColors?: Readonly<ProjectColorMap>
 ): CentralLabel {
   const conv = convs.get(convId)
   const t = conv ? conversationTarget(conv, sandboxRoot) : storedTarget(entries, convId)
-  const color = centralColor(convId)
-  if (!t) return { project: '', title: 'conversa', color, icon: null, sandbox: false }
+  if (!t) return { project: '', title: 'conversa', color: centralColor(convId), icon: null, sandbox: false }
+  const color = t.sandbox ? SANDBOX_PROJECT_COLOR.hex : t.cwd ? projectColorHex({ projectColors }, t.cwd) : centralColor(convId)
   return {
     project: t.project,
     title: t.title,

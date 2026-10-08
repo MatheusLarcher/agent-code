@@ -106,6 +106,7 @@ import type {
   TaskBoard,
   TaskBoardDetail,
   TokenUsageHistory,
+  TurnTimeTotals,
   OpenedPlanningDto,
   PlanningCardDto,
   PlanningChangedMsg,
@@ -424,6 +425,7 @@ const api: AgentCodeApi = {
   refreshUsage: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentRefreshUsage, convId),
   getTokenUsageHistory: (convId: string): Promise<TokenUsageHistory> =>
     ipcRenderer.invoke(Channels.tokenUsageHistory, convId),
+  getTurnTimeTotals: (convId: string): Promise<TurnTimeTotals> => ipcRenderer.invoke(Channels.turnTimeTotals, convId),
   listContextTurns: (convId: string): Promise<ContextTurnSummary[]> => ipcRenderer.invoke(Channels.contextTurnsList, convId),
   readContextTurn: (convId: string, turnId: string, parentToolUseId?: string): Promise<ContextTurnDetail | null> =>
     ipcRenderer.invoke(Channels.contextTurnsRead, convId, turnId, parentToolUseId),

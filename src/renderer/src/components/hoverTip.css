@@ -1,0 +1,78 @@
+/* O tooltip do app (HoverTip.tsx): balão escuro de vidro, seta para o elemento,
+   entrada curta (fade + 4px). Vale para o PC e para o celular. */
+.hover-tip {
+  position: fixed;
+  z-index: 2147483000;
+  max-width: min(320px, calc(100vw - 12px));
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: rgba(24, 23, 21, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    0 10px 28px -10px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #f1ece4;
+  font: 500 12px/1.4 var(--font, 'Segoe UI', system-ui, sans-serif);
+  letter-spacing: 0.1px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+  transform-origin: var(--tip-arrow, 50%) 100%;
+}
+.hover-tip.below {
+  transform: translateY(-4px) scale(0.98);
+  transform-origin: var(--tip-arrow, 50%) 0;
+}
+/* Animação (não transição): o balão já nasce medido e posicionado no mesmo quadro. */
+.hover-tip.on {
+  opacity: 1;
+  transform: none;
+  animation: hover-tip-in 0.14s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.hover-tip.on.below {
+  animation-name: hover-tip-in-below;
+}
+@keyframes hover-tip-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+}
+@keyframes hover-tip-in-below {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+/* A seta: um losango com a mesma borda, metade para fora. */
+.hover-tip::after {
+  content: '';
+  position: absolute;
+  left: var(--tip-arrow, 50%);
+  bottom: -5px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: inherit;
+  border-right: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  transform: rotate(45deg);
+}
+.hover-tip.below::after {
+  top: -5px;
+  bottom: auto;
+  transform: rotate(225deg);
+}
+.hover-tip.touch {
+  font-size: 13px;
+  padding: 8px 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hover-tip.on {
+    animation: none;
+  }
+}

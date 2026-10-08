@@ -554,9 +554,6 @@ function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
 function hydrateStoredConversation(conversation: Conversation): Conversation {
   return {
     ...conversation,
-    // Corrupt/legacy state must never resurrect both mutually-exclusive
-    // modes. Economy wins because it is the stricter execution mode.
-    loopEnabled: conversation.economyMode === true ? false : conversation.loopEnabled === true,
     backgroundTasks: [],
     queuedAfterInterrupt: undefined,
     // A turn interrupted by the app closing never delivers its result/error
@@ -1425,7 +1422,7 @@ export function App(): JSX.Element {
           setBusySince((m) => withoutKey(m, cid))
           return
         }
-        // A session-bound setting (model, effort, Loop or Econômico) changed
+        // A session-bound setting (model, effort or Rápido) changed
         // while busy — apply it now, at the handoff, by restarting the live
         // session (same resume id, so history carries over) before the next
         // message goes out.
@@ -2138,8 +2135,6 @@ export function App(): JSX.Element {
             : undefined,
           model: c.model,
           effort: c.effort ?? DEFAULT_EFFORT,
-          economyMode: c.economyMode === true,
-          loopEnabled: c.loopEnabled === true,
           fastMode: c.fastMode === true,
           fastModeAvailable: modelSupportsFastMode(c.model),
           todoPlan: c.todoPlan,
@@ -2224,18 +2219,12 @@ export function App(): JSX.Element {
     // O esforço vem da MESMA conversa de onde veio o modelo: com os dois
     // Automáticos independentes, misturar as origens mudaria o que o par quer dizer.
     const effortSource = sameFolder?.model ? sameFolder : active
-    const inheritedEconomy = sameFolder?.economyMode ?? active?.economyMode ?? false
-    const inheritedLoop = inheritedEconomy
-      ? false
-      : (sameFolder?.loopEnabled ?? active?.loopEnabled ?? false)
     const conv: Conversation = {
       id: id ?? uid('c'),
       title: DEFAULT_TITLE,
       cwd: folder,
       model,
       effort: effortSource?.effort || (isAutoModel(model) ? AUTO_EFFORT : DEFAULT_EFFORT),
-      economyMode: inheritedEconomy,
-      loopEnabled: inheritedLoop,
       // Fast mode is inherited like the other per-conversation settings, but only
       // when the inherited model can actually run it.
       fastMode:
@@ -2504,8 +2493,6 @@ export function App(): JSX.Element {
           skipPermissions: skipPermsRef.current,
           resume: conv.sdkSessionId ?? undefined,
           effort: conv.effort,
-          economyMode: conv.economyMode === true,
-          loopEnabled: conv.loopEnabled === true,
           fastMode: conv.fastMode === true,
           // Conta Claude gravada com a conversa; o main confirma ou escolhe.
           ...(conv.claudeAccountId ? { claudeAccountId: conv.claudeAccountId } : {}),
@@ -2717,56 +2704,8 @@ export function App(): JSX.Element {
     [notify]
   )
 
-  // "Modo econômico" toggle — per-conversation, same restart-on-idle logic as the
-  // model/effort pickers. When on, the session receives instructions to skip
-  // validation for trivial tasks (scoped to THIS conversation only).
-  const changeEconomyMode = useCallback(
-    (id: string, on: boolean): void => {
-      const current = convsRef.current.find((c) => c.id === id)
-      const cancelsLoop = on && current?.loopEnabled === true
-      patchConv(id, (c) => ({ ...c, economyMode: on, ...(on ? { loopEnabled: false } : {}) }))
-      if (connectedRef.current.has(id)) {
-        // Cancelar o Loop derruba já (como desligá-lo); o resto espera turno e subagentes.
-        if (cancelsLoop || (!busyRef.current.has(id) && !backgroundHold.holds(id))) void stopSession(id, { silent: true })
-        else pendingSessionConfigRef.current.add(id)
-      }
-      notify(
-        'sucesso',
-        on
-          ? cancelsLoop
-            ? 'Modo econômico ativado — o loop desta conversa foi interrompido e desativado.'
-            : 'Modo econômico ativado para esta conversa — vale na próxima mensagem.'
-          : 'Modo econômico desativado para esta conversa — vale na próxima mensagem.'
-      )
-    },
-    [patchConv, stopSession, notify, backgroundHold]
-  )
-
-  const changeLoopEnabled = useCallback(
-    (id: string, on: boolean): void => {
-      const current = convsRef.current.find((c) => c.id === id)
-      if (on && current?.economyMode === true) return
-      patchConv(id, (c) => ({ ...c, loopEnabled: on, ...(on ? { economyMode: false } : {}) }))
-      // Disabling must destroy the SDK session even mid-turn: session-scoped
-      // ScheduleWakeup jobs die with it, so no stale wakeup can resurrect work.
-      // Enabling waits for the turn AND for background subagents.
-      if (connectedRef.current.has(id) && (!on || (!busyRef.current.has(id) && !backgroundHold.holds(id)))) {
-        void stopSession(id, { silent: true })
-      } else if (connectedRef.current.has(id)) {
-        pendingSessionConfigRef.current.add(id)
-      }
-      notify(
-        'sucesso',
-        on
-          ? 'Loop ativado para esta conversa — limite padrão de 100 ciclos.'
-          : 'Loop desativado — continuações pendentes foram interrompidas.'
-      )
-    },
-    [patchConv, stopSession, notify, backgroundHold]
-  )
-
   // "Modo rápido" (fast mode) toggle — per-conversation, same restart-on-idle
-  // logic as the economy toggle. Only offered on models that support it; the
+  // logic as the model/effort pickers. Only offered on models that support it; the
   // toggle is hidden otherwise, and switching to an unsupported model clears the
   // flag (see changeModel) so it can't silently ride along.
   const changeFastMode = useCallback(
@@ -2780,7 +2719,7 @@ export function App(): JSX.Element {
       notify(
         'sucesso',
         on
-          ? 'Modo rápido ativado — respostas até ~2,5x mais rápidas, com custo por token maior. Vale na próxima mensagem.'
+          ? 'Modo rápido ativado — vale na próxima mensagem. Se a conta não tiver uso extra, o chat avisa e roda em velocidade padrão.'
           : 'Modo rápido desativado — volta à velocidade e ao preço normais na próxima mensagem.'
       )
     },
@@ -3811,13 +3750,11 @@ export function App(): JSX.Element {
   useEffect(
     () =>
       window.api.onRemoteSetMode(({ convId, mode, on }) => {
-        // Econômico/loop/rápido são da sessão — e a Central não tem sessão.
+        // O rápido é da sessão — e a Central não tem sessão.
         if (convId === CENTRAL_ID || !convsRef.current.some((c) => c.id === convId)) return
-        if (mode === 'economy') changeEconomyMode(convId, on)
-        else if (mode === 'loop') changeLoopEnabled(convId, on)
-        else changeFastMode(convId, on)
+        if (mode === 'fast') changeFastMode(convId, on)
       }),
-    [changeEconomyMode, changeLoopEnabled, changeFastMode]
+    [changeFastMode]
   )
   useEffect(
     () =>
@@ -4481,13 +4418,6 @@ export function App(): JSX.Element {
       // contexto precisa do modelo concreto do turno — o mesmo que o
       // snapshot do celular já usa logo acima.
       runningModel={active ? runningModel(active) : MODELS[0].id}
-      // A sessão do Manager sobe sem Econômico e Loop.
-      hideSessionToggles={!!activePlanning}
-      economyMode={active?.economyMode === true}
-      onEconomyModeChange={(on) => active && changeEconomyMode(active.id, on)}
-      loopEnabled={active?.loopEnabled === true}
-      loopLocked={active?.economyMode === true}
-      onLoopEnabledChange={(on) => active && changeLoopEnabled(active.id, on)}
       fastModeAvailable={!!active && !activePlanning && modelSupportsFastMode(active.model)}
       fastMode={active?.fastMode === true}
       onFastModeChange={(on) => active && changeFastMode(active.id, on)}

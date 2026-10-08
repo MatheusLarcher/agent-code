@@ -556,15 +556,11 @@ export class RemoteClient {
     return this.post('/api/interrupt', { convId }).then(() => this.fetchState())
   }
 
-  /** Econ. / Loop / Rápido da conversa aberta (otimista). */
-  setMode(mode: 'economy' | 'loop' | 'fast', on: boolean): void {
+  /** Rápido da conversa aberta (otimista). */
+  setMode(mode: 'fast', on: boolean): void {
     const convId = this.state.convId
     if (!convId) return
-    const key = mode === 'economy' ? 'economyMode' : mode === 'loop' ? 'loopEnabled' : 'fastMode'
-    const patch: Partial<ConvSummary> = { [key]: on }
-    if (on && mode === 'economy') patch.loopEnabled = false
-    if (on && mode === 'loop') patch.economyMode = false
-    this.patchConv(convId, patch)
+    this.patchConv(convId, { fastMode: on })
     void this.post('/api/set-mode', { convId, mode, on })
       .then(() => this.fetchState())
       .catch(() => this.fetchState().catch(() => undefined))

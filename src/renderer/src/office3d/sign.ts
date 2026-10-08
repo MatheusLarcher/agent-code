@@ -1,17 +1,17 @@
 /**
  * Placas do projeto (CanvasTexture com mipmaps e anisotropia):
  * - 'floor': a placa no chão diante da ilha reservada (1024×256, a paleta clara
- *   do mockup v2): filete, medalhão com o ícone e o nome em verde apagado;
- * - 'desk': a plaquinha da mesa ocupada (256×256): fundo e o medalhão com o ícone.
- *
- * As cores são um tom NEUTRO fixo, igual para todo projeto (NEUTRAL): a cor do
- * projeto vai só na camisa do agente — nada em volta dele muda de cor.
+ *   do mockup v2) na COR DO PROJETO (projectColor.ts): véu, moldura, filete,
+ *   anel do medalhão, o nome e o traço sob ele — identifica a ilha de longe;
+ * - 'desk': a plaquinha da mesa ocupada (256×256): fundo e o medalhão com o
+ *   ícone, no tom NEUTRO fixo (NEUTRAL) — nada colado no agente muda de cor.
  *
  * O ícone vem de `feed.projectIcons[cwd]`. No App ele é uma data URL (App.tsx,
  * "Icon found inside each project folder"), mas aceitamos também URL, caminho de
  * arquivo e emoji/glifo curto; sem ícone, a inicial.
  */
 import { CanvasTexture, SRGBColorSpace } from 'three'
+import { hslToRgb, parseHex, rgbToHsl, toHex } from '@shared/projectColor'
 import { fileUrl } from '../fileUrl'
 import { canvas2d } from './textures'
 
@@ -34,7 +34,7 @@ export function iconSource(icon: string | null | undefined, name: string): IconS
   return { kind: 'initial', text: initialOf(name) }
 }
 
-/** Matiz estável por id (FNV-1a): a inicial do projeto no filtro e nas abas do quadro (as placas são neutras). */
+/** Matiz estável por id (FNV-1a): o acento da tela do console da Central (screens.ts). Projeto usa a cor fixa (projectColor.ts). */
 export function accentHue(id: string): number {
   let h = 0x811c9dc5
   for (let i = 0; i < id.length; i++) {
@@ -80,14 +80,14 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 /** Medalhão claro com o ícone (imagem recortada no círculo, glifo ou inicial em `ink`). */
-function medallion(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, source: IconSource, img: HTMLImageElement | null, name: string, ink: string, ring: string | null): void {
+function medallion(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, source: IconSource, img: HTMLImageElement | null, name: string, ink: string, ring: string | null, ringWidth = 0.08): void {
   ctx.fillStyle = '#f6f4ec'
   ctx.beginPath()
   ctx.arc(cx, cy, r, 0, Math.PI * 2)
   ctx.fill()
   if (ring) {
     ctx.strokeStyle = ring
-    ctx.lineWidth = r * 0.08
+    ctx.lineWidth = r * ringWidth
     ctx.stroke()
   }
   if (source.kind === 'image' && img && img.complete && img.naturalWidth > 0) {
@@ -110,20 +110,46 @@ function medallion(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: num
   ctx.fillText(text, cx, cy + r * 0.07)
 }
 
-/** A placa do chão: fundo claro, filete do projeto, medalhão e o nome (em maiúsculas, encolhendo até caber). */
-function drawFloor(ctx: CanvasRenderingContext2D, source: IconSource, img: HTMLImageElement | null, name: string): void {
+/** `#rrggbb` + alfa → `rgba(...)`; hex inválido volta como veio. */
+function alpha(hex: string, a: number): string {
+  const c = parseHex(hex)
+  return c ? `rgba(${c.r}, ${c.g}, ${c.b}, ${a})` : hex
+}
+
+/** A tinta do nome: o matiz do projeto, escuro o bastante para ler sobre a placa clara. */
+export function floorInk(hex: string): string {
+  const c = parseHex(hex)
+  if (!c) return '#6f7a66'
+  const hsl = rgbToHsl(c)
+  return toHex(hslToRgb({ ...hsl, l: Math.min(hsl.l, 0.3) }))
+}
+
+/**
+ * A placa do chão: fundo claro com um véu da cor do projeto vindo da esquerda,
+ * moldura, filete e anel do medalhão na cor, o nome (maiúsculas, encolhendo até
+ * caber) na tinta escura da mesma cor e um traço da cor sob ele. Sem cor, o tom NEUTRAL.
+ */
+function drawFloor(ctx: CanvasRenderingContext2D, source: IconSource, img: HTMLImageElement | null, name: string, accent: string | null): void {
   ctx.fillStyle = '#d4d7cc'
   ctx.fillRect(0, 0, SIGN_W, SIGN_H)
-  ctx.strokeStyle = '#c2c6b8'
+  if (accent) {
+    const wash = ctx.createLinearGradient(0, 0, SIGN_W * 0.7, 0)
+    wash.addColorStop(0, alpha(accent, 0.34))
+    wash.addColorStop(1, alpha(accent, 0))
+    ctx.fillStyle = wash
+    roundRect(ctx, 12, 12, SIGN_W - 24, SIGN_H - 24, 18)
+    ctx.fill()
+  }
+  ctx.strokeStyle = accent ? alpha(accent, 0.75) : '#c2c6b8'
   ctx.lineWidth = 6
   roundRect(ctx, 12, 12, SIGN_W - 24, SIGN_H - 24, 18)
   ctx.stroke()
-  ctx.fillStyle = NEUTRAL.bar
-  roundRect(ctx, 34, 40, 16, SIGN_H - 80, 8)
+  ctx.fillStyle = accent ?? NEUTRAL.bar
+  roundRect(ctx, 32, 40, 20, SIGN_H - 80, 10)
   ctx.fill()
   const cx = 160
   const cy = SIGN_H / 2
-  medallion(ctx, cx, cy, 78, source, img, name, NEUTRAL.ink, NEUTRAL.ring)
+  medallion(ctx, cx, cy, 78, source, img, name, accent ? floorInk(accent) : NEUTRAL.ink, accent ?? NEUTRAL.ring, accent ? 0.12 : 0.08)
   const left = cx + 78 + 44
   const maxW = SIGN_W - left - 56
   const label = name.toUpperCase()
@@ -135,8 +161,14 @@ function drawFloor(ctx: CanvasRenderingContext2D, source: IconSource, img: HTMLI
     size -= 4
     ctx.font = `600 ${size}px "Segoe UI", sans-serif`
   }
-  ctx.fillStyle = '#6f7a66'
-  ctx.fillText(label, left, cy + 4, maxW)
+  ctx.fillStyle = accent ? floorInk(accent) : '#6f7a66'
+  ctx.fillText(label, left, cy - (accent ? 6 : -4), maxW)
+  if (!accent) return
+  // O traço sob o nome: da largura do texto, na cor do projeto.
+  const textW = Math.min(maxW, ctx.measureText(label).width)
+  ctx.fillStyle = accent
+  roundRect(ctx, left, cy + size * 0.42, Math.max(60, textW), 10, 5)
+  ctx.fill()
 }
 
 /** A plaquinha da mesa: fundo neutro, filete claro e o medalhão do ícone. */
@@ -154,12 +186,12 @@ function drawDesk(ctx: CanvasRenderingContext2D, source: IconSource, img: HTMLIm
 }
 
 /**
- * Desenha a placa (no tom neutro: `_accentId`, o projeto, não pinta nada — fica
- * na assinatura para quem chama). A imagem do ícone carrega de forma assíncrona: quando chega,
+ * Desenha a placa. `accent` (a cor do projeto, `#rrggbb`) pinta só a do chão; a
+ * da mesa fica no tom neutro. A imagem do ícone carrega de forma assíncrona: quando chega,
  * redesenha e chama `onUpdate` (o motor agenda um quadro). Imagem com erro cai
  * na inicial.
  */
-export function createSignTexture(name: string, icon: string | null, _accentId: string, anisotropy: number, onUpdate: () => void, style: SignStyle = 'floor'): SignTexture {
+export function createSignTexture(name: string, icon: string | null, accent: string | null, anisotropy: number, onUpdate: () => void, style: SignStyle = 'floor'): SignTexture {
   const w = style === 'floor' ? SIGN_W : DESK_SIGN
   const h = style === 'floor' ? SIGN_H : DESK_SIGN
   const { canvas, ctx } = canvas2d(w, h)
@@ -172,7 +204,7 @@ export function createSignTexture(name: string, icon: string | null, _accentId: 
 
   const draw = (): void => {
     if (!ctx) return
-    if (style === 'floor') drawFloor(ctx, source, img, name)
+    if (style === 'floor') drawFloor(ctx, source, img, name, accent)
     else drawDesk(ctx, source, img, name)
     texture.needsUpdate = true
   }

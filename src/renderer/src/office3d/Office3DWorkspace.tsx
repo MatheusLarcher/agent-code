@@ -64,6 +64,7 @@ import { setMeetingProbe } from './officeWatch'
 import type { OfficePower } from './power'
 import { OfficeMemoryPanel } from './OfficeMemoryPanel'
 import { OfficePlanDialog, type PlanProject } from './OfficePlanDialog'
+import { agentCss } from './projectColor'
 import { TvFocus } from './TvFocus'
 import { useTvFocus } from './useTvFocus'
 
@@ -487,6 +488,7 @@ export function Office3DWorkspace({
           expandSignal={expand}
           collapseSignal={collapse}
           onLocate={locate}
+          agentColor={conversation && !convIsCentral ? agentCss(feed, conversation.cwd || null, principalKey(conversation.id)) : undefined}
         >
           {centralShown ? central : chat}
         </OfficeChatFloat>

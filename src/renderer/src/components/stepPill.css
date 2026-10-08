@@ -1,0 +1,46 @@
+/* As pílulas da linha de passos (StepPills.tsx): ícone do tipo na cor dele +
+   número; o "4 buscas" fica no tooltip (HoverTip). PC e celular. */
+.chat-pills {
+  display: flex;
+  gap: 5px;
+  flex: none;
+}
+.chat-pill {
+  --k: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--k) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--k) 22%, transparent);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background 0.12s,
+    box-shadow 0.12s;
+}
+.chat-pill:hover {
+  background: color-mix(in srgb, var(--k) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--k) 45%, transparent);
+}
+.chat-pill-ico {
+  flex: none;
+  color: var(--k);
+}
+.chat-pill b {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.chat-pill.k-search { --k: #7aa7d9; }
+.chat-pill.k-read { --k: #6cc4c0; }
+.chat-pill.k-edit { --k: #e0956f; }
+.chat-pill.k-bash { --k: #a3c46c; }
+.chat-pill.k-web { --k: #9aa8e8; }
+.chat-pill.k-browser { --k: #6fb7e0; }
+.chat-pill.k-agent { --k: #c39bd3; }
+.chat-pill.k-other { --k: #b8b2a7; }

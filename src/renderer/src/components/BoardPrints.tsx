@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentCodeApi } from '@shared/api'
 import { printsByCard, type BoardPrintImageResult, type BoardPrintMeta } from '@shared/boardPrints'
+import { PrintsTag } from './BoardTagIcon'
 import './boardPrints.css'
 
 /**
@@ -60,14 +61,10 @@ export function useProjectPrints(projectCwd: string | null, api: PrintsApi | nul
   return useMemo(() => printsByCard(prints), [prints])
 }
 
-/** 📷 N no cartão. */
+/** Câmera + N no cartão (o texto no tooltip). */
 export function PrintBadge({ count }: { count: number }): JSX.Element | null {
   if (count <= 0) return null
-  return (
-    <span className="board-tag prints" title={count === 1 ? '1 print da tarefa testada' : `${count} prints da tarefa testada`}>
-      📷 {count}
-    </span>
-  )
+  return <PrintsTag count={count} />
 }
 
 function fmtWhen(iso: string): string {

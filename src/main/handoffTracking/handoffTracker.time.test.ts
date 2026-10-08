@@ -119,6 +119,39 @@ describe('HandoffTracker — tempo', () => {
   })
 })
 
+describe('HandoffTracker — turno sem turn-start (CLI sem eco do id)', () => {
+  it('a primeira atividade abre o turno e o tempo ativo conta', async () => {
+    const h = await harness()
+    await h.register([{ conteudo: 'Prompt 1', etapas: [] }])
+    h.tracker.noteUserSend(CONV, 'Prompt 1')
+    await h.settle()
+    h.emit({ kind: 'assistant-text', id: 'a1', text: 'Vou começar', final: false })
+    await h.settle()
+    expect(h.tracker.isTurnRunning(CONV)).toBe(true)
+    h.advance(30 * SEC)
+    h.emit(result)
+    await h.settle()
+    expect((await h.envios())[0].tempoAtivoMs).toBe(30 * SEC)
+  })
+
+  it('depois do Stop, o rabo do turno parado não reabre o tempo', async () => {
+    const h = await harness()
+    await h.register([{ conteudo: 'Prompt 1', etapas: [] }])
+    h.tracker.noteUserSend(CONV, 'Prompt 1')
+    h.emit(turnStart)
+    await h.settle()
+    h.advance(10 * SEC)
+    h.tracker.noteStop(CONV)
+    h.emit(result)
+    await h.settle()
+    h.emit({ kind: 'assistant-text', id: 'a1', text: 'resto', final: true })
+    h.advance(40 * SEC)
+    await h.settle()
+    expect(h.tracker.isTurnRunning(CONV)).toBe(false)
+    expect((await h.envios())[0].tempoAtivoMs).toBe(10 * SEC)
+  })
+})
+
 describe('HandoffTracker — parada (varredura, 10 min)', () => {
   it('enviado sem nenhum turno: parada exatamente no limite', async () => {
     const h = await harness()

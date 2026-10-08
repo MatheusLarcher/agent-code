@@ -34,10 +34,10 @@ vi.mock('./visionRelay', async () => ({ ...await vi.importActual('./visionRelay'
 import { AgentSession } from './agentSession'
 let current: AgentSession | null = null
 afterEach(() => { current?.dispose(); current = null })
-function session(model?: string, loopEnabled = false) {
+function session(model?: string) {
   const writes: ContextTurnWrite[] = []
   const repo = { saveContextTurn: async (w: ContextTurnWrite) => { writes.push(w) } } as ContextHistoryRepository
-  current = new AgentSession({ convId: 'capture-integration', cwd: '/p', model, loopEnabled }, {} as BrowserController, vi.fn(), vi.fn(), vi.fn(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, repo)
+  current = new AgentSession({ convId: 'capture-integration', cwd: '/p', model }, {} as BrowserController, vi.fn(), vi.fn(), vi.fn(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, repo)
   return { s: current, writes }
 }
 function feed(s: AgentSession, message: unknown) { (s as any).handleMessage(message) }
@@ -65,13 +65,12 @@ describe('AgentSession context origin', () => {
     expect(JSON.stringify(detail)).not.toContain('AAAA')
     if (model.startsWith('glm')) expect(text).toContain('[VISUAL_CONTEXT]')
   })
-  it('separa nota de cancelamento e /loop sem mudar a mensagem entregue', async () => {
-    const { s } = session('claude-sonnet-5-5', true)
+  it('separa a nota de cancelamento sem mudar a mensagem entregue', async () => {
+    const { s } = session('claude-sonnet-5-5')
     ;(s as any).canceledPending = true
     await s.send('novo pedido', undefined, 'cancel-uuid')
     const detail = readLiveContext('capture-integration', 'cancel-uuid')!
     expect(detail.blocks.some((b) => b.kind === 'cancel-note')).toBe(true)
-    expect(detail.blocks.some((b) => b.kind === 'loop')).toBe(true)
     expect(composeFromPromptBlocks(detail.blocks.filter((b) => b.source === 'prompt'))).toBe((s as any).input.values.at(-1).message.content)
   })
   it('tool-use Agent conserva definição de especialista mais input pelo parentToolUseId', async () => {

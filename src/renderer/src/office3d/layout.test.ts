@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { OfficeCharacterModel, OfficeModel, OfficeRoomModel } from '../office/adapter/model'
+import { projectColorHex, type OfficeCharacterModel, type OfficeModel, type OfficeRoomModel } from '../office/adapter/model'
 import { projectPoint, screenPose } from './cameraRig'
 import { BOARD_AT, BOARD_PLANE } from './engineTv'
 import { boardPlace } from './furniture'
@@ -84,7 +84,7 @@ describe('layoutOffice — um escritório para todos os projetos', () => {
     expect(ds.map(kOf)).toEqual([0, 1, 2])
     expect(l.rooms[0].islands[0].projectId).toBe('A')
     expect(l.islandOf).toEqual({ A: [0] })
-    expect(l.projects).toEqual([{ id: 'A', name: 'A', icon: null, islands: [0], agents: 3 }])
+    expect(l.projects).toEqual([{ id: 'A', name: 'A', icon: null, color: projectColorHex(null, 'A'), islands: [0], agents: 3 }])
   })
 
   it('projetos novos pegam a próxima ilha livre na ordem frente-esquerda, frente-direita, trás-esquerda, trás-direita', () => {

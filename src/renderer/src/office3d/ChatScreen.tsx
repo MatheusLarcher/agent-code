@@ -44,7 +44,8 @@ export function chatContent(feed: OfficeFeed | null, model: OfficeCharacterModel
 
 export interface ChatPanelProps {
   head: TurnHead
-  seed: string
+  /** A cor (CSS) do agente no cabeçalho (projectColor.ts `agentCss`). */
+  color: string
   content: ChatContent
   /** Cabeçalho próprio no lugar do TurnHeader (o do Chat no Código). */
   header?: ReactNode
@@ -56,7 +57,7 @@ export interface ChatPanelProps {
   quote?: QuoteListApi
 }
 
-export function ChatPanel({ head, seed, content, header, endSignal = 0, tts = null, quote }: ChatPanelProps): JSX.Element {
+export function ChatPanel({ head, color, content, header, endSignal = 0, tts = null, quote }: ChatPanelProps): JSX.Element {
   const bodyRef = useRef<HTMLDivElement>(null)
   const atEnd = useRef(true)
   useLayoutEffect(() => {
@@ -76,7 +77,7 @@ export function ChatPanel({ head, seed, content, header, endSignal = 0, tts = nu
 
   return (
     <div className="o3d-chat-screen">
-      {header === undefined ? <TurnHeader head={head} seed={seed} /> : header}
+      {header === undefined ? <TurnHeader head={head} color={color} /> : header}
       <div className="message-list o3d-chat-screen-body" ref={bodyRef} onScroll={onScroll}>
         <TurnRows messages={content.messages} busy={head.busy} live={content.live} limit={SCREEN_MESSAGES} tts={tts} quote={quote} />
       </div>

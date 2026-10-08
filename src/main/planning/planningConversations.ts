@@ -52,10 +52,7 @@ export async function planningStartOptions(
   // do Manager.
   const pair =
     isAutoModel(execution.model) || !isEffortLevel(execution.effort) ? PLANNING_AUTO_FALLBACK : execution
-  // Loop e modo econômico são toggles da conversa comum: /loop agenda turnos
-  // sozinho e o econômico manda pular verificação — nenhum dos dois cabe numa
-  // sessão que planeja com o usuário, então a do Manager sobe sem eles.
-  return { ...opts, model: pair.model, effort: pair.effort, loopEnabled: false, economyMode: false }
+  return { ...opts, model: pair.model, effort: pair.effort }
 }
 
 /** As conversas vivas que são sessões do Agent Manager. */

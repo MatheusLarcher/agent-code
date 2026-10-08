@@ -138,9 +138,9 @@ describe('handoffConversationFields', () => {
     }
   })
 
-  it('não vira conversa de planejamento nem mexe em loop/econômico', () => {
+  it('não vira conversa de planejamento', () => {
     const f = handoffConversationFields('checkout', 'X', opus) as Record<string, unknown>
-    for (const key of ['mode', 'planningSlug', 'economyMode', 'loopEnabled']) {
+    for (const key of ['mode', 'planningSlug']) {
       expect(f, key).not.toHaveProperty(key)
     }
   })
@@ -152,8 +152,6 @@ describe('planningConversationFields', () => {
     expect(f).toMatchObject({ mode: 'planning', planningSlug: 'checkout', title: 'Checkout com Pix' })
     expect(isAutoModel(f.model)).toBe(false)
     expect(f.model).toBeTruthy()
-    expect(f.loopEnabled).toBe(false)
-    expect(f.economyMode).toBe(false)
   })
 
   it('reabrir sem título usa o slug', () => {

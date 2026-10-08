@@ -38,6 +38,7 @@ export type CentralSendWithReply = (
 ) => Promise<boolean>
 import { appendCentralEntry, centralAttachmentNames } from './centralRegistry'
 import { hasActiveAnchor } from './centralEntries'
+import { useProjectColorMap } from '../office/useProjectColors'
 import { labelFor as buildLabel, type CentralLabel } from './centralRecents'
 import { applyMirror, planMirror } from './centralMirrorSync'
 import { turnToolUses } from './centralMirror'
@@ -287,9 +288,11 @@ export function useCentral(deps: UseCentralDeps): UseCentralResult {
   entriesRef.current = entries
   const convsMap = useMemo(() => new Map(deps.conversations.map((c) => [c.id, c])), [deps.conversations])
   const { projectIcons, sandboxRoot, busyIds, permissions } = deps
+  // A cor de cada destino é a do projeto dele (a mesma do escritório e da lateral).
+  const projectColors = useProjectColorMap()
   const labelFor = useCallback(
-    (convId: string): CentralLabel => buildLabel(convId, convsMap, entries, projectIcons, sandboxRoot),
-    [convsMap, entries, projectIcons, sandboxRoot]
+    (convId: string): CentralLabel => buildLabel(convId, convsMap, entries, projectIcons, sandboxRoot, projectColors),
+    [convsMap, entries, projectIcons, sandboxRoot, projectColors]
   )
   const rail = useMemo<CentralRailCard[]>(() => {
     const cards: CentralRailCard[] = []

@@ -747,6 +747,22 @@ ALTER TABLE context_turn ADD COLUMN IF NOT EXISTS models_json jsonb NOT NULL DEF
  * `board_item_id` sem FK: o cartão pode expirar e a entrega fica. O
  * UNIQUE(envio_id, etapa_id) já indexa `envio_id` (coluna líder).
  */
+/**
+ * Migration 18 — tempo de execução de cada turno (`conversation_turn_time`),
+ * espelha a 18 do SQLite: um registro por `result`, para a soma da conversa
+ * sobreviver a reinícios. Sem change feed: é lido sob demanda pelo histórico.
+ */
+const TURN_TIME = `
+CREATE TABLE IF NOT EXISTS conversation_turn_time (
+  id text PRIMARY KEY,
+  conv_id text NOT NULL,
+  turn_id text,
+  duration_ms bigint NOT NULL,
+  created_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS conversation_turn_time_conv ON conversation_turn_time(conv_id, created_at);
+`
+
 const HANDOFF_TRACKING = `
 CREATE TABLE IF NOT EXISTS handoff_envios (
   id text PRIMARY KEY,
@@ -825,7 +841,8 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   migration(14, 'postgres-board-item-events-justified-system', BOARD_ITEM_EVENTS_JUSTIFIED_SYSTEM),
   migration(15, 'postgres-context-history', CONTEXT_HISTORY),
   migration(16, 'postgres-context-turn-models', CONTEXT_TURN_MODELS),
-  migration(17, 'postgres-handoff-tracking', HANDOFF_TRACKING)
+  migration(17, 'postgres-handoff-tracking', HANDOFF_TRACKING),
+  migration(18, 'postgres-turn-time', TURN_TIME)
 ]
 
 const MIGRATION_TABLE = `

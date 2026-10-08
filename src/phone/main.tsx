@@ -1,4 +1,5 @@
 import { createRoot } from 'react-dom/client'
+import { HoverTipLayer } from '@renderer/components/HoverTip'
 import { App } from './App'
 import './styles/base.css'
 import './styles/pair.css'
@@ -9,4 +10,10 @@ import './styles/central.css'
 import './styles/turn.css'
 import './styles/settings.css'
 
-createRoot(document.getElementById('root')!).render(<App />)
+// O tooltip do app (toque longo no celular) no lugar do `title` nativo.
+createRoot(document.getElementById('root')!).render(
+  <>
+    <App />
+    <HoverTipLayer />
+  </>
+)

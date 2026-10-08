@@ -45,7 +45,7 @@ describe('suggestConversationTitle', () => {
     expect(calls).toHaveLength(1)
     const { options } = calls[0]
     expect(options.model).toBe(TITLE_MODEL)
-    expect(TITLE_MODEL).toBe('claude-haiku-4-5')
+    expect(TITLE_MODEL).toBe('claude-haiku-5-5')
     expect(options).not.toHaveProperty('effort')
     expect(options.thinking).toEqual({ type: 'disabled' })
     expect(options).not.toHaveProperty('maxThinkingTokens')

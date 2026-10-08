@@ -447,6 +447,14 @@ export interface LlmUsageTotal {
   callCount: number
 }
 
+/** Tempo de execução dos turnos de uma conversa (soma gravada por turno). */
+export interface TurnTimeTotals {
+  totalMs: number
+  turns: number
+  /** Duração do turno mais recente; `null` sem nenhum turno gravado. */
+  lastMs: number | null
+}
+
 /** Payload de `agent:token-usage:history`: as chamadas e os totais agregados
  *  de uma conversa, para reconstruir a árvore ao reabrir uma conversa antiga. */
 export interface TokenUsageHistory {
@@ -921,12 +929,6 @@ export interface StartAgentOptions {
   /** Reasoning effort for the model (low / medium / high / xhigh / max), or
    *  AUTO_EFFORT — resolved in main before the session exists, never forwarded. */
   effort?: string
-  /** Per-conversation "modo econômico": instructs the LLM to skip validation for
-   *  trivial tasks. Scoped to THIS conversation only. */
-  economyMode?: boolean
-  /** Enables Claude Code's dynamic /loop for this conversation. Mutually
-   *  exclusive with economyMode and guarded in AgentSession. */
-  loopEnabled?: boolean
   /** Per-conversation "modo rápido" (fast mode): runs Opus at up to ~2.5x the
    *  output speed for a higher per-token price. Only meaningful for the models in
    *  FAST_MODE_MODELS — see modelSupportsFastMode. */
@@ -967,6 +969,7 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5-1': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-haiku-5-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6.1-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -985,7 +988,7 @@ export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', '
 /** `effort` cut down to what `model` actually supports: the deepest supported
  *  level that is not above the one asked for.
  *
- *  Haiku stops at `high`, and the provider REJECTS an unsupported pair instead
+ *  A model may stop below `max`, and the provider REJECTS an unsupported pair instead
  *  of quietly serving the nearest one — so a model+effort pair that was decided
  *  in two independent steps has to pass through here before it leaves the
  *  process. A model with no entry in MODEL_EFFORT has nothing to clamp against
@@ -1012,7 +1015,8 @@ export function clampEffortToModel(model: string | undefined, effort: EffortLeve
 export const CLAUDE_MODELS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
-  { id: 'claude-fable-5-1', label: 'Fable 5.1' }
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5' }
 ]
 
 /** The value a conversation carries while it is in "Automático".
@@ -1258,7 +1262,8 @@ export const RETIRED_MODEL_REPLACEMENTS: Readonly<Record<string, string>> = {
   'gpt-5.6-luna': 'gpt-6-luna',
   'gpt-5.6-terra': 'gpt-6-sol',
   'gpt-5.6-sol': 'gpt-6-sol',
-  'claude-sonnet-5': 'claude-sonnet-5-5'
+  'claude-sonnet-5': 'claude-sonnet-5-5',
+  'claude-haiku-4-5': 'claude-haiku-5-5'
 }
 
 /** O id em uso para `model`: o substituto se ele foi aposentado, senão ele mesmo. */
@@ -1294,6 +1299,7 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'claude-sonnet-5': 1_000_000,
   'claude-fable-5-1': 1_000_000,
   'claude-fable-5': 1_000_000,
+  'claude-haiku-5-5': 1_000_000,
   // OpenAI GPT-6 family — default window from the local Codex catalog
   // (models_cache.json: context_window 272000); extended context is opt-in.
   'gpt-6-luna': 272_000,
@@ -1350,9 +1356,10 @@ export interface VigiaConfig {
  *  not the model doing the work — the point is that it costs less than the
  *  conversation it watches. A better model here is a one-line change. */
 export const VIGIA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5 (mais barato)' },
   { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5 (recomendado)' },
-  { id: 'claude-fable-5-1', label: 'Fable 5.1 (mais barato)' },
-  { id: 'claude-opus-5-5', label: 'Opus 5.5 (mais caro)' }
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1 (mais caro)' }
 ]
 
 /**
@@ -2340,6 +2347,8 @@ export const Channels = {
   /** Chamadas e totais persistidos de uma conversa, para reconstruir a árvore
    *  de consumo de tokens ao reabrir uma conversa antiga. */
   tokenUsageHistory: 'agent:token-usage:history',
+  /** Tempo somado dos turnos de uma conversa (`TurnTimeTotals`). */
+  turnTimeTotals: 'agent:turn-time:totals',
   /** Histórico de contexto e senha explícita: IPC do PC, nunca ChatEvent/LAN. */
   contextTurnsList: 'contextTurns:list',
   contextTurnsRead: 'contextTurns:read',
@@ -2399,7 +2408,7 @@ export const Channels = {
   remoteCentralChoose: 'remote:central-choose',
   /** Phone asked to stop the running turn of a conversation. */
   remoteInterrupt: 'remote:interrupt',
-  /** Phone toggled a per-conversation mode (economy/loop/fast). */
+  /** Phone toggled a per-conversation mode (fast). */
   remoteSetMode: 'remote:set-mode',
   /** Phone created/renamed/deleted a conversation. */
   remoteConversationAction: 'remote:conversation-action',
@@ -2480,8 +2489,6 @@ export interface RemoteConversation {
   /** Current reasoning effort of this conversation. */
   effort?: string
   /** Per-conversation execution modes mirrored from the desktop. */
-  economyMode?: boolean
-  loopEnabled?: boolean
   fastMode?: boolean
   /** Whether the current model can run in fast mode (gates the phone toggle). */
   fastModeAvailable?: boolean
@@ -2554,10 +2561,10 @@ export interface McpCancelQueuedMsg {
   taskId: string
 }
 
-/** A per-conversation execution mode toggled from a phone. */
+/** A per-conversation execution mode toggled from a phone (only fast mode exists). */
 export interface RemoteSetModeMsg {
   convId: string
-  mode: 'economy' | 'loop' | 'fast'
+  mode: 'fast'
   on: boolean
 }
 

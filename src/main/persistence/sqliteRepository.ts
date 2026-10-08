@@ -19,6 +19,8 @@ import {
   listSqliteBoardItemPrints,
   pruneSqliteBoardItemPrints
 } from './sqliteBoardPrints'
+import { insertSqliteTurnTime, sqliteTurnTimeTotals } from './sqliteTurnTime'
+import type { TurnTimeTotals } from '../../shared/ipc'
 import {
   countSqliteOrphanContextBlobs,
   deleteSqliteContextTurns,
@@ -145,6 +147,7 @@ import {
   type TaskStepFinish,
   type TaskTransition,
   type TaskBoardLinkWrite,
+  type TurnTimeInsert,
   type VersionedKv
 } from './types'
 
@@ -1757,6 +1760,14 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         .all(convId) as unknown as LlmUsageTotalRow[]
       return rows.map(llmUsageTotalFromRow)
     })
+  }
+
+  async insertTurnTime(input: TurnTimeInsert): Promise<void> {
+    this.write((db) => insertSqliteTurnTime(db, input))
+  }
+
+  async turnTimeTotals(convId: string): Promise<TurnTimeTotals> {
+    return this.read((db) => sqliteTurnTimeTotals(db, convId))
   }
 
   // Histórico do contexto: SQL em sqliteContextHistory.ts.

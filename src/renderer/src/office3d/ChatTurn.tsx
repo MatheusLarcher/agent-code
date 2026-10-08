@@ -20,7 +20,6 @@ import { useChatDisplay } from '../components/chatDisplay'
 import type { QuoteListApi } from '../components/quoteComment/quoteBlocks'
 import { ToolCard } from '../components/ToolCard'
 import type { UIMessage } from '../types'
-import { seedCss } from './appearance'
 import type { ToolUseMessage, TurnHead } from './chatPage'
 
 export interface TurnRowsProps {
@@ -87,9 +86,10 @@ function ModelSwitchNote({ from, to, why }: { from: string; to: string; why: str
   )
 }
 
-export function TurnHeader({ head, seed, children }: { head: TurnHead; seed: string; children?: ReactNode }): JSX.Element {
+/** `color`: a cor (CSS) do agente — a do projeto (projectColor.ts `agentCss`), a mesma da camisa. */
+export function TurnHeader({ head, color, children }: { head: TurnHead; color: string; children?: ReactNode }): JSX.Element {
   return (
-    <div className="o3d-turn-head" style={{ '--o3d-agent': seedCss(seed) } as CSSProperties}>
+    <div className="o3d-turn-head" style={{ '--o3d-agent': color } as CSSProperties}>
       <span className="o3d-chat-dot" aria-hidden="true" />
       <span className="o3d-turn-title" title={head.title}>
         {head.title || 'Conversa'}

@@ -63,7 +63,7 @@ describe('candidatos', () => {
   it('oferece os modelos reais do seletor, e cada um com descrição', () => {
     const models = autoModelCandidates()
 
-    expect(models).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'])
+    expect(models).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-haiku-5-5'])
     // Sem descrição o Jev escolheria pelo nome do modelo, não pelo trabalho pedido.
     for (const model of models) expect(AUTO_MODEL_DESCRIPTIONS[model]).toBeTruthy()
   })

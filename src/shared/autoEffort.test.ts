@@ -51,8 +51,6 @@ describe('migração one-shot das conversas', () => {
     model: 'auto',
     autoModel: 'claude-sonnet-5-5',
     effort: 'high',
-    economyMode: false,
-    loopEnabled: false,
     fastMode: false,
     sdkSessionId: 'sess-1',
     messages: [{ kind: 'user', id: 'u1', text: 'oi', ts: 1 }],

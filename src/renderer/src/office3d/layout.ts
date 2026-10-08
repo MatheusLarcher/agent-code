@@ -35,7 +35,7 @@
  * câmera, girada pelo `yaw` da mesa; quem senta fica em SEAT_FRONT no +Z da
  * mesa (deskPoint), de costas para o monitor com o mesmo yaw.
  */
-import type { OfficeCharacterModel, OfficeModel } from '../office/adapter/model'
+import { projectColorHex, type OfficeCharacterModel, type OfficeModel } from '../office/adapter/model'
 import { managerChairs, managerSeat } from './meetingRoom'
 import {
   CENTRAL_SPOT,
@@ -87,6 +87,8 @@ export interface IslandLayout {
   projectId: string | null
   name: string | null
   icon: string | null
+  /** A cor do projeto (projectColor.ts); null livre. */
+  color: string | null
 }
 
 export interface RoomLayout {
@@ -108,6 +110,8 @@ export interface ProjectLayout {
   name: string
   /** Ícone do projeto (feed.projectIcons[cwd]): data URL, caminho, emoji ou null. */
   icon: string | null
+  /** A cor fixa do projeto (`#rrggbb`, projectColor.ts). */
+  color: string
   /** Ilhas reservadas para ele. */
   islands: number[]
   /** Personagens dele no escritório. */
@@ -160,7 +164,7 @@ function officeRoom(): RoomLayout {
     width: OFFICE_W,
     depth: OFFICE_D,
     desks: STATIONS.map((s) => ({ index: s.index, x: s.x, z: s.z, yaw: s.yaw, out: s.out, island: s.island, k: s.k, ownerKey: null, projectId: null })),
-    islands: ISLANDS.map((i) => ({ index: i.index, x: i.x, z: i.z, projectId: null, name: null, icon: null }))
+    islands: ISLANDS.map((i) => ({ index: i.index, x: i.x, z: i.z, projectId: null, name: null, icon: null, color: null }))
   }
 }
 
@@ -292,6 +296,7 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
     isl.projectId = p
     isl.name = m?.name ?? null
     isl.icon = m?.icon ?? null
+    isl.color = p ? (m?.color ?? projectColorHex(null, p)) : null
   }
 
   const prevLounge = new Map(prev.characters.flatMap((c): Array<[string, number]> => (c.lounge !== null ? [[c.key, c.lounge]] : [])))
@@ -303,7 +308,7 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
     const p = projectOf(c)
     if (p) agents.set(p, (agents.get(p) ?? 0) + 1)
   }
-  const projects: ProjectLayout[] = model.rooms.map((r) => ({ id: r.id, name: r.name, icon: r.icon ?? null, islands: islandsOf(r.id), agents: agents.get(r.id) ?? 0 }))
+  const projects: ProjectLayout[] = model.rooms.map((r) => ({ id: r.id, name: r.name, icon: r.icon ?? null, color: r.color ?? projectColorHex(null, r.id), islands: islandsOf(r.id), agents: agents.get(r.id) ?? 0 }))
   const islandOf: Record<string, number[]> = {}
   for (const p of projects) if (p.islands.length > 0) islandOf[p.id] = p.islands
   return { rooms: [room], projects, characters, deskOf, islandOf, managerOf }

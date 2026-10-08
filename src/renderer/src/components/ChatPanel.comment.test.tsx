@@ -84,11 +84,6 @@ function panel(overrides: Partial<PanelProps>): JSX.Element {
       effort="high"
       effortLocked={false}
       onEffortChange={() => {}}
-      economyMode={false}
-      onEconomyModeChange={() => {}}
-      loopEnabled={false}
-      loopLocked={false}
-      onLoopEnabledChange={() => {}}
       fastModeAvailable={false}
       fastMode={false}
       onFastModeChange={() => {}}

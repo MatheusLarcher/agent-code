@@ -1,4 +1,5 @@
-import { query, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
+import { query, type FastModeDisabledReason, type FastModeState, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
+import { fastModeNotice } from './fastModeNotice'
 import { AsyncQueue } from './asyncQueue'
 import { createAppMcpServer, APP_CALL_HINT, APP_PRINT_HINT, APP_RESTART_HINT } from './appTools'
 import { CallIds, emitOfficeCall } from './officeCallRuntime'
@@ -11,6 +12,7 @@ import { claudeAuthExpiry, isClaudeAuthFailure } from './authExpiry'
 import { stallAbortText, stallVerdict, STALL_POLL_MS } from './stallWatch'
 import { logSession } from './sessionLog'
 import { ToolInputStreams, type RawStreamEvent } from './toolInputStream'
+import { withTodoTools } from './todoToolsEnv'
 import { AgentTaskTranslator } from './agentTasks'
 import { MirrorRepair, MIRROR_REPAIR_SEND_TIMEOUT_MS, mirrorRepairText } from './mirrorRepair'
 import { composeRequestContext, composeUserPrompt } from './promptEnvelope'
@@ -84,7 +86,6 @@ import { ensureCodexProxyRunning, FAST_MODE_TOKEN_SUFFIX } from './codexProxy'
 import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import { buildProjectOutline } from './projectOutline'
-import { pathWithRtk } from './rtk'
 import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type {
@@ -111,26 +112,6 @@ import { buildSecretsHintWithMask } from './contextSnapshot/secretsHint'
 import type { ContextTurnChanged } from '../shared/contextSnapshot'
 
 export const OPENAI_MAX_TURNS = 64
-export const DEFAULT_LOOP_LIMIT = 100
-export const MAX_LOOP_LIMIT = 10_000
-
-/** Reads only numbers explicitly tied to a loop/repetition limit. Incidental
- * ports, dates and ids must never silently turn into execution budgets. */
-export function loopLimitFromPrompt(text: string): number {
-  const patterns = [
-    /(?:limite(?:\s+(?:do|de))?\s+loop|loop\s+limit)\s*[:=]?\s*(\d+)/iu,
-    /(?:at[eé]|no\s+m[aá]ximo|max(?:imum)?)\s+(\d+)\s+(?:vezes|ciclos|itera(?:ç|c)[õo]es|times|cycles|iterations)/iu,
-    /(?:tente|repita|execute|rode|repeat|run|try)\s+(?:at[eé]\s+)?(\d+)\s+(?:vezes|ciclos|itera(?:ç|c)[õo]es|times|cycles|iterations)/iu
-  ]
-  for (const pattern of patterns) {
-    const value = Number(pattern.exec(text)?.[1])
-    if (Number.isSafeInteger(value) && value > DEFAULT_LOOP_LIMIT) {
-      return Math.min(value, MAX_LOOP_LIMIT)
-    }
-  }
-  return DEFAULT_LOOP_LIMIT
-}
-
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
 (browser_navigate, browser_form_fields, browser_run_steps, browser_snapshot, browser_screenshot,
 browser_click, browser_type, browser_get_text, browser_evaluate, browser_back, browser_reload).
@@ -215,49 +196,6 @@ export function buildContextStamp(origin: MessageOrigin, now: Date = new Date(),
   const de = origin === 'celular' ? `do celular, pela ponte LAN do PC ${machine}` : `do PC ${machine}`
   return `[Contexto do sistema: mensagem enviada ${de} em ${quando} (${fuso}).]`
 }
-
-// Shown to the model only when the "Modo econômico" toggle is ON in the UI.
-// O modo NÃO reduz mais o rigor do trabalho: todos os recursos, validações e
-// verificações continuam valendo igual ao modo normal. Ele apenas ADICIONA
-// duas skills de compressão de tokens (`caveman` na saída, `rtk` na entrada).
-const ECONOMY_HINT = `MODO ECONÔMICO ATIVADO — O USUÁRIO MARCOU O TOGGLE "ECONÔMICO" NA UI.
-
-Este modo NÃO muda o que você faz nem o rigor com que faz. Todas as regras normais
-continuam valendo integralmente: planejamento, typecheck, testes, build, validação
-no app, revisão, segurança e Definition of Done. Não pule nenhuma etapa por causa
-deste modo.
-
-A única mudança é COMO os tokens trafegam. Enquanto este modo estiver ativo:
-
-1. Carregue a skill **caveman** (ferramenta Skill, nome \`caveman\`) no início do
-   turno e siga o estilo dela em todas as suas respostas — comprime a SAÍDA sem
-   perder substância técnica.
-
-2. Carregue a skill **rtk** (ferramenta Skill, nome \`rtk\`) e siga a regra dela ao
-   usar o Bash: prefixe com \`rtk\` os comandos cobertos (\`git\`, \`ls\`, \`grep\`,
-   \`test\`, \`tsc\`, \`docker\`, \`vitest\`, \`find\`, \`diff\`…) — comprime a ENTRADA
-   vinda do terminal.
-
-3. Se uma das duas skills não estiver disponível, siga com a outra e avise o
-   usuário em uma linha; nunca trave a tarefa por causa disso.
-
-Fora essas duas skills, comporte-se exatamente como no modo normal.`
-
-// Short per-message companion of ECONOMY_HINT (see send()).
-export const ECONOMY_TURN_REMINDER = `[MODO ECONÔMICO LIGADO — antes de qualquer outra ação neste turno: (1) se ainda não carregou nesta sessão, chame a ferramenta Skill com "caveman" e depois com "rtk"; (2) responda no estilo caveman; (3) todo comando de Bash coberto pelo rtk (git, ls, grep, find, diff, tsc, vitest, npm test, docker…) vai com o prefixo \`rtk\`. Rigor, testes e validações continuam normais.]`
-
-const LOOP_HINT = `MODO LOOP ATIVADO PELO USUÁRIO NESTA CONVERSA.
-
-Quando uma mensagem normal chegar com este modo ativo, ela será transformada internamente em /loop. Em CADA ciclo:
-1. se o usuário escreveu uma condição de saída explícita, verifique-a primeiro;
-2. se essa condição explícita já foi atingida, chame ScheduleWakeup com {"stop":true} e entregue o resultado final;
-3. se não existe condição de saída explícita, NÃO invente uma e NÃO encerre antes do limite: continue agendando até completar 100 ciclos;
-4. só peça o próximo ScheduleWakeup DEPOIS de concluir e verificar o trabalho possível neste ciclo;
-5. nunca use ScheduleWakeup apenas para esperar um subagente ou tarefa em background;
-6. não inclua campos fora do schema, como "noop".
-
-O Agent Code aplica 100 ciclos por padrão. Um limite maior só vale quando o usuário o pedir
-explicitamente no texto. Somente uma condição de saída explícita encerra o loop antes do limite.`
 
 // Persistent, cross-conversation memory. The .md files live in the user's chosen
 // cache folder (next to the SQLite db — see store.ts), so the PATH is per-user/per-machine,
@@ -652,10 +590,6 @@ export interface SkillRuntimePaths {
 
 export interface AgentContinuationState {
   approvedTools: string[]
-  loopActive: boolean
-  loopCycles: number
-  loopLimit: number
-  loopScheduledThisIteration: boolean
 }
 
 export class AgentSession {
@@ -780,10 +714,7 @@ export class AgentSession {
   private disposed = false
   private inputDrain: Promise<void> = Promise.resolve()
   private currentInputId: number | null = null
-  private loopActive = false
-  private loopCycles = 0
-  private loopLimit = DEFAULT_LOOP_LIMIT
-  private loopScheduledThisIteration = false
+  private lastFastModeNotice: string | null = null
   private turnActive = false
   private idleWaiters = new Set<() => void>()
   private mirrorFailed = false
@@ -992,7 +923,7 @@ export class AgentSession {
         ? 'Trabalho autônomo sem prova de término.'
         : this.restartBackground === null ? 'Estado de background desconhecido.'
         : this.restartBackground > 0 ? 'Tarefas em background ativas.'
-        : this.loopActive ? 'Loop/agendamento ativo.' : this.mirrorFailed ? 'Persistência não verificada.' : undefined,
+        : this.mirrorFailed ? 'Persistência não verificada.' : undefined,
       autonomousCallOpen: this.restartOpaqueCalls.size > 0
     }
   }
@@ -1166,13 +1097,6 @@ export class AgentSession {
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
     append += `\n\n${CHROME_CONTROL_HINT}`
 
-    // Modo econômico: when the user toggled it on for THIS conversation, tell the
-    // model to skip validation/build/tests for trivial tasks to save tokens.
-    if (this.opts.economyMode) {
-      append += `\n\n${ECONOMY_HINT}`
-    } else if (this.opts.loopEnabled) {
-      append += `\n\n${LOOP_HINT}`
-    }
     // Conversa nascida de um handoff do planejamento: de onde veio, onde está o
     // plano e que o roteiro vira o plano dela. `null` em qualquer outra sessão.
     const handoffBlock = handoffAppendBlock(this.opts)
@@ -1256,16 +1180,6 @@ export class AgentSession {
     if (!ollamaOn && !openaiOn) env = claudeAccounts.envFor(this.opts.claudeAccountId)
     this.machineClaudeLogin = !ollamaOn && !openaiOn && env === undefined
 
-    // Economy mode leans on the `rtk` proxy binary, which is installed per-user
-    // and put on the user PATH — but a PATH change only reaches processes
-    // started after it, so a running app would need a restart to see it.
-    // Resolve the install dir and prepend it to the subprocess PATH instead.
-    // Nothing changes when rtk is not installed (the skill degrades on its own).
-    if (this.opts.economyMode) {
-      const rtkPath = pathWithRtk()
-      if (rtkPath) env = { ...(env ?? process.env), PATH: rtkPath }
-    }
-
     // The bundled CLI receives this environment rather than inheriting our
     // process. Task snapshots must resolve from that same effective root.
     this.sessionTasksRoot = env?.CLAUDE_CONFIG_DIR
@@ -1293,7 +1207,8 @@ export class AgentSession {
           ? { fastMode: true }
           : {})
       },
-      ...(env ? { env } : {}),
+      // TodoWrite/TaskCreate sempre: é o plano do agente que vira cartão no Quadro (todoToolsEnv.ts).
+      env: withTodoTools(env),
       ...(openaiOn ? { maxTurns: OPENAI_MAX_TURNS } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
@@ -1624,24 +1539,6 @@ export class AgentSession {
     const projectsCatalogUpdate = await this.refreshProjectsIfChanged()
     if (messageKind === 'normal' && !this.disposed) presenceUpdate(this, this.opts.convId, this.opts.cwd, { question: text })
     const othersUpdate = messageKind === 'normal' ? await this.crossConversationContext() : ''
-    // A real user dispatch starts a fresh loop budget. Dynamic wakeups are
-    // injected by the CLI and do not pass through this method. Internal
-    // recovery prompts must never start a fresh loop just because the toggle
-    // remains enabled.
-    const trimmed = text.trimStart()
-    const startsWithSlashCommand = trimmed.startsWith('/')
-    const shouldAutoLoop =
-      messageKind === 'normal' &&
-      this.opts.loopEnabled === true &&
-      this.opts.economyMode !== true &&
-      !startsWithSlashCommand
-    const explicitLoop = /^\/loop(?:\s|$)/iu.test(trimmed)
-    if (!this.providerContinuation) {
-      this.loopActive = this.opts.loopEnabled === true && this.opts.economyMode !== true && (shouldAutoLoop || explicitLoop)
-      this.loopCycles = 0
-      this.loopLimit = loopLimitFromPrompt(text)
-      this.loopScheduledThisIteration = false
-    }
     this.providerContinuation = false
     const uuid = messageUuid || randomUUID()
     const receiptText = text.length > 500 ? `${text.slice(0, 500)}…` : text
@@ -1664,12 +1561,7 @@ export class AgentSession {
       cancelNote = note
       taskText = text ? `${note}\n\n${text}` : note
     }
-    let outText = shouldAutoLoop ? `/loop ${taskText}` : taskText
-    if (explicitLoop && taskText !== text) {
-      const loopPrefix = text.match(/^\s*\/loop(?:\s+|$)/iu)?.[0] ?? '/loop '
-      const loopBody = text.slice(loopPrefix.length)
-      outText = `${loopPrefix.trimEnd()} ${taskText.slice(0, taskText.length - text.length)}${loopBody}`
-    }
+    const outText = taskText
     // Keep only user-owned material in the SDK's persisted user turn. The
     // complete docs outline and bounded relevant-memory excerpts are generated
     // by live request hooks, not copied into history or passed to vision relay.
@@ -1695,9 +1587,8 @@ export class AgentSession {
         }
         return selection
       })
-    const economyReminder = this.opts.economyMode ? ECONOMY_TURN_REMINDER : ''
     const promptParts = {
-      stamp, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, projects: projectsCatalogUpdate, others: othersUpdate, reminder: economyReminder
+      stamp, memory: memoryCatalogUpdate, skills: skillCatalogUpdate, projects: projectsCatalogUpdate, others: othersUpdate
     }
     const stamped = (body: string): string => composeUserPrompt(body, promptParts)
 
@@ -1860,8 +1751,7 @@ export class AgentSession {
   }
 
   continuationState(): AgentContinuationState {
-    return { approvedTools: [...this.approvedTools], loopActive: this.loopActive, loopCycles: this.loopCycles,
-      loopLimit: this.loopLimit, loopScheduledThisIteration: this.loopScheduledThisIteration }
+    return { approvedTools: [...this.approvedTools] }
   }
 
   /** `continuing` = a próxima mensagem continua a tarefa (troca no estouro).
@@ -1869,10 +1759,6 @@ export class AgentSession {
    *  usuário e começa um turno novo, com o loop decidido do zero. */
   restoreContinuation(state: AgentContinuationState, continuing = true): void {
     this.approvedTools = new Set(state.approvedTools)
-    this.loopActive = state.loopActive
-    this.loopCycles = state.loopCycles
-    this.loopLimit = state.loopLimit
-    this.loopScheduledThisIteration = state.loopScheduledThisIteration
     this.providerContinuation = continuing
   }
 
@@ -1885,12 +1771,11 @@ export class AgentSession {
   }
 
   hasBackgroundWork(): boolean {
-    return (this.restartBackground ?? 0) > 0 || this.loopActive || this.restartOpaqueCalls.size > 0
+    return (this.restartBackground ?? 0) > 0 || this.restartOpaqueCalls.size > 0
   }
 
   async interrupt(): Promise<AgentInterruptResult> {
     this.windowsControlScope.cancel()
-    this.clearLoopState()
     const q = this.q
     if (!q) {
       this.releasePendingPermissions('O usuário parou o turno.')
@@ -2067,7 +1952,6 @@ export class AgentSession {
     this.contextCapture.dispose()
     presenceRemove(this, this.opts.convId)
     this.mirrorRepair?.dispose()
-    this.clearLoopState()
     // O registro de memórias usadas é do turno corrente desta conversa: some com
     // ela. O ordinal avança para que uma decisão ainda em voo não repovoe o
     // registro depois do fim — seria vazamento por conversa morta.
@@ -2307,7 +2191,7 @@ ${lines}
    * and logged — it must NOT poison the rest. The previous all-or-nothing rule
    * announced "no skills available" whenever a single expected name was missing,
    * which hid every working skill from the model (measured: one stray user
-   * skill silenced the whole managed kit, including the economy-mode pair).
+   * skill silenced the whole managed kit).
    *
    * Returns null only when the reload itself fails or the session has no query.
    */
@@ -2349,11 +2233,6 @@ ${lines}
       console.warn('[skills] native reload failed; catalog remains unchanged:', error)
       return null
     }
-  }
-
-  private clearLoopState(): void {
-    this.loopActive = false
-    this.loopScheduledThisIteration = false
   }
 
   private handlePermission(
@@ -2399,83 +2278,13 @@ ${lines}
       const planningSkillDenial = sessionSkillDenial(this.opts, skill, this.handoffFirstTurnDone)
       if (planningSkillDenial) return Promise.resolve({ behavior: 'deny', message: planningSkillDenial })
       if (/^(?:[^:]+:)?loop$/iu.test(skill.trim())) {
-        if (this.opts.loopEnabled !== true || this.opts.economyMode === true) {
-          return Promise.resolve({
-            behavior: 'deny',
-            message: 'Loop desativado nesta conversa. Ative o toggle “Loop” para usar /loop.'
-          })
-        }
-        this.loopActive = true
-        // The per-conversation toggle is the explicit user grant. Returning here
-        // also prevents loopActive from being set while the Skill permission is
-        // still pending (and possibly denied).
-        return Promise.resolve({ behavior: 'allow', updatedInput: input })
-      }
-      // Same reasoning for the two economy-mode skills: the toggle IS the user's
-      // grant, and ECONOMY_HINT asks for both at the start of every turn — without
-      // this the user would face two permission modals per session. Read-only by
-      // nature (they only change how the model writes and which command prefix it
-      // uses), and denied outright when the toggle is off, so the model cannot
-      // opt into the compressed style behind the user's back.
-      if (/^(?:[^:]+:)?(?:caveman|rtk)$/iu.test(skill.trim())) {
-        if (this.opts.economyMode !== true) {
-          return Promise.resolve({
-            behavior: 'deny',
-            message: `Skill "${skill}" só é usada com o toggle "Econômico" ligado nesta conversa.`
-          })
-        }
-        return Promise.resolve({ behavior: 'allow', updatedInput: input })
+        return Promise.resolve({ behavior: 'deny', message: 'A skill /loop não está disponível: o modo Loop foi removido do Agent Code.' })
       }
     }
+    // O recurso Loop foi removido do app: o agendamento (ScheduleWakeup) e a skill
+    // /loop não rodam mais, com ou sem 'Permitir tudo'.
     if (toolName === 'ScheduleWakeup') {
-      if (this.opts.loopEnabled !== true || this.opts.economyMode === true) {
-        return Promise.resolve({
-          behavior: 'deny',
-          message: 'ScheduleWakeup bloqueado: o toggle Loop está desativado nesta conversa.'
-        })
-      }
-      if (!this.loopActive) {
-        return Promise.resolve({
-          behavior: 'deny',
-          message: 'ScheduleWakeup só pode ser usado por uma execução ativa da skill /loop; não o use para esperar subagentes.'
-        })
-      }
-      const allowedKeys = new Set(['delaySeconds', 'reason', 'prompt', 'stop'])
-      const unexpected = Object.keys(input).filter((key) => !allowedKeys.has(key))
-      if (unexpected.length) {
-        return Promise.resolve({
-          behavior: 'deny',
-          message: `ScheduleWakeup inválido: campos não permitidos: ${unexpected.join(', ')}.`
-        })
-      }
-      if (input.stop === true) {
-        this.clearLoopState()
-        return Promise.resolve({ behavior: 'allow', updatedInput: { stop: true } })
-      }
-      if (this.loopCycles >= this.loopLimit) {
-        this.clearLoopState()
-        return Promise.resolve({
-          behavior: 'deny',
-          message: `Loop encerrado após ${this.loopLimit} ciclos sem confirmar a condição de saída. Peça explicitamente um limite maior para tentar novamente.`
-        })
-      }
-      if (
-        typeof input.delaySeconds !== 'number' ||
-        !Number.isFinite(input.delaySeconds) ||
-        typeof input.reason !== 'string' ||
-        !input.reason.trim() ||
-        typeof input.prompt !== 'string' ||
-        !input.prompt.trim()
-      ) {
-        return Promise.resolve({
-          behavior: 'deny',
-          message: 'ScheduleWakeup inválido: delaySeconds, reason e prompt são obrigatórios durante o loop.'
-        })
-      }
-      this.loopCycles++
-      this.loopScheduledThisIteration = true
-      console.log(`[loop] conversation=${this.opts.convId} cycle=${this.loopCycles}/${this.loopLimit} scheduled`)
-      return Promise.resolve({ behavior: 'allow', updatedInput: input })
+      return Promise.resolve({ behavior: 'deny', message: 'ScheduleWakeup não está disponível: o modo Loop foi removido do Agent Code.' })
     }
     // Windows control has its own high-risk master gate. "Permitir tudo" must
     // never bypass it; enabling the dedicated toggle is the explicit grant.
@@ -2772,6 +2581,17 @@ ${lines}
             cacheCreationInputTokens?: number
           }>
           origin?: { kind?: string }
+          fast_mode_state?: FastModeState
+          fast_mode_disabled_reason?: FastModeDisabledReason
+        }
+        // Modo rápido pedido mas não servido (conta sem "uso extra", cooldown…):
+        // diz o motivo em vez de deixar o toggle parecer ligado. Um aviso por motivo.
+        if (fastModeTransport(this.opts.model) === 'anthropic-setting') {
+          const notice = fastModeNotice(this.opts.fastMode === true, r.fast_mode_state, r.fast_mode_disabled_reason)
+          if (notice && notice.key !== this.lastFastModeNotice) {
+            this.lastFastModeNotice = notice.key
+            this.emit({ kind: 'status', id: nextId(), text: notice.text })
+          } else if (!notice) this.lastFastModeNotice = null
         }
         // A background subagent (Task tool) finishing sends its OWN `result`
         // message into this same stream, tagged `origin.kind === 'peer'`. That
@@ -2830,14 +2650,6 @@ ${lines}
         }
         this.restartPersisting = true
         this.markTurnIdle()
-        // If an active loop iteration reaches a successful terminal result
-        // without requesting another wakeup, its condition is complete. The CLI
-        // has nothing pending and the local guard must not authorize a stale call.
-        if (this.loopActive && !r.is_error && !usageExhausted && !this.loopScheduledThisIteration) {
-          this.loopActive = false
-          console.log(`[loop] conversation=${this.opts.convId} completed after ${this.loopCycles} cycle(s)`)
-        }
-        this.loopScheduledThisIteration = false
         // Belt-and-braces re-read at the end of every turn: if the folder watcher
         // ever misses a write (network drive, antivirus, watcher limits), the card
         // still lands on the truth instead of drifting for the rest of the chat.
@@ -2847,6 +2659,16 @@ ${lines}
         }
         const reconciledUsage = reconcileResultUsage(r.usage, r.modelUsage)
         this.reconcileLiveLlmCalls(r.modelUsage)
+        // O tempo do turno entra na conta da conversa (sobrevive a reinícios). Nunca
+        // derruba o `result`: até um erro síncrono do repositório vira só aviso.
+        if (Number.isFinite(r.duration_ms)) {
+          const turnTime = { convId: this.opts.convId, turnId: turnIds?.[0] ?? null, durationMs: r.duration_ms }
+          void Promise.resolve()
+            .then(() => this.tokenUsageRepository?.insertTurnTime(turnTime))
+            .catch((error) => {
+              console.warn(`[turn-time] falha ao gravar o tempo do turno conv=${this.opts.convId}: ${error instanceof Error ? error.message : String(error)}`)
+            })
+        }
         this.emit({
           kind: 'result',
           id: nextId(),

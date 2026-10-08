@@ -40,12 +40,12 @@ import type { BrowserController } from './browserController'
 
 afterEach(() => { vi.useRealTimers(); capture.queries = [] })
 describe('provider-neutral prompt contract', () => {
-  it('restores loop budget and tool approvals without starting a new loop on provider continuation', async () => {
+  it('restores tool approvals on provider continuation', async () => {
     const ask = vi.fn()
-    const session = new AgentSession({ convId: 'parity', cwd: '/project', model: 'gpt-6-astra', loopEnabled: true }, {} as BrowserController, () => {}, ask, () => {})
+    const session = new AgentSession({ convId: 'parity', cwd: '/project', model: 'gpt-6-astra' }, {} as BrowserController, () => {}, ask, () => {})
     try {
       await session.start()
-      const state = { approvedTools: ['Write'], loopActive: true, loopCycles: 17, loopLimit: 100, loopScheduledThisIteration: false }
+      const state = { approvedTools: ['Write'] }
       session.restoreContinuation(state)
       await session.send('Continue', undefined, 'continuation-id', 'pc', 'recovery')
       expect(session.continuationState()).toEqual(state)

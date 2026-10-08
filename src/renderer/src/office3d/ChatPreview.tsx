@@ -12,6 +12,7 @@ import type { OfficeCharacterModel } from '../office/adapter/model'
 import { lookupOf, turnHead, turnMessages } from './chatPage'
 import { TurnHeader, TurnRows } from './ChatTurn'
 import { PROJECTOR_KEY } from './engineTypes'
+import { agentCss } from './projectColor'
 import './screens.css'
 
 /** Quantas entradas do turno a prévia mostra. */
@@ -57,7 +58,7 @@ export function ChatPreview({ feed, model }: { feed: OfficeFeed | null; model: O
   const head = turnHead(feed, model)
   return (
     <div className="o3d-preview" data-testid="office-preview" aria-hidden="true">
-      <TurnHeader head={head} seed={model.seed} />
+      <TurnHeader head={head} color={agentCss(feed, model.roomId, model.seed)} />
       <div className="message-list o3d-preview-body">
         <TurnRows messages={messages} busy={head.busy} limit={PREVIEW_MESSAGES} />
       </div>

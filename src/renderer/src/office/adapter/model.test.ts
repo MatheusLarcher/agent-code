@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { PermissionRequest } from '@shared/ipc'
 import { buildCrew, callSegments, lineText } from '../../crew'
 import type { Conversation } from '../../types'
-import { deriveOfficeModel, planHandoffs, roomIdFor, type OfficeCharacterModel } from './model'
+import { deriveOfficeModel, planHandoffs, projectColorHex, roomIdFor, type OfficeCharacterModel } from './model'
 import { scanTurn } from './turn'
 import { HOUR, NOW, conv, feed, toolUse, track, user } from './testFeed'
 
@@ -40,9 +40,15 @@ describe('quem entra no escritório', () => {
       NOW
     )
     expect(m.rooms).toEqual([
-      { id: 'c:/proj/alpha', projectKey: 'C:\\proj\\Alpha', name: 'Alpha', icon: 'data:icon', principals: 2 },
-      { id: 'd:/work/beta', projectKey: 'D:/work/beta/', name: 'beta', icon: null, principals: 1 }
+      { id: 'c:/proj/alpha', projectKey: 'C:\\proj\\Alpha', name: 'Alpha', icon: 'data:icon', color: projectColorHex(null, 'c:/proj/alpha'), principals: 2 },
+      { id: 'd:/work/beta', projectKey: 'D:/work/beta/', name: 'beta', icon: null, color: projectColorHex(null, 'd:/work/beta'), principals: 1 }
     ])
+    // A cor da sala é a fixa do projeto (feed.projectColors, por qualquer cwd dele).
+    const colored = deriveOfficeModel(
+      feed({ conversations: [conv('a', { cwd: 'C:\\proj\\Alpha' })], projectColors: { 'c:/proj/alpha/': { hex: '#3c9add', source: 'logo' } } }),
+      NOW
+    )
+    expect(colored.rooms[0].color).toBe('#3c9add')
     expect(roomIdFor('/home/x/Proj/')).toBe('/home/x/Proj')
   })
 

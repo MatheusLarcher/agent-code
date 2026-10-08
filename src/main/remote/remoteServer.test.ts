@@ -457,12 +457,16 @@ describe('RemoteServer — um celular por PC + novas ações do celular', () => 
     expect(interrupts).toEqual(['c9'])
     expect((await call(`/api/interrupt?token=${tok}&dev=fone-C`, {})).status).toBe(400)
 
-    expect((await call(`/api/set-mode?token=${tok}&dev=fone-C`, { convId: 'c9', mode: 'loop', on: true })).status).toBe(200)
-    expect(modes).toEqual([{ convId: 'c9', mode: 'loop', on: true }])
+    expect((await call(`/api/set-mode?token=${tok}&dev=fone-C`, { convId: 'c9', mode: 'fast', on: true })).status).toBe(200)
+    expect(modes).toEqual([{ convId: 'c9', mode: 'fast', on: true }])
     expect((await call(`/api/set-mode?token=${tok}&dev=fone-C`, { convId: 'c9', mode: 'turbo', on: true })).status).toBe(400)
+    // Economico e loop foram removidos: não chegam mais às deps.
+    expect((await call(`/api/set-mode?token=${tok}&dev=fone-C`, { convId: 'c9', mode: 'loop', on: true })).status).toBe(400)
+    expect((await call(`/api/set-mode?token=${tok}&dev=fone-C`, { convId: 'c9', mode: 'economy', on: true })).status).toBe(400)
+    expect(modes).toHaveLength(1)
     // Eco otimista no snapshot.
-    const st = (await call(`/api/state?token=${tok}&dev=fone-C`)).json as { conversations: Array<{ id: string; loopEnabled?: boolean }> }
-    expect(st.conversations.find((c) => c.id === 'c9')?.loopEnabled).toBe(true)
+    const st = (await call(`/api/state?token=${tok}&dev=fone-C`)).json as { conversations: Array<{ id: string; fastMode?: boolean }> }
+    expect(st.conversations.find((c) => c.id === 'c9')?.fastMode).toBe(true)
 
     const created = await call(`/api/conversation?token=${tok}&dev=fone-C`, { type: 'create', cwd: '/proj' })
     expect(created.status).toBe(200)

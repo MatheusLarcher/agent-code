@@ -23,6 +23,7 @@ import { createConversationLock } from './conversationLock'
 import { createStepRunner, RESUME_PREPARE_DEADLINE_MS } from './sessionSteps'
 import { initSessionLog, logSession } from './sessionLog'
 import { initFreezeLog, logFreezes } from './freezeLog'
+import { startMemoryWatch } from './memoryWatch'
 import { readOfficeAgentFile } from './officeAgents'
 import { installJsProfilingPolicy, rendererIndexMatcher } from './jsProfilingPolicy'
 import { SessionLeases } from './sessionLeases'
@@ -40,7 +41,7 @@ import { isSandboxPath, sandboxCreateResult, sandboxRoot } from './sandbox'
 import { secondInstanceReveal, wantsMinimized } from './mcpInbound/windowStartup'
 import { RelayClient } from './remote/relayClient'
 import { RemotePairingStore } from './remote/remotePairing'
-import { buildRemoteApk } from './remote/buildApk'
+import { buildRemoteApk, resolveRemoteRoot } from './remote/buildApk'
 import {
   AUTO_MODEL,
   Channels,
@@ -190,7 +191,8 @@ import type {
   ConversationQueryDto,
   SecretVaultItem,
   MemoryConflictItem,
-  TokenUsageHistory
+  TokenUsageHistory,
+  TurnTimeTotals
 } from '../shared/ipc'
 
 let mainWindow: BrowserWindow | null = null
@@ -199,6 +201,7 @@ let stopTaskReaper: (() => void) | null = null
 let stopHandoffSweep: (() => void) | null = null
 let stopRestartGuardFile: (() => void) | null = null
 let stopSleepGuard: (() => void) | null = null
+let stopMemoryWatch: (() => void) | null = null
 /** Handlers planning:* e os vigias de pasta deles (fechados ao sair). */
 let planningIpc: PlanningIpcHandle | null = null
 /** O HTML do agente na TV do Escritório (protocolo agent-mockup + janela de captura). */
@@ -685,8 +688,15 @@ async function fsExists(p: string): Promise<boolean> {
   }
 }
 
-// Root of the smartfone-remote project (sibling of out/ → ../../ from out/main).
-const REMOTE_ROOT = join(import.meta.dirname, '../../smartfone-remote')
+// Repo root at build time (electron.vite.config.ts `define`); absent under vitest.
+declare const __AGENT_CODE_REPO__: string | undefined
+
+// Root of the smartfone-remote project: sibling of out/ (dev), else the repo the
+// installer was built from — resources/app does not carry it.
+const REMOTE_ROOT = resolveRemoteRoot([
+  join(import.meta.dirname, '../../smartfone-remote'),
+  typeof __AGENT_CODE_REPO__ === 'string' ? join(__AGENT_CODE_REPO__, 'smartfone-remote') : undefined
+])
 
 // ---- "@" autocomplete: search project files/folders --------------------------
 
@@ -1516,7 +1526,7 @@ export function registerIpc(): void {
   // O chip da autorização do PO: a foto e o "Revogar".
   poAuthorizations.registerIpc((channel, listener) => ipcMain.handle(channel, listener))
   ipcMain.handle(Channels.planningExportPdf, (e, req: unknown) => exportFlowPdf(e.sender, req))
-  // Título automático da conversa (claude-haiku-4-5): a lógica mora em titles/.
+  // Título automático da conversa (claude-haiku-5-5): a lógica mora em titles/.
   registerConversationTitleIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener) })
   // Fila de espera das conversas, gravada no banco para sobreviver ao reinício.
   registerOutboxIpc({
@@ -1555,6 +1565,10 @@ export function registerIpc(): void {
       repository.listLlmUsageTotals(convId)
     ])
     return { calls, totals }
+  })
+  // Tempo somado dos turnos de uma conversa (`conversation_turn_time`): leve, sem as chamadas.
+  ipcMain.handle(Channels.turnTimeTotals, async (_e, convId: string): Promise<TurnTimeTotals> => {
+    return storageLifecycle.repository().turnTimeTotals(convId)
   })
   ipcMain.handle(Channels.kvGet, (_e, key: string) => readPersistedKv(key))
   ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => {
@@ -2700,6 +2714,9 @@ app.whenReady().then(async () => {
   initSessionLog(app.getPath('userData'))
   // Travadas da tela em <userData>/logs/travadas.log (freezeLog.ts).
   initFreezeLog(app.getPath('userData'))
+  // Memória do processo principal em <userData>/logs/memoria.log + perfil de heap
+  // perto do teto (memoryWatch.ts): o app fechava sem aviso por estouro de heap.
+  stopMemoryWatch = startMemoryWatch({ userDataDir: app.getPath('userData') })
   // Mesma pergunta ("algum agente ocupado?"), outro consumidor: enquanto houver
   // turno vivo, o sistema não entra em suspensão por ociosidade — o Windows não
   // conta o trabalho do agente como atividade e dormia no meio da tarefa. Sai
@@ -2931,6 +2948,8 @@ app.on('before-quit', (event) => {
   stopRestartGuardFile = null
   stopSleepGuard?.()
   stopSleepGuard = null
+  stopMemoryWatch?.()
+  stopMemoryWatch = null
   planningIpc?.close()
   centralIpc?.dispose()
 })

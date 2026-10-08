@@ -9,7 +9,7 @@
  */
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { ProjectLayout } from './layout'
-import { accentHue, iconSource } from './sign'
+import { iconSource } from './sign'
 
 /** Aberto, fecha com Esc (sem deixar o Esc chegar ao motor) ou com um clique fora de `box`. */
 export function useDismiss(open: boolean, close: () => void, box: RefObject<HTMLElement | null>): void {
@@ -34,8 +34,8 @@ export function useDismiss(open: boolean, close: () => void, box: RefObject<HTML
   }, [open, box])
 }
 
-/** Ícone do projeto: a imagem, o emoji ou a inicial na cor dele. */
-export function ProjectIcon({ project }: { project: Pick<ProjectLayout, 'id' | 'name' | 'icon'> }): JSX.Element {
+/** Ícone do projeto: a imagem, o emoji ou a inicial na cor fixa dele (projectColor.ts). */
+export function ProjectIcon({ project }: { project: Pick<ProjectLayout, 'id' | 'name' | 'icon' | 'color'> }): JSX.Element {
   const src = iconSource(project.icon, project.name)
   if (src.kind === 'image') return <img className="o3d-pf-icon" src={src.src} alt="" aria-hidden="true" />
   if (src.kind === 'glyph')
@@ -45,7 +45,7 @@ export function ProjectIcon({ project }: { project: Pick<ProjectLayout, 'id' | '
       </span>
     )
   return (
-    <span className="o3d-pf-icon initial" style={{ background: `hsl(${accentHue(project.id)} 42% 46%)` }} aria-hidden="true">
+    <span className="o3d-pf-icon initial" style={{ background: project.color }} aria-hidden="true">
       {src.text}
     </span>
   )

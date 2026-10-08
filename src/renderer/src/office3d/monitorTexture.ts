@@ -4,7 +4,7 @@
  * a última ação dele (`code.action`: leitura, terminal, busca, navegador ou
  * delegação — actionPaint.ts); sem, o CHAT ENCOLHIDO do turno (chatPaint.ts).
  *
- * O conteúdo vem de screenPageFor (screens.ts), trocado no máximo a cada 5 s
+ * O conteúdo vem de screenPageFor (screens.ts), trocado no máximo a cada 2 s
  * (monitorThrottle.ts). `draw` só redesenha quando a
  * página (ou a cor da sala) muda: não há custo por quadro. `scale` < 1 é a
  * mesma tela num canvas menor (LOD médio).

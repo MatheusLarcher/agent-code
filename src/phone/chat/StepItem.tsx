@@ -9,6 +9,8 @@ import { memo, useMemo, type ReactNode } from 'react'
 import type { CentralActivity } from '@shared/central'
 import { sameStep, stepActivity, stepFallback, stepHasLine, type ChatStep } from '@renderer/components/chatSteps'
 import type { CardRefResolver } from '@renderer/components/Markdown'
+import { StepPillRow } from '@renderer/components/StepPillRow'
+import { stepPills, type StepPill } from '@renderer/components/stepPills'
 import { useStepOpen } from '@renderer/components/useStepOpen'
 import type { ChatMsg } from '../core/types'
 import { Icon } from '../ui/icons'
@@ -30,10 +32,12 @@ export interface ActLineProps {
    * "agora: …" aqui, o chevron de sempre. A Central (padrão) mantém os dois.
    */
   quiet?: boolean
+  /** As pílulas por tipo (ícone + número; o texto no toque longo): no lugar da contagem total. */
+  pills?: readonly StepPill[]
 }
 
 /** Terminada: ▸ + resumo + contagem. Rodando: spinner (na cor `--c`), o resumo até ali e "agora: …" (fora do modo `quiet`). */
-export function ActLine({ activity: a, running, open, onToggle, fallback = '', animate = false, quiet = false }: ActLineProps): JSX.Element {
+export function ActLine({ activity: a, running, open, onToggle, fallback = '', animate = false, quiet = false, pills = [] }: ActLineProps): JSX.Element {
   const nodes: ReactNode[] = (Array.isArray(a?.segments) ? a.segments : []).map((s, i) => {
     if (s?.tone === 'strong') return <b key={i}>{s.text}</b>
     const tone = s?.tone
@@ -46,8 +50,9 @@ export function ActLine({ activity: a, running, open, onToggle, fallback = '', a
   return (
     <button type="button" className={`c-act${open ? ' open' : ''}${running ? ' running' : ''}`} title={a?.text} aria-expanded={open} onClick={onToggle}>
       {spin ? <span className="c-spin" /> : <Icon name="chevron" size={12} className="c-chev" />}
+      <StepPillRow pills={pills} count={(n) => (animate ? <CountUp value={n} /> : n)} />
       <span className="c-sum">{nodes.length ? nodes : fallback || (spin ? 'trabalhando…' : `${count} ${count === 1 ? 'ação' : 'ações'}`)}</span>
-      {count > 0 && !(quiet && !nodes.length && fallback) && <span className="c-count">{animate ? <CountUp value={count} /> : count}</span>}
+      {count > 0 && pills.length === 0 && !(quiet && !nodes.length && fallback) && <span className="c-count">{animate ? <CountUp value={count} /> : count}</span>}
     </button>
   )
 }
@@ -67,11 +72,12 @@ interface StepItemProps {
 function StepLine({ step, voiceReady, speakingId, onSpeak, resolveRef, fresh }: StepItemProps): JSX.Element {
   const [open, toggle] = useStepOpen(step.id)
   const activity = useMemo(() => stepActivity(step), [step])
+  const pills = useMemo(() => stepPills(step.tools), [step])
   // Sem o "agora" (ele fica na linha ao vivo): rodando sem nada pronto, "usou 1 ferramenta".
   const fallback = stepFallback({ segments: activity.segments, now: undefined }, step.tools.length, step.items.length - step.tools.length)
   return (
     <>
-      <ActLine activity={activity} running={step.running} open={open} onToggle={toggle} fallback={fallback} animate={fresh} quiet />
+      <ActLine activity={activity} running={step.running} open={open} onToggle={toggle} fallback={fallback} animate={fresh} quiet pills={pills} />
       {open && (
         <div className="c-tools">
           {step.items.map((m, i) =>

@@ -17,6 +17,7 @@ import type { Touch, Turn } from '../projectActivity'
 import type { TodoItem } from '../types'
 import { fmtAgo as fmtCrewAgo, fmtClock } from './AgentCrew'
 import { BoardCardDetail, COLUMNS, fmtAgo } from './BoardCardDetail'
+import { PoTag } from './BoardTagIcon'
 import { CrewRoleIcon } from './CrewIcons'
 import { IconCollapseRight, IconSpinner, IconTrash } from './Icons'
 import { ProjectGraph } from './ProjectGraph'
@@ -130,10 +131,6 @@ function poAgreed(item: BoardItem): boolean {
 }
 
 /** O tooltip dos selos do PO: o motivo atual do cartão, quando há. */
-function reasonTip(item: BoardItem): string | undefined {
-  return item.poReason ? `Motivo: ${item.poReason}` : undefined
-}
-
 const TASK_STATUS_LABEL: Record<TaskBoardStatus, string> = {
   pending: 'Na fila',
   running: 'Executando',
@@ -499,28 +496,12 @@ function Card({
           {deadline && <DeadlineTag deadline={deadline} />}
           <PrintBadge count={prints} />
           {/* Cada selo do PO leva o motivo no tooltip: toda alteração dele se justifica. */}
-          {item.origin === 'po' && (
-            <span className="board-tag po" title={reasonTip(item)}>
-              PO acrescentou
-            </span>
-          )}
+          {item.origin === 'po' && <PoTag action="added" reason={item.poReason} />}
           {/* O rebaixamento de fim de turno não é o PO discordando: com o selo,
               "PO corrigiu/revisou" só repetiria o mesmo fato com o nome errado. */}
-          {!awaiting && isPoCorrected(item) && (
-            <span className="board-tag po" title={reasonTip(item)}>
-              PO corrigiu
-            </span>
-          )}
-          {item.poTitle && item.origin === 'agent' && !isPoCorrected(item) && (
-            <span className="board-tag po" title={reasonTip(item)}>
-              PO reescreveu
-            </span>
-          )}
-          {!awaiting && poAgreed(item) && (
-            <span className="board-tag po" title={reasonTip(item)}>
-              PO revisou
-            </span>
-          )}
+          {!awaiting && isPoCorrected(item) && <PoTag action="fixed" reason={item.poReason} />}
+          {item.poTitle && item.origin === 'agent' && !isPoCorrected(item) && <PoTag action="rewrote" reason={item.poReason} />}
+          {!awaiting && poAgreed(item) && <PoTag action="reviewed" reason={item.poReason} />}
           {status === 'completed' && <span className="board-tag auto">{fmtAgo(item.updatedAt, now)}</span>}
         </span>
       </button>

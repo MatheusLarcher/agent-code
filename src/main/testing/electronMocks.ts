@@ -128,7 +128,7 @@ vi.mock('../appRelauncher', () => ({ armAppRelauncher: vi.fn() }))
 vi.mock('../remote/remoteServer', () => ({ RemoteServer: class { broadcast(): void {} } }))
 vi.mock('../remote/relayClient', () => ({ RelayClient: class {} }))
 vi.mock('../remote/remotePairing', () => ({ RemotePairingStore: class {} }))
-vi.mock('../remote/buildApk', () => ({ buildRemoteApk: vi.fn() }))
+vi.mock('../remote/buildApk', () => ({ buildRemoteApk: vi.fn(), resolveRemoteRoot: (c: Array<string | undefined>) => c.find(Boolean) }))
 vi.mock('../config', () => ({
   ensureConfigLoaded: vi.fn(),
   initializeConfigPersistence: vi.fn(),

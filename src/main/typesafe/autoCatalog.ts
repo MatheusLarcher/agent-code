@@ -37,10 +37,12 @@ export function autoEffortLadder(model: string): EffortLevel[] {
  * qual custa mais — sem isto a escolha sai do nome, não do trabalho pedido.
  *
  * Preços por milhão de tokens (entrada/saída) do catálogo da Anthropic: Fable
- * 5.1 $10/$50, Sonnet 5 $2/$10, Opus 5.5 $4/$20. A escada de
+ * 5.1 $10/$50, Sonnet 5 $2/$10, Opus 5.5 $4/$20, Haiku 5.5 $0,10/$0,50. A escada de
  * custo é também a de capacidade, e é isso que as descrições dizem.
  */
 export const AUTO_MODEL_DESCRIPTIONS: Record<string, string> = {
+  'claude-haiku-5-5':
+    'O mais barato e o mais rápido, de longe. Tarefa simples e bem definida: pergunta factual, tradução, resumo, renomear, edição pontual óbvia.',
   'claude-sonnet-5-5':
     'Equilíbrio entre custo e capacidade. O padrão do trabalho de código do dia a dia: implementar uma mudança já descrita, corrigir um bug localizado, escrever um teste.',
   'claude-opus-5-5':

@@ -4,7 +4,7 @@ import { ContextCapture, readLiveContext } from './capture'
 import { composeFromPromptBlocks } from './blocks'
 import type { ContextHistoryRepository, ContextTurnWrite } from '../persistence/types'
 
-const parts = { stamp: 'stamp', memory: '', skills: '', projects: '', reminder: '' }
+const parts = { stamp: 'stamp', memory: '', skills: '', projects: '' }
 const OPUS = 'claude-opus-5-5'
 const SOL = 'gpt-6.1-sol'
 

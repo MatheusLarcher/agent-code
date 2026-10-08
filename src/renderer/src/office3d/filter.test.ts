@@ -129,7 +129,7 @@ describe('EngineFilter: escolha salva, filtro em vigor e lista do HUD', () => {
     }
     return s
   }
-  const proj = (id: string, agents = 1): ProjectLayout => ({ id, name: id, icon: null, islands: [], agents })
+  const proj = (id: string, agents = 1): ProjectLayout => ({ id, name: id, icon: null, color: '#3c9add', islands: [], agents })
 
   it('a escolha salva vale quando o projeto chega; com o feed ainda vazio fica guardada', () => {
     const apply = vi.fn()

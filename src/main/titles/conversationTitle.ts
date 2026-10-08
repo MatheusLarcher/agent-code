@@ -4,14 +4,15 @@ import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-a
  * Nome curto para uma conversa, a partir da 1ª mensagem do usuário.
  *
  * Uma chamada one-shot no molde de observerQuery.ts (tools [], maxTurns 1):
- * - modelo barato (claude-haiku-4-5), SEM `effort` — o Haiku 4.5 recusa o
- *   parâmetro — e com o thinking desligado de forma explícita;
+ * - modelo barato (claude-haiku-5-5), SEM `effort` (fica no padrão `medium`)
+ *   e com o thinking desligado de forma explícita — o Haiku 5.5 só aceita
+ *   `disabled` com esforço `high` ou abaixo;
  * - sessão efêmera (persistSession false): o pedido de título não é conversa;
  * - tempo curto: estourou, aborta e devolve null;
  * - nunca lança: qualquer falha vira null e quem chamou fica com o recuo.
  */
 
-export const TITLE_MODEL = 'claude-haiku-4-5'
+export const TITLE_MODEL = 'claude-haiku-5-5'
 /** Teto do título, em caracteres. */
 export const TITLE_MAX_CHARS = 40
 /** O quanto da mensagem vai para o modelo: o assunto está no começo. */
@@ -93,7 +94,7 @@ async function askModel(
   const options: Options = {
     model: TITLE_MODEL,
     systemPrompt: TITLE_SYSTEM_PROMPT,
-    // Sem `effort` (o Haiku 4.5 dá erro com ele) e sem thinking.
+    // Sem `effort` (padrão `medium`, que aceita thinking desligado) e sem thinking.
     thinking: { type: 'disabled' },
     executable: 'node',
     tools: [],

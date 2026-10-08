@@ -5,7 +5,7 @@
  * O fluxo, na 1ª mensagem com texto de uma conversa ainda sem nome:
  * 1. na hora, o recuo — o começo do que o usuário digitou (titleSource 'auto');
  * 2. se nenhuma janela de uso do Claude passou de 90%, pede ao main um nome
- *    curto (claude-haiku-4-5, conversation:suggestTitle); na volta, ele só
+ *    curto (claude-haiku-5-5, conversation:suggestTitle); na volta, ele só
  *    entra por cima do recuo ('auto' → 'llm'), nunca por cima de um nome do
  *    usuário;
  * 3. renomear pelo usuário grava 'user' e trava: nada automático mexe mais.

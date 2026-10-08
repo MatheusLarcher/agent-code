@@ -442,6 +442,25 @@ describe('token usage — llm_calls / llm_usage_totals', () => {
     await repository.close()
   })
 
+  it('soma o tempo dos turnos por conversa e lê o último (sobrevive a reabrir o banco)', async () => {
+    const { cache, dbPath } = await tempCache()
+    const repository = new SqliteRepository(cache, dbPath, 'device-a')
+    await repository.initialize()
+    expect(await repository.turnTimeTotals('conv-1')).toEqual({ totalMs: 0, turns: 0, lastMs: null })
+
+    await repository.insertTurnTime({ convId: 'conv-1', turnId: 'turn-1', durationMs: 60_000 })
+    await repository.insertTurnTime({ convId: 'conv-1', turnId: 'turn-2', durationMs: 15_500 })
+    await repository.insertTurnTime({ convId: 'conv-outra', turnId: 'turn-x', durationMs: 999 })
+    expect(await repository.turnTimeTotals('conv-1')).toEqual({ totalMs: 75_500, turns: 2, lastMs: 15_500 })
+
+    // Reabre o banco: o tempo gravado continua lá.
+    repository.close()
+    const reopened = new SqliteRepository(cache, dbPath, 'device-a')
+    await reopened.initialize()
+    expect(await reopened.turnTimeTotals('conv-1')).toEqual({ totalMs: 75_500, turns: 2, lastMs: 15_500 })
+    reopened.close()
+  })
+
   it('cost_usd nulo não quebra o agregado (fica null quando nenhuma chamada tem preço)', async () => {
     const { cache, dbPath } = await tempCache()
     const repository = new SqliteRepository(cache, dbPath, 'device-a')

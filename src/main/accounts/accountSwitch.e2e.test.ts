@@ -87,7 +87,7 @@ function world(opts: { pct: Record<string, number>; gpt?: boolean }) {
       refreshUsage: async () => {},
       waitForIdle: async () => {},
       resumeAfterQuota: async () => `sessao-da-conta-${proc.account}`,
-      continuationState: () => ({ approvedTools: [], loopActive: false, loopCycles: 0, loopLimit: 100, loopScheduledThisIteration: false }),
+      continuationState: () => ({ approvedTools: [] }),
       restoreContinuation: vi.fn(),
       // O do AgentSession real: vem do `background_tasks_changed` do SDK.
       hasBackgroundWork: () => translator.hasBackgroundWork()

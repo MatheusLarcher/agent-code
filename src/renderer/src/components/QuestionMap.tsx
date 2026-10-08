@@ -13,6 +13,10 @@ interface Cluster {
   questions: Question[]
 }
 
+/** Distância mínima entre dois pontos, em fração da altura do mapa (~340px): 5% ≈ 17px,
+ *  o que garante que cada ponto tenha uma área de clique própria de 16px sem sobrepor a vizinha. */
+const CLUSTER_GAP = 0.05
+
 function clusterQuestions(messages: UIMessage[]): Cluster[] {
   const questions: Question[] = []
   messages.forEach((message, index) => {
@@ -23,7 +27,7 @@ function clusterQuestions(messages: UIMessage[]): Cluster[] {
   const clusters: Cluster[] = []
   for (const question of questions) {
     const last = clusters[clusters.length - 1]
-    if (last && question.ratio - last.ratio < 0.018) {
+    if (last && question.ratio - last.ratio < CLUSTER_GAP) {
       last.questions.push(question)
       last.ratio = last.questions.reduce((sum, q) => sum + q.ratio, 0) / last.questions.length
     } else clusters.push({ ratio: question.ratio, questions: [question] })
@@ -68,7 +72,7 @@ export function QuestionMap({
             aria-label={cluster.questions.length > 1 ? `${cluster.questions.length} perguntas` : preview(cluster.questions[0].text)}
             onMouseEnter={() => setOpen(index)}
             onFocus={() => setOpen(index)}
-            onClick={() => cluster.questions.length === 1 && onSelect(cluster.questions[0].id)}
+            onClick={() => (cluster.questions.length === 1 ? onSelect(cluster.questions[0].id) : setOpen(index))}
           />
           {open === index && (
             <div className="question-map-card">

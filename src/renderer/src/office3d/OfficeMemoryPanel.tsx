@@ -2,9 +2,12 @@
  * O painel de Memórias no Escritório: os dados (useMemoryPanel, só com ele
  * aberto) e quem está na estante agora, lido da turma do motor.
  */
+import { CENTRAL_ID } from '@shared/central'
 import type { OfficeFeed } from '../office/adapter/feed'
+import { principalKey } from '../office/adapter/model'
 import type { Office3DEngine } from './engine'
 import { MemoryPanel } from './MemoryPanel'
+import { agentCss } from './projectColor'
 import { useMemoryPanel } from './useMemoryPanel'
 
 export interface OfficeMemoryPanelProps {
@@ -35,6 +38,7 @@ export function OfficeMemoryPanel({ engine, feed, onClose, onOpenConversation }:
       onClose={onClose}
       onFlyToAgent={(convId) => engine.flyToAgent(`conv:${convId}`)}
       onOpenConversation={onOpenConversation}
+      dotOf={(e) => agentCss(feed, e.convId === CENTRAL_ID ? null : e.project || null, principalKey(e.convId))}
     />
   )
 }

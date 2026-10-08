@@ -64,6 +64,7 @@ import type {
   ConversationDeleteDto,
   RepositoryChange,
   TokenUsageHistory,
+  TurnTimeTotals,
   OpenedPlanningDto,
   PlanningCardDto,
   PlanningChangedMsg,
@@ -449,7 +450,7 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   loadAllConversations(): Promise<unknown[]>
   /** Persist the full conversation list, split one db per project (`cwd`). */
   saveAllConversations(list: unknown[]): Promise<void>
-  /** Nome curto (claude-haiku-4-5, one-shot) para a conversa a partir da 1ª
+  /** Nome curto (claude-haiku-5-5, one-shot) para a conversa a partir da 1ª
    *  mensagem. Nunca lança: `ok: false` quando não houver título. */
   suggestConversationTitle(req: { text: string; convId?: string }): Promise<SuggestTitleResult>
 
@@ -579,6 +580,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   /** Persisted LLM calls + aggregated totals of a conversation, to rebuild the
    *  token-usage tree when reopening an old conversation. */
   getTokenUsageHistory(convId: string): Promise<TokenUsageHistory>
+  /** Tempo somado dos turnos da conversa (leve: sem as chamadas de LLM). */
+  getTurnTimeTotals(convId: string): Promise<TurnTimeTotals>
   /** Somente PC: cópias mascaradas do contexto entregue ao agente. */
   listContextTurns(convId: string): Promise<ContextTurnSummary[]>
   readContextTurn(convId: string, turnId: string, parentToolUseId?: string): Promise<ContextTurnDetail | null>
@@ -666,7 +669,7 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   onRemoteCentralChoose(cb: (m: RemoteCentralChoose) => void): () => void
   /** A phone asked to stop the running turn of a conversation. */
   onRemoteInterrupt(cb: (m: { convId: string }) => void): () => void
-  /** A phone toggled a per-conversation mode (economy/loop/fast). */
+  /** A phone toggled a per-conversation mode (fast). */
   onRemoteSetMode(cb: (m: RemoteSetModeMsg) => void): () => void
   /** A phone created/renamed/deleted a conversation. */
   onRemoteConversationAction(cb: (m: RemoteConversationAction) => void): () => void

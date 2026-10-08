@@ -8,14 +8,20 @@
  * Ícone de imagem (data URL, arquivo) carrega uma vez e fica em cache; quando
  * chega, `iconsVersion` sobe e quem pinta redesenha (`onIcon` pede um quadro).
  */
-import { accentHue, iconSource, initialOf } from '../sign'
+import { projectColorHex } from '../../office/adapter/model'
+import { iconSource, initialOf } from '../sign'
 import { FACE_W, MAX_TABS, TAB_D, tabX } from './boardLayout'
 
 export interface BoardTitleInfo {
   id: string
   name: string
   icon: string | null
+  /** A cor fixa do projeto (projectColor.ts); ausente = a reserva. */
+  color?: string
 }
+
+/** A cor do projeto da aba (a do feed, senão a reserva). */
+const colorOf = (p: BoardTitleInfo): string => p.color ?? projectColorHex(null, p.id)
 
 const FONT = '"Segoe UI", system-ui, sans-serif'
 const INK = '#2d2721'
@@ -51,7 +57,7 @@ function imageOf(src: string): HTMLImageElement | null {
 function icon(ctx: CanvasRenderingContext2D, p: BoardTitleInfo, cx: number, cy: number, r: number): void {
   const src = iconSource(p.icon, p.name)
   const img = src.kind === 'image' ? imageOf(src.src) : null
-  ctx.fillStyle = img || src.kind === 'glyph' ? '#f6f4ec' : `hsl(${accentHue(p.id)} 42% 46%)`
+  ctx.fillStyle = img || src.kind === 'glyph' ? '#f6f4ec' : colorOf(p)
   ctx.beginPath()
   ctx.arc(cx, cy, r, 0, Math.PI * 2)
   ctx.fill()
@@ -106,7 +112,7 @@ export function paintTitle(ctx: CanvasRenderingContext2D, w: number, h: number, 
     const x = w / 2 + tabX(i, tabs.length) * px
     const tr = (TAB_D * px) / 2
     if (t.id === title?.id) {
-      ctx.strokeStyle = `hsl(${accentHue(t.id)} 50% 38%)`
+      ctx.strokeStyle = colorOf(t)
       ctx.lineWidth = 5
       ctx.beginPath()
       ctx.arc(x, cy, tr + 5, 0, Math.PI * 2)

@@ -139,7 +139,7 @@ export class ProviderFailoverSession {
       if (event.kind === 'result' || event.kind === 'error') {
         this.turnOpen = false
         // O modelo fixado vale só para o turno da tarefa: o seguinte (mensagem do
-        // usuário, turno autônomo do loop) nasce livre — o `agent:send` refixa.
+        // usuário, turno autônomo) nasce livre — o `agent:send` refixa.
         this.modelPinned = false
         if (event.kind === 'result' && !event.isError && !this.stopped) this.checkTurnEnd()
         this.tryPending()
@@ -199,15 +199,13 @@ export class ProviderFailoverSession {
    * tarefa do usuário está parada sem limite, o background pode nunca terminar
    * (servidor de dev, watch) e um subagente em background da conta esgotada bate
    * no mesmo limite. Então troca já, avisa o usuário e conta à sessão nova o que
-   * foi interrompido. Um loop agendado sozinho não conta: ele passa para a sessão
-   * nova pelo `continuationState`. Mas um loop JUNTO de uma chamada autônoma ainda
-   * sem resultado (`restartActivity().autonomousCallOpen`) conta: a chamada
-   * morre com o processo e precisa ser avisada.
+   * foi interrompido. Uma chamada autônoma ainda sem resultado
+   * (`restartActivity().autonomousCallOpen`) também conta: ela morre com o
+   * processo e precisa ser avisada.
    */
   private interruptedBackground(previous: Session): string[] | null {
     if (!previous.hasBackgroundWork?.()) return null
     const opaqueCall = previous.restartActivity?.().autonomousCallOpen === true
-    if (!this.backgroundTasks.length && !opaqueCall && previous.continuationState().loopActive) return null
     return opaqueCall ? [...this.backgroundTasks, OPAQUE_CALL_TASK] : [...this.backgroundTasks]
   }
 
@@ -420,7 +418,7 @@ export class ProviderFailoverSession {
 
   /** A query da sessão atual ainda lê mensagens (uma morta não pode ser reaproveitada). */
   isAlive(): boolean { return !this.disposed && (this.current.isAlive?.() ?? true) }
-  /** O processo atual tem trabalho que trocá-lo mataria (subagente/shell em background, loop). */
+  /** O processo atual tem trabalho que trocá-lo mataria (subagente/shell em background). */
   hasBackgroundWork(): boolean { return !this.disposed && !!this.current.hasBackgroundWork?.() }
 
   start(): Promise<boolean> { return this.current.start() }

@@ -53,8 +53,8 @@ describe('ensurePostgresBoardPrints', () => {
     warn.mockRestore()
   })
 
-  it('não é migração numerada: a versão do schema continua a 17', () => {
-    expect(POSTGRES_MIGRATIONS.at(-1)?.version).toBe(17)
+  it('não é migração numerada: nenhuma migração numerada é de board_item_prints', () => {
+    expect(POSTGRES_MIGRATIONS.at(-1)?.version).toBe(18)
     expect(POSTGRES_MIGRATIONS.some((entry) => /board_item_prints/.test(entry.sql))).toBe(false)
   })
 })

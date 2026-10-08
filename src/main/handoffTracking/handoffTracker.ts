@@ -18,6 +18,9 @@ import { closeSlice, newConvState, rememberSend, type ConvState } from './handof
 
 export type { HandoffBoard, HandoffCorrection } from './handoffJobs'
 
+/** Eventos de atividade do turno: o mesmo critério que abre o "em execução" no topo da conversa. */
+const TURN_ACTIVITY: ReadonlySet<ChatEvent['kind']> = new Set(['assistant-text', 'thinking', 'tool-use', 'tool-result', 'status'])
+
 /**
  * O acompanhamento dos envios de handoff pelo que o APP observa — nunca pela
  * palavra do modelo (card req-acompanhamento-app). Entradas, todas ligadas no
@@ -87,8 +90,9 @@ export class HandoffTracker {
     this.guard('attach', () => void this.state(convId, cwd, true))
   }
 
-  /** O tee de eventos. Só `turn-start`, `result`, `error` e `task-list` importam. */
+  /** O tee de eventos. `turn-start`, `result`, `error`, `task-list` e a atividade do turno importam. */
   observe(convId: string, cwd: string, event: ChatEvent): void {
+    if (TURN_ACTIVITY.has(event.kind)) return this.noteActivity(convId)
     if (event.kind !== 'turn-start' && event.kind !== 'result' && event.kind !== 'error' && event.kind !== 'task-list') return
     this.guard('observe', () => {
       const at = this.now()
@@ -98,14 +102,7 @@ export class HandoffTracker {
       if (event.kind === 'turn-start') {
         // Um turno novo (o usuário retomou): o Stop do anterior deixa de valer.
         s.stoppedByUser = false
-        const ms = closeSlice(s, at, () => {
-          if (!s.turnRunning) s.turnStartedAt = at
-          s.turnRunning = true
-        })
-        return this.enqueue(convId, async () => {
-          await this.jobs.addTime(convId, ms)
-          await this.jobs.turnStart(convId, at)
-        })
+        return this.openTurn(convId, s, at)
       }
       // `result`/`error` encerram o turno — e as pendências: há resoluções
       // silenciosas (Permitir tudo, descarte) que não passam por notePermission.
@@ -127,6 +124,31 @@ export class HandoffTracker {
         await this.jobs.addTime(convId, ms)
         await this.jobs.error(convId, event.text, recoverable, stopped)
       })
+    })
+  }
+
+  /** Atividade do turno (texto, ferramenta, status). Sem `turn-start` (o CLI não ecoou o
+   *  id do turno), a primeira atividade abre o turno — o mesmo critério do topo da conversa.
+   *  Só conversa já acompanhada, e nunca o rabo de um turno parado pelo Stop. */
+  private noteActivity(convId: string): void {
+    this.guard('noteActivity', () => {
+      const s = this.states.get(convId)
+      if (!s) return
+      const at = this.now()
+      s.lastActivity = at
+      if (!s.turnRunning && !s.stoppedByUser) this.openTurn(convId, s, at)
+    })
+  }
+
+  /** Abre o turno: fecha a fatia anterior e começa a contar o tempo ativo. */
+  private openTurn(convId: string, s: ConvState, at: number): void {
+    const ms = closeSlice(s, at, () => {
+      if (!s.turnRunning) s.turnStartedAt = at
+      s.turnRunning = true
+    })
+    this.enqueue(convId, async () => {
+      await this.jobs.addTime(convId, ms)
+      await this.jobs.turnStart(convId, at)
     })
   }
 

@@ -15,7 +15,7 @@
  */
 import './memoryPanel.css'
 import { useMemo, useState } from 'react'
-import { byFolder, filterUsage, memoryRows, NO_FILTERS, type HowFilter, type PanelFilters, type Period, type SortBy } from './memoryUsage'
+import { byFolder, filterUsage, memoryRows, NO_FILTERS, type HowFilter, type PanelFilters, type Period, type SortBy, type UsageEvent } from './memoryUsage'
 import { MemoryDetail, MemoryLine, UsageLine } from './MemoryPanelParts'
 import type { MemoryPanelData } from './useMemoryPanel'
 
@@ -26,6 +26,8 @@ export interface MemoryPanelProps {
   onClose: () => void
   onFlyToAgent: (convId: string) => void
   onOpenConversation: (convId: string) => void
+  /** A cor do ponto do agente de um uso (a do projeto, projectColor.ts `agentCss`). */
+  dotOf?: (e: UsageEvent) => string
   now?: number
 }
 
@@ -33,7 +35,7 @@ const PERIODS: ReadonlyArray<[Period, string]> = [['agora', 'agora'], ['hoje', '
 const HOWS: ReadonlyArray<[HowFilter, string]> = [['escolhida', 'escolhida pelo app'], ['lida', 'lida'], ['gravada', 'gravada']]
 const name = (cwd: string): string => cwd.split(/[\\/]+/).filter(Boolean).pop() ?? cwd
 
-export function MemoryPanel({ data, atShelf, onClose, onFlyToAgent, onOpenConversation, now = Date.now() }: MemoryPanelProps): JSX.Element {
+export function MemoryPanel({ data, atShelf, onClose, onFlyToAgent, onOpenConversation, dotOf, now = Date.now() }: MemoryPanelProps): JSX.Element {
   const [f, setF] = useState<PanelFilters>(NO_FILTERS)
   const [open, setOpen] = useState<string | null>(null)
   const set = (patch: Partial<PanelFilters>): void => setF((cur) => ({ ...cur, ...patch }))
@@ -147,7 +149,7 @@ export function MemoryPanel({ data, atShelf, onClose, onFlyToAgent, onOpenConver
               </li>
             ))}
             {uses.slice(0, 60).map((e, i) => (
-              <UsageLine key={i} e={e} title={e.relPath ? (titles.get(e.relPath) ?? e.relPath) : 'a lista de memórias'} now={now} onAgent={onFlyToAgent} onOpen={e.relPath && titles.has(e.relPath) ? openMemory : undefined} />
+              <UsageLine key={i} e={e} title={e.relPath ? (titles.get(e.relPath) ?? e.relPath) : 'a lista de memórias'} now={now} dot={dotOf?.(e)} onAgent={onFlyToAgent} onOpen={e.relPath && titles.has(e.relPath) ? openMemory : undefined} />
             ))}
             {!uses.length && !atShelf.length ? <li className="mp-empty">{data.loading ? 'Carregando…' : 'Nenhum uso com esses filtros.'}</li> : null}
           </ul>

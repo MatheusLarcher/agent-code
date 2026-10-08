@@ -52,7 +52,7 @@ export function localFilterStorage(): FilterStorage {
 }
 
 const sigOf = (projects: readonly ProjectLayout[], id: string | null): string =>
-  `${id ?? ''}|${projects.map((p) => `${p.id}:${p.name}:${p.agents}:${p.icon ? p.icon.length : 0}`).join(',')}`
+  `${id ?? ''}|${projects.map((p) => `${p.id}:${p.name}:${p.agents}:${p.icon ? p.icon.length : 0}:${p.color}`).join(',')}`
 
 export class EngineFilter {
   private wanted: string | null

@@ -385,22 +385,6 @@ export const IconZap = (p: IconProps): JSX.Element => (
     <path d="M13 2.5L4.5 13.5H12l-1 8 8.5-11H12z" />
   </Svg>
 )
-/** Leaf — economy mode (fewer tokens). */
-export const IconLeaf = (p: IconProps): JSX.Element => (
-  <Svg {...p}>
-    <path d="M5 19c0-8 5.5-13.5 15-14-.4 9.6-6 15-14 15" />
-    <path d="M5 19c3-3.5 6-6 9.5-8" />
-  </Svg>
-)
-/** Circular arrows — loop mode / retry. */
-export const IconRepeat = (p: IconProps): JSX.Element => (
-  <Svg {...p}>
-    <path d="M17 2.5l3 3-3 3" />
-    <path d="M4 11.5V10a4.5 4.5 0 0 1 4.5-4.5H20" />
-    <path d="M7 21.5l-3-3 3-3" />
-    <path d="M20 12.5V14a4.5 4.5 0 0 1-4.5 4.5H4" />
-  </Svg>
-)
 /** Hammer — build (generate the APK). */
 export const IconHammer = (p: IconProps): JSX.Element => (
   <Svg {...p}>

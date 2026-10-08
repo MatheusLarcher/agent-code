@@ -18,18 +18,19 @@ import { QueueStrip } from './QueueStrip'
 import { EffortPicker } from './EffortPicker'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
 import { VigiaChip, type VigiaDoubt } from './VigiaChip'
-import { IconClock, IconHelp, IconChevronDown, IconLeaf, IconRepeat, IconWarning, IconZap } from './Icons'
+import { IconClock, IconHelp, IconChevronDown, IconWarning, IconZap } from './Icons'
 import { TokenUsagePanel } from './TokenUsagePanel'
 import { UsageMiniBar } from './UsageMiniBar'
 import { fmtDuration } from './fmtDuration'
+import { useTurnTimeTotals } from './useTurnTimeTotals'
 import { emptyUsageMap, type UsageMap } from '../tokenUsageTree'
 import { useChatDisplay } from './chatDisplay'
 import { useQuoteComments } from './quoteComment/useQuoteComments'
 import { CentralBackButton } from '../central/CentralBackButton'
 import { ChatOpacityControl } from './ChatOpacityControl'
 
-/** Live elapsed time of the running task; when idle, the last task's duration. */
-function RunTimer({ since, lastMs }: { since: number | null; lastMs: number | null }): JSX.Element | null {
+/** Live elapsed time of the running task; when idle, the last task's duration. `totalMs`: o somado dos turnos já terminados. */
+function RunTimer({ since, lastMs, totalMs }: { since: number | null; lastMs: number | null; totalMs: number | null }): JSX.Element | null {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (since == null) return
@@ -38,21 +39,33 @@ function RunTimer({ since, lastMs }: { since: number | null; lastMs: number | nu
     return () => clearInterval(id)
   }, [since])
 
+  const total =
+    totalMs != null && totalMs > 0 ? (
+      <span className="tok time total" title="Tempo somado de todas as tarefas desta conversa (turnos já terminados)">
+        Σ {fmtDuration(totalMs)}
+      </span>
+    ) : null
   if (since != null) {
     return (
-      <span className="tok time running" title="Tempo da tarefa em execução">
-        ⏱ {fmtDuration(Math.max(0, now - since))}
-      </span>
+      <>
+        <span className="tok time running" title="Tempo da tarefa em execução">
+          ⏱ {fmtDuration(Math.max(0, now - since))}
+        </span>
+        {total}
+      </>
     )
   }
   if (lastMs != null) {
     return (
-      <span className="tok time" title="Duração da última tarefa">
-        ⏱ {fmtDuration(lastMs)}
-      </span>
+      <>
+        <span className="tok time" title="Duração da última tarefa">
+          ⏱ {fmtDuration(lastMs)}
+        </span>
+        {total}
+      </>
     )
   }
-  return null
+  return total
 }
 
 /**
@@ -233,9 +246,6 @@ interface Props {
    * precisa do modelo concreto.
    */
   runningModel: string
-  /** Esconde Econômico e Loop: a sessão do Agent Manager (planejamento) sobe
-   *  sem eles. Modelo e esforço continuam — lá eles editam os do Manager. */
-  hideSessionToggles?: boolean
   modelLocked: boolean
   onModelChange: (id: string) => void
   /** Called when the user clicks the model picker while it's locked (no active
@@ -252,13 +262,6 @@ interface Props {
   runningEffort?: string
   effortLocked: boolean
   onEffortChange: (level: string) => void
-  /** Modo econômico toggle — shown beside the model/effort pickers. */
-  economyMode: boolean
-  onEconomyModeChange: (on: boolean) => void
-  /** Dynamic /loop toggle. Economy mode disables it. */
-  loopEnabled: boolean
-  loopLocked: boolean
-  onLoopEnabledChange: (on: boolean) => void
   /** Modo rápido toggle — only rendered when the current model supports fast mode
    *  (`fastModeAvailable`), since the API rejects it on every other model. */
   fastModeAvailable: boolean
@@ -295,7 +298,7 @@ export function fastModeTitle(model: string, on: boolean): string {
   const codex = fastModeTransport(model) === 'codex-priority'
   const cost = codex
     ? 'sem custo por token (usa sua assinatura ChatGPT), mas pode consumir o limite do plano mais rápido'
-    : 'com custo por token maior'
+    : 'cobrado como uso extra (precisa estar ativo na conta Claude) e com custo por token maior'
   const gain = codex ? '~1,6x mais rápidas' : 'até ~2,5x mais rápidas'
   return on
     ? `Modo rápido ATIVO — respostas ${gain}, ${cost}. Clique para desativar.`
@@ -332,6 +335,8 @@ export function ChatPanel(props: Props): JSX.Element {
   const { compact, hideWindowsBanner, hideLastUsage, usageMini, onComposerHasText } = useChatDisplay()
   // "Comentar" num bloco da resposta: "[trecho N]" inline no cursor do campo de mensagem.
   const quote = useQuoteComments(messages)
+  // O total somado da conversa (os turnos já terminados), ao lado do tempo da tarefa.
+  const timeTotals = useTurnTimeTotals(props.convId, props.runningSince != null)
   return (
     <section className="chat-panel">
       {!compact && (
@@ -348,12 +353,13 @@ export function ChatPanel(props: Props): JSX.Element {
               model={props.runningModel}
               runningSince={props.runningSince}
               lastDurationMs={props.lastDurationMs}
+              timeTotals={timeTotals}
               open={tokenPanelOpen}
               onToggle={() => setTokenPanelOpen((v) => !v)}
             />
           ) : (
             <div className="token-meter" title="Consumo geral desta conversa">
-              <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
+              <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} totalMs={timeTotals?.totalMs ?? null} />
               <ContextBar context={tokens.context} model={props.runningModel} />
               <span className="tok out">↑ {fmt(tokens.output)} saída</span>
               <span className="tok cost">~${tokens.cost.toFixed(2)}</span>
@@ -528,37 +534,6 @@ export function ChatPanel(props: Props): JSX.Element {
             onChange={props.onEffortChange}
           />
         )}
-        {!props.hideSessionToggles && (<>
-        <button
-          type="button"
-          className={`economy-toggle${props.economyMode ? ' on' : ''}`}
-          title={
-            props.economyMode
-              ? 'Modo econômico ATIVO — tarefas simples pulam validação para economizar tokens. Clique para desativar.'
-              : 'Modo econômico — quando ativo, tarefas simples (typo, CSS, texto) pulam typecheck/build/test para economizar tokens.'
-          }
-          onClick={() => props.onEconomyModeChange(!props.economyMode)}
-        >
-          <span className="economy-icon"><IconLeaf size={13} /></span>
-          <span className="economy-label">Econômico</span>
-        </button>
-        <button
-          type="button"
-          className={`loop-toggle${props.loopEnabled ? ' on' : ''}`}
-          disabled={props.loopLocked}
-          title={
-            props.loopLocked
-              ? 'Loop indisponível enquanto o modo econômico estiver ativo.'
-              : props.loopEnabled
-                ? 'Loop ATIVO — mensagens normais repetem automaticamente. Uma condição explícita encerra antes; sem condição, usa 100 ciclos.'
-                : 'Loop — repete mensagens normais automaticamente. Uma condição explícita encerra antes; sem condição, usa 100 ciclos.'
-          }
-          onClick={() => props.onLoopEnabledChange(!props.loopEnabled)}
-        >
-          <span className="loop-icon"><IconRepeat size={13} /></span>
-          <span className="loop-label">Loop</span>
-        </button>
-        </>)}
         {props.fastModeAvailable && (
           <button
             type="button"

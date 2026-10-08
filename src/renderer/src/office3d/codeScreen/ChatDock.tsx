@@ -111,7 +111,8 @@ const STATE_LABEL: Record<ChatState, string> = { busy: 'trabalhando', idle: 'par
 
 export interface MonitorChatProps {
   head: TurnHead
-  seed: string
+  /** A cor (CSS) do agente (a do projeto, projectColor.ts `agentCss`). */
+  color: string
   content: ChatContent
   /** Quem e o modelo ("Agent principal · Opus 5.5"). */
   who: string
@@ -145,7 +146,7 @@ function QuotedChat(props: MonitorChatProps): JSX.Element {
   return <ChatBody {...props} quote={quote} />
 }
 
-function ChatBody({ head, seed, content, who, state, composer, hidden, opener, go, quote }: MonitorChatProps & { quote: QuoteComments | null }): JSX.Element {
+function ChatBody({ head, color, content, who, state, composer, hidden, opener, go, quote }: MonitorChatProps & { quote: QuoteComments | null }): JSX.Element {
   const tts = useContext(TtsContext)
   const boxRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -157,7 +158,7 @@ function ChatBody({ head, seed, content, who, state, composer, hidden, opener, g
       {!hidden && (
         <ChatPanel
           head={head}
-          seed={seed}
+          color={color}
           content={content}
           endSignal={go.n}
           tts={tts}

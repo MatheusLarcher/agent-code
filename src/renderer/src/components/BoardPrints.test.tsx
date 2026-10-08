@@ -44,7 +44,7 @@ afterEach(() => {
 describe('PrintBadge', () => {
   it('📷 com o número; sem print, nada', () => {
     const { container, rerender } = render(<PrintBadge count={2} />)
-    expect(screen.getByText('📷 2').getAttribute('title')).toBe('2 prints da tarefa testada')
+    expect(screen.getByLabelText('2 prints da tarefa testada').textContent).toBe('2')
     rerender(<PrintBadge count={0} />)
     expect(container.innerHTML).toBe('')
   })
@@ -88,7 +88,7 @@ describe('BoardPanel — o 📷 no cartão e as miniaturas no detalhe', () => {
     render(
       <BoardPanel projectCwd="C:/proj" conversationId="conv-1" conversationTitles={{ 'conv-1': 'Implementação' }} busy={false} onClose={vi.fn()} onOpenConversation={vi.fn()} />
     )
-    expect(await screen.findByText('📷 2')).toBeTruthy()
+    expect(await screen.findByLabelText('2 prints da tarefa testada')).toBeTruthy()
     fireEvent.click(screen.getByText('Tela de login'))
     expect(await screen.findByText('Prints da tarefa testada')).toBeTruthy()
     expect(screen.getAllByAltText(/legenda p/)).toHaveLength(2)

@@ -17,7 +17,7 @@
  * (useTokenUsageTotals); o contexto e o custo, do `tokens` da conversa.
  */
 import { useEffect, useId, useState } from 'react'
-import { contextLimitFor } from '@shared/ipc'
+import { contextLimitFor, type TurnTimeTotals } from '@shared/ipc'
 import { fmtCost, fmtShare, fmtTokens, tokenCount, usageSlices } from '../tokenUsageHistory'
 import type { UsageMap } from '../tokenUsageTree'
 import { fmtDuration } from './fmtDuration'
@@ -32,6 +32,8 @@ export interface UsageMiniBarProps {
   model: string
   runningSince: number | null
   lastDurationMs: number | null
+  /** Tempo somado dos turnos já terminados (`null` até a primeira leitura). */
+  timeTotals: TurnTimeTotals | null
   /** O painel por agente e subagente está aberto (o clique o abre e fecha). */
   open: boolean
   onToggle: () => void
@@ -66,7 +68,7 @@ function Elapsed({ since, lastMs }: { since: number | null; lastMs: number | nul
   return <b>—</b>
 }
 
-export function UsageMiniBar({ convId, tokens, usageMap, model, runningSince, lastDurationMs, open, onToggle }: UsageMiniBarProps): JSX.Element {
+export function UsageMiniBar({ convId, tokens, usageMap, model, runningSince, lastDurationMs, timeTotals, open, onToggle }: UsageMiniBarProps): JSX.Element {
   const popId = useId()
   const [hover, setHover] = useState(false)
   const [focus, setFocus] = useState(false)
@@ -155,6 +157,12 @@ export function UsageMiniBar({ convId, tokens, usageMap, model, runningSince, la
               <dt>Tempo</dt>
               <dd>
                 <Elapsed since={runningSince} lastMs={lastDurationMs} />
+                {timeTotals && timeTotals.turns > 0 && (
+                  <small>
+                    {' '}
+                    · {fmtDuration(timeTotals.totalMs)} no total ({timeTotals.turns} {timeTotals.turns === 1 ? 'tarefa' : 'tarefas'})
+                  </small>
+                )}
               </dd>
               <dt>Custo</dt>
               <dd>

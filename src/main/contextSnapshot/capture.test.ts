@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ContextCapture, readLiveContext, countLiveContext } from './capture'
 import type { ContextHistoryRepository, ContextTurnWrite } from '../persistence/types'
 import { composeFromPromptBlocks } from './blocks'
-const parts = { stamp: 'stamp', memory: '', skills: '', projects: '', reminder: '' }
+const parts = { stamp: 'stamp', memory: '', skills: '', projects: '' }
 function setup(provider: 'claude' | 'gpt' | 'ollama' = 'claude') {
   const writes: ContextTurnWrite[] = []
   const repository = { saveContextTurn: vi.fn(async (w: ContextTurnWrite) => { writes.push(w) }) } as unknown as ContextHistoryRepository

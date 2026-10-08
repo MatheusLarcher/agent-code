@@ -63,8 +63,8 @@ describe('projectFileName', () => {
 })
 
 describe('save/load — split por projeto', () => {
-  it('preserva o toggle Loop junto da conversa', () => {
-    const record = { ...conv('loop-1', 'C:\\Projects\\loop-app'), loopEnabled: true, economyMode: false }
+  it('preserva o modo Rápido junto da conversa', () => {
+    const record = { ...conv('fast-1', 'C:\\Projects\\fast-app'), fastMode: true }
     saveAllConversationRecords(cacheDir, [record])
     expect(loadAllConversationRecords(cacheDir)).toEqual([record])
   })

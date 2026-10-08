@@ -156,13 +156,13 @@ describe('BoardPanel', () => {
       items: [card({ poStatus: 'completed', poReason: 'o agente concluiu e esqueceu de marcar' })]
     })
     render(panel())
-    expect(await screen.findByText('PO corrigiu')).toBeTruthy()
+    expect(await screen.findByLabelText(/^PO corrigiu/)).toBeTruthy()
   })
 
   it('cartão criado pelo PO é identificado como tal', async () => {
     mockApi({ available: true, items: [card({ origin: 'po', sourceId: null, sourceTitle: 'testar com 2 conversas' })] })
     render(panel())
-    expect(await screen.findByText('PO acrescentou')).toBeTruthy()
+    expect(await screen.findByLabelText(/^PO acrescentou/)).toBeTruthy()
   })
 
   it('o detalhe mostra o motivo do PO — é o que torna a correção auditável', async () => {
@@ -199,7 +199,7 @@ describe('BoardPanel', () => {
       items: [card({ poStatus: 'pending', poReason: 'o PO reviu o cartão' })]
     })
     render(panel())
-    expect(await screen.findByText('PO revisou')).toBeTruthy()
+    expect(await screen.findByLabelText(/^PO revisou/)).toBeTruthy()
   })
 
   it('cartão rebaixado pelo fim de turno mostra "Aguardando você" no Quadro e na Lista, no lugar de "PO revisou/corrigiu"', async () => {
@@ -221,8 +221,8 @@ describe('BoardPanel', () => {
     await screen.findByText('parado')
     expect(screen.getAllByText('Aguardando você')).toHaveLength(1)
     expect(screen.getAllByText('Interrompido')).toHaveLength(1)
-    expect(screen.queryByText('PO revisou')).toBeNull()
-    expect(screen.queryByText('PO corrigiu')).toBeNull()
+    expect(screen.queryByLabelText(/^PO revisou/)).toBeNull()
+    expect(screen.queryByLabelText(/^PO corrigiu/)).toBeNull()
 
     fireEvent.click(screen.getByText('Lista'))
     await screen.findByText(/Quadro de tarefas/)

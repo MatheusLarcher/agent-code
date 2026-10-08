@@ -85,11 +85,6 @@ function renderChat(opts: { strict?: boolean } = {}) {
               effort="high"
               effortLocked={false}
               onEffortChange={() => {}}
-              economyMode={false}
-              onEconomyModeChange={() => {}}
-              loopEnabled={false}
-              loopLocked={false}
-              onLoopEnabledChange={() => {}}
               fastModeAvailable={false}
               fastMode={false}
               onFastModeChange={() => {}}

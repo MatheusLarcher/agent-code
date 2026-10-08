@@ -1471,8 +1471,6 @@ describe('App — uso da conta (5h/semana) na topbar, global (não é por conver
 // so these assert on real persisted state, not an internal implementation detail.
 function savedConv(): {
   todoPlan?: { items: TodoItem[]; active: boolean }
-  economyMode?: boolean
-  loopEnabled?: boolean
 } | undefined {
   const list = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
   return list.find((c: { id: string }) => c.id === 'c1')
@@ -1519,25 +1517,17 @@ describe('mergeUsageLimit — atualização sem número não zera o badge', () =
   })
 })
 
-describe('App — Loop e Econômico por conversa', () => {
-  it('persiste o toggle Loop e Econômico o desativa', async () => {
+describe('App — Econômico e Loop foram removidos', () => {
+  it('a barra do chat não tem mais os botões', async () => {
     render(
       <UiProvider>
         <App />
       </UiProvider>
     )
 
-    const loop = await screen.findByRole('button', { name: /Loop/i })
-    expect(loop.getAttribute('title')).toMatch(/mensagens normais.*100 ciclos/i)
-    fireEvent.click(loop)
-    await waitFor(() => expect(savedConv()?.loopEnabled).toBe(true))
-
-    fireEvent.click(screen.getByRole('button', { name: /Econômico/i }))
-    await waitFor(() => {
-      expect(savedConv()?.economyMode).toBe(true)
-      expect(savedConv()?.loopEnabled).toBe(false)
-    })
-    expect((screen.getByRole('button', { name: /Loop/i }) as HTMLButtonElement).disabled).toBe(true)
+    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    expect(screen.queryByRole('button', { name: /Loop/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Econômico/i })).toBeNull()
   })
 })
 
@@ -2743,7 +2733,9 @@ describe('App — modo Automático', () => {
 
     await emit(partial) // ainda ocupado
     await send('msg2') // vai para a fila
-    fireEvent.click(screen.getByText('Econômico')) // config trocada no meio do turno
+    // config trocada no meio do turno: esforço fixo no lugar do Automático
+    fireEvent.click(container.querySelector('.effort-trigger') as HTMLElement)
+    fireEvent.change(screen.getByRole('slider', { name: 'Esforço' }), { target: { value: '1' } })
 
     await emit(result) // fim do turno → handoff da fila
     await waitFor(() => expect(api.disposeAgent).toHaveBeenCalledWith('c1'))
@@ -2755,11 +2747,11 @@ describe('App — modo Automático', () => {
     expect(api.startAgent).toHaveBeenCalledTimes(2)
     const second = api.startAgent.mock.calls[1][0] as {
       autoPrompt?: { message: string }
-      economyMode: boolean
+      effort?: string
     }
     // A única sessão criada já traz a escolha DESTE turno e a config nova.
     expect(second.autoPrompt?.message).toBe('msg2')
-    expect(second.economyMode).toBe(true)
+    expect(second.effort).not.toBe('auto')
   })
 
   it('o `system` da sessão também não tira a conversa do Automático', async () => {
@@ -2900,7 +2892,7 @@ describe('App — conversa de planejamento', () => {
     expect(container.querySelector('.planning-workspace .pl-chat .chat-panel')).toBeTruthy()
     expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
     // O seletor do chat edita o modelo do Agent Manager (a config de planejamento),
-    // com o Automático; Econômico e Loop não existem para o Manager.
+    // com o Automático; Econômico e Loop não existem mais.
     const select = container.querySelector('.pl-chat select.model-select') as HTMLSelectElement
     // Com o TypeSafe pronto (assíncrono no boot); sem ele o Automático sai da lista.
     await waitFor(() => expect([...select.options].map((o) => o.value)).toContain('auto'))
@@ -3545,7 +3537,7 @@ describe('App — autosave só das conversas alteradas', () => {
     // hidratação preenche): sem isso a primeira abertura regrava as duas por causa
     // da normalização, não do autosave.
     const [seed] = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
-    const c1 = { ...seed, effortSplit: true, loopEnabled: false, backgroundTasks: [] }
+    const c1 = { ...seed, effortSplit: true, backgroundTasks: [] }
     localStorage.setItem('agentcode.conversations.v1', JSON.stringify([c1, { ...c1, id: 'c2', title: 'Outra' }]))
   })
 

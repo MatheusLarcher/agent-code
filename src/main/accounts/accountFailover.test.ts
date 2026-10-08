@@ -32,7 +32,7 @@ function stub(background = { busy: false }) {
     refreshUsage: vi.fn(async () => {}),
     waitForIdle: vi.fn(async () => {}),
     resumeAfterQuota: vi.fn(async () => 'durable-session'),
-    continuationState: vi.fn(() => ({ approvedTools: [], loopActive: false, loopCycles: 0, loopLimit: 100, loopScheduledThisIteration: false })),
+    continuationState: vi.fn(() => ({ approvedTools: [] })),
     restoreContinuation: vi.fn(),
     hasBackgroundWork: vi.fn(() => background.busy)
   }
@@ -367,25 +367,13 @@ describe('estouro com trabalho em background: troca já, avisa o usuário e a co
     expect(h.records[1].session.send.mock.calls[0][0]).toContain('- (sem descrição disponível)')
   })
 
-  it('só um loop agendado não é interrompido (passa pelo continuationState): continuação normal', async () => {
+  it('chamada autônoma em aberto (AgentSession real): a chamada interrompida é avisada', async () => {
     const h = harness({ pct: { A: 60, B: 10 } })
     await h.session.send('tarefa')
-    h.background.busy = true
-    h.records[0].session.continuationState.mockReturnValue({ approvedTools: [], loopActive: true, loopCycles: 1, loopLimit: 100, loopScheduledThisIteration: false })
-    h.records[0].event(weekly)
-    await settled()
-    expect(switches(h.emit)[0].text).toBe('A conta conta A atingiu o limite. Continuei na conta conta B.')
-    expect(h.records[1].session.send).toHaveBeenCalledExactlyOnceWith(FAILOVER_CONTINUATION, undefined, expect.any(String), 'pc', 'recovery')
-  })
-
-  it('loop ativo + chamada autônoma em aberto (AgentSession real): a chamada interrompida é avisada', async () => {
-    const h = harness({ pct: { A: 60, B: 10 } })
-    await h.session.send('tarefa')
-    // O estado vem do AgentSession de verdade: loop agendado e uma ferramenta sem
-    // PostToolUse ainda (restartOpaqueCalls), sem nenhuma background-task listada.
+    // O estado vem do AgentSession de verdade: uma ferramenta sem PostToolUse
+    // ainda (restartOpaqueCalls), sem nenhuma background-task listada.
     const real = new AgentSession({ convId: 'c', cwd: '/p', model: 'claude-opus-5-5' }, {} as BrowserController, vi.fn(), vi.fn(), vi.fn())
-    const inner = real as unknown as { loopActive: boolean; restartOpaqueCalls: Set<string>; restartBackground: number | null }
-    inner.loopActive = true
+    const inner = real as unknown as { restartOpaqueCalls: Set<string>; restartBackground: number | null }
     inner.restartBackground = 0
     inner.restartOpaqueCalls.add('toolu_mcp_1')
     const old = Object.assign(h.records[0].session, { restartActivity: () => real.restartActivity() })
@@ -398,24 +386,19 @@ describe('estouro com trabalho em background: troca já, avisa o usuário e a co
     const [continuation] = h.records[1].session.send.mock.calls[0] as [string]
     expect(continuation).toBe(failoverContinuation([OPAQUE_CALL_TASK]))
     expect(continuation).toContain(`- ${OPAQUE_CALL_TASK}`)
-    // O loop continua indo para a sessão nova, como antes.
-    expect(h.records[1].session.restoreContinuation).toHaveBeenCalledWith(expect.objectContaining({ loopActive: true }), true)
+    expect(h.records[1].session.restoreContinuation).toHaveBeenCalledWith(expect.objectContaining({ approvedTools: [] }), true)
 
     // O sinal é o campo estruturado, não o texto do `unsafe`.
     expect(real.restartActivity().autonomousCallOpen).toBe(true)
-    // Sem a chamada em aberto, o mesmo loop sozinho segue sem aviso (comportamento aprovado).
-    inner.restartOpaqueCalls.clear()
-    expect(real.restartActivity()).toMatchObject({ unsafe: 'Loop/agendamento ativo.', autonomousCallOpen: false })
   })
 
-  it('loop ativo + comando destacado já concluído (restartUncertain, AgentSession real): SEM aviso', async () => {
+  it('comando destacado já concluído (restartUncertain, AgentSession real): SEM aviso', async () => {
     const h = harness({ pct: { A: 60, B: 10 } })
     await h.session.send('tarefa')
     // restartUncertain é pegajoso e dá o MESMO texto de `unsafe` da chamada em
     // aberto — a comparação por texto avisava aqui. Nenhuma chamada está aberta.
     const real = new AgentSession({ convId: 'c', cwd: '/p', model: 'claude-opus-5-5' }, {} as BrowserController, vi.fn(), vi.fn(), vi.fn())
-    const inner = real as unknown as { loopActive: boolean; restartUncertain: boolean; restartBackground: number | null }
-    inner.loopActive = true
+    const inner = real as unknown as { restartUncertain: boolean; restartBackground: number | null }
     inner.restartBackground = 0
     inner.restartUncertain = true
     expect(real.restartActivity()).toMatchObject({ unsafe: 'Trabalho autônomo sem prova de término.', autonomousCallOpen: false })

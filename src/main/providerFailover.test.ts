@@ -20,7 +20,7 @@ function harness(model = 'claude-opus-5-5') {
     records.push({ options, event, finish, session })
     return session
   })
-  const session = new ProviderFailoverSession({ convId: 'chat', cwd: '/project', model, effort: 'max', economyMode: true }, factory, emit, available, complete)
+  const session = new ProviderFailoverSession({ convId: 'chat', cwd: '/project', model, effort: 'max', fastMode: false }, factory, emit, available, complete)
   return { session, records, emit, complete, available }
 }
 function stub() {
@@ -45,7 +45,7 @@ describe('provider failover', () => {
     h.records[0].finish()
     await settled()
     expect(h.records).toHaveLength(2)
-    expect(h.records[1].options).toMatchObject({ model: to, resume: 'durable-session', cwd: '/project', economyMode: true, effort: 'max' })
+    expect(h.records[1].options).toMatchObject({ model: to, resume: 'durable-session', cwd: '/project', fastMode: false, effort: 'max' })
     expect(h.records[1].session.send).toHaveBeenCalledExactlyOnceWith(FAILOVER_CONTINUATION, undefined, expect.any(String), 'pc', 'recovery')
     expect(h.records[1].session.restoreContinuation).toHaveBeenCalledWith(expect.objectContaining({ approvedTools: ['Write'], loopCycles: 7, loopLimit: 100 }), true)
     expect(h.emit.mock.calls.map(([e]) => e.kind)).toEqual(['assistant-text', 'provider-switch'])

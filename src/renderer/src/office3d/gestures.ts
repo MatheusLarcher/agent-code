@@ -320,15 +320,26 @@ function leisurePose(out: Pose, a: Action, t: number, k: number): void {
       out[CH.lean] = -0.02
       return
     case 'napSofa':
-      // Esparramado: afundado, recostado no encosto e com as mãos largadas no colo, meio abertas.
-      arms(out, 0.2, 0.12, 0.35, 0.2, 0.12, 0.35)
-      out[CH.fingersL] = out[CH.fingersR] = 0.3
-      // Reclinado até encostar: as costas ficam ~0,34 m atrás do quadril (o lounge deixa esse vão, officePlan.LOUNGE_SEATS).
-      out[CH.lean] = -0.75 + 0.02 * Math.sin(1.2 * t)
-      out[CH.headPitch] = 0.08
-      out[CH.headRoll] = 0.35
-      out[CH.eyes] = 0
-      out[CH.mouth] = 0.12 + 0.12 * Math.sin(1.2 * t)
+      // Esparramado: afundado, recostado no encosto e com os braços soltos pelo peso, as mãos caídas ao lado das coxas.
+      // Os braços são relativos ao tronco, que está reclinado ~0,75: com o braço à frente do tronco (>0) a mão fica
+      // flutuando acima do colo; com ~0 ele cai ao longo do corpo até o assento.
+      {
+        const breath = Math.sin(1.2 * t)
+        // De vez em quando um suspiro mais fundo (a cada ~9 s) e um sobressalto leve do dorminhoco.
+        const sigh = pulse((t + k) % 9, 6, 1.6)
+        const twitch = pulse((t + k * 1.7) % 17, 12, 0.35)
+        arms(out, -0.05 + 0.02 * breath, 0.22 + 0.03 * breath, 0.3, -0.08 + 0.02 * breath, 0.2 + 0.03 * breath, 0.34)
+        out[CH.fingersL] = 0.35
+        out[CH.fingersR] = 0.3 + 0.25 * twitch
+        // Reclinado até encostar: as costas ficam ~0,34 m atrás do quadril (o lounge deixa esse vão, officePlan.LOUNGE_SEATS).
+        out[CH.lean] = -0.75 + 0.02 * breath - 0.02 * sigh
+        // A cabeça pesa: pende devagar para o lado e para a frente, e cai um pouco mais a cada respiração.
+        out[CH.headPitch] = 0.18 + 0.03 * breath + 0.05 * Math.sin(0.35 * t + k)
+        out[CH.headRoll] = 0.35 + 0.04 * Math.sin(0.5 * t + k)
+        out[CH.shrug] = 0.05 * sigh
+        out[CH.eyes] = 0
+        out[CH.mouth] = 0.12 + 0.12 * breath + 0.2 * sigh
+      }
       return
   }
 }

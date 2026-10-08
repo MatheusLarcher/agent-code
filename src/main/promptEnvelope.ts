@@ -11,7 +11,6 @@ export interface PromptContext {
   /** [OUTRAS_CONVERSAS]: o que os agentes das outras conversas fazem agora
    *  (crossConversation.ts). Só informativo. Opcional: '' ou ausente = nada. */
   others?: string
-  reminder: string
 }
 
 export interface RequestContext {
@@ -27,14 +26,9 @@ export interface RequestContext {
  * Agent SDK hooks instead (composeRequestContext).
  */
 export function composeUserPrompt(body: string, parts: PromptContext): string {
-  const context = [parts.stamp, parts.memory, parts.skills, parts.projects, parts.others, parts.reminder]
+  const context = [parts.stamp, parts.memory, parts.skills, parts.projects, parts.others]
     .filter(Boolean)
     .join('\n\n')
-  const loopMatch = body.match(/^\s*\/loop(?:\s+|$)/iu)
-  if (loopMatch) {
-    const task = body.slice(loopMatch[0].length)
-    return task ? `/loop ${context}\n\n${task}` : `/loop ${context}`
-  }
   return body ? `${context}\n\n${body}` : context
 }
 
