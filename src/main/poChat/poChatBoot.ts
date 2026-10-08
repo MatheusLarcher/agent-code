@@ -129,7 +129,8 @@ export function startPoChat(deps: PoChatBootDeps): PoChatService {
           ordem: 1,
           loteId: `pedido-po-${id}`,
           conteudo: text,
-          // Conclui quando o turno acaba sem erro e os cartões citados viram concluídos.
+          // Conclui quando todos os cartões citados estão concluídos no Quadro (e não
+          // contestados pelo PO) — mesmo que o turno tenha terminado com erro.
           entregas: cards.map((c) => ({ etapaId: `${CARD_ETAPA_PREFIX}${c.id}`, etapaTitulo: c.title, estimativaPlano: null }))
         }
       ])

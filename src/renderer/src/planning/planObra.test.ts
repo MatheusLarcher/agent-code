@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HandoffEnvioStatus } from '@shared/handoffTracking'
 import { MIN, entrega, envio } from '../handoffTracking/handoffFixtures'
-import { inicioText, minutosText, obraView, planEnviosOf } from './planObra'
+import { counterText, inicioText, minutosText, obraView, planCounter } from './planObra'
 
 const etapas = [
   { id: 'a', titulo: 'Banco', status: 'pendente' as const },
@@ -11,14 +11,21 @@ const etapas = [
 ]
 const e = (etapaId: string, status: 'pendente' | 'em_andamento' | 'concluida' | 'incompleta', ordem = 1) =>
   entrega({ id: `hn-${etapaId}`, etapaId, etapaTitulo: etapas.find((x) => x.id === etapaId)?.titulo ?? etapaId, status, ordem })
-const states = (v: ReturnType<typeof obraView>): string => v.bricks.map((b) => `${b.id}:${b.state}`).join(' ')
+const states = (v: ReturnType<typeof obraView>): string => v.progress.steps.map((b) => `${b.id}:${b.state}`).join(' ')
 
 describe('a obra do plano (planObra)', () => {
-  it('sem envio: na prancheta — os tijolos são as etapas na planta (a já concluída no roteiro, pronta)', () => {
+  it('sem envio: na prancheta — os tijolos são as etapas na planta (a especificada no roteiro também: "concluida" lá não é pronta)', () => {
     const v = obraView([], [{ ...etapas[0], status: 'concluida' }, ...etapas.slice(1)])
     expect(v.stage).toBe('prancheta')
-    expect(states(v)).toBe('a:pronto b:planta c:planta d:planta')
+    expect(states(v)).toBe('a:planta b:planta c:planta d:planta')
     expect([v.mestre, v.inicio, v.etapa]).toEqual([null, null, null])
+  })
+
+  it('etapa especificada (concluida no roteiro) que nunca foi enviada continua na planta: o enviado pronto é fase entregue, não habite-se', () => {
+    const especificadas = etapas.map((x) => ({ ...x, status: 'concluida' as const }))
+    const v = obraView([envio({ status: 'concluida', entregas: [e('a', 'concluida', 1), e('b', 'concluida', 2)] })], especificadas)
+    expect(states(v)).toBe('a:pronto b:pronto c:planta d:planta')
+    expect([v.stage, v.headline]).toEqual(['fase', 'Fase entregue: 2 de 4 etapas prontas — o resto do plano ainda está na planta.'])
   })
 
   it('em obra: a etapa de agora (n de total), os tijolos por entrega, o mestre de obras, o tempo × prazo e o início', () => {
@@ -87,18 +94,21 @@ describe('a obra do plano (planObra)', () => {
       etapas
     )
     expect(states(v)).toBe('a:pronto b:planta c:planta d:planta z:massa')
-    expect(v.etapa).toEqual({ n: null, total: 4, titulo: 'Extra' })
+    // A etapa fora do roteiro entra no fim do plano: a posição dela é a 5ª de 5.
+    expect(v.etapa).toEqual({ n: 5, total: 5, titulo: 'Extra' })
     expect(v.tempo).toEqual({ ativoMs: 15 * MIN, prazoMin: 35, level: 'ok' })
     expect(v.inicio).toBe('2026-10-05T10:00:00.000Z')
   })
 
-  it('os envios do plano: o mesmo slug no mesmo projeto, caminho sem caixa nem barras', () => {
-    const list = [
-      envio({ id: '1', planSlug: 'checkout', projectCwd: 'C:\\Proj\\App\\' }),
-      envio({ id: '2', planSlug: 'login', projectCwd: 'c:/proj/app' }),
-      envio({ id: '3', planSlug: 'checkout', projectCwd: 'D:/outro' })
-    ]
-    expect(planEnviosOf(list, 'c:/proj/app', 'checkout').map((x) => x.id)).toEqual(['1'])
+  it('o contador do plano: antes do envio, as especificadas no roteiro; com envios, as prontas na implementação', () => {
+    const roteiro = [{ ...etapas[0], status: 'concluida' as const }, ...etapas.slice(1)]
+    const antes = planCounter(roteiro, null)
+    expect([antes, counterText(antes)]).toEqual([{ feitas: 1, total: 4, label: 'especificadas' }, '1 de 4 especificadas'])
+    const obra = obraView([envio({ entregas: [e('b', 'concluida', 1), e('c', 'em_andamento', 2)] })], roteiro)
+    const depois = planCounter(roteiro, obra.progress)
+    expect([depois, counterText(depois)]).toEqual([{ feitas: 1, total: 4, label: 'prontas' }, '1 de 4 prontas'])
+    expect(counterText({ feitas: 0, total: 1, label: 'prontas' })).toBe('0 de 1 pronta')
+    expect(counterText({ feitas: 1, total: 1, label: 'especificadas' })).toBe('1 de 1 especificada')
   })
 
   it('textos: minutos de obra e o início relativo a hoje', () => {

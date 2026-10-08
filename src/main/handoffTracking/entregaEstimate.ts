@@ -1,7 +1,7 @@
 import { currentEntrega, type HandoffEntrega, type HandoffEnvio } from '../../shared/handoffTracking'
 import { isValidEstimativa, MAX_ESTIMATIVA_MIN } from '../../shared/planningEstimate'
 import type { HandoffEntregaPatch } from '../persistence/types'
-import { etapaIdFromTitle } from './handoffRules'
+import { activeTimeEntregas, etapaIdFromTitle } from './handoffRules'
 
 /**
  * As regras puras das ferramentas `entrega_estimar` e `entrega_tempo`
@@ -91,16 +91,16 @@ export function estimatePatch(req: EntregaEstimateRequest, at: string): HandoffE
 }
 
 /**
- * O tempo ativo da entrega AGORA. A fatia ainda não gravada só é dela se ela
- * está em andamento num envio não concluído — é para lá que o tracker a manda
- * (handoffRules.timeDistribution); depois da conclusão, o tempo é retrabalho.
+ * O tempo ativo da entrega AGORA. A fatia ainda não gravada só é dela se é para
+ * ela que o tracker a manda (handoffRules.activeTimeEntregas: a em andamento ou,
+ * sem nenhuma, a etapa atual); depois da conclusão, o tempo é retrabalho.
  */
 export function entregaActiveMs(
   envio: HandoffEnvio,
   entrega: HandoffEntrega,
   unflushedMs: number
 ): { tempoAtivoMs: number; contando: boolean } {
-  const contando = envio.status !== 'concluida' && entrega.status === 'em_andamento'
+  const contando = activeTimeEntregas(envio).some((e) => e.id === entrega.id)
   const extra = contando && Number.isFinite(unflushedMs) ? Math.max(0, unflushedMs) : 0
   return { tempoAtivoMs: entrega.tempoAtivoMs + extra, contando }
 }

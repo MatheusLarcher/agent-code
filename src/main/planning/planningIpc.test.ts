@@ -102,8 +102,11 @@ describe('registerPlanningIpc', () => {
     await call(Channels.planningSaveCard, { ...ref, card: card(), expectedRev: 0 })
     await call(Channels.planningSaveCard, { ...ref, card: card({ id: 'amb-1', tipo: 'ambiguidade', status: 'aberta' }), expectedRev: 0 })
     await call(Channels.planningSaveCard, { ...ref, card: card({ id: 'amb-2', tipo: 'ambiguidade', status: 'resolvida' }), expectedRev: 0 })
+    // O id de cada etapa vem junto: a posição no plano numera "Etapa N de M" (topo do chat, TV).
+    await call(Channels.planningSaveRoteiro, { ...ref, roteiro: { titulo: 'Checkout', etapas: [{ id: 'banco', titulo: 'Banco', status: 'concluida', estimativa: 30 }] }, expectedRev: 1 })
     w.calls.length = 0
-    expect(await call(Channels.planningPeek, ref)).toEqual({ ok: true, plan: { titulo: 'Checkout', etapas: [], cards: 3, ambiguidadesAbertas: 1 } })
+    const etapas = [{ id: 'banco', titulo: 'Banco', status: 'concluida' }]
+    expect(await call(Channels.planningPeek, ref)).toEqual({ ok: true, plan: { titulo: 'Checkout', etapas, cards: 3, ambiguidadesAbertas: 1 } })
     expect(w.calls).toEqual([])
     expect(await call(Channels.planningPeek, { ...ref, slug: 'nao-existe' })).toMatchObject({ ok: false })
   })

@@ -8,11 +8,20 @@ export { summarizeCall } from '../vigia/vigiaPrompt'
 // A seta é de mão única — poPromptText não importa nada —, então não há ciclo.
 // A LEITURA do veredito (`parsePoVerdict`, `rejectUnsafeOps`) mora em
 // poVerdict.ts, que importa daqui; por isso ela NÃO sai reexportada.
-import { PO_RESUMED_MARK, PO_RETURNED_SECTION, PO_SYSTEM_PROMPT_CLOSE, PO_SYSTEM_PROMPT_OPEN } from './poPromptText'
+import {
+  PO_ORPHAN_RULES,
+  PO_ORPHAN_SECTION,
+  PO_RESUMED_MARK,
+  PO_RETURNED_SECTION,
+  PO_SYSTEM_PROMPT_CLOSE,
+  PO_SYSTEM_PROMPT_OPEN
+} from './poPromptText'
 import { formatPoGitEvidence, type PoGitEvidence } from './poGit'
 export {
   PO_AWAITING_AUTHORIZATION_REASON,
   PO_MAX_OPS,
+  PO_ORPHAN_RULES,
+  PO_ORPHAN_SECTION,
   PO_RESUMED_MARK,
   PO_RETURNED_SECTION,
   PO_SYSTEM_PROMPT_CLOSE,
@@ -344,14 +353,37 @@ export function buildPoDigest(input: {
   return lines.join('\n')
 }
 
+/** Uma etapa do prompt deste turno sem cartão no quadro (handoffOrphans.ts). */
+export interface PoOrphanEtapa {
+  etapaId: string
+  titulo: string
+}
+
+/** Teto da seção das etapas sem cartão; cada linha leva `[id] título` no corte
+ *  do título do cartão (PO_MAX_TITLE_CHARS), para a cópia do PO caber igual. */
+export const PO_MAX_ORPHANS = 10
+
+/** A seção das etapas sem cartão, com a regra FEITA/NOVA junto (poPromptText.ts). */
+export function formatPoOrphanEtapas(orphans: readonly PoOrphanEtapa[]): string {
+  const lines = orphans
+    .slice(0, PO_MAX_ORPHANS)
+    .map((orphan) => `${LIST_MARK}${clamp(`[${orphan.etapaId}] ${orphan.titulo}`, PO_MAX_TITLE_CHARS)}`)
+  return [PO_ORPHAN_SECTION, ...lines, PO_ORPHAN_RULES].join('\n')
+}
+
 export function buildPoPrompt(
   input: Parameters<typeof buildPoDigest>[0] & {
     /** O git da pasta (poGit.ts). Fica DEPOIS do digest e com teto próprio
      *  (`PO_GIT_SECTION_MAX_CHARS`): o teto do digest continua o documentado. */
     git?: PoGitEvidence | null
+    /** Só no fechamento: as etapas do prompt sem cartão. Como o git, fica
+     *  depois do digest e com teto próprio (PO_MAX_ORPHANS); vazia, a seção some. */
+    orphans?: readonly PoOrphanEtapa[]
   }
 ): string {
   const rules = input.phase === 'open' ? PO_SYSTEM_PROMPT_OPEN : PO_SYSTEM_PROMPT_CLOSE
+  const close = (input.phase ?? 'close') === 'close'
+  const orphans = close && input.orphans?.length ? `\n\n${formatPoOrphanEtapas(input.orphans)}` : ''
   const git = input.git ? `\n\n${formatPoGitEvidence(input.git)}` : ''
-  return `${rules}\n\n---\n\n${buildPoDigest(input)}${git}`
+  return `${rules}\n\n---\n\n${buildPoDigest(input)}${orphans}${git}`
 }

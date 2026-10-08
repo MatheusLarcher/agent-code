@@ -1,20 +1,14 @@
 import type { HandoffEnvio } from '../../shared/handoffTracking'
 import type { ChatEvent } from '../../shared/ipc'
 import type { HandoffRepository } from '../persistence/types'
-import {
-  entregaActiveMs,
-  estimatePatch,
-  findEntrega,
-  type EntregaEstimateOutcome,
-  type EntregaEstimateRequest,
-  type EntregaTimeOutcome
-} from './entregaEstimate'
+import type { EntregaEstimateOutcome, EntregaEstimateRequest, EntregaTimeOutcome } from './entregaEstimate'
 import { DEADLINE_NOTICE_TIMEOUT_MS, withTimeout } from './handoffDeadline'
 import { HandoffJobs, type HandoffBoard, type HandoffCorrection } from './handoffJobs'
 import { handoffContentHash } from './handoffModel'
+import { HandoffReconciler } from './handoffReconcile'
 import * as rules from './handoffRules'
 import { setActiveHandoffTracker } from './handoffRuntime'
-import { closeSlice, newConvState, rememberSend, type ConvState } from './handoffState'
+import { closeSlice, ConvQueues, mayHaveStalled, newConvState, rememberSend, type ConvState } from './handoffState'
 
 export type { HandoffBoard, HandoffCorrection } from './handoffJobs'
 
@@ -59,23 +53,25 @@ export interface HandoffTrackerDeps {
 
 export class HandoffTracker {
   private readonly states = new Map<string, ConvState>()
-  private readonly queues = new Map<string, Promise<void>>()
+  private readonly queues = new ConvQueues((convId, err) => this.warn(convId, err))
   private readonly startedAt: number
   private readonly stallMs: number
   private readonly jobs: HandoffJobs
+  private readonly reconciler: HandoffReconciler
 
   constructor(private readonly deps: HandoffTrackerDeps) {
     this.startedAt = this.now()
     this.stallMs = deps.stallMs ?? rules.HANDOFF_STALL_MS
-    this.jobs = new HandoffJobs({
+    const io = {
       repo: () => this.repo(),
       board: deps.board,
       now: () => this.now(),
       poEnabled: () => this.poEnabled(),
-      changed: (convId) => this.changed(convId),
-      state: (convId) => this.states.get(convId),
-      stallMs: this.stallMs
-    })
+      changed: (convId: string) => this.changed(convId),
+      warn: (where: string, err: unknown) => this.warn(where, err)
+    }
+    this.jobs = new HandoffJobs({ ...io, state: (convId) => this.states.get(convId), stallMs: this.stallMs })
+    this.reconciler = new HandoffReconciler({ ...io, states: () => this.states, exclusive: (convId, job) => this.exclusive(convId, job) })
     // O servidor MCP `entregas` das sessões de handoff o acha por aqui
     // (handoffRuntime.ts) — o último criado é o do processo.
     setActiveHandoffTracker(this)
@@ -98,7 +94,8 @@ export class HandoffTracker {
       const at = this.now()
       const s = this.state(convId, cwd, true)
       s.lastActivity = at
-      if (event.kind === 'task-list') return this.queueCards(convId)
+      // A releitura vem pelo Quadro (boardChanged) depois de o snapshot ser gravado.
+      if (event.kind === 'task-list') return this.flushBeforeCards(convId)
       if (event.kind === 'turn-start') {
         // Um turno novo (o usuário retomou): o Stop do anterior deixa de valer.
         s.stoppedByUser = false
@@ -236,10 +233,12 @@ export class HandoffTracker {
     return this.exclusive(convId, () => this.jobs.dispatched(convId, envioId, at)).catch(() => false)
   }
 
-  /** O Quadro do projeto mudou (sync, PO, arrasto): relê as conversas dele. */
+  /** O Quadro do projeto mudou (sync, PO, arrasto): o reconciliador relê o
+   *  projeto inteiro — não só as conversas em memória. */
   boardChanged(projectId: string): void {
     this.guard('boardChanged', () => {
-      for (const [convId, s] of this.states) if (s.projectId === projectId) this.queueCards(convId)
+      for (const [convId, s] of this.states) if (s.projectId === projectId) this.flushBeforeCards(convId)
+      this.reconciler.schedule(projectId)
     })
   }
 
@@ -271,6 +270,9 @@ export class HandoffTracker {
     }
   }
 
+  /** Para o PO no fechamento: as etapas do envio corrente sem cartão no Quadro (HandoffJobs.orphanEtapas — fora da fila, nunca lança). */
+  orphanEtapas = (convId: string) => this.jobs.orphanEtapas(convId)
+
   isTurnRunning(convId: string): boolean {
     return this.states.get(convId)?.turnRunning ?? false
   }
@@ -289,18 +291,7 @@ export class HandoffTracker {
    * sobrescreve, com o motivo novo. Rejeita só se o banco recusar a escrita.
    */
   estimateEntrega(convId: string, req: EntregaEstimateRequest): Promise<EntregaEstimateOutcome> {
-    return this.exclusive(convId, async (): Promise<EntregaEstimateOutcome> => {
-      const repo = this.repo()
-      if (!repo) return { ok: false, reason: 'sem_banco' }
-      const found = findEntrega(rules.currentEnvio(await repo.listHandoffEnvios({ conversationId: convId })), req.etapa)
-      if (!found.ok) return found
-      const before = found.entrega
-      const anterior =
-        before.estimativaAgente === null ? null : { minutos: before.estimativaAgente, motivo: before.estimativaAgenteMotivo }
-      const envio = await repo.updateHandoffEntrega(before.id, estimatePatch(req, new Date(this.now()).toISOString()))
-      this.changed(convId)
-      return { ok: true, envio, entrega: envio.entregas.find((e) => e.id === before.id) ?? before, anterior }
-    })
+    return this.exclusive(convId, () => this.jobs.estimate(convId, req))
   }
 
   /**
@@ -310,13 +301,7 @@ export class HandoffTracker {
    * entra antes da leitura.
    */
   entregaTime(convId: string, etapa: string | null): Promise<EntregaTimeOutcome> {
-    return this.exclusive(convId, async (): Promise<EntregaTimeOutcome> => {
-      const repo = this.repo()
-      if (!repo) return { ok: false, reason: 'sem_banco' }
-      const found = findEntrega(rules.currentEnvio(await repo.listHandoffEnvios({ conversationId: convId })), etapa)
-      if (!found.ok) return found
-      return { ...found, ...entregaActiveMs(found.envio, found.entrega, this.unflushedActiveMs(convId)) }
-    })
+    return this.exclusive(convId, () => this.jobs.entregaTime(convId, etapa, () => this.unflushedActiveMs(convId)))
   }
 
   /**
@@ -353,30 +338,22 @@ export class HandoffTracker {
 
   /** Roda `job` na fila de escrita da conversa (depois do que já está nela). */
   exclusive<T>(convId: string, job: () => Promise<T>): Promise<T> {
-    const previous = this.queues.get(convId) ?? Promise.resolve()
-    const result = previous.then(job)
-    const tail = result.then(
-      () => undefined,
-      (err: unknown) => this.warn(convId, err)
-    )
-    this.queues.set(convId, tail)
-    void tail.then(() => {
-      if (this.queues.get(convId) === tail) this.queues.delete(convId)
-    })
-    return result
+    return this.queues.run(convId, job)
   }
 
-  /** Espera a fila (de uma conversa ou de todas) esvaziar — para teste e varredura. */
+  /** Espera a fila (de uma conversa ou de todas, com o reconciliador) esvaziar — para teste e varredura. */
   async settled(convId?: string): Promise<void> {
     for (let i = 0; i < 100; i++) {
-      const pending = convId ? [this.queues.get(convId)].filter(Boolean) : [...this.queues.values()]
+      const pending = convId ? this.queues.pending(convId) : [...this.queues.pending(), ...this.reconciler.pending()]
       if (pending.length === 0) return
       await Promise.all(pending)
     }
   }
 
-  /** As conversas com envio em curso no banco viram conhecidas (para a parada).
-   *  Lança se o banco falhar — a varredura tenta de novo na passada seguinte. */
+  /** As conversas com envio em curso no banco viram conhecidas (para a parada), e
+   *  o reconciliador passa em cada projeto com envio saído e não concluído (o
+   *  Quadro pode ter andado com o app fechado). Lança se o banco falhar — a
+   *  varredura tenta de novo na passada seguinte. */
   async loadKnown(): Promise<boolean> {
     const repo = this.repo()
     if (!repo) return false
@@ -385,10 +362,12 @@ export class HandoffTracker {
       const s = this.state(envio.conversationId, envio.projectCwd, false)
       s.projectId ??= envio.projectId
     }
+    await this.reconciler.scheduleUnsettled(repo)
     return true
   }
 
-  /** Uma passada: grava a fatia ativa de quem está rodando e marca `parada`. */
+  /** Uma passada: grava a fatia ativa de quem está rodando e marca `parada` — e
+   *  o reconciliador relê o projeto do que parou (com tudo pronto, conclui). */
   async sweep(): Promise<{ flushed: number; stalled: number }> {
     const at = this.now()
     const work: Promise<unknown>[] = []
@@ -402,14 +381,13 @@ export class HandoffTracker {
           work.push(this.exclusive(convId, () => this.jobs.addTime(convId, ms)))
         }
       }
-      if (s.turnRunning || s.pending.size > 0 || s.dormantAt === s.lastActivity) continue
-      const since = Math.max(s.lastActivity, this.startedAt)
-      // Sem ler o banco: nada pode estar parado antes do limite desde a última atividade.
-      if (at - since < this.stallMs) continue
+      if (!mayHaveStalled(s, at, this.startedAt, this.stallMs)) continue
       work.push(
         this.exclusive(convId, async () => {
           // A última atividade é relida na vez do job: algo pode ter chegado na fila.
-          stalled += await this.jobs.markStalled(convId, this.startedAt)
+          const marked = await this.jobs.markStalled(convId, this.startedAt)
+          stalled += marked.length
+          for (const envio of marked) this.reconciler.schedule(envio.projectId)
         })
       )
     }
@@ -449,13 +427,13 @@ export class HandoffTracker {
     })
   }
 
-  private queueCards(convId: string): void {
+  /** O cartão mudou: a fatia até aqui é das entregas como estavam ANTES da
+   *  mudança, então é gravada antes da releitura (que entra na fila depois). */
+  private flushBeforeCards(convId: string): void {
     const s = this.states.get(convId)
     if (!s) return
-    // O cartão mudou: a fatia até aqui é das entregas como estavam ANTES da
-    // mudança, então é gravada antes da releitura.
     s.cardsMs += closeSlice(s, this.now())
-    // Já há uma releitura esperando na fila: ela vai ver esta mudança também.
+    // Já há uma gravação esperando na fila: ela leva esta fatia também.
     if (s.cardsQueued) return
     s.cardsQueued = true
     this.enqueue(convId, async () => {
@@ -463,7 +441,6 @@ export class HandoffTracker {
       const ms = s.cardsMs
       s.cardsMs = 0
       await this.jobs.addTime(convId, ms)
-      await this.jobs.refreshCards(convId)
     })
   }
 

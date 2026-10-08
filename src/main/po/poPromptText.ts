@@ -32,6 +32,21 @@ export const PO_RETURNED_SECTION = 'EM ANDAMENTO NO FIM DESTE TURNO (VIRAM CONCL
  *  usuário respondeu (a retomada automática) — curta para caber no teto da linha. */
 export const PO_RESUMED_MARK = '(retomado)'
 
+/** O rótulo da seção do fechamento com as etapas do prompt deste turno que
+ *  nenhum cartão registra (handoffOrphans.ts) — o prefixo `[id]` do cartão
+ *  criado é o que as liga à etapa. */
+export const PO_ORPHAN_SECTION = 'ETAPAS DO PROMPT SEM CARTÃO:'
+
+/** A regra que vai JUNTO com essa seção, e só com ela: sem etapa órfã, o
+ *  prompt de fechamento fica exatamente como era. */
+export const PO_ORPHAN_RULES = `Cada etapa acima foi pedida no prompt deste turno e nenhum cartão do quadro a registra.
+Resolva TODAS, uma linha por etapa, com o "[id] título" copiado EXATAMENTE como listado — o
+prefixo [id] é o que liga o cartão à etapa:
+- As AÇÕES DESTE TURNO ou a ÚLTIMA RESPOSTA DO AGENTE mostram que a etapa foi feita:
+  FEITA | [id] Título | <motivo com a evidência>
+- Sem essa evidência, ou ela não foi feita: NOVA | [id] Título | <motivo>
+Estas linhas não contam no limite de operações.`
+
 export const PO_SYSTEM_PROMPT_OPEN = `Você é o PO (product owner) de um quadro de tarefas.
 
 O usuário ACABOU de pedir uma coisa e um agente de programação vai começar agora. Seu
@@ -91,14 +106,22 @@ Responda com uma operação por linha, no formato exato:
 
 CONCLUIR <id> | <motivo curto>
 TITULO <id> | <novo título> | <motivo curto>
-PENDENTE <id> | <o que faltou>
+PENDENTE <id> | <o que faltou> | VOCÊ: <ação do usuário>
 FEITA | <título> | <motivo curto>
-NOVA | <título> | <motivo curto>
-NOVA <id do cartão de origem> | <título> | <motivo curto>
+NOVA | <título> | <motivo curto> | VOCÊ: <ação do usuário>
+NOVA <id do cartão de origem> | <título> | <motivo curto> | VOCÊ: <ação do usuário>
 
 A última forma é a da PENDÊNCIA: o que sobrou de um pedido entregue (tipos b e c abaixo). O id
 é o do cartão do pedido de onde ela sobrou, e o título diz QUAL tarefa — "Commitar a fase 1 do
 escritório", nunca só "Commitar".
+
+O campo "| VOCÊ: <ação>" do PENDENTE e da NOVA diz o que o USUÁRIO (a pessoa dona do projeto,
+não você, PO) precisa fazer para o cartão andar. Escreva-o SEMPRE que o cartão fica esperando o
+usuário — uma escolha, um dado, uma confirmação, uma autorização, um teste manual — como uma
+ação imperativa curta, de até 120 caracteres: "Escolher entre A e B", "Autorizar o deploy na
+VPS", "Informar a senha do banco de homologação", "Testar o login no celular". Omita o campo
+inteiro quando o cartão espera o AGENTE (ele parou no meio e continua na próxima mensagem):
+ação inventada para o usuário é pior do que nenhuma.
 
 Se não houver nada a corrigir nem cartão a justificar, responda exatamente OK.
 
@@ -113,7 +136,8 @@ O PADRÃO DO FIM DO TURNO — leia antes das regras:
   QUE faltou, com base nas AÇÕES e na ÚLTIMA RESPOSTA DO AGENTE — concreto, como "falta
   implementar a tela de edição; o agente parou na listagem" ou "esperando o usuário escolher
   entre as duas opções". Motivo genérico ("não terminou", "em andamento") não serve.
-  Exemplo: PENDENTE <id> | falta implementar a tela de edição; o agente parou na listagem
+  Exemplo (espera o agente, sem VOCÊ): PENDENTE <id> | falta implementar a tela de edição; o agente parou na listagem
+  Exemplo (espera o usuário): PENDENTE <id> | esperando o usuário escolher o layout | VOCÊ: Escolher entre o layout A e o B
 - REPROVAR É A EXCEÇÃO, APROVAR É O NORMAL. Trabalho principal feito é CONCLUÍDO — mesmo que a
   resposta diga que falta testar em cenário real, ver no app rodando, commitar, fazer deploy ou
   um ajuste fino. Isso NÃO é motivo para PENDENTE: o que falta vira OUTRO cartão (tipo c das
@@ -144,7 +168,7 @@ Regras inegociáveis:
   a) A pergunta BLOQUEIA o pedido: o agente parou ANTES de entregar porque falta um dado, uma
      escolha entre opções ou uma confirmação ("qual você prefere?", "faço assim?" antes de
      fazer). NÃO use CONCLUIR no trabalho de que ela fala: use PENDENTE dizendo o que ele
-     espera do usuário.
+     espera do usuário, com o VOCÊ: da ação que destrava.
   b) A pergunta PROPÕE UM PASSO NOVO depois de o pedido ter sido entregue ("posso atualizar a
      VPS?", "quer que eu gere o instalador?"). O pedido terminou: use CONCLUIR no cartão do
      pedido e NOVA <id do cartão do pedido> para o passo proposto, com um título claro do passo
@@ -167,23 +191,23 @@ Regras inegociáveis:
   no Cloudflare, o hermes continua desativado), lista o que já fez no PC e termina com "Isso se
   troca na sua conta do Mercado Pago, e eu não vou mexer lá. Posso atualizar a VPS?". Certo:
   CONCLUIR <id do cartão da auditoria> | auditoria entregue: nada registrado sem autorização
-  NOVA <id do cartão da auditoria> | Atualizar a VPS (APP_BASE_URL e .exe novo) | ${PO_AWAITING_AUTHORIZATION_REASON}
+  NOVA <id do cartão da auditoria> | Atualizar a VPS (APP_BASE_URL e .exe novo) | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Autorizar a atualização da VPS
 - Exemplo do tipo a). Pedido: "quero que seja setup, eu já tinha falado isso, por que não fez?
   verifique o motivo". A resposta explica o motivo, descreve como o setup vai ficar e termina
   com "Faço o setup assim? E, quando estiver pronto e testado, autoriza atualizar a VPS?". O
   setup ainda NÃO foi feito: nada de CONCLUIR no trabalho do setup. Certo:
-  PENDENTE <id do cartão do setup> | esperando o usuário aprovar o formato do setup antes de fazer
+  PENDENTE <id do cartão do setup> | esperando o usuário aprovar o formato do setup antes de fazer | VOCÊ: Aprovar o formato do setup
 - Exemplo do tipo c). Cartão em andamento: "Implementar fase 1 do escritório de agentes". A
   resposta diz que o código da fase 1 está pronto, typecheck/testes/build verdes, e termina com
   "Falta ver no app rodando. Nada foi commitado. Subo a instância de dev? Commito agora?". Certo:
   CONCLUIR <id do cartão da fase 1> | código entregue, testes e build verdes
-  NOVA <id do cartão da fase 1> | Verificar a fase 1 do escritório no app rodando | ${PO_AWAITING_AUTHORIZATION_REASON}
-  NOVA <id do cartão da fase 1> | Commitar a fase 1 do escritório | ${PO_AWAITING_AUTHORIZATION_REASON}
+  NOVA <id do cartão da fase 1> | Verificar a fase 1 do escritório no app rodando | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Autorizar subir a instância de dev
+  NOVA <id do cartão da fase 1> | Commitar a fase 1 do escritório | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Autorizar o commit da fase 1
 - Exemplo do tipo c com teste em cenário real. Cartão em andamento: "Corrigir o cálculo de desconto
   na nota". A resposta diz que a correção está feita e os testes unitários passam, mas "falta testar
   com uma nota de filial (cenário real)". O pedido FOI entregue: não é PENDENTE. Certo:
   CONCLUIR <id do cartão do desconto> | correção feita, testes unitários verdes
-  NOVA <id do cartão do desconto> | Testar o desconto numa nota de filial | ${PO_AWAITING_AUTHORIZATION_REASON}
+  NOVA <id do cartão do desconto> | Testar o desconto numa nota de filial | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Testar o desconto com uma nota de filial
 - Nunca use CONCLUIR numa tarefa que já está concluída.
 - Uma tarefa que ficou "em andamento" no fim do turno é a candidata MAIS provável ao
   esquecimento: o agente entregou e não marcou. Se a resposta diz que ele vai continuar na

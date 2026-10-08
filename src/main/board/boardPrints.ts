@@ -53,7 +53,8 @@ export function resolvePrintCard(items: readonly BoardItem[], conversationId: st
     }
   }
   const titles = (i: BoardItem): string[] => [norm(boardItemTitle(i)), norm(i.sourceTitle)]
-  const byId = mine.filter((i) => i.sourceId === wanted)
+  // O id da tarefa ("3") casa também com o cartão de lista (`<lista>:3`).
+  const byId = mine.filter((i) => i.sourceId === wanted || !!i.sourceId?.endsWith(`:${wanted}`))
   const byTitle = mine.filter((i) => titles(i).includes(norm(wanted)))
   const prefix = /^\[[^\]]+\]/.exec(wanted)?.[0]
   const byPrefix = prefix ? mine.filter((i) => titles(i).some((t) => t.startsWith(norm(prefix)))) : []

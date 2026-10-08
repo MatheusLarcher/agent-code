@@ -1,3 +1,4 @@
+import type { TaskCounts } from '@shared/stepProgress'
 import { IconBoard, IconCollapseRight, IconGlobe } from './Icons'
 
 export type RightPane = 'browser' | 'board'
@@ -13,8 +14,8 @@ interface Props {
   liveAgents: number
   /** Open preview tabs — shown as a small count on the Navegador tab. */
   browserTabs: number
-  /** Progresso do quadro (concluídas/total) e quantos cartões esperam você — `null` quando não há tarefa. */
-  boardProgress: { done: number; total: number; awaiting?: number } | null
+  /** Progresso do quadro (concluídas/total, a contagem única taskCounts) e quantos cartões esperam você — `null` quando não há tarefa. */
+  boardProgress: (Pick<TaskCounts, 'done' | 'total'> & { awaiting?: number }) | null
 }
 
 /**

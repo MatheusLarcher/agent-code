@@ -64,10 +64,10 @@ import {
   assertPoWrite,
   BOARD_COLUMNS,
   BOARD_EVENT_COLUMNS,
-  BOARD_SELECT_WITH_PARENT,
   boardItemEventFromRow,
   boardItemFromRow,
   boardItemId,
+  boardSelectColumns,
   compareBoardItems,
   newBoardItemEvent,
   normalizeSourceItems,
@@ -76,6 +76,7 @@ import {
   type BoardItemEventRow,
   type BoardItemRow
 } from '../board/boardModel'
+import { boardUserActionText, nextBoardUserAction } from '../board/boardUserAction'
 import {
   assertProposalLease,
   assertMemoryProposalApplication,
@@ -175,6 +176,8 @@ const DELIVERABLE_SELECT_COLUMNS = sqliteRecordSelectColumns('task_deliverables'
 const EVENT_SELECT_COLUMNS = sqliteRecordSelectColumns('task_events')
 const MEMORY_ENTRY_SELECT_COLUMNS = sqliteRecordSelectColumns('memory_entries')
 const MEMORY_PROPOSAL_SELECT_COLUMNS = sqliteRecordSelectColumns('memory_proposals')
+/** O quadro lido com todas as colunas aditivas: no SQLite elas sempre existem (migrações 16 e 19). */
+const BOARD_SELECT = boardSelectColumns()
 
 interface KvRow {
   scope: 'global' | 'device'
@@ -1066,7 +1069,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       // Statements preparados UMA vez fora do laço: o snapshot é reemitido a
       // cada avanço do plano, e recompilá-los por item multiplicava o trabalho
       // pelo tamanho do plano dentro de uma transação que segura o write lock.
-      const selectOne = db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`)
+      const selectOne = db.prepare(`SELECT ${BOARD_SELECT} FROM board_items WHERE id = ?`)
       const insertEvent = db.prepare(
         `INSERT INTO board_item_events(${BOARD_EVENT_COLUMNS}) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
       )
@@ -1099,7 +1102,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       const updateOneClearingPo = db.prepare(
         `UPDATE board_items SET
            project_id = ?, project_cwd = ?, source_title = ?, source_status = ?,
-           active_form = ?, seq = ?, po_status = NULL, po_reason = NULL,
+           active_form = ?, seq = ?, po_status = NULL, po_reason = NULL, po_user_action = NULL,
            revision = revision + 1, updated_at = ?
          WHERE id = ?`
       )
@@ -1163,19 +1166,21 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         // esqueleto no CLI e desapareceria a cada sincronização.
         const keep = items.map((item) => boardItemId(input.conversationId, item.sourceId))
         const placeholders = keep.map(() => '?').join(', ')
+        // Concluído de OUTRA lista fica (ver `BoardSyncInput.list`).
+        const list = input.list ?? ''
         const gone = db
           .prepare(
             `SELECT id FROM board_items
              WHERE conversation_id = ? AND origin = 'agent'
-               AND id NOT IN (${placeholders})`
+               AND id NOT IN (${placeholders})
+               AND (? = '' OR substr(coalesce(source_id, ''), 1, length(?) + 1) = ? || ':'
+                    OR coalesce(po_status, source_status) <> 'completed')`
           )
-          .all(input.conversationId, ...keep) as unknown as Array<{ id: string }>
+          .all(input.conversationId, ...keep, list, list, list) as unknown as Array<{ id: string }>
         if (gone.length > 0) {
-          db.prepare(
-            `DELETE FROM board_items
-             WHERE conversation_id = ? AND origin = 'agent' AND id NOT IN (${placeholders})`
-          ).run(input.conversationId, ...keep)
-          for (const row of gone) touched.push(String(row.id))
+          const ids = gone.map((row) => String(row.id))
+          db.prepare(`DELETE FROM board_items WHERE id IN (${ids.map(() => '?').join(', ')})`).run(...ids)
+          touched.push(...ids)
         }
         db.exec('COMMIT')
       } catch (error) {
@@ -1204,7 +1209,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       }
       if (!query.includeDismissed) clauses.push('dismissed_at IS NULL')
       const rows = db
-        .prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE ${clauses.join(' AND ')}`)
+        .prepare(`SELECT ${BOARD_SELECT} FROM board_items WHERE ${clauses.join(' AND ')}`)
         .all(...params) as unknown as BoardItemRow[]
       return rows.map(boardItemFromRow).sort(compareBoardItems)
     })
@@ -1212,7 +1217,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
 
   async getBoardItem(id: string): Promise<BoardItem | null> {
     return this.read((db) => {
-      const row = db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`).get(id) as unknown as
+      const row = db.prepare(`SELECT ${BOARD_SELECT} FROM board_items WHERE id = ?`).get(id) as unknown as
         | BoardItemRow
         | undefined
       return row ? boardItemFromRow(row) : null
@@ -1224,7 +1229,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     let skipped = false
     const item = this.write((db) => {
       const current = db
-        .prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`)
+        .prepare(`SELECT ${BOARD_SELECT} FROM board_items WHERE id = ?`)
         .get(input.id) as unknown as BoardItemRow | undefined
       if (!current) throw new TypeError(`Cartão inexistente: ${input.id}`)
       if (input.onlyIf && !input.onlyIf(boardItemFromRow(current))) {
@@ -1236,14 +1241,15 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         poTitle: input.poTitle === undefined ? current.po_title : input.poTitle,
         poNote: input.poNote === undefined ? current.po_note : input.poNote,
         poStatus: input.poStatus === undefined ? current.po_status : input.poStatus,
-        poReason: input.poReason === undefined ? current.po_reason : input.poReason
+        poReason: input.poReason === undefined ? current.po_reason : input.poReason,
+        userAction: nextBoardUserAction(input, current.po_user_action ?? null)
       }
       db.prepare(
         `UPDATE board_items SET
-           po_title = ?, po_note = ?, po_status = ?, po_reason = ?, po_at = ?,
+           po_title = ?, po_note = ?, po_status = ?, po_reason = ?, po_user_action = ?, po_at = ?,
            revision = revision + 1, updated_at = ?
          WHERE id = ?`
-      ).run(next.poTitle, next.poNote, next.poStatus, next.poReason, now, now, input.id)
+      ).run(next.poTitle, next.poNote, next.poStatus, next.poReason, next.userAction, now, now, input.id)
       // Uma escrita do PO conta UM fato — a regra de qual mora em
       // `planPoWriteEvent`, a mesma do PostgreSQL.
       const priorEffective = (current.po_status ?? current.source_status) as BoardItemStatus
@@ -1260,7 +1266,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       })
       if (event) this.logBoardEvent(db, { boardItemId: input.id, at: now, actor: input.actor ?? 'po', ...event })
       return boardItemFromRow(
-        db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`).get(input.id) as unknown as BoardItemRow
+        db.prepare(`SELECT ${BOARD_SELECT} FROM board_items WHERE id = ?`).get(input.id) as unknown as BoardItemRow
       )
     })
     if (!skipped) this.emit('board', item.id, item.revision)
@@ -1281,8 +1287,8 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
           )?.next ?? 0
         ) || 0
       db.prepare(
-        `INSERT INTO board_items(${BOARD_COLUMNS.trimEnd()}, parent_id)
-         VALUES(?, ?, ?, ?, 'po', NULL, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, NULL, 1, ?, ?, ?)`
+        `INSERT INTO board_items(${BOARD_COLUMNS.trimEnd()}, parent_id, po_user_action)
+         VALUES(?, ?, ?, ?, 'po', NULL, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, NULL, 1, ?, ?, ?, ?)`
       ).run(
         id,
         input.projectId,
@@ -1295,11 +1301,12 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         now,
         now,
         now,
-        input.parentId?.trim() || null
+        input.parentId?.trim() || null,
+        boardUserActionText(input.userAction)
       )
       this.logBoardEvent(db, { boardItemId: id, at: now, kind: 'created', actor: 'po', toStatus: input.status, note: input.reason })
       return boardItemFromRow(
-        db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
+        db.prepare(`SELECT ${BOARD_SELECT} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
       )
     })
     this.emit('board', item.id, item.revision)
@@ -1322,7 +1329,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         note: by?.note ?? null
       })
       return boardItemFromRow(
-        db.prepare(`SELECT ${BOARD_SELECT_WITH_PARENT} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
+        db.prepare(`SELECT ${BOARD_SELECT} FROM board_items WHERE id = ?`).get(id) as unknown as BoardItemRow
       )
     })
     this.emit('board', item.id, item.revision)

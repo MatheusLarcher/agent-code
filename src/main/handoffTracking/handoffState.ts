@@ -28,7 +28,8 @@ export interface ConvState {
   /** Entregas do envio corrente com cartão em andamento (destino do retrabalho). */
   cardInProgress: Set<string>
   cardsQueued: boolean
-  /** Fatia ativa fechada por mudança no Quadro, à espera da releitura enfileirada. */
+  /** Fatia ativa fechada por mudança no Quadro, à espera da gravação enfileirada
+   *  (antes da releitura do reconciliador). */
   cardsMs: number
   /** `lastActivity` da última varredura que não achou nada que pudesse parar. */
   dormantAt: number | null
@@ -83,6 +84,48 @@ export function closeSlice(s: ConvState, at: number, mutate: () => void = () => 
   mutate()
   s.activeSince = isActive(s) ? at : null
   return ms
+}
+
+/**
+ * A varredura só lê o banco da conversa que PODE ter parado: sem turno nem
+ * pergunta aberta, com atividade nova desde a última varredura que nada achou e
+ * há o limite desde a última atividade (contada a partir de `notBefore`, o
+ * início do tracker) — antes disso nada pode estar parado.
+ */
+export function mayHaveStalled(s: ConvState, at: number, notBefore: number, stallMs: number): boolean {
+  if (s.turnRunning || s.pending.size > 0 || s.dormantAt === s.lastActivity) return false
+  return at - Math.max(s.lastActivity, notBefore) >= stallMs
+}
+
+/**
+ * A fila de escrita por conversa (HandoffTracker.exclusive): um job por vez em
+ * cada uma, na ordem de chegada. O erro de um job vai para `onError` e não trava
+ * os seguintes.
+ */
+export class ConvQueues {
+  private readonly tails = new Map<string, Promise<void>>()
+
+  constructor(private readonly onError: (convId: string, err: unknown) => void) {}
+
+  run<T>(convId: string, job: () => Promise<T>): Promise<T> {
+    const result = (this.tails.get(convId) ?? Promise.resolve()).then(job)
+    const tail = result.then(
+      () => undefined,
+      (err: unknown) => this.onError(convId, err)
+    )
+    this.tails.set(convId, tail)
+    void tail.then(() => {
+      if (this.tails.get(convId) === tail) this.tails.delete(convId)
+    })
+    return result
+  }
+
+  /** As filas com trabalho: de uma conversa ou de todas. */
+  pending(convId?: string): Promise<void>[] {
+    if (convId === undefined) return [...this.tails.values()]
+    const tail = this.tails.get(convId)
+    return tail ? [tail] : []
+  }
 }
 
 /** Guarda o texto visto no agent:send (os mais antigos saem). */

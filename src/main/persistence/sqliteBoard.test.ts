@@ -51,6 +51,24 @@ describe('SqliteRepository — quadro de tarefas', () => {
     expect(items.every((entry) => entry.origin === 'agent')).toBe(true)
   })
 
+  it('lista nova (conversa retomada noutra sessão/PC): o concluído da lista antiga fica; o não concluído segue a lista nova', async () => {
+    const repository = await repo()
+    const withList = (list: string, items: BoardSourceItem[]) =>
+      repository.syncBoardItems({ projectId: 'proj-1', projectCwd: 'C:/GitHub/agent-code', conversationId: 'conv-1', items, list })
+    await withList('lA', [
+      source('lA:1', '[etapa-a] Feita', 'completed', 0),
+      source('lA:2', '[etapa-b] Pela metade', 'in_progress', 1),
+      source('lA:3', 'Por fazer', 'pending', 2)
+    ])
+    const after = await withList('lB', [source('lB:1', '[etapa-c] Nova', 'pending', 0)])
+    expect(after.map((item) => item.sourceTitle).sort()).toEqual(['[etapa-a] Feita', '[etapa-c] Nova'])
+    // Na MESMA lista, o que sumiu sai — até o concluído (o agente apagou a tarefa).
+    const same = await withList('lB', [source('lB:2', 'Outra', 'pending', 0)])
+    expect(same.map((item) => item.sourceTitle).sort()).toEqual(['Outra', '[etapa-a] Feita'])
+    // Sem lista (antes): o snapshot manda em tudo, como sempre.
+    expect((await sync(repository, [source('x', 'Só esta', 'pending')])).map((item) => item.sourceTitle)).toEqual(['Só esta'])
+  })
+
   it('reingerir o mesmo snapshot não duplica cartão nem infla a revisão', async () => {
     const repository = await repo()
     await sync(repository, [source('1', 'uma', 'pending')])

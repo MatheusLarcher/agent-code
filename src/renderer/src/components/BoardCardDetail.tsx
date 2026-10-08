@@ -14,10 +14,11 @@ import { ReadRetry } from './ReadRetry'
 /**
  * O detalhe de um cartão do Quadro — o MESMO no painel (BoardPanel) e na janela
  * do cartão do Escritório 3D (office3d/board/BoardOverlay): título, status,
- * conversa (link), título original, observação, motivo atual, datas, quem
- * criou, revisão, a linha do tempo (quem fez o quê e por quê) e as ações abrir
- * a conversa e dispensar/restaurar. A linha do tempo é lida sob demanda e
- * acompanha a revisão do cartão (o motivo novo aparece sem reabrir).
+ * conversa (link), título original, observação, o que você precisa fazer,
+ * motivo atual, datas, quem criou, revisão, a linha do tempo (quem fez o quê e
+ * por quê) e as ações abrir a conversa e dispensar/restaurar. A linha do tempo é
+ * lida sob demanda e acompanha a revisão do cartão (o motivo novo aparece sem
+ * reabrir).
  */
 
 export const COLUMNS: { status: BoardItemStatus; label: string; key: string }[] = [
@@ -211,6 +212,15 @@ export function BoardCardDetail({
           </>
         )}
       </dl>
+      {/* O que destrava o cartão parado esperando o usuário, ANTES do motivo: é a
+          primeira coisa que ele precisa ler. Só enquanto está "a fazer" — o campo
+          some quando o status do PO é substituído. */}
+      {item.poUserAction && status === 'pending' && (
+        <div className="board-detail-action" aria-label="O que você precisa fazer">
+          <span className="board-who">O que você precisa fazer</span>
+          <span>{item.poUserAction}</span>
+        </div>
+      )}
       {/* A trilha do PO é o que torna a correção automática auditável: sem o
           motivo na tela, um PO errado vira um quadro errado sem explicação. */}
       {/* "Motivo atual", não "PO": o motivo também pode ser de uma regra

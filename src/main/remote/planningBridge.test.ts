@@ -92,8 +92,8 @@ describe('GET /api/planning/list', () => {
     expect(res.json()).toEqual({
       ok: true,
       plans: [
-        { slug: 'plano-a', titulo: 'Checkout novo', etapas: { total: 2, concluidas: 1 }, cards: 2, ambiguidadesAbertas: 1 },
-        { slug: 'plano-b', titulo: 'Vazio', etapas: { total: 0, concluidas: 0 }, cards: 0, ambiguidadesAbertas: 0 }
+        { slug: 'plano-a', titulo: 'Checkout novo', etapas: { total: 2, concluidas: 1, fonte: 'especificacao' }, cards: 2, ambiguidadesAbertas: 1 },
+        { slug: 'plano-b', titulo: 'Vazio', etapas: { total: 0, concluidas: 0, fonte: 'especificacao' }, cards: 0, ambiguidadesAbertas: 0 }
       ]
     })
   })

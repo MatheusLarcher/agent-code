@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { HandoffEnvio } from '@shared/handoffTracking'
 import { HANDOFF_REFRESH_MS, type HandoffEnviosApi, type HandoffEnviosState } from '../handoffTracking/useHandoffEnvios'
-import { planEnviosOf } from './planObra'
+import { planEnviosOf } from '@shared/stepProgress'
 
 /**
  * Os envios de UM plano (a obra dele: planObra.ts), lidos do banco (handoff:list

@@ -4,7 +4,7 @@ import { conv, feed } from '../office/adapter/testFeed'
 import { demoFeed } from './demoFeed'
 import { DEMO_PLAN_ID, demoPlanPeek } from './demoPlan'
 import { DEMO_LOOP_MS } from './demoTimeline'
-import { PEEK_MS, TvPlans } from './tvPlans'
+import { PEEK_MS, planPeeksFor, roteiroOfPeek, TvPlans } from './tvPlans'
 
 const NOW = 1_800_000_000_000
 const plan = (id: string, cwd: string, slug: string, updatedAt: number) => conv(id, { cwd, mode: 'planning', planningSlug: slug, updatedAt })
@@ -53,6 +53,40 @@ describe('os planos na TV (TvPlans)', () => {
     t.peek(p)
     expect(peek).toHaveBeenCalledTimes(3)
     t.dispose()
+  })
+
+  it('o cache é um por ponte: a TV e as telas (planPeeksFor) pedem o resumo uma vez; o aviso de mudança relê e avisa quem assina', async () => {
+    let changed: ((m: { projectCwd: string; slug: string }) => void) | null = null
+    const peek = vi.fn(async () => ({ ok: true as const, plan: { titulo: 'Checkout', etapas: [{ id: 'banco', titulo: 'Banco', status: 'concluida' as const }], cards: 1, ambiguidadesAbertas: 0 } }))
+    const api = { planningPeek: peek, onPlanningChanged: (cb: typeof changed) => ((changed = cb), () => {}) }
+    const tv = new TvPlans(api, () => {}, () => NOW)
+    const ref = { cwd: 'C:\\a', slug: 's1' }
+    const cache = planPeeksFor(api)!
+    expect(planPeeksFor(api)).toBe(cache)
+    expect(planPeeksFor(null)).toBeNull()
+    expect(planPeeksFor({})).toBeNull()
+    tv.peek({ convId: 'p1', title: 'Plano', ...ref })
+    expect(cache.get(ref)).toBeNull()
+    expect(peek).toHaveBeenCalledTimes(1)
+    const seen = vi.fn()
+    const off = cache.subscribe(seen)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(seen).toHaveBeenCalledTimes(1)
+    expect(roteiroOfPeek(cache.cached(ref))).toEqual([{ id: 'banco', titulo: 'Banco' }])
+    changed!({ projectCwd: 'c:\\A', slug: 's1' })
+    expect(seen).toHaveBeenCalledTimes(2)
+    cache.get(ref)
+    expect(peek).toHaveBeenCalledTimes(2)
+    off()
+    tv.dispose()
+  })
+
+  it('o roteiro do resumo: as etapas com id, na ordem; sem o id de alguma (a demo), null', () => {
+    const dto = (etapas: { id?: string; titulo: string }[]) => ({ titulo: 'x', cards: 0, ambiguidadesAbertas: 0, etapas: etapas.map((e) => ({ ...e, status: 'pendente' as const })) })
+    expect(roteiroOfPeek(dto([{ id: 'a', titulo: 'A' }, { id: 'b', titulo: 'B' }]))).toEqual([{ id: 'a', titulo: 'A' }, { id: 'b', titulo: 'B' }])
+    expect(roteiroOfPeek(dto([{ id: 'a', titulo: 'A' }, { titulo: 'B' }]))).toBeNull()
+    expect(roteiroOfPeek(null)).toBeNull()
   })
 
   it('na demo o Manager do checkout está à cabeceira e a TV tem o resumo falso dele, sem pedir ao main', () => {

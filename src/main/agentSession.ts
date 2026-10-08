@@ -4,6 +4,7 @@ import { AsyncQueue } from './asyncQueue'
 import { createAppMcpServer, APP_CALL_HINT, APP_PRINT_HINT, APP_RESTART_HINT } from './appTools'
 import { cloudToolDeps, runCloudTool } from './cloudTool'
 import { CallIds, emitOfficeCall } from './officeCallRuntime'
+import { taskListKey } from './board/boardModel'
 import { attachPrintFromAgent } from './board/printRuntime'
 import { OFFICE_CALL_TOOL } from '../shared/officeCall'
 import { appRestart } from './appRestartRuntime'
@@ -738,6 +739,10 @@ export class AgentSession {
   private restartPersisting = false
   private restartBackground: number | null = null
   private restartUncertain = false
+  /** Bash/Agent em segundo plano em voo (do PreToolUse ao retorno). */
+  private readonly restartDetachedCalls = new Set<string>()
+  /** Um deles retornou e o SDK ainda não mandou a lista de tarefas em background depois disso. */
+  private restartDetachedPending = false
   /**
    * Chamadas de ferramenta EM VOO cujo efeito não é verificável (shell, MCP de
    * terceiro, subagente). Entram no PreToolUse e saem quando a ferramenta
@@ -919,10 +924,15 @@ export class AgentSession {
     }
   }
 
+  /** O comando em segundo plano retornou: a trava passa a esperar a próxima lista de tarefas do SDK. */
+  private detachedReturned(toolUseId: string): void {
+    if (this.restartDetachedCalls.delete(toolUseId)) this.restartDetachedPending = true
+  }
+
   restartActivity(): RestartActivity {
     return {
       busy: this.restartInitializing || this.restartPersisting || this.turnActive || this.pendingPermissions.size > 0,
-      unsafe: this.restartUncertain || this.restartOpaqueCalls.size > 0
+      unsafe: this.restartUncertain || this.restartDetachedPending || this.restartOpaqueCalls.size > 0
         ? 'Trabalho autônomo sem prova de término.'
         : this.restartBackground === null ? 'Estado de background desconhecido.'
         : this.restartBackground > 0 ? 'Tarefas em background ativas.'
@@ -1316,10 +1326,15 @@ export class AgentSession {
           // SDK task-level snapshots cover managed tasks, but arbitrary shell,
           // remote agents, custom MCPs and cron may outlive that registry.
           if (!VERIFIED_TOOLS.includes(name)) this.restartOpaqueCalls.add(input.tool_use_id)
-          // Trabalho lançado DESTACADO não termina quando a chamada retorna, então
-          // aqui a incerteza é permanente na sessão — é o caso que o booleano
-          // antigo tratava certo e o único que precisa dele.
-          if (startsDetachedWork(name, input.tool_input)) this.restartUncertain = true
+          // Trabalho lançado DESTACADO não termina quando a chamada retorna. Bash e
+          // Agent em segundo plano são tarefas do SDK: a incerteza vale até o
+          // próximo `background_tasks_changed`, e daí em diante manda a contagem
+          // real (um comando que já terminou não trava mais o reinício). Cron,
+          // gatilho remoto e workflow ficam fora dessa lista: incerteza permanente.
+          if (startsDetachedWork(name, input.tool_input)) {
+            if (name === 'Bash' || name === 'Agent' || name === 'Task') this.restartDetachedCalls.add(input.tool_use_id)
+            else this.restartUncertain = true
+          }
           // Qualquer ferramenta (verificável ou não) estende a tolerância de
           // silêncio: build e download legítimos passam minutos sem emitir.
           this.toolsInFlight.add(input.tool_use_id)
@@ -1335,6 +1350,7 @@ export class AgentSession {
         PostToolUse: [{ hooks: [async (input) => {
           if (input.hook_event_name === 'PostToolUse') {
             this.restartOpaqueCalls.delete(input.tool_use_id)
+            this.detachedReturned(input.tool_use_id)
             this.toolsInFlight.delete(input.tool_use_id)
             this.markActivity()
             // Handoff: o aviso de prazo da etapa (80% e 100%, uma vez por marco).
@@ -1347,6 +1363,7 @@ export class AgentSession {
         PostToolUseFailure: [{ hooks: [async (input) => {
           if (input.hook_event_name === 'PostToolUseFailure') {
             this.restartOpaqueCalls.delete(input.tool_use_id)
+            this.detachedReturned(input.tool_use_id)
             this.toolsInFlight.delete(input.tool_use_id)
             this.markActivity()
           }
@@ -1964,13 +1981,19 @@ export class AgentSession {
     if (this.watchedSessionId === sessionId && this.stopTaskWatch) return
     this.stopTaskWatch?.()
     this.watchedSessionId = sessionId
+    const list = this.taskList()
     const items = readSessionTasks(sessionId, this.sessionTasksRoot)
-    if (items) this.emit({ kind: 'task-list', items })
+    if (items) this.emit({ kind: 'task-list', items, list })
     this.stopTaskWatch = watchSessionTasks(
       sessionId,
-      (list) => this.emit({ kind: 'task-list', items: list }),
+      (tasks) => this.emit({ kind: 'task-list', items: tasks, list }),
       this.sessionTasksRoot
     )
+  }
+
+  /** A lista de tarefas que o watcher lê (sessão + PC + pasta do CLI): o quadro separa os cartões por ela. */
+  private taskList(): string | undefined {
+    return this.watchedSessionId ? taskListKey(this.watchedSessionId, hostname(), this.sessionTasksRoot ?? '') : undefined
   }
 
   // ---- internals ----
@@ -2410,7 +2433,11 @@ ${lines}
       case 'system':
         if (message.subtype === 'init') {
           this.restartInitializing = false
-          if (!this.opts.resume && !this.restartUncertain) this.restartBackground = 0
+          // O processo do CLI acabou de subir: só conhece as tarefas em background que
+          // ele mesmo lançar, e essas chegam pelo `background_tasks_changed`. Vale
+          // também para a conversa retomada — antes ela ficava "background
+          // desconhecido" até um snapshot que podia nunca vir, e travava o reinício.
+          if (!this.restartUncertain && !this.restartDetachedPending && this.restartDetachedCalls.size === 0) this.restartBackground = 0
           // O esforço com que a sessão subiu (o mesmo que foi ao SDK): com o
           // esforço gravado em Automático, é o que o seletor mostra em uso.
           const effort = sdkEffort(this.opts.model, this.opts.effort)
@@ -2472,6 +2499,8 @@ ${lines}
             tasks: Array<{ task_id: string; task_type: string; description: string }>
           }).tasks
           this.restartBackground = Array.isArray(tasks) ? tasks.length : null
+          // A contagem do SDK passa a valer pelo comando em segundo plano lançado.
+          if (Array.isArray(tasks)) this.restartDetachedPending = false
           appRestart?.changed()
           this.emit({
             kind: 'background-tasks',
@@ -2626,7 +2655,7 @@ ${lines}
         // still lands on the truth instead of drifting for the rest of the chat.
         if (this.watchedSessionId) {
           const tasks = readSessionTasks(this.watchedSessionId, this.sessionTasksRoot)
-          if (tasks) this.emit({ kind: 'task-list', items: tasks })
+          if (tasks) this.emit({ kind: 'task-list', items: tasks, list: this.taskList() })
         }
         const reconciledUsage = reconcileResultUsage(r.usage, r.modelUsage)
         this.reconcileLiveLlmCalls(r.modelUsage)

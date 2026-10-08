@@ -178,7 +178,8 @@ export function isRoutineEnvio(envio: Pick<HandoffEnvio, 'arquivo'>): boolean {
 // (indicador de prazo) leem do mesmo jeito.
 // ---------------------------------------------------------------------------
 
-function parseMs(iso: string | null | undefined): number | null {
+/** Uma data ISO em ms; `null` sem data ou inválida. */
+export function parseMs(iso: string | null | undefined): number | null {
   if (!iso) return null
   const ms = Date.parse(iso)
   return Number.isFinite(ms) ? ms : null

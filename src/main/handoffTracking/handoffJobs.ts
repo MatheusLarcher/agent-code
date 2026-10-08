@@ -1,7 +1,17 @@
 import { isEnvioSent, type HandoffEnvio } from '../../shared/handoffTracking'
 import type { BoardItem } from '../../shared/ipc'
 import type { HandoffEntregaPatch, HandoffEnvioPatch, HandoffRepository } from '../persistence/types'
+import {
+  entregaActiveMs,
+  estimatePatch,
+  findEntrega,
+  type EntregaEstimateOutcome,
+  type EntregaEstimateRequest,
+  type EntregaTimeOutcome
+} from './entregaEstimate'
 import * as deadline from './handoffDeadline'
+import { orphanEtapas, type OrphanEtapa } from './handoffOrphans'
+import { projectCards, syncEnvio } from './handoffReconcile'
 import * as rules from './handoffRules'
 import type { ConvState, SeenSend } from './handoffState'
 
@@ -14,9 +24,7 @@ import type { ConvState, SeenSend } from './handoffState'
 
 /** O que o acompanhamento lê do Quadro (o BoardService real cumpre). */
 export interface HandoffBoard {
-  list(cwd: string, options: { conversationId?: string }): Promise<BoardItem[] | null>
-  /** Fila de escrita do snapshot (`task-list`) da conversa. */
-  settled(convId: string): Promise<void>
+  list(cwd: string, options: { conversationId?: string; includeDismissed?: boolean }): Promise<BoardItem[] | null>
   /** Fechamento do turno (espera o PO até o teto dele). */
   turnClosed(convId: string): Promise<void>
 }
@@ -30,6 +38,8 @@ export interface HandoffJobContext {
   changed(convId: string): void
   state(convId: string): ConvState | undefined
   stallMs: number
+  /** O log do tracker — para as leituras que nunca lançam (`orphanEtapas`). */
+  warn?(where: string, err: unknown): void
 }
 
 export interface HandoffCorrection {
@@ -50,6 +60,23 @@ export class HandoffJobs {
     return repo ? rules.currentEnvio(await this.load(repo, convId)) : null
   }
 
+  /**
+   * Para o PO no fechamento: as entregas abertas do envio corrente sem cartão
+   * no Quadro do projeto (handoffOrphans.ts). Só LÊ, e FORA da fila de propósito:
+   * o fim de turno, na fila, espera o PO — e o PO espera esta leitura. Nunca
+   * lança: falha (sem banco, Quadro indisponível) é lista vazia.
+   */
+  async orphanEtapas(convId: string): Promise<OrphanEtapa[]> {
+    try {
+      const current = await this.currentEnvio(convId)
+      const cards = current ? await this.projectCards(convId, current) : null
+      return current && cards ? orphanEtapas(current, cards) : []
+    } catch (err) {
+      this.ctx.warn?.('orphanEtapas', err)
+      return []
+    }
+  }
+
   async turnStart(convId: string, at: number): Promise<void> {
     const repo = this.ctx.repo()
     if (!repo) return
@@ -66,12 +93,18 @@ export class HandoffJobs {
     await this.ctx.board.turnClosed(convId)
     const repo = this.ctx.repo()
     if (!repo) return
-    const loaded = await this.load(repo, convId)
-    if (!rules.currentEnvio(loaded)) return
-    const cards = (await this.cards(convId)) ?? []
-    const { envios } = await this.syncCards(repo, convId, loaded, cards)
-    const current = rules.currentEnvio(envios)
-    if (!current || current.status === 'concluida') return
+    let current = rules.currentEnvio(await this.load(repo, convId))
+    if (!current) return
+    const cards = (await this.projectCards(convId, current)) ?? []
+    // Só o envio corrente: os outros da conversa o reconciliador acompanha.
+    if (current.status !== 'concluida') {
+      const synced = await syncEnvio(repo, current, cards, this.sync())
+      current = synced.envio
+      if (synced.wrote) this.ctx.changed(convId)
+    }
+    const s = this.ctx.state(convId)
+    if (s) s.cardInProgress = new Set(rules.entregasWithCardInProgress(current, cards))
+    if (current.status === 'concluida') return
     const outcome = rules.turnEndOutcome(current, cards, { now: iso(at), turnError })
     for (const { id, patch } of outcome.entregas) await repo.updateHandoffEntrega(id, patch)
     const envio: HandoffEnvioPatch =
@@ -159,27 +192,26 @@ export class HandoffJobs {
     return true
   }
 
-  /** Releitura dos cartões da conversa (task-list, mudança no Quadro). */
-  async refreshCards(convId: string): Promise<void> {
-    const s = this.ctx.state(convId)
+  /** `entrega_estimar` (ver HandoffTracker.estimateEntrega). */
+  async estimate(convId: string, req: EntregaEstimateRequest): Promise<EntregaEstimateOutcome> {
     const repo = this.ctx.repo()
-    if (!s || !repo) return
-    await this.ctx.board.settled(convId)
-    const loaded = await this.load(repo, convId)
-    if (loaded.length === 0) return
-    const cards = await this.cards(convId)
-    if (!cards) return
-    const { envios, completedNow } = await this.syncCards(repo, convId, loaded, cards)
-    const current = rules.currentEnvio(envios)
-    for (const envio of envios) {
-      const patch = rules.incompleteRefresh(envio, cards, {
-        now: iso(this.ctx.now()),
-        completedNow: completedNow.has(envio.id),
-        // O turno rodando é do envio corrente; o incompleto anterior pode concluir.
-        turnRunning: envio.id === current?.id && s.turnRunning
-      })
-      await this.writeEnvio(repo, convId, envio, patch)
-    }
+    if (!repo) return { ok: false, reason: 'sem_banco' }
+    const found = findEntrega(rules.currentEnvio(await repo.listHandoffEnvios({ conversationId: convId })), req.etapa)
+    if (!found.ok) return found
+    const before = found.entrega
+    const anterior = before.estimativaAgente === null ? null : { minutos: before.estimativaAgente, motivo: before.estimativaAgenteMotivo }
+    const envio = await repo.updateHandoffEntrega(before.id, estimatePatch(req, iso(this.ctx.now())))
+    this.ctx.changed(convId)
+    return { ok: true, envio, entrega: envio.entregas.find((e) => e.id === before.id) ?? before, anterior }
+  }
+
+  /** `entrega_tempo` (ver HandoffTracker.entregaTime): `unflushedMs` lido na vez do job. */
+  async entregaTime(convId: string, etapa: string | null, unflushedMs: () => number): Promise<EntregaTimeOutcome> {
+    const repo = this.ctx.repo()
+    if (!repo) return { ok: false, reason: 'sem_banco' }
+    const found = findEntrega(rules.currentEnvio(await repo.listHandoffEnvios({ conversationId: convId })), etapa)
+    if (!found.ok) return found
+    return { ...found, ...entregaActiveMs(found.envio, found.entrega, unflushedMs()) }
   }
 
   /** Grava `ms` de tempo ativo (+ o que esperava um envio corrente). */
@@ -241,26 +273,26 @@ export class HandoffJobs {
 
   /** Marca `parada` o que passou do limite sem turno (contado desde a última
    *  atividade da CONVERSA — a deste processo e a escrita mais recente em
-   *  qualquer envio dela —, nunca antes de `notBefore`, o início do tracker). */
-  async markStalled(convId: string, notBefore: number): Promise<number> {
+   *  qualquer envio dela —, nunca antes de `notBefore`, o início do tracker).
+   *  Devolve os envios que marcou (a varredura agenda o reconciliador deles). */
+  async markStalled(convId: string, notBefore: number): Promise<HandoffEnvio[]> {
     const s = this.ctx.state(convId)
     const repo = this.ctx.repo()
-    if (!s || !repo || s.turnRunning || s.pending.size > 0) return 0
+    if (!s || !repo || s.turnRunning || s.pending.size > 0) return []
     const envios = await this.load(repo, convId)
     const lastActivityMs = Math.max(s.lastActivity, notBefore, rules.conversationLastWriteMs(envios))
     const stall = { turnRunning: false, pending: false, lastActivityMs, now: this.ctx.now(), limitMs: this.ctx.stallMs }
-    let stalled = 0
+    const stalled: HandoffEnvio[] = []
     let open = 0
     for (const envio of envios) {
       const motivo = rules.stallReason(envio, stall)
       if (motivo) {
-        await repo.updateHandoffEnvio(envio.id, { status: 'parada', motivo })
-        stalled++
+        stalled.push(await repo.updateHandoffEnvio(envio.id, { status: 'parada', motivo }))
       } else if (rules.isStallable(envio.status)) {
         open++
       }
     }
-    if (stalled > 0) this.ctx.changed(convId)
+    if (stalled.length > 0) this.ctx.changed(convId)
     // Nada que possa parar: só volta a olhar quando houver atividade nova.
     if (open === 0) s.dormantAt = s.lastActivity
     return stalled
@@ -274,39 +306,15 @@ export class HandoffJobs {
     const entrega = envio?.entregas.find((e) => e.id === req.entregaId)
     if (!envio || !entrega) throw new Error('Entrega não encontrada.')
     let updated = await repo.updateHandoffEntrega(entrega.id, rules.correctionPatch(entrega, req.acao, req.motivo, at))
-    const cards = (await this.cards(convId, this.ctx.state(convId)?.cwd || updated.projectCwd)) ?? []
+    const cards = (await this.projectCards(convId, updated)) ?? []
     const patch = rules.envioAfterCorrection(updated, req.acao, cards, at)
     if (patch) updated = await repo.updateHandoffEnvio(updated.id, patch)
     this.ctx.changed(convId)
     return updated
   }
 
-  /** As entregas de todo envio não concluído da conversa acompanham os cartões. */
-  private async syncCards(
-    repo: HandoffRepository,
-    convId: string,
-    loaded: readonly HandoffEnvio[],
-    cards: readonly BoardItem[]
-  ): Promise<{ envios: HandoffEnvio[]; completedNow: Set<string> }> {
-    const sync = { now: iso(this.ctx.now()), poEnabled: this.ctx.poEnabled() }
-    const completedNow = new Set<string>()
-    const envios: HandoffEnvio[] = []
-    let wrote = false
-    for (let envio of loaded) {
-      if (envio.status !== 'concluida') {
-        for (const { id, patch } of rules.syncEntregas(envio, cards, sync)) {
-          envio = await repo.updateHandoffEntrega(id, patch)
-          if (patch.status === 'concluida') completedNow.add(envio.id)
-          wrote = true
-        }
-      }
-      envios.push(envio)
-    }
-    const s = this.ctx.state(convId)
-    const current = rules.currentEnvio(envios)
-    if (s) s.cardInProgress = new Set(current ? rules.entregasWithCardInProgress(current, cards) : [])
-    if (wrote) this.ctx.changed(convId)
-    return { envios, completedNow }
+  private sync(): { now: string; poEnabled: boolean } {
+    return { now: iso(this.ctx.now()), poEnabled: this.ctx.poEnabled() }
   }
 
   private async load(repo: HandoffRepository, convId: string): Promise<HandoffEnvio[]> {
@@ -316,12 +324,9 @@ export class HandoffJobs {
     return envios
   }
 
-  /** Os cartões da conversa; `null` = Quadro indisponível. */
-  private async cards(convId: string, cwd?: string): Promise<BoardItem[] | null> {
-    const dir = cwd ?? this.ctx.state(convId)?.cwd
-    if (!dir) return null
-    const items = await this.ctx.board.list(dir, { conversationId: convId })
-    return items ? items.filter((card) => card.conversationId === convId) : null
+  /** Os cartões do PROJETO do envio (a pasta da sessão primeiro); `null` = Quadro indisponível. */
+  private projectCards(convId: string, envio: HandoffEnvio): Promise<BoardItem[] | null> {
+    return projectCards(this.ctx.board, envio.projectId, [this.ctx.state(convId)?.cwd ?? '', envio.projectCwd])
   }
 
   /**

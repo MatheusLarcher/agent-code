@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
 import { z } from 'zod'
+import type { HandoffEnvio } from '../../shared/handoffTracking'
 import type { ChatEvent, RemoteConversationAction, RemoteStatePayload } from '../../shared/ipc'
 import { isValidMediaName, mediaKindOf } from '../../shared/planningMedia'
 import {
@@ -14,10 +15,12 @@ import {
   type RemotePlanningFailure,
   type RemotePlanSummary
 } from '../../shared/planningRemote'
+import { planEnviosOf, planProgress, roteiroProgress } from '../../shared/stepProgress'
+import { resolveProjectIdentity } from '../persistence/projectIdentity'
 import { onPlanningChanged } from '../planning/planningEvents'
 import { toPlanningFailure } from '../planning/planningIpc'
 import * as realMedia from '../planning/planningMedia'
-import { isValidName } from '../planning/planningModel'
+import { isValidName, type RoteiroStage } from '../planning/planningModel'
 import * as realStore from '../planning/planningStore'
 
 /**
@@ -26,7 +29,9 @@ import * as realStore from '../planning/planningStore'
  * serve planos de projetos que o PC conhece (os do retrato publicado pelo
  * renderer). Não há rota de escrita de card: no celular quem mexe nos cards é
  * o Agent Manager. "Novo planejamento" vira uma RemoteConversationAction
- * `plan`, que o renderer executa com o startOfficePlan.
+ * `plan`, que o renderer executa com o startOfficePlan. Na lista, as etapas de
+ * um plano já enviado contam a implementação, lida dos envios no banco
+ * (planEtapasProgress).
  */
 
 export interface PlanningBridgeStore {
@@ -42,6 +47,17 @@ export interface PlanningBridgeCtx {
   onConversationAction?: (action: RemoteConversationAction) => void
   store?: PlanningBridgeStore
   isDirectory?: (p: string) => Promise<boolean>
+  /** Os envios de handoff do projeto (de qualquer conversa), para o progresso da
+   *  implementação na lista. Padrão: o banco do app; lança sem ele. */
+  envios?: (cwd: string) => Promise<HandoffEnvio[]>
+}
+
+async function defaultEnvios(cwd: string): Promise<HandoffEnvio[]> {
+  // Sob demanda: o lifecycle carrega os bancos (node:sqlite, Electron) só quando a lista pede.
+  const { storageLifecycle } = await import('../persistence/lifecycle')
+  const repo = storageLifecycle.repository()
+  const { projectId } = await resolveProjectIdentity(cwd)
+  return repo.listHandoffEnvios({ projectIds: [projectId], limit: 1000 })
 }
 
 const defaultStore: PlanningBridgeStore = {
@@ -120,13 +136,29 @@ function query(url: URL, keys: string[]): Record<string, string> {
   return out
 }
 
-async function summary(store: PlanningBridgeStore, cwd: string, slug: string): Promise<RemotePlanSummary> {
+/**
+ * O "N/M" da lista (shared/stepProgress, a regra das telas do PC): com envios,
+ * a IMPLEMENTAÇÃO — prontas de total pela posição no plano (planProgress com o
+ * roteiro); sem, a ESPECIFICAÇÃO do roteiro (roteiroProgress: especificadas de
+ * total), nunca as duas misturadas. `fonte` diz qual das duas, para o celular
+ * escrever "prontas" ou "especificadas".
+ */
+export function planEtapasProgress(roteiro: readonly RoteiroStage[], planEnvios: readonly HandoffEnvio[]): RemotePlanSummary['etapas'] {
+  if (planEnvios.length > 0) {
+    const p = planProgress(planEnvios, roteiro)
+    return { total: p.total, concluidas: p.prontas, fonte: 'implementacao' }
+  }
+  const r = roteiroProgress(roteiro)
+  return { total: r.total, concluidas: r.feitas, fonte: 'especificacao' }
+}
+
+async function summary(store: PlanningBridgeStore, cwd: string, slug: string, planEnvios: HandoffEnvio[]): Promise<RemotePlanSummary> {
   try {
     const p = await store.openPlan(cwd, slug)
     return {
       slug,
       titulo: p.roteiro.titulo,
-      etapas: { total: p.roteiro.etapas.length, concluidas: p.roteiro.etapas.filter((e) => e.status === 'concluida').length },
+      etapas: planEtapasProgress(p.roteiro.etapas, planEnvios),
       cards: p.cards.length,
       ambiguidadesAbertas: p.cards.filter((c) => c.tipo === 'ambiguidade' && c.status !== 'resolvida').length
     }
@@ -215,7 +247,10 @@ export async function servePlanningRoute(
       const { cwd } = parse(ListReq, query(url, ['cwd']))
       await assertProject(cwd, ctx)
       const plans: RemotePlanSummary[] = []
-      for (const slug of await store.listPlans(cwd)) plans.push(await summary(store, cwd, slug))
+      const slugs = await store.listPlans(cwd)
+      // Uma leitura dos envios por lista; sem banco, cada plano sai com a especificação.
+      const envios = slugs.length > 0 ? await (ctx.envios ?? defaultEnvios)(cwd).catch((): HandoffEnvio[] => []) : []
+      for (const slug of slugs) plans.push(await summary(store, cwd, slug, planEnviosOf(envios, cwd, slug)))
       return sendJson(res, 200, { ok: true, plans })
     }
     if (route === '/api/planning/plan' && get) {

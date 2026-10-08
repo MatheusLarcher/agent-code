@@ -9,7 +9,9 @@ import {
 } from '../../shared/handoffTracking'
 import type { StartAgentOptions } from '../../shared/ipc'
 import { MAX_ESTIMATIVA_MIN } from '../../shared/planningEstimate'
-import { estimateInputError, type EntregaEstimateDone, type EntregaMiss, type EntregaTimeDone } from './entregaEstimate'
+import { planEnviosOf, planProgress, type PlanProgress, type PlanRoteiro } from '../../shared/stepProgress'
+import { openPlan } from '../planning/planningStore'
+import { estimateInputError, type EntregaEstimateDone, type EntregaFound, type EntregaMiss, type EntregaTimeDone } from './entregaEstimate'
 import { activeHandoffTracker } from './handoffRuntime'
 import type { HandoffTracker } from './handoffTracker'
 
@@ -41,6 +43,57 @@ export interface EntregaToolDeps {
   conversationId: string
   /** O acompanhamento ativo, lido a cada chamada. Padrão: handoffRuntime. */
   tracker?: () => EntregaTracker | null
+  /** As etapas do plano do envio, numeradas pela posição no PLANO. Padrão: loadPlanProgress. */
+  planProgress?: (envio: HandoffEnvio) => Promise<PlanProgress>
+}
+
+/** De onde vêm o roteiro e os envios do plano. Cada um lança quando não consegue ler. */
+export interface PlanSource {
+  /** As etapas do roteiro, na ordem. */
+  roteiro(projectCwd: string, slug: string): Promise<PlanRoteiro>
+  /** Os envios de handoff do projeto, de qualquer conversa. */
+  envios(projectId: string): Promise<HandoffEnvio[]>
+}
+
+const defaultPlanSource: PlanSource = {
+  roteiro: async (projectCwd, slug) => (await openPlan(projectCwd, slug)).roteiro.etapas,
+  envios: async (projectId) => {
+    // Sob demanda: o lifecycle carrega os bancos (node:sqlite, Electron), e quem
+    // só importa os nomes das ferramentas (planningSession) não deve puxá-los.
+    const { storageLifecycle } = await import('../persistence/lifecycle')
+    // Só leitura: vale com o banco em modo só-leitura; offline, lança.
+    return storageLifecycle.repository().listHandoffEnvios({ projectIds: [projectId], limit: 1000 })
+  }
+}
+
+/**
+ * As etapas do plano do `envio` numeradas pela POSIÇÃO NO PLANO — a regra única
+ * de shared/stepProgress, a mesma das telas: o roteiro (planningStore.openPlan)
+ * e os envios do plano no projeto, de qualquer conversa. Falha suave, por parte:
+ * sem roteiro, a união das entregas dos envios; sem banco, as do próprio envio.
+ * Nunca lança.
+ */
+export async function loadPlanProgress(envio: HandoffEnvio, source: PlanSource = defaultPlanSource): Promise<PlanProgress> {
+  const [roteiro, envios] = await Promise.all([
+    source.roteiro(envio.projectCwd, envio.planSlug).catch(() => null),
+    source.envios(envio.projectId).catch((): HandoffEnvio[] => [])
+  ])
+  // O envio em mãos é o mais novo (a estimativa acabou de ser gravada nele).
+  const others = planEnviosOf(envios, envio.projectCwd, envio.planSlug).filter((e) => e.id !== envio.id)
+  return planProgress([...others, envio], roteiro)
+}
+
+/** "etapa N de M": a posição da entrega no plano. */
+interface PlanPlace {
+  n: number
+  total: number
+}
+
+async function planPlace(found: EntregaFound, load: (envio: HandoffEnvio) => Promise<PlanProgress>): Promise<PlanPlace> {
+  // A numeração não pode derrubar a resposta: sem o plano, a das entregas do envio.
+  const progress = await load(found.envio).catch(() => planProgress([found.envio]))
+  const step = progress.steps.find((s) => s.id === found.entrega.etapaId)
+  return step ? { n: step.n, total: progress.total } : { n: found.entrega.ordem, total: found.envio.entregas.length }
 }
 
 /** Quem pode ter o servidor: a conversa de handoff — nunca o Agent Manager
@@ -76,9 +129,9 @@ function minutes(n: number): string {
   return `${n} min`
 }
 
-/** "Etapa 2 — Título" (N = a posição da etapa NESTE prompt). */
-function etapaHeading(entrega: HandoffEntrega): string {
-  return `Etapa ${entrega.ordem} — ${entrega.etapaTitulo}`
+/** "Etapa 2 — Título" (N = a posição da etapa no PLANO, a mesma das telas). */
+function etapaHeading(entrega: HandoffEntrega, place: PlanPlace): string {
+  return `Etapa ${place.n} — ${entrega.etapaTitulo}`
 }
 
 function etapaList(envio: HandoffEnvio): string {
@@ -113,11 +166,11 @@ function describeMiss(miss: EntregaMiss): string {
   }
 }
 
-function describeEstimate(done: EntregaEstimateDone): string {
-  const { entrega, envio, anterior } = done
+function describeEstimate(done: EntregaEstimateDone, place: PlanPlace): string {
+  const { entrega, anterior } = done
   const z = entrega.estimativaAgente ?? 0
   const lines = [
-    `Estimativa registrada para [${entrega.etapaId}] ${entrega.etapaTitulo} (etapa ${entrega.ordem} de ${envio.entregas.length} deste prompt).`,
+    `Estimativa registrada para [${entrega.etapaId}] ${entrega.etapaTitulo} (etapa ${place.n} de ${place.total} do plano).`,
     entrega.estimativaPlano === null
       ? 'Prazo: nenhum — o plano não estimou esta etapa.'
       : `Prazo (estimativa do plano): ${minutes(entrega.estimativaPlano)} — é ele que vale, e a sua estimativa não o muda.`,
@@ -126,17 +179,17 @@ function describeEstimate(done: EntregaEstimateDone): string {
   if (anterior) lines.push(`Substituiu a anterior: ${minutes(anterior.minutos)} (motivo: ${anterior.motivo ?? '—'}).`)
   lines.push(
     'O tempo que vale é o tempo ativo medido pelo app; ao concluir a etapa, consulte entrega_tempo com esta etapa.',
-    `Escreva agora no chat: ${etapaHeading(entrega)}: ${prazoPhrase(entrega)}, minha estimativa ${minutes(z)}`
+    `Escreva agora no chat: ${etapaHeading(entrega, place)}: ${prazoPhrase(entrega)}, minha estimativa ${minutes(z)}`
   )
   return lines.join('\n')
 }
 
-function describeTime(done: EntregaTimeDone): string {
-  const { entrega, envio, tempoAtivoMs, contando } = done
+function describeTime(done: EntregaTimeDone, place: PlanPlace): string {
+  const { entrega, tempoAtivoMs, contando } = done
   const y = tempoAtivoMinutos(tempoAtivoMs)
   const dentro = withinDeadline(tempoAtivoMs, entrega.estimativaPlano)
   const lines = [
-    `[${entrega.etapaId}] ${entrega.etapaTitulo} — etapa ${entrega.ordem} de ${envio.entregas.length} deste prompt, ${STATUS_LABEL[entrega.status]}.`,
+    `[${entrega.etapaId}] ${entrega.etapaTitulo} — etapa ${place.n} de ${place.total} do plano, ${STATUS_LABEL[entrega.status]}.`,
     entrega.estimativaPlano === null
       ? 'Prazo: nenhum — o plano não estimou esta etapa.'
       : `Prazo (estimativa do plano): ${minutes(entrega.estimativaPlano)}.`,
@@ -150,7 +203,7 @@ function describeTime(done: EntregaTimeDone): string {
     medido += ` (${pct}% do prazo) — ${dentro ? 'dentro do prazo' : `fora do prazo, passou ${minutes(y - entrega.estimativaPlano)}`}`
   }
   lines.push(`${medido}.`)
-  if (contando) lines.push('A contagem segue enquanto a etapa está em andamento e você trabalha (pausa quando espera o usuário).')
+  if (contando) lines.push('A contagem segue enquanto esta é a etapa atual e você trabalha (pausa quando espera o usuário).')
   if (entrega.retrabalhoMs > 0) lines.push(`Retrabalho depois da conclusão do envio: ${minutes(tempoAtivoMinutos(entrega.retrabalhoMs))}.`)
   const prazo = dentro === null ? 'sem prazo' : dentro ? 'dentro do prazo' : 'fora do prazo'
   lines.push(
@@ -179,6 +232,7 @@ const erase = (definition: unknown): AnyTool => definition as AnyTool
 
 export function buildEntregaTools(deps: EntregaToolDeps): AnyTool[] {
   const trackerOf = deps.tracker ?? activeHandoffTracker
+  const loadPlan = deps.planProgress ?? ((envio: HandoffEnvio) => loadPlanProgress(envio))
   return [
     erase(tool(
       'entrega_estimar',
@@ -199,7 +253,7 @@ export function buildEntregaTools(deps: EntregaToolDeps): AnyTool[] {
           const tracker = trackerOf()
           if (!tracker) return OFF
           const outcome = await tracker.estimateEntrega(deps.conversationId, { etapa: a.etapa, minutos: a.minutos, motivo: a.motivo })
-          return outcome.ok ? describeEstimate(outcome) : `Nada registrado. ${describeMiss(outcome)}`
+          return outcome.ok ? describeEstimate(outcome, await planPlace(outcome, loadPlan)) : `Nada registrado. ${describeMiss(outcome)}`
         })
     )),
 
@@ -220,7 +274,7 @@ export function buildEntregaTools(deps: EntregaToolDeps): AnyTool[] {
           if (!tracker) return OFF
           const etapa = a.etapa?.trim() ? a.etapa : null
           const outcome = await tracker.entregaTime(deps.conversationId, etapa)
-          return outcome.ok ? describeTime(outcome) : describeMiss(outcome)
+          return outcome.ok ? describeTime(outcome, await planPlace(outcome, loadPlan)) : describeMiss(outcome)
         })
     ))
   ]

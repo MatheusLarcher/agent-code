@@ -4,15 +4,16 @@ import { randomUUID } from 'node:crypto'
 import { Client, type Pool } from 'pg'
 import type { PostgresConnectionDraft } from '../../shared/ipc'
 import { POSTGRES_DATABASE } from './bootstrapStore'
-import { ensurePostgresBoardParent } from './postgresBoardParent'
+import { ensurePostgresBoardParent, ensurePostgresBoardUserAction } from './postgresBoardParent'
 import { POSTGRES_MIGRATIONS } from './postgresMigrations'
 import { postgresClientConfig, provisionPostgres } from './postgresProvisioning'
 import { PostgresRepository } from './postgresRepository'
 
 /**
- * O vínculo da pendência no PostgreSQL compartilhado: coluna garantida na
- * abertura, SEM migração numerada — uma numerada faria a versão mais velha do
- * app, no outro PC, recusar o banco (`SCHEMA_TOO_NEW`).
+ * As colunas aditivas do quadro no PostgreSQL compartilhado (o vínculo da
+ * pendência e a ação do usuário): garantidas na abertura, SEM migração numerada
+ * — uma numerada faria a versão mais velha do app, no outro PC, recusar o banco
+ * (`SCHEMA_TOO_NEW`).
  */
 
 /** Um pool falso: responde à consulta da coluna e registra o resto. */
@@ -60,6 +61,30 @@ describe('ensurePostgresBoardParent', () => {
   it('não é migração numerada: nenhuma migração numerada é de parent_id', () => {
     expect(POSTGRES_MIGRATIONS.at(-1)?.version).toBe(18)
     expect(POSTGRES_MIGRATIONS.some((entry) => /parent_id/.test(entry.sql))).toBe(false)
+  })
+})
+
+describe('ensurePostgresBoardUserAction — o mesmo molde, para po_user_action', () => {
+  it('confere a coluna certa e, faltando, cria po_user_action com o teto de lock', async () => {
+    const { pool, client } = fakePool([false, true])
+    expect(await ensurePostgresBoardUserAction(pool)).toBe(true)
+    expect(vi.mocked(pool.query).mock.calls[0][1]).toEqual(['po_user_action'])
+    const statements = client.query.mock.calls.map(([sql]) => String(sql))
+    expect(statements).toContain('ALTER TABLE board_items ADD COLUMN IF NOT EXISTS po_user_action text')
+    expect(statements.some((sql) => /lock_timeout/.test(sql))).toBe(true)
+  })
+
+  it('ALTER que falha: devolve false e o quadro segue sem o campo', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { pool, queries } = fakePool([false], new Error('canceling statement due to lock timeout'))
+    expect(await ensurePostgresBoardUserAction(pool)).toBe(false)
+    expect(queries).toContain('ROLLBACK')
+    warn.mockRestore()
+  })
+
+  it('não é migração numerada: o app antigo do outro PC não recusa o banco', () => {
+    expect(POSTGRES_MIGRATIONS.at(-1)?.version).toBe(18)
+    expect(POSTGRES_MIGRATIONS.some((entry) => /po_user_action/.test(entry.sql))).toBe(false)
   })
 })
 
@@ -126,5 +151,30 @@ describe.runIf(integration).sequential('PostgresRepository — vínculo da pend�
     })
     expect(child.parentId).toBe(old.id)
     expect((await second.repository.getBoardItem(child.id))?.parentId).toBe(old.id)
+  })
+
+  it('a ação do usuário: grava na NOVA e no PENDENTE, limpa ao trocar o status; banco sem a coluna a ganha ao reabrir', async () => {
+    const first = await open()
+    opened.push(first.repository)
+    const old = await first.repository.createBoardPoItem({ ...base, title: 'Cartão de antes', status: 'pending', reason: 'r' })
+    await first.pool.query('ALTER TABLE board_items DROP COLUMN po_user_action')
+    await first.repository.close()
+    opened.splice(0)
+
+    const second = await open()
+    opened.push(second.repository)
+    expect(await second.repository.getBoardItem(old.id)).not.toHaveProperty('poUserAction')
+    const created = await second.repository.createBoardPoItem({
+      ...base,
+      title: 'Atualizar a VPS',
+      status: 'pending',
+      reason: 'aguardando autorização do usuário',
+      userAction: 'Autorizar a atualização da VPS'
+    })
+    expect(created.poUserAction).toBe('Autorizar a atualização da VPS')
+    const justified = await second.repository.applyBoardPo({ id: old.id, poReason: 'esperando', userAction: 'Escolher A ou B' })
+    expect(justified.poUserAction).toBe('Escolher A ou B')
+    const done = await second.repository.applyBoardPo({ id: old.id, poStatus: 'completed', poReason: 'entregue' })
+    expect(done).not.toHaveProperty('poUserAction')
   })
 })

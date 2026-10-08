@@ -29,7 +29,7 @@ import { FIT_MIN_ZOOM } from './canvasViewport'
 import { buildFlowPdf } from './flowPdf'
 import { columnFocusPoint, computeLayout } from './layout'
 import { loadRoteiroCollapsed, loadRoteiroWidth, saveRoteiroCollapsed, saveRoteiroWidth } from './paneSizes'
-import { obraView } from './planObra'
+import { counterText, obraView, planCounter } from './planObra'
 import { PlanningPlanContext } from './planningPlanContext'
 import type { DropTarget, DroppedFile } from './mediaDrop'
 import { PlanningMediaContext } from './mediaView'
@@ -275,11 +275,13 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions, onOpenC
   )
 
   const etapas = roteiro?.etapas ?? []
-  const done = etapas.filter((e) => e.status === 'concluida').length
   const title = roteiro?.titulo || slug
   // A obra do plano (planObra.ts): na prancheta até o envio, depois o andamento lido do banco.
   const obraEnvios = usePlanObra(projectCwd, slug).envios
   const obra = useMemo(() => (obraEnvios && roteiro ? obraView(obraEnvios, roteiro.etapas) : null), [obraEnvios, roteiro])
+  // O contador (cabeçalho e roteiro): com envios do plano, as etapas prontas; antes, as especificadas.
+  const implementacao = obra && obra.stage !== 'prancheta' ? obra.progress : null
+  const counter = planCounter(etapas, implementacao)
 
   // PDF do flow inteiro (todos os cards, não só o trecho na tela): o DOM do
   // canvas vira uma página autocontida e o main imprime (flowPdf.ts).
@@ -321,11 +323,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions, onOpenC
             {title}
           </h1>
         </div>
-        {etapas.length > 0 && (
-          <span className="pl-head-progress">
-            {done} de {etapas.length} etapa{etapas.length === 1 ? '' : 's'}
-          </span>
-        )}
+        {counter.total > 0 && <span className="pl-head-progress">{counterText(counter)}</span>}
         {obra && <ObraSeal obra={obra} />}
         <span className="pl-head-spacer" />
         {headerActions && (
@@ -343,6 +341,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions, onOpenC
           <>
             <ProgressList
               etapas={etapas}
+              implementacao={implementacao}
               onToggle={onToggleEtapa}
               onFocus={focusEtapa}
               onEstimate={onEstimateEtapa}

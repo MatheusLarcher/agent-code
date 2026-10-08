@@ -5,6 +5,7 @@
  * inclinada do console da Central, perpendicular a ela (CONSOLE_PLANE). Só liga as pontas
  * — o que a TV mostra é decidido em projectors.ts / tvContent.ts.
  */
+import { taskCounts } from '@shared/stepProgress'
 import type { EngineBoard } from './board/engineBoard'
 import { monitorPose, screenPose, TV_PLANE, tvPose, type CameraPose, type MonitorAt, type ScreenPlane, type ViewSize } from './cameraRig'
 import { CONSOLE_SCREEN, CONSOLE_TILT } from './decorWall'
@@ -22,17 +23,11 @@ import type { ScoreData } from './tvPaint'
 
 const LEVEL: Readonly<Record<PowerLevel, string>> = { cheia: 'cheia', economia: 'economia', alerta: 'alerta', apagao: 'apagão' }
 
-/** As tarefas do Quadro do projeto (ou de todos), por coluna. */
+/** As tarefas do Quadro do projeto (ou de todos), por coluna (a contagem única: taskCounts). */
 export function boardCounts(board: Pick<EngineBoard, 'sync'>, projectId: string | null): Pick<ScoreData, 'todo' | 'doing' | 'done'> {
-  const out = { todo: 0, doing: 0, done: 0 }
-  for (const id of projectId ? [projectId] : board.sync.roomIds) {
-    for (const c of board.sync.mirror(id)?.shown ?? []) {
-      if (c.status === 'completed') out.done++
-      else if (c.status === 'in_progress') out.doing++
-      else out.todo++
-    }
-  }
-  return out
+  const ids = projectId ? [projectId] : board.sync.roomIds
+  const { pending, inProgress, done } = taskCounts(ids.flatMap((id) => board.sync.mirror(id)?.shown ?? []))
+  return { todo: pending, doing: inProgress, done }
 }
 
 /**

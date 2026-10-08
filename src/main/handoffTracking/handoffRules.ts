@@ -1,19 +1,17 @@
 import {
   CARD_ETAPA_PREFIX,
+  currentEntrega,
   currentEnvio,
   isEnvioSent,
+  parseMs,
   type HandoffEntrega,
   type HandoffEnvio,
   type HandoffEnvioStatus
 } from '../../shared/handoffTracking'
-import {
-  BOARD_USER_MOVE_REASON_PREFIX,
-  boardItemStatus,
-  parseBoardTurnEndReason,
-  type BoardItem
-} from '../../shared/ipc'
+import { boardItemStatus, type BoardItem } from '../../shared/ipc'
 import type { HandoffEntregaPatch, HandoffEnvioPatch, HandoffTimeAdd } from '../persistence/types'
 import { STALL_ABORT_MS } from '../stallWatch'
+import { blockReason, cardForEtapa, poContestReason } from './handoffCardMatch'
 
 /**
  * As regras do acompanhamento dos envios de handoff, puras: nada aqui lê banco,
@@ -35,7 +33,7 @@ export const HANDOFF_ERROR_MOTIVO_MAX = 500
 export const HANDOFF_ENVIO_MOTIVO_MAX = 2000
 
 /** Começo do motivo do envio cujo turno terminou com erro — a releitura do
- *  Quadro não o reescreve (perderia o erro). */
+ *  Quadro mantém o erro e troca só a lista do que falta. */
 export const TURN_ERROR_PREFIX = 'o turno terminou com erro'
 
 export const CORRECTED_BY_USER = 'corrigido por você'
@@ -55,12 +53,6 @@ export const HANDOFF_OPEN_STATUSES: readonly HandoffEnvioStatus[] = ['na_fila', 
 export function truncate(text: string, max: number): string {
   const clean = text.trim()
   return clean.length <= max ? clean : `${clean.slice(0, max - 1).trimEnd()}…`
-}
-
-function parseMs(iso: string | null | undefined): number | null {
-  if (!iso) return null
-  const ms = Date.parse(iso)
-  return Number.isFinite(ms) ? ms : null
 }
 
 /** Tempo corrido da entrega: do início ao fim no Quadro; sem início visto, 0. */
@@ -90,58 +82,11 @@ export function envioForHash(envios: readonly HandoffEnvio[], hash: string): Han
 // Cartão ↔ entrega
 // ---------------------------------------------------------------------------
 
-const ETAPA_PREFIX = /^\s*\[([^\]\s]{1,64})\]/
-
-/** O id da etapa no começo do título (`[id-da-etapa] …`), em minúsculas; `null` sem prefixo. */
-export function etapaIdFromTitle(title: string | null | undefined): string | null {
-  const match = ETAPA_PREFIX.exec(title ?? '')
-  return match ? match[1].toLowerCase() : null
-}
+// O casamento cartão ↔ etapa mora em handoffCardMatch.ts; reexportado aqui.
+export { blockReason, CARD_EPOCH_SLACK_MS, cardForEtapa, etapaIdFromTitle, poContestReason, type CardPreference } from './handoffCardMatch'
 
 /** O "Mandar fazer" do "Fala, PO" liga a entrega direto ao cartão citado: `card:<id>`. */
 export { CARD_ETAPA_PREFIX }
-
-/** O cartão da etapa: não dispensado, título (do agente ou do PO) com o prefixo
- *  `[id]`. Vários → o atualizado por último. Item sem prefixo é subitem. */
-export function cardForEtapa(cards: readonly BoardItem[], etapaId: string): BoardItem | null {
-  if (etapaId.startsWith(CARD_ETAPA_PREFIX)) {
-    const cardId = etapaId.slice(CARD_ETAPA_PREFIX.length)
-    return cards.find((card) => card.id === cardId && card.dismissedAt === null) ?? null
-  }
-  const id = etapaId.toLowerCase()
-  let best: BoardItem | null = null
-  for (const card of cards) {
-    if (card.dismissedAt !== null) continue
-    if (etapaIdFromTitle(card.sourceTitle) !== id && etapaIdFromTitle(card.poTitle) !== id) continue
-    if (!best || (parseMs(card.updatedAt) ?? 0) >= (parseMs(best.updatedAt) ?? 0)) best = card
-  }
-  return best
-}
-
-/**
- * O motivo da contestação do PO, ou `null`. Contestado = o agente concluiu e o
- * PO sobrepôs outro status. NÃO é contestação: o fim de turno devolvendo
- * "fazendo" para "a fazer" (regra do app) nem o arrasto do usuário no Quadro.
- */
-export function poContestReason(card: BoardItem): string | null {
-  if (card.sourceStatus !== 'completed' || card.poStatus === null || card.poStatus === 'completed') return null
-  if (parseBoardTurnEndReason(card.poReason)) return null
-  if (card.poReason?.startsWith(BOARD_USER_MOVE_REASON_PREFIX)) return null
-  return card.poReason?.trim() || 'sem motivo registrado'
-}
-
-/** Por que a etapa NÃO está concluída, dito pelo cartão (ou pela falta dele). */
-export function blockReason(card: BoardItem | null, etapaId: string): string {
-  if (!card) return `sem cartão no Quadro com o prefixo [${etapaId}]`
-  const contest = poContestReason(card)
-  if (contest) return `o PO contestou: ${contest}`
-  const status = boardItemStatus(card)
-  const label = status === 'in_progress' ? 'cartão em andamento' : status === 'pending' ? 'cartão a fazer' : 'cartão concluído'
-  // O motivo do PO/do app diz o que o status sozinho não diz ("o turno terminou
-  // sem concluir esta tarefa — falta verificar…").
-  const why = card.poReason?.trim()
-  return why ? `${label} (${why})` : label
-}
 
 export interface EntregaSyncContext {
   /** Agora, em ISO. */
@@ -206,11 +151,19 @@ export interface EntregaPatchFor {
   patch: HandoffEntregaPatch
 }
 
-/** As entregas do envio acompanhando os cartões da conversa. */
+/** O cartão de uma entrega do envio: o casamento ÚNICO do app — as regras daqui
+ *  e as etapas órfãs do PO (handoffOrphans.ts) chamam só este. A época é o
+ *  REGISTRO do lote (`criadoEm`), não a saída do prompt: o agente declara as
+ *  etapas do roteiro inteiro já no 1º prompt. */
+export function entregaCard(envio: HandoffEnvio, entrega: HandoffEntrega, cards: readonly BoardItem[]): BoardItem | null {
+  return cardForEtapa(cards, entrega.etapaId, { conversationId: envio.conversationId, boardItemId: entrega.boardItemId, since: envio.criadoEm })
+}
+
+/** As entregas do envio acompanhando os cartões do projeto. */
 export function syncEntregas(envio: HandoffEnvio, cards: readonly BoardItem[], ctx: EntregaSyncContext): EntregaPatchFor[] {
   const out: EntregaPatchFor[] = []
   for (const entrega of envio.entregas) {
-    const patch = entregaCardPatch(entrega, cardForEtapa(cards, entrega.etapaId), ctx)
+    const patch = entregaCardPatch(entrega, entregaCard(envio, entrega, cards), ctx)
     if (patch) out.push({ id: entrega.id, patch })
   }
   return out
@@ -220,7 +173,7 @@ export function syncEntregas(envio: HandoffEnvio, cards: readonly BoardItem[], c
 export function entregasWithCardInProgress(envio: HandoffEnvio, cards: readonly BoardItem[]): string[] {
   return envio.entregas
     .filter((entrega) => {
-      const card = cardForEtapa(cards, entrega.etapaId)
+      const card = entregaCard(envio, entrega, cards)
       return card !== null && boardItemStatus(card) === 'in_progress'
     })
     .map((entrega) => entrega.id)
@@ -230,16 +183,16 @@ export function entregasWithCardInProgress(envio: HandoffEnvio, cards: readonly 
 // Critério concluída / incompleta
 // ---------------------------------------------------------------------------
 
-function missingReason(entrega: HandoffEntrega, cards: readonly BoardItem[]): string {
+function missingReason(envio: HandoffEnvio, entrega: HandoffEntrega, cards: readonly BoardItem[]): string {
   if (entrega.corrigidoPor === 'usuario') return entrega.motivo ?? CORRECTED_BY_USER
-  return blockReason(cardForEtapa(cards, entrega.etapaId), entrega.etapaId)
+  return blockReason(entregaCard(envio, entrega, cards), entrega.etapaId)
 }
 
 /** "faltou 1 de 3 entregas: [id] Título — motivo; …" */
 export function describeMissing(envio: HandoffEnvio, cards: readonly BoardItem[]): string {
   const missing = envio.entregas.filter((e) => e.status !== 'concluida')
   if (missing.length === 0) return ''
-  const items = missing.map((e) => `[${e.etapaId}] ${e.etapaTitulo} — ${missingReason(e, cards)}`)
+  const items = missing.map((e) => `[${e.etapaId}] ${e.etapaTitulo} — ${missingReason(envio, e, cards)}`)
   const noun = envio.entregas.length === 1 ? 'entrega' : 'entregas'
   return `faltou ${missing.length} de ${envio.entregas.length} ${noun}: ${items.join('; ')}`
 }
@@ -249,12 +202,26 @@ export interface TurnEndOutcome {
   entregas: EntregaPatchFor[]
 }
 
+/** O motivo do incompleto: o erro do turno (se houve) na frente e o que falta. */
+function incompleteMotivo(error: string | null, missing: string): string {
+  return truncate([error, missing].filter(Boolean).join(' — '), HANDOFF_ENVIO_MOTIVO_MAX)
+}
+
+const MISSING_START = / — faltou \d+ de \d+ entregas?: /
+
+/** A parte "o turno terminou com erro: …" do motivo gravado, sem a lista do que faltava; `null` sem erro. */
+function turnErrorPart(motivo: string | null): string | null {
+  if (!motivo?.startsWith(TURN_ERROR_PREFIX)) return null
+  const at = MISSING_START.exec(motivo)?.index
+  return at === undefined ? motivo : motivo.slice(0, at)
+}
+
 /**
  * O fim do turno (`result`) do envio corrente, com as entregas JÁ sincronizadas
- * com os cartões. Todas concluídas e turno sem erro → `concluida`; senão
- * `incompleta`, dizendo o que faltou e por quê — e cada entrega que faltou
- * fica `incompleta` com o próprio motivo (a corrigida pelo usuário, não).
- * Envio sem entregas: só o turno decide.
+ * com os cartões. Todas concluídas → `concluida`, mesmo com erro de turno (o
+ * Quadro é a verdade); senão `incompleta`, dizendo o que faltou e por quê — e
+ * cada entrega que faltou fica `incompleta` com o próprio motivo (a corrigida
+ * pelo usuário, não). Envio sem entregas: só o turno decide.
  */
 export function turnEndOutcome(
   envio: HandoffEnvio,
@@ -264,38 +231,49 @@ export function turnEndOutcome(
   const entregas: EntregaPatchFor[] = []
   for (const entrega of envio.entregas) {
     if (entrega.status === 'concluida' || entrega.corrigidoPor === 'usuario') continue
-    const patch = diff(entrega, { status: 'incompleta', motivo: missingReason(entrega, cards) })
+    const patch = diff(entrega, { status: 'incompleta', motivo: missingReason(envio, entrega, cards) })
     if (patch) entregas.push({ id: entrega.id, patch })
   }
   const missing = describeMissing(envio, cards)
-  if (!ctx.turnError && !missing) {
+  if (!missing && (envio.entregas.length > 0 || !ctx.turnError)) {
     return { envio: { status: 'concluida', concluidoEm: envio.concluidoEm ?? ctx.now, motivo: null }, entregas }
   }
-  const error = ctx.turnError ? `${TURN_ERROR_PREFIX}: ${truncate(ctx.turnError, HANDOFF_ERROR_MOTIVO_MAX)}` : ''
-  const motivo = truncate([error, missing].filter(Boolean).join(' — '), HANDOFF_ENVIO_MOTIVO_MAX)
-  return { envio: { status: 'incompleta', motivo, concluidoEm: null }, entregas }
+  const error = ctx.turnError ? `${TURN_ERROR_PREFIX}: ${truncate(ctx.turnError, HANDOFF_ERROR_MOTIVO_MAX)}` : null
+  return { envio: { status: 'incompleta', motivo: incompleteMotivo(error, missing), concluidoEm: null }, entregas }
 }
 
+// ---------------------------------------------------------------------------
+// Reconciliação com o Quadro (handoffReconcile.ts)
+// ---------------------------------------------------------------------------
+
+/** Os status que o reconciliador relê: o envio que já saiu e não concluiu. */
+export const RECONCILE_STATUSES: readonly HandoffEnvioStatus[] = ['enviado', 'em_execucao', 'aguardando_voce', 'parada', 'falhou', 'incompleta']
+
+/** Já saiu e não concluiu. O "tirado da fila" (parada sem `enviadoEm`) nunca saiu. */
+export function isReconcilable(envio: HandoffEnvio): boolean {
+  return RECONCILE_STATUSES.includes(envio.status) && isEnvioSent(envio)
+}
+
+/** O turno já acabou nesses: é o Quadro que diz se o trabalho ficou feito. */
+const SETTLED_BY_BOARD: ReadonlySet<HandoffEnvioStatus> = new Set(['incompleta', 'parada', 'falhou'])
+
 /**
- * Depois de reler os cartões de um envio que JÁ terminou incompleto: o veredito
- * do PO que chegou depois do teto (30 s) concluiu a última entrega → o envio
- * passa a concluído; senão, o motivo acompanha o que ainda falta.
- * `completedNow` = alguma entrega acabou de virar concluída. O incompleto de
- * turno que terminou com ERRO fica como está: concluído exige turno sem erro, e
- * o motivo do erro não se perde.
+ * O envio depois de as entregas acompanharem os cartões (syncEntregas antes).
+ * Incompleto, parado ou que falhou com TODAS as entregas (≥ 1) concluídas vira
+ * concluído — mesmo com erro de turno: o Quadro é a verdade. Incompleto que
+ * ainda falta tem o motivo relido (o erro do turno fica; só a lista troca).
+ * Turno rodando na conversa: o status é dele, nada muda aqui.
  */
-export function incompleteRefresh(
+export function reconcileEnvioPatch(
   envio: HandoffEnvio,
   cards: readonly BoardItem[],
-  ctx: { now: string; completedNow: boolean; turnRunning: boolean }
+  ctx: { now: string; turnRunning: boolean }
 ): HandoffEnvioPatch | null {
-  if (envio.status !== 'incompleta' || ctx.turnRunning || envio.motivo?.startsWith(TURN_ERROR_PREFIX)) return null
+  if (ctx.turnRunning || !SETTLED_BY_BOARD.has(envio.status) || !isEnvioSent(envio)) return null
   const missing = describeMissing(envio, cards)
-  if (!missing && envio.entregas.length > 0 && ctx.completedNow) {
-    return { status: 'concluida', concluidoEm: ctx.now, motivo: null }
-  }
-  if (!missing) return null
-  const motivo = truncate(missing, HANDOFF_ENVIO_MOTIVO_MAX)
+  if (!missing) return envio.entregas.length > 0 ? { status: 'concluida', concluidoEm: ctx.now, motivo: null } : null
+  if (envio.status !== 'incompleta') return null
+  const motivo = incompleteMotivo(turnErrorPart(envio.motivo), missing)
   return motivo === envio.motivo ? null : { motivo }
 }
 
@@ -333,9 +311,10 @@ export const STOP_MOTIVO = 'você parou este prompt (Stop) — a fila espera voc
 
 /**
  * O Stop do usuário: o envio corrente que não concluiu fica PARADO até o próximo
- * turno (o veredito atrasado do PO não o conclui por trás). O que já concluiu
- * fica concluído — a hora da conclusão é dado de entrega; a fila o segura pela
- * marca do tracker (HandoffTracker.stoppedByUser).
+ * turno — ou até o Quadro dizer que todas as etapas ficaram prontas (o
+ * reconciliador o conclui). O que já concluiu fica concluído — a hora da
+ * conclusão é dado de entrega; a fila o segura pela marca do tracker
+ * (HandoffTracker.stoppedByUser), não pelo status.
  */
 export function stopPatch(envio: HandoffEnvio): HandoffEnvioPatch | null {
   if (!isEnvioSent(envio) || envio.status === 'concluida') return null
@@ -353,8 +332,21 @@ export function errorPatch(envio: HandoffEnvio, text: string): HandoffEnvioPatch
 // ---------------------------------------------------------------------------
 
 /**
+ * As entregas que recebem o tempo ATIVO de um envio não concluído: as em
+ * andamento; sem nenhuma, a etapa ATUAL (currentEntrega — a mesma que o
+ * indicador do topo mostra), para o tempo não sumir entre uma etapa e outra.
+ */
+export function activeTimeEntregas(envio: HandoffEnvio): HandoffEntrega[] {
+  if (envio.status === 'concluida') return []
+  const running = envio.entregas.filter((e) => e.status === 'em_andamento')
+  if (running.length > 0) return running
+  const current = currentEntrega(envio)
+  return current ? [current] : []
+}
+
+/**
  * Para onde vai uma fatia de tempo ATIVO (turno rodando, sem pergunta aberta).
- * Envio não concluído: tempo ativo do envio e de cada entrega em andamento.
+ * Envio não concluído: tempo ativo do envio e de activeTimeEntregas.
  * Concluído: é retrabalho — do envio (o total) e das entregas cujo cartão voltou
  * a andar.
  */
@@ -366,7 +358,7 @@ export function timeDistribution(
   const slice = Math.round(ms)
   if (!Number.isFinite(slice) || slice <= 0) return null
   if (envio.status !== 'concluida') {
-    const entregas = envio.entregas.filter((e) => e.status === 'em_andamento').map((e) => ({ id: e.id, ativoMs: slice }))
+    const entregas = activeTimeEntregas(envio).map((e) => ({ id: e.id, ativoMs: slice }))
     return { envioId: envio.id, ativoMs: slice, entregas }
   }
   const entregas = envio.entregas.filter((e) => cardInProgress.has(e.id)).map((e) => ({ id: e.id, retrabalhoMs: slice }))
@@ -454,12 +446,13 @@ export function envioAfterCorrection(
   if (!isEnvioSent(envio)) return null
   const allDone = envio.entregas.length > 0 && envio.entregas.every((e) => e.status === 'concluida')
   if (allDone) return envio.status === 'concluida' ? null : { status: 'concluida', concluidoEm: envio.concluidoEm ?? now, motivo: null }
-  const motivo = truncate(describeMissing(envio, cards), HANDOFF_ENVIO_MOTIVO_MAX)
-  if (acao === 'reabrir' && envio.status === 'concluida') return { status: 'incompleta', concluidoEm: null, motivo }
-  // Incompleto continua incompleto, mas a lista do que falta acompanha a correção
-  // (o motivo do erro do turno fica).
-  if (envio.status === 'incompleta' && !envio.motivo?.startsWith(TURN_ERROR_PREFIX) && motivo !== envio.motivo) {
-    return { motivo }
+  const missing = describeMissing(envio, cards)
+  if (acao === 'reabrir' && envio.status === 'concluida') {
+    return { status: 'incompleta', concluidoEm: null, motivo: incompleteMotivo(null, missing) }
   }
-  return null
+  // Incompleto continua incompleto, mas a lista do que falta acompanha a correção
+  // (o motivo do erro do turno fica na frente).
+  if (envio.status !== 'incompleta') return null
+  const motivo = incompleteMotivo(turnErrorPart(envio.motivo), missing)
+  return motivo === envio.motivo ? null : { motivo }
 }

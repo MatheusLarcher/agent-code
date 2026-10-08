@@ -10,7 +10,8 @@ import type { MockupCaptureResult, MockupRequest, MockupUrlResult } from './offi
 /** O resumo de um plano para a TV (sem abrir a vigia da pasta). */
 export interface PlanningPeekDto {
   titulo: string
-  etapas: { titulo: string; status: 'pendente' | 'em_andamento' | 'concluida' }[]
+  /** `id`: o main sempre manda (o roteiro numera "Etapa N de M"); o resumo falso da demo não tem. */
+  etapas: { id?: string; titulo: string; status: 'pendente' | 'em_andamento' | 'concluida' }[]
   cards: number
   ambiguidadesAbertas: number
 }

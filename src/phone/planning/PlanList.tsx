@@ -1,9 +1,10 @@
 /**
  * A lista da aba Planos: os planos de cada projeto que o PC conhece, no mesmo
  * cabeçalho recolhível da aba Conversas (tudo começa recolhido). Cada plano mostra
- * título, etapas feitas/total e as ambiguidades abertas; o "?" do cabeçalho
- * recolhido avisa que há ambiguidade esperando resposta. "+ Novo planejamento" no
- * topo (e o "+" de cada projeto, com ele já escolhido).
+ * título, o "N/M" das etapas — "prontas" (implementação) ou "especificadas"
+ * (roteiro; PC antigo, sem `fonte`, só sabia esta) — e as ambiguidades abertas;
+ * o "?" do cabeçalho recolhido avisa que há ambiguidade esperando resposta.
+ * "+ Novo planejamento" no topo (e o "+" de cada projeto, com ele já escolhido).
  */
 import { useEffect, useMemo } from 'react'
 import { client, nav } from '../app/runtime'
@@ -16,6 +17,12 @@ import { CollapsibleGroup } from '../ui/Collapsible'
 import { Icon } from '../ui/icons'
 import { knownProjects, loadLists, openPlan, planUi, startCreate, toggleProject } from './planState'
 
+/** "2/5 prontas" (implementação) ou "3/4 especificadas" (roteiro); "sem etapas" sem nenhuma. */
+function etapasLabel({ total, concluidas, fonte }: RemotePlanSummary['etapas']): string {
+  if (!total) return 'sem etapas'
+  return `${concluidas}/${total} ${fonte === 'implementacao' ? 'prontas' : 'especificadas'}`
+}
+
 function PlanRow({ cwd, p }: { cwd: string; p: RemotePlanSummary }): JSX.Element {
   const { total, concluidas } = p.etapas
   const pct = total > 0 ? Math.round((concluidas / total) * 100) : 0
@@ -27,7 +34,7 @@ function PlanRow({ cwd, p }: { cwd: string; p: RemotePlanSummary }): JSX.Element
       ) : (
         <span className="pl-row-meta">
           <span className="pl-progress" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
-          <span>{total ? `${concluidas}/${total} etapas` : 'sem etapas'}</span>
+          <span>{etapasLabel(p.etapas)}</span>
           <span>· {p.cards} {p.cards === 1 ? 'card' : 'cards'}</span>
           {p.ambiguidadesAbertas > 0 && (
             <span className="pl-badge amb">{p.ambiguidadesAbertas} {p.ambiguidadesAbertas === 1 ? 'ambiguidade aberta' : 'ambiguidades abertas'}</span>

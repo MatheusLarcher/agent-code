@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
+import { planProgress } from '../../shared/stepProgress'
 import {
   deadlineNoticeFor,
   deadlineNoticeText,
@@ -7,11 +8,12 @@ import {
   lateMarks,
   msToNextMark,
   noticeEntrega,
+  rememberPlanSteps,
   withNotice,
   withTimeAdded,
   withTimeout
 } from './handoffDeadline'
-import { sessionDeadlineNotice } from './handoffDeadlineHook'
+import { PLAN_POSITIONS_TTL_MS, PlanPositions, sessionDeadlineNotice } from './handoffDeadlineHook'
 import { entrega, envio, iso, T0 } from './handoffTestKit'
 
 // O prazo por etapa, puro: atraso só na virada e o aviso ao agente uma vez por
@@ -22,7 +24,7 @@ const AT = iso(T0)
 
 /** Envio de uma etapa em andamento com prazo `prazo` e `ms` de tempo ativo. */
 function running(ms: number, over: Parameters<typeof entrega>[0] = {}, prazo: number | null = 40) {
-  const e = entrega({ etapaId: 'prazos', ordem: 3, status: 'em_andamento', estimativaPlano: prazo, tempoAtivoMs: ms, ...over })
+  const e = entrega({ etapaId: 'prazos', ordem: 1, status: 'em_andamento', estimativaPlano: prazo, tempoAtivoMs: ms, ...over })
   return envio({ estimativaTotal: prazo, prazoTotal: prazo, tempoAtivoMs: ms, entregas: [e] })
 }
 
@@ -82,7 +84,7 @@ describe('deadlineNoticeFor — o aviso ao agente, uma vez por marco', () => {
     expect(notice).toEqual({
       entregaId: 'hn-prazos',
       mark: 80,
-      text: expect.stringMatching(/^⏱ Etapa 3 \(prazos\): 32 de 40 min de trabalho — 80% do prazo/),
+      text: expect.stringMatching(/^⏱ Etapa 1 \(prazos\): 32 de 40 min de trabalho — 80% do prazo/),
       patch: { aviso80Em: AT }
     })
   })
@@ -96,7 +98,7 @@ describe('deadlineNoticeFor — o aviso ao agente, uma vez por marco', () => {
     const notice = deadlineNoticeFor(running(40 * MIN + 1, { aviso80Em: '2026-10-05T11:00:00.000Z' }), AT)
     expect(notice?.mark).toBe(100)
     expect(notice?.patch).toEqual({ aviso100Em: AT, atrasada: true })
-    expect(notice?.text).toMatch(/^⏱ Etapa 3 \(prazos\): 41 de 40 min de trabalho — passou do prazo/)
+    expect(notice?.text).toMatch(/^⏱ Etapa 1 \(prazos\): 41 de 40 min de trabalho — passou do prazo/)
     expect(notice?.text).toContain('Feche a etapa')
     expect(notice?.text).toContain('corte escopo')
     expect(notice?.text).toContain('reporte o bloqueio')
@@ -116,26 +118,50 @@ describe('deadlineNoticeFor — o aviso ao agente, uma vez por marco', () => {
     expect(deadlineNoticeFor(running(45 * MIN, { aviso80Em: AT, atrasada: true }), AT)?.patch).toEqual({ aviso100Em: AT })
   })
 
-  it('etapa sem estimativa, pendente, ou envio concluído: nunca', () => {
+  it('etapa sem estimativa, todas concluídas, ou envio concluído: nunca', () => {
     expect(deadlineNoticeFor(running(500 * MIN, {}, null), AT)).toBeNull()
-    expect(deadlineNoticeFor(running(500 * MIN, { status: 'pendente' }), AT)).toBeNull()
+    expect(deadlineNoticeFor(running(500 * MIN, { status: 'concluida' }), AT)).toBeNull()
     expect(deadlineNoticeFor({ ...running(500 * MIN), status: 'concluida' }, AT)).toBeNull()
   })
 
-  it('a etapa é a ATUAL (a primeira em andamento), e N é a posição dela no prompt', () => {
-    const a = entrega({ id: 'hn-a', etapaId: 'a', ordem: 1, status: 'concluida', tempoAtivoMs: 90 * MIN })
-    const b = entrega({ id: 'hn-b', etapaId: 'b', ordem: 2, status: 'em_andamento', estimativaPlano: 10, tempoAtivoMs: 8 * MIN })
-    const e = envio({ entregas: [a, b] })
-    expect(noticeEntrega(e)?.id).toBe('hn-b')
-    expect(deadlineNoticeFor(e, AT)?.text).toMatch(/^⏱ Etapa 2 \(b\): 8 de 10 min de trabalho/)
+  it('sem etapa em andamento, a atual (pendente) recebe o aviso: é para ela que o tempo vai', () => {
+    expect(deadlineNoticeFor(running(500 * MIN, { status: 'pendente' }), AT)?.mark).toBe(100)
   })
 
   it('o texto é curto (uma linha) — vai no resultado de uma ferramenta', () => {
     for (const mark of [80, 100] as const) {
-      const text = deadlineNoticeText(running(41 * MIN).entregas[0], mark)
+      const text = deadlineNoticeText(running(41 * MIN).entregas[0], mark, 12)
+      expect(text).toMatch(/^⏱ Etapa 12 \(prazos\)/)
       expect(text).not.toContain('\n')
       expect(text.length).toBeLessThan(260)
     }
+  })
+})
+
+describe('"⏱ Etapa N": N é a posição da etapa no PLANO (a mesma das telas)', () => {
+  const a = entrega({ id: 'hn-a', etapaId: 'a', ordem: 1, status: 'concluida', tempoAtivoMs: 90 * MIN })
+  const b = entrega({ id: 'hn-b', etapaId: 'b', ordem: 2, status: 'em_andamento', estimativaPlano: 10, tempoAtivoMs: 8 * MIN })
+
+  it('a etapa é a ATUAL; sem posição publicada, N pela união das entregas (planProgress sem roteiro)', () => {
+    const e = envio({ planSlug: 'nada-publicado', entregas: [a, b] })
+    expect(noticeEntrega(e)?.id).toBe('hn-b')
+    expect(deadlineNoticeFor(e, AT)?.text).toMatch(/^⏱ Etapa 2 \(b\): 8 de 10 min de trabalho/)
+  })
+
+  it('com as posições publicadas do plano (roteiro + envios, pelo hook): a dela no plano', () => {
+    rememberPlanSteps('c:\\proj\\', 'publicado', [
+      { id: 'base', n: 1 },
+      { id: 'a', n: 2 },
+      { id: 'tela', n: 3 },
+      { id: 'b', n: 4 }
+    ])
+    // O caminho do projeto bate sem caixa nem barras (como planEnviosOf).
+    const e = envio({ projectCwd: 'C:/proj', planSlug: 'publicado', entregas: [a, b] })
+    expect(deadlineNoticeFor(e, AT)?.text).toMatch(/^⏱ Etapa 4 \(b\): 8 de 10 min/)
+    // Outro plano não herda; etapa fora das publicadas (envio novo depois da leitura) cai na união.
+    expect(deadlineNoticeFor({ ...e, planSlug: 'outro-plano' }, AT)?.text).toMatch(/^⏱ Etapa 2 \(b\)/)
+    const c = { ...b, id: 'hn-c', etapaId: 'c' }
+    expect(deadlineNoticeFor({ ...e, entregas: [a, c] }, AT)?.text).toMatch(/^⏱ Etapa 2 \(c\)/)
   })
 })
 
@@ -147,7 +173,8 @@ describe('msToNextMark — quanto relógio, no mínimo, até o próximo aviso', 
     expect(msToNextMark(running(41 * MIN, { aviso80Em: AT }))).toBe(0)
     expect(msToNextMark(running(41 * MIN, { aviso80Em: AT, aviso100Em: AT }))).toBeNull()
     expect(msToNextMark(running(10 * MIN, {}, null))).toBeNull()
-    expect(msToNextMark(running(10 * MIN, { status: 'pendente' }))).toBeNull()
+    expect(msToNextMark(running(10 * MIN, { status: 'pendente' }))).toBe(22 * MIN)
+    expect(msToNextMark(running(10 * MIN, { status: 'concluida' }))).toBeNull()
   })
 })
 
@@ -164,7 +191,7 @@ describe('withTimeout', () => {
 })
 
 describe('sessionDeadlineNotice — só a conversa de handoff, só o fio principal, nunca lança', () => {
-  const tracker = (text: string | null) => ({ deadlineNotice: vi.fn(async () => text) })
+  const tracker = (text: string | null) => ({ deadlineNotice: vi.fn(async () => text), currentEnvio: vi.fn(async () => null) })
 
   it('handoff: pergunta ao acompanhamento pela conversa da sessão', async () => {
     const t = tracker('⏱ aviso')
@@ -172,23 +199,79 @@ describe('sessionDeadlineNotice — só a conversa de handoff, só o fio princip
     expect(t.deadlineNotice).toHaveBeenCalledWith('c1')
   })
 
-  it('conversa comum, Agent Manager e subagente: nem pergunta', async () => {
+  it('conversa comum, Agent Manager e subagente: nem pergunta (nem lê as posições do plano)', async () => {
     const t = tracker('⏱ aviso')
     await expect(sessionDeadlineNotice({ convId: 'c1' }, undefined, () => t)).resolves.toBeNull()
     await expect(sessionDeadlineNotice({ convId: 'c1', planning: { slug: 'p' }, handoff: { slug: 'p' } }, undefined, () => t)).resolves.toBeNull()
     await expect(sessionDeadlineNotice({ convId: 'c1', handoff: { slug: 'p' } }, 'agent-7', () => t)).resolves.toBeNull()
     expect(t.deadlineNotice).not.toHaveBeenCalled()
+    expect(t.currentEnvio).not.toHaveBeenCalled()
   })
 
   it('sem acompanhamento, ou ele falhando: null', async () => {
     const role = { convId: 'c1', handoff: { slug: 'p' } }
     await expect(sessionDeadlineNotice(role, undefined, () => null)).resolves.toBeNull()
-    const boom = { deadlineNotice: vi.fn(async () => Promise.reject(new Error('banco fora'))) }
+    const boom = { deadlineNotice: vi.fn(async () => Promise.reject(new Error('banco fora'))), currentEnvio: vi.fn(async () => null) }
     await expect(sessionDeadlineNotice(role, undefined, () => boom)).resolves.toBeNull()
     await expect(
       sessionDeadlineNotice(role, undefined, () => {
         throw new Error('getter')
       })
     ).resolves.toBeNull()
+  })
+})
+
+describe('PlanPositions — a posição no plano é lida FORA do caminho quente do hook', () => {
+  const roteiro = [
+    { id: 'base', titulo: 'Base' },
+    { id: 'b', titulo: 'B' }
+  ]
+  const atual = (slug: string) =>
+    envio({ planSlug: slug, entregas: [entrega({ id: 'hn-b', etapaId: 'b', status: 'em_andamento', estimativaPlano: 10, tempoAtivoMs: 8 * MIN })] })
+
+  it('publica as posições do plano (o aviso seguinte numera por elas) e só relê depois do TTL', async () => {
+    let now = 1_000
+    const cur = atual('com-ttl')
+    const load = vi.fn(async (e: typeof cur) => planProgress([e], roteiro))
+    const positions = new PlanPositions({ load, now: () => now })
+    const t = { currentEnvio: vi.fn(async () => cur) }
+
+    expect(deadlineNoticeFor(cur, AT)?.text).toMatch(/^⏱ Etapa 1 \(b\)/)
+    await positions.refresh('c1', t)
+    expect(t.currentEnvio).toHaveBeenCalledWith('c1')
+    expect(deadlineNoticeFor(cur, AT)?.text).toMatch(/^⏱ Etapa 2 \(b\)/)
+
+    // Dentro do TTL o hook só compara o relógio: nem pergunta pelo envio.
+    now += PLAN_POSITIONS_TTL_MS - 1
+    expect(positions.refresh('c1', t)).toBeNull()
+    expect(load).toHaveBeenCalledTimes(1)
+    now += 1
+    await positions.refresh('c1', t)
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('o aviso não espera a leitura: com ela pendurada, sai na hora (e a leitura não se repete em paralelo)', async () => {
+    const load = vi.fn(() => new Promise<never>(() => undefined))
+    const positions = new PlanPositions({ load, now: () => 0 })
+    const t = { deadlineNotice: vi.fn(async () => '⏱ aviso'), currentEnvio: vi.fn(async () => atual('pendurado')) }
+    const role = { convId: 'c-lento', handoff: { slug: 'pendurado' } }
+    await expect(sessionDeadlineNotice(role, undefined, () => t, positions)).resolves.toBe('⏱ aviso')
+    // Nada da leitura roda no caminho da ferramenta: ela começa depois do hook.
+    expect(t.currentEnvio).not.toHaveBeenCalled()
+    await expect(sessionDeadlineNotice(role, undefined, () => t, positions)).resolves.toBe('⏱ aviso')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(t.currentEnvio).toHaveBeenCalledTimes(1)
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('sem envio, ou a leitura falhando: nada publicado, nada lançado (o aviso numera pela união das entregas)', async () => {
+    const cur = atual('falha')
+    const sem = new PlanPositions({ load: vi.fn(), now: () => 0 })
+    await expect(sem.refresh('c1', { currentEnvio: async () => null })).resolves.toBeUndefined()
+    const quebrada = new PlanPositions({ load: async () => Promise.reject(new Error('disco')), now: () => 0 })
+    await expect(quebrada.refresh('c1', { currentEnvio: async () => cur })).resolves.toBeUndefined()
+    const semTracker = new PlanPositions({ load: vi.fn(), now: () => 0 })
+    await expect(semTracker.refresh('c1', { currentEnvio: async () => Promise.reject(new Error('banco')) })).resolves.toBeUndefined()
+    expect(deadlineNoticeFor(cur, AT)?.text).toMatch(/^⏱ Etapa 1 \(b\)/)
   })
 })

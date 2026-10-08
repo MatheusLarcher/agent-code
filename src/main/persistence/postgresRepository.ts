@@ -30,7 +30,7 @@ import { hotPathTransaction } from './postgresSessionSetup'
 import { rollbackOrDiscard } from './postgresTimeouts'
 import { writePostgresTelemetryBatch } from './postgresTelemetryBatch'
 import type { TelemetryBatch } from './telemetryBatch'
-import { ensurePostgresBoardParent } from './postgresBoardParent'
+import { ensurePostgresBoardParent, ensurePostgresBoardUserAction } from './postgresBoardParent'
 import { BoardPrintPruner } from './boardPrintPruner'
 import type { BoardItemPrintQuery, BoardItemPrintRecord, BoardItemPrintWrite } from './boardPrintTypes'
 import {
@@ -50,12 +50,11 @@ import {
 import {
   assertPoCreate,
   assertPoWrite,
-  BOARD_COLUMNS,
   BOARD_EVENT_COLUMNS,
-  BOARD_SELECT_WITH_PARENT,
   boardItemEventFromRow,
   boardItemFromRow,
   boardItemId,
+  boardSelectColumns,
   compareBoardItems,
   newBoardItemEvent,
   normalizeSourceItems,
@@ -64,6 +63,7 @@ import {
   type BoardItemEventRow,
   type BoardItemRow
 } from '../board/boardModel'
+import { boardUserActionText, nextBoardUserAction } from '../board/boardUserAction'
 import {
   assertDeliverableKind,
   assertStepFinalStatus,
@@ -202,6 +202,8 @@ function decodeBoardRow(row: BoardItemRow): BoardItemRow {
     po_title: row.po_title === null ? null : decodePostgresText(row.po_title),
     po_note: row.po_note === null ? null : decodePostgresText(row.po_note),
     po_reason: row.po_reason === null ? null : decodePostgresText(row.po_reason),
+    // Aditiva: ausente (coluna não lida) continua ausente.
+    ...(row.po_user_action ? { po_user_action: decodePostgresText(row.po_user_action) } : {}),
     po_at: stamp(row.po_at),
     dismissed_at: stamp(row.dismissed_at),
     created_at: stamp(row.created_at) ?? new Date(0).toISOString(),
@@ -432,6 +434,8 @@ export class PostgresRepository implements PersistenceRepository {
   private initialized = false
   /** A coluna `board_items.parent_id` existe neste banco (ver postgresBoardParent.ts). */
   private boardParent = false
+  /** A coluna `board_items.po_user_action` existe neste banco (idem). */
+  private boardUserAction = false
   /** A tabela `board_item_prints` existe neste banco (ver postgresBoardPrints.ts). */
   private boardPrints = false
 
@@ -496,6 +500,7 @@ export class PostgresRepository implements PersistenceRepository {
       )
     })
     this.boardParent = await ensurePostgresBoardParent(this.pool)
+    this.boardUserAction = await ensurePostgresBoardUserAction(this.pool)
     this.boardPrints = await ensurePostgresBoardPrints(this.pool)
     await this.feed.start()
     this.changeLogPruner.start()
@@ -505,9 +510,9 @@ export class PostgresRepository implements PersistenceRepository {
     this.initialized = true
   }
 
-  /** As colunas lidas do quadro: com o vínculo da pendência só quando ele existe. */
+  /** As colunas lidas do quadro: cada aditiva só quando ela existe. */
   private boardColumns(): string {
-    return this.boardParent ? BOARD_SELECT_WITH_PARENT : BOARD_COLUMNS
+    return boardSelectColumns(this.boardParent, this.boardUserAction)
   }
 
   async close(): Promise<void> {
@@ -1113,11 +1118,13 @@ export class PostgresRepository implements PersistenceRepository {
         // camada do agente, e é isso que impede uma releitura do snapshot de
         // desfazer a correção do PO. O `po_status` é reescrito com o valor já
         // lido sob o `FOR UPDATE` — ou com `NULL`, quando o agente mudou o
-        // status e passou a ser ele quem falou por último sobre o estado.
+        // status e passou a ser ele quem falou por último sobre o estado. A ação
+        // do usuário cai junto (só com a coluna presente).
+        const clearUserAction = plan.clearPoStatus && this.boardUserAction ? ', po_user_action = NULL' : ''
         await client.query(
           `UPDATE board_items SET
              project_id = $2, project_cwd = $3, source_title = $4, source_status = $5,
-             active_form = $6, seq = $7, po_status = $8, po_reason = $9,
+             active_form = $6, seq = $7, po_status = $8, po_reason = $9${clearUserAction},
              revision = revision + 1, updated_at = clock_timestamp()
            WHERE id = $1`,
           [
@@ -1143,10 +1150,13 @@ export class PostgresRepository implements PersistenceRepository {
         }
       }
       const keep = items.map((item) => boardItemId(input.conversationId, item.sourceId))
+      // Concluído de OUTRA lista fica (ver `BoardSyncInput.list`).
       await client.query(
         `DELETE FROM board_items
-         WHERE conversation_id = $1 AND origin = 'agent' AND NOT (id = ANY($2::text[]))`,
-        [input.conversationId, keep]
+         WHERE conversation_id = $1 AND origin = 'agent' AND NOT (id = ANY($2::text[]))
+           AND ($3::text = '' OR left(coalesce(source_id, ''), length($3::text) + 1) = $3::text || ':'
+                OR coalesce(po_status, source_status) <> 'completed')`,
+        [input.conversationId, keep, input.list ?? '']
       )
     })
     return this.listBoardItems({ projectIds: [input.projectId], conversationId: input.conversationId })
@@ -1194,18 +1204,24 @@ export class PostgresRepository implements PersistenceRepository {
       const nextPoTitle = input.poTitle === undefined ? current.po_title : nullableText(input.poTitle)
       const nextPoStatus = input.poStatus === undefined ? current.po_status : input.poStatus
       const nextPoReason = input.poReason === undefined ? current.po_reason : nullableText(input.poReason)
+      const params: unknown[] = [
+        input.id,
+        nextPoTitle,
+        input.poNote === undefined ? current.po_note : nullableText(input.poNote),
+        nextPoStatus,
+        nextPoReason
+      ]
+      // A ação do usuário só grava com a coluna presente (a regra é a do SQLite).
+      if (this.boardUserAction) {
+        const userAction = nextBoardUserAction(input, decodeNullable(current.po_user_action ?? null))
+        params.push(userAction === null ? null : encodePostgresText(userAction))
+      }
       await client.query(
         `UPDATE board_items SET
-           po_title = $2, po_note = $3, po_status = $4, po_reason = $5,
+           po_title = $2, po_note = $3, po_status = $4, po_reason = $5${this.boardUserAction ? ', po_user_action = $6' : ''},
            po_at = clock_timestamp(), revision = revision + 1, updated_at = clock_timestamp()
          WHERE id = $1`,
-        [
-          input.id,
-          nextPoTitle,
-          input.poNote === undefined ? current.po_note : nullableText(input.poNote),
-          nextPoStatus,
-          nextPoReason
-        ]
+        params
       )
       // Uma escrita do PO conta UM fato: status ganha prioridade sobre
       // título/observação porque é o que a reabertura e a auditoria mais
@@ -1253,11 +1269,21 @@ export class PostgresRepository implements PersistenceRepository {
           encodePostgresText(input.reason)
         ]
       )
-      // O vínculo só grava com a coluna presente; sem ela, a pendência nasce sem pai.
+      // As aditivas só gravam com a coluna presente; sem ela, o cartão nasce sem
+      // pai (ou sem ação). Um UPDATE só, para um registro só no change feed.
+      const extra: string[] = []
+      const values: unknown[] = [id]
       const parentId = input.parentId?.trim()
       if (parentId && this.boardParent) {
-        await client.query('UPDATE board_items SET parent_id = $2 WHERE id = $1', [id, parentId])
+        values.push(parentId)
+        extra.push(`parent_id = $${values.length}`)
       }
+      const userAction = boardUserActionText(input.userAction)
+      if (userAction && this.boardUserAction) {
+        values.push(encodePostgresText(userAction))
+        extra.push(`po_user_action = $${values.length}`)
+      }
+      if (extra.length > 0) await client.query(`UPDATE board_items SET ${extra.join(', ')} WHERE id = $1`, values)
       await this.logBoardEvent(client, { boardItemId: id, kind: 'created', actor: 'po', toStatus: input.status, note: input.reason })
       return this.requireBoardItem(client, id)
     })

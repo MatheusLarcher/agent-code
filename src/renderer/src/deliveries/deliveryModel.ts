@@ -1,9 +1,10 @@
-import type { HandoffEntregaStatus, HandoffEnvio, HandoffEnvioStatus } from '@shared/handoffTracking'
+import type { HandoffEnvio, HandoffEnvioStatus } from '@shared/handoffTracking'
 
 /**
  * As regras da tela Entregas, sem React: rótulos, o que precisa do usuário (o
  * contador da barra), a ordem, os filtros e a busca. Tudo lê o que o main gravou
- * no banco — nada vem do texto do modelo.
+ * no banco — nada vem do texto do modelo. As contas e o rótulo das etapas (e o
+ * do status da entrega) são os da regra única: shared/stepProgress.
  */
 
 export const ENVIO_STATUS_LABEL: Record<HandoffEnvioStatus, string> = {
@@ -15,13 +16,6 @@ export const ENVIO_STATUS_LABEL: Record<HandoffEnvioStatus, string> = {
   falhou: 'falhou',
   incompleta: 'incompleta',
   concluida: 'concluída'
-}
-
-export const ENTREGA_STATUS_LABEL: Record<HandoffEntregaStatus, string> = {
-  pendente: 'pendente',
-  em_andamento: 'em andamento',
-  concluida: 'concluída',
-  incompleta: 'incompleta'
 }
 
 /** Busca do usuário: ignora maiúsculas e acentos — aplicada à busca E aos dados. */
@@ -150,8 +144,4 @@ export function filterCounts(envios: readonly HandoffEnvio[], query: string): Re
     for (const f of DELIVERY_FILTERS) if (matchesFilter(envio, f)) out[f]++
   }
   return out
-}
-
-export function progress(envio: HandoffEnvio): { done: number; total: number } {
-  return { done: envio.entregas.filter((e) => e.status === 'concluida').length, total: envio.entregas.length }
 }

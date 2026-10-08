@@ -9,15 +9,20 @@ import {
 import {
   assertPoCreate,
   assertPoWrite,
+  BOARD_COLUMNS,
+  boardItemFromRow,
   boardItemId,
   boardItemsToExpire,
   boardItemsToReopen,
   boardItemsToReopenBefore,
+  boardSelectColumns,
   compareBoardItems,
   normalizeSourceItems,
   planBoardSourceSync,
+  type BoardItemRow,
   type BoardSyncCurrent
 } from './boardModel'
+import { boardUserActionText, nextBoardUserAction } from './boardUserAction'
 
 function item(patch: Partial<BoardItem> = {}): BoardItem {
   return {
@@ -289,6 +294,65 @@ describe('planBoardSourceSync', () => {
 
   it('projeto que mudou de identidade é escrita, não silêncio', () => {
     expect(planBoardSourceSync(current(), incoming(), 'p2').unchanged).toBe(false)
+  })
+})
+
+describe('colunas aditivas — po_user_action (o que o usuário precisa fazer)', () => {
+  const row = (patch: Partial<BoardItemRow> = {}): BoardItemRow => ({
+    id: 'bi-1',
+    project_id: 'p1',
+    project_cwd: 'C:/x',
+    conversation_id: 'c1',
+    origin: 'po',
+    source_id: null,
+    source_title: 'Atualizar a VPS',
+    source_status: 'pending',
+    active_form: null,
+    seq: 0,
+    po_title: null,
+    po_note: null,
+    po_status: null,
+    po_reason: 'aguardando autorização do usuário',
+    po_at: null,
+    dismissed_at: null,
+    revision: 1,
+    created_at: '2026-10-08T12:00:00.000Z',
+    updated_at: '2026-10-08T12:00:00.000Z',
+    ...patch
+  })
+
+  it('a leitura inclui cada aditiva só quando pedida (o PostgreSQL sem a coluna não a lê)', () => {
+    expect(boardSelectColumns()).toBe(`${BOARD_COLUMNS.trimEnd()}, parent_id, po_user_action`)
+    expect(boardSelectColumns(true, false)).toBe(`${BOARD_COLUMNS.trimEnd()}, parent_id`)
+    expect(boardSelectColumns(false, true)).toBe(`${BOARD_COLUMNS.trimEnd()}, po_user_action`)
+    expect(boardSelectColumns(false, false)).toBe(BOARD_COLUMNS.trimEnd())
+  })
+
+  it('a linha vira `poUserAction` só com valor; sem a coluna ou vazia, o cartão tem a forma de sempre', () => {
+    expect(boardItemFromRow(row({ po_user_action: '  Autorizar a atualização da VPS ' })).poUserAction).toBe(
+      'Autorizar a atualização da VPS'
+    )
+    expect(boardItemFromRow(row())).not.toHaveProperty('poUserAction')
+    expect(boardItemFromRow(row({ po_user_action: null }))).not.toHaveProperty('poUserAction')
+    expect(boardItemFromRow(row({ po_user_action: '   ' }))).not.toHaveProperty('poUserAction')
+  })
+
+  it('a regra da escrita: pedido explícito vale; sem ele, trocar o status limpa e o resto mantém', () => {
+    expect(nextBoardUserAction({ userAction: 'Escolher A ou B' }, null)).toBe('Escolher A ou B')
+    expect(nextBoardUserAction({ userAction: null }, 'Escolher A ou B')).toBeNull()
+    expect(nextBoardUserAction({ poStatus: 'pending', userAction: 'Escolher A ou B' }, 'Escolher A ou B')).toBe('Escolher A ou B')
+    expect(nextBoardUserAction({ poStatus: 'completed' }, 'Escolher A ou B')).toBeNull()
+    expect(nextBoardUserAction({ poStatus: null }, 'Escolher A ou B')).toBeNull()
+    expect(nextBoardUserAction({}, 'Escolher A ou B')).toBe('Escolher A ou B')
+  })
+
+  it('o texto gravado: espaços colapsados, vazio é null, cortado em 120', () => {
+    expect(boardUserActionText('  Autorizar \n o deploy ')).toBe('Autorizar o deploy')
+    expect(boardUserActionText('   ')).toBeNull()
+    expect(boardUserActionText(undefined)).toBeNull()
+    const long = boardUserActionText('x'.repeat(300))
+    expect(long).toHaveLength(120)
+    expect(long?.endsWith('…')).toBe(true)
   })
 })
 

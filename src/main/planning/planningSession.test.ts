@@ -182,6 +182,9 @@ describe('handoffAppendBlock', () => {
     expect(ENTREGA_ESTIMAR_TOOL).toBe('mcp__entregas__entrega_estimar')
     expect(block).toMatch(/Ao começar a etapa[^\n]*registre a SUA estimativa com a ferramenta mcp__entregas__entrega_estimar/)
     expect(block).toContain('"Etapa N — <título>: estimativa do plano X min (prazo), minha estimativa Z min"')
+    // N é a posição no PLANO (a ordem do _roteiro.md), a mesma da linha pronta da ferramenta e das telas.
+    expect(block).toContain('(N = a posição da etapa no plano, a ordem dela no _roteiro.md; a ferramenta devolve a linha pronta)')
+    expect(block).not.toMatch(/neste prompt\)/)
     expect(block).toMatch(/O prazo é a estimativa do plano e não muda; a sua fica ao lado dela/)
     // Ao concluir: o tempo vem da medição do app (entrega_tempo), com dentro/fora do prazo e o motivo se passou.
     expect(ENTREGA_TEMPO_TOOL).toBe('mcp__entregas__entrega_tempo')

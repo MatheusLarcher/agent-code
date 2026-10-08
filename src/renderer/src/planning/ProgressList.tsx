@@ -1,6 +1,7 @@
 /**
- * Checklist compacto do roteiro: as etapas na ordem, com contador
- * concluídas/total e, embaixo dele, o total estimado e quantas etapas estão
+ * Checklist compacto do roteiro: as etapas na ordem, com contador feitas/total
+ * (planCounter: as especificadas no roteiro; com a implementação começada, as
+ * prontas dela) e, embaixo dele, o total estimado e quantas etapas estão
  * sem estimativa. Clicar na marca avança o status (pendente → em andamento →
  * concluída → pendente); clicar no nome centraliza o canvas na coluna; clicar
  * na estimativa a edita ali mesmo (com `onEstimate`).
@@ -11,13 +12,17 @@
  */
 import type { PlanningRoteiroDto } from '@shared/ipc'
 import { formatMinutos, sumEstimativas } from '@shared/planningEstimate'
+import type { PlanProgress } from '@shared/stepProgress'
 import { IconChevronLeft, IconChevronRight } from '../components/Icons'
 import { STAGE_STATUS_LABEL, StageStatusIcon } from './cardTypes'
+import { counterText, planCounter, type PlanCounter } from './planObra'
 import { SEM_ESTIMATIVA, StageEstimate, estimateSummary, estimateText } from './StageEstimate'
 import { nextStageStatus } from './usePlanning'
 
 export interface ProgressListProps {
   etapas: PlanningRoteiroDto['etapas']
+  /** O progresso da implementação (planProgress dos envios do plano); sem ele, o contador é o da especificação. */
+  implementacao?: Pick<PlanProgress, 'prontas' | 'total'> | null
   onToggle: (id: string) => void
   onFocus: (id: string) => void
   /** Nova estimativa da etapa (minutos; null remove). Sem ele, a estimativa só aparece. */
@@ -30,9 +35,18 @@ export interface ProgressListProps {
 
 const SUMMARY_HINT = 'Soma das estimativas das etapas, em minutos de trabalho do agente'
 
-function RoteiroRail({ etapas, onFocus, onToggleCollapsed }: ProgressListProps): JSX.Element {
+/** "1/3", com o que ele conta no title. */
+function Counter({ counter }: { counter: PlanCounter }): JSX.Element {
+  const what = counter.label === 'prontas' ? 'Implementação' : 'Especificação'
+  return (
+    <span className="pl-progress-count" data-testid="pl-progress-count" title={`${what}: ${counterText(counter)}`}>
+      {counter.feitas}/{counter.total}
+    </span>
+  )
+}
+
+function RoteiroRail({ etapas, implementacao, onFocus, onToggleCollapsed }: ProgressListProps): JSX.Element {
   const total = etapas.length
-  const done = etapas.filter((e) => e.status === 'concluida').length
   const estimated = sumEstimativas(etapas)
   return (
     <nav className="pl-progress pl-rail nokey" aria-label="Progresso do roteiro">
@@ -48,9 +62,7 @@ function RoteiroRail({ etapas, onFocus, onToggleCollapsed }: ProgressListProps):
           <IconChevronRight size={15} />
         </button>
       )}
-      <span className="pl-progress-count" data-testid="pl-progress-count" title={`${done} de ${total} etapas concluídas`}>
-        {done}/{total}
-      </span>
+      <Counter counter={planCounter(etapas, implementacao ?? null)} />
       {total > 0 && (
         <span className="pl-rail-est-total" data-testid="pl-rail-estimate" title={`${estimateSummary(etapas)}. ${SUMMARY_HINT}`}>
           {estimated.semEstimativa === total ? SEM_ESTIMATIVA : formatMinutos(estimated.total)}
@@ -81,19 +93,17 @@ function RoteiroRail({ etapas, onFocus, onToggleCollapsed }: ProgressListProps):
 }
 
 export function ProgressList(props: ProgressListProps): JSX.Element {
-  const { etapas, onToggle, onFocus, onEstimate, collapsed, onToggleCollapsed } = props
+  const { etapas, implementacao, onToggle, onFocus, onEstimate, collapsed, onToggleCollapsed } = props
   if (collapsed) return <RoteiroRail {...props} />
   const total = etapas.length
-  const done = etapas.filter((e) => e.status === 'concluida').length
-  const pct = total ? Math.round((done / total) * 100) : 0
+  const counter = planCounter(etapas, implementacao ?? null)
+  const pct = counter.total ? Math.round((counter.feitas / counter.total) * 100) : 0
   return (
     // nokey: Delete/Backspace aqui não apaga card selecionado no canvas.
     <nav className="pl-progress nokey" aria-label="Progresso do roteiro">
       <div className="pl-progress-head">
         <span className="pl-progress-title">Roteiro</span>
-        <span className="pl-progress-count" data-testid="pl-progress-count" title={`${done} de ${total} etapas concluídas`}>
-          {done}/{total}
-        </span>
+        <Counter counter={counter} />
         {onToggleCollapsed && (
           <button
             type="button"
@@ -112,7 +122,7 @@ export function ProgressList(props: ProgressListProps): JSX.Element {
           {estimateSummary(etapas)}
         </p>
       )}
-      <div className="pl-progress-bar" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done}>
+      <div className="pl-progress-bar" role="progressbar" aria-valuemin={0} aria-valuemax={counter.total} aria-valuenow={counter.feitas}>
         <span style={{ width: `${pct}%` }} />
       </div>
       {total === 0 ? (

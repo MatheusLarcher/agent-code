@@ -38,7 +38,8 @@ describe('PlanningScreen — estados', () => {
     expect(screen.getByRole('button', { name: 'Enviar para implementação' })).toBeTruthy()
     expect(screen.getByText('conversa com o agente')).toBeTruthy()
     expect(screen.getByTestId('pl-progress-count').textContent).toBe('1/3')
-    expect(screen.getByText('1 de 3 etapas')).toBeTruthy()
+    // Antes do envio, o cabeçalho conta a especificação (o "concluida" do roteiro).
+    expect(screen.getByText('1 de 3 especificadas')).toBeTruthy()
   })
 
   it('erro ao abrir mostra o motivo e "Tentar de novo" reabre', async () => {

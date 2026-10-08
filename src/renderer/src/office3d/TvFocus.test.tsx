@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { HandoffEnvio } from '@shared/handoffTracking'
+import type { PlanningPeekDto } from '@shared/officeApi'
 import { DeliveryCenterContext, type DeliveryCenterValue } from '../deliveries/deliveryCenterContext'
 import { entrega, envio } from '../handoffTracking/handoffFixtures'
 import { HandoffButton } from '../planning/HandoffDialog'
@@ -212,6 +213,25 @@ describe('o foco dentro da TV (TvFocus)', () => {
       expect(screen.getByTestId('tv-focus-plan').hidden).toBe(false)
       expect(screen.getByTestId('planning-ws')).toBe(plan)
       expect(screen.queryByTestId('tv-deploy')).toBeNull()
+    })
+
+    it('a aba conta pelo roteiro do plano (o resumo do planning:peek, no cache da TV) e se atualiza quando o resumo chega', async () => {
+      let answer!: (r: { ok: true; plan: PlanningPeekDto }) => void
+      const planningPeek = vi.fn(() => new Promise<{ ok: true; plan: PlanningPeekDto }>((resolve) => (answer = resolve)))
+      const c = center([envio({ status: 'aguardando_voce', entregas: [entrega({ status: 'concluida' }), entrega({ id: 'hn-b', etapaId: 'b', ordem: 2 })] })])
+      render(
+        <DeliveryCenterContext.Provider value={c}>
+          <TvFocus info={plano} projectors={{ mirror: vi.fn() }} onClose={vi.fn()} activeConvId="p1" peekApi={{ planningPeek }} />
+        </DeliveryCenterContext.Provider>
+      )
+      // Antes do resumo: as etapas enviadas.
+      expect(screen.getByRole('tab', { name: 'Implantação · 1/2 · aguardando você' })).toBeTruthy()
+      expect(planningPeek).toHaveBeenCalledWith({ projectCwd: 'C:\\proj', slug: 'checkout' })
+      // O roteiro tem uma 3ª etapa nunca enviada: o total passa a ser o do plano.
+      const etapas = ['registro-no-banco', 'b', 'deploy'].map((id) => ({ id, titulo: id, status: 'pendente' as const }))
+      await act(async () => answer({ ok: true, plan: { titulo: 'Checkout', etapas, cards: 0, ambiguidadesAbertas: 0 } }))
+      expect(await screen.findByRole('tab', { name: 'Implantação · 1/3 · aguardando você' })).toBeTruthy()
+      expect(planningPeek).toHaveBeenCalledTimes(1)
     })
 
     it('sem leitura do banco: a aba aparece com o motivo, nunca "nenhum envio"; sem o centro de Entregas (o escritório fora do App), a aba não existe', () => {

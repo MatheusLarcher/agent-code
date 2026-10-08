@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectNode } from '@shared/ipc'
+import { taskCounts } from '@shared/stepProgress'
 import { actionColor, actionKind, fileType, type ActionKind, type Touch, type Turn } from '../projectActivity'
 import type { TodoItem } from '../types'
 import { ProjectFilters } from './ProjectFilters'
@@ -887,7 +888,7 @@ export function ProjectGraph({
     }
   }, [])
 
-  const done = steps?.filter((s) => s.status === 'completed').length ?? 0
+  const { done } = taskCounts(steps ?? [])
 
   return (
     <div className={`pgraph${embedded ? ' embedded' : ''}`}>

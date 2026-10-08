@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ChatEvent } from '../../shared/ipc'
+import { createPlan, openPlan, saveRoteiro } from '../planning/planningStore'
 import {
   buildEntregaTools,
   ENTREGA_ESTIMAR_TOOL,
@@ -8,6 +9,7 @@ import {
   entregaMcpServerFor,
   entregaServerApplies,
   entregaToolAutoAllowed,
+  loadPlanProgress,
   type EntregaTracker
 } from './entregaTools'
 import { activeHandoffTracker } from './handoffRuntime'
@@ -56,7 +58,8 @@ describe('entrega_estimar', () => {
 
     const out = await estimar(tools, { etapa: 'etapa-a', minutos: 20, motivo: 'só um handler novo e o teste' })
 
-    expect(out).toContain('Estimativa registrada para [etapa-a] Etapa etapa-a (etapa 1 de 2 deste prompt).')
+    // Sem roteiro no disco (e, no teste, sem o banco do app): a posição pelas entregas do envio.
+    expect(out).toContain('Estimativa registrada para [etapa-a] Etapa etapa-a (etapa 1 de 2 do plano).')
     expect(out).toContain('Prazo (estimativa do plano): 30 min — é ele que vale, e a sua estimativa não o muda.')
     expect(out).toContain('Sua estimativa: 20 min (motivo: só um handler novo e o teste).')
     expect(out).toContain('Escreva agora no chat: Etapa 1 — Etapa etapa-a: estimativa do plano 30 min (prazo), minha estimativa 20 min')
@@ -178,7 +181,7 @@ describe('entrega_tempo', () => {
 
     // Sem etapa: a em andamento.
     const agora = await tempo(tools)
-    expect(agora).toContain('[etapa-a] Etapa etapa-a — etapa 1 de 2 deste prompt, em andamento.')
+    expect(agora).toContain('[etapa-a] Etapa etapa-a — etapa 1 de 2 do plano, em andamento.')
     expect(agora).toContain('Prazo (estimativa do plano): 30 min.')
     expect(agora).toContain('Sua estimativa: 20 min.')
     expect(agora).toContain('Tempo ativo medido pelo app: 10 min (33% do prazo) — dentro do prazo.')
@@ -214,7 +217,49 @@ describe('entrega_tempo', () => {
     expect(out).not.toMatch(/A contagem segue/)
     expect(await tempo(tools, { etapa: 'etapa-c' })).toMatch(/A etapa "etapa-c" não pertence ao envio corrente/)
     // Sem etapa, a atual passa a ser a primeira não concluída.
-    expect(await tempo(tools)).toContain('[etapa-b] Etapa etapa-b — etapa 2 de 2 deste prompt, pendente.')
+    expect(await tempo(tools)).toContain('[etapa-b] Etapa etapa-b — etapa 2 de 2 do plano, pendente.')
+  })
+})
+
+describe('"etapa N de M": a posição no PLANO (roteiro + envios do plano), igual às telas', () => {
+  /** O roteiro do plano no disco do projeto: uma etapa antes das do prompt. */
+  async function roteiro(h: Harness, etapas: string[]): Promise<void> {
+    await createPlan(h.cwd, 'plano', 'Plano')
+    const rev = (await openPlan(h.cwd, 'plano')).roteiro.rev
+    await saveRoteiro(h.cwd, 'plano', { titulo: 'Plano', etapas: etapas.map((id) => ({ id, titulo: `Etapa ${id}`, status: 'concluida' })) }, rev)
+  }
+
+  it('com o roteiro (planningStore.openPlan): N e M são os do plano, e a linha pronta do chat também', async () => {
+    const { h, tools } = await sent()
+    await roteiro(h, ['base', 'etapa-a', 'etapa-b', 'etapa-c'])
+    const out = await estimar(tools, { etapa: 'etapa-a', minutos: 20, motivo: 'm' })
+    expect(out).toContain('Estimativa registrada para [etapa-a] Etapa etapa-a (etapa 2 de 4 do plano).')
+    expect(out).toContain('Escreva agora no chat: Etapa 2 — Etapa etapa-a: estimativa do plano 30 min (prazo), minha estimativa 20 min')
+    expect(await tempo(tools, { etapa: 'etapa-b' })).toContain('[etapa-b] Etapa etapa-b — etapa 3 de 4 do plano, pendente.')
+  })
+
+  it('sem roteiro: a união das entregas dos envios do plano no projeto, de qualquer conversa', async () => {
+    const h = await harness()
+    // A 1ª parte do plano foi para outra conversa, antes.
+    await h.register([{ conteudo: 'Outra', etapas: ['x', 'y'] }], 'conv-outra')
+    await h.register([{ conteudo: 'Prompt 1', etapas: ['etapa-a', 'etapa-b'] }])
+    h.tracker.noteUserSend(CONV, 'Prompt 1')
+    await h.settle()
+    const source = {
+      roteiro: async () => Promise.reject(new Error('planejamento não encontrado')),
+      envios: (projectId: string) => h.repo.listHandoffEnvios({ projectIds: [projectId] })
+    }
+    const tools = buildEntregaTools({ conversationId: CONV, tracker: () => h.tracker, planProgress: (e) => loadPlanProgress(e, source) })
+    expect(await estimar(tools, { etapa: 'etapa-b', minutos: 5, motivo: 'm' })).toContain('(etapa 4 de 4 do plano)')
+  })
+
+  it('a leitura do plano falhando inteira: a posição pelas entregas do envio, sem lançar', async () => {
+    const { h } = await sent()
+    const source = { roteiro: async () => Promise.reject(new Error('disco')), envios: async () => Promise.reject(new Error('banco')) }
+    const tools = buildEntregaTools({ conversationId: CONV, tracker: () => h.tracker, planProgress: (e) => loadPlanProgress(e, source) })
+    expect(await estimar(tools, { etapa: 'etapa-b', minutos: 5, motivo: 'm' })).toContain('(etapa 2 de 2 do plano)')
+    const quebrado = buildEntregaTools({ conversationId: CONV, tracker: () => h.tracker, planProgress: async () => Promise.reject(new Error('x')) })
+    expect(await tempo(quebrado, { etapa: 'etapa-b' })).toContain('— etapa 2 de 2 do plano, pendente.')
   })
 })
 

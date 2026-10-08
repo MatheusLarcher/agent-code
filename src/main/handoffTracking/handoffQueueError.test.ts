@@ -8,9 +8,11 @@ import { CONV, closeHarnesses, harness, type Harness } from './handoffTrackerHar
 
 /**
  * Erro e Stop na fila do quadro (tracker, Quadro e SQLite de verdade): um turno
- * que termina com erro NUNCA solta o próximo prompt — nem o erro que chega
- * depois de texto —; a retomada que termina bem solta; e o Stop do usuário não
- * é erro: a fila fica parada (sem retomada) até ele retomar ou mandar seguir.
+ * que termina com erro e com etapa faltando NUNCA solta o próximo prompt — nem o
+ * erro que chega depois de texto —; com todas as etapas prontas no Quadro, o
+ * envio conclui (o Quadro é a verdade); a retomada que termina bem solta; e o
+ * Stop do usuário não é erro: a fila fica parada (sem retomada) até ele retomar
+ * ou mandar seguir.
  */
 
 afterEach(closeHarnesses)
@@ -44,10 +46,10 @@ async function end(h: Harness, event: ChatEvent, done = false): Promise<void> {
 }
 
 describe('erro na implantação: nunca o próximo prompt', () => {
-  it('result com erro depois de texto (mesmo com a etapa concluída): o envio não conclui e a fila para com o erro', async () => {
+  it('result com erro depois de texto, com etapa faltando: o envio não conclui e a fila para com o erro', async () => {
     const h = await harness()
     await running(h)
-    await end(h, { kind: 'result', id: 'r1', isError: true, text: 'API Error: 500 overloaded', durationMs: 1 }, true)
+    await end(h, { kind: 'result', id: 'r1', isError: true, text: 'API Error: 500 overloaded', durationMs: 1 })
     const first = (await h.envios())[0]
     expect(first.status).toBe('incompleta')
     expect(first.motivo).toContain('API Error: 500 overloaded')
@@ -55,6 +57,14 @@ describe('erro na implantação: nunca o próximo prompt', () => {
     expect(res).toMatchObject({ ok: true, decision: { kind: 'hold' } })
     if (!res.ok || res.decision.kind !== 'hold') throw new Error('esperava parada')
     expect(res.decision.motivo).toContain('API Error: 500 overloaded')
+  })
+
+  it('result com erro, mas com TODAS as etapas prontas no Quadro: o envio conclui (o Quadro é a verdade) e a fila segue', async () => {
+    const h = await harness()
+    await running(h)
+    await end(h, { kind: 'result', id: 'r1', isError: true, text: 'API Error: 500 overloaded', durationMs: 1 }, true)
+    expect((await h.envios())[0]).toMatchObject({ status: 'concluida', motivo: null })
+    expect(await gate(h)()).toMatchObject({ decision: { kind: 'next', envio: { conteudo: 'Prompt 2' } } })
   })
 
   it('erro de sessão: o envio falha e a fila para; a retomada que termina bem solta o próximo', async () => {

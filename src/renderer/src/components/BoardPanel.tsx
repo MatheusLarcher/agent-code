@@ -28,6 +28,7 @@ import { PrintBadge, useProjectPrints } from './BoardPrints'
 import { ReadRetry } from './ReadRetry'
 // A coluna Concluído mostra só os 4 mais recentes (o contador segue com o total).
 import { recentCompleted } from '@shared/boardView'
+import { taskCounts, type TaskCounts } from '@shared/stepProgress'
 
 /**
  * O quadro de tarefas do projeto: o que o agente declarou que ia fazer, e o que
@@ -109,12 +110,6 @@ interface Props {
 /** Reexportados para quem já importava daqui; a regra mora em `@shared/ipc`,
  *  porque é a MESMA que o main usa para ordenar o quadro. */
 export { effectiveStatus, effectiveTitle, isPoCorrected }
-
-/** Concluídas de um grupo. Uma passada só — a contagem é usada duas vezes na
- *  mesma linha (o número e o plural). */
-function groupDone(list: BoardItem[]): number {
-  return list.filter((entry) => effectiveStatus(entry) === 'completed').length
-}
 
 /**
  * O PO escreveu um status neste cartão e o agente, no fim, disse a mesma coisa.
@@ -419,7 +414,8 @@ function ColumnCrewDots({
   )
 }
 
-/** O selo "Aguardando você"/"Interrompido" — o mesmo no Quadro e na Lista. */
+/** O selo "Aguardando você"/"Interrompido" — o mesmo no Quadro e na Lista. A dica
+ *  mostra primeiro o que o usuário precisa fazer (quando o PO disse), depois o motivo. */
 function AwaitingTag({
   item,
   badge
@@ -427,8 +423,10 @@ function AwaitingTag({
   item: BoardItem
   badge: NonNullable<ReturnType<typeof boardItemAwaitingBadge>>
 }): JSX.Element {
+  const action = item.poUserAction ? `O que você precisa fazer: ${item.poUserAction}` : null
+  const hint = [action, item.poReason].filter(Boolean).join('\n')
   return (
-    <span className={`board-tag awaiting ${badge.kind}`} title={item.poReason ?? undefined}>
+    <span className={`board-tag awaiting ${badge.kind}`} title={hint || undefined}>
       {badge.label}
     </span>
   )
@@ -710,8 +708,8 @@ export function BoardPanel({
     return map
   }, [items])
 
-  const done = byStatus.completed.length
-  const awaitingCount = useMemo(() => items.filter((item) => boardItemAwaitingBadge(item) !== null).length, [items])
+  // A contagem do cabeçalho e da aba: uma só (boardProgress → taskCounts).
+  const { done, total, awaiting: awaitingCount } = useMemo(() => boardProgress(items), [items])
   // O prazo das etapas (a entrega ligada a cada cartão `[etapa]`).
   const deadlines = useCardDeadlines(projectCwd, window.api)
   // Os prints da tarefa visual (o 📷 de cada cartão).
@@ -719,8 +717,9 @@ export function BoardPanel({
   // Enquanto o painel está montado, ele é a fonte do contador da aba — assim o
   // App não repete a MESMA consulta em paralelo a cada mudança do quadro.
   useEffect(() => {
-    onProgress?.(available ? { done, total: items.length, awaiting: awaitingCount } : null)
-  }, [onProgress, available, done, items.length, awaitingCount])
+    // Pelos números (não pelo objeto): o App só redesenha quando a contagem muda.
+    onProgress?.(available ? { done, total, awaiting: awaitingCount } : null)
+  }, [onProgress, available, done, total, awaitingCount])
   const poAt = useMemo(
     () => items.reduce<string | null>((latest, item) => (item.poAt && (!latest || item.poAt > latest) ? item.poAt : latest), null),
     [items]
@@ -781,7 +780,8 @@ export function BoardPanel({
       list.push(item)
       map.set(item.conversationId, list)
     }
-    return [...map.entries()]
+    // A contagem do cabeçalho de cada grupo: a mesma do Quadro (taskCounts), uma vez por grupo.
+    return [...map.entries()].map(([convId, list]) => [convId, list, taskCounts(list, effectiveStatus)] as const)
   }, [items])
 
   return (
@@ -827,7 +827,7 @@ export function BoardPanel({
         )}
         <span className="board-bar-spacer" />
         <span className="board-count">
-          {done}/{items.length}
+          {done}/{total}
         </span>
         <button type="button" className="nav-btn" onClick={onClose} title="Recolher painel">
           <IconCollapseRight />
@@ -946,14 +946,14 @@ export function BoardPanel({
         </div>
       ) : (
         <div className="board-list">
-          {groups.map(([convId, list]) => (
+          {groups.map(([convId, list, counts]) => (
             <div key={convId}>
               <div className="board-group">
                 {conversationTitles[convId] ?? 'Conversa removida'}
                 <span className="board-muted">
                   {' '}
-                  — {list.length} tarefa{list.length > 1 ? 's' : ''}, {groupDone(list)} concluída
-                  {groupDone(list) === 1 ? '' : 's'}
+                  — {counts.total} tarefa{counts.total > 1 ? 's' : ''}, {counts.done} concluída
+                  {counts.done === 1 ? '' : 's'}
                 </span>
               </div>
               {list.map((item) => {
@@ -1026,17 +1026,13 @@ export function BoardPanel({
   )
 }
 
-/** O rótulo da aba: concluídas / total e quantos cartões esperam você. */
-export interface BoardProgress {
-  done: number
-  total: number
+/** O rótulo da aba: concluídas / total (taskCounts) e quantos cartões esperam você. */
+export interface BoardProgress extends Pick<TaskCounts, 'done' | 'total'> {
   awaiting: number
 }
 
+/** A contagem do Quadro pelo status efetivo (o do PO por cima do da fonte). */
 export function boardProgress(items: BoardItem[]): BoardProgress {
-  return {
-    done: items.filter((item) => effectiveStatus(item) === 'completed').length,
-    total: items.length,
-    awaiting: items.filter((item) => boardItemAwaitingBadge(item) !== null).length
-  }
+  const { done, total } = taskCounts(items, effectiveStatus)
+  return { done, total, awaiting: items.filter((item) => boardItemAwaitingBadge(item) !== null).length }
 }

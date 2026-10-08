@@ -7,6 +7,8 @@ import {
   type HandoffEntrega,
   type HandoffEnvio
 } from '../../shared/handoffTracking'
+import { normalizePath } from '../../shared/pathGuard'
+import { planProgress } from '../../shared/stepProgress'
 import type { HandoffEntregaPatch, HandoffEnvioPatch, HandoffTimeAdd } from '../persistence/types'
 import type { EntregaPatchFor } from './handoffRules'
 
@@ -79,20 +81,46 @@ export function lateMarks(envio: HandoffEnvio): LateMarks {
 }
 
 /**
- * A etapa cujo prazo o agente acompanha agora: a etapa ATUAL do envio (a regra
- * compartilhada `currentEntrega`), se está em andamento num envio não concluído
- * — é para ela que o tempo ativo vai — e tem prazo.
+ * A etapa cujo prazo o agente acompanha agora: a etapa ATUAL de um envio não
+ * concluído (a regra compartilhada `currentEntrega` — a em andamento ou, sem
+ * nenhuma, a primeira não concluída), se tem prazo. É para ela que o tempo
+ * ativo vai (handoffRules.activeTimeEntregas).
  */
 export function noticeEntrega(envio: HandoffEnvio): HandoffEntrega | null {
   if (envio.status === 'concluida') return null
   const entrega = currentEntrega(envio)
-  if (!entrega || entrega.status !== 'em_andamento') return null
+  if (!entrega) return null
   return entrega.estimativaPlano !== null && entrega.estimativaPlano > 0 ? entrega : null
 }
 
-/** `⏱ Etapa 3 (prazos): 34 de 40 min de trabalho …` — N é a posição da etapa no prompt. */
-export function deadlineNoticeText(entrega: HandoffEntrega, mark: DeadlineMark): string {
-  const head = `⏱ Etapa ${entrega.ordem} (${entrega.etapaId}): ${tempoAtivoMinutos(entrega.tempoAtivoMs)} de ${entrega.estimativaPlano ?? 0} min de trabalho`
+/**
+ * As posições no PLANO publicadas por plano (projeto + slug): quem lê o roteiro
+ * e os envios do plano fora do caminho quente (o hook da sessão,
+ * handoffDeadlineHook.ts) as deixa aqui, e o aviso só consulta o mapa — sem
+ * disco nem banco.
+ */
+const planSteps = new Map<string, ReadonlyMap<string, number>>()
+
+const planKey = (projectCwd: string, slug: string): string => `${normalizePath(projectCwd)}\n${slug}`
+
+/** Publica as posições (`n` de planProgress) das etapas de um plano; substitui as anteriores. */
+export function rememberPlanSteps(projectCwd: string, slug: string, steps: ReadonlyArray<{ id: string; n: number }>): void {
+  planSteps.set(planKey(projectCwd, slug), new Map(steps.map((s) => [s.id, s.n])))
+}
+
+/**
+ * O N do "⏱ Etapa N": a posição da etapa no PLANO (shared/stepProgress — a
+ * mesma de "Etapa N de M" nas telas), a publicada; sem ela (leitura ainda não
+ * feita ou falhou), a da união das entregas do envio (planProgress sem roteiro).
+ */
+export function noticeStepNumber(envio: HandoffEnvio, entrega: HandoffEntrega): number {
+  const published = planSteps.get(planKey(envio.projectCwd, envio.planSlug))?.get(entrega.etapaId)
+  return published ?? planProgress([envio]).steps.find((s) => s.id === entrega.etapaId)?.n ?? entrega.ordem
+}
+
+/** `⏱ Etapa 3 (prazos): 34 de 40 min de trabalho …` — N (`n`) é a posição da etapa no plano (noticeStepNumber). */
+export function deadlineNoticeText(entrega: HandoffEntrega, mark: DeadlineMark, n: number): string {
+  const head = `⏱ Etapa ${n} (${entrega.etapaId}): ${tempoAtivoMinutos(entrega.tempoAtivoMs)} de ${entrega.estimativaPlano ?? 0} min de trabalho`
   if (mark === 80) {
     return `${head} — 80% do prazo da etapa (tempo ativo medido pelo app). Planeje fechar a etapa dentro do prazo.`
   }
@@ -123,10 +151,10 @@ export function deadlineNoticeFor(envio: HandoffEnvio, at: string): DeadlineNoti
     const patch: HandoffEntregaPatch = { aviso100Em: at }
     if (entrega.aviso80Em === null) patch.aviso80Em = at
     if (!entrega.atrasada) patch.atrasada = true
-    return { entregaId: entrega.id, mark: 100, text: deadlineNoticeText(entrega, 100), patch }
+    return { entregaId: entrega.id, mark: 100, text: deadlineNoticeText(entrega, 100, noticeStepNumber(envio, entrega)), patch }
   }
   if (level === 'alerta' && entrega.aviso80Em === null) {
-    return { entregaId: entrega.id, mark: 80, text: deadlineNoticeText(entrega, 80), patch: { aviso80Em: at } }
+    return { entregaId: entrega.id, mark: 80, text: deadlineNoticeText(entrega, 80, noticeStepNumber(envio, entrega)), patch: { aviso80Em: at } }
   }
   return null
 }

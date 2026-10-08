@@ -1,15 +1,18 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import type { HandoffEnvioStatus } from '../../shared/handoffTracking'
+import { HANDOFF_REMOVED_MOTIVO, type HandoffEnvioStatus } from '../../shared/handoffTracking'
 import { BOARD_TURN_END_REASON, boardTurnEndReason } from '../../shared/ipc'
 import { STALL_ABORT_MS } from '../stallWatch'
 import {
   blockReason,
+  CARD_EPOCH_SLACK_MS,
+  CARD_ETAPA_PREFIX,
   cardForEtapa,
   conversationLastWriteMs,
   correctionPatch,
   currentEnvio,
   describeMissing,
+  entregaCard,
   entregaCardPatch,
   entregasWithCardInProgress,
   envioAfterCorrection,
@@ -17,10 +20,11 @@ import {
   errorPatch,
   etapaIdFromTitle,
   HANDOFF_STALL_MS,
-  incompleteRefresh,
+  isReconcilable,
   isRecoverableError,
   permissionPatch,
   poContestReason,
+  reconcileEnvioPatch,
   stallReason,
   syncEntregas,
   timeDistribution,
@@ -63,6 +67,55 @@ describe('cartão ↔ entrega pelo prefixo [id-da-etapa]', () => {
       card({ id: 'velho', sourceTitle: '[etapa-a] A', updatedAt: iso(T0) })
     ]
     expect(cardForEtapa(cards, 'etapa-a')?.id).toBe('novo')
+  })
+
+  it('concluído e não contestado vem primeiro: o cartão novo pendente (lista nova) não regride a etapa', () => {
+    const cards = [
+      card({ id: 'feito', sourceStatus: 'completed', updatedAt: iso(T0) }),
+      card({ id: 'contestado', sourceStatus: 'completed', poStatus: 'pending', poReason: 'sem teste', updatedAt: iso(T0 + 9_000) }),
+      card({ id: 'novo', updatedAt: iso(T0 + 5_000) })
+    ]
+    expect(cardForEtapa(cards, 'etapa-a')?.id).toBe('feito')
+    expect(cardForEtapa(cards, 'etapa-a', { boardItemId: 'novo', conversationId: 'conv-1' })?.id).toBe('feito')
+  })
+
+  it('dispensado só conta se concluído e não contestado (a expiração de 2 dias não desfaz a etapa)', () => {
+    const dismissedAt = iso(T0)
+    const expirado = card({ id: 'expirado', sourceStatus: 'completed', dismissedAt })
+    expect(cardForEtapa([expirado], 'etapa-a')?.id).toBe('expirado')
+    expect(cardForEtapa([card({ id: 'x', dismissedAt })], 'etapa-a')).toBeNull()
+    expect(cardForEtapa([card({ id: 'x', sourceStatus: 'completed', poStatus: 'pending', poReason: 'não', dismissedAt })], 'etapa-a')).toBeNull()
+    // `card:<id>` (o "Mandar fazer" do PO) segue a mesma regra.
+    expect(cardForEtapa([expirado], `${CARD_ETAPA_PREFIX}expirado`)?.id).toBe('expirado')
+    expect(cardForEtapa([card({ id: 'x', dismissedAt })], `${CARD_ETAPA_PREFIX}x`)).toBeNull()
+  })
+
+  it('desempate: o cartão já ligado > o da mesma conversa > o mais novo (com e sem concluído)', () => {
+    const at = (s: number) => iso(T0 + s * 1_000)
+    for (const sourceStatus of ['completed', 'in_progress'] as const) {
+      const cards = [
+        card({ id: 'ligado', sourceStatus, conversationId: 'outra', updatedAt: at(1) }),
+        card({ id: 'mesma', sourceStatus, conversationId: 'conv-1', updatedAt: at(2) }),
+        card({ id: 'nova', sourceStatus, conversationId: 'outra', updatedAt: at(3) })
+      ]
+      expect(cardForEtapa(cards, 'etapa-a', { boardItemId: 'ligado', conversationId: 'conv-1' })?.id).toBe('ligado')
+      expect(cardForEtapa(cards, 'etapa-a', { boardItemId: 'sumiu', conversationId: 'conv-1' })?.id).toBe('mesma')
+      expect(cardForEtapa(cards, 'etapa-a', { conversationId: 'conv-x' })?.id).toBe('nova')
+    }
+  })
+
+  it('entregaCard, o casamento ÚNICO da entrega: a época é o registro do lote (não a saída), o cartão já ligado e a conversa do envio', () => {
+    // Lote registrado em T0; o prompt saiu 10 min depois. O cartão criado entre os dois é da etapa.
+    const e = envio({ criadoEm: iso(T0), enviadoEm: iso(T0 + 600_000) })
+    const antes = card({ id: 'antes', createdAt: iso(T0 - CARD_EPOCH_SLACK_MS - 1) })
+    const entre = card({ id: 'entre', createdAt: iso(T0 + 60_000) })
+    expect(entregaCard(e, entrega(), [antes, entre])?.id).toBe('entre')
+    expect(entregaCard(e, entrega(), [antes])).toBeNull()
+    expect(entregaCard(e, entrega({ boardItemId: 'antes' }), [antes])?.id).toBe('antes')
+    // A conversa do envio desempata, à frente do atualizado por último.
+    const mesma = card({ id: 'mesma', conversationId: 'conv-1', updatedAt: iso(T0 + 1_000) })
+    const outra = card({ id: 'outra', conversationId: 'conv-x', updatedAt: iso(T0 + 9_000) })
+    expect(entregaCard(e, entrega(), [mesma, outra])?.id).toBe('mesma')
   })
 })
 
@@ -198,27 +251,58 @@ describe('critério concluída / incompleta no fim do turno', () => {
     expect(outcome.envio.motivo).toBe('faltou 1 de 2 entregas: [b] Título de b — corrigido por você: refazer')
   })
 
-  it('veredito tardio do PO conclui a última entrega: o envio incompleto vira concluído', () => {
-    const late = two({ status: 'concluida' }, { status: 'concluida' })
-    const opts = { now: NOW, completedNow: true, turnRunning: false }
-    expect(incompleteRefresh({ ...late, status: 'incompleta', motivo: 'faltou' }, [], opts)).toEqual({
+  it('turno com erro mas TODAS as entregas concluídas no Quadro: concluída (o Quadro é a verdade)', () => {
+    const done = two({ status: 'concluida' }, { status: 'concluida' })
+    expect(turnEndOutcome(done, [], { now: NOW, turnError: 'error_during_execution' }).envio).toEqual({
       status: 'concluida',
       concluidoEm: NOW,
       motivo: null
     })
-    expect(incompleteRefresh({ ...late, status: 'incompleta' }, [], { ...opts, turnRunning: true })).toBeNull()
-    expect(incompleteRefresh({ ...late, status: 'incompleta' }, [], { ...opts, completedNow: false })).toBeNull()
-    const still = { ...two({ status: 'concluida' }, {}), status: 'incompleta' as const, motivo: 'velho' }
-    expect(incompleteRefresh(still, [], opts)).toEqual({ motivo: describeMissing(still, []) })
-    expect(incompleteRefresh({ ...still, motivo: 'o turno terminou com erro: x' }, [], opts)).toBeNull()
+  })
+})
+
+describe('reconciliação do envio com o Quadro', () => {
+  const two = (a: Partial<ReturnType<typeof entrega>>, b: Partial<ReturnType<typeof entrega>>) =>
+    envio({ entregas: [entrega({ etapaId: 'a', ...a }), entrega({ etapaId: 'b', ordem: 2, ...b })] })
+  const opts = { now: NOW, turnRunning: false }
+  const done = two({ status: 'concluida' }, { status: 'concluida' })
+  const concluded = { status: 'concluida', concluidoEm: NOW, motivo: null }
+
+  it('incompleta, parada ou falhou com todas as entregas concluídas: concluída — mesmo com erro de turno', () => {
+    expect(reconcileEnvioPatch({ ...done, status: 'incompleta', motivo: 'faltou' }, [], opts)).toEqual(concluded)
+    expect(reconcileEnvioPatch({ ...done, status: 'incompleta', motivo: 'o turno terminou com erro: x' }, [], opts)).toEqual(concluded)
+    expect(reconcileEnvioPatch({ ...done, status: 'parada', motivo: 'parou' }, [], opts)).toEqual(concluded)
+    expect(reconcileEnvioPatch({ ...done, status: 'falhou', motivo: 'boom' }, [], opts)).toEqual(concluded)
   })
 
-  it('turno que terminou com ERRO nunca vira concluído pela releitura, nem com o veredito tardio do PO', () => {
-    const late = two({ status: 'concluida' }, { status: 'concluida' })
-    const motivo = 'o turno terminou com erro: error_during_execution — faltou 1 de 2 entregas: [b] Título de b — cartão a fazer'
-    const opts = { now: NOW, completedNow: true, turnRunning: false }
-    expect(incompleteRefresh({ ...late, status: 'incompleta', motivo }, [], opts)).toBeNull()
-    expect(incompleteRefresh({ ...late, status: 'incompleta', motivo: 'o turno terminou com erro: x' }, [], opts)).toBeNull()
+  it('turno rodando, envio em curso, sem entregas, que não saiu ou já concluído: o status não muda', () => {
+    expect(reconcileEnvioPatch({ ...done, status: 'incompleta' }, [], { ...opts, turnRunning: true })).toBeNull()
+    for (const status of ['enviado', 'em_execucao', 'aguardando_voce', 'concluida'] as const) {
+      expect(reconcileEnvioPatch({ ...done, status }, [], opts)).toBeNull()
+    }
+    expect(reconcileEnvioPatch(envio({ status: 'incompleta', entregas: [] }), [], opts)).toBeNull()
+    expect(reconcileEnvioPatch({ ...done, status: 'parada', enviadoEm: null }, [], opts)).toBeNull()
+  })
+
+  it('incompleta que ainda falta: o motivo é relido; o erro do turno fica e só a lista troca', () => {
+    const still = { ...two({ status: 'concluida' }, {}), status: 'incompleta' as const, motivo: 'velho' }
+    expect(reconcileEnvioPatch(still, [], opts)).toEqual({ motivo: describeMissing(still, []) })
+    expect(reconcileEnvioPatch({ ...still, motivo: describeMissing(still, []) }, [], opts)).toBeNull()
+    const error = 'o turno terminou com erro: error_during_execution'
+    const old = `${error} — faltou 2 de 2 entregas: [a] Título de a — cartão a fazer; [b] Título de b — cartão a fazer`
+    expect(reconcileEnvioPatch({ ...still, motivo: old }, [], opts)).toEqual({ motivo: `${error} — ${describeMissing(still, [])}` })
+    expect(reconcileEnvioPatch({ ...still, motivo: error }, [], opts)).toEqual({ motivo: `${error} — ${describeMissing(still, [])}` })
+    // Parada e falhou guardam o motivo deles (o Stop, a parada, o erro).
+    expect(reconcileEnvioPatch({ ...still, status: 'parada' }, [], opts)).toBeNull()
+    expect(reconcileEnvioPatch({ ...still, status: 'falhou' }, [], opts)).toBeNull()
+  })
+
+  it('os envios que o reconciliador acompanha: saíram e não concluíram (o tirado da fila nunca saiu)', () => {
+    expect(isReconcilable(envio({ status: 'incompleta' }))).toBe(true)
+    expect(isReconcilable(envio({ status: 'parada' }))).toBe(true)
+    expect(isReconcilable(envio({ status: 'parada', enviadoEm: null, motivo: HANDOFF_REMOVED_MOTIVO }))).toBe(false)
+    expect(isReconcilable(envio({ status: 'na_fila', enviadoEm: null }))).toBe(false)
+    expect(isReconcilable(envio({ status: 'concluida' }))).toBe(false)
   })
 })
 
@@ -276,6 +360,15 @@ describe('tempo', () => {
 
   it('não concluído: tempo ativo do envio e das entregas em andamento', () => {
     expect(timeDistribution(e, 1500.4, new Set())).toEqual({ envioId: 'he-1', ativoMs: 1500, entregas: [{ id: 'hn-a', ativoMs: 1500 }] })
+  })
+
+  it('não concluído sem etapa em andamento: a fatia vai para a etapa ATUAL (a do indicador do topo)', () => {
+    const idle = envio({
+      entregas: [entrega({ etapaId: 'a', status: 'concluida' }), entrega({ etapaId: 'b', ordem: 2 }), entrega({ etapaId: 'c', ordem: 3 })]
+    })
+    expect(timeDistribution(idle, 1000, new Set())).toEqual({ envioId: 'he-1', ativoMs: 1000, entregas: [{ id: 'hn-b', ativoMs: 1000 }] })
+    const allDone = envio({ entregas: [entrega({ status: 'concluida' })] })
+    expect(timeDistribution(allDone, 1000, new Set())).toEqual({ envioId: 'he-1', ativoMs: 1000, entregas: [] })
   })
 
   it('concluído: retrabalho do envio e das entregas cujo cartão voltou a andar', () => {

@@ -4,7 +4,8 @@
  *                estágio da obra (Em obra, Vistoria, Habite-se…);
  *   PlacaDaObra  a placa da obra embaixo do cabeçalho, depois do envio: a fita
  *                zebrada, o guindaste içando um tijolo (a casa pronta no
- *                habite-se), a frase, os tijolos (uma etapa do roteiro por
+ *                habite-se), "Etapa N de M" (a posição no plano, de
+ *                planProgress), a frase, os tijolos (uma etapa do plano por
  *                tijolo), o mestre de obras (a conversa de implementação, com
  *                "Ver a obra"), o tempo de obra × prazo e o início.
  * Movimento só enquanto a obra anda, e nenhum com prefers-reduced-motion.
@@ -112,7 +113,8 @@ export interface PlacaDaObraProps {
 }
 
 export function PlacaDaObra({ obra, onOpenConversation, now = Date.now() }: PlacaDaObraProps): JSX.Element {
-  const counts = COUNT_ORDER.map((s) => [s, obra.bricks.filter((b) => b.state === s).length] as const).filter(([, n]) => n > 0)
+  const bricks = obra.progress.steps
+  const counts = COUNT_ORDER.map((s) => [s, bricks.filter((b) => b.state === s).length] as const).filter(([, n]) => n > 0)
   const mestre = obra.mestre
   return (
     <section className={`pl-obra s-${obra.stage}`} aria-label="Placa da obra" data-stage={obra.stage}>
@@ -121,7 +123,7 @@ export function PlacaDaObra({ obra, onOpenConversation, now = Date.now() }: Plac
         <ObraArt stage={obra.stage} />
         <div className="pl-obra-main">
           <p className="pl-obra-headline">
-            {obra.etapa?.n ? (
+            {obra.etapa ? (
               <span className="pl-obra-step">
                 Etapa {obra.etapa.n} de {obra.etapa.total}
               </span>
@@ -129,15 +131,15 @@ export function PlacaDaObra({ obra, onOpenConversation, now = Date.now() }: Plac
             {obra.headline}
           </p>
           {obra.detail && <p className="pl-obra-detail">{obra.detail}</p>}
-          {obra.bricks.length > 0 && (
+          {bricks.length > 0 && (
             <div className="pl-obra-wall">
               <ol className="pl-obra-bricks" aria-label="Tijolos da obra: uma etapa do plano por tijolo">
-                {obra.bricks.map((b, i) => (
+                {bricks.map((b) => (
                   <li
                     key={b.id}
                     className={`pl-brick b-${b.state}`}
-                    title={`${i + 1}. ${b.titulo} — ${BRICK_LABEL[b.state]}`}
-                    aria-label={`Etapa ${i + 1}, ${b.titulo}: ${BRICK_LABEL[b.state]}`}
+                    title={`${b.n}. ${b.titulo} — ${BRICK_LABEL[b.state]}`}
+                    aria-label={`Etapa ${b.n}, ${b.titulo}: ${BRICK_LABEL[b.state]}`}
                   />
                 ))}
               </ol>

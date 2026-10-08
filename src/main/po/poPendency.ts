@@ -34,7 +34,8 @@ export function shapePendencies(ops: PoOp[], defaults: readonly BoardItem[], car
   const inferred = concluded.size === 1 ? [...concluded][0] : undefined
   const byId = new Map(cards.map((card) => [card.id, card]))
   return ops.map((op) => {
-    if (op.kind !== 'create' || op.status !== 'pending') return op
+    // A etapa do prompt sem cartão (`etapaId`) não é pendência de outro cartão.
+    if (op.kind !== 'create' || op.status !== 'pending' || op.etapaId) return op
     const parentId = op.parentId ?? inferred
     if (!parentId) return op
     return { ...op, parentId, title: pendencyTitle(op.title, byId.get(parentId)) }

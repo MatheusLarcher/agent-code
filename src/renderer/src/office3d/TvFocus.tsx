@@ -15,7 +15,10 @@
  *           (N)": o mockup ou o espelho do 1º da fila no lugar do plano — o
  *           chamado só conta como visto quando ela abre (`onSeen`); com envios
  *           para implementação (o centro de Entregas do App, por contexto), a
- *           aba "Implantação · N/M · status": o andamento e os botões (TvDeploy);
+ *           aba "Implantação · N/M · status" (N/M = etapas prontas do plano,
+ *           planProgress com o roteiro do planning:peek — usePlanRoteiro, o
+ *           cache da TV —, relida quando o resumo chega; status = o do envio
+ *           de agora, planEnvioAtual): o andamento e os botões (TvDeploy);
  *   score   o espelho do placar.
  *
  * "+N esperando" no alto quando a sala tem fila. Desmontar solta o espelho e o
@@ -24,11 +27,13 @@
 import './tvFocus.css'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useDeliveryCenterContext } from '../deliveries/deliveryCenterContext'
+import { usePlanRoteiro } from '../handoffTracking/usePlanRoteiro'
 import { MockupFrame, type MockupUrlFn } from './MockupFrame'
 import { callMarks } from './officeCalls'
 import type { Projectors, TvFocusInfo } from './projectors'
 import { PROJ_H, PROJ_W } from './projectorPaint'
 import { deploySummary, TvDeploy } from './TvDeploy'
+import type { PeekApi } from './tvPlans'
 
 export interface TvFocusProps {
   info: TvFocusInfo
@@ -48,6 +53,8 @@ export interface TvFocusProps {
   onSeen?: (callId: string) => void
   /** "Ir até o agente" da aba Implantação: fecha o foco e voa até a mesa dele; false se ele não está no escritório. */
   onGoToAgent?: (convId: string) => boolean
+  /** O resumo do plano (planning:peek) para o roteiro da aba Implantação; injetável nos testes, padrão: window.api. */
+  peekApi?: PeekApi | null
 }
 
 const MIRROR_SCALE = 2
@@ -114,13 +121,15 @@ function Mockup({ info, onSend, mockupUrl }: { info: Extract<TvFocusInfo, { kind
   )
 }
 
-export function TvFocus({ info, projectors, onClose, onSend, mockupUrl, planning, activeConvId, onPickPlan, onSeen = markSeen, onGoToAgent }: TvFocusProps): JSX.Element {
+export function TvFocus({ info, projectors, onClose, onSend, mockupUrl, planning, activeConvId, onPickPlan, onSeen = markSeen, onGoToAgent, peekApi }: TvFocusProps): JSX.Element {
   // A aba aberta ("Agente chamando" ou "Implantação") vale para ESTE foco: outro foco (ou outro plano) volta ao plano.
   const [tabFor, setTabFor] = useState<{ info: TvFocusInfo; tab: 'agent' | 'deploy' } | null>(null)
   const agents = info.kind === 'plan' ? (info.agents ?? []) : []
   const plan = info.kind === 'plan' ? (info.plans.find((p) => p.convId === info.convId) ?? null) : null
   const center = useDeliveryCenterContext()
-  const deploy = plan ? deploySummary(center, plan) : null
+  // Sem o centro de Entregas não há aba Implantação: nem pede o resumo.
+  const roteiro = usePlanRoteiro(center ? plan?.cwd : null, plan?.slug, peekApi)
+  const deploy = plan ? deploySummary(center, plan, roteiro) : null
   const onAgent = tabFor?.info === info && tabFor.tab === 'agent' && agents.length > 0
   const onDeploy = tabFor?.info === info && tabFor.tab === 'deploy' && !!deploy
   const shown = onAgent ? agents[0] : info
@@ -176,7 +185,7 @@ export function TvFocus({ info, projectors, onClose, onSend, mockupUrl, planning
         </div>
       ) : null}
       {onDeploy && plan && center ? (
-        <TvDeploy plan={plan} center={center} onOpenConversation={openConversation} onGoToAgent={onGoToAgent} />
+        <TvDeploy plan={plan} center={center} onOpenConversation={openConversation} onGoToAgent={onGoToAgent} peekApi={peekApi} />
       ) : shown.kind === 'mockup' ? (
         <Mockup info={shown} onSend={onSend} mockupUrl={mockupUrl} />
       ) : shown.kind === 'plan' ? null : (

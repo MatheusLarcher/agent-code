@@ -473,6 +473,13 @@ export interface BoardSyncInput {
   projectCwd: string
   conversationId: string
   items: BoardSourceItem[]
+  /**
+   * A lista de onde veio o snapshot (`taskListKey`; os `sourceId` levam o prefixo
+   * `<list>:`). O que sumiu do snapshot é apagado, MENOS os cartões concluídos de
+   * outra lista: retomar a conversa noutra sessão ou noutro PC começa uma lista
+   * nova, e o feito antes não pode sumir do quadro. Vazio = uma lista só (antes).
+   */
+  list?: string
 }
 
 /** Escrita do PO. Só os campos dele; `undefined` deixa como está, `null` limpa. */
@@ -488,6 +495,10 @@ export interface BoardPoWrite {
    *  usuário passa `'user'`: é um terceiro tipo de escritor, distinto do PO.
    *  As regras determinísticas (fim de turno, retomada) passam `'system'`. */
   actor?: 'po' | 'user' | 'system'
+  /** O que o usuário precisa fazer (`BoardItem.poUserAction`): `null` limpa. Omitido,
+   *  mantém — MENOS quando `poStatus` vem junto: trocar o status limpa (ver
+   *  `nextBoardUserAction`). Banco sem a coluna ignora o campo. */
+  userAction?: string | null
   /** Nota do evento quando ela não é o `poReason` gravado — o TITULO que não
    *  pode apagar o motivo do fim de turno leva a própria justificativa aqui. */
   eventNote?: string | null
@@ -518,6 +529,9 @@ export interface BoardPoCreate {
   /** A pendência aponta para o cartão de origem (ver `BoardItem.parentId`).
    *  Banco sem a coluna ignora o campo em vez de falhar. */
   parentId?: string | null
+  /** O que o usuário precisa fazer (`BoardItem.poUserAction`); mesma regra de
+   *  banco sem a coluna. */
+  userAction?: string | null
 }
 
 export interface BoardQuery {

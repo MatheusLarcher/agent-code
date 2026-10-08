@@ -42,7 +42,8 @@ describe('regras compartilhadas do prazo (shared/handoffTracking)', () => {
 describe('deadlineView', () => {
   it('etapa atual, tempo ativo contra o prazo e a estimativa do agente, do banco', () => {
     const view = deadlineView({ envios: [running(12 * MIN)], error: null })
-    expect(view).toMatchObject({ level: 'ok', etapa: 'Etapa 1/2: Registro no banco', tempo: '12 de 30 min', agente: 'agente 20 min' })
+    expect(view).toMatchObject({ level: 'ok', etapa: 'Etapa 1 de 2: Registro no banco', tempo: '12 de 30 min', agente: 'agente 20 min' })
+    expect(view?.title).toContain('Etapa atual: Etapa 1 de 2: Registro no banco [registro-no-banco] — em andamento.')
     expect(view?.title).toContain('Prazo (estimativa do plano): 30 min.')
     expect(view?.title).toContain('Estimativa do agente: 20 min — dois backends.')
     expect(view?.title).toContain('Tempo ativo: 12 min (40% do prazo — dentro do prazo).')
@@ -74,5 +75,48 @@ describe('deadlineView', () => {
       entregas: [entrega({ status: 'concluida', tempoAtivoMs: 26 * MIN })]
     })
     expect(deadlineView({ envios: [done], error: null })).toMatchObject({ level: 'alerta', etapa: 'Etapas concluídas', tempo: '26 de 30 min', agente: null })
+  })
+
+  describe('"Etapa N de M" é a posição no PLANO (planProgress/stepLabel), não no prompt', () => {
+    // O plano mandado em partes: a parte 1 (banco, tela) já saiu, de outra conversa; esta conversa faz a parte 2.
+    const parte1 = envio({
+      id: 'he-0', conversationId: 'conv-0', status: 'concluida', loteId: 'hl-0', criadoEm: '2026-10-05T11:00:00.000Z', enviadoEm: '2026-10-05T11:00:00.000Z',
+      entregas: [entrega({ etapaId: 'banco', etapaTitulo: 'Banco', status: 'concluida' }), entrega({ etapaId: 'tela', etapaTitulo: 'Tela', ordem: 2, status: 'concluida' })]
+    })
+    const parte2 = envio({
+      id: 'he-1', estimativaTotal: 50, prazoTotal: 50,
+      entregas: [
+        entrega({ etapaId: 'pix', etapaTitulo: 'Pix', status: 'em_andamento', tempoAtivoMs: 6 * MIN }),
+        entrega({ etapaId: 'aceite', etapaTitulo: 'Aceite', ordem: 2, estimativaPlano: 20 })
+      ]
+    })
+    const roteiro = [
+      { id: 'banco', titulo: 'Banco' },
+      { id: 'tela', titulo: 'Tela' },
+      { id: 'pix', titulo: 'Pix' },
+      { id: 'aceite', titulo: 'Aceite' },
+      { id: 'deploy', titulo: 'Deploy' }
+    ]
+
+    it('com os envios do plano no projeto (de qualquer conversa): a 1ª etapa deste prompt é a 3ª do plano', () => {
+      const view = deadlineView({ envios: [parte2], error: null }, { envios: [parte1, parte2], roteiro: null })
+      expect(view).toMatchObject({ etapa: 'Etapa 3 de 4: Pix', tempo: '6 de 30 min' })
+    })
+
+    it('com o roteiro: o total é o do plano (etapas ainda não enviadas contam)', () => {
+      expect(deadlineView({ envios: [parte2], error: null }, { envios: [parte1, parte2], roteiro })?.etapa).toBe('Etapa 3 de 5: Pix')
+      // Os envios do plano ainda não chegaram: o roteiro já dá a posição.
+      expect(deadlineView({ envios: [parte2], error: null }, { envios: null, roteiro })?.etapa).toBe('Etapa 3 de 5: Pix')
+    })
+
+    it('a leitura do plano ainda sem o envio desta conversa (lida antes do registro): os desta conversa entram na conta', () => {
+      expect(deadlineView({ envios: [parte2], error: null }, { envios: [parte1], roteiro: null })?.etapa).toBe('Etapa 3 de 4: Pix')
+    })
+
+    it('envios de outro plano ou de outro projeto não entram na conta', () => {
+      const outro = envio({ id: 'x', planSlug: 'login', entregas: [entrega({ etapaId: 'x1' }), entrega({ etapaId: 'x2', ordem: 2 })] })
+      const fora = envio({ id: 'y', projectCwd: 'D:/outro', entregas: [entrega({ etapaId: 'y1' })] })
+      expect(deadlineView({ envios: [parte2], error: null }, { envios: [outro, fora, parte2], roteiro: null })?.etapa).toBe('Etapa 1 de 2: Pix')
+    })
   })
 })

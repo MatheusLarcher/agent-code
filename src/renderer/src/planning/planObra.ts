@@ -16,12 +16,13 @@
  *   fase        o que foi enviado está pronto, mas parte do plano nem saiu da
  *               planta (o plano mandado em partes);
  *   habitese    todas as etapas prontas: obra entregue.
- * O estágio sai do lote mais recente (cada envio do plano é um lote); os
- * tijolos e o tempo, de todos os envios do plano.
+ * O estágio sai do envio de agora (planEnvioAtual: o lote mais recente); os
+ * tijolos, a etapa de agora e as contas, de planProgress (a regra única de
+ * etapas, shared/stepProgress.ts); o tempo, de todos os envios do plano.
  */
-import { currentEntrega, currentEnvio, deadlineLevel, type DeadlineLevel, type HandoffEntrega, type HandoffEnvio, type HandoffEnvioStatus } from '@shared/handoffTracking'
+import { deadlineLevel, type DeadlineLevel, type HandoffEnvio, type HandoffEnvioStatus } from '@shared/handoffTracking'
 import type { PlanningRoteiroDto } from '@shared/ipc'
-import { normalizePath } from '@shared/pathGuard'
+import { planProgress, roteiroProgress, type PlanProgress, type StepState } from '@shared/stepProgress'
 
 export type ObraStage = 'prancheta' | 'canteiro' | 'obra' | 'vistoria' | 'parada' | 'embargada' | 'acabamento' | 'fase' | 'habitese'
 
@@ -38,8 +39,8 @@ export const OBRA_LABEL: Record<ObraStage, string> = {
   habitese: 'Habite-se'
 }
 
-/** Um tijolo por etapa: na planta (não enviada), na fila, na massa (em andamento), pronto ou trincado (incompleta). */
-export type BrickState = 'planta' | 'fila' | 'massa' | 'pronto' | 'trinca'
+/** Um tijolo por etapa (o estado de planProgress): na planta (não enviada), na fila, na massa (em andamento), pronto ou trincado (incompleta). */
+export type BrickState = StepState
 
 export const BRICK_LABEL: Record<BrickState, string> = {
   planta: 'na planta',
@@ -49,21 +50,16 @@ export const BRICK_LABEL: Record<BrickState, string> = {
   trinca: 'incompleta'
 }
 
-export interface ObraBrick {
-  id: string
-  titulo: string
-  state: BrickState
-}
-
 export interface ObraView {
   stage: ObraStage
   /** A frase da placa. */
   headline: string
   /** O porquê gravado pelo acompanhamento (motivo), quando há. */
   detail: string | null
-  bricks: ObraBrick[]
-  /** A etapa de agora no roteiro (n de total), ou só o título se ela saiu do roteiro. */
-  etapa: { n: number | null; total: number; titulo: string } | null
+  /** As etapas do plano (um tijolo cada) e as contas — planProgress. */
+  progress: PlanProgress
+  /** A etapa de agora pela posição no plano (n de total), só enquanto alguém está nela. */
+  etapa: { n: number; total: number; titulo: string } | null
   /** Quem constrói: a conversa de implementação do envio de agora. */
   mestre: { conversationId: string; title: string } | null
   /** Tempo ativo somado × prazo somado (a estimativa do plano). */
@@ -74,47 +70,16 @@ export interface ObraView {
 
 type Etapa = Pick<PlanningRoteiroDto['etapas'][number], 'id' | 'titulo' | 'status'>
 
-/** Os envios deste plano: o mesmo slug no mesmo projeto (caminho comparado sem caixa/barras no Windows). */
-export function planEnviosOf(envios: readonly HandoffEnvio[], projectCwd: string, slug: string): HandoffEnvio[] {
-  const cwd = normalizePath(projectCwd)
-  return envios.filter((e) => e.planSlug === slug && normalizePath(e.projectCwd) === cwd)
-}
-
-const at = (e: HandoffEnvio): number => Date.parse(e.enviadoEm ?? e.criadoEm) || 0
-
-/** Do mais grave/vivo ao mais quieto: o primeiro status presente no lote decide o estágio. */
-const STAGE_BY_STATUS: ReadonlyArray<[HandoffEnvioStatus, ObraStage]> = [
-  ['aguardando_voce', 'vistoria'],
-  ['em_execucao', 'obra'],
-  ['parada', 'parada'],
-  ['falhou', 'embargada'],
-  ['incompleta', 'acabamento'],
-  ['enviado', 'canteiro'],
-  ['na_fila', 'canteiro']
-]
-
-const BRICK_BY_ENTREGA: Record<HandoffEntrega['status'], BrickState> = {
-  pendente: 'fila',
-  em_andamento: 'massa',
-  concluida: 'pronto',
-  incompleta: 'trinca'
-}
-
-function bricksOf(envios: readonly HandoffEnvio[], etapas: readonly Etapa[]): ObraBrick[] {
-  // A entrega mais recente de cada etapa (um plano reenviado refaz a etapa).
-  const last = new Map<string, HandoffEntrega>()
-  for (const envio of [...envios].sort((a, b) => at(a) - at(b) || a.ordem - b.ordem)) {
-    for (const entrega of envio.entregas) last.set(entrega.etapaId, entrega)
-  }
-  const bricks: ObraBrick[] = etapas.map((e) => {
-    const entrega = last.get(e.id)
-    last.delete(e.id)
-    const state: BrickState = entrega ? BRICK_BY_ENTREGA[entrega.status] : e.status === 'concluida' ? 'pronto' : 'planta'
-    return { id: e.id, titulo: e.titulo, state }
-  })
-  // Etapa enviada que saiu do roteiro depois: continua na obra, no fim.
-  for (const entrega of last.values()) bricks.push({ id: entrega.etapaId, titulo: entrega.etapaTitulo, state: BRICK_BY_ENTREGA[entrega.status] })
-  return bricks
+/** O estágio pelo status do envio de agora (planEnvioAtual já escolheu o mais vivo/grave do lote). */
+const STAGE_BY_STATUS: Record<HandoffEnvioStatus, ObraStage> = {
+  aguardando_voce: 'vistoria',
+  em_execucao: 'obra',
+  parada: 'parada',
+  falhou: 'embargada',
+  incompleta: 'acabamento',
+  enviado: 'canteiro',
+  na_fila: 'canteiro',
+  concluida: 'habitese'
 }
 
 function headlineOf(stage: ObraStage, etapa: string | null, prontas: number, total: number): string {
@@ -142,26 +107,20 @@ function headlineOf(stage: ObraStage, etapa: string | null, prontas: number, tot
 
 /** A obra do plano a partir dos envios DELE (planEnviosOf) e do roteiro. */
 export function obraView(envios: readonly HandoffEnvio[], etapas: readonly Etapa[]): ObraView {
-  const bricks = bricksOf(envios, etapas)
+  const progress = planProgress(envios, etapas)
+  const { prontas, total, atual } = progress
   const tempo = { ativoMs: 0, prazoMin: null as number | null, level: 'neutro' as DeadlineLevel }
-  const prontas = bricks.filter((b) => b.state === 'pronto').length
-  if (envios.length === 0) {
-    return { stage: 'prancheta', headline: headlineOf('prancheta', null, 0, bricks.length), detail: null, bricks, etapa: null, mestre: null, tempo, inicio: null }
+  const envio = progress.envioAtual
+  if (!envio) {
+    return { stage: 'prancheta', headline: headlineOf('prancheta', null, 0, total), detail: null, progress, etapa: null, mestre: null, tempo, inicio: null }
   }
-  // O lote mais recente decide o estágio (o envio de agora é dele).
-  const newest = [...envios].sort((a, b) => Date.parse(b.criadoEm) - Date.parse(a.criadoEm))[0]
-  const lote = envios.filter((e) => e.loteId === newest.loteId)
-  const hit = STAGE_BY_STATUS.find(([status]) => lote.some((e) => e.status === status))
-  let stage: ObraStage = hit ? hit[1] : 'habitese'
+  let stage = STAGE_BY_STATUS[envio.status]
   // Lote concluído não é habite-se se sobrou etapa trincada (de um lote anterior) ou ainda na planta.
-  if (stage === 'habitese' && bricks.some((b) => b.state === 'trinca')) stage = 'acabamento'
-  else if (stage === 'habitese' && prontas < bricks.length) stage = 'fase'
-  const envio = (hit && lote.find((e) => e.status === hit[0])) || currentEnvio(lote) || newest
-  const entrega = currentEntrega(envio)
-  const idx = entrega ? etapas.findIndex((e) => e.id === entrega.etapaId) : -1
+  if (stage === 'habitese' && progress.incompletas > 0) stage = 'acabamento'
+  else if (stage === 'habitese' && prontas < total) stage = 'fase'
   const live = stage !== 'habitese' && stage !== 'fase'
   // A etapa de agora só quando alguém já pegou nela (no canteiro aberto ninguém começou).
-  const etapa = entrega && live && stage !== 'canteiro' ? { n: idx >= 0 ? idx + 1 : null, total: etapas.length, titulo: entrega.etapaTitulo } : null
+  const etapa = atual && live && stage !== 'canteiro' ? { n: atual.n, total, titulo: atual.titulo } : null
   for (const e of envios) {
     tempo.ativoMs += e.tempoAtivoMs
     const prazo = e.prazoTotal ?? e.estimativaTotal
@@ -172,14 +131,37 @@ export function obraView(envios: readonly HandoffEnvio[], etapas: readonly Etapa
   const quiet = stage === 'obra' || stage === 'canteiro' || !live
   return {
     stage,
-    headline: headlineOf(stage, etapa?.titulo ?? null, prontas, bricks.length),
+    headline: headlineOf(stage, etapa?.titulo ?? null, prontas, total),
     detail: quiet ? null : envio.motivo,
-    bricks,
+    progress,
     etapa,
     mestre: { conversationId: envio.conversationId, title: envio.conversationTitle },
     tempo,
     inicio: sent[0] ?? null
   }
+}
+
+/** O contador do plano (cabeçalho e roteiro). */
+export interface PlanCounter {
+  feitas: number
+  total: number
+  label: 'prontas' | 'especificadas'
+}
+
+/**
+ * Com a implementação começada (`impl`: o planProgress dos envios do plano), as
+ * etapas prontas; antes, as especificadas no roteiro (roteiroProgress) — o
+ * "concluida" do roteiro é especificada, nunca pronta.
+ */
+export function planCounter(etapas: ReadonlyArray<Pick<Etapa, 'status'>>, impl: Pick<PlanProgress, 'prontas' | 'total'> | null): PlanCounter {
+  return impl ? { feitas: impl.prontas, total: impl.total, label: 'prontas' } : { ...roteiroProgress(etapas), label: 'especificadas' }
+}
+
+const COUNTER_SINGULAR: Record<PlanCounter['label'], string> = { prontas: 'pronta', especificadas: 'especificada' }
+
+/** "2 de 5 prontas" · "1 de 1 especificada". */
+export function counterText(c: PlanCounter): string {
+  return `${c.feitas} de ${c.total} ${c.total === 1 ? COUNTER_SINGULAR[c.label] : c.label}`
 }
 
 /** "45 min", "1 h", "1 h 05 min" (minutos inteiros, arredondados para cima como o app mede). */

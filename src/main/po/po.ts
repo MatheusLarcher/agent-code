@@ -11,10 +11,12 @@ import { listConvTasks, type PoLedgerDeps } from './poLedger'
 import {
   PO_COOLDOWN_MS,
   PO_MAX_CALLS,
+  PO_MAX_ORPHANS,
   PO_MAX_RETRIES,
   PO_RETRY_DELAY_MS,
   summarizeCall,
   type PoCall,
+  type PoOrphanEtapa,
   type PoPhase
 } from './poPrompt'
 import type { PoLogEntry, PoLogOutcome, PoLogWriter } from './poLog'
@@ -69,6 +71,8 @@ export interface PoDeps extends PoProviderDeps, PoLedgerDeps {
   authorization?(convId: string): Promise<{ current: PoAuthorization | null; hasQueue: boolean } | null>
   authorize?(convId: string, op: PoAuthorizationOp): Promise<void>
   queueRoutine?(convId: string, routine: PoRoutineRequest): Promise<void>
+  /** As etapas do prompt sem cartão no quadro (handoffTracking/handoffOrphans.ts): o fechamento cria o `[id]` delas. */
+  orphanEtapas?(convId: string): Promise<PoOrphanEtapa[]>
 }
 
 interface ConvState {
@@ -392,6 +396,8 @@ export class Po {
       const merged = mergeDeferred(taken, turn)
       const ledgerTasks = await listConvTasks(this.deps, convId)
       const digestCards = poDigestCards(cards)
+      // Só as que o digest lista: o parser libera FEITA/NOVA [id] apenas para elas.
+      const orphans = phase === 'close' ? ((await this.deps.orphanEtapas?.(convId).catch(() => null)) ?? []).slice(0, PO_MAX_ORPHANS) : []
 
       // O gate do TypeSafe vê o MESMO material que o modelo veria (pedido
       // mesclado, quadro, ações, registro, resposta) e roda antes de qualquer rota. Um
@@ -399,7 +405,8 @@ export class Po {
       // para a fila, e nada é escrito nem anunciado — o elenco não mostra uma
       // auditoria que não aconteceu. `null` (sem chave, desligado, erro) é
       // ausência de decisão, não "não": segue exatamente como sempre seguiu.
-      const worthIt = await askBoardGate(this.deps, {
+      // Com etapa sem cartão o gate não decide: ele não a vê, e o "não" a deixaria sem cartão.
+      const worthIt = orphans.length > 0 ? null : await askBoardGate(this.deps, {
         phase,
         userText: merged.userText,
         cards: digestCards.map(({ title, status }) => ({ title, status })),
@@ -429,7 +436,7 @@ export class Po {
       const authorization = await this.deps.authorization?.(convId).catch(() => null)
       const request = buildPoRequest({
         config: cfg, convId, cwd: turn.cwd, projectId, phase, cards, userText: merged.userText, calls: merged.calls,
-        reply: merged.reply, ledgerTasks, background, returned, git, next, authorization, correlationId: this.nextCorrelationId()
+        reply: merged.reply, ledgerTasks, background, returned, git, next, authorization, orphans, correlationId: this.nextCorrelationId()
       })
 
       diagnostic(this.deps, request, 'claude-started', 'claude')
@@ -455,7 +462,7 @@ export class Po {
 
         // A lista que o modelo julgou é de antes da consulta: criar e pôr em
         // andamento são conferidos de novo contra o quadro de agora (poApply.ts).
-        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now, returned, next, authorization: authorization?.current }
+        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now, returned, next, authorization: authorization?.current, orphans }
         await applyPoVerdict(this.deps, target, text, cards, progress)
         // Daqui em diante a análise chegou ao fim: o que ela tirou da fila foi
         // julgado e escrito, e não volta.

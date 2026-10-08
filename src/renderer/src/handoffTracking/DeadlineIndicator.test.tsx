@@ -7,13 +7,19 @@ import { envio, entrega, MIN, running } from './handoffFixtures'
 
 afterEach(cleanup)
 
-/** handoff:list e handoff:changed em memória, com o aviso disparável pelo teste. */
+/**
+ * handoff:list e handoff:changed em memória, com o aviso disparável pelo teste.
+ * Por conversa, só os envios dela; por projeto (os do plano), todos.
+ */
 function mockApi(initial: HandoffEnvio[]) {
   let next: HandoffListResult = { ok: true, envios: initial }
   const listeners = new Set<(msg: HandoffChangedMsg) => void>()
   const off = vi.fn()
   const api = {
-    handoffList: vi.fn(async (_req?: HandoffListRequest): Promise<HandoffListResult> => structuredClone(next)),
+    handoffList: vi.fn(async (req?: HandoffListRequest): Promise<HandoffListResult> => {
+      const res = structuredClone(next)
+      return res.ok && req?.conversationId ? { ok: true, envios: res.envios.filter((e) => e.conversationId === req.conversationId) } : res
+    }),
     onHandoffChanged: vi.fn((cb: (msg: HandoffChangedMsg) => void) => {
       listeners.add(cb)
       return () => {
@@ -25,6 +31,9 @@ function mockApi(initial: HandoffEnvio[]) {
   return {
     api,
     off,
+    listeners,
+    /** As leituras da conversa (as do plano, por projeto, ficam de fora). */
+    convCalls: (): HandoffListRequest[] => api.handoffList.mock.calls.map(([req]) => req ?? {}).filter((req) => !!req.conversationId),
     set(envios: HandoffEnvio[]) {
       next = { ok: true, envios }
     },
@@ -53,7 +62,7 @@ describe('DeadlineIndicator', () => {
     render(<DeadlineIndicator conversationId="conv-1" api={m.api} />)
     const el = await shown()
     expect(m.api.handoffList).toHaveBeenCalledWith({ conversationId: 'conv-1' })
-    expect(screen.getByText('Etapa 1/2: Registro no banco')).toBeTruthy()
+    expect(screen.getByText('Etapa 1 de 2: Registro no banco')).toBeTruthy()
     expect(screen.getByText('12 de 30 min')).toBeTruthy()
     expect(screen.getByText('agente 20 min')).toBeTruthy()
     expect(el.className).toContain('is-ok')
@@ -80,21 +89,41 @@ describe('DeadlineIndicator', () => {
     expect(screen.getByText('31 de 30 min')).toBeTruthy()
   })
 
-  it('aviso de OUTRA conversa não relê; o desta relê com os valores novos do banco', async () => {
+  it('aviso de OUTRA conversa não relê a conversa (só os envios do plano); o desta relê com os valores novos do banco', async () => {
     const m = mockApi([running(5 * MIN)])
     render(<DeadlineIndicator conversationId="conv-1" api={m.api} />)
     await shown()
-    expect(m.api.handoffList).toHaveBeenCalledTimes(1)
+    expect(m.convCalls()).toHaveLength(1)
     m.set([running(6 * MIN, { estimativaAgente: 25 })])
     m.changed('conv-2')
     await new Promise((resolve) => setTimeout(resolve, 30))
-    expect(m.api.handoffList).toHaveBeenCalledTimes(1)
+    expect(m.convCalls()).toHaveLength(1)
     expect(screen.getByText('5 de 30 min')).toBeTruthy()
 
     m.changed('conv-1')
     await waitFor(() => expect(screen.getByText('6 de 30 min')).toBeTruthy())
     expect(screen.getByText('agente 25 min')).toBeTruthy()
-    expect(m.api.handoffList).toHaveBeenCalledTimes(2)
+    expect(m.convCalls()).toHaveLength(2)
+  })
+
+  it('"Etapa N de M" pela posição no PLANO: os envios do plano no projeto (de outra conversa também) e o roteiro', async () => {
+    const parte1 = envio({
+      id: 'he-0', conversationId: 'conv-0', status: 'concluida', criadoEm: '2026-10-05T11:00:00.000Z', enviadoEm: '2026-10-05T11:00:00.000Z',
+      entregas: [entrega({ etapaId: 'banco', etapaTitulo: 'Banco', status: 'concluida' }), entrega({ etapaId: 'tela', etapaTitulo: 'Tela', ordem: 2, status: 'concluida' })]
+    })
+    const parte2 = envio({ entregas: [entrega({ etapaId: 'pix', etapaTitulo: 'Pix', status: 'em_andamento', tempoAtivoMs: 4 * MIN })] })
+    const m = mockApi([parte1, parte2])
+    const { unmount } = render(<DeadlineIndicator conversationId="conv-1" api={m.api} peekApi={null} />)
+    await waitFor(() => expect(screen.getByText('Etapa 3 de 3: Pix')).toBeTruthy())
+    expect(m.api.handoffList).toHaveBeenCalledWith({ projectCwd: 'C:/proj', limit: 1000 })
+    unmount()
+
+    // O título vem do roteiro (o plano pode tê-lo renomeado depois do envio).
+    const etapas = ['banco', 'tela', 'pix', 'aceite'].map((id) => ({ id, titulo: id === 'pix' ? 'Pix no checkout' : id, status: 'pendente' as const }))
+    const peekApi = { planningPeek: vi.fn(async () => ({ ok: true as const, plan: { titulo: 'Checkout', etapas, cards: 0, ambiguidadesAbertas: 0 } })) }
+    render(<DeadlineIndicator conversationId="conv-1" api={m.api} peekApi={peekApi} />)
+    await waitFor(() => expect(screen.getByText('Etapa 3 de 4: Pix no checkout')).toBeTruthy())
+    expect(peekApi.planningPeek).toHaveBeenCalledWith({ projectCwd: 'C:/proj', slug: 'checkout' })
   })
 
   it('sem envio registrado ou sem estimativa do plano: neutro e discreto ("sem prazo")', async () => {
@@ -125,7 +154,7 @@ describe('DeadlineIndicator', () => {
     await waitFor(() => expect(screen.getByText('9 de 30 min')).toBeTruthy())
     ok.fail('caiu')
     ok.changed('conv-1')
-    await waitFor(() => expect(ok.api.handoffList).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(ok.convCalls()).toHaveLength(2))
     expect(screen.getByText('9 de 30 min')).toBeTruthy()
   })
 
@@ -143,17 +172,19 @@ describe('DeadlineIndicator', () => {
     expect(m.api.handoffList.mock.calls.length).toBe(calls)
   })
 
-  it('trocar de conversa lê a nova; desmontar cancela a assinatura do aviso', async () => {
+  it('trocar de conversa lê a nova; desmontar cancela as assinaturas do aviso', async () => {
     const m = mockApi([running(4 * MIN)])
     const { rerender, unmount } = render(<DeadlineIndicator conversationId="conv-1" api={m.api} />)
     await shown()
-    m.set([running(8 * MIN)])
+    // A da conversa e a dos envios do plano.
+    await waitFor(() => expect(m.listeners.size).toBe(2))
+    m.set([{ ...running(8 * MIN), id: 'he-2', conversationId: 'conv-2' }])
     rerender(<DeadlineIndicator conversationId="conv-2" api={m.api} />)
     await waitFor(() => expect(screen.getByText('8 de 30 min')).toBeTruthy())
-    expect(m.api.handoffList).toHaveBeenLastCalledWith({ conversationId: 'conv-2' })
-    expect(m.off).toHaveBeenCalledTimes(1) // a assinatura da conv-1 saiu
+    expect(m.convCalls().at(-1)).toEqual({ conversationId: 'conv-2' })
+    expect(m.listeners.size).toBe(2) // a assinatura da conv-1 saiu
     unmount()
-    expect(m.off).toHaveBeenCalledTimes(2)
+    expect(m.listeners.size).toBe(0)
   })
 
   it('sem o canal no window.api (preload antigo, testes do App): neutro, sem quebrar', async () => {

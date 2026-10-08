@@ -6,8 +6,9 @@ import type { PoAuthorization } from '../../shared/poAuthorization'
 import { parsePoAuthorization, PO_ROUTINE_REASON, routineFor, type PoAuthorizationOp } from './poAuthorization'
 import { linkLedgerTaskToCard, type PoLedgerDeps } from './poLedger'
 import { shapePendencies } from './poPendency'
-import type { PoPhase } from './poPrompt'
+import { clamp, PO_AWAITING_AUTHORIZATION_REASON, type PoOrphanEtapa, type PoPhase } from './poPrompt'
 import { parsePoVerdict, rejectUnsafeOps, type PoOp } from './poVerdict'
+import { BOARD_USER_ACTION_MAX_CHARS } from '../board/boardUserAction'
 
 /**
  * A escrita do veredito do PO no quadro: da resposta do modelo às operações
@@ -23,6 +24,8 @@ export interface PoApplyDeps extends PoLedgerDeps {
   authorize?(convId: string, op: PoAuthorizationOp): Promise<void>
   /** A pendência de commit autorizada vira rotina na fila, com o texto fixo. */
   queueRoutine?(convId: string, routine: PoRoutineRequest): Promise<void>
+  /** As etapas do prompt sem cartão, relidas antes de criar o cartão delas (ver `confirmOrphans`). */
+  orphanEtapas?(convId: string): Promise<PoOrphanEtapa[]>
 }
 
 /** A rotina pedida pelo fechamento: o título do cartão de origem e onde ela roda. */
@@ -49,6 +52,8 @@ export interface PoApplyTarget {
   next?: PoNextPrompt | null
   /** Só no fechamento: a autorização de commit/push da conversa (a pendência vira rotina). */
   authorization?: PoAuthorization | null
+  /** Só no fechamento: as etapas do prompt sem cartão que o digest listou. */
+  orphans?: readonly PoOrphanEtapa[]
 }
 
 /** O que já foi escrito. Mutável de propósito: se uma escrita lança no meio,
@@ -56,6 +61,19 @@ export interface PoApplyTarget {
 export interface PoApplyProgress {
   applied: number
   touched: string[]
+}
+
+/**
+ * O que o usuário precisa fazer no cartão que a NOVA cria — só no que nasce "a
+ * fazer". O VOCÊ do veredito vale; sem ele, a NOVA que espera autorização recebe
+ * o padrão determinístico "Autorizar: <título>" (o título já completo pela
+ * pendência), porque é exatamente isso que ela espera e o modelo esqueceu de dizer.
+ */
+export function poCreateUserAction(op: Extract<PoOp, { kind: 'create' }>): string | null {
+  if (op.status !== 'pending') return null
+  if (op.userAction) return op.userAction
+  if (!op.reason.trim().toLowerCase().startsWith(PO_AWAITING_AUTHORIZATION_REASON)) return null
+  return clamp(`Autorizar: ${op.title}`, BOARD_USER_ACTION_MAX_CHARS)
 }
 
 /** As operações que só podem ser escritas depois de conferidas contra o quadro
@@ -104,7 +122,25 @@ export async function confirmCreates(deps: PoApplyDeps, ops: PoOp[], target: PoA
   // está "a fazer". Falha fechada: duplicar ou reabrir é pior do que registrar
   // depois, e o que ficou de fora volta na próxima auditoria.
   if (!fresh) return ops.filter((op) => !needsFreshList(op))
-  return rejectUnsafeOps(ops, fresh, target.phase)
+  return confirmOrphans(deps, rejectUnsafeOps(ops, fresh, target.phase), target.convId)
+}
+
+/**
+ * O cartão da etapa sem cartão só nasce se ela CONTINUA sem cartão pelo
+ * casamento do acompanhamento, relido agora: o agente (ou outra conversa do
+ * projeto) pode tê-lo criado durante a consulta, até com outro título — o que a
+ * barreira de título não veria. Falha fechada, como a lista fresca: sem a
+ * releitura, nenhum; a etapa volta no próximo fechamento.
+ */
+async function confirmOrphans(deps: PoApplyDeps, ops: PoOp[], convId: string): Promise<PoOp[]> {
+  const etapaOf = (op: PoOp): string | null => (op.kind === 'create' ? op.etapaId ?? null : null)
+  if (!ops.some((op) => etapaOf(op) !== null)) return ops
+  const still = (await deps.orphanEtapas?.(convId).catch(() => null)) ?? []
+  const ids = new Set(still.map((orphan) => orphan.etapaId.toLowerCase()))
+  return ops.filter((op) => {
+    const etapa = etapaOf(op)
+    return etapa === null || ids.has(etapa)
+  })
 }
 
 /**
@@ -121,7 +157,8 @@ export async function applyPoVerdict(
   progress: PoApplyProgress
 ): Promise<void> {
   const defaults = target.phase === 'close' ? defaultCompletions(text, target.returned ?? []) : []
-  const parsed = parsePoVerdict(text, cards.map((card) => card.id), target.phase)
+  const orphanIds = (target.orphans ?? []).map((orphan) => orphan.etapaId)
+  const parsed = parsePoVerdict(text, cards.map((card) => card.id), target.phase, orphanIds)
   const verdict = rejectUnsafeOps(shapePendencies(parsed, defaults, cards), cards, target.phase)
   const ops = await confirmCreates(deps, verdict, target)
   const { convId, cwd, projectId, startedAt } = target
@@ -173,8 +210,15 @@ export async function applyPoVerdict(
       // Sem mudar o status: a frase fixa do fim de turno fica na frente (é ela
       // que o selo e a retomada reconhecem) e o motivo concreto vem depois. O
       // cartão ainda "em andamento" é o que o `result` vai devolver.
+      // A ação do usuário é a DESTE PENDENTE: sem VOCÊ o cartão espera o agente,
+      // e a ação de um PENDENTE anterior não pode ficar no cartão.
       const kind = parseBoardTurnEndReason(byId.get(op.id)?.poReason)?.kind ?? 'result'
-      await deps.board.applyPo({ id: op.id, poReason: boardTurnEndReason(kind, op.reason), eventNote: op.reason })
+      await deps.board.applyPo({
+        id: op.id,
+        poReason: boardTurnEndReason(kind, op.reason),
+        userAction: op.userAction ?? null,
+        eventNote: op.reason
+      })
       progress.touched.push(op.id)
     } else {
       // Pendência de commit com autorização: não espera o usuário — vira rotina,
@@ -182,6 +226,8 @@ export async function applyPoVerdict(
       const auth = target.phase === 'close' ? target.authorization : null
       const parent = op.parentId ? byId.get(op.parentId) : undefined
       const routine = !!auth && op.status === 'pending' && !!parent && routineFor(op.title, auth)
+      // A rotina roda sozinha: não há o que o usuário fazer.
+      const userAction = routine ? null : poCreateUserAction(op)
       const created = await deps.board.createPoItem({
         projectId,
         projectCwd: cwd,
@@ -189,7 +235,8 @@ export async function applyPoVerdict(
         title: op.title,
         status: op.status,
         reason: routine ? PO_ROUTINE_REASON : op.reason,
-        ...(op.parentId ? { parentId: op.parentId } : {})
+        ...(op.parentId ? { parentId: op.parentId } : {}),
+        ...(userAction ? { userAction } : {})
       })
       if (created) progress.touched.push(created.id)
       if (created && op.status === 'in_progress') await linkLedgerTaskToCard(deps, convId, created.id, startedAt)

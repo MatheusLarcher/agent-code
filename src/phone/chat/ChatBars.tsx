@@ -5,6 +5,7 @@
  * (ChatTurns), não numa faixa aqui.
  */
 import { useEffect, useState } from 'react'
+import { taskCounts } from '@shared/stepProgress'
 import { client } from '../app/runtime'
 import { useStore } from '../core/store'
 import type { ConvSummary } from '../core/types'
@@ -48,14 +49,14 @@ export function TodoPlan({ conv }: { conv: ConvSummary }): JSX.Element | null {
   const [open, setOpen] = useState(true)
   const plan = conv.todoPlan
   if (!plan?.items?.length) return null
-  const done = plan.items.filter((t) => t.status === 'completed').length
+  const { done, total } = taskCounts(plan.items)
   const running = plan.items.find((t) => t.status === 'in_progress')
   return (
     <div className="todo-plan">
       <button type="button" className="todo-head" onClick={() => setOpen((o) => !o)}>
         <span className="todo-title">
           {plan.active ? '◔ ' : '✓ '}
-          {done}/{plan.items.length}
+          {done}/{total}
           {running && !open ? ` · ${running.activeForm || running.content}` : ' etapas'}
         </span>
         <span className="todo-caret">{open ? '▾' : '▸'}</span>

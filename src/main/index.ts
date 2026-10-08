@@ -493,6 +493,10 @@ const po = new Po({
   authorization: (convId) => poAuthorizations.authorization(convId),
   authorize: (convId, op) => poAuthorizations.authorize(convId, op),
   queueRoutine: (convId, routine) => poAuthorizations.queueRoutine(convId, routine),
+  // O fechamento cria o cartão `[id]` das etapas do prompt sem cartão no quadro
+  // (handoffTracking/handoffOrphans.ts). Referência preguiçosa: o acompanhamento
+  // é declarado abaixo, e isto só roda no fim de um turno.
+  orphanEtapas: (convId) => handoffTracker.orphanEtapas(convId),
   diagnose: (diagnostic) => send(Channels.poProviderDiagnostic, {
     ...diagnostic,
     id: randomUUID(),

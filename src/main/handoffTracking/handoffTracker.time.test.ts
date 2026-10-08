@@ -50,6 +50,23 @@ describe('HandoffTracker — tempo', () => {
     expect(envio.entregas[0]).toMatchObject({ tempoAtivoMs: 40 * SEC, tempoCorridoMs: 100 * SEC, retrabalhoMs: 0 })
   })
 
+  it('sem etapa em andamento, o tempo vai para a etapa ATUAL (a que o topo mostra), não se perde', async () => {
+    const h = await running(['a', 'b'])
+    h.advance(30 * SEC)
+    h.tasks([['[a] Fazer A', 'completed']])
+    await h.settle()
+    h.advance(20 * SEC)
+    h.emit(result)
+    await h.settle()
+    const [envio] = await h.envios()
+    expect(envio.tempoAtivoMs).toBe(50 * SEC)
+    // Os 30 s antes de o cartão de [a] aparecer são de [a]; depois de concluída, a atual é [b].
+    expect(envio.entregas.map((e) => [e.etapaId, e.status, e.tempoAtivoMs])).toEqual([
+      ['a', 'concluida', 30 * SEC],
+      ['b', 'incompleta', 20 * SEC]
+    ])
+  })
+
   it('sem turno rodando (app fechado, conversa parada) o tempo não anda', async () => {
     const h = await running(['a'])
     h.advance(20 * SEC)
@@ -303,9 +320,6 @@ describe('HandoffTracker — nunca lança, nunca derruba a conversa', () => {
   const failingBoard: HandoffBoard = {
     list: async () => {
       throw new Error('quadro fora do ar')
-    },
-    settled: async () => {
-      throw new Error('x')
     },
     turnClosed: async () => {
       throw new Error('x')

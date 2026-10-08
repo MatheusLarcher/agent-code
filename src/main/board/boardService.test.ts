@@ -6,6 +6,7 @@ import type { BoardServiceDeps } from './boardService'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { taskListKey } from './boardModel'
 import { BoardService, toSourceItems } from './boardService'
 
 // Pasta REAL: `projectId` resolve a identidade do projeto e devolve '' quando a
@@ -85,6 +86,13 @@ describe('toSourceItems', () => {
       { sourceId: '1', title: 'uma', status: 'completed', activeForm: 'Fazendo uma', seq: 0 },
       { sourceId: '2', title: 'duas', status: 'pending', activeForm: null, seq: 1 }
     ])
+  })
+
+  it('com a lista, os ids levam o prefixo dela; a lista depende da sessão e do PC', () => {
+    expect(toSourceItems([task('3', 'três', 'pending')], 'lab')[0].sourceId).toBe('lab:3')
+    expect(taskListKey('s1', 'pc-a')).toBe(taskListKey('s1', 'pc-a'))
+    expect(taskListKey('s1', 'pc-a')).not.toBe(taskListKey('s1', 'pc-b'))
+    expect(taskListKey('s1', 'pc-a')).not.toBe(taskListKey('s2', 'pc-a'))
   })
 })
 

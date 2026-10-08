@@ -4,7 +4,7 @@ import type { PoGitEvidence } from './poGit'
 import { formatPoNextPrompt, type PoNextPrompt } from './poHold'
 import type { PoAuthorization } from '../../shared/poAuthorization'
 import { formatPoAuthorizationClose, formatPoAuthorizationOpen } from './poAuthorization'
-import { buildPoPrompt, type PoCall, type PoLedgerTask, type PoPhase } from './poPrompt'
+import { buildPoPrompt, type PoCall, type PoLedgerTask, type PoOrphanEtapa, type PoPhase } from './poPrompt'
 import type { PoObserverRequest } from './poProviders'
 
 /**
@@ -49,6 +49,8 @@ export interface PoRequestInput {
   next?: PoNextPrompt | null
   /** A autorização de commit/push da conversa e se ela tem fila (poAuthorization.ts). */
   authorization?: { current: PoAuthorization | null; hasQueue: boolean } | null
+  /** Só no fechamento: as etapas do prompt sem cartão (`PoDeps.orphanEtapas`); vazia, sem seção. */
+  orphans?: readonly PoOrphanEtapa[]
   correlationId: string
 }
 
@@ -73,7 +75,8 @@ export function buildPoRequest(input: PoRequestInput): PoObserverRequest {
     background: input.background,
     returned: input.returned.map((card) => card.id),
     resumed: input.returned.filter(isResumedCard).map((card) => card.id),
-    git: input.git
+    git: input.git,
+    orphans: input.orphans
   })
   const prompt = [base, ...extraSections(input)].join('\n\n')
   return Object.freeze({

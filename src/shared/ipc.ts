@@ -121,7 +121,8 @@ export type ChatEvent =
    *  storage (see sessionTasks.ts). Authoritative: it replaces whatever the
    *  renderer built from the live TaskCreate/TaskUpdate events, which go stale
    *  whenever the app misses them (closed app, machine restart, resumed chat). */
-  | { kind: 'task-list'; items: TaskItem[] }
+  /** `list`: de qual lista de tarefas do CLI (sessão + PC) veio — o quadro separa os cartões por ela. */
+  | { kind: 'task-list'; items: TaskItem[]; list?: string }
   /** One real call to the model, for the "Tokens" panel's usage tree (see
    *  docs/superpowers/specs/2026-09-19-arvore-consumo-tokens-design.md).
    *  `node_id` is the `Task`/`Agent` tool-use id that owns this call, or the
@@ -252,6 +253,11 @@ export interface BoardItem {
    *  concluiu com algo faltando: commitar, verificar, deploy). Opcional: banco
    *  sem a coluna (PostgreSQL ainda não atualizado) e cartão comum não têm. */
   parentId?: string | null
+  /** O que o USUÁRIO precisa fazer para o cartão "a fazer" andar ("Escolher entre
+   *  A e B", "Autorizar o deploy na VPS"), escrito pelo PO no PENDENTE/NOVA. Some
+   *  quando o status do PO é substituído. Opcional como `parentId`: banco sem a
+   *  coluna e cartão que espera o agente não têm. */
+  poUserAction?: string | null
 }
 
 /**

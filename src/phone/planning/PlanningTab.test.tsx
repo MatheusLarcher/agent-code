@@ -102,8 +102,26 @@ describe('Aba Planos', () => {
     expect(screen.queryByText('Site novo')).toBeNull()
     fireEvent.click(alfa)
     expect(screen.getByText('Site novo')).toBeTruthy()
-    expect(screen.getByText('1/2 etapas')).toBeTruthy()
+    // Sem `fonte` (PC antigo): o N/M é a especificação do roteiro.
+    expect(screen.getByText('1/2 especificadas')).toBeTruthy()
     expect(screen.getByText('1 ambiguidade aberta')).toBeTruthy()
+  })
+
+  it('lista: o "N/M" diz de onde vem — "prontas" (implementação) ou "especificadas" (roteiro)', async () => {
+    routes[LIST_ALFA] = () => ({
+      ok: true,
+      plans: [
+        { ...SUMMARY, slug: 'impl', titulo: 'Em implementação', etapas: { total: 5, concluidas: 2, fonte: 'implementacao' } },
+        { ...SUMMARY, slug: 'spec', titulo: 'Em especificação', etapas: { total: 4, concluidas: 3, fonte: 'especificacao' } },
+        { ...SUMMARY, slug: 'vazio', titulo: 'Vazio', etapas: { total: 0, concluidas: 0, fonte: 'especificacao' } }
+      ]
+    })
+    render(<PlanningTab />)
+    await flush()
+    fireEvent.click(groupHeader('alfa')!)
+    expect(screen.getByText('2/5 prontas')).toBeTruthy()
+    expect(screen.getByText('3/4 especificadas')).toBeTruthy()
+    expect(screen.getByText('sem etapas')).toBeTruthy()
   })
 
   it('sem planos: o aviso de lista vazia', async () => {

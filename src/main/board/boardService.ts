@@ -156,7 +156,7 @@ export class BoardService {
   /** Alimentado pelo tee de eventos do main. Nunca lança. */
   observe(convId: string, cwd: string, event: ChatEvent): void {
     if (event.kind === 'task-list') {
-      this.enqueue(convId, cwd, event.items)
+      this.enqueue(convId, cwd, event.items, event.list ?? '')
       return
     }
     if (event.kind === 'background-tasks') {
@@ -180,16 +180,16 @@ export class BoardService {
     }
   }
 
-  private enqueue(convId: string, cwd: string, items: TaskItem[]): void {
+  private enqueue(convId: string, cwd: string, items: TaskItem[], list: string): void {
     const previous = this.writes.get(convId) ?? Promise.resolve()
     const next = previous
       .catch(() => undefined)
-      .then(() => this.sync(convId, cwd, items))
+      .then(() => this.sync(convId, cwd, items, list))
       .catch(() => undefined)
     this.writes.set(convId, next)
   }
 
-  private async sync(convId: string, cwd: string, items: TaskItem[]): Promise<void> {
+  private async sync(convId: string, cwd: string, items: TaskItem[], list: string): Promise<void> {
     const repository = this.deps.repository()
     if (!repository) return
     const projectId = await this.projectId(cwd)
@@ -198,7 +198,8 @@ export class BoardService {
       projectId,
       projectCwd: cwd,
       conversationId: convId,
-      items: toSourceItems(items)
+      items: toSourceItems(items, list),
+      list
     })
     this.deps.onChanged?.(projectId)
   }
@@ -296,7 +297,7 @@ export class BoardService {
     return work.finally(() => this.reopening.delete(work))
   }
 
-  /** Actor `system` (regra, não julgamento); mantém a justificativa do PENDENTE. */
+  /** Actor `system` (regra, não julgamento); mantém a justificativa e a ação do usuário do PENDENTE. */
   private async demoteStale(convId: string, cwd: string, kind: BoardTurnEndKind, closedAt: number): Promise<void> {
     // Relê depois de todo mundo ter escrito: o que o PO acabou de corrigir só
     // aparece aqui, e `null` é quadro indisponível — não há o que reabrir.
@@ -309,7 +310,8 @@ export class BoardService {
         // A escrita crua: `applyPo` esperaria por esta mesma reabertura.
         const justification = parseBoardTurnEndReason(card.poReason)?.justification
         const poReason = boardTurnEndReason(kind, justification)
-        await this.writePo({ id: card.id, poStatus: 'pending', poReason, actor: 'system' })
+        const keep = card.poUserAction ? { userAction: card.poUserAction } : {}
+        await this.writePo({ id: card.id, poStatus: 'pending', poReason, ...keep, actor: 'system' })
         reopened.add(card.id)
       } catch {
         // Cartão que sumiu entre a leitura e a escrita não derruba os outros.

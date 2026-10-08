@@ -114,6 +114,8 @@ describe('applyPoVerdict — o motivo é gravado', () => {
     expect(write).toEqual({
       id: 'bi-1',
       poReason: `${BOARD_TURN_END_REASON.result} — falta verificar no app rodando e commitar`,
+      // Sem VOCÊ o cartão espera o agente: a ação de um PENDENTE anterior é limpa.
+      userAction: null,
       eventNote: 'falta verificar no app rodando e commitar'
     })
     expect(write.poStatus).toBeUndefined()

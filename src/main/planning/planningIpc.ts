@@ -358,10 +358,12 @@ export function registerPlanningIpc(deps: PlanningIpcDeps): PlanningIpcHandle {
   })
 
   // A TV do Escritório: o resumo pintado (título, etapas, cards, ambiguidades), sem vigia nem tela aberta.
+  // O id das etapas numera "Etapa N de M" pela posição no plano (topo do chat, aba Implantação).
   register(Channels.planningPeek, RefReq, async ({ projectCwd, slug }): Promise<PlanningResult<{ plan: PlanningPeekDto }>> => {
     const p = await store.openPlan(projectCwd, slug)
     const abertas = p.cards.filter((c) => c.tipo === 'ambiguidade' && c.status !== 'resolvida').length
-    return { ok: true, plan: { titulo: p.roteiro.titulo, etapas: p.roteiro.etapas.map(({ titulo, status }) => ({ titulo, status })), cards: p.cards.length, ambiguidadesAbertas: abertas } }
+    const etapas = p.roteiro.etapas.map(({ id, titulo, status }) => ({ id, titulo, status }))
+    return { ok: true, plan: { titulo: p.roteiro.titulo, etapas, cards: p.cards.length, ambiguidadesAbertas: abertas } }
   })
 
   register(

@@ -36,12 +36,15 @@ export const BOARD_COLUMNS = `
 `
 
 /**
- * As colunas lidas, com o vínculo da pendência (`parent_id`). Fora de
- * `BOARD_COLUMNS` de propósito: as escritas que listam aquelas colunas ficam
- * como estavam, e o PostgreSQL compartilhado só lê esta lista quando a coluna
- * existe — uma versão mais velha do app no outro PC nunca a conhece.
+ * As colunas lidas, com as ADITIVAS: o vínculo da pendência (`parent_id`) e o que
+ * o usuário precisa fazer (`po_user_action`). Fora de `BOARD_COLUMNS` de
+ * propósito: as escritas que listam aquelas colunas ficam como estavam, e o
+ * PostgreSQL compartilhado só lê cada uma quando ela existe — uma versão mais
+ * velha do app no outro PC nunca as conhece. O SQLite tem as duas sempre.
  */
-export const BOARD_SELECT_WITH_PARENT = `${BOARD_COLUMNS.trimEnd()}, parent_id`
+export function boardSelectColumns(parent = true, userAction = true): string {
+  return `${BOARD_COLUMNS.trimEnd()}${parent ? ', parent_id' : ''}${userAction ? ', po_user_action' : ''}`
+}
 
 export interface BoardItemRow {
   id: string
@@ -63,8 +66,9 @@ export interface BoardItemRow {
   revision: number
   created_at: string
   updated_at: string
-  /** Só quando a leitura usou `BOARD_SELECT_WITH_PARENT`. */
+  /** As aditivas: só quando a leitura as incluiu (`boardSelectColumns`). */
   parent_id?: string | null
+  po_user_action?: string | null
 }
 
 export function isBoardStatus(value: unknown): value is BoardItemStatus {
@@ -106,9 +110,10 @@ export function boardItemFromRow(row: BoardItemRow): BoardItem {
     revision: Number(row.revision) || 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
-    // Só a pendência carrega o campo: o cartão comum continua com a forma de
-    // sempre (sem `parentId`), como o lido de um banco sem a coluna.
-    ...(text(row.parent_id ?? null) ? { parentId: text(row.parent_id ?? null) } : {})
+    // As aditivas só vêm com valor: o cartão comum continua com a forma de
+    // sempre (sem `parentId`/`poUserAction`), como o lido de um banco sem a coluna.
+    ...(text(row.parent_id ?? null) ? { parentId: text(row.parent_id ?? null) } : {}),
+    ...(text(row.po_user_action ?? null) ? { poUserAction: text(row.po_user_action ?? null) } : {})
   }
 }
 
@@ -276,7 +281,7 @@ export type BoardSyncCurrent = Pick<
 export interface BoardSyncPlan {
   /** Nada mudou no que o agente declarou: pular a escrita evita inflar `revision`. */
   unchanged: boolean
-  /** Soltar `po_status`/`po_reason` — ver `planBoardSourceSync`. */
+  /** Soltar `po_status`/`po_reason`/`po_user_action` — ver `planBoardSourceSync`. */
   clearPoStatus: boolean
 }
 
@@ -471,10 +476,20 @@ export function newBoardItemEvent(input: {
   }
 }
 
-/** `TaskItem` (o que a sessão publica) → a forma que o quadro grava. */
-export function toSourceItems(items: TaskItem[]): BoardSourceItem[] {
+/**
+ * A lista de tarefas de onde veio o snapshot. O CLI guarda uma lista por sessão
+ * em cada PC (e conta de CLI), numerada a partir de 1: retomar a conversa noutra
+ * sessão ou noutro PC começa uma lista nova, e sem o prefixo a tarefa #1 nova
+ * sobrescreveria o cartão #1 antigo.
+ */
+export function taskListKey(sessionId: string, host: string, root = ''): string {
+  return `l${createHash('sha1').update(`${host}\u001f${root}\u001f${sessionId}`).digest('hex').slice(0, 10)}`
+}
+
+/** `TaskItem` (o que a sessão publica) → a forma que o quadro grava; com `list`, os ids levam o prefixo dela. */
+export function toSourceItems(items: TaskItem[], list = ''): BoardSourceItem[] {
   return items.map((item, index) => ({
-    sourceId: String(item.id ?? index),
+    sourceId: `${list ? `${list}:` : ''}${String(item.id ?? index)}`,
     title: typeof item.content === 'string' ? item.content : '',
     status: item.status,
     activeForm: typeof item.activeForm === 'string' && item.activeForm.trim() ? item.activeForm : null,

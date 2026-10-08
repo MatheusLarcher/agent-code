@@ -1167,7 +1167,8 @@ describe('AgentSession — backend de fora não recebe o login guardado', () => 
 
     expect(emit).toHaveBeenCalledWith({
       kind: 'task-list',
-      items: [{ id: '1', content: 'Snapshot GPT', status: 'in_progress', activeForm: 'Snapshot GPT' }]
+      items: [{ id: '1', content: 'Snapshot GPT', status: 'in_progress', activeForm: 'Snapshot GPT' }],
+      list: expect.stringMatching(/^l[0-9a-f]{10}$/)
     })
   })
 
@@ -1896,6 +1897,17 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
       await pre(call('Bash', 'bg', { run_in_background: true }))
       await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'bg', tool_input: { run_in_background: true }, tool_response: {} })
       expect(s.restartActivity().unsafe).toBe(OPAQUE)
+    })
+
+    it('comando em segundo plano: trava até a lista de tarefas do SDK; terminado, libera', async () => {
+      const { s, pre, post } = await started()
+      await pre(call('Bash', 'bg2', { run_in_background: true }))
+      await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'bg2', tool_input: { run_in_background: true }, tool_response: {} })
+      expect(s.restartActivity().unsafe).toBe(OPAQUE)
+      handle(s, { type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 't1', task_type: 'local_bash', description: 'npm run dev' }] })
+      expect(s.restartActivity().unsafe).toBe('Tarefas em background ativas.')
+      handle(s, { type: 'system', subtype: 'background_tasks_changed', tasks: [] })
+      expect(s.restartActivity().unsafe).toBeUndefined()
     })
 
     it('cron destacado continua incerto', async () => {

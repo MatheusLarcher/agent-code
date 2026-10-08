@@ -234,7 +234,7 @@ describe('HandoffTracker — fim do turno e critério de concluída', () => {
     expect(envio.entregas[0]).toMatchObject({ status: 'concluida', motivo: null })
   })
 
-  it('turno que terminou com erro não vira concluído com o veredito tardio do PO', async () => {
+  it('turno que terminou com erro também vira concluído com o veredito tardio do PO (o Quadro é a verdade)', async () => {
     const h = await running(['a'])
     h.tasks([['[a] Fazer A', 'in_progress']])
     h.emit(result({ isError: true, text: 'error_during_execution' }))
@@ -244,10 +244,16 @@ describe('HandoffTracker — fim do turno e critério de concluída', () => {
     await h.board.applyPo({ id: (await h.cardOf('[a]')).id, poStatus: 'completed', poReason: 'está pronto', actor: 'po' })
     await h.settle()
     const [envio] = await h.envios()
-    // A entrega acompanha o cartão; o envio, não: o turno dele terminou com erro.
     expect(envio.entregas[0].status).toBe('concluida')
-    expect(envio).toMatchObject({ status: 'incompleta', concluidoEm: null })
-    expect(envio.motivo).toMatch(/^o turno terminou com erro: error_during_execution/)
+    expect(envio).toMatchObject({ status: 'concluida', concluidoEm: iso(h.now()), motivo: null })
+  })
+
+  it('turno com erro, mas com todas as etapas prontas no Quadro: concluída já no fim do turno', async () => {
+    const h = await running(['a'])
+    h.tasks([['[a] Fazer A', 'completed']])
+    h.emit(result({ isError: true, text: 'error_during_execution' }))
+    await h.settle()
+    expect((await h.envios())[0]).toMatchObject({ status: 'concluida', motivo: null })
   })
 
   it('arrastar o cartão concluído de volta no Quadro não é contestação do PO', async () => {

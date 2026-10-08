@@ -5,9 +5,11 @@ import type { HandoffTracker } from './handoffTracker'
  * startTaskReaper). Existe porque a sessão que morre calada não manda evento
  * nenhum: sem alguém olhar de fora, o envio ficaria "em execução" para sempre.
  *
- * Cada passada (60 s): na primeira, carrega as conversas com envio em curso no
- * banco (as de antes de o app abrir); depois grava a fatia de tempo ativo de
- * quem está rodando e marca `parada` o envio sem turno há o limite (10 min).
+ * Cada passada (60 s): na primeira com banco, carrega as conversas com envio em
+ * curso (as de antes de o app abrir) e agenda o reconciliador nos projetos com
+ * envio saído e não concluído (handoffReconcile.ts); depois grava a fatia de
+ * tempo ativo de quem está rodando e marca `parada` o envio sem turno há o
+ * limite (10 min).
  */
 
 /** De quanto em quanto tempo a varredura passa. */

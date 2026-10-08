@@ -60,11 +60,14 @@ export async function harness(options: { attach?: boolean; deps?: Partial<Handof
 
   // Um dia à frente do relógio real: o `updatedAt` que o banco carimba com o
   // relógio de verdade fica sempre "antigo" para o tracker, e os limites de
-  // tempo do teste (a parada) ficam exatos.
+  // tempo do teste (a parada) ficam exatos. A trava de época não sente isso:
+  // compara dois carimbos do banco (o `criadoEm` do envio e o `createdAt` do cartão).
   let clock = Date.now() + 24 * 60 * 60_000
   const changed: string[] = []
   const logs: string[] = []
   const po = { enabled: true }
+  // As conversas que receberam evento: o `settle` espera o quadro de todas.
+  const convs = new Set<string>([CONV])
   let tracker!: HandoffTracker
   const board = new BoardService({ repository: () => repo, onChanged: (projectId) => tracker.boardChanged(projectId) })
   const make = (extra: Partial<HandoffTrackerDeps> = {}): HandoffTracker =>
@@ -121,6 +124,7 @@ export async function harness(options: { attach?: boolean; deps?: Partial<Handof
       return envios
     },
     emit(event, conv = CONV) {
+      convs.add(conv)
       tracker.observe(conv, cwd, event)
       board.observe(conv, cwd, event)
     },
@@ -143,8 +147,10 @@ export async function harness(options: { attach?: boolean; deps?: Partial<Handof
     },
     async settle() {
       for (let i = 0; i < 4; i++) {
-        await board.settled(CONV)
-        await board.turnClosed(CONV)
+        for (const conv of convs) {
+          await board.settled(conv)
+          await board.turnClosed(conv)
+        }
         await tracker.settled()
       }
     },

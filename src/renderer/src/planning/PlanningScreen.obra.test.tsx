@@ -71,25 +71,36 @@ describe('PlanningScreen — a obra do plano', () => {
     const placa = screen.getByRole('region', { name: 'Placa da obra' })
     expect(within(placa).getByText('Etapa 2 de 3')).toBeTruthy()
     expect(within(placa).getByText(/Mão na massa: Desenhar a solução/)).toBeTruthy()
-    expect(within(placa).getByText('1 pronta · 1 na massa · 1 na fila')).toBeTruthy()
-    expect(within(placa).getAllByRole('listitem').map((li) => li.className)).toEqual(['pl-brick b-pronto', 'pl-brick b-massa', 'pl-brick b-fila'])
+    // "requisitos" está especificada no roteiro, mas nunca foi enviada: na planta, não pronta.
+    expect(within(placa).getByText('1 na massa · 1 na fila · 1 na planta')).toBeTruthy()
+    expect(within(placa).getAllByRole('listitem').map((li) => li.className)).toEqual(['pl-brick b-planta', 'pl-brick b-massa', 'pl-brick b-fila'])
+    // Com envios, o cabeçalho e o roteiro contam a implementação (planProgress), não a especificação.
+    expect(screen.getByText('0 de 3 prontas')).toBeTruthy()
+    expect(screen.getByTestId('pl-progress-count').textContent).toBe('0/3')
+    expect(screen.getByTestId('pl-progress-count').getAttribute('title')).toBe('Implementação: 0 de 3 prontas')
     expect(within(placa).getByText('Implementação: Plano de teste')).toBeTruthy()
     fireEvent.click(within(placa).getByRole('button', { name: 'Ver a obra' }))
     expect(open).toHaveBeenCalledWith('impl')
-    // A implementação acabou: o aviso handoff:changed relê e a obra vira habite-se.
+    // O envio acabou: o aviso handoff:changed relê. Só as duas enviadas ficaram prontas —
+    // "requisitos" segue na planta: fase entregue, não habite-se.
+    const desenho = entrega({ etapaId: 'desenho', etapaTitulo: 'Desenhar a solução', status: 'concluida', ordem: 1 })
+    const final = entrega({ id: 'hn-entrega', etapaId: 'entrega', etapaTitulo: 'Entregar', status: 'concluida', ordem: 2 })
+    await act(async () => {
+      d.set([ours({ status: 'concluida', entregas: [desenho, final] })])
+    })
+    expect(await screen.findByText('Fase entregue')).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Placa da obra' }).dataset.stage).toBe('fase')
+    expect(screen.getByText('2 de 3 prontas')).toBeTruthy()
+    // Mandada e pronta também a que faltava: habite-se.
     await act(async () => {
       d.set([
-        ours({
-          status: 'concluida',
-          entregas: [
-            entrega({ etapaId: 'desenho', etapaTitulo: 'Desenhar a solução', status: 'concluida', ordem: 1 }),
-            entrega({ id: 'hn-entrega', etapaId: 'entrega', etapaTitulo: 'Entregar', status: 'concluida', ordem: 2 })
-          ]
-        })
+        ours({ status: 'concluida', entregas: [desenho, final] }),
+        ours({ id: 'he-2', loteId: 'hl-2', criadoEm: '2026-10-05T13:00:00.000Z', enviadoEm: '2026-10-05T13:00:00.000Z', status: 'concluida', entregas: [entrega({ id: 'hn-req', etapaId: 'requisitos', etapaTitulo: 'Levantar requisitos', status: 'concluida' })] })
       ])
     })
     expect(await screen.findByText('Habite-se')).toBeTruthy()
     expect(screen.getByRole('region', { name: 'Placa da obra' }).dataset.stage).toBe('habitese')
+    expect(screen.getByText('3 de 3 prontas')).toBeTruthy()
   })
 
   it('sem leitura do banco não inventa estágio: nem selo nem placa', async () => {

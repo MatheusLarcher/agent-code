@@ -1,16 +1,17 @@
 import { useState, type ReactNode } from 'react'
-import {
-  currentEntrega,
-  tempoAtivoMinutos,
-  type HandoffEntrega,
-  type HandoffEnvio
-} from '@shared/handoffTracking'
+import { tempoAtivoMinutos, type HandoffEntrega, type HandoffEnvio } from '@shared/handoffTracking'
 import { formatMinutos } from '@shared/planningEstimate'
+import { ENTREGA_STATUS_LABEL, planProgress, stepLabel, type PlanProgress } from '@shared/stepProgress'
 import { useUI } from '../ui/UiProvider'
-import { ENTREGA_STATUS_LABEL, ENVIO_STATUS_LABEL, isLate, progress, projectName } from './deliveryModel'
+import { ENVIO_STATUS_LABEL, isLate, projectName } from './deliveryModel'
 import type { DeliveriesState } from './useDeliveries'
 
-/** Uma linha da tela Entregas: o envio e, expandido, as entregas (etapas) dele. */
+/**
+ * Uma linha da tela Entregas: o envio e, expandido, as entregas (etapas) dele.
+ * As contas são as da regra única (shared/stepProgress): prontas/total das
+ * etapas DESTE prompt (planProgress do envio) e "Etapa N de M" da etapa de
+ * agora dele pela posição no PLANO (stepLabel com o progresso do plano).
+ */
 
 type Correct = DeliveriesState['correct']
 
@@ -91,6 +92,8 @@ function EntregaRow({ entrega, correct }: { entrega: HandoffEntrega; correct: Co
 
 export interface DeliveryEnvioRowProps {
   envio: HandoffEnvio
+  /** O progresso do plano do envio (planProgress com os envios do plano e o roteiro): numera "Etapa N de M". */
+  plan: PlanProgress
   expanded: boolean
   onToggle: () => void
   onOpenConversation: (conversationId: string) => void
@@ -99,9 +102,8 @@ export interface DeliveryEnvioRowProps {
   actions?: ReactNode
 }
 
-export function DeliveryEnvioRow({ envio, expanded, onToggle, onOpenConversation, correct, actions }: DeliveryEnvioRowProps): JSX.Element {
-  const { done, total } = progress(envio)
-  const atual = currentEntrega(envio)
+export function DeliveryEnvioRow({ envio, plan, expanded, onToggle, onOpenConversation, correct, actions }: DeliveryEnvioRowProps): JSX.Element {
+  const { prontas, total } = planProgress([envio])
   const plano = envio.planTitulo || envio.planSlug
   const entregas = [...envio.entregas].sort((a, b) => a.ordem - b.ordem)
   return (
@@ -125,8 +127,8 @@ export function DeliveryEnvioRow({ envio, expanded, onToggle, onOpenConversation
             <span className="dlv-plan" title={envio.planSlug}>
               {plano}
             </span>
-            <span className="dlv-progress" title="Entregas concluídas / total">
-              {done}/{total}
+            <span className="dlv-progress" title="Etapas deste prompt prontas / total">
+              {prontas}/{total}
             </span>
           </div>
           <div className="dlv-envio-meta">
@@ -143,9 +145,7 @@ export function DeliveryEnvioRow({ envio, expanded, onToggle, onOpenConversation
               {envio.conversationTitle || 'Conversa'}
             </button>
             <span className="dlv-sep">·</span>
-            <span className="dlv-current">
-              {atual ? `Etapa ${atual.ordem}/${total}: ${atual.etapaTitulo}` : total > 0 ? 'Etapas concluídas' : 'Sem etapas'}
-            </span>
+            <span className="dlv-current">{stepLabel(plan, envio)}</span>
             <span className="dlv-sep">·</span>
             <span className="dlv-times" title="Prazo do envio (soma das estimativas do plano) × tempo ativo medido pelo app">
               estimado {minutes(envio.prazoTotal)} × real {realTime(envio.tempoAtivoMs)}

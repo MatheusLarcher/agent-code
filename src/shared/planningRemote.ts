@@ -30,11 +30,16 @@ export interface PlanningChangedEvent {
   slug: string
 }
 
+/** De onde vem o "N/M" das etapas: a implementação (prontas, dos envios) ou a
+ *  especificação (especificadas, do roteiro do planejamento). */
+export type RemotePlanEtapasFonte = 'implementacao' | 'especificacao'
+
 /** Um plano na lista de um projeto. */
 export interface RemotePlanSummary {
   slug: string
   titulo: string
-  etapas: { total: number; concluidas: number }
+  /** `fonte` ausente = PC antigo, que só contava a especificação. */
+  etapas: { total: number; concluidas: number; fonte?: RemotePlanEtapasFonte }
   cards: number
   ambiguidadesAbertas: number
   /** O plano não abriu (arquivo quebrado): o resto vem zerado e `titulo` = slug. */

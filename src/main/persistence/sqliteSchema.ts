@@ -590,6 +590,17 @@ export const SQLITE_BOARD_PARENT_SCHEMA = `
   ALTER TABLE board_items ADD COLUMN parent_id TEXT;
 `
 
+/**
+ * Migration 19 — o que o USUÁRIO precisa fazer no cartão "a fazer" que espera por
+ * ele (`board_items.po_user_action`, escrito pelo PO no PENDENTE/NOVA). Mesmo
+ * molde da 16: coluna que aceita nulo, `ADD COLUMN` que o guarda de `write()` não
+ * repete, e no PostgreSQL a coluna NÃO é migração numerada — ver
+ * `ensurePostgresBoardUserAction`.
+ */
+export const SQLITE_BOARD_USER_ACTION_SCHEMA = `
+  ALTER TABLE board_items ADD COLUMN po_user_action TEXT;
+`
+
 export interface SqliteMigration {
   version: number
   name: string
@@ -653,7 +664,8 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   // Tabela nova com `IF NOT EXISTS` (sqliteBoardPrints.ts): o mesmo SQL no guarda.
   migration(17, 'sqlite-v2-board-prints', SQLITE_BOARD_PRINTS_SCHEMA),
   // Tabela nova com `IF NOT EXISTS` (sqliteTurnTime.ts): o mesmo SQL no guarda.
-  migration(18, 'sqlite-v2-turn-time', SQLITE_TURN_TIME_SCHEMA)
+  migration(18, 'sqlite-v2-turn-time', SQLITE_TURN_TIME_SCHEMA),
+  migration(19, 'sqlite-v2-board-user-action', SQLITE_BOARD_USER_ACTION_SCHEMA, '')
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */
