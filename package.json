@@ -1,6 +1,6 @@
 {
   "name": "agent-code-desktop",
-  "version": "0.1.93",
+  "version": "0.1.96",
   "description": "Desktop UI for Claude Code with an embedded agent-driven browser (Claude Desktop style)",
   "type": "module",
   "main": "./out/main/index.js",
@@ -10,7 +10,7 @@
     "build": "electron-vite build && node scripts/build-storage-migration.mjs && npm run windows-control:build",
     "windows-control:build": "node scripts/build-windows-control.mjs",
     "postgres:stage": "node scripts/stage-postgres.mjs",
-    "windows-control:test":"dotnet run --project src/main/windowsControl/native/AgentCode.WindowsControl.csproj -c Release -- --self-test",
+    "windows-control:test": "dotnet run --project src/main/windowsControl/native/AgentCode.WindowsControl.csproj -c Release -- --self-test",
     "start": "electron-vite preview",
     "icon": "node scripts/make-icon.mjs",
     "engine:sync": "node scripts/sync-engine.mjs",
