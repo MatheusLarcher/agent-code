@@ -13,6 +13,11 @@ export interface DevHookDeps {
   cloudTool?: (input: unknown) => Promise<unknown>
   /** Guarda um segredo no cofre da instância isolada (para o {{secret:nome}}). */
   putSecret?: (name: string, value: string) => Promise<unknown>
+  /** Um evento do agente pelo MESMO caminho da sessão real (tela + celular): o replay
+   *  do roteiro de carga entra no lugar do SDK, sem chamar o modelo. */
+  agentEvent?: (convId: string, event: unknown) => void
+  /** Sobe a ponte do celular só no loopback, sem relay nem config (o celular simulado do roteiro). */
+  startPhoneBridge?: () => Promise<unknown>
 }
 
 export function installDevHooks(deps: DevHookDeps = {}): boolean {
@@ -31,7 +36,9 @@ export function installDevHooks(deps: DevHookDeps = {}): boolean {
       return true
     },
     cloudTool: (input: unknown) => (deps.cloudTool ? deps.cloudTool(input) : Promise.reject(new Error('sem ferramenta'))),
-    putSecret: (name: string, value: string) => (deps.putSecret ? deps.putSecret(name, value) : Promise.reject(new Error('sem cofre')))
+    putSecret: (name: string, value: string) => (deps.putSecret ? deps.putSecret(name, value) : Promise.reject(new Error('sem cofre'))),
+    agentEvent: (convId: string, event: unknown) => deps.agentEvent?.(convId, event),
+    startPhoneBridge: () => (deps.startPhoneBridge ? deps.startPhoneBridge() : Promise.reject(new Error('sem ponte')))
   }
   ;(globalThis as Record<string, unknown>)['__agentCodeDev'] = hooks
   console.warn('[dev] ganchos de validação ligados (instância isolada, AGENT_CODE_DEV_HOOKS=1)')

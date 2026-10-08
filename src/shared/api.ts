@@ -110,6 +110,7 @@ import type {
   DatabaseRestoreRequestDto,
   StorageTransitionResultDto
 } from './databaseBackup'
+import type { RemoteSearchResult } from './remoteSearch'
 
 /** Um prompt do handoff a registrar: o arquivo de _handoff/ e o texto EXATO enviado. */
 export interface HandoffRegisterPrompt {
@@ -673,6 +674,9 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   remoteStatus(): Promise<RemoteInfo>
   /** Publish the latest conversation snapshot for the bridge to serve to phones. */
   publishRemoteState(state: RemoteStatePayload): Promise<void>
+  /** O celular buscou nas perguntas do usuário: a tela responde só os resultados. */
+  onRemoteSearchRequested(cb: (request: { requestId: string; q: string }) => void): () => void
+  remoteSearchReply(requestId: string, results: RemoteSearchResult[]): Promise<void>
   /** Build the Android remote APK (smartfone-remote). Progress via onRemoteBuildProgress. */
   buildRemoteApk(): Promise<{ ok: boolean; apkPath?: string; message: string }>
   /** A command arrived from a phone — dispatch it into its conversation. */

@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { rehypeBlurWords, type BlurWordsState } from '../chatAnim'
+import { rehypeBlurBlock, type BlurBlockState } from '../chatAnim'
+import { splitMarkdownBlocks } from './markdownBlocks'
 import type { PlanningCardType } from '@shared/ipc'
 import { refHrefTipo, refsToMarkdownLinks, splitRefs, type RefCard } from '../planning/cardRefs'
 import { CARD_TYPE_LABEL, typeColorVar } from '../planning/cardTypes'
@@ -50,12 +51,40 @@ const mdQuotableWithRefs = { ...mdComponentsWithRefs, ...quoteBlockComponents }
 const REMARK_PLUGINS = [remarkGfm]
 const NO_PLUGINS: never[] = []
 
+type MdComponents = typeof mdComponents | typeof mdComponentsWithRefs | typeof mdQuotable | typeof mdQuotableWithRefs
+
+/** Um bloco da resposta: em memo, só é reprocessado quando o texto dele (ou o ponto
+ *  onde a numeração do borrado começa) muda — no streaming, só o último. */
+const MarkdownBlock = memo(function MarkdownBlock({
+  source,
+  components,
+  blur,
+  shared,
+  index,
+  offset
+}: {
+  source: string
+  components: MdComponents
+  blur: boolean
+  shared: BlurBlockState
+  index: number
+  offset: number
+}): JSX.Element {
+  const rehypePlugins = useMemo(() => (blur ? [rehypeBlurBlock(shared, index, offset)] : NO_PLUGINS), [blur, shared, index, offset])
+  return (
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={rehypePlugins} components={components}>
+      {source}
+    </ReactMarkdown>
+  )
+})
+
 /** Render text as GitHub-flavored Markdown (headings, lists, code, tables, …).
  *  Safe: react-markdown builds React nodes, no raw HTML. Shared by the chat
  *  (assistant answers) and the file preview (.md "Janela de Arquivo").
  *  `resolveRef` (só o chat do Agent Manager): [[Nome]] de um card vira a pílula
  *  com a cor do tipo; sem ele, o texto sai exatamente como sempre.
- *  Em memo: no chat, só reprocessa quando o texto (ou o resolvedor) muda. */
+ *  Em memo e POR BLOCO (markdownBlocks.ts): no streaming, o texto que muda é só o
+ *  do último bloco — os anteriores não são processados de novo a cada pedaço. */
 export const Markdown = memo(function Markdown({
   text,
   resolveRef,
@@ -67,22 +96,29 @@ export const Markdown = memo(function Markdown({
   blur?: boolean
 }): JSX.Element {
   const source = useMemo(() => (resolveRef ? refsToMarkdownLinks(text, resolveRef) : text), [text, resolveRef])
+  const blocks = useMemo(() => splitMarkdownBlocks(source), [source])
   const quotable = useQuotableBlocks()
   const components = quotable
     ? resolveRef ? mdQuotableWithRefs : mdQuotable
     : resolveRef ? mdComponentsWithRefs : mdComponents
-  // BlurText: o plugin numera as palavras; depois de pintar, as que já estão na tela viram a base
-  // (o pedaço novo do streaming entra em cascata a partir dali, o resto não recomeça).
-  const words = useRef<BlurWordsState>({ base: 0, total: 0 })
-  const rehypePlugins = useMemo(() => (blur ? [rehypeBlurWords(words.current)] : NO_PLUGINS), [blur])
+  // BlurText: cada bloco numera as palavras continuando de onde os anteriores pararam;
+  // depois de pintar, as que já estão na tela viram a base (o pedaço novo do streaming
+  // entra em cascata a partir dali, o resto não recomeça).
+  const words = useRef<BlurBlockState>({ base: 0, counts: [] })
   useEffect(() => {
-    words.current.base = words.current.total
+    words.current.counts.length = blocks.length
+    words.current.base = words.current.counts.reduce((sum, count) => sum + (count ?? 0), 0)
   })
+  let offset = 0
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={rehypePlugins} components={components}>
-        {source}
-      </ReactMarkdown>
+      {blocks.map((block, index) => {
+        const start = offset
+        offset += words.current.counts[index] ?? 0
+        return (
+          <MarkdownBlock key={index} source={block} components={components} blur={blur} shared={words.current} index={index} offset={start} />
+        )
+      })}
     </div>
   )
 })

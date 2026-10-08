@@ -9,6 +9,7 @@ import { ChatRow, lastAnswerTsId, type ChatRowContext, type TtsControls } from '
 import { ChatStepRow } from './ChatStep'
 import { ChatLive } from './ChatLive'
 import { AnimGateProvider, useAnimGate } from '../chatAnim'
+import { LazyMarkdownProvider, useLazyAnswers } from './lazyMarkdown'
 import { buildChatRows, rowIndexOfUser } from './chatSteps'
 import { loadMoreText, useScrollWindow, WINDOW_PAGE } from './useScrollWindow'
 
@@ -71,6 +72,8 @@ export function MessageList({
   const rows = useMemo(() => buildChatRows(messages, { busy }), [messages, busy])
   // Só o que chega ao vivo anima (chatAnim); o histórico ao abrir a conversa entra pronto.
   const animGate = useAnimGate(messages)
+  // Abrir a conversa não processa o Markdown de tudo de uma vez (lazyMarkdown.tsx).
+  const lazyAnswers = useLazyAnswers(messages)
   // Only the last rows are rendered; near the top, one more page with the same
   // row kept in place (useScrollWindow). While reading history, rows arriving at
   // the end don't move the window start.
@@ -187,9 +190,11 @@ export function MessageList({
     <div className="message-list" ref={scrollRef} onScroll={onScroll}>
       {hasOlder && <div className="load-more-hint">{loadMoreText(startIdx)}</div>}
       <AnimGateProvider gate={animGate}>
-        {shown.map((r) =>
-          r.type === 'step' ? <ChatStepRow key={r.key} step={r} ctx={rowCtx} /> : <ChatRow key={r.key} m={r.msg} ctx={rowCtx} />
-        )}
+        <LazyMarkdownProvider value={lazyAnswers}>
+          {shown.map((r) =>
+            r.type === 'step' ? <ChatStepRow key={r.key} step={r} ctx={rowCtx} /> : <ChatRow key={r.key} m={r.msg} ctx={rowCtx} />
+          )}
+        </LazyMarkdownProvider>
       </AnimGateProvider>
       {busy && <ChatLive messages={messages} />}
       <div ref={endRef} />

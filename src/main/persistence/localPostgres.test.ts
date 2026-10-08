@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BootstrapStore, LOCAL_POSTGRES_PORT, type SecureStorageAdapter } from './bootstrapStore'
-import { LocalPostgres, localPostgresPaths, type CommandResult, type LocalPostgresDeps, type LocalPostgresPaths } from './localPostgres'
+import { EMPTY_CLUSTER_DIRS, LocalPostgres, localPostgresPaths, restoreEmptyClusterDirs, type CommandResult, type LocalPostgresDeps, type LocalPostgresPaths } from './localPostgres'
 
 const dirs: string[] = []
 afterEach(async () => {
@@ -130,6 +130,21 @@ describe('LocalPostgres', () => {
     const start = fake.calls.find((call) => call.args[0] === 'start')!
     expect(start.args).toEqual(expect.arrayContaining(['-D', paths.dataDir, '-l', paths.logFile, '-w']))
     expect(start.args[start.args.indexOf('-o') + 1]).toBe(`-p ${LOCAL_POSTGRES_PORT} -c listen_addresses=127.0.0.1`)
+  })
+
+  it('pastas vazias do cluster apagadas por um limpador de fora: recriadas antes de subir (as de dados não)', async () => {
+    const { bootstrap, fake, server, paths, deps } = await setup()
+    await server.ensure(bootstrap)
+    await server.stop()
+    await rm(join(paths.dataDir, 'pg_notify'), { recursive: true, force: true })
+    await rm(join(paths.dataDir, 'pg_wal', 'archive_status'), { recursive: true, force: true })
+    const draft = await new LocalPostgres(() => paths, deps).ensure(bootstrap)
+    expect(fake.running).toBe(draft.port)
+    for (const dir of EMPTY_CLUSTER_DIRS) expect(existsSync(join(paths.dataDir, ...dir.split('/')))).toBe(true)
+    expect(existsSync(join(paths.dataDir, 'pg_xact'))).toBe(false)
+    expect(await readFile(paths.logFile, 'utf8')).toContain('pg_notify, ')
+    // Nada faltando: nada a recriar.
+    expect(await restoreEmptyClusterDirs(paths.dataDir)).toEqual([])
   })
 
   it('servidor que sobrou de uma queda do app é reusado na porta em que está, sem initdb nem start', async () => {

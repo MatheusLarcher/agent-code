@@ -10,9 +10,10 @@
  *   selo dos chamados: quantos agentes chamam o usuário para ver um HTML
  *   (useOfficeCalls: também avisa o main — notificação do Windows e celular).
  * - `useMainTab`: a aba escolhida, lembrada entre sessões.
- * - `OfficeTabHost`: o Escritório 3D em tela cheia. O chunk do three só carrega
- *   na 1ª vez que a aba abre; depois o escritório fica montado, PAUSADO com a
- *   aba Conversa, e volta na hora com a mesma câmera.
+ * - `OfficeTabHost`: o Escritório 3D em tela cheia. O chunk do three carrega num
+ *   momento ocioso depois de a janela abrir (ou na 1ª abertura da aba, se vier
+ *   antes); depois o escritório fica montado, PAUSADO com a aba Conversa, e
+ *   volta na hora com a mesma câmera.
  * - `OfficeErrorBoundary`: uma falha no 3D não derruba o app — vira um aviso
  *   com "Voltar para a Conversa", e a aba gravada passa a ser a Conversa (a
  *   próxima abertura do app não volta para um escritório quebrado).
@@ -124,11 +125,44 @@ export interface OfficeTabHostProps extends Omit<Office3DWorkspaceProps, 'active
   active: boolean
 }
 
-/** O escritório na área principal: nada até a 1ª abertura; depois, montado (e pausado com a aba fechada). */
+/** Depois que a janela abre, espera isto e um momento ocioso para montar o escritório pausado. */
+export const OFFICE_PRELOAD_AFTER_MS = 4_000
+/** ...e este tempo sem tecla, clique nem rolagem: montar a cena ocupa a tela ~0,3 s, que não cai no meio da digitação. */
+export const OFFICE_PRELOAD_QUIET_MS = 3_000
+const INPUT_EVENTS = ['keydown', 'pointerdown', 'wheel'] as const
+
+/** O escritório na área principal: montado PAUSADO no 1º momento ocioso depois de abrir a
+ *  janela (ou na 1ª abertura da aba, se vier antes) e não desmonta mais — o 1º clique na
+ *  aba não paga o chunk do three, o contexto WebGL nem a compilação dos shaders. */
 export function OfficeTabHost({ active, ...rest }: OfficeTabHostProps): JSX.Element | null {
   const [opened, setOpened] = useState(active)
   // Estado derivado da prop (padrão do React): a 1ª abertura monta e não desmonta mais.
   if (active && !opened) setOpened(true)
+  // Pré-carga no ocioso. Falhou? O OfficeErrorBoundary só mostra o aviso com a aba aberta.
+  useEffect(() => {
+    if (opened) return
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+      cancelIdleCallback?: (id: number) => void
+    }
+    let lastInput = Date.now()
+    const onInput = (): void => void (lastInput = Date.now())
+    for (const type of INPUT_EVENTS) window.addEventListener(type, onInput, { capture: true, passive: true })
+    let idleId: number | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const quiet = (): boolean => Date.now() - lastInput >= OFFICE_PRELOAD_QUIET_MS
+    const attempt = (): void => {
+      if (!quiet()) timer = setTimeout(attempt, lastInput + OFFICE_PRELOAD_QUIET_MS - Date.now())
+      else if (!w.requestIdleCallback) setOpened(true)
+      else idleId = w.requestIdleCallback(() => (quiet() ? setOpened(true) : attempt()), { timeout: 15_000 })
+    }
+    timer = setTimeout(attempt, OFFICE_PRELOAD_AFTER_MS)
+    return () => {
+      clearTimeout(timer)
+      if (idleId !== undefined) w.cancelIdleCallback?.(idleId)
+      for (const type of INPUT_EVENTS) window.removeEventListener(type, onInput, { capture: true })
+    }
+  }, [opened])
   // Contexto do detector de travadas: o Escritório está montado.
   useEffect(() => {
     if (!opened) return

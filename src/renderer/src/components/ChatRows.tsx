@@ -22,7 +22,8 @@ import type { UIMessage } from '../types'
 import { useUI } from '../ui/UiProvider'
 import { AccountSwitchNote } from './AccountSwitchNote'
 import { IconSpeaker, IconStopSmall } from './Icons'
-import { CardRefText, Markdown, type CardRefResolver } from './Markdown'
+import { CardRefText, type CardRefResolver } from './Markdown'
+import { LazyMarkdown } from './lazyMarkdown'
 import { QuotableMessage, type QuoteListApi } from './quoteComment/quoteBlocks'
 import { ToolCard } from './ToolCard'
 import './chatLook.css'
@@ -201,7 +202,7 @@ function AssistantRow({ m, ctx }: { m: AssistantMsg; ctx: ChatRowContext }): JSX
       <div className="bubble">
         {clean && (
           <QuotableMessage api={quote} messageId={m.id} read={m.answer ? tts : null} source={clean}>
-            <Markdown text={clean} resolveRef={resolveRef} blur={blur} />
+            <LazyMarkdown messageId={m.id} text={clean} resolveRef={resolveRef} blur={blur} />
           </QuotableMessage>
         )}
         {paths.map((p, k) => (

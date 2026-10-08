@@ -2095,6 +2095,9 @@ export const Channels = {
   storageCloudSwitch: 'storage:cloud-switch',
   /** Fim de uma troca/restauração que rodou em segundo plano (a da ferramenta do agente). */
   storageTransitionResult: 'storage:transition-result',
+  /** Busca do celular nas perguntas do usuário: o main pede, a tela responde só os resultados. */
+  remoteSearchRequested: 'remote:search-requested',
+  remoteSearchReply: 'remote:search-reply',
   /** Persist and apply the independent Windows-control permission immediately. */
   windowsControlSetEnabled: 'windows-control:set-enabled',
   /** Grava e aplica na hora a permissão do controle do Chrome. */
@@ -2518,7 +2521,7 @@ export interface RemoteConversation {
   updatedAt: number
   messages: unknown[]
   /** Messages waiting in the desktop outbox while this conversation is busy. */
-  queued?: { text: string }[]
+  queued?: { id?: string; text: string }[]
   questions?: Array<{ id: string; text: string; ts?: number; position: number; queued?: boolean }>
   recovery?: {
     reason: 'limit' | 'transient'
@@ -2552,9 +2555,24 @@ export interface RemoteConversation {
   planningSlug?: string
 }
 
-/** Snapshot the renderer publishes to main so the bridge can serve history. */
+/**
+ * O estado LEVE de uma conversa que a tela publica para a ponte do celular: sem
+ * mensagens nem perguntas — o main as tira do instantâneo da fila de gravação (ou
+ * do banco) só quando o celular pede (remoteConversations.ts).
+ */
+export type RemoteConversationLight = Omit<RemoteConversation, 'messages' | 'questions'> & {
+  messageCount?: number
+  /** Só clientes antigos/testes: com as mensagens, elas valem como fonte. */
+  messages?: unknown[]
+}
+
+/** What the renderer publishes to main for the phone bridge. Without `delta`, it
+ *  replaces the whole list; with `delta`, `conversations` are only the ones that
+ *  changed and `removed` the ones that left. */
 export interface RemoteStatePayload {
-  conversations: RemoteConversation[]
+  conversations: RemoteConversationLight[]
+  delta?: boolean
+  removed?: string[]
   /** Global "Permitir tudo" (skip permissions) state, mirrored to the phone. */
   skipPerms?: boolean
   /** Models available in the PC's picker (Claude + enabled Ollama), for the phone's selector. */

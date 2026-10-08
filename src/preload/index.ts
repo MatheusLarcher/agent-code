@@ -9,6 +9,7 @@ import type {
   DatabaseRestoreRequestDto,
   StorageTransitionResultDto
 } from '../shared/databaseBackup'
+import type { RemoteSearchResult } from '../shared/remoteSearch'
 import type {
   AgentCodeApi,
   HandoffChangedMsg,
@@ -527,6 +528,10 @@ const api: AgentCodeApi = {
   remoteStatus: (): Promise<RemoteInfo> => ipcRenderer.invoke(Channels.remoteStatus),
   publishRemoteState: (state: RemoteStatePayload): Promise<void> =>
     ipcRenderer.invoke(Channels.remotePublishState, state),
+  onRemoteSearchRequested: (cb: (request: { requestId: string; q: string }) => void): (() => void) =>
+    on(Channels.remoteSearchRequested, cb),
+  remoteSearchReply: (requestId: string, results: RemoteSearchResult[]): Promise<void> =>
+    ipcRenderer.invoke(Channels.remoteSearchReply, requestId, results),
   buildRemoteApk: (): Promise<{ ok: boolean; apkPath?: string; message: string }> =>
     ipcRenderer.invoke(Channels.remoteBuildApk),
   onRemoteInbound: (cb: (m: RemoteInboundMsg) => void): (() => void) =>

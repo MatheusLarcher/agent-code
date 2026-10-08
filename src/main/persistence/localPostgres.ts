@@ -55,6 +55,30 @@ const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 // cada partida (-p), para seguir o que está gravado no bootstrap.
 const CONF_BLOCK = "\n# Agent Code: atende so esta maquina; a porta vem do app (pg_ctl -o -p).\nlisten_addresses = '127.0.0.1'\n"
 
+/**
+ * Pastas do cluster que ficam VAZIAS no uso normal (sem tablespace, slot, transação
+ * preparada, arquivamento…). Um limpador de "pastas vazias" de fora as apaga, e sem elas
+ * o Postgres não sobe ("could not open directory pg_notify"). Se sumiram, estavam vazias:
+ * recriá-las vazias devolve o estado de antes. As que guardam dados (pg_xact,
+ * pg_multixact) ficam de fora — faltando, o erro do Postgres aparece como é.
+ */
+export const EMPTY_CLUSTER_DIRS = [
+  'pg_commit_ts', 'pg_dynshmem', 'pg_logical/mappings', 'pg_logical/snapshots', 'pg_notify', 'pg_replslot', 'pg_serial',
+  'pg_snapshots', 'pg_stat', 'pg_stat_tmp', 'pg_subtrans', 'pg_tblspc', 'pg_twophase', 'pg_wal/archive_status', 'pg_wal/summaries'
+] as const
+
+/** Recria as EMPTY_CLUSTER_DIRS que faltam; devolve as recriadas. */
+export async function restoreEmptyClusterDirs(dataDir: string): Promise<string[]> {
+  const restored: string[] = []
+  for (const dir of EMPTY_CLUSTER_DIRS) {
+    const path = join(dataDir, ...dir.split('/'))
+    if (await stat(path).then(() => true, () => false)) continue
+    await mkdir(path, { recursive: true })
+    restored.push(dir)
+  }
+  return restored
+}
+
 /** Acha os binários: resources/postgres no app instalado, out/postgres em desenvolvimento. */
 export function localPostgresPaths(resourceRoots: string[], localRoot: string): LocalPostgresPaths {
   const binDir = resourceRoots
@@ -229,6 +253,10 @@ export class LocalPostgres {
 
   private async startServer(paths: LocalPostgresPaths, port: number): Promise<void> {
     await rotateLog(paths.logFile)
+    const restored = await restoreEmptyClusterDirs(paths.dataDir)
+    if (restored.length) {
+      await appendFile(paths.logFile, `Agent Code: pastas vazias do cluster que faltavam, recriadas antes de subir: ${restored.join(', ')}\n`, 'utf8').catch(() => undefined)
+    }
     const result = await this.deps
       .start(
         join(paths.binDir, 'pg_ctl.exe'),

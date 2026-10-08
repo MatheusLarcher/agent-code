@@ -1349,6 +1349,12 @@ button svg {
 .md {
   white-space: normal;
 }
+/* Resposta antiga ainda não processada (lazyMarkdown.tsx): o mesmo texto, com as
+   quebras de linha, até chegar perto da tela ou o app ficar ocioso. */
+.md.md-plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .md > :first-child {
   margin-top: 0;
 }

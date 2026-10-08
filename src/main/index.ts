@@ -97,6 +97,7 @@ import { DatabaseBackups } from './persistence/backup/databaseBackups'
 import { sideOf } from './persistence/backup/switchSupport'
 import { registerDatabaseBackupIpc } from './databaseBackupIpc'
 import { createStorageSwitchWiring } from './storageSwitchWiring'
+import type { RemoteSearchResult } from '../shared/remoteSearch'
 import { devDataDir } from './devDataDir'
 import { installDevHooks } from './devHooks'
 import { createConversationWriteQueue, registerConversationQueueIpc } from './persistence/writeQueue/conversationQueueSetup'
@@ -728,6 +729,27 @@ function requestStorageFlush(): Promise<void> {
   })
 }
 
+/** A busca do celular nas perguntas do usuário: a tela tem as conversas carregadas
+ *  e devolve só os resultados (nunca as mensagens). Sem resposta em 3 s, a ponte
+ *  busca com o que tem no main. */
+const pendingRemoteSearches = new Map<string, (results: RemoteSearchResult[]) => void>()
+function requestRendererSearch(q: string): Promise<RemoteSearchResult[]> {
+  if (!mainWindow || mainWindow.isDestroyed()) return Promise.reject(new Error('sem janela'))
+  const requestId = randomUUID()
+  return new Promise<RemoteSearchResult[]>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingRemoteSearches.delete(requestId)
+      reject(new Error('a tela não respondeu a busca'))
+    }, 3_000)
+    timer.unref?.()
+    pendingRemoteSearches.set(requestId, (results) => {
+      clearTimeout(timer)
+      resolve(results)
+    })
+    send(Channels.remoteSearchRequested, { requestId, q })
+  })
+}
+
 const storageTransitionHooks = {
   // A tela entrega o que tem e a fila grava TUDO antes da cópia entre bancos:
   // uma mudança que ficasse para trás iria para o banco errado.
@@ -1172,6 +1194,21 @@ const remote = new RemoteServer({
   officeAgentFile: (name) => readOfficeAgentFile(name, { packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
   // `projectColors` no /api/state: só as cores já resolvidas; o resto é detectado em segundo plano.
   projectColors: (cwds) => projectColors.peek(cwds),
+  // As mensagens para o celular saem daqui, não da tela: o instantâneo da fila de
+  // gravação (o mais novo) e, para a conversa que não passou por ela, o banco.
+  messageSource: {
+    snapshot: (convId) => {
+      const messages = conversationQueue.snapshot(convId)?.messages
+      return Array.isArray(messages) ? messages : null
+    },
+    load: async (convId) => {
+      if (!storageLifecycle.canMutate()) throw new Error('banco indisponível')
+      return ((await storageLifecycle.repository().loadConversations({ ids: [convId] }))[0]?.payload.messages as unknown[] | undefined) ?? null
+    }
+  },
+  search: (q) => requestRendererSearch(q),
+  // Instância isolada com os ganchos de teste: só o loopback (sem aviso do firewall).
+  host: () => (devDataDir() && process.env['AGENT_CODE_DEV_HOOKS'] === '1' ? '127.0.0.1' : '0.0.0.0'),
   apkPath: () => join(REMOTE_ROOT, 'dist', 'agent-remote.apk'),
   wwwDir: () => join(REMOTE_ROOT, 'www'),
   onClientsChanged: (info) => send(Channels.remoteClients, info),
@@ -2741,6 +2778,12 @@ export function registerIpc(): void {
   ipcMain.handle(Channels.remotePublishState, (_e, state: RemoteStatePayload) => {
     remote.setState(state)
   })
+  ipcMain.handle(Channels.remoteSearchReply, (_e, requestId: unknown, results: unknown) => {
+    const done = pendingRemoteSearches.get(String(requestId))
+    if (!done) return
+    pendingRemoteSearches.delete(String(requestId))
+    done(Array.isArray(results) ? (results.slice(0, 200) as RemoteSearchResult[]) : [])
+  })
   ipcMain.handle(Channels.remoteBuildApk, async () => {
     const r = await buildRemoteApk(REMOTE_ROOT, (line) =>
       send(Channels.remoteBuildProgress, { line })
@@ -2915,7 +2958,15 @@ app.whenReady().then(async () => {
   // ferramenta da nuvem sem conversa chamando (a guarda vale para todas).
   installDevHooks({
     cloudTool: (input) => storageSwitch.cloudToolWithoutCaller(input),
-    putSecret: async (name, value) => secretSink()?.put(name, value)
+    putSecret: async (name, value) => secretSink()?.put(name, value),
+    // A ponte do celular só local: sem o relay para o broker (que é do app instalado) e sem gravar a config.
+    startPhoneBridge: () => remote.start(),
+    // Como o `emit` da sessão: a tela recebe tudo; o celular, menos os deltas de entrada e o turn-start.
+    agentEvent: (convId, event) => {
+      const chat = event as ChatEvent
+      send(Channels.agentEvent, { convId, event: chat })
+      if (chat.kind !== 'tool-input-delta' && chat.kind !== 'turn-start') remote.broadcast(convId, chat)
+    }
   })
   // O vigia do git começa a checar (a cada 15 s, só pastas com pendência aberta).
   poCommitWatch.start()
@@ -3085,7 +3136,10 @@ app.whenReady().then(async () => {
   databaseBackups.startDaily()
   // Runs outside every chat session. The cheap transcript mtime gate happens
   // before any agent is started, and the persisted timestamp keeps it daily.
-  if (storageAvailable) stopMemoryCurator = await startMemoryCuratorScheduler()
+  // Na instância isolada de teste (AGENT_CODE_DEV_DATA_DIR) fica desligado: banco
+  // novo = curadoria na hora, sobre as transcrições REAIS de ~/.claude/projects e
+  // com a conta Claude logada na máquina.
+  if (storageAvailable && !devDataDir()) stopMemoryCurator = await startMemoryCuratorScheduler()
   // Devolve à fila a tarefa cujo executor morreu. É a primeira regra do time
   // que roda fora do modelo: quem some no meio do trabalho pode ser justamente
   // o supervisor, então não dá para depender de alguém perceber e agir.

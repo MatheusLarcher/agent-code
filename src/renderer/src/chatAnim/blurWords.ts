@@ -25,15 +25,23 @@ export interface BlurWordsState {
   total: number
 }
 
+/** Um bloco da mensagem (Markdown memoizado por bloco): a numeração continua de onde
+ *  os blocos anteriores pararam (`offset`), e quantas palavras ESTE bloco teve vai para
+ *  `counts[index]` — assim o texto já pintado nos outros blocos não pisca de novo. */
+export interface BlurBlockState {
+  base: number
+  counts: number[]
+}
+
 /** Mais que isto e o resto entra sem animação (respostas longas não viram milhares de camadas). */
 export const MAX_WORDS = 400
 /** O maior atraso, em passos de 45 ms. */
 const MAX_STEP = 40
 const SKIP = new Set(['pre', 'code', 'kbd', 'svg', 'math'])
 
-export function rehypeBlurWords(state: BlurWordsState): () => (tree: HNode) => void {
+export function rehypeBlurWords(state: BlurWordsState, offset = 0): () => (tree: HNode) => void {
   return () => (tree: HNode) => {
-    let i = 0
+    let i = offset
     const walk = (node: HNode): void => {
       if (!node.children) return
       const out: HNode[] = []
@@ -62,5 +70,16 @@ export function rehypeBlurWords(state: BlurWordsState): () => (tree: HNode) => v
     }
     walk(tree)
     state.total = i
+  }
+}
+
+/** O plugin de um bloco: numera a partir de `offset` e guarda as palavras dele em `counts[index]`. */
+export function rehypeBlurBlock(shared: BlurBlockState, index: number, offset: number): () => (tree: HNode) => void {
+  const local: BlurWordsState = { base: 0, total: 0 }
+  const inner = rehypeBlurWords(local, offset)
+  return () => (tree: HNode) => {
+    local.base = shared.base
+    inner()(tree)
+    shared.counts[index] = local.total - offset
   }
 }

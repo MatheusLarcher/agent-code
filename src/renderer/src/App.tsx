@@ -119,6 +119,8 @@ import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
 const BOARD_BADGE_POLL_MS = 60_000
 /** Fechar/recarregar espera o estado da UI (SQLite local) no máximo isto. */
 const CLOSE_UI_SAVE_MS = 1_000
+/** No máximo uma publicação por segundo para a ponte do celular. */
+const REMOTE_PUBLISH_MIN_MS = 1_000
 import { settleWithin } from './deadline'
 import { IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
@@ -192,6 +194,8 @@ import { useBoardCardOpener } from './components/boardOpenCard'
 import type { PoAuthorizationMap } from '@shared/poAuthorization'
 import { CentralPanel } from './central/CentralPanel'
 import { buildRemoteCentral } from './central/centralRemote'
+import { RemoteLightDiff } from './remote/remoteLightDiff'
+import { searchUserPrompts } from '@shared/remoteSearch'
 import { DeliveryCenterProvider } from './deliveries/deliveryCenterContext'
 import { useDeliveryCenter } from './deliveries/useDeliveryCenter'
 
@@ -704,6 +708,8 @@ export function App(): JSX.Element {
   // (gates publishing conversation snapshots to main for phones to read).
   const [remoteOpen, setRemoteOpen] = useState(false)
   const [remoteRunning, setRemoteRunning] = useState(false)
+  /** Celulares com a ponte aberta agora (SSE): sem nenhum, nada é publicado. */
+  const [remoteClients, setRemoteClients] = useState(0)
   // App settings modal (OpenAI / Ollama API keys, etc.).
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Confirmation before stopping a session whose agent is mid-task (so an
@@ -2111,36 +2117,73 @@ export function App(): JSX.Element {
 
   // ---- remote bridge: track running state + publish snapshots for phones ----
   useEffect(() => {
-    void window.api.remoteStatus().then((i) => setRemoteRunning(i.running))
+    const apply = (i: { running: boolean; clients: number }): void => {
+      setRemoteRunning(i.running)
+      setRemoteClients(i.running ? i.clients : 0)
+    }
+    void window.api.remoteStatus().then(apply)
     // onRemoteClients also fires on start/stop, so it doubles as a running signal.
-    const off = window.api.onRemoteClients((i) => setRemoteRunning(i.running))
+    const off = window.api.onRemoteClients(apply)
     return off
   }, [])
+  // Busca do celular nas perguntas do usuário: só os resultados vão para o main.
+  useEffect(
+    () =>
+      window.api.onRemoteSearchRequested?.(({ requestId, q }) => {
+        void window.api.remoteSearchReply(requestId, searchUserPrompts(convsRef.current, q)).catch(() => undefined)
+      }),
+    []
+  )
 
+  // A ponte do celular recebe só o estado LEVE das conversas (sem mensagens: o main
+  // as tira da fila de gravação), só das que mudaram, só com celular conectado e no
+  // máximo uma vez por segundo — publicar tudo a cada mudança era a maior travada.
+  const phoneLinked = remoteRunning && remoteClients > 0
   const pubTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const pubLastAt = useRef(0)
+  const pubAllRef = useRef(true)
+  const remoteDiff = useRef(new RemoteLightDiff<Conversation>())
+  const remoteInputsRef = useRef({ permissions, stalledSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null })
+  remoteInputsRef.current = { permissions, stalledSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null }
   useEffect(() => {
-    if (!hydrated || !remoteRunning) return
-    clearTimeout(pubTimer.current)
+    if (!hydrated || !phoneLinked) {
+      // O próximo celular (ou a ponte religada) recebe a lista inteira.
+      pubAllRef.current = true
+      return
+    }
+    if (pubTimer.current !== undefined) return
     pubTimer.current = setTimeout(() => {
+      pubTimer.current = undefined
+      pubLastAt.current = Date.now()
       const publishStartedAt = freezeClock()
+      const inputs = remoteInputsRef.current
+      const all = pubAllRef.current
+      pubAllRef.current = false
+      const queuedBy = new Map<string, QueuedMessage[]>()
+      for (const item of queueRef.current) queuedBy.set(item.convId, [...(queuedBy.get(item.convId) ?? []), item])
+      const { changed, removed } = remoteDiff.current.diff(
+        convsRef.current.map((c) => ({
+          conv: c,
+          busy: busyRef.current.has(c.id),
+          connected: connectedRef.current.has(c.id),
+          queued: (queuedBy.get(c.id) ?? []).map((m) => `${m.id}:${m.text.length}`).join('|'),
+          permission: inputs.permissions[c.id],
+          stalled: inputs.stalledSince[c.id],
+          central: isCentralConversation(c) ? centralRef.current : null
+        })),
+        all
+      )
       void window.api.publishRemoteState({
-        conversations: convsRef.current.map((c) => ({
+        ...(all ? {} : { delta: true, removed }),
+        conversations: changed.map(({ conv: c, busy, connected, permission, stalled }) => ({
           id: c.id,
           title: c.title,
           cwd: c.cwd,
-          busy: busyRef.current.has(c.id),
-          connected: connectedRef.current.has(c.id),
+          busy,
+          connected,
           updatedAt: c.updatedAt,
-          messages: c.messages,
-          queued: queueRef.current.filter((m) => m.convId === c.id).map((m) => ({ text: m.text })),
-          questions: [
-            ...c.messages.flatMap((m, position) =>
-              m.kind === 'user' ? [{ id: m.id, text: m.text, ts: m.ts, position }] : []
-            ),
-            ...queueRef.current
-              .filter((m) => m.convId === c.id)
-              .map((m, index) => ({ id: m.id, text: m.text, position: c.messages.length + index, queued: true }))
-          ],
+          messageCount: c.messages.length,
+          queued: (queuedBy.get(c.id) ?? []).map((m) => ({ id: m.id, text: m.text })),
           recovery: c.recovery
             ? {
                 reason: c.recovery.reason,
@@ -2155,15 +2198,15 @@ export function App(): JSX.Element {
           fastMode: c.fastMode === true,
           fastModeAvailable: modelSupportsFastMode(c.model),
           todoPlan: c.todoPlan,
-          stalledSince: stalledSince[c.id],
+          stalledSince: stalled,
           tokens: { context: c.tokens.context, output: c.tokens.output, cost: c.tokens.cost, contextLimit: contextLimitFor(runningModel(c)) },
-          permission: permissions[c.id],
+          permission: permission as PermissionRequest | undefined,
           // Aba Planos do celular: liga a conversa do Agent Manager ao plano (projeto = cwd).
           ...(isPlanningConversation(c) ? { mode: 'planning' as const, planningSlug: c.planningSlug } : {}),
           // Só na Central: o retrato compacto do celular (central/centralRemote.ts);
           // `self` marca os pedidos do outro PC (o celular não oferece escolha neles).
           ...(isCentralConversation(c) && centralRef.current
-            ? { central: buildRemoteCentral({ ...centralRef.current, self: storageStatus?.installationId ?? null }) }
+            ? { central: buildRemoteCentral({ ...centralRef.current, self: inputs.installationId }) }
             : {})
         })),
         skipPerms: skipPermsRef.current,
@@ -2172,18 +2215,18 @@ export function App(): JSX.Element {
         // alguma conversa já o tem gravado — senão o seletor do celular ficaria
         // em branco nela. O cliente rotula `auto` pelo `effortLabels`.
         models: withAutoModelOption(
-          models,
-          typesafeReady || convsRef.current.some((c) => isAutoModel(c.model)),
+          inputs.models,
+          inputs.typesafeReady || convsRef.current.some((c) => isAutoModel(c.model)),
           undefined
         ),
-        ...remoteEffortCatalog(typesafeReady || convsRef.current.some((c) => isAutoEffort(c.effort))),
+        ...remoteEffortCatalog(inputs.typesafeReady || convsRef.current.some((c) => isAutoEffort(c.effort))),
         usage: usageLimitsRef.current,
         projects: Array.from(new Set(convsRef.current.map((c) => c.cwd).filter(Boolean)))
       })
       freezeSection('celular', publishStartedAt)
-    }, 400)
-    return () => clearTimeout(pubTimer.current)
-  }, [conversations, queue, busyIds, connectedIds, remoteRunning, hydrated, skipPerms, models, permissions, stalledSince, usageLimits, storageStatus?.installationId])
+    }, Math.max(0, pubLastAt.current + REMOTE_PUBLISH_MIN_MS - Date.now()))
+  }, [conversations, queue, busyIds, connectedIds, phoneLinked, hydrated, skipPerms, models, permissions, stalledSince, usageLimits, storageStatus?.installationId])
+  useEffect(() => () => clearTimeout(pubTimer.current), [])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
   // page viewport follows (BrowserPanel reports its new size to main).

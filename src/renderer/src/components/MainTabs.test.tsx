@@ -7,7 +7,7 @@ import { conv, feed, track } from '../office/adapter/testFeed'
 import { officeStore } from '../office/officeStore'
 import type { EngineOptions, RendererLike } from '../office3d/engine'
 import { LEVEL_COLORS, type PowerLevel } from '../office3d/power'
-import { MainTabs, OfficeErrorBoundary, OfficeTabHost, officeTabTitle, useMainTab } from './MainTabs'
+import { MainTabs, OFFICE_PRELOAD_AFTER_MS, OFFICE_PRELOAD_QUIET_MS, OfficeErrorBoundary, OfficeTabHost, officeTabTitle, useMainTab } from './MainTabs'
 import { loadMainTab, officeTabStatus, type MainTab } from './mainTabState'
 
 beforeEach(() => {
@@ -194,6 +194,38 @@ describe('OfficeTabHost: o escritório só carrega na 1ª abertura e depois fica
     expect(screen.getByTestId('office3d-workspace')).toBe(ws)
     view.unmount()
     expect(renderers[0].disposed).toBe(true)
+  })
+
+  it('pré-carga: monta escondido e pausado depois de OFFICE_PRELOAD_AFTER_MS e de OFFICE_PRELOAD_QUIET_MS sem tecla nem clique', async () => {
+    const idle = vi.fn((cb: () => void) => (cb(), 1))
+    Object.defineProperty(window, 'requestIdleCallback', { value: idle, configurable: true, writable: true })
+    const renderers: Array<ReturnType<typeof fakeRenderer>> = []
+    const engineOptions: EngineOptions = {
+      raf: () => 1,
+      caf: () => {},
+      source: { getSnapshot: () => null, subscribe: () => () => {} },
+      createRenderer: () => (renderers.push(fakeRenderer()), renderers[renderers.length - 1])
+    }
+    // Só o relógio e os timers: o requestIdleCallback continua o espião acima.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      const view = render(<OfficeTabHost active={false} chat={null} conversation={null} onOpenConversation={vi.fn()} onOpenFile={vi.fn()} engineOptions={engineOptions} />)
+      act(() => void vi.advanceTimersByTime(OFFICE_PRELOAD_AFTER_MS - 1_000))
+      fireEvent.keyDown(window, { key: 'a' })
+      // Tecla há 1 s quando o prazo vence: espera o silêncio completo.
+      act(() => void vi.advanceTimersByTime(1_000))
+      expect(idle).not.toHaveBeenCalled()
+      act(() => void vi.advanceTimersByTime(OFFICE_PRELOAD_QUIET_MS - 1_000))
+      expect(idle).toHaveBeenCalledTimes(1)
+      vi.useRealTimers()
+      const ws = await screen.findByTestId('office3d-workspace', undefined, { timeout: 15_000 })
+      expect(ws.hidden).toBe(true)
+      expect(renderers).toHaveLength(1)
+      view.unmount()
+    } finally {
+      vi.useRealTimers()
+      Reflect.deleteProperty(window, 'requestIdleCallback')
+    }
   })
 })
 

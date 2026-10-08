@@ -8,13 +8,14 @@ import { extname, join, normalize, sep } from 'node:path'
 import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from '../downloadAllowlist'
 import { OfficeCallsBridge } from './officeCallsBridge'
 import { servePlanningRoute } from './planningBridge'
+import { RemoteConversationStore, type RemoteMessageSource } from './remoteConversations'
+import type { RemoteSearchResult } from '../../shared/remoteSearch'
 import { CENTRAL_ID, parseCentralChoose, parseReplyTo, type RemoteCentralChoose } from '../../shared/central'
 import type {
   ChatEvent,
   FileAttachment,
   ImageAttachment,
   PermissionResponse,
-  RemoteConversation,
   RemoteConversationAction,
   RemoteInfo,
   RemotePairedDevice,
@@ -76,6 +77,14 @@ export interface RemoteServerDeps {
   officeAgentFile?: (name: string) => Promise<Uint8Array | null>
   /** Cor fixa dos projetos já resolvida (síncrono; o que falta é detectado em segundo plano). */
   projectColors?: (cwds: string[]) => ProjectColorMap
+  /** De onde vêm as mensagens (histórico, perguntas, downloads): o instantâneo da fila
+   *  de gravação e o banco — a tela não manda mais mensagens (remoteConversations.ts). */
+  messageSource?: RemoteMessageSource
+  /** Busca nas perguntas do usuário, feita pela tela (tem tudo carregado) só quando pedida. */
+  search?: (q: string) => Promise<RemoteSearchResult[]>
+  /** Onde escutar (padrão: todas as interfaces, para o celular na rede). A instância de
+   *  teste usa só o loopback: nada de aviso do firewall. */
+  host?: () => string
 }
 
 const DEFAULT_PORT = 8765
@@ -151,7 +160,8 @@ export class RemoteServer {
   private port = DEFAULT_PORT
   private token = ''
   private ip = ''
-  private state: RemoteStatePayload = { conversations: [] }
+  /** O estado leve das conversas que a tela publica; as mensagens vêm da fila/banco. */
+  private readonly store: RemoteConversationStore
   private clients = new Set<ServerResponse>()
   /** Os chamados do escritório (officeCallsBridge.ts): o aviso a cada celular e a lista dos abertos a quem conecta. */
   readonly officeCalls = new OfficeCallsBridge((line) => {
@@ -174,7 +184,9 @@ export class RemoteServer {
    *  cleared): once a file is offered, it stays downloadable. */
   private liveDownloadable = new Set<string>()
 
-  constructor(private readonly deps: RemoteServerDeps) {}
+  constructor(private readonly deps: RemoteServerDeps) {
+    this.store = new RemoteConversationStore(deps.messageSource)
+  }
 
   info(): RemoteInfo {
     const running = this.server !== null
@@ -237,7 +249,7 @@ export class RemoteServer {
         res.end(`internal error: ${String(err)}`)
       })
     })
-    await listenWithFallback(server, DEFAULT_PORT, 20).then((p) => (this.port = p))
+    await listenWithFallback(server, DEFAULT_PORT, 20, this.deps.host?.() ?? '0.0.0.0').then((p) => (this.port = p))
     this.server = server
     // Comment pings keep proxies/Android from dropping idle SSE connections.
     this.keepAlive = setInterval(() => {
@@ -273,9 +285,14 @@ export class RemoteServer {
     for (const p of downloadablesFromEvent(event)) this.liveDownloadable.add(canonicalPath(p))
   }
 
-  /** Replace the served conversation snapshot (renderer is the source of truth). */
+  /** O estado que a tela publica: a lista inteira ou só o que mudou (`delta`). */
   setState(state: RemoteStatePayload): void {
-    this.state = state
+    this.store.apply(state)
+  }
+
+  /** Há celular ligado agora (SSE aberto): sem ele, a tela nem publica. */
+  hasClients(): boolean {
+    return this.clients.size > 0
   }
 
   // ---- internals ----
@@ -360,7 +377,10 @@ export class RemoteServer {
       if (path === '/api/tts-parts' && req.method === 'POST') return this.serveTtsParts(req, res)
       if (path === '/api/file') return this.serveFile(url, res)
       if (path === '/api/office-agent') return this.serveOfficeAgent(url, res)
-      if (path.startsWith('/api/planning/')) return servePlanningRoute(path, req, url, res, { state: this.state, onConversationAction: this.deps.onConversationAction })
+      if (path.startsWith('/api/planning/')) {
+        const state: RemoteStatePayload = { conversations: this.store.list(), projects: this.store.global('projects') }
+        return servePlanningRoute(path, req, url, res, { state, onConversationAction: this.deps.onConversationAction })
+      }
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'rota desconhecida' }))
       return
@@ -469,17 +489,21 @@ export class RemoteServer {
    */
   private downloadablePaths(): Set<string> {
     const out = new Set<string>(this.liveDownloadable)
-    for (const conv of this.state.conversations) {
-      for (const p of downloadablesFromMessages(conv.messages)) out.add(canonicalPath(p))
-    }
+    for (const p of this.store.downloadables()) out.add(canonicalPath(p))
     return out
+  }
+
+  /** As mensagens que o celular vai ver também passam a poder ser baixadas — mesmo
+   *  que a conversa saia da memória depois (a lista do banco é pequena). */
+  private allowDownloadsIn(messages: readonly unknown[]): void {
+    for (const p of downloadablesFromMessages(messages as unknown[])) this.liveDownloadable.add(canonicalPath(p))
   }
 
   /** Cor fixa de cada projeto das conversas e da lista de projetos (só as já resolvidas). */
   private projectColors(): ProjectColorMap {
     if (!this.deps.projectColors) return {}
-    const cwds = new Set<string>(this.state.projects ?? [])
-    for (const c of this.state.conversations) if (c.cwd) cwds.add(c.cwd)
+    const cwds = new Set<string>(this.store.global('projects') ?? [])
+    for (const c of this.store.list()) if (c.cwd) cwds.add(c.cwd)
     try {
       return this.deps.projectColors([...cwds])
     } catch {
@@ -488,7 +512,8 @@ export class RemoteServer {
   }
 
   private serveState(res: ServerResponse): void {
-    const conversations = this.state.conversations.map((c) => summarize(c))
+    // O resumo de cada conversa (sem as mensagens); as perguntas vêm das que estão à mão.
+    const conversations = this.store.summaries()
     // `voiceReady` tells the phone whether to show the mic/listen buttons. Voice
     // runs on the PC with local engines — no key — so it's on whenever wired.
     const voiceReady = Boolean(this.deps.transcribe && this.deps.tts)
@@ -497,12 +522,12 @@ export class RemoteServer {
       JSON.stringify({
         conversations,
         voiceReady,
-        skipPerms: this.state.skipPerms ?? false,
-        models: this.state.models ?? [],
-        modelEffort: this.state.modelEffort ?? {},
-        effortLabels: this.state.effortLabels ?? {},
-        usage: this.state.usage ?? {},
-        projects: this.state.projects ?? [],
+        skipPerms: this.store.global('skipPerms') ?? false,
+        models: this.store.global('models') ?? [],
+        modelEffort: this.store.global('modelEffort') ?? {},
+        effortLabels: this.store.global('effortLabels') ?? {},
+        usage: this.store.global('usage') ?? {},
+        projects: this.store.global('projects') ?? [],
         projectColors: this.projectColors(),
         pairedDevice: this.pairedDevice ?? null,
         relayState: this.relayState,
@@ -569,10 +594,7 @@ export class RemoteServer {
     if (!convId || !mode) return sendJson(res, 400, { ok: false, error: 'convId e mode (fast) são obrigatórios' })
     this.deps.onSetMode?.(convId, mode, on)
     // Optimistic echo (same idea as set-model); the renderer's publish confirms.
-    this.state = {
-      ...this.state,
-      conversations: this.state.conversations.map((c) => (c.id === convId ? { ...c, fastMode: on } : c))
-    }
+    this.store.patch(convId, { fastMode: on })
     sendJson(res, 200, { ok: true })
   }
 
@@ -590,7 +612,7 @@ export class RemoteServer {
       const cwd = String(j.cwd ?? '').trim()
       if (!cwd) return sendJson(res, 400, { ok: false, error: 'cwd obrigatório' })
       // Only folders the desktop already knows: the phone can't pick arbitrary paths.
-      const known = new Set<string>([...(this.state.projects ?? []), ...this.state.conversations.map((c) => c.cwd)])
+      const known = new Set<string>([...(this.store.global('projects') ?? []), ...this.store.list().map((c) => c.cwd)])
       if (!known.has(cwd)) return sendJson(res, 400, { ok: false, error: 'projeto desconhecido' })
       action = { type: 'create', cwd, convId: `c-${randomBytes(6).toString('hex')}` }
     } else if (j.type === 'rename') {
@@ -626,12 +648,7 @@ export class RemoteServer {
     this.deps.onSetModel?.(convId, model, effort)
     // Optimistic echo on the snapshot so the phone's next /api/state already
     // reflects the change (the renderer's own publish will confirm it).
-    this.state = {
-      ...this.state,
-      conversations: this.state.conversations.map((c) =>
-        c.id === convId ? { ...c, ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : c
-      )
-    }
+    this.store.patch(convId, { ...(model ? { model } : {}), ...(effort ? { effort } : {}) })
     sendJson(res, 200, { ok: true })
   }
 
@@ -710,7 +727,7 @@ export class RemoteServer {
     }
     this.deps.onSetSkipPerms?.(on)
     // Reflect it immediately so the phone's UI doesn't wait for the next publish.
-    this.state = { ...this.state, skipPerms: on }
+    this.store.setGlobal('skipPerms', on)
     sendJson(res, 200, { ok: true, skipPerms: on })
   }
 
@@ -766,54 +783,39 @@ export class RemoteServer {
    *  mobile connection; the phone doesn't need older history to keep chatting. */
   private static readonly HISTORY_LIMIT = 30
 
-  private serveHistory(url: URL, res: ServerResponse): void {
+  private async serveHistory(url: URL, res: ServerResponse): Promise<void> {
     const id = url.searchParams.get('conv') ?? ''
-    const conv = this.state.conversations.find((c) => c.id === id)
-    const messages = (conv?.messages ?? []).slice(-RemoteServer.HISTORY_LIMIT)
+    const all = await this.store.messages(id)
+    // O banco não respondeu: na hora, sem segurar o celular (ele tenta de novo).
+    if (!all) return sendJson(res, 503, { messages: [], error: 'banco indisponível' })
+    const messages = all.slice(-RemoteServer.HISTORY_LIMIT)
+    this.allowDownloadsIn(messages)
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify({ messages }))
   }
 
   /** Small history slice centered on a selected question from the lightweight index. */
-  private serveHistoryWindow(url: URL, res: ServerResponse): void {
+  private async serveHistoryWindow(url: URL, res: ServerResponse): Promise<void> {
     const convId = url.searchParams.get('conv') ?? ''
     const messageId = url.searchParams.get('message') ?? ''
-    const conv = this.state.conversations.find((c) => c.id === convId)
-    const messages = conv?.messages ?? []
+    const messages = await this.store.messages(convId)
+    if (!messages) return sendJson(res, 503, { messages: [], error: 'banco indisponível' })
     const center = messages.findIndex((m) => !!m && typeof m === 'object' && (m as { id?: string }).id === messageId)
     if (center < 0) return sendJson(res, 404, { messages: [], error: 'mensagem não encontrada' })
     const start = Math.max(0, center - 12)
-    return sendJson(res, 200, { messages: messages.slice(start, center + 18), targetId: messageId })
+    const window = messages.slice(start, center + 18)
+    this.allowDownloadsIn(window)
+    return sendJson(res, 200, { messages: window, targetId: messageId })
   }
 
-  /** Full-text search over the USER's own prompts across every conversation.
-   *  Reuses the in-memory snapshot the renderer publishes (which carries the full
-   *  message list), so no extra DB query is needed. Returns the matching convs with
-   *  a short snippet around the hit, most-recent first. */
-  private serveSearch(url: URL, res: ServerResponse): void {
+  /** Full-text search over the USER's own prompts across every conversation: the
+   *  renderer has them all loaded and answers just the results; without it, the
+   *  titles plus the conversations whose messages are at hand here. Most-recent first. */
+  private async serveSearch(url: URL, res: ServerResponse): Promise<void> {
     const q = (url.searchParams.get('q') ?? '').trim()
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-    if (!q) {
-      res.end(JSON.stringify({ results: [] }))
-      return
-    }
-    const fq = fold(q)
-    const results: Array<{ id: string; title: string; cwd: string; snippet: string; messageId: string | null; updatedAt: number }> = []
-    for (const c of this.state.conversations) {
-      let snippet: string | null = null
-      let messageId: string | null = null
-      for (const m of c.messages as Array<{ kind?: string; text?: string; id?: string }>) {
-        if (m && m.kind === 'user' && typeof m.text === 'string' && fold(m.text).includes(fq)) {
-          snippet = makeSnippet(m.text, q)
-          messageId = typeof m.id === 'string' ? m.id : null
-          break
-        }
-      }
-      if (snippet == null && fold(c.title).includes(fq)) snippet = makeSnippet(c.title, q)
-      if (snippet != null) results.push({ id: c.id, title: c.title, cwd: c.cwd, snippet, messageId, updatedAt: c.updatedAt })
-    }
-    results.sort((a, b) => b.updatedAt - a.updatedAt)
-    res.end(JSON.stringify({ results }))
+    if (!q) return sendJson(res, 200, { results: [] })
+    const results = this.deps.search ? await this.deps.search(q).catch(() => this.store.search(q)) : this.store.search(q)
+    sendJson(res, 200, { results })
   }
 
   private serveEvents(req: IncomingMessage, res: ServerResponse): void {
@@ -836,7 +838,7 @@ export class RemoteServer {
 
   /** A entrada `id` da Central publicada pode ser respondida (tem destino e é deste PC). */
   private isReplyable(id: string): boolean {
-    const central = this.state.conversations.find((c) => c.id === CENTRAL_ID)?.central
+    const central = this.store.get(CENTRAL_ID)?.central
     const entries = Array.isArray(central?.entries) ? central.entries : []
     return entries.some(
       (e) =>
@@ -883,38 +885,6 @@ export class RemoteServer {
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: true }))
   }
-}
-
-/** Conversation summary for /api/state (drops the heavy message list). The Central's
- *  `central` snapshot stays: it is compact (last entries, no image data) and the
- *  phone refreshes it through this same poll. */
-function summarize(c: RemoteConversation): Omit<RemoteConversation, 'messages'> & { messageCount: number } {
-  const { messages, ...rest } = c
-  return { ...rest, queued: c.queued ?? [], messageCount: messages.length }
-}
-
-/** Lowercase + strip accents, so "selênio" matches "selenio" (accent-insensitive).
- *  Drops Unicode combining marks (U+0300–U+036F) by code point — no literal regex. */
-function fold(s: string): string {
-  const n = s.toLowerCase().normalize('NFD')
-  let out = ''
-  for (let i = 0; i < n.length; i++) {
-    const code = n.charCodeAt(i)
-    if (code >= 0x300 && code <= 0x36f) continue
-    out += n[i]
-  }
-  return out
-}
-
-/** A short, single-line excerpt of `text` centered on the (case-insensitive) hit. */
-function makeSnippet(text: string, q: string): string {
-  const i = text.toLowerCase().indexOf(q.toLowerCase())
-  const at = i >= 0 ? i : 0
-  const start = Math.max(0, at - 28)
-  let s = text.slice(start, at + q.length + 52).replace(/\s+/g, ' ').trim()
-  if (start > 0) s = '… ' + s
-  if (at + q.length + 52 < text.length) s = s + ' …'
-  return s
 }
 
 /** Write a JSON response with the given status. */
@@ -996,7 +966,7 @@ function sanitizeImages(input: unknown): ImageAttachment[] {
 }
 
 /** Try `start`, then start+1, … up to `attempts` times. */
-function listenWithFallback(server: Server, start: number, attempts: number): Promise<number> {
+function listenWithFallback(server: Server, start: number, attempts: number, host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     let port = start
     let tries = 0
@@ -1008,7 +978,7 @@ function listenWithFallback(server: Server, start: number, attempts: number): Pr
           setImmediate(tryListen)
         } else reject(err)
       })
-      server.listen(port, '0.0.0.0', () => resolve(port))
+      server.listen(port, host, () => resolve(port))
     }
     tryListen()
   })

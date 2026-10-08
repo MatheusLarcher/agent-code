@@ -26,6 +26,7 @@ import { appBrowserApi } from './browserFrames'
 import { agentPose, CameraRig, framePose, type CameraPose } from './cameraRig'
 import { CameraSync } from './cameraSync'
 import { EngineFilter } from './engineFilter'
+import { GpuWarmup } from './engineGpuWarmup'
 import { EnginePower } from './enginePower'
 import { focusKeyFor, focusPoseFor, wireTv } from './engineTv'
 import { createDefaultRenderer, listener, observeResize, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
@@ -87,6 +88,8 @@ export class Office3DEngine {
   private disposed = false
   /** Aba fechada: nada roda; o feed que chegar fica em `pending` e o resize em `sizeStale`. */
   private paused = false
+  /** Shaders (e, com a aba fechada, a GPU) prontos antes do quadro: nenhum quadro enquanto `busy` (engineGpuWarmup.ts). */
+  private readonly warmup = new GpuWarmup(() => this.requestRender())
   private pending: OfficeFeed | null = null
   private sizeStale = false
   /** Último gesto do usuário na câmera (relógio do motor, ms) e o `follow` que espera o agente chegar. */
@@ -123,13 +126,14 @@ export class Office3DEngine {
     this.board.attach((key, quip) => this.speech.say(key, quip) && this.requestRender(), () => this.feed && !this.paused && this.applyFeed(this.feed))
     this.pointer = this.board.bind(this.bindPointer())
     this.bindInput()
-    this.observeSize()
+    this.resize()
+    observeResize(this.container, this.listen, this.cleanups, () => this.resize())
     const source = opts.source ?? officeStore
     const snap = source.getSnapshot()
     if (snap) this.applyFeed(snap)
     this.cleanups.push(source.subscribe((f) => this.applyFeed(f)))
     this.tick = setInterval(this.tickQuips, QUIP_TICK_MS)
-    this.requestRender()
+    this.warmup.begin({ renderer: this.renderer, scene: this.scene.scene, camera: this.camera, paused: () => this.paused, disposed: () => this.disposed, sizeStale: () => (this.sizeStale = true) })
   }
 
   /** Ponteiro (pointerInput.ts): girar/arrastar, clique, duplo clique, roda e hover. */
@@ -198,11 +202,6 @@ export class Office3DEngine {
     this.userCamAt = this.now()
   }
 
-  private observeSize(): void {
-    this.resize()
-    observeResize(this.container, this.listen, this.cleanups, () => this.resize())
-  }
-
   private resize(): void {
     // Pausado o palco está escondido (0×0): só anota; a volta remede.
     if (this.paused) {
@@ -242,7 +241,7 @@ export class Office3DEngine {
     this.snapshot = snapshot
     // A energia antes do sync: sala no escuro já monta com a tela preta (na volta da pausa, sem o evento).
     const powerEvent = this.power.read(feed, wallNow, this.now() / 1000, catchUp)
-    this.scene.sync(this.layout, feed, { snapshot, events, wallNow, t: this.now() / 1000 })
+    this.warmup.sync(() => this.scene.sync(this.layout, feed, { snapshot, events, wallNow, t: this.now() / 1000 }))
     this.board.feed(feed, this.layout)
     this.speech.feed(snapshot, events, wallNow, this.power.quip(powerEvent))
     this.power.emit()
@@ -434,7 +433,7 @@ export class Office3DEngine {
 
   requestRender(): void {
     this.lowRate = false
-    if (this.disposed || this.paused || this.rafId || document.hidden) return
+    if (this.disposed || this.paused || this.warmup.busy || this.rafId || document.hidden) return
     this.lastFrame = this.now()
     this.quality.restart(this.lastFrame)
     this.rafId = this.raf(this.frame)
@@ -447,7 +446,7 @@ export class Office3DEngine {
 
   private readonly frame = (): void => {
     this.rafId = 0
-    if (this.disposed || this.paused || document.hidden) return
+    if (this.disposed || this.paused || this.warmup.busy || document.hidden) return
     const now = this.now()
     // Só animação de baixa prioridade (LOD longe): ~30 quadros/s.
     if (this.lowRate && now - this.lastFrame < LOW_RATE_MS - 2) {

@@ -3,7 +3,7 @@
  * falso dos testes), a fonte do feed, as opções injetáveis, os callbacks e o
  * `listener` dos eventos de DOM (cada um já com a remoção guardada para o dispose).
  */
-import { PCFShadowMap, WebGLRenderer, type Camera, type Scene } from 'three'
+import { PCFShadowMap, WebGLRenderer, type Camera, type Object3D, type Scene, type Texture } from 'three'
 import type { BoardItemStatus } from '@shared/ipc'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { BoardApi } from './board/boardSync'
@@ -20,8 +20,12 @@ export interface RendererLike {
   capabilities?: { getMaxAnisotropy(): number }
   /** WebGLRenderer real: shadow map refeito só quando o motor pede (autoUpdate desligado). */
   shadowMap?: { autoUpdate: boolean; needsUpdate: boolean }
-  /** WebGLRenderer real: contadores do último quadro (HUD de desempenho). */
-  info?: { render: { calls: number; triangles: number } }
+  /** WebGLRenderer real: contadores do último quadro (HUD de desempenho) e os programas (o 1º uso no aquecimento). */
+  info?: { render: { calls: number; triangles: number }; programs?: ReadonlyArray<{ isReady?(): boolean; getUniforms?(): unknown }> | null }
+  /** WebGLRenderer real: compila os shaders sem travar (KHR_parallel_shader_compile). */
+  compileAsync?(scene: Object3D, camera: Camera, targetScene?: Scene | null): Promise<unknown>
+  /** WebGLRenderer real: sobe uma textura para a GPU fora do quadro. */
+  initTexture?(texture: Texture): void
 }
 
 /** Renderer padrão: antialias e sombras suaves (só a luz principal projeta), refeitas sob demanda. */
