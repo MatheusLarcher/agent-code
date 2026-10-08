@@ -771,13 +771,20 @@ const storageTransitionHooks = {
   }
 }
 
+/** O título da conversa (o que a fila de gravação tem dela) para as mensagens; sem ele, o id. */
+function conversationLabel(convId: string): string {
+  const title = conversationQueue.snapshot(convId)?.title
+  return typeof title === 'string' && title.trim() ? title.trim() : convId
+}
+
 // Restauração e troca local ↔ nuvem: a guarda do app_restart, a drenagem da tela e
 // das filas antes da cópia e a ferramenta app_postgres_nuvem (storageSwitchWiring.ts).
 const storageSwitch = createStorageSwitchWiring({
   lifecycle: storageLifecycle,
   backups: databaseBackups,
   appVersion: app.getVersion(),
-  guard: () => appRestart?.status() ?? null,
+  // Só trabalho de verdade segura a troca (workStatus), com o nome da conversa na recusa.
+  guard: () => appRestart?.workStatus(conversationLabel) ?? null,
   flushRenderer: () => requestStorageFlush(),
   flushQueues: async () => {
     const [conversations, outbox] = await Promise.all([

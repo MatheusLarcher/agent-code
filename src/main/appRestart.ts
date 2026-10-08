@@ -7,6 +7,10 @@ export interface RestartActivity {
    * (`restartUncertain`) ou um loop ativo não ligam este sinal.
    */
   autonomousCallOpen?: boolean
+  /** Tarefas em background que o SDK diz estarem rodando agora (null: ainda não disse). */
+  backgroundTasks?: number | null
+  /** O histórico do último turno ainda não foi confirmado no banco. */
+  persistenceUnverified?: boolean
 }
 export interface ArmedRestart {
   commit(): Promise<void>
@@ -39,13 +43,50 @@ export class AppRestartCoordinator {
   private reservation?: { caller: symbol; timer: ReturnType<typeof setTimeout>; running: boolean }
   constructor(private readonly host: RestartHost, private readonly timeoutMs = 60_000) {}
 
-  register(id: string, read: () => RestartActivity): { request: (reason: string, checkOnly?: boolean) => RestartReply; remove: () => void } {
+  register(id: string, read: () => RestartActivity): {
+    request: (reason: string, checkOnly?: boolean) => RestartReply
+    /** O que as OUTRAS conversas estão fazendo de verdade agora (`working`); undefined = nada. */
+    othersWorking: () => string | undefined
+    remove: () => void
+  } {
     const key = Symbol(id)
     this.sessions.set(key, { id, read })
     return {
       request: (reason, checkOnly = false) => this.request(key, reason, checkOnly),
+      othersWorking: () => this.working(String, key),
       remove: () => { this.sessions.delete(key); if (this.reservation?.caller === key) this.cancel('Sessão solicitante desconectada.') }
     }
+  }
+
+  /**
+   * A guarda da troca e da restauração de banco: só trabalho DE VERDADE agora —
+   * turno vivo, permissão pendente, start/send em andamento, ferramenta autônoma
+   * sem resultado, tarefa em background que o SDK diz estar rodando ou histórico
+   * ainda não confirmado no banco. Ao contrário de `status()`, ignora o latch de
+   * incerteza de `unsafe` ("sem prova de término", "background desconhecido" de
+   * uma conversa retomada): ele sobrevive ao fim do trabalho e segurava a troca
+   * para sempre, com "agente trabalhando" sem agente nenhum. `label` dá o nome
+   * da conversa para a mensagem.
+   */
+  workStatus(label: (convId: string) => string = String): RestartGuardStatus {
+    const blockedBy = this.working(label) ?? null
+    return { idle: !blockedBy, blockedBy, sessions: this.sessions.size, at: new Date().toISOString() }
+  }
+
+  private working(label: (convId: string) => string, caller?: symbol): string | undefined {
+    if (this.operations.size) return 'Uma conversa está começando ou enviando uma mensagem.'
+    if (this.reservation) return 'Já existe uma reserva de reinício.'
+    for (const [key, session] of this.sessions) {
+      if (key === caller) continue
+      let state: RestartActivity
+      try { state = session.read() } catch { return `Estado da conversa "${label(session.id)}" ilegível.` }
+      const name = `"${label(session.id)}"`
+      if (state.busy) return `A conversa ${name} está com um turno em andamento.`
+      if (state.autonomousCallOpen) return `A conversa ${name} tem uma ferramenta ainda rodando.`
+      if ((state.backgroundTasks ?? 0) > 0) return `A conversa ${name} tem tarefas em background rodando.`
+      if (state.persistenceUnverified) return `O histórico da conversa ${name} ainda não foi confirmado no banco.`
+    }
+    return undefined
   }
 
   /** Acquire synchronously BEFORE the first await in every external start/send. */

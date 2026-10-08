@@ -927,7 +927,10 @@ export class AgentSession {
         : this.restartBackground === null ? 'Estado de background desconhecido.'
         : this.restartBackground > 0 ? 'Tarefas em background ativas.'
         : this.mirrorFailed ? 'Persistência não verificada.' : undefined,
-      autonomousCallOpen: this.restartOpaqueCalls.size > 0
+      autonomousCallOpen: this.restartOpaqueCalls.size > 0,
+      // O que a troca de banco olha (appRestart.workStatus): o real, sem o latch de incerteza.
+      backgroundTasks: this.restartBackground,
+      persistenceUnverified: this.mirrorFailed
     }
   }
 
@@ -994,9 +997,13 @@ export class AgentSession {
         // O print da tarefa visual no cartão (board/printAttach.ts); o Agent Manager não tem cartão.
         attachPrint: this.opts.planning ? undefined : (p) => attachPrintFromAgent({ ...p, conversationId: this.opts.convId, cwd: this.opts.cwd }),
         // A nuvem opcional por comando (cloudTool.ts): a guarda vale para as OUTRAS conversas;
-        // a desta está no meio do turno, e a troca só roda depois que ele terminar.
+        // a desta está no meio do turno, e a troca só roda depois que ele terminar. Só
+        // trabalho de verdade conta (othersWorking), não o latch de incerteza do app_restart.
         postgresCloud: this.opts.planning ? undefined : (input) => {
-          const deps = cloudToolDeps(() => this.restartRegistration?.request('troca de banco de dados', true) ?? { ok: true, message: '' })
+          const deps = cloudToolDeps(() => {
+            const blocked = this.restartRegistration?.othersWorking()
+            return { ok: !blocked, message: blocked ?? '' }
+          })
           return deps ? runCloudTool(input, deps) : Promise.resolve({ ok: false, text: 'A troca de banco não está disponível nesta execução.' })
         }
       })

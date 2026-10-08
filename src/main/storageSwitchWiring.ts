@@ -49,7 +49,7 @@ export function createStorageSwitchWiring(deps: StorageSwitchWiringDeps): Storag
     if (guard && !guard.idle) {
       throw new StorageError(
         'TRANSITION_IN_PROGRESS',
-        `Há agente trabalhando agora (${guard.blockedBy ?? 'turno em andamento'}). A troca de banco só acontece com todas as conversas paradas: tente quando o turno terminar.`
+        `${guard.blockedBy ?? 'Há uma conversa trabalhando agora.'} A troca de banco só acontece com todas as conversas paradas: tente de novo quando terminar.`
       )
     }
   }
