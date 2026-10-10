@@ -10,7 +10,7 @@ import { createAccountRegistry, DEFAULT_ACCOUNT_ID } from './registry'
 import { accountForConversation } from './selection'
 import { createSessionSwitchDeps } from './sessionSwitch'
 import type { AccountSwitchDeps } from './switchDeps'
-import { exhaustedReading, mergeReading, windowFromRateLimitEvent } from './usageMath'
+import { accountConsumption, exhaustedReading, mergeReading, windowFromRateLimitEvent } from './usageMath'
 import { fetchAccountWindows } from './usageQuery'
 import { createUsageReader } from './usageReader'
 
@@ -168,7 +168,7 @@ export function accountSwitchDepsFor(convId: string, acquire: () => Promise<void
     // Os observadores seguem a conta da conversa: trocam junto.
     changed: (id) => conversationAccounts.set(convId, id),
     acquire,
-    markExhausted: (id, text) => claudeAccounts.saveUsage(id, exhaustedReading(claudeAccounts.loadUsage(id), text, Date.now()))
+    markExhausted: markAccountExhausted
   })
 }
 
@@ -187,11 +187,37 @@ export function forgetConversationAccount(convId: string): void {
  * conta que a regra de conversa nova escolheria. `undefined` = login da máquina.
  */
 export async function observerEnvFor(convId: string | undefined, model?: string): Promise<NodeJS.ProcessEnv | undefined> {
+  return (await observerAccountFor(convId, model, new Set()))?.env
+}
+
+/**
+ * A conta de uma chamada avulsa (PO, Vigia, Memorista, título, curador): a da
+ * conversa enquanto ela não estourou; estourada (pela última leitura, que o
+ * estouro marca em 100%), a primeira da ordem com folga — como a troca do
+ * agente principal. `exclude` são as já tentadas nesta chamada. `null` = não
+ * sobrou conta; uma conta só = o login da máquina, como sempre.
+ */
+export async function observerAccountFor(
+  convId: string | undefined,
+  model: string | undefined,
+  exclude: ReadonlySet<string>
+): Promise<{ id: string; env?: NodeJS.ProcessEnv } | null> {
   await claudeAccounts.ensureLoaded()
-  if (!claudeAccounts.hasExtraAccounts()) return undefined
+  if (!claudeAccounts.hasExtraAccounts()) return exclude.has(DEFAULT_ACCOUNT_ID) ? null : { id: DEFAULT_ACCOUNT_ID }
+  const list = (await claudeAccounts.candidates()).filter((account) => account.status === 'connected' && !exclude.has(account.id))
+  if (!list.length) return null
+  const free = (id: string | undefined): boolean => list.some((account) => account.id === id && accountConsumption(account.usage, model) < 100)
   const known = convId ? conversationAccounts.get(convId) : undefined
-  const id = known ?? accountForConversation(undefined, await claudeAccounts.candidates(), model)
-  return claudeAccounts.envFor(id)
+  const best = free(known) ? known : list.find((account) => accountConsumption(account.usage, model) < 100)?.id
+  // Todas marcadas como estouradas: a leitura pode estar velha — a primeira
+  // tentativa ainda vai na conta da conversa; as seguintes, não.
+  const id = best ?? (exclude.size === 0 ? (list.find((account) => account.id === known) ?? list[0]).id : undefined)
+  return id ? { id, env: claudeAccounts.envFor(id) } : null
+}
+
+/** O estouro visto por uma chamada avulsa: a mesma marca da troca do agente principal. */
+export function markAccountExhausted(id: string, text: string): void {
+  claudeAccounts.saveUsage(id, exhaustedReading(claudeAccounts.loadUsage(id), text, Date.now()))
 }
 
 /**

@@ -1,4 +1,5 @@
 import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
 
 /** A reason the PO may safely expose and use to move from Claude to Luna. */
 export type SafeProviderReason = 'claude_plan' | 'claude_auth' | 'claude_authorization'
@@ -20,20 +21,45 @@ export interface ObserverRequest extends ObserverRuntime {
   conversationId?: string
 }
 
-/** Resolve o env da conta Claude de uma conversa (undefined = login da máquina). */
-export type ClaudeObserverEnvResolver = (
-  conversationId: string | undefined,
-  model: string
-) => Promise<NodeJS.ProcessEnv | undefined>
+/** A conta Claude escolhida para uma chamada avulsa (`env` ausente = login da máquina). */
+export interface ClaudeObserverAccount {
+  id: string
+  env?: NodeJS.ProcessEnv
+}
 
-let claudeEnvResolver: ClaudeObserverEnvResolver | null = null
+/**
+ * As contas Claude vistas pelos observadores. `pick` devolve a conta da
+ * conversa se ela não estourou, senão a de menor uso que ainda tem folga, fora
+ * as de `exclude`; `null` = nenhuma sobrou. `markExhausted` tira a conta da
+ * escolha até o reset — a mesma marca que a troca do agente principal grava.
+ */
+export interface ClaudeObserverAccounts {
+  pick(conversationId: string | undefined, model: string, exclude: ReadonlySet<string>): Promise<ClaudeObserverAccount | null>
+  markExhausted(id: string, text: string): void
+}
+
+let claudeAccounts: ClaudeObserverAccounts | null = null
 
 /**
  * Ligado no boot (index.ts) com as contas Claude. Injetado, não importado: o
  * adaptador continua sem depender do store/electron — e os testes também.
  */
-export function setClaudeObserverEnvResolver(resolver: ClaudeObserverEnvResolver | null): void {
-  claudeEnvResolver = resolver
+export function setClaudeObserverAccounts(accounts: ClaudeObserverAccounts | null): void {
+  claudeAccounts = accounts
+}
+
+async function pickClaudeAccount(
+  conversationId: string | undefined,
+  model: string,
+  exclude: ReadonlySet<string>
+): Promise<ClaudeObserverAccount | null | undefined> {
+  if (!claudeAccounts) return undefined
+  try {
+    return await claudeAccounts.pick(conversationId, model, exclude)
+  } catch (error) {
+    console.warn('[observador] conta da conversa indisponível, seguindo com o login da máquina:', (error as Error).message)
+    return undefined
+  }
 }
 
 /** Env de uma chamada Claude avulsa (observador, título, curador). Nunca lança. */
@@ -41,13 +67,7 @@ export async function claudeObserverEnv(
   conversationId: string | undefined,
   model: string
 ): Promise<NodeJS.ProcessEnv | undefined> {
-  if (!claudeEnvResolver) return undefined
-  try {
-    return await claudeEnvResolver(conversationId, model)
-  } catch (error) {
-    console.warn('[observador] conta da conversa indisponível, seguindo com o login da máquina:', (error as Error).message)
-    return undefined
-  }
+  return (await pickClaudeAccount(conversationId, model, new Set()))?.env
 }
 
 /**
@@ -96,16 +116,42 @@ async function* singlePrompt(prompt: string): AsyncIterable<SDKUserMessage> {
   } as SDKUserMessage
 }
 
+/** Teto de contas Claude tentadas numa chamada avulsa (cada uma, uma vez). */
+const MAX_OBSERVER_ACCOUNTS = 8
+
 /**
- * Runs exactly one observer request. The caller owns policy (whether a failed
- * Claude attempt can proceed to Luna); this adapter only extracts text and
- * preserves recognized, structured Claude failures.
+ * Runs one observer request. The caller owns policy (whether a failed Claude
+ * attempt can proceed to Luna); this adapter extracts text, preserves
+ * recognized, structured Claude failures and — like the main agent — moves to
+ * the next Claude account when the current one hits its usage limit.
+ *
+ * Claude sem env explícito: a conta da conversa acompanhada; estourou, marca
+ * a conta e tenta a próxima com folga. Sem nenhuma, falha com `claude_plan`
+ * — o motivo que leva o PO e o memorista à Luna. Env explícito (Luna, ou quem
+ * já escolheu a conta) roda uma vez só, como sempre.
  */
 export async function runObserverAttempt(request: ObserverRequest): Promise<ObserverAttempt> {
-  // Claude sem env explícito: a conta da conversa acompanhada. Luna já vem com
-  // o env do proxy do GPT.
-  const env =
-    request.env ?? (request.provider === 'claude' ? await claudeObserverEnv(request.conversationId, request.model) : undefined)
+  if (request.env || request.provider !== 'claude') return (await runOnce(request, request.env)).attempt
+  const tried = new Set<string>()
+  for (let round = 0; round < MAX_OBSERVER_ACCOUNTS; round++) {
+    const account = await pickClaudeAccount(request.conversationId, request.model, tried)
+    // Sem contas configuradas (ou a escolha falhou): o login da máquina, uma vez.
+    if (account === undefined) return (await runOnce(request, undefined)).attempt
+    if (account === null) break
+    tried.add(account.id)
+    const { attempt, exhausted } = await runOnce(request, account.env)
+    if (!exhausted) return attempt
+    claudeAccounts?.markExhausted(account.id, exhausted)
+    console.log(`[observador] conta ${account.id} atingiu o limite de uso; tentando a próxima`)
+  }
+  return { provider: 'claude', state: 'failed', reason: 'claude_plan' }
+}
+
+/** Uma consulta; `exhausted` traz o aviso de limite do provedor, quando houve. */
+async function runOnce(
+  request: ObserverRequest,
+  env: NodeJS.ProcessEnv | undefined
+): Promise<{ attempt: ObserverAttempt; exhausted: string | null }> {
   const options: Options = {
     cwd: request.cwd,
     model: request.model,
@@ -121,24 +167,35 @@ export async function runObserverAttempt(request: ObserverRequest): Promise<Obse
 
   let text = ''
   let reason: SafeProviderReason | undefined
+  let exhausted: string | null = null
   try {
     const q = query({ prompt: singlePrompt(request.prompt), options })
     for await (const message of q) {
-      if (message.type === 'assistant' && !isSdkErrorFrame(message)) {
+      const errorFrame = isSdkErrorFrame(message)
+      if (message.type === 'assistant' && !errorFrame) {
         const content = (message.message as { content?: Array<{ type: string; text?: string }> }).content ?? []
         for (const block of content) {
           if (block.type === 'text' && typeof block.text === 'string') text += block.text
         }
       }
+      // O mesmo critério do agente principal: só o frame de erro do provedor
+      // com o aviso de limite — nunca o texto normal do modelo.
+      if (!exhausted && errorFrame && sdkUsageExhausted(message)) exhausted = frameText(message) || 'usage limit reached'
       if (request.provider === 'claude') reason ??= classifyClaudeObserverFailure(message)
     }
   } catch (error) {
     if (request.provider === 'claude') reason ??= classifyClaudeObserverFailure(error)
+    if (!exhausted && isUsageExhausted(error)) exhausted = (error as Error).message
   }
 
   const usable = text.trim()
-  if (usable) return { provider: request.provider, state: 'completed', text: usable }
-  return { provider: request.provider, state: 'failed', ...(reason ? { reason } : {}) }
+  if (usable) return { attempt: { provider: request.provider, state: 'completed', text: usable }, exhausted: null }
+  return { attempt: { provider: request.provider, state: 'failed', ...(reason ? { reason } : {}) }, exhausted }
+}
+
+function frameText(message: unknown): string {
+  const content = (message as { message?: { content?: Array<{ type: string; text?: string }> } }).message?.content ?? []
+  return content.map((block) => (block.type === 'text' ? block.text ?? '' : '')).join('').trim()
 }
 
 /**

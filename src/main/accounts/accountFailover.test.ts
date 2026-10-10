@@ -260,6 +260,34 @@ describe('troca de conta no estouro', () => {
     expect(switches(h.emit).at(-1)).toMatchObject({ reason: 'manual', toAccountId: 'C', text: expect.stringContaining('tarefa do Forgia encerrada') })
   })
 
+  it('GPT esgota depois das contas Claude: volta ao Claude na conta que tem folga agora, não na que estourou', async () => {
+    const h = harness({ pct: { A: 90, B: 100 } })
+    await h.session.send('tarefa longa')
+    h.records[0].event(quota)
+    await settled()
+    expect(h.records[1].options.model).toBe('gpt-6.1-sol')
+    // B renovou enquanto o GPT trabalhava; A segue marcada como estourada.
+    h.stored.set('B', reading(10))
+    h.records[1].event(quota)
+    await settled()
+    expect(h.records[2].options).toMatchObject({ model: 'claude-opus-5-5', claudeAccountId: 'B', resume: 'durable-session' })
+    expect(h.records[2].session.send).toHaveBeenCalledWith(FAILOVER_CONTINUATION, undefined, expect.any(String), 'pc', 'recovery')
+    expect(h.changed).toHaveBeenCalledWith('B')
+    expect(h.emit.mock.calls.map(([e]) => (e as ChatEvent).kind)).toEqual(['provider-switch', 'provider-switch'])
+  })
+
+  it('GPT esgota e nenhuma conta Claude tem folga: para com o aviso, sem voltar para a conta estourada', async () => {
+    const h = harness({ pct: { A: 90, B: 100 } })
+    await h.session.send('tarefa longa')
+    h.records[0].event(quota)
+    await settled()
+    h.records[1].event(quota)
+    await settled()
+    expect(h.records).toHaveLength(2)
+    expect(h.emit).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'error', text: expect.stringContaining('Claude e GPT atingiram') }))
+    expect(h.complete).toHaveBeenCalledTimes(1)
+  })
+
   it('uma conta só: o estouro segue como hoje (Claude → GPT)', async () => {
     const h = harness({ pct: { A: 100 }, multiple: false })
     await h.session.send('oi')

@@ -1,15 +1,24 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const sdk = vi.hoisted(() => ({ frames: [] as unknown[] }))
+const sdk = vi.hoisted(() => ({
+  frames: [] as unknown[],
+  /** Por conta (env CLAUDE_CONFIG_DIR): os frames daquela conta; vence `frames`. */
+  byAccount: null as Record<string, unknown[]> | null,
+  envs: [] as Array<string | undefined>
+}))
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: () =>
-    (async function* () {
-      for (const frame of sdk.frames) yield frame
+  query: ({ options }: { options: { env?: NodeJS.ProcessEnv } }) => {
+    const account = options.env?.CLAUDE_CONFIG_DIR
+    sdk.envs.push(account)
+    const frames = sdk.byAccount && account ? sdk.byAccount[account] ?? [] : sdk.frames
+    return (async function* () {
+      for (const frame of frames) yield frame
     })()
+  }
 }))
 
-import { classifyClaudeObserverFailure, runObserverAttempt } from './observerQuery'
+import { classifyClaudeObserverFailure, runObserverAttempt, setClaudeObserverAccounts } from './observerQuery'
 
 const answer = (text: string, error?: string) => ({ type: 'assistant', ...(error ? { error } : {}), message: { content: [{ type: 'text', text }] } })
 const attempt = (frames: unknown[]) => {
@@ -33,6 +42,67 @@ describe('runObserverAttempt', () => {
 
   it('a resposta cortada em max_output_tokens continua sendo resposta', async () => {
     expect(await attempt([answer('resposta cortada', 'max_output_tokens')])).toEqual({ provider: 'claude', state: 'completed', text: 'resposta cortada' })
+  })
+})
+
+describe('runObserverAttempt — troca de conta no estouro, como o agente principal', () => {
+  const LIMIT = "You've hit your session limit · resets 3am"
+  const exhaustedFrame = { type: 'assistant', error: 'rate_limit', message: { content: [{ type: 'text', text: LIMIT }] } }
+
+  function accounts(order: string[]) {
+    const marked: string[] = []
+    setClaudeObserverAccounts({
+      pick: async (_conv, _model, exclude) => {
+        const id = order.find((candidate) => !exclude.has(candidate) && !marked.includes(candidate))
+        return id ? { id, env: { CLAUDE_CONFIG_DIR: id } } : null
+      },
+      markExhausted: (id) => {
+        marked.push(id)
+      }
+    })
+    return marked
+  }
+
+  beforeEach(() => {
+    sdk.envs = []
+  })
+
+  afterEach(() => {
+    setClaudeObserverAccounts(null)
+    sdk.byAccount = null
+    sdk.envs = []
+  })
+
+  it('a conta da conversa estourou: marca, segue para a próxima e responde por ela', async () => {
+    const marked = accounts(['A', 'B'])
+    sdk.byAccount = { A: [exhaustedFrame], B: [answer('veredito')] }
+    expect(await runObserverAttempt({ prompt: 'p', model: 'm', provider: 'claude', conversationId: 'c' }))
+      .toEqual({ provider: 'claude', state: 'completed', text: 'veredito' })
+    expect(sdk.envs).toEqual(['A', 'B'])
+    expect(marked).toEqual(['A'])
+  })
+
+  it('todas estouradas: falha com claude_plan (o PO e o memorista seguem para a Luna)', async () => {
+    const marked = accounts(['A', 'B'])
+    sdk.byAccount = { A: [exhaustedFrame], B: [exhaustedFrame] }
+    expect(await runObserverAttempt({ prompt: 'p', model: 'm', provider: 'claude' }))
+      .toEqual({ provider: 'claude', state: 'failed', reason: 'claude_plan' })
+    expect(marked).toEqual(['A', 'B'])
+  })
+
+  it('erro que não é limite (sobrecarga) não troca de conta', async () => {
+    const marked = accounts(['A', 'B'])
+    sdk.byAccount = { A: [answer('API Error: 529 overloaded', 'overloaded')], B: [answer('não devia rodar')] }
+    expect(await runObserverAttempt({ prompt: 'p', model: 'm', provider: 'claude' })).toEqual({ provider: 'claude', state: 'failed' })
+    expect(sdk.envs).toEqual(['A'])
+    expect(marked).toEqual([])
+  })
+
+  it('env explícito (Luna, quem já escolheu a conta) roda uma vez só', async () => {
+    accounts(['A', 'B'])
+    sdk.byAccount = { X: [exhaustedFrame] }
+    await runObserverAttempt({ prompt: 'p', model: 'm', provider: 'claude', env: { CLAUDE_CONFIG_DIR: 'X' } })
+    expect(sdk.envs).toEqual(['X'])
   })
 })
 

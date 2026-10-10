@@ -164,6 +164,8 @@ vi.mock('../accounts', () => ({
   accountSwitchDepsFor: vi.fn(() => undefined),
   forgetConversationAccount: vi.fn(),
   observerEnvFor: vi.fn(async () => undefined),
+  observerAccountFor: vi.fn(async () => ({ id: 'default' })),
+  markAccountExhausted: vi.fn(),
   queryAllAccountsUsage: vi.fn(async () => []),
   queryAccountUsage: vi.fn(async () => ({ accountId: 'default', reading: null, fresh: false })),
   recordSessionRateLimit: vi.fn(),

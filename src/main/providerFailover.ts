@@ -56,6 +56,9 @@ class NoDestination extends Error {}
  *  gastando bem menos da assinatura — o Astra não compensa como reserva. */
 export const FAILOVER_GPT_MODEL = 'gpt-6.1-sol'
 
+/** Claude → GPT → Claude → GPT no mesmo turno, no máximo. */
+const MAX_PROVIDER_SWITCHES = 3
+
 export function providerForModel(model?: string): UsageProvider | null {
   if (isOpenAIModel(model)) return 'gpt'
   return !model || model.startsWith('claude-') ? 'claude' : null
@@ -73,6 +76,8 @@ export class ProviderFailoverSession {
   private disposed = false
   private switching: Promise<void> | null = null
   private tried = new Set<UsageProvider>()
+  /** Trocas de provedor neste turno — o teto contra ir e voltar sem fim. */
+  private providerSwitches = 0
   /** Contas Claude que já entraram neste turno: cada uma, uma vez (sem laço). */
   private triedAccounts = new Set<string>()
   private lastModels: Partial<Record<UsageProvider, string>> = {}
@@ -262,21 +267,40 @@ export class ProviderFailoverSession {
       }
       this.tried.add(from)
       const to = from === 'claude' ? 'gpt' : 'claude'
-      if (this.tried.has(to)) throw noDestination('Claude e GPT atingiram o limite de uso. A tarefa foi preservada; aguarde a renovação dos limites.')
-      if (!(await this.available(to))) throw noDestination(`O limite de uso foi atingido e ${to === 'gpt' ? 'o ChatGPT' : 'o Claude'} não está conectado. A tarefa foi preservada; aguarde a renovação dos limites.`)
-      if (!active()) return
+      const allExhausted = 'Claude e GPT atingiram o limite de uso. A tarefa foi preservada; aguarde a renovação dos limites.'
+      if (++this.providerSwitches > MAX_PROVIDER_SWITCHES) throw noDestination(allExhausted)
       const fromModel = this.options.model ?? 'claude-opus-5-5'
-      this.lastModels[from] = fromModel
       const model = this.lastModels[to] ?? (to === 'gpt' ? FAILOVER_GPT_MODEL : 'claude-opus-5-5')
+      // GPT esgotou: volta ao Claude na conta que tem folga AGORA — a da
+      // conversa costuma ser justamente a que estourou e levou ao GPT. As
+      // estouradas estão marcadas em 100% até o reset, então não há laço: sem
+      // nenhuma com folga, para aqui.
+      let claudeAccount: string | null = null
+      if (to === 'claude' && this.accounts?.multiple()) {
+        const target = await this.accounts.exhaustedTarget('', model, new Set())
+        console.log(`[contas] conversa ${this.options.convId}: GPT estourou → ${target ? `conta Claude ${target.to} (${Math.round(target.toPct)}%)` : 'nenhuma conta Claude com folga'}`)
+        if (!target) throw noDestination(allExhausted)
+        claudeAccount = target.to
+      } else {
+        if (this.tried.has(to)) throw noDestination(allExhausted)
+        if (!(await this.available(to))) throw noDestination(`O limite de uso foi atingido e ${to === 'gpt' ? 'o ChatGPT' : 'o Claude'} não está conectado. A tarefa foi preservada; aguarde a renovação dos limites.`)
+      }
+      if (!active()) return
+      this.lastModels[from] = fromModel
       const effort = this.options.effort
       const interrupted = this.interruptedBackground(previous)
       const switched = await this.replace(previous, (resume) => ({
         model, resume,
+        ...(claudeAccount ? { claudeAccountId: claudeAccount } : {}),
         effort: effort && MODEL_EFFORT[model]?.some((level) => level === effort) ? effort : 'high',
         fastMode: this.options.fastMode === true && modelSupportsFastMode(model)
       }), active, true)
       if (!switched) return
       this.tried.add(to)
+      if (claudeAccount) {
+        this.triedAccounts.add(claudeAccount)
+        this.accounts?.changed(claudeAccount)
+      }
       this.emit({
         kind: 'provider-switch', id: randomUUID(), fromModel, model, effort: this.options.effort,
         fastMode: this.options.fastMode === true,
@@ -429,6 +453,7 @@ export class ProviderFailoverSession {
     ++this.turn
     this.tried.clear()
     this.triedAccounts.clear()
+    this.providerSwitches = 0
     this.turnOpen = true
     await this.current.send(...args)
   }
