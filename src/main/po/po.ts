@@ -405,8 +405,22 @@ export class Po {
       // para a fila, e nada é escrito nem anunciado — o elenco não mostra uma
       // auditoria que não aconteceu. `null` (sem chave, desligado, erro) é
       // ausência de decisão, não "não": segue exatamente como sempre seguiu.
+      // O turno real traz o snapshot do seu `result`; o sintético (flush,
+      // retentativa, `dispose`) não tem instante próprio e usa o de agora.
+      const background = turn.background ?? conv.background
+      // O que este fechamento julga — sem PENDENTE, conclui pelo padrão. Na
+      // rodada da fila com um turno novo rodando, o "em andamento" é dele.
+      const returned = phase !== 'close' ? [] : poReturnedCards({
+        cards,
+        background: background.length > 0,
+        demotedAtTurnEnd: this.deps.board.reopenedAtLastTurnEnd?.(convId),
+        turnRunning: force && conv.userText !== null && !conv.fired
+      })
+
       // Com etapa sem cartão o gate não decide: ele não a vê, e o "não" a deixaria sem cartão.
-      const worthIt = orphans.length > 0 ? null : await askBoardGate(this.deps, {
+      // Com cartão a fechar também não: o "não" (ex.: "o push já tinha sido feito",
+      // lido como só conversa) deixava o cartão entregue de volta em "a fazer".
+      const worthIt = orphans.length > 0 || returned.length > 0 ? null : await askBoardGate(this.deps, {
         phase,
         userText: merged.userText,
         cards: digestCards.map(({ title, status }) => ({ title, status })),
@@ -420,17 +434,6 @@ export class Po {
         return
       }
 
-      // O turno real traz o snapshot do seu `result`; o sintético (flush,
-      // retentativa, `dispose`) não tem instante próprio e usa o de agora.
-      const background = turn.background ?? conv.background
-      // O que este fechamento julga — sem PENDENTE, conclui pelo padrão. Na
-      // rodada da fila com um turno novo rodando, o "em andamento" é dele.
-      const returned = phase !== 'close' ? [] : poReturnedCards({
-        cards,
-        background: background.length > 0,
-        demotedAtTurnEnd: this.deps.board.reopenedAtLastTurnEnd?.(convId),
-        turnRunning: force && conv.userText !== null && !conv.fired
-      })
       const git = await this.deps.gitEvidence?.(turn.cwd, poGitSince(cards, returned)).catch(() => null)
       const next = phase === 'close' ? await this.deps.nextPrompt?.(convId).catch(() => null) : null
       const authorization = await this.deps.authorization?.(convId).catch(() => null)

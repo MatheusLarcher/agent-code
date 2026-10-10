@@ -268,6 +268,16 @@ describe('Po — o fechamento recebe as órfãs', () => {
     expect(ask).toHaveBeenCalledTimes(1)
   })
 
+  it('com cartão em andamento a fechar o gate não decide: o PO analisa e o OK conclui pelo padrão', async () => {
+    const gate = vi.fn(async () => false)
+    const ask = vi.fn(async () => 'OK')
+    const board = fakeBoard()
+    vi.mocked(board.list).mockResolvedValue([card('bi-1', { sourceStatus: 'in_progress' })])
+    await closeTurn(new Po({ config: () => config(), board, ask, gate, orphanEtapas: async () => [] }))
+    expect(ask).toHaveBeenCalledTimes(1)
+    expect(board.applyPo).toHaveBeenCalledWith(expect.objectContaining({ id: 'bi-1', poStatus: 'completed' }))
+  })
+
   it('PO desligado: nada é lido nem criado; a ponte que falha só tira a seção', async () => {
     const off = vi.fn(async () => ORPHANS)
     const board = fakeBoard()

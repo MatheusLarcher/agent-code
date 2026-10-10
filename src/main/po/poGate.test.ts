@@ -73,6 +73,16 @@ function writingClaude() {
   }))
 }
 
+/** Abertura sem escrita: não cria cartão em andamento, e o fechamento fica sem
+ *  cartão a fechar — o caso em que o gate ainda decide o fechamento. */
+function quietOpenClaude() {
+  return vi.fn(async (request: PoObserverRequest) => ({
+    provider: 'claude' as const,
+    state: 'completed' as const,
+    text: request.phase === 'open' ? 'OK' : 'CONCLUIR bi-1 | o teste passou'
+  }))
+}
+
 async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
   await new Promise((resolve) => setTimeout(resolve, 0))
@@ -111,9 +121,13 @@ describe('Po — gate "não" economiza o modelo', () => {
     expect(diagnostics).toEqual([])
   })
 
-  it('no FECHAMENTO: a abertura roda normal, o fechamento não chama modelo nem escreve', async () => {
-    const board = fakeBoard([card({ sourceStatus: 'in_progress' })])
-    const runClaude = writingClaude()
+  it('no FECHAMENTO sem cartão a fechar: a abertura roda normal, o fechamento não chama modelo nem escreve', async () => {
+    const board = fakeBoard([card()])
+    const runClaude = vi.fn(async (request: PoObserverRequest) => ({
+      provider: 'claude' as const,
+      state: 'completed' as const,
+      text: request.phase === 'open' ? 'OK' : 'CONCLUIR bi-1 | o teste passou'
+    }))
     const diagnostics: PoProviderDiagnostic[] = []
     const gate = vi.fn(async (input: BoardGateInput) => (input.phase === 'close' ? false : null))
     const po = new Po({ config, board, runClaude, gate, diagnose: (event) => diagnostics.push(event) })
@@ -126,6 +140,21 @@ describe('Po — gate "não" economiza o modelo', () => {
     expect(runClaude.mock.calls.map(([request]) => request.phase)).toEqual(['open'])
     expect(board.applyPo).not.toHaveBeenCalled()
     expect(diagnostics.every((event) => event.round === 'open')).toBe(true)
+  })
+
+  it('no FECHAMENTO com cartão em andamento o gate não decide: o PO analisa e conclui o cartão', async () => {
+    const board = fakeBoard([card({ sourceStatus: 'in_progress' })])
+    const runClaude = writingClaude()
+    const gate = vi.fn(async (input: BoardGateInput) => (input.phase === 'close' ? false : null))
+    const po = new Po({ config, board, runClaude, gate })
+
+    po.noteUserMessage('conv-1', 'C:/p', 'o push já tinha sido feito')
+    po.observe('conv-1', result)
+    await flush()
+
+    expect(gate.mock.calls.map(([input]) => input.phase)).toEqual(['open'])
+    expect(runClaude.mock.calls.map(([request]) => request.phase).sort()).toEqual(['close', 'open'])
+    expect(board.applyPo).toHaveBeenCalledWith({ id: 'bi-1', poStatus: 'completed', poReason: 'o teste passou' })
   })
 
   it('o "não" conta como auditado: o acumulado não volta para a fila e nada é reagendado', async () => {
@@ -225,7 +254,7 @@ describe('Po — gate sem decisão segue como hoje', () => {
     po.observe('conv-1', result)
     await flush()
 
-    expect(runClaude.mock.calls.map(([request]) => request.phase)).toEqual(['open', 'close'])
+    expect(runClaude.mock.calls.map(([request]) => request.phase).sort()).toEqual(['close', 'open'])
     expect(board.applyPo).toHaveBeenCalledWith({ id: 'bi-1', poStatus: 'completed', poReason: 'o teste passou' })
   })
 
@@ -241,7 +270,8 @@ describe('Po — gate sem decisão segue como hoje', () => {
     po.observe('conv-1', result)
     await flush()
 
-    expect(gate).toHaveBeenCalledTimes(2)
+    // Só a abertura pergunta: o fechamento tem cartão em andamento, e aí o gate não decide.
+    expect(gate).toHaveBeenCalledTimes(1)
     expect(runClaude).toHaveBeenCalledTimes(2)
     expect(board.applyPo).toHaveBeenCalledWith({ id: 'bi-1', poStatus: 'completed', poReason: 'o teste passou' })
   })
@@ -282,13 +312,15 @@ describe('Po — gate sem decisão segue como hoje', () => {
 
 describe('Po — gate "sim"', () => {
   it('segue normal e o gate vê o mesmo material do digest, depois do quadro e antes do anúncio', async () => {
-    const board = fakeBoard([card({ sourceStatus: 'in_progress', poTitle: 'Tabela do quadro' })])
+    // Cartão "a fazer" e abertura sem escrita: o fechamento não tem cartão
+    // em andamento a fechar, então o gate é quem decide se vale analisar.
+    const board = fakeBoard([card({ poTitle: 'Tabela do quadro' })])
     const order: string[] = []
     board.list.mockImplementation(async () => {
       order.push('list')
-      return [card({ sourceStatus: 'in_progress', poTitle: 'Tabela do quadro' })]
+      return [card({ poTitle: 'Tabela do quadro' })]
     })
-    const runClaude = writingClaude()
+    const runClaude = quietOpenClaude()
     const inputs: BoardGateInput[] = []
     const gate = vi.fn(async (input: BoardGateInput) => {
       order.push(`gate:${input.phase}`)
@@ -317,7 +349,7 @@ describe('Po — gate "sim"', () => {
     expect(close).toEqual({
       phase: 'close',
       userText: 'termina a tabela',
-      cards: [{ title: 'Tabela do quadro', status: 'in_progress' }],
+      cards: [{ title: 'Tabela do quadro', status: 'pending' }],
       calls: [{ tool: 'Edit', detail: expect.stringContaining('src/quadro.ts') }],
       ledgerTasks: [{ title: 'Tabela do quadro', status: 'done' }],
       // A resposta do turno: é nela que "entreguei; posso publicar?" aparece.
@@ -338,7 +370,7 @@ describe('Po — gate "sim"', () => {
       return true
     })
     let now = 1_000_000
-    const po = new Po({ config, board, runClaude: writingClaude(), gate, now: () => now })
+    const po = new Po({ config, board, runClaude: quietOpenClaude(), gate, now: () => now })
 
     po.noteUserMessage('conv-1', 'C:/p', 'audita o Cloudflare')
     await flush()
