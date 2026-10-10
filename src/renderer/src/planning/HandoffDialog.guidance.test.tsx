@@ -42,12 +42,12 @@ describe('HandoffDialog — interruptores do handoff no pedido ao Agent Manager'
     expect(await askManager()).toBe(managerHandoffRequest(makePlan().dir, 0, 0))
   })
 
-  it('config ilegível: vale o padrão (ciclo ligado)', async () => {
+  it('config ilegível: vale o padrão (tudo desligado — o replay e o A/B mostraram piora com o ciclo)', async () => {
     const m = mockPlanningApi()
     ;(m.api as Record<string, unknown>).getConfig = vi.fn(async () => {
       throw new Error('canal fechado')
     })
-    expect(await askManager()).toContain(HANDOFF_CYCLE_RULE)
+    expect(await askManager()).not.toContain(HANDOFF_CYCLE_RULE)
   })
 })
 

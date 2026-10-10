@@ -27,9 +27,10 @@ async function fixture(prefix: string): Promise<{ app: string; cache: string; ho
 const names = (home: string): string[] => discoverSkills('', home).map((s) => s.name)
 
 describe('kits de skills atrás de um interruptor', () => {
-  it('o kit do ciclo segue o interruptor "Ciclo completo nos handoffs" (ligado por padrão)', () => {
+  it('o kit do ciclo segue o interruptor "Ciclo completo nos handoffs" (desligado por padrão)', () => {
     expect(SKILL_KITS.map((k) => k.id)).toContain('ciclo')
-    expect(activeSkillKits(DEFAULT_CONFIG)).toEqual(['ciclo'])
+    expect(activeSkillKits(DEFAULT_CONFIG)).toEqual([])
+    expect(activeSkillKits({ handoff: { ciclo: true, leituraGuiada: false } })).toEqual(['ciclo'])
     expect(activeSkillKits({ handoff: { ciclo: false, leituraGuiada: true } })).toEqual([])
   })
 
@@ -37,7 +38,8 @@ describe('kits de skills atrás de um interruptor', () => {
     expect(SKILL_KITS.map((k) => k.id)).toContain('ecc')
     expect(activeSkillKits(DEFAULT_CONFIG)).not.toContain('ecc')
     const tiered = { ...DEFAULT_CONFIG.skillCatalog, tiered: true }
-    expect(activeSkillKits({ ...DEFAULT_CONFIG, skillCatalog: tiered })).toEqual(['ciclo', 'ecc'])
+    expect(activeSkillKits({ ...DEFAULT_CONFIG, skillCatalog: tiered })).toEqual(['ecc'])
+    expect(activeSkillKits({ handoff: { ciclo: true, leituraGuiada: false }, skillCatalog: tiered })).toEqual(['ciclo', 'ecc'])
     expect(activeSkillKits({ handoff: { ciclo: false, leituraGuiada: false }, skillCatalog: tiered })).toEqual(['ecc'])
   })
 
